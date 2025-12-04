@@ -1,0 +1,31 @@
+# .github/workflows/dependency-graph.yml
+name: Update Dependency Graph
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main # default branch of the project
+jobs:
+  dependency-graph:
+    name: Update Dependency Graph
+    permissions:
+      actions: read
+      contents: write # this permission is needed to submit the dependency graph
+      security-events: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up JDK
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin' # Install Temurin JDK
+          java-version: '17'      # Adjust to your project's Java version
+      - name: Install sbt
+        run: |
+          echo "Installing sbt..."
+          curl -L https://github.com/sbt/sbt/releases/download/v1.10.11/sbt-1.10.11.tgz | tar xz
+          sudo mv sbt/bin/sbt /usr/local/bin/
+      - uses: scalacenter/sbt-dependency-submission@v2
+        with:
+          working-directory: './'
+          configs-ignore: scala-doc-tool

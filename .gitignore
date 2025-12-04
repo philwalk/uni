@@ -1,0 +1,45 @@
+../
+*.jar
+*.class
+*.log
+*.out
+sall
+jsall
+s[0-9]*
+_vb
+tags
+.scala-build
+
+sonatype.sbt
+# classpath @files come in Windows/EverybodyElse versions
+classpathAtfile*
+.cache
+.env
+.envrc
+.history
+.sdkmanrc
+.lib/
+dist/*
+target/
+lib_managed/
+local.conf
+src_managed/
+project/boot/
+project/plugins/project/
+project/scalafix/*
+project/.sbtserver
+project/.sbtserver.lock
+project/project/
+*.swp
+*.sw?
+*.semanticdb
+jsrc/*.jar
+.idea*
+# Metals
+.metals/
+.bsp/
+.bloop/
+metals.sbt
+.vscode
+# virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
+hs_err_pid*

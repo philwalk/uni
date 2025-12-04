@@ -1,0 +1,11 @@
+
+/*
+ * Provides alternative to `java.nio.file.Paths` usable in all environments.
+ * `uni.Paths.get()` recognizes MSYS2/Cygwin posix path strings
+ *
+ * Supported java environments:
+ * Windows / Linux / OSX,
+ * Supported Windows shell environments:
+ *   CYGWIN, MINGW, MSYS2, GIT-BASH, GITSDK, CLANG, etc.
+ *
+ */
