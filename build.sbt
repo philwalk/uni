@@ -70,7 +70,7 @@ lazy val root = (project in file(".")).
     description        := "Support for expressive scripting",
  // mainClass          := Some("vast.apps.ShowSysProps"),
     buildInfoKeys      := Seq[BuildInfoKey](name, version, scalaVersion, sbtVersion),
-    buildInfoPackage   := "unifile", // available as "import unifile.BuildInfo"
+    buildInfoPackage   := "uni", // available as "import uni.BuildInfo"
   )
 
 libraryDependencies ++= Seq(

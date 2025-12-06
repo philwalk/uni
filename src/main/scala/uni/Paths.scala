@@ -15,11 +15,11 @@ import scala.math.BigDecimal.RoundingMode
 export java.io.File as JFile
 export java.nio.file.Path
 export scala.util.Properties.isWin
-export Internals.*
 
 // A scala cygpath-aware rendition of Paths.get
-// TODO: why is this slower than realPath.sc?
 object Paths {
+  import Internals.*
+  import file.*
 
   /** Normalize and convert a string path to a java.nio.file.Path */
   def get(segs: String *): Path = {
@@ -45,20 +45,22 @@ object Paths {
           // find longest matching mount prefix
           val keys = posix2winMounts.keys
           val pstrTrim = pstr.stripSuffix("/")
-          val maybeMount = keys
-            .filter { key =>
-              val k = key.toLowerCase
-              val s = pstrTrim.toLowerCase
-              s.startsWith(k) &&
-                (s.length == k.length || {
-                  val next = s.charAt(k.length)
-                  next == '/' || next == '\\' || next == ':'
-                })
-            }
-            .toList
-            .sortBy(-_.length)
-            .headOption
-
+          def isMounted(rootedPath: String): Option[String] = {
+            keys
+              .filter { key =>
+                val k = key.toLowerCase
+                val s = rootedPath.toLowerCase
+                s.startsWith(k) &&
+                  (s.length == k.length || {
+                    val next = s.charAt(k.length)
+                    next == '/' || next == '\\' || next == ':'
+                  })
+              }
+              .toList
+              .sortBy(-_.length)
+              .headOption
+          }
+          val maybeMount = isMounted(pstrTrim)
           maybeMount match {
             case Some(mountKey) =>
               val mount = posix2winMounts(mountKey) match {
@@ -68,8 +70,8 @@ object Paths {
               val postPrefix = pstrTrim.drop(mountKey.length)
               s"$mount$postPrefix"
             case None =>
-              // Msys drive-relative fallback
-              s"$defaultDrive$pstr"
+              val root = posix2winMounts("/")
+              s"$root$pstr"
           }
         } else {
           // Directory-relative path
@@ -143,6 +145,10 @@ object Paths {
 }
 
 object Internals {
+  import file.*
+
+  lazy val pwd: Path = JPaths.get("").toAbsolutePath
+
   def showMountMaps(): Unit = {
     println("Forward Map:")
     win2posixMounts.foreach { case (k, v) =>
@@ -157,23 +163,30 @@ object Internals {
     }
   }
 
-  def spawn(cmd: String *): (Int, Seq[String], Seq[String]) = {
-    var (stdout, stderr) = (Vector.empty[String], Vector.empty[String])
+  lazy val exe: String = if isWin then ".exe" else ""
+
+  case class Proc(status: Int, stdout: Seq[String], stderr: Seq[String])
+
+  def spawn(cmd: String *): Proc = {
+    import scala.collection.mutable.ListBuffer
+    val (stdout, stderr) = (ListBuffer.empty[String], ListBuffer.empty[String])
+    val cmdArray = cmd.toArray.updated(0, cmd.head.stripSuffix(exe) + exe)
     try {
-      val status = cmd.toSeq ! ProcessLogger(stdout appended _, stderr appended _)
-      (status, stdout, stderr)
+      val status = cmdArray.toSeq ! ProcessLogger(stdout append _, stderr append _)
+      Proc(status, stdout.toSeq, stderr.toSeq)
     } catch {
-      case e: Throwable =>
-        (99, stdout, stderr appended e.getMessage)
+      case e: Exception =>
+        Proc(-1, stdout.toSeq, (stderr append e.getMessage).toSeq)
     }
   }
+
   def call(cmd: String *): Option[String] = {
     try {
-      val (status, stdout, stderr) = spawn(cmd *)
-      if (status != 0){
+      val ret = spawn(cmd *)
+      if (ret.status != 0){
         None
       } else {
-        stdout.mkString("\n").trim match {
+        ret.stdout.mkString("\n").trim match {
           case s if s.nonEmpty =>
             Some(s)
           case _ =>
@@ -186,50 +199,57 @@ object Internals {
     }
   }
 
-  def reparseTest(path: String): String = {
-    Try {
-      // this line throws an exception if path is not a Windows reparse point (symlink)
-      val output = Seq("fsutil", "reparsepoint", "query", path).!!.linesIterator.toList
-
-      // Collect hex dump lines
-      val hexLines = output.filter(_.matches("""^\s*[0-9A-Fa-f]{4}:.*"""))
-      val hexPairs = hexLines.flatMap(_.drop(6).trim.split("\\s+").filter(_.nonEmpty))
-      val bytes    = hexPairs.map(Integer.parseInt(_, 16).toByte).toArray
-
-      val decoded  = new String(bytes, StandardCharsets.UTF_16LE).trim
-      val parts = decoded.split("\\?\\?\\\\")
-      val printName: String = parts.lastOption.getOrElse(decoded) // user-friendly
-      printName
-    }.getOrElse(path)
-  }
-
   def realpathWindows(path: String): String = {
-    def loop(p: Path): String =
-      if p == null then path
-      else
-        val resolved = reparseTest(p.toString)
-        if resolved != p.toString then resolved
-        else loop(p.getParent)
-    loop(JPaths.get(path))
+    if (!isWin) {
+      path
+    } else {
+      def reparseTest(path: String): String = {
+        Try {
+          // this line throws an exception if path is not a Windows reparse point (symlink)
+          val output = Seq("fsutil", "reparsepoint", "query", path).!!.linesIterator.toList
+
+          // Collect hex dump lines
+          val hexLines = output.filter(_.matches("""^\s*[0-9A-Fa-f]{4}:.*"""))
+          val hexPairs = hexLines.flatMap(_.drop(6).trim.split("\\s+").filter(_.nonEmpty))
+          val bytes    = hexPairs.map(Integer.parseInt(_, 16).toByte).toArray
+
+          val decoded  = new String(bytes, StandardCharsets.UTF_16LE).trim
+          val parts = decoded.split("\\?\\?\\\\")
+          val printName: String = parts.lastOption.getOrElse(decoded) // user-friendly
+          printName
+        }.getOrElse(path)
+      }
+
+      def loop(p: Path): String = {
+        if (p == null) {
+          path
+        } else {
+          val resolved = reparseTest(p.toString)
+          if resolved != p.toString then resolved
+          else loop(p.getParent)
+        }
+      }
+      loop(JPaths.get(path))
+    }
   }
 
   def realWhere(jpath: java.nio.file.Path): Path = {
     realWhere(jpath.toString.replace('\\', '/'))
   }
 
-  def realWhere(mightBeSymlinkPath: String): Path = {
+  def realWhere(mightBeSymlinkToExecutable: String): Path = {
     try {
       if (!isWin) {
-        val cmd = Seq("bash", "-c", s"""realpath "`command -v ${mightBeSymlinkPath}`" """.trim)
-        val real: String = call(cmd *).getOrElse(mightBeSymlinkPath)
+        val cmd = Seq("bash", "-c", s"""realpath "`command -v ${mightBeSymlinkToExecutable}`" """.trim)
+        val real: String = call(cmd *).getOrElse(mightBeSymlinkToExecutable)
         JPaths.get(real)
       } else {
-        val real = realpathWindows(mightBeSymlinkPath)
+        val real = realpathWindows(mightBeSymlinkToExecutable)
         JPaths.get(real)
       }
     } catch {
       case e: Exception =>
-        JPaths.get(mightBeSymlinkPath) 
+        JPaths.get(mightBeSymlinkToExecutable) 
     }
   }
   lazy val userHome = {
@@ -378,7 +398,180 @@ object Internals {
     }
   }
 
+  lazy val defaultDrive: String = defaultDriveLetter+":"
+
+  def defaultDriveLetter: String = {
+    if (isWin) new JFile("/").getAbsolutePath.take(1) else ""
+  }
+  /*
+  def isSameFile(p1: Path, p2: Path): Boolean = {
+    try {
+      val (p1str, p2str) = (p1.toString, p2.toString)
+      // even files that !canExist() can be the same file
+      p1str == p2str || {
+        canExist(p1) && canExist(p2) && {
+          Files.isSameFile(p1, p2)
+        }
+      }
+    } catch {
+      case _: Exception =>
+        false
+    }
+  }
+  */
+  def exists(fname: String): Boolean = Files.exists(Paths.get(fname))
+
+  def standardizePath(p: Path): String = {
+    if p.toString.contains("~") then
+      hook += 1
+    val winPath: String = if canExist(p) then
+      p.toAbsolutePath.normalize.toString
+    else
+      p.toFile.getAbsolutePath // is this adequate?
+
+    val pathstr = winPath.toString
+    if (!isWin) {
+      pathstr
+    } else {
+      val pstr = pathstr.replace('\\', '/') match {
+      case "/" => "/"
+      case s => s.stripSuffix("/") // no trailing slash
+      }
+
+      // First check explicit mounts
+      val w2pm = win2posixMounts
+      val maybeMount = w2pm.keys
+        .filter(pstr.startsWithIgnoreCase)
+        .toList
+        .sortBy(-_.length)
+        .headOption
+
+      maybeMount match {
+        case Some(winRoot) =>
+          // Replace with mapped POSIX mount
+          val posixRoots = w2pm(winRoot)
+          val post = pstr.drop(winRoot.length)
+          s"${posixRoots.head}${post}"
+
+        case None =>
+          if (pstr.length >= 2 && pstr(1) == ':') {
+            // Drive letter path
+            val drive = pstr(0).toLower
+            val post = pstr.drop(2)
+            s"$cygPrefix$drive$post"
+          } else if (pstr.startsWith("//")) {
+            // UNC path
+            val unc = pstr.drop(2)
+            s"${cygPrefix}unc/$unc"
+          } else {
+            // Relative path
+            pstr
+          }
+      }
+    }
+  }
+
+  def asPosixDrive(dl: String, path: String): String = {
+    val root = cygdrive
+    val cygified = s"$root${dl.take(1).toLowerCase(Locale.ROOT)}$path"
+    cygified
+  }
+  lazy val driveRoot: String = JPaths.get("").toAbsolutePath.getRoot.toString.take(2)
+
+  // default cygdrive values, if /etc/fstab is not customized
+  //    cygwin: "/cygdrive",
+  //    msys:   "/"
+  lazy val msysRoot = posix2winMounts("/").mkString
+  lazy val cygdrive: String = cygPrefix
+  def _osName: String = sys.props("os.name")
+
+  lazy val _osType: String = _osName.toLowerCase(Locale.ROOT) match {
+  case s if s.contains("windows")  => "windows"
+  case s if s.contains("linux")    => "linux"
+  case s if s.contains("mac os x") => "darwin"
+  case other =>
+    sys.error(s"osType is [$other]")
+  }
+ 
+  import java.io.{FileWriter, OutputStreamWriter, PrintWriter}
+  def withFileWriter(p: Path, charsetName: String = "UTF-8", append: Boolean = false)(func: PrintWriter => Any): Unit = {
+    val jfile  = p.toFile
+    val lcname = jfile.getName.toLowerCase(Locale.ROOT)
+    if (lcname != "stdout") {
+      Option(jfile.getParentFile) match {
+      case Some(parent) =>
+        if (!parent.exists) {
+          throw new IllegalArgumentException(s"parent directory not found [${parent}]")
+        }
+      case None =>
+        throw new IllegalArgumentException(s"no parent directory")
+      }
+    }
+    val writer = lcname match {
+    case "stdout" =>
+      new PrintWriter(new OutputStreamWriter(System.out, charsetName), true)
+    case _ =>
+      new PrintWriter(new FileWriter(jfile, append))
+    }
+    try {
+      val _: Any = func(writer)
+    } finally {
+      writer.flush()
+      if (lcname != "stdout") {
+        // don't close stdout!
+        writer.close()
+      }
+    }
+  }
+  def shellRoot: String = if isWin then call("cygpath.exe", "-m", "/").getOrElse("") else ""
+
+  def isWinshell: Boolean = Properties.propOrNone("MSYSTEM").nonEmpty
+  lazy val here  = pwd.toAbsolutePath.normalize.toString.toLowerCase(Locale.ROOT).replace('\\', '/')
+  lazy val uhere = here.replaceFirst("^[a-zA-Z]:", "")
+  def hereDrive: String = {
+    if (isWin) new JFile("/").getAbsolutePath.take(2).mkString else ""
+  }
+
+  def canExist(p: Path): Boolean = {
+    val root = p.getRoot
+    if (root == null) {
+      true
+    } else {
+      val rootDrive = root.toFile.toString.toUpperCase.take(2)
+      rootDrives.contains(rootDrive)
+    }
+  }
+
+  def rootDrives: Array[String] = java.io.File.listRoots().map( (f: JFile) =>
+    f.getAbsolutePath.take(2) // discard trailing backslashes
+  )
+  /*
+  def driveLetters: Seq[Char] = java.io.File.listRoots().map( (f: JFile) =>
+    f.getAbsolutePath.head // discard trailing backslashes
+  )
+  */
+
+  def safeAbsolutePath(p: Path): Path = {
+    if (!isWin) {
+      p.toAbsolutePath
+    } else {
+      val pstr = p.toString
+      if (pstr.matches("^[A-Za-z]:$")) {
+        val drive = pstr.charAt(0)
+        if (java.io.File.listRoots().exists(_.getPath.startsWith(s"$drive:")))
+          p.toAbsolutePath // drive exists, delegate
+        else
+          JPaths.get(s"$drive:/") // convention: root of drive
+      } else {
+        p.toAbsolutePath
+      }
+    }
+  }
+}
+
+object file {
   import StandardCharsets.{UTF_8, ISO_8859_1 as Latin1}
+  import Internals.*
 
   /** Extension methods */
   extension (p: Path) {
@@ -575,181 +768,8 @@ object Internals {
     }
   }
 
-  lazy val defaultDrive: String = defaultDriveLetter+":"
-
-  def defaultDriveLetter: String = {
-    if (isWin) new JFile("/").getAbsolutePath.take(1) else ""
-  }
-  def isSameFile(f1: String, f2: String): Boolean = {
-    val p1 = Paths.get(f1)
-    val p2 = Paths.get(f2)
-    isSameFile(p1, p2)
-  }
-  def isSameFile(p1: Path, p2: Path): Boolean = {
-    try {
-      val (p1str, p2str) = (p1.toString, p2.toString)
-      // even files that !canExist() can be the same file
-      p1str == p2str || {
-        canExist(p1) && canExist(p2) && {
-          Files.isSameFile(p1, p2)
-        }
-      }
-    } catch {
-      case _: Exception =>
-        false
-    }
-  }
-  def exists(fname: String): Boolean = Files.exists(Paths.get(fname))
-
-  def standardizePath(p: Path): String = {
-    if p.toString.contains("~") then
-      hook += 1
-    val winPath: String = if canExist(p) then
-      p.toAbsolutePath.normalize.toString
-    else
-      p.toFile.getAbsolutePath // is this adequate?
-
-    val pathstr = winPath.toString
-    if (!isWin) {
-      pathstr
-    } else {
-      val pstr = pathstr.replace('\\', '/') match {
-      case "/" => "/"
-      case s => s.stripSuffix("/") // no trailing slash
-      }
-
-      // First check explicit mounts
-      val w2pm = win2posixMounts
-      val maybeMount = w2pm.keys
-        .filter(pstr.startsWithIgnoreCase)
-        .toList
-        .sortBy(-_.length)
-        .headOption
-
-      maybeMount match {
-        case Some(winRoot) =>
-          // Replace with mapped POSIX mount
-          val posixRoots = w2pm(winRoot)
-          val post = pstr.drop(winRoot.length)
-          s"${posixRoots.head}${post}"
-
-        case None =>
-          if (pstr.length >= 2 && pstr(1) == ':') {
-            // Drive letter path
-            val drive = pstr(0).toLower
-            val post = pstr.drop(2)
-            s"$cygPrefix$drive$post"
-          } else if (pstr.startsWith("//")) {
-            // UNC path
-            val unc = pstr.drop(2)
-            s"${cygPrefix}unc/$unc"
-          } else {
-            // Relative path
-            pstr
-          }
-      }
-    }
-  }
-
-  def asPosixDrive(dl: String, path: String): String = {
-    val root = cygdrive
-    val cygified = s"$root${dl.take(1).toLowerCase(Locale.ROOT)}$path"
-    cygified
-  }
-  lazy val driveRoot: String = JPaths.get("").toAbsolutePath.getRoot.toString.take(2)
-
-  // default cygdrive values, if /etc/fstab is not customized
-  //    cygwin: "/cygdrive",
-  //    msys:   "/"
-  lazy val msysRoot = posix2winMounts("/").mkString
-  lazy val cygdrive: String = cygPrefix
-  def _osName: String = sys.props("os.name")
-
-  lazy val _osType: String = _osName.toLowerCase(Locale.ROOT) match {
-  case s if s.contains("windows")  => "windows"
-  case s if s.contains("linux")    => "linux"
-  case s if s.contains("mac os x") => "darwin"
-  case other =>
-    sys.error(s"osType is [$other]")
-  }
- 
-  // TODO: this goes somewhere else
-  import java.io.{FileWriter, OutputStreamWriter, PrintWriter}
-  def withFileWriter(p: Path, charsetName: String = "UTF-8", append: Boolean = false)(func: PrintWriter => Any): Unit = {
-    val jfile  = p.toFile
-    val lcname = jfile.getName.toLowerCase(Locale.ROOT)
-    if (lcname != "stdout") {
-      Option(jfile.getParentFile) match {
-      case Some(parent) =>
-        if (!parent.exists) {
-          throw new IllegalArgumentException(s"parent directory not found [${parent}]")
-        }
-      case None =>
-        throw new IllegalArgumentException(s"no parent directory")
-      }
-    }
-    val writer = lcname match {
-    case "stdout" =>
-      new PrintWriter(new OutputStreamWriter(System.out, charsetName), true)
-    case _ =>
-      new PrintWriter(new FileWriter(jfile, append))
-    }
-    try {
-      val _: Any = func(writer)
-    } finally {
-      writer.flush()
-      if (lcname != "stdout") {
-        // don't close stdout!
-        writer.close()
-      }
-    }
-  }
-  def shellRoot: String = if isWin then call("cygpath.exe", "-m", "/").getOrElse("") else ""
-
-  def isWinshell: Boolean = Properties.propOrNone("MSYSTEM").nonEmpty
-  lazy val pwd: Path = JPaths.get("").toAbsolutePath
-  lazy val here  = pwd.toAbsolutePath.normalize.toString.toLowerCase(Locale.ROOT).replace('\\', '/')
-  lazy val uhere = here.replaceFirst("^[a-zA-Z]:", "")
-  def hereDrive: String = {
-    if (isWin) new JFile("/").getAbsolutePath.take(2).mkString else ""
-  }
-
-  def canExist(p: Path): Boolean = {
-    val root = p.getRoot
-    if (root == null) {
-      true
-    } else {
-      val rootDrive = root.toFile.toString.toUpperCase.take(2)
-      rootDrives.contains(rootDrive)
-    }
-  }
-
-  def rootDrives: Array[String] = java.io.File.listRoots().map( (f: JFile) =>
-    f.getAbsolutePath.take(2) // discard trailing backslashes
-  )
-  /*
-  def driveLetters: Seq[Char] = java.io.File.listRoots().map( (f: JFile) =>
-    f.getAbsolutePath.head // discard trailing backslashes
-  )
-  */
-
-  def safeAbsolutePath(p: Path): Path = {
-    if (!isWin) {
-      p.toAbsolutePath
-    } else {
-      val pstr = p.toString
-      if (pstr.matches("^[A-Za-z]:$")) {
-        val drive = pstr.charAt(0)
-        if (java.io.File.listRoots().exists(_.getPath.startsWith(s"$drive:")))
-          p.toAbsolutePath // drive exists, delegate
-        else
-          JPaths.get(s"$drive:/") // convention: root of drive
-      } else {
-        p.toAbsolutePath
-      }
-    }
-  }
-
+  export Internals.call as call
+  export Internals.spawn as spawn
   export System.err.printf as eprintf
   export scala.util.Properties.{isLinux}
 }

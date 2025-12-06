@@ -1,6 +1,8 @@
 package uni
 
 import uni.*
+import uni.file.*
+import uni.Internals.*
 import org.scalatest.BeforeAndAfter
 import org.scalatest.funspec.AnyFunSpec
 import org.scalatest.matchers.should.Matchers
@@ -24,7 +26,8 @@ class RootRelativeTest extends AnyFunSpec with Matchers with BeforeAndAfter {
       for (testdir <- testdirs) {
         it(s"should correctly resolve Windows rootRelative path [$testdir]") {
           val mounts  = posix2winMounts.keySet.toArray
-          val mounted = mounts.find((dir: String) => isSameFile(dir, testdir))
+          val testDirPath = Paths.get(testdir)
+          val mounted = mounts.find((dir: String) => testDirPath.isSameFile(Paths.get(dir)))
 
           val thisPath = mounted match {
           case Some(str) =>
@@ -52,7 +55,8 @@ class RootRelativeTest extends AnyFunSpec with Matchers with BeforeAndAfter {
         if (mounts.nonEmpty) {
           val testdirs = Seq("/opt", "/optx")
           for (dir <- testdirs) {
-            val mounted = mounts.find((s: String) => isSameFile(s, dir))
+            val dirPath = Paths.get(dir)
+            val mounted = mounts.find((s: String) => dirPath.isSameFile(Paths.get(s)))
             val thisPath = mounted match {
               case Some(str) =>
                 posix2winMounts(str)
