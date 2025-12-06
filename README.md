@@ -82,7 +82,9 @@ import uni.file.*
 // mapped to "C:\msys64\etc\fstab" in Windows
 val p = Paths.get("/etc/fstab")
 printf("%s\n", p.posx)
-printf("env: %-10s| %-22s | %d lines\n", uname("-o"), p.posx, p.lines.size)
+val sysType = call("uname", "-o").getOrElse("")
+printf("env: %-10s| %-22s | %d lines\n", sysType, p.posx, p.lines.size)
+
 ```
 ### Output of the previous example script on various platforms:
 ```
