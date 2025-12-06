@@ -1,6 +1,8 @@
 package uni
 
 import uni.*
+import uni.file.*
+import uni.Internals.*
 import org.scalatest.BeforeAndAfter
 import org.scalatest.funspec.AnyFunSpec
 import org.scalatest.matchers.should.Matchers

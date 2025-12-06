@@ -8,7 +8,7 @@
 
 Run Linux and Mac jvm code with on Windows without drive letters or backslashes.
 
-<img alt="unifile image" width=200 src="images/plastic-pallet.png">
+<img alt="uni image" width=200 src="images/uni.png">
 
 Recognizes `posix` file paths in Windows, via customizable mount points in `C:/msys64/etc/fstab`.
 
@@ -29,7 +29,7 @@ Recognizes `posix` file paths in Windows, via customizable mount points in `C:/m
 To use `uni` in an `SBT` project, add this dependency to `build.sbt`
 
 ```sbt
-  "org.vastblue" % "unifile_3" % "0.4.4"
+  "org.vastblue" % "uni_3" % "0.4.4"
   ```
 For `scala 3.5+` or `scala-cli` scripts:
 ```sbt
@@ -73,10 +73,10 @@ The following example might surprise Windows developers, since JVM languages don
 ```scala
 #!/usr/bin/env -S scala-cli shebang
 
-//> using scala "3.4.3"
-//> using dep "org.vastblue::unifile:0.4.1"
+//> using dep "org.vastblue::uni:0.4.4"
 
-import vastblue.unifile.*
+import uni.*
+import uni.file.*
 
 // display the native path and lines.size of /etc/fstab
 // mapped to "C:\msys64\etc\fstab" in Windows

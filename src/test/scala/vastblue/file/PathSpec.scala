@@ -1,6 +1,8 @@
 package uni
 
 import uni.*
+import uni.file.*
+import uni.Internals.*
 import org.scalatest.*
 import org.scalatest.funspec.AnyFunSpec
 import org.scalatest.matchers.should.Matchers
@@ -161,7 +163,7 @@ class PathSpec extends AnyFunSpec with Matchers with BeforeAndAfter {
           val d: String = file.dospath.toLowerCase
           val df       = Paths.get(a)
           val af       = Paths.get(d)
-          val sameFile = isSameFile(af, df)
+          val sameFile = af.isSameFile(df)
           //def isPwd(s: String): Boolean = s == "." || s == pwd.posx
           val equivalent = a == d || a.path.abs == d.path.abs
           if (sameFile && equivalent) {
@@ -305,7 +307,7 @@ class PathSpec extends AnyFunSpec with Matchers with BeforeAndAfter {
         val matchtag = "%-12s to %s".format(fname, v)
         it(s"round trip conversion should match [$matchtag]") {
           // val (k1, k2) = (f1.key, v.key)
-          val sameFile = isSameFile(f1, v)
+          val sameFile = f1.isSameFile(v)
           val bothPwd = isPwd(f1) && isPwd(v)
           if (f1 != v || !sameFile) {
             printf("f1[%s]\nv[%s]\n", f1, v)
@@ -475,7 +477,7 @@ class PathSpec extends AnyFunSpec with Matchers with BeforeAndAfter {
     pairs
   }
 
-  lazy val testPwd = java.nio.file.Paths.get(".").toAbsolutePath.normalize
+  lazy val testPwd: Path = java.nio.file.Paths.get(".").toAbsolutePath.normalize
 
   def isPwd(p: Path): Boolean = isPwd(p.toString)
 
@@ -483,7 +485,7 @@ class PathSpec extends AnyFunSpec with Matchers with BeforeAndAfter {
     case "" | "." =>
       true
     case s =>
-      isSameFile(JPaths.get(s), testPwd)
+      JPaths.get(s).isSameFile(testPwd)
   }
 
   /** similar to gnu 'touch <filename>' */
