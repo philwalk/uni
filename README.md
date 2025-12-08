@@ -29,11 +29,11 @@ Recognizes `posix` file paths in Windows, via customizable mount points in `C:/m
 To use `uni` in an `SBT` project, add this dependency to `build.sbt`
 
 ```sbt
-  "org.vastblue" % "uni_3" % "0.4.4"
+  "org.vastblue" % "uni_3" % "0.5.0"
   ```
 For `scala 3.5+` or `scala-cli` scripts:
 ```sbt
-  "//> using dep org.vastblue:uni_3:0.4.4"
+  "//> using dep org.vastblue:uni_3:0.5.0"
 ```
 ## Simplicity and Portability
   * Script as though you're running in a Linux environment.
@@ -73,10 +73,10 @@ The following example might surprise Windows developers, since JVM languages don
 ```scala
 #!/usr/bin/env -S scala-cli shebang
 
-//> using dep "org.vastblue::uni:0.4.4"
+//> using dep "org.vastblue::uni:0.5.0"
 
 import uni.*
-import uni.file.*
+import uni.fs.*
 
 // display the native path and lines.size of /etc/fstab
 // mapped to "C:\msys64\etc\fstab" in Windows
