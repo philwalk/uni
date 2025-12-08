@@ -10,10 +10,10 @@ class TestUniPath extends AnyFunSpec with Matchers with BeforeAndAfter {
   describe("uni") {
     it("should display discovered environment") {
       printf("hereDrive:   [%s]\n", hereDrive)
-      for ((key, valu) <- win2posixMounts) {
+      for ((key, valu) <- config.win2posix) {
         printf("mount %-22s -> %s\n", key, valu)
       }
-      for ((key, valu) <- posix2winMounts) {
+      for ((key, valu) <- config.posix2win) {
         printf("mount %-22s -> %s\n", key, valu)
       }
     }

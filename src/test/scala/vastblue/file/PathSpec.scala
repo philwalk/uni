@@ -7,8 +7,6 @@ import org.scalatest.*
 import org.scalatest.funspec.AnyFunSpec
 import org.scalatest.matchers.should.Matchers
 import java.nio.file.{Files as JFiles, Paths as JPaths}
-//import java.nio.file.{Path, Paths as JPaths}
-//import scala.util.Properties.isWin
 
 class PathSpec extends AnyFunSpec with Matchers with BeforeAndAfter {
   lazy val verbose   = Option(System.getenv("VERBOSE_TESTS")).nonEmpty
@@ -399,7 +397,7 @@ class PathSpec extends AnyFunSpec with Matchers with BeforeAndAfter {
   // cygroot describes how to translate `driveRelative` like this:
   //     /cygdrive/c          # if cygroot == '/cygdrive'
   //     /c                   # if cygroot == '/'
-  lazy val cygroot: String = cygdrive match {
+  lazy val cygroot: String = config.cygPrefix match {
   case str if str.endsWith("/") => str
   case str                      => s"$str/"
   }
@@ -442,6 +440,8 @@ class PathSpec extends AnyFunSpec with Matchers with BeforeAndAfter {
   lazy val username = sys.props("user.name").toLowerCase
 
   lazy val toStringPairs = List(
+    ("C:/opt",  "/opt"),
+    ("/etc",  s"${cygroot}/etc"),
     (".", uhere),
     (s"${cygroot}q/", s"${cygroot}q"),
     (s"${cygroot}q/file", s"${cygroot}q/file"), // assumes there is no Q: drive

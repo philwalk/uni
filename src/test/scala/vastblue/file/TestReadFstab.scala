@@ -8,6 +8,8 @@ import org.scalatest.BeforeAndAfter
 import org.scalatest.funspec.AnyFunSpec
 import org.scalatest.matchers.should.Matchers
 
+// TODO: instrument Paths.scala to allow injecting /etc/fstab settings.
+// because the expectation for tests is a function of the mount table.
 class TestReadFstab extends AnyFunSpec with Matchers with BeforeAndAfter {
   // display the native path and lines.size of /etc/fstab
   // mapped to "C:\msys64\etc\fstab" in default install for Windows MSYS2

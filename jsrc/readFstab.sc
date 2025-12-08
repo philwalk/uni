@@ -1,7 +1,7 @@
 #!/usr/bin/env -S scala-cli shebang
 
 //> using jvm 17
-//> using dep "org.vastblue::uni:0.4.4"
+//> using dep "org.vastblue::uni:0.4.5"
 
 import uni.*
 import uni.file.* // useful extensions
