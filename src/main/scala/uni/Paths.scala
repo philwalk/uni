@@ -2,7 +2,7 @@
 package uni
 
 import java.nio.charset.{Charset, StandardCharsets}
-import java.nio.file.{Files, Path, Paths as JPaths}
+import java.nio.file.{Files, Path, Paths as JPaths, StandardCopyOption}
 import java.net.URI
 import java.util.Locale
 import scala.collection.immutable.SortedMap
@@ -12,8 +12,8 @@ import scala.util.Properties
 import scala.jdk.CollectionConverters.*
 import scala.math.BigDecimal.RoundingMode
 
-export java.io.File as JFile
 export java.nio.file.Path
+export java.io.File as JFile
 export scala.util.Properties.{isWin, isMac, isLinux}
 
 // A scala msys2-cygpath-aware rendition of Paths.get
@@ -29,11 +29,11 @@ object Paths {
   }
 }
 
-@volatile var config: PathsConfig = DefaultPathsConfig
+@volatile private[uni] var config: PathsConfig = DefaultPathsConfig
 // Cache the candidate keys once, lowercased for comparison
-@volatile var posix2winKeys: List[String] = posix2winKeysCurrent
+@volatile private[uni] var posix2winKeys: List[String] = posix2winKeysCurrent
 
-def posix2winKeysCurrent: List[String] = config.posix2win.keysIterator.map(_.toLowerCase).toList
+private[uni] def posix2winKeysCurrent: List[String] = config.posix2win.keysIterator.map(_.toLowerCase).toList
 def updateKeys = {
   posix2winKeys = posix2winKeysCurrent
 }
@@ -382,7 +382,7 @@ object Proc {
 }
 
 object Internals {
-  import file.*
+  import fs.*
 
   lazy val pwd: Path = JPaths.get("").toAbsolutePath
 
@@ -456,7 +456,7 @@ object Internals {
     }
   }
 
-  def realWhere(jpath: java.nio.file.Path): Path = {
+  def realWhere(jpath: Path): Path = {
     realWhere(jpath.toString.replace('\\', '/'))
   }
 
@@ -766,7 +766,10 @@ object Internals {
 
 }
 
-object file {
+object fs {
+  def round(number: Double, scale: Int = 6): Double =
+    BigDecimal(number).setScale(scale, RoundingMode.HALF_UP).toDouble
+
   import StandardCharsets.{UTF_8, ISO_8859_1 as Latin1}
   import Internals.*
 
@@ -794,6 +797,14 @@ object file {
       } catch {
       case m: java.nio.charset.MalformedInputException =>
          Files.readAllLines(p, Latin1).asScala.iterator
+      }
+    }
+    def csvRows: Iterator[Seq[String]] = {
+      uni.io.FastCsv.rowsAsync(p)
+    }
+    def csvRows(onRow: Seq[String] => Unit): Unit = {
+      uni.io.FastCsv.eachRow(p){ (row: Seq[String]) =>
+        onRow(row)
       }
     }
     def lines(charset: Charset = UTF_8): Iterator[String] = {
@@ -889,14 +900,10 @@ object file {
       ymdHms.format(date)
     }
 
-    def round(number: Double, scale: Int = 6): Double =
-      BigDecimal(number).setScale(scale, RoundingMode.HALF_UP).toDouble
-
     /** Copy this Path to the given destination Path.
       * By default overwrites if the target exists.
       */
     def copyTo(dest: Path, overwrite: Boolean = true, copyAttributes: Boolean = false): Path = {
-      import java.nio.file.StandardCopyOption
       val options =
         if (overwrite && copyAttributes)
           Array(StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES)
