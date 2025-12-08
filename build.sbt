@@ -11,7 +11,7 @@ javacOptions ++= Seq("-source", "17", "-target", "17")
 ThisBuild / scalaVersion  := scalaVer
 
 lazy val projectName = "uni"
-ThisBuild / version       := "0.4.4"
+ThisBuild / version       := "0.4.5"
 ThisBuild / versionScheme := Some("semver-spec")
 
 ThisBuild / organization         := "org.vastblue"

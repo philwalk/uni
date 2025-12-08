@@ -14,16 +14,128 @@ import scala.math.BigDecimal.RoundingMode
 
 export java.io.File as JFile
 export java.nio.file.Path
-export scala.util.Properties.isWin
+export scala.util.Properties.{isWin, isMac, isLinux}
 
-// A scala cygpath-aware rendition of Paths.get
+// A scala msys2-cygpath-aware rendition of Paths.get
 object Paths {
-  import Internals.*
-  import file.*
+  // Public API: same as java.nio.file.Paths.get
+  def get(first: String, more: String*): Path = {
+    config.get(first, more: _*)
+  }
+
+  // Public API: same as java.nio.file.Paths.get
+  def get(uri: URI): Path = {
+    config.get(uri)
+  }
+}
+
+@volatile var config: PathsConfig = DefaultPathsConfig
+// Cache the candidate keys once, lowercased for comparison
+@volatile var posix2winKeys: List[String] = posix2winKeysCurrent
+
+def posix2winKeysCurrent: List[String] = config.posix2win.keysIterator.map(_.toLowerCase).toList
+def updateKeys = {
+  posix2winKeys = posix2winKeysCurrent
+}
+
+
+type Win2posixMap = Map[String, Seq[String]]
+type Posix2winMap = SortedMap[String, String]
+
+// Config contract
+trait PathsConfig {
+  def get(first: String, more: String*): Path
+  def get(uri: URI): Path
+
+  def cygPrefix: String
+  def win2posix: Win2posixMap
+  def posix2win: Posix2winMap
+  def msysRoot: String
+  def p2wm: SortedMap[String, String]
+}
+
+// Testing seam: inject synthetic mount lines (clients normally won't call this)
+private[uni] def withMountLines(mountLines: Seq[String]): Unit = {
+  config = new SyntheticPathsConfig(mountLines)
+  updateKeys
+}
+
+// Restore default config (e.g., after tests)
+private[uni] def resetConfig(): Unit = {
+  config = DefaultPathsConfig
+}
+
+// Canonical map container
+final case class MountMaps(
+  cygPrefix: String,
+  win2posix: Win2posixMap,
+  posix2win: Posix2winMap
+) {
+  val msysRoot = posix2win.getOrElse("/", "")
+  val p2wm = posix2win.removed("/")
+}
+
+// Default config: spawns mount.exe and parses stdout lazily
+object DefaultPathsConfig extends PathsConfig {
+  private lazy val mountInfo: MountMaps = {
+    val lines: Seq[String] = MountExe.lines()
+    ParseMounts.parseMountLines(lines)
+  }
+
+  def msysRoot: String = mountInfo.msysRoot
+  def cygPrefix: String = mountInfo.cygPrefix
+  def win2posix: Win2posixMap = mountInfo.win2posix
+  def posix2win: Posix2winMap = mountInfo.posix2win
+  def p2wm: SortedMap[String, String] = mountInfo.p2wm
+
+  // Paths interface method implementations
+  def get(first: String, more: String*): Path = {
+    Resolver.resolvePath(first, more, mountInfo)
+  }
+
+  def get(uri: URI): Path = {
+    Resolver.resolvePath(uri, mountInfo)
+  }
+}
+
+// Synthetic config: uses injected mount lines
+final class SyntheticPathsConfig(mountLines: Seq[String]) extends PathsConfig {
+  private lazy val mountInfo: MountMaps = {
+    ParseMounts.parseMountLines(mountLines)
+  }
+
+  def msysRoot: String = mountInfo.msysRoot
+  def cygPrefix: String = mountInfo.cygPrefix
+  def win2posix: Win2posixMap = mountInfo.win2posix
+  def posix2win: Posix2winMap = mountInfo.posix2win
+  def p2wm: SortedMap[String, String] = mountInfo.p2wm
+
+  def get(first: String, more: String*): Path = {
+    Resolver.resolvePath(first, more, mountInfo)
+  }
+
+  def get(uri: URI): Path = {
+    Resolver.resolvePath(uri, mountInfo)
+  }
+}
+
+object Resolver {
 
   /** Normalize and convert a string path to a java.nio.file.Path */
-  def get(segs: String *): Path = {
-    val fname = segs.mkString("/")
+  /*
+   * The crux of the biscuit:
+   * In every OS except Windows, there are 2 types of Path:  absolute and pwd-relative
+   * In Windows, there are 5 types of path:
+        // absolute:                  drive letter followed by slash or backslash, e.g.       "F:/"
+        // Windows UNC path           \\server\share
+        // drive-relative:            drive letter not followed by slash or backslash, e.g.   "F:config/bin"
+        // posix-absolute (MSYS2:     any path beginning with a single "/", e.g.,             "/usr/bin"
+        // directory-relative         no drive letter, no leading slash/backslash             "./bin"
+   *
+   * This method must produce the correct java.nio.file.Path object for each of these.
+   */
+  def resolvePath(first: String, more: Seq[String], mountInfo: MountMaps): Path = {
+    val fname = (first +: more).mkString("/")
     val pstr = if (fname.contains("~")) {
       fname.replaceFirst("~", userHome)
     } else {
@@ -34,8 +146,9 @@ object Paths {
         pstr
       } else {
         if pstr == "/" then
-          msysRoot
+          config.msysRoot
         else if (pstr.length >= 2 && pstr(1) == ':') {
+          assert(Character.isLetter(pstr(0)))
           // Windows absolute or drive-relative
           pstr
         } else if (pstr.startsWith("\\\\")) {
@@ -43,34 +156,19 @@ object Paths {
           pstr
         } else if (pstr.startsWith("/")) {
           // find longest matching mount prefix
-          val keys = posix2winMounts.keys
           val pstrTrim = pstr.stripSuffix("/")
-          def isMounted(rootedPath: String): Option[String] = {
-            keys
-              .filter { key =>
-                val k = key.toLowerCase
-                val s = rootedPath.toLowerCase
-                s.startsWith(k) &&
-                  (s.length == k.length || {
-                    val next = s.charAt(k.length)
-                    next == '/' || next == '\\' || next == ':'
-                  })
-              }
-              .toList
-              .sortBy(-_.length)
-              .headOption
-          }
-          val maybeMount = isMounted(pstrTrim)
+          val pstrlc = pstrTrim.toLowerCase(Locale.ROOT)
+          val maybeMount = PrefixResolverRecursive.mountPrefix(pstrlc)
           maybeMount match {
             case Some(mountKey) =>
-              val mount = posix2winMounts(mountKey) match {
+              val mountedWinPath = config.posix2win(mountKey) match {
                 case s if s.endsWith(":") => s"$s/"
                 case s => s
               }
               val postPrefix = pstrTrim.drop(mountKey.length)
-              s"$mount$postPrefix"
+              s"$mountedWinPath$postPrefix"
             case None =>
-              val root = posix2winMounts("/")
+              val root = config.posix2win("/")
               s"$root$pstr"
           }
         } else {
@@ -82,86 +180,211 @@ object Paths {
     JPaths.get(result)
   }
 
-  def oldget(input: String): Path = {
-    val result: String = {
-      if (!isWin) {
-        input
-      } else {
-        input match {
-        case "" | "." =>
-          input
-        case dl if dl.matches("[a-zA-Z]:") =>
-          val absDl = JPaths.get(dl)
-          if canExist(absDl) then
-            absDl.toAbsolutePath.toString.replace('\\', '/')
-          else
-            dl
-        case _ =>
-          var forward = input.replaceFirst("~", userHome).replace('\\', '/')
-          if (input.startsWith(cygPrefix) && input.length == cygPrefix.length + 2) {
-            // "/mnt/c" is NOT == "C:"
-            // JVM treats a bare drive "C:" as the current working directory on that drive
-            // msys2 interprets "/mnt/c" as "c:/"
-            forward = s"$forward/"
+  /** Overload for java.net.URI */
+  def resolvePath(uri: URI, mountInfo: MountMaps): Path = {
+    val scheme = Option(uri.getScheme).map(_.toLowerCase).getOrElse("")
+    val path: String = uri.getPath
+
+    if ((scheme.isEmpty || scheme == "file") && path != null && path.startsWith("/")) {
+      // Delegate to our string-based get
+      resolvePath(path, Nil, mountInfo)
+    } else {
+      // Otherwise, fall back to java.nio.file.Paths
+      JPaths.get(uri)
+    }
+  }
+
+  object PrefixResolverSinglePass {
+    // Cache the candidate keys once, lowercased for comparison
+    //private lazy val candidates: List[String] = config.posix2win.keysIterator.map(_.toLowerCase).toList
+
+    def mountPrefix(path: String): Option[String] = {
+      val s = path.stripSuffix("/").toLowerCase(Locale.ROOT)
+
+      // Scan once, track longest match
+      var best: String = null
+      var bestLen = -1
+
+      for (k <- posix2winKeys) {
+        if (s.startsWith(k) &&
+            (s.length == k.length || {
+              val next = s.charAt(k.length)
+              next == '/' || next == '\\' || next == ':'
+            })) {
+          if (k.length > bestLen) {
+            best = k
+            bestLen = k.length
           }
-          val isPosix = forward.startsWith("/") //|| !forward.matches("(?i)^[a-z]:/.*")
-          val local = if (isPosix) {
-            p2wm.collectFirst {
-            case (posix, winSeq) if forward.startsWithIgnoreCase(posix) =>
-              val left = winSeq
-              val rite = forward.stripPrefixIgnoreCase(posix+"/")
-              if (left.endsWith("/") || rite.startsWith("/")) {
-                hook += 1
+        }
+      }
+
+      if (best != null) Some(best) else None
+    }
+  }
+
+  object PrefixResolverRecursive {
+    // Cache candidates once, lazily
+    //private lazy val candidates: List[String] = config.posix2win.keysIterator.map(_.toLowerCase).toList
+
+    def mountPrefix(path: String): Option[String] = {
+      val s = path.stripSuffix("/").toLowerCase(Locale.ROOT)
+
+      import scala.annotation.tailrec
+      @tailrec def loop(best: Option[String], rest: List[String]): Option[String] = rest match {
+        case Nil => best
+        case h :: t =>
+          val nb =
+            if (s.startsWith(h) &&
+                (s.length == h.length || {
+                  val next = s.charAt(h.length)
+                  next == '/' || next == '\\' || next == ':'
+                })) {
+              best match {
+                case Some(b) => if (h.length > b.length) Some(h) else best
+                case None    => Some(h)
               }
-              val lr = s"$left/$rite"
-              val normalized = if lr.length >= 4 then lr.stripSuffix("/") else lr
-              normalized
-            }.getOrElse {
-              s"$rootEntry$forward"
-            }
-          } else {
-            forward
+            } else best
+          loop(nb, t)
+      }
+
+      loop(None, posix2winKeys)
+    }
+  }
+}
+
+// Parsing logic (adapted from your snippet, with braces and explicit vals)
+object ParseMounts {
+
+  def parseMountLines(lines: Seq[String]): MountMaps = {
+    val pairsAndPrefix: (String, Seq[(String, String)]) = {
+      val entries: Seq[(String, String)] = lines.flatMap { line =>
+        // Expected format: "C:/msys64 on / type ntfs"
+        val parts = line.split(" on | type ").map(_.trim)
+        if (parts.length >= 2) Some(parts(0) -> parts(1)) else None
+      }.toSeq
+
+      val cygPrefix: String = entries.find { case (a, _) => a.endsWith(":") } match {
+        case Some((a, b)) if a.length == 2 => b.dropRight(2)
+        case _ => ""
+      }
+
+      def syntheticDriveEntries(prefix: String): Seq[(String, String)] = {
+        ('A' to 'Z').map { d =>
+          val winKey = s"$d:".toLowerCase(Locale.ROOT)
+          val posixVal = {
+            val lower = d.toLower
+            if (prefix.isEmpty) s"/$lower" else s"$prefix/$lower"
           }
-          local
+          winKey -> posixVal
+        }
+      }.toSeq
+
+      val syntheticEntries: Seq[(String, String)] = {
+        if (!isWin) Nil else syntheticDriveEntries(cygPrefix)
+      }
+
+      val entriesPlus: Seq[(String, String)] = entries ++ syntheticEntries
+      (cygPrefix, entriesPlus.distinct)
+    }
+
+    val cygPrefix: String = pairsAndPrefix._1
+    val pairs: Seq[(String, String)] = pairsAndPrefix._2
+
+    // Ordering for Windows-style keys: by length, then lexicographic
+    val winOrdering: Ordering[String] = {
+      Ordering.by[String, Int](_.length).orElse(Ordering.String)
+    }
+
+    // Ordering for Posix-style keys: root first, then length, then lexicographic
+    val posixOrdering: Ordering[String] = new Ordering[String] {
+      def compare(a: String, b: String): Int = {
+        if (a == "/" && b == "/") 0
+        else if (a == "/") -1
+        else if (b == "/") 1
+        else {
+          val lenCmp = a.length.compare(b.length)
+          if (lenCmp != 0) lenCmp else a.compareTo(b)
         }
       }
     }
-    val r = JPaths.get(result)
-    r
+
+    // Forward map (Windows → Seq[Posix]), lowercase keys
+    val forwardMap: Win2posixMap = {
+      val grouped: Map[String, Seq[String]] =
+        pairs.groupMap { case (win, _) => win.toLowerCase(Locale.ROOT) } { case (_, posix) => posix }
+      SortedMap.from(grouped)(winOrdering)
+    }
+
+    // Reverse map (Posix → Windows), lowercase keys/values
+    val reverseMap: Posix2winMap = {
+      val entries: Seq[(String, String)] = pairs.map { case (win, posix) =>
+        posix.toLowerCase(Locale.ROOT) -> win.toLowerCase(Locale.ROOT)
+      }
+      SortedMap.from(entries)(posixOrdering)
+    }
+
+    MountMaps(cygPrefix, forwardMap, reverseMap)
+  }
+}
+
+// MountExe locator + stdout reader (production path)
+object MountExe {
+  private val defaultMsysRoot: String = "c:/msys64"
+  private val defaultMountExe: String = s"$defaultMsysRoot/usr/bin/mount.exe"
+
+  // Return mount.exe mountExePath or empty string
+  lazy val mountExePath: String = {
+    if (!isWin) {
+      ""
+    } else {
+      // cygwin version of /etc/fstab is never evaluated unless we check this first
+      val mountExe = Proc.call("where.exe", "mount.exe").getOrElse("")
+      if (mountExe.nonEmpty) {
+        mountExe
+      } else {
+        val nio = JPaths.get(defaultMountExe)
+        if (Files.exists(nio)) defaultMountExe else ""
+      }
+    }
   }
 
-  /** Overload for JFile */
-  def get(file: JFile)(using posix2winMounts: Win2posixMap): Path = {
-    get(file.getPath)
+  // Spawn and capture lines, or Nil if unavailable
+  def lines(): Seq[String] = {
+    if (mountExePath.nonEmpty) {
+      Proc.lazyLines(mountExePath)
+    } else {
+      Nil
+    }
+  }
+}
+  
+lazy val userHome = sys.props("user.home").replace('\\', '/')
+private var hook = 0
+
+// Minimal process helpers for portability
+object Proc {
+
+  import scala.sys.process.*
+
+  // Returns first stdout line if command succeeds
+  def call(cmd: String, arg: String): Option[String] = {
+    val buf = scala.collection.mutable.ListBuffer.empty[String]
+    val status = Seq(cmd, arg).!(ProcessLogger(line => buf += line, _ => ()))
+    if (status == 0 && buf.nonEmpty) Some(buf.head) else None
   }
 
-  /** Overload for java.net.URI */
-  def get(uri: URI)(using posix2winMounts: Win2posixMap): Path = {
-    JPaths.get(uri)
+  // Returns all stdout lines
+  def lazyLines(cmd: String): Seq[String] = {
+    val buf = scala.collection.mutable.ListBuffer.empty[String]
+    val status = Seq(cmd).!(ProcessLogger(line => buf += line, _ => ()))
+    if (status == 0) buf.toList else Nil
   }
-
-  /** Overload for java.nio.file.Path (identity) */
-  def get(path: Path): Path = path
 }
 
 object Internals {
   import file.*
 
   lazy val pwd: Path = JPaths.get("").toAbsolutePath
-
-  def showMountMaps(): Unit = {
-    println("Forward Map:")
-    win2posixMounts.foreach { case (k, v) =>
-      val row = "%-44s -> %s".format(k, v.mkString(","))
-      println(row)
-    }
-
-    println("\nReverse Map:")
-    posix2winMounts.foreach { case (k, v) =>
-      val row = "%-44s -> %s".format(k, v)
-      println(row)
-    }
-  }
 
   lazy val exe: String = if isWin then ".exe" else ""
 
@@ -252,32 +475,8 @@ object Internals {
         JPaths.get(mightBeSymlinkToExecutable) 
     }
   }
-  lazy val userHome = {
-    val uh = sys.props("user.home").replace('\\', '/')
-    uh
-  }
 
-  def defaultMsysRoot = "c:/msys64"
-  def defaultMountExe = s"$defaultMsysRoot/usr/bin/mount.exe"
-
-  lazy val mount: String = if (!isWin) {
-    ""
-  } else {
-    // cygwin /etc/fstab is not evaluated unless we check this first
-    val mountExe = call("where.exe", "mount.exe").getOrElse("")
-    if (mountExe.nonEmpty) {
-      mountExe
-    } else if (Files.exists(JPaths.get(defaultMountExe))) {
-      defaultMountExe
-    } else {
-      ""
-    }
-  }
-  type Win2posixMap = Map[String, Seq[String]]
-  type Posix2winMap = SortedMap[String, String]
-
-  var hook = 0
-  def parseMountLines(lines: Seq[String]): (String, Win2posixMap, Posix2winMap) = {
+  def parseMountLines(lines: Seq[String]): MountMaps = {
     val (cygPrefix: String, pairs: Seq[(String, String)]) = {
       val entries = lines.flatMap { line =>
         val parts = line.split(" on | type ").map(_.trim)
@@ -333,44 +532,7 @@ object Internals {
         posix.toLowerCase(Locale.ROOT) -> win.toLowerCase(Locale.ROOT)
       })(using posixOrdering)
 
-    (cygPrefix, forwardMap, reverseMap)
-  }
-
-  // maps lookup is by lowercase
-  extension [V](m: SortedMap[String, V]) {
-    def getLower(key: String): Option[V] =
-      m.get(key.toLowerCase(Locale.ROOT))
-
-    def get(key: String): Option[V] =
-      m.get(key.toLowerCase(Locale.ROOT))
-
-    def getLowerOrElse(key: String, default: => V): V =
-      m.getOrElse(key.toLowerCase(Locale.ROOT), default)
-
-    def getOrElse(key: String, default: => V): V =
-      m.getOrElse(key.toLowerCase(Locale.ROOT), default)
-  }
-
-  lazy val mounts: Seq[String] = if (mount.nonEmpty) {
-    Seq(mount).lazyLines_!.toList
-  } else {
-    Nil
-  }
-
-  lazy val (cygPrefix, win2posixMounts: Win2posixMap, posix2winMounts: Posix2winMap) =
-    parseMountLines(mounts)
-
-  lazy val (rootEntry: String, p2wm: SortedMap[String, String]) = {
-    val (rootPair, p2wm) = posix2winMounts.partition(_._1 == "/")
-    val rootEntry = rootPair("/")
-    (rootEntry, p2wm)
-  }
-
-  // simplified by the fact that entry is guaranteed to be a Windows absolute path with drive letter
-  def posixPathWithDrive(entry: String): String = {
-    // assumes cygdrive = "/"
-    val dl = entry.substring(0, 1)
-    s"/$dl${entry.substring(2).replace('\\', '/')}"
+    MountMaps(cygPrefix, forwardMap, reverseMap)
   }
 
   def relativePathToCwd(p: Path): Path = {
@@ -403,12 +565,35 @@ object Internals {
   def defaultDriveLetter: String = {
     if (isWin) new JFile("/").getAbsolutePath.take(1) else ""
   }
-  /*
-  def isSameFile(p1: Path, p2: Path): Boolean = {
+
+  def showMountMaps(): Unit = {
+    println("Forward Map:")
+    config.win2posix.foreach { case (k, v) =>
+      val row = "%-44s -> %s".format(k, v.mkString(","))
+      println(row)
+    }
+
+    println("\nReverse Map:")
+    config.posix2win.foreach { case (k, v) =>
+      val row = "%-44s -> %s".format(k, v)
+      println(row)
+    }
+  }
+
+  def samePathString(s1: String ,s2: String): Boolean = {
+    if (isWin || isMac) {
+      s1 equalsIgnoreCase s2
+    } else {
+      s1 == s2
+    }
+  }
+
+  def sameFileTest(p1: Path, p2: Path): Boolean = {
     try {
-      val (p1str, p2str) = (p1.toString, p2.toString)
+      val (p1str, p2str) = (p1.toFile.getAbsolutePath, p2.toFile.getAbsolutePath)
       // even files that !canExist() can be the same file
-      p1str == p2str || {
+      // if path strings are an exact path
+      samePathString(p1str, p2str) || {
         canExist(p1) && canExist(p2) && {
           Files.isSameFile(p1, p2)
         }
@@ -418,7 +603,7 @@ object Internals {
         false
     }
   }
-  */
+
   def exists(fname: String): Boolean = Files.exists(Paths.get(fname))
 
   def standardizePath(p: Path): String = {
@@ -439,7 +624,7 @@ object Internals {
       }
 
       // First check explicit mounts
-      val w2pm = win2posixMounts
+      val w2pm = config.win2posix
       val maybeMount = w2pm.keys
         .filter(pstr.startsWithIgnoreCase)
         .toList
@@ -458,11 +643,11 @@ object Internals {
             // Drive letter path
             val drive = pstr(0).toLower
             val post = pstr.drop(2)
-            s"$cygPrefix$drive$post"
+            s"${config.cygPrefix}$drive$post"
           } else if (pstr.startsWith("//")) {
             // UNC path
             val unc = pstr.drop(2)
-            s"${cygPrefix}unc/$unc"
+            s"${config.cygPrefix}unc/$unc"
           } else {
             // Relative path
             pstr
@@ -472,17 +657,12 @@ object Internals {
   }
 
   def asPosixDrive(dl: String, path: String): String = {
-    val root = cygdrive
+    val root = config.cygPrefix
     val cygified = s"$root${dl.take(1).toLowerCase(Locale.ROOT)}$path"
     cygified
   }
   lazy val driveRoot: String = JPaths.get("").toAbsolutePath.getRoot.toString.take(2)
 
-  // default cygdrive values, if /etc/fstab is not customized
-  //    cygwin: "/cygdrive",
-  //    msys:   "/"
-  lazy val msysRoot = posix2winMounts("/").mkString
-  lazy val cygdrive: String = cygPrefix
   def _osName: String = sys.props("os.name")
 
   lazy val _osType: String = _osName.toLowerCase(Locale.ROOT) match {
@@ -567,6 +747,23 @@ object Internals {
       }
     }
   }
+
+  // maps lookup is by lowercase
+  extension [V](m: SortedMap[String, V]) {
+    def getLower(key: String): Option[V] =
+      m.get(key.toLowerCase(Locale.ROOT))
+
+    def get(key: String): Option[V] =
+      m.get(key.toLowerCase(Locale.ROOT))
+
+    def getLowerOrElse(key: String, default: => V): V =
+      m.getOrElse(key.toLowerCase(Locale.ROOT), default)
+
+    def getOrElse(key: String, default: => V): V =
+      m.getOrElse(key.toLowerCase(Locale.ROOT), default)
+  }
+
+
 }
 
 object file {
@@ -620,7 +817,7 @@ object file {
       try {
         other match {
           case otherPath: Path =>
-            Files.isSameFile(p, otherPath)
+            sameFileTest(p, otherPath)
           case _ =>
             false
         }
@@ -653,9 +850,6 @@ object file {
         hook += 1
       }
       p.toString.posx
-    }
-    def posixDl: String = {
-      if (isWin) posixPathWithDrive(p.toString) else p.toString
     }
     def posix: String = {
       p.toString.posix
@@ -728,15 +922,12 @@ object file {
   extension (str: String) {
     def path: Path = Paths.get(str)
     def posx: String = str.replace('\\', '/')
-    def posixDl: String = {
-      if (isWin) posixPathWithDrive(str) else str
-    }
     def posix: String = {
       if (!isWin) {
         str
       } else {
         val forward = str.replace('\\', '/')
-        win2posixMounts.collectFirst {
+        config.win2posix.collectFirst {
           case (win, posixSeq) if forward.startsWithIgnoreCase(win) =>
             s"${posixSeq.head}${forward.stripPrefixIgnoreCase(win)}"
         }.getOrElse {
@@ -751,11 +942,11 @@ object file {
       if (!isWin || !isPosix) {
         str
       } else {
-        p2wm.collectFirst {
+        config.p2wm.collectFirst {
           case (posix, winSeq) if str.startsWithIgnoreCase(posix) =>
             s"${winSeq.head}${str.stripPrefixIgnoreCase(posix)}"
         }.getOrElse {
-          s"$rootEntry$str"
+          s"${config.msysRoot}$str"
         }
       }
     }
