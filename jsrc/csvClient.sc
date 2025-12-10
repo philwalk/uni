@@ -4,6 +4,7 @@
 
 import java.nio.charset.StandardCharsets
 import uni.*
+import uni.fs.*
 import uni.io.*
 
 object CsvClient {
@@ -17,19 +18,25 @@ object CsvClient {
     val path = Paths.get(args(0))
 
     val cfg = FastCsv.Config(
-      delimiter = None, // leave None if discovery is desired
+      delimiterChar = None, // leave None if discovery is desired
       charset = StandardCharsets.UTF_8,
       bufferSize = 4 << 20 // 4 MiB buffer
     )
 
-    val sink = new FastCsv.RowSink {
-      override def onRow(fields: Array[Array[Byte]]): Unit = {
-        val decoded = FastCsv.decodeFields(fields, cfg.charset)
-        // For demo: print each row
-        println(decoded.mkString("[", ", ", "]"))
+    if (false) {
+      val sink = new FastCsv.RowSink {
+        override def onRow(fields: Array[Array[Byte]]): Unit = {
+          val decoded = FastCsv.decodeFields(fields, cfg.charset)
+          // For demo: print each row
+          println(decoded.mkString("[", ", ", "]"))
+        }
+      }
+      FastCsv.parse(path, sink, cfg)
+    } else {
+      FastCsv.eachRow(path, cfg){ row =>
+        println(row.mkString("|"))
       }
     }
-
-    FastCsv.parse(path, sink, cfg, sampleRows = 100)
+    sys.error(s"quit after first file [${path.posx}]") 
   }
 }

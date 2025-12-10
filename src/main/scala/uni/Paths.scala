@@ -808,7 +808,7 @@ object fs {
       }
     }
     def lines(charset: Charset = UTF_8): Iterator[String] = {
-      Files.readAllLines(p, charset).asScala.iterator
+      scala.io.Source.fromFile(p.toFile).getLines
     }
     def contentAsString(charset: Charset = UTF_8): String = Files.readString(p, charset)
     def contentAsString: String = {
