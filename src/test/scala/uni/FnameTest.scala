@@ -1,7 +1,7 @@
 package uni
 
 import uni.*
-import uni.file.*
+import uni.fs.*
 import uni.Internals.*
 import org.scalatest.BeforeAndAfter
 import org.scalatest.funspec.AnyFunSpec

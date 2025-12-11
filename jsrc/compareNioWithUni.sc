@@ -1,11 +1,11 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.4.5
+//> using dep org.vastblue:uni_3:0.5.0
 
 import java.nio.file.{Paths as JPaths}
 import uni.{Paths as UPaths}
 
-import uni.file.*
+import uni.fs.*
 
 for (pathstr <- posixPaths) {
   val jp = JPaths.get(pathstr)
@@ -14,6 +14,7 @@ for (pathstr <- posixPaths) {
     printf("%-44s\n  %s\n  %s\n",  pathstr, jp.abs, up.abs)
 }
 
+// TODO: generate this list from the local system
 lazy val posixPaths = Seq(
 	"/",
 	"/a",

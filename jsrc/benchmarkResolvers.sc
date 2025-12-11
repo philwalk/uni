@@ -1,15 +1,18 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.4.5
+//> using dep org.vastblue:uni_3:0.5.0
 
 import uni.*
-import uni.file.*
+import uni.fs.*
 
+// config is private[uni] ; need to locally publish a version with
+// relaxed privacy to avoid compiler errors below.
 object BenchmarkResolver {
 
   def main(args: Array[String]): Unit = {
     val testdirs = if (args.isEmpty){
-      testData
+      printf("usage: %s [@<testPathsFile>] | <path1> [<path2> ...]]\n", sys.props("scala.source.names"))
+      sys.exit(1)
     } else if (args.length == 1 && args(0).startsWith("@")) {
       scala.io.Source.fromFile(args(0).tail).getLines.toList
     } else {
@@ -51,6 +54,7 @@ object BenchmarkResolver {
   object PrefixResolver {
     // Cache the candidate keys once, lowercased for comparison
     private lazy val candidates: List[String] =
+      // config is private[uni] ; compiler error
       config.posix2win.keysIterator.map(_.toLowerCase).toList
 
     def mountPrefix(path: String): Option[String] = {
@@ -80,6 +84,7 @@ object BenchmarkResolver {
   object PrefixResolverRecursive {
     // Cache candidates once, lazily
     private lazy val candidates: List[String] =
+      // config is private[uni] ; compiler error
       config.posix2win.keysIterator.map(_.toLowerCase).toList
 
     def mountPrefix(path: String): Option[String] = {
@@ -106,92 +111,4 @@ object BenchmarkResolver {
       loop(None, candidates)
     }
   }
-  def testData = Seq(
-    "/c/Drivers",
-    "/c/Apps",
-    "/c/OneDriveTemp",
-    "/c/Dell",
-    "/c/$Windows.~WS",
-    "/c/ESD",
-    "/c/temp",
-    "/c/Android",
-    "/c/HP",
-    "/c/Config.Msi",
-    "/c/MATS",
-    "/c/test",
-    "/c/ff",
-    "/c/System Repair",
-    "/c/NVIDIA",
-    "/c/jdk-test",
-    "/c/hostedtoolcache",
-    "/c/$Recycle.Bin",
-    "/c/PerfLogs",
-    "/c/ZIR",
-    "/c/hadoop",
-    "/c/texlive",
-    "/c/Recovery",
-    "/c/Log",
-    "/c/inetpub",
-    "/c/OpenBLAS",
-    "/c/Users",
-    "/c/rtools45",
-    "/c/cygwin64",
-    "/c/Program Files (x86)",
-    "/c/.bsp",
-    "/c/scan",
-    "/c/msys64",
-    "/c/f",
-    "/c/Intel",
-    "/c/data",
-    "/c/Program Files",
-    "/c/opt",
-    "/c/ProgramData",
-    "/c/Windows",
-    "/c/",
-    "/c/System Volume Information",
-    "/c/tmp",
-    "/Drivers",
-    "/Apps",
-    "/OneDriveTemp",
-    "/Dell",
-    "/$Windows.~WS",
-    "/ESD",
-    "/temp",
-    "/Android",
-    "/HP",
-    "/Config.Msi",
-    "/MATS",
-    "/test",
-    "/ff",
-    "/System Repair",
-    "/NVIDIA",
-    "/jdk-test",
-    "/hostedtoolcache",
-    "/$Recycle.Bin",
-    "/PerfLogs",
-    "/ZIR",
-    "/hadoop",
-    "/texlive",
-    "/Recovery",
-    "/Log",
-    "/inetpub",
-    "/OpenBLAS",
-    "/Users",
-    "/rtools45",
-    "/cygwin64",
-    "/Program Files (x86)",
-    "/.bsp",
-    "/scan",
-    "/msys64",
-    "/f",
-    "/Intel",
-    "/data",
-    "/Program Files",
-    "/opt",
-    "/ProgramData",
-    "/Windows",
-    "/",
-    "/System Volume Information",
-    "/tmp",
-  )
 }
