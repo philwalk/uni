@@ -107,7 +107,7 @@ Note that on Darwin, there is no `/etc/fstab` file, so the `Path#lines` extensio
     * `brew install coreutils`
 
 ### Tips for Writing Portable Scala Scripts
-Most portability issues concern the peculiaritites of the Windows jvm and all others.
+Most portability issues concern the peculiaritites of the Windows jvm.
 Things that maximize the odds of your script running everywhere:
   * prefer `scala 3`
   * prefer forward slashes in path Strings except when displaying output
