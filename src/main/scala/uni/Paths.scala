@@ -2,7 +2,7 @@ package uni
 
 import java.nio.file.{Files, Paths as JPaths}
 import java.net.URI
-import java.util.Locale
+import java.util.{Arrays, Locale, Comparator}
 import scala.collection.immutable.SortedMap
 
 export java.nio.file.Path
@@ -30,12 +30,12 @@ trait PathsConfig {
   def msysRoot: String
   def cygRoot = msysRoot // alias
 
-  lazy val posix2winKeys: Array[String] = mapKeysArray(posix2win)
-  lazy val win2posixKeys: Array[String] = mapKeysArray(win2posix)
+  lazy val posix2winKeys: Array[String] = keysArray(posix2win)
+  lazy val win2posixKeys: Array[String] = keysArray(win2posix)
 
-  private def mapKeysArray(map: Posix2winMap | Win2posixMap): Array[String] =
+  private def keysArray(map: Posix2winMap | Win2posixMap): Array[String] =
     val arr = map.keysIterator.map(_.toLowerCase).toArray
-    java.util.Arrays.sort(arr, java.util.Comparator.comparingInt[String](_.length).reversed())
+    Arrays.sort(arr, Comparator.comparingInt[String](_.length).reversed())
     arr
 }
 
@@ -61,10 +61,10 @@ final class SyntheticPathsConfig(mountLines: Seq[String]) extends PathsConfig {
   def get(uri: URI): Path = Resolver.resolvePath(uri, mountInfo)
 }
 
-// to inject synthetic mount lines for testing
+// inject mount lines for testing
 private[uni] def withMountLines(mountLines: Seq[String]): Unit = config = new SyntheticPathsConfig(mountLines)
 
-// restore default config after tests
+// restore default config
 private[uni] def resetConfig(): Unit = config = DefaultPathsConfig
 
 // canonical map container
@@ -79,64 +79,65 @@ object Resolver {
    relative             ./bin
    Windows UNC path     //server/share or \\\\server\\\share
    msys-mounted:        /usr/bin
-  */
+   */
   inline def resolvePath(first: String, more: Seq[String], mountInfo: MountMaps): Path =
-    val result = resolvePathString(first, more, mountInfo)
+    val result = resolvePathstr(first, more, mountInfo)
     JPaths.get(result)
 
+  enum WinPathKind:
+    case Root, Absolute, UNC, Posix, Relative, DriveRel
+
+  import WinPathKind.*
+
+  private def classify(p: String): WinPathKind =
+    if p.startsWith("//") then UNC
+    else if p == "/" then Root
+    else if p.length >= 2 && p(1) == ':' then
+      if p.length >= 3 && p(2) == '/' then Absolute
+      else DriveRel
+    else if p.startsWith("/") then Posix
+    else Relative
+
   /** Convert to a valid Windows path string */
-  def resolvePathString(first: String, more: Seq[String], mountInfo: MountMaps): String = {
-    val fname = (first +: more).mkString("/")
-    val pstr = if fname.contains("~") then
-      fname.replaceFirst("~", userHome)
-    else
-      fname
+  def resolvePathstr(first: String, more: Seq[String], mountInfo: MountMaps): String = {
+    val pstr =
+      val fname = (first +: more).mkString("/").replace('\\', '/')
+      if fname.contains("~") then
+        fname.replaceFirst("~", userHome)
+      else
+        fname
 
     if !isWin then
       pstr
     else {
-      if pstr == "/" then
-        config.msysRoot
-      else if pstr.length >= 2 && pstr(1) == ':' then
-        assert(Character.isLetter(pstr(0)))
-        // Windows absolute or drive-relative
-        pstr
-      else if pstr.startsWith("//") then
-        // Windows UNC path
-        pstr
-      else if (pstr.startsWith("/")) {
-        // find longest matching mount prefix
-        val maybeMount = Resolver.findPrefix(pstr, config.posix2winKeys)
-        maybeMount match {
-          case Some(mountKey) =>
-            val mountedWinPath = config.posix2win(mountKey) match
-              case s if s.endsWith(":") =>
-                s"$s/" // need trailing slash (otherwise interpreted as cwd)
-              case s =>
-                s
-            val pstrTrim = stripTrailingSlash(pstr)
-            val postPrefix = pstrTrim.drop(mountKey.length)
-            s"$mountedWinPath$postPrefix"
-          case None =>
-            val root = config.posix2win("/")
-            if pstr.startsWith(root) then pstr else s"$root$pstr"
-        }
-      } else {
-        // Directory-relative path
-        pstr
-      }
+      val pathType = classify(pstr)
+      pathType match
+        case Absolute | DriveRel | UNC | Relative =>
+          pstr // ok as-is
+        case Root  => config.msysRoot
+        case Posix =>
+          // get longest matching mount prefix
+          val maybeMount = Resolver.findPrefix(pstr, config.posix2winKeys)
+          maybeMount match {
+            case Some(mountKey) =>
+              val mountedWinPath = config.posix2win(mountKey) match
+                case s if s.endsWith(":") =>
+                  s"$s/" // msys mounts are not drive-relative
+                case s =>
+                  s
+              val pstrTrim = stripTrailingSlash(pstr)
+              val postPrefix = pstrTrim.drop(mountKey.length)
+              s"$mountedWinPath$postPrefix"
+            case None =>
+              val root = config.posix2win("/")
+              if pstr.startsWith(root) then pstr else s"$root$pstr"
+          }
     }
   }
 
   def stripTrailingSlash(pathstr: String): String =
     if pathstr.length <= 2 then pathstr
     else pathstr.stripSuffix("/")
-
-  /** Find longest mount prefix for a path (keys: `win2posixKeys` or `posix2winKeys`) */
-  def findPrefix(pathstr: String, keys: Array[String]): Option[String] =
-    val trimmed = stripTrailingSlash(pathstr)
-    val lower = trimmed.toLowerCase(Locale.ROOT)
-    PrefixFinder.mountPrefix(lower, keys)
 
   def resolvePath(uri: URI, mountInfo: MountMaps): Path = {
     val scheme = Option(uri.getScheme).map(_.toLowerCase).getOrElse("")
@@ -147,36 +148,42 @@ object Resolver {
     else
       JPaths.get(uri)
   }
+  export PrefixFinder.findPrefix
 
   object PrefixFinder {
-    // find longest matching key prefix
-    def mountPrefix(path: String, keys: Array[String]): Option[String] = {
-      val s = path.replace('\\', '/').stripSuffix("/").toLowerCase(Locale.ROOT)
 
+    /** get longest mount prefix from `win2posixKeys` or `posix2winKeys` */
+    def findPrefix(pathstr: String, keys: Array[String]): Option[String] =
+      val str = stripTrailingSlash(pathstr).toLowerCase(Locale.ROOT)
+      mountPrefix(str, keys)
+
+    // find the longest matching prefix in `keys`
+    private inline def mountPrefix(s: String, keys: Array[String]): Option[String] = {
       @annotation.tailrec
-      def loop(i: Int, best: Option[String]): Option[String] = {
-        if (i >= keys.length) best
+      def loop(i: Int, best: String | Null): Option[String] =
+        if i >= keys.length then
+          Option(best)
         else {
           val h = keys(i)
-          val nb =
-            if (s.startsWith(h) &&
-                (s.length == h.length || {
-                  val next = s.charAt(h.length)
-                  next == '/' || next == ':'
-                })) {
-              best match {
-                case Some(b) => if (h.length > b.length) Some(h) else best
-                case None    => Some(h)
-              }
-            } else best
 
-          loop(i + 1, nb)
+          // Fast prefix check
+          val matches =
+            s.startsWith(h) &&
+              (s.length == h.length || {
+                val next = s.charAt(h.length)
+                next == '/' || next == ':'
+              })
+
+          val newBest =
+            if matches && (best == null || h.length > best.length) then h
+            else best
+
+          loop(i + 1, newBest)
         }
-      }
-      loop(0, None)
+
+      loop(0, null)
     }
   }
-
 }
 
 /** Parsing /etc/fstab entries */
@@ -190,17 +197,13 @@ object ParseMounts {
       }
 
     // normalize windows + POSIX paths
-    def fixupWin(s: String): String = s.replace('\\', '/') match
+    def fixup(s: String): String = s.replace('\\', '/') match
       case "/" => "/" // don't strip THIS suffix!
-      case s => s.stripSuffix("/")
-
-    def fixupPosix(s: String): String = s match
-      case "/" => "/" // don't strip THIS suffix!
-      case s => s.stripSuffix("/")
+      case s   => s.stripSuffix("/")
 
     val entries: Seq[(String, String)] =
       rawEntries.map { case (w, p) =>
-        fixupWin(w) -> fixupPosix(p)
+        fixup(w) -> fixup(p)
       }
 
     def isDriveRoot(s: String): Boolean = s.matches("^[A-Za-z]:$")
@@ -210,41 +213,38 @@ object ParseMounts {
       entries.collectFirst {
         case (win, posix) => {
           if isDriveRoot(win) &&
-             posix.startsWith("/") &&
-             posix.length >= 3 &&
-             posix.charAt(posix.length - 2) == '/' then
+            posix.startsWith("/") &&
+            posix.length >= 3 &&
+            posix.charAt(posix.length - 2) == '/'
+          then
             posix.substring(0, posix.length - 1)
           else
             null
         }
       }.collectFirst { case p if p != null => p }
-       .getOrElse("/")
+        .getOrElse("/")
     }
 
     def isRealDrive(posix: String): Boolean =
       posix == s"$cygdrive${posix.last}" &&
         posix.length == cygdrive.length + 1
 
-    val realPosixDriveRoots: Set[Char] =
+    val posixDriveRefs: Set[Char] =
       entries.collect {
         case (_, posix) if isRealDrive(posix) =>
           posix.last.toLower
       }.toSet
 
     // add synthetic entries for all unmapped drive letters
-    def syntheticDriveEntries: Seq[(String, String)] = {
+    def missingDrives(cygdrive: String, real: Set[Char]): Seq[(String, String)] =
       ('A' to 'Z').flatMap { d =>
         val lower = d.toLower
-        if realPosixDriveRoots.contains(lower) then
-          None
-        else
-          val win = s"$d:" // already uppercase
-          val posix = s"$cygdrive$lower"
-          Some(win -> posix)
+        if real(lower) then None
+        else Some(s"$d:" -> s"$cygdrive$lower")
       }
-    }
 
-    val syntheticDrives: Seq[(String, String)] = if isWin then syntheticDriveEntries else Nil
+    val syntheticDrives =
+      if isWin then missingDrives(cygdrive, posixDriveRefs) else Nil
 
     val hasRoot: Boolean = entries.exists(_._2 == "/")
 
@@ -258,7 +258,7 @@ object ParseMounts {
     // --- combine all entries
     val allEntries: Seq[(String, String)] =
       (entries ++ syntheticDrives ++ syntheticRoot)
-        .map { case (w, p) => fixupWin(w) -> fixupPosix(p) }
+        .map { case (w, p) => fixup(w) -> fixup(p) }
         .distinct
 
     // --- build maps
