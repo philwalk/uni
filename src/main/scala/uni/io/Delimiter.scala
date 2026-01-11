@@ -12,13 +12,13 @@ object Delimiter {
   final val quote: Char = '"'
 
   final case class DelimState(
-    delimiter: Char,
-    fieldsCount: Int = 0,              // current row-in-progress
-    score: Int = 0,                    // raw delimiter hits
-    inQuotes: Boolean = false,
-    escaped: Boolean = false,
-    rowCounts: Vector[Int] = Vector.empty,
-    partialCounts: Vector[Int] = Vector.empty // NEW: widths from truncated rows
+     delimiterChar: Char,
+     fieldsCount: Int = 0, // current row-in-progress
+     score: Int = 0, // raw delimiter hits
+     inQuotes: Boolean = false,
+     escaped: Boolean = false,
+     rowCounts: Vector[Int] = Vector.empty,
+     partialCounts: Vector[Int] = Vector.empty // NEW: widths from truncated rows
   ) {
     def rowsExamined = rowCounts.size
     def partialRows: Int = partialCounts.size   // <-- add this
@@ -56,7 +56,7 @@ object Delimiter {
       f"fields: $fieldsCount%5d, score: $score%3d, " +
       f"mode: $modeColumns%4d (rows=$rowsExamined%3d), " +
       f"partialMode: $partialMode%4d (partials=$partialRows), " +
-      f"bestWidth: $bestWidth%4d, delimiter == [$delimiter]"
+      f"bestWidth: $bestWidth%4d, delimiter == [$delimiterChar]"
   }
 
   // Detect winning delimiter state
@@ -85,14 +85,14 @@ object Delimiter {
             if (st.escaped) st = st.copy(escaped = false)
             else if (c == escape) st = st.copy(escaped = true)
             else if (c == quote) st = st.copy(inQuotes = !st.inQuotes)
-            else if (c == st.delimiter && !st.inQuotes)
+            else if (c == st.delimiterChar && !st.inQuotes)
               st = st.copy(fieldsCount = st.fieldsCount + 1, score = st.score + 1)
             st
           }
 
           if (idx % checkInterval == 0) {
             dominantState(states, dominanceFactor).foreach { best =>
-              winnerDelim = Some(best.delimiter) // note: only store the delimiter
+              winnerDelim = Some(best.delimiterChar) // note: only store the delimiter
             }
           }
           idx += 1
@@ -107,14 +107,14 @@ object Delimiter {
         // if no winner yet, re-check after we have rowCounts/partialCounts
         if (winnerDelim.isEmpty) {
           dominantState(states, dominanceFactor).foreach { best =>
-            winnerDelim = Some(best.delimiter)
+            winnerDelim = Some(best.delimiterChar)
           }
         }
       }
 
       // Final selection: return the up-to-date state object for the winner delimiter
       winnerDelim
-        .flatMap(d => states.find(_.delimiter == d))
+        .flatMap(d => states.find(_.delimiterChar == d))
         .getOrElse(states.maxBy(s => (s.score, -s.rowCounts.distinct.size)))
     }
 
@@ -153,7 +153,7 @@ object Delimiter {
   def lazySplitter(path: Path, sampleRows: Int): Iterator[Iterator[String]] = {
     val winnerState = detect(path, sampleRows)
     val rows = charStreamWithFallback(path, Int.MaxValue) // reopen full file
-    rows.map(row => splitRow(row, winnerState.delimiter))
+    rows.map(row => splitRow(row, winnerState.delimiterChar))
   }
 
   // Dominance check
@@ -168,7 +168,7 @@ object Delimiter {
       // best must be at least as consistent as others, and if equally consistent,
       // it should have >= mode support and a clearly higher score.
       val dominance = states.forall { s =>
-        s.delimiter == best.delimiter ||
+        s.delimiterChar == best.delimiterChar ||
         best.widthDistinct < s.widthDistinct ||
         (best.widthDistinct == s.widthDistinct &&
           (best.modeSupport > s.modeSupport ||
@@ -219,7 +219,7 @@ object Delimiter {
 
 object TestDiagnostics {
   def summarize(res: Delimiter.DelimState): String =
-    s"winner=${res.delimiter}, score=${res.score}, mode=${res.modeColumns}"
+    s"winner=${res.delimiterChar}, score=${res.score}, mode=${res.modeColumns}"
 
   def candidatesSummary(path: java.nio.file.Path, maxRows: Int): String = {
     // Re-run detection but capture the internal states snapshot at the end
@@ -255,7 +255,7 @@ object TestDiagnostics {
 
     states
       .sortBy(s => (-s.rowCounts.distinct.size, -s.modeSupport, -s.score))
-      .map(s => s"delim=${s.delimiter} widths=${s.rowCounts.mkString("[", ",", "]")} mode=${s.modeColumns} score=${s.score}")
+      .map(s => s"delim=${s.delimiterChar} widths=${s.rowCounts.mkString("[", ",", "]")} mode=${s.modeColumns} score=${s.score}")
       .mkString("\n")
   }
 }

@@ -1,7 +1,7 @@
 //#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 package uni
 
-//> using dep org.vastblue:uni_3:0.5.0
+//> using dep org.vastblue:uni_3:0.5.2
 
 import uni.*
 import uni.fs.*

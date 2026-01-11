@@ -1,0 +1,8 @@
+- complete rewrite from scratch of unifile
+- LinesIterator efficiently streams large files
+- csv streaming with fast delimiter-detection
+- Major performance refactor + FastCsv extensions
+- Major performance refactor: optimized prefix resolver and benchmarks
+- fix example script in README
+- fix for incorrect conversion of MSYS2 /etc/fstab
+- cleanup README

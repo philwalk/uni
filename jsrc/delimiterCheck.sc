@@ -1,7 +1,7 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 //package uni
 
-//> using dep org.vastblue:uni_3:0.5.0
+//> using dep org.vastblue:uni_3:0.5.2
 
 import uni.*
 import uni.fs.*
@@ -14,9 +14,8 @@ object DelimiterCheck {
 
   def usage(m: String = ""): Nothing = {
     if m.nonEmpty then printf("%s\n", m)
-    val progname = Option(sys.props("scala.source.names")).getOrElse("delimiterCheck.sc")
-    printf("usage: %s [<file1> [<file2> ...]]\n", progname)
-    printf("if no files on command line, filenames piped from STDIN\n", progname)
+    printf("usage: %s [<file1> [<file2> ...]] | <filenames-on-stdin>\n", progName(this))
+    printf("if no files on command line, filenames piped from STDIN\n")
     sys.exit(1)
   }
 
@@ -32,6 +31,12 @@ object DelimiterCheck {
       }
     }
 
+    val stdinHasInput = System.in.available() > 0
+
+    if (csvfiles.isEmpty && !stdinHasInput) {
+      usage(s"No filenames the command line and no filenames on stdin")
+    }
+    
     // filenames can also be piped in from STDIN
     if (csvfiles.isEmpty) {
       import LinesIterator.*
