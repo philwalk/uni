@@ -1,8 +1,10 @@
 package uni
 
+import uni.fs.applyTilde
+
 import java.nio.file.{Files, Paths as JPaths}
 import java.net.URI
-import java.util.{Arrays, Locale, Comparator}
+import java.util.{Arrays, Comparator, Locale}
 import scala.collection.immutable.SortedMap
 
 export java.nio.file.Path
@@ -102,10 +104,7 @@ object Resolver {
   def resolvePathstr(first: String, more: Seq[String], mountInfo: MountMaps): String = {
     val pstr =
       val fname = (first +: more).mkString("/").replace('\\', '/')
-      if fname.contains("~") then
-        fname.replaceFirst("~", userHome)
-      else
-        fname
+      applyTilde(fname)
 
     if !isWin then
       pstr

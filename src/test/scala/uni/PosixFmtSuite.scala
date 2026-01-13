@@ -14,36 +14,55 @@ final class PosixFmtSuite extends FunSuite {
 
   test("String.posix respects forwardMap mount translations"):
     // Suppose forwardMap contains: "C:/msys64/usr/bin"   -> Seq("/usr/bin")
-    val win = "C:/msys64/usr/bin/bash.exe"
     val expected = "/usr/bin/bash.exe"
+
+    val win = if isWin then
+      "C:/msys64/usr/bin/bash.exe"
+    else
+      expected
+
     val actual = win.posix
     assertEquals(actual, expected)
 
   given Conversion[String, Seq[String]] with
     def apply(s: String): Seq[String] = Seq(s)
 
-  withMountLines(Seq(
-    "C:/msys64 on / type ntfs (binary)",
-    "C:/Users on /c/home type ntfs (binary)",
-  ))
-  for (win, allowedPosix: Seq[String]) <- cases do
-    test(s"String.posix converts $win to ${allowedPosix.mkString(" or ")}"):
-      val actual = win.posix
-      val expectedPosix = if allowedPosix.contains(actual) then
-        actual
-      else
-        allowedPosix.head // fail
+  if isWin then
+    withMountLines(Seq(
+      "C:/msys64 on / type ntfs (binary)",
+      "C:/Users on /c/home type ntfs (binary)",
+    ))
+    for (win, allowedPosix: Seq[String]) <- windowsCases do
+      test(s"String.posix converts $win to ${allowedPosix.mkString(" or ")}"):
+        val actual = win.posix
+        val expectedPosix = if allowedPosix.contains(actual) then
+          actual
+        else
+          allowedPosix.head // fail
 
-      assertEquals(
-        actual,
-        expectedPosix,
-        clues(s"input: $win\nresult: $actual\nexpect: $expectedPosix")
-      )
+        assertEquals(
+          actual,
+          expectedPosix,
+          clues(s"input: $win\nresult: $actual\nexpect: $expectedPosix")
+        )
+  else
+    for (pathstr, list: Seq[String]) <- nonWinCases do
+      test(s"String.posix maps $pathstr to $pathstr"):
+        if (pathstr.contains("~")) {
+          hook += 1
+        }
+        val actual = posixAbs(pathstr)
+        val expected = unixAbs(pathstr)
+        if (actual != expected) {
+          hook += 1
+        }
+        assertEquals(actual, expected)
+
 
   resetConfig() // undo `withMountLines` above
 
   // Representative Windows paths
-  lazy val cases: Seq[(String, Seq[String])] = Seq(
+  lazy val windowsCases: Seq[(String, Seq[String])] = Seq(
     // --- Absolute drive-letter paths
     s"${pwd.toString}/biz"           -> Seq(s"$cwd1/biz", s"$cwd2/biz"),
     "C:/"                            -> "/c",
@@ -103,6 +122,9 @@ final class PosixFmtSuite extends FunSuite {
     "/c/Users/liam"                  -> Seq("/c/Users/liam", "/c/home/liam"),
     "./script.sh"                    -> Seq(s"$cwd1/script.sh", s"$cwd2/script.sh"),
   )
+  lazy val nonWinCases: Seq[(String, Seq[String])] = for {
+    (pathstr, list) <- windowsCases
+  } yield (pathstr.replaceFirst("^[a-zA-Z]:", "") -> list)
 
   lazy val (cwd1: String, cwd2: String) = {
     val dir1 = toPosixDriveLetter(Paths.get(".").toAbsolutePath.normalize.toString.replace('\\', '/'))

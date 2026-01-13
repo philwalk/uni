@@ -413,7 +413,7 @@ private inline def joinPosix(prefix: String, suffix: String): String =
   }
 
 /*
- * This method only converts if `isWin`, otherwise it's a pass-through.
+ * This method only converts if `isWin`, otherwise it's almost a pass-through.
  * Output is a POSIX-style String.
  * In Windows:
  *   convert rawstr path to `cygpath -u` format
@@ -421,7 +421,8 @@ private inline def joinPosix(prefix: String, suffix: String): String =
  */
 def posixAbs(raw: String): String = {
   if !isWin then {
-    Paths.get(raw).toAbsolutePath.normalize.toString
+    val s = applyTilde(raw)
+    Paths.get(s).toAbsolutePath.normalize.toString
   } else {
     val cygMixed = Paths.get(raw).toAbsolutePath.normalize.toString.replace('\\', '/')
     val absPosix = {
@@ -452,6 +453,13 @@ def posixRel(raw: String): String = {
     else
       abs   // fallback: cannot relativize, return absolute
   rel.toString.replace('\\', '/')
+}
+
+private def noTrailingSlash(s: String): String = {
+  s match {
+  case "/" => "/" // never return empty String
+  case _ => s.stripSuffix("/")
+  }
 }
 
 private inline def toPosixDriveLetter(winPath: String): String = {
@@ -694,6 +702,18 @@ object fs {
       case _           => false
 
     valid // single exit
+  }
+
+  def unixAbs(str: String): String = {
+    val s = applyTilde(str)
+    java.nio.file.Paths.get(s).toAbsolutePath.normalize.toString
+  }
+
+  def applyTilde(str: String): String = {
+    if str.startsWith("~") then
+      str.replaceFirst("~", userHome)
+    else
+      str
   }
 
   def isValidMsysPath(s: String): Boolean = {
