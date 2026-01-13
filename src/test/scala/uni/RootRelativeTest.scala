@@ -10,29 +10,24 @@ class RootRelativeTest extends FunSuite {
   val workingDir = Paths.get(".").toAbsolutePath
   val cwdDrive   = workingDir.getRoot.toString.take(2)
 
-  //
-  // ------------------------------------------------------------
-  // Basic environment info
-  // ------------------------------------------------------------
-  //
-  test("env: print cwd and drive info") {
-    println(s"cwd: $workingDir")
-    println(s"cwdDrive: $cwdDrive")
-    assert(workingDir.toString.take(2) == cwdDrive)
-  }
+  // ---------------------------------------
+  // basic environment info
+  // ---------------------------------------
+  if isWin then
+    test("env: print cwd and drive info") {
+      println(s"cwd: $workingDir")
+      println(s"cwdDrive: $cwdDrive")
+      assert(workingDir.toString.take(2) == cwdDrive)
+    }
 
-  //
-  // ------------------------------------------------------------
+  // ---------------------------------------
   // Windows root-relative path resolution tests
-  // ------------------------------------------------------------
-  //
-  {
-    val testdirs = Seq("/opt", "/OPT", "/$RECYCLE.BIN", "/Program Files", "/etc")
+  // ---------------------------------------
+  val testdirs = Seq("/opt", "/OPT", "/$RECYCLE.BIN", "/Program Files", "/etc")
 
+  if isWin then
     testdirs.foreach { testdir =>
       test(s"root-relative: resolve Windows path [$testdir]") {
-        assume(isWin, "Windows-only test")
-
         val mounts = config.posix2win.keySet.toArray
         val testDirPath = Paths.get(testdir)
 
@@ -60,24 +55,20 @@ class RootRelativeTest extends FunSuite {
         )
       }
     }
-  }
 
-  //
-  // ------------------------------------------------------------
+  // ---------------------------------------
   // mountMap application tests
-  // ------------------------------------------------------------
-  //
+  // ---------------------------------------
   test("mountMap: print PATH and java.library.path") {
     noisy(envpath)
     noisy(jvmpath)
   }
 
-  {
+  if (isWin) {
     val testdirs = Seq("/opt", "/optx")
 
     testdirs.foreach { dir =>
       test(s"mountMap: mapping correctness for [$dir]") {
-        assume(isWin, "Windows-only test")
 
         val mounts = config.posix2win.keySet.toArray
         assume(mounts.nonEmpty, "No mount map entries available")
@@ -110,11 +101,9 @@ class RootRelativeTest extends FunSuite {
     }
   }
 
-  //
-  // ------------------------------------------------------------
+  // ---------------------------------------
   // Helpers
-  // ------------------------------------------------------------
-  //
+  // ---------------------------------------
   def envpath: String = {
     val psep = java.io.File.pathSeparator
     val entries =
