@@ -9,12 +9,16 @@ import java.nio.file.StandardOpenOption.READ
 object FastCsv {
 
   final case class Config(
-    delimiter: Option[Byte] = None,
-    quote: Byte = '"'.toByte,
+    delimiterChar: Option[Char] = None,
+    quoteChar: Char = '"',
     charset: Charset = StandardCharsets.UTF_8,
     bufferSize: Int = 1 << 20, // 1 MiB
     initialFieldSize: Int = 128
-  )
+  ) {
+    val quote: Byte = quoteChar.toByte
+    def delimiter: Option[Byte] = delimiterChar.map(_.toByte)
+    override def toString = "delimiter: [%c]".format(delimiterChar.getOrElse('?'))
+  }
 
   trait RowSink {
     def onRow(fields: Array[Array[Byte]]): Unit
