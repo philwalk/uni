@@ -1,4 +1,4 @@
-package uni.util
+package uni.cli
 
 import munit.FunSuite
 

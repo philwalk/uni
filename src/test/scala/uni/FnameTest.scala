@@ -3,8 +3,8 @@ package uni
 import munit.FunSuite
 import uni.*
 import uni.fs.*
-import uni.Internals.*
-import TestUtils.{noisy}
+import uni.Internals.{_osType}
+import TestUtils.*
 
 class FnameTest extends FunSuite {
   def nativePathString(p: Path): String =

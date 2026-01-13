@@ -11,7 +11,7 @@ export java.io.File as JFile
 /* java.nio.file.Paths wrapper adds msys2 path support. */
 object Paths {
   // API same as java.nio.file.Paths.get
-  def get(first: String, more: String*): Path = config.get(first, more: _*)
+  def get(first: String, more: String*): Path = config.get(first, more*)
   def get(uri: URI): Path = config.get(uri)
 }
 
@@ -285,14 +285,14 @@ object ParseMounts {
         } { case (_, posix) =>
           posix
         }
-      val base = SortedMap.from(grouped)(winOrdering)
+      val base = SortedMap.from(grouped)(using winOrdering)
       new LcLookupMap(base) // for case-insensitive lookups
 
     val reverseMap: Posix2winMap =
       val pairs = allEntries.map { case (win, posix) =>
         posix.toLowerCase(Locale.ROOT) -> win
       }
-      val base = SortedMap.from(pairs)(posixOrdering)
+      val base = SortedMap.from(pairs)(using posixOrdering)
       new LcLookupMap(base) // for case-insensitive lookups
 
     MountMaps(cygdrive, forwardMap, reverseMap)

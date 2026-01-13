@@ -1,4 +1,4 @@
-package uni.util
+package uni.apps
 
 import java.nio.file.{Files, Paths}
 import uni.io.FastCsv

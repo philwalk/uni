@@ -2,6 +2,7 @@
 package uni
 
 import java.io.{File as JFile}
+import java.io.{BufferedReader, InputStreamReader}
 import java.nio.charset.{Charset, StandardCharsets}
 import java.nio.file.{Path, Files, Paths as JPaths, StandardCopyOption}
 import java.util.Locale
@@ -16,11 +17,18 @@ import Internals.*
 import uni.fs.*
 
 export scala.util.Properties.{isWin, isMac, isLinux}
+export Proc.{spawn, call, lazyLines}
+export System.err.printf as eprintf
 
 def progName(mainObject: AnyRef) = Option(sys.props("scala.source.names")).getOrElse {
   // usage: progName(this) from the main object.
-  mainObject.getClass.getName
-    .replaceAll(".*[.]", "")   // drop package
+  val str = mainObject match {
+  case name: String =>
+    name
+  case obj: AnyRef =>
+    obj.getClass.getName
+  }
+  str.replaceAll(".*[.]", "")   // drop package
     .replaceAll("[$].*", "")   // drop Scala object suffix
 }
 
@@ -75,20 +83,6 @@ object Proc {
     val status = Seq(cmd, arg).!(ProcessLogger(line => buf += line, _ => ()))
     if (status == 0 && buf.nonEmpty) Some(buf.head) else None
   }
-
-  // Returns all stdout lines
-  def lazyLines(cmd: String): Seq[String] = {
-    val buf = scala.collection.mutable.ListBuffer.empty[String]
-    val status = Seq(cmd).!(ProcessLogger(line => buf += line, _ => ()))
-    if (status == 0) buf.toList else Nil
-  }
-}
-
-lazy val pwd: Path = JPaths.get("").toAbsolutePath
-
-object Internals {
-  import fs.*
-
   lazy val exe: String = if isWin then ".exe" else ""
 
   case class Proc(status: Int, stdout: Seq[String], stderr: Seq[String])
@@ -124,6 +118,29 @@ object Internals {
         None
     }
   }
+
+  def lazyLines(cmd: String): LazyList[String] =
+    import java.lang.ProcessBuilder
+    val pb = new ProcessBuilder(cmd)
+    pb.redirectErrorStream(false)   // keep stderr separate
+
+    val p = pb.start()
+
+    val reader = new BufferedReader(new InputStreamReader(p.getInputStream))
+
+    def loop(): LazyList[String] =
+      val line = reader.readLine()
+      if line == null then LazyList.empty
+      else line #:: loop()
+
+    loop()
+
+}
+
+lazy val pwd: Path = JPaths.get("").toAbsolutePath
+
+object Internals {
+  import fs.*
 
   def realpathWindows(path: String): String = {
     if (!isWin) {
@@ -226,7 +243,7 @@ object Internals {
 
   def samePathString(s1: String ,s2: String): Boolean = {
     if (isWin || isMac) {
-      s1 equalsIgnoreCase s2
+      s1.equalsIgnoreCase(s2)
     } else {
       s1 == s2
     }
@@ -322,36 +339,6 @@ object Internals {
     sys.error(s"osType is [$other]")
   }
  
-  import java.io.{FileWriter, OutputStreamWriter, PrintWriter}
-  def withFileWriter(p: Path, charsetName: String = "UTF-8", append: Boolean = false)(func: PrintWriter => Any): Unit = {
-    val jfile  = p.toFile
-    val lcname = jfile.getName.toLowerCase(Locale.ROOT)
-    if (lcname != "stdout") {
-      Option(jfile.getParentFile) match {
-      case Some(parent) =>
-        if (!parent.exists) {
-          throw new IllegalArgumentException(s"parent directory not found [${parent}]")
-        }
-      case None =>
-        throw new IllegalArgumentException(s"no parent directory")
-      }
-    }
-    val writer = lcname match {
-    case "stdout" =>
-      new PrintWriter(new OutputStreamWriter(System.out, charsetName), true)
-    case _ =>
-      new PrintWriter(new FileWriter(jfile, append))
-    }
-    try {
-      val _: Any = func(writer)
-    } finally {
-      writer.flush()
-      if (lcname != "stdout") {
-        // don't close stdout!
-        writer.close()
-      }
-    }
-  }
   def shellRoot: String = if isWin then call("cygpath.exe", "-m", "/").getOrElse("") else ""
 
   def isWinshell: Boolean = Properties.propOrNone("MSYSTEM").nonEmpty
@@ -417,7 +404,7 @@ private val driveLetterPattern =
   java.util.regex.Pattern.compile("^([A-Za-z]):")
 
 /** joined string normalized to never have trailing slash unless == "/" */
-inline def joinPosix(prefix: String, suffix: String): String =
+private inline def joinPosix(prefix: String, suffix: String): String =
   val pre  = prefix.stripSuffix("/")
   val post = s"/${suffix.stripPrefix("/")}"
   s"$pre$post" match {
@@ -738,8 +725,34 @@ object fs {
     valid // single exit
   }
 
-  export Internals.call as call
-  export Internals.spawn as spawn
-  export System.err.printf as eprintf
-  export scala.util.Properties.{isLinux}
+  import java.io.{FileWriter, OutputStreamWriter, PrintWriter}
+  def withFileWriter(p: Path, charsetName: String = "UTF-8", append: Boolean = false)(func: PrintWriter => Any): Unit = {
+    val jfile  = p.toFile
+    val lcname = jfile.getName.toLowerCase(Locale.ROOT)
+    if (lcname != "stdout") {
+      Option(jfile.getParentFile) match {
+      case Some(parent) =>
+        if (!parent.exists) {
+          throw new IllegalArgumentException(s"parent directory not found [${parent}]")
+        }
+      case None =>
+        throw new IllegalArgumentException(s"no parent directory")
+      }
+    }
+    val writer = lcname match {
+    case "stdout" =>
+      new PrintWriter(new OutputStreamWriter(System.out, charsetName), true)
+    case _ =>
+      new PrintWriter(new FileWriter(jfile, append))
+    }
+    try {
+      val _: Any = func(writer)
+    } finally {
+      writer.flush()
+      if (lcname != "stdout") {
+        // don't close stdout!
+        writer.close()
+      }
+    }
+  }
 }

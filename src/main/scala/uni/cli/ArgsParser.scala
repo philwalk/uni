@@ -1,15 +1,25 @@
-package uni.util
+package uni.cli
 
 import scala.util.DynamicVariable
 
 // public API
-export ArgCtx.{thisArg, consumeNext, peekNext, nextInt, nextLong, nextDouble}
-def eachArg(args: Seq[String], usage: String => Nothing)
-           (pf: PartialFunction[String, Unit]): Unit = {
-  ArgCtx.withArgs(args, usage)(pf)
-}
+export ArgCtx.{showUsage, eachArg, thisArg, consumeNext, peekNext, nextInt, nextLong, nextDouble}
 
-private object ArgCtx {
+object ArgCtx {
+  private[uni] var exitFn: Int => Nothing = (code: Int) => sys.exit(code)
+
+  // inline causes `currentCaller` macro to expand callers source path
+  inline def showUsage(m: String = "", list: String *): Nothing = { //(using programName: () => String) : Nothing = {
+    if m.nonEmpty then System.err.print(s"$m\n")
+    System.err.print(s"usage: $currentCaller <options>\n")
+    list.filter(_.nonEmpty).foreach(s => System.err.print(s"$s\n"))
+    exitFn(1)
+  }
+
+  def eachArg(args: Seq[String], usage: String => Nothing)
+             (pf: PartialFunction[String, Unit]): Unit = {
+    ArgCtx.withArgs(args, usage)(pf)
+  }
 
   private final class Ctx(args: Seq[String], usage: String => Nothing) {
     private var i: Int = 0

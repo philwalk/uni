@@ -1,4 +1,4 @@
-lazy val scala3 = "3.3.7"
+lazy val scala3 = "3.7.0"
 lazy val scalaVer = scala3
 
 lazy val supportedScalaVersions = List(scala3)
@@ -11,7 +11,7 @@ javacOptions ++= Seq("-source", "17", "-target", "17")
 ThisBuild / scalaVersion  := scalaVer
 
 lazy val projectName = "uni"
-ThisBuild / version       := "0.6.0"
+ThisBuild / version       := "0.6.1"
 ThisBuild / versionScheme := Some("semver-spec")
 
 ThisBuild / organization         := "org.vastblue"
@@ -19,8 +19,6 @@ ThisBuild / organizationName     := "vastblue.org"
 ThisBuild / organizationHomepage := Some(url("https://vastblue.org"))
 
 //cancelable in Global := true
-
-parallelExecution := false
 
 ThisBuild / scmInfo := Some(
   ScmInfo(
@@ -65,6 +63,7 @@ Compile / packageBin / packageOptions +=
 lazy val root = (project in file(".")).
   enablePlugins(BuildInfoPlugin).
   settings(
+    parallelExecution  := false,
     crossScalaVersions := supportedScalaVersions,
     name               := projectName,
     description        := "Support for expressive scripting",

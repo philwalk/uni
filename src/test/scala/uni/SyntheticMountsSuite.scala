@@ -175,7 +175,7 @@ final class SyntheticMountsSuite extends FunSuite {
   def assertEqualsIgnoreCase(
       actual: String,
       expected: String,
-      extra: => munit.Clue[_] | Null = null
+      extra: => munit.Clue[?] | Null = null
   )(using loc: munit.Location): Unit =
 
     val clueText =
@@ -196,7 +196,7 @@ final class SyntheticMountsSuite extends FunSuite {
   def comparePaths(
       p1: Path,
       p2: Path,
-      extra: => munit.Clue[_] | Null = null
+      extra: => munit.Clue[?] | Null = null
   )(using loc: munit.Location): Unit =
 
     val same =
@@ -330,14 +330,14 @@ final class SyntheticMountsSuite extends FunSuite {
   extension (actual: String)
     def assertEqIgnoreCase(
         expected: String,
-        extra: => munit.Clue[_] | Null = null
+        extra: => munit.Clue[?] | Null = null
     )(using loc: munit.Location): Unit =
       assertEqualsIgnoreCase(actual, expected, extra)
 
   extension (p: Path)
     def assertSameAs(
         other: Path,
-        extra: => munit.Clue[_] | Null = null
+        extra: => munit.Clue[?] | Null = null
     )(using loc: munit.Location): Unit =
       comparePaths(p, other, extra)
 
