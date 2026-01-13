@@ -1,17 +1,16 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.5.0
+//> using dep org.vastblue:uni_3:0.5.2
 
+import uni.*
 import uni.fs.*
 import uni.io.*
-import java.nio.file.Paths
 
 object CsvClientRows {
 
-  def progName = Option(sys.props("scala.source.names")).getOrElse("csvClient")
   def usage(m: String = ""): Unit = {
     if (m.nonEmpty) println(m)
-    System.err.println(s"Usage: ${progName} [-async | -pulled] <csv-file>")
+    System.err.println(s"Usage: ${progName(this)} [-async | -pulled] <csv-file>")
     System.exit(1)
   }
   def main(args: Array[String]): Unit = {

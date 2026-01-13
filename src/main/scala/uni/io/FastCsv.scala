@@ -29,50 +29,51 @@ object FastCsv {
     path: Path,
     cfg: Config = Config(),
     sampleRows: Int = 100
-  ): Iterator[Seq[String]] = new Iterator[Seq[String]] {
+  ): Iterator[Seq[String]] = {
+    new Iterator[Seq[String]] {
+      private val delimiter: Byte = cfg.delimiter.getOrElse {
+        val res = Delimiter.detect(path, sampleRows)
+        res.delimiterChar.toByte
+      }
+      private val parser = new RowParser(cfg, delimiter)
+      private val ch = Files.newByteChannel(path, READ).asInstanceOf[FileChannel]
+      private val buf = ByteBuffer.allocateDirect(cfg.bufferSize)
 
-    private val delimiter: Byte = cfg.delimiter.getOrElse {
-      val res = Delimiter.detect(path, sampleRows)
-      res.delimiter.toByte
-    }
-    private val parser = new RowParser(cfg, delimiter)
-    private val ch = Files.newByteChannel(path, READ).asInstanceOf[FileChannel]
-    private val buf = ByteBuffer.allocateDirect(cfg.bufferSize)
+      // Queue of decoded rows
+      private val rowQueue = scala.collection.mutable.Queue.empty[Seq[String]]
+      private var eof = false
 
-    // Queue of decoded rows
-    private val rowQueue = scala.collection.mutable.Queue.empty[Seq[String]]
-    private var eof = false
-
-    private def advance(): Unit = {
-      while (rowQueue.isEmpty && !eof) {
-        buf.clear()
-        val read = ch.read(buf)
-        if (read <= 0) {
-          eof = true
-          parser.eof().foreach(r => rowQueue.enqueue(decodeFields(r, cfg.charset).toSeq))
-          ch.close()
-        } else {
-          buf.flip()
-          while (buf.hasRemaining) {
-            parser.feed(buf.get()) match {
-              case Some(r) =>
-                rowQueue.enqueue(decodeFields(r, cfg.charset).toSeq)
-              case None =>
+      private def advance(): Unit = {
+        while (rowQueue.isEmpty && !eof) {
+          buf.clear()
+          val read = ch.read(buf)
+          if (read <= 0) {
+            eof = true
+            parser.eof().foreach(r => rowQueue.enqueue(decodeFields(r, cfg.charset).toSeq))
+            ch.close()
+          } else {
+            buf.flip()
+            while (buf.hasRemaining) {
+              parser.feed(buf.get()) match {
+                case Some(r) =>
+                  rowQueue.enqueue(decodeFields(r, cfg.charset).toSeq)
+                case None =>
+              }
             }
           }
         }
       }
-    }
 
-    override def hasNext: Boolean = {
-      advance()
-      rowQueue.nonEmpty
-    }
+      override def hasNext: Boolean = {
+        advance()
+        rowQueue.nonEmpty
+      }
 
-    override def next(): Seq[String] = {
-      if (hasNext) rowQueue.dequeue()
-      else throw new NoSuchElementException("No more rows")
-    }
+      override def next(): Seq[String] = {
+        if (hasNext) rowQueue.dequeue()
+        else throw new NoSuchElementException("No more rows")
+      }
+    }.filter(_.size > 1) // discard if empty or text-with-no-delimiter
   }
 
   /** Queue filled by background thread: return Iterator[Seq[String]] */
@@ -82,70 +83,71 @@ object FastCsv {
     sampleRows: Int = 100,
     queueCapacity: Int = 1024
   ): Iterator[Seq[String]] = {
+    {
+      import java.util.concurrent.LinkedBlockingQueue
 
-    import java.util.concurrent.LinkedBlockingQueue
+      val delimiterChar: Char = cfg.delimiterChar.getOrElse {
+        val res = Delimiter.detect(path, sampleRows)
+        res.delimiterChar
+      }
+      val parser = new RowParser(cfg, delimiterChar.toByte)
+      val ch = Files.newByteChannel(path, READ).asInstanceOf[FileChannel]
+      val buf = ByteBuffer.allocateDirect(cfg.bufferSize)
 
-    val delimiter: Byte = cfg.delimiter.getOrElse {
-      val res = Delimiter.detect(path, sampleRows)
-      res.delimiter.toByte
-    }
-    val parser = new RowParser(cfg, delimiter)
-    val ch = Files.newByteChannel(path, READ).asInstanceOf[FileChannel]
-    val buf = ByteBuffer.allocateDirect(cfg.bufferSize)
+      // Bounded queue for back-pressure
+      val queue = new LinkedBlockingQueue[Option[Seq[String]]](queueCapacity)
 
-    // Bounded queue for back-pressure
-    val queue = new LinkedBlockingQueue[Option[Seq[String]]](queueCapacity)
-
-    // Background thread fills the queue
-    val producer = new Thread(() => {
-      try {
-        while (ch.read(buf) > 0) {
-          buf.flip()
-          while (buf.hasRemaining) {
-            parser.feed(buf.get()) match {
-              case Some(row) =>
-                val decoded = decodeFields(row, cfg.charset).toSeq
-                queue.put(Some(decoded)) // blocks if full
-              case None =>
+      // Background thread fills the queue
+      val producer = new Thread(() => {
+        try {
+          while (ch.read(buf) > 0) {
+            buf.flip()
+            while (buf.hasRemaining) {
+              parser.feed(buf.get()) match {
+                case Some(row) =>
+                  val decoded = decodeFields(row, cfg.charset).toSeq
+                  queue.put(Some(decoded)) // blocks if full
+                case None =>
+              }
             }
+            buf.clear()
           }
-          buf.clear()
+          parser.eof().foreach { row =>
+            val decoded = decodeFields(row, cfg.charset).toSeq
+            queue.put(Some(decoded))
+          }
+        } finally {
+          ch.close()
+          queue.put(None) // end-of-stream marker
         }
-        parser.eof().foreach { row =>
-          val decoded = decodeFields(row, cfg.charset).toSeq
-          queue.put(Some(decoded))
+      })
+      producer.setDaemon(true)
+      producer.start()
+
+      // Foreground iterator consumes from queue
+      new Iterator[Seq[String]] {
+        private var nextRow: Option[Seq[String]] = None
+
+        private def advance(): Unit = {
+          if (nextRow.isEmpty) {
+            nextRow = queue.take() // blocks until row or None
+          }
         }
-      } finally {
-        ch.close()
-        queue.put(None) // end-of-stream marker
-      }
-    })
-    producer.setDaemon(true)
-    producer.start()
 
-    // Foreground iterator consumes from queue
-    new Iterator[Seq[String]] {
-      private var nextRow: Option[Seq[String]] = None
+        override def hasNext: Boolean = {
+          advance()
+          nextRow.nonEmpty
+        }
 
-      private def advance(): Unit = {
-        if (nextRow.isEmpty) {
-          nextRow = queue.take() // blocks until row or None
+        override def next(): Seq[String] = {
+          if (hasNext) {
+            val r = nextRow.get
+            nextRow = None
+            r
+          } else throw new NoSuchElementException("No more rows")
         }
       }
-
-      override def hasNext: Boolean = {
-        advance()
-        nextRow.nonEmpty
-      }
-
-      override def next(): Seq[String] = {
-        if (hasNext) {
-          val r = nextRow.get
-          nextRow = None
-          r
-        } else throw new NoSuchElementException("No more rows")
-      }
-    }
+    }.filter(_.size > 1) // discard if empty or text-with-no-delimiter
   }
 
   /** Synchronous blocking API -- parse and send rows to sink */
@@ -156,7 +158,7 @@ object FastCsv {
   )(onRow: Seq[String] => Unit): Unit = {
     val delimiter: Byte = cfg.delimiter.getOrElse {
       val res = Delimiter.detect(path, sampleRows)
-      res.delimiter.toByte
+      res.delimiterChar.toByte
     }
     val parser = new RowParser(cfg, delimiter)
     val ch = Files.newByteChannel(path, READ).asInstanceOf[FileChannel]
@@ -181,7 +183,7 @@ object FastCsv {
   def parse(path: Path, sink: RowSink, cfg: Config = Config(), sampleRows: Int = 100): Unit = {
     val delimiter: Byte = cfg.delimiter.getOrElse {
       val res = Delimiter.detect(path, sampleRows)
-      res.delimiter.toByte
+      res.delimiterChar.toByte
     }
     val parser = new RowParser(cfg, delimiter)
     val ch = Files.newByteChannel(path, READ).asInstanceOf[FileChannel]
@@ -220,6 +222,8 @@ object FastCsv {
     private var inQuotes = false
     private var pendingCR = false
     private var prevWasQuote = false
+    private var fieldWasQuoted = false
+    private var hasSeenQuoteInRow = false
 
     @inline private def ensureFieldCapacity(n: Int): Unit = {
       if (n > field.length) {
@@ -236,16 +240,33 @@ object FastCsv {
       field(fieldLen) = b
       fieldLen = next
     }
+
+    @inline private def trimBytes(raw: Array[Byte]): Array[Byte] = {
+      var start = 0
+      var end = raw.length - 1
+
+      // ASCII whitespace: space, tab, CR, LF
+      while (start <= end && raw(start) <= ' ') start += 1
+      while (end >= start && raw(end) <= ' ') end -= 1
+
+      if (start == 0 && end == raw.length - 1) raw
+      else java.util.Arrays.copyOfRange(raw, start, end + 1)
+    }
+
     @inline private def emitField(): Unit = {
-      val out = java.util.Arrays.copyOf(field, fieldLen)
+      val raw = java.util.Arrays.copyOf(field, fieldLen)
+      val cleaned =
+        if fieldWasQuoted then raw
+        else trimBytes(raw)
       if (fieldCount == fields.length) {
         val nf = new Array[Array[Byte]](fields.length << 1)
         System.arraycopy(fields, 0, nf, 0, fields.length)
         fields = nf
       }
-      fields(fieldCount) = out
+      fields(fieldCount) = cleaned
       fieldCount += 1
       fieldLen = 0
+      fieldWasQuoted = false
     }
     @inline private def emitRow(): Array[Array[Byte]] = {
       val row = new Array[Array[Byte]](fieldCount)
@@ -258,34 +279,120 @@ object FastCsv {
     def feed(b: Byte): Option[Array[Array[Byte]]] = {
       if (pendingCR) {
         pendingCR = false
-        if (b == '\n') return None
+        if (b == '\n') {
+          None
+        } else {
+          feedCore(b)
+        }
+      } else {
+        feedCore(b)
       }
-      if (inQuotes) {
+    }
+
+    @inline private def feedCore(b: Byte): Option[Array[Array[Byte]]] = {
+      // Fast path: no quotes seen yet, not currently in quotes
+      if (!inQuotes && !hasSeenQuoteInRow) {
+        if (b == delimiter) {
+          emitField()
+          None
+        } else if (b == '\n') {
+          emitField()
+          hasSeenQuoteInRow = false
+          Some(emitRow())
+        } else if (b == '\r') {
+          emitField()
+          val r = emitRow()
+          pendingCR = true
+          hasSeenQuoteInRow = false
+          Some(r)
+        } else if (b == cfg.quote) {
+          inQuotes = true
+          prevWasQuote = false
+          fieldWasQuoted = true
+          hasSeenQuoteInRow = true
+          None
+        } else {
+          append(b)
+          None
+        }
+
+      } else if (inQuotes) {
+
         if (b == cfg.quote) {
+          // Either start of escaped quote or potential closing quote
           if (prevWasQuote) {
+            // Escaped quote: "" → "
             append(cfg.quote)
             prevWasQuote = false
           } else {
+            // Possible closing quote; need next byte to decide
             prevWasQuote = true
           }
+          None
+
         } else {
           if (prevWasQuote) {
-            inQuotes = false
-            prevWasQuote = false
-            if (b == delimiter) { emitField(); return None }
-            else if (b == '\n') { emitField(); return Some(emitRow()) }
-            else if (b == '\r') { emitField(); val r = emitRow(); pendingCR = true; return Some(r) }
-            else append(b)
-          } else append(b)
+            // We just saw a quote; decide if it was closing or literal
+            if (b == delimiter || b == '\n' || b == '\r') {
+              // Real closing quote
+              inQuotes = false
+              prevWasQuote = false
+
+              if (b == delimiter) {
+                emitField()
+                None
+              } else if (b == '\n') {
+                emitField()
+                hasSeenQuoteInRow = false
+                Some(emitRow())
+              } else { // '\r'
+                emitField()
+                val r = emitRow()
+                pendingCR = true
+                hasSeenQuoteInRow = false
+                Some(r)
+              }
+
+            } else {
+              // Not a valid closing quote → treat previous quote as literal
+              append(cfg.quote)
+              append(b)
+              prevWasQuote = false
+              None
+            }
+
+          } else {
+            // Normal character inside quotes
+            append(b)
+            None
+          }
         }
+
       } else {
-        if (b == delimiter) emitField()
-        else if (b == '\n') { emitField(); return Some(emitRow()) }
-        else if (b == '\r') { emitField(); val r = emitRow(); pendingCR = true; return Some(r) }
-        else if (b == cfg.quote) { inQuotes = true; prevWasQuote = false }
-        else append(b)
+        // Not inQuotes, but we *have* seen a quote earlier in this row
+        if (b == delimiter) {
+          emitField()
+          None
+        } else if (b == '\n') {
+          emitField()
+          hasSeenQuoteInRow = false
+          Some(emitRow())
+        } else if (b == '\r') {
+          emitField()
+          val r = emitRow()
+          pendingCR = true
+          hasSeenQuoteInRow = false
+          Some(r)
+        } else if (b == cfg.quote) {
+          inQuotes = true
+          prevWasQuote = false
+          fieldWasQuoted = true
+          None
+        } else {
+          append(b)
+          None
+        }
       }
-      None
     }
 
     /** Flush final row at EOF if needed */

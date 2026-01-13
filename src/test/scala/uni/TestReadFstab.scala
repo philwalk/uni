@@ -1,28 +1,28 @@
 package uni
 
+import munit.FunSuite
 import uni.fs.*
-import org.scalatest.BeforeAndAfter
-import org.scalatest.funspec.AnyFunSpec
-import org.scalatest.matchers.should.Matchers
+import TestUtils.{noisy}
 
-// TODO: test against synthetic mount maps.
-// Expectation for tests should be a function of the mount table.
-class TestReadFstab extends AnyFunSpec with Matchers with BeforeAndAfter {
-  // display the native path and lines.size of /etc/fstab
-  // mapped to "C:\msys64\etc\fstab" in default install for Windows MSYS2
-  val sysType: String = uname("-o")
-  println(s"uname [$sysType]")
+class TestReadFstab extends FunSuite {
 
-  sysType match {
-  case "Msys" | "Linux" =>
-    val p = Paths.get("/etc/fstab")
-    assert(p.lines.nonEmpty)
-  case _ =>
-    val p = Paths.get("/etc/hosts")
-    assert(p.lines.nonEmpty)
-  }
-
-  def uname(arg: String = "-a"): String = {
+  // uname wrapper preserved exactly
+  def uname(arg: String = "-a"): String =
     call("uname", arg).getOrElse("")
+
+  test("fstab/hosts: should be readable depending on OS type") {
+    val sysType = uname("-o")
+    noisy(s"uname [$sysType]")
+
+    sysType match {
+      case "Msys" | "Linux" =>
+        val p = Paths.get("/etc/fstab")
+        assert(p.lines.nonEmpty, clues(s"/etc/fstab should not be empty: ${p.stdpath}"))
+
+      case _ =>
+        // on MacOS there is no /etc/fstab so we verify /etc/hosts instead
+        val p = Paths.get("/etc/hosts")
+        assert(p.lines.nonEmpty, clues(s"/etc/hosts should not be empty: ${p.stdpath}"))
+    }
   }
 }

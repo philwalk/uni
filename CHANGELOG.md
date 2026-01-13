@@ -1,0 +1,11 @@
+- added Windows filetype enum and classifier
+- refactor Paths.scala removing unrelated code
+- switch tests to munit
+- add more test cases
+- dropped all third-party deps except test harness
+- fast LinesIterator for streaming / large files 
+- fast csv streaming with delimiter-detection
+- performance refactor + csv extension methods
+- update README
+- lots of bug fixes as a side effect of refactor
+- from-scratch rewrite of org.vastblue:pallet
