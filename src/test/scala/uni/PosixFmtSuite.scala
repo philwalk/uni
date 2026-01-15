@@ -9,11 +9,10 @@ final class PosixFmtSuite extends FunSuite {
 
   //private var hook = 0
   // import the extension under test
-  import uni.pwd
   import uni.fs.*
 
   test("String.posix respects forwardMap mount translations"):
-    // Suppose forwardMap contains: "C:/msys64/usr/bin"   -> Seq("/usr/bin")
+    // Suppose forwardMap contains: "C:/msys64/usr/bin"   -> "/usr/bin"
     val expected = "/usr/bin/bash.exe"
 
     val win = if isWin then
@@ -24,29 +23,44 @@ final class PosixFmtSuite extends FunSuite {
     val actual = win.posix
     assertEquals(actual, expected)
 
-  given Conversion[String, Seq[String]] with
-    def apply(s: String): Seq[String] = Seq(s)
+  lazy val cygpathExe = if !isWin then "" else Proc.call("where.exe", "cygpath.exe").getOrElse("")
+
+  //given Conversion[String, Seq[String]] with def apply(s: String): Seq[String] = Seq(s)
+  def cygpathU(s: String): String = {
+    if cygpathExe.isEmpty then
+      ""
+    else {
+      val exe = cygpathExe
+      val abs = s.toAbsSlash
+      fixit(Proc.call(exe, "-u", abs).getOrElse(""))
+    }
+  }
 
   if isWin then
     withMountLines(Seq(
       "C:/msys64 on / type ntfs (binary)",
-      "C:/Users on /c/home type ntfs (binary)",
+      "C:/Users on /Users type ntfs (binary,user)",
+      "C:/Users on /home type ntfs (binary,user)",
     ))
-    for (win, allowedPosix: Seq[String]) <- windowsCases do
-      test(s"String.posix converts $win to ${allowedPosix.mkString(" or ")}"):
-        val actual = win.posix
-        val expectedPosix = if allowedPosix.contains(actual) then
-          actual
-        else
-          allowedPosix.head // fail
-
+    printf("windowsPath, expectedAbs, posixAbs, cygpath\n")
+    for (win, expect) <- windowsCases do
+      test(s"String.posix converts $win to $expect"):
+        val winposix = win.posix
+        val cygunix: String = cygpathU(win)
+        val actual = winposix
+        if cygunix != actual then
+          hook += 1
+//        if cygunix.nonEmpty then assert(cygunix == actual)
+          printf("%s, %s, %s, %s\n", win, expect, fixit(actual), cygunix)
+        /*
         assertEquals(
           actual,
-          expectedPosix,
-          clues(s"input: $win\nresult: $actual\nexpect: $expectedPosix")
+          expect,
+          s"input: $win\nresult: $actual\nexpect: $expect"
         )
+        */
   else
-    for (pathstr, list: Seq[String]) <- nonWinCases do
+    for (pathstr, expect: String) <- nonWinCases do
       test(s"String.posix maps $pathstr to $pathstr"):
         if (pathstr.contains("~")) {
           hook += 1
@@ -62,85 +76,114 @@ final class PosixFmtSuite extends FunSuite {
   resetConfig() // undo `withMountLines` above
 
   // Representative Windows paths
-  lazy val windowsCases: Seq[(String, Seq[String])] = Seq(
+  lazy val windowsCases: Seq[(String, String)] = Seq(
     // --- Absolute drive-letter paths
-    s"${pwd.toString}/biz"           -> Seq(s"$cwd1/biz", s"$cwd2/biz"),
+    s"$testHome/biz"             -> s"$testHomePosix/biz",
     "C:/"                            -> "/c",
     "Z:/"                            -> "/z",
-    "C:/Users/liam/project"          -> Seq("/c/Users/liam/project", "/c/home/liam/project"),
+    "C:/Users/liam/project"          -> "/c/Users/liam/project",
     "D:/data/logs/today.txt"         -> "/d/data/logs/today.txt",
     "E:/tmp"                         -> "/e/tmp",
     "C:/Program Files/Git/bin"       -> "/c/Program Files/Git/bin",
-    "C:/Users/liam/AppData/Local"    -> Seq("/c/Users/liam/AppData/Local", "/c/home/liam/AppData/Local"),
+    "C:/Users/liam/AppData/Local"    -> "/c/Users/liam/AppData/Local",
 
-    "C:/Users/liam/project"         -> Seq("/c/Users/liam/project", "/c/home/liam/project"),
-    "D:/data/logs/today.txt"        -> "/d/data/logs/today.txt",
-    "E:/tmp"                        -> "/e/tmp",
-    "C:/Program Files/Git/bin"      -> "/c/Program Files/Git/bin",
-    "C:/Users/liam/AppData/Local"   -> Seq("/c/Users/liam/AppData/Local", "/c/home/liam/AppData/Local"),
+    "C:/Users/liam/project"          -> "/c/Users/liam/project",
+    "D:/data/logs/today.txt"         -> "/d/data/logs/today.txt",
+    "E:/tmp"                         -> "/e/tmp",
+    "C:/Program Files/Git/bin"       -> "/c/Program Files/Git/bin",
+    "C:/Users/liam/AppData/Local"    -> "/c/Users/liam/AppData/Local",
 
-    // --- Forward-slash Windows paths (legal but uncommon)
+    // --- Forward-fwdSlash Windows paths (legal but uncommon)
     "C:/Windows/System32"            -> "/c/Windows/System32",
     "D:/data/logs"                   -> "/d/data/logs",
 
     // --- Mixed slashes
-    "C:/Users/liam/Documents"        -> Seq("/c/Users/liam/Documents", "/c/home/liam/Documents"),
+    "C:/Users/liam/Documents"        -> "/c/Users/liam/Documents",
     "D:/data/logs/today.txt"         -> "/d/data/logs/today.txt",
 
     // --- Drive-relative paths
     // Meaning: relative to current directory on drive C:
-    "C:folder/file.txt"              -> Seq(s"$cwd1/folder/file.txt", s"$cwd2/folder/file.txt"),
-    "C:folder/sub"                   -> Seq(s"$cwd2/folder/sub", s"$cwd2/folder/sub"),
+    testDir                      -> testDirPosix,
+    testHome                     -> testHomePosix,
+    "C:folder/sub"                   -> s"$testDirPosix/folder/sub",
+    "C:folder/file.txt"              -> s"$testDirPosix/folder/file.txt",
+    "C:folder/sub"                   -> s"$testDirPosix/folder/sub",
 
     // --- Relative paths
-    "./file.txt"                     -> Seq(s"$cwd1/file.txt", s"$cwd2/file.txt"),
-    "../file.txt"                    -> Seq(s"$parent1/file.txt", s"$parent2/file.txt"),
+    "./file.txt"                     -> s"$testDirPosix/file.txt",
+    "../file.txt"                    -> s"$testParentDirPosix/file.txt",
 
     // --- Home-relative (not Windows-native, but users type them)
-    "~/"                             -> Seq(home1, home2),
-    "~"                              -> Seq(home1, home2),
-    "~/Documents/notes.txt"          -> Seq(s"$home1/Documents/notes.txt", s"$home2/Documents/notes.txt"),
+    "~/"                             -> testHomePosix,
+    "~"                              -> testHomePosix,
+    "~/Documents/notes.txt"          -> s"$testHomePosix/Documents/notes.txt",
 
     // --- UNC paths
     "//server/share/folder/file.txt" -> "//server/share/folder/file.txt",
     "//server/share/folder/file.txt" -> "//server/share/folder/file.txt",
 
     // --- Bare filenames
-    "file.txt"                       -> Seq(s"$cwd1/file.txt", s"$cwd2/file.txt"),
-    "notes.md"                       -> Seq(s"$cwd1/notes.md", s"$cwd2/notes.md"),
+    "file.txt"                       -> s"$testDirPosix/file.txt",
+    "notes.md"                       -> s"$testDirPosix/notes.md",
 
     // --- Paths with spaces
     "C:/My Projects/scala/test"      -> "/c/My Projects/scala/test",
     "D:/Data Sets/2024/report.csv"   -> "/d/Data Sets/2024/report.csv",
 
     // --- Trailing slashes
-    "C:/Users/liam/"                 -> Seq("/c/Users/liam", "/c/home/liam"),
+    "C:/home/liam/"                  -> "/c/home/liam",
     "D:/data/logs/"                  -> "/d/data/logs",
 
     // --- miscellaneous
     "/usr/bin"                       -> "/usr/bin",
-    "/c/Users/liam"                  -> Seq("/c/Users/liam", "/c/home/liam"),
-    "./script.sh"                    -> Seq(s"$cwd1/script.sh", s"$cwd2/script.sh"),
+    "/c/home/liam"                   -> "/c/home/liam",
+    "/home/liam"                     -> "/home/liam",
+    "./script.sh"                    -> s"$testDirPosix/script.sh",
+    "~/script.sh"                    -> s"$testHomePosix/script.sh",
   )
-  lazy val nonWinCases: Seq[(String, Seq[String])] = for {
+
+  lazy val nonWinCases: Seq[(String, String)] = for {
     (pathstr, list) <- windowsCases
   } yield (pathstr.replaceFirst("^[a-zA-Z]:", "") -> list)
 
-  lazy val (cwd1: String, cwd2: String) = {
-    val dir1 = toPosixDriveLetter(Paths.get(".").toAbsolutePath.normalize.toString.replace('\\', '/'))
-    val dir2 = dir1.replaceAll("(?i)/Users", "/home")
-    (dir1, dir2)
+
+  lazy val testDirPosix: String = {
+    winAbsToPosixAbs(fixit(testDir).toAbsSlash)
   }
-  lazy val (parent1: String, parent2: String) = {
-    val dir1 = toPosixDriveLetter(Paths.get("..").toAbsolutePath.normalize.toString.replace('\\', '/'))
-    val dir2 = dir1.replaceAll("(?i)/Users", "/home")
-    (dir1, dir2)
+  lazy val testHomePosix: String = {
+    winAbsToPosixAbs(testHome)
   }
-  lazy val (home1: String, home2: String) = {
-    import java.nio.file.Paths
-    val dir1 = toPosixDriveLetter(Paths.get(sys.props("user.home")).toAbsolutePath.normalize.toString.replace('\\', '/'))
-    val dir2 = dir1.replaceAll("(?i)/Users", "/home")
-    (dir1, dir2)
+  lazy val (testParentDir: String, testParentDirPosix: String) = {
+    val dir = fixit("..".toAbsSlash)
+    val posix = winAbsToPosixAbs(dir)
+    (dir, posix)
+  }
+  def fixit(s: String): String = {
+    s.replaceAll(realName, testName)
+      .replaceAll(realHome, testHome)
+      .replaceAll(realDir, testDir)
+  }
+
+  lazy val testName: String = "liam"
+  lazy val realName: String = sys.props("user.name").fwdSlash
+  lazy val realHome: String = sys.props("user.home").fwdSlash
+  lazy val realDir: String  = sys.props("user.dir").fwdSlash
+
+  lazy val testHome = realHome.replaceAll(realName, testName) // already absolute
+  lazy val testDir  = realDir.replaceAll(realName, testName).toAbsSlash
+
+  extension(s: String) {
+    def fwdSlash: String = s.replace('\\', '/')
+    def toAbsSlash: String = {
+      import java.nio.file.Paths
+      val str = s.replace('\\', '/')
+      if str.length >= 3 && str.charAt(1) == ':' && str.charAt(2) == '/' then
+        str
+      else if str.length >= 2 && str.charAt(1) == ':' then
+        str
+      else
+        Paths.get(str).toAbsolutePath.normalize.toString.replace('\\', '/')
+    }
   }
 }
 

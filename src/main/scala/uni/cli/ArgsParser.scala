@@ -9,7 +9,7 @@ object ArgCtx {
   private[uni] var exitFn: Int => Nothing = (code: Int) => sys.exit(code)
 
   // inline causes `currentCaller` macro to expand callers source path
-  inline def showUsage(m: String = "", list: String *): Nothing = { //(using programName: () => String) : Nothing = {
+  inline def showUsage(m: String = "", list: String*): Nothing = { //(using programName: () => String) : Nothing = {
     if m.nonEmpty then System.err.print(s"$m\n")
     System.err.print(s"usage: $currentCaller <options>\n")
     list.filter(_.nonEmpty).foreach(s => System.err.print(s"$s\n"))

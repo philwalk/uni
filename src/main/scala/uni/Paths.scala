@@ -191,8 +191,14 @@ object ParseMounts {
     // parse raw entries
     val rawEntries: Seq[(String, String)] =
       lines.flatMap { line =>
-        val parts = line.split(" on | type ").map(_.trim)
-        if parts.length >= 2 then Some(parts(0) -> parts(1)) else None
+        if line.contains(" on ") then
+          // mount.exe format
+          val parts = line.split(" on | type ").map(_.trim)
+          if parts.length >= 2 then Some(parts(0) -> parts(1)) else None
+        else
+          // fstab format
+          val parts = line.trim.split("\\s+")
+          if parts.length >= 2 then Some(parts(0) -> parts(1)) else None
       }
 
     // normalize windows + POSIX paths

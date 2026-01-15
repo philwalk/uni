@@ -404,7 +404,7 @@ private val driveLetterPattern =
   java.util.regex.Pattern.compile("^([A-Za-z]):")
 
 /** joined string normalized to never have trailing slash unless == "/" */
-private inline def joinPosix(prefix: String, suffix: String): String =
+private def joinPosix(prefix: String, suffix: String): String =
   val pre  = prefix.stripSuffix("/")
   val post = s"/${suffix.stripPrefix("/")}"
   s"$pre$post" match {
@@ -429,14 +429,43 @@ def posixAbs(raw: String): String = {
       if (cygMixed.startsWithIgnoreCase(config.cygRoot)) {
         cygMixed.drop(config.cygRoot.length)
       } else {
-        Resolver.findPrefix(cygMixed, config.win2posixKeys) match {
-          case Some(winPrefix) =>
-            val posixSeq = config.win2posix(winPrefix)
-            val suffix   = cygMixed.drop(winPrefix.length).stripSuffix("/")
-            joinPosix(posixSeq.head, suffix)
-          case None =>
-            toPosixDriveLetter(cygMixed)
-        }
+      Resolver.findPrefix(cygMixed, config.win2posixKeys) match
+        case Some(winPrefix) =>
+          val suffix = cygMixed.drop(winPrefix.length).stripSuffix("/")
+          val mounts = config.win2posix(winPrefix)
+          assert(cygMixed.length >= 2 && cygMixed.charAt(1) == ':')
+          val winBase = cygMixed.substring(0, 2).toLowerCase
+
+          // POSIX basenames (e.g., "Users" from "/Users")
+          def basename(posix: String): String =
+            val s = posix.stripSuffix("/")
+            val i = s.lastIndexOf('/')
+            if i >= 0 then s.substring(i + 1) else s
+
+          val basenameMatches =
+            mounts.filter(p => basename(p).equalsIgnoreCase(winBase))
+
+          val chosen =
+            if basenameMatches.size == 1 then
+              // Unique basename match → use it
+              basenameMatches.head
+            else
+              // No unique basename match → check specificity
+              val best = mounts.maxBy(_.count(_ == '/'))   // deepest POSIX path
+              val tied = mounts.count(_.count(_ == '/') == best.count(_ == '/')) > 1
+
+              if tied then {
+                // Ambiguous → fallback to cygdrive
+                val actualPrefix = cygMixed.take(winPrefix.length)
+                winAbsToPosixAbs(actualPrefix)
+              }
+              else
+                best
+
+          joinPosix(chosen, suffix)
+
+        case None =>
+          winAbsToPosixAbs(cygMixed)
       }
     }
     absPosix
@@ -455,14 +484,14 @@ def posixRel(raw: String): String = {
   rel.toString.replace('\\', '/')
 }
 
-private def noTrailingSlash(s: String): String = {
+private inline def noTrailingSlash(s: String): String = {
   s match {
   case "/" => "/" // never return empty String
   case _ => s.stripSuffix("/")
   }
 }
 
-private inline def toPosixDriveLetter(winPath: String): String = {
+private inline def winAbsToPosixAbs(winPath: String): String = {
   val cyg = config.cygdrive.stripSuffix("/") // "/" reduces to empty string, "/cygpath" unaffected
   if isDriveLetterPath(winPath) then
     val driveLower = winPath.charAt(0).toLower.toString
