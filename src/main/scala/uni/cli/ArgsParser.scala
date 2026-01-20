@@ -11,7 +11,8 @@ object ArgCtx {
   // inline causes `currentCaller` macro to expand callers source path
   inline def showUsage(m: String = "", list: String*): Nothing = { //(using programName: () => String) : Nothing = {
     if m.nonEmpty then System.err.print(s"$m\n")
-    System.err.print(s"usage: $currentCaller <options>\n")
+    val prog = uni.progName(currentCaller.replace('\\', '/').replaceAll("^.*/", ""))
+    System.err.print(s"usage: $prog <options>\n")
     list.filter(_.nonEmpty).foreach(s => System.err.print(s"$s\n"))
     exitFn(1)
   }

@@ -80,7 +80,12 @@ object Proc {
   // Returns first stdout line if command succeeds
   def call(cmd: String, arg: String): Option[String] = {
     val buf = scala.collection.mutable.ListBuffer.empty[String]
-    val status = Seq(cmd, arg).!(ProcessLogger(line => buf += line, _ => ()))
+    val status = try
+      Seq(cmd, arg).!(ProcessLogger(line => buf += line, _ => ()))
+    catch
+      case e: java.io.IOException =>
+        System.err.printf("%s\n", e.getMessage)
+        -1
     if (status == 0 && buf.nonEmpty) Some(buf.head) else None
   }
   lazy val exe: String = if isWin then ".exe" else ""
@@ -135,9 +140,17 @@ object Proc {
 
     loop()
 
+  def whereInPath(prog: String): Option[String] =
+    val name  = if isWin && !prog.endsWith(".exe") then prog + ".exe" else prog
+    val sep   = java.io.File.pathSeparator
+    val paths = sys.env.get("PATH").iterator.flatMap(_.split(sep))
+    paths
+      .map(p => java.nio.file.Paths.get(p, name))
+      .find(Files.isExecutable(_))
+      .map(_.toString)
 }
 
-lazy val pwd: Path = JPaths.get("").toAbsolutePath
+lazy val pwd: Path = JPaths.get(config.userdir)
 
 object Internals {
   import fs.*
@@ -265,11 +278,9 @@ object Internals {
     }
   }
 
-  def exists(fname: String): Boolean = Files.exists(Paths.get(fname))
+  def exists(fname: String): Boolean = Files.exists(JPaths.get(fname))
 
   def standardizePath(p: Path): String = {
-    if p.toString.contains("~") then
-      hook += 1
     val winPath: String = if canExist(p) then
       p.toAbsolutePath.normalize.toString
     else
@@ -367,22 +378,27 @@ object Internals {
   )
   */
 
-  def safeAbsolutePath(p: Path): Path = {
-    if (!isWin) {
+  def safeAbsolutePath(p: Path): Path =
+    if !isWin then
       p.toAbsolutePath
-    } else {
-      val pstr = p.toString
-      if (pstr.matches("^[A-Za-z]:$")) {
-        val drive = pstr.charAt(0)
-        if (java.io.File.listRoots().exists(_.getPath.startsWith(s"$drive:")))
-          p.toAbsolutePath // drive exists, delegate
+    else
+      val s = p.toString
+
+      // Detect drive-only path like "X:"
+      val isDriveOnly =
+        s.length == 2 &&
+        s(1) == ':' &&
+        s(0).isLetter
+
+      if isDriveOnly then
+        val drive = s(0)
+        val root = new java.io.File(s"$drive:/")
+        if root.exists() then
+          p.toAbsolutePath
         else
-          JPaths.get(s"$drive:/") // convention: root of drive
-      } else {
+          Paths.get(s"$drive:/")   // canonical absolute root
+      else
         p.toAbsolutePath
-      }
-    }
-  }
 
   // maps lookup is by lowercase
   extension [V](m: SortedMap[String, V]) {
@@ -403,14 +419,88 @@ object Internals {
 private val driveLetterPattern =
   java.util.regex.Pattern.compile("^([A-Za-z]):")
 
+private def noTrailingSlash(p: String): String =
+  if p == "/" then
+    "/"
+  else if p.length >= 3 && p(1) == ':' && p(2) == '/' then
+    if p.length > 3 then
+      p.stripSuffix("/")
+    else
+      p
+  else
+    p.stripSuffix("/")
+
+private def normalizePosix(p: Path): String =
+  normalizePosix(p.toString)
+
+private def normalizePosix(p: String): String =
+  if p.trim.matches("C:[\\/]") then
+    hook += 1
+  val str = p.replace('\\', '/')
+  if str == "/" then "/"
+  else noTrailingSlash(str)
+
 /** joined string normalized to never have trailing slash unless == "/" */
 private def joinPosix(prefix: String, suffix: String): String =
   val pre  = prefix.stripSuffix("/")
   val post = s"/${suffix.stripPrefix("/")}"
-  s"$pre$post" match {
-    case "/" => "/"
-    case s => s.stripSuffix("/")
-  }
+  noTrailingSlash(s"$pre$post")
+
+
+def stringAbs(raw: String): String = {
+  Resolver.resolvePathstr(raw)
+}
+
+def applyTildeAndDots(raw: String): String = {
+  require(!raw.contains('\\'))
+  if raw.isEmpty || raw == "." then
+    config.userdir
+
+  else if raw == ".." then
+    config.userdirParent
+
+  else
+    raw(0) match
+      case '~' =>
+        // user home
+        if raw.length == 1 then
+          config.userhome
+        else
+          config.userhome + raw.substring(1)
+
+      case '.' =>
+        // handle ./foo and ../foo
+        if raw.startsWith("./") then
+          config.userdir + raw.substring(1)
+
+        else if raw.startsWith("../") then
+          val parent = config.userdirParent.stripSuffix("/")
+          val suffix = raw.substring(2).stripPrefix("/")
+          s"$parent/$suffix"
+
+        else
+          // ".foo" → userdir + "foo"
+          config.userdir + raw.substring(1)
+
+      case _ =>
+        // treat only true bare filenames as relative
+        if raw.length == 2 && raw(1) == ':' then
+          s"${config.driveCwd(raw(0))}"
+        else if !raw.contains('/') then
+          s"${config.userdir}/$raw"
+        else
+          raw
+}
+
+def quikResolve(raw: String): Path = {
+  val s = applyTildeAndDots(raw)
+  JPaths.get(s).toAbsolutePath.normalize
+}
+
+inline private def parentDirOf(s: String): String =
+  val i = s.lastIndexOf('/')
+  if i <= 0 then "/" else s.substring(0, i)
+
 
 /*
  * This method only converts if `isWin`, otherwise it's almost a pass-through.
@@ -420,88 +510,58 @@ private def joinPosix(prefix: String, suffix: String): String =
  *   in some cases java sees a different path than cygpath; defer to java.
  */
 def posixAbs(raw: String): String = {
-  if !isWin then {
-    val s = applyTilde(raw)
-    Paths.get(s).toAbsolutePath.normalize.toString
-  } else {
-    val cygMixed = Paths.get(raw).toAbsolutePath.normalize.toString.replace('\\', '/')
-    val absPosix = {
-      if (cygMixed.startsWithIgnoreCase(config.cygRoot)) {
+  if !isWin then
+    Resolver.resolvePathstr(raw)
+  else if raw.startsWith("/") then
+    noTrailingSlash(raw)
+  else {
+    if raw == "file.txt" then
+      hook += 1
+    val cygMixed = Resolver.resolvePathstr(raw)
+    val absPosix =
+      if cygMixed.startsWithIgnoreCase(config.cygRoot) then
         cygMixed.drop(config.cygRoot.length)
-      } else {
-      Resolver.findPrefix(cygMixed, config.win2posixKeys) match
-        case Some(winPrefix) =>
-          val suffix = cygMixed.drop(winPrefix.length).stripSuffix("/")
-          val mounts = config.win2posix(winPrefix)
-          assert(cygMixed.length >= 2 && cygMixed.charAt(1) == ':')
-          val winBase = cygMixed.substring(0, 2).toLowerCase
+      else {
+//        val win2posx = config.win2posix.toSeq // TODO: remove IDE helper vals
+//        val posx2win = config.posix2win.toSeq
+        Resolver.findPrefix(cygMixed, config.win2posixKeys) match
+          case Some(winPrefix) =>
+            val suffix = cygMixed.drop(winPrefix.length).stripSuffix("/")
+            config.win2posix.get(winPrefix) match
+              case Some(posixSeq) =>
+                joinPosix(posixSeq.head, suffix)
+              case None =>
+                winAbsToPosixAbs(cygMixed)
 
-          // POSIX basenames (e.g., "Users" from "/Users")
-          def basename(posix: String): String =
-            val s = posix.stripSuffix("/")
-            val i = s.lastIndexOf('/')
-            if i >= 0 then s.substring(i + 1) else s
-
-          val basenameMatches =
-            mounts.filter(p => basename(p).equalsIgnoreCase(winBase))
-
-          val chosen =
-            if basenameMatches.size == 1 then
-              // Unique basename match → use it
-              basenameMatches.head
-            else
-              // No unique basename match → check specificity
-              val best = mounts.maxBy(_.count(_ == '/'))   // deepest POSIX path
-              val tied = mounts.count(_.count(_ == '/') == best.count(_ == '/')) > 1
-
-              if tied then {
-                // Ambiguous → fallback to cygdrive
-                val actualPrefix = cygMixed.take(winPrefix.length)
-                winAbsToPosixAbs(actualPrefix)
-              }
-              else
-                best
-
-          joinPosix(chosen, suffix)
-
-        case None =>
-          winAbsToPosixAbs(cygMixed)
+          case None =>
+            // No matching Windows prefix at all → cygdrive fallback
+            winAbsToPosixAbs(cygMixed)
       }
-    }
     absPosix
   }
 }
 
 // leverage posixAbs to deal with ~, trailing slash, etc.
-def posixRel(raw: String): String = {
-  val cwd = posixAbs(".")
+def posixRel(raw: String): String =
+  val cwd = posixAbs(config.userdir)
   val abs = posixAbs(raw)
-  val rel =
-    if abs.startsWithIgnoreCase(cwd) then
-      abs.drop(cwd.length)
-    else
-      abs   // fallback: cannot relativize, return absolute
-  rel.toString.replace('\\', '/')
-}
 
-private inline def noTrailingSlash(s: String): String = {
-  s match {
-  case "/" => "/" // never return empty String
-  case _ => s.stripSuffix("/")
-  }
-}
-
-private inline def winAbsToPosixAbs(winPath: String): String = {
-  val cyg = config.cygdrive.stripSuffix("/") // "/" reduces to empty string, "/cygpath" unaffected
-  if isDriveLetterPath(winPath) then
-    val driveLower = winPath.charAt(0).toLower.toString
-    s"$cyg/$driveLower${winPath.substring(2)}"
+  if abs.equalsIgnoreCase(cwd) then
+    "."
+  else if abs.startsWithIgnoreCase(cwd + "/") then
+    abs.substring(cwd.length + 1)   // skip the slash
   else
-    winPath
-}
+    abs
+
+def winAbsToPosixAbs(cygMixed: String): String =
+  require(cygMixed.length > 1 && cygMixed(1) == ':', s"not a Windows abs path [$cygMixed]")
+  val drive = cygMixed.take(1).toLowerCase
+  val path  = cygMixed.drop(2)  // drop "C:"
+  s"/$drive$path"
+
 private inline def isDriveLetterPath(s: String): Boolean = {
-  s.length >= 2 && s.charAt(1) == ':' && {
-    val c = s.charAt(0)
+  s.length >= 2 && s(1) == ':' && {
+    val c = s(0)
     (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
   }
 }
@@ -510,7 +570,7 @@ private inline def isDriveLetterPath(s: String): Boolean = {
 object stringExts {
   extension (str: String) {
     def path: Path = Paths.get(str)
-    def posx: String = str.replace('\\', '/')
+    def posx: String = normalizePosix(str)
     def posix: String = posixAbs(str)
 
     def startsWithIgnoreCase(prefix: String): Boolean = startsWithUncased(str, prefix)
@@ -520,7 +580,7 @@ object stringExts {
       else str
 
     def local: String = {
-      val forward = str.replace('\\', '/')
+      val forward = normalizePosix(str)
       val isPosix = forward.startsWith("/") //|| !forward.matches("(?i)^[a-z]:/.*")
       if (!isWin || !isPosix) {
         str
@@ -564,9 +624,9 @@ object pathExts {
 
     def abs: String =
       if (java.nio.file.Files.exists(p))
-        p.toAbsolutePath.normalize.toString.replace('\\', '/')
+        normalizePosix(p.toAbsolutePath.normalize.toString)
       else
-        p.normalize.toString.replace('\\', '/')
+        normalizePosix(p.normalize.toString)
 
     def firstline: String = lines.nextOption.getOrElse("")
     def lines: Iterator[String] = {
@@ -614,7 +674,7 @@ object pathExts {
         case _: Exception => false
       }
     }
-    def localpath: String = p.toString.replace('\\', '/')
+    def localpath: String = normalizePosix(p.toString)
 
     def dospath: String = {
       val pstr = p.toString
@@ -640,12 +700,12 @@ object pathExts {
       if (p == null) {
         hook += 1
       }
-      p.toString.replace('\\', '/')
+      normalizePosix(p.toString)
     }
     def posix: String = posixAbs(p.toString)
 
     def local: String = {
-      p.toString.replace('\\', '/')
+      normalizePosix(p.toString)
     }
     def dotsuffix: String = {
       val name = p.getFileName.toString
@@ -731,18 +791,6 @@ object fs {
       case _           => false
 
     valid // single exit
-  }
-
-  def unixAbs(str: String): String = {
-    val s = applyTilde(str)
-    java.nio.file.Paths.get(s).toAbsolutePath.normalize.toString
-  }
-
-  def applyTilde(str: String): String = {
-    if str.startsWith("~") then
-      str.replaceFirst("~", userHome)
-    else
-      str
   }
 
   def isValidMsysPath(s: String): Boolean = {

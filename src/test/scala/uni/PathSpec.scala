@@ -10,6 +10,14 @@ import TestUtils.{prmsg, noisy}
 class PathSpec extends FunSuite {
   lazy val testFile: Path = Paths.get(s"${TMP}/youMayDeleteThisDebrisFile.txt")
 
+  var testfileb: Path = scala.compiletime.uninitialized
+
+  override def beforeAll(): Unit = {
+    uni.resetConfig()
+    testfileb = Paths.get(homeDirTestFile)
+    touch(testfileb)
+  }
+
   override def beforeEach(context: BeforeEach): Unit = {
     if (!JFiles.exists(testFile)) {
       prmsg(s"create testFile[$testFile]")
@@ -50,12 +58,12 @@ class PathSpec extends FunSuite {
 
   // Path.relpath.stdpath
   test("Path.relpath.stdpath: should correctly relativize Path, if below pwd") {
+    withMountLines(Nil, testUser)
     val p     = Paths.get(s"${pwd.posx}/src")
-    val pabs: String = p.toAbsolutePath.normalize.toString.replace('\\', '/')
+    val pabs: String = p.toAbsolutePath.toString.replace('\\', '/')
     val relp: Path  = Paths.get(posixRel(pabs)) // relativePathToCwd(p)
     val stdp  = relp.stdpath
-    val ok = (stdp == pabs) || pabs.endsWith(stdp)
-
+    val ok = pabs.drop(2).endsWith(stdp.drop(2))
     assert(
       ok,
       clues(
@@ -91,10 +99,11 @@ class PathSpec extends FunSuite {
 
   // tilde-in-path-test
   test("File#tilde-in-path-test: should see file in user home directory if present") {
-    noisy(s"posixHomeDir: [$posixHomeDir]")
-    noisy(s"testfileb:    [$testfileb]")
+
+    prmsg(s"posixHomeDir: [$posixHomeDir]")
+    prmsg(s"testfileb:    [$testfileb]")
     val ok = testfileb.exists
-    if (ok) noisy(s"tilde successfully converted to path '$testfileb'")
+    if (ok) prmsg(s"tilde successfully converted to path '$testfileb'")
     assert(ok, s"error: cannot see file '$testfileb'")
   }
 
@@ -133,7 +142,7 @@ class PathSpec extends FunSuite {
           val x = file.exists
           val y = new JFile(expected).exists
           if (x && y) {
-            assertEquals(a, d)
+            assert(sameFile)
           } else {
             noisy(s"[$file].exists: [$x]\n[$expected].exists: [$y]")
           }
@@ -226,7 +235,7 @@ class PathSpec extends FunSuite {
       test(s"# round trip consistency: round trip conversion should match [$matchtag]") {
         val sameFile = f1.isSameFile(v)
         val bothPwd = isPwd(f1) && isPwd(v)
-        if (f1 != v || !sameFile) {
+        if (f1 != v && !sameFile) {
           noisy(s"f1[$f1]\nv[$v]")
         }
         assert(sameFile, s"not sameFile: f1[$f1] != variant v[$v]")

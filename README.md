@@ -33,7 +33,7 @@ To use `uni` in an `SBT` project, add this dependency to `build.sbt`
   ```
 For `scala 3.5+` or `scala-cli` scripts:
 ```sbt
-  "//> using dep org.vastblue:uni_3:0.5.2"
+  "//> using dep org.vastblue:uni_3:0.6.1
 ```
 ## Simplicity and Portability
   * Script as though you're running in a Linux environment.
@@ -72,7 +72,7 @@ The following example might surprise Windows developers, since JVM languages don
 
 ```scala
 #!/usr/bin/env -S scala-cli shebang
-//> using dep "org.vastblue::uni:0.5.2"
+//> using dep "org.vastblue:uni_3:0.6.1
 
 import uni.Paths
 import uni.fs.{call, posx, lines}

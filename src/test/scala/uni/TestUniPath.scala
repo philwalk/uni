@@ -5,6 +5,7 @@ import uni.Internals.*
 import TestUtils.{verbose, prmsg}
 
 class TestUniPath extends FunSuite {
+  override def beforeAll(): Unit = uni.resetConfig()
 
   // ANSI colors (safe on MSYS2, Git Bash, Windows Terminal, IntelliJ)
   private val CYAN   = "\u001b[36m"

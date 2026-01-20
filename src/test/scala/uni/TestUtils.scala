@@ -10,6 +10,18 @@ object TestUtils {
   def noisy(s: String): Unit = if verbose then  System.err.print(s+"\n")
   def prmsg(s: String): Unit = print(s+"\n")
 
+  lazy val windowsTestUser: UserInfo = UserInfo(
+    "liam",                // username
+    "C:/Persons/liam",     // userhome
+    "C:/munit/test"        // userdir
+  )
+  lazy val unixTestUser: UserInfo = UserInfo(
+    windowsTestUser.name,
+    windowsTestUser.home.drop(2),
+    windowsTestUser.dir.drop(2)
+  )
+  lazy val testUser: UserInfo = if isWin then windowsTestUser else unixTestUser
+
   def procFiles = Seq(
     "/proc/cpuinfo",
     "/proc/devices",
@@ -42,8 +54,6 @@ object TestUtils {
   }
   def getVariants(p: Path): Seq[Path] = {
     val pstr = p.toString.toLowerCase
-    if pstr.contains("~") then
-      hook += 1
     val stdpathToo = if (nonCanonicalDefaultDrive) Nil else Seq(p.stdpath)
     val pposx = p.posx
     val ptoStr = p.toString
@@ -57,14 +67,7 @@ object TestUtils {
     ) ++ stdpathToo // stdpath fails round-trip test when default drive != C:
 
     val vlist = variants.distinct.map { s =>
-      if (s.startsWithIgnoreCase("/Users/")) {
-        hook += 1
-      }
-      val p = Paths.get(s)
-      if (p.toString.take(1).toLowerCase != pstr.take(1)) {
-        hook += 1
-      }
-      p
+      uni.Paths.get(s)
     }
     vlist.distinct
   }
@@ -73,11 +76,6 @@ object TestUtils {
   lazy val testDataLines = (0 until maxLines).toList.map { _.toString }
 
   lazy val homeDirTestFile = "~/shellExecFileTest.out"
-  lazy val testfileb: Path = {
-    val p = Paths.get(homeDirTestFile)
-    touch(p)
-    p
-  }
 
   lazy val dosHomeDir: String   = sys.props("user.home")
   lazy val posixHomeDir: String = {
@@ -120,9 +118,6 @@ object TestUtils {
 
     val empty = pairs.find { case ((a: String, b: String)) =>
       b.trim == ""
-    }
-    if (empty.nonEmpty) {
-      hook += 1
     }
     pairs
   }.distinct
@@ -196,5 +191,32 @@ object TestUtils {
   }
   def touch(fname: String): Int = {
     touch(Paths.get(fname))
+  }
+
+  lazy val cygpathExe = if !isWin then "" else Proc.call("where.exe", "cygpath.exe").getOrElse("")
+
+  //given Conversion[String, Seq[String]] with def apply(s: String): Seq[String] = Seq(s)
+  def cygpathU(s: String): String = {
+    if cygpathExe.isEmpty then
+      ""
+    else {
+      val exe = cygpathExe
+      val abs = s
+      Proc.call(exe, "-u", abs).getOrElse("")
+    }
+  }
+
+  extension(s: String) {
+    def fwdSlash: String = s.replace('\\', '/')
+    def toAbsSlash: String = {
+      import java.nio.file.Paths
+      val str = s.replace('\\', '/')
+      if str.length >= 3 && str.charAt(1) == ':' && str.charAt(2) == '/' then
+        str
+      else if str.length >= 2 && str.charAt(1) == ':' then
+        str
+      else
+        Paths.get(str).toAbsolutePath.normalize.toString.replace('\\', '/')
+    }
   }
 }
