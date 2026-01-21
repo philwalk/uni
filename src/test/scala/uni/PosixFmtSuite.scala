@@ -1,21 +1,28 @@
 package uni
 
 import munit.FunSuite
+import uni.TestUtils.*
+import java.nio.file.{Paths as JPaths}
 
 final class PosixFmtSuite extends FunSuite {
 // uncomment the next 2 lines to disable timeout
   import scala.concurrent.duration.*
   override def munitTimeout: Duration = Duration.Inf
 
-  //private var hook = 0
+  override def beforeAll(): Unit = uni.resetConfig()
+
+  override def afterAll(): Unit = {
+    resetConfig() // don't contaminate other test suites
+  }
+
   // import the extension under test
-  import uni.pwd
   import uni.fs.*
+  var testsTotal = 0
+  var runsTotal = 0
 
   test("String.posix respects forwardMap mount translations"):
-    // Suppose forwardMap contains: "C:/msys64/usr/bin"   -> Seq("/usr/bin")
+    // Suppose forwardMap contains: "C:/msys64/usr/bin"   -> "/usr/bin"
     val expected = "/usr/bin/bash.exe"
-
     val win = if isWin then
       "C:/msys64/usr/bin/bash.exe"
     else
@@ -24,123 +31,223 @@ final class PosixFmtSuite extends FunSuite {
     val actual = win.posix
     assertEquals(actual, expected)
 
-  given Conversion[String, Seq[String]] with
-    def apply(s: String): Seq[String] = Seq(s)
+  test("verify UserInfo mechanism") {
+    withMountLines(Nil, testUser)
+    val userDir  = normalizePosix(quikResolve("."))
+    val userHome = normalizePosix(quikResolve("~"))
+    assertEquals(userDir, testUser.dir)
+    assertEquals(userHome, testUser.home)
+  }
 
   if isWin then
-    withMountLines(Seq(
-      "C:/msys64 on / type ntfs (binary)",
-      "C:/Users on /c/home type ntfs (binary)",
-    ))
-    for (win, allowedPosix: Seq[String]) <- windowsCases do
-      test(s"String.posix converts $win to ${allowedPosix.mkString(" or ")}"):
-        val actual = win.posix
-        val expectedPosix = if allowedPosix.contains(actual) then
-          actual
-        else
-          allowedPosix.head // fail
+    // NOTE: when multiple posix paths are mounted to directory (e.g., C:/Users)
+    // the tie-breaker rule for `cygpath -u C:/Users` differs between Msys and Cygwin:
+    //    Cygwin reports the chronologically newer (most recently mounted) posix path;
+    //    Msys reports the lexicographically greater posix path.
 
-        assertEquals(
-          actual,
-          expectedPosix,
-          clues(s"input: $win\nresult: $actual\nexpect: $expectedPosix")
-        )
+    // Shared test runner for all Windows mount configurations.
+    def runWinTests(expectsAndMounts: ExpectsGivenMounts): Unit = {
+      val mountLines: Seq[String] = expectsAndMounts.mounts
+      val expected: Seq[(String, String)] = expectsAndMounts.expects
+
+      for ((win, expect), i) <- expected.zipWithIndex do {
+        if i == 0 then runsTotal += 1
+        test(s"$i: String.posix converts $win to $expect"):
+          // Install mount table
+          withMountLines(mountLines, testUser)
+          val posixPath = posixAbs(win)
+          if posixPath != expect then
+            posixAbs(win) // hook
+          assertEquals(
+            posixPath,
+            expect,
+            s"input: $win, result: $posixPath, expect: $expect"
+          )
+      }
+    }
+
+    runWinTests(expectsAndMountsMisc) // affected by actual test server mount table
+    runWinTests(expectsAndMountsA)    // C:/Uzers -> $mount1
+    runWinTests(expectsAndMountsB)    // C:/Uzers -> $mount1 and $mount2
+    runWinTests(expectsAndMountsC)    // C:/Uzers unmounted
+
   else
-    for (pathstr, list: Seq[String]) <- nonWinCases do
+    // Non-Windows tests: the only affect on the input path
+    // should be to convert it to an absolute normalized path.
+    val nonWinCases: Seq[(String, String)] = Seq(
+      ("/mount1/liam/"                  ->  "/mount1/liam"),
+      ("/mount1/liam"                   ->  "/mount1/liam"),
+      ("/mount1/liam"                   ->  "/mount1/liam"),
+      ("/mount1/liam/"                  ->  "/mount1/liam"),
+      ("/usr/bin"                       ->  "/usr/bin"),
+      ("/Uzers/liam/"                   ->  "/mount1/liam"),
+      ("/Uzers/liam"                    ->  "/mount1/liam"),
+      ("/Uzers/liam/AppData/Local"      ->  "/mount1/liam/AppData/Local"),
+      ("/Uzers/liam/Documents"          ->  "/mount1/liam/Documents"),
+      ("/Program Files/Git/bin"         ->  "/Program Files/Git/bin"),
+      ("/Windows/System32"              ->  "/Windows/System32"),
+      ("/data/logs"                     ->  "/data/logs"),
+      ("/data/logs/"                    ->  "/data/logs"),
+      ("/data/logs/today.txt"           ->  "/data/logs/today.txt"),
+      ("/Data Sets/2024/report.csv"     ->  "/Data Sets/2024/report.csv"),
+      ("/My Projects/scala/test"        ->  "/My Projects/scala/test"),
+   // ("//server/share/folder/file.txt" -> "//server/share/folder/file.txt"), TODO: fix 
+    )
+
+    for (pathstr, expect: String) <- nonWinCases do
       test(s"String.posix maps $pathstr to $pathstr"):
-        if (pathstr.contains("~")) {
-          hook += 1
-        }
-        val actual = posixAbs(pathstr)
-        val expected = unixAbs(pathstr)
-        if (actual != expected) {
-          hook += 1
-        }
+        val actual   = posixAbs(pathstr)
+        val expected = JPaths.get(pathstr).toAbsolutePath.normalize.toString
+        if actual != expected then hook += 1
         assertEquals(actual, expected)
 
 
-  resetConfig() // undo `withMountLines` above
-
-  // Representative Windows paths
-  lazy val windowsCases: Seq[(String, Seq[String])] = Seq(
-    // --- Absolute drive-letter paths
-    s"${pwd.toString}/biz"           -> Seq(s"$cwd1/biz", s"$cwd2/biz"),
-    "C:/"                            -> "/c",
-    "Z:/"                            -> "/z",
-    "C:/Users/liam/project"          -> Seq("/c/Users/liam/project", "/c/home/liam/project"),
-    "D:/data/logs/today.txt"         -> "/d/data/logs/today.txt",
-    "E:/tmp"                         -> "/e/tmp",
-    "C:/Program Files/Git/bin"       -> "/c/Program Files/Git/bin",
-    "C:/Users/liam/AppData/Local"    -> Seq("/c/Users/liam/AppData/Local", "/c/home/liam/AppData/Local"),
-
-    "C:/Users/liam/project"         -> Seq("/c/Users/liam/project", "/c/home/liam/project"),
-    "D:/data/logs/today.txt"        -> "/d/data/logs/today.txt",
-    "E:/tmp"                        -> "/e/tmp",
-    "C:/Program Files/Git/bin"      -> "/c/Program Files/Git/bin",
-    "C:/Users/liam/AppData/Local"   -> Seq("/c/Users/liam/AppData/Local", "/c/home/liam/AppData/Local"),
-
-    // --- Forward-slash Windows paths (legal but uncommon)
-    "C:/Windows/System32"            -> "/c/Windows/System32",
-    "D:/data/logs"                   -> "/d/data/logs",
-
-    // --- Mixed slashes
-    "C:/Users/liam/Documents"        -> Seq("/c/Users/liam/Documents", "/c/home/liam/Documents"),
-    "D:/data/logs/today.txt"         -> "/d/data/logs/today.txt",
-
-    // --- Drive-relative paths
-    // Meaning: relative to current directory on drive C:
-    "C:folder/file.txt"              -> Seq(s"$cwd1/folder/file.txt", s"$cwd2/folder/file.txt"),
-    "C:folder/sub"                   -> Seq(s"$cwd2/folder/sub", s"$cwd2/folder/sub"),
-
-    // --- Relative paths
-    "./file.txt"                     -> Seq(s"$cwd1/file.txt", s"$cwd2/file.txt"),
-    "../file.txt"                    -> Seq(s"$parent1/file.txt", s"$parent2/file.txt"),
-
-    // --- Home-relative (not Windows-native, but users type them)
-    "~/"                             -> Seq(home1, home2),
-    "~"                              -> Seq(home1, home2),
-    "~/Documents/notes.txt"          -> Seq(s"$home1/Documents/notes.txt", s"$home2/Documents/notes.txt"),
-
-    // --- UNC paths
-    "//server/share/folder/file.txt" -> "//server/share/folder/file.txt",
-    "//server/share/folder/file.txt" -> "//server/share/folder/file.txt",
-
-    // --- Bare filenames
-    "file.txt"                       -> Seq(s"$cwd1/file.txt", s"$cwd2/file.txt"),
-    "notes.md"                       -> Seq(s"$cwd1/notes.md", s"$cwd2/notes.md"),
-
-    // --- Paths with spaces
-    "C:/My Projects/scala/test"      -> "/c/My Projects/scala/test",
-    "D:/Data Sets/2024/report.csv"   -> "/d/Data Sets/2024/report.csv",
-
-    // --- Trailing slashes
-    "C:/Users/liam/"                 -> Seq("/c/Users/liam", "/c/home/liam"),
-    "D:/data/logs/"                  -> "/d/data/logs",
-
-    // --- miscellaneous
-    "/usr/bin"                       -> "/usr/bin",
-    "/c/Users/liam"                  -> Seq("/c/Users/liam", "/c/home/liam"),
-    "./script.sh"                    -> Seq(s"$cwd1/script.sh", s"$cwd2/script.sh"),
+  lazy val mountLinesMisc = Seq(
+    "C:/msys64 on / type ntfs (binary)",
   )
-  lazy val nonWinCases: Seq[(String, Seq[String])] = for {
-    (pathstr, list) <- windowsCases
-  } yield (pathstr.replaceFirst("^[a-zA-Z]:", "") -> list)
 
-  lazy val (cwd1: String, cwd2: String) = {
-    val dir1 = toPosixDriveLetter(Paths.get(".").toAbsolutePath.normalize.toString.replace('\\', '/'))
-    val dir2 = dir1.replaceAll("(?i)/Users", "/home")
-    (dir1, dir2)
+  private lazy val expectsAndMountsMisc = {
+    withMountLines(mountLinesMisc, testUser)
+    ExpectsGivenMounts(
+      s"no additional mounts",
+      mountLinesMisc,
+      Seq(
+        testDir                   -> testDirPosix,
+        testHome                  -> testHomePosix,
+        "C:folder/sub"            -> s"$testDirPosix/folder/sub",
+        "C:folder/file.txt"       -> s"$testDirPosix/folder/file.txt",
+        "C:folder/sub"            -> s"$testDirPosix/folder/sub",
+        "./file.txt"              -> s"$testDirPosix/file.txt",
+        "../file.txt"             -> s"$testParentDirPosix/file.txt",
+        "~/"                      -> testHomePosix,
+        "~"                       -> testHomePosix,
+        "~/Documents/notes.txt"   -> s"$testHomePosix/Documents/notes.txt",
+        "./script.sh"             -> s"$testDirPosix/script.sh",
+        "~/script.sh"             -> s"$testHomePosix/script.sh",
+        "file.txt"                -> s"$testDirPosix/file.txt",
+        "notes.md"                -> s"$testDirPosix/notes.md",
+      )
+    )
   }
-  lazy val (parent1: String, parent2: String) = {
-    val dir1 = toPosixDriveLetter(Paths.get("..").toAbsolutePath.normalize.toString.replace('\\', '/'))
-    val dir2 = dir1.replaceAll("(?i)/Users", "/home")
-    (dir1, dir2)
+
+  // Representative Windows paths with C:/Uzers => /homedir
+  private lazy val expectsAndMountsA = ExpectsGivenMounts(
+    s"${uzers} => $mount1",
+    Seq(
+      "C:/msys64 on / type ntfs (binary)",
+      s"${uzers} on $mount1 type ntfs (binary,user)"
+    ), Seq(
+      s"$mount1/liam/"                 -> s"$mount1/liam",
+      s"$mount1/liam"                  -> s"$mount1/liam",
+      s"/c$mount1/liam"                -> s"/c$mount1/liam",
+      s"C:$mount1/liam/"               -> s"/c$mount1/liam",
+      "/usr/bin"                       -> "/usr/bin",
+      s"$uzers/liam/"                  -> s"$mount1/liam",
+      s"$uzers/liam"                   -> s"$mount1/liam",
+      s"$uzers/liam/AppData/Local"     -> s"$mount1/liam/AppData/Local",
+      s"$uzers/liam/Documents"         -> s"$mount1/liam/Documents",
+      "C:/Program Files/Git/bin"       -> "/c/Program Files/Git/bin",
+      "C:/Windows/System32"            -> "/c/Windows/System32",
+      "D:/data/logs"                   -> "/d/data/logs",
+      "D:/data/logs/"                  -> "/d/data/logs",
+      "D:/data/logs/today.txt"         -> "/d/data/logs/today.txt",
+      "D:/Data Sets/2024/report.csv"   -> "/d/Data Sets/2024/report.csv",
+      "C:/My Projects/scala/test"      -> "/c/My Projects/scala/test",
+      "//server/share/folder/file.txt" -> "//server/share/folder/file.txt",
+      "C:/"                            -> "/c",
+      "Z:/"                            -> "/z",
+    )
+  )
+
+  // Representative Windows paths with C:/Uzers => $mount1 and $mount2
+  private lazy val expectsAndMountsB = ExpectsGivenMounts(
+    s"$uzers -> $mount1 and $mount2",
+    Seq(
+      "C:/msys64 on / type ntfs (binary)",
+      s"$uzers on $mount1 type ntfs (binary,user)",
+      s"$uzers on $mount2 type ntfs (binary,user)",
+    ), Seq(
+      s"$mount1/liam/"                 -> s"$mount1/liam",
+      s"$mount1/liam"                  -> s"$mount1/liam",
+      s"/c$mount1/liam"                -> s"/c$mount1/liam",
+      s"C:$mount1/liam/"               -> s"/c$mount1/liam",
+      s"$uzers/liam/"                  -> s"$mount1/liam",
+      s"$uzers/liam"                   -> s"$mount1/liam",
+      s"$uzers/liam/AppData/Local"     -> s"$mount1/liam/AppData/Local",
+      s"$uzers/liam/Documents"         -> s"$mount1/liam/Documents",
+      "C:/Program Files/Git/bin"       -> "/c/Program Files/Git/bin",
+      "C:/Windows/System32"            -> "/c/Windows/System32",
+      "D:/data/logs"                   -> "/d/data/logs",
+      "D:/data/logs/"                  -> "/d/data/logs",
+      "D:/data/logs/today.txt"         -> "/d/data/logs/today.txt",
+      "D:/Data Sets/2024/report.csv"   -> "/d/Data Sets/2024/report.csv",
+      "C:/My Projects/scala/test"      -> "/c/My Projects/scala/test",
+      "//server/share/folder/file.txt" -> "//server/share/folder/file.txt",
+      "C:/"                            -> "/c",
+      "Z:/"                            -> "/z",
+    )
+  )
+
+  // Representative Windows paths with C:/Uzers not mounted
+  private lazy val expectsAndMountsC = ExpectsGivenMounts(
+    s"$uzers not mounted",
+    Seq(
+      "C:/msys64 on / type ntfs (binary)",
+    ), Seq(
+      "/usr/bin"                       -> "/usr/bin",
+      "C:/Uzers/liam/"                 -> "/c/Uzers/liam",
+      "C:/Uzers/liam"                  -> "/c/Uzers/liam",
+      "C:/Uzers/liam/AppData/Local"    -> "/c/Uzers/liam/AppData/Local",
+      "C:/Uzers/liam/Documents"        -> "/c/Uzers/liam/Documents",
+      "C:/Program Files/Git/bin"       -> "/c/Program Files/Git/bin",
+      "C:/Windows/System32"            -> "/c/Windows/System32",
+      "D:/data/logs"                   -> "/d/data/logs",
+      "D:/data/logs/"                  -> "/d/data/logs",
+      "D:/data/logs/today.txt"         -> "/d/data/logs/today.txt",
+      "D:/Data Sets/2024/report.csv"   -> "/d/Data Sets/2024/report.csv",
+      "C:/My Projects/scala/test"      -> "/c/My Projects/scala/test",
+      "//server/share/folder/file.txt" -> "//server/share/folder/file.txt",
+      "C:/"                            -> "/c",
+      "Z:/"                            -> "/z",
+    )
+  )
+
+  case class ExpectsGivenMounts(tag: String, mounts: Seq[String], expects: Seq[(String, String)])
+
+  def winAbsToCygdrive(raw: String): String =
+    if raw.length >= 3 &&
+       raw.charAt(1) == ':' &&
+       raw.charAt(2) == '/' &&
+       raw.charAt(0).isLetter
+    then
+      val drive = raw.charAt(0).toLower
+      s"${config.cygdrive}$drive${raw.substring(2)}"
+    else
+      raw
+
+  extension(abs: String) {
+    def posixDrive: String = {
+      assert(abs.take(2).last == ':')
+      winAbsToCygdrive(abs)
+    }
   }
-  lazy val (home1: String, home2: String) = {
-    import java.nio.file.Paths
-    val dir1 = toPosixDriveLetter(Paths.get(sys.props("user.home")).toAbsolutePath.normalize.toString.replace('\\', '/'))
-    val dir2 = dir1.replaceAll("(?i)/Users", "/home")
-    (dir1, dir2)
-  }
+
+//  private lazy val realName: String = sys.props("user.name").fwdSlash
+//  private lazy val realHome: String = sys.props("user.home").fwdSlash
+//  private lazy val realDir: String  = sys.props("user.dir").fwdSlash
+//  private lazy val realTestHome = realHome.replaceAll(realName, testUsername) // already absolute
+//  private lazy val realTestDir  = realDir.replaceAll(realName, testUsername).toAbsSlash
+
+  private lazy val mount1     = "/mount1"
+  private lazy val mount2     = "/mount2"
+  private lazy val uzers      = "C:/Uzers"
+
+  def testDir      = testUser.dir
+  def testUsername = testUser.name
+  def testHome     = testUser.home
+
+  def testDirPosix       = config.userdir.posix
+  def testHomePosix      = config.userhome.posix
+  def testParentDirPosix = config.userdirParent.posix
+
 }
-

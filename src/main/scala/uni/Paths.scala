@@ -1,7 +1,5 @@
 package uni
 
-import uni.fs.applyTilde
-
 import java.nio.file.{Files, Paths as JPaths}
 import java.net.URI
 import java.util.{Arrays, Comparator, Locale}
@@ -10,11 +8,30 @@ import scala.collection.immutable.SortedMap
 export java.nio.file.Path
 export java.io.File as JFile
 
-/* java.nio.file.Paths wrapper adds msys2 path support. */
+/* This library wraps calls to java.nio.file.Paths.get() for the purpose of providing a `uni.Paths.get`
+ * with support for adding msys2 and cygwin paths support (based on /etc/fstab mount maps).
+ * Calls to `uni.Paths.get` convert path strings to `java.nio.file.Path` objects.
+ * If a path string is not already a legal Windows path string,
+ * this library is responsible for converting such msys2 / cygwin path strings to valid Windows equivalent
+ * prior to calling `java.nio.file.Paths.get(...)`.
+ * Therefore, every such Path value produced is based on a legal Windows path string.
+ *
+ * The applied conversion is almost exactly equivalent to `cygpath -m <pathstring>`, although there are
+ * exceptions:
+ */
+
 object Paths {
+
   // API same as java.nio.file.Paths.get
-  def get(first: String, more: String*): Path = config.get(first, more*)
-  def get(uri: URI): Path = config.get(uri)
+  def get(first: String, more: String*): Path =
+    if first.startsWith("file://") && more.isEmpty then
+      // explicit URI semantics
+      get(java.net.URI.create(first))
+    else
+      config.get(first, more *)
+
+  def get(uri: URI): Path =
+    config.get(uri)
 }
 
 @volatile private[uni] var config: PathsConfig = DefaultPathsConfig // mutable test seam
@@ -32,6 +49,14 @@ trait PathsConfig {
   def msysRoot: String
   def cygRoot = msysRoot // alias
 
+  def username: String
+  def userhome: String
+  def userdir: String
+
+  lazy val userdirParent: String =
+    val i = userdir.lastIndexOf('/')
+    if i <= 0 then "/" else userdir.substring(0, i)
+
   lazy val posix2winKeys: Array[String] = keysArray(posix2win)
   lazy val win2posixKeys: Array[String] = keysArray(win2posix)
 
@@ -39,6 +64,8 @@ trait PathsConfig {
     val arr = map.keysIterator.map(_.toLowerCase).toArray
     Arrays.sort(arr, Comparator.comparingInt[String](_.length).reversed())
     arr
+
+  def driveCwd(drive: Char): Path
 }
 
 // Default config: spawns mount.exe and parses stdout lazily
@@ -48,23 +75,56 @@ object DefaultPathsConfig extends PathsConfig {
   def cygdrive: String = mountInfo.cygdrive
   def win2posix: Win2posixMap = mountInfo.win2posix
   def posix2win: Posix2winMap = mountInfo.posix2win
-  def get(first: String, more: String*): Path = Resolver.resolvePath(first, more, mountInfo)
-  def get(uri: URI): Path = Resolver.resolvePath(uri, mountInfo)
+  def get(first: String, more: String*): Path = Resolver.resolvePath(first, more)
+  def get(uri: URI): Path = Resolver.resolvePath(uri)
+  def username: String = realUserName
+  def userhome: String = realUserHome
+  def userdir: String  = realUserDir
+  def driveCwd(drive: Char): Path =
+    val upper = drive.toUpper
+    require(upper.isLetter, s"Not a valid drive letter: $drive")
+    // Query the JVM for the drive’s working directory
+    val p = java.nio.file.Paths.get(s"$upper:.")
+    if Files.exists(p) then
+      p.toAbsolutePath
+    else
+      java.nio.file.Paths.get(s"$upper:/")
 }
 
+private lazy val realUserName: String = sys.props("user.name")
+private lazy val realUserHome: String = normalizePosix(sys.props("user.home"))
+private lazy val realUserDir: String  = normalizePosix(sys.props("user.dir"))
+
+case class UserInfo(name: String, home: String, dir: String)
+lazy val realUser: UserInfo = UserInfo(realUserName, realUserHome, realUserDir)
+
 // Synthetic config: uses injected mount lines
-final class SyntheticPathsConfig(mountLines: Seq[String]) extends PathsConfig {
-  private lazy val mountInfo: MountMaps = ParseMounts.parseMountLines(mountLines)
+final class SyntheticPathsConfig(mountLines: Seq[String], val user: UserInfo) extends PathsConfig {
+  private val mountInfo: MountMaps = ParseMounts.parseMountLines(mountLines)
   def msysRoot: String = mountInfo.msysRoot
   def cygdrive: String = mountInfo.cygdrive
   def win2posix: Win2posixMap = mountInfo.win2posix
   def posix2win: Posix2winMap = mountInfo.posix2win
-  def get(first: String, more: String*): Path = Resolver.resolvePath(first, more, mountInfo)
-  def get(uri: URI): Path = Resolver.resolvePath(uri, mountInfo)
+  def get(first: String, more: String*): Path = Resolver.resolvePath(first, more)
+  def get(uri: URI): Path = Resolver.resolvePath(uri)
+  def username: String = user.name
+  def userhome: String = user.home
+  def userdir: String = user.dir
+  def driveCwd(drive: Char): Path =
+    val upper = drive.toUpper
+    require(upper.isLetter, s"Not a valid drive letter: $drive")
+    // if `userdir` && drive letter matches `drive`, then
+    if userdir(0).toUpper == upper then
+      Paths.get(userdir)
+    else
+      // otherwise tests should assume this is the drive root
+      Paths.get(s"$upper:/")
 }
 
 // inject mount lines for testing
-private[uni] def withMountLines(mountLines: Seq[String]): Unit = config = new SyntheticPathsConfig(mountLines)
+private[uni] def withMountLines(mountLines: Seq[String], testUser: UserInfo): Unit = {
+  config = new SyntheticPathsConfig(mountLines, testUser)
+}
 
 // restore default config
 private[uni] def resetConfig(): Unit = config = DefaultPathsConfig
@@ -82,68 +142,103 @@ object Resolver {
    Windows UNC path     //server/share or \\\\server\\\share
    msys-mounted:        /usr/bin
    */
-  inline def resolvePath(first: String, more: Seq[String], mountInfo: MountMaps): Path =
-    val result = resolvePathstr(first, more, mountInfo)
-    JPaths.get(result)
+  def resolvePath(first: String, more: Seq[String]): Path =
+    val result = resolvePathstr(first, more)
+    try {
+      JPaths.get(result)
+    } catch
+      case e: Throwable =>
+        hook += 1
+        throw e
 
   enum WinPathKind:
-    case Root, Absolute, UNC, Posix, Relative, DriveRel
+    case Root, Absolute, UNC, Posix, Relative, DriveRel, Invalid
 
-  import WinPathKind.*
+  export WinPathKind.*
 
-  private def classify(p: String): WinPathKind =
-    if p.startsWith("//") then UNC
+  def classify(p: String): WinPathKind = {
+    if p.contains("://") then Invalid
+    else if p.startsWith("//") then UNC
     else if p == "/" then Root
     else if p.length >= 2 && p(1) == ':' then
-      if p.length >= 3 && p(2) == '/' then Absolute
-      else DriveRel
+      if p.length == 2 then
+        DriveRel
+      else if p(2) == '/' || p(2) == '\\' then
+        Absolute
+      else
+        DriveRel
     else if p.startsWith("/") then Posix
     else Relative
+  }
 
   /** Convert to a valid Windows path string */
-  def resolvePathstr(first: String, more: Seq[String], mountInfo: MountMaps): String = {
+  def resolvePathstr(first: String, more: Seq[String] = Nil): String = {
     val pstr =
       val fname = (first +: more).mkString("/").replace('\\', '/')
-      applyTilde(fname)
+      applyTildeAndDots(fname) // real or test user
 
     if !isWin then
       pstr
     else {
-      val pathType = classify(pstr)
-      pathType match
-        case Absolute | DriveRel | UNC | Relative =>
-          pstr // ok as-is
-        case Root  => config.msysRoot
-        case Posix =>
-          // get longest matching mount prefix
-          val maybeMount = Resolver.findPrefix(pstr, config.posix2winKeys)
-          maybeMount match {
-            case Some(mountKey) =>
-              val mountedWinPath = config.posix2win(mountKey) match
-                case s if s.endsWith(":") =>
-                  s"$s/" // msys mounts are not drive-relative
-                case s =>
-                  s
-              val pstrTrim = stripTrailingSlash(pstr)
-              val postPrefix = pstrTrim.drop(mountKey.length)
-              s"$mountedWinPath$postPrefix"
-            case None =>
-              val root = config.posix2win("/")
-              if pstr.startsWith(root) then pstr else s"$root$pstr"
-          }
+      resolveWindowsPathstr(pstr)
     }
+  }
+
+  // resolve to a syntactically valid Windows path string, not necessarily absolute.
+  def resolveWindowsPathstr(pstr: String): String = {
+    val pathType = classify(pstr)
+    pathType match
+      case Invalid =>
+        sys.error(s"invalid path type: $pstr")
+      case Absolute | UNC | Relative =>
+        pstr // ok as-is
+      case Root  =>
+        config.msysRoot
+      case Posix =>
+        // get longest matching mount prefix
+        val maybeMount = Resolver.findPrefix(pstr, config.posix2winKeys)
+        maybeMount match {
+          case Some(mountKey) =>
+            val mountedWinPath = config.posix2win(mountKey) match
+              case s if s.endsWith(":") =>
+                s"$s/" // msys mounts are not drive-relative
+              case s =>
+                s
+            val pstrTrim = stripTrailingSlash(pstr)
+            val postPrefix = pstrTrim.drop(mountKey.length)
+            s"$mountedWinPath$postPrefix"
+          case None =>
+            val root = config.posix2win("/")
+            if pstr.startsWith(root) then pstr else s"$root$pstr"
+        }
+      case DriveRel =>
+        resolveDriveRelPathstr(pstr)
+  }
+
+  def resolveDriveRelPathstr(pstr: String): String = {
+    val drive   = pstr.charAt(0).toLower
+    val cwd     = config.driveCwd(drive)
+    val dir     = cwd.toString.replace('\\', '/')
+    val dirbare = dir.stripSuffix("/")
+    val suffix = pstr.substring(2)
+    val pathstr = if suffix.isEmpty then dir else s"$dirbare/$suffix"
+    pathstr
   }
 
   def stripTrailingSlash(pathstr: String): String =
     if pathstr.length <= 2 then pathstr
     else pathstr.stripSuffix("/")
 
-  def resolvePath(uri: URI, mountInfo: MountMaps): Path = {
+  extension(s: String) {
+    def stripLastSlash: String = stripTrailingSlash(s)
+  }
+
+  def resolvePath(uri: URI): Path = {
     val scheme = Option(uri.getScheme).map(_.toLowerCase).getOrElse("")
     val path: String = uri.getPath
 
     if (scheme.isEmpty || scheme == "file") && path != null && path.startsWith("/") then
-      resolvePath(path, Nil, mountInfo)
+      resolvePath(path, Nil)
     else
       JPaths.get(uri)
   }
@@ -191,18 +286,24 @@ object ParseMounts {
     // parse raw entries
     val rawEntries: Seq[(String, String)] =
       lines.flatMap { line =>
-        val parts = line.split(" on | type ").map(_.trim)
-        if parts.length >= 2 then Some(parts(0) -> parts(1)) else None
+        if line.contains(" on ") then
+          // mount.exe format
+          val parts = line.split(" on | type ").map(_.trim)
+          if parts.length >= 2 then Some(parts(0) -> parts(1)) else None
+        else
+          // fstab format
+          val parts = line.trim.split("\\s+")
+          if parts.length >= 2 then Some(parts(0) -> parts(1)) else None
       }
 
     // normalize windows + POSIX paths
-    def fixup(s: String): String = s.replace('\\', '/') match
+    def stripSlash(s: String): String = s.replace('\\', '/') match
       case "/" => "/" // don't strip THIS suffix!
       case s   => s.stripSuffix("/")
 
     val entries: Seq[(String, String)] =
       rawEntries.map { case (w, p) =>
-        fixup(w) -> fixup(p)
+        stripSlash(w) -> stripSlash(p)
       }
 
     def isDriveRoot(s: String): Boolean = s.matches("^[A-Za-z]:$")
@@ -211,7 +312,9 @@ object ParseMounts {
     val cygdrive: String = {
       entries.collectFirst {
         case (win, posix) => {
-          if isDriveRoot(win) &&
+          if win == "none" then
+            s"${posix.stripSuffix("/")}/"
+          else if isDriveRoot(win) &&
             posix.startsWith("/") &&
             posix.length >= 3 &&
             posix.charAt(posix.length - 2) == '/'
@@ -257,7 +360,7 @@ object ParseMounts {
     // --- combine all entries
     val allEntries: Seq[(String, String)] =
       (entries ++ syntheticDrives ++ syntheticRoot)
-        .map { case (w, p) => fixup(w) -> fixup(p) }
+        .map { case (w, p) => stripSlash(w) -> stripSlash(p) }
         .distinct
 
     // --- build maps

@@ -3,11 +3,14 @@ package uni
 import munit.*
 import uni.*
 import uni.fs.*
+import TestUtils.testUser
 
 final class SyntheticMountsSuite extends FunSuite {
 // uncomment the next 2 lines to disable timeout
 // import scala.concurrent.duration.*
 // override def munitTimeout: Duration = Duration.Inf
+
+  override def beforeAll(): Unit = uni.resetConfig()
 
   override def afterEach(context: AfterEach): Unit =
     resetConfig()
@@ -17,7 +20,7 @@ final class SyntheticMountsSuite extends FunSuite {
     test("synthetic: root mount resolves /usr/bin correctly") {
       withMountLines(Seq(
         "C:/msys64 on / type ntfs (binary)"
-      ))
+      ), testUser)
 
       val pathstr = "/usr/bin/bash"
       val p = Paths.get(pathstr)
@@ -43,7 +46,7 @@ final class SyntheticMountsSuite extends FunSuite {
         "C:/msys64 on / type ntfs (binary)",
         "C:/ on /c type ntfs (binary)",
         "D:/ on /d type ntfs (binary)"
-      ))
+      ), testUser)
 
       assertEqualsIgnoreCase(Paths.get("/c/Users").posx, "C:/users")
       assertEqualsIgnoreCase(Paths.get("/d/tmp").posx, "D:/tmp")
@@ -55,7 +58,7 @@ final class SyntheticMountsSuite extends FunSuite {
         "C:/msys64 on / type ntfs (binary)",
         "C:/msys64/usr on /usr type ntfs (binary)",
         "C:/msys64/usr/local on /usr/local type ntfs (binary)"
-      ))
+      ), testUser)
       val pstr1 = Paths.get("/usr/bin").posx
       val pstr2 = Paths.get("/usr/local/bin").posx
       assertEqualsIgnoreCase(pstr1, "C:/msys64/usr/bin")
@@ -66,7 +69,7 @@ final class SyntheticMountsSuite extends FunSuite {
     test("synthetic: /Users treated as drive-relative when no mount exists") {
       withMountLines(Seq(
         "C:/msys64 on / type ntfs (binary)"
-      ))
+      ), testUser)
 
       val p = Paths.get("/Users")
       assert(
@@ -79,7 +82,7 @@ final class SyntheticMountsSuite extends FunSuite {
     test("synthetic: UNC mount resolves correctly") {
       withMountLines(Seq(
         """\\server\share on /mnt/share type smbfs (binary)"""
-      ))
+      ), testUser)
 
       val p = Paths.get("/mnt/share/docs")
       assertEqualsIgnoreCase(
@@ -94,7 +97,7 @@ final class SyntheticMountsSuite extends FunSuite {
         "C:/msys64 on / type ntfs (binary)",
         "C:/ on /c type ntfs (binary)",
         "D:/data on /data type ntfs (binary)"
-      ))
+      ), testUser)
 
       assert(Paths.get("/bin/bash").posx.toLowerCase.startsWith("c:/msys64"))
       assertEqualsIgnoreCase(Paths.get("/c/Windows").posx, "C:/Windows")
@@ -105,7 +108,7 @@ final class SyntheticMountsSuite extends FunSuite {
     test("synthetic: URI resolution uses synthetic mount map") {
       withMountLines(Seq(
         "C:/msys64 on / type ntfs (binary)"
-      ))
+      ), testUser)
 
       val uri = new java.net.URI("file:///usr/bin/bash")
       val p = Paths.get(uri)
@@ -122,7 +125,7 @@ final class SyntheticMountsSuite extends FunSuite {
       withMountLines(Seq(
         "C:/msys64 on / type ntfs (binary)",
         "C:/msys64/usr/bin on /usr/bin type ntfs (binary)"
-      ))
+      ), testUser)
       assertEqualsIgnoreCase(config.cygdrive, "/")
     }
 
@@ -132,7 +135,7 @@ final class SyntheticMountsSuite extends FunSuite {
         "C:/msys64 on / type ntfs (binary)",
         "C:/msys64/usr on /usr type ntfs (binary)",
         "C:/msys64/usr/local on /usr/local type ntfs (binary)"
-      ))
+      ), testUser)
 
       val keys = config.posix2winKeys.toSeq
       assert(keys.head.length >= keys.last.length)
@@ -145,7 +148,7 @@ final class SyntheticMountsSuite extends FunSuite {
         "C:/msys64 on / type ntfs (binary)",
         "C:/msys64/bin on /bin type ntfs (binary)",
         "C:/msys64/b on /b type ntfs (binary)" // the default mapping except when B: is mapped to /b
-      ))
+      ), testUser)
 
       assertEqualsIgnoreCase(Paths.get("/bin/bash").posx, "C:/msys64/bin/bash")
       val bfoo = Paths.get("/b/foo")
@@ -156,7 +159,7 @@ final class SyntheticMountsSuite extends FunSuite {
     test("synthetic: absolute Windows paths bypass mount table") {
       withMountLines(Seq(
         "C:/msys64 on / type ntfs (binary)"
-      ))
+      ), testUser)
 
       val p = Paths.get("C:/Windows/System32")
       assertEqualsIgnoreCase(p.posx, "C:/Windows/System32")
@@ -166,7 +169,7 @@ final class SyntheticMountsSuite extends FunSuite {
     test("synthetic: round-trip posix→win→posix is stable") {
       withMountLines(Seq(
         "C:/msys64 on / type ntfs (binary)"
-      ))
+      ), testUser)
 
       val p1 = Paths.get("/usr/bin/bash")
       val p2 = Paths.get(p1.posx)

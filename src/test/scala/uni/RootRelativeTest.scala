@@ -6,9 +6,11 @@ import uni.fs.*
 import TestUtils.*
 
 class RootRelativeTest extends FunSuite {
+  override def beforeAll(): Unit = uni.resetConfig()
+
   // current working directory is fixed at JVM startup time
-  val workingDir = Paths.get(".").toAbsolutePath
-  val cwdDrive   = workingDir.getRoot.toString.take(2)
+  val workingDir: Path = Paths.get(".").toAbsolutePath
+  val cwdDrive: String = workingDir.getRoot.toString.take(2)
 
   // ---------------------------------------
   // basic environment info
@@ -23,7 +25,7 @@ class RootRelativeTest extends FunSuite {
   // ---------------------------------------
   // Windows root-relative path resolution tests
   // ---------------------------------------
-  val testdirs = Seq("/opt", "/OPT", "/$RECYCLE.BIN", "/Program Files", "/etc")
+  val testdirs: Seq[String] = Seq("/opt", "/OPT", "/$RECYCLE.BIN", "/Program Files", "/etc")
 
   if isWin then
     testdirs.foreach { testdir =>
@@ -67,35 +69,35 @@ class RootRelativeTest extends FunSuite {
   if (isWin) {
     val testdirs = Seq("/opt", "/optx")
 
-    testdirs.foreach { dir =>
-      test(s"mountMap: mapping correctness for [$dir]") {
+    testdirs.foreach { testdir =>
+      test(s"mountMap: mapping correctness for [$testdir]") {
+        lazy val mountLines = Seq(
+          "C:/msys64 on / type ntfs (binary)",
+          "C:/opt on /opt type ntfs (binary)",
+        )
+        withMountLines(mountLines, testUser)
 
         val mounts = config.posix2win.keySet.toArray
         assume(mounts.nonEmpty, "No mount map entries available")
 
-        val dirPath = Paths.get(dir)
+        val dirPath: Path = uni.Paths.get(testdir)
 
-        val mounted =
+        val mounted = {
           mounts.find((s: String) => dirPath.isSameFile(Paths.get(s)))
+        }
 
-        val thisPath =
-          mounted match {
-            case Some(str) => config.posix2win(str)
-            case None      => dir
-          }
+        val expected: String = if mounts.contains(testdir) then
+          "C:" + testdir
+        else
+          config.msysRoot + testdir
 
-        val jf = java.nio.file.Paths.get(thisPath)
-        noisy(s"[${jf.toString}]: exists [${jf.toFile.exists}]")
-
-        val testdir = java.nio.file.Paths.get(dir)
-
-        if (mounted.nonEmpty != testdir.toFile.exists)
+        val actual = dirPath.toString.replace('\\', '/')
+        if actual.toLowerCase != expected.toLowerCase then
           hook += 1
-
         assertEquals(
-          mounted.nonEmpty,
-          testdir.toFile.exists,
-          clues(s"dir=$dir thisPath=$thisPath mounted=$mounted")
+          actual.toLowerCase,
+          expected.toLowerCase,
+          clues(s"dir=$testdir mounted=$mounted expected=$expected actual=$actual")
         )
       }
     }

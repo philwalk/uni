@@ -7,6 +7,8 @@ import uni.Internals.{_osType}
 import TestUtils.*
 
 class FnameTest extends FunSuite {
+  override def beforeAll(): Unit = uni.resetConfig()
+
   def nativePathString(p: Path): String =
     p.normalize.toString match {
       case "" | "." => "."
@@ -70,9 +72,7 @@ class FnameTest extends FunSuite {
           case _                      => false
         }
 
-      if (!testPossible) {
-        hook += 1
-      } else {
+      if (testPossible) {
         val namestr = testfile.toString.trim
         withFileWriter(testfile) { w =>
           w.printf(namestr)

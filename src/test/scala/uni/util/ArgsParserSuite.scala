@@ -4,6 +4,8 @@ import munit.FunSuite
 
 class ArgsParserSuite extends FunSuite {
 
+  override def beforeAll(): Unit = uni.resetConfig()
+
   private def failUsage(msg: String): Nothing =
     throw new RuntimeException(msg)
 

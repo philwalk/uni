@@ -7,6 +7,8 @@ import java.nio.charset.StandardCharsets
 class TestDelimiterSpec extends FunSuite {
   private val tempFiles = scala.collection.mutable.ArrayBuffer.empty[java.nio.file.Path]
 
+  override def beforeAll(): Unit = uni.resetConfig()
+
   //
   // ------------------------------------------------------------
   // Helpers

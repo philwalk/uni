@@ -4,6 +4,8 @@ import munit.FunSuite
 import TestUtils.{noisy}
 
 class TestInvariants extends FunSuite {
+  override def beforeAll(): Unit = uni.resetConfig()
+ 
   // Helpers
   def hereDrive: String =
     if (isWin)
