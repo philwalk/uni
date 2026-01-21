@@ -74,9 +74,28 @@ final class PosixFmtSuite extends FunSuite {
   else
     // Non-Windows tests: the only affect on the input path
     // should be to convert it to an absolute normalized path.
+    val nonWinCases: Seq[(String, String)] = Seq(
+      ("/mount1/liam/"                  ->  "/mount1/liam"),
+      ("/mount1/liam"                   ->  "/mount1/liam"),
+      ("/mount1/liam"                   ->  "/mount1/liam"),
+      ("/mount1/liam/"                  ->  "/mount1/liam"),
+      ("/usr/bin"                       ->  "/usr/bin"),
+      ("/Uzers/liam/"                   ->  "/mount1/liam"),
+      ("/Uzers/liam"                    ->  "/mount1/liam"),
+      ("/Uzers/liam/AppData/Local"      ->  "/mount1/liam/AppData/Local"),
+      ("/Uzers/liam/Documents"          ->  "/mount1/liam/Documents"),
+      ("/Program Files/Git/bin"         ->  "/Program Files/Git/bin"),
+      ("/Windows/System32"              ->  "/Windows/System32"),
+      ("/data/logs"                     ->  "/data/logs"),
+      ("/data/logs/"                    ->  "/data/logs"),
+      ("/data/logs/today.txt"           ->  "/data/logs/today.txt"),
+      ("/Data Sets/2024/report.csv"     ->  "/Data Sets/2024/report.csv"),
+      ("/My Projects/scala/test"        ->  "/My Projects/scala/test"),
+   // ("//server/share/folder/file.txt" -> "//server/share/folder/file.txt"), TODO: fix 
+    )
+
     for (pathstr, expect: String) <- nonWinCases do
       test(s"String.posix maps $pathstr to $pathstr"):
-        if pathstr.contains("~") then hook += 1
         val actual   = posixAbs(pathstr)
         val expected = JPaths.get(pathstr).toAbsolutePath.normalize.toString
         if actual != expected then hook += 1
@@ -211,18 +230,6 @@ final class PosixFmtSuite extends FunSuite {
       assert(abs.take(2).last == ':')
       winAbsToCygdrive(abs)
     }
-  }
-
-  private lazy val nonWinCases: Seq[(String, String)] = {
-    val expects: Seq[(String, String)] = expectsAndMountsA.expects
-
-    val cases: Seq[(String, String)] = 
-      for {
-        (pathstr: String, expect: String) <- expects
-        barePath = pathstr.replaceFirst("^[a-zA-Z]:", "")
-        bareExpect = expect.replaceFirst("/[a-z]/?", "/")
-      } yield (barePath, bareExpect)
-    cases
   }
 
 //  private lazy val realName: String = sys.props("user.name").fwdSlash

@@ -511,7 +511,11 @@ inline private def parentDirOf(s: String): String =
  */
 def posixAbs(raw: String): String = {
   if !isWin then
-    Resolver.resolvePathstr(raw)
+    Resolver.resolvePathstr(raw) match {
+    case "/" => "/"
+    case s   => s.stripSuffix("/")
+    }
+    
   else if raw.startsWith("/") then
     noTrailingSlash(raw)
   else {
