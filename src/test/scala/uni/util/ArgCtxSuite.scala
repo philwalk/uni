@@ -96,8 +96,8 @@ class ArgCtxSuite extends FunSuite {
     val ps   = new PrintStream(baos, true)
     System.setErr(ps)
 
-    val originalExit = ArgCtx.exitFn
-    ArgCtx.exitFn = code => throw ExitCalled(code)
+    val originalExit = ArgsParser.exitFn
+    ArgsParser.exitFn = code => throw ExitCalled(code)
 
     try
       body
@@ -108,5 +108,5 @@ class ArgCtxSuite extends FunSuite {
         (baos.toString("UTF-8"), code)
     finally
       System.setErr(originalErr)
-      ArgCtx.exitFn = originalExit
+      ArgsParser.exitFn = originalExit
 }

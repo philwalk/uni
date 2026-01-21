@@ -2,10 +2,10 @@ package uni.cli
 
 import scala.util.DynamicVariable
 
-// public API
-export ArgCtx.{showUsage, eachArg, thisArg, consumeNext, peekNext, nextInt, nextLong, nextDouble}
+// public API:
+// showUsage, eachArg, thisArg, consumeNext, peekNext, nextInt, nextLong, nextDouble
 
-object ArgCtx {
+object ArgsParser {
   private[uni] var exitFn: Int => Nothing = (code: Int) => sys.exit(code)
 
   // inline causes `currentCaller` macro to expand callers source path
@@ -19,7 +19,7 @@ object ArgCtx {
 
   def eachArg(args: Seq[String], usage: String => Nothing)
              (pf: PartialFunction[String, Unit]): Unit = {
-    ArgCtx.withArgs(args, usage)(pf)
+    ArgsParser.withArgs(args, usage)(pf)
   }
 
   private final class Ctx(args: Seq[String], usage: String => Nothing) {

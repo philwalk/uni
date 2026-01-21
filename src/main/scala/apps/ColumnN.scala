@@ -3,7 +3,7 @@
 //> using dep org.vastblue:uni_3:0.6.1
 
 import uni.*
-import uni.fs.*
+//import uni.ext.*
 import uni.io.*
 
 object ColumnN {

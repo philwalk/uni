@@ -2,7 +2,7 @@ package uni
 
 import munit.FunSuite
 import TestUtils.noisy
-import uni.fs.*
+import uni.ext.*
 
 class TestReadFstab extends FunSuite {
   override def beforeAll(): Unit = uni.resetConfig()

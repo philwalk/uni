@@ -1,32 +1,31 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.6.1
+//> using dep org.vastblue:uni_3:0.6.2
 
 import uni.*
-import uni.fs.*
 import uni.io.*
 
 // 
 object ColumnN {
   def usage(m: String = ""): Nothing = {
-    if (m.nonEmpty) printf("%s\n", m)
-    printf("usage: %s <colnum> <csvFile>\n", progName(this))
-    printf("<colnum>   ; zero-based column index")
-    sys.exit(1)
+    showUsage(m, "",
+      "<inputCsvFile>",
+      "<colnum>   ; zero-based column index"
+    )
   }
 
   var verbose = false
-  var colnum = -1
+  var colnum = -5
   var fullstack = false
   var inputFile: Option[Path] = None
 
   def main(args: Array[String]): Unit = {
     try {
-      args.foreach { arg =>
-        arg match {
+      eachArg(args.toSeq, usage) {
         case "-fullstack" =>
-   1G       fullstack = true
-        case "-v" => verbose = true
+          fullstack = true
+        case "-v" =>
+          verbose = true
         case fname if fname.path.isFile =>
           if inputFile.nonEmpty then
             usage(s"2nd filename [$fname] but already specified [${inputFile.get}]")
@@ -35,11 +34,12 @@ object ColumnN {
             usage(s"not found [${p.posx}]")
           }
           inputFile = Some(p)
-        case n if n.matches("[1-9][0-9]*") =>
-          if colnum >= 0 then
+        case n if n.matches("[0-9]+") =>
+          if colnum != -5 then
             usage(s"2nd column number [$n] but already specified [$colnum]")
           colnum = n.toInt
-        }
+        case arg =>
+          usage(s"unrecognized arg [$arg]")
       }
       if (colnum < 0) {
         usage()

@@ -1,7 +1,6 @@
 package uni
 
 import uni.*
-import uni.fs.*
 import uni.Internals.*
 import java.nio.file.{Paths as JPaths}
 
@@ -53,7 +52,6 @@ object TestUtils {
     prmsg(s"gdrive.isSymbolicLink: ${gdrive.isSymbolicLink}")
   }
   def getVariants(p: Path): Seq[Path] = {
-    val pstr = p.toString.toLowerCase
     val stdpathToo = if (nonCanonicalDefaultDrive) Nil else Seq(p.stdpath)
     val pposx = p.posx
     val ptoStr = p.toString
@@ -116,9 +114,6 @@ object TestUtils {
     ) ::: gdriveTests
     pairs = pairs.distinct
 
-    val empty = pairs.find { case ((a: String, b: String)) =>
-      b.trim == ""
-    }
     pairs
   }.distinct
 
