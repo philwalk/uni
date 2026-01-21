@@ -1,26 +1,30 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.6.1
+//> using dep org.vastblue:uni_3:0.6.2
+
 import uni.*
-import uni.cli.*
 import java.nio.file.Files
 
 var paths = Vector.empty[Path]
 
-eachArg(args, showUsage) {
+def usage(m: String = ""): Nothing = {
+  showUsage(m, "",
+    "<filename>    ; input",
+  )
+}
+
+eachArg(args.toSeq, usage) {
   case fname if Paths.get(fname).exists =>
     paths :+= Paths.get(fname)
   case arg =>
     showUsage(s"unrecognized arg [$arg]")
 }
 
-paths.foreach {
-  printf("%s\n", realpath(_))
+paths.foreach { (arg: Path) =>
+  printf("%s\n", realpath(arg))
 }
 
 def realpath(p: Path): String = {
-  val p   = Paths.get(arg)
-
   // Find deepest existing parent
   val existing =
     Iterator.iterate(p)(_.getParent)

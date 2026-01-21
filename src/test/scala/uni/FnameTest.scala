@@ -2,7 +2,7 @@ package uni
 
 import munit.FunSuite
 import uni.*
-import uni.fs.*
+import uni.io.*
 import uni.Internals.{_osType}
 import TestUtils.*
 

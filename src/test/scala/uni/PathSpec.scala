@@ -3,7 +3,8 @@ package uni
 import munit.FunSuite
 import uni.Internals.*
 import uni.TestUtils.*
-import uni.fs.*
+import uni.*
+import uni.io.*
 import java.nio.file.{Files as JFiles}
 import TestUtils.{prmsg, noisy}
 

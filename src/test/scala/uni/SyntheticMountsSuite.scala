@@ -1,9 +1,8 @@
 package uni
 
 import munit.*
-import uni.*
-import uni.fs.*
 import TestUtils.testUser
+import uni.*
 
 final class SyntheticMountsSuite extends FunSuite {
 // uncomment the next 2 lines to disable timeout

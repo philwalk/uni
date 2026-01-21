@@ -1,5 +1,7 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
+//> using dep org.vastblue:uni_3:0.6.2
+
 import java.nio.file.Path
 
 object strExts:
@@ -19,16 +21,15 @@ object Ov:
   extension (s: String)
     def stringPosx: String = "your override here"
 
-import fs.*               // import both
-import pathExts.posx      // bring back only Path.posx
+import uni.*              // import both
 
 extension (s: String) def posx = "your override here"
 
-println("abc".posx)
+println("abc".posix)
 
 val files: Seq[java.io.File] = java.nio.file.Paths.get(".").toFile.listFiles.toList
 
 for f <- files.filter(_.isFile).take(5) do
   val p: Path = f.toPath
-  if f.isFile then printf("%s\n", p.posx)
+  if f.isFile then printf("%s\n", p.posix)
 

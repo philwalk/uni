@@ -9,7 +9,6 @@ import java.io.{BufferedWriter, OutputStreamWriter}
 import java.io.{RandomAccessFile, BufferedReader, InputStreamReader, ByteArrayInputStream}
 import scala.collection.mutable.ArrayBuffer
 import uni.*
-import uni.fs.*
 
 object LinesIterator {
   export java.io.PrintWriter
@@ -153,16 +152,4 @@ object LinesIterator {
     .newDecoder()
     .onMalformedInput(CodingErrorAction.REPLACE)
     .onUnmappableCharacter(CodingErrorAction.REPLACE)
-
-  /*
-  extension(s: String) {
-    def posxx: String = s.replace('\\', '/')
-  }
-  extension(p: Path) {
-    def posxx: String = p.toString.posx
-  }
-
-  def envprop = Option(sys.props("scala.sources")).getOrElse(scriptPath)
-  lazy val sources = Option(System.getenv("_")).getOrElse(envprop)
-  */
 }

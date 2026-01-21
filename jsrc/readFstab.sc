@@ -1,9 +1,9 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.6.1
+//> using dep org.vastblue:uni_3:0.6.2
 
 import uni.*
-import uni.fs.* // useful extensions
+//import uni.fs.* // useful extensions
 
 // display the native path and lines.size of /etc/fstab
 // mapped to "C:\msys64\etc\fstab" in default install for Windows MSYS2

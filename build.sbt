@@ -5,13 +5,15 @@ lazy val supportedScalaVersions = List(scala3)
 
 javacOptions ++= Seq("-source", "17", "-target", "17")
 
+maxErrors := 10
+
 //enablePlugins(ScalaNativePlugin)
 //nativeLinkStubs := true
 //ThisBuild / envFileName   := "dev.env" // sbt-dotenv plugin gets build environment here
 ThisBuild / scalaVersion  := scalaVer
 
 lazy val projectName = "uni"
-ThisBuild / version       := "0.6.1"
+ThisBuild / version       := "0.6.2"
 ThisBuild / versionScheme := Some("semver-spec")
 
 ThisBuild / organization         := "org.vastblue"

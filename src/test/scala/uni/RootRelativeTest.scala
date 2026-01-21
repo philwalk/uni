@@ -1,9 +1,8 @@
 package uni
 
 import munit.FunSuite
-import uni.*
-import uni.fs.*
 import TestUtils.*
+import uni.*
 
 class RootRelativeTest extends FunSuite {
   override def beforeAll(): Unit = uni.resetConfig()
