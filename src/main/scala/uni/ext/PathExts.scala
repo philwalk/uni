@@ -4,10 +4,11 @@ import java.io.{File as JFile}
 import java.nio.file.{Path, Files, StandardCopyOption}
 import java.nio.charset.{Charset, StandardCharsets}
 import StandardCharsets.{UTF_8, ISO_8859_1 as Latin1}
-//import helpers.*
 import uni.*
 import uni.Internals.*
 import scala.jdk.CollectionConverters.*
+import java.time.LocalDateTime
+import java.time.ZoneId
 
 /** Path Extension methods */
 object pathExts {
@@ -144,6 +145,19 @@ object pathExts {
       ymdHms.format(date)
     }
 
+    def lastModifiedTime: LocalDateTime = {
+      import java.time.*
+      LocalDateTime.ofInstant(
+        Instant.ofEpochMilli(p.toFile.lastModified),
+        MountainTime
+      )
+    }
+
+    def epoch2DateTime(epoch: Long, timezone: java.time.ZoneId = UTC): LocalDateTime = {
+      val instant = java.time.Instant.ofEpochMilli(epoch)
+      LocalDateTime.ofInstant(instant, timezone)
+    }
+
     /** Copy this Path to the given destination Path.
       * By default overwrites if the target exists.
       */
@@ -167,5 +181,14 @@ object pathExts {
         Files.walk(p).iterator().asScala
       else
         Iterator.empty
+
+    def hash64: String = {
+      val (hashstr: String, throwOpt: Option[Exception]) = uni.io.Hash64.hash64(p.toFile)
+      hashstr
+    }
   }
+
+  //  lazy val EasternTime: ZoneId  = java.time.ZoneId.of("America/New_York")
+  lazy val MountainTime: ZoneId = java.time.ZoneId.of("America/Denver")
+  lazy val UTC: ZoneId          = java.time.ZoneId.of("UTC")
 }

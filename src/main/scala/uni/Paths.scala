@@ -35,6 +35,7 @@ object Paths {
 }
 
 @volatile private[uni] var config: PathsConfig = DefaultPathsConfig // mutable test seam
+def shellRoot: String = config.msysRoot
 
 type Win2posixMap = LcLookupMap[Seq[String]]
 type Posix2winMap = LcLookupMap[String]

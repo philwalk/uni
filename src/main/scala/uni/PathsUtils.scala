@@ -13,7 +13,8 @@ import scala.util.Properties
 import uni.ext.*
 
 export scala.util.Properties.{isWin, isMac, isLinux}
-export Proc.{spawn, call, lazyLines}
+export Proc.{call, shellExec, shellExecProc, spawn, spawnStreaming, execLines}
+export Proc.{lazyLines, bashExe, unameExe, uname, osType, where}
 export System.err.printf as eprintf
 
 def progName(mainObject: AnyRef) = Option(sys.props("scala.source.names")).getOrElse {
@@ -73,6 +74,41 @@ object Proc {
 
   import scala.sys.process.*
 
+  def execLines(cmd: String*): LazyList[String] = {
+    Process(cmd.toSeq).lazyLines_!
+  }
+  def lazyLines(cmd: String): LazyList[String] =
+    import java.lang.ProcessBuilder
+    val pb = new ProcessBuilder(cmd)
+    pb.redirectErrorStream(false)   // keep stderr separate
+
+    val p = pb.start()
+
+    val reader = new BufferedReader(new InputStreamReader(p.getInputStream))
+
+    def loop(): LazyList[String] =
+      val line = reader.readLine()
+      if line == null then LazyList.empty
+      else line #:: loop()
+
+    loop()
+
+  def where(prog: String): String =
+    if isWin then
+      val winprog = prog.stripSuffix(".exe")
+      call("where.exe", s"$winprog.exe").getOrElse(prog)
+    else
+      call("which", prog).getOrElse(prog)
+
+  def whereInPath(prog: String): Option[String] =
+    val name  = if isWin && !prog.endsWith(".exe") then prog + ".exe" else prog
+    val sep   = java.io.File.pathSeparator
+    val paths = sys.env.get("PATH").iterator.flatMap(_.split(sep))
+    paths
+      .map(p => java.nio.file.Paths.get(p, name))
+      .find(Files.isExecutable(_))
+      .map(_.toString)
+
   // Returns first stdout line if command succeeds
   def call(cmd: String, arg: String): Option[String] = {
     val buf = scala.collection.mutable.ListBuffer.empty[String]
@@ -86,9 +122,9 @@ object Proc {
   }
   lazy val exe: String = if isWin then ".exe" else ""
 
-  case class Proc(status: Int, stdout: Seq[String], stderr: Seq[String])
+  case class Proc[Out, Err](status: Int, stdout: Out, stderr: Err, e: Option[Exception] = None)
 
-  def spawn(cmd: String *): Proc = {
+  def spawn(cmd: String *): Proc[Seq[String], Seq[String]] = {
     import scala.collection.mutable.ListBuffer
     val (stdout, stderr) = (ListBuffer.empty[String], ListBuffer.empty[String])
     val cmdArray = cmd.toArray.updated(0, cmd.head.stripSuffix(exe) + exe)
@@ -120,33 +156,125 @@ object Proc {
     }
   }
 
-  def lazyLines(cmd: String): LazyList[String] =
-    import java.lang.ProcessBuilder
-    val pb = new ProcessBuilder(cmd)
-    pb.redirectErrorStream(false)   // keep stderr separate
+  def shellExecProc(bashCommand: String): Proc[Seq[String], Seq[String]] = {
+    try {
+      val cmd = Seq(bashExe, "-c", bashCommand)
+      spawn(cmd *)
+    } catch {
+      case e: Exception =>
+        Proc(-1, Nil, Nil, Some(e))
+    }
+  }
 
-    val p = pb.start()
+  // happy path wrapper
+  def shellExec(bashCommand: String): Seq[String] = {
+    val proc = shellExecProc(bashCommand)
+    proc.stdout
+  }
 
-    val reader = new BufferedReader(new InputStreamReader(p.getInputStream))
+  import scala.collection.mutable.Queue
+  import scala.concurrent.{ExecutionContext, Future}
+  import scala.sys.process._
+  import java.io.{BufferedReader, InputStream, InputStreamReader}
 
-    def loop(): LazyList[String] =
-      val line = reader.readLine()
-      if line == null then LazyList.empty
-      else line #:: loop()
+  case class StreamingProc(
+    status: Int,
+    stdout: LazyList[String],
+    stderr: LazyList[String],
+    cancel: () => Unit
+  )
+  def spawnStreaming(cmd: String*)(using ec: ExecutionContext): StreamingProc = {
+    val stdoutQ = Queue.empty[String]
+    val stderrQ = Queue.empty[String]
 
-    loop()
+    @volatile var stdoutDone  = false
+    @volatile var stderrDone  = false
+    @volatile var cancelled   = false
 
-  def whereInPath(prog: String): Option[String] =
-    val name  = if isWin && !prog.endsWith(".exe") then prog + ".exe" else prog
-    val sep   = java.io.File.pathSeparator
-    val paths = sys.env.get("PATH").iterator.flatMap(_.split(sep))
-    paths
-      .map(p => java.nio.file.Paths.get(p, name))
-      .find(Files.isExecutable(_))
-      .map(_.toString)
+    def readerThread(is: InputStream, q: Queue[String], markDone: => Unit): Unit =
+      Future {
+        val br = new BufferedReader(new InputStreamReader(is))
+        try {
+          var line: String | Null = null
+          while (!cancelled && { line = br.readLine(); line != null }) {
+            q.synchronized {
+              q.enqueue(line)
+              q.notifyAll()
+            }
+          }
+        } finally {
+          markDone
+          q.synchronized { q.notifyAll() }
+          br.close()
+        }
+      }
+
+    def streamFrom(q: Queue[String], doneFlag: => Boolean): LazyList[String] = {
+      def next: Option[String] =
+        q.synchronized {
+          while (q.isEmpty && !doneFlag && !cancelled)
+            q.wait()
+          if (q.nonEmpty) Some(q.dequeue())
+          else None
+        }
+
+      LazyList
+        .continually(next)
+        .takeWhile(_.isDefined)
+        .map(_.get)
+    }
+
+    val io = new ProcessIO(
+      _   => (),
+      out => readerThread(out, stdoutQ, { stdoutDone = true }),
+      err => readerThread(err, stderrQ, { stderrDone = true })
+    )
+
+    val p = Process(cmd).run(io)
+
+    val stdoutStream = streamFrom(stdoutQ, stdoutDone)
+    val stderrStream = streamFrom(stderrQ, stderrDone)
+
+    // Wait for both readers to finish before capturing final status
+    while (!stdoutDone || !stderrDone) {
+      Thread.sleep(1)
+    }
+    val exitStatus = p.exitValue()
+
+    def cancelFn(): Unit = {
+      cancelled = true
+      stdoutQ.synchronized { stdoutQ.notifyAll() }
+      stderrQ.synchronized { stderrQ.notifyAll() }
+      p.destroy()
+    }
+
+    StreamingProc(exitStatus, stdoutStream, stderrStream, cancelFn)
+  }
+
+  lazy val bashExe = if isWin then
+    call("where.exe", "bash.exe").getOrElse("bash.exe")
+  else
+    "/bin/bash"
+
+  lazy val unameExe = where("uname")
+
+  // uname wrapper preserved exactly
+  def uname(arg: String = "-a"): String = {
+    val exe = if isWin then ".exe" else ""
+    call(s"uname$exe", arg).getOrElse("")
+  }
+  lazy val osType: String = sys.props("os.name").toLowerCase match {
+  case s if s.contains("windows")  => "windows"
+  case s if s.contains("linux")    => "linux"
+  case s if s.contains("mac os x") => "darwin"
+  case other =>
+    sys.error(s"osType is [$other]")
+  }
 }
 
 lazy val pwd: Path = JPaths.get(config.userdir)
+
+def isWinshell: Boolean = isWin && Properties.propOrNone("MSYSTEM").nonEmpty
 
 object Internals {
   import ext.*
@@ -346,9 +474,8 @@ object Internals {
     sys.error(s"osType is [$other]")
   }
  
-  def shellRoot: String = if isWin then call("cygpath.exe", "-m", "/").getOrElse("") else ""
+  //def shellRoot: String = if isWin then call("cygpath.exe", "-m", "/").getOrElse("") else ""
 
-  def isWinshell: Boolean = Properties.propOrNone("MSYSTEM").nonEmpty
   lazy val here  = pwd.toAbsolutePath.normalize.toString.toLowerCase(Locale.ROOT).replace('\\', '/')
   lazy val uhere = here.replaceFirst("^[a-zA-Z]:", "")
   def hereDrive: String = {
