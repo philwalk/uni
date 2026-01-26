@@ -17,6 +17,8 @@ export Proc.{call, shellExec, shellExecProc, spawn, spawnStreaming, execLines}
 export Proc.{lazyLines, bashExe, unameExe, uname, osType, where}
 export System.err.printf as eprintf
 
+val verboseUni: Boolean = Option(System.getenv("VERBOSE_UNI")).nonEmpty
+
 def progName(mainObject: AnyRef) = Option(sys.props("scala.source.names")).getOrElse {
   // usage: progName(this) from the main object.
   val str = mainObject match {

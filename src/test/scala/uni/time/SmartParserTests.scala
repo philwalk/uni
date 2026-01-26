@@ -9,18 +9,17 @@ import TestDates.*
 import munit.FunSuite
 
 class SmartParserTests extends FunSuite {
-  // -----------------------------
-  // parseDateTime tests
-  // -----------------------------
-  for ((teststr, expected) <- testDatesExpected) {
-    test(s"parseDateTime should parse :[$teststr]") {
+  // --------------------------------
+  // parse testDates against expected
+  // --------------------------------
+  for (((teststr, expectedTimestamp), index) <- TestDates.testDatesExpected.zipWithIndex) {
+    test(s"parseSmart should properly parse string [$teststr]") {
       val pDate: LocalDateTime = parseDate(teststr)
-      val pds = pDate.toString("yyyy/MM/dd")
-
-      if (pds != expected)
-        hook += 1
-
-      assertEquals(pds, expected)
+      val pds    = pDate.toString("yyyy-MM-dd")
+      val expectedDate = expectedTimestamp.replaceAll("T.*", "")
+      assertEquals(pds, expectedDate,
+        s"Input: $teststr\nOutput: $pDate\nIndex: $index"
+      )
     }
   }
 
@@ -71,17 +70,6 @@ class SmartParserTests extends FunSuite {
       sortedByString,
       "Sorting mismatch between parser-sorted and epoch-sorted lists"
     )
-  }
-
-  // --------------------------------
-  // parse testDates against expected
-  // --------------------------------
-  for ((teststr, expected) <- TestDates.testDatesExpected) {
-    test(s"parseSmart should properly parse string [$teststr]") {
-      val pDate: LocalDateTime = parseDate(teststr)
-      val pds    = pDate.toString("yyyy/MM/dd")
-      assertEquals(pds, expected)
-    }
   }
 
   for (teststr <- TestDates.testDatesToIso) {
@@ -326,69 +314,69 @@ object TestDates {
 
   val testDatesExpected = List(
     // SquashedMonthDay
-    ("Apr12-11",                               "2011/04/12"),
+    ("Apr12-11",                               "2011-04-12T00:00:00"),
 
     // HyphenDMY (textual month)
-    ("11-Apr-2016",                            "2016/04/11"),
+    ("11-Apr-2016",                            "2016-04-11T00:00:00"),
 
     // SlashMDY (date-only)
-    ("05/06/1993",                             "1993/05/06"),
+    ("05/06/1993",                             "1993-05-06T00:00:00"),
 
     // SlashMDY (24-hour time with offset)
-    ("04/08/2009 18:17:08 -0700",              "2009/04/08"),
+    ("04/08/2009 18:17:08 -0700",              "2009-04-08T18:17:08"),
 
     // SlashMDY (AM/PM with seconds)
-    ("04/12/1992 01:58 PM",                    "1992/04/12"),
+    ("04/12/1992 01:58 PM",                    "1992-04-12T13:58:00"),
 
     // SlashMDY (AM/PM without seconds)
-    ("1/10/2009 4:05 PM",                      "2009/01/10"),
+    ("1/10/2009 4:05 PM",                      "2009-01-10T16:05:00"),
 
     // SlashDMY (unambiguous)
-    ("31/05/2009 08:59:59 -0000",              "2009/05/31"),
+    ("31/05/2009 08:59:59 -0000",              "2009-05-31T08:59:59"),
 
     // SlashDMY (unambiguous by >12 rule)
-    ("22/11/1992 07:25:19 -0800",              "1992/11/22"),
+    ("22/11/1992 07:25:19 -0800",              "1992-11-22T07:25:19"),
 
     // SlashYMD (date-only)
-    ("1992/03/04",                             "1992/03/04"),
+    ("1992/03/04",                             "1992-03-04T00:00:00"),
 
     // SlashYMD (24-hour time)
-    ("2009/03/30 22:10:03",                    "2009/03/30"),
+    ("2009/03/30 22:10:03",                    "2009-03-30T22:10:03"),
 
     // SlashYMD (fractional seconds)
-    ("2009/03/24 21:48:25.0",                  "2009/03/24"),
+    ("2009/03/24 21:48:25.0",                  "2009-03-24T21:48:25"),
 
     // MonthCommaYear
-    ("May 16, 2014",                           "2014/05/16"),
+    ("May 16, 2014",                           "2014-05-16T00:00:00"),
 
     // MonthCommaYear (no space after comma)
-    ("May 16,2014",                            "2014/05/16"),
+    ("May 16,2014",                            "2014-05-16T00:00:00"),
 
     // RFCish (weekday, no parentheses)
-    ("Mon, 01 Jan 2001 12:34:56 -0700",        "2001/01/01"),
+    ("Mon, 01 Jan 2001 12:34:56 -0700",        "2001-01-01T12:34:56"),
 
     // RFCish (weekday, with parentheses — normalized away)
-    ("Mon, 01 Jan 2001 12:34:56 -0700 (MDT)",  "2001/01/01"),
+    ("Mon, 01 Jan 2001 12:34:56 -0700 (MDT)",  "2001-01-01T12:34:56"),
 
     // RFCish (no weekday)
-    ("01 Jan 2001 12:34:56 -0700",             "2001/01/01"),
+    ("01 Jan 2001 12:34:56 -0700",             "2001-01-01T12:34:56"),
 
     // RFCish (AM/PM variant)
-    ("Fri Jan 10 2014 2:34:17 PM EST",         "2014/01/10"),
+    ("Fri Jan 10 2014 2:34:17 PM EST",         "2014-01-10T14:34:17"),
 
-    // Hyphenated YMD (missing previously)
-    ("2009-03-24",                             "2009/03/24"),
+    // Hyphenated YMD
+    ("2009-03-24",                             "2009-03-24T00:00:00"),
 
     // ISO 8601 with T separator
-    ("2009-03-24T21:48:25Z",                   "2009/03/24"),
+    ("2009-03-24T21:48:25Z",                   "2009-03-24T21:48:25"),
 
     // ISO 8601 with offset
-    ("2009-03-24T21:48:25-07:00",              "2009/03/24"),
+    ("2009-03-24T21:48:25-07:00",              "2009-03-24T21:48:25"),
 
     // ISO 8601 with fractional seconds
-    ("2009-03-24T21:48:25.123Z",               "2009/03/24"),
+    ("2009-03-24T21:48:25.123Z",               "2009-03-24T21:48:25"),
 
     // SlashMDY ambiguous → MDY default
-    ("2/11/2009 16:34:32 -0800",               "2009/02/11")
+    ("2/11/2009 16:34:32 -0800",               "2009-02-11T16:34:32")
   )
 }

@@ -4,11 +4,25 @@ import uni.*
 import java.time.LocalDateTime
 
 object ChronoParse {
-  private[uni] var verbose = false
   private lazy val BadDate: LocalDateTime = yyyyMMddHHmmssToDate(List(1900,01,01))
   private lazy val now: LocalDateTime = LocalDateTime.now()
   private lazy val MonthNamesPattern = "(?i)(.*)(Jan[uary]*|Feb[ruary]*|Mar[ch]*|Apr[il]*|May|June?|July?|Aug[ust]*|Sep[tember]*|Oct[ober]*|Nov[ember]*|Dec[ember]*)(.*)".r
   var monthFirst = true // enforced convention for ambiguous month/day versus day/month
+
+  def parseDateChrono(inpDateStr: String): LocalDateTime = {
+    if (inpDateStr.trim.isEmpty) {
+      BadDate
+    } else {
+      def isDigit(c: Char): Boolean = c >= '0' && c <= '9'
+      val digitcount = inpDateStr.filter { (c: Char) => isDigit(c) }.size
+      if (digitcount < 3 || digitcount > 19) {
+        BadDate
+      } else {
+        val flds = uni.time.ChronoParse(inpDateStr) // might return BadDate!
+        flds.dateTime 
+      }
+    }
+  }
 
   /*
    * ChronoParse constructor.
@@ -37,7 +51,7 @@ object ChronoParse {
     if (!isPossibleDateString(normed)) {
       BadChrono
     } else {
-      val (datefields, timestring, timezone, _monthIndex, _yearIndex) = cleanPrep(normed)
+      val (datefields, timestring, timezone, _monthIndex, _yearIndex, pmFlag) = cleanPrep(normed)
       var (monthIndex: Int, yearIndex: Int) = (_monthIndex, _yearIndex)
       val clean = s"${datefields.mkString(" ")} ${timestring} $timezone".trim
       var _datenumstrings: IndexedSeq[String] = Nil.toIndexedSeq
@@ -109,6 +123,7 @@ object ChronoParse {
             val rite: Seq[String] = datenumstrings.tail
             val (mid: Seq[String], tail: Seq[String]) = rite.splitAt(1)
             val hrmin: String = mid.mkString
+            //eprintf("hrmin[%s]\n", hrmin)
             if (hrmin.matches("[0-9]{3,4}")) {
               val (hr: String, min: String) = hrmin.splitAt(hrmin.length-2)
               val hour = if (hr.length == 1) {
@@ -157,7 +172,7 @@ object ChronoParse {
               hook += 1 // TODO
           }
         }
-        if verbose then printf("confident: %s\n", confident)
+        if verboseUni then printf("confident: %s\n", confident)
         def centuryPrefix(year: Int = now.getYear): String = {
           century(year).toString.take(2)
         }
@@ -446,7 +461,7 @@ object ChronoParse {
             hook += 1
           }
           val standardOrder = List(nums(iy), nums(im), nums(id)) ++ nums.drop(3)
-          yyyyMMddHHmmssToDate(standardOrder)
+          yyyyMMddHHmmssToDate(standardOrder, pmFlag)
         }
         val dateTime: LocalDateTime = bareformats match {
           case "d" :: "M" :: "y" :: tail => ymd(2,1,0, tail)
@@ -486,12 +501,10 @@ object ChronoParse {
     (monthIndex, cleanFields.toIndexedSeq)
   }
 
-  private def cleanPrep(rawdatetime: String): (Seq[String], String, String, Int, Int) = {
+  private def cleanPrep(rawdatetime: String): (Seq[String], String, String, Int, Int, Boolean) = {
     var monthIndex: Int = -1
     var yearIndex: Int = -1
-    if (rawdatetime.endsWith(" 2020")) {
-      hook += 1
-    }
+    var pmFlag = false
     val (datefields, timestring, timezone) = {
       // toss weekday name, convert month name to number
       val (cleandates: Array[String], cleantimes: Array[String], timezone: String) = {
@@ -514,7 +527,11 @@ object ChronoParse {
           val ff = cleaned.
             split(splitRegex).
             filter {
-              case "-AM" | "AM" => false
+              case "-AM" | "AM" =>
+                false
+              case "-PM" | "PM" =>
+                pmFlag = true
+                true
               case _ => true
             }
           ff.partition {
@@ -572,7 +589,7 @@ object ChronoParse {
 
       (datefields, timestring, timezone)
     }
-    (datefields, timestring, timezone, monthIndex, yearIndex)
+    (datefields, timestring, timezone, monthIndex, yearIndex, pmFlag)
   }
 
   private lazy val BadChrono = new ChronoParse(BadDate, "", "", Nil, false)
@@ -599,44 +616,49 @@ object ChronoParse {
     val Seq(y: Int, m: Int, d: Int) = ymd
     validYear(y) && validMonth(m) && validDay(d)
   }
-  private def validTimeFields(nums: Seq[Int]): Boolean = {
-    nums.forall { (n: Int) => n >= 0 && n <= 59 }
-  }
-  private def yyyyMMddHHmmssToDate(so: List[Int]): LocalDateTime = {
-    if (!validYmd(so.take(3))) {
-      BadDate 
-    } else if(!validTimeFields(so.drop(3))) {
-      BadDate 
-    } else {
-      so.take(7) match {
-      case yr :: mo :: dy :: hr :: mn :: sc :: nano :: Nil =>
-        if (hr > 12 || mn > 12 || sc > 12) {
-          BadDate
-        } else {
-          LocalDateTime.of(yr, mo, dy, hr, mn, sc, nano)
-        }
-      case yr :: mo :: dy :: hr :: mn :: sc :: Nil =>
-        if (sc > 59 || mn > 59 || hr > 59) {
-          hook += 1
-        }
-        LocalDateTime.of(yr, mo, dy, hr, mn, sc)
-      case yr :: mo :: dy :: hr :: mn :: Nil =>
-        LocalDateTime.of(yr, mo, dy, hr, mn, 0)
-      case yr :: mo :: dy :: hr :: Nil =>
-        if (hr > 23) {
-          hook += 1
-        }
-        LocalDateTime.of(yr, mo, dy, hr, 0, 0)
-      case yr :: mo :: dy :: Nil =>
-        if (mo > 12) {
-          hook += 1
-        }
-        LocalDateTime.of(yr, mo, dy, 0, 0, 0)
-      case other =>
-        //sys.error(s"not enough date-time fields: [${so.mkString("|")}]")
-        BadDate
-      }
-    }
+
+  private def yyyyMMddHHmmssToDate(
+    fields: List[Int],
+    pm: Boolean = false
+  ): LocalDateTime = {
+    def valid24(hr: Int, mn: Int, sc: Int): Boolean =
+      hr >= 0 && hr <= 23 &&
+      mn >= 0 && mn <= 59 &&
+      sc >= 0 && sc <= 59
+    def valid12(hr: Int, mn: Int, sc: Int): Boolean =
+      hr >= 1 && hr <= 12 &&
+      mn >= 0 && mn <= 59 &&
+      sc >= 0 && sc <= 59
+
+    // Extract YMD
+    val (yr, mo, dy) = fields match
+      case y :: m :: d :: _ => (y, m, d)
+      case _                => return BadDate
+
+    if !validYmd(List(yr, mo, dy)) then return BadDate
+
+    // Extract time components (defaulting missing ones)
+    val (hr0, mn0, sc0, nano0) = fields.drop(3) match
+      case h :: m :: s :: n :: _ => (h, m, s, n)
+      case h :: m :: s :: Nil    => (h, m, s, 0)
+      case h :: m :: Nil         => (h, m, 0, 0)
+      case h :: Nil              => (h, 0, 0, 0)
+      case Nil                   => (0, 0, 0, 0)
+
+    // Validate time according to AM/PM or 24-hour rules
+    val valid =
+      if pm then valid12(hr0, mn0, sc0)
+      else valid24(hr0, mn0, sc0)
+
+    if !valid then return BadDate
+
+    // Apply PM conversion
+    val hr = if pm then
+      if hr0 == 12 then 12 else hr0 + 12
+    else
+      hr0
+
+    LocalDateTime.of(yr, mo, dy, hr, mn0, sc0, nano0)
   }
 
   private lazy val timeZoneCodes = Set(
@@ -886,7 +908,7 @@ object ChronoParse {
           false
         }
       }
-      if verbose then printf("digits: %d, nondigits: %d, bogus: %d\n", digits, nondigits, bogus)
+      if verboseUni then printf("digits: %d, nondigits: %d, bogus: %d\n", digits, nondigits, bogus)
       val density = 100.0 * validchars.size.toDouble / s.length.toDouble
       val proportion = 100.0 * nondigits.toDouble / (digits+1.0)
       digits >= 3 && digits <= 19 && density >= 30.0 && proportion < 35.0
