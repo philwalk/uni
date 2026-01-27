@@ -1,6 +1,6 @@
 package uni.time
 
-import uni.*
+import uni.verboseUni
 
 import java.time.temporal.ChronoUnit
 import java.time.Duration
@@ -10,7 +10,9 @@ import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeParseException
 import scala.util.matching.Regex
 
-export TimeUtils.{now, parseDate, parseDateChrono}
+export ChronoParse.parseDateChrono
+export SmarterParse.parseDateSmart
+export TimeUtils.{now, parseDate}
 
 extension (inst: Instant)
   def toString(
@@ -25,22 +27,25 @@ extension (dt: LocalDateTime)
   def toString(fmt: String): String =
     dt.format(DateTimeFormatter.ofPattern(fmt))
 
-package object TimeUtils {
+object TimeUtils {
+  private var hook = 0
 
   def parseDate(datestr: String, format: String = ""): LocalDateTime = {
     try {
-      SmartParse.parseDateSmart(datestr)
+      parseDateSmart(datestr)
     } catch {
       case d: DateTimeParseException =>
         if verboseUni then
-          val dtype = SmartParse.classify(datestr)
+          val dtype = SmarterParse.classify(datestr)
           System.err.println(s"[$datestr] classified as [$dtype]")
+
         parseDateChrono(datestr) // return BadDate rather than throwing an exception
         //throw d
     }
   }
 
   // this depends on uni.time.ChronoParse
+  /*
   def parseDateChrono(inpDateStr: String): LocalDateTime = {
     if (inpDateStr.trim.isEmpty) {
       BadDate
@@ -55,6 +60,7 @@ package object TimeUtils {
       }
     }
   }
+  */
 
   val EasternTime: ZoneId  = java.time.ZoneId.of("America/New_York")
   val MountainTime: ZoneId = java.time.ZoneId.of("America/Denver")

@@ -9,6 +9,139 @@ import TestDates.*
 import munit.FunSuite
 
 class SmartParserTests extends FunSuite {
+  test("mdy-with-time") {
+    val localdatetime = parseDate("04/08 18:17:08 2009")
+    printf("%s\n", localdatetime)
+  }
+  
+  test("classifier matches pattern buckets") {
+    var iterations = 100
+    var seedcounter = 0
+    for
+      (shape, patterns) <- SmarterParse.patternsByShape
+      pattern <- patterns
+      i <- 0 until iterations
+    do
+      ExampleGenerator.seed(seedcounter)
+      seedcounter += 1
+
+      val (example, expected) = ExampleGenerator.exampleForPattern(pattern)
+      if verboseUni then println(s"example: $example, expected: $expected")
+      val inferred = SmarterParse.classify(example)
+      if shape != inferred && verboseUni then
+        println(s"shape[$shape] != inferred[$inferred]")
+
+      assertEquals(
+        inferred,
+        expected,
+        s"Pattern $pattern misclassified for example: '$example'"
+      )
+  }
+  /*
+    SmarterParse.patternsByShape.foreach { (shape, patterns) =>
+      patterns.foreach { p =>
+        val (example, expected) = ExampleGenerator.exampleForPattern(p)
+        val inferred = SmarterParse.classify(example)
+        if shape != inferred && verboseUni then
+          println(s"shape[$shape] != inferred[$inferred]")
+        assertEquals(inferred, expected, s"Pattern $p misclassified for example: '$example'")
+      }
+    }
+  }
+  */
+
+  test("Pareto of shapes in test corpus") {
+    val allTestStrings: Seq[String] = TestDates.all // Your test corpus: replace with your actual list
+
+    // Classify each string
+    val classified: Seq[(String, SmarterParse.Shape)] = allTestStrings.map(s => s -> SmarterParse.classify(s))
+
+    // Group by shape
+    val grouped: Map[SmarterParse.Shape, Seq[String]] = classified.groupBy(_._2).view.mapValues(_.map(_._1)).toMap
+
+    // Sort by descending count (Pareto)
+    val pareto = grouped.toSeq.sortBy { case (_, strs) => -strs.size }
+
+    // Pretty print
+    println("\n=== Pareto of Shapes ===")
+    pareto.foreach { case (shape, strs) =>
+      println(f"${shape.toString}%-18s  count=${strs.size}%4d")
+    }
+
+    // Optional: fail if any shape has zero coverage
+    val missing = SmarterParse.Shape.values.toSet -- grouped.keySet
+
+    assertEquals(
+      missing,
+      Set.empty[SmarterParse.Shape],
+      s"Shapes with no test coverage: $missing"
+    )
+  }
+
+  test("patternsByShape") {
+    SmarterParse.patternsByShape.foreach { (shape, list) =>
+      if list.distinct != list then
+        fail(s"$shape:\n${list.mkString("\n")}")
+    }
+    val patterns = SmarterParse.patternsByShape.values.toSeq.flatten
+    val duples = patterns.groupBy(identity).collect { case (p, xs) if xs.size > 1 => p }
+    assertEquals(duples.size, 0, duples)
+  }
+  test("sharedPatterns") {
+    // 1. No duplicates within a shape
+    SmarterParse.patternsByShape.foreach { (shape, list) =>
+      val dups = list.groupBy(identity).collect { case (p, xs) if xs.size > 1 => p }
+      if dups.nonEmpty then
+        fail(s"Shape $shape contains duplicate patterns:\n${dups.mkString("\n")}")
+    }
+
+    // 2. Build reverse index: pattern -> shapes that contain it
+    val reverse =
+      SmarterParse.patternsByShape.toSeq
+        .flatMap { case (shape, list) => list.map(_ -> shape) }
+        .groupBy(_._1)
+        .view
+        .mapValues(_.map(_._2))
+        .toMap
+
+    // 3. Find patterns that appear in more than one shape
+    val collisions =
+      reverse.collect { case (pattern, shapes) if shapes.distinct.size > 1 =>
+        pattern -> shapes.distinct
+      }
+
+    if collisions.nonEmpty then
+      val msg =
+        collisions
+          .map { case (p, shapes) =>
+            s"Pattern '$p' appears in shapes: ${shapes.mkString(", ")}"
+          }
+          .mkString("\n\n")
+
+      fail(s"patternsByShape contains cross-shape collisions:\n\n$msg")
+  }
+
+  test("smartParse should treat -, ., / delimiters equivalently for numeric dates") {
+    val cases = List(
+      ("04/12/1992", "1992-04-12T00:00:00"),
+      ("04-12-1992", "1992-04-12T00:00:00"),
+      ("04.12.1992", "1992-04-12T00:00:00"),
+
+      ("2019/01/31 0:01", "2019-01-31T00:01:00"),
+      ("2019-01-31 0:01", "2019-01-31T00:01:00"),
+      ("2019.01.31 0:01", "2019-01-31T00:01:00"),
+
+      ("31/05/2009 08:59:59", "2009-05-31T08:59:59"),
+      ("31-05/2009 08:59:59".replace('-', '/'), "2009-05-31T08:59:59"), // if you want DMY variants
+      ("31.05.2009 08:59:59", "2009-05-31T08:59:59")
+    )
+
+    cases.foreach { (in, expectedIso) =>
+      val dt = parseDateSmart(in)
+      assertEquals(dt.toString("yyyy-MM-dd'T'HH:mm:ss"), expectedIso)
+    }
+  }
+
   // --------------------------------
   // parse testDates against expected
   // --------------------------------
@@ -116,6 +249,9 @@ object TestDates {
   def toInt(s: String): Int = s.dropWhile(_ == '0') match {
   case ""  => 0
   case str => str.toInt
+  }
+  def all: Seq[String] = {
+    (testDatesExpected.map(_._1) ++ testDatesPlusExpected.map(_._1) ++ testDatesToIso).distinct
   }
 
   lazy val testDatesPlusExpected = List(
@@ -313,6 +449,16 @@ object TestDates {
   )
 
   val testDatesExpected = List(
+    // ISO 8601 with T separator
+    ("2009-03-24T21:48:25Z",                   "2009-03-24T21:48:25"),
+
+    // ISO 8601 with offset
+    ("2009-03-24T21:48:25-07:00",              "2009-03-24T21:48:25"),
+
+    // ISO 8601 with fractional seconds
+    ("2009-03-24T21:48:25.123Z",               "2009-03-24T21:48:25"),
+
+    
     // SquashedMonthDay
     ("Apr12-11",                               "2011-04-12T00:00:00"),
 
@@ -348,6 +494,9 @@ object TestDates {
 
     // MonthCommaYear
     ("May 16, 2014",                           "2014-05-16T00:00:00"),
+    ("May 12, 2024",                           "2024-05-12T00:00:00"),
+    ("May 12, 2024 2:30 PM",                   "2024-05-12T14:30:00"),
+    ("December 5, 2024",                       "2024-12-05T00:00:00"),
 
     // MonthCommaYear (no space after comma)
     ("May 16,2014",                            "2014-05-16T00:00:00"),
@@ -367,16 +516,12 @@ object TestDates {
     // Hyphenated YMD
     ("2009-03-24",                             "2009-03-24T00:00:00"),
 
-    // ISO 8601 with T separator
-    ("2009-03-24T21:48:25Z",                   "2009-03-24T21:48:25"),
-
-    // ISO 8601 with offset
-    ("2009-03-24T21:48:25-07:00",              "2009-03-24T21:48:25"),
-
-    // ISO 8601 with fractional seconds
-    ("2009-03-24T21:48:25.123Z",               "2009-03-24T21:48:25"),
-
     // SlashMDY ambiguous → MDY default
-    ("2/11/2009 16:34:32 -0800",               "2009-02-11T16:34:32")
+    ("2/11/2009 16:34:32 -0800",               "2009-02-11T16:34:32"),
+    
+    // RFC
+    ("Sun, 12 May 2024 14:30:00 +0000",        "2024-05-12T14:30:00"),
+    ("Sun, 12 May 2024 14:30:00 GMT",          "2024-05-12T14:30:00"),
   )
 }
+

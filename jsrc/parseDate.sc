@@ -2,13 +2,14 @@
 
 //> using dep org.vastblue:uni_3:0.7.0
 
+//import uni.{showUsage, eachArg, thisArg}
 import uni.*
+//import uni.time.TimeUtils.parseDate
 import uni.time.*
 
 object VerifyTestDates {
   def usage(m: String = ""): Nothing = {
-    showUsage(m, "",
-      "<filename>    ; input",
+    showUsage(m, "<date-time-string> [options]",
       " [-s]         ; smart parse",
       " [-c]         ; chrono parse",
       " [-f]         ; smart with fallback",
@@ -16,39 +17,37 @@ object VerifyTestDates {
   }
 
   var parseType = ""
+  var datestr = ""
   def main(args: Array[String]): Unit = {
     eachArg(args.toSeq, usage) {
+    case s if datestr.isEmpty =>
+      datestr = s
     case "-s" | "-c" | "-f" =>
       parseType = thisArg
     case arg =>
       usage(s"unrecognized arg [$arg]")
     }
     if parseType.isEmpty then
-      usage()
+      parseType = "-s"
 
-    val expectedVersusInput = "data/generatedTestdates.csv".path
-    val pairs = expectedVersusInput.csvRows.drop(1).toSeq
-      
+    val compFmt = "yyyy-MM-dd HH:mm:ss"
+    try {
+      val test: java.time.LocalDateTime = parse(datestr)
+      val testiso = test.toString(compFmt)
+      printf("%s | %s # %s\n", test, testiso, datestr)
+    } catch {
+      case e: Exception =>
+        System.err.printf("%s\n", e.getMessage)
+    }
     def parse(target: String): java.time.LocalDateTime = {
       parseType match {
       case "-s" => parseDateSmart(target)
       case "-c" => parseDateChrono(target)
-      case "-f" => parseDate(target)
+      case "-f" => uni.time.TimeUtils.parseDate(target)
       case _ => usage(s"bad parseType [$parseType]")
       }
     }
-    val compFmt = "yyyy-MM-dd HH:mm:ss"
-    for ((Seq(expect, target), i) <- pairs.zipWithIndex) {
-      try {
-        val test: java.time.LocalDateTime = parse(target)
-        val testiso = test.toString(compFmt)
-        if expect != testiso then
-          printf("%3d, %s, %s\n", i+2, expect, test)
-      } catch {
-        case e: Exception =>
-          System.err.printf("%s\n", e.getMessage)
-      }
-    }
   }
+
 
 }

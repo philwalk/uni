@@ -9,6 +9,27 @@ import TestDates.*
 import munit.FunSuite
 
 class ChronoParseTests extends FunSuite {
+  test("chronoParse should match smartParse for -, ., / numeric dates") {
+    val inputs = List(
+      "04/12/1992",
+      "04-12-1992",
+      "04.12.1992",
+      "2019/01/31 0:01",
+      "2019-01-31 0:01",
+      "2019.01.31 0:01"
+    )
+
+    inputs.foreach { in =>
+      val s = parseDateSmart(in)
+      val c = parseDateChrono(in)
+      assertEquals(
+        s.toString("yyyy-MM-dd'T'HH:mm:ss"),
+        c.toString("yyyy-MM-dd'T'HH:mm:ss"),
+        s"Mismatch for input: $in"
+      )
+    }
+  }
+
   // --------------------------------
   // parse testDates against expected
   // --------------------------------
