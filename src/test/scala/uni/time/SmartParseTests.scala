@@ -8,28 +8,30 @@ import TestDates.*
 
 import munit.FunSuite
 
-class SmartParserTests extends FunSuite {
+class SmartParseTests extends FunSuite {
+  private var hook = 0
   test("mdy-with-time") {
     val localdatetime = parseDate("04/08 18:17:08 2009")
     printf("%s\n", localdatetime)
+    hook += 1
   }
   
   test("classifier matches pattern buckets") {
     var iterations = 100
     var seedcounter = 0
     for
-      (shape, patterns) <- SmarterParse.patternsByShape
+      (shape, patterns) <- SmartParse.patternsByShape
       pattern <- patterns
       i <- 0 until iterations
     do
-      ExampleGenerator.seed(seedcounter)
+      ExampleGeneratorSmarter.seed(seedcounter)
       seedcounter += 1
 
-      val (example, expected) = ExampleGenerator.exampleForPattern(pattern)
+      val (example, expected) = ExampleGeneratorSmarter.exampleForPattern(pattern)
       if verboseUni then println(s"example: $example, expected: $expected")
-      val inferred = SmarterParse.classify(example)
-      if shape != inferred && verboseUni then
-        println(s"shape[$shape] != inferred[$inferred]")
+      val inferred = SmartParse.classify(example)
+      if shape != inferred && (true || verboseUni) then
+        println(s"shape[$shape] != inferred[$inferred] for seed ${seedcounter-1} and date '${example}'")
 
       assertEquals(
         inferred,
@@ -37,27 +39,15 @@ class SmartParserTests extends FunSuite {
         s"Pattern $pattern misclassified for example: '$example'"
       )
   }
-  /*
-    SmarterParse.patternsByShape.foreach { (shape, patterns) =>
-      patterns.foreach { p =>
-        val (example, expected) = ExampleGenerator.exampleForPattern(p)
-        val inferred = SmarterParse.classify(example)
-        if shape != inferred && verboseUni then
-          println(s"shape[$shape] != inferred[$inferred]")
-        assertEquals(inferred, expected, s"Pattern $p misclassified for example: '$example'")
-      }
-    }
-  }
-  */
 
   test("Pareto of shapes in test corpus") {
     val allTestStrings: Seq[String] = TestDates.all // Your test corpus: replace with your actual list
 
     // Classify each string
-    val classified: Seq[(String, SmarterParse.Shape)] = allTestStrings.map(s => s -> SmarterParse.classify(s))
+    val classified: Seq[(String, SmartParse.Shape)] = allTestStrings.map(s => s -> SmartParse.classify(s))
 
     // Group by shape
-    val grouped: Map[SmarterParse.Shape, Seq[String]] = classified.groupBy(_._2).view.mapValues(_.map(_._1)).toMap
+    val grouped: Map[SmartParse.Shape, Seq[String]] = classified.groupBy(_._2).view.mapValues(_.map(_._1)).toMap
 
     // Sort by descending count (Pareto)
     val pareto = grouped.toSeq.sortBy { case (_, strs) => -strs.size }
@@ -69,27 +59,27 @@ class SmartParserTests extends FunSuite {
     }
 
     // Optional: fail if any shape has zero coverage
-    val missing = SmarterParse.Shape.values.toSet -- grouped.keySet
+    val missing = SmartParse.Shape.values.toSet -- grouped.keySet
 
     assertEquals(
       missing,
-      Set.empty[SmarterParse.Shape],
+      Set.empty[SmartParse.Shape],
       s"Shapes with no test coverage: $missing"
     )
   }
 
   test("patternsByShape") {
-    SmarterParse.patternsByShape.foreach { (shape, list) =>
+    SmartParse.patternsByShape.foreach { (shape, list) =>
       if list.distinct != list then
         fail(s"$shape:\n${list.mkString("\n")}")
     }
-    val patterns = SmarterParse.patternsByShape.values.toSeq.flatten
+    val patterns = SmartParse.patternsByShape.values.toSeq.flatten
     val duples = patterns.groupBy(identity).collect { case (p, xs) if xs.size > 1 => p }
     assertEquals(duples.size, 0, duples)
   }
   test("sharedPatterns") {
     // 1. No duplicates within a shape
-    SmarterParse.patternsByShape.foreach { (shape, list) =>
+    SmartParse.patternsByShape.foreach { (shape, list) =>
       val dups = list.groupBy(identity).collect { case (p, xs) if xs.size > 1 => p }
       if dups.nonEmpty then
         fail(s"Shape $shape contains duplicate patterns:\n${dups.mkString("\n")}")
@@ -97,7 +87,7 @@ class SmartParserTests extends FunSuite {
 
     // 2. Build reverse index: pattern -> shapes that contain it
     val reverse =
-      SmarterParse.patternsByShape.toSeq
+      SmartParse.patternsByShape.toSeq
         .flatMap { case (shape, list) => list.map(_ -> shape) }
         .groupBy(_._1)
         .view
@@ -146,7 +136,7 @@ class SmartParserTests extends FunSuite {
   // parse testDates against expected
   // --------------------------------
   for (((teststr, expectedTimestamp), index) <- TestDates.testDatesExpected.zipWithIndex) {
-    test(s"parseSmart should properly parse string [$teststr]") {
+    test(s"parseSmarter should properly parse string [$teststr]") {
       val pDate: LocalDateTime = parseDate(teststr)
       val pds    = pDate.toString("yyyy-MM-dd")
       val expectedDate = expectedTimestamp.replaceAll("T.*", "")
@@ -171,10 +161,10 @@ class SmartParserTests extends FunSuite {
 
   for (str <- testDatesToIso) {
     test(s"parsing ISO formatted ${str} should be idempotent") {
-      val parsed1 = parseDate(str) // dateParser(str)
+      val parsed1 = parseDate(str) // dateParse(str)
       val iso1    = parsed1.toString("yyyy/MM/dd HH:mm:ss")
 
-      val parsed2 = parseDate(iso1) // dateParser(iso1)
+      val parsed2 = parseDate(iso1) // dateParse(iso1)
       val iso2    = parsed2.toString("yyyy/MM/dd HH:mm:ss")
 
       assertEquals(
@@ -187,19 +177,19 @@ class SmartParserTests extends FunSuite {
 
   test("parsed dates should sort consistently by timestamp") {
     val parsed = testDatesToIso.map { str =>
-      val dt = parseDate(str) // dateParser(str)
+      val dt = parseDate(str) // dateParse(str)
       val epoch = dt.atZone(MountainTime).toInstant.toEpochMilli
       (str, epoch)
     }
 
-    val sortedByParser = parsed.sortBy(_._2).map(_._1)
+    val sortedByParse = parsed.sortBy(_._2).map(_._1)
     val sortedByString = testDatesToIso.sortBy { str =>
-      //dateParser(str).atZone(MountainTime).toInstant.toEpochMilli
+      //dateParse(str).atZone(MountainTime).toInstant.toEpochMilli
       parseDate(str).atZone(MountainTime).toInstant.toEpochMilli
     }
 
     assertEquals(
-      sortedByParser,
+      sortedByParse,
       sortedByString,
       "Sorting mismatch between parser-sorted and epoch-sorted lists"
     )

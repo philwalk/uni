@@ -7,12 +7,12 @@ import java.time.Duration
 import java.time.{Instant, LocalDateTime, ZoneId}
 import java.time.temporal.{TemporalAdjuster, TemporalAdjusters}
 import java.time.format.DateTimeFormatter
-import java.time.format.DateTimeParseException
 import scala.util.matching.Regex
+//import java.time.format.DateTimeParseException
 
+export TimeUtils.{parseDate, BadDate, EmptyDate}
 export ChronoParse.parseDateChrono
-export SmarterParse.parseDateSmart
-export TimeUtils.{now, parseDate}
+export SmartParse.parseDateSmart
 
 extension (inst: Instant)
   def toString(
@@ -28,39 +28,22 @@ extension (dt: LocalDateTime)
     dt.format(DateTimeFormatter.ofPattern(fmt))
 
 object TimeUtils {
-  private var hook = 0
+  val BadDate: LocalDateTime   = LocalDateTime.of(1900, 1, 2, 3, 4, 5)
+  val EmptyDate: LocalDateTime = LocalDateTime.of(1800, 1, 2, 3, 4, 5)
 
   def parseDate(datestr: String, format: String = ""): LocalDateTime = {
-    try {
-      parseDateSmart(datestr)
-    } catch {
-      case d: DateTimeParseException =>
-        if verboseUni then
-          val dtype = SmarterParse.classify(datestr)
-          System.err.println(s"[$datestr] classified as [$dtype]")
-
-        parseDateChrono(datestr) // return BadDate rather than throwing an exception
-        //throw d
+    parseDateSmart(datestr) match {
+    case BadDate | EmptyDate =>
+      if verboseUni then
+        val dtype = SmartParse.classify(datestr)
+        System.err.println(s"[$datestr] classified as [$dtype]")
+      parseDateChrono(datestr) // return BadDate rather than throwing an exception
+    case d: LocalDateTime =>
+      d
+    case null =>
+      throw new IllegalArgumentException(s"null returned when parsing datestr [$datestr]")
     }
   }
-
-  // this depends on uni.time.ChronoParse
-  /*
-  def parseDateChrono(inpDateStr: String): LocalDateTime = {
-    if (inpDateStr.trim.isEmpty) {
-      BadDate
-    } else {
-      def isDigit(c: Char): Boolean = c >= '0' && c <= '9'
-      val digitcount = inpDateStr.filter { (c: Char) => isDigit(c) }.size
-      if (digitcount < 3 || digitcount > 19) {
-        BadDate
-      } else {
-        val flds = uni.time.ChronoParse(inpDateStr) // might return BadDate!
-        flds.dateTime 
-      }
-    }
-  }
-  */
 
   val EasternTime: ZoneId  = java.time.ZoneId.of("America/New_York")
   val MountainTime: ZoneId = java.time.ZoneId.of("America/Denver")
@@ -81,10 +64,6 @@ object TimeUtils {
 
   def numerifyNames(datestr: String) = {
     val noweekdayName = datestr.replaceAll("(?i)(Sun[day]*|Mon[day]*|Tue[sday]*|Wed[nesday]*|Thu[rsday]*|Fri[day]*|Sat[urday]*),? *", "")
-//    val nomonthName = datestr.replaceAll("(?i)(Jan[ury]*|Feb[ruay]*|Mar[ch]*|Apr[il]*|May|Jun[e]*|Jul[y]*|Aug[st]*|Sep[tmbr]*|Oct[ober]*|Nov[embr]*|Dec[mbr]*),? *", "")
-//    if (noweekdayName != datestr || nomonthName != datestr){
-//      hook += 1
-//    }
     noweekdayName match {
     case str if str.matches("(?i).*[JFMASOND][aerpuco][nbrylgptvc][a-z]*.*") =>
       var ff = str.replaceFirst("([a-zA-Z])([0-9])", "$1 $2").split("[-/,\\s]+")
@@ -103,9 +82,6 @@ object TimeUtils {
           ff(1) = tmp
         }
         val mstr = ff.head.take(3)
-        if (!mstr.toLowerCase.matches("[a-z]{3}")) {
-          hook += 1
-        }
         val month = ChronoParse.monthAbbrev2Number(mstr)
         ff = ff.drop(1)
         // format: off
@@ -221,9 +197,6 @@ object TimeUtils {
   def ageInDays(fname: String): Double = {
     ageInDays(new java.io.File(fname))
   }
-
-  lazy val BadDate: LocalDateTime   = parseDate("1900-01-01")
-  lazy val EmptyDate: LocalDateTime = parseDate("1800-01-01")
 
   object sysTimer {
     var begin         = System.currentTimeMillis

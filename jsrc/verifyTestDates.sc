@@ -43,7 +43,7 @@ object VerifyTestDates {
         val test: java.time.LocalDateTime = parse(target)
         val testiso = test.toString(compFmt)
         if expect != testiso then
-          printf("%3d, %s, %s\n", i+2, expect, test)
+          printf("%3d, %s, %s # %s\n", i+2, expect, testiso, target)
       } catch {
         case e: Exception =>
           System.err.printf("%s\n", e.getMessage)
