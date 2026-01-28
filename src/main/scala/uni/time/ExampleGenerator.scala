@@ -2,7 +2,7 @@ package uni.time
 
 import scala.util.Random
 
-object ExampleGeneratorSmarter:
+object ExampleGenerator:
   import SmartParse.{Shape, Pattern}
 
   private var rng: Random = new Random(0)

@@ -1,10 +1,10 @@
 package uni.time
 
 import uni.*
+import uni.time.*
 import java.time.LocalDateTime
 
 object ChronoParse {
-  private lazy val BadDate: LocalDateTime = yyyyMMddHHmmssToDate(List(1900,01,01))
   private lazy val now: LocalDateTime = LocalDateTime.now()
   private lazy val MonthNamesPattern = "(?i)(.*)(Jan[uary]*|Feb[ruary]*|Mar[ch]*|Apr[il]*|May|June?|July?|Aug[ust]*|Sep[tember]*|Oct[ober]*|Nov[ember]*|Dec[ember]*)(.*)".r
   var monthFirst = true // enforced convention for ambiguous month/day versus day/month

@@ -16,21 +16,21 @@ object DateTester {
   }
 
   var testdate = ""
+  var verbose = false
   def main(args: Array[String]): Unit = {
     eachArg(args.toSeq, usage) {
+    case "-v" =>
+      verbose = true
     case s if s.matches(".*[0-9].*") =>
       testdate = s
     case arg =>
       usage(s"unrecognized arg [$arg]")
     }
     if testdate.nonEmpty then
-      println("S")
       val smartr = parseDateSmart(testdate)
-      println("C")
       val chrono = parseDateChrono(testdate)
-      println("F")
       val fallbk = parseDate(testdate)
-      if chrono != smartr then
+      if verbose || chrono != smartr then
         printf("# [%s]\n", testdate)
         printf("  smartr: %s\n", smartr)
         printf("  chrono: %s\n", chrono)
