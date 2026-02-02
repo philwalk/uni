@@ -2,11 +2,14 @@ package uni.ext
 
 import uni.*
 import java.nio.file.Path
+import java.io.{File as JFile}
 
 /** String Extension methods */
 object stringExts {
   extension (str: String) {
     def path: Path = Paths.get(str)
+    def asPath: Path = Paths.get(str)
+    def toFile: JFile = Paths.get(str).toFile
     def posx: String = normalizePosix(str)
     def posix: String = posixAbs(str)
 

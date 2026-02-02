@@ -1,4 +1,5 @@
-data/
+data/*
+!data/testdates.sc
 ../
 *.jar
 *.class

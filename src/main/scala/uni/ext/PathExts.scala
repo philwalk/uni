@@ -1,13 +1,15 @@
 package uni.ext
 
+import java.nio.charset.{Charset, MalformedInputException, StandardCharsets}
 import java.io.{File as JFile}
 import java.nio.file.{Path, Files, StandardCopyOption}
-import java.nio.charset.{Charset, StandardCharsets}
 import StandardCharsets.{UTF_8, ISO_8859_1 as Latin1}
-//import helpers.*
-import uni.*
-import uni.Internals.*
 import scala.jdk.CollectionConverters.*
+import uni.*
+import uni.time.*
+import uni.Internals.*
+import java.time.LocalDateTime
+import java.time.ZoneId
 
 /** Path Extension methods */
 object pathExts {
@@ -16,11 +18,15 @@ object pathExts {
     def isDirectory: Boolean = Files.isDirectory(p)
     def isFile: Boolean = Files.isRegularFile(p)
     def name: String = p.getFileName.toString
+    def length: Long = if Files.exists(p) then Files.size(p) else 0L
+
     def basename: String = {
       val n = p.getFileName.toString
       val i = n.lastIndexOf('.')
       if i == -1 then n else n.substring(0, i)
     }
+    def lcbasename: String = basename.toLowerCase
+
     def relativePath: Path = relativePathToCwd(p)
     def relpath: String = {
       val rp: Path = relativePathToCwd(p)
@@ -33,20 +39,24 @@ object pathExts {
       else
         normalizePosix(p.normalize.toString)
 
-    def firstline: String = lines.nextOption.getOrElse("")
-    def lines: Iterator[String] = {
+    def linesStream: Iterator[String] = streamLines(p)
+
+    def firstLine: String = streamLines(p).nextOption.getOrElse("")
+
+    def lines: Seq[String] = {
       try {
-        Files.readAllLines(p, UTF_8).asScala.iterator
+        Files.readAllLines(p, UTF_8).asScala.toSeq
       } catch {
       case m: java.nio.charset.MalformedInputException =>
-         Files.readAllLines(p, Latin1).asScala.iterator
+         Files.readAllLines(p, Latin1).asScala.toSeq
       }
     }
-    def csvRows: Iterator[Seq[String]] = {
+
+    def csvRows: Iterator[IterableOnce[String]] = {
       uni.io.FastCsv.rowsAsync(p)
     }
-    def csvRows(onRow: Seq[String] => Unit): Unit = {
-      uni.io.FastCsv.eachRow(p){ (row: Seq[String]) =>
+    def csvRows(onRow: IterableOnce[String] => Unit): Unit = {
+      uni.io.FastCsv.eachRow(p){ (row: IterableOnce[String]) =>
         onRow(row)
       }
     }
@@ -96,15 +106,15 @@ object pathExts {
           s
       }
     }
-    def files: Iterator[JFile] = Option(p.toFile.listFiles) match {
+    def filesIter: Iterator[JFile] = Option(p.toFile.listFiles) match {
       case Some(arr) => arr.iterator
       case None      => Iterator.empty
     }
-    def paths: Iterator[Path] = files.map(_.toPath)
+    def files: Seq[JFile] = filesIter.toSeq
+    def pathsIter: Iterator[Path] = filesIter.map(_.toPath)
+    def paths: Seq[Path] = pathsIter.toSeq
+
     def posx: String = {
-      if (p == null) {
-        hook += 1
-      }
       normalizePosix(p.toString)
     }
     def posix: String = posixAbs(p.toString)
@@ -116,6 +126,10 @@ object pathExts {
       val name = p.getFileName.toString
       val idx  = name.lastIndexOf('.')
       if idx > 0 then name.substring(idx) else ""
+    }
+    def extension: Option[String] = {
+      val ext = dotsuffix
+      if ext.nonEmpty then Some(ext.drop(1)) else None
     }
     def suffix: String = {
       val ext = dotsuffix
@@ -144,6 +158,19 @@ object pathExts {
       ymdHms.format(date)
     }
 
+    def lastModifiedTime: LocalDateTime = {
+      import java.time.*
+      LocalDateTime.ofInstant(
+        Instant.ofEpochMilli(p.toFile.lastModified),
+        MountainTime
+      )
+    }
+
+    def epoch2DateTime(epoch: Long, timezone: java.time.ZoneId = UTC): LocalDateTime = {
+      val instant = java.time.Instant.ofEpochMilli(epoch)
+      LocalDateTime.ofInstant(instant, timezone)
+    }
+
     /** Copy this Path to the given destination Path.
       * By default overwrites if the target exists.
       */
@@ -162,10 +189,164 @@ object pathExts {
       dest
     }
     /** Recursively iterate all files and directories under this Path. */
-    def pathsTree: Iterator[Path] =
+    def pathsTree: Seq[Path] = pathsTreeIter.toSeq
+
+    def pathsTreeIter: Iterator[Path] =
       if Files.exists(p) then
         Files.walk(p).iterator().asScala
       else
         Iterator.empty
+
+    def hash64: String = {
+      val (hashstr: String, throwOpt: Option[Exception]) = uni.io.Hash64.hash64(p.toFile)
+      hashstr
+    }
+
+    def cksum: (Long, Long) =
+      uni.io.cksum(p)
+
+    def md5: String =
+      uni.io.md5(p)
+
+    def mkdirs: Boolean =
+      Files.createDirectories(p)
+      p.toFile.isDirectory
+
+    def renameTo(other: Path, overwrite: Boolean = false): Boolean = 
+      renameToOpt(other, overwrite).isDefined
+
+    def renameToOpt(other: Path, overwrite: Boolean = false): Option[Path] =
+      if Files.exists(p) && (overwrite || !Files.exists(other)) then
+        import java.nio.file.CopyOption
+        import java.nio.file.StandardCopyOption.REPLACE_EXISTING
+        val opts: Array[CopyOption] =
+          if overwrite then Array(REPLACE_EXISTING)
+          else Array.empty[CopyOption]
+        try Some(Files.move(p, other, opts*))
+        catch case _: Exception => None
+      else
+        None
+
+    /** Deletes the file if it exists.
+      * @return true if deleted, false if it did not exist.
+      * @throws java.io.IOException if deletion fails for real (permissions, locks, etc.)
+      */
+    def delete(): Boolean =
+      Files.deleteIfExists(p)
+
+    def realpath: Path = {
+      // Find deepest existing parent
+      val existing =
+        Iterator.iterate(p)(_.getParent)
+          .takeWhile(_ != null)
+          .find(Files.exists(_))
+
+      // Compute the remaining tail BEFORE canonicalizing the prefix
+      val remaining =
+        existing match
+          case Some(prefix) =>
+            val prefixCount = prefix.getNameCount
+            val pCount      = p.getNameCount
+            if prefixCount < pCount then
+              p.subpath(prefixCount, pCount)
+            else
+              Paths.get("")
+          case None =>
+            Paths.get("") // nothing exists; whole path is "remaining"
+
+      // Canonicalize the prefix
+      val resolvedPrefix =
+        existing.map(_.toRealPath()).getOrElse(p.toAbsolutePath())
+
+      // Reattach and normalize
+      val finalPath =
+        resolvedPrefix.resolve(remaining).normalize()
+
+      finalPath
+    }
   }
+
+  extension(f: JFile) {
+    def posx: String = f.toPath.posx
+    def name: String = f.getName
+    def basename: String = {
+      val n = f.getName
+      val i = n.lastIndexOf('.')
+      if i == -1 then n else n.substring(0, i)
+    }
+    def lcbasename: String = basename.toLowerCase
+    def path: Path = f.toPath
+    def abs: String = f.toPath.abs
+    def stdpath: String = standardizePath(f.toPath)
+    def filesTree: Seq[JFile] = filesTreeIter.toSeq
+    def filesTreeIter: Iterator[JFile] =
+      if f.exists() then
+        Files.walk(f.toPath).iterator().asScala.map(_.toFile)
+      else
+        Iterator.empty
+      }
+
+  lazy val UTC: ZoneId          = java.time.ZoneId.of("UTC")
+  //lazy val EasternTime: ZoneId  = java.time.ZoneId.of("America/New_York")
+  //lazy val MountainTime: ZoneId = java.time.ZoneId.of("America/Denver")
+
+  import java.nio.charset.{StandardCharsets, CodingErrorAction}
+  import java.io.InputStream
+  import scala.collection.mutable.ArrayBuffer
+  import java.nio.ByteBuffer
+
+  def streamLines(p: Path): Iterator[String] =
+    new Iterator[String]:
+      private val in: InputStream = Files.newInputStream(p)
+      private val buf = ArrayBuffer.empty[Byte]
+      private var nextLine: String | Null = null
+      private var closed = false
+
+      // Strict UTF-8 decoder: throws on malformed input
+      val utf8Decoder =
+        StandardCharsets.UTF_8
+          .newDecoder()
+          .onMalformedInput(CodingErrorAction.REPORT)
+          .onUnmappableCharacter(CodingErrorAction.REPORT)
+
+      override def hasNext: Boolean =
+        if nextLine != null then true
+        else if closed then false
+        else
+          nextLine = readNextLine()
+          nextLine != null
+
+      override def next(): String =
+        if !hasNext then throw new NoSuchElementException("next on empty iterator")
+        val s = nextLine
+        nextLine = null
+        s.nn
+
+      private def readNextLine(): String | Null =
+        buf.clear()
+
+        var b = in.read()
+        if b == -1 then
+          close()
+          return null
+
+        // accumulate until newline or EOF
+        while b != -1 && b != '\n' do
+          if b != '\r' then buf += b.toByte
+          b = in.read()
+
+        val bytes = buf.toArray
+
+        try
+          // Try strict UTF-8 decoder first
+          utf8Decoder.decode(ByteBuffer.wrap(bytes)).toString
+        catch
+          case _: MalformedInputException =>
+            // Fallback per line
+            new String(bytes, StandardCharsets.ISO_8859_1)
+
+      private def close(): Unit =
+        if !closed then
+          closed = true
+          in.close()
 }

@@ -1,11 +1,12 @@
 package uni
 
-import munit.FunSuite
+
 import uni.*
 import uni.io.*
 import uni.Internals.{_osType}
 import TestUtils.*
 
+import munit.FunSuite
 class FnameTest extends FunSuite {
   override def beforeAll(): Unit = uni.resetConfig()
 

@@ -2,7 +2,7 @@ package uni
 
 import munit.FunSuite
 import uni.Internals.*
-import TestUtils.{verbose, prmsg}
+import TestUtils.prmsg
 
 class TestUniPath extends FunSuite {
   override def beforeAll(): Unit = uni.resetConfig()
@@ -16,7 +16,7 @@ class TestUniPath extends FunSuite {
 
   // Environment dump (colorized)
   test("uni: display discovered environment") {
-    if verbose then print(s"${RED}verbose-logging")
+    if verboseUni then print(s"${RED}verbose-logging")
     prmsg(s"${CYAN}hereDrive:${RESET}   [$hereDrive]")
 
     prmsg(s"${YELLOW}win2posix mappings:${RESET}")

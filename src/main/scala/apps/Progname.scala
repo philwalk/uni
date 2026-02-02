@@ -1,13 +1,14 @@
 //#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 package uni.apps
 
-//> using dep org.vastblue:uni_3:0.6.1
+//> using dep org.vastblue:uni_3:0.7.0
 
 import uni.*
 
 /*
  * In a scala-cli script, `uni.progName` returns sourceName;
  * In a scala program or script, `uni.progName returns mainName;
+ * In an munit test, ???
  *
  * `scala-cli` scripts define `scriptName` but it's undefined in the other contexts and causes a compile error.
  */
@@ -16,7 +17,8 @@ object Progname {
   def main(args: Array[String]): Unit = {
   //printf("%-32s: %s\n", "scriptPath", scriptPath) // defined by scala-cli, undefined in non-script scala programs
     printf("%-32s: %s\n", "sourcePathRelative", sourcePathRelative) // based on a property defined by scala-cli
-    printf("%-32s: %s\n", "progName", progName(this)) // if sourceName is defined, else mainName
+    printf("%-32s: %s\n", "progName", progName) // if sourceName is defined, else mainName
+    printf("%-32s: %s\n", "progPath", progPath) // if sourcePath is defined, else mainPath
     printf("%-32s: %s\n", "sourceName", sourceName) // a property defined by scala-cli
     printf("%-32s: %s\n", "sourcePath", sourcePath) // a property defined by scala-cli
     printf("%-32s: %s\n", "mainName", mainName) // main object name

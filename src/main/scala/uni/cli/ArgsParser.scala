@@ -1,17 +1,23 @@
 package uni.cli
 
+import uni.Path
 import scala.util.DynamicVariable
+import java.nio.file.{Files, Paths}
 
 // public API:
 // showUsage, eachArg, thisArg, consumeNext, peekNext, nextInt, nextLong, nextDouble
 
 object ArgsParser {
+  var hook = 0  // TEMPORARY! // all non-private fields are exported
+
   private[uni] var exitFn: Int => Nothing = (code: Int) => sys.exit(code)
 
+  inline def _usage(m: String = "", list: Seq[String]): Nothing = showUsage(m, list*) // TEMPORARY!
+
   // inline causes `currentCaller` macro to expand callers source path
-  inline def showUsage(m: String = "", list: String*): Nothing = { //(using programName: () => String) : Nothing = {
+  inline def showUsage(m: String = "", list: String*): Nothing = {
     if m.nonEmpty then System.err.print(s"$m\n")
-    val prog = uni.progName(currentCaller.replace('\\', '/').replaceAll("^.*/", ""))
+    val prog = progName // FromClassName(currentCaller.replace('\\', '/').replaceAll("^.*/", ""))
     System.err.print(s"usage: $prog <options>\n")
     list.filter(_.nonEmpty).foreach(s => System.err.print(s"$s\n"))
     exitFn(1)
@@ -108,4 +114,74 @@ object ArgsParser {
 
   def nextDouble: Double = ctx.nextDouble
 
+  /* return base filename */
+  inline def progName: String = {
+    // First try scala-cli's source.names property
+    val directPath = progPath
+    if Files.isRegularFile(Paths.get(directPath)) then
+      // expected if launched by scala-cli 
+      directPath.replaceAll(".*/", "") // return bare filename
+    else
+      // Try to find the source file
+      val srcfileOpt = findSourceFile(directPath)
+      srcfileOpt.getOrElse(directPath)
+  }
+
+  /* return absolute path */
+  inline def progPath: String = {
+    // First try scala-cli's source.names property
+    val sourceNameOpt = Option(sys.props("scala.sources"))
+    sourceNameOpt.getOrElse {
+      currentCaller.replace('\\', '/')
+    }
+  }
+
+  /* `progNameFromClassname(this)` is the expected use-case */
+  def progNameFromClassname(mainObject: AnyRef) = Option(sys.props("scala.source.names")).getOrElse {
+    // usage: progName(this) from the main object.
+    val str = mainObject match {
+    case name: String =>
+      name
+    case obj: AnyRef =>
+      obj.getClass.getName
+    }
+    str.replaceAll(".*[.]", "")   // drop package
+      .replaceAll("[$].*", "")   // drop Scala object suffix
+  }
+
+  private def findSourceFile(fileName: String): Option[String] = {
+
+    // Possible source file names for the class
+    val candidates = Seq(fileName)
+    
+    // Search in common source directories
+    val searchRoots = Seq(
+      Paths.get("."),
+      Paths.get("src/main/scala"),
+      Paths.get("src/test/scala")
+    )
+    
+    searchRoots.iterator.flatMap { root =>
+      if (Files.exists(root)) {
+        candidates.flatMap { fileName =>
+          findFileRecursive(root, fileName)
+        }
+      } else {
+        Nil
+      }
+    }.nextOption().map(_.toString)
+  }
+
+  private def findFileRecursive(root: Path, fileName: String): Option[Path] = {
+    import java.nio.file.{Files, FileVisitOption}
+    import scala.jdk.StreamConverters.*
+    
+    try {
+      Files.walk(root, 10, FileVisitOption.FOLLOW_LINKS)
+        .toScala(Iterator)
+        .find(p => p.getFileName.toString == fileName)
+    } catch {
+      case _: Exception => None
+    }
+  }
 }

@@ -1,6 +1,6 @@
 package uni
 
-import java.nio.file.{Files, Paths as JPaths}
+import java.nio.file.{Files, Paths as JPaths, Path}
 import java.net.URI
 import java.util.{Arrays, Comparator, Locale}
 import scala.collection.immutable.SortedMap
@@ -32,9 +32,11 @@ object Paths {
 
   def get(uri: URI): Path =
     config.get(uri)
+
 }
 
 @volatile private[uni] var config: PathsConfig = DefaultPathsConfig // mutable test seam
+def shellRoot: String = config.msysRoot
 
 type Win2posixMap = LcLookupMap[Seq[String]]
 type Posix2winMap = LcLookupMap[String]
@@ -172,7 +174,7 @@ object Resolver {
   }
 
   /** Convert to a valid Windows path string */
-  def resolvePathstr(first: String, more: Seq[String] = Nil): String = {
+  def resolvePathstr(first: String, more: Seq[String] = Seq.empty): String = {
     val pstr =
       val fname = (first +: more).mkString("/").replace('\\', '/')
       applyTildeAndDots(fname) // real or test user

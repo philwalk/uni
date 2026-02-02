@@ -5,8 +5,7 @@ import uni.Internals.*
 import java.nio.file.{Paths as JPaths}
 
 object TestUtils {
-  val verbose = Option(System.getenv("VERBOSE_TESTS")).nonEmpty
-  def noisy(s: String): Unit = if verbose then  System.err.print(s+"\n")
+  def noisy(s: String): Unit = if verboseUni then  System.err.print(s+"\n")
   def prmsg(s: String): Unit = print(s+"\n")
 
   lazy val windowsTestUser: UserInfo = UserInfo(
