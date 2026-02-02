@@ -1,8 +1,8 @@
 package uni.ext
 
+import java.nio.charset.{Charset, MalformedInputException, StandardCharsets}
 import java.io.{File as JFile}
 import java.nio.file.{Path, Files, StandardCopyOption}
-import java.nio.charset.{Charset, StandardCharsets}
 import StandardCharsets.{UTF_8, ISO_8859_1 as Latin1}
 import scala.jdk.CollectionConverters.*
 import uni.*
@@ -18,6 +18,8 @@ object pathExts {
     def isDirectory: Boolean = Files.isDirectory(p)
     def isFile: Boolean = Files.isRegularFile(p)
     def name: String = p.getFileName.toString
+    def length: Long = if Files.exists(p) then Files.size(p) else 0L
+
     def basename: String = {
       val n = p.getFileName.toString
       val i = n.lastIndexOf('.')
@@ -37,9 +39,9 @@ object pathExts {
       else
         normalizePosix(p.normalize.toString)
 
-    def firstline: String = linesStream.nextOption.getOrElse("")
-
     def linesStream: Iterator[String] = streamLines(p)
+
+    def firstLine: String = streamLines(p).nextOption.getOrElse("")
 
     def lines: Seq[String] = {
       try {
@@ -284,18 +286,67 @@ object pathExts {
         Iterator.empty
       }
 
+  lazy val UTC: ZoneId          = java.time.ZoneId.of("UTC")
+  //lazy val EasternTime: ZoneId  = java.time.ZoneId.of("America/New_York")
+  //lazy val MountainTime: ZoneId = java.time.ZoneId.of("America/Denver")
+
+  import java.nio.charset.{StandardCharsets, CodingErrorAction}
+  import java.io.InputStream
+  import scala.collection.mutable.ArrayBuffer
+  import java.nio.ByteBuffer
 
   def streamLines(p: Path): Iterator[String] =
     new Iterator[String]:
-      private val stream = Files.lines(p, UTF_8)
-      private val it = stream.iterator().asScala
-      override def hasNext = 
-        val hn = it.hasNext
-        if !hn then stream.close()
-        hn
-      override def next() = it.next()
-  //  lazy val EasternTime: ZoneId  = java.time.ZoneId.of("America/New_York")
-  //lazy val MountainTime: ZoneId = java.time.ZoneId.of("America/Denver")
-  lazy val UTC: ZoneId          = java.time.ZoneId.of("UTC")
+      private val in: InputStream = Files.newInputStream(p)
+      private val buf = ArrayBuffer.empty[Byte]
+      private var nextLine: String | Null = null
+      private var closed = false
 
+      // Strict UTF-8 decoder: throws on malformed input
+      val utf8Decoder =
+        StandardCharsets.UTF_8
+          .newDecoder()
+          .onMalformedInput(CodingErrorAction.REPORT)
+          .onUnmappableCharacter(CodingErrorAction.REPORT)
+
+      override def hasNext: Boolean =
+        if nextLine != null then true
+        else if closed then false
+        else
+          nextLine = readNextLine()
+          nextLine != null
+
+      override def next(): String =
+        if !hasNext then throw new NoSuchElementException("next on empty iterator")
+        val s = nextLine
+        nextLine = null
+        s.nn
+
+      private def readNextLine(): String | Null =
+        buf.clear()
+
+        var b = in.read()
+        if b == -1 then
+          close()
+          return null
+
+        // accumulate until newline or EOF
+        while b != -1 && b != '\n' do
+          if b != '\r' then buf += b.toByte
+          b = in.read()
+
+        val bytes = buf.toArray
+
+        try
+          // Try strict UTF-8 decoder first
+          utf8Decoder.decode(ByteBuffer.wrap(bytes)).toString
+        catch
+          case _: MalformedInputException =>
+            // Fallback per line
+            new String(bytes, StandardCharsets.ISO_8859_1)
+
+      private def close(): Unit =
+        if !closed then
+          closed = true
+          in.close()
 }
