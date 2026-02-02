@@ -37,15 +37,19 @@ object pathExts {
       else
         normalizePosix(p.normalize.toString)
 
-    def firstline: String = lines.nextOption.getOrElse("")
-    def lines: Iterator[String] = {
+    def firstline: String = linesStream.nextOption.getOrElse("")
+
+    def linesStream: Iterator[String] = streamLines(p)
+
+    def lines: Seq[String] = {
       try {
-        Files.readAllLines(p, UTF_8).asScala.iterator
+        Files.readAllLines(p, UTF_8).asScala.toSeq
       } catch {
       case m: java.nio.charset.MalformedInputException =>
-         Files.readAllLines(p, Latin1).asScala.iterator
+         Files.readAllLines(p, Latin1).asScala.toSeq
       }
     }
+
     def csvRows: Iterator[IterableOnce[String]] = {
       uni.io.FastCsv.rowsAsync(p)
     }
@@ -100,11 +104,14 @@ object pathExts {
           s
       }
     }
-    def files: Iterator[JFile] = Option(p.toFile.listFiles) match {
+    def filesIter: Iterator[JFile] = Option(p.toFile.listFiles) match {
       case Some(arr) => arr.iterator
       case None      => Iterator.empty
     }
-    def paths: Iterator[Path] = files.map(_.toPath)
+    def files: Seq[JFile] = filesIter.toSeq
+    def pathsIter: Iterator[Path] = filesIter.map(_.toPath)
+    def paths: Seq[Path] = pathsIter.toSeq
+
     def posx: String = {
       normalizePosix(p.toString)
     }
@@ -180,7 +187,9 @@ object pathExts {
       dest
     }
     /** Recursively iterate all files and directories under this Path. */
-    def pathsTree: Iterator[Path] =
+    def pathsTree: Seq[Path] = pathsTreeIter.toSeq
+
+    def pathsTreeIter: Iterator[Path] =
       if Files.exists(p) then
         Files.walk(p).iterator().asScala
       else
@@ -267,14 +276,26 @@ object pathExts {
     def path: Path = f.toPath
     def abs: String = f.toPath.abs
     def stdpath: String = standardizePath(f.toPath)
-    def filesTree: Iterator[JFile] =
+    def filesTree: Seq[JFile] = filesTreeIter.toSeq
+    def filesTreeIter: Iterator[JFile] =
       if f.exists() then
         Files.walk(f.toPath).iterator().asScala.map(_.toFile)
       else
         Iterator.empty
       }
 
+
+  def streamLines(p: Path): Iterator[String] =
+    new Iterator[String]:
+      private val stream = Files.lines(p, UTF_8)
+      private val it = stream.iterator().asScala
+      override def hasNext = 
+        val hn = it.hasNext
+        if !hn then stream.close()
+        hn
+      override def next() = it.next()
   //  lazy val EasternTime: ZoneId  = java.time.ZoneId.of("America/New_York")
   //lazy val MountainTime: ZoneId = java.time.ZoneId.of("America/Denver")
   lazy val UTC: ZoneId          = java.time.ZoneId.of("UTC")
+
 }
