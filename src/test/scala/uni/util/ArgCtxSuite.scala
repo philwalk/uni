@@ -4,7 +4,7 @@ import munit.*
 import java.io.{ByteArrayOutputStream, PrintStream}
 import uni.cli.*
 
-class ArgCtxSuite extends FunSuite {
+class ArgsSuite extends FunSuite {
   override def beforeAll(): Unit = uni.resetConfig()
 
   // uncomment the next 2 lines to disable timeout

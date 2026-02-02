@@ -1,6 +1,6 @@
 package uni.time
 
-import uni.*
+import uni.verboseUni
 import uni.time.*
 import java.time.LocalDateTime
 
@@ -42,7 +42,9 @@ class SmartParseTests extends FunSuite {
     }
   }
   
-  private var hook = 0
+  @annotation.nowarn("msg=unused private member")
+  private var hook = 0 // it's not actually unused ...
+
   test("mdy-with-time") {
     val localdatetime = parseDate("04/08 18:17:08 2009")
     printf("%s\n", localdatetime)
@@ -50,7 +52,7 @@ class SmartParseTests extends FunSuite {
   }
   
   test("classifier matches pattern buckets") {
-    var iterations = 100
+    val iterations = 100
     var seedcounter = 0
     for
       (shape, patterns) <- SmartParse.patternsByShape

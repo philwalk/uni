@@ -6,32 +6,13 @@ import java.time.temporal.ChronoUnit
 import java.time.Duration
 import java.time.{Instant, LocalDateTime, ZoneId}
 import java.time.temporal.{TemporalAdjuster, TemporalAdjusters}
-import java.time.format.DateTimeFormatter
 import scala.util.matching.Regex
-//import java.time.format.DateTimeParseException
-
-export TimeUtils.{parseDate, BadDate, EmptyDate}
-export ChronoParse.parseDateChrono
-export SmartParse.parseDateSmart
-
-extension (inst: Instant)
-  def toString(
-    pattern: String,
-    zone: ZoneId = ZoneId.systemDefault()
-  ): String =
-    LocalDateTime
-      .ofInstant(inst, zone)
-      .format(DateTimeFormatter.ofPattern(pattern))
-
-extension (dt: LocalDateTime)
-  def toString(fmt: String): String =
-    dt.format(DateTimeFormatter.ofPattern(fmt))
 
 object TimeUtils {
   val BadDate: LocalDateTime   = LocalDateTime.of(1900, 1, 2, 3, 4, 5)
   val EmptyDate: LocalDateTime = LocalDateTime.of(1800, 1, 2, 3, 4, 5)
 
-  def parseDate(datestr: String, format: String = ""): LocalDateTime = {
+  def parseDate(datestr: String): LocalDateTime = {
     parseDateSmart(datestr) match {
     case BadDate | EmptyDate =>
       if verboseUni then
@@ -45,14 +26,43 @@ object TimeUtils {
     }
   }
 
+  // a very fast conversion 8 char yyyyMMdd formatted Strings
+  def quikDate(s: String): LocalDateTime = {
+    assert(s.length >= 8, s"ymd[$s]")
+    val ymdtest = s.take(8)
+    val ymd = if ymdtest.matches("[0-9]+") then
+      ymdtest.take(4)+"-"+ymdtest.drop(4).take(2)+"-"+ymdtest.drop(6)
+    else
+      s.take(10)
+    quikDateTime(ymd)
+  }
+
+  def quikDateTime(s: String): LocalDateTime = {
+    require(s.matches("""[0-9]{4}\D[0-9]{2}\D[0-9]{2}.*"""))
+    val ff = s.split("[^0-9]+").filter { _.trim.nonEmpty }.map { _.toInt }
+    ff match {
+    case Array(y, m, d) =>
+      LocalDateTime.of(y, m, d, 0, 0, 0)
+    case Array(y, m, d, h, mn) =>
+      LocalDateTime.of(y, m, d, h, mn, 0)
+    case Array(y, m, d, h, mn, s) =>
+      LocalDateTime.of(y, m, d, h, mn, s)
+    case Array(y, m, d, h) =>
+      LocalDateTime.of(y, m, d, h, 0, 0)
+    case _ =>
+      sys.error(s"bad dateTime: [$s]")
+    }
+  }
+
   val EasternTime: ZoneId  = java.time.ZoneId.of("America/New_York")
   val MountainTime: ZoneId = java.time.ZoneId.of("America/Denver")
   val UTC: ZoneId          = java.time.ZoneId.of("UTC")
+  private def nowInstant   = Instant.now()
 
-  def now        = Instant.now()
+  def now        = LocalDateTime.now()
 
   private[uni] def zoneid     = ZoneId.systemDefault
-  private[uni] def zoneOffset = zoneid.getRules().getStandardOffset(now)
+  private[uni] def zoneOffset = zoneid.getRules().getStandardOffset(nowInstant)
 
   type DateTimeZone = java.time.ZoneId
 
@@ -62,47 +72,42 @@ object TimeUtils {
   }
   lazy val NullDate: LocalDateTime = LocalDateTime.parse("0000-01-01T00:00:00") // .ofInstant(Instant.ofEpochMilli(0))
 
-  def numerifyNames(datestr: String) = {
-    val noweekdayName = datestr.replaceAll("(?i)(Sun[day]*|Mon[day]*|Tue[sday]*|Wed[nesday]*|Thu[rsday]*|Fri[day]*|Sat[urday]*),? *", "")
-    noweekdayName match {
-    case str if str.matches("(?i).*[JFMASOND][aerpuco][nbrylgptvc][a-z]*.*") =>
-      var ff = str.replaceFirst("([a-zA-Z])([0-9])", "$1 $2").split("[-/,\\s]+")
-      val monthIndex = ff.indexWhere {(s: String) => s.matches("(?i).*[JFMASOND][aerpuco][nbrylgptvc][a-z]*.*")}
-      if (monthIndex >= 0){
-        val monthName = ff(monthIndex)
-        val month: Int = ChronoParse.monthAbbrev2Number(ff(monthIndex))
-        val nwn = noweekdayName.replaceAll(monthName, "%02d ".format(month))
-        nwn
-      } else {
-        // format: off
-        if (ff(0).matches("\\d+")) {
-          // swap 1st and 2nd fields (e.g., convert "01 Jan" to "Jan 01")
-          val tmp = ff(0)
-          ff(0) = ff(1)
-          ff(1) = tmp
-        }
-        val mstr = ff.head.take(3)
-        val month = ChronoParse.monthAbbrev2Number(mstr)
-        ff = ff.drop(1)
-        // format: off
-        val (day, year, timestr, tz) = ff.toList match {
-        case d :: y :: Nil =>
-          (d.toInt, y.toInt, "", "")
-        case d :: y :: ts :: tz :: Nil if ts.contains(":") =>
-          (d.toInt, y.toInt, " "+ts, " "+tz)
-        case d :: ts :: y :: tail if ts.contains(":") =>
-          (d.toInt, y.toInt, " "+ts, "")
-        case d :: y :: ts :: tail =>
-          (d.toInt, y.toInt, " "+ts, "")
-        case other => 
-          sys.error(s"bad date [$other]")
-        }
-        // format: on
-        "%4d-%02d-%02d%s%s".format(year, month, day, timestr, tz)
-      }
-    case str =>
-      str
-    }
+  // At object/class level (outside the method)
+  private val WeekdayPattern = "(?i)(Sun[day]*|Mon[day]*|Tue[sday]*|Wed[nesday]*|Thu[rsday]*|Fri[day]*|Sat[urday]*),? *".r
+  private val MonthPattern = "(?i)[JFMASOND][aerpuco][nbrylgptvc][a-z]*".r
+  private val LetterDigitPattern = "([a-zA-Z])([0-9])".r
+
+  def numerifyNames(datestr: String): String = {
+    val noWeekday = WeekdayPattern.replaceAllIn(datestr, "")
+    
+    if !MonthPattern.findFirstIn(noWeekday).isDefined then noWeekday
+    else
+      val parts = LetterDigitPattern.replaceFirstIn(noWeekday, "$1 $2")
+        .split("[-/,\\s]+")
+      
+      parts.indexWhere(s => MonthPattern.matches(s)) match
+        case idx if idx >= 0 =>
+          val monthNum = ChronoParse.monthAbbrev2Number(parts(idx))
+          noWeekday.replaceAll(parts(idx), f"$monthNum%02d")
+        
+        case _ =>
+          val (monthStr, rest) = 
+            if parts.head.matches("\\d+") then (parts(1), parts.head +: parts.drop(2))
+            else (parts.head, parts.tail)
+          
+          val month = ChronoParse.monthAbbrev2Number(monthStr.take(3))
+          
+          rest.toList match
+            case d :: y :: Nil =>
+              f"${y.toInt}%04d-$month%02d-${d.toInt}%02d"
+            case d :: y :: ts :: tz :: _ if ts.contains(":") =>
+              f"${y.toInt}%04d-$month%02d-${d.toInt}%02d $ts $tz"
+            case d :: ts :: y :: _ if ts.contains(":") =>
+              f"${y.toInt}%04d-$month%02d-${d.toInt}%02d $ts"
+            case d :: y :: ts :: _ =>
+              f"${y.toInt}%04d-$month%02d-${d.toInt}%02d $ts"
+            case other =>
+              sys.error(s"bad date [${other.mkString(", ")}]")
   }
 
   lazy val mmddyyyyPattern: Regex          = """(\d{1,2})\D(\d{1,2})\D(\d{4})""".r
@@ -122,13 +127,13 @@ object TimeUtils {
 
   // signed number of days between specified dates.
   // if date1 > date2, a negative number of days is returned.
-  def daysBetween(d1: LocalDateTime, d2: LocalDateTime, zone: ZoneId): Long = ChronoUnit.DAYS.between(d1.atZone(zone), d2.atZone(zone))
+  def daysBetween(d1: LocalDateTime, d2: LocalDateTime, zone: ZoneId = zoneid): Long = ChronoUnit.DAYS.between(d1.atZone(zone), d2.atZone(zone))
 
   def secondsBetween(d1: LocalDateTime, d2: LocalDateTime, zone: ZoneId): Long = secondsBetween(d1.atZone(zone).toInstant, d2.atZone(zone).toInstant)
   def secondsBetween(d1: Instant, d2: Instant): Long = ChronoUnit.SECONDS.between(d1, d2)
 
   // age in seconds relative to now
-  def secondsSince(date1: LocalDateTime, zone: ZoneId = MountainTime): Long = ChronoUnit.SECONDS.between(date1.atZone(zone).toInstant, now)
+  def secondsSince(date1: LocalDateTime, zone: ZoneId = MountainTime): Long = ChronoUnit.SECONDS.between(date1.atZone(zone).toInstant, nowInstant)
 
   def minutesBetween(d1: LocalDateTime, d2: LocalDateTime, zone: ZoneId = MountainTime): Double = secondsBetween(d1, d2, zone).toDouble / 60.0
 
@@ -185,7 +190,7 @@ object TimeUtils {
 
   def ageInMinutes(f: java.io.File): Double = {
     if (f.exists)
-      val diffMillis = now.toEpochMilli - f.lastModified()
+      val diffMillis = nowInstant.toEpochMilli - f.lastModified()
       diffMillis / (60 * 1000.0)
     else
       1e6 // treat non-existent files as VERY old

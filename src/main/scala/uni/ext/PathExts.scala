@@ -4,9 +4,10 @@ import java.io.{File as JFile}
 import java.nio.file.{Path, Files, StandardCopyOption}
 import java.nio.charset.{Charset, StandardCharsets}
 import StandardCharsets.{UTF_8, ISO_8859_1 as Latin1}
-import uni.*
-import uni.Internals.*
 import scala.jdk.CollectionConverters.*
+import uni.*
+import uni.time.*
+import uni.Internals.*
 import java.time.LocalDateTime
 import java.time.ZoneId
 
@@ -22,6 +23,8 @@ object pathExts {
       val i = n.lastIndexOf('.')
       if i == -1 then n else n.substring(0, i)
     }
+    def lcbasename: String = basename.toLowerCase
+
     def relativePath: Path = relativePathToCwd(p)
     def relpath: String = {
       val rp: Path = relativePathToCwd(p)
@@ -43,11 +46,11 @@ object pathExts {
          Files.readAllLines(p, Latin1).asScala.iterator
       }
     }
-    def csvRows: Iterator[Seq[String]] = {
+    def csvRows: Iterator[IterableOnce[String]] = {
       uni.io.FastCsv.rowsAsync(p)
     }
-    def csvRows(onRow: Seq[String] => Unit): Unit = {
-      uni.io.FastCsv.eachRow(p){ (row: Seq[String]) =>
+    def csvRows(onRow: IterableOnce[String] => Unit): Unit = {
+      uni.io.FastCsv.eachRow(p){ (row: IterableOnce[String]) =>
         onRow(row)
       }
     }
@@ -103,9 +106,6 @@ object pathExts {
     }
     def paths: Iterator[Path] = files.map(_.toPath)
     def posx: String = {
-      if (p == null) {
-        hook += 1
-      }
       normalizePosix(p.toString)
     }
     def posix: String = posixAbs(p.toString)
@@ -117,6 +117,10 @@ object pathExts {
       val name = p.getFileName.toString
       val idx  = name.lastIndexOf('.')
       if idx > 0 then name.substring(idx) else ""
+    }
+    def extension: Option[String] = {
+      val ext = dotsuffix
+      if ext.nonEmpty then Some(ext.drop(1)) else None
     }
     def suffix: String = {
       val ext = dotsuffix
@@ -186,9 +190,91 @@ object pathExts {
       val (hashstr: String, throwOpt: Option[Exception]) = uni.io.Hash64.hash64(p.toFile)
       hashstr
     }
+
+    def cksum: (Long, Long) =
+      uni.io.cksum(p)
+
+    def md5: String =
+      uni.io.md5(p)
+
+    def mkdirs: Boolean =
+      Files.createDirectories(p)
+      p.toFile.isDirectory
+
+    def renameTo(other: Path, overwrite: Boolean = false): Boolean = 
+      renameToOpt(other, overwrite).isDefined
+
+    def renameToOpt(other: Path, overwrite: Boolean = false): Option[Path] =
+      if Files.exists(p) && (overwrite || !Files.exists(other)) then
+        import java.nio.file.CopyOption
+        import java.nio.file.StandardCopyOption.REPLACE_EXISTING
+        val opts: Array[CopyOption] =
+          if overwrite then Array(REPLACE_EXISTING)
+          else Array.empty[CopyOption]
+        try Some(Files.move(p, other, opts*))
+        catch case _: Exception => None
+      else
+        None
+
+    /** Deletes the file if it exists.
+      * @return true if deleted, false if it did not exist.
+      * @throws java.io.IOException if deletion fails for real (permissions, locks, etc.)
+      */
+    def delete(): Boolean =
+      Files.deleteIfExists(p)
+
+    def realpath: Path = {
+      // Find deepest existing parent
+      val existing =
+        Iterator.iterate(p)(_.getParent)
+          .takeWhile(_ != null)
+          .find(Files.exists(_))
+
+      // Compute the remaining tail BEFORE canonicalizing the prefix
+      val remaining =
+        existing match
+          case Some(prefix) =>
+            val prefixCount = prefix.getNameCount
+            val pCount      = p.getNameCount
+            if prefixCount < pCount then
+              p.subpath(prefixCount, pCount)
+            else
+              Paths.get("")
+          case None =>
+            Paths.get("") // nothing exists; whole path is "remaining"
+
+      // Canonicalize the prefix
+      val resolvedPrefix =
+        existing.map(_.toRealPath()).getOrElse(p.toAbsolutePath())
+
+      // Reattach and normalize
+      val finalPath =
+        resolvedPrefix.resolve(remaining).normalize()
+
+      finalPath
+    }
   }
 
+  extension(f: JFile) {
+    def posx: String = f.toPath.posx
+    def name: String = f.getName
+    def basename: String = {
+      val n = f.getName
+      val i = n.lastIndexOf('.')
+      if i == -1 then n else n.substring(0, i)
+    }
+    def lcbasename: String = basename.toLowerCase
+    def path: Path = f.toPath
+    def abs: String = f.toPath.abs
+    def stdpath: String = standardizePath(f.toPath)
+    def filesTree: Iterator[JFile] =
+      if f.exists() then
+        Files.walk(f.toPath).iterator().asScala.map(_.toFile)
+      else
+        Iterator.empty
+      }
+
   //  lazy val EasternTime: ZoneId  = java.time.ZoneId.of("America/New_York")
-  lazy val MountainTime: ZoneId = java.time.ZoneId.of("America/Denver")
+  //lazy val MountainTime: ZoneId = java.time.ZoneId.of("America/Denver")
   lazy val UTC: ZoneId          = java.time.ZoneId.of("UTC")
 }

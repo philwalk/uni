@@ -32,6 +32,18 @@ object Paths {
 
   def get(uri: URI): Path =
     config.get(uri)
+
+  @deprecated("Use .toSeq explicitly", "1.0.0")
+  given iteratorStringToSeq: Conversion[Iterator[String], Seq[String]] = _.toSeq
+
+  @deprecated("Use .toList explicitly", "1.0.0")
+  given iteratorStringToList: Conversion[Iterator[String], List[String]] = _.toList
+
+  @deprecated("Use .toSeq explicitly", "1.0.0")
+  given iteratorPathToSeq: Conversion[Iterator[Path], Seq[Path]] = _.toSeq
+
+  @deprecated("Use .toList explicitly", "1.0.0")
+  given iteratorPathToList: Conversion[Iterator[Path], List[Path]] = _.toList
 }
 
 @volatile private[uni] var config: PathsConfig = DefaultPathsConfig // mutable test seam
@@ -173,7 +185,7 @@ object Resolver {
   }
 
   /** Convert to a valid Windows path string */
-  def resolvePathstr(first: String, more: Seq[String] = Nil): String = {
+  def resolvePathstr(first: String, more: Seq[String] = Seq.empty): String = {
     val pstr =
       val fname = (first +: more).mkString("/").replace('\\', '/')
       applyTildeAndDots(fname) // real or test user

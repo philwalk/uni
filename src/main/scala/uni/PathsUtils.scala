@@ -14,22 +14,14 @@ import uni.ext.*
 
 export scala.util.Properties.{isWin, isMac, isLinux}
 export Proc.{call, shellExec, shellExecProc, spawn, spawnStreaming, execLines}
-export Proc.{lazyLines, bashExe, unameExe, uname, osType, where}
-export System.err.printf as eprintf
+export Proc.{lazyLines, bashExe, unameExe, uname, osType, where, isWsl, hostname}
+export System.err.{println as eprintln, print as eprint} // these return Unit
 
 val verboseUni: Boolean = Option(System.getenv("VERBOSE_UNI")).nonEmpty
 
-def progName(mainObject: AnyRef) = Option(sys.props("scala.source.names")).getOrElse {
-  // usage: progName(this) from the main object.
-  val str = mainObject match {
-  case name: String =>
-    name
-  case obj: AnyRef =>
-    obj.getClass.getName
-  }
-  str.replaceAll(".*[.]", "")   // drop package
-    .replaceAll("[$].*", "")   // drop Scala object suffix
-}
+// wrapper method better than `export System.err.printf as eprintf` due to `Unit` return.
+def eprintf(format: String, args: Any*): Unit = 
+  System.err.printf(format, args*)  // ✅ Returns Unit
 
 /**
  * Print a filtered stack trace.
@@ -61,15 +53,14 @@ def showLimitedStack(e: Throwable): Unit = {
  * Only show stack trace elements of caller object.
  * Usage: showMinimalStack(e, this)
  */
-def showMinimalStack(e: Exception, ref: AnyRef): Unit = {
-  val lcMain = progName(ref).toLowerCase
+inline def showMinimalStack(e: Exception = new RuntimeException("showMinimalStack")): Unit = {
+  val lcMain = progName.toLowerCase
   withFilteredStack(e) { elem =>
     elem.toString.toLowerCase.contains(lcMain)
   }
 }
 
 lazy val userHome = sys.props("user.home").replace('\\', '/')
-private var hook = 0
 
 // Minimal process helpers for portability
 object Proc {
@@ -174,6 +165,13 @@ object Proc {
     proc.stdout
   }
 
+  def shellExec(str: String, env: Map[String, String] = Map.empty[String, String]): LazyList[String] = {
+    val cmd      = Seq(bashExe, "-c", str)
+    val envPairs = env.map { case (a, b) => (a, b) }.toList
+    val proc     = Process(cmd, pwd.toFile, envPairs *)
+    proc.lazyLines_!
+  }
+
   import scala.collection.mutable.Queue
   import scala.concurrent.{ExecutionContext, Future}
   import scala.sys.process._
@@ -265,6 +263,8 @@ object Proc {
     val exe = if isWin then ".exe" else ""
     call(s"uname$exe", arg).getOrElse("")
   }
+  def isWsl: Boolean = uname("-r").contains("WSL")
+
   lazy val osType: String = sys.props("os.name").toLowerCase match {
   case s if s.contains("windows")  => "windows"
   case s if s.contains("linux")    => "linux"
@@ -272,6 +272,8 @@ object Proc {
   case other =>
     sys.error(s"osType is [$other]")
   }
+
+  def hostname = java.net.InetAddress.getLocalHost.getHostName
 }
 
 lazy val pwd: Path = JPaths.get(config.userdir)
@@ -494,14 +496,9 @@ object Internals {
     }
   }
 
-  def rootDrives: Array[String] = java.io.File.listRoots().map( (f: JFile) =>
-    f.getAbsolutePath.take(2) // discard trailing backslashes
-  )
-  /*
-  def driveLetters: Seq[Char] = java.io.File.listRoots().map( (f: JFile) =>
-    f.getAbsolutePath.head // discard trailing backslashes
-  )
-  */
+  private[uni] def rootDrives: Seq[String] = 
+    Option(java.io.File.listRoots())
+      .fold(Seq.empty[String])(_.map(_.getAbsolutePath.take(2)).toSeq)
 
   def safeAbsolutePath(p: Path): Path =
     if !isWin then
@@ -695,93 +692,3 @@ private inline def isDriveLetterPath(s: String): Boolean = {
   }
 }
 
-
-
-//object fs {
-//  //export pathExts.*
-//  //export stringExts.*
-//
-//  def round(number: Double, scale: Int = 6): Double =
-//    BigDecimal(number).setScale(scale, RoundingMode.HALF_UP).toDouble
-//
-//
-//  def isValidWindowsPath(s: String): Boolean = {
-//    val t = s.trim
-//
-//    val driveAbs   = "^[A-Za-z]:[\\\\/].*".r
-//    val unc        = "^\\\\\\\\[^\\\\]+\\\\[^\\\\]+.*".r
-//    val device     = "^\\\\\\\\[.?]\\\\.*".r
-//    val winRel     = "^[^/]*\\\\.*".r
-//    val embedded   = ".*[A-Za-z]:[\\\\/].*".r
-//
-//    val valid = t match
-//      case driveAbs()  => true
-//      case unc()       => true
-//      case device()    => true
-//      case winRel()    => true
-//      case embedded()  => true
-//      case _           => false
-//
-//    valid // single exit
-//  }
-//
-//  def isValidMsysPath(s: String): Boolean = {
-//    val t = s.trim
-//
-//    val tildeUser = "^~[A-Za-z0-9._-]+/.*".r
-//    val msysDrive = "^/[A-Za-z]/.*".r
-//    val optValue  = """.*=[^=]*[/~].*""".r
-//
-//    // 1. Tilde paths
-//    val valid = if t == "~" then true
-//    else if t.startsWith("~/") then true
-//    else if tildeUser.matches(t) then true
-//
-//    // 2. Rooted POSIX paths
-//    else if t.startsWith("/") && !t.startsWith("//") then true
-//
-//    // 3. MSYS drive paths (/c/foo)
-//    else if msysDrive.matches(t) then true
-//
-//    // 4. Relative POSIX paths containing '/'
-//    else if t.contains("/") && !isValidWindowsPath(t) then true
-//
-//    // 5. Option-value forms (--foo=/bar, --foo=~/baz)
-//    else if optValue.matches(t) && !isValidWindowsPath(t) then true
-//
-//    else false
-//
-//    valid // single exit
-//  }
-//
-//  import java.io.{FileWriter, OutputStreamWriter, PrintWriter}
-//  def withFileWriter(p: Path, charsetName: String = "UTF-8", append: Boolean = false)(func: PrintWriter => Any): Unit = {
-//    val jfile  = p.toFile
-//    val lcname = jfile.getName.toLowerCase(Locale.ROOT)
-//    if (lcname != "stdout") {
-//      Option(jfile.getParentFile) match {
-//      case Some(parent) =>
-//        if (!parent.exists) {
-//          throw new IllegalArgumentException(s"parent directory not found [${parent}]")
-//        }
-//      case None =>
-//        throw new IllegalArgumentException(s"no parent directory")
-//      }
-//    }
-//    val writer = lcname match {
-//    case "stdout" =>
-//      new PrintWriter(new OutputStreamWriter(System.out, charsetName), true)
-//    case _ =>
-//      new PrintWriter(new FileWriter(jfile, append))
-//    }
-//    try {
-//      val _: Any = func(writer)
-//    } finally {
-//      writer.flush()
-//      if (lcname != "stdout") {
-//        // don't close stdout!
-//        writer.close()
-//      }
-//    }
-//  }
-//}

@@ -1,7 +1,6 @@
 package uni.time
 
 import uni.*
-import uni.time.*
 import java.time.LocalDateTime
 
 object ChronoParse {
@@ -617,6 +616,7 @@ object ChronoParse {
     validYear(y) && validMonth(m) && validDay(d)
   }
 
+  @annotation.nowarn("msg=unused")
   private def yyyyMMddHHmmssToDate(
     fields: List[Int],
     pm: Boolean = false

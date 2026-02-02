@@ -7,6 +7,10 @@ javacOptions ++= Seq("-source", "17", "-target", "17")
 
 maxErrors := 10
 
+// these 2 prevent everything in vast.apps from being recompiled if only 1 vast.apps source changed:
+ThisBuild / incOptions := incOptions.value.withRecompileOnMacroDef(false)
+ThisBuild / watchTriggeredMessage := Watch.clearScreenOnTrigger
+
 //enablePlugins(ScalaNativePlugin)
 //nativeLinkStubs := true
 //ThisBuild / envFileName   := "dev.env" // sbt-dotenv plugin gets build environment here
