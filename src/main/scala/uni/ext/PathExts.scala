@@ -130,10 +130,6 @@ object pathExts {
       val idx  = name.lastIndexOf('.')
       if idx > 0 then name.substring(idx) else ""
     }
-    def extension: Option[String] = {
-      val ext = dotsuffix
-      if ext.nonEmpty then Some(ext.drop(1)) else None
-    }
     def suffix: String = {
       val ext = dotsuffix
       if ext.nonEmpty then ext.drop(1) else ""
