@@ -89,12 +89,15 @@ object pathExts {
         case _: Exception => false
       }
     }
-    def localpath: String = normalizePosix(p.toString)
+
+    def localpath: String = {
+      val s = normalizePosix(p.toString)
+      if isWin then s.replace('/', '\\') else s
+    }
 
     def dospath: String = {
       val pstr = p.toString
       pstr match {
-        case "." => "."
         case s if !isWin || s.length > 2 =>
           s
         case s if s.endsWith(":") =>
@@ -127,13 +130,13 @@ object pathExts {
       val idx  = name.lastIndexOf('.')
       if idx > 0 then name.substring(idx) else ""
     }
-    def extension: Option[String] = {
-      val ext = dotsuffix
-      if ext.nonEmpty then Some(ext.drop(1)) else None
-    }
     def suffix: String = {
       val ext = dotsuffix
       if ext.nonEmpty then ext.drop(1) else ""
+    }
+    def extension: Option[String] = {
+      val sfx = p.suffix
+      if sfx.nonEmpty then Some(sfx) else None
     }
     def newerThan(other: Path): Boolean = {
       p.isFile && other.isFile && other.lastModified > p.lastModified
