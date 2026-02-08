@@ -156,7 +156,7 @@ object BigUtils:
       else
         Try(parseDate(col)).getOrElse(col)
 
-    value match
+    (value: @unchecked) match
       case bd: BigDecimal => Big(bd)
       case str: String    => str
       case dt: DateTime   => dt

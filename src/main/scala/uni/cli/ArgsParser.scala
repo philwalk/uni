@@ -49,7 +49,9 @@ object ArgsParser {
     }
 
     def peekNext: String = {
-      withNext {
+      if i+1 >= args.length then
+        "" // if no more args, peek does not trigger call to usage
+      else withNext {
         args(i + 1)
       }
     }

@@ -13,7 +13,7 @@ import scala.util.Properties
 import uni.ext.*
 
 export scala.util.Properties.{isWin, isMac, isLinux}
-export Proc.{call, shellExec, shellExecProc, spawn, spawnStreaming, execLines}
+export Proc.{call, shellExec, shellExecProc, spawn, spawnStreaming, execLines, ProcStatus}
 export Proc.{lazyLines, bashExe, unameExe, uname, osType, where, isWsl, hostname}
 export System.err.{println as eprintln, print as eprint} // these return Unit
 
@@ -115,18 +115,18 @@ object Proc {
   }
   lazy val exe: String = if isWin then ".exe" else ""
 
-  case class Proc[Out, Err](status: Int, stdout: Out, stderr: Err, e: Option[Exception] = None)
+  case class ProcStatus[Out, Err](status: Int, stdout: Out, stderr: Err, e: Option[Exception] = None)
 
-  def spawn(cmd: String *): Proc[Seq[String], Seq[String]] = {
+  def spawn(cmd: String *): ProcStatus[Seq[String], Seq[String]] = {
     import scala.collection.mutable.ListBuffer
     val (stdout, stderr) = (ListBuffer.empty[String], ListBuffer.empty[String])
     val cmdArray = cmd.toArray.updated(0, cmd.head.stripSuffix(exe) + exe)
     try {
       val status = cmdArray.toSeq ! ProcessLogger(stdout append _, stderr append _)
-      Proc(status, stdout.toSeq, stderr.toSeq)
+      ProcStatus(status, stdout.toSeq, stderr.toSeq)
     } catch {
       case e: Exception =>
-        Proc(-1, stdout.toSeq, (stderr append e.getMessage).toSeq)
+        ProcStatus(-1, stdout.toSeq, (stderr append e.getMessage).toSeq)
     }
   }
 
@@ -149,13 +149,13 @@ object Proc {
     }
   }
 
-  def shellExecProc(bashCommand: String): Proc[Seq[String], Seq[String]] = {
+  def shellExecProc(bashCommand: String): ProcStatus[Seq[String], Seq[String]] = {
     try {
       val cmd = Seq(bashExe, "-c", bashCommand)
       spawn(cmd *)
     } catch {
       case e: Exception =>
-        Proc(-1, Nil, Nil, Some(e))
+        ProcStatus(-1, Nil, Nil, Some(e))
     }
   }
 
@@ -466,7 +466,7 @@ object Internals {
     val cygified = s"$root${dl.take(1).toLowerCase(Locale.ROOT)}$path"
     cygified
   }
-  lazy val driveRoot: String = JPaths.get("").toAbsolutePath.getRoot.toString.take(2)
+  lazy val driveRoot: String = JPaths.get(".").toAbsolutePath.getRoot.toString.take(2)
 
   def _osName: String = sys.props("os.name")
 

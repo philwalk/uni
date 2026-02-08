@@ -22,8 +22,11 @@ extension (inst: Instant)
     LocalDateTime.ofInstant(inst, zone).format(DateTimeFormatter.ofPattern(pattern))
 
 extension (dt: LocalDateTime)
-  def toString(fmt: String): String =
-    dt.format(DateTimeFormatter.ofPattern(fmt))
+  def toString(fmt: String): String = dt.format(DateTimeFormatter.ofPattern(fmt))
+  def >=(other: LocalDateTime): Boolean = dt.compareTo(other) >= 0
+  def <=(other: LocalDateTime): Boolean = dt.compareTo(other) <= 0
+  def >(other: LocalDateTime): Boolean  = dt.compareTo(other) > 0
+  def <(other: LocalDateTime): Boolean  = dt.compareTo(other) < 0
 
 extension (n: Int)
   def days: Duration = Duration.ofDays(n.toLong)

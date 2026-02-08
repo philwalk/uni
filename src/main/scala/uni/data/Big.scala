@@ -25,8 +25,8 @@ object Big:
   // ------------------------------------------------------------
   // Extractor for pattern matching
   // ------------------------------------------------------------
-  def unapply(n: Big): Option[Big] =
-    if n == BadNum then None else Some(n)
+  def unapply(b: Big): Option[Big] =
+    if b == BadNum then None else Some(b)
 
   given CanEqual[Big, BigDecimal] = CanEqual.derived
   given CanEqual[BigDecimal, Big] = CanEqual.derived
@@ -64,95 +64,111 @@ object Big:
   // ------------------------------------------------------------
   // Extension methods
   // ------------------------------------------------------------
-  extension (n: Big)
+  extension (b: Big)
     // underlying Big
-    inline def value: BigDecimal = n
+    inline def value: BigDecimal = b
 
-    inline def toBigDecimal: BigDecimal = n
+    inline def signum: Int = b.signum
+
+    inline def toBigDecimal: BigDecimal = b
 
     // --- BadNum helpers -------------------------------------------------------
 
     // unary guard
     inline def unary_- : Big =
-      if BigUtils.isBad(n) then BigUtils.BadNum else Big(-n)
+      if BigUtils.isBad(b) then BigUtils.BadNum else Big(-b)
 
     // binary guard helper
     @inline private def badGuard(that: Big)(f: => Big): Big =
-      if BigUtils.isBad(n) || BigUtils.isBad(that) then BigUtils.BadNum
+      if BigUtils.isBad(b) || BigUtils.isBad(that) then BigUtils.BadNum
       else Big(f)
 
-    // --- arithmetic -----------------------------------------------------------
 
-    inline def +(that: Big): Big = badGuard(that)(n + that)
-    inline def -(that: Big): Big = badGuard(that)(n - that)
-    inline def *(that: Big): Big = badGuard(that)(n * that)
-    inline def /(that: Big): Big =
-      if BigUtils.isBad(n) || BigUtils.isBad(that) then BigUtils.BadNum
-      else if that == Big(0) then BigUtils.BadNum
-      else Big(n / that)
+  // ... existing methods ...
+  
+  // --- rounding and scale ---------------------------------------------------
+    inline def setScale(scale: Int, roundingMode: BigDecimal.RoundingMode.RoundingMode): Big =
+      if BigUtils.isBad(b) then BigUtils.BadNum
+      else Big(b.setScale(scale, roundingMode))
+    
+    inline def setScale(scale: Int): Big =
+      if BigUtils.isBad(b) then BigUtils.BadNum
+      else Big(b.setScale(scale))
+
+    // --- arithmetic -----------------------------------------------------------
+    inline def +(that: Big): Big = badGuard(that)(b + that)
+    inline def -(that: Big): Big = badGuard(that)(b - that)
+    inline def *(that: Big): Big = badGuard(that)(b * that)
+    inline def /(that: Big): Big = if BigUtils.isBad(b) || BigUtils.isBad(that) then BigUtils.BadNum else if that == Big(0) then BigUtils.BadNum else Big(b / that)
 
     // Multiply by Int, Long, Double
-    inline def *(that: Int): Big = badGuard(that)(n * BigDecimal(that))
-    inline def *(that: Long): Big = badGuard(that)(n * BigDecimal(that))
-    inline def *(that: Double): Big = badGuard(that)(n * BigDecimal(that))
+    inline def *(that: Int): Big = badGuard(that)(b * that.asBig)
+    inline def *(that: Long): Big = badGuard(that)(b * that.asBig)
+    inline def *(that: Double): Big = badGuard(that)(b * that.asBig)
 
     // Add other operators if needed
-    inline def +(that: Int): Big = badGuard(that)(n + BigDecimal(that))
-    inline def +(that: Long): Big = badGuard(that)(n + BigDecimal(that))
-    inline def +(that: Double): Big = badGuard(that)(n + BigDecimal(that))
+    inline def +(that: Int): Big = badGuard(that)(b + that.asBig)
+    inline def +(that: Long): Big = badGuard(that)(b + that.asBig)
+    inline def +(that: Double): Big = badGuard(that)(b + that.asBig)
 
-    inline def -(that: Int): Big = badGuard(that)(n - BigDecimal(that))
-    inline def -(that: Long): Big = badGuard(that)(n - BigDecimal(that))
-    inline def -(that: Double): Big = badGuard(that)(n - BigDecimal(that))
+    inline def -(that: Int): Big = badGuard(that)(b - that.asBig)
+    inline def -(that: Long): Big = badGuard(that)(b - that.asBig)
+    inline def -(that: Double): Big = badGuard(that)(b - that.asBig)
 
-    inline def /(that: Int): Big =
-      if BigUtils.isBad(n) || that == 0 then BigUtils.BadNum
-      else Big(n / BigDecimal(that))
+    inline def /(that: Int): Big = if BigUtils.isBad(b) || that == 0 then BigUtils.BadNum else Big(b / that.asBig)
+    inline def /(that: Long): Big = if BigUtils.isBad(b) || that == 0 then BigUtils.BadNum else Big(b / that.asBig)
+    inline def /(that: Double): Big = if BigUtils.isBad(b) || that == 0.0 || that.isNaN || that.isInfinite then BigUtils.BadNum else Big(b / that.asBig)
 
-    inline def /(that: Long): Big =
-      if BigUtils.isBad(n) || that == 0 then BigUtils.BadNum
-      else Big(n / BigDecimal(that))
+    // --- comparison operators -------------------------------------------------
+    // Comparison with Big
+    inline def ==(that: Big): Boolean  = if BigUtils.isBad(b) || BigUtils.isBad(that) then false else b == that
+    inline def !=(that: Big): Boolean  = if BigUtils.isBad(b) || BigUtils.isBad(that) then true else b != that
+    inline def <(that: Big): Boolean   = if BigUtils.isBad(b) || BigUtils.isBad(that) then false else b < that
+    inline def <=(that: Big): Boolean  = if BigUtils.isBad(b) || BigUtils.isBad(that) then false else b <= that
+    inline def >(that: Big): Boolean   = if BigUtils.isBad(b) || BigUtils.isBad(that) then false else b > that
+    inline def >=(that: Big): Boolean  = if BigUtils.isBad(b) || BigUtils.isBad(that) then false else b >= that
 
-    inline def /(that: Double): Big =
-      if BigUtils.isBad(n) || that == 0.0 || that.isNaN || that.isInfinite then BigUtils.BadNum
-      else Big(n / BigDecimal(that))
+    // Comparison with Int
+    // inline def ==(that: Int): Boolean  = if BigUtils.isBad(b) then false else b == that.asBig
+    // inline def !=(that: Int): Boolean  = if BigUtils.isBad(b) then true else b != that.asBig
+    inline def <(that: Int): Boolean   = if BigUtils.isBad(b) then false else b < that.asBig
+    inline def <=(that: Int): Boolean  = if BigUtils.isBad(b) then false else b <= that.asBig
+    inline def >(that: Int): Boolean   = if BigUtils.isBad(b) then false else b > that.asBig
+    inline def >=(that: Int): Boolean  = if BigUtils.isBad(b) then false else b >= that.asBig
 
-    // --- comparisons ----------------------------------------------------------
-    inline def <(that: Big): Boolean    = !BigUtils.isBad(n) && !BigUtils.isBad(that) && n < that
-    inline def <=(that: Big): Boolean   = !BigUtils.isBad(n) && !BigUtils.isBad(that) && n <= that
-    inline def >(that: Big): Boolean    = !BigUtils.isBad(n) && !BigUtils.isBad(that) && n > that
-    inline def >=(that: Big): Boolean   = !BigUtils.isBad(n) && !BigUtils.isBad(that) && n >= that
+    // Comparison with Long
+    // inline def ==(that: Long): Boolean  = if BigUtils.isBad(b) then false else b == that.asBig
+    // inline def !=(that: Long): Boolean  = if BigUtils.isBad(b) then true else b != that.asBig
+    inline def <(that: Long): Boolean   = if BigUtils.isBad(b) then false else b < that.asBig
+    inline def <=(that: Long): Boolean  = if BigUtils.isBad(b) then false else b <= that.asBig
+    inline def >(that: Long): Boolean   = if BigUtils.isBad(b) then false else b > that.asBig
+    inline def >=(that: Long): Boolean  = if BigUtils.isBad(b) then false else b >= that.asBig
 
-    inline def <(that: Double): Boolean = n < that.asBig
-    inline def <(that: Long): Boolean   = n < that.asBig
-    inline def <(that: Int): Boolean    = n < that.asBig
-
-    inline def <=(that: Double): Boolean = n <= that.asBig
-    inline def <=(that: Long): Boolean   = n <= that.asBig
-    inline def <=(that: Int): Boolean    = n <= that.asBig
-
-    inline def >(that: Double): Boolean = n > that.asBig
-    inline def >(that: Long): Boolean   = n > that.asBig
-    inline def >(that: Int): Boolean    = n > that.asBig
-
-    inline def >=(that: Double): Boolean = n >= that.asBig
-    inline def >=(that: Long): Boolean   = n >= that.asBig
-    inline def >=(that: Int): Boolean    = n >= that.asBig
+    // Comparison with Double
+    // inline def ==(that: Double): Boolean  = if BigUtils.isBad(b) || that.isNaN || that.isInfinite then false else b == that.asBig
+    // inline def !=(that: Double): Boolean  = if BigUtils.isBad(b) || that.isNaN || that.isInfinite then true else b != that.asBig
+    inline def <(that: Double): Boolean   = if BigUtils.isBad(b) || that.isNaN || that.isInfinite then false else b < that.asBig
+    inline def <=(that: Double): Boolean  = if BigUtils.isBad(b) || that.isNaN || that.isInfinite then false else b <= that.asBig
+    inline def >(that: Double): Boolean   = if BigUtils.isBad(b) || that.isNaN || that.isInfinite then false else b > that.asBig
+    inline def >=(that: Double): Boolean  = if BigUtils.isBad(b) || that.isNaN || that.isInfinite then false else b >= that.asBig
 
     // --- conversions ----------------------------------------------------------
 
-    inline def toDouble: Double = if BigUtils.isBad(n) then Double.NaN else n.toDouble
+    inline def toDouble: Double = if BigUtils.isBad(b) then Double.NaN else b.toDouble
 
-    inline def toFloat: Float = if BigUtils.isBad(n) then Float.NaN else n.toFloat
+    inline def toFloat: Float = if BigUtils.isBad(b) then Float.NaN else b.toFloat
 
-    inline def toBig: Big = n
+    inline def toBig: Big = b
 
-    inline def toInt: Int = n.toInt
+    inline def toInt: Int = b.toInt
     
-    inline def toLong: Long = n.toLong
+    inline def toLong: Long = b.toLong
       
-    inline def abs: Big = n.abs
+    inline def abs: Big = b.abs
 
   import scala.language.implicitConversions
+  // Define equality comparisons as given instances
+  given Conversion[Int, Big] = i => Big(BigDecimal(i))
+  given Conversion[Long, Big] = l => Big(BigDecimal(l))
   given Conversion[Double, Big] = d => Big(BigDecimal(d))
 
