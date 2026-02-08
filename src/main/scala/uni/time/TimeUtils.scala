@@ -59,8 +59,7 @@ object TimeUtils {
   val UTC: ZoneId          = java.time.ZoneId.of("UTC")
   private def nowInstant   = Instant.now()
 
-  def now: LocalDateTime       = LocalDateTime.now()
-  val yesterday: LocalDateTime = now.minusDays(1)
+  def now        = LocalDateTime.now()
 
   private[uni] def zoneid     = ZoneId.systemDefault
   private[uni] def zoneOffset = zoneid.getRules().getStandardOffset(nowInstant)
@@ -137,8 +136,6 @@ object TimeUtils {
   def secondsSince(date1: LocalDateTime, zone: ZoneId = MountainTime): Long = ChronoUnit.SECONDS.between(date1.atZone(zone).toInstant, nowInstant)
 
   def minutesBetween(d1: LocalDateTime, d2: LocalDateTime, zone: ZoneId = MountainTime): Double = secondsBetween(d1, d2, zone).toDouble / 60.0
-
-  def hoursBetween(d1: LocalDateTime, d2: LocalDateTime, zone: ZoneId = MountainTime): Double = secondsBetween(d1, d2, zone).toDouble / 3600.0
 
   def endOfMonth(d: LocalDateTime): LocalDateTime = {
     val month: java.time.YearMonth = { java.time.YearMonth.from(d) }

@@ -52,11 +52,11 @@ object pathExts {
       }
     }
 
-    def csvRows: Seq[Seq[String]] = {
-      uni.io.FastCsv.rowsAsync(p).toSeq
+    def csvRows: Iterator[IterableOnce[String]] = {
+      uni.io.FastCsv.rowsAsync(p)
     }
-    def csvRows(onRow: Seq[String] => Unit): Unit = {
-      uni.io.FastCsv.eachRow(p){ (row: Seq[String]) =>
+    def csvRows(onRow: IterableOnce[String] => Unit): Unit = {
+      uni.io.FastCsv.eachRow(p){ (row: IterableOnce[String]) =>
         onRow(row)
       }
     }
@@ -129,6 +129,10 @@ object pathExts {
       val name = p.getFileName.toString
       val idx  = name.lastIndexOf('.')
       if idx > 0 then name.substring(idx) else ""
+    }
+    def extension: Option[String] = {
+      val ext = dotsuffix
+      if ext.nonEmpty then Some(ext.drop(1)) else None
     }
     def suffix: String = {
       val ext = dotsuffix
@@ -234,7 +238,7 @@ object pathExts {
       * @return true if deleted, false if it did not exist.
       * @throws java.io.IOException if deletion fails for real (permissions, locks, etc.)
       */
-    def delete: Boolean =
+    def delete(): Boolean =
       Files.deleteIfExists(p)
 
     def realpath: Path = {
@@ -244,36 +248,28 @@ object pathExts {
           .takeWhile(_ != null)
           .find(Files.exists(_))
 
-      // Compute remaining tail WITHOUT trying to wrap empty in a Path
-      val remainingOpt: Option[Path] =
+      // Compute the remaining tail BEFORE canonicalizing the prefix
+      val remaining =
         existing match
           case Some(prefix) =>
             val prefixCount = prefix.getNameCount
             val pCount      = p.getNameCount
             if prefixCount < pCount then
-              Some(p.subpath(prefixCount, pCount))
+              p.subpath(prefixCount, pCount)
             else
-              None
+              Paths.get("")
           case None =>
-            None
+            Paths.get("") // nothing exists; whole path is "remaining"
 
-      // Canonicalize prefix
+      // Canonicalize the prefix
       val resolvedPrefix =
-        existing match
-             case Some(prefix) =>
-               try prefix.toRealPath()
-               catch case _: Exception =>
-                 // Loop, unreadable dir, or other canonicalization failure
-                 prefix.toAbsolutePath().normalize()
+        existing.map(_.toRealPath()).getOrElse(p.toAbsolutePath())
 
-             case None =>
-               // Nothing exists; canonicalization impossible
-               p.toAbsolutePath().normalize()
+      // Reattach and normalize
+      val finalPath =
+        resolvedPrefix.resolve(remaining).normalize()
 
-      // Reattach tail if present
-      remainingOpt match
-        case Some(tail) => resolvedPrefix.resolve(tail).normalize()
-        case None       => resolvedPrefix.normalize()
+      finalPath
     }
   }
 
@@ -295,14 +291,7 @@ object pathExts {
         Files.walk(f.toPath).iterator().asScala.map(_.toFile)
       else
         Iterator.empty
-
-    def linesStream: Iterator[String] = f.toPath.linesStream
-
-    def firstLine: String = f.toPath.firstLine
-
-    def lines: Seq[String] = f.toPath.lines
-  }
-
+      }
 
   lazy val UTC: ZoneId          = java.time.ZoneId.of("UTC")
   //lazy val EasternTime: ZoneId  = java.time.ZoneId.of("America/New_York")

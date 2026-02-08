@@ -13,7 +13,7 @@ import scala.util.Properties
 import uni.ext.*
 
 export scala.util.Properties.{isWin, isMac, isLinux}
-export Proc.{call, shellExec, shellExecProc, spawn, spawnStreaming, execLines, ProcStatus}
+export Proc.{call, shellExec, shellExecProc, spawn, spawnStreaming, execLines}
 export Proc.{lazyLines, bashExe, unameExe, uname, osType, where, isWsl, hostname}
 export System.err.{println as eprintln, print as eprint} // these return Unit
 
@@ -115,9 +115,9 @@ object Proc {
   }
   lazy val exe: String = if isWin then ".exe" else ""
 
-  case class ProcStatus[Out, Err](status: Int, stdout: Out, stderr: Err, e: Option[Exception] = None)
+  case class Proc[Out, Err](status: Int, stdout: Out, stderr: Err, e: Option[Exception] = None)
 
-  def spawn(cmd: String *): ProcStatus[Seq[String], Seq[String]] = {
+  def spawn(cmd: String *): Proc[Seq[String], Seq[String]] = {
     import scala.collection.mutable.ListBuffer
     val (stdout, stderr) = (ListBuffer.empty[String], ListBuffer.empty[String])
     val cmdArray = cmd.toArray.updated(0, cmd.head.stripSuffix(exe) + exe)
@@ -149,13 +149,13 @@ object Proc {
     }
   }
 
-  def shellExecProc(bashCommand: String): ProcStatus[Seq[String], Seq[String]] = {
+  def shellExecProc(bashCommand: String): Proc[Seq[String], Seq[String]] = {
     try {
       val cmd = Seq(bashExe, "-c", bashCommand)
       spawn(cmd *)
     } catch {
       case e: Exception =>
-        ProcStatus(-1, Nil, Nil, Some(e))
+        Proc(-1, Nil, Nil, Some(e))
     }
   }
 

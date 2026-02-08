@@ -21,13 +21,14 @@ f g h i j
 
 // Because __DATA__ section comment must be at the end of the source file,
 // the above facsimile is not valid and must be ignored.
+
 object HereDoc {
   inline def DATA: Iterator[String] = sourceData(progPath)  // Perl-style
   inline def END: Iterator[String] = sourceData(progPath)   // Ruby-style
   def DATA(sourcePath: String): Iterator[String] = sourceData(sourcePath)  // Perl-style
   def END(sourcePath: String): Iterator[String] = sourceData(sourcePath)   // Ruby-style
 
-  private val verboseUni = false
+  private val verboseUni = true
   private[uni] def sourcePath(fname: String): JPath = {
     val p = JPaths.get(fname)
     if (JFiles.isRegularFile(p)) p
@@ -46,7 +47,7 @@ object HereDoc {
 
   private def sourceData(fname: String): Iterator[String] =
     val p: Path = sourcePath(fname)
-    if verboseUni then println(s"HereDoc.sourceData($fname): [${p.posx}]")
+    if verboseUni then printf("sourcePath: [%s]\n", p.toString)
     import java.nio.charset.StandardCharsets.UTF_8
     val lines = java.nio.file.Files.readAllLines(p, UTF_8).asScala
     
