@@ -52,12 +52,15 @@ object pathExts {
       }
     }
 
-    def csvRows: Iterator[IterableOnce[String]] = {
+    def csvRowsAsync: Iterator[IterableOnce[String]] = {
       uni.io.FastCsv.rowsAsync(p)
     }
-    def csvRows(onRow: IterableOnce[String] => Unit): Unit = {
+    def csvRows: Iterator[Seq[String]] = {
+      uni.io.FastCsv.rowsPulled(p)
+    }
+    def csvRows(onRow: Seq[String] => Unit): Unit = {
       uni.io.FastCsv.eachRow(p){ (row: IterableOnce[String]) =>
-        onRow(row)
+        onRow(row.iterator.to(Seq))
       }
     }
     def lines(charset: Charset = UTF_8): Iterator[String] = {
@@ -231,7 +234,7 @@ object pathExts {
       * @return true if deleted, false if it did not exist.
       * @throws java.io.IOException if deletion fails for real (permissions, locks, etc.)
       */
-    def delete(): Boolean =
+    def delete: Boolean =
       Files.deleteIfExists(p)
 
     def realpath: Path = {

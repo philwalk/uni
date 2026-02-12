@@ -17,7 +17,7 @@ ThisBuild / watchTriggeredMessage := Watch.clearScreenOnTrigger
 ThisBuild / scalaVersion  := scalaVer
 
 lazy val projectName = "uni"
-ThisBuild / version       := "0.7.0"
+ThisBuild / version       := "0.8.0" // added numpy-like matrix to uni.data.*
 ThisBuild / versionScheme := Some("semver-spec")
 
 ThisBuild / organization         := "org.vastblue"

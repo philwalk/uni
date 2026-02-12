@@ -2,12 +2,23 @@ package uni.data
 
 import uni.data.BigUtils.*
 import scala.math.BigDecimal
+import scala.math.BigDecimal.*
+export scala.math.BigDecimal.RoundingMode
 
 object Big:
+  private val MC = java.math.MathContext.DECIMAL128   // or a custom context
   // ------------------------------------------------------------
   // Opaque type
   // ------------------------------------------------------------
   opaque type Big = BigDecimal
+
+// Derive Fractional[Big] from Fractional[BigDecimal]
+  given Fractional[Big] = summon[Fractional[BigDecimal]].asInstanceOf[Fractional[Big]]
+
+  def zero: Big = Big(BigDecimal(0))
+  def one: Big = Big(BigDecimal(1))
+  def ten: Big = Big(BigDecimal(10))
+  def hundred: Big = Big(BigDecimal(100))
 
   // Constructors
   def apply(s: String): Big      = BigUtils.str2num(s)
@@ -22,6 +33,7 @@ object Big:
   def big(i: Int): Big         = apply(i)
   def big(l: Long): Big        = apply(l)
   def big(bd: BigDecimal): Big = apply(bd)
+
   // ------------------------------------------------------------
   // Extractor for pattern matching
   // ------------------------------------------------------------
@@ -69,6 +81,11 @@ object Big:
     inline def value: BigDecimal = n
 
     inline def toBigDecimal: BigDecimal = n
+
+    inline def signum: Int = n.signum // Inside this scope, b is treated as a BigDecimal
+
+    def setScale(scale: Int, roundingMode: scala.math.BigDecimal.RoundingMode.RoundingMode): Big =
+      n.setScale(scale, roundingMode)
 
     // --- BadNum helpers -------------------------------------------------------
 
@@ -152,7 +169,14 @@ object Big:
     inline def toLong: Long = n.toLong
       
     inline def abs: Big = n.abs
+  
+    def sqrt: Big = 
+      // BigDecimal.sqrt is available in Java 9+
+      // .bigDecimal converts scala.math.BigDecimal -> java.math.BigDecimal
+      val underlying: java.math.BigDecimal = n.value.bigDecimal
+      Big(underlying.sqrt(Big.MC))
 
   import scala.language.implicitConversions
   given Conversion[Double, Big] = d => Big(BigDecimal(d))
+
 
