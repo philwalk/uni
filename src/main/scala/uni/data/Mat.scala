@@ -1,6 +1,8 @@
 package uni.data
 
 import scala.reflect.ClassTag
+import scala.compiletime.erasedValue
+import com.github.fommil.netlib.BLAS
 
 object Mat {
   // Opaque type wraps flat array with dimensions
@@ -9,7 +11,8 @@ object Mat {
   private case class MatData[T](
     data: Array[T],
     rows: Int,
-    cols: Int
+    cols: Int,
+    transposed: Boolean = false
   )
   
   object :: // Sentinel object for "all" in slicing
@@ -47,7 +50,10 @@ object Mat {
       val c = if (col < 0) m.cols + col else col
       require(r >= 0 && r < m.rows && c >= 0 && c < m.cols, 
         s"Index ($r, $c) out of bounds for ${m.rows}×${m.cols} matrix")
-      m.data(r * m.cols + c)
+      if m.transposed then
+        m.data(c * m.rows + r)
+      else
+        m.data(r * m.cols + c)
     }
     
     /** 
@@ -59,7 +65,10 @@ object Mat {
       val c = if (col < 0) m.cols + col else col
       require(r >= 0 && r < m.rows && c >= 0 && c < m.cols,
         s"Index ($r, $c) out of bounds for ${m.rows}×${m.cols} matrix")
-      m.data(r * m.cols + c) = value
+      if m.transposed then
+        m.data(c * m.rows + r) = value
+      else
+        m.data(r * m.cols + c) = value
     }
     
     /** 
@@ -69,11 +78,10 @@ object Mat {
     def apply(rows: ::.type, col: Int)(using ClassTag[T]): Mat[T] = {
       val c = if (col < 0) m.cols + col else col
       require(c >= 0 && c < m.cols, s"Column index $c out of bounds")
-      
       val result = Array.ofDim[T](m.rows)
       var i = 0
       while (i < m.rows) {
-        result(i) = m.data(i * m.cols + c)
+        result(i) = m(i, c)  // respects transposed flag
         i += 1
       }
       MatData(result, m.rows, 1)
@@ -86,9 +94,12 @@ object Mat {
     def apply(row: Int, cols: ::.type)(using ClassTag[T]): Mat[T] = {
       val r = if (row < 0) m.rows + row else row
       require(r >= 0 && r < m.rows, s"Row index $r out of bounds")
-      
       val result = Array.ofDim[T](m.cols)
-      System.arraycopy(m.data, r * m.cols, result, 0, m.cols)
+      var j = 0
+      while (j < m.cols) {
+        result(j) = m(r, j)  // respects transposed flag
+        j += 1
+      }
       MatData(result, 1, m.cols)
     }
     
@@ -101,15 +112,12 @@ object Mat {
       val colSeq = cols.toSeq
       val newRows = rowSeq.length
       val newCols = colSeq.length
-      
       val result = Array.ofDim[T](newRows * newCols)
       var i = 0
       while (i < newRows) {
         var j = 0
         while (j < newCols) {
-          val srcRow = rowSeq(i)
-          val srcCol = colSeq(j)
-          result(i * newCols + j) = m(srcRow, srcCol)
+          result(i * newCols + j) = m(rowSeq(i), colSeq(j))
           j += 1
         }
         i += 1
@@ -123,69 +131,74 @@ object Mat {
   extension [T: ClassTag](m: Mat[T])
     /** 
      * NumPy: m.T 
-     * Transpose (short form)
+     * O(1) transpose - flips flag and swaps dims, no data movement
      */
     def T: Mat[T] = transpose
     
     /** 
      * NumPy: m.transpose() 
-     * Transpose (long form)
+     * O(1) transpose - flips flag and swaps dims, no data movement
      */
-    def transpose: Mat[T] = {
-      val result = Array.ofDim[T](m.size)
-      var i = 0
-      while (i < m.rows) {
-        var j = 0
-        while (j < m.cols) {
-          result(j * m.rows + i) = m.data(i * m.cols + j)
-          j += 1
-        }
-        i += 1
-      }
-      MatData(result, m.cols, m.rows)
-    }
+    def transpose: Mat[T] =
+      MatData(m.data, m.cols, m.rows, !m.transposed)
     
     /** 
      * NumPy: m.reshape(rows, cols) 
-     * Reshape matrix (must preserve total size)
+     * Reshape matrix - materializes logical order first if transposed
      */
     def reshape(rows: Int, cols: Int): Mat[T] = {
       require(rows * cols == m.size, 
         s"Cannot reshape ${m.rows}×${m.cols} (size ${m.size}) to ${rows}×${cols} (size ${rows*cols})")
-      MatData(m.data.clone(), rows, cols)
+      val result = Array.ofDim[T](m.size)
+      var i = 0
+      while i < m.rows do
+        var j = 0
+        while j < m.cols do
+          result(i * m.cols + j) = m(i, j)
+          j += 1
+        i += 1
+      MatData(result, rows, cols)
     }
     
     /** 
      * NumPy: m.flatten() 
-     * Return flattened copy as 1D array
+     * Return flattened copy in logical row-major order
      */
-    def flatten: Array[T] = m.data.clone()
+    def flatten: Array[T] =
+      if !m.transposed then
+        m.data.clone()
+      else
+        val result = Array.ofDim[T](m.size)
+        var i = 0
+        while i < m.rows do
+          var j = 0
+          while j < m.cols do
+            result(i * m.cols + j) = m(i, j)
+            j += 1
+          i += 1
+        result
     
     /** 
      * NumPy: m.copy() 
-     * Return deep copy
+     * Return deep copy preserving transposed state
      */
-    def copy: Mat[T] = MatData(m.data.clone(), m.rows, m.cols)
+    def copy: Mat[T] = MatData(m.data.clone(), m.rows, m.cols, m.transposed)
     
     /**
      * NumPy: m.ravel()
-     * Return flattened view as row vector (creates copy in our case)
+     * Return flattened view as row vector in logical order
      */
-    def ravel: Mat[T] = MatData(m.data.clone(), 1, m.size)
+    def ravel: Mat[T] = MatData(flatten, 1, m.size)
   
   // ============================================================================
   // Arithmetic Operations (NumPy-aligned)
   // ============================================================================
-  
+
   extension [T: ClassTag](m: Mat[T])
-    /** 
-     * NumPy: m + n 
-     * Element-wise addition
-     */
+    /** NumPy: m + n - Element-wise addition */
     def +(other: Mat[T])(using num: Numeric[T]): Mat[T] = {
       require(m.rows == other.rows && m.cols == other.cols, 
         s"Shape mismatch: ${m.shape} vs ${other.shape}")
-      
       val result = Array.ofDim[T](m.size)
       var i = 0
       while (i < m.size) {
@@ -195,10 +208,7 @@ object Mat {
       MatData(result, m.rows, m.cols)
     }
     
-    /** 
-     * NumPy: m + scalar 
-     * Add scalar to all elements
-     */
+    /** NumPy: m + scalar - Add scalar to all elements */
     def +(scalar: T)(using num: Numeric[T]): Mat[T] = {
       val result = Array.ofDim[T](m.size)
       var i = 0
@@ -209,14 +219,10 @@ object Mat {
       MatData(result, m.rows, m.cols)
     }
     
-    /** 
-     * NumPy: m - n 
-     * Element-wise subtraction
-     */
+    /** NumPy: m - n - Element-wise subtraction */
     def -(other: Mat[T])(using num: Numeric[T]): Mat[T] = {
       require(m.rows == other.rows && m.cols == other.cols,
         s"Shape mismatch: ${m.shape} vs ${other.shape}")
-      
       val result = Array.ofDim[T](m.size)
       var i = 0
       while (i < m.size) {
@@ -226,10 +232,7 @@ object Mat {
       MatData(result, m.rows, m.cols)
     }
     
-    /** 
-     * NumPy: m - scalar 
-     * Subtract scalar from all elements
-     */
+    /** NumPy: m - scalar - Subtract scalar from all elements */
     def -(scalar: T)(using num: Numeric[T]): Mat[T] = {
       val result = Array.ofDim[T](m.size)
       var i = 0
@@ -241,14 +244,12 @@ object Mat {
     }
     
     /** 
-     * NumPy: m * n (element-wise multiplication)
-     * Note: In NumPy, * is element-wise. Use @ for matrix mult.
-     * We use *:* for element-wise to match Breeze, * for matrix mult.
+     * Element-wise multiplication (*:* to match Breeze convention)
+     * NumPy equivalent: m * n
      */
     def *:*(other: Mat[T])(using num: Numeric[T]): Mat[T] = {
       require(m.rows == other.rows && m.cols == other.cols,
         s"Shape mismatch: ${m.shape} vs ${other.shape}")
-      
       val result = Array.ofDim[T](m.size)
       var i = 0
       while (i < m.size) {
@@ -258,10 +259,7 @@ object Mat {
       MatData(result, m.rows, m.cols)
     }
     
-    /** 
-     * NumPy: m * scalar 
-     * Multiply all elements by scalar
-     */
+    /** NumPy: m * scalar - Multiply all elements by scalar */
     def *(scalar: T)(using num: Numeric[T]): Mat[T] = {
       val result = Array.ofDim[T](m.size)
       var i = 0
@@ -272,48 +270,55 @@ object Mat {
       MatData(result, m.rows, m.cols)
     }
     
-    /** 
-     * NumPy: m @ n or m.dot(n)
-     * Matrix multiplication
-     */
-    def *(other: Mat[T])(using num: Numeric[T]): Mat[T] = {
-      require(m.cols == other.rows, 
-        s"Cannot multiply ${m.rows}×${m.cols} by ${other.rows}×${other.cols}")
-      
-      val result = Array.ofDim[T](m.rows * other.cols)
-      
+    /*
+    def multiplyGeneric(other: Mat[T])(using num: Numeric[T]): Mat[T] = {
+      require(m.cols == other.rows)
+
+      val a = m.data
+      val b = other.data
+      val rowsA = m.rows
+      val colsA = m.cols
+      val colsB = other.cols
+
+      val aT = m.transposed
+      val bT = other.transposed
+
+      val plus  = num.plus
+      val times = num.times
+      val zero  = num.zero
+
+      val result = Array.ofDim[T](rowsA * colsB)
+
       var i = 0
-      while (i < m.rows) {
+      while i < rowsA do
         var j = 0
-        while (j < other.cols) {
-          var sum = num.zero
+        while j < colsB do
+          var sum = zero
           var k = 0
-          while (k < m.cols) {
-            sum = num.plus(sum, num.times(
-              m.data(i * m.cols + k),
-              other.data(k * other.cols + j)
-            ))
+          while k < colsA do
+            val aVal =
+              if !aT then a(i * colsA + k)
+              else a(k * rowsA + i)
+
+            val bVal =
+              if !bT then b(k * colsB + j)
+              else b(j * other.rows + k)
+
+            sum = plus(sum, times(aVal, bVal))
             k += 1
-          }
-          result(i * other.cols + j) = sum
+
+          result(i * colsB + j) = sum
           j += 1
-        }
         i += 1
-      }
-      
-      MatData(result, m.rows, other.cols)
+
+      MatData(result, rowsA, colsB)
     }
+    */
     
-    /** 
-     * NumPy: m.dot(n) 
-     * Matrix multiplication (explicit form)
-     */
-    def dot(other: Mat[T])(using num: Numeric[T]): Mat[T] = m * other
+    /** NumPy: m.dot(n) - Matrix multiplication (explicit form) */
+    //def dot(other: Mat[T])(using num: Numeric[T]): Mat[T] = m * other
     
-    /** 
-     * NumPy: m / scalar 
-     * Divide all elements by scalar
-     */
+    /** NumPy: m / scalar - Divide all elements by scalar */
     def /(scalar: T)(using frac: Fractional[T]): Mat[T] = {
       val result = Array.ofDim[T](m.size)
       var i = 0
@@ -324,10 +329,7 @@ object Mat {
       MatData(result, m.rows, m.cols)
     }
     
-    /** 
-     * NumPy: -m 
-     * Unary negation
-     */
+    /** NumPy: -m - Unary negation */
     def unary_-(using num: Numeric[T]): Mat[T] = {
       val result = Array.ofDim[T](m.size)
       var i = 0
@@ -360,16 +362,42 @@ object Mat {
     }
     
     /** NumPy: m.argmin() - index of minimum element as (row, col) */
-    def argmin(using ord: Ordering[T]): (Int, Int) = {
-      val idx = m.data.indexOf(m.data.min)
-      (idx / m.cols, idx % m.cols)
-    }
+    def argmin(using ord: Ordering[T]): (Int, Int) =
+      if !m.transposed then
+        val idx = m.data.indexOf(m.data.min)
+        (idx / m.cols, idx % m.cols)
+      else
+        var minVal = m(0, 0)
+        var minR = 0
+        var minC = 0
+        var i = 0
+        while i < m.rows do
+          var j = 0
+          while j < m.cols do
+            if ord.lt(m(i, j), minVal) then
+              minVal = m(i, j); minR = i; minC = j
+            j += 1
+          i += 1
+        (minR, minC)
     
     /** NumPy: m.argmax() - index of maximum element as (row, col) */
-    def argmax(using ord: Ordering[T]): (Int, Int) = {
-      val idx = m.data.indexOf(m.data.max)
-      (idx / m.cols, idx % m.cols)
-    }
+    def argmax(using ord: Ordering[T]): (Int, Int) =
+      if !m.transposed then
+        val idx = m.data.indexOf(m.data.max)
+        (idx / m.cols, idx % m.cols)
+      else
+        var maxVal = m(0, 0)
+        var maxR = 0
+        var maxC = 0
+        var i = 0
+        while i < m.rows do
+          var j = 0
+          while j < m.cols do
+            if ord.gt(m(i, j), maxVal) then
+              maxVal = m(i, j); maxR = i; maxC = j
+            j += 1
+          i += 1
+        (maxR, maxC)
   
   // ============================================================================
   // Functional Operations
@@ -387,7 +415,7 @@ object Mat {
       MatData(result, m.rows, m.cols)
     }
     
-    /** Filter and return indices where predicate is true */
+    /** Return indices where predicate is true */
     def where(pred: T => Boolean): Array[(Int, Int)] = {
       val indices = scala.collection.mutable.ArrayBuffer[(Int, Int)]()
       var i = 0
@@ -409,8 +437,7 @@ object Mat {
   extension [T: ClassTag](m: Mat[T])(using frac: Fractional[T])
     /** Pretty-print matrix */
     def show: String = {
-      // Helper to get type name
-      def typeName[T: ClassTag]: String =
+      def typeName: String =
         summon[ClassTag[T]].runtimeClass.getSimpleName match
           case "double"     => "Double"
           case "float"      => "Float"
@@ -420,7 +447,7 @@ object Mat {
       if m.isEmpty then 
         s"Mat[$typeName]([], shape=(0, 0))"
       else
-        // 1. Analyze data range
+        // 1. Analyze data range (raw data ok - same elements regardless of transpose)
         val values = m.data
         val absMax = values.map(v => math.abs(frac.toDouble(v))).max
         val absMin = values.filter(frac.toDouble(_) != 0.0)
@@ -430,33 +457,28 @@ object Mat {
         // 2. Decide format based on range
         val fmt: Double => String =
           if absMax >= 1e6 || (absMin > 0 && absMin < 1e-4) then
-            // Scientific notation for very large or very small
             d => f"$d%.4e"
           else
-            // Find the actual precision needed by examining fractional parts
             val allInts = values.forall(v => frac.toDouble(v) == math.floor(frac.toDouble(v)))
             if allInts then
-              // All whole numbers - no decimal places needed
               d => d.toLong.toString
             else
-              // Find meaningful decimal places by checking spread of fractional parts
               val doubles = values.map(frac.toDouble)
               val spread = doubles.max - doubles.min
               val decPlaces = 
-                if spread == 0.0 then 1                              // all same value
-                else if spread >= 100 then 1                         // large spread, 1 decimal
-                else if spread >= 10  then 2
-                else if spread >= 1   then 3
-                else if spread >= 0.1 then 4
+                if spread == 0.0  then 1
+                else if spread >= 100  then 1
+                else if spread >= 10   then 2
+                else if spread >= 1    then 3
+                else if spread >= 0.1  then 4
                 else if spread >= 0.01 then 5
-                else 6                                               // small spread, more precision
+                else 6
               d => s"%.${decPlaces}f".format(d)
 
-        // 3. Format all values, find max width for alignment
-        val formatted = values.map(v => fmt(frac.toDouble(v)))
-        val colWidth = formatted.map(_.length).max
+        // 3. Find max column width for alignment
+        val colWidth = values.map(v => fmt(frac.toDouble(v)).length).max
         
-        // 4. Render
+        // 4. Render using m(i,j) to respect transposed flag
         val sb = new StringBuilder
         sb.append(s"Mat[$typeName](\n")
         var i = 0
@@ -464,7 +486,7 @@ object Mat {
           sb.append("  [")
           var j = 0
           while j < m.cols do
-            val s = formatted(i * m.cols + j)
+            val s = fmt(frac.toDouble(m(i, j)))
             sb.append(" " * (colWidth - s.length))
             sb.append(s)
             if j < m.cols - 1 then sb.append(", ")
@@ -481,147 +503,87 @@ object Mat {
   // Factory Methods (NumPy-aligned)
   // ============================================================================
   
-  /** 
-   * NumPy: np.zeros((rows, cols)) 
-   * Create matrix filled with zeros
-   */
-  def zeros[T: ClassTag](rows: Int, cols: Int)(using frac: Fractional[T]): Mat[T] = {
-    val data = Array.fill(rows * cols)(frac.zero)
-    MatData(data, rows, cols)
-  }
+  /** NumPy: np.zeros((rows, cols)) */
+  def zeros[T: ClassTag](rows: Int, cols: Int)(using frac: Fractional[T]): Mat[T] =
+    MatData(Array.fill(rows * cols)(frac.zero), rows, cols)
   
   /** NumPy: np.zeros(shape) where shape is tuple */
   def zeros[T: ClassTag](shape: (Int, Int))(using frac: Fractional[T]): Mat[T] = 
     zeros(shape._1, shape._2)
   
-  /** 
-   * NumPy: np.ones((rows, cols)) 
-   * Create matrix filled with ones
-   */
-  def ones[T: ClassTag](rows: Int, cols: Int)(using frac: Fractional[T]): Mat[T] = {
-    val data = Array.fill(rows * cols)(frac.one)
-    MatData(data, rows, cols)
-  }
+  /** NumPy: np.ones((rows, cols)) */
+  def ones[T: ClassTag](rows: Int, cols: Int)(using frac: Fractional[T]): Mat[T] =
+    MatData(Array.fill(rows * cols)(frac.one), rows, cols)
   
   /** NumPy: np.ones(shape) where shape is tuple */
   def ones[T: ClassTag](shape: (Int, Int))(using frac: Fractional[T]): Mat[T] = 
     ones(shape._1, shape._2)
   
-  /** 
-   * NumPy: np.eye(n) 
-   * Create n×n identity matrix
-   */
-  def eye[T: ClassTag](n: Int)(using frac: Fractional[T]): Mat[T] = {
-    val data = Array.tabulate(n * n)(i => 
-      if (i % (n + 1) == 0) frac.one else frac.zero
-    )
-    MatData(data, n, n)
-  }
+  /** NumPy: np.eye(n) - n×n identity matrix */
+  def eye[T: ClassTag](n: Int)(using frac: Fractional[T]): Mat[T] =
+    MatData(Array.tabulate(n * n)(i => if i % (n + 1) == 0 then frac.one else frac.zero), n, n)
   
-  /** 
-   * NumPy: np.full((rows, cols), value) 
-   * Create matrix filled with given value
-   */
-  def full[T: ClassTag](rows: Int, cols: Int, value: T): Mat[T] = {
-    val data = Array.fill(rows * cols)(value)
-    MatData(data, rows, cols)
-  }
+  /** NumPy: np.full((rows, cols), value) */
+  def full[T: ClassTag](rows: Int, cols: Int, value: T): Mat[T] =
+    MatData(Array.fill(rows * cols)(value), rows, cols)
   
   /** NumPy: np.full(shape, value) where shape is tuple */
   def full[T: ClassTag](shape: (Int, Int), value: T): Mat[T] = 
     full(shape._1, shape._2, value)
   
-  /** 
-   * NumPy: np.arange(stop) 
-   * Create column vector [0, 1, ..., stop-1]
-   */
-  def arange[T: ClassTag](stop: Int)(using frac: Fractional[T]): Mat[T] = {
-    val data = Array.tabulate(stop)(i => frac.fromInt(i))
-    MatData(data, stop, 1)
-  }
+  /** NumPy: np.arange(stop) - column vector [0, 1, ..., stop-1] */
+  def arange[T: ClassTag](stop: Int)(using frac: Fractional[T]): Mat[T] =
+    MatData(Array.tabulate(stop)(i => frac.fromInt(i)), stop, 1)
   
-  /** 
-   * NumPy: np.arange(start, stop) 
-   * Create column vector [start, start+1, ..., stop-1]
-   */
+  /** NumPy: np.arange(start, stop) */
   def arange[T: ClassTag](start: Int, stop: Int)(using frac: Fractional[T]): Mat[T] = {
     val n = stop - start
     require(n > 0, s"stop ($stop) must be greater than start ($start)")
-    val data = Array.tabulate(n)(i => frac.fromInt(start + i))
-    MatData(data, n, 1)
+    MatData(Array.tabulate(n)(i => frac.fromInt(start + i)), n, 1)
   }
   
-  /** 
-   * NumPy: np.arange(start, stop, step) 
-   * Create column vector with given step
-   */
+  /** NumPy: np.arange(start, stop, step) */
   def arange[T: ClassTag](start: Int, stop: Int, step: Int)(using frac: Fractional[T]): Mat[T] = {
     require(step != 0, "step cannot be zero")
     val n = ((stop - start).toDouble / step).ceil.toInt
     require(n > 0, s"Invalid range: start=$start, stop=$stop, step=$step")
-    val data = Array.tabulate(n)(i => frac.fromInt(start + i * step))
-    MatData(data, n, 1)
+    MatData(Array.tabulate(n)(i => frac.fromInt(start + i * step)), n, 1)
   }
   
-  /** 
-   * NumPy: np.linspace(start, stop, num) 
-   * Create column vector with num evenly spaced values
-   */
-   def linspace[T: ClassTag](start: Double, stop: Double, num: Int = 50)(using frac: Fractional[T]): Mat[T] = {
-      require(num > 0, "num must be positive")
-      if num == 1 then
-        MatData(Array(frac.fromInt(start.toInt)), 1, 1)
-      else
-        val step = (stop - start) / (num - 1)
-        val data = Array.tabulate(num) { i =>
-          val v = start + i * step
-          // Convert Double to T via BigDecimal to preserve precision
-          BigDecimal(v) match
-            case bd if summon[ClassTag[T]].runtimeClass == classOf[Double]     => v.asInstanceOf[T]
-            case bd if summon[ClassTag[T]].runtimeClass == classOf[Float]      => v.toFloat.asInstanceOf[T]
-            case bd if summon[ClassTag[T]].runtimeClass == classOf[BigDecimal] => bd.asInstanceOf[T]
-            case _                                                              => frac.fromInt(v.toInt)
-        }
-        MatData(data, num, 1)
-    }
+  /** NumPy: np.linspace(start, stop, num) */
+  def linspace[T: ClassTag](start: Double, stop: Double, num: Int = 50)(using frac: Fractional[T]): Mat[T] = {
+    require(num > 0, "num must be positive")
+    if num == 1 then
+      MatData(Array(frac.fromInt(start.toInt)), 1, 1)
+    else
+      val step = (stop - start) / (num - 1)
+      val data = Array.tabulate(num) { i =>
+        val v = start + i * step
+        summon[ClassTag[T]].runtimeClass match
+          case c if c == classOf[Double]     => v.asInstanceOf[T]
+          case c if c == classOf[Float]      => v.toFloat.asInstanceOf[T]
+          case c if c == classOf[BigDecimal] => BigDecimal(v).asInstanceOf[T]
+          case c => throw IllegalArgumentException(s"linspace unsupported type: ${c.getName}")
+      }
+      MatData(data, num, 1)
+  }
   
-  /** 
-   * Create matrix from flat array with explicit dimensions
-   * Usage: Mat(2, 3, Array(1, 2, 3, 4, 5, 6))
-   */
+  /** Create matrix from flat array with explicit dimensions */
   def apply[T: ClassTag](rows: Int, cols: Int, data: Array[T]): Mat[T] = {
     require(data.length == rows * cols, 
       s"Data length ${data.length} != $rows × $cols")
     MatData(data, rows, cols)
   }
   
-  /** 
-   * Handle Unit () as empty matrix
-   * Usage: Mat(()) creates 0×0 matrix
-   */
-  def apply[T: ClassTag](unit: Unit): Mat[T] = {
+  /** Mat(()) - empty matrix */
+  def apply[T: ClassTag](unit: Unit): Mat[T] =
     MatData(Array.ofDim[T](0), 0, 0)
-  }
   
-  /** 
-   * Handle single scalar value - promote to 1×1 matrix
-   * Usage: Mat(42) creates 1×1 matrix containing 42
-   * This handles the (x) case since (x) is just x, not Tuple1(x)
-   */
-   def apply[T: ClassTag](value: T): Mat[T] =
-      MatData(Array(value), 1, 1)
-  
-  /** 
-   * NumPy: np.array([...]) - alias for apply
-   * NOT implemented, equivalent to `apply` and misleading.
-   */
-  // def array[T: ClassTag](tuples: Tuple*)(using frac: Fractional[T]): Mat[T] = apply(tuples*)
-  
-  /** 
-   * NumPy: np.array([[1, 2], [3, 4]]) 
-   * Create matrix from tuple literals
-   * Usage: Mat((1, 2), (3, 4))
-   */
+  /** Mat(value) - 1×1 matrix from scalar */
+  def apply[T: ClassTag](value: T): Mat[T] =
+    MatData(Array(value), 1, 1)
+
+  /** NumPy: np.array([[1, 2], [3, 4]]) - matrix from tuple literals */
   def apply[T: ClassTag](tuples: Tuple*)(using frac: Fractional[T]): Mat[T] = {
     val rows = tuples.length
     if rows == 0 then 
@@ -629,7 +591,6 @@ object Mat {
     else
       val cols = tuples(0).productArity
       val data = Array.ofDim[T](rows * cols)
-      
       var i = 0
       while i < rows do
         val rowTuple = tuples(i)
@@ -637,7 +598,7 @@ object Mat {
         var j = 0
         while j < cols do
           data(i * cols + j) = rowTuple.productElement(j) match
-            case n: Int          => frac.fromInt(n)       // promote Int literals ← missing!
+            case n: Int          => frac.fromInt(n)
             case n: Double       => n.asInstanceOf[T]
             case n: Float        => n.asInstanceOf[T]
             case n: BigDecimal   => n.asInstanceOf[T]
@@ -645,39 +606,23 @@ object Mat {
             case other           => throw new IllegalArgumentException(s"Unsupported type: ${other.getClass.getName}")
           j += 1
         i += 1
-      
       MatData(data, rows, cols)
   }
 
-  
-  def apply(value: Double): Mat[Double]                     = MatData(Array(value), 1, 1)
-  def apply(value: Big): Mat[Big]                           = MatData(Array(value), 1, 1)
+  // Concrete-type single-value factories (unambiguous, no [T] required)
+  def apply(value: Double): Mat[Double] = MatData(Array(value), 1, 1)
+  def apply(value: Big): Mat[Big]       = MatData(Array(value), 1, 1)
 
-  /** 
-   * Workaround for single scalar value (since (x) is not a tuple)
-   * Usage: Mat.single(42) creates 1×1 matrix
-   */
-  def single[T: ClassTag](value: T): Mat[T] = {
-    val data = Array(value)
-    MatData(data, 1, 1)
-  }
+  /** Explicit 1×1 matrix factory */
+  def single[T: ClassTag](value: T): Mat[T] =
+    MatData(Array(value), 1, 1)
   
-  /** 
-   * Create matrix from sequence of scalars (column vector)
-   * Usage: Mat.fromSeq(Seq(1, 2, 3)) creates 3×1 column vector
-   * Workaround for: Mat(1, 2, 3) which would require varargs overload
-   */
-  def fromSeq[T: ClassTag](values: Seq[T]): Mat[T] = {
-    if (values.isEmpty)
-      empty[T]
-    else
-      MatData(values.toArray, values.length, 1)
-  }
+  /** Create column vector from sequence */
+  def fromSeq[T: ClassTag](values: Seq[T]): Mat[T] =
+    if values.isEmpty then empty[T]
+    else MatData(values.toArray, values.length, 1)
   
-  /** 
-   * Create row vector from varargs (alternative to row())
-   * Usage: Mat.of(1, 2, 3) creates 1×3 row vector
-   */
+  /** Create row vector from varargs */
   def of[T: ClassTag](first: T, rest: T*): Mat[T] = {
     val values = first +: rest
     MatData(values.toArray, 1, values.length)
@@ -698,22 +643,275 @@ object Mat {
     MatData(data, rows, cols)
   }
   
-  /** Create empty matrix */
+  /** Create empty 0×0 matrix */
   def empty[T: ClassTag]: Mat[T] = MatData(Array.ofDim[T](0), 0, 0)
   
-  /** 
-   * Create row vector from values
-   * Usage: Mat.row(1, 2, 3) creates 1×3 matrix
-   */
-  def row[T: ClassTag](values: T*): Mat[T] = {
+  /** Create row vector from values */
+  def row[T: ClassTag](values: T*): Mat[T] =
     MatData(values.toArray, 1, values.length)
-  }
   
-  /** 
-   * Create column vector from values
-   * Usage: Mat.col(1, 2, 3) creates 3×1 matrix
-   */
-  def col[T: ClassTag](values: T*): Mat[T] = {
+  /** Create column vector from values */
+  def col[T: ClassTag](values: T*): Mat[T] =
     MatData(values.toArray, values.length, 1)
+
+  // matrix multiply
+  extension [T: ClassTag](m: Mat[T]) {
+    /** 
+     * NumPy: m @ n or m.dot(n) - Matrix multiplication
+     * Uses apply() to correctly handle transposed matrices
+     */
+    inline def *(other: Mat[T]): Mat[T] = {
+      if m.cols != other.rows then
+        throw new IllegalArgumentException(s"m.cols[${m.cols}] != other.rows[${other.rows}]")
+
+      inline erasedValue[T] match
+        case _: Double =>
+          val a = m.asInstanceOf[Mat[Double]]
+          val b = other.asInstanceOf[Mat[Double]]
+          val out =
+            if shouldUseBLAS(a, b) then multiplyDoubleBLAS(b)
+            else multiplyDouble(b)
+          out.asInstanceOf[Mat[T]]
+
+        case _: Float =>
+          val a = m.asInstanceOf[Mat[Float]]
+          val b = other.asInstanceOf[Mat[Float]]
+          val out =
+            if shouldUseBLAS(a, b) then multiplyFloatBLAS(b)
+            else multiplyFloat(b)
+          out.asInstanceOf[Mat[T]]
+
+        case _: Big =>
+          multiplyBig(other.asInstanceOf[Mat[Big]]).asInstanceOf[Mat[T]]
+
+        case _: BigDecimal =>
+          multiplyBig(other.asInstanceOf[Mat[Big]]).asInstanceOf[Mat[T]]
+    }
+
+    private def multiplyDouble(other: Mat[Double]): Mat[Double] = {
+      val a = m.data.asInstanceOf[Array[Double]]
+      val b = other.data.asInstanceOf[Array[Double]]
+      val rowsA = m.rows
+      val colsA = m.cols
+      val colsB = other.cols
+
+      val aT = m.transposed
+      val bT = other.transposed
+
+      val result = Array.ofDim[Double](rowsA * colsB)
+
+      // Precompute accessors to eliminate branches in the inner loop
+      val aAt: (Int, Int) => Double =
+        if !aT then (i, k) => a(i * colsA + k)
+        else (i, k) => a(k * rowsA + i)
+
+      val bAt: (Int, Int) => Double =
+        if !bT then (k, j) => b(k * colsB + j)
+        else (k, j) => b(j * other.rows + k)
+
+      var i = 0
+      while i < rowsA do
+        var j = 0
+        while j < colsB do
+          var sum = 0.0
+          var k = 0
+          while k < colsA do
+            sum += aAt(i, k) * bAt(k, j)
+            k += 1
+          result(i * colsB + j) = sum
+          j += 1
+        i += 1
+      MatData(result, rowsA, colsB)
+    }
+
+    private def multiplyFloat(other: Mat[Float]): Mat[Float] = {
+      val a = m.data.asInstanceOf[Array[Float]]
+      val b = other.data.asInstanceOf[Array[Float]]
+      val rowsA = m.rows
+      val colsA = m.cols
+      val colsB = other.cols
+
+      val aT = m.transposed
+      val bT = other.transposed
+
+      val result = Array.ofDim[Float](rowsA * colsB)
+
+      val aAt =
+        if !aT then (i: Int, k: Int) => a(i * colsA + k)
+        else (i: Int, k: Int) => a(k * rowsA + i)
+
+      val bAt =
+        if !bT then (k: Int, j: Int) => b(k * colsB + j)
+        else (k: Int, j: Int) => b(j * other.rows + k)
+
+      var i = 0
+      while i < rowsA do
+        var j = 0
+        while j < colsB do
+          var sum = 0.0f
+          var k = 0
+          while k < colsA do
+            sum += aAt(i, k) * bAt(k, j)
+            k += 1
+          result(i * colsB + j) = sum
+          j += 1
+        i += 1
+
+      MatData(result, rowsA, colsB)
+    }
+
+    private def multiplyBig(other: Mat[Big]): Mat[Big] = {
+      val a = m.data.asInstanceOf[Array[BigDecimal]]
+      val b = other.data.asInstanceOf[Array[BigDecimal]]
+      val rowsA = m.rows
+      val colsA = m.cols
+      val colsB = other.cols
+
+      val aT = m.transposed
+      val bT = other.transposed
+
+      val result = Array.ofDim[BigDecimal](rowsA * colsB)
+
+      val aAt =
+        if !aT then (i: Int, k: Int) => a(i * colsA + k)
+        else (i: Int, k: Int) => a(k * rowsA + i)
+
+      val bAt =
+        if !bT then (k: Int, j: Int) => b(k * colsB + j)
+        else (k: Int, j: Int) => b(j * other.rows + k)
+
+      var i = 0
+      while i < rowsA do
+        var j = 0
+        while j < colsB do
+          var sum = BigDecimal(0)
+          var k = 0
+          while k < colsA do
+            sum = sum + (aAt(i, k) * bAt(k, j))
+            k += 1
+          result(i * colsB + j) = sum
+          j += 1
+        i += 1
+
+      MatData(result.asInstanceOf[Array[Big]], rowsA, colsB)
+    }
+
+    private inline def shouldUseBLAS[A](a: Mat[A], b: Mat[A]): Boolean =
+      a.rows * a.cols * b.cols >= 50_000 // cubic work estimate
+
+    private def multiplyDoubleBLAS(other: Mat[Double]): Mat[Double] = {
+      val a = m.data.asInstanceOf[Array[Double]]
+      val b = other.data.asInstanceOf[Array[Double]]
+      val rowsA = m.rows
+      val colsA = m.cols
+      val colsB = other.cols
+
+      // Convert to column-major
+      val aCol = new Array[Double](rowsA * colsA)
+      val bCol = new Array[Double](colsA * colsB)
+      val cCol = new Array[Double](rowsA * colsB)
+
+      // row-major → column-major
+      var i = 0
+      while i < rowsA do
+        var j = 0
+        while j < colsA do
+          aCol(j * rowsA + i) = a(i * colsA + j)
+          j += 1
+        i += 1
+
+      i = 0
+      while i < colsA do
+        var j = 0
+        while j < colsB do
+          bCol(j * colsA + i) = b(i * colsB + j)
+          j += 1
+        i += 1
+
+      // BLAS call: C = A * B
+      BLAS.getInstance.dgemm(
+        "N", "N",
+        rowsA, colsB, colsA,
+        1.0,
+        aCol, 0, rowsA,
+        bCol, 0, colsA,
+        0.0,
+        cCol, 0, rowsA
+      )
+
+      // Convert back to row-major
+      val result = new Array[Double](rowsA * colsB)
+      i = 0
+      while i < rowsA do
+        var j = 0
+        while j < colsB do
+          result(i * colsB + j) = cCol(j * rowsA + i)
+          j += 1
+        i += 1
+
+      MatData(result, rowsA, colsB)
+    }
+    private def multiplyFloatBLAS(other: Mat[Float]): Mat[Float] = {
+      val a = m.data.asInstanceOf[Array[Float]]
+      val b = other.data.asInstanceOf[Array[Float]]
+      val rowsA = m.rows
+      val colsA = m.cols
+      val colsB = other.cols
+
+      val aCol = new Array[Float](rowsA * colsA)
+      val bCol = new Array[Float](colsA * colsB)
+      val cCol = new Array[Float](rowsA * colsB)
+
+      var i = 0
+      while i < rowsA do
+        var j = 0
+        while j < colsA do
+          aCol(j * rowsA + i) = a(i * colsA + j)
+          j += 1
+        i += 1
+
+      i = 0
+      while i < colsA do
+        var j = 0
+        while j < colsB do
+          bCol(j * colsA + i) = b(i * colsB + j)
+          j += 1
+        i += 1
+
+      BLAS.getInstance.sgemm(
+        "N", "N",
+        rowsA, colsB, colsA,
+        1.0f,
+        aCol, 0, rowsA,
+        bCol, 0, colsA,
+        0.0f,
+        cCol, 0, rowsA
+      )
+
+      val result = new Array[Float](rowsA * colsB)
+      i = 0
+      while i < rowsA do
+        var j = 0
+        while j < colsB do
+          result(i * colsB + j) = cCol(j * rowsA + i)
+          j += 1
+        i += 1
+
+      MatData(result, rowsA, colsB)
+    }
+    inline def dot(other: Mat[T]): Mat[T] =
+      inline erasedValue[T] match
+        case _: Double =>
+          multiplyDouble(other.asInstanceOf[Mat[Double]]).asInstanceOf[Mat[T]]
+
+        case _: Float =>
+          multiplyFloat(other.asInstanceOf[Mat[Float]]).asInstanceOf[Mat[T]]
+
+        case _: BigDecimal =>
+          multiplyBig(other.asInstanceOf[Mat[Big]]).asInstanceOf[Mat[T]]
+
+        case _: Big =>
+          multiplyBig(other.asInstanceOf[Mat[Big]]).asInstanceOf[Mat[T]]
   }
+
 }

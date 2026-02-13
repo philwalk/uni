@@ -79,8 +79,9 @@ lazy val root = (project in file(".")).
   )
 
 libraryDependencies ++= Seq(
-  "org.scalameta" %% "munit"            % "1.2.1" % Test,
-  "org.scalameta" %% "munit-scalacheck" % "1.2.0" % Test
+  "com.github.fommil.netlib" % "all"              % "1.1.2", // netlib-java
+  "org.scalameta"           %% "munit"            % "1.2.1" % Test,
+  "org.scalameta"           %% "munit-scalacheck" % "1.2.0" % Test,
 )
 
 /*
