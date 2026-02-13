@@ -2,6 +2,7 @@ package uni.data
 
 import scala.reflect.ClassTag
 import scala.compiletime.erasedValue
+import scala.util.Random
 
 object Mat {
   // Opaque type wraps flat array with dimensions
@@ -357,25 +358,34 @@ object Mat {
   // ============================================================================
   def zeros[T: ClassTag](rows: Int, cols: Int)(using frac: Fractional[T]): Mat[T] =
     MatData(Array.fill(rows * cols)(frac.zero), rows, cols)
+
   def zeros[T: ClassTag](shape: (Int, Int))(using frac: Fractional[T]): Mat[T] =
     zeros(shape._1, shape._2)
+
   def ones[T: ClassTag](rows: Int, cols: Int)(using frac: Fractional[T]): Mat[T] =
     MatData(Array.fill(rows * cols)(frac.one), rows, cols)
+
   def ones[T: ClassTag](shape: (Int, Int))(using frac: Fractional[T]): Mat[T] =
     ones(shape._1, shape._2)
+
   def eye[T: ClassTag](n: Int)(using frac: Fractional[T]): Mat[T] =
     MatData(Array.tabulate(n * n)(i => if i % (n + 1) == 0 then frac.one else frac.zero), n, n)
+
   def full[T: ClassTag](rows: Int, cols: Int, value: T): Mat[T] =
     MatData(Array.fill(rows * cols)(value), rows, cols)
+
   def full[T: ClassTag](shape: (Int, Int), value: T): Mat[T] =
     full(shape._1, shape._2, value)
+
   def arange[T: ClassTag](stop: Int)(using frac: Fractional[T]): Mat[T] =
     MatData(Array.tabulate(stop)(i => frac.fromInt(i)), stop, 1)
+
   def arange[T: ClassTag](start: Int, stop: Int)(using frac: Fractional[T]): Mat[T] = {
     val n = stop - start
     require(n > 0, s"stop ($stop) must be greater than start ($start)")
     MatData(Array.tabulate(n)(i => frac.fromInt(start + i)), n, 1)
   }
+
   def arange[T: ClassTag](start: Int, stop: Int, step: Int)(using frac: Fractional[T]): Mat[T] = {
     require(step != 0, "step cannot be zero")
     val n = ((stop - start).toDouble / step).ceil.toInt
@@ -426,13 +436,21 @@ object Mat {
         i += 1
       MatData(data, rows, cols)
   }
+  // Concrete-type single-value factories (unambiguous, no [T] required)
   def apply(value: Double): Mat[Double] = MatData(Array(value), 1, 1)
   def apply(value: Big): Mat[Big]       = MatData(Array(value), 1, 1)
+
+  /** Explicit 1×1 matrix factory */
   def single[T: ClassTag](value: T): Mat[T] = MatData(Array(value), 1, 1)
+
+  /** Create column vector from sequence */
   def fromSeq[T: ClassTag](values: Seq[T]): Mat[T] =
     if values.isEmpty then empty[T] else MatData(values.toArray, values.length, 1)
-  def of[T: ClassTag](first: T, rest: T*): Mat[T] =
-    MatData((first +: rest).toArray, 1, 1 + rest.length)
+
+  /** Create row vector from varargs */
+  def of[T: ClassTag](first: T, rest: T*): Mat[T] = MatData((first +: rest).toArray, 1, 1 + rest.length)
+
+  /** Create matrix using generator function */
   def tabulate[T: ClassTag](rows: Int, cols: Int)(f: (Int, Int) => T): Mat[T] = {
     val data = Array.ofDim[T](rows * cols)
     var i = 0
@@ -442,8 +460,13 @@ object Mat {
       i += 1
     MatData(data, rows, cols)
   }
+  /** Create empty 0×0 matrix */
   def empty[T: ClassTag]: Mat[T]           = MatData(Array.ofDim[T](0), 0, 0)
+
+  /** Create row vector from values */
   def row[T: ClassTag](values: T*): Mat[T] = MatData(values.toArray, 1, values.length)
+
+  /** Create column vector from values */
   def col[T: ClassTag](values: T*): Mat[T] = MatData(values.toArray, values.length, 1)
 
   // ============================================================================
@@ -806,9 +829,238 @@ object Mat {
       MatData(result, rowsA, colsB)
     }
 
+    def trace(using num: Numeric[T]): T = diagonal.foldLeft(num.zero)(num.plus)
+
+    def allclose(other: Mat[T], rtol: Double = 1e-5, atol: Double = 1e-8)(using frac: Fractional[T]): Boolean = {
+      if m.rows != other.rows || m.cols != other.cols then return false
+      var i = 0
+      while i < m.rows do
+        var j = 0
+        while j < m.cols do
+          val a = frac.toDouble(m(i, j))
+          val b = frac.toDouble(other(i, j))
+          if math.abs(a - b) > atol + rtol * math.abs(b) then return false
+          j += 1
+        i += 1
+      true
+    }
+
+    /** NumPy: np.sum(m, axis=0) → row vector of column sums
+     *         np.sum(m, axis=1) → column vector of row sums */
+    def sum(axis: Int)(using num: Numeric[T]): Mat[T] = {
+      require(axis == 0 || axis == 1, s"axis must be 0 or 1, got $axis")
+      if axis == 0 then
+        // Sum down rows → result is 1×cols
+        val result = Array.fill(m.cols)(num.zero)
+        var i = 0
+        while i < m.rows do
+          var j = 0
+          while j < m.cols do
+            result(j) = num.plus(result(j), m(i, j))
+            j += 1
+          i += 1
+        MatData(result, 1, m.cols)
+      else
+        // Sum across cols → result is rows×1
+        val result = Array.fill(m.rows)(num.zero)
+        var i = 0
+        while i < m.rows do
+          var j = 0
+          while j < m.cols do
+            result(i) = num.plus(result(i), m(i, j))
+            j += 1
+          i += 1
+        MatData(result, m.rows, 1)
+    }
+
+    def mean(axis: Int)(using frac: Fractional[T]): Mat[T] = {
+      require(axis == 0 || axis == 1, s"axis must be 0 or 1, got $axis")
+      val s = m.sum(axis)
+      val n = if axis == 0 then m.rows else m.cols
+      s / frac.fromInt(n)
+    }
+
+    def max(axis: Int)(using ord: Ordering[T]): Mat[T] = {
+      require(axis == 0 || axis == 1, s"axis must be 0 or 1, got $axis")
+      if axis == 0 then
+        // Max down rows → 1×cols
+        val result = Array.tabulate(m.cols)(j => m(0, j))
+        var i = 1
+        while i < m.rows do
+          var j = 0
+          while j < m.cols do
+            if ord.gt(m(i, j), result(j)) then result(j) = m(i, j)
+            j += 1
+          i += 1
+        MatData(result, 1, m.cols)
+      else
+        // Max across cols → rows×1
+        val result = Array.tabulate(m.rows)(i => m(i, 0))
+        var i = 0
+        while i < m.rows do
+          var j = 1
+          while j < m.cols do
+            if ord.gt(m(i, j), result(i)) then result(i) = m(i, j)
+            j += 1
+          i += 1
+        MatData(result, m.rows, 1)
+    }
+
+    def min(axis: Int)(using ord: Ordering[T]): Mat[T] = {
+      require(axis == 0 || axis == 1, s"axis must be 0 or 1, got $axis")
+      if axis == 0 then
+        val result = Array.tabulate(m.cols)(j => m(0, j))
+        var i = 1
+        while i < m.rows do
+          var j = 0
+          while j < m.cols do
+            if ord.lt(m(i, j), result(j)) then result(j) = m(i, j)
+            j += 1
+          i += 1
+        MatData(result, 1, m.cols)
+      else
+        val result = Array.tabulate(m.rows)(i => m(i, 0))
+        var i = 0
+        while i < m.rows do
+          var j = 1
+          while j < m.cols do
+            if ord.lt(m(i, j), result(i)) then result(i) = m(i, j)
+            j += 1
+          i += 1
+        MatData(result, m.rows, 1)
+    }
+
+    def abs(using frac: Fractional[T]): Mat[T] =
+      m.map((x: T) => if frac.lt(x, frac.zero) then frac.negate(x) else x)
+
+    def sqrt(using frac: Fractional[T]): Mat[T] =
+      summon[ClassTag[T]].runtimeClass match
+        case c if c == classOf[Double] =>
+          m.map((x: T) => math.sqrt(frac.toDouble(x)).asInstanceOf[T])
+        case c if c == classOf[Float] =>
+          m.map((x: T) => math.sqrt(frac.toDouble(x)).toFloat.asInstanceOf[T])
+        case c if c == classOf[BigDecimal] =>
+          m.map((x: T) => x.asInstanceOf[Big].sqrt.asInstanceOf[T])
+        case c => throw UnsupportedOperationException(s"sqrt unsupported for ${c.getName}")
+
+    def exp(using frac: Fractional[T]): Mat[T] =
+      m.map((x: T) => math.exp(frac.toDouble(x)).asInstanceOf[T])
+
+    def log(using frac: Fractional[T]): Mat[T] =
+      m.map((x: T) => math.log(frac.toDouble(x)).asInstanceOf[T])
+
+    def clip(lower: T, upper: T)(using ord: Ordering[T]): Mat[T] =
+      m.map((x: T) => if ord.lt(x, lower) then lower else if ord.gt(x, upper) then upper else x)
+
+    def outer(other: Mat[T])(using num: Numeric[T]): Mat[T] = {
+      require(m.size > 0 && other.size > 0, "outer requires non-empty vectors")
+      val a = m.flatten
+      val b = other.flatten
+      val result = Array.ofDim[T](a.length * b.length)
+      var i = 0
+      while i < a.length do
+        var j = 0
+        while j < b.length do
+          result(i * b.length + j) = num.times(a(i), b(j))
+          j += 1
+        i += 1
+      MatData(result, a.length, b.length)
+    }
+
+    /** NumPy: np.linalg.solve(A, b) - solve Ax = b for x */
+    def solve(b: Mat[T])(using frac: Fractional[T]): Mat[T] = {
+      require(m.rows == m.cols, s"solve requires square matrix, got ${m.shape}")
+      require(b.rows == m.rows, s"b.rows ${b.rows} must match matrix rows ${m.rows}")
+      val n = m.rows
+      val nRhs = b.cols
+      val (lu, pivots, _) = luDecompose
+      val result = Array.ofDim[T](n * nRhs)
+
+      var col = 0
+      while col < nRhs do
+        val x = Array.tabulate(n)(i => b(pivots(i), col))
+        // Forward substitution
+        var i = 1
+        while i < n do
+          var k = 0
+          while k < i do
+            x(i) = frac.minus(x(i), frac.times(lu(i, k), x(k)))
+            k += 1
+          i += 1
+        // Backward substitution
+        i = n - 1
+        while i >= 0 do
+          var k = i + 1
+          while k < n do
+            x(i) = frac.minus(x(i), frac.times(lu(i, k), x(k)))
+            k += 1
+          x(i) = frac.div(x(i), lu(i, i))
+          i -= 1
+        var row = 0
+        while row < n do
+          result(row * nRhs + col) = x(row)
+          row += 1
+        col += 1
+      MatData(result, n, nRhs)
+    }
+
   } // end extension
 
-  private lazy val blasThreshold: Long =
-    System.getProperty("uni.mat.blasThreshold", "6000").toLong
+  def rand(rows: Int, cols: Int, seed: Long = -1): Mat[Double] = {
+    val rng = if seed >= 0 then Random(seed) else Random
+
+    MatData(Array.fill(rows * cols)(rng.nextDouble()), rows, cols)
+  }
+
+  def randn(rows: Int, cols: Int, seed: Long = -1): Mat[Double] = {
+    val rng = if seed >= 0 then Random(seed) else Random
+    MatData(Array.fill(rows * cols)(rng.nextGaussian()), rows, cols)
+  }
+
+
+  // In the Mat companion object (not extension)
+  def vstack[U: ClassTag](matrices: Mat[U]*): Mat[U] = {
+    require(matrices.nonEmpty, "vstack requires at least one matrix")
+    val cols = matrices.head.cols
+    require(matrices.forall(_.cols == cols), "vstack requires equal column counts")
+    val totalRows = matrices.map(_.rows).sum
+    val result = Array.ofDim[U](totalRows * cols)
+    var offset = 0
+    for mat <- matrices do
+      var i = 0
+      while i < mat.rows do
+        var j = 0
+        while j < mat.cols do
+          result(offset + i * cols + j) = mat(i, j)
+          j += 1
+        i += 1
+      offset += mat.rows * cols
+    MatData(result, totalRows, cols)
+  }
+
+  def hstack[U: ClassTag](matrices: Mat[U]*): Mat[U] = {
+    require(matrices.nonEmpty, "hstack requires at least one matrix")
+    val rows = matrices.head.rows
+    require(matrices.forall(_.rows == rows), "hstack requires equal row counts")
+    val totalCols = matrices.map(_.cols).sum
+    val result = Array.ofDim[U](rows * totalCols)
+    var i = 0
+    while i < rows do
+      var colOffset = 0
+      for mat <- matrices do
+        var j = 0
+        while j < mat.cols do
+          result(i * totalCols + colOffset + j) = mat(i, j)
+          j += 1
+        colOffset += mat.cols
+      i += 1
+    MatData(result, rows, totalCols)
+  }
+
+  def concatenate[U: ClassTag](matrices: Seq[Mat[U]], axis: Int = 0): Mat[U] =
+    if axis == 0 then vstack(matrices*)
+    else hstack(matrices*)
+
+  private lazy val blasThreshold: Long = System.getProperty("uni.mat.blasThreshold", "6000").toLong
 
 }
