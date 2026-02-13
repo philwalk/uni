@@ -124,3 +124,44 @@ final class BigSuite extends FunSuite:
     val dt = getMostSpecificType("2024-01-15")
     assert(dt.isInstanceOf[uni.time.DateTime])
   }
+
+   test("setScale should round to specified decimal places") {
+    val big = Big(3.14159)
+    val rounded = big.setScale(2, RoundingMode.HALF_UP)
+    assertEquals(rounded.toBigDecimal, BigDecimal("3.14"))
+  }
+  
+  test("setScale with HALF_UP rounding mode") {
+    val big = Big(2.345)
+    val rounded = big.setScale(1, RoundingMode.HALF_UP)
+    assertEquals(rounded.toBigDecimal, BigDecimal("2.3"))
+    
+    val big2 = Big(2.35)
+    val rounded2 = big2.setScale(1, RoundingMode.HALF_UP)
+    assertEquals(rounded2.toBigDecimal, BigDecimal("2.4"))
+  }
+  
+  test("setScale with HALF_DOWN rounding mode") {
+    val big = Big(2.35)
+    val rounded = big.setScale(1, RoundingMode.HALF_DOWN)
+    assertEquals(rounded.toBigDecimal, BigDecimal("2.3"))
+  }
+  
+  test("setScale should preserve type as Big") {
+    val big = Big(1.23456)
+    val rounded = big.setScale(2, RoundingMode.HALF_UP)
+    // Verify it's still a Big (compiles and can use Big methods)
+    assertEquals(rounded.signum, 1)
+  }
+  
+  test("setScale with zero decimal places") {
+    val big = Big(3.7)
+    val rounded = big.setScale(0, RoundingMode.HALF_UP)
+    assertEquals(rounded.toBigDecimal, BigDecimal("4"))
+  }
+  
+  test("setScale with negative numbers") {
+    val big = Big(-2.75)
+    val rounded = big.setScale(1, RoundingMode.HALF_UP)
+    assertEquals(rounded.toBigDecimal, BigDecimal("-2.8"))
+  }

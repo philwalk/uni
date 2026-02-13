@@ -13,6 +13,8 @@ export BigUtils.*
 
 object BigUtils:
 
+  type CVD = LocalDateTime|uni.data.Big|Option[Int]|String|Int
+
   // ------------------------------------------------------------
   // Core type & sentinels
   // ------------------------------------------------------------
@@ -232,3 +234,16 @@ object BigUtils:
 
   def big2double(xx: Big): Double =
     if isBad(xx) then Double.NaN else xx.toDouble
+
+  def toStr(x: CVD): String = {
+    (x: @unchecked) match {
+    case s: String        => s
+    case n: (Int | Long)  => n.toString
+    case BadNum           => "N/A"
+    case b: Big           => b.toString
+    case d: LocalDateTime => d.toString("yyyy-MM-dd")
+    case Some(oi: Int)    => oi.toString
+    case None             => ""
+    }
+  }
+

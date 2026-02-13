@@ -17,7 +17,7 @@ ThisBuild / watchTriggeredMessage := Watch.clearScreenOnTrigger
 ThisBuild / scalaVersion  := scalaVer
 
 lazy val projectName = "uni"
-ThisBuild / version       := "0.7.0"
+ThisBuild / version       := "0.8.0" // added numpy-like matrix to uni.data.*
 ThisBuild / versionScheme := Some("semver-spec")
 
 ThisBuild / organization         := "org.vastblue"
@@ -79,8 +79,9 @@ lazy val root = (project in file(".")).
   )
 
 libraryDependencies ++= Seq(
-  "org.scalameta" %% "munit"            % "1.2.1" % Test,
-  "org.scalameta" %% "munit-scalacheck" % "1.2.0" % Test
+  "com.github.fommil.netlib" % "all"              % "1.1.2", // netlib-java
+  "org.scalameta"           %% "munit"            % "1.2.1" % Test,
+  "org.scalameta"           %% "munit-scalacheck" % "1.2.0" % Test,
 )
 
 /*

@@ -49,9 +49,11 @@ object ArgsParser {
     }
 
     def peekNext: String = {
-      withNext {
-        args(i + 1)
-      }
+      if i + 1 < args.length then
+        withNext {
+          args(i + 1)
+        }
+      else ""
     }
 
     def nextInt: Int = {
