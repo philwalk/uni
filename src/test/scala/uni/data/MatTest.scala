@@ -342,7 +342,7 @@ class MatTest extends munit.FunSuite {
   
   test("copy creates deep copy") {
     val m = Mat.ones[Double](2, 2)
-    val c = m.copy
+    val c = m.matCopy
     m(0, 0) = 99.0
     assertEquals(m(0, 0), 99.0)
     assertEquals(c(0, 0), 1.0)  // copy unchanged
@@ -902,5 +902,298 @@ class MatTest extends munit.FunSuite {
     val t = m.T
     assertEquals(t.shape, (3, 2))
     assertEquals(t(0, 1), Big(4))
+  }
+
+  test("BLAS multiply matches pure JVM multiply") {
+    val m1 = Mat.tabulate[Double](50, 50)((i, j) => (i + j).toDouble / 100.0)
+    val m2 = Mat.tabulate[Double](50, 50)((i, j) => (i * j).toDouble / 100.0)
+
+    val blasResult = m1.multiplyDoubleBLAS(m2)
+    val pureResult = m1.multiplyDouble(m2)
+
+    assertEquals(blasResult.shape, pureResult.shape)
+    
+    // Compare all elements within floating point tolerance
+    var i = 0
+    while i < blasResult.rows do
+      var j = 0
+      while j < blasResult.cols do
+        assertEqualsDouble(blasResult(i, j), pureResult(i, j), 1e-8, s"mismatch at ($i,$j)")
+        j += 1
+      i += 1
+  }
+
+  test("BLAS multiply matches pure JVM for transposed matrices") {
+    val m1 = Mat.tabulate[Double](30, 40)((i, j) => (i + j).toDouble / 100.0)
+    val m2 = Mat.tabulate[Double](40, 30)((i, j) => (i * j).toDouble / 100.0)
+
+    // Test all four transposition combinations
+    for
+      t1 <- Seq(false, true)
+      t2 <- Seq(false, true)
+    do
+      val a = if t1 then m1.T else m1
+      val b = if t2 then m2.T else m2
+      if a.cols == b.rows then
+        val blasResult = a.multiplyDoubleBLAS(b)
+        val pureResult = a.multiplyDouble(b)
+        var i = 0
+        while i < blasResult.rows do
+          var j = 0
+          while j < blasResult.cols do
+            assertEqualsDouble(blasResult(i, j), pureResult(i, j), 1e-8,
+              s"mismatch at ($i,$j) with t1=$t1, t2=$t2")
+            j += 1
+          i += 1
+  }
+
+  // ============================================================================
+  // diagonal
+  // ============================================================================
+  test("diagonal of square matrix") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6), (7, 8, 9))
+    val d = m.diagonal
+    assertEquals(d.toList, List(1.0, 5.0, 9.0))
+  }
+
+  test("diagonal of non-square matrix takes min dimension") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6))  // 2x3
+    val d = m.diagonal
+    assertEquals(d.toList, List(1.0, 5.0))
+  }
+
+  test("diagonal of transposed matrix") {
+    val m = Mat[Double]((1, 2), (3, 4), (5, 6)).T  // 2x3 transposed
+    val d = m.diagonal
+    assertEquals(d.toList, List(1.0, 4.0))
+  }
+
+  // ============================================================================
+  // norm
+  // ============================================================================
+  test("norm of row vector") {
+    val v = Mat.row[Double](3.0, 4.0)
+    assertEqualsDouble(v.norm, 5.0, 1e-10)
+  }
+
+  test("norm of column vector") {
+    val v = Mat.col[Double](3.0, 4.0)
+    assertEqualsDouble(v.norm, 5.0, 1e-10)
+  }
+
+  test("norm of unit vector") {
+    val v = Mat.row[Double](1.0, 0.0, 0.0)
+    assertEqualsDouble(v.norm, 1.0, 1e-10)
+  }
+
+  test("norm of Float vector") {
+    val v = Mat.row[Float](3.0f, 4.0f)
+    assertEqualsDouble(v.norm.toDouble, 5.0, 1e-5)
+  }
+
+  test("norm requires vector") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    intercept[IllegalArgumentException] { m.norm }
+  }
+
+  // ============================================================================
+  // hadamard
+  // ============================================================================
+  test("hadamard equals *:*") {
+    val a = Mat[Double]((1, 2), (3, 4))
+    val b = Mat[Double]((5, 6), (7, 8))
+    val h = a.hadamard(b)
+    val e = a *:* b
+    assertEquals(h.shape, e.shape)
+    var i = 0; while i < h.rows do
+      var j = 0; while j < h.cols do
+        assertEqualsDouble(h(i,j), e(i,j), 1e-10)
+        j += 1
+      i += 1
+  }
+
+  test("hadamard correct values") {
+    val a = Mat[Double]((1, 2), (3, 4))
+    val b = Mat[Double]((5, 6), (7, 8))
+    val h = a.hadamard(b)
+    assertEquals(h(0,0), 5.0)
+    assertEquals(h(0,1), 12.0)
+    assertEquals(h(1,0), 21.0)
+    assertEquals(h(1,1), 32.0)
+  }
+
+  // ============================================================================
+  // determinant
+  // ============================================================================
+  test("determinant of 1x1 matrix") {
+    val m = Mat[Double](5.0)
+    assertEqualsDouble(m.determinant, 5.0, 1e-10)
+  }
+
+  test("determinant of 2x2 matrix") {
+    // det [[1,2],[3,4]] = 1*4 - 2*3 = -2
+    val m = Mat[Double]((1, 2), (3, 4))
+    assertEqualsDouble(m.determinant, -2.0, 1e-10)
+  }
+
+  test("determinant of 3x3 matrix") {
+    // det [[1,2,3],[4,5,6],[7,8,10]] = -3
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6), (7, 8, 10))
+    assertEqualsDouble(m.determinant, -3.0, 1e-10)
+  }
+
+  test("determinant of identity matrix is 1") {
+    val m = Mat.eye[Double](4)
+    assertEqualsDouble(m.determinant, 1.0, 1e-10)
+  }
+
+  test("determinant of singular matrix throws") {
+    val m = Mat[Double]((1, 2), (2, 4))  // row2 = 2*row1
+    intercept[ArithmeticException] { m.determinant }
+  }
+
+  test("determinant requires square matrix") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6))
+    intercept[IllegalArgumentException] { m.determinant }
+  }
+
+  // ============================================================================
+  // inverse
+  // ============================================================================
+  test("inverse of 2x2 matrix") {
+    val m   = Mat[Double]((1, 2), (3, 4))
+    val inv = m.inverse
+    // m * inv should be identity
+    val prod = m * inv
+    assertEqualsDouble(prod(0,0), 1.0, 1e-10)
+    assertEqualsDouble(prod(0,1), 0.0, 1e-10)
+    assertEqualsDouble(prod(1,0), 0.0, 1e-10)
+    assertEqualsDouble(prod(1,1), 1.0, 1e-10)
+  }
+
+  test("inverse of 3x3 matrix: m * inv = I") {
+    val m   = Mat[Double]((1, 2, 3), (0, 1, 4), (5, 6, 0))
+    val inv = m.inverse
+    val prod = m * inv
+    val n = 3
+    var i = 0
+    while i < n do
+      var j = 0
+      while j < n do
+        val expected = if i == j then 1.0 else 0.0
+        assertEqualsDouble(prod(i,j), expected, 1e-10, s"identity check failed at ($i,$j)")
+        j += 1
+      i += 1
+  }
+
+  test("inverse of identity is identity") {
+    val m   = Mat.eye[Double](3)
+    val inv = m.inverse
+    val n = 3
+    var i = 0
+    while i < n do
+      var j = 0
+      while j < n do
+        val expected = if i == j then 1.0 else 0.0
+        assertEqualsDouble(inv(i,j), expected, 1e-10)
+        j += 1
+      i += 1
+  }
+
+  test("inverse of singular matrix throws") {
+    val m = Mat[Double]((1, 2), (2, 4))
+    intercept[ArithmeticException] { m.inverse }
+  }
+
+  test("inverse requires square matrix") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6))
+    intercept[IllegalArgumentException] { m.inverse }
+  }
+
+  // ============================================================================
+  // qrDecomposition
+  // ============================================================================
+  test("qr decomposition: Q * R = original matrix") {
+    val m = Mat[Double]((1, 2), (3, 4), (5, 6))  // 3x2
+    val (q, r) = m.qrDecomposition
+    val reconstructed = q * r
+    var i = 0
+    while i < m.rows do
+      var j = 0
+      while j < m.cols do
+        assertEqualsDouble(reconstructed(i,j), m(i,j), 1e-10, s"mismatch at ($i,$j)")
+        j += 1
+      i += 1
+  }
+
+  test("qr decomposition: Q is orthonormal (Q^T * Q = I)") {
+    val m = Mat[Double]((1, 2), (3, 4), (5, 6))  // 3x2
+    val (q, _) = m.qrDecomposition
+    val qtq = q.T * q  // should be 2x2 identity
+    val p = qtq.rows
+    var i = 0
+    while i < p do
+      var j = 0
+      while j < p do
+        val expected = if i == j then 1.0 else 0.0
+        assertEqualsDouble(qtq(i,j), expected, 1e-10, s"Q^T*Q not identity at ($i,$j)")
+        j += 1
+      i += 1
+  }
+
+  test("qr decomposition: R is upper triangular") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6), (7, 8, 10))
+    val (_, r) = m.qrDecomposition
+    var i = 1
+    while i < r.rows do
+      var j = 0
+      while j < i do
+        assertEqualsDouble(r(i,j), 0.0, 1e-10, s"R not upper triangular at ($i,$j)")
+        j += 1
+      i += 1
+  }
+
+  test("qr decomposition square matrix: Q * R = original") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6), (7, 8, 10))
+    val (q, r) = m.qrDecomposition
+    val reconstructed = q * r
+    var i = 0
+    while i < m.rows do
+      var j = 0
+      while j < m.cols do
+        assertEqualsDouble(reconstructed(i,j), m(i,j), 1e-10, s"mismatch at ($i,$j)")
+        j += 1
+      i += 1
+  }
+
+  // ============================================================================
+  // eigenvalues
+  // ============================================================================
+  test("eigenvalues of 2x2 symmetric matrix") {
+    // [[2, 1], [1, 2]] has eigenvalues 3 and 1
+    val m = Mat[Double]((2, 1), (1, 2))
+    val eigs = m.eigenvalues().sorted
+    assertEqualsDouble(eigs(0), 1.0, 1e-6)
+    assertEqualsDouble(eigs(1), 3.0, 1e-6)
+  }
+
+  test("eigenvalues of identity matrix are all 1") {
+    val m = Mat.eye[Double](3)
+    val eigs = m.eigenvalues()
+    eigs.foreach(e => assertEqualsDouble(e, 1.0, 1e-6))
+  }
+
+  test("eigenvalues of diagonal matrix equal diagonal entries") {
+    // [[3,0,0],[0,1,0],[0,0,2]] has eigenvalues 1, 2, 3
+    val m = Mat[Double]((3, 0, 0), (0, 1, 0), (0, 0, 2))
+    val eigs = m.eigenvalues().sorted
+    assertEqualsDouble(eigs(0), 1.0, 1e-6)
+    assertEqualsDouble(eigs(1), 2.0, 1e-6)
+    assertEqualsDouble(eigs(2), 3.0, 1e-6)
+  }
+
+  test("eigenvalues requires square matrix") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6))
+    intercept[IllegalArgumentException] { m.eigenvalues() }
   }
 }
