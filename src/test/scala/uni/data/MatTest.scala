@@ -1196,4 +1196,383 @@ class MatTest extends munit.FunSuite {
     val m = Mat[Double]((1, 2, 3), (4, 5, 6))
     intercept[IllegalArgumentException] { m.eigenvalues() }
   }
+
+  // ============================================================================
+  // trace
+  // ============================================================================
+  test("trace of square matrix") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6), (7, 8, 9))
+    assertEqualsDouble(m.trace, 15.0, 1e-10)  // 1 + 5 + 9
+  }
+
+  test("trace of identity matrix equals n") {
+    val m = Mat.eye[Double](4)
+    assertEqualsDouble(m.trace, 4.0, 1e-10)
+  }
+
+  test("trace of non-square matrix uses min dimension") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6))  // 2x3
+    assertEqualsDouble(m.trace, 6.0, 1e-10)  // 1 + 5
+  }
+
+  // ============================================================================
+  // allclose
+  // ============================================================================
+  test("allclose identical matrices") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    assert(m.allclose(m))
+  }
+
+  test("allclose within tolerance") {
+    val a = Mat[Double]((1.0, 2.0), (3.0, 4.0))
+    val b = Mat[Double]((1.0 + 1e-9, 2.0 - 1e-9), (3.0, 4.0 + 1e-9))
+    assert(a.allclose(b))
+  }
+
+  test("allclose outside tolerance") {
+    val a = Mat[Double]((1.0, 2.0), (3.0, 4.0))
+    val b = Mat[Double]((1.0, 2.0), (3.0, 4.1))
+    assert(!a.allclose(b))
+  }
+
+  test("allclose shape mismatch returns false") {
+    val a = Mat[Double]((1, 2), (3, 4))
+    val b = Mat[Double]((1, 2, 3), (4, 5, 6))
+    assert(!a.allclose(b))
+  }
+
+  test("allclose custom tolerance") {
+    val a = Mat[Double]((1.0, 2.0))
+    val b = Mat[Double]((1.05, 2.05))
+    assert(!a.allclose(b))
+    assert(a.allclose(b, atol = 0.1))
+  }
+
+  // ============================================================================
+  // axis-aware sum
+  // ============================================================================
+  test("sum axis=0 gives column sums") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6))
+    val s = m.sum(0)
+    assertEquals(s.shape, (1, 3))
+    assertEqualsDouble(s(0, 0), 5.0, 1e-10)
+    assertEqualsDouble(s(0, 1), 7.0, 1e-10)
+    assertEqualsDouble(s(0, 2), 9.0, 1e-10)
+  }
+
+  test("sum axis=1 gives row sums") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6))
+    val s = m.sum(1)
+    assertEquals(s.shape, (2, 1))
+    assertEqualsDouble(s(0, 0), 6.0, 1e-10)
+    assertEqualsDouble(s(1, 0), 15.0, 1e-10)
+  }
+
+  test("sum invalid axis throws") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    intercept[IllegalArgumentException] { m.sum(2) }
+  }
+
+  // ============================================================================
+  // axis-aware mean
+  // ============================================================================
+  test("mean axis=0 gives column means") {
+    val m = Mat[Double]((1, 2, 3), (3, 4, 5))
+    val s = m.mean(0)
+    assertEquals(s.shape, (1, 3))
+    assertEqualsDouble(s(0, 0), 2.0, 1e-10)
+    assertEqualsDouble(s(0, 1), 3.0, 1e-10)
+    assertEqualsDouble(s(0, 2), 4.0, 1e-10)
+  }
+
+  test("mean axis=1 gives row means") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6))
+    val s = m.mean(1)
+    assertEquals(s.shape, (2, 1))
+    assertEqualsDouble(s(0, 0), 2.0, 1e-10)
+    assertEqualsDouble(s(1, 0), 5.0, 1e-10)
+  }
+
+  // ============================================================================
+  // axis-aware max/min
+  // ============================================================================
+  test("max axis=0 gives column maxima") {
+    val m = Mat[Double]((1, 5, 3), (4, 2, 6))
+    val mx = m.max(0)
+    assertEquals(mx.shape, (1, 3))
+    assertEqualsDouble(mx(0, 0), 4.0, 1e-10)
+    assertEqualsDouble(mx(0, 1), 5.0, 1e-10)
+    assertEqualsDouble(mx(0, 2), 6.0, 1e-10)
+  }
+
+  test("max axis=1 gives row maxima") {
+    val m = Mat[Double]((1, 5, 3), (4, 2, 6))
+    val mx = m.max(1)
+    assertEquals(mx.shape, (2, 1))
+    assertEqualsDouble(mx(0, 0), 5.0, 1e-10)
+    assertEqualsDouble(mx(1, 0), 6.0, 1e-10)
+  }
+
+  test("min axis=0 gives column minima") {
+    val m = Mat[Double]((1, 5, 3), (4, 2, 6))
+    val mn = m.min(0)
+    assertEquals(mn.shape, (1, 3))
+    assertEqualsDouble(mn(0, 0), 1.0, 1e-10)
+    assertEqualsDouble(mn(0, 1), 2.0, 1e-10)
+    assertEqualsDouble(mn(0, 2), 3.0, 1e-10)
+  }
+
+  test("min axis=1 gives row minima") {
+    val m = Mat[Double]((1, 5, 3), (4, 2, 6))
+    val mn = m.min(1)
+    assertEquals(mn.shape, (2, 1))
+    assertEqualsDouble(mn(0, 0), 1.0, 1e-10)
+    assertEqualsDouble(mn(1, 0), 2.0, 1e-10)
+  }
+
+  // ============================================================================
+  // abs
+  // ============================================================================
+  test("abs of matrix") {
+    val m = Mat[Double]((1, -2), (-3, 4))
+    val a = m.abs
+    assertEqualsDouble(a(0, 0), 1.0, 1e-10)
+    assertEqualsDouble(a(0, 1), 2.0, 1e-10)
+    assertEqualsDouble(a(1, 0), 3.0, 1e-10)
+    assertEqualsDouble(a(1, 1), 4.0, 1e-10)
+  }
+
+  test("abs leaves positive values unchanged") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    assert(m.abs.allclose(m))
+  }
+
+  // ============================================================================
+  // sqrt
+  // ============================================================================
+  test("sqrt of matrix") {
+    val m = Mat[Double]((4, 9), (16, 25))
+    val s = m.sqrt
+    assertEqualsDouble(s(0, 0), 2.0, 1e-10)
+    assertEqualsDouble(s(0, 1), 3.0, 1e-10)
+    assertEqualsDouble(s(1, 0), 4.0, 1e-10)
+    assertEqualsDouble(s(1, 1), 5.0, 1e-10)
+  }
+
+  test("sqrt of Float matrix") {
+    val m = Mat[Float]((4, 9), (16, 25))
+    val s = m.sqrt
+    assertEqualsDouble(s(0, 0).toDouble, 2.0, 1e-5)
+    assertEqualsDouble(s(0, 1).toDouble, 3.0, 1e-5)
+  }
+
+  // ============================================================================
+  // exp / log
+  // ============================================================================
+  test("exp of zeros matrix gives ones") {
+    val m = Mat.zeros[Double](2, 2)
+    assert(m.exp.allclose(Mat.ones[Double](2, 2)))
+  }
+
+  test("log and exp are inverses") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    assert(m.exp.log.allclose(m, atol = 1e-10))
+  }
+
+  test("log of ones gives zeros") {
+    val m = Mat.ones[Double](2, 3)
+    assert(m.log.allclose(Mat.zeros[Double](2, 3)))
+  }
+
+  // ============================================================================
+  // clip
+  // ============================================================================
+  test("clip values within range") {
+    val m = Mat[Double]((-1, 2), (5, 3))
+    val c = m.clip(0.0, 4.0)
+    assertEqualsDouble(c(0, 0), 0.0, 1e-10)
+    assertEqualsDouble(c(0, 1), 2.0, 1e-10)
+    assertEqualsDouble(c(1, 0), 4.0, 1e-10)
+    assertEqualsDouble(c(1, 1), 3.0, 1e-10)
+  }
+
+  test("clip with equal bounds gives constant matrix") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    val c = m.clip(2.0, 2.0)
+    assert(c.allclose(Mat.full[Double](2, 2, 2.0)))
+  }
+
+  // ============================================================================
+  // vstack / hstack / concatenate
+  // ============================================================================
+  test("vstack two matrices") {
+    val a = Mat[Double]((1, 2), (3, 4))
+    val b = Mat[Double]((5, 6), (7, 8))
+    val s = Mat.vstack(a, b)
+    assertEquals(s.shape, (4, 2))
+    assertEqualsDouble(s(0, 0), 1.0, 1e-10)
+    assertEqualsDouble(s(2, 0), 5.0, 1e-10)
+    assertEqualsDouble(s(3, 1), 8.0, 1e-10)
+  }
+
+  test("hstack two matrices") {
+    val a = Mat[Double]((1, 2), (3, 4))
+    val b = Mat[Double]((5, 6), (7, 8))
+    val s = Mat.hstack(a, b)
+    assertEquals(s.shape, (2, 4))
+    assertEqualsDouble(s(0, 0), 1.0, 1e-10)
+    assertEqualsDouble(s(0, 2), 5.0, 1e-10)
+    assertEqualsDouble(s(1, 3), 8.0, 1e-10)
+  }
+
+  test("vstack three matrices") {
+    val a = Mat[Double]((1, 2))
+    val b = Mat[Double]((3, 4))
+    val c = Mat[Double]((5, 6))
+    val s = Mat.vstack(a, b, c)
+    assertEquals(s.shape, (3, 2))
+    assertEqualsDouble(s(2, 1), 6.0, 1e-10)
+  }
+
+  test("concatenate axis=0 same as vstack") {
+    val a = Mat[Double]((1, 2), (3, 4))
+    val b = Mat[Double]((5, 6))
+    val s1 = Mat.concatenate(Seq(a, b), axis = 0)
+    val s2 = Mat.vstack(a, b)
+    assert(s1.allclose(s2))
+  }
+
+  test("concatenate axis=1 same as hstack") {
+    val a = Mat[Double]((1, 2), (3, 4))
+    val b = Mat[Double]((5, 6), (7, 8))
+    val s1 = Mat.concatenate(Seq(a, b), axis = 1)
+    val s2 = Mat.hstack(a, b)
+    assert(s1.allclose(s2))
+  }
+
+  test("vstack mismatched cols throws") {
+    val a = Mat[Double]((1, 2), (3, 4))
+    val b = Mat[Double]((5, 6, 7))
+    intercept[IllegalArgumentException] { Mat.vstack(a, b) }
+  }
+
+  test("hstack mismatched rows throws") {
+    val a = Mat[Double]((1, 2), (3, 4))
+    val b = Mat[Double]((5, 6, 7))
+    intercept[IllegalArgumentException] { Mat.hstack(a, b) }
+  }
+
+  // ============================================================================
+  // outer
+  // ============================================================================
+  test("outer product of two vectors") {
+    val a = Mat.col[Double](1, 2, 3)
+    val b = Mat.col[Double](4, 5)
+    val o = a.outer(b)
+    assertEquals(o.shape, (3, 2))
+    assertEqualsDouble(o(0, 0), 4.0, 1e-10)   // 1*4
+    assertEqualsDouble(o(0, 1), 5.0, 1e-10)   // 1*5
+    assertEqualsDouble(o(1, 0), 8.0, 1e-10)   // 2*4
+    assertEqualsDouble(o(2, 1), 15.0, 1e-10)  // 3*5
+  }
+
+  test("outer product of row vectors") {
+    val a = Mat.row[Double](1, 2)
+    val b = Mat.row[Double](3, 4)
+    val o = a.outer(b)
+    assertEquals(o.shape, (2, 2))
+    assertEqualsDouble(o(0, 0), 3.0, 1e-10)
+    assertEqualsDouble(o(1, 1), 8.0, 1e-10)
+  }
+
+  // ============================================================================
+  // solve
+  // ============================================================================
+  test("solve simple 2x2 system") {
+    // 2x + y = 5
+    // x + 3y = 10
+    // solution: x=1, y=3
+    val A = Mat[Double]((2, 1), (1, 3))
+    val b = Mat.col[Double](5, 10)
+    val x = A.solve(b)
+    assertEqualsDouble(x(0, 0), 1.0, 1e-10)
+    assertEqualsDouble(x(1, 0), 3.0, 1e-10)
+  }
+
+  test("solve: A * x = b gives b") {
+    val A = Mat[Double]((1, 2, 3), (0, 1, 4), (5, 6, 0))
+    val b = Mat.col[Double](1, 2, 3)
+    val x = A.solve(b)
+    val check = A * x
+    assertEqualsDouble(check(0, 0), 1.0, 1e-10)
+    assertEqualsDouble(check(1, 0), 2.0, 1e-10)
+    assertEqualsDouble(check(2, 0), 3.0, 1e-10)
+  }
+
+  test("solve identity system") {
+    val A = Mat.eye[Double](3)
+    val b = Mat.col[Double](4, 5, 6)
+    val x = A.solve(b)
+    assert(x.allclose(b))
+  }
+
+  test("solve singular matrix throws") {
+    val A = Mat[Double]((1, 2), (2, 4))
+    val b = Mat.col[Double](1, 2)
+    intercept[ArithmeticException] { A.solve(b) }
+  }
+
+  test("solve multiple RHS columns") {
+    val A = Mat.eye[Double](3)
+    val b = Mat[Double]((1, 4), (2, 5), (3, 6))  // 3x2 RHS
+    val x = A.solve(b)
+    assert(x.allclose(b))
+  }
+
+  // ============================================================================
+  // rand / randn
+  // ============================================================================
+  test("rand shape is correct") {
+    val m = Mat.rand(3, 4)
+    assertEquals(m.shape, (3, 4))
+  }
+
+  test("rand values in [0, 1)") {
+    val m = Mat.rand(10, 10)
+    assert(m.min >= 0.0)
+    assert(m.max < 1.0)
+  }
+
+  test("rand with seed is reproducible") {
+    val m1 = Mat.rand(3, 3, seed = 42)
+    val m2 = Mat.rand(3, 3, seed = 42)
+    assert(m1.allclose(m2))
+  }
+
+  test("rand different seeds give different results") {
+    val m1 = Mat.rand(3, 3, seed = 42)
+    val m2 = Mat.rand(3, 3, seed = 99)
+    assert(!m1.allclose(m2))
+  }
+
+  test("randn shape is correct") {
+    val m = Mat.randn(3, 4)
+    assertEquals(m.shape, (3, 4))
+  }
+
+  test("randn with seed is reproducible") {
+    val m1 = Mat.randn(3, 3, seed = 42)
+    val m2 = Mat.randn(3, 3, seed = 42)
+    assert(m1.allclose(m2))
+  }
+
+  test("randn values roughly normal (mean near 0, std near 1)") {
+    val m = Mat.randn(100, 100)
+    val mu = m.mean
+    val variance = m.map((x: Double) => (x - mu) * (x - mu)).mean
+    // With 10000 samples, mean should be very close to 0
+    assertEqualsDouble(m.mean, 0.0, 0.1)
+    // Variance should be close to 1
+    assertEqualsDouble(variance, 1.0, 0.1)
+  }
 }
