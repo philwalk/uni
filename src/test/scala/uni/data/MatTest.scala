@@ -2213,4 +2213,346 @@ class MatTest extends munit.FunSuite {
     assertEqualsDouble(recovered(1), 1.0, 1e-10)
     assertEqualsDouble(recovered(2), 4.0, 1e-10)
   }
+  // ============================================================================
+  // repeat
+  // ============================================================================
+  test("repeat no axis repeats each element") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    val r = m.repeat(2)
+    assertEquals(r.shape, (1, 8))
+    assertEqualsDouble(r(0, 0), 1.0, 1e-10)
+    assertEqualsDouble(r(0, 1), 1.0, 1e-10)
+    assertEqualsDouble(r(0, 2), 2.0, 1e-10)
+    assertEqualsDouble(r(0, 3), 2.0, 1e-10)
+    assertEqualsDouble(r(0, 4), 3.0, 1e-10)
+    assertEqualsDouble(r(0, 5), 3.0, 1e-10)
+    assertEqualsDouble(r(0, 6), 4.0, 1e-10)
+    assertEqualsDouble(r(0, 7), 4.0, 1e-10)
+  }
+
+  test("repeat axis=0 repeats each row") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    val r = m.repeat(3, 0)
+    assertEquals(r.shape, (6, 2))
+    assertEqualsDouble(r(0, 0), 1.0, 1e-10)
+    assertEqualsDouble(r(1, 0), 1.0, 1e-10)
+    assertEqualsDouble(r(2, 0), 1.0, 1e-10)
+    assertEqualsDouble(r(3, 0), 3.0, 1e-10)
+    assertEqualsDouble(r(4, 0), 3.0, 1e-10)
+    assertEqualsDouble(r(5, 0), 3.0, 1e-10)
+  }
+
+  test("repeat axis=1 repeats each col") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    val r = m.repeat(3, 1)
+    assertEquals(r.shape, (2, 6))
+    assertEqualsDouble(r(0, 0), 1.0, 1e-10)
+    assertEqualsDouble(r(0, 1), 1.0, 1e-10)
+    assertEqualsDouble(r(0, 2), 1.0, 1e-10)
+    assertEqualsDouble(r(0, 3), 2.0, 1e-10)
+    assertEqualsDouble(r(0, 4), 2.0, 1e-10)
+    assertEqualsDouble(r(0, 5), 2.0, 1e-10)
+  }
+
+  test("repeat n=1 returns equivalent matrix") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    val r = m.repeat(1, 0)
+    assert(r.allclose(m))
+  }
+
+  // ============================================================================
+  // tile
+  // ============================================================================
+  test("tile 1x1 returns equivalent matrix") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    val r = m.tile(1, 1)
+    assert(r.allclose(m))
+  }
+
+  test("tile 2x1 doubles rows") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    val r = m.tile(2, 1)
+    assertEquals(r.shape, (4, 2))
+    assertEqualsDouble(r(0, 0), 1.0, 1e-10)
+    assertEqualsDouble(r(1, 0), 3.0, 1e-10)
+    assertEqualsDouble(r(2, 0), 1.0, 1e-10)  // tiles again
+    assertEqualsDouble(r(3, 0), 3.0, 1e-10)
+  }
+
+  test("tile 1x3 triples cols") {
+    val m = Mat[Double]((1, 2))
+    val r = m.tile(1, 3)
+    assertEquals(r.shape, (1, 6))
+    assertEqualsDouble(r(0, 0), 1.0, 1e-10)
+    assertEqualsDouble(r(0, 1), 2.0, 1e-10)
+    assertEqualsDouble(r(0, 2), 1.0, 1e-10)
+    assertEqualsDouble(r(0, 3), 2.0, 1e-10)
+    assertEqualsDouble(r(0, 4), 1.0, 1e-10)
+    assertEqualsDouble(r(0, 5), 2.0, 1e-10)
+  }
+
+  test("tile 2x2 tiles in both directions") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    val r = m.tile(2, 2)
+    assertEquals(r.shape, (4, 4))
+    // top-left should be original
+    assertEqualsDouble(r(0, 0), 1.0, 1e-10)
+    assertEqualsDouble(r(0, 1), 2.0, 1e-10)
+    assertEqualsDouble(r(1, 0), 3.0, 1e-10)
+    assertEqualsDouble(r(1, 1), 4.0, 1e-10)
+    // top-right should be original repeated
+    assertEqualsDouble(r(0, 2), 1.0, 1e-10)
+    assertEqualsDouble(r(0, 3), 2.0, 1e-10)
+    // bottom-left should be original repeated
+    assertEqualsDouble(r(2, 0), 1.0, 1e-10)
+    assertEqualsDouble(r(3, 1), 4.0, 1e-10)
+  }
+
+  // ============================================================================
+  // diff
+  // ============================================================================
+  test("diff no axis flattens and differences") {
+    val m = Mat[Double]((1, 3), (6, 10))
+    val d = m.diff
+    assertEquals(d.shape, (1, 3))
+    assertEqualsDouble(d(0, 0), 2.0, 1e-10)
+    assertEqualsDouble(d(0, 1), 3.0, 1e-10)
+    assertEqualsDouble(d(0, 2), 4.0, 1e-10)
+  }
+
+  test("diff axis=0 differences down rows") {
+    val m = Mat[Double]((1, 2), (4, 6), (9, 11))
+    val d = m.diff(0)
+    assertEquals(d.shape, (2, 2))
+    assertEqualsDouble(d(0, 0), 3.0, 1e-10)  // 4-1
+    assertEqualsDouble(d(0, 1), 4.0, 1e-10)  // 6-2
+    assertEqualsDouble(d(1, 0), 5.0, 1e-10)  // 9-4
+    assertEqualsDouble(d(1, 1), 5.0, 1e-10)  // 11-6
+  }
+
+  test("diff axis=1 differences across cols") {
+    val m = Mat[Double]((1, 3, 6), (10, 15, 21))
+    val d = m.diff(1)
+    assertEquals(d.shape, (2, 2))
+    assertEqualsDouble(d(0, 0), 2.0, 1e-10)  // 3-1
+    assertEqualsDouble(d(0, 1), 3.0, 1e-10)  // 6-3
+    assertEqualsDouble(d(1, 0), 5.0, 1e-10)  // 15-10
+    assertEqualsDouble(d(1, 1), 6.0, 1e-10)  // 21-15
+  }
+
+  test("diff of constant matrix is zeros") {
+    val m = Mat.full[Double](3, 3, 5.0)
+    val d = m.diff(0)
+    assert(d.allclose(Mat.zeros[Double](2, 3)))
+  }
+
+  test("diff axis=0 requires at least 2 rows") {
+    val m = Mat[Double]((1, 2, 3))
+    intercept[IllegalArgumentException] { m.diff(0) }
+  }
+
+  test("diff axis=1 requires at least 2 cols") {
+    val m = Mat.col[Double](1, 2, 3)
+    intercept[IllegalArgumentException] { m.diff(1) }
+  }
+
+  // ============================================================================
+  // percentile / median
+  // ============================================================================
+  test("percentile 0 is min") {
+    val m = Mat[Double]((3, 1), (4, 2))
+    assertEqualsDouble(m.percentile(0), 1.0, 1e-10)
+  }
+
+  test("percentile 100 is max") {
+    val m = Mat[Double]((3, 1), (4, 2))
+    assertEqualsDouble(m.percentile(100), 4.0, 1e-10)
+  }
+
+  test("percentile 50 is median") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    assertEqualsDouble(m.percentile(50), m.median, 1e-10)
+  }
+
+  test("median of sorted vector") {
+    val m = Mat.row[Double](1, 2, 3, 4, 5)
+    assertEqualsDouble(m.median, 3.0, 1e-10)
+  }
+
+  test("median of even-length vector interpolates") {
+    val m = Mat.row[Double](1, 2, 3, 4)
+    assertEqualsDouble(m.median, 2.5, 1e-10)
+  }
+
+  test("percentile axis=0 gives column percentiles") {
+    val m = Mat[Double]((1, 2), (3, 4), (5, 6))
+    val p = m.percentile(50, 0)
+    assertEquals(p.shape, (1, 2))
+    assertEqualsDouble(p(0, 0), 3.0, 1e-10)
+    assertEqualsDouble(p(0, 1), 4.0, 1e-10)
+  }
+
+  test("percentile axis=1 gives row percentiles") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6))
+    val p = m.percentile(50, 1)
+    assertEquals(p.shape, (2, 1))
+    assertEqualsDouble(p(0, 0), 2.0, 1e-10)
+    assertEqualsDouble(p(1, 0), 5.0, 1e-10)
+  }
+
+  test("median axis=0") {
+    val m = Mat[Double]((1, 2), (3, 4), (5, 6))
+    val med = m.median(0)
+    assertEquals(med.shape, (1, 2))
+    assertEqualsDouble(med(0, 0), 3.0, 1e-10)
+    assertEqualsDouble(med(0, 1), 4.0, 1e-10)
+  }
+
+  test("percentile out of range throws") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    intercept[IllegalArgumentException] { m.percentile(-1) }
+    intercept[IllegalArgumentException] { m.percentile(101) }
+  }
+
+  // ============================================================================
+  // matrixRank
+  // ============================================================================
+  test("matrixRank of identity matrix is n") {
+    val m = Mat.eye[Double](4)
+    assertEquals(m.matrixRank(), 4)
+  }
+
+  test("matrixRank of zero matrix is 0") {
+    val m = Mat.zeros[Double](3, 3)
+    assertEquals(m.matrixRank(), 0)
+  }
+
+  test("matrixRank of singular matrix is less than n") {
+    // row2 = 2 * row1 → rank 1
+    val m = Mat[Double]((1, 2), (2, 4))
+    assertEquals(m.matrixRank(), 1)
+  }
+
+  test("matrixRank of full rank rectangular matrix") {
+    val m = Mat[Double]((1, 0, 0), (0, 1, 0))  // 2×3 rank 2
+    assertEquals(m.matrixRank(), 2)
+  }
+
+  test("matrixRank with custom tolerance") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    assertEquals(m.matrixRank(tol = 1e-10), 2)
+  }
+
+  // ============================================================================
+  // norm (matrix)
+  // ============================================================================
+  test("Frobenius norm of identity matrix is sqrt(n)") {
+    val m = Mat.eye[Double](3)
+    assertEqualsDouble(m.norm("fro"), math.sqrt(3.0), 1e-10)
+  }
+
+  test("Frobenius norm of known matrix") {
+    // [[1,2],[3,4]] → sqrt(1+4+9+16) = sqrt(30)
+    val m = Mat[Double]((1, 2), (3, 4))
+    assertEqualsDouble(m.norm("fro"), math.sqrt(30.0), 1e-10)
+  }
+
+  test("infinity norm is max absolute row sum") {
+    // row sums: [1+2=3, 3+4=7] → max = 7
+    val m = Mat[Double]((1, 2), (3, 4))
+    assertEqualsDouble(m.norm("inf"), 7.0, 1e-10)
+  }
+
+  test("1-norm is max absolute col sum") {
+    // col sums: [1+3=4, 2+4=6] → max = 6
+    val m = Mat[Double]((1, 2), (3, 4))
+    assertEqualsDouble(m.norm("1"), 6.0, 1e-10)
+  }
+
+  test("Frobenius norm with negative values uses abs") {
+    val m = Mat[Double]((-1, 2), (-3, 4))
+    assertEqualsDouble(m.norm("fro"), math.sqrt(30.0), 1e-10)
+  }
+
+  test("unsupported norm ord throws") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    intercept[IllegalArgumentException] { m.norm("2") }
+  }
+
+  // ============================================================================
+  // isnan / isinf / isfinite
+  // ============================================================================
+  test("isnan detects NaN values") {
+    val m = Mat[Double](2, 2, Array(1.0, Double.NaN, Double.NaN, 4.0))
+    val r = m.isnan
+    assertEquals(r(0, 0), false)
+    assertEquals(r(0, 1), true)
+    assertEquals(r(1, 0), true)
+    assertEquals(r(1, 1), false)
+  }
+
+  test("isnan all false for finite matrix") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    assert(!m.isnan.underlying.exists(identity))
+  }
+
+  test("isinf detects infinite values") {
+    val m = Mat[Double](2, 2, Array(1.0, Double.PositiveInfinity, Double.NegativeInfinity, 4.0))
+    val r = m.isinf
+    assertEquals(r(0, 0), false)
+    assertEquals(r(0, 1), true)
+    assertEquals(r(1, 0), true)
+    assertEquals(r(1, 1), false)
+  }
+
+  test("isfinite is complement of isnan and isinf") {
+    val m = Mat[Double](1, 4, Array(1.0, Double.NaN, Double.PositiveInfinity, 4.0))
+    val r = m.isfinite
+    assertEquals(r(0, 0), true)
+    assertEquals(r(0, 1), false)
+    assertEquals(r(0, 2), false)
+    assertEquals(r(0, 3), true)
+  }
+
+  // ============================================================================
+  // nanToNum
+  // ============================================================================
+  test("nanToNum replaces NaN with 0 by default") {
+    val m = Mat[Double](1, 3, Array(1.0, Double.NaN, 3.0))
+    val r = m.nanToNum()
+    assertEqualsDouble(r(0, 0), 1.0, 1e-10)
+    assertEqualsDouble(r(0, 1), 0.0, 1e-10)
+    assertEqualsDouble(r(0, 2), 3.0, 1e-10)
+  }
+
+  test("nanToNum replaces positive infinity") {
+    val m = Mat[Double](1, 2, Array(Double.PositiveInfinity, 1.0))
+    val r = m.nanToNum()
+    assertEqualsDouble(r(0, 0), 0.0, 1e-10)
+    assertEqualsDouble(r(0, 1), 1.0, 1e-10)
+  }
+
+  test("nanToNum replaces negative infinity") {
+    val m = Mat[Double](1, 2, Array(Double.NegativeInfinity, 1.0))
+    val r = m.nanToNum()
+    assertEqualsDouble(r(0, 0), 0.0, 1e-10)
+  }
+
+  test("nanToNum with custom replacement values") {
+    val m = Mat[Double](1, 3, Array(Double.NaN, Double.PositiveInfinity, Double.NegativeInfinity))
+    val r = m.nanToNum(nan = -1.0, posinf = 999.0, neginf = -999.0)
+    assertEqualsDouble(r(0, 0),   -1.0, 1e-10)
+    assertEqualsDouble(r(0, 1),  999.0, 1e-10)
+    assertEqualsDouble(r(0, 2), -999.0, 1e-10)
+  }
+
+  test("nanToNum leaves finite values unchanged") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    assert(m.nanToNum().allclose(m))
+  }
+
+  test("nanToNum then isfinite all true") {
+    val m = Mat[Double](1, 4, Array(1.0, Double.NaN, Double.PositiveInfinity, 4.0))
+    assert(m.nanToNum().isfinite.underlying.forall(identity))
+  }
 }

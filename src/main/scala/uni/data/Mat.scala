@@ -1518,6 +1518,245 @@ object Mat {
       MatData(result, nRows, nCols)
     }
 
+    /** NumPy: np.repeat(m, n) - repeat each element n times, returns flat row vector */
+    def repeat(n: Int): Mat[T] = {
+      val result = Array.ofDim[T](m.size * n)
+      var i = 0
+      while i < m.size do
+        var k = 0
+        while k < n do
+          result(i * n + k) = m.data(i)
+          k += 1
+        i += 1
+      MatData(result, 1, m.size * n)
+    }
+
+    /** NumPy: np.repeat(m, n, axis=0) - repeat each row n times */
+    /** NumPy: np.repeat(m, n, axis=1) - repeat each col n times */
+    def repeat(n: Int, axis: Int): Mat[T] = {
+      require(axis == 0 || axis == 1, s"axis must be 0 or 1, got $axis")
+      if axis == 0 then
+        val result = Array.ofDim[T](m.rows * n * m.cols)
+        var i = 0
+        while i < m.rows do
+          var k = 0
+          while k < n do
+            var j = 0
+            while j < m.cols do
+              result((i * n + k) * m.cols + j) = m(i, j)
+              j += 1
+            k += 1
+          i += 1
+        MatData(result, m.rows * n, m.cols)
+      else
+        val result = Array.ofDim[T](m.rows * m.cols * n)
+        var i = 0
+        while i < m.rows do
+          var j = 0
+          while j < m.cols do
+            var k = 0
+            while k < n do
+              result(i * m.cols * n + j * n + k) = m(i, j)
+              k += 1
+            j += 1
+          i += 1
+        MatData(result, m.rows, m.cols * n)
+    }
+
+    /** NumPy: np.tile(m, (rowReps, colReps)) - tile matrix */
+    def tile(rowReps: Int, colReps: Int): Mat[T] = {
+      val newRows = m.rows * rowReps
+      val newCols = m.cols * colReps
+      val result  = Array.ofDim[T](newRows * newCols)
+      var i = 0
+      while i < newRows do
+        var j = 0
+        while j < newCols do
+          result(i * newCols + j) = m(i % m.rows, j % m.cols)
+          j += 1
+        i += 1
+      MatData(result, newRows, newCols)
+    }
+
+    /** NumPy: np.diff(m) - first differences of flattened matrix */
+    def diff(using num: Numeric[T]): Mat[T] = {
+      val flat = m.flatten
+      val result = Array.ofDim[T](flat.length - 1)
+      var i = 0
+      while i < result.length do
+        result(i) = num.minus(flat(i + 1), flat(i))
+        i += 1
+      MatData(result, 1, result.length)
+    }
+
+    /** NumPy: np.diff(m, axis=0) - first differences along axis */
+    def diff(axis: Int)(using num: Numeric[T]): Mat[T] = {
+      require(axis == 0 || axis == 1, s"axis must be 0 or 1, got $axis")
+      if axis == 0 then
+        require(m.rows > 1, "diff axis=0 requires at least 2 rows")
+        val result = Array.ofDim[T]((m.rows - 1) * m.cols)
+        var i = 0
+        while i < m.rows - 1 do
+          var j = 0
+          while j < m.cols do
+            result(i * m.cols + j) = num.minus(m(i + 1, j), m(i, j))
+            j += 1
+          i += 1
+        MatData(result, m.rows - 1, m.cols)
+      else
+        require(m.cols > 1, "diff axis=1 requires at least 2 cols")
+        val result = Array.ofDim[T](m.rows * (m.cols - 1))
+        var i = 0
+        while i < m.rows do
+          var j = 0
+          while j < m.cols - 1 do
+            result(i * (m.cols - 1) + j) = num.minus(m(i, j + 1), m(i, j))
+            j += 1
+          i += 1
+        MatData(result, m.rows, m.cols - 1)
+    }
+
+    // percentile and median:
+    private def percentileOf(arr: Array[T], p: Double)(using frac: Fractional[T]): T = {
+      require(p >= 0 && p <= 100, s"percentile must be in [0,100], got $p")  // guard here
+      val sorted = arr.sorted(using summon[Ordering[T]])
+      val n = sorted.length
+      if n == 1 then return sorted(0)
+      val idx  = (p / 100.0) * (n - 1)
+      val lo   = idx.toInt
+      val hi   = math.min(lo + 1, n - 1)
+      val frac2 = idx - lo
+      val result = frac.toDouble(sorted(lo)) + frac2 * (frac.toDouble(sorted(hi)) - frac.toDouble(sorted(lo)))
+      summon[ClassTag[T]].runtimeClass match
+        case c if c == classOf[Double]     => result.asInstanceOf[T]
+        case c if c == classOf[Float]      => result.toFloat.asInstanceOf[T]
+        case c if c == classOf[BigDecimal] => BigDecimal(result).asInstanceOf[T]
+        case c => throw UnsupportedOperationException(s"percentile unsupported for ${c.getName}")
+    }
+
+    /** NumPy: np.percentile(m, p) - p-th percentile of all elements, p in [0,100] */
+    def percentile(p: Double)(using frac: Fractional[T]): T =
+      percentileOf(m.flatten, p)
+
+    /** NumPy: np.median(m) - median of all elements */
+    def median(using frac: Fractional[T]): T =
+      percentileOf(m.flatten, 50.0)
+
+    /** NumPy: np.percentile(m, p, axis=0/1) - percentile along axis */
+    def percentile(p: Double, axis: Int)(using frac: Fractional[T]): Mat[T] = {
+      require(axis == 0 || axis == 1, s"axis must be 0 or 1, got $axis")
+      if axis == 0 then
+        val result = Array.ofDim[T](m.cols)
+        var j = 0
+        while j < m.cols do
+          result(j) = percentileOf(Array.tabulate(m.rows)(i => m(i, j)), p)
+          j += 1
+        MatData(result, 1, m.cols)
+      else
+        val result = Array.ofDim[T](m.rows)
+        var i = 0
+        while i < m.rows do
+          result(i) = percentileOf(Array.tabulate(m.cols)(j => m(i, j)), p)
+          i += 1
+        MatData(result, m.rows, 1)
+    }
+
+    /** NumPy: np.median(m, axis=0/1) */
+    def median(axis: Int)(using frac: Fractional[T]): Mat[T] =
+      percentile(50.0, axis)
+
+    // matrix_rank:
+    /** NumPy: np.linalg.matrix_rank(m) - rank via SVD singular value threshold */
+    def matrixRank(tol: Double = -1.0)(using frac: Fractional[T]): Int = {
+      summon[ClassTag[T]].runtimeClass match
+        case c if c == classOf[Double] =>
+          val (_, s, _) = m.asInstanceOf[Mat[Double]].svdDouble
+          val threshold = if tol < 0 then 1e-10 * s(0) else tol
+          s.count(_ > threshold)
+        case c =>
+          throw UnsupportedOperationException(s"matrixRank only supported for Double, got ${c.getName}")
+    }
+
+    //5. Matrix norm overload:
+    /** NumPy: np.linalg.norm(m, ord='fro') - Frobenius norm = sqrt(sum of squares)
+     *         np.linalg.norm(m, ord='inf') - max absolute row sum
+     *         np.linalg.norm(m, ord='1')   - max absolute col sum  */
+    def norm(ord: String)(using frac: Fractional[T]): T = {
+      ord match
+        case "fro" =>
+          val sumSq = m.data.foldLeft(frac.zero)((acc, x) =>
+            frac.plus(acc, frac.times(x, x)))
+          summon[ClassTag[T]].runtimeClass match
+            case c if c == classOf[Double]     => math.sqrt(frac.toDouble(sumSq)).asInstanceOf[T]
+            case c if c == classOf[Float]      => math.sqrt(frac.toDouble(sumSq)).toFloat.asInstanceOf[T]
+            case c if c == classOf[BigDecimal] => sumSq.asInstanceOf[Big].sqrt.asInstanceOf[T]
+            case c => throw UnsupportedOperationException(s"norm unsupported for ${c.getName}")
+        case "inf" =>
+          // max absolute row sum
+          var maxRowSum = frac.zero
+          var i = 0
+          while i < m.rows do
+            var rowSum = frac.zero
+            var j = 0
+            while j < m.cols do
+              rowSum = frac.plus(rowSum,
+                if frac.lt(m(i,j), frac.zero) then frac.negate(m(i,j)) else m(i,j))
+              j += 1
+            if frac.gt(rowSum, maxRowSum) then maxRowSum = rowSum
+            i += 1
+          maxRowSum
+        case "1" =>
+          // max absolute col sum
+          var maxColSum = frac.zero
+          var j = 0
+          while j < m.cols do
+            var colSum = frac.zero
+            var i = 0
+            while i < m.rows do
+              colSum = frac.plus(colSum,
+                if frac.lt(m(i,j), frac.zero) then frac.negate(m(i,j)) else m(i,j))
+              i += 1
+            if frac.gt(colSum, maxColSum) then maxColSum = colSum
+            j += 1
+          maxColSum
+        case other =>
+          throw IllegalArgumentException(s"unsupported norm ord '$other', use 'fro', 'inf', or '1'")
+    }
+    // isnan/isinf/isfinite and nanToNum:
+    // These are Double/Float specific - Boolean result for data cleaning
+    /** NumPy: np.isnan(m) */
+    def isnan(using frac: Fractional[T]): Mat[Boolean] =
+      MatData(m.data.map(x => frac.toDouble(x).isNaN), m.rows, m.cols, m.transposed)
+
+    /** NumPy: np.isinf(m) */
+    def isinf(using frac: Fractional[T]): Mat[Boolean] =
+      MatData(m.data.map(x => frac.toDouble(x).isInfinite), m.rows, m.cols, m.transposed)
+
+    /** NumPy: np.isfinite(m) */
+    def isfinite(using frac: Fractional[T]): Mat[Boolean] =
+      MatData(m.data.map(x => { val d = frac.toDouble(x); !d.isNaN && !d.isInfinite }),
+        m.rows, m.cols, m.transposed)
+
+    /** NumPy: np.nan_to_num(m, nan=0.0, posinf=0.0, neginf=0.0) */
+    def nanToNum(
+        nan:    Double = 0.0,
+        posinf: Double = 0.0,
+        neginf: Double = 0.0
+    )(using frac: Fractional[T]): Mat[T] = {
+      m.map((x: T) => {
+        val d = frac.toDouble(x)
+        val replaced =
+          if d.isNaN then nan
+          else if d.isPosInfinity then posinf
+          else if d.isNegInfinity then neginf
+          else d
+        summon[ClassTag[T]].runtimeClass match
+          case c if c == classOf[Double]     => replaced.asInstanceOf[T]
+          case c if c == classOf[Float]      => replaced.toFloat.asInstanceOf[T]
+          case c if c == classOf[BigDecimal] => BigDecimal(replaced).asInstanceOf[T]
+          case c => throw UnsupportedOperationException(s"nanToNum unsupported for ${c.getName}")
+      })
+    }
   } // end extension
 
   def rand(rows: Int, cols: Int, seed: Long = -1): Mat[Double] = {
