@@ -1575,4 +1575,346 @@ class MatTest extends munit.FunSuite {
     // Variance should be close to 1
     assertEqualsDouble(variance, 1.0, 0.1)
   }
+
+  // ============================================================================
+  // cumsum
+  // ============================================================================
+  test("cumsum no axis flattens and accumulates") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    val s = m.cumsum
+    assertEquals(s.shape, (1, 4))
+    assertEqualsDouble(s(0, 0), 1.0, 1e-10)
+    assertEqualsDouble(s(0, 1), 3.0, 1e-10)
+    assertEqualsDouble(s(0, 2), 6.0, 1e-10)
+    assertEqualsDouble(s(0, 3), 10.0, 1e-10)
+  }
+
+  test("cumsum axis=0 accumulates down rows") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    val s = m.cumsum(0)
+    assertEquals(s.shape, (2, 2))
+    assertEqualsDouble(s(0, 0), 1.0, 1e-10)
+    assertEqualsDouble(s(0, 1), 2.0, 1e-10)
+    assertEqualsDouble(s(1, 0), 4.0, 1e-10)  // 1+3
+    assertEqualsDouble(s(1, 1), 6.0, 1e-10)  // 2+4
+  }
+
+  test("cumsum axis=1 accumulates across cols") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6))
+    val s = m.cumsum(1)
+    assertEquals(s.shape, (2, 3))
+    assertEqualsDouble(s(0, 0), 1.0, 1e-10)
+    assertEqualsDouble(s(0, 1), 3.0, 1e-10)  // 1+2
+    assertEqualsDouble(s(0, 2), 6.0, 1e-10)  // 1+2+3
+    assertEqualsDouble(s(1, 0), 4.0, 1e-10)
+    assertEqualsDouble(s(1, 1), 9.0, 1e-10)  // 4+5
+    assertEqualsDouble(s(1, 2), 15.0, 1e-10) // 4+5+6
+  }
+
+  test("cumsum invalid axis throws") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    intercept[IllegalArgumentException] { m.cumsum(2) }
+  }
+
+  // ============================================================================
+  // cov
+  // ============================================================================
+  test("cov of single variable is variance") {
+    // row = variable, cols = observations
+    val m = Mat[Double]((2, 4, 4, 4, 5, 5, 7, 9))
+    val c = m.cov
+    assertEquals(c.shape, (1, 1))
+    // variance of [2,4,4,4,5,5,7,9] = 4.571... (sample variance)
+    assertEqualsDouble(c(0, 0), 32.0 / 7.0, 1e-10)
+  }
+
+  test("cov of two variables is 2x2") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6))
+    val c = m.cov
+    assertEquals(c.shape, (2, 2))
+    // diagonal should be variances, off-diagonal covariances
+    // var([1,2,3]) = 1.0,  var([4,5,6]) = 1.0, cov = 1.0
+    assertEqualsDouble(c(0, 0), 1.0, 1e-10)
+    assertEqualsDouble(c(1, 1), 1.0, 1e-10)
+    assertEqualsDouble(c(0, 1), 1.0, 1e-10)
+    assertEqualsDouble(c(1, 0), 1.0, 1e-10)
+  }
+
+  test("cov matrix is symmetric") {
+    val m = Mat[Double]((1, 3, 2), (4, 2, 5), (1, 1, 3))
+    val c = m.cov
+    var i = 0
+    while i < c.rows do
+      var j = 0
+      while j < c.cols do
+        assertEqualsDouble(c(i, j), c(j, i), 1e-10, s"not symmetric at ($i,$j)")
+        j += 1
+      i += 1
+  }
+
+  test("cov requires at least 2 observations") {
+    val m = Mat[Double](2, 1, Array(1.0, 2.0))
+    intercept[IllegalArgumentException] { m.cov }
+  }
+
+  // ============================================================================
+  // corrcoef
+  // ============================================================================
+  test("corrcoef diagonal is all ones") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6))
+    val r = m.corrcoef
+    assertEqualsDouble(r(0, 0), 1.0, 1e-10)
+    assertEqualsDouble(r(1, 1), 1.0, 1e-10)
+  }
+
+  test("corrcoef of perfectly correlated variables is 1") {
+    // y = 2x + 1, perfect positive correlation
+    val m = Mat[Double]((1, 2, 3, 4), (3, 5, 7, 9))
+    val r = m.corrcoef
+    assertEqualsDouble(r(0, 1), 1.0, 1e-10)
+    assertEqualsDouble(r(1, 0), 1.0, 1e-10)
+  }
+
+  test("corrcoef of perfectly anti-correlated variables is -1") {
+    val m = Mat[Double]((1, 2, 3, 4), (4, 3, 2, 1))
+    val r = m.corrcoef
+    assertEqualsDouble(r(0, 1), -1.0, 1e-10)
+    assertEqualsDouble(r(1, 0), -1.0, 1e-10)
+  }
+
+  test("corrcoef is symmetric") {
+    val m = Mat[Double]((1, 3, 2), (4, 2, 5), (1, 1, 3))
+    val r = m.corrcoef
+    var i = 0
+    while i < r.rows do
+      var j = 0
+      while j < r.cols do
+        assertEqualsDouble(r(i, j), r(j, i), 1e-10, s"not symmetric at ($i,$j)")
+        j += 1
+      i += 1
+  }
+
+  // ============================================================================
+  // sort
+  // ============================================================================
+  test("sort no axis flattens and sorts") {
+    val m = Mat[Double]((3, 1), (4, 2))
+    val s = m.sort()
+    assertEquals(s.shape, (1, 4))
+    assertEqualsDouble(s(0, 0), 1.0, 1e-10)
+    assertEqualsDouble(s(0, 1), 2.0, 1e-10)
+    assertEqualsDouble(s(0, 2), 3.0, 1e-10)
+    assertEqualsDouble(s(0, 3), 4.0, 1e-10)
+  }
+
+  test("sort axis=0 sorts each column") {
+    val m = Mat[Double]((3, 1), (1, 4), (2, 2))
+    val s = m.sort(0)
+    assertEquals(s.shape, (3, 2))
+    assertEqualsDouble(s(0, 0), 1.0, 1e-10)
+    assertEqualsDouble(s(1, 0), 2.0, 1e-10)
+    assertEqualsDouble(s(2, 0), 3.0, 1e-10)
+    assertEqualsDouble(s(0, 1), 1.0, 1e-10)
+    assertEqualsDouble(s(1, 1), 2.0, 1e-10)
+    assertEqualsDouble(s(2, 1), 4.0, 1e-10)
+  }
+
+  test("sort axis=1 sorts each row") {
+    val m = Mat[Double]((3, 1, 2), (6, 4, 5))
+    val s = m.sort(1)
+    assertEquals(s.shape, (2, 3))
+    assertEqualsDouble(s(0, 0), 1.0, 1e-10)
+    assertEqualsDouble(s(0, 1), 2.0, 1e-10)
+    assertEqualsDouble(s(0, 2), 3.0, 1e-10)
+    assertEqualsDouble(s(1, 0), 4.0, 1e-10)
+    assertEqualsDouble(s(1, 1), 5.0, 1e-10)
+    assertEqualsDouble(s(1, 2), 6.0, 1e-10)
+  }
+
+  // ============================================================================
+  // argsort
+  // ============================================================================
+  test("argsort no axis returns flat sort indices") {
+    val m = Mat[Double]((3, 1), (4, 2))
+    val idx = m.argsort()
+    assertEquals(idx.shape, (1, 4))
+    assertEquals(idx(0, 0), 1)  // value 1 at flat index 1
+    assertEquals(idx(0, 1), 3)  // value 2 at flat index 3
+    assertEquals(idx(0, 2), 0)  // value 3 at flat index 0
+    assertEquals(idx(0, 3), 2)  // value 4 at flat index 2
+  }
+
+  test("argsort axis=1 returns indices that would sort each row") {
+    val m = Mat[Double]((3, 1, 2), (6, 4, 5))
+    val idx = m.argsort(1)
+    assertEquals(idx.shape, (2, 3))
+    assertEquals(idx(0, 0), 1)  // smallest in row 0 is at col 1
+    assertEquals(idx(0, 1), 2)
+    assertEquals(idx(0, 2), 0)
+    assertEquals(idx(1, 0), 1)  // smallest in row 1 is at col 1
+    assertEquals(idx(1, 1), 2)
+    assertEquals(idx(1, 2), 0)
+  }
+
+  test("argsort axis=0 returns indices that would sort each column") {
+    val m = Mat[Double]((3, 1), (1, 4), (2, 2))
+    val idx = m.argsort(0)
+    assertEquals(idx.shape, (3, 2))
+    assertEquals(idx(0, 0), 1)  // smallest in col 0 is at row 1
+    assertEquals(idx(1, 0), 2)
+    assertEquals(idx(2, 0), 0)
+    assertEquals(idx(0, 1), 0)  // smallest in col 1 is at row 0
+    assertEquals(idx(1, 1), 2)
+    assertEquals(idx(2, 1), 1)
+  }
+
+  // ============================================================================
+  // unique
+  // ============================================================================
+  test("unique returns sorted distinct values") {
+    val m = Mat[Double]((3, 1, 2), (1, 3, 2))
+    val (vals, counts) = m.unique
+    assertEquals(vals.toList, List(1.0, 2.0, 3.0))
+  }
+
+  test("unique counts are correct") {
+    val m = Mat[Double]((1, 2, 1), (2, 3, 3))
+    val (vals, counts) = m.unique
+    assertEquals(vals.toList,  List(1.0, 2.0, 3.0))
+    assertEquals(counts.toList, List(2, 2, 2))
+  }
+
+  test("unique of matrix with all same values") {
+    val m = Mat.full[Double](3, 3, 5.0)
+    val (vals, counts) = m.unique
+    assertEquals(vals.length, 1)
+    assertEquals(vals(0), 5.0)
+    assertEquals(counts(0), 9)
+  }
+
+  // ============================================================================
+  // svd
+  // ============================================================================
+  test("svd: U * diag(s) * Vt = original matrix") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6))  // 2x3
+    val (u, s, vt) = m.svd
+    // Reconstruct: U * S * Vt
+    val nRows = m.rows; val nCols = m.cols
+    val p = s.length
+    // Build sigma: nRows×nCols with s on diagonal
+    val sigma = Mat.zeros[Double](nRows, nCols)
+    var i = 0
+    while i < p do
+      sigma(i, i) = s(i)
+      i += 1
+    val reconstructed = u * sigma * vt
+    var ri = 0
+    while ri < nRows do
+      var j = 0
+      while j < nCols do
+        assertEqualsDouble(reconstructed(ri, j), m(ri, j), 1e-8, s"mismatch at ($ri,$j)")
+        j += 1
+      ri += 1
+  }
+
+  test("svd: U is orthonormal (U^T * U = I)") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6))
+    val (u, _, _) = m.svd
+    val utu = u.T * u
+    val n = utu.rows
+    var i = 0
+    while i < n do
+      var j = 0
+      while j < n do
+        val expected = if i == j then 1.0 else 0.0
+        assertEqualsDouble(utu(i, j), expected, 1e-8, s"U^T*U not identity at ($i,$j)")
+        j += 1
+      i += 1
+  }
+
+  test("svd: Vt is orthonormal (Vt * Vt^T = I)") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6))
+    val (_, _, vt) = m.svd
+    val vtVtT = vt * vt.T
+    val n = vtVtT.rows
+    var i = 0
+    while i < n do
+      var j = 0
+      while j < n do
+        val expected = if i == j then 1.0 else 0.0
+        assertEqualsDouble(vtVtT(i, j), expected, 1e-8, s"Vt*Vt^T not identity at ($i,$j)")
+        j += 1
+      i += 1
+  }
+
+  test("svd singular values are non-negative and descending") {
+    val m = Mat[Double]((4, 3), (2, 1))
+    val (_, s, _) = m.svd
+    assert(s.forall(_ >= 0.0))
+    var i = 0
+    while i < s.length - 1 do
+      assert(s(i) >= s(i + 1), s"s($i)=${s(i)} < s(${i+1})=${s(i+1)}")
+      i += 1
+  }
+
+  test("svd of identity matrix has singular values all 1") {
+    val m = Mat.eye[Double](3)
+    val (_, s, _) = m.svd
+    s.foreach(sv => assertEqualsDouble(sv, 1.0, 1e-10))
+  }
+
+  // ============================================================================
+  // lstsq
+  // ============================================================================
+  test("lstsq exact solution when square non-singular") {
+    // Same as solve: 2x + y = 5, x + 3y = 10 → x=1, y=3
+    val A = Mat[Double]((2, 1), (1, 3))
+    val b = Mat.col[Double](5, 10)
+    val (x, _, _, _) = A.lstsq(b)
+    assertEqualsDouble(x(0, 0), 1.0, 1e-8)
+    assertEqualsDouble(x(1, 0), 3.0, 1e-8)
+  }
+
+  test("lstsq overdetermined system minimizes residuals") {
+    // Fit y = 2x through noisy points: (1,2.1), (2,3.9), (3,6.2)
+    // A*x = b where A = [[1],[2],[3]], b = [2.1, 3.9, 6.2]
+    val A = Mat[Double]((1, 1), (2, 1), (3, 1))  // design matrix with intercept
+    val b = Mat.col[Double](2.1, 3.9, 6.2)
+    val (x, residuals, rank, _) = A.lstsq(b)
+    // slope should be ~2, intercept ~0
+    assertEqualsDouble(x(0, 0), 2.05, 0.1)
+    assertEquals(rank, 2)
+    // residuals should be small but nonzero
+    assert(residuals(0, 0) >= 0.0)
+  }
+
+  test("lstsq rank of full rank matrix") {
+    val A = Mat[Double]((1, 0), (0, 1), (1, 1))
+    val b = Mat.col[Double](1, 2, 3)
+    val (_, _, rank, _) = A.lstsq(b)
+    assertEquals(rank, 2)
+  }
+
+  test("lstsq singular values are non-negative") {
+    val A = Mat[Double]((1, 2), (3, 4), (5, 6))
+    val b = Mat.col[Double](1, 2, 3)
+    val (_, _, _, s) = A.lstsq(b)
+    s.foreach(sv => assert(sv >= 0.0))
+  }
+
+  test("lstsq A*x approximates b for overdetermined system") {
+    val A = Mat[Double]((1, 1), (1, 2), (1, 3), (1, 4))
+    val b = Mat.col[Double](6, 5, 7, 10)
+    val (x, _, _, _) = A.lstsq(b)
+    // A*x should be close to b in the least squares sense
+    val ax = A * x
+    // residual norm should be minimal - check it's at least finite and small
+    var residNorm = 0.0
+    var i = 0
+    while i < b.rows do
+      val diff = ax(i, 0) - b(i, 0)
+      residNorm += diff * diff
+      i += 1
+    assert(residNorm < 10.0)  // loose bound - just sanity check
+  }
 }
