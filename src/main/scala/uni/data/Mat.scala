@@ -612,53 +612,143 @@ object Mat {
       MatData(result, n, n)
     }
 
-    // ---- QR Decomposition (Gram-Schmidt, flat array) -------------------
+    // ---- QR Decomposition (Householder reflections) -------------------
     // Returns (Q: rows×p, R: p×cols) where m = Q * R, p = min(rows,cols)
     def qrDecomposition(using frac: Fractional[T]): (Mat[T], Mat[T]) = {
       val nRows = m.rows
       val nCols = m.cols
       val p     = math.min(nRows, nCols)
-      val Q = Array.ofDim[T](nRows * p)
-      val R = Array.ofDim[T](p * nCols)
 
-      var j = 0
-      while j < p do
-        // v = column j of m
-        val v = Array.ofDim[T](nRows)
-        var i = 0
-        while i < nRows do { v(i) = m(i, j); i += 1 }
+      // Work on a flat mutable copy of m (respects transposed flag)
+      val R = Array.ofDim[T](nRows * nCols)
+      var i = 0
+      while i < nRows do
+        var j = 0
+        while j < nCols do
+          R(i * nCols + j) = m(i, j)
+          j += 1
+        i += 1
 
-        // Subtract projections onto Q columns 0..j-1
+      // Q accumulated as nRows×nRows identity, updated by each reflector
+      val Q = Array.ofDim[T](nRows * nRows)
+      i = 0
+      while i < nRows do
+        Q(i * nRows + i) = frac.one
+        i += 1
+
+      // Helper: dot product of two subarrays starting at offset, length len
+      inline def dot(a: Array[T], aOff: Int, b: Array[T], bOff: Int, len: Int): T =
+        var s = frac.zero
         var k = 0
-        while k < j do
-          var dot = frac.zero
-          i = 0
-          while i < nRows do
-            dot = frac.plus(dot, frac.times(Q(i * p + k), m(i, j)))
-            i += 1
-          R(k * nCols + j) = dot
-          i = 0
-          while i < nRows do
-            v(i) = frac.minus(v(i), frac.times(dot, Q(i * p + k)))
-            i += 1
+        while k < len do
+          s = frac.plus(s, frac.times(a(aOff + k), b(bOff + k)))
           k += 1
+        s
 
-        // Norm of v
-        var normSq = frac.zero
+      var col = 0
+      while col < p do
+        val len = nRows - col  // length of the subcolumn
+
+        // Extract subcolumn col of R below diagonal into v
+        val v = Array.ofDim[T](len)
         i = 0
-        while i < nRows do { normSq = frac.plus(normSq, frac.times(v(i), v(i))); i += 1 }
-        val normVal: T = summon[ClassTag[T]].runtimeClass match
-          case c if c == classOf[Double]     => math.sqrt(frac.toDouble(normSq)).asInstanceOf[T]
-          case c if c == classOf[Float]      => math.sqrt(frac.toDouble(normSq)).toFloat.asInstanceOf[T]
-          case c if c == classOf[BigDecimal] => normSq.asInstanceOf[Big].sqrt.asInstanceOf[T]
-          case c => throw UnsupportedOperationException(s"qrDecomposition unsupported for ${c.getName}")
+        while i < len do
+          v(i) = R((col + i) * nCols + col)
+          i += 1
 
-        R(j * nCols + j) = normVal
+        // Compute norm of v
+        val normSq = dot(v, 0, v, 0, len)
+        val normV: T = summon[ClassTag[T]].runtimeClass match
+          case c if c == classOf[Double] =>
+            math.sqrt(frac.toDouble(normSq)).asInstanceOf[T]
+          case c if c == classOf[Float] =>
+            math.sqrt(frac.toDouble(normSq)).toFloat.asInstanceOf[T]
+          case c if c == classOf[BigDecimal] =>
+            normSq.asInstanceOf[Big].sqrt.asInstanceOf[T]
+          case c => throw UnsupportedOperationException(s"qr unsupported for ${c.getName}")
+
+        if frac.toDouble(normV) != 0.0 then
+          // v[0] += sign(v[0]) * norm(v)  to avoid cancellation
+          val sign = if frac.toDouble(v(0)) >= 0.0 then frac.one else frac.negate(frac.one)
+          v(0) = frac.plus(v(0), frac.times(sign, normV))
+
+          // tau = 2 / (v^T v)
+          val vTv = dot(v, 0, v, 0, len)
+          val tau = frac.div(frac.fromInt(2), vTv)
+
+          // Apply reflector to R: R = (I - tau*v*v^T) * R
+          // Only affects rows col..nRows, cols col..nCols
+          var j = col
+          while j < nCols do
+            // w = v^T * R[col:, j]
+            var w = frac.zero
+            i = 0
+            while i < len do
+              w = frac.plus(w, frac.times(v(i), R((col + i) * nCols + j)))
+              i += 1
+            // R[col+i, j] -= tau * v[i] * w
+            i = 0
+            while i < len do
+              R((col + i) * nCols + j) = frac.minus(
+                R((col + i) * nCols + j),
+                frac.times(tau, frac.times(v(i), w))
+              )
+              i += 1
+            j += 1
+
+          // Apply reflector to Q: Q = Q * (I - tau*v*v^T)
+          // For each ROW of Q, compute row dot v, then update
+          var qRow = 0
+          while qRow < nRows do
+            // w = Q[qRow, col:] dot v
+            var w = frac.zero
+            i = 0
+            while i < len do
+              w = frac.plus(w, frac.times(Q(qRow * nRows + col + i), v(i)))
+              i += 1
+            // Q[qRow, col+i] -= tau * w * v[i]
+            i = 0
+            while i < len do
+              Q(qRow * nRows + col + i) = frac.minus(
+                Q(qRow * nRows + col + i),
+                frac.times(tau, frac.times(w, v(i)))
+              )
+              i += 1
+            qRow += 1
+
+        col += 1
+
+      // Zero out below-diagonal entries of R (numerical noise)
+      i = 1
+      while i < nRows do
+        var j = 0
+        while j < math.min(i, nCols) do
+          R(i * nCols + j) = frac.zero
+          j += 1
+        i += 1
+
+      // Return economy QR: Q is nRows×p, R is p×nCols
+      // Q from accumulation is nRows×nRows - take first p columns
+      val Qout = Array.ofDim[T](nRows * p)
+      i = 0
+      while i < nRows do
+        var j = 0
+        while j < p do
+          Qout(i * p + j) = Q(i * nRows + j)
+          j += 1
+        i += 1
+
+        // Slice R to p×nCols (drop rows p..nRows which are zero)
+      val Rout = Array.ofDim[T](p * nCols)
         i = 0
-        while i < nRows do { Q(i * p + j) = frac.div(v(i), normVal); i += 1 }
-        j += 1
+        while i < p do
+          var j = 0
+          while j < nCols do
+            Rout(i * nCols + j) = R(i * nCols + j)
+            j += 1
+          i += 1
 
-      (MatData(Q, nRows, p), MatData(R, p, nCols))
+      (MatData(Qout, nRows, p), MatData(Rout, p, nCols))
     }
 
     // ---- Eigenvalues (QR iteration) ------------------------------------
