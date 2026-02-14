@@ -1094,6 +1094,308 @@ object Mat {
       MatData(result, n, nRhs)
     }
 
+    def cumsum(axis: Int)(using num: Numeric[T]): Mat[T] = {
+      require(axis == 0 || axis == 1, s"axis must be 0 or 1, got $axis")
+      val result = Array.ofDim[T](m.rows * m.cols)
+      if axis == 0 then
+        // Cumulative sum down rows for each column
+        var j = 0
+        while j < m.cols do
+          var acc = num.zero
+          var i = 0
+          while i < m.rows do
+            acc = num.plus(acc, m(i, j))
+            result(i * m.cols + j) = acc
+            i += 1
+          j += 1
+      else
+        // Cumulative sum across cols for each row
+        var i = 0
+        while i < m.rows do
+          var acc = num.zero
+          var j = 0
+          while j < m.cols do
+            acc = num.plus(acc, m(i, j))
+            result(i * m.cols + j) = acc
+            j += 1
+          i += 1
+      MatData(result, m.rows, m.cols)
+    }
+
+    // No-axis version: flatten then cumsum
+    def cumsum(using num: Numeric[T]): Mat[T] = {
+      val flat = m.flatten
+      val result = Array.ofDim[T](flat.length)
+      var acc = num.zero
+      var i = 0
+      while i < flat.length do
+        acc = num.plus(acc, flat(i))
+        result(i) = acc
+        i += 1
+      MatData(result, 1, flat.length)
+    }
+
+    // 2. cov and corrcoef:
+    // scala// NumPy: np.cov(m) - each ROW is a variable, each COL is an observation
+    // Returns p×p covariance matrix where p = number of rows
+    def cov(using frac: Fractional[T]): Mat[T] = {
+      val p = m.rows  // number of variables
+      val n = m.cols  // number of observations
+      require(n > 1, "cov requires at least 2 observations (cols)")
+
+      // Subtract row means
+      val means = m.mean(1)  // p×1
+      val centered = Array.ofDim[T](p * n)
+      var i = 0
+      while i < p do
+        var j = 0
+        while j < n do
+          centered(i * n + j) = frac.minus(m(i, j), means(i, 0))
+          j += 1
+        i += 1
+
+      // cov = C * C^T / (n-1)
+      val denom = frac.fromInt(n - 1)
+      val result = Array.ofDim[T](p * p)
+      i = 0
+      while i < p do
+        var j = 0
+        while j < p do
+          var s = frac.zero
+          var k = 0
+          while k < n do
+            s = frac.plus(s, frac.times(centered(i * n + k), centered(j * n + k)))
+            k += 1
+          result(i * p + j) = frac.div(s, denom)
+          j += 1
+        i += 1
+      MatData(result, p, p)
+    }
+
+    def corrcoef(using frac: Fractional[T]): Mat[T] = {
+      val c = m.cov
+      val p = c.rows
+      // stddevs = sqrt of diagonal of cov
+      val std = Array.ofDim[T](p)
+      var i = 0
+      while i < p do
+        std(i) = summon[ClassTag[T]].runtimeClass match
+          case c2 if c2 == classOf[Double] =>
+            math.sqrt(frac.toDouble(c(i, i))).asInstanceOf[T]
+          case c2 if c2 == classOf[Float] =>
+            math.sqrt(frac.toDouble(c(i, i))).toFloat.asInstanceOf[T]
+          case c2 if c2 == classOf[BigDecimal] =>
+            c(i, i).asInstanceOf[Big].sqrt.asInstanceOf[T]
+          case c2 => throw UnsupportedOperationException(s"corrcoef unsupported for ${c2.getName}")
+        i += 1
+      val result = Array.ofDim[T](p * p)
+      i = 0
+      while i < p do
+        var j = 0
+        while j < p do
+          result(i * p + j) = frac.div(c(i, j), frac.times(std(i), std(j)))
+          j += 1
+        i += 1
+      MatData(result, p, p)
+    }
+
+    // 3. sort and argsort:
+    def sort(axis: Int = -1)(using ord: Ordering[T]): Mat[T] = {
+      if axis == -1 then
+        // Sort flattened
+        val flat = m.flatten
+        val sorted = flat.sorted
+        MatData(sorted, 1, flat.length)
+      else
+        require(axis == 0 || axis == 1, s"axis must be -1, 0 or 1, got $axis")
+        val result = Array.ofDim[T](m.rows * m.cols)
+        if axis == 0 then
+          // Sort each column independently
+          var j = 0
+          while j < m.cols do
+            val col = Array.tabulate(m.rows)(i => m(i, j))
+            val sorted = col.sorted
+            var i = 0
+            while i < m.rows do
+              result(i * m.cols + j) = sorted(i)
+              i += 1
+            j += 1
+        else
+          // Sort each row independently
+          var i = 0
+          while i < m.rows do
+            val row = Array.tabulate(m.cols)(j => m(i, j))
+            val sorted = row.sorted
+            var j = 0
+            while j < m.cols do
+              result(i * m.cols + j) = sorted(j)
+              j += 1
+            i += 1
+        MatData(result, m.rows, m.cols)
+    }
+
+    def argsort(axis: Int = -1)(using ord: Ordering[T]): Mat[Int] = {
+      if axis == -1 then
+        val flat = m.flatten
+        val indices = flat.indices.sortBy(flat(_)).toArray
+        MatData(indices, 1, indices.length)
+      else
+        require(axis == 0 || axis == 1, s"axis must be -1, 0 or 1, got $axis")
+        val result = Array.ofDim[Int](m.rows * m.cols)
+        if axis == 0 then
+          var j = 0
+          while j < m.cols do
+            val col = Array.tabulate(m.rows)(i => m(i, j))
+            val sorted = col.indices.sortBy(col(_)).toArray
+            var i = 0
+            while i < m.rows do
+              result(i * m.cols + j) = sorted(i)
+              i += 1
+            j += 1
+        else
+          var i = 0
+          while i < m.rows do
+            val row = Array.tabulate(m.cols)(j => m(i, j))
+            val sorted = row.indices.sortBy(row(_)).toArray
+            var j = 0
+            while j < m.cols do
+              result(i * m.cols + j) = sorted(j)
+              j += 1
+            i += 1
+        MatData(result, m.rows, m.cols)
+    }
+
+    // 4. unique:
+    def unique(using ord: Ordering[T]): (Array[T], Array[Int]) = {
+      val flat = m.flatten
+      val sorted = flat.sorted
+      val vals = scala.collection.mutable.ArrayBuffer[T]()
+      val counts = scala.collection.mutable.ArrayBuffer[Int]()
+      var i = 0
+      while i < sorted.length do
+        if vals.isEmpty || ord.compare(sorted(i), vals.last) != 0 then
+          vals += sorted(i)
+          counts += 1
+        else
+          counts(counts.length - 1) += 1
+        i += 1
+      (vals.toArray, counts.toArray)
+    }
+    private[data] def svdDouble: (Mat[Double], Array[Double], Mat[Double]) = {
+      import org.bytedeco.openblas.global.openblas.*
+      val md    = m.asInstanceOf[Mat[Double]]
+      val nRows = md.rows
+      val nCols = md.cols
+      val p     = math.min(nRows, nCols)
+      val aCopy = md.flatten  // row-major, respects transposed flag
+      val s     = Array.ofDim[Double](p)
+      val u     = Array.ofDim[Double](nRows * nRows)
+      val vt    = Array.ofDim[Double](nCols * nCols)
+
+      val info = LAPACKE_dgesdd(
+        LAPACK_ROW_MAJOR, 'A'.toByte,
+        nRows, nCols,
+        aCopy, nCols,   // lda = nCols for row-major
+        s,
+        u,  nRows,      // ldu
+        vt, nCols       // ldvt
+      )
+      if info != 0 then
+        throw ArithmeticException(s"LAPACKE_dgesdd failed with info=$info")
+
+      (MatData(u, nRows, nRows), s, MatData(vt, nCols, nCols))
+    }
+
+    def svd(using frac: Fractional[T]): (Mat[T], Array[T], Mat[T]) =
+      summon[ClassTag[T]].runtimeClass match
+        case c if c == classOf[Double] =>
+          val (u, s, vt) = m.asInstanceOf[Mat[Double]].svdDouble
+          (u.asInstanceOf[Mat[T]], s.asInstanceOf[Array[T]], vt.asInstanceOf[Mat[T]])
+        case c =>
+          throw UnsupportedOperationException(s"svd only supported for Double, got ${c.getName}")
+
+    def lstsq(b: Mat[T])(using frac: Fractional[T]): (Mat[T], Mat[T], Int, Array[T]) = {
+      summon[ClassTag[T]].runtimeClass match
+        case c if c == classOf[Double] =>
+          val md   = m.asInstanceOf[Mat[Double]]
+          val bd   = b.asInstanceOf[Mat[Double]]
+          val nRows = md.rows
+          val nCols = md.cols
+          val nRhs  = bd.cols
+          val p     = math.min(nRows, nCols)
+
+          val (uMat, s, vtMat) = md.svdDouble
+          // Extract flat row-major arrays from the Mat results
+          // uMat  is nRows×nRows, row-major: uMat.underlying(r*nRows + c) = U[r,c]
+          // vtMat is nCols×nCols, row-major: vtMat.underlying(r*nCols + c) = Vt[r,c]
+          val u  = uMat.underlying   // Array[Double], nRows*nRows
+          val vt = vtMat.underlying  // Array[Double], nCols*nCols
+
+          // Rank = number of singular values above threshold
+          val threshold = 1e-10 * s(0)
+          val rank = s.count(_ > threshold)
+
+          val result = Array.ofDim[Double](nCols * nRhs)
+
+          var col = 0
+          while col < nRhs do
+            // Step 1: tmp = U^T * b[:,col]
+            // U^T[i,k] = U[k,i] = u(k*nRows + i)
+            // tmp[i] = sum_k U[k,i] * b[k,col]
+            val tmp = Array.ofDim[Double](nRows)
+            var i = 0
+            while i < nRows do
+              var k = 0
+              while k < nRows do
+                tmp(i) += u(k * nRows + i) * bd(k, col)
+                k += 1
+              i += 1
+
+            // Step 2: apply S^+  (pseudo-inverse of diagonal)
+            // tmp[i] /= s[i] for i < rank, zero otherwise
+            i = 0
+            while i < p do
+              if i < rank then tmp(i) /= s(i)
+              else tmp(i) = 0.0
+              i += 1
+
+            // Step 3: x = V * tmp  (V = Vt^T)
+            // V[i,k] = Vt[k,i] = vt(k*nCols + i)
+            // result[i,col] = sum_k Vt[k,i] * tmp[k]
+            i = 0
+            while i < nCols do
+              var k = 0
+              while k < p do
+                result(i * nRhs + col) += vt(k * nCols + i) * tmp(k)
+                k += 1
+              i += 1
+            col += 1
+
+          // Residuals: ||A*x - b||^2 per RHS column, only meaningful if nRows > nCols
+          val residuals = Array.ofDim[Double](nRhs)
+          if nRows > nCols then
+            val xMat = MatData(result, nCols, nRhs)
+            val diff = md * xMat - bd
+            var c2 = 0
+            while c2 < nRhs do
+              var i = 0
+              while i < nRows do
+                val v = diff(i, c2)
+                residuals(c2) += v * v
+                i += 1
+              c2 += 1
+
+          (
+            MatData(result, nCols, nRhs).asInstanceOf[Mat[T]],
+            MatData(residuals, 1, nRhs).asInstanceOf[Mat[T]],
+            rank,
+            s.asInstanceOf[Array[T]]
+          )
+
+        case c =>
+          throw UnsupportedOperationException(s"lstsq only supported for Double, got ${c.getName}")
+    }
+
   } // end extension
 
   def rand(rows: Int, cols: Int, seed: Long = -1): Mat[Double] = {
