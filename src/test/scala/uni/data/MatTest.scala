@@ -1917,4 +1917,300 @@ class MatTest extends munit.FunSuite {
       i += 1
     assert(residNorm < 10.0)  // loose bound - just sanity check
   }
+
+  // ============================================================================
+  // Comparison operators → Mat[Boolean]
+  // ============================================================================
+  test("gt returns correct boolean mask") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    val mask = m.gt(2.0)
+    assertEquals(mask.shape, (2, 2))
+    assertEquals(mask(0, 0), false)
+    assertEquals(mask(0, 1), false)
+    assertEquals(mask(1, 0), true)
+    assertEquals(mask(1, 1), true)
+  }
+
+  test("lt returns correct boolean mask") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    val mask = m.lt(3.0)
+    assertEquals(mask(0, 0), true)
+    assertEquals(mask(0, 1), true)
+    assertEquals(mask(1, 0), false)
+    assertEquals(mask(1, 1), false)
+  }
+
+  test("gte includes boundary") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    val mask = m.gte(2.0)
+    assertEquals(mask(0, 0), false)
+    assertEquals(mask(0, 1), true)
+    assertEquals(mask(1, 0), true)
+    assertEquals(mask(1, 1), true)
+  }
+
+  test("lte includes boundary") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    val mask = m.lte(2.0)
+    assertEquals(mask(0, 0), true)
+    assertEquals(mask(0, 1), true)
+    assertEquals(mask(1, 0), false)
+    assertEquals(mask(1, 1), false)
+  }
+
+  test(":== returns correct boolean mask") {
+    val m = Mat[Double]((1, 2), (2, 4))
+    val mask = m.:==(2.0)
+    assertEquals(mask(0, 0), false)
+    assertEquals(mask(0, 1), true)
+    assertEquals(mask(1, 0), true)
+    assertEquals(mask(1, 1), false)
+  }
+
+  test(":!= returns correct boolean mask") {
+    val m = Mat[Double]((1, 2), (2, 4))
+    val mask = m.:!=(2.0)
+    assertEquals(mask(0, 0), true)
+    assertEquals(mask(0, 1), false)
+    assertEquals(mask(1, 0), false)
+    assertEquals(mask(1, 1), true)
+  }
+
+  test("gt with Int argument works") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    val mask = m.gt(2)
+    assertEquals(mask(1, 0), true)
+    assertEquals(mask(0, 1), false)
+  }
+
+  test("lt with Int argument works") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    val mask = m.lt(3)
+    assertEquals(mask(0, 0), true)
+    assertEquals(mask(1, 1), false)
+  }
+
+  test(":== with Int argument works") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    val mask = m.:==(2)
+    assertEquals(mask(0, 1), true)
+    assertEquals(mask(0, 0), false)
+  }
+
+  test("comparison preserves shape") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6))
+    assertEquals(m.gt(3.0).shape, (2, 3))
+  }
+
+  // ============================================================================
+  // Boolean mask indexing
+  // ============================================================================
+  test("boolean mask indexing returns matching elements as flat vector") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    val result = m(m.gt(2.0))
+    assertEquals(result.shape, (1, 2))
+    assertEqualsDouble(result(0, 0), 3.0, 1e-10)
+    assertEqualsDouble(result(0, 1), 4.0, 1e-10)
+  }
+
+  test("boolean mask indexing with no matches returns empty") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    val result = m(m.gt(10.0))
+    assertEquals(result.size, 0)
+  }
+
+  test("boolean mask indexing with all matches") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    val result = m(m.gt(0.0))
+    assertEquals(result.size, 4)
+  }
+
+  test("boolean mask assignment sets matching elements") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    m(m.gt(2.0)) = 0.0
+    assertEqualsDouble(m(0, 0), 1.0, 1e-10)
+    assertEqualsDouble(m(0, 1), 2.0, 1e-10)
+    assertEqualsDouble(m(1, 0), 0.0, 1e-10)
+    assertEqualsDouble(m(1, 1), 0.0, 1e-10)
+  }
+
+  test("boolean mask assignment with :== ") {
+    val m = Mat[Double]((1, 2), (2, 4))
+    m(m.:==(2.0)) = -1.0
+    assertEqualsDouble(m(0, 0),  1.0, 1e-10)
+    assertEqualsDouble(m(0, 1), -1.0, 1e-10)
+    assertEqualsDouble(m(1, 0), -1.0, 1e-10)
+    assertEqualsDouble(m(1, 1),  4.0, 1e-10)
+  }
+
+  test("boolean mask shape mismatch throws") {
+    val m    = Mat[Double]((1, 2), (3, 4))
+    val mask = Mat.full[Boolean](2, 3, true)        // 2×3 - wrong shape
+    intercept[IllegalArgumentException] { m(mask) }
+  }
+
+  // ============================================================================
+  // Fancy indexing
+  // ============================================================================
+  test("fancy row indexing selects correct rows") {
+    val m = Mat[Double]((1, 2), (3, 4), (5, 6))
+    val r = m(Array(0, 2), ::)
+    assertEquals(r.shape, (2, 2))
+    assertEqualsDouble(r(0, 0), 1.0, 1e-10)
+    assertEqualsDouble(r(0, 1), 2.0, 1e-10)
+    assertEqualsDouble(r(1, 0), 5.0, 1e-10)
+    assertEqualsDouble(r(1, 1), 6.0, 1e-10)
+  }
+
+  test("fancy col indexing selects correct cols") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6))
+    val r = m(::, Array(0, 2))
+    assertEquals(r.shape, (2, 2))
+    assertEqualsDouble(r(0, 0), 1.0, 1e-10)
+    assertEqualsDouble(r(0, 1), 3.0, 1e-10)
+    assertEqualsDouble(r(1, 0), 4.0, 1e-10)
+    assertEqualsDouble(r(1, 1), 6.0, 1e-10)
+  }
+
+  test("fancy row+col indexing selects submatrix") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6), (7, 8, 9))
+    val r = m(Array(0, 2), Array(0, 2))
+    assertEquals(r.shape, (2, 2))
+    assertEqualsDouble(r(0, 0), 1.0, 1e-10)
+    assertEqualsDouble(r(0, 1), 3.0, 1e-10)
+    assertEqualsDouble(r(1, 0), 7.0, 1e-10)
+    assertEqualsDouble(r(1, 1), 9.0, 1e-10)
+  }
+
+  test("fancy indexing preserves order of indices") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6), (7, 8, 9))
+    val r = m(Array(2, 0, 1), ::)  // reversed row order
+    assertEqualsDouble(r(0, 0), 7.0, 1e-10)
+    assertEqualsDouble(r(1, 0), 1.0, 1e-10)
+    assertEqualsDouble(r(2, 0), 4.0, 1e-10)
+  }
+
+  test("fancy row indexing out of bounds throws") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    intercept[IllegalArgumentException] { m(Array(0, 5), ::) }
+  }
+
+  test("fancy col indexing out of bounds throws") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    intercept[IllegalArgumentException] { m(::, Array(0, 5)) }
+  }
+
+  // ============================================================================
+  // where (3-argument)
+  // ============================================================================
+  test("where with Mat arguments selects elementwise") {
+    val cond = Mat[Double]((1, 2), (3, 4))
+    val x    = Mat[Double]((10, 20), (30, 40))
+    val y    = Mat[Double]((100, 200), (300, 400))
+    val r    = Mat.where(cond.gt(2.0), x, y)
+    assertEqualsDouble(r(0, 0), 100.0, 1e-10)  // 1 not > 2, take y
+    assertEqualsDouble(r(0, 1), 200.0, 1e-10)  // 2 not > 2, take y
+    assertEqualsDouble(r(1, 0),  30.0, 1e-10)  // 3 > 2, take x
+    assertEqualsDouble(r(1, 1),  40.0, 1e-10)  // 4 > 2, take x
+  }
+
+  test("where with scalar arguments") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    val r = Mat.where(m.gt(2.0), 1.0, -1.0)
+    assertEqualsDouble(r(0, 0), -1.0, 1e-10)
+    assertEqualsDouble(r(0, 1), -1.0, 1e-10)
+    assertEqualsDouble(r(1, 0),  1.0, 1e-10)
+    assertEqualsDouble(r(1, 1),  1.0, 1e-10)
+  }
+
+  test("where with Int scalars") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    val r = Mat.where(m.gt(2), 1.0, -1.0)
+    assertEqualsDouble(r(1, 0), 1.0, 1e-10)
+    assertEqualsDouble(r(0, 0), -1.0, 1e-10)
+  }
+
+  // where shape mismatch throws
+  test("where shape mismatch throws") {
+    val cond = Mat.full[Boolean](2, 2, true)
+    val x    = Mat[Double]((1, 2), (3, 4))
+    val y    = Mat[Double]((1, 2, 3), (4, 5, 6))   // wrong shape
+    intercept[IllegalArgumentException] { Mat.where(cond, x, y) }
+  }
+
+  test("where preserves shape") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6))
+    val r = Mat.where(m.gte(3.0), 1.0, 0.0)
+    assertEquals(r.shape, (2, 3))
+  }
+
+  // ============================================================================
+  // diag
+  // ============================================================================
+  test("diag from array produces diagonal matrix") {
+    val d = Mat.diag(Array(1.0, 2.0, 3.0))
+    assertEquals(d.shape, (3, 3))
+    assertEqualsDouble(d(0, 0), 1.0, 1e-10)
+    assertEqualsDouble(d(1, 1), 2.0, 1e-10)
+    assertEqualsDouble(d(2, 2), 3.0, 1e-10)
+    assertEqualsDouble(d(0, 1), 0.0, 1e-10)
+    assertEqualsDouble(d(1, 0), 0.0, 1e-10)
+  }
+
+  test("diag off-diagonal elements are zero") {
+    val d = Mat.diag(Array(4.0, 5.0, 6.0))
+    var i = 0
+    while i < 3 do
+      var j = 0
+      while j < 3 do
+        if i != j then assertEqualsDouble(d(i, j), 0.0, 1e-10)
+        j += 1
+      i += 1
+  }
+
+  test("diag from column vector Mat") {
+    val v = Mat.col[Double](1, 2, 3)
+    val d = Mat.diag(v)
+    assertEquals(d.shape, (3, 3))
+    assertEqualsDouble(d(0, 0), 1.0, 1e-10)
+    assertEqualsDouble(d(1, 1), 2.0, 1e-10)
+    assertEqualsDouble(d(2, 2), 3.0, 1e-10)
+  }
+
+  test("diag from row vector Mat") {
+    val v = Mat.row[Double](1, 2, 3)
+    val d = Mat.diag(v)
+    assertEquals(d.shape, (3, 3))
+    assertEqualsDouble(d(1, 1), 2.0, 1e-10)
+  }
+
+  test("diag rectangular nRows > nCols") {
+    val d = Mat.diag(Array(1.0, 2.0), 3, 2)
+    assertEquals(d.shape, (3, 2))
+    assertEqualsDouble(d(0, 0), 1.0, 1e-10)
+    assertEqualsDouble(d(1, 1), 2.0, 1e-10)
+    assertEqualsDouble(d(2, 0), 0.0, 1e-10)
+  }
+
+  test("diag rectangular nRows < nCols") {
+    val d = Mat.diag(Array(1.0, 2.0), 2, 3)
+    assertEquals(d.shape, (2, 3))
+    assertEqualsDouble(d(0, 0), 1.0, 1e-10)
+    assertEqualsDouble(d(1, 1), 2.0, 1e-10)
+    assertEqualsDouble(d(0, 2), 0.0, 1e-10)
+  }
+
+  test("diag from non-vector Mat throws") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    intercept[IllegalArgumentException] { Mat.diag(m) }
+  }
+
+  test("diagonal of diag matrix recovers original values") {
+    val values = Array(3.0, 1.0, 4.0)
+    val d = Mat.diag(values)
+    val recovered = d.diagonal
+    assertEqualsDouble(recovered(0), 3.0, 1e-10)
+    assertEqualsDouble(recovered(1), 1.0, 1e-10)
+    assertEqualsDouble(recovered(2), 4.0, 1e-10)
+  }
 }

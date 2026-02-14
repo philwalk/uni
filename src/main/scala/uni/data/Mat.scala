@@ -1396,6 +1396,128 @@ object Mat {
           throw UnsupportedOperationException(s"lstsq only supported for Double, got ${c.getName}")
     }
 
+    // ---- Element-wise comparison → Mat[Boolean] ----------------------------
+    def gt(other: T)(using ord: Ordering[T]): Mat[Boolean] =
+      MatData(m.data.map(ord.gt(_, other)), m.rows, m.cols, m.transposed)
+
+    def lt(other: T)(using ord: Ordering[T]): Mat[Boolean] =
+      MatData(m.data.map(ord.lt(_, other)), m.rows, m.cols, m.transposed)
+
+    def gte(other: T)(using ord: Ordering[T]): Mat[Boolean] =
+      MatData(m.data.map(ord.gteq(_, other)), m.rows, m.cols, m.transposed)
+
+    def lte(other: T)(using ord: Ordering[T]): Mat[Boolean] =
+      MatData(m.data.map(ord.lteq(_, other)), m.rows, m.cols, m.transposed)
+
+    def :==(other: T)(using ord: Ordering[T]): Mat[Boolean] =
+      MatData(m.data.map(ord.equiv(_, other)), m.rows, m.cols, m.transposed)
+
+    def :!=(other: T)(using ord: Ordering[T]): Mat[Boolean] =
+      MatData(m.data.map(!ord.equiv(_, other)), m.rows, m.cols, m.transposed)
+
+    // Int overloads for natural NumPy-style usage e.g. m.gt(0)
+    def gt(other: Int)(using ord: Ordering[T], frac: Fractional[T]): Mat[Boolean] =
+      m.gt(frac.fromInt(other))
+
+    def lt(other: Int)(using ord: Ordering[T], frac: Fractional[T]): Mat[Boolean] =
+      m.lt(frac.fromInt(other))
+
+    def gte(other: Int)(using ord: Ordering[T], frac: Fractional[T]): Mat[Boolean] =
+      m.gte(frac.fromInt(other))
+
+    def lte(other: Int)(using ord: Ordering[T], frac: Fractional[T]): Mat[Boolean] =
+      m.lte(frac.fromInt(other))
+
+    def :==(other: Int)(using ord: Ordering[T], frac: Fractional[T]): Mat[Boolean] =
+      m.:==(frac.fromInt(other))
+
+    def :!=(other: Int)(using ord: Ordering[T], frac: Fractional[T]): Mat[Boolean] =
+      m.:!=(frac.fromInt(other))
+
+    // ---- Boolean mask indexing ---------------------------------------------
+
+    /** m(m.gt(0.0)) → flat vector of elements where mask is true */
+    def apply(mask: Mat[Boolean]): Mat[T] = {
+      require(mask.rows == m.rows && mask.cols == m.cols,
+        s"Mask shape ${mask.shape} must match matrix shape ${m.shape}")
+      val buf = scala.collection.mutable.ArrayBuffer[T]()
+      var i = 0
+      while i < m.rows do
+        var j = 0
+        while j < m.cols do
+          if mask(i, j) then buf += m(i, j)
+          j += 1
+        i += 1
+      val arr = buf.toArray
+      MatData(arr, 1, arr.length)
+    }
+
+    /** m(m.gt(0.0)) = 1.0 → set all elements where mask is true */
+    def update(mask: Mat[Boolean], value: T): Unit = {
+      require(mask.rows == m.rows && mask.cols == m.cols,
+        s"Mask shape ${mask.shape} must match matrix shape ${m.shape}")
+      var i = 0
+      while i < m.rows do
+        var j = 0
+        while j < m.cols do
+          if mask(i, j) then m(i, j) = value
+          j += 1
+        i += 1
+    }
+
+    // ---- Fancy index: row/col selection by Array[Int] ----------------------
+
+    /** m(Array(0,2,4), ::) → select rows by index */
+    def apply(rowIndices: Array[Int], cols: ::.type): Mat[T] = {
+      val nCols = m.cols
+      val result = Array.ofDim[T](rowIndices.length * nCols)
+      var i = 0
+      while i < rowIndices.length do
+        val r = rowIndices(i)
+        require(r >= 0 && r < m.rows, s"Row index $r out of bounds for ${m.rows} rows")
+        var j = 0
+        while j < nCols do
+          result(i * nCols + j) = m(r, j)
+          j += 1
+        i += 1
+      MatData(result, rowIndices.length, nCols)
+    }
+
+    /** m(::, Array(0,2,4)) → select cols by index */
+    def apply(rows: ::.type, colIndices: Array[Int]): Mat[T] = {
+      val nRows = m.rows
+      val result = Array.ofDim[T](nRows * colIndices.length)
+      var i = 0
+      while i < nRows do
+        var j = 0
+        while j < colIndices.length do
+          val c = colIndices(j)
+          require(c >= 0 && c < m.cols, s"Col index $c out of bounds for ${m.cols} cols")
+          result(i * colIndices.length + j) = m(i, c)
+          j += 1
+        i += 1
+      MatData(result, nRows, colIndices.length)
+    }
+
+    /** m(Array(0,2), Array(1,3)) → select rows and cols by index */
+    def apply(rowIndices: Array[Int], colIndices: Array[Int]): Mat[T] = {
+      val nRows = rowIndices.length
+      val nCols = colIndices.length
+      val result = Array.ofDim[T](nRows * nCols)
+      var i = 0
+      while i < nRows do
+        val r = rowIndices(i)
+        require(r >= 0 && r < m.rows, s"Row index $r out of bounds")
+        var j = 0
+        while j < nCols do
+          val c = colIndices(j)
+          require(c >= 0 && c < m.cols, s"Col index $c out of bounds")
+          result(i * nCols + j) = m(r, c)
+          j += 1
+        i += 1
+      MatData(result, nRows, nCols)
+    }
+
   } // end extension
 
   def rand(rows: Int, cols: Int, seed: Long = -1): Mat[Double] = {
@@ -1408,7 +1530,6 @@ object Mat {
     val rng = if seed >= 0 then Random(seed) else Random
     MatData(Array.fill(rows * cols)(rng.nextGaussian()), rows, cols)
   }
-
 
   // In the Mat companion object (not extension)
   def vstack[U: ClassTag](matrices: Mat[U]*): Mat[U] = {
@@ -1453,6 +1574,69 @@ object Mat {
     if axis == 0 then vstack(matrices*)
     else hstack(matrices*)
 
+  // ---- where (3-argument form) -------------------------------------------
+  /** NumPy: np.where(condition, x, y) - element-wise conditional select */
+  def where[T: ClassTag](condition: Mat[Boolean], x: Mat[T], y: Mat[T]): Mat[T] = {
+    require(
+      condition.rows == x.rows && condition.cols == x.cols &&
+      x.rows == y.rows && x.cols == y.cols,
+      s"where: shape mismatch: condition=${condition.shape} x=${x.shape} y=${y.shape}"
+    )
+    val result = Array.ofDim[T](x.rows * x.cols)
+    var i = 0
+    while i < x.rows do
+      var j = 0
+      while j < x.cols do
+        result(i * x.cols + j) = if condition(i, j) then x(i, j) else y(i, j)
+        j += 1
+      i += 1
+    MatData(result, x.rows, x.cols)
+  }
+
+  /** np.where(condition, scalar, scalar) */
+  def where[T: ClassTag](condition: Mat[Boolean], x: T, y: T): Mat[T] = {
+    val result = Array.ofDim[T](condition.rows * condition.cols)
+    var i = 0
+    while i < condition.rows do
+      var j = 0
+      while j < condition.cols do
+        result(i * condition.cols + j) = if condition(i, j) then x else y
+        j += 1
+      i += 1
+    MatData(result, condition.rows, condition.cols)
+  }
+
+  // ---- diag --------------------------------------------------------------
+
+  /** NumPy: np.diag(array) - construct square diagonal matrix from array */
+  def diag[T: ClassTag](values: Array[T])(using frac: Fractional[T]): Mat[T] = {
+    val n = values.length
+    val result = Array.fill(n * n)(frac.zero)
+    var i = 0
+    while i < n do
+      result(i * n + i) = values(i)
+      i += 1
+    MatData(result, n, n)
+  }
+
+  /** np.diag(v) where v is a vector Mat */
+  def diag[T: ClassTag](v: Mat[T])(using frac: Fractional[T]): Mat[T] = {
+    require(v.rows == 1 || v.cols == 1,
+      s"diag requires a vector (1×n or n×1), got ${v.shape}")
+    diag(v.flatten)
+  }
+
+  /** Rectangular diagonal: nRows×nCols with values on diagonal */
+  def diag[T: ClassTag](values: Array[T], rows: Int, cols: Int)
+      (using frac: Fractional[T]): Mat[T] = {
+    val result = Array.fill(rows * cols)(frac.zero)
+    val p = math.min(math.min(rows, cols), values.length)
+    var i = 0
+    while i < p do
+      result(i * cols + i) = values(i)
+      i += 1
+    MatData(result, rows, cols)
+  }
   private lazy val blasThreshold: Long = System.getProperty("uni.mat.blasThreshold", "6000").toLong
 
 }
