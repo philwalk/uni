@@ -2928,4 +2928,256 @@ class MatTest extends munit.FunSuite {
         assert(av.allclose(lv, atol = 1e-8), s"A*v != lambda*v for col $col")
       col += 1
   }
+
+  // ============================================================================
+  // tril / triu
+  // ============================================================================
+  test("tril k=0 keeps lower triangular including diagonal") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6), (7, 8, 9))
+    val r = m.tril()
+    assertEqualsDouble(r(0, 0), 1.0, 1e-10, "r(0,0)")
+    assertEqualsDouble(r(0, 1), 0.0, 1e-10, "r(0,1)")
+    assertEqualsDouble(r(0, 2), 0.0, 1e-10, "r(0,2)")
+    assertEqualsDouble(r(1, 0), 4.0, 1e-10, "r(1,0)")
+    assertEqualsDouble(r(1, 1), 5.0, 1e-10, "r(1,1)")
+    assertEqualsDouble(r(1, 2), 0.0, 1e-10, "r(1,2)")
+    assertEqualsDouble(r(2, 0), 7.0, 1e-10, "r(2,0)")
+    assertEqualsDouble(r(2, 1), 8.0, 1e-10, "r(2,1)")
+    assertEqualsDouble(r(2, 2), 9.0, 1e-10, "r(2,2)")
+  }
+
+  test("tril k=1 includes one superdiagonal") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6), (7, 8, 9))
+    val r = m.tril(1)
+    assertEqualsDouble(r(0, 0), 1.0, 1e-10, "r(0,0)")
+    assertEqualsDouble(r(0, 1), 2.0, 1e-10, "r(0,1)")
+    assertEqualsDouble(r(0, 2), 0.0, 1e-10, "r(0,2)")
+    assertEqualsDouble(r(1, 1), 5.0, 1e-10, "r(1,1)")
+    assertEqualsDouble(r(1, 2), 6.0, 1e-10, "r(1,2)")
+  }
+
+  test("tril k=-1 excludes diagonal") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6), (7, 8, 9))
+    val r = m.tril(-1)
+    assertEqualsDouble(r(0, 0), 0.0, 1e-10, "r(0,0)")
+    assertEqualsDouble(r(1, 0), 4.0, 1e-10, "r(1,0)")
+    assertEqualsDouble(r(1, 1), 0.0, 1e-10, "r(1,1)")
+    assertEqualsDouble(r(2, 0), 7.0, 1e-10, "r(2,0)")
+    assertEqualsDouble(r(2, 1), 8.0, 1e-10, "r(2,1)")
+    assertEqualsDouble(r(2, 2), 0.0, 1e-10, "r(2,2)")
+  }
+
+  test("triu k=0 keeps upper triangular including diagonal") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6), (7, 8, 9))
+    val r = m.triu()
+    assertEqualsDouble(r(0, 0), 1.0, 1e-10, "r(0,0)")
+    assertEqualsDouble(r(0, 1), 2.0, 1e-10, "r(0,1)")
+    assertEqualsDouble(r(0, 2), 3.0, 1e-10, "r(0,2)")
+    assertEqualsDouble(r(1, 0), 0.0, 1e-10, "r(1,0)")
+    assertEqualsDouble(r(1, 1), 5.0, 1e-10, "r(1,1)")
+    assertEqualsDouble(r(1, 2), 6.0, 1e-10, "r(1,2)")
+    assertEqualsDouble(r(2, 0), 0.0, 1e-10, "r(2,0)")
+    assertEqualsDouble(r(2, 1), 0.0, 1e-10, "r(2,1)")
+    assertEqualsDouble(r(2, 2), 9.0, 1e-10, "r(2,2)")
+  }
+
+  test("triu k=1 excludes diagonal") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6), (7, 8, 9))
+    val r = m.triu(1)
+    assertEqualsDouble(r(0, 0), 0.0, 1e-10, "r(0,0)")
+    assertEqualsDouble(r(0, 1), 2.0, 1e-10, "r(0,1)")
+    assertEqualsDouble(r(0, 2), 3.0, 1e-10, "r(0,2)")
+    assertEqualsDouble(r(1, 1), 0.0, 1e-10, "r(1,1)")
+    assertEqualsDouble(r(1, 2), 6.0, 1e-10, "r(1,2)")
+  }
+
+  test("triu k=-1 includes one subdiagonal") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6), (7, 8, 9))
+    val r = m.triu(-1)
+    assertEqualsDouble(r(1, 0), 4.0, 1e-10, "r(1,0)")
+    assertEqualsDouble(r(2, 0), 0.0, 1e-10, "r(2,0)")
+    assertEqualsDouble(r(2, 1), 8.0, 1e-10, "r(2,1)")
+  }
+
+  test("tril + triu - original = diagonal matrix") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6), (7, 8, 9))
+    val r = m.tril() + m.triu() - m
+    // should equal m with only diagonal preserved
+    assertEqualsDouble(r(0, 1), 0.0, 1e-10, "off-diagonal")
+    assertEqualsDouble(r(0, 0), 1.0, 1e-10, "diagonal")
+    assertEqualsDouble(r(1, 1), 5.0, 1e-10, "diagonal")
+    assertEqualsDouble(r(2, 2), 9.0, 1e-10, "diagonal")
+  }
+
+  test("R from QR is upper triangular") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6), (7, 8, 10))
+    val (_, r) = m.qrDecomposition
+    assert(r.allclose(r.triu(), atol = 1e-8))
+  }
+
+  // ============================================================================
+  // eye with offset k
+  // ============================================================================
+  test("eye k=0 is identity") {
+    val m = Mat.eye[Double](3)
+    assert(m.allclose(Mat.eye[Double](3, 0)))
+  }
+
+  test("eye k=1 is superdiagonal") {
+    val m = Mat.eye[Double](3, 1)
+    assertEqualsDouble(m(0, 1), 1.0, 1e-10, "m(0,1)")
+    assertEqualsDouble(m(1, 2), 1.0, 1e-10, "m(1,2)")
+    assertEqualsDouble(m(0, 0), 0.0, 1e-10, "m(0,0)")
+    assertEqualsDouble(m(1, 1), 0.0, 1e-10, "m(1,1)")
+  }
+
+  test("eye k=-1 is subdiagonal") {
+    val m = Mat.eye[Double](3, -1)
+    assertEqualsDouble(m(1, 0), 1.0, 1e-10, "m(1,0)")
+    assertEqualsDouble(m(2, 1), 1.0, 1e-10, "m(2,1)")
+    assertEqualsDouble(m(0, 0), 0.0, 1e-10, "m(0,0)")
+  }
+
+  test("eye k=n-1 has single element in top right") {
+    val m = Mat.eye[Double](3, 2)
+    assertEqualsDouble(m(0, 2), 1.0, 1e-10, "m(0,2)")
+    assertEqualsDouble(m(1, 2), 0.0, 1e-10, "m(1,2)")
+  }
+
+  test("eye k beyond bounds is all zeros") {
+    val m = Mat.eye[Double](3, 3)
+    assert(m.allclose(Mat.zeros[Double](3, 3)))
+  }
+
+  // ============================================================================
+  // zerosLike / onesLike / fullLike
+  // ============================================================================
+  test("zerosLike has same shape and all zeros") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6))
+    val r = Mat.zerosLike(m)
+    assertEquals(r.shape, (2, 3))
+    assert(r.allclose(Mat.zeros[Double](2, 3)))
+  }
+
+  test("onesLike has same shape and all ones") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6))
+    val r = Mat.onesLike(m)
+    assertEquals(r.shape, (2, 3))
+    assert(r.allclose(Mat.ones[Double](2, 3)))
+  }
+
+  test("fullLike has same shape and correct value") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    val r = Mat.fullLike(m, 7.0)
+    assertEquals(r.shape, (2, 2))
+    assert(r.allclose(Mat.full[Double](2, 2, 7.0)))
+  }
+
+  test("zerosLike does not share data with original") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    val r = Mat.zerosLike(m)
+    r(0, 0) = 99.0
+    assertEqualsDouble(m(0, 0), 1.0, 1e-10, "original unchanged")
+  }
+
+  // ============================================================================
+  // sign
+  // ============================================================================
+  test("sign of positive values is 1") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    val s = m.sign
+    assert(s.allclose(Mat.ones[Double](2, 2)))
+  }
+
+  test("sign of negative values is -1") {
+    val m = Mat[Double]((-1, -2), (-3, -4))
+    val s = m.sign
+    assert(s.allclose(Mat.full[Double](2, 2, -1.0)))
+  }
+
+  test("sign of zero is 0") {
+    val m = Mat.zeros[Double](2, 2)
+    val s = m.sign
+    assert(s.allclose(Mat.zeros[Double](2, 2)))
+  }
+
+  test("sign of mixed values") {
+    val m = Mat[Double]((-3, 0, 5))
+    val s = m.sign
+    assertEqualsDouble(s(0, 0), -1.0, 1e-10, "negative")
+    assertEqualsDouble(s(0, 1),  0.0, 1e-10, "zero")
+    assertEqualsDouble(s(0, 2),  1.0, 1e-10, "positive")
+  }
+
+  // ============================================================================
+  // round
+  // ============================================================================
+  test("round to 0 decimals") {
+    val m = Mat[Double]((1.4, 1.5), (2.4, 2.5))
+    val r = m.round()
+    assertEqualsDouble(r(0, 0), 1.0, 1e-10, "1.4→1")
+    assertEqualsDouble(r(0, 1), 2.0, 1e-10, "1.5→2")
+    assertEqualsDouble(r(1, 0), 2.0, 1e-10, "2.4→2")
+    assertEqualsDouble(r(1, 1), 3.0, 1e-10, "2.5→3") // or 2 depending on rounding mode
+  }
+
+  test("round to 2 decimals") {
+    val m = Mat[Double]((1.234, 5.678))
+    val r = m.round(2)
+    assertEqualsDouble(r(0, 0), 1.23, 1e-10, "1.234→1.23")
+    assertEqualsDouble(r(0, 1), 5.68, 1e-10, "5.678→5.68")
+  }
+
+  test("round negative decimals rounds to tens") {
+    val m = Mat[Double]((123.4, 456.7))
+    val r = m.round(-2)
+    assertEqualsDouble(r(0, 0), 100.0, 1e-10, "123→100")
+    assertEqualsDouble(r(0, 1), 500.0, 1e-10, "457→500")
+  }
+
+  test("round of integer values is unchanged") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    assert(m.round().allclose(m))
+  }
+
+  // ============================================================================
+  // power
+  // ============================================================================
+  test("power with Double exponent") {
+    val m = Mat[Double]((4, 9), (16, 25))
+    val r = m.power(0.5)  // square root
+    assertEqualsDouble(r(0, 0), 2.0, 1e-10, "sqrt(4)")
+    assertEqualsDouble(r(0, 1), 3.0, 1e-10, "sqrt(9)")
+    assertEqualsDouble(r(1, 0), 4.0, 1e-10, "sqrt(16)")
+    assertEqualsDouble(r(1, 1), 5.0, 1e-10, "sqrt(25)")
+  }
+
+  test("power with Int exponent 2") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    val r = m.power(2)
+    assertEqualsDouble(r(0, 0),  1.0, 1e-10, "1^2")
+    assertEqualsDouble(r(0, 1),  4.0, 1e-10, "2^2")
+    assertEqualsDouble(r(1, 0),  9.0, 1e-10, "3^2")
+    assertEqualsDouble(r(1, 1), 16.0, 1e-10, "4^2")
+  }
+
+  test("power 0 gives all ones") {
+    val m = Mat[Double]((2, 3), (4, 5))
+    assert(m.power(0).allclose(Mat.ones[Double](2, 2)))
+  }
+
+  test("power 1 gives original") {
+    val m = Mat[Double]((2, 3), (4, 5))
+    assert(m.power(1).allclose(m))
+  }
+
+  test("power consistent with sqrt") {
+    val m = Mat[Double]((4, 9), (16, 25))
+    assert(m.power(0.5).allclose(m.sqrt, atol = 1e-10))
+  }
+
+  test("power negative Int throws") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    intercept[UnsupportedOperationException] { m.power(-1) }
+  }
 }

@@ -375,8 +375,15 @@ object Mat {
   def ones[T: ClassTag](shape: (Int, Int))(using frac: Fractional[T]): Mat[T] =
     ones(shape._1, shape._2)
 
-  def eye[T: ClassTag](n: Int)(using frac: Fractional[T]): Mat[T] =
-    MatData(Array.tabulate(n * n)(i => if i % (n + 1) == 0 then frac.one else frac.zero), n, n)
+  def eye[T: ClassTag](n: Int, k: Int = 0)(using frac: Fractional[T]): Mat[T] = {
+    val result = Array.fill(n * n)(frac.zero)
+    var i = 0
+    while i < n do
+      val j = i + k
+      if j >= 0 && j < n then result(i * n + j) = frac.one
+      i += 1
+    MatData(result, n, n)
+  }
 
   def full[T: ClassTag](rows: Int, cols: Int, value: T): Mat[T] =
     MatData(Array.fill(rows * cols)(value), rows, cols)
@@ -1933,7 +1940,82 @@ object Mat {
           throw UnsupportedOperationException(s"eig only supported for Double, got ${c.getName}")
     }
 
+    /** NumPy: np.tril(m, k=0) - lower triangular, k=0 main diagonal,
+     *  k>0 above, k<0 below */
+    def tril(k: Int = 0)(using num: Numeric[T]): Mat[T] = {
+      val result = Array.ofDim[T](m.rows * m.cols)
+      var i = 0
+      while i < m.rows do
+        var j = 0
+        while j < m.cols do
+          result(i * m.cols + j) = if j <= i + k then m(i, j) else num.zero
+          j += 1
+        i += 1
+      MatData(result, m.rows, m.cols)
+    }
+
+    /** NumPy: np.triu(m, k=0) - upper triangular */
+    def triu(k: Int = 0)(using num: Numeric[T]): Mat[T] = {
+      val result = Array.ofDim[T](m.rows * m.cols)
+      var i = 0
+      while i < m.rows do
+        var j = 0
+        while j < m.cols do
+          result(i * m.cols + j) = if j >= i + k then m(i, j) else num.zero
+          j += 1
+        i += 1
+      MatData(result, m.rows, m.cols)
+    }
+
+    /** NumPy: np.sign(m) - element-wise sign: -1, 0, or 1 */
+    def sign(using num: Numeric[T]): Mat[T] = {
+      m.map((x: T) =>
+        if num.lt(x, num.zero) then num.negate(num.one)
+        else if num.gt(x, num.zero) then num.one
+        else num.zero
+      )
+    }
+
+    /** NumPy: np.round(m, decimals=0) */
+    def round(decimals: Int = 0)(using frac: Fractional[T]): Mat[T] = {
+      val scale = math.pow(10.0, decimals)
+      m.map((x: T) => {
+        val rounded = math.round(frac.toDouble(x) * scale).toDouble / scale
+        summon[ClassTag[T]].runtimeClass match
+          case c if c == classOf[Double]     => rounded.asInstanceOf[T]
+          case c if c == classOf[Float]      => rounded.toFloat.asInstanceOf[T]
+          case c if c == classOf[BigDecimal] => BigDecimal(rounded).asInstanceOf[T]
+          case c => throw UnsupportedOperationException(s"round unsupported for ${c.getName}")
+      })
+    }
+
+    /** NumPy: np.power(m, n) - element-wise x^n */
+    def power(n: Double)(using frac: Fractional[T]): Mat[T] =
+      m.map((x: T) => {
+        val result = math.pow(frac.toDouble(x), n)
+        summon[ClassTag[T]].runtimeClass match
+          case c if c == classOf[Double]     => result.asInstanceOf[T]
+          case c if c == classOf[Float]      => result.toFloat.asInstanceOf[T]
+          case c if c == classOf[BigDecimal] => BigDecimal(result).asInstanceOf[T]
+          case c => throw UnsupportedOperationException(s"power unsupported for ${c.getName}")
+      })
+
+    /** Integer exponent overload - no Fractional needed */
+    def power(n: Int)(using num: Numeric[T]): Mat[T] = {
+      m.map((x: T) => {
+        var result = num.one
+        var k = 0
+        while k < math.abs(n) do
+          result = num.times(result, x)
+          k += 1
+        if n < 0 then
+          throw UnsupportedOperationException("negative integer power requires Fractional")
+        result
+      })
+    }
   } // end extension
+
+  private lazy val blasThreshold: Long = System.getProperty("uni.mat.blasThreshold", "6000").toLong
 
   def rand(rows: Int, cols: Int, seed: Long = -1): Mat[Double] = {
     val rng = if seed >= 0 then Random(seed) else Random
@@ -2200,6 +2282,14 @@ object Mat {
         throw IllegalArgumentException(s"unknown mode '$other', use 'full', 'same', or 'valid'")
   }
 
-  private lazy val blasThreshold: Long = System.getProperty("uni.mat.blasThreshold", "6000").toLong
+  // In companion object
+  def zerosLike[T: ClassTag](m: Mat[T])(using frac: Fractional[T]): Mat[T] =
+    Mat.zeros[T](m.rows, m.cols)
+
+  def onesLike[T: ClassTag](m: Mat[T])(using frac: Fractional[T]): Mat[T] =
+    Mat.ones[T](m.rows, m.cols)
+
+  def fullLike[T: ClassTag](m: Mat[T], value: T): Mat[T] =
+    Mat.full[T](m.rows, m.cols, value)
 
 }
