@@ -1,6 +1,6 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.7.0
+//> using dep org.vastblue:uni_3:0.8.1
 
 import java.nio.file.Path
 
@@ -32,4 +32,3 @@ val files: Seq[java.io.File] = java.nio.file.Paths.get(".").toFile.listFiles.toL
 for f <- files.filter(_.isFile).take(5) do
   val p: Path = f.toPath
   if f.isFile then printf("%s\n", p.posix)
-
