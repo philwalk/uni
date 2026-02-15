@@ -7,6 +7,13 @@ import scala.util.Random
 object Mat {
   // Opaque type wraps flat array with dimensions
   opaque type Mat[T] = MatData[T]
+  // Type aliases for documentation - same as Mat[T] at runtime
+  // Vec[T]    - either row or column vector (rows==1 or cols==1)
+  // RowVec[T] - row vector (rows==1)
+  // ColVec[T] - column vector (cols==1)
+  type Vec[T]    = Mat[T]
+  type RowVec[T] = Mat[T]
+  type ColVec[T] = Mat[T]
   
   private[data] case class MatData[T](
     data: Array[T],
@@ -1042,7 +1049,7 @@ object Mat {
     def clip(lower: T, upper: T)(using ord: Ordering[T]): Mat[T] =
       m.map((x: T) => if ord.lt(x, lower) then lower else if ord.gt(x, upper) then upper else x)
 
-    def outer(other: Mat[T])(using num: Numeric[T]): Mat[T] = {
+    def outer(other: Vec[T])(using num: Numeric[T]): Mat[T] = {
       require(m.size > 0 && other.size > 0, "outer requires non-empty vectors")
       val a = m.flatten
       val b = other.flatten
@@ -1757,6 +1764,175 @@ object Mat {
           case c => throw UnsupportedOperationException(s"nanToNum unsupported for ${c.getName}")
       })
     }
+
+    /** Add a row vector to every row of m: np equivalent of m + v (broadcast) */
+    def addToEachRow(v: RowVec[T])(using num: Numeric[T]): Mat[T] = {
+      require(v.size == m.cols,
+        s"row vector length ${v.size} must match matrix cols ${m.cols}")
+      val vFlat = v.flatten
+      val result = Array.ofDim[T](m.rows * m.cols)
+      var i = 0
+      while i < m.rows do
+        var j = 0
+        while j < m.cols do
+          result(i * m.cols + j) = num.plus(m(i, j), vFlat(j))
+          j += 1
+        i += 1
+      MatData(result, m.rows, m.cols)
+    }
+
+    /** Add a column vector to every col of m */
+    def addToEachCol(v: ColVec[T])(using num: Numeric[T]): Mat[T] = {
+      require(v.size == m.rows,
+        s"col vector length ${v.size} must match matrix rows ${m.rows}")
+      val vFlat = v.flatten
+      val result = Array.ofDim[T](m.rows * m.cols)
+      var i = 0
+      while i < m.rows do
+        var j = 0
+        while j < m.cols do
+          result(i * m.cols + j) = num.plus(m(i, j), vFlat(i))
+          j += 1
+        i += 1
+      MatData(result, m.rows, m.cols)
+    }
+
+    /** Multiply each row of m element-wise by a row vector */
+    def mulEachRow(v: RowVec[T])(using num: Numeric[T]): Mat[T] = {
+      require(v.size == m.cols,
+        s"row vector length ${v.size} must match matrix cols ${m.cols}")
+      val vFlat = v.flatten
+      val result = Array.ofDim[T](m.rows * m.cols)
+      var i = 0
+      while i < m.rows do
+        var j = 0
+        while j < m.cols do
+          result(i * m.cols + j) = num.times(m(i, j), vFlat(j))
+          j += 1
+        i += 1
+      MatData(result, m.rows, m.cols)
+    }
+
+    /** Multiply each col of m element-wise by a column vector */
+    def mulEachCol(v: ColVec[T])(using num: Numeric[T]): Mat[T] = {
+      require(v.size == m.rows,
+        s"col vector length ${v.size} must match matrix rows ${m.rows}")
+      val vFlat = v.flatten
+      val result = Array.ofDim[T](m.rows * m.cols)
+      var i = 0
+      while i < m.rows do
+        var j = 0
+        while j < m.cols do
+          result(i * m.cols + j) = num.times(m(i, j), vFlat(i))
+          j += 1
+        i += 1
+      MatData(result, m.rows, m.cols)
+    }
+
+    /** Subtract a row vector from every row */
+    def subFromEachRow(v: RowVec[T])(using num: Numeric[T]): Mat[T] = {
+      require(v.size == m.cols,
+        s"row vector length ${v.size} must match matrix cols ${m.cols}")
+      val vFlat = v.flatten
+      val result = Array.ofDim[T](m.rows * m.cols)
+      var i = 0
+      while i < m.rows do
+        var j = 0
+        while j < m.cols do
+          result(i * m.cols + j) = num.minus(m(i, j), vFlat(j))
+          j += 1
+        i += 1
+      MatData(result, m.rows, m.cols)
+    }
+
+    /** Subtract a column vector from every col */
+    def subFromEachCol(v: ColVec[T])(using num: Numeric[T]): Mat[T] = {
+      require(v.size == m.rows,
+        s"col vector length ${v.size} must match matrix rows ${m.rows}")
+      val vFlat = v.flatten
+      val result = Array.ofDim[T](m.rows * m.cols)
+      var i = 0
+      while i < m.rows do
+        var j = 0
+        while j < m.cols do
+          result(i * m.cols + j) = num.minus(m(i, j), vFlat(i))
+          j += 1
+        i += 1
+      MatData(result, m.rows, m.cols)
+    }
+
+    /** Divide each row of m element-wise by a row vector */
+    def divEachRow(v: RowVec[T])(using frac: Fractional[T]): Mat[T] = {
+      require(v.size == m.cols,
+        s"row vector length ${v.size} must match matrix cols ${m.cols}")
+      val vFlat = v.flatten
+      val result = Array.ofDim[T](m.rows * m.cols)
+      var i = 0
+      while i < m.rows do
+        var j = 0
+        while j < m.cols do
+          result(i * m.cols + j) = frac.div(m(i, j), vFlat(j))
+          j += 1
+        i += 1
+      MatData(result, m.rows, m.cols)
+    }
+
+    /** Divide each col of m element-wise by a column vector */
+    def divEachCol(v: ColVec[T])(using frac: Fractional[T]): Mat[T] = {
+      require(v.size == m.rows,
+        s"col vector length ${v.size} must match matrix rows ${m.rows}")
+      val vFlat = v.flatten
+      val result = Array.ofDim[T](m.rows * m.cols)
+      var i = 0
+      while i < m.rows do
+        var j = 0
+        while j < m.cols do
+          result(i * m.cols + j) = frac.div(m(i, j), vFlat(i))
+          j += 1
+        i += 1
+      MatData(result, m.rows, m.cols)
+    }
+
+    /** NumPy: np.linalg.eig(m) - eigenvalues and right eigenvectors
+     *  Returns (realParts, imagParts, eigenvectors) since we have no Complex type
+     *  For symmetric matrices prefer eigenvalues() which is more efficient */
+    private[data] def eigDouble: (Array[Double], Array[Double], Mat[Double]) = {
+      import org.bytedeco.openblas.global.openblas.*
+      val md    = m.asInstanceOf[Mat[Double]]
+      val n     = md.rows
+      require(n == md.cols, s"eig requires square matrix, got ${md.shape}")
+      val aCopy = md.flatten  // row-major copy
+
+      val wr  = Array.ofDim[Double](n)  // real parts of eigenvalues
+      val wi  = Array.ofDim[Double](n)  // imaginary parts
+      val vr  = Array.ofDim[Double](n * n)  // right eigenvectors
+
+      val info = LAPACKE_dgeev(
+        LAPACK_ROW_MAJOR, 'N'.toByte, 'V'.toByte,
+        n,
+        aCopy, n,   // A, lda
+        wr, wi,     // eigenvalue real and imag parts
+        null, 1,    // left eigenvectors (not computed)
+        vr, n       // right eigenvectors, ldvr
+      )
+      if info != 0 then
+        throw ArithmeticException(s"LAPACKE_dgeev failed with info=$info")
+
+      (wr, wi, MatData(vr, n, n))
+    }
+
+    /*
+     * returns (realParts, imagParts, eigenvectors) as separate arrays.
+     */
+    def eig(using frac: Fractional[T]): (Array[T], Array[T], Mat[T]) = {
+      summon[ClassTag[T]].runtimeClass match
+        case c if c == classOf[Double] =>
+          val (wr, wi, vr) = m.asInstanceOf[Mat[Double]].eigDouble
+          (wr.asInstanceOf[Array[T]], wi.asInstanceOf[Array[T]], vr.asInstanceOf[Mat[T]])
+        case c =>
+          throw UnsupportedOperationException(s"eig only supported for Double, got ${c.getName}")
+    }
+
   } // end extension
 
   def rand(rows: Int, cols: Int, seed: Long = -1): Mat[Double] = {
@@ -1770,7 +1946,6 @@ object Mat {
     MatData(Array.fill(rows * cols)(rng.nextGaussian()), rows, cols)
   }
 
-  // In the Mat companion object (not extension)
   def vstack[U: ClassTag](matrices: Mat[U]*): Mat[U] = {
     require(matrices.nonEmpty, "vstack requires at least one matrix")
     val cols = matrices.head.cols
@@ -1876,6 +2051,155 @@ object Mat {
       i += 1
     MatData(result, rows, cols)
   }
+
+  // In Mat companion object
+  def meshgrid[T: ClassTag](x: Vec[T], y: Vec[T]): (Mat[T], Mat[T]) = {
+    val xs = x.flatten  // works for row or col vector
+    val ys = y.flatten
+    val nRows = ys.length
+    val nCols = xs.length
+    val xx = Array.ofDim[T](nRows * nCols)
+    val yy = Array.ofDim[T](nRows * nCols)
+    var i = 0
+    while i < nRows do
+      var j = 0
+      while j < nCols do
+        xx(i * nCols + j) = xs(j)
+        yy(i * nCols + j) = ys(i)
+        j += 1
+      i += 1
+    (MatData(xx, nRows, nCols), MatData(yy, nRows, nCols))
+  }
+
+  /** NumPy: np.polyfit(x, y, deg) - least squares polynomial fit
+   *  Returns coefficients [a_n, a_{n-1}, ..., a_0] highest degree first */
+  def polyfit(x: Vec[Double], y: Vec[Double], deg: Int): Vec[Double] = {
+    require(deg >= 1, s"degree must be >= 1, got $deg")
+    val xs = x.flatten
+    val ys = y.flatten
+    require(xs.length == ys.length, s"x and y must have same length")
+    require(xs.length > deg, s"need more points than degree")
+    val n = xs.length
+    // Build Vandermonde matrix: each row is [x^deg, x^(deg-1), ..., x^0]
+    val vand = Array.ofDim[Double](n * (deg + 1))
+    var i = 0
+    while i < n do
+      var j = 0
+      while j <= deg do
+        vand(i * (deg + 1) + j) = math.pow(xs(i), (deg - j).toDouble)
+        j += 1
+      i += 1
+    val A = MatData(vand, n, deg + 1)
+    val b = MatData(ys, n, 1)
+    val (coeffs, _, _, _) = A.lstsq(b)
+    // coeffs is (deg+1)×1, return as flat row vector
+    MatData(coeffs.flatten, 1, deg + 1)
+  }
+
+  /** NumPy: np.polyval(coeffs, x) - evaluate polynomial at points
+   * Horner's method for numerical stability.
+   *  coeffs = [a_n, ..., a_0] highest degree first (matches polyfit output) */
+  def polyval(coeffs: Vec[Double], x: Vec[Double]): Vec[Double] = {
+    val cs = coeffs.flatten  // [a_n, ..., a_0]
+    val xs = x.flatten
+    val result = Array.ofDim[Double](xs.length)
+    var i = 0
+    while i < xs.length do
+      // Horner's method: a_n * x^n + ... + a_0
+      var acc = 0.0
+      var k = 0
+      while k < cs.length do
+        acc = acc * xs(i) + cs(k)
+        k += 1
+      result(i) = acc
+      i += 1
+    MatData(result, 1, xs.length)
+  }
+
+  /** NumPy: np.convolve(a, b, mode='full') - discrete linear convolution
+   *  mode: "full" (default), "same", "valid" */
+  def convolve(a: Vec[Double], b: Vec[Double], mode: String = "full"): Vec[Double] = {
+    val as = a.flatten
+    val bs = b.flatten
+    val na = as.length
+    val nb = bs.length
+    val nFull = na + nb - 1
+    val full = Array.ofDim[Double](nFull)
+    var i = 0
+    while i < na do
+      var j = 0
+      while j < nb do
+        full(i + j) += as(i) * bs(j)
+        j += 1
+      i += 1
+    mode match
+      case "full" =>
+        MatData(full, 1, nFull)
+      case "same" =>
+        val start = (nb - 1) / 2
+        val result = Array.ofDim[Double](na)
+        var k = 0
+        while k < na do
+          result(k) = full(start + k)
+          k += 1
+        MatData(result, 1, na)
+      case "valid" =>
+        val nValid = math.max(na, nb) - math.min(na, nb) + 1
+        val start  = math.min(na, nb) - 1
+        val result = Array.ofDim[Double](nValid)
+        var k = 0
+        while k < nValid do
+          result(k) = full(start + k)
+          k += 1
+        MatData(result, 1, nValid)
+      case other =>
+        throw IllegalArgumentException(s"unknown mode '$other', use 'full', 'same', or 'valid'")
+  }
+
+  /** NumPy: np.correlate(a, b, mode='valid') - cross-correlation
+   *  Correlation is convolution with b reversed */
+  def correlate(a: Vec[Double], b: Vec[Double], mode: String = "valid"): Vec[Double] = {
+    val as = a.flatten
+    val bs = b.flatten
+    val na = as.length
+    val nb = bs.length
+    val nFull = na + nb - 1
+    val full = Array.ofDim[Double](nFull)
+    // c[k] = sum_j a[j] * b[j - (k - (nb-1))]
+    // equivalent: pad and slide b across a without reversing
+    var k = 0
+    while k < nFull do
+      var j = 0
+      while j < nb do
+        val ai = k - (nb - 1) + j
+        if ai >= 0 && ai < na then
+          full(k) += as(ai) * bs(j)
+        j += 1
+      k += 1
+    mode match
+      case "full" =>
+        MatData(full, 1, nFull)
+      case "same" =>
+        val start = (nb - 1) / 2
+        val result = Array.ofDim[Double](na)
+        var i = 0
+        while i < na do
+          result(i) = full(start + i)
+          i += 1
+        MatData(result, 1, na)
+      case "valid" =>
+        val nValid = math.max(na, nb) - math.min(na, nb) + 1
+        val start  = nb - 1
+        val result = Array.ofDim[Double](nValid)
+        var i = 0
+        while i < nValid do
+          result(i) = full(start + i)
+          i += 1
+        MatData(result, 1, nValid)
+      case other =>
+        throw IllegalArgumentException(s"unknown mode '$other', use 'full', 'same', or 'valid'")
+  }
+
   private lazy val blasThreshold: Long = System.getProperty("uni.mat.blasThreshold", "6000").toLong
 
 }

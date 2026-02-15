@@ -2555,4 +2555,377 @@ class MatTest extends munit.FunSuite {
     val m = Mat[Double](1, 4, Array(1.0, Double.NaN, Double.PositiveInfinity, 4.0))
     assert(m.nanToNum().isfinite.underlying.forall(identity))
   }
+
+  // ============================================================================
+  // meshgrid
+  // ============================================================================
+  test("meshgrid produces correct shapes") {
+    val x = Mat.row[Double](1, 2, 3)
+    val y = Mat.row[Double](4, 5)
+    val (xx, yy) = Mat.meshgrid(x, y)
+    assertEquals(xx.shape, (2, 3))
+    assertEquals(yy.shape, (2, 3))
+  }
+
+  test("meshgrid xx repeats x along rows") {
+    val x = Mat.row[Double](1, 2, 3)
+    val y = Mat.row[Double](4, 5)
+    val (xx, _) = Mat.meshgrid(x, y)
+    assertEqualsDouble(xx(0, 0), 1.0, 1e-10, "xx(0,0)")
+    assertEqualsDouble(xx(0, 1), 2.0, 1e-10, "xx(0,1)")
+    assertEqualsDouble(xx(0, 2), 3.0, 1e-10, "xx(0,2)")
+    assertEqualsDouble(xx(1, 0), 1.0, 1e-10, "xx(1,0)")
+    assertEqualsDouble(xx(1, 1), 2.0, 1e-10, "xx(1,1)")
+    assertEqualsDouble(xx(1, 2), 3.0, 1e-10, "xx(1,2)")
+  }
+
+  test("meshgrid yy repeats y along cols") {
+    val x = Mat.row[Double](1, 2, 3)
+    val y = Mat.row[Double](4, 5)
+    val (_, yy) = Mat.meshgrid(x, y)
+    assertEqualsDouble(yy(0, 0), 4.0, 1e-10, "yy(0,0)")
+    assertEqualsDouble(yy(0, 1), 4.0, 1e-10, "yy(0,1)")
+    assertEqualsDouble(yy(0, 2), 4.0, 1e-10, "yy(0,2)")
+    assertEqualsDouble(yy(1, 0), 5.0, 1e-10, "yy(1,0)")
+    assertEqualsDouble(yy(1, 1), 5.0, 1e-10, "yy(1,1)")
+    assertEqualsDouble(yy(1, 2), 5.0, 1e-10, "yy(1,2)")
+  }
+
+  test("meshgrid works with col vectors") {
+    val x = Mat.col[Double](1, 2, 3)
+    val y = Mat.col[Double](4, 5)
+    val (xx, yy) = Mat.meshgrid(x, y)
+    assertEquals(xx.shape, (2, 3))
+    assertEquals(yy.shape, (2, 3))
+    assertEqualsDouble(xx(0, 0), 1.0, 1e-10, "xx(0,0)")
+    assertEqualsDouble(yy(1, 0), 5.0, 1e-10, "yy(1,0)")
+  }
+
+  test("meshgrid 1x1 produces 1x1 matrices") {
+    val x = Mat.row[Double](3)
+    val y = Mat.row[Double](7)
+    val (xx, yy) = Mat.meshgrid(x, y)
+    assertEquals(xx.shape, (1, 1))
+    assertEqualsDouble(xx(0, 0), 3.0, 1e-10, "xx(0,0)")
+    assertEqualsDouble(yy(0, 0), 7.0, 1e-10, "yy(0,0)")
+  }
+
+  // ============================================================================
+  // polyval
+  // ============================================================================
+  test("polyval evaluates linear polynomial") {
+    // 2x + 1 at x = [0, 1, 2]
+    val coeffs = Mat.row[Double](2, 1)
+    val x      = Mat.row[Double](0, 1, 2)
+    val r      = Mat.polyval(coeffs, x)
+    assertEqualsDouble(r(0, 0), 1.0, 1e-10, "x=0")
+    assertEqualsDouble(r(0, 1), 3.0, 1e-10, "x=1")
+    assertEqualsDouble(r(0, 2), 5.0, 1e-10, "x=2")
+  }
+
+  test("polyval evaluates quadratic polynomial") {
+    // x^2 - 2x + 1 = (x-1)^2 at x = [0, 1, 2, 3]
+    val coeffs = Mat.row[Double](1, -2, 1)
+    val x      = Mat.row[Double](0, 1, 2, 3)
+    val r      = Mat.polyval(coeffs, x)
+    assertEqualsDouble(r(0, 0), 1.0, 1e-10, "x=0")
+    assertEqualsDouble(r(0, 1), 0.0, 1e-10, "x=1")
+    assertEqualsDouble(r(0, 2), 1.0, 1e-10, "x=2")
+    assertEqualsDouble(r(0, 3), 4.0, 1e-10, "x=3")
+  }
+
+  test("polyval constant polynomial") {
+    val coeffs = Mat.row[Double](5)
+    val x      = Mat.row[Double](0, 1, 2)
+    val r      = Mat.polyval(coeffs, x)
+    assertEqualsDouble(r(0, 0), 5.0, 1e-10, "x=0")
+    assertEqualsDouble(r(0, 1), 5.0, 1e-10, "x=1")
+    assertEqualsDouble(r(0, 2), 5.0, 1e-10, "x=2")
+  }
+
+  // ============================================================================
+  // polyfit
+  // ============================================================================
+  test("polyfit linear fit through exact points") {
+    // y = 2x + 3, exact points
+    val x = Mat.row[Double](0, 1, 2, 3)
+    val y = Mat.row[Double](3, 5, 7, 9)
+    val c = Mat.polyfit(x, y, 1)
+    assertEquals(c.shape, (1, 2))
+    assertEqualsDouble(c(0, 0), 2.0, 1e-8, "slope")
+    assertEqualsDouble(c(0, 1), 3.0, 1e-8, "intercept")
+  }
+
+  test("polyfit quadratic fit through exact points") {
+    // y = x^2, exact points
+    val x = Mat.row[Double](0, 1, 2, 3, 4)
+    val y = Mat.row[Double](0, 1, 4, 9, 16)
+    val c = Mat.polyfit(x, y, 2)
+    assertEquals(c.shape, (1, 3))
+    assertEqualsDouble(c(0, 0), 1.0, 1e-6, "a2")  // x^2 coeff
+    assertEqualsDouble(c(0, 1), 0.0, 1e-6, "a1")  // x coeff
+    assertEqualsDouble(c(0, 2), 0.0, 1e-6, "a0")  // constant
+  }
+
+  test("polyfit then polyval reproduces original points") {
+    val x = Mat.row[Double](1, 2, 3, 4, 5)
+    val y = Mat.row[Double](2, 7, 14, 23, 34)  // y = x^2 + x
+    val c = Mat.polyfit(x, y, 2)
+    val r = Mat.polyval(c, x)
+    var j = 0
+    while j < x.cols do
+      assertEqualsDouble(r(0, j), y(0, j), 1e-6, s"point $j")
+      j += 1
+  }
+
+  test("polyfit degree too high throws") {
+    val x = Mat.row[Double](1, 2)
+    val y = Mat.row[Double](1, 2)
+    intercept[IllegalArgumentException] { Mat.polyfit(x, y, 2) }
+  }
+
+  test("polyfit x y length mismatch throws") {
+    val x = Mat.row[Double](1, 2, 3)
+    val y = Mat.row[Double](1, 2)
+    intercept[IllegalArgumentException] { Mat.polyfit(x, y, 1) }
+  }
+
+  // ============================================================================
+  // convolve
+  // ============================================================================
+  test("convolve full mode") {
+    // np.convolve([1,2,3], [4,5]) = [4, 13, 22, 15]
+    val a = Mat.row[Double](1, 2, 3)
+    val b = Mat.row[Double](4, 5)
+    val r = Mat.convolve(a, b)
+    assertEquals(r.shape, (1, 4))
+    assertEqualsDouble(r(0, 0),  4.0, 1e-10, "r(0)")
+    assertEqualsDouble(r(0, 1), 13.0, 1e-10, "r(1)")
+    assertEqualsDouble(r(0, 2), 22.0, 1e-10, "r(2)")
+    assertEqualsDouble(r(0, 3), 15.0, 1e-10, "r(3)")
+  }
+
+  test("convolve same mode") {
+    val a = Mat.row[Double](1, 2, 3)
+    val b = Mat.row[Double](4, 5)
+    val r = Mat.convolve(a, b, "same")
+    assertEquals(r.shape, (1, 3))
+    assertEqualsDouble(r(0, 0),  4.0, 1e-10, "r(0)")
+    assertEqualsDouble(r(0, 1), 13.0, 1e-10, "r(1)")
+    assertEqualsDouble(r(0, 2), 22.0, 1e-10, "r(2)")
+  }
+
+  test("convolve valid mode") {
+    val a = Mat.row[Double](1, 2, 3)
+    val b = Mat.row[Double](4, 5)
+    val r = Mat.convolve(a, b, "valid")
+    assertEquals(r.shape, (1, 2))
+    assertEqualsDouble(r(0, 0), 13.0, 1e-10, "r(0)")
+    assertEqualsDouble(r(0, 1), 22.0, 1e-10, "r(1)")
+  }
+
+  test("convolve with identity filter") {
+    // convolving with [1] returns original
+    val a = Mat.row[Double](1, 2, 3, 4)
+    val b = Mat.row[Double](1)
+    val r = Mat.convolve(a, b, "same")
+    assert(r.allclose(a))
+  }
+
+  test("convolve unknown mode throws") {
+    val a = Mat.row[Double](1, 2, 3)
+    val b = Mat.row[Double](4, 5)
+    intercept[IllegalArgumentException] { Mat.convolve(a, b, "bad") }
+  }
+
+  // ============================================================================
+  // correlate
+  // ============================================================================
+  test("correlate valid mode default") {
+    // np.correlate([1,2,3], [4,5]) = [14, 23]
+    val a = Mat.row[Double](1, 2, 3)
+    val b = Mat.row[Double](4, 5)
+    val r = Mat.correlate(a, b)
+    assertEquals(r.shape, (1, 2))
+    assertEqualsDouble(r(0, 0), 14.0, 1e-10, "r(0)")
+    assertEqualsDouble(r(0, 1), 23.0, 1e-10, "r(1)")
+  }
+
+  test("correlate full mode") {
+    val a = Mat.row[Double](1, 2, 3)
+    val b = Mat.row[Double](4, 5)
+    val r = Mat.correlate(a, b, "full")
+    assertEquals(r.shape, (1, 4))
+  }
+
+  test("correlate of signal with itself peaks at center") {
+    val a = Mat.row[Double](1, 2, 3, 2, 1)
+    val r = Mat.correlate(a, a, "full")
+    // peak should be at center index
+    val center = r.cols / 2
+    var i = 0
+    while i < r.cols do
+      assert(r(0, center) >= r(0, i), s"center not peak at i=$i")
+      i += 1
+  }
+
+  // ============================================================================
+  // broadcasting
+  // ============================================================================
+  test("addToEachRow adds row vector to every row") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6))
+    val v = Mat.row[Double](10, 20, 30)
+    val r = m.addToEachRow(v)
+    assertEquals(r.shape, (2, 3))
+    assertEqualsDouble(r(0, 0), 11.0, 1e-10, "r(0,0)")
+    assertEqualsDouble(r(0, 1), 22.0, 1e-10, "r(0,1)")
+    assertEqualsDouble(r(0, 2), 33.0, 1e-10, "r(0,2)")
+    assertEqualsDouble(r(1, 0), 14.0, 1e-10, "r(1,0)")
+    assertEqualsDouble(r(1, 1), 25.0, 1e-10, "r(1,1)")
+    assertEqualsDouble(r(1, 2), 36.0, 1e-10, "r(1,2)")
+  }
+
+  test("addToEachCol adds col vector to every col") {
+    val m = Mat[Double]((1, 2), (3, 4), (5, 6))
+    val v = Mat.col[Double](10, 20, 30)
+    val r = m.addToEachCol(v)
+    assertEquals(r.shape, (3, 2))
+    assertEqualsDouble(r(0, 0), 11.0, 1e-10, "r(0,0)")
+    assertEqualsDouble(r(0, 1), 12.0, 1e-10, "r(0,1)")
+    assertEqualsDouble(r(1, 0), 23.0, 1e-10, "r(1,0)")
+    assertEqualsDouble(r(2, 0), 35.0, 1e-10, "r(2,0)")
+  }
+
+  test("mulEachRow multiplies each row by row vector") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6))
+    val v = Mat.row[Double](2, 3, 4)
+    val r = m.mulEachRow(v)
+    assertEqualsDouble(r(0, 0),  2.0, 1e-10, "r(0,0)")
+    assertEqualsDouble(r(0, 1),  6.0, 1e-10, "r(0,1)")
+    assertEqualsDouble(r(0, 2), 12.0, 1e-10, "r(0,2)")
+    assertEqualsDouble(r(1, 0),  8.0, 1e-10, "r(1,0)")
+    assertEqualsDouble(r(1, 1), 15.0, 1e-10, "r(1,1)")
+    assertEqualsDouble(r(1, 2), 24.0, 1e-10, "r(1,2)")
+  }
+
+  test("mulEachCol multiplies each col by col vector") {
+    val m = Mat[Double]((1, 2), (3, 4), (5, 6))
+    val v = Mat.col[Double](2, 3, 4)
+    val r = m.mulEachCol(v)
+    assertEqualsDouble(r(0, 0),  2.0, 1e-10, "r(0,0)")
+    assertEqualsDouble(r(1, 0),  9.0, 1e-10, "r(1,0)")
+    assertEqualsDouble(r(2, 0), 20.0, 1e-10, "r(2,0)")
+    assertEqualsDouble(r(2, 1), 24.0, 1e-10, "r(2,1)")
+  }
+
+  test("subFromEachRow subtracts row vector from every row") {
+    val m = Mat[Double]((10, 20), (30, 40))
+    val v = Mat.row[Double](1, 2)
+    val r = m.subFromEachRow(v)
+    assertEqualsDouble(r(0, 0),  9.0, 1e-10, "r(0,0)")
+    assertEqualsDouble(r(0, 1), 18.0, 1e-10, "r(0,1)")
+    assertEqualsDouble(r(1, 0), 29.0, 1e-10, "r(1,0)")
+    assertEqualsDouble(r(1, 1), 38.0, 1e-10, "r(1,1)")
+  }
+
+  test("subFromEachCol subtracts col vector from every col") {
+    val m = Mat[Double]((10, 20), (30, 40))
+    val v = Mat.col[Double](1, 2)
+    val r = m.subFromEachCol(v)
+    assertEqualsDouble(r(0, 0),  9.0, 1e-10, "r(0,0)")
+    assertEqualsDouble(r(0, 1), 19.0, 1e-10, "r(0,1)")
+    assertEqualsDouble(r(1, 0), 28.0, 1e-10, "r(1,0)")
+    assertEqualsDouble(r(1, 1), 38.0, 1e-10, "r(1,1)")
+  }
+
+  test("divEachRow divides each row by row vector") {
+    val m = Mat[Double]((2, 6), (4, 9))
+    val v = Mat.row[Double](2, 3)
+    val r = m.divEachRow(v)
+    assertEqualsDouble(r(0, 0), 1.0, 1e-10, "r(0,0)")  // 2/2
+    assertEqualsDouble(r(0, 1), 2.0, 1e-10, "r(0,1)")  // 6/3
+    assertEqualsDouble(r(1, 0), 2.0, 1e-10, "r(1,0)")  // 4/2
+    assertEqualsDouble(r(1, 1), 3.0, 1e-10, "r(1,1)")  // 9/3
+  }
+
+  test("divEachCol divides each col by col vector") {
+    val m = Mat[Double]((4, 6), (9, 12))
+    val v = Mat.col[Double](2, 3)
+    val r = m.divEachCol(v)
+    assertEqualsDouble(r(0, 0), 2.0, 1e-10, "r(0,0)")
+    assertEqualsDouble(r(0, 1), 3.0, 1e-10, "r(0,1)")
+    assertEqualsDouble(r(1, 0), 3.0, 1e-10, "r(1,0)")
+    assertEqualsDouble(r(1, 1), 4.0, 1e-10, "r(1,1)")
+  }
+
+  test("addToEachRow wrong size throws") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6))
+    val v = Mat.row[Double](1, 2)
+    intercept[IllegalArgumentException] { m.addToEachRow(v) }
+  }
+
+  test("addToEachCol wrong size throws") {
+    val m = Mat[Double]((1, 2), (3, 4), (5, 6))
+    val v = Mat.col[Double](1, 2)
+    intercept[IllegalArgumentException] { m.addToEachCol(v) }
+  }
+
+  test("broadcasting preserves shape") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6), (7, 8, 9))
+    val v = Mat.row[Double](1, 2, 3)
+    assertEquals(m.addToEachRow(v).shape, (3, 3))
+    assertEquals(m.mulEachRow(v).shape, (3, 3))
+  }
+
+  // ============================================================================
+  // eig (non-symmetric)
+  // ============================================================================
+  test("eig of diagonal matrix has eigenvalues on diagonal") {
+    val m = Mat[Double]((3, 0, 0), (0, 1, 0), (0, 0, 4))
+    val (wr, wi, _) = m.eig
+    val sorted = wr.sorted
+    assertEqualsDouble(sorted(0), 1.0, 1e-8, "eig0")
+    assertEqualsDouble(sorted(1), 3.0, 1e-8, "eig1")
+    assertEqualsDouble(sorted(2), 4.0, 1e-8, "eig2")
+  }
+
+  test("eig of identity matrix has all eigenvalues 1") {
+    val m = Mat.eye[Double](3)
+    val (wr, wi, _) = m.eig
+    wr.foreach(v => assertEqualsDouble(v, 1.0, 1e-8, "eig"))
+  }
+
+  test("eig imaginary parts are zero for symmetric matrix") {
+    val m = Mat[Double]((2, 1), (1, 2))
+    val (_, wi, _) = m.eig
+    wi.foreach(v => assertEqualsDouble(v, 0.0, 1e-8, "imag"))
+  }
+
+  test("eig of 2x2 known matrix") {
+    // [[1,2],[3,4]] eigenvalues: (5 ± sqrt(33)) / 2
+    val m  = Mat[Double]((1, 2), (3, 4))
+    val (wr, _, _) = m.eig
+    val sorted = wr.sorted
+    assertEqualsDouble(sorted(0), (5 - math.sqrt(33)) / 2, 1e-8, "eig0")
+    assertEqualsDouble(sorted(1), (5 + math.sqrt(33)) / 2, 1e-8, "eig1")
+  }
+
+  test("eig non-square throws") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6))
+    intercept[IllegalArgumentException] { m.eig }
+  }
+
+  test("eig eigenvectors satisfy A*v = lambda*v") {
+    val m = Mat[Double]((2, 1), (1, 2))
+    val (wr, wi, vr) = m.eig
+    // for each eigenvalue/vector pair, check A*v ≈ lambda*v
+    var col = 0
+    while col < 2 do
+      if math.abs(wi(col)) < 1e-10 then  // only check real eigenvalues
+        val v   = vr(::, col)
+        val av  = m * v
+        val lv  = v * wr(col)
+        assert(av.allclose(lv, atol = 1e-8), s"A*v != lambda*v for col $col")
+      col += 1
+  }
 }
