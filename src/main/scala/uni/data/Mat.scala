@@ -2013,6 +2013,286 @@ object Mat {
         result
       })
     }
+
+    /** m(0 until 2, ::) - range rows, all cols */
+    def apply(rows: Range, cols: ::.type): Mat[T] =
+      m(rows, 0 until m.cols)
+
+    /** m(::, 0 until 2) - all rows, range cols */
+    def apply(rows: ::.type, cols: Range): Mat[T] =
+      m(0 until m.rows, cols)
+
+    /** m(0, 0 until 2) - single row, range cols */
+    def apply(row: Int, cols: Range): Mat[T] =
+      m(row to row, cols)
+
+    /** m(0 until 2, 0) - range rows, single col */
+    def apply(rows: Range, col: Int): Mat[T] =
+      m(rows, col to col)
+
+    // newaxis equivalents
+    def toRowVec: Mat[T] = MatData(m.flatten, 1, m.size)
+    def toColVec: Mat[T] = MatData(m.flatten, m.size, 1)
+
+    // in-place scalar ops
+    def :+=(scalar: T)(using num: Numeric[T]): Unit = {
+      var i = 0
+      while i < m.rows do
+        var j = 0
+        while j < m.cols do
+          m(i, j) = num.plus(m(i, j), scalar)
+          j += 1
+        i += 1
+    }
+
+    def :-=(scalar: T)(using num: Numeric[T]): Unit = {
+      var i = 0
+      while i < m.rows do
+        var j = 0
+        while j < m.cols do
+          m(i, j) = num.minus(m(i, j), scalar)
+          j += 1
+        i += 1
+    }
+
+    def :*=(scalar: T)(using num: Numeric[T]): Unit = {
+      var i = 0
+      while i < m.rows do
+        var j = 0
+        while j < m.cols do
+          m(i, j) = num.times(m(i, j), scalar)
+          j += 1
+        i += 1
+    }
+
+    def :/=(scalar: T)(using frac: Fractional[T]): Unit = {
+      var i = 0
+      while i < m.rows do
+        var j = 0
+        while j < m.cols do
+          m(i, j) = frac.div(m(i, j), scalar)
+          j += 1
+        i += 1
+    }
+
+    // Int overloads
+    def :+=(scalar: Int)(using frac: Fractional[T]): Unit = m.:+=(frac.fromInt(scalar))
+    def :-=(scalar: Int)(using frac: Fractional[T]): Unit = m.:-=(frac.fromInt(scalar))
+    def :*=(scalar: Int)(using frac: Fractional[T]): Unit = m.:*=(frac.fromInt(scalar))
+    def :/=(scalar: Int)(using frac: Fractional[T]): Unit = m.:/=(frac.fromInt(scalar))
+
+    // in-place Mat ops
+    def :+=(other: Mat[T])(using num: Numeric[T]): Unit = {
+      require(m.rows == other.rows && m.cols == other.cols,
+        s"shape mismatch: ${m.shape} vs ${other.shape}")
+      var i = 0
+      while i < m.rows do
+        var j = 0
+        while j < m.cols do
+          m(i, j) = num.plus(m(i, j), other(i, j))
+          j += 1
+        i += 1
+    }
+
+    def :-=(other: Mat[T])(using num: Numeric[T]): Unit = {
+      require(m.rows == other.rows && m.cols == other.cols,
+        s"shape mismatch: ${m.shape} vs ${other.shape}")
+      var i = 0
+      while i < m.rows do
+        var j = 0
+        while j < m.cols do
+          m(i, j) = num.minus(m(i, j), other(i, j))
+          j += 1
+        i += 1
+    }
+
+    // applyAlongAxis
+    def applyAlongAxis(fn: Mat[T] => T, axis: Int): Mat[T] = {
+      require(axis == 0 || axis == 1, s"axis must be 0 or 1, got $axis")
+      if axis == 0 then
+        val result = Array.tabulate(m.cols)(j => fn(m(::, j)))
+        MatData(result, 1, m.cols)
+      else
+        val result = Array.tabulate(m.rows)(i => fn(m(i, ::)))
+        MatData(result, m.rows, 1)
+    }
+
+    /** NumPy: np.linalg.pinv(m) - Moore-Penrose pseudoinverse via SVD */
+    def pinv(tol: Double = -1.0)(using frac: Fractional[T]): Mat[T] = {
+      summon[ClassTag[T]].runtimeClass match
+        case c if c == classOf[Double] =>
+          val md = m.asInstanceOf[Mat[Double]]
+          val nRows = md.rows
+          val nCols = md.cols
+          val p     = math.min(nRows, nCols)
+
+          val (uMat, s, vtMat) = md.svdDouble
+          val u  = uMat.underlying   // Array[Double] - avoids Mat.apply extension interference
+          val vt = vtMat.underlying  // Array[Double]
+
+          val threshold = if tol < 0 then
+            1e-10 * math.max(nRows, nCols) * s(0)
+          else tol
+
+          val sInv = s.map(sv => if sv > threshold then 1.0 / sv else 0.0)
+
+          // pinv = V * S^+ * U^T
+          // V[i,k]   = Vt[k,i] = vt(k*nCols+i)
+          // U^T[k,j] = U[j,k]  = u(j*nRows+k)
+          val result = Array.ofDim[Double](nCols * nRows)
+          var i = 0
+          while i < nCols do
+            var j = 0
+            while j < nRows do
+              var sum = 0.0
+              var k = 0
+              while k < p do
+                sum = sum + vt(k * nCols + i) * sInv(k) * u(j * nRows + k)
+                k += 1
+              result(i * nRows + j) = sum
+              j += 1
+            i += 1
+          MatData(result, nCols, nRows).asInstanceOf[Mat[T]]
+
+        case c =>
+          throw UnsupportedOperationException(s"pinv only supported for Double, got ${c.getName}")
+    }
+
+    /** NumPy: np.linalg.cholesky(m) - Cholesky decomposition
+     *  Returns lower triangular L such that m = L * L^T
+     *  m must be symmetric positive definite */
+    def cholesky(using frac: Fractional[T]): Mat[T] =
+      summon[ClassTag[T]].runtimeClass match
+        case c if c == classOf[Double] =>
+          import org.bytedeco.openblas.global.openblas.*
+          val md = m.asInstanceOf[Mat[Double]]
+          val n  = md.rows
+          require(n == md.cols, s"cholesky requires square matrix, got ${md.shape}")
+          val aCopy = md.flatten
+          val info = LAPACKE_dpotrf(
+            LAPACK_ROW_MAJOR, 'L'.toByte,
+            n, aCopy, n
+          )
+          if info > 0 then
+            throw ArithmeticException(s"Matrix is not positive definite (info=$info)")
+          if info < 0 then
+            throw ArithmeticException(s"LAPACKE_dpotrf failed with info=$info")
+          // Zero out upper triangle - LAPACKE leaves original values there
+          var i = 0
+          while i < n do
+            var j = i + 1
+            while j < n do
+              aCopy(i * n + j) = 0.0
+              j += 1
+            i += 1
+          MatData(aCopy, n, n).asInstanceOf[Mat[T]]
+        case c =>
+          throw UnsupportedOperationException(s"cholesky only supported for Double, got ${c.getName}")
+
+    /** NumPy: np.cross(a, b) - cross product of two 3D vectors */
+    def cross(other: Vec[T])(using num: Numeric[T]): Vec[T] = {
+      val a = m.flatten
+      val b = other.flatten
+      require(a.length == 3 && b.length == 3,
+        s"cross product requires 3D vectors, got lengths ${a.length} and ${b.length}")
+      val result = Array.ofDim[T](3)
+      // [a1*b2 - a2*b1, a2*b0 - a0*b2, a0*b1 - a1*b0]
+      result(0) = num.minus(num.times(a(1), b(2)), num.times(a(2), b(1)))
+      result(1) = num.minus(num.times(a(2), b(0)), num.times(a(0), b(2)))
+      result(2) = num.minus(num.times(a(0), b(1)), num.times(a(1), b(0)))
+      MatData(result, 1, 3)
+    }
+
+    /** NumPy: np.kron(a, b) - Kronecker product */
+    def kron(other: Mat[T])(using num: Numeric[T]): Mat[T] = {
+      val nRows = m.rows * other.rows
+      val nCols = m.cols * other.cols
+      val result = Array.ofDim[T](nRows * nCols)
+      var i = 0
+      while i < m.rows do
+        var j = 0
+        while j < m.cols do
+          var p = 0
+          while p < other.rows do
+            var q = 0
+            while q < other.cols do
+              val r = i * other.rows + p
+              val c = j * other.cols + q
+              result(r * nCols + c) = num.times(m(i, j), other(p, q))
+              q += 1
+            p += 1
+          j += 1
+        i += 1
+      MatData(result, nRows, nCols)
+    }
+
+    /** m(rows: Range, ::) = value */
+    def update(rows: Range, cols: ::.type, value: T): Unit =
+      for r <- rows do
+        var j = 0
+        while j < m.cols do
+          m(r, j) = value
+          j += 1
+
+    /** m(::, cols: Range) = value */
+    def update(rows: ::.type, cols: Range, value: T): Unit =
+      var i = 0
+      while i < m.rows do
+        for c <- cols do m(i, c) = value
+        i += 1
+
+    /** m(rows: Range, cols: Range) = value */
+    def update(rows: Range, cols: Range, value: T): Unit =
+      for r <- rows do
+        for c <- cols do
+          m(r, c) = value
+
+    /** m(rows: Range, ::) = other Mat */
+    def update(rows: Range, cols: ::.type, other: Mat[T]): Unit = {
+      require(other.rows == rows.length && other.cols == m.cols,
+        s"shape mismatch: target ${rows.length}×${m.cols} vs source ${other.shape}")
+      var i = 0
+      for r <- rows do
+        var j = 0
+        while j < m.cols do
+          m(r, j) = other(i, j)
+          j += 1
+        i += 1
+    }
+
+    /** m(::, cols: Range) = other Mat */
+    def update(rows: ::.type, cols: Range, other: Mat[T]): Unit = {
+      require(other.rows == m.rows && other.cols == cols.length,
+        s"shape mismatch: target ${m.rows}×${cols.length} vs source ${other.shape}")
+      var i = 0
+      while i < m.rows do
+        var j = 0
+        for c <- cols do
+          m(i, c) = other(i, j)
+          j += 1
+        i += 1
+    }
+
+    /** m(rows: Range, cols: Range) = other Mat */
+    def update(rows: Range, cols: Range, other: Mat[T]): Unit = {
+      require(other.rows == rows.length && other.cols == cols.length,
+        s"shape mismatch: target ${rows.length}×${cols.length} vs source ${other.shape}")
+      var i = 0
+      for r <- rows do
+        var j = 0
+        for c <- cols do
+          m(r, c) = other(i, j)
+          j += 1
+        i += 1
+    }
+
+    /** m(row: Int, cols: Range) = value */
+    def update(row: Int, cols: Range, value: T): Unit =
+      for c <- cols do m(row, c) = value
+
+    /** m(rows: Range, col: Int) = value */
+    def update(rows: Range, col: Int, value: T): Unit =
+      for r <- rows do m(r, col) = value
   } // end extension
 
   private lazy val blasThreshold: Long = System.getProperty("uni.mat.blasThreshold", "6000").toLong

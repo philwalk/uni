@@ -3180,4 +3180,562 @@ class MatTest extends munit.FunSuite {
     val m = Mat[Double]((1, 2), (3, 4))
     intercept[UnsupportedOperationException] { m.power(-1) }
   }
+
+  // ============================================================================
+  // Range slicing mixed overloads
+  // ============================================================================
+  test("range rows all cols") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6), (7, 8, 9))
+    val r = m(0 until 2, ::)
+    assertEquals(r.shape, (2, 3))
+    assertEqualsDouble(r(0, 0), 1.0, 1e-10, "r(0,0)")
+    assertEqualsDouble(r(1, 2), 6.0, 1e-10, "r(1,2)")
+  }
+
+  test("all rows range cols") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6), (7, 8, 9))
+    val r = m(::, 1 until 3)
+    assertEquals(r.shape, (3, 2))
+    assertEqualsDouble(r(0, 0), 2.0, 1e-10, "r(0,0)")
+    assertEqualsDouble(r(2, 1), 9.0, 1e-10, "r(2,1)")
+  }
+
+  test("single row range cols") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6), (7, 8, 9))
+    val r = m(1, 0 until 2)
+    assertEquals(r.shape, (1, 2))
+    assertEqualsDouble(r(0, 0), 4.0, 1e-10, "r(0,0)")
+    assertEqualsDouble(r(0, 1), 5.0, 1e-10, "r(0,1)")
+  }
+
+  test("range rows single col") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6), (7, 8, 9))
+    val r = m(0 until 2, 1)
+    assertEquals(r.shape, (2, 1))
+    assertEqualsDouble(r(0, 0), 2.0, 1e-10, "r(0,0)")
+    assertEqualsDouble(r(1, 0), 5.0, 1e-10, "r(1,0)")
+  }
+
+  test("step range rows") {
+    val m = Mat[Double]((1, 2), (3, 4), (5, 6), (7, 8), (9, 10), (11, 12))
+    val r = m(0 until 6 by 2, ::)
+    assertEquals(r.shape, (3, 2))
+    assertEqualsDouble(r(0, 0), 1.0, 1e-10, "r(0,0)")
+    assertEqualsDouble(r(1, 0), 5.0, 1e-10, "r(1,0)")
+    assertEqualsDouble(r(2, 0), 9.0, 1e-10, "r(2,0)")
+  }
+
+  test("step range cols") {
+    val m = Mat[Double]((1, 2, 3, 4, 5, 6))
+    val r = m(::, 0 until 6 by 2)
+    assertEquals(r.shape, (1, 3))
+    assertEqualsDouble(r(0, 0), 1.0, 1e-10, "r(0,0)")
+    assertEqualsDouble(r(0, 1), 3.0, 1e-10, "r(0,1)")
+    assertEqualsDouble(r(0, 2), 5.0, 1e-10, "r(0,2)")
+  }
+
+  test("reverse range rows") {
+    val m = Mat[Double]((1, 2), (3, 4), (5, 6))
+    val r = m(2 to 0 by -1, ::)
+    assertEquals(r.shape, (3, 2))
+    assertEqualsDouble(r(0, 0), 5.0, 1e-10, "r(0,0)")
+    assertEqualsDouble(r(1, 0), 3.0, 1e-10, "r(1,0)")
+    assertEqualsDouble(r(2, 0), 1.0, 1e-10, "r(2,0)")
+  }
+
+  // ============================================================================
+  // toRowVec / toColVec
+  // ============================================================================
+  test("toRowVec reshapes to 1×n") {
+    val m = Mat.col[Double](1, 2, 3)
+    val r = m.toRowVec
+    assertEquals(r.shape, (1, 3))
+    assertEqualsDouble(r(0, 0), 1.0, 1e-10, "r(0,0)")
+    assertEqualsDouble(r(0, 2), 3.0, 1e-10, "r(0,2)")
+  }
+
+  test("toColVec reshapes to n×1") {
+    val m = Mat.row[Double](1, 2, 3)
+    val r = m.toColVec
+    assertEquals(r.shape, (3, 1))
+    assertEqualsDouble(r(0, 0), 1.0, 1e-10, "r(0,0)")
+    assertEqualsDouble(r(2, 0), 3.0, 1e-10, "r(2,0)")
+  }
+
+  test("toRowVec then toColVec round trips shape") {
+    val m = Mat.col[Double](1, 2, 3)
+    assertEquals(m.toRowVec.toColVec.shape, m.shape)
+  }
+
+  test("toRowVec does not share data with original") {
+    val m = Mat.col[Double](1, 2, 3)
+    val r = m.toRowVec
+    r(0, 0) = 99.0
+    assertEqualsDouble(m(0, 0), 1.0, 1e-10, "original unchanged")
+  }
+
+  test("toColVec of 2D matrix flattens then reshapes") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    val r = m.toColVec
+    assertEquals(r.shape, (4, 1))
+    assertEqualsDouble(r(0, 0), 1.0, 1e-10, "r(0,0)")
+    assertEqualsDouble(r(3, 0), 4.0, 1e-10, "r(3,0)")
+  }
+
+  // ============================================================================
+  // in-place scalar operators
+  // ============================================================================
+  test("+= scalar") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    m :+= 10.0
+    assertEqualsDouble(m(0, 0), 11.0, 1e-10, "m(0,0)")
+    assertEqualsDouble(m(1, 1), 14.0, 1e-10, "m(1,1)")
+  }
+
+  test("-= scalar") {
+    val m = Mat[Double]((5, 6), (7, 8))
+    m :-= 2.0
+    assertEqualsDouble(m(0, 0), 3.0, 1e-10, "m(0,0)")
+    assertEqualsDouble(m(1, 1), 6.0, 1e-10, "m(1,1)")
+  }
+
+  test("*= scalar") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    m :*= 3.0
+    assertEqualsDouble(m(0, 0),  3.0, 1e-10, "m(0,0)")
+    assertEqualsDouble(m(0, 1),  6.0, 1e-10, "m(0,1)")
+    assertEqualsDouble(m(1, 0),  9.0, 1e-10, "m(1,0)")
+    assertEqualsDouble(m(1, 1), 12.0, 1e-10, "m(1,1)")
+  }
+
+  test("/= scalar") {
+    val m = Mat[Double]((4, 6), (8, 10))
+    m :/= 2.0
+    assertEqualsDouble(m(0, 0), 2.0, 1e-10, "m(0,0)")
+    assertEqualsDouble(m(0, 1), 3.0, 1e-10, "m(0,1)")
+    assertEqualsDouble(m(1, 0), 4.0, 1e-10, "m(1,0)")
+    assertEqualsDouble(m(1, 1), 5.0, 1e-10, "m(1,1)")
+  }
+
+  test("+= Int scalar") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    m :+= 1
+    assertEqualsDouble(m(0, 0), 2.0, 1e-10, "m(0,0)")
+    assertEqualsDouble(m(1, 1), 5.0, 1e-10, "m(1,1)")
+  }
+
+  test("-= Int scalar") {
+    val m = Mat[Double]((5, 6), (7, 8))
+    m :-= 1
+    assertEqualsDouble(m(0, 0), 4.0, 1e-10, "m(0,0)")
+    assertEqualsDouble(m(1, 1), 7.0, 1e-10, "m(1,1)")
+  }
+
+  test("*= Int scalar") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    m :*= 2
+    assertEqualsDouble(m(0, 1), 4.0, 1e-10, "m(0,1)")
+    assertEqualsDouble(m(1, 0), 6.0, 1e-10, "m(1,0)")
+  }
+
+  test("/= Int scalar") {
+    val m = Mat[Double]((4, 6), (8, 10))
+    m :/= 2
+    assertEqualsDouble(m(0, 0), 2.0, 1e-10, "m(0,0)")
+    assertEqualsDouble(m(1, 1), 5.0, 1e-10, "m(1,1)")
+  }
+
+  // ============================================================================
+  // in-place Mat operators
+  // ============================================================================
+  test("+= Mat element-wise") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    val n = Mat[Double]((10, 20), (30, 40))
+    m :+= n
+    assertEqualsDouble(m(0, 0), 11.0, 1e-10, "m(0,0)")
+    assertEqualsDouble(m(0, 1), 22.0, 1e-10, "m(0,1)")
+    assertEqualsDouble(m(1, 0), 33.0, 1e-10, "m(1,0)")
+    assertEqualsDouble(m(1, 1), 44.0, 1e-10, "m(1,1)")
+  }
+
+  test("-= Mat element-wise") {
+    val m = Mat[Double]((10, 20), (30, 40))
+    val n = Mat[Double]((1, 2), (3, 4))
+    m :-= n
+    assertEqualsDouble(m(0, 0),  9.0, 1e-10, "m(0,0)")
+    assertEqualsDouble(m(0, 1), 18.0, 1e-10, "m(0,1)")
+    assertEqualsDouble(m(1, 0), 27.0, 1e-10, "m(1,0)")
+    assertEqualsDouble(m(1, 1), 36.0, 1e-10, "m(1,1)")
+  }
+
+  test("+= Mat shape mismatch throws") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    val n = Mat[Double]((1, 2, 3), (4, 5, 6))
+    intercept[IllegalArgumentException] { m :+= n }
+  }
+
+  test("-= Mat shape mismatch throws") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    val n = Mat[Double]((1, 2, 3))
+    intercept[IllegalArgumentException] { m :-= n }
+  }
+
+  test("+= Mat does not affect other") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    val n = Mat[Double]((1, 1), (1, 1))
+    m :+= n
+    assertEqualsDouble(n(0, 0), 1.0, 1e-10, "n unchanged")
+  }
+
+  // ============================================================================
+  // applyAlongAxis
+  // ============================================================================
+  test("applyAlongAxis axis=0 applies fn to each column") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6))
+    // sum of each column
+    val r = m.applyAlongAxis(col => col.sum, 0)
+    assertEquals(r.shape, (1, 3))
+    assertEqualsDouble(r(0, 0), 5.0, 1e-10, "col0 sum")
+    assertEqualsDouble(r(0, 1), 7.0, 1e-10, "col1 sum")
+    assertEqualsDouble(r(0, 2), 9.0, 1e-10, "col2 sum")
+  }
+
+  test("applyAlongAxis axis=1 applies fn to each row") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6))
+    // sum of each row
+    val r = m.applyAlongAxis(row => row.sum, 1)
+    assertEquals(r.shape, (2, 1))
+    assertEqualsDouble(r(0, 0),  6.0, 1e-10, "row0 sum")
+    assertEqualsDouble(r(1, 0), 15.0, 1e-10, "row1 sum")
+  }
+
+  test("applyAlongAxis axis=0 with max") {
+    val m = Mat[Double]((3, 1, 4), (1, 5, 9))
+    val r = m.applyAlongAxis(col => col.max, 0)
+    assertEqualsDouble(r(0, 0), 3.0, 1e-10, "col0 max")
+    assertEqualsDouble(r(0, 1), 5.0, 1e-10, "col1 max")
+    assertEqualsDouble(r(0, 2), 9.0, 1e-10, "col2 max")
+  }
+
+  test("applyAlongAxis axis=1 with mean") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6))
+    val r = m.applyAlongAxis(row => row.mean, 1)
+    assertEqualsDouble(r(0, 0), 2.0, 1e-10, "row0 mean")
+    assertEqualsDouble(r(1, 0), 5.0, 1e-10, "row1 mean")
+  }
+
+  test("applyAlongAxis invalid axis throws") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    intercept[IllegalArgumentException] { m.applyAlongAxis(col => col.sum, 2) }
+  }
+
+  test("applyAlongAxis axis=0 consistent with sum(0)") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6), (7, 8, 9))
+    val r1 = m.applyAlongAxis(col => col.sum, 0)
+    val r2 = m.sum(0)
+    assert(r1.allclose(r2))
+  }
+
+  test("applyAlongAxis axis=1 consistent with sum(1)") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6), (7, 8, 9))
+    val r1 = m.applyAlongAxis(row => row.sum, 1)
+    val r2 = m.sum(1)
+    assert(r1.allclose(r2))
+  }
+  // ============================================================================
+  // pinv
+  // ============================================================================
+  test("pinv of identity is identity") {
+    val m = Mat.eye[Double](3)
+    assert(m.pinv().allclose(Mat.eye[Double](3), atol = 1e-8))
+  }
+
+  test("pinv of square matrix: A * pinv(A) ≈ I") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    val p = m.pinv()
+    assert((m * p).allclose(Mat.eye[Double](2), atol = 1e-8))
+  }
+
+  test("pinv of rectangular matrix: A * pinv(A) ≈ I (nRows < nCols)") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6))  // 2×3
+    val p = m.pinv()
+    assertEquals(p.shape, (3, 2))
+    val r = m * p
+    assert(r.allclose(Mat.eye[Double](2), atol = 1e-8))
+  }
+
+  test("pinv of rectangular matrix: pinv(A) * A ≈ I (nRows > nCols)") {
+    val m = Mat[Double]((1, 2), (3, 4), (5, 6))  // 3×2
+    val p = m.pinv()
+    assertEquals(p.shape, (2, 3))
+    val r = p * m
+    assert(r.allclose(Mat.eye[Double](2), atol = 1e-8))
+  }
+
+  test("pinv of singular matrix does not throw") {
+    val m = Mat[Double]((1, 2), (2, 4))  // rank 1
+    val p = m.pinv()
+    assertEquals(p.shape, (2, 2))
+  }
+
+  test("pinv double application: pinv(pinv(A)) ≈ A") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    assert(m.pinv().pinv().allclose(m, atol = 1e-6))
+  }
+
+  // ============================================================================
+  // cholesky
+  // ============================================================================
+  test("cholesky of identity is identity") {
+    val m = Mat.eye[Double](3)
+    assert(m.cholesky.allclose(Mat.eye[Double](3), atol = 1e-10))
+  }
+
+  test("cholesky L * L^T = original matrix") {
+    val m = Mat[Double]((4, 2), (2, 3))  // symmetric positive definite
+    val L = m.cholesky
+    assert((L * L.T).allclose(m, atol = 1e-10))
+  }
+
+  test("cholesky result is lower triangular") {
+    val m = Mat[Double]((4, 2), (2, 3))
+    val L = m.cholesky
+    assert(L.allclose(L.tril(), atol = 1e-10))
+  }
+
+  test("cholesky of known matrix") {
+    // [[4,2],[2,3]] → L = [[2,0],[1,sqrt(2)]]
+    val m = Mat[Double]((4, 2), (2, 3))
+    val L = m.cholesky
+    assertEqualsDouble(L(0, 0), 2.0,          1e-10, "L(0,0)")
+    assertEqualsDouble(L(0, 1), 0.0,          1e-10, "L(0,1)")
+    assertEqualsDouble(L(1, 0), 1.0,          1e-10, "L(1,0)")
+    assertEqualsDouble(L(1, 1), math.sqrt(2), 1e-10, "L(1,1)")
+  }
+
+  test("cholesky 3x3 symmetric positive definite") {
+    val m = Mat[Double]((6, 3, 2), (3, 5, 1), (2, 1, 4))
+    val L = m.cholesky
+    assert((L * L.T).allclose(m, atol = 1e-8))
+    assert(L.allclose(L.tril(), atol = 1e-10))
+  }
+
+  test("cholesky non-square throws") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6))
+    intercept[IllegalArgumentException] { m.cholesky }
+  }
+
+  test("cholesky non-positive-definite throws") {
+    val m = Mat[Double]((1, 2), (2, 1))  // not positive definite
+    intercept[ArithmeticException] { m.cholesky }
+  }
+
+  // ============================================================================
+  // cross
+  // ============================================================================
+  test("cross product of standard basis vectors") {
+    val i = Mat.row[Double](1, 0, 0)
+    val j = Mat.row[Double](0, 1, 0)
+    val k = Mat.row[Double](0, 0, 1)
+    assert(i.cross(j).allclose(k, atol = 1e-10))
+    assert(j.cross(k).allclose(i, atol = 1e-10))
+    assert(k.cross(i).allclose(j, atol = 1e-10))
+  }
+
+  test("cross product is anti-commutative") {
+    val a = Mat.row[Double](1, 2, 3)
+    val b = Mat.row[Double](4, 5, 6)
+    val ab = a.cross(b)
+    val ba = b.cross(a)
+    assert(ab.allclose(ba * -1.0, atol = 1e-10))
+  }
+
+  test("cross product of parallel vectors is zero") {
+    val a = Mat.row[Double](1, 2, 3)
+    val b = Mat.row[Double](2, 4, 6)  // b = 2*a
+    assert(a.cross(b).allclose(Mat.zeros[Double](1, 3), atol = 1e-10))
+  }
+
+  test("cross product known result") {
+    // [1,2,3] × [4,5,6] = [-3, 6, -3]
+    val a = Mat.row[Double](1, 2, 3)
+    val b = Mat.row[Double](4, 5, 6)
+    val r = a.cross(b)
+    assertEqualsDouble(r(0, 0), -3.0, 1e-10, "x")
+    assertEqualsDouble(r(0, 1),  6.0, 1e-10, "y")
+    assertEqualsDouble(r(0, 2), -3.0, 1e-10, "z")
+  }
+
+  test("cross product of col vectors") {
+    val a = Mat.col[Double](1, 0, 0)
+    val b = Mat.col[Double](0, 1, 0)
+    val r = a.cross(b)
+    assertEqualsDouble(r(0, 2), 1.0, 1e-10, "z component")
+  }
+
+  test("cross product non-3D throws") {
+    val a = Mat.row[Double](1, 2)
+    val b = Mat.row[Double](3, 4)
+    intercept[IllegalArgumentException] { a.cross(b) }
+  }
+
+  // ============================================================================
+  // kron
+  // ============================================================================
+  test("kron with identity is block diagonal") {
+    val a = Mat[Double]((1, 2), (3, 4))
+    val i = Mat.eye[Double](2)
+    val r = i.kron(a)  // I ⊗ a gives block diagonal, not a ⊗ I
+    assertEquals(r.shape, (4, 4))
+    // top-left block should be a
+    assertEqualsDouble(r(0, 0), 1.0, 1e-10, "r(0,0)")
+    assertEqualsDouble(r(0, 1), 2.0, 1e-10, "r(0,1)")
+    assertEqualsDouble(r(1, 0), 3.0, 1e-10, "r(1,0)")
+    assertEqualsDouble(r(1, 1), 4.0, 1e-10, "r(1,1)")
+    // top-right block should be zeros
+    assertEqualsDouble(r(0, 2), 0.0, 1e-10, "r(0,2)")
+    assertEqualsDouble(r(0, 3), 0.0, 1e-10, "r(0,3)")
+    // bottom-right block should be a
+    assertEqualsDouble(r(2, 2), 1.0, 1e-10, "r(2,2)")
+    assertEqualsDouble(r(3, 3), 4.0, 1e-10, "r(3,3)")
+  }
+
+  test("kron known result") {
+    // [[1,2],[3,4]] ⊗ [[0,5],[6,7]]
+    val a = Mat[Double]((1, 2), (3, 4))
+    val b = Mat[Double]((0, 5), (6, 7))
+    val r = a.kron(b)
+    assertEquals(r.shape, (4, 4))
+    // r[0:2, 0:2] = 1 * b
+    assertEqualsDouble(r(0, 0),  0.0, 1e-10, "1*b(0,0)")
+    assertEqualsDouble(r(0, 1),  5.0, 1e-10, "1*b(0,1)")
+    assertEqualsDouble(r(1, 0),  6.0, 1e-10, "1*b(1,0)")
+    assertEqualsDouble(r(1, 1),  7.0, 1e-10, "1*b(1,1)")
+    // r[0:2, 2:4] = 2 * b
+    assertEqualsDouble(r(0, 2),  0.0, 1e-10, "2*b(0,0)")
+    assertEqualsDouble(r(0, 3), 10.0, 1e-10, "2*b(0,1)")
+    assertEqualsDouble(r(1, 2), 12.0, 1e-10, "2*b(1,0)")
+    assertEqualsDouble(r(1, 3), 14.0, 1e-10, "2*b(1,1)")
+  }
+
+  test("kron shape is correct") {
+    val a = Mat[Double]((1, 2), (3, 4))        // 2×2
+    val b = Mat[Double]((1, 2, 3), (4, 5, 6)) // 2×3
+    val r = a.kron(b)
+    assertEquals(r.shape, (4, 6))
+  }
+
+  test("kron with scalar matrix scales") {
+    val a = Mat[Double]((1, 2), (3, 4))
+    val s = Mat[Double](1, 1, Array(3.0))  // 1×1 scalar matrix
+    val r = a.kron(s)
+    assertEquals(r.shape, (2, 2))
+    assert(r.allclose(a * 3.0))
+  }
+
+  test("kron is associative") {
+    val a = Mat[Double]((1, 0), (0, 1))
+    val b = Mat[Double]((1, 2), (3, 4))
+    val c = Mat[Double]((0, 1), (1, 0))
+    val r1 = a.kron(b).kron(c)
+    val r2 = a.kron(b.kron(c))
+    assert(r1.allclose(r2, atol = 1e-10))
+  }
+
+  // ============================================================================
+  // slice assignment
+  // ============================================================================
+  test("range rows all cols scalar assignment") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6), (7, 8, 9))
+    m(0 until 2, ::) = 0.0
+    assertEqualsDouble(m(0, 0), 0.0, 1e-10, "m(0,0)")
+    assertEqualsDouble(m(0, 2), 0.0, 1e-10, "m(0,2)")
+    assertEqualsDouble(m(1, 1), 0.0, 1e-10, "m(1,1)")
+    assertEqualsDouble(m(2, 0), 7.0, 1e-10, "m(2,0) unchanged")
+  }
+
+  test("all rows range cols scalar assignment") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6), (7, 8, 9))
+    m(::, 1 until 3) = 0.0
+    assertEqualsDouble(m(0, 0), 1.0, 1e-10, "m(0,0) unchanged")
+    assertEqualsDouble(m(0, 1), 0.0, 1e-10, "m(0,1)")
+    assertEqualsDouble(m(0, 2), 0.0, 1e-10, "m(0,2)")
+    assertEqualsDouble(m(2, 1), 0.0, 1e-10, "m(2,1)")
+  }
+
+  test("range rows range cols scalar assignment") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6), (7, 8, 9))
+    m(0 until 2, 1 until 3) = 99.0
+    assertEqualsDouble(m(0, 1), 99.0, 1e-10, "m(0,1)")
+    assertEqualsDouble(m(0, 2), 99.0, 1e-10, "m(0,2)")
+    assertEqualsDouble(m(1, 1), 99.0, 1e-10, "m(1,1)")
+    assertEqualsDouble(m(0, 0),  1.0, 1e-10, "m(0,0) unchanged")
+    assertEqualsDouble(m(2, 0),  7.0, 1e-10, "m(2,0) unchanged")
+  }
+
+  test("step range assignment") {
+    val m = Mat.zeros[Double](6, 2)
+    m(0 until 6 by 2, ::) = 1.0
+    assertEqualsDouble(m(0, 0), 1.0, 1e-10, "row 0")
+    assertEqualsDouble(m(1, 0), 0.0, 1e-10, "row 1 unchanged")
+    assertEqualsDouble(m(2, 0), 1.0, 1e-10, "row 2")
+    assertEqualsDouble(m(3, 0), 0.0, 1e-10, "row 3 unchanged")
+    assertEqualsDouble(m(4, 0), 1.0, 1e-10, "row 4")
+    assertEqualsDouble(m(5, 0), 0.0, 1e-10, "row 5 unchanged")
+  }
+
+  test("range rows all cols Mat assignment") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6), (7, 8, 9))
+    val src = Mat[Double]((10, 20, 30), (40, 50, 60))
+    m(0 until 2, ::) = src
+    assertEqualsDouble(m(0, 0), 10.0, 1e-10, "m(0,0)")
+    assertEqualsDouble(m(0, 2), 30.0, 1e-10, "m(0,2)")
+    assertEqualsDouble(m(1, 1), 50.0, 1e-10, "m(1,1)")
+    assertEqualsDouble(m(2, 0),  7.0, 1e-10, "m(2,0) unchanged")
+  }
+
+  test("all rows range cols Mat assignment") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6))
+    val src = Mat[Double]((20, 30), (50, 60))
+    m(::, 1 until 3) = src
+    assertEqualsDouble(m(0, 0),  1.0, 1e-10, "m(0,0) unchanged")
+    assertEqualsDouble(m(0, 1), 20.0, 1e-10, "m(0,1)")
+    assertEqualsDouble(m(0, 2), 30.0, 1e-10, "m(0,2)")
+    assertEqualsDouble(m(1, 1), 50.0, 1e-10, "m(1,1)")
+  }
+
+  test("range rows range cols Mat assignment") {
+    val m = Mat.zeros[Double](4, 4)
+    val src = Mat[Double]((1, 2), (3, 4))
+    m(1 until 3, 1 until 3) = src
+    assertEqualsDouble(m(1, 1), 1.0, 1e-10, "m(1,1)")
+    assertEqualsDouble(m(1, 2), 2.0, 1e-10, "m(1,2)")
+    assertEqualsDouble(m(2, 1), 3.0, 1e-10, "m(2,1)")
+    assertEqualsDouble(m(2, 2), 4.0, 1e-10, "m(2,2)")
+    assertEqualsDouble(m(0, 0), 0.0, 1e-10, "m(0,0) unchanged")
+    assertEqualsDouble(m(3, 3), 0.0, 1e-10, "m(3,3) unchanged")
+  }
+
+  test("single row range cols assignment") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6))
+    m(0, 1 until 3) = 0.0
+    assertEqualsDouble(m(0, 0), 1.0, 1e-10, "m(0,0) unchanged")
+    assertEqualsDouble(m(0, 1), 0.0, 1e-10, "m(0,1)")
+    assertEqualsDouble(m(0, 2), 0.0, 1e-10, "m(0,2)")
+    assertEqualsDouble(m(1, 1), 5.0, 1e-10, "m(1,1) unchanged")
+  }
+
+  test("range rows single col assignment") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6), (7, 8, 9))
+    m(0 until 2, 2) = 0.0
+    assertEqualsDouble(m(0, 2), 0.0, 1e-10, "m(0,2)")
+    assertEqualsDouble(m(1, 2), 0.0, 1e-10, "m(1,2)")
+    assertEqualsDouble(m(2, 2), 9.0, 1e-10, "m(2,2) unchanged")
+  }
+
+  test("slice assignment shape mismatch throws") {
+    val m   = Mat[Double]((1, 2, 3), (4, 5, 6), (7, 8, 9))
+    val src = Mat[Double]((1, 2), (3, 4))  // wrong shape
+    intercept[IllegalArgumentException] { m(0 until 2, ::) = src }
+  }
 }
