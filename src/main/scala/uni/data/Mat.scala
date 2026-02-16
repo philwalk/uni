@@ -15,7 +15,7 @@ object Mat {
   type RowVec[T] = Mat[T]
   type ColVec[T] = Mat[T]
   
-  private[data] case class MatData[T](
+  private case class MatData[T] private[Mat](
     data: Array[T],
     rows: Int,
     cols: Int,
@@ -44,6 +44,9 @@ object Mat {
 
     if (m.isWeirdLayout) m.matCopy else m
   }
+  private[uni] def createTestView[T: ClassTag](
+    data: Array[T], rows: Int, cols: Int, t: Boolean, offset: Int, rs: Int, cs: Int
+  ): Mat[T] = new MatData(data, rows, cols, t, offset, rs, cs)
 
   object :: // Sentinel object for "all" in slicing
   
@@ -59,6 +62,9 @@ object Mat {
     inline def ndim: Int            = 2
     inline def isEmpty: Boolean     = m.size == 0
     inline def underlying: Array[T] = m.data
+    private[data] inline def rs: Int = m.rs
+    private[data] inline def cs: Int = m.cs
+    private[data] inline def offset: Int = m.offset
   
   // ============================================================================
   // Indexing (NumPy-aligned with negative index support)
@@ -2688,7 +2694,8 @@ object Mat {
   def fullLike[T: ClassTag](m: Mat[T], value: T): Mat[T] =
     Mat.full[T](m.rows, m.cols, value)
 
-  private def broadcast2D[T: ClassTag](a: Mat[T], b: Mat[T]): (Mat[T], Mat[T], Int, Int) =
+  /*
+  private def broadcast2D[T: ClassTag](a: Mat[T], b: Mat[T]): (Mat[T], Mat[T], Int, Int) = {
     val (ar, ac) = a.shape
     val (br, bc) = b.shape
 
@@ -2734,5 +2741,7 @@ object Mat {
     val a2 = expand(a, outRows, outCols)
     val b2 = expand(b, outRows, outCols)
     (a2, b2, outRows, outCols)
+  }
+  */
 
 }

@@ -3750,24 +3750,22 @@ class MatTest extends munit.FunSuite {
     // 2. Manually construct a "Slice" typed as Mat
     // Since MatData is private[data], this works if the test is in the same package
     // or if you use a helper in the Mat object.
-    val sliced: Mat[Double] = new MatData(
-      base.asInstanceOf[MatData[Double]].data, 
-      3, 2, false, 1, 3, 1
-    ).asInstanceOf[Mat[Double]]
+    // Use the internal test-factory instead of 'new MatData'
+    val sliced = Mat.createTestView(base.underlying, 3, 2, false, 1, 3, 1)
     
     // 3. Use the extension method .transpose (works because it's typed as Mat)
     val transposedSlice = sliced.transpose 
     
-    // 4. Extract the "weird" components to trigger the Layout Guard in create
-    val internal = transposedSlice.asInstanceOf[MatData[Double]]
     // LOGGING: Add this to see what's actually happening
-    println(s"Strides: rs=${internal.rs}, cs=${internal.cs}, offset=${internal.offset}")
+    println(s"Strides: rs=${transposedSlice.rs}, cs=${transposedSlice.cs}, offset=${transposedSlice.offset}")
     val guarded = Mat.create(
-      internal.data, 
-      internal.rows, 
-      internal.cols, 
-      internal.transposed,
-      internal.offset
+      transposedSlice.data, 
+      transposedSlice.rows, 
+      transposedSlice.cols, 
+      transposedSlice.transposed,
+      transposedSlice.offset,
+      transposedSlice.rs,
+      transposedSlice.cs,
     )
 
     // 5. Verification
