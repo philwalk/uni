@@ -403,7 +403,6 @@ class MatTest extends munit.FunSuite {
     assertEquals(result(1, 1), 12.0)
   }
   
-  /*
   test("element-wise multiplication") {
     val m1 = Mat[Double]((1, 2), (3, 4))
     val m2 = Mat[Double]((2, 3), (4, 5))
@@ -449,7 +448,6 @@ class MatTest extends munit.FunSuite {
     val p2 = m1 * m2
     assertEquals(p1(0, 0), p2(0, 0))
   }
-  */
   
   test("scalar division") {
     val m = Mat[Double]((10.0, 20.0), (30.0, 40.0))
@@ -3784,5 +3782,101 @@ class MatTest extends munit.FunSuite {
     // Updating the original vector updates the whole virtual "matrix"
     colVec.update(0, 0, 99.0)
     assert(broadcasted(0, 1) == 99.0)
+  }
+  
+  test("Broadcasting Addition: 3x3 + 3x1") {
+    val mat = Mat.create(Array(
+      1.0, 1.0, 1.0,
+      2.0, 2.0, 2.0,
+      3.0, 3.0, 3.0
+    ), 3, 3)
+    
+    val colVec = Mat.create(Array(10.0, 20.0, 30.0), 3, 1)
+    
+    val result = mat + colVec
+    
+    // Row 0: 1+10, 1+10, 1+10
+    assert(result(0, 0) == 11.0)
+    assert(result(0, 2) == 11.0)
+    // Row 2: 3+30, 3+30, 3+30
+    assert(result(2, 0) == 33.0)
+    assert(result(2, 2) == 33.0)
+  }
+
+  test("zero-copy reshape") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6)) // 2x3
+    val reshaped = m.reshape(3, 2)            // 3x2
+    
+    assertEquals(reshaped.shape, (3, 2))
+    assertEquals(reshaped(0, 0), 1.0)
+    assertEquals(reshaped(1, 0), 3.0)
+    assertEquals(reshaped(2, 1), 6.0)
+    
+    // Prove it's zero-copy: modify the original, reshaped should change!
+    // (Assuming you have an update method m(r, c) = v)
+    m(0, 0) = 99.0
+    assertEquals(reshaped(0, 0), 99.0)
+  }
+
+  test("complex view concatenation") {
+    // 1. Create a 3x3 matrix
+    val base = Mat[Double]((1, 2, 3), (4, 5, 6), (7, 8, 9))
+    
+    // 2. Take a 2x2 slice: [[5, 6], [8, 9]]
+    val s = base.slice(1 to 2, 1 to 2) 
+    
+    // 3. Transpose it: [[5, 8], [6, 9]]
+    val st = s.T
+    
+    // 4. Concat it with a 2x1 zeros matrix:
+    // [[5, 8, 0], 
+    //  [6, 9, 0]]
+    val zeros = Mat.zeros[Double](2, 1)
+    val combined = Mat.hstack(st, zeros)
+    
+    assertEquals(combined.shape, (2, 3))
+    assertEquals(combined(0, 0), 5.0)
+    assertEquals(combined(0, 1), 8.0)
+    assertEquals(combined(0, 2), 0.0)
+    assertEquals(combined(1, 1), 9.0)
+  }
+
+  test("broadcasting arithmetic: centering columns") {
+    // 3x3 Matrix
+    val m = Mat[Double](
+      (10, 20, 30),
+      (40, 50, 60),
+      (70, 80, 90)
+    )
+
+    // 1x3 Row Vector (The mean of each column)
+    val colMeans = Mat[Double]((40, 50, 60)) 
+    
+    // This should work because colMeans is 1x3, and m is 3x3.
+    // The '-' operator should automatically broadcast colMeans.
+    val centered = m - colMeans
+
+    assertEquals(centered.shape, (3, 3))
+    
+    // Row 0: [10-40, 20-50, 30-60] = [-30, -30, -30]
+    assertEquals(centered(0, 0), -30.0)
+    assertEquals(centered(0, 1), -30.0)
+    
+    // Row 1: [40-40, 50-50, 60-60] = [0, 0, 0]
+    assertEquals(centered(1, 0), 0.0)
+    
+    // Row 2: [70-40, 80-50, 90-60] = [30, 30, 30]
+    assertEquals(centered(2, 2), 30.0)
+  }
+
+  test("show respects transposition") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6)) // 2x3
+    val mt = m.T                          // 3x2
+    
+    val s = mt.show
+    // The first row of the string should be [1, 4]
+    // not [1, 2]
+    assert(s.contains("[1, 4]"))
+    assert(mt.shape == (3, 2))
   }
 }
