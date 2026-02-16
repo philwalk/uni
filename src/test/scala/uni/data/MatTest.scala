@@ -3738,4 +3738,41 @@ class MatTest extends munit.FunSuite {
     val src = Mat[Double]((1, 2), (3, 4))  // wrong shape
     intercept[IllegalArgumentException] { m(0 until 2, ::) = src }
   }
+
+  test("Layout Guard: transpose of a slice should not crash") {
+    // 1. Create base Mat
+    val base: Mat[Double] = Mat.create(Array(
+      1.0, 2.0, 3.0,
+      4.0, 5.0, 6.0,
+      7.0, 8.0, 9.0
+    ), 3, 3)
+
+    // 2. Manually construct a "Slice" typed as Mat
+    // Since MatData is private[data], this works if the test is in the same package
+    // or if you use a helper in the Mat object.
+    val sliced: Mat[Double] = new MatData(
+      base.asInstanceOf[MatData[Double]].data, 
+      3, 2, false, 1, 3, 1
+    ).asInstanceOf[Mat[Double]]
+    
+    // 3. Use the extension method .transpose (works because it's typed as Mat)
+    val transposedSlice = sliced.transpose 
+    
+    // 4. Extract the "weird" components to trigger the Layout Guard in create
+    val internal = transposedSlice.asInstanceOf[MatData[Double]]
+    // LOGGING: Add this to see what's actually happening
+    println(s"Strides: rs=${internal.rs}, cs=${internal.cs}, offset=${internal.offset}")
+    val guarded = Mat.create(
+      internal.data, 
+      internal.rows, 
+      internal.cols, 
+      internal.transposed,
+      internal.offset
+    )
+
+    // 5. Verification
+    assert(guarded.isStandardContiguous, "Layout Guard failed to normalize a weird layout!")
+    assert(guarded(0, 0) == 2.0)
+    assert(guarded(1, 0) == 3.0) 
+  }
 }
