@@ -36,13 +36,18 @@ object Mat {
   ): Mat[T] = {
     // We explicitly calculate the strides that your legacy code 
     // was previously calculating implicitly inside the 'apply' if/else.
-    val rs = if (transposed) 1 else cols
-    val cs = if (transposed) rows else 1
+    val actualRs = if (rs >= 0) rs else (if transposed then 1 else cols)
+    val actualCs = if (cs >= 0) cs else (if transposed then rows else 1)
 
     // must be the ONLY place the private constructor is used!
-    val m = new MatData(data, rows, cols, transposed, offset, rs, cs)
+    val m = new MatData(data, rows, cols, transposed, offset, actualRs, actualCs)
 
-    if (m.isWeirdLayout) m.matCopy else m
+    if m.isWeirdLayout then
+      val clean = m.matCopy
+      //println(s"GUARD TRIGGERED: Original Transposed=${m.transposed}, clean Transposed=${clean.transposed}")
+      clean
+    else
+      m
   }
   private[uni] def createTestView[T: ClassTag](
     data: Array[T], rows: Int, cols: Int, t: Boolean, offset: Int, rs: Int, cs: Int
@@ -74,12 +79,18 @@ object Mat {
     // to set the default Row-Major strides.
     // Your temporary Phase 1 "Choke Point"
     def isWeirdLayout: Boolean = {
-      val leadingDim = if (m.transposed) m.cols else m.rows
-      val majorStride = if (m.transposed) m.cs else m.rs
-      // As per the #850 fix, a major stride > leading dimension 
-      // in a non-standard view is the danger signal.
-      majorStride > math.max(leadingDim, 1) && !m.isStandardContiguous
+      // If it's already standard, it's definitely not weird.
+      if m.isStandardContiguous then 
+        false
+      else if m.rs == 0 || m.cs == 0 then
+        false
+      else
+        val leadingDim = if m.transposed then m.cols else m.rows
+        val majorStride = if m.transposed then m.cs else m.rs
+        val isFragmented = majorStride > math.max(leadingDim, 1)
+        isFragmented && !m.isStandardContiguous
     }
+
     def isStandardContiguous: Boolean = 
       (m.rs == m.cols && m.cs == 1 && !m.transposed) || 
       (m.rs == 1 && m.cs == m.rows && m.transposed)
@@ -94,12 +105,86 @@ object Mat {
       while (i < m.rows) {
         var j = 0
         while (j < m.cols) {
+          // use the stride-aware apply to get the right values
           newData(i * m.cols + j) = m(i, j)
           j += 1
         }
         i += 1
       }
       Mat.create(newData, m.rows, m.cols, transposed = false)
+    }
+
+    /**
+     * NumPy-style slicing: m.slice(rowRange, colRange)
+     * Returns a zero-copy view of the sub-matrix.
+     */
+    def slice(rows: Range, cols: Range): Mat[T] = {
+      // 1. Normalize ranges (handle Range.inclusive vs exclusive)
+      val rStart = if (rows.start < 0) m.rows + rows.start else rows.start
+      val cStart = if (cols.start < 0) m.cols + cols.start else cols.start
+      
+      val newRows = rows.length
+      val newCols = cols.length
+
+      // 2. Bounds check
+      if (rStart < 0 || rStart + newRows > m.rows || 
+          cStart < 0 || cStart + newCols > m.cols) {
+        throw new IndexOutOfBoundsException(s"Slice $rows, $cols out of bounds for ${m.rows}x${m.cols}")
+      }
+
+      // 3. The Stride Magic: Calculate the new physical offset
+      // The new starting point is the old offset plus the 
+      // jump to the first element of the slice.
+      val newOffset = m.offset + (rStart * m.rs) + (cStart * m.cs)
+
+      // 4. Funnel through the Choke Point
+      // We pass the existing strides (rs, cs) and the new offset.
+      // The Layout Guard will automatically check if this specific 
+      // sub-view is "weird" and copy it if necessary!
+      Mat.create(
+        m.underlying,
+        newRows,
+        newCols,
+        m.transposed,
+        newOffset,
+        m.rs,
+        m.cs
+      )
+    }
+
+    /**
+     * Virtually expands the matrix to the target dimensions.
+     * If a dimension is 1, it can be broadcast to any size by setting stride to 0.
+     */
+    def broadcastTo(targetRows: Int, targetCols: Int): Mat[T] = {
+      if m.rows == targetRows && m.cols == targetCols then
+        m
+      else
+        // Stride Trick: If current dimension is 1, new stride is 0.
+        // Otherwise, keep the original stride.
+        val newRS = if (m.rows == 1 && targetRows > 1) 0 else m.rs
+        val newCS = if (m.cols == 1 && targetCols > 1) 0 else m.cs
+
+        // Validation: NumPy only allows broadcasting if dimensions match or are 1
+        val canBroadcastRows = m.rows == targetRows || m.rows == 1
+        val canBroadcastCols = m.cols == targetCols || m.cols == 1
+
+        if (!canBroadcastRows || !canBroadcastCols) {
+          throw new IllegalArgumentException(
+            s"Cannot broadcast shape ${m.shape} to ($targetRows, $targetCols)"
+          )
+        }
+
+        // Funnel through our offset-aware factory
+        Mat.create(
+          m.underlying,
+          targetRows,
+          targetCols,
+          m.transposed,
+          m.offset,
+          newRS,
+          newCS
+        )
     }
 
     /** 
@@ -125,8 +210,8 @@ object Mat {
       val c = if col < 0 then m.cols + col else col
       require(r >= 0 && r < m.rows && c >= 0 && c < m.cols,
         s"Index ($r, $c) out of bounds for ${m.rows}x${m.cols} matrix")
-      if m.transposed then m.data(c * m.rows + r) = value
-      else m.data(r * m.cols + c) = value
+      // Use the same unified stride equation as apply!
+      m.data(m.offset + r * m.rs + c * m.cs) = value
     }
     
     /** 
@@ -2693,55 +2778,5 @@ object Mat {
 
   def fullLike[T: ClassTag](m: Mat[T], value: T): Mat[T] =
     Mat.full[T](m.rows, m.cols, value)
-
-  /*
-  private def broadcast2D[T: ClassTag](a: Mat[T], b: Mat[T]): (Mat[T], Mat[T], Int, Int) = {
-    val (ar, ac) = a.shape
-    val (br, bc) = b.shape
-
-    // Column compatibility
-    require(ac == bc || ac == 1 || bc == 1,
-      s"Cannot broadcast columns: $ac vs $bc")
-
-    // Row compatibility
-    require(ar == br || ar == 1 || br == 1,
-      s"Cannot broadcast rows: $ar vs $br")
-
-    val outRows = math.max(ar, br)
-    val outCols = math.max(ac, bc)
-
-    def expand(m: Mat[T], targetRows: Int, targetCols: Int): Mat[T] =
-      val (r, c) = m.shape
-      if r == targetRows && c == targetCols then m
-      else if r == 1 && c == targetCols then
-        // broadcast row vector downward
-        val out = Array.ofDim[T](targetRows * targetCols)
-        var i = 0
-        while i < targetRows do
-          System.arraycopy(m.data, 0, out, i * targetCols, targetCols)
-          i += 1
-        Mat.create(out, targetRows, targetCols)
-      else if c == 1 && r == targetRows then
-        // broadcast column vector rightward
-        val out = Array.ofDim[T](targetRows * targetCols)
-        var i = 0
-        while i < targetRows do
-          var j = 0
-          val v = m(i, 0)
-          while j < targetCols do
-            out(i * targetCols + j) = v
-            j += 1
-          i += 1
-        Mat.create(out, targetRows, targetCols)
-      else
-        throw new IllegalArgumentException(
-          s"Cannot broadcast shape ${m.shape} to ($targetRows,$targetCols)"
-        )
-
-    val a2 = expand(a, outRows, outCols)
-    val b2 = expand(b, outRows, outCols)
-    (a2, b2, outRows, outCols)
-  }
-  */
 
 }

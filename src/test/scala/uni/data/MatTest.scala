@@ -3739,38 +3739,50 @@ class MatTest extends munit.FunSuite {
     intercept[IllegalArgumentException] { m(0 until 2, ::) = src }
   }
 
-  test("Layout Guard: transpose of a slice should not crash") {
-    // 1. Create base Mat
-    val base: Mat[Double] = Mat.create(Array(
-      1.0, 2.0, 3.0,
-      4.0, 5.0, 6.0,
-      7.0, 8.0, 9.0
-    ), 3, 3)
-
-    // 2. Manually construct a "Slice" typed as Mat
-    // Since MatData is private[data], this works if the test is in the same package
-    // or if you use a helper in the Mat object.
-    // Use the internal test-factory instead of 'new MatData'
-    val sliced = Mat.createTestView(base.underlying, 3, 2, false, 1, 3, 1)
+  test("Layout Guard: transpose of a slice should be auto-normalized") {
+    val base = Mat.create(Array(1.0, 2.0, 3.0, 4.0, 5.0, 6.0), 2, 3)
+    val slice = base.slice(0 until 2, 1 until 3) 
     
-    // 3. Use the extension method .transpose (works because it's typed as Mat)
-    val transposedSlice = sliced.transpose 
-    
-    // LOGGING: Add this to see what's actually happening
-    println(s"Strides: rs=${transposedSlice.rs}, cs=${transposedSlice.cs}, offset=${transposedSlice.offset}")
-    val guarded = Mat.create(
-      transposedSlice.data, 
-      transposedSlice.rows, 
-      transposedSlice.cols, 
-      transposedSlice.transposed,
-      transposedSlice.offset,
-      transposedSlice.rs,
-      transposedSlice.cs,
-    )
+    val transposed = slice.transpose 
 
-    // 5. Verification
-    assert(guarded.isStandardContiguous, "Layout Guard failed to normalize a weird layout!")
-    assert(guarded(0, 0) == 2.0)
-    assert(guarded(1, 0) == 3.0) 
+    // 1. It should definitely be standard/contiguous now
+    assert(transposed.isStandardContiguous)
+    
+    // 2. IMPORTANT: If the layout is standard, 'transposed' SHOULD be true!
+    // Only weird layouts get flattened to 'transposed = false'.
+    // Since the slice was already healed, this transpose is a "Standard Transpose".
+    if (transposed.isStandardContiguous) {
+      assert(transposed.transposed) 
+    }
+
+    assert(transposed(0, 0) == 2.0)
+  }
+
+  test("Zero-copy slicing should reflect updates to the parent") {
+    val parent = Mat.create(Array(1.0, 2.0, 3.0, 4.0), 2, 2)
+    val view = parent.slice(0 until 2, 1 until 2) // Right column: [2.0, 4.0]
+    assert(view(0, 0) == 2.0)
+    
+    parent.update(0, 1, 99.0) // Update parent
+    
+    // The view should see the change because it's the same memory!
+    assert(view(0, 0) == 99.0)
+  }
+
+  test("Broadcasting: column vector should behave like a matrix") {
+    val colVec = Mat.create(Array(1.0, 2.0, 3.0), 3, 1)
+    val broadcasted = colVec.broadcastTo(3, 3)
+    //println(s"Broadcasted Strides: rs=${broadcasted.rs}, cs=${broadcasted.cs}")
+
+    assert(broadcasted.rows == 3 && broadcasted.cols == 3)
+    
+    // Every column in row 0 should be 1.0
+    assert(broadcasted(0, 0) == 1.0)
+    assert(broadcasted(0, 1) == 1.0)
+    assert(broadcasted(0, 2) == 1.0)
+    
+    // Updating the original vector updates the whole virtual "matrix"
+    colVec.update(0, 0, 99.0)
+    assert(broadcasted(0, 1) == 99.0)
   }
 }
