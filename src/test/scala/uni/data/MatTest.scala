@@ -3879,4 +3879,32 @@ class MatTest extends munit.FunSuite {
     assert(s.contains("[1, 4]"))
     assert(mt.shape == (3, 2))
   }
+
+  test("mutation: row slice using =") {
+    val m: Mat[Double] = Mat.zeros[Double](3, 3)
+    
+    // Update the middle row
+    m(1, ::) = 5.0
+    
+    assert(m(1, 0) == 5.0)
+    assert(m(1, 1) == 5.0)
+    assert(m(1, 2) == 5.0)
+    
+    // Ensure Row 0 and 2 remained untouched (checking stride integrity)
+    assert(m(0, 0) == 0.0)
+    assert(m(2, 0) == 0.0)
+  }
+
+  test("mutation: column slice using =") {
+    val m = Mat.zeros[Double](3, 3)
+    
+    // Update the last column
+    m(::, 2) = 9.9
+    
+    assert(m(0, 2) == 9.9)
+    assert(m(1, 2) == 9.9)
+    assert(m(2, 2) == 9.9)
+    assert(m(1, 1) == 0.0) // Integrity check
+  }
+  
 }
