@@ -133,6 +133,100 @@ object Mat {
       // Use the same unified stride equation as apply!
       m.data(m.offset + r * m.rs + c * m.cs) = value
     }
+    /** m(rows: Range, ::) = value */
+    def update(rows: Range, cols: ::.type, value: T): Unit =
+      for r <- rows do
+        var j = 0
+        while j < m.cols do
+          m(r, j) = value
+          j += 1
+
+    /** m(::, cols: Range) = value */
+    def update(rows: ::.type, cols: Range, value: T): Unit =
+      var i = 0
+      while i < m.rows do
+        for c <- cols do m(i, c) = value
+        i += 1
+
+    /** m(rows: Range, cols: Range) = value */
+    def update(rows: Range, cols: Range, value: T): Unit =
+      for r <- rows do
+        for c <- cols do
+          m(r, c) = value
+
+    /** m(row: Int, cols: Range) = value */
+    def update(row: Int, cols: Range, value: T): Unit =
+      for c <- cols do m(row, c) = value
+
+    /** m(rows: Range, col: Int) = value */
+    def update(rows: Range, col: Int, value: T): Unit =
+      for r <- rows do m(r, col) = value
+
+    /** m(m.gt(0.0)) = 1.0 → set all elements where mask is true */
+    def update(mask: Mat[Boolean], value: T): Unit = {
+      require(mask.rows == m.rows && mask.cols == m.cols,
+        s"Mask shape ${mask.shape} must match matrix shape ${m.shape}")
+      var i = 0
+      while i < m.rows do
+        var j = 0
+        while j < m.cols do
+          if mask(i, j) then m(i, j) = value
+          j += 1
+        i += 1
+    }
+
+    /** m(rows: Range, ::) = other Mat */
+    def update(rows: Range, cols: ::.type, other: Mat[T]): Unit = {
+      require(other.rows == rows.length && other.cols == m.cols,
+        s"shape mismatch: target ${rows.length}×${m.cols} vs source ${other.shape}")
+      var i = 0
+      for r <- rows do
+        var j = 0
+        while j < m.cols do
+          m(r, j) = other(i, j)
+          j += 1
+        i += 1
+    }
+
+    /** m(::, cols: Range) = other Mat */
+    def update(rows: ::.type, cols: Range, other: Mat[T]): Unit = {
+      require(other.rows == m.rows && other.cols == cols.length,
+        s"shape mismatch: target ${m.rows}×${cols.length} vs source ${other.shape}")
+      var i = 0
+      while i < m.rows do
+        var j = 0
+        for c <- cols do
+          m(i, c) = other(i, j)
+          j += 1
+        i += 1
+    }
+
+    /** m(rows: Range, cols: Range) = other Mat */
+    def update(rows: Range, cols: Range, other: Mat[T]): Unit = {
+      require(other.rows == rows.length && other.cols == cols.length,
+        s"shape mismatch: target ${rows.length}×${cols.length} vs source ${other.shape}")
+      var i = 0
+      for r <- rows do
+        var j = 0
+        for c <- cols do
+          m(r, c) = other(i, j)
+          j += 1
+        i += 1
+    }
+
+    // row mutator
+    def update(row: Int, cols: ::.type, value: T): Unit =
+      var j = 0
+      while j < m.cols do
+        m(row, j) = value
+        j += 1
+        
+    // col mutator
+    def update(rows: ::.type, col: Int, value: T): Unit =
+      var i = 0
+      while i < m.rows do
+        m(i, col) = value
+        i += 1
 
   // ============================================================================
   // Indexing (NumPy-aligned with negative index support)
@@ -251,7 +345,14 @@ object Mat {
         )
     }
 
-  //extension [T: ClassTag](m: Mat[T])
+//    /** * Enables: m(i, ::) := 10.0 
+//     * Or even: m(0 until 2, 0 until 2) := 0.0
+//     */
+//    def :=(r: Int, c: Int, value: T): Unit =
+//      // Loop through the logical shape of the matrix (the slice)
+//      // and use the stride-aware set logic
+//      m.data(r * m.cols + c) = value
+
     /** Internal looper for broadcasting matrix-matrix operations */
     private def binOp(other: Mat[T])(op: (T, T) => T): Mat[T] = {
       val targetRows = math.max(m.rows, other.rows)
@@ -1428,17 +1529,18 @@ object Mat {
     }
 
     /** NumPy: np.linalg.solve(A, b) - solve Ax = b for x */
-    def solve(b: Mat[T])(using frac: Fractional[T]): Mat[T] = {
+    def solve(bVec: Mat[T])(using frac: Fractional[T]): Mat[T] = {
       require(m.rows == m.cols, s"solve requires square matrix, got ${m.shape}")
-      require(b.rows == m.rows, s"b.rows ${b.rows} must match matrix rows ${m.rows}")
+      val bCol = if (bVec.rows == 1 && bVec.cols == m.rows) bVec.T else bVec
+      require(bCol.rows == m.rows, s"bCol.rows ${bCol.rows} must match matrix rows ${m.rows}")
       val n = m.rows
-      val nRhs = b.cols
+      val nRhs = bCol.cols
       val (lu, pivots, _) = luDecompose
       val result = Array.ofDim[T](n * nRhs)
 
       var col = 0
       while col < nRhs do
-        val x = Array.tabulate(n)(i => b(pivots(i), col))
+        val x = Array.tabulate(n)(i => bCol(pivots(i), col))
         // Forward substitution
         var i = 1
         while i < n do
@@ -1820,19 +1922,6 @@ object Mat {
         i += 1
       val arr = buf.toArray
       Mat.create(arr, 1, arr.length)
-    }
-
-    /** m(m.gt(0.0)) = 1.0 → set all elements where mask is true */
-    def update(mask: Mat[Boolean], value: T): Unit = {
-      require(mask.rows == m.rows && mask.cols == m.cols,
-        s"Mask shape ${mask.shape} must match matrix shape ${m.shape}")
-      var i = 0
-      while i < m.rows do
-        var j = 0
-        while j < m.cols do
-          if mask(i, j) then m(i, j) = value
-          j += 1
-        i += 1
     }
 
     // ---- Fancy index: row/col selection by Array[Int] ----------------------
@@ -2578,74 +2667,6 @@ object Mat {
         i += 1
       Mat.create(result, nRows, nCols)
     }
-
-    /** m(rows: Range, ::) = value */
-    def update(rows: Range, cols: ::.type, value: T): Unit =
-      for r <- rows do
-        var j = 0
-        while j < m.cols do
-          m(r, j) = value
-          j += 1
-
-    /** m(::, cols: Range) = value */
-    def update(rows: ::.type, cols: Range, value: T): Unit =
-      var i = 0
-      while i < m.rows do
-        for c <- cols do m(i, c) = value
-        i += 1
-
-    /** m(rows: Range, cols: Range) = value */
-    def update(rows: Range, cols: Range, value: T): Unit =
-      for r <- rows do
-        for c <- cols do
-          m(r, c) = value
-
-    /** m(rows: Range, ::) = other Mat */
-    def update(rows: Range, cols: ::.type, other: Mat[T]): Unit = {
-      require(other.rows == rows.length && other.cols == m.cols,
-        s"shape mismatch: target ${rows.length}×${m.cols} vs source ${other.shape}")
-      var i = 0
-      for r <- rows do
-        var j = 0
-        while j < m.cols do
-          m(r, j) = other(i, j)
-          j += 1
-        i += 1
-    }
-
-    /** m(::, cols: Range) = other Mat */
-    def update(rows: ::.type, cols: Range, other: Mat[T]): Unit = {
-      require(other.rows == m.rows && other.cols == cols.length,
-        s"shape mismatch: target ${m.rows}×${cols.length} vs source ${other.shape}")
-      var i = 0
-      while i < m.rows do
-        var j = 0
-        for c <- cols do
-          m(i, c) = other(i, j)
-          j += 1
-        i += 1
-    }
-
-    /** m(rows: Range, cols: Range) = other Mat */
-    def update(rows: Range, cols: Range, other: Mat[T]): Unit = {
-      require(other.rows == rows.length && other.cols == cols.length,
-        s"shape mismatch: target ${rows.length}×${cols.length} vs source ${other.shape}")
-      var i = 0
-      for r <- rows do
-        var j = 0
-        for c <- cols do
-          m(r, c) = other(i, j)
-          j += 1
-        i += 1
-    }
-
-    /** m(row: Int, cols: Range) = value */
-    def update(row: Int, cols: Range, value: T): Unit =
-      for c <- cols do m(row, c) = value
-
-    /** m(rows: Range, col: Int) = value */
-    def update(rows: Range, col: Int, value: T): Unit =
-      for r <- rows do m(r, col) = value
 
     /** NumPy: np.std(m) - population standard deviation of all elements */
     def std(using frac: Fractional[T]): T =
