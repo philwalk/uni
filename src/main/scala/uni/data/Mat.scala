@@ -20,7 +20,7 @@ object Mat {
     rows: Int,
     cols: Int,
     transposed: Boolean = false, // Keep this temporarily for staging
-    offset: Int = 0,    // Default to 0
+    offset: Int = 0,  // Default to 0
     rs: Int = -1,     // rowSride ; phase 0: always 'cols'
     cs: Int = -1,     // colStride ; phase 0: always 1
   )
@@ -54,6 +54,9 @@ object Mat {
   ): Mat[T] = new MatData(data, rows, cols, t, offset, rs, cs)
 
   object :: // Sentinel object for "all" in slicing
+
+  def inspect: String = 
+    s"Mat(${rows}x${cols}, offset=$offset, rs=$rs, cs=$cs, transposed=$transposed)"
   
   // ============================================================================
   // Core Properties (NumPy-aligned)
@@ -70,11 +73,72 @@ object Mat {
     private[data] inline def rs: Int = m.rs
     private[data] inline def cs: Int = m.cs
     private[data] inline def offset: Int = m.offset
-  
+
+    def isContiguous: Boolean = 
+      !m.transposed && m.rs == m.cols && m.cs == 1
+
+    // 2. Stride-aware reshape
+    def reshape(newRows: Int, newCols: Int)(using ct: ClassTag[T]): Mat[T] = {
+      require(newRows * newCols == m.rows * m.cols, 
+        s"Cannot reshape ${m.rows}x${m.cols} to ${newRows}x${newCols}")
+
+      if m.isContiguous then
+        // Pass arguments in the correct order for your Mat.create:
+        // data, rows, cols, transposed, offset, rs, cs
+        Mat.create(m.data, newRows, newCols, false, m.offset, newCols, 1)
+      else
+        // If it's a slice or transposed, we must force a contiguous copy first
+        m.toContiguous.reshape(newRows, newCols)
+    }
+
+    // 3. Helper to force a matrix into a standard contiguous layout
+    def toContiguous(using ct: ClassTag[T]): Mat[T] = {
+      if m.isContiguous then m
+      else
+        val newData = new Array[T](m.rows * m.cols)
+        var i = 0
+        while i < m.rows do
+          var j = 0
+          while j < m.cols do
+            newData(i * m.cols + j) = m(i, j)
+            j += 1
+          i += 1
+        Mat.create(newData, m.rows, m.cols, false, 0, m.cols, 1)
+    }
+    // Inside your extension [T](m: Mat[T]) block:
+
+    /** 
+     * NumPy: m[i, j] 
+     * Element access with negative indexing support
+     * m(-1, -1) accesses last element
+     */
+    inline def apply(row: Int, col: Int): T = {
+      val r = if row < 0 then m.rows + row else row
+      val c = if col < 0 then m.cols + col else col
+      require(r >= 0 && r < m.rows && c >= 0 && c < m.cols,
+        s"Index ($r, $c) out of bounds for ${m.rows}x${m.cols} matrix")
+      // Unified stride equation
+      m.data(m.offset + r * m.rs + c * m.cs)
+    }
+    
+    /** 
+     * NumPy: m[i, j] = value
+     * Element update with negative indexing support
+     */
+    inline def update(row: Int, col: Int, value: T): Unit = {
+      val r = if row < 0 then m.rows + row else row
+      val c = if col < 0 then m.cols + col else col
+      require(r >= 0 && r < m.rows && c >= 0 && c < m.cols,
+        s"Index ($r, $c) out of bounds for ${m.rows}x${m.cols} matrix")
+      // Use the same unified stride equation as apply!
+      m.data(m.offset + r * m.rs + c * m.cs) = value
+    }
+
   // ============================================================================
   // Indexing (NumPy-aligned with negative index support)
   // ============================================================================
   extension [T: ClassTag](m: Mat[T])
+  // 1. Helper to check if layout is standard row-major
     // All "Phase 0" creation methods must funnel through this helper 
     // to set the default Row-Major strides.
     // Your temporary Phase 1 "Choke Point"
@@ -187,33 +251,323 @@ object Mat {
         )
     }
 
+  //extension [T: ClassTag](m: Mat[T])
+    /** Internal looper for broadcasting matrix-matrix operations */
+    private def binOp(other: Mat[T])(op: (T, T) => T): Mat[T] = {
+      val targetRows = math.max(m.rows, other.rows)
+      val targetCols = math.max(m.cols, other.cols)
+      val a = m.broadcastTo(targetRows, targetCols)
+      val b = other.broadcastTo(targetRows, targetCols)
+      val resData = new Array[T](targetRows * targetCols)
+      var r = 0
+      while (r < targetRows) {
+        var c = 0
+        while (c < targetCols) {
+          resData(r * targetCols + c) = op(a(r, c), b(r, c))
+          c += 1
+        }
+        r += 1
+      }
+      Mat.create(resData, targetRows, targetCols)
+    }
+
+    // --- Matrix-Matrix (Broadcasting) ---
+    def +(other: Mat[T])(using num: Numeric[T]): Mat[T] = binOp(other)(num.plus)
+    def -(other: Mat[T])(using num: Numeric[T]): Mat[T] = binOp(other)(num.minus)
+    def *:*(other: Mat[T])(using num: Numeric[T]): Mat[T] = binOp(other)(num.times)
+    def hadamard(other: Mat[T])(using num: Numeric[T]): Mat[T] = m *:* other
+
+    def unary_-(using num: Numeric[T]): Mat[T] = {
+      // We allocate an array for the result
+      val result = new Array[T](m.rows * m.cols)
+      var r = 0
+      var idx = 0
+      while (r < m.rows) {
+        var c = 0
+        while (c < m.cols) {
+          // Respects offset and strides!
+          result(idx) = num.negate(m(r, c))
+          idx += 1
+          c += 1
+        }
+        r += 1
+      }
+      Mat.create(result, m.rows, m.cols)
+    }
+
+  // ============================================================================
+  // Shape Manipulation
+  // ============================================================================
+  //extension [T: ClassTag](m: Mat[T])
+    def T: Mat[T] = transpose
     /** 
-     * NumPy: m[i, j] 
-     * Element access with negative indexing support
-     * m(-1, -1) accesses last element
+     * NumPy: m.T 
+     * O(1) transpose - flips flag and swaps dims, no data movement
      */
-    inline def apply(row: Int, col: Int): T = {
-      val r = if row < 0 then m.rows + row else row
-      val c = if col < 0 then m.cols + col else col
-      require(r >= 0 && r < m.rows && c >= 0 && c < m.cols,
-        s"Index ($r, $c) out of bounds for ${m.rows}x${m.cols} matrix")
-      // Unified stride equation
-      m.data(m.offset + r * m.rs + c * m.cs)
+    def transpose: Mat[T] = {
+      // We create a new view, flipping the 'transposed' flag,
+      // but we MUST pass the existing offset and the SWAPPED strides.
+      Mat.create(
+        data = m.underlying,
+        rows = m.cols,      // Rows/Cols swap logically
+        cols = m.rows,
+        transposed = !m.transposed,
+        offset = m.offset,   // <--- This is likely what is missing!
+        rs = m.cs,           // Row stride becomes the old Col stride
+        cs = m.rs            // Col stride becomes the old Row stride
+      )
     }
     
-    /** 
-     * NumPy: m[i, j] = value
-     * Element update with negative indexing support
-     */
-    inline def update(row: Int, col: Int, value: T): Unit = {
-      val r = if row < 0 then m.rows + row else row
-      val c = if col < 0 then m.cols + col else col
-      require(r >= 0 && r < m.rows && c >= 0 && c < m.cols,
-        s"Index ($r, $c) out of bounds for ${m.rows}x${m.cols} matrix")
-      // Use the same unified stride equation as apply!
-      m.data(m.offset + r * m.rs + c * m.cs) = value
+    def flatten: Array[T] = {
+      // We use m.size here assuming it's defined as rows * cols
+      if m.isContiguous && m.offset == 0 && m.data.length == m.rows * m.cols then
+        m.data.clone()
+      else
+        val result = Array.ofDim[T](m.rows * m.cols)
+        var i = 0
+        while i < m.rows do
+          var j = 0
+          while j < m.cols do
+            result(i * m.cols + j) = m(i, j)
+            j += 1
+          i += 1
+        result
     }
     
+    def data: Array[T] = m.asInstanceOf[MatData[T]].data
+
+    /**
+     * NumPy: m.ravel()
+     * Return flattened view as row vector in logical order
+     */
+    def ravel: Mat[T] = Mat.create(flatten, 1, m.size)
+  
+    // ============================================================================
+    // Arithmetic Operations
+    // ============================================================================
+
+    /** NumPy: m + scalar - Add scalar to all elements */
+    def +(scalar: T)(using num: Numeric[T]): Mat[T] = {
+      // 1. Allocate a fresh array for the result (this will be contiguous)
+      val result = new Array[T](m.rows * m.cols)
+      var r = 0
+      var idx = 0
+      // 2. Iterate through logical rows and columns
+      while (r < m.rows) {
+        var c = 0
+        while (c < m.cols) {
+          // 3. m(r, c) correctly calculates the offset using strides
+          result(idx) = num.plus(m(r, c), scalar)
+          idx += 1
+          c += 1
+        }
+        r += 1
+      }
+      // 4. Return a new Mat pointing to the contiguous result array
+      Mat.create(result, m.rows, m.cols)
+    }
+    def -(scalar: T)(using num: Numeric[T]): Mat[T] = {
+      // 1. Allocate a fresh array for the result (this will be contiguous)
+      val result = new Array[T](m.rows * m.cols)
+      var r = 0
+      var idx = 0
+      // 2. Iterate through logical rows and columns
+      while (r < m.rows) {
+        var c = 0
+        while (c < m.cols) {
+          // 3. m(r, c) correctly calculates the offset using strides
+          result(idx) = num.minus(m(r, c), scalar)
+          idx += 1
+          c += 1
+        }
+        r += 1
+      }
+      // 4. Return a new Mat pointing to the contiguous result array
+      Mat.create(result, m.rows, m.cols)
+    }
+    def *(scalar: T)(using num: Numeric[T]): Mat[T] = {
+      // 1. Allocate a fresh array for the result (this will be contiguous)
+      val result = new Array[T](m.rows * m.cols)
+      var r = 0
+      var idx = 0
+      // 2. Iterate through logical rows and columns
+      while (r < m.rows) {
+        var c = 0
+        while (c < m.cols) {
+          // 3. m(r, c) correctly calculates the offset using strides
+          result(idx) = num.times(m(r, c), scalar)
+          idx += 1
+          c += 1
+        }
+        r += 1
+      }
+      // 4. Return a new Mat pointing to the contiguous result array
+      Mat.create(result, m.rows, m.cols)
+    }
+
+    // ============================================================================
+    // Statistical Methods
+    // ============================================================================
+
+    def min(using ord: Ordering[T]): T = {
+      if (m.rows == 0 || m.cols == 0) throw new UnsupportedOperationException("empty matrix")
+      var minValue = m(0, 0)
+      var r = 0
+      while (r < m.rows) {
+        var c = 0
+        while (c < m.cols) {
+          val current = m(r, c)
+          if (ord.lt(current, minValue)) minValue = current
+          c += 1
+        }
+        r += 1
+      }
+      minValue
+    }
+
+    def max(using ord: Ordering[T]): T = {
+      if (m.rows == 0 || m.cols == 0) throw new UnsupportedOperationException("empty matrix")
+      var maxValue = m(0, 0)
+      var r = 0
+      while (r < m.rows) {
+        var c = 0
+        while (c < m.cols) {
+          val current = m(r, c)
+          if (ord.gt(current, maxValue)) maxValue = current
+          c += 1
+        }
+        r += 1
+      }
+      maxValue
+    }
+
+    def sum(using num: Numeric[T]): T = {
+      var total = num.zero
+      var i = 0
+      while i < m.rows do
+        var j = 0
+        while j < m.cols do
+          total = num.plus(total, m(i, j)) // Uses stride-aware apply
+          j += 1
+        i += 1
+      total
+    }
+
+    def argmin(using ord: Ordering[T]): (Int, Int) = {
+      if (m.rows == 0 || m.cols == 0) throw new UnsupportedOperationException("empty matrix")
+      
+      var minVal = m(0, 0)
+      var minR = 0
+      var minC = 0
+      
+      var i = 0
+      while (i < m.rows) {
+        var j = 0
+        while (j < m.cols) {
+          val current = m(i, j)
+          if (ord.lt(current, minVal)) {
+            minVal = current
+            minR = i
+            minC = j
+          }
+          j += 1
+        }
+        i += 1
+      }
+      (minR, minC)
+    }
+    
+    def argmax(using ord: Ordering[T]): (Int, Int) = {
+      if (m.rows == 0 || m.cols == 0) throw new UnsupportedOperationException("empty matrix")
+      
+      var maxVal = m(0, 0)
+      var maxR = 0
+      var maxC = 0
+      
+      var i = 0
+      while (i < m.rows) {
+        var j = 0
+        while (j < m.cols) {
+          val current = m(i, j)
+          // Identical structure, just swapping 'lt' for 'gt'
+          if (ord.gt(current, maxVal)) {
+            maxVal = current
+            maxR = i
+            maxC = j
+          }
+          j += 1
+        }
+        i += 1
+      }
+      (maxR, maxC)
+    }
+  
+    // ============================================================================
+    // Functional Operations
+    // ============================================================================
+
+    def map[U: ClassTag](f: T => U): Mat[U] = {
+      // Allocate a fresh, contiguous array for the result
+      val resData = new Array[U](m.rows * m.cols)
+      var r = 0
+      var idx = 0
+      while (r < m.rows) {
+        var c = 0
+        while (c < m.cols) {
+          // m(r, c) uses your stride/offset logic to find the REAL element
+          resData(idx) = f(m(r, c))
+          idx += 1
+          c += 1
+        }
+        r += 1
+      }
+      Mat.create(resData, m.rows, m.cols)
+    }
+
+    def where(pred: T => Boolean): Array[(Int, Int)] = {
+      val buf = scala.collection.mutable.ArrayBuffer[(Int, Int)]()
+      var i = 0
+      while i < m.rows do
+        var j = 0
+        while j < m.cols do
+          if pred(m(i, j)) then buf += ((i, j))
+          j += 1
+        i += 1
+      buf.toArray
+    }
+  
+  // ============================================================================
+  // Display
+  // ============================================================================
+  extension [T: ClassTag](m: Mat[T])(using frac: Fractional[T])
+    /** m(0 until 2, ::) - range rows, all cols */
+    def apply(rows: Range, cols: ::.type): Mat[T] =
+      m(rows, 0 until m.cols)
+
+    /** m(::, 0 until 2) - all rows, range cols */
+    def apply(rows: ::.type, cols: Range): Mat[T] =
+      m(0 until m.rows, cols)
+
+    /** m(0, 0 until 2) - single row, range cols */
+    def apply(row: Int, cols: Range): Mat[T] =
+      m(row to row, cols)
+
+    /** m(0 until 2, 0) - range rows, single col */
+    def apply(rows: Range, col: Int): Mat[T] =
+      m(rows, col to col)
+
+    def /(scalar: T): Mat[T] = {
+      val res = new Array[T](m.size)
+      var r = 0; var idx = 0
+      while r < m.rows do
+        var c = 0
+        while c < m.cols do
+          res(idx) = frac.div(m(r, c), scalar)
+          idx += 1; c += 1
+        r += 1
+      Mat.create(res, m.rows, m.cols)
+    }
+
     /** 
      * NumPy: m[:, col] 
      * Extract column as column vector
@@ -264,210 +618,6 @@ object Mat {
       Mat.create(result, newRows, newCols)
     }
   
-  // ============================================================================
-  // Shape Manipulation
-  // ============================================================================
-  extension [T: ClassTag](m: Mat[T])
-    def T: Mat[T] = transpose
-    /** 
-     * NumPy: m.T 
-     * O(1) transpose - flips flag and swaps dims, no data movement
-     */
-    def transpose: Mat[T] = {
-      // We create a new view, flipping the 'transposed' flag,
-      // but we MUST pass the existing offset and the SWAPPED strides.
-      Mat.create(
-        data = m.underlying,
-        rows = m.cols,      // Rows/Cols swap logically
-        cols = m.rows,
-        transposed = !m.transposed,
-        offset = m.offset,   // <--- This is likely what is missing!
-        rs = m.cs,           // Row stride becomes the old Col stride
-        cs = m.rs            // Col stride becomes the old Row stride
-      )
-    }
-    
-    /** 
-     * NumPy: m.reshape(rows, cols) 
-     * Reshape matrix - materializes logical order first if transposed
-     */
-    def reshape(rows: Int, cols: Int): Mat[T] = {
-      require(rows * cols == m.size,
-        s"Cannot reshape ${m.rows}x${m.cols} (size ${m.size}) to ${rows}x${cols}")
-      val result = Array.ofDim[T](m.size)
-      var i = 0
-      while i < m.rows do
-        var j = 0
-        while j < m.cols do
-          result(i * m.cols + j) = m(i, j)
-          j += 1
-        i += 1
-      Mat.create(result, rows, cols)
-    }
-    
-    /** 
-     * NumPy: m.flatten() 
-     * Return flattened copy in logical row-major order
-     */
-    def flatten: Array[T] =
-      if !m.transposed then m.data.clone()
-      else
-        val result = Array.ofDim[T](m.size)
-        var i = 0
-        while i < m.rows do
-          var j = 0
-          while j < m.cols do
-            result(i * m.cols + j) = m(i, j)
-            j += 1
-          i += 1
-        result
-    
-    /** 
-     */
-    //def matCopy: Mat[T] = Mat.create(m.data.clone(), m.rows, m.cols, m.transposed)
-    def data: Array[T] = m.asInstanceOf[MatData[T]].data
-
-    /**
-     * NumPy: m.ravel()
-     * Return flattened view as row vector in logical order
-     */
-    def ravel: Mat[T] = Mat.create(flatten, 1, m.size)
-  
-  // ============================================================================
-  // Arithmetic Operations
-  // ============================================================================
-  extension [T: ClassTag](m: Mat[T])
-    /** NumPy: m + n - Element-wise addition */
-    def +(other: Mat[T])(using num: Numeric[T]): Mat[T] = {
-      require(m.rows == other.rows && m.cols == other.cols,
-        s"Shape mismatch: ${m.shape} vs ${other.shape}")
-      val result = Array.ofDim[T](m.size)
-      var i = 0
-      while i < m.size do { result(i) = num.plus(m.data(i), other.data(i)); i += 1 }
-      Mat.create(result, m.rows, m.cols)
-    }
-
-    /** NumPy: m + scalar - Add scalar to all elements */
-    def +(scalar: T)(using num: Numeric[T]): Mat[T] = {
-      val result = Array.ofDim[T](m.size)
-      var i = 0
-      while i < m.size do { result(i) = num.plus(m.data(i), scalar); i += 1 }
-      Mat.create(result, m.rows, m.cols)
-    }
-    /** NumPy: m - n - Element-wise subtraction */
-    def -(other: Mat[T])(using num: Numeric[T]): Mat[T] = {
-      require(m.rows == other.rows && m.cols == other.cols,
-        s"Shape mismatch: ${m.shape} vs ${other.shape}")
-      val result = Array.ofDim[T](m.size)
-      var i = 0
-      while i < m.size do { result(i) = num.minus(m.data(i), other.data(i)); i += 1 }
-      Mat.create(result, m.rows, m.cols)
-    }
-    /** NumPy: m - scalar - Subtract scalar from all elements */
-    def -(scalar: T)(using num: Numeric[T]): Mat[T] = {
-      val result = Array.ofDim[T](m.size)
-      var i = 0
-      while i < m.size do { result(i) = num.minus(m.data(i), scalar); i += 1 }
-      Mat.create(result, m.rows, m.cols)
-    }
-    /** Element-wise (Hadamard) product */
-    def *:*(other: Mat[T])(using num: Numeric[T]): Mat[T] = {
-      require(m.rows == other.rows && m.cols == other.cols,
-        s"Shape mismatch: ${m.shape} vs ${other.shape}")
-      val result = Array.ofDim[T](m.size)
-      var i = 0
-      while i < m.size do { result(i) = num.times(m.data(i), other.data(i)); i += 1 }
-      Mat.create(result, m.rows, m.cols)
-    }
-    /** Alias for *:* */
-    def hadamard(other: Mat[T])(using num: Numeric[T]): Mat[T] = m *:* other
-
-    /** NumPy: m * scalar - Multiply all elements by scalar */
-    def *(scalar: T)(using num: Numeric[T]): Mat[T] = {
-      val result = Array.ofDim[T](m.size)
-      var i = 0
-      while i < m.size do { result(i) = num.times(m.data(i), scalar); i += 1 }
-      Mat.create(result, m.rows, m.cols)
-    }
-    def /(scalar: T)(using frac: Fractional[T]): Mat[T] = {
-      val result = Array.ofDim[T](m.size)
-      var i = 0
-      while i < m.size do { result(i) = frac.div(m.data(i), scalar); i += 1 }
-      Mat.create(result, m.rows, m.cols)
-    }
-    def unary_-(using num: Numeric[T]): Mat[T] = {
-      val result = Array.ofDim[T](m.size)
-      var i = 0
-      while i < m.size do { result(i) = num.negate(m.data(i)); i += 1 }
-      Mat.create(result, m.rows, m.cols)
-    }
-  
-  // ============================================================================
-  // Statistical Methods
-  // ============================================================================
-  extension [T: ClassTag](m: Mat[T])
-    def min(using ord: Ordering[T]): T = m.data.min
-    def max(using ord: Ordering[T]): T = m.data.max
-    def sum(using num: Numeric[T]): T  = m.data.foldLeft(num.zero)(num.plus)
-    def mean(using frac: Fractional[T]): T =
-      frac.div(m.data.foldLeft(frac.zero)(frac.plus), frac.fromInt(m.size))
-    
-    def argmin(using ord: Ordering[T]): (Int, Int) =
-      if !m.transposed then
-        val idx = m.data.indexOf(m.data.min)
-        (idx / m.cols, idx % m.cols)
-      else
-        var minVal = m(0, 0); var minR = 0; var minC = 0
-        var i = 0
-        while i < m.rows do
-          var j = 0
-          while j < m.cols do
-            if ord.lt(m(i, j), minVal) then { minVal = m(i, j); minR = i; minC = j }
-            j += 1
-          i += 1
-        (minR, minC)
-    
-    def argmax(using ord: Ordering[T]): (Int, Int) =
-      if !m.transposed then
-        val idx = m.data.indexOf(m.data.max)
-        (idx / m.cols, idx % m.cols)
-      else
-        var maxVal = m(0, 0); var maxR = 0; var maxC = 0
-        var i = 0
-        while i < m.rows do
-          var j = 0
-          while j < m.cols do
-            if ord.gt(m(i, j), maxVal) then { maxVal = m(i, j); maxR = i; maxC = j }
-            j += 1
-          i += 1
-        (maxR, maxC)
-  
-  // ============================================================================
-  // Functional Operations
-  // ============================================================================
-  extension [T: ClassTag](m: Mat[T])
-    def map[U: ClassTag](f: T => U): Mat[U] = {
-      val result = Array.ofDim[U](m.size)
-      var i = 0
-      while i < m.size do { result(i) = f(m.data(i)); i += 1 }
-      Mat.create(result, m.rows, m.cols)
-    }
-    def where(pred: T => Boolean): Array[(Int, Int)] = {
-      val buf = scala.collection.mutable.ArrayBuffer[(Int, Int)]()
-      var i = 0
-      while i < m.rows do
-        var j = 0
-        while j < m.cols do
-          if pred(m(i, j)) then buf += ((i, j))
-          j += 1
-        i += 1
-      buf.toArray
-    }
-  
-  // ============================================================================
-  // Display
-  // ============================================================================
-  extension [T: ClassTag](m: Mat[T])(using frac: Fractional[T])
     def show: String = {
       def typeName: String =
         summon[ClassTag[T]].runtimeClass.getSimpleName match
@@ -641,6 +791,21 @@ object Mat {
 
   /** Create column vector from values */
   def col[T: ClassTag](values: T*): Mat[T] = Mat.create(values.toArray, values.length, 1)
+
+  extension [T: ClassTag](m: Mat[T])(using frac: Fractional[T])
+    // applyAlongAxis
+    def applyAlongAxis(fn: Mat[T] => T, axis: Int): Mat[T] = {
+      require(axis == 0 || axis == 1, s"axis must be 0 or 1, got $axis")
+      if axis == 0 then
+        //val result = Array.tabulate(m.cols)(j => fn(m.slice(::, j)))
+        val result = Array.tabulate(m.cols)(j => fn(m.slice(0 until m.rows, j to j)))
+
+        Mat.create(result, 1, m.cols)
+      else
+        //val result = Array.tabulate(m.rows)(i => fn(m(i, ::)))
+        val result = Array.tabulate(m.rows)(i => fn(m.slice(i to i, 0 until m.cols)))
+        Mat.create(result, m.rows, 1)
+    }
 
   // ============================================================================
   // Matrix Multiply + Linear Algebra (extension block)
@@ -964,15 +1129,24 @@ object Mat {
 
     // ---- Pure-JVM multiply (parallel tiled) ----------------------------
     private[data] def multiplyDouble(other: Mat[Double]): Mat[Double] = {
-      val a = m.data.asInstanceOf[Array[Double]]
-      val b = other.data.asInstanceOf[Array[Double]]
+      //val a = m.data.asInstanceOf[Array[Double]]
+      //val b = other.data.asInstanceOf[Array[Double]]
       val rowsA = m.rows; val colsA = m.cols; val colsB = other.cols
       val result = Array.ofDim[Double](rowsA * colsB)
       val TILE = 32
-      val aAt: (Int, Int) => Double =
-        if !m.transposed then (i, k) => a(i * colsA + k) else (i, k) => a(k * rowsA + i)
-      val bAt: (Int, Int) => Double =
-        if !other.transposed then (k, j) => b(k * colsB + j) else (k, j) => b(j * other.rows + k)
+
+      val dataA = m.data.asInstanceOf[Array[Double]]
+      val dataB = other.data.asInstanceOf[Array[Double]]
+      // Extract strides and offsets once to keep the inner loop fast
+      val (rsA, csA, offA) = (m.rs, m.cs, m.offset)
+      val (rsB, csB, offB) = (other.rs, other.cs, other.offset)
+
+      // Stride-aware manual accessor
+      inline def getA(r: Int, c: Int): Double = dataA(offA + r * rsA + c * csA)
+      inline def getB(r: Int, c: Int): Double = dataB(offB + r * rsB + c * csB)
+
+// Then use getA(i, k) inside the loops
+
       java.util.stream.IntStream.range(0, (rowsA + TILE - 1) / TILE).parallel().forEach { tileI =>
         val iStart = tileI * TILE; val iEnd = math.min(iStart + TILE, rowsA)
         var tileK = 0
@@ -985,9 +1159,9 @@ object Mat {
             while i < iEnd do
               var k = kStart
               while k < kEnd do
-                val aVal = aAt(i, k)
+                val aVal = getA(i, k)
                 var j = jStart
-                while j < jEnd do { result(i * colsB + j) += aVal * bAt(k, j); j += 1 }
+                while j < jEnd do { result(i * colsB + j) += aVal * getB(k, j); j += 1 }
                 k += 1
               i += 1
             tileJ += 1
@@ -997,15 +1171,16 @@ object Mat {
     }
 
     private[data] def multiplyFloat(other: Mat[Float]): Mat[Float] = {
-      val a = m.data.asInstanceOf[Array[Float]]
-      val b = other.data.asInstanceOf[Array[Float]]
+      //val a = m.data.asInstanceOf[Array[Float]]
+      //val b = other.data.asInstanceOf[Array[Float]]
       val rowsA = m.rows; val colsA = m.cols; val colsB = other.cols
       val result = Array.ofDim[Float](rowsA * colsB)
       val TILE = 32
-      val aAt: (Int, Int) => Float =
-        if !m.transposed then (i, k) => a(i * colsA + k) else (i, k) => a(k * rowsA + i)
-      val bAt: (Int, Int) => Float =
-        if !other.transposed then (k, j) => b(k * colsB + j) else (k, j) => b(j * other.rows + k)
+      // Use the matrix accessors directly. They already handle transposition, 
+      // offsets, and strides correctly!
+      val aAt: (Int, Int) => Float = (i, k) => m.apply(i, k).asInstanceOf[Float]
+      val bAt: (Int, Int) => Float = (k, j) => other.apply(k, j).asInstanceOf[Float]
+
       java.util.stream.IntStream.range(0, (rowsA + TILE - 1) / TILE).parallel().forEach { tileI =>
         val iStart = tileI * TILE; val iEnd = math.min(iStart + TILE, rowsA)
         var tileK = 0
@@ -1095,17 +1270,21 @@ object Mat {
     def trace(using num: Numeric[T]): T = diagonal.foldLeft(num.zero)(num.plus)
 
     def allclose(other: Mat[T], rtol: Double = 1e-5, atol: Double = 1e-8)(using frac: Fractional[T]): Boolean = {
-      if m.rows != other.rows || m.cols != other.cols then return false
-      var i = 0
-      while i < m.rows do
-        var j = 0
-        while j < m.cols do
-          val a = frac.toDouble(m(i, j))
-          val b = frac.toDouble(other(i, j))
-          if math.abs(a - b) > atol + rtol * math.abs(b) then return false
-          j += 1
-        i += 1
-      true
+      if m.rows != other.rows || m.cols != other.cols then
+        false
+      else
+        var i = 0
+        var identical = true
+        while i < m.rows && identical do
+          var j = 0
+          while j < m.cols && identical do
+            val a = frac.toDouble(m(i, j))
+            val b = frac.toDouble(other(i, j))
+            if math.abs(a - b) > atol + rtol * math.abs(b) then 
+              identical = false
+            j += 1
+          i += 1
+        identical
     }
 
     /** NumPy: np.sum(m, axis=0) → row vector of column sums
@@ -1136,6 +1315,24 @@ object Mat {
         Mat.create(result, m.rows, 1)
     }
 
+    def mean(using frac: Fractional[T]): T = {
+      if (m.rows == 0 || m.cols == 0) then
+        frac.zero
+      else
+        // Use the explicit nested loop logic here to avoid extension method resolution issues
+        var total = frac.zero
+        var r = 0
+        while (r < m.rows) {
+          var c = 0
+          while (c < m.cols) {
+            total = frac.plus(total, m(r, c))
+            c += 1
+          }
+          r += 1
+        }
+        frac.div(total, frac.fromInt(m.rows * m.cols))
+    }
+    
     def mean(axis: Int)(using frac: Fractional[T]): Mat[T] = {
       require(axis == 0 || axis == 1, s"axis must be 0 or 1, got $axis")
       val s = m.sum(axis)
@@ -1693,15 +1890,30 @@ object Mat {
 
     /** NumPy: np.repeat(m, n) - repeat each element n times, returns flat row vector */
     def repeat(n: Int): Mat[T] = {
-      val result = Array.ofDim[T](m.size * n)
-      var i = 0
-      while i < m.size do
-        var k = 0
-        while k < n do
-          result(i * n + k) = m.data(i)
-          k += 1
-        i += 1
-      Mat.create(result, 1, m.size * n)
+      // result size is logical elements * n
+      val result = new Array[T](m.rows * m.cols * n)
+      var r = 0
+      var idx = 0
+      
+      while (r < m.rows) {
+        var c = 0
+        while (c < m.cols) {
+          // Get the correct logical element
+          val value = m(r, c)
+          
+          // Repeat it n times in the output
+          var k = 0
+          while (k < n) {
+            result(idx) = value
+            idx += 1
+            k += 1
+          }
+          c += 1
+        }
+        r += 1
+      }
+      // Creates a row vector (1 x total_elements)
+      Mat.create(result, 1, m.rows * m.cols * n)
     }
 
     /** NumPy: np.repeat(m, n, axis=0) - repeat each row n times */
@@ -1794,17 +2006,19 @@ object Mat {
       require(p >= 0 && p <= 100, s"percentile must be in [0,100], got $p")  // guard here
       val sorted = arr.sorted(using summon[Ordering[T]])
       val n = sorted.length
-      if n == 1 then return sorted(0)
-      val idx  = (p / 100.0) * (n - 1)
-      val lo   = idx.toInt
-      val hi   = math.min(lo + 1, n - 1)
-      val frac2 = idx - lo
-      val result = frac.toDouble(sorted(lo)) + frac2 * (frac.toDouble(sorted(hi)) - frac.toDouble(sorted(lo)))
-      summon[ClassTag[T]].runtimeClass match
-        case c if c == classOf[Double]     => result.asInstanceOf[T]
-        case c if c == classOf[Float]      => result.toFloat.asInstanceOf[T]
-        case c if c == classOf[BigDecimal] => BigDecimal(result).asInstanceOf[T]
-        case c => throw UnsupportedOperationException(s"percentile unsupported for ${c.getName}")
+      if n == 1 then 
+        sorted(0)
+      else
+        val idx  = (p / 100.0) * (n - 1)
+        val lo   = idx.toInt
+        val hi   = math.min(lo + 1, n - 1)
+        val frac2 = idx - lo
+        val result = frac.toDouble(sorted(lo)) + frac2 * (frac.toDouble(sorted(hi)) - frac.toDouble(sorted(lo)))
+        summon[ClassTag[T]].runtimeClass match
+          case c if c == classOf[Double]     => result.asInstanceOf[T]
+          case c if c == classOf[Float]      => result.toFloat.asInstanceOf[T]
+          case c if c == classOf[BigDecimal] => BigDecimal(result).asInstanceOf[T]
+          case c => throw UnsupportedOperationException(s"percentile unsupported for ${c.getName}")
     }
 
     /** NumPy: np.percentile(m, p) - p-th percentile of all elements, p in [0,100] */
@@ -1857,8 +2071,15 @@ object Mat {
     def norm(ord: String)(using frac: Fractional[T]): T = {
       ord match
         case "fro" =>
-          val sumSq = m.data.foldLeft(frac.zero)((acc, x) =>
-            frac.plus(acc, frac.times(x, x)))
+          var sumSq = frac.zero
+            var i = 0
+            while i < m.rows do
+              var j = 0
+              while j < m.cols do
+                val x = m(i, j) // Respects offset and strides
+                sumSq = frac.plus(sumSq, frac.times(x, x))
+                j += 1
+              i += 1
           summon[ClassTag[T]].runtimeClass match
             case c if c == classOf[Double]     => math.sqrt(frac.toDouble(sumSq)).asInstanceOf[T]
             case c if c == classOf[Float]      => math.sqrt(frac.toDouble(sumSq)).toFloat.asInstanceOf[T]
@@ -2173,22 +2394,6 @@ object Mat {
       })
     }
 
-    /** m(0 until 2, ::) - range rows, all cols */
-    def apply(rows: Range, cols: ::.type): Mat[T] =
-      m(rows, 0 until m.cols)
-
-    /** m(::, 0 until 2) - all rows, range cols */
-    def apply(rows: ::.type, cols: Range): Mat[T] =
-      m(0 until m.rows, cols)
-
-    /** m(0, 0 until 2) - single row, range cols */
-    def apply(row: Int, cols: Range): Mat[T] =
-      m(row to row, cols)
-
-    /** m(0 until 2, 0) - range rows, single col */
-    def apply(rows: Range, col: Int): Mat[T] =
-      m(rows, col to col)
-
     // newaxis equivalents
     def toRowVec: Mat[T] = Mat.create(m.flatten, 1, m.size)
     def toColVec: Mat[T] = Mat.create(m.flatten, m.size, 1)
@@ -2263,17 +2468,6 @@ object Mat {
           m(i, j) = num.minus(m(i, j), other(i, j))
           j += 1
         i += 1
-    }
-
-    // applyAlongAxis
-    def applyAlongAxis(fn: Mat[T] => T, axis: Int): Mat[T] = {
-      require(axis == 0 || axis == 1, s"axis must be 0 or 1, got $axis")
-      if axis == 0 then
-        val result = Array.tabulate(m.cols)(j => fn(m(::, j)))
-        Mat.create(result, 1, m.cols)
-      else
-        val result = Array.tabulate(m.rows)(i => fn(m(i, ::)))
-        Mat.create(result, m.rows, 1)
     }
 
     /** NumPy: np.linalg.pinv(m) - Moore-Penrose pseudoinverse via SVD */
