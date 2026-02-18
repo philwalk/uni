@@ -237,7 +237,7 @@ object pathExts {
     def delete: Boolean =
       Files.deleteIfExists(p)
 
-    def realpath: Path = {
+    def realPath: String = {
       // Find deepest existing parent
       val existing =
         Iterator.iterate(p)(_.getParent)
@@ -245,17 +245,17 @@ object pathExts {
           .find(Files.exists(_))
 
       // Compute the remaining tail BEFORE canonicalizing the prefix
-      val remaining =
+      val remaining: Option[Path] =
         existing match
           case Some(prefix) =>
             val prefixCount = prefix.getNameCount
             val pCount      = p.getNameCount
             if prefixCount < pCount then
-              p.subpath(prefixCount, pCount)
+              Some(p.subpath(prefixCount, pCount))
             else
-              Paths.get("")
+              None
           case None =>
-            Paths.get("") // nothing exists; whole path is "remaining"
+            None
 
       // Canonicalize the prefix
       val resolvedPrefix =
@@ -263,9 +263,9 @@ object pathExts {
 
       // Reattach and normalize
       val finalPath =
-        resolvedPrefix.resolve(remaining).normalize()
+        resolvedPrefix.resolve(remaining.mkString("/")).normalize()
 
-      finalPath
+      finalPath.toString.replace('\\', '/')
     }
   }
 
@@ -287,7 +287,7 @@ object pathExts {
         Files.walk(f.toPath).iterator().asScala.map(_.toFile)
       else
         Iterator.empty
-      }
+  }
 
   lazy val UTC: ZoneId          = java.time.ZoneId.of("UTC")
   //lazy val EasternTime: ZoneId  = java.time.ZoneId.of("America/New_York")

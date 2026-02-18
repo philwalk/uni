@@ -1,5 +1,6 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
+
 //> using dep com.lihaoyi::ujson::4.0.2
 //> using dep org.vastblue:uni_3:0.8.2
 
@@ -22,7 +23,7 @@ object Numpy2Mat {
   def usage(m: String = ""): Nothing = {
     showUsage(m, "",
       "--json <input.json>",
-      "<input.py>"
+      "<input.py> | <input.json>"
     )
   }
 
@@ -32,29 +33,40 @@ object Numpy2Mat {
     // ── main ──────────────────────────────────────────────────────────────────────
     eachArg(args.toSeq, usage) {
       case "--json" =>
-        jsonFile = consumeNext
-        if !jsonFile.path.isFile then
-          usage(s"not found [$jsonFile]")
+        val p = consumeNext.path
+        if !p.isFile then
+          usage(s"not found [${p.posx}]")
+        jsonFile = p.posx
+        
       case fname if Paths.get(fname).isFile =>
-        pyFile = fname
-        if !pyFile.path.isFile then
-          usage(s"not found [$pyFile]")
+        val p = fname.path
+        if !p.isFile then
+          usage(s"not found [${p.posx}]")
+        p.suffix match
+          case "json" =>
+            jsonFile = p.posx
+          case "py" =>
+            pyFile = p.posx
+
       case arg =>
         usage(s"unrecognized arg [$arg]")
     }
-    (jsonFile.isEmpty, pyFile.isEmpty) match
+
+    (jsonFile.nonEmpty, pyFile.nonEmpty) match
       case (false, false) =>
         usage(s"must specify either '--json <jsonFile>' OR <pyFile>")
-      case (true, true) =>
-        usage(s"either --json <jsonFile> OR <pyFile> but not both:  json[$jsonFile], py[$pyFile]")
-      case (false, true) =>
-        val output = Np2Mat.translateFile(pyFile)
-        print(output+"\n")
       case (true, false) =>
+        eprintf("jsonFile[%s]\n", jsonFile)
         val fname = Paths.get(jsonFile).posx
         val json   = scala.io.Source.fromFile(fname).mkString
-        val output = Np2Mat.translateJson(json)
+        val output = Numpy2Mat.translateJson(json)
+        print(output.replaceAll("\r", "")+"\n")
+      case (false, true) =>
+        eprintf("pyFile[%s]\n", pyFile)
+        val output = Numpy2Mat.translateFile(pyFile)
         print(output+"\n")
+      case (true, true) =>
+        usage(s"either --json <jsonFile> OR <pyFile> but not both:  json[$jsonFile], py[$pyFile]")
       case _ =>
         usage()
   }
@@ -65,8 +77,8 @@ object Numpy2Mat {
     val json = generateAst(pythonPath)
     translateJson(json)
 
-  def translateJson(json: String): String =
-    val tree = ujson.read(json)
+  def translateJson(jsonPath: String): String =
+    val tree = ujson.read(jsonPath)
     val ctx  = TranslateContext()
     ctx.indent = 2
     val body = translateModule(tree, ctx)
@@ -97,9 +109,9 @@ print(json.dumps(node_to_dict(tree), indent=2))
 """.trim
     val scriptFile = java.io.File.createTempFile("ast_dump", ".py")
     scala.util.Using(java.io.PrintWriter(scriptFile))(_.write(script))
-    val result = sys.process.Process(Seq("python", scriptFile.getAbsolutePath, pythonPath)).!!
+    val ProcStatus(exitCode, stdout, stderr, exOpt) = shellExecProc(s"mypy compile ${scriptFile.toString.posx}")
     scriptFile.delete()
-    result
+    stdout.mkString("\n")
 
   // ── context ─────────────────────────────────────────────────────────────
 
@@ -128,7 +140,7 @@ print(json.dumps(node_to_dict(tree), indent=2))
     tree("body").arr.flatMap(stmt => translateStmt(stmt, ctx))
 
   private def renderOutput(lines: Seq[String], ctx: TranslateContext): String =
-    val scriptHeader = """#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+    val scriptHeader = """#!/usr/bin/env -S scala-cli shebang -deprecation
       |
       |//> using dep org.vastblue:uni_3:0.8.2""".trim.stripMargin
 
@@ -267,7 +279,7 @@ print(json.dumps(node_to_dict(tree), indent=2))
 
   private def translateSubscriptAssign(target: Value, value: Value, ctx: TranslateContext): Seq[String] =
     val obj   = translateExpr(target("value"), ctx)
-    val slice = translateSlice(target("slice"), ctx)
+    val slice = translateSliceWithDimensions(target("slice"), obj, ctx)
     val (expr, info) = translateExprWithInfo(value, ctx, None)
     val safeExpr = if !info.isMatrix && info.scalaType != "Double" then s"($expr).toDouble" else expr
     Seq(s"${ctx.indentStr}$obj($slice) = $safeExpr")
@@ -386,7 +398,7 @@ print(json.dumps(node_to_dict(tree), indent=2))
 
       case "Subscript" =>
         val obj   = translateExpr(node("value"), ctx)
-        val slice = translateSlice(node("slice"), ctx)
+        val slice = translateSliceWithDimensions(node("slice"), obj, ctx)
         (s"$obj($slice)", defaultInfo)
 
       case "IfExp" =>
@@ -456,7 +468,7 @@ print(json.dumps(node_to_dict(tree), indent=2))
         name match
           case "print" =>
             val argStr = args.map(a => translateExpr(a, ctx)).mkString(", ")
-            (s"println($argStr)", defaultInfo.copy(isMatrix = false))
+            (s"print($argStr.show)", defaultInfo.copy(isMatrix = false))
           case "len" =>
             val a = translateExpr(args(0), ctx)
             (s"$a.size", defaultInfo.copy(isMatrix = false))
@@ -947,23 +959,31 @@ print(json.dumps(node_to_dict(tree), indent=2))
 
   // ── slice ────────────────────────────────────────────────────────────────
 
-  private def translateSlice(node: Value, ctx: TranslateContext): String =
+  private def translateSlice(node: Value, ctx: TranslateContext, objName: Option[String] = None, axis: Int = 0): String =
     node("_type").str match
       case "Slice" =>
         val lower = node.obj.get("lower").filter(!_.isNull).map(v => translateExpr(v, ctx))
         val upper = node.obj.get("upper").filter(!_.isNull).map(v => translateExpr(v, ctx))
         val step  = node.obj.get("step").filter(!_.isNull).map(v => translateExpr(v, ctx))
+
+        val end = objName match {
+          case Some(name) => if axis == 0 then s"$name.rows" else s"$name.cols"
+          case None => "Int.MaxValue"
+        }
         (lower, upper, step) match
           case (None,    None,    None)    => "::"
-          case (None,    None,    Some(s)) => s"0 until Int.MaxValue by $s"
-          case (Some(l), None,    None)    => s"$l until Int.MaxValue"
+          case (None,    None,    Some(s)) => s"0 until $end by $s"
+          case (Some(l), None,    None)    => s"$l until $end"
           case (None,    Some(u), None)    => s"0 until $u"
           case (Some(l), Some(u), None)    => s"$l until $u"
           case (Some(l), Some(u), Some(s)) => s"$l until $u by $s"
           case (None,    Some(u), Some(s)) => s"0 until $u by $s"
-          case (Some(l), None,    Some(s)) => s"$l until Int.MaxValue by $s"
+          case (Some(l), None,    Some(s)) => s"$l until $end by $s"
       case "Tuple" =>
-        node("elts").arr.map(e => translateSlice(e, ctx)).mkString(", ")
+        node("elts").arr.zipWithIndex.map { case (e, idx) =>
+          translateSlice(e, ctx, objName, idx)
+        }.mkString(", ")
+
       case "Constant" =>
         translateExpr(node, ctx)
       case "Name" =>
@@ -973,6 +993,18 @@ print(json.dumps(node_to_dict(tree), indent=2))
         translateExpr(node, ctx)
 
   // ── list comp ────────────────────────────────────────────────────────────
+  private def translateSliceWithDimensions(sliceNode: Value, obj: String, ctx: TranslateContext): String =
+    sliceNode("_type").str match {
+      case "Tuple" => 
+        // Multiple dimensions: m[::2, :] 
+        val slices = sliceNode("elts").arr.zipWithIndex.map { case (s, axis) =>
+          translateSlice(s, ctx, Some(obj), axis)
+        }
+        slices.mkString(", ")
+      case _ => 
+        // Single dimension: m[::2] - assume axis 0 (rows)
+        translateSlice(sliceNode, ctx, Some(obj), 0)
+    }
 
   private def translateListComp(
       node: Value, ctx: TranslateContext): (String, VarInfo) =
