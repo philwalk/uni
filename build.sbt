@@ -82,7 +82,6 @@ libraryDependencies ++= Seq(
   "org.bytedeco"             % "openblas-platform" % "0.3.30-1.5.12",
   "org.scalameta"           %% "munit"             % "1.2.1" % Test,
   "org.scalameta"           %% "munit-scalacheck"  % "1.2.0" % Test,
-//"com.lihaoyi"             %% "ujson"             % "4.0.2" // temporary
 )
 
 /*
