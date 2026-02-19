@@ -3907,4 +3907,96 @@ class MatTest extends munit.FunSuite {
     assert(m(1, 1) == 0.0) // Integrity check
   }
   
+  test("Double ~^ operator basic functionality") {
+    assertEquals(2.0 ~^ 3.0, 8.0, 1e-10)
+    assertEquals(5.0 ~^ 2.0, 25.0, 1e-10)
+    assertEquals(10.0 ~^ 0.0, 1.0, 1e-10)
+    assertEquals(4.0 ~^ 0.5, 2.0, 1e-10)
+  }
+  
+  test("Double ~^ operator precedence with multiplication") {
+    // Should be 2 * (3 ~^ 2) = 2 * 9 = 18
+    assertEquals(2.0 * 3.0 ~^ 2.0, 18.0, 1e-10)
+    
+    // Should be (2 * 3) ~^ 2 = 6 ~^ 2 = 36 
+    assertEquals((2.0 * 3.0) ~^ 2.0, 36.0, 1e-10)
+  }
+  
+  test("Double ~^ operator precedence with addition") {
+    // Should be 5 + (2 ~^ 3) = 5 + 8 = 13
+    assertEquals(5.0 + 2.0 ~^ 3.0, 13.0, 1e-10)
+  }
+  
+  test("Mat[Double] ~^ operator element-wise") {
+    val m = Mat[Double]((2, 3), (4, 5))
+    val result = m ~^ 2.0
+    val expected = Mat[Double]((4, 9), (16, 25))
+    
+    assert(result.allclose(expected))
+  }
+  
+  test("Mat[Double] ~^ operator with scalar precedence") {
+    val m = Mat.ones[Double](2, 2)
+    val result = 2.0 * m ~^ 3.0  // Should be 2 * (m ^ 3) = 2 * ones = 2 * ones
+    val expected = Mat.full[Double](2, 2, 2.0)
+    
+    assert(result.allclose(expected))
+  }
+  
+  test("Float ~^ operator") {
+    assertEquals(2.0f ~^ 3.0f, 8.0, 1e-6)
+    assertEquals(3.0f ~^ 2.0f, 9.0, 1e-6)
+  }
+  
+  test("Int ~^ operator returns Double") {
+    assertEquals(2 ~^ 3, 8.0, 1e-10)
+    assertEquals(10 ~^ 2, 100.0, 1e-10)
+  }
+
+  test("Double ~^ edge cases") {
+    assertEquals(2.0 ~^ 0.0, 1.0, 1e-10)   // any base ~^ 0 = 1
+    assertEquals(0.0 ~^ 0.0, 1.0, 1e-10)   // Math.pow convention
+    assertEquals(2.0 ~^ 1.0, 2.0, 1e-10)   // any base ~^ 1 = base
+    assertEquals(2.0 ~^ -2.0, 0.25, 1e-10) // negative exponent
+    assertEquals(0.0 ~^ 2.0, 0.0, 1e-10)   // zero base
+  }
+
+  test("Double ~^ cross-type promotion") {
+    assertEquals(2 ~^ 2.0, 4.0, 1e-10)     // Int base, Double exponent
+    assertEquals(2.0 ~^ 2, 4.0, 1e-10)     // Double base, Int exponent
+  }
+
+  test("Double ~^ precedence with addition") {
+    // Should be 2 + (3 ~^ 2) = 2 + 9 = 11, not (2 + 3) ~^ 2 = 25
+    assertEquals(2.0 + 3.0 ~^ 2.0, 11.0, 1e-10)
+  }
+
+  test("Mat[Double] ~^ identity cases") {
+    val m = Mat[Double]((2, 3), (4, 5))
+    assert((m ~^ 0).allclose(Mat.ones[Double](2, 2)))
+    assert((m ~^ 1).allclose(m))                   // m ~^ 1 = m
+  }
+
+  test("Mat[Double] ~^ negative and fractional exponents") {
+    val m = Mat[Double]((2, 3), (4, 5))
+    assert((m ~^ -1.0).allclose(Mat[Double]((0.5, 1.0/3.0), (0.25, 0.2))))
+    assert((m ~^ 0.5).allclose(Mat[Double]((math.sqrt(2), math.sqrt(3)), (2.0, math.sqrt(5)))))
+  }
+
+  test("Mat[Float] ~^ operator") {
+    val m = Mat[Float]((2, 3), (4, 5))
+    val result = m ~^ 2.0
+    val expected = Mat[Float]((4, 9), (16, 25))
+    assert(result.allclose(expected))
+  }
+
+  test("Big ~^ integer exponent uses BigDecimal precision") {
+    val b = Big(2)
+    assertEquals(b ~^ Big(10), Big(1024))
+  }
+
+  test("Big ~^ fractional exponent falls back to Double") {
+    val b = Big(4)
+    assertEquals((b ~^ Big(0.5)).toDouble, 2.0, 1e-10)
+  }
 }
