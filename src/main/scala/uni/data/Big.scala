@@ -84,18 +84,6 @@ object Big:
 
     inline def signum: Int = n.signum // Inside this scope, b is treated as a BigDecimal
 
-    /*
-    def ~^(exponent: Big): Big = 
-      val expDouble = exponent.toDouble
-      if (expDouble == expDouble.toInt) {
-        // Integer exponent - use BigDecimal.pow for precision
-        Big(n.underlying.pow(expDouble.toInt))
-      } else {
-        // Fractional exponent - fall back to double precision
-        Big(math.pow(n.toDouble, expDouble))
-      }
-      */
-
     def ~^[T](exponent: T)(using frac: Fractional[T]): Big = 
       val expDouble = frac.toDouble(exponent)
       if (expDouble == expDouble.toInt) {

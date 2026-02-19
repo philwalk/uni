@@ -165,3 +165,16 @@ final class BigSuite extends FunSuite:
     val rounded = big.setScale(1, RoundingMode.HALF_UP)
     assertEquals(rounded.toBigDecimal, BigDecimal("-2.8"))
   }
+
+  test("divide by zero returns None") {
+    val ten = Big(10)
+    val chek = ten / Big.zero
+    assertEquals(chek, BadNum)  // Tests the None branch
+  }
+
+  test("divide non-zero returns Some") {
+    val ten = Big(10)
+    val chek = ten / Big(2)
+    assertEquals(chek, Big(5))  // Tests the Some branch
+  }
+
