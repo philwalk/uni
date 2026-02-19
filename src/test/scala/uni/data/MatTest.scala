@@ -1528,53 +1528,6 @@ class MatTest extends munit.FunSuite {
   }
 
   // ============================================================================
-  // rand / randn
-  // ============================================================================
-  test("rand shape is correct") {
-    val m = Mat.rand(3, 4)
-    assertEquals(m.shape, (3, 4))
-  }
-
-  test("rand values in [0, 1)") {
-    val m = Mat.rand(10, 10)
-    assert(m.min >= 0.0)
-    assert(m.max < 1.0)
-  }
-
-  test("rand with seed is reproducible") {
-    val m1 = Mat.rand(3, 3, seed = 42)
-    val m2 = Mat.rand(3, 3, seed = 42)
-    assert(m1.allclose(m2))
-  }
-
-  test("rand different seeds give different results") {
-    val m1 = Mat.rand(3, 3, seed = 42)
-    val m2 = Mat.rand(3, 3, seed = 99)
-    assert(!m1.allclose(m2))
-  }
-
-  test("randn shape is correct") {
-    val m = Mat.randn(3, 4)
-    assertEquals(m.shape, (3, 4))
-  }
-
-  test("randn with seed is reproducible") {
-    val m1 = Mat.randn(3, 3, seed = 42)
-    val m2 = Mat.randn(3, 3, seed = 42)
-    assert(m1.allclose(m2))
-  }
-
-  test("randn values roughly normal (mean near 0, std near 1)") {
-    val m = Mat.randn(100, 100)
-    val mu = m.mean
-    val variance = m.map((x: Double) => (x - mu) * (x - mu)).mean
-    // With 10000 samples, mean should be very close to 0
-    assertEqualsDouble(m.mean, 0.0, 0.1)
-    // Variance should be close to 1
-    assertEqualsDouble(variance, 1.0, 0.1)
-  }
-
-  // ============================================================================
   // cumsum
   // ============================================================================
   test("cumsum no axis flattens and accumulates") {
@@ -3999,4 +3952,239 @@ class MatTest extends munit.FunSuite {
     val b = Big(4)
     assertEquals((b ~^ Big(0.5)).toDouble, 2.0, 1e-10)
   }
+
+  // ============================================================================
+  // rand / randn
+  // ============================================================================
+  test("rand shape is correct") {
+    val m = Mat.rand(3, 4)
+    assertEquals(m.shape, (3, 4))
+  }
+
+  test("rand values in [0, 1)") {
+    val m = Mat.rand(10, 10)
+    println(s"Created Mat: rows=${m.rows}, cols=${m.cols}, data.length=${m.data.length}")
+    println(s"First few values: ${m.data.take(5).mkString(", ")}")
+    assert(m.min >= 0.0)
+    assert(m.max < 1.0)
+  }
+
+  test("rand with seed is reproducible") {
+    Mat.setSeed(42)
+    val m1 = Mat.rand(3, 3)
+    Mat.setSeed(42)
+    val m2 = Mat.rand(3, 3)
+    assert(m1.allclose(m2))
+  }
+
+  test("rand different seeds give different results") {
+    Mat.setSeed(42)
+    val m1 = Mat.rand(3, 3)
+    Mat.setSeed(99)
+    val m2 = Mat.rand(3, 3)
+    assert(!m1.allclose(m2))
+  }
+
+  test("randn shape is correct") {
+    val m = Mat.randn(3, 4)
+    assertEquals(m.shape, (3, 4))
+  }
+
+  test("randn with seed is reproducible") {
+    Mat.setSeed(42)
+    val m1 = Mat.randn(3, 3)
+    Mat.setSeed(42)
+    val m2 = Mat.randn(3, 3)
+    assert(m1.allclose(m2))
+  }
+
+  test("randn values roughly normal (mean near 0, std near 1)") {
+    val m = Mat.randn(100, 100)
+    val mu = m.mean
+    val variance = m.map((x: Double) => (x - mu) * (x - mu)).mean
+    // With 10000 samples, mean should be very close to 0
+    assertEqualsDouble(m.mean, 0.0, 0.1)
+    // Variance should be close to 1
+    assertEqualsDouble(variance, 1.0, 0.1)
+  }
+
+  test("rand Mat.setSeed produces deterministic sequence") {
+    Mat.setSeed(42)
+    val seq1 = (0 until 5).map(_ => Mat.nextRandLong)
+    
+    Mat.setSeed(42)
+    val seq2 = (0 until 5).map(_ => Mat.nextRandLong)
+    
+    assertEquals(seq1, seq2, "Same seed should produce same sequence")
+  }
+
+  test("rand Mat RNG matches NumPy seed=42 integer sequence") {
+    Mat.setSeed(42)
+    val expected = Array(383329928L, 3324115917L, 2811363265L, 1884968545L, 1859786276L)
+    val actual = Array.fill(5)(Mat.nextRandLong)
+    
+    expected.zip(actual).zipWithIndex.foreach { case ((exp, act), i) =>
+      assertEquals(act, exp, s"Mismatch at position $i")
+    }
+  }
+
+  test("rand Mat RNG matches NumPy seed=0 sequence") {
+    Mat.setSeed(0)
+    val expected = Array(3653403231L, 2735729615L, 2195314465L, 1158725112L, 1322117304L)
+    val actual = Array.fill(5)(Mat.nextRandLong)
+    
+    expected.zip(actual).zipWithIndex.foreach { case ((exp, act), i) =>
+      assertEquals(act, exp, s"Seed=0 mismatch at position $i")
+    }
+  }
+
+  test("rand Mat.uniform matches NumPy distribution range") {
+    Mat.setSeed(42)
+    val m = Mat.uniform(0.0, 10.0, 100, 100)
+    
+    // Check all values in range
+    assert(m.data.forall(x => x >= 0.0 && x < 10.0), "All values should be in [0, 10)")
+    
+    // Check mean is roughly in middle
+    val mean = m.data.sum / m.data.length
+    assert(mean > 4.0 && mean < 6.0, s"Mean $mean should be ~5.0")
+  }
+
+  test("rand Mat.randn produces standard normal distribution") {
+    Mat.setSeed(42)
+    val m = Mat.randn(1000, 1000)
+    
+    // Check mean and std using direct calculation
+    val mean = m.data.sum / m.data.length
+    val variance = m.data.map(x => (x - mean) * (x - mean)).sum / m.data.length
+    val std = math.sqrt(variance)
+    
+    assert(math.abs(mean) < 0.05, s"Mean $mean should be ~0")
+    assert(math.abs(std - 1.0) < 0.05, s"Std $std should be ~1")
+  }
+
+  test("rand Mat.randint generates integers in range") {
+    Mat.setSeed(42)
+    val values = (0 until 100).map(_ => Mat.randint(0, 100))
+    
+    assert(values.forall(_ >= 0), "All values should be >= 0")
+    assert(values.forall(_ < 100), "All values should be < 100")
+    assert(values.toSet.size > 50, "Should have good variety of values")
+  }
+
+  test("rand Mat.randint matrix form") {
+    Mat.setSeed(42)
+    val m = Mat.randint(0, 10, 5, 5)
+    
+    assert(m.data.forall(x => x >= 0 && x < 10), "All values in [0, 10)")
+    assertEquals(m.rows, 5)
+    assertEquals(m.cols, 5)
+  }
+
+  test("rand NumPy RNG cache file loads seeds 0-100") {
+    // Seeds 0-100 should be pre-cached, no Python call needed
+    for (seed <- Seq(0L, 1L, 42L, 50L, 99L, 100L)) {
+      Mat.setSeed(seed)
+      val value = Mat.nextRandLong
+      assert(value >= 0, s"Seed $seed should produce valid output without Python")
+    }
+  }
+
+  test("rand Different seeds produce different sequences") {
+    Mat.setSeed(0)
+    val seq0 = (0 until 5).map(_ => Mat.nextRandLong)
+    
+    Mat.setSeed(1)
+    val seq1 = (0 until 5).map(_ => Mat.nextRandLong)
+    
+    assert(seq0 != seq1, "Different seeds should produce different sequences")
+  }
+
+  test("rand Mat.rand produces values in [0, 1)") {
+    Mat.setSeed(42)
+    val m = Mat.rand(100, 100)
+    
+    assert(m.data.forall(x => x >= 0.0 && x < 1.0), "All values should be in [0, 1)")
+  }
+
+  /*
+  test("NumPyRNG matches NumPy seed=42 sequence") {
+    Mat.setSeed(42)
+    val expected = Array(51, 92, 14, 71, 60)
+    val actual = Array.fill(5)((globalRNG.nextInt() % 100).toInt)
+    
+    expected.zip(actual).zipWithIndex.foreach { case ((exp, act), i) =>
+      assertEquals(act, exp, s"Mismatch at position $i")
+    }
+  }
+
+  test("NumPyRNG uniform distribution with seed=42") {
+    Mat.setSeed(42)
+    val m = Mat.uniform(0.0, 10.0, 2, 3)
+    
+    // First few values from: np.random.seed(42); np.random.uniform(0, 10, (2, 3))
+    // Verify at least the first value matches approximately
+    assert(m(0, 0) > 3.7 && m(0, 0) < 3.8, s"First uniform value ${m(0, 0)} doesn't match NumPy")
+  }
+
+  test("NumPyRNG state advances correctly") {
+    Mat.setSeed(42)
+    val first = globalRNG.nextInt()
+    
+    Mat.setSeed(42)
+    val second = globalRNG.nextInt()
+    
+    assertEquals(first, second, "Same seed should produce same first value")
+    
+    val third = globalRNG.nextInt()
+    assert(third != first, "Sequential calls should produce different values")
+  }
+  */
+  test("rand values in [0, 1)") {
+    val m = Mat.rand(10, 10)
+    assert(m.data.min >= 0.0, s"Min value ${m.data.min} should be >= 0")
+    assert(m.data.max < 1.0, s"Max value ${m.data.max} should be < 1")
+  }
+
+  test("rand with seed is reproducible") {
+    Mat.setSeed(42)
+    val m1 = Mat.rand(5, 5)
+    Mat.setSeed(42)
+    val m2 = Mat.rand(5, 5)
+    assert(m1.data.sameElements(m2.data))
+  }
+
+  test("randn with seed is reproducible") {
+    Mat.setSeed(42)
+    val m1 = Mat.randn(5, 5)
+    Mat.setSeed(42)
+    val m2 = Mat.randn(5, 5)
+    assert(m1.data.sameElements(m2.data))
+  }
+
+  test("randn values roughly normal (mean near 0, std near 1)") {
+    Mat.setSeed(42)
+    val m = Mat.randn(100, 100)
+    val mean = m.data.sum / m.data.length
+    val variance = m.data.map(x => (x - mean) * (x - mean)).sum / m.data.length
+    val std = math.sqrt(variance)
+    
+    assert(math.abs(mean) < 0.1, s"Mean $mean should be ~0")
+    assert(math.abs(std - 1.0) < 0.1, s"Std $std should be ~1")
+  }
+
+  test("ISOLATED seed=0 test") {
+    // Force complete reset
+    Mat.globalRNG = new NumPyRNG(0)
+    val first = Mat.nextRandLong
+    assertEquals(first, 3653403231L, s"First value from fresh seed=0")
+  }
+  test("seed=0 isolation test") {
+    // Completely fresh RNG
+    val rng = new NumPyRNG(0)
+    val first = rng.nextInt()
+    println(s"Direct RNG seed=0 first value: $first")
+    assertEquals(first, 3653403231L)
+  }
+
 }

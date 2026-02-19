@@ -2,7 +2,7 @@ package uni.data
 
 import scala.reflect.ClassTag
 import scala.compiletime.erasedValue
-import scala.util.Random
+//import scala.util.Random
 
 object Mat {
   // Opaque type wraps flat array with dimensions
@@ -14,6 +14,7 @@ object Mat {
   type Vec[T]    = Mat[T]
   type RowVec[T] = Mat[T]
   type ColVec[T] = Mat[T]
+  
   
   private case class MatData[T] private[Mat](
     data: Array[T],
@@ -73,6 +74,7 @@ object Mat {
     private[data] inline def rs: Int = m.rs
     private[data] inline def cs: Int = m.cs
     private[data] inline def offset: Int = m.offset
+    // In Mat extension methods
 
     def isContiguous: Boolean = 
       !m.transposed && m.rs == m.cols && m.cs == 1
@@ -2719,17 +2721,6 @@ object Mat {
 
   private lazy val blasThreshold: Long = System.getProperty("uni.mat.blasThreshold", "6000").toLong
 
-  def rand(rows: Int, cols: Int, seed: Long = -1): Mat[Double] = {
-    val rng = if seed >= 0 then Random(seed) else Random
-
-    Mat.create(Array.fill(rows * cols)(rng.nextDouble()), rows, cols)
-  }
-
-  def randn(rows: Int, cols: Int, seed: Long = -1): Mat[Double] = {
-    val rng = if seed >= 0 then Random(seed) else Random
-    Mat.create(Array.fill(rows * cols)(rng.nextGaussian()), rows, cols)
-  }
-
   def vstack[U: ClassTag](matrices: Mat[U]*): Mat[U] = {
     require(matrices.nonEmpty, "vstack requires at least one matrix")
     val cols = matrices.head.cols
@@ -3014,4 +3005,51 @@ object Mat {
     def ~^(exponent: Double): Mat[T] =
       if exponent == 0.0 then Mat.eye[T](m.rows)
       else m.power(exponent)
+
+  // Global RNG state
+  private[data] lazy val defaultRNG: NumPyRNG = new NumPyRNG(0)
+  private[data] var globalRNG: NumPyRNG = defaultRNG
+
+  /** Set random seed matching NumPy's np.random.seed() */
+  def setSeed(seed: Long): Unit =
+    globalRNG = new NumPyRNG(seed)
+
+  def nextRandLong: Long = globalRNG.nextInt()
+  def nextRandInt: Long = globalRNG.nextInt() & 0xFFFFFFFFL
+  def nextRandDouble: Double = globalRNG.nextDouble()
+
+  /** NumPy: np.random.rand(rows, cols) - uniform [0, 1) */
+  def rand(rows: Int, cols: Int): Mat[Double] = {
+    val data = Array.fill(rows * cols)(globalRNG.nextDouble())
+    Mat.create(data, rows, cols)
   }
+
+  /** NumPy: np.random.randn(rows, cols) - standard normal */
+  def randn(rows: Int, cols: Int): Mat[Double] = {
+    val data = Array.fill(rows * cols)(globalRNG.randn())
+    Mat.create(data, rows, cols)
+  }
+
+  /** NumPy: np.random.uniform(low, high, (rows, cols)) */
+  def uniform(low: Double, high: Double, rows: Int, cols: Int): Mat[Double] = {
+    val data = Array.fill(rows * cols)(globalRNG.uniform(low, high))
+    Mat.create(data, rows, cols)
+  }
+
+  /** NumPy: np.random.randint(low, high, (rows, cols)) */
+  def randint(low: Int, high: Int, rows: Int, cols: Int): Mat[Int] = {
+    val range = high - low
+    val data = Array.fill(rows * cols) {
+      val value = globalRNG.nextInt()
+      ((value % range + range) % range + low).toInt  // Handle negative modulo
+    }
+    Mat.create(data, rows, cols)
+  }
+
+  /** NumPy: np.random.randint(low, high) - single integer */
+  def randint(low: Int, high: Int): Int = {
+    val range = high - low
+    val value = globalRNG.nextInt()
+    ((value % range + range) % range + low).toInt
+  }
+}

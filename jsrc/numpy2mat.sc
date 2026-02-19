@@ -1,6 +1,5 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-
 //> using dep com.lihaoyi::ujson::4.0.2
 //> using dep org.vastblue:uni_3:0.8.2
 
@@ -87,7 +86,7 @@ object Numpy2Mat {
   // ── AST generation ──────────────────────────────────────────────────────
 
   private def generateAst(pythonPath: String): String =
-    val script = """
+    val script = s"""
 import ast, json, sys
 
 def node_to_dict(node):
@@ -101,7 +100,7 @@ def node_to_dict(node):
     else:
         return node
 
-with open(sys.argv[1]) as f:
+with open("$pythonPath") as f:
     code = f.read()
 
 tree = ast.parse(code)
@@ -109,8 +108,9 @@ print(json.dumps(node_to_dict(tree), indent=2))
 """.trim
     val scriptFile = java.io.File.createTempFile("ast_dump", ".py")
     scala.util.Using(java.io.PrintWriter(scriptFile))(_.write(script))
-    val ProcStatus(exitCode, stdout, stderr, exOpt) = shellExecProc(s"mypy compile ${scriptFile.toString.posx}")
-    scriptFile.delete()
+    val ProcStatus(exitCode, stdout, stderr, exOpt) = shellExecProc(s"""python "${scriptFile.toString.posx}"""")
+    //printf("scriptFile[%s]\n", scriptFile)
+    //scriptFile.delete()
     stdout.mkString("\n")
 
   // ── context ─────────────────────────────────────────────────────────────
@@ -749,9 +749,18 @@ print(json.dumps(node_to_dict(tree), indent=2))
         (ctx.todo(s"random.randint($lo, $hi) - use Mat.rand then scale"), info)
       case "seed"    =>
         val s = translateExpr(args(0), ctx)
-        (ctx.todo(s"random.seed($s) - use seed parameter on Mat.rand/randn"), info)
+      case "seed" =>
+        (s"Mat.setSeed($s.toLong)", info.copy(isMatrix = false))
       case "shuffle" => (ctx.todo("random.shuffle - no direct equivalent"), info)
       case "choice"  => (ctx.todo("random.choice - no direct equivalent"), info)
+      case "uniform" =>
+        val lo = if args.nonEmpty then translateExpr(args(0), ctx) else "0.0"
+        val hi = if args.length > 1 then translateExpr(args(1), ctx) else "1.0"
+        val size = kwarg("size")
+          .map(v => shapeArgs(v))
+          .orElse(if args.length > 2 then Some(shapeArgs(args(2))) else None)
+          .getOrElse("1, 1")
+        (s"Mat.uniform($lo, $hi, $size)", info)
       case other     => (ctx.todo(s"np.random.$other - not yet translated"), info)
 
   // ── method calls on Mat instances ────────────────────────────────────────
