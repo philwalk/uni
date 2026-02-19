@@ -2994,4 +2994,24 @@ object Mat {
   def fullLike[T: ClassTag](m: Mat[T], value: T): Mat[T] =
     Mat.full[T](m.rows, m.cols, value)
 
-}
+  // exponentiation operator is '~^', chosen to achieve numpy
+  // operator-precedence w.r.t. * and ~^
+  // In scala, ~^ has highter precedence than *
+  //          2 * 3 ~^ 2 = 18 ; 2*(3^2)
+  // whereas  2 * 3  ^ 2 = 36 ; (2*3)^2
+  //
+  // not directly related to exponentiation, but needed
+  // to support the usage in the above comment
+  // (to left-multiply a matrix by a scalar).
+  extension (scalar: Double)
+    def *(m: Mat[Double]): Mat[Double] = m * scalar
+
+  extension (base: Double)
+    def ~^(exponent: Double): Double = Math.pow(base, exponent)
+
+  extension [T: ClassTag](m: Mat[T])(using frac: Fractional[T])
+    def ~^(exponent: Int): Mat[T] = m.power(exponent)
+    def ~^(exponent: Double): Mat[T] =
+      if exponent == 0.0 then Mat.eye[T](m.rows)
+      else m.power(exponent)
+  }
