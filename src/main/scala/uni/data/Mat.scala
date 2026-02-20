@@ -6,7 +6,8 @@ import scala.compiletime.erasedValue
 
 object Mat {
   // Opaque type wraps flat array with dimensions
-  opaque type Mat[T] = MatData[T]
+  opaque type Mat[T] = Internal.MatData[T]
+  private type MatData[T] = Internal.MatData[T]
   // Type aliases for documentation - same as Mat[T] at runtime
   // Vec[T]    - either row or column vector (rows==1 or cols==1)
   // RowVec[T] - row vector (rows==1)
@@ -14,80 +15,109 @@ object Mat {
   type Vec[T]    = Mat[T]
   type RowVec[T] = Mat[T]
   type ColVec[T] = Mat[T]
-  
-  
-  private case class MatData[T] private[Mat](
-    data: Array[T],
-    rows: Int,
-    cols: Int,
-    transposed: Boolean = false, // Keep this temporarily for staging
-    offset: Int = 0,  // Default to 0
-    rs: Int = -1,     // rowSride ; phase 0: always 'cols'
-    cs: Int = -1,     // colStride ; phase 0: always 1
-  )
-  
-  private[data] def create[T: ClassTag](
-    data: Array[T],
-    rows: Int,
-    cols: Int,
-    transposed: Boolean = false,
-    offset: Int = 0, // added in phase 2
-    rs: Int = -1,
-    cs: Int = -1,
-  ): Mat[T] = {
-    // We explicitly calculate the strides that your legacy code 
-    // was previously calculating implicitly inside the 'apply' if/else.
-    val actualRs = if (rs >= 0) rs else (if transposed then 1 else cols)
-    val actualCs = if (cs >= 0) cs else (if transposed then rows else 1)
 
-    // must be the ONLY place the private constructor is used!
-    val m = new MatData(data, rows, cols, transposed, offset, actualRs, actualCs)
+  private object Internal {
+    class MatData[T] private[Internal](
+      private[Mat] val _tdata: Array[T],
+      private[Mat] val _rows: Int,
+      private[Mat] val _cols: Int,
+      private[Mat] val _transposed: Boolean = false, // Keep this temporarily for staging
+      private[Mat] val _offset: Int = 0,  // Default to 0
+      private[Mat] val _rs: Int = -1,     // rowSride ; phase 0_: always 'cols'
+      private[Mat] val _cs: Int = -1,     // colStride ; phase 0_: always 1
+    )
 
-    if m.isWeirdLayout then
-      val clean = m.matCopy
-      //println(s"GUARD TRIGGERED: Original Transposed=${m.transposed}, clean Transposed=${clean.transposed}")
-      clean
-    else
-      m
+    private[data] def create[T: ClassTag](
+      _tdata: Array[T],
+      _rows: Int,
+      _cols: Int,
+      _transposed: Boolean = false,
+      _offset: Int = 0, // added in phase 2
+      _rs: Int = -1,
+      _cs: Int = -1,
+    ): Mat[T] = {
+      // We explicitly calculate the strides that your legacy code
+      // was previously calculating implicitly inside the 'apply' if/else.
+      val actualRs = if (_rs >= 0) _rs else (if _transposed then 1 else _cols)
+      val actualCs = if (_cs >= 0) _cs else (if _transposed then _rows else 1)
+
+      // must be the ONLY place the private constructor is used!
+      val m = new MatData(_tdata, _rows, _cols, _transposed, _offset, actualRs, actualCs)
+
+      if m.isWeirdLayout then
+        val clean = m.matCopy
+        //println(s"GUARD TRIGGERED: Original Transposed=${m.transposed}, clean Transposed=${clean.transposed}")
+        clean
+      else
+        m
+    }
+    private[uni] def createTestView[T: ClassTag](
+      _tdata: Array[T], _rows: Int, _cols: Int, _t: Boolean, _offset: Int, _rs: Int, _cs: Int
+    ): Mat[T] = new MatData(_tdata, _rows, _cols, _t, _offset, _rs, _cs)
+
+    // This is the ONLY bridge allowed to call 'new'
+    // We mark it 'private' so it is ONLY visible inside 'Internal'
+  //private def constructorBridge[T](...): MatData[T] = new MatData(...)
+
+    // Now, we put the 'create' logic INSIDE Internal.
+    // This makes 'Internal.create' the ONLY public entrance.
   }
-  private[uni] def createTestView[T: ClassTag](
-    data: Array[T], rows: Int, cols: Int, t: Boolean, offset: Int, rs: Int, cs: Int
-  ): Mat[T] = new MatData(data, rows, cols, t, offset, rs, cs)
+
+  // The 'Mat.create' that the rest of your app uses
+  // just forwards to the Internal gatekeeper.
+  def create[T: ClassTag](
+      tdata: Array[T],
+      rows: Int,
+      cols: Int,
+      transposed: Boolean = false,
+      offset: Int = 0, // added in phase 2
+      rs: Int = -1,
+      cs: Int = -1,
+  ): Mat[T] = {
+    Internal.create(tdata, rows, cols, transposed, offset, rs, cs)
+  }
+
 
   object :: // Sentinel object for "all" in slicing
 
-  def inspect: String = 
+  def inspect: String =
     s"Mat(${rows}x${cols}, offset=$offset, rs=$rs, cs=$cs, transposed=$transposed)"
-  
+
   // ============================================================================
   // Core Properties (NumPy-aligned)
   // ============================================================================
   extension [T](m: Mat[T])
-    inline def rows: Int            = m.rows
-    inline def cols: Int            = m.cols
-    inline def transposed: Boolean  = m.transposed
-    inline def shape: (Int, Int)    = (m.rows, m.cols)
-    inline def size: Int            = m.rows * m.cols
-    inline def ndim: Int            = 2
-    inline def isEmpty: Boolean     = m.size == 0
-    inline def underlying: Array[T] = m.data
-    private[data] inline def rs: Int = m.rs
-    private[data] inline def cs: Int = m.cs
-    private[data] inline def offset: Int = m.offset
+    // This is the "Unwrapper".
+    // It MUST exist to tell the compiler: "Treat this as the class, not the opaque type."
+    private def asData: MatData[T] = m.asInstanceOf[MatData[T]]
+    private[data] def tdata: Array[T]        = asData._tdata
+    private[data] def rows: Int              = asData._rows
+    private[data] def cols: Int              = asData._cols
+    private[data] def transposed: Boolean    = asData._transposed
+    private[data] def shape: (Int, Int)      = (asData._rows, asData._cols)
+    private[data] def size: Int              = asData._rows * asData._cols
+    private[data] def underlying: Array[T]   = asData._tdata
+    private[data] def rs: Int                = asData._rs
+    private[data] def cs: Int                = asData._cs
+    private[data] def offset: Int            = asData._offset
+    private[data] def isEmpty: Boolean       = asData.size == 0
+    def ndim: Int              = 2
     // In Mat extension methods
 
-    def isContiguous: Boolean = 
+    def asMat: Mat[T] = m // a Vec is already a Mat, so no-op
+
+    def isContiguous: Boolean =
       !m.transposed && m.rs == m.cols && m.cs == 1
 
     // 2. Stride-aware reshape
     def reshape(newRows: Int, newCols: Int)(using ct: ClassTag[T]): Mat[T] = {
-      require(newRows * newCols == m.rows * m.cols, 
+      require(newRows * newCols == m.rows * m.cols,
         s"Cannot reshape ${m.rows}x${m.cols} to ${newRows}x${newCols}")
 
       if m.isContiguous then
         // Pass arguments in the correct order for your Mat.create:
-        // data, rows, cols, transposed, offset, rs, cs
-        Mat.create(m.data, newRows, newCols, false, m.offset, newCols, 1)
+        // tdata, rows, cols, transposed, offset, rs, cs
+        Mat.create(m.tdata, newRows, newCols, false, m.offset, newCols, 1)
       else
         // If it's a slice or transposed, we must force a contiguous copy first
         m.toContiguous.reshape(newRows, newCols)
@@ -109,8 +139,8 @@ object Mat {
     }
     // Inside your extension [T](m: Mat[T]) block:
 
-    /** 
-     * NumPy: m[i, j] 
+    /**
+     * NumPy: m[i, j]
      * Element access with negative indexing support
      * m(-1, -1) accesses last element
      */
@@ -120,10 +150,10 @@ object Mat {
       require(r >= 0 && r < m.rows && c >= 0 && c < m.cols,
         s"Index ($r, $c) out of bounds for ${m.rows}x${m.cols} matrix")
       // Unified stride equation
-      m.data(m.offset + r * m.rs + c * m.cs)
+      m.tdata(m.offset + r * m.rs + c * m.cs)
     }
-    
-    /** 
+
+    /**
      * NumPy: m[i, j] = value
      * Element update with negative indexing support
      */
@@ -133,7 +163,7 @@ object Mat {
       require(r >= 0 && r < m.rows && c >= 0 && c < m.cols,
         s"Index ($r, $c) out of bounds for ${m.rows}x${m.cols} matrix")
       // Use the same unified stride equation as apply!
-      m.data(m.offset + r * m.rs + c * m.cs) = value
+      m.tdata(m.offset + r * m.rs + c * m.cs) = value
     }
     /** m(rows: Range, ::) = value */
     def update(rows: Range, cols: ::.type, value: T): Unit =
@@ -222,7 +252,7 @@ object Mat {
       while j < m.cols do
         m(row, j) = value
         j += 1
-        
+
     // col mutator
     def update(rows: ::.type, col: Int, value: T): Unit =
       var i = 0
@@ -235,12 +265,12 @@ object Mat {
   // ============================================================================
   extension [T: ClassTag](m: Mat[T])
   // 1. Helper to check if layout is standard row-major
-    // All "Phase 0" creation methods must funnel through this helper 
+    // All "Phase 0" creation methods must funnel through this helper
     // to set the default Row-Major strides.
     // Your temporary Phase 1 "Choke Point"
     def isWeirdLayout: Boolean = {
       // If it's already standard, it's definitely not weird.
-      if m.isStandardContiguous then 
+      if m.isStandardContiguous then
         false
       else if m.rs == 0 || m.cs == 0 then
         false
@@ -251,12 +281,12 @@ object Mat {
         isFragmented && !m.isStandardContiguous
     }
 
-    def isStandardContiguous: Boolean = 
-      (m.rs == m.cols && m.cs == 1 && !m.transposed) || 
+    def isStandardContiguous: Boolean =
+      (m.rs == m.cols && m.cs == 1 && !m.transposed) ||
       (m.rs == 1 && m.cs == m.rows && m.transposed)
 
     /**
-     * NumPy: m.copy() 
+     * NumPy: m.copy()
      * Return deep copy preserving transposed state
      */
     def matCopy: Mat[T] = {
@@ -282,24 +312,24 @@ object Mat {
       // 1. Normalize ranges (handle Range.inclusive vs exclusive)
       val rStart = if (rows.start < 0) m.rows + rows.start else rows.start
       val cStart = if (cols.start < 0) m.cols + cols.start else cols.start
-      
+
       val newRows = rows.length
       val newCols = cols.length
 
       // 2. Bounds check
-      if (rStart < 0 || rStart + newRows > m.rows || 
+      if (rStart < 0 || rStart + newRows > m.rows ||
           cStart < 0 || cStart + newCols > m.cols) {
         throw new IndexOutOfBoundsException(s"Slice $rows, $cols out of bounds for ${m.rows}x${m.cols}")
       }
 
       // 3. The Stride Magic: Calculate the new physical offset
-      // The new starting point is the old offset plus the 
+      // The new starting point is the old offset plus the
       // jump to the first element of the slice.
       val newOffset = m.offset + (rStart * m.rs) + (cStart * m.cs)
 
       // 4. Funnel through the Choke Point
       // We pass the existing strides (rs, cs) and the new offset.
-      // The Layout Guard will automatically check if this specific 
+      // The Layout Guard will automatically check if this specific
       // sub-view is "weird" and copy it if necessary!
       Mat.create(
         m.underlying,
@@ -347,13 +377,13 @@ object Mat {
         )
     }
 
-//    /** * Enables: m(i, ::) := 10.0 
+//    /** * Enables: m(i, ::) := 10.0
 //     * Or even: m(0 until 2, 0 until 2) := 0.0
 //     */
 //    def :=(r: Int, c: Int, value: T): Unit =
 //      // Loop through the logical shape of the matrix (the slice)
 //      // and use the stride-aware set logic
-//      m.data(r * m.cols + c) = value
+//      m.tdata(r * m.cols + c) = value
 
     /** Internal looper for broadcasting matrix-matrix operations */
     private def binOp(other: Mat[T])(op: (T, T) => T): Mat[T] = {
@@ -375,9 +405,9 @@ object Mat {
     }
 
     // --- Matrix-Matrix (Broadcasting) ---
-    def +(other: Mat[T])(using num: Numeric[T]): Mat[T] = binOp(other)(num.plus)
-    def -(other: Mat[T])(using num: Numeric[T]): Mat[T] = binOp(other)(num.minus)
-    def *:*(other: Mat[T])(using num: Numeric[T]): Mat[T] = binOp(other)(num.times)
+    def +(other: Mat[T])(using num: Numeric[T]): Mat[T] = m.binOp(other)(num.plus)
+    def -(other: Mat[T])(using num: Numeric[T]): Mat[T] = m.binOp(other)(num.minus)
+    def *:*(other: Mat[T])(using num: Numeric[T]): Mat[T] = m.binOp(other)(num.times)
     def hadamard(other: Mat[T])(using num: Numeric[T]): Mat[T] = m *:* other
 
     def unary_-(using num: Numeric[T]): Mat[T] = {
@@ -403,15 +433,15 @@ object Mat {
   // ============================================================================
   //extension [T: ClassTag](m: Mat[T])
     def T: Mat[T] = transpose
-    /** 
-     * NumPy: m.T 
+    /**
+     * NumPy: m.T
      * O(1) transpose - flips flag and swaps dims, no data movement
      */
     def transpose: Mat[T] = {
       // We create a new view, flipping the 'transposed' flag,
       // but we MUST pass the existing offset and the SWAPPED strides.
       Mat.create(
-        data = m.underlying,
+        tdata = m.underlying,
         rows = m.cols,      // Rows/Cols swap logically
         cols = m.rows,
         transposed = !m.transposed,
@@ -420,11 +450,11 @@ object Mat {
         cs = m.rs            // Col stride becomes the old Row stride
       )
     }
-    
+
     def flatten: Array[T] = {
       // We use m.size here assuming it's defined as rows * cols
-      if m.isContiguous && m.offset == 0 && m.data.length == m.rows * m.cols then
-        m.data.clone()
+      if m.isContiguous && m.offset == 0 && m.tdata.length == m.rows * m.cols then
+        m.tdata.clone()
       else
         val result = Array.ofDim[T](m.rows * m.cols)
         var i = 0
@@ -436,15 +466,15 @@ object Mat {
           i += 1
         result
     }
-    
-    def data: Array[T] = m.asInstanceOf[MatData[T]].data
+
+    def data: Array[T] = m.asInstanceOf[MatData[T]].tdata
 
     /**
      * NumPy: m.ravel()
      * Return flattened view as row vector in logical order
      */
     def ravel: Mat[T] = Mat.create(flatten, 1, m.size)
-  
+
     // ============================================================================
     // Arithmetic Operations
     // ============================================================================
@@ -558,11 +588,11 @@ object Mat {
 
     def argmin(using ord: Ordering[T]): (Int, Int) = {
       if (m.rows == 0 || m.cols == 0) throw new UnsupportedOperationException("empty matrix")
-      
+
       var minVal = m(0, 0)
       var minR = 0
       var minC = 0
-      
+
       var i = 0
       while (i < m.rows) {
         var j = 0
@@ -579,14 +609,14 @@ object Mat {
       }
       (minR, minC)
     }
-    
+
     def argmax(using ord: Ordering[T]): (Int, Int) = {
       if (m.rows == 0 || m.cols == 0) throw new UnsupportedOperationException("empty matrix")
-      
+
       var maxVal = m(0, 0)
       var maxR = 0
       var maxC = 0
-      
+
       var i = 0
       while (i < m.rows) {
         var j = 0
@@ -604,7 +634,7 @@ object Mat {
       }
       (maxR, maxC)
     }
-  
+
     // ============================================================================
     // Functional Operations
     // ============================================================================
@@ -638,7 +668,7 @@ object Mat {
         i += 1
       buf.toArray
     }
-  
+
   // ============================================================================
   // Display
   // ============================================================================
@@ -671,8 +701,8 @@ object Mat {
       Mat.create(res, m.rows, m.cols)
     }
 
-    /** 
-     * NumPy: m[:, col] 
+    /**
+     * NumPy: m[:, col]
      * Extract column as column vector
      */
     def apply(rows: ::.type, col: Int): Mat[T] = {
@@ -685,9 +715,9 @@ object Mat {
         i += 1
       Mat.create(result, m.rows, 1)
     }
-    
-    /** 
-     * NumPy: m[row, :] 
+
+    /**
+     * NumPy: m[row, :]
      * Extract row as row vector
      */
     def apply(row: Int, cols: ::.type): Mat[T] = {
@@ -700,7 +730,7 @@ object Mat {
         j += 1
       Mat.create(result, 1, m.cols)
     }
-    
+
     /**
      * NumPy: m[rows, cols]
      * Rectangular slicing with Range support
@@ -720,7 +750,7 @@ object Mat {
         i += 1
       Mat.create(result, newRows, newCols)
     }
-  
+
     def show: String = {
       def typeName: String =
         summon[ClassTag[T]].runtimeClass.getSimpleName match
@@ -730,7 +760,7 @@ object Mat {
           case other        => other
       if m.isEmpty then s"Mat[$typeName]([], shape=(0, 0))"
       else
-        val values = m.data
+        val values = m.tdata
         val absMax = values.map(v => math.abs(frac.toDouble(v))).max
         val absMin = values.filter(frac.toDouble(_) != 0.0)
                            .map(v => math.abs(frac.toDouble(v)))
@@ -818,6 +848,7 @@ object Mat {
     require(n > 0, s"Invalid range: start=$start, stop=$stop, step=$step")
     Mat.create(Array.tabulate(n)(i => frac.fromInt(start + i * step)), n, 1)
   }
+
   def linspace[T: ClassTag](start: Double, stop: Double, num: Int = 50)(using frac: Fractional[T]): Mat[T] = {
     require(num > 0, "num must be positive")
     if num == 1 then Mat.create(Array(frac.fromInt(start.toInt)), 1, 1)
@@ -895,6 +926,12 @@ object Mat {
   /** Create column vector from values */
   def col[T: ClassTag](values: T*): Mat[T] = Mat.create(values.toArray, values.length, 1)
 
+  /** Create column vector from varargs: Mat(1.0, 2.0, 3.0) → 3x1 */
+  def apply[T: ClassTag](first: T, rest: T*): ColVec[T] = {
+    val values = first +: rest
+    create(values.toArray, values.length, 1)
+  }
+
   extension [T: ClassTag](m: Mat[T])(using frac: Fractional[T])
     // applyAlongAxis
     def applyAlongAxis(fn: Mat[T] => T, axis: Int): Mat[T] = {
@@ -916,7 +953,7 @@ object Mat {
   extension [T: ClassTag](m: Mat[T]) {
 
     // ---- Matrix multiply -----------------------------------------------
-    inline def *(other: Mat[T]): Mat[T] = {
+    inline def matmul(other: Mat[T]): Mat[T] = {
       if m.cols != other.rows then
         throw IllegalArgumentException(s"m.cols[${m.cols}] != other.rows[${other.rows}]")
       inline erasedValue[T] match
@@ -930,7 +967,7 @@ object Mat {
         case _: BigDecimal => multiplyBig(other.asInstanceOf[Mat[Big]]).asInstanceOf[Mat[T]]
     }
 
-    inline def dot(other: Mat[T]): Mat[T] = m * other
+    inline def dot(other: Mat[T]): Mat[T] = m.matmul(other)
 
     // ---- Diagonal ------------------------------------------------------
     def diagonal: Array[T] = {
@@ -1224,7 +1261,7 @@ object Mat {
 
     // ---- clone ---------------------------------------------------------
     def cloneMat: Mat[T] = {
-      val src = m.data
+      val src = m.tdata
       val dst = new Array[T](src.length)
       System.arraycopy(src, 0, dst, 0, src.length)
       Mat.create(dst, m.rows, m.cols, m.transposed)
@@ -1232,13 +1269,13 @@ object Mat {
 
     // ---- Pure-JVM multiply (parallel tiled) ----------------------------
     private[data] def multiplyDouble(other: Mat[Double]): Mat[Double] = {
-      //val a = m.data.asInstanceOf[Array[Double]]
+      //val a = m.tdata.asInstanceOf[Array[Double]]
       //val b = other.data.asInstanceOf[Array[Double]]
       val rowsA = m.rows; val colsA = m.cols; val colsB = other.cols
       val result = Array.ofDim[Double](rowsA * colsB)
       val TILE = 32
 
-      val dataA = m.data.asInstanceOf[Array[Double]]
+      val dataA = m.tdata.asInstanceOf[Array[Double]]
       val dataB = other.data.asInstanceOf[Array[Double]]
       // Extract strides and offsets once to keep the inner loop fast
       val (rsA, csA, offA) = (m.rs, m.cs, m.offset)
@@ -1274,12 +1311,12 @@ object Mat {
     }
 
     private[data] def multiplyFloat(other: Mat[Float]): Mat[Float] = {
-      //val a = m.data.asInstanceOf[Array[Float]]
+      //val a = m.tdata.asInstanceOf[Array[Float]]
       //val b = other.data.asInstanceOf[Array[Float]]
       val rowsA = m.rows; val colsA = m.cols; val colsB = other.cols
       val result = Array.ofDim[Float](rowsA * colsB)
       val TILE = 32
-      // Use the matrix accessors directly. They already handle transposition, 
+      // Use the matrix accessors directly. They already handle transposition,
       // offsets, and strides correctly!
       val aAt: (Int, Int) => Float = (i, k) => m.apply(i, k).asInstanceOf[Float]
       val bAt: (Int, Int) => Float = (k, j) => other.apply(k, j).asInstanceOf[Float]
@@ -1308,7 +1345,7 @@ object Mat {
     }
 
     private[data] def multiplyBig(other: Mat[Big]): Mat[Big] = {
-      val a = m.data.asInstanceOf[Array[BigDecimal]]
+      val a = m.tdata.asInstanceOf[Array[BigDecimal]]
       val b = other.data.asInstanceOf[Array[BigDecimal]]
       val rowsA = m.rows; val colsA = m.cols; val colsB = other.cols
       val result = Array.ofDim[BigDecimal](rowsA * colsB)
@@ -1335,7 +1372,7 @@ object Mat {
     private[data] def multiplyDoubleBLAS(other: Mat[Double]): Mat[Double] = {
       import org.bytedeco.openblas.global.openblas.*
       import org.bytedeco.javacpp.*
-      val a = m.data.asInstanceOf[Array[Double]]
+      val a = m.tdata.asInstanceOf[Array[Double]]
       val b = other.data.asInstanceOf[Array[Double]]
       val rowsA = m.rows; val colsA = m.cols; val colsB = other.cols
       val result = new Array[Double](rowsA * colsB)
@@ -1354,7 +1391,7 @@ object Mat {
     private[data] def multiplyFloatBLAS(other: Mat[Float]): Mat[Float] = {
       import org.bytedeco.openblas.global.openblas.*
       import org.bytedeco.javacpp.*
-      val a = m.data.asInstanceOf[Array[Float]]
+      val a = m.tdata.asInstanceOf[Array[Float]]
       val b = other.data.asInstanceOf[Array[Float]]
       val rowsA = m.rows; val colsA = m.cols; val colsB = other.cols
       val result = new Array[Float](rowsA * colsB)
@@ -1383,7 +1420,7 @@ object Mat {
           while j < m.cols && identical do
             val a = frac.toDouble(m(i, j))
             val b = frac.toDouble(other(i, j))
-            if math.abs(a - b) > atol + rtol * math.abs(b) then 
+            if math.abs(a - b) > atol + rtol * math.abs(b) then
               identical = false
             j += 1
           i += 1
@@ -1435,7 +1472,7 @@ object Mat {
         }
         frac.div(total, frac.fromInt(m.rows * m.cols))
     }
-    
+
     def mean(axis: Int)(using frac: Fractional[T]): Mat[T] = {
       require(axis == 0 || axis == 1, s"axis must be 0 or 1, got $axis")
       val s = m.sum(axis)
@@ -1849,7 +1886,7 @@ object Mat {
           val residuals = Array.ofDim[Double](nRhs)
           if nRows > nCols then
             val xMat = Mat.create(result, nCols, nRhs)
-            val diff = md * xMat - bd
+            val diff = md @@ xMat - bd
             var c2 = 0
             while c2 < nRhs do
               var i = 0
@@ -1872,22 +1909,22 @@ object Mat {
 
     // ---- Element-wise comparison → Mat[Boolean] ----------------------------
     def gt(other: T)(using ord: Ordering[T]): Mat[Boolean] =
-      Mat.create(m.data.map(ord.gt(_, other)), m.rows, m.cols, m.transposed)
+      Mat.create(m.tdata.map(ord.gt(_, other)), m.rows, m.cols, m.transposed)
 
     def lt(other: T)(using ord: Ordering[T]): Mat[Boolean] =
-      Mat.create(m.data.map(ord.lt(_, other)), m.rows, m.cols, m.transposed)
+      Mat.create(m.tdata.map(ord.lt(_, other)), m.rows, m.cols, m.transposed)
 
     def gte(other: T)(using ord: Ordering[T]): Mat[Boolean] =
-      Mat.create(m.data.map(ord.gteq(_, other)), m.rows, m.cols, m.transposed)
+      Mat.create(m.tdata.map(ord.gteq(_, other)), m.rows, m.cols, m.transposed)
 
     def lte(other: T)(using ord: Ordering[T]): Mat[Boolean] =
-      Mat.create(m.data.map(ord.lteq(_, other)), m.rows, m.cols, m.transposed)
+      Mat.create(m.tdata.map(ord.lteq(_, other)), m.rows, m.cols, m.transposed)
 
     def :==(other: T)(using ord: Ordering[T]): Mat[Boolean] =
-      Mat.create(m.data.map(ord.equiv(_, other)), m.rows, m.cols, m.transposed)
+      Mat.create(m.tdata.map(ord.equiv(_, other)), m.rows, m.cols, m.transposed)
 
     def :!=(other: T)(using ord: Ordering[T]): Mat[Boolean] =
-      Mat.create(m.data.map(!ord.equiv(_, other)), m.rows, m.cols, m.transposed)
+      Mat.create(m.tdata.map(!ord.equiv(_, other)), m.rows, m.cols, m.transposed)
 
     // Int overloads for natural NumPy-style usage e.g. m.gt(0)
     def gt(other: Int)(using ord: Ordering[T], frac: Fractional[T]): Mat[Boolean] =
@@ -1985,13 +2022,13 @@ object Mat {
       val result = new Array[T](m.rows * m.cols * n)
       var r = 0
       var idx = 0
-      
+
       while (r < m.rows) {
         var c = 0
         while (c < m.cols) {
           // Get the correct logical element
           val value = m(r, c)
-          
+
           // Repeat it n times in the output
           var k = 0
           while (k < n) {
@@ -2097,7 +2134,7 @@ object Mat {
       require(p >= 0 && p <= 100, s"percentile must be in [0,100], got $p")  // guard here
       val sorted = arr.sorted(using summon[Ordering[T]])
       val n = sorted.length
-      if n == 1 then 
+      if n == 1 then
         sorted(0)
       else
         val idx  = (p / 100.0) * (n - 1)
@@ -2211,15 +2248,15 @@ object Mat {
     // These are Double/Float specific - Boolean result for data cleaning
     /** NumPy: np.isnan(m) */
     def isnan(using frac: Fractional[T]): Mat[Boolean] =
-      Mat.create(m.data.map(x => frac.toDouble(x).isNaN), m.rows, m.cols, m.transposed)
+      Mat.create(m.tdata.map(x => frac.toDouble(x).isNaN), m.rows, m.cols, m.transposed)
 
     /** NumPy: np.isinf(m) */
     def isinf(using frac: Fractional[T]): Mat[Boolean] =
-      Mat.create(m.data.map(x => frac.toDouble(x).isInfinite), m.rows, m.cols, m.transposed)
+      Mat.create(m.tdata.map(x => frac.toDouble(x).isInfinite), m.rows, m.cols, m.transposed)
 
     /** NumPy: np.isfinite(m) */
     def isfinite(using frac: Fractional[T]): Mat[Boolean] =
-      Mat.create(m.data.map(x => { val d = frac.toDouble(x); !d.isNaN && !d.isInfinite }),
+      Mat.create(m.tdata.map(x => { val d = frac.toDouble(x); !d.isNaN && !d.isInfinite }),
         m.rows, m.cols, m.transposed)
 
     /** NumPy: np.nan_to_num(m, nan=0.0, posinf=0.0, neginf=0.0) */
@@ -2674,7 +2711,7 @@ object Mat {
     def std(using frac: Fractional[T]): T =
       val mu     = m.mean
       val n      = m.size
-      val sumSq  = m.data.foldLeft(frac.zero) { (acc, x) =>
+      val sumSq  = m.tdata.foldLeft(frac.zero) { (acc, x) =>
         val diff = frac.minus(x, mu)
         frac.plus(acc, frac.times(diff, diff))
       }
@@ -2711,12 +2748,521 @@ object Mat {
     def variance(using frac: Fractional[T]): T =
       val mu    = m.mean
       val n     = m.size
-      val sumSq = m.data.foldLeft(frac.zero) { (acc, x) =>
+      val sumSq = m.tdata.foldLeft(frac.zero) { (acc, x) =>
         val diff = frac.minus(x, mu)
         frac.plus(acc, frac.times(diff, diff))
       }
       frac.div(sumSq, frac.fromInt(n))
 
+    /** NumPy: np.sin(m) - element-wise sine */
+    def sin(using num: Fractional[T]): Mat[Double] = {
+      val data = Array.ofDim[Double](m.size)
+      var idx = 0
+      var r = 0
+      while (r < m.rows) {
+        var c = 0
+        while (c < m.cols) {
+          data(idx) = math.sin(num.toDouble(m(r, c)))
+          idx += 1
+          c += 1
+        }
+        r += 1
+      }
+      create(data, m.rows, m.cols)
+    }
+
+    /** NumPy: np.cos(m) - element-wise cosine */
+    def cos(using num: Fractional[T]): Mat[Double] = {
+      val data = Array.ofDim[Double](m.size)
+      var idx = 0
+      var r = 0
+      while (r < m.rows) {
+        var c = 0
+        while (c < m.cols) {
+          data(idx) = math.cos(num.toDouble(m(r, c)))
+          idx += 1
+          c += 1
+        }
+        r += 1
+      }
+      create(data, m.rows, m.cols)
+    }
+
+    /** NumPy: np.tan(m) - element-wise tangent */
+    def tan(using num: Fractional[T]): Mat[Double] = {
+      val data = Array.ofDim[Double](m.size)
+      var idx = 0
+      var r = 0
+      while (r < m.rows) {
+        var c = 0
+        while (c < m.cols) {
+          data(idx) = math.tan(num.toDouble(m(r, c)))
+          idx += 1
+          c += 1
+        }
+        r += 1
+      }
+      create(data, m.rows, m.cols)
+    }
+
+    /** NumPy: np.arcsin(m) - element-wise arcsine */
+    def arcsin(using num: Fractional[T]): Mat[Double] = {
+      val data = Array.ofDim[Double](m.size)
+      var idx = 0
+      var r = 0
+      while (r < m.rows) {
+        var c = 0
+        while (c < m.cols) {
+          data(idx) = math.asin(num.toDouble(m(r, c)))
+          idx += 1
+          c += 1
+        }
+        r += 1
+      }
+      create(data, m.rows, m.cols)
+    }
+
+    /** NumPy: np.arccos(m) - element-wise arccosine */
+    def arccos(using num: Fractional[T]): Mat[Double] = {
+      val data = Array.ofDim[Double](m.size)
+      var idx = 0
+      var r = 0
+      while (r < m.rows) {
+        var c = 0
+        while (c < m.cols) {
+          data(idx) = math.acos(num.toDouble(m(r, c)))
+          idx += 1
+          c += 1
+        }
+        r += 1
+      }
+      create(data, m.rows, m.cols)
+    }
+
+    /** NumPy: np.arctan(m) - element-wise arctangent */
+    def arctan(using num: Fractional[T]): Mat[Double] = {
+      val data = Array.ofDim[Double](m.size)
+      var idx = 0
+      var r = 0
+      while (r < m.rows) {
+        var c = 0
+        while (c < m.cols) {
+          data(idx) = math.atan(num.toDouble(m(r, c)))
+          idx += 1
+          c += 1
+        }
+        r += 1
+      }
+      create(data, m.rows, m.cols)
+    }
+
+    /** NumPy: np.arctan2(y, x) - element-wise 2-argument arctangent */
+    def arctan2(other: Mat[T])(using num: Fractional[T]): Mat[Double] = {
+      require(m.rows == other.rows && m.cols == other.cols,
+        s"Shape mismatch: ${m.rows}x${m.cols} vs ${other.rows}x${other.cols}")
+
+      val data = Array.ofDim[Double](m.size)
+      var idx = 0
+      var r = 0
+      while (r < m.rows) {
+        var c = 0
+        while (c < m.cols) {
+          data(idx) = math.atan2(num.toDouble(m(r, c)), num.toDouble(other(r, c)))
+          idx += 1
+          c += 1
+        }
+        r += 1
+      }
+      create(data, m.rows, m.cols)
+    }
+
+    /** NumPy: np.sinh(m) - element-wise hyperbolic sine */
+    def sinh(using num: Fractional[T]): Mat[Double] = {
+      val data = Array.ofDim[Double](m.size)
+      var idx = 0
+      var r = 0
+      while (r < m.rows) {
+        var c = 0
+        while (c < m.cols) {
+          data(idx) = math.sinh(num.toDouble(m(r, c)))
+          idx += 1
+          c += 1
+        }
+        r += 1
+      }
+      create(data, m.rows, m.cols)
+    }
+
+    /** NumPy: np.cosh(m) - element-wise hyperbolic cosine */
+    def cosh(using num: Fractional[T]): Mat[Double] = {
+      val data = Array.ofDim[Double](m.size)
+      var idx = 0
+      var r = 0
+      while (r < m.rows) {
+        var c = 0
+        while (c < m.cols) {
+          data(idx) = math.cosh(num.toDouble(m(r, c)))
+          idx += 1
+          c += 1
+        }
+        r += 1
+      }
+      create(data, m.rows, m.cols)
+    }
+
+    /** NumPy: np.tanh(m) - element-wise hyperbolic tangent */
+    def tanh(using num: Fractional[T]): Mat[Double] = {
+      val data = Array.ofDim[Double](m.size)
+      var idx = 0
+      var r = 0
+      while (r < m.rows) {
+        var c = 0
+        while (c < m.cols) {
+          data(idx) = math.tanh(num.toDouble(m(r, c)))
+          idx += 1
+          c += 1
+        }
+        r += 1
+      }
+      create(data, m.rows, m.cols)
+    }
+
+    /** NumPy: np.floor(m) - element-wise floor */
+    def floor(using num: Fractional[T]): Mat[Double] = {
+      val data = Array.ofDim[Double](m.size)
+      var idx = 0
+      var r = 0
+      while (r < m.rows) {
+        var c = 0
+        while (c < m.cols) {
+          data(idx) = math.floor(num.toDouble(m(r, c)))
+          idx += 1
+          c += 1
+        }
+        r += 1
+      }
+      create(data, m.rows, m.cols)
+    }
+
+    /** NumPy: np.ceil(m) - element-wise ceiling */
+    def ceil(using num: Fractional[T]): Mat[Double] = {
+      val data = Array.ofDim[Double](m.size)
+      var idx = 0
+      var r = 0
+      while (r < m.rows) {
+        var c = 0
+        while (c < m.cols) {
+          data(idx) = math.ceil(num.toDouble(m(r, c)))
+          idx += 1
+          c += 1
+        }
+        r += 1
+      }
+      create(data, m.rows, m.cols)
+    }
+
+    // Element-wise multiplication (NumPy's * operator)
+    def *(other: Mat[T])(using num: Numeric[T]): Mat[T] = m.binOp(other)(num.times)
+
+    // Matrix multiplication (NumPy's @ operator)
+    inline def @@(other: Mat[T]): Mat[T] = matmul(other)
+
+    // Division with broadcasting
+    def /(other: Mat[T])(using frac: Fractional[T]): Mat[T] = m.binOp(other)(frac.div)
+
+    /** ML: Sigmoid activation σ(x) = 1/(1 + e^(-x)) */
+    def sigmoid(using num: Fractional[T]): Mat[Double] = {
+      val data = Array.ofDim[Double](m.size)
+      var idx = 0
+      var r = 0
+      while (r < m.rows) {
+        var c = 0
+        while (c < m.cols) {
+          val x = num.toDouble(m(r, c))
+          // Numerically stable sigmoid
+          data(idx) = if (x >= 0) {
+            1.0 / (1.0 + math.exp(-x))
+          } else {
+            val exp_x = math.exp(x)
+            exp_x / (1.0 + exp_x)
+          }
+          idx += 1
+          c += 1
+        }
+        r += 1
+      }
+      create(data, m.rows, m.cols)
+    }
+
+    /** ML: Hyperbolic tangent (already exists as tanh) - alias for clarity */
+    // tanh already implemented
+
+    /** ML: ReLU (Rectified Linear Unit) - max(0, x) */
+    def relu(using num: Numeric[T]): Mat[T] = {
+      val zero = num.zero
+      val data = Array.ofDim[T](m.size)
+      var idx = 0
+      var r = 0
+      while (r < m.rows) {
+        var c = 0
+        while (c < m.cols) {
+          val x = m(r, c)
+          data(idx) = if (num.gt(x, zero)) x else zero
+          idx += 1
+          c += 1
+        }
+        r += 1
+      }
+      create(data, m.rows, m.cols)
+    }
+
+    /** ML: Leaky ReLU - max(alpha*x, x) */
+    def leakyRelu(alpha: Double = 0.01)(using num: Fractional[T]): Mat[Double] = {
+      val data = Array.ofDim[Double](m.size)
+      var idx = 0
+      var r = 0
+      while (r < m.rows) {
+        var c = 0
+        while (c < m.cols) {
+          val x = num.toDouble(m(r, c))
+          data(idx) = if (x > 0) x else alpha * x
+          idx += 1
+          c += 1
+        }
+        r += 1
+      }
+      create(data, m.rows, m.cols)
+    }
+
+    /** ML: Softmax along axis - exp(x) / sum(exp(x))
+     *
+     *  Numerically stable: subtract max before exp to prevent overflow
+     */
+    def softmax(axis: Int = 1)(using num: Fractional[T]): Mat[Double] = {
+      require(axis == 0 || axis == 1, "axis must be 0 (columns) or 1 (rows)")
+
+      val result = Array.ofDim[Double](m.rows * m.cols)
+
+      if (axis == 1) {
+        // Softmax across columns for each row
+        var r = 0
+        while (r < m.rows) {
+          // Find max in this row
+          var maxVal = num.toDouble(m(r, 0))
+          var c = 1
+          while (c < m.cols) {
+            val v = num.toDouble(m(r, c))
+            if (v > maxVal) maxVal = v
+            c += 1
+          }
+
+          // Compute exp(x - max) and sum
+          var sum = 0.0
+          c = 0
+          while (c < m.cols) {
+            val expVal = math.exp(num.toDouble(m(r, c)) - maxVal)
+            result(r * m.cols + c) = expVal
+            sum += expVal
+            c += 1
+          }
+
+          // Normalize
+          c = 0
+          while (c < m.cols) {
+            result(r * m.cols + c) /= sum
+            c += 1
+          }
+          r += 1
+        }
+      } else {
+        // Softmax down rows for each column
+        var c = 0
+        while (c < m.cols) {
+          // Find max in this column
+          var maxVal = num.toDouble(m(0, c))
+          var r = 1
+          while (r < m.rows) {
+            val v = num.toDouble(m(r, c))
+            if (v > maxVal) maxVal = v
+            r += 1
+          }
+
+          // Compute exp(x - max) and sum
+          var sum = 0.0
+          r = 0
+          while (r < m.rows) {
+            val expVal = math.exp(num.toDouble(m(r, c)) - maxVal)
+            result(r * m.cols + c) = expVal
+            sum += expVal
+            r += 1
+          }
+
+          // Normalize
+          r = 0
+          while (r < m.rows) {
+            result(r * m.cols + c) /= sum
+            r += 1
+          }
+          c += 1
+        }
+      }
+
+      create(result, m.rows, m.cols)
+    }
+
+    /** ML: Log-softmax (numerically stable) - log(softmax(x)) */
+    def logSoftmax(axis: Int = 1)(using num: Fractional[T]): Mat[Double] = {
+      // More stable than log(softmax(x))
+      require(axis == 0 || axis == 1, "axis must be 0 (columns) or 1 (rows)")
+
+      val result = Array.ofDim[Double](m.rows * m.cols)
+
+      if (axis == 1) {
+        var r = 0
+        while (r < m.rows) {
+          // Find max
+          var maxVal = num.toDouble(m(r, 0))
+          var c = 1
+          while (c < m.cols) {
+            val v = num.toDouble(m(r, c))
+            if (v > maxVal) maxVal = v
+            c += 1
+          }
+
+          // Compute log(sum(exp(x - max)))
+          var sumExp = 0.0
+          c = 0
+          while (c < m.cols) {
+            sumExp += math.exp(num.toDouble(m(r, c)) - maxVal)
+            c += 1
+          }
+          val logSumExp = maxVal + math.log(sumExp)
+
+          // Result is x - log(sum(exp(x)))
+          c = 0
+          while (c < m.cols) {
+            result(r * m.cols + c) = num.toDouble(m(r, c)) - logSumExp
+            c += 1
+          }
+          r += 1
+        }
+      } else {
+        var c = 0
+        while (c < m.cols) {
+          var maxVal = num.toDouble(m(0, c))
+          var r = 1
+          while (r < m.rows) {
+            val v = num.toDouble(m(r, c))
+            if (v > maxVal) maxVal = v
+            r += 1
+          }
+
+          var sumExp = 0.0
+          r = 0
+          while (r < m.rows) {
+            sumExp += math.exp(num.toDouble(m(r, c)) - maxVal)
+            r += 1
+          }
+          val logSumExp = maxVal + math.log(sumExp)
+
+          r = 0
+          while (r < m.rows) {
+            result(r * m.cols + c) = num.toDouble(m(r, c)) - logSumExp
+            r += 1
+          }
+          c += 1
+        }
+      }
+
+      create(result, m.rows, m.cols)
+    }
+
+    /** ML: ELU (Exponential Linear Unit) - x if x>0, alpha*(exp(x)-1) otherwise */
+    def elu(alpha: Double = 1.0)(using num: Fractional[T]): Mat[Double] = {
+      val data = Array.ofDim[Double](m.size)
+      var idx = 0
+      var r = 0
+      while (r < m.rows) {
+        var c = 0
+        while (c < m.cols) {
+          val x = num.toDouble(m(r, c))
+          data(idx) = if (x > 0) x else alpha * (math.exp(x) - 1.0)
+          idx += 1
+          c += 1
+        }
+        r += 1
+      }
+      create(data, m.rows, m.cols)
+    }
+
+    /** ML: GELU (Gaussian Error Linear Unit) - approximation */
+    def gelu(using num: Fractional[T]): Mat[Double] = {
+      val data = Array.ofDim[Double](m.size)
+      var idx = 0
+      var r = 0
+      while (r < m.rows) {
+        var c = 0
+        while (c < m.cols) {
+          val x = num.toDouble(m(r, c))
+          // Approximation: 0.5 * x * (1 + tanh(sqrt(2/π) * (x + 0.044715 * x^3)))
+          val x3 = x * x * x
+          val inner = math.sqrt(2.0 / math.Pi) * (x + 0.044715 * x3)
+          data(idx) = 0.5 * x * (1.0 + math.tanh(inner))
+          idx += 1
+          c += 1
+        }
+        r += 1
+      }
+      create(data, m.rows, m.cols)
+    }
+    /** ML: Dropout - randomly zero elements during training
+     *  
+     *  @param p Probability of dropping (zeroing) each element (default 0.5)
+     *  @param training If false, returns unchanged matrix (inference mode)
+     *  @param seed Random seed for reproducibility (default: use global RNG)
+     */
+    def dropout(p: Double = 0.5, training: Boolean = true, seed: Long = -1)(using num: Fractional[T]): Mat[Double] = {
+      require(p >= 0.0 && p < 1.0, s"Dropout probability must be in [0, 1), got $p")
+      
+      if (training) {
+        val scale = 1.0 / (1.0 - p)
+        val rng = if (seed >= 0) new NumPyRNG(seed) else globalRNG
+        val data = Array.ofDim[Double](m.size)
+        
+        var idx = 0
+        var r = 0
+        while (r < m.rows) {
+          var c = 0
+          while (c < m.cols) {
+            val keep = rng.nextDouble() >= p
+            data(idx) = if (keep) {
+              num.toDouble(m(r, c)) * scale
+            } else {
+              0.0
+            }
+            idx += 1
+            c += 1
+          }
+          r += 1
+        }
+        create(data, m.rows, m.cols)
+      } else {
+        // Inference mode: no dropout, no scaling
+        val data = Array.ofDim[Double](m.size)
+        var idx = 0
+        var r = 0
+        while (r < m.rows) {
+          var c = 0
+          while (c < m.cols) {
+            data(idx) = num.toDouble(m(r, c))
+            idx += 1
+            c += 1
+          }
+          r += 1
+        }
+        create(data, m.rows, m.cols)
+      }
+    }
   } // end extension
 
   private lazy val blasThreshold: Long = System.getProperty("uni.mat.blasThreshold", "6000").toLong
@@ -3030,6 +3576,13 @@ object Mat {
     Mat.create(data, rows, cols)
   }
 
+  // np.random.normal(mean, std, size=(5, 4))
+  // You'd need to add:
+  def normal(mean: Double, std: Double, rows: Int, cols: Int): Mat[Double] = {
+    val data = Array.fill(rows * cols)(mean + std * globalRNG.randn())
+    create(data, rows, cols)
+  }
+
   /** NumPy: np.random.uniform(low, high, (rows, cols)) */
   def uniform(low: Double, high: Double, rows: Int, cols: Int): Mat[Double] = {
     val data = Array.fill(rows * cols)(globalRNG.uniform(low, high))
@@ -3052,4 +3605,5 @@ object Mat {
     val value = globalRNG.nextInt()
     ((value % range + range) % range + low).toInt
   }
+
 }

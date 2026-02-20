@@ -688,6 +688,21 @@ print(json.dumps(node_to_dict(tree), indent=2))
       case "cov"     => (s"$arg0.cov", info)
       case "corrcoef" => (s"$arg0.corrcoef", info)
 
+      case "sin" => (s"$arg0.sin", info)
+      case "cos" => (s"$arg0.cos", info)
+      case "tan" => (s"$arg0.tan", info)
+      case "arcsin" => (s"$arg0.arcsin", info)
+      case "arccos" => (s"$arg0.arccos", info)
+      case "arctan" => (s"$arg0.arctan", info)
+      case "arctan2" =>
+        val arg1 = translateExpr(args(1), ctx)
+        (s"$arg0.arctan2($arg1)", info)
+      case "sinh" => (s"$arg0.sinh", info)
+      case "cosh" => (s"$arg0.cosh", info)
+      case "tanh" => (s"$arg0.tanh", info)
+      case "floor" => (s"$arg0.floor", info)
+      case "ceil" => (s"$arg0.ceil", info)
+
       case other =>
         val argStr = args.map(a => translateExpr(a, ctx)).mkString(", ")
         (ctx.todo(s"np.$other($argStr) - not yet translated"), info)
@@ -747,20 +762,19 @@ print(json.dumps(node_to_dict(tree), indent=2))
         val lo = translateExpr(args(0), ctx)
         val hi = translateExpr(args(1), ctx)
         (ctx.todo(s"random.randint($lo, $hi) - use Mat.rand then scale"), info)
-      case "seed"    =>
-        val s = translateExpr(args(0), ctx)
       case "seed" =>
+        val s = translateExpr(args(0), ctx)
         (s"Mat.setSeed($s.toLong)", info.copy(isMatrix = false))
-      case "shuffle" => (ctx.todo("random.shuffle - no direct equivalent"), info)
-      case "choice"  => (ctx.todo("random.choice - no direct equivalent"), info)
       case "uniform" =>
-        val lo = if args.nonEmpty then translateExpr(args(0), ctx) else "0.0"
-        val hi = if args.length > 1 then translateExpr(args(1), ctx) else "1.0"
-        val size = kwarg("size")
-          .map(v => shapeArgs(v))
-          .orElse(if args.length > 2 then Some(shapeArgs(args(2))) else None)
+        val lo   = if args.nonEmpty then translateExpr(args(0), ctx) else "0.0"
+        val hi   = if args.length > 1 then translateExpr(args(1), ctx) else "1.0"
+        val size = if args.length > 2 then shapeArgs(args(2)) 
+        else kwargs.find(k => k("arg").strOpt.contains("size"))
+          .map(k => shapeArgs(k("value")))
           .getOrElse("1, 1")
         (s"Mat.uniform($lo, $hi, $size)", info)
+      case "shuffle" => (ctx.todo("random.shuffle - no direct equivalent"), info)
+      case "choice"  => (ctx.todo("random.choice - no direct equivalent"), info)
       case other     => (ctx.todo(s"np.random.$other - not yet translated"), info)
 
   // ── method calls on Mat instances ────────────────────────────────────────

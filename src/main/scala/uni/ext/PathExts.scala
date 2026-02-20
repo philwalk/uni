@@ -237,7 +237,7 @@ object pathExts {
     def delete: Boolean =
       Files.deleteIfExists(p)
 
-    def realPath: String = {
+    def realPath: Path = {
       // Find deepest existing parent
       val existing =
         Iterator.iterate(p)(_.getParent)
@@ -265,7 +265,7 @@ object pathExts {
       val finalPath =
         resolvedPrefix.resolve(remaining.mkString("/")).normalize()
 
-      finalPath.toString.replace('\\', '/')
+      Paths.get(finalPath.toString.replace('\\', '/'))
     }
   }
 
