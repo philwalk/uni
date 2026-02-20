@@ -145,7 +145,7 @@ object NumPyRNG {
       |import numpy as np
       |rng = np.random.default_rng($seed)
       |s = rng.bit_generator.state['state']
-      |print(f"{s['state']},{s['inc']}")
+      |print(f\\"{s['state']},{s['inc']}\\")
       """.trim.stripMargin
       
       val output = sys.process.Process(Seq("python", "-c", pythonCode)).!!.trim
