@@ -115,11 +115,15 @@ object NumPyRNG {
   }
   
   private def getOrComputeInitialState(seed: Long): (BigInt, BigInt) = {
-    stateCache.getOrElseUpdate(seed, {
-      val (state, inc) = computeStateFromPython(seed)
-      saveToCache(seed, state, inc)
-      (state, inc)
-    })
+    stateCache.get(seed) match {
+      case Some(cached) => cached
+      case None =>
+        val computed = computeStateFromPython(seed)
+        // Only cache if successful (computeStateFromPython throws on failure)
+        saveToCache(seed, computed._1, computed._2)
+        stateCache(seed) = computed
+        computed
+    }
   }
 
   private def saveToCache(seed: Long, state: BigInt, inc: BigInt): Unit = {
@@ -137,11 +141,12 @@ object NumPyRNG {
   private def computeStateFromPython(seed: Long): (BigInt, BigInt) = {
     try {
       val pythonCode = s"""
-  import numpy as np
-  rng = np.random.default_rng($seed)
-  s = rng.bit_generator.state['state']
-  print(f"{s['state']},{s['inc']}")
-  """.trim
+      |#!/usr/bin/env -S python
+      |import numpy as np
+      |rng = np.random.default_rng($seed)
+      |s = rng.bit_generator.state['state']
+      |print(f"{s['state']},{s['inc']}")
+      """.trim.stripMargin
       
       val output = sys.process.Process(Seq("python", "-c", pythonCode)).!!.trim
       val parts = output.split(",")
@@ -170,6 +175,8 @@ object NumPyRNG {
           |50=259031282180232884730447052609721539192,81605775420243012667316905014758695997
           |99=323145379500794079207071596454411015148,324459057272246375853630270025492255805
           |100=241834680195789509926839563169936010333,30008503642980956324491363429807189605
+          |123=160078363690744033601390112987726904141,17686443629577124697969402389330893883
+          |456=247657327053257868884743652982636763877,246070390390441921778646289804763626967
           """.trim.stripMargin
         Files.write(cacheFile, minimalCache.getBytes,
           java.nio.file.StandardOpenOption.CREATE)

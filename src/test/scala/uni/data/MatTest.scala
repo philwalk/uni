@@ -416,7 +416,7 @@ class MatTest extends munit.FunSuite {
   test("matrix multiplication") {
     val m1 = Mat[Double]((1, 2), (3, 4))
     val m2 = Mat[Double]((5, 6), (7, 8))
-    val prod = m1 * m2
+    val prod = m1 @@ m2
     assertEquals(prod.shape, (2, 2))
     assertEquals(prod(0, 0), 19.0)  // 1*5 + 2*7
     assertEquals(prod(0, 1), 22.0)  // 1*6 + 2*8
@@ -427,7 +427,7 @@ class MatTest extends munit.FunSuite {
   test("matrix multiplication with non-square") {
     val m1 = Mat[Double]((1, 2, 3), (4, 5, 6))  // 2x3
     val m2 = Mat[Double]((7, 8), (9, 10), (11, 12))  // 3x2
-    val prod = m1 * m2
+    val prod = m1 @@ m2
     assertEquals(prod.shape, (2, 2))
     assertEquals(prod(0, 0), 58.0)   // 1*7 + 2*9 + 3*11
     assertEquals(prod(0, 1), 64.0)   // 1*8 + 2*10 + 3*12
@@ -437,7 +437,7 @@ class MatTest extends munit.FunSuite {
     val m1 = Mat.ones[Double](2, 3)
     val m2 = Mat.ones[Double](2, 3)
     intercept[IllegalArgumentException] {
-      m1 * m2  // 2x3 * 2x3 invalid
+      m1 @@ m2  // 2x3 @@ 2x3 invalid
     }
   }
   
@@ -445,7 +445,7 @@ class MatTest extends munit.FunSuite {
     val m1 = Mat[Double]((1, 2), (3, 4))
     val m2 = Mat[Double]((5, 6), (7, 8))
     val p1 = m1.dot(m2)
-    val p2 = m1 * m2
+    val p2 = m1 @@ m2
     assertEquals(p1(0, 0), p2(0, 0))
   }
   
@@ -884,7 +884,7 @@ class MatTest extends munit.FunSuite {
     val diff = m2 - m1
     assertEquals(diff(0, 0), Big(4))
     
-    val prod = m1 * m2  // matrix multiply
+    val prod = m1 @@ m2  // matrix multiply
     assertEquals(prod(0, 0), Big(19))
     assertEquals(prod(1, 1), Big(50))
   }
@@ -1062,17 +1062,17 @@ class MatTest extends munit.FunSuite {
     val m   = Mat[Double]((1, 2), (3, 4))
     val inv = m.inverse
     // m * inv should be identity
-    val prod = m * inv
+    val prod = m @@ inv
     assertEqualsDouble(prod(0,0), 1.0, 1e-10)
     assertEqualsDouble(prod(0,1), 0.0, 1e-10)
     assertEqualsDouble(prod(1,0), 0.0, 1e-10)
     assertEqualsDouble(prod(1,1), 1.0, 1e-10)
   }
 
-  test("inverse of 3x3 matrix: m * inv = I") {
+  test("inverse of 3x3 matrix: m @@ inv = I") {
     val m   = Mat[Double]((1, 2, 3), (0, 1, 4), (5, 6, 0))
     val inv = m.inverse
-    val prod = m * inv
+    val prod = m @@ inv
     val n = 3
     var i = 0
     while i < n do
@@ -1111,10 +1111,10 @@ class MatTest extends munit.FunSuite {
   // ============================================================================
   // qrDecomposition
   // ============================================================================
-  test("qr decomposition: Q * R = original matrix") {
+  test("qr decomposition: Q @@ R = original matrix") {
     val m = Mat[Double]((1, 2), (3, 4), (5, 6))  // 3x2
     val (q, r) = m.qrDecomposition
-    val reconstructed = q * r
+    val reconstructed = q @@ r
     var i = 0
     while i < m.rows do
       var j = 0
@@ -1124,10 +1124,10 @@ class MatTest extends munit.FunSuite {
       i += 1
   }
 
-  test("qr decomposition: Q is orthonormal (Q^T * Q = I)") {
+  test("qr decomposition: Q is orthonormal (Q^T @@ Q = I)") {
     val m = Mat[Double]((1, 2), (3, 4), (5, 6))  // 3x2
     val (q, _) = m.qrDecomposition
-    val qtq = q.T * q  // should be 2x2 identity
+    val qtq = q.T @@ q  // should be 2x2 identity
     val p = qtq.rows
     var i = 0
     while i < p do
@@ -1151,10 +1151,10 @@ class MatTest extends munit.FunSuite {
       i += 1
   }
 
-  test("qr decomposition square matrix: Q * R = original") {
+  test("qr decomposition square matrix: Q @@ R = original") {
     val m = Mat[Double]((1, 2, 3), (4, 5, 6), (7, 8, 10))
     val (q, r) = m.qrDecomposition
-    val reconstructed = q * r
+    val reconstructed = q @@ r
     var i = 0
     while i < m.rows do
       var j = 0
@@ -1497,11 +1497,11 @@ class MatTest extends munit.FunSuite {
     assertEqualsDouble(x(1, 0), 3.0, 1e-10)
   }
 
-  test("solve: A * x = b gives b") {
+  test("solve: A @@ x = b gives b") {
     val A = Mat[Double]((1, 2, 3), (0, 1, 4), (5, 6, 0))
     val b = Mat.col[Double](1, 2, 3)
     val x = A.solve(b)
-    val check = A * x
+    val check = A @@ x
     assertEqualsDouble(check(0, 0), 1.0, 1e-10)
     assertEqualsDouble(check(1, 0), 2.0, 1e-10)
     assertEqualsDouble(check(2, 0), 3.0, 1e-10)
@@ -1746,10 +1746,10 @@ class MatTest extends munit.FunSuite {
   // ============================================================================
   // svd
   // ============================================================================
-  test("svd: U * diag(s) * Vt = original matrix") {
+  test("svd: U @@ diag(s) @@ Vt = original matrix") {
     val m = Mat[Double]((1, 2, 3), (4, 5, 6))  // 2x3
     val (u, s, vt) = m.svd
-    // Reconstruct: U * S * Vt
+    // Reconstruct: U @@ S @@ Vt
     val nRows = m.rows; val nCols = m.cols
     val p = s.length
     // Build sigma: nRows×nCols with s on diagonal
@@ -1758,7 +1758,7 @@ class MatTest extends munit.FunSuite {
     while i < p do
       sigma(i, i) = s(i)
       i += 1
-    val reconstructed = u * sigma * vt
+    val reconstructed = u @@ sigma @@ vt
     var ri = 0
     while ri < nRows do
       var j = 0
@@ -1768,10 +1768,10 @@ class MatTest extends munit.FunSuite {
       ri += 1
   }
 
-  test("svd: U is orthonormal (U^T * U = I)") {
+  test("svd: U is orthonormal (U^T @@ U = I)") {
     val m = Mat[Double]((1, 2, 3), (4, 5, 6))
     val (u, _, _) = m.svd
-    val utu = u.T * u
+    val utu = u.T @@ u
     val n = utu.rows
     var i = 0
     while i < n do
@@ -1783,10 +1783,10 @@ class MatTest extends munit.FunSuite {
       i += 1
   }
 
-  test("svd: Vt is orthonormal (Vt * Vt^T = I)") {
+  test("svd: Vt is orthonormal (Vt @@ Vt^T = I)") {
     val m = Mat[Double]((1, 2, 3), (4, 5, 6))
     val (_, _, vt) = m.svd
-    val vtVtT = vt * vt.T
+    val vtVtT = vt @@ vt.T
     val n = vtVtT.rows
     var i = 0
     while i < n do
@@ -1858,7 +1858,7 @@ class MatTest extends munit.FunSuite {
     val b = Mat.col[Double](6, 5, 7, 10)
     val (x, _, _, _) = A.lstsq(b)
     // A*x should be close to b in the least squares sense
-    val ax = A * x
+    val ax = A @@ x
     // residual norm should be minimal - check it's at least finite and small
     var residNorm = 0.0
     var i = 0
@@ -2379,7 +2379,7 @@ class MatTest extends munit.FunSuite {
   }
 
   test("matrixRank of singular matrix is less than n") {
-    // row2 = 2 * row1 → rank 1
+    // row2 = 2 @@ row1 → rank 1
     val m = Mat[Double]((1, 2), (2, 4))
     assertEquals(m.matrixRank(), 1)
   }
@@ -2874,7 +2874,7 @@ class MatTest extends munit.FunSuite {
     while col < 2 do
       if math.abs(wi(col)) < 1e-10 then  // only check real eigenvalues
         val v   = vr(::, col)
-        val av  = m * v
+        val av  = m @@ v
         val lv  = v * wr(col)
         assert(av.allclose(lv, atol = 1e-8), s"A*v != lambda*v for col $col")
       col += 1
@@ -3401,25 +3401,25 @@ class MatTest extends munit.FunSuite {
     assert(m.pinv().allclose(Mat.eye[Double](3), atol = 1e-8))
   }
 
-  test("pinv of square matrix: A * pinv(A) ≈ I") {
+  test("pinv of square matrix: A @@ pinv(A) ≈ I") {
     val m = Mat[Double]((1, 2), (3, 4))
     val p = m.pinv()
-    assert((m * p).allclose(Mat.eye[Double](2), atol = 1e-8))
+    assert((m @@ p).allclose(Mat.eye[Double](2), atol = 1e-8))
   }
 
-  test("pinv of rectangular matrix: A * pinv(A) ≈ I (nRows < nCols)") {
+  test("pinv of rectangular matrix: A @@ pinv(A) ≈ I (nRows < nCols)") {
     val m = Mat[Double]((1, 2, 3), (4, 5, 6))  // 2×3
     val p = m.pinv()
     assertEquals(p.shape, (3, 2))
-    val r = m * p
+    val r = m @@ p
     assert(r.allclose(Mat.eye[Double](2), atol = 1e-8))
   }
 
-  test("pinv of rectangular matrix: pinv(A) * A ≈ I (nRows > nCols)") {
+  test("pinv of rectangular matrix: pinv(A) @@ A ≈ I (nRows > nCols)") {
     val m = Mat[Double]((1, 2), (3, 4), (5, 6))  // 3×2
     val p = m.pinv()
     assertEquals(p.shape, (2, 3))
-    val r = p * m
+    val r = p @@ m
     assert(r.allclose(Mat.eye[Double](2), atol = 1e-8))
   }
 
@@ -3442,10 +3442,10 @@ class MatTest extends munit.FunSuite {
     assert(m.cholesky.allclose(Mat.eye[Double](3), atol = 1e-10))
   }
 
-  test("cholesky L * L^T = original matrix") {
+  test("cholesky L @@ L^T = original matrix") {
     val m = Mat[Double]((4, 2), (2, 3))  // symmetric positive definite
     val L = m.cholesky
-    assert((L * L.T).allclose(m, atol = 1e-10))
+    assert((L @@ L.T).allclose(m, atol = 1e-10))
   }
 
   test("cholesky result is lower triangular") {
@@ -3467,7 +3467,7 @@ class MatTest extends munit.FunSuite {
   test("cholesky 3x3 symmetric positive definite") {
     val m = Mat[Double]((6, 3, 2), (3, 5, 1), (2, 1, 4))
     val L = m.cholesky
-    assert((L * L.T).allclose(m, atol = 1e-8))
+    assert((L @@ L.T).allclose(m, atol = 1e-8))
     assert(L.allclose(L.tril(), atol = 1e-10))
   }
 
@@ -3963,8 +3963,8 @@ class MatTest extends munit.FunSuite {
 
   test("rand values in [0, 1)") {
     val m = Mat.rand(10, 10)
-    println(s"Created Mat: rows=${m.rows}, cols=${m.cols}, data.length=${m.data.length}")
-    println(s"First few values: ${m.data.take(5).mkString(", ")}")
+    //println(s"Created Mat: rows=${m.rows}, cols=${m.cols}, data.length=${m.data.length}")
+    //println(s"First few values: ${m.data.take(5).mkString(", ")}")
     assert(m.min >= 0.0)
     assert(m.max < 1.0)
   }
@@ -4183,8 +4183,340 @@ class MatTest extends munit.FunSuite {
     // Completely fresh RNG
     val rng = new NumPyRNG(0)
     val first = rng.nextInt()
-    println(s"Direct RNG seed=0 first value: $first")
+    //println(s"Direct RNG seed=0 first value: $first")
     assertEquals(first, 3653403231L)
   }
 
+  test("Mat.normal produces normal distribution with custom mean and std") {
+    Mat.setSeed(42)
+    val mean = 5.0
+    val std = 2.0
+    val m = Mat.normal(mean, std, 1000, 1000)
+    
+    // Calculate sample mean and std
+    val sampleMean = m.tdata.sum / m.tdata.length
+    val sampleVariance = m.tdata.map(x => (x - sampleMean) * (x - sampleMean)).sum / m.tdata.length
+    val sampleStd = math.sqrt(sampleVariance)
+    
+    // For 1M samples, should be very close
+    assert(math.abs(sampleMean - mean) < 0.05, s"Mean $sampleMean should be ~$mean")
+    assert(math.abs(sampleStd - std) < 0.05, s"Std $sampleStd should be ~$std")
+  }
+
+  test("Mat.normal with mean=0, std=1 matches randn") {
+    Mat.setSeed(42)
+    val m1 = Mat.normal(0.0, 1.0, 100, 100)
+    
+    Mat.setSeed(42)
+    val m2 = Mat.randn(100, 100)
+    
+    assert(m1.tdata.sameElements(m2.tdata), "normal(0,1) should equal randn()")
+  }
+
+  test("Mat.normal different parameters produce different distributions") {
+    Mat.setSeed(42)
+    val m1 = Mat.normal(0.0, 1.0, 1000, 1000)
+    
+    Mat.setSeed(42)
+    val m2 = Mat.normal(10.0, 3.0, 1000, 1000)
+    
+    val mean1 = m1.tdata.sum / m1.tdata.length
+    val mean2 = m2.tdata.sum / m2.tdata.length
+    
+    assert(math.abs(mean1) < 0.1, s"First should have mean ~0, got $mean1")
+    assert(math.abs(mean2 - 10.0) < 0.1, s"Second should have mean ~10, got $mean2")
+  }
+
+  test("Mat.normal shape is correct") {
+    val m = Mat.normal(5.0, 2.0, 3, 4)
+    assertEquals(m.rows, 3)
+    assertEquals(m.cols, 4)
+    assertEquals(m.size, 12)
+  }
+
+  test("vec.asMat returns argument") {
+    val m: Vec[Double] = Mat[Double](1, 2, 3, 4, 5, 6)
+    assertEquals(m, m.asMat)
+  }
+
+  test("Mat(scalars...) creates column vector") {
+    val v = Mat[Double](1, 2, 3, 4, 5, 6)
+    assertEquals(v.rows, 6)
+    assertEquals(v.cols, 1)
+    assert(v.tdata.sameElements(Array(1.0, 2.0, 3.0, 4.0, 5.0, 6.0)))
+  }
+
+  test("sin computes element-wise sine") {
+    val m = Mat[Double]((0, math.Pi/2), (math.Pi, 3*math.Pi/2))
+    val result = m.sin
+    assert(result(0, 0) < 1e-10)  // sin(0) ≈ 0
+    assert(math.abs(result(0, 1) - 1.0) < 1e-10)  // sin(π/2) ≈ 1
+    assert(math.abs(result(1, 0)) < 1e-10)  // sin(π) ≈ 0
+    assert(math.abs(result(1, 1) + 1.0) < 1e-10)  // sin(3π/2) ≈ -1
+  }
+
+  test("cos computes element-wise cosine") {
+    val m = Mat[Double]((0, math.Pi/2), (math.Pi, 2*math.Pi))
+    val result = m.cos
+    assert(math.abs(result(0, 0) - 1.0) < 1e-10)  // cos(0) ≈ 1
+    assert(math.abs(result(0, 1)) < 1e-10)  // cos(π/2) ≈ 0
+    assert(math.abs(result(1, 0) + 1.0) < 1e-10)  // cos(π) ≈ -1
+    assert(math.abs(result(1, 1) - 1.0) < 1e-10)  // cos(2π) ≈ 1
+  }
+
+  test("tan computes element-wise tangent") {
+    val m = Mat[Double]((0, math.Pi/4), (math.Pi, -math.Pi/4))
+    val result = m.tan
+    assert(math.abs(result(0, 0)) < 1e-10)  // tan(0) ≈ 0
+    assert(math.abs(result(0, 1) - 1.0) < 1e-10)  // tan(π/4) ≈ 1
+    assert(math.abs(result(1, 0)) < 1e-10)  // tan(π) ≈ 0
+    assert(math.abs(result(1, 1) + 1.0) < 1e-10)  // tan(-π/4) ≈ -1
+  }
+
+  test("arctan2 computes 2-argument arctangent") {
+    val y = Mat[Double]((1, 0), (-1, 0))
+    val x = Mat[Double]((0, 1), (0, -1))
+    val result = y.arctan2(x)
+    assert(math.abs(result(0, 0) - math.Pi/2) < 1e-10)  // atan2(1,0) = π/2
+    assert(math.abs(result(0, 1)) < 1e-10)  // atan2(0,1) = 0
+    assert(math.abs(result(1, 0) + math.Pi/2) < 1e-10)  // atan2(-1,0) = -π/2
+    assert(math.abs(result(1, 1) - math.Pi) < 1e-10)  // atan2(0,-1) = π
+  }
+
+  test("tanh computes element-wise hyperbolic tangent") {
+    val m = Mat[Double]((-2, 0), (2, 100))
+    val result = m.tanh
+    assert(result(0, 1) < 1e-10)  // tanh(0) ≈ 0
+    assert(result(1, 1) > 0.99)  // tanh(large) → 1
+    assert(result(0, 0) < -0.9)  // tanh(-2) ≈ -0.96
+  }
+
+  test("floor and ceil work correctly") {
+    val m = Mat[Double]((1.2, -1.2), (2.8, -2.8))
+    val f = m.floor
+    val c = m.ceil
+    
+    assertEquals(f(0, 0), 1.0)
+    assertEquals(f(0, 1), -2.0)
+    assertEquals(c(1, 0), 3.0)
+    assertEquals(c(1, 1), -2.0)
+  }
+
+  test("broadcasting: matrix / row vector") {
+    val m = Mat[Double]((10, 20, 30), (40, 50, 60))  // 2x3
+    val v = Mat.row[Double](2, 5, 10)                 // 1x3
+    val result = m / v
+    
+    assertEquals(result(0, 0), 5.0)   // 10/2
+    assertEquals(result(0, 1), 4.0)   // 20/5
+    assertEquals(result(0, 2), 3.0)   // 30/10
+    assertEquals(result(1, 0), 20.0)  // 40/2
+    assertEquals(result(1, 2), 6.0)   // 60/10
+  }
+
+  test("broadcasting: matrix / column vector") {
+    val m = Mat[Double]((10, 20), (30, 40))  // 2x2
+    val v = Mat[Double](2, 5)                 // 2x1
+    val result = m / v
+    
+    assertEquals(result(0, 0), 5.0)   // 10/2
+    assertEquals(result(0, 1), 10.0)  // 20/2
+    assertEquals(result(1, 0), 6.0)   // 30/5
+    assertEquals(result(1, 1), 8.0)   // 40/5
+  }
+
+  test("broadcasting: row vector / column vector") {
+    val row = Mat.row[Double](12, 18, 24)  // 1x3
+    val col = Mat[Double](2, 3)             // 2x1
+    val result = row / col
+    
+    assertEquals(result.rows, 2)
+    assertEquals(result.cols, 3)
+    assertEquals(result(0, 0), 6.0)   // 12/2
+    assertEquals(result(0, 1), 9.0)   // 18/2
+    assertEquals(result(1, 0), 4.0)   // 12/3
+    assertEquals(result(1, 2), 8.0)   // 24/3
+  }
+
+  test("broadcasting: division by scalar (1x1 matrix)") {
+    val m = Mat[Double]((10, 20), (30, 40))
+    val scalar = Mat[Double](5)  // 1x1
+    val result = m / scalar
+    
+    assertEquals(result(0, 0), 2.0)
+    assertEquals(result(1, 1), 8.0)
+  }
+  test("sigmoid handles positive and negative values") {
+    val m = Mat[Double]((-2, 0), (2, 100))
+    val result = m.sigmoid
+    
+    assert(result(0, 0) > 0.1 && result(0, 0) < 0.2)  // sigmoid(-2) ≈ 0.12
+    assertEquals(result(0, 1), 0.5, 0.001)             // sigmoid(0) = 0.5
+    assert(result(1, 0) > 0.8 && result(1, 0) < 0.9)  // sigmoid(2) ≈ 0.88
+    assert(result(1, 1) > 0.99)                        // sigmoid(100) → 1
+  }
+
+  test("relu zeroes negative values") {
+    val m = Mat[Double]((-2, 0), (2, 5))
+    val result = m.relu
+    
+    assertEquals(result(0, 0), 0.0)
+    assertEquals(result(0, 1), 0.0)
+    assertEquals(result(1, 0), 2.0)
+    assertEquals(result(1, 1), 5.0)
+  }
+
+  test("leakyRelu preserves negative values with scaling") {
+    val m = Mat[Double]((-2, 0), (2, 5))
+    val result = m.leakyRelu(0.1)
+    
+    assertEquals(result(0, 0), -0.2, 0.001)  // -2 * 0.1
+    assertEquals(result(0, 1), 0.0)
+    assertEquals(result(1, 0), 2.0)
+    assertEquals(result(1, 1), 5.0)
+  }
+
+  test("softmax sums to 1 along axis") {
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6))
+    val result = m.softmax(axis = 1)  // across columns
+    
+    // Each row should sum to 1
+    val row0Sum = result(0, 0) + result(0, 1) + result(0, 2)
+    val row1Sum = result(1, 0) + result(1, 1) + result(1, 2)
+    
+    assert(math.abs(row0Sum - 1.0) < 1e-14, s"Row 0 sum $row0Sum should be ~1.0")
+    assert(math.abs(row1Sum - 1.0) < 1e-14, s"Row 1 sum $row1Sum should be ~1.0")
+    
+    // Larger values should have higher probabilities
+    assert(result(0, 2) > result(0, 1))
+    assert(result(0, 1) > result(0, 0))
+  }
+
+  test("softmax handles large values without overflow") {
+    val m = Mat[Double]((100, 200), (300, 400))
+    val result = m.softmax(axis = 1)
+    
+    // Should not be NaN or Inf
+    assert(!result(0, 0).isNaN && !result(0, 0).isInfinite)
+    assert(!result(1, 1).isNaN && !result(1, 1).isInfinite)
+    
+    // Each row sums to 1
+    val row0Sum = result(0, 0) + result(0, 1)
+    assertEquals(row0Sum, 1.0, 1e-10)
+  }
+
+  test("logSoftmax is numerically stable") {
+    val m = Mat[Double]((100, 200), (300, 400))
+    val result = m.logSoftmax(axis = 1)
+    
+    // Should not be NaN or Inf
+    assert(!result(0, 0).isNaN && !result(0, 0).isInfinite)
+    assert(!result(1, 1).isNaN && !result(1, 1).isInfinite)
+    
+    // exp(logSoftmax) should equal softmax
+    val softmax_result = m.softmax(axis = 1)
+    assertEquals(math.exp(result(0, 0)), softmax_result(0, 0), 1e-10)
+    assertEquals(math.exp(result(1, 1)), softmax_result(1, 1), 1e-10)
+    
+    // All values should be ≤ 0 (log of probabilities)
+    assert(result(0, 0) <= 0)
+    assert(result(1, 1) <= 0)
+  }
+
+  test("elu is smooth at zero") {
+    val m = Mat[Double]((-1, 0), (0.001, 1))
+    val result = m.elu(alpha = 1.0)
+    
+    assertEquals(result(0, 1), 0.0, 1e-10)  // elu(0) = 0
+    assert(result(0, 0) < 0)                // negative for x < 0
+    assert(result(1, 1) == 1.0)             // x for x > 0
+  }
+
+  test("gelu approximation is reasonable") {
+    val m = Mat[Double]((-2, 0), (2, 5))
+    val result = m.gelu
+    
+    assertEquals(result(0, 1), 0.0, 0.001)  // gelu(0) ≈ 0
+    assert(result(0, 0) < 0)                 // negative for x < 0
+    assert(result(1, 0) > 1.5)              // gelu(2) ≈ 1.96
+  }
+
+  test("dropout zeros approximately p fraction of elements") {
+    Mat.setSeed(42)
+    val m = Mat.ones[Double](100, 100)
+    val result = m.dropout(p = 0.5, training = true)
+    
+    // Count zeros
+    val numZeros = result.tdata.count(_ == 0.0)
+    val fraction = numZeros.toDouble / result.size
+    
+    // Should be approximately 50% (allow 10% variance due to randomness)
+    assert(fraction > 0.4 && fraction < 0.6, s"Expected ~50% zeros, got ${fraction * 100}%")
+  }
+
+  test("dropout scales remaining values by 1/(1-p)") {
+    Mat.setSeed(42)
+    val m = Mat.ones[Double](10, 10)
+    val result = m.dropout(p = 0.5, training = true)
+    
+    // Non-zero values should be scaled by 2.0 (= 1/(1-0.5))
+    val nonZeroValues = result.tdata.filter(_ != 0.0)
+    assert(nonZeroValues.nonEmpty, "Should have some non-zero values")
+    nonZeroValues.foreach { v =>
+      assert(math.abs(v - 2.0) < 0.001, s"Non-zero values should be scaled to 2.0, got $v")
+    }
+  }
+
+  test("dropout with p=0 keeps all values") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    val result = m.dropout(p = 0.0, training = true)
+    
+    // With p=0, no dropout, but still scaled by 1/(1-0) = 1
+    assert(result.tdata.sameElements(Array(1.0, 2.0, 3.0, 4.0)))
+  }
+
+  test("dropout in inference mode returns unchanged values") {
+    Mat.setSeed(42)
+    val m = Mat[Double]((1, 2, 3), (4, 5, 6))
+    val result = m.dropout(p = 0.5, training = false)
+    
+    // Should be exactly the same (no dropout, no scaling)
+    assert(result.tdata.sameElements(Array(1.0, 2.0, 3.0, 4.0, 5.0, 6.0)))
+  }
+
+  test("dropout with same seed produces same mask") {
+    val m = Mat.ones[Double](5, 5)
+    
+    val result1 = m.dropout(p = 0.3, training = true, seed = 123)
+    val result2 = m.dropout(p = 0.3, training = true, seed = 123)
+    
+    assert(result1.tdata.sameElements(result2.tdata), "Same seed should produce same dropout mask")
+  }
+
+  test("dropout with different seeds produces different masks") {
+    val m = Mat.ones[Double](5, 5)
+    
+    val result1 = m.dropout(p = 0.3, training = true, seed = 123)
+    val result2 = m.dropout(p = 0.3, training = true, seed = 456)
+    
+    assert(!result1.tdata.sameElements(result2.tdata), "Different seeds should produce different masks")
+  }
+
+  test("dropout preserves matrix shape") {
+    val m = Mat.rand(7, 11)
+    val result = m.dropout(p = 0.3, training = true)
+    
+    assertEquals(result.rows, 7)
+    assertEquals(result.cols, 11)
+  }
+
+  test("dropout maintains expected value") {
+    Mat.setSeed(42)
+    val m = Mat.full[Double](1000, 1000, 5.0)  // All values = 5.0
+    val result = m.dropout(p = 0.5, training = true)
+    
+    // Mean should be approximately 5.0 (some dropped to 0, others scaled to 10)
+    val mean = result.tdata.sum / result.size
+    assert(math.abs(mean - 5.0) < 0.2, s"Expected value should be ~5.0, got $mean")
+  }
 }
