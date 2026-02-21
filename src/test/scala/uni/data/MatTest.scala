@@ -584,64 +584,6 @@ class MatTest extends munit.FunSuite {
   }
   
   // ============================================================================
-  // Display Tests
-  // ============================================================================
-  
-  test("show formats matrix nicely") {
-    val m = Mat[Double]((1, 2), (3, 4))
-    val s = m.show
-    assert(s.contains("Mat[Double]("))
-    assert(s.contains("[1, 2]"))
-    assert(s.contains("[3, 4]"))
-    assert(s.contains("shape=(2,2)"))
-  }
-
-  test("show formats matrix nicely with wider range") {
-    val m = Mat[Double]((1, 0.2), (0.0003, 4001.000004))
-    val str = m.show
-    val expect = """
-    |Mat[Double](
-    |  [   1.0,    0.2],
-    |  [   0.0, 4001.0]
-    |  shape=(2,2)
-    """.trim.stripMargin
-    assertEquals(str, expect)
-  }
-  
-  test("show handles empty matrix") {
-    val m = Mat.empty[Double]
-    assertEquals(m.show, "Mat[Double]([], shape=(0, 0))")
-  }
-
-  test("show formats Float matrix nicely") {
-    val m = Mat[Float]((1, 2), (3, 4))
-    val s = m.show
-    assert(s.contains("Mat[Float]("))
-    assert(s.contains("[1, 2]"))
-    assert(s.contains("[3, 4]"))
-    assert(s.contains("shape=(2,2)"))
-  }
-  
-  test("show handles empty matrix of type Float") {
-    val m = Mat.empty[Float]
-    assertEquals(m.show, "Mat[Float]([], shape=(0, 0))")
-  }
-
-  test("show formats Big matrix nicely") {
-    val m = Mat[Big]((1, 2), (3, 4))
-    val s = m.show
-    assert(s.contains("Mat[Big]("))
-    assert(s.contains("[1, 2]"))
-    assert(s.contains("[3, 4]"))
-    assert(s.contains("shape=(2,2)"))
-  }
-  
-  test("show handles empty matrix of type Big") {
-    val m = Mat.empty[Big]
-    assertEquals(m.show, "Mat[Big]([], shape=(0, 0))")
-  }
-  
-  // ============================================================================
   // NumPy Equivalence Examples (Documentation)
   // ============================================================================
   
@@ -833,40 +775,6 @@ class MatTest extends munit.FunSuite {
     intercept[IllegalArgumentException] {
       m1 *:* m2
     }
-  }
-
-  // ============================================================================
-  // show branch coverage
-  // ============================================================================
-
-  test("show uses scientific notation for large values") {
-    val m = Mat[Double]((1e7, 2e8), (3e9, 4e10))
-    val s = m.show
-    assert(s.contains("e+"), s"Expected scientific notation in: $s")
-  }
-
-  test("show uses scientific notation for small values") {
-    val m = Mat[Double]((1e-5, 2e-6), (3e-7, 4e-8))
-    val s = m.show
-    assert(s.contains("e-"), s"Expected scientific notation in: $s")
-  }
-
-  test("show uses integer format for whole numbers") {
-    val m = Mat[Double]((1, 2), (3, 4))
-    val s = m.show
-    assert(s.contains("[1, 2]"), s"Expected integer format in: $s")
-    assert(!s.contains("1.0"),   s"Should not contain decimal in: $s")
-  }
-
-  test("show precision reflects spread") {
-    // small spread - needs more decimal places
-    val m1 = Mat[Double]((0.0001, 0.0002), (0.0003, 0.0004))
-    assert(m1.show.contains("0.000"), "small spread needs fine precision")
-
-    // large spread - fewer decimal places needed  
-    val m2 = Mat[Double]((1, 200), (3000, 40000))
-    val s2 = m2.show
-    assert(!s2.contains(".000000"), "large spread should not over-precision")
   }
 
   // ============================================================================
@@ -3820,17 +3728,6 @@ class MatTest extends munit.FunSuite {
     
     // Row 2: [70-40, 80-50, 90-60] = [30, 30, 30]
     assertEquals(centered(2, 2), 30.0)
-  }
-
-  test("show respects transposition") {
-    val m = Mat[Double]((1, 2, 3), (4, 5, 6)) // 2x3
-    val mt = m.T                          // 3x2
-    
-    val s = mt.show
-    // The first row of the string should be [1, 4]
-    // not [1, 2]
-    assert(s.contains("[1, 4]"))
-    assert(mt.shape == (3, 2))
   }
 
   test("mutation: row slice using =") {

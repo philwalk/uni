@@ -210,7 +210,7 @@ object Mat {
     /** m(rows: Range, ::) = other Mat */
     def update(rows: Range, cols: ::.type, other: Mat[T]): Unit = {
       require(other.rows == rows.length && other.cols == m.cols,
-        s"shape mismatch: target ${rows.length}×${m.cols} vs source ${other.shape}")
+        s"shape mismatch: target ${rows.length}x${m.cols} vs source ${other.shape}")
       var i = 0
       for r <- rows do
         var j = 0
@@ -223,7 +223,7 @@ object Mat {
     /** m(::, cols: Range) = other Mat */
     def update(rows: ::.type, cols: Range, other: Mat[T]): Unit = {
       require(other.rows == m.rows && other.cols == cols.length,
-        s"shape mismatch: target ${m.rows}×${cols.length} vs source ${other.shape}")
+        s"shape mismatch: target ${m.rows}x${cols.length} vs source ${other.shape}")
       var i = 0
       while i < m.rows do
         var j = 0
@@ -236,7 +236,7 @@ object Mat {
     /** m(rows: Range, cols: Range) = other Mat */
     def update(rows: Range, cols: Range, other: Mat[T]): Unit = {
       require(other.rows == rows.length && other.cols == cols.length,
-        s"shape mismatch: target ${rows.length}×${cols.length} vs source ${other.shape}")
+        s"shape mismatch: target ${rows.length}x${cols.length} vs source ${other.shape}")
       var i = 0
       for r <- rows do
         var j = 0
@@ -751,55 +751,203 @@ object Mat {
       Mat.create(result, newRows, newCols)
     }
 
-    def show: String = {
-      def typeName: String =
-        summon[ClassTag[T]].runtimeClass.getSimpleName match
-          case "double"     => "Double"
-          case "float"      => "Float"
-          case "BigDecimal" => "Big"
-          case other        => other
-      if m.isEmpty then s"Mat[$typeName]([], shape=(0, 0))"
+    private def typeName(using tag: ClassTag[T]): String = {
+      tag.runtimeClass match
+        case java.lang.Double.TYPE => "Double"
+        case java.lang.Float.TYPE  => "Float"
+        case c if c == classOf[BigDecimal] => "Big"
+        case other => other.getSimpleName
+    }
+
+    /** Default show: high precision, compact formatting */
+    def show: String =
+      val header = s"${m.rows}x${m.cols} Mat[$typeName]:"
+      val body   = renderAuto
+      if body.isEmpty then header
+      else s"$header\n$body"
+
+    def show(fmt: String): String =
+      val header = s"${m.rows}x${m.cols} Mat[$typeName]:"
+      val body   = renderRows(fmt)
+      if body.isEmpty then header
+      else s"$header\n$body"
+
+    /** Automatic formatting with high precision and compact layout */
+    private def renderAuto: String = {
+      val values =
+        for i <- 0 until m.rows; j <- 0 until m.cols
+        yield frac.toDouble(m(i,j))
+
+      if values.isEmpty then
+        ""   // no body
       else
-        val values = m.tdata
-        val absMax = values.map(v => math.abs(frac.toDouble(v))).max
-        val absMin = values.filter(frac.toDouble(_) != 0.0)
-                           .map(v => math.abs(frac.toDouble(v)))
-                           .minOption.getOrElse(0.0)
-        val fmt: Double => String =
-          if absMax >= 1e6 || (absMin > 0 && absMin < 1e-4) then d => f"$d%.4e"
+        // --- magnitude analysis ---
+        val absMax = values.map(math.abs).max
+        val absMin = values.filter(_ != 0.0).map(math.abs).minOption.getOrElse(0.0)
+
+        // --- scientific notation trigger (improved) ---
+        val sci =
+          absMax >= 1e8 || (absMin > 0 && absMin < 1e-6)
+
+        // --- base precision based on number of columns ---
+        val base =
+          if m.cols <= 4 then 10
+          else if m.cols <= 8 then 8
+          else 6
+
+        // --- spread-based refinement ---
+        val spread = values.max - values.min
+
+        val maxDec =
+          if sci then base
+          else if spread == 0.0 then base
+          else if spread >= 100 then base - 3
+          else if spread >= 10  then base - 2
+          else if spread >= 1   then base - 1
+          else base
+
+        // --- formatting function (dynamic precision) ---
+        val fmt = if sci then s"%.${maxDec}e" else s"%.${maxDec}f"
+        val raw = values.map(v => fmt.format(v)).toIndexedSeq
+        renderRowsFromRaw(raw, true)
+    }
+
+    /** Core row-rendering logic */
+    def trimZeros(s: String, keepDecimal: Boolean): String = {
+      val parts = s.split("[eE]", 2)
+      val main  = parts(0)
+      val exp   = if parts.length == 2 then "e" + parts(1) else ""
+
+      val trimmedMain =
+        if main.contains('.') then
+          val r = main.reverse.dropWhile(_ == '0').dropWhile(_ == '.').reverse
+          if r.isEmpty then "0"
+          else if keepDecimal && !r.contains('.') then r + "."
+          else r
+        else main
+      trimmedMain + exp
+    }
+
+    private def renderRows(fmt: String): String = {
+      val isAuto = fmt.isEmpty
+
+      // 1. Format each element using m(i,j)
+      val raw =
+        if isAuto then
+          for i <- 0 until m.rows; j <- 0 until m.cols
+          yield m(i, j).toString
+        else
+          for i <- 0 until m.rows; j <- 0 until m.cols
+          yield fmt.format(m(i, j))
+      renderRowsFromRaw(raw, isAuto)
+    }
+
+    private def renderRowsFromRaw(raw: IndexedSeq[String], isAuto: Boolean): String = {
+      // 2. Detect per-column decimal requirement
+      val colHasDecimal = Array.fill(m.cols)(false)
+      for i <- 0 until m.rows; j <- 0 until m.cols do
+        if raw(i*m.cols + j).contains('.') then
+          colHasDecimal(j) = true
+
+      // scientific-notation trigger
+      val values =
+        if raw.isEmpty then Nil
+        else raw.map(_.toDouble).map(math.abs)
+
+      val useSci =
+        if values.isEmpty then
+          false
+        else
+          val absMax = values.max
+          val absMin = values.filter(_ > 0).minOption.getOrElse(absMax)
+          absMax >= 1e8 || absMin < 1e-6
+
+      val colIsInteger =
+        if isAuto then
+          if useSci then
+            Array.fill(m.cols)(false)
           else
-            val allInts = values.forall(v => frac.toDouble(v) == math.floor(frac.toDouble(v)))
-            if allInts then d => d.toLong.toString
+            val arr = Array.fill(m.cols)(true)
+            for i <- 0 until m.rows; j <- 0 until m.cols do
+              val d = frac.toDouble(m(i,j))
+              if d != Math.rint(d) then
+                arr(j) = false
+            arr
+        else
+          Array.fill(m.cols)(false)   // disable integer-only logic in fmt mode
+
+      // Integer-only columns must NOT be treated as decimal columns
+      for j <- 0 until m.cols do
+        if colIsInteger(j) then
+          colHasDecimal(j) = false
+
+      // 3. Trim zeros only for auto-format
+      val trimmed =
+        if isAuto then
+          for idx <- raw.indices yield
+            val col = idx % m.cols
+            // integer-only override
+            if colIsInteger(col) then
+              val s = raw(idx)
+              val dot = s.indexOf('.')
+              if dot >= 0 then
+                // strip decimal AND everything after it AND prevent later decimal enforcement
+                s.substring(0, dot)
+              else
+                s
             else
-              val doubles = values.map(frac.toDouble)
-              val spread = doubles.max - doubles.min
-              val dec =
-                if spread == 0.0 then 1
-                else if spread >= 100 then 1
-                else if spread >= 10  then 2
-                else if spread >= 1   then 3
-                else if spread >= 0.1 then 4
-                else if spread >= 0.01 then 5
-                else 6
-              d => s"%.${dec}f".format(d)
-        val colWidth = values.map(v => fmt(frac.toDouble(v)).length).max
-        val sb = new StringBuilder
-        sb.append(s"Mat[$typeName](\n")
-        var i = 0
-        while i < m.rows do
-          sb.append("  [")
-          var j = 0
-          while j < m.cols do
-            val s = fmt(frac.toDouble(m(i, j)))
-            sb.append(" " * (colWidth - s.length)).append(s)
-            if j < m.cols - 1 then sb.append(", ")
-            j += 1
-          sb.append("]")
-          if i < m.rows - 1 then sb.append(",")
-          sb.append("\n")
-          i += 1
-        sb.append(s"  shape=${m.shape}")
-        sb.toString
+              val t0 = trimZeros(raw(idx), keepDecimal = colHasDecimal(col))
+              if colHasDecimal(col) then
+                if t0.contains('.') then
+                  if t0.endsWith(".") then t0 + "0" else t0
+                else
+                  t0 + ".0"
+              else
+                t0
+        else
+          raw
+
+      // 4. Split integer and fractional parts (same for both modes)
+      val split =
+        trimmed.map(_.stripLeading).map { s =>
+          val parts = s.split("\\.", 2)
+          if parts.length == 1 then (parts(0), "")
+          else (parts(0), parts(1))
+        }
+
+      // 5. Compute per-column widths
+      val intWidth  = Array.fill(m.cols)(0)
+      val fracWidth = Array.fill(m.cols)(0)
+
+      for i <- 0 until m.rows; j <- 0 until m.cols do
+        val (intp, fracp) = split(i*m.cols + j)
+        intWidth(j)  = math.max(intWidth(j),  intp.length)
+        fracWidth(j) = math.max(fracWidth(j), fracp.length)
+
+      // 6. Render aligned output
+      val sb = new StringBuilder
+      var idx = 0
+
+      for i <- 0 until m.rows do
+        sb.append(" (")
+        for j <- 0 until m.cols do
+          val (intp, fracp) = split(idx)
+
+          sb.append(" " * (intWidth(j) - intp.length))
+          sb.append(intp)
+
+          if colHasDecimal(j) then
+            sb.append(".")
+            sb.append(fracp)
+            sb.append(" " * (fracWidth(j) - fracp.length))
+
+          if j < m.cols - 1 then sb.append(", ")
+
+          idx += 1
+        sb.append(")")
+        if i < m.rows - 1 then sb.append(",\n")
+
+      sb.toString
     }
 
   // ============================================================================
@@ -897,7 +1045,7 @@ object Mat {
   def apply(value: Double): Mat[Double] = Mat.create(Array(value), 1, 1)
   def apply(value: Big): Mat[Big]       = Mat.create(Array(value), 1, 1)
 
-  /** Explicit 1×1 matrix factory */
+  /** Explicit 1x1 matrix factory */
   def single[T: ClassTag](value: T): Mat[T] = Mat.create(Array(value), 1, 1)
 
   /** Create column vector from sequence */
@@ -917,7 +1065,7 @@ object Mat {
       i += 1
     Mat.create(data, rows, cols)
   }
-  /** Create empty 0×0 matrix */
+  /** Create empty 0x0 matrix */
   def empty[T: ClassTag]: Mat[T]           = Mat.create(Array.ofDim[T](0), 0, 0)
 
   /** Create row vector from values */
@@ -1091,7 +1239,7 @@ object Mat {
     }
 
     // ---- QR Decomposition (Householder reflections) -------------------
-    // Returns (Q: rows×p, R: p×cols) where m = Q * R, p = min(rows,cols)
+    // Returns (Q: rowsxp, R: pxcols) where m = Q * R, p = min(rows,cols)
     def qrDecomposition(using frac: Fractional[T]): (Mat[T], Mat[T]) = {
       val nRows = m.rows
       val nCols = m.cols
@@ -1107,7 +1255,7 @@ object Mat {
           j += 1
         i += 1
 
-      // Q accumulated as nRows×nRows identity, updated by each reflector
+      // Q accumulated as nRowsxnRows identity, updated by each reflector
       val Q = Array.ofDim[T](nRows * nRows)
       i = 0
       while i < nRows do
@@ -1205,8 +1353,8 @@ object Mat {
           j += 1
         i += 1
 
-      // Return economy QR: Q is nRows×p, R is p×nCols
-      // Q from accumulation is nRows×nRows - take first p columns
+      // Return economy QR: Q is nRowsxp, R is pxnCols
+      // Q from accumulation is nRowsxnRows - take first p columns
       val Qout = Array.ofDim[T](nRows * p)
       i = 0
       while i < nRows do
@@ -1216,7 +1364,7 @@ object Mat {
           j += 1
         i += 1
 
-        // Slice R to p×nCols (drop rows p..nRows which are zero)
+        // Slice R to pxnCols (drop rows p..nRows which are zero)
       val Rout = Array.ofDim[T](p * nCols)
         i = 0
         while i < p do
@@ -1432,7 +1580,7 @@ object Mat {
     def sum(axis: Int)(using num: Numeric[T]): Mat[T] = {
       require(axis == 0 || axis == 1, s"axis must be 0 or 1, got $axis")
       if axis == 0 then
-        // Sum down rows → result is 1×cols
+        // Sum down rows → result is 1xcols
         val result = Array.fill(m.cols)(num.zero)
         var i = 0
         while i < m.rows do
@@ -1443,7 +1591,7 @@ object Mat {
           i += 1
         Mat.create(result, 1, m.cols)
       else
-        // Sum across cols → result is rows×1
+        // Sum across cols → result is rowsx1
         val result = Array.fill(m.rows)(num.zero)
         var i = 0
         while i < m.rows do
@@ -1483,7 +1631,7 @@ object Mat {
     def max(axis: Int)(using ord: Ordering[T]): Mat[T] = {
       require(axis == 0 || axis == 1, s"axis must be 0 or 1, got $axis")
       if axis == 0 then
-        // Max down rows → 1×cols
+        // Max down rows → 1xcols
         val result = Array.tabulate(m.cols)(j => m(0, j))
         var i = 1
         while i < m.rows do
@@ -1494,7 +1642,7 @@ object Mat {
           i += 1
         Mat.create(result, 1, m.cols)
       else
-        // Max across cols → rows×1
+        // Max across cols → rowsx1
         val result = Array.tabulate(m.rows)(i => m(i, 0))
         var i = 0
         while i < m.rows do
@@ -1648,14 +1796,14 @@ object Mat {
 
     // 2. cov and corrcoef:
     // scala// NumPy: np.cov(m) - each ROW is a variable, each COL is an observation
-    // Returns p×p covariance matrix where p = number of rows
+    // Returns pxp covariance matrix where p = number of rows
     def cov(using frac: Fractional[T]): Mat[T] = {
       val p = m.rows  // number of variables
       val n = m.cols  // number of observations
       require(n > 1, "cov requires at least 2 observations (cols)")
 
       // Subtract row means
-      val means = m.mean(1)  // p×1
+      val means = m.mean(1)  // px1
       val centered = Array.ofDim[T](p * n)
       var i = 0
       while i < p do
@@ -1837,8 +1985,8 @@ object Mat {
 
           val (uMat, s, vtMat) = md.svdDouble
           // Extract flat row-major arrays from the Mat results
-          // uMat  is nRows×nRows, row-major: uMat.underlying(r*nRows + c) = U[r,c]
-          // vtMat is nCols×nCols, row-major: vtMat.underlying(r*nCols + c) = Vt[r,c]
+          // uMat  is nRowsxnRows, row-major: uMat.underlying(r*nRows + c) = U[r,c]
+          // vtMat is nColsxnCols, row-major: vtMat.underlying(r*nCols + c) = Vt[r,c]
           val u  = uMat.underlying   // Array[Double], nRows*nRows
           val vt = vtMat.underlying  // Array[Double], nCols*nCols
 
@@ -3357,11 +3505,11 @@ object Mat {
   /** np.diag(v) where v is a vector Mat */
   def diag[T: ClassTag](v: Mat[T])(using frac: Fractional[T]): Mat[T] = {
     require(v.rows == 1 || v.cols == 1,
-      s"diag requires a vector (1×n or n×1), got ${v.shape}")
+      s"diag requires a vector (1xn or nx1), got ${v.shape}")
     diag(v.flatten)
   }
 
-  /** Rectangular diagonal: nRows×nCols with values on diagonal */
+  /** Rectangular diagonal: nRowsxnCols with values on diagonal */
   def diag[T: ClassTag](values: Array[T], rows: Int, cols: Int)
       (using frac: Fractional[T]): Mat[T] = {
     val result = Array.fill(rows * cols)(frac.zero)
@@ -3413,7 +3561,7 @@ object Mat {
     val A = Mat.create(vand, n, deg + 1)
     val b = Mat.create(ys, n, 1)
     val (coeffs, _, _, _) = A.lstsq(b)
-    // coeffs is (deg+1)×1, return as flat row vector
+    // coeffs is (deg+1)x1, return as flat row vector
     Mat.create(coeffs.flatten, 1, deg + 1)
   }
 
