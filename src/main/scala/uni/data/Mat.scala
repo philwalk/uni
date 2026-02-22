@@ -25,7 +25,30 @@ object Mat {
       private[Mat] val _offset: Int = 0,  // Default to 0
       private[Mat] val _rs: Int = -1,     // rowSride ; phase 0_: always 'cols'
       private[Mat] val _cs: Int = -1,     // colStride ; phase 0_: always 1
-    )
+    ) {
+      override def toString: String = {
+        val typeName = _tdata.getClass.getComponentType match {
+          case java.lang.Double.TYPE => "Double"  // ← Capitalize primitive
+          case java.lang.Float.TYPE  => "Float"
+          case c if c == classOf[BigDecimal] => "Big"
+          case other => other.getSimpleName
+        }
+        formatMatrix(
+          _tdata, _rows, _cols, _offset, _rs, _cs,
+          typeName,
+          toDouble = {
+            case d: Double => d
+            case f: Float => f.toDouble
+            case b: BigDecimal => b.toDouble
+            case i: Int => i.toDouble
+            case l: Long => l.toDouble
+            case _ => 0.0  // fallback
+          },
+          mkString = _.toString,
+          fmt = None
+        )
+      }
+    }
 
     private[data] def create[T: ClassTag](
       _tdata: Array[T],
@@ -83,6 +106,276 @@ object Mat {
   def inspect: String =
     s"Mat(${rows}x${cols}, offset=$offset, rs=$rs, cs=$cs, transposed=$transposed)"
 
+  def formatMatrix[T](
+    tdata: Array[T],
+    rows: Int,
+    cols: Int,
+    offset: Int,
+    rs: Int,
+    cs: Int,
+    typeName: String,
+    toDouble: T => Double,
+    mkString: T => String,
+    fmt: Option[String] = None
+  ): String = {
+    
+    def getValue(i: Int, j: Int): T = 
+      tdata(offset + i * rs + j * cs)
+    
+    // Truncation thresholds
+    val maxRows = Mat.PrintOptions.maxRows
+    val maxCols = Mat.PrintOptions.maxCols
+    val edgeRows = Mat.PrintOptions.edgeItems
+    val edgeCols = Mat.PrintOptions.edgeItems
+    
+    val truncateRows = rows > maxRows
+    val truncateCols = cols > maxCols
+    
+    // Determine which indices to display
+    val rowIndices = if (truncateRows) {
+      (0 until edgeRows) ++ (rows - edgeRows until rows)
+    } else {
+      0 until rows
+    }
+    
+    val colIndices = if (truncateCols) {
+      (0 until edgeCols) ++ (cols - edgeCols until cols)
+    } else {
+      0 until cols
+    }
+    
+    val displayRows = rowIndices.size
+    val displayCols = colIndices.size
+    
+    // Helper to trim zeros
+    def trimZeros(s: String, keepDecimal: Boolean): String = {
+      val parts = s.split("[eE]", 2)
+      val main  = parts(0)
+      val exp   = if (parts.length == 2) "e" + parts(1) else ""
+
+      val trimmedMain =
+        if (main.contains('.')) {
+          val r = main.reverse.dropWhile(_ == '0').dropWhile(_ == '.').reverse
+          if (r.isEmpty) "0"
+          else if (keepDecimal && !r.contains('.')) r + "."
+          else r
+        } else main
+      trimmedMain + exp
+    }
+    
+    // Automatic formatting with high precision
+    def renderAuto: String = {
+      val values =
+        for (i <- rowIndices; j <- colIndices)
+        yield toDouble(getValue(i, j))
+
+      if (values.isEmpty) {
+        ""
+      } else {
+        val absMax = values.map(math.abs).max
+        val absMin = values.filter(_ != 0.0).map(math.abs).minOption.getOrElse(0.0)
+
+        val sci = absMax >= 1e8 || (absMin > 0 && absMin < 1e-6)
+
+        val base =
+          if (displayCols <= 4) 10
+          else if (displayCols <= 8) 8
+          else 6
+
+        val spread = values.max - values.min
+
+        val maxDec =
+          if (sci) base
+          else if (spread == 0.0) base
+          else if (spread >= 100) base - 3
+          else if (spread >= 10) base - 2
+          else if (spread >= 1) base - 1
+          else base
+
+        val fmtStr = if (sci) s"%.${maxDec}e" else s"%.${maxDec}f"
+        val raw = values.map(v => fmtStr.format(v)).toIndexedSeq
+        renderRowsFromRaw(raw, isAuto = true)
+      }
+    }
+    
+    // Format with explicit format string
+    def renderRows(fmtStr: String): String = {
+      val isAuto = fmtStr.isEmpty
+
+      val raw =
+        if (isAuto) {
+          for (i <- rowIndices; j <- colIndices)
+          yield mkString(getValue(i, j))
+        } else {
+          for (i <- rowIndices; j <- colIndices)
+          yield fmtStr.format(getValue(i, j))
+        }
+      renderRowsFromRaw(raw, isAuto)
+    }
+    
+    // Core rendering logic
+    def renderRowsFromRaw(raw: IndexedSeq[String], isAuto: Boolean): String = {
+      val colHasDecimal = Array.fill(displayCols)(false)
+      for (i <- 0 until displayRows; j <- 0 until displayCols) {
+        if (raw(i * displayCols + j).contains('.')) {
+          colHasDecimal(j) = true
+        }
+      }
+
+      val values =
+        if (raw.isEmpty) Nil
+        else raw.map(_.toDouble).map(math.abs)
+
+      val useSci =
+        if (values.isEmpty) {
+          false
+        } else {
+          val absMax = values.max
+          val absMin = values.filter(_ > 0).minOption.getOrElse(absMax)
+          absMax >= 1e8 || absMin < 1e-6
+        }
+
+      val colIsInteger =
+        if (isAuto) {
+          if (useSci) {
+            Array.fill(displayCols)(false)
+          } else {
+            val arr = Array.fill(displayCols)(true)
+            for (i <- 0 until displayRows; j <- 0 until displayCols) {
+              val d = toDouble(getValue(rowIndices(i), colIndices(j)))
+              if (d != Math.rint(d)) {
+                arr(j) = false
+              }
+            }
+            arr
+          }
+        } else {
+          Array.fill(displayCols)(false)
+        }
+
+      for (j <- 0 until displayCols) {
+        if (colIsInteger(j)) {
+          colHasDecimal(j) = false
+        }
+      }
+
+      val trimmed =
+        if (isAuto) {
+          for (idx <- raw.indices) yield {
+            val col = idx % displayCols
+            if (colIsInteger(col)) {
+              val s = raw(idx)
+              val dot = s.indexOf('.')
+              if (dot >= 0) s.substring(0, dot)
+              else s
+            } else {
+              val t0 = trimZeros(raw(idx), keepDecimal = colHasDecimal(col))
+              if (colHasDecimal(col)) {
+                if (t0.contains('.')) {
+                  if (t0.endsWith(".")) t0 + "0" else t0
+                } else {
+                  t0 + ".0"
+                }
+              } else {
+                t0
+              }
+            }
+          }
+        } else {
+          raw
+        }
+
+      val split =
+        trimmed.map(_.stripLeading).map { s =>
+          val parts = s.split("\\.", 2)
+          if (parts.length == 1) (parts(0), "")
+          else (parts(0), parts(1))
+        }
+
+      val intWidth  = Array.fill(displayCols)(0)
+      val fracWidth = Array.fill(displayCols)(0)
+
+      for (i <- 0 until displayRows; j <- 0 until displayCols) {
+        val (intp, fracp) = split(i * displayCols + j)
+        intWidth(j)  = math.max(intWidth(j),  intp.length)
+        fracWidth(j) = math.max(fracWidth(j), fracp.length)
+      }
+      
+      // Add ellipsis column widths if truncating columns
+      val sb = new StringBuilder
+      var idx = 0
+      
+      for (displayRowIdx <- 0 until displayRows) {
+        // Insert row ellipsis after edge rows
+        if (truncateRows && displayRowIdx == edgeRows) {
+          sb.append(" ...\n")
+        }
+        
+        sb.append(" (")
+        for (displayColIdx <- 0 until displayCols) {
+          // Insert column ellipsis after edge cols
+          if (truncateCols && displayColIdx == edgeCols) {
+            sb.append("...")
+            if (displayColIdx < displayCols - 1) sb.append(", ")
+          }
+          
+          val (intp, fracp) = split(idx)
+          sb.append(" " * (intWidth(displayColIdx) - intp.length))
+          sb.append(intp)
+          
+          if (colHasDecimal(displayColIdx)) {
+            sb.append(".")
+            sb.append(fracp)
+            sb.append(" " * (fracWidth(displayColIdx) - fracp.length))
+          }
+          
+          if (displayColIdx < displayCols - 1) sb.append(", ")
+          idx += 1
+        }
+        sb.append(")")
+        if (displayRowIdx < displayRows - 1) sb.append(",\n")
+      }
+
+      sb.toString
+    }
+    val header = s"${rows}x${cols} Mat[$typeName]:"
+    val body = if (fmt.isDefined) {
+      renderRows(fmt.get)
+    } else {
+      renderAuto
+    }
+    
+    if (body.isEmpty) header
+    else s"$header\n$body"
+    
+  }
+
+  // Global print options
+  object PrintOptions {
+    var maxRows: Int = 10        // NumPy doesn't have this, but useful
+    var maxCols: Int = 10        // NumPy doesn't have this, but useful  
+    var edgeItems: Int = 3       // NumPy has this - items to show on each edge
+    var precision: Int = 8       // NumPy has this
+    var suppressScientific: Boolean = false  // NumPy has this
+    var threshold: Int = 1000    // NumPy has this - total elements before ellipsis
+  }
+  
+  def setPrintOptions(
+    maxRows: Int = PrintOptions.maxRows,
+    maxCols: Int = PrintOptions.maxCols,
+    edgeItems: Int = PrintOptions.edgeItems,
+    precision: Int = PrintOptions.precision,
+    suppressScientific: Boolean = PrintOptions.suppressScientific,
+    threshold: Int = PrintOptions.threshold
+  ): Unit = {
+    PrintOptions.maxRows = maxRows
+    PrintOptions.maxCols = maxCols
+    PrintOptions.edgeItems = edgeItems
+    PrintOptions.precision = precision
+    PrintOptions.suppressScientific = suppressScientific
+    PrintOptions.threshold = threshold
+  }
+
   // ============================================================================
   // Core Properties (NumPy-aligned)
   // ============================================================================
@@ -104,6 +397,33 @@ object Mat {
     def ndim: Int              = 2
     // In Mat extension methods
 
+    def typeName(using tag: ClassTag[T]): String = {
+      tag.runtimeClass match
+        case java.lang.Double.TYPE => "Double"
+        case java.lang.Float.TYPE  => "Float"
+        case c if c == classOf[BigDecimal] => "Big"
+        case other => other.getSimpleName
+    }
+
+    def show(using frac: Fractional[T], ct: ClassTag[T]): String = {
+      formatMatrix(
+        m.tdata, m.rows, m.cols, m.offset, m.rs, m.cs,
+        typeName,
+        toDouble = frac.toDouble,
+        mkString = _.toString,
+        fmt = None
+      )
+    }
+
+    def show(fmt: String)(using frac: Fractional[T], ct: ClassTag[T]): String = {
+      formatMatrix(
+        m.tdata, m.rows, m.cols, m.offset, m.rs, m.cs,
+        typeName,
+        toDouble = frac.toDouble,
+        mkString = _.toString,
+        fmt = Some(fmt)
+      )
+    }
     def asMat: Mat[T] = m // a Vec is already a Mat, so no-op
 
     def isContiguous: Boolean =
@@ -751,204 +1071,6 @@ object Mat {
       Mat.create(result, newRows, newCols)
     }
 
-    private def typeName(using tag: ClassTag[T]): String = {
-      tag.runtimeClass match
-        case java.lang.Double.TYPE => "Double"
-        case java.lang.Float.TYPE  => "Float"
-        case c if c == classOf[BigDecimal] => "Big"
-        case other => other.getSimpleName
-    }
-
-    /** Default show: high precision, compact formatting */
-    def show: String =
-      val header = s"${m.rows}x${m.cols} Mat[$typeName]:"
-      val body   = renderAuto
-      if body.isEmpty then header
-      else s"$header\n$body"
-
-    def show(fmt: String): String =
-      val header = s"${m.rows}x${m.cols} Mat[$typeName]:"
-      val body   = renderRows(fmt)
-      if body.isEmpty then header
-      else s"$header\n$body"
-
-    /** Automatic formatting with high precision and compact layout */
-    private def renderAuto: String = {
-      val values =
-        for i <- 0 until m.rows; j <- 0 until m.cols
-        yield frac.toDouble(m(i,j))
-
-      if values.isEmpty then
-        ""   // no body
-      else
-        // --- magnitude analysis ---
-        val absMax = values.map(math.abs).max
-        val absMin = values.filter(_ != 0.0).map(math.abs).minOption.getOrElse(0.0)
-
-        // --- scientific notation trigger (improved) ---
-        val sci =
-          absMax >= 1e8 || (absMin > 0 && absMin < 1e-6)
-
-        // --- base precision based on number of columns ---
-        val base =
-          if m.cols <= 4 then 10
-          else if m.cols <= 8 then 8
-          else 6
-
-        // --- spread-based refinement ---
-        val spread = values.max - values.min
-
-        val maxDec =
-          if sci then base
-          else if spread == 0.0 then base
-          else if spread >= 100 then base - 3
-          else if spread >= 10  then base - 2
-          else if spread >= 1   then base - 1
-          else base
-
-        // --- formatting function (dynamic precision) ---
-        val fmt = if sci then s"%.${maxDec}e" else s"%.${maxDec}f"
-        val raw = values.map(v => fmt.format(v)).toIndexedSeq
-        renderRowsFromRaw(raw, true)
-    }
-
-    /** Core row-rendering logic */
-    def trimZeros(s: String, keepDecimal: Boolean): String = {
-      val parts = s.split("[eE]", 2)
-      val main  = parts(0)
-      val exp   = if parts.length == 2 then "e" + parts(1) else ""
-
-      val trimmedMain =
-        if main.contains('.') then
-          val r = main.reverse.dropWhile(_ == '0').dropWhile(_ == '.').reverse
-          if r.isEmpty then "0"
-          else if keepDecimal && !r.contains('.') then r + "."
-          else r
-        else main
-      trimmedMain + exp
-    }
-
-    private def renderRows(fmt: String): String = {
-      val isAuto = fmt.isEmpty
-
-      // 1. Format each element using m(i,j)
-      val raw =
-        if isAuto then
-          for i <- 0 until m.rows; j <- 0 until m.cols
-          yield m(i, j).toString
-        else
-          for i <- 0 until m.rows; j <- 0 until m.cols
-          yield fmt.format(m(i, j))
-      renderRowsFromRaw(raw, isAuto)
-    }
-
-    private def renderRowsFromRaw(raw: IndexedSeq[String], isAuto: Boolean): String = {
-      // 2. Detect per-column decimal requirement
-      val colHasDecimal = Array.fill(m.cols)(false)
-      for i <- 0 until m.rows; j <- 0 until m.cols do
-        if raw(i*m.cols + j).contains('.') then
-          colHasDecimal(j) = true
-
-      // scientific-notation trigger
-      val values =
-        if raw.isEmpty then Nil
-        else raw.map(_.toDouble).map(math.abs)
-
-      val useSci =
-        if values.isEmpty then
-          false
-        else
-          val absMax = values.max
-          val absMin = values.filter(_ > 0).minOption.getOrElse(absMax)
-          absMax >= 1e8 || absMin < 1e-6
-
-      val colIsInteger =
-        if isAuto then
-          if useSci then
-            Array.fill(m.cols)(false)
-          else
-            val arr = Array.fill(m.cols)(true)
-            for i <- 0 until m.rows; j <- 0 until m.cols do
-              val d = frac.toDouble(m(i,j))
-              if d != Math.rint(d) then
-                arr(j) = false
-            arr
-        else
-          Array.fill(m.cols)(false)   // disable integer-only logic in fmt mode
-
-      // Integer-only columns must NOT be treated as decimal columns
-      for j <- 0 until m.cols do
-        if colIsInteger(j) then
-          colHasDecimal(j) = false
-
-      // 3. Trim zeros only for auto-format
-      val trimmed =
-        if isAuto then
-          for idx <- raw.indices yield
-            val col = idx % m.cols
-            // integer-only override
-            if colIsInteger(col) then
-              val s = raw(idx)
-              val dot = s.indexOf('.')
-              if dot >= 0 then
-                // strip decimal AND everything after it AND prevent later decimal enforcement
-                s.substring(0, dot)
-              else
-                s
-            else
-              val t0 = trimZeros(raw(idx), keepDecimal = colHasDecimal(col))
-              if colHasDecimal(col) then
-                if t0.contains('.') then
-                  if t0.endsWith(".") then t0 + "0" else t0
-                else
-                  t0 + ".0"
-              else
-                t0
-        else
-          raw
-
-      // 4. Split integer and fractional parts (same for both modes)
-      val split =
-        trimmed.map(_.stripLeading).map { s =>
-          val parts = s.split("\\.", 2)
-          if parts.length == 1 then (parts(0), "")
-          else (parts(0), parts(1))
-        }
-
-      // 5. Compute per-column widths
-      val intWidth  = Array.fill(m.cols)(0)
-      val fracWidth = Array.fill(m.cols)(0)
-
-      for i <- 0 until m.rows; j <- 0 until m.cols do
-        val (intp, fracp) = split(i*m.cols + j)
-        intWidth(j)  = math.max(intWidth(j),  intp.length)
-        fracWidth(j) = math.max(fracWidth(j), fracp.length)
-
-      // 6. Render aligned output
-      val sb = new StringBuilder
-      var idx = 0
-
-      for i <- 0 until m.rows do
-        sb.append(" (")
-        for j <- 0 until m.cols do
-          val (intp, fracp) = split(idx)
-
-          sb.append(" " * (intWidth(j) - intp.length))
-          sb.append(intp)
-
-          if colHasDecimal(j) then
-            sb.append(".")
-            sb.append(fracp)
-            sb.append(" " * (fracWidth(j) - fracp.length))
-
-          if j < m.cols - 1 then sb.append(", ")
-
-          idx += 1
-        sb.append(")")
-        if i < m.rows - 1 then sb.append(",\n")
-
-      sb.toString
-    }
 
   // ============================================================================
   // Factory Methods

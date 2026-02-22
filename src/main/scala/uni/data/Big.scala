@@ -48,6 +48,7 @@ object Big:
   // given Conversion[Long, Big] = l => Big(BigDecimal(l))
   // given Conversion[Int, Big]  = i => Big(BigDecimal(i))
   // given Conversion[Double, Big] = d => Big(BigDecimal(d))
+
   extension (d: Double)
     inline def asBig: Big = Big(BigDecimal(d))
 
@@ -188,6 +189,10 @@ object Big:
       Big(underlying.sqrt(Big.MC))
 
   import scala.language.implicitConversions
+  given Conversion[Int, Big] = d => Big(BigDecimal(d))
+  given Conversion[Long, Big] = d => Big(BigDecimal(d))
+  given Conversion[Float, Big] = d => Big(BigDecimal(d))
   given Conversion[Double, Big] = d => Big(BigDecimal(d))
+//given Conversion[String, Big] = d => Big(BigDecimal(d))  // too much surprise!
 
 
