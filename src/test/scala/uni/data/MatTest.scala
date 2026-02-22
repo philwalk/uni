@@ -4514,4 +4514,137 @@ class MatTest extends munit.FunSuite {
     assertEquals(minResult(0, 0), 1.5f)
     assertEquals(minResult(1, 0), 3.0f)
   }
+
+
+  // Log variants tests
+  test("log10 computes base-10 logarithm") {
+    val m = Mat[Double]((1, 10, 100), (1000, 10000, 100000))
+    val result = m.log10
+    
+    assertEquals(result(0, 0), 0.0, 1e-10)   // log10(1) = 0
+    assertEquals(result(0, 1), 1.0, 1e-10)   // log10(10) = 1
+    assertEquals(result(0, 2), 2.0, 1e-10)   // log10(100) = 2
+    assertEquals(result(1, 0), 3.0, 1e-10)   // log10(1000) = 3
+    assertEquals(result(1, 1), 4.0, 1e-10)   // log10(10000) = 4
+    assertEquals(result(1, 2), 5.0, 1e-10)   // log10(100000) = 5
+  }
+
+  test("log2 computes base-2 logarithm") {
+    val m = Mat[Double]((1, 2, 4), (8, 16, 32))
+    val result = m.log2
+    
+    assertEquals(result(0, 0), 0.0, 1e-10)   // log2(1) = 0
+    assertEquals(result(0, 1), 1.0, 1e-10)   // log2(2) = 1
+    assertEquals(result(0, 2), 2.0, 1e-10)   // log2(4) = 2
+    assertEquals(result(1, 0), 3.0, 1e-10)   // log2(8) = 3
+    assertEquals(result(1, 1), 4.0, 1e-10)   // log2(16) = 4
+    assertEquals(result(1, 2), 5.0, 1e-10)   // log2(32) = 5
+  }
+
+  test("log10 and log2 handle non-powers") {
+    val m = Mat[Double]((5, 7), (15, 25))
+    val log10Result = m.log10
+    val log2Result = m.log2
+    
+    // Just verify they compute without error
+    assert(log10Result(0, 0) > 0.6 && log10Result(0, 0) < 0.7)  // log10(5) ≈ 0.699
+    assert(log2Result(0, 0) > 2.3 && log2Result(0, 0) < 2.4)    // log2(5) ≈ 2.322
+  }
+
+  test("trunc truncates toward zero") {
+    val m = Mat[Double]((1.7, -1.7, 2.3), (-2.3, 0.5, -0.5))
+    val result = m.trunc
+    
+    assertEquals(result(0, 0), 1.0)   // trunc(1.7) = 1
+    assertEquals(result(0, 1), -1.0)  // trunc(-1.7) = -1
+    assertEquals(result(0, 2), 2.0)   // trunc(2.3) = 2
+    assertEquals(result(1, 0), -2.0)  // trunc(-2.3) = -2
+    assertEquals(result(1, 1), 0.0)   // trunc(0.5) = 0
+    assertEquals(result(1, 2), 0.0)   // trunc(-0.5) = 0
+  }
+
+  test("trunc differs from floor for negative numbers") {
+    val m = Mat[Double]((-1.7, -2.3))
+    val truncResult = m.trunc
+    val floorResult = m.floor
+    
+    assertEquals(truncResult(0, 0), -1.0)  // trunc(-1.7) = -1
+    assertEquals(floorResult(0, 0), -2.0)  // floor(-1.7) = -2
+    
+    assertEquals(truncResult(0, 1), -2.0)  // trunc(-2.3) = -2
+    assertEquals(floorResult(0, 1), -3.0)  // floor(-2.3) = -3
+  }
+
+  // Boolean reduction tests
+  test("all returns true when all elements are true") {
+    val m = Mat.create(Array(true, true, true, true), 2, 2)
+    assert(m.all)
+  }
+
+  test("all returns false when any element is false") {
+    val m = Mat.create(Array(true, true, false, true), 2, 2)
+    assert(!m.all)
+  }
+
+  test("any returns true when any element is true") {
+    val m = Mat.create(Array(false, false, false, true), 2, 2)
+    assert(m.any)
+  }
+
+  test("any returns false when all elements are false") {
+    val m = Mat.create(Array(false, false, false, false), 2, 2)
+    assert(!m.any)
+  }
+
+  test("all(axis=0) checks columns") {
+    val m = Mat.create(Array(true, false, true, true, true, true), 2, 3)
+    val result = m.all(axis = 0)
+    
+    assertEquals(result.rows, 1)
+    assertEquals(result.cols, 3)
+    assertEquals(result(0, 0), true)   // col 0: all true
+    assertEquals(result(0, 1), false)  // col 1: has false
+    assertEquals(result(0, 2), true)   // col 2: all true
+  }
+
+  test("all(axis=1) checks rows") {
+    val m = Mat.create(Array(true, true, true, true, false, true), 2, 3)
+    val result = m.all(axis = 1)
+    
+    assertEquals(result.rows, 2)
+    assertEquals(result.cols, 1)
+    assertEquals(result(0, 0), true)   // row 0: all true
+    assertEquals(result(1, 0), false)  // row 1: has false
+  }
+
+  test("any(axis=0) checks columns") {
+    val m = Mat.create(Array(false, false, true, false, true, false), 2, 3)
+    val result = m.any(axis = 0)
+    
+    assertEquals(result.rows, 1)
+    assertEquals(result.cols, 3)
+    assertEquals(result(0, 0), false)  // col 0: all false
+    assertEquals(result(0, 1), true)   // col 1: has true
+    assertEquals(result(0, 2), true)   // col 2: has true
+  }
+
+  test("any(axis=1) checks rows") {
+    val m = Mat.create(Array(false, false, false, false, true, false), 2, 3)
+    val result = m.any(axis = 1)
+    
+    assertEquals(result.rows, 2)
+    assertEquals(result.cols, 1)
+    assertEquals(result(0, 0), false)  // row 0: all false
+    assertEquals(result(1, 0), true)   // row 1: has true
+  }
+
+  test("all and any work with single element") {
+    val mTrue = Mat.create(Array(true), 1, 1)
+    assert(mTrue.all)
+    assert(mTrue.any)
+    
+    val mFalse = Mat.create(Array(false), 1, 1)
+    assert(!mFalse.all)
+    assert(!mFalse.any)
+  }
 }
