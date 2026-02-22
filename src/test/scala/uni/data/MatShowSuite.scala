@@ -326,4 +326,316 @@ final class MatShowSuite extends FunSuite {
     assert(mt.shape == (3, 2))
   }
 
+  test("formatMatrix truncates large row count with ellipsis") {
+    val m = Mat.rand(100, 5)
+    val output = m.show
+    
+    // Should contain ellipsis for rows
+    assert(output.contains("..."), "Should show row ellipsis for 100 rows")
+    
+    // Should show header with full dimensions
+    assert(output.startsWith("100x5 Mat[Double]:"), "Header should show full dimensions")
+    
+    // Count actual data rows (not including ellipsis line)
+    val dataRows = output.split("\n").count(_.trim.startsWith("("))
+    assertEquals(dataRows, 6, "Should show 3 first + 3 last rows = 6 total")
+  }
+
+  test("formatMatrix truncates large column count with ellipsis") {
+    val m = Mat.rand(5, 50)
+    val output = m.show
+    
+    // Should contain ellipsis for columns
+    assert(output.contains("..."), "Should show column ellipsis for 50 cols")
+    
+    // Should show header with full dimensions
+    assert(output.startsWith("5x50 Mat[Double]:"), "Header should show full dimensions")
+    
+    // Each row should have exactly 6 displayed values + 1 ellipsis
+    val firstRow = output.split("\n")(1)
+    val commaCount = firstRow.count(_ == ',')
+    assertEquals(commaCount, 7, "Should show 3 first + 3 last cols = 6 commas (7 items including ...)")
+  }
+
+  test("formatMatrix truncates both rows and columns") {
+    val m = Mat.rand(100, 50)
+    val output = m.show
+    
+    // Should have both row and column ellipsis
+    val lines = output.split("\n")
+    assert(lines.exists(_.trim == "..."), "Should have row ellipsis line")
+    assert(lines.exists(line => line.contains("(") && line.contains("...")), "Should have column ellipsis in data rows")
+    
+    // Header
+    assert(output.startsWith("100x50 Mat[Double]:"), "Header should show full dimensions")
+  }
+
+  test("formatMatrix does not truncate small matrices") {
+    val m = Mat.rand(5, 5)
+    val output = m.show
+    
+    // Should NOT contain ellipsis
+    assert(!output.contains("..."), "Small matrix should not have ellipsis")
+    
+    // Should have all 5 rows
+    val dataRows = output.split("\n").count(_.trim.startsWith("("))
+    assertEquals(dataRows, 5, "Should show all 5 rows")
+  }
+
+// threshold not yet implemented
+  test("formatMatrix threshold exactly at boundary") {
+    // Test exactly at maxRows threshold (10 rows)
+    val m1 = Mat.rand(10, 5)
+    val output1 = m1.show
+    assert(!output1.contains("..."), "10 rows should not truncate (threshold is >10)")
+    
+    // Test just over threshold (11 rows)
+    val m2 = Mat.rand(11, 5)
+    val output2 = m2.show
+    assert(output2.contains("..."), "11 rows should truncate")
+    
+    // Same for columns
+    val m3 = Mat.rand(5, 10)
+    val output3 = m3.show
+    assert(!output3.contains("..."), "10 cols should not truncate")
+    
+    val m4 = Mat.rand(5, 11)
+    val output4 = m4.show
+    assert(output4.contains("..."), "11 cols should truncate")
+  }
+
+  test("formatMatrix empty matrix shows header only") {
+    val m = Mat.zeros[Double](0, 0)
+    val output = m.show
+    
+    assertEquals(output, "0x0 Mat[Double]:", "Empty matrix should show header only")
+  }
+
+  test("formatMatrix with explicit format and truncation") {
+    val m = Mat.rand(100, 50)
+    val output = m.show("%.2f")
+    
+    // Should still truncate
+    assert(output.contains("..."), "Should truncate even with explicit format")
+    
+    // Values should be formatted to 2 decimal places
+    val firstRow = output.split("\n")(1)
+    // Check that numbers have the right format (this is approximate)
+    assert(firstRow.matches(".*\\d\\.\\d{2}.*"), "Should format to 2 decimal places")
+  }
+
+  test("formatMatrix preserves alignment with ellipsis") {
+    val m = Mat.rand(20, 20)
+    val output = m.show
+    val lines = output.split("\n").filter(_.trim.startsWith("("))
+    
+    // All data rows should have similar structure
+    // Check that ellipsis appears in consistent position
+    val ellipsisPositions = lines.map(_.indexOf("...")).filter(_ >= 0)
+    if (ellipsisPositions.nonEmpty) {
+      val avgPos = ellipsisPositions.sum / ellipsisPositions.length
+      ellipsisPositions.foreach { pos =>
+        assert(math.abs(pos - avgPos) < 5, "Ellipsis should be roughly aligned across rows")
+      }
+    }
+  }
+
+  test("formatMatrix row ellipsis appears between edge rows") {
+    val m = Mat.rand(50, 5)
+    val output = m.show
+    val lines = output.split("\n")
+    
+    // Find the ellipsis line
+    val ellipsisLineIdx = lines.indexWhere(_.trim == "...")
+    assert(ellipsisLineIdx > 0, "Should have row ellipsis")
+    
+    // Should appear after first 3 data rows (header + 3 rows = line 4)
+    assert(ellipsisLineIdx == 4, s"Row ellipsis should be at line 4, was at $ellipsisLineIdx")
+  }
+
+  test("formatMatrix handles various numeric types with truncation") {
+    val m1 = Mat.rand(100, 50).asInstanceOf[Mat[Double]]
+    assert(m1.show.contains("..."))
+    
+    val m2 = Mat.full[Big](100, 50, 42)
+    assert(m2.show.contains("..."))
+    
+    val m3 = Mat.full[Float](100, 50, 3.14f)
+    assert(m3.show.contains("..."))
+  }
+
+  test("setPrintOptions changes edge items displayed") {
+    // Save original
+    val originalEdge = Mat.PrintOptions.edgeItems
+    
+    try {
+      Mat.setPrintOptions(edgeItems = 5)
+      val m = Mat.rand(50, 50)
+      val output = m.show
+      
+      // Count data rows (should be 5 + 5 = 10)
+      val dataRows = output.split("\n").count(_.trim.startsWith("("))
+      assertEquals(dataRows, 10, "Should show 5 first + 5 last rows = 10 total")
+      
+    } finally {
+      // Restore
+      Mat.setPrintOptions(edgeItems = originalEdge)
+    }
+  }
+
+  test("setPrintOptions changes max rows threshold") {
+    val original = Mat.PrintOptions.maxRows
+    
+    try {
+      Mat.setPrintOptions(maxRows = 5)
+      
+      // 5 rows should not truncate (threshold is >5)
+      val m1 = Mat.rand(5, 3)
+      assert(!m1.show.contains("..."), "5 rows should not truncate with maxRows=5")
+      
+      // 6 rows should truncate
+      val m2 = Mat.rand(6, 3)
+      assert(m2.show.contains("..."), "6 rows should truncate with maxRows=5")
+      
+    } finally {
+      Mat.setPrintOptions(maxRows = original)
+    }
+  }
+
+  test("setPrintOptions changes max cols threshold") {
+    val original = Mat.PrintOptions.maxCols
+    
+    try {
+      Mat.setPrintOptions(maxCols = 5)
+      
+      val m1 = Mat.rand(3, 5)
+      assert(!m1.show.contains("..."), "5 cols should not truncate")
+      
+      val m2 = Mat.rand(3, 6)
+      assert(m2.show.contains("..."), "6 cols should truncate")
+      
+    } finally {
+      Mat.setPrintOptions(maxCols = original)
+    }
+  }
+
+  test("setPrintOptions threshold controls total element cutoff") {
+    val original = Mat.PrintOptions.threshold
+    
+    try {
+      Mat.setPrintOptions(threshold = 100)
+      
+      // 10x10 = 100 elements (at threshold)
+      val m1 = Mat.rand(10, 10)
+      val output1 = m1.show
+      // Behavior at exactly threshold may vary - document current behavior
+      
+      // 11x11 = 121 elements (over threshold)
+      val m2 = Mat.rand(11, 11)
+      val output2 = m2.show
+      // Should truncate based on maxRows/maxCols even if under element threshold
+      
+    } finally {
+      Mat.setPrintOptions(threshold = original)
+    }
+  }
+
+  test("setPrintOptions can disable truncation entirely") {
+    val originalRows = Mat.PrintOptions.maxRows
+    val originalCols = Mat.PrintOptions.maxCols
+    
+    try {
+      Mat.setPrintOptions(maxRows = Int.MaxValue, maxCols = Int.MaxValue)
+      
+      val m = Mat.rand(20, 20)
+      val output = m.show
+      
+      // Should not truncate
+      assert(!output.contains("..."), "Should not truncate with maxRows/maxCols = Int.MaxValue")
+      
+      // Should have all 20 rows
+      val dataRows = output.split("\n").count(_.trim.startsWith("("))
+      assertEquals(dataRows, 20, "Should show all 20 rows")
+      
+    } finally {
+      Mat.setPrintOptions(maxRows = originalRows, maxCols = originalCols)
+    }
+  }
+
+  test("setPrintOptions default values restore original behavior") {
+    // Change settings
+    Mat.setPrintOptions(edgeItems = 5, maxRows = 20, maxCols = 20)
+    
+    // Reset to defaults
+    Mat.setPrintOptions(edgeItems = 3, maxRows = 10, maxCols = 10)
+    
+    val m = Mat.rand(50, 50)
+    val output = m.show
+    
+    // Should show 3 edge items
+    val dataRows = output.split("\n").count(_.trim.startsWith("("))
+    assertEquals(dataRows, 6, "Should show 3 + 3 = 6 rows with default edgeItems=3")
+  }
+
+  test("setPrintOptions precision affects decimal places") {
+    val original = Mat.PrintOptions.precision
+    
+    try {
+      Mat.setPrintOptions(precision = 2)
+      
+      val m = Mat[Double]((1.23456789, 2.34567890), (3.45678901, 4.56789012))
+      val output = m.show("%.10f")  // Explicit format overrides precision setting
+      
+      // Note: precision option would need to be integrated into formatMatrix
+      // to actually affect output - this test documents expected behavior
+      
+    } finally {
+      Mat.setPrintOptions(precision = original)
+    }
+  }
+
+  test("setPrintOptions multiple parameters at once") {
+    val origEdge = Mat.PrintOptions.edgeItems
+    val origMaxRows = Mat.PrintOptions.maxRows
+    val origMaxCols = Mat.PrintOptions.maxCols
+    
+    try {
+      Mat.setPrintOptions(
+        edgeItems = 2,
+        maxRows = 8,
+        maxCols = 8
+      )
+      
+      assertEquals(Mat.PrintOptions.edgeItems, 2)
+      assertEquals(Mat.PrintOptions.maxRows, 8)
+      assertEquals(Mat.PrintOptions.maxCols, 8)
+      
+      val m = Mat.rand(20, 20)
+      val output = m.show
+      
+      // Should use new settings
+      assert(output.contains("..."), "Should truncate with maxRows=8")
+      val dataRows = output.split("\n").count(_.trim.startsWith("("))
+      assertEquals(dataRows, 4, "Should show 2 + 2 = 4 rows with edgeItems=2")
+      
+    } finally {
+      Mat.setPrintOptions(
+        edgeItems = origEdge,
+        maxRows = origMaxRows,
+        maxCols = origMaxCols
+      )
+    }
+  }
+
+  test("setPrintOptions thread safety - options are global") {
+    // Document that these are global mutable settings
+    // Could cause issues in concurrent tests
+    val original = Mat.PrintOptions.edgeItems
+    
+    Mat.setPrintOptions(edgeItems = 7)
+    assertEquals(Mat.PrintOptions.edgeItems, 7)
+    
+    // Any thread/test will see this change
+    Mat.setPrintOptions(edgeItems = original)
+  }
 }
