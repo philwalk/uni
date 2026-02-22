@@ -382,7 +382,6 @@ final class MatShowSuite extends FunSuite {
     assertEquals(dataRows, 5, "Should show all 5 rows")
   }
 
-// threshold not yet implemented
   test("formatMatrix threshold exactly at boundary") {
     // Test exactly at maxRows threshold (10 rows)
     val m1 = Mat.rand(10, 5)
@@ -528,7 +527,7 @@ final class MatShowSuite extends FunSuite {
       // 10x10 = 100 elements (at threshold)
       val m1 = Mat.rand(10, 10)
       val output1 = m1.show
-      // Behavior at exactly threshold may vary - document current behavior
+      // Behavior at exact threshold may vary - document current behavior
       
       // 11x11 = 121 elements (over threshold)
       val m2 = Mat.rand(11, 11)

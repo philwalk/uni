@@ -4416,4 +4416,102 @@ class MatTest extends munit.FunSuite {
     val mean = result.tdata.sum / result.size
     assert(math.abs(mean - 5.0) < 0.2, s"Expected value should be ~5.0, got $mean")
   }
+
+  test("maximum element-wise between two matrices") {
+    val m1 = Mat[Double]((1, 5, 3), (4, 2, 6))
+    val m2 = Mat[Double]((2, 3, 4), (3, 5, 1))
+    val result = m1.maximum(m2)
+    
+    assertEquals(result(0, 0), 2.0)  // max(1, 2)
+    assertEquals(result(0, 1), 5.0)  // max(5, 3)
+    assertEquals(result(0, 2), 4.0)  // max(3, 4)
+    assertEquals(result(1, 0), 4.0)  // max(4, 3)
+    assertEquals(result(1, 1), 5.0)  // max(2, 5)
+    assertEquals(result(1, 2), 6.0)  // max(6, 1)
+  }
+
+  test("minimum element-wise between two matrices") {
+    val m1 = Mat[Double]((1, 5, 3), (4, 2, 6))
+    val m2 = Mat[Double]((2, 3, 4), (3, 5, 1))
+    val result = m1.minimum(m2)
+    
+    assertEquals(result(0, 0), 1.0)  // min(1, 2)
+    assertEquals(result(0, 1), 3.0)  // min(5, 3)
+    assertEquals(result(0, 2), 3.0)  // min(3, 4)
+    assertEquals(result(1, 0), 3.0)  // min(4, 3)
+    assertEquals(result(1, 1), 2.0)  // min(2, 5)
+    assertEquals(result(1, 2), 1.0)  // min(6, 1)
+  }
+
+  test("maximum with scalar - ReLU pattern") {
+    val m = Mat[Double]((-2, 3, -1), (4, -5, 0))
+    val result = m.maximum(0.0)
+    
+    // Same as ReLU
+    assertEquals(result(0, 0), 0.0)   // max(-2, 0)
+    assertEquals(result(0, 1), 3.0)   // max(3, 0)
+    assertEquals(result(0, 2), 0.0)   // max(-1, 0)
+    assertEquals(result(1, 0), 4.0)   // max(4, 0)
+    assertEquals(result(1, 1), 0.0)   // max(-5, 0)
+    assertEquals(result(1, 2), 0.0)   // max(0, 0)
+  }
+
+  test("minimum with scalar - clipping") {
+    val m = Mat[Double]((10, 3, 8), (1, 15, 5))
+    val result = m.minimum(7.0)
+    
+    assertEquals(result(0, 0), 7.0)   // min(10, 7)
+    assertEquals(result(0, 1), 3.0)   // min(3, 7)
+    assertEquals(result(0, 2), 7.0)   // min(8, 7)
+    assertEquals(result(1, 0), 1.0)   // min(1, 7)
+    assertEquals(result(1, 1), 7.0)   // min(15, 7)
+    assertEquals(result(1, 2), 5.0)   // min(5, 7)
+  }
+
+  test("maximum/minimum shape mismatch throws") {
+    val m1 = Mat[Double]((1, 2), (3, 4))
+    val m2 = Mat[Double]((1, 2, 3), (4, 5, 6))
+    
+    intercept[IllegalArgumentException] {
+      m1.maximum(m2)
+    }
+    
+    intercept[IllegalArgumentException] {
+      m1.minimum(m2)
+    }
+  }
+
+  test("maximum/minimum work with negative numbers") {
+    val m1 = Mat[Double]((-5, -2), (-8, -1))
+    val m2 = Mat[Double]((-3, -4), (-6, -7))
+    
+    val maxResult = m1.maximum(m2)
+    assertEquals(maxResult(0, 0), -3.0)  // max(-5, -3)
+    assertEquals(maxResult(0, 1), -2.0)  // max(-2, -4)
+    
+    val minResult = m1.minimum(m2)
+    assertEquals(minResult(0, 0), -5.0)  // min(-5, -3)
+    assertEquals(minResult(1, 1), -7.0)  // min(-1, -7)
+  }
+
+  test("maximum equals relu for maximum(m, 0)") {
+    val m = Mat[Double]((-2, 3, -1), (4, -5, 0))
+    val maxZero = m.maximum(0.0)
+    val relu = m.relu
+    
+    assert(maxZero.tdata.sameElements(relu.tdata), "maximum(m, 0) should equal relu")
+  }
+
+  test("maximum/minimum work with different types") {
+    val m1 = Mat[Float]((1.5f, 2.5f), (3.5f, 4.5f))
+    val m2 = Mat[Float]((2.0f, 2.0f), (3.0f, 5.0f))
+    
+    val maxResult = m1.maximum(m2)
+    assertEquals(maxResult(0, 0), 2.0f)
+    assertEquals(maxResult(1, 1), 5.0f)
+    
+    val minResult = m1.minimum(m2)
+    assertEquals(minResult(0, 0), 1.5f)
+    assertEquals(minResult(1, 0), 3.0f)
+  }
 }

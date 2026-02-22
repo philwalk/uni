@@ -3533,6 +3533,87 @@ object Mat {
         create(data, m.rows, m.cols)
       }
     }
+
+    /** Element-wise maximum between two matrices (NumPy: np.maximum) */
+    def maximum(other: Mat[T])(using ord: Ordering[T]): Mat[T] = {
+      require(m.rows == other.rows && m.cols == other.cols,
+        s"Shape mismatch: ${m.rows}x${m.cols} vs ${other.rows}x${other.cols}")
+      
+      val data = Array.ofDim[T](m.size)
+      var idx = 0
+      var r = 0
+      while (r < m.rows) {
+        var c = 0
+        while (c < m.cols) {
+          val v1 = m(r, c)
+          val v2 = other(r, c)
+          data(idx) = if (ord.gt(v1, v2)) v1 else v2
+          idx += 1
+          c += 1
+        }
+        r += 1
+      }
+      create(data, m.rows, m.cols)
+    }
+
+    /** Element-wise minimum between two matrices (NumPy: np.minimum) */
+    def minimum(other: Mat[T])(using ord: Ordering[T]): Mat[T] = {
+      require(m.rows == other.rows && m.cols == other.cols,
+        s"Shape mismatch: ${m.rows}x${m.cols} vs ${other.rows}x${other.cols}")
+      
+      val data = Array.ofDim[T](m.size)
+      var idx = 0
+      var r = 0
+      while (r < m.rows) {
+        var c = 0
+        while (c < m.cols) {
+          val v1 = m(r, c)
+          val v2 = other(r, c)
+          data(idx) = if (ord.lt(v1, v2)) v1 else v2
+          idx += 1
+          c += 1
+        }
+        r += 1
+      }
+      create(data, m.rows, m.cols)
+    }
+
+    /** Element-wise maximum with scalar */
+    def maximum(scalar: T)(using ord: Ordering[T]): Mat[T] = {
+      val data = Array.ofDim[T](m.size)
+      var idx = 0
+      var r = 0
+      while (r < m.rows) {
+        var c = 0
+        while (c < m.cols) {
+          val v = m(r, c)
+          data(idx) = if (ord.gt(v, scalar)) v else scalar
+          idx += 1
+          c += 1
+        }
+        r += 1
+      }
+      create(data, m.rows, m.cols)
+    }
+
+    /** Element-wise minimum with scalar */
+    def minimum(scalar: T)(using ord: Ordering[T]): Mat[T] = {
+      val data = Array.ofDim[T](m.size)
+      var idx = 0
+      var r = 0
+      while (r < m.rows) {
+        var c = 0
+        while (c < m.cols) {
+          val v = m(r, c)
+          data(idx) = if (ord.lt(v, scalar)) v else scalar
+          idx += 1
+          c += 1
+        }
+        r += 1
+      }
+      create(data, m.rows, m.cols)
+    }
+
   } // end extension
 
   private lazy val blasThreshold: Long = System.getProperty("uni.mat.blasThreshold", "6000").toLong
