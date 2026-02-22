@@ -1431,18 +1431,6 @@ object Mat {
     def apply(rows: Range, col: Int): Mat[T] =
       m(rows, col to col)
 
-    def /(scalar: T): Mat[T] = {
-      val res = new Array[T](m.size)
-      var r = 0; var idx = 0
-      while r < m.rows do
-        var c = 0
-        while c < m.cols do
-          res(idx) = frac.div(m(r, c), scalar)
-          idx += 1; c += 1
-        r += 1
-      Mat.create(res, m.rows, m.cols)
-    }
-
     /**
      * NumPy: m[:, col]
      * Extract column as column vector
@@ -1491,6 +1479,18 @@ object Mat {
           j += 1
         i += 1
       Mat.create(result, newRows, newCols)
+    }
+
+    def /(scalar: T): Mat[T] = {
+      val res = new Array[T](m.size)
+      var r = 0; var idx = 0
+      while r < m.rows do
+        var c = 0
+        while c < m.cols do
+          res(idx) = frac.div(m(r, c), scalar)
+          idx += 1; c += 1
+        r += 1
+      Mat.create(res, m.rows, m.cols)
     }
 
 
@@ -4181,6 +4181,62 @@ object Mat {
         }
         create(data, m.rows, 1)
       }
+    }
+
+    def vsplit(indices: Array[Int])(using frac: Fractional[T]): Seq[Mat[T]] = {
+      require(indices.forall(i => i > 0 && i < m.rows), 
+        s"Split indices must be in range (0, ${m.rows})")
+      require(indices.sorted.sameElements(indices), "Indices must be sorted")
+      
+      val splitPoints = (0 +: indices.toSeq :+ m.rows).distinct
+      
+      (0 until splitPoints.length - 1).map { i =>
+        val startRow = splitPoints(i)
+        val endRow = splitPoints(i + 1)
+        m(startRow until endRow, ::)
+      }
+    }
+
+    def vsplit(n: Int)(using frac: Fractional[T]): Seq[Mat[T]] = {
+      require(m.rows % n == 0, s"Cannot split ${m.rows} rows into $n equal parts")
+      
+      val rowsPerSplit = m.rows / n
+      (0 until n).map { i =>
+        m(i * rowsPerSplit until (i + 1) * rowsPerSplit, ::)
+      }
+    }
+
+    def hsplit(indices: Array[Int])(using frac: Fractional[T]): Seq[Mat[T]] = {
+      require(indices.forall(i => i > 0 && i < m.cols), 
+        s"Split indices must be in range (0, ${m.cols})")
+      require(indices.sorted.sameElements(indices), "Indices must be sorted")
+      
+      val splitPoints = (0 +: indices.toSeq :+ m.cols).distinct
+      
+      (0 until splitPoints.length - 1).map { i =>
+        val startCol = splitPoints(i)
+        val endCol = splitPoints(i + 1)
+        m(::, startCol until endCol)
+      }
+    }
+
+    def hsplit(n: Int)(using frac: Fractional[T]): Seq[Mat[T]] = {
+      require(m.cols % n == 0, s"Cannot split ${m.cols} cols into $n equal parts")
+      
+      val colsPerSplit = m.cols / n
+      (0 until n).map { i =>
+        m(::, i * colsPerSplit until (i + 1) * colsPerSplit)
+      }
+    }
+
+    def split(indices: Array[Int], axis: Int = 0)(using frac: Fractional[T]): Seq[Mat[T]] = {
+      require(axis == 0 || axis == 1, "axis must be 0 (rows) or 1 (columns)")
+      if (axis == 0) vsplit(indices) else hsplit(indices)
+    }
+
+    def split(n: Int, axis: Int)(using frac: Fractional[T]): Seq[Mat[T]] = {
+      require(axis == 0 || axis == 1, "axis must be 0 (rows) or 1 (columns)")
+      if (axis == 0) vsplit(n) else hsplit(n)
     }
   } // end extension
 }
