@@ -376,6 +376,348 @@ object Mat {
     PrintOptions.threshold = threshold
   }
 
+
+  private lazy val blasThreshold: Long = System.getProperty("uni.mat.blasThreshold", "6000").toLong
+
+  def vstack[U: ClassTag](matrices: Mat[U]*): Mat[U] = {
+    require(matrices.nonEmpty, "vstack requires at least one matrix")
+    val cols = matrices.head.cols
+    require(matrices.forall(_.cols == cols), "vstack requires equal column counts")
+    val totalRows = matrices.map(_.rows).sum
+    val result = Array.ofDim[U](totalRows * cols)
+    var offset = 0
+    for mat <- matrices do
+      var i = 0
+      while i < mat.rows do
+        var j = 0
+        while j < mat.cols do
+          result(offset + i * cols + j) = mat(i, j)
+          j += 1
+        i += 1
+      offset += mat.rows * cols
+    Mat.create(result, totalRows, cols)
+  }
+
+  def hstack[U: ClassTag](matrices: Mat[U]*): Mat[U] = {
+    require(matrices.nonEmpty, "hstack requires at least one matrix")
+    val rows = matrices.head.rows
+    require(matrices.forall(_.rows == rows), "hstack requires equal row counts")
+    val totalCols = matrices.map(_.cols).sum
+    val result = Array.ofDim[U](rows * totalCols)
+    var i = 0
+    while i < rows do
+      var colOffset = 0
+      for mat <- matrices do
+        var j = 0
+        while j < mat.cols do
+          result(i * totalCols + colOffset + j) = mat(i, j)
+          j += 1
+        colOffset += mat.cols
+      i += 1
+    Mat.create(result, rows, totalCols)
+  }
+
+  def concatenate[U: ClassTag](matrices: Seq[Mat[U]], axis: Int = 0): Mat[U] =
+    if axis == 0 then vstack(matrices*)
+    else hstack(matrices*)
+
+  // ---- where (3-argument form) -------------------------------------------
+  /** NumPy: np.where(condition, x, y) - element-wise conditional select */
+  def where[T: ClassTag](condition: Mat[Boolean], x: Mat[T], y: Mat[T]): Mat[T] = {
+    require(
+      condition.rows == x.rows && condition.cols == x.cols &&
+      x.rows == y.rows && x.cols == y.cols,
+      s"where: shape mismatch: condition=${condition.shape} x=${x.shape} y=${y.shape}"
+    )
+    val result = Array.ofDim[T](x.rows * x.cols)
+    var i = 0
+    while i < x.rows do
+      var j = 0
+      while j < x.cols do
+        result(i * x.cols + j) = if condition(i, j) then x(i, j) else y(i, j)
+        j += 1
+      i += 1
+    Mat.create(result, x.rows, x.cols)
+  }
+
+  /** np.where(condition, scalar, scalar) */
+  def where[T: ClassTag](condition: Mat[Boolean], x: T, y: T): Mat[T] = {
+    val result = Array.ofDim[T](condition.rows * condition.cols)
+    var i = 0
+    while i < condition.rows do
+      var j = 0
+      while j < condition.cols do
+        result(i * condition.cols + j) = if condition(i, j) then x else y
+        j += 1
+      i += 1
+    Mat.create(result, condition.rows, condition.cols)
+  }
+
+  // ---- diag --------------------------------------------------------------
+
+  /** NumPy: np.diag(array) - construct square diagonal matrix from array */
+  def diag[T: ClassTag](values: Array[T])(using frac: Fractional[T]): Mat[T] = {
+    val n = values.length
+    val result = Array.fill(n * n)(frac.zero)
+    var i = 0
+    while i < n do
+      result(i * n + i) = values(i)
+      i += 1
+    Mat.create(result, n, n)
+  }
+
+  /** np.diag(v) where v is a vector Mat */
+  def diag[T: ClassTag](v: Mat[T])(using frac: Fractional[T]): Mat[T] = {
+    require(v.rows == 1 || v.cols == 1,
+      s"diag requires a vector (1xn or nx1), got ${v.shape}")
+    diag(v.flatten)
+  }
+
+  /** Rectangular diagonal: nRowsxnCols with values on diagonal */
+  def diag[T: ClassTag](values: Array[T], rows: Int, cols: Int)
+      (using frac: Fractional[T]): Mat[T] = {
+    val result = Array.fill(rows * cols)(frac.zero)
+    val p = math.min(math.min(rows, cols), values.length)
+    var i = 0
+    while i < p do
+      result(i * cols + i) = values(i)
+      i += 1
+    Mat.create(result, rows, cols)
+  }
+
+  // In Mat companion object
+  def meshgrid[T: ClassTag](x: Vec[T], y: Vec[T]): (Mat[T], Mat[T]) = {
+    val xs = x.flatten  // works for row or col vector
+    val ys = y.flatten
+    val nRows = ys.length
+    val nCols = xs.length
+    val xx = Array.ofDim[T](nRows * nCols)
+    val yy = Array.ofDim[T](nRows * nCols)
+    var i = 0
+    while i < nRows do
+      var j = 0
+      while j < nCols do
+        xx(i * nCols + j) = xs(j)
+        yy(i * nCols + j) = ys(i)
+        j += 1
+      i += 1
+    (Mat.create(xx, nRows, nCols), Mat.create(yy, nRows, nCols))
+  }
+
+  /** NumPy: np.polyfit(x, y, deg) - least squares polynomial fit
+   *  Returns coefficients [a_n, a_{n-1}, ..., a_0] highest degree first */
+  def polyfit(x: Vec[Double], y: Vec[Double], deg: Int): Vec[Double] = {
+    require(deg >= 1, s"degree must be >= 1, got $deg")
+    val xs = x.flatten
+    val ys = y.flatten
+    require(xs.length == ys.length, s"x and y must have same length")
+    require(xs.length > deg, s"need more points than degree")
+    val n = xs.length
+    // Build Vandermonde matrix: each row is [x^deg, x^(deg-1), ..., x^0]
+    val vand = Array.ofDim[Double](n * (deg + 1))
+    var i = 0
+    while i < n do
+      var j = 0
+      while j <= deg do
+        vand(i * (deg + 1) + j) = math.pow(xs(i), (deg - j).toDouble)
+        j += 1
+      i += 1
+    val A = Mat.create(vand, n, deg + 1)
+    val b = Mat.create(ys, n, 1)
+    val (coeffs, _, _, _) = A.lstsq(b)
+    // coeffs is (deg+1)x1, return as flat row vector
+    Mat.create(coeffs.flatten, 1, deg + 1)
+  }
+
+  /** NumPy: np.polyval(coeffs, x) - evaluate polynomial at points
+   * Horner's method for numerical stability.
+   *  coeffs = [a_n, ..., a_0] highest degree first (matches polyfit output) */
+  def polyval(coeffs: Vec[Double], x: Vec[Double]): Vec[Double] = {
+    val cs = coeffs.flatten  // [a_n, ..., a_0]
+    val xs = x.flatten
+    val result = Array.ofDim[Double](xs.length)
+    var i = 0
+    while i < xs.length do
+      // Horner's method: a_n * x^n + ... + a_0
+      var acc = 0.0
+      var k = 0
+      while k < cs.length do
+        acc = acc * xs(i) + cs(k)
+        k += 1
+      result(i) = acc
+      i += 1
+    Mat.create(result, 1, xs.length)
+  }
+
+  /** NumPy: np.convolve(a, b, mode='full') - discrete linear convolution
+   *  mode: "full" (default), "same", "valid" */
+  def convolve(a: Vec[Double], b: Vec[Double], mode: String = "full"): Vec[Double] = {
+    val as = a.flatten
+    val bs = b.flatten
+    val na = as.length
+    val nb = bs.length
+    val nFull = na + nb - 1
+    val full = Array.ofDim[Double](nFull)
+    var i = 0
+    while i < na do
+      var j = 0
+      while j < nb do
+        full(i + j) += as(i) * bs(j)
+        j += 1
+      i += 1
+    mode match
+      case "full" =>
+        Mat.create(full, 1, nFull)
+      case "same" =>
+        val start = (nb - 1) / 2
+        val result = Array.ofDim[Double](na)
+        var k = 0
+        while k < na do
+          result(k) = full(start + k)
+          k += 1
+        Mat.create(result, 1, na)
+      case "valid" =>
+        val nValid = math.max(na, nb) - math.min(na, nb) + 1
+        val start  = math.min(na, nb) - 1
+        val result = Array.ofDim[Double](nValid)
+        var k = 0
+        while k < nValid do
+          result(k) = full(start + k)
+          k += 1
+        Mat.create(result, 1, nValid)
+      case other =>
+        throw IllegalArgumentException(s"unknown mode '$other', use 'full', 'same', or 'valid'")
+  }
+
+  /** NumPy: np.correlate(a, b, mode='valid') - cross-correlation
+   *  Correlation is convolution with b reversed */
+  def correlate(a: Vec[Double], b: Vec[Double], mode: String = "valid"): Vec[Double] = {
+    val as = a.flatten
+    val bs = b.flatten
+    val na = as.length
+    val nb = bs.length
+    val nFull = na + nb - 1
+    val full = Array.ofDim[Double](nFull)
+    // c[k] = sum_j a[j] * b[j - (k - (nb-1))]
+    // equivalent: pad and slide b across a without reversing
+    var k = 0
+    while k < nFull do
+      var j = 0
+      while j < nb do
+        val ai = k - (nb - 1) + j
+        if ai >= 0 && ai < na then
+          full(k) += as(ai) * bs(j)
+        j += 1
+      k += 1
+    mode match
+      case "full" =>
+        Mat.create(full, 1, nFull)
+      case "same" =>
+        val start = (nb - 1) / 2
+        val result = Array.ofDim[Double](na)
+        var i = 0
+        while i < na do
+          result(i) = full(start + i)
+          i += 1
+        Mat.create(result, 1, na)
+      case "valid" =>
+        val nValid = math.max(na, nb) - math.min(na, nb) + 1
+        val start  = nb - 1
+        val result = Array.ofDim[Double](nValid)
+        var i = 0
+        while i < nValid do
+          result(i) = full(start + i)
+          i += 1
+        Mat.create(result, 1, nValid)
+      case other =>
+        throw IllegalArgumentException(s"unknown mode '$other', use 'full', 'same', or 'valid'")
+  }
+
+  // In companion object
+  def zerosLike[T: ClassTag](m: Mat[T])(using frac: Fractional[T]): Mat[T] =
+    Mat.zeros[T](m.rows, m.cols)
+
+  def onesLike[T: ClassTag](m: Mat[T])(using frac: Fractional[T]): Mat[T] =
+    Mat.ones[T](m.rows, m.cols)
+
+  def fullLike[T: ClassTag](m: Mat[T], value: T): Mat[T] =
+    Mat.full[T](m.rows, m.cols, value)
+
+  // exponentiation operator is '~^', chosen to achieve numpy
+  // operator-precedence w.r.t. * and ~^
+  // In scala, ~^ has highter precedence than *
+  //          2 * 3 ~^ 2 = 18 ; 2*(3^2)
+  // whereas  2 * 3  ^ 2 = 36 ; (2*3)^2
+  //
+  // not directly related to exponentiation, but needed
+  // to support the usage in the above comment
+  // (to left-multiply a matrix by a scalar).
+  extension (scalar: Double)
+    def *(m: Mat[Double]): Mat[Double] = m * scalar
+
+  extension (base: Double)
+    def ~^(exponent: Double): Double = Math.pow(base, exponent)
+
+  extension [T: ClassTag](m: Mat[T])(using frac: Fractional[T])
+    def ~^(exponent: Int): Mat[T] = m.power(exponent)
+    def ~^(exponent: Double): Mat[T] =
+      if exponent == 0.0 then Mat.eye[T](m.rows)
+      else m.power(exponent)
+
+  // Global RNG state
+  private[data] lazy val defaultRNG: NumPyRNG = new NumPyRNG(0)
+  private[data] var globalRNG: NumPyRNG = defaultRNG
+
+  /** Set random seed matching NumPy's np.random.seed() */
+  def setSeed(seed: Long): Unit =
+    globalRNG = new NumPyRNG(seed)
+
+  def nextRandLong: Long = globalRNG.nextInt()
+  def nextRandInt: Long = globalRNG.nextInt() & 0xFFFFFFFFL
+  def nextRandDouble: Double = globalRNG.nextDouble()
+
+  /** NumPy: np.random.rand(rows, cols) - uniform [0, 1) */
+  def rand(rows: Int, cols: Int): Mat[Double] = {
+    val data = Array.fill(rows * cols)(globalRNG.nextDouble())
+    Mat.create(data, rows, cols)
+  }
+
+  /** NumPy: np.random.randn(rows, cols) - standard normal */
+  def randn(rows: Int, cols: Int): Mat[Double] = {
+    val data = Array.fill(rows * cols)(globalRNG.randn())
+    Mat.create(data, rows, cols)
+  }
+
+  // np.random.normal(mean, std, size=(5, 4))
+  // You'd need to add:
+  def normal(mean: Double, std: Double, rows: Int, cols: Int): Mat[Double] = {
+    val data = Array.fill(rows * cols)(mean + std * globalRNG.randn())
+    create(data, rows, cols)
+  }
+
+  /** NumPy: np.random.uniform(low, high, (rows, cols)) */
+  def uniform(low: Double, high: Double, rows: Int, cols: Int): Mat[Double] = {
+    val data = Array.fill(rows * cols)(globalRNG.uniform(low, high))
+    Mat.create(data, rows, cols)
+  }
+
+  /** NumPy: np.random.randint(low, high, (rows, cols)) */
+  def randint(low: Int, high: Int, rows: Int, cols: Int): Mat[Int] = {
+    val range = high - low
+    val data = Array.fill(rows * cols) {
+      val value = globalRNG.nextInt()
+      ((value % range + range) % range + low).toInt  // Handle negative modulo
+    }
+    Mat.create(data, rows, cols)
+  }
+
+  /** NumPy: np.random.randint(low, high) - single integer */
+  def randint(low: Int, high: Int): Int = {
+    val range = high - low
+    val value = globalRNG.nextInt()
+    ((value % range + range) % range + low).toInt
+  }
+
   // ============================================================================
   // Core Properties (NumPy-aligned)
   // ============================================================================
@@ -579,6 +921,86 @@ object Mat {
       while i < m.rows do
         m(i, col) = value
         i += 1
+
+    /** Update selected rows (NumPy: m[indices, :] = value) */
+    def update(rowIndices: Array[Int], cols: ::.type, other: Mat[T]): Unit = {
+      require(rowIndices.length == other.rows && m.cols == other.cols,
+        s"Shape mismatch: need ${rowIndices.length}x${m.cols}, got ${other.rows}x${other.cols}")
+      
+      var i = 0
+      while (i < rowIndices.length) {
+        val r = rowIndices(i)
+        var c = 0
+        while (c < m.cols) {
+          m(r, c) = other(i, c)
+          c += 1
+        }
+        i += 1
+      }
+    }
+
+    /** Update selected columns (NumPy: m[:, indices] = value) */
+    def update(rows: ::.type, colIndices: Array[Int], other: Mat[T]): Unit = {
+      require(m.rows == other.rows && colIndices.length == other.cols,
+        s"Shape mismatch: need ${m.rows}x${colIndices.length}, got ${other.rows}x${other.cols}")
+      
+      var r = 0
+      while (r < m.rows) {
+        var i = 0
+        while (i < colIndices.length) {
+          val c = colIndices(i)
+          m(r, c) = other(r, i)
+          i += 1
+        }
+        r += 1
+      }
+    }
+
+    /** Update selected rows and columns (NumPy: m[row_idx, col_idx] = value) */
+    def update(rowIndices: Array[Int], colIndices: Array[Int], other: Mat[T]): Unit = {
+      require(rowIndices.length == other.rows && colIndices.length == other.cols,
+        s"Shape mismatch: need ${rowIndices.length}x${colIndices.length}, got ${other.rows}x${other.cols}")
+      
+      var i = 0
+      while (i < rowIndices.length) {
+        val r = rowIndices(i)
+        var j = 0
+        while (j < colIndices.length) {
+          val c = colIndices(j)
+          m(r, c) = other(i, j)
+          j += 1
+        }
+        i += 1
+      }
+    }
+
+    /** Update selected rows with scalar (NumPy: m[indices, :] = scalar) */
+    def update(rowIndices: Array[Int], cols: ::.type, value: T): Unit = {
+      var i = 0
+      while (i < rowIndices.length) {
+        val r = rowIndices(i)
+        var c = 0
+        while (c < m.cols) {
+          m(r, c) = value
+          c += 1
+        }
+        i += 1
+      }
+    }
+
+    /** Update selected columns with scalar (NumPy: m[:, indices] = scalar) */
+    def update(rows: ::.type, colIndices: Array[Int], value: T): Unit = {
+      var r = 0
+      while (r < m.rows) {
+        var i = 0
+        while (i < colIndices.length) {
+          val c = colIndices(i)
+          m(r, c) = value
+          i += 1
+        }
+        r += 1
+      }
+    }
 
   // ============================================================================
   // Indexing (NumPy-aligned with negative index support)
@@ -3533,347 +3955,232 @@ object Mat {
         create(data, m.rows, m.cols)
       }
     }
-  } // end extension
 
-  private lazy val blasThreshold: Long = System.getProperty("uni.mat.blasThreshold", "6000").toLong
-
-  def vstack[U: ClassTag](matrices: Mat[U]*): Mat[U] = {
-    require(matrices.nonEmpty, "vstack requires at least one matrix")
-    val cols = matrices.head.cols
-    require(matrices.forall(_.cols == cols), "vstack requires equal column counts")
-    val totalRows = matrices.map(_.rows).sum
-    val result = Array.ofDim[U](totalRows * cols)
-    var offset = 0
-    for mat <- matrices do
-      var i = 0
-      while i < mat.rows do
-        var j = 0
-        while j < mat.cols do
-          result(offset + i * cols + j) = mat(i, j)
-          j += 1
-        i += 1
-      offset += mat.rows * cols
-    Mat.create(result, totalRows, cols)
-  }
-
-  def hstack[U: ClassTag](matrices: Mat[U]*): Mat[U] = {
-    require(matrices.nonEmpty, "hstack requires at least one matrix")
-    val rows = matrices.head.rows
-    require(matrices.forall(_.rows == rows), "hstack requires equal row counts")
-    val totalCols = matrices.map(_.cols).sum
-    val result = Array.ofDim[U](rows * totalCols)
-    var i = 0
-    while i < rows do
-      var colOffset = 0
-      for mat <- matrices do
-        var j = 0
-        while j < mat.cols do
-          result(i * totalCols + colOffset + j) = mat(i, j)
-          j += 1
-        colOffset += mat.cols
-      i += 1
-    Mat.create(result, rows, totalCols)
-  }
-
-  def concatenate[U: ClassTag](matrices: Seq[Mat[U]], axis: Int = 0): Mat[U] =
-    if axis == 0 then vstack(matrices*)
-    else hstack(matrices*)
-
-  // ---- where (3-argument form) -------------------------------------------
-  /** NumPy: np.where(condition, x, y) - element-wise conditional select */
-  def where[T: ClassTag](condition: Mat[Boolean], x: Mat[T], y: Mat[T]): Mat[T] = {
-    require(
-      condition.rows == x.rows && condition.cols == x.cols &&
-      x.rows == y.rows && x.cols == y.cols,
-      s"where: shape mismatch: condition=${condition.shape} x=${x.shape} y=${y.shape}"
-    )
-    val result = Array.ofDim[T](x.rows * x.cols)
-    var i = 0
-    while i < x.rows do
-      var j = 0
-      while j < x.cols do
-        result(i * x.cols + j) = if condition(i, j) then x(i, j) else y(i, j)
-        j += 1
-      i += 1
-    Mat.create(result, x.rows, x.cols)
-  }
-
-  /** np.where(condition, scalar, scalar) */
-  def where[T: ClassTag](condition: Mat[Boolean], x: T, y: T): Mat[T] = {
-    val result = Array.ofDim[T](condition.rows * condition.cols)
-    var i = 0
-    while i < condition.rows do
-      var j = 0
-      while j < condition.cols do
-        result(i * condition.cols + j) = if condition(i, j) then x else y
-        j += 1
-      i += 1
-    Mat.create(result, condition.rows, condition.cols)
-  }
-
-  // ---- diag --------------------------------------------------------------
-
-  /** NumPy: np.diag(array) - construct square diagonal matrix from array */
-  def diag[T: ClassTag](values: Array[T])(using frac: Fractional[T]): Mat[T] = {
-    val n = values.length
-    val result = Array.fill(n * n)(frac.zero)
-    var i = 0
-    while i < n do
-      result(i * n + i) = values(i)
-      i += 1
-    Mat.create(result, n, n)
-  }
-
-  /** np.diag(v) where v is a vector Mat */
-  def diag[T: ClassTag](v: Mat[T])(using frac: Fractional[T]): Mat[T] = {
-    require(v.rows == 1 || v.cols == 1,
-      s"diag requires a vector (1xn or nx1), got ${v.shape}")
-    diag(v.flatten)
-  }
-
-  /** Rectangular diagonal: nRowsxnCols with values on diagonal */
-  def diag[T: ClassTag](values: Array[T], rows: Int, cols: Int)
-      (using frac: Fractional[T]): Mat[T] = {
-    val result = Array.fill(rows * cols)(frac.zero)
-    val p = math.min(math.min(rows, cols), values.length)
-    var i = 0
-    while i < p do
-      result(i * cols + i) = values(i)
-      i += 1
-    Mat.create(result, rows, cols)
-  }
-
-  // In Mat companion object
-  def meshgrid[T: ClassTag](x: Vec[T], y: Vec[T]): (Mat[T], Mat[T]) = {
-    val xs = x.flatten  // works for row or col vector
-    val ys = y.flatten
-    val nRows = ys.length
-    val nCols = xs.length
-    val xx = Array.ofDim[T](nRows * nCols)
-    val yy = Array.ofDim[T](nRows * nCols)
-    var i = 0
-    while i < nRows do
-      var j = 0
-      while j < nCols do
-        xx(i * nCols + j) = xs(j)
-        yy(i * nCols + j) = ys(i)
-        j += 1
-      i += 1
-    (Mat.create(xx, nRows, nCols), Mat.create(yy, nRows, nCols))
-  }
-
-  /** NumPy: np.polyfit(x, y, deg) - least squares polynomial fit
-   *  Returns coefficients [a_n, a_{n-1}, ..., a_0] highest degree first */
-  def polyfit(x: Vec[Double], y: Vec[Double], deg: Int): Vec[Double] = {
-    require(deg >= 1, s"degree must be >= 1, got $deg")
-    val xs = x.flatten
-    val ys = y.flatten
-    require(xs.length == ys.length, s"x and y must have same length")
-    require(xs.length > deg, s"need more points than degree")
-    val n = xs.length
-    // Build Vandermonde matrix: each row is [x^deg, x^(deg-1), ..., x^0]
-    val vand = Array.ofDim[Double](n * (deg + 1))
-    var i = 0
-    while i < n do
-      var j = 0
-      while j <= deg do
-        vand(i * (deg + 1) + j) = math.pow(xs(i), (deg - j).toDouble)
-        j += 1
-      i += 1
-    val A = Mat.create(vand, n, deg + 1)
-    val b = Mat.create(ys, n, 1)
-    val (coeffs, _, _, _) = A.lstsq(b)
-    // coeffs is (deg+1)x1, return as flat row vector
-    Mat.create(coeffs.flatten, 1, deg + 1)
-  }
-
-  /** NumPy: np.polyval(coeffs, x) - evaluate polynomial at points
-   * Horner's method for numerical stability.
-   *  coeffs = [a_n, ..., a_0] highest degree first (matches polyfit output) */
-  def polyval(coeffs: Vec[Double], x: Vec[Double]): Vec[Double] = {
-    val cs = coeffs.flatten  // [a_n, ..., a_0]
-    val xs = x.flatten
-    val result = Array.ofDim[Double](xs.length)
-    var i = 0
-    while i < xs.length do
-      // Horner's method: a_n * x^n + ... + a_0
-      var acc = 0.0
-      var k = 0
-      while k < cs.length do
-        acc = acc * xs(i) + cs(k)
-        k += 1
-      result(i) = acc
-      i += 1
-    Mat.create(result, 1, xs.length)
-  }
-
-  /** NumPy: np.convolve(a, b, mode='full') - discrete linear convolution
-   *  mode: "full" (default), "same", "valid" */
-  def convolve(a: Vec[Double], b: Vec[Double], mode: String = "full"): Vec[Double] = {
-    val as = a.flatten
-    val bs = b.flatten
-    val na = as.length
-    val nb = bs.length
-    val nFull = na + nb - 1
-    val full = Array.ofDim[Double](nFull)
-    var i = 0
-    while i < na do
-      var j = 0
-      while j < nb do
-        full(i + j) += as(i) * bs(j)
-        j += 1
-      i += 1
-    mode match
-      case "full" =>
-        Mat.create(full, 1, nFull)
-      case "same" =>
-        val start = (nb - 1) / 2
-        val result = Array.ofDim[Double](na)
-        var k = 0
-        while k < na do
-          result(k) = full(start + k)
-          k += 1
-        Mat.create(result, 1, na)
-      case "valid" =>
-        val nValid = math.max(na, nb) - math.min(na, nb) + 1
-        val start  = math.min(na, nb) - 1
-        val result = Array.ofDim[Double](nValid)
-        var k = 0
-        while k < nValid do
-          result(k) = full(start + k)
-          k += 1
-        Mat.create(result, 1, nValid)
-      case other =>
-        throw IllegalArgumentException(s"unknown mode '$other', use 'full', 'same', or 'valid'")
-  }
-
-  /** NumPy: np.correlate(a, b, mode='valid') - cross-correlation
-   *  Correlation is convolution with b reversed */
-  def correlate(a: Vec[Double], b: Vec[Double], mode: String = "valid"): Vec[Double] = {
-    val as = a.flatten
-    val bs = b.flatten
-    val na = as.length
-    val nb = bs.length
-    val nFull = na + nb - 1
-    val full = Array.ofDim[Double](nFull)
-    // c[k] = sum_j a[j] * b[j - (k - (nb-1))]
-    // equivalent: pad and slide b across a without reversing
-    var k = 0
-    while k < nFull do
-      var j = 0
-      while j < nb do
-        val ai = k - (nb - 1) + j
-        if ai >= 0 && ai < na then
-          full(k) += as(ai) * bs(j)
-        j += 1
-      k += 1
-    mode match
-      case "full" =>
-        Mat.create(full, 1, nFull)
-      case "same" =>
-        val start = (nb - 1) / 2
-        val result = Array.ofDim[Double](na)
-        var i = 0
-        while i < na do
-          result(i) = full(start + i)
-          i += 1
-        Mat.create(result, 1, na)
-      case "valid" =>
-        val nValid = math.max(na, nb) - math.min(na, nb) + 1
-        val start  = nb - 1
-        val result = Array.ofDim[Double](nValid)
-        var i = 0
-        while i < nValid do
-          result(i) = full(start + i)
-          i += 1
-        Mat.create(result, 1, nValid)
-      case other =>
-        throw IllegalArgumentException(s"unknown mode '$other', use 'full', 'same', or 'valid'")
-  }
-
-  // In companion object
-  def zerosLike[T: ClassTag](m: Mat[T])(using frac: Fractional[T]): Mat[T] =
-    Mat.zeros[T](m.rows, m.cols)
-
-  def onesLike[T: ClassTag](m: Mat[T])(using frac: Fractional[T]): Mat[T] =
-    Mat.ones[T](m.rows, m.cols)
-
-  def fullLike[T: ClassTag](m: Mat[T], value: T): Mat[T] =
-    Mat.full[T](m.rows, m.cols, value)
-
-  // exponentiation operator is '~^', chosen to achieve numpy
-  // operator-precedence w.r.t. * and ~^
-  // In scala, ~^ has highter precedence than *
-  //          2 * 3 ~^ 2 = 18 ; 2*(3^2)
-  // whereas  2 * 3  ^ 2 = 36 ; (2*3)^2
-  //
-  // not directly related to exponentiation, but needed
-  // to support the usage in the above comment
-  // (to left-multiply a matrix by a scalar).
-  extension (scalar: Double)
-    def *(m: Mat[Double]): Mat[Double] = m * scalar
-
-  extension (base: Double)
-    def ~^(exponent: Double): Double = Math.pow(base, exponent)
-
-  extension [T: ClassTag](m: Mat[T])(using frac: Fractional[T])
-    def ~^(exponent: Int): Mat[T] = m.power(exponent)
-    def ~^(exponent: Double): Mat[T] =
-      if exponent == 0.0 then Mat.eye[T](m.rows)
-      else m.power(exponent)
-
-  // Global RNG state
-  private[data] lazy val defaultRNG: NumPyRNG = new NumPyRNG(0)
-  private[data] var globalRNG: NumPyRNG = defaultRNG
-
-  /** Set random seed matching NumPy's np.random.seed() */
-  def setSeed(seed: Long): Unit =
-    globalRNG = new NumPyRNG(seed)
-
-  def nextRandLong: Long = globalRNG.nextInt()
-  def nextRandInt: Long = globalRNG.nextInt() & 0xFFFFFFFFL
-  def nextRandDouble: Double = globalRNG.nextDouble()
-
-  /** NumPy: np.random.rand(rows, cols) - uniform [0, 1) */
-  def rand(rows: Int, cols: Int): Mat[Double] = {
-    val data = Array.fill(rows * cols)(globalRNG.nextDouble())
-    Mat.create(data, rows, cols)
-  }
-
-  /** NumPy: np.random.randn(rows, cols) - standard normal */
-  def randn(rows: Int, cols: Int): Mat[Double] = {
-    val data = Array.fill(rows * cols)(globalRNG.randn())
-    Mat.create(data, rows, cols)
-  }
-
-  // np.random.normal(mean, std, size=(5, 4))
-  // You'd need to add:
-  def normal(mean: Double, std: Double, rows: Int, cols: Int): Mat[Double] = {
-    val data = Array.fill(rows * cols)(mean + std * globalRNG.randn())
-    create(data, rows, cols)
-  }
-
-  /** NumPy: np.random.uniform(low, high, (rows, cols)) */
-  def uniform(low: Double, high: Double, rows: Int, cols: Int): Mat[Double] = {
-    val data = Array.fill(rows * cols)(globalRNG.uniform(low, high))
-    Mat.create(data, rows, cols)
-  }
-
-  /** NumPy: np.random.randint(low, high, (rows, cols)) */
-  def randint(low: Int, high: Int, rows: Int, cols: Int): Mat[Int] = {
-    val range = high - low
-    val data = Array.fill(rows * cols) {
-      val value = globalRNG.nextInt()
-      ((value % range + range) % range + low).toInt  // Handle negative modulo
+    /** Element-wise maximum between two matrices (NumPy: np.maximum) */
+    def maximum(other: Mat[T])(using ord: Ordering[T]): Mat[T] = {
+      require(m.rows == other.rows && m.cols == other.cols,
+        s"Shape mismatch: ${m.rows}x${m.cols} vs ${other.rows}x${other.cols}")
+      
+      val data = Array.ofDim[T](m.size)
+      var idx = 0
+      var r = 0
+      while (r < m.rows) {
+        var c = 0
+        while (c < m.cols) {
+          val v1 = m(r, c)
+          val v2 = other(r, c)
+          data(idx) = if (ord.gt(v1, v2)) v1 else v2
+          idx += 1
+          c += 1
+        }
+        r += 1
+      }
+      create(data, m.rows, m.cols)
     }
-    Mat.create(data, rows, cols)
-  }
 
-  /** NumPy: np.random.randint(low, high) - single integer */
-  def randint(low: Int, high: Int): Int = {
-    val range = high - low
-    val value = globalRNG.nextInt()
-    ((value % range + range) % range + low).toInt
-  }
+    /** Element-wise minimum between two matrices (NumPy: np.minimum) */
+    def minimum(other: Mat[T])(using ord: Ordering[T]): Mat[T] = {
+      require(m.rows == other.rows && m.cols == other.cols,
+        s"Shape mismatch: ${m.rows}x${m.cols} vs ${other.rows}x${other.cols}")
+      
+      val data = Array.ofDim[T](m.size)
+      var idx = 0
+      var r = 0
+      while (r < m.rows) {
+        var c = 0
+        while (c < m.cols) {
+          val v1 = m(r, c)
+          val v2 = other(r, c)
+          data(idx) = if (ord.lt(v1, v2)) v1 else v2
+          idx += 1
+          c += 1
+        }
+        r += 1
+      }
+      create(data, m.rows, m.cols)
+    }
 
+    /** Element-wise maximum with scalar */
+    def maximum(scalar: T)(using ord: Ordering[T]): Mat[T] = {
+      val data = Array.ofDim[T](m.size)
+      var idx = 0
+      var r = 0
+      while (r < m.rows) {
+        var c = 0
+        while (c < m.cols) {
+          val v = m(r, c)
+          data(idx) = if (ord.gt(v, scalar)) v else scalar
+          idx += 1
+          c += 1
+        }
+        r += 1
+      }
+      create(data, m.rows, m.cols)
+    }
+
+    /** Element-wise minimum with scalar */
+    def minimum(scalar: T)(using ord: Ordering[T]): Mat[T] = {
+      val data = Array.ofDim[T](m.size)
+      var idx = 0
+      var r = 0
+      while (r < m.rows) {
+        var c = 0
+        while (c < m.cols) {
+          val v = m(r, c)
+          data(idx) = if (ord.lt(v, scalar)) v else scalar
+          idx += 1
+          c += 1
+        }
+        r += 1
+      }
+      create(data, m.rows, m.cols)
+    }
+
+    /** Natural log base 10 (NumPy: np.log10) */
+    def log10(using frac: Fractional[T]): Mat[Double] = {
+      val data = Array.ofDim[Double](m.size)
+      var idx = 0
+      var r = 0
+      while (r < m.rows) {
+        var c = 0
+        while (c < m.cols) {
+          data(idx) = math.log10(frac.toDouble(m(r, c)))
+          idx += 1
+          c += 1
+        }
+        r += 1
+      }
+      create(data, m.rows, m.cols)
+    }
+
+    /** Natural log base 2 (NumPy: np.log2) */
+    def log2(using frac: Fractional[T]): Mat[Double] = {
+      val data = Array.ofDim[Double](m.size)
+      var idx = 0
+      var r = 0
+      while (r < m.rows) {
+        var c = 0
+        while (c < m.cols) {
+          data(idx) = math.log(frac.toDouble(m(r, c))) / math.log(2.0)
+          idx += 1
+          c += 1
+        }
+        r += 1
+      }
+      create(data, m.rows, m.cols)
+    }
+
+    /** Truncate to integer, toward zero (NumPy: np.trunc) */
+    def trunc(using frac: Fractional[T]): Mat[Double] = {
+      val data = Array.ofDim[Double](m.size)
+      var idx = 0
+      var r = 0
+      while (r < m.rows) {
+        var c = 0
+        while (c < m.cols) {
+          val v = frac.toDouble(m(r, c))
+          data(idx) = if (v >= 0) math.floor(v) else math.ceil(v)
+          idx += 1
+          c += 1
+        }
+        r += 1
+      }
+      create(data, m.rows, m.cols)
+    }
+    // In Mat extension methods (for Mat[Boolean] specifically)
+
+    /** Test whether all elements are true (NumPy: np.all) */
+    def all(using ev: T =:= Boolean): Boolean = {
+      var r = 0
+      while (r < m.rows) {
+        var c = 0
+        while (c < m.cols) {
+          if (!ev(m(r, c))) return false
+          c += 1
+        }
+        r += 1
+      }
+      true
+    }
+
+    /** Test whether any element is true (NumPy: np.any) */
+    def any(using ev: T =:= Boolean): Boolean = {
+      var r = 0
+      while (r < m.rows) {
+        var c = 0
+        while (c < m.cols) {
+          if (ev(m(r, c))) return true
+          c += 1
+        }
+        r += 1
+      }
+      false
+    }
+
+    /** Test whether all elements along axis are true (NumPy: np.all(axis=...)) */
+    def all(axis: Int)(using ev: T =:= Boolean): Mat[Boolean] = {
+      require(axis == 0 || axis == 1, "axis must be 0 or 1")
+      
+      if (axis == 0) {
+        // Reduce along rows (check each column)
+        val data = Array.fill(m.cols)(true)
+        var r = 0
+        while (r < m.rows) {
+          var c = 0
+          while (c < m.cols) {
+            if (!ev(m(r, c))) data(c) = false
+            c += 1
+          }
+          r += 1
+        }
+        create(data, 1, m.cols)
+      } else {
+        // Reduce along columns (check each row)
+        val data = Array.fill(m.rows)(true)
+        var r = 0
+        while (r < m.rows) {
+          var c = 0
+          while (c < m.cols) {
+            if (!ev(m(r, c))) data(r) = false
+            c += 1
+          }
+          r += 1
+        }
+        create(data, m.rows, 1)
+      }
+    }
+
+    /** Test whether any element along axis is true (NumPy: np.any(axis=...)) */
+    def any(axis: Int)(using ev: T =:= Boolean): Mat[Boolean] = {
+      require(axis == 0 || axis == 1, "axis must be 0 or 1")
+      
+      if (axis == 0) {
+        // Reduce along rows (check each column)
+        val data = Array.fill(m.cols)(false)
+        var r = 0
+        while (r < m.rows) {
+          var c = 0
+          while (c < m.cols) {
+            if (ev(m(r, c))) data(c) = true
+            c += 1
+          }
+          r += 1
+        }
+        create(data, 1, m.cols)
+      } else {
+        // Reduce along columns (check each row)
+        val data = Array.fill(m.rows)(false)
+        var r = 0
+        while (r < m.rows) {
+          var c = 0
+          while (c < m.cols) {
+            if (ev(m(r, c))) data(r) = true
+            c += 1
+          }
+          r += 1
+        }
+        create(data, m.rows, 1)
+      }
+    }
+  } // end extension
 }
