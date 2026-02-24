@@ -13,12 +13,11 @@ jobs:
     steps:
     - uses: actions/checkout@v3
 
-    # 1. Setup Python with pip caching
+    # 1. Setup Python
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.10'
-        cache: 'pip' # Caches NumPy and other pip installs
 
     - name: Install NumPy 2.x
       run: |
