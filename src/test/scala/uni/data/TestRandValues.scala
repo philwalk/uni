@@ -2,7 +2,23 @@ package uni.data
 
 import Mat.*
 class TestRandValues extends munit.FunSuite {
-  test("diagnostic: first raw values seed=0") {
+  /** * Checks if 'python' or 'python3' is available in the system PATH.
+   * Returns true if either command exits with a status code of 0.
+   */
+  lazy val isPythonAvailable: Boolean = {
+    import scala.sys.process.*
+    import scala.util.Try
+
+    def check(cmd: String): Boolean = 
+      Try(Process(Seq(cmd, "--version")).!(ProcessLogger(_ => ())) == 0)
+        .getOrElse(false)
+
+    check("python")
+  }
+  def skipIfNoPython = if !isPythonAvailable then munit.Ignore else munit.Tag("python")
+
+
+  test("diagnostic: first raw values seed=0".tag(skipIfNoPython)) {
     Mat.setSeed(0)
     val raw1 = Mat.globalRNG.nextLong()
     val raw2 = Mat.globalRNG.nextLong()
@@ -15,7 +31,7 @@ class TestRandValues extends munit.FunSuite {
     }
   }
 
-  test("rand matches NumPy 2.4.0 PCG64DXSM for seed=42") {
+  test("rand matches NumPy 2.4.0 PCG64DXSM for seed=42".tag(skipIfNoPython)) {
     Mat.setSeed(42)
     val values = (0 until 10).map(_ => Mat.rand(1, 1)(0, 0))
     
@@ -29,7 +45,7 @@ class TestRandValues extends munit.FunSuite {
     }
   }
 
-  test("rand matches NumPy 2.4.0 PCG64DXSM for seed=0") {
+  test("rand matches NumPy 2.4.0 PCG64DXSM for seed=0".tag(skipIfNoPython)) {
     Mat.setSeed(0)
     val values = (0 until 10).map(_ => Mat.rand(1, 1)(0, 0))
     
@@ -43,7 +59,7 @@ class TestRandValues extends munit.FunSuite {
     }
   }
 
-  test("rand matrix matches NumPy 2.4.0 PCG64DXSM for seed=12345") {
+  test("rand matrix matches NumPy 2.4.0 PCG64DXSM for seed=12345".tag(skipIfNoPython)) {
     Mat.setSeed(12345)
     val m = Mat.rand(3, 3)
     val values = m.flatten
@@ -58,7 +74,7 @@ class TestRandValues extends munit.FunSuite {
     }
   }
 
-  test("uniform matches NumPy 2.4.0 PCG64DXSM for seed=42") {
+  test("uniform matches NumPy 2.4.0 PCG64DXSM for seed=42".tag(skipIfNoPython)) {
     Mat.setSeed(12345)
     val values = (0 until 5).map(_ => Mat.uniform(5.0, 10.0, 1, 1)(0, 0))
     
@@ -72,7 +88,7 @@ class TestRandValues extends munit.FunSuite {
     }
   }
 
-  test("randn matches NumPy 2.4.0 PCG64DXSM for seed=42") {
+  test("randn matches NumPy 2.4.0 PCG64DXSM for seed=42".tag(skipIfNoPython)) {
     Mat.setSeed(42)
     val values = (0 until 10).map(_ => Mat.randn(1, 1)(0, 0))
     
@@ -86,7 +102,7 @@ class TestRandValues extends munit.FunSuite {
     }
   }
 
-  test("randn matches NumPy 2.4.0 PCG64DXSM for seed=0") {
+  test("randn matches NumPy 2.4.0 PCG64DXSM for seed=0".tag(skipIfNoPython)) {
     Mat.setSeed(0)
     val values = (0 until 10).map(_ => Mat.randn(1, 1)(0, 0))
     
@@ -101,7 +117,7 @@ class TestRandValues extends munit.FunSuite {
     }
   }
 
-  test("randint matches NumPy 2.4.0 PCG64DXSM for seed=42") {
+  test("randint matches NumPy 2.4.0 PCG64DXSM for seed=42".tag(skipIfNoPython)) {
     Mat.setSeed(42)
     val values = (0 until 10).map(_ => Mat.randint(0, 100))
     
