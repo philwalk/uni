@@ -527,12 +527,16 @@ final class MatShowSuite extends FunSuite {
       // 10x10 = 100 elements (at threshold)
       val m1 = Mat.rand(10, 10)
       val output1 = m1.show
+      // Verify it is NOT truncated (does not contain the ellipsis)
+      assert(!output1.contains("..."), s"Should not truncate at threshold: \n$output1")
       // Behavior at exact threshold may vary - document current behavior
       
       // 11x11 = 121 elements (over threshold)
       val m2 = Mat.rand(11, 11)
       val output2 = m2.show
+      // Verify it IS truncated
       // Should truncate based on maxRows/maxCols even if under element threshold
+      assert(output2.contains("..."), s"Should truncate when over threshold: \n$output2")
       
     } finally {
       Mat.setPrintOptions(threshold = original)
@@ -584,10 +588,8 @@ final class MatShowSuite extends FunSuite {
       
       val m = Mat[Double]((1.23456789, 2.34567890), (3.45678901, 4.56789012))
       val output = m.show("%.10f")  // Explicit format overrides precision setting
-      
-      // Note: precision option would need to be integrated into formatMatrix
-      // to actually affect output - this test documents expected behavior
-      
+      // Assert that the output actually shows 10 decimal places, not 2
+      assert(output.contains("1.2345678900"), s"Output should honor explicit 10-decimal format: \n$output")
     } finally {
       Mat.setPrintOptions(precision = original)
     }
