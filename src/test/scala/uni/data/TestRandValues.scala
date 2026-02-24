@@ -2,19 +2,26 @@ package uni.data
 
 import Mat.*
 class TestRandValues extends munit.FunSuite {
-  /** * Checks if 'python' or 'python3' is available in the system PATH.
-   * Returns true if either command exits with a status code of 0.
+  /**
+   * Checks if 'python' is available AND has numpy installed.
    */
   lazy val isPythonAvailable: Boolean = {
     import scala.sys.process.*
     import scala.util.Try
+    def hasNumpy(cmd: String): Boolean =
+      Try {
+        // Runs 'python -c "import numpy"'
+        // Exit code 0 means success, any other code means failure
+        val code = Process(Seq(cmd, "-c", "import numpy")).!(ProcessLogger(_ => ()))
+        code == 0
+      }.getOrElse(false)
 
-    def check(cmd: String): Boolean = 
-      Try(Process(Seq(cmd, "--version")).!(ProcessLogger(_ => ())) == 0)
-        .getOrElse(false)
-
-    check("python")
+    // Check both common command names
+    hasNumpy("python")
   }
+
+  /** * Helper for MUnit tags to keep test definitions clean
+   */
   def skipIfNoPython = if !isPythonAvailable then munit.Ignore else munit.Tag("python")
 
 
