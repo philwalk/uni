@@ -13,7 +13,7 @@ jobs:
     steps:
     - uses: actions/checkout@v3
 
-    # 1. Setup Python
+    # Setup Python
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
@@ -24,14 +24,19 @@ jobs:
         python3 -m pip install --upgrade pip
         python3 -m pip install "numpy>=2.0.0"
 
-    # 2. Setup Java with sbt caching
+    # Setup Java with sbt caching
     - name: Set up JDK 17
       uses: actions/setup-java@v3
       with:
         java-version: 17
         distribution: temurin
-        cache: sbt # Caches ~/.sbt, ~/.ivy2/cache, and ~/.cache/coursier
+        cache: sbt
 
-    # 3. Run tests
+    # Setup sbt
+    - name: Set up sbt
+      uses: sbt/setup-sbt@v1
+
+    # Run tests
     - name: Run tests
       run: sbt test
+
