@@ -423,27 +423,91 @@ object NumPyRNG {
   }
   */
 
+//  def getInitialStateFromPython(seed: Long): (BigInt, BigInt) = {
+//    try {
+//      val pythonCode = s"""
+//      |#!/usr/bin/env -S python
+//      |import numpy as np
+//      |rng = np.random.default_rng($seed)
+//      |s = rng.bit_generator.state['state']
+//      |print(f\\"{s['state']},{s['inc']}\\")
+//      """.trim.stripMargin
+//      val output = sys.process.Process(Seq("python", "-c", pythonCode)).!!.trim
+//      val parts = output.split(",")
+//      val state = BigInt(parts(0))
+//      val inc = BigInt(parts(1))
+//      //System.err.println(s"// Computed for seed $seed: state=$state, inc=$inc")
+//      (state, inc)
+//    } catch {
+//      case e: Exception =>
+//        System.err.println(s"Warning: Could not compute NumPy state for seed $seed")
+//        System.err.println(s"  ${e.getMessage}")
+//        System.err.println("Results will not match NumPy for this seed")
+//        (BigInt(seed), BigInt("332724090758049132448979897138935081983"))  // Fallback
+//    }
+//  }
   def getInitialStateFromPython(seed: Long): (BigInt, BigInt) = {
+    import java.nio.charset.StandardCharsets
+    import scala.sys.process.*
+    import scala.util.Try
+    import java.nio.file.Files
+    val os = System.getProperty("os.name")
+    val tempFile = Files.createTempFile("numpy_seed_gen_", ".py")
+    val cmd = if (os.toLowerCase.contains("win")) "python" else "python3"
+    
+    // We use a StringBuilder to capture stderr so we can check it later
+    val stderrBuffer = new StringBuilder()
     try {
-      val pythonCode = s"""
-      |#!/usr/bin/env -S python
-      |import numpy as np
-      |rng = np.random.default_rng($seed)
-      |s = rng.bit_generator.state['state']
-      |print(f\\"{s['state']},{s['inc']}\\")
-      """.trim.stripMargin
-      val output = sys.process.Process(Seq("python", "-c", pythonCode)).!!.trim
+      val pythonCode = 
+        s"""
+          |import numpy as np
+          |import sys
+          |try:
+          |  # PCG64DXSM state extraction for NumPy 2.x
+          |  rng = np.random.default_rng($seed)
+          |  state_dict = rng.bit_generator.state
+          |  s = state_dict['state']['state']
+          |  i = state_dict['state']['inc']
+          |  print(f"{s},{i}")
+          |except Exception as e:
+          |  print(f"PYTHON_ERROR: {e}", file=sys.stderr)
+          |  sys.exit(1)
+          |""".stripMargin
+
+      Files.write(tempFile, pythonCode.getBytes(StandardCharsets.UTF_8))
+
+      // !! captures stdout; ProcessLogger captures stderr into our buffer
+      val output = Process(Seq(cmd, tempFile.toString)).!!(ProcessLogger(
+        _ => (), 
+        err => stderrBuffer.append(err).append("\n")
+      )).trim
+      
       val parts = output.split(",")
-      val state = BigInt(parts(0))
-      val inc = BigInt(parts(1))
-      //System.err.println(s"// Computed for seed $seed: state=$state, inc=$inc")
-      (state, inc)
+      (BigInt(parts(0)), BigInt(parts(1)))
+
     } catch {
       case e: Exception =>
-        System.err.println(s"Warning: Could not compute NumPy state for seed $seed")
-        System.err.println(s"  ${e.getMessage}")
-        System.err.println("Results will not match NumPy for this seed")
-        (BigInt(seed), BigInt("332724090758049132448979897138935081983"))  // Fallback
+        val pythonPath = Try(Process(if (cmd == "python") "where python" else "which python3").!!).getOrElse("Not Found").trim
+        val pyVersion = Try(Process(Seq(cmd, "--version")).!!).getOrElse("Unknown").trim
+        
+        System.err.println(s"--- Python Diagnostic Log (Seed: $seed) ---")
+        System.err.println(s"OS:             $os")
+        System.err.println(s"Python Cmd:     $cmd")
+        System.err.println(s"Python Path:    $pythonPath")
+        System.err.println(s"Python Version: $pyVersion")
+        
+        // Corrected check for the StringBuilder
+        if (stderrBuffer.nonEmpty) {
+          System.err.println(s"Python Stderr:\n${stderrBuffer.toString().trim}")
+        }
+        
+        System.err.println(s"Scala Error:    ${e.getMessage}")
+        System.err.println(s"------------------------------------------")
+        
+        // Fallback increment for PCG64DXSM
+        (BigInt(seed), BigInt("332724090758049132448979897138935081983"))
+    } finally {
+      Files.deleteIfExists(tempFile)
     }
   }
 
