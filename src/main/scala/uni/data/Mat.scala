@@ -74,13 +74,14 @@ object Mat {
       else
         m
     }
+
     private[uni] def createTestView[T: ClassTag](
       _tdata: Array[T], _rows: Int, _cols: Int, _t: Boolean, _offset: Int, _rs: Int, _cs: Int
     ): Mat[T] = new MatData(_tdata, _rows, _cols, _t, _offset, _rs, _cs)
 
     // This is the ONLY bridge allowed to call 'new'
     // We mark it 'private' so it is ONLY visible inside 'Internal'
-  //private def constructorBridge[T](...): MatData[T] = new MatData(...)
+    //private def constructorBridge[T](...): MatData[T] = new MatData(...)
 
     // Now, we put the 'create' logic INSIDE Internal.
     // This makes 'Internal.create' the ONLY public entrance.
@@ -100,7 +101,6 @@ object Mat {
     Internal.create(tdata, rows, cols, transposed, offset, rs, cs)
   }
 
-
   object :: // Sentinel object for "all" in slicing
 
   def inspect: String =
@@ -118,35 +118,35 @@ object Mat {
     mkString: T => String,
     fmt: Option[String] = None
   ): String = {
-    
-    def getValue(i: Int, j: Int): T = 
+
+    def getValue(i: Int, j: Int): T =
       tdata(offset + i * rs + j * cs)
-    
+
     // Truncation thresholds
     val maxRows = Mat.PrintOptions.maxRows
     val maxCols = Mat.PrintOptions.maxCols
     val edgeRows = Mat.PrintOptions.edgeItems
     val edgeCols = Mat.PrintOptions.edgeItems
-    
+
     val truncateRows = rows > maxRows
     val truncateCols = cols > maxCols
-    
+
     // Determine which indices to display
     val rowIndices = if (truncateRows) {
       (0 until edgeRows) ++ (rows - edgeRows until rows)
     } else {
       0 until rows
     }
-    
+
     val colIndices = if (truncateCols) {
       (0 until edgeCols) ++ (cols - edgeCols until cols)
     } else {
       0 until cols
     }
-    
+
     val displayRows = rowIndices.size
     val displayCols = colIndices.size
-    
+
     // Helper to trim zeros
     def trimZeros(s: String, keepDecimal: Boolean): String = {
       val parts = s.split("[eE]", 2)
@@ -162,7 +162,7 @@ object Mat {
         } else main
       trimmedMain + exp
     }
-    
+
     // Automatic formatting with high precision
     def renderAuto: String = {
       val values =
@@ -197,7 +197,7 @@ object Mat {
         renderRowsFromRaw(raw, isAuto = true)
       }
     }
-    
+
     // Format with explicit format string
     def renderRows(fmtStr: String): String = {
       val isAuto = fmtStr.isEmpty
@@ -212,7 +212,7 @@ object Mat {
         }
       renderRowsFromRaw(raw, isAuto)
     }
-    
+
     // Core rendering logic
     def renderRowsFromRaw(raw: IndexedSeq[String], isAuto: Boolean): String = {
       val colHasDecimal = Array.fill(displayCols)(false)
@@ -300,17 +300,17 @@ object Mat {
         intWidth(j)  = math.max(intWidth(j),  intp.length)
         fracWidth(j) = math.max(fracWidth(j), fracp.length)
       }
-      
+
       // Add ellipsis column widths if truncating columns
       val sb = new StringBuilder
       var idx = 0
-      
+
       for (displayRowIdx <- 0 until displayRows) {
         // Insert row ellipsis after edge rows
         if (truncateRows && displayRowIdx == edgeRows) {
           sb.append(" ...\n")
         }
-        
+
         sb.append(" (")
         for (displayColIdx <- 0 until displayCols) {
           // Insert column ellipsis after edge cols
@@ -318,17 +318,17 @@ object Mat {
             sb.append("...")
             if (displayColIdx < displayCols - 1) sb.append(", ")
           }
-          
+
           val (intp, fracp) = split(idx)
           sb.append(" " * (intWidth(displayColIdx) - intp.length))
           sb.append(intp)
-          
+
           if (colHasDecimal(displayColIdx)) {
             sb.append(".")
             sb.append(fracp)
             sb.append(" " * (fracWidth(displayColIdx) - fracp.length))
           }
-          
+
           if (displayColIdx < displayCols - 1) sb.append(", ")
           idx += 1
         }
@@ -344,22 +344,22 @@ object Mat {
     } else {
       renderAuto
     }
-    
+
     if (body.isEmpty) header
     else s"$header\n$body"
-    
+
   }
 
   // Global print options
   object PrintOptions {
     var maxRows: Int = 10        // NumPy doesn't have this, but useful
-    var maxCols: Int = 10        // NumPy doesn't have this, but useful  
+    var maxCols: Int = 10        // NumPy doesn't have this, but useful
     var edgeItems: Int = 3       // NumPy has this - items to show on each edge
     var precision: Int = 8       // NumPy has this
     var suppressScientific: Boolean = false  // NumPy has this
     var threshold: Int = 1000    // NumPy has this - total elements before ellipsis
   }
-  
+
   def setPrintOptions(
     maxRows: Int = PrintOptions.maxRows,
     maxCols: Int = PrintOptions.maxCols,
@@ -672,7 +672,7 @@ object Mat {
   def setSeed(seed: Long): Unit =
     globalRNG = new NumPyRNG(seed)
 
-  def nextRandLong: Long = globalRNG.nextInt()
+  def nextRandLong: Long = globalRNG.nextLong()
   def nextRandInt: Long = globalRNG.nextInt() & 0xFFFFFFFFL
   def nextRandDouble: Double = globalRNG.nextDouble()
 
@@ -701,21 +701,15 @@ object Mat {
     Mat.create(data, rows, cols)
   }
 
-  /** NumPy: np.random.randint(low, high, (rows, cols)) */
-  def randint(low: Int, high: Int, rows: Int, cols: Int): Mat[Int] = {
-    val range = high - low
-    val data = Array.fill(rows * cols) {
-      val value = globalRNG.nextInt()
-      ((value % range + range) % range + low).toInt  // Handle negative modulo
-    }
-    Mat.create(data, rows, cols)
-  }
-
   /** NumPy: np.random.randint(low, high) - single integer */
   def randint(low: Int, high: Int): Int = {
-    val range = high - low
-    val value = globalRNG.nextInt()
-    ((value % range + range) % range + low).toInt
+    low + globalRNG.nextBoundedInt(high - low)
+  }
+
+  /** NumPy: np.random.randint(low, high, (rows, cols)) */
+  def randint(low: Int, high: Int, rows: Int, cols: Int): Mat[Int] = {
+    val data = Array.fill(rows * cols)(randint(low, high))
+    Mat.create(data, rows, cols)
   }
 
   // ============================================================================
@@ -736,6 +730,32 @@ object Mat {
     private[data] def cs: Int                = asData._cs
     private[data] def offset: Int            = asData._offset
     private[data] def isEmpty: Boolean       = asData.size == 0
+    def isContiguous: Boolean =
+      !transposed && rs == cols && cs == 1
+
+    def foreach(f: T => Unit): Unit = {
+      if (isContiguous) {
+        // Fast path for contiguous data
+        var i = offset
+        val end = offset + rows * cols * cs
+        while (i < end) {
+          f(tdata(i))
+          i += cs
+        }
+      } else {
+        // General case with proper indexing
+        var r = 0
+        while (r < rows) {
+          var c = 0
+          while (c < cols) {
+            f(apply(r, c))
+            c += 1
+          }
+          r += 1
+        }
+      }
+    }
+
     def ndim: Int              = 2
     // In Mat extension methods
 
@@ -768,9 +788,6 @@ object Mat {
     }
     def asMat: Mat[T] = m // a Vec is already a Mat, so no-op
 
-    def isContiguous: Boolean =
-      !m.transposed && m.rs == m.cols && m.cs == 1
-
     // 2. Stride-aware reshape
     def reshape(newRows: Int, newCols: Int)(using ct: ClassTag[T]): Mat[T] = {
       require(newRows * newCols == m.rows * m.cols,
@@ -787,19 +804,34 @@ object Mat {
 
     // 3. Helper to force a matrix into a standard contiguous layout
     def toContiguous(using ct: ClassTag[T]): Mat[T] = {
-      if m.isContiguous then m
+      // 1. Check if already contiguous to avoid work
+      if (m.isContiguous) then 
+        m 
       else
-        val newData = new Array[T](m.rows * m.cols)
+        // 2. Pre-calculate total size to ensure it's positive
+        val total = m.rows * m.cols
+        val newData = new Array[T](Math.max(0, total))
+        
+        // 3. Use local vals for rows/cols to avoid repeated field access 
+        //    which might be volatile or computed
+        val rows = m.rows
+        val cols = m.cols
+        
         var i = 0
-        while i < m.rows do
+        while (i < rows) {
           var j = 0
-          while j < m.cols do
-            newData(i * m.cols + j) = m(i, j)
+          while (j < cols) {
+            // Use the local 'cols' for the stride calculation
+            newData(i * cols + j) = m(i, j)
             j += 1
+          }
           i += 1
-        Mat.create(newData, m.rows, m.cols, false, 0, m.cols, 1)
+        }
+        
+        // 4. Create the new matrix with standard strides
+        // IMPORTANT: Ensure Mat.create results in a matrix where isContiguous is TRUE
+        Mat.create(newData, rows, cols, false, 0, cols, 1)
     }
-    // Inside your extension [T](m: Mat[T]) block:
 
     /**
      * NumPy: m[i, j]
@@ -926,7 +958,7 @@ object Mat {
     def update(rowIndices: Array[Int], cols: ::.type, other: Mat[T]): Unit = {
       require(rowIndices.length == other.rows && m.cols == other.cols,
         s"Shape mismatch: need ${rowIndices.length}x${m.cols}, got ${other.rows}x${other.cols}")
-      
+
       var i = 0
       while (i < rowIndices.length) {
         val r = rowIndices(i)
@@ -943,7 +975,7 @@ object Mat {
     def update(rows: ::.type, colIndices: Array[Int], other: Mat[T]): Unit = {
       require(m.rows == other.rows && colIndices.length == other.cols,
         s"Shape mismatch: need ${m.rows}x${colIndices.length}, got ${other.rows}x${other.cols}")
-      
+
       var r = 0
       while (r < m.rows) {
         var i = 0
@@ -960,7 +992,7 @@ object Mat {
     def update(rowIndices: Array[Int], colIndices: Array[Int], other: Mat[T]): Unit = {
       require(rowIndices.length == other.rows && colIndices.length == other.cols,
         s"Shape mismatch: need ${rowIndices.length}x${colIndices.length}, got ${other.rows}x${other.cols}")
-      
+
       var i = 0
       while (i < rowIndices.length) {
         val r = rowIndices(i)
@@ -3908,19 +3940,19 @@ object Mat {
       create(data, m.rows, m.cols)
     }
     /** ML: Dropout - randomly zero elements during training
-     *  
+     *
      *  @param p Probability of dropping (zeroing) each element (default 0.5)
      *  @param training If false, returns unchanged matrix (inference mode)
      *  @param seed Random seed for reproducibility (default: use global RNG)
      */
     def dropout(p: Double = 0.5, training: Boolean = true, seed: Long = -1)(using num: Fractional[T]): Mat[Double] = {
       require(p >= 0.0 && p < 1.0, s"Dropout probability must be in [0, 1), got $p")
-      
+
       if (training) {
         val scale = 1.0 / (1.0 - p)
         val rng = if (seed >= 0) new NumPyRNG(seed) else globalRNG
         val data = Array.ofDim[Double](m.size)
-        
+
         var idx = 0
         var r = 0
         while (r < m.rows) {
@@ -3960,7 +3992,7 @@ object Mat {
     def maximum(other: Mat[T])(using ord: Ordering[T]): Mat[T] = {
       require(m.rows == other.rows && m.cols == other.cols,
         s"Shape mismatch: ${m.rows}x${m.cols} vs ${other.rows}x${other.cols}")
-      
+
       val data = Array.ofDim[T](m.size)
       var idx = 0
       var r = 0
@@ -3982,7 +4014,7 @@ object Mat {
     def minimum(other: Mat[T])(using ord: Ordering[T]): Mat[T] = {
       require(m.rows == other.rows && m.cols == other.cols,
         s"Shape mismatch: ${m.rows}x${m.cols} vs ${other.rows}x${other.cols}")
-      
+
       val data = Array.ofDim[T](m.size)
       var idx = 0
       var r = 0
@@ -4090,37 +4122,40 @@ object Mat {
     // In Mat extension methods (for Mat[Boolean] specifically)
 
     /** Test whether all elements are true (NumPy: np.all) */
+    /** Test whether all elements are true (NumPy: np.all) */
     def all(using ev: T =:= Boolean): Boolean = {
+      var res = true
       var r = 0
-      while (r < m.rows) {
+      while (r < m.rows && res) {
         var c = 0
-        while (c < m.cols) {
-          if (!ev(m(r, c))) return false
+        while (c < m.cols && res) {
+          if (!ev(m(r, c))) then res = false
           c += 1
         }
         r += 1
       }
-      true
+      res
     }
 
     /** Test whether any element is true (NumPy: np.any) */
     def any(using ev: T =:= Boolean): Boolean = {
+      var res = false
       var r = 0
-      while (r < m.rows) {
+      while (r < m.rows && !res) {
         var c = 0
-        while (c < m.cols) {
-          if (ev(m(r, c))) return true
+        while (c < m.cols && !res) {
+          if (ev(m(r, c))) then res = true
           c += 1
         }
         r += 1
       }
-      false
+      res
     }
 
     /** Test whether all elements along axis are true (NumPy: np.all(axis=...)) */
     def all(axis: Int)(using ev: T =:= Boolean): Mat[Boolean] = {
       require(axis == 0 || axis == 1, "axis must be 0 or 1")
-      
+
       if (axis == 0) {
         // Reduce along rows (check each column)
         val data = Array.fill(m.cols)(true)
@@ -4153,7 +4188,7 @@ object Mat {
     /** Test whether any element along axis is true (NumPy: np.any(axis=...)) */
     def any(axis: Int)(using ev: T =:= Boolean): Mat[Boolean] = {
       require(axis == 0 || axis == 1, "axis must be 0 or 1")
-      
+
       if (axis == 0) {
         // Reduce along rows (check each column)
         val data = Array.fill(m.cols)(false)
@@ -4183,4 +4218,82 @@ object Mat {
       }
     }
   } // end extension
+
+  extension [T: ClassTag](m: Mat[T]) {
+
+    def histogram(bins: Int = 10, range: Option[(T, T)] = None)(using frac: Fractional[T]): (Array[Int], Array[T]) = {
+      require(bins > 0, "bins must be positive")
+      val data = m.flatten
+
+      if (data.isEmpty) then
+        (Array.fill(bins)(0), Array.fill(bins + 1)(frac.zero))
+      else
+        val (minVal, maxVal) = range.getOrElse {
+          var mi = data(0); var ma = data(0)
+          data.foreach { v =>
+            if (frac.lt(v, mi)) mi = v
+            if (frac.gt(v, ma)) ma = v
+          }
+          (mi, ma)
+        }
+
+        if (frac.equiv(minVal, maxVal)) then
+          val step = frac.div(frac.fromInt(1), frac.fromInt(10000))
+          val edges = Array.tabulate(bins + 1)(i => frac.plus(minVal, frac.times(frac.fromInt(i), step)))
+          val counts = Array.fill(bins)(0)
+          counts(0) = data.length
+          (counts, edges)
+        else
+          val rangeDist = frac.minus(maxVal, minVal)
+          val binWidth = frac.div(rangeDist, frac.fromInt(bins))
+          val binEdges = Array.tabulate(bins + 1) { i =>
+            if (i == bins) maxVal else frac.plus(minVal, frac.times(frac.fromInt(i), binWidth))
+          }
+
+          val counts = Array.fill(bins)(0)
+          data.foreach { value =>
+            if (frac.gteq(value, minVal) && frac.lteq(value, maxVal)) then
+              if (frac.equiv(value, maxVal)) then
+                counts(bins - 1) += 1
+              else
+                val diff = frac.minus(value, minVal)
+                // We use toDouble only for the index calculation to handle Big/BigDecimal
+                val idx = frac.toDouble(frac.div(diff, binWidth)).toInt
+                val binIdx = Math.max(0, Math.min(idx, bins - 1))
+                counts(binIdx) += 1
+          }
+          (counts, binEdges)
+    }
+
+    def histogram(binEdges: Seq[T])(using frac: Fractional[T]): (Array[Int], Array[T]) = {
+      require(binEdges.length >= 2, "binEdges must have at least 2 elements")
+      val edgesArray = binEdges.toArray
+      val numBins = edgesArray.length - 1
+      val counts = Array.fill(numBins)(0)
+      val data = m.flatten
+
+      data.foreach { value =>
+        val first = edgesArray(0)
+        val last = edgesArray(numBins)
+
+        if (frac.equiv(value, last)) then
+          counts(numBins - 1) += 1
+        else if (frac.gteq(value, first) && frac.lt(value, last)) then
+          var left = 0
+          var right = numBins - 1
+          // Robust binary search: Finds 'i' such that edges(i) <= value < edges(i+1)
+          while (left < right) {
+            // The +1 ensures that when left and right are adjacent, mid becomes right
+            val mid = left + (right - left + 1) / 2
+            if (frac.lteq(edgesArray(mid), value)) then
+              left = mid // Moves left forward
+            else
+              right = mid - 1 // Moves right backward
+          }
+          counts(left) += 1
+      }
+      (counts, edgesArray)
+    }
+  }
+
 }
