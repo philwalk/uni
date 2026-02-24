@@ -8,16 +8,13 @@ class TestRandValues extends munit.FunSuite {
   lazy val isPythonAvailable: Boolean = {
     import scala.sys.process.*
     import scala.util.Try
-    def hasNumpy(cmd: String): Boolean =
-      Try {
-        // Runs 'python -c "import numpy"'
-        // Exit code 0 means success, any other code means failure
-        val code = Process(Seq(cmd, "-c", "import numpy")).!(ProcessLogger(_ => ()))
-        code == 0
-      }.getOrElse(false)
-
-    // Check both common command names
-    hasNumpy("python")
+    val os = System.getProperty("os.name").toLowerCase
+    val cmd = if (os.contains("win")) "python" else "python3"
+    
+    // Actually try to import numpy to verify the environment is ready
+    Try {
+      Process(Seq(cmd, "-c", "import numpy")).!(ProcessLogger(_ => ())) == 0
+    }.getOrElse(false)
   }
 
   /** * Helper for MUnit tags to keep test definitions clean
