@@ -357,16 +357,20 @@ class NumPyRNG(seed: Long = 0L) {
 // Pre-computed PCG64 initial states for seeds 0-100
 // Generated for NumPy compatibility
 object NumPyRNG {
-  import java.nio.file.{Files, Paths, StandardOpenOption}
+  /*
+  import java.nio.file.Paths
 
   private val cacheFile = {
     val home = System.getProperty("user.home")
     Paths.get(home, ".numpy_rng_cache.txt")
   }
+  */
   
   // Cache now stores (state, increment) pairs
+  /*
+  import java.nio.file.{Files, Paths}
   private val stateCache = {
-    ensureMinimalCache()  // ← Ensure sufficient cache values for unit tests
+    //ensureMinimalCache()  // ← Ensure sufficient cache values for unit tests
 
     val cache = scala.collection.mutable.Map[Long, (BigInt, BigInt)]()
     if (Files.exists(cacheFile)) {
@@ -387,8 +391,11 @@ object NumPyRNG {
     }
     cache
   }
+  */
   
   private def getOrComputeInitialState(seed: Long): (BigInt, BigInt) = {
+    getInitialStateNumpy242(seed)
+    /*
     stateCache.get(seed) match {
       case Some(cached) => cached
       case None =>
@@ -398,9 +405,12 @@ object NumPyRNG {
         stateCache(seed) = computed
         computed
     }
+    */
   }
 
+  /*
   private def saveToCache(seed: Long, state: BigInt, inc: BigInt): Unit = {
+    import java.nio.file.StandardOpenOption
     try {
       val entry = s"$seed=$state,$inc\n"
       Files.write(cacheFile, entry.getBytes,
@@ -411,6 +421,7 @@ object NumPyRNG {
         System.err.println(s"Warning: Could not save to cache: ${e.getMessage}")
     }
   }
+  */
 
   def getInitialStateFromPython(seed: Long): (BigInt, BigInt) = {
     try {
@@ -436,6 +447,7 @@ object NumPyRNG {
     }
   }
 
+  /*
   private def ensureMinimalCache(): Unit = {
     if (!Files.exists(cacheFile)) {
       try {
@@ -459,6 +471,7 @@ object NumPyRNG {
       }
     }
   }
+  */
 
 }
 export NumPyRNG.getInitialStateFromPython
