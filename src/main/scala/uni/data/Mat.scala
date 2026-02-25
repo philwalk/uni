@@ -4,6 +4,9 @@ import scala.reflect.ClassTag
 import scala.compiletime.erasedValue
 //import scala.util.Random
 
+/** Top-level alias for the Double-specialized matrix factory */
+val MatD = Mat.MatD
+
 object Mat {
   // Opaque type wraps flat array with dimensions
   opaque type Mat[T] = Internal.MatData[T]
@@ -42,6 +45,7 @@ object Mat {
             case b: BigDecimal => b.toDouble
             case i: Int => i.toDouble
             case l: Long => l.toDouble
+            case b: Boolean => if (b) 1.0 else 0.0
             case _ => 0.0  // fallback
           },
           mkString = _.toString,
@@ -719,17 +723,17 @@ object Mat {
     // This is the "Unwrapper".
     // It MUST exist to tell the compiler: "Treat this as the class, not the opaque type."
     private def asData: MatData[T] = m.asInstanceOf[MatData[T]]
-    private[data] def tdata: Array[T]        = asData._tdata
-    private[data] def rows: Int              = asData._rows
-    private[data] def cols: Int              = asData._cols
+    def tdata: Array[T]        = asData._tdata
+    def rows: Int              = asData._rows
+    def cols: Int              = asData._cols
+    def isEmpty: Boolean       = asData.size == 0
+    def shape: (Int, Int)      = (asData._rows, asData._cols)
+    def size: Int              = asData._rows * asData._cols
     private[data] def transposed: Boolean    = asData._transposed
-    private[data] def shape: (Int, Int)      = (asData._rows, asData._cols)
-    private[data] def size: Int              = asData._rows * asData._cols
     private[data] def underlying: Array[T]   = asData._tdata
     private[data] def rs: Int                = asData._rs
     private[data] def cs: Int                = asData._cs
     private[data] def offset: Int            = asData._offset
-    private[data] def isEmpty: Boolean       = asData.size == 0
     def isContiguous: Boolean =
       !transposed && rs == cols && cs == 1
 
@@ -1586,7 +1590,7 @@ object Mat {
           case c if c == classOf[BigDecimal] => BigDecimal(v).asInstanceOf[T]
           case c => throw IllegalArgumentException(s"linspace unsupported: ${c.getName}")
       }
-      Mat.create(data, num, 1)
+      Mat.create(data, 1, num) // row vector
   }
   def apply[T: ClassTag](rows: Int, cols: Int, data: Array[T]): Mat[T] = {
     require(data.length == rows * cols, s"Data length ${data.length} != $rows x $cols")
@@ -2610,7 +2614,7 @@ object Mat {
           val residuals = Array.ofDim[Double](nRhs)
           if nRows > nCols then
             val xMat = Mat.create(result, nCols, nRhs)
-            val diff = md @@ xMat - bd
+            val diff = md ~@ xMat - bd
             var c2 = 0
             while c2 < nRhs do
               var i = 0
@@ -3689,7 +3693,9 @@ object Mat {
     def *(other: Mat[T])(using num: Numeric[T]): Mat[T] = m.binOp(other)(num.times)
 
     // Matrix multiplication (NumPy's @ operator)
-    inline def @@(other: Mat[T]): Mat[T] = matmul(other)
+    inline def ~@(other: Mat[T]): Mat[T] = matmul(other)
+
+    inline def ++(other: Mat[T]): Mat[T] = vstack(other)
 
     // Division with broadcasting
     def /(other: Mat[T])(using frac: Fractional[T]): Mat[T] = m.binOp(other)(frac.div)
@@ -4295,5 +4301,20 @@ object Mat {
       (counts, edgesArray)
     }
   }
+  // src/main/scala/uni/data/Mat.scala
+  object MatD:
+    // Specialized Constructors (No [Double] tag needed)
+    def apply(rows: Tuple*): Mat[Double] = Mat.apply[Double](rows*)
+    def zeros(r: Int, c: Int): Mat[Double] = Mat.zeros[Double](r, c)
+    def ones(r: Int, c: Int): Mat[Double] = Mat.ones[Double](r, c)
+    def eye(n: Int): Mat[Double] = Mat.eye[Double](n)
+    def randn(r: Int, c: Int): Mat[Double] = Mat.randn(r, c)
+    def rand(r: Int, c: Int): Mat[Double] = Mat.rand(r, c)
+    def linspace(start: Double, stop: Double, num: Int): Mat[Double] = 
+      Mat.linspace[Double](start, stop, num)
+    
+    def diag(data: Array[Double]): Mat[Double] = Mat.diag(Mat.create(data, 1, data.length))
 
+    // Export generic static methods (like IO or formatting)
+    export Mat.{setPrintOptions}
 }

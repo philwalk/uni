@@ -1,6 +1,6 @@
 #!/usr/bin/env -S scala-cli shebang -deprecation
 
-//> using dep org.vastblue:uni_3:0.8.2
+//> using dep org.vastblue:uni_3:0.9.0
 import uni.*
 import uni.time.*
 import uni.data.*
@@ -36,7 +36,7 @@ object Main:
 
     var zmat = Mat.randn(5, 3)
     var xmat = Mat.randn(5, 4)
-    var mmat = zmat.T @@ xmat
+    var mmat = zmat.T ~@ xmat
     print(zmat.show+"\n")
     print(xmat.show+"\n")
     print(mmat.show+"\n")
@@ -92,4 +92,3 @@ object Main:
   // unsupported expr: JoinedStr
   // np.random.normal - not yet translated
   // np.random.normal - not yet translated
-

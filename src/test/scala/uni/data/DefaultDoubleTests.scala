@@ -23,9 +23,9 @@ class DefaultDoubleTests extends FunSuite {
   // Line 577/581/586: linspace else branch + fallback
   test("linspace negative range") {
     val m = Mat.linspace[Double](10, 0, 5)
-    assertEquals(m.shape, (5, 1))
+    assertEquals(m.shape, (1, 5))
     assertEqualsDouble(m(0, 0), 10.0, 1e-10, "value mismatch")
-    assertEqualsDouble(m(4, 0),  0.0, 1e-10, "value mismatch")
+    assertEqualsDouble(m(0, 4),  0.0, 1e-10, "value mismatch")
   }
 
   // Lines 592-594: flat array constructor

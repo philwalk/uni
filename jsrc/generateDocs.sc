@@ -1,7 +1,7 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
 //> using dep com.lihaoyi::os-lib:0.11.3
-//> using dep org.vastblue:uni_3:0.7.0
+//> using dep org.vastblue:uni_3:0.9.0
 
 import uni.*
 import scala.io.Source
@@ -44,7 +44,7 @@ object GenerateDocs {
       "Indexing" -> Seq("apply", "negative indexing", "slice", "fancy", "boolean mask", "where"),
       "Shape" -> Seq("shape", "size", "ndim", "isEmpty", "reshape", "flatten", "ravel", "transpose", "T "),
       "Arithmetic" -> Seq("addition", "subtraction", "multiplication", "division", "negation", "scalar", "element-wise", "hadamard"),
-      "Linear Algebra" -> Seq("matrix multiplication", "dot", "@@", "inverse", "determinant", "trace", "qr", "svd", "eig", "solve", "lstsq", "norm", "diagonal", "cholesky", "pinv", "cross", "kron"),
+      "Linear Algebra" -> Seq("matrix multiplication", "dot", "~@", "inverse", "determinant", "trace", "qr", "svd", "eig", "solve", "lstsq", "norm", "diagonal", "cholesky", "pinv", "cross", "kron"),
       "Statistics" -> Seq("min", "max", "sum", "mean", "std", "variance", "median", "percentile", "cov", "corrcoef", "argmin", "argmax"),
       "Element-wise Math" -> Seq("abs", "sqrt", "exp", "log", "log10", "log2", "sin", "cos", "tan", "arcsin", "arccos", "arctan", "arctan2", "sinh", "cosh", "tanh", "floor", "ceil", "trunc", "clip", "sign", "round", "power"),
       "Comparison" -> Seq("gt", "lt", "gte", "lte", ":==", ":!=", "allclose"),
