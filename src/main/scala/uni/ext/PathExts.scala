@@ -92,7 +92,10 @@ object pathExts {
         case _: Exception => false
       }
     }
-    def localpath: String = normalizePosix(p.toString)
+    def localpath: String = {
+      val s = normalizePosix(p.toString)
+      if isWin then s.replace('/', '\\') else s
+    }
 
     def dospath: String = {
       val pstr = p.toString
