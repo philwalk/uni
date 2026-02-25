@@ -1,6 +1,6 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.7.0
+//> using dep org.vastblue:uni_3:0.8.2
 
 import uni.*
 //import uni.fs.*
@@ -156,4 +156,3 @@ object Key:
         val c = summon[Ordering[Key]].compare(it1.next(), it2.next())
         if c != 0 then return c
       java.lang.Integer.compare(xs.size, ys.size)
-

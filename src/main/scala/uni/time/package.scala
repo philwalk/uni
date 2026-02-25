@@ -29,6 +29,15 @@ extension (dt: LocalDateTime)
   def toString(fmt: String): String =
     dt.format(DateTimeFormatter.ofPattern(fmt))
 
+extension (dt: DateTime)
+  def >=(other: DateTime): Boolean = 
+    // Assuming .value or similar gives you the underlying LocalDateTime
+    !dt.isBefore(other)
+    
+  def >(other: DateTime): Boolean = dt.isAfter(other)
+  def <=(other: DateTime): Boolean = !dt.isAfter(other)
+  def <(other: DateTime): Boolean = dt.isBefore(other)
+
 extension (n: Int)
   def days: Duration = Duration.ofDays(n.toLong)
   def hours: Duration = Duration.ofHours(n.toLong)

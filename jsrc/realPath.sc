@@ -1,6 +1,6 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.7.0
+//> using dep org.vastblue:uni_3:0.8.2
 
 import uni.*
 import java.nio.file.Files
@@ -21,10 +21,10 @@ eachArg(args.toSeq, usage) {
 }
 
 paths.foreach { (arg: Path) =>
-  printf("%s\n", realpath(arg))
+  printf("%s\n", realPath(arg))
 }
 
-def realpath(p: Path): String = {
+def realPath(p: Path): String = {
   // Find deepest existing parent
   val existing =
     Iterator.iterate(p)(_.getParent)
@@ -32,17 +32,17 @@ def realpath(p: Path): String = {
       .find(Files.exists(_))
 
   // Compute the remaining tail BEFORE canonicalizing the prefix
-  val remaining =
+  val remaining: Option[Path] =
     existing match
       case Some(prefix) =>
         val prefixCount = prefix.getNameCount
         val pCount      = p.getNameCount
         if prefixCount < pCount then
-          p.subpath(prefixCount, pCount)
+          Some(p.subpath(prefixCount, pCount))
         else
-          Paths.get("")
+          None
       case None =>
-        Paths.get("") // nothing exists; whole path is "remaining"
+        None
 
   // Canonicalize the prefix
   val resolvedPrefix =
@@ -50,7 +50,7 @@ def realpath(p: Path): String = {
 
   // Reattach and normalize
   val finalPath =
-    resolvedPrefix.resolve(remaining).normalize()
+    resolvedPrefix.resolve(remaining.mkString("/")).normalize()
 
   finalPath.toString.replace('\\', '/')
 }

@@ -2,12 +2,23 @@ package uni.data
 
 import uni.data.BigUtils.*
 import scala.math.BigDecimal
+import scala.math.BigDecimal.*
+export scala.math.BigDecimal.RoundingMode
 
 object Big:
+  private val MC = java.math.MathContext.DECIMAL128   // or a custom context
   // ------------------------------------------------------------
   // Opaque type
   // ------------------------------------------------------------
   opaque type Big = BigDecimal
+
+// Derive Fractional[Big] from Fractional[BigDecimal]
+  given Fractional[Big] = summon[Fractional[BigDecimal]].asInstanceOf[Fractional[Big]]
+
+  def zero: Big = Big(BigDecimal(0))
+  def one: Big = Big(BigDecimal(1))
+  def ten: Big = Big(BigDecimal(10))
+  def hundred: Big = Big(BigDecimal(100))
 
   // Constructors
   def apply(s: String): Big      = BigUtils.str2num(s)
@@ -22,6 +33,7 @@ object Big:
   def big(i: Int): Big         = apply(i)
   def big(l: Long): Big        = apply(l)
   def big(bd: BigDecimal): Big = apply(bd)
+
   // ------------------------------------------------------------
   // Extractor for pattern matching
   // ------------------------------------------------------------
@@ -36,6 +48,7 @@ object Big:
   // given Conversion[Long, Big] = l => Big(BigDecimal(l))
   // given Conversion[Int, Big]  = i => Big(BigDecimal(i))
   // given Conversion[Double, Big] = d => Big(BigDecimal(d))
+
   extension (d: Double)
     inline def asBig: Big = Big(BigDecimal(d))
 
@@ -69,6 +82,22 @@ object Big:
     inline def value: BigDecimal = n
 
     inline def toBigDecimal: BigDecimal = n
+
+    inline def signum: Int = n.signum // Inside this scope, b is treated as a BigDecimal
+
+    def ~^[T](exponent: T)(using frac: Fractional[T]): Big = 
+      val expDouble = frac.toDouble(exponent)
+      if (expDouble == expDouble.toInt) {
+        // Integer exponent - use BigDecimal.pow for precision
+        val value: BigDecimal = n.underlying.pow(expDouble.toInt)
+        uni.data.Big(value)
+      } else {
+        // Fractional exponent - fall back to double precision
+        uni.data.Big(math.pow(n.toDouble, expDouble))
+      }
+
+    def setScale(scale: Int, roundingMode: scala.math.BigDecimal.RoundingMode.RoundingMode): Big =
+      n.setScale(scale, roundingMode)
 
     // --- BadNum helpers -------------------------------------------------------
 
@@ -153,6 +182,21 @@ object Big:
       
     inline def abs: Big = n.abs
 
+    inline def isValidInt: Boolean = n.isValidInt
+
+    inline def isValidLong: Boolean = n.isValidLong
+  
+    def sqrt: Big = 
+      // BigDecimal.sqrt is available in Java 9+
+      // .bigDecimal converts scala.math.BigDecimal -> java.math.BigDecimal
+      val underlying: java.math.BigDecimal = n.value.bigDecimal
+      Big(underlying.sqrt(Big.MC))
+
   import scala.language.implicitConversions
+  given Conversion[Int, Big] = d => Big(BigDecimal(d))
+  given Conversion[Long, Big] = d => Big(BigDecimal(d))
+  given Conversion[Float, Big] = d => Big(BigDecimal(d))
   given Conversion[Double, Big] = d => Big(BigDecimal(d))
+//given Conversion[String, Big] = d => Big(BigDecimal(d))  // too much surprise!
+
 

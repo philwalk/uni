@@ -17,7 +17,7 @@ ThisBuild / watchTriggeredMessage := Watch.clearScreenOnTrigger
 ThisBuild / scalaVersion  := scalaVer
 
 lazy val projectName = "uni"
-ThisBuild / version       := "0.7.0"
+ThisBuild / version       := "0.8.2" // slice machinery added but not employed
 ThisBuild / versionScheme := Some("semver-spec")
 
 ThisBuild / organization         := "org.vastblue"
@@ -79,8 +79,9 @@ lazy val root = (project in file(".")).
   )
 
 libraryDependencies ++= Seq(
-  "org.scalameta" %% "munit"            % "1.2.1" % Test,
-  "org.scalameta" %% "munit-scalacheck" % "1.2.0" % Test
+  "org.bytedeco"             % "openblas-platform" % "0.3.30-1.5.12",
+  "org.scalameta"           %% "munit"             % "1.2.1" % Test,
+  "org.scalameta"           %% "munit-scalacheck"  % "1.2.0" % Test,
 )
 
 /*

@@ -36,6 +36,17 @@ class ArgsParserSuite extends FunSuite {
     assertEquals(consumed, "hello")
   }
 
+  test("peekNext does NOT call usage if there is no next argument") {
+    var peeked: String = ""
+
+    eachArg(Seq("-x"), failUsage) {
+      case "-x" => {
+        peeked = peekNext
+      }
+    }
+    assertEquals(peeked, "")
+  }
+
   test("nextInt parses an integer") {
     var value = 0
 
