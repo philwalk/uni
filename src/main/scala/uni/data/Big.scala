@@ -181,6 +181,10 @@ object Big:
     inline def toLong: Long = n.toLong
       
     inline def abs: Big = n.abs
+
+    inline def isValidInt: Boolean = n.isValidInt
+
+    inline def isValidLong: Boolean = n.isValidLong
   
     def sqrt: Big = 
       // BigDecimal.sqrt is available in Java 9+
