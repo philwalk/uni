@@ -7,12 +7,16 @@ import StandardCharsets.{UTF_8, ISO_8859_1 as Latin1}
 import scala.jdk.CollectionConverters.*
 import uni.*
 import uni.time.*
+import uni.data.*
+import uni.io.FileOps.*
 import uni.Internals.*
 import java.time.LocalDateTime
 import java.time.ZoneId
+import scala.reflect.ClassTag
 
 /** Path Extension methods */
 object pathExts {
+
   extension (p: Path) {
     def exists: Boolean = Files.exists(p)
     def isDirectory: Boolean = Files.isDirectory(p)
@@ -52,7 +56,7 @@ object pathExts {
       }
     }
 
-    def csvRowsAsync: Iterator[IterableOnce[String]] = {
+    def csvRowsAsync: Iterator[Seq[String]] = {
       uni.io.FastCsv.rowsAsync(p)
     }
     def csvRows: Iterator[Seq[String]] = {
@@ -80,6 +84,7 @@ object pathExts {
     def getParentNonNull: Path = Option(p.getParent).getOrElse(p) // dirname convention: `dirname :/` == /
     def getParentPath: Path = Option(p.getParent).getOrElse(p.toAbsolutePath.normalize.getParent)
     def parent: Path = p.toAbsolutePath.getParent
+
     def isSameFile(other: Any): Boolean = {
       try {
         other match {
@@ -270,6 +275,29 @@ object pathExts {
 
       Paths.get(finalPath.toString.replace('\\', '/'))
     }
+
+    /** * Private generic delegator. 
+     * This handles the boilerplate of discarding headers for Persona 1.
+     */
+    private def loadMatInternal[T: ClassTag](map: Big => T): Mat[T] =
+      loadSmart(p, map).mat
+
+    // --- Public Specialized API ---
+
+    /** Financial-Safe: Raw Big Matrix */
+    def loadMatBig: Mat[Big] = loadMatInternal(identity)
+
+    /** Scientific/Engineering: Double Matrix (via Big for safety) */
+    def loadMatD: MatD = loadMatInternal(_.toDouble)
+
+    // --- Public Metadata API (For Testing & Reports) ---
+
+    /** Returns headers + Big Matrix */
+    def loadSmartBig: MatResult[Big] = loadSmart(p)
+
+    /** Returns headers + Double Matrix */
+    def loadSmartD: MatResult[Double] = loadSmart(p, _.toDouble)
+
   }
 
   extension(f: JFile) {

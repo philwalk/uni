@@ -42,8 +42,8 @@ class ChronoParseTests extends FunSuite {
     )
   }
 
-  for (((teststr, expectedTimestamp), index) <- testDatesExpected.zipWithIndex) {
-    test(s"chronoParse should properly parse string [$teststr]") {
+  test(s"chronoParse should properly parse various test strings") {
+    for (((teststr, expectedTimestamp), index) <- testDatesExpected.zipWithIndex) {
       val pDate: LocalDateTime = parseDateChrono(teststr)
       val pds    = pDate.toString("yyyy-MM-dd")
       val expectedDate = expectedTimestamp.replaceAll("T.*", "")
@@ -59,8 +59,8 @@ class ChronoParseTests extends FunSuite {
   }
 
 
-  for ((str, index) <- testDatesToIso.zipWithIndex) {
-    test(s"$str should parse and format to ISO") {
+  test(s"parseDateChrono should parse various and format to ISO") {
+    for ((str, index) <- testDatesToIso.zipWithIndex) {
       val parsed = parseDateChrono(str)
 
       // Format to ISO-like output
@@ -72,8 +72,8 @@ class ChronoParseTests extends FunSuite {
     }
   }
 
-  for (str <- testDatesToIso) {
-    test(s"parsing ISO formatted ${str} should be idempotent") {
+  test(s"parsing ISO formatted should be idempotent") {
+    for (str <- testDatesToIso) {
       val parsed1 = parseDateChrono(str) // dateParser(str)
       val iso1    = parsed1.toString("yyyy/MM/dd HH:mm:ss")
 
@@ -108,8 +108,8 @@ class ChronoParseTests extends FunSuite {
     )
   }
 
-  for (teststr <- TestDates.testDatesToIso) {
-    test(s"should parse timestamp [$teststr]") {
+  test(s"should parse diverse timestamps") {
+    for (teststr <- TestDates.testDatesToIso) {
       val pDate: LocalDateTime = parseDateChrono(teststr)
       val Array(ys, ms, ds)  = pDate.toString("yyyy/MM/dd").split("/")
 

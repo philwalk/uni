@@ -7,13 +7,13 @@ import uni.data.Big.Big
 import scala.util.Try
 import scala.util.matching.Regex
 import scala.math.BigDecimal
+import uni.data.Big.*
 
-export Big.*
 export BigUtils.*
 
 object BigUtils:
 
-  type CVD = LocalDateTime|uni.data.Big|Option[Int]|String|Int
+  type CVD = LocalDateTime|Big|Option[Int]|String|Int
 
   // ------------------------------------------------------------
   // Core type & sentinels
@@ -168,11 +168,11 @@ object BigUtils:
   // Big constructors (explicit, minimal)
   // ------------------------------------------------------------
 
-//  def big(str: String): Big = str2num(str)
-//  def big(bd: Big): Big = bd
-//  def big(d: Double): Big = Big(d)
-//  def big(i: Int): Big = Big(i)
-//  def big(l: Long): Big = Big(l)
+  def big(str: String): Big = str2num(str)
+  def big(bd: Big): Big = bd
+  def big(d: Double): Big = Big(d)
+  def big(i: Int): Big = Big(i)
+  def big(l: Long): Big = Big(l)
 
   // ------------------------------------------------------------
   // Formatting DSL core

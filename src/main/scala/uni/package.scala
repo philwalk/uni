@@ -1,5 +1,6 @@
 package uni
 
+export java.nio.file.Path
 export cli.ArgsParser.*
 export ext.pathExts.*
 export ext.stringExts.*

@@ -36,7 +36,7 @@ object Main:
 
     var zmat = Mat.randn(5, 3)
     var xmat = Mat.randn(5, 4)
-    var mmat = zmat.T @@ xmat
+    var mmat = zmat.T ~@ xmat
     print(zmat.show+"\n")
     print(xmat.show+"\n")
     print(mmat.show+"\n")

@@ -37,7 +37,7 @@ class SmartParseTests extends FunSuite {
   test("selected") {
     for (datestr <- selectedDateStrings) {
       val date = parseDate(datestr)
-      printf("[%s]\n", date)
+      //printf("[%s]\n", date)
       assert(date != BadDate, s"bad date: $datestr")
     }
   }
@@ -47,7 +47,8 @@ class SmartParseTests extends FunSuite {
 
   test("mdy-with-time") {
     val localdatetime = parseDate("04/08 18:17:08 2009")
-    printf("%s\n", localdatetime)
+    assert(localdatetime != BadDate, s"bad date: $localdatetime")
+    //printf("%s\n", localdatetime)
     hook += 1
   }
   
@@ -65,7 +66,7 @@ class SmartParseTests extends FunSuite {
       val (example, expected) = ExampleGenerator.exampleForPattern(pattern)
       if verboseUni then println(s"example: $example, expected: $expected")
       val inferred = SmartParse.classify(example)
-      if shape != inferred && (true || verboseUni) then
+      if shape != inferred && verboseUni then
         println(s"shape[$shape] != inferred[$inferred] for seed ${seedcounter-1} and date '${example}'")
 
       assertEquals(
@@ -170,8 +171,8 @@ class SmartParseTests extends FunSuite {
   // --------------------------------
   // parse testDates against expected
   // --------------------------------
-  for (((teststr, expectedTimestamp), index) <- TestDates.testDatesExpected.zipWithIndex) {
-    test(s"parseSmart should properly parse string [$teststr]") {
+  test(s"parseSmart should properly parse string very diverse timestamp formats") {
+    for (((teststr, expectedTimestamp), index) <- TestDates.testDatesExpected.zipWithIndex) {
       val pDate: LocalDateTime = parseDate(teststr)
       val pds    = pDate.toString("yyyy-MM-dd")
       val expectedDate = expectedTimestamp.replaceAll("T.*", "")
@@ -181,8 +182,8 @@ class SmartParseTests extends FunSuite {
     }
   }
 
-  for ((str, index) <- testDatesToIso.zipWithIndex) {
-    test(s"$str should parse and format to ISO") {
+  test(s"should parse very diverse inputs and format to ISO") {
+    for ((str, index) <- testDatesToIso.zipWithIndex) {
       val parsed = parseDate(str)
 
       // Format to ISO-like output
@@ -194,8 +195,8 @@ class SmartParseTests extends FunSuite {
     }
   }
 
-  for (str <- testDatesToIso) {
-    test(s"parsing ISO formatted ${str} should be idempotent") {
+  test(s"parsing ISO formatted strings should be idempotent") {
+    for (str <- testDatesToIso) {
       val parsed1 = parseDate(str) // dateParse(str)
       val iso1    = parsed1.toString("yyyy/MM/dd HH:mm:ss")
 
@@ -230,8 +231,8 @@ class SmartParseTests extends FunSuite {
     )
   }
 
-  for (teststr <- TestDates.testDatesToIso) {
-    test(s"should parse timestamp [$teststr]") {
+  test(s"parseDate() should parse wide variety of test Dates and timestamps") {
+    for (teststr <- TestDates.testDatesToIso) {
       val pDate: LocalDateTime = parseDate(teststr)
       val Array(ys, ms, ds)  = pDate.toString("yyyy/MM/dd").split("/")
 
