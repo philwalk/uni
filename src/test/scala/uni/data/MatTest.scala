@@ -242,8 +242,8 @@ class MatTest extends munit.FunSuite {
     val m = Mat[Big]((1, 2, 3), (4, 5, 6))
     val col = m(::, -1)
     assertEquals(col.shape, (2, 1))
-    assertEquals(col(0, 0), big(3))
-    assertEquals(col(1, 0), big(6))
+    assertEquals(col(0, 0), Big(3))
+    assertEquals(col(1, 0), Big(6))
   }
   
   test("slice extracts row") {
@@ -416,7 +416,7 @@ class MatTest extends munit.FunSuite {
   test("matrix multiplication") {
     val m1 = Mat[Double]((1, 2), (3, 4))
     val m2 = Mat[Double]((5, 6), (7, 8))
-    val prod = m1 @@ m2
+    val prod = m1 ~@ m2
     assertEquals(prod.shape, (2, 2))
     assertEquals(prod(0, 0), 19.0)  // 1*5 + 2*7
     assertEquals(prod(0, 1), 22.0)  // 1*6 + 2*8
@@ -427,7 +427,7 @@ class MatTest extends munit.FunSuite {
   test("matrix multiplication with non-square") {
     val m1 = Mat[Double]((1, 2, 3), (4, 5, 6))  // 2x3
     val m2 = Mat[Double]((7, 8), (9, 10), (11, 12))  // 3x2
-    val prod = m1 @@ m2
+    val prod = m1 ~@ m2
     assertEquals(prod.shape, (2, 2))
     assertEquals(prod(0, 0), 58.0)   // 1*7 + 2*9 + 3*11
     assertEquals(prod(0, 1), 64.0)   // 1*8 + 2*10 + 3*12
@@ -437,7 +437,7 @@ class MatTest extends munit.FunSuite {
     val m1 = Mat.ones[Double](2, 3)
     val m2 = Mat.ones[Double](2, 3)
     intercept[IllegalArgumentException] {
-      m1 @@ m2  // 2x3 @@ 2x3 invalid
+      m1 ~@ m2  // 2x3 ~@ 2x3 invalid
     }
   }
   
@@ -445,7 +445,7 @@ class MatTest extends munit.FunSuite {
     val m1 = Mat[Double]((1, 2), (3, 4))
     val m2 = Mat[Double]((5, 6), (7, 8))
     val p1 = m1.dot(m2)
-    val p2 = m1 @@ m2
+    val p2 = m1 ~@ m2
     assertEquals(p1(0, 0), p2(0, 0))
   }
   
@@ -792,7 +792,7 @@ class MatTest extends munit.FunSuite {
     val diff = m2 - m1
     assertEquals(diff(0, 0), Big(4))
     
-    val prod = m1 @@ m2  // matrix multiply
+    val prod = m1 ~@ m2  // matrix multiply
     assertEquals(prod(0, 0), Big(19))
     assertEquals(prod(1, 1), Big(50))
   }
@@ -970,17 +970,17 @@ class MatTest extends munit.FunSuite {
     val m   = Mat[Double]((1, 2), (3, 4))
     val inv = m.inverse
     // m * inv should be identity
-    val prod = m @@ inv
+    val prod = m ~@ inv
     assertEqualsDouble(prod(0,0), 1.0, 1e-10)
     assertEqualsDouble(prod(0,1), 0.0, 1e-10)
     assertEqualsDouble(prod(1,0), 0.0, 1e-10)
     assertEqualsDouble(prod(1,1), 1.0, 1e-10)
   }
 
-  test("inverse of 3x3 matrix: m @@ inv = I") {
+  test("inverse of 3x3 matrix: m ~@ inv = I") {
     val m   = Mat[Double]((1, 2, 3), (0, 1, 4), (5, 6, 0))
     val inv = m.inverse
-    val prod = m @@ inv
+    val prod = m ~@ inv
     val n = 3
     var i = 0
     while i < n do
@@ -1019,10 +1019,10 @@ class MatTest extends munit.FunSuite {
   // ============================================================================
   // qrDecomposition
   // ============================================================================
-  test("qr decomposition: Q @@ R = original matrix") {
+  test("qr decomposition: Q ~@ R = original matrix") {
     val m = Mat[Double]((1, 2), (3, 4), (5, 6))  // 3x2
     val (q, r) = m.qrDecomposition
-    val reconstructed = q @@ r
+    val reconstructed = q ~@ r
     var i = 0
     while i < m.rows do
       var j = 0
@@ -1032,10 +1032,10 @@ class MatTest extends munit.FunSuite {
       i += 1
   }
 
-  test("qr decomposition: Q is orthonormal (Q^T @@ Q = I)") {
+  test("qr decomposition: Q is orthonormal (Q^T ~@ Q = I)") {
     val m = Mat[Double]((1, 2), (3, 4), (5, 6))  // 3x2
     val (q, _) = m.qrDecomposition
-    val qtq = q.T @@ q  // should be 2x2 identity
+    val qtq = q.T ~@ q  // should be 2x2 identity
     val p = qtq.rows
     var i = 0
     while i < p do
@@ -1059,10 +1059,10 @@ class MatTest extends munit.FunSuite {
       i += 1
   }
 
-  test("qr decomposition square matrix: Q @@ R = original") {
+  test("qr decomposition square matrix: Q ~@ R = original") {
     val m = Mat[Double]((1, 2, 3), (4, 5, 6), (7, 8, 10))
     val (q, r) = m.qrDecomposition
-    val reconstructed = q @@ r
+    val reconstructed = q ~@ r
     var i = 0
     while i < m.rows do
       var j = 0
@@ -1405,11 +1405,11 @@ class MatTest extends munit.FunSuite {
     assertEqualsDouble(x(1, 0), 3.0, 1e-10)
   }
 
-  test("solve: A @@ x = b gives b") {
+  test("solve: A ~@ x = b gives b") {
     val A = Mat[Double]((1, 2, 3), (0, 1, 4), (5, 6, 0))
     val b = Mat.col[Double](1, 2, 3)
     val x = A.solve(b)
-    val check = A @@ x
+    val check = A ~@ x
     assertEqualsDouble(check(0, 0), 1.0, 1e-10)
     assertEqualsDouble(check(1, 0), 2.0, 1e-10)
     assertEqualsDouble(check(2, 0), 3.0, 1e-10)
@@ -1654,10 +1654,10 @@ class MatTest extends munit.FunSuite {
   // ============================================================================
   // svd
   // ============================================================================
-  test("svd: U @@ diag(s) @@ Vt = original matrix") {
+  test("svd: U ~@ diag(s) ~@ Vt = original matrix") {
     val m = Mat[Double]((1, 2, 3), (4, 5, 6))  // 2x3
     val (u, s, vt) = m.svd
-    // Reconstruct: U @@ S @@ Vt
+    // Reconstruct: U ~@ S ~@ Vt
     val nRows = m.rows; val nCols = m.cols
     val p = s.length
     // Build sigma: nRows×nCols with s on diagonal
@@ -1666,7 +1666,7 @@ class MatTest extends munit.FunSuite {
     while i < p do
       sigma(i, i) = s(i)
       i += 1
-    val reconstructed = u @@ sigma @@ vt
+    val reconstructed = u ~@ sigma ~@ vt
     var ri = 0
     while ri < nRows do
       var j = 0
@@ -1676,10 +1676,10 @@ class MatTest extends munit.FunSuite {
       ri += 1
   }
 
-  test("svd: U is orthonormal (U^T @@ U = I)") {
+  test("svd: U is orthonormal (U^T ~@ U = I)") {
     val m = Mat[Double]((1, 2, 3), (4, 5, 6))
     val (u, _, _) = m.svd
-    val utu = u.T @@ u
+    val utu = u.T ~@ u
     val n = utu.rows
     var i = 0
     while i < n do
@@ -1691,10 +1691,10 @@ class MatTest extends munit.FunSuite {
       i += 1
   }
 
-  test("svd: Vt is orthonormal (Vt @@ Vt^T = I)") {
+  test("svd: Vt is orthonormal (Vt ~@ Vt^T = I)") {
     val m = Mat[Double]((1, 2, 3), (4, 5, 6))
     val (_, _, vt) = m.svd
-    val vtVtT = vt @@ vt.T
+    val vtVtT = vt ~@ vt.T
     val n = vtVtT.rows
     var i = 0
     while i < n do
@@ -1766,7 +1766,7 @@ class MatTest extends munit.FunSuite {
     val b = Mat.col[Double](6, 5, 7, 10)
     val (x, _, _, _) = A.lstsq(b)
     // A*x should be close to b in the least squares sense
-    val ax = A @@ x
+    val ax = A ~@ x
     // residual norm should be minimal - check it's at least finite and small
     var residNorm = 0.0
     var i = 0
@@ -2287,7 +2287,7 @@ class MatTest extends munit.FunSuite {
   }
 
   test("matrixRank of singular matrix is less than n") {
-    // row2 = 2 @@ row1 → rank 1
+    // row2 = 2 ~@ row1 → rank 1
     val m = Mat[Double]((1, 2), (2, 4))
     assertEquals(m.matrixRank(), 1)
   }
@@ -2782,7 +2782,7 @@ class MatTest extends munit.FunSuite {
     while col < 2 do
       if math.abs(wi(col)) < 1e-10 then  // only check real eigenvalues
         val v   = vr(::, col)
-        val av  = m @@ v
+        val av  = m ~@ v
         val lv  = v * wr(col)
         assert(av.allclose(lv, atol = 1e-8), s"A*v != lambda*v for col $col")
       col += 1
@@ -3309,25 +3309,25 @@ class MatTest extends munit.FunSuite {
     assert(m.pinv().allclose(Mat.eye[Double](3), atol = 1e-8))
   }
 
-  test("pinv of square matrix: A @@ pinv(A) ≈ I") {
+  test("pinv of square matrix: A ~@ pinv(A) ≈ I") {
     val m = Mat[Double]((1, 2), (3, 4))
     val p = m.pinv()
-    assert((m @@ p).allclose(Mat.eye[Double](2), atol = 1e-8))
+    assert((m ~@ p).allclose(Mat.eye[Double](2), atol = 1e-8))
   }
 
-  test("pinv of rectangular matrix: A @@ pinv(A) ≈ I (nRows < nCols)") {
+  test("pinv of rectangular matrix: A ~@ pinv(A) ≈ I (nRows < nCols)") {
     val m = Mat[Double]((1, 2, 3), (4, 5, 6))  // 2×3
     val p = m.pinv()
     assertEquals(p.shape, (3, 2))
-    val r = m @@ p
+    val r = m ~@ p
     assert(r.allclose(Mat.eye[Double](2), atol = 1e-8))
   }
 
-  test("pinv of rectangular matrix: pinv(A) @@ A ≈ I (nRows > nCols)") {
+  test("pinv of rectangular matrix: pinv(A) ~@ A ≈ I (nRows > nCols)") {
     val m = Mat[Double]((1, 2), (3, 4), (5, 6))  // 3×2
     val p = m.pinv()
     assertEquals(p.shape, (2, 3))
-    val r = p @@ m
+    val r = p ~@ m
     assert(r.allclose(Mat.eye[Double](2), atol = 1e-8))
   }
 
@@ -3350,10 +3350,10 @@ class MatTest extends munit.FunSuite {
     assert(m.cholesky.allclose(Mat.eye[Double](3), atol = 1e-10))
   }
 
-  test("cholesky L @@ L^T = original matrix") {
+  test("cholesky L ~@ L^T = original matrix") {
     val m = Mat[Double]((4, 2), (2, 3))  // symmetric positive definite
     val L = m.cholesky
-    assert((L @@ L.T).allclose(m, atol = 1e-10))
+    assert((L ~@ L.T).allclose(m, atol = 1e-10))
   }
 
   test("cholesky result is lower triangular") {
@@ -3375,7 +3375,7 @@ class MatTest extends munit.FunSuite {
   test("cholesky 3x3 symmetric positive definite") {
     val m = Mat[Double]((6, 3, 2), (3, 5, 1), (2, 1, 4))
     val L = m.cholesky
-    assert((L @@ L.T).allclose(m, atol = 1e-8))
+    assert((L ~@ L.T).allclose(m, atol = 1e-8))
     assert(L.allclose(L.tril(), atol = 1e-10))
   }
 
@@ -3927,6 +3927,9 @@ class MatTest extends munit.FunSuite {
       -4406194786753952655L, -3946417008787286208L,
       2363279394319028499L, 8308154130757172590L
     ).map(v => if (v > Long.MaxValue) v - (1L << 64) else v) // Convert to signed
+
+    // Assertion: compare the sequences
+    assertEquals(actual.toList, expected.toList, "The random long sequence should exactly match the NumPy seed=42 reference")
   }
 
   test("rand Mat RNG matches NumPy seed=0 sequence") {
@@ -4708,5 +4711,55 @@ class MatTest extends munit.FunSuite {
     val (counts, edges) = m.histogram(bins = 5, range = Some((0.0, 10.0)))
     
     assertEquals(counts.sum, 6)  // Only values in [0, 10] are counted
+  }
+
+  test("Boolean Indexing (Filtering)") {
+    val m = MatD.row(1.0, 2.0, 3.0, 4.0)
+    val mask = m.gt(2.0) // Expected: [false, false, true, true]
+    val filtered = m(mask)
+    
+    assertEquals(filtered.rows, 1)
+    assertEquals(filtered.cols, 2)
+    assertEquals(filtered(0, 0), 3.0)
+    assertEquals(filtered(0, 1), 4.0)
+  }
+
+  test("Logical Operations (AND, OR, NOT)") {
+    val v = MatD.row(1.0, 2.0, 3.0, 4.0)
+    val mask1 = v.gt(1.0) // [F, T, T, T]
+    val mask2 = v.lt(4.0) // [T, T, T, F]
+    
+    val combinedAnd = mask1 && mask2 // Expected: [F, T, T, F]
+    val combinedOr  = mask1 || mask2 // Expected: [T, T, T, T]
+    val negated     = !mask1         // Expected: [T, F, F, F]
+    
+    assertEquals(combinedAnd.sum.toInt, 2, "AND logic should find 2 elements")
+    assert(combinedOr.all, "OR logic should be all true")
+    assert(negated.at(0, 0), "NOT logic failed at index 0")
+  }
+
+  test("Conditional Selection (where)") {
+    val v = MatD.row(-1.0, 2.0, -3.0, 4.0)
+    val mask = v.lt(0.0)
+    // Replace negatives with absolute value
+    val result = MatD.where(mask, v.abs, v) 
+    
+    val allPositive = result.all(x => x > 0)
+    assert(allPositive, "Where condition should have resulted in all positive values")
+    assertEquals(result(0, 0), 1.0)
+    assertEquals(result(0, 2), 3.0)
+  }
+
+  test("Reductions (all, any)") {
+    val m = MatD.ones(2, 2)
+    val allTrue = m.gt(0.0)
+    
+    // Using explicit Mat[Boolean] construction if your factory supports it
+    // otherwise creating from a comparison as above
+    assert(allTrue.all, "all() should be true for ones.gt(0)")
+    
+    val someTrue = MatD.row(1.0, 0.0, 0.0).gt(0.5)
+    assert(someTrue.any, "any() should be true if one element is true")
+    assert(!someTrue.all, "all() should be false if some elements are false")
   }
 }

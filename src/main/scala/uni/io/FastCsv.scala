@@ -73,7 +73,7 @@ object FastCsv {
         if (hasNext) rowQueue.dequeue()
         else throw new NoSuchElementException("No more rows")
       }
-    }.filter(_.size > 1) // discard if empty or text-with-no-delimiter
+    }.filter(_.exists(_.trim.nonEmpty)) // discard if empty or text-with-no-delimiter
   }
 
   /** Queue filled by background thread: return Iterator[Seq[String]] */

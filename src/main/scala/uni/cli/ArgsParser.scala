@@ -116,20 +116,20 @@ object ArgsParser {
 
   def nextDouble: Double = ctx.nextDouble
 
-  /* return base filename */
+  /* returns base filename */
   inline def progName: String = {
     // First try scala-cli's source.names property
     val directPath = progPath
     if Files.isRegularFile(Paths.get(directPath)) then
       // expected if launched by scala-cli 
-      directPath.replaceAll(".*/", "") // return bare filename
+      directPath.replaceAll(".*/", "") // bare filename
     else
       // Try to find the source file
       val srcfileOpt = findSourceFile(directPath)
       srcfileOpt.getOrElse(directPath)
   }
 
-  /* return absolute path */
+  /* returns absolute path */
   inline def progPath: String = {
     // First try scala-cli's source.names property
     val sourceNameOpt = Option(sys.props("scala.sources"))

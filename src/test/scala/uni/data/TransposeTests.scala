@@ -32,7 +32,7 @@ class TransposeTests extends munit.FunSuite {
     val m = Mat[Double](())
     assertEquals(m.shape, (0, 0))  // does this pass or fail?
     assert(m.isEmpty)
-    val s = m.show
-    printf("s[%s]\n", s)
+    //val s = m.show
+    //printf("s[%s]\n", s)
   }
 }

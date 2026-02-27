@@ -28,7 +28,7 @@ object HereDoc {
   def DATA(sourcePath: String): Iterator[String] = sourceData(sourcePath)  // Perl-style
   def END(sourcePath: String): Iterator[String] = sourceData(sourcePath)   // Ruby-style
 
-  private val verboseUni = true
+  private val verboseUni = false
   private[uni] def sourcePath(fname: String): JPath = {
     val p = JPaths.get(fname)
     if (JFiles.isRegularFile(p)) p
@@ -58,7 +58,7 @@ object HereDoc {
     // 1. Find the index of the last opening delimiter
     val lastOpenIndex = lines.lastIndexWhere(_.trim.startsWith(open))
 
-    // If not found, return empty iterator
+    // If not found, returns empty iterator
     if lastOpenIndex < 0 then Iterator.empty
     else
       // 2. Stream forward from that point

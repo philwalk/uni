@@ -1,0 +1,42 @@
+the translator architecture based on the JSON structure:
+
+  _type discriminates every node
+  np.zeros(...) → Attribute node with value.id="np" and attr="zeros"
+  BinOp with Add → needs shape inference to resolve broadcasting
+  Import with asname="np" → tells us the numpy alias
+
+Translator is a standalone Scala file:
+  The AST JSON gives us everything we need. Here's the complete translator: jsrc/np2Mat.sc
+
+Now the helper Python script and a test:  ast_dump.py
+Now a representative test Python file covering the main patterns:
+Test Python file with common NumPy patterns
+  test_input.py
+Now let's copy the files to the output and present them:Ran a command, read a fileCopy files to outputsScriptPresented 3 filesDoneHere's what you have:
+ast_dump.py - run this first to generate the JSON AST:
+bashpython ast_dump.py test_input.py > test_input.json
+Np2Mat.scala - the translator. To integrate into your project:
+
+Add ujson dependency to build.sbt: "com.lihaoyi" %% "ujson" % "3.1.4"
+Place in src/main/scala/np2mat/
+Call: Np2Mat.translateFile("path/to/script.py")
+
+What it handles:
+
+All numpy factory methods (zeros, ones, eye, arange, linspace, array)
+All element-wise math (sqrt, exp, log, abs, clip, sign, round, power)
+All reductions with axis (sum, mean, max, min, median, percentile)
+All linalg (solve, inv, det, svd, qr, eig, cholesky, pinv, lstsq)
+Boolean indexing (v[v > 0], v[v < 0] = 0)
+Slicing including step slices (m[::2, :])
+Stacking (vstack, hstack, concatenate)
+np.where, np.random.rand/randn
+For/while loops, if/else, function defs
+Augmented assignment (+= → :+=)
+
+Known TODOs flagged automatically:
+
+Broadcasting ambiguity (m + v when shapes unknown)
+np.random.randint (no direct equivalent)
+einsum (manual translation required)
+np.std (not yet in Mat)

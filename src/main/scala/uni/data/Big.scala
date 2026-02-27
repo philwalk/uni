@@ -5,6 +5,8 @@ import scala.math.BigDecimal
 import scala.math.BigDecimal.*
 export scala.math.BigDecimal.RoundingMode
 
+export Big.Big
+
 object Big:
   private val MC = java.math.MathContext.DECIMAL128   // or a custom context
   // ------------------------------------------------------------
@@ -84,6 +86,8 @@ object Big:
     inline def toBigDecimal: BigDecimal = n
 
     inline def signum: Int = n.signum // Inside this scope, b is treated as a BigDecimal
+
+    inline def toPlainString: String = n.bigDecimal.toPlainString // Inside this scope, b is treated as a BigDecimal
 
     def ~^[T](exponent: T)(using frac: Fractional[T]): Big = 
       val expDouble = frac.toDouble(exponent)
@@ -185,6 +189,11 @@ object Big:
     inline def isValidInt: Boolean = n.isValidInt
 
     inline def isValidLong: Boolean = n.isValidLong
+
+    inline def isNaN: Boolean = {
+      n == BadNum
+    }
+    inline def isNotNaN: Boolean = n != BadNum
   
     def sqrt: Big = 
       // BigDecimal.sqrt is available in Java 9+

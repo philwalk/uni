@@ -11,6 +11,8 @@ import scala.sys.process.*
 import scala.util.Try
 import scala.util.Properties
 import uni.ext.*
+import uni.data.*
+import uni.time.*
 
 export scala.util.Properties.{isWin, isMac, isLinux}
 export Proc.{ProcStatus, call, shellExec, shellExecProc, spawn, spawnStreaming, execLines}
@@ -692,3 +694,29 @@ private inline def isDriveLetterPath(s: String): Boolean = {
   }
 }
 
+/**
+ * Scans a CSV to determine the best Mat[T] specialization.
+ * @param path File to scan
+ * @param scanRows Number of rows to inspect (default 10)
+ * @return A function (String => Any) tuned for that file's data
+ */
+def inferType(path: Path, scanRows: Int = 10): String => Any = {
+  val rows = path.csvRows.take(scanRows + 1).toVector // +1 for potential header
+  val dataRows = if (rows.size > 1) rows.tail else rows
+  
+  if (dataRows.isEmpty) return (s: String) => s
+
+  // Sample a high-value column (or the first one) to check type
+  // In a multi-column Mat, we usually pick the most common type across all samples
+  val samples = for {
+    row <- dataRows
+    cell <- row.take(1) // Just testing the first column for this example
+  } yield getMostSpecificType(cell)
+
+  val hasDates = samples.exists(_.isInstanceOf[DateTime])
+  val hasBigs  = samples.exists(_.isInstanceOf[BigDecimal])
+
+  if (hasBigs)  (s: String) => str2num(s)
+  else if (hasDates) (s: String) => parseDate(s)
+  else (s: String) => s // Default to String
+}

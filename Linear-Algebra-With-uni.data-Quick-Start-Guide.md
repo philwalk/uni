@@ -72,7 +72,7 @@ val scaled = A * 2.0                  // Multiply all elements by 2
 val shifted = A + 10.0                // Add 10 to all elements
 
 // Matrix multiplication
-val matmul = A @@ B                   // or A.dot(B)
+val matmul = A ~@ B                   // or A.dot(B)
 
 // Broadcasting with vectors
 val rowVec = Mat.row[Double](1, 2)
@@ -257,13 +257,13 @@ Mat.setSeed(42)
 val X = Mat.randn(100, 10)
 val y = Mat.randn(100, 1)
 val (weights, _, _, _) = X.lstsq(y)
-val pred = X @@ weights
+val pred = X ~@ weights
 ```
 
 ## Key Differences from NumPy
 
 1. **Type parameters**: `Mat[Double]` vs NumPy's inferred types
-2. **Matrix multiplication**: `@@` or `.dot()` vs NumPy's `@`
+2. **Matrix multiplication**: `~@` or `.dot()` vs NumPy's `@`
 3. **Ranges**: `0 until 5` vs NumPy's `0:5`
 4. **All syntax**: `::` vs NumPy's `:`
 5. **Equality**: `:==` vs NumPy's `==` (to avoid conflicts with Scala's ==)
@@ -276,7 +276,7 @@ val pred = X @@ weights
 
 ## Performance Tips
 
-1. Use `@@` for matrix multiplication (BLAS-optimized for Double/Float)
+1. Use `~@` for matrix multiplication (BLAS-optimized for Double/Float)
 2. Avoid unnecessary `reshape` - use views when possible
 3. Set seed once at program start for reproducibility
 4. Use broadcasting instead of explicit loops

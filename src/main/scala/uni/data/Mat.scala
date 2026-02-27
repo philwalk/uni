@@ -2,9 +2,19 @@ package uni.data
 
 import scala.reflect.ClassTag
 import scala.compiletime.erasedValue
-//import scala.util.Random
+import uni.io.FileOps.*
 
+//export Mat.MatD as MatD
+import uni.data.Big.Big
+export Mat.Mat
+export Mat.{rows, cols, shape, size, isEmpty, transposed, isContiguous, apply, isNaN, isNotNaN}
+
+
+//type MatD = Mat.MatD.type
 object Mat {
+  self =>
+//type MatD = MatD.type // Mat[Double]
+
   // Opaque type wraps flat array with dimensions
   opaque type Mat[T] = Internal.MatData[T]
   private type MatData[T] = Internal.MatData[T]
@@ -16,6 +26,90 @@ object Mat {
   type RowVec[T] = Mat[T]
   type ColVec[T] = Mat[T]
 
+  extension [T](m: Mat[T])
+    // public extension methods:
+    def rows: Int = asData._rows
+    def cols: Int = asData._cols
+    def shape: (Int, Int) = (asData._rows, asData._cols)
+    def size: Int = asData._rows * asData._cols
+    def isEmpty: Boolean = asData._rows == 0 || asData._cols == 0
+    def transposed: Boolean   = asData._transposed
+    def isContiguous: Boolean =
+      !transposed && rs == cols && cs == 1
+
+    // Standard 2D access using strides and offset
+    inline def at(r: Int, c: Int): T = 
+      underlying(offset + r * rs + c * cs)
+
+    // Flat access (requires caution with strides!)
+    // In your "Phase 0" where isContiguous is usually true, 
+    // this is simple. If you allow non-contiguous flat access, 
+    // you'd typically calculate (i / cols) and (i % cols).
+    inline def at(i: Int): T = 
+      if isContiguous then underlying(offset + i)
+      else at(i / cols, i % cols)
+
+    private def asData: MatData[T] = m.asInstanceOf[MatData[T]]
+    private[data] def tdata: Array[T]       = asData._tdata
+    private[data] def underlying: Array[T]  = asData._tdata
+    private[data] def rs: Int               = asData._rs
+    private[data] def cs: Int               = asData._cs
+    private[data] def offset: Int           = asData._offset
+
+    /** Returns a lazy iterator over all elements in row-major order */
+    def iterator: Iterator[T] = new Iterator[T] {
+      private var i = 0
+      private val limit = m.rows * m.cols
+      def hasNext: Boolean = i < limit
+      def next(): T = 
+        val row = i / m.cols
+        val col = i % m.cols
+        val value = m(row, col)
+        i += 1
+        value
+    }
+
+    /** Predicate check that short-circuits as soon as the condition is met */
+    def exists(p: T => Boolean): Boolean = iterator.exists(p)
+
+    /** Checks if any element is NaN (specifically for Double/Big) */
+    def containsNaN(using numeric: Numeric[T]): Boolean = 
+      // This assumes your Big/Double has a way to check isNaN
+      // For now, simple exists with a lambda is safest
+      exists(v => v.toString == "NaN" || v.toString == "NaN") // or specialized logic
+
+    def saveCSV(filePath: uni.Path, sep: String = ",", nanAs: String = "NaN"): Unit = {
+      withFileWriter(filePath) { writer =>
+        for (i <- 0 until m.rows) {
+          val row = for (j <- 0 until m.cols) yield {
+            m(i, j).asInstanceOf[Any] match {
+              // IEEE 754 Floating Point Special Cases
+              case d: Double if d.isNaN => nanAs
+              case d: Double if d.isPosInfinity => "Inf"
+              case d: Double if d.isNegInfinity => "-Inf"
+              case f: Float  if f.isNaN => nanAs
+              case f: Float  if f.isPosInfinity => "Inf"
+              case f: Float  if f.isNegInfinity => "-Inf"
+
+              // Big Types
+              case BadNum         => "N/A"            // Prevents 1E+10 formatting
+              case bd: BigDecimal => bd.bigDecimal.toPlainString // Prevents 1E+10 formatting
+              case bi: BigInt     => bi.toString
+
+              // Fallback for everything else (Int, Boolean, etc.)
+              case null  => ""
+              case other => java.lang.String.valueOf(other)
+            }
+          }
+          writer.println(row.mkString(sep))
+        }
+      }
+    }
+
+  extension (m: Mat[Big])
+    def isNaN: Mat[Boolean] = m.map(_ == BigUtils.BadNum)
+    def isNotNaN: Mat[Boolean] = m.map(_ != BigUtils.BadNum)
+
   private object Internal {
     class MatData[T] private[Internal](
       private[Mat] val _tdata: Array[T],
@@ -26,29 +120,41 @@ object Mat {
       private[Mat] val _rs: Int = -1,     // rowSride ; phase 0_: always 'cols'
       private[Mat] val _cs: Int = -1,     // colStride ; phase 0_: always 1
     ) {
-      override def toString: String = {
-        val typeName = _tdata.getClass.getComponentType match {
-          case java.lang.Double.TYPE => "Double"  // ← Capitalize primitive
-          case java.lang.Float.TYPE  => "Float"
-          case c if c == classOf[BigDecimal] => "Big"
-          case other => other.getSimpleName
-        }
-        formatMatrix(
-          _tdata, _rows, _cols, _offset, _rs, _cs,
-          typeName,
-          toDouble = {
-            case d: Double => d
-            case f: Float => f.toDouble
-            case b: BigDecimal => b.toDouble
-            case i: Int => i.toDouble
-            case l: Long => l.toDouble
-            case _ => 0.0  // fallback
-          },
-          mkString = _.toString,
-          fmt = None
-        )
+    override def toString: String = {
+      val componentType = _tdata.getClass.getComponentType
+      val isBool = componentType == java.lang.Boolean.TYPE
+
+      val typeName = componentType match {
+        case java.lang.Double.TYPE  => "Double"
+        case java.lang.Boolean.TYPE => "Boolean"
+        case java.lang.Float.TYPE   => "Float"
+        case c if c == classOf[BigDecimal] => "Big"
+        case other => other.getSimpleName
       }
+
+      val isBig = typeName == "Big" || typeName == "BigDecimal"
+
+      formatMatrix(
+        _tdata, _rows, _cols, _offset, _rs, _cs,
+        typeName,
+        toDouble = {
+          case b: Boolean => if (b) 1.0 else 0.0
+          case d: Double  => d
+          case n: Number  => n.doubleValue()
+          case _          => 0.0
+        },
+        mkString = {
+          // This ensures we get "true" / "false" strings
+          case BadNum => "NaN"
+          case bool: Boolean => bool.toString 
+          case bigd: BigDecimal => bigd.toString 
+          case other      => other.toString
+        },
+        // If it's Boolean, we don't want "%g" (which turns true into 1.00000)
+        fmt = if (isBool || isBig) None else Some("%g")
+      )
     }
+  }
 
     private[data] def create[T: ClassTag](
       _tdata: Array[T],
@@ -75,20 +181,16 @@ object Mat {
         m
     }
 
+    // 'Internal.create' is the ONLY way to create a Mat.
     private[uni] def createTestView[T: ClassTag](
       _tdata: Array[T], _rows: Int, _cols: Int, _t: Boolean, _offset: Int, _rs: Int, _cs: Int
     ): Mat[T] = new MatData(_tdata, _rows, _cols, _t, _offset, _rs, _cs)
-
-    // This is the ONLY bridge allowed to call 'new'
-    // We mark it 'private' so it is ONLY visible inside 'Internal'
-    //private def constructorBridge[T](...): MatData[T] = new MatData(...)
-
-    // Now, we put the 'create' logic INSIDE Internal.
-    // This makes 'Internal.create' the ONLY public entrance.
   }
+
 
   // The 'Mat.create' that the rest of your app uses
   // just forwards to the Internal gatekeeper.
+  // This is the only public way to create a Mat.
   def create[T: ClassTag](
       tdata: Array[T],
       rows: Int,
@@ -103,279 +205,8 @@ object Mat {
 
   object :: // Sentinel object for "all" in slicing
 
-  def inspect: String =
+  def inspect[T: ClassTag]: String =
     s"Mat(${rows}x${cols}, offset=$offset, rs=$rs, cs=$cs, transposed=$transposed)"
-
-  def formatMatrix[T](
-    tdata: Array[T],
-    rows: Int,
-    cols: Int,
-    offset: Int,
-    rs: Int,
-    cs: Int,
-    typeName: String,
-    toDouble: T => Double,
-    mkString: T => String,
-    fmt: Option[String] = None
-  ): String = {
-
-    def getValue(i: Int, j: Int): T =
-      tdata(offset + i * rs + j * cs)
-
-    // Truncation thresholds
-    val maxRows = Mat.PrintOptions.maxRows
-    val maxCols = Mat.PrintOptions.maxCols
-    val edgeRows = Mat.PrintOptions.edgeItems
-    val edgeCols = Mat.PrintOptions.edgeItems
-
-    val truncateRows = rows > maxRows
-    val truncateCols = cols > maxCols
-
-    // Determine which indices to display
-    val rowIndices = if (truncateRows) {
-      (0 until edgeRows) ++ (rows - edgeRows until rows)
-    } else {
-      0 until rows
-    }
-
-    val colIndices = if (truncateCols) {
-      (0 until edgeCols) ++ (cols - edgeCols until cols)
-    } else {
-      0 until cols
-    }
-
-    val displayRows = rowIndices.size
-    val displayCols = colIndices.size
-
-    // Helper to trim zeros
-    def trimZeros(s: String, keepDecimal: Boolean): String = {
-      val parts = s.split("[eE]", 2)
-      val main  = parts(0)
-      val exp   = if (parts.length == 2) "e" + parts(1) else ""
-
-      val trimmedMain =
-        if (main.contains('.')) {
-          val r = main.reverse.dropWhile(_ == '0').dropWhile(_ == '.').reverse
-          if (r.isEmpty) "0"
-          else if (keepDecimal && !r.contains('.')) r + "."
-          else r
-        } else main
-      trimmedMain + exp
-    }
-
-    // Automatic formatting with high precision
-    def renderAuto: String = {
-      val values =
-        for (i <- rowIndices; j <- colIndices)
-        yield toDouble(getValue(i, j))
-
-      if (values.isEmpty) {
-        ""
-      } else {
-        val absMax = values.map(math.abs).max
-        val absMin = values.filter(_ != 0.0).map(math.abs).minOption.getOrElse(0.0)
-
-        val sci = absMax >= 1e8 || (absMin > 0 && absMin < 1e-6)
-
-        val base =
-          if (displayCols <= 4) 10
-          else if (displayCols <= 8) 8
-          else 6
-
-        val spread = values.max - values.min
-
-        val maxDec =
-          if (sci) base
-          else if (spread == 0.0) base
-          else if (spread >= 100) base - 3
-          else if (spread >= 10) base - 2
-          else if (spread >= 1) base - 1
-          else base
-
-        val fmtStr = if (sci) s"%.${maxDec}e" else s"%.${maxDec}f"
-        val raw = values.map(v => fmtStr.format(v)).toIndexedSeq
-        renderRowsFromRaw(raw, isAuto = true)
-      }
-    }
-
-    // Format with explicit format string
-    def renderRows(fmtStr: String): String = {
-      val isAuto = fmtStr.isEmpty
-
-      val raw =
-        if (isAuto) {
-          for (i <- rowIndices; j <- colIndices)
-          yield mkString(getValue(i, j))
-        } else {
-          for (i <- rowIndices; j <- colIndices)
-          yield fmtStr.format(getValue(i, j))
-        }
-      renderRowsFromRaw(raw, isAuto)
-    }
-
-    // Core rendering logic
-    def renderRowsFromRaw(raw: IndexedSeq[String], isAuto: Boolean): String = {
-      val colHasDecimal = Array.fill(displayCols)(false)
-      for (i <- 0 until displayRows; j <- 0 until displayCols) {
-        if (raw(i * displayCols + j).contains('.')) {
-          colHasDecimal(j) = true
-        }
-      }
-
-      val values =
-        if (raw.isEmpty) Nil
-        else raw.map(_.toDouble).map(math.abs)
-
-      val useSci =
-        if (values.isEmpty) {
-          false
-        } else {
-          val absMax = values.max
-          val absMin = values.filter(_ > 0).minOption.getOrElse(absMax)
-          absMax >= 1e8 || absMin < 1e-6
-        }
-
-      val colIsInteger =
-        if (isAuto) {
-          if (useSci) {
-            Array.fill(displayCols)(false)
-          } else {
-            val arr = Array.fill(displayCols)(true)
-            for (i <- 0 until displayRows; j <- 0 until displayCols) {
-              val d = toDouble(getValue(rowIndices(i), colIndices(j)))
-              if (d != Math.rint(d)) {
-                arr(j) = false
-              }
-            }
-            arr
-          }
-        } else {
-          Array.fill(displayCols)(false)
-        }
-
-      for (j <- 0 until displayCols) {
-        if (colIsInteger(j)) {
-          colHasDecimal(j) = false
-        }
-      }
-
-      val trimmed =
-        if (isAuto) {
-          for (idx <- raw.indices) yield {
-            val col = idx % displayCols
-            if (colIsInteger(col)) {
-              val s = raw(idx)
-              val dot = s.indexOf('.')
-              if (dot >= 0) s.substring(0, dot)
-              else s
-            } else {
-              val t0 = trimZeros(raw(idx), keepDecimal = colHasDecimal(col))
-              if (colHasDecimal(col)) {
-                if (t0.contains('.')) {
-                  if (t0.endsWith(".")) t0 + "0" else t0
-                } else {
-                  t0 + ".0"
-                }
-              } else {
-                t0
-              }
-            }
-          }
-        } else {
-          raw
-        }
-
-      val split =
-        trimmed.map(_.stripLeading).map { s =>
-          val parts = s.split("\\.", 2)
-          if (parts.length == 1) (parts(0), "")
-          else (parts(0), parts(1))
-        }
-
-      val intWidth  = Array.fill(displayCols)(0)
-      val fracWidth = Array.fill(displayCols)(0)
-
-      for (i <- 0 until displayRows; j <- 0 until displayCols) {
-        val (intp, fracp) = split(i * displayCols + j)
-        intWidth(j)  = math.max(intWidth(j),  intp.length)
-        fracWidth(j) = math.max(fracWidth(j), fracp.length)
-      }
-
-      // Add ellipsis column widths if truncating columns
-      val sb = new StringBuilder
-      var idx = 0
-
-      for (displayRowIdx <- 0 until displayRows) {
-        // Insert row ellipsis after edge rows
-        if (truncateRows && displayRowIdx == edgeRows) {
-          sb.append(" ...\n")
-        }
-
-        sb.append(" (")
-        for (displayColIdx <- 0 until displayCols) {
-          // Insert column ellipsis after edge cols
-          if (truncateCols && displayColIdx == edgeCols) {
-            sb.append("...")
-            if (displayColIdx < displayCols - 1) sb.append(", ")
-          }
-
-          val (intp, fracp) = split(idx)
-          sb.append(" " * (intWidth(displayColIdx) - intp.length))
-          sb.append(intp)
-
-          if (colHasDecimal(displayColIdx)) {
-            sb.append(".")
-            sb.append(fracp)
-            sb.append(" " * (fracWidth(displayColIdx) - fracp.length))
-          }
-
-          if (displayColIdx < displayCols - 1) sb.append(", ")
-          idx += 1
-        }
-        sb.append(")")
-        if (displayRowIdx < displayRows - 1) sb.append(",\n")
-      }
-
-      sb.toString
-    }
-    val header = s"${rows}x${cols} Mat[$typeName]:"
-    val body = if (fmt.isDefined) {
-      renderRows(fmt.get)
-    } else {
-      renderAuto
-    }
-
-    if (body.isEmpty) header
-    else s"$header\n$body"
-
-  }
-
-  // Global print options
-  object PrintOptions {
-    var maxRows: Int = 10        // NumPy doesn't have this, but useful
-    var maxCols: Int = 10        // NumPy doesn't have this, but useful
-    var edgeItems: Int = 3       // NumPy has this - items to show on each edge
-    var precision: Int = 8       // NumPy has this
-    var suppressScientific: Boolean = false  // NumPy has this
-    var threshold: Int = 1000    // NumPy has this - total elements before ellipsis
-  }
-
-  def setPrintOptions(
-    maxRows: Int = PrintOptions.maxRows,
-    maxCols: Int = PrintOptions.maxCols,
-    edgeItems: Int = PrintOptions.edgeItems,
-    precision: Int = PrintOptions.precision,
-    suppressScientific: Boolean = PrintOptions.suppressScientific,
-    threshold: Int = PrintOptions.threshold
-  ): Unit = {
-    PrintOptions.maxRows = maxRows
-    PrintOptions.maxCols = maxCols
-    PrintOptions.edgeItems = edgeItems
-    PrintOptions.precision = precision
-    PrintOptions.suppressScientific = suppressScientific
-    PrintOptions.threshold = threshold
-  }
-
 
   private lazy val blasThreshold: Long = System.getProperty("uni.mat.blasThreshold", "6000").toLong
 
@@ -474,8 +305,7 @@ object Mat {
   }
 
   /** Rectangular diagonal: nRowsxnCols with values on diagonal */
-  def diag[T: ClassTag](values: Array[T], rows: Int, cols: Int)
-      (using frac: Fractional[T]): Mat[T] = {
+  def diag[T: ClassTag](values: Array[T], rows: Int, cols: Int)(using frac: Fractional[T]): Mat[T] = {
     val result = Array.fill(rows * cols)(frac.zero)
     val p = math.min(math.min(rows, cols), values.length)
     var i = 0
@@ -525,7 +355,7 @@ object Mat {
     val A = Mat.create(vand, n, deg + 1)
     val b = Mat.create(ys, n, 1)
     val (coeffs, _, _, _) = A.lstsq(b)
-    // coeffs is (deg+1)x1, return as flat row vector
+    // coeffs is (deg+1)x1, returned as flat row vector
     Mat.create(coeffs.flatten, 1, deg + 1)
   }
 
@@ -664,6 +494,28 @@ object Mat {
       if exponent == 0.0 then Mat.eye[T](m.rows)
       else m.power(exponent)
 
+    /** Filters rows based on a predicate function */
+    def filterRows(p: Mat[T] => Boolean): Mat[T] = {
+      // 1. Identify which row indices pass the predicate
+      val keep = (0 until m.rows).filter { r =>
+        p(m(r, ::)) // get a row Vec
+      }
+
+      if keep.isEmpty then
+        Mat.create(Array.empty[T], 0, m.cols)
+      else
+        // 2. Allocate and copy data for the new Mat
+        val newData = new Array[T](keep.length * m.cols)
+        keep.zipWithIndex.foreach { (originalRow, newRowIdx) =>
+          System.arraycopy(
+            m.underlying, m.offset + originalRow * m.rs, 
+            newData, newRowIdx * m.cols, 
+            m.cols
+          )
+        }
+        Mat.create(newData, keep.length, m.cols)
+    }
+
   // Global RNG state
   private[data] lazy val defaultRNG: NumPyRNG = new NumPyRNG(0)
   private[data] var globalRNG: NumPyRNG = defaultRNG
@@ -718,36 +570,23 @@ object Mat {
   extension [T](m: Mat[T])
     // This is the "Unwrapper".
     // It MUST exist to tell the compiler: "Treat this as the class, not the opaque type."
-    private def asData: MatData[T] = m.asInstanceOf[MatData[T]]
-    private[data] def tdata: Array[T]        = asData._tdata
-    private[data] def rows: Int              = asData._rows
-    private[data] def cols: Int              = asData._cols
-    private[data] def transposed: Boolean    = asData._transposed
-    private[data] def shape: (Int, Int)      = (asData._rows, asData._cols)
-    private[data] def size: Int              = asData._rows * asData._cols
-    private[data] def underlying: Array[T]   = asData._tdata
-    private[data] def rs: Int                = asData._rs
-    private[data] def cs: Int                = asData._cs
-    private[data] def offset: Int            = asData._offset
-    private[data] def isEmpty: Boolean       = asData.size == 0
-    def isContiguous: Boolean =
-      !transposed && rs == cols && cs == 1
+    //private def asData: MatData[T] = m.asInstanceOf[MatData[T]]
 
     def foreach(f: T => Unit): Unit = {
-      if (isContiguous) {
+      if (m.isContiguous) {
         // Fast path for contiguous data
-        var i = offset
-        val end = offset + rows * cols * cs
+        var i = m.offset
+        val end = m.offset + m.rows * m.cols * m.cs
         while (i < end) {
-          f(tdata(i))
-          i += cs
+          f(m.tdata(i))
+          i += m.cs
         }
       } else {
         // General case with proper indexing
         var r = 0
-        while (r < rows) {
+        while (r < m.rows) {
           var c = 0
-          while (c < cols) {
+          while (c < m.cols) {
             f(apply(r, c))
             c += 1
           }
@@ -1151,6 +990,20 @@ object Mat {
         )
     }
 
+    def zipMap[U, V: ClassTag](other: Mat[U])(f: (T, U) => V): Mat[V] = {
+      require(m.rows == other.rows && m.cols == other.cols, 
+        s"Dimension mismatch: (${m.rows}x${m.cols}) vs (${other.rows}x${other.cols})")
+      
+      val len = m.rows * m.cols
+      val res = new Array[V](len)
+      var i = 0
+      while (i < len) {
+        res(i) = f(m.at(i), other.at(i))
+        i += 1
+      }
+      Mat.create(res, m.rows, m.cols)
+    }
+
 //    /** * Enables: m(i, ::) := 10.0
 //     * Or even: m(0 until 2, 0 until 2) := 0.0
 //     */
@@ -1202,10 +1055,9 @@ object Mat {
       Mat.create(result, m.rows, m.cols)
     }
 
-  // ============================================================================
-  // Shape Manipulation
-  // ============================================================================
-  //extension [T: ClassTag](m: Mat[T])
+    // ============================================================================
+    // Shape Manipulation
+    // ============================================================================
     def T: Mat[T] = transpose
     /**
      * NumPy: m.T
@@ -1618,8 +1470,8 @@ object Mat {
       Mat.create(data, rows, cols)
   }
   // Concrete-type single-value factories (unambiguous, no [T] required)
-  def apply(value: Double): Mat[Double] = Mat.create(Array(value), 1, 1)
-  def apply(value: Big): Mat[Big]       = Mat.create(Array(value), 1, 1)
+  def apply(value: Double): Mat[Double] = Mat.create[Double](Array(value), 1, 1)
+  def apply(value: Big.Big): Mat[Big.Big]       = Mat.create[Big.Big](Array(value), 1, 1)
 
   /** Explicit 1x1 matrix factory */
   def single[T: ClassTag](value: T): Mat[T] = Mat.create(Array(value), 1, 1)
@@ -2610,7 +2462,7 @@ object Mat {
           val residuals = Array.ofDim[Double](nRhs)
           if nRows > nCols then
             val xMat = Mat.create(result, nCols, nRhs)
-            val diff = md @@ xMat - bd
+            val diff = md ~@ xMat - bd
             var c2 = 0
             while c2 < nRhs do
               var i = 0
@@ -2980,15 +2832,15 @@ object Mat {
 
     /** NumPy: np.isfinite(m) */
     def isfinite(using frac: Fractional[T]): Mat[Boolean] =
-      Mat.create(m.tdata.map(x => { val d = frac.toDouble(x); !d.isNaN && !d.isInfinite }),
-        m.rows, m.cols, m.transposed)
+    // pass the metadata along with the array
+      val boolArray = m.tdata.map(x => { 
+        val d = frac.toDouble(x)
+        !d.isNaN && !d.isInfinite 
+      })
+      Mat.create(boolArray, m.rows, m.cols, m.transposed)
 
     /** NumPy: np.nan_to_num(m, nan=0.0, posinf=0.0, neginf=0.0) */
-    def nanToNum(
-        nan:    Double = 0.0,
-        posinf: Double = 0.0,
-        neginf: Double = 0.0
-    )(using frac: Fractional[T]): Mat[T] = {
+    def nanToNum(nan: Double = 0.0, posinf: Double = 0.0, neginf: Double = 0.0)(using frac: Fractional[T]): Mat[T] = {
       m.map((x: T) => {
         val d = frac.toDouble(x)
         val replaced =
@@ -3689,7 +3541,7 @@ object Mat {
     def *(other: Mat[T])(using num: Numeric[T]): Mat[T] = m.binOp(other)(num.times)
 
     // Matrix multiplication (NumPy's @ operator)
-    inline def @@(other: Mat[T]): Mat[T] = matmul(other)
+    inline def ~@(other: Mat[T]): Mat[T] = matmul(other)
 
     // Division with broadcasting
     def /(other: Mat[T])(using frac: Fractional[T]): Mat[T] = m.binOp(other)(frac.div)
@@ -4119,9 +3971,9 @@ object Mat {
       }
       create(data, m.rows, m.cols)
     }
+
     // In Mat extension methods (for Mat[Boolean] specifically)
 
-    /** Test whether all elements are true (NumPy: np.all) */
     /** Test whether all elements are true (NumPy: np.all) */
     def all(using ev: T =:= Boolean): Boolean = {
       var res = true
@@ -4216,6 +4068,36 @@ object Mat {
         }
         create(data, m.rows, 1)
       }
+    }
+
+    /** Test whether all elements satisfy the predicate */
+    def all(p: T => Boolean): Boolean = {
+      var res = true
+      var r = 0
+      while (res && r < m.rows) {
+        var c = 0
+        while (res && c < m.cols) {
+          if (!p(m(r, c))) res = false
+          c += 1
+        }
+        r += 1
+      }
+      res
+    }
+
+    /** Test whether any element satisfies the predicate */
+    def any(p: T => Boolean): Boolean = {
+      var res = false
+      var r = 0
+      while (!res && r < m.rows) {
+        var c = 0
+        while (!res && c < m.cols) {
+          if (p(m(r, c))) res = true
+          c += 1
+        }
+        r += 1
+      }
+      res
     }
 
     def vsplit(indices: Array[Int])(using frac: Fractional[T]): Seq[Mat[T]] = {
@@ -4352,4 +4234,361 @@ object Mat {
     }
   }
 
+  def formatMatrix[T](
+    tdata: Array[T],
+    rows: Int,
+    cols: Int,
+    offset: Int,
+    rs: Int,
+    cs: Int,
+    typeName: String,
+    toDouble: T => Double,
+    mkString: T => String,
+    fmt: Option[String] = None
+  ): String = {
+
+    def getValue(i: Int, j: Int): T =
+      tdata(offset + i * rs + j * cs)
+
+    // Truncation thresholds
+    val maxRows = Mat.PrintOptions.maxRows
+    val maxCols = Mat.PrintOptions.maxCols
+    val edgeRows = Mat.PrintOptions.edgeItems
+    val edgeCols = Mat.PrintOptions.edgeItems
+
+    val truncateRows = rows > maxRows
+    val truncateCols = cols > maxCols
+
+    // Determine which indices to display
+    val rowIndices = if (truncateRows) {
+      (0 until edgeRows) ++ (rows - edgeRows until rows)
+    } else {
+      0 until rows
+    }
+
+    val colIndices = if (truncateCols) {
+      (0 until edgeCols) ++ (cols - edgeCols until cols)
+    } else {
+      0 until cols
+    }
+
+    val displayRows = rowIndices.size
+    val displayCols = colIndices.size
+
+    // Helper to trim zeros
+    def trimZeros(s: String, keepDecimal: Boolean): String = {
+      val parts = s.split("[eE]", 2)
+      val main  = parts(0)
+      val exp   = if (parts.length == 2) "e" + parts(1) else ""
+
+      val trimmedMain =
+        if (main.contains('.')) {
+          val r = main.reverse.dropWhile(_ == '0').dropWhile(_ == '.').reverse
+          if (r.isEmpty) "0"
+          else if (keepDecimal && !r.contains('.')) r + "."
+          else r
+        } else main
+      trimmedMain + exp
+    }
+
+    // Automatic formatting with high precision
+    def renderAuto: String = {
+      val values =
+        for (i <- rowIndices; j <- colIndices)
+        yield toDouble(getValue(i, j))
+
+      if (values.isEmpty) {
+        ""
+      } else {
+        val absMax = values.map(math.abs).max
+        val absMin = values.filter(_ != 0.0).map(math.abs).minOption.getOrElse(0.0)
+
+        val sci = absMax >= 1e8 || (absMin > 0 && absMin < 1e-6)
+
+        val base =
+          if (displayCols <= 4) 10
+          else if (displayCols <= 8) 8
+          else 6
+
+        val spread = values.max - values.min
+
+        val maxDec =
+          if (sci) base
+          else if (spread == 0.0) base
+          else if (spread >= 100) base - 3
+          else if (spread >= 10) base - 2
+          else if (spread >= 1) base - 1
+          else base
+
+        val fmtStr = if (sci) s"%.${maxDec}e" else s"%.${maxDec}f"
+        val raw = values.map(v => fmtStr.format(v)).toIndexedSeq
+        renderRowsFromRaw(raw, isAuto = true)
+      }
+    }
+
+    // Format with explicit format string
+    def renderRows(fmtStr: String): String = {
+      val isAuto = fmtStr.isEmpty
+
+      val raw =
+        if (isAuto) {
+          for (i <- rowIndices; j <- colIndices)
+          yield mkString(getValue(i, j))
+        } else {
+          for (i <- rowIndices; j <- colIndices)
+          yield fmtStr.format(getValue(i, j))
+        }
+      renderRowsFromRaw(raw, isAuto)
+    }
+
+    // Core rendering logic
+    def renderRowsFromRaw(raw: IndexedSeq[String], isAuto: Boolean): String = {
+      val colHasDecimal = Array.fill(displayCols)(false)
+      for (i <- 0 until displayRows; j <- 0 until displayCols) {
+        if (raw(i * displayCols + j).contains('.')) {
+          colHasDecimal(j) = true
+        }
+      }
+
+      // 1. Guard against parsing non-numeric strings like "true"/"false"
+      val values =
+        if (raw.isEmpty || typeName == "Boolean") Nil
+        else raw.map(s => scala.util.Try(s.toDouble).getOrElse(0.0)).map(math.abs)
+
+      // 2. Only check for scientific notation if we actually have numeric values
+      val useSci =
+        if (values.isEmpty || typeName == "Boolean") {
+          false
+        } else {
+          val absMax = values.max
+          val absMin = values.filter(_ > 0).minOption.getOrElse(absMax)
+          absMax >= 1e8 || absMin < 1e-6
+        }
+
+      val colIsInteger =
+        if (isAuto) {
+          if (useSci) {
+            Array.fill(displayCols)(false)
+          } else {
+            val arr = Array.fill(displayCols)(true)
+            for (i <- 0 until displayRows; j <- 0 until displayCols) {
+              val d = toDouble(getValue(rowIndices(i), colIndices(j)))
+              if (d != Math.rint(d)) {
+                arr(j) = false
+              }
+            }
+            arr
+          }
+        } else {
+          Array.fill(displayCols)(false)
+        }
+
+      for (j <- 0 until displayCols) {
+        if (colIsInteger(j)) {
+          colHasDecimal(j) = false
+        }
+      }
+
+      val trimmed =
+        if (isAuto) {
+          for (idx <- raw.indices) yield {
+            val col = idx % displayCols
+            if (colIsInteger(col)) {
+              val s = raw(idx)
+              val dot = s.indexOf('.')
+              if (dot >= 0) s.substring(0, dot)
+              else s
+            } else {
+              val t0 = trimZeros(raw(idx), keepDecimal = colHasDecimal(col))
+              if (colHasDecimal(col)) {
+                if (t0.contains('.')) {
+                  if (t0.endsWith(".")) t0 + "0" else t0
+                } else {
+                  t0 + ".0"
+                }
+              } else {
+                t0
+              }
+            }
+          }
+        } else {
+          raw
+        }
+
+      val split =
+        trimmed.map(_.stripLeading).map { s =>
+          val parts = s.split("\\.", 2)
+          if (parts.length == 1) (parts(0), "")
+          else (parts(0), parts(1))
+        }
+
+      val intWidth  = Array.fill(displayCols)(0)
+      val fracWidth = Array.fill(displayCols)(0)
+
+      for (i <- 0 until displayRows; j <- 0 until displayCols) {
+        val (intp, fracp) = split(i * displayCols + j)
+        intWidth(j)  = math.max(intWidth(j),  intp.length)
+        fracWidth(j) = math.max(fracWidth(j), fracp.length)
+      }
+
+      // Add ellipsis column widths if truncating columns
+      val sb = new StringBuilder
+      var idx = 0
+
+      for (displayRowIdx <- 0 until displayRows) {
+        // Insert row ellipsis after edge rows
+        if (truncateRows && displayRowIdx == edgeRows) {
+          sb.append(" ...\n")
+        }
+
+        sb.append(" (")
+        for (displayColIdx <- 0 until displayCols) {
+          // Insert column ellipsis after edge cols
+          if (truncateCols && displayColIdx == edgeCols) {
+            sb.append("...")
+            if (displayColIdx < displayCols - 1) sb.append(", ")
+          }
+
+          val (intp, fracp) = split(idx)
+          sb.append(" " * (intWidth(displayColIdx) - intp.length))
+          sb.append(intp)
+
+          if (colHasDecimal(displayColIdx)) {
+            sb.append(".")
+            sb.append(fracp)
+            sb.append(" " * (fracWidth(displayColIdx) - fracp.length))
+          }
+
+          if (displayColIdx < displayCols - 1) sb.append(", ")
+          idx += 1
+        }
+        sb.append(")")
+        if (displayRowIdx < displayRows - 1) sb.append(",\n")
+      }
+
+      sb.toString
+    }
+
+    val header = s"${rows}x${cols} Mat[$typeName]:"
+    val body =
+    if (fmt.isDefined) {
+      renderRows(fmt.get)
+    } else if (typeName == "Boolean" || typeName == "Big") {
+      renderRows("") // Passing empty string triggers the isAuto logic in renderRows
+    } else {
+      renderAuto
+    }
+
+    if (body.isEmpty) header
+    else s"$header\n$body"
+
+  }
+
+  // Global print options
+  object PrintOptions {
+    var maxRows: Int = 10        // NumPy doesn't have this, but useful
+    var maxCols: Int = 10        // NumPy doesn't have this, but useful
+    var edgeItems: Int = 3       // NumPy has this - items to show on each edge
+    var precision: Int = 8       // NumPy has this
+    var suppressScientific: Boolean = false  // NumPy has this
+    var threshold: Int = 1000    // NumPy has this - total elements before ellipsis
+  }
+
+  def setPrintOptions(
+    maxRows: Int = PrintOptions.maxRows,
+    maxCols: Int = PrintOptions.maxCols,
+    edgeItems: Int = PrintOptions.edgeItems,
+    precision: Int = PrintOptions.precision,
+    suppressScientific: Boolean = PrintOptions.suppressScientific,
+    threshold: Int = PrintOptions.threshold
+  ): Unit = {
+    PrintOptions.maxRows = maxRows
+    PrintOptions.maxCols = maxCols
+    PrintOptions.edgeItems = edgeItems
+    PrintOptions.precision = precision
+    PrintOptions.suppressScientific = suppressScientific
+    PrintOptions.threshold = threshold
+  }
+
+  extension (self: Mat[Boolean])
+    def &&(other: Mat[Boolean]): Mat[Boolean] = self.zipMap(other)(_ && _)
+    def ||(other: Mat[Boolean]): Mat[Boolean] = self.zipMap(other)(_ || _)
+    
+    def unary_! : Mat[Boolean] = {
+      val len = self.rows * self.cols
+      val res = new Array[Boolean](len)
+      var i = 0
+      while (i < len) {
+        res(i) = !self.at(i)
+        i += 1
+      }
+      Mat.create(res, self.rows, self.cols)
+    }
+    /** Returns the count of true elements in the matrix */
+    def sum: Int = {
+      val len = self.rows * self.cols
+      var count = 0
+      var i = 0
+      while (i < len) {
+        if (self.at(i)) count += 1
+        i += 1
+      }
+      count
+    }
+
+
+}
+
+/** Convenience API for Mat[Double]. */
+import Mat.*
+
+// This makes MatD a valid Type name for the user
+type MatD = Mat[Double] 
+
+// This remains your factory object
+object MatD {
+  // Fractional[Double] is always available
+  private given fracD: Fractional[Double] = summon[Fractional[Double]]
+
+  // ----- Constructors -----
+  def zeros(rows: Int, cols: Int): Mat[Double] = Mat.zeros[Double](rows, cols)
+  def zeros(shape: (Int, Int)): Mat[Double] = Mat.zeros[Double](shape)
+  def ones(rows: Int, cols: Int): Mat[Double] = Mat.ones[Double](rows, cols)
+  def ones(shape: (Int, Int)): Mat[Double] = Mat.ones[Double](shape)
+  def full(rows: Int, cols: Int, value: Double): Mat[Double] = Mat.full[Double](rows, cols, value)
+  def full(shape: (Int, Int), value: Double): Mat[Double] = Mat.full[Double](shape, value)
+  def eye(n: Int, k: Int = 0): Mat[Double] = Mat.eye[Double](n, k)
+  def arange(stop: Int): Mat[Double] = Mat.arange[Double](stop)
+  def arange(start: Int, stop: Int): Mat[Double] = Mat.arange[Double](start, stop)
+  def arange(start: Int, stop: Int, step: Int): Mat[Double] = Mat.arange[Double](start, stop, step)
+  def linspace(start: Double, stop: Double, num: Int = 50): Mat[Double] = Mat.linspace[Double](start, stop, num)
+
+  def apply(rows: Int, cols: Int): Mat[Double] = Mat.zeros[Double](rows, cols)
+  def apply(m: Mat[Double], row: Int, col: Int): Double = m.apply(row, col) // This uses the extension method exactly like your tests
+
+  def apply(rows: Int, cols: Int, data: Array[Double]): Mat[Double] = Mat.apply[Double](rows, cols, data)
+  def apply(value: Double): Mat[Double] = Mat.apply[Double](value)
+  def apply(tuples: Tuple*): Mat[Double] = Mat.apply[Double](tuples*)
+  def single(value: Double): Mat[Double] = Mat.single[Double](value)
+  def fromSeq(values: Seq[Double]): Mat[Double] = Mat.fromSeq[Double](values)
+  def of(first: Double, rest: Double*): Mat[Double] = Mat.of[Double](first, rest*)
+  def row(values: Double*): Mat[Double] = Mat.row[Double](values*)
+  def col(values: Double*): Mat[Double] = Mat.col[Double](values*)
+  def empty: Mat[Double] = Mat.empty[Double]
+  // ----- Diagonal -----
+  def diag(values: Array[Double]): Mat[Double] = Mat.diag[Double](values)
+  def diag(v: Mat[Double]): Mat[Double] = Mat.diag[Double](v)
+  def diag(values: Array[Double], rows: Int, cols: Int): Mat[Double] = Mat.diag[Double](values, rows, cols)
+  // ----- Like-constructors -----
+  def zerosLike(m: Mat[Double]): Mat[Double] = Mat.zerosLike[Double](m)
+  def onesLike(m: Mat[Double]): Mat[Double] = Mat.onesLike[Double](m)
+  def fullLike(m: Mat[Double], value: Double): Mat[Double] = Mat.fullLike[Double](m, value)
+
+  // ----- Stacking -----
+  def vstack(mats: Mat[Double]*): Mat[Double] = Mat.vstack[Double](mats*)
+  def hstack(mats: Mat[Double]*): Mat[Double] = Mat.hstack[Double](mats*)
+  def concatenate(mats: Seq[Mat[Double]], axis: Int = 0): Mat[Double] = Mat.concatenate[Double](mats, axis)
+  def where(condition: Mat[Boolean], x: Mat[Double], y: Mat[Double]): Mat[Double] = Mat.where[Double](condition, x, y)
+  def rand(rows: Int, cols: Int): Mat[Double] = Mat.rand(rows, cols)
+  def randn(rows: Int, cols: Int): Mat[Double] = Mat.randn(rows, cols)
 }

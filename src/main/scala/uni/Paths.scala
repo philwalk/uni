@@ -5,7 +5,7 @@ import java.net.URI
 import java.util.{Arrays, Comparator, Locale}
 import scala.collection.immutable.SortedMap
 
-export java.nio.file.Path
+//export java.nio.file.Path
 export java.io.File as JFile
 
 /* This library wraps calls to java.nio.file.Paths.get() for the purpose of providing a `uni.Paths.get`
