@@ -5,8 +5,10 @@ import scala.math.BigDecimal
 import scala.math.BigDecimal.*
 export scala.math.BigDecimal.RoundingMode
 
-export Big.Big
+export Big.{Big, big, asBig, zero, one, ten, hundred}
+//export Big.*
 
+// Mat
 object Big:
   private val MC = java.math.MathContext.DECIMAL128   // or a custom context
   // ------------------------------------------------------------
@@ -29,12 +31,18 @@ object Big:
   def apply(l: Long): Big        = BigDecimal(l)
   def apply(bd: BigDecimal): Big = bd
 
+  def big(str: String): Big      = str2num(str)
+  def big(d: Double): Big        = BigDecimal(d)
+  def big(i: Int): Big           = BigDecimal(i)
+  def big(l: Long): Big          = BigDecimal(l)
+  def big(bd: BigDecimal): Big   = bd.asInstanceOf[Big]
+
   // Lowercase factory (public API)
-  def big(s: String): Big      = apply(s)
-  def big(d: Double): Big      = apply(d)
-  def big(i: Int): Big         = apply(i)
-  def big(l: Long): Big        = apply(l)
-  def big(bd: BigDecimal): Big = apply(bd)
+//  def big(s: String): Big      = apply(s)
+//  def big(d: Double): Big      = apply(d)
+//  def big(i: Int): Big         = apply(i)
+//  def big(l: Long): Big        = apply(l)
+//  def big(bd: BigDecimal): Big = apply(bd)
 
   // ------------------------------------------------------------
   // Extractor for pattern matching
@@ -50,6 +58,9 @@ object Big:
   // given Conversion[Long, Big] = l => Big(BigDecimal(l))
   // given Conversion[Int, Big]  = i => Big(BigDecimal(i))
   // given Conversion[Double, Big] = d => Big(BigDecimal(d))
+
+  extension (s: String)
+    inline def asBig: Big = Big(BigDecimal(s))
 
   extension (d: Double)
     inline def asBig: Big = Big(BigDecimal(d))

@@ -1,4 +1,4 @@
-# uni.Mat
+# uni.data
 
 **uni.Mat** is a high-performance, NumPy-compatible matrix library for **Scala 3.7.0+**.
 
@@ -6,18 +6,26 @@ It provides a zero-overhead, type-safe interface for scientific computing by lev
 
 ## Key Features
 
-* **Zero-Overhead Opaque Types:** Uses `opaque type Mat[T] = Internal.MatData[T]` to ensure that at runtime, your matrices are as lean as raw arrays, with no wrapper object overhead.
+* **Zero-Overhead Types:** Uses `opaque type Mat[T] = Internal.MatData[T]` to ensure that at runtime, your matrices are as lean as raw arrays, with no wrapper object overhead.
 * **NumPy Random Fidelity:** 1:1 behavioral matching for `rand`, `randn`, `uniform`, `randint`, etc. using a high-performance **PCG64** implementation.
 * **Strided Memory Layout:** Supports `rowStride` and `colStride`, enabling $O(1)$ `transpose` and zero-copy slicing/views, mirroring NumPy's internal engine.
 * **Broadcasting & In-place Ops:** Built-in support for NumPy-style broadcasting and memory-efficient in-place mutation operators (`:+=`, `:-=`, `:*=`, `:/=`).
 * **Deep Learning Primitives:** Optimized activation functions (`sigmoid`, `relu`, `softmax`, `leakyRelu`) and linear algebra operators (`~@`) built directly into the core type.
+
+For high-accuracy scientific modeling or other applications requiring extreme precision, `uni.Mat` provides a `Big` numeric type.
+
+* **High Precision:** [Big Type Guide](docs/BigTypeGuide.md) — Learn about high-precision matrices, and how to use `Mat[Big]`.
+
+## Design Philosophy
+
+uni.Mat is built on the principle that developers shouldn't have to choose between type safety and the ergonomics of NumPy. Its design leverages strides, offsets, and broadcasting for high efficiency—including LAPACK integration—all while maintaining a clean, expression-oriented API.
 
 ## Installation
 
 Add the following to your `build.sbt`:
 
 ```scala
-libraryDependencies += "org.vastblue" %% "uni" % "0.9.1"
+libraryDependencies += "org.vastblue" %% "uni" % "0.9.2"
 ```
 
 ## Quick Start
@@ -27,7 +35,7 @@ libraryDependencies += "org.vastblue" %% "uni" % "0.9.1"
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.9.1
+//> using dep org.vastblue:uni_3:0.9.2
 
 import uni.data.*
 
@@ -44,7 +52,7 @@ println(normal)
 
 ## Matrix Type Aliases
 
-To keep your code concise and idiomatic, `uni.Mat` provides type aliases and matching factory objects for common numeric types.
+To keep your code concise and idiomatic, `uni.Mat` provides type aliases and matching factory objects for supported numeric types.
 
 | Alias | Full Type | Description |
 | :--- | :--- | :--- |
@@ -146,15 +154,81 @@ println(m.show("%.2f"))  // custom format string
 Mat.setPrintOptions(maxRows = 20, maxCols = 20, edgeItems = 5)
 ```
 
+### Usage Example
+
+## Comprehensive Example: MatD in Action
+
+The following example demonstrates a wide array of ```uni.Mat``` capabilities, including matrix creation, slicing, broadcasting, linear algebra (SVD, QR, Inverse), and in-place mutation. It illustrates how the library brings NumPy-style ergonomics to Scala while maintaining high performance.
+
+```scala
+#!/usr/bin/env -S scala-cli shebang -deprecation
+//> using dep org.vastblue:uni_3:0.9.2
+
+import uni.data.*
+import uni.data.Mat.*
+
+object MatDCheck {
+  def main(args: Array[String]): Unit = {
+    // 1. Creation and Basic Shapes
+    val m = Mat.zeros[Double](3, 4)
+    val v = MatD.row(1, 2, 3, 4)
+    val eye = MatD.eye(2)
+    val r = MatD.arange(0, 10, 2)
+    val ls = MatD.linspace(0, 1, 5)
+
+    // 2. Arithmetic & Broadcasting
+    val result = m + v      // Row-wise broadcasting
+    val powr = result ~^ 2  // Power operator
+    val matMult = powr ~@ v.T // Matrix multiplication (matmul)
+
+    // 3. Math Functions
+    val sq = m.sqrt
+    val ex = v.exp
+    val cl = v.clip(0, 5)
+
+    // 4. Reductions
+    val s = m.sum
+    val s0 = m.sum(0) // Sum over axis 0
+    val mn = m.mean
+
+    // 5. Linear Algebra
+    val A = MatD((1, 2), (3, 4))
+    val b = MatD.row(5, 6)
+    val x = A.solve(b)         // Linear solver
+    val inv_A = A.inverse
+    val det_A = A.determinant
+    val (u, s2, vt) = A.svd    // Singular Value Decomposition
+    val (q, r2) = A.qrDecomposition
+
+    // 6. Boolean Masking & Filtering
+    val mask = v.gt(1)
+    val filtered = v(mask)
+    v(v.lt(0)) = 0 // Conditional assignment
+
+    // 7. Slicing & Manipulation
+    val sub = m(0 until 2, ::) // Slice rows
+    val col = m(::, 0)         // Slice column
+    val reshaped = m.reshape(2, 6)
+    val transposed = m.T       // O(1) Transpose
+    val stacked = MatD.vstack(m, m)
+
+    // 8. Random Generation
+    val rand_m = MatD.rand(3, 3)
+    val randn_m = MatD.randn(3, 3)
+
+    // 9. In-place Mutation
+    m :+= 1
+    m :*= 2
+    for i <- 0 until 3 do
+      m(i, ::) = i * 2
+  }
+}
+```
+
 ## Advanced Usage
 
-For high-accuracy scientific modeling or other applications requiring extreme precision, `uni.Mat` provides a `Big` numeric type.
-
-* **High Precision:** [Big Type Guide](docs/BigTypeGuide.md) — Learn about high-precision matrices, and how to use `Mat[Big]`.
-
-## Design Philosophy
-
-`uni.Mat` is built on the principle that Scala developers shouldn't have to choose between type safety and the proven ergonomics of NumPy. By using **Opaque Types**, we hide the implementation details of strides and offsets while providing a clean, expression-oriented API.
+* **Cheat Sheet:** [MatD Cheat Sheet](docs/MatDCheatSheet.md) — Side-by-side comparison of MatD vs NumPy, Breeze, R, and MATLAB.
+* **High Precision:** [Big Type Guide](docs/BigTypeGuide.md) — High-precision matrices using `Mat[Big]`.
 
 ### NumPy to uni.Mat Mapping
 

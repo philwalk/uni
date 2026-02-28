@@ -7,7 +7,7 @@ import uni.io.FileOps.*
 //export Mat.MatD as MatD
 import uni.data.Big.Big
 export Mat.Mat
-export Mat.{rows, cols, shape, size, isEmpty, transposed, isContiguous, apply, isNaN, isNotNaN}
+export Mat.{rows, cols, shape, size, isEmpty, transposed, isContiguous, apply}
 
 
 //type MatD = Mat.MatD.type
@@ -107,8 +107,7 @@ object Mat {
     }
 
   extension (m: Mat[Big])
-    def isNaN: Mat[Boolean] = m.map(_ == BigUtils.BigNaN)
-    def isNotNaN: Mat[Boolean] = m.map(_ != BigUtils.BigNaN)
+    def hasNaN: Mat[Boolean] = m.map(_ == BigUtils.BigNaN)
 
   private object Internal {
     class MatData[T] private[Internal](

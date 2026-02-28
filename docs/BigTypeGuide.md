@@ -2,12 +2,12 @@
 
 The ```Big``` type in ```uni.Mat``` is a high-precision numeric type designed to provide the accuracy of ```BigDecimal``` with the convenience of standard numeric types. It is implemented as a Scala 3 **Opaque Type**, ensuring zero-overhead at runtime while providing a safe, custom API.
 
-## Key Concept: BadNum (The BigDecimal NaN)
+## Key Concept: BigNaN (The BigDecimal NaN)
 
-Standard ```BigDecimal``` does not have a concept of "Not a Number" (NaN). If you divide by zero or encounter an invalid string, it throws an exception. ```uni.data.Big``` introduces ```BadNum```:
+Standard ```BigDecimal``` does not have a concept of "Not a Number" (NaN). If you divide by zero or encounter an invalid string, it throws an exception. ```uni.data.Big``` introduces ```BigNaN```:
 
-* **Safe Arithmetic:** Operations involving ```BadNum``` result in ```BadNum``` (poisoning), similar to how ```Double.NaN``` works.
-* **Division Safety:** Dividing a ```Big``` value by zero returns ```BadNum``` instead of crashing your application.
+* **Safe Arithmetic:** Operations involving ```BigNaN``` result in ```BigNaN``` (poisoning), similar to how ```Double.NaN``` works.
+* **Division Safety:** Dividing a ```Big``` value by zero returns ```BigNaN``` instead of crashing your application.
 * **Validation:** Use ```n.isNaN``` or ```n.isNotNaN``` to check the validity of a result.
 
 ## Usage
@@ -17,20 +17,19 @@ Standard ```BigDecimal``` does not have a concept of "Not a Number" (NaN). If yo
 You can create ```Big``` instances from strings, integers, longs, or doubles.
 
 ```scala
-import uni.data.Big
-import uni.data.Big.*
+import uni.data.*
 
 val b1 = big("123.456")  // From String
 val b2 = 100.asBig       // Extension method
 val b3: Big = 42.0       // Implicit conversion
 
 // Extraction
-val d: Double = b1.toDouble // Returns Double.NaN if b1 is BadNum
+val d: Double = b1.toDouble // Returns Double.NaN if b1 is BigNaN
 ```
 
 ### 2. Arithmetic & Operators
 
-```Big``` supports all standard operators. If any operand is ```BadNum```, the result is ```BadNum```.
+```Big``` supports all standard operators. If any operand is ```BigNaN```, the result is ```BigNaN```.
 
 ```scala
 val result = (b1 + b2) * 2 / b3
@@ -43,7 +42,7 @@ val preciseRoot = b1.sqrt // Precise BigDecimal square root
 
 ### 3. Comparison
 
-Comparisons are "BadNum-aware." Any comparison against a ```BadNum``` returns ```false```.
+Comparisons are "BigNaN-aware." Any comparison against a ```BigNaN``` returns ```false```.
 
 ```scala
 if (b1 > b2) {
@@ -56,14 +55,14 @@ if (b1 > b2) {
 ### Construction
 | Method | Description |
 | :--- | :--- |
-| ```Big("1.23")``` | Safe parsing (returns ```BadNum``` on failure) |
+| ```Big("1.23")``` | Safe parsing (returns ```BigNaN``` on failure) |
 | ```big(1.23)``` | Lowercase factory method |
 | ```.asBig``` | Extension method for ```Int```, ```Long```, and ```Double``` |
 
 ### Safety Checks
 | Method | Description |
 | :--- | :--- |
-| ```n.isNaN``` | Returns true if the value is ```BadNum``` |
+| ```n.isNaN``` | Returns true if the value is ```BigNaN``` |
 | ```n.isNotNaN``` | Returns true if the value is a valid number |
 | ```unapply(n)``` | Allows pattern matching: ```case Big(value) => ...``` |
 
@@ -76,7 +75,7 @@ if (b1 > b2) {
 
 ## Why use Big instead of Double?
 
-Use ```Big``` when **precision is non-negotiable** (e.g., Financial calculations, high-precision weights, or any domain where floating-point rounding errors are unacceptable), but you still want the "safety-first" coding style of the NumPy/Mat ecosystem.
+Choose ```Big``` for domains where **precision is critical** (e.g., finance or high-precision weights). It avoids floating-point rounding errors while preserving an intuitive, "safety-first" coding style.
 
 ---
 © 2026 VastBlue.

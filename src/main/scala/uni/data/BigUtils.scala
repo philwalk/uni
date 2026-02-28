@@ -173,11 +173,13 @@ object BigUtils:
   // Big constructors (explicit, minimal)
   // ------------------------------------------------------------
 
-  def big(str: String): Big = str2num(str)
-  def big(bd: Big): Big = bd
-  def big(d: Double): Big = Big(d)
-  def big(i: Int): Big = Big(i)
-  def big(l: Long): Big = Big(l)
+  /*
+  def big(s: String): Big      = apply(s)
+  def big(d: Double): Big      = apply(d)
+  def big(i: Int): Big         = apply(i)
+  def big(l: Long): Big        = apply(l)
+  def big(bd: BigDecimal): Big = apply(bd)
+  */
 
   // ------------------------------------------------------------
   // Formatting DSL core
