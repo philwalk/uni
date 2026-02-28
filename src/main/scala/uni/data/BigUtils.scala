@@ -20,20 +20,23 @@ object BigUtils:
   // ------------------------------------------------------------
 
   private val BadNumLiteral = "-0.00000001234567890123456789"
-  val BadNum: Big = Big(BadNumLiteral)
+  // Ensure BigNaN is defined as the opaque type Big
+  val BigNaN: Big = Big(BigDecimal(BadNumLiteral))
 
-  val BigZero: Big = Big(0)
-  val BigOne:  Big = Big(1)
-  val Hundred: Big = Big(100)
+  inline def isBad(n: Big): Boolean = 
+    // Cast to AnyRef to enable reference equality check (eq)
+    (n.asInstanceOf[AnyRef] eq BigNaN.asInstanceOf[AnyRef]) || (n == BigNaN)
+
+  inline def orBad(opt: Option[Big]): Big =
+    opt.getOrElse(BigNaN)
+
+//  val BigZero: Big = Big(0)
+  val BigOne:  Big = Big.one
+  val Hundred: Big = Big.hundred
 
   private val debug: Boolean =
     Option(System.getenv("DEBUG")).isDefined
 
-  inline def isBad(b: Big): Boolean =
-    b == BadNum
-
-  inline def orBad(opt: Option[Big]): Big =
-    opt.getOrElse(BadNum)
 
   // ------------------------------------------------------------
   // Regex patterns (kept from original)
@@ -54,13 +57,13 @@ object BigUtils:
     c == '+' || c == '%' || c == '$' || c == ','
 
   // ------------------------------------------------------------
-  // String → Big parsing (BadNum sentinel preserved)
+  // String → Big parsing (BigNaN sentinel preserved)
   // ------------------------------------------------------------
 
   def str2num(raw: String): Big =
     val trimmed = raw.trim
     if !trimmed.forall(validNumChar) then
-      BadNum
+      BigNaN
     else
       val cleaned =
         trimmed
@@ -71,12 +74,14 @@ object BigUtils:
         if cleaned.startsWith(".") then "0" + cleaned else cleaned
 
       if normalized.isEmpty || !normalized.forall(validNumChar) then
-        BadNum
+        BigNaN
       else
         val nopct = normalized.replace("%", "")
-        val parsed = Try(Big(BigDecimal(nopct))).toOption
-        val base   = orBad(parsed)
-        if isBad(base) then BadNum
+        val base: Big   = {
+          val parsed: Option[Big] = Try(Big(BigDecimal(nopct))).toOption
+          orBad(parsed)
+        }
+        if isBad(base) then BigNaN
         else if nopct != normalized then base / Hundred
         else base
 
@@ -143,7 +148,7 @@ object BigUtils:
           negative = true
           col = col.substring(1).trim
 
-        val base = Try(Big(col)).getOrElse(BadNum)
+        val base = Try(Big(col)).getOrElse(BigNaN)
 
         val signed =
           if negative && !isBad(base) then -base else base
@@ -151,7 +156,7 @@ object BigUtils:
         val pctAdjusted =
           if percent && !isBad(signed) then signed / Hundred else signed
 
-        if isBad(pctAdjusted) then BadNum
+        if isBad(pctAdjusted) then BigNaN
         else pctAdjusted * factor
 
       else if col.length < 7 then col
@@ -200,7 +205,7 @@ object BigUtils:
       NumFormat(colWidth = 3, dec = 0, factor = 100.0, suffix = "%")
 
   // ------------------------------------------------------------
-  // Formatting helpers (BadNum-aware)
+  // Formatting helpers (BigNaN-aware)
   // ------------------------------------------------------------
 
   def numStr(xx: Big, fmt: NumFormat = NumFormat.Default): String =
@@ -239,7 +244,7 @@ object BigUtils:
     (x: @unchecked) match {
     case s: String        => s
     case n: (Int | Long)  => n.toString
-    case BadNum           => "N/A"
+    case BigNaN           => "N/A"
     case b: Big           => b.toString
     case d: LocalDateTime => d.toString("yyyy-MM-dd")
     case Some(oi: Int)    => oi.toString

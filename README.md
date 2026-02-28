@@ -1,89 +1,184 @@
-# Universal Scripting Library
+# uni.Mat
 
-A comprehensive Scala library for portable scripting, data processing, and scientific computing.
+**uni.Mat** is a high-performance, NumPy-compatible matrix library for **Scala 3.7.0+**.
 
-## Overview
-
-The Universal Scripting Library (uni) provides a complete toolkit for writing portable, cross-platform scripts in Scala. Whether you're processing data files, performing linear algebra operations, or building command-line tools, uni offers a familiar, NumPy-inspired API with the safety and performance of Scala.
+It provides a zero-overhead, type-safe interface for scientific computing by leveraging Scala 3 **Opaque Types**. Designed for developers who need the ergonomics and reproducibility of the Python/NumPy ecosystem within the JVM, `uni.Mat` features 100% faithful implementations of NumPy's random generation and strided array logic.
 
 ## Key Features
 
-- 🖥️ **Portable Programming** - Write once, run anywhere (Windows, macOS, Linux)
-- 📊 **Data Import & Processing** - CSV parsing, date/time handling, data cleaning
-- 🔢 **Linear Algebra** - NumPy-compatible matrix operations with 99% API coverage
-- ⚡ **Performance** - BLAS-optimized operations, zero-copy views, efficient broadcasting
-- ✅ **Reliability** - 1461+ comprehensive tests ensuring correctness
+* **Zero-Overhead Opaque Types:** Uses `opaque type Mat[T] = Internal.MatData[T]` to ensure that at runtime, your matrices are as lean as raw arrays, with no wrapper object overhead.
+* **NumPy Random Fidelity:** 1:1 behavioral matching for `rand`, `randn`, `uniform`, `randint`, etc. using a high-performance **PCG64** implementation.
+* **Strided Memory Layout:** Supports `rowStride` and `colStride`, enabling $O(1)$ `transpose` and zero-copy slicing/views, mirroring NumPy's internal engine.
+* **Broadcasting & In-place Ops:** Built-in support for NumPy-style broadcasting and memory-efficient in-place mutation operators (`:+=`, `:-=`, `:*=`, `:/=`).
+* **Deep Learning Primitives:** Optimized activation functions (`sigmoid`, `relu`, `softmax`, `leakyRelu`) and linear algebra operators (`~@`) built directly into the core type.
 
-## Documentation
+## Installation
 
-### 🚀 [Portable Programming](docs/Portable-Programming.md)
+Add the following to your `build.sbt`:
 
-Write scripts that work seamlessly across all platforms:
-- Cross-platform file paths and operations
-- Environment variable handling
-- Process execution and piping
-- Platform-specific conditionals
-- Resource management
-
-### 🎯 [Command Line Parsing](docs/Command-Line-Parsing.md)
-
-Build professional command-line tools:
-- Argument parsing with type safety
-- Flag and option handling
-- Subcommand support
-- Automatic help generation
-- Validation and error handling
-
-### 📥 [Importing Data](docs/Importing-Data.md)
-
-Comprehensive data import capabilities:
-
-#### [Date and Time String Conversion](docs/Importing-Data.md#date-and-time-string-conversion)
-- Parse various date/time formats to `LocalDateTime`
-- Handle ISO 8601, RFC 3339, custom formats
-- Timezone-aware parsing
-- Flexible format detection
-
-#### [Comma-Separated Files (CSV)](docs/Importing-Data.md#comma-separated-files)
-- Fast CSV parsing with configurable delimiters
-- Header detection and custom column names
-- Type inference and conversion
-- Handle quoted fields, escaped characters
-- Memory-efficient streaming
-
-#### [NumPy-Inspired Linear Algebra](docs/Importing-Data.md#numpy-inspired-linear-algebra)
-- Load matrices from CSV/TSV files
-- Direct NumPy `.npy` file import
-- Integration with Mat library
-- Automatic type conversion
-
-### 🔢 Linear Algebra
-
-Complete NumPy-compatible matrix operations:
-
-- **[Quick Start Guide](Linear-Algebra-With-uni.data-Quick-Start-Guide.md)** - Common operations and examples
-- **[Complete API Reference](Linear-Algebra-With-uni.data-Reference-Guide.md)** - Detailed documentation with 1461 test examples
-
-**Quick Example:**
 ```scala
-TODO
+libraryDependencies += "org.vastblue" %% "uni" % "0.9.1"
 ```
-## Documentation
 
-### 📚 [Quick Start Guide](Linear-Algebra-With-uni.data-Quick-Start-Guide.md)
+## Quick Start
 
-Essential operations to get started:
-- [Installation](Linear-Algebra-With-uni.data-Quick-Start-Guide.md#installation)
-- [Creating Matrices](Linear-Algebra-With-uni.data-Quick-Start-Guide.md#creating-matrices)
-- [Indexing & Slicing](Linear-Algebra-With-uni.data-Quick-Start-Guide.md#indexing--slicing)
-- [Linear Algebra](Linear-Algebra-With-uni.data-Quick-Start-Guide.md#linear-algebra)
-- [NumPy Translation Examples](Linear-Algebra-With-uni.data-Quick-Start-Guide.md#numpy-translation-examples)
+### Matrix Creation & Randomness
 
-### 📖 [Complete API Reference](Linear-Algebra-With-uni.data-Reference-Guide.md)
+```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-Comprehensive documentation with examples from all 1461 tests:
-- [Matrix Creation](Linear-Algebra-With-uni.data-Reference-Guide.md#matrix-creation) - 87 tests
-- [Linear Algebra](Linear-Algebra-With-uni.data-Reference-Guide.md#linear-algebra) - 123 tests
-- [Statistical Functions](Linear-Algebra-With-uni.data-Reference-Guide.md#statistical-functions) - 56 tests
-- [Machine Learning](Linear-Algebra-With-uni.data-Reference-Guide.md#machine-learning) - 18 tests
-- [And more...](Linear-Algebra-With-uni.data-Reference-Guide.md#table-of-contents)
+//> using dep org.vastblue:uni_3:0.9.1
+
+import uni.data.*
+
+// 100% faithful to NumPy's PCG64-based np.random.uniform
+Mat.setSeed(42)
+val weights = Mat.uniform(low = -0.1, high = 0.1, rows = 64, cols = 32)
+
+// Standard constructors
+val zeros    = Mat.zeros(10, 10)
+val identity = Mat.eye(5)
+val normal   = Mat.normal(10, 10)
+println(normal)
+```
+
+## Matrix Type Aliases
+
+To keep your code concise and idiomatic, `uni.Mat` provides type aliases and matching factory objects for common numeric types.
+
+| Alias | Full Type | Description |
+| :--- | :--- | :--- |
+| `MatD` | `Mat[Double]` | Standard 64-bit floating point matrix (default) |
+| `MatB` | `Mat[Big]` | High-precision, NaN-safe `BigDecimal` matrix |
+| `MatF` | `Mat[Float]` | 32-bit floating point matrix for memory efficiency |
+
+Each alias has a matching factory object mirroring the `Mat` API:
+
+```scala
+import uni.data.*
+
+val weights:    MatD = MatD.randn(64, 32)
+val prices:     MatB = MatB.zeros(10, 1)
+val embeddings: MatF = MatF.rand(128, 64)
+
+// Extension method from Big
+val preciseVal = 10.5.asBig
+val identityB: MatB = MatB.eye(5)
+```
+
+## NumPy-like Syntax and Features
+
+### Slicing and Views
+
+```scala
+val data = Mat.randn(100, 10)
+
+// Extract a row or column as a view using the :: sentinel
+val row = data(0, ::)    // first row
+val col = data(::, 0)    // first column
+
+// Constant-time transpose (no data copy)
+val rotated = data.T
+```
+
+### Mathematical Operations
+
+```scala
+val a = Mat.randn(3, 3)
+val b = Mat.randn(3, 3)
+
+val c = a ~@ b    // matrix multiplication (matmul)
+val d = a + b     // element-wise addition
+val e = a * b     // Hadamard (element-wise) product
+val f = a.relu    // built-in activation function
+```
+
+### In-place Operations
+
+```scala
+val m = Mat.ones(4, 4)
+m :+= 2.0    // add scalar in-place
+m :-= 1.0    // subtract scalar in-place
+m :*= 3.0    // multiply scalar in-place
+m :/= 2.0    // divide scalar in-place
+
+val n = Mat.ones(4, 4)
+m :+= n      // element-wise add matrix in-place
+```
+
+### Boolean Operations
+
+```scala
+val a    = Mat.randn(3, 3)
+val mask = (a :== 0) || (a :== 1)    // Mat[Boolean]
+
+val inverted = !mask
+val count    = mask.sum    // count of true elements
+val anyTrue  = mask.any
+val allTrue  = mask.all
+```
+
+### Stacking and Splitting
+
+```scala
+val top    = Mat.ones(2, 4)
+val bottom = Mat.zeros(2, 4)
+
+val stacked = Mat.vstack(top, bottom)    // 4x4 Mat
+val halves  = stacked.vsplit(2)          // Seq of two 2x4 Mats
+
+val left  = Mat.ones(4, 2)
+val right = Mat.zeros(4, 2)
+val wide  = Mat.hstack(left, right)      // 4x4 Mat
+val cols  = wide.hsplit(2)               // Seq of two 4x2 Mats
+```
+
+### Display and Formatting
+
+```scala
+val m = Mat.randn(3, 3)
+
+println(m)               // calls toString
+println(m.show)          // equivalent, explicit
+println(m.show("%.2f"))  // custom format string
+
+// Adjust truncation thresholds for large matrices
+Mat.setPrintOptions(maxRows = 20, maxCols = 20, edgeItems = 5)
+```
+
+## Advanced Usage
+
+For high-accuracy scientific modeling or other applications requiring extreme precision, `uni.Mat` provides a `Big` numeric type.
+
+* **High Precision:** [Big Type Guide](docs/BigTypeGuide.md) — Learn about high-precision matrices, and how to use `Mat[Big]`.
+
+## Design Philosophy
+
+`uni.Mat` is built on the principle that Scala developers shouldn't have to choose between type safety and the proven ergonomics of NumPy. By using **Opaque Types**, we hide the implementation details of strides and offsets while providing a clean, expression-oriented API.
+
+### NumPy to uni.Mat Mapping
+
+| NumPy | uni.Mat | Note |
+| :--- | :--- | :--- |
+| `a @ b` | `a ~@ b` | Matrix multiplication |
+| `a * b` | `a * b` | Element-wise product |
+| `a[0, :]` | `a(0, ::)` | Row slice |
+| `a[:, 0]` | `a(::, 0)` | Column slice |
+| `a.T` | `a.T` or `a.transpose` | $O(1)$ view |
+| `np.random.randn` | `Mat.randn` | PCG64-backed |
+| `np.where(c, x, y)` | `Mat.where(c, x, y)` | Conditional selection |
+| `np.vstack` / `np.vsplit` | `Mat.vstack` / `m.vsplit(n)` | Row-wise stack / split |
+
+## Example: Neural Network Layer
+
+Because activation functions are members of the `Mat` type, building layers is idiomatic:
+
+```scala
+def denseLayer(input: Mat[Double], weights: Mat[Double], bias: Mat[Double]): Mat[Double] = {
+  // Simple, readable forward pass
+  (input ~@ weights + bias).sigmoid
+}
+```
+
+---
+© 2026 vastblue.org. Distributed under the Apache License 2.0.
