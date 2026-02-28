@@ -1,6 +1,6 @@
 #!/usr/bin/env -S scala-cli shebang -deprecation
 
-//> using dep org.vastblue:uni_3:0.8.2
+//> using dep org.vastblue:uni_3:0.9.2
 import uni.*
 import uni.time.*
 import uni.data.*
@@ -92,4 +92,3 @@ object Main:
   // unsupported expr: JoinedStr
   // np.random.normal - not yet translated
   // np.random.normal - not yet translated
-
