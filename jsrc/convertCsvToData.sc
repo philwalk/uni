@@ -22,7 +22,7 @@ object CSV {
   case class BoolVal(b: Boolean) extends TypedValue
   case class StrVal(s: String) extends TypedValue
   case object BadDate extends TypedValue
-  case object BadNum extends TypedValue
+  case object BigNaN extends TypedValue
   case object BadInt extends TypedValue
   case object BadLong extends TypedValue
   case object BadBool extends TypedValue
@@ -94,13 +94,13 @@ object CSV {
         case _ => BadLong.asInstanceOf[Long]  // Sentinel value
       }
     
-    /** Convert column to Big with BadNum sentinel */
+    /** Convert column to Big with BigNaN sentinel */
     def getBigs(colName: String): Seq[Big] = 
       apply(colName).map {
         case BigVal(b) => b
         case IntVal(n) => Big(n)
         case LongVal(n) => Big(n)
-        case _ => BadNum.asInstanceOf[Big]  // Sentinel value
+        case _ => BigNaN.asInstanceOf[Big]  // Sentinel value
       }
     
     /** Convert column to LocalDateTime with BadDate sentinel */
@@ -127,7 +127,7 @@ object CSV {
         case BoolVal(b) => b.toString
         case DateVal(dt) => dt.toString
         case BadDate => "BadDate"
-        case BadNum => "BadNum"
+        case BigNaN => "BigNaN"
         case BadInt => "BadInt"
         case BadLong => "BadLong"
         case BadBool => "BadBool"
@@ -136,7 +136,7 @@ object CSV {
     
     /** Check if value is a sentinel/error */
     def isBad(value: TypedValue): Boolean = value match {
-      case BadDate | BadNum | BadInt | BadLong | BadBool | EmptyVal => true
+      case BadDate | BigNaN | BadInt | BadLong | BadBool | EmptyVal => true
       case _ => false
     }
     
@@ -269,7 +269,7 @@ object CSV {
             val longCount = nonEmpty.count(s => tryParseLong(s).isDefined)
             if (longCount >= threshold) ColType.LongType
             else {
-              val bigCount = nonEmpty.count(s => Big(s) != BadNum)
+              val bigCount = nonEmpty.count(s => Big(s) != BigNaN)
               if (bigCount >= threshold) ColType.BigType
               else {
                 val dateCount = nonEmpty.count(s => parseDate(s) != BadDate)
@@ -297,7 +297,7 @@ object CSV {
         
       case ColType.BigType =>
         val b = Big(s)
-        if (b == BadNum) BadNum else BigVal(b)
+        if (b == BigNaN) BigNaN else BigVal(b)
         
       case ColType.DateType =>
         val d = parseDate(s)
@@ -362,14 +362,14 @@ object DataFrameExamples {
     // Filter using sentinels
     val valid = df.filter { row =>
       row("amount") match {
-        case CSV.BigVal(b) if b != BadNum => b > Big(100)
+        case CSV.BigVal(b) if b != BigNaN => b > Big(100)
         case _ => false
       }
     }
     
     // Work with sentinels like NaN
     val processed = amounts.map { amt =>
-      if (amt == BadNum) Big(0)  // Replace bad values
+      if (amt == BigNaN) Big(0)  // Replace bad values
       else amt * 1.1
     }
   }
@@ -383,7 +383,7 @@ object DataFrameExamples {
     
     (0 until df.size).map { i =>
       (names(i), ids(i), dates(i), amounts(i))
-      // BadDate, BadInt, BadNum are sentinels in the tuple
+      // BadDate, BadInt, BigNaN are sentinels in the tuple
     }
   }
 }

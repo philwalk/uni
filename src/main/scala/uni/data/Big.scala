@@ -40,7 +40,7 @@ object Big:
   // Extractor for pattern matching
   // ------------------------------------------------------------
   def unapply(n: Big): Option[Big] =
-    if n == BadNum then None else Some(n)
+    if n == BigNaN then None else Some(n)
 
   given CanEqual[Big, BigDecimal] = CanEqual.derived
   given CanEqual[BigDecimal, Big] = CanEqual.derived
@@ -89,7 +89,7 @@ object Big:
 
     inline def toPlainString: String = n.bigDecimal.toPlainString // Inside this scope, b is treated as a BigDecimal
 
-    def ~^[T](exponent: T)(using frac: Fractional[T]): Big = 
+    def ~^[T](exponent: T)(using frac: Fractional[T]): Big =
       val expDouble = frac.toDouble(exponent)
       if (expDouble == expDouble.toInt) {
         // Integer exponent - use BigDecimal.pow for precision
@@ -99,19 +99,21 @@ object Big:
         // Fractional exponent - fall back to double precision
         uni.data.Big(math.pow(n.toDouble, expDouble))
       }
+    def ~^(exponent: Int): Big  = n ~^ exponent.toDouble
+    def ~^(exponent: Long): Big = n ~^ exponent.toDouble
 
     def setScale(scale: Int, roundingMode: scala.math.BigDecimal.RoundingMode.RoundingMode): Big =
       n.setScale(scale, roundingMode)
 
-    // --- BadNum helpers -------------------------------------------------------
+    // --- BigNaN helpers -------------------------------------------------------
 
     // unary guard
     inline def unary_- : Big =
-      if BigUtils.isBad(n) then BigUtils.BadNum else Big(-n)
+      if BigUtils.isBad(n) then BigNaN else Big(-n)
 
     // binary guard helper
     @inline private def badGuard(that: Big)(f: => Big): Big =
-      if BigUtils.isBad(n) || BigUtils.isBad(that) then BigUtils.BadNum
+      if BigUtils.isBad(n) || BigUtils.isBad(that) then BigNaN
       else Big(f)
 
     // --- arithmetic -----------------------------------------------------------
@@ -119,10 +121,56 @@ object Big:
     inline def +(that: Big): Big = badGuard(that)(n + that)
     inline def -(that: Big): Big = badGuard(that)(n - that)
     inline def *(that: Big): Big = badGuard(that)(n * that)
+
+    /*
     inline def /(that: Big): Big =
-      if BigUtils.isBad(n) || BigUtils.isBad(that) then BigUtils.BadNum
-      else if that == Big(0) then BigUtils.BadNum
+      if BigUtils.isBad(n) || BigUtils.isBad(that) then BigNaN
+      else if that == Big(0) then BigNaN
       else Big(n / that)
+
+    inline def /(that: Int): Big =
+      if BigUtils.isBad(n) || that == 0 then BigNaN
+      else Big(n / BigDecimal(that))
+
+    inline def /(that: Long): Big =
+      if n == BigNaN || that == 0 then BigNaN
+      else Big(n / BigDecimal(that))
+
+    def /(that: Double): Big =
+      if n == BigNaN || that == 0.0 || that.isNaN || that.isInfinite then
+        BigNaN
+      else {
+        if that.isNaN || that.isInfinite then
+          BigNaN
+        else
+          val denom = BigDecimal(that)
+          val ratio = n / denom
+          Big(ratio)
+      }
+      */
+      /**
+     * Unified division handling Big, Double, Int, etc.
+     * Correctly intercepts NaN/Infinite before BigDecimal conversion.
+     */
+     /**
+     * Unified division: Handles Big, Double, Int, Long, etc.
+     * Correctly intercepts Double.NaN before it hits BigDecimal.
+     */
+    def /[T](that: T)(using num: Numeric[T]): Big =
+      // 1. Check for non-finite values (NaN/Inf) via Double conversion
+      val d = num.toDouble(that)
+      if BigUtils.isBad(n) || !d.isFinite || d == 0.0 then 
+        BigNaN
+      else
+        // 2. Optimization: If it's already a Big, use full precision
+        if that.isInstanceOf[Big] then
+          val divisor = that.asInstanceOf[Big]
+          // Re-check zero for the opaque type just in case
+          if divisor == Big(0) then BigNaN else Big(n / divisor)
+        else
+          // 3. For everything else (Int, Long, Double), convert via String
+          // This is the safest way to create a BigDecimal from a Double
+          Big(n / BigDecimal(d.toString))
 
     // Multiply by Int, Long, Double
     inline def *(that: Int): Big = badGuard(that)(n * BigDecimal(that))
@@ -137,18 +185,6 @@ object Big:
     inline def -(that: Int): Big = badGuard(that)(n - BigDecimal(that))
     inline def -(that: Long): Big = badGuard(that)(n - BigDecimal(that))
     inline def -(that: Double): Big = badGuard(that)(n - BigDecimal(that))
-
-    inline def /(that: Int): Big =
-      if BigUtils.isBad(n) || that == 0 then BigUtils.BadNum
-      else Big(n / BigDecimal(that))
-
-    inline def /(that: Long): Big =
-      if BigUtils.isBad(n) || that == 0 then BigUtils.BadNum
-      else Big(n / BigDecimal(that))
-
-    inline def /(that: Double): Big =
-      if BigUtils.isBad(n) || that == 0.0 || that.isNaN || that.isInfinite then BigUtils.BadNum
-      else Big(n / BigDecimal(that))
 
     // --- comparisons ----------------------------------------------------------
     inline def <(that: Big): Boolean    = !BigUtils.isBad(n) && !BigUtils.isBad(that) && n < that
@@ -191,9 +227,9 @@ object Big:
     inline def isValidLong: Boolean = n.isValidLong
 
     inline def isNaN: Boolean = {
-      n == BadNum
+      n == BigNaN
     }
-    inline def isNotNaN: Boolean = n != BadNum
+    inline def isNotNaN: Boolean = n != BigNaN
   
     def sqrt: Big = 
       // BigDecimal.sqrt is available in Java 9+
@@ -204,8 +240,21 @@ object Big:
   import scala.language.implicitConversions
   given Conversion[Int, Big] = d => Big(BigDecimal(d))
   given Conversion[Long, Big] = d => Big(BigDecimal(d))
-  given Conversion[Float, Big] = d => Big(BigDecimal(d))
-  given Conversion[Double, Big] = d => Big(BigDecimal(d))
-//given Conversion[String, Big] = d => Big(BigDecimal(d))  // too much surprise!
+  // BigDecimal has no apply(Float/Double) overload — the compiler resolves BigDecimal(d) via
+  // double2bigDecimal (imported from BigDecimal.*), which crashes on NaN/Infinite.
+  // Using d.toString avoids that path entirely.  BigNaN can't be referenced here because
+  // BigUtils imports Big.*, creating an initialization cycle; use the literal instead.
+  //private val BadNumLit: BigDecimal = BigDecimal("-0.00000001234567890123456789")
+  given Conversion[Float, Big]  = d => if d.isInfinite then
+    BigNaN
+  else
+    if !d.isFinite then BigNaN else
+    Big(BigDecimal(d))
+
+  given Conversion[Double, Big] = d => if d.isInfinite then
+    BigNaN
+  else
+    if !d.isFinite then BigNaN else
+    Big(BigDecimal(d))
 
 

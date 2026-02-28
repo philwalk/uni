@@ -28,9 +28,9 @@ final class BigSuite extends FunSuite:
     assertEquals(BG("1,234.56").value, BD("1234.56"))
   }
 
-  test("Big.apply returns BadNum for invalid strings") {
-    assertEquals(BG("abc"), BadNum)
-    assertEquals(BG("12x34"), BadNum)
+  test("Big.apply returns BigNaN for invalid strings") {
+    assertEquals(BG("abc"), BigNaN)
+    assertEquals(BG("12x34"), BigNaN)
   }
 
   // ------------------------------------------------------------
@@ -47,13 +47,13 @@ final class BigSuite extends FunSuite:
     assertEquals((a / b).value, BigDecimal("4.0"))
   }
 
-  test("Arithmetic with BadNum propagates BadNum") {
+  test("Arithmetic with BigNaN propagates BigNaN") {
     val bad = BG("not-a-number")
     val good = BG("10")
 
-    assertEquals((bad + good), BadNum)
-    assertEquals((good + bad), BadNum)
-    assertEquals((bad * bad), BadNum)
+    assertEquals((bad + good), BigNaN)
+    assertEquals((good + bad), BigNaN)
+    assertEquals((bad * bad), BigNaN)
   }
 
   // ------------------------------------------------------------
@@ -77,8 +77,8 @@ final class BigSuite extends FunSuite:
     assertEquals(s.trim, "123.5")
   }
 
-  test("numStr handles BadNum") {
-    val s = numStr(BadNum)
+  test("numStr handles BigNaN") {
+    val s = numStr(BigNaN)
     assert(s.contains("N/A"))
   }
 
@@ -101,7 +101,7 @@ final class BigSuite extends FunSuite:
   }
 
   test("str2num rejects invalid characters") {
-    assertEquals(str2num("12a3"), BadNum)
+    assertEquals(str2num("12a3"), BigNaN)
   }
 
   // ------------------------------------------------------------
@@ -169,7 +169,7 @@ final class BigSuite extends FunSuite:
   test("divide by zero returns None") {
     val ten = Big(10)
     val chek = ten / Big.zero
-    assertEquals(chek, BadNum)  // Tests the None branch
+    assertEquals(chek, BigNaN)  // Tests the None branch
   }
 
   test("divide non-zero returns Some") {

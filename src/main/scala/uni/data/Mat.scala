@@ -92,7 +92,7 @@ object Mat {
               case f: Float  if f.isNegInfinity => "-Inf"
 
               // Big Types
-              case BadNum         => "N/A"            // Prevents 1E+10 formatting
+              case BigNaN         => "N/A"            // Prevents 1E+10 formatting
               case bd: BigDecimal => bd.bigDecimal.toPlainString // Prevents 1E+10 formatting
               case bi: BigInt     => bi.toString
 
@@ -107,8 +107,8 @@ object Mat {
     }
 
   extension (m: Mat[Big])
-    def isNaN: Mat[Boolean] = m.map(_ == BigUtils.BadNum)
-    def isNotNaN: Mat[Boolean] = m.map(_ != BigUtils.BadNum)
+    def isNaN: Mat[Boolean] = m.map(_ == BigUtils.BigNaN)
+    def isNotNaN: Mat[Boolean] = m.map(_ != BigUtils.BigNaN)
 
   private object Internal {
     class MatData[T] private[Internal](
@@ -145,7 +145,7 @@ object Mat {
         },
         mkString = {
           // This ensures we get "true" / "false" strings
-          case BadNum => "NaN"
+          case BigNaN => "NaN"
           case bool: Boolean => bool.toString 
           case bigd: BigDecimal => bigd.toString 
           case other      => other.toString
@@ -4234,256 +4234,6 @@ object Mat {
     }
   }
 
-  def formatMatrix[T](
-    tdata: Array[T],
-    rows: Int,
-    cols: Int,
-    offset: Int,
-    rs: Int,
-    cs: Int,
-    typeName: String,
-    toDouble: T => Double,
-    mkString: T => String,
-    fmt: Option[String] = None
-  ): String = {
-
-    def getValue(i: Int, j: Int): T =
-      tdata(offset + i * rs + j * cs)
-
-    // Truncation thresholds
-    val maxRows = Mat.PrintOptions.maxRows
-    val maxCols = Mat.PrintOptions.maxCols
-    val edgeRows = Mat.PrintOptions.edgeItems
-    val edgeCols = Mat.PrintOptions.edgeItems
-
-    val truncateRows = rows > maxRows
-    val truncateCols = cols > maxCols
-
-    // Determine which indices to display
-    val rowIndices = if (truncateRows) {
-      (0 until edgeRows) ++ (rows - edgeRows until rows)
-    } else {
-      0 until rows
-    }
-
-    val colIndices = if (truncateCols) {
-      (0 until edgeCols) ++ (cols - edgeCols until cols)
-    } else {
-      0 until cols
-    }
-
-    val displayRows = rowIndices.size
-    val displayCols = colIndices.size
-
-    // Helper to trim zeros
-    def trimZeros(s: String, keepDecimal: Boolean): String = {
-      val parts = s.split("[eE]", 2)
-      val main  = parts(0)
-      val exp   = if (parts.length == 2) "e" + parts(1) else ""
-
-      val trimmedMain =
-        if (main.contains('.')) {
-          val r = main.reverse.dropWhile(_ == '0').dropWhile(_ == '.').reverse
-          if (r.isEmpty) "0"
-          else if (keepDecimal && !r.contains('.')) r + "."
-          else r
-        } else main
-      trimmedMain + exp
-    }
-
-    // Automatic formatting with high precision
-    def renderAuto: String = {
-      val values =
-        for (i <- rowIndices; j <- colIndices)
-        yield toDouble(getValue(i, j))
-
-      if (values.isEmpty) {
-        ""
-      } else {
-        val absMax = values.map(math.abs).max
-        val absMin = values.filter(_ != 0.0).map(math.abs).minOption.getOrElse(0.0)
-
-        val sci = absMax >= 1e8 || (absMin > 0 && absMin < 1e-6)
-
-        val base =
-          if (displayCols <= 4) 10
-          else if (displayCols <= 8) 8
-          else 6
-
-        val spread = values.max - values.min
-
-        val maxDec =
-          if (sci) base
-          else if (spread == 0.0) base
-          else if (spread >= 100) base - 3
-          else if (spread >= 10) base - 2
-          else if (spread >= 1) base - 1
-          else base
-
-        val fmtStr = if (sci) s"%.${maxDec}e" else s"%.${maxDec}f"
-        val raw = values.map(v => fmtStr.format(v)).toIndexedSeq
-        renderRowsFromRaw(raw, isAuto = true)
-      }
-    }
-
-    // Format with explicit format string
-    def renderRows(fmtStr: String): String = {
-      val isAuto = fmtStr.isEmpty
-
-      val raw =
-        if (isAuto) {
-          for (i <- rowIndices; j <- colIndices)
-          yield mkString(getValue(i, j))
-        } else {
-          for (i <- rowIndices; j <- colIndices)
-          yield fmtStr.format(getValue(i, j))
-        }
-      renderRowsFromRaw(raw, isAuto)
-    }
-
-    // Core rendering logic
-    def renderRowsFromRaw(raw: IndexedSeq[String], isAuto: Boolean): String = {
-      val colHasDecimal = Array.fill(displayCols)(false)
-      for (i <- 0 until displayRows; j <- 0 until displayCols) {
-        if (raw(i * displayCols + j).contains('.')) {
-          colHasDecimal(j) = true
-        }
-      }
-
-      // 1. Guard against parsing non-numeric strings like "true"/"false"
-      val values =
-        if (raw.isEmpty || typeName == "Boolean") Nil
-        else raw.map(s => scala.util.Try(s.toDouble).getOrElse(0.0)).map(math.abs)
-
-      // 2. Only check for scientific notation if we actually have numeric values
-      val useSci =
-        if (values.isEmpty || typeName == "Boolean") {
-          false
-        } else {
-          val absMax = values.max
-          val absMin = values.filter(_ > 0).minOption.getOrElse(absMax)
-          absMax >= 1e8 || absMin < 1e-6
-        }
-
-      val colIsInteger =
-        if (isAuto) {
-          if (useSci) {
-            Array.fill(displayCols)(false)
-          } else {
-            val arr = Array.fill(displayCols)(true)
-            for (i <- 0 until displayRows; j <- 0 until displayCols) {
-              val d = toDouble(getValue(rowIndices(i), colIndices(j)))
-              if (d != Math.rint(d)) {
-                arr(j) = false
-              }
-            }
-            arr
-          }
-        } else {
-          Array.fill(displayCols)(false)
-        }
-
-      for (j <- 0 until displayCols) {
-        if (colIsInteger(j)) {
-          colHasDecimal(j) = false
-        }
-      }
-
-      val trimmed =
-        if (isAuto) {
-          for (idx <- raw.indices) yield {
-            val col = idx % displayCols
-            if (colIsInteger(col)) {
-              val s = raw(idx)
-              val dot = s.indexOf('.')
-              if (dot >= 0) s.substring(0, dot)
-              else s
-            } else {
-              val t0 = trimZeros(raw(idx), keepDecimal = colHasDecimal(col))
-              if (colHasDecimal(col)) {
-                if (t0.contains('.')) {
-                  if (t0.endsWith(".")) t0 + "0" else t0
-                } else {
-                  t0 + ".0"
-                }
-              } else {
-                t0
-              }
-            }
-          }
-        } else {
-          raw
-        }
-
-      val split =
-        trimmed.map(_.stripLeading).map { s =>
-          val parts = s.split("\\.", 2)
-          if (parts.length == 1) (parts(0), "")
-          else (parts(0), parts(1))
-        }
-
-      val intWidth  = Array.fill(displayCols)(0)
-      val fracWidth = Array.fill(displayCols)(0)
-
-      for (i <- 0 until displayRows; j <- 0 until displayCols) {
-        val (intp, fracp) = split(i * displayCols + j)
-        intWidth(j)  = math.max(intWidth(j),  intp.length)
-        fracWidth(j) = math.max(fracWidth(j), fracp.length)
-      }
-
-      // Add ellipsis column widths if truncating columns
-      val sb = new StringBuilder
-      var idx = 0
-
-      for (displayRowIdx <- 0 until displayRows) {
-        // Insert row ellipsis after edge rows
-        if (truncateRows && displayRowIdx == edgeRows) {
-          sb.append(" ...\n")
-        }
-
-        sb.append(" (")
-        for (displayColIdx <- 0 until displayCols) {
-          // Insert column ellipsis after edge cols
-          if (truncateCols && displayColIdx == edgeCols) {
-            sb.append("...")
-            if (displayColIdx < displayCols - 1) sb.append(", ")
-          }
-
-          val (intp, fracp) = split(idx)
-          sb.append(" " * (intWidth(displayColIdx) - intp.length))
-          sb.append(intp)
-
-          if (colHasDecimal(displayColIdx)) {
-            sb.append(".")
-            sb.append(fracp)
-            sb.append(" " * (fracWidth(displayColIdx) - fracp.length))
-          }
-
-          if (displayColIdx < displayCols - 1) sb.append(", ")
-          idx += 1
-        }
-        sb.append(")")
-        if (displayRowIdx < displayRows - 1) sb.append(",\n")
-      }
-
-      sb.toString
-    }
-
-    val header = s"${rows}x${cols} Mat[$typeName]:"
-    val body =
-    if (fmt.isDefined) {
-      renderRows(fmt.get)
-    } else if (typeName == "Boolean" || typeName == "Big") {
-      renderRows("") // Passing empty string triggers the isAuto logic in renderRows
-    } else {
-      renderAuto
-    }
-
-    if (body.isEmpty) header
-    else s"$header\n$body"
-
-  }
-
   // Global print options
   object PrintOptions {
     var maxRows: Int = 10        // NumPy doesn't have this, but useful
@@ -4589,6 +4339,160 @@ object MatD {
   def hstack(mats: Mat[Double]*): Mat[Double] = Mat.hstack[Double](mats*)
   def concatenate(mats: Seq[Mat[Double]], axis: Int = 0): Mat[Double] = Mat.concatenate[Double](mats, axis)
   def where(condition: Mat[Boolean], x: Mat[Double], y: Mat[Double]): Mat[Double] = Mat.where[Double](condition, x, y)
+  def where(condition: Mat[Boolean], x: Double, y: Double): Mat[Double] = Mat.where[Double](condition, x, y)
+  def tabulate(rows: Int, cols: Int)(f: (Int, Int) => Double): Mat[Double] = Mat.tabulate[Double](rows, cols)(f)
+  def meshgrid(x: Vec[Double], y: Vec[Double]): (Mat[Double], Mat[Double]) = Mat.meshgrid[Double](x, y)
+  // ----- Random -----
+  def setSeed(seed: Long): Unit = Mat.setSeed(seed)
   def rand(rows: Int, cols: Int): Mat[Double] = Mat.rand(rows, cols)
   def randn(rows: Int, cols: Int): Mat[Double] = Mat.randn(rows, cols)
+  def uniform(low: Double, high: Double, rows: Int, cols: Int): Mat[Double] = Mat.uniform(low, high, rows, cols)
+  def normal(mean: Double, std: Double, rows: Int, cols: Int): Mat[Double] = Mat.normal(mean, std, rows, cols)
+  def randint(low: Int, high: Int): Int = Mat.randint(low, high)
+  def randint(low: Int, high: Int, rows: Int, cols: Int): Mat[Int] = Mat.randint(low, high, rows, cols)
+  // ----- Signal processing (Double-only) -----
+  def polyfit(x: Vec[Double], y: Vec[Double], deg: Int): Vec[Double] = Mat.polyfit(x, y, deg)
+  def polyval(coeffs: Vec[Double], x: Vec[Double]): Vec[Double] = Mat.polyval(coeffs, x)
+  def convolve(a: Vec[Double], b: Vec[Double], mode: String = "full"): Vec[Double] = Mat.convolve(a, b, mode)
+  def correlate(a: Vec[Double], b: Vec[Double], mode: String = "valid"): Vec[Double] = Mat.correlate(a, b, mode)
+}
+
+type MatB = Mat[Big] 
+
+object MatB {
+  // Fractional[Big] is always available
+  private given fracD: Fractional[Big] = summon[Fractional[Big]]
+
+  // ----- Constructors -----
+  def zeros(rows: Int, cols: Int): Mat[Big] = Mat.zeros[Big](rows, cols)
+  def zeros(shape: (Int, Int)): Mat[Big] = Mat.zeros[Big](shape)
+  def ones(rows: Int, cols: Int): Mat[Big] = Mat.ones[Big](rows, cols)
+  def ones(shape: (Int, Int)): Mat[Big] = Mat.ones[Big](shape)
+  def full(rows: Int, cols: Int, value: Double): Mat[Big] = Mat.full[Big](rows, cols, value)
+  def full(shape: (Int, Int), value: Double): Mat[Big] = Mat.full[Big](shape, value)
+  def eye(n: Int, k: Int = 0): Mat[Big] = Mat.eye[Big](n, k)
+  def arange(stop: Int): Mat[Big] = Mat.arange[Big](stop)
+  def arange(start: Int, stop: Int): Mat[Big] = Mat.arange[Big](start, stop)
+  def arange(start: Int, stop: Int, step: Int): Mat[Big] = Mat.arange[Big](start, stop, step)
+  def linspace(start: Double, stop: Double, num: Int = 50): Mat[Big] = Mat.linspace[Big](start, stop, num)
+
+  def apply(rows: Int, cols: Int): Mat[Big] = Mat.zeros[Big](rows, cols)
+  def apply(m: Mat[Big], row: Int, col: Int): Big = m.apply(row, col) // This uses the extension method exactly like your tests
+
+  def apply(rows: Int, cols: Int, data: Array[Big]): Mat[Big] = Mat.apply[Big](rows, cols, data)
+  def apply(value: Double): Mat[Big] = Mat.apply[Big](value)
+  def apply(tuples: Tuple*): Mat[Big] = Mat.apply[Big](tuples*)
+  def single(value: Double): Mat[Big] = Mat.single[Big](value)
+  def fromSeq(values: Seq[Big]): Mat[Big] = Mat.fromSeq[Big](values)
+  def of(first: Double, rest: Double*): Mat[Big] = Mat.of[Big](Big(first), rest.map(Big(_))*)
+  def row(values: Double*): Mat[Big] = Mat.row[Big](values.map(Big(_))*)
+  def col(values: Double*): Mat[Big] = Mat.col[Big](values.map(Big(_))*)
+  def empty: Mat[Big] = Mat.empty[Big]
+  // ----- Diagonal -----
+  def diag(values: Array[Big]): Mat[Big] = Mat.diag[Big](values)
+  def diag(v: Mat[Big]): Mat[Big] = Mat.diag[Big](v)
+  def diag(values: Array[Big], rows: Int, cols: Int): Mat[Big] = Mat.diag[Big](values, rows, cols)
+  // ----- Like-constructors -----
+  def zerosLike(m: Mat[Big]): Mat[Big] = Mat.zerosLike[Big](m)
+  def onesLike(m: Mat[Big]): Mat[Big] = Mat.onesLike[Big](m)
+  def fullLike(m: Mat[Big], value: Double): Mat[Big] = Mat.fullLike[Big](m, value)
+
+  // ----- Stacking -----
+  def vstack(mats: Mat[Big]*): Mat[Big] = Mat.vstack[Big](mats*)
+  def hstack(mats: Mat[Big]*): Mat[Big] = Mat.hstack[Big](mats*)
+  def concatenate(mats: Seq[Mat[Big]], axis: Int = 0): Mat[Big] = Mat.concatenate[Big](mats, axis)
+  def where(condition: Mat[Boolean], x: Mat[Big], y: Mat[Big]): Mat[Big] = Mat.where[Big](condition, x, y)
+  def where(condition: Mat[Boolean], x: Big, y: Big): Mat[Big] = Mat.where[Big](condition, x, y)
+  def tabulate(rows: Int, cols: Int)(f: (Int, Int) => Big): Mat[Big] = Mat.tabulate[Big](rows, cols)(f)
+  def meshgrid(x: Vec[Big], y: Vec[Big]): (Mat[Big], Mat[Big]) = Mat.meshgrid[Big](x, y)
+  // ----- Random -----
+  def setSeed(seed: Long): Unit = Mat.setSeed(seed)
+  def rand(rows: Int, cols: Int): Mat[Big] = {
+    val data = Array.fill(rows * cols)(Big(Mat.globalRNG.nextDouble()))
+    Mat.create(data, rows, cols)
+  }
+  def randn(rows: Int, cols: Int): Mat[Big] = {
+    val data = Array.fill(rows * cols)(Big(Mat.globalRNG.randn()))
+    Mat.create(data, rows, cols)
+  }
+  def uniform(low: Double, high: Double, rows: Int, cols: Int): Mat[Big] = {
+    val data = Array.fill(rows * cols)(Big(Mat.globalRNG.uniform(low, high)))
+    Mat.create(data, rows, cols)
+  }
+  def normal(mean: Double, std: Double, rows: Int, cols: Int): Mat[Big] = {
+    val data = Array.fill(rows * cols)(Big(mean + std * Mat.globalRNG.randn()))
+    Mat.create(data, rows, cols)
+  }
+  def randint(low: Int, high: Int): Int = Mat.randint(low, high)
+  def randint(low: Int, high: Int, rows: Int, cols: Int): Mat[Int] = Mat.randint(low, high, rows, cols)
+}
+
+type MatF = Mat[Float] 
+
+object MatF {
+  // Fractional[Float] is always available
+  private given fracF: Fractional[Float] = summon[Fractional[Float]]
+
+  // ----- Constructors -----
+  def zeros(rows: Int, cols: Int): Mat[Float] = Mat.zeros[Float](rows, cols)
+  def zeros(shape: (Int, Int)): Mat[Float] = Mat.zeros[Float](shape)
+  def ones(rows: Int, cols: Int): Mat[Float] = Mat.ones[Float](rows, cols)
+  def ones(shape: (Int, Int)): Mat[Float] = Mat.ones[Float](shape)
+  def full(rows: Int, cols: Int, value: Double): Mat[Float] = Mat.full[Float](rows, cols, value.toFloat)
+  def full(shape: (Int, Int), value: Double): Mat[Float] = Mat.full[Float](shape, value.toFloat)
+  def eye(n: Int, k: Int = 0): Mat[Float] = Mat.eye[Float](n, k)
+  def arange(stop: Int): Mat[Float] = Mat.arange[Float](stop)
+  def arange(start: Int, stop: Int): Mat[Float] = Mat.arange[Float](start, stop)
+  def arange(start: Int, stop: Int, step: Int): Mat[Float] = Mat.arange[Float](start, stop, step)
+  def linspace(start: Double, stop: Double, num: Int = 50): Mat[Float] = Mat.linspace[Float](start, stop, num)
+
+  def apply(rows: Int, cols: Int): Mat[Float] = Mat.zeros[Float](rows, cols)
+  def apply(m: Mat[Float], row: Int, col: Int): Float = m.apply(row, col)
+
+  def apply(rows: Int, cols: Int, data: Array[Float]): Mat[Float] = Mat.apply[Float](rows, cols, data)
+  def apply(value: Double): Mat[Float] = Mat.apply[Float](value.toFloat)
+  def apply(tuples: Tuple*): Mat[Float] = Mat.apply[Float](tuples*)
+  def single(value: Double): Mat[Float] = Mat.single[Float](value.toFloat)
+  def fromSeq(values: Seq[Float]): Mat[Float] = Mat.fromSeq[Float](values)
+  def of(first: Double, rest: Double*): Mat[Float] = Mat.of[Float](first.toFloat, rest.map(_.toFloat)*)
+  def row(values: Double*): Mat[Float] = Mat.row[Float](values.map(_.toFloat)*)
+  def col(values: Double*): Mat[Float] = Mat.col[Float](values.map(_.toFloat)*)
+  def empty: Mat[Float] = Mat.empty[Float]
+  // ----- Diagonal -----
+  def diag(values: Array[Float]): Mat[Float] = Mat.diag[Float](values)
+  def diag(v: Mat[Float]): Mat[Float] = Mat.diag[Float](v)
+  def diag(values: Array[Float], rows: Int, cols: Int): Mat[Float] = Mat.diag[Float](values, rows, cols)
+  // ----- Like-constructors -----
+  def zerosLike(m: Mat[Float]): Mat[Float] = Mat.zerosLike[Float](m)
+  def onesLike(m: Mat[Float]): Mat[Float] = Mat.onesLike[Float](m)
+  def fullLike(m: Mat[Float], value: Double): Mat[Float] = Mat.fullLike[Float](m, value.toFloat)
+
+  // ----- Stacking -----
+  def vstack(mats: Mat[Float]*): Mat[Float] = Mat.vstack[Float](mats*)
+  def hstack(mats: Mat[Float]*): Mat[Float] = Mat.hstack[Float](mats*)
+  def concatenate(mats: Seq[Mat[Float]], axis: Int = 0): Mat[Float] = Mat.concatenate[Float](mats, axis)
+  def where(condition: Mat[Boolean], x: Mat[Float], y: Mat[Float]): Mat[Float] = Mat.where[Float](condition, x, y)
+  def where(condition: Mat[Boolean], x: Float, y: Float): Mat[Float] = Mat.where[Float](condition, x, y)
+  def tabulate(rows: Int, cols: Int)(f: (Int, Int) => Float): Mat[Float] = Mat.tabulate[Float](rows, cols)(f)
+  def meshgrid(x: Vec[Float], y: Vec[Float]): (Mat[Float], Mat[Float]) = Mat.meshgrid[Float](x, y)
+  // ----- Random -----
+  def setSeed(seed: Long): Unit = Mat.setSeed(seed)
+  def rand(rows: Int, cols: Int): Mat[Float] = {
+    val data = Array.fill(rows * cols)(Mat.globalRNG.nextDouble().toFloat)
+    Mat.create(data, rows, cols)
+  }
+  def randn(rows: Int, cols: Int): Mat[Float] = {
+    val data = Array.fill(rows * cols)(Mat.globalRNG.randn().toFloat)
+    Mat.create(data, rows, cols)
+  }
+  def uniform(low: Double, high: Double, rows: Int, cols: Int): Mat[Float] = {
+    val data = Array.fill(rows * cols)(Mat.globalRNG.uniform(low, high).toFloat)
+    Mat.create(data, rows, cols)
+  }
+  def normal(mean: Double, std: Double, rows: Int, cols: Int): Mat[Float] = {
+    val data = Array.fill(rows * cols)((mean + std * Mat.globalRNG.randn()).toFloat)
+    Mat.create(data, rows, cols)
+  }
+  def randint(low: Int, high: Int): Int = Mat.randint(low, high)
+  def randint(low: Int, high: Int, rows: Int, cols: Int): Mat[Int] = Mat.randint(low, high, rows, cols)
 }
