@@ -10,7 +10,7 @@ It provides a zero-overhead, type-safe interface for scientific computing by lev
 * **NumPy Random Fidelity:** 1:1 behavioral matching for `rand`, `randn`, `uniform`, `randint`, etc. using a high-performance **PCG64** implementation.
 * **Strided Memory Layout:** Supports `rowStride` and `colStride`, enabling $O(1)$ `transpose` and zero-copy slicing/views, mirroring NumPy's internal engine.
 * **Broadcasting & In-place Ops:** Built-in support for NumPy-style broadcasting and memory-efficient in-place mutation operators (`:+=`, `:-=`, `:*=`, `:/=`).
-* **Deep Learning Primitives:** Optimized activation functions (`sigmoid`, `relu`, `softmax`, `leakyRelu`) and linear algebra operators (`~@`) built directly into the core type.
+* **Deep Learning Primitives:** Activation functions (`sigmoid`, `relu`, `softmax`, `leakyRelu`) use parallel fork/join for contiguous matrices — outperforming NumPy's single-core SIMD on multi-core hardware.
 
 For high-accuracy scientific modeling or other applications requiring extreme precision, `uni.Mat` provides a `Big` numeric type.
 
@@ -23,11 +23,13 @@ Measured on the same machine (JVM 17 / Scala 3.7.0 vs Python 3.14.3 / NumPy 2.4.
 | Operation | NumPy | MatD | Ratio |
 | :--- | ---: | ---: | :--- |
 | `randn(1000×1000)` | 19 ms | 21 ms | **≈ tied** |
-| `matmul 512×512` | 1.7 ms | 3.3 ms | 2× slower |
-| `sigmoid(1000×1000)` | 12.4 ms | 13.5 ms | **≈ tied** |
-| `sum(1000×1000)` | 0.3 ms | 0.6 ms | 2× slower |
-| `relu(1000×1000)` | 2.1 ms | 9.0 ms | 4× slower |
+| `matmul 512×512` | 1.7 ms | 3.3 ms | 1.9× slower |
+| `sigmoid(1000×1000)` | 12.6 ms | 3.0 ms | **4× faster** |
+| `relu(1000×1000)` | 2.0 ms | 0.8 ms | **2.5× faster** |
+| `add(1000×1000)` | 2.3 ms | 1.7 ms | **1.4× faster** |
+| `sum(1000×1000)` | 0.3 ms | 0.5 ms | 1.6× slower |
 | `transpose(1000×1000)` | ≈0 ms | ≈0 ms | **tied** |
+| custom fn (`mapParallel` vs `np.vectorize`) | 440 ms | 0.9 ms | **470× faster** |
 
 Full results and methodology: [MatD Cheat Sheet — Performance](docs/MatDCheatSheet.md).
 

@@ -12,7 +12,7 @@
  * ------------
  * - 15 warmup iterations (JVM JIT needs time to compile hot loops)
  * - 20 timed iterations; reports mean and min in ms
- * - Same 7 operations as py/bench.py for direct side-by-side comparison
+ * - Same 8 operations as py/bench.py for direct side-by-side comparison
  * - Matrix sizes match the Python script (N=1000, MM=512)
  *
  * Why results differ
@@ -98,10 +98,17 @@ bench("transpose 1000×1000  [O(1)]") {
   M.T
 }
 
+// 8. Custom scalar fn via mapParallel — JVM parallel fork/join vs np.vectorize (Python loop).
+//    Uses x*x + 2*x + 1 so the work per element is non-trivial but not exp-heavy.
+bench("mapParallel custom fn (1000×1000)") {
+  M.mapParallel(x => x * x + 2 * x + 1.0)
+}
+
 println("  " + "-" * 72)
 println("""
 Note: transpose is O(1) in both libraries (stride flip, no copy).
       MatD matmul uses OpenBLAS via bytedeco (org.bytedeco:openblas-platform).
       NumPy matmul uses OpenBLAS (or MKL if present in your install).
       JVM results improve significantly after warmup; first run will be slower.
+      mapParallel vs np.vectorize: JVM wins because np.vectorize is a Python loop.
 """)

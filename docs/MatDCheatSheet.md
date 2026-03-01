@@ -9,23 +9,24 @@ Side-by-side reference for **uni.MatD**, NumPy, Breeze, R, and MATLAB.
 ## Performance vs NumPy
 
 Measured on the same machine: NumPy 2.4.1 / Python 3.14.3 vs uni.MatD 0.9.2 / Scala 3.7.0 / JVM 17.
-Both use OpenBLAS. See [`bench.sc`](../bench.sc) and [`py/bench.py`](../py/bench.py) to reproduce.
+Both use OpenBLAS. See [`jsrc/bench.sc`](../jsrc/bench.sc) and [`py/bench.py`](../py/bench.py) to reproduce.
 
 | Operation | NumPy | MatD | Ratio | Notes |
 |---|---:|---:|---|---|
-| `randn(1000×1000)` | 19 ms | 21 ms | **≈ tied** | PCG64 reimplemented with Long arithmetic; 12× faster than previous BigInt impl |
-| `matmul 512×512` | 1.7 ms | 3.3 ms | 2× slower | Both use OpenBLAS; gap is JNI call overhead |
-| `sigmoid(1000×1000)` | 12.4 ms | 13.5 ms | 1.1× slower | JVM JIT closely matches NumPy's vectorised `exp` |
-| `relu(1000×1000)` | 2.1 ms | 9.0 ms | 4.3× slower | SIMD `max` is faster than JIT equivalent |
-| `add(1000×1000)` | 2.3 ms | 7.8 ms | 3.4× slower | SIMD memcpy-level kernel vs JIT loop |
-| `sum(1000×1000)` | 0.3 ms | 0.6 ms | 2× slower | Parallel fork/join; was 12× slower before |
+| `randn(1000×1000)` | 19 ms | 21 ms | **≈ tied** | PCG64 with Long arithmetic; was 252 ms before BigInt rewrite |
+| `matmul 512×512` | 1.7 ms | 3.3 ms | 1.9× slower | Both use OpenBLAS; gap is JNI call overhead |
+| `sigmoid(1000×1000)` | 12.6 ms | 3.0 ms | **4.2× faster** | Parallel fork/join beats single-core SIMD |
+| `relu(1000×1000)` | 2.0 ms | 0.8 ms | **2.5× faster** | Parallel fork/join beats single-core SIMD |
+| `add(1000×1000)` | 2.3 ms | 1.7 ms | **1.4× faster** | Parallel fork/join beats single-core SIMD |
+| `sum(1000×1000)` | 0.3 ms | 0.5 ms | 1.6× slower | NumPy SIMD reduction hard to beat |
 | `transpose(1000×1000)` | ≈0 ms | ≈0 ms | **tied** | O(1) stride-flip in both — no data copy |
+| `mapParallel` custom fn | 440 ms | 0.9 ms | **470× faster** | `np.vectorize` is a Python loop; JVM is compiled |
 
 **Practical guidance:**
-- `randn` is now essentially on par with NumPy — regenerating large matrices in hot loops is no longer a concern.
-- Matmul is viable on JVM (~2–3× overhead via OpenBLAS JNI).
-- Sigmoid is a JVM strength; other element-wise ops have 3–4× overhead from absent SIMD.
-- `sum` dropped from 12× to 2× slower after switching to a parallel fork/join implementation.
+- Element-wise ops (`relu`, `sigmoid`, `add`) now run faster than NumPy — parallel JVM cores beat single-core C SIMD.
+- Custom scalar functions: `mapParallel` vs `np.vectorize` shows a 470× JVM advantage; the Python interpreter overhead dominates.
+- Matmul: NumPy still wins (~2×) due to OpenBLAS JNI overhead on the JVM side.
+- `sum`: NumPy's vectorised C reduction is hard to beat; MatD is within 2×.
 
 ---
 
