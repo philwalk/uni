@@ -519,6 +519,7 @@ object Mat {
   private[data] lazy val defaultRNG: NumPyRNG = new NumPyRNG(0)
   private[data] var globalRNG: NumPyRNG = defaultRNG
 
+
   /** Set random seed matching NumPy's np.random.seed() */
   def setSeed(seed: Long): Unit =
     globalRNG = new NumPyRNG(seed)
@@ -1199,17 +1200,35 @@ object Mat {
       maxValue
     }
 
-    def sum(using num: Numeric[T]): T = {
-      var total = num.zero
-      var i = 0
-      while i < m.rows do
-        var j = 0
-        while j < m.cols do
-          total = num.plus(total, m(i, j)) // Uses stride-aware apply
-          j += 1
-        i += 1
-      total
-    }
+    def sum(using num: Numeric[T]): T =
+      summon[ClassTag[T]].runtimeClass match
+        case c if c == classOf[Double] && m.isContiguous && m.offset == 0 =>
+          // Fast path: parallel fork/join on JVM heap — no JNI copy, uses all cores.
+          // Guard: tdata may be a parent array; only use when its length matches this view.
+          val data = m.tdata.asInstanceOf[Array[Double]]
+          if data.length == m.rows * m.cols then
+            java.util.Arrays.stream(data).parallel().sum().asInstanceOf[T]
+          else
+            var total = 0.0
+            var i = 0
+            while i < m.rows do
+              var j = 0
+              while j < m.cols do
+                total += data(i * m.rs + j * m.cs)
+                j += 1
+              i += 1
+            total.asInstanceOf[T]
+        case _ =>
+          // General path: strided views, non-Double types, offset slices.
+          var total = num.zero
+          var i = 0
+          while i < m.rows do
+            var j = 0
+            while j < m.cols do
+              total = num.plus(total, m(i, j))
+              j += 1
+            i += 1
+          total
 
     def argmin(using ord: Ordering[T]): (Int, Int) = {
       if (m.rows == 0 || m.cols == 0) throw new UnsupportedOperationException("empty matrix")

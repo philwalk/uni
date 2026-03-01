@@ -23,31 +23,37 @@ class NumPyRNG(seed: Long = 0L) {
   import NumPyRNG._
   
   private val (initState, initInc) = getOrComputeInitialState(seed)
-  private var state: BigInt = initState
-  private val increment: BigInt = initInc
-  
-  private val multiplier = BigInt("47026247687942121848144207491837523525")
-  private val MASK_128 = (BigInt(1) << 128) - 1
-  private val MASK_64 = (BigInt(1) << 64) - 1
-  private var useUpper = false  // Track which half to use
-  private var cachedRaw: Long = 0L
-  
-  private def step(): Unit = {
-    state = ((state * multiplier) + increment) & MASK_128
-  }
-  
-  private def rotr64(value: Long, rot: Int): Long = {
-    val r = rot & 63
-    ((value >>> r) | (value << (64 - r)))
-  }
-  
-  private def output(): Long = {
-    val low = (state & MASK_64).toLong
-    val high = ((state >> 64) & MASK_64).toLong
-    val xored = high ^ low
-    val rotation = (high >>> 58).toInt
-    rotr64(xored, rotation)
-  }
+
+  // Represent 128-bit PCG state as two Long values — zero heap allocation in hot path.
+  private var stateLo: Long = initState.toLong          // low  64 bits
+  private var stateHi: Long = (initState >> 64).toLong  // high 64 bits
+  private val incLo:   Long = initInc.toLong
+  private val incHi:   Long = (initInc >> 64).toLong
+
+  // PCG64 multiplier = 0x2360ED051FC65DA4_4385DF649FCCF645
+  private val MultLo: Long = 0x4385DF649FCCF645L
+  private val MultHi: Long = 0x2360ED051FC65DA4L
+
+  private var useUpper  = false
+  private var cachedRaw = 0L
+
+  // Upper 64 bits of the 128-bit unsigned product a × b.
+  // Math.multiplyHigh (Java 9+) treats inputs as signed; correct for unsigned.
+  @inline private def umHigh(a: Long, b: Long): Long =
+    Math.multiplyHigh(a, b) + ((a >> 63) & b) + ((b >> 63) & a)
+
+  private def step(): Unit =
+    val newLo = stateLo * MultLo
+    val newHi = umHigh(stateLo, MultLo) + stateLo * MultHi + stateHi * MultLo
+    val sumLo = newLo + incLo
+    val carry = if (java.lang.Long.compareUnsigned(sumLo, incLo) < 0) 1L else 0L
+    stateLo   = sumLo
+    stateHi   = newHi + incHi + carry
+
+  private def output(): Long =
+    val xored    = stateHi ^ stateLo
+    val rotation = (stateHi >>> 58).toInt
+    java.lang.Long.rotateRight(xored, rotation)
   
   def nextLong(): Long = {
     step()

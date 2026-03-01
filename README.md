@@ -238,7 +238,7 @@ object MatDCheck {
 | `a * b` | `a * b` | Element-wise product |
 | `a[0, :]` | `a(0, ::)` | Row slice |
 | `a[:, 0]` | `a(::, 0)` | Column slice |
-| `a.T` | `a.T` or `a.transpose` | $O(1)$ view |
+| `a.T` | `a.T` | $O(1)$ view |
 | `np.random.randn` | `Mat.randn` | PCG64-backed |
 | `np.where(c, x, y)` | `Mat.where(c, x, y)` | Conditional selection |
 | `np.vstack` / `np.vsplit` | `Mat.vstack` / `m.vsplit(n)` | Row-wise stack / split |
