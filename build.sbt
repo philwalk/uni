@@ -142,7 +142,16 @@ credentials += Credentials(
   "ignored",
 )
 
-credentials += Credentials(Path.userHome / ".sonatype_credentials") 
+val credFile = Path.userHome / ".sonatype_credentials"
+credentials ++= (
+  if credFile.exists then Seq(Credentials(credFile))
+  else Seq(Credentials(
+    "Sonatype Nexus Repository Manager",
+    "central.sonatype.com",
+    sys.env.getOrElse("SONATYPE_USERNAME", ""),
+    sys.env.getOrElse("SONATYPE_PASSWORD", "")
+  ))
+)
 
 // Set this to the same value set as your credential files host.
 sonatypeCredentialHost := "central.sonatype.com"
