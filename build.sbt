@@ -144,7 +144,7 @@ credentials += Credentials(
 
 val credFile = Path.userHome / ".sonatype_credentials"
 credentials ++= (
-  if credFile.exists then Seq(Credentials(credFile))
+  if (credFile.exists) Seq(Credentials(credFile))
   else Seq(Credentials(
     "Sonatype Nexus Repository Manager",
     "central.sonatype.com",
