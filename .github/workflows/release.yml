@@ -40,6 +40,7 @@ jobs:
       - name: Import GPG key
         run: |
           echo "${{ secrets.PGP_SECRET }}" | base64 --decode | gpg --batch --import
+          echo "1CF370113B7EE5A327DD25E7B5D88C95FC9CB6CA:6:" | gpg --import-ownertrust
 
       - name: Publish signed artifacts to Sonatype Central
         env:

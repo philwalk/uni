@@ -142,6 +142,9 @@ credentials += Credentials(
   "ignored",
 )
 
+// CI supplies the GPG passphrase via env var; locally sbt-pgp falls back to pinentry.
+pgpPassphrase := sys.env.get("PGP_PASSPHRASE").map(_.toArray)
+
 val credFile = Path.userHome / ".sonatype_credentials"
 credentials ++= (
   if (credFile.exists) Seq(Credentials(credFile))
