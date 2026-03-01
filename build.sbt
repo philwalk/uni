@@ -7,6 +7,8 @@ javacOptions ++= Seq("-source", "17", "-target", "17")
 
 maxErrors := 10
 
+description := "high-performance, NumPy-like linear algebra for the JVM"
+
 // these 2 prevent everything in vast.apps from being recompiled if only 1 vast.apps source changed:
 ThisBuild / incOptions := incOptions.value.withRecompileOnMacroDef(false)
 ThisBuild / watchTriggeredMessage := Watch.clearScreenOnTrigger

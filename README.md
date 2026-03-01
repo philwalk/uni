@@ -16,6 +16,21 @@ For high-accuracy scientific modeling or other applications requiring extreme pr
 
 * **High Precision:** [Big Type Guide](docs/BigTypeGuide.md) — Learn about high-precision matrices, and how to use `Mat[Big]`.
 
+## Performance vs NumPy
+
+Measured on the same machine (JVM 17 / Scala 3.7.0 vs Python 3.14.3 / NumPy 2.4.1). Both use OpenBLAS.
+
+| Operation | NumPy | MatD | Ratio |
+| :--- | ---: | ---: | :--- |
+| `randn(1000×1000)` | 19 ms | 21 ms | **≈ tied** |
+| `matmul 512×512` | 1.7 ms | 3.3 ms | 2× slower |
+| `sigmoid(1000×1000)` | 12.4 ms | 13.5 ms | **≈ tied** |
+| `sum(1000×1000)` | 0.3 ms | 0.6 ms | 2× slower |
+| `relu(1000×1000)` | 2.1 ms | 9.0 ms | 4× slower |
+| `transpose(1000×1000)` | ≈0 ms | ≈0 ms | **tied** |
+
+Full results and methodology: [MatD Cheat Sheet — Performance](docs/MatDCheatSheet.md).
+
 ## Design Philosophy
 
 uni.Mat is built on the principle that developers shouldn't have to choose between type safety and the ergonomics of NumPy. Its design leverages strides, offsets, and broadcasting for high efficiency—including LAPACK integration—all while maintaining a clean, expression-oriented API.
@@ -238,7 +253,7 @@ object MatDCheck {
 | `a * b` | `a * b` | Element-wise product |
 | `a[0, :]` | `a(0, ::)` | Row slice |
 | `a[:, 0]` | `a(::, 0)` | Column slice |
-| `a.T` | `a.T` or `a.transpose` | $O(1)$ view |
+| `a.T` | `a.T` | $O(1)$ view |
 | `np.random.randn` | `Mat.randn` | PCG64-backed |
 | `np.where(c, x, y)` | `Mat.where(c, x, y)` | Conditional selection |
 | `np.vstack` / `np.vsplit` | `Mat.vstack` / `m.vsplit(n)` | Row-wise stack / split |

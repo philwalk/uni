@@ -6,6 +6,29 @@ Side-by-side reference for **uni.MatD**, NumPy, Breeze, R, and MATLAB.
 
 ---
 
+## Performance vs NumPy
+
+Measured on the same machine: NumPy 2.4.1 / Python 3.14.3 vs uni.MatD 0.9.2 / Scala 3.7.0 / JVM 17.
+Both use OpenBLAS. See [`bench.sc`](../bench.sc) and [`py/bench.py`](../py/bench.py) to reproduce.
+
+| Operation | NumPy | MatD | Ratio | Notes |
+|---|---:|---:|---|---|
+| `randn(1000×1000)` | 19 ms | 21 ms | **≈ tied** | PCG64 reimplemented with Long arithmetic; 12× faster than previous BigInt impl |
+| `matmul 512×512` | 1.7 ms | 3.3 ms | 2× slower | Both use OpenBLAS; gap is JNI call overhead |
+| `sigmoid(1000×1000)` | 12.4 ms | 13.5 ms | 1.1× slower | JVM JIT closely matches NumPy's vectorised `exp` |
+| `relu(1000×1000)` | 2.1 ms | 9.0 ms | 4.3× slower | SIMD `max` is faster than JIT equivalent |
+| `add(1000×1000)` | 2.3 ms | 7.8 ms | 3.4× slower | SIMD memcpy-level kernel vs JIT loop |
+| `sum(1000×1000)` | 0.3 ms | 0.6 ms | 2× slower | Parallel fork/join; was 12× slower before |
+| `transpose(1000×1000)` | ≈0 ms | ≈0 ms | **tied** | O(1) stride-flip in both — no data copy |
+
+**Practical guidance:**
+- `randn` is now essentially on par with NumPy — regenerating large matrices in hot loops is no longer a concern.
+- Matmul is viable on JVM (~2–3× overhead via OpenBLAS JNI).
+- Sigmoid is a JVM strength; other element-wise ops have 3–4× overhead from absent SIMD.
+- `sum` dropped from 12× to 2× slower after switching to a parallel fork/join implementation.
+
+---
+
 ## Setup / Import
 
 | | Code |
