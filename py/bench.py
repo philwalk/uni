@@ -9,7 +9,7 @@ Design notes
 ------------
 * 10 warmup iterations (Python has no JIT, but memory/cache matters)
 * 20 timed iterations; reports mean and min in ms
-* Same 7 operations as bench.sc for direct comparison
+* Same 8 operations as bench.sc for direct comparison
 * Matrix sizes chosen to be meaningful but not hour-long
 """
 
@@ -86,7 +86,15 @@ bench("sum(1000×1000)",
 bench("transpose 1000×1000  [O(1)]",
       lambda: M.T)
 
+# 8. Custom scalar fn via np.vectorize — Python-level loop, not a C kernel.
+#    MatD counterpart uses mapParallel (JVM fork/join, no Python overhead).
+#    Same function: x*x + 2*x + 1
+_vec_fn = np.vectorize(lambda x: x * x + 2.0 * x + 1.0)
+bench("vectorize custom fn  (1000×1000)",
+      lambda: _vec_fn(M))
+
 print("  " + "-" * 72)
 print("\nNote: transpose is O(1) in both libraries (stride flip, no copy).")
 print("      MatD matmul uses OpenBLAS via bytedeco (org.bytedeco:openblas-platform).")
-print("      NumPy matmul uses OpenBLAS (or MKL if present in your install).\n")
+print("      NumPy matmul uses OpenBLAS (or MKL if present in your install).")
+print("      np.vectorize is a Python loop — MatD mapParallel is expected to win here.\n")
