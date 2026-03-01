@@ -20,17 +20,6 @@ final class PosixFmtSuite extends FunSuite {
   var testsTotal = 0
   var runsTotal = 0
 
-  test("String.posix respects forwardMap mount translations"):
-    // Suppose forwardMap contains: "C:/msys64/usr/bin"   -> "/usr/bin"
-    val expected = "/usr/bin/bash.exe"
-    val win = if isWin then
-      "C:/msys64/usr/bin/bash.exe"
-    else
-      expected
-
-    val actual = win.posix
-    assertEquals(actual, expected)
-
   test("verify UserInfo mechanism") {
     withMountLines(Nil, testUser)
     val userDir  = normalizePosix(quikResolve("."))

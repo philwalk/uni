@@ -19,7 +19,7 @@ ThisBuild / watchTriggeredMessage := Watch.clearScreenOnTrigger
 ThisBuild / scalaVersion  := scalaVer
 
 lazy val projectName = "uni"
-ThisBuild / version       := "0.9.2" // slice machinery added but not employed
+ThisBuild / version       := "0.9.3" // slice machinery added but not employed
 ThisBuild / versionScheme := Some("semver-spec")
 
 ThisBuild / organization         := "org.vastblue"
@@ -74,7 +74,7 @@ lazy val root = (project in file(".")).
     parallelExecution  := false,
     crossScalaVersions := supportedScalaVersions,
     name               := projectName,
-    description        := "Support for expressive scripting",
+    description        := "high-performance, NumPy-like linear algebra for the JVM",
  // mainClass          := Some("vast.apps.ShowSysProps"),
     buildInfoKeys      := Seq[BuildInfoKey](name, version, scalaVersion, sbtVersion),
     buildInfoPackage   := "uni", // available as "import uni.BuildInfo"

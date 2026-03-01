@@ -1,3 +1,4 @@
+bin/astDumper.sh
 data/*
 !data/testdates.sc
 ../
@@ -45,3 +46,23 @@ metals.sbt
 .vscode
 # virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
 hs_err_pid*
+py/ast_dump.py
+py/hundredSeeds.py
+py/mytprfex.py
+py/pngK.py
+py/rng.py
+py/test_input.json
+py/test_input.py
+biz
+biz.sc
+bizy.sc
+bizz
+mytprfex.sc
+plan.txt
+problems.txt
+randLong.sc
+remaining-gaps.txt
+sho.sc
+smartRedesign.txt
+smartparse.sc
+translationKey.txt

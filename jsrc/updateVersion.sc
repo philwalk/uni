@@ -11,7 +11,7 @@ object Main:
     println(s"Detected project version: $version")
 
     val root = Paths.get(".")
-    val matcher = FileSystems.getDefault.getPathMatcher("glob:**/*.sc")
+    val matcher = FileSystems.getDefault.getPathMatcher("glob:**/*.{sc,scala,md}")
 
     val files =
       Files.walk(root)
@@ -37,14 +37,13 @@ def readVersion(): String =
 
 def updateFile(path: Path, newVersion: String): Unit =
   val lines = Files.readAllLines(path).asScala
+  val target = s"//> using dep org.vastblue:uni_3:$newVersion"
+  val regex = """//> using dep org\.vastblue(:uni_3:|::uni:)[0-9]+\.[0-9]+\.[0-9]+"""
 
-  val updated = lines.map { line =>
-    line.replaceAll(
-      """//> using dep org\.vastblue:uni_3:[0-9]+\.[0-9]+\.[0-9]+""",
-      s"//> using dep org.vastblue:uni_3:$newVersion"
-    )
-  }
+  val updated = lines.map(_.replaceAll(regex, target))
 
-  val lfText = updated.mkString("\n")
-  Files.write(path, lfText.getBytes("UTF-8"))
-  println(s"updated: $path")
+  // Only write and print if the content has actually changed
+  if (lines != updated) then
+    val lfText = updated.mkString("\n")
+    Files.write(path, lfText.getBytes("UTF-8"))
+    println(s"updated: $path")
