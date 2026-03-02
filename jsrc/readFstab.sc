@@ -3,13 +3,6 @@
 //> using dep org.vastblue:uni_3:0.9.2
 
 import uni.*
-//import uni.fs.* // useful extensions
-
-// display the native path and lines.size of /etc/fstab
-// mapped to "C:\msys64\etc\fstab" in default install for Windows MSYS2
-
-// display the native path and lines.size of /etc/fstab
-// mapped to "C:\msys64\etc\fstab" in Windows msys2
 
 val sysType = uname("-o")
 

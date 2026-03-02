@@ -1,7 +1,8 @@
 package uni.io
 
+import uni.*
 import munit.FunSuite
-import java.nio.file.{Files, Paths}
+import java.nio.file.Files
 import java.nio.charset.StandardCharsets
 
 class TestDelimiterSpec extends FunSuite {

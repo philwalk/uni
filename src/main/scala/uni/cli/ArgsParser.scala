@@ -1,8 +1,8 @@
 package uni.cli
 
-import uni.Path
+import uni.*
 import scala.util.DynamicVariable
-import java.nio.file.{Files, Paths}
+import java.nio.file.Files
 
 // public API:
 // showUsage, eachArg, thisArg, consumeNext, peekNext, nextInt, nextLong, nextDouble
