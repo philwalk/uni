@@ -23,7 +23,7 @@ On Linux and macOS, `uni.Paths` delegates to `java.nio.file.Paths` unchanged. On
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.9.2
+//> using dep org.vastblue:uni_3:0.9.3
 
 import uni.*
 
@@ -195,7 +195,7 @@ The following script hashes all files under a directory and demonstrates argumen
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.9.2
+//> using dep org.vastblue:uni_3:0.9.3
 
 import uni.*
 
@@ -241,7 +241,7 @@ The program name (`hash64demo.sc`) is derived automatically from the runtime env
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.9.2
+//> using dep org.vastblue:uni_3:0.9.3
 
 import uni.time.*
 
@@ -263,7 +263,7 @@ A source file can include a block of raw data after the code, enclosed in a `/* 
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.9.2
+//> using dep org.vastblue:uni_3:0.9.3
 
 import uni.data.HereDoc
 
@@ -282,4 +282,3 @@ carol,35,manager
 ---
 
 ## File I/O Utilities (`uni.io`)
-
