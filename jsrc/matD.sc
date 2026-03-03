@@ -1,6 +1,6 @@
 #!/usr/bin/env -S scala-cli shebang -deprecation
 
-//> using dep org.vastblue:uni_3:0.9.2
+//> using dep org.vastblue:uni_3:0.9.3
 
 import uni.data.*
 //import uni.data.Mat.*
