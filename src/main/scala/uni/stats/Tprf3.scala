@@ -1,4 +1,4 @@
-package apps
+package uni.stats
 
 import uni.data.*
 import uni.data.Mat.*
@@ -9,8 +9,8 @@ import scala.collection.parallel.CollectionConverters.*
  * Three-Pass Regression Filter (Kelly & Pruitt, 2015)
  *
  * Two entry points:
- *   - tprfFast  →  TprfResult  (IS Full; vectorized batch solves; phi/sigma/estimateYhat)
- *   - estimate3prf / forecast3prf  →  PointEstimates  (all OOS modes, autoproxy, avar)
+ *   - tprfFast    →  TprfFast    (IS Full; vectorized batch solves; phi/sigma/estimateYhat)
+ *   - estimate3prf →  Tprf3Result (all procedures; OOS modes, autoproxy, avar)
  *
  * Reference: Kelly, Bryan and Seth Pruitt (2015):
  *   "The Three-Pass Regression Filter: A New Approach to Forecasting
@@ -20,18 +20,19 @@ object Tprf3 {
 
   // ── Output types ───────────────────────────────────────────────────────────
 
-  case class PointEstimates(
-    forecasts: MatD,                        // (T x 1) forecast series
-    ferrors:   MatD,                        // (T x 1) forecast errors
-    rsquare:   Double,                      // R² vs rolling mean (can be negative OOS)
-    encnew:    Double       = Double.NaN,   // ENC-NEW stat (OOS Recursive only)
-    rollfore:  MatD         = MatD.zeros(1, 1),
-    alpha:     Option[MatD] = None,         // (N x 1) IS Full predictor coefficients
-  )
-
   case class AvarEstimates(
     alpha:     MatD,   // (N x N) asymptotic covariance of alpha
     forecasts: MatD,   // (T x T) asymptotic covariance of forecasts
+  )
+
+  case class Tprf3Result(
+    forecasts: MatD,                             // (T x 1) forecast series
+    ferrors:   MatD,                             // (T x 1) forecast errors
+    rsquare:   Double,                           // R² vs rolling mean (can be negative OOS)
+    encnew:    Double            = Double.NaN,   // ENC-NEW stat (OOS Recursive only)
+    rollfore:  MatD              = MatD.zeros(1, 1),
+    alpha:     Option[MatD]      = None,         // (N x 1) IS Full predictor coefficients
+    avar:      Option[AvarEstimates] = None,     // asymptotic variance (IS Full + computeAvar)
   )
 
   // ── TprfResult trait ────────────────────────────────────────────────────────
@@ -435,7 +436,7 @@ object Tprf3 {
     rollwin:     (Int, Int, Int) = (30, 20, 0),
     pls:         Boolean         = false,
     computeAvar: Boolean         = false,
-  ): (MatD, PointEstimates, Option[AvarEstimates]) =
+  ): Tprf3Result =
 
     val T = y.rows
     val N = X.cols
@@ -575,10 +576,6 @@ object Tprf3 {
         }
       else None
 
-    val pointests = PointEstimates(
-      forecasts = forecasts, ferrors = ferrors, rsquare = rsq,
-      encnew = encStat, rollfore = rollfore, alpha = alpha)
-
     // ── Asymptotic variance (IS Full only) ───────────────────────────────────
     val avarests: Option[AvarEstimates] =
       if computeAvar && procedure == "IS Full" then
@@ -601,7 +598,9 @@ object Tprf3 {
         }
       else None
 
-    (forecasts, pointests, avarests)
+    Tprf3Result(
+      forecasts = forecasts, ferrors = ferrors, rsquare = rsq,
+      encnew = encStat, rollfore = rollfore, alpha = alpha, avar = avarests)
 
   /** Forecasts only — simplified wrapper around estimate3prf. */
   def forecast3prf(
@@ -613,7 +612,7 @@ object Tprf3 {
     mintrain:  (Int, Int) = (-1, 0),
     pls:       Boolean    = false,
   ): MatD =
-    estimate3prf(y, X, Z, procedure, window, mintrain, pls = pls)._1
+    estimate3prf(y, X, Z, procedure, window, mintrain, pls = pls).forecasts
 
   // ── Smoke test ──────────────────────────────────────────────────────────────
   def main(args: Array[String]): Unit =
@@ -625,18 +624,17 @@ object Tprf3 {
 
     // IS Full
     val rf = tprfFast(X, y, Z)
-    val (fore3, pt3, _) = estimate3prf(y, X, Right(Z), procedure = "IS Full")
+    val r3 = estimate3prf(y, X, Right(Z), procedure = "IS Full")
     printf("tprfFast     R²=%.4f  yhat[0]=%.6f  adjR²=%.4f  phi:%dx%d  sigma:%dx%d%n",
       rf.rSquared, rf.y_hat(0, 0), rf.adjRsq, rf.phi.rows, rf.phi.cols, rf.sigma.rows, rf.sigma.cols)
-    printf("estimate3prf R²=%.4f  yhat[0]=%.6f%n", pt3.rsquare, fore3(0, 0))
+    printf("estimate3prf R²=%.4f  yhat[0]=%.6f%n", r3.rsquare, r3.forecasts(0, 0))
 
     // Autoproxy IS Full
-    val (fore4, pt4, _) = estimate3prf(y, X, Left(2), procedure = "IS Full")
-    printf("Autoproxy   R²=%.4f  yhat[0]=%.6f%n", pt4.rsquare, fore4(0, 0))
+    val r4 = estimate3prf(y, X, Left(2), procedure = "IS Full")
+    printf("Autoproxy   R²=%.4f  yhat[0]=%.6f%n", r4.rsquare, r4.forecasts(0, 0))
 
     // OOS Recursive
-    val (fore5, pt5, _) = estimate3prf(y, X, Right(Z), procedure = "OOS Recursive",
-                            mintrain = (100, 0))
-    val nFore = (0 until T).count(i => !fore5(i, 0).isNaN)
-    printf("OOS Rec     R²=%.4f  n_forecasts=%d%n", pt5.rsquare, nFore)
+    val r5 = estimate3prf(y, X, Right(Z), procedure = "OOS Recursive", mintrain = (100, 0))
+    val nFore = (0 until T).count(i => !r5.forecasts(i, 0).isNaN)
+    printf("OOS Rec     R²=%.4f  n_forecasts=%d%n", r5.rsquare, nFore)
 }

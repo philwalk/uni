@@ -21,6 +21,9 @@ Both use OpenBLAS. See [`jsrc/bench.sc`](../jsrc/bench.sc) and [`py/bench.py`](.
 | `sum(1000×1000)` | 0.3 ms | 0.5 ms | 1.6× slower | NumPy SIMD reduction hard to beat |
 | `transpose(1000×1000)` | ≈0 ms | ≈0 ms | **tied** | O(1) stride-flip in both — no data copy |
 | `mapParallel` custom fn | 440 ms | 0.9 ms | **470× faster** | `np.vectorize` is a Python loop; JVM is compiled |
+| `3PRF IS Full (T=650, N=40, L=2)` | 7 ms | 1.6 ms | **4.4× faster** | vectorized batch solves (Kelly & Pruitt); Python: scipy-openblas64 |
+| `3PRF OOS Recursive (T=650, N=40, L=2)` | 265 ms | 140 ms | **1.9× faster** | Scala: parallel collections; Python: vectorized per-window |
+| `3PRF OOS Cross Val (T=650, N=40, L=2)` | 679 ms | 334 ms | **2× faster** | Scala: parallel collections; Python: vectorized per-window |
 
 **Practical guidance:**
 - Element-wise ops (`relu`, `sigmoid`, `add`) now run faster than NumPy — parallel JVM cores beat single-core C SIMD.

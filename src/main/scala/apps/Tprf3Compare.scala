@@ -3,6 +3,7 @@ package apps
 import uni.data.*
 import uni.data.Mat.*
 import uni.*
+import uni.stats.Tprf3
 
 /**
  * Cross-validates Tprf3.scala against py/tprf3.py by reading common CSV
@@ -54,31 +55,30 @@ object Tprf3Compare {
     println()
 
     // ── IS Full (explicit Z) ─────────────────────────────────────────────────
-    val (fore_is, pt_is, _) = Tprf3.estimate3prf(y, X, Right(Z), procedure = "IS Full")
+    val r_is   = Tprf3.estimate3prf(y, X, Right(Z), procedure = "IS Full")
     val ref_is = load("fore_is.csv")
-    printf("IS Full        R²=%.6f  fore[0]=%.10f%n", pt_is.rsquare, fore_is(0, 0))
-    check("IS Full", fore_is, ref_is)
+    printf("IS Full        R²=%.6f  fore[0]=%.10f%n", r_is.rsquare, r_is.forecasts(0, 0))
+    check("IS Full", r_is.forecasts, ref_is)
 
     // ── IS Full (autoproxy L=2) ──────────────────────────────────────────────
-    val (fore_ia, pt_ia, _) = Tprf3.estimate3prf(y, X, Left(2), procedure = "IS Full")
+    val r_ia   = Tprf3.estimate3prf(y, X, Left(2), procedure = "IS Full")
     val ref_ia = load("fore_is_auto.csv")
-    printf("IS Full auto   R²=%.6f  fore[0]=%.10f%n", pt_ia.rsquare, fore_ia(0, 0))
-    check("IS Full auto", fore_ia, ref_ia)
+    printf("IS Full auto   R²=%.6f  fore[0]=%.10f%n", r_ia.rsquare, r_ia.forecasts(0, 0))
+    check("IS Full auto", r_ia.forecasts, ref_ia)
 
     // ── OOS Recursive ────────────────────────────────────────────────────────
-    val (fore_or, pt_or, _) = Tprf3.estimate3prf(y, X, Right(Z), procedure = "OOS Recursive",
-                               mintrain = (50, 0))
+    val r_or   = Tprf3.estimate3prf(y, X, Right(Z), procedure = "OOS Recursive", mintrain = (50, 0))
     val ref_or = load("fore_oos_rec.csv")
-    val n_or = (0 until T).count(i => !fore_or(i, 0).isNaN)
-    printf("OOS Recursive  R²=%.6f  n_valid=%d%n", pt_or.rsquare, n_or)
-    check("OOS Recursive", fore_or, ref_or)
+    val n_or   = (0 until T).count(i => !r_or.forecasts(i, 0).isNaN)
+    printf("OOS Recursive  R²=%.6f  n_valid=%d%n", r_or.rsquare, n_or)
+    check("OOS Recursive", r_or.forecasts, ref_or)
 
     // ── OOS Cross Val ────────────────────────────────────────────────────────
-    val (fore_cv, pt_cv, _) = Tprf3.estimate3prf(y, X, Right(Z), procedure = "OOS Cross Val")
+    val r_cv   = Tprf3.estimate3prf(y, X, Right(Z), procedure = "OOS Cross Val")
     val ref_cv = load("fore_oos_cv.csv")
-    val n_cv = (0 until T).count(i => !fore_cv(i, 0).isNaN)
-    printf("OOS Cross Val  R²=%.6f  n_valid=%d%n", pt_cv.rsquare, n_cv)
-    check("OOS Cross Val", fore_cv, ref_cv)
+    val n_cv   = (0 until T).count(i => !r_cv.forecasts(i, 0).isNaN)
+    printf("OOS Cross Val  R²=%.6f  n_valid=%d%n", r_cv.rsquare, n_cv)
+    check("OOS Cross Val", r_cv.forecasts, ref_cv)
 
     // ── Tprf3.tprfFast ────────────────────────────────────────────────────────
     println()

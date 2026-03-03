@@ -30,6 +30,9 @@ Measured on the same machine (JVM 17 / Scala 3.7.0 vs Python 3.14.3 / NumPy 2.4.
 | `sum(1000×1000)` | 0.3 ms | 0.5 ms | 1.6× slower |
 | `transpose(1000×1000)` | ≈0 ms | ≈0 ms | **tied** |
 | custom fn (`mapParallel` vs `np.vectorize`) | 440 ms | 0.9 ms | **470× faster** |
+| `3PRF IS Full (T=650, N=40, L=2)` | 7 ms | 1.6 ms | **4.4× faster** |
+| `3PRF OOS Recursive (T=650, N=40, L=2)` | 265 ms | 140 ms | **1.9× faster** |
+| `3PRF OOS Cross Val (T=650, N=40, L=2)` | 679 ms | 334 ms | **2× faster** |
 
 Full results and methodology: [MatD Cheat Sheet — Performance](docs/MatDCheatSheet.md).
 

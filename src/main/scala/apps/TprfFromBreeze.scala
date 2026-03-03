@@ -7,7 +7,7 @@ import uni.data.*
 import uni.data.Mat.*
 import uni.*
 import java.io.PrintWriter
-import Tprf3.{TprfResult, TprfFast, tprfFast}
+import uni.stats.Tprf3.{TprfResult, TprfFast, tprfFast}
 
 object TprfFromBreeze {
 

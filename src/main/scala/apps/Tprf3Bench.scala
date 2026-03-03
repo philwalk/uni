@@ -2,6 +2,7 @@ package apps
 
 import uni.*
 import uni.data.*
+import uni.stats.Tprf3
 import scala.sys.process.*
 
 /**
@@ -57,6 +58,11 @@ object Tprf3Bench {
     printf("  [Scala]  %-26s  %8.2f ms/call  (loops=%d)%n",
       "Tprf3.estimate3prf OOS CV", msCv, oosLoops)
 
+  /** Known native-Windows Python installations to try, in preference order. */
+  private val winPythonCandidates: List[String] = List(
+    "F:/WPy64-3.14.3.0/python/python.exe",
+  )
+
   private def findPython(): Option[String] =
     // MSYS2 paths resolved to Windows equivalents via Paths.get().posx
     val msys2Paths = List("/ucrt64/bin/python3.exe", "/usr/bin/python3")
@@ -66,20 +72,53 @@ object Tprf3Bench {
       catch case _: Exception => false
     }
 
-  private def runPythonBench(rootDir: String): Unit =
-    val script = Paths.get(s"$rootDir/py/bench_tprf3.py").posx
-    if !java.io.File(script).exists() then
-      println(s"  (script not found: $script)")
-      return
-    findPython() match
-      case None      => println("  (python3 not found; skipping Python benchmark)")
-      case Some(exe) => Seq(exe, "-u", script).!
+  private def findWinPython(): Option[String] =
+    winPythonCandidates.find { p =>
+      try Seq(p, "--version").!(ProcessLogger(_ => ())) == 0
+      catch case _: Exception => false
+    }
+
+  /** Returns "Python X.Y.Z  (blas-name)" for display in the section header. */
+  private def pythonLabel(exe: String): String =
+    val ver = try
+      var v = ""
+      Seq(exe, "-c", "import sys; print(sys.version.split()[0])").!(ProcessLogger(v = _, _ => ()))
+      v.trim
+    catch case _: Exception => "?"
+    val blas = try
+      var b = ""
+      val cmd = "import numpy as np, warnings; warnings.filterwarnings('ignore'); " +
+        "[print(v['name']) for v in np.__config__.blas_opt_info.get('libraries', [{'name':'?'}][:1])]"
+      // simpler: parse show_config output for the name field
+      var lines = List.empty[String]
+      Seq(exe, "-c",
+        "import numpy as np, warnings; warnings.filterwarnings('ignore'); np.show_config()"
+      ).!(ProcessLogger(l => lines ::= l, _ => ()))
+      val nameLine = lines.reverse.find(_.trim.startsWith("name:"))
+      nameLine.map(_.trim.stripPrefix("name:").trim).getOrElse("?")
+    catch case _: Exception => "?"
+    s"Python $ver  ($blas)"
+
+  private def runBench(header: String, exe: String, script: String): Unit =
+    println(s"\n$header")
+    Seq(exe, "-u", script).!
 
   def main(args: Array[String]): Unit =
+    val rootDir = sys.props.getOrElse("user.dir", ".")
+    val script  = Paths.get(s"$rootDir/py/bench_tprf3.py").posx
+
     println("── Scala benchmarks ─────────────────────────────────────────────────────────")
     run("Small", T = 200, N = 30, L = 2, warmup = 5,  loops = 50)
     run("Large", T = 650, N = 40, L = 2, warmup = 3,  loops = 20)
-    println()
-    println("── Python benchmarks ────────────────────────────────────────────────────────")
-    runPythonBench(sys.props.getOrElse("user.dir", "."))
+
+    if !java.io.File(script).exists() then
+      println(s"\n(bench script not found: $script)")
+    else
+      findPython() match
+        case None      => println("\n(MSYS2 python3 not found; skipping)")
+        case Some(exe) => runBench(s"── Python benchmarks  [${pythonLabel(exe)}] ──────────────────────────────", exe, script)
+
+      findWinPython() match
+        case None      => println("\n(WinPython not found; skipping)")
+        case Some(exe) => runBench(s"── WinPython benchmarks  [${pythonLabel(exe)}] ───────────────────────────", exe, script)
 }
