@@ -3,6 +3,7 @@ package apps
 import uni.data.*
 import uni.data.Mat.*
 import uni.*
+import scala.collection.parallel.CollectionConverters.*
 
 /**
  * Three-Pass Regression Filter (Kelly & Pruitt, 2015)
@@ -472,7 +473,7 @@ object Tprf3 {
           zFinal = zMat
 
       case "OOS Cross Val" =>
-        (0 until T).par.foreach { t =>
+        (0 until T).toVector.par.foreach { t =>
           val drop = (t - window._1 until t - window._1 + window._2).filter(i => i >= 0 && i < T)
           val ts   = setdiff(T, drop)
           val yt   = selectRows(y, ts)
@@ -494,7 +495,7 @@ object Tprf3 {
         }
 
       case "OOS Recursive" =>
-        (mt._1 + 1 + mt._2 until T).par.foreach { t =>
+        (mt._1 + 1 + mt._2 until T).toVector.par.foreach { t =>
           val ts  = (0 until t - 1 - mt._2).toSeq
           val yt  = selectRows(y, ts)
           val Xt0 = selectRows(Xn, ts)
@@ -515,7 +516,7 @@ object Tprf3 {
         }
 
       case "OOS Rolling" =>
-        (win + 1 + gap until T).par.foreach { t =>
+        (win + 1 + gap until T).toVector.par.foreach { t =>
           val ts0 = (t - win - gap until t - 1 - gap).filter(i => i >= 0 && i < T)
           val yt  = selectRows(y, ts0)
           val Xt0 = selectRows(Xn, ts0)
