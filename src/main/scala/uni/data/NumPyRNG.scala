@@ -363,95 +363,11 @@ class NumPyRNG(seed: Long = 0L) {
 // Pre-computed PCG64 initial states for seeds 0-100
 // Generated for NumPy compatibility
 object NumPyRNG {
-  /*
-  import java.nio.file.Paths
-
-  private val cacheFile = {
-    val home = System.getProperty("user.home")
-    Paths.get(home, ".numpy_rng_cache.txt")
-  }
-  */
-  
-  // Cache now stores (state, increment) pairs
-  /*
-  import java.nio.file.{Files, Paths}
-  private val stateCache = {
-    //ensureMinimalCache()  // ← Ensure sufficient cache values for unit tests
-
-    val cache = scala.collection.mutable.Map[Long, (BigInt, BigInt)]()
-    if (Files.exists(cacheFile)) {
-      try {
-        scala.io.Source.fromFile(cacheFile.toFile).getLines().foreach { line =>
-          val parts = line.split("=|,")
-          if (parts.length == 3) {
-            val seed = parts(0).toLong
-            val state = BigInt(parts(1))
-            val inc = BigInt(parts(2))
-            cache(seed) = (state, inc)
-          }
-        }
-      } catch {
-        case e: Exception =>
-          System.err.println(s"Warning: Could not load RNG cache: ${e.getMessage}")
-      }
-    }
-    cache
-  }
-  */
   
   private def getOrComputeInitialState(seed: Long): (BigInt, BigInt) = {
     getInitialStateNumpy242(seed)
-    /*
-    stateCache.get(seed) match {
-      case Some(cached) => cached
-      case None =>
-        val computed = getInitialStateFromPython(seed)
-        // Only cache if successful (getInitialStateFromPython throws on failure)
-        saveToCache(seed, computed._1, computed._2)
-        stateCache(seed) = computed
-        computed
-    }
-    */
   }
 
-  /*
-  private def saveToCache(seed: Long, state: BigInt, inc: BigInt): Unit = {
-    import java.nio.file.StandardOpenOption
-    try {
-      val entry = s"$seed=$state,$inc\n"
-      Files.write(cacheFile, entry.getBytes,
-        StandardOpenOption.CREATE, 
-        StandardOpenOption.APPEND)
-    } catch {
-      case e: Exception =>
-        System.err.println(s"Warning: Could not save to cache: ${e.getMessage}")
-    }
-  }
-  */
-
-//  def getInitialStateFromPython(seed: Long): (BigInt, BigInt) = {
-//    try {
-//      val pythonCode = s"""
-//      |#!/usr/bin/env -S python
-//      |import numpy as np
-//      |rng = np.random.default_rng($seed)
-//      |s = rng.bit_generator.state['state']
-//      |print(f\\"{s['state']},{s['inc']}\\")
-//      """.trim.stripMargin
-//      val output = sys.process.Process(Seq("python", "-c", pythonCode)).!!.trim
-//      val parts = output.split(",")
-//      val state = BigInt(parts(0))
-//      val inc = BigInt(parts(1))
-//      //System.err.println(s"// Computed for seed $seed: state=$state, inc=$inc")
-//      (state, inc)
-//    } catch {
-//      case e: Exception =>
-//        System.err.println(s"Warning: Could not compute NumPy state for seed $seed")
-//        System.err.println(s"  ${e.getMessage}")
-//        System.err.println("Results will not match NumPy for this seed")
-//        (BigInt(seed), BigInt("332724090758049132448979897138935081983"))  // Fallback
-//    }
-//  }
   def getInitialStateFromPython(seed: Long): (BigInt, BigInt) = {
     import java.nio.charset.StandardCharsets
     import scala.sys.process.*
@@ -517,33 +433,8 @@ object NumPyRNG {
     }
   }
 
-  /*
-  private def ensureMinimalCache(): Unit = {
-    if (!Files.exists(cacheFile)) {
-      try {
-        // Create with seeds used in tests: 0, 1, 42, 50, 99, 100
-        val minimalCache = """
-          |0=35399562948360463058890781895381311971,87136372517582989555478159403783844777
-          |1=207833532711051698738587646355624148094,194290289479364712180083596243593368443
-          |42=274674114334540486603088602300644985544,332724090758049132448979897138935081983
-          |50=259031282180232884730447052609721539192,81605775420243012667316905014758695997
-          |99=323145379500794079207071596454411015148,324459057272246375853630270025492255805
-          |100=241834680195789509926839563169936010333,30008503642980956324491363429807189605
-          |123=160078363690744033601390112987726904141,17686443629577124697969402389330893883
-          |456=247657327053257868884743652982636763877,246070390390441921778646289804763626967
-          """.trim.stripMargin
-        Files.write(cacheFile, minimalCache.getBytes,
-          java.nio.file.StandardOpenOption.CREATE)
-        System.err.println(s"Created minimal NumPy RNG cache at ${cacheFile}")
-      } catch {
-        case e: Exception =>
-          System.err.println(s"Warning: Could not create cache file: ${e.getMessage}")
-      }
-    }
-  }
-  */
-
 }
+
 export NumPyRNG.getInitialStateFromPython
 export SeedSequenceModule.getInitialStateNumpy242
 

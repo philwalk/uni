@@ -1,6 +1,7 @@
 package uni.apps
 
-import java.nio.file.{Files, Paths}
+import uni.*
+import java.nio.file.Files
 import uni.io.FastCsv
 
 object CsvBench:

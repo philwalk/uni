@@ -275,7 +275,7 @@ def denseLayer(input: Mat[Double], weights: Mat[Double], bias: Mat[Double]): Mat
 
 `uni` also includes utilities that predate `uni.data.Mat` and remain available via `import uni.*`:
 
-* **Portable scripting:** [Portable Programming Utilities](docs/Portable-Programming.md) — MSYS2/Cygwin-aware paths, smart date parsing, command-line argument handling, and inline data embedding.
+* **Scripting Shortcuts:** [Portable Programming Utilities](docs/UniScriptingTools.md) — MSYS2/Cygwin-aware paths, smart date parsing, command-line argument handling, and inline data embedding.
 
 ---
 © 2026 vastblue.org. Distributed under the Apache License 2.0.

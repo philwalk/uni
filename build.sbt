@@ -26,7 +26,7 @@ ThisBuild / organization         := "org.vastblue"
 ThisBuild / organizationName     := "vastblue.org"
 ThisBuild / organizationHomepage := Some(url("https://vastblue.org"))
 ThisBuild / homepage             := Some(url(s"https://github.com/philwalk/$projectName"))
-ThisBuild / licenses             := Seq("Apache-2.0" -> url("https://www.apache.org/licenses/LICENSE-2.0.txt"))
+ThisBuild / licenses.withRank(KeyRanks.Invisible) := Seq("Apache-2.0" -> url("https://www.apache.org/licenses/LICENSE-2.0.txt"))
 
 //cancelable in Global := true
 
@@ -83,9 +83,10 @@ lazy val root = (project in file(".")).
   )
 
 libraryDependencies ++= Seq(
-  "org.bytedeco"             % "openblas-platform" % "0.3.30-1.5.12",
-  "org.scalameta"           %% "munit"             % "1.2.1" % Test,
-  "org.scalameta"           %% "munit-scalacheck"  % "1.2.0" % Test,
+  "org.bytedeco"             % "openblas-platform"          % "0.3.31-1.5.13",
+  "org.scala-lang.modules"  %% "scala-parallel-collections" % "1.2.0",
+  "org.scalameta"           %% "munit"                      % "1.2.3" % Test,
+  "org.scalameta"           %% "munit-scalacheck"           % "1.2.0" % Test,
 )
 
 /*
