@@ -46,6 +46,33 @@ class MatMultiplyTest extends munit.FunSuite {
     assertEquals(result(1, 0), 7.5)
   }
   
+  test("BLAS matmul: non-zero offset view gives correct result") {
+    // Regression test for BLAS offset bug:
+    // new DoublePointer(arr*) starts at index 0, ignoring m.offset.
+    // For a view with offset=n, BLAS would read the wrong block of memory.
+    //
+    // Mat.create with standard strides (rs=cols, cs=1) passes through isWeirdLayout=false,
+    // so the matrix is NOT materialized — the offset reaches multiplyDoubleBLAS unchanged.
+    //
+    // Use n=20 so rows*cols*cols = 8000 >= blasThreshold(6000), ensuring BLAS is called.
+    val n   = 20
+    val off = n  // n zeros before the actual matrix data
+
+    // backing layout: [0..n-1] = zeros, [n..n+n*n-1] = n×n identity in row-major
+    val backing = Array.ofDim[Double](off + n * n)
+    for i <- 0 until n do backing(off + i * n + i) = 1.0
+
+    // view points into backing at the identity block; standard strides, non-zero offset
+    val view = Mat.createView(backing, n, n, false, off, n, 1)
+    val ref  = MatD.eye(n)
+
+    // I × I = I; if offset is ignored BLAS reads the zero-prefixed region → wrong result
+    val result = view ~@ ref
+    for i <- 0 until n; j <- 0 until n do
+      assertEqualsDouble(result(i, j), ref(i, j), 1e-10,
+        s"mismatch at ($i,$j): expected ${ref(i,j)}, got ${result(i,j)}")
+  }
+
   test("matrix multiplication rejects invalid dimensions") {
     val m1 = Mat.ones[Double](2, 3)
     val m2 = Mat.ones[Double](2, 3)

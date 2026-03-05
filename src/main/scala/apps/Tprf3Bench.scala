@@ -86,10 +86,6 @@ object Tprf3Bench {
       v.trim
     catch case _: Exception => "?"
     val blas = try
-      var b = ""
-      val cmd = "import numpy as np, warnings; warnings.filterwarnings('ignore'); " +
-        "[print(v['name']) for v in np.__config__.blas_opt_info.get('libraries', [{'name':'?'}][:1])]"
-      // simpler: parse show_config output for the name field
       var lines = List.empty[String]
       Seq(exe, "-c",
         "import numpy as np, warnings; warnings.filterwarnings('ignore'); np.show_config()"

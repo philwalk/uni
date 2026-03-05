@@ -84,8 +84,11 @@ object Tprf3Compare {
     println()
     println("── Tprf3 IS Full: tprfFast ──────────────────────────────────────────────")
     val result = Tprf3.tprfFast(X, y, Z)
+    val rss = ((y - result.y_hat) ~^ 2.0).sum
+    val ssy = ((y - y.mean) ~^ 2.0).sum
+    val r2  = (ssy - rss) / ssy
     printf("fast           R²=%.6f  yhat[0]=%.10f  adjR²=%.6f%n",
-      TprfFromBreeze.rr2(y, result.y_hat), result.y_hat(0, 0), result.adjRsq)
+      r2, result.y_hat(0, 0), result.adjRsq)
     check("fast vs Python ref", result.y_hat, ref_is)
 
     // ── Factor matrix ─────────────────────────────────────────────────────────

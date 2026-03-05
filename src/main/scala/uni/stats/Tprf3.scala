@@ -271,7 +271,7 @@ object Tprf3 {
     if vals.nonEmpty then vals.sum / vals.length else Double.NaN
 
   /** OLS with NaN-row filtering and minObs guard; returns Some(beta) or None. */
-  private def nanOls(y: MatD, X: MatD, minObs: Int = 10): Option[MatD] =
+  private def nanOls(y: MatD, X: MatD, minObs: Int): Option[MatD] =
     val valid = (0 until y.rows).filter { i =>
       !y(i, 0).isNaN && (0 until X.cols).forall(j => !X(i, j).isNaN)
     }
@@ -322,8 +322,8 @@ object Tprf3 {
     y:      MatD,
     X:      MatD,
     Z:      MatD,
-    oosX:   Option[MatD] = None,
-    minObs: Int          = 10,
+    oosX:   Option[MatD],
+    minObs: Int,
   ): (MatD, Double) =
     val T = y.rows
     val L = Z.cols
@@ -364,7 +364,7 @@ object Tprf3 {
     y:      MatD,
     X:      MatD,
     Z:      MatD,
-    pls:    Boolean      = false,
+    pls:    Boolean,
     oosX:   Option[MatD] = None,
     minObs: Int          = 10,
   ): (MatD, Double) =

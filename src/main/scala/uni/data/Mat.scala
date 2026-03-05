@@ -190,17 +190,19 @@ object Mat {
   // The 'Mat.create' that the rest of your app uses
   // just forwards to the Internal gatekeeper.
   // This is the only public way to create a Mat.
-  def create[T: ClassTag](
+  def create[T: ClassTag](tdata: Array[T], rows: Int, cols: Int): Mat[T] =
+    Internal.create(tdata, rows, cols, false, 0, -1, -1)
+
+  /** For tests and internal callers that need custom strides/offset. */
+  private[data] def createView[T: ClassTag](
       tdata: Array[T],
       rows: Int,
       cols: Int,
       transposed: Boolean = false,
-      offset: Int = 0, // added in phase 2
+      offset: Int = 0,
       rs: Int = -1,
       cs: Int = -1,
-  ): Mat[T] = {
-    Internal.create(tdata, rows, cols, transposed, offset, rs, cs)
-  }
+  ): Mat[T] = Internal.create(tdata, rows, cols, transposed, offset, rs, cs)
 
   object :: // Sentinel object for "all" in slicing
 
@@ -208,6 +210,23 @@ object Mat {
     s"Mat(${rows}x${cols}, offset=$offset, rs=$rs, cs=$cs, transposed=$transposed)"
 
   private lazy val blasThreshold: Long = System.getProperty("uni.mat.blasThreshold", "6000").toLong
+
+  /** Returns m if already BLAS-safe (offset=0, standard strides), else a fresh contiguous copy. */
+  private def blasReady(m: Mat[Double]): Mat[Double] =
+    if m.isStandardContiguous && m.offset == 0 then m
+    else
+      val rows = m.rows; val cols = m.cols
+      val arr  = new Array[Double](rows * cols)
+      var i = 0; while i < rows do { var j = 0; while j < cols do { arr(i*cols+j) = m(i,j); j+=1 }; i+=1 }
+      Mat.create(arr, rows, cols)
+
+  private def blasReadyF(m: Mat[Float]): Mat[Float] =
+    if m.isStandardContiguous && m.offset == 0 then m
+    else
+      val rows = m.rows; val cols = m.cols
+      val arr  = new Array[Float](rows * cols)
+      var i = 0; while i < rows do { var j = 0; while j < cols do { arr(i*cols+j) = m(i,j); j+=1 }; i+=1 }
+      Mat.create(arr, rows, cols)
 
   def vstack[U: ClassTag](matrices: Mat[U]*): Mat[U] = {
     require(matrices.nonEmpty, "vstack requires at least one matrix")
@@ -633,9 +652,7 @@ object Mat {
         s"Cannot reshape ${m.rows}x${m.cols} to ${newRows}x${newCols}")
 
       if m.isContiguous then
-        // Pass arguments in the correct order for your Mat.create:
-        // tdata, rows, cols, transposed, offset, rs, cs
-        Mat.create(m.tdata, newRows, newCols, false, m.offset, newCols, 1)
+        Internal.create(m.tdata, newRows, newCols, false, m.offset, newCols, 1)
       else
         // If it's a slice or transposed, we must force a contiguous copy first
         m.toContiguous.reshape(newRows, newCols)
@@ -644,8 +661,8 @@ object Mat {
     // 3. Helper to force a matrix into a standard contiguous layout
     def toContiguous(using ct: ClassTag[T]): Mat[T] = {
       // 1. Check if already contiguous to avoid work
-      if (m.isContiguous) then 
-        m 
+      if m.isContiguous && m.offset == 0 then
+        m
       else
         // 2. Pre-calculate total size to ensure it's positive
         val total = m.rows * m.cols
@@ -668,8 +685,7 @@ object Mat {
         }
         
         // 4. Create the new matrix with standard strides
-        // IMPORTANT: Ensure Mat.create results in a matrix where isContiguous is TRUE
-        Mat.create(newData, rows, cols, false, 0, cols, 1)
+        Mat.create(newData, rows, cols)
     }
 
     /**
@@ -779,19 +795,43 @@ object Mat {
         i += 1
     }
 
-    // row mutator
+    // row mutator (scalar)
     def update(row: Int, cols: ::.type, value: T): Unit =
       var j = 0
       while j < m.cols do
         m(row, j) = value
         j += 1
 
-    // col mutator
+    // col mutator (scalar)
     def update(rows: ::.type, col: Int, value: T): Unit =
       var i = 0
       while i < m.rows do
         m(i, col) = value
         i += 1
+
+    /** m(row, ::) = other — assign row vector (1×N) or col vector (N×1) to a single row.
+     *  NumPy: m[row, :] = arr  (Breeze: m(row, ::).t := vec) */
+    def update(row: Int, cols: ::.type, other: Mat[T]): Unit =
+      val r = if row < 0 then m.rows + row else row
+      require(r >= 0 && r < m.rows, s"Row index $r out of bounds [0, ${m.rows})")
+      require(other.rows == 1 && other.cols == m.cols || other.rows == m.cols && other.cols == 1,
+        s"shape mismatch: row has ${m.cols} cols, source is ${other.rows}×${other.cols}")
+      if other.rows == 1 then
+        for c <- 0 until m.cols do m(r, c) = other(0, c)
+      else
+        for c <- 0 until m.cols do m(r, c) = other(c, 0)
+
+    /** m(::, col) = other — assign col vector (N×1) or row vector (1×N) to a single column.
+     *  NumPy: m[:, col] = arr  (Breeze: m(::, col) := vec) */
+    def update(rows: ::.type, col: Int, other: Mat[T]): Unit =
+      val c = if col < 0 then m.cols + col else col
+      require(c >= 0 && c < m.cols, s"Column index $c out of bounds [0, ${m.cols})")
+      require(other.cols == 1 && other.rows == m.rows || other.rows == 1 && other.cols == m.rows,
+        s"shape mismatch: col has ${m.rows} rows, source is ${other.rows}×${other.cols}")
+      if other.cols == 1 then
+        for r <- 0 until m.rows do m(r, c) = other(r, 0)
+      else
+        for r <- 0 until m.rows do m(r, c) = other(0, r)
 
     /** Update selected rows (NumPy: m[indices, :] = value) */
     def update(rowIndices: Array[Int], cols: ::.type, other: Mat[T]): Unit = {
@@ -914,7 +954,7 @@ object Mat {
         }
         i += 1
       }
-      Mat.create(newData, m.rows, m.cols, transposed = false)
+      Mat.create(newData, m.rows, m.cols)
     }
 
     /**
@@ -944,15 +984,7 @@ object Mat {
       // We pass the existing strides (rs, cs) and the new offset.
       // The Layout Guard will automatically check if this specific
       // sub-view is "weird" and copy it if necessary!
-      Mat.create(
-        m.underlying,
-        newRows,
-        newCols,
-        m.transposed,
-        newOffset,
-        m.rs,
-        m.cs
-      )
+      Internal.create(m.underlying, newRows, newCols, m.transposed, newOffset, m.rs, m.cs)
     }
 
     /**
@@ -978,16 +1010,7 @@ object Mat {
           )
         }
 
-        // Funnel through our offset-aware factory
-        Mat.create(
-          m.underlying,
-          targetRows,
-          targetCols,
-          m.transposed,
-          m.offset,
-          newRS,
-          newCS
-        )
+        Internal.create(m.underlying, targetRows, targetCols, m.transposed, m.offset, newRS, newCS)
     }
 
     def zipMap[U, V: ClassTag](other: Mat[U])(f: (T, U) => V): Mat[V] = {
@@ -1079,15 +1102,7 @@ object Mat {
     def transpose: Mat[T] = {
       // We create a new view, flipping the 'transposed' flag,
       // but we MUST pass the existing offset and the SWAPPED strides.
-      Mat.create(
-        tdata = m.underlying,
-        rows = m.cols,      // Rows/Cols swap logically
-        cols = m.rows,
-        transposed = !m.transposed,
-        offset = m.offset,   // <--- This is likely what is missing!
-        rs = m.cs,           // Row stride becomes the old Col stride
-        cs = m.rs            // Col stride becomes the old Row stride
-      )
+      Internal.create(m.underlying, m.cols, m.rows, !m.transposed, m.offset, m.cs, m.rs)
     }
 
     def flatten: Array[T] = {
@@ -1882,7 +1897,7 @@ object Mat {
       val src = m.tdata
       val dst = new Array[T](src.length)
       System.arraycopy(src, 0, dst, 0, src.length)
-      Mat.create(dst, m.rows, m.cols, m.transposed)
+      Internal.create(dst, m.rows, m.cols, m.transposed, 0, -1, -1)
     }
 
     // ---- Pure-JVM multiply (parallel tiled) ----------------------------
@@ -1990,14 +2005,16 @@ object Mat {
     private[data] def multiplyDoubleBLAS(other: Mat[Double]): Mat[Double] = {
       import org.bytedeco.openblas.global.openblas.*
       import org.bytedeco.javacpp.*
-      val a = m.tdata.asInstanceOf[Array[Double]]
-      val b = other.data.asInstanceOf[Array[Double]]
-      val rowsA = m.rows; val colsA = m.cols; val colsB = other.cols
+      val am = Mat.blasReady(m.asInstanceOf[Mat[Double]])
+      val bm = Mat.blasReady(other)
+      val a = am.tdata.asInstanceOf[Array[Double]]
+      val b = bm.tdata.asInstanceOf[Array[Double]]
+      val rowsA = am.rows; val colsA = am.cols; val colsB = bm.cols
       val result = new Array[Double](rowsA * colsB)
-      val transA = if m.transposed then CblasTrans else CblasNoTrans
-      val transB = if other.transposed then CblasTrans else CblasNoTrans
-      val ldA = if m.transposed then m.rows else m.cols
-      val ldB = if other.transposed then other.rows else other.cols
+      val transA = if am.transposed then CblasTrans else CblasNoTrans
+      val transB = if bm.transposed then CblasTrans else CblasNoTrans
+      val ldA = if am.transposed then am.rows else am.cols
+      val ldB = if bm.transposed then bm.rows else bm.cols
       val pA = new DoublePointer(a*); val pB = new DoublePointer(b*)
       val pC = new DoublePointer(result.length.toLong)
       cblas_dgemm(CblasRowMajor, transA, transB, rowsA, colsB, colsA,
@@ -2009,14 +2026,16 @@ object Mat {
     private[data] def multiplyFloatBLAS(other: Mat[Float]): Mat[Float] = {
       import org.bytedeco.openblas.global.openblas.*
       import org.bytedeco.javacpp.*
-      val a = m.tdata.asInstanceOf[Array[Float]]
-      val b = other.data.asInstanceOf[Array[Float]]
-      val rowsA = m.rows; val colsA = m.cols; val colsB = other.cols
+      val am = Mat.blasReadyF(m.asInstanceOf[Mat[Float]])
+      val bm = Mat.blasReadyF(other)
+      val a = am.tdata.asInstanceOf[Array[Float]]
+      val b = bm.tdata.asInstanceOf[Array[Float]]
+      val rowsA = am.rows; val colsA = am.cols; val colsB = bm.cols
       val result = new Array[Float](rowsA * colsB)
-      val transA = if m.transposed then CblasTrans else CblasNoTrans
-      val transB = if other.transposed then CblasTrans else CblasNoTrans
-      val ldA = if m.transposed then m.rows else m.cols
-      val ldB = if other.transposed then other.rows else other.cols
+      val transA = if am.transposed then CblasTrans else CblasNoTrans
+      val transB = if bm.transposed then CblasTrans else CblasNoTrans
+      val ldA = if am.transposed then am.rows else am.cols
+      val ldB = if bm.transposed then bm.rows else bm.cols
       val pA = new FloatPointer(a*); val pB = new FloatPointer(b*)
       val pC = new FloatPointer(result.length.toLong)
       cblas_sgemm(CblasRowMajor, transA, transB, rowsA, colsB, colsA,
@@ -2527,22 +2546,22 @@ object Mat {
 
     // ---- Element-wise comparison → Mat[Boolean] ----------------------------
     def gt(other: T)(using ord: Ordering[T]): Mat[Boolean] =
-      Mat.create(m.tdata.map(ord.gt(_, other)), m.rows, m.cols, m.transposed)
+      Internal.create(m.tdata.map(ord.gt(_, other)), m.rows, m.cols, m.transposed, 0, -1, -1)
 
     def lt(other: T)(using ord: Ordering[T]): Mat[Boolean] =
-      Mat.create(m.tdata.map(ord.lt(_, other)), m.rows, m.cols, m.transposed)
+      Internal.create(m.tdata.map(ord.lt(_, other)), m.rows, m.cols, m.transposed, 0, -1, -1)
 
     def gte(other: T)(using ord: Ordering[T]): Mat[Boolean] =
-      Mat.create(m.tdata.map(ord.gteq(_, other)), m.rows, m.cols, m.transposed)
+      Internal.create(m.tdata.map(ord.gteq(_, other)), m.rows, m.cols, m.transposed, 0, -1, -1)
 
     def lte(other: T)(using ord: Ordering[T]): Mat[Boolean] =
-      Mat.create(m.tdata.map(ord.lteq(_, other)), m.rows, m.cols, m.transposed)
+      Internal.create(m.tdata.map(ord.lteq(_, other)), m.rows, m.cols, m.transposed, 0, -1, -1)
 
     def :==(other: T)(using ord: Ordering[T]): Mat[Boolean] =
-      Mat.create(m.tdata.map(ord.equiv(_, other)), m.rows, m.cols, m.transposed)
+      Internal.create(m.tdata.map(ord.equiv(_, other)), m.rows, m.cols, m.transposed, 0, -1, -1)
 
     def :!=(other: T)(using ord: Ordering[T]): Mat[Boolean] =
-      Mat.create(m.tdata.map(!ord.equiv(_, other)), m.rows, m.cols, m.transposed)
+      Internal.create(m.tdata.map(!ord.equiv(_, other)), m.rows, m.cols, m.transposed, 0, -1, -1)
 
     // Int overloads for natural NumPy-style usage e.g. m.gt(0)
     def gt(other: Int)(using ord: Ordering[T], frac: Fractional[T]): Mat[Boolean] =
@@ -2866,20 +2885,19 @@ object Mat {
     // These are Double/Float specific - Boolean result for data cleaning
     /** NumPy: np.isnan(m) */
     def isnan(using frac: Fractional[T]): Mat[Boolean] =
-      Mat.create(m.tdata.map(x => frac.toDouble(x).isNaN), m.rows, m.cols, m.transposed)
+      Internal.create(m.tdata.map(x => frac.toDouble(x).isNaN), m.rows, m.cols, m.transposed, 0, -1, -1)
 
     /** NumPy: np.isinf(m) */
     def isinf(using frac: Fractional[T]): Mat[Boolean] =
-      Mat.create(m.tdata.map(x => frac.toDouble(x).isInfinite), m.rows, m.cols, m.transposed)
+      Internal.create(m.tdata.map(x => frac.toDouble(x).isInfinite), m.rows, m.cols, m.transposed, 0, -1, -1)
 
     /** NumPy: np.isfinite(m) */
     def isfinite(using frac: Fractional[T]): Mat[Boolean] =
-    // pass the metadata along with the array
-      val boolArray = m.tdata.map(x => { 
+      val boolArray = m.tdata.map(x => {
         val d = frac.toDouble(x)
-        !d.isNaN && !d.isInfinite 
+        !d.isNaN && !d.isInfinite
       })
-      Mat.create(boolArray, m.rows, m.cols, m.transposed)
+      Internal.create(boolArray, m.rows, m.cols, m.transposed, 0, -1, -1)
 
     /** NumPy: np.nan_to_num(m, nan=0.0, posinf=0.0, neginf=0.0) */
     def nanToNum(nan: Double = 0.0, posinf: Double = 0.0, neginf: Double = 0.0)(using frac: Fractional[T]): Mat[T] = {

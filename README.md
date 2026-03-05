@@ -34,6 +34,16 @@ Measured on the same machine (JVM 17 / Scala 3.7.0 vs Python 3.14.3 / NumPy 2.4.
 | `3PRF OOS Recursive (T=650, N=40, L=2)` | 265 ms | 140 ms | **1.9× faster** |
 | `3PRF OOS Cross Val (T=650, N=40, L=2)` | 679 ms | 334 ms | **2× faster** |
 
+  **3PRF benchmark key** — Three-Pass Regression Filter ([Kelly & Pruitt 2015](https://doi.org/10.1111/jofi.12246));
+  `T` = observations, `N` = predictors, `L` = proxy factors.
+  Python: `estimate3prf_fast` (vectorized NumPy). Scala: `tprfFast` / `estimate3prf` with parallel collections.
+
+  | Label | Description |
+  | :--- | :--- |
+  | IS Full | In-sample fit over the full sample; two vectorized batch solves |
+  | OOS Recursive | Expanding-window out-of-sample; re-estimates at each step |
+  | OOS Cross Val | Leave-one-out cross-validation across all T windows |
+
 Full results and methodology: [MatD Cheat Sheet — Performance](docs/MatDCheatSheet.md).
 
 ## Design Philosophy
@@ -60,27 +70,27 @@ libraryDependencies += "org.vastblue" %% "uni" % "0.9.2"
 import uni.data.*
 
 // 100% faithful to NumPy's PCG64-based np.random.uniform
-Mat.setSeed(42)
-val weights = Mat.uniform(low = -0.1, high = 0.1, rows = 64, cols = 32)
+MatD.setSeed(42)
+val weights = MatD.uniform(low = -0.1, high = 0.1, rows = 64, cols = 32)
 
 // Standard constructors
-val zeros    = Mat.zeros(10, 10)
-val identity = Mat.eye(5)
-val normal   = Mat.normal(10, 10)
+val zeros    = MatD.zeros(10, 10)
+val identity = MatD.eye(5)
+val normal   = MatD.normal(10, 10)
 println(normal)
 ```
 
 ## Matrix Type Aliases
 
-To keep your code concise and idiomatic, `uni.Mat` provides type aliases and matching factory objects for supported numeric types.
+To keep your code concise and idiomatic, `uni.MatD` provides type aliases and matching factory objects for supported numeric types.
 
 | Alias | Full Type | Description |
 | :--- | :--- | :--- |
-| `MatD` | `Mat[Double]` | Standard 64-bit floating point matrix (default) |
-| `MatB` | `Mat[Big]` | High-precision, NaN-safe `BigDecimal` matrix |
-| `MatF` | `Mat[Float]` | 32-bit floating point matrix for memory efficiency |
+| `MatD` | `MatD[Double]` | Standard 64-bit floating point matrix (default) |
+| `MatB` | `MatD[Big]` | High-precision, NaN-safe `BigDecimal` matrix |
+| `MatF` | `MatD[Float]` | 32-bit floating point matrix for memory efficiency |
 
-Each alias has a matching factory object mirroring the `Mat` API:
+Each alias has a matching factory object mirroring the `MatD` API:
 
 ```scala
 import uni.data.*
@@ -99,7 +109,15 @@ val identityB: MatB = MatB.eye(5)
 ### Slicing and Views
 
 ```scala
-val data = Mat.randn(100, 10)
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.9.2
+
+import uni.data.*
+import uni.data.MatD.*
+
+MatD.setSeed(95)
+val data = MatD.randn(100, 10)
 
 // Extract a row or column as a view using the :: sentinel
 val row = data(0, ::)    // first row
@@ -107,13 +125,17 @@ val col = data(::, 0)    // first column
 
 // Constant-time transpose (no data copy)
 val rotated = data.T
+println(s"row: $row")
+println(s"col: $col")
+println(s"rotated: $rotated")
+println(s"rotated: ${rotated.show("%7.2f")}")
 ```
 
 ### Mathematical Operations
 
 ```scala
-val a = Mat.randn(3, 3)
-val b = Mat.randn(3, 3)
+val a = MatD.randn(3, 3)
+val b = MatD.randn(3, 3)
 
 val c = a ~@ b    // matrix multiplication (matmul)
 val d = a + b     // element-wise addition
@@ -124,21 +146,35 @@ val f = a.relu    // built-in activation function
 ### In-place Operations
 
 ```scala
-val m = Mat.ones(4, 4)
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.9.2
+
+import uni.data.*
+import uni.data.MatD.*
+
+val m = MatD.ones(4, 4)
 m :+= 2.0    // add scalar in-place
 m :-= 1.0    // subtract scalar in-place
 m :*= 3.0    // multiply scalar in-place
 m :/= 2.0    // divide scalar in-place
 
-val n = Mat.ones(4, 4)
+val n = MatD.ones(4, 4)
 m :+= n      // element-wise add matrix in-place
 ```
 
 ### Boolean Operations
 
 ```scala
-val a    = Mat.randn(3, 3)
-val mask = (a :== 0) || (a :== 1)    // Mat[Boolean]
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.9.2
+
+import uni.data.*
+import uni.data.MatD.*
+
+val a    = MatD.randn(3, 3)
+val mask = (a :== 0) || (a :== 1)    // MatD[Boolean]
 
 val inverted = !mask
 val count    = mask.sum    // count of true elements
@@ -149,48 +185,62 @@ val allTrue  = mask.all
 ### Stacking and Splitting
 
 ```scala
-val top    = Mat.ones(2, 4)
-val bottom = Mat.zeros(2, 4)
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-val stacked = Mat.vstack(top, bottom)    // 4x4 Mat
+//> using dep org.vastblue:uni_3:0.9.2
+
+import uni.data.*
+import uni.data.MatD.*
+
+val top    = MatD.ones(2, 4)
+val bottom = MatD.zeros(2, 4)
+
+val stacked = MatD.vstack(top, bottom)    // 4x4 MatD
 val halves  = stacked.vsplit(2)          // Seq of two 2x4 Mats
 
-val left  = Mat.ones(4, 2)
-val right = Mat.zeros(4, 2)
-val wide  = Mat.hstack(left, right)      // 4x4 Mat
+val left  = MatD.ones(4, 2)
+val right = MatD.zeros(4, 2)
+val wide  = MatD.hstack(left, right)      // 4x4 MatD
 val cols  = wide.hsplit(2)               // Seq of two 4x2 Mats
 ```
 
 ### Display and Formatting
 
 ```scala
-val m = Mat.randn(3, 3)
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.9.2
+
+import uni.data.*
+import uni.data.MatD.*
+
+val m = MatD.randn(3, 3)
 
 println(m)               // calls toString
 println(m.show)          // equivalent, explicit
 println(m.show("%.2f"))  // custom format string
 
 // Adjust truncation thresholds for large matrices
-Mat.setPrintOptions(maxRows = 20, maxCols = 20, edgeItems = 5)
+MatD.setPrintOptions(maxRows = 20, maxCols = 20, edgeItems = 5)
 ```
 
 ### Usage Example
 
 ## Comprehensive Example: MatD in Action
 
-The following example demonstrates a wide array of ```uni.Mat``` capabilities, including matrix creation, slicing, broadcasting, linear algebra (SVD, QR, Inverse), and in-place mutation. It illustrates how the library brings NumPy-style ergonomics to Scala while maintaining high performance.
+The following example demonstrates a wide array of ```uni.MatD``` capabilities, including matrix creation, slicing, broadcasting, linear algebra (SVD, QR, Inverse), and in-place mutation. It illustrates how the library brings NumPy-style ergonomics to Scala while maintaining high performance.
 
 ```scala
 #!/usr/bin/env -S scala-cli shebang -deprecation
 //> using dep org.vastblue:uni_3:0.9.3
 
 import uni.data.*
-import uni.data.Mat.*
+import uni.data.MatD.*
 
 object MatDCheck {
   def main(args: Array[String]): Unit = {
     // 1. Creation and Basic Shapes
-    val m = Mat.zeros[Double](3, 4)
+    val m = MatD.zeros[Double](3, 4)
     val v = MatD.row(1, 2, 3, 4)
     val eye = MatD.eye(2)
     val r = MatD.arange(0, 10, 2)
@@ -248,27 +298,27 @@ object MatDCheck {
 ## Advanced Usage
 
 * **Cheat Sheet:** [MatD Cheat Sheet](docs/MatDCheatSheet.md) — Side-by-side comparison of MatD vs NumPy, Breeze, R, and MATLAB.
-* **High Precision:** [Big Type Guide](docs/BigTypeGuide.md) — High-precision matrices using `Mat[Big]`.
+* **High Precision:** [Big Type Guide](docs/BigTypeGuide.md) — High-precision matrices using `MatD[Big]`.
 
-### NumPy to uni.Mat Mapping
+### NumPy to uni.MatD Mapping
 
-| NumPy | uni.Mat | Note |
+| NumPy | uni.MatD | Note |
 | :--- | :--- | :--- |
 | `a @ b` | `a ~@ b` | Matrix multiplication |
 | `a * b` | `a * b` | Element-wise product |
 | `a[0, :]` | `a(0, ::)` | Row slice |
 | `a[:, 0]` | `a(::, 0)` | Column slice |
 | `a.T` | `a.T` | $O(1)$ view |
-| `np.random.randn` | `Mat.randn` | PCG64-backed |
-| `np.where(c, x, y)` | `Mat.where(c, x, y)` | Conditional selection |
-| `np.vstack` / `np.vsplit` | `Mat.vstack` / `m.vsplit(n)` | Row-wise stack / split |
+| `np.random.randn` | `MatD.randn` | PCG64-backed |
+| `np.where(c, x, y)` | `MatD.where(c, x, y)` | Conditional selection |
+| `np.vstack` / `np.vsplit` | `MatD.vstack` / `m.vsplit(n)` | Row-wise stack / split |
 
 ## Example: Neural Network Layer
 
-Because activation functions are members of the `Mat` type, building layers is idiomatic:
+Because activation functions are members of the `MatD` type, building layers is idiomatic:
 
 ```scala
-def denseLayer(input: Mat[Double], weights: Mat[Double], bias: Mat[Double]): Mat[Double] = {
+def denseLayer(input: MatD[Double], weights: MatD[Double], bias: MatD[Double]): MatD[Double] = {
   // Simple, readable forward pass
   (input ~@ weights + bias).sigmoid
 }
@@ -276,7 +326,7 @@ def denseLayer(input: Mat[Double], weights: Mat[Double], bias: Mat[Double]): Mat
 
 ## Other Features
 
-`uni` also includes utilities that predate `uni.data.Mat` and remain available via `import uni.*`:
+`uni` also includes utilities that predate `uni.data.MatD` and remain available via `import uni.*`:
 
 * **Scripting Shortcuts:** [Portable Programming Utilities](docs/UniScriptingTools.md) — MSYS2/Cygwin-aware paths, smart date parsing, command-line argument handling, and inline data embedding.
 
