@@ -1,7 +1,6 @@
 package apps
 
 import uni.*
-import uni.io.*
 import uni.data.*
 import uni.data.Mat.*
 import uni.stats.Tprf3.tprfFast

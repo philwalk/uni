@@ -1,10 +1,9 @@
 package uni
 
-export java.nio.file.Path
 export cli.ArgsParser.*
-export ext.pathExts.*
-export ext.stringExts.*
-export ext.helpers.*
+export pathExts.*
+export stringExts.*
+export helpers.*
 
 @deprecated("Use .toSeq explicitly", "1.0.0")
 given iteratorStringToSeq: Conversion[Iterator[String], Seq[String]] = _.toSeq

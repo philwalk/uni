@@ -1,12 +1,12 @@
 package uni
 
-import java.nio.file.{Files, Paths as JPaths, Path}
+import java.nio.file.{Files, Paths as JPaths}
 import java.net.URI
 import java.util.{Arrays, Comparator, Locale}
 import scala.collection.immutable.SortedMap
 
-//export java.nio.file.Path
 export java.io.File as JFile
+type Path = java.nio.file.Path
 
 /* This library wraps calls to java.nio.file.Paths.get() for the purpose of providing a `uni.Paths.get`
  * with support for adding msys2 and cygwin paths support (based on /etc/fstab mount maps).

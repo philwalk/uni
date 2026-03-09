@@ -3,7 +3,6 @@ package uni.data
 import munit.FunSuite
 import uni.data.Big
 import uni.data.Big.*
-import uni.data.BigUtils.*
 
 /** Extended coverage for the Big opaque type, covering constructors, mixed-type
  *  arithmetic, conversions, comparisons with primitives, BigNaN propagation,

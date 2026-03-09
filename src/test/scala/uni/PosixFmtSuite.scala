@@ -3,7 +3,6 @@ package uni
 import munit.FunSuite
 import uni.TestUtils.*
 import java.nio.file.{Paths as JPaths}
-import uni.ext.*
 
 final class PosixFmtSuite extends FunSuite {
 // uncomment the next 2 lines to disable timeout

@@ -1,4 +1,4 @@
-package uni.ext
+package uni
 
 import uni.*
 import java.nio.file.Path
@@ -7,11 +7,22 @@ import java.io.{File as JFile}
 /** String Extension methods */
 object stringExts {
   extension (str: String) {
-    def path: Path = Paths.get(str)
+    def path: Path   = Paths.get(str)
     def asPath: Path = Paths.get(str)
+    @deprecated("Use `path` or `asPath`", "uni") def toPath: Path = Paths.get(str)
     def toFile: JFile = Paths.get(str).toFile
-    def posx: String = normalizePosix(str)
+    def absPath: Path = Paths.get(str).toAbsolutePath.normalize
+    def posx: String  = normalizePosix(str)
     def posix: String = posixAbs(str)
+
+    def lc: String = str.toLowerCase
+    def uc: String = str.toUpperCase
+
+    /** Drop the last `.ext` from a filename string. Hidden files (dot-first) are returned unchanged. */
+    def dropSuffix: String = {
+      val i = str.lastIndexOf('.')
+      if i <= 0 then str else str.substring(0, i)
+    }
 
     def startsWithIgnoreCase(prefix: String): Boolean = startsWithUncased(str, prefix)
     def stripPrefixIgnoreCase(prefix: String): String = stripPrefixUncased(str, prefix)
@@ -21,7 +32,7 @@ object stringExts {
 
     def local: String = {
       val forward = normalizePosix(str)
-      val isPosix = forward.startsWith("/") //|| !forward.matches("(?i)^[a-z]:/.*")
+      val isPosix = forward.startsWith("/")
       if (!isWin || !isPosix) {
         str
       } else {
@@ -44,4 +55,3 @@ object stringExts {
   }
 
 }
-

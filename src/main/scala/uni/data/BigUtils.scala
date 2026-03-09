@@ -1,27 +1,22 @@
 package uni.data
 
-import uni.*
 import uni.time.*
-import uni.data.Big
-import uni.data.Big.Big
 import scala.util.Try
 import scala.util.matching.Regex
 import scala.math.BigDecimal
-import uni.data.Big.*
 
 export BigUtils.*
 
 object BigUtils:
+  import uni.data.Big
+  import uni.data.Big.Big
+  import uni.data.Big.*
 
   type CVD = LocalDateTime|Big|Option[Int]|String|Int
 
   // ------------------------------------------------------------
   // Core type & sentinels
   // ------------------------------------------------------------
-
-  private val BadNumLiteral = "-0.00000001234567890123456789"
-  // Ensure BigNaN is defined as the opaque type Big
-  val BigNaN: Big = Big(BigDecimal(BadNumLiteral))
 
   inline def isBad(n: Big): Boolean = 
     // Cast to AnyRef to enable reference equality check (eq)
@@ -31,8 +26,8 @@ object BigUtils:
     opt.getOrElse(BigNaN)
 
 //  val BigZero: Big = Big(0)
-  val BigOne:  Big = Big.one
-  val Hundred: Big = Big.hundred
+  //val BigOne:  Big = Big.one
+  //val Hundred: Big = Big.hundred
 
   private val debug: Boolean =
     Option(System.getenv("DEBUG")).isDefined
@@ -82,7 +77,7 @@ object BigUtils:
           orBad(parsed)
         }
         if isBad(base) then BigNaN
-        else if nopct != normalized then base / Hundred
+        else if nopct != normalized then base / Big.hundred
         else base
 
   // ------------------------------------------------------------
@@ -122,7 +117,7 @@ object BigUtils:
 
         var negative = false
         var percent  = false
-        var factor   = BigOne
+        var factor   = Big.one
 
         col = col.replaceAll(",", "")
 
@@ -154,7 +149,7 @@ object BigUtils:
           if negative && !isBad(base) then -base else base
 
         val pctAdjusted =
-          if percent && !isBad(signed) then signed / Hundred else signed
+          if percent && !isBad(signed) then signed / Big.hundred else signed
 
         if isBad(pctAdjusted) then BigNaN
         else pctAdjusted * factor
@@ -253,4 +248,5 @@ object BigUtils:
     case None             => ""
     }
   }
+
 

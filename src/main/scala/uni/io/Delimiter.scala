@@ -59,64 +59,65 @@ object Delimiter {
       f"bestWidth: $bestWidth%4d, delimiter == [$delimiterChar]"
   }
 
+
   // Detect winning delimiter state
-    def detect(
-      path: Path,
-      maxRows: Int,
-      dominanceFactor: Int = 2,
-      checkInterval: Int = 100,
-      maxCharsPerRow: Int = 8000
-    ): DelimState = {
+  def detect(
+    path: Path,
+    maxRows: Int,
+    dominanceFactor: Int = 2,
+    checkInterval: Int = 100,
+    maxCharsPerRow: Int = 8000
+  ): DelimState = {
 
-      var states = candidates.map(d => DelimState(d)).toVector
-      val rows = charStreamWithFallback(path, maxRows).take(maxRows)
+    var states = candidates.map(d => DelimState(d)).toVector
+    val rows = charStreamWithFallback(path, maxRows).take(maxRows)
 
-      var winnerDelim: Option[Char] = None
+    var winnerDelim: Option[Char] = None
 
-      for (row <- rows if winnerDelim.isEmpty) {
-        var idx = 0
-        val it = row
-        var truncated = false
+    for (row <- rows if winnerDelim.isEmpty) {
+      var idx = 0
+      val it = row
+      var truncated = false
 
-        while (it.hasNext && winnerDelim.isEmpty && idx < maxCharsPerRow) {
-          val c = it.next()
-          states = states.map { s =>
-            var st = s
-            if (st.escaped) st = st.copy(escaped = false)
-            else if (c == escape) st = st.copy(escaped = true)
-            else if (c == quote) st = st.copy(inQuotes = !st.inQuotes)
-            else if (c == st.delimiterChar && !st.inQuotes)
-              st = st.copy(fieldsCount = st.fieldsCount + 1, score = st.score + 1)
-            st
-          }
-
-          if (idx % checkInterval == 0) {
-            dominantState(states, dominanceFactor).foreach { best =>
-              winnerDelim = Some(best.delimiterChar) // note: only store the delimiter
-            }
-          }
-          idx += 1
+      while (it.hasNext && winnerDelim.isEmpty && idx < maxCharsPerRow) {
+        val c = it.next()
+        states = states.map { s =>
+          var st = s
+          if (st.escaped) st = st.copy(escaped = false)
+          else if (c == escape) st = st.copy(escaped = true)
+          else if (c == quote) st = st.copy(inQuotes = !st.inQuotes)
+          else if (c == st.delimiterChar && !st.inQuotes)
+            st = st.copy(fieldsCount = st.fieldsCount + 1, score = st.score + 1)
+          st
         }
 
-        // if we didn’t consume the whole row, it’s truncated (either maxCharsPerRow or winner mid-row)
-        if (it.hasNext || winnerDelim.nonEmpty) truncated = true
-
-        // flush as complete or partial for ALL candidates
-        states = states.map(_.recordRow(partial = truncated))
-
-        // if no winner yet, re-check after we have rowCounts/partialCounts
-        if (winnerDelim.isEmpty) {
+        if (idx % checkInterval == 0) {
           dominantState(states, dominanceFactor).foreach { best =>
-            winnerDelim = Some(best.delimiterChar)
+            winnerDelim = Some(best.delimiterChar) // note: only store the delimiter
           }
         }
+        idx += 1
       }
 
-      // Final selection: return the up-to-date state object for the winner delimiter
-      winnerDelim
-        .flatMap(d => states.find(_.delimiterChar == d))
-        .getOrElse(states.maxBy(s => (s.score, -s.rowCounts.distinct.size)))
+      // if we didn’t consume the whole row, it’s truncated (either maxCharsPerRow or winner mid-row)
+      if (it.hasNext || winnerDelim.nonEmpty) truncated = true
+
+      // flush as complete or partial for ALL candidates
+      states = states.map(_.recordRow(partial = truncated))
+
+      // if no winner yet, re-check after we have rowCounts/partialCounts
+      if (winnerDelim.isEmpty) {
+        dominantState(states, dominanceFactor).foreach { best =>
+          winnerDelim = Some(best.delimiterChar)
+        }
+      }
     }
+
+    // Final selection: return the up-to-date state object for the winner delimiter
+    winnerDelim
+      .flatMap(d => states.find(_.delimiterChar == d))
+      .getOrElse(states.maxBy(s => (s.score, -s.rowCounts.distinct.size)))
+  }
 
   // Split a single row lazily into fields
   def splitRow(row: Iterator[Char], delim: Char): Iterator[String] = new Iterator[String] {

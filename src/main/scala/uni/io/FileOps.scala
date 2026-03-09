@@ -9,7 +9,7 @@ import uni.data.*
 import uni.data.Big.Big
 import uni.data.Mat.*
 
-export FileOps.*
+export FileOps.{withFileWriter => _, *}
 
 object FileOps {
   def withFileWriter(p: Path, charsetName: String = "UTF-8", append: Boolean = false)

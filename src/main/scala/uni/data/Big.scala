@@ -1,12 +1,11 @@
 package uni.data
 
-import uni.data.BigUtils.*
 import scala.math.BigDecimal
 import scala.math.BigDecimal.*
 export scala.math.BigDecimal.RoundingMode
 
-export Big.{Big, big, asBig, zero, one, ten, hundred}
-//export Big.*
+export Big.{Big, big, asBig, zero, one, BigOne, ten, hundred, BigNaN, BadNum, BigZero}
+export Big.{given Conversion[Int, Big], given Conversion[Long, Big], given Conversion[Float, Big], given Conversion[Double, Big]}
 
 // Mat
 object Big:
@@ -19,19 +18,31 @@ object Big:
 // Derive Fractional[Big] from Fractional[BigDecimal]
   given Fractional[Big] = summon[Fractional[BigDecimal]].asInstanceOf[Fractional[Big]]
 
-  def zero: Big = Big(BigDecimal(0))
-  def one: Big = Big(BigDecimal(1))
-  def ten: Big = Big(BigDecimal(10))
-  def hundred: Big = Big(BigDecimal(100))
+  private val BadNumLiteral = "-0.00000001234567890123456789"
+
+  // Ensure BigNaN is defined as the opaque type Big
+  val BigNaN: Big = Big(BigDecimal(BadNumLiteral))
+  lazy val zero: Big = Big(BigDecimal(0))
+  @deprecated("use BigNaN", "0.9") lazy val BadNum: Big  = BigNaN
+  @deprecated("use Big.zero", "0.9") lazy val BigZero: Big = zero
+  lazy val one: Big    = Big(BigDecimal(1))
+  lazy val BigOne: Big = one
+  lazy val ten: Big    = Big(BigDecimal(10))
+  lazy val hundred: Big = Big(BigDecimal(100))
+
+  // Defined locally so Big.scala has no compile dependency on BigUtils (breaks the Zinc cycle).
+  // BigUtils.isBad has the same implementation; both check against BigNaN.
+  private inline def isBad(n: Big): Boolean =
+    (n.asInstanceOf[AnyRef] eq BigNaN.asInstanceOf[AnyRef]) || (n == BigNaN)
 
   // Constructors
-  def apply(s: String): Big      = BigUtils.str2num(s)
+  def apply(s: String): Big      = scala.util.Try(BigDecimal(s.trim.replaceAll("[,$]", ""))).getOrElse(BigNaN)
   def apply(d: Double): Big      = BigDecimal(d)
   def apply(i: Int): Big         = BigDecimal(i)
   def apply(l: Long): Big        = BigDecimal(l)
   def apply(bd: BigDecimal): Big = bd
 
-  def big(str: String): Big      = str2num(str)
+  def big(str: String): Big      = scala.util.Try(BigDecimal(str.trim.replaceAll("[,$]", ""))).getOrElse(BigNaN)
   def big(d: Double): Big        = BigDecimal(d)
   def big(i: Int): Big           = BigDecimal(i)
   def big(l: Long): Big          = BigDecimal(l)
@@ -120,11 +131,11 @@ object Big:
 
     // unary guard
     inline def unary_- : Big =
-      if BigUtils.isBad(n) then BigNaN else Big(-n)
+      if isBad(n) then BigNaN else Big(-n)
 
     // binary guard helper
     @inline private def badGuard(that: Big)(f: => Big): Big =
-      if BigUtils.isBad(n) || BigUtils.isBad(that) then BigNaN
+      if isBad(n) || isBad(that) then BigNaN
       else Big(f)
 
     // --- arithmetic -----------------------------------------------------------
@@ -135,12 +146,12 @@ object Big:
 
     /*
     inline def /(that: Big): Big =
-      if BigUtils.isBad(n) || BigUtils.isBad(that) then BigNaN
+      if isBad(n) || isBad(that) then BigNaN
       else if that == Big(0) then BigNaN
       else Big(n / that)
 
     inline def /(that: Int): Big =
-      if BigUtils.isBad(n) || that == 0 then BigNaN
+      if isBad(n) || that == 0 then BigNaN
       else Big(n / BigDecimal(that))
 
     inline def /(that: Long): Big =
@@ -159,29 +170,14 @@ object Big:
           Big(ratio)
       }
       */
-      /**
-     * Unified division handling Big, Double, Int, etc.
-     * Correctly intercepts NaN/Infinite before BigDecimal conversion.
-     */
-     /**
-     * Unified division: Handles Big, Double, Int, Long, etc.
-     * Correctly intercepts Double.NaN before it hits BigDecimal.
-     */
-    def /[T](that: T)(using num: Numeric[T]): Big =
-      // 1. Check for non-finite values (NaN/Inf) via Double conversion
-      val d = num.toDouble(that)
-      if BigUtils.isBad(n) || !d.isFinite || d == 0.0 then 
-        BigNaN
-      else
-        // 2. Optimization: If it's already a Big, use full precision
-        if that.isInstanceOf[Big] then
-          val divisor = that.asInstanceOf[Big]
-          // Re-check zero for the opaque type just in case
-          if divisor == Big(0) then BigNaN else Big(n / divisor)
-        else
-          // 3. For everything else (Int, Long, Double), convert via String
-          // This is the safest way to create a BigDecimal from a Double
-          Big(n / BigDecimal(d.toString))
+    def /(that: Big): Big =
+      if isBad(n) || isBad(that) || that == zero then BigNaN else Big(n / that)
+    def /(that: Double): Big =
+      if isBad(n) || !that.isFinite || that == 0.0 then BigNaN else Big(n / BigDecimal(that.toString))
+    def /(that: Long): Big =
+      if isBad(n) || that == 0L then BigNaN else Big(n / BigDecimal(that))
+    def /(that: Int): Big =
+      if isBad(n) || that == 0 then BigNaN else Big(n / BigDecimal(that))
 
     // Multiply by Int, Long, Double
     inline def *(that: Int): Big = badGuard(that)(n * BigDecimal(that))
@@ -198,10 +194,10 @@ object Big:
     inline def -(that: Double): Big = badGuard(that)(n - BigDecimal(that))
 
     // --- comparisons ----------------------------------------------------------
-    inline def <(that: Big): Boolean    = !BigUtils.isBad(n) && !BigUtils.isBad(that) && n < that
-    inline def <=(that: Big): Boolean   = !BigUtils.isBad(n) && !BigUtils.isBad(that) && n <= that
-    inline def >(that: Big): Boolean    = !BigUtils.isBad(n) && !BigUtils.isBad(that) && n > that
-    inline def >=(that: Big): Boolean   = !BigUtils.isBad(n) && !BigUtils.isBad(that) && n >= that
+    inline def <(that: Big): Boolean    = !isBad(n) && !isBad(that) && n < that
+    inline def <=(that: Big): Boolean   = !isBad(n) && !isBad(that) && n <= that
+    inline def >(that: Big): Boolean    = !isBad(n) && !isBad(that) && n > that
+    inline def >=(that: Big): Boolean   = !isBad(n) && !isBad(that) && n >= that
 
     inline def <(that: Double): Boolean = n < that.asBig
     inline def <(that: Long): Boolean   = n < that.asBig
@@ -221,9 +217,9 @@ object Big:
 
     // --- conversions ----------------------------------------------------------
 
-    inline def toDouble: Double = if BigUtils.isBad(n) then Double.NaN else n.toDouble
+    inline def toDouble: Double = if isBad(n) then Double.NaN else n.toDouble
 
-    inline def toFloat: Float = if BigUtils.isBad(n) then Float.NaN else n.toFloat
+    inline def toFloat: Float = if isBad(n) then Float.NaN else n.toFloat
 
     inline def toBig: Big = n
 
@@ -232,6 +228,8 @@ object Big:
     inline def toLong: Long = n.toLong
       
     inline def abs: Big = n.abs
+    def max(that: Big): Big = if isBad(n) || isBad(that) then BigNaN else if n >= that then n else that
+    def min(that: Big): Big = if isBad(n) || isBad(that) then BigNaN else if n <= that then n else that
 
     inline def isValidInt: Boolean = n.isValidInt
 

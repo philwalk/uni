@@ -1,4 +1,4 @@
-package uni.ext
+package uni
 
 import scala.math.BigDecimal
 import scala.math.BigDecimal.RoundingMode

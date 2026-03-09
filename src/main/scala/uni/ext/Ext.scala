@@ -1,4 +1,4 @@
-package uni.ext
+package uni
 
 object Ext:
   export pathExts.*

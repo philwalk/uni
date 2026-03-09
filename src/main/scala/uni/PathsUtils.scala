@@ -10,7 +10,6 @@ import scala.collection.immutable.SortedMap
 import scala.sys.process.*
 import scala.util.Try
 import scala.util.Properties
-import uni.ext.*
 import uni.data.*
 import uni.time.*
 
@@ -18,8 +17,20 @@ export scala.util.Properties.{isWin, isMac, isLinux}
 export Proc.{ProcStatus, call, shellExec, shellExecProc, spawn, spawnStreaming, execLines}
 export Proc.{lazyLines, bashExe, unameExe, uname, osType, where, isWsl, hostname}
 export System.err.{println as eprintln, print as eprint} // these return Unit
+def withFileWriter(p: Path, charsetName: String = "UTF-8", append: Boolean = false)(func: java.io.PrintWriter => Any): Unit =
+  uni.io.FileOps.withFileWriter(p, charsetName, append)(func)
 
 val verboseUni: Boolean = Option(System.getenv("VERBOSE_UNI")).nonEmpty
+
+val userhome: String = System.getProperty("user.home").replace('\\', '/')
+
+def tmpDir: String =
+  Seq("/f/tmp", "/g/tmp", "/tmp")
+    .find { s => java.nio.file.Files.isDirectory(java.nio.file.Paths.get(s)) }
+    .getOrElse(System.getProperty("java.io.tmpdir"))
+    .replace('\\', '/')
+
+def exec(args: String*): String = execLines(args*).mkString("\n")
 
 // wrapper method better than `export System.err.printf as eprintf` due to `Unit` return.
 def eprintf(format: String, args: Any*): Unit = 
@@ -39,7 +50,7 @@ private def withFilteredStack(e: Throwable)(p: StackTraceElement => Boolean): Un
 /*
  * Print a less verbose stack trace.
  */
-def showLimitedStack(e: Throwable): Unit = {
+def showLimitedStack(e: Throwable = new RuntimeException("limited-stack")): Unit = {
   withFilteredStack(e){ elem =>
     val cls = elem.getClassName
     !cls.startsWith("java.") &&
@@ -283,7 +294,6 @@ lazy val pwd: Path = JPaths.get(config.userdir)
 def isWinshell: Boolean = isWin && Properties.propOrNone("MSYSTEM").nonEmpty
 
 object Internals {
-  import ext.*
 
   def realpathWindows(path: String): String = {
     if (!isWin) {

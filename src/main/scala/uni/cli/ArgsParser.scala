@@ -74,6 +74,9 @@ object ArgsParser {
       }
     }
 
+    def consumeInt: Int    = nextInt
+    def consumeLong: Long  = nextLong
+
     def run(pf: PartialFunction[String, Unit]): Unit = {
       while i < args.length do {
         val arg = thisArg
@@ -115,6 +118,9 @@ object ArgsParser {
   def nextLong: Long = ctx.nextLong
 
   def nextDouble: Double = ctx.nextDouble
+
+  def consumeInt: Int   = ctx.consumeInt
+  def consumeLong: Long = ctx.consumeLong
 
   /* returns base filename */
   inline def progName: String = {

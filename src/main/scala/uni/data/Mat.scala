@@ -7,8 +7,17 @@ import uni.io.FileOps.*
 //export Mat.MatD as MatD
 import uni.data.Big.Big
 export Mat.Mat
-export Mat.{rows, cols, shape, size, isEmpty, transposed, isContiguous, apply}
+export Mat.{`::`, Vec, RowVec, ColVec, rows, cols, shape, shapes, size, isEmpty, transposed, isContiguous, apply, update}
 
+// Commutative scalar multiply — all in one group to satisfy Scala 3's overload grouping rule.
+// scalar * Mat[Double]
+extension (scalar: Double) def *(m: Mat.Mat[Double]): Mat.Mat[Double] = m * scalar
+extension (scalar: Int)    def *(m: Mat.Mat[Double]): Mat.Mat[Double] = m * scalar.toDouble
+extension (scalar: Long)   def *(m: Mat.Mat[Double]): Mat.Mat[Double] = m * scalar.toDouble
+// scalar * Big  (left-hand multiply; right-hand is on Big itself)
+extension (n: Int)    def *(b: uni.data.Big.Big): uni.data.Big.Big = b * n
+extension (n: Long)   def *(b: uni.data.Big.Big): uni.data.Big.Big = b * n
+extension (n: Double) def *(b: uni.data.Big.Big): uni.data.Big.Big = b * n
 
 //type MatD = Mat.MatD.type
 object Mat {
@@ -31,6 +40,7 @@ object Mat {
     def rows: Int = asData._rows
     def cols: Int = asData._cols
     def shape: (Int, Int) = (asData._rows, asData._cols)
+    def shapes: (Int, Int) = shape
     def size: Int = asData._rows * asData._cols
     def isEmpty: Boolean = asData._rows == 0 || asData._cols == 0
     def transposed: Boolean   = asData._transposed
@@ -107,7 +117,7 @@ object Mat {
     }
 
   extension (m: Mat[Big])
-    def hasNaN: Mat[Boolean] = m.map(_ == BigUtils.BigNaN)
+    def hasNaN: Mat[Boolean] = m.map(_ == BigNaN)
 
   private object Internal {
     class MatData[T] private[Internal](
@@ -204,7 +214,9 @@ object Mat {
       cs: Int = -1,
   ): Mat[T] = Internal.create(tdata, rows, cols, transposed, offset, rs, cs)
 
-  object :: // Sentinel object for "all" in slicing
+  /** Slice sentinel: m(::, 0), m(0, ::). Aliases scala.collection.immutable.::
+   *  so that exporting it to uni.data doesn't shadow the standard list extractor. */
+  val `::` = scala.collection.immutable.`::`
 
   def inspect[T: ClassTag]: String =
     s"Mat(${rows}x${cols}, offset=$offset, rs=$rs, cs=$cs, transposed=$transposed)"
@@ -3163,7 +3175,7 @@ object Mat {
     def toColVec: Mat[T] = Mat.create(m.flatten, m.size, 1)
 
     // in-place scalar ops
-    def :+=(scalar: T)(using num: Numeric[T]): Unit = {
+    def :+=(scalar: T)(using num: Numeric[T]): Mat[T] = {
       var i = 0
       while i < m.rows do
         var j = 0
@@ -3171,9 +3183,10 @@ object Mat {
           m(i, j) = num.plus(m(i, j), scalar)
           j += 1
         i += 1
+      m
     }
 
-    def :-=(scalar: T)(using num: Numeric[T]): Unit = {
+    def :-=(scalar: T)(using num: Numeric[T]): Mat[T] = {
       var i = 0
       while i < m.rows do
         var j = 0
@@ -3181,9 +3194,10 @@ object Mat {
           m(i, j) = num.minus(m(i, j), scalar)
           j += 1
         i += 1
+      m
     }
 
-    def :*=(scalar: T)(using num: Numeric[T]): Unit = {
+    def :*=(scalar: T)(using num: Numeric[T]): Mat[T] = {
       var i = 0
       while i < m.rows do
         var j = 0
@@ -3191,9 +3205,10 @@ object Mat {
           m(i, j) = num.times(m(i, j), scalar)
           j += 1
         i += 1
+      m
     }
 
-    def :/=(scalar: T)(using frac: Fractional[T]): Unit = {
+    def :/=(scalar: T)(using frac: Fractional[T]): Mat[T] = {
       var i = 0
       while i < m.rows do
         var j = 0
@@ -3201,16 +3216,17 @@ object Mat {
           m(i, j) = frac.div(m(i, j), scalar)
           j += 1
         i += 1
+      m
     }
 
     // Int overloads
-    def :+=(scalar: Int)(using frac: Fractional[T]): Unit = m.:+=(frac.fromInt(scalar))
-    def :-=(scalar: Int)(using frac: Fractional[T]): Unit = m.:-=(frac.fromInt(scalar))
-    def :*=(scalar: Int)(using frac: Fractional[T]): Unit = m.:*=(frac.fromInt(scalar))
-    def :/=(scalar: Int)(using frac: Fractional[T]): Unit = m.:/=(frac.fromInt(scalar))
+    def :+=(scalar: Int)(using frac: Fractional[T]): Mat[T] = m.:+=(frac.fromInt(scalar))
+    def :-=(scalar: Int)(using frac: Fractional[T]): Mat[T] = m.:-=(frac.fromInt(scalar))
+    def :*=(scalar: Int)(using frac: Fractional[T]): Mat[T] = m.:*=(frac.fromInt(scalar))
+    def :/=(scalar: Int)(using frac: Fractional[T]): Mat[T] = m.:/=(frac.fromInt(scalar))
 
     // in-place Mat ops
-    def :+=(other: Mat[T])(using num: Numeric[T]): Unit = {
+    def :+=(other: Mat[T])(using num: Numeric[T]): Mat[T] = {
       require(m.rows == other.rows && m.cols == other.cols,
         s"shape mismatch: ${m.shape} vs ${other.shape}")
       var i = 0
@@ -3220,9 +3236,10 @@ object Mat {
           m(i, j) = num.plus(m(i, j), other(i, j))
           j += 1
         i += 1
+      m
     }
 
-    def :-=(other: Mat[T])(using num: Numeric[T]): Unit = {
+    def :-=(other: Mat[T])(using num: Numeric[T]): Mat[T] = {
       require(m.rows == other.rows && m.cols == other.cols,
         s"shape mismatch: ${m.shape} vs ${other.shape}")
       var i = 0
@@ -3232,6 +3249,7 @@ object Mat {
           m(i, j) = num.minus(m(i, j), other(i, j))
           j += 1
         i += 1
+      m
     }
 
     /** NumPy: np.linalg.pinv(m) - Moore-Penrose pseudoinverse via SVD */
@@ -4389,6 +4407,7 @@ object MatD {
 
   def apply(rows: Int, cols: Int, data: Array[Double]): Mat[Double] = Mat.apply[Double](rows, cols, data)
   def apply(value: Double): Mat[Double] = Mat.apply[Double](value)
+  def apply(first: Double, rest: Double*): Mat[Double] = Mat.row[Double](first +: rest*)
   def apply(tuples: Tuple*): Mat[Double] = Mat.apply[Double](tuples*)
   def single(value: Double): Mat[Double] = Mat.single[Double](value)
   def fromSeq(values: Seq[Double]): Mat[Double] = Mat.fromSeq[Double](values)
@@ -4452,6 +4471,7 @@ object MatB {
 
   def apply(rows: Int, cols: Int, data: Array[Big]): Mat[Big] = Mat.apply[Big](rows, cols, data)
   def apply(value: Double): Mat[Big] = Mat.apply[Big](value)
+  def apply(first: Double, rest: Double*): Mat[Big] = Mat.row[Big](Big(first) +: rest.map(Big(_))*)
   def apply(tuples: Tuple*): Mat[Big] = Mat.apply[Big](tuples*)
   def single(value: Double): Mat[Big] = Mat.single[Big](value)
   def fromSeq(values: Seq[Big]): Mat[Big] = Mat.fromSeq[Big](values)
@@ -4522,6 +4542,7 @@ object MatF {
 
   def apply(rows: Int, cols: Int, data: Array[Float]): Mat[Float] = Mat.apply[Float](rows, cols, data)
   def apply(value: Double): Mat[Float] = Mat.apply[Float](value.toFloat)
+  def apply(first: Double, rest: Double*): Mat[Float] = Mat.row[Float](first.toFloat +: rest.map(_.toFloat)*)
   def apply(tuples: Tuple*): Mat[Float] = Mat.apply[Float](tuples*)
   def single(value: Double): Mat[Float] = Mat.single[Float](value.toFloat)
   def fromSeq(values: Seq[Float]): Mat[Float] = Mat.fromSeq[Float](values)

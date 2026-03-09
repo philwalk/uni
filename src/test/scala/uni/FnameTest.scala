@@ -2,7 +2,6 @@ package uni
 
 
 import uni.*
-import uni.io.*
 import uni.Internals.{_osType}
 import TestUtils.*
 
