@@ -1,6 +1,6 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.9.3
+//> using dep org.vastblue:uni_3:0.9.4
 
 import uni.*
 import java.nio.file.{Files as JFiles, Paths as JPaths, Path as JPath}

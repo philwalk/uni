@@ -1,7 +1,7 @@
 #!/usr/bin/env -S scala-cli shebang -deprecation
 
 //> using scala 3.8.2
-//> using dep org.vastblue:uni_3:0.9.3
+//> using dep org.vastblue:uni_3:0.9.4
 
 /**
  * MatD benchmark — counterpart to py/bench.py (NumPy/Python).
