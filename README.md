@@ -86,9 +86,9 @@ To keep your code concise and idiomatic, `uni.MatD` provides type aliases and ma
 
 | Alias | Full Type | Description |
 | :--- | :--- | :--- |
-| `MatD` | `MatD[Double]` | Standard 64-bit floating point matrix (default) |
-| `MatB` | `MatD[Big]` | High-precision, NaN-safe `BigDecimal` matrix |
-| `MatF` | `MatD[Float]` | 32-bit floating point matrix for memory efficiency |
+| `MatD` | `Mat[Double]` | Standard 64-bit floating point matrix (default) |
+| `MatB` | `Mat[Big]` | High-precision, NaN-safe `BigDecimal` matrix |
+| `MatF` | `Mat[Float]` | 32-bit floating point matrix for memory efficiency |
 
 Each alias has a matching factory object mirroring the `MatD` API:
 
