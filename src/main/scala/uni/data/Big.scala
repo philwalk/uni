@@ -15,9 +15,6 @@ object Big:
   // ------------------------------------------------------------
   opaque type Big = BigDecimal
 
-// Derive Fractional[Big] from Fractional[BigDecimal]
-  given Fractional[Big] = summon[Fractional[BigDecimal]].asInstanceOf[Fractional[Big]]
-
   private val BadNumLiteral = "-0.00000001234567890123456789"
 
   // Ensure BigNaN is defined as the opaque type Big
@@ -81,19 +78,6 @@ object Big:
 
   extension (i: Int)
     inline def asBig: Big = Big(BigDecimal(i))
-
-  given Numeric[Big] with
-    def plus(x: Big, y: Big): Big = x + y
-    def minus(x: Big, y: Big): Big = x - y
-    def times(x: Big, y: Big): Big = x * y
-    def negate(x: Big): Big = -x
-    def fromInt(x: Int): Big = Big(x)
-    def parseString(str: String): Option[Big] = scala.util.Try(Big(str)).toOption
-    def toInt(x: Big): Int = x.toInt
-    def toLong(x: Big): Long = x.toLong
-    def toFloat(x: Big): Float = x.toFloat
-    def toDouble(x: Big): Double = x.toDouble
-    def compare(x: Big, y: Big): Int = x.compare(y)
 
   extension (d: Double)
     def toBig: Big = Big(BigDecimal(d))
@@ -199,21 +183,21 @@ object Big:
     inline def >(that: Big): Boolean    = !isBad(n) && !isBad(that) && n > that
     inline def >=(that: Big): Boolean   = !isBad(n) && !isBad(that) && n >= that
 
-    inline def <(that: Double): Boolean = n < that.asBig
-    inline def <(that: Long): Boolean   = n < that.asBig
-    inline def <(that: Int): Boolean    = n < that.asBig
+    inline def <(that: Double): Boolean = !isBad(n) && n < that.asBig
+    inline def <(that: Long): Boolean   = !isBad(n) && n < that.asBig
+    inline def <(that: Int): Boolean    = !isBad(n) && n < that.asBig
 
-    inline def <=(that: Double): Boolean = n <= that.asBig
-    inline def <=(that: Long): Boolean   = n <= that.asBig
-    inline def <=(that: Int): Boolean    = n <= that.asBig
+    inline def <=(that: Double): Boolean = !isBad(n) && n <= that.asBig
+    inline def <=(that: Long): Boolean   = !isBad(n) && n <= that.asBig
+    inline def <=(that: Int): Boolean    = !isBad(n) && n <= that.asBig
 
-    inline def >(that: Double): Boolean = n > that.asBig
-    inline def >(that: Long): Boolean   = n > that.asBig
-    inline def >(that: Int): Boolean    = n > that.asBig
+    inline def >(that: Double): Boolean = !isBad(n) && n > that.asBig
+    inline def >(that: Long): Boolean   = !isBad(n) && n > that.asBig
+    inline def >(that: Int): Boolean    = !isBad(n) && n > that.asBig
 
-    inline def >=(that: Double): Boolean = n >= that.asBig
-    inline def >=(that: Long): Boolean   = n >= that.asBig
-    inline def >=(that: Int): Boolean    = n >= that.asBig
+    inline def >=(that: Double): Boolean = !isBad(n) && n >= that.asBig
+    inline def >=(that: Long): Boolean   = !isBad(n) && n >= that.asBig
+    inline def >=(that: Int): Boolean    = !isBad(n) && n >= that.asBig
 
     // --- conversions ----------------------------------------------------------
 
@@ -266,4 +250,24 @@ object Big:
     if !d.isFinite then BigNaN else
     Big(BigDecimal(d))
 
-
+// ------------------------------------------------------------
+// Fractional[Big] — placed outside object Big so Big is opaque here.
+// We use .value to obtain the underlying BigDecimal and operate on it
+// directly, bypassing Numeric.NumericOps / Ordering.lt which would
+// delegate back to this instance and cause infinite recursion.
+// ------------------------------------------------------------
+given Fractional[Big] with
+  def plus(x: Big, y: Big): Big    = if x.isNaN || y.isNaN then BigNaN else Big(x.value + y.value)
+  def minus(x: Big, y: Big): Big   = if x.isNaN || y.isNaN then BigNaN else Big(x.value - y.value)
+  def times(x: Big, y: Big): Big   = if x.isNaN || y.isNaN then BigNaN else Big(x.value * y.value)
+  def negate(x: Big): Big          = if x.isNaN then BigNaN else Big(-x.value)
+  def div(x: Big, y: Big): Big     =
+    if x.isNaN || y.isNaN || y.value == BigDecimal(0) then BigNaN else Big(x.value / y.value)
+  def fromInt(x: Int): Big         = Big(x)
+  def parseString(s: String): Option[Big] = scala.util.Try(Big(s)).toOption
+  def toInt(x: Big): Int           = x.value.toInt
+  def toLong(x: Big): Long         = x.value.toLong
+  def toFloat(x: Big): Float       = if x.isNaN then Float.NaN else x.value.toFloat
+  def toDouble(x: Big): Double     = if x.isNaN then Double.NaN else x.value.toDouble
+  def compare(x: Big, y: Big): Int =
+    if x.isNaN || y.isNaN then 0 else x.value.compare(y.value)

@@ -1368,6 +1368,9 @@ object Mat {
   // Display
   // ============================================================================
   extension [T: ClassTag](m: Mat[T])(using frac: Fractional[T])
+    /** m(::) - all elements; NumPy: m[:] */
+    def apply(all: ::.type): Mat[T] = m(0 until m.rows, 0 until m.cols)
+
     /** m(0 until 2, ::) - range rows, all cols */
     def apply(rows: Range, cols: ::.type): Mat[T] =
       m(rows, 0 until m.cols)
@@ -1492,6 +1495,25 @@ object Mat {
     val n = ((stop - start).toDouble / step).ceil.toInt
     require(n > 0, s"Invalid range: start=$start, stop=$stop, step=$step")
     Mat.create(Array.tabulate(n)(i => frac.fromInt(start + i * step)), n, 1)
+  }
+
+  private def doubleToT[T: ClassTag](v: Double): T =
+    summon[ClassTag[T]].runtimeClass match
+      case c if c == classOf[Double]     => v.asInstanceOf[T]
+      case c if c == classOf[Float]      => v.toFloat.asInstanceOf[T]
+      case c if c == classOf[BigDecimal] => BigDecimal(v).asInstanceOf[T]
+      case c => throw IllegalArgumentException(s"arange unsupported type: ${c.getName}")
+
+  def arange[T: ClassTag](stop: Double)(using frac: Fractional[T]): Mat[T] =
+    arange[T](0.0, stop, 1.0)
+
+  def arange[T: ClassTag](start: Double, stop: Double)(using frac: Fractional[T]): Mat[T] =
+    arange[T](start, stop, 1.0)
+
+  def arange[T: ClassTag](start: Double, stop: Double, step: Double)(using frac: Fractional[T]): Mat[T] = {
+    require(step != 0.0, "step cannot be zero")
+    val n = math.max(0, math.ceil((stop - start) / step).toInt)
+    Mat.create(Array.tabulate(n)(i => doubleToT[T](start + i * step)), n, 1)
   }
 
   def linspace[T: ClassTag](start: Double, stop: Double, num: Int = 50)(using frac: Fractional[T]): Mat[T] = {
@@ -4400,6 +4422,9 @@ object MatD {
   def arange(stop: Int): Mat[Double] = Mat.arange[Double](stop)
   def arange(start: Int, stop: Int): Mat[Double] = Mat.arange[Double](start, stop)
   def arange(start: Int, stop: Int, step: Int): Mat[Double] = Mat.arange[Double](start, stop, step)
+  def arange(stop: Double): Mat[Double] = Mat.arange[Double](stop)
+  def arange(start: Double, stop: Double): Mat[Double] = Mat.arange[Double](start, stop)
+  def arange(start: Double, stop: Double, step: Double): Mat[Double] = Mat.arange[Double](start, stop, step)
   def linspace(start: Double, stop: Double, num: Int = 50): Mat[Double] = Mat.linspace[Double](start, stop, num)
 
   def apply(rows: Int, cols: Int): Mat[Double] = Mat.zeros[Double](rows, cols)
@@ -4464,6 +4489,9 @@ object MatB {
   def arange(stop: Int): Mat[Big] = Mat.arange[Big](stop)
   def arange(start: Int, stop: Int): Mat[Big] = Mat.arange[Big](start, stop)
   def arange(start: Int, stop: Int, step: Int): Mat[Big] = Mat.arange[Big](start, stop, step)
+  def arange(stop: Double): Mat[Big] = Mat.arange[Big](stop)
+  def arange(start: Double, stop: Double): Mat[Big] = Mat.arange[Big](start, stop)
+  def arange(start: Double, stop: Double, step: Double): Mat[Big] = Mat.arange[Big](start, stop, step)
   def linspace(start: Double, stop: Double, num: Int = 50): Mat[Big] = Mat.linspace[Big](start, stop, num)
 
   def apply(rows: Int, cols: Int): Mat[Big] = Mat.zeros[Big](rows, cols)
@@ -4535,6 +4563,9 @@ object MatF {
   def arange(stop: Int): Mat[Float] = Mat.arange[Float](stop)
   def arange(start: Int, stop: Int): Mat[Float] = Mat.arange[Float](start, stop)
   def arange(start: Int, stop: Int, step: Int): Mat[Float] = Mat.arange[Float](start, stop, step)
+  def arange(stop: Double): Mat[Float] = Mat.arange[Float](stop)
+  def arange(start: Double, stop: Double): Mat[Float] = Mat.arange[Float](start, stop)
+  def arange(start: Double, stop: Double, step: Double): Mat[Float] = Mat.arange[Float](start, stop, step)
   def linspace(start: Double, stop: Double, num: Int = 50): Mat[Float] = Mat.linspace[Float](start, stop, num)
 
   def apply(rows: Int, cols: Int): Mat[Float] = Mat.zeros[Float](rows, cols)

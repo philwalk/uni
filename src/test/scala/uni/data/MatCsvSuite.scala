@@ -1,4 +1,4 @@
-package apps
+package uni.data
 
 import munit.FunSuite
 import uni.data.Mat

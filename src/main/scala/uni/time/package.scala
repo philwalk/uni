@@ -1,6 +1,6 @@
 package uni.time
 
-import java.time.{Instant, LocalDateTime, LocalDate, ZoneId, ZonedDateTime, Duration, Period, Month}
+import java.time.{Instant, LocalDateTime, ZoneId, Duration, Period, Month}
 import java.time.format.DateTimeFormatter
 import java.time.temporal.TemporalAdjusters
 import java.time.DayOfWeek
@@ -10,13 +10,13 @@ export TimeUtils.{parseDate as parseDateTime}
 export TimeUtils.*
 export ChronoParse.parseDateChrono
 export SmartParse.parseDateSmart
+export java.time.LocalDateTime
 
-type LocalDateTime = java.time.LocalDateTime
+type DateTime = java.time.LocalDateTime // alias used by pallet
 type Instant = java.time.Instant
 type ZoneId = java.time.ZoneId
 type Duration = java.time.Duration
 
-type DateTime = java.time.LocalDateTime // alias used by pallet
 
 // Extensions
 extension (inst: Instant)

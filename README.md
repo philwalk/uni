@@ -50,12 +50,22 @@ Full results and methodology: [MatD Cheat Sheet — Performance](docs/MatDCheatS
 
 uni.Mat is built on the principle that developers shouldn't have to choose between type safety and the ergonomics of NumPy. Its design leverages strides, offsets, and broadcasting for high efficiency—including LAPACK integration—all while maintaining a clean, expression-oriented API.
 
+## Test Coverage
+
+Measured with `sbt jacoco` (1,179 tests). Branch coverage is lower than line coverage because Scala 3 `inline` methods generate independent bytecode copies at each call site, each with their own branch counters.
+
+| Package | Branch | Line |
+| :--- | ---: | ---: |
+| `uni.data` | 54% | 88% |
+| `uni.time` | 32% | 71% |
+| `uni` | 23% | 43% |
+
 ## Installation
 
 Add the following to your `build.sbt`:
 
 ```scala
-libraryDependencies += "org.vastblue" %% "uni" % "0.9.2"
+libraryDependencies += "org.vastblue" %% "uni" % "0.9.5"
 ```
 
 ## Quick Start
@@ -65,7 +75,7 @@ libraryDependencies += "org.vastblue" %% "uni" % "0.9.2"
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.9.4
+//> using dep org.vastblue:uni_3:0.9.5
 
 import uni.data.*
 
@@ -111,7 +121,7 @@ val identityB: MatB = MatB.eye(5)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.9.4
+//> using dep org.vastblue:uni_3:0.9.5
 
 import uni.data.*
 import uni.data.MatD.*
@@ -148,7 +158,7 @@ val f = a.relu    // built-in activation function
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.9.4
+//> using dep org.vastblue:uni_3:0.9.5
 
 import uni.data.*
 import uni.data.MatD.*
@@ -168,7 +178,7 @@ m :+= n      // element-wise add matrix in-place
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.9.4
+//> using dep org.vastblue:uni_3:0.9.5
 
 import uni.data.*
 import uni.data.MatD.*
@@ -187,7 +197,7 @@ val allTrue  = mask.all
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.9.4
+//> using dep org.vastblue:uni_3:0.9.5
 
 import uni.data.*
 import uni.data.MatD.*
@@ -209,7 +219,7 @@ val cols  = wide.hsplit(2)               // Seq of two 4x2 Mats
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.9.4
+//> using dep org.vastblue:uni_3:0.9.5
 
 import uni.data.*
 import uni.data.MatD.*
@@ -232,7 +242,7 @@ The following example demonstrates a wide array of ```uni.MatD``` capabilities, 
 
 ```scala
 #!/usr/bin/env -S scala-cli shebang -deprecation
-//> using dep org.vastblue:uni_3:0.9.4
+//> using dep org.vastblue:uni_3:0.9.5
 
 import uni.data.*
 import uni.data.MatD.*
@@ -329,6 +339,37 @@ def denseLayer(input: MatD[Double], weights: MatD[Double], bias: MatD[Double]): 
 `uni` also includes utilities that predate `uni.data.MatD` and remain available via `import uni.*`:
 
 * **Scripting Shortcuts:** [Portable Programming Utilities](docs/UniScriptingTools.md) — MSYS2/Cygwin-aware paths, smart date parsing, command-line argument handling, and inline data embedding.
+
+### Tolerant Numeric Parsing for Big Data Prep
+
+Raw financial and scientific datasets rarely arrive in clean form. `uni.data.BigUtils` provides `isNumeric` and `getMostSpecificType` that accept the messy formats found in spreadsheets and CSV exports **without requiring pre-cleaning**:
+
+| Raw input | Recognised as |
+| :--- | :--- |
+| `"$1,234.56"` | `Big(1234.56)` |
+| `"(500.00)"` | `Big(-500.00)` — accounting negative |
+| `"7.5K"` / `"2.1M"` / `"4B"` | `Big(7500)` / `Big(2_100_000)` / `Big(4_000_000_000)` |
+| `"12.5%"` | `Big(0.125)` — already divided by 100 |
+| `"-0.042"` | `Big(-0.042)` |
+| `"2024-01-15"` | `DateTime` |
+| anything else | `String` (passed through unchanged) |
+
+`getMostSpecificType` promotes each raw cell to the most specific type it can without error, so a column of mixed-format numbers loads correctly as `Mat[Big]` in a single pass:
+
+```scala
+import uni.data.*
+import uni.data.BigUtils.*
+
+val raw = Seq("$1,200", "(300)", "1.5K", "0.75%", "N/A", "2024-03-01")
+val typed = raw.map(getMostSpecificType)
+// => Seq(Big(1200), Big(-300), Big(1500), Big(0.0075), "N/A", DateTime(...))
+
+// Load numeric cells directly into a column vector
+val nums = typed.collect { case b: BigDecimal => Big(b) }
+val col  = MatB.col(nums*)
+```
+
+This eliminates the typical ETL step of writing format-specific regex cleaners before ingestion — particularly valuable when working with multi-source datasets where currency symbols, parenthesised negatives, and scale suffixes appear unpredictably across columns.
 
 ---
 © 2026 vastblue.org. Distributed under the Apache License 2.0.

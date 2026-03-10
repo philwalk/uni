@@ -1,7 +1,7 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
 //> using dep com.lihaoyi::ujson::4.0.2
-//> using dep org.vastblue:uni_3:0.9.4
+//> using dep org.vastblue:uni_3:0.9.5
 
 import uni.*
 import scala.collection.mutable
@@ -142,7 +142,7 @@ print(json.dumps(node_to_dict(tree), indent=2))
   private def renderOutput(lines: Seq[String], ctx: TranslateContext): String =
     val scriptHeader = """#!/usr/bin/env -S scala-cli shebang -deprecation
       |
-      |//> using dep org.vastblue:uni_3:0.9.4""".trim.stripMargin
+      |//> using dep org.vastblue:uni_3:0.9.5""".trim.stripMargin
 
     val sb = new StringBuilder
     sb.append(scriptHeader+"\n")
@@ -425,12 +425,25 @@ print(json.dumps(node_to_dict(tree), indent=2))
   private def translateAttrAccess(
       obj: String, attr: String, ctx: TranslateContext): (String, VarInfo) =
     val info = VarInfo(obj)
+    // numpy module constants (np.pi, np.inf, etc.)
+    if obj == ctx.npAlias then
+      attr match
+        case "pi"      => return ("math.Pi",                   info.copy(isMatrix = false))
+        case "inf"     => return ("Double.PositiveInfinity",   info.copy(isMatrix = false))
+        case "PINF"    => return ("Double.PositiveInfinity",   info.copy(isMatrix = false))
+        case "NINF"    => return ("Double.NegativeInfinity",   info.copy(isMatrix = false))
+        case "nan"     => return ("Double.NaN",                info.copy(isMatrix = false))
+        case "e"       => return ("math.E",                    info.copy(isMatrix = false))
+        case "newaxis" => return (ctx.todo("np.newaxis - use .toRowVec or .toColVec"), info)
+        case _         => // fall through to instance attrs
     attr match
       case "T"     => (s"$obj.T", info)
       case "shape" => (s"$obj.shape", info.copy(isMatrix = false))
       case "size"  => (s"$obj.size", info.copy(isMatrix = false))
       case "dtype" => (ctx.todo(s"$obj.dtype - no direct equivalent"), info)
       case "flat"  => (s"$obj.flatten", info)
+      case "real"  => (s"$obj", info)          // real part of real matrix = itself
+      case "imag"  => (ctx.todo(s"$obj.imag - complex not supported"), info)
       case other   => (s"$obj.$other", info)
 
   // ── calls ────────────────────────────────────────────────────────────────

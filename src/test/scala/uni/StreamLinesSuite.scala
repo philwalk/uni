@@ -1,4 +1,4 @@
-package streamtest
+package uni
 
 import java.nio.file.Files
 import java.nio.charset.StandardCharsets

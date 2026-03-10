@@ -414,4 +414,300 @@ class BigCoverageSuite extends FunSuite {
     assert(Big(Long.MaxValue).isValidLong)
     assert(!Big(3.14).isValidLong)
   }
+
+  // ============================================================================
+  // Big(String) constructor
+  // ============================================================================
+
+  test("Big(String) parses valid numbers") {
+    assertEquals(Big("42").value, BigDecimal(42))
+    assertEquals(Big("3.14").value, BigDecimal("3.14"))
+  }
+
+  test("Big(String) strips dollar signs and commas") {
+    assertEquals(Big("$1,234.56").value, BigDecimal("1234.56"))
+  }
+
+  test("Big(String) returns BigNaN for non-numeric input") {
+    assertEquals(Big("not-a-number"), BigNaN)
+    assertEquals(Big("abc"), BigNaN)
+  }
+
+  // ============================================================================
+  // String.asBig extension
+  // ============================================================================
+
+  test("String.asBig parses decimal string") {
+    assertEquals("9.99".asBig.value, BigDecimal("9.99"))
+  }
+
+  // ============================================================================
+  // max / min
+  // ============================================================================
+
+  test("max returns larger value") {
+    assertEquals(Big(7).max(Big(3)), Big(7))
+    assertEquals(Big(3).max(Big(7)), Big(7))
+    assertEquals(Big(5).max(Big(5)), Big(5))
+  }
+
+  test("max with BigNaN returns BigNaN") {
+    assertEquals(BigNaN.max(Big(1)), BigNaN)
+    assertEquals(Big(1).max(BigNaN), BigNaN)
+  }
+
+  test("min returns smaller value") {
+    assertEquals(Big(3).min(Big(7)), Big(3))
+    assertEquals(Big(7).min(Big(3)), Big(3))
+    assertEquals(Big(5).min(Big(5)), Big(5))
+  }
+
+  test("min with BigNaN returns BigNaN") {
+    assertEquals(BigNaN.min(Big(1)), BigNaN)
+    assertEquals(Big(1).min(BigNaN), BigNaN)
+  }
+
+  // ============================================================================
+  // setScale
+  // ============================================================================
+
+  test("setScale rounds to given decimal places") {
+    val b = Big(3.14159)
+    assertEquals(b.setScale(2, RoundingMode.HALF_UP).value, BigDecimal("3.14"))
+  }
+
+  // ============================================================================
+  // Float / Double implicit conversion — NaN and Infinity guard
+  // ============================================================================
+
+  test("Float.NaN converts to BigNaN") {
+    val b: Big = Float.NaN
+    assertEquals(b, BigNaN)
+  }
+
+  test("Float.PositiveInfinity converts to BigNaN") {
+    val b: Big = Float.PositiveInfinity
+    assertEquals(b, BigNaN)
+  }
+
+  test("Float.NegativeInfinity converts to BigNaN") {
+    val b: Big = Float.NegativeInfinity
+    assertEquals(b, BigNaN)
+  }
+
+  test("Double.NaN converts to BigNaN") {
+    val b: Big = Double.NaN
+    assertEquals(b, BigNaN)
+  }
+
+  test("Double.PositiveInfinity converts to BigNaN") {
+    val b: Big = Double.PositiveInfinity
+    assertEquals(b, BigNaN)
+  }
+
+  test("Double.NegativeInfinity converts to BigNaN") {
+    val b: Big = Double.NegativeInfinity
+    assertEquals(b, BigNaN)
+  }
+
+  // ============================================================================
+  // Numeric[Big] remaining methods
+  // ============================================================================
+
+  test("Numeric[Big].parseString returns Some for valid input") {
+    val num = summon[Numeric[Big]]
+    assertEquals(num.parseString("3.14").map(_.toDouble).getOrElse(-1.0), 3.14, 1e-12)
+  }
+
+  test("Numeric[Big].parseString returns Some(BigNaN) for invalid input") {
+    // Big(str) catches parse failures and returns BigNaN rather than throwing,
+    // so parseString("bad") = Some(BigNaN), not None.
+    val num = summon[Numeric[Big]]
+    assert(num.parseString("bad").exists(_.isNaN))
+  }
+
+  test("Numeric[Big].toInt / toLong / toFloat / toDouble") {
+    val num = summon[Numeric[Big]]
+    assertEquals(num.toInt(Big(5)),          5)
+    assertEquals(num.toLong(Big(5)),         5L)
+    assertEquals(num.toFloat(Big(2.5f)),     2.5f)
+    assertEqualsDouble(num.toDouble(Big(2.5)), 2.5, 1e-12)
+  }
+
+  // ============================================================================
+  // badGuard: right-hand BigNaN
+  // ============================================================================
+
+  test("valid Big + BigNaN returns BigNaN") {
+    assertEquals(Big(5) + BigNaN, BigNaN)
+  }
+
+  test("valid Big - BigNaN returns BigNaN") {
+    assertEquals(Big(5) - BigNaN, BigNaN)
+  }
+
+  test("valid Big * BigNaN returns BigNaN") {
+    assertEquals(Big(5) * BigNaN, BigNaN)
+  }
+
+  test("valid Big / BigNaN returns BigNaN") {
+    assertEquals(Big(5) / BigNaN, BigNaN)
+  }
+
+  test("BigNaN + BigNaN returns BigNaN") {
+    assertEquals(BigNaN + BigNaN, BigNaN)
+  }
+
+  // ============================================================================
+  // Big-op-Big valid arithmetic (dedicated Big×Big overload, separate inline copy
+  // from Big-op-primitive overloads)
+  // ============================================================================
+
+  test("Big + Big / Big - Big / Big * Big valid paths") {
+    assertEquals((Big(5) + Big(3)).value, BigDecimal(8))
+    assertEquals((Big(5) - Big(3)).value, BigDecimal(2))
+    assertEquals((Big(5) * Big(3)).value, BigDecimal(15))
+  }
+
+  test("Big / Big valid path and zero-divisor guard") {
+    assertEqualsDouble((Big(10) / Big(2)).toDouble, 5.0, 1e-12)
+    assertEquals(Big(5) / Big(0), BigNaN)
+  }
+
+  test("BigNaN / Big propagates BigNaN (left-NaN for /(Big))") {
+    assertEquals(BigNaN / Big(5), BigNaN)
+  }
+
+  // ============================================================================
+  // Left-NaN for arithmetic overloads not yet individually covered
+  // (each inline copy generates independent bytecode branches)
+  // ============================================================================
+
+  test("BigNaN on left for -(Big) and *(Big)") {
+    assertEquals(BigNaN - Big(5), BigNaN)
+    assertEquals(BigNaN * Big(5), BigNaN)
+  }
+
+  test("BigNaN on left for +(Long) +(Double) -(Int) -(Double)") {
+    assertEquals(BigNaN + 5L,  BigNaN)
+    assertEquals(BigNaN + 1.0, BigNaN)
+    assertEquals(BigNaN - 5,   BigNaN)
+    assertEquals(BigNaN - 1.0, BigNaN)
+  }
+
+  test("BigNaN on left for *(Int) and *(Long)") {
+    assertEquals(BigNaN * 5,  BigNaN)
+    assertEquals(BigNaN * 5L, BigNaN)
+  }
+
+  test("BigNaN on left for /(Int) /(Long) /(Double)") {
+    assertEquals(BigNaN / 2,   BigNaN)
+    assertEquals(BigNaN / 2L,  BigNaN)
+    assertEquals(BigNaN / 2.0, BigNaN)
+  }
+
+  // ============================================================================
+  // Right-NaN via Double.NaN implicit conversion for primitive arithmetic overloads
+  // (covers isBad(that)=true branch in +(Double), -(Double), *(Double) inline copies)
+  // ============================================================================
+
+  test("Big + Double.NaN / Big - Double.NaN / Big * Double.NaN return BigNaN") {
+    assertEquals(Big(5) + Double.NaN, BigNaN)
+    assertEquals(Big(5) - Double.NaN, BigNaN)
+    assertEquals(Big(5) * Double.NaN, BigNaN)
+  }
+
+  // ============================================================================
+  // Comparisons: Big vs Big — true and false cases
+  // ============================================================================
+
+  test("<(Big) >(Big) <=(Big) >=(Big) true and false cases") {
+    assert(Big(1) < Big(3));          assert(!(Big(3) < Big(1)))
+    assert(Big(3) > Big(1));          assert(!(Big(1) > Big(3)))
+    assert(Big(1) <= Big(3));         assert(Big(1) <= Big(1));   assert(!(Big(3) <= Big(1)))
+    assert(Big(3) >= Big(1));         assert(Big(1) >= Big(1));   assert(!(Big(1) >= Big(3)))
+  }
+
+  test("Big(1) <= BigNaN and Big(1) >= BigNaN return false (right-NaN branch)") {
+    assert(!(Big(1) <= BigNaN))
+    assert(!(Big(1) >= BigNaN))
+  }
+
+  // ============================================================================
+  // Comparisons: BigNaN on left for primitive overloads (separate inline copies
+  // from the BigNaN-left cases for the Big overloads)
+  // ============================================================================
+
+  test("BigNaN compared with Double/Long/Int via all operators returns false") {
+    assert(!(BigNaN < 2.0));  assert(!(BigNaN < 2L));  assert(!(BigNaN < 2))
+    assert(!(BigNaN <= 2.0)); assert(!(BigNaN <= 2L)); assert(!(BigNaN <= 2))
+    assert(!(BigNaN > 2.0));  assert(!(BigNaN > 2L));  assert(!(BigNaN > 2))
+    assert(!(BigNaN >= 2.0)); assert(!(BigNaN >= 2L)); assert(!(BigNaN >= 2))
+  }
+
+  // ============================================================================
+  // Comparisons: false branches for primitive overloads (valid comparison, wrong direction)
+  // ============================================================================
+
+  test("primitive comparisons false branches") {
+    assert(!(Big(1) < 0.5));  assert(!(Big(1) < 0L));  assert(!(Big(1) < 0))
+    assert(!(Big(3) <= 2.0)); assert(!(Big(3) <= 2L)); assert(!(Big(3) <= 2))
+    assert(!(Big(1) > 2.0));  assert(!(Big(1) > 2L));  assert(!(Big(1) > 2))
+    assert(!(Big(2) >= 3.0)); assert(!(Big(2) >= 3L)); assert(!(Big(2) >= 3))
+  }
+
+  // ============================================================================
+  // Fractional[Big] typeclass — NaN-aware; summon[Numeric[Big]] resolves here
+  // because Fractional is a subtype of Numeric and this is the only given.
+  // ============================================================================
+
+  test("Fractional[Big] valid arithmetic") {
+    val frac = summon[Fractional[Big]]
+    assertEqualsDouble(frac.plus(Big(2), Big(3)).toDouble,  5.0,  1e-10)
+    assertEqualsDouble(frac.minus(Big(5), Big(3)).toDouble, 2.0,  1e-10)
+    assertEqualsDouble(frac.times(Big(4), Big(3)).toDouble, 12.0, 1e-10)
+    assertEqualsDouble(frac.div(Big(10), Big(4)).toDouble,  2.5,  1e-10)
+    assertEqualsDouble(frac.negate(Big(5)).toDouble,        -5.0, 1e-12)
+  }
+
+  test("Fractional[Big].plus/minus/times NaN propagation") {
+    val frac = summon[Fractional[Big]]
+    assertEquals(frac.plus(BigNaN, Big(1)),  BigNaN)
+    assertEquals(frac.plus(Big(1),  BigNaN), BigNaN)
+    assertEquals(frac.minus(BigNaN, Big(1)), BigNaN)
+    assertEquals(frac.minus(Big(1), BigNaN), BigNaN)
+    assertEquals(frac.times(BigNaN, Big(1)), BigNaN)
+    assertEquals(frac.times(Big(1), BigNaN), BigNaN)
+  }
+
+  test("Fractional[Big].div NaN propagation and zero-divisor") {
+    val frac = summon[Fractional[Big]]
+    assertEquals(frac.div(BigNaN, Big(2)), BigNaN)
+    assertEquals(frac.div(Big(2), BigNaN), BigNaN)
+    assertEquals(frac.div(Big(2), Big(0)), BigNaN)
+  }
+
+  test("Fractional[Big].negate NaN propagation") {
+    val frac = summon[Fractional[Big]]
+    assertEquals(frac.negate(BigNaN), BigNaN)
+  }
+
+  test("Fractional[Big].compare returns 0 when either operand is BigNaN") {
+    val frac = summon[Fractional[Big]]
+    assertEquals(frac.compare(BigNaN, Big(1)), 0)
+    assertEquals(frac.compare(Big(1), BigNaN), 0)
+    assert(frac.compare(Big(3), Big(1)) > 0)
+    assert(frac.compare(Big(1), Big(3)) < 0)
+    assertEquals(frac.compare(Big(2), Big(2)), 0)
+  }
+
+  // ============================================================================
+  // ~^ fractional Float exponent — covers the else (non-integer) branch in the
+  // Float-instantiated generic ~^[T: Fractional] method
+  // ============================================================================
+
+  test("~^ with fractional Float exponent uses double fallback") {
+    assertEqualsDouble((Big(4) ~^ 0.5f).toDouble, 2.0, 1e-10)
+    assertEqualsDouble((Big(9) ~^ 0.5f).toDouble, 3.0, 1e-10)
+  }
 }

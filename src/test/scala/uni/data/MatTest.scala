@@ -747,6 +747,74 @@ class MatTest extends munit.FunSuite {
     }
   }
 
+  test("arange with Double stop") {
+    val m = Mat.arange[Double](5.0)
+    assertEquals(m.shape, (5, 1))
+    assertEqualsDouble(m(0, 0), 0.0, 1e-10)
+    assertEqualsDouble(m(4, 0), 4.0, 1e-10)
+  }
+
+  test("arange with Double start and stop") {
+    val m = Mat.arange[Double](1.0, 4.0)
+    assertEquals(m.shape, (3, 1))
+    assertEqualsDouble(m(0, 0), 1.0, 1e-10)
+    assertEqualsDouble(m(2, 0), 3.0, 1e-10)
+  }
+
+  test("arange with Double step (fractional)") {
+    val m = Mat.arange[Double](0.0, 1.0, 0.25)
+    assertEquals(m.shape, (4, 1))
+    assertEqualsDouble(m(0, 0), 0.00, 1e-10)
+    assertEqualsDouble(m(1, 0), 0.25, 1e-10)
+    assertEqualsDouble(m(3, 0), 0.75, 1e-10)
+  }
+
+  test("MatD flat-Double apply creates row vector") {
+    val m = MatD(1.25, 1.75, 2.25, 2.75)
+    assertEquals(m.shape, (1, 4))
+    assertEqualsDouble(m(0, 0), 1.25, 1e-10)
+    assertEqualsDouble(m(0, 3), 2.75, 1e-10)
+  }
+
+  test("MatD flat-Double single value") {
+    val m = MatD(3.14)
+    assertEquals(m.shape, (1, 1))
+    assertEqualsDouble(m(0, 0), 3.14, 1e-10)
+  }
+
+  test("in-place :+= is chainable") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    val result = m :+= 10.0
+    assertEqualsDouble(result(0, 0), 11.0, 1e-10)
+    assertEqualsDouble(result(1, 1), 14.0, 1e-10)
+  }
+
+  test("in-place :-= is chainable") {
+    val m = Mat[Double]((5, 6), (7, 8))
+    val result = m :-= 2.0
+    assertEqualsDouble(result(0, 0), 3.0, 1e-10)
+  }
+
+  test("in-place :*= is chainable") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    val result = m :*= 3.0
+    assertEqualsDouble(result(0, 0), 3.0, 1e-10)
+  }
+
+  test("in-place :/= is chainable") {
+    val m = Mat[Double]((6, 8), (3, 4))
+    val result = m :/= 2.0
+    assertEqualsDouble(result(0, 0), 3.0, 1e-10)
+  }
+
+  test("m(::) returns all elements") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    val all = m(::)
+    assertEquals(all.shape, (2, 2))
+    assertEqualsDouble(all(0, 0), 1.0, 1e-10)
+    assertEqualsDouble(all(1, 1), 4.0, 1e-10)
+  }
+
   test("column slice rejects out of bounds") {
     val m = Mat[Double]((1, 2, 3), (4, 5, 6))
     intercept[IllegalArgumentException] {

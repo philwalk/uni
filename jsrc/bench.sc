@@ -1,7 +1,7 @@
 #!/usr/bin/env -S scala-cli shebang -deprecation
 
 //> using scala 3.8.2
-//> using dep org.vastblue:uni_3:0.9.4
+//> using dep org.vastblue:uni_3:0.9.5
 
 /**
  * MatD benchmark — counterpart to py/bench.py (NumPy/Python).
@@ -58,7 +58,7 @@ val M2 = MatD.randn(N,  N)
 
 // ── benchmark suite ───────────────────────────────────────────────────────────
 
-println(s"\nuni.MatD 0.9.2   Scala 3.7.0   JVM ${System.getProperty("java.version")}")
+println(s"\nuni.MatD 0.9.5   Scala 3.7.0   JVM ${System.getProperty("java.version")}")
 println(s"N=$N  MM=$MM  warmup=$WARMUP  iters=$ITERS\n")
 println("  " + "-" * 72)
 

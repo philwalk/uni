@@ -19,7 +19,7 @@ ThisBuild / watchTriggeredMessage := Watch.clearScreenOnTrigger
 ThisBuild / scalaVersion  := scalaVer
 
 lazy val projectName = "uni"
-ThisBuild / version       := "0.9.4" // client imports cleanup
+ThisBuild / version       := "0.9.5" // client imports cleanup
 ThisBuild / versionScheme := Some("semver-spec")
 
 ThisBuild / organization         := "org.vastblue"
@@ -71,7 +71,7 @@ Compile / packageBin / packageOptions +=
   Package.ManifestAttributes(java.util.jar.Attributes.Name.CLASS_PATH -> "")
 
 lazy val root = (project in file(".")).
-  enablePlugins(BuildInfoPlugin).
+  enablePlugins(BuildInfoPlugin, JacocoPlugin).
   settings(
     parallelExecution  := false,
     crossScalaVersions := supportedScalaVersions,
@@ -80,6 +80,10 @@ lazy val root = (project in file(".")).
  // mainClass          := Some("vast.apps.ShowSysProps"),
     buildInfoKeys      := Seq[BuildInfoKey](name, version, scalaVersion, sbtVersion),
     buildInfoPackage   := "uni", // available as "import uni.BuildInfo"
+    jacocoReportSettings := JacocoReportSettings(
+      title  = "uni coverage",
+      formats = Seq(JacocoReportFormats.HTML, JacocoReportFormats.XML),
+    ),
   )
 
 libraryDependencies ++= Seq(

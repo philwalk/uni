@@ -8,7 +8,7 @@ Side-by-side reference for **uni.MatD**, NumPy, Breeze, R, and MATLAB.
 
 ## Performance vs NumPy
 
-Measured on the same machine: NumPy 2.4.1 / Python 3.14.3 vs uni.MatD 0.9.2 / Scala 3.7.0 / JVM 17.
+Measured on the same machine: NumPy 2.4.1 / Python 3.14.3 vs uni.MatD 0.9.5 / Scala 3.7.0 / JVM 17.
 Both use OpenBLAS. See [`jsrc/bench.sc`](../jsrc/bench.sc) and [`py/bench.py`](../py/bench.py) to reproduce.
 
 | Operation | NumPy | MatD | Ratio | Notes |

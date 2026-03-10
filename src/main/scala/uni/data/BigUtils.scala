@@ -89,10 +89,9 @@ object BigUtils:
     if s.isEmpty then false
     else
       val numsAndSuch = s.filter(validNumChar)
-      if s.length != numsAndSuch.length ||
-         numsAndSuch.count(c => c == '-' || c == '/') > 1
-      then false
-      else
+      if numsAndSuch.count(c => c == '-' || c == '/') > 1 then false
+      else if s.length == numsAndSuch.length then
+        // All chars are basic numeric — try direct parse then all regex patterns
         Try(s.toDouble).isSuccess || (s match
           case NumPattern1(_, _)        => true
           case NumPattern2(_, _, _, _)  => true
@@ -100,6 +99,13 @@ object BigUtils:
           case NumPattern4(_, _)        => true
           case _                        => false
         )
+      else
+        // Has chars outside validNumChar (K/M/B, parentheses, etc.) —
+        // try the patterns designed to handle them
+        s match
+          case NumPattern1(_, _) => true
+          case NumPattern3(_, _) => true
+          case _                 => false
 
   // ------------------------------------------------------------
   // Most specific type: String | Big | DateTime
