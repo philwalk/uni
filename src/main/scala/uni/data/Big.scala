@@ -211,7 +211,7 @@ object Big:
     
     inline def toLong: Long = n.toLong
       
-    inline def abs: Big = n.abs
+    inline def abs: Big = if isBad(n) then BigNaN else n.abs
     def max(that: Big): Big = if isBad(n) || isBad(that) then BigNaN else if n >= that then n else that
     def min(that: Big): Big = if isBad(n) || isBad(that) then BigNaN else if n <= that then n else that
 
@@ -224,11 +224,13 @@ object Big:
     }
     inline def isNotNaN: Boolean = n != BigNaN
   
-    def sqrt: Big = 
-      // BigDecimal.sqrt is available in Java 9+
-      // .bigDecimal converts scala.math.BigDecimal -> java.math.BigDecimal
-      val underlying: java.math.BigDecimal = n.value.bigDecimal
-      Big(underlying.sqrt(Big.MC))
+    def sqrt: Big =
+      if isBad(n) then BigNaN
+      else
+        // BigDecimal.sqrt is available in Java 9+
+        // .bigDecimal converts scala.math.BigDecimal -> java.math.BigDecimal
+        val underlying: java.math.BigDecimal = n.value.bigDecimal
+        Big(underlying.sqrt(Big.MC))
 
   import scala.language.implicitConversions
   given Conversion[Int, Big] = d => Big(BigDecimal(d))

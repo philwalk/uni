@@ -615,4 +615,137 @@ class MatCoverageSuite extends FunSuite {
     val m = MatF.row(2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0)
     assertEqualsDouble(m.std.toDouble, 2.0, 1e-4)
   }
+
+  // ============================================================================
+  // Tier 1: MatF factory methods (linspace, arange, fromSeq, tabulate,
+  //         zerosLike, onesLike, fullLike, concatenate)
+  // ============================================================================
+
+  test("MatF.linspace produces correct values") {
+    val m = MatF.linspace(0.0, 1.0, 5)
+    assertEquals(m.rows, 5)  // linspace returns column vector (n, 1)
+    assertEqualsDouble(m(0, 0).toDouble, 0.0, 1e-5)
+    assertEqualsDouble(m(4, 0).toDouble, 1.0, 1e-5)
+  }
+
+  test("MatF.arange (Int stop)") {
+    val m = MatF.arange(5)
+    assertEquals(m.rows, 5)  // arange returns column vector (n, 1)
+    assertEqualsDouble(m(0, 0).toDouble, 0.0, 1e-5)
+    assertEqualsDouble(m(4, 0).toDouble, 4.0, 1e-5)
+  }
+
+  test("MatF.arange (Int start, stop, step)") {
+    val m = MatF.arange(0, 10, 2)
+    assertEquals(m.rows, 5)
+    assertEqualsDouble(m(2, 0).toDouble, 4.0, 1e-5)
+  }
+
+  test("MatF.fromSeq") {
+    val m = MatF.fromSeq(Seq(1.0f, 2.0f, 3.0f))
+    assertEquals(m.rows, 3)  // fromSeq returns column vector (n, 1)
+    assertEqualsDouble(m(1, 0).toDouble, 2.0, 1e-5)
+  }
+
+  test("MatF.tabulate") {
+    val m = MatF.tabulate(2, 3)((r, c) => (r * 3 + c).toFloat)
+    assertEquals(m.shape, (2, 3))
+    assertEqualsDouble(m(1, 2).toDouble, 5.0, 1e-5)
+  }
+
+  test("MatF.zerosLike") {
+    val template = MatF.ones(3, 4)
+    val z = MatF.zerosLike(template)
+    assertEquals(z.shape, (3, 4))
+    assertEqualsDouble(z(0, 0).toDouble, 0.0, 1e-5)
+  }
+
+  test("MatF.onesLike") {
+    val template = MatF.zeros(2, 5)
+    val o = MatF.onesLike(template)
+    assertEquals(o.shape, (2, 5))
+    assertEqualsDouble(o(1, 3).toDouble, 1.0, 1e-5)
+  }
+
+  test("MatF.fullLike") {
+    val template = MatF.zeros(2, 3)
+    val f = MatF.fullLike(template, 7.0)
+    assertEquals(f.shape, (2, 3))
+    assertEqualsDouble(f(1, 2).toDouble, 7.0, 1e-4)
+  }
+
+  test("MatF.concatenate axis=0") {
+    val a = MatF.ones(2, 3)
+    val b = MatF.zeros(2, 3)
+    val c = MatF.concatenate(Seq(a, b), axis = 0)
+    assertEquals(c.shape, (4, 3))
+    assertEqualsDouble(c(0, 0).toDouble, 1.0, 1e-5)
+    assertEqualsDouble(c(2, 0).toDouble, 0.0, 1e-5)
+  }
+
+  // ============================================================================
+  // Tier 1: MatB factory methods
+  // ============================================================================
+
+  test("MatB.linspace produces correct values") {
+    val m = MatB.linspace(0.0, 1.0, 5)
+    assertEquals(m.rows, 5)  // linspace returns column vector (n, 1)
+    assertEqualsDouble(m(0, 0).toDouble, 0.0, 1e-10)
+    assertEqualsDouble(m(4, 0).toDouble, 1.0, 1e-10)
+  }
+
+  test("MatB.arange (Int stop)") {
+    val m = MatB.arange(5)
+    assertEquals(m.rows, 5)  // arange returns column vector (n, 1)
+    assertEqualsDouble(m(0, 0).toDouble, 0.0, 1e-10)
+    assertEqualsDouble(m(4, 0).toDouble, 4.0, 1e-10)
+  }
+
+  test("MatB.arange (Int start, stop, step)") {
+    val m = MatB.arange(0, 10, 2)
+    assertEquals(m.rows, 5)
+    assertEqualsDouble(m(2, 0).toDouble, 4.0, 1e-10)
+  }
+
+  test("MatB.fromSeq") {
+    val m = MatB.fromSeq(Seq(Big(1), Big(2), Big(3)))
+    assertEquals(m.rows, 3)  // fromSeq returns column vector (n, 1)
+    assertEqualsDouble(m(1, 0).toDouble, 2.0, 1e-10)
+  }
+
+  test("MatB.tabulate") {
+    val m = MatB.tabulate(2, 3)((r, c) => Big(r * 3 + c))
+    assertEquals(m.shape, (2, 3))
+    assertEqualsDouble(m(1, 2).toDouble, 5.0, 1e-10)
+  }
+
+  test("MatB.zerosLike") {
+    val template = MatB.ones(3, 4)
+    val z = MatB.zerosLike(template)
+    assertEquals(z.shape, (3, 4))
+    assertEqualsDouble(z(0, 0).toDouble, 0.0, 1e-10)
+  }
+
+  test("MatB.onesLike") {
+    val template = MatB.zeros(2, 5)
+    val o = MatB.onesLike(template)
+    assertEquals(o.shape, (2, 5))
+    assertEqualsDouble(o(1, 3).toDouble, 1.0, 1e-10)
+  }
+
+  test("MatB.fullLike") {
+    val template = MatB.zeros(2, 3)
+    val f = MatB.fullLike(template, 7.0)
+    assertEquals(f.shape, (2, 3))
+    assertEqualsDouble(f(1, 2).toDouble, 7.0, 1e-10)
+  }
+
+  test("MatB.concatenate axis=0") {
+    val a = MatB.ones(2, 3)
+    val b = MatB.zeros(2, 3)
+    val c = MatB.concatenate(Seq(a, b), axis = 0)
+    assertEquals(c.shape, (4, 3))
+    assertEqualsDouble(c(0, 0).toDouble, 1.0, 1e-10)
+    assertEqualsDouble(c(2, 0).toDouble, 0.0, 1e-10)
+  }
 }

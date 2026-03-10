@@ -282,6 +282,10 @@ class BigCoverageSuite extends FunSuite {
     assertEquals(Big(0).abs.value,   BigDecimal(0))
   }
 
+  test("BigNaN.abs returns BigNaN") {
+    assertEquals(BigNaN.abs, BigNaN)
+  }
+
   // ============================================================================
   // signum
   // ============================================================================
@@ -304,6 +308,10 @@ class BigCoverageSuite extends FunSuite {
 
   test("sqrt of non-square is high precision") {
     assertEqualsDouble(Big(2).sqrt.toDouble, math.sqrt(2), 1e-10)
+  }
+
+  test("BigNaN.sqrt returns BigNaN") {
+    assertEquals(BigNaN.sqrt, BigNaN)
   }
 
   // ============================================================================
