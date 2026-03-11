@@ -1,4 +1,4 @@
-package apps
+package uni.apps
 
 import uni.data.*
 import uni.data.Mat.*

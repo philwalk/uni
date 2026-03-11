@@ -1,4 +1,4 @@
-package apps
+package uni.apps
 
 import uni.*
 import uni.data.*

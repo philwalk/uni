@@ -1,5 +1,5 @@
 //#!/usr/bin/env -S scala-cli shebang -deprecation
-package apps
+package uni.apps
 
 //> using dep org.vastblue:uni_3:0.9.5
 
