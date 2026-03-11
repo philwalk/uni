@@ -52,7 +52,7 @@ uni.Mat is built on the principle that developers shouldn't have to choose betwe
 
 ## Test Coverage
 
-Measured with `sbt jacoco` (1,663 tests). Branch coverage is lower than line coverage because Scala 3 `inline` methods generate independent bytecode copies at each call site, each with their own branch counters.
+Measured with `sbt jacoco` (1,761 tests). Branch coverage is lower than line coverage because Scala 3 `inline` methods generate independent bytecode copies at each call site, each with their own branch counters.
 
 | Package | Branch | Line |
 | :--- | ---: | ---: |
