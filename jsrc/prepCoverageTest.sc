@@ -9,7 +9,7 @@ object PrepCoverageTest:
   val InlineDefRegex = """(?m)^ *inline (def|private def)""".r.unanchored
 
   def usage(m: String = ""): Nothing = 
-    showUsage(m, "", "[-prep | -restore] [-v]")
+    showUsage(m, "", "[-prep | -restore | -coverage] [-v]")
 
   var verbose = false
   var op = ""
@@ -17,14 +17,16 @@ object PrepCoverageTest:
   def main(args: Array[String]): Unit =
     eachArg(args.toSeq, usage) {
       case "-v" => verbose = true
-      case "-prep" | "-restore" => op = thisArg
+      case "-prep" | "-restore" | "-coverage" =>
+        op = thisArg
       case arg => usage(s"unrecognized arg [$arg]")
     }
 
     op match
-      case "-prep"    => runPrep()
-      case "-restore" => runRestore()
-      case _          => usage("Please specify -prep or -restore")
+      case "-prep"     => runPrep()
+      case "-restore"  => runRestore()
+      case "-coverage" => runCoverage() // New Orchestrator
+      case _           => usage("Please specify -prep or -restore")
 
   def runPrep(): Unit =
     // Check for ANY modified .scala files in the repo
@@ -48,9 +50,8 @@ object PrepCoverageTest:
     val targets = srcdir.walk
       .filter(_.ext == "scala")
       .filterNot { p => 
-        val path: String = p.posx
-        // Check if 'cli' exists as a distinct directory segment
-        path.contains("/cli/") || path.contains("HereDoc") || path.contains(BuildDir)
+        val segments = p.posx.split('/')
+        segments.contains("cli") || segments.contains("HereDoc") || segments.contains(BuildDir)
       }
       .filter(p => InlineDefRegex.findFirstIn(p.contentAsString).isDefined)
       .toList
@@ -71,8 +72,13 @@ object PrepCoverageTest:
     else
       if verbose then println(s"Restoring: ${toRestore.mkString(", ")}")
       // Using -- to separate paths from the command is safer
-      s"git checkout -- ${toRestore.mkString(" ")}".!
-      println(s"Restored ${toRestore.size} files.")
+      // '--' ensures git treats the strings as paths
+      //s"git checkout -- ${toRestore.mkString(" ")}".!
+      val exitCode = s"git checkout -- ${toRestore.mkString(" ")}".!
+      if exitCode == 0 then
+        println(s"Restored ${toRestore.size} files.")
+      else
+        println("Error: Git restore failed.")
 
   def deInline(p: Path): Unit =
     var content = p.contentAsString
@@ -118,10 +124,54 @@ object PrepCoverageTest:
         }
       }
 
-    // Now that the 'hard' one is replaced with standard Scala, purge ALL 'inline'
-    // This is safe because matmul is no longer 'inline def'
-    val finalContent = content.replaceAll("(?<!@)\\binline\\b\\s*", "")
-    p.write(finalContent)
+  def runCoverage(): Unit =
+    println("=== Starting Full Coverage Run ===")
+    
+    try
+      // Stage 1: Prep
+      runPrep()
+      
+      // Stage 2: Build and Test
+      println("\n=== Running sbt clean jacoco ===")
+      // Using ! to execute and get exit code
+      val result = "sbt clean jacoco".!
+      
+      if result != 0 then
+        println(s"\n[WARNING] sbt exited with error code $result. Proceeding to restore...")
+      else
+        println("\n=== sbt completed successfully ===")
+        openReport() // <--- Open the browser here
+        
+    finally
+      // Stage 3: Restore (Always runs)
+      println("\n=== Restoring Source Files ===")
+      runRestore()
+      
+      // Verification
+      val remaining = "git status --porcelain -uno".!!.linesIterator
+        .filter(_.endsWith(".scala")).toList
+      if remaining.isEmpty then
+        println("SUCCESS: Workspace is clean.")
+      else
+        println(s"ALERT: Workspace still has modified files: ${remaining.mkString(", ")}")
+
+  def verifyClean(): Unit =
+    val remaining = "git status --porcelain -uno".!!.linesIterator
+      .filter(_.endsWith(".scala")).toList
+    if remaining.isEmpty then println("SUCCESS: Workspace is clean.")
+    else println(s"ALERT: Workspace still has modified files: ${remaining.mkString(", ")}")
+
+  def openReport(): Unit =
+    import java.awt.Desktop
+    val report = "target/scala-3.7.0/jacoco/report/html/index.html".path
+    if report.exists then
+      println(s"Opening report: ${report.posx}")
+      if Desktop.isDesktopSupported && Desktop.getDesktop.isSupported(Desktop.Action.BROWSE) then
+        Desktop.getDesktop.browse(report.toUri)
+      else
+        println(s"Automatic browsing not supported. Report at: ${report.toUri}")
+    else
+      println(s"Report not found at ${report.posx}")
 
   lazy val matmulReplacement: String = """
     def matmul(other: Mat[T]): Mat[T] = {

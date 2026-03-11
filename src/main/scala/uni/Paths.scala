@@ -136,7 +136,7 @@ final case class MountMaps(cygdrive: String, win2posix: Win2posixMap, posix2win:
   val msysRoot = posix2win.getOrElse("/", "")
 }
 
-object Resolver {
+private[uni] object Resolver {
   /* Five Windows path types:
    absolute:            F:/...
    drive-relative:      F:config/bin

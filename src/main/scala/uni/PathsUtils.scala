@@ -293,7 +293,7 @@ lazy val pwd: Path = JPaths.get(config.userdir)
 
 def isWinshell: Boolean = isWin && Properties.propOrNone("MSYSTEM").nonEmpty
 
-object Internals {
+private[uni] object Internals {
 
   def realpathWindows(path: String): String = {
     if (!isWin) {

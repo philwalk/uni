@@ -289,13 +289,13 @@ class UniRootCoverageSuite extends FunSuite:
   test("iteratorPathToSeq: Iterator[Path] implicitly converts to Seq[Path]") {
     import scala.language.implicitConversions
     val paths = Seq(JPaths.get("/a"), JPaths.get("/b"))
-    val seq: Seq[Path] = paths.iterator
+    val seq: Seq[Path] = paths.iterator.toSeq
     assertEquals(seq, paths)
   }
 
   test("iteratorPathToList: Iterator[Path] implicitly converts to List[Path]") {
     import scala.language.implicitConversions
     val paths = List(JPaths.get("/a"), JPaths.get("/b"))
-    val lst: List[Path] = paths.iterator
+    val lst: List[Path] = paths.iterator.toList
     assertEquals(lst, paths)
   }
