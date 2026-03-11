@@ -52,7 +52,7 @@ uni.Mat is built on the principle that developers shouldn't have to choose betwe
 
 ## Test Coverage
 
-Measured with `sbt jacoco` (1,782 tests). Branch coverage measures both true and false outcomes of every conditional, so it is typically lower than line coverage.
+Measured with `sbt jacoco` (1,826 tests). Branch coverage measures both true and false outcomes of every conditional, so it is typically lower than line coverage.
 Note: inline annotations were removed before running JaCoCo to prevent Scala 3's per-call-site bytecode duplication — where each call site gets its own branch counters — from artificially lowering reported coverage.
 
 | Package | Branch | Line |

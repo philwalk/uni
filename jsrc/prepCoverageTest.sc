@@ -28,7 +28,8 @@ object PrepCoverageTest:
 
   def runPrep(): Unit =
     // Check for ANY modified .scala files in the repo
-    val modifiedInRepo = "git status --porcelain".!!.linesIterator
+    // -uno tells git to ignore untracked files
+    val modifiedInRepo = "git status --porcelain -uno".!!.linesIterator
       .filter(_.endsWith(".scala")).toList
 
     if modifiedInRepo.nonEmpty then
@@ -60,19 +61,20 @@ object PrepCoverageTest:
     println(s"Successfully prepped ${targets.size} files for JaCoCo.")
 
   def runRestore(): Unit =
-    // Safety: Find all modified .scala files via git and check them back out
-    val toRestore = "git status --porcelain".!!.linesIterator
-      .map(_.substring(3)) // Strip status codes (e.g., ' M ')
+    // Only restore files that git actually knows about (Tracked & Modified)
+    // 'git diff --name-only' is the cleanest way to get just modified tracked files
+    val toRestore = "git diff --name-only".!!.linesIterator
       .filter(_.endsWith(".scala")).toList
 
     if toRestore.isEmpty then
       println("Nothing to restore.")
     else
       if verbose then println(s"Restoring: ${toRestore.mkString(", ")}")
-      s"git checkout ${toRestore.mkString(" ")}".!
+      // Using -- to separate paths from the command is safer
+      s"git checkout -- ${toRestore.mkString(" ")}".!
       println(s"Restored ${toRestore.size} files.")
 
-def deInline(p: Path): Unit =
+  def deInline(p: Path): Unit =
     var content = p.contentAsString
 
     if p.last == "Mat.scala" && content.contains("def matmul") then
