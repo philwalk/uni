@@ -227,7 +227,7 @@ object FastCsv {
     private var fieldWasQuoted = false
     private var hasSeenQuoteInRow = false
 
-    @inline private def ensureFieldCapacity(n: Int): Unit = {
+    inline private def ensureFieldCapacity(n: Int): Unit = {
       if (n > field.length) {
         var cap = field.length
         while (cap < n) cap <<= 1
@@ -236,14 +236,14 @@ object FastCsv {
         field = nf
       }
     }
-    @inline private def append(b: Byte): Unit = {
+    inline private def append(b: Byte): Unit = {
       val next = fieldLen + 1
       ensureFieldCapacity(next)
       field(fieldLen) = b
       fieldLen = next
     }
 
-    @inline private def trimBytes(raw: Array[Byte]): Array[Byte] = {
+    inline private def trimBytes(raw: Array[Byte]): Array[Byte] = {
       var start = 0
       var end = raw.length - 1
 
@@ -255,7 +255,7 @@ object FastCsv {
       else java.util.Arrays.copyOfRange(raw, start, end + 1)
     }
 
-    @inline private def emitField(): Unit = {
+    inline private def emitField(): Unit = {
       val raw = java.util.Arrays.copyOf(field, fieldLen)
       val cleaned =
         if fieldWasQuoted then raw
@@ -270,7 +270,7 @@ object FastCsv {
       fieldLen = 0
       fieldWasQuoted = false
     }
-    @inline private def emitRow(): Array[Array[Byte]] = {
+    inline private def emitRow(): Array[Array[Byte]] = {
       val row = new Array[Array[Byte]](fieldCount)
       System.arraycopy(fields, 0, row, 0, fieldCount)
       fieldCount = 0
@@ -291,7 +291,7 @@ object FastCsv {
       }
     }
 
-    @inline private def feedCore(b: Byte): Option[Array[Array[Byte]]] = {
+    inline private def feedCore(b: Byte): Option[Array[Array[Byte]]] = {
       // Fast path: no quotes seen yet, not currently in quotes
       if (!inQuotes && !hasSeenQuoteInRow) {
         if (b == delimiter) {

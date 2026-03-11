@@ -10,7 +10,7 @@ object PrepCoverageTest:
   val ExcludePath = "/cli/"
   val BuildDir    = ".scala-build"
   
-  val InlineDefRegex = """^ *inline (def|private def)""".r.unanchored
+  val InlineDefRegex = """(?m)^ *inline (def|private def)""".r.unanchored
 
   def usage(m: String = ""): Nothing = 
     showUsage(m, "", "[-prep | -restore] [-v]")
@@ -41,11 +41,16 @@ object PrepCoverageTest:
       sys.exit(1)
 
     // Identify targets based on your shell-logic equivalent
-    val targets = SearchDir.path.walk
+    val srcdir = SearchDir.path
+    if !srcdir.isDirectory then
+      usage(s"not a directory [${srcdir.posx}]")
+
+    val targets = srcdir.walk
       .filter(_.ext == "scala")
       .filterNot(_.abs.contains(ExcludePath))
       .filterNot(_.abs.contains(BuildDir))
       .filter(p => InlineDefRegex.findFirstIn(p.contentAsString).isDefined)
+      .toList
 
     if verbose then println(s"Found ${targets.size} candidate files.")
     
@@ -80,6 +85,9 @@ object PrepCoverageTest:
         if braceCount <= 0 && line.contains("}") then inProtectedZone = false
         line 
       else
-        line.replaceAll("\\binline\\b\\s*", "")
+        // FIX: Use negative lookbehind to ignore @inline
+        // This regex says: "Find 'inline' as a whole word, 
+        // but ONLY if it doesn't have an '@' immediately before it."
+        line.replaceAll("(?<!@)\\binline\\b\\s*", "")
     }
     p.writeLines(newLines)

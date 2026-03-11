@@ -118,7 +118,7 @@ object Big:
       if isBad(n) then BigNaN else Big(-n)
 
     // binary guard helper
-    @inline private def badGuard(that: Big)(f: => Big): Big =
+    inline private def badGuard(that: Big)(f: => Big): Big =
       if isBad(n) || isBad(that) then BigNaN
       else Big(f)
 

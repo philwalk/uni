@@ -39,7 +39,7 @@ class NumPyRNG(seed: Long = 0L) {
 
   // Upper 64 bits of the 128-bit unsigned product a × b.
   // Math.multiplyHigh (Java 9+) treats inputs as signed; correct for unsigned.
-  @inline private def umHigh(a: Long, b: Long): Long =
+  inline private def umHigh(a: Long, b: Long): Long =
     Math.multiplyHigh(a, b) + ((a >> 63) & b) + ((b >> 63) & a)
 
   private def step(): Unit =
