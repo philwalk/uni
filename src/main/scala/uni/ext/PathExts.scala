@@ -133,8 +133,11 @@ object pathExts {
     def subdirs: Seq[Path]         = pathsIter.filter(Files.isDirectory(_)).toSeq
     def subfiles: Seq[Path]        = pathsIter.filter(Files.isRegularFile(_)).toSeq
 
-    // ---- tree walk ----
     def reversePath: String = p.iterator.asScala.map(_.toString).toList.reverse.mkString("/")
+
+    // ---- tree walk ----
+
+    def walk: Iterator[Path] = pathsTreeIter // alias
 
     def pathsTree: Seq[Path] = pathsTreeIter.toSeq
     def pathsTreeIter: Iterator[Path] =
@@ -346,6 +349,18 @@ object pathExts {
     def loadMatD: MatD                  = loadMatInternal(_.toDouble)
     def loadSmartBig: MatResult[Big]    = loadSmart(p)
     def loadSmartD: MatResult[Double]   = loadSmart(p, _.toDouble)
+
+    def writeLines(lines: Seq[String]): Unit = 
+      // Adding the trailing newline ensures the file isn't "missing a newline at EOF"
+      uni.io.FileOps.withFileWriter(p){ w => 
+        lines.foreach { line => 
+          w.write(line)
+          w.write("\n")
+        }
+      }
+
+    def write(text: String): Unit = 
+      uni.io.FileOps.withFileWriter(p){ w => w.write(text) }
   }
 
   // ---------------------------------------------------------------------------
@@ -473,6 +488,10 @@ object pathExts {
     def loadMatD: MatD                = f.toPath.loadMatD
     def loadSmartBig: MatResult[Big]  = f.toPath.loadSmartBig
     def loadSmartD: MatResult[Double] = f.toPath.loadSmartD
+
+    def writeLines(lines: Seq[String]): Unit = f.toPath.writeLines(lines)
+
+    def write(text: String): Unit = f.toPath.write(text)
   }
 
   lazy val UTC: ZoneId = java.time.ZoneId.of("UTC")

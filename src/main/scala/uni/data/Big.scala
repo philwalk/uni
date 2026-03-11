@@ -252,24 +252,21 @@ object Big:
     if !d.isFinite then BigNaN else
     Big(BigDecimal(d))
 
-// ------------------------------------------------------------
-// Fractional[Big] — placed outside object Big so Big is opaque here.
-// We use .value to obtain the underlying BigDecimal and operate on it
-// directly, bypassing Numeric.NumericOps / Ordering.lt which would
-// delegate back to this instance and cause infinite recursion.
-// ------------------------------------------------------------
-given Fractional[Big] with
-  def plus(x: Big, y: Big): Big    = if x.isNaN || y.isNaN then BigNaN else Big(x.value + y.value)
-  def minus(x: Big, y: Big): Big   = if x.isNaN || y.isNaN then BigNaN else Big(x.value - y.value)
-  def times(x: Big, y: Big): Big   = if x.isNaN || y.isNaN then BigNaN else Big(x.value * y.value)
-  def negate(x: Big): Big          = if x.isNaN then BigNaN else Big(-x.value)
-  def div(x: Big, y: Big): Big     =
-    if x.isNaN || y.isNaN || y.value == BigDecimal(0) then BigNaN else Big(x.value / y.value)
-  def fromInt(x: Int): Big         = Big(x)
-  def parseString(s: String): Option[Big] = scala.util.Try(Big(s)).toOption
-  def toInt(x: Big): Int           = x.value.toInt
-  def toLong(x: Big): Long         = x.value.toLong
-  def toFloat(x: Big): Float       = if x.isNaN then Float.NaN else x.value.toFloat
-  def toDouble(x: Big): Double     = if x.isNaN then Double.NaN else x.value.toDouble
-  def compare(x: Big, y: Big): Int =
-    if x.isNaN || y.isNaN then 0 else x.value.compare(y.value)
+  // Placed inside object Big so it sits in the implicit scope of the Big opaque type
+  // (Scala 3 searches the defining object for given instances automatically).
+  // .value is used to obtain the underlying BigDecimal and operate on it directly.
+  given Fractional[Big] with
+    def plus(x: Big, y: Big): Big    = if x.isNaN || y.isNaN then BigNaN else Big(x.value + y.value)
+    def minus(x: Big, y: Big): Big   = if x.isNaN || y.isNaN then BigNaN else Big(x.value - y.value)
+    def times(x: Big, y: Big): Big   = if x.isNaN || y.isNaN then BigNaN else Big(x.value * y.value)
+    def negate(x: Big): Big          = if x.isNaN then BigNaN else Big(-x.value)
+    def div(x: Big, y: Big): Big     =
+      if x.isNaN || y.isNaN || y.value == BigDecimal(0) then BigNaN else Big(x.value / y.value)
+    def fromInt(x: Int): Big         = Big(x)
+    def parseString(s: String): Option[Big] = scala.util.Try(Big(s)).toOption
+    def toInt(x: Big): Int           = x.value.toInt
+    def toLong(x: Big): Long         = x.value.toLong
+    def toFloat(x: Big): Float       = if x.isNaN then Float.NaN else x.value.toFloat
+    def toDouble(x: Big): Double     = if x.isNaN then Double.NaN else x.value.toDouble
+    def compare(x: Big, y: Big): Int =
+      if x.isNaN || y.isNaN then 0 else x.value.compare(y.value)
