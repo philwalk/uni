@@ -6,7 +6,7 @@ import java.time.LocalDateTime
 object ChronoParse {
   private lazy val now: LocalDateTime = LocalDateTime.now()
   private lazy val MonthNamesPattern = "(?i)(.*)(Jan[uary]*|Feb[ruary]*|Mar[ch]*|Apr[il]*|May|June?|July?|Aug[ust]*|Sep[tember]*|Oct[ober]*|Nov[ember]*|Dec[ember]*)(.*)".r
-  var monthFirst = true // enforced convention for ambiguous month/day versus day/month
+  private var monthFirst = true // enforced convention for ambiguous month/day versus day/month
 
   def parseDateChrono(inpDateStr: String): LocalDateTime = {
     if (inpDateStr.trim.isEmpty) {
@@ -453,7 +453,7 @@ object ChronoParse {
           val tdnums = (datenumstrings ++ timestring.split("[+: ]+"))
             tdnums.filter { _.trim.nonEmpty }.map { toNum(_) }
         }
-        def ymd(iy: Int, im: Int, id: Int, tail: List[String]): LocalDateTime = {
+        def ymd(iy: Int, im: Int, id: Int): LocalDateTime = {
           if (iy <0 || im <0 || id <0) {
             hook += 1
           } else if (nums.size < 3) {
@@ -463,12 +463,12 @@ object ChronoParse {
           yyyyMMddHHmmssToDate(standardOrder, pmFlag)
         }
         val dateTime: LocalDateTime = bareformats match {
-          case "d" :: "M" :: "y" :: tail => ymd(2,1,0, tail)
-          case "M" :: "d" :: "y" :: tail => ymd(2,0,1, tail)
-          case "d" :: "y" :: "M" :: tail => ymd(1,2,0, tail)
-          case "M" :: "y" :: "d" :: tail => ymd(1,0,2, tail)
-          case "y" :: "d" :: "M" :: tail => ymd(0,2,1, tail)
-          case "y" :: "M" :: "d" :: tail => ymd(0,1,2, tail)
+          case "d" :: "M" :: "y" :: _ => ymd(2,1,0)
+          case "M" :: "d" :: "y" :: _ => ymd(2,0,1)
+          case "d" :: "y" :: "M" :: _ => ymd(1,2,0)
+          case "M" :: "y" :: "d" :: _ => ymd(1,0,2)
+          case "y" :: "d" :: "M" :: _ => ymd(0,2,1)
+          case "y" :: "M" :: "d" :: _ => ymd(0,1,2)
           case other =>
             valid = false
             BadDate

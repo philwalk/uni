@@ -25,13 +25,13 @@ object Progname {
     printf("%-32s: %s\n", "progCmnd", progCmnd) // based on sys.prop `sun.java.command`
   }
 
-  def sourceName = Option(sys.props("scala.source.names")).getOrElse("?")
+  private def sourceName = Option(sys.props("scala.source.names")).getOrElse("?")
 
   def sourcePath = Option(sys.props("scala.sources")).getOrElse("?")
 
-  def sourcePathRelative = relativePath(sourcePath)
+  private def sourcePathRelative = relativePath(sourcePath)
 
-  def mainName = this.getClass.getName
+  private def mainName = this.getClass.getName
     .replaceAll(".*[.]", "")
     .replaceAll("[$].*", "")
 
@@ -43,5 +43,5 @@ object Progname {
 
   def userDir: Path = Paths.get(sys.props("user.dir")).toAbsolutePath.normalize
 
-  def progCmnd: String = sys.props("sun.java.command").split("\\s+")(0).replaceAll(".*[.]", "")
+  private def progCmnd: String = sys.props("sun.java.command").split("\\s+")(0).replaceAll(".*[.]", "")
 }

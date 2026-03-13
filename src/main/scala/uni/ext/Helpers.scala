@@ -8,7 +8,7 @@ object helpers:
   def round(number: Double, scale: Int = 6): Double =
     BigDecimal(number).setScale(scale, RoundingMode.HALF_UP).toDouble
 
-  def isValidWindowsPath(s: String): Boolean =
+  private def isValidWindowsPath(s: String): Boolean =
     val t = s.trim
     val driveAbs   = "^[A-Za-z]:[\\\\/].*".r
     val unc        = "^\\\\\\\\[^\\\\]+\\\\[^\\\\]+.*".r

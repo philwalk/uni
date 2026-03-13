@@ -37,10 +37,10 @@ object BigUtils:
   // Regex patterns (kept from original)
   // ------------------------------------------------------------
 
-  val NumPattern1: Regex = """(?i)([-\(]\s*)?(\d[\.\d,]+)[%\)]?[%KMB]?""".r
-  val NumPattern2: Regex = """(-?\s*[\.\d,]+)(E-?\d+)([%\)]?)([%KMB]?)""".r
-  val NumPattern3: Regex = """-?(\d+)([%KMB]?)""".r
-  val NumPattern4: Regex = """-?(\d+)(.?[0-9]*E[-+][0-9]+)?""".r
+  private val NumPattern1: Regex = """(?i)([-\(]\s*)?(\d[\.\d,]+)[%\)]?[%KMB]?""".r
+  private val NumPattern2: Regex = """(-?\s*[\.\d,]+)(E-?\d+)([%\)]?)([%KMB]?)""".r
+  private val NumPattern3: Regex = """-?(\d+)([%KMB]?)""".r
+  private val NumPattern4: Regex = """-?(\d+)(.?[0-9]*E[-+][0-9]+)?""".r
 
   // ------------------------------------------------------------
   // Character validation

@@ -13,7 +13,7 @@ object MatrixFromCsv {
   }
 
   var verbose = false
-  var infile = ""
+  private var infile = ""
   def main(args: Array[String]): Unit = {
     eachArg(args.toSeq, usage) {
     case "-v" => verbose = true

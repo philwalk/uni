@@ -15,7 +15,7 @@ import scala.reflect.ClassTag
 /** Path Extension methods */
 object pathExts {
 
-  extension (p: Path) {
+  extension (@annotation.unused p: Path) {
     def exists: Boolean      = Files.exists(p)
     def isDirectory: Boolean = Files.isDirectory(p)
     def isFile: Boolean      = Files.isRegularFile(p)
@@ -128,7 +128,7 @@ object pathExts {
       case None      => Iterator.empty
     }
     def files: Seq[JFile]          = filesIter.toSeq
-    def pathsIter: Iterator[Path]  = filesIter.map(_.toPath)
+    private def pathsIter: Iterator[Path]  = filesIter.map(_.toPath)
     def paths: Seq[Path]           = pathsIter.toSeq
     def subdirs: Seq[Path]         = pathsIter.filter(Files.isDirectory(_)).toSeq
     def subfiles: Seq[Path]        = pathsIter.filter(Files.isRegularFile(_)).toSeq
@@ -150,16 +150,17 @@ object pathExts {
     def linesStream: Iterator[String] = streamLines(p)
     def firstLine: String = streamLines(p).nextOption.getOrElse("")
 
-    def lines: Seq[String] = {
+    def lines: Iterator[String] = {
       try {
-        Files.readAllLines(p, UTF_8).asScala.toSeq
+        Files.readAllLines(p, UTF_8).asScala.iterator
       } catch {
         case _: java.nio.charset.MalformedInputException =>
-          Files.readAllLines(p, Latin1).asScala.toSeq
+          Files.readAllLines(p, Latin1).asScala.iterator
       }
     }
 
-    def lines(charset: Charset = UTF_8): Iterator[String] =
+    def lines(charset: String = ""): Iterator[String] =
+      if charset.isEmpty then streamLines(p) else
       scala.io.Source.fromFile(p.toFile).getLines
 
     def contentAsString(charset: Charset = UTF_8): String = Files.readString(p, charset)
@@ -435,7 +436,7 @@ object pathExts {
     // ---- read content ----
     def linesStream: Iterator[String]             = streamLines(f.toPath)
     def firstLine: String                         = streamLines(f.toPath).nextOption.getOrElse("")
-    def lines: Seq[String]                        = f.toPath.lines
+    def lines: Iterator[String]                   = f.toPath.lines
     def lines(charset: Charset): Iterator[String] = scala.io.Source.fromFile(f, charset.name).getLines
     def contentAsString(charset: Charset): String = Files.readString(f.toPath, charset)
     def contentAsString: String                   = f.toPath.contentAsString

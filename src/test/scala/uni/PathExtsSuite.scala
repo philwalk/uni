@@ -11,7 +11,7 @@ class PathExtsSuite extends FunSuite:
   private def tempFile(content: String): Path =
     val p = Files.createTempFile("pathexts-", ".txt")
     p.toFile.deleteOnExit()
-    Files.write(p, content.getBytes(StandardCharsets.UTF_8))
+    Files.write(p, content.getBytes(StandardCharsets.UTF_8.name))
     p
 
   private def emptyTempFile(): Path =
@@ -210,7 +210,7 @@ class PathExtsSuite extends FunSuite:
 
   test("lines(charset): reads with explicit charset") {
     val p = tempFile("x\ny\nz")
-    val ls = p.lines(StandardCharsets.UTF_8).toList
+    val ls = p.lines(StandardCharsets.UTF_8.name).toList
     assertEquals(ls, List("x", "y", "z"))
   }
 
@@ -318,10 +318,11 @@ class PathExtsSuite extends FunSuite:
   // epoch2DateTime (Path extension)
   // ============================================================================
 
-  test("epoch2DateTime on Path: epoch 0 in UTC returns 1970") {
+  test("lastModifiedTime on Path for new temp file returns current year") {
     val p = tempFile("ep")
-    val dt = p.epoch2DateTime(0L, UTC)
-    assertEquals(dt.getYear, 1970)
+    val dt = p.lastModifiedTime
+    val currentYear = java.time.LocalDate.now().getYear
+    assertEquals(dt.getYear, currentYear)
   }
 
   // ============================================================================

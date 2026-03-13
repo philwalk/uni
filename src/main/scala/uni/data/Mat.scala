@@ -19,10 +19,8 @@ extension (n: Int)    def *(b: uni.data.Big.Big): uni.data.Big.Big = b * n
 extension (n: Long)   def *(b: uni.data.Big.Big): uni.data.Big.Big = b * n
 extension (n: Double) def *(b: uni.data.Big.Big): uni.data.Big.Big = b * n
 
-//type MatD = Mat.MatD.type
 object Mat {
   self =>
-//type MatD = MatD.type // Mat[Double]
 
   // Opaque type wraps flat array with dimensions
   opaque type Mat[T] = Internal.MatData[T]
@@ -83,7 +81,7 @@ object Mat {
     def exists(p: T => Boolean): Boolean = iterator.exists(p)
 
     /** Checks if any element is NaN (specifically for Double/Big) */
-    def containsNaN(using numeric: Numeric[T]): Boolean = 
+    def containsNaN(using @annotation.unused numeric: Numeric[T]): Boolean = 
       // This assumes your Big/Double has a way to check isNaN
       // For now, simple exists with a lambda is safest
       exists(v => v.toString == "NaN" || v.toString == "NaN") // or specialized logic
@@ -191,6 +189,7 @@ object Mat {
     }
 
     // 'Internal.create' is the ONLY way to create a Mat.
+    @annotation.unused 
     private[uni] def createTestView[T: ClassTag](
       _tdata: Array[T], _rows: Int, _cols: Int, _t: Boolean, _offset: Int, _rs: Int, _cs: Int
     ): Mat[T] = new MatData(_tdata, _rows, _cols, _t, _offset, _rs, _cs)
@@ -218,6 +217,7 @@ object Mat {
    *  so that exporting it to uni.data doesn't shadow the standard list extractor. */
   val `::` = scala.collection.immutable.`::`
 
+  @annotation.unused 
   def inspect[T: ClassTag]: String =
     s"Mat(${rows}x${cols}, offset=$offset, rs=$rs, cs=$cs, transposed=$transposed)"
 
@@ -598,7 +598,8 @@ object Mat {
   // ============================================================================
   // Core Properties (NumPy-aligned)
   // ============================================================================
-  extension [T](m: Mat[T])
+  
+  extension [T](@annotation.unused m: Mat[T])
     // This is the "Unwrapper".
     // It MUST exist to tell the compiler: "Treat this as the class, not the opaque type."
     //private def asData: MatData[T] = m.asInstanceOf[MatData[T]]
@@ -928,8 +929,8 @@ object Mat {
   // ============================================================================
   // Indexing (NumPy-aligned with negative index support)
   // ============================================================================
-  extension [T: ClassTag](m: Mat[T])
-  // 1. Helper to check if layout is standard row-major
+  extension [T](m: Mat[T])(using @annotation.unused ct: ClassTag[T]) {
+    // 1. Helper to check if layout is standard row-major
     // All "Phase 0" creation methods must funnel through this helper
     // to set the default Row-Major strides.
     // Your temporary Phase 1 "Choke Point"
@@ -1363,11 +1364,12 @@ object Mat {
         i += 1
       buf.toArray
     }
+  }
 
   // ============================================================================
   // Display
   // ============================================================================
-  extension [T: ClassTag](m: Mat[T])(using frac: Fractional[T])
+  extension [T: ClassTag](m: Mat[T])(using @annotation.unused frac: Fractional[T])
     /** m(::) - all elements; NumPy: m[:] */
     def apply(all: ::.type): Mat[T] = m(0 until m.rows, 0 until m.cols)
 
@@ -1510,6 +1512,7 @@ object Mat {
   def arange[T: ClassTag](start: Double, stop: Double)(using frac: Fractional[T]): Mat[T] =
     arange[T](start, stop, 1.0)
 
+  @annotation.unused 
   def arange[T: ClassTag](start: Double, stop: Double, step: Double)(using frac: Fractional[T]): Mat[T] = {
     require(step != 0.0, "step cannot be zero")
     val n = math.max(0, math.ceil((stop - start) / step).toInt)
@@ -1535,6 +1538,8 @@ object Mat {
     require(data.length == rows * cols, s"Data length ${data.length} != $rows x $cols")
     Mat.create(data, rows, cols)
   }
+  
+  @annotation.unused
   def apply[T: ClassTag](unit: Unit): Mat[T] = Mat.create(Array.ofDim[T](0), 0, 0)
   def apply[T: ClassTag](value: T): Mat[T]   = Mat.create(Array(value), 1, 1)
   def apply[T: ClassTag](tuples: Tuple*)(using frac: Fractional[T]): Mat[T] = {
@@ -1599,7 +1604,7 @@ object Mat {
     create(values.toArray, values.length, 1)
   }
 
-  extension [T: ClassTag](m: Mat[T])(using frac: Fractional[T])
+  extension [T: ClassTag](m: Mat[T])(using @annotation.unused frac: Fractional[T])
     // applyAlongAxis
     def applyAlongAxis(fn: Mat[T] => T, axis: Int): Mat[T] = {
       require(axis == 0 || axis == 1, s"axis must be 0 or 1, got $axis")
@@ -1617,7 +1622,7 @@ object Mat {
   // ============================================================================
   // Matrix Multiply + Linear Algebra (extension block)
   // ============================================================================
-  extension [T: ClassTag](m: Mat[T]) {
+  extension [T](@annotation.unused m: Mat[T])(using @annotation.unused ct: ClassTag[T]) {
 
     // ---- Matrix multiply -----------------------------------------------
     inline def matmul(other: Mat[T]): Mat[T] = {
@@ -2488,6 +2493,7 @@ object Mat {
       (Mat.create(u, nRows, nRows), s, Mat.create(vt, nCols, nCols))
     }
 
+    @annotation.unused 
     def svd(using frac: Fractional[T]): (Mat[T], Array[T], Mat[T]) =
       summon[ClassTag[T]].runtimeClass match
         case c if c == classOf[Double] =>
@@ -2496,6 +2502,7 @@ object Mat {
         case c =>
           throw UnsupportedOperationException(s"svd only supported for Double, got ${c.getName}")
 
+    @annotation.unused 
     def lstsq(b: Mat[T])(using frac: Fractional[T]): (Mat[T], Mat[T], Int, Array[T]) = {
       summon[ClassTag[T]].runtimeClass match
         case c if c == classOf[Double] =>
@@ -2853,6 +2860,7 @@ object Mat {
 
     // matrix_rank:
     /** NumPy: np.linalg.matrix_rank(m) - rank via SVD singular value threshold */
+    @annotation.unused 
     def matrixRank(tol: Double = -1.0)(using frac: Fractional[T]): Int = {
       summon[ClassTag[T]].runtimeClass match
         case c if c == classOf[Double] =>
@@ -3081,6 +3089,7 @@ object Mat {
     /** NumPy: np.linalg.eig(m) - eigenvalues and right eigenvectors
      *  Returns (realParts, imagParts, eigenvectors) since we have no Complex type
      *  For symmetric matrices prefer eigenvalues() which is more efficient */
+    @annotation.unused 
     private[data] def eigDouble: (Array[Double], Array[Double], Mat[Double]) = {
       import org.bytedeco.openblas.global.openblas.*
       val md    = m.asInstanceOf[Mat[Double]]
@@ -3109,6 +3118,7 @@ object Mat {
     /*
      * returns (realParts, imagParts, eigenvectors) as separate arrays.
      */
+    @annotation.unused 
     def eig(using frac: Fractional[T]): (Array[T], Array[T], Mat[T]) = {
       summon[ClassTag[T]].runtimeClass match
         case c if c == classOf[Double] =>
@@ -3275,6 +3285,7 @@ object Mat {
     }
 
     /** NumPy: np.linalg.pinv(m) - Moore-Penrose pseudoinverse via SVD */
+    @annotation.unused 
     def pinv(tol: Double = -1.0)(using frac: Fractional[T]): Mat[T] = {
       summon[ClassTag[T]].runtimeClass match
         case c if c == classOf[Double] =>
@@ -3318,6 +3329,7 @@ object Mat {
     /** NumPy: np.linalg.cholesky(m) - Cholesky decomposition
      *  Returns lower triangular L such that m = L * L^T
      *  m must be symmetric positive definite */
+    @annotation.unused 
     def cholesky(using frac: Fractional[T]): Mat[T] =
       summon[ClassTag[T]].runtimeClass match
         case c if c == classOf[Double] =>
@@ -4405,6 +4417,7 @@ import Mat.*
 
 // This makes MatD a valid Type name for the user
 type MatD = Mat[Double] 
+type VecD = Vec[Double]
 
 // This remains your factory object
 object MatD {
@@ -4472,7 +4485,8 @@ object MatD {
   def correlate(a: Vec[Double], b: Vec[Double], mode: String = "valid"): Vec[Double] = Mat.correlate(a, b, mode)
 }
 
-type MatB = Mat[Big] 
+type MatB = Mat[Big]
+type VecB = Vec[Big]
 
 object MatB {
   // Fractional[Big] is always available
@@ -4547,6 +4561,7 @@ object MatB {
 }
 
 type MatF = Mat[Float] 
+type VecF = Vec[Float] 
 
 object MatF {
   // Fractional[Float] is always available

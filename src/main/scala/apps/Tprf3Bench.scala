@@ -14,7 +14,7 @@ import scala.sys.process.*
 object Tprf3Bench {
 
   /** Returns ms-per-call for the given block run `loops` times. */
-  def bench(loops: Int)(block: => Unit): Double =
+  private def bench(loops: Int)(block: => Unit): Double =
     val t0 = System.currentTimeMillis()
     var i  = 0
     while i < loops do { block; i += 1 }

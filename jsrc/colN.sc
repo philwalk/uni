@@ -58,7 +58,7 @@ object ColumnN {
         throw e
       } else {
         //showLimitedStack(e)    // removes java, scala, sun, oracle, etc.
-        showMinimalStack(e, this) // removes all but stack entries with this object name (case-insensitive)
+        showMinimalStack(e) // removes all but stack entries with this object name (case-insensitive)
       }
     }
   }

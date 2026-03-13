@@ -122,7 +122,6 @@ scalacOptions := {
     "-Wunused:imports",
     "-unchecked",
 
-    "-Wdead-code",   // private members never referenced
     "-Wunused:privates",   // private members never referenced
     "-Wunused:locals",     // local vals/vars never used
     "-Wunused:params",     // method params never used

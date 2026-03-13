@@ -91,7 +91,7 @@ object ArgsParser {
 
   private val current = new DynamicVariable[Ctx | Null](null)
 
-  def withArgs[A](args: Seq[String], usage: String => Nothing)
+  private def withArgs[A](args: Seq[String], usage: String => Nothing)
                  (pf: PartialFunction[String, Unit]): A = {
     val ctx = new Ctx(args, usage)
     current.withValue(ctx) {

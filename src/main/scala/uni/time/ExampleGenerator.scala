@@ -72,7 +72,7 @@ object ExampleGenerator:
     val ss = rng.nextInt(60)
     f"$m%02d$d1$d%02d $hh%02d:$mm%02d:$ss%02d $y"
 
-  lazy val maxDays = IndexedSeq(31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
+  private lazy val maxDays = IndexedSeq(31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
 
   private def expandDMY(): String = {
     val m = 1 + rng.nextInt(12)

@@ -25,7 +25,7 @@ object stringExts {
     }
 
     def startsWithIgnoreCase(prefix: String): Boolean = startsWithUncased(str, prefix)
-    def stripPrefixIgnoreCase(prefix: String): String = stripPrefixUncased(str, prefix)
+    private def stripPrefixIgnoreCase(prefix: String): String = stripPrefixUncased(str, prefix)
     def stripPrefix(prefix: String): String =
       if str.startsWith(prefix) then str.substring(prefix.length)
       else str
@@ -46,11 +46,11 @@ object stringExts {
     }
   }
 
-  def startsWithUncased(str: String, prefix: String): Boolean = {
+  private def startsWithUncased(str: String, prefix: String): Boolean = {
     str.regionMatches(true, 0, prefix, 0, prefix.length)
   }
 
-  def stripPrefixUncased(str: String, prefix: String): String = {
+  private def stripPrefixUncased(str: String, prefix: String): String = {
     if startsWithUncased(str, prefix) then str.substring(prefix.length) else str
   }
 

@@ -16,9 +16,9 @@ object ColumnN {
   }
 
   var verbose = false
-  var colnum = -1
-  var fullstack = false
-  var inputFile: Option[Path] = None
+  private var colnum = -1
+  private var fullstack = false
+  private var inputFile: Option[Path] = None
 
   def main(args: Array[String]): Unit = {
     try {

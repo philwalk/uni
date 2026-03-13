@@ -3,12 +3,9 @@ package uni
 
 import java.io.{File as JFile}
 import java.io.{BufferedReader, InputStreamReader}
-import java.nio.charset.{StandardCharsets}
 import java.nio.file.{Path, Files, Paths as JPaths}
 import java.util.Locale
 import scala.collection.immutable.SortedMap
-import scala.sys.process.*
-import scala.util.Try
 import scala.util.Properties
 import uni.data.*
 import uni.time.*
@@ -295,60 +292,6 @@ def isWinshell: Boolean = isWin && Properties.propOrNone("MSYSTEM").nonEmpty
 
 private[uni] object Internals {
 
-  def realpathWindows(path: String): String = {
-    if (!isWin) {
-      path
-    } else {
-      def reparseTest(path: String): String = {
-        Try {
-          // this line throws an exception if path is not a Windows reparse point (symlink)
-          val output = Seq("fsutil", "reparsepoint", "query", path).!!.linesIterator.toList
-
-          // Collect hex dump lines
-          val hexLines = output.filter(_.matches("""^\s*[0-9A-Fa-f]{4}:.*"""))
-          val hexPairs = hexLines.flatMap(_.drop(6).trim.split("\\s+").filter(_.nonEmpty))
-          val bytes    = hexPairs.map(Integer.parseInt(_, 16).toByte).toArray
-
-          val decoded  = new String(bytes, StandardCharsets.UTF_16LE).trim
-          val parts = decoded.split("\\?\\?\\\\")
-          val printName: String = parts.lastOption.getOrElse(decoded) // user-friendly
-          printName
-        }.getOrElse(path)
-      }
-
-      def loop(p: Path): String = {
-        if (p == null) {
-          path
-        } else {
-          val resolved = reparseTest(p.toString)
-          if resolved != p.toString then resolved
-          else loop(p.getParent)
-        }
-      }
-      loop(JPaths.get(path))
-    }
-  }
-
-  def realWhere(jpath: Path): Path = {
-    realWhere(jpath.toString.replace('\\', '/'))
-  }
-
-  def realWhere(mightBeSymlinkToExecutable: String): Path = {
-    try {
-      if (!isWin) {
-        val cmd = Seq("bash", "-c", s"""realpath "`command -v ${mightBeSymlinkToExecutable}`" """.trim)
-        val real: String = call(cmd *).getOrElse(mightBeSymlinkToExecutable)
-        JPaths.get(real)
-      } else {
-        val real = realpathWindows(mightBeSymlinkToExecutable)
-        JPaths.get(real)
-      }
-    } catch {
-      case e: Exception =>
-        JPaths.get(mightBeSymlinkToExecutable) 
-    }
-  }
-
   def relativePathToCwd(p: Path): Path = {
     val candidate =
       if !p.isAbsolute && p.getRoot != null then {
@@ -376,7 +319,7 @@ private[uni] object Internals {
 
   lazy val defaultDrive: String = defaultDriveLetter+":"
 
-  def defaultDriveLetter: String = {
+  private def defaultDriveLetter: String = {
     if (isWin) new JFile("/").getAbsolutePath.take(1) else ""
   }
 
@@ -480,7 +423,7 @@ private[uni] object Internals {
   }
   lazy val driveRoot: String = JPaths.get("").toAbsolutePath.getRoot.toString.take(2)
 
-  def _osName: String = sys.props("os.name")
+  private def _osName: String = sys.props("os.name")
 
   lazy val _osType: String = _osName.toLowerCase(Locale.ROOT) match {
   case s if s.contains("windows")  => "windows"

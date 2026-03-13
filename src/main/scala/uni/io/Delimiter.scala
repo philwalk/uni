@@ -20,8 +20,8 @@ object Delimiter {
      rowCounts: Vector[Int] = Vector.empty,
      partialCounts: Vector[Int] = Vector.empty // NEW: widths from truncated rows
   ) {
-    def rowsExamined = rowCounts.size
-    def partialRows: Int = partialCounts.size   // <-- add this
+    private def rowsExamined = rowCounts.size
+    private def partialRows: Int = partialCounts.size   // <-- add this
 
     /** Flush the current row into rowCounts (complete or truncated). */
     def recordRow(partial: Boolean = false): DelimState = {
@@ -46,11 +46,11 @@ object Delimiter {
       else rowCounts.count(_ == modeColumns)
 
     /** Best-effort width from truncated rows, if no full rows recorded. */
-    def partialMode: Int =
+    private def partialMode: Int =
       if (partialCounts.isEmpty) 0
       else partialCounts.groupBy(identity).view.mapValues(_.size).maxBy(_._2)._1
 
-    def bestWidth: Int = if (modeColumns > 0) modeColumns else partialMode
+    private def bestWidth: Int = if (modeColumns > 0) modeColumns else partialMode
 
     override def toString: String =
       f"fields: $fieldsCount%5d, score: $score%3d, " +
@@ -120,7 +120,7 @@ object Delimiter {
   }
 
   // Split a single row lazily into fields
-  def splitRow(row: Iterator[Char], delim: Char): Iterator[String] = new Iterator[String] {
+  private def splitRow(row: Iterator[Char], delim: Char): Iterator[String] = new Iterator[String] {
     private val buf = new StringBuilder
     private var inQuotes = false
     private var escaped = false
@@ -158,16 +158,11 @@ object Delimiter {
   }
 
   // Dominance check
-  def dominantState(states: Iterable[DelimState], factor: Int = 2): Option[DelimState] = {
+  private def dominantState(states: Iterable[DelimState], factor: Int): Option[DelimState] = {
     if (states.isEmpty) None
     else {
-      // Rank: consistency first, then mode support, then raw score
       def rank(s: DelimState) = (-s.widthDistinct, s.modeSupport, s.score)
       val best = states.maxBy(rank)
-
-      // Dominance condition that respects consistency:
-      // best must be at least as consistent as others, and if equally consistent,
-      // it should have >= mode support and a clearly higher score.
       val dominance = states.forall { s =>
         s.delimiterChar == best.delimiterChar ||
         best.widthDistinct < s.widthDistinct ||
@@ -175,7 +170,6 @@ object Delimiter {
           (best.modeSupport > s.modeSupport ||
            (best.modeSupport == s.modeSupport && best.score > s.score * factor)))
       }
-
       if (dominance) Some(best) else None
     }
   }

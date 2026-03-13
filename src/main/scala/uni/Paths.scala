@@ -217,7 +217,7 @@ private[uni] object Resolver {
         resolveDriveRelPathstr(pstr)
   }
 
-  def resolveDriveRelPathstr(pstr: String): String = {
+  private def resolveDriveRelPathstr(pstr: String): String = {
     val drive   = pstr.charAt(0).toLower
     val cwd     = config.driveCwd(drive)
     val dir     = cwd.toString.replace('\\', '/')
@@ -246,7 +246,7 @@ private[uni] object Resolver {
   }
   export PrefixFinder.findPrefix
 
-  object PrefixFinder {
+  private object PrefixFinder {
 
     /** get longest mount prefix from `win2posixKeys` or `posix2winKeys` */
     def findPrefix(pathstr: String, keys: Array[String]): Option[String] =
@@ -406,10 +406,10 @@ object ParseMounts {
 // MountExe locator + stdout reader (production path)
 object MountExe {
   val defaultMsysRoot: String = "C:/msys64"
-  val defaultMountExe: String = s"$defaultMsysRoot/usr/bin/mount.exe"
+  private val defaultMountExe: String = s"$defaultMsysRoot/usr/bin/mount.exe"
 
   // Return mount.exe mountExe or empty string
-  lazy val mountExe: String = {
+  private lazy val mountExe: String = {
     if !isWin then
       ""
     else

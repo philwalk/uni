@@ -10,8 +10,8 @@ import scala.collection.parallel.ForkJoinTaskSupport
 import java.util.concurrent.ForkJoinPool
 
 object TprfRunner {
-  var dir_tag = 0
-  var prevPct = ""
+  private var dir_tag = 0
+  private var prevPct = ""
   var t0 = System.currentTimeMillis
 
   def usage(m: String=""): Nothing = {
@@ -24,10 +24,10 @@ object TprfRunner {
     )
   }
   var verbose = false
-  var dumpData = false // short-circuit the loop, in order to dump generated random data
-  var n_iter = 200
-  var n_proxies = 2 // Z=3
-  var tncount = 200
+  private var dumpData = false // short-circuit the loop, in order to dump generated random data
+  private var n_iter = 200
+  private var n_proxies = 2 // Z=3
+  private var tncount = 200
 
   def main(args: Array[String]): Unit =
     try {
@@ -66,7 +66,7 @@ object TprfRunner {
     if n % 2 == 1 then sorted(n / 2) else (sorted(n / 2 - 1) + sorted(n / 2)) / 2.0
 
   // calculate r-squared for TPRF with random data generated with serial correlation
-  def runner(): Unit = {
+  private def runner(): Unit = {
     /*
     Generate a list of parameter combinations to be used.
     Parameters: pf, pg, a, d
@@ -178,7 +178,7 @@ object TprfRunner {
     }
   }
 
-  def data_generator(data_dict: Parms): (MatD, MatD) = {
+  private def data_generator(data_dict: Parms): (MatD, MatD) = {
     /*
     Function to generate data samples, governed by the parameters passed through
     the data_dict, based on the setup mentioned in the paper.
@@ -270,7 +270,7 @@ object TprfRunner {
     r0
 
   private def tprf(X: MatD, y: MatD, Z: MatD, oos: MatD): (MatD, Double) =
-    val model = tprfFast(X, y, Z, oos)
+    val model = tprfFast(X, y, Z)
     val yhatt = if oos.rows > 1 then model.estimateYhat(oos) else Double.NaN
     (model.y_hat, yhatt)
 
@@ -289,7 +289,7 @@ object TprfRunner {
       lst(t - train_window) = yhatt
     rr2(y(train_window until y.rows, ::), Mat.create(lst, lst.length, 1))
 
-  case class Combo(
+  private case class Combo(
     var pf: Double = 0, // Serial correlation in relevant factors
     var pg: Double = 0, // Serial correlation in irrelevant factors
     var a: Double = 0,  // Serial correlation between idiosyncratic errors
@@ -310,7 +310,7 @@ object TprfRunner {
     var non_pervasive: Boolean = false,
     var strength: Double = 0,
   )
-  object Result {
+  private object Result {
     def colnames(n_proxies: Int): Seq[String] = Seq("pf", "pg", "a", "d", s"3PRF$n_proxies-rsquared")
     def apply(): Result = new Result(0, 0, 0, 0, 0)
   }
@@ -327,7 +327,7 @@ object TprfRunner {
     override def toString: String = s"${fmt(pf)},${fmt(pg)},${fmt(a)},${fmt(d)},$tprf_result"
   }
 
-  def pydump(X: MatD, y: MatD): Unit = {
+  private def pydump(X: MatD, y: MatD): Unit = {
     println(s"X:\n${X.show("% 14.7f")}")
     println(s"y:\n${y.show("% 14.7f")}")
     sys.exit(1)
@@ -338,8 +338,8 @@ object TprfRunner {
   given Conversion[Long, Double] with
     def apply(i: Long): Double = i.toDouble
 
-  lazy val save_dir_base = Paths.get(s"data_${n_iter}_scala").posx
-  def nextSaveDir(): String = {
+  private lazy val save_dir_base = Paths.get(s"data_${n_iter}_scala").posx
+  private def nextSaveDir(): String = {
     var dirpath = "%s_%02d".format(save_dir_base, dir_tag)
     while (dirpath.path.exists) {
       dir_tag += 1

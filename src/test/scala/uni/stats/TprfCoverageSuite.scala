@@ -10,14 +10,14 @@ import uni.stats.Tprf3.*
  *  - mintrain._1 < 0 → T/2 branch
  *  - OOS Rolling with gap > 0
  *  - IS Full autoproxy + computeAvar=true
- *  - TprfFast: empty _b1 → pass1columnsRsquared = Array.empty
- *  - TprfFast: adjRsq when nObs <= nParams
- *  - TprfFast: rSquared when y is constant (ssy == 0)
- *  - TprfFast: estimateYhat Xstd.cols == 1 (else branch, no normalisation)
- *  - TprfFast: pass1columnsRsquared sst == 0 (constant X column)
+ *  - tprfFast: empty _b1 → pass1columnsRsquared = Array.empty
+ *  - tprfFast: adjRsq when nObs <= nParams
+ *  - tprfFast: rSquared when y is constant (ssy == 0)
+ *  - tprfFast: estimateYhat Xstd.cols == 1 (else branch, no normalisation)
+ *  - tprfFast: pass1columnsRsquared sst == 0 (constant X column)
  *  - stdcols zero-std column → 1.0 fallback
  *  - t3prfFast: T < minObs early-return NaN path
- *  - estimate3prf OOS rsquare: ssT == 0 → Double.NaN branch
+ *  - estimate3prf OOS rSquared: ssT == 0 → Double.NaN branch
  *  - X with NaN column: nanStdCols vals.length <= 1 branch
  *  - OOS Recursive with mintrain gap
  *  - OOS Cross Val with non-zero window
@@ -116,12 +116,12 @@ class TprfCoverageSuite extends FunSuite:
   }
 
   // ============================================================================
-  // TprfFast: empty _b1 → pass1columnsRsquared returns Array.empty
+  // tprfFast: empty _b1 → pass1columnsRsquared returns Array.empty
   // ============================================================================
 
-  test("TprfFast empty _b1: pass1columnsRsquared is empty") {
+  test("tprfFast empty _b1: pass1columnsRsquared is empty") {
     // _b1 defaults to MatD.zeros(0, 0) → rows == 0 → Array.empty branch
-    val tf = TprfFast(X, y, Z,
+    val tf = Tprf3Result(X, y, Z,
       phi     = MatD.zeros(N, L),
       sigma   = MatD.zeros(T, L),
       betaHat = MatD.zeros(L + 1, 1))
@@ -129,16 +129,16 @@ class TprfCoverageSuite extends FunSuite:
   }
 
   // ============================================================================
-  // TprfFast: adjRsq when nObs <= nParams → returns 0.0
+  // tprfFast: adjRsq when nObs <= nParams → returns 0.0
   // ============================================================================
 
-  test("TprfFast adjRsq: returns 0.0 when nObs <= nParams") {
+  test("tprfFast adjRsq: returns 0.0 when nObs <= nParams") {
     // T2=3, L=2: betaHat.rows = L+1 = 3 = y.rows → nObs(3) <= nParams(3)
     val T2 = 3
     val smallY   = MatD.randn(T2, 1)
     val smallSig = MatD.randn(T2, L)
     val beta     = MatD.randn(L + 1, 1)   // 3 rows = T2
-    val tf = TprfFast(MatD.randn(T2, N), smallY, MatD.randn(T2, L),
+    val tf = Tprf3Result(MatD.randn(T2, N), smallY, MatD.randn(T2, L),
       phi     = MatD.randn(N, L),
       sigma   = smallSig,
       betaHat = beta)
@@ -146,32 +146,32 @@ class TprfCoverageSuite extends FunSuite:
   }
 
   // ============================================================================
-  // TprfFast: rSquared when y is constant (ssy == 0 → 0.0)
+  // tprfFast: rSquared when y is constant (ssy == 0 → 0.0)
   // ============================================================================
 
-  test("TprfFast rSquared: returns 0.0 when y is constant") {
+  test("tprfFast rSquared: returns 0.0 when y is constant") {
     val yConst = MatD.full(T, 1, 5.0)
     val tf = tprfFast(X, yConst, Z)
     assertEqualsDouble(tf.rSquared, 0.0, 1e-10)
   }
 
   // ============================================================================
-  // TprfFast: estimateYhat with Xstd.cols == 1 (no normalisation, else branch)
+  // tprfFast: estimateYhat with Xstd.cols == 1 (no normalisation, else branch)
   // ============================================================================
 
-  test("TprfFast estimateYhat: Xstd.cols==1 skips normalisation (else oos branch)") {
-    // When TprfFast is constructed directly, Xstd defaults to ones(1,1) (cols=1)
+  test("tprfFast estimateYhat: Xstd.cols==1 skips normalisation (else oos branch)") {
+    // When tprfFast is constructed directly, Xstd defaults to ones(1,1) (cols=1)
     val phi   = MatD.randn(N, L)
     val sigma = MatD.randn(T, L)
     val beta  = MatD.randn(L + 1, 1)
-    val tf = TprfFast(X, y, Z, phi, sigma, beta)  // Xstd = ones(1,1)
+    val tf = Tprf3Result(X, y, Z, phi, sigma, beta)  // Xstd = ones(1,1)
     val oos = X(0, ::).T   // (N×1)
     val pred = tf.estimateYhat(oos)
     assert(!pred.isInfinite, s"expected finite or NaN, got $pred")
   }
 
   // ============================================================================
-  // stdcols zero-std branch + TprfFast pass1columnsRsquared sst==0
+  // stdcols zero-std branch + tprfFast pass1columnsRsquared sst==0
   // ============================================================================
 
   test("tprfFast with constant X column: stdcols returns 1.0, pass1R²(last)==0") {
@@ -197,15 +197,15 @@ class TprfCoverageSuite extends FunSuite:
   }
 
   // ============================================================================
-  // estimate3prf OOS rsquare: ssT == 0 → Double.NaN (constant y)
+  // estimate3prf OOS rSquared: ssT == 0 → Double.NaN (constant y)
   // ============================================================================
 
-  test("OOS Cross Val constant y: rsquare is NaN (ssT == 0 branch)") {
+  test("OOS Cross Val constant y: rSquared is NaN (ssT == 0 branch)") {
     // Constant y → rollfore == y at every t → ssT = sum((y - rollfore)²) = 0 → NaN
     val yConst = MatD.full(T, 1, 3.0)
     val r = estimate3prf(yConst, X, Right(Z), procedure = "OOS Cross Val",
                          window = (0, 1))
-    assert(r.rsquare.isNaN, s"expected NaN rsquare, got ${r.rsquare}")
+    assert(r.rSquared.isNaN, s"expected NaN rSquared, got ${r.rSquared}")
   }
 
   // ============================================================================
@@ -217,7 +217,7 @@ class TprfCoverageSuite extends FunSuite:
     for i <- 0 until T do XwithNaN(i, 0) = Double.NaN
     val r = estimate3prf(y, XwithNaN, Right(Z))
     assertEquals(r.forecasts.shape, (T, 1))
-    assert(!r.rsquare.isInfinite, s"rsquare should not be infinite, got ${r.rsquare}")
+    assert(!r.rSquared.isInfinite, s"rSquared should not be infinite, got ${r.rSquared}")
   }
 
   test("OOS Cross Val with NaN X column: nanStdCols on subsets handles all-NaN") {

@@ -148,7 +148,7 @@ object LinesIterator {
     def close(): Unit = { }
   }
 
-  lazy val decoderUtf8 = Charset.forName("UTF-8")
+  private lazy val decoderUtf8 = Charset.forName("UTF-8")
     .newDecoder()
     .onMalformedInput(CodingErrorAction.REPLACE)
     .onUnmappableCharacter(CodingErrorAction.REPLACE)

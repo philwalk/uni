@@ -19,9 +19,9 @@ class TprfSuite extends FunSuite:
   private val y: MatD = MatD.randn(T, 1)
 
   // Shared computed objects — lazy so construction cost is paid once per use.
-  private lazy val td: TprfDirect  = TprfDirect(X, y, Z)
-  private lazy val tf: TprfFast    = tprfFast(X, y, Z)
+  private lazy val tf: Tprf3Result  = tprfFast(X, y, Z)
   private lazy val rIS: Tprf3Result = estimate3prf(y, X, Right(Z))
+  private lazy val td: Tprf3Result = TprfDirect(X, y, Z)
 
   // ============================================================================
   // Lm — NaN-aware OLS
@@ -171,7 +171,8 @@ class TprfSuite extends FunSuite:
   }
 
   test("tprfFast: estimateYhat(oos) returns a finite Double") {
-    val oos = X(0, ::).T  // first row transposed → (N×1)
+    // Use tf.X (which is Xn) instead of the raw X
+    val oos = tf.X(0, ::).T  
     assert(tf.estimateYhat(oos).isFinite)
   }
 
@@ -193,8 +194,8 @@ class TprfSuite extends FunSuite:
     assertEquals(rIS.forecasts.shape, (T, 1))
   }
 
-  test("estimate3prf IS Full: ferrors shape is (T, 1)") {
-    assertEquals(rIS.ferrors.shape, (T, 1))
+  test("estimate3prf IS Full: residuals shape is (T, 1)") {
+    assertEquals(rIS.residuals.shape, (T, 1))
   }
 
   test("estimate3prf IS Full: no NaN in forecasts") {
@@ -202,8 +203,8 @@ class TprfSuite extends FunSuite:
     assertEquals(nans, 0)
   }
 
-  test("estimate3prf IS Full: rsquare <= 1.0") {
-    assert(rIS.rsquare <= 1.0 + 1e-10)
+  test("estimate3prf IS Full: rSquared <= 1.0") {
+    assert(rIS.rSquared <= 1.0 + 1e-10)
   }
 
   test("estimate3prf IS Full: alpha is Some with shape (N, 1)") {
@@ -336,10 +337,10 @@ class TprfSuite extends FunSuite:
   }
 
   test("Tprf3Result: default optional fields") {
-    val r = Tprf3Result(MatD.zeros(5, 1), MatD.zeros(5, 1), rsquare = 0.42)
+    val r = Tprf3Result(MatD.zeros(5, 1), MatD.zeros(5, 1), rSquared = 0.42)
     assert(r.encnew.isNaN)
     assert(r.alpha.isEmpty)
     assert(r.avar.isEmpty)
     assertEquals(r.rollfore.shape, (1, 1))
-    assertEqualsDouble(r.rsquare, 0.42, 1e-12)
+    assertEqualsDouble(r.rSquared, 0.42, 1e-12)
   }
