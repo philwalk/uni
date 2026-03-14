@@ -114,6 +114,9 @@ object Mat {
       }
     }
 
+    def writeCsv(filePath: uni.Path, sep: String = ","): Unit = m.saveCSV(filePath, sep)
+    def writeCsv(filePath: String): Unit                      = m.saveCSV(uni.Paths.get(filePath))
+
   extension (m: Mat[Big])
     def hasNaN: Mat[Boolean] = m.map(_ == BigNaN)
 
@@ -4483,6 +4486,11 @@ object MatD {
   def polyval(coeffs: Vec[Double], x: Vec[Double]): Vec[Double] = Mat.polyval(coeffs, x)
   def convolve(a: Vec[Double], b: Vec[Double], mode: String = "full"): Vec[Double] = Mat.convolve(a, b, mode)
   def correlate(a: Vec[Double], b: Vec[Double], mode: String = "valid"): Vec[Double] = Mat.correlate(a, b, mode)
+  // ----- CSV I/O -----
+  def readCsv(p: uni.Path): MatD                          = loadSmart(p, (b: Big) => b.toDouble).mat
+  def readCsv(s: String): MatD                            = readCsv(uni.Paths.get(s))
+  def writeCsv(m: MatD, p: uni.Path, sep: String = ","): Unit = m.saveCSV(p, sep)
+  def writeCsv(m: MatD, s: String):                       Unit = writeCsv(m, uni.Paths.get(s))
 }
 
 type MatB = Mat[Big]
@@ -4558,6 +4566,11 @@ object MatB {
   }
   def randint(low: Int, high: Int): Int = Mat.randint(low, high)
   def randint(low: Int, high: Int, rows: Int, cols: Int): Mat[Int] = Mat.randint(low, high, rows, cols)
+  // ----- CSV I/O -----
+  def readCsv(p: uni.Path): MatB                          = loadSmart(p).mat
+  def readCsv(s: String): MatB                            = readCsv(uni.Paths.get(s))
+  def writeCsv(m: MatB, p: uni.Path, sep: String = ","): Unit = m.saveCSV(p, sep)
+  def writeCsv(m: MatB, s: String):                       Unit = writeCsv(m, uni.Paths.get(s))
 }
 
 type MatF = Mat[Float] 
@@ -4633,4 +4646,9 @@ object MatF {
   }
   def randint(low: Int, high: Int): Int = Mat.randint(low, high)
   def randint(low: Int, high: Int, rows: Int, cols: Int): Mat[Int] = Mat.randint(low, high, rows, cols)
+  // ----- CSV I/O -----
+  def readCsv(p: uni.Path): MatF                          = loadSmart(p, (b: Big) => b.toDouble.toFloat).mat
+  def readCsv(s: String): MatF                            = readCsv(uni.Paths.get(s))
+  def writeCsv(m: MatF, p: uni.Path, sep: String = ","): Unit = m.saveCSV(p, sep)
+  def writeCsv(m: MatF, s: String):                       Unit = writeCsv(m, uni.Paths.get(s))
 }

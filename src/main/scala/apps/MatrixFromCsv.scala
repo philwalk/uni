@@ -30,7 +30,7 @@ object MatrixFromCsv {
 
     /*
     import uni.data.*
-    val data = p.loadMat(big(_))
+    val data = p.loadMatB
     val filtered = data.filterRows(_.isNotNaN.any)
     println(filtered)
     */

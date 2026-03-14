@@ -4,6 +4,7 @@ export cli.ArgsParser.*
 export pathExts.*
 export stringExts.*
 export helpers.*
+export uni.data.{MatD, MatB, MatF}
 
 @deprecated("Use .toSeq explicitly", "1.0.0")
 given iteratorStringToSeq: Conversion[Iterator[String], Seq[String]] = _.toSeq

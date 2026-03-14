@@ -350,8 +350,15 @@ object pathExts {
     def loadMatD: MatD                  = loadMatInternal(_.toDouble)
     def loadSmartBig: MatResult[Big]    = loadSmart(p)
     def loadSmartD: MatResult[Double]   = loadSmart(p, _.toDouble)
+    def loadMatB: Mat[Big]              = loadMatBig
+    def loadMatF: MatF                  = loadMatInternal(_.toDouble.toFloat)
 
-    def writeLines(lines: Seq[String]): Unit = 
+    def readCsv: MatD                                    = loadMatD
+    def readCsvB: MatB                                   = loadMatBig
+    def readCsvF: MatF                                   = loadMatF
+    def writeCsv[T](m: Mat[T], sep: String = ","): Unit = m.saveCSV(p, sep)
+
+    def writeLines(lines: Seq[String]): Unit =
       // Adding the trailing newline ensures the file isn't "missing a newline at EOF"
       uni.io.FileOps.withFileWriter(p){ w => 
         lines.foreach { line => 
@@ -489,6 +496,14 @@ object pathExts {
     def loadMatD: MatD                = f.toPath.loadMatD
     def loadSmartBig: MatResult[Big]  = f.toPath.loadSmartBig
     def loadSmartD: MatResult[Double] = f.toPath.loadSmartD
+    def loadMatB: Mat[Big]            = f.toPath.loadMatB
+    def loadMatF: MatF                = f.toPath.loadMatF
+
+    def readCsv: MatD                              = f.toPath.readCsv
+    def readCsvB: MatB                             = f.toPath.readCsvB
+    def readCsvF: MatF                             = f.toPath.readCsvF
+    def writeCsv[T](m: Mat[T]): Unit               = f.toPath.writeCsv(m)
+    def writeCsv[T](m: Mat[T], sep: String): Unit  = f.toPath.writeCsv(m, sep)
 
     def writeLines(lines: Seq[String]): Unit = f.toPath.writeLines(lines)
 

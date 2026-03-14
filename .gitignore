@@ -83,4 +83,11 @@ matlab/
 py/__pycache__/
 slice.sc
 test-data/
-
+bin/
+doc/Tprf3-cleanup-Plan.md
+idea-report/
+kp_alpha.csv
+kp_rsquare.csv
+kp_yhat.csv
+tprf3-refactor-plan.txt
+xmlReport/

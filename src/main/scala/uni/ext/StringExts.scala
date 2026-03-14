@@ -1,6 +1,8 @@
 package uni
 
 import uni.*
+import uni.data.{MatD, MatF, MatB, Mat}
+import uni.io.FileOps.loadSmart
 import java.nio.file.Path
 import java.io.{File as JFile}
 
@@ -44,6 +46,12 @@ object stringExts {
         }
       }
     }
+
+    def readCsv: MatD                              = loadSmart(Paths.get(str), _.toDouble).mat
+    def readCsvB: MatB                             = loadSmart(Paths.get(str)).mat
+    def readCsvF: MatF                             = loadSmart(Paths.get(str), _.toDouble.toFloat).mat
+    def writeCsv[T](m: Mat[T]): Unit               = m.saveCSV(Paths.get(str))
+    def writeCsv[T](m: Mat[T], sep: String): Unit  = m.saveCSV(Paths.get(str), sep)
   }
 
   private def startsWithUncased(str: String, prefix: String): Boolean = {
