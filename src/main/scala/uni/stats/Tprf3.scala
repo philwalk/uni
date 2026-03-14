@@ -8,9 +8,10 @@ import scala.collection.parallel.CollectionConverters.*
 /**
  * Three-Pass Regression Filter (Kelly & Pruitt, 2015)
  *
- * Two entry points:
- *   - tprfFast    →  TprfFast    (IS Full; vectorized batch solves; phi/sigma/estimateYhat)
- *   - estimate3prf →  Tprf3Result (all procedures; OOS modes, autoproxy, avar)
+ * Three entry points:
+ *   - tprfClosedForm →  Tprf3Result (IS Full; closed-form projection; normalizes X)
+ *   - t3prf          →  Tprf3Result (IS Full; vectorized batch solves; phi/sigma/estimateYhat)
+ *   - estimate3prf   →  Tprf3Result (all procedures; OOS modes, autoproxy, avar)
  *
  * Reference: Kelly, Bryan and Seth Pruitt (2015):
  *   "The Three-Pass Regression Filter: A New Approach to Forecasting
@@ -26,31 +27,31 @@ object Tprf3 {
   )
 
   object Tprf3Result {
-    // Custom apply method to hide the private name `_residuals` from client code
     def apply(
         forecasts: MatD,
-        residuals: MatD, 
+        residuals: MatD,
         rSquared:  Double,
         encnew:    Double = Double.NaN,
         rollfore:  MatD   = MatD.zeros(1, 1),
         X:         MatD   = MatD.zeros(0, 0),
         y:         MatD   = MatD.zeros(0, 0),
         Z:         MatD   = MatD.zeros(0, 0),
-        alpha: Option[MatD]          = None,     // (N x 1) IS Full predictor coefficients
+        beta3: Option[MatD]          = None,     // (L+1 x 1) pass-3 OLS coefficients
+        alpha: Option[MatD]          = None,     // (N x 1) K&P pointests.alpha (IS Full)
         avar:  Option[AvarEstimates] = None,     // asymptotic variance (IS Full + computeAvar)
         phi:   MatD     = MatD.zeros(0, 0),
         sigma: MatD     = MatD.zeros(0, 0),
         phiHat: MatD    = MatD.zeros(0, 0)
     ): Tprf3Result = new Tprf3Result(
-      forecasts, residuals, rSquared, encnew, 
-      rollfore, X, y, Z, alpha, avar, phi, sigma, phiHat
+      forecasts, residuals, rSquared, encnew,
+      rollfore, X, y, Z, beta3, alpha, avar, phi, sigma, phiHat
     )
 
-    /** * Compatibility Bridge for test suites.
+    /** Compatibility Bridge for test suites.
      * Maps the old TprfFast signature to Tprf3Result.
      */
     def apply(
-        X: MatD, y: MatD, Z: MatD, 
+        X: MatD, y: MatD, Z: MatD,
         phi: MatD, sigma: MatD, betaHat: MatD
     ): Tprf3Result = {
       val Xaug = MatD.hstack(MatD.ones(sigma.rows, 1), sigma) // add intercept
@@ -60,17 +61,18 @@ object Tprf3 {
         residuals = y - yHat,
         rSquared  = 0.0, // Tests usually check specific values of phi/sigma/beta
         X = X, y = y, Z = Z,
-        phi = phi,
-        sigma = sigma,
-        alpha = Some(betaHat), // keep intercept column
+        phi    = phi,
+        sigma  = sigma,
+        beta3  = Some(betaHat), // keep intercept column
+        alpha  = None,
         phiHat = MatD.zeros(0, 0) // Not used in this manual test mode
       )
     }
   }
 
   case class Tprf3Result(
-    forecasts: MatD,                        // (T x 1) forecast series 
-    private val _residuals: MatD,           // (T x 1) forecast errors
+    forecasts: MatD,                        // (T x 1) forecast series
+    override val residuals: MatD,           // (T x 1) forecast errors
     override val rSquared:  Double,         // R² vs rolling mean (can be negative OOS)
     encnew: Double,
     rollfore: MatD,
@@ -80,7 +82,8 @@ object Tprf3 {
     y: MatD,
     Z: MatD,
 
-    alpha: Option[MatD],
+    beta3: Option[MatD],                    // (L+1 x 1) pass-3 OLS coefficients; set by t3prf / tprfClosedForm
+    alpha: Option[MatD],                    // (N x 1) K&P pointests.alpha; set by estimate3prf IS Full
     avar:  Option[AvarEstimates],
 
     // Model state from IS Full
@@ -88,14 +91,13 @@ object Tprf3 {
     override val sigma: MatD,
     phiHat: MatD,
   ) extends TprfResult {
-    // satisfy the trait's lazy requirement here
-    override lazy val residuals: MatD = _residuals
-
+    // K&P: inner `t3prf` calls this `yhat`; outer `estimate3prf` calls this `forecasts`.
+    // `forecasts` is the stored field; `y_hat` aliases it for TprfResult trait compatibility.
     def y_hat: MatD = forecasts
-    //def coefficients: MatD = alpha.getOrElse(MatD.zeros(0, 0))
-    override def coefficients: MatD = 
-      val a = alpha.getOrElse(MatD.zeros(0, 0))
-      if (a.rows > 1) a(1 until a.rows, ::) else a
+
+    override def coefficients: MatD =
+      val b = beta3.getOrElse(MatD.zeros(0, 0))
+      if (b.rows > 1) b(1 until b.rows, ::) else b
 
     /** Preserved: Vectorized OOS prediction logic */
     override def estimateYhat(oos: VecD): Double = {
@@ -103,18 +105,16 @@ object Tprf3 {
       else
         val oosCol = if (oos.rows == 1) oos.T else oos
         val designPhi = withIntercept(phi)
-        
+
         // Project oos onto factor space
         val b_oos = (designPhi.T ~@ designPhi).inverse ~@ (designPhi.T ~@ oosCol)
         val sigma_oos = b_oos(1 until b_oos.rows, ::)
-        
+
         // finalDesign is (1 x L+1)
         val finalDesign = MatD.hstack(MatD.ones(1, 1), sigma_oos.T)
-        // Use the internal alpha (L+1 x 1) directly to match finalDesign's columns
-        val fullBeta = alpha.get // get full coefficients
-        
-        // coefficients is now (L+1 x 1) because it includes the intercept
-        if (finalDesign.cols != fullBeta.rows) Double.NaN 
+        val fullBeta = beta3.get // (L+1 x 1) pass-3 OLS coefficients
+
+        if (finalDesign.cols != fullBeta.rows) Double.NaN
         else (finalDesign ~@ fullBeta)(0, 0)
     }
 
@@ -129,7 +129,7 @@ object Tprf3 {
         val sstCols  = ((X - colMeans) ~^ 2.0).sum(0)
         Array.tabulate(X.cols)(i => if sstCols(0, i) == 0.0 then 0.0 else 1.0 - rssCols(0, i) / sstCols(0, i))
 
-    override def intercept: Double = alpha.map(_(0, 0)).getOrElse(Double.NaN)
+    override def intercept: Double = beta3.map(_(0, 0)).getOrElse(Double.NaN)
 
     override def toString: String =
       s"Tprf3Result(R²=$rSquared, n=$n, df=$df, residuals=${residuals.shape}, y_hat=${y_hat.shape})"
@@ -144,7 +144,7 @@ object Tprf3 {
     def Z: MatD       // proxy matrix (T×L)
     def y_hat: MatD   // estimated response (T×1)
 
-    lazy val residuals: MatD = y - y_hat
+    def residuals: MatD = y - y_hat
     lazy val n:         Int  = X.rows
     lazy val df:        Double = Z.cols.toDouble
     lazy val rss:       Double = (residuals ~^ 2.0).sum
@@ -186,106 +186,79 @@ object Tprf3 {
     def intercept: Double = Double.NaN
   }
 
-  // ── TprfDirect ─────────────────────────────────────────────────────────────
+  // ── tprfClosedForm ──────────────────────────────────────────────────────────
 
-  /** Closed-form 3PRF estimator. Fastest for IS Full; phi/sigma computed lazily. */
-  case class TprfDirect(X: MatD, y: MatD, Z: MatD) extends TprfResult:
-    assert(X.cols >= Z.cols, s"X.cols: ${X.cols} < Z.cols: ${Z.cols}")
+  /** Closed-form 3PRF (K&P IS Full, algebraic matrix formula).
+   *  Collapses the three passes into a single projection; normalizes X internally.
+   *  Equivalent in result to t3prf but never iterates — ŷ follows directly from:
+   *
+   *    α̂ = Wxz(Wxz'SxxWxz)⁻¹Wxz'X'J(T)y
+   *    ŷ = J(T)Xα̂
+   *
+   *  where Wxz = J(N)·X'·J(T)·Z,  Sxx = X'·J(T)·X,  J(k) = I_k − (1/k)·1·1'
+   *  Pass-1 (Phi) and pass-2 (Sigma) are still computed for phi/sigma fields. */
+  def tprfClosedForm(y: MatD, X: MatD, Z: MatD): Tprf3Result =
+    val Xn   = X / nanStdCols(X)
+    val T    = Xn.rows; val N = Xn.cols
+    val Jt   = jMat(T); val Jn = jMat(N)
+    val XtJt = Xn.T ~@ Jt
+    val JtX  = Jt ~@ Xn
+    val Wxz  = Jn ~@ XtJt ~@ Z
+    val Sxx  = XtJt ~@ Xn
+    val alpha_hat_factor: MatD = Wxz ~@ (Wxz.T ~@ Sxx ~@ Wxz).inverse ~@ Wxz.T ~@ XtJt
+    val alpha_hat = alpha_hat_factor ~@ y           // N×1
+    val y_hat_val = JtX ~@ alpha_hat + y.mean       // T×1
 
-    private val T = X.rows
-    private val N = X.cols
-    private val Jt:  MatD = jMat(T)
-    private val Jn:  MatD = jMat(N)
-    private val XtJt: MatD = X.T ~@ Jt
-    private val JtX:  MatD = Jt ~@ X
-    private val Wxz:  MatD = Jn ~@ XtJt ~@ Z
-    private val Sxx:  MatD = XtJt ~@ X
+    // Pass-1 (K&P: Phi N×L)
+    val phiMat     = MatD.zeros(N, Z.cols)
+    val phiHatFull = MatD.zeros(Z.cols + 1, N)
+    val r2         = Array.ofDim[Double](N)
+    for i <- 0 until N do
+      val m = Lm(Xn(::, i), Z)
+      phiMat(i until i+1, ::) = m.coef_.T
+      phiHatFull(::, i until i+1) = m.beta
+      val v = m.rSquared
+      r2(i) = if v.isNaN || v.isInfinite then 0.0 else v
+    val phi = phiMat                                // N×L
 
-    private lazy val JtZ: MatD = Jt ~@ Z
-    private lazy val Szz: MatD = Z.T ~@ JtZ
+    // Pass-2 (K&P: Sigma T×L)
+    val sigma = MatD.zeros(T, Z.cols)
+    for t <- 0 until T do
+      val m = Lm(Xn(t, ::).T, phi, addIntercept = true)
+      sigma(t until t+1, ::) = m.coef_.T
 
-    val alpha_hat_factor: MatD =
-      Wxz ~@ (Wxz.T ~@ Sxx ~@ Wxz).inverse ~@ Wxz.T ~@ XtJt
+    // Pass-3 (K&P: beta = [iota(T) Sigma]\y)
+    val Xaug  = withIntercept(sigma)
+    val beta3 = (Xaug.T ~@ Xaug).inverse ~@ (Xaug.T ~@ y)  // L+1×1
 
-    private val alpha_hat: MatD = alpha_hat_factor ~@ y   // (N, 1)
+    // K&P: Szz = Z'·J(T)·Z; beta_hat = Szz⁻¹·Wxz'·alpha_hat (closed-form pass-3 alt)
+    val JtZ      = Jt ~@ Z
+    val Szz      = Z.T ~@ JtZ
+    val _beta_hat = Szz.inverse ~@ Wxz.T ~@ alpha_hat       // L×1, K&P closed-form alt
 
-    private[uni] lazy val beta_hat: MatD =
-      Szz.inverse ~@ Wxz.T ~@ alpha_hat
+    val resids = y - y_hat_val
+    val ssy    = ((y - y.mean) ~^ 2.0).sum
+    val rsq    = if ssy == 0.0 then 0.0 else 1.0 - (resids ~^ 2.0).sum / ssy
 
-    private[uni] lazy val betaPass3: MatD =
-      val Xaug = withIntercept(sigma)              // T×(L+1)
-      (Xaug.T ~@ Xaug).inverse ~@ (Xaug.T ~@ y)  // (L+1)×1
+    Tprf3Result(
+      forecasts = y_hat_val,
+      residuals = resids,
+      rSquared  = rsq,
+      X = Xn, y = y, Z = Z,
+      beta3  = Some(beta3),
+      phi    = phi,
+      sigma  = sigma,
+      phiHat = phiHatFull
+    )
 
-    private def calcYhat(yvec: VecD): MatD =
-      JtX ~@ (alpha_hat_factor ~@ yvec) + yvec.mean
+  // ── t3prf (K&P vectorized) ──────────────────────────────────────────────────
 
-    // prediction formula for a new observation:
-    def estimateYhat(oos: VecD): Double =
-      // ensure oos is a column vector (N x 1)
-      val oosCol = if (oos.rows == 1) oos.T else oos
-      // alpha_hat is already (N x 1), so alpha_hat.T is (1 x N)
-      val pred = (alpha_hat.T ~@ oosCol)(0, 0) + y.mean
-      pred
-
-    val y_hat: MatD = calcYhat(y)
-
-    // Pass-1 and pass-2 matrices, computed lazily via a single shared pass-1 sweep.
-    private lazy val _pass1: (MatD, Array[Double], MatD) =
-      val phiMat = MatD.zeros(N, Z.cols)
-      val phiHatFull = MatD.zeros(Z.cols + 1, N) // L+1 x N
-      val r2     = Array.ofDim[Double](N)
-      for i <- 0 until N do
-        val m  = Lm(X(::, i), Z)
-        phiMat(i until i+1, ::) = m.coef_.T
-        phiHatFull(::, i until i+1) = m.beta // added for Tprf3Result
-        val v  = m.rSquared
-        r2(i)  = if v.isNaN || v.isInfinite then 0.0 else v
-      (phiMat, r2, phiHatFull)
-
-    // Ensure it returns (L x 1)
-    override def coefficients: MatD = beta_hat
-    override def phi: MatD                           = _pass1._1
-    override def pass1columnsRsquared: Array[Double] = _pass1._2
-    def phiHatFull: MatD                    = _pass1._3 // extra for trait
-
-    override val sigma: MatD =
-      val result = MatD.zeros(T, Z.cols)
-      for t <- 0 until T do
-        val m = Lm(X(t, ::).T, phi, addIntercept = true)
-        result(t until t+1, ::) = m.coef_.T
-      result
-
-    override def toString: String =
-      "residuals: %s\ny_hat: %s\n".format(residuals, y_hat)
-
-  object TprfDirect:
-    def apply(X: MatD, y: MatD, Z: MatD): Tprf3Result =
-      val impl = new TprfDirect(X, y, Z)
-      Tprf3Result(
-        forecasts = impl.y_hat,
-        residuals = impl.residuals,
-        rSquared  = impl.rSquared,
-        X         = impl.X,
-        y         = impl.y,
-        Z         = impl.Z,
-        alpha     = Some(impl.betaPass3),
-        phi       = impl.phi,
-        sigma     = impl.sigma,
-        phiHat    = impl.phiHatFull
-      )
-
-  // ── TprfFast ──────────────────────────────────────────────────────────────
-
-  /** Vectorized 3PRF: replaces N+T OLS loops with 2 batch matrix solves.
-   *  phi/sigma available immediately; estimateYhat supported. */
-
-  /** IS Full via vectorized matrix solves. Replaces N+T OLS loops with 2 batch solves.
-   *  phi/sigma/pass1R²/adjRsq available immediately; estimateYhat supported.
-   * Returns the unified Tprf3Result (same as all 3prf code)
-   */
-  def tprfFast(X: MatD, y: MatD, Z: MatD): Tprf3Result = {
-    val Xstd      = stdcols(X)
-    val Xn        = X / Xstd
+  /** Vectorized 3PRF: K&P t3prf with batch matrix solves replacing N+T OLS loops.
+   *  Normalizes X internally (nanStdCols). Produces identical results to tprfClosedForm.
+   *  Pass-3: beta = [iota(T) Sigma] \ y,  ŷ = [iota(T) Sigma]·beta
+   *  (cf. tprfClosedForm closed form: α̂ = Wxz(Wxz'SxxWxz)⁻¹Wxz'X'J(T)y, ŷ = J(T)Xα̂) */
+  def t3prf(y: MatD, X: MatD, Z: MatD): Tprf3Result = {
+    val Xn        = X / nanStdCols(X)
     val designZ   = withIntercept(Z)
     val B1        = (designZ.T ~@ designZ).inverse ~@ (designZ.T ~@ Xn)
     val phi       = B1(1 until B1.rows, ::).T        // N×L
@@ -294,11 +267,10 @@ object Tprf3 {
     val sigma     = B2(1 until B2.rows, ::).T         // T×L
     val Xaug      = withIntercept(sigma)
     val beta      = (Xaug.T ~@ Xaug).inverse ~@ (Xaug.T ~@ y)
-    
+
     val y_hat_val = Xaug ~@ beta
     val resids    = y - y_hat_val
-    
-    // Calculate R-squared manually for the constructor
+
     val ssy = ((y - y.mean) ~^ 2.0).sum
     val rsq = if (ssy == 0.0) 0.0 else 1.0 - (resids ~^ 2.0).sum / ssy
 
@@ -311,7 +283,7 @@ object Tprf3 {
       Z         = Z,
       phi       = phi,
       sigma     = sigma,
-      alpha     = Some(beta),
+      beta3     = Some(beta),
       phiHat    = B1
     )
   }
@@ -366,18 +338,6 @@ object Tprf3 {
   /** Centre each column (subtract column mean). */
   private def centerColumns(m: MatD): MatD =
     m - (m.sum(0) / m.rows.toDouble)
-
-  /** Column std-dev (sample, no NaN handling); returns (1×N). Zero columns → 1. */
-  private def stdcols(m: MatD): MatD =
-    val colMeans = m.sum(0) / m.rows.toDouble
-    val centered = m - colMeans
-    val s = ((centered ~^ 2.0).sum(0) / (m.rows - 1).toDouble).sqrt
-    val arr = new Array[Double](s.cols)
-    var j = 0
-    while j < s.cols do
-      arr(j) = if s(0, j) == 0.0 then 1.0 else s(0, j)
-      j += 1
-    Mat.create(arr, 1, s.cols)
 
   /** Column std-dev ignoring NaN; returns (1×N). Zero/degenerate columns → 1. */
   private def nanStdCols(m: MatD): MatD =
@@ -481,7 +441,7 @@ object Tprf3 {
   /** Three-pass OLS with hoisted design matrices and NaN tolerance.
    *  Dispatches to t3prfFast for the non-PLS case (eliminates N+T loops).
    *  @param oosX  (1×N) out-of-sample predictor row, or None */
-  private def t3prf(
+  private def runT3prf(
     y:      MatD,
     X:      MatD,
     Z:      MatD,
@@ -584,13 +544,13 @@ object Tprf3 {
           var r0   = y * 1.0
           var fore = nanCol(T)
           for j <- 0 until l do
-            val (f, _) = t3prf(y, Xn, r0, effPls)
+            val (f, _) = runT3prf(y, Xn, r0, effPls)
             if j == l - 1 then zFinal = Some(r0)
             r0   = MatD.hstack(r0, y - f)
             fore = f
           for i <- 0 until T do forecasts(i, 0) = fore(i, 0)
         else
-          val (f, _) = t3prf(y, Xn, zMat.get, effPls)
+          val (f, _) = runT3prf(y, Xn, zMat.get, effPls)
           for i <- 0 until T do forecasts(i, 0) = f(i, 0)
           zFinal = zMat
 
@@ -607,11 +567,11 @@ object Tprf3 {
             if autoproxy then
               var r0 = yt * 1.0; var tp = Double.NaN
               for _ <- 0 until l do
-                val (tmp, t2) = t3prf(yt, Xt, r0, effPls, oos)
+                val (tmp, t2) = runT3prf(yt, Xt, r0, effPls, oos)
                 r0 = MatD.hstack(yt - tmp, r0); tp = t2
               tp
             else
-              t3prf(yt, Xt, selectRows(zMat.get, ts), effPls, oos)._2
+              runT3prf(yt, Xt, selectRows(zMat.get, ts), effPls, oos)._2
           forecasts(t, 0) = tmpt
           rollfore(t, 0)  = nanMean(yt)
         }
@@ -628,11 +588,11 @@ object Tprf3 {
             if autoproxy then
               var r0 = yt * 1.0; var tp = Double.NaN
               for _ <- 0 until l do
-                val (tmp, t2) = t3prf(yt, Xt, r0, effPls, oos, mt._1)
+                val (tmp, t2) = runT3prf(yt, Xt, r0, effPls, oos, mt._1)
                 r0 = MatD.hstack(yt - tmp, r0); tp = t2
               tp
             else
-              t3prf(yt, Xt, selectRows(zMat.get, ts), effPls, oos)._2
+              runT3prf(yt, Xt, selectRows(zMat.get, ts), effPls, oos)._2
           forecasts(t, 0) = tmpt
           rollfore(t, 0)  = nanMean(yt)
         }
@@ -649,11 +609,11 @@ object Tprf3 {
             if autoproxy then
               var r0 = yt * 1.0; var tp = Double.NaN
               for _ <- 0 until l do
-                val (tmp, t2) = t3prf(yt, Xt, r0, effPls, oos, minNona)
+                val (tmp, t2) = runT3prf(yt, Xt, r0, effPls, oos, minNona)
                 r0 = MatD.hstack(yt - tmp, r0); tp = t2
               tp
             else
-              t3prf(yt, Xt, selectRows(zMat.get, ts0), effPls, oos)._2
+              runT3prf(yt, Xt, selectRows(zMat.get, ts0), effPls, oos)._2
           forecasts(t, 0) = tmpt
           rollfore(t, 0)  = nanMean(yt)
         }
@@ -750,12 +710,14 @@ object Tprf3 {
     val Z = MatD.randn(T, L)
 
     // IS Full
-    val rf: Tprf3Result = tprfFast(X, y, Z)
+    val rf: Tprf3Result = t3prf(y, X, Z)
+    val rc: Tprf3Result = tprfClosedForm(y, X, Z)
     val r3: Tprf3Result = estimate3prf(y, X, Right(Z), procedure = "IS Full")
 
-    printf("tprfFast     R²=%.4f  yhat[0]=%.6f  adjR²=%.4f  phi:%dx%d  sigma:%dx%d%n",
+    printf("t3prf          R²=%.4f  yhat[0]=%.6f  adjR²=%.4f  phi:%dx%d  sigma:%dx%d%n",
       rf.rSquared, rf.y_hat(0, 0), rf.adjRsq, rf.phi.rows, rf.phi.cols, rf.sigma.rows, rf.sigma.cols)
-    printf("estimate3prf R²=%.4f  yhat[0]=%.6f%n", r3.rSquared, r3.forecasts(0, 0))
+    printf("tprfClosedForm R²=%.4f  yhat[0]=%.6f%n", rc.rSquared, rc.y_hat(0, 0))
+    printf("estimate3prf   R²=%.4f  yhat[0]=%.6f%n", r3.rSquared, r3.forecasts(0, 0))
 
     // Autoproxy IS Full
     val r4 = estimate3prf(y, X, Left(2), procedure = "IS Full")

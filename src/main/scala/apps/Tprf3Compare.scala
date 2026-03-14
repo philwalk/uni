@@ -80,10 +80,10 @@ object Tprf3Compare {
     printf("OOS Cross Val  R²=%.6f  n_valid=%d%n", r_cv.rSquared, n_cv)
     check("OOS Cross Val", r_cv.forecasts, ref_cv)
 
-    // ── Tprf3.tprfFast ────────────────────────────────────────────────────────
+    // ── Tprf3.t3prf ──────────────────────────────────────────────────────────
     println()
-    println("── Tprf3 IS Full: tprfFast ──────────────────────────────────────────────")
-    val result = Tprf3.tprfFast(X, y, Z)
+    println("── Tprf3 IS Full: t3prf ─────────────────────────────────────────────────")
+    val result = Tprf3.t3prf(y, X, Z)
     val rss = ((y - result.y_hat) ~^ 2.0).sum
     val ssy = ((y - y.mean) ~^ 2.0).sum
     val r2  = (ssy - rss) / ssy

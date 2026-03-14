@@ -5,7 +5,7 @@ import uni.data.*
 import uni.data.Mat.*
 import uni.stats.Tprf3.*
 
-/** Coverage suite for uni.stats.Tprf3: Lm, TprfDirect, TprfFast, estimate3prf,
+/** Coverage suite for uni.stats.Tprf3: Lm, tprfClosedForm, t3prf, estimate3prf,
  *  forecast3prf, and all four OOS procedures. */
 class TprfSuite extends FunSuite:
 
@@ -18,10 +18,21 @@ class TprfSuite extends FunSuite:
   private val X: MatD = MatD.randn(T, N)
   private val y: MatD = MatD.randn(T, 1)
 
-  // Shared computed objects — lazy so construction cost is paid once per use.
-  private lazy val tf: Tprf3Result  = tprfFast(X, y, Z)
+  // All three accept raw (unnormalized) X and normalize internally (nanStdCols / nanstd).
+  // Given the same X, y, Z they produce numerically identical y_hat / residuals / rSquared.
+  //
+  // td  — tprfClosedForm: closed-form projection via alpha_hat_factor (K&P matrix formula).
+  //       K&P variables: Phi (N×L pass-1), Sigma (T×L pass-2), beta ([iota Sigma]\y),
+  //       yhat = [iota Sigma]*beta. Also retains Szz, beta_hat as K&P closed-form intermediates.
+  //
+  // tf  — t3prf: K&P's t3prf vectorized (batch matrix solves replace N+T OLS loops).
+  //       Same Phi, Sigma, beta, yhat. beta3 stored in result.
+  //
+  // rIS — estimate3prf IS Full: K&P estimate3PRF(y,X,Z,'type','IS Full').
+  //       Computes forecasts via runT3prf path; additionally computes pointests.alpha (N×1).
+  private lazy val td:  Tprf3Result = tprfClosedForm(y, X, Z)
+  private lazy val tf:  Tprf3Result = t3prf(y, X, Z)
   private lazy val rIS: Tprf3Result = estimate3prf(y, X, Right(Z))
-  private lazy val td: Tprf3Result = TprfDirect(X, y, Z)
 
   // ============================================================================
   // Lm — NaN-aware OLS
@@ -76,111 +87,111 @@ class TprfSuite extends FunSuite:
   }
 
   // ============================================================================
-  // TprfDirect — shapes and basic properties
+  // tprfClosedForm — shapes and basic properties
   // ============================================================================
 
-  test("TprfDirect: y_hat shape is (T, 1)") {
+  test("tprfClosedForm: y_hat shape is (T, 1)") {
     assertEquals(td.y_hat.shape, (T, 1))
   }
 
-  test("TprfDirect: residuals shape is (T, 1)") {
+  test("tprfClosedForm: residuals shape is (T, 1)") {
     assertEquals(td.residuals.shape, (T, 1))
   }
 
-  test("TprfDirect: coefficients shape is (L, 1)") {
+  test("tprfClosedForm: coefficients shape is (L, 1)") {
     assertEquals(td.coefficients.shape, (L, 1))
   }
 
-  test("TprfDirect: phi shape is (N, L)") {
+  test("tprfClosedForm: phi shape is (N, L)") {
     assertEquals(td.phi.shape, (N, L))
   }
 
-  test("TprfDirect: sigma shape is (T, L)") {
+  test("tprfClosedForm: sigma shape is (T, L)") {
     assertEquals(td.sigma.shape, (T, L))
   }
 
-  test("TprfDirect: n == T and df == L") {
+  test("tprfClosedForm: n == T and df == L") {
     assertEquals(td.n, T)
     assertEqualsDouble(td.df, L.toDouble, 1e-12)
   }
 
-  test("TprfDirect: pass1columnsRsquared has N entries, each in [0, 1]") {
+  test("tprfClosedForm: pass1columnsRsquared has N entries, each in [0, 1]") {
     val r2 = td.pass1columnsRsquared
     assertEquals(r2.length, N)
     assert(r2.forall(v => v >= 0.0 && v <= 1.0 + 1e-10),
       s"out-of-range R²: ${r2.mkString(", ")}")
   }
 
-  test("TprfDirect: rSquared is at most 1.0") {
+  test("tprfClosedForm: rSquared is at most 1.0") {
     assert(td.rSquared <= 1.0 + 1e-10)
   }
 
-  test("TprfDirect: rSquared is 0.0 when y is constant (ssy == 0 branch)") {
+  test("tprfClosedForm: rSquared is 0.0 when y is constant (ssy == 0 branch)") {
     val yConst = MatD.full(T, 1, 7.0)
-    assertEqualsDouble(TprfDirect(X, yConst, Z).rSquared, 0.0, 1e-10)
+    assertEqualsDouble(tprfClosedForm(yConst, X, Z).rSquared, 0.0, 1e-10)
   }
 
-  test("TprfDirect: degreesOfFreedom is positive") {
+  test("tprfClosedForm: degreesOfFreedom is positive") {
     val df = td.degreesOfFreedom
     assert(df > 0.0, s"expected positive df, got $df")
   }
 
-  test("TprfDirect: toString contains 'residuals' and 'y_hat'") {
+  test("tprfClosedForm: toString contains 'residuals' and 'y_hat'") {
     val s = td.toString
     assert(s.contains("residuals"), s)
     assert(s.contains("y_hat"), s)
   }
 
-  // ============================================================================
-  // TprfFast (tprfFast entry point) — shapes and properties
-  // ============================================================================
+  // =================================
+  // t3prf — shapes and properties
+  // =================================
 
-  test("tprfFast: phi shape is (N, L)") {
+  test("t3prf: phi shape is (N, L)") {
     assertEquals(tf.phi.shape, (N, L))
   }
 
-  test("tprfFast: sigma shape is (T, L)") {
+  test("t3prf: sigma shape is (T, L)") {
     assertEquals(tf.sigma.shape, (T, L))
   }
 
-  test("tprfFast: y_hat shape is (T, 1)") {
+  test("t3prf: y_hat shape is (T, 1)") {
     assertEquals(tf.y_hat.shape, (T, 1))
   }
 
-  test("tprfFast: coefficients shape is (L, 1)") {
+  test("t3prf: coefficients shape is (L, 1)") {
     assertEquals(tf.coefficients.shape, (L, 1))
   }
 
-  test("tprfFast: rSquared <= 1.0") {
+  test("t3prf: rSquared <= 1.0") {
     assert(tf.rSquared <= 1.0 + 1e-10)
   }
 
-  test("tprfFast: adjRsq <= rSquared") {
+  test("t3prf: adjRsq <= rSquared") {
     assert(tf.adjRsq <= tf.rSquared + 1e-10)
   }
 
-  test("tprfFast: intercept is finite") {
+  test("t3prf: intercept is finite") {
     assert(tf.intercept.isFinite, s"intercept was ${tf.intercept}")
   }
 
-  test("tprfFast: pass1columnsRsquared has N entries in [0, 1]") {
+  test("t3prf: pass1columnsRsquared has N entries in [0, 1]") {
     val r2 = tf.pass1columnsRsquared
     assertEquals(r2.length, N)
     assert(r2.forall(v => v >= 0.0 && v <= 1.0 + 1e-10),
       s"out-of-range R²: ${r2.mkString(", ")}")
   }
 
-  test("tprfFast: estimateYhat(oos) returns a finite Double") {
+  test("t3prf: estimateYhat(oos) returns a finite Double") {
     // Use tf.X (which is Xn) instead of the raw X
-    val oos = tf.X(0, ::).T  
+    val oos = tf.X(0, ::).T
     assert(tf.estimateYhat(oos).isFinite)
   }
 
-  test("tprfFast: residuals shape is (T, 1)") {
+  test("t3prf: residuals shape is (T, 1)") {
     assertEquals(tf.residuals.shape, (T, 1))
   }
 
-  test("tprfFast: toString contains 'residuals' and 'y_hat'") {
+  test("t3prf: toString contains 'residuals' and 'y_hat'") {
     val s = tf.toString
     assert(s.contains("residuals"), s)
     assert(s.contains("y_hat"), s)
@@ -339,6 +350,7 @@ class TprfSuite extends FunSuite:
   test("Tprf3Result: default optional fields") {
     val r = Tprf3Result(MatD.zeros(5, 1), MatD.zeros(5, 1), rSquared = 0.42)
     assert(r.encnew.isNaN)
+    assert(r.beta3.isEmpty)
     assert(r.alpha.isEmpty)
     assert(r.avar.isEmpty)
     assertEquals(r.rollfore.shape, (1, 1))

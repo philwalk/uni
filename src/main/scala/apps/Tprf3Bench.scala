@@ -6,7 +6,7 @@ import uni.stats.Tprf3
 import scala.sys.process.*
 
 /**
- * Benchmarks Tprf3.tprfFast and Tprf3.estimate3prf across two data sizes,
+ * Benchmarks Tprf3.t3prf and Tprf3.estimate3prf across two data sizes,
  * then invokes py/bench_tprf3.py so Scala and Python results appear side-by-side.
  *
  * Run:  sbt "runMain apps.Tprf3Bench"
@@ -31,15 +31,15 @@ object Tprf3Bench {
     print("  warming up ... ")
     Console.flush()
     for _ <- 0 until warmup do
-      Tprf3.tprfFast(X, y, Z)
+      Tprf3.t3prf(y, X, Z)
       Tprf3.estimate3prf(y, X, Right(Z), procedure = "IS Full")
     println("done")
 
     // ── IS Full ───────────────────────────────────────────────────────────
-    val msFast   = bench(loops) { Tprf3.tprfFast(X, y, Z) }
+    val msFast   = bench(loops) { Tprf3.t3prf(y, X, Z) }
     val ms3prf   = bench(loops) { Tprf3.estimate3prf(y, X, Right(Z), procedure = "IS Full") }
 
-    printf("  [Scala]  %-26s  %8.2f ms/call%n", "Tprf3.tprfFast", msFast)
+    printf("  [Scala]  %-26s  %8.2f ms/call%n", "Tprf3.t3prf", msFast)
     printf("  [Scala]  %-26s  %8.2f ms/call%n", "Tprf3.estimate3prf IS Full", ms3prf)
 
     // ── OOS Recursive (fewer loops — it iterates T times internally) ──────

@@ -3,7 +3,7 @@ package uni.apps
 import uni.*
 import uni.data.*
 import uni.data.Mat.*
-import uni.stats.Tprf3.tprfFast
+import uni.stats.Tprf3.t3prf
 import scala.collection.immutable.Vector as VecSeq
 import scala.collection.parallel.CollectionConverters.*
 import scala.collection.parallel.ForkJoinTaskSupport
@@ -264,13 +264,13 @@ object TprfRunner {
   private def autoproxy(X: MatD, y: MatD, n_proxy: Int): MatD =
     var r0: MatD = y
     for _ <- 1 until n_proxy do
-      val yhat: MatD      = tprfFast(X, y, r0).y_hat
+      val yhat: MatD      = t3prf(y, X, r0).y_hat
       val residuals: MatD = y - yhat
       r0 = MatD.hstack(residuals, r0)
     r0
 
   private def tprf(X: MatD, y: MatD, Z: MatD, oos: MatD): (MatD, Double) =
-    val model = tprfFast(X, y, Z)
+    val model = t3prf(y, X, Z)
     val yhatt = if oos.rows > 1 then model.estimateYhat(oos) else Double.NaN
     (model.y_hat, yhatt)
 

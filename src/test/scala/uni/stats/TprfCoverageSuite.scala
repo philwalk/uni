@@ -10,12 +10,12 @@ import uni.stats.Tprf3.*
  *  - mintrain._1 < 0 → T/2 branch
  *  - OOS Rolling with gap > 0
  *  - IS Full autoproxy + computeAvar=true
- *  - tprfFast: empty _b1 → pass1columnsRsquared = Array.empty
- *  - tprfFast: adjRsq when nObs <= nParams
- *  - tprfFast: rSquared when y is constant (ssy == 0)
- *  - tprfFast: estimateYhat Xstd.cols == 1 (else branch, no normalisation)
- *  - tprfFast: pass1columnsRsquared sst == 0 (constant X column)
- *  - stdcols zero-std column → 1.0 fallback
+ *  - t3prf: empty phiHat → pass1columnsRsquared = Array.empty
+ *  - t3prf: adjRsq when nObs <= nParams
+ *  - t3prf: rSquared when y is constant (ssy == 0)
+ *  - t3prf: estimateYhat via Tprf3Result compatibility bridge
+ *  - t3prf: pass1columnsRsquared sst == 0 (constant X column)
+ *  - nanStdCols zero-std column → 1.0 fallback
  *  - t3prfFast: T < minObs early-return NaN path
  *  - estimate3prf OOS rSquared: ssT == 0 → Double.NaN branch
  *  - X with NaN column: nanStdCols vals.length <= 1 branch
@@ -116,11 +116,11 @@ class TprfCoverageSuite extends FunSuite:
   }
 
   // ============================================================================
-  // tprfFast: empty _b1 → pass1columnsRsquared returns Array.empty
+  // t3prf: empty phiHat → pass1columnsRsquared returns Array.empty
   // ============================================================================
 
-  test("tprfFast empty _b1: pass1columnsRsquared is empty") {
-    // _b1 defaults to MatD.zeros(0, 0) → rows == 0 → Array.empty branch
+  test("t3prf empty phiHat: pass1columnsRsquared is empty") {
+    // phiHat defaults to MatD.zeros(0, 0) → rows == 0 → Array.empty branch
     val tf = Tprf3Result(X, y, Z,
       phi     = MatD.zeros(N, L),
       sigma   = MatD.zeros(T, L),
@@ -129,10 +129,10 @@ class TprfCoverageSuite extends FunSuite:
   }
 
   // ============================================================================
-  // tprfFast: adjRsq when nObs <= nParams → returns 0.0
+  // t3prf: adjRsq when nObs <= nParams → returns 0.0
   // ============================================================================
 
-  test("tprfFast adjRsq: returns 0.0 when nObs <= nParams") {
+  test("t3prf adjRsq: returns 0.0 when nObs <= nParams") {
     // T2=3, L=2: betaHat.rows = L+1 = 3 = y.rows → nObs(3) <= nParams(3)
     val T2 = 3
     val smallY   = MatD.randn(T2, 1)
@@ -146,21 +146,21 @@ class TprfCoverageSuite extends FunSuite:
   }
 
   // ============================================================================
-  // tprfFast: rSquared when y is constant (ssy == 0 → 0.0)
+  // t3prf: rSquared when y is constant (ssy == 0 → 0.0)
   // ============================================================================
 
-  test("tprfFast rSquared: returns 0.0 when y is constant") {
+  test("t3prf rSquared: returns 0.0 when y is constant") {
     val yConst = MatD.full(T, 1, 5.0)
-    val tf = tprfFast(X, yConst, Z)
+    val tf = t3prf(yConst, X, Z)
     assertEqualsDouble(tf.rSquared, 0.0, 1e-10)
   }
 
   // ============================================================================
-  // tprfFast: estimateYhat with Xstd.cols == 1 (no normalisation, else branch)
+  // t3prf: estimateYhat via compatibility bridge
   // ============================================================================
 
-  test("tprfFast estimateYhat: Xstd.cols==1 skips normalisation (else oos branch)") {
-    // When tprfFast is constructed directly, Xstd defaults to ones(1,1) (cols=1)
+  test("t3prf estimateYhat: compatibility bridge result returns finite or NaN") {
+    // Tprf3Result compatibility bridge sets beta3 = Some(betaHat)
     val phi   = MatD.randn(N, L)
     val sigma = MatD.randn(T, L)
     val beta  = MatD.randn(L + 1, 1)
@@ -171,14 +171,14 @@ class TprfCoverageSuite extends FunSuite:
   }
 
   // ============================================================================
-  // stdcols zero-std branch + tprfFast pass1columnsRsquared sst==0
+  // nanStdCols zero-std branch + t3prf pass1columnsRsquared sst==0
   // ============================================================================
 
-  test("tprfFast with constant X column: stdcols returns 1.0, pass1R²(last)==0") {
-    // Last column is all 1.0s → std = 0 → stdcols uses 1.0 fallback
+  test("t3prf with constant X column: nanStdCols returns 1.0, pass1R²(last)==0") {
+    // Last column is all 1.0s → std = 0 → nanStdCols uses 1.0 fallback
     // After normalisation, column is still constant → sstCols = 0 → R² = 0.0
     val Xconst = MatD.hstack(X, MatD.ones(T, 1))
-    val tf = tprfFast(Xconst, y, Z)
+    val tf = t3prf(y, Xconst, Z)
     val r2 = tf.pass1columnsRsquared
     assertEquals(r2.length, N + 1)
     assertEqualsDouble(r2(N), 0.0, 1e-10)   // constant column → R² clamped to 0
