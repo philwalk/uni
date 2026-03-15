@@ -6,7 +6,8 @@ import java.time.LocalDateTime
 object ChronoParse {
   private lazy val now: LocalDateTime = LocalDateTime.now()
   private lazy val MonthNamesPattern = "(?i)(.*)(Jan[uary]*|Feb[ruary]*|Mar[ch]*|Apr[il]*|May|June?|July?|Aug[ust]*|Sep[tember]*|Oct[ober]*|Nov[ember]*|Dec[ember]*)(.*)".r
-  private var monthFirst = true // enforced convention for ambiguous month/day versus day/month
+
+  private def monthFirst: Boolean = timeConfig.monthFirst // respect global config
 
   def parseDateChrono(inpDateStr: String): LocalDateTime = {
     if (inpDateStr.trim.isEmpty) {

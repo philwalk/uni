@@ -17,6 +17,10 @@ Standard ```BigDecimal``` does not have a concept of "Not a Number" (NaN). If yo
 You can create ```Big``` instances from strings, integers, longs, or doubles.
 
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.9.6
+
 import uni.data.*
 
 val b1 = big("123.456")  // From String
@@ -32,6 +36,16 @@ val d: Double = b1.toDouble // Returns Double.NaN if b1 is BigNaN
 ```Big``` supports all standard operators. If any operand is ```BigNaN```, the result is ```BigNaN```.
 
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.9.6
+
+import uni.data.*
+
+val b1 = big("123.456")
+val b2 = 100.asBig
+val b3: Big = 42.0
+
 val result = (b1 + b2) * 2 / b3
 
 // Power operator (~^)
@@ -45,6 +59,15 @@ val preciseRoot = b1.sqrt // Precise BigDecimal square root
 Comparisons are "BigNaN-aware." Any comparison against a ```BigNaN``` returns ```false```.
 
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.9.6
+
+import uni.data.*
+
+val b1 = big("123.456")
+val b2 = 100.asBig
+
 if (b1 > b2) {
   println("Greater than")
 }

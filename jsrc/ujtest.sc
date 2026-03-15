@@ -1,7 +1,7 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
 //> using dep com.lihaoyi::ujson::4.0.2
-//> using dep org.vastblue:uni_3:0.9.5
+//> using dep org.vastblue:uni_3:0.9.6
 
 import uni.*
 import scala.collection.mutable

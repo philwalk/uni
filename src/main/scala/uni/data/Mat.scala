@@ -1672,7 +1672,7 @@ object Mat {
     }
 
   /** Returns the "NaN" sentinel value for type T at runtime. */
-  private def nanFill[T](using frac: Fractional[T], ct: ClassTag[T]): T =
+  private def nanFill[T](using @annotation.unused frac: Fractional[T], ct: ClassTag[T]): T =
     ct.runtimeClass match
       case c if c == classOf[Double] => Double.NaN.asInstanceOf[T]
       case c if c == classOf[Float]  => Float.NaN.asInstanceOf[T]

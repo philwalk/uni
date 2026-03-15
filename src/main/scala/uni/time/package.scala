@@ -12,6 +12,31 @@ export ChronoParse.parseDateChrono
 export SmartParse.parseDateSmart
 export java.time.LocalDateTime
 
+case class TimeConfig(monthFirst: Boolean = true)
+
+private val _timeConfig = new scala.util.DynamicVariable[TimeConfig](TimeConfig())
+
+/** Global access to the current thread-local time configuration. */
+def timeConfig: TimeConfig = _timeConfig.value
+
+/** Run a block of code with a specific TimeConfig. */
+def withTimeConfig[T](config: TimeConfig)(thunk: => T): T =
+  _timeConfig.withValue(config)(thunk)
+
+/** Run a block of code with DMY (Day-Month-Year) preference for ambiguous dates. */
+def withDMY[T](thunk: => T): T =
+  withTimeConfig(TimeConfig(monthFirst = false))(thunk)
+
+/** Run a block of code with MDY (Month-Day-Year) preference for ambiguous dates. */
+def withMDY[T](thunk: => T): T =
+  withTimeConfig(TimeConfig(monthFirst = true))(thunk)
+
+// For backward compatibility or global overrides if needed (less common with DynamicVariable)
+private[uni] def withTimeConfigGlobal(config: TimeConfig): Unit = 
+  // This is tricky with DynamicVariable. We usually just rely on scoped values.
+  // But if the user really wants to change the global default:
+  () 
+
 type DateTime = java.time.LocalDateTime // alias used by pallet
 type Instant = java.time.Instant
 type ZoneId = java.time.ZoneId

@@ -14,6 +14,18 @@ import uni.*
 
 ---
 
+## Portable Shell Scripts
+
+For Unix-like environments (Linux, macOS, WSL, MSYS2, Cygwin, Git-Bash), the recommended `scala-cli` shebang is:
+
+```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+```
+
+This ensures that the script runs with compiler flags for code quality.
+
+---
+
 ## Portable Path Handling
 
 `java.nio.file.Paths.get("/etc/fstab")` throws an exception on Windows because the JVM has no knowledge of MSYS2 or Cygwin mount tables. `uni.Paths` is a drop-in replacement that works correctly on all platforms with the same code.
@@ -23,7 +35,7 @@ On Linux and macOS, `uni.Paths` delegates to `java.nio.file.Paths` unchanged. On
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.9.5
+//> using dep org.vastblue:uni_3:0.9.6
 
 import uni.*
 
@@ -195,7 +207,7 @@ The following script hashes all files under a directory and demonstrates argumen
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.9.5
+//> using dep org.vastblue:uni_3:0.9.6
 
 import uni.*
 
@@ -241,7 +253,7 @@ The program name (`hash64demo.sc`) is derived automatically from the runtime env
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.9.5
+//> using dep org.vastblue:uni_3:0.9.6
 
 import uni.time.*
 
@@ -263,7 +275,7 @@ A source file can include a block of raw data after the code, enclosed in a `/* 
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.9.5
+//> using dep org.vastblue:uni_3:0.9.6
 
 import uni.data.HereDoc
 

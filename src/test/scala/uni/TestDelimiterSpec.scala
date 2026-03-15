@@ -19,7 +19,7 @@ class TestDelimiterSpec extends FunSuite {
   /** Writes a temporary CSV file under target/ and returns its Path.
     * The file is automatically deleted after the test.
     */
-  private def writeTempFile(name: String, lines: Seq[String])(using loc: munit.Location): java.nio.file.Path = {
+  private def writeTempFile(name: String, lines: Seq[String])(using @annotation.unused loc: munit.Location): java.nio.file.Path = {
     val path = Paths.get("target", s"$name.csv")
     Files.createDirectories(path.getParent)
     Files.write(path, lines.mkString("\n").getBytes(StandardCharsets.UTF_8))

@@ -8,7 +8,7 @@ Side-by-side reference for **uni.MatD**, NumPy, Breeze, R, and MATLAB.
 
 ## Performance vs NumPy
 
-Measured on the same machine: NumPy 2.4.1 / Python 3.14.3 vs uni.MatD 0.9.5 / Scala 3.7.0 / JVM 17.
+Measured on the same machine: NumPy 2.4.1 / Python 3.14.3 vs uni.MatD 0.9.6 / Scala 3.7.0 / JVM 17.
 Both use OpenBLAS. See [`jsrc/bench.sc`](../jsrc/bench.sc) and [`py/bench.py`](../py/bench.py) to reproduce.
 
 | Operation | NumPy | MatD | Ratio | Notes |
@@ -30,6 +30,29 @@ Both use OpenBLAS. See [`jsrc/bench.sc`](../jsrc/bench.sc) and [`py/bench.py`](.
 - Custom scalar functions: `mapParallel` vs `np.vectorize` shows a 470× JVM advantage; the Python interpreter overhead dominates.
 - Matmul: NumPy still wins (~2×) due to OpenBLAS JNI overhead on the JVM side.
 - `sum`: NumPy's vectorised C reduction is hard to beat; MatD is within 2×.
+
+---
+
+## Performance vs Breeze
+
+Measured on the same machine: Breeze 2.1.0 vs uni.MatD 0.9.6 / Scala 3.8.2 / JVM 21.
+Both use native OpenBLAS (JNIBLAS). See [`jsrc/breezeBench.sc`](../jsrc/breezeBench.sc) to reproduce.
+
+| Operation | MatD | Breeze | Ratio | Notes |
+|---|---:|---:|---|---|
+| `randn(1000×1000)` | 14.6 ms | 52.7 ms | **3.6× faster** | PCG64 (MatD) vs Gaussian sampler (Breeze) |
+| `matmul 512×512` | 2.7 ms | 1.4 ms | 0.5× slower | Breeze column-major avoids transpose; MatD row-major pays transpose cost |
+| `sigmoid(1000×1000)` | 1.9 ms | 11.7 ms | **6.2× faster** | Parallel fork/join (MatD) vs sequential UFunc (Breeze) |
+| `relu(1000×1000)` | 0.8 ms | 3.9 ms | **4.8× faster** | Parallel fork/join (MatD) vs sequential map (Breeze) |
+| `add(1000×1000)` | 1.3 ms | 1.7 ms | **1.3× faster** | Parallel fork/join (MatD) vs sequential element-wise (Breeze) |
+| `sum(1000×1000)` | 0.5 ms | 1.0 ms | **2.1× faster** | Both sequential; MatD single-pass is faster |
+| `transpose(1000×1000)` | ≈0 ms | ≈0 ms | **tied** | O(1) stride-flip in both — no data copy |
+| `mapParallel` custom fn | 0.8 ms | 10.2 ms | **12.6× faster** | Parallel fork/join (MatD) vs sequential map (Breeze) |
+
+**Practical guidance:**
+- MatD wins 6/7 scored operations; geometric mean: MatD is **3×** faster overall.
+- The one exception is matmul: Breeze stores matrices column-major (matching BLAS convention), so `A * B` maps directly to `dgemm`. MatD stores row-major and pays a transpose cost before calling BLAS.
+- Element-wise and custom-function operations show the largest gaps because MatD uses parallel fork/join while Breeze processes elements sequentially.
 
 ---
 
@@ -215,9 +238,76 @@ Both use OpenBLAS. See [`jsrc/bench.sc`](../jsrc/bench.sc) and [`py/bench.py`](.
 
 ---
 
+## Pandas-Style Data Analysis
+
+| Operation | MatD | pandas | Notes |
+|---|---|---|---|
+| First n rows | `m.head(n)` | `df.head(n)` | Returns `Mat[T]` |
+| Last n rows | `m.tail(n)` | `df.tail(n)` | Returns `Mat[T]` |
+| Index of min per axis | `m.idxmin(axis)` | `df.idxmin(axis)` | Returns `Mat[Int]` |
+| Index of max per axis | `m.idxmax(axis)` | `df.idxmax(axis)` | Returns `Mat[Int]` |
+| Cumulative max | `m.cummax(axis)` | `df.cummax(axis)` | axis=0 (rows) or 1 (cols) |
+| Cumulative min | `m.cummin(axis)` | `df.cummin(axis)` | axis=0 (rows) or 1 (cols) |
+| N largest values | `m.nlargest(n)` | `df.nlargest(n, col)` | Returns 1×n row vector |
+| N smallest values | `m.nsmallest(n)` | `df.nsmallest(n, col)` | Returns 1×n row vector |
+| Range test | `m.between(lo, hi)` | `s.between(lo, hi)` | Returns `Mat[Boolean]` |
+| Unique value count | `m.nunique` | `df.nunique()` | `Int` |
+| Frequency table | `m.valueCounts` | `s.value_counts()` | `Array[(T, Int)]`, descending |
+| Shift / lag | `m.shift(n, fill)` | `df.shift(n)` | fill: sentinel for new cells |
+| Shift columns | `m.shift(n, fill, axis=1)` | `df.shift(n, axis=1)` | |
+| Percent change | `m.pct_change()` | `df.pct_change()` | First row is NaN |
+| Fill NaN | `m.fillna(v)` | `df.fillna(v)` | Replaces NaN/BigNaN |
+| Descriptive stats | `m.describe` | `df.describe()` | Returns `(Array[String], Mat[Double])` — 8 rows |
+| Rolling mean | `m.rolling(w).mean` | `df.rolling(w).mean()` | First w-1 rows are NaN |
+| Rolling sum | `m.rolling(w).sum` | `df.rolling(w).sum()` | |
+| Rolling min | `m.rolling(w).min` | `df.rolling(w).min()` | |
+| Rolling max | `m.rolling(w).max` | `df.rolling(w).max()` | |
+| Rolling std dev | `m.rolling(w).std` | `df.rolling(w).std()` | |
+| Column by name | `result("Col")` | `df["Col"]` | From `MatResult`; throws if absent |
+| Column option | `result.col("Col")` | `df.get("Col")` | `Option[ColVec[T]]` |
+
+### describe output layout
+
+```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.9.6
+
+import uni.data.*
+
+val m = MatD((1,2),(3,4),(5,6))
+val (labels, stats) = m.describe
+// labels = Array("count","mean","std","min","25%","50%","75%","max")
+// stats  = 8 × m.cols  Mat[Double]
+```
+
+### MatResult — CSV with named columns
+
+```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.9.6
+
+import uni.*
+import uni.io.FileOps.*
+
+val r = loadSmart(Paths.get("data.csv"))          // MatResult[Big]  (auto-detects header)
+val r2 = loadSmart(Paths.get("data.csv"), _.toDouble) // MatResult[Double]
+
+r("Close")          // ColVec[Big]   — throws NoSuchElementException if absent
+r.col("Volume")     // Option[ColVec[Big]]
+r.columnIndex       // Map[String, Int]  (pre-computed; free repeated lookups)
+```
+
+---
+
 ## Quick Reference Card
 
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.9.6
+
 import uni.data.*
 
 // Create

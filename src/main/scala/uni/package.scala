@@ -6,14 +6,14 @@ export stringExts.*
 export helpers.*
 export uni.data.{MatD, MatB, MatF}
 
-@deprecated("Use .toSeq explicitly", "1.0.0")
+@deprecated("use 'p.lines.toSeq' if you want a Seq[String]", "uni")
 given iteratorStringToSeq: Conversion[Iterator[String], Seq[String]] = _.toSeq
 
-@deprecated("Use .toList explicitly", "1.0.0")
+@deprecated("use .toList explicitly", "uni")
 given iteratorStringToList: Conversion[Iterator[String], List[String]] = _.toList
 
-@deprecated("Use .toSeq explicitly", "1.0.0")
+@deprecated("use .toSeq explicitly", "uni")
 given iteratorPathToSeq: Conversion[Iterator[Path], Seq[Path]] = _.toSeq
 
-@deprecated("Use .toList explicitly", "1.0.0")
+@deprecated("use .toList explicitly", "uni")
 given iteratorPathToList: Conversion[Iterator[Path], List[Path]] = _.toList

@@ -1,8 +1,9 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.9.5
+//> using dep org.vastblue:uni_3:0.9.6
 
-import java.nio.file.*
+import uni.*
+import java.nio.file.{Files, FileSystems}
 import scala.jdk.CollectionConverters.*
 
 object Main:
@@ -12,10 +13,16 @@ object Main:
 
     val root = Paths.get(".")
     val matcher = FileSystems.getDefault.getPathMatcher("glob:**/*.{sc,scala,md}")
+    def fileFilter(p: Path): Boolean = {
+      p.isFile && matcher.matches(p) && {
+        val str = p.posx
+        !str.contains("/.scala-build/") && !str.contains("/target/")
+      }
+    }
 
     val files =
       Files.walk(root)
-        .filter(p => matcher.matches(p))
+        .filter(p => fileFilter(p))
         .iterator()
         .asScala
         .toList

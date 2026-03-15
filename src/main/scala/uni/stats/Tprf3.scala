@@ -234,7 +234,8 @@ object Tprf3 {
     // K&P: Szz = Z'·J(T)·Z; beta_hat = Szz⁻¹·Wxz'·alpha_hat (closed-form pass-3 alt)
     val JtZ      = Jt ~@ Z
     val Szz      = Z.T ~@ JtZ
-    val _beta_hat = Szz.inverse ~@ Wxz.T ~@ alpha_hat       // L×1, K&P closed-form alt
+    @annotation.unused
+    lazy val _beta_hat = Szz.inverse ~@ Wxz.T ~@ alpha_hat       // L×1, K&P closed-form alt
 
     val resids = y - y_hat_val
     val ssy    = ((y - y.mean) ~^ 2.0).sum

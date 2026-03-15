@@ -4,13 +4,17 @@ A NumPy-compatible matrix library for Scala with exact reproducibility and compr
 
 ## Installation
 ```scala
-libraryDependencies += "org.someorg" %% "mat" % "0.9.0"
+//> using dep org.vastblue:uni_3:0.9.6
 ```
 
 ## Basic Usage
 
 ### Creating Matrices
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.9.6
+
 import uni.data.Mat
 import uni.data.Mat.*
 
@@ -37,6 +41,15 @@ val randInt = Mat.randint(0, 100, 5, 5)     // Random integers [0, 100)
 
 ### Indexing & Slicing
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.9.6
+
+import uni.data.Mat
+import uni.data.Mat.*
+
+val m = Mat[Double]((1, 2, 3), (4, 5, 6))
+
 // Basic indexing
 val value = m(0, 1)                   // Element at row 0, col 1
 val value2 = m(-1, -1)                // Last element (negative indexing)
@@ -58,6 +71,13 @@ m(mask) = 0.0                         // Set matching elements to 0
 
 ### Arithmetic Operations
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.9.6
+
+import uni.data.Mat
+import uni.data.Mat.*
+
 val A = Mat[Double]((1, 2), (3, 4))
 val B = Mat[Double]((5, 6), (7, 8))
 
@@ -81,6 +101,16 @@ val result = A + rowVec               // Adds rowVec to each row
 
 ### Linear Algebra
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.9.6
+
+import uni.data.Mat
+import uni.data.Mat.*
+
+val A = Mat[Double]((1, 2), (3, 4))
+val v = Mat.col[Double](1.0, 2.0, 3.0)
+
 // Basic operations
 val AT = A.T                          // Transpose
 val inv = A.inverse                   // Matrix inverse
@@ -103,6 +133,15 @@ val frobNorm = A.norm("fro")          // Frobenius norm
 
 ### Statistics
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.9.6
+
+import uni.data.Mat
+import uni.data.Mat.*
+
+val m = Mat.randn[Double](5, 4)
+
 // Reductions
 val min = m.min                       // Minimum element
 val max = m.max                       // Maximum element
@@ -127,6 +166,17 @@ val p90 = m.percentile(90)            // 90th percentile
 
 ### Element-wise Math Functions
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.9.6
+
+import uni.data.Mat
+import uni.data.Mat.*
+
+val m  = Mat.randn[Double](5, 4)
+val m1 = Mat.randn[Double](5, 4)
+val m2 = Mat.randn[Double](5, 4)
+
 // Basic math
 val absM = m.abs                      // Absolute value
 val sqrtM = m.sqrt                    // Square root
@@ -153,6 +203,15 @@ val minElems = m1.minimum(m2)         // Element-wise min
 
 ### Machine Learning Functions
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.9.6
+
+import uni.data.Mat
+import uni.data.Mat.*
+
+val m = Mat.randn[Double](5, 4)
+
 // Activation functions
 val sigmoid = m.sigmoid               // σ(x) = 1/(1+e^-x)
 val relu = m.relu                     // max(0, x)
@@ -169,8 +228,20 @@ val custom = Mat.normal(mean = 5.0, std = 2.0, rows = 100, cols = 10)
 
 ### Data Manipulation
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.9.6
+
+import uni.data.Mat
+import uni.data.Mat.*
+
+val m  = Mat.randn[Double](9, 6)    // 9 rows, 6 cols (54 elements)
+val m1 = Mat.randn[Double](3, 6)
+val m2 = Mat.randn[Double](3, 6)
+val m3 = Mat.randn[Double](3, 6)
+
 // Reshaping
-val reshaped = m.reshape(6, 2)        // Change shape (must have same size)
+val reshaped = m.reshape(6, 9)        // Change shape (must have same size: 9×6 = 6×9)
 val flat = m.flatten                  // Convert to 1D array
 val rowVec = m.toRowVec               // Reshape to 1×n
 val colVec = m.toColVec               // Reshape to n×1
@@ -190,6 +261,15 @@ val tiled = m.tile(2, 3)              // Tile 2 rows × 3 cols
 
 ### Comparison & Boolean Operations
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.9.6
+
+import uni.data.Mat
+import uni.data.Mat.*
+
+val m = Mat.randn[Double](5, 4)
+
 // Comparisons return Boolean matrices
 val mask1 = m > 5.0                   // Greater than
 val mask2 = m.lte(10.0)               // Less than or equal
@@ -209,6 +289,15 @@ val cleaned = m.nanToNum(nan = 0.0)   // Replace NaN with 0
 
 ### Display & Formatting
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.9.6
+
+import uni.data.Mat
+import uni.data.Mat.*
+
+val m = Mat.randn[Double](5, 7)
+
 // Default display (auto-formatted)
 println(m.show)
 // 5x7 Mat[Double]:
@@ -227,8 +316,42 @@ Mat.setPrintOptions(
 )
 ```
 
+### Data Loading & Persistence
+
+`uni.data` provides seamless CSV integration via extension methods on both `java.nio.file.Path` and `Mat`.
+
+```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.9.6
+
+import uni.*
+import uni.data.*
+
+// Paths.get() is portable across Windows/MSYS2/Cygwin/Linux/WSL/MacOS
+val path = Paths.get("data.csv")
+
+// 1. Saving from Mat (write first so the file exists for reading)
+val m = MatD.randn(10, 5)
+m.writeCsv(path)                 // Save as comma-separated
+
+// 2. Loading from Path
+val m1: MatD = path.readCsv      // Load as Mat[Double] (alias for MatD)
+val m2: MatB = path.readCsvB     // Load as Mat[Big]    (alias for MatB)
+val m3: MatF = path.readCsvF     // Load as Mat[Float]  (alias for MatF)
+
+// 3. Tab-separated
+m.writeCsv(path, sep = "\t")     // Save as tab-separated
+```
+
 ### Working with Different Types
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.9.6
+
+import uni.data.*
+
 // Mat works with Double, Float, and Big (BigDecimal)
 val doubles = Mat[Double]((1.5, 2.5), (3.5, 4.5))
 val floats = Mat[Float]((1.5f, 2.5f), (3.5f, 4.5f))
@@ -249,7 +372,10 @@ weights = np.linalg.lstsq(X, y)[0]
 pred = X @ weights
 ```
 ```scala
-// Mat (exact equivalent)
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.9.6
+
 import uni.data.Mat
 import uni.data.Mat.*
 
@@ -270,9 +396,10 @@ val pred = X ~@ weights
 
 ## Next Steps
 
-- See full API reference for complete method list
-- Check test suite for advanced usage examples
-- Use `numpy2mat.sc` translator for automatic NumPy→Scala conversion
+- See the [Full API Reference](ReferenceGuide.md) for a complete method list.
+- Check the [README](../README.md) for a high-level overview.
+- Check the test suite for advanced usage examples.
+- Use `numpy2mat.sc` translator for automatic NumPy→Scala conversion.
 
 ## Performance Tips
 

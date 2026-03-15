@@ -231,6 +231,9 @@ object SmartParse {
       // Standard patterns
       // YMD with optional time
       if isYear(a) && isMonth(b) && isDay(c) then Shape.YMD
+      // Ambiguous MDY/DMY case
+      else if isMonth(a) && isDay(a) && isMonth(b) && isDay(b) && (isYear(c) || isTwoDigitYear(c)) then
+        if timeConfig.monthFirst then Shape.MDY else Shape.DMY
       // MDY with optional time
       else if isMonth(a) && isDay(b) && (isYear(c) || isTwoDigitYear(c)) then Shape.MDY
       // DMY with optional time

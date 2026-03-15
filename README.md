@@ -11,32 +11,43 @@ It provides a zero-overhead, type-safe interface for scientific computing by lev
 * **Strided Memory Layout:** Supports `rowStride` and `colStride`, enabling $O(1)$ `transpose` and zero-copy slicing/views, mirroring NumPy's internal engine.
 * **Broadcasting & In-place Ops:** Built-in support for NumPy-style broadcasting and memory-efficient in-place mutation operators (`:+=`, `:-=`, `:*=`, `:/=`).
 * **Deep Learning Primitives:** Activation functions (`sigmoid`, `relu`, `softmax`, `leakyRelu`) use parallel fork/join for contiguous matrices — outperforming NumPy's single-core SIMD on multi-core hardware.
+* **Pandas-Style Data Analysis:** `head`/`tail`, `shift`/`pct_change`, `rolling`, `describe`, `fillna`, `idxmin`/`idxmax`, `cummax`/`cummin`, `nlargest`/`nsmallest`, `between`, `valueCounts`, and named-column CSV access via `MatResult`.
 
 For high-accuracy scientific modeling or other applications requiring extreme precision, `uni.Mat` provides a `Big` numeric type.
 
 * **High Precision:** [Big Type Guide](docs/BigTypeGuide.md) — Learn about high-precision matrices, and how to use `Mat[Big]`.
 
-## Performance vs NumPy
+## Performance
 
-Measured on the same machine (JVM 17 / Scala 3.7.0 vs Python 3.14.3 / NumPy 2.4.1). Both use OpenBLAS.
+### Core matrix operations
+
+NumPy: Python 3.14.3 / NumPy 2.4.1 (see [`py/bench.py`](py/bench.py)).
+Breeze/MatD: Scala 3.8.2 / JVM 21, both using native OpenBLAS (see [`jsrc/breezeBench.sc`](jsrc/breezeBench.sc)).
+
+| Operation | NumPy | Breeze | MatD |
+| :--- | ---: | ---: | ---: |
+| `randn(1000×1000)` | 19 ms | 52.7 ms | 14.6 ms |
+| `matmul 512×512` | 1.7 ms | 1.4 ms | 2.7 ms |
+| `sigmoid(1000×1000)` | 12.6 ms | 11.7 ms | 1.9 ms |
+| `relu(1000×1000)` | 2.0 ms | 3.9 ms | 0.8 ms |
+| `add(1000×1000)` | 2.3 ms | 1.7 ms | 1.3 ms |
+| `sum(1000×1000)` | 0.3 ms | 1.0 ms | 0.5 ms |
+| `transpose(1000×1000)` | ≈0 ms | ≈0 ms | ≈0 ms |
+| custom fn (`mapParallel` / `map` / `np.vectorize`) | 440 ms | 10.2 ms | 0.8 ms |
+
+MatD wins 6/8 operations vs NumPy and 6/7 scored vs Breeze (geometric mean **3× faster** than Breeze).
+Losses: `matmul` (Breeze column-major avoids a transpose; NumPy native BLAS) and `sum` (NumPy SIMD reduction).
+
+### 3PRF (Three-Pass Regression Filter)
+
+Measured on the same machine (JVM 17 / Scala 3.7.0 vs Python 3.14.3 / NumPy 2.4.1, scipy-openblas64).
+See [`jsrc/tprf.sc`](jsrc/tprf.sc) and [Kelly & Pruitt (2015)](https://doi.org/10.1111/jofi.12246).
 
 | Operation | NumPy | MatD | Ratio |
 | :--- | ---: | ---: | :--- |
-| `randn(1000×1000)` | 19 ms | 21 ms | **≈ tied** |
-| `matmul 512×512` | 1.7 ms | 3.3 ms | 1.9× slower |
-| `sigmoid(1000×1000)` | 12.6 ms | 3.0 ms | **4× faster** |
-| `relu(1000×1000)` | 2.0 ms | 0.8 ms | **2.5× faster** |
-| `add(1000×1000)` | 2.3 ms | 1.7 ms | **1.4× faster** |
-| `sum(1000×1000)` | 0.3 ms | 0.5 ms | 1.6× slower |
-| `transpose(1000×1000)` | ≈0 ms | ≈0 ms | **tied** |
-| custom fn (`mapParallel` vs `np.vectorize`) | 440 ms | 0.9 ms | **470× faster** |
 | `3PRF IS Full (T=650, N=40, L=2)` | 5 ms | 2 ms | **2.6× faster** |
 | `3PRF OOS Recursive (T=650, N=40, L=2)` | 268 ms | 133 ms | **2× faster** |
 | `3PRF OOS Cross Val (T=650, N=40, L=2)` | 718 ms | 373 ms | **1.9× faster** |
-
-  **3PRF benchmark key** — Three-Pass Regression Filter ([Kelly & Pruitt 2015](https://doi.org/10.1111/jofi.12246));
-  `T` = observations, `N` = predictors, `L` = proxy factors.
-  Python: `estimate3prf_fast` (vectorized NumPy). Scala: `t3prf` / `estimate3prf` with parallel collections.
 
   | Label | Description |
   | :--- | :--- |
@@ -69,8 +80,28 @@ Note: inline annotations were removed before running JaCoCo to prevent Scala 3's
 Add the following to your `build.sbt`:
 
 ```scala
-libraryDependencies += "org.vastblue" %% "uni" % "0.9.5"
+libraryDependencies += "org.vastblue" %% "uni" % "0.9.6"
 ```
+
+## Advanced Usage
+
+* **Quick Start:** [Mat Quick Start Guide](docs/QuickStartGuide.md) — Fast track to NumPy-compatible matrix operations in Scala.
+* **API Reference:** [Mat Reference Guide](docs/ReferenceGuide.md) — Comprehensive API documentation with validated examples.
+* **Cheat Sheet:** [MatD Cheat Sheet](docs/MatDCheatSheet.md) — Side-by-side comparison of MatD vs NumPy, Breeze, R, and MATLAB.
+* **High Precision:** [Big Type Guide](docs/BigTypeGuide.md) — High-precision matrices using `MatD[Big]`.
+
+### NumPy to uni.MatD Mapping
+
+| NumPy | uni.MatD | Note |
+| :--- | :--- | :--- |
+| `a @ b` | `a ~@ b` | Matrix multiplication |
+| `a * b` | `a * b` | Element-wise product |
+| `a[0, :]` | `a(0, ::)` | Row slice |
+| `a[:, 0]` | `a(::, 0)` | Column slice |
+| `a.T` | `a.T` | $O(1)$ view |
+| `np.random.randn` | `MatD.randn` | PCG64-backed |
+| `np.where(c, x, y)` | `MatD.where(c, x, y)` | Conditional selection |
+| `np.vstack` / `np.vsplit` | `MatD.vstack` / `m.vsplit(n)` | Row-wise stack / split |
 
 ## Quick Start
 
@@ -79,7 +110,7 @@ libraryDependencies += "org.vastblue" %% "uni" % "0.9.5"
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.9.5
+//> using dep org.vastblue:uni_3:0.9.6
 
 import uni.data.*
 
@@ -90,7 +121,7 @@ val weights = MatD.uniform(low = -0.1, high = 0.1, rows = 64, cols = 32)
 // Standard constructors
 val zeros    = MatD.zeros(10, 10)
 val identity = MatD.eye(5)
-val normal   = MatD.normal(10, 10)
+val normal   = MatD.randn(10, 10)
 println(normal)
 ```
 
@@ -107,6 +138,10 @@ To keep your code concise and idiomatic, `uni.MatD` provides type aliases and ma
 Each alias has a matching factory object mirroring the `MatD` API:
 
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.9.6
+
 import uni.data.*
 
 val weights:    MatD = MatD.randn(64, 32)
@@ -125,7 +160,7 @@ val identityB: MatB = MatB.eye(5)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.9.5
+//> using dep org.vastblue:uni_3:0.9.6
 
 import uni.data.*
 import uni.data.MatD.*
@@ -148,6 +183,12 @@ println(s"rotated: ${rotated.show("%7.2f")}")
 ### Mathematical Operations
 
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.9.6
+
+import uni.data.*
+
 val a = MatD.randn(3, 3)
 val b = MatD.randn(3, 3)
 
@@ -162,7 +203,7 @@ val f = a.relu    // built-in activation function
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.9.5
+//> using dep org.vastblue:uni_3:0.9.6
 
 import uni.data.*
 import uni.data.MatD.*
@@ -182,7 +223,7 @@ m :+= n      // element-wise add matrix in-place
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.9.5
+//> using dep org.vastblue:uni_3:0.9.6
 
 import uni.data.*
 import uni.data.MatD.*
@@ -201,7 +242,7 @@ val allTrue  = mask.all
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.9.5
+//> using dep org.vastblue:uni_3:0.9.6
 
 import uni.data.*
 import uni.data.MatD.*
@@ -223,7 +264,7 @@ val cols  = wide.hsplit(2)               // Seq of two 4x2 Mats
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.9.5
+//> using dep org.vastblue:uni_3:0.9.6
 
 import uni.data.*
 import uni.data.MatD.*
@@ -242,11 +283,12 @@ MatD.setPrintOptions(maxRows = 20, maxCols = 20, edgeItems = 5)
 
 ## Comprehensive Example: MatD in Action
 
-The following example demonstrates a wide array of ```uni.MatD``` capabilities, including matrix creation, slicing, broadcasting, linear algebra (SVD, QR, Inverse), and in-place mutation. It illustrates how the library brings NumPy-style ergonomics to Scala while maintaining high performance.
+The following example demonstrates a wide array of `uni.MatD` capabilities
+, including matrix creation, slicing, broadcasting, linear algebra (SVD, QR, Inverse), and in-place mutation. It illustrates how the library brings NumPy-style ergonomics to Scala while maintaining high performance.
 
 ```scala
-#!/usr/bin/env -S scala-cli shebang -deprecation
-//> using dep org.vastblue:uni_3:0.9.5
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+//> using dep org.vastblue:uni_3:0.9.6
 
 import uni.data.*
 import uni.data.MatD.*
@@ -309,30 +351,18 @@ object MatDCheck {
 }
 ```
 
-## Advanced Usage
-
-* **Cheat Sheet:** [MatD Cheat Sheet](docs/MatDCheatSheet.md) — Side-by-side comparison of MatD vs NumPy, Breeze, R, and MATLAB.
-* **High Precision:** [Big Type Guide](docs/BigTypeGuide.md) — High-precision matrices using `MatD[Big]`.
-
-### NumPy to uni.MatD Mapping
-
-| NumPy | uni.MatD | Note |
-| :--- | :--- | :--- |
-| `a @ b` | `a ~@ b` | Matrix multiplication |
-| `a * b` | `a * b` | Element-wise product |
-| `a[0, :]` | `a(0, ::)` | Row slice |
-| `a[:, 0]` | `a(::, 0)` | Column slice |
-| `a.T` | `a.T` | $O(1)$ view |
-| `np.random.randn` | `MatD.randn` | PCG64-backed |
-| `np.where(c, x, y)` | `MatD.where(c, x, y)` | Conditional selection |
-| `np.vstack` / `np.vsplit` | `MatD.vstack` / `m.vsplit(n)` | Row-wise stack / split |
-
 ## Example: Neural Network Layer
 
 Because activation functions are members of the `MatD` type, building layers is idiomatic:
 
 ```scala
-def denseLayer(input: MatD[Double], weights: MatD[Double], bias: MatD[Double]): MatD[Double] = {
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.9.6
+
+import uni.data.*
+
+def denseLayer(input: MatD, weights: MatD, bias: MatD): MatD = {
   // Simple, readable forward pass
   (input ~@ weights + bias).sigmoid
 }
@@ -343,6 +373,7 @@ def denseLayer(input: MatD[Double], weights: MatD[Double], bias: MatD[Double]): 
 `uni` also includes utilities that predate `uni.data.MatD` and remain available via `import uni.*`:
 
 * **Scripting Shortcuts:** [Portable Programming Utilities](docs/UniScriptingTools.md) — MSYS2/Cygwin-aware paths, smart date parsing, command-line argument handling, and inline data embedding.
+* **Smart Date-Time Parsing:** [Date-Time Parser Guide](docs/DateTimeParser.md) — Autodetect messy dates, configure MDY/DMY preferences, and eliminate ETL regex steps.
 
 ### Tolerant Numeric Parsing for Big Data Prep
 
@@ -361,6 +392,10 @@ Raw financial and scientific datasets rarely arrive in clean form. `uni.data.Big
 `getMostSpecificType` promotes each raw cell to the most specific type it can without error, so a column of mixed-format numbers loads correctly as `Mat[Big]` in a single pass:
 
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.9.6
+
 import uni.data.*
 import uni.data.BigUtils.*
 
@@ -376,4 +411,4 @@ val col  = MatB.col(nums*)
 This eliminates the typical ETL step of writing format-specific regex cleaners before ingestion — particularly valuable when working with multi-source datasets where currency symbols, parenthesised negatives, and scale suffixes appear unpredictably across columns.
 
 ---
-© 2026 vastblue.org. Distributed under the Apache License 2.0.
+[CHANGELOG.md](CHANGELOG.md) | © 2026 vastblue.org. Distributed under the Apache License 2.0.
