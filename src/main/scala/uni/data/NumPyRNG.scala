@@ -412,19 +412,19 @@ object NumPyRNG {
         val pythonPath = Try(Process(if (cmd == "python") "where python" else "which python3").!!).getOrElse("Not Found").trim
         val pyVersion = Try(Process(Seq(cmd, "--version")).!!).getOrElse("Unknown").trim
         
-        System.err.println(s"--- Python Diagnostic Log (Seed: $seed) ---")
-        System.err.println(s"OS:             $os")
-        System.err.println(s"Python Cmd:     $cmd")
-        System.err.println(s"Python Path:    $pythonPath")
-        System.err.println(s"Python Version: $pyVersion")
-        
+        System.err.print(s"--- Python Diagnostic Log (Seed: $seed) ---\n")
+        System.err.print(s"OS:             $os\n")
+        System.err.print(s"Python Cmd:     $cmd\n")
+        System.err.print(s"Python Path:    $pythonPath\n")
+        System.err.print(s"Python Version: $pyVersion\n")
+
         // Corrected check for the StringBuilder
         if (stderrBuffer.nonEmpty) {
-          System.err.println(s"Python Stderr:\n${stderrBuffer.toString().trim}")
+          System.err.print(s"Python Stderr:\n${stderrBuffer.toString().trim}\n")
         }
-        
-        System.err.println(s"Scala Error:    ${e.getMessage}")
-        System.err.println(s"------------------------------------------")
+
+        System.err.print(s"Scala Error:    ${e.getMessage}\n")
+        System.err.print(s"------------------------------------------\n")
         
         // Fallback increment for PCG64DXSM
         (BigInt(seed), BigInt("332724090758049132448979897138935081983"))

@@ -13,11 +13,12 @@ import uni.time.*
 export scala.util.Properties.{isWin, isMac, isLinux}
 export Proc.{ProcStatus, call, shellExec, shellExecProc, spawn, spawnStreaming, execLines}
 export Proc.{lazyLines, bashExe, unameExe, uname, osType, where, isWsl, hostname}
-export System.err.{println as eprintln, print as eprint} // these return Unit
+export System.err.print as eprint // returns Unit
+def eprintln(s: String): Unit = System.err.print(s"$s\n")
 def withFileWriter(p: Path, charsetName: String = "UTF-8", append: Boolean = false)(func: java.io.PrintWriter => Any): Unit =
   uni.io.FileOps.withFileWriter(p, charsetName, append)(func)
 
-val verboseUni: Boolean = Option(System.getenv("VERBOSE_UNI")).nonEmpty
+lazy val verboseUni: Boolean = Option(System.getenv("VERBOSE_UNI")).nonEmpty
 
 val userhome: String = System.getProperty("user.home").replace('\\', '/')
 

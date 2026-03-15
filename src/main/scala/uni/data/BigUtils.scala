@@ -114,12 +114,12 @@ object BigUtils:
   def getMostSpecificType(raw: String): String | Big | DateTime =
     var col = raw.replaceAll("""[\$]""", "").trim
 
-    if debug then println(s"# rawcol[$raw]")
+    if debug then print(s"# rawcol[$raw]\n")
 
     val value: Any =
       if col.isEmpty then col
       else if isNumeric(col) then
-        if debug then println("Numeric match")
+        if debug then print("Numeric match\n")
 
         var negative = false
         var percent  = false

@@ -125,11 +125,18 @@ final class SyntheticPathsConfig(mountLines: Seq[String], val user: UserInfo) ex
 
 // inject mount lines for testing
 private[uni] def withMountLines(mountLines: Seq[String], testUser: UserInfo): Unit = {
+  if verboseUni then
+    // PathSpec
+    print(s"============== set SyntheticPathsConfig for mountMap[${mountLines.mkString("\n")}] and testUser [${testUser}]")
   config = new SyntheticPathsConfig(mountLines, testUser)
 }
 
 // restore default config
-private[uni] def resetConfig(): Unit = config = DefaultPathsConfig
+private[uni] def resetConfig(): Unit = config = {
+  if verboseUni then
+    print("================ reset SyntheticPathsConfig\n")
+  DefaultPathsConfig
+}
 
 // canonical map container
 final case class MountMaps(cygdrive: String, win2posix: Win2posixMap, posix2win: Posix2winMap) {

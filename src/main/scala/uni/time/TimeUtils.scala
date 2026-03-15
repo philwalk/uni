@@ -17,7 +17,7 @@ object TimeUtils {
     case BadDate | EmptyDate =>
       if verboseUni then
         val dtype = SmartParse.classify(datestr)
-        System.err.println(s"[$datestr] classified as [$dtype]")
+        System.err.print(s"[$datestr] classified as [$dtype]\n")
       parseDateChrono(datestr) // return BadDate rather than throwing an exception
     case d: LocalDateTime =>
       d

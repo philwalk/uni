@@ -109,7 +109,7 @@ object Mat {
               case other => java.lang.String.valueOf(other)
             }
           }
-          writer.println(row.mkString(sep))
+          writer.print(s"${row.mkString(sep)}\n")
         }
       }
     }
@@ -548,6 +548,9 @@ object Mat {
         }
         Mat.create(newData, keep.length, m.cols)
     }
+
+    def head(n: Int): Mat[T] = m(0 until math.min(n, m.rows), ::)
+    def tail(n: Int): Mat[T] = m(math.max(0, m.rows - n) until m.rows, ::)
 
   // Global RNG state
   private[data] lazy val defaultRNG: NumPyRNG = new NumPyRNG(0)
@@ -1323,6 +1326,52 @@ object Mat {
       (maxR, maxC)
     }
 
+    def idxmin(axis: Int)(using ord: Ordering[T]): Mat[Int] =
+      require(axis == 0 || axis == 1, s"axis must be 0 or 1, got $axis")
+      if axis == 0 then
+        val result = Array.ofDim[Int](m.cols)
+        var j = 0
+        while j < m.cols do
+          var best = 0; var bestVal = m(0, j); var i = 1
+          while i < m.rows do
+            if ord.lt(m(i, j), bestVal) then { bestVal = m(i, j); best = i }
+            i += 1
+          result(j) = best; j += 1
+        Mat.create(result, 1, m.cols)
+      else
+        val result = Array.ofDim[Int](m.rows)
+        var i = 0
+        while i < m.rows do
+          var best = 0; var bestVal = m(i, 0); var j = 1
+          while j < m.cols do
+            if ord.lt(m(i, j), bestVal) then { bestVal = m(i, j); best = j }
+            j += 1
+          result(i) = best; i += 1
+        Mat.create(result, m.rows, 1)
+
+    def idxmax(axis: Int)(using ord: Ordering[T]): Mat[Int] =
+      require(axis == 0 || axis == 1, s"axis must be 0 or 1, got $axis")
+      if axis == 0 then
+        val result = Array.ofDim[Int](m.cols)
+        var j = 0
+        while j < m.cols do
+          var best = 0; var bestVal = m(0, j); var i = 1
+          while i < m.rows do
+            if ord.gt(m(i, j), bestVal) then { bestVal = m(i, j); best = i }
+            i += 1
+          result(j) = best; j += 1
+        Mat.create(result, 1, m.cols)
+      else
+        val result = Array.ofDim[Int](m.rows)
+        var i = 0
+        while i < m.rows do
+          var best = 0; var bestVal = m(i, 0); var j = 1
+          while j < m.cols do
+            if ord.gt(m(i, j), bestVal) then { bestVal = m(i, j); best = j }
+            j += 1
+          result(i) = best; i += 1
+        Mat.create(result, m.rows, 1)
+
     // ============================================================================
     // Functional Operations
     // ============================================================================
@@ -1621,6 +1670,13 @@ object Mat {
         val result = Array.tabulate(m.rows)(i => fn(m.slice(i to i, 0 until m.cols)))
         Mat.create(result, m.rows, 1)
     }
+
+  /** Returns the "NaN" sentinel value for type T at runtime. */
+  private def nanFill[T](using frac: Fractional[T], ct: ClassTag[T]): T =
+    ct.runtimeClass match
+      case c if c == classOf[Double] => Double.NaN.asInstanceOf[T]
+      case c if c == classOf[Float]  => Float.NaN.asInstanceOf[T]
+      case _                         => BigNaN.asInstanceOf[T]
 
   // ============================================================================
   // Matrix Multiply + Linear Algebra (extension block)
@@ -2325,6 +2381,48 @@ object Mat {
       Mat.create(result, 1, flat.length)
     }
 
+    def cummax(axis: Int)(using ord: Ordering[T]): Mat[T] =
+      require(axis == 0 || axis == 1, s"axis must be 0 or 1, got $axis")
+      val result = Array.ofDim[T](m.rows * m.cols)
+      if axis == 0 then
+        var j = 0
+        while j < m.cols do
+          var acc = m(0, j); var i = 0
+          while i < m.rows do
+            if ord.gt(m(i, j), acc) then acc = m(i, j)
+            result(i * m.cols + j) = acc; i += 1
+          j += 1
+      else
+        var i = 0
+        while i < m.rows do
+          var acc = m(i, 0); var j = 0
+          while j < m.cols do
+            if ord.gt(m(i, j), acc) then acc = m(i, j)
+            result(i * m.cols + j) = acc; j += 1
+          i += 1
+      Mat.create(result, m.rows, m.cols)
+
+    def cummin(axis: Int)(using ord: Ordering[T]): Mat[T] =
+      require(axis == 0 || axis == 1, s"axis must be 0 or 1, got $axis")
+      val result = Array.ofDim[T](m.rows * m.cols)
+      if axis == 0 then
+        var j = 0
+        while j < m.cols do
+          var acc = m(0, j); var i = 0
+          while i < m.rows do
+            if ord.lt(m(i, j), acc) then acc = m(i, j)
+            result(i * m.cols + j) = acc; i += 1
+          j += 1
+      else
+        var i = 0
+        while i < m.rows do
+          var acc = m(i, 0); var j = 0
+          while j < m.cols do
+            if ord.lt(m(i, j), acc) then acc = m(i, j)
+            result(i * m.cols + j) = acc; j += 1
+          i += 1
+      Mat.create(result, m.rows, m.cols)
+
     // 2. cov and corrcoef:
     // scala// NumPy: np.cov(m) - each ROW is a variable, each COL is an observation
     // Returns pxp covariance matrix where p = number of rows
@@ -2424,6 +2522,17 @@ object Mat {
         Mat.create(result, m.rows, m.cols)
     }
 
+    def nlargest(n: Int)(using ord: Ordering[T]): Mat[T] =
+      val flat = m.flatten.sorted(using ord.reverse).take(math.min(n, m.size))
+      Mat.create(flat, 1, flat.length)
+
+    def nsmallest(n: Int)(using ord: Ordering[T]): Mat[T] =
+      val flat = m.flatten.sorted.take(math.min(n, m.size))
+      Mat.create(flat, 1, flat.length)
+
+    def between(lo: T, hi: T)(using ord: Ordering[T]): Mat[Boolean] =
+      m.map(x => ord.gteq(x, lo) && ord.lteq(x, hi))
+
     def argsort(axis: Int = -1)(using ord: Ordering[T]): Mat[Int] = {
       if axis == -1 then
         val flat = m.flatten
@@ -2471,6 +2580,13 @@ object Mat {
         i += 1
       (vals.toArray, counts.toArray)
     }
+
+    def nunique(using ord: Ordering[T]): Int = unique._1.length
+
+    def valueCounts(using ord: Ordering[T]): Array[(T, Int)] =
+      val (vals, counts) = unique
+      vals.zip(counts).sortBy(-_._2)
+
     private[data] def svdDouble: (Mat[Double], Array[Double], Mat[Double]) = {
       import org.bytedeco.openblas.global.openblas.*
       val md    = m.asInstanceOf[Mat[Double]]
@@ -2810,6 +2926,51 @@ object Mat {
         Mat.create(result, m.rows, m.cols - 1)
     }
 
+    def shift(n: Int, fill: T, axis: Int = 0): Mat[T] =
+      val result = Array.fill(m.rows * m.cols)(fill)
+      if axis == 0 then
+        val srcRow = if n >= 0 then 0     else -n
+        val dstRow = if n >= 0 then n     else  0
+        val nRows  = m.rows - math.abs(n)
+        if nRows > 0 then
+          var i = 0
+          while i < nRows do
+            var j = 0
+            while j < m.cols do
+              result((dstRow + i) * m.cols + j) = m(srcRow + i, j)
+              j += 1
+            i += 1
+      else
+        val srcCol = if n >= 0 then 0 else -n
+        val dstCol = if n >= 0 then n else  0
+        val nCols  = m.cols - math.abs(n)
+        if nCols > 0 then
+          var i = 0
+          while i < m.rows do
+            var j = 0
+            while j < nCols do
+              result(i * m.cols + (dstCol + j)) = m(i, srcCol + j)
+              j += 1
+            i += 1
+      Mat.create(result, m.rows, m.cols)
+
+    def pct_change(axis: Int = 0)(using frac: Fractional[T]): Mat[T] =
+      val fill = nanFill[T]
+      val prev = m.shift(1, fill, axis)
+      val result = Array.ofDim[T](m.rows * m.cols)
+      var i = 0
+      while i < m.rows do
+        var j = 0
+        while j < m.cols do
+          val p = prev(i, j)
+          val pd = frac.toDouble(p)
+          result(i * m.cols + j) =
+            if pd.isNaN || pd == 0.0 then fill
+            else frac.div(frac.minus(m(i, j), p), p)
+          j += 1
+        i += 1
+      Mat.create(result, m.rows, m.cols)
+
     // percentile and median:
     private def percentileOf(arr: Array[T], p: Double)(using frac: Fractional[T]): T = {
       require(p >= 0 && p <= 100, s"percentile must be in [0,100], got $p")  // guard here
@@ -2960,6 +3121,9 @@ object Mat {
           case c => throw UnsupportedOperationException(s"nanToNum unsupported for ${c.getName}")
       })
     }
+
+    def fillna(value: T)(using frac: Fractional[T]): Mat[T] =
+      m.map(x => if frac.toDouble(x).isNaN then value else x)
 
     /** Add a row vector to every row of m: np equivalent of m + v (broadcast) */
     def addToEachRow(v: RowVec[T])(using num: Numeric[T]): Mat[T] = {
@@ -3444,6 +3608,19 @@ object Mat {
         frac.plus(acc, frac.times(diff, diff))
       }
       frac.div(sumSq, frac.fromInt(n))
+
+    def describe(using frac: Fractional[T], ord: Ordering[T]): (Array[String], Mat[Double]) =
+      val toD: T => Double = frac.toDouble
+      val countRow = Mat.full[Double](1, m.cols, m.rows.toDouble)
+      val meanRow  = m.mean(axis = 0).map(toD)
+      val stdRow   = m.std(axis = 0).map(toD)
+      val minRow   = m.min(axis = 0).map(toD)
+      val q1Row    = m.percentile(25, axis = 0).map(toD)
+      val medRow   = m.median(axis = 0).map(toD)
+      val q3Row    = m.percentile(75, axis = 0).map(toD)
+      val maxRow   = m.max(axis = 0).map(toD)
+      val labels   = Array("count", "mean", "std", "min", "25%", "50%", "75%", "max")
+      (labels, Mat.vstack[Double](countRow, meanRow, stdRow, minRow, q1Row, medRow, q3Row, maxRow))
 
     /** NumPy: np.sin(m) - element-wise sine */
     def sin(using num: Fractional[T]): Mat[Double] = {
@@ -4098,6 +4275,8 @@ object Mat {
       create(data, m.rows, m.cols)
     }
 
+    def rolling(window: Int): Mat.RollingWindow[T] = Mat.RollingWindow(m, window)
+
     // In Mat extension methods (for Mat[Boolean] specifically)
 
     /** Test whether all elements are true (NumPy: np.all) */
@@ -4412,6 +4591,72 @@ object Mat {
       count
     }
 
+  /** Sliding-window aggregations over rows (axis=0), matching pandas rolling().
+   *  Positions 0..window-2 are filled with the NaN sentinel for type T. */
+  class RollingWindow[T: ClassTag](private val mat: Mat[T], window: Int):
+    require(window >= 1, s"window must be >= 1, got $window")
+
+    def mean(using frac: Fractional[T]): Mat[T] =
+      roll { arr =>
+        var s = frac.zero; var i = 0
+        while i < arr.length do { s = frac.plus(s, arr(i)); i += 1 }
+        frac.div(s, frac.fromInt(arr.length))
+      }
+
+    def sum(using num: Numeric[T], frac: Fractional[T]): Mat[T] =
+      roll { arr =>
+        var s = num.zero; var i = 0
+        while i < arr.length do { s = num.plus(s, arr(i)); i += 1 }
+        s
+      }
+
+    def min(using ord: Ordering[T], frac: Fractional[T]): Mat[T] =
+      roll { arr =>
+        var best = arr(0); var i = 1
+        while i < arr.length do { if ord.lt(arr(i), best) then best = arr(i); i += 1 }
+        best
+      }
+
+    def max(using ord: Ordering[T], frac: Fractional[T]): Mat[T] =
+      roll { arr =>
+        var best = arr(0); var i = 1
+        while i < arr.length do { if ord.gt(arr(i), best) then best = arr(i); i += 1 }
+        best
+      }
+
+    def std(using frac: Fractional[T]): Mat[T] =
+      roll { arr =>
+        var s = frac.zero; var i = 0
+        while i < arr.length do { s = frac.plus(s, arr(i)); i += 1 }
+        val mu = frac.div(s, frac.fromInt(arr.length))
+        var sq = frac.zero; i = 0
+        while i < arr.length do
+          val d = frac.minus(arr(i), mu)
+          sq = frac.plus(sq, frac.times(d, d)); i += 1
+        val variance = frac.div(sq, frac.fromInt(arr.length))
+        summon[ClassTag[T]].runtimeClass match
+          case c if c == classOf[Double]     => math.sqrt(frac.toDouble(variance)).asInstanceOf[T]
+          case c if c == classOf[Float]      => math.sqrt(frac.toDouble(variance)).toFloat.asInstanceOf[T]
+          case c if c == classOf[BigDecimal] => variance.asInstanceOf[Big].sqrt.asInstanceOf[T]
+          case c => throw UnsupportedOperationException(s"rolling.std unsupported for ${c.getName}")
+      }
+
+    private def roll(f: Array[T] => T)(using frac: Fractional[T]): Mat[T] =
+      val fill   = nanFill[T]
+      val result = Array.fill(mat.rows * mat.cols)(fill)
+      var j = 0
+      while j < mat.cols do
+        var i = window - 1
+        while i < mat.rows do
+          val arr = Array.ofDim[T](window)
+          var k = 0
+          while k < window do
+            arr(k) = mat(i - window + 1 + k, j)
+            k += 1
+          result(i * mat.cols + j) = f(arr)
+          i += 1
+        j += 1
+      Mat.create(result, mat.rows, mat.cols)
 
 }
 

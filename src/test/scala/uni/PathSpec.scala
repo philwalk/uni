@@ -13,8 +13,11 @@ class PathSpec extends FunSuite {
   var testfileb: Path = scala.compiletime.uninitialized
 
   override def beforeAll(): Unit = {
-    uni.resetConfig()
+    withMountLines(Nil, testUser)
     testfileb = Paths.get(homeDirTestFile)
+    printf("%s\n", testUser)
+    assert(testfileb.posx.startsWith(testUser.home.replace('\\', '/')), s"testfileb[$testfileb]")
+    uni.resetConfig()
     touch(testfileb)
   }
 
@@ -102,9 +105,10 @@ class PathSpec extends FunSuite {
 
     prmsg(s"posixHomeDir: [$posixHomeDir]")
     prmsg(s"testfileb:    [$testfileb]")
-    val ok = testfileb.exists
+    // if home dir exists, testfile should have been created
+    val ok = posixHomeDir.path.exists == testfileb.exists
     if (ok) prmsg(s"tilde successfully converted to path '$testfileb'")
-    assert(ok, s"error: cannot see file '$testfileb'")
+    assert(ok, s"error: cannot see file '$testfileb' presumed below '${posixHomeDir}'")
   }
 
   test("File#tilde-in-path-test: should NOT see file in user home directory if NOT present") {
@@ -116,12 +120,24 @@ class PathSpec extends FunSuite {
 
   // Windows-specific tests
   if (isWin) {
+    import java.nio.file.{Paths => JPaths}
+    withMountLines(Nil, testUser)
+    val pairs = pathDospathPairs
+    val realCwd = JPaths.get(".").posx
+    pairs.foreach { (_, expected) =>
+      val e = uni.Paths.get(expected).posx
+      if e.contains("philwalk") then
+        sys.error(s"internal error on [$e]")
+      if e.startsWith(realCwd) then
+        sys.error(s"internal error on [$e]")
+    }
     showTestInputs()
-
-    for ((fname, expected) <- pathDospathPairs) {
+    for ((fname, expected) <- pairs) {
       val name = s"File: should correctly handle posix drive for dos path $fname"
       test(name) {
-        noisy(s"fname[$fname], expected[$expected]")
+        if fname == "C:" then
+          hook += 1
+        printf(s"\nfname[$fname], expected[$expected]")
         val file = Paths.get(fname)
         noisy(f"${file.stdpath}%-22s : ${file.exists}")
         val a = expected.toLowerCase.replace('/', '\\')
@@ -129,6 +145,9 @@ class PathSpec extends FunSuite {
         val df       = Paths.get(a)
         val af       = Paths.get(d)
         val sameFile = af.isSameFile(df)
+        if (!sameFile) {
+          hook += 1
+        }
         val equivalent = a == d || a.path.abs == d.path.abs
         if (sameFile && equivalent) {
           noisy(s"a [$a] == d [$d]")
@@ -142,7 +161,9 @@ class PathSpec extends FunSuite {
           val x = file.exists
           val y = new JFile(expected).exists
           if (x && y) {
-            assert(sameFile)
+            if !sameFile then
+              hook += 1
+            assert(sameFile, s"af[$af] not same as df[$df]")
           } else {
             noisy(s"[$file].exists: [$x]\n[$expected].exists: [$y]")
           }

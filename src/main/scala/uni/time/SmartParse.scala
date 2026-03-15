@@ -169,9 +169,9 @@ object SmartParse {
   //  Classifier
   def classify(s: String): Shape =
     if verboseUni then
-      println("RAW:     " + s)
-      println("NORMAL:  " + preNormalize(s))
-      println("TOKENS:  " + tokenize(preNormalize(s)))
+      print("RAW:     " + s + "\n")
+      print("NORMAL:  " + preNormalize(s) + "\n")
+      print("TOKENS:  " + tokenize(preNormalize(s)) + "\n")
     if looksLikeISO8601Raw(s) then
       Shape.ISO8601
     else

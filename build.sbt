@@ -70,10 +70,12 @@ publishTo := sonatypePublishToBundle.value
 Compile / packageBin / packageOptions +=
   Package.ManifestAttributes(java.util.jar.Attributes.Name.CLASS_PATH -> "")
 
+Test / parallelExecution := false // PathSpec tests use modal test mode for Paths.get behavior
+
 lazy val root = (project in file(".")).
   enablePlugins(BuildInfoPlugin, JacocoPlugin).
   settings(
-    parallelExecution  := false,
+//  parallelExecution  := false,
     crossScalaVersions := supportedScalaVersions,
     name               := projectName,
     description        := "high-performance, NumPy-like linear algebra for the JVM",

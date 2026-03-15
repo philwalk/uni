@@ -72,10 +72,10 @@ object TestUtils {
   lazy val maxLines      = 10
   lazy val testDataLines = (0 until maxLines).toList.map { _.toString }
 
-  lazy val homeDirTestFile = "~/shellExecFileTest.out"
+  def homeDirTestFile = "~/shellExecFileTest.out"
 
-  lazy val dosHomeDir: String   = sys.props("user.home")
-  lazy val posixHomeDir: String = {
+  def dosHomeDir: String = Paths.get("~").posx // sys.props("user.home")
+  def posixHomeDir: String = {
     val dhd = dosHomeDir.path
     dhd.stdpath
   }
@@ -87,43 +87,44 @@ object TestUtils {
   // cygdrive describes how to translate `driveRelative` like this:
   //     /cygdrive/c          # if cygdrive == '/cygdrive'
   //     /c                   # if cygdrive == '/'
-  lazy val cygdrive: String = config.cygdrive match {
+  def cygdrive: String = config.cygdrive match {
   case str if str.endsWith("/") => str
   case str                      => s"$str/"
   }
 
-  lazy val gdriveTests = List(
+  def gdriveTests = List(
     (s"${cygdrive}g", "g:\\"),
     (s"${cygdrive}g/", "g:\\")
   )
 
-  lazy val pathDospathPairs = {
+  def pathDospathPairs = {
+    val testHere = uni.Paths.get(".").posx
+    val testHome = uni.Paths.get("~").posx
     var pairs = List(
       (".", "."),
-      (hereDrive, here),         // jvm treats bare "C:" as pwd for that drive
+      (hereDrive, testHere),         // jvm treats bare "C:" as pwd for that drive
       (s"${cygdrive}q/", "q:\\"), // assumes /etc/fstab mounts /cygdrive to /
       (s"${cygdrive}q", "q:\\"),  // assumes /etc/fstab mounts /cygdrive to /
       (s"${cygdrive}c", "c:\\"),
       (s"${cygdrive}c/", "c:\\"),
-      ("~", dosHomeDir),
-      ("~/", dosHomeDir),
+      ("~", testHome),
+      ("~/", testHome),
       (s"${cygdrive}g", "g:\\"),
       (s"${cygdrive}g/", "g:\\"),
       (s"${cygdrive}c/data/", "c:\\data")
     ) ::: gdriveTests
     pairs = pairs.distinct
-
     pairs
   }.distinct
 
-  lazy val nonCanonicalDefaultDrive = {
+  def nonCanonicalDefaultDrive = {
     val dru = driveRoot.toUpperCase
     dru != "C:"
   }
 
   lazy val username = sys.props("user.name").toLowerCase
 
-  lazy val toStringPairs = List(
+  def toStringPairs = List(
     ("C:/opt",  "/opt"),
     ("/etc",  s"${cygdrive}etc"),
     (".", uhere),
@@ -137,7 +138,7 @@ object TestUtils {
     (s"${cygdrive}g/", s"${cygdrive}g"),
     (s"${cygdrive}c/data/", "/data")
   )
-  lazy val TMP: String = {
+  def TMP: String = {
     val dl = "f"
     val driveRoot   = s"${cygdrive}${dl}"
     if (canExist(driveRoot.path)) {
@@ -153,7 +154,7 @@ object TestUtils {
       "/tmp"
     }
   }
-  lazy val distinctKeys: Seq[String] = {
+  def distinctKeys: Seq[String] = {
     val pairs: Seq[String] = (toStringPairs.toMap.keySet ++ pathDospathPairs.toMap.keySet).toList.distinct.sorted
     for (pair <- pairs) {
       printf("pair: [%s]\n", pair)
@@ -161,7 +162,7 @@ object TestUtils {
     pairs
   }
 
-  lazy val testPwd: Path = java.nio.file.Paths.get(".").toAbsolutePath.normalize
+  def testPwd: Path = Paths.get(".").toAbsolutePath.normalize
 
   def isPwd(p: Path): Boolean = isPwd(p.toString)
 

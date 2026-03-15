@@ -70,7 +70,26 @@ object FileOps {
       create(flatData, numRows, numCols)
   }
 
-  case class MatResult[T](headers: Vector[String], mat: Mat[T])
+  case class MatResult[T](headers: Vector[String], mat: Mat[T]):
+
+    /** Column by header name. Returns None if name not found. */
+    def col(name: String)(using ct: scala.reflect.ClassTag[T]): Option[ColVec[T]] =
+      val i = headers.indexOf(name)
+      if i == -1 then None
+      else
+        val result = Array.ofDim[T](mat.rows)
+        var r = 0
+        while r < mat.rows do { result(r) = mat(r, i); r += 1 }
+        Some(create(result, mat.rows, 1))
+
+    /** Column by header name; throws NoSuchElementException if not found. */
+    def apply(name: String)(using scala.reflect.ClassTag[T]): ColVec[T] =
+      col(name).getOrElse(
+        throw new NoSuchElementException(
+          s"column '$name' not in headers: ${headers.mkString(", ")}"))
+
+    /** Precomputed header → index map for repeated lookups. */
+    lazy val columnIndex: Map[String, Int] = headers.zipWithIndex.toMap
 
   /** * The identity version: returns MatResult[Big]
    * Perfect for financial data where you want to stay in Big.
