@@ -2,7 +2,7 @@ package uni
 
 import uni.*
 import uni.data.{MatD, MatF, MatB, Mat}
-import uni.io.FileOps.loadSmart
+import uni.io.FileOps.{loadSmart, loadSmartUrl}
 import java.nio.file.Path
 import java.io.{File as JFile}
 
@@ -47,9 +47,15 @@ object stringExts {
       }
     }
 
-    def readCsv: MatD                              = loadSmart(Paths.get(str), _.toDouble).mat
-    def readCsvB: MatB                             = loadSmart(Paths.get(str)).mat
-    def readCsvF: MatF                             = loadSmart(Paths.get(str), _.toDouble.toFloat).mat
+    def readCsv: MatD  =
+      if str.startsWith("http://") || str.startsWith("https://") then loadSmartUrl(str, _.toDouble).mat
+      else loadSmart(Paths.get(str), _.toDouble).mat
+    def readCsvB: MatB =
+      if str.startsWith("http://") || str.startsWith("https://") then loadSmartUrl(str).mat
+      else loadSmart(Paths.get(str)).mat
+    def readCsvF: MatF =
+      if str.startsWith("http://") || str.startsWith("https://") then loadSmartUrl(str, _.toDouble.toFloat).mat
+      else loadSmart(Paths.get(str), _.toDouble.toFloat).mat
     def writeCsv[T](m: Mat[T]): Unit               = m.saveCSV(Paths.get(str))
     def writeCsv[T](m: Mat[T], sep: String): Unit  = m.saveCSV(Paths.get(str), sep)
   }

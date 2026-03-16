@@ -20,21 +20,22 @@ m.plot(
   title  = "my chart",               // window / PNG title
   labels = Seq("col0", "col1"),      // series labels (defaults: "col0", "col1", …)
   saveTo = "out/chart",              // saves out/chart.png; omit to show window
-  style  = PlotStyle(width = 900, height = 600),
+  style  = PlotStyle(width = 900, height = 600, xLabel = "time", yLabel = "value"),
 )
 ```
 
 ### `.scatter()` — scatter plot
 
-Two columns plotted against each other.
+Two columns plotted against each other; optional group colouring.
 
 ```scala
 m.scatter(
-  xCol   = 0,                        // column index for x-axis (default 0)
-  yCol   = 1,                        // column index for y-axis (default 1)
-  title  = "x vs y",
-  saveTo = "out/scatter",
-  style  = PlotStyle(width = 700, height = 700),
+  xCol     = 0,                      // column index for x-axis (default 0)
+  yCol     = 1,                      // column index for y-axis (default 1)
+  groupCol = 4,                      // colour points by this column (-1 = no grouping)
+  title    = "x vs y",
+  saveTo   = "out/scatter",
+  style    = PlotStyle(width = 700, height = 700, xLabel = "feature A", yLabel = "feature B"),
 )
 ```
 
@@ -47,9 +48,78 @@ m.hist(
   bins   = 20,                       // number of bins (default 20)
   title  = "distribution",
   saveTo = "out/hist",
-  style  = PlotStyle(width = 800, height = 500),
+  style  = PlotStyle(width = 800, height = 500, yLabel = "frequency"),
 )
 ```
+
+### `.bar()` — bar chart
+
+One bar per row; labels come from a column or default to row indices.
+
+```scala
+m.bar(
+  col      = 1,                      // column providing bar heights (default 0)
+  labelCol = 0,                      // column providing x-axis labels (-1 = row indices)
+  title    = "totals",
+  saveTo   = "out/bar",
+  style    = PlotStyle(xLabel = "category", yLabel = "count"),
+)
+```
+
+### `.heatmap()` — heatmap
+
+Renders the matrix as a colour grid. Useful for correlation and confusion matrices.
+
+```scala
+val features = Seq("sepal_l", "sepal_w", "petal_l", "petal_w")
+corr.heatmap(
+  title     = "Correlation matrix",
+  rowLabels = features,
+  colLabels = features,
+  saveTo    = "out/corr",
+  style     = PlotStyle(width = 700, height = 700),
+)
+```
+
+### `.boxPlot()` — box plot
+
+One box per column showing median, quartiles, and outliers.
+
+```scala
+m.boxPlot(
+  title  = "feature distributions",
+  labels = Seq("sepal_l", "sepal_w", "petal_l", "petal_w"),
+  saveTo = "out/boxes",
+  style  = PlotStyle(yLabel = "cm"),
+)
+```
+
+### `.pairs()` — scatterplot matrix
+
+A p×p grid of subplots: histograms on the diagonal, scatter plots off-diagonal.
+Each scatter cell shows axis tick marks, gridlines, and labelled x/y variable names.
+Equivalent to R `pairs()` / seaborn `pairplot`.
+
+The window is resizable — the plot re-renders at the new size automatically.
+
+```scala
+m.pairs(
+  title        = "Scatterplot matrix",   // window title
+  labels       = Seq("Freq", "Angle", "Chord", "Velo", "Thick", "Sound"),
+  bins         = 10,                     // histogram bucket count (default 10)
+  dotSize      = 3,                      // scatter dot size in pixels (default 3)
+  color        = new Color(31, 119, 180),// bar and dot colour (default blue)
+  scatterAlpha = 80,                     // dot opacity 0–255 (default 80; lower = more transparent)
+  labelStyle   = Font.BOLD,             // Font.PLAIN / Font.BOLD / Font.ITALIC (default BOLD)
+  saveTo       = "docs/images/pairs",    // saves pairs.png; omit to show window
+  style        = PlotStyle(width = 1400, height = 600),
+)
+```
+
+`scatterAlpha` is worth tuning: low values (40–60) reveal density in crowded plots;
+higher values (150+) make sparse plots easier to read.
+
+`labelStyle` accepts any `java.awt.Font` style constant — import `java.awt.Font` to use them.
 
 ---
 
@@ -65,6 +135,10 @@ All fields are optional — omit any field to keep the GGPlot2 theme default.
 | `plotBackground` | `Option[Color]` | `None` | inner plot-area background |
 | `foreground` | `Option[Color]` | `None` | axis labels and title colour |
 | `seriesColors` | `Seq[Color]` | `Nil` | per-series colours in order |
+| `xLabel` | `String` | `""` | x-axis label |
+| `yLabel` | `String` | `""` | y-axis label |
+| `xLog` | `Boolean` | `false` | logarithmic x-axis (XY charts only) |
+| `yLog` | `Boolean` | `false` | logarithmic y-axis (XY charts only) |
 
 ### Named presets
 
@@ -74,9 +148,14 @@ All fields are optional — omit any field to keep the GGPlot2 theme default.
 
 ### Examples
 
-**Resize only:**
+**Axis labels:**
 ```scala
-m.scatter(style = PlotStyle(width = 1400, height = 900))
+m.scatter(style = PlotStyle(xLabel = "principal component 1", yLabel = "principal component 2"))
+```
+
+**Log scale:**
+```scala
+m.plot(style = PlotStyle(yLog = true, yLabel = "loss (log scale)"))
 ```
 
 **Dark background:**
@@ -110,6 +189,8 @@ m.hist(bins = 20, saveTo = "docs/images/iris-hist",  style = PlotStyle.uniform)
 
 | Script | Description |
 | :--- | :--- |
+| [`jsrc/corr.sc`](../jsrc/corr.sc) | Interactive: Iris correlation heatmap + two scatter windows showing strong vs weak correlation |
 | [`jsrc/iris.sc`](../jsrc/iris.sc) | Interactive: scatter, histogram, and line plot on the Fisher Iris dataset |
 | [`jsrc/anscombe.sc`](../jsrc/anscombe.sc) | Interactive: Anscombe's Quartet — four scatter plots with identical statistics |
-| [`jsrc/gen-images.sc`](../jsrc/gen-images.sc) | Headless: regenerates all `docs/images/iris-*.png` at uniform size |
+| [`jsrc/airfoilNoise.sc`](../jsrc/airfoilNoise.sc) | Interactive: pairs (scatterplot matrix) on the UCI Airfoil Self-Noise dataset |
+| [`jsrc/gen-images.sc`](../jsrc/gen-images.sc) | Headless: regenerates all `docs/images/iris-*.png` (line, scatter, grouped-scatter, hist, bar, corr, box) |

@@ -3,6 +3,9 @@ package uni.data
 import munit.FunSuite
 import Mat.*
 import uni.data.Big.*
+import uni.io.FileOps.MatResult
+import uni.{AggOp, JoinType}
+import uni.io.matResultOps.*
 
 class MatPandasSuite extends FunSuite {
 
@@ -386,6 +389,159 @@ class MatPandasSuite extends FunSuite {
     assertEquals(result.columnIndex("price"), 0)
     assertEquals(result.columnIndex("volume"), 1)
     assert(!result.columnIndex.contains("missing"))
+  }
+
+  // ---- L: groupBy (single op) -----------------------------------------------
+  // Data: sector(0), price(1), vol(2)
+  // row0: sector=1, price=10, vol=100
+  // row1: sector=2, price=20, vol=200
+  // row2: sector=1, price=30, vol=300
+
+  def sectorData: MatResult[Double] =
+    MatResult(Vector("sector", "price", "vol"),
+      MatD(3, 3, Array(1.0, 10.0, 100.0,
+                       2.0, 20.0, 200.0,
+                       1.0, 30.0, 300.0)))
+
+  test("L1: groupBy mean — correct number of output rows") {
+    val g = sectorData.groupBy("sector")
+    assertEquals(g.mat.rows, 2) // two distinct sectors
+  }
+
+  test("L2: groupBy mean — output headers are keyCol + col_mean") {
+    val g = sectorData.groupBy("sector")
+    assertEquals(g.headers, Vector("sector", "price_mean", "vol_mean"))
+  }
+
+  test("L3: groupBy mean — sector=1 price mean is (10+30)/2 = 20") {
+    val g = sectorData.groupBy("sector")
+    val row0 = (0 until g.mat.rows).find(r => g.mat(r, 0) == 1.0).get
+    assertEqualsDouble(g.mat(row0, 1), 20.0, 1e-10)
+  }
+
+  test("L4: groupBy sum — sector=1 vol sum is 400") {
+    val g = sectorData.groupBy("sector", AggOp.Sum)
+    val row0 = (0 until g.mat.rows).find(r => g.mat(r, 0) == 1.0).get
+    assertEqualsDouble(g.mat(row0, g.headers.indexOf("vol_sum")), 400.0, 1e-10)
+  }
+
+  test("L5: groupBy count — sector=1 count is 2") {
+    val g = sectorData.groupBy("sector", AggOp.Count)
+    val row0 = (0 until g.mat.rows).find(r => g.mat(r, 0) == 1.0).get
+    assertEqualsDouble(g.mat(row0, g.headers.indexOf("price_count")), 2.0, 1e-10)
+  }
+
+  test("L6: groupBy min — sector=1 price min is 10") {
+    val g = sectorData.groupBy("sector", AggOp.Min)
+    val row0 = (0 until g.mat.rows).find(r => g.mat(r, 0) == 1.0).get
+    assertEqualsDouble(g.mat(row0, g.headers.indexOf("price_min")), 10.0, 1e-10)
+  }
+
+  test("L7: groupBy max — sector=2 price max is 20") {
+    val g = sectorData.groupBy("sector", AggOp.Max)
+    val row1 = (0 until g.mat.rows).find(r => g.mat(r, 0) == 2.0).get
+    assertEqualsDouble(g.mat(row1, g.headers.indexOf("price_max")), 20.0, 1e-10)
+  }
+
+  test("L8: groupBy unknown key column throws NoSuchElementException") {
+    intercept[NoSuchElementException] {
+      sectorData.groupBy("missing")
+    }
+  }
+
+  // ---- M: groupBy (multi op) ------------------------------------------------
+
+  test("M1: groupBy with per-column ops — different ops per column") {
+    val g = sectorData.groupBy("sector",
+      Map("price" -> AggOp.Mean, "vol" -> AggOp.Sum))
+    assertEquals(g.headers, Vector("sector", "price_mean", "vol_sum"))
+    val row0 = (0 until g.mat.rows).find(r => g.mat(r, 0) == 1.0).get
+    assertEqualsDouble(g.mat(row0, 1), 20.0,  1e-10)  // mean price
+    assertEqualsDouble(g.mat(row0, 2), 400.0, 1e-10)  // sum vol
+  }
+
+  // ---- N: merge inner join --------------------------------------------------
+  // Left:  id(0), price(1)         Right: id(0), vol(1)
+  // row0: id=1, price=10           row0: id=1, vol=100
+  // row1: id=2, price=20           row1: id=3, vol=300
+
+  def leftData: MatResult[Double] =
+    MatResult(Vector("id", "price"),
+      MatD(2, 2, Array(1.0, 10.0, 2.0, 20.0)))
+
+  def rightData: MatResult[Double] =
+    MatResult(Vector("id", "vol"),
+      MatD(2, 2, Array(1.0, 100.0, 3.0, 300.0)))
+
+  test("N1: inner join — only matching rows") {
+    val j = leftData.merge(rightData, on = "id")
+    assertEquals(j.mat.rows, 1)
+  }
+
+  test("N2: inner join — output headers: on col once, then remaining cols") {
+    val j = leftData.merge(rightData, on = "id")
+    assertEquals(j.headers, Vector("id", "price", "vol"))
+  }
+
+  test("N3: inner join — correct values in matched row") {
+    val j = leftData.merge(rightData, on = "id")
+    assertEqualsDouble(j.mat(0, 0), 1.0,   1e-10) // id
+    assertEqualsDouble(j.mat(0, 1), 10.0,  1e-10) // price
+    assertEqualsDouble(j.mat(0, 2), 100.0, 1e-10) // vol
+  }
+
+  test("N4: inner join — no matching rows gives empty result") {
+    val l = MatResult(Vector("id", "x"), MatD(1, 2, Array(99.0, 1.0)))
+    val r = MatResult(Vector("id", "y"), MatD(1, 2, Array(88.0, 2.0)))
+    val j = l.merge(r, on = "id")
+    assertEquals(j.mat.rows, 0)
+  }
+
+  test("N5: inner join — column name collision suffixed _x / _y") {
+    val l = MatResult(Vector("id", "val"), MatD(1, 2, Array(1.0, 10.0)))
+    val r = MatResult(Vector("id", "val"), MatD(1, 2, Array(1.0, 20.0)))
+    val j = l.merge(r, on = "id")
+    assertEquals(j.headers, Vector("id", "val_x", "val_y"))
+    assertEqualsDouble(j.mat(0, 1), 10.0, 1e-10)
+    assertEqualsDouble(j.mat(0, 2), 20.0, 1e-10)
+  }
+
+  // ---- O: merge left join ---------------------------------------------------
+
+  test("O1: left join — keeps all left rows") {
+    val j = leftData.merge(rightData, on = "id", how = JoinType.Left)
+    assertEquals(j.mat.rows, 2) // id=1 matched, id=2 unmatched
+  }
+
+  test("O2: left join — unmatched right columns are NaN") {
+    val j = leftData.merge(rightData, on = "id", how = JoinType.Left)
+    val unmatched = (0 until j.mat.rows).find(r => j.mat(r, 0) == 2.0).get
+    assert(j.mat(unmatched, j.headers.indexOf("vol")).isNaN)
+  }
+
+  test("O3: left join — matched row has correct values") {
+    val j = leftData.merge(rightData, on = "id", how = JoinType.Left)
+    val matched = (0 until j.mat.rows).find(r => j.mat(r, 0) == 1.0).get
+    assertEqualsDouble(j.mat(matched, j.headers.indexOf("vol")), 100.0, 1e-10)
+  }
+
+  // ---- P: merge right join --------------------------------------------------
+
+  test("P1: right join — keeps all right rows") {
+    val j = leftData.merge(rightData, on = "id", how = JoinType.Right)
+    assertEquals(j.mat.rows, 2) // id=1 matched, id=3 unmatched
+  }
+
+  test("P2: right join — unmatched left columns are NaN") {
+    val j = leftData.merge(rightData, on = "id", how = JoinType.Right)
+    val unmatched = (0 until j.mat.rows).find(r => j.mat(r, 0) == 3.0).get
+    assert(j.mat(unmatched, j.headers.indexOf("price")).isNaN)
+  }
+
+  test("P3: right join — unknown on-column throws NoSuchElementException") {
+    intercept[NoSuchElementException] {
+      leftData.merge(rightData, on = "missing")
+    }
   }
 
 }

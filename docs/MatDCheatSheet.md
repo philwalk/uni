@@ -14,7 +14,7 @@ Both use OpenBLAS. See [`jsrc/breezeBench.sc`](../jsrc/breezeBench.sc) and [`py/
 | Operation | NumPy | MatD | Ratio | Notes |
 |---|---:|---:|---|---|
 | `randn(1000×1000)` | 21 ms | 15 ms | **1.4× faster** | PCG64 with Long arithmetic; was 252 ms before BigInt rewrite |
-| `matmul 512×512` | 1.4 ms | 1.7 ms | 1.2× slower | Both use OpenBLAS; Breeze column-major avoids transpose |
+| `matmul 512×512` | 1.4 ms | 1.7 ms | 1.2× slower | Both use OpenBLAS; NumPy uses transA/transB flags, MatD pre-transposes |
 | `sigmoid(1000×1000)` | 12 ms | 2.0 ms | **6× faster** | Parallel fork/join beats single-core SIMD |
 | `relu(1000×1000)` | 2.0 ms | 0.8 ms | **2.5× faster** | Parallel fork/join beats single-core SIMD |
 | `add(1000×1000)` | 2.1 ms | 1.4 ms | **1.5× faster** | Parallel fork/join beats single-core SIMD |
@@ -28,7 +28,7 @@ Both use OpenBLAS. See [`jsrc/breezeBench.sc`](../jsrc/breezeBench.sc) and [`py/
 **Practical guidance:**
 - Element-wise ops (`relu`, `sigmoid`, `add`) run faster than NumPy — parallel JVM cores beat single-core C SIMD.
 - Custom scalar functions: `mapParallel` vs `np.vectorize` shows a 162× JVM advantage; the Python interpreter overhead dominates.
-- Matmul: NumPy still wins (~1.2×) due to OpenBLAS JNI overhead on the JVM side.
+- Matmul: NumPy still wins (~1.2×) — row-major layout requires a pre-transpose before BLAS; NumPy uses transA/transB flags to avoid the copy.
 - `sum`: NumPy's vectorised C reduction is hard to beat; MatD is within 1.2×.
 - 3PRF IS Full: Python wins due to the K&P alpha computation involving T×T matrix ops; OOS modes favour Scala via parallel collections.
 

@@ -4775,7 +4775,9 @@ object MatD {
   def correlate(a: Vec[Double], b: Vec[Double], mode: String = "valid"): Vec[Double] = Mat.correlate(a, b, mode)
   // ----- CSV I/O -----
   def readCsv(p: uni.Path): MatD                          = loadSmart(p, (b: Big) => b.toDouble).mat
-  def readCsv(s: String): MatD                            = readCsv(uni.Paths.get(s))
+  def readCsv(s: String): MatD                            =
+    if s.startsWith("http://") || s.startsWith("https://") then loadSmartUrl(s, (b: Big) => b.toDouble).mat
+    else readCsv(uni.Paths.get(s))
   def writeCsv(m: MatD, p: uni.Path, sep: String = ","): Unit = m.saveCSV(p, sep)
   def writeCsv(m: MatD, s: String):                       Unit = writeCsv(m, uni.Paths.get(s))
 }
@@ -4855,7 +4857,9 @@ object MatB {
   def randint(low: Int, high: Int, rows: Int, cols: Int): Mat[Int] = Mat.randint(low, high, rows, cols)
   // ----- CSV I/O -----
   def readCsv(p: uni.Path): MatB                          = loadSmart(p).mat
-  def readCsv(s: String): MatB                            = readCsv(uni.Paths.get(s))
+  def readCsv(s: String): MatB                            =
+    if s.startsWith("http://") || s.startsWith("https://") then loadSmartUrl(s).mat
+    else readCsv(uni.Paths.get(s))
   def writeCsv(m: MatB, p: uni.Path, sep: String = ","): Unit = m.saveCSV(p, sep)
   def writeCsv(m: MatB, s: String):                       Unit = writeCsv(m, uni.Paths.get(s))
 }
@@ -4935,7 +4939,9 @@ object MatF {
   def randint(low: Int, high: Int, rows: Int, cols: Int): Mat[Int] = Mat.randint(low, high, rows, cols)
   // ----- CSV I/O -----
   def readCsv(p: uni.Path): MatF                          = loadSmart(p, (b: Big) => b.toDouble.toFloat).mat
-  def readCsv(s: String): MatF                            = readCsv(uni.Paths.get(s))
+  def readCsv(s: String): MatF                            =
+    if s.startsWith("http://") || s.startsWith("https://") then loadSmartUrl(s, (b: Big) => b.toDouble.toFloat).mat
+    else readCsv(uni.Paths.get(s))
   def writeCsv(m: MatF, p: uni.Path, sep: String = ","): Unit = m.saveCSV(p, sep)
   def writeCsv(m: MatF, s: String):                       Unit = writeCsv(m, uni.Paths.get(s))
 }

@@ -5,6 +5,8 @@ export pathExts.*
 export stringExts.*
 export helpers.*
 export uni.data.{MatD, MatB, MatF}
+export uni.io.{AggOp, JoinType}
+export io.matResultOps.*
 
 @deprecated("use 'p.lines.toSeq' if you want a Seq[String]", "uni")
 given iteratorStringToSeq: Conversion[Iterator[String], Seq[String]] = _.toSeq

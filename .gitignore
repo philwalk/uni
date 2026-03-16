@@ -1,3 +1,4 @@
+py/heatmap.py
 bin/astDumper.sh
 data/*
 !data/testdates.sc

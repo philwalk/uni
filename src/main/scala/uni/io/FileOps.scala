@@ -148,4 +148,17 @@ object FileOps {
 
       MatResult(headers, create(flatData, numRows, width))
   }
+
+  def loadSmartUrl(url: String): MatResult[Big] = loadSmartUrl(url, identity)
+
+  def loadSmartUrl[T: ClassTag](url: String, map: Big => T): MatResult[T] =
+    val tmp = java.nio.file.Files.createTempFile("uni-csv-", ".csv")
+    try
+      val conn = java.net.URI.create(url).toURL.openConnection()
+      conn.setRequestProperty("User-Agent", "uni/1.0")
+      java.nio.file.Files.copy(conn.getInputStream, tmp,
+        java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+      loadSmart(tmp, map)
+    finally
+      java.nio.file.Files.deleteIfExists(tmp)
 }

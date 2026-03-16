@@ -77,7 +77,7 @@ Breeze/MatD: Scala 3.8.2 / JVM 21, both using native OpenBLAS (see [`jsrc/breeze
 | custom fn (`mapParallel` / `map` / `np.vectorize`) | 162 ms | 10.2 ms | 1.0 ms |
 
 MatD wins 6/8 operations vs NumPy and 6/7 scored vs Breeze (geometric mean **3× faster** than Breeze).
-Losses: `matmul` (Breeze column-major avoids a transpose; NumPy native BLAS) and `sum` (NumPy SIMD reduction).
+Losses: `matmul` (row-major layout requires a pre-transpose before BLAS; Breeze column-major and NumPy's transA/transB flags avoid this cost) and `sum` (NumPy C-extension reduction is marginally faster).
 
 ### 3PRF (Three-Pass Regression Filter)
 
