@@ -49,21 +49,21 @@ def run(label: str, T: int, N: int, L: int, warmup: int, loops: int):
     oos_loops = max(1, loops // 10)
 
     # ── IS Full ───────────────────────────────────────────────────────────────
-    ms_is      = bench(loops, lambda: estimate3prf(y, X, Z, procedure="IS Full"))
+#   ms_is      = bench(loops, lambda: estimate3prf(y, X, Z, procedure="IS Full"))
     ms_is_fast = bench(loops, lambda: estimate3prf_fast(y, X, Z, procedure="IS Full"))
-    print(f"  [Python]      {'estimate3prf IS Full':<22}  {ms_is:8.2f} ms/call")
+#   print(f"  [Python]      {'estimate3prf IS Full':<22}  {ms_is:8.2f} ms/call")
     print(f"  [Python Fast] {'estimate3prf IS Full':<22}  {ms_is_fast:8.2f} ms/call")
 
     # ── OOS Recursive ─────────────────────────────────────────────────────────
-    ms_rec      = bench(oos_loops, lambda: estimate3prf(y, X, Z, procedure="OOS Recursive", mintrain=T // 2))
+#   ms_rec      = bench(oos_loops, lambda: estimate3prf(y, X, Z, procedure="OOS Recursive", mintrain=T // 2))
     ms_rec_fast = bench(oos_loops, lambda: estimate3prf_fast(y, X, Z, procedure="OOS Recursive", mintrain=T // 2))
-    print(f"  [Python]      {'estimate3prf OOS Rec':<22}  {ms_rec:8.2f} ms/call  (loops={oos_loops})")
+#   print(f"  [Python]      {'estimate3prf OOS Rec':<22}  {ms_rec:8.2f} ms/call  (loops={oos_loops})")
     print(f"  [Python Fast] {'estimate3prf OOS Rec':<22}  {ms_rec_fast:8.2f} ms/call  (loops={oos_loops})")
 
     # ── OOS Cross Val ─────────────────────────────────────────────────────────
-    ms_cv      = bench(oos_loops, lambda: estimate3prf(y, X, Z, procedure="OOS Cross Val"))
+#   ms_cv      = bench(oos_loops, lambda: estimate3prf(y, X, Z, procedure="OOS Cross Val"))
     ms_cv_fast = bench(oos_loops, lambda: estimate3prf_fast(y, X, Z, procedure="OOS Cross Val"))
-    print(f"  [Python]      {'estimate3prf OOS CV':<22}  {ms_cv:8.2f} ms/call  (loops={oos_loops})")
+#   print(f"  [Python]      {'estimate3prf OOS CV':<22}  {ms_cv:8.2f} ms/call  (loops={oos_loops})")
     print(f"  [Python Fast] {'estimate3prf OOS CV':<22}  {ms_cv_fast:8.2f} ms/call  (loops={oos_loops})")
 
 

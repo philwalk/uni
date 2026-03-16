@@ -1,8 +1,4 @@
-//#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 package uni.data
-//> using dep org.vastblue:uni_3:0.10.0
-//> using dep "org.bytedeco:openblas-platform:0.3.30-1.5.12"
-//> using javaOpt "-Dorg.bytedeco.javacpp.cachedir=C:\\tmp\\javacpp"
 
 import uni.data.*
 import scala.util.Random
@@ -18,6 +14,10 @@ object BlasCrossover {
     println("\n=== Float crossover ===")
     warmupFloat()
     scanCrossoverFloat()
+
+    println("\n=== Thin matrix scan (Double): K×M @ M×K, K fixed, M varies ===")
+    warmupDouble()
+    scanThinDouble()
   }
 
   // ============================================================
@@ -47,8 +47,13 @@ object BlasCrossover {
   // ============================================================
 
   // Scale iterations inversely with work to keep each measurement ~10-50ms total
-  def iterationsFor(size: Int): Int = 
+  def iterationsFor(size: Int): Int =
     val work = size.toLong * size * size
+    val iters = (5_000_000_000L / work.max(1)).toInt
+    iters.max(5).min(50000)
+
+  def iterationsForThin(k: Int, m: Int): Int =
+    val work = k.toLong * m * k
     val iters = (5_000_000_000L / work.max(1)).toInt
     iters.max(5).min(50000)
 
@@ -145,4 +150,37 @@ object BlasCrossover {
     else
       println("\nNo clear crossover found in scanned range")
   }
+
+  // ============================================================
+  // Thin matrix scan: K×M @ M×K for small fixed K, varying M
+  // Answers: for each output size K×K, does BLAS ever win, and at what M?
+  // ============================================================
+
+  def scanThinDouble(): Unit =
+    // K values matching shapes that appear in 3PRF passes (L+1 cols after intercept)
+    val kValues = Seq(2, 3, 4, 5, 6, 8, 10, 16)
+    val mValues = (2 to 20 by 1) ++ (24 to 60 by 4) ++ (64 to 256 by 16) ++ (256 to 1024 by 64)
+
+    for k <- kValues do
+      println(f"\n  K=$k (shape: ${k}×M @ M×${k})")
+      println(f"  ${"M"}%6s  ${"iters"}%7s  ${"BLAS ms"}%10s  ${"Pure ms"}%10s  ${"ratio"}%7s  ${"winner"}%8s  ${"ops"}%10s")
+      println(f"  ${"---"}%6s  ${"-----"}%7s  ${"-------"}%10s  ${"-------"}%10s  ${"-----"}%7s  ${"------"}%8s  ${"---"}%10s")
+
+      var blasWonAt = -1
+      for m <- mValues do
+        val iters = iterationsForThin(k, m)
+        val a = Mat.tabulate[Double](k, m)((_, _) => Random.nextDouble())
+        val b = Mat.tabulate[Double](m, k)((_, _) => Random.nextDouble())
+        val blasMs = medianMs(7)(a.multiplyDoubleBLAS(b))
+        val pureMs = medianMs(7)(a.multiplyDouble(b))
+        val ratio  = pureMs / blasMs
+        val winner = if blasMs < pureMs then "BLAS" else "Pure"
+        val ops    = k.toLong * m * k
+        if winner == "BLAS" && blasWonAt == -1 then blasWonAt = m
+        println(f"  $m%6d  $iters%7d  $blasMs%10.4f  $pureMs%10.4f  $ratio%7.2f  $winner%8s  $ops%10d")
+
+      if blasWonAt >= 0 then
+        println(s"\n  BLAS first wins at M=$blasWonAt  (ops=${k.toLong * blasWonAt * k})")
+      else
+        println(s"\n  BLAS never wins for K=$k in scanned range")
 }

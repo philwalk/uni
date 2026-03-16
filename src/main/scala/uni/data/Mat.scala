@@ -172,8 +172,8 @@ object Mat {
       _cols: Int,
       _transposed: Boolean = false,
       _offset: Int = 0, // added in phase 2
-      _rs: Int = -1,
-      _cs: Int = -1,
+      _rs: Int = -1, // rowStride
+      _cs: Int = -1, // colStride
     ): Mat[T] = {
       // We explicitly calculate the strides that your legacy code
       // was previously calculating implicitly inside the 'apply' if/else.
@@ -224,7 +224,8 @@ object Mat {
   def inspect[T: ClassTag]: String =
     s"Mat(${rows}x${cols}, offset=$offset, rs=$rs, cs=$cs, transposed=$transposed)"
 
-  private lazy val blasThreshold: Long = System.getProperty("uni.mat.blasThreshold", "6000").toLong
+  private lazy val blasThreshold:     Long = System.getProperty("uni.mat.blasThreshold",     "216").toLong
+  private lazy val blasThinThreshold: Long = System.getProperty("uni.mat.blasThinThreshold", "384").toLong
 
   /** Returns m if already BLAS-safe (offset=0, standard strides), else a fresh contiguous copy. */
   private def blasReady(m: Mat[Double]): Mat[Double] =
@@ -242,6 +243,43 @@ object Mat {
       val arr  = new Array[Float](rows * cols)
       var i = 0; while i < rows do { var j = 0; while j < cols do { arr(i*cols+j) = m(i,j); j+=1 }; i+=1 }
       Mat.create(arr, rows, cols)
+
+  /** Thread-local direct ByteBuffers reused across BLAS calls to avoid
+   *  per-call native malloc/free.  Each buffer grows on demand, never shrinks.
+   *  Wrapping a direct buffer in DoublePointer / FloatPointer is zero-copy:
+   *  JavaCPP reads the stable native address via DirectBuffer.address(). */
+  private object DirectBufs:
+    import java.nio.{ByteBuffer, ByteOrder, DoubleBuffer, FloatBuffer}
+
+    private def mkD(n: Int): DoubleBuffer =
+      ByteBuffer.allocateDirect(n * 8).order(ByteOrder.nativeOrder).asDoubleBuffer
+    private def mkF(n: Int): FloatBuffer =
+      ByteBuffer.allocateDirect(n * 4).order(ByteOrder.nativeOrder).asFloatBuffer
+
+    private val dA = ThreadLocal.withInitial[DoubleBuffer](() => mkD(256))
+    private val dB = ThreadLocal.withInitial[DoubleBuffer](() => mkD(256))
+    private val dC = ThreadLocal.withInitial[DoubleBuffer](() => mkD(256))
+    private val fA = ThreadLocal.withInitial[FloatBuffer] (() => mkF(256))
+    private val fB = ThreadLocal.withInitial[FloatBuffer] (() => mkF(256))
+    private val fC = ThreadLocal.withInitial[FloatBuffer] (() => mkF(256))
+
+    private def ensureD(tl: ThreadLocal[DoubleBuffer], n: Int): DoubleBuffer =
+      val b = tl.get
+      if b.capacity >= n then { b.position(0); b }
+      else { val nb = mkD(n); tl.set(nb); nb }
+
+    private def ensureF(tl: ThreadLocal[FloatBuffer], n: Int): FloatBuffer =
+      val b = tl.get
+      if b.capacity >= n then { b.position(0); b }
+      else { val nb = mkF(n); tl.set(nb); nb }
+
+    def forDA(a: Array[Double]): DoubleBuffer = ensureD(dA, a.length).put(a).position(0)
+    def forDB(b: Array[Double]): DoubleBuffer = ensureD(dB, b.length).put(b).position(0)
+    def forDC(n: Int):           DoubleBuffer = ensureD(dC, n)
+
+    def forFA(a: Array[Float]):  FloatBuffer  = ensureF(fA, a.length).put(a).position(0)
+    def forFB(b: Array[Float]):  FloatBuffer  = ensureF(fB, b.length).put(b).position(0)
+    def forFC(n: Int):           FloatBuffer  = ensureF(fC, n)
 
   def vstack[U: ClassTag](matrices: Mat[U]*): Mat[U] = {
     require(matrices.nonEmpty, "vstack requires at least one matrix")
@@ -2098,7 +2136,9 @@ object Mat {
     }
 
     private inline def shouldUseBLAS[A](a: Mat[A], b: Mat[A]): Boolean =
-      a.rows.toLong * a.cols * b.cols >= blasThreshold
+      val minDim = a.rows min b.cols
+      val ops    = a.rows.toLong * a.cols * b.cols
+      ops >= (if minDim >= 6 then blasThreshold else blasThinThreshold)
 
     private[data] def multiplyDoubleBLAS(other: Mat[Double]): Mat[Double] = {
       import org.bytedeco.openblas.global.openblas.*
@@ -2113,11 +2153,12 @@ object Mat {
       val transB = if bm.transposed then CblasTrans else CblasNoTrans
       val ldA = if am.transposed then am.rows else am.cols
       val ldB = if bm.transposed then bm.rows else bm.cols
-      val pA = new DoublePointer(a*); val pB = new DoublePointer(b*)
-      val pC = new DoublePointer(result.length.toLong)
+      val pA = new DoublePointer(DirectBufs.forDA(a))
+      val pB = new DoublePointer(DirectBufs.forDB(b))
+      val pC = new DoublePointer(DirectBufs.forDC(result.length))
       cblas_dgemm(CblasRowMajor, transA, transB, rowsA, colsB, colsA,
         1.0, pA, ldA, pB, ldB, 0.0, pC, colsB)
-      pC.get(result); pA.close(); pB.close(); pC.close()
+      pC.get(result) // no close() — we don't own the backing native memory
       Mat.create(result, rowsA, colsB)
     }
 
@@ -2134,11 +2175,12 @@ object Mat {
       val transB = if bm.transposed then CblasTrans else CblasNoTrans
       val ldA = if am.transposed then am.rows else am.cols
       val ldB = if bm.transposed then bm.rows else bm.cols
-      val pA = new FloatPointer(a*); val pB = new FloatPointer(b*)
-      val pC = new FloatPointer(result.length.toLong)
+      val pA = new FloatPointer(DirectBufs.forFA(a))
+      val pB = new FloatPointer(DirectBufs.forFB(b))
+      val pC = new FloatPointer(DirectBufs.forFC(result.length))
       cblas_sgemm(CblasRowMajor, transA, transB, rowsA, colsB, colsA,
         1.0f, pA, ldA, pB, ldB, 0.0f, pC, colsB)
-      pC.get(result); pA.close(); pB.close(); pC.close()
+      pC.get(result) // no close() — we don't own the backing native memory
       Mat.create(result, rowsA, colsB)
     }
 

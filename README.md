@@ -24,6 +24,8 @@ Each method opens an interactive Swing window, or saves a PNG when `saveTo` is s
 Pass a `PlotStyle` to control dimensions, colours, and export consistency.
 
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+//> using dep org.vastblue:uni_3:0.10.0
 import uni.data.*
 import uni.plot.*
 
@@ -60,33 +62,33 @@ and [Plot Guide](docs/PlotGuide.md) for the full `PlotStyle` API.
 
 ### Core matrix operations
 
-NumPy: Python 3.14.3 / NumPy 2.4.1 (see [`py/bench.py`](py/bench.py)).
+NumPy: Python 3.14.3 / NumPy 2.4.2 (see [`py/bench.py`](py/bench.py)).
 Breeze/MatD: Scala 3.8.2 / JVM 21, both using native OpenBLAS (see [`jsrc/breezeBench.sc`](jsrc/breezeBench.sc)).
 
 | Operation | NumPy | Breeze | MatD |
 | :--- | ---: | ---: | ---: |
-| `randn(1000×1000)` | 19 ms | 52.7 ms | 14.6 ms |
-| `matmul 512×512` | 1.7 ms | 1.4 ms | 2.7 ms |
-| `sigmoid(1000×1000)` | 12.6 ms | 11.7 ms | 1.9 ms |
-| `relu(1000×1000)` | 2.0 ms | 3.9 ms | 0.8 ms |
-| `add(1000×1000)` | 2.3 ms | 1.7 ms | 1.3 ms |
-| `sum(1000×1000)` | 0.3 ms | 1.0 ms | 0.5 ms |
+| `randn(1000×1000)` | 21 ms | 51 ms | 15 ms |
+| `matmul 512×512` | 1.4 ms | 1.2 ms | 1.7 ms |
+| `sigmoid(1000×1000)` | 12 ms | 11.7 ms | 2.0 ms |
+| `relu(1000×1000)` | 2.0 ms | 3.7 ms | 0.8 ms |
+| `add(1000×1000)` | 2.1 ms | 1.6 ms | 1.4 ms |
+| `sum(1000×1000)` | 0.4 ms | 1.0 ms | 0.5 ms |
 | `transpose(1000×1000)` | ≈0 ms | ≈0 ms | ≈0 ms |
-| custom fn (`mapParallel` / `map` / `np.vectorize`) | 440 ms | 10.2 ms | 0.8 ms |
+| custom fn (`mapParallel` / `map` / `np.vectorize`) | 162 ms | 10.2 ms | 1.0 ms |
 
 MatD wins 6/8 operations vs NumPy and 6/7 scored vs Breeze (geometric mean **3× faster** than Breeze).
 Losses: `matmul` (Breeze column-major avoids a transpose; NumPy native BLAS) and `sum` (NumPy SIMD reduction).
 
 ### 3PRF (Three-Pass Regression Filter)
 
-Measured on the same machine (JVM 17 / Scala 3.7.0 vs Python 3.14.3 / NumPy 2.4.1, scipy-openblas64).
-See [`jsrc/tprf.sc`](jsrc/tprf.sc) and [Kelly & Pruitt (2015)](https://doi.org/10.1111/jofi.12246).
+Measured on the same machine (JVM 21 / Scala 3.8.2 vs Python 3.14.3 / NumPy 2.4.2, scipy-openblas).
+See [`src/main/scala/apps/Tprf3Bench.scala`](src/main/scala/apps/Tprf3Bench.scala) and [Kelly & Pruitt (2015)](https://doi.org/10.1111/jofi.12246).
 
-| Operation | NumPy | MatD | Ratio |
+| Operation | Python | MatD | Ratio |
 | :--- | ---: | ---: | :--- |
-| `3PRF IS Full (T=650, N=40, L=2)` | 5 ms | 2 ms | **2.6× faster** |
-| `3PRF OOS Recursive (T=650, N=40, L=2)` | 268 ms | 133 ms | **2× faster** |
-| `3PRF OOS Cross Val (T=650, N=40, L=2)` | 718 ms | 373 ms | **1.9× faster** |
+| `3PRF IS Full (T=650, N=40, L=2)` | 11 ms | 19 ms | **1.7× slower** |
+| `3PRF OOS Recursive (T=650, N=40, L=2)` | 286 ms | 159 ms | **1.8× faster** |
+| `3PRF OOS Cross Val (T=650, N=40, L=2)` | 742 ms | 375 ms | **2× faster** |
 
   | Label | Description |
   | :--- | :--- |
