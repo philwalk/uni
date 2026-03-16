@@ -1,6 +1,6 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.10.0
+//> using dep org.vastblue:uni_3:0.10.1
 import uni.data.*
 import uni.plot.*
 val m = MatD.randn(100, 3)
