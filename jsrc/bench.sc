@@ -2,7 +2,7 @@
 
 //> using scala 3.8.2
 //> using javaOpt --add-modules jdk.incubator.vector
-//> using dep org.vastblue:uni_3:0.9.6
+//> using dep org.vastblue:uni_3:0.10.0
 
 /**
  * MatD benchmark — counterpart to py/bench.py (NumPy/Python).

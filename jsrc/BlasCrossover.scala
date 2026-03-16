@@ -1,6 +1,6 @@
 //#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 package uni.data
-//> using dep org.vastblue:uni_3:0.9.6
+//> using dep org.vastblue:uni_3:0.10.0
 //> using dep "org.bytedeco:openblas-platform:0.3.30-1.5.12"
 //> using javaOpt "-Dorg.bytedeco.javacpp.cachedir=C:\\tmp\\javacpp"
 

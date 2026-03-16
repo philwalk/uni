@@ -1,7 +1,7 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -deprecation
 //#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.9.6
+//> using dep org.vastblue:uni_3:0.10.0
 
 //> using dep org.vastblue:vast_3:0.11.5
 

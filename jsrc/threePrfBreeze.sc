@@ -1,6 +1,6 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -deprecation
 
-//> using dep org.vastblue:uni_3:0.9.6
+//> using dep org.vastblue:uni_3:0.10.0
 //> using dep org.scalanlp::breeze:2.1.0
 
 /////////////////////////////////////////////

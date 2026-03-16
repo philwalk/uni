@@ -17,6 +17,45 @@ For high-accuracy scientific modeling or other applications requiring extreme pr
 
 * **High Precision:** [Big Type Guide](docs/BigTypeGuide.md) — Learn about high-precision matrices, and how to use `Mat[Big]`.
 
+## Visualization (`uni.plot`)
+
+`import uni.plot.*` adds `.scatter()`, `.hist()`, and `.plot()` directly on `MatD`.
+Each method opens an interactive Swing window, or saves a PNG when `saveTo` is supplied.
+Pass a `PlotStyle` to control dimensions, colours, and export consistency.
+
+```scala
+import uni.data.*
+import uni.plot.*
+
+val iris = MatD.readCsv("datasets/iris.csv")
+// columns: sepal_length(0), sepal_width(1), petal_length(2), petal_width(3)
+
+iris.scatter(2, 3, title = "Iris: petal length vs petal width")
+iris.hist(bins = 20, title = "Iris: sepal length distribution")
+iris.plot(title = "Iris: all 4 features",
+          labels = Seq("sepal length", "sepal width", "petal length", "petal width"))
+
+// PlotStyle — override only what you need; everything else defers to the GGPlot2 theme
+iris.scatter(2, 3, style = PlotStyle(width = 1200, height = 800))
+iris.hist(bins = 20, style = PlotStyle(background = Some(java.awt.Color.BLACK),
+                                       foreground = Some(java.awt.Color.WHITE)))
+
+// PlotStyle.uniform — identical 800×500 for all saved images
+iris.scatter(2, 3, saveTo = "docs/images/iris-scatter", style = PlotStyle.uniform)
+iris.hist(bins = 20, saveTo = "docs/images/iris-hist",  style = PlotStyle.uniform)
+```
+
+<table><tr>
+<!--
+<td align="center"><img src="docs/images/iris-scatter.png" width="450"/><br>Petal length vs petal width <em>Iris</em> clusters</td>
+-->
+<td align="center"><img src="docs/images/iris-lines.png" width="450"/><br>Petal length vs petal width <em>Iris</em> clusters</td>
+<td align="center"><img src="docs/images/iris-hist.png"  width="450"/><br>Sepal length distribution across 150 samples</td>
+</tr></table>
+
+See [`jsrc/iris.sc`](jsrc/iris.sc) and [`jsrc/anscombe.sc`](jsrc/anscombe.sc) for runnable demos,
+and [Plot Guide](docs/PlotGuide.md) for the full `PlotStyle` API.
+
 ## Performance
 
 ### Core matrix operations
@@ -86,6 +125,7 @@ libraryDependencies += "org.vastblue" %% "uni" % "0.9.6"
 ## Advanced Usage
 
 * **Quick Start:** [Mat Quick Start Guide](docs/QuickStartGuide.md) — Fast track to NumPy-compatible matrix operations in Scala.
+* **Visualization:** [Plot Guide](docs/PlotGuide.md) — `uni.plot` methods, `PlotStyle` configuration, and demo scripts.
 * **API Reference:** [Mat Reference Guide](docs/ReferenceGuide.md) — Comprehensive API documentation with validated examples.
 * **Cheat Sheet:** [MatD Cheat Sheet](docs/MatDCheatSheet.md) — Side-by-side comparison of MatD vs NumPy, Breeze, R, and MATLAB.
 * **High Precision:** [Big Type Guide](docs/BigTypeGuide.md) — High-precision matrices using `MatD[Big]`.
@@ -110,7 +150,7 @@ libraryDependencies += "org.vastblue" %% "uni" % "0.9.6"
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.9.6
+//> using dep org.vastblue:uni_3:0.10.0
 
 import uni.data.*
 
@@ -140,7 +180,7 @@ Each alias has a matching factory object mirroring the `MatD` API:
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.9.6
+//> using dep org.vastblue:uni_3:0.10.0
 
 import uni.data.*
 
@@ -160,7 +200,7 @@ val identityB: MatB = MatB.eye(5)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.9.6
+//> using dep org.vastblue:uni_3:0.10.0
 
 import uni.data.*
 import uni.data.MatD.*
@@ -185,7 +225,7 @@ println(s"rotated: ${rotated.show("%7.2f")}")
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.9.6
+//> using dep org.vastblue:uni_3:0.10.0
 
 import uni.data.*
 
@@ -203,7 +243,7 @@ val f = a.relu    // built-in activation function
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.9.6
+//> using dep org.vastblue:uni_3:0.10.0
 
 import uni.data.*
 import uni.data.MatD.*
@@ -223,7 +263,7 @@ m :+= n      // element-wise add matrix in-place
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.9.6
+//> using dep org.vastblue:uni_3:0.10.0
 
 import uni.data.*
 import uni.data.MatD.*
@@ -242,7 +282,7 @@ val allTrue  = mask.all
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.9.6
+//> using dep org.vastblue:uni_3:0.10.0
 
 import uni.data.*
 import uni.data.MatD.*
@@ -264,7 +304,7 @@ val cols  = wide.hsplit(2)               // Seq of two 4x2 Mats
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.9.6
+//> using dep org.vastblue:uni_3:0.10.0
 
 import uni.data.*
 import uni.data.MatD.*
@@ -288,7 +328,7 @@ The following example demonstrates a wide array of `uni.MatD` capabilities
 
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
-//> using dep org.vastblue:uni_3:0.9.6
+//> using dep org.vastblue:uni_3:0.10.0
 
 import uni.data.*
 import uni.data.MatD.*
@@ -358,7 +398,7 @@ Because activation functions are members of the `MatD` type, building layers is 
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.9.6
+//> using dep org.vastblue:uni_3:0.10.0
 
 import uni.data.*
 
@@ -394,7 +434,7 @@ Raw financial and scientific datasets rarely arrive in clean form. `uni.data.Big
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.9.6
+//> using dep org.vastblue:uni_3:0.10.0
 
 import uni.data.*
 import uni.data.BigUtils.*

@@ -19,7 +19,7 @@ ThisBuild / watchTriggeredMessage := Watch.clearScreenOnTrigger
 ThisBuild / scalaVersion  := scalaVer
 
 lazy val projectName = "uni"
-ThisBuild / version       := "0.9.6" // implicitly convert Interator to Seq with deprecation warning
+ThisBuild / version       := "0.10.0" // add uni.plot package
 ThisBuild / versionScheme := Some("semver-spec")
 
 ThisBuild / organization         := "org.vastblue"
@@ -91,7 +91,8 @@ lazy val root = (project in file(".")).
 libraryDependencies ++= Seq(
   "org.bytedeco"             % "openblas-platform"          % "0.3.31-1.5.13",
   "org.scala-lang.modules"  %% "scala-parallel-collections" % "1.2.0",
-  "org.scalameta"           %% "munit"                      % "1.2.3" % Test,
+  "org.knowm.xchart"         % "xchart"                     % "3.8.8",
+  "org.scalameta"           %% "munit"                      % "1.2.4" % Test,
   "org.scalameta"           %% "munit-scalacheck"           % "1.2.0" % Test,
 )
 
