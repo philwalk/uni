@@ -119,7 +119,7 @@ Note: inline annotations were removed before running JaCoCo to prevent Scala 3's
 Add the following to your `build.sbt`:
 
 ```scala
-libraryDependencies += "org.vastblue" %% "uni" % "0.9.6"
+libraryDependencies += "org.vastblue" %% "uni" % "0.10.0"
 ```
 
 ## Advanced Usage

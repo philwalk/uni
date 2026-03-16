@@ -44,10 +44,15 @@ def readVersion(): String =
 
 def updateFile(path: Path, newVersion: String): Unit =
   val lines = Files.readAllLines(path).asScala
-  val target = s"//> using dep org.vastblue:uni_3:$newVersion"
-  val regex = """//> using dep org\.vastblue(:uni_3:|::uni:)[0-9]+\.[0-9]+\.[0-9]+"""
+  val regex1 = """//> using dep org\.vastblue(:uni_3:|::uni:)[0-9]+\.[0-9]+\.[0-9]+"""
+  val target1 = s"//> using dep org.vastblue:uni_3:$newVersion"
 
-  val updated = lines.map(_.replaceAll(regex, target))
+  val regex2 = """"org.vastblue" %% "uni" % "[0-9]+[.][0-9]+[.][0-9]+""""
+  val target2 = s""""org.vastblue" %% "uni" % "$newVersion""""
+
+  val updated = lines.map( s =>
+    s.replaceAll(regex1, target1).replaceAll(regex2, target2)
+  )
 
   // Only write and print if the content has actually changed
   if (lines != updated) then
