@@ -9,11 +9,11 @@ import uni.io.*
 // sort a csv file by a specified list of columns.
 object ColumnN {
   def usage(m: String = ""): Nothing = {
-    if (m.nonEmpty) printf("%s\n", m)
-    printf("usage: %s <sortColumns> <csvFile>\n", progName(this))
-    printf("<colA> [<colB> ...]   ; zero-based column indexes")
-    printf("use a negative index to denote descending order.\n")
-    sys.exit(1)
+    showUsage(m,
+      "<sortColumns> <csvFile>",
+      "<colA> [<colB> ...]   ; zero-based column indexes",
+      "use a negative index to denote descending order."
+    )
   }
 
   var (verbose, sortSpecs, fullstack, inputFile: Option[Path])  = (false, List.empty[(Int, Boolean)], false, None)

@@ -5,8 +5,7 @@
 //> using javaOpt --add-modules jdk.incubator.vector
 //> using javaOpt -Ddev.ludovic.netlib.blas.nativeLib=libopenblas.dll
 ////> using javaOpt -verbose:jni
-////> using repository file:///C:/Users/philwalk/.m2-netlib
-//> using dep dev.ludovic.netlib:blas:3.1.2
+//> using dep dev.ludovic.netlib:blas:3.1.1
 //> using dep org.vastblue:uni_3:0.10.1
 //> using dep org.scalanlp::breeze:2.1.0
 

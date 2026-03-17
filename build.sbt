@@ -72,8 +72,11 @@ Compile / packageBin / packageOptions +=
 
 Test / parallelExecution := false // PathSpec tests use modal test mode for Paths.get behavior
 
+// tell MUnit to be quiet (it uses the same arguments as ScalaTest)
+
 lazy val root = (project in file(".")).
-  enablePlugins(BuildInfoPlugin, JacocoPlugin).
+  //enablePlugins(BuildInfoPlugin, JacocoPlugin).
+  enablePlugins(BuildInfoPlugin).
   settings(
 //  parallelExecution  := false,
     crossScalaVersions := supportedScalaVersions,
@@ -82,11 +85,16 @@ lazy val root = (project in file(".")).
  // mainClass          := Some("vast.apps.ShowSysProps"),
     buildInfoKeys      := Seq[BuildInfoKey](name, version, scalaVersion, sbtVersion),
     buildInfoPackage   := "uni", // available as "import uni.BuildInfo"
+    /* 
+    // uncomment for coverage reports (also uncomment in project/plugins.sbt)
     jacocoReportSettings := JacocoReportSettings(
       title  = "uni coverage",
       formats = Seq(JacocoReportFormats.HTML, JacocoReportFormats.XML),
     ),
+    */
   )
+
+Test / testOptions += Tests.Argument(TestFrameworks.MUnit, "-q")
 
 libraryDependencies ++= Seq(
   "org.bytedeco"             % "openblas-platform"          % "0.3.31-1.5.13",

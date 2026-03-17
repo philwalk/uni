@@ -124,6 +124,30 @@ Both use native OpenBLAS (JNIBLAS). See [`jsrc/breezeBench.sc`](../jsrc/breezeBe
 
 ---
 
+## Column / Row Mapping
+
+| Operation | MatD | NumPy | Breeze | R | MATLAB |
+|---|---|---|---|---|---|
+| Map each column | `m(::, *).map(f)` or `m.mapCols(f)` | `np.apply_along_axis(f, 0, m)` | `X(::, *).map(f)` | `apply(m, 2, f)` | — |
+| Map each row | `m(*, ::).map(f)` or `m.mapRows(f)` | `np.apply_along_axis(f, 1, m)` | `X(*, ::).map(f)` | `apply(m, 1, f)` | — |
+
+`f` receives a `ColVec[T]` (n×1) for column mapping, a `RowVec[T]` (1×n) for row mapping, and must return the same shape. Both syntaxes are equivalent — use whichever feels familiar.
+
+```scala
+// Sort each column independently (Breeze-style)
+m(::, *).map(col => col.sort())
+
+// Sort each column independently (named method)
+m.mapCols(col => col.sort())
+
+// Reverse each row
+m(*, ::).map(row => row(::, row.cols-1 to 0 by -1))
+```
+
+> **Note:** For broadcasting operations (subtract column means, divide by std) use arithmetic directly — `m - m.mean(axis=0)` is both simpler and faster.
+
+---
+
 ## Element-wise Arithmetic
 
 | Operation | MatD | NumPy | Breeze | R | MATLAB |
@@ -141,7 +165,7 @@ Both use native OpenBLAS (JNIBLAS). See [`jsrc/breezeBench.sc`](../jsrc/breezeBe
 
 | Operation | MatD | NumPy | Breeze | R | MATLAB |
 |---|---|---|---|---|---|
-| Matrix multiply | `a ~@ b` | `a @ b` | `a * b` | `a %*% b` | `a * b` |
+| Matrix multiply | `a *@ b` | `a @ b` | `a * b` | `a %*% b` | `a * b` |
 
 ---
 
@@ -328,7 +352,7 @@ val bT   = b.T        // transpose
 // Arithmetic
 val d = a + b         // element-wise
 val e = a * b         // Hadamard product
-val f = c ~@ b        // matmul
+val f = c *@ b        // matmul
 
 // In-place
 b :*= 0.5

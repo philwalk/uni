@@ -9,8 +9,7 @@ import java.io.BufferedWriter
 object MinimizeQuotes {
   def main(args: Array[String]): Unit = {
     if (args.length < 1) {
-      System.err.println(s"Usage: ${progName(this)} <csv-file>")
-      System.exit(1)
+      showUsage("", "<filepath>")
     }
     args.foreach { arg =>
       val p = Paths.get(arg)

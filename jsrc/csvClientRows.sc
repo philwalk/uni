@@ -9,9 +9,9 @@ import uni.io.*
 object CsvClientRows {
 
   def usage(m: String = ""): Unit = {
-    if (m.nonEmpty) println(m)
-    System.err.println(s"Usage: ${progName(this)} [-async | -pulled] <csv-file>")
-    System.exit(1)
+    showUsage(m,
+      "[-async | -pulled] <csv-file>"
+    )
   }
   def main(args: Array[String]): Unit = {
     var fname = ""

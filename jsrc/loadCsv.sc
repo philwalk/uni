@@ -28,8 +28,7 @@ object LoadCsv {
     if !p.isFile then
       usage(s"not found: ${p.posx}")
 
-    val data = p.loadMat(big(_))
-    val filtered = data.filterRows(_.isNotNaN.any)
-    println(filtered)
+    val data = MatB.readCsv(p)
+    println(data)
   }
 }

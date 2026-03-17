@@ -33,7 +33,7 @@ object MatDCheck {
     println(s"prod: $prod")
     val powr = w ~^ 2
     println(s"powr: $powr")
-    val matMult = powr ~@ w
+    val matMult = powr *@ w
     println(s"matMult: $matMult")
     val div = w / 2
     println(s"div: $div")

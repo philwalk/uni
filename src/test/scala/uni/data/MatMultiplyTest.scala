@@ -10,7 +10,7 @@ class MatMultiplyTest extends munit.FunSuite {
   test("matrix multiplication") {
     val m1 = Mat[Double]((1, 2), (3, 4))
     val m2 = Mat[Double]((5, 6), (7, 8))
-    val prod = m1 ~@ m2
+    val prod = m1 *@ m2
     assertEquals(prod.shape, (2, 2))
     assertEquals(prod(0, 0), 19.0)  // 1*5 + 2*7
     assertEquals(prod(0, 1), 22.0)  // 1*6 + 2*8
@@ -21,7 +21,7 @@ class MatMultiplyTest extends munit.FunSuite {
   test("matrix multiplication with non-square") {
     val m1 = Mat[Double]((1, 2, 3), (4, 5, 6))  // 2x3
     val m2 = Mat[Double]((7, 8), (9, 10), (11, 12))  // 3x2
-    val prod = m1 ~@ m2
+    val prod = m1 *@ m2
     assertEquals(prod.shape, (2, 2))
     assertEquals(prod(0, 0), 58.0)   // 1*7 + 2*9 + 3*11
     assertEquals(prod(0, 1), 64.0)   // 1*8 + 2*10 + 3*12
@@ -31,14 +31,14 @@ class MatMultiplyTest extends munit.FunSuite {
     val m1 = Mat[Double]((1, 2), (3, 4))
     val m2 = Mat[Double]((5, 6), (7, 8))
     val p1 = m1.dot(m2)
-    val p2 = m1 ~@ m2
+    val p2 = m1 *@ m2
     assertEquals(p1(0, 0), p2(0, 0))
   }
   
-  test("Mat[Double] ~@ Mat[Double] matrix multiply promotes to Mat[Double]") {
+  test("Mat[Double] *@ Mat[Double] matrix multiply promotes to Mat[Double]") {
     val m1 = Mat[Double]((1, 2), (3, 4))  // Mat[Double], 2x2
     val m2 = Mat[Double]((0.5, 1.0), (1.5, 2.0))  // Mat[Double], 2x2
-    val result = m1 ~@ m2
+    val result = m1 *@ m2
     
     // 1*0.5 + 2*1.5 = 3.5
     assertEquals(result(0, 0), 3.5)
@@ -67,7 +67,7 @@ class MatMultiplyTest extends munit.FunSuite {
     val ref  = MatD.eye(n)
 
     // I × I = I; if offset is ignored BLAS reads the zero-prefixed region → wrong result
-    val result = view ~@ ref
+    val result = view *@ ref
     for i <- 0 until n; j <- 0 until n do
       assertEqualsDouble(result(i, j), ref(i, j), 1e-10,
         s"mismatch at ($i,$j): expected ${ref(i,j)}, got ${result(i,j)}")
@@ -77,7 +77,7 @@ class MatMultiplyTest extends munit.FunSuite {
     val m1 = Mat.ones[Double](2, 3)
     val m2 = Mat.ones[Double](2, 3)
     intercept[IllegalArgumentException] {
-      m1 ~@ m2  // 2x3 ~@ 2x3 invalid
+      m1 *@ m2  // 2x3 *@ 2x3 invalid
     }
   }
   
@@ -91,7 +91,7 @@ class MatMultiplyTest extends munit.FunSuite {
     assert(result.isInstanceOf[Mat[Double]])
   }
   
-  test("Mat[Double] ~@ Double promotes to Mat[Double]") {
+  test("Mat[Double] *@ Double promotes to Mat[Double]") {
     val m = Mat[Double]((1, 2), (3, 4))  // Mat[Double]
     val result = m * 2.5
     
@@ -108,5 +108,43 @@ class MatMultiplyTest extends munit.FunSuite {
     assertEquals(prod(1, 0), 12.0)
     assertEquals(prod(1, 1), 20.0)
   }
-  
+
+  // ============================================================================
+  // .item and Double./ tests
+  // ============================================================================
+
+  test("item extracts scalar from 1x1 matrix") {
+    val m = MatD((3.14))
+    assertEquals(m.item, 3.14)
+  }
+
+  test("item works on 1x1 result of matrix multiply") {
+    val row = Mat[Double]((1.0, 2.0))          // 1x2
+    val col = Mat[Double]((2.0), (3.0))         // 2x1
+    val q   = row *@ col                        // 1x1 = 8.0
+    assertEquals(q.item, 8.0)
+  }
+
+  test("item throws on non-1x1 matrix") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    intercept[IllegalArgumentException] { m.item }
+  }
+
+  test("Double / 1x1 Mat[Double]") {
+    val q: Mat[Double] = MatD((8.0))
+    assertEquals(1.0 / q, 0.125)
+  }
+
+  test("Double / 1x1 result of matrix multiply") {
+    val row = Mat[Double]((1.0, 2.0))
+    val col = Mat[Double]((2.0), (3.0))
+    val q   = row *@ col                        // 1x1 = 8.0
+    assertEquals(1.0 / q, 0.125)
+  }
+
+  test("Double / non-1x1 Mat throws") {
+    val m = Mat[Double]((1, 2), (3, 4))
+    intercept[IllegalArgumentException] { 1.0 / m }
+  }
+
 }

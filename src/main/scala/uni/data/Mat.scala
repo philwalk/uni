@@ -7,17 +7,18 @@ import uni.io.FileOps.*
 //export Mat.MatD as MatD
 import uni.data.Big.Big
 export Mat.Mat
-export Mat.{`::`, Vec, RowVec, ColVec, rows, cols, shape, shapes, size, isEmpty, transposed, isContiguous, apply, update}
+export Mat.{`::`, `*`, ColsView, RowsView, Vec, RowVec, ColVec, rows, cols, shape, shapes, size, isEmpty, transposed, isContiguous, apply, update}
+export MatD.leastSquares
 
 // Commutative scalar multiply — all in one group to satisfy Scala 3's overload grouping rule.
 // scalar * Mat[Double]
-extension (scalar: Double) def *(m: Mat.Mat[Double]): Mat.Mat[Double] = m * scalar
-extension (scalar: Int)    def *(m: Mat.Mat[Double]): Mat.Mat[Double] = m * scalar.toDouble
-extension (scalar: Long)   def *(m: Mat.Mat[Double]): Mat.Mat[Double] = m * scalar.toDouble
+extension (scalar: Double) @annotation.targetName("scalarTimesMatD") def *(m: Mat.Mat[Double]): Mat.Mat[Double] = m * scalar
+extension (scalar: Int)    @annotation.targetName("intTimesMatD")    def *(m: Mat.Mat[Double]): Mat.Mat[Double] = m * scalar.toDouble
+extension (scalar: Long)   @annotation.targetName("longTimesMatD")   def *(m: Mat.Mat[Double]): Mat.Mat[Double] = m * scalar.toDouble
 // scalar * Big  (left-hand multiply; right-hand is on Big itself)
-extension (n: Int)    def *(b: uni.data.Big.Big): uni.data.Big.Big = b * n
-extension (n: Long)   def *(b: uni.data.Big.Big): uni.data.Big.Big = b * n
-extension (n: Double) def *(b: uni.data.Big.Big): uni.data.Big.Big = b * n
+extension (n: Int)    @annotation.targetName("intTimesBig")    def *(b: uni.data.Big.Big): uni.data.Big.Big = b * n
+extension (n: Long)   @annotation.targetName("longTimesBig")   def *(b: uni.data.Big.Big): uni.data.Big.Big = b * n
+extension (n: Double) @annotation.targetName("doubleTimesBig") def *(b: uni.data.Big.Big): uni.data.Big.Big = b * n
 
 object Mat {
   self =>
@@ -220,7 +221,33 @@ object Mat {
    *  so that exporting it to uni.data doesn't shadow the standard list extractor. */
   val `::` = scala.collection.immutable.`::`
 
-  @annotation.unused 
+  /** Broadcast-axis sentinel: m(::, *) → ColsView; m(*, ::) → RowsView.
+   *  Mirrors Breeze's X(::, *).map(f) / X(*, ::).map(f) idiom. */
+  object `*`
+
+  /** Returned by m(::, *); call .map(f) to transform each column independently. */
+  final class ColsView[T: ClassTag](val m: Mat[T]):
+    def map(f: ColVec[T] => ColVec[T]): Mat[T] = m.mapCols(f)
+    // Normalize other to rows×1; accepts either rows×1 or 1×rows orientation
+    private def asColVec(other: Mat[T]): Mat[T] =
+      if other.cols == 1 then other else other.T
+    def -(other: Mat[T])(using Numeric[T]): Mat[T]    = m - asColVec(other)
+    def +(other: Mat[T])(using Numeric[T]): Mat[T]    = m + asColVec(other)
+    def *(other: Mat[T])(using Numeric[T]): Mat[T]    = m * asColVec(other)
+    def /(other: Mat[T])(using Fractional[T]): Mat[T] = m / asColVec(other)
+
+  /** Returned by m(*, ::); call .map(f) to transform each row independently. */
+  final class RowsView[T: ClassTag](val m: Mat[T]):
+    def map(f: RowVec[T] => RowVec[T]): Mat[T] = m.mapRows(f)
+    // Normalize other to 1×cols; accepts either 1×cols or cols×1 orientation
+    private def asRowVec(other: Mat[T]): Mat[T] =
+      if other.rows == 1 then other else other.T
+    def -(other: Mat[T])(using Numeric[T]): Mat[T]    = m - asRowVec(other)
+    def +(other: Mat[T])(using Numeric[T]): Mat[T]    = m + asRowVec(other)
+    def *(other: Mat[T])(using Numeric[T]): Mat[T]    = m * asRowVec(other)
+    def /(other: Mat[T])(using Fractional[T]): Mat[T] = m / asRowVec(other)
+
+  @annotation.unused
   def inspect[T: ClassTag]: String =
     s"Mat(${rows}x${cols}, offset=$offset, rs=$rs, cs=$cs, transposed=$transposed)"
 
@@ -1178,6 +1205,18 @@ object Mat {
         result
     }
 
+    /** Return a fresh independent copy of this matrix (Breeze: m.copy). */
+    def copy: Mat[T] = Mat.create(m.flatten, m.rows, m.cols)
+
+    /** Alias for [[flatten]]: returns a fresh row-major Array[T]. */
+    def toArray: Array[T] = m.flatten
+
+    /** Extract the single element of a 1×1 matrix (NumPy: `.item()`).
+     *  Throws IllegalArgumentException if the matrix is not 1×1. */
+    def item: T =
+      require(m.rows == 1 && m.cols == 1, s"item requires 1×1 matrix, got ${m.rows}×${m.cols}")
+      m(0, 0)
+
     def data: Array[T] = m.asInstanceOf[MatData[T]].tdata
 
     /**
@@ -1508,6 +1547,12 @@ object Mat {
         j += 1
       Mat.create(result, 1, m.cols)
     }
+
+    /** Breeze: X(::, *) — returns a ColsView for per-column mapping via .map(f) */
+    def apply(rows: ::.type, cols: `*`.type): ColsView[T] = ColsView(m)
+
+    /** Breeze: X(*, ::) — returns a RowsView for per-row mapping via .map(f) */
+    def apply(rows: `*`.type, cols: ::.type): RowsView[T] = RowsView(m)
 
     /**
      * NumPy: m[rows, cols]
@@ -2725,7 +2770,7 @@ object Mat {
           val residuals = Array.ofDim[Double](nRhs)
           if nRows > nCols then
             val xMat = Mat.create(result, nCols, nRhs)
-            val diff = md ~@ xMat - bd
+            val diff = md *@ xMat - bd
             var c2 = 0
             while c2 < nRhs do
               var i = 0
@@ -3641,6 +3686,12 @@ object Mat {
         Mat.create(result, m.rows, 1)
     }
 
+    /** R: scale(x, center=TRUE, scale=TRUE) — subtract column means and/or divide by column std devs.
+     *  Returns a new matrix with zero-mean columns (center=true) and/or unit-variance columns (scale=true). */
+    def scale(center: Boolean = true, doScale: Boolean = true)(using frac: Fractional[T]): Mat[T] =
+      val c = if center then m - m.mean(axis = 0) else m
+      if doScale then c / m.std(axis = 0) else c
+
     /** NumPy: np.var(m) - variance */
     def variance(using frac: Fractional[T]): T =
       val mu    = m.mean
@@ -3875,7 +3926,7 @@ object Mat {
     def *(other: Mat[T])(using num: Numeric[T]): Mat[T] = m.binOp(other)(num.times)
 
     // Matrix multiplication (NumPy's @ operator)
-    inline def ~@(other: Mat[T]): Mat[T] = matmul(other)
+    inline def *@(other: Mat[T]): Mat[T] = matmul(other)
 
     // Division with broadcasting
     def /(other: Mat[T])(using frac: Fractional[T]): Mat[T] = m.binOp(other)(frac.div)
@@ -4579,6 +4630,38 @@ object Mat {
       }
       (counts, edgesArray)
     }
+
+    /** Breeze: X(::, *).map(f) — apply f to each column; columns are reassembled horizontally.
+     *  Each column is passed as a ColVec (n×1 Mat[T]); f must return a column vector. */
+    def mapCols(f: ColVec[T] => ColVec[T]): Mat[T] =
+      if m.cols == 0 then Mat.create(Array.ofDim[T](0), 0, 0)
+      else
+        val cols = Array.tabulate(m.cols)(j => f(m.slice(0 until m.rows, j to j)))
+        val nrows = cols(0).rows
+        val result = Array.ofDim[T](nrows * m.cols)
+        var j = 0
+        while j < m.cols do
+          val col = cols(j)
+          var i = 0
+          while i < nrows do { result(i * m.cols + j) = col(i, 0); i += 1 }
+          j += 1
+        Mat.create(result, nrows, m.cols)
+
+    /** Breeze: X(*, ::).map(f) — apply f to each row; rows are reassembled vertically.
+     *  Each row is passed as a RowVec (1×n Mat[T]); f must return a row vector. */
+    def mapRows(f: RowVec[T] => RowVec[T]): Mat[T] =
+      if m.rows == 0 then Mat.create(Array.ofDim[T](0), 0, 0)
+      else
+        val rows = Array.tabulate(m.rows)(i => f(m.slice(i to i, 0 until m.cols)))
+        val ncols = rows(0).cols
+        val result = Array.ofDim[T](m.rows * ncols)
+        var i = 0
+        while i < m.rows do
+          val row = rows(i)
+          var j = 0
+          while j < ncols do { result(i * ncols + j) = row(0, j); j += 1 }
+          i += 1
+        Mat.create(result, m.rows, ncols)
   }
 
   // Global print options
@@ -4700,25 +4783,48 @@ object Mat {
         j += 1
       Mat.create(result, mat.rows, mat.cols)
 
+  // Double / 1×1 Mat[Double] — must live inside Mat so `import Mat.*` brings it into scope
+  extension (scalar: Double)
+    @annotation.targetName("doubleOverMat")
+    def /(m: Mat[Double]): Double =
+      require(m.rows == 1 && m.cols == 1, s"/ requires 1×1 matrix, got ${m.rows}×${m.cols}")
+      scalar / m(0, 0)
+
 }
 
 /** Convenience API for Mat[Double]. */
 import Mat.*
 
 // This makes MatD a valid Type name for the user
-type MatD = Mat[Double] 
+type MatD = Mat[Double]
 type VecD = Vec[Double]
 
 // This remains your factory object
+/** Result returned by [[MatD.leastSquares]]. Mirrors Breeze's LeastSquaresResult. */
+case class LeastSquaresResult(
+  coefficients:   MatD,
+  residuals:      MatD,
+  rank:           Int,
+  singularValues: Array[Double],
+)
+
 object MatD {
   // Fractional[Double] is always available
   private given fracD: Fractional[Double] = summon[Fractional[Double]]
 
+  /** Breeze: leastSquares(A, b) — solve min‖Ax − b‖₂ via SVD.
+   *  Returns a [[LeastSquaresResult]] with a `.coefficients` field. */
+  def leastSquares(A: MatD, b: MatD): LeastSquaresResult =
+    val (coefs, resid, rank, sv) = A.lstsq(b)
+    LeastSquaresResult(coefs, resid, rank, sv)
+
   // ----- Constructors -----
+  def zeros(n: Int): Mat[Double]               = Mat.zeros[Double](n, 1)
   def zeros(rows: Int, cols: Int): Mat[Double] = Mat.zeros[Double](rows, cols)
   def zeros(shape: (Int, Int)): Mat[Double] = Mat.zeros[Double](shape)
+  def ones(n: Int): Mat[Double]              = Mat.ones[Double](n, 1)
   def ones(rows: Int, cols: Int): Mat[Double] = Mat.ones[Double](rows, cols)
-  def ones(shape: (Int, Int)): Mat[Double] = Mat.ones[Double](shape)
+  def ones(shape: (Int, Int)): Mat[Double]   = Mat.ones[Double](shape)
   def full(rows: Int, cols: Int, value: Double): Mat[Double] = Mat.full[Double](rows, cols, value)
   def full(shape: (Int, Int), value: Double): Mat[Double] = Mat.full[Double](shape, value)
   def eye(n: Int, k: Int = 0): Mat[Double] = Mat.eye[Double](n, k)

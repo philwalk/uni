@@ -254,7 +254,7 @@ object TprfRunner {
       eta(t, ::) = eta(t - 1, ::) * a + eta_tilda(t, ::)
 
     val factors  = MatD.hstack(f, g)
-    val X1       = factors ~@ factor_loadings
+    val X1       = factors *@ factor_loadings
     val etaNorm  = eta / popStd(eta)
     val constant = popStd(X1) * math.sqrt(strength)
     val X        = X1 + constant * etaNorm

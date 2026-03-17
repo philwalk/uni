@@ -12,10 +12,9 @@ object DelimiterCheck {
   var csvfiles = Vector.empty[String]
 
   def usage(m: String = ""): Nothing = {
-    if m.nonEmpty then printf("%s\n", m)
-    printf("usage: %s [<file1> [<file2> ...]] | <filenames-on-stdin>\n", progName(this))
-    printf("if no files on command line, filenames piped from STDIN\n")
-    sys.exit(1)
+    showUsage(m, "[<file1> [<file2> ...]] | <filenames-on-stdin>",
+      "if no files on command line, filenames piped from STDIN",
+    )
   }
 
   def main(args: Array[String]): Unit = {

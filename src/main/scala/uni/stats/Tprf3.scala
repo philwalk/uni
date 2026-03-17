@@ -55,7 +55,7 @@ object Tprf3 {
         phi: MatD, sigma: MatD, betaHat: MatD
     ): Tprf3Result = {
       val Xaug = MatD.hstack(MatD.ones(sigma.rows, 1), sigma) // add intercept
-      val yHat = Xaug ~@ betaHat
+      val yHat = Xaug *@ betaHat
       Tprf3Result(
         forecasts = yHat,
         residuals = y - yHat,
@@ -107,7 +107,7 @@ object Tprf3 {
         val designPhi = withIntercept(phi)
 
         // Project oos onto factor space
-        val b_oos = (designPhi.T ~@ designPhi).inverse ~@ (designPhi.T ~@ oosCol)
+        val b_oos = (designPhi.T *@ designPhi).inverse *@ (designPhi.T *@ oosCol)
         val sigma_oos = b_oos(1 until b_oos.rows, ::)
 
         // finalDesign is (1 x L+1)
@@ -115,7 +115,7 @@ object Tprf3 {
         val fullBeta = beta3.get // (L+1 x 1) pass-3 OLS coefficients
 
         if (finalDesign.cols != fullBeta.rows) Double.NaN
-        else (finalDesign ~@ fullBeta)(0, 0)
+        else (finalDesign *@ fullBeta)(0, 0)
     }
 
     /** Preserved: Lazy pass-1 R² calculation */
@@ -123,7 +123,7 @@ object Tprf3 {
       if phiHat.rows == 0 then Array.empty
       else
         val dZ       = withIntercept(Z)
-        val Xfitted1 = dZ ~@ phiHat
+        val Xfitted1 = dZ *@ phiHat
         val colMeans = X.sum(0) / X.rows.toDouble
         val rssCols  = ((X - Xfitted1) ~^ 2.0).sum(0)
         val sstCols  = ((X - colMeans) ~^ 2.0).sum(0)
@@ -174,13 +174,13 @@ object Tprf3 {
 
     def degreesOfFreedom: Double =
       val Jt   = jMat(X.rows); val Jn = jMat(X.cols)
-      val XtJt = X.T ~@ Jt
-      val Wxz  = Jn ~@ XtJt ~@ Z
-      val Sxx  = XtJt ~@ X
-      val hatX = Wxz ~@ (Wxz.T ~@ Sxx ~@ Wxz).inverse ~@ Wxz.T ~@ XtJt
+      val XtJt = X.T *@ Jt
+      val Wxz  = Jn *@ XtJt *@ Z
+      val Sxx  = XtJt *@ X
+      val hatX = Wxz *@ (Wxz.T *@ Sxx *@ Wxz).inverse *@ Wxz.T *@ XtJt
       val centered = centerColumns(hatX)
       val (u, _, _) = centered.svd
-      val H = u ~@ u.T
+      val H = u *@ u.T
       H.trace
 
     def intercept: Double = Double.NaN
@@ -201,13 +201,13 @@ object Tprf3 {
     val Xn   = X / nanStdCols(X)
     val T    = Xn.rows; val N = Xn.cols
     val Jt   = jMat(T); val Jn = jMat(N)
-    val XtJt = Xn.T ~@ Jt
-    val JtX  = Jt ~@ Xn
-    val Wxz  = Jn ~@ XtJt ~@ Z
-    val Sxx  = XtJt ~@ Xn
-    val alpha_hat_factor: MatD = Wxz ~@ (Wxz.T ~@ Sxx ~@ Wxz).inverse ~@ Wxz.T ~@ XtJt
-    val alpha_hat = alpha_hat_factor ~@ y           // N×1
-    val y_hat_val = JtX ~@ alpha_hat + y.mean       // T×1
+    val XtJt = Xn.T *@ Jt
+    val JtX  = Jt *@ Xn
+    val Wxz  = Jn *@ XtJt *@ Z
+    val Sxx  = XtJt *@ Xn
+    val alpha_hat_factor: MatD = Wxz *@ (Wxz.T *@ Sxx *@ Wxz).inverse *@ Wxz.T *@ XtJt
+    val alpha_hat = alpha_hat_factor *@ y           // N×1
+    val y_hat_val = JtX *@ alpha_hat + y.mean       // T×1
 
     // Pass-1 (K&P: Phi N×L)
     val phiMat     = MatD.zeros(N, Z.cols)
@@ -229,13 +229,13 @@ object Tprf3 {
 
     // Pass-3 (K&P: beta = [iota(T) Sigma]\y)
     val Xaug  = withIntercept(sigma)
-    val beta3 = (Xaug.T ~@ Xaug).inverse ~@ (Xaug.T ~@ y)  // L+1×1
+    val beta3 = (Xaug.T *@ Xaug).inverse *@ (Xaug.T *@ y)  // L+1×1
 
     // K&P: Szz = Z'·J(T)·Z; beta_hat = Szz⁻¹·Wxz'·alpha_hat (closed-form pass-3 alt)
-    val JtZ      = Jt ~@ Z
-    val Szz      = Z.T ~@ JtZ
+    val JtZ      = Jt *@ Z
+    val Szz      = Z.T *@ JtZ
     @annotation.unused
-    lazy val _beta_hat = Szz.inverse ~@ Wxz.T ~@ alpha_hat       // L×1, K&P closed-form alt
+    lazy val _beta_hat = Szz.inverse *@ Wxz.T *@ alpha_hat       // L×1, K&P closed-form alt
 
     val resids = y - y_hat_val
     val ssy    = ((y - y.mean) ~^ 2.0).sum
@@ -261,15 +261,15 @@ object Tprf3 {
   def t3prf(y: MatD, X: MatD, Z: MatD): Tprf3Result = {
     val Xn        = X / nanStdCols(X)
     val designZ   = withIntercept(Z)
-    val B1        = (designZ.T ~@ designZ).inverse ~@ (designZ.T ~@ Xn)
+    val B1        = (designZ.T *@ designZ).inverse *@ (designZ.T *@ Xn)
     val phi       = B1(1 until B1.rows, ::).T        // N×L
     val designPhi = withIntercept(phi)
-    val B2        = (designPhi.T ~@ designPhi).inverse ~@ (designPhi.T ~@ Xn.T)
+    val B2        = (designPhi.T *@ designPhi).inverse *@ (designPhi.T *@ Xn.T)
     val sigma     = B2(1 until B2.rows, ::).T         // T×L
     val Xaug      = withIntercept(sigma)
-    val beta      = (Xaug.T ~@ Xaug).inverse ~@ (Xaug.T ~@ y)
+    val beta      = (Xaug.T *@ Xaug).inverse *@ (Xaug.T *@ y)
 
-    val y_hat_val = Xaug ~@ beta
+    val y_hat_val = Xaug *@ beta
     val resids    = y - y_hat_val
 
     val ssy = ((y - y.mean) ~^ 2.0).sum
@@ -305,12 +305,12 @@ object Tprf3 {
     private val Xaug: MatD =
       if addIntercept then MatD.hstack(MatD.ones(nObs, 1), Xf) else Xf
     val nParams: Int = Xaug.cols
-    private val XtX: MatD   = Xaug.T ~@ Xaug
-    private val Xty: MatD   = Xaug.T ~@ yf
-    private[uni] val beta: MatD  = XtX.inverse ~@ Xty
+    private val XtX: MatD   = Xaug.T *@ Xaug
+    private val Xty: MatD   = Xaug.T *@ yf
+    private[uni] val beta: MatD  = XtX.inverse *@ Xty
     val intercept_ : Double = if addIntercept then beta(0, 0) else 0.0
     val coef_      : MatD   = if addIntercept then beta(1 until nParams, ::) else beta
-    private val yHatLm:   MatD = Xaug ~@ beta
+    private val yHatLm:   MatD = Xaug *@ beta
     private val residsLm: MatD = yf - yHatLm
     val rSquared: Double =
       val rss_ = (residsLm ~^ 2.0).sum
@@ -375,7 +375,7 @@ object Tprf3 {
     else
       val yv  = selectRows(y, valid)
       val Xv  = selectRows(X, valid)
-      Some((Xv.T ~@ Xv).inverse ~@ (Xv.T ~@ yv))
+      Some((Xv.T *@ Xv).inverse *@ (Xv.T *@ yv))
 
   private inline def withIntercept(X: MatD): MatD = MatD.hstack(MatD.ones(X.rows, 1), X)
 
@@ -413,28 +413,28 @@ object Tprf3 {
     else
       // Pass 1: batch OLS — all N columns of X on Z simultaneously
       val designZ = withIntercept(Z)
-      val B1      = (designZ.T ~@ designZ).inverse ~@ (designZ.T ~@ X)
+      val B1      = (designZ.T *@ designZ).inverse *@ (designZ.T *@ X)
       val Phi     = B1(1 until B1.rows, ::).T          // N×L
 
       // Pass 2: batch OLS — all T rows of X on Phi simultaneously
       val designPhi = withIntercept(Phi)
-      val PtPinv    = (designPhi.T ~@ designPhi).inverse
-      val B2        = PtPinv ~@ (designPhi.T ~@ X.T)
+      val PtPinv    = (designPhi.T *@ designPhi).inverse
+      val B2        = PtPinv *@ (designPhi.T *@ X.T)
       val Sigma     = B2(1 until B2.rows, ::).T         // T×L
 
       // Pass 3
       val Xaug = withIntercept(Sigma)
       val beta  = nanOls(y, Xaug, minObs = 1).getOrElse(
         Mat.create(Array.fill(L + 1)(Double.NaN), L + 1, 1))
-      val yhat  = Xaug ~@ beta
+      val yhat  = Xaug *@ beta
 
       // OOS point forecast — reuse PtPinv; xt arrives as (1×N) row, needs (N×1)
       val yhatt = oosX match
         case None => Double.NaN
         case Some(xt) =>
-          val b_oos     = PtPinv ~@ (designPhi.T ~@ xt.T)
+          val b_oos     = PtPinv *@ (designPhi.T *@ xt.T)
           val sigma_oos = b_oos(1 until b_oos.rows, ::)
-          (MatD.hstack(MatD.ones(1, 1), sigma_oos.T) ~@ beta)(0, 0)
+          (MatD.hstack(MatD.ones(1, 1), sigma_oos.T) *@ beta)(0, 0)
 
       (yhat, yhatt)
     }
@@ -480,7 +480,7 @@ object Tprf3 {
       val Xaug = withIntercept(Sigma)
       val beta  = nanOls(y, Xaug, minObs = 1).getOrElse(
         Mat.create(Array.fill(L + 1)(Double.NaN), L + 1, 1))
-      val yhat  = Xaug ~@ beta
+      val yhat  = Xaug *@ beta
 
       val yhatt = oosX match
         case None => Double.NaN
@@ -489,7 +489,7 @@ object Tprf3 {
           nanOls(xc.T, designPhi, minObs) match
             case None      => Double.NaN
             case Some(sigma) =>
-              (MatD.hstack(MatD.ones(1, 1), sigma.T) ~@ beta)(0, 0)
+              (MatD.hstack(MatD.ones(1, 1), sigma.T) *@ beta)(0, 0)
 
       (yhat, yhatt)
 
@@ -651,10 +651,10 @@ object Tprf3 {
         zFinal.map { zf =>
           val jt   = jMat(T)
           val jn   = jMat(N)
-          val XtJt = Xn.T ~@ jt
-          val Wxz  = jn ~@ XtJt ~@ zf
-          val Sxx  = XtJt ~@ Xn
-          Wxz ~@ (Wxz.T ~@ Sxx ~@ Wxz).inverse ~@ Wxz.T ~@ XtJt ~@ y
+          val XtJt = Xn.T *@ jt
+          val Wxz  = jn *@ XtJt *@ zf
+          val Sxx  = XtJt *@ Xn
+          Wxz *@ (Wxz.T *@ Sxx *@ Wxz).inverse *@ Wxz.T *@ XtJt *@ y
         }
       else None
 
@@ -663,20 +663,20 @@ object Tprf3 {
       if computeAvar && procedure == "IS Full" then
         zFinal.map { zf =>
           val jt = jMat(T); val jn = jMat(N)
-          val a  = Xn.T ~@ jt ~@ zf * (1.0 / T)
-          val b  = (zf.T ~@ jt ~@ Xn ~@ jn ~@ Xn.T ~@ jt ~@ Xn ~@
-                    jn ~@ Xn.T ~@ jt ~@ zf) * (math.pow(T, -3) * math.pow(N, -2))
-          val c  = zf.T ~@ jt ~@ Xn ~@ jn * (1.0 / T / N)
-          val omegaA = jn ~@ a ~@ b.inverse ~@ c
+          val a  = Xn.T *@ jt *@ zf * (1.0 / T)
+          val b  = (zf.T *@ jt *@ Xn *@ jn *@ Xn.T *@ jt *@ Xn *@
+                    jn *@ Xn.T *@ jt *@ zf) * (math.pow(T, -3) * math.pow(N, -2))
+          val c  = zf.T *@ jt *@ Xn *@ jn * (1.0 / T / N)
+          val omegaA = jn *@ a *@ b.inverse *@ c
           val Xm = Xn.sum(0) / T.toDouble
           var tmp = MatD.zeros(N, N)
           for ti <- 0 until T do
             val xrow = Xn(ti, ::) - Xm
-            tmp = tmp + xrow.T ~@ xrow * (math.pow(residuals(ti, 0), 2) / T)
-          val alphaAvar = omegaA ~@ tmp ~@ omegaA.T
+            tmp = tmp + xrow.T *@ xrow * (math.pow(residuals(ti, 0), 2) / T)
+          val alphaAvar = omegaA *@ tmp *@ omegaA.T
           AvarEstimates(
             alpha     = alphaAvar,
-            forecasts = jt ~@ Xn ~@ alphaAvar ~@ Xn.T ~@ jt * math.pow(N, -2))
+            forecasts = jt *@ Xn *@ alphaAvar *@ Xn.T *@ jt * math.pow(N, -2))
         }
       else None
 

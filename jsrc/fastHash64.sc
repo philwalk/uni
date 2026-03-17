@@ -12,9 +12,9 @@ import java.nio.file.attribute.BasicFileAttributes
 object FastHash64 {
   
   def usage(m: String = ""): Nothing = {
-    if m.nonEmpty then System.err.printf("%s\n", m)
-    System.err.print(s"usage: ${progName(this)} [-r] <dir-or-file> [<dir-or-file> ...]\n")
-    sys.exit(1)
+    showUsage(m,
+      "[-r] <dir-or-file> [<dir-or-file> ...]"
+    )
   }
 
   var recurse: Boolean = false

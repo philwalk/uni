@@ -426,7 +426,7 @@ class MatCoverageSuite extends FunSuite {
     val a = Mat[Double]((2.0, 1.0), (1.0, 2.0))
     val pi = a.pinv()
     // A * pinv(A) ≈ I
-    val prod = a ~@ pi
+    val prod = a *@ pi
     assertEqualsDouble(prod(0, 0), 1.0, 1e-8)
     assertEqualsDouble(prod(0, 1), 0.0, 1e-8)
     assertEqualsDouble(prod(1, 0), 0.0, 1e-8)

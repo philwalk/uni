@@ -55,12 +55,12 @@ object Tprf {
       if addIntercept then MatD.hstack(MatD.ones(nObs, 1), X)
       else X
     val nParams = Xaug.cols
-    private val XtX: MatD  = Xaug.T ~@ Xaug
-    private val Xty: MatD  = Xaug.T ~@ y
-    private val beta: MatD = XtX.inverse ~@ Xty
+    private val XtX: MatD  = Xaug.T *@ Xaug
+    private val Xty: MatD  = Xaug.T *@ y
+    private val beta: MatD = XtX.inverse *@ Xty
     val intercept_ : Double = if addIntercept then beta(0, 0) else 0.0
     val coef_      : MatD   = if addIntercept then beta(1 until nParams, ::) else beta
-    private val yHatLm: MatD    = Xaug ~@ beta
+    private val yHatLm: MatD    = Xaug *@ beta
     private val residsLm: MatD  = y - yHatLm
     val rSquared: Double =
       val rss_ = (residsLm ~^ 2.0).sum
@@ -129,7 +129,7 @@ object Tprf {
       val hatX     = tp.alpha_hat_factor
       val centered = centerColumns(hatX)
       val (u, _, _) = centered.svd
-      val H = u ~@ u.T
+      val H = u *@ u.T
       H.trace
   }
 
@@ -150,32 +150,32 @@ object Tprf {
     val N: Int = X.cols
     val Jt: MatD  = J(T)
     val Jn: MatD  = J(N)
-    val XtJt: MatD = X.T ~@ Jt
-    val JtX: MatD  = Jt ~@ X
-    val Wxz: MatD  = Jn ~@ XtJt ~@ Z
-    val Sxx: MatD  = XtJt ~@ X
-    val SXy: MatD  = XtJt ~@ y
+    val XtJt: MatD = X.T *@ Jt
+    val JtX: MatD  = Jt *@ X
+    val Wxz: MatD  = Jn *@ XtJt *@ Z
+    val Sxx: MatD  = XtJt *@ X
+    val SXy: MatD  = XtJt *@ y
 
-    lazy val JtZ: MatD = Jt ~@ Z
-    lazy val Szz: MatD = Z.T ~@ JtZ
-    lazy val Sxz: MatD = X.T ~@ JtZ
+    lazy val JtZ: MatD = Jt *@ Z
+    lazy val Szz: MatD = Z.T *@ JtZ
+    lazy val Sxz: MatD = X.T *@ JtZ
 
     // α̂ (alpha_hat) is a constrained version of OLS predictive coefficient.
     // Shape: (N, T)
     val alpha_hat_factor: MatD =
-      Wxz ~@ (Wxz.T ~@ Sxx ~@ Wxz).inverse ~@ Wxz.T ~@ XtJt
+      Wxz *@ (Wxz.T *@ Sxx *@ Wxz).inverse *@ Wxz.T *@ XtJt
 
-    val alpha_hat: MatD = alpha_hat_factor ~@ y   // (N, 1)
+    val alpha_hat: MatD = alpha_hat_factor *@ y   // (N, 1)
 
     lazy val f_hat: MatD =
-      Szz ~@ (Wxz.T ~@ Wxz).inverse ~@ Wxz.T ~@ XtJt
+      Szz *@ (Wxz.T *@ Wxz).inverse *@ Wxz.T *@ XtJt
 
     lazy val beta_hat: MatD =
-      Szz.inverse ~@ Wxz.T ~@ alpha_hat
+      Szz.inverse *@ Wxz.T *@ alpha_hat
 
     def calcYhat(yvec: MatD): MatD =
-      val alpHat: MatD = alpha_hat_factor ~@ yvec  // (N, 1)
-      JtX ~@ alpHat + yvec.mean                    // (T, 1) + scalar
+      val alpHat: MatD = alpha_hat_factor *@ yvec  // (N, 1)
+      JtX *@ alpHat + yvec.mean                    // (T, 1) + scalar
 
     val y_hat: MatD = calcYhat(y)
 
@@ -201,12 +201,12 @@ object Tprf {
     def rSquared: BigDecimal       = bigVert(pass3model.rSquared)
     def adjRsq: Double             = pass3model.adjRs
 
-    val y_hat: MatD = sigma ~@ betaHatCoeff + betaHatIntercept
+    val y_hat: MatD = sigma *@ betaHatCoeff + betaHatIntercept
 
     def estimateYhat(oos: MatD): Double =
       val rowmodel  = Lm(oos, phi)
       val rowsigma  = rowmodel.coef_                          // (L, 1)
-      (rowsigma.T ~@ betaHatCoeff)(0, 0) + betaHatIntercept  // scalar
+      (rowsigma.T *@ betaHatCoeff)(0, 0) + betaHatIntercept  // scalar
 
     override def toString: String =
       "residuals: %s\ny_hat: %s\n".format(residuals, y_hat)

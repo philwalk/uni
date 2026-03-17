@@ -9,8 +9,7 @@ object CsvMinimizeQuotes {
 
   def main(args: Array[String]): Unit = {
     if (args.length < 1) {
-      System.err.println(s"Usage: ${progName(this)} <csv-file>")
-      System.exit(1)
+      showUsage("", "<csv-file>")
     }
     import uni.io.CsvFormatter.formatRow
     args.foreach { arg =>

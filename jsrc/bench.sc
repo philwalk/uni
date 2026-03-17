@@ -71,7 +71,7 @@ bench("randn(1000×1000)") {
 
 // 2. Matrix multiply — bytedeco → OpenBLAS JNI; similar pathway to NumPy
 bench("matmul 512×512 @ 512×512") {
-  A ~@ B
+  A *@ B
 }
 
 // 3. Sigmoid — element-wise 1/(1+e^-x) over 1M elements

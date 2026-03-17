@@ -1,0 +1,9 @@
+# vi build.sbt # update version string
+jsrc/updateVersion.sc # replace version string in docs and example code
+sbt "clean;test;publishLocal"
+git add `gitmods`
+git status
+git commit -m 'Release v0.10.1'
+git tag v0.10.1 -f
+git push --tags -f
+git push origin main

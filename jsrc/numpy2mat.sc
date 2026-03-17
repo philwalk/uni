@@ -41,7 +41,7 @@ object Numpy2Mat {
         val p = fname.path
         if !p.isFile then
           usage(s"not found [${p.posx}]")
-        p.suffix match
+        p.ext match
           case "json" =>
             jsonFile = p.posx
           case "py" =>

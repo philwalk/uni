@@ -136,7 +136,7 @@ libraryDependencies += "org.vastblue" %% "uni" % "0.10.1"
 
 | NumPy | uni.MatD | Note |
 | :--- | :--- | :--- |
-| `a @ b` | `a ~@ b` | Matrix multiplication |
+| `a @ b` | `a *@ b` | Matrix multiplication |
 | `a * b` | `a * b` | Element-wise product |
 | `a[0, :]` | `a(0, ::)` | Row slice |
 | `a[:, 0]` | `a(::, 0)` | Column slice |
@@ -234,7 +234,7 @@ import uni.data.*
 val a = MatD.randn(3, 3)
 val b = MatD.randn(3, 3)
 
-val c = a ~@ b    // matrix multiplication (matmul)
+val c = a *@ b    // matrix multiplication (matmul)
 val d = a + b     // element-wise addition
 val e = a * b     // Hadamard (element-wise) product
 val f = a.relu    // built-in activation function
@@ -347,7 +347,7 @@ object MatDCheck {
     // 2. Arithmetic & Broadcasting
     val result = m + v      // Row-wise broadcasting
     val powr = result ~^ 2  // Power operator
-    val matMult = powr ~@ v.T // Matrix multiplication (matmul)
+    val matMult = powr *@ v.T // Matrix multiplication (matmul)
 
     // 3. Math Functions
     val sq = m.sqrt
@@ -406,7 +406,7 @@ import uni.data.*
 
 def denseLayer(input: MatD, weights: MatD, bias: MatD): MatD = {
   // Simple, readable forward pass
-  (input ~@ weights + bias).sigmoid
+  (input *@ weights + bias).sigmoid
 }
 ```
 
