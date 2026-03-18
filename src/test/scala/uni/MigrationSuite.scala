@@ -26,3 +26,10 @@ class MigrationSuite extends FunSuite:
     val sorted: Seq[String] = p.lines.sorted
     assertEquals(sorted, testSeq.sorted)
   }
+
+  test("CVec.show and RVec.show work with import uni.* only") {
+    val v: CVecD = CVec(1.0, 2.0, 3.0)
+    val r: RVecD = RVec(4.0, 5.0, 6.0)
+    assert(v.show.startsWith("3x1 CVec[Double]:"))
+    assert(r.show.startsWith("1x3 RVec[Double]:"))
+  }

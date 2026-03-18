@@ -1,7 +1,7 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -deprecation
 //#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.10.1
+//> using dep org.vastblue:uni_3:0.11.0
 
 //> using dep org.vastblue:vast_3:0.11.5
 
@@ -33,12 +33,12 @@
 import uni.*
 import uni.data.*
 
-//type D = Double
 
 
 
-type VecD = MatD
 import MatD.{randn as rnorm, uniform, zeros, eye, ones}
+
+
 
 object ThreePrf {
   
@@ -110,7 +110,6 @@ object ThreePrf {
       if( n_proxy == 0 && (_Z.rows == 0 || _Z.cols == 0) ){
         sys.error("please either provide proxies or choose a number of automatic proxies to build")
       }
-
 
       val X = _X.scale(center, scale)
 
@@ -288,16 +287,13 @@ object ThreePrf {
       val part1: VecD = XX.T *@ y
       val part2: Double = 1.0 / (y.T *@ XX *@ XX *@ y)
       val part3: Double = (y.T *@ XX *@ y).item
-      val y_hat: VecD = part1 *@ part2 *@ part3 + y.mean // Should y be demeaned?
-      // alpha_hat = null  // No alpha_hat in pls
+      val y_hat: VecD = part1 * part2 * part3 + y.mean // Should y be demeaned?
       val alpha_hat: VecD = MatD.zeros(y_hat.size)
       (y_hat, alpha_hat)
 
     } else {
       val T = NROW(X)
       val N = NCOL(X)
-      //J = function(len) { diag(rep(1, len)) - 1/len.T *@ matrix(1, nrow=len, ncol=len) }
-
       val Jn = J(N)
       val Jt = J(T)
       printf("fit_closed:Jn:      %s\n", Jn.shapes)
@@ -312,47 +308,23 @@ object ThreePrf {
       val W_XZ = wxzLeft *@ wxzRite // val W_XZ = Jn.T *@ X.T *@ Jt.T *@ Z
       val S_XX = Xt *@ Jt *@ X
       val S_Xy = Xt *@ Jt *@ y
-      /*
-      W_XZ <- Jn %*% X.T %*% Jt %*% Z
-      S_XX <- X.T %*% Jt %*% X
-      S_Xy <- X.T %*% Jt %*% y
-      */
-
-      val alpha_hat = W_XZ *@ inv(W_XZ.T *@ S_XX *@ W_XZ) *@ W_XZ.T *@ S_Xy
+      val alpha_hat = W_XZ *@ (W_XZ.T *@ S_XX *@ W_XZ).inverse *@ W_XZ.T *@ S_Xy
       val y_hat = Jt *@ X *@ alpha_hat + y.mean
       (y_hat, alpha_hat)
 
-      /*
-      alpha_hat <- W_XZ %*% solve(W_XZ.T %*% S_XX %*% W_XZ) %*% W_XZ.T %*% S_Xy
-      y_hat <- y.mean + Jt %*% X %*% alpha_hat
-      */
-
-      // part1 <- Jt %*% X %*% W_XZ
-      // part2 <- solve(W_XZ.T %*% S_XX %*% W_XZ)
-      // part3 <- W_XZ.T %*% S_Xy
-      // y_hat <- y.mean + part1 %*% part2 %*% part3
     }
     val fitted = y_hat
     val residuals = y - y_hat
 
-    /*
-    //rownames(alpha_hat) <- paste0("alpha", 1:NROW(alpha_hat))
-    fit$alpha_hat <- alpha_hat
-    y_hat <- as.vector(y_hat)
-    names(y_hat) <- as.character(1:length(y_hat))
-    fit$fitted.values <- y_hat
-    fit$residuals <- as.vector(y - y_hat)
-    */
-
-    PredReg(alpha_hat, y_hat, residuals, null, null) // residuals, loadings, factors)
+    PredReg(alpha_hat, y_hat, residuals, NullMat, NullMat) // residuals, loadings, factors)
   }
 
   //###################################################
   //## Three Pass Regression Filter Model Simulation ##
   //###################################################
   def sim_factors(T: Int, K_f: Int=1, rho_f:Double=0.0, rho_g:Double=0.0, sigma_g: VecD= sigma_g): Seq[MatD] = {
-    //##.T *@ Simulating relevant factor innovations
-    val u_f = matrix(randn(T *@ K_f), nrow=T, ncol=K_f)
+    //## * Simulating relevant factor innovations
+    val u_f = matrix(randn(T * K_f), nrow=T, ncol=K_f)
     val f: MatD = matrix(0, nrow=T, ncol=K_f)
     f(0, ::) = u_f(0, ::)
     for (i <- 1 until f.rows){
@@ -624,10 +596,10 @@ object ThreePrf {
     both
   }
 
-  def NROW[T](X: MatD[T]): Int = X.rows
-  def NCOL[T](X: MatD[T]): Int = X.cols
-  def NROW[T](V: Vec[T]): Int = V.size
-  def NCOL[T](V: Vec[T]): Int = 1
+  def NROW(X: MatD): Int = X.rows
+  def NCOL(X: MatD): Int = X.cols
+  def NROW(V: VecD): Int = V.size
+  def NCOL(V: VecD): Int = 1
 
   def MatrixNaN(rows: Int, cols: Int): MatD = {
     val mat = MatD.zeros(rows, cols)
@@ -690,7 +662,7 @@ object ThreePrf {
   def centerAndScale(X: MatD) = {
     val X_mean = X.mean(axis = 0).T // means of each column (axis) of the X.
     var centered = X(*, ::) - X_mean
-    centered(*, ::) / stddev(centered(::, *)).T
+    centered(*, ::) / std(centered(::, *)).T
   }
   def dump4x4(tag: String, m: MatD): Unit = {
     printf("%s: %s\n", tag, m.shape)

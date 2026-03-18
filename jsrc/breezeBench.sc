@@ -7,7 +7,7 @@
 ////> using javaOpt -verbose:jni
 ////> using repository file:///C:/Users/philwalk/.m2-netlib
 //> using dep dev.ludovic.netlib:blas:3.1.2
-//> using dep org.vastblue:uni_3:0.10.1
+//> using dep org.vastblue:uni_3:0.11.0
 //> using dep org.scalanlp::breeze:2.1.0
 
 /**

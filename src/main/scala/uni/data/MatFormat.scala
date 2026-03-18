@@ -10,7 +10,8 @@ def formatMatrix[T](
   typeName: String,
   toDouble: T => Double,
   mkString: T => String,
-  fmt: Option[String] = None
+  fmt: Option[String] = None,
+  label: String = "Mat"
 ): String = {
 
   def getValue(i: Int, j: Int): T =
@@ -235,7 +236,7 @@ def formatMatrix[T](
     sb.toString
   }
 
-  val header = s"${rows}x${cols} Mat[$typeName]:"
+  val header = s"${rows}x${cols} $label[$typeName]:"
   val body =
   if (fmt.isDefined) {
     renderRows(fmt.get)

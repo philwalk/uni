@@ -25,7 +25,7 @@ Pass a `PlotStyle` to control dimensions, colours, and export consistency.
 
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
-//> using dep org.vastblue:uni_3:0.10.1
+//> using dep org.vastblue:uni_3:0.11.0
 import uni.data.*
 import uni.plot.*
 
@@ -121,7 +121,7 @@ Note: inline annotations were removed before running JaCoCo to prevent Scala 3's
 Add the following to your `build.sbt`:
 
 ```scala
-libraryDependencies += "org.vastblue" %% "uni" % "0.10.1"
+libraryDependencies += "org.vastblue" %% "uni" % "0.11.0"
 ```
 
 ## Advanced Usage
@@ -141,7 +141,8 @@ libraryDependencies += "org.vastblue" %% "uni" % "0.10.1"
 | `a[0, :]` | `a(0, ::)` | Row slice |
 | `a[:, 0]` | `a(::, 0)` | Column slice |
 | `a.T` | `a.T` | $O(1)$ view |
-| `np.random.randn` | `MatD.randn` | PCG64-backed |
+| `np.random.randn(n)` | `MatD.randn(n)` / `MatD.rnorm(n)` | n×1 column vector, standard normal |
+| `np.random.randn(r,c)` | `MatD.randn(r, c)` | r×c matrix, standard normal |
 | `np.where(c, x, y)` | `MatD.where(c, x, y)` | Conditional selection |
 | `np.vstack` / `np.vsplit` | `MatD.vstack` / `m.vsplit(n)` | Row-wise stack / split |
 
@@ -152,7 +153,7 @@ libraryDependencies += "org.vastblue" %% "uni" % "0.10.1"
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.10.1
+//> using dep org.vastblue:uni_3:0.11.0
 
 import uni.data.*
 
@@ -167,6 +168,52 @@ val normal   = MatD.randn(10, 10)
 println(normal)
 ```
 
+## Vector Types
+
+`CVec[T]` (column vector, n×1) and `RVec[T]` (row vector, 1×n) are opaque types backed by `Mat[T]`.
+They add type-safe BLAS-style vector dispatch on top of `Mat`.
+
+```scala
+import uni.data.*
+
+val y: CVecD = CVec(1.0, 2.0, 3.0)   // column vector
+val r: RVecD = RVec(4.0, 5.0, 6.0)   // row vector
+
+// Transpose flips column ↔ row
+val rt: CVecD = r.T
+val yt: RVecD = y.T
+
+// *@ dispatch table
+val dot:   Double = y.T *@ y          // RVec *@ CVec  → scalar
+val dot2:  Double = y *@ y            // CVec *@ CVec  → scalar (auto-transpose)
+val dot3:  Double = r *@ r            // RVec *@ RVec  → scalar (auto-transpose)
+val outer: MatD   = y *@ y.T          // CVec *@ RVec  → n×n matrix
+val Xy:    CVecD  = X *@ y            // Mat  *@ CVec  → CVec
+val yTX:   RVecD  = y.T *@ X         // RVec *@ Mat   → RVec
+
+// Arithmetic
+val sum  = y + CVec(0.1, 0.2, 0.3)   // CVec + CVec
+val yp1  = y + 1.0                    // CVec + scalar
+val ym1  = y - 1.0                    // CVec - scalar
+val s2   = 2.0 * y                    // Double * CVec
+val si   = 2   * y                    // Int    * CVec
+val sl   = 2L  * y                    // Long   * CVec
+
+// Norm, show
+val n: Double = y.norm
+println(y.show)   // "3x1 CVec[Double]: ..."
+```
+
+| CVec factory | |
+| :--- | :--- |
+| `CVec(1.0, 2.0, 3.0)` | from varargs |
+| `CVec.zeros[Double](n)` | n zeros |
+| `CVec.ones[Double](n)` | n ones |
+| `CVec.fromArray(arr)` | from `Array[T]` |
+| `CVec.fromMat(m)` | from n×1 or 1×n `Mat[T]` |
+
+`RVec` has the same factory methods.
+
 ## Matrix Type Aliases
 
 To keep your code concise and idiomatic, `uni.MatD` provides type aliases and matching factory objects for supported numeric types.
@@ -176,13 +223,15 @@ To keep your code concise and idiomatic, `uni.MatD` provides type aliases and ma
 | `MatD` | `Mat[Double]` | Standard 64-bit floating point matrix (default) |
 | `MatB` | `Mat[Big]` | High-precision, NaN-safe `BigDecimal` matrix |
 | `MatF` | `Mat[Float]` | 32-bit floating point matrix for memory efficiency |
+| `CVecD` | `CVec[Double]` | Column vector, n×1 |
+| `RVecD` | `RVec[Double]` | Row vector, 1×n |
 
 Each alias has a matching factory object mirroring the `MatD` API:
 
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.10.1
+//> using dep org.vastblue:uni_3:0.11.0
 
 import uni.data.*
 
@@ -202,7 +251,7 @@ val identityB: MatB = MatB.eye(5)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.10.1
+//> using dep org.vastblue:uni_3:0.11.0
 
 import uni.data.*
 import uni.data.MatD.*
@@ -227,7 +276,7 @@ println(s"rotated: ${rotated.show("%7.2f")}")
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.10.1
+//> using dep org.vastblue:uni_3:0.11.0
 
 import uni.data.*
 
@@ -245,7 +294,7 @@ val f = a.relu    // built-in activation function
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.10.1
+//> using dep org.vastblue:uni_3:0.11.0
 
 import uni.data.*
 import uni.data.MatD.*
@@ -265,7 +314,7 @@ m :+= n      // element-wise add matrix in-place
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.10.1
+//> using dep org.vastblue:uni_3:0.11.0
 
 import uni.data.*
 import uni.data.MatD.*
@@ -284,7 +333,7 @@ val allTrue  = mask.all
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.10.1
+//> using dep org.vastblue:uni_3:0.11.0
 
 import uni.data.*
 import uni.data.MatD.*
@@ -306,7 +355,7 @@ val cols  = wide.hsplit(2)               // Seq of two 4x2 Mats
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.10.1
+//> using dep org.vastblue:uni_3:0.11.0
 
 import uni.data.*
 import uni.data.MatD.*
@@ -330,7 +379,7 @@ The following example demonstrates a wide array of `uni.MatD` capabilities
 
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
-//> using dep org.vastblue:uni_3:0.10.1
+//> using dep org.vastblue:uni_3:0.11.0
 
 import uni.data.*
 import uni.data.MatD.*
@@ -400,7 +449,7 @@ Because activation functions are members of the `MatD` type, building layers is 
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.10.1
+//> using dep org.vastblue:uni_3:0.11.0
 
 import uni.data.*
 
@@ -436,7 +485,7 @@ Raw financial and scientific datasets rarely arrive in clean form. `uni.data.Big
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.10.1
+//> using dep org.vastblue:uni_3:0.11.0
 
 import uni.data.*
 import uni.data.BigUtils.*

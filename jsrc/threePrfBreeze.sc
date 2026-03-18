@@ -1,6 +1,6 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -deprecation
 
-//> using dep org.vastblue:uni_3:0.10.1
+//> using dep org.vastblue:uni_3:0.11.0
 //> using dep org.scalanlp::breeze:2.1.0
 
 /////////////////////////////////////////////
@@ -288,15 +288,12 @@ object ThreePrfBreeze {
       val part2: D = 1.0 / (y.t  * XX  * XX  * y)
       val part3: D = y.t  * XX  * y
       val y_hat: VecD = part1  * part2  * part3 + mean(y) // Should y be demeaned?
-      // alpha_hat = null  // No alpha_hat in pls
       val alpha_hat: VecD = DenseVector.zeros[D](y_hat.size)
       (y_hat, alpha_hat)
 
     } else {
       val T = NROW(X)
       val N = NCOL(X)
-      //J = function(len) { diag(rep(1, len)) - 1/len  * matrix(1, nrow=len, ncol=len) }
-
       val Jn = J(N)
       val Jt = J(T)
       printf("fit_closed:Jn:      %s\n", Jn.shapes)
@@ -311,37 +308,12 @@ object ThreePrfBreeze {
       val W_XZ = wxzLeft  * wxzRite // val W_XZ = Jn  * X.t  * Jt  * Z
       val S_XX = Xt  * Jt  * X
       val S_Xy = Xt  * Jt  * y
-      /*
-      W_XZ <- Jn %*% X.t %*% Jt %*% Z
-      S_XX <- X.t %*% Jt %*% X
-      S_Xy <- X.t %*% Jt %*% y
-      */
-
       val alpha_hat = W_XZ  * inv(W_XZ.t  * S_XX  * W_XZ)  * W_XZ.t  * S_Xy
       val y_hat = Jt  * X  * alpha_hat + mean(y)
       (y_hat, alpha_hat)
-
-      /*
-      alpha_hat <- W_XZ %*% solve(W_XZ.t %*% S_XX %*% W_XZ) %*% W_XZ.t %*% S_Xy
-      y_hat <- mean(y) + Jt %*% X %*% alpha_hat
-      */
-
-      // part1 <- Jt %*% X %*% W_XZ
-      // part2 <- solve(W_XZ.t %*% S_XX %*% W_XZ)
-      // part3 <- W_XZ.t %*% S_Xy
-      // y_hat <- mean(y) + part1 %*% part2 %*% part3
     }
     val fitted = y_hat
     val residuals = y - y_hat
-
-    /*
-    //rownames(alpha_hat) <- paste0("alpha", 1:NROW(alpha_hat))
-    fit$alpha_hat <- alpha_hat
-    y_hat <- as.vector(y_hat)
-    names(y_hat) <- as.character(1:length(y_hat))
-    fit$fitted.values <- y_hat
-    fit$residuals <- as.vector(y - y_hat)
-    */
 
     PredReg(alpha_hat, y_hat, residuals, null, null) // residuals, loadings, factors)
   }
@@ -350,8 +322,8 @@ object ThreePrfBreeze {
   //## Three Pass Regression Filter Model Simulation ##
   //###################################################
   def sim_factors(T: Int, K_f: Int=1, rho_f:D=0.0, rho_g:D=0.0, sigma_g: VecD= sigma_g): Seq[MatD] = {
-    //##  * Simulating relevant factor innovations
-    val u_f = matrix(rnorm(T  * K_f), nrow=T, ncol=K_f)
+    //## * Simulating relevant factor innovations
+    val u_f = matrix(rnorm(T * K_f), nrow=T, ncol=K_f)
     val f: MatD = matrix(0, nrow=T, ncol=K_f)
     f(0, ::) := u_f(0, ::)
     for (i <- 1 until f.rows){
