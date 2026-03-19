@@ -28,57 +28,87 @@ val uniform = PlotStyle(width = 900, height = 600)
 val sq      = PlotStyle(width = 700, height = 700)
 
 // 1. Line plot — all 4 features over sample index
+var outfile = "docs/images/iris-lines"
+printf("create %s\n", outfile)
 iris.plot(
   title  = "Iris: all 4 features",
   labels = features,
-  saveTo = "docs/images/iris-lines",
+  saveTo = outfile,
   style  = uniform.copy(xLabel = "sample index", yLabel = "cm", seriesColors = tab10))
+printf("done\n")
 
 // 2. Grouped scatter — petal length vs petal width, coloured by species
+outfile = "docs/images/iris-scatter-grouped"
+printf("create %s\n", outfile)
 irisExt.scatter(xCol = 2, yCol = 3, groupCol = 4,
   title  = "Iris: petal length vs petal width (by species)",
-  saveTo = "docs/images/iris-scatter-grouped",
+  saveTo = outfile,
   style  = sq.copy(xLabel = "petal length (cm)", yLabel = "petal width (cm)"))
 
 // 3. Plain scatter (kept for backward compatibility)
+outfile = "docs/images/iris-scatter"
+printf("create %s\n", outfile)
 iris.scatter(2, 3,
   title  = "Iris: petal length vs petal width",
-  saveTo = "docs/images/iris-scatter",
+  saveTo = outfile,
   style  = sq.copy(seriesColors = Seq(new Color(31, 119, 180))))
 
 // 4. Histogram — sepal length distribution
+outfile = "docs/images/iris-hist"
+printf("create %s\n", outfile)
 iris.hist(bins = 20,
   title  = "Iris: sepal length distribution",
-  saveTo = "docs/images/iris-hist",
+  saveTo = outfile,
   style  = uniform.copy(xLabel = "sepal length (cm)", yLabel = "count",
     seriesColors = Seq(new Color(255, 127, 14))))
 
 // 5. Bar chart — mean value per feature
+outfile = "docs/images/iris-bar"
+printf("create %s\n", outfile)
 val featureMeans = MatD.col(
   (0 until iris.cols).map(c => iris(::, c).flatten.sum / iris.rows)*)
 featureMeans.bar(
   title  = "Iris: mean feature values  (0=sepal_l 1=sepal_w 2=petal_l 3=petal_w)",
-  saveTo = "docs/images/iris-bar",
+  saveTo = outfile,
   style  = uniform.copy(xLabel = "feature index", yLabel = "cm",
     seriesColors = Seq(new Color(31, 119, 180))))
 
 // 6. Correlation heatmap — computed via corrcoef (NumPy convention: rows = variables)
+outfile = "docs/images/iris-corr"
+printf("create %s\n", outfile)
 val corr = iris.T.corrcoef
 corr.heatmap(
   title     = "Iris: feature correlation matrix",
   rowLabels = features,
   colLabels = features,
-  saveTo    = "docs/images/iris-corr",
+  saveTo    = outfile,
   style     = PlotStyle(width = 720, height = 680))
 
 // 7. Box plot — per-feature distribution (median, IQR, outliers)
+outfile = "docs/images/iris-box"
+printf("create %s\n", outfile)
 iris.boxPlot(
   title  = "Iris: feature distributions",
   labels = features,
-  saveTo = "docs/images/iris-box",
+  saveTo = outfile,
   style  = uniform.copy(yLabel = "cm"))
+
+// 8. Pairs (scatterplot matrix) — 4×4 grid showing inter-feature correlations
+outfile = "docs/images/iris-pairs"
+printf("create %s\n", outfile)
+iris.pairs(
+  title        = "Iris: scatterplot matrix",
+  labels       = features,
+  bins         = 10,
+  dotSize      = 9,
+  scatterAlpha = 90,
+  color        = Color(31, 25, 160),
+  saveTo       = outfile,
+  style        = PlotStyle(width = 1500, height = 900)
+)
 
 println("Saved docs/images/:")
 for name <- Seq("iris-lines", "iris-scatter-grouped", "iris-scatter",
-                "iris-hist",  "iris-bar",              "iris-corr", "iris-box") do
+                "iris-hist",  "iris-bar",              "iris-corr", "iris-box",
+                "iris-pairs") do
   println(s"  $name.png")

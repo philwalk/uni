@@ -151,6 +151,110 @@ println(v)
 
 ---
 
+## Vector Types (CVec / RVec)
+
+`CVec[T]` (column vector, n×1) and `RVec[T]` (row vector, 1×n) are opaque types backed by `Mat[T]`.
+Their `*@` overloads dispatch entirely on static types — no `asInstanceOf` or runtime branching.
+
+### CVec / RVec creation
+
+**CVec.apply / RVec.apply — from varargs**
+```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.11.0
+
+import uni.data.*
+
+val y: CVecD = CVec(1.0, 2.0, 3.0)   // 3×1 column vector
+val r: RVecD = RVec(4.0, 5.0, 6.0)   // 1×3 row vector
+```
+
+**Factory methods**
+```scala
+val z = CVec.zeros[Double](5)        // 5-element column of zeros
+val o = CVec.ones[Double](5)         // 5-element column of ones
+val v = CVec.fromArray(Array(1.0, 2.0, 3.0))
+val c = CVec.fromMat(someMatD)       // n×1 or 1×n Mat → CVec
+```
+
+`RVec` provides the same factories. Type aliases: `CVecD = CVec[Double]`, `RVecD = RVec[Double]`.
+
+### *@ dispatch table
+
+| Expression | Types | Result |
+| :--- | :--- | :--- |
+| `y.T *@ y` | `RVec *@ CVec` | `T` (dot product) |
+| `y *@ y` | `CVec *@ CVec` | `T` (auto-transpose) |
+| `r *@ r` | `RVec *@ RVec` | `T` (auto-transpose) |
+| `y *@ y.T` | `CVec *@ RVec` | `Mat[T]` (outer product) |
+| `X *@ y` | `Mat *@ CVec` | `CVec[T]` |
+| `y.T *@ X` | `RVec *@ Mat` | `RVec[T]` |
+| `y *@ X` | `CVec *@ Mat` | `RVec[T]` (auto-transpose) |
+| `X *@ r` | `Mat *@ RVec` | `CVec[T]` (auto-transpose) |
+
+**Quadratic form example**
+```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.11.0
+
+import uni.data.*
+
+val y: CVecD = CVec(1.0, 2.0, 3.0)
+val X: MatD  = MatD((2,0,0),(0,3,0),(0,0,4))
+
+val q: Double = y.T *@ X *@ y   // = 50.0
+// println(q)
+// 50.0
+```
+
+### CVec arithmetic
+
+```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.11.0
+
+import uni.data.*
+
+val a: CVecD = CVec(1.0, 2.0, 3.0)
+val b: CVecD = CVec(4.0, 5.0, 6.0)
+
+val sum   = a + b           // CVec + CVec
+val diff  = b - a           // CVec - CVec
+val sp1   = a + 1.0         // CVec + scalar
+val sm1   = a - 1.0         // CVec - scalar
+val s2    = 2.0 * a         // Double * CVec
+val i2    = 2   * a         // Int    * CVec
+val l2    = 2L  * a         // Long   * CVec
+val norm  = a.norm          // Euclidean norm
+// println(a.show)
+// 3x1 CVec[Double]:
+//  (1.0, 2.0, 3.0)
+```
+
+`RVec` supports the same arithmetic operations.
+
+---
+
+## Scalar Extraction
+
+**item — extract scalar from 1×1 matrix (NumPy: `.item()`)**
+```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.11.0
+
+import uni.data.*
+
+val a = MatD((3.0, 1.0), (1.0, 2.0))
+val s: Double = (a *@ a.T).diagonal.sum.item   // extract scalar from 1×1
+// throws IllegalArgumentException if not 1×1
+```
+
+---
+
 ## Pandas-Style Data Analysis
 
 All methods are defined on `Mat[T]` and work with `MatD`, `MatF`, and `MatB`.

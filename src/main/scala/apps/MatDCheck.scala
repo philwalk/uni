@@ -15,7 +15,7 @@ object MatDCheck {
     val col = m(::, 0)
     println(s"col: $col")
 
-    val v = MatD.row(1, 2, 3, 4)
+    val v: MatD = MatD.row(1, 2, 3, 4)
     println(s"v: $v")
     val w = MatD.ones(2, 2)
     println(s"w: $w")
@@ -61,7 +61,7 @@ object MatDCheck {
     println(s"mx: $mx")
     val A = MatD((1, 2), (3, 4))
     println(s"A: $A")
-    val b = MatD.row(5, 6)
+    val b: MatD = MatD.row(5, 6)
     println(s"b: $b")
     val x = A.solve(b)
     println(s"x: $x")

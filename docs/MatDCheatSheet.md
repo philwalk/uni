@@ -108,6 +108,7 @@ Both use native OpenBLAS (JNIBLAS). See [`jsrc/breezeBench.sc`](../jsrc/breezeBe
 | Row count | `m.rows` | `m.shape[0]` | `m.rows` | `nrow(m)` | `size(m,1)` |
 | Col count | `m.cols` | `m.shape[1]` | `m.cols` | `ncol(m)` | `size(m,2)` |
 | Total elements | `m.rows * m.cols` | `m.size` | `m.size` | `length(m)` | `numel(m)` |
+| Extract scalar | `m.item` | `m.item()` | `m(0,0)` | `m[1,1]` | `m(1,1)` |
 
 ---
 
@@ -166,6 +167,10 @@ m(*, ::).map(row => row(::, row.cols-1 to 0 by -1))
 | Operation | MatD | NumPy | Breeze | R | MATLAB |
 |---|---|---|---|---|---|
 | Matrix multiply | `a *@ b` | `a @ b` | `a * b` | `a %*% b` | `a * b` |
+| Mat × col-vec | `X *@ y` where `y: CVecD` → `CVecD` | `X @ y` | `X * y` | `X %*% y` | `X * y` |
+| row-vec × Mat | `r *@ X` where `r: RVecD` → `RVecD` | `r @ X` | `r * X` | `r %*% X` | `r * X` |
+| dot product | `y *@ y` (CVec auto-transposes) → `Double` | `y @ y` | `y dot y` | `t(y) %*% y` | `y' * y` |
+| outer product | `y *@ y.T` (CVec × RVec) → `MatD` | `np.outer(y, y)` | `y * y.t` | `y %o% y` | `y * y'` |
 
 ---
 
@@ -392,5 +397,16 @@ Mat.setPrintOptions(maxRows = 20, maxCols = 20, edgeItems = 5)
 | `MatD` | `Mat[Double]` | `MatD` | Default, IEEE 754 double |
 | `MatF` | `Mat[Float]` | `MatF` | Half the memory of MatD |
 | `MatB` | `Mat[Big]` | `MatB` | Arbitrary precision, NaN-safe |
+| `CVecD` | `CVec[Double]` | `CVec` | Column vector (n×1); opaque type |
+| `RVecD` | `RVec[Double]` | `RVec` | Row vector (1×n); opaque type |
 
-All three share the same API; factory objects mirror `Mat` methods with appropriate types.
+`MatD`, `MatF`, and `MatB` share the same API; factory objects mirror `Mat` methods with appropriate types.
+`CVec` / `RVec` provide type-safe `*@` dispatch: `X *@ y` returns `CVecD`, `y.T *@ X` returns `RVecD`, and `y *@ y` returns `Double`.
+
+```scala
+val y: CVecD = CVec(1.0, 2.0, 3.0)
+val r: RVecD = RVec(4.0, 5.0, 6.0)
+val z  = CVec.zeros[Double](5)
+val o  = RVec.ones[Double](5)
+val s: Double = (y *@ y)           // dot product = 14.0
+```

@@ -11,6 +11,35 @@ import uni.plot.*
 
 ## Methods
 
+### `.pairs()` — scatterplot matrix
+
+A p×p grid of subplots: histograms on the diagonal, scatter plots off-diagonal.
+Each scatter cell shows axis tick marks, gridlines, and labelled x/y variable names.
+Equivalent to R `pairs()` / seaborn `pairplot`.
+
+The window is resizable — the plot re-renders at the new size automatically.
+
+```scala
+m.pairs(
+  title        = "Iris: scatterplot matrix",  // window title
+  labels       = Seq("sepal_l", "sepal_w", "petal_l", "petal_w"),
+  bins         = 10,                       // histogram bucket count (default 10)
+  dotSize      = 9,                        // scatter dot size in pixels (default 3)
+  scatterAlpha = 90,                       // dot opacity 0–255 (default 80; lower = more transparent)
+  color        = Color(31, 119, 180),      // bar and dot colour (default blue)
+  labelStyle   = Font.BOLD,                // Font.PLAIN / Font.BOLD / Font.ITALIC (default BOLD)
+  saveTo       = "docs/images/iris-pairs", // saves iris-pairs.png; omit to show window
+  style        = PlotStyle(width = 1500, height = 900),
+)
+```
+
+`scatterAlpha` is worth tuning: low values (40–60) reveal density in crowded plots;
+higher values (150+) make sparse plots easier to read.
+
+`labelStyle` accepts any `java.awt.Font` style constant — import `java.awt.Font` to use them.
+
+<p align="center"><img src="images/iris-pairs.png" width="800"/><br><em>Fisher Iris — 4-feature pairplot (150 samples): note the strong petal_l ↔ petal_w correlation and the near-zero sepal_w correlation</em></p>
+
 ### `.plot()` — line chart
 
 One series per column; x-axis = row indices.
@@ -94,33 +123,6 @@ m.boxPlot(
 )
 ```
 
-### `.pairs()` — scatterplot matrix
-
-A p×p grid of subplots: histograms on the diagonal, scatter plots off-diagonal.
-Each scatter cell shows axis tick marks, gridlines, and labelled x/y variable names.
-Equivalent to R `pairs()` / seaborn `pairplot`.
-
-The window is resizable — the plot re-renders at the new size automatically.
-
-```scala
-m.pairs(
-  title        = "Scatterplot matrix",   // window title
-  labels       = Seq("Freq", "Angle", "Chord", "Velo", "Thick", "Sound"),
-  bins         = 10,                     // histogram bucket count (default 10)
-  dotSize      = 3,                      // scatter dot size in pixels (default 3)
-  color        = new Color(31, 119, 180),// bar and dot colour (default blue)
-  scatterAlpha = 80,                     // dot opacity 0–255 (default 80; lower = more transparent)
-  labelStyle   = Font.BOLD,             // Font.PLAIN / Font.BOLD / Font.ITALIC (default BOLD)
-  saveTo       = "docs/images/pairs",    // saves pairs.png; omit to show window
-  style        = PlotStyle(width = 1400, height = 600),
-)
-```
-
-`scatterAlpha` is worth tuning: low values (40–60) reveal density in crowded plots;
-higher values (150+) make sparse plots easier to read.
-
-`labelStyle` accepts any `java.awt.Font` style constant — import `java.awt.Font` to use them.
-
 ---
 
 ## `PlotStyle`
@@ -192,5 +194,6 @@ m.hist(bins = 20, saveTo = "docs/images/iris-hist",  style = PlotStyle.uniform)
 | [`jsrc/corr.sc`](../jsrc/corr.sc) | Interactive: Iris correlation heatmap + two scatter windows showing strong vs weak correlation |
 | [`jsrc/iris.sc`](../jsrc/iris.sc) | Interactive: scatter, histogram, and line plot on the Fisher Iris dataset |
 | [`jsrc/anscombe.sc`](../jsrc/anscombe.sc) | Interactive: Anscombe's Quartet — four scatter plots with identical statistics |
+| [`jsrc/irisPairedFeatures.sc`](../jsrc/irisPairedFeatures.sc) | Interactive: pairs (scatterplot matrix) on the Fisher Iris dataset |
 | [`jsrc/airfoilNoise.sc`](../jsrc/airfoilNoise.sc) | Interactive: pairs (scatterplot matrix) on the UCI Airfoil Self-Noise dataset |
-| [`jsrc/gen-images.sc`](../jsrc/gen-images.sc) | Headless: regenerates all `docs/images/iris-*.png` (line, scatter, grouped-scatter, hist, bar, corr, box) |
+| [`jsrc/gen-images.sc`](../jsrc/gen-images.sc) | Headless: regenerates all `docs/images/iris-*.png` (line, scatter, grouped-scatter, hist, bar, corr, box, pairs) |

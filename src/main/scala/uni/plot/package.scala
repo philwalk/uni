@@ -383,8 +383,10 @@ extension (m: MatD)
   def pairs(
       title: String = "Scatterplot matrix",
       labels: Seq[String] = Nil,
-      bins: Int = 10, dotSize: Int = 3,
-      color: Color = new Color(31, 119, 180), scatterAlpha: Int = 80,
+      bins: Int = 10,
+      dotSize: Int = 3,
+      color: Color = new Color(31, 119, 180),
+      scatterAlpha: Int = 80,
       labelStyle: Int = Font.BOLD,
       saveTo: String = "",
       style: PlotStyle = PlotStyle(width = 1400, height = 600)

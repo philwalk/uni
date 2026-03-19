@@ -104,7 +104,7 @@ uni.Mat is built on the principle that developers shouldn't have to choose betwe
 
 ## Test Coverage
 
-Measured with `sbt jacoco` (1,826 tests). Branch coverage measures both true and false outcomes of every conditional, so it is typically lower than line coverage.
+Measured with `sbt jacoco` (1,980 tests). Branch coverage measures both true and false outcomes of every conditional, so it is typically lower than line coverage.
 Note: inline annotations were removed before running JaCoCo to prevent Scala 3's per-call-site bytecode duplication — where each call site gets its own branch counters — from artificially lowering reported coverage.
 
 | Package | Branch | Line |
@@ -145,6 +145,7 @@ libraryDependencies += "org.vastblue" %% "uni" % "0.11.0"
 | `np.random.randn(r,c)` | `MatD.randn(r, c)` | r×c matrix, standard normal |
 | `np.where(c, x, y)` | `MatD.where(c, x, y)` | Conditional selection |
 | `np.vstack` / `np.vsplit` | `MatD.vstack` / `m.vsplit(n)` | Row-wise stack / split |
+| `m.item()` | `m.item` | Extract scalar from 1×1 matrix |
 
 ## Quick Start
 

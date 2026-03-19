@@ -1,0 +1,75 @@
+package uni.data
+
+// NOTE: deliberately NO `import Mat.*` — tests the external (library-user) import
+// path where CVec/RVec methods are resolved via companion implicit scope, exactly
+// as scala-cli scripts and uni.plot resolve them.  The import Mat.* in CVecSuite
+// causes matFlatten (explicit import) to win over cvecFlatten (companion scope),
+// masking infinite-recursion bugs in the companion extensions.
+import uni.data.*
+
+class CVecExternalSuite extends munit.FunSuite:
+
+  // ── CVec ──────────────────────────────────────────────────────────────────
+
+  test("CVec.flatten — direct") {
+    val v: CVecD = CVec(1.0, 2.0, 3.0)
+    assertEquals(v.flatten.toSeq, Seq(1.0, 2.0, 3.0))
+  }
+
+  test("CVec.flatten — from column slice (the plot-package scenario)") {
+    val m = MatD((1.0, 4.0), (2.0, 5.0), (3.0, 6.0))
+    val col0 = m(::, 0)
+    assertEquals(col0.flatten.toSeq, Seq(1.0, 2.0, 3.0))
+    assertEquals(m(::, 1).flatten.toSeq, Seq(4.0, 5.0, 6.0))
+  }
+
+  test("CVec.toArray") {
+    val v: CVecD = CVec(1.0, 2.0, 3.0)
+    assertEquals(v.toArray.toSeq, Seq(1.0, 2.0, 3.0))
+  }
+
+  test("CVec.norm") {
+    val v: CVecD = CVec(3.0, 4.0)
+    assertEqualsDouble(v.norm, 5.0, 1e-10)
+  }
+
+  test("CVec.reshape") {
+    val v: CVecD = CVec(1.0, 2.0, 3.0, 4.0, 5.0, 6.0)
+    val m = v.reshape(2, 3)
+    assertEquals(m.rows, 2)
+    assertEquals(m.cols, 3)
+    assertEquals(m(0, 0), 1.0)
+    assertEquals(m(1, 2), 6.0)
+  }
+
+  // ── RVec ──────────────────────────────────────────────────────────────────
+
+  test("RVec.flatten — direct") {
+    val rv: RVecD = RVec(4.0, 5.0, 6.0)
+    assertEquals(rv.flatten.toSeq, Seq(4.0, 5.0, 6.0))
+  }
+
+  test("RVec.flatten — from row slice") {
+    val m = MatD((1.0, 2.0, 3.0), (4.0, 5.0, 6.0))
+    assertEquals(m(0, ::).flatten.toSeq, Seq(1.0, 2.0, 3.0))
+    assertEquals(m(1, ::).flatten.toSeq, Seq(4.0, 5.0, 6.0))
+  }
+
+  test("RVec.toArray") {
+    val rv: RVecD = RVec(4.0, 5.0, 6.0)
+    assertEquals(rv.toArray.toSeq, Seq(4.0, 5.0, 6.0))
+  }
+
+  test("RVec.norm") {
+    val rv: RVecD = RVec(3.0, 4.0)
+    assertEqualsDouble(rv.norm, 5.0, 1e-10)
+  }
+
+  test("RVec.reshape") {
+    val rv: RVecD = RVec(1.0, 2.0, 3.0, 4.0, 5.0, 6.0)
+    val m = rv.reshape(3, 2)
+    assertEquals(m.rows, 3)
+    assertEquals(m.cols, 2)
+    assertEquals(m(0, 0), 1.0)
+    assertEquals(m(2, 1), 6.0)
+  }

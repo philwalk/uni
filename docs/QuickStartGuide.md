@@ -361,6 +361,54 @@ val bigs = Mat[Big]((Big(1.5), Big(2.5)), (Big(3.5), Big(4.5)))
 val m = Mat[Double]((1, 2), (3, 4))   // Ints promoted to Double
 ```
 
+### Vector Types (CVec / RVec)
+
+`CVec[T]` (column vector, n×1) and `RVec[T]` (row vector, 1×n) are opaque types backed by `Mat[T]`.
+They enable type-safe BLAS-style dispatch — the `*@` operator returns the correct scalar or matrix
+based solely on static types, with no runtime branching.
+
+```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.11.0
+
+import uni.data.*
+
+val y: CVecD = CVec(1.0, 2.0, 3.0)   // 3×1 column vector
+val X: MatD  = MatD((2,0,0),(0,3,0),(0,0,4))
+
+// *@ dispatch: return type is determined by the operand types
+val q:     Double = y.T *@ X *@ y    // RVec *@ Mat → RVec, then RVec *@ CVec → Double (= 50.0)
+val q2:    Double = y *@ X *@ y      // auto-transpose: CVec *@ Mat → RVec, then RVec *@ CVec → Double
+val Xy:    CVecD  = X *@ y           // Mat  *@ CVec → CVec
+val yTX:   RVecD  = y.T *@ X        // RVec *@ Mat  → RVec
+val outer: MatD   = y *@ y.T         // CVec *@ RVec → outer-product Mat (3×3)
+val dot:   Double = y *@ y           // CVec *@ CVec → scalar (auto-transpose)
+
+// Arithmetic
+val sum = y + CVec(0.1, 0.2, 0.3)   // CVec + CVec → CVec
+val s2  = 2.0 * y                    // Double * CVec → CVec
+println(y.show)                      // "3x1 CVec[Double]: ..."
+```
+
+| Factory | Description |
+| :--- | :--- |
+| `CVec(1.0, 2.0, 3.0)` | from varargs |
+| `CVec.zeros[Double](n)` | n zeros |
+| `CVec.ones[Double](n)` | n ones |
+| `CVec.fromArray(arr)` | from `Array[T]` |
+| `CVec.fromMat(m)` | from n×1 or 1×n `Mat[T]` |
+
+`RVec` provides the same factory methods. Type aliases `CVecD = CVec[Double]` and `RVecD = RVec[Double]`.
+
+### Extracting a Scalar from a 1×1 Matrix
+
+```scala
+val a = MatD((3.0, 1.0), (1.0, 2.0))
+val trace = a.diagonal.sum         // 1×1 MatD
+val t: Double = trace.item         // extract the scalar (throws if not 1×1)
+```
+
 ### NumPy Translation Examples
 ```python
 # NumPy

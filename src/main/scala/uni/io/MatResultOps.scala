@@ -28,7 +28,11 @@ object matResultOps:
       }
       Mat.create(arr, rowIdxs.length, m.cols)
 
-  extension [T: ClassTag](mr: MatResult[T])(using frac: Fractional[T], @annotation.unused ord: Ordering[T])
+  extension [T](@annotation.unused mr: MatResult[T])(using 
+    @annotation.unused ct: ClassTag[T], 
+    @annotation.unused frac: Fractional[T], 
+    @annotation.unused ord: Ordering[T]
+  )
 
     /** Group rows by distinct values in `keyCol` and aggregate all other columns
      *  with a single operation.  Returns `MatResult[Double]`.

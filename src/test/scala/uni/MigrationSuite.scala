@@ -17,12 +17,14 @@ class MigrationSuite extends FunSuite:
 
   test("Iterator[String] converts to Seq") {
     val p = textFile.path
+    @annotation.nowarn // no deprecation warning here
     val seq: Seq[String] = p.lines
     assertEquals(seq, testSeq)
   }
 
   test("Iterator[String] can be sorted") {
     val p = textFile.path
+    @annotation.nowarn // no deprecation warning here
     val sorted: Seq[String] = p.lines.sorted
     assertEquals(sorted, testSeq.sorted)
   }

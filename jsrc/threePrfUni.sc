@@ -286,7 +286,7 @@ object ThreePrf {
       val XX = X *@ X.T
       val part1: VecD = XX.T *@ y
       val part2: Double = 1.0 / (y.T *@ XX *@ XX *@ y)
-      val part3: Double = (y.T *@ XX *@ y).item
+      val part3: Double = y.T *@ XX *@ y
       val y_hat: VecD = part1 * part2 * part3 + y.mean // Should y be demeaned?
       val alpha_hat: VecD = MatD.zeros(y_hat.size)
       (y_hat, alpha_hat)
