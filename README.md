@@ -81,6 +81,24 @@ MatD wins 7/8 operations vs NumPy and wins or ties all 7 scored vs Breeze (geome
 Only loss: `sum` vs NumPy (C-extension SIMD reduction is marginally faster).
 `matmul` is now tied with Breeze — switching from bytedeco to netlib JNIBLAS eliminated the prior overhead gap; both now call OpenBLAS at the same latency (~1.2 ms).
 
+### Linux (Intel Core i5-6500, Ubuntu 24.04, OpenBLAS)
+
+Breeze/MatD: Scala 3.8.2 / JVM 21, both using native OpenBLAS via netlib JNIBLAS.
+
+| Operation | Breeze | MatD | Bz/MD |
+| :--- | ---: | ---: | ---: |
+| `randn(1000×1000)` | 59.7 ms | 16.4 ms | 3.6× |
+| `matmul 512×512` | 1.86 ms | 1.80 ms | 1.03× |
+| `sigmoid(1000×1000)` | 8.70 ms | 3.68 ms | 2.4× |
+| `relu(1000×1000)` | 4.05 ms | 1.07 ms | 3.8× |
+| `add(1000×1000)` | 1.86 ms | 1.93 ms | 0.96× |
+| `sum(1000×1000)` | 1.17 ms | 1.36 ms | 0.86× |
+| `transpose(1000×1000)` | ≈0 ms | ≈0 ms | — |
+| custom fn (`mapParallel` / `map`) | 11.20 ms | 1.11 ms | 10.1× |
+
+MatD faster 5/7 scored, geometric mean **2.24× faster** than Breeze.
+`matmul` is tied (both use OpenBLAS via JNIBLAS). `add` and `sum` are marginal Breeze wins.
+
 ### 3PRF (Three-Pass Regression Filter)
 
 Measured on the same machine (JVM 21 / Scala 3.8.2 vs Python 3.14.3 / NumPy 2.4.2, scipy-openblas).
