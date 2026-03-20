@@ -1,7 +1,7 @@
 #!/usr/bin/env -S scala-cli shebang -deprecation
 
 //> using scala 3.8.2
-//> using dep org.vastblue:uni_3:0.9.5
+//> using dep org.vastblue:uni_3:0.10.1
 
 /**
  * MatD benchmark — counterpart to py/bench.py (NumPy/Python).
@@ -17,7 +17,7 @@
  *
  * Why results differ
  * ------------------
- * Matmul  : both use OpenBLAS (NumPy natively; MatD via bytedeco JNI)
+ * Matmul  : both use OpenBLAS (NumPy natively; MatD via Bytedeco or Netlib JNI)
  *           → results should be similar; JNI call overhead is small
  * Sigmoid : NumPy uses C + SIMD (AVX); JVM relies on JIT; gap varies by CPU
  * ReLU    : same as sigmoid — SIMD vs JIT
@@ -68,7 +68,7 @@ bench("randn(1000×1000)") {
   MatD.randn(N, N)
 }
 
-// 2. Matrix multiply — bytedeco → OpenBLAS JNI; similar pathway to NumPy
+// 2. Matrix multiply — bytedeco/netlib → OpenBLAS JNI; similar pathway to NumPy
 bench("matmul 512×512 @ 512×512") {
   A ~@ B
 }
@@ -107,7 +107,7 @@ bench("mapParallel custom fn (1000×1000)") {
 println("  " + "-" * 72)
 println("""
 Note: transpose is O(1) in both libraries (stride flip, no copy).
-      MatD matmul uses OpenBLAS via bytedeco (org.bytedeco:openblas-platform).
+      MatD matmul uses OpenBLAS via Netlib (org.bytedeco:openblas-platform).
       NumPy matmul uses OpenBLAS (or MKL if present in your install).
       JVM results improve significantly after warmup; first run will be slower.
       mapParallel vs np.vectorize: JVM wins because np.vectorize is a Python loop.
