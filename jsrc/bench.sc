@@ -1,8 +1,7 @@
 #!/usr/bin/env -S scala-cli shebang -deprecation
 
 //> using scala 3.8.2
-//> using javaOpt --add-modules jdk.incubator.vector
-//> using dep org.vastblue:uni_3:0.11.0
+//> using dep org.vastblue:uni_3:0.9.5
 
 /**
  * MatD benchmark — counterpart to py/bench.py (NumPy/Python).
@@ -33,8 +32,8 @@ import uni.data.*
 val N  = 1000   // square size for element-wise / reduction ops
 val MM = 512    // matmul side length (512³ ≈ 134M multiplications)
 
-val WARMUP = 15
-val ITERS  = 20
+val WARMUP = 16
+val ITERS  = 240
 
 // ── timing helper ─────────────────────────────────────────────────────────────
 
@@ -59,7 +58,7 @@ val M2 = MatD.randn(N,  N)
 
 // ── benchmark suite ───────────────────────────────────────────────────────────
 
-println(s"\nuni.MatD 0.9.6  Scala 3.8.2   JVM ${System.getProperty("java.version")}")
+println(s"\nuni.MatD 0.9.5   Scala 3.7.0   JVM ${System.getProperty("java.version")}")
 println(s"N=$N  MM=$MM  warmup=$WARMUP  iters=$ITERS\n")
 println("  " + "-" * 72)
 
@@ -71,7 +70,7 @@ bench("randn(1000×1000)") {
 
 // 2. Matrix multiply — bytedeco → OpenBLAS JNI; similar pathway to NumPy
 bench("matmul 512×512 @ 512×512") {
-  A *@ B
+  A ~@ B
 }
 
 // 3. Sigmoid — element-wise 1/(1+e^-x) over 1M elements

@@ -256,8 +256,11 @@ object Mat {
   def inspect[T: ClassTag]: String =
     s"Mat(${rows}x${cols}, offset=$offset, rs=$rs, cs=$cs, transposed=$transposed)"
 
-  private lazy val blasThreshold:     Long = System.getProperty("uni.mat.blasThreshold",     "216").toLong
-  private lazy val blasThinThreshold: Long = System.getProperty("uni.mat.blasThinThreshold", "384").toLong
+  // Crossover is higher on macOS/Accelerate (JNI overhead amortises later) than on Windows/Linux+OpenBLAS.
+  // Mac measured: square Double=1728, thin=768. Windows/Linux: square=216, thin=384.
+  private lazy val isMacOS = System.getProperty("os.name", "").toLowerCase.startsWith("mac")
+  private lazy val blasThreshold:     Long = System.getProperty("uni.mat.blasThreshold",     if isMacOS then "1728" else "216").toLong
+  private lazy val blasThinThreshold: Long = System.getProperty("uni.mat.blasThinThreshold", if isMacOS then "768"  else "384").toLong
 
   /** Returns m if already BLAS-safe (offset=0, standard strides), else a fresh contiguous copy. */
   private def blasReady(m: Mat[Double]): Mat[Double] =
@@ -276,42 +279,7 @@ object Mat {
       var i = 0; while i < rows do { var j = 0; while j < cols do { arr(i*cols+j) = m(i,j); j+=1 }; i+=1 }
       Mat.create(arr, rows, cols)
 
-  /** Thread-local direct ByteBuffers reused across BLAS calls to avoid
-   *  per-call native malloc/free.  Each buffer grows on demand, never shrinks.
-   *  Wrapping a direct buffer in DoublePointer / FloatPointer is zero-copy:
-   *  JavaCPP reads the stable native address via DirectBuffer.address(). */
-  private object DirectBufs:
-    import java.nio.{ByteBuffer, ByteOrder, DoubleBuffer, FloatBuffer}
-
-    private def mkD(n: Int): DoubleBuffer =
-      ByteBuffer.allocateDirect(n * 8).order(ByteOrder.nativeOrder).asDoubleBuffer
-    private def mkF(n: Int): FloatBuffer =
-      ByteBuffer.allocateDirect(n * 4).order(ByteOrder.nativeOrder).asFloatBuffer
-
-    private val dA = ThreadLocal.withInitial[DoubleBuffer](() => mkD(256))
-    private val dB = ThreadLocal.withInitial[DoubleBuffer](() => mkD(256))
-    private val dC = ThreadLocal.withInitial[DoubleBuffer](() => mkD(256))
-    private val fA = ThreadLocal.withInitial[FloatBuffer] (() => mkF(256))
-    private val fB = ThreadLocal.withInitial[FloatBuffer] (() => mkF(256))
-    private val fC = ThreadLocal.withInitial[FloatBuffer] (() => mkF(256))
-
-    private def ensureD(tl: ThreadLocal[DoubleBuffer], n: Int): DoubleBuffer =
-      val b = tl.get
-      if b.capacity >= n then { b.position(0); b }
-      else { val nb = mkD(n); tl.set(nb); nb }
-
-    private def ensureF(tl: ThreadLocal[FloatBuffer], n: Int): FloatBuffer =
-      val b = tl.get
-      if b.capacity >= n then { b.position(0); b }
-      else { val nb = mkF(n); tl.set(nb); nb }
-
-    def forDA(a: Array[Double]): DoubleBuffer = ensureD(dA, a.length).put(a).position(0)
-    def forDB(b: Array[Double]): DoubleBuffer = ensureD(dB, b.length).put(b).position(0)
-    def forDC(n: Int):           DoubleBuffer = ensureD(dC, n)
-
-    def forFA(a: Array[Float]):  FloatBuffer  = ensureF(fA, a.length).put(a).position(0)
-    def forFB(b: Array[Float]):  FloatBuffer  = ensureF(fB, b.length).put(b).position(0)
-    def forFC(n: Int):           FloatBuffer  = ensureF(fC, n)
+  private val netlib = dev.ludovic.netlib.blas.BLAS.getInstance()
 
   def vstack[U: ClassTag](matrices: Mat[U]*): Mat[U] = {
     require(matrices.nonEmpty, "vstack requires at least one matrix")
@@ -2198,46 +2166,36 @@ object Mat {
       ops >= (if minDim >= 6 then blasThreshold else blasThinThreshold)
 
     private[data] def multiplyDoubleBLAS(other: Mat[Double]): Mat[Double] = {
-      import org.bytedeco.openblas.global.openblas.*
-      import org.bytedeco.javacpp.*
       val am = Mat.blasReady(m.asInstanceOf[Mat[Double]])
       val bm = Mat.blasReady(other)
       val a = am.tdata.asInstanceOf[Array[Double]]
       val b = bm.tdata.asInstanceOf[Array[Double]]
       val rowsA = am.rows; val colsA = am.cols; val colsB = bm.cols
       val result = new Array[Double](rowsA * colsB)
-      val transA = if am.transposed then CblasTrans else CblasNoTrans
-      val transB = if bm.transposed then CblasTrans else CblasNoTrans
+      val transA = if am.transposed then "T" else "N"
+      val transB = if bm.transposed then "T" else "N"
       val ldA = if am.transposed then am.rows else am.cols
       val ldB = if bm.transposed then bm.rows else bm.cols
-      val pA = new DoublePointer(DirectBufs.forDA(a))
-      val pB = new DoublePointer(DirectBufs.forDB(b))
-      val pC = new DoublePointer(DirectBufs.forDC(result.length))
-      cblas_dgemm(CblasRowMajor, transA, transB, rowsA, colsB, colsA,
-        1.0, pA, ldA, pB, ldB, 0.0, pC, colsB)
-      pC.get(result) // no close() — we don't own the backing native memory
+      // row-major C=A*B  →  col-major dgemm: swap operands and trans flags
+      Mat.netlib.dgemm(transB, transA, colsB, rowsA, colsA,
+        1.0, b, 0, ldB, a, 0, ldA, 0.0, result, 0, colsB)
       Mat.create(result, rowsA, colsB)
     }
 
     private[data] def multiplyFloatBLAS(other: Mat[Float]): Mat[Float] = {
-      import org.bytedeco.openblas.global.openblas.*
-      import org.bytedeco.javacpp.*
       val am = Mat.blasReadyF(m.asInstanceOf[Mat[Float]])
       val bm = Mat.blasReadyF(other)
       val a = am.tdata.asInstanceOf[Array[Float]]
       val b = bm.tdata.asInstanceOf[Array[Float]]
       val rowsA = am.rows; val colsA = am.cols; val colsB = bm.cols
       val result = new Array[Float](rowsA * colsB)
-      val transA = if am.transposed then CblasTrans else CblasNoTrans
-      val transB = if bm.transposed then CblasTrans else CblasNoTrans
+      val transA = if am.transposed then "T" else "N"
+      val transB = if bm.transposed then "T" else "N"
       val ldA = if am.transposed then am.rows else am.cols
       val ldB = if bm.transposed then bm.rows else bm.cols
-      val pA = new FloatPointer(DirectBufs.forFA(a))
-      val pB = new FloatPointer(DirectBufs.forFB(b))
-      val pC = new FloatPointer(DirectBufs.forFC(result.length))
-      cblas_sgemm(CblasRowMajor, transA, transB, rowsA, colsB, colsA,
-        1.0f, pA, ldA, pB, ldB, 0.0f, pC, colsB)
-      pC.get(result) // no close() — we don't own the backing native memory
+      // row-major C=A*B  →  col-major sgemm: swap operands and trans flags
+      Mat.netlib.sgemm(transB, transA, colsB, rowsA, colsA,
+        1.0f, b, 0, ldB, a, 0, ldA, 0.0f, result, 0, colsB)
       Mat.create(result, rowsA, colsB)
     }
 

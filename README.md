@@ -63,12 +63,13 @@ and [Plot Guide](docs/PlotGuide.md) for the full `PlotStyle` API.
 ### Core matrix operations
 
 NumPy: Python 3.14.3 / NumPy 2.4.2 (see [`py/bench.py`](py/bench.py)).
-Breeze/MatD: Scala 3.8.2 / JVM 21, both using native OpenBLAS (see [`jsrc/breezeBench.sc`](jsrc/breezeBench.sc)).
+Breeze/MatD: Scala 3.8.2 / JVM 21, both using native OpenBLAS via netlib JNIBLAS (see [`jsrc/benchBreeze.sc`](jsrc/benchBreeze.sc)).
+NOTE: v0.10.1 and prior use Bytedeco OpenBLAS, 
 
 | Operation | NumPy | Breeze | MatD |
 | :--- | ---: | ---: | ---: |
 | `randn(1000×1000)` | 21 ms | 51 ms | 15 ms |
-| `matmul 512×512` | 1.4 ms | 1.2 ms | 1.7 ms |
+| `matmul 512×512` | 1.4 ms | 1.2 ms | 1.2 ms |
 | `sigmoid(1000×1000)` | 12 ms | 11.7 ms | 2.0 ms |
 | `relu(1000×1000)` | 2.0 ms | 3.7 ms | 0.8 ms |
 | `add(1000×1000)` | 2.1 ms | 1.6 ms | 1.4 ms |
@@ -76,8 +77,9 @@ Breeze/MatD: Scala 3.8.2 / JVM 21, both using native OpenBLAS (see [`jsrc/breeze
 | `transpose(1000×1000)` | ≈0 ms | ≈0 ms | ≈0 ms |
 | custom fn (`mapParallel` / `map` / `np.vectorize`) | 162 ms | 10.2 ms | 1.0 ms |
 
-MatD wins 6/8 operations vs NumPy and 6/7 scored vs Breeze (geometric mean **3× faster** than Breeze).
-Losses: `matmul` (row-major layout requires a pre-transpose before BLAS; Breeze column-major and NumPy's transA/transB flags avoid this cost) and `sum` (NumPy C-extension reduction is marginally faster).
+MatD wins 7/8 operations vs NumPy and wins or ties all 7 scored vs Breeze (geometric mean **~3.1× faster** than Breeze).
+Only loss: `sum` vs NumPy (C-extension SIMD reduction is marginally faster).
+`matmul` is now tied with Breeze — switching from bytedeco to netlib JNIBLAS eliminated the prior overhead gap; both now call OpenBLAS at the same latency (~1.2 ms).
 
 ### 3PRF (Three-Pass Regression Filter)
 
@@ -123,6 +125,32 @@ Add the following to your `build.sbt`:
 ```scala
 libraryDependencies += "org.vastblue" %% "uni" % "0.11.0"
 ```
+
+### Native BLAS backend
+
+`uni` uses [netlib-java](https://github.com/lucidfrontier45/netlib-java) for matrix multiply. The native backend is selected automatically:
+
+| Platform | Backend | User action |
+|----------|---------|-------------|
+| macOS | Accelerate framework (always present) | None |
+| Windows | VectorBLAS (Java Vector API SIMD) | None — see note below |
+| Linux | `libblas.so.3` resolved by the system linker | See below |
+
+**Linux:** `libblas.so.3` is a system symlink managed by `update-alternatives`. For maximum performance install an optimized BLAS and let the alternatives system point the symlink at it:
+
+```bash
+# Ubuntu / Debian — installs OpenBLAS and sets libblas.so.3 → libopenblas.so.3
+sudo apt-get install libopenblas0
+```
+
+Without this, `libblas.so.3` may resolve to the slow single-threaded reference BLAS. If `libblas.so.3` is missing entirely, `uni` falls back to a pure-JVM BLAS (correct but slower).
+
+> **Windows note (0.11.0):** Native OpenBLAS support for Windows has merged in the
+> netlib upstream but is pending publication (expected as 3.1.2). In the meantime,
+> `uni 0.11.0` uses `VectorBLAS` (Java Vector API SIMD, JDK 21+) for matrix multiply —
+> correct and faster than scalar Java, but slower than native OpenBLAS for large matrices.
+> A `uni` patch will update to 3.1.2 once it is published. Prior to 0.11.0, `uni` used
+> `bytedeco/openblas-platform` which bundled native OpenBLAS for Windows automatically.
 
 ## Advanced Usage
 

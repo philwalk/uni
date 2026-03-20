@@ -5,8 +5,8 @@
 //> using javaOpt --add-modules jdk.incubator.vector
 //> using javaOpt -Ddev.ludovic.netlib.blas.nativeLib=libopenblas.dll
 ////> using javaOpt -verbose:jni
-//> using repository file:///C:/Users/philwalk/.m2-netlib
-//> using dep dev.ludovic.netlib:blas:3.1.2
+//> using repository m2Local
+//> using dep dev.ludovic.netlib:blas:3.1.1
 //> using dep org.vastblue:uni_3:0.11.0
 //> using dep org.scalanlp::breeze:2.1.0
 
@@ -54,8 +54,8 @@ val jniBlasFailed = try {
 
 val N      = 1000   // square size for element-wise / reduction ops
 val MM     = 512    // matmul side length (512³ ≈ 134M multiplications)
-val WARMUP = 15
-val ITERS  = 20
+val WARMUP = 16
+val ITERS  = 80
 
 // ── timing helper — returns minimum ms ───────────────────────────────────────
 def minMs(op: => Any): Double =

@@ -72,6 +72,11 @@ Compile / packageBin / packageOptions +=
 
 Test / parallelExecution := false // PathSpec tests use modal test mode for Paths.get behavior
 
+// Enable Java Vector API (used by netlib VectorBLAS for SIMD-accelerated BLAS)
+val vectorApiOpts = Seq("--add-modules=jdk.incubator.vector")
+Test / javaOptions ++= vectorApiOpts
+javaOptions        ++= vectorApiOpts
+
 // tell MUnit to be quiet (it uses the same arguments as ScalaTest)
 
 lazy val root = (project in file(".")).
@@ -97,6 +102,7 @@ lazy val root = (project in file(".")).
 Test / testOptions += Tests.Argument(TestFrameworks.MUnit, "-q")
 
 libraryDependencies ++= Seq(
+  "dev.ludovic.netlib"       % "blas"                       % "3.1.1",
   "org.bytedeco"             % "openblas-platform"          % "0.3.31-1.5.13",
   "org.scala-lang.modules"  %% "scala-parallel-collections" % "1.2.0",
   "org.knowm.xchart"         % "xchart"                     % "3.8.8",
