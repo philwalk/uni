@@ -1,8 +1,6 @@
 package uni.data
 
 import munit.FunSuite
-import uni.data.Mat
-import uni.data.Mat.*
 import uni.data.MatD
 import java.nio.file.Files
 import uni.*

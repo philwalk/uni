@@ -1,7 +1,6 @@
 package uni.data
 
 import munit.FunSuite
-import Mat.*
 import uni.data.Big.*
 
 /** Covers Mat.scala branches not yet reached: in-place Float/Big ops, axis Bool methods,

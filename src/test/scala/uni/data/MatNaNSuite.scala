@@ -1,7 +1,6 @@
 package uni.data
 
 import munit.FunSuite
-import Mat.*
 import uni.data.Big.*
 
 /** Covers containsNaN, hasNaN, inspect and related branches in Mat.scala. */

@@ -1,7 +1,6 @@
 package uni.data
 
 import munit.FunSuite
-import Mat.*
 import uni.data.Big.*
 
 /** Covers slow-path activation functions, Float/Big math dispatch branches,

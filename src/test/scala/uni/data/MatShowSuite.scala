@@ -1,7 +1,6 @@
 package uni.data
 
 import munit.FunSuite
-import Mat.*
 
 final class MatShowSuite extends FunSuite {
   type D = Double

@@ -1,7 +1,5 @@
 package uni.data
 
-import Mat.*
-
 class MatTest extends munit.FunSuite {
   
   // ============================================================================

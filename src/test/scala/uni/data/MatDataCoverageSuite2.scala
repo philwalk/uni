@@ -1,7 +1,6 @@
 package uni.data
 
 import munit.FunSuite
-import Mat.*
 //import uni.data.Big.*
 
 /** Covers Mat.scala branches not reached by MatTest, MatCoverageSuite, or MatNaNSuite.

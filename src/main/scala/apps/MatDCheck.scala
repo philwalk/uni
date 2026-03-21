@@ -4,7 +4,6 @@ package uni.apps
 //> using dep org.vastblue:uni_3:0.11.1
 
 import uni.data.*
-import uni.data.Mat.*
 
 object MatDCheck {
   def main(args: Array[String]): Unit = {

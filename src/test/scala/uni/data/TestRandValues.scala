@@ -1,6 +1,5 @@
 package uni.data
 
-import Mat.*
 class TestRandValues extends munit.FunSuite {
   /**
    * Checks if 'python' is available AND has numpy installed.

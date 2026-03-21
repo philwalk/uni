@@ -2,7 +2,6 @@ package uni.stats
 
 import munit.FunSuite
 import uni.data.*
-import uni.data.Mat.*
 import uni.stats.Tprf3.*
 
 /** Coverage suite for uni.stats.Tprf3: Lm, tprfClosedForm, t3prf, estimate3prf,

@@ -13,7 +13,6 @@ s[0-9]*
 _vb
 tags
 .scala-build
-
 sonatype.sbt
 # classpath @files come in Windows/EverybodyElse versions
 classpathAtfile*
@@ -92,3 +91,17 @@ kp_rsquare.csv
 kp_yhat.csv
 tprf3-refactor-plan.txt
 xmlReport/
+airfoil_self_noise.csv
+asterisk.sc
+ctr.sc
+doc/broadcastRowsColsPlan.txt
+dot-jvmopts
+dot-vscode/
+import-concerns-plus-claude-thoughts.txt
+netlib-info.txt
+notes-claude.txt
+removedTests.txt
+uni.code-workspace
+vec-design-plan.txt
+vector-returning-ops.txt
+warnings.txt

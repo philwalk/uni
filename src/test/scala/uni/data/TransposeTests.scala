@@ -1,7 +1,5 @@
 package uni.data
 
-import Mat.*
-
 class TransposeTests extends munit.FunSuite {
   test("element access on transposed matrix") {
     val m = Mat[Double]((1, 2, 3), (4, 5, 6))

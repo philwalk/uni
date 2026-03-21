@@ -6,7 +6,7 @@ import uni.io.FileOps.*
 
 //export Mat.MatD as MatD
 import uni.data.Big.Big
-export Mat.{Mat, `::`, ColsView, RowsView, CVec, RVec, Vec, RowVec, ColVec, rows, cols, shape, shapes, size, isEmpty, transposed, isContiguous, apply}
+export Mat.{Mat, `::`, `~^`, ColsView, RowsView, CVec, RVec, Vec, RowVec, ColVec, rows, cols, shape, shapes, size, isEmpty, transposed, isContiguous, apply}
 export MatD.leastSquares
 
 object Mat {

@@ -1,7 +1,6 @@
 package uni.data
 
 import munit.FunSuite
-import Mat.*
 
 /** Tests for mapCols, mapRows, m(::, *).map(f), m(*, ::).map(f),
  *  and arithmetic operators on ColsView / RowsView with auto-orientation. */

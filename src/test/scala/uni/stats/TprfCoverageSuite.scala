@@ -2,7 +2,6 @@ package uni.stats
 
 import munit.FunSuite
 import uni.data.*
-import uni.data.Mat.*
 import uni.stats.Tprf3.*
 
 /** Targets the 585 missed branches in uni.stats.Tprf3 that TprfSuite doesn't reach:

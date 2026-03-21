@@ -2,7 +2,6 @@ package uni.data
 
 import munit.FunSuite
 import uni.data.*
-import Mat.*
 import uni.data.Big.*
 
 /** Coverage suite for Mat methods that are absent from existing test files.

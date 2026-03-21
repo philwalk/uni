@@ -1,7 +1,5 @@
 package uni.data
 
-import Mat.*
-
 import munit.FunSuite
 class DefaultDoubleTests extends FunSuite {
   test("matrix factory taking a single scalar value of type Double") {
