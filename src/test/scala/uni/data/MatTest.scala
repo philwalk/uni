@@ -2849,7 +2849,7 @@ class MatTest extends munit.FunSuite {
     var col = 0
     while col < 2 do
       if math.abs(wi(col)) < 1e-10 then  // only check real eigenvalues
-        val v   = vr(::, col)
+        val v   = vr(::, col).toMat
         val av  = m *@ v
         val lv  = v * wr(col)
         assert(av.allclose(lv, atol = 1e-8), s"A*v != lambda*v for col $col")
@@ -3196,7 +3196,7 @@ class MatTest extends munit.FunSuite {
 
   test("toRowVec does not share data with original") {
     val m = Mat.col[Double](1, 2, 3)
-    val r = m.toRowVec
+    val r = m.toRowVec.toMat
     r(0, 0) = 99.0
     assertEqualsDouble(m(0, 0), 1.0, 1e-10, "original unchanged")
   }

@@ -3,17 +3,19 @@
 //> using jvm 21
 //> using scala 3.8.2
 //> using javaOpt --add-modules jdk.incubator.vector
+//> using javaOpt -Ddev.ludovic.netlib.blas.nativeLib=libopenblas.dll
 ////> using javaOpt -verbose:jni
 //> using repository m2Local
 //> using dep dev.ludovic.netlib:blas:3.1.1
-////> using dep org.vastblue:uni_3:0.11.1
 //> using dep org.vastblue:uni_3:0.11.1
 //> using dep org.scalanlp::breeze:2.1.0
 
 /**
  * MatD vs Breeze benchmark — side-by-side comparison of 8 core operations.
  *
- * Run:   scala-cli bench.sc
+ * Run:   scala-cli jsrc/benchBreeze.sc
+ * For MatD with Bytedeco OpenBLAS, run:   scala-cli benchMatmulBytedeco.sc
+ * For MatD with Netlib   OpenBLAS, run:   scala-cli benchMatmulNetlib.sc
  *
  * Bz/MD < 1.0 → Breeze faster;  Bz/MD > 1.0 → MatD faster
  *
@@ -35,10 +37,10 @@
 
 import scala.collection.mutable.ArrayBuffer
 import uni.data.*
-import breeze.linalg.{DenseMatrix, sum as bzSum}
+import breeze.linalg.DenseMatrix
 import breeze.stats.distributions.Gaussian
 import breeze.stats.distributions.Rand.VariableSeed.randBasis
-import breeze.numerics.{sigmoid as bzSigmoid}
+//import breeze.numerics.{sigmoid as bzSigmoid}
 
 // ── detect BLAS backend silently (before printing anything) ───────────────────
 // JNIBLAS is package-private so we use the public BLAS.getInstance() and inspect class name
@@ -102,86 +104,9 @@ println(s"N=$N  MM=$MM  warmup=$WARMUP  iters=$ITERS  (times = min ms)\n")
 println(f"  ${"Operation"}%-40s  ${"MatD(ms)"}%7s    ${"Bz(ms)"}%7s    ${"Bz/MD"}%5s")
 println("  " + "-" * 74)
 
-// 1. Random generation — PCG64 (MatD) vs Gaussian sampler (Breeze)
-row("randn(1000×1000)") {
-  MatD.setSeed(42)
-  MatD.randn(N, N)
-} {
-  DenseMatrix.rand[Double](N, N, normalDist)
-}
-
-// 2. Matrix multiply — OpenBLAS in both; MatD via bytedeco JNI, Breeze via netlib-java
-row("matmul 512×512 @ 512×512") {
-  A *@ B
+// Matrix multiply — OpenBLAS in both; MatD via bytedeco JNI, Breeze via netlib-java
+row("Netlib:   matmul 512×512 @ 512×512") {
+  A *@ B // the new multiply operator!  (changed from ~@ at v0.11.0)
 } {
   bzA * bzB
 }
-
-// 3. Sigmoid — parallel fork/join (MatD) vs sequential UFunc (Breeze)
-row("sigmoid(1000×1000)") {
-  M.sigmoid
-} {
-  bzSigmoid(bzM)
-}
-
-// 4. ReLU — parallel (MatD) vs sequential map (Breeze; no built-in relu)
-row("relu(1000×1000)") {
-  M.relu
-} {
-  bzM.map(x => math.max(0.0, x))
-}
-
-// 5. Element-wise add — parallel (MatD) vs sequential (Breeze)
-row("add 1000×1000 + 1000×1000") {
-  M + M2
-} {
-  bzM + bzM2
-}
-
-// 6. Sum reduction
-row("sum(1000×1000)") {
-  M.sum
-} {
-  bzSum(bzM)
-}
-
-// 7. Transpose — O(1) stride/isTranspose flag in both; near-zero cost
-row("transpose 1000×1000  [O(1)]") {
-  M.T
-} {
-  bzM.t
-}
-
-// 8. Custom map fn — parallel fork/join (MatD) vs sequential (Breeze)
-row("map custom fn (1000×1000)") {
-  M.mapParallel(x => x * x + 2 * x + 1.0)
-} {
-  bzM.map(x => x * x + 2 * x + 1.0)
-}
-
-println("  " + "-" * 74)
-
-// ── dynamic summary ───────────────────────────────────────────────────────────
-val scored   = results.filter(_.scoreable).toVector
-val matdWon  = scored.count(_.ratio > 1.0)
-val bzWon    = scored.count(_.ratio < 1.0)
-val geoMean  = math.exp(scored.map(r => math.log(r.ratio)).sum / scored.size)
-val best     = scored.maxBy(_.ratio)
-val closest  = scored.minBy(r => math.abs(r.ratio - 1.0))
-val skipped  = results.filterNot(_.scoreable).map(_.label.trim)
-val backend  = if jniBlasFailed then "VECTORAPIBLAS (JNIBLAS unavailable)" else "JNIBLAS (native OpenBLAS)"
-
-println(s"\nSummary (${scored.size}/${results.size} operations scored):")
-if skipped.nonEmpty then
-  println(s"  Excluded (O(1) / sub-50µs): ${skipped.mkString(", ")}")
-println(f"  MatD faster:    $matdWon%d/${scored.size}%d   geometric mean Bz/MD = $geoMean%.2f×")
-if bzWon > 0 then
-  val wins = scored.filter(_.ratio < 1.0).map(r => f"${r.label.trim} (${r.ratio}%.2f×)").mkString(", ")
-  println(f"  Breeze faster:  $bzWon%d/${scored.size}%d   ($wins)")
-else
-  println(f"  Breeze faster:  0/${scored.size}%d")
-println(f"  Biggest MatD lead:  ${best.label.trim} (${best.ratio}%.1f×)")
-println(f"  Closest contest:    ${closest.label.trim} (${closest.ratio}%.2f×)")
-println(s"  Breeze BLAS backend: $backend")
-if jniBlasFailed then
-  println("  (matmul gap reflects BLAS fallback; other gaps are parallel vs sequential)")

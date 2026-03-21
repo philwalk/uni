@@ -73,3 +73,38 @@ class CVecExternalSuite extends munit.FunSuite:
     assertEquals(m(0, 0), 1.0)
     assertEquals(m(2, 1), 6.0)
   }
+
+  // ── *@ dispatch via import uni.data.* (quadratic form) ───────────────────────
+
+  test("same-package: y.T returns RVecD explicitly") {
+    val y: CVecD  = CVec(1.0, 2.0, 3.0)
+    val yT: RVecD = y.T
+    assertEquals(yT(0), 1.0)
+  }
+
+  test("quadratic form: y.T *@ X *@ y = Double (import uni.data.*)") {
+    val y: CVecD = CVec(1.0, 2.0, 3.0)
+    val X: MatD  = MatD((2,0,0),(0,3,0),(0,0,4))
+    val q: Double = y.T *@ X *@ y
+    assertEquals(q, 50.0)
+  }
+
+  // ── object * export — m(*, ::) must work after `import uni.data.*` ──────────
+
+  def center(data: MatD): MatD =
+    val centers = data.mean(axis = 0).T   // cols×1
+    data(*, ::) - centers                 // RowsView auto-normalises orientation
+
+  test("center function: data(*, ::) - mean(axis=0).T gives zero column means") {
+    val data = MatD((1.0, 2.0, 3.0), (4.0, 5.0, 6.0), (7.0, 8.0, 9.0))
+    val c = center(data)
+    for j <- 0 until c.cols do
+      assertEqualsDouble(c.mean(axis = 0)(0, j), 0.0, 1e-10)
+  }
+
+  test("center function: data(*, ::) - mean(axis=0) (no .T) gives same result") {
+    val data = MatD((1.0, 2.0, 3.0), (4.0, 5.0, 6.0), (7.0, 8.0, 9.0))
+    val c = data(*, ::) - data.mean(axis = 0)
+    for j <- 0 until c.cols do
+      assertEqualsDouble(c.mean(axis = 0)(0, j), 0.0, 1e-10)
+  }

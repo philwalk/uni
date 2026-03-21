@@ -1,7 +1,7 @@
 #!/usr/bin/env -S scala-cli shebang -deprecation
 
 //> using scala 3.8.2
-//> using dep org.vastblue:uni_3:0.10.1
+//> using dep org.vastblue:uni_3:0.11.1
 
 /**
  * MatD benchmark — counterpart to py/bench.py (NumPy/Python).
@@ -70,7 +70,7 @@ bench("randn(1000×1000)") {
 
 // 2. Matrix multiply — bytedeco/netlib → OpenBLAS JNI; similar pathway to NumPy
 bench("matmul 512×512 @ 512×512") {
-  A ~@ B
+  A *@ B
 }
 
 // 3. Sigmoid — element-wise 1/(1+e^-x) over 1M elements

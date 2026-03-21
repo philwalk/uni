@@ -1,0 +1,38 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+Mar 20, 2026 12:51:07 PM dev.ludovic.netlib.blas.InstanceBuilder <clinit>
+INFO: Using dev.ludovic.netlib.blas.JNIBLAS
+
+MatD 0.9.6 vs Breeze 2.1.0   Scala 3.8.2   JVM 21.0.9
+N=1000  MM=512  warmup=16  iters=80  (times = min ms)
+
+  Operation                                 MatD(ms)     Bz(ms)    Bz/MD
+  --------------------------------------------------------------------------
+  randn(1000×1000)                            16.42      59.72     3.64
+  matmul 512×512 @ 512×512                     1.80       1.86     1.03
+  sigmoid(1000×1000)                           3.68       8.70     2.37
+  relu(1000×1000)                              1.07       4.05     3.78
+  add 1000×1000 + 1000×1000                    1.93       1.86     0.96
+  sum(1000×1000)                               1.36       1.17     0.86
+  transpose 1000×1000  [O(1)]                  0.00       0.00     2.54
+  map custom fn (1000×1000)                    1.11      11.20    10.08
+  --------------------------------------------------------------------------
+
+Summary (7/8 operations scored):
+  Excluded (O(1) / sub-50µs): transpose 1000×1000  [O(1)]
+  MatD faster:    5/7   geometric mean Bz/MD = 2.24×
+  Breeze faster:  2/7   (add 1000×1000 + 1000×1000 (0.96×), sum(1000×1000) (0.86×))
+  Biggest MatD lead:  map custom fn (1000×1000) (10.1×)
+  Closest contest:    matmul 512×512 @ 512×512 (1.03×)
+  Breeze BLAS backend: JNIBLAS (native OpenBLAS)
+
+Kernel: 6.8.0-101-generic arch: x86_64 bits: 64 compiler: gcc v: 13.3.0
+Desktop: Cinnamon v: 6.4.8 Distro: Linux Mint 22.1 Xia
+base: Ubuntu 24.04 noble
+Type: Desktop Mobo: ASUSTeK model: MAXIMUS VIII GENE v: Rev 1.xx
+Info: quad core model: Intel Core i5-6500 bits: 64 type: MCP arch: Skylake-S
+rev: 3 cache: L1: 256 KiB L2: 1024 KiB L3: 6 MiB
+Speed (MHz): avg: 2782 high: 3501 min/max: 800/3600 cores: 1: 3327 2: 3500 3: 800 4: 3501 bogomips: 25599
+Flags: avx avx2 ht lm nx pae sse sse2 sse3 sse4_1 sse4_2 ssse3
+Memory: total: 48 GiB available: 46.92 GiB used: 3.75 GiB (8.0%)
+Packages: 2794 Compilers: clang: 18.1.3 gcc: 13.3.0 Shell: Bash v: 5.2.21
+

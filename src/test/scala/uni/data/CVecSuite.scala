@@ -1,7 +1,6 @@
 package uni.data
 
 import uni.data.*
-import Mat.*
 
 class CVecSuite extends munit.FunSuite:
 

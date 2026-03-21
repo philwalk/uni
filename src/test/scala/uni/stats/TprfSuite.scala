@@ -183,7 +183,7 @@ class TprfSuite extends FunSuite:
 
   test("t3prf: estimateYhat(oos) returns a finite Double") {
     // Use tf.X (which is Xn) instead of the raw X
-    val oos = tf.X(0, ::).T
+    val oos = tf.X(0, ::).T.toMat
     assert(tf.estimateYhat(oos).isFinite)
   }
 

@@ -1,6 +1,5 @@
 package uni.data
 import uni.data.*
-import uni.data.Mat.*
 // Minimal reproduction of the TprfRunner pattern
 object MinimalTest {
   def test(): Unit = {
@@ -20,7 +19,12 @@ object MinimalTest {
     val rvAdd: RVec[Double] = rv1 + rv2            // Does RVec + RVec work?
     @annotation.unused
     val rvMul: RVec[Double] = rv1 * pf             // Does RVec * scalar work?
-    val rvExpr: RVec[Double] = rv1 * pf + rv2      // Does combined expr work?
+    // Combined expr: break into two steps (Scala 3 doesn't propagate RVec expected
+    // type into inner subexpression of chained operators without an intermediate val).
+    // The real TprfRunner pattern `f(t,::)=rv*s+rv2` uses Mat[T] expected type which
+    // propagates correctly (see line 26 below which compiles fine).
+    val rvMulPf: RVec[Double] = rv1 * pf
+    val rvExpr: RVec[Double] = rvMulPf + rv2
     // Step 2: does update with explicit RVec work?
     f(1, ::) = rvExpr                               // Does update(Int, ::, RVec) work?
     // Step 3: does the inline form work?

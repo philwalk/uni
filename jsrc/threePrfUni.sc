@@ -1,7 +1,8 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -deprecation
 //#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.11.0
+//> using scala 3.7.0
+//> using dep org.vastblue:uni_3:0.11.1
 
 //> using dep org.vastblue:vast_3:0.11.5
 
@@ -292,8 +293,8 @@ object ThreePrf {
       (y_hat, alpha_hat)
 
     } else {
-      val T = NROW(X)
-      val N = NCOL(X)
+      val T = X.rows
+      val N = X.cols
       val Jn = J(N)
       val Jt = J(T)
       printf("fit_closed:Jn:      %s\n", Jn.shapes)
@@ -595,11 +596,6 @@ object ThreePrf {
     }
     both
   }
-
-  def NROW(X: MatD): Int = X.rows
-  def NCOL(X: MatD): Int = X.cols
-  def NROW(V: VecD): Int = V.size
-  def NCOL(V: VecD): Int = 1
 
   def MatrixNaN(rows: Int, cols: Int): MatD = {
     val mat = MatD.zeros(rows, cols)

@@ -6,22 +6,8 @@ import uni.io.FileOps.*
 
 //export Mat.MatD as MatD
 import uni.data.Big.Big
-export Mat.{Mat, `::`, `*@`, ColsView, RowsView, CVec, RVec, Vec, RowVec, ColVec, rows, cols, shape, shapes, size, isEmpty, transposed, isContiguous, apply}
+export Mat.{Mat, `::`, ColsView, RowsView, CVec, RVec, Vec, RowVec, ColVec, rows, cols, shape, shapes, size, isEmpty, transposed, isContiguous, apply}
 export MatD.leastSquares
-
-// Commutative scalar multiply — all in one group to satisfy Scala 3's overload grouping rule.
-// scalar * Mat[Double]
-extension (scalar: Double) @annotation.targetName("scalarTimesMatD") def *(m: Mat.Mat[Double]): Mat.Mat[Double] = m * scalar
-extension (scalar: Int)    @annotation.targetName("intTimesMatD")    def *(m: Mat.Mat[Double]): Mat.Mat[Double] = m * scalar.toDouble
-extension (scalar: Long)   @annotation.targetName("longTimesMatD")   def *(m: Mat.Mat[Double]): Mat.Mat[Double] = m * scalar.toDouble
-extension (scalar: Int)    @annotation.targetName("intTimesCVecD")   def *(cv: Mat.CVec[Double]): Mat.CVec[Double] = cv * scalar.toDouble
-extension (scalar: Long)   @annotation.targetName("longTimesCVecD")  def *(cv: Mat.CVec[Double]): Mat.CVec[Double] = cv * scalar.toDouble
-extension (scalar: Int)    @annotation.targetName("intTimesRVecD")   def *(rv: Mat.RVec[Double]): Mat.RVec[Double] = rv * scalar.toDouble
-extension (scalar: Long)   @annotation.targetName("longTimesRVecD")  def *(rv: Mat.RVec[Double]): Mat.RVec[Double] = rv * scalar.toDouble
-// scalar * Big  (left-hand multiply; right-hand is on Big itself)
-extension (n: Int)    @annotation.targetName("intTimesBig")    def *(b: uni.data.Big.Big): uni.data.Big.Big = b * n
-extension (n: Long)   @annotation.targetName("longTimesBig")   def *(b: uni.data.Big.Big): uni.data.Big.Big = b * n
-extension (n: Double) @annotation.targetName("doubleTimesBig") def *(b: uni.data.Big.Big): uni.data.Big.Big = b * n
 
 object Mat {
   self =>
@@ -198,12 +184,15 @@ object Mat {
     }
 
     // 'Internal.create' is the ONLY way to create a Mat.
-    @annotation.unused 
+    @annotation.unused
     private[uni] def createTestView[T: ClassTag](
       _tdata: Array[T], _rows: Int, _cols: Int, _t: Boolean, _offset: Int, _rs: Int, _cs: Int
     ): Mat[T] = new MatData(_tdata, _rows, _cols, _t, _offset, _rs, _cs)
-  }
 
+    /** Pure view: swap dims/strides, flip transposed flag. No ClassTag needed (no allocation). */
+    private[Mat] def transposeView[T](m: MatData[T]): Mat[T] =
+      new MatData(m._tdata, m._cols, m._rows, !m._transposed, m._offset, m._cs, m._rs)
+  }
 
   // The 'Mat.create' that the rest of your app uses
   // just forwards to the Internal gatekeeper.
@@ -221,6 +210,11 @@ object Mat {
       rs: Int = -1,
       cs: Int = -1,
   ): Mat[T] = Internal.create(tdata, rows, cols, transposed, offset, rs, cs)
+
+  /** ClassTag-free transpose view: swaps dims/strides, flips transposed flag.
+   *  Used by VecExts and fromMat so those callers need 0 total using params. */
+  private[data] def matTransposeOf[T](m: Mat[T]): Mat[T] =
+    Internal.transposeView(m.asInstanceOf[Internal.MatData[T]])
 
   /** Slice sentinel: m(::, 0), m(0, ::). Aliases scala.collection.immutable.::
    *  so that exporting it to uni.data doesn't shadow the standard list extractor. */
@@ -1159,15 +1153,8 @@ object Mat {
     // Shape Manipulation
     // ============================================================================
     def T: Mat[T] = transpose
-    /**
-     * NumPy: m.T
-     * O(1) transpose - flips flag and swaps dims, no data movement
-     */
-    def transpose: Mat[T] = {
-      // We create a new view, flipping the 'transposed' flag,
-      // but we MUST pass the existing offset and the SWAPPED strides.
-      Internal.create(m.underlying, m.cols, m.rows, !m.transposed, m.offset, m.cs, m.rs)
-    }
+    /** O(1) transpose — flips flag and swaps dims, no data movement */
+    def transpose: Mat[T] = Internal.transposeView(m.asInstanceOf[Internal.MatData[T]])
 
     def flatten: Array[T] = {
       // We use m.size here assuming it's defined as rows * cols
@@ -1711,7 +1698,7 @@ object Mat {
   def row[T: ClassTag](values: T*): Mat[T] = Mat.create(values.toArray, 1, values.length)
 
   /** Create column vector from values */
-  def col[T: ClassTag](values: T*): CVec[T] = Mat.create(values.toArray, values.length, 1)
+  def col[T: ClassTag](values: T*): Mat[T] = Mat.create(values.toArray, values.length, 1)
 
   /** Create column vector from varargs: Mat(1.0, 2.0, 3.0) → 3x1 */
   def apply[T: ClassTag](first: T, rest: T*): ColVec[T] = {
@@ -1762,6 +1749,23 @@ object Mat {
     }
 
     inline def dot(other: Mat[T]): Mat[T] = m.matmul(other)
+
+    // Non-inline matmul via ClassTag runtime dispatch.  Used from VecExts.scala
+    // where `inline def *@` are NOT found in Scala 3 package-level extension
+    // method lookup — only non-inline methods are indexed for dispatch.
+    private[data] def matmulRt(other: Mat[T]): Mat[T] = {
+      if m.cols != other.rows then
+        throw IllegalArgumentException(s"m.cols[${m.cols}] != other.rows[${other.rows}]")
+      ct.runtimeClass match
+        case c if c == classOf[Double] =>
+          val a = m.asInstanceOf[Mat[Double]]; val b = other.asInstanceOf[Mat[Double]]
+          (if shouldUseBLAS(a, b) then a.multiplyDoubleBLAS(b) else a.multiplyDouble(b)).asInstanceOf[Mat[T]]
+        case c if c == classOf[Float] =>
+          val a = m.asInstanceOf[Mat[Float]]; val b = other.asInstanceOf[Mat[Float]]
+          (if shouldUseBLAS(a, b) then a.multiplyFloatBLAS(b) else a.multiplyFloat(b)).asInstanceOf[Mat[T]]
+        case _ =>
+          m.asInstanceOf[Mat[Big]].multiplyBig(other.asInstanceOf[Mat[Big]]).asInstanceOf[Mat[T]]
+    }
 
     // ---- Diagonal ------------------------------------------------------
     def diagonal: Array[T] = {
@@ -4820,20 +4824,24 @@ object Mat {
         for r <- 0 until m.rows do m(r, c) = src(0, r)
 
   // ── CVec companion ──────────────────────────────────────────────────────────
-  // given cvecToMat is in companion scope → found automatically when working
-  // with CVec[T] values (e.g. val x: MatD = someCVec) without any explicit import.
+  // CVec[T] <: Mat[T] (opaque subtype), so val x: MatD = someCVec works via
+  // widening without any explicit Conversion. No given cvecToMat needed.
   object CVec:
-    given cvecToMat[T]: Conversion[CVec[T], Mat[T]] = v => v
     def apply[T: ClassTag](elems: T*): CVec[T] =
       Mat.create(elems.toArray, elems.length, 1)
     def zeros[T: ClassTag: Fractional](n: Int): CVec[T] = Mat.zeros[T](n, 1)
     def ones[T: ClassTag: Fractional](n: Int): CVec[T]  = Mat.ones[T](n, 1)
     def fromArray[T: ClassTag](arr: Array[T]): CVec[T] =
       Mat.create(arr.clone(), arr.length, 1)
-    def fromMat[T: ClassTag](m: Mat[T]): CVec[T] =
+    def fromMat[T](m: Mat[T]): CVec[T] =
       require(m.cols == 1 || m.rows == 1,
         s"fromMat requires a vector-shaped matrix, got ${m.rows}×${m.cols}")
-      if m.cols == 1 then m else m.T
+      if m.cols == 1 then m else Internal.transposeView(m.asInstanceOf[Internal.MatData[T]])
+    // ClassTag-free widening.  Used from VecExts.scala (outside object Mat, where
+    // CVec[T] is opaque and `(cv: Mat[T])` upcast is not available without <: bound).
+    extension [T](v: CVec[T])
+      @annotation.targetName("cvecAsMat")
+      def asMat: Mat[T] = v
     // Extensions are in companion scope — found via implicit scope of CVec[T]
     // without any explicit import.
     extension [T](v: CVec[T])(using @annotation.unused ct: ClassTag[T])
@@ -4842,8 +4850,6 @@ object Mat {
       def size: Int = (v: Mat[T]).rows * (v: Mat[T]).cols
       @annotation.targetName("cvecApply")
       def apply(i: Int): T = (v: Mat[T]).at(i, 0)
-      @annotation.targetName("cvecTranspose")
-      def T: RVec[T] = (v: Mat[T]).transpose
       @annotation.targetName("cvecToArray")
       def toArray: Array[T] = v.flatten
       @annotation.targetName("cvecFlatten")
@@ -4869,10 +4875,6 @@ object Mat {
         val m = v: Mat[T]
         formatMatrix(m.tdata, m.rows, m.cols, m.offset, m.rs, m.cs,
           m.typeName(using ct), frac.toDouble, _.toString, fmt = None, label = "CVec")
-      @annotation.targetName("cvecAdd")
-      def +(other: CVec[T])(using Numeric[T]): CVec[T] = (v: Mat[T]).binOp(other: Mat[T])(summon[Numeric[T]].plus)
-      @annotation.targetName("cvecSub")
-      def -(other: CVec[T])(using Numeric[T]): CVec[T] = (v: Mat[T]).binOp(other: Mat[T])(summon[Numeric[T]].minus)
       @annotation.targetName("cvecAddScalar")
       def +(scalar: T)(using num: Numeric[T]): CVec[T] = {
         val n = (v: Mat[T]).rows; val r = new Array[T](n)
@@ -4883,24 +4885,6 @@ object Mat {
       def -(scalar: T)(using num: Numeric[T]): CVec[T] = {
         val n = (v: Mat[T]).rows; val r = new Array[T](n)
         var i = 0; while (i < n) { r(i) = num.minus((v: Mat[T]).at(i, 0), scalar); i += 1 }
-        Mat.create(r, n, 1)
-      }
-      @annotation.targetName("cvecMul")
-      def *(scalar: T)(using num: Numeric[T]): CVec[T] = {
-        val n = (v: Mat[T]).rows; val r = new Array[T](n)
-        var i = 0; while (i < n) { r(i) = num.times((v: Mat[T]).at(i, 0), scalar); i += 1 }
-        Mat.create(r, n, 1)
-      }
-      @annotation.targetName("cvecDiv")
-      def /(scalar: T)(using frac: Fractional[T]): CVec[T] = {
-        val n = (v: Mat[T]).rows; val r = new Array[T](n)
-        var i = 0; while (i < n) { r(i) = frac.div((v: Mat[T]).at(i, 0), scalar); i += 1 }
-        Mat.create(r, n, 1)
-      }
-      @annotation.targetName("cvecNeg")
-      def unary_-(using num: Numeric[T]): CVec[T] = {
-        val n = (v: Mat[T]).rows; val r = new Array[T](n)
-        var i = 0; while (i < n) { r(i) = num.negate((v: Mat[T]).at(i, 0)); i += 1 }
         Mat.create(r, n, 1)
       }
       @annotation.targetName("cvecNorm")
@@ -4915,12 +4899,6 @@ object Mat {
           case c if c == classOf[BigDecimal] => sumSq.asInstanceOf[Big].sqrt.asInstanceOf[T]
           case c => throw UnsupportedOperationException(s"norm unsupported for ${c.getName}")
       }
-      @annotation.targetName("cvecOuterRvec") @annotation.unused
-      inline def *@(rv: RVec[T])(using Numeric[T]): Mat[T] = (v: Mat[T]).matmul(rv: Mat[T])
-      @annotation.targetName("cvecTimesMat")
-      inline def *@(m: Mat[T]): RVec[T] = (v: Mat[T]).transpose.matmul(m)
-      @annotation.targetName("cvecDotCvec") @annotation.unused
-      inline def *@(other: CVec[T])(using Numeric[T]): T = (v: Mat[T]).transpose.matmul(other: Mat[T]).at(0, 0)
       @annotation.targetName("cvecShape")
       def shape: (Int, Int) = ((v: Mat[T]).rows, (v: Mat[T]).cols)
       @annotation.targetName("cvecRows")
@@ -4950,8 +4928,8 @@ object Mat {
       }
 
   // ── RVec companion ──────────────────────────────────────────────────────────
+  // RVec[T] <: Mat[T] (opaque subtype), so widening is automatic. No given needed.
   object RVec:
-    given rvecToMat[T]: Conversion[RVec[T], Mat[T]] = rv => rv
     def apply[T: ClassTag](elems: T*): RVec[T] =
       Mat.create(elems.toArray, 1, elems.length)
     @annotation.unused
@@ -4959,18 +4937,20 @@ object Mat {
     def ones[T: ClassTag: Fractional](n: Int): RVec[T]  = Mat.ones[T](1, n)
     def fromArray[T: ClassTag](arr: Array[T]): RVec[T] =
       Mat.create(arr.clone(), 1, arr.length)
-    def fromMat[T: ClassTag](m: Mat[T]): RVec[T] =
+    def fromMat[T](m: Mat[T]): RVec[T] =
       require(m.rows == 1 || m.cols == 1,
         s"fromMat requires a vector-shaped matrix, got ${m.rows}×${m.cols}")
-      if m.rows == 1 then m else m.T
+      if m.rows == 1 then m else Internal.transposeView(m.asInstanceOf[Internal.MatData[T]])
+    // ClassTag-free widening.  Used from VecExts.scala (outside object Mat).
+    extension [T](@annotation.unused rv: RVec[T])
+      @annotation.targetName("rvecAsMat")
+      def asMat: Mat[T] = rv
     extension [T](@annotation.unused rv: RVec[T])(using @annotation.unused ct: ClassTag[T])
       def toMat: Mat[T] = rv
       @annotation.targetName("rvecSize")
       def size: Int = (rv: Mat[T]).rows * (rv: Mat[T]).cols
       @annotation.targetName("rvecApply")
       def apply(j: Int): T = (rv: Mat[T]).at(0, j)
-      @annotation.targetName("rvecTranspose")
-      def T: CVec[T] = (rv: Mat[T]).transpose
       @annotation.targetName("rvecToArray")
       def toArray: Array[T] = rv.flatten
       @annotation.targetName("rvecFlatten")
@@ -5008,32 +4988,14 @@ object Mat {
           case c if c == classOf[BigDecimal] => sumSq.asInstanceOf[Big].sqrt.asInstanceOf[T]
           case c => throw UnsupportedOperationException(s"norm unsupported for ${c.getName}")
       }
-      @annotation.targetName("rvecAdd")
-      def +(other: RVec[T])(using Numeric[T]): RVec[T] = (rv: Mat[T]).binOp(other: Mat[T])(summon[Numeric[T]].plus)
-      @annotation.targetName("rvecSub")
-      def -(other: RVec[T])(using Numeric[T]): RVec[T] = (rv: Mat[T]).binOp(other: Mat[T])(summon[Numeric[T]].minus)
       @annotation.targetName("rvecSubMat")
       def -(m: Mat[T])(using Numeric[T]): Mat[T] = (rv: Mat[T]).binOp(m)(summon[Numeric[T]].minus)
-      @annotation.targetName("rvecAddScalar")
-      def +(scalar: T)(using num: Numeric[T]): RVec[T] = {
-        val n = (rv: Mat[T]).cols; val r = new Array[T](n)
-        var i = 0; while (i < n) { r(i) = num.plus((rv: Mat[T]).at(0, i), scalar); i += 1 }
-        Mat.create(r, 1, n)
-      }
       @annotation.targetName("rvecSubScalar")
       def -(scalar: T)(using num: Numeric[T]): RVec[T] = {
         val n = (rv: Mat[T]).cols; val r = new Array[T](n)
         var i = 0; while (i < n) { r(i) = num.minus((rv: Mat[T]).at(0, i), scalar); i += 1 }
         Mat.create(r, 1, n)
       }
-      @annotation.targetName("rvecMul")
-      def *(scalar: T)(using num: Numeric[T]): RVec[T] = {
-        val n = (rv: Mat[T]).cols; val r = new Array[T](n)
-        var i = 0; while (i < n) { r(i) = num.times((rv: Mat[T]).at(0, i), scalar); i += 1 }
-        Mat.create(r, 1, n)
-      }
-      @annotation.targetName("rvecHadamard")
-      def *(other: RVec[T])(using Numeric[T]): RVec[T] = (rv: Mat[T]).binOp(other: Mat[T])(summon[Numeric[T]].times)
       @annotation.targetName("rvecDiv")
       def /(scalar: T)(using frac: Fractional[T]): RVec[T] = {
         val n = (rv: Mat[T]).cols; val r = new Array[T](n)
@@ -5042,20 +5004,6 @@ object Mat {
       }
       @annotation.targetName("rvecDivMat")
       def /(m: Mat[T])(using frac: Fractional[T]): Mat[T] = (rv: Mat[T]).binOp(m)(frac.div)
-      @annotation.targetName("rvecDivRVec") @annotation.unused
-      def /(other: RVec[T])(using frac: Fractional[T]): RVec[T] = (rv: Mat[T]).binOp(other: Mat[T])(frac.div)
-      @annotation.targetName("rvecNeg") @annotation.unused
-      def unary_-(using num: Numeric[T]): RVec[T] = {
-        val n = (rv: Mat[T]).cols; val r = new Array[T](n)
-        var i = 0; while (i < n) { r(i) = num.negate((rv: Mat[T]).at(0, i)); i += 1 }
-        Mat.create(r, 1, n)
-      }
-      @annotation.targetName("rvecDotCvec") @annotation.unused
-      inline def *@(cv: CVec[T])(using Numeric[T]): T = (rv: Mat[T]).matmul(cv: Mat[T]).at(0, 0)
-      @annotation.targetName("rvecDotRvec") @annotation.unused
-      inline def *@(other: RVec[T])(using Numeric[T]): T = (rv: Mat[T]).matmul((other: Mat[T]).transpose).at(0, 0)
-      @annotation.targetName("rvecTimesMat")
-      inline def *@(m: Mat[T]): RVec[T] = (rv: Mat[T]).matmul(m)
       @annotation.targetName("rvecShape")
       def shape: (Int, Int) = ((rv: Mat[T]).rows, (rv: Mat[T]).cols)
       @annotation.targetName("rvecRows")
@@ -5088,70 +5036,6 @@ object Mat {
 
 /** Convenience API for Mat[Double]. */
 import Mat.*
-
-// Package-level extensions for RVec[T] and CVec[T].
-// With `import uni.data.*` in scope, these are at file scope.
-// Direct RVec/CVec receiver match beats the implicit-conversion path to Mat[T].
-// Not included for RVec: scalar -, / — those with Mat[T] second arg cause intercept issues.
-extension [T: ClassTag](rv: RVec[T])
-  @annotation.targetName("pkgRvecUniqueTest")
-  def rvecUniqueTest(s: T)(using num: Numeric[T]): RVec[T] = RVec.fromMat(rv.toMat * s)
-  @annotation.targetName("pkgRvecT")
-  def T: CVec[T] = CVec.fromMat(rv.toMat.transpose)
-  @annotation.targetName("pkgRvecMulScalar") @annotation.unused
-  def *(s: T)(using num: Numeric[T]): RVec[T]      = RVec.fromMat(rv.toMat * s)
-  @annotation.targetName("pkgRvecAddRVec") @annotation.unused
-  def +(other: RVec[T])(using Numeric[T]): RVec[T]   = RVec.fromMat(rv.toMat + other.toMat)
-  @annotation.targetName("pkgRvecAddScalar")
-  def +(s: T)(using Numeric[T]): RVec[T]              = RVec.fromMat(rv.toMat + s)
-  @annotation.targetName("pkgRvecSubRVec")
-  def -(other: RVec[T])(using Numeric[T]): RVec[T]    = RVec.fromMat(rv.toMat - other.toMat)
-  @annotation.targetName("pkgRvecMulRVec")
-  def *(other: RVec[T])(using Numeric[T]): RVec[T]    = RVec.fromMat(rv.toMat * other.toMat)
-  @annotation.targetName("pkgRvecDivRVec")
-  def /(other: RVec[T])(using Fractional[T]): RVec[T]  = RVec.fromMat(rv.toMat / other.toMat)
-  @annotation.targetName("pkgRvecNeg")
-  def unary_-(using Numeric[T]): RVec[T]            = RVec.fromMat(-rv.toMat)
-  @annotation.targetName("pkgRvecTimesMat")
-  inline def *@(mat: Mat[T]): RVec[T] = RVec.fromMat(rv.toMat.matmul(mat))
-  @annotation.targetName("pkgRvecDotCvec") @annotation.unused
-  inline def *@(cv: CVec[T])(using Numeric[T]): T = rv.toMat.matmul(cv.toMat).at(0, 0)
-  @annotation.targetName("pkgRvecDotRvec") @annotation.unused
-  inline def *@(other: RVec[T])(using Numeric[T]): T = rv.toMat.matmul(other.toMat.transpose).at(0, 0)
-extension [T: ClassTag](cv: CVec[T])
-  @annotation.targetName("pkgCvecT")
-  def T: RVec[T] = RVec.fromMat(cv.toMat.transpose)
-  @annotation.targetName("pkgCvecMulScalar")
-  def *(s: T)(using num: Numeric[T]): CVec[T]      = CVec.fromMat(cv.toMat * s)
-  @annotation.targetName("pkgCvecDivScalar")
-  def /(s: T)(using frac: Fractional[T]): CVec[T]   = CVec.fromMat(cv.toMat / s)
-  @annotation.targetName("pkgCvecAddCVec")
-  def +(other: CVec[T])(using Numeric[T]): CVec[T]  = CVec.fromMat(cv.toMat + other.toMat)
-  @annotation.targetName("pkgCvecSubCVec")
-  def -(other: CVec[T])(using Numeric[T]): CVec[T]  = CVec.fromMat(cv.toMat - other.toMat)
-  @annotation.targetName("pkgCvecNeg")
-  def unary_-(using Numeric[T]): CVec[T]            = CVec.fromMat(-cv.toMat)
-  @annotation.targetName("pkgCvecTimesMat")
-  inline def *@(mat: Mat[T]): RVec[T] = RVec.fromMat(cv.toMat.transpose.matmul(mat))
-  @annotation.targetName("pkgCvecDotCvec") @annotation.unused
-  inline def *@(other: CVec[T])(using Numeric[T]): T = cv.toMat.transpose.matmul(other.toMat).at(0, 0)
-  @annotation.targetName("pkgCvecOuterRvec") @annotation.unused
-  inline def *@(rv: RVec[T])(using Numeric[T]): Mat[T] = cv.toMat.matmul(rv.toMat)
-// Package-level show for CVec/RVec: [T] (no ClassTag constraint on extension) so
-// the direct-receiver specificity beats the matShow path from `import Mat.*` + conversion.
-extension [T](cv: CVec[T])
-  @annotation.targetName("pkgCvecShow")
-  def show(using frac: Fractional[T], ct: ClassTag[T]): String =
-    val m = cv.toMat
-    formatMatrix(m.tdata, m.rows, m.cols, m.offset, m.rs, m.cs,
-      m.typeName(using ct), frac.toDouble, _.toString, fmt = None, label = "CVec")
-
-extension [T](rv: RVec[T])
-  @annotation.targetName("pkgRvecShow")
-  def show(using frac: Fractional[T], ct: ClassTag[T]): String =
-    val m = rv.toMat
-    formatMatrix(m.tdata, m.rows, m.cols, m.offset, m.rs, m.cs,
-      m.typeName(using ct), frac.toDouble, _.toString, fmt = None, label = "RVec")
 
 // This makes MatD a valid Type name for the user
 type MatD = Mat[Double]
@@ -5211,7 +5095,7 @@ object MatD {
   def fromSeq(values: Seq[Double]): CVec[Double] = Mat.fromSeq[Double](values)
   def of(first: Double, rest: Double*): Mat[Double] = Mat.of[Double](first, rest*)
   def row(values: Double*): MatD = Mat.row[Double](values*)
-  def col(values: Double*): CVec[Double] = Mat.col[Double](values*)
+  def col(values: Double*): MatD = Mat.create(values.toArray, values.length, 1)
   def empty: Mat[Double] = Mat.empty[Double]
   // ----- Diagonal -----
   def diag(values: Array[Double]): Mat[Double] = Mat.diag[Double](values)
@@ -5288,7 +5172,7 @@ object MatB {
   def fromSeq(values: Seq[Big]): CVec[Big] = Mat.fromSeq[Big](values)
   def of(first: Double, rest: Double*): Mat[Big] = Mat.of[Big](Big(first), rest.map(Big(_))*)
   def row(values: Double*): MatB = Mat.row[Big](values.map(Big(_))*)
-  def col(values: Double*): CVec[Big] = Mat.col[Big](values.map(Big(_))*)
+  def col(values: Double*): MatB = Mat.create(values.map(Big(_)).toArray, values.length, 1)
   def empty: Mat[Big] = Mat.empty[Big]
   // ----- Diagonal -----
   def diag(values: Array[Big]): Mat[Big] = Mat.diag[Big](values)
@@ -5370,7 +5254,7 @@ object MatF {
   def fromSeq(values: Seq[Float]): CVec[Float] = Mat.fromSeq[Float](values)
   def of(first: Double, rest: Double*): Mat[Float] = Mat.of[Float](first.toFloat, rest.map(_.toFloat)*)
   def row(values: Double*): MatF = Mat.row[Float](values.map(_.toFloat)*)
-  def col(values: Double*): CVec[Float] = Mat.col[Float](values.map(_.toFloat)*)
+  def col(values: Double*): MatF = Mat.create(values.map(_.toFloat).toArray, values.length, 1)
   def empty: Mat[Float] = Mat.empty[Float]
   // ----- Diagonal -----
   def diag(values: Array[Float]): Mat[Float] = Mat.diag[Float](values)

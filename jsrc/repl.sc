@@ -1,5 +1,5 @@
 #!/usr/bin/env -S scala-cli repl
-//> using dep org.vastblue:uni_3:0.11.0
+//> using dep org.vastblue:uni_3:0.11.1
 import uni.*
 import uni.time.*
 import uni.data.*
