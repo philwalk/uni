@@ -223,7 +223,7 @@ object TprfRunner {
         g(t, j) = g(t - 1, j) * pg + g_err(t, j)
 
       // Adjust the irrelevant factors for higher variance than relevant factors
-      val gcolj: MatD   = g(::, j).toMat
+      val gcolj: MatD   = g(::, j)
       val scale: Double = fStd * math.sqrt(g_var(j)) / popStd(gcolj)
       g(::, j) = gcolj * scale
 
@@ -284,7 +284,7 @@ object TprfRunner {
     val lst = Array.ofDim[Double](X.rows - train_window)
     for t <- train_window until X.rows do
       val Z      = autoproxy(X(0 until t, ::), y(0 until t, ::), n_proxies)
-      val (_, yhatt) = tprf(X(0 until t, ::), y(0 until t, ::), Z, X(t, ::).T.toMat)
+      val (_, yhatt) = tprf(X(0 until t, ::), y(0 until t, ::), Z, X(t, ::).T)
       lst(t - train_window) = yhatt
     rr2(y(train_window until y.rows, ::), Mat.create(lst, lst.length, 1))
 

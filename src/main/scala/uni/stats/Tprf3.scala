@@ -213,7 +213,7 @@ object Tprf3 {
     val phiHatFull = MatD.zeros(Z.cols + 1, N)
     val r2         = Array.ofDim[Double](N)
     for i <- 0 until N do
-      val m = Lm(Xn(::, i).toMat, Z)
+      val m = Lm(Xn(::, i), Z)
       phiMat(i until i+1, ::) = m.coef_.T
       phiHatFull(::, i until i+1) = m.beta
       val v = m.rSquared
@@ -223,7 +223,7 @@ object Tprf3 {
     // Pass-2 (K&P: Sigma T×L)
     val sigma = MatD.zeros(T, Z.cols)
     for t <- 0 until T do
-      val m = Lm(Xn(t, ::).T.toMat, phi, addIntercept = true)
+      val m = Lm(Xn(t, ::).T, phi, addIntercept = true)
       sigma(t until t+1, ::) = m.coef_.T
 
     // Pass-3 (K&P: beta = [iota(T) Sigma]\y)
@@ -464,14 +464,14 @@ object Tprf3 {
       // Pass 1
       val designZ = Z
       for i <- 0 until N do
-        nanOls(xCentered(::, i).toMat, designZ, minObs) match
+        nanOls(xCentered(::, i), designZ, minObs) match
           case Some(phi) => Phi(i until i+1, ::) = phi.T
           case None      => ()
 
       // Pass 2
       val designPhi = Phi
       for t <- 0 until T do
-        nanOls(xCentered(t, ::).T.toMat, designPhi, minObs) match
+        nanOls(xCentered(t, ::).T, designPhi, minObs) match
           case Some(sigma) => Sigma(t until t+1, ::) = sigma.T
           case None        => ()
 
@@ -562,7 +562,7 @@ object Tprf3 {
           val Xt0  = selectRows(Xn, ts)
           val Xts  = nanStdCols(Xt0)
           val Xt   = Xt0 / Xts
-          val oos  = Some(Xn(t, ::).toMat / Xts)
+          val oos  = Some(Xn(t, ::) / Xts)
           val tmpt =
             if autoproxy then
               var r0 = yt * 1.0; var tp = Double.NaN

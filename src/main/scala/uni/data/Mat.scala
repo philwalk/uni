@@ -22,8 +22,8 @@ object Mat {
   type Vec[T]    = Mat[T]
   type RowVec[T] = Mat[T]
   type ColVec[T] = Mat[T]
-  opaque type CVec[T] = Mat[T]    // column vector (n×1)
-  opaque type RVec[T] = Mat[T]    // row vector (1×n)
+  opaque type CVec[T] <: Mat[T] = Mat[T]    // column vector (n×1)
+  opaque type RVec[T] <: Mat[T] = Mat[T]    // row vector (1×n)
 
   extension [T](m: Mat[T])
     // public extension methods:
@@ -4794,34 +4794,6 @@ object Mat {
       var i = 0; while (i < n) { r(i) = s * (rv: Mat[Double]).at(0, i); i += 1 }
       Mat.create(r, 1, n)
     }
-
-  // ── update overloads for RVec[T]/CVec[T] inside object Mat ──────────────────
-  // @targetName prevents E120 (RVec[T] = Mat[T] inside object Mat).
-  // Placed here so `import Mat.*` imports them at file scope alongside Mat.update,
-  // giving them priority via specificity when RVec[T]/CVec[T] args are passed.
-  extension [T](m: Mat[T])(using @annotation.unused ct: ClassTag[T])
-    @annotation.targetName("matUpdateRowRVec")
-    def update(row: Int, cols: ::.type, rv: RVec[T]): Unit =
-      val r = if row < 0 then m.rows + row else row
-      require(r >= 0 && r < m.rows, s"Row index $r out of bounds [0, ${m.rows})")
-      val src = rv: Mat[T]
-      require(src.rows == 1 && src.cols == m.cols || src.rows == m.cols && src.cols == 1,
-        s"shape mismatch: row has ${m.cols} cols, source is ${src.rows}×${src.cols}")
-      if src.rows == 1 then
-        for c <- 0 until m.cols do m(r, c) = src(0, c)
-      else
-        for c <- 0 until m.cols do m(r, c) = src(c, 0)
-    @annotation.targetName("matUpdateColCVec")
-    def update(rows: ::.type, col: Int, cv: CVec[T]): Unit =
-      val c = if col < 0 then m.cols + col else col
-      require(c >= 0 && c < m.cols, s"Column index $c out of bounds [0, ${m.cols})")
-      val src = cv: Mat[T]
-      require(src.cols == 1 && src.rows == m.rows || src.rows == 1 && src.cols == m.rows,
-        s"shape mismatch: col has ${m.rows} rows, source is ${src.rows}×${src.cols}")
-      if src.cols == 1 then
-        for r <- 0 until m.rows do m(r, c) = src(r, 0)
-      else
-        for r <- 0 until m.rows do m(r, c) = src(0, r)
 
   // ── CVec companion ──────────────────────────────────────────────────────────
   // CVec[T] <: Mat[T] (opaque subtype), so val x: MatD = someCVec works via

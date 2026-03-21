@@ -15,10 +15,10 @@ package uni.data
 //   - package scope (step 3) for callers in uni.data
 //   - explicit import (step 2) via `import uni.data.*` for external callers
 //
-// SUBTYPE BOUND: CVec[T]/RVec[T] have NO `<: Mat[T]` upper bound.  Without it,
-// the Mat extension method `T: Mat[T]` (and others) cannot be applied to CVec/RVec
-// values via subtype outside object Mat.  This eliminates the competition that
-// would otherwise cause Mat companion-scope methods to win over VecOps methods.
+// SUBTYPE BOUND: CVec[T]/RVec[T] have `<: Mat[T]` upper bound, so CVecD/RVecD widen
+// to MatD implicitly — no `.toMat` needed in user code.  Dispatch still works because
+// `import Mat.*` is absent from user code (removed); VecOps is at step 3 (package
+// scope) while Mat companion methods land at step 4 — VecOps wins.
 //
 // INLINE LIMITATION: Scala 3 does NOT index `inline def` extension methods at
 // package level for extension method lookup.  All `*@` overloads use plain `def`

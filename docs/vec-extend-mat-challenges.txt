@@ -1,0 +1,218 @@
+❯ what were the obstacles to having CVecD and RVecD extend MatD?
+
+● The core obstacle was Scala 3's extension method dispatch rules, specifically how the upper bound interacts with implicit scope.
+
+  With opaque type CVec[T] <: Mat[T] = Mat[T]
+
+  The upper bound makes object Mat (companion of the base type Mat) part of CVec's implicit scope (Scala 3 step 4/5). This means Mat.T — which takes a Mat[T] receiver — can be applied to a CVec[T] argument via the subtype relationship.
+
+  This created unresolvable competition:
+
+  ┌──────────────────────────────────┬────────────────────────────────┬────────────────────────┬──────────────────────────────────────────────────────┐
+  │             Context              │             Mat.T              │        VecOps.T        │                        Winner                        │
+  ├──────────────────────────────────┼────────────────────────────────┼────────────────────────┼──────────────────────────────────────────────────────┤
+  │ Same package, import Mat.*       │ Step 2 (explicit)              │ Step 3 (package scope) │ Mat.T — but can't actually apply; blocks fallthrough │
+  ├──────────────────────────────────┼────────────────────────────────┼────────────────────────┼──────────────────────────────────────────────────────┤
+  │ Cross-package, import uni.data.* │ Step 4 (companion via subtype) │ Step 2 (via import)    │ VecOps.T ✓                                           │
+  ├──────────────────────────────────┼────────────────────────────────┼────────────────────────┼──────────────────────────────────────────────────────┤
+  │ Same package, no import          │ Step 4 (companion)             │ Step 3 (package)       │ VecOps.T ✓                                           │
+  └──────────────────────────────────┴────────────────────────────────┴────────────────────────┴──────────────────────────────────────────────────────┘
+
+  The problem: in test files using import Mat.*, Mat.T was found at step 2 with the wrong receiver type (Mat[T]), but Scala 3 does not fall through to step 3 once a same-named candidate is found — even if that candidate cannot be applied. So cv.T produced "not found" instead of finding VecOps.T.
+
+  Without the upper bound
+
+  Mat.T simply cannot be applied to CVec[T] anywhere outside object Mat — there's no subtype relationship, so the compiler never finds it as a candidate. VecOps.T wins cleanly at whatever scope it's reached.
+
+  Secondary obstacle: TASTY transparency
+
+  Inside object Mat, CVec[T] = Mat[T] is transparent. Any method defined there with return type CVec[T] has Mat[T] written into TASTY, so external callers get Mat[T] back — the typed vector is erased from the return type at the call site.
+
+  This is why the CVec/RVec extensions live in VecExts.scala (as object VecOps, re-exported at package level): there, CVec and RVec are properly opaque, so def T: CVec[T] actually records CVec[T] in TASTY.
+
+  What you give up without the bound
+
+  - CVec[T] doesn't automatically get all Mat[T] methods — callers need .toMat to use allclose, sigmoid, isContiguous, etc.
+  - Can't pass a CVecD where MatD is expected without .toMat
+
+  That's the intentional trade-off: explicit conversion for full type safety and unambiguous dispatch.
+
+
+❯ are some of the problems avoided by eliminating `import Mat.*`?
+
+● Yes — the main dispatch conflict was specifically caused by import Mat.* at the call site, not by the upper bound itself.
+
+  How import Mat.* was the trigger
+
+  With CVec[T] <: Mat[T] and import Mat.* present:
+
+  Step 2 (explicit import Mat.*): Mat.T — wrong receiver, can't apply, but BLOCKS fallthrough
+  Step 3 (package scope):         VecOps.T — correct, but never reached
+
+  Without import Mat.* (which we've now enforced):
+
+  Step 3 (package scope):    VecOps.T — correct, wins ✓
+  Step 4 (companion, Mat.*): Mat.T — lower priority, not reached
+
+  So yes — if we'd banned import Mat.* from user code from day one, the upper bound likely wouldn't have caused the dispatch failures you saw in practice.
+
+  What the upper bound still breaks, regardless
+
+  Two problems survive even without import Mat.*:
+
+  1. TASTY transparency kills return types
+
+  Inside object Mat, CVec[T] is transparent. Methods defined there record Mat[T] in TASTY, not CVec[T]. External callers would get MatD back from cv.T — losing the typed vector. This is why extensions live in VecExts.scala (where CVec is opaque).
+
+  2. Type safety weakens at function boundaries
+
+  With CVec[T] <: Mat[T], any function taking Mat[T] silently accepts CVec[T]. You'd lose the column vector type without realizing it. This is the reason Lm(Xn(::, i).toMat, ...) needed the explicit .toMat — with a subtype, the vector would have slipped through silently as a MatD parameter, which is fine
+  for correctness but means callers aren't nudged to think about what they're passing.
+
+  Summary
+
+  ┌─────────────────────────────────────────────┬─────────────────────────┬────────────────────────────┐
+  │                   Problem                   │ Caused by import Mat.*? │ Caused by <: Mat[T] alone? │
+  ├─────────────────────────────────────────────┼─────────────────────────┼────────────────────────────┤
+  │ cv.T "not found" in test files              │ ✓ Yes — main cause      │ No                         │
+  ├─────────────────────────────────────────────┼─────────────────────────┼────────────────────────────┤
+  │ Wrong return type from object Mat methods   │ No                      │ ✓ Yes (TASTY)              │
+  ├─────────────────────────────────────────────┼─────────────────────────┼────────────────────────────┤
+  │ Silent upcast to Mat at function boundaries │ No                      │ ✓ Yes                      │
+  └─────────────────────────────────────────────┴─────────────────────────┴────────────────────────────┘
+
+  The no-upper-bound design is still correct, but the primary forcing function was import Mat.* in test files — which is now gone.
+
+
+❯ It sounds like the only hard blocker is TASTY transparency (correct?), and if so, is that something that might be fixed in a future scala version?
+
+● Mostly yes, but with a nuance.
+
+  With import Mat.* eliminated, what's left?
+
+  Dispatch: No longer a blocker. With all user code using only import uni.data.*, VecOps is at step 2 or 3 while Mat companion is at step 4 — VecOps wins cleanly even with <: Mat[T].
+
+  TASTY transparency: Still a hard blocker for extension methods defined inside object Mat. The scope where the opaque type is declared is where the transparency applies — so def T: RVec[T] inside object Mat is written into TASTY as def T: Mat[T]. External callers get MatD back, not RVecD. This is what
+  forced the extensions into VecExts.scala.
+
+  Type safety weakening: Soft concern, not a hard blocker. CVecD <: MatD means silent implicit widening at function call sites — a design trade-off, not a compilation failure.
+
+  Will TASTY transparency be fixed?
+
+  Unlikely, because it's not a bug — it's the intentional semantics of Scala 3 opaque types. The transparency in the defining scope is precisely what makes them useful: you can implement all the operations freely using the underlying type. Making the compiler use the alias name in TASTY even inside the
+  defining scope would undermine that. It's specified in https://docs.scala-lang.org/sips/opaque-types.html.
+
+  The actual architectural implication
+
+  TASTY transparency is already fully worked around by the current design: all CVec/RVec extension methods live in VecExts.scala where CVec/RVec are properly opaque, so return types are correctly recorded. Only the factory methods (CVec.fromMat, CVec.apply) remain inside object Mat — and those return
+  CVecD correctly because they go through the opaque type boundary outward, not inward.
+
+  So in practice, the upper bound <: Mat[T] with import Mat.* eliminated and extensions in VecExts.scala is probably achievable now. The remaining question is whether the overload set for *@ stays unambiguous — since CVecD <: MatD would make *@(other: Mat[T]) applicable to every CVec argument, competing
+  with the more-specific *@(cv: CVec[T]).
+
+The fix we ended up with instead requires user code to explicitly convert between CVecD/RVecD and MatD ; and if the TASTY transparency problem could be addressed by changes to the client API, would they be more or less onerous than what we have now that would become unnecessary?
+
+● The TASTY transparency problem is fixable with library-internal changes only — no client API changes needed.
+
+  The fix
+
+  Move object CVec and object RVec from inside object Mat to package level (where the types are properly opaque), with a narrow private[data] bridge for construction:
+
+  // Inside object Mat — the bridge (invisible to users):
+  private[data] def mkCVec[T](m: Mat[T]): CVec[T] = m
+  private[data] def mkRVec[T](m: Mat[T]): RVec[T] = m
+
+  // At package level — CVec is opaque here, TASTY preserves CVec[T]:
+  object CVec:
+    def apply[T: ClassTag](elems: T*): CVec[T] = Mat.mkCVec(Mat.create(elems.toArray, elems.length, 1))
+    def fromMat[T](m: Mat[T]): CVec[T]         = Mat.mkCVec(m)
+
+  That's a one-time structural change. Users see the same API.
+
+  What this enables
+
+  With CVecD <: MatD restored, users never need .toMat:
+
+  val col = m(::, 0)          // col: CVecD
+  col.allclose(other)         // works — CVecD IS a MatD via subtype
+  col.sigmoid                 // works
+  A.solve(col)                // works — CVecD accepted where MatD expected
+
+  Comparison
+
+  ┌────────────────┬─────────────────────────────────────────┬──────────────────────────────────┐
+  │                │        Current (no upper bound)         │   With upper bound + TASTY fix   │
+  ├────────────────┼─────────────────────────────────────────┼──────────────────────────────────┤
+  │ Library change │ Done                                    │ ~20 lines restructuring          │
+  ├────────────────┼─────────────────────────────────────────┼──────────────────────────────────┤
+  │ Client burden  │ .toMat at every Mat-operation call site │ Nothing                          │
+  ├────────────────┼─────────────────────────────────────────┼──────────────────────────────────┤
+  │ Type safety    │ Hard distinction                        │ Silent widening to MatD possible │
+  └────────────────┴─────────────────────────────────────────┴──────────────────────────────────┘
+
+  The current .toMat burden is recurring — every slice used with a Mat method, every function that takes MatD, every test that uses allclose on a slice result. The TASTY fix is one-time and library-internal. So yes, strictly less onerous — and the things that would become unnecessary (all the .toMat calls
+   added in Tprf3.scala, TprfRunner.scala, and the test files) represent exactly the ongoing user-facing cost of not doing it.
+
+
+● Looking at these errors, they fall into distinct groups with different relationships to the library change.
+
+  Fixed by the upper bound (~10 errors)
+
+  These are direct CVecD/RVecD → MatD/VecD mismatches that disappear with <: Mat[T]:
+
+  - L166, 343: val slice: VecD = r(::, k-1) — column slice returns CVecD, needs MatD
+  - L200, 212: leastSquares(Zm, Xj) where Xj: CVecD — parameter mismatch
+  - L228, 237: leastSquares(L1, X(i,::).T) — .T correctly gives CVecD, then leastSquares rejects it
+  - L364: val u_gtRow0: VecD = u_g(0,::).T — same pattern
+  - L374: gprevRow.shapes where gprevRow: RVecD — .shapes is on Mat[T], fixed by subtype
+  - L290: val part3: Double = y.T *@ XX *@ y — would work if y: CVecD (needs VecD = CVecD too)
+
+  Complicates the library change (row assignment)
+
+  L330, 370, 380: m(i, ::) = u_f(i, ::) where the RHS is RVecD. Currently there's an update overload specifically for RVec[T]. With RVecD <: MatD, that overload becomes genuinely ambiguous with the Mat[T] overload — both match. The fix is straightforward: remove the RVec-specific update overload (it
+  becomes redundant with the subtype). But it's a required change.
+
+  Pure script bugs — unrelated to library change
+
+  *@ used for integer multiplication (L353, 358, 362, 445, 446, 408):
+  randn(T *@ K_g)        // should be T * K_g
+  sigma_y.toDouble *@ u_y  // should be sigma_y.toDouble * u_y
+  The author used *@ (matrix multiply) as a general multiplication operator throughout. Nothing the library can do here.
+
+  .T called on Int (L481, 482, 488, 621, 625, 629, 631, 646):
+  N.T *@ K      // N is an Int — .T is being used R-style (t() is a no-op on scalars in R)
+  nrow.T *@ ncol
+  R's t() is a no-op on scalars; the author translated this literally. Should just be N * K.
+
+  Undefined R functions (L328, 344, 347, 353, 357, 358, 362, 401, 445, 446):
+  randn(T * K_f)     // MatD.randn takes two args
+  variance(col0)     // no such function
+  sqrt(sigma_g)      // global sqrt, not mat.sqrt
+  rnorm(T * N)       // R's rnorm — needs equivalent
+
+  Other R-isms:
+  - Transpose[VecD] type (L365, 375, 608) — doesn't exist; should be RVecD
+  - mat(mat :== 0.0) := NaN (L602) — R-style assignment; := not in library
+  - for (row <- m(*, ::)) (L666) — RowsView has no foreach
+  - MatD.create(rows, cols, arr) (L546) — not public; use MatD.apply
+  - MatD.uniform(n, min, max: Double) (L552) — max typed as Int
+
+  Summary
+
+  ┌───────────────────────────────┬───────┬─────────────────────────────────────────────────────┐
+  │             Group             │ Count │           Relationship to library change            │
+  ├───────────────────────────────┼───────┼─────────────────────────────────────────────────────┤
+  │ CVecD/RVecD → MatD mismatches │ ~10   │ Fixed by upper bound                                │
+  ├───────────────────────────────┼───────┼─────────────────────────────────────────────────────┤
+  │ Row assignment m(i,::) = rvec │ 3     │ Complicates — remove redundant RVec update overload │
+  ├───────────────────────────────┼───────┼─────────────────────────────────────────────────────┤
+  │ *@ used for scalar multiply   │ ~10   │ Unrelated — script bugs                             │
+  ├───────────────────────────────┼───────┼─────────────────────────────────────────────────────┤
+  │ .T on Int                     │ ~8    │ Unrelated — R idiom mistranslation                  │
+  ├───────────────────────────────┼───────┼─────────────────────────────────────────────────────┤
+  │ Undefined R functions         │ ~8    │ Unrelated — missing wrappers or wrong API           │
+  ├───────────────────────────────┼───────┼─────────────────────────────────────────────────────┤
+  │ Other R-isms                  │ ~5    │ Unrelated — script bugs                             │
+  └───────────────────────────────┴───────┴─────────────────────────────────────────────────────┘
+
+  The row assignment issue is the only genuine complication, and it has a clean resolution.

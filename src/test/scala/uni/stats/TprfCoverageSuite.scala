@@ -164,7 +164,7 @@ class TprfCoverageSuite extends FunSuite:
     val sigma = MatD.randn(T, L)
     val beta  = MatD.randn(L + 1, 1)
     val tf = Tprf3Result(X, y, Z, phi, sigma, beta)  // Xstd = ones(1,1)
-    val oos = X(0, ::).T.toMat   // (N×1)
+    val oos = X(0, ::).T   // (N×1) CVecD; widens to MatD via <: bound
     val pred = tf.estimateYhat(oos)
     assert(!pred.isInfinite, s"expected finite or NaN, got $pred")
   }
