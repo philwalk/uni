@@ -29,5 +29,6 @@ git diff --cached --quiet && echo "nothing staged, skipping commit" || git commi
 # tag: -f overwrites local tag safely (remote is protected by check #2)
 git tag -f "$TAG"
 
-git push origin main
-git push origin "$TAG"
+echo "############### $TAG ################" 1>&2
+#git push origin main
+#git push origin "$TAG"
