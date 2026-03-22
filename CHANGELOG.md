@@ -1,3 +1,9 @@
+## v0.11.2
+- Add `foreach` for `RowsView` and `ColsView` (enables `for (row <- m(*, ::))` and `for (col <- m(::, *))`)
+- Fall back to bytedeco/OpenBLAS matmul if netlib fails to load its fast native implementation
+- Align `threePrfUni.sc` and `threePrfBreeze.sc` RNG streams for reproducible cross-validation
+- Add `release-and-publish.sh` release script
+
 ## v0.11.0
 - Switch matrix multiply backend from bytedeco/OpenBLAS to `dev.ludovic.netlib:blas:3.1.1`
   - macOS: JNIBLAS → Accelerate framework (always present, zero user setup)

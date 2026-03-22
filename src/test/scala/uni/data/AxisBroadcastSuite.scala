@@ -151,3 +151,77 @@ class AxisBroadcastSuite extends FunSuite:
   test("data(::, *) + rowMeans equals data + rowMeans") {
     assertEquals(cells(data(::, *) + rowMeansCol).toSeq, cells(data + rowMeansCol).toSeq)
   }
+
+  // ============================================================================
+  // foreach on RowsView — for (row <- m(*, ::))
+  // ============================================================================
+
+  test("for (row <- m(*, ::)): visits every row in order") {
+    val collected = scala.collection.mutable.ArrayBuffer.empty[Seq[Double]]
+    for (row <- data(*, ::)) collected += row.toArray.toSeq
+    assertEquals(collected.size, 3)
+    assertEquals(collected(0), Seq(1.0, 2.0, 3.0))
+    assertEquals(collected(1), Seq(4.0, 5.0, 6.0))
+    assertEquals(collected(2), Seq(7.0, 8.0, 9.0))
+  }
+
+  test("for (row <- m(*, ::)): each row has shape 1×cols") {
+    for (row <- data(*, ::)) {
+      assertEquals(row.rows, 1)
+      assertEquals(row.cols, data.cols)
+    }
+  }
+
+  test("for (row <- m(*, ::)): works on transposed matrix") {
+    val t = data.T  // 3×3 transposed
+    val collected = scala.collection.mutable.ArrayBuffer.empty[Seq[Double]]
+    for (row <- t(*, ::)) collected += row.toArray.toSeq
+    assertEquals(collected.size, 3)
+    assertEquals(collected(0), Seq(1.0, 4.0, 7.0))
+    assertEquals(collected(1), Seq(2.0, 5.0, 8.0))
+    assertEquals(collected(2), Seq(3.0, 6.0, 9.0))
+  }
+
+  test("for (row <- m(*, ::)): empty matrix — zero iterations") {
+    val empty = Mat.create(Array.emptyDoubleArray, 0, 0)
+    var count = 0
+    for (_ <- empty(*, ::)) count += 1
+    assertEquals(count, 0)
+  }
+
+  // ============================================================================
+  // foreach on ColsView — for (col <- m(::, *))
+  // ============================================================================
+
+  test("for (col <- m(::, *)): visits every column in order") {
+    val collected = scala.collection.mutable.ArrayBuffer.empty[Seq[Double]]
+    for (col <- data(::, *)) collected += col.toArray.toSeq
+    assertEquals(collected.size, 3)
+    assertEquals(collected(0), Seq(1.0, 4.0, 7.0))
+    assertEquals(collected(1), Seq(2.0, 5.0, 8.0))
+    assertEquals(collected(2), Seq(3.0, 6.0, 9.0))
+  }
+
+  test("for (col <- m(::, *)): each col has shape rows×1") {
+    for (col <- data(::, *)) {
+      assertEquals(col.rows, data.rows)
+      assertEquals(col.cols, 1)
+    }
+  }
+
+  test("for (col <- m(::, *)): works on transposed matrix") {
+    val t = data.T  // 3×3 transposed
+    val collected = scala.collection.mutable.ArrayBuffer.empty[Seq[Double]]
+    for (col <- t(::, *)) collected += col.toArray.toSeq
+    assertEquals(collected.size, 3)
+    assertEquals(collected(0), Seq(1.0, 2.0, 3.0))
+    assertEquals(collected(1), Seq(4.0, 5.0, 6.0))
+    assertEquals(collected(2), Seq(7.0, 8.0, 9.0))
+  }
+
+  test("for (col <- m(::, *)): empty matrix — zero iterations") {
+    val empty = Mat.create(Array.emptyDoubleArray, 0, 0)
+    var count = 0
+    for (_ <- empty(::, *)) count += 1
+    assertEquals(count, 0)
+  }
