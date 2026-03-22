@@ -234,6 +234,13 @@ object Mat {
     def +(other: Mat[T])(using Numeric[T]): Mat[T]    = m + asColVec(other)
     def *(other: Mat[T])(using Numeric[T]): Mat[T]    = m * asColVec(other)
     def /(other: Mat[T])(using Fractional[T]): Mat[T] = m / asColVec(other)
+    def foreach(f: CVec[T] => Unit): Unit =
+      var j = 0
+      while j < m._cols do
+        val col = Array.ofDim[T](m._rows)
+        var i = 0; while i < m._rows do { col(i) = m.at(i, j); i += 1 }
+        f(Mat.create(col, m._rows, 1))
+        j += 1
 
   /** Returned by m(*, ::); call .map(f) to transform each row independently. */
   final class RowsView[T: ClassTag](val m: Mat[T]):
@@ -245,6 +252,13 @@ object Mat {
     def +(other: Mat[T])(using Numeric[T]): Mat[T]    = m + asRowVec(other)
     def *(other: Mat[T])(using Numeric[T]): Mat[T]    = m * asRowVec(other)
     def /(other: Mat[T])(using Fractional[T]): Mat[T] = m / asRowVec(other)
+    def foreach(f: RVec[T] => Unit): Unit =
+      var i = 0
+      while i < m._rows do
+        val row = Array.ofDim[T](m._cols)
+        var j = 0; while j < m._cols do { row(j) = m.at(i, j); j += 1 }
+        f(Mat.create(row, 1, m._cols))
+        i += 1
 
   @annotation.unused
   def inspect[T: ClassTag]: String =
@@ -274,6 +288,8 @@ object Mat {
       Mat.create(arr, rows, cols)
 
   private val netlib = dev.ludovic.netlib.blas.BLAS.getInstance()
+  // true when netlib selected VectorBLAS or JNIBLAS; false means Java11BLAS (slow) → use bytedeco instead
+  private val netlibIsFast = !netlib.getClass.getName.endsWith("Java11BLAS")
 
   def vstack[U: ClassTag](matrices: Mat[U]*): Mat[U] = {
     require(matrices.nonEmpty, "vstack requires at least one matrix")
@@ -2169,7 +2185,10 @@ object Mat {
       val ops    = a.rows.toLong * a.cols * b.cols
       ops >= (if minDim >= 6 then blasThreshold else blasThinThreshold)
 
-    private[data] def multiplyDoubleBLAS(other: Mat[Double]): Mat[Double] = {
+    private[data] def multiplyDoubleBLAS(other: Mat[Double]): Mat[Double] =
+      if Mat.netlibIsFast then multiplyDoubleNetlib(other) else multiplyDoubleOB(other)
+
+    private def multiplyDoubleNetlib(other: Mat[Double]): Mat[Double] = {
       val am = Mat.blasReady(m.asInstanceOf[Mat[Double]])
       val bm = Mat.blasReady(other)
       val a = am.tdata.asInstanceOf[Array[Double]]
@@ -2186,7 +2205,27 @@ object Mat {
       Mat.create(result, rowsA, colsB)
     }
 
-    private[data] def multiplyFloatBLAS(other: Mat[Float]): Mat[Float] = {
+    private def multiplyDoubleOB(other: Mat[Double]): Mat[Double] = {
+      import org.bytedeco.openblas.global.openblas._
+      val am = Mat.blasReady(m.asInstanceOf[Mat[Double]])
+      val bm = Mat.blasReady(other)
+      val a = am.tdata.asInstanceOf[Array[Double]]
+      val b = bm.tdata.asInstanceOf[Array[Double]]
+      val rowsA = am.rows; val colsA = am.cols; val colsB = bm.cols
+      val result = new Array[Double](rowsA * colsB)
+      val transA = if am.transposed then CblasTrans else CblasNoTrans
+      val transB = if bm.transposed then CblasTrans else CblasNoTrans
+      val ldA = if am.transposed then am.rows else am.cols
+      val ldB = if bm.transposed then bm.rows else bm.cols
+      cblas_dgemm(CblasRowMajor, transA, transB, rowsA, colsB, colsA,
+        1.0, a, ldA, b, ldB, 0.0, result, colsB)
+      Mat.create(result, rowsA, colsB)
+    }
+
+    private[data] def multiplyFloatBLAS(other: Mat[Float]): Mat[Float] =
+      if Mat.netlibIsFast then multiplyFloatNetlib(other) else multiplyFloatOB(other)
+
+    private def multiplyFloatNetlib(other: Mat[Float]): Mat[Float] = {
       val am = Mat.blasReadyF(m.asInstanceOf[Mat[Float]])
       val bm = Mat.blasReadyF(other)
       val a = am.tdata.asInstanceOf[Array[Float]]
@@ -2200,6 +2239,23 @@ object Mat {
       // row-major C=A*B  →  col-major sgemm: swap operands and trans flags
       Mat.netlib.sgemm(transB, transA, colsB, rowsA, colsA,
         1.0f, b, 0, ldB, a, 0, ldA, 0.0f, result, 0, colsB)
+      Mat.create(result, rowsA, colsB)
+    }
+
+    private def multiplyFloatOB(other: Mat[Float]): Mat[Float] = {
+      import org.bytedeco.openblas.global.openblas._
+      val am = Mat.blasReadyF(m.asInstanceOf[Mat[Float]])
+      val bm = Mat.blasReadyF(other)
+      val a = am.tdata.asInstanceOf[Array[Float]]
+      val b = bm.tdata.asInstanceOf[Array[Float]]
+      val rowsA = am.rows; val colsA = am.cols; val colsB = bm.cols
+      val result = new Array[Float](rowsA * colsB)
+      val transA = if am.transposed then CblasTrans else CblasNoTrans
+      val transB = if bm.transposed then CblasTrans else CblasNoTrans
+      val ldA = if am.transposed then am.rows else am.cols
+      val ldB = if bm.transposed then bm.rows else bm.cols
+      cblas_sgemm(CblasRowMajor, transA, transB, rowsA, colsB, colsA,
+        1.0f, a, ldA, b, ldB, 0.0f, result, colsB)
       Mat.create(result, rowsA, colsB)
     }
 

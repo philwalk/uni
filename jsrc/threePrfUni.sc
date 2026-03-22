@@ -1,8 +1,9 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -deprecation
 
 //> using scala 3.7.0
+//> using javaOpt "--add-modules=jdk.incubator.vector"
 //> using dep org.vastblue:uni_3:0.11.2
-//> using dep org.vastblue:vast_3:0.11.5
+
 
 /////////////////////////////////////////////
 // Three Pass Regression Filter Estimators //
@@ -33,14 +34,14 @@ import uni.data.MatD.uniform
 
 
 
-
-
+type D = Double
 
 
 
 
 
 object ThreePrf {
+
   
   def usage(m: String=""): Nothing = {
     _usage(m, Seq(
@@ -50,8 +51,7 @@ object ThreePrf {
     ))
   }
 
-  var seed: Int=42
-  MatD.setSeed(seed)
+  var seed: Int = 42
   var n_proxy: Int = 1
   var center: Boolean = false
   var scale: Boolean = true
@@ -59,8 +59,9 @@ object ThreePrf {
   val sigma_y = 1
   var verbose = false
 
-  def main(args: Array[String]): Unit = {
 
+  def main(args: Array[String]): Unit = {
+    MatD.setSeed(seed)
     var (_T, _N, _K_f, _L, center, scale, pls, closed_form, fitalg) = (200, 200, 1, 1, true, true, true, false, 2)
     eachArg(args.toSeq, usage){
     case "-v" => verbose = !verbose
@@ -155,10 +156,10 @@ object ThreePrf {
   def autoProxies(n_proxy: Int, X: MatD, y: VecD, pls: Boolean=false, closed_form: Boolean=true, fitalg: Int=2): MatD = {
     // Computing automatic proxies
     val r = MatD(y.size, n_proxy)
-    r(::, 0) = y // r[, 1] <- y
-    printf("auprx:X             %s\n", X.shapes)
-    printf("auprx:y             %s\n", y.shapes)
-    printf("auprx:r             %s\n", r.shapes)
+    r(::, 0)  = y // r[, 1] <- y
+    printf("auprx:X             %s\n", X.shapex)
+    printf("auprx:y             %s\n", y.shapex)
+    printf("auprx:r             %s\n", r.shapex)
     for (k <- 1 until n_proxy) {
       val result = leastSquares(X, y) // fit
       /* r[, k] <- resid(.tprf_fit(X, y, r[, k - 1], pls=pls, closed_form=closed_form, fitalg=fitalg)) */
@@ -180,16 +181,16 @@ object ThreePrf {
 
   //' @export
   def tprf_fit_iter(X: MatD, y: VecD, Z: MatD, pls: Boolean=false, closed_form:Boolean=true, fitalg: Int = 2): PredReg = {
-    printf("fit_iter:X          %s\n", X.shapes)
-    printf("fit_iter:y          %s\n", y.shapes)
-    printf("fit_iter:Z          %s\n", Z.shapes)
+    printf("fit_iter:X          %s\n", X.shapex)
+    printf("fit_iter:y          %s\n", y.shapex)
+    printf("fit_iter:Z          %s\n", Z.shapex)
 
     val plsNum = if (pls) 0 else 1 // no intercept if pls
 
     // Pass 1 Time series regression
     // Preallocating loadings
     val loadings = MatrixNaN(X.cols, Z.cols + plsNum)
-    printf("fit_iter:loadings:  %s\n", loadings.shapes)
+    printf("fit_iter:loadings:  %s\n", loadings.shapex)
     
     if (pls) {
       for (j <- 0 until loadings.rows) {
@@ -198,7 +199,7 @@ object ThreePrf {
         val Xj = X(::, j)
         val result = leastSquares(Zm, Xj) // fit
         val coefs = result.coefficients
-        if (j==0) printf("fit_iter:coeffs:    %s\n", coefs.shapes)
+        if (j==0) printf("fit_iter:coeffs:    %s\n", coefs.shapex)
         //val coefs = coef(lm(formula=X(:: , j) ~ Z - 1, na.action=na.exclude, model=false))
         loadings(j, ::) = coefs.T // row vector
       }
@@ -210,7 +211,7 @@ object ThreePrf {
         val Xj = X(::, j)
         val result = leastSquares(Zm, Xj) // fit
         val coefs = result.coefficients
-        if (j==0) printf("fit_iter:coeffs:    %s\n", coefs.shapes)
+        if (j==0) printf("fit_iter:coeffs:    %s\n", coefs.shapex)
         // coef( lm( formula = X(::, j) ~ 1 + Z, na.action=na.exclude, model=false))
         loadings(j, ::) = coefs.T
       }
@@ -235,8 +236,8 @@ object ThreePrf {
 //        L1  :+= 1.0
         val result = leastSquares(L1, X(i, ::).T) // fit
         val coefs = result.coefficients
-        if (i==1) printf("fit_iter:L1:        %s\n", L1.shapes)
-        if (i==1) printf("fit_iter:coefs:     %s\n", coefs.shapes)
+        if (i==1) printf("fit_iter:L1:        %s\n", L1.shapex)
+        if (i==1) printf("fit_iter:coefs:     %s\n", coefs.shapex)
         //factors[i, ] <- coef(lm(formula=X[i,] ~ 1 + loadings[, -1], na.action=na.exclude, model=false))
         factors(i, ::) = coefs.T
       }
@@ -279,9 +280,9 @@ object ThreePrf {
   //
   def tprf_fit_closed(Xorig: MatD, y: VecD, Z: MatD, pls: Boolean = false): PredReg = {
     val X = Xorig.copy
-    printf("fit_closed:X:       %s\n", X.shapes)
-    printf("fit_closed:y:       %s\n", y.shapes)
-    printf("fit_closed:Z:       %s\n", Z.shapes)
+    printf("fit_closed:X:       %s\n", X.shapex)
+    printf("fit_closed:y:       %s\n", y.shapex)
+    printf("fit_closed:Z:       %s\n", Z.shapex)
     var (y_hat, alpha_hat) = if (pls) {
       val XX = X *@ X.T
       val part1 = XX.T *@ y
@@ -296,15 +297,15 @@ object ThreePrf {
       val N = X.cols
       val Jn = J(N)
       val Jt = J(T)
-      printf("fit_closed:Jn:      %s\n", Jn.shapes)
-      printf("fit_closed:X.T:     %s\n", X.T.shapes)
-      printf("fit_closed:Jt:      %s\n", Jt.shapes)
-      printf("fit_closed:Z:       %s\n", X.shapes)
+      printf("fit_closed:Jn:      %s\n", Jn.shapex)
+      printf("fit_closed:X.T:     %s\n", X.T.shapex)
+      printf("fit_closed:Jt:      %s\n", Jt.shapex)
+      printf("fit_closed:Z:       %s\n", X.shapex)
       val wxzRite = Jt *@ Z
-      printf("fit_closed:wxzRite: %s\n", wxzRite.shapes)
+      printf("fit_closed:wxzRite: %s\n", wxzRite.shapex)
       val Xt = X.T
       val wxzLeft = Jn *@ Xt
-      printf("fit_closed:wxzLeft: %s\n", wxzLeft.shapes)
+      printf("fit_closed:wxzLeft: %s\n", wxzLeft.shapex)
       val W_XZ = wxzLeft *@ wxzRite // val W_XZ = Jn.T *@ X.T *@ Jt.T *@ Z
       val S_XX = Xt *@ Jt *@ X
       val S_Xy = Xt *@ Jt *@ y
@@ -325,7 +326,7 @@ object ThreePrf {
   def sim_factors(T: Int, K_f: Int=1, rho_f:Double=0.0, rho_g:Double=0.0, sigma_g: MatD= sigma_g): Seq[MatD] = {
     //## * Simulating relevant factor innovations
     val u_f = matrix(rnorm(T * K_f), nrow=T, ncol=K_f)
-    val f: MatD = matrix(0.0, nrow=T, ncol=K_f)
+    val f: MatD = matrix(0, nrow=T, ncol=K_f)
     f(0, ::) = u_f(0, ::)
     for (i <- 1 until f.rows){
       val prevrow: VecD = f(i - 1, ::).T * rho_f
@@ -345,37 +346,37 @@ object ThreePrf {
     // the next 2 probably not needed? PMW
     val col0varDiag: MatD = MatD.diag(col0variance)
 //    val sigma_g_mat: VecD = diag(col0varDiag)
-//    printf("sigma_g_mat    %s\n", sigma_g_mat.shapes)
-    printf("sim_f:col0varDiag   %s\n", col0varDiag.shapes)
+//    printf("sigma_g_mat    %s\n", sigma_g_mat.shapex)
+    printf("sim_f:col0varDiag   %s\n", col0varDiag.shapex)
 
     var g: List[MatD] = if (K_g > 0) {
       val rn = rnorm(T * K_g)
-      printf("sim_f:rn            %s\n", rn.shapes)
+      printf("sim_f:rn            %s\n", rn.shapex)
       val sigma_g = col0varDiag // sigma_g is a diagonal matrix inside this block!
       dump4x4("sigma_g", sigma_g)
       val sigma_g_sqrt: MatD = sigma_g.sqrt
       val matRnorm: MatD = matrix(rnorm(T * K_g), nrow=T, ncol=K_g)
-      printf("sim_f:matRnorm      %s\n", matRnorm.shapes)
+      printf("sim_f:matRnorm      %s\n", matRnorm.shapex)
 //      val u_g: MatD = matRnorm.T *@ sigma_g_sqrt
-      printf("sim_f:sigma_g_sqrt  %s\n", sigma_g_sqrt.shapes)
+      printf("sim_f:sigma_g_sqrt  %s\n", sigma_g_sqrt.shapex)
       val u_g: MatD = matrix(rnorm(T * K_g), nrow=T, ncol=K_g) *@ sigma_g_sqrt
-      printf("sim_f:u_g           %s\n", u_g.shapes)
+      printf("sim_f:u_g           %s\n", u_g.shapex)
       val u_gtRow0: VecD = u_g(0, ::).T // row vector
       val u_g_row0 = u_g(0, ::)
       val g = MatD.zeros(T, K_g)
-      printf("sim_f:u_gtRow0      %s\n", u_gtRow0.shapes)
-      printf("sim_f:g             %s\n", g.shapes)
-      printf("sim_f:u_g_row0      %s\n", u_g_row0.shapes)
+      printf("sim_f:u_gtRow0      %s\n", u_gtRow0.shapex)
+      printf("sim_f:g             %s\n", g.shapex)
+      printf("sim_f:u_g_row0      %s\n", u_g_row0.shapex)
       g(0, ::) = u_g_row0
       for(i <- 1 until g.rows) {
         try {
           val gprevRow = g(i-1, ::)
-          if (i==1) printf("sim_f:gprevRow      %s\n", gprevRow.shapes)
+          if (i==1) printf("sim_f:gprevRow      %s\n", gprevRow.shapex)
           val u_giRow = u_g(i, ::)
-          if (i==1) printf("sim_f:u_giRow       %s\n", u_giRow.shapes)
+          if (i==1) printf("sim_f:u_giRow       %s\n", u_giRow.shapex)
           val gnuRow = gprevRow * rho_g + u_giRow
-          if (i==1) printf("sim_f:gnuRow        %s\n", gnuRow.shapes)
-  //        if (i==1) printf("gnuRow.T   %s\n", gnuRow.T.shapes)
+          if (i==1) printf("sim_f:gnuRow        %s\n", gnuRow.shapex)
+  //        if (i==1) printf("gnuRow.T   %s\n", gnuRow.T.shapex)
           g(i, ::) = gnuRow
         } catch {
         case t: Throwable =>
@@ -392,20 +393,20 @@ object ThreePrf {
   }
 
   //##' @export
-  def sim_target(factors: Seq[MatD], beta_0: Double, beta: MatD, sigma_y:Int=1): VecD = {
+  def sim_target(factors: Seq[MatD], beta_0: D, beta: MatD, sigma_y:Int=1): VecD = {
     printf("sim_target(factors, beta_0:%s, beta, sigma_y:%s)\n", beta_0, sigma_y)
     val F = mergeFactorColumns(factors)
     val T = F.rows
-    //##.T *@ Generating innovations
+    //## * Generating innovations
     val u_y: MatD = matrix(rnorm(T), nrow=T, ncol=1, byrow=false)
     val Fxbeta = F *@ beta
-    printf("sim_t:F             %s\n", F.shapes)
-    printf("sim_t:beta          %s\n", beta.shapes)
-    printf("sim_t:Fxbeta        %s\n", Fxbeta.shapes)
-    printf("sim_t:u_y           %s\n", u_y.shapes)
+    printf("sim_t:F             %s\n", F.shapex)
+    printf("sim_t:beta          %s\n", beta.shapex)
+    printf("sim_t:Fxbeta        %s\n", Fxbeta.shapex)
+    printf("sim_t:u_y           %s\n", u_y.shapex)
 
     val y = Fxbeta + beta_0 + sigma_y.toDouble * u_y
-    printf("sim_t:y             %s\n", y.shapes)
+    printf("sim_t:y             %s\n", y.shapex)
     assert(y.cols==1, s"too many columns: ${y.cols}: $y")
     y(::, 0) // there should only be one column
   }
@@ -423,8 +424,8 @@ object ThreePrf {
 
   //##' @export
   def sim_observations(N: Int, factors: Seq[MatD], phi_0: Double, phi: MatD): MatD = {
-    printf("sim_o:factors$f     %s\n", factors(0).shapes)
-    if (factors.size>1) printf("sim_o:factors$g     %s\n", factors(1).shapes)
+    printf("sim_o:factors$f     %s\n", factors(0).shapex)
+    if (factors.size>1) printf("sim_o:factors$g     %s\n", factors(1).shapex)
     val F = mergeFactorColumns(factors)
     val T = F.rows
     val K = F.cols
@@ -434,24 +435,24 @@ object ThreePrf {
       case f :: g :: Nil => (f, g)
       case _ => sys.error(s"bad factors Seq: ${factors}")
     }
-    printf("sim_o:factors$f %s\n", factors(0).shapes)
-    if (factors.size>1) printf("sim_o:factors$g %s\n", factors(1).shapes)
+    printf("sim_o:factors$f %s\n", factors(0).shapex)
+    if (factors.size>1) printf("sim_o:factors$g %s\n", factors(1).shapex)
     val T: Int = f.rows
     val K: Int = factors.map(_.cols).sum
     printf("K:                  %5d\n", K)
     val F: MatD = c(f, g)
     */
     val epsilon: MatD = matrix(rnorm(T * N), nrow=T, ncol=N)
-    printf("sim_o:rnorm(T * N)   %s\n", rnorm(T * N).shapes)
-    printf("sim_o:epsilon       %s\n", epsilon.shapes)
-    printf("sim_o:F             %s\n", F.shapes)
-    printf("sim_o:phi           %s\n", phi.shapes)
+    printf("sim_o:rnorm(T * N)  %5d x %5d\n", T * N, 1)
+    printf("sim_o:epsilon       %s\n", epsilon.shapex)
+    printf("sim_o:F             %s\n", F.shapex)
+    printf("sim_o:phi           %s\n", phi.shapex)
     val FxphiT = F *@ phi.T
     val X: MatD = FxphiT + epsilon + phi_0
     X
   }
   //##' export
-  def sim_proxies(L: Int, factors: Seq[MatD], lambda_0: Double, lambda: MatD): MatD = {
+  def sim_proxies(L: Int, factors: Seq[MatD], lambda_0: D, lambda: MatD): MatD = {
     sim_observations(L, factors, lambda_0, lambda)
   }
   def mergeFactorColumns(factors: Seq[MatD]): MatD = {
@@ -462,33 +463,33 @@ object ThreePrf {
     }
   }
 
-  //##'  *@export
+  //##'  @export
   def sim_problem(T: Int, N: Int, K_f: Int, sigma_g: MatD, L: Int=2, sigma_y: Int=1): Simulation = {
     assert(L > 0, s"error: L <= 0, but at least one proxy is required")
     //## Simulate Factors
     val factors: Seq[MatD] @unchecked = sim_factors(T, K_f, sigma_g=sigma_g)
     for ((fact, i) <- factors.zipWithIndex) {
-      printf("sim_p:factors(%d)    %s\n", i, fact.shapes)
+      printf("sim_p:factors(%d)    %s\n", i, fact.shapex)
     }
     val F = mergeFactorColumns(factors)
     val K = F.cols
-    printf("sim_p:K:                   %5d\n", K)
+    printf("sim_p:K:                    %5d\n", K)
 
     //## Simulate observations
-    val phi_0: Double = runifDbl(1, -1, 1)
+    val phi_0: D = runifDbl(1, -1, 1)
     printf("sim_p:N x K:        %5d x %5d\n", N, K)
-    printf("sim_p:runif(N * K)      %s x %5d\n", runif(N * K, -1, 1).length, 1)
+    printf("sim_p:runif(N * K)  %5d x %5d\n", N * K, 1)
     val phi = matrix(runif(N * K, -1, 1), nrow=N, ncol=K)
-    printf("sim_p:phi.T         %s\n", phi.T.shapes)
+    printf("sim_p:phi.T         %s\n", phi.T.shapex)
     val X = sim_observations(N, factors, phi_0, phi)
    
     //## Simulate proxies
-    val lambda_0: Double = runifDbl(1, -1, 1)
+    val lambda_0: D = runifDbl(1, -1, 1)
     val lambda: MatD = matrix(runif(L * K), nrow=L, ncol=K)
     val Z: MatD = sim_proxies(L, factors, lambda_0, lambda)
 
     //## Simulate targets
-    val beta_0: Double = runifDbl(1, -1, 1)
+    val beta_0: D = runifDbl(1, -1, 1)
 
     val K_g = K - K_f
     val beta = matrix(c(runif(K_f, -1, 1), rep(0, K - K_f)), nrow=K, ncol=1, byrow=true)
@@ -675,15 +676,17 @@ object ThreePrf {
       }
     }
   }
-//  def dump4x4(tag: String, m: MatD): Unit = {
-//    printf("%s: %s\n", tag, m.shape)
-//    for (rnum <- 1 to m.rows.min(4)) {
-//      val row = m(rnum - 1, ::)
-//      printf("[%d,] ", rnum)
-//      for ((c, j) <- row.toArray.take(4).zipWithIndex) {
-//        printf(" %9.7f", c)
-//      }
-//      printf("\n")
-//    }
-//  }
+  def dump4x4_(tag: String, m: MatD): Unit = {
+    printf("%s: %s\n", tag, m.shape)
+    for (rnum <- 1 to m.rows.min(4)) {
+      val row = m(rnum - 1, ::)
+      printf("[%d,] ", rnum)
+      for ((c, j) <- row.toArray.take(4).zipWithIndex) {
+        printf(" %9.7f", c)
+      }
+      printf("\n")
+    }
+  }
+  extension(m: MatD)
+    def shapex: String = "%5d x %5d".format(m.rows, m.cols)
 }

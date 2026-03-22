@@ -583,7 +583,7 @@ object Tprf3 {
           val Xt0 = selectRows(Xn, ts)
           val Xts = nanStdCols(Xt0)
           val Xt  = Xt0 / Xts
-          val oos = Some(Xn(t, ::).toMat / Xts)
+          val oos = Some(Xn(t, ::) / Xts)
           val tmpt =
             if autoproxy then
               var r0 = yt * 1.0; var tp = Double.NaN
@@ -604,7 +604,7 @@ object Tprf3 {
           val Xt0 = selectRows(Xn, ts0)
           val Xts = nanStdCols(Xt0)
           val Xt  = Xt0 / Xts
-          val oos = Some(Xn(t, ::).toMat / Xts)
+          val oos = Some(Xn(t, ::) / Xts)
           val tmpt =
             if autoproxy then
               var r0 = yt * 1.0; var tp = Double.NaN

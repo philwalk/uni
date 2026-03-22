@@ -1,6 +1,7 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -deprecation
 
 //> using scala 3.7.0
+//> using javaOpt "--add-modules=jdk.incubator.vector"
 //> using dep org.vastblue:uni_3:0.11.2
 //> using dep org.scalanlp::breeze:2.1.0
 
@@ -39,8 +40,8 @@ type Vec[T] = DenseVector[T]
 type MatD = DenseMatrix[Double]
 type VecD = DenseVector[Double]
 
-
 object ThreePrfBreeze {
+  val ThreePrf = ThreePrfBreeze
 
   def usage(m: String=""): Nothing = {
     _usage(m, Seq(
@@ -51,13 +52,13 @@ object ThreePrfBreeze {
   }
 
   var seed: Int = 42
-  private var rng: NumPyRNG = scala.compiletime.uninitialized // new NumPyRNG(seed) // TODO: use MatD.randn, etc
   var n_proxy: Int = 1
   var center: Boolean = false
   var scale: Boolean = true
-  val sigma_g = DenseVector[Double](1.25, 1.75, 2.25, 2.75)
+  val sigma_g = DenseVector[D](1.25, 1.75, 2.25, 2.75)
   val sigma_y = 1
   var verbose = false
+  var rng: NumPyRNG = scala.compiletime.uninitialized
 
   def main(args: Array[String]): Unit = {
     rng = new NumPyRNG(seed) // reset to match uni version's Mat.setSeed(seed)
@@ -104,7 +105,7 @@ object ThreePrfBreeze {
         (this.center, this.scale)
       }
       def n_proxy = if (closed_form) 1 else L
-      ThreePrfBreeze.n_proxy = if (closed_form) 1 else n_proxy
+      ThreePrf.n_proxy = if (closed_form) 1 else n_proxy
 
       // Both proxies Z and the number automatic proxies cannot be unspecified
       if( n_proxy == 0 && (_Z.rows == 0 || _Z.cols == 0) ){
@@ -190,7 +191,7 @@ object ThreePrfBreeze {
     // Preallocating loadings
     val loadings = MatrixNaN(X.cols, Z.cols + plsNum)
     printf("fit_iter:loadings:  %s\n", loadings.shapes)
-    
+
     if (pls) {
       for (j <- 0 until loadings.rows) {
         var Zm: MatD = Z.copy
@@ -209,7 +210,7 @@ object ThreePrfBreeze {
         Zm :+= 1.0
         val Xj = X(::, j)
         val result = leastSquares(Zm, Xj) // fit
-        val coefs: VecD = result.coefficients
+        val coefs = result.coefficients
         if (j==0) printf("fit_iter:coeffs:    %s\n", coefs.shapes)
         // coef( lm( formula = X(::, j) ~ 1 + Z, na.action=na.exclude, model=false))
         loadings(j, ::) := coefs.t
@@ -348,16 +349,16 @@ object ThreePrfBreeze {
     printf("sim_f:col0varDiag   %s\n", col0varDiag.shapes)
 
     var g: List[MatD] = if (K_g > 0) {
-      val rn = rnorm(T  * K_g)
+      val rn = rnorm(T * K_g)
       printf("sim_f:rn            %s\n", rn.shapes)
       val sigma_g = col0varDiag // sigma_g is a diagonal matrix inside this block!
       dump4x4("sigma_g", sigma_g)
       val sigma_g_sqrt: MatD = sqrt(sigma_g)
-      val matRnorm: MatD = matrix(rnorm(T  * K_g), nrow=T, ncol=K_g)
+      val matRnorm: MatD = matrix(rnorm(T * K_g), nrow=T, ncol=K_g)
       printf("sim_f:matRnorm      %s\n", matRnorm.shapes)
 //      val u_g: MatD = matRnorm  * sigma_g_sqrt
       printf("sim_f:sigma_g_sqrt  %s\n", sigma_g_sqrt.shapes)
-      val u_g: MatD = matrix(rnorm(T  * K_g), nrow=T, ncol=K_g)  * sigma_g_sqrt
+      val u_g: MatD = matrix(rnorm(T * K_g), nrow=T, ncol=K_g)  * sigma_g_sqrt
       printf("sim_f:u_g           %s\n", u_g.shapes)
       val u_gtRow0: VecD = u_g(0, ::).t // row vector
       val u_g_row0: Transpose[VecD] = u_g(0, ::)
@@ -395,7 +396,7 @@ object ThreePrfBreeze {
     printf("sim_target(factors, beta_0:%s, beta, sigma_y:%s)\n", beta_0, sigma_y)
     val F = mergeFactorColumns(factors)
     val T = F.rows
-    //##  * Generating innovations
+    //## * Generating innovations
     val u_y: MatD = matrix(rnorm(T), nrow=T, ncol=1, byrow=false)
     val Fxbeta = F  * beta
     printf("sim_t:F             %s\n", F.shapes)
@@ -403,12 +404,12 @@ object ThreePrfBreeze {
     printf("sim_t:Fxbeta        %s\n", Fxbeta.shapes)
     printf("sim_t:u_y           %s\n", u_y.shapes)
 
-    val y = Fxbeta + beta_0 + sigma_y.toDouble  * u_y
+    val y = Fxbeta + beta_0 + sigma_y.toDouble * u_y
     printf("sim_t:y             %s\n", y.shapes)
     assert(y.cols==1, s"too many columns: ${y.cols}: $y")
     y(::, 0) // there should only be one column
   }
-  
+
   // partially apply R %*% multiplication rules
   def rMult(m1: MatD, m2: MatD): MatD = {
     if(m1.cols == 1 && m2.cols == 1){
@@ -441,7 +442,7 @@ object ThreePrfBreeze {
     val F: MatD = c(f, g)
     */
     val epsilon: MatD = matrix(rnorm(T  * N), nrow=T, ncol=N)
-    printf("sim_o:rnorm(T  * N)  %5d x %5d\n", T  * N, 1)
+    printf("sim_o:rnorm(T * N)  %5d x %5d\n", T  * N, 1)
     printf("sim_o:epsilon       %s\n", epsilon.shapes)
     printf("sim_o:F             %s\n", F.shapes)
     printf("sim_o:phi           %s\n", phi.shapes)
@@ -471,19 +472,19 @@ object ThreePrfBreeze {
     }
     val F = mergeFactorColumns(factors)
     val K = F.cols
-    printf("sim_p:K:                   %5d\n", K)
+    printf("sim_p:K:                    %5d\n", K)
 
     //## Simulate observations
     val phi_0: D = runifDbl(1, -1, 1)
     printf("sim_p:N x K:        %5d x %5d\n", N, K)
-    printf("sim_p:runif(N  * K)   %5d x %5d\n", N  * K, 1)
-    val phi = matrix(runif(N  * K, -1, 1), nrow=N, ncol=K)
+    printf("sim_p:runif(N * K)  %5d x %5d\n", N * K, 1)
+    val phi = matrix(runif(N * K, -1, 1), nrow=N, ncol=K)
     printf("sim_p:phi.t         %s\n", phi.t.shapes)
     val X = sim_observations(N, factors, phi_0, phi)
-   
+
     //## Simulate proxies
     val lambda_0: D = runifDbl(1, -1, 1)
-    val lambda: MatD = matrix(runif(L  * K), nrow=L, ncol=K)
+    val lambda: MatD = matrix(runif(L * K), nrow=L, ncol=K)
     val Z: MatD = sim_proxies(L, factors, lambda_0, lambda)
 
     //## Simulate targets
