@@ -1,13 +1,13 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -deprecation
 
-//> using dep org.vastblue:uni_3:0.11.1
+//> using scala 3.7.0
+//> using dep org.vastblue:uni_3:0.11.2
 //> using dep org.scalanlp::breeze:2.1.0
 
 /////////////////////////////////////////////
 // Three Pass Regression Filter Estimators //
 /////////////////////////////////////////////
 
-//  * Three pass regression filter
 //' Three Pass Regression Filter
 //'
 //' Fits the three pass regression filter
@@ -51,7 +51,7 @@ object ThreePrfBreeze {
   }
 
   var seed: Int = 42
-  private var rng: NumPyRNG = new NumPyRNG(seed) // TODO: use MatD.randn, etc
+  private var rng: NumPyRNG = scala.compiletime.uninitialized // new NumPyRNG(seed) // TODO: use MatD.randn, etc
   var n_proxy: Int = 1
   var center: Boolean = false
   var scale: Boolean = true
