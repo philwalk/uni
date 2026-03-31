@@ -1,7 +1,7 @@
 package uni.data
 
 import scala.reflect.ClassTag
-import scala.compiletime.erasedValue
+import scala.compiletime.{erasedValue, summonFrom}
 import uni.io.FileOps.*
 
 //export Mat.MatD as MatD
@@ -1753,15 +1753,20 @@ object Mat {
     inline def matmul(other: Mat[T]): Mat[T] = {
       if m.cols != other.rows then
         throw IllegalArgumentException(s"m.cols[${m.cols}] != other.rows[${other.rows}]")
-      inline erasedValue[T] match
-        case _: Double =>
-          val a = m.asInstanceOf[Mat[Double]]; val b = other.asInstanceOf[Mat[Double]]
-          (if shouldUseBLAS(a, b) then multiplyDoubleBLAS(b) else multiplyDouble(b)).asInstanceOf[Mat[T]]
-        case _: Float =>
-          val a = m.asInstanceOf[Mat[Float]]; val b = other.asInstanceOf[Mat[Float]]
-          (if shouldUseBLAS(a, b) then multiplyFloatBLAS(b) else multiplyFloat(b)).asInstanceOf[Mat[T]]
-        case _: Big       => multiplyBig(other.asInstanceOf[Mat[Big]]).asInstanceOf[Mat[T]]
-        case _: BigDecimal => multiplyBig(other.asInstanceOf[Mat[Big]]).asInstanceOf[Mat[T]]
+      summonFrom {
+        case _: (T =:= Big) =>
+          multiplyBig(other.asInstanceOf[Mat[Big]]).asInstanceOf[Mat[T]]
+        case _ =>
+          inline erasedValue[T] match
+            case _: Double =>
+              val a = m.asInstanceOf[Mat[Double]]; val b = other.asInstanceOf[Mat[Double]]
+              (if shouldUseBLAS(a, b) then multiplyDoubleBLAS(b) else multiplyDouble(b)).asInstanceOf[Mat[T]]
+            case _: Float =>
+              val a = m.asInstanceOf[Mat[Float]]; val b = other.asInstanceOf[Mat[Float]]
+              (if shouldUseBLAS(a, b) then multiplyFloatBLAS(b) else multiplyFloat(b)).asInstanceOf[Mat[T]]
+            case _: BigDecimal =>
+              multiplyBig(other.asInstanceOf[Mat[Big]]).asInstanceOf[Mat[T]]
+      }
     }
 
     inline def dot(other: Mat[T]): Mat[T] = m.matmul(other)

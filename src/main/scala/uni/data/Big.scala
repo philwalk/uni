@@ -6,14 +6,20 @@ export scala.math.BigDecimal.RoundingMode
 
 export Big.{Big, big, asBig, zero, one, BigOne, ten, hundred, BigNaN, BadNum, BigZero}
 export Big.{given Conversion[Int, Big], given Conversion[Long, Big], given Conversion[Float, Big], given Conversion[Double, Big]}
-
 // Mat
 object Big:
+
   private val MC = java.math.MathContext.DECIMAL128   // or a custom context
   // ------------------------------------------------------------
   // Opaque type
   // ------------------------------------------------------------
   opaque type Big = BigDecimal
+
+  import scala.reflect.TypeTest
+  given bigTypeTest: TypeTest[Any, Big] with
+    def unapply(x: Any): Option[x.type & Big] = x match
+      case b: BigDecimal => Some(b.asInstanceOf[x.type & Big])
+      case _ => None
 
   private val BadNumLiteral = "-0.00000001234567890123456789"
 

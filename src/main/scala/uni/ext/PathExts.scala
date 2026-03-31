@@ -174,7 +174,7 @@ object pathExts {
     }
 
     @deprecated("Use `contentAsString`", "uni") def text: String           = contentAsString
-    @deprecated("Use `lines`", "uni")            def trimmedLines: Seq[String] = lines
+    @deprecated("Use `lines`", "uni")            def trimmedLines: Seq[String] = lines.toSeq
 
     def byteArray: Array[Byte] = Files.readAllBytes(p)
 

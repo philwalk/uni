@@ -31,8 +31,10 @@ object Main {
 
     val root = Paths.get(".")
     val matcher = FileSystems.getDefault.getPathMatcher("glob:**/*.{sc,scala,md}")
+    def isScala(p: Path): Boolean =
+      matcher.matches(p) || p.firstLine.contains("scala")
     def fileFilter(p: Path): Boolean = {
-      p.isFile && matcher.matches(p) && {
+      p.isFile && isScala(p) && {
         val str = p.posx
         !str.contains("/.scala-build/") && !str.contains("/target/")
       }
@@ -84,7 +86,9 @@ object Main {
             print(s"+ $u\n")
         }
       else
+        val ts = Proc.call("stat.exe", "-c", "%y", path.posx).getOrElse("")
         val lfText = updated.mkString("\n")
         Files.write(path, lfText.getBytes("UTF-8"))
         println(s"updated: $path")
+        if ts.nonEmpty then Proc.call("touch", "-d", ts, path.posx)
 }

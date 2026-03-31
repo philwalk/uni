@@ -441,4 +441,20 @@ object FastCsv {
       )
     }
   }
+
+  def parseCsvLine(line: String, cfg: Config = Config()): Seq[String] = {
+    // default to comma (the byte literal for a comma: 44.toByte or ',')
+    val delimiter = cfg.delimiter.getOrElse(','.toByte)
+    val parser = new RowParser(cfg, delimiter)
+    val bytes = line.getBytes(cfg.charset)
+    
+    // Feed all bytes from the string
+    bytes.foreach(parser.feed)
+    
+    // Use eof() to trigger the emission of the final fields
+    parser.eof() match {
+      case Some(row) => decodeFields(row, cfg.charset).toSeq
+      case None      => Seq.empty
+    }
+  }
 }
