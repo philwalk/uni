@@ -565,6 +565,8 @@ object Mat {
   // (to left-multiply a matrix by a scalar).
   extension (scalar: Double)
     def *(m: Mat[Double]): Mat[Double] = m * scalar
+    def +(m: Mat[Double]): Mat[Double] = m + scalar
+    def -(m: Mat[Double]): Mat[Double] = m.map(scalar - _)
 
   extension (base: Double)
     def ~^(exponent: Double): Double = Math.pow(base, exponent)

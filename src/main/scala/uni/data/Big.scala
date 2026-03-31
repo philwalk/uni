@@ -238,6 +238,15 @@ object Big:
         val underlying: java.math.BigDecimal = n.value.bigDecimal
         Big(underlying.sqrt(Big.MC))
 
+  // scalar / Big  (left-hand division only; *,+,- live at package scope in
+  // VecExts.scala so they don't shadow Mat[Double] ops at higher priority.
+  // Division stays here so it doesn't shadow existing Mat[Double] 1×1
+  // scalar division when imported via `import uni.data.*`.)
+  extension (n: Int)    @annotation.targetName("intDivBig")    def /(b: Big): Big = Big(n) / b
+  extension (n: Long)   @annotation.targetName("longDivBig")   def /(b: Big): Big = Big(n) / b
+  extension (n: Double) @annotation.targetName("doubleDivBig") def /(b: Big): Big = Big(n) / b
+  extension (n: Float)  @annotation.targetName("floatDivBig")  def /(b: Big): Big = Big(n.toDouble) / b
+
   import scala.language.implicitConversions
   given Conversion[Int, Big] = d => Big(BigDecimal(d))
   given Conversion[Long, Big] = d => Big(BigDecimal(d))

@@ -29,24 +29,33 @@ package uni.data
 
 import Mat.*
 import scala.reflect.ClassTag
-import uni.data.Big.Big
 
 // Re-export `*` (broadcast-axis sentinel) from object Mat in THIS FILE so the
 // forwarder is compiled where CVec/RVec are opaque.
 export Mat.{`*`}
 
-// scalar * Mat[Double]  (left-hand multiply; right-hand is on Mat itself)
-extension (scalar: Double) @annotation.targetName("scalarTimesMatD") def *(m: Mat[Double]): Mat[Double]        = m * scalar
-extension (scalar: Int)    @annotation.targetName("intTimesMatD")    def *(m: Mat[Double]): Mat[Double]        = m * scalar.toDouble
-extension (scalar: Long)   @annotation.targetName("longTimesMatD")   def *(m: Mat[Double]): Mat[Double]        = m * scalar.toDouble
-extension (scalar: Int)    @annotation.targetName("intTimesCVecD")   def *(cv: CVec[Double]): CVec[Double]     = CVec.fromMat(cv.asMat * scalar.toDouble)
-extension (scalar: Long)   @annotation.targetName("longTimesCVecD")  def *(cv: CVec[Double]): CVec[Double]     = CVec.fromMat(cv.asMat * scalar.toDouble)
-extension (scalar: Int)    @annotation.targetName("intTimesRVecD")   def *(rv: RVec[Double]): RVec[Double]     = RVec.fromMat(rv.asMat * scalar.toDouble)
-extension (scalar: Long)   @annotation.targetName("longTimesRVecD")  def *(rv: RVec[Double]): RVec[Double]     = RVec.fromMat(rv.asMat * scalar.toDouble)
-// scalar * Big  (left-hand multiply; right-hand is on Big itself)
-extension (n: Int)    @annotation.targetName("intTimesBig")    def *(b: Big): Big = b * n
-extension (n: Long)   @annotation.targetName("longTimesBig")   def *(b: Big): Big = b * n
-extension (n: Double) @annotation.targetName("doubleTimesBig") def *(b: Big): Big = b * n
+// scalar *,+,- Mat[Double]  (left-hand ops; all at package scope so overload
+// resolution can choose between Mat and Big overloads at the same priority)
+extension (scalar: Double) @annotation.targetName("scalarTimesMatD")  def *(m: Mat[Double]): Mat[Double]    = m * scalar
+extension (scalar: Int)    @annotation.targetName("intTimesMatD")     def *(m: Mat[Double]): Mat[Double]    = m * scalar.toDouble
+extension (scalar: Long)   @annotation.targetName("longTimesMatD")    def *(m: Mat[Double]): Mat[Double]    = m * scalar.toDouble
+extension (scalar: Float)  @annotation.targetName("floatTimesMatD")   def *(m: Mat[Double]): Mat[Double]    = m * scalar.toDouble
+extension (scalar: Int)    @annotation.targetName("intPlusMatD")      def +(m: Mat[Double]): Mat[Double]    = m + scalar.toDouble
+extension (scalar: Long)   @annotation.targetName("longPlusMatD")     def +(m: Mat[Double]): Mat[Double]    = m + scalar.toDouble
+extension (scalar: Float)  @annotation.targetName("floatPlusMatD")    def +(m: Mat[Double]): Mat[Double]    = m + scalar.toDouble
+extension (scalar: Int)    @annotation.targetName("intMinusMatD")     def -(m: Mat[Double]): Mat[Double]    = m.map(scalar.toDouble - _)
+extension (scalar: Long)   @annotation.targetName("longMinusMatD")    def -(m: Mat[Double]): Mat[Double]    = m.map(scalar.toDouble - _)
+extension (scalar: Float)  @annotation.targetName("floatMinusMatD")   def -(m: Mat[Double]): Mat[Double]    = m.map(scalar.toDouble - _)
+extension (scalar: Int)    @annotation.targetName("intTimesCVecD")    def *(cv: CVec[Double]): CVec[Double] = CVec.fromMat(cv.asMat * scalar.toDouble)
+extension (scalar: Long)   @annotation.targetName("longTimesCVecD")   def *(cv: CVec[Double]): CVec[Double] = CVec.fromMat(cv.asMat * scalar.toDouble)
+extension (scalar: Int)    @annotation.targetName("intTimesRVecD")    def *(rv: RVec[Double]): RVec[Double] = RVec.fromMat(rv.asMat * scalar.toDouble)
+extension (scalar: Long)   @annotation.targetName("longTimesRVecD")   def *(rv: RVec[Double]): RVec[Double] = RVec.fromMat(rv.asMat * scalar.toDouble)
+// scalar *,+,- Big: NO extension methods here.
+// These are handled by given Conversion[Int/Long/Double/Float, Big] (defined in
+// object Big and exported at uni.data package scope), which lets the compiler
+// convert e.g. `2` → Big(2) and then use Big's own +/-/* methods.
+// Defining explicit extensions here would compete with intPlusMatD / intMinusMatD
+// at the same scope level and prevent Scala 3.7 from resolving `scalar + Mat`.
 
 // All CVec/RVec extension methods are in object VecOps so they can be
 // exported from this file via `export VecOps.*`.  Methods defined inside

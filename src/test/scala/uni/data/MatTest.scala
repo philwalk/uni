@@ -4084,7 +4084,7 @@ class MatTest extends munit.FunSuite {
     assert(m.data.forall(x => x >= 0.0 && x < 1.0), "All values should be in [0, 1)")
   }
 
-  /*
+  /* TODO: fix this if it provides useful verification
   test("NumPyRNG matches NumPy seed=42 sequence") {
     Mat.setSeed(42)
     val expected = Array(51, 92, 14, 71, 60)

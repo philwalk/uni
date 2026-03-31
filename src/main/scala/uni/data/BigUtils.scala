@@ -5,6 +5,8 @@ import scala.util.Try
 import scala.util.matching.Regex
 import scala.math.BigDecimal
 
+//export BigUtils.getMostSpecificType
+
 object BigUtils:
   import uni.data.Big
   import uni.data.Big.Big

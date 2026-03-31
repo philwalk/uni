@@ -16,6 +16,7 @@ class MigrationSuite extends FunSuite:
   val testSeq: Seq[String] = textFile.path.lines.toSeq
 
   /* these only worked initially because this is in uni package */
+  // TODO: if there's a way to export auto conversion from iterator to seq, these can be uncommented.
 //  test("Iterator[String] converts to Seq") {
 //    val p = textFile.path
 //    @annotation.nowarn // no deprecation warning here
