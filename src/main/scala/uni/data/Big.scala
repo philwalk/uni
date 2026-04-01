@@ -238,10 +238,24 @@ object Big:
         val underlying: java.math.BigDecimal = n.value.bigDecimal
         Big(underlying.sqrt(Big.MC))
 
-  // scalar / Big  (left-hand division only; *,+,- live at package scope in
-  // VecExts.scala so they don't shadow Mat[Double] ops at higher priority.
-  // Division stays here so it doesn't shadow existing Mat[Double] 1×1
-  // scalar division when imported via `import uni.data.*`.)
+  // scalar +,-,*,/ Big  (left-hand ops for all scalar types).
+  // Explicit extensions here (in Big's implicit scope) are needed because
+  // object Mat now has `extension (scalar: Double) def *,+,-(m: Mat[Double])`,
+  // which causes Scala 3.7+ to generate E134 for Double.*/+/- on a Big argument
+  // before trying `given Conversion[Double, Big]`.  Int/Long/Float are included
+  // for consistency and forward compatibility.
+  extension (n: Int)    @annotation.targetName("intTimesBig")   def *(b: Big): Big = Big(n) * b
+  extension (n: Long)   @annotation.targetName("longTimesBig")  def *(b: Big): Big = Big(n) * b
+  extension (n: Double) @annotation.targetName("doubleTimesBig") def *(b: Big): Big = Big(n) * b
+  extension (n: Float)  @annotation.targetName("floatTimesBig") def *(b: Big): Big = Big(n.toDouble) * b
+  extension (n: Int)    @annotation.targetName("intPlusBig")    def +(b: Big): Big = Big(n) + b
+  extension (n: Long)   @annotation.targetName("longPlusBig")   def +(b: Big): Big = Big(n) + b
+  extension (n: Double) @annotation.targetName("doublePlusBig") def +(b: Big): Big = Big(n) + b
+  extension (n: Float)  @annotation.targetName("floatPlusBig")  def +(b: Big): Big = Big(n.toDouble) + b
+  extension (n: Int)    @annotation.targetName("intMinusBig")   def -(b: Big): Big = Big(n) - b
+  extension (n: Long)   @annotation.targetName("longMinusBig")  def -(b: Big): Big = Big(n) - b
+  extension (n: Double) @annotation.targetName("doubleMinusBig") def -(b: Big): Big = Big(n) - b
+  extension (n: Float)  @annotation.targetName("floatMinusBig") def -(b: Big): Big = Big(n.toDouble) - b
   extension (n: Int)    @annotation.targetName("intDivBig")    def /(b: Big): Big = Big(n) / b
   extension (n: Long)   @annotation.targetName("longDivBig")   def /(b: Big): Big = Big(n) / b
   extension (n: Double) @annotation.targetName("doubleDivBig") def /(b: Big): Big = Big(n) / b

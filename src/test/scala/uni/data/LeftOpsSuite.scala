@@ -1,7 +1,7 @@
-package uni.data
+package test.leftops
 
 import munit.FunSuite
-import uni.data.Big.*
+import uni.data.*
 
 /** Verifies that scalars (Int, Long, Float, Double) can appear on the
  *  LEFT side of +, -, *, / with both Big and Mat[Double]. */
