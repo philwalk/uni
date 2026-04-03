@@ -19,7 +19,7 @@ ThisBuild / watchTriggeredMessage := Watch.clearScreenOnTrigger
 ThisBuild / scalaVersion  := scalaVer
 
 lazy val projectName = "uni"
-ThisBuild / version       := "0.11.3" // Vec <: Mat
+ThisBuild / version       := "0.12.0" // consistent Seq/Iterator method names for Path.lines and Path.csvRows
 ThisBuild / versionScheme := Some("semver-spec")
 
 ThisBuild / organization         := "org.vastblue"
@@ -102,7 +102,7 @@ lazy val root = (project in file(".")).
 Test / testOptions += Tests.Argument(TestFrameworks.MUnit, "-q")
 
 libraryDependencies ++= Seq(
-  "dev.ludovic.netlib"       % "blas"                       % "3.1.1",
+  "dev.ludovic.netlib"       % "blas"                       % "3.2.0",
   "org.bytedeco"             % "openblas-platform"          % "0.3.31-1.5.13",
   "org.scala-lang.modules"  %% "scala-parallel-collections" % "1.2.0",
   "org.knowm.xchart"         % "xchart"                     % "3.8.8",

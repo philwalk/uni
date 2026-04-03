@@ -7,7 +7,7 @@ import uni.*
 import uni.io.*
 
 // sort a csv file by a specified list of columns.
-object ColumnN {
+object SortByCols {
   def usage(m: String = ""): Nothing = {
     showUsage(m,
       "<sortColumns> <csvFile>",

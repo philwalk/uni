@@ -184,6 +184,8 @@ object Big:
     inline def -(that: Double): Big = badGuard(that)(n - BigDecimal(that))
 
     // --- comparisons ----------------------------------------------------------
+    def compare(that: Big): Int =
+      if isBad(n) || isBad(that) then 0 else n.bigDecimal.compareTo(that.bigDecimal)
     inline def <(that: Big): Boolean    = !isBad(n) && !isBad(that) && n < that
     inline def <=(that: Big): Boolean   = !isBad(n) && !isBad(that) && n <= that
     inline def >(that: Big): Boolean    = !isBad(n) && !isBad(that) && n > that

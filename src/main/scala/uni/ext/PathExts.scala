@@ -1,6 +1,6 @@
 package uni
 
-import java.nio.charset.{Charset, MalformedInputException, StandardCharsets}
+import java.nio.charset.{Charset, StandardCharsets}
 import java.io.{File as JFile, PrintWriter}
 import java.nio.file.{Path, Files, StandardCopyOption}
 import java.time.{DayOfWeek, LocalDateTime, ZoneId}
@@ -128,7 +128,7 @@ object pathExts {
       case None      => Iterator.empty
     }
     def files: Seq[JFile]          = filesIter.toSeq
-    private def pathsIter: Iterator[Path]  = filesIter.map(_.toPath)
+    def pathsIter: Iterator[Path]  = filesIter.map(_.toPath)
     def paths: Seq[Path]           = pathsIter.toSeq
     def subdirs: Seq[Path]         = pathsIter.filter(Files.isDirectory(_)).toSeq
     def subfiles: Seq[Path]        = pathsIter.filter(Files.isRegularFile(_)).toSeq
@@ -147,44 +147,53 @@ object pathExts {
         Iterator.empty
 
     // ---- read content ----
-    def linesStream: Iterator[String] = streamLines(p)
-    def firstLine: String = streamLines(p).nextOption.getOrElse("")
+    def linesStream: Iterator[String] = if isFile then streamLines(p) else Iterator.empty
+    def firstLine: String = linesStream.nextOption.getOrElse("")
 
-    def lines: Iterator[String] = {
-      try {
-        Files.readAllLines(p, UTF_8).asScala.iterator
-      } catch {
-        case _: java.nio.charset.MalformedInputException =>
-          Files.readAllLines(p, Latin1).asScala.iterator
-      }
-    }
+    def lines: Seq[String] = linesStream.toSeq
 
-    def lines(charset: String = ""): Iterator[String] =
-      if charset.isEmpty then streamLines(p) else
-      scala.io.Source.fromFile(p.toFile).getLines
+    def lines(charset: String): Seq[String] = linesStream(charset).toSeq
 
-    def contentAsString(charset: Charset = UTF_8): String = Files.readString(p, charset)
-    def contentAsString: String = {
-      try {
-        Files.readString(p, UTF_8)
-      } catch {
-        case _: java.nio.charset.MalformedInputException =>
-          Files.readString(p, Latin1)
-      }
-    }
+    def linesStream(charset: String): Iterator[String] =
+      if !isFile then Iterator.empty
+      else if charset.isEmpty then streamLines(p)
+      else
+        val cs = try Charset.forName(charset) catch case _: Exception => UTF_8
+        streamLines(p, cs)
+
+    def contentAsString(charset: Charset = UTF_8): String =
+      if isFile then
+        try Files.readString(p, charset) catch case _: Exception => ""
+      else ""
+
+    def contentAsString: String =
+      if isFile then
+        try {
+          Files.readString(p, UTF_8)
+        } catch {
+          case _: Exception =>
+            try {
+              Files.readString(p, Latin1)
+            } catch {
+              case _: Exception => ""
+            }
+        }
+      else ""
 
     @deprecated("Use `contentAsString`", "uni") def text: String           = contentAsString
     @deprecated("Use `lines`", "uni")            def trimmedLines: Seq[String] = lines.toSeq
 
-    def byteArray: Array[Byte] = Files.readAllBytes(p)
+    def byteArray: Array[Byte] = if isFile then (try Files.readAllBytes(p) catch case _: Exception => Array.empty[Byte]) else Array.empty[Byte]
 
     // ---- CSV ----
-    def csvRowsAsync: Iterator[Seq[String]] = uni.io.FastCsv.rowsAsync(p)
-    def csvRows: Seq[Seq[String]]           = uni.io.FastCsv.rowsPulled(p).toSeq
+    def csvRowsAsync:  Iterator[Seq[String]] = if isFile then uni.io.FastCsv.rowsAsync(p) else Iterator.empty
+    def csvRowsStream: Iterator[Seq[String]] = if isFile then uni.io.FastCsv.rowsPulled(p) else Iterator.empty
+    def csvRows:       Seq[Seq[String]]      = csvRowsStream.toSeq
     def csvRows(onRow: Seq[String] => Unit): Unit =
-      uni.io.FastCsv.eachRow(p) { (row: IterableOnce[String]) =>
-        onRow(row.iterator.to(Seq))
-      }
+      if isFile then
+        uni.io.FastCsv.eachRow(p) { (row: IterableOnce[String]) =>
+          onRow(row.iterator.to(Seq))
+        }
 
     // ---- existence / link ----
     def isSymbolicLink: Boolean = Files.isSymbolicLink(p)
@@ -260,11 +269,12 @@ object pathExts {
     /** Rename by copy+delete — works across filesystems. Returns 0 on success, -1 on failure. */
     def renameViaCopy(newFile: Path, overwrite: Boolean = false): Int =
       try
-        if !Files.exists(p) then return -1
-        if Files.exists(newFile) && !overwrite then return -1
-        Files.copy(p, newFile, StandardCopyOption.REPLACE_EXISTING)
-        Files.delete(p)
-        0
+        if !Files.exists(p) || (Files.exists(newFile) && !overwrite) then
+          -1
+        else
+          Files.copy(p, newFile, StandardCopyOption.REPLACE_EXISTING)
+          Files.delete(p)
+          0
       catch case _: Exception => -1
 
     def renameTo(other: Path, overwrite: Boolean = false): Boolean =
@@ -425,46 +435,47 @@ object pathExts {
     def diff(other: JFile): Seq[String] = shellExec(s"diff '${f.toPath.posx}' '${other.toPath.posx}'")
 
     // ---- directory listing ----
-    def filesIter: Iterator[JFile]  = Option(f.listFiles).map(_.iterator).getOrElse(Iterator.empty)
-    def files: Seq[JFile]           = filesIter.toSeq
-    def pathsIter: Iterator[Path]   = filesIter.map(_.toPath)
-    def paths: Seq[Path]            = pathsIter.toSeq
+    def filesIter: Iterator[JFile]  = f.toPath.filesIter
+    def files: Seq[JFile]           = f.toPath.files
+    def pathsIter: Iterator[Path]   = f.toPath.pathsIter
+    def paths: Seq[Path]            = f.toPath.paths
     def subdirs: Seq[Path]          = f.toPath.subdirs
     def subfiles: Seq[Path]         = f.toPath.subfiles
 
     // ---- tree walk ----
-    def filesTree: Seq[JFile] = filesTreeIter.toSeq
-    def filesTreeIter: Iterator[JFile] =
-      if f.exists() then Files.walk(f.toPath).iterator().asScala.map(_.toFile)
-      else Iterator.empty
-    def pathsTree: Seq[Path]          = f.toPath.pathsTree
-    def pathsTreeIter: Iterator[Path] = f.toPath.pathsTreeIter
+    def filesTree: Seq[JFile]          = filesTreeIter.toSeq
+    def filesTreeIter: Iterator[JFile] = f.toPath.pathsTreeIter.map(_.toFile)
+    def pathsTree: Seq[Path]           = f.toPath.pathsTree
+    def pathsTreeIter: Iterator[Path]  = f.toPath.pathsTreeIter
 
     // ---- read content ----
-    def linesStream: Iterator[String]             = streamLines(f.toPath)
-    def firstLine: String                         = streamLines(f.toPath).nextOption.getOrElse("")
-    def lines: Iterator[String]                   = f.toPath.lines
-    def lines(charset: Charset): Iterator[String] = scala.io.Source.fromFile(f, charset.name).getLines
-    def contentAsString(charset: Charset): String = Files.readString(f.toPath, charset)
-    def contentAsString: String                   = f.toPath.contentAsString
-    def byteArray: Array[Byte]                    = f.toPath.byteArray
+    def linesStream: Iterator[String]                  = f.toPath.linesStream
+    def firstLine: String                              = f.toPath.firstLine
+    def lines: Seq[String]                             = f.toPath.lines
+    def lines(charset: String): Seq[String]            = f.toPath.lines(charset)
+    def lines(charset: Charset): Seq[String]           = f.toPath.lines(charset.name)
+    def linesStream(charset: String): Iterator[String] = f.toPath.linesStream(charset)
+    def contentAsString(charset: Charset): String      = f.toPath.contentAsString(charset)
+    def contentAsString: String                        = f.toPath.contentAsString
+    def byteArray: Array[Byte]                         = f.toPath.byteArray
 
     // ---- CSV ----
-    def csvRowsAsync: Iterator[Seq[String]]       = uni.io.FastCsv.rowsAsync(f.toPath)
-    def csvRows: Seq[Seq[String]]                 = uni.io.FastCsv.rowsPulled(f.toPath).toSeq
+    def csvRowsAsync:  Iterator[Seq[String]]       = f.toPath.csvRowsAsync
+    def csvRowsStream: Iterator[Seq[String]]       = f.toPath.csvRowsStream
+    def csvRows:      Seq[Seq[String]]            = f.toPath.csvRows
     def csvRows(onRow: Seq[String] => Unit): Unit = f.toPath.csvRows(onRow)
 
     // ---- timestamps ----
-    def lastModMillisAgo: Long    = System.currentTimeMillis - f.lastModified
-    def lastModSecondsAgo: Double = lastModMillisAgo / 1000.0
-    def lastModMinutesAgo: Double = round(lastModSecondsAgo / 60.0)
-    def lastModHoursAgo: Double   = round(lastModMinutesAgo / 60.0)
-    def lastModDaysAgo: Double    = round(lastModHoursAgo / 24.0)
-    def lastModSeconds: Double    = lastModSecondsAgo
-    def lastModMinutes: Double    = lastModMinutesAgo
-    def lastModHours: Double      = lastModHoursAgo
-    def lastModDays: Double       = lastModDaysAgo
-    def ageInDays: Double         = lastModDaysAgo
+    def lastModMillisAgo: Long    = f.toPath.lastModMillisAgo
+    def lastModSecondsAgo: Double = f.toPath.lastModSecondsAgo
+    def lastModMinutesAgo: Double = f.toPath.lastModMinutesAgo
+    def lastModHoursAgo: Double   = f.toPath.lastModHoursAgo
+    def lastModDaysAgo: Double    = f.toPath.lastModDaysAgo
+    def lastModSeconds: Double    = f.toPath.lastModSeconds
+    def lastModMinutes: Double    = f.toPath.lastModMinutes
+    def lastModHours: Double      = f.toPath.lastModHours
+    def lastModDays: Double       = f.toPath.lastModDays
+    def ageInDays: Double         = f.toPath.ageInDays
     def lastModifiedYMD: String   = f.toPath.lastModifiedYMD
     def lastModifiedTime: LocalDateTime = f.toPath.lastModifiedTime
     def weekDay: DayOfWeek        = f.toPath.weekDay
@@ -517,16 +528,14 @@ object pathExts {
   import scala.collection.mutable.ArrayBuffer
   import java.nio.ByteBuffer
 
-  def streamLines(p: Path): Iterator[String] =
+  def streamLines(p: Path, cs: Charset = StandardCharsets.UTF_8): Iterator[String] =
     new Iterator[String]:
       private val in: InputStream = Files.newInputStream(p)
       private val buf = ArrayBuffer.empty[Byte]
       private var nextLine: String | Null = null
       private var closed = false
 
-      val utf8Decoder =
-        StandardCharsets.UTF_8
-          .newDecoder()
+      val decoder = cs.newDecoder()
           .onMalformedInput(CodingErrorAction.REPORT)
           .onUnmappableCharacter(CodingErrorAction.REPORT)
 
@@ -549,19 +558,19 @@ object pathExts {
         var b = in.read()
         if b == -1 then
           close()
-          return null
+          null
+        else
+          while b != -1 && b != '\n' do
+            if b != '\r' then buf += b.toByte
+            b = in.read()
 
-        while b != -1 && b != '\n' do
-          if b != '\r' then buf += b.toByte
-          b = in.read()
+          val bytes = buf.toArray
 
-        val bytes = buf.toArray
-
-        try
-          utf8Decoder.decode(ByteBuffer.wrap(bytes)).toString
-        catch
-          case _: MalformedInputException =>
-            new String(bytes, StandardCharsets.ISO_8859_1)
+          try
+            decoder.decode(ByteBuffer.wrap(bytes)).toString
+          catch
+            case _: Exception =>
+              new String(bytes, StandardCharsets.ISO_8859_1)
 
       private def close(): Unit =
         if !closed then

@@ -65,7 +65,15 @@ env: Cygwin     | C:/cygwin64/etc/fstab | 24 lines
 
 ---
 
-## Path Extension Methods
+## Robustness and Portability
+
+`uni` methods are designed for scripting: they never return `null` and avoid throwing exceptions for common file-system issues. 
+
+- **Defensive:** Methods like `.lines`, `.csvRows`, or `.csvRowsStream` return an empty `Seq` or `Iterator` (rather than crashing) if the file does not exist, or if it is a directory.
+- **Encoding:** Reading methods default to UTF-8 but automatically fall back to Latin-1 (`ISO-8859-1`) if encoding errors occur, ensuring that "corrupt" or mixed-encoding data can still be processed.
+- **Portability:** All `Path` extension methods are also available for `java.io.File` (aliased as `JFile`), ensuring consistent behavior regardless of the underlying API used.
+
+---
 
 `import uni.*` adds the following methods to every `java.nio.file.Path`, organised by category:
 
@@ -84,12 +92,14 @@ env: Cygwin     | C:/cygwin64/etc/fstab | 24 lines
 
 | Method | Returns | Description |
 | :--- | :--- | :--- |
-| `.name` | `String` | filename including extension |
-| `.basename` | `String` | filename without extension |
-| `.lcbasename` | `String` | lowercase basename |
-| `.suffix` | `String` | extension without leading dot |
+| `.last` | `String` | filename including extension |
+| `.baseName` | `String` | filename without extension |
+| `.ext` | `String` | extension without leading dot |
 | `.dotsuffix` | `String` | extension with leading dot (e.g. `".scala"`) |
 | `.extension` | `Option[String]` | extension without dot, or `None` |
+| `.name` | `String` | (deprecated) use `.last` |
+| `.basename` | `String` | (deprecated) use `.baseName` |
+| `.suffix` | `String` | (deprecated) use `.ext` |
 
 **Path string representations**
 
@@ -98,9 +108,13 @@ env: Cygwin     | C:/cygwin64/etc/fstab | 24 lines
 | `.posx` | `String` | forward-slash path string |
 | `.posix` | `String` | absolute forward-slash path string |
 | `.abs` | `String` | absolute normalised path with forward slashes |
+| `.abspath` | `Path` | absolute normalised path as a `Path` |
 | `.stdpath` | `String` | standardised path string |
 | `.relpath` | `String` | path relative to the current working directory |
 | `.localpath` | `String` | native path (backslashes on Windows) |
+| `.local` | `String` | alias for `.posx` |
+| `.dospath` | `String` | native Windows path format |
+| `.noDrive` | `String` | path string without Windows drive letter |
 
 **Navigation**
 
@@ -118,12 +132,14 @@ env: Cygwin     | C:/cygwin64/etc/fstab | 24 lines
 | `.linesStream` | `Iterator[String]` | streaming lines; suitable for large files |
 | `.firstLine` | `String` | first line only |
 | `.contentAsString` | `String` | entire file as a string |
+| `.byteArray` | `Array[Byte]` | raw file content as bytes |
 
 **CSV**
 
 | Method | Returns | Description |
 | :--- | :--- | :--- |
-| `.csvRows` | `Iterator[Seq[String]]` | file parsed as delimited rows |
+| `.csvRows` | `Seq[Seq[String]]` | all parsed CSV rows |
+| `.csvRowsStream` | `Iterator[Seq[String]]` | streaming CSV rows; suitable for large files |
 | `.csvRowsAsync` | `Iterator[Seq[String]]` | async variant |
 | `.csvRows(onRow)` | `Unit` | callback-per-row variant |
 
@@ -144,6 +160,11 @@ env: Cygwin     | C:/cygwin64/etc/fstab | 24 lines
 | `.pathsIter` | `Iterator[Path]` | immediate contents as an iterator |
 | `.pathsTree` | `Seq[Path]` | recursive directory tree |
 | `.pathsTreeIter` | `Iterator[Path]` | recursive tree as an iterator |
+| `.walk` | `Iterator[Path]` | alias for `.pathsTreeIter` |
+| `.files` | `Seq[File]` | immediate contents as `File` objects |
+| `.filesIter` | `Iterator[File]` | immediate contents as an iterator |
+| `.subdirs` | `Seq[Path]` | immediate child directories |
+| `.subfiles` | `Seq[Path]` | immediate child files |
 
 **File operations**
 
@@ -151,6 +172,7 @@ env: Cygwin     | C:/cygwin64/etc/fstab | 24 lines
 | :--- | :--- | :--- |
 | `.copyTo(dest, overwrite, copyAttributes)` | `Path` | copy file to destination |
 | `.renameTo(other, overwrite)` | `Boolean` | rename or move file |
+| `.renameViaCopy(dest, overwrite)` | `Int` | rename by copy+delete (0 on success) |
 | `.delete` | `Boolean` | delete file if it exists |
 | `.mkdirs` | `Boolean` | create directory and any missing parents |
 | `.length` | `Long` | file size in bytes |
@@ -166,6 +188,8 @@ env: Cygwin     | C:/cygwin64/etc/fstab | 24 lines
 | `.lastModMinutesAgo` | `Double` | minutes since last modification |
 | `.lastModHoursAgo` | `Double` | hours since last modification |
 | `.lastModDaysAgo` | `Double` | days since last modification |
+| `.ageInDays` | `Double` | alias for `.lastModDaysAgo` |
+| `.weekDay` | `DayOfWeek` | day of the week of last modification |
 
 **Hashing and checksums**
 
@@ -173,6 +197,7 @@ env: Cygwin     | C:/cygwin64/etc/fstab | 24 lines
 | :--- | :--- | :--- |
 | `.hash64` | `String` | streaming 64-bit hash of file contents |
 | `.md5` | `String` | MD5 digest as a hex string |
+| `.sha256` | `String` | SHA-256 digest as a hex string |
 | `.cksum` | `(Long, Long)` | POSIX-style checksum and byte count |
 
 `import uni.*` also extends `String` with a `.path` method that converts the string to a `java.nio.file.Path`, allowing `"/etc/fstab".path.lines` and similar one-liners.

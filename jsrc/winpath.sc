@@ -3,16 +3,13 @@
 //> using dep org.vastblue:uni_3:0.11.2
 
 import uni.*
-//import uni.fs.*
 
 object Winpath {
   private var proxiedExeName: String = ""
   private var proxiedArgs: Seq[String] = Seq.empty
 
   def usage(msg: String = ""): Nothing = {
-    if msg.nonEmpty then eprintf("%s\n", msg)
-    eprintf("%s\n", s"usage: ${progName(this)} <proxiedExe> <arg1> [<arg2> ...]")
-    sys.exit(1)
+    showUsage("<proxiedExe> <arg1> [<arg2> ...]")
   }
 
   def main(args: Array[String]): Unit = {
@@ -90,5 +87,21 @@ object Winpath {
   lazy val winpathConfig: Path = {
     Paths.get("~/.winpath.cfg")
   }
+
+  private def isValidWindowsPath(s: String): Boolean =
+    val t = s.trim
+    val driveAbs   = "^[A-Za-z]:[\\\\/].*".r
+    val unc        = "^\\\\\\\\[^\\\\]+\\\\[^\\\\]+.*".r
+    val device     = "^\\\\\\\\[.?]\\\\.*".r
+    val winRel     = "^[^/]*\\\\.*".r
+    val embedded   = ".*[A-Za-z]:[\\\\/].*".r
+
+    t match
+      case driveAbs()  => true
+      case unc()       => true
+      case device()    => true
+      case winRel()    => true
+      case embedded()  => true
+      case _           => false
 
 }

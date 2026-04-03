@@ -47,7 +47,7 @@ object FileOps {
     map: String => T
   ): Mat[T] = {
     val path: Path = uni.Paths.get(pathString)
-    val rows = path.csvRows.toVector
+    val rows = path.csvRowsStream.toVector
     val dataRows = if (skipHeader && rows.nonEmpty) rows.tail else rows
     
     if dataRows.isEmpty then
@@ -102,7 +102,7 @@ object FileOps {
    */
   def loadSmart[T: ClassTag](p: Path, map: Big => T): MatResult[T] = {
     // 1. Get ALL rows from the CSV
-    val allRows = p.csvRows.toVector
+    val allRows = p.csvRowsStream.toVector
     if allRows.isEmpty then
       MatResult(Vector.empty, create(Array.empty[T], 0, 0))
     else
@@ -132,21 +132,21 @@ object FileOps {
 
       // 4. REIFICATION
       val numRows = dataRows.length
-      if (numRows == 0) return MatResult(headers, create(Array.empty[T], 0, width))
-
-      val flatData = new Array[T](numRows * width)
-      var r = 0
-      while (r < numRows) {
-        var c = 0
-        while (c < width) {
-          // Direct indexing to avoid any row-skipping "magic"
-          flatData(r * width + c) = map(big(dataRows(r)(c)))
-          c += 1
+      if (numRows == 0) then
+        MatResult(headers, create(Array.empty[T], 0, width))
+      else
+        val flatData = new Array[T](numRows * width)
+        var r = 0
+        while (r < numRows) {
+          var c = 0
+          while (c < width) {
+            // Direct indexing to avoid any row-skipping "magic"
+            flatData(r * width + c) = map(big(dataRows(r)(c)))
+            c += 1
+          }
+          r += 1
         }
-        r += 1
-      }
-
-      MatResult(headers, create(flatData, numRows, width))
+        MatResult(headers, create(flatData, numRows, width))
   }
 
   def loadSmartUrl(url: String): MatResult[Big] = loadSmartUrl(url, identity)

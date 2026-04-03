@@ -13,23 +13,21 @@ class MigrationSuite extends FunSuite:
     else
       "/etc/hosts"
 
-  val testSeq: Seq[String] = textFile.path.lines.toSeq
+  val testSeq: Seq[String] = textFile.path.lines
 
-  /* these only worked initially because this is in uni package */
-  // TODO: if there's a way to export auto conversion from iterator to seq, these can be uncommented.
-//  test("Iterator[String] converts to Seq") {
-//    val p = textFile.path
-//    @annotation.nowarn // no deprecation warning here
-//    val seq: Seq[String] = p.lines
-//    assertEquals(seq, testSeq)
-//  }
-//
-//  test("Iterator[String] can be sorted") {
-//    val p = textFile.path
-//    @annotation.nowarn // no deprecation warning here
-//    val sorted: Seq[String] = p.lines.sorted
-//    assertEquals(sorted, testSeq.sorted)
-//  }
+  test("Path.lines returns Seq") {
+    val p = textFile.path
+    @annotation.nowarn // no deprecation warning here
+    val seq: Seq[String] = p.lines
+    assertEquals(seq, testSeq)
+  }
+
+  test("Path.lines can be sorted") {
+    val p = textFile.path
+    @annotation.nowarn // no deprecation warning here
+    val sorted: Seq[String] = p.lines.sorted
+    assertEquals(sorted, testSeq.sorted)
+  }
 
   test("CVec.show and RVec.show work with import uni.* only") {
     val v: CVecD = CVec(1.0, 2.0, 3.0)

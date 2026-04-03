@@ -546,6 +546,13 @@ class PathExtsSuite extends FunSuite:
     assertEquals(rows(0).toList, List("x", "y"))
   }
 
+  test("csvRowsStream: returns Iterator[Seq[String]]") {
+    val p = tempFile("x,y\n1,2\n3,4\n")
+    val it = p.csvRowsStream
+    assert(it.isInstanceOf[Iterator[?]])
+    assertEquals(it.toList.length, 3)
+  }
+
   test("csvRows (callback): invokes callback for each row") {
     val p = tempFile("a,b\n1,2\n")
     var count = 0
@@ -706,6 +713,13 @@ class PathExtsSuite extends FunSuite:
     val f = tempJFile("a,b\n1,2\n")
     val rows = f.csvRows
     assertEquals(rows.length, 2)
+  }
+
+  test("JFile.csvRowsStream: returns Iterator[Seq[String]]") {
+    val f = tempJFile("x,y\n1,2\n3,4\n")
+    val it = f.csvRowsStream
+    assert(it.isInstanceOf[Iterator[?]])
+    assertEquals(it.toList.length, 3)
   }
 
   test("JFile.copyTo: copies file content") {
