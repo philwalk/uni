@@ -340,7 +340,7 @@ object TprfRunner {
   private lazy val save_dir_base = Paths.get(s"data_${n_iter}_scala").posx
   private def nextSaveDir(): String = {
     var dirpath = "%s_%02d".format(save_dir_base, dir_tag)
-    while (dirpath.path.exists) {
+    while (dirpath.asPath.exists) {
       dir_tag += 1
       dirpath = "%s_%02d".format(save_dir_base, dir_tag)
     }

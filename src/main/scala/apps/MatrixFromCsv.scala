@@ -17,14 +17,14 @@ object MatrixFromCsv {
   def main(args: Array[String]): Unit = {
     eachArg(args.toSeq, usage) {
     case "-v" => verbose = true
-    case f if f.path.isFile =>
+    case f if f.asPath.isFile =>
       infile = f
     case arg =>
       usage(s"unrecognized arg [$arg]")
     }
     if infile.isEmpty then
       usage()
-    val p = infile.path
+    val p = infile.asPath
     if !p.isFile then
       usage(s"not found: ${p.posx}")
 

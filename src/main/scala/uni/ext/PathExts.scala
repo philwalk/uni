@@ -120,7 +120,9 @@ object pathExts {
     def parent: Path           = p.toAbsolutePath.getParent
     def parentPath: Path       = getParentPath
     def parentFile: JFile      = p.getParentPath.toFile
-    def file: JFile            = p.toFile
+    def asFile: JFile          = p.toFile
+
+    @deprecated("Use `asFast`", "uni") def file: JFile = p.toFile
 
     // ---- directory listing ----
     def filesIter: Iterator[JFile] = Option(p.toFile.listFiles) match {
@@ -402,8 +404,9 @@ object pathExts {
     @deprecated("Use `ext.lc`", "uni")      def lcsuffix: String   = ext.toLowerCase
 
     // ---- path forms ----
+    @deprecated("Use `toPath`", "uni")      def path: Path = f.toPath
+
     def posx: String     = f.toPath.posx
-    def path: Path       = f.toPath
     def abs: String      = f.toPath.abs
     def abspath: Path    = f.toPath.abspath
     def stdpath: String  = standardizePath(f.toPath)
@@ -525,55 +528,60 @@ object pathExts {
 
   import java.nio.charset.{StandardCharsets, CodingErrorAction}
   import java.io.InputStream
-  import scala.collection.mutable.ArrayBuffer
-  import java.nio.ByteBuffer
 
-  def streamLines(p: Path, cs: Charset = StandardCharsets.UTF_8): Iterator[String] =
-    new Iterator[String]:
-      private val in: InputStream = Files.newInputStream(p)
-      private val buf = ArrayBuffer.empty[Byte]
-      private var nextLine: String | Null = null
-      private var closed = false
+  def streamLines(p: Path, cs: Charset = StandardCharsets.UTF_8): Iterator[String] = new Iterator[String] with AutoCloseable {
+    private val in: InputStream = Files.newInputStream(p)
+    // Use a reusable BAOS to avoid constant ArrayBuffer re-allocations
+    private val bos = new java.io.ByteArrayOutputStream(128)
+    private var nextLine: String | Null = null
+    private var isClosed = false
 
-      val decoder = cs.newDecoder()
-          .onMalformedInput(CodingErrorAction.REPORT)
-          .onUnmappableCharacter(CodingErrorAction.REPORT)
+    private val decoder = cs.newDecoder()
+      .onMalformedInput(CodingErrorAction.REPORT)
+      .onUnmappableCharacter(CodingErrorAction.REPORT)
 
-      override def hasNext: Boolean =
-        if nextLine != null then true
-        else if closed then false
-        else
-          nextLine = readNextLine()
-          nextLine != null
+    override def hasNext: Boolean = {
+      if (nextLine != null) true
+      else if (isClosed) false
+      else {
+        nextLine = readNextLine()
+        if (nextLine == null) { close(); false } else true
+      }
+    }
 
-      override def next(): String =
-        if !hasNext then throw new NoSuchElementException("next on empty iterator")
-        val s = nextLine
-        nextLine = null
-        s.nn
+    override def next(): String = {
+      if (!hasNext) throw new NoSuchElementException()
+      val s = nextLine.nn
+      nextLine = null
+      s
+    }
 
-      private def readNextLine(): String | Null =
-        buf.clear()
+    private def readNextLine(): String | Null = {
+      bos.reset() // Reuse existing memory
+      var b = in.read()
+      if (b == -1) return null
 
-        var b = in.read()
-        if b == -1 then
-          close()
-          null
-        else
-          while b != -1 && b != '\n' do
-            if b != '\r' then buf += b.toByte
-            b = in.read()
+      while (b != -1 && b != '\n'.toInt) {
+        if (b != '\r'.toInt) bos.write(b)
+        b = in.read()
+      }
 
-          val bytes = buf.toArray
+      val bytes = bos.toByteArray
+      try {
+        decoder.decode(java.nio.ByteBuffer.wrap(bytes)).toString
+      } catch {
+        case _: Exception => new String(bytes, StandardCharsets.ISO_8859_1)
+      }
+    }
 
-          try
-            decoder.decode(ByteBuffer.wrap(bytes)).toString
-          catch
-            case _: Exception =>
-              new String(bytes, StandardCharsets.ISO_8859_1)
+    override def close(): Unit = {
+      if (!isClosed) {
+        isClosed = true
+        in.close()
+      }
+    }
 
-      private def close(): Unit =
-        if !closed then
-          closed = true
-          in.close()
+    // Safety net for partial reads (e.g. .take(5))
+    override def finalize(): Unit = close()
+  }
 }

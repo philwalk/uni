@@ -176,7 +176,8 @@ Without this, `libblas.so.3` may resolve to the slow single-threaded reference B
 * **Visualization:** [Plot Guide](docs/PlotGuide.md) — `uni.plot` methods, `PlotStyle` configuration, and demo scripts.
 * **API Reference:** [Mat Reference Guide](docs/ReferenceGuide.md) — Comprehensive API documentation with validated examples.
 * **Cheat Sheet:** [MatD Cheat Sheet](docs/MatDCheatSheet.md) — Side-by-side comparison of MatD vs NumPy, Breeze, R, and MATLAB.
-* **High Precision:** [Big Type Guide](docs/BigTypeGuide.md) — High-precision matrices using `MatD[Big]`.
+* **High Precision:** [Big Type Guide](docs/BigTypeGuide.md) — High-precision matrices using `MatB` (`Mat[Big]`).
+* **Path & I/O Reference:** [Path/String/File Extensions](docs/PathIOReference.md) — Complete extension method reference for `Path`, `JFile`, and `String`.
 
 ### NumPy to uni.MatD Mapping
 

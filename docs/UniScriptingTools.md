@@ -75,132 +75,7 @@ env: Cygwin     | C:/cygwin64/etc/fstab | 24 lines
 
 ---
 
-`import uni.*` adds the following methods to every `java.nio.file.Path`, organised by category:
-
-**Existence and type**
-
-| Method | Returns | Description |
-| :--- | :--- | :--- |
-| `.exists` | `Boolean` | true if the path exists |
-| `.isFile` | `Boolean` | true if a regular file |
-| `.isDirectory` | `Boolean` | true if a directory |
-| `.isSymbolicLink` | `Boolean` | true if a symbolic link |
-| `.isSameFile(other)` | `Boolean` | true if both paths refer to the same file |
-| `.newerThan(other)` | `Boolean` | true if this file was modified more recently |
-
-**Name and extension**
-
-| Method | Returns | Description |
-| :--- | :--- | :--- |
-| `.last` | `String` | filename including extension |
-| `.baseName` | `String` | filename without extension |
-| `.ext` | `String` | extension without leading dot |
-| `.dotsuffix` | `String` | extension with leading dot (e.g. `".scala"`) |
-| `.extension` | `Option[String]` | extension without dot, or `None` |
-| `.name` | `String` | (deprecated) use `.last` |
-| `.basename` | `String` | (deprecated) use `.baseName` |
-| `.suffix` | `String` | (deprecated) use `.ext` |
-
-**Path string representations**
-
-| Method | Returns | Description |
-| :--- | :--- | :--- |
-| `.posx` | `String` | forward-slash path string |
-| `.posix` | `String` | absolute forward-slash path string |
-| `.abs` | `String` | absolute normalised path with forward slashes |
-| `.abspath` | `Path` | absolute normalised path as a `Path` |
-| `.stdpath` | `String` | standardised path string |
-| `.relpath` | `String` | path relative to the current working directory |
-| `.localpath` | `String` | native path (backslashes on Windows) |
-| `.local` | `String` | alias for `.posx` |
-| `.dospath` | `String` | native Windows path format |
-| `.noDrive` | `String` | path string without Windows drive letter |
-
-**Navigation**
-
-| Method | Returns | Description |
-| :--- | :--- | :--- |
-| `.parent` | `Path` | absolute parent directory |
-| `.relativePath` | `Path` | path relative to CWD as a `Path` |
-| `.realPath` | `Path` | canonical path, resolving symlinks and mount points |
-
-**Reading file contents**
-
-| Method | Returns | Description |
-| :--- | :--- | :--- |
-| `.lines` | `Seq[String]` | all lines; UTF-8 with Latin-1 fallback |
-| `.linesStream` | `Iterator[String]` | streaming lines; suitable for large files |
-| `.firstLine` | `String` | first line only |
-| `.contentAsString` | `String` | entire file as a string |
-| `.byteArray` | `Array[Byte]` | raw file content as bytes |
-
-**CSV**
-
-| Method | Returns | Description |
-| :--- | :--- | :--- |
-| `.csvRows` | `Seq[Seq[String]]` | all parsed CSV rows |
-| `.csvRowsStream` | `Iterator[Seq[String]]` | streaming CSV rows; suitable for large files |
-| `.csvRowsAsync` | `Iterator[Seq[String]]` | async variant |
-| `.csvRows(onRow)` | `Unit` | callback-per-row variant |
-
-**Matrix loading** (requires `uni.data.*`)
-
-| Method | Returns | Description |
-| :--- | :--- | :--- |
-| `.loadMatD` | `MatD` | parse CSV into a `Mat[Double]` |
-| `.loadMatBig` | `Mat[Big]` | parse CSV into a high-precision `Mat[Big]` |
-| `.loadSmartD` | `MatResult[Double]` | parse CSV, returning headers and matrix |
-| `.loadSmartBig` | `MatResult[Big]` | parse CSV, returning headers and matrix |
-
-**Directory listing**
-
-| Method | Returns | Description |
-| :--- | :--- | :--- |
-| `.paths` | `Seq[Path]` | immediate directory contents |
-| `.pathsIter` | `Iterator[Path]` | immediate contents as an iterator |
-| `.pathsTree` | `Seq[Path]` | recursive directory tree |
-| `.pathsTreeIter` | `Iterator[Path]` | recursive tree as an iterator |
-| `.walk` | `Iterator[Path]` | alias for `.pathsTreeIter` |
-| `.files` | `Seq[File]` | immediate contents as `File` objects |
-| `.filesIter` | `Iterator[File]` | immediate contents as an iterator |
-| `.subdirs` | `Seq[Path]` | immediate child directories |
-| `.subfiles` | `Seq[Path]` | immediate child files |
-
-**File operations**
-
-| Method | Returns | Description |
-| :--- | :--- | :--- |
-| `.copyTo(dest, overwrite, copyAttributes)` | `Path` | copy file to destination |
-| `.renameTo(other, overwrite)` | `Boolean` | rename or move file |
-| `.renameViaCopy(dest, overwrite)` | `Int` | rename by copy+delete (0 on success) |
-| `.delete` | `Boolean` | delete file if it exists |
-| `.mkdirs` | `Boolean` | create directory and any missing parents |
-| `.length` | `Long` | file size in bytes |
-
-**Timestamps**
-
-| Method | Returns | Description |
-| :--- | :--- | :--- |
-| `.lastModified` | `Long` | last-modified time as epoch milliseconds |
-| `.lastModifiedYMD` | `String` | last-modified time as `"yyyy-MM-dd HH:mm:ss"` |
-| `.lastModifiedTime` | `LocalDateTime` | last-modified time in the local timezone |
-| `.lastModSecondsAgo` | `Double` | seconds since last modification |
-| `.lastModMinutesAgo` | `Double` | minutes since last modification |
-| `.lastModHoursAgo` | `Double` | hours since last modification |
-| `.lastModDaysAgo` | `Double` | days since last modification |
-| `.ageInDays` | `Double` | alias for `.lastModDaysAgo` |
-| `.weekDay` | `DayOfWeek` | day of the week of last modification |
-
-**Hashing and checksums**
-
-| Method | Returns | Description |
-| :--- | :--- | :--- |
-| `.hash64` | `String` | streaming 64-bit hash of file contents |
-| `.md5` | `String` | MD5 digest as a hex string |
-| `.sha256` | `String` | SHA-256 digest as a hex string |
-| `.cksum` | `(Long, Long)` | POSIX-style checksum and byte count |
-
-`import uni.*` also extends `String` with a `.path` method that converts the string to a `java.nio.file.Path`, allowing `"/etc/fstab".path.lines` and similar one-liners.
+For a complete list of all `Path`, `JFile`, and `String` extension methods added by `import uni.*`, see the [Path & I/O Reference](PathIOReference.md).
 
 ---
 
@@ -246,7 +121,7 @@ var verbose = false
 var dirname = ""
 eachArg(args.toSeq, usage) {
   case "-v" => verbose = true
-  case dir if dir.path.isDirectory =>
+  case dir if dir.asPath.isDirectory =>
     dirname = dir
   case arg =>
     usage(s"unrecognized arg [$arg]")
@@ -254,7 +129,7 @@ eachArg(args.toSeq, usage) {
 if dirname.isEmpty then
   usage()
 
-dirname.path.paths.foreach { p =>
+dirname.asPath.paths.foreach { p =>
   if p.isFile then
     println(s"${p.hash64} ${p.posx}")
 }

@@ -14,7 +14,7 @@ Standard ```BigDecimal``` does not have a concept of "Not a Number" (NaN). If yo
 
 ### 1. Creation and Conversions
 
-You can create ```Big``` instances from strings, integers, longs, or doubles.
+You can create ```Big``` instances from strings, integers, longs, doubles, or via implicit conversion.
 
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
@@ -23,9 +23,11 @@ You can create ```Big``` instances from strings, integers, longs, or doubles.
 
 import uni.data.*
 
-val b1 = big("123.456")  // From String
-val b2 = 100.asBig       // Extension method
-val b3: Big = 42.0       // Implicit conversion
+val b1 = big("123.456")  // From String via factory function
+val b2 = 100.asBig       // Int extension method
+val b3 = 42.0.asBig      // Double extension method
+val b4 = "99.9".asBig    // String extension method
+val b5: Big = 42.0       // Implicit conversion (Conversion[Double, Big])
 
 // Extraction
 val d: Double = b1.toDouble // Returns Double.NaN if b1 is BigNaN
@@ -79,15 +81,19 @@ if (b1 > b2) {
 | Method | Description |
 | :--- | :--- |
 | ```Big("1.23")``` | Safe parsing (returns ```BigNaN``` on failure) |
-| ```big(1.23)``` | Lowercase factory method |
-| ```.asBig``` | Extension method for ```Int```, ```Long```, and ```Double``` |
+| ```big("1.23")``` | Lowercase factory, same safe parsing |
+| ```big(1.23)``` / ```big(42)``` / ```big(99L)``` | Factory from `Double`, `Int`, `Long` |
+| ```"1.23".asBig``` | `String` extension method |
+| ```42.asBig``` / ```1.5.asBig``` / ```99L.asBig``` | Extension method for `Int`, `Double`, `Long` |
+| ```val b: Big = 42.0``` | Implicit conversion (`given Conversion[Double, Big]` etc.) |
 
-### Safety Checks
+### Safety Checks and Pattern Matching
 | Method | Description |
 | :--- | :--- |
 | ```n.isNaN``` | Returns true if the value is ```BigNaN``` |
 | ```n.isNotNaN``` | Returns true if the value is a valid number |
-| ```unapply(n)``` | Allows pattern matching: ```case Big(value) => ...``` |
+| ```case Big(v) => ...``` | Value extraction via `unapply` |
+| ```case b: Big => ...``` | Type pattern matching via `TypeTest[Any, Big]` |
 
 ### Precision & Formatting
 | Method | Description |

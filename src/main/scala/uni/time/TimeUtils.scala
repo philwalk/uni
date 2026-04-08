@@ -130,15 +130,15 @@ object TimeUtils {
   // if date1 > date2, a negative number of days is returned.
   def elapsedDays(d1: LocalDateTime, d2: LocalDateTime, zone: ZoneId = zoneid): Long = ChronoUnit.DAYS.between(d1.atZone(zone), d2.atZone(zone))
 
-  def secondsBetween(d1: LocalDateTime, d2: LocalDateTime, zone: ZoneId): Long = secondsBetween(d1.atZone(zone).toInstant, d2.atZone(zone).toInstant)
+  def secondsBetween(d1: LocalDateTime, d2: LocalDateTime, zone: ZoneId = zoneid): Long = secondsBetween(d1.atZone(zone).toInstant, d2.atZone(zone).toInstant)
   def secondsBetween(d1: Instant, d2: Instant): Long = ChronoUnit.SECONDS.between(d1, d2)
 
   // age in seconds relative to now
-  def secondsSince(date1: LocalDateTime, zone: ZoneId = MountainTime): Long = ChronoUnit.SECONDS.between(date1.atZone(zone).toInstant, nowInstant)
+  def secondsSince(date1: LocalDateTime, zone: ZoneId = zoneid): Long = ChronoUnit.SECONDS.between(date1.atZone(zone).toInstant, nowInstant)
 
-  def minutesBetween(d1: LocalDateTime, d2: LocalDateTime, zone: ZoneId = MountainTime): Double = secondsBetween(d1, d2, zone).toDouble / 60.0
-  def hoursBetween(d1: LocalDateTime, d2: LocalDateTime, zone: ZoneId = MountainTime): Double = secondsBetween(d1, d2, zone).toDouble / 3600.0
-  def daysRounded(d1: LocalDateTime, d2: LocalDateTime, zone: ZoneId = MountainTime): Double = secondsBetween(d1, d2, zone).toDouble / (24.0 * 3600.0)
+  def minutesBetween(d1: LocalDateTime, d2: LocalDateTime, zone: ZoneId = zoneid): Double = secondsBetween(d1, d2, zone).toDouble / 60.0
+  def hoursBetween(d1: LocalDateTime, d2: LocalDateTime, zone: ZoneId = zoneid): Double = secondsBetween(d1, d2, zone).toDouble / 3600.0
+  def daysRounded(d1: LocalDateTime, d2: LocalDateTime, zone: ZoneId = zoneid): Double = secondsBetween(d1, d2, zone).toDouble / (24.0 * 3600.0)
   def daysBetween(d1: LocalDateTime, d2: LocalDateTime): Long = ChronoUnit.DAYS.between(d1, d2)
 
   def endOfMonth(d: LocalDateTime): LocalDateTime = {
@@ -153,7 +153,7 @@ object TimeUtils {
     case _ =>
       -1
     }
-    epoch2DateTime(lastmod, MountainTime)
+    epoch2DateTime(lastmod, zoneid)
   }
 
   def epoch2DateTime(epoch: Long, timezone: java.time.ZoneId = UTC): LocalDateTime = {
@@ -186,7 +186,7 @@ object TimeUtils {
     else
       (-days, hours, minutes, seconds)
 
-  def nowZoned(zone: ZoneId = MountainTime): LocalDateTime =
+  def nowZoned(zone: ZoneId = zoneid): LocalDateTime =
     LocalDateTime.now(zone)
 
   def nowUTC: Instant =

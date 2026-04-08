@@ -1,4 +1,4 @@
-package uni.time
+package client
 
 import munit.FunSuite
 import uni.time.*
@@ -153,6 +153,12 @@ class TimeUtilsSuite extends FunSuite:
     assertEquals(secondsBetween(d1, d2, UTC), 60L)
   }
 
+  test("secondsBetween(LocalDateTime, LocalDateTime): default zone, 60 s") {
+    val d1 = LocalDateTime.of(2024, 6, 15, 12, 0, 0)
+    val d2 = LocalDateTime.of(2024, 6, 15, 12, 1, 0)
+    assertEquals(secondsBetween(d1, d2), 60L)
+  }
+
   test("secondsBetween(Instant, Instant): 60 s") {
     val i1 = java.time.Instant.ofEpochSecond(1000L)
     val i2 = java.time.Instant.ofEpochSecond(1060L)
@@ -258,6 +264,11 @@ class TimeUtilsSuite extends FunSuite:
   // ============================================================================
   // ageInMinutes / ageInDays — both branches (exists / missing)
   // ============================================================================
+
+  test("secondsSince: default zone, result ≥ 0") {
+    val past = LocalDateTime.now().minusSeconds(5)
+    assert(secondsSince(past) >= 0L)
+  }
 
   test("ageInMinutes: non-existent file → 1e6") {
     assertEqualsDouble(ageInMinutes(new File("/nonexistent/xyz.tmp")), 1e6, 0.0)

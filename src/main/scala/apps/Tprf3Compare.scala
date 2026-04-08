@@ -40,7 +40,7 @@ object Tprf3Compare {
     val dataDir = s"$rootDir/test-data/tprf3"
 
     def load(name: String): MatD =
-      val p = s"$dataDir/$name".path
+      val p = s"$dataDir/$name".asPath
       require(p.isFile, s"Missing fixture: ${p.posx}  (run py/gen_tprf3_fixtures.py first)")
       p.loadMatD
 

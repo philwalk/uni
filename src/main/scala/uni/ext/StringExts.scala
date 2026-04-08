@@ -9,9 +9,11 @@ import java.io.{File as JFile}
 /** String Extension methods */
 object stringExts {
   extension (str: String) {
-    def path: Path   = Paths.get(str)
     def asPath: Path = Paths.get(str)
-    @deprecated("Use `path` or `asPath`", "uni") def toPath: Path = Paths.get(str)
+
+    @deprecated("Use `asPath`", "uni") def path: Path   = Paths.get(str)
+    @deprecated("Use `asPath`", "uni") def toPath: Path = Paths.get(str)
+
     def toFile: JFile = Paths.get(str).toFile
     def absPath: Path = Paths.get(str).toAbsolutePath.normalize
     def posx: String  = normalizePosix(str)
