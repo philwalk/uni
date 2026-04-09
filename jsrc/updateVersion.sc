@@ -1,6 +1,6 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.11.2
+//> using dep org.vastblue:uni_3:0.12.0
 
 import uni.*
 import java.nio.file.{Files, FileSystems}
@@ -62,8 +62,9 @@ object Main {
       case VersionRegex(v) => v
       case _ => sys.error(s"Could not parse version from: $versionLine")
 
-  def updateFile(path: Path, newVersion: String): Unit =
-    val lines = Files.readAllLines(path).asScala
+  def updateFile(p: Path, newVersion: String): Unit = {
+    val lines = p.lines.toSeq
+    // val lines = Files.readAllLines(p).asScala // vulerable to malformed input exception
     val regex1 = """//> using dep org\.vastblue(:uni_3:|::uni:)[0-9]+\.[0-9]+\.[0-9]+"""
     val target1 = s"//> using dep org.vastblue:uni_3:$newVersion"
 
@@ -75,7 +76,7 @@ object Main {
       else s.replaceAll(regex1, target1).replaceAll(regex2, target2)
     )
 
-    val fname = path.relativePath.toString.replace('\\', '/')
+    val fname = p.relativePath.toString.replace('\\', '/')
     // Only write and print if the content has actually changed
     if (lines != updated) then
       if !force then
@@ -86,9 +87,10 @@ object Main {
             print(s"+ $u\n")
         }
       else
-        val ts = Proc.call("stat.exe", "-c", "%y", path.posx).getOrElse("")
+        val ts = Proc.call("stat.exe", "-c", "%y", p.posx).getOrElse("")
         val lfText = updated.mkString("\n")
-        Files.write(path, lfText.getBytes("UTF-8"))
-        println(s"updated: $path")
-        if ts.nonEmpty then Proc.call("touch", "-d", ts, path.posx)
+        Files.write(p, lfText.getBytes("UTF-8"))
+        println(s"updated: $p")
+        if ts.nonEmpty then Proc.call("touch", "-d", ts, p.posx)
+  }
 }

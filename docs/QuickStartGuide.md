@@ -4,7 +4,7 @@ A NumPy-compatible matrix library for Scala with exact reproducibility and compr
 
 ## Installation
 ```scala
-//> using dep org.vastblue:uni_3:0.11.2
+//> using dep org.vastblue:uni_3:0.12.0
 ```
 
 ## Basic Usage
@@ -13,7 +13,7 @@ A NumPy-compatible matrix library for Scala with exact reproducibility and compr
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.11.2
+//> using dep org.vastblue:uni_3:0.12.0
 
 import uni.data.Mat
 import uni.data.Mat.*
@@ -43,7 +43,7 @@ val randInt = Mat.randint(0, 100, 5, 5)     // Random integers [0, 100)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.11.2
+//> using dep org.vastblue:uni_3:0.12.0
 
 import uni.data.Mat
 import uni.data.Mat.*
@@ -73,7 +73,7 @@ m(mask) = 0.0                         // Set matching elements to 0
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.11.2
+//> using dep org.vastblue:uni_3:0.12.0
 
 import uni.data.Mat
 import uni.data.Mat.*
@@ -103,7 +103,7 @@ val result = A + rowVec               // Adds rowVec to each row
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.11.2
+//> using dep org.vastblue:uni_3:0.12.0
 
 import uni.data.Mat
 import uni.data.Mat.*
@@ -135,7 +135,7 @@ val frobNorm = A.norm("fro")          // Frobenius norm
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.11.2
+//> using dep org.vastblue:uni_3:0.12.0
 
 import uni.data.Mat
 import uni.data.Mat.*
@@ -168,7 +168,7 @@ val p90 = m.percentile(90)            // 90th percentile
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.11.2
+//> using dep org.vastblue:uni_3:0.12.0
 
 import uni.data.Mat
 import uni.data.Mat.*
@@ -205,7 +205,7 @@ val minElems = m1.minimum(m2)         // Element-wise min
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.11.2
+//> using dep org.vastblue:uni_3:0.12.0
 
 import uni.data.Mat
 import uni.data.Mat.*
@@ -230,7 +230,7 @@ val custom = Mat.normal(mean = 5.0, std = 2.0, rows = 100, cols = 10)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.11.2
+//> using dep org.vastblue:uni_3:0.12.0
 
 import uni.data.Mat
 import uni.data.Mat.*
@@ -263,7 +263,7 @@ val tiled = m.tile(2, 3)              // Tile 2 rows × 3 cols
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.11.2
+//> using dep org.vastblue:uni_3:0.12.0
 
 import uni.data.Mat
 import uni.data.Mat.*
@@ -291,7 +291,7 @@ val cleaned = m.nanToNum(nan = 0.0)   // Replace NaN with 0
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.11.2
+//> using dep org.vastblue:uni_3:0.12.0
 
 import uni.data.Mat
 import uni.data.Mat.*
@@ -323,7 +323,7 @@ Mat.setPrintOptions(
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.11.2
+//> using dep org.vastblue:uni_3:0.12.0
 
 import uni.*
 import uni.data.*
@@ -348,7 +348,7 @@ m.writeCsv(path, sep = "\t")     // Save as tab-separated
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.11.2
+//> using dep org.vastblue:uni_3:0.12.0
 
 import uni.data.*
 
@@ -370,7 +370,7 @@ based solely on static types, with no runtime branching.
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.11.2
+//> using dep org.vastblue:uni_3:0.12.0
 
 import uni.data.*
 
@@ -422,7 +422,7 @@ pred = X @ weights
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.11.2
+//> using dep org.vastblue:uni_3:0.12.0
 
 import uni.data.Mat
 import uni.data.Mat.*

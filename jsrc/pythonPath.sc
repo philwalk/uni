@@ -1,6 +1,6 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.11.2
+//> using dep org.vastblue:uni_3:0.12.0
 
 import uni.*
 val python3 = Paths.get("/ucrt64/bin/python3.exe")

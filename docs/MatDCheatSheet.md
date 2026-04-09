@@ -301,7 +301,7 @@ m(*, ::).map(row => row(::, row.cols-1 to 0 by -1))
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.11.2
+//> using dep org.vastblue:uni_3:0.12.0
 
 import uni.data.*
 
@@ -316,7 +316,7 @@ val (labels, stats) = m.describe
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.11.2
+//> using dep org.vastblue:uni_3:0.12.0
 
 import uni.*
 import uni.io.FileOps.*
@@ -336,7 +336,7 @@ r.columnIndex       // Map[String, Int]  (pre-computed; free repeated lookups)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.11.2
+//> using dep org.vastblue:uni_3:0.12.0
 
 import uni.data.*
 
