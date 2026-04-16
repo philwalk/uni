@@ -1,6 +1,6 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.12.0
+//> using dep org.vastblue:uni_3:0.12.1
 
 import uni.*
 import java.nio.file.{Files, FileSystems}
@@ -63,8 +63,8 @@ object Main {
       case _ => sys.error(s"Could not parse version from: $versionLine")
 
   def updateFile(p: Path, newVersion: String): Unit = {
-    val lines = p.lines.toSeq
     // val lines = Files.readAllLines(p).asScala // vulerable to malformed input exception
+    val lines = p.lines.toSeq // not vulnerable
     val regex1 = """//> using dep org\.vastblue(:uni_3:|::uni:)[0-9]+\.[0-9]+\.[0-9]+"""
     val target1 = s"//> using dep org.vastblue:uni_3:$newVersion"
 

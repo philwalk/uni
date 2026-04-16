@@ -36,14 +36,14 @@ class FnameTest extends FunSuite {
   val testpath = "./bin"
 
   val testPaths: Seq[String] = Seq(
-    testpath.path.toString,
-    nativePathString(testpath.path),
-    nativePathString(relativePath(testpath.path)),
-    testpath.path.relpath.posx,
-    testpath.path.relpath,
-    testpath.path.stdpath,
-    testpath.path.posx,
-    testpath.path.localpath
+    testpath.asPath.toString,
+    nativePathString(testpath.asPath),
+    nativePathString(relativePath(testpath.asPath)),
+    testpath.asPath.relpath.posx,
+    testpath.asPath.relpath,
+    testpath.asPath.stdpath,
+    testpath.asPath.posx,
+    testpath.asPath.localpath
   )
 
   //

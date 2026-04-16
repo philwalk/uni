@@ -1,7 +1,7 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
 //> using dep com.lihaoyi::os-lib:0.11.3
-//> using dep org.vastblue:uni_3:0.12.0
+//> using dep org.vastblue:uni_3:0.12.1
 
 import scala.io.Source
 import scala.collection.mutable

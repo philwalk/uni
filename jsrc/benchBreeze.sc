@@ -6,8 +6,8 @@
 ////> using javaOpt -verbose:jni
 //> using repository m2Local
 //> using dep dev.ludovic.netlib:blas:3.1.1
-////> using dep org.vastblue:uni_3:0.12.0
-//> using dep org.vastblue:uni_3:0.12.0
+////> using dep org.vastblue:uni_3:0.12.1
+//> using dep org.vastblue:uni_3:0.12.1
 //> using dep org.scalanlp::breeze:2.1.0
 
 /**

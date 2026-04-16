@@ -113,10 +113,12 @@ object Delimiter {
       }
     }
 
-    // Final selection: return the up-to-date state object for the winner delimiter
+    // Final selection: return the up-to-date state object for the winner delimiter.
+    // Prefer candidates with score > 0; fall back to all states only if none scored.
+    val scoredStates = if states.exists(_.score > 0) then states.filter(_.score > 0) else states
     winnerDelim
       .flatMap(d => states.find(_.delimiterChar == d))
-      .getOrElse(states.maxBy(s => (s.score, -s.rowCounts.distinct.size)))
+      .getOrElse(scoredStates.maxBy(s => (s.score, -s.rowCounts.distinct.size)))
   }
 
   // Split a single row lazily into fields
@@ -157,13 +159,18 @@ object Delimiter {
     rows.map(row => splitRow(row, winnerState.delimiterChar))
   }
 
-  // Dominance check
+  // Dominance check.
+  // Candidates with score == 0 are excluded: a delimiter that never appears trivially
+  // achieves widthDistinct=1 and modeSupport=numRows (every row is 1 field wide), which
+  // would let it beat the real delimiter whenever the real delimiter has any row-width
+  // variation (header/data mismatch, quoted fields containing the delimiter, etc.).
   private def dominantState(states: Iterable[DelimState], factor: Int): Option[DelimState] = {
-    if (states.isEmpty) None
+    val active = states.filter(_.score > 0)
+    if (active.isEmpty) None
     else {
       def rank(s: DelimState) = (-s.widthDistinct, s.modeSupport, s.score)
-      val best = states.maxBy(rank)
-      val dominance = states.forall { s =>
+      val best = active.maxBy(rank)
+      val dominance = active.forall { s =>
         s.delimiterChar == best.delimiterChar ||
         best.widthDistinct < s.widthDistinct ||
         (best.widthDistinct == s.widthDistinct &&

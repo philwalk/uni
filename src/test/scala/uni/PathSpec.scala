@@ -44,7 +44,7 @@ class PathSpec extends FunSuite {
 
   // Path.suffix
   test("Path.suffix: should correctly derive dotsuffix") {
-    val p = ".ue.scala.swp".path
+    val p = ".ue.scala.swp".asPath
     val expected = ".swp"
     val dsfx = p.dotsuffix
     assertEquals(dsfx, expected)
@@ -106,7 +106,7 @@ class PathSpec extends FunSuite {
     prmsg(s"posixHomeDir: [$posixHomeDir]")
     prmsg(s"testfileb:    [$testfileb]")
     // if home dir exists, testfile should have been created
-    val ok = posixHomeDir.path.exists == testfileb.exists
+    val ok = posixHomeDir.asPath.exists == testfileb.exists
     if (ok) prmsg(s"tilde successfully converted to path '$testfileb'")
     assert(ok, s"error: cannot see file '$testfileb' presumed below '${posixHomeDir}'")
   }
@@ -148,7 +148,7 @@ class PathSpec extends FunSuite {
         if (!sameFile) {
           hook += 1
         }
-        val equivalent = a == d || a.path.abs == d.path.abs
+        val equivalent = a == d || a.asPath.abs == d.asPath.abs
         if (sameFile && equivalent) {
           noisy(s"a [$a] == d [$d]")
           assert(equivalent)
@@ -269,7 +269,7 @@ class PathSpec extends FunSuite {
   for (fname <- procFiles) {
     test(s"/proc files: $fname should be readable in Linux or Windows shell") {
       if (isLinux || isWinshell) {
-        val p = fname.path
+        val p = fname.asPath
         val text: String = p.contentAsString.takeWhile(_ != '\n')
         noisy(s"# $fname :: [$text]")
         assert(text.nonEmpty)

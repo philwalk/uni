@@ -76,7 +76,7 @@ object TestUtils {
 
   def dosHomeDir: String = Paths.get("~").posx // sys.props("user.home")
   def posixHomeDir: String = {
-    val dhd = dosHomeDir.path
+    val dhd = dosHomeDir.asPath
     dhd.stdpath
   }
 
@@ -141,7 +141,7 @@ object TestUtils {
   def TMP: String = {
     val dl = "f"
     val driveRoot   = s"${cygdrive}${dl}"
-    if (canExist(driveRoot.path)) {
+    if (canExist(driveRoot.asPath)) {
       val tmpdir = Paths.get(driveRoot)
       // val str = tmpdir.localpath
       tmpdir.isDirectory && tmpdir.paths.contains("/tmp") match {

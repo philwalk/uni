@@ -13,17 +13,17 @@ class MigrationSuite extends FunSuite:
     else
       "/etc/hosts"
 
-  val testSeq: Seq[String] = textFile.path.lines
+  val testSeq: Seq[String] = textFile.asPath.lines
 
   test("Path.lines returns Seq") {
-    val p = textFile.path
+    val p = textFile.asPath
     @annotation.nowarn // no deprecation warning here
     val seq: Seq[String] = p.lines
     assertEquals(seq, testSeq)
   }
 
   test("Path.lines can be sorted") {
-    val p = textFile.path
+    val p = textFile.asPath
     @annotation.nowarn // no deprecation warning here
     val sorted: Seq[String] = p.lines.sorted
     assertEquals(sorted, testSeq.sorted)

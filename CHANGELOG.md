@@ -1,4 +1,4 @@
-## v0.12.0
+## v0.12.1
 - Windows: netlib 3.2.0 publication JNIBLAS ->  Accelerate framework (always present, zero user setup)
 - match on Opaque type `Big` at runtime
 - Path extension methods return type implicit in method names
