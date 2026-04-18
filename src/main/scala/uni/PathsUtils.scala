@@ -557,8 +557,12 @@ def applyTildeAndDots(raw: String): String = {
           s"$parent/$suffix"
 
         else
-          // ".foo" → userdir + "foo"
-          config.userdir + raw.substring(1)
+          // preserve the leading dot of hidden files like ".gitignore"
+          if (raw.startsWith(".")) {
+             s"${config.userdir.stripSuffix("/")}/$raw"
+          } else {
+             config.userdir + raw.substring(1)
+          }
 
       case _ =>
         // treat only true bare filenames as relative

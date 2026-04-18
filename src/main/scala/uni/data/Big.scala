@@ -39,13 +39,23 @@ object Big:
     (n.asInstanceOf[AnyRef] eq BigNaN.asInstanceOf[AnyRef]) || (n == BigNaN)
 
   // Constructors
-  def apply(s: String): Big      = scala.util.Try(BigDecimal(s.trim.replaceAll("[,$]", ""))).getOrElse(BigNaN)
+  def apply(s: String): Big      =
+    val t = s.trim.replaceAll("[,$]", "")
+    if t.endsWith("%") then
+      scala.util.Try(BigDecimal(t.init) / BigDecimal(100)).getOrElse(BigNaN)
+    else
+      scala.util.Try(BigDecimal(t)).getOrElse(BigNaN)
   def apply(d: Double): Big      = BigDecimal(d)
   def apply(i: Int): Big         = BigDecimal(i)
   def apply(l: Long): Big        = BigDecimal(l)
   def apply(bd: BigDecimal): Big = bd
 
-  def big(str: String): Big      = scala.util.Try(BigDecimal(str.trim.replaceAll("[,$]", ""))).getOrElse(BigNaN)
+  def big(str: String): Big      =
+    val t = str.trim.replaceAll("[,$]", "")
+    if t.endsWith("%") then
+      scala.util.Try(BigDecimal(t.init) / BigDecimal(100)).getOrElse(BigNaN)
+    else
+      scala.util.Try(BigDecimal(t)).getOrElse(BigNaN)
   def big(d: Double): Big        = BigDecimal(d)
   def big(i: Int): Big           = BigDecimal(i)
   def big(l: Long): Big          = BigDecimal(l)

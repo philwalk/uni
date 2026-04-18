@@ -122,7 +122,7 @@ object pathExts {
     def parentFile: JFile      = p.getParentPath.toFile
     def asFile: JFile          = p.toFile
 
-    @deprecated("Use `asFast`", "uni") def file: JFile = p.toFile
+    @deprecated("Use `asFile`", "uni") def file: JFile = p.toFile
 
     // ---- directory listing ----
     def filesIter: Iterator[JFile] = Option(p.toFile.listFiles) match {
@@ -183,7 +183,7 @@ object pathExts {
       else ""
 
     @deprecated("Use `contentAsString`", "uni") def text: String           = contentAsString
-    @deprecated("Use `lines`", "uni")            def trimmedLines: Seq[String] = lines.toSeq
+    @deprecated("Use `lines`", "uni")           def trimmedLines: Seq[String] = lines.toSeq
 
     def byteArray: Array[Byte] = if isFile then (try Files.readAllBytes(p) catch case _: Exception => Array.empty[Byte]) else Array.empty[Byte]
 
@@ -404,7 +404,7 @@ object pathExts {
     @deprecated("Use `ext.lc`", "uni")      def lcsuffix: String   = ext.toLowerCase
 
     // ---- path forms ----
-    @deprecated("Use `toPath`", "uni")      def path: Path = f.toPath
+    @deprecated("Use `asPath`", "uni")      def path: Path = f.toPath
 
     def posx: String     = f.toPath.posx
     def abs: String      = f.toPath.abs
