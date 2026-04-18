@@ -126,8 +126,8 @@ class UniRootCoverageSuite extends FunSuite:
     assertEquals(applyTildeAndDots("../foo"), s"$parent/foo")
   }
 
-  test("applyTildeAndDots: '.hidden' (dotfile, not ./ or ../) → userdir + hidden") {
-    assertEquals(applyTildeAndDots(".hidden"), config.userdir + "hidden")
+  test("applyTildeAndDots: '.hidden' (dotfile) → userdir/.hidden (leading dot preserved)") {
+    assertEquals(applyTildeAndDots(".hidden"), config.userdir.stripSuffix("/") + "/.hidden")
   }
 
   test("applyTildeAndDots: bare filename (no /) → userdir/name") {

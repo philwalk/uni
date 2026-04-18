@@ -424,21 +424,84 @@ class BigCoverageSuite extends FunSuite {
   }
 
   // ============================================================================
-  // Big(String) constructor
+  // Big(String) constructor — comprehensive parsing parity with str2num
   // ============================================================================
 
-  test("Big(String) parses valid numbers") {
+  test("Big(String) parses plain integer") {
     assertEquals(Big("42").value, BigDecimal(42))
+    assertEquals(Big("0").value,  BigDecimal(0))
+  }
+
+  test("Big(String) parses decimal") {
     assertEquals(Big("3.14").value, BigDecimal("3.14"))
+  }
+
+  test("Big(String) parses negative") {
+    assertEquals(Big("-42").value, BigDecimal(-42))
+    assertEquals(Big("-3.14").value, BigDecimal("-3.14"))
+  }
+
+  test("Big(String) handles leading dot") {
+    assertEqualsDouble(Big(".5").toDouble, 0.5, 1e-12)
   }
 
   test("Big(String) strips dollar signs and commas") {
     assertEquals(Big("$1,234.56").value, BigDecimal("1234.56"))
+    assertEquals(Big("$100").value,      BigDecimal(100))
+    assertEquals(Big("1,000").value,     BigDecimal(1000))
+  }
+
+  test("Big(String) trailing percent divides by 100") {
+    assertEqualsDouble(Big("75%").toDouble,   0.75,  1e-12)
+    assertEqualsDouble(Big("50%").toDouble,   0.5,   1e-12)
+    assertEqualsDouble(Big("100%").toDouble,  1.0,   1e-12)
+    assertEqualsDouble(Big("12.5%").toDouble, 0.125, 1e-12)
+  }
+
+  test("Big(String) negative percent divides by 100 and preserves sign") {
+    assertEqualsDouble(Big("-25%").toDouble, -0.25, 1e-12)
+  }
+
+  test("Big(String) dollar-sign and comma with percent") {
+    assertEqualsDouble(Big("$50%").toDouble,     0.5,  1e-12)
+    assertEqualsDouble(Big("$1,000%").toDouble, 10.0,  1e-12)
+  }
+
+  test("Big(String) handles scientific notation") {
+    assertEqualsDouble(Big("1e5").toDouble,  100000.0, 1e-6)
+    assertEqualsDouble(Big("1E5").toDouble,  100000.0, 1e-6)
+    assertEqualsDouble(Big("1.5e2").toDouble,  150.0,  1e-10)
+  }
+
+  test("Big(String) handles leading/trailing whitespace") {
+    assertEquals(Big("  42  ").value, BigDecimal(42))
+    assertEqualsDouble(Big("  50%  ").toDouble, 0.5, 1e-12)
   }
 
   test("Big(String) returns BigNaN for non-numeric input") {
     assertEquals(Big("not-a-number"), BigNaN)
-    assertEquals(Big("abc"), BigNaN)
+    assertEquals(Big("abc"),          BigNaN)
+    assertEquals(Big("12x34"),        BigNaN)
+  }
+
+  test("Big(String) returns BigNaN for empty or whitespace") {
+    assertEquals(Big(""),   BigNaN)
+    assertEquals(Big("  "), BigNaN)
+  }
+
+  test("Big(String) returns BigNaN when only symbols remain after cleanup") {
+    assertEquals(Big("$"), BigNaN)
+    assertEquals(Big(","), BigNaN)
+  }
+
+  // big(str) must mirror apply(String) exactly
+  test("Big.big(String) mirrors apply for all parsing cases") {
+    assertEqualsDouble(Big.big("75%").toDouble,      0.75,  1e-12)
+    assertEqualsDouble(Big.big("-25%").toDouble,    -0.25,  1e-12)
+    assertEqualsDouble(Big.big("$1,234.56").toDouble, 1234.56, 1e-10)
+    assertEqualsDouble(Big.big("1e5").toDouble,     100000.0, 1e-6)
+    assertEquals(Big.big("abc"), BigNaN)
+    assertEquals(Big.big(""),    BigNaN)
   }
 
   // ============================================================================
