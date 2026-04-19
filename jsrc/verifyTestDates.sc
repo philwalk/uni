@@ -1,6 +1,6 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.12.1
+//> using dep org.vastblue:uni_3:0.12.3
 
 import uni.*
 import uni.time.*
@@ -26,7 +26,7 @@ object VerifyTestDates {
     if parseType.isEmpty then
       usage()
 
-    val expectedVersusInput = "data/generatedTestdates.csv".path
+    val expectedVersusInput = "data/generatedTestdates.csv".asPath
     val pairs = expectedVersusInput.csvRows.drop(1).toSeq
       
     def parse(target: String): java.time.LocalDateTime = {

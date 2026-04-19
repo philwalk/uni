@@ -1,6 +1,6 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.12.1
+//> using dep org.vastblue:uni_3:0.12.3
 
 import uni.*
 import scala.sys.process.*
@@ -43,7 +43,7 @@ object PrepCoverageTest:
     val SearchDir   = "src/main"
     val BuildDir    = ".scala-build"
     
-    val srcdir = SearchDir.path
+    val srcdir = SearchDir.asPath
     if !srcdir.isDirectory then
       usage(s"not a directory [${srcdir.posx}]")
 
@@ -163,7 +163,7 @@ object PrepCoverageTest:
 
   def openReport(): Unit =
     import java.awt.Desktop
-    val report = "target/scala-3.7.0/jacoco/report/html/index.html".path
+    val report = "target/scala-3.7.0/jacoco/report/html/index.html".asPath
     if report.exists then
       println(s"Opening report: ${report.posx}")
       if Desktop.isDesktopSupported && Desktop.getDesktop.isSupported(Desktop.Action.BROWSE) then

@@ -435,7 +435,7 @@ object pathExts {
     // ---- existence / link ----
     def isSymbolicLink: Boolean         = Files.isSymbolicLink(f.toPath)
     def isSameFile(other: Any): Boolean = f.toPath.isSameFile(other)
-    def diff(other: JFile): Seq[String] = shellExec(s"diff '${f.toPath.posx}' '${other.toPath.posx}'")
+    def diff(other: JFile): Seq[String] = run("diff", f.toPath.posx, other.toPath.posx).lines
 
     // ---- directory listing ----
     def filesIter: Iterator[JFile]  = f.toPath.filesIter

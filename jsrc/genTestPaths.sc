@@ -1,6 +1,6 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.12.1
+//> using dep org.vastblue:uni_3:0.12.3
 import uni.*
 
 object GenTestPaths {
@@ -27,23 +27,16 @@ object GenTestPaths {
     "~/AppData",
   )
 
-  def umount(name: String = mountName): Unit = {
-    Proc.call(Seq("umount.exe", name)*)
-  }
-  def mount(name: String = mountName): Unit = {
-    Proc.call("mount.exe", mountBase, name)
-  }
-  def isMapped(name: String = mountName): Boolean = {
-    val lines = Proc.call("mount.exe").getOrElse("").split("\r?\n")
-    lines.find(_.contains(name)).nonEmpty
-  }
-  def fixup(str: String): String = {
+  def umount(name: String = mountName): Unit =
+    run("umount.exe", name)
+  def mount(name: String = mountName): Unit =
+    run("mount.exe", mountBase, name)
+  def isMapped(name: String = mountName): Boolean =
+    run("mount.exe").text.split("\r?\n").exists(_.contains(name))
+  def fixup(str: String): String =
     str.replaceAll(username, "liam").replaceAll(userhome, "C:/Users/liam")
-  }
-  def cygpath(path: String, flag: String): String = {
-    val str = Proc.call("cygpath.exe", flag, path).getOrElse("").trim
-    fixup(str)
-  }
+  def cygpath(path: String, flag: String): String =
+    fixup(run("cygpath.exe", flag, path).toOption.getOrElse("").trim)
   lazy val username = sys.props("user.name").replace('\\', '/')
   lazy val userhome = sys.props("user.home").replace('\\', '/')
   lazy val userdir = fixup(sys.props("user.dir"))

@@ -2,7 +2,6 @@
 package uni
 
 import java.io.{File as JFile}
-import java.io.{BufferedReader, InputStreamReader}
 import java.nio.file.{Path, Files, Paths as JPaths}
 import java.util.Locale
 import scala.collection.immutable.SortedMap
@@ -10,9 +9,11 @@ import scala.util.Properties
 import uni.data.*
 import uni.time.*
 
+import scala.concurrent.ExecutionContext
+given ExecutionContext = ExecutionContext.global
+
 export scala.util.Properties.{isWin, isMac, isLinux}
-export Proc.{ProcStatus, call, shellExec, shellExecProc, spawn, spawnStreaming, execLines}
-export Proc.{lazyLines, bashExe, unameExe, uname, osType, where, isWsl, hostname}
+export Proc.{ProcResult, run, bashExe, pythonExe, unameExe, uname, osType, where, isWsl, hostname}
 export System.err.print as eprint // returns Unit
 def eprintln(s: String): Unit = System.err.print(s"$s\n")
 def withFileWriter(p: Path, charsetName: String = "UTF-8", append: Boolean = false)(func: java.io.PrintWriter => Any): Unit =
@@ -28,11 +29,30 @@ def tmpDir: String =
     .getOrElse(System.getProperty("java.io.tmpdir"))
     .replace('\\', '/')
 
-def exec(args: String*): String = execLines(args*).mkString("\n")
-
 // wrapper method better than `export System.err.printf as eprintf` due to `Unit` return.
-def eprintf(format: String, args: Any*): Unit = 
-  System.err.printf(format, args*)  // ✅ Returns Unit
+def eprintf(format: String, args: Any*): Unit =
+  System.err.printf(format, args*)
+
+import scala.util.boundary, boundary.break
+
+extension (status: Int)
+  /** Log msg to stderr if status != 0; return status. Chainable. */
+  def !!(msg: String): Int =
+    if status != 0 then eprintln(s"$msg [$status]")
+    status
+  /** Invoke f with error description if status != 0; return status. */
+  infix def orElse(f: String => Unit): Int =
+    if status != 0 then f(s"exit status: $status")
+    status
+  /** Within failFast { }, break out of the block on non-zero status. */
+  infix def orFail(msg: String)(using label: boundary.Label[Int]): Int =
+    if status != 0 then
+      eprintln(s"$msg [$status]")
+      break(status)
+    status
+
+/** Run body; any .orFail call inside short-circuits the block on failure. */
+def failFast(body: boundary.Label[Int] ?=> Int): Int = boundary(body)
 
 /**
  * Print a filtered stack trace.
@@ -77,32 +97,100 @@ lazy val userHome = sys.props("user.home").replace('\\', '/')
 object Proc {
 
   import scala.sys.process.*
+  import scala.collection.mutable.{ListBuffer, Queue}
+  import scala.concurrent.{ExecutionContext, Future}
+  import java.io.{BufferedReader, InputStream, InputStreamReader}
 
-  def execLines(cmd: String*): LazyList[String] = {
+  private[uni] def execLines(cmd: String*): LazyList[String] =
     Process(cmd.toSeq).lazyLines_!
-  }
-  def lazyLines(cmd: String): LazyList[String] =
-    import java.lang.ProcessBuilder
-    val pb = new ProcessBuilder(cmd)
-    pb.redirectErrorStream(false)   // keep stderr separate
 
-    val p = pb.start()
-
+  private[uni] def lazyLines(cmd: String): LazyList[String] =
+    import java.lang.ProcessBuilder as JPB
+    val pb = new JPB(cmd)
+    pb.redirectErrorStream(false)
+    val p      = pb.start()
     val reader = new BufferedReader(new InputStreamReader(p.getInputStream))
-
     def loop(): LazyList[String] =
       val line = reader.readLine()
-      if line == null then LazyList.empty
-      else line #:: loop()
-
+      if line == null then LazyList.empty else line #:: loop()
     loop()
+
+  // Low-level two-arg call used internally by bashExe, uname; never interpolates a shell string.
+  private def callQuiet(cmd: String, arg: String): Option[String] = {
+    val buf = ListBuffer.empty[String]
+    val status = try
+      Seq(cmd, arg).!(ProcessLogger(buf += _, _ => ()))
+    catch
+      case e: java.io.IOException =>
+        System.err.printf("%s\n", e.getMessage)
+        -1
+    if status == 0 && buf.nonEmpty then Some(buf.head) else None
+  }
+
+  private lazy val exe: String = if isWin then ".exe" else ""
+
+  case class ProcResult(status: Int, stdout: Seq[String], stderr: Seq[String], cmd: Seq[String]):
+    def text: String       = stdout.mkString("\n")
+    def lines: Seq[String] = stdout
+    def ok: Boolean        = status == 0
+    def toOption: Option[String] = if ok && stdout.nonEmpty then Some(text) else None
+
+  extension (r: ProcResult)
+    def !!(msg: String): ProcResult =
+      if !r.ok then eprintln(s"$msg [${r.status}]: ${r.cmd.mkString(" ")}")
+      r
+    infix def orFail(msg: String)(using label: boundary.Label[Int]): ProcResult =
+      if !r.ok then
+        eprintln(s"$msg [${r.status}]: ${r.cmd.mkString(" ")}")
+        break(r.status)
+      r
+
+  // Route by file extension.
+  // On Linux/macOS the kernel handles shebangs directly, so .py and .sc pass through unchanged;
+  // on Windows no shebang support exists, so we prepend the interpreter explicitly.
+  // .sh always gets bashExe prepended (handles non-executable scripts on all platforms).
+  private def routeCmd(cmd: Seq[String]): Seq[String] =
+    cmd.headOption match
+      case Some(h) if h.endsWith(".sh")                                   => bashExe +: cmd
+      case Some(h) if h.endsWith(".py") && isWin                          => pythonExe +: cmd
+      case Some(h) if h.endsWith(".sc") && isWin                          => Seq("scala-cli", "shebang") ++ cmd
+      case Some(h) if isWin && (h.endsWith(".bat") || h.endsWith(".cmd")) => Seq("cmd.exe", "/c") ++ cmd
+      case Some(h) if isWin && h.endsWith(".ps1")                         => Seq("powershell.exe", "-File") ++ cmd
+      case Some(h) if isWin                                                => (h.stripSuffix(".exe") + ".exe") +: cmd.tail
+      case _                                                               => cmd
+
+  /** Buffered: captures stdout and stderr, returns ProcResult with cmd.
+   *  If the program is not found, returns a failed ProcResult (status=-1) rather than throwing.
+   */
+  def run(cmd: String*): ProcResult =
+    val routed = routeCmd(cmd)
+    try
+      val ps = spawnStreaming(routed*)
+      ProcResult(ps.status, ps.stdout.toSeq, ps.stderr.toSeq, routed)
+    catch
+      case e: java.io.IOException =>
+        ProcResult(-1, Seq.empty, Seq(e.getMessage), routed)
+
+  /** Streaming: calls out per stdout line, err per stderr line, returns exit status.
+   *  If the program is not found, calls err with the IOException message and returns -1.
+   */
+  def run(cmd: String*)(out: String => Unit, err: String => Unit = eprintln): Int =
+    val routed = routeCmd(cmd)
+    try
+      val proc = spawnStreaming(routed*)
+      proc.stdout.foreach(out)
+      proc.stderr.foreach(err)
+      proc.status
+    catch
+      case e: java.io.IOException =>
+        err(e.getMessage)
+        -1
 
   def where(prog: String): String =
     if isWin then
-      val winprog = prog.stripSuffix(".exe")
-      call("where.exe", s"$winprog.exe").getOrElse(prog)
+      run("where.exe", prog.stripSuffix(".exe") + ".exe").toOption.getOrElse(prog)
     else
-      call("which", prog).getOrElse(prog)
+      run("which", prog).toOption.getOrElse(prog)
 
   def whereInPath(prog: String): Option[String] =
     val name  = if isWin && !prog.endsWith(".exe") then prog + ".exe" else prog
@@ -113,94 +201,21 @@ object Proc {
       .find(Files.isExecutable(_))
       .map(_.toString)
 
-  // Returns first stdout line if command succeeds
-  def call(cmd: String, arg: String): Option[String] = {
-    val buf = scala.collection.mutable.ListBuffer.empty[String]
-    val status = try
-      Seq(cmd, arg).!(ProcessLogger(line => buf += line, _ => ()))
-    catch
-      case e: java.io.IOException =>
-        System.err.printf("%s\n", e.getMessage)
-        -1
-    if (status == 0 && buf.nonEmpty) Some(buf.head) else None
-  }
-  lazy val exe: String = if isWin then ".exe" else ""
-
-  case class ProcStatus[Out, Err](status: Int, stdout: Out, stderr: Err, e: Option[Exception] = None)
-
-  def spawn(cmd: String *): ProcStatus[Seq[String], Seq[String]] = {
-    import scala.collection.mutable.ListBuffer
-    val (stdout, stderr) = (ListBuffer.empty[String], ListBuffer.empty[String])
-    val cmdArray = cmd.toArray.updated(0, cmd.head.stripSuffix(exe) + exe)
-    try {
-      val status = cmdArray.toSeq ! ProcessLogger(stdout append _, stderr append _)
-      ProcStatus(status, stdout.toSeq, stderr.toSeq)
-    } catch {
-      case e: Exception =>
-        ProcStatus(-1, stdout.toSeq, (stderr append e.getMessage).toSeq)
-    }
-  }
-
-  def call(cmd: String *): Option[String] = {
-    try {
-      val ret = spawn(cmd *)
-      if (ret.status != 0){
-        None
-      } else {
-        ret.stdout.mkString("\n").trim match {
-          case s if s.nonEmpty =>
-            Some(s)
-          case _ =>
-            None
-        }
-      }
-    } catch {
-      case _: Throwable =>
-        None
-    }
-  }
-
-  def shellExecProc(bashCommand: String): ProcStatus[Seq[String], Seq[String]] = {
-    try {
-      val cmd = Seq(bashExe, "-c", bashCommand)
-      spawn(cmd *)
-    } catch {
-      case e: Exception =>
-        ProcStatus(-1, Nil, Nil, Some(e))
-    }
-  }
-
-  // happy path wrapper
-  def shellExec(bashCommand: String): Seq[String] = {
-    val proc = shellExecProc(bashCommand)
-    proc.stdout
-  }
-
-  def shellExec(str: String, env: Map[String, String] = Map.empty[String, String]): LazyList[String] = {
-    val cmd      = Seq(bashExe, "-c", str)
-    val envPairs = env.map { case (a, b) => (a, b) }.toList
-    val proc     = Process(cmd, pwd.toFile, envPairs *)
-    proc.lazyLines_!
-  }
-
-  import scala.collection.mutable.Queue
-  import scala.concurrent.{ExecutionContext, Future}
-  import scala.sys.process._
-  import java.io.{BufferedReader, InputStream, InputStreamReader}
-
-  case class StreamingProc(
+  private case class StreamingProc(
     status: Int,
     stdout: LazyList[String],
     stderr: LazyList[String],
-    cancel: () => Unit
+    cancel: () => Unit,
+    cmd: Seq[String]
   )
-  def spawnStreaming(cmd: String*)(using ec: ExecutionContext): StreamingProc = {
+
+  private def spawnStreaming(cmd: String*)(using ec: ExecutionContext): StreamingProc = {
     val stdoutQ = Queue.empty[String]
     val stderrQ = Queue.empty[String]
 
-    @volatile var stdoutDone  = false
-    @volatile var stderrDone  = false
-    @volatile var cancelled   = false
+    @volatile var stdoutDone = false
+    @volatile var stderrDone = false
+    @volatile var cancelled  = false
 
     def readerThread(is: InputStream, q: Queue[String], markDone: => Unit): Unit =
       Future {
@@ -208,10 +223,7 @@ object Proc {
         try {
           var line: String | Null = null
           while (!cancelled && { line = br.readLine(); line != null }) {
-            q.synchronized {
-              q.enqueue(line)
-              q.notifyAll()
-            }
+            q.synchronized { q.enqueue(line); q.notifyAll() }
           }
         } finally {
           markDone
@@ -220,20 +232,13 @@ object Proc {
         }
       }
 
-    def streamFrom(q: Queue[String], doneFlag: => Boolean): LazyList[String] = {
+    def streamFrom(q: Queue[String], doneFlag: => Boolean): LazyList[String] =
       def next: Option[String] =
         q.synchronized {
-          while (q.isEmpty && !doneFlag && !cancelled)
-            q.wait()
-          if (q.nonEmpty) Some(q.dequeue())
-          else None
+          while (q.isEmpty && !doneFlag && !cancelled) q.wait()
+          if q.nonEmpty then Some(q.dequeue()) else None
         }
-
-      LazyList
-        .continually(next)
-        .takeWhile(_.isDefined)
-        .map(_.get)
-    }
+      LazyList.continually(next).takeWhile(_.isDefined).map(_.get)
 
     val io = new ProcessIO(
       _   => (),
@@ -241,15 +246,11 @@ object Proc {
       err => readerThread(err, stderrQ, { stderrDone = true })
     )
 
-    val p = Process(cmd).run(io)
-
+    val p            = Process(cmd).run(io)
     val stdoutStream = streamFrom(stdoutQ, stdoutDone)
     val stderrStream = streamFrom(stderrQ, stderrDone)
 
-    // Wait for both readers to finish before capturing final status
-    while (!stdoutDone || !stderrDone) {
-      Thread.sleep(1)
-    }
+    while (!stdoutDone || !stderrDone) Thread.sleep(1)
     val exitStatus = p.exitValue()
 
     def cancelFn(): Unit = {
@@ -259,32 +260,40 @@ object Proc {
       p.destroy()
     }
 
-    StreamingProc(exitStatus, stdoutStream, stderrStream, cancelFn)
+    StreamingProc(exitStatus, stdoutStream, stderrStream, cancelFn, cmd)
   }
 
-  lazy val bashExe = if isWin then
-    call("where.exe", "bash.exe").getOrElse("bash.exe")
+  // Uses callQuiet (not run) to avoid depending on bashExe before it is initialized.
+  lazy val bashExe: String = if isWin then
+    callQuiet("where.exe", "bash.exe").getOrElse("bash.exe")
   else
     "/bin/bash"
 
-  lazy val unameExe = where("uname")
+  // pythonExe: like bashExe, uses callQuiet to avoid circular init with routeCmd.
+  lazy val pythonExe: String =
+    if isWin then
+      callQuiet("where.exe", "python3.exe")
+        .orElse(callQuiet("where.exe", "python.exe"))
+        .getOrElse("python3.exe")
+    else
+      callQuiet("which", "python3")
+        .orElse(callQuiet("which", "python"))
+        .getOrElse("python3")
 
-  // uname wrapper preserved exactly
-  def uname(arg: String = "-a"): String = {
-    val exe = if isWin then ".exe" else ""
-    call(s"uname$exe", arg).getOrElse("")
-  }
+  lazy val unameExe: String = where("uname")
+
+  def uname(arg: String = "-a"): String =
+    run(s"uname$exe", arg).toOption.getOrElse("")
+
   def isWsl: Boolean = uname("-r").contains("WSL")
 
-  lazy val osType: String = sys.props("os.name").toLowerCase match {
-  case s if s.contains("windows")  => "windows"
-  case s if s.contains("linux")    => "linux"
-  case s if s.contains("mac os x") => "darwin"
-  case other =>
-    sys.error(s"osType is [$other]")
-  }
+  lazy val osType: String = sys.props("os.name").toLowerCase match
+    case s if s.contains("windows")  => "windows"
+    case s if s.contains("linux")    => "linux"
+    case s if s.contains("mac os x") => "darwin"
+    case other                       => sys.error(s"osType is [$other]")
 
-  def hostname = java.net.InetAddress.getLocalHost.getHostName
+  def hostname: String = java.net.InetAddress.getLocalHost.getHostName
 }
 
 lazy val pwd: Path = JPaths.get(config.userdir)

@@ -64,7 +64,7 @@ and [Plot Guide](docs/PlotGuide.md) for the full `PlotStyle` API.
 
 NumPy: Python 3.14.3 / NumPy 2.4.2 (see [`py/bench.py`](py/bench.py)).
 Breeze/MatD: Scala 3.8.2 / JVM 21, both using native OpenBLAS via netlib JNIBLAS (see [`jsrc/benchBreeze.sc`](jsrc/benchBreeze.sc)).
-NOTE: v0.10.1 and prior use Bytedeco OpenBLAS, 
+Note: v0.10.2 and earlier used bytedeco/OpenBLAS for matmul; switching to netlib JNIBLAS in v0.11.0 eliminated the prior JNI overhead and brought matmul latency level with Breeze.
 
 | Operation | NumPy | Breeze | MatD |
 | :--- | ---: | ---: | ---: |

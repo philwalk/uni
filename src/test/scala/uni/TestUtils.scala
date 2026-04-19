@@ -188,7 +188,7 @@ object TestUtils {
     touch(Paths.get(fname))
   }
 
-  lazy val cygpathExe = if !isWin then "" else Proc.call("where.exe", "cygpath.exe").getOrElse("")
+  lazy val cygpathExe = if !isWin then "" else run("where.exe", "cygpath.exe").toOption.getOrElse("")
 
   //given Conversion[String, Seq[String]] with def apply(s: String): Seq[String] = Seq(s)
   def cygpathU(s: String): String = {
@@ -197,7 +197,7 @@ object TestUtils {
     else {
       val exe = cygpathExe
       val abs = s
-      Proc.call(exe, "-u", abs).getOrElse("")
+      run(exe, "-u", abs).toOption.getOrElse("")
     }
   }
 

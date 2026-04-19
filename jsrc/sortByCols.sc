@@ -1,6 +1,6 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.12.1
+//> using dep org.vastblue:uni_3:0.12.3
 
 import uni.*
 //import uni.fs.*
@@ -60,10 +60,10 @@ object SortByCols {
           else
             (token.toInt, true)            // ascending
         }
-      case fname if fname.path.isFile =>
+      case fname if fname.asPath.isFile =>
         if inputFile.nonEmpty then
           usage(s"2nd filename [$fname] but already specified [${inputFile.get}]")
-        val p = fname.path
+        val p = fname.asPath
         if (!p.isFile) {
           usage(s"not found [${p.posx}]")
         }

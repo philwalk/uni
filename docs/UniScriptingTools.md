@@ -1,8 +1,8 @@
 # uni — Scripting Utilities
 
 > **TODO:** Many features of the `uni` package are not yet documented here, including
-> `uni.io`, `uni.cli`, CSV processing, process execution (`Proc`), and others.
-> This document covers the most commonly used utilities; contributions welcome.
+> `uni.io`, `uni.cli`, and CSV processing. This document covers the most commonly used utilities;
+> contributions welcome. For subprocess execution, see [SubprocessAPI.md](SubprocessAPI.md).
 
 The `uni` package provides practical tools for Scala scripts and applications: portable path handling across Windows POSIX environments, flexible date parsing, command-line argument handling, and inline data embedding. These utilities are available alongside the main focus of the library, [uni.data.Mat](../README.md).
 
@@ -35,12 +35,12 @@ On Linux and macOS, `uni.Paths` delegates to `java.nio.file.Paths` unchanged. On
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.12.1
+//> using dep org.vastblue:uni_3:0.12.3
 
 import uni.*
 
 val p = Paths.get("/etc/fstab")
-val sysType = Proc.call("uname", "-o").getOrElse("")
+val sysType = run("uname", "-o").toOption.getOrElse("")
 printf("env: %-10s| %-22s | %d lines\n", sysType, p.posx, p.lines.size)
 ```
 
@@ -107,7 +107,7 @@ The following script hashes all files under a directory and demonstrates argumen
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.12.1
+//> using dep org.vastblue:uni_3:0.12.3
 
 import uni.*
 
@@ -153,7 +153,7 @@ The program name (`hash64demo.sc`) is derived automatically from the runtime env
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.12.1
+//> using dep org.vastblue:uni_3:0.12.3
 
 import uni.time.*
 
@@ -175,7 +175,7 @@ A source file can include a block of raw data after the code, enclosed in a `/* 
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.12.1
+//> using dep org.vastblue:uni_3:0.12.3
 
 import uni.data.HereDoc
 

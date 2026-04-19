@@ -1,6 +1,6 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.12.1
+//> using dep org.vastblue:uni_3:0.12.3
 
 import uni.*
 import java.nio.file.{Files, FileSystems}
@@ -29,24 +29,40 @@ object Main {
       printf("no update\n")
       sys.exit(0)
 
-    val root = Paths.get(".")
-    val matcher = FileSystems.getDefault.getPathMatcher("glob:**/*.{sc,scala,md}")
+    val matcher = FileSystems.getDefault.getPathMatcher("glob:**/*.{sc,scala,md,sh}")
     def isScala(p: Path): Boolean =
       matcher.matches(p) || p.firstLine.contains("scala")
-    def fileFilter(p: Path): Boolean = {
-      p.isFile && isScala(p) && {
-        val str = p.posx
-        !str.contains("/.scala-build/") && !str.contains("/target/")
-      }
+
+    val ignoredDirs = Seq(
+      ".git", ".idea", ".scala-build", "target", "jsrcArchive", "archive", "archive-sv", "ksrc", "mortgage", "osxbin",
+      "rbin", "rs", "ruby", "js", "quad20240228", "qdsaved", "march2quadreports", "data_200_scala_01", "drop-finstr",
+      "drop-qual", "drop-mom", "drop-earnest", "drop-perf", "drop-bsdrank", "drop-rev", "drop-overall",
+      "scalaArchive", "drop-value", "debris-files-to-be-reviewed", "assessor", "saved-assessor", ".vscode", ".metals",
+      "CobraWinLDTP", "clisrcArchive", "data_200_scala_12", "data_200_scala_15", "idea-2024.3.1.lib", ".cargo",
+      ".sqlx", ".bloop", "artifacts", "some", "luxbin", ".bsp", "deduplication", "tmp", "data", "jar", "lib",
+      "exes", "obsolete-staging", "py", "roadtrip", "biz", "cygbin", ".claude", ".git", ".idea",
+    )
+    def ignored(fname: String): Boolean = {
+      ignoredDirs.find(dir => fname.contains(s"/$dir/")).nonEmpty
     }
 
-    val files =
-      Files.walk(root)
+    def fileFilter(p: Path): Boolean =
+      p.isFile && isScala(p) && p.ext != "out" && {
+        val str = p.posx
+        !ignored(str)
+      }
+
+    val roots: Seq[Path] = Paths.get(".").paths.filter { dir =>
+      dir.isDirectory && ! ignoredDirs.contains(dir.last)
+    }
+
+    val files = roots.flatMap { dir =>
+      eprintf("# %s\n", dir)
+      Files.walk(dir)
         .filter(p => fileFilter(p))
         .iterator()
         .asScala
-        .toList
-
+    }.toList
     files.foreach(updateFile(_, version))
     println("Done.")
   }
@@ -87,10 +103,10 @@ object Main {
             print(s"+ $u\n")
         }
       else
-        val ts = Proc.call("stat.exe", "-c", "%y", p.posx).getOrElse("")
+        val ts = run("stat.exe", "-c", "%y", p.posx).toOption.getOrElse("")
         val lfText = updated.mkString("\n")
         Files.write(p, lfText.getBytes("UTF-8"))
         println(s"updated: $p")
-        if ts.nonEmpty then Proc.call("touch", "-d", ts, p.posx)
+        if ts.nonEmpty then run("touch", "-d", ts, p.posx)
   }
 }

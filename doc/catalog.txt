@@ -1,0 +1,80 @@
+  ---
+  Benchmarks (5)
+
+  - bench.sc — MatD vs NumPy: 8 core operations
+  - benchBreeze.sc — MatD vs Breeze: netlib backend
+  - benchBreezeMac.sc — MatD vs Breeze: Mac-specific netlib config
+  - benchMatmulBytedeco.sc — matmul only, Bytedeco backend
+  - benchMatmulNetlib.sc — matmul only, Netlib backend
+
+  Demos (22)
+
+  - anscombe.sc — Anscombe's Quartet scatter plots
+  - asterisk.sc — broadcast row/column syntax test
+  - corr.sc — Iris correlation heatmap + scatter
+  - heatmap.sc — correlation heatmap demo
+  - hereDoc.sc — embedded __DATA__/__END__ sections
+  - importOrder.sc — path extension import override demo
+  - iris.sc — Iris scatter, histogram, line plots
+  - irisPairedFeatures.sc — Iris scatterplot matrix
+  - matD.sc — MatD indexing/slicing/reshaping
+  - matStuff.sc — zeros/ones/eye/arange/linspace
+  - mUntil.sc — slicing with until ranges
+  - myPath.sc — posx / posix path conversion
+  - parseDate.sc — smart/chrono/fallback date parsing
+  - plot.sc — line, scatter, histogram plots
+  - progname.sc — scriptPath, progName, sourceName
+  - pythonPath.sc — Python executable path lookup
+  - readFstab.sc — reads /etc/fstab, /etc/hosts, .bashrc
+  - repl.sc — REPL scratch pad for MatD
+  - rng.sc — seeded RNG verification
+  - show.sc — matrix pretty-print formats
+  - airfoilNoise.sc — downloads airfoil CSV, analyzes + plots
+  - hash64demo.sc — 64-bit directory hashing demo
+  - hereDoc.sc — perl/ruby style hereDoc data
+
+  Tools (17)
+
+  - colN.sc — extracts column N from CSV
+  - convertCsvToData.sc — CSV → typed values (dates/ints/bools)
+  - csvClient.sc — reads CSV with delimiter discovery
+  - csvClientRows.sc — CSV row iteration (async/pull)
+  - csvEachRow.sc — sequential CSV row processing
+  - csvMinimizeQuotes.sc — reformat CSV with minimal quoting
+  - dataFrame.sc — CSV type inference with failure modes
+  - dateTester.sc — date parsing validation
+  - delimiterCheck.sc — CSV delimiter detection/report
+  - fastHash64.sc — 64-bit file/dir hashing
+  - loadCsv.sc — load CSV + display stats
+  - minimizeQuotes.sc — minimize CSV quoting
+  - numpy2mat.sc — Python/NumPy → Scala/Mat source translator (via JSON AST)
+  - realPath.sc — resolve real path including non-existent files
+  - sortByCols.sc — sort CSV by columns
+  - ujtest.sc — NumPy→Mat translator with Python subprocess
+  - winpath.sc — Windows exe proxy with MSYS path conversion
+
+  Algorithm demos (4)
+
+  - threePrfBreeze.sc — three-pass regression filter (Breeze)
+  - threePrfUni.sc — three-pass regression filter (MatD)
+  - tprf.sc — TPRF direct + looped implementations
+  - verifyTprfResults.sc — validates TPRF against Octave reference
+
+  Doc/coverage generation (4)
+
+  - gen-images.sc — generates PNG images for README
+  - generateDetailedDocs.sc — extracts detailed docs from MUnit tests
+  - generateDocs.sc — generates docs from MUnit tests
+  - prepCoverageTest.sc — prepares source for coverage testing
+
+  Dev utilities (5)
+
+  - generate3prfData.sc — exports X/y/Z matrices to CSV for MATLAB validation
+  - genTestPaths.sc — tests Windows mount path normalization
+  - updateVersion.sc — bumps //> using dep versions across scripts
+  - usage.sc — demonstrates usage() call
+  - verifyTestDates.sc — verifies date parsing against expected values
+
+  ---
+  Removal candidates to consider:
+

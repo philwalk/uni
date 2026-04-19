@@ -4,16 +4,15 @@
 //> using scala 3.8.2
 //> using javaOpt --add-modules jdk.incubator.vector
 //> using javaOpt -Ddev.ludovic.netlib.blas.nativeLib=libopenblas.dll
-////> using javaOpt -verbose:jni
 //> using repository m2Local
-//> using dep dev.ludovic.netlib:blas:3.1.1
+//> using dep dev.ludovic.netlib:blas:3.2.0
 //> using dep org.vastblue:uni_3:0.10.2 // pinned (so jsrc/updateVersion.sc will leave this as-is)
 //> using dep org.scalanlp::breeze:2.1.0
 
 /**
- * MatD vs Breeze benchmark — side-by-side comparison of 8 core operations.
+ * ARCHIVAL BENCHMARK — pinned to uni 0.10.2, the last release using bytedeco/OpenBLAS
+ * for matrix multiply. Kept as a reproducible record of pre-switch matmul performance.
  *
- * Run:   scala-cli jsrc/benchBreeze.sc
  * For MatD with Bytedeco OpenBLAS, run:   scala-cli benchMatmulBytedeco.sc
  * For MatD with Netlib   OpenBLAS, run:   scala-cli benchMatmulNetlib.sc
  *
@@ -21,18 +20,17 @@
  *
  * Design notes
  * ------------
- * - 15 warmup iterations (JVM JIT needs time to compile hot loops)
- * - 20 timed iterations; reports minimum ms (most stable metric)
- * - Same 8 operations for both libraries
- * - Matrix sizes: N=1000 for element-wise/reduction, MM=512 for matmul
+ * v0.11.0 switched matmul to netlib JNIBLAS (direct Java array passing, no
+ * DoublePointer/DirectBuffer overhead), eliminating the gap visible here.
+ * Run jsrc/benchMatmulNetlib.sc for the post-switch comparison.
+ *
+ * Bz/MD < 1.0 → Breeze faster;  Bz/MD > 1.0 → MatD faster
  *
  * Key differences
  * ---------------
  * Matmul  : MatD → OpenBLAS via bytedeco JNI; Breeze → netlib-java / OpenBLAS
- * Sigmoid : MatD uses parallel fork/join; Breeze uses sequential UFunc
- * ReLU    : MatD uses parallel fork/join; Breeze has no built-in (map used)
- * Add     : MatD uses parallel fork/join; Breeze uses sequential element-wise
- * Map     : MatD.mapParallel is parallel; DenseMatrix.map is sequential
+ *
+ * Note: uses the old ~@ matmul operator (renamed to *@ in v0.11.0).
  */
 
 import scala.collection.mutable.ArrayBuffer

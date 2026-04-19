@@ -1,7 +1,7 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 //package apps
 
-//> using dep org.vastblue:uni_3:0.12.1
+//> using dep org.vastblue:uni_3:0.12.3
 
 import uni.data.*
 import uni.data.Mat.*
@@ -331,7 +331,7 @@ object Tprf {
     val residuals: MatD = y_true - yhatt
     Option(System.getenv("TPRF_RESIDUALS_OUT")).foreach { f =>
       if f.nonEmpty then
-        val p = f.path
+        val p = f.asPath
         if !p.exists then
           System.err.printf("creating residuals file [%s]%n", p.posx)
           val w = new PrintWriter(p.toFile)

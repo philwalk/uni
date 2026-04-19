@@ -1,7 +1,7 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 //package uni
 
-//> using dep org.vastblue:uni_3:0.12.1
+//> using dep org.vastblue:uni_3:0.12.3
 
 import uni.*
 import uni.io.*
@@ -22,7 +22,7 @@ object DelimiterCheck {
       arg match {
       case "-c" =>
         concise = true
-      case fname if fname.path.isFile =>
+      case fname if fname.asPath.isFile =>
         csvfiles :+= fname
       case _ =>
         usage(s"unrecognized arg / file-not-found: [$arg]")
@@ -39,7 +39,7 @@ object DelimiterCheck {
     if (csvfiles.isEmpty) {
       import LinesIterator.*
       iterateLines(None){ (raw: String, w: PrintWriter) =>
-        if raw.path.isFile then
+        if raw.asPath.isFile then
           csvfiles :+= raw
         else
           usage(s"file not found: $raw")

@@ -1,6 +1,6 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.12.1
+//> using dep org.vastblue:uni_3:0.12.3
 
 import uni.*
 import uni.data.*
@@ -9,9 +9,9 @@ import uni.stats.Tprf3.*
 object VerifyTprfResults {
   def main(args: Array[String]): Unit = {
     // 1. Load the exact same data Octave used
-    val X = "t3prf-validation/ref_X.csv".path.loadMatD
-    val y = "t3prf-validation/ref_y.csv".path.loadMatD
-    val Z = "t3prf-validation/ref_Z.csv".path.loadMatD
+    val X = "t3prf-validation/ref_X.csv".asPath.loadMatD
+    val y = "t3prf-validation/ref_y.csv".asPath.loadMatD
+    val Z = "t3prf-validation/ref_Z.csv".asPath.loadMatD
 
     // 2. Run the Scala Tprf3 estimation
     // Assuming Tprf3.estimate follows the same signature
@@ -22,9 +22,9 @@ object VerifyTprfResults {
     val result = estimate3prf(y, X, Right(Z))
 
     // 3. Save results for comparison
-    val scalaYhatPath = "t3prf-validation/scala_yhat.csv".path
-    val scalaAlphaPath = "t3prf-validation/scala_alpha.csv".path
-    val scalaRsqPath = "t3prf-validation/scala_rsquare.csv".path
+    val scalaYhatPath = "t3prf-validation/scala_yhat.csv".asPath
+    val scalaAlphaPath = "t3prf-validation/scala_alpha.csv".asPath
+    val scalaRsqPath = "t3prf-validation/scala_rsquare.csv".asPath
 
     result.forecasts.saveCSV(scalaYhatPath)
     result.alpha.foreach(_.saveCSV(scalaAlphaPath))
@@ -36,9 +36,9 @@ object VerifyTprfResults {
     println(s"Scala Run Complete. R-Square: ${result.rSquared}")
 
     // 4. Verify results against MATLAB (KP) outputs
-    val kpYhatPath = "t3prf-validation/kp_yhat.csv".path
-    val kpAlphaPath = "t3prf-validation/kp_alpha.csv".path
-    val kpRsqPath = "t3prf-validation/kp_rsquare.csv".path
+    val kpYhatPath = "t3prf-validation/kp_yhat.csv".asPath
+    val kpAlphaPath = "t3prf-validation/kp_alpha.csv".asPath
+    val kpRsqPath = "t3prf-validation/kp_rsquare.csv".asPath
 
     if (kpYhatPath.exists && kpAlphaPath.exists && kpRsqPath.exists) {
       println("\nVerifying against MATLAB (KP) references...")

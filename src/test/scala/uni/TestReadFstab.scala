@@ -6,11 +6,8 @@ import TestUtils.noisy
 class TestReadFstab extends FunSuite {
   override def beforeAll(): Unit = uni.resetConfig()
 
-  // uname wrapper preserved exactly
-  def uname(arg: String = "-a"): String = {
-    val exe = if isWin then ".exe" else ""
-    call(s"uname$exe", arg).getOrElse("")
-  }
+  def uname(arg: String = "-a"): String =
+    run(s"uname${if isWin then ".exe" else ""}", arg).toOption.getOrElse("")
 
   test("/etc/hosts should be readable if uname in Path for any OS type") {
     Proc.whereInPath("uname") match {
@@ -18,7 +15,7 @@ class TestReadFstab extends FunSuite {
       // need best effort examination of other evidence (sys.props? sys.env?)
 
       case Some(pathstr) =>
-        val sysType = Proc.call(pathstr, "-o").getOrElse("")
+        val sysType = run(pathstr, "-o").toOption.getOrElse("")
         noisy(s"uname [$sysType]")
 
         sysType match {

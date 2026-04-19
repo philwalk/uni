@@ -1,6 +1,6 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.12.1
+//> using dep org.vastblue:uni_3:0.12.3
 
 import uni.*
 
@@ -9,7 +9,7 @@ val sysType = uname("-o")
 println(s"`uname -o` => [$sysType]")
 
 for (fname <- Seq("/etc/hosts", "~/.bashrc"))
-  val p = fname.path
+  val p = fname.asPath
   assert(p.exists, s"${p.posx}")
 
 for (fname <- Seq("/etc/fstab", "/etc/hosts", "~/.bashrc", "/opt/no-such-file")) {
@@ -18,6 +18,5 @@ for (fname <- Seq("/etc/fstab", "/etc/hosts", "~/.bashrc", "/opt/no-such-file"))
     printf("%-32s| %4d lines\n", p.posx, size)
 }
 
-def uname(arg: String): String = {
-  call("uname", arg).getOrElse("")
-}
+def uname(arg: String): String =
+  run("uname", arg).toOption.getOrElse("")

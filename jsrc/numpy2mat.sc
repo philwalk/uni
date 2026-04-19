@@ -1,7 +1,7 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep com.lihaoyi::ujson::4.0.2
-//> using dep org.vastblue:uni_3:0.12.1
+//> using dep com.lihaoyi::ujson::4.4.3
+//> using dep org.vastblue:uni_3:0.12.3
 
 import uni.*
 import scala.collection.mutable
@@ -32,13 +32,13 @@ object Numpy2Mat {
     // ── main ──────────────────────────────────────────────────────────────────────
     eachArg(args.toSeq, usage) {
       case "--json" =>
-        val p = consumeNext.path
+        val p = consumeNext.asPath
         if !p.isFile then
           usage(s"not found [${p.posx}]")
         jsonFile = p.posx
         
       case fname if Paths.get(fname).isFile =>
-        val p = fname.path
+        val p = fname.asPath
         if !p.isFile then
           usage(s"not found [${p.posx}]")
         p.ext match
@@ -108,10 +108,10 @@ print(json.dumps(node_to_dict(tree), indent=2))
 """.trim
     val scriptFile = java.io.File.createTempFile("ast_dump", ".py")
     scala.util.Using(java.io.PrintWriter(scriptFile))(_.write(script))
-    val ProcStatus(exitCode, stdout, stderr, exOpt) = shellExecProc(s"""python "${scriptFile.toString.posx}"""")
+    val result = run(bashExe, "-c", s"""python "${scriptFile.toString.posx}"""")
     //printf("scriptFile[%s]\n", scriptFile)
     //scriptFile.delete()
-    stdout.mkString("\n")
+    result.text
 
   // ── context ─────────────────────────────────────────────────────────────
 
@@ -142,7 +142,7 @@ print(json.dumps(node_to_dict(tree), indent=2))
   private def renderOutput(lines: Seq[String], ctx: TranslateContext): String =
     val scriptHeader = """#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
       |
-      |//> using dep org.vastblue:uni_3:0.12.1""".trim.stripMargin
+      |//> using dep org.vastblue:uni_3:0.12.3""".trim.stripMargin
 
     val sb = new StringBuilder
     sb.append(scriptHeader+"\n")
