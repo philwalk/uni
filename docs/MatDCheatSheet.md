@@ -104,11 +104,14 @@ Both use native OpenBLAS via netlib JNIBLAS. See [`jsrc/benchBreeze.sc`](../jsrc
 
 | Operation | MatD | NumPy | Breeze | R | MATLAB |
 |---|---|---|---|---|---|
-| Dimensions | `m.shape` → `(r, c)` | `m.shape` | `(m.rows, m.cols)` | `dim(m)` | `size(m)` |
-| Row count | `m.rows` | `m.shape[0]` | `m.rows` | `nrow(m)` | `size(m,1)` |
-| Col count | `m.cols` | `m.shape[1]` | `m.cols` | `ncol(m)` | `size(m,2)` |
-| Total elements | `m.rows * m.cols` | `m.size` | `m.size` | `length(m)` | `numel(m)` |
-| Extract scalar | `m.item` | `m.item()` | `m(0,0)` | `m[1,1]` | `m(1,1)` |
+| Dimensions | `m.shape` | `m.shape` | `(m.rows, m.cols)` | `dim(m)` | `size(m)` |
+| Row count | `m.rows`<br>`m.shape._1` | `m.shape[0]` | `m.rows` | `nrow(m)` | `size(m,1)` |
+| Col count | `m.cols`<br>`m.shape._2` | `m.shape[1]` | `m.cols` | `ncol(m)` | `size(m,2)` |
+| Total elements | `m.size` | `m.size` | `m.size` | `length(m)` | `numel(m)` |
+| Reshape | `m.reshape(r, c)` | `m.reshape(r, c)` | `m.reshape(r, c)` | `matrix(m, r, c)` | `reshape(m, r, c)` |
+| Flatten to array | `m.flatten` | `m.flatten()` | `m.data` | `as.vector(m)` | `m(:)` |
+| Flatten to row vec | `m.ravel` | `m.ravel()` | — | — | — |
+| Extract scalar | `m.item`<br>`m(0, 0)` | `m.item()` | `m(0,0)` | `m[1,1]` | `m(1,1)` |
 
 ---
 
@@ -129,23 +132,49 @@ Both use native OpenBLAS via netlib JNIBLAS. See [`jsrc/benchBreeze.sc`](../jsrc
 
 | Operation | MatD | NumPy | Breeze | R | MATLAB |
 |---|---|---|---|---|---|
-| Map each column | `m(::, *).map(f)` or `m.mapCols(f)` | `np.apply_along_axis(f, 0, m)` | `X(::, *).map(f)` | `apply(m, 2, f)` | — |
-| Map each row | `m(*, ::).map(f)` or `m.mapRows(f)` | `np.apply_along_axis(f, 1, m)` | `X(*, ::).map(f)` | `apply(m, 1, f)` | — |
+| Map each column | `m.eachCol.map(f)`<br>`m(::, *).map(f)`<br>`m.mapCols(f)` | `np.apply_along_axis(f, 0, m)` | `X(::, *).map(f)` | `apply(m, 2, f)` | — |
+| Map each row | `m.eachRow.map(f)`<br>`m(*, ::).map(f)`<br>`m.mapRows(f)` | `np.apply_along_axis(f, 1, m)` | `X(*, ::).map(f)` | `apply(m, 1, f)` | — |
 
-`f` receives a `ColVec[T]` (n×1) for column mapping, a `RowVec[T]` (1×n) for row mapping, and must return the same shape. Both syntaxes are equivalent — use whichever feels familiar.
+`f` receives a `ColVec[T]` (n×1) for column mapping, a `RowVec[T]` (1×n) for row mapping, and must return the same shape. All three MatD spellings per row are equivalent.
 
 ```scala
-// Sort each column independently (Breeze-style)
+// Sort each column independently (Breeze-style sentinel)
 m(::, *).map(col => col.sort())
 
-// Sort each column independently (named method)
-m.mapCols(col => col.sort())
+// Sort each column independently (named method — preferred when also importing breeze.linalg.*)
+m.eachCol.map(col => col.sort())
 
 // Reverse each row
-m(*, ::).map(row => row(::, row.cols-1 to 0 by -1))
+m.eachRow.map(row => row(::, row.cols-1 to 0 by -1))
 ```
 
 > **Note:** For broadcasting operations (subtract column means, divide by std) use arithmetic directly — `m - m.mean(axis=0)` is both simpler and faster.
+
+---
+
+## Migrating from Breeze
+
+Key syntax differences for Breeze users. Most idioms carry over directly; the main changes are
+operator names and a few method renames.
+
+| Breeze | MatD | Note |
+|--------|------|------|
+| `X * Y` | `X *@ Y` | Matrix multiply (`*` is element-wise in MatD) |
+| `X :* Y` | `X * Y` | Element-wise multiply |
+| `X :/ Y` | `X / Y` | Element-wise divide |
+| `X.t` | `X.T` | Transpose |
+| `sum(X, Axis._0)` | `X.sum(axis=0)` | Column-wise sum |
+| `sum(X, Axis._1)` | `X.sum(axis=1)` | Row-wise sum |
+| `X(::, *).map(f)` | `X(::, *).map(f)` or `X.eachCol.map(f)` | Apply f to each column |
+| `X(*, ::).map(f)` | `X(*, ::).map(f)` or `X.eachRow.map(f)` | Apply f to each row |
+| `X(i, ::)` | `X(i, ::)` | Row slice (identical) |
+| `X(::, j)` | `X(::, j)` | Column slice (identical) |
+| `svd(X)` | `X.svd` | SVD decomposition |
+| `X \ b` | `X.solve(b)` | Least-squares solve |
+
+<sub>The broadcast sentinel `*` is spelled identically in both libraries. In files that import both,
+use `X.eachCol` / `X.eachRow` to sidestep the name collision, or rename at import:
+`import uni.data.{\`*\` as All}`.</sub>
 
 ---
 

@@ -1,3 +1,32 @@
+## v0.13.1
+
+**Bug fixes**
+- `Paths`: dotfile paths (e.g. `.gitignore`, `.env`) were incorrectly resolved relative to
+  `userdir` with the leading dot stripped — now preserved correctly
+- `Big`: percentage strings (`"75%"`) now parse to `0.75` instead of `BigNaN`
+- `PathExts`: corrected stale deprecation messages (`asFast` → `asFile`, `toPath` → `asPath`)
+
+**Subprocess API**
+- Extract `object Proc` to dedicated `ProcUtils.scala`
+- Add fluent `proc(cmd*)` builder with `.cwd()`, `.env()`, `.stdin()`, `.timeout()`, `.run()`, `.stream()`
+- `run(cmd*)` stdout/stderr backed by lazy `LinkedBlockingQueue` + daemon reader threads
+- `ProcResult` extends `IndexedSeq[String]`; add `orElse`, `headOnly`, `takeOnly(n)`
+- Add `Proc.whereInPath(prog): Option[String]`
+
+**Matrix API**
+- Add `Mat.eachCol` / `Mat.eachRow` — named alternatives to `m(::, *).map(f)` / `m(*, ::).map(f)`;
+  avoids `*` import conflict when mixing `uni.data.*` and `breeze.linalg.*`
+
+**Documentation**
+- `SubprocessAPI.md`: document `proc` builder, full `ProcResult` API, environment utilities
+- `MatDCheatSheet.md`: add "Migrating from Breeze" table; add reshape/flatten/ravel/size rows;
+  show all equivalent MatD spellings for column/row mapping
+- `README.md`: add reshape and per-axis mapping rows to NumPy mapping table
+
+## v0.13.0
+
+- See release commit for full change list
+
 ## v0.12.1
 - Windows: netlib 3.2.0 publication JNIBLAS ->  Accelerate framework (always present, zero user setup)
 - match on Opaque type `Big` at runtime

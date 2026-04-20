@@ -72,19 +72,79 @@ run("git", "ls-files") { line => ... } { err => ... }       // Int  (explicit st
 
 ---
 
+## `proc` builder
+
+When you need to set a working directory, inject environment variables, pipe stdin, or impose a
+timeout, use `proc(cmd*)` instead of `run(cmd*)`. It returns a `ProcBuilder` that you configure
+with a fluent chain before calling `.run()` or `.stream()`:
+
+```scala
+proc("mvn", "package").cwd("/home/user/myproject").run()
+
+proc("sh", "-c", "echo $SECRET").env(Map("SECRET" -> "s3cr3t")).run()
+
+proc("cat").stdin("hello\nworld\n").run().lines   // Seq("hello", "world")
+
+proc(bashExe, "-c", "sleep 10").timeout(500L).run().ok  // false — timed out → status -1
+```
+
+### `ProcBuilder` API
+
+```scala
+proc(cmd: String*): ProcBuilder          // factory
+
+// configuration (chainable):
+.cwd(p: Path): ProcBuilder               // working directory
+.cwd(s: String): ProcBuilder
+.env(m: Map[String, String]): ProcBuilder  // additional env vars (merged into child env)
+.stdin(s: String): ProcBuilder           // text piped to child's stdin
+.timeout(ms: Long): ProcBuilder          // max wait in milliseconds; status -1 on expiry
+
+// terminal:
+.run(): ProcResult                       // buffered — same result type as run(cmd*)
+.stream(out: String => Unit,             // streaming — same as streaming run overload
+        err: String => Unit = eprintln): Int
+```
+
+`ProcBuilder.run()` and `.stream()` accept the same error-handling extensions as the
+top-level `run` overloads (`!!`, `orFail`, `orElse`).
+
+---
+
 ## `ProcResult`
 
 ```scala
-case class ProcResult(status: Int, stdout: Seq[String], stderr: Seq[String], cmd: Seq[String]):
-  def text: String                    // stdout lines joined by "\n"
-  def lines: Seq[String]              // stdout lines
-  def ok: Boolean                     // status == 0
-  def toOption: Option[String]        // Some(text) if ok && nonEmpty, else None
+case class ProcResult(status: Int, stdout: Seq[String], stderr: Seq[String], cmd: Seq[String])
+    extends IndexedSeq[String]:
+  def text: String                         // stdout lines joined by "\n"
+  def lines: Seq[String]                   // stdout lines
+  def ok: Boolean                          // status == 0
+  def toOption: Option[String]             // Some(text) if ok && nonEmpty, else None
+  def orElse(default: => String): String   // text if ok && nonEmpty, else default
+  def headOnly: String                     // first stdout line; drains rest in background
+  def takeOnly(n: Int): Seq[String]        // first n stdout lines; drains rest in background
+  def apply(i: Int): String                // IndexedSeq — r(0) is first stdout line
+  def length: Int                          // number of stdout lines
 ```
 
 `cmd` carries the post-routing command — what the OS actually received. For example,
 `run("deploy.sh")` stores `[/usr/bin/bash, deploy.sh]` in `cmd`. The `!!` and `orFail`
 extensions on `ProcResult` use `cmd` to self-describe errors without the caller repeating the name.
+
+`headOnly` and `takeOnly(n)` are for cases where you only need the first line(s) of a
+potentially long output. They consume the requested lines eagerly, then drain and discard
+the rest in a background daemon thread — preventing reader threads from blocking:
+
+```scala
+val branch = run("git", "rev-parse", "--abbrev-ref", "HEAD").headOnly
+val top3   = run("git", "log", "--oneline").takeOnly(3)
+```
+
+`orElse` provides a default without the intermediate `Option`:
+
+```scala
+val version = run("git", "describe", "--tags").orElse("unknown")
+```
 
 ---
 
@@ -271,6 +331,52 @@ failFast {
   printf("branch=%s sha=%s\n", branch.text.trim, sha.text.trim)
   0
 }
+```
+
+---
+
+## Environment utilities
+
+These values and functions are exported by `import uni.*` alongside `run` and `proc`.
+
+### Interpreter paths
+
+```scala
+bashExe: String      // absolute path to bash — resolved once at startup via `where.exe`/`which`
+pythonExe: String    // absolute path to python3 (or python) — resolved at startup
+unameExe: String     // absolute path to uname
+```
+
+Use them when you need to pass the interpreter explicitly rather than relying on implicit routing:
+
+```scala
+run(bashExe, "-c", "git log --oneline | head -20").lines
+run(pythonExe, "-c", "import sys; print(sys.version)").headOnly
+```
+
+### `where` / `whereInPath`
+
+```scala
+where(prog: String): String              // resolves full path via where.exe / which; returns prog unchanged on failure
+whereInPath(prog: String): Option[String]  // searches PATH entries directly; None if not found
+```
+
+`where` calls the system resolver and is appropriate when you need the canonical path
+that the OS would actually use. `whereInPath` does an in-process `PATH` scan and is useful
+for existence checks without spawning a subprocess:
+
+```scala
+val bash = where("bash")                          // "/usr/bin/bash" or "C:/msys64/usr/bin/bash.exe"
+val hasPython = Proc.whereInPath("python3").isDefined
+```
+
+### Other exported utilities
+
+```scala
+uname(arg: String = "-a"): String   // runs uname, returns stdout or "" on failure
+isWsl: Boolean                      // true when running inside WSL
+osType: String                      // "windows" | "linux" | "darwin"
+hostname: String                    // java.net.InetAddress.getLocalHost.getHostName
 ```
 
 ---

@@ -1539,6 +1539,12 @@ object Mat {
     /** Breeze: X(*, ::) — returns a RowsView for per-row mapping via .map(f) */
     def apply(rows: `*`.type, cols: ::.type): RowsView[T] = RowsView(m)
 
+    /** Named alternative to m(::, *) — avoids `*` import conflict when mixing with breeze.linalg.* */
+    def eachCol: ColsView[T] = ColsView(m)
+
+    /** Named alternative to m(*, ::) — avoids `*` import conflict when mixing with breeze.linalg.* */
+    def eachRow: RowsView[T] = RowsView(m)
+
     /**
      * NumPy: m[rows, cols]
      * Rectangular slicing with Range support

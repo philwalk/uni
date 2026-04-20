@@ -130,8 +130,8 @@ class ProcSuite extends FunSuite:
     // Run a command that writes to stderr
     val errBuf = collection.mutable.ListBuffer.empty[String]
     // ls on a non-existent path writes to stderr
-    val missingPath = if isWin then "C:/no-such-dir-xyz" else "/no-such-dir-xyz"
-    run(if isWin then "dir" else "ls", missingPath)(
+    val missingPath = "/no-such-dir-xyz"
+    run("ls", missingPath)(
       _ => (),
       errLine => errBuf += errLine
     )
@@ -285,4 +285,85 @@ class ProcSuite extends FunSuite:
         s".sc script output should contain 'scala-routing-ok': ${r.lines}")
     finally
       Files.deleteIfExists(script)
+  }
+
+  // ============================================================================
+  // ProcBuilder — proc(...).cwd / .env / .stdin / .timeout
+  // ============================================================================
+
+  test("proc.env: custom env var is visible to child process") {
+    val key   = "UNI_TEST_VAR"
+    val value = "hello-from-env"
+    val r =
+      if isWin then
+        proc("cmd.exe", "/c", s"echo %${key}%").env(Map(key -> value)).run()
+      else
+        proc("sh", "-c", s"echo $$${key}").env(Map(key -> value)).run()
+    assert(r.ok, s"proc.env run should succeed, got ${r.status}")
+    assert(r.lines.exists(_.contains(value)),
+      s"expected '$value' in output: ${r.lines}")
+  }
+
+  test("proc.cwd: working directory is respected") {
+    import java.nio.file.{Files as JFiles}
+    val tmpDir = JFiles.createTempDirectory("uni-proc-cwd-test-")
+    try
+      val r =
+        if isWin then
+          proc("cmd.exe", "/c", "cd").cwd(tmpDir.toString).run()
+        else
+          proc("pwd").cwd(tmpDir.toString).run()
+      assert(r.ok, s"proc.cwd run should succeed, got ${r.status}")
+      val out = r.lines.mkString.replace('\\', '/').toLowerCase
+      val exp = tmpDir.toAbsolutePath.toString.replace('\\', '/').toLowerCase
+      assert(out.contains(exp.takeRight(20)),
+        s"expected cwd output to contain '${exp.takeRight(20)}', got: $out")
+    finally
+      JFiles.deleteIfExists(tmpDir)
+  }
+
+  test("proc.stdin: stdin is passed to child process") {
+    val input = "hello-stdin"
+    val r = proc("cat").stdin(input + "\n").run()
+    assert(r.ok, s"proc.stdin run should succeed, got ${r.status}")
+    assert(r.lines.exists(_.contains(input)),
+      s"expected '$input' in output: ${r.lines}")
+  }
+
+  test("proc.timeout: process exceeding timeout returns -1") {
+    val r = proc(bashExe, "-c", "sleep 10").timeout(200L).run()
+    assertEquals(r.status, -1, s"timed-out process should return status -1")
+  }
+
+  // ============================================================================
+  // ProcResult.headOnly / takeOnly / IndexedSeq
+  // ============================================================================
+
+  test("headOnly: returns first stdout line and drains rest") {
+    val r = run("echo", "head-only-test")
+    val h = r.headOnly
+    assert(h.contains("head-only-test"), s"headOnly should return first line, got: $h")
+  }
+
+  test("takeOnly: returns first N lines") {
+    val lines5 =
+      if isWin then "echo a && echo b && echo c && echo d && echo e"
+      else "printf 'a\nb\nc\nd\ne\n'"
+    val r =
+      if isWin then run("cmd.exe", "/c", lines5)
+      else run("sh", "-c", lines5)
+    val taken = r.takeOnly(3)
+    assertEquals(taken.size, 3, s"takeOnly(3) should return 3 lines, got ${taken.size}: $taken")
+  }
+
+  test("takeOnly(1): returns single-element seq") {
+    val r     = run("echo", "single")
+    val taken = r.takeOnly(1)
+    assertEquals(taken.size, 1)
+    assert(taken.head.contains("single"))
+  }
+
+  test("ProcResult extends IndexedSeq: apply(0) returns first line") {
+    val r = run("echo", "indexedseq-test")
+    assert(r(0).contains("indexedseq-test"), s"r(0) should be first line, got: ${r(0)}")
   }

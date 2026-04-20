@@ -187,11 +187,15 @@ Without this, `libblas.so.3` may resolve to the slow single-threaded reference B
 | `a * b` | `a * b` | Element-wise product |
 | `a[0, :]` | `a(0, ::)` | Row slice |
 | `a[:, 0]` | `a(::, 0)` | Column slice |
+| `np.apply_along_axis(f, 0, a)` | `a.eachCol.map(f)` | Apply f to each column |
+| `np.apply_along_axis(f, 1, a)` | `a.eachRow.map(f)` | Apply f to each row |
+| `a.reshape(r, c)` | `a.reshape(r, c)` | Change shape |
 | `a.T` | `a.T` | $O(1)$ view |
-| `np.random.randn(n)` | `MatD.randn(n)` / `MatD.rnorm(n)` | n×1 column vector, standard normal |
+| `np.random.randn(n)` | `MatD.randn(n)`<br>`MatD.rnorm(n)` | n×1 column vector, standard normal |
 | `np.random.randn(r,c)` | `MatD.randn(r, c)` | r×c matrix, standard normal |
 | `np.where(c, x, y)` | `MatD.where(c, x, y)` | Conditional selection |
-| `np.vstack` / `np.vsplit` | `MatD.vstack` / `m.vsplit(n)` | Row-wise stack / split |
+| `np.vstack(...)` | `MatD.vstack(...)` | Row-wise stack |
+| `np.vsplit(m, n)` | `m.vsplit(n)` | Row-wise split |
 | `m.item()` | `m.item` | Extract scalar from 1×1 matrix |
 
 ## Quick Start
