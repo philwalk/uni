@@ -1,7 +1,7 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
 //> using dep com.lihaoyi::ujson::4.4.3
-//> using dep org.vastblue:uni_3:0.12.3
+//> using dep org.vastblue:uni_3:0.13.2
 
 import uni.*
 import scala.collection.mutable
@@ -142,7 +142,7 @@ print(json.dumps(node_to_dict(tree), indent=2))
   private def renderOutput(lines: Seq[String], ctx: TranslateContext): String =
     val scriptHeader = """#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
       |
-      |//> using dep org.vastblue:uni_3:0.12.3""".trim.stripMargin
+      |//> using dep org.vastblue:uni_3:0.13.2""".trim.stripMargin
 
     val sb = new StringBuilder
     sb.append(scriptHeader+"\n")

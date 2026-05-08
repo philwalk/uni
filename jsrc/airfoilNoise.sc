@@ -1,7 +1,7 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
 //> using jvm 17
-//> using dep org.vastblue:uni_3:0.12.3
+//> using dep org.vastblue:uni_3:0.13.2
 //> using dep com.github.darrenjw::scala-glm:0.9
 
 import uni.data.*
@@ -16,7 +16,7 @@ object AirfoilNoise {
     val file = new java.io.File(fileName)
     if (!file.exists) {
       val s = new java.io.PrintWriter(file)
-      val data = scala.io.Source.fromURL(url).getLines
+      val data = scala.io.Source.fromURL(url).getLines()
       data.foreach(l => s.write(l.trim.
         split('\t').filter(_ != "").
         mkString("", ",", "\n")))

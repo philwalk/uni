@@ -33,27 +33,6 @@ def tmpDir: String =
 def eprintf(format: String, args: Any*): Unit =
   System.err.printf(format, args*)
 
-import scala.util.boundary, boundary.break
-
-extension (status: Int)
-  /** Log msg to stderr if status != 0; return status. Chainable. */
-  def !!(msg: String): Int =
-    if status != 0 then eprintln(s"$msg [$status]")
-    status
-  /** Invoke f with error description if status != 0; return status. */
-  infix def orElse(f: String => Unit): Int =
-    if status != 0 then f(s"exit status: $status")
-    status
-  /** Within failFast { }, break out of the block on non-zero status. */
-  infix def orFail(msg: String)(using label: boundary.Label[Int]): Int =
-    if status != 0 then
-      eprintln(s"$msg [$status]")
-      break(status)
-    status
-
-/** Run body; any .orFail call inside short-circuits the block on failure. */
-def failFast(body: boundary.Label[Int] ?=> Int): Int = boundary(body)
-
 /**
  * Print a filtered stack trace.
  */

@@ -16,7 +16,7 @@ The primary entry point is `parseDate(String)`, which returns a `java.time.Local
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.12.3
+//> using dep org.vastblue:uni_3:0.13.2
 
 import uni.time.*
 
@@ -42,7 +42,7 @@ You can override this behavior using scoped configuration blocks:
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.12.3
+//> using dep org.vastblue:uni_3:0.13.2
 
 import uni.time.*
 
@@ -72,7 +72,7 @@ The date parser is integrated into `uni.data.BigUtils.getMostSpecificType`. This
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.12.3
+//> using dep org.vastblue:uni_3:0.13.2
 
 import uni.data.*
 import uni.data.BigUtils.*

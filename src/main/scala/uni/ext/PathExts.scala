@@ -11,6 +11,7 @@ import uni.data.*
 import uni.io.FileOps.*
 import uni.Internals.*
 import scala.reflect.ClassTag
+import scala.util.Using
 
 /** Path Extension methods */
 object pathExts {
@@ -150,18 +151,34 @@ object pathExts {
 
     // ---- read content ----
     def linesStream: Iterator[String] = if isFile then streamLines(p) else Iterator.empty
-    def firstLine: String = linesStream.nextOption.getOrElse("")
-
-    def lines: Seq[String] = linesStream.toSeq
-
-    def lines(charset: String): Seq[String] = linesStream(charset).toSeq
-
     def linesStream(charset: String): Iterator[String] =
       if !isFile then Iterator.empty
       else if charset.isEmpty then streamLines(p)
       else
         val cs = try Charset.forName(charset) catch case _: Exception => UTF_8
         streamLines(p, cs)
+
+    def withLines[A](f: Iterator[String] => A): A =
+      if isFile then Using.resource(streamLines(p))(f) else f(Iterator.empty)
+
+    def withLines[A](charset: String)(f: Iterator[String] => A): A =
+      if !isFile then f(Iterator.empty)
+      else if charset.isEmpty then Using.resource(streamLines(p))(f)
+      else
+        val cs = try Charset.forName(charset) catch case _: Exception => UTF_8
+        Using.resource(streamLines(p, cs))(f)
+
+    def eachLine(f: String => Unit): Unit =
+      if isFile then Using.resource(streamLines(p))(_.foreach(f))
+
+    def eachLine(charset: String)(f: String => Unit): Unit =
+      if isFile then withLines(charset)(_.foreach(f))
+
+    def firstLine: String = withLines(_.nextOption.getOrElse(""))
+
+    def lines: Seq[String] = withLines(_.toSeq)
+
+    def lines(charset: String): Seq[String] = withLines(charset)(_.toSeq)
 
     def contentAsString(charset: Charset = UTF_8): String =
       if isFile then
@@ -452,12 +469,16 @@ object pathExts {
     def pathsTreeIter: Iterator[Path]  = f.toPath.pathsTreeIter
 
     // ---- read content ----
-    def linesStream: Iterator[String]                  = f.toPath.linesStream
+    def linesStream: Iterator[String]                                  = f.toPath.linesStream
+    def linesStream(charset: String): Iterator[String]                 = f.toPath.linesStream(charset)
+    def withLines[A](fn: Iterator[String] => A): A                    = f.toPath.withLines(fn)
+    def withLines[A](charset: String)(fn: Iterator[String] => A): A   = f.toPath.withLines(charset)(fn)
+    def eachLine(fn: String => Unit): Unit                             = f.toPath.eachLine(fn)
+    def eachLine(charset: String)(fn: String => Unit): Unit            = f.toPath.eachLine(charset)(fn)
     def firstLine: String                              = f.toPath.firstLine
     def lines: Seq[String]                             = f.toPath.lines
     def lines(charset: String): Seq[String]            = f.toPath.lines(charset)
     def lines(charset: Charset): Seq[String]           = f.toPath.lines(charset.name)
-    def linesStream(charset: String): Iterator[String] = f.toPath.linesStream(charset)
     def contentAsString(charset: Charset): String      = f.toPath.contentAsString(charset)
     def contentAsString: String                        = f.toPath.contentAsString
     def byteArray: Array[Byte]                         = f.toPath.byteArray
@@ -529,8 +550,8 @@ object pathExts {
   import java.nio.charset.{StandardCharsets, CodingErrorAction}
   import java.io.InputStream
 
-  def streamLines(p: Path, cs: Charset = StandardCharsets.UTF_8): Iterator[String] = new Iterator[String] with AutoCloseable {
-    private val in: InputStream = Files.newInputStream(p)
+  private def streamLines(p: Path, cs: Charset = StandardCharsets.UTF_8): Iterator[String] & AutoCloseable = new Iterator[String] with AutoCloseable {
+    private val in: InputStream = new java.io.BufferedInputStream(Files.newInputStream(p))
     // Use a reusable BAOS to avoid constant ArrayBuffer re-allocations
     private val bos = new java.io.ByteArrayOutputStream(128)
     private var nextLine: String | Null = null
@@ -580,8 +601,5 @@ object pathExts {
         in.close()
       }
     }
-
-    // Safety net for partial reads (e.g. .take(5))
-    override def finalize(): Unit = close()
   }
 }

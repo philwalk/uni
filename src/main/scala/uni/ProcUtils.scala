@@ -3,10 +3,9 @@ package uni
 import java.io.{BufferedReader, InputStream, InputStreamReader}
 import java.nio.file.Path
 import java.util.concurrent.{LinkedBlockingQueue, TimeUnit}
-import scala.collection.mutable.{ListBuffer, Queue as MQueue}
-import scala.concurrent.{ExecutionContext, Future}
+import scala.collection.mutable.ListBuffer
 import scala.jdk.CollectionConverters.*
-import scala.sys.process.{Process, ProcessIO, ProcessLogger, stringSeqToProcess}
+import scala.sys.process.{Process, ProcessLogger, stringSeqToProcess}
 import scala.util.boundary, boundary.break
 import scala.util.Properties.isWin
 
@@ -110,12 +109,19 @@ object Proc {
     t.start()
     t
 
-  private def qToLazyList(q: LinkedBlockingQueue[Option[String]]): LazyList[String] =
-    LazyList.unfold(q) { queue =>
-      queue.take() match
-        case None    => None
-        case Some(s) => Some((s, queue))
-    }
+  // Drains q into buf; terminates on None sentinel. Runs concurrently with process.waitFor()
+  // so that the bounded queue never fills and blocks the reader threads.
+  private def drainingThread(q: LinkedBlockingQueue[Option[String]], buf: ListBuffer[String]): Thread =
+    val t = Thread(() =>
+      var done = false
+      while !done do
+        q.take() match
+          case None    => done = true
+          case Some(s) => buf += s
+    )
+    t.setDaemon(true)
+    t.start()
+    t
 
   final class ProcBuilder private[Proc](cmd: Seq[String]):
     private var _cwd:     Option[java.io.File]  = None
@@ -151,22 +157,26 @@ object Proc {
         case None => process.waitFor()
 
     def run(): ProcResult =
-      val routed = routeCmd(cmd)
-      val outQ   = new LinkedBlockingQueue[Option[String]](64)
-      val errQ   = new LinkedBlockingQueue[Option[String]](64)
+      val routed  = routeCmd(cmd)
+      val outQ    = new LinkedBlockingQueue[Option[String]](64)
+      val errQ    = new LinkedBlockingQueue[Option[String]](64)
+      val outBuf  = ListBuffer.empty[String]
+      val errBuf  = ListBuffer.empty[String]
       try
         val process = startJavaProcess(routed, _cwd, _env)
         pipeStdin(process)
         startReader(process.getInputStream, outQ)
         startReader(process.getErrorStream, errQ)
+        val outD    = drainingThread(outQ, outBuf)
+        val errD    = drainingThread(errQ, errBuf)
         val status  = awaitProcess(process)
-        ProcResult(status, qToLazyList(outQ), qToLazyList(errQ), routed)
+        outD.join()
+        errD.join()
+        ProcResult(status, outBuf.toSeq, errBuf.toSeq, routed)
       catch
         case e: java.io.IOException =>
-          outQ.put(None)
-          errQ.put(Some(e.getMessage))
-          errQ.put(None)
-          ProcResult(-1, qToLazyList(outQ), qToLazyList(errQ), routed)
+          outQ.put(None); errQ.put(None)
+          ProcResult(-1, Seq.empty, Seq(e.getMessage), routed)
 
     def stream(out: String => Unit, err: String => Unit = eprintln): Int =
       val routed = routeCmd(cmd)
@@ -200,73 +210,55 @@ object Proc {
    *  If the program is not found, returns a failed ProcResult (status=-1) rather than throwing.
    */
   def run(cmd: String*): ProcResult =
-    val routed = routeCmd(cmd)
-    val outQ   = new LinkedBlockingQueue[Option[String]](64)
-    val errQ   = new LinkedBlockingQueue[Option[String]](64)
+    val routed  = routeCmd(cmd)
+    val outQ    = new LinkedBlockingQueue[Option[String]](64)
+    val errQ    = new LinkedBlockingQueue[Option[String]](64)
+    val outBuf  = ListBuffer.empty[String]
+    val errBuf  = ListBuffer.empty[String]
     try
       val process = startJavaProcess(routed, None, Map.empty)
       startReader(process.getInputStream, outQ)
       startReader(process.getErrorStream, errQ)
-      val status = process.waitFor()
-      ProcResult(status, qToLazyList(outQ), qToLazyList(errQ), routed)
+      val outD    = drainingThread(outQ, outBuf)
+      val errD    = drainingThread(errQ, errBuf)
+      val status  = process.waitFor()
+      outD.join()
+      errD.join()
+      ProcResult(status, outBuf.toSeq, errBuf.toSeq, routed)
     catch
       case e: java.io.IOException =>
-        outQ.put(None)
-        errQ.put(Some(e.getMessage))
-        errQ.put(None)
-        ProcResult(-1, qToLazyList(outQ), qToLazyList(errQ), routed)
+        outQ.put(None); errQ.put(None)
+        ProcResult(-1, Seq.empty, Seq(e.getMessage), routed)
 
   /** Streaming: calls out per stdout line, err per stderr line, returns exit status.
-   *  Uses Future-based readers with an unbounded queue — the same approach as the original
-   *  spawnStreaming — so MSYS2 executables on Windows are handled correctly.
+   *  Uses Thread-based readers; no ExecutionContext required.
    *  If the program is not found, calls err with the IOException message and returns -1.
    */
-  def run(cmd: String*)(out: String => Unit, err: String => Unit = eprintln)(using ec: ExecutionContext): Int =
+  def run(cmd: String*)(out: String => Unit, err: String => Unit = eprintln): Int =
     val routed = routeCmd(cmd)
-    val outQ   = MQueue.empty[String]
-    val errQ   = MQueue.empty[String]
-    @volatile var outDone = false
-    @volatile var errDone = false
-    def readerFuture(is: InputStream, q: MQueue[String], markDone: => Unit): Unit =
-      Future {
+    def readerThread(is: InputStream, cb: String => Unit): Thread =
+      val t = Thread(() =>
         val br = new BufferedReader(new InputStreamReader(is))
         try
           var line = br.readLine()
           while line != null do
-            q.synchronized { q.enqueue(line); q.notifyAll() }
+            cb(line)
             line = br.readLine()
         catch case _: java.io.IOException => ()
-        finally
-          markDone
-          q.synchronized { q.notifyAll() }
-          br.close()
-      }
-    def drainQueue(q: MQueue[String], doneFlag: => Boolean, cb: String => Unit): Unit =
-      def next(): Option[String] =
-        q.synchronized {
-          while q.isEmpty && !doneFlag do q.wait()
-          if q.nonEmpty then Some(q.dequeue()) else None
-        }
-      while
-        next() match
-          case None    => false
-          case Some(s) => cb(s); true
-      do ()
-    try
-      val io = new ProcessIO(
-        _ => (),
-        is => readerFuture(is, outQ, { outDone = true }),
-        is => readerFuture(is, errQ, { errDone = true })
       )
-      val p = Process(routed).run(io)
-      while !outDone || !errDone do Thread.sleep(1)
-      val status = p.exitValue()
-      drainQueue(outQ, outDone, out)
-      drainQueue(errQ, errDone, err)
+      t.setDaemon(true)
+      t.start()
+      t
+    try
+      val process = startJavaProcess(routed, None, Map.empty)
+      val outT    = readerThread(process.getInputStream, out)
+      val errT    = readerThread(process.getErrorStream, err)
+      val status  = process.waitFor()
+      outT.join()
+      errT.join()
       status
     catch
       case e: java.io.IOException => err(e.getMessage); -1
-      case _: InterruptedException => Thread.currentThread().interrupt(); -1
 
   def where(prog: String): String =
     if isWin then
@@ -315,3 +307,22 @@ object Proc {
 
   def hostname: String = java.net.InetAddress.getLocalHost.getHostName
 }
+
+extension (status: Int)
+  /** Log msg to stderr if status != 0; return status. Chainable. */
+  def !!(msg: String): Int =
+    if status != 0 then eprintln(s"$msg [$status]")
+    status
+  /** Invoke f with error description if status != 0; return status. */
+  infix def orElse(f: String => Unit): Int =
+    if status != 0 then f(s"exit status: $status")
+    status
+  /** Within failFast { }, break out of the block on non-zero status. */
+  infix def orFail(msg: String)(using label: boundary.Label[Int]): Int =
+    if status != 0 then
+      eprintln(s"$msg [$status]")
+      break(status)
+    status
+
+/** Run body; any .orFail call inside short-circuits the block on failure. */
+def failFast(body: boundary.Label[Int] ?=> Int): Int = boundary(body)

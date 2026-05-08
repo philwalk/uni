@@ -76,6 +76,14 @@ class ProcSuite extends FunSuite:
     assert(!r.ok, s"missing program should fail")
   }
 
+  test("run buffered: handles more than 64 lines without deadlock") {
+    val r =
+      if isWin then run("cmd.exe", "/c", "for /l %i in (1,1,100) do @echo line%i")
+      else run("sh", "-c", "seq 1 100")
+    assert(r.ok, s"should succeed, got ${r.status}")
+    assert(r.lines.size >= 100, s"expected >=100 lines, got ${r.lines.size}")
+  }
+
   // ============================================================================
   // Buffered run — ProcResult extensions
   // ============================================================================
@@ -189,6 +197,67 @@ class ProcSuite extends FunSuite:
   test("failFast: returns body value when no orFail triggered") {
     val result = failFast { 42 }
     assertEquals(result, 42)
+  }
+
+  // ============================================================================
+  // etest.sc pattern coverage
+  // ============================================================================
+
+  // Pattern 1: nested streaming run inside a callback, chained with !!
+  test("run streaming: nested run inside callback (Pattern 1)") {
+    val outer = collection.mutable.ListBuffer.empty[String]
+    val inner = collection.mutable.ListBuffer.empty[String]
+    run("echo", "hello") { line =>
+      outer += line
+      run("echo", s"got:$line") { inner += _ } !! s"inner failed on [$line]"
+    } !! "outer failed"
+    assert(outer.exists(_.contains("hello")), s"outer: $outer")
+    assert(inner.exists(_.contains("got:")), s"inner: $inner")
+  }
+
+  // Pattern 2: nested streaming run inside failFast with orFail on both levels
+  test("run streaming: nested run inside failFast with orFail (Pattern 2)") {
+    val collected = collection.mutable.ListBuffer.empty[String]
+    val result = failFast {
+      run("echo", "p2-outer") { line =>
+        run("echo", s"p2-inner:$line") { collected += _ } orFail s"inner failed on [$line]"
+      } orFail "outer failed"
+    }
+    assertEquals(result, 0)
+    assert(collected.exists(_.contains("p2-inner:")), s"collected: $collected")
+  }
+
+  // Pattern 5: two-arg form — stdout goes to first arg, stderr to second
+  test("run streaming: two-arg form routes stdout to first callback (Pattern 5)") {
+    val stdoutBuf = collection.mutable.ListBuffer.empty[String]
+    val stderrBuf = collection.mutable.ListBuffer.empty[String]
+    val status = run("echo", "p5-stdout")(
+      line    => stdoutBuf += line,
+      errLine => stderrBuf += errLine,
+    )
+    assertEquals(status, 0)
+    assert(stdoutBuf.exists(_.contains("p5-stdout")), s"stdout: $stdoutBuf")
+  }
+
+  // Pattern 6: orElse handler invoked on failure
+  test("run streaming: orElse handler called on failure (Pattern 6)") {
+    val failures = collection.mutable.ListBuffer.empty[String]
+    run(if isWin then "no-such-xyz.exe" else "no-such-xyz") { _ => () } orElse { msg =>
+      failures += msg
+    }
+    assert(failures.nonEmpty, "orElse handler should receive an error message on failure")
+  }
+
+  // Pattern 7: compose two buffered results via toOption
+  test("run buffered: composing two toOption results (Pattern 7)") {
+    val r1 = run("echo", "p7-first")
+    val r2 = run("echo", "p7-second")
+    (r1.toOption, r2.toOption) match
+      case (Some(a), Some(b)) =>
+        assert(a.contains("p7-first"),  s"r1: $a")
+        assert(b.contains("p7-second"), s"r2: $b")
+      case other =>
+        fail(s"both runs should succeed, got: $other")
   }
 
   // ============================================================================

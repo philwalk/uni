@@ -13,7 +13,7 @@
 //   sepal_w ↔ petal_l   r ≈ -0.43  (weak negative — sepal width is nearly independent)
 //   sepal_w ↔ sepal_l   r ≈ -0.12  (no meaningful relationship)
 
-//> using dep org.vastblue:uni_3:0.12.3
+//> using dep org.vastblue:uni_3:0.13.2
 import uni.data.*
 import uni.plot.*
 

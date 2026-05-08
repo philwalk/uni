@@ -189,6 +189,42 @@ class PathExtsSuite extends FunSuite:
     assertEquals(p.linesStream.toList, List("alpha", "beta", "gamma"))
   }
 
+  test("eachLine: visits all lines in order") {
+    val p = tempFile("one\ntwo\nthree")
+    val buf = collection.mutable.ArrayBuffer.empty[String]
+    p.eachLine(buf += _)
+    assertEquals(buf.toList, List("one", "two", "three"))
+  }
+
+  test("eachLine: empty file visits no lines") {
+    val p = emptyTempFile()
+    var count = 0
+    p.eachLine(_ => count += 1)
+    assertEquals(count, 0)
+  }
+
+  test("eachLine: non-existent path visits no lines") {
+    val p = java.nio.file.Paths.get("/no/such/file.txt")
+    var count = 0
+    p.eachLine(_ => count += 1)
+    assertEquals(count, 0)
+  }
+
+  test("withLines: yields all lines via bracket") {
+    val p = tempFile("foo\nbar\nbaz")
+    assertEquals(p.withLines(_.toList), List("foo", "bar", "baz"))
+  }
+
+  test("withLines: non-existent path passes empty iterator") {
+    val p = java.nio.file.Paths.get("/no/such/file.txt")
+    assertEquals(p.withLines(_.toList), Nil)
+  }
+
+  test("withLines(charset): reads with explicit charset") {
+    val p = tempFile("a\nb\nc")
+    assertEquals(p.withLines("UTF-8")(_.toList), List("a", "b", "c"))
+  }
+
   test("firstLine: returns first line of file") {
     val p = tempFile("hello\nworld")
     assertEquals(p.firstLine, "hello")
@@ -619,6 +655,18 @@ class PathExtsSuite extends FunSuite:
   test("JFile.linesStream: yields all lines") {
     val f = tempJFile("p\nq\nr")
     assertEquals(f.linesStream.toList, List("p", "q", "r"))
+  }
+
+  test("JFile.withLines: yields all lines via bracket") {
+    val f = tempJFile("i\nj\nk")
+    assertEquals(f.withLines(_.toList), List("i", "j", "k"))
+  }
+
+  test("JFile.eachLine: visits all lines in order") {
+    val f = tempJFile("x\ny\nz")
+    val buf = collection.mutable.ArrayBuffer.empty[String]
+    f.eachLine(buf += _)
+    assertEquals(buf.toList, List("x", "y", "z"))
   }
 
   test("JFile.firstLine: returns first line") {

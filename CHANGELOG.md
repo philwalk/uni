@@ -1,3 +1,41 @@
+## v0.13.2
+
+**Subprocess API — deadlock fix and cleanup**
+- `Proc.run(cmd*)`: replaced `LazyList`/queue-backed lazy streams with eager draining threads —
+  a dedicated daemon thread drains each output queue into a `ListBuffer` concurrently with
+  `process.waitFor()`, eliminating the bounded-queue (64-slot) deadlock on long-running commands
+- `ProcResult.lines` / `.errLines` now return `Seq[String]` (eagerly collected) instead of lazy `LazyList`
+- Streaming `run(cmd*)(out, err)` overload no longer requires an implicit `ExecutionContext` —
+  switched from `Future`-based readers to plain daemon `Thread`s
+- Added `Int` extensions (moved from `PathsUtils` to `ProcUtils`, now package-level):
+  - `status !! msg` — log to stderr on non-zero exit; chainable
+  - `status orElse f` — invoke callback with error description on failure
+  - `status orFail msg` — short-circuit a `failFast` block on non-zero exit
+- Added `failFast { ... }` block: any `.orFail` call inside short-circuits the block and returns the failing status
+
+**Path I/O — safe resource management**
+- Added `p.withLines[A](f: Iterator[String] => A): A` — bracket pattern using `Using.resource`;
+  guarantees stream close even on partial reads or exceptions; also available with a `charset` overload
+- Added `p.eachLine(f: String => Unit)` — convenience wrapper around `withLines`; also available with a `charset` overload
+- `firstLine`, `lines`, `lines(charset)` reimplemented via `withLines` (safe resource management)
+- All new methods also available on `java.io.File` extension block
+- `streamLines` made `private`; now wraps input in `BufferedInputStream` for better performance
+- Removed unreliable `finalize()` safety net from `streamLines` iterator
+
+**New app: `SourceTimestamps`**
+- `src/main/scala/apps/SourceTimestamps.scala`: lists Scala source files whose filesystem mtime
+  is newer than the last git commit timestamp; emits `touch -d` commands to sync them
+
+**`updateVersion.sc` improvements**
+- Added `-v` (verbose), `--` (report version and exit) flags
+- Now accepts explicit file/directory arguments to scope the version update
+
+**Tests**
+- `PathExtsSuite`: 12 new tests covering `eachLine` and `withLines` for both `Path` and `java.io.File`
+- `ProcSuite`: 8 new tests including a deadlock regression test (>64 output lines), nested streaming,
+  `failFast`/`orFail`, `orElse`, and `toOption` composition patterns
+- `StreamLinesSuite`: refactored to use `p.linesStream` instead of internal `streamLines` calls directly
+
 ## v0.13.1
 
 **Bug fixes**

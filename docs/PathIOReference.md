@@ -99,8 +99,12 @@ Complete reference for all non-deprecated extension methods added to `java.nio.f
 | :--- | :--- | :--- |
 | `.lines` | `Seq[String]` | all lines; UTF-8 with Latin-1 fallback; empty if not a file |
 | `.lines(charset)` | `Seq[String]` | all lines with explicit charset name |
-| `.linesStream` | `Iterator[String]` | streaming lines; suitable for large files |
-| `.linesStream(charset)` | `Iterator[String]` | streaming lines with explicit charset name |
+| `.linesStream` | `Iterator[String]` | lazy streaming lines; file handle closed on EOF; use `withLines` for partial reads |
+| `.linesStream(charset)` | `Iterator[String]` | lazy streaming lines with explicit charset name |
+| `.withLines(f)` | `A` | resource-safe bracket: opens iterator, calls `f`, closes on return or exception |
+| `.withLines(charset)(f)` | `A` | resource-safe bracket with explicit charset name |
+| `.eachLine(f)` | `Unit` | calls `f` once per line; streaming, resource-safe |
+| `.eachLine(charset)(f)` | `Unit` | per-line callback with explicit charset name |
 | `.firstLine` | `String` | first line only (empty string if file is empty or absent) |
 | `.contentAsString` | `String` | entire file as a string; UTF-8 with Latin-1 fallback |
 | `.contentAsString(charset)` | `String` | entire file as a string with explicit `Charset` |

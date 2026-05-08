@@ -2,7 +2,7 @@
 
 //> using scala 3.7.0
 //> using javaOpt "--add-modules=jdk.incubator.vector"
-//> using dep org.vastblue:uni_3:0.12.3
+//> using dep org.vastblue:uni_3:0.13.2
 
 
 /////////////////////////////////////////////

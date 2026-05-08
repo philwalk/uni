@@ -4,7 +4,6 @@
 
 import uni.*
 import java.nio.file.{Files, FileSystems}
-import java.nio.file.attribute.FileTime
 import scala.jdk.CollectionConverters.*
 
 object MigrateToV13 {
@@ -23,9 +22,9 @@ object MigrateToV13 {
   val rewrites: Seq[(String, String)] = Seq(
     // 1. Dependency version bump
     ("""//> using dep org\.vastblue:uni_3:[0-9]+\.[0-9]+\.[0-9]+""",
-     "//> using dep org.vastblue:uni_3:0.13.0"),
+     "//> using dep org.vastblue:uni_3:0.13.2"),
     (""""org\.vastblue" %% "uni" % "[0-9]+\.[0-9]+\.[0-9]+"""",
-     """"org.vastblue" %% "uni" % "0.13.0""""),
+     """"org.vastblue" %% "uni" +%+ +"0.13.1""""),
     // 2. ProcStatus → ProcResult (field names unchanged, cmd field added)
     ("""\bProcStatus\b""", "ProcResult"),
     // 3. exec(...) → run(...), skipping execLines which is private[uni]

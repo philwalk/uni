@@ -6,7 +6,7 @@
 //> using javaOpt -Ddev.ludovic.netlib.blas.nativeLib=libopenblas.dll
 //> using repository m2Local
 //> using dep dev.ludovic.netlib:blas:3.2.0
-//> using dep org.vastblue:uni_3:0.12.3
+//> using dep org.vastblue:uni_3:0.13.2
 //> using dep org.scalanlp::breeze:2.1.0
 
 /**
@@ -108,4 +108,3 @@ row("Netlib:   matmul 512×512 @ 512×512") {
 } {
   bzA * bzB
 }
-
