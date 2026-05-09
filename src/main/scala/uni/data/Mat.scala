@@ -294,7 +294,7 @@ object Mat {
   private val netlibIsFast: Boolean =
     val name = netlib.getClass.getName
     if name.endsWith("F2JBLAS") || name.endsWith("Java11BLAS") then false
-    else if name.endsWith("JNIBLAS") && sys.props.getOrElse("os.name", "").toLowerCase.contains("linux") then
+    else if name.endsWith("JNIBLAS") && sys.props("os.name").toLowerCase.contains("linux") then
       val n = 64
       val a = new Array[Double](n * n)
       val b = new Array[Double](n * n)

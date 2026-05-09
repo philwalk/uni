@@ -34,6 +34,7 @@ class BlasDiagSuite extends FunSuite:
              |  sudo apt-get remove --purge libopenblas0-pthread libopenblas0 \\
              |    libopenblas-dev libopenblas-pthread-dev
              |  sudo apt-get autoremove --purge && sudo ldconfig""".stripMargin)
+  }
 
   private def shellOut(cmd: List[String]): Option[String] =
     try
