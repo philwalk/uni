@@ -3403,17 +3403,18 @@ object Mat {
       require(n == md.cols, s"eig requires square matrix, got ${md.shape}")
       val aCopy = md.flatten  // row-major copy
 
-      val wr  = Array.ofDim[Double](n)  // real parts of eigenvalues
-      val wi  = Array.ofDim[Double](n)  // imaginary parts
-      val vr  = Array.ofDim[Double](n * n)  // right eigenvectors
+      val wr  = Array.ofDim[Double](n)
+      val wi  = Array.ofDim[Double](n)
+      val vl  = Array.ofDim[Double](n * n)  // dummy left eigenvectors (required by system LAPACKE even when jobvl='N')
+      val vr  = Array.ofDim[Double](n * n)
 
       val info = LAPACKE_dgeev(
         LAPACK_ROW_MAJOR, 'N'.toByte, 'V'.toByte,
         n,
-        aCopy, n,   // A, lda
-        wr, wi,     // eigenvalue real and imag parts
-        null, 1,    // left eigenvectors (not computed)
-        vr, n       // right eigenvectors, ldvr
+        aCopy, n,
+        wr, wi,
+        vl, n,    // left eigenvectors (not computed, but valid buffer for system LAPACKE)
+        vr, n
       )
       if info != 0 then
         throw ArithmeticException(s"LAPACKE_dgeev failed with info=$info")

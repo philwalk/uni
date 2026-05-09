@@ -3,7 +3,6 @@
 //> using jvm 21
 //> using scala 3.8.2
 //> using javaOpt --add-modules jdk.incubator.vector
-//> using javaOpt -Ddev.ludovic.netlib.blas.nativeLib=libopenblas.dll
 //> using repository m2Local
 //> using dep dev.ludovic.netlib:blas:3.2.0
 //> using dep org.vastblue:uni_3:0.10.2 // pinned (so jsrc/updateVersion.sc will leave this as-is)

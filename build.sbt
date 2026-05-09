@@ -19,7 +19,7 @@ ThisBuild / watchTriggeredMessage := Watch.clearScreenOnTrigger
 ThisBuild / scalaVersion  := scalaVer
 
 lazy val projectName = "uni"
-ThisBuild / version       := "0.13.2"
+ThisBuild / version       := "0.13.3"
 ThisBuild / versionScheme := Some("semver-spec")
 
 ThisBuild / organization         := "org.vastblue"
@@ -72,10 +72,15 @@ Compile / packageBin / packageOptions +=
 
 Test / parallelExecution := false // PathSpec tests use modal test mode for Paths.get behavior
 
-// Enable Java Vector API (used by netlib VectorBLAS for SIMD-accelerated BLAS)
+Test / fork := true
+
+Test / envVars ++= Map("OPENBLAS_NUM_THREADS" -> "1")
+
+  // Enable Java Vector API (used by netlib VectorBLAS for SIMD-accelerated BLAS)
 val vectorApiOpts = Seq("--add-modules=jdk.incubator.vector")
-Test / javaOptions ++= vectorApiOpts
-javaOptions        ++= vectorApiOpts
+
+Test / javaOptions ++= vectorApiOpts ++ Seq("-Xss8m")
+javaOptions ++= vectorApiOpts
 
 // tell MUnit to be quiet (it uses the same arguments as ScalaTest)
 
