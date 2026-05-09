@@ -5,7 +5,7 @@
 //> using javaOpt --add-modules jdk.incubator.vector
 //> using repository m2Local
 //> using dep dev.ludovic.netlib:blas:3.2.0
-//> using dep org.vastblue:uni_3:0.13.2
+//> using dep org.vastblue:uni_3:0.13.3
 //> using dep org.scalanlp::breeze:2.1.0
 
 /**

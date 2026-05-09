@@ -28,7 +28,7 @@
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.13.2
+//> using dep org.vastblue:uni_3:0.13.3
 
 import uni.data.*
 
@@ -45,7 +45,7 @@ println(m)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.13.2
+//> using dep org.vastblue:uni_3:0.13.3
 
 import uni.data.*
 
@@ -61,7 +61,7 @@ println(m)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.13.2
+//> using dep org.vastblue:uni_3:0.13.3
 
 import uni.data.*
 
@@ -78,7 +78,7 @@ println(m)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.13.2
+//> using dep org.vastblue:uni_3:0.13.3
 
 import uni.data.*
 
@@ -96,7 +96,7 @@ println(m)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.13.2
+//> using dep org.vastblue:uni_3:0.13.3
 
 import uni.data.*
 
@@ -111,7 +111,7 @@ println(m)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.13.2
+//> using dep org.vastblue:uni_3:0.13.3
 
 import uni.data.*
 
@@ -125,7 +125,7 @@ println(v)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.13.2
+//> using dep org.vastblue:uni_3:0.13.3
 
 import uni.data.*
 
@@ -141,7 +141,7 @@ println(v)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.13.2
+//> using dep org.vastblue:uni_3:0.13.3
 
 import uni.data.*
 
@@ -166,7 +166,7 @@ Their `*@` overloads dispatch entirely on static types — no `asInstanceOf` or 
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.13.2
+//> using dep org.vastblue:uni_3:0.13.3
 
 import uni.data.*
 
@@ -201,7 +201,7 @@ val c = CVec.fromMat(someMatD)       // n×1 or 1×n Mat → CVec
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.13.2
+//> using dep org.vastblue:uni_3:0.13.3
 
 import uni.data.*
 
@@ -218,7 +218,7 @@ val q: Double = y.T *@ X *@ y   // = 50.0
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.13.2
+//> using dep org.vastblue:uni_3:0.13.3
 
 import uni.data.*
 
@@ -248,7 +248,7 @@ val norm  = a.norm          // Euclidean norm
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.13.2
+//> using dep org.vastblue:uni_3:0.13.3
 
 import uni.data.*
 
@@ -269,7 +269,7 @@ All methods are defined on `Mat[T]` and work with `MatD`, `MatF`, and `MatB`.
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.13.2
+//> using dep org.vastblue:uni_3:0.13.3
 
 import uni.data.*
 
@@ -284,7 +284,7 @@ m.head(2)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.13.2
+//> using dep org.vastblue:uni_3:0.13.3
 
 import uni.data.*
 
@@ -303,7 +303,7 @@ m.tail(2)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.13.2
+//> using dep org.vastblue:uni_3:0.13.3
 
 import uni.data.*
 
@@ -316,7 +316,7 @@ m.idxmin(1)   // 3x1 — row minimums at cols:    (1, 0, 1)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.13.2
+//> using dep org.vastblue:uni_3:0.13.3
 
 import uni.data.*
 
@@ -333,7 +333,7 @@ m.idxmax(1)   // 3x1 — row maximums at cols:    (0, 1, 0)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.13.2
+//> using dep org.vastblue:uni_3:0.13.3
 
 import uni.data.*
 
@@ -349,7 +349,7 @@ m.cummax(0)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.13.2
+//> using dep org.vastblue:uni_3:0.13.3
 
 import uni.data.*
 
@@ -369,7 +369,7 @@ m.cummin(0)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.13.2
+//> using dep org.vastblue:uni_3:0.13.3
 
 import uni.data.*
 
@@ -381,7 +381,7 @@ m.nlargest(3)   // 1x3: (5.0, 4.0, 3.0)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.13.2
+//> using dep org.vastblue:uni_3:0.13.3
 
 import uni.data.*
 
@@ -397,7 +397,7 @@ m.nsmallest(3)  // 1x3: (0.0, 1.0, 2.0)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.13.2
+//> using dep org.vastblue:uni_3:0.13.3
 
 import uni.data.*
 
@@ -417,7 +417,7 @@ m.between(2.0, 6.0)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.13.2
+//> using dep org.vastblue:uni_3:0.13.3
 
 import uni.data.*
 
@@ -429,7 +429,7 @@ m.nunique   // 3
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.13.2
+//> using dep org.vastblue:uni_3:0.13.3
 
 import uni.data.*
 
@@ -445,7 +445,7 @@ m.valueCounts   // Array((2.0, 2), (1.0, 2), (3.0, 2)) — ties broken by order
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.13.2
+//> using dep org.vastblue:uni_3:0.13.3
 
 import uni.data.*
 
@@ -461,7 +461,7 @@ m.shift(1, Double.NaN)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.13.2
+//> using dep org.vastblue:uni_3:0.13.3
 
 import uni.data.*
 
@@ -481,7 +481,7 @@ prices.pct_change()
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.13.2
+//> using dep org.vastblue:uni_3:0.13.3
 
 import uni.data.*
 
@@ -500,7 +500,7 @@ m.fillna(0.0)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.13.2
+//> using dep org.vastblue:uni_3:0.13.3
 
 import uni.data.*
 
@@ -518,7 +518,7 @@ val (labels, stats) = m.describe
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.13.2
+//> using dep org.vastblue:uni_3:0.13.3
 
 import uni.data.*
 
@@ -543,7 +543,7 @@ Available aggregations: `.mean`, `.sum`, `.min`, `.max`, `.std`
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.13.2
+//> using dep org.vastblue:uni_3:0.13.3
 
 import uni.*
 import uni.data.*
