@@ -288,8 +288,22 @@ object Mat {
       Mat.create(arr, rows, cols)
 
   private val netlib = dev.ludovic.netlib.blas.BLAS.getInstance()
-  // true when netlib selected VectorBLAS or JNIBLAS; false means Java11BLAS (slow) → use bytedeco instead
-  private val netlibIsFast = !netlib.getClass.getName.endsWith("Java11BLAS")
+  // JNIBLAS on Linux may be backed by the slow reference Fortran BLAS (libblas3) when system
+  // OpenBLAS is absent. A 64×64 timing probe distinguishes it: OpenBLAS ~0.01ms, reference ~1ms.
+  // F2JBLAS / Java11BLAS are always slow. VectorBLAS and JNIBLAS+OpenBLAS are fast.
+  private val netlibIsFast: Boolean =
+    val name = netlib.getClass.getName
+    if name.endsWith("F2JBLAS") || name.endsWith("Java11BLAS") then false
+    else if name.endsWith("JNIBLAS") && sys.props.getOrElse("os.name", "").toLowerCase.contains("linux") then
+      val n = 64
+      val a = new Array[Double](n * n)
+      val b = new Array[Double](n * n)
+      val c = new Array[Double](n * n)
+      netlib.dgemm("N", "N", n, n, n, 1.0, b, 0, n, a, 0, n, 0.0, c, 0, n) // warmup
+      val t0 = System.nanoTime()
+      netlib.dgemm("N", "N", n, n, n, 1.0, b, 0, n, a, 0, n, 0.0, c, 0, n)
+      (System.nanoTime() - t0) < 500_000L // < 0.5ms → OpenBLAS; ≥ 0.5ms → reference BLAS
+    else true
 
   def vstack[U: ClassTag](matrices: Mat[U]*): Mat[U] = {
     require(matrices.nonEmpty, "vstack requires at least one matrix")
