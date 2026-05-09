@@ -25,7 +25,7 @@
  *
  * Key differences
  * ---------------
- * Matmul  : MatD → OpenBLAS via bytedeco JNI; Breeze → netlib-java / OpenBLAS
+ * Matmul  : MatD → netlib JNIBLAS (bytedeco fallback when system OpenBLAS unavailable); Breeze → netlib-java / OpenBLAS
  *
  *
  */
@@ -99,7 +99,7 @@ println(s"N=$N  MM=$MM  warmup=$WARMUP  iters=$ITERS  (times = min ms)\n")
 println(f"  ${"Operation"}%-40s  ${"MatD(ms)"}%7s    ${"Bz(ms)"}%7s    ${"Bz/MD"}%5s")
 println("  " + "-" * 74)
 
-// Matrix multiply — OpenBLAS in both; MatD via bytedeco JNI, Breeze via netlib-java
+// Matrix multiply — MatD via netlib JNIBLAS (bytedeco fallback on Linux without system OpenBLAS); Breeze via netlib-java
 row("Netlib:   matmul 512×512 @ 512×512") {
   A *@ B // the new multiply operator!  (changed from ~@ at v0.11.0)
 } {

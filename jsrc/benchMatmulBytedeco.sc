@@ -3,6 +3,8 @@
 //> using jvm 21
 //> using scala 3.8.2
 //> using javaOpt --add-modules jdk.incubator.vector
+//> using repository m2Local
+//> using dep dev.ludovic.netlib:blas:3.2.0 // need this for breeze, uni_3 0.10.2 doesn't transitively provide it
 //> using dep org.vastblue:uni_3:0.10.2 // pinned (so jsrc/updateVersion.sc will leave this as-is)
 //> using dep org.scalanlp::breeze:2.1.0
 
@@ -36,6 +38,18 @@ import breeze.linalg.DenseMatrix
 import breeze.stats.distributions.Gaussian
 import breeze.stats.distributions.Rand.VariableSeed.randBasis
 //import breeze.numerics.{sigmoid as bzSigmoid}
+
+// ── detect BLAS backend silently (before printing anything) ───────────────────
+// JNIBLAS is package-private so we use the public BLAS.getInstance() and inspect class name
+val jniBlasFailed = try {
+  val blas = Class.forName("dev.ludovic.netlib.blas.BLAS")
+    .getMethod("getInstance").invoke(null)
+  !blas.getClass.getName.contains("JNIBLAS")
+} catch { case e: Throwable =>
+  val msg = Option(e.getCause).map(_.getMessage).orElse(Option(e.getMessage)).getOrElse("(no message)")
+  System.err.println(s"BLAS detection: $msg")
+  true
+}
 
 val N      = 1000   // square size for element-wise / reduction ops
 val MM     = 512    // matmul side length (512³ ≈ 134M multiplications)
@@ -82,7 +96,7 @@ val bzM2 = DenseMatrix.rand[Double](N,  N,  normalDist)
 bzA * bzB
 
 // ── header ────────────────────────────────────────────────────────────────────
-println(s"\nMatD  vs Breeze 2.1.0   JVM ${System.getProperty("java.version")}")
+println(s"\nMatD 0.9.6 vs Breeze 2.1.0   Scala 3.8.2   JVM ${System.getProperty("java.version")}")
 println(s"N=$N  MM=$MM  warmup=$WARMUP  iters=$ITERS  (times = min ms)\n")
 println(f"  ${"Operation"}%-40s  ${"MatD(ms)"}%7s    ${"Bz(ms)"}%7s    ${"Bz/MD"}%5s")
 println("  " + "-" * 74)

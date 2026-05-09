@@ -22,7 +22,7 @@
  *
  * Key differences
  * ---------------
- * Matmul  : MatD → OpenBLAS via bytedeco JNI; Breeze → netlib-java / OpenBLAS
+ * Matmul  : MatD → netlib JNIBLAS (bytedeco fallback when system OpenBLAS unavailable); Breeze → netlib-java / OpenBLAS
  * Sigmoid : MatD uses parallel fork/join; Breeze uses sequential UFunc
  * ReLU    : MatD uses parallel fork/join; Breeze has no built-in (map used)
  * Add     : MatD uses parallel fork/join; Breeze uses sequential element-wise
@@ -107,7 +107,7 @@ row("randn(1000×1000)") {
   DenseMatrix.rand[Double](N, N, normalDist)
 }
 
-// 2. Matrix multiply — OpenBLAS in both; MatD via bytedeco JNI, Breeze via netlib-java
+// 2. Matrix multiply — MatD via netlib JNIBLAS (bytedeco fallback on Linux without system OpenBLAS); Breeze via netlib-java
 row("matmul 512×512 @ 512×512") {
   A *@ B
 } {
