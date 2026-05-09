@@ -3,7 +3,6 @@
 //> using jvm 21
 //> using scala 3.8.2
 //> using javaOpt --add-modules jdk.incubator.vector
-//> using dep dev.ludovic.netlib:blas:3.2.0
 //> using dep org.vastblue:uni_3:0.13.3
 //> using dep org.scalanlp::breeze:2.1.0
 
@@ -94,7 +93,8 @@ val bzM2 = DenseMatrix.rand[Double](N,  N,  normalDist)
 bzA * bzB
 
 // ── header ────────────────────────────────────────────────────────────────────
-println(s"\nMatD 0.9.6 vs Breeze 2.1.0   Scala 3.8.2   JVM ${System.getProperty("java.version")}")
+println(s"\nuni.MatD JVM ${System.getProperty("java.version")}")
+println(s"\nMatD vs Breeze")
 println(s"N=$N  MM=$MM  warmup=$WARMUP  iters=$ITERS  (times = min ms)\n")
 println(f"  ${"Operation"}%-40s  ${"MatD(ms)"}%7s    ${"Bz(ms)"}%7s    ${"Bz/MD"}%5s")
 println("  " + "-" * 74)

@@ -58,7 +58,7 @@ val M2 = MatD.randn(N,  N)
 
 // ── benchmark suite ───────────────────────────────────────────────────────────
 
-println(s"\nuni.MatD 0.9.5   Scala 3.7.0   JVM ${System.getProperty("java.version")}")
+println(s"\nuni.MatD / JVM ${System.getProperty("java.version")}")
 println(s"N=$N  MM=$MM  warmup=$WARMUP  iters=$ITERS\n")
 println("  " + "-" * 72)
 
