@@ -34,8 +34,17 @@ class UniRootCoverageSuite extends FunSuite:
   // Resolver.classify — all 7 WinPathKind branches
   // ============================================================================
 
-  test("classify: Invalid (contains ://)") {
+  test("classify: Invalid — multi-char URI scheme (http://, file://)") {
     assertEquals(classify("http://example.com"), Invalid)
+    assertEquals(classify("file://foo"),         Invalid)
+  }
+
+  test("classify: Absolute with double slash (C://foo) is not a URI scheme") {
+    // Regression: C://ghcup/bin was incorrectly classified as Invalid
+    // because the old check was p.contains("://") — true at index 1 for drive paths.
+    // Drive letters are 1 char, so indexOf("://") > 1 is the correct guard.
+    assertEquals(classify("C://ghcup/bin"),          Absolute)
+    assertEquals(classify("C://ghcup/bin/uname.exe"), Absolute)
   }
 
   test("classify: UNC path (starts with //)") {

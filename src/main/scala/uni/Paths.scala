@@ -166,7 +166,7 @@ private[uni] object Resolver {
   export WinPathKind.*
 
   def classify(p: String): WinPathKind = {
-    if p.contains("://") then Invalid
+    if p.indexOf("://") > 1 then Invalid  // URI scheme (file://, https://); drive letter is 1 char so C:// is Absolute
     else if p.startsWith("//") then UNC
     else if p == "/" then Root
     else if p.length >= 2 && p(1) == ':' then
