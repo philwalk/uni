@@ -1,0 +1,5 @@
+*.scala   text eol=lf
+*.sc      text eol=lf
+*.sbt     text eol=lf
+*.yml     text eol=lf
+*.md      text eol=lf

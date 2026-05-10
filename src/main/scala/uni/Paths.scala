@@ -412,7 +412,11 @@ object ParseMounts {
 
 // MountExe locator + stdout reader (production path)
 object MountExe {
-  val defaultMsysRoot: String = "C:/msys64"
+  val defaultMsysRoot: String = {
+    val cwd = sys.props.getOrElse("user.dir", "C:/")
+    val drive = if cwd.length >= 2 && cwd(1) == ':' then cwd.substring(0, 2) else "C:"
+    s"$drive/msys64"
+  }
   private val defaultMountExe: String = s"$defaultMsysRoot/usr/bin/mount.exe"
 
   // Return mount.exe mountExe or empty string

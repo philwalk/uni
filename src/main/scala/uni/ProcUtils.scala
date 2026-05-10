@@ -272,7 +272,10 @@ object Proc {
     val paths = sys.env.get("PATH").iterator.flatMap(_.split(sep))
     paths
       .map(p => java.nio.file.Paths.get(p, name))
-      .find(java.nio.file.Files.isExecutable(_))
+      .find { p =>
+        if isWin then java.nio.file.Files.exists(p)
+        else java.nio.file.Files.isExecutable(p)
+      }
       .map(_.toString)
 
   // Uses callQuiet (not run) to avoid depending on bashExe before it is initialized.
