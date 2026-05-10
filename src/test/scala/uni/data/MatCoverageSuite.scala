@@ -3,6 +3,7 @@ package uni.data
 import munit.FunSuite
 import uni.data.*
 import uni.data.Big.*
+import scala.concurrent.duration.*
 
 /** Coverage suite for Mat methods that are absent from existing test files.
  *  Targets: trig functions, math/rounding, signal processing, stats,
@@ -10,6 +11,10 @@ import uni.data.Big.*
  *  filterRows, ravel, unary_-, toRowVec/toColVec, convolve, correlate,
  *  polyfit/polyval, meshgrid. */
 class MatCoverageSuite extends FunSuite {
+
+  // bytedeco OpenBLAS extracts its native DLL on first use; Windows Defender
+  // scans it, which can take > 30 s on CI runners.  120 s covers this.
+  override val munitTimeout: Duration = 120.seconds
 
   // ============================================================================
   // Trig: sin / cos / tan

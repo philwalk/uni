@@ -2,9 +2,9 @@
 name: Update Dependency Graph
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main # default branch of the project
+  release:
+    types: [published] # Triggers only when a release is actually published
+
 jobs:
   dependency-graph:
     name: Update Dependency Graph

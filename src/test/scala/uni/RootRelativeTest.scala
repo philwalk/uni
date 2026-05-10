@@ -29,6 +29,13 @@ class RootRelativeTest extends FunSuite {
   if isWin then
     testdirs.foreach { testdir =>
       test(s"root-relative: resolve Windows path [$testdir]") {
+        // Skip when the MSYS/Git root is on a different drive than the CWD.
+        // This happens on CI runners where Git Bash provides mount.exe with a C: root
+        // but the workspace (and cwdDrive) is on D:.
+        assume(
+          config.msysRoot.isEmpty || config.msysRoot.take(2).equalsIgnoreCase(cwdDrive),
+          s"MSYS root (${config.msysRoot}) is on a different drive than CWD ($cwdDrive) — skipping"
+        )
         val mounts = config.posix2win.keySet.toArray
         val testDirPath = Paths.get(testdir)
 

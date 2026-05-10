@@ -269,9 +269,9 @@ object Proc {
   def whereInPath(prog: String): Option[String] =
     val name  = if isWin && !prog.endsWith(".exe") then prog + ".exe" else prog
     val sep   = java.io.File.pathSeparator
-    val paths = sys.env.get("PATH").iterator.flatMap(_.split(sep))
+    val paths = Option(System.getenv("PATH")).iterator.flatMap(_.split(sep))
     paths
-      .map(p => java.nio.file.Paths.get(p, name))
+      .map(p => Paths.get(p, name))
       .find { p =>
         if isWin then java.nio.file.Files.exists(p)
         else java.nio.file.Files.isExecutable(p)

@@ -21,7 +21,10 @@ on:
 jobs:
   test:
     name: Run tests
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
       - uses: actions/checkout@v4
@@ -39,11 +42,10 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+          cache: sbt
 
-      - name: Install sbt
-        run: |
-          curl -L https://github.com/sbt/sbt/releases/download/v1.10.11/sbt-1.10.11.tgz | tar xz
-          sudo mv sbt/bin/sbt /usr/local/bin/
+      - name: Set up sbt
+        uses: sbt/setup-sbt@v1
 
       - name: Run tests
         run: sbt test
