@@ -1,3 +1,48 @@
+## v0.13.3 — 2026-05-10
+
+**Bug fixes — Linux BLAS**
+- Fixed bytedeco/OpenBLAS native library loading failure on Linux that prevented LAPACK operations
+  (SVD, eigenvalues, Cholesky) from initialising correctly
+- `Mat.matMultiply`: detect at runtime whether netlib loaded its native JNIBLAS implementation;
+  fall back to bytedeco/OpenBLAS matmul only when the native path is unavailable, restoring
+  optimal performance on Linux systems where `libblas.so.3` is present
+
+**Bug fixes — Windows path handling**
+- `Resolver.classify`: `C://ghcup/bin` (double slash after drive letter) was incorrectly classified
+  as `Invalid` because the old guard was `p.contains("://")`; changed to `p.indexOf("://") > 1`
+  so single-character drive letters are not mistaken for URI schemes
+- `Proc.whereInPath`: replaced `sys.env.get("PATH")` (Scala's case-sensitive `Map`) with
+  `System.getenv("PATH")` (case-insensitive on Windows) so the variable is found regardless
+  of whether the OS names it `PATH` or `Path`
+- `Proc.whereInPath`: replaced `Files.isExecutable` with `Files.exists` on Windows —
+  `isExecutable` is unreliable for system executables (ACL check can return `false` for
+  files that are plainly runnable)
+- `Proc.whereInPath`: switched from `java.nio.file.Paths.get` to `uni.Paths.get` so that
+  POSIX-style PATH entries emitted by MSYS2/Git Bash shells resolve correctly on Windows
+
+**CI — Windows support**
+- Added `windows-latest` to the CI test matrix
+- Added `.gitattributes` enforcing LF line endings for `*.scala`, `*.sc`, `*.sbt`, `*.yml`,
+  `*.md` — prevents Git's `core.autocrlf` from injecting `\r` into triple-quoted string
+  literals, which broke `assertEquals` comparisons on Windows runners
+- `RootRelativeTest`: added `assume` guard to skip drive-letter tests when the MSYS/Git Bash
+  root (`C:`) is on a different drive than the workspace (`D:`) — a common CI runner layout
+- `MatCoverageSuite`: raised `munitTimeout` to 120 s — Windows Defender scans bytedeco's
+  extracted native DLL on first use, which can exceed MUnit's default 30 s timeout on CI
+- Release workflow: publish step now requires tests to pass on all three platforms
+  (ubuntu, macos, windows) before Sonatype upload proceeds
+
+**Tests**
+- `BlasDiagSuite`: new suite verifying BLAS backend selection logic on Linux
+- `UniRootCoverageSuite`: regression test asserting that `C://ghcup/bin` and similar
+  double-slash Windows paths are classified as `Absolute`, not `Invalid`
+
+**Benchmarks (internal)**
+- Cleaned up and extended matmul benchmark scripts (`bench.sc`, `benchBreeze.sc`,
+  `benchMatmulNetlib.sc`, `benchMatmulBytedeco.sc`)
+
+---
+
 ## v0.13.2
 
 **Subprocess API — deadlock fix and cleanup**
