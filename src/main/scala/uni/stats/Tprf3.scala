@@ -343,11 +343,18 @@ object Tprf3 {
   private def nanStdCols(m: MatD): MatD =
     val arr = Array.ofDim[Double](m.cols)
     for j <- 0 until m.cols do
-      val vals = (0 until m.rows).collect { case i if !m(i, j).isNaN => m(i, j) }
+      var n = 0; var sum = 0.0
+      for i <- 0 until m.rows do
+        val v = m(i, j)
+        if !v.isNaN then { n += 1; sum += v }
       arr(j) =
-        if vals.length > 1 then
-          val mu = vals.sum / vals.length
-          val sd = math.sqrt(vals.map(x => (x - mu) * (x - mu)).sum / (vals.length - 1))
+        if n > 1 then
+          val mu = sum / n
+          var ss = 0.0
+          for i <- 0 until m.rows do
+            val v = m(i, j)
+            if !v.isNaN then { val d = v - mu; ss += d * d }
+          val sd = math.sqrt(ss / (n - 1))
           if sd == 0.0 then 1.0 else sd
         else 1.0
     Mat.create(arr, 1, m.cols)
@@ -356,14 +363,20 @@ object Tprf3 {
   private def nanMeanCols(m: MatD): MatD =
     val arr = Array.ofDim[Double](m.cols)
     for j <- 0 until m.cols do
-      val vals = (0 until m.rows).collect { case i if !m(i, j).isNaN => m(i, j) }
-      arr(j) = if vals.nonEmpty then vals.sum / vals.length else Double.NaN
+      var n = 0; var sum = 0.0
+      for i <- 0 until m.rows do
+        val v = m(i, j)
+        if !v.isNaN then { n += 1; sum += v }
+      arr(j) = if n > 0 then sum / n else Double.NaN
     Mat.create(arr, 1, m.cols)
 
   /** Mean of a column vector ignoring NaN. */
   private def nanMean(v: MatD): Double =
-    val vals = (0 until v.rows).collect { case i if !v(i, 0).isNaN => v(i, 0) }
-    if vals.nonEmpty then vals.sum / vals.length else Double.NaN
+    var n = 0; var sum = 0.0
+    for i <- 0 until v.rows do
+      val x = v(i, 0)
+      if !x.isNaN then { n += 1; sum += x }
+    if n > 0 then sum / n else Double.NaN
 
   /** OLS with NaN-row filtering and minObs guard; returns Some(beta) or None. */
   private def nanOls(y: MatD, X: MatD, minObs: Int): Option[MatD] =

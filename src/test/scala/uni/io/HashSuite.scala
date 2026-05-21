@@ -95,6 +95,60 @@ class HashSuite extends FunSuite:
     assertEquals(h1.digest(), h2.digest())
   }
 
+  // 64-byte boundary: digest branches on totalLen >= 64
+  test("Hash64: 63-byte input uses short-path in digest (seed + PRIME64_5)") {
+    val bytes = Array.tabulate[Byte](63)(i => i.toByte)
+    val h = Hash64(seed = 0L)
+    h.update(bytes, 0, 63)
+    assertNotEquals(h.digest(), 0L)
+  }
+
+  test("Hash64: 64-byte input uses accumulator path in digest") {
+    val bytes = Array.tabulate[Byte](64)(i => i.toByte)
+    val h = Hash64(seed = 0L)
+    h.update(bytes, 0, 64)
+    assertNotEquals(h.digest(), 0L)
+  }
+
+  test("Hash64: 63 and 64 byte inputs produce different digests") {
+    def run(n: Int) =
+      val bytes = Array.tabulate[Byte](n)(i => i.toByte)
+      val h = Hash64(seed = 0L)
+      h.update(bytes, 0, n)
+      h.digest()
+    assertNotEquals(run(63), run(64))
+  }
+
+  test("Hash64: 65-byte input (one chunk + 1 remainder) is non-zero and distinct from 64") {
+    def run(n: Int) =
+      val bytes = Array.tabulate[Byte](n)(i => i.toByte)
+      val h = Hash64(seed = 0L)
+      h.update(bytes, 0, n)
+      h.digest()
+    assertNotEquals(run(65), 0L)
+    assertNotEquals(run(65), run(64))
+  }
+
+  test("Hash64: non-zero offset in update is respected") {
+    val payload = "xxxxxhello world".getBytes("UTF-8")
+    val direct  = "hello world".getBytes("UTF-8")
+    def run(bytes: Array[Byte], off: Int, len: Int) =
+      val h = Hash64(seed = 0L)
+      h.update(bytes, off, len)
+      h.digest()
+    assertEquals(run(payload, 5, 11), run(direct, 0, 11))
+  }
+
+  test("Hash64: zero-length update does not change digest") {
+    val bytes = "data".getBytes("UTF-8")
+    val hWithNoop = Hash64(seed = 0L)
+    hWithNoop.update(bytes, 0, bytes.length)
+    hWithNoop.update(Array.emptyByteArray, 0, 0)
+    val hDirect = Hash64(seed = 0L)
+    hDirect.update(bytes, 0, bytes.length)
+    assertEquals(hWithNoop.digest(), hDirect.digest())
+  }
+
   // ============================================================================
   // Hash64.hash64(file) — Tier 2 (file-based)
   // ============================================================================
@@ -132,6 +186,26 @@ class HashSuite extends FunSuite:
     assertEquals(hex, "")
     assert(err.isDefined)
     assert(err.get.isInstanceOf[java.io.FileNotFoundException])
+  }
+
+  test("Hash64.hash64: empty file returns 16-char hex, no error") {
+    withTempFile(Array.emptyByteArray) { p =>
+      val (hex, err) = Hash64.hash64(p.toFile)
+      assertEquals(err, None)
+      assertEquals(hex.length, 16)
+      assert(hex.forall(c => "0123456789abcdef".contains(c)), s"not hex: $hex")
+    }
+  }
+
+  test("Hash64.hash64: file larger than 64 KB returns 16-char hex, no error") {
+    // exercises the buffer-read loop in hash64 (buffer is 64 KB)
+    val content = Array.tabulate[Byte](70 * 1024)(i => i.toByte)
+    withTempFile(content) { p =>
+      val (hex, err) = Hash64.hash64(p.toFile)
+      assertEquals(err, None)
+      assertEquals(hex.length, 16)
+      assert(hex.forall(c => "0123456789abcdef".contains(c)), s"not hex: $hex")
+    }
   }
 
   // ============================================================================
@@ -200,6 +274,26 @@ class HashSuite extends FunSuite:
   }
 
   // ============================================================================
+  // cksum — GNU reference values (from: printf 'input' | cksum)
+  // ============================================================================
+
+  test("cksum: empty input matches GNU cksum (4294967295, 0)") {
+    assertEquals(cksum(Array.emptyByteArray), (4294967295L, 0L))
+  }
+
+  test("cksum: 'hello\\n' matches GNU cksum (3015617425, 6)") {
+    assertEquals(cksum("hello\n".getBytes("UTF-8")), (3015617425L, 6L))
+  }
+
+  test("cksum: 'hello world' matches GNU cksum (1135714720, 11)") {
+    assertEquals(cksum("hello world".getBytes("UTF-8")), (1135714720L, 11L))
+  }
+
+  test("cksum: 'the quick brown fox' matches GNU cksum (94151300, 19)") {
+    assertEquals(cksum("the quick brown fox".getBytes("UTF-8")), (94151300L, 19L))
+  }
+
+  // ============================================================================
   // cksum — Tier 2
   // ============================================================================
 
@@ -238,5 +332,87 @@ class HashSuite extends FunSuite:
     withTempFile(Array.emptyByteArray) { p =>
       val (_, len) = cksum(p)
       assertEquals(len, 0L)
+    }
+  }
+
+  // ============================================================================
+  // Cksum.apply(Array[Byte]) — Tier 1
+  // ============================================================================
+
+  test("cksum(Array): length matches input size") {
+    val content = "hello cksum apply".getBytes("UTF-8")
+    val (_, len) = cksum(content)
+    assertEquals(len, content.length.toLong)
+  }
+
+  test("cksum(Array): crc is in 32-bit unsigned range [0, 4294967295]") {
+    val content = "range check array".getBytes("UTF-8")
+    val (crc, _) = cksum(content)
+    assert(crc >= 0L && crc <= 0xFFFFFFFFL, s"crc out of range: $crc")
+  }
+
+  test("cksum(Array): deterministic") {
+    val content = "determinism array".getBytes("UTF-8")
+    assertEquals(cksum(content), cksum(content))
+  }
+
+  test("cksum(Array): different content → different crc") {
+    assertNotEquals(cksum("abc".getBytes("UTF-8"))._1, cksum("xyz".getBytes("UTF-8"))._1)
+  }
+
+  test("cksum(Array): empty array → crc 4294967295, length 0") {
+    // computeFinal(0, 0): length loop does not execute → ~0L & 0xFFFFFFFFL = 4294967295
+    assertEquals(cksum(Array.emptyByteArray), (4294967295L, 0L))
+  }
+
+  // ============================================================================
+  // Cksum.apply(Iterator[Byte]) — Tier 1
+  // ============================================================================
+
+  test("cksum(Iterator): length matches input size") {
+    val content = "hello cksum iterator".getBytes("UTF-8")
+    val (_, len) = cksum(content.iterator)
+    assertEquals(len, content.length.toLong)
+  }
+
+  test("cksum(Iterator): crc is in 32-bit unsigned range [0, 4294967295]") {
+    val content = "range check iterator".getBytes("UTF-8")
+    val (crc, _) = cksum(content.iterator)
+    assert(crc >= 0L && crc <= 0xFFFFFFFFL, s"crc out of range: $crc")
+  }
+
+  test("cksum(Iterator): deterministic") {
+    val content = "determinism iterator".getBytes("UTF-8")
+    assertEquals(cksum(content.iterator), cksum(content.iterator))
+  }
+
+  test("cksum(Iterator): different content → different crc") {
+    assertNotEquals(cksum("abc".getBytes("UTF-8").iterator)._1, cksum("xyz".getBytes("UTF-8").iterator)._1)
+  }
+
+  test("cksum(Iterator): empty iterator → crc 4294967295, length 0") {
+    assertEquals(cksum(Iterator.empty[Byte]), (4294967295L, 0L))
+  }
+
+  // ============================================================================
+  // Cross-consistency: Array vs Iterator vs file
+  // ============================================================================
+
+  test("Cksum: Array and Iterator agree on same data") {
+    val content = "cross check array vs iterator".getBytes("UTF-8")
+    assertEquals(cksum(content), cksum(content.iterator))
+  }
+
+  test("Cksum: Array and file-based agree on same data") {
+    val content = "cross check array vs file".getBytes("UTF-8")
+    withTempFile(content) { p =>
+      assertEquals(cksum(content), cksum(p))
+    }
+  }
+
+  test("Cksum: Iterator and file-based agree on same data") {
+    val content = "cross check iterator vs file".getBytes("UTF-8")
+    withTempFile(content) { p =>
+      assertEquals(cksum(content.iterator), cksum(p))
     }
   }

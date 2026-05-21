@@ -1159,7 +1159,31 @@ object Mat {
         Mat.create(out, m.rows, m.cols).asInstanceOf[Mat[T]]
       else
         m.binOp(other)(num.plus)
-    def -(other: Mat[T])(using num: Numeric[T]): Mat[T] = m.binOp(other)(num.minus)
+    def -(other: Mat[T])(using num: Numeric[T]): Mat[T] =
+      if summon[ClassTag[T]].runtimeClass == classOf[Double]
+         && m.isContiguous && m.offset == 0 && m.tdata.length == m.rows * m.cols
+         && other.isContiguous && other.offset == 0
+      then
+        val a    = m.tdata.asInstanceOf[Array[Double]]
+        val rows = m.rows; val cols = m.cols
+        val out  = Array.ofDim[Double](rows * cols)
+        if other.rows == rows && other.cols == cols && other.tdata.length == rows * cols then
+          // Same-shape: element-wise, parallel
+          val b = other.tdata.asInstanceOf[Array[Double]]
+          java.util.Arrays.parallelSetAll(out, i => a(i) - b(i))
+        else if other.rows == 1 && other.cols == cols && other.tdata.length == cols then
+          // Broadcast 1×N: subtract same row from every row
+          val b = other.tdata.asInstanceOf[Array[Double]]
+          var r = 0
+          while r < rows do
+            val base = r * cols; var c = 0
+            while c < cols do { out(base + c) = a(base + c) - b(c); c += 1 }
+            r += 1
+        else
+          return m.binOp(other)(num.minus)
+        Mat.create(out, rows, cols).asInstanceOf[Mat[T]]
+      else
+        m.binOp(other)(num.minus)
     def *:*(other: Mat[T])(using num: Numeric[T]): Mat[T] = m.binOp(other)(num.times)
     def hadamard(other: Mat[T])(using num: Numeric[T]): Mat[T] = m *:* other
 
@@ -2310,8 +2334,29 @@ object Mat {
      *         np.sum(m, axis=1) → column vector of row sums */
     def sum(axis: Int)(using num: Numeric[T]): Mat[T] = {
       require(axis == 0 || axis == 1, s"axis must be 0 or 1, got $axis")
-      if axis == 0 then
-        // Sum down rows → result is 1xcols
+      // Fast path: contiguous Double array — no boxing, no Numeric dispatch
+      if summon[ClassTag[T]].runtimeClass == classOf[Double]
+         && m.isContiguous && m.offset == 0 && m.tdata.length == m.rows * m.cols
+      then
+        val a = m.tdata.asInstanceOf[Array[Double]]
+        val rows = m.rows; val cols = m.cols
+        if axis == 0 then
+          val result = Array.ofDim[Double](cols)
+          var i = 0
+          while i < rows do
+            val base = i * cols; var j = 0
+            while j < cols do { result(j) += a(base + j); j += 1 }
+            i += 1
+          Mat.create(result, 1, cols).asInstanceOf[Mat[T]]
+        else
+          val result = Array.ofDim[Double](rows)
+          var i = 0
+          while i < rows do
+            val base = i * cols; var s = 0.0; var j = 0
+            while j < cols do { s += a(base + j); j += 1 }
+            result(i) = s; i += 1
+          Mat.create(result, rows, 1).asInstanceOf[Mat[T]]
+      else if axis == 0 then
         val result = Array.fill(m.cols)(num.zero)
         var i = 0
         while i < m.rows do
@@ -2322,7 +2367,6 @@ object Mat {
           i += 1
         Mat.create(result, 1, m.cols)
       else
-        // Sum across cols → result is rowsx1
         val result = Array.fill(m.rows)(num.zero)
         var i = 0
         while i < m.rows do
@@ -4002,7 +4046,31 @@ object Mat {
     inline def *@(rv: RVec[T]): CVec[T] = m.matmul((rv: Mat[T]).transpose)
 
     // Division with broadcasting
-    def /(other: Mat[T])(using frac: Fractional[T]): Mat[T] = m.binOp(other)(frac.div)
+    def /(other: Mat[T])(using frac: Fractional[T]): Mat[T] =
+      if summon[ClassTag[T]].runtimeClass == classOf[Double]
+         && m.isContiguous && m.offset == 0 && m.tdata.length == m.rows * m.cols
+         && other.isContiguous && other.offset == 0
+      then
+        val a    = m.tdata.asInstanceOf[Array[Double]]
+        val rows = m.rows; val cols = m.cols
+        val out  = Array.ofDim[Double](rows * cols)
+        if other.rows == rows && other.cols == cols && other.tdata.length == rows * cols then
+          // Same-shape: element-wise, parallel
+          val b = other.tdata.asInstanceOf[Array[Double]]
+          java.util.Arrays.parallelSetAll(out, i => a(i) / b(i))
+        else if other.rows == 1 && other.cols == cols && other.tdata.length == cols then
+          // Broadcast 1×N: divide each row by the same divisor row
+          val b = other.tdata.asInstanceOf[Array[Double]]
+          var r = 0
+          while r < rows do
+            val base = r * cols; var c = 0
+            while c < cols do { out(base + c) = a(base + c) / b(c); c += 1 }
+            r += 1
+        else
+          return m.binOp(other)(frac.div)
+        Mat.create(out, rows, cols).asInstanceOf[Mat[T]]
+      else
+        m.binOp(other)(frac.div)
 
     /** ML: Sigmoid activation σ(x) = 1/(1 + e^(-x)) */
     def sigmoid(using num: Fractional[T]): Mat[Double] =
