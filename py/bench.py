@@ -93,6 +93,14 @@ _vec_fn = np.vectorize(lambda x: x * x + 2.0 * x + 1.0)
 bench("vectorize custom fn  (1000×1000)",
       lambda: _vec_fn(M))
 
+# 9. Mean — full-matrix reduction to scalar
+bench("mean(1000×1000)",
+      lambda: M.mean())
+
+# 10. Std dev — two-pass: mean then variance, then sqrt
+bench("std(1000×1000)",
+      lambda: M.std())
+
 print("  " + "-" * 72)
 print("\nNote: transpose is O(1) in both libraries (stride flip, no copy).")
 print("      MatD matmul uses OpenBLAS via bytedeco (org.bytedeco:openblas-platform).")

@@ -21,16 +21,16 @@ Both use OpenBLAS (MatD via netlib JNIBLAS). See [`jsrc/benchBreeze.sc`](../jsrc
 | `sum(1000×1000)` | 0.86 ms | 0.49 ms | **1.8× faster** | Parallel fork/join reduction; double-unboxing elimination |
 | `transpose(1000×1000)` | ≈0 ms | ≈0 ms | **tied** | O(1) stride-flip in both — no data copy |
 | `mapParallel` custom fn | 166 ms | 0.81 ms | **205× faster** | `np.vectorize` is a Python loop; JVM is compiled |
-| `3PRF IS Full (T=650, N=40, L=2)` | 18 ms | 21 ms | **1.2× slower** | includes K&P alpha computation; Python: WinPython scipy-openblas |
-| `3PRF OOS Recursive (T=650, N=40, L=2)` | 295 ms | 29 ms | **10× faster** | double-unboxing elimination; Scala: parallel collections; Python: vectorized per-window |
-| `3PRF OOS Cross Val (T=650, N=40, L=2)` | 777 ms | 78 ms | **10× faster** | double-unboxing elimination; Scala: parallel collections; Python: vectorized per-window |
+| `3PRF IS Full (T=650, N=40, L=2)` | 7 ms | 13 ms | **1.9× slower** | includes K&P alpha computation; Python: WinPython scipy-openblas |
+| `3PRF OOS Recursive (T=650, N=40, L=2)` | 268 ms | 27 ms | **10× faster** | double-unboxing elimination; Scala: parallel collections; Python: vectorized per-window |
+| `3PRF OOS Cross Val (T=650, N=40, L=2)` | 717 ms | 66 ms | **10.9× faster** | double-unboxing elimination; Scala: parallel collections; Python: vectorized per-window |
 
 **Practical guidance:**
 - MatD wins all 8 measured operations vs NumPy on Windows (JVM 21, MSYS2 Python).
 - Element-wise ops (`relu`, `sigmoid`, `add`, `sum`) run faster than NumPy — parallel JVM cores beat single-core C SIMD; `sum` previously appeared as a loss on Linux due to NumPy's AVX-512 path, but on this platform MatD wins 1.8×.
 - Custom scalar functions: `mapParallel` vs `np.vectorize` shows a 205× JVM advantage; the Python interpreter overhead dominates.
 - Matmul: MatD wins ~1.3× — netlib JNIBLAS passes arrays directly with no DoublePointer overhead.
-- 3PRF IS Full: Python (scipy-openblas) leads by ~1.2×; OOS modes strongly favour Scala — double-unboxing elimination lifted the advantage from ~2× to ~10×.
+- 3PRF IS Full: Python (scipy-openblas) leads by ~1.9× — IS Full is dominated by two BLAS batch solves where NumPy's native path has an edge; OOS modes strongly favour Scala — double-unboxing elimination lifted the advantage from ~2× to ~10×.
 
 ---
 

@@ -1,3 +1,61 @@
+## v0.13.4 — 2026-05-23
+
+**Performance — Double unboxing elimination (`Mat.scala`)**
+
+Profiling of the 3PRF benchmark revealed that generic `Numeric[T]` / `Fractional[T]`
+dispatch was boxing every `Double` operand.  All high-frequency operations on contiguous
+`MatD` arrays now have dedicated fast paths that cast `tdata` to `Array[Double]` and use
+raw arithmetic, bypassing the typeclass layer entirely.
+
+Operations that gained fast paths:
+- `+`, `-`, `*:*` (Hadamard element-wise): same-shape parallel and 1×N broadcast
+- `unary_-`: parallel negation
+- Scalar `+(T)`, `-(T)`, `*(T)`, `/(T)`: parallel scalar broadcast (all four operators)
+- `sum(axis=0/1)`: direct while-loop accumulation, no `Numeric.plus` dispatch
+- `std(axis=0/1)`: two-pass direct loop (mean then variance), no `Array.tabulate` boxing
+- `/(other: Mat[T])`: same-shape parallel and 1×N broadcast division
+
+**Performance — 3PRF (`Tprf3.scala`)**
+
+`nanStdCols`, `nanMeanCols`, `nanMean`, `nanOls`: replaced `.collect`/`.filter`/`.map`/`.sum`
+chains on ranges (which produce `Seq[Double]` and box every element) with explicit `while`
+loops accumulating into `Double` locals and `Array.newBuilder[Int]`.
+
+**Bug fix — nested-parallelism regression in scalar `/(T)`**
+
+The initial `/(T)` fast path used `parallelSetAll` unconditionally, which caused severe
+fork/join pool thrashing when called inside the OOS parallel loop on small vectors
+(e.g. the 1×N result of `sum(axis=0)` divided by row count in `centerColumns`).
+Fixed by using a sequential while loop for arrays smaller than 4096 elements, matching
+the approach used for threshold-based dispatch in the other scalar ops.
+
+**Measured improvements (Windows 11, JVM 17, T=650 N=40 L=2):**
+
+| Operation | v0.13.3 | v0.13.4 | Speedup |
+| :--- | ---: | ---: | ---: |
+| 3PRF OOS Recursive | 159 ms | 27 ms | **5.9×** |
+| 3PRF OOS Cross Val | 375 ms | 66 ms | **5.7×** |
+| 3PRF IS Full | 19 ms | 13 ms | **1.5×** |
+
+MatD now wins **8/8** core operations vs NumPy on Windows (was 7/8; `sum` flipped from
+a marginal loss to 1.8× win). Geometric mean vs Breeze improved from 3.1× to 3.3×.
+
+**New: `uni.io.Cksum`**
+
+- `Cksum.cksum(bytes: Array[Byte]): (Long, Long)` — POSIX `cksum`-compatible CRC32/length
+- `Cksum.cksum(bytes: Iterator[Byte]): (Long, Long)` — streaming variant
+- `Cksum.cksum(path: Path): (Long, Long)` — file variant
+- `HashSuite`: new test suite covering CRC32 correctness and streaming equivalence
+
+**Benchmarks**
+
+- `bench.sc`, `benchBreeze.sc`, `py/bench.py`: added `mean(1000×1000)` and `std(1000×1000)`
+  rows to all three benchmark scripts
+- Updated all documented benchmark numbers in `README.md` and `docs/MatDCheatSheet.md`
+  to reflect results measured on Windows 11 with the current optimisations
+
+---
+
 ## v0.13.3 — 2026-05-10
 
 **Bug fixes — Linux BLAS**

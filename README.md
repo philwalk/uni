@@ -105,9 +105,9 @@ See [`src/main/scala/apps/Tprf3Bench.scala`](src/main/scala/apps/Tprf3Bench.scal
 
 | Operation | Python | MatD | Ratio |
 | :--- | ---: | ---: | :--- |
-| `3PRF IS Full (T=650, N=40, L=2)` | 18 ms | 21 ms | **1.2× slower** |
-| `3PRF OOS Recursive (T=650, N=40, L=2)` | 295 ms | 29 ms | **10× faster** |
-| `3PRF OOS Cross Val (T=650, N=40, L=2)` | 777 ms | 78 ms | **10× faster** |
+| `3PRF IS Full (T=650, N=40, L=2)` | 7 ms | 13 ms | **1.9× slower** |
+| `3PRF OOS Recursive (T=650, N=40, L=2)` | 268 ms | 27 ms | **10× faster** |
+| `3PRF OOS Cross Val (T=650, N=40, L=2)` | 717 ms | 66 ms | **10.9× faster** |
 
   | Label | Description |
   | :--- | :--- |

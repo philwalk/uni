@@ -1637,17 +1637,30 @@ object Mat {
       Mat.create(result, newRows, newCols)
     }
 
-    def /(scalar: T): Mat[T] = {
-      val res = new Array[T](m.size)
-      var r = 0; var idx = 0
-      while r < m.rows do
-        var c = 0
-        while c < m.cols do
-          res(idx) = frac.div(m(r, c), scalar)
-          idx += 1; c += 1
-        r += 1
-      Mat.create(res, m.rows, m.cols)
-    }
+    def /(scalar: T): Mat[T] =
+      if summon[ClassTag[T]].runtimeClass == classOf[Double]
+         && m.isContiguous && m.offset == 0 && m.tdata.length == m.rows * m.cols
+      then
+        val s   = scalar.asInstanceOf[Double]
+        val a   = m.tdata.asInstanceOf[Array[Double]]
+        val out = Array.ofDim[Double](a.length)
+        // parallelSetAll overhead dominates for small arrays; use sequential below threshold
+        if a.length >= 4096 then
+          java.util.Arrays.parallelSetAll(out, i => a(i) / s)
+        else
+          var i = 0
+          while i < a.length do { out(i) = a(i) / s; i += 1 }
+        Mat.create(out, m.rows, m.cols).asInstanceOf[Mat[T]]
+      else
+        val res = new Array[T](m.size)
+        var r = 0; var idx = 0
+        while r < m.rows do
+          var c = 0
+          while c < m.cols do
+            res(idx) = frac.div(m(r, c), scalar)
+            idx += 1; c += 1
+          r += 1
+        Mat.create(res, m.rows, m.cols)
 
 
   // ============================================================================
@@ -3875,9 +3888,39 @@ object Mat {
           case c => throw UnsupportedOperationException(s"std unsupported for ${c.getName}")
 
     /** NumPy: np.std(m, axis=0/1) - std along axis */
-    def std(axis: Int)(using frac: Fractional[T]): Mat[T] = {
+    def std(axis: Int)(using frac: Fractional[T]): Mat[T] =
       require(axis == 0 || axis == 1, s"axis must be 0 or 1, got $axis")
-      if axis == 0 then
+      if summon[ClassTag[T]].runtimeClass == classOf[Double]
+         && m.isContiguous && m.offset == 0 && m.tdata.length == m.rows * m.cols
+      then
+        val a = m.tdata.asInstanceOf[Array[Double]]
+        val rows = m.rows; val cols = m.cols
+        if axis == 0 then
+          val result = Array.ofDim[Double](cols)
+          var j = 0
+          while j < cols do
+            var mu = 0.0; var i = 0
+            while i < rows do { mu += a(i * cols + j); i += 1 }
+            mu /= rows
+            var ss = 0.0; i = 0
+            while i < rows do { val d = a(i * cols + j) - mu; ss += d * d; i += 1 }
+            result(j) = math.sqrt(ss / rows)
+            j += 1
+          Mat.create(result, 1, cols).asInstanceOf[Mat[T]]
+        else
+          val result = Array.ofDim[Double](rows)
+          var i = 0
+          while i < rows do
+            val base = i * cols
+            var mu = 0.0; var j = 0
+            while j < cols do { mu += a(base + j); j += 1 }
+            mu /= cols
+            var ss = 0.0; j = 0
+            while j < cols do { val d = a(base + j) - mu; ss += d * d; j += 1 }
+            result(i) = math.sqrt(ss / cols)
+            i += 1
+          Mat.create(result, rows, 1).asInstanceOf[Mat[T]]
+      else if axis == 0 then
         val result = Array.ofDim[T](m.cols)
         var j = 0
         while j < m.cols do
@@ -3891,7 +3934,6 @@ object Mat {
           result(i) = Mat.create(Array.tabulate(m.cols)(j => m(i, j)), 1, m.cols).std
           i += 1
         Mat.create(result, m.rows, 1)
-    }
 
     /** R: scale(x, center=TRUE, scale=TRUE) — subtract column means and/or divide by column std devs.
      *  Returns a new matrix with zero-mean columns (center=true) and/or unit-variance columns (scale=true). */

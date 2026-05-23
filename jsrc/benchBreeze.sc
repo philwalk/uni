@@ -32,6 +32,7 @@
 import scala.collection.mutable.ArrayBuffer
 import uni.data.*
 import breeze.linalg.{DenseMatrix, sum as bzSum}
+import breeze.stats.{mean as bzMean, stddev as bzStddev}
 import breeze.stats.distributions.Gaussian
 import breeze.stats.distributions.Rand.VariableSeed.randBasis
 import breeze.numerics.{sigmoid as bzSigmoid}
@@ -154,6 +155,20 @@ row("map custom fn (1000×1000)") {
   M.mapParallel(x => x * x + 2 * x + 1.0)
 } {
   bzM.map(x => x * x + 2 * x + 1.0)
+}
+
+// 9. Mean — full-matrix scalar mean; Breeze requires toDenseVector for stats functions
+row("mean(1000×1000)") {
+  M.mean
+} {
+  bzMean(bzM.toDenseVector)
+}
+
+// 10. Std dev — two-pass (mean then variance); Breeze requires toDenseVector
+row("std(1000×1000)") {
+  M.std
+} {
+  bzStddev(bzM.toDenseVector)
 }
 
 println("  " + "-" * 74)

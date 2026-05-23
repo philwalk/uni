@@ -406,8 +406,8 @@ object Tprf3 {
     val valid = validBuf.result()
     if valid.length < minObs then None
     else
-      val yv  = selectRows(y, valid)
-      val Xv  = selectRows(X, valid)
+      val yv  = selectRows(y, valid.toIndexedSeq)
+      val Xv  = selectRows(X, valid.toIndexedSeq)
       Some((Xv.T *@ Xv).inverse *@ (Xv.T *@ yv))
 
   private inline def withIntercept(X: MatD): MatD = MatD.hstack(MatD.ones(X.rows, 1), X)

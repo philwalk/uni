@@ -104,6 +104,16 @@ bench("mapParallel custom fn (1000×1000)") {
   M.mapParallel(x => x * x + 2 * x + 1.0)
 }
 
+// 9. Mean — full-matrix reduction to scalar
+bench("mean(1000×1000)") {
+  M.mean
+}
+
+// 10. Std dev — two-pass: mean then variance, then sqrt
+bench("std(1000×1000)") {
+  M.std
+}
+
 println("  " + "-" * 72)
 println("""
 Note: transpose is O(1) in both libraries (stride flip, no copy).
