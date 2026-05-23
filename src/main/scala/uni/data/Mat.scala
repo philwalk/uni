@@ -1146,17 +1146,26 @@ object Mat {
 
     // --- Matrix-Matrix (Broadcasting) ---
     def +(other: Mat[T])(using num: Numeric[T]): Mat[T] =
-      // Fast path: same-shape contiguous Double + Double — parallel, no boxing.
       if summon[ClassTag[T]].runtimeClass == classOf[Double]
-         && m.rows == other.rows && m.cols == other.cols
          && m.isContiguous && m.offset == 0 && m.tdata.length == m.rows * m.cols
-         && other.isContiguous && other.offset == 0 && other.tdata.length == other.rows * other.cols
+         && other.isContiguous && other.offset == 0
       then
-        val a = m.tdata.asInstanceOf[Array[Double]]
-        val b = other.tdata.asInstanceOf[Array[Double]]
-        val out = new Array[Double](a.length)
-        java.util.Arrays.parallelSetAll(out, i => a(i) + b(i))
-        Mat.create(out, m.rows, m.cols).asInstanceOf[Mat[T]]
+        val a    = m.tdata.asInstanceOf[Array[Double]]
+        val rows = m.rows; val cols = m.cols
+        val out  = Array.ofDim[Double](rows * cols)
+        if other.rows == rows && other.cols == cols && other.tdata.length == rows * cols then
+          val b = other.tdata.asInstanceOf[Array[Double]]
+          java.util.Arrays.parallelSetAll(out, i => a(i) + b(i))
+        else if other.rows == 1 && other.cols == cols && other.tdata.length == cols then
+          val b = other.tdata.asInstanceOf[Array[Double]]
+          var r = 0
+          while r < rows do
+            val base = r * cols; var c = 0
+            while c < cols do { out(base + c) = a(base + c) + b(c); c += 1 }
+            r += 1
+        else
+          return m.binOp(other)(num.plus)
+        Mat.create(out, rows, cols).asInstanceOf[Mat[T]]
       else
         m.binOp(other)(num.plus)
     def -(other: Mat[T])(using num: Numeric[T]): Mat[T] =
@@ -1184,26 +1193,49 @@ object Mat {
         Mat.create(out, rows, cols).asInstanceOf[Mat[T]]
       else
         m.binOp(other)(num.minus)
-    def *:*(other: Mat[T])(using num: Numeric[T]): Mat[T] = m.binOp(other)(num.times)
+    def *:*(other: Mat[T])(using num: Numeric[T]): Mat[T] =
+      if summon[ClassTag[T]].runtimeClass == classOf[Double]
+         && m.isContiguous && m.offset == 0 && m.tdata.length == m.rows * m.cols
+         && other.isContiguous && other.offset == 0
+      then
+        val a    = m.tdata.asInstanceOf[Array[Double]]
+        val rows = m.rows; val cols = m.cols
+        val out  = Array.ofDim[Double](rows * cols)
+        if other.rows == rows && other.cols == cols && other.tdata.length == rows * cols then
+          val b = other.tdata.asInstanceOf[Array[Double]]
+          java.util.Arrays.parallelSetAll(out, i => a(i) * b(i))
+        else if other.rows == 1 && other.cols == cols && other.tdata.length == cols then
+          val b = other.tdata.asInstanceOf[Array[Double]]
+          var r = 0
+          while r < rows do
+            val base = r * cols; var c = 0
+            while c < cols do { out(base + c) = a(base + c) * b(c); c += 1 }
+            r += 1
+        else
+          return m.binOp(other)(num.times)
+        Mat.create(out, rows, cols).asInstanceOf[Mat[T]]
+      else
+        m.binOp(other)(num.times)
     def hadamard(other: Mat[T])(using num: Numeric[T]): Mat[T] = m *:* other
 
-    def unary_-(using num: Numeric[T]): Mat[T] = {
-      // We allocate an array for the result
-      val result = new Array[T](m.rows * m.cols)
-      var r = 0
-      var idx = 0
-      while (r < m.rows) {
-        var c = 0
-        while (c < m.cols) {
-          // Respects offset and strides!
-          result(idx) = num.negate(m(r, c))
-          idx += 1
-          c += 1
-        }
-        r += 1
-      }
-      Mat.create(result, m.rows, m.cols)
-    }
+    def unary_-(using num: Numeric[T]): Mat[T] =
+      if summon[ClassTag[T]].runtimeClass == classOf[Double]
+         && m.isContiguous && m.offset == 0 && m.tdata.length == m.rows * m.cols
+      then
+        val a   = m.tdata.asInstanceOf[Array[Double]]
+        val out = Array.ofDim[Double](a.length)
+        java.util.Arrays.parallelSetAll(out, i => -a(i))
+        Mat.create(out, m.rows, m.cols).asInstanceOf[Mat[T]]
+      else
+        val result = new Array[T](m.rows * m.cols)
+        var r = 0; var idx = 0
+        while r < m.rows do
+          var c = 0
+          while c < m.cols do
+            result(idx) = num.negate(m(r, c))
+            idx += 1; c += 1
+          r += 1
+        Mat.create(result, m.rows, m.cols)
 
     // ============================================================================
     // Shape Manipulation
@@ -1253,63 +1285,65 @@ object Mat {
     // ============================================================================
 
     /** NumPy: m + scalar - Add scalar to all elements */
-    def +(scalar: T)(using num: Numeric[T]): Mat[T] = {
-      // 1. Allocate a fresh array for the result (this will be contiguous)
-      val result = new Array[T](m.rows * m.cols)
-      var r = 0
-      var idx = 0
-      // 2. Iterate through logical rows and columns
-      while (r < m.rows) {
-        var c = 0
-        while (c < m.cols) {
-          // 3. m(r, c) correctly calculates the offset using strides
-          result(idx) = num.plus(m(r, c), scalar)
-          idx += 1
-          c += 1
-        }
-        r += 1
-      }
-      // 4. Return a new Mat pointing to the contiguous result array
-      Mat.create(result, m.rows, m.cols)
-    }
-    def -(scalar: T)(using num: Numeric[T]): Mat[T] = {
-      // 1. Allocate a fresh array for the result (this will be contiguous)
-      val result = new Array[T](m.rows * m.cols)
-      var r = 0
-      var idx = 0
-      // 2. Iterate through logical rows and columns
-      while (r < m.rows) {
-        var c = 0
-        while (c < m.cols) {
-          // 3. m(r, c) correctly calculates the offset using strides
-          result(idx) = num.minus(m(r, c), scalar)
-          idx += 1
-          c += 1
-        }
-        r += 1
-      }
-      // 4. Return a new Mat pointing to the contiguous result array
-      Mat.create(result, m.rows, m.cols)
-    }
-    def *(scalar: T)(using num: Numeric[T]): Mat[T] = {
-      // 1. Allocate a fresh array for the result (this will be contiguous)
-      val result = new Array[T](m.rows * m.cols)
-      var r = 0
-      var idx = 0
-      // 2. Iterate through logical rows and columns
-      while (r < m.rows) {
-        var c = 0
-        while (c < m.cols) {
-          // 3. m(r, c) correctly calculates the offset using strides
-          result(idx) = num.times(m(r, c), scalar)
-          idx += 1
-          c += 1
-        }
-        r += 1
-      }
-      // 4. Return a new Mat pointing to the contiguous result array
-      Mat.create(result, m.rows, m.cols)
-    }
+    def +(scalar: T)(using num: Numeric[T]): Mat[T] =
+      if summon[ClassTag[T]].runtimeClass == classOf[Double]
+         && m.isContiguous && m.offset == 0 && m.tdata.length == m.rows * m.cols
+      then
+        val s = scalar.asInstanceOf[Double]
+        val a = m.tdata.asInstanceOf[Array[Double]]
+        val out = Array.ofDim[Double](a.length)
+        java.util.Arrays.parallelSetAll(out, i => a(i) + s)
+        Mat.create(out, m.rows, m.cols).asInstanceOf[Mat[T]]
+      else
+        val result = new Array[T](m.rows * m.cols)
+        var r = 0; var idx = 0
+        while r < m.rows do
+          var c = 0
+          while c < m.cols do
+            result(idx) = num.plus(m(r, c), scalar)
+            idx += 1; c += 1
+          r += 1
+        Mat.create(result, m.rows, m.cols)
+
+    def -(scalar: T)(using num: Numeric[T]): Mat[T] =
+      if summon[ClassTag[T]].runtimeClass == classOf[Double]
+         && m.isContiguous && m.offset == 0 && m.tdata.length == m.rows * m.cols
+      then
+        val s = scalar.asInstanceOf[Double]
+        val a = m.tdata.asInstanceOf[Array[Double]]
+        val out = Array.ofDim[Double](a.length)
+        java.util.Arrays.parallelSetAll(out, i => a(i) - s)
+        Mat.create(out, m.rows, m.cols).asInstanceOf[Mat[T]]
+      else
+        val result = new Array[T](m.rows * m.cols)
+        var r = 0; var idx = 0
+        while r < m.rows do
+          var c = 0
+          while c < m.cols do
+            result(idx) = num.minus(m(r, c), scalar)
+            idx += 1; c += 1
+          r += 1
+        Mat.create(result, m.rows, m.cols)
+
+    def *(scalar: T)(using num: Numeric[T]): Mat[T] =
+      if summon[ClassTag[T]].runtimeClass == classOf[Double]
+         && m.isContiguous && m.offset == 0 && m.tdata.length == m.rows * m.cols
+      then
+        val s = scalar.asInstanceOf[Double]
+        val a = m.tdata.asInstanceOf[Array[Double]]
+        val out = Array.ofDim[Double](a.length)
+        java.util.Arrays.parallelSetAll(out, i => a(i) * s)
+        Mat.create(out, m.rows, m.cols).asInstanceOf[Mat[T]]
+      else
+        val result = new Array[T](m.rows * m.cols)
+        var r = 0; var idx = 0
+        while r < m.rows do
+          var c = 0
+          while c < m.cols do
+            result(idx) = num.times(m(r, c), scalar)
+            idx += 1; c += 1
+          r += 1
+        Mat.create(result, m.rows, m.cols)
 
     // ============================================================================
     // Statistical Methods
@@ -1847,17 +1881,23 @@ object Mat {
     def norm(using frac: Fractional[T]): T = {
       require(m.cols == 1 || m.rows == 1,
         s"norm requires a vector (1xn or nx1), got ${m.shape}")
-      val flat = m.flatten
-      var sumSq = frac.zero
-      var i = 0
-      while i < flat.length do
-        sumSq = frac.plus(sumSq, frac.times(flat(i), flat(i)))
-        i += 1
-      summon[ClassTag[T]].runtimeClass match
-        case c if c == classOf[Double]     => math.sqrt(frac.toDouble(sumSq)).asInstanceOf[T]
-        case c if c == classOf[Float]      => math.sqrt(frac.toDouble(sumSq)).toFloat.asInstanceOf[T]
-        case c if c == classOf[BigDecimal] => sumSq.asInstanceOf[Big].sqrt.asInstanceOf[T]
-        case c => throw UnsupportedOperationException(s"norm unsupported for ${c.getName}")
+      if summon[ClassTag[T]].runtimeClass == classOf[Double]
+         && m.isContiguous && m.offset == 0 && m.tdata.length == m.rows * m.cols
+      then
+        val a = m.tdata.asInstanceOf[Array[Double]]
+        var sumSq = 0.0; var i = 0
+        while i < a.length do { val x = a(i); sumSq += x * x; i += 1 }
+        math.sqrt(sumSq).asInstanceOf[T]
+      else
+        val flat = m.flatten
+        var sumSq = frac.zero; var i = 0
+        while i < flat.length do
+          sumSq = frac.plus(sumSq, frac.times(flat(i), flat(i))); i += 1
+        summon[ClassTag[T]].runtimeClass match
+          case c if c == classOf[Double]     => math.sqrt(frac.toDouble(sumSq)).asInstanceOf[T]
+          case c if c == classOf[Float]      => math.sqrt(frac.toDouble(sumSq)).toFloat.asInstanceOf[T]
+          case c if c == classOf[BigDecimal] => sumSq.asInstanceOf[Big].sqrt.asInstanceOf[T]
+          case c => throw UnsupportedOperationException(s"norm unsupported for ${c.getName}")
     }
 
     // ---- LU Decomposition (internal) -----------------------------------
@@ -2310,7 +2350,18 @@ object Mat {
       Mat.create(result, rowsA, colsB)
     }
 
-    def trace(using num: Numeric[T]): T = diagonal.foldLeft(num.zero)(num.plus)
+    def trace(using num: Numeric[T]): T =
+      if summon[ClassTag[T]].runtimeClass == classOf[Double]
+         && m.isContiguous && m.offset == 0 && m.tdata.length == m.rows * m.cols
+      then
+        val a    = m.tdata.asInstanceOf[Array[Double]]
+        val n    = math.min(m.rows, m.cols)
+        val step = m.cols + 1
+        var s = 0.0; var i = 0
+        while i < n do { s += a(i * step); i += 1 }
+        s.asInstanceOf[T]
+      else
+        diagonal.foldLeft(num.zero)(num.plus)
 
     def allclose(other: Mat[T], rtol: Double = 1e-5, atol: Double = 1e-8)(using frac: Fractional[T]): Boolean = {
       if m.rows != other.rows || m.cols != other.cols then
@@ -2378,23 +2429,22 @@ object Mat {
         Mat.create(result, m.rows, 1)
     }
 
-    def mean(using frac: Fractional[T]): T = {
-      if (m.rows == 0 || m.cols == 0) then
-        frac.zero
+    def mean(using frac: Fractional[T]): T =
+      if m.rows == 0 || m.cols == 0 then frac.zero
+      else if summon[ClassTag[T]].runtimeClass == classOf[Double]
+         && m.isContiguous && m.offset == 0 && m.tdata.length == m.rows * m.cols
+      then
+        val a = m.tdata.asInstanceOf[Array[Double]]
+        (java.util.Arrays.stream(a).parallel().sum() / (m.rows * m.cols)).asInstanceOf[T]
       else
-        // Use the explicit nested loop logic here to avoid extension method resolution issues
         var total = frac.zero
         var r = 0
-        while (r < m.rows) {
+        while r < m.rows do
           var c = 0
-          while (c < m.cols) {
-            total = frac.plus(total, m(r, c))
-            c += 1
-          }
+          while c < m.cols do
+            total = frac.plus(total, m(r, c)); c += 1
           r += 1
-        }
         frac.div(total, frac.fromInt(m.rows * m.cols))
-    }
 
     def mean(axis: Int)(using frac: Fractional[T]): Mat[T] = {
       require(axis == 0 || axis == 1, s"axis must be 0 or 1, got $axis")
@@ -2539,44 +2589,62 @@ object Mat {
 
     def cumsum(axis: Int)(using num: Numeric[T]): Mat[T] = {
       require(axis == 0 || axis == 1, s"axis must be 0 or 1, got $axis")
-      val result = Array.ofDim[T](m.rows * m.cols)
-      if axis == 0 then
-        // Cumulative sum down rows for each column
-        var j = 0
-        while j < m.cols do
-          var acc = num.zero
-          var i = 0
-          while i < m.rows do
-            acc = num.plus(acc, m(i, j))
-            result(i * m.cols + j) = acc
-            i += 1
-          j += 1
-      else
-        // Cumulative sum across cols for each row
-        var i = 0
-        while i < m.rows do
-          var acc = num.zero
+      if summon[ClassTag[T]].runtimeClass == classOf[Double]
+         && m.isContiguous && m.offset == 0 && m.tdata.length == m.rows * m.cols
+      then
+        val a      = m.tdata.asInstanceOf[Array[Double]]
+        val result = Array.ofDim[Double](m.rows * m.cols)
+        if axis == 0 then
           var j = 0
           while j < m.cols do
-            acc = num.plus(acc, m(i, j))
-            result(i * m.cols + j) = acc
+            var acc = 0.0; var i = 0
+            while i < m.rows do
+              acc += a(i * m.cols + j); result(i * m.cols + j) = acc; i += 1
             j += 1
-          i += 1
-      Mat.create(result, m.rows, m.cols)
+        else
+          var i = 0
+          while i < m.rows do
+            var acc = 0.0; var j = 0
+            while j < m.cols do
+              acc += a(i * m.cols + j); result(i * m.cols + j) = acc; j += 1
+            i += 1
+        Mat.create(result, m.rows, m.cols).asInstanceOf[Mat[T]]
+      else
+        val result = Array.ofDim[T](m.rows * m.cols)
+        if axis == 0 then
+          var j = 0
+          while j < m.cols do
+            var acc = num.zero; var i = 0
+            while i < m.rows do
+              acc = num.plus(acc, m(i, j)); result(i * m.cols + j) = acc; i += 1
+            j += 1
+        else
+          var i = 0
+          while i < m.rows do
+            var acc = num.zero; var j = 0
+            while j < m.cols do
+              acc = num.plus(acc, m(i, j)); result(i * m.cols + j) = acc; j += 1
+            i += 1
+        Mat.create(result, m.rows, m.cols)
     }
 
     // No-axis version: flatten then cumsum
-    def cumsum(using num: Numeric[T]): Mat[T] = {
-      val flat = m.flatten
-      val result = Array.ofDim[T](flat.length)
-      var acc = num.zero
-      var i = 0
-      while i < flat.length do
-        acc = num.plus(acc, flat(i))
-        result(i) = acc
-        i += 1
-      Mat.create(result, 1, flat.length)
-    }
+    def cumsum(using num: Numeric[T]): Mat[T] =
+      if summon[ClassTag[T]].runtimeClass == classOf[Double]
+         && m.isContiguous && m.offset == 0 && m.tdata.length == m.rows * m.cols
+      then
+        val a      = m.tdata.asInstanceOf[Array[Double]]
+        val result = Array.ofDim[Double](a.length)
+        var acc = 0.0; var i = 0
+        while i < a.length do { acc += a(i); result(i) = acc; i += 1 }
+        Mat.create(result, 1, a.length).asInstanceOf[Mat[T]]
+      else
+        val flat   = m.flatten
+        val result = Array.ofDim[T](flat.length)
+        var acc = num.zero; var i = 0
+        while i < flat.length do
+          acc = num.plus(acc, flat(i)); result(i) = acc; i += 1
+        Mat.create(result, 1, flat.length)
 
     def cummax(axis: Int)(using ord: Ordering[T]): Mat[T] =
       require(axis == 0 || axis == 1, s"axis must be 0 or 1, got $axis")
@@ -2627,34 +2695,52 @@ object Mat {
       val p = m.rows  // number of variables
       val n = m.cols  // number of observations
       require(n > 1, "cov requires at least 2 observations (cols)")
-
-      // Subtract row means
-      val means = m.mean(1)  // px1
-      val centered = Array.ofDim[T](p * n)
-      var i = 0
-      while i < p do
-        var j = 0
-        while j < n do
-          centered(i * n + j) = frac.minus(m(i, j), means(i, 0))
-          j += 1
-        i += 1
-
-      // cov = C * C^T / (n-1)
-      val denom = frac.fromInt(n - 1)
-      val result = Array.ofDim[T](p * p)
-      i = 0
-      while i < p do
-        var j = 0
-        while j < p do
-          var s = frac.zero
+      if summon[ClassTag[T]].runtimeClass == classOf[Double]
+         && m.isContiguous && m.offset == 0 && m.tdata.length == p * n
+      then
+        val a        = m.tdata.asInstanceOf[Array[Double]]
+        val centered = Array.ofDim[Double](p * n)
+        var i = 0
+        while i < p do
+          var s = 0.0; var j = 0
+          while j < n do { s += a(i * n + j); j += 1 }
+          val mu = s / n; j = 0
+          while j < n do { centered(i * n + j) = a(i * n + j) - mu; j += 1 }
+          i += 1
+        val denom  = (n - 1).toDouble
+        val result = Array.ofDim[Double](p * p)
+        i = 0
+        while i < p do
           var k = 0
-          while k < n do
-            s = frac.plus(s, frac.times(centered(i * n + k), centered(j * n + k)))
-            k += 1
-          result(i * p + j) = frac.div(s, denom)
-          j += 1
-        i += 1
-      Mat.create(result, p, p)
+          while k < p do
+            var s = 0.0; var j = 0
+            while j < n do { s += centered(i * n + j) * centered(k * n + j); j += 1 }
+            result(i * p + k) = s / denom; k += 1
+          i += 1
+        Mat.create(result, p, p).asInstanceOf[Mat[T]]
+      else
+        // Subtract row means
+        val means    = m.mean(1)  // px1
+        val centered = Array.ofDim[T](p * n)
+        var i = 0
+        while i < p do
+          var j = 0
+          while j < n do
+            centered(i * n + j) = frac.minus(m(i, j), means(i, 0)); j += 1
+          i += 1
+        // cov = C * C^T / (n-1)
+        val denom  = frac.fromInt(n - 1)
+        val result = Array.ofDim[T](p * p)
+        i = 0
+        while i < p do
+          var j = 0
+          while j < p do
+            var s = frac.zero; var k = 0
+            while k < n do
+              s = frac.plus(s, frac.times(centered(i * n + k), centered(j * n + k))); k += 1
+            result(i * p + j) = frac.div(s, denom); j += 1
+          i += 1
+        Mat.create(result, p, p)
     }
 
     def corrcoef(using frac: Fractional[T]): Mat[T] = {
@@ -3762,21 +3848,31 @@ object Mat {
 
     /** NumPy: np.std(m) - population standard deviation of all elements */
     def std(using frac: Fractional[T]): T =
-      val mu     = m.mean
-      val n      = m.size
-      val sumSq  = m.tdata.foldLeft(frac.zero) { (acc, x) =>
-        val diff = frac.minus(x, mu)
-        frac.plus(acc, frac.times(diff, diff))
-      }
-      val variance = frac.div(sumSq, frac.fromInt(n))
-      summon[ClassTag[T]].runtimeClass match
-        case c if c == classOf[Double]     =>
-          math.sqrt(frac.toDouble(variance)).asInstanceOf[T]
-        case c if c == classOf[Float]      =>
-          math.sqrt(frac.toDouble(variance)).toFloat.asInstanceOf[T]
-        case c if c == classOf[BigDecimal] =>
-          variance.asInstanceOf[Big].sqrt.asInstanceOf[T]
-        case c => throw UnsupportedOperationException(s"std unsupported for ${c.getName}")
+      if summon[ClassTag[T]].runtimeClass == classOf[Double]
+         && m.isContiguous && m.offset == 0 && m.tdata.length == m.rows * m.cols
+      then
+        val a  = m.tdata.asInstanceOf[Array[Double]]
+        val n  = a.length
+        val mu = java.util.Arrays.stream(a).parallel().sum() / n
+        var sumSq = 0.0; var i = 0
+        while i < n do { val d = a(i) - mu; sumSq += d * d; i += 1 }
+        math.sqrt(sumSq / n).asInstanceOf[T]
+      else
+        val mu    = m.mean
+        val n     = m.size
+        val sumSq = m.tdata.foldLeft(frac.zero) { (acc, x) =>
+          val diff = frac.minus(x, mu)
+          frac.plus(acc, frac.times(diff, diff))
+        }
+        val variance = frac.div(sumSq, frac.fromInt(n))
+        summon[ClassTag[T]].runtimeClass match
+          case c if c == classOf[Double]     =>
+            math.sqrt(frac.toDouble(variance)).asInstanceOf[T]
+          case c if c == classOf[Float]      =>
+            math.sqrt(frac.toDouble(variance)).toFloat.asInstanceOf[T]
+          case c if c == classOf[BigDecimal] =>
+            variance.asInstanceOf[Big].sqrt.asInstanceOf[T]
+          case c => throw UnsupportedOperationException(s"std unsupported for ${c.getName}")
 
     /** NumPy: np.std(m, axis=0/1) - std along axis */
     def std(axis: Int)(using frac: Fractional[T]): Mat[T] = {
@@ -3805,13 +3901,23 @@ object Mat {
 
     /** NumPy: np.var(m) - variance */
     def variance(using frac: Fractional[T]): T =
-      val mu    = m.mean
-      val n     = m.size
-      val sumSq = m.tdata.foldLeft(frac.zero) { (acc, x) =>
-        val diff = frac.minus(x, mu)
-        frac.plus(acc, frac.times(diff, diff))
-      }
-      frac.div(sumSq, frac.fromInt(n))
+      if summon[ClassTag[T]].runtimeClass == classOf[Double]
+         && m.isContiguous && m.offset == 0 && m.tdata.length == m.rows * m.cols
+      then
+        val a  = m.tdata.asInstanceOf[Array[Double]]
+        val n  = a.length
+        val mu = java.util.Arrays.stream(a).parallel().sum() / n
+        var sumSq = 0.0; var i = 0
+        while i < n do { val d = a(i) - mu; sumSq += d * d; i += 1 }
+        (sumSq / n).asInstanceOf[T]
+      else
+        val mu    = m.mean
+        val n     = m.size
+        val sumSq = m.tdata.foldLeft(frac.zero) { (acc, x) =>
+          val diff = frac.minus(x, mu)
+          frac.plus(acc, frac.times(diff, diff))
+        }
+        frac.div(sumSq, frac.fromInt(n))
 
     def describe(using frac: Fractional[T], ord: Ordering[T]): (Array[String], Mat[Double]) =
       val toD: T => Double = frac.toDouble
@@ -5013,15 +5119,24 @@ object Mat {
       }
       @annotation.targetName("cvecNorm")
       def norm(using frac: Fractional[T]): T = {
-        val flat = (v: Mat[T]).flatten
-        var sumSq = frac.zero; var i = 0
-        while i < flat.length do
-          sumSq = frac.plus(sumSq, frac.times(flat(i), flat(i))); i += 1
-        summon[ClassTag[T]].runtimeClass match
-          case c if c == classOf[Double]     => math.sqrt(frac.toDouble(sumSq)).asInstanceOf[T]
-          case c if c == classOf[Float]      => math.sqrt(frac.toDouble(sumSq)).toFloat.asInstanceOf[T]
-          case c if c == classOf[BigDecimal] => sumSq.asInstanceOf[Big].sqrt.asInstanceOf[T]
-          case c => throw UnsupportedOperationException(s"norm unsupported for ${c.getName}")
+        val mat = v: Mat[T]
+        if summon[ClassTag[T]].runtimeClass == classOf[Double]
+           && mat.isContiguous && mat.offset == 0 && mat.tdata.length == mat.rows * mat.cols
+        then
+          val a = mat.tdata.asInstanceOf[Array[Double]]
+          var sumSq = 0.0; var i = 0
+          while i < a.length do { val x = a(i); sumSq += x * x; i += 1 }
+          math.sqrt(sumSq).asInstanceOf[T]
+        else
+          val flat = mat.flatten
+          var sumSq = frac.zero; var i = 0
+          while i < flat.length do
+            sumSq = frac.plus(sumSq, frac.times(flat(i), flat(i))); i += 1
+          summon[ClassTag[T]].runtimeClass match
+            case c if c == classOf[Double]     => math.sqrt(frac.toDouble(sumSq)).asInstanceOf[T]
+            case c if c == classOf[Float]      => math.sqrt(frac.toDouble(sumSq)).toFloat.asInstanceOf[T]
+            case c if c == classOf[BigDecimal] => sumSq.asInstanceOf[Big].sqrt.asInstanceOf[T]
+            case c => throw UnsupportedOperationException(s"norm unsupported for ${c.getName}")
       }
       @annotation.targetName("cvecShape")
       def shape: (Int, Int) = ((v: Mat[T]).rows, (v: Mat[T]).cols)
@@ -5102,15 +5217,24 @@ object Mat {
           m.typeName(using ct), frac.toDouble, _.toString, fmt = None, label = "RVec")
       @annotation.targetName("rvecNorm")
       def norm(using frac: Fractional[T]): T = {
-        val flat = (rv: Mat[T]).flatten
-        var sumSq = frac.zero; var i = 0
-        while i < flat.length do
-          sumSq = frac.plus(sumSq, frac.times(flat(i), flat(i))); i += 1
-        summon[ClassTag[T]].runtimeClass match
-          case c if c == classOf[Double]     => math.sqrt(frac.toDouble(sumSq)).asInstanceOf[T]
-          case c if c == classOf[Float]      => math.sqrt(frac.toDouble(sumSq)).toFloat.asInstanceOf[T]
-          case c if c == classOf[BigDecimal] => sumSq.asInstanceOf[Big].sqrt.asInstanceOf[T]
-          case c => throw UnsupportedOperationException(s"norm unsupported for ${c.getName}")
+        val mat = rv: Mat[T]
+        if summon[ClassTag[T]].runtimeClass == classOf[Double]
+           && mat.isContiguous && mat.offset == 0 && mat.tdata.length == mat.rows * mat.cols
+        then
+          val a = mat.tdata.asInstanceOf[Array[Double]]
+          var sumSq = 0.0; var i = 0
+          while i < a.length do { val x = a(i); sumSq += x * x; i += 1 }
+          math.sqrt(sumSq).asInstanceOf[T]
+        else
+          val flat = mat.flatten
+          var sumSq = frac.zero; var i = 0
+          while i < flat.length do
+            sumSq = frac.plus(sumSq, frac.times(flat(i), flat(i))); i += 1
+          summon[ClassTag[T]].runtimeClass match
+            case c if c == classOf[Double]     => math.sqrt(frac.toDouble(sumSq)).asInstanceOf[T]
+            case c if c == classOf[Float]      => math.sqrt(frac.toDouble(sumSq)).toFloat.asInstanceOf[T]
+            case c if c == classOf[BigDecimal] => sumSq.asInstanceOf[Big].sqrt.asInstanceOf[T]
+            case c => throw UnsupportedOperationException(s"norm unsupported for ${c.getName}")
       }
       @annotation.targetName("rvecSubMat")
       def -(m: Mat[T])(using Numeric[T]): Mat[T] = (rv: Mat[T]).binOp(m)(summon[Numeric[T]].minus)

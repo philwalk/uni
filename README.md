@@ -68,17 +68,16 @@ Note: v0.10.2 and earlier used bytedeco/OpenBLAS for matmul; switching to netlib
 
 | Operation | NumPy | Breeze | MatD |
 | :--- | ---: | ---: | ---: |
-| `randn(1000×1000)` | 21 ms | 51 ms | 15 ms |
-| `matmul 512×512` | 1.4 ms | 1.2 ms | 1.2 ms |
-| `sigmoid(1000×1000)` | 12 ms | 11.7 ms | 2.0 ms |
-| `relu(1000×1000)` | 2.0 ms | 3.7 ms | 0.8 ms |
-| `add(1000×1000)` | 2.1 ms | 1.6 ms | 1.4 ms |
-| `sum(1000×1000)` | 0.4 ms | 1.0 ms | 0.5 ms |
+| `randn(1000×1000)` | 22 ms | 51 ms | 15 ms |
+| `matmul 512×512` | 1.6 ms | 1.2 ms | 1.2 ms |
+| `sigmoid(1000×1000)` | 13 ms | 11.7 ms | 1.9 ms |
+| `relu(1000×1000)` | 2.1 ms | 3.8 ms | 0.76 ms |
+| `add(1000×1000)` | 2.6 ms | 1.7 ms | 1.2 ms |
+| `sum(1000×1000)` | 0.86 ms | 1.1 ms | 0.49 ms |
 | `transpose(1000×1000)` | ≈0 ms | ≈0 ms | ≈0 ms |
-| custom fn (`mapParallel` / `map` / `np.vectorize`) | 162 ms | 10.2 ms | 1.0 ms |
+| custom fn (`mapParallel` / `map` / `np.vectorize`) | 166 ms | 10.2 ms | 0.81 ms |
 
-MatD wins 7/8 operations vs NumPy and wins or ties all 7 scored vs Breeze (geometric mean **~3.1× faster** than Breeze).
-Only loss: `sum` vs NumPy (C-extension SIMD reduction is marginally faster).
+MatD wins 8/8 operations vs NumPy and wins or ties all 7 scored vs Breeze (geometric mean **~3.3× faster** than Breeze).
 `matmul` is now tied with Breeze — switching from bytedeco to netlib JNIBLAS eliminated the prior overhead gap; both now call OpenBLAS at the same latency (~1.2 ms).
 
 ### Linux (Intel Core i5-6500, Ubuntu 24.04, OpenBLAS)
@@ -101,14 +100,14 @@ MatD faster 5/7 scored, geometric mean **2.24× faster** than Breeze.
 
 ### 3PRF (Three-Pass Regression Filter)
 
-Measured on the same machine (JVM 21 / Scala 3.8.2 vs Python 3.14.3 / NumPy 2.4.2, scipy-openblas).
+Measured on Windows 11 (JVM 17 / Scala 3.8.2 vs Python 3.14.3 / WinPython scipy-openblas).
 See [`src/main/scala/apps/Tprf3Bench.scala`](src/main/scala/apps/Tprf3Bench.scala) and [Kelly & Pruitt (2015)](https://doi.org/10.1111/jofi.12246).
 
 | Operation | Python | MatD | Ratio |
 | :--- | ---: | ---: | :--- |
-| `3PRF IS Full (T=650, N=40, L=2)` | 11 ms | 19 ms | **1.7× slower** |
-| `3PRF OOS Recursive (T=650, N=40, L=2)` | 286 ms | 159 ms | **1.8× faster** |
-| `3PRF OOS Cross Val (T=650, N=40, L=2)` | 742 ms | 375 ms | **2× faster** |
+| `3PRF IS Full (T=650, N=40, L=2)` | 18 ms | 21 ms | **1.2× slower** |
+| `3PRF OOS Recursive (T=650, N=40, L=2)` | 295 ms | 29 ms | **10× faster** |
+| `3PRF OOS Cross Val (T=650, N=40, L=2)` | 777 ms | 78 ms | **10× faster** |
 
   | Label | Description |
   | :--- | :--- |

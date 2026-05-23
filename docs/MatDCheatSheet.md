@@ -13,24 +13,24 @@ Both use OpenBLAS (MatD via netlib JNIBLAS). See [`jsrc/benchBreeze.sc`](../jsrc
 
 | Operation | NumPy | MatD | Ratio | Notes |
 |---|---:|---:|---|---|
-| `randn(1000×1000)` | 21 ms | 15 ms | **1.4× faster** | PCG64 with Long arithmetic; was 252 ms before BigInt rewrite |
-| `matmul 512×512` | 1.4 ms | 1.2 ms | **1.2× faster** | Both use OpenBLAS; netlib JNIBLAS passes arrays directly, matching NumPy latency |
-| `sigmoid(1000×1000)` | 12 ms | 2.0 ms | **6× faster** | Parallel fork/join beats single-core SIMD |
-| `relu(1000×1000)` | 2.0 ms | 0.8 ms | **2.5× faster** | Parallel fork/join beats single-core SIMD |
-| `add(1000×1000)` | 2.1 ms | 1.4 ms | **1.5× faster** | Parallel fork/join beats single-core SIMD |
-| `sum(1000×1000)` | 0.4 ms | 0.5 ms | 1.2× slower | NumPy SIMD reduction hard to beat |
+| `randn(1000×1000)` | 22 ms | 15 ms | **1.5× faster** | PCG64 with Long arithmetic; was 252 ms before BigInt rewrite |
+| `matmul 512×512` | 1.6 ms | 1.2 ms | **1.3× faster** | Both use OpenBLAS; netlib JNIBLAS passes arrays directly, matching NumPy latency |
+| `sigmoid(1000×1000)` | 13 ms | 1.9 ms | **6.8× faster** | Parallel fork/join beats single-core SIMD |
+| `relu(1000×1000)` | 2.1 ms | 0.76 ms | **2.8× faster** | Parallel fork/join beats single-core SIMD |
+| `add(1000×1000)` | 2.6 ms | 1.2 ms | **2.2× faster** | Parallel fork/join beats single-core SIMD |
+| `sum(1000×1000)` | 0.86 ms | 0.49 ms | **1.8× faster** | Parallel fork/join reduction; double-unboxing elimination |
 | `transpose(1000×1000)` | ≈0 ms | ≈0 ms | **tied** | O(1) stride-flip in both — no data copy |
-| `mapParallel` custom fn | 162 ms | 1.0 ms | **162× faster** | `np.vectorize` is a Python loop; JVM is compiled |
-| `3PRF IS Full (T=650, N=40, L=2)` | 11 ms | 19 ms | **1.7× slower** | includes K&P alpha computation; Python: scipy-openblas |
-| `3PRF OOS Recursive (T=650, N=40, L=2)` | 286 ms | 159 ms | **1.8× faster** | Scala: parallel collections; Python: vectorized per-window |
-| `3PRF OOS Cross Val (T=650, N=40, L=2)` | 742 ms | 375 ms | **2× faster** | Scala: parallel collections; Python: vectorized per-window |
+| `mapParallel` custom fn | 166 ms | 0.81 ms | **205× faster** | `np.vectorize` is a Python loop; JVM is compiled |
+| `3PRF IS Full (T=650, N=40, L=2)` | 18 ms | 21 ms | **1.2× slower** | includes K&P alpha computation; Python: WinPython scipy-openblas |
+| `3PRF OOS Recursive (T=650, N=40, L=2)` | 295 ms | 29 ms | **10× faster** | double-unboxing elimination; Scala: parallel collections; Python: vectorized per-window |
+| `3PRF OOS Cross Val (T=650, N=40, L=2)` | 777 ms | 78 ms | **10× faster** | double-unboxing elimination; Scala: parallel collections; Python: vectorized per-window |
 
 **Practical guidance:**
-- Element-wise ops (`relu`, `sigmoid`, `add`) run faster than NumPy — parallel JVM cores beat single-core C SIMD.
-- Custom scalar functions: `mapParallel` vs `np.vectorize` shows a 162× JVM advantage; the Python interpreter overhead dominates.
-- Matmul: MatD now wins (~1.2×) — switching from bytedeco to netlib JNIBLAS eliminated prior JNI overhead; both now call OpenBLAS at the same latency.
-- `sum`: NumPy's vectorised C reduction is hard to beat; MatD is within 1.2×.
-- 3PRF IS Full: Python wins due to the K&P alpha computation involving T×T matrix ops; OOS modes favour Scala via parallel collections.
+- MatD wins all 8 measured operations vs NumPy on Windows (JVM 21, MSYS2 Python).
+- Element-wise ops (`relu`, `sigmoid`, `add`, `sum`) run faster than NumPy — parallel JVM cores beat single-core C SIMD; `sum` previously appeared as a loss on Linux due to NumPy's AVX-512 path, but on this platform MatD wins 1.8×.
+- Custom scalar functions: `mapParallel` vs `np.vectorize` shows a 205× JVM advantage; the Python interpreter overhead dominates.
+- Matmul: MatD wins ~1.3× — netlib JNIBLAS passes arrays directly with no DoublePointer overhead.
+- 3PRF IS Full: Python (scipy-openblas) leads by ~1.2×; OOS modes strongly favour Scala — double-unboxing elimination lifted the advantage from ~2× to ~10×.
 
 ---
 
@@ -44,14 +44,14 @@ Both use native OpenBLAS via netlib JNIBLAS. See [`jsrc/benchBreeze.sc`](../jsrc
 | `randn(1000×1000)` | 15 ms | 51 ms | **3.4× faster** | PCG64 (MatD) vs Gaussian sampler (Breeze) |
 | `matmul 512×512` | 1.2 ms | 1.2 ms | **tied** | Same OpenBLAS backend; switching to netlib JNIBLAS eliminated prior bytedeco overhead |
 | `sigmoid(1000×1000)` | 1.9 ms | 11.7 ms | **6.2× faster** | Parallel fork/join (MatD) vs sequential UFunc (Breeze) |
-| `relu(1000×1000)` | 0.8 ms | 3.9 ms | **4.8× faster** | Parallel fork/join (MatD) vs sequential map (Breeze) |
-| `add(1000×1000)` | 1.3 ms | 1.7 ms | **1.3× faster** | Parallel fork/join (MatD) vs sequential element-wise (Breeze) |
-| `sum(1000×1000)` | 0.5 ms | 1.0 ms | **2.1× faster** | Both sequential; MatD single-pass is faster |
+| `relu(1000×1000)` | 0.76 ms | 3.8 ms | **5.0× faster** | Parallel fork/join (MatD) vs sequential map (Breeze) |
+| `add(1000×1000)` | 1.2 ms | 1.7 ms | **1.4× faster** | Parallel fork/join (MatD) vs sequential element-wise (Breeze) |
+| `sum(1000×1000)` | 0.49 ms | 1.1 ms | **2.2× faster** | Both sequential; MatD single-pass is faster |
 | `transpose(1000×1000)` | ≈0 ms | ≈0 ms | **tied** | O(1) stride-flip in both — no data copy |
-| `mapParallel` custom fn | 1.0 ms | 10.2 ms | **10.5× faster** | Parallel fork/join (MatD) vs sequential map (Breeze) |
+| `mapParallel` custom fn | 0.81 ms | 10.2 ms | **12.5× faster** | Parallel fork/join (MatD) vs sequential map (Breeze) |
 
 **Practical guidance:**
-- MatD wins or ties all 7 scored operations; geometric mean: MatD is **~3.1×** faster overall.
+- MatD wins or ties all 7 scored operations; geometric mean: MatD is **~3.3×** faster overall.
 - Matmul is now tied: switching from bytedeco to netlib JNIBLAS (direct Java array passing, no DoublePointer/DirectBuffer overhead) brings MatD to the same OpenBLAS latency as Breeze (~1.2 ms).
 - Element-wise and custom-function operations show the largest gaps because MatD uses parallel fork/join while Breeze processes elements sequentially.
 

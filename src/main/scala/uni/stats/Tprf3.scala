@@ -342,47 +342,68 @@ object Tprf3 {
   /** Column std-dev ignoring NaN; returns (1×N). Zero/degenerate columns → 1. */
   private def nanStdCols(m: MatD): MatD =
     val arr = Array.ofDim[Double](m.cols)
-    for j <- 0 until m.cols do
+    var j = 0
+    while j < m.cols do
       var n = 0; var sum = 0.0
-      for i <- 0 until m.rows do
+      var i = 0
+      while i < m.rows do
         val v = m(i, j)
         if !v.isNaN then { n += 1; sum += v }
+        i += 1
       arr(j) =
         if n > 1 then
           val mu = sum / n
           var ss = 0.0
-          for i <- 0 until m.rows do
+          i = 0
+          while i < m.rows do
             val v = m(i, j)
             if !v.isNaN then { val d = v - mu; ss += d * d }
+            i += 1
           val sd = math.sqrt(ss / (n - 1))
           if sd == 0.0 then 1.0 else sd
         else 1.0
+      j += 1
     Mat.create(arr, 1, m.cols)
 
   /** Column means ignoring NaN; returns (1×N). */
   private def nanMeanCols(m: MatD): MatD =
     val arr = Array.ofDim[Double](m.cols)
-    for j <- 0 until m.cols do
+    var j = 0
+    while j < m.cols do
       var n = 0; var sum = 0.0
-      for i <- 0 until m.rows do
+      var i = 0
+      while i < m.rows do
         val v = m(i, j)
         if !v.isNaN then { n += 1; sum += v }
+        i += 1
       arr(j) = if n > 0 then sum / n else Double.NaN
+      j += 1
     Mat.create(arr, 1, m.cols)
 
   /** Mean of a column vector ignoring NaN. */
   private def nanMean(v: MatD): Double =
     var n = 0; var sum = 0.0
-    for i <- 0 until v.rows do
+    var i = 0
+    while i < v.rows do
       val x = v(i, 0)
       if !x.isNaN then { n += 1; sum += x }
+      i += 1
     if n > 0 then sum / n else Double.NaN
 
   /** OLS with NaN-row filtering and minObs guard; returns Some(beta) or None. */
   private def nanOls(y: MatD, X: MatD, minObs: Int): Option[MatD] =
-    val valid = (0 until y.rows).filter { i =>
-      !y(i, 0).isNaN && (0 until X.cols).forall(j => !X(i, j).isNaN)
-    }
+    val validBuf = Array.newBuilder[Int]
+    var i = 0
+    while i < y.rows do
+      if !y(i, 0).isNaN then
+        var allOk = true
+        var jj = 0
+        while jj < X.cols && allOk do
+          if X(i, jj).isNaN then allOk = false
+          jj += 1
+        if allOk then validBuf += i
+      i += 1
+    val valid = validBuf.result()
     if valid.length < minObs then None
     else
       val yv  = selectRows(y, valid)
