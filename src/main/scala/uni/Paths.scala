@@ -420,7 +420,7 @@ object MountExe {
     if !isWin then
       ""
     else
-      run("where.exe", "mount.exe").toOption.getOrElse {
+      run("where.exe", "mount.exe").lines.headOption.getOrElse {
         // msys2, cygwin, Git-bash supported
         val p = JPaths.get(defaultMountExe)
         if (Files.exists(p)) defaultMountExe else ""
