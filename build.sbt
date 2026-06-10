@@ -19,7 +19,7 @@ ThisBuild / watchTriggeredMessage := Watch.clearScreenOnTrigger
 ThisBuild / scalaVersion  := scalaVer
 
 lazy val projectName = "uni"
-ThisBuild / version       := "0.13.4"
+ThisBuild / version       := "0.14.0"
 ThisBuild / versionScheme := Some("semver-spec")
 
 ThisBuild / organization         := "org.vastblue"
@@ -73,6 +73,16 @@ Compile / packageBin / packageOptions +=
 Test / parallelExecution := false // PathSpec tests use modal test mode for Paths.get behavior
 
 Test / fork := true
+
+// Fork `run` so apps/benchmarks (e.g. Tprf3Bench) get a fresh JVM instead of the
+// long-lived sbt server, whose accumulated heap/JIT state inflates allocation-heavy
+// timings (measured 2026-06-10: IS Full 29-67 ms in-server vs 16 ms forked).
+// Forking also makes the `javaOptions` below (Vector API) actually apply to `run`.
+Compile / run / fork := true
+Compile / run / connectInput := true // forward stdin to forked process
+// Route forked-process output through the logger so it reaches `sbt --client`
+// sessions too (plain StdoutOutput goes to the server console, not the client)
+Compile / run / outputStrategy := Some(OutputStrategy.LoggedOutput(sLog.value))
 
 Test / envVars ++= Map("OPENBLAS_NUM_THREADS" -> "1")
 

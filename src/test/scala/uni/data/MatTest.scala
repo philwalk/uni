@@ -767,10 +767,16 @@ class MatTest extends munit.FunSuite {
     assertEqualsDouble(m(3, 0), 0.75, 1e-10)
   }
 
-  test("MatD flat-Double apply creates row vector") {
+  test("MatD flat-Double apply creates column vector (v0.14.0, matches Mat(...) and Breeze)") {
     val m = MatD(1.25, 1.75, 2.25, 2.75)
-    assertEquals(m.shape, (1, 4))
+    assertEquals(m.shape, (4, 1))
     assertEqualsDouble(m(0, 0), 1.25, 1e-10)
+    assertEqualsDouble(m(3, 0), 2.75, 1e-10)
+  }
+
+  test("MatD.row remains the explicit row-vector factory") {
+    val m = MatD.row(1.25, 1.75, 2.25, 2.75)
+    assertEquals(m.shape, (1, 4))
     assertEqualsDouble(m(0, 3), 2.75, 1e-10)
   }
 

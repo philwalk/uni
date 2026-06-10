@@ -1,3 +1,97 @@
+## v0.14.0 — unreleased
+
+**Bug fixes — view correctness (`Mat.scala`)**
+
+Several operations read the raw backing array (`m.tdata`) directly, which for a
+zero-copy view (e.g. a full-width row slice, `offset > 0`) is the *parent's* storage —
+producing silently wrong results (wrong elements and wrong length). All now use
+stride/offset-aware access:
+
+- `gt`, `lt`, `gte`, `lte`, `:==`, `:!=` — rewritten via `m.map`
+- `isnan`, `isinf`, `isfinite` — rewritten via `m.map`
+- `std`, `variance` (general, non-Double path) — sum of squares now accumulates
+  stride-aware instead of folding over the raw array
+- `filterRows` — replaced `System.arraycopy` (which assumed column stride 1 and
+  produced garbage for transposed matrices) with a stride-aware element copy
+
+**Bug fixes — semantics**
+
+- `containsNaN`: now checks `Numeric.toDouble(v).isNaN` (correct for Double, Float,
+  and the `BigNaN` sentinel) instead of per-element `toString == "NaN"`
+- `linspace(start, stop, num = 1)`: no longer truncates a fractional `start`
+  (previously returned `start.toInt`)
+- `power(n: Int)`: negative exponents are rejected before computing instead of
+  throwing mid-loop after wasted work
+
+**API changes (breaking)**
+
+- `MatD(1.0, 2.0, …)` / `MatB(…)` / `MatF(…)` flat varargs now build a **column**
+  vector (n×1), matching `Mat(…)`, `CVec(…)`, every vector-producing factory
+  (`randn`, `arange`, `linspace`, `fromSeq`), and Breeze's `DenseVector(…)` —
+  previously these were the lone row-vector outliers. The `ReferenceGuide`
+  examples written against column semantics now behave as documented. For an
+  explicit row vector use `MatD.row(…)` / `Mat.row[T](…)` / `RVec(…)`
+- `m ~^ 0.0` is now element-wise all-ones, matching `m ~^ 0` and NumPy `**`
+  semantics — previously it returned the identity matrix (matrix-power semantics
+  leaking into an otherwise element-wise operator)
+- Removed `cloneMat` — it copied the entire parent array and dropped the view
+  offset (wrong data for views); use `copy` / `matCopy`
+- Removed `inspect` — never produced meaningful output
+- `def data` is now `private[data]` — it exposed the raw backing array (the
+  *parent's* storage for views), bypassing all layout invariants; use `toArray`
+  or `flatten` for a flat copy
+- Relaxed constraints: slicing (`m(::)`, `m(r, ::)`, `m(rows, cols)`, …), `head`,
+  `tail`, `filterRows`, `applyAlongAxis`, `vsplit`, `hsplit`, and `split` no longer
+  require `Fractional[T]` — they now work for any element type (e.g. `Mat[Int]`)
+
+**Performance**
+
+- New shared helpers `fillD` / `sumD` apply a uniform 4096-element threshold before
+  going parallel across all Double fast paths (`+`, `-`, `*:*`, `/`, scalar ops,
+  `unary_-`, `sigmoid`, `relu`, `sum`, `mean`, `std`, `variance`). Previously only
+  scalar `/` had the threshold; every other op paid fork/join overhead on small
+  matrices. Confirmed on Tprf3Bench Large: IS Full 9.7 ms vs 13 ms documented for
+  v0.13.4 (the avar block does ~1,300 small-matrix ops per call)
+- `sumD` rewritten from `DoubleStream.sum` to a chunked parallel sum over an
+  8-accumulator unrolled kernel (independent accumulators break the FP-add latency
+  chain; fixed chunk boundaries keep results deterministic). NumPy 2.4.1's
+  SIMD reductions had overtaken the old implementation; measured on the
+  bench.sc 1000×1000 suite (JVM 21):
+  `sum` 0.45 → **0.09 ms**, `mean` 0.45 → **0.09 ms**, `std` 1.46 → **1.12 ms**
+  (NumPy 2.4.1: 0.25 / 0.27 / 3.28 ms — both reductions flip from ~1.8× losses
+  back to ~2.8× wins). Note: plain summation replaces DoubleStream's compensated
+  summation, so last-ulp rounding of `sum`/`mean`/`std`/`variance`/`cov` may
+  differ from v0.13.x; all 2,219 tests pass unchanged
+
+**Tests**
+
+- `ViewOpsSuite`: regression suite running every fixed operation against an offset
+  row-slice view and a transposed matrix, compared against `matCopy` results
+- `MatSemanticsSuite`: pins `~^` element-wise semantics, the `power` guard,
+  `linspace(num=1)`, `containsNaN` (Double and BigNaN), and `Fractional`-free
+  slicing/splitting on `Mat[Int]`
+
+**Build**
+
+- `Compile / run / fork := true` (with `connectInput` and logger-routed output so
+  `sbt --client` sessions see it): benchmarks now run in a fresh JVM instead of the
+  long-lived sbt server, whose accumulated heap/JIT state inflated allocation-heavy
+  timings (IS Full Large measured 29–67 ms in-server vs 9.7 ms forked), and the
+  Vector API `javaOptions` (`--add-modules=jdk.incubator.vector`) now actually
+  apply to `run` — previously they were silently ignored
+- Tprf3Bench (Large, forked, this machine): IS Full 9.7 ms, OOS Rec 24 ms,
+  OOS CV 61 ms — all at or better than the v0.13.4 documented numbers
+
+**Docs**
+
+- Refreshed all benchmark tables in `README.md` and `docs/MatDCheatSheet.md` with
+  same-day, same-machine measurements of uni 0.14.0 vs NumPy 2.4.1 vs Breeze 2.1.0
+  (JVM 21): MatD wins 9/9 scored ops vs NumPy and wins or ties 9/9 vs Breeze
+  (geomean ~6.2×); 3PRF table updated to the forked-JVM numbers (IS Full gap vs
+  scipy-openblas narrowed from 1.9× to 1.2×)
+
+---
+
 ## v0.13.4 — 2026-05-23
 
 **Performance — Double unboxing elimination (`Mat.scala`)**

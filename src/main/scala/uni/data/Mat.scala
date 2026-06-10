@@ -72,11 +72,10 @@ object Mat {
     /** Predicate check that short-circuits as soon as the condition is met */
     def exists(p: T => Boolean): Boolean = iterator.exists(p)
 
-    /** Checks if any element is NaN (specifically for Double/Big) */
-    def containsNaN(using @annotation.unused numeric: Numeric[T]): Boolean = 
-      // This assumes your Big/Double has a way to check isNaN
-      // For now, simple exists with a lambda is safest
-      exists(v => v.toString == "NaN" || v.toString == "NaN") // or specialized logic
+    /** Checks if any element is NaN (Double/Float NaN, or the BigNaN sentinel,
+     *  whose Numeric[Big].toDouble is defined to return Double.NaN) */
+    def containsNaN(using num: Numeric[T]): Boolean =
+      exists(v => num.toDouble(v).isNaN)
 
     def saveCSV(filePath: uni.Path, sep: String = ",", nanAs: String = "NaN"): Unit = {
       withFileWriter(filePath) { writer =>
@@ -260,15 +259,68 @@ object Mat {
         f(Mat.create(row, 1, m._cols))
         i += 1
 
-  @annotation.unused
-  def inspect[T: ClassTag]: String =
-    s"Mat(${rows}x${cols}, offset=$offset, rs=$rs, cs=$cs, transposed=$transposed)"
-
   // Crossover is higher on macOS/Accelerate (JNI overhead amortises later) than on Windows/Linux+OpenBLAS.
   // Mac measured: square Double=1728, thin=768. Windows/Linux: square=216, thin=384.
   private lazy val isMacOS = System.getProperty("os.name", "").toLowerCase.startsWith("mac")
   private lazy val blasThreshold:     Long = System.getProperty("uni.mat.blasThreshold",     if isMacOS then "1728" else "216").toLong
   private lazy val blasThinThreshold: Long = System.getProperty("uni.mat.blasThinThreshold", if isMacOS then "768"  else "384").toLong
+
+  // Fork/join overhead dominates parallelSetAll / parallel streams below this size;
+  // run sequentially for small arrays.
+  private final val ParallelThreshold = 4096
+
+  /** Fill `out` with f(i); parallel for large arrays, sequential below ParallelThreshold. */
+  private def fillD(out: Array[Double])(f: Int => Double): Unit =
+    if out.length >= ParallelThreshold then
+      java.util.Arrays.parallelSetAll(out, i => f(i))
+    else
+      var i = 0
+      while i < out.length do
+        out(i) = f(i)
+        i += 1
+
+  /** Sum of a(from until until) with 8 independent accumulators: a single-accumulator
+   *  loop is serialized by FP-add latency (~4 cycles); independent chains let the CPU
+   *  run adds in parallel and reach memory bandwidth. (HotSpot does not auto-vectorize
+   *  FP reductions, so this is the fastest portable scalar form.) */
+  private def sumRange(a: Array[Double], from: Int, until: Int): Double =
+    var s0 = 0.0; var s1 = 0.0; var s2 = 0.0; var s3 = 0.0
+    var s4 = 0.0; var s5 = 0.0; var s6 = 0.0; var s7 = 0.0
+    var i = from
+    val limit = until - 7
+    while i < limit do
+      s0 += a(i);     s1 += a(i + 1); s2 += a(i + 2); s3 += a(i + 3)
+      s4 += a(i + 4); s5 += a(i + 5); s6 += a(i + 6); s7 += a(i + 7)
+      i += 8
+    var s = ((s0 + s1) + (s2 + s3)) + ((s4 + s5) + (s6 + s7))
+    while i < until do
+      s += a(i)
+      i += 1
+    s
+
+  /** Sum of a Double array; parallel chunked for large arrays. Chunk boundaries are
+   *  fixed by length (not scheduling), so results are deterministic run-to-run.
+   *  Note: plain summation, not DoubleStream's compensated summation — last-ulp
+   *  rounding may differ from pre-0.14 results, but it benchmarks ~2× faster
+   *  (NumPy-class reduction throughput). */
+  private def sumD(a: Array[Double]): Double =
+    val n = a.length
+    if n < ParallelThreshold then sumRange(a, 0, n)
+    else
+      val chunks   = math.min(Runtime.getRuntime.availableProcessors, math.max(n / ParallelThreshold, 1))
+      val step     = (n + chunks - 1) / chunks
+      val partials = new Array[Double](chunks)
+      java.util.stream.IntStream.range(0, chunks).parallel().forEach { c =>
+        val from = c * step
+        val until = math.min(from + step, n)
+        if from < until then partials(c) = sumRange(a, from, until)
+      }
+      var s = 0.0
+      var c = 0
+      while c < chunks do
+        s += partials(c)
+        c += 1
+      s
 
   /** Returns m if already BLAS-safe (offset=0, standard strides), else a fresh contiguous copy. */
   private def blasReady(m: Mat[Double]): Mat[Double] =
@@ -586,29 +638,27 @@ object Mat {
     def ~^(exponent: Double): Double = Math.pow(base, exponent)
 
   extension [T: ClassTag](m: Mat[T])(using frac: Fractional[T])
-    def ~^(exponent: Int): Mat[T] = m.power(exponent)
-    def ~^(exponent: Double): Mat[T] =
-      if exponent == 0.0 then Mat.eye[T](m.rows)
-      else m.power(exponent)
+    // ~^ is element-wise power (NumPy ** semantics): m ~^ 0 and m ~^ 0.0 are all-ones
+    def ~^(exponent: Int): Mat[T]    = m.power(exponent)
+    def ~^(exponent: Double): Mat[T] = m.power(exponent)
 
+  extension [T: ClassTag](m: Mat[T])
     /** Filters rows based on a predicate function */
     def filterRows(p: Mat[T] => Boolean): Mat[T] = {
-      // 1. Identify which row indices pass the predicate
-      val keep = (0 until m.rows).filter { r =>
-        p(m(r, ::)) // get a row Vec
-      }
-
+      val keep = (0 until m.rows).filter(r => p(m(r, ::)))
       if keep.isEmpty then
         Mat.create(Array.empty[T], 0, m.cols)
       else
-        // 2. Allocate and copy data for the new Mat
+        // Stride-aware element copy: m may be a transposed or offset view,
+        // so a flat System.arraycopy of underlying storage is not valid here.
         val newData = new Array[T](keep.length * m.cols)
-        keep.zipWithIndex.foreach { (originalRow, newRowIdx) =>
-          System.arraycopy(
-            m.underlying, m.offset + originalRow * m.rs, 
-            newData, newRowIdx * m.cols, 
-            m.cols
-          )
+        var idx = 0
+        keep.foreach { r =>
+          var j = 0
+          while j < m.cols do
+            newData(idx) = m(r, j)
+            idx += 1
+            j += 1
         }
         Mat.create(newData, keep.length, m.cols)
     }
@@ -1155,7 +1205,7 @@ object Mat {
         val out  = Array.ofDim[Double](rows * cols)
         if other.rows == rows && other.cols == cols && other.tdata.length == rows * cols then
           val b = other.tdata.asInstanceOf[Array[Double]]
-          java.util.Arrays.parallelSetAll(out, i => a(i) + b(i))
+          fillD(out)(i => a(i) + b(i))
         else if other.rows == 1 && other.cols == cols && other.tdata.length == cols then
           val b = other.tdata.asInstanceOf[Array[Double]]
           var r = 0
@@ -1179,7 +1229,7 @@ object Mat {
         if other.rows == rows && other.cols == cols && other.tdata.length == rows * cols then
           // Same-shape: element-wise, parallel
           val b = other.tdata.asInstanceOf[Array[Double]]
-          java.util.Arrays.parallelSetAll(out, i => a(i) - b(i))
+          fillD(out)(i => a(i) - b(i))
         else if other.rows == 1 && other.cols == cols && other.tdata.length == cols then
           // Broadcast 1×N: subtract same row from every row
           val b = other.tdata.asInstanceOf[Array[Double]]
@@ -1203,7 +1253,7 @@ object Mat {
         val out  = Array.ofDim[Double](rows * cols)
         if other.rows == rows && other.cols == cols && other.tdata.length == rows * cols then
           val b = other.tdata.asInstanceOf[Array[Double]]
-          java.util.Arrays.parallelSetAll(out, i => a(i) * b(i))
+          fillD(out)(i => a(i) * b(i))
         else if other.rows == 1 && other.cols == cols && other.tdata.length == cols then
           val b = other.tdata.asInstanceOf[Array[Double]]
           var r = 0
@@ -1224,7 +1274,7 @@ object Mat {
       then
         val a   = m.tdata.asInstanceOf[Array[Double]]
         val out = Array.ofDim[Double](a.length)
-        java.util.Arrays.parallelSetAll(out, i => -a(i))
+        fillD(out)(i => -a(i))
         Mat.create(out, m.rows, m.cols).asInstanceOf[Mat[T]]
       else
         val result = new Array[T](m.rows * m.cols)
@@ -1272,7 +1322,9 @@ object Mat {
       require(m.rows == 1 && m.cols == 1, s"item requires 1×1 matrix, got ${m.rows}×${m.cols}")
       m(0, 0)
 
-    def data: Array[T] = m.asInstanceOf[MatData[T]].tdata
+    // Raw backing array — for views this is the parent's storage; never expose publicly
+    // (callers wanting a flat copy use toArray/flatten).
+    private[data] def data: Array[T] = m.asInstanceOf[MatData[T]].tdata
 
     /**
      * NumPy: m.ravel()
@@ -1292,7 +1344,7 @@ object Mat {
         val s = scalar.asInstanceOf[Double]
         val a = m.tdata.asInstanceOf[Array[Double]]
         val out = Array.ofDim[Double](a.length)
-        java.util.Arrays.parallelSetAll(out, i => a(i) + s)
+        fillD(out)(i => a(i) + s)
         Mat.create(out, m.rows, m.cols).asInstanceOf[Mat[T]]
       else
         val result = new Array[T](m.rows * m.cols)
@@ -1312,7 +1364,7 @@ object Mat {
         val s = scalar.asInstanceOf[Double]
         val a = m.tdata.asInstanceOf[Array[Double]]
         val out = Array.ofDim[Double](a.length)
-        java.util.Arrays.parallelSetAll(out, i => a(i) - s)
+        fillD(out)(i => a(i) - s)
         Mat.create(out, m.rows, m.cols).asInstanceOf[Mat[T]]
       else
         val result = new Array[T](m.rows * m.cols)
@@ -1332,7 +1384,7 @@ object Mat {
         val s = scalar.asInstanceOf[Double]
         val a = m.tdata.asInstanceOf[Array[Double]]
         val out = Array.ofDim[Double](a.length)
-        java.util.Arrays.parallelSetAll(out, i => a(i) * s)
+        fillD(out)(i => a(i) * s)
         Mat.create(out, m.rows, m.cols).asInstanceOf[Mat[T]]
       else
         val result = new Array[T](m.rows * m.cols)
@@ -1388,7 +1440,7 @@ object Mat {
           // Guard: tdata may be a parent array; only use when its length matches this view.
           val data = m.tdata.asInstanceOf[Array[Double]]
           if data.length == m.rows * m.cols then
-            java.util.Arrays.stream(data).parallel().sum().asInstanceOf[T]
+            sumD(data).asInstanceOf[T]
           else
             var total = 0.0
             var i = 0
@@ -1553,9 +1605,9 @@ object Mat {
   }
 
   // ============================================================================
-  // Display
+  // Slicing / views (no numeric constraint — works for any element type)
   // ============================================================================
-  extension [T: ClassTag](m: Mat[T])(using @annotation.unused frac: Fractional[T])
+  extension [T: ClassTag](m: Mat[T])
     /** m(::) - all elements; NumPy: m[:] */
     def apply(all: ::.type): Mat[T] = m(0 until m.rows, 0 until m.cols)
 
@@ -1637,6 +1689,7 @@ object Mat {
       Mat.create(result, newRows, newCols)
     }
 
+  extension [T: ClassTag](m: Mat[T])(using frac: Fractional[T])
     def /(scalar: T): Mat[T] =
       if summon[ClassTag[T]].runtimeClass == classOf[Double]
          && m.isContiguous && m.offset == 0 && m.tdata.length == m.rows * m.cols
@@ -1644,12 +1697,7 @@ object Mat {
         val s   = scalar.asInstanceOf[Double]
         val a   = m.tdata.asInstanceOf[Array[Double]]
         val out = Array.ofDim[Double](a.length)
-        // parallelSetAll overhead dominates for small arrays; use sequential below threshold
-        if a.length >= 4096 then
-          java.util.Arrays.parallelSetAll(out, i => a(i) / s)
-        else
-          var i = 0
-          while i < a.length do { out(i) = a(i) / s; i += 1 }
+        fillD(out)(i => a(i) / s)
         Mat.create(out, m.rows, m.cols).asInstanceOf[Mat[T]]
       else
         val res = new Array[T](m.size)
@@ -1730,9 +1778,9 @@ object Mat {
     Mat.create(Array.tabulate(n)(i => doubleToT[T](start + i * step)), n, 1)
   }
 
-  def linspace[T: ClassTag](start: Double, stop: Double, num: Int = 50)(using frac: Fractional[T]): CVec[T] = {
+  def linspace[T: ClassTag](start: Double, stop: Double, num: Int = 50)(using @annotation.unused frac: Fractional[T]): CVec[T] = {
     require(num > 0, "num must be positive")
-    if num == 1 then Mat.create(Array(frac.fromInt(start.toInt)), 1, 1)
+    if num == 1 then Mat.create(Array(doubleToT[T](start)), 1, 1)
     else
       val step = (stop - start) / (num - 1)
       val data = Array.tabulate(num) { i =>
@@ -1815,7 +1863,7 @@ object Mat {
     create(values.toArray, values.length, 1)
   }
 
-  extension [T: ClassTag](m: Mat[T])(using @annotation.unused frac: Fractional[T])
+  extension [T: ClassTag](m: Mat[T])
     // applyAlongAxis
     def applyAlongAxis(fn: Mat[T] => T, axis: Int): Mat[T] = {
       require(axis == 0 || axis == 1, s"axis must be 0 or 1, got $axis")
@@ -2177,14 +2225,6 @@ object Mat {
       A.diagonal
     }
 
-    // ---- clone ---------------------------------------------------------
-    def cloneMat: Mat[T] = {
-      val src = m.tdata
-      val dst = new Array[T](src.length)
-      System.arraycopy(src, 0, dst, 0, src.length)
-      Internal.create(dst, m.rows, m.cols, m.transposed, 0, -1, -1)
-    }
-
     // ---- Pure-JVM multiply (parallel tiled) ----------------------------
     private[data] def multiplyDouble(other: Mat[Double]): Mat[Double] = {
       //val a = m.tdata.asInstanceOf[Array[Double]]
@@ -2448,7 +2488,7 @@ object Mat {
          && m.isContiguous && m.offset == 0 && m.tdata.length == m.rows * m.cols
       then
         val a = m.tdata.asInstanceOf[Array[Double]]
-        (java.util.Arrays.stream(a).parallel().sum() / (m.rows * m.cols)).asInstanceOf[T]
+        (sumD(a) / (m.rows * m.cols)).asInstanceOf[T]
       else
         var total = frac.zero
         var r = 0
@@ -3001,23 +3041,19 @@ object Mat {
     }
 
     // ---- Element-wise comparison → Mat[Boolean] ----------------------------
-    def gt(other: T)(using ord: Ordering[T]): Mat[Boolean] =
-      Internal.create(m.tdata.map(ord.gt(_, other)), m.rows, m.cols, m.transposed, 0, -1, -1)
+    // m.map is stride/offset-aware; mapping m.tdata directly would read the
+    // parent array of a view (wrong elements, wrong length).
+    def gt(other: T)(using ord: Ordering[T]): Mat[Boolean]  = m.map(ord.gt(_, other))
 
-    def lt(other: T)(using ord: Ordering[T]): Mat[Boolean] =
-      Internal.create(m.tdata.map(ord.lt(_, other)), m.rows, m.cols, m.transposed, 0, -1, -1)
+    def lt(other: T)(using ord: Ordering[T]): Mat[Boolean]  = m.map(ord.lt(_, other))
 
-    def gte(other: T)(using ord: Ordering[T]): Mat[Boolean] =
-      Internal.create(m.tdata.map(ord.gteq(_, other)), m.rows, m.cols, m.transposed, 0, -1, -1)
+    def gte(other: T)(using ord: Ordering[T]): Mat[Boolean] = m.map(ord.gteq(_, other))
 
-    def lte(other: T)(using ord: Ordering[T]): Mat[Boolean] =
-      Internal.create(m.tdata.map(ord.lteq(_, other)), m.rows, m.cols, m.transposed, 0, -1, -1)
+    def lte(other: T)(using ord: Ordering[T]): Mat[Boolean] = m.map(ord.lteq(_, other))
 
-    def :==(other: T)(using ord: Ordering[T]): Mat[Boolean] =
-      Internal.create(m.tdata.map(ord.equiv(_, other)), m.rows, m.cols, m.transposed, 0, -1, -1)
+    def :==(other: T)(using ord: Ordering[T]): Mat[Boolean] = m.map(ord.equiv(_, other))
 
-    def :!=(other: T)(using ord: Ordering[T]): Mat[Boolean] =
-      Internal.create(m.tdata.map(!ord.equiv(_, other)), m.rows, m.cols, m.transposed, 0, -1, -1)
+    def :!=(other: T)(using ord: Ordering[T]): Mat[Boolean] = m.map(!ord.equiv(_, other))
 
     // Int overloads for natural NumPy-style usage e.g. m.gt(0)
     def gt(other: Int)(using ord: Ordering[T], frac: Fractional[T]): Mat[Boolean] =
@@ -3387,19 +3423,18 @@ object Mat {
     // These are Double/Float specific - Boolean result for data cleaning
     /** NumPy: np.isnan(m) */
     def isnan(using frac: Fractional[T]): Mat[Boolean] =
-      Internal.create(m.tdata.map(x => frac.toDouble(x).isNaN), m.rows, m.cols, m.transposed, 0, -1, -1)
+      m.map(x => frac.toDouble(x).isNaN)
 
     /** NumPy: np.isinf(m) */
     def isinf(using frac: Fractional[T]): Mat[Boolean] =
-      Internal.create(m.tdata.map(x => frac.toDouble(x).isInfinite), m.rows, m.cols, m.transposed, 0, -1, -1)
+      m.map(x => frac.toDouble(x).isInfinite)
 
     /** NumPy: np.isfinite(m) */
     def isfinite(using frac: Fractional[T]): Mat[Boolean] =
-      val boolArray = m.tdata.map(x => {
+      m.map(x => {
         val d = frac.toDouble(x)
         !d.isNaN && !d.isInfinite
       })
-      Internal.create(boolArray, m.rows, m.cols, m.transposed, 0, -1, -1)
 
     /** NumPy: np.nan_to_num(m, nan=0.0, posinf=0.0, neginf=0.0) */
     def nanToNum(nan: Double = 0.0, posinf: Double = 0.0, neginf: Double = 0.0)(using frac: Fractional[T]): Mat[T] = {
@@ -3654,14 +3689,14 @@ object Mat {
 
     /** Integer exponent overload - no Fractional needed */
     def power(n: Int)(using num: Numeric[T]): Mat[T] = {
+      if n < 0 then
+        throw UnsupportedOperationException("negative integer power requires Fractional")
       m.map((x: T) => {
         var result = num.one
         var k = 0
-        while k < math.abs(n) do
+        while k < n do
           result = num.times(result, x)
           k += 1
-        if n < 0 then
-          throw UnsupportedOperationException("negative integer power requires Fractional")
         result
       })
     }
@@ -3866,17 +3901,23 @@ object Mat {
       then
         val a  = m.tdata.asInstanceOf[Array[Double]]
         val n  = a.length
-        val mu = java.util.Arrays.stream(a).parallel().sum() / n
+        val mu = sumD(a) / n
         var sumSq = 0.0; var i = 0
         while i < n do { val d = a(i) - mu; sumSq += d * d; i += 1 }
         math.sqrt(sumSq / n).asInstanceOf[T]
       else
+        // Stride-aware accumulation: folding m.tdata would read the parent array of a view
         val mu    = m.mean
         val n     = m.size
-        val sumSq = m.tdata.foldLeft(frac.zero) { (acc, x) =>
-          val diff = frac.minus(x, mu)
-          frac.plus(acc, frac.times(diff, diff))
-        }
+        var sumSq = frac.zero
+        var r = 0
+        while r < m.rows do
+          var c = 0
+          while c < m.cols do
+            val diff = frac.minus(m(r, c), mu)
+            sumSq = frac.plus(sumSq, frac.times(diff, diff))
+            c += 1
+          r += 1
         val variance = frac.div(sumSq, frac.fromInt(n))
         summon[ClassTag[T]].runtimeClass match
           case c if c == classOf[Double]     =>
@@ -3948,17 +3989,23 @@ object Mat {
       then
         val a  = m.tdata.asInstanceOf[Array[Double]]
         val n  = a.length
-        val mu = java.util.Arrays.stream(a).parallel().sum() / n
+        val mu = sumD(a) / n
         var sumSq = 0.0; var i = 0
         while i < n do { val d = a(i) - mu; sumSq += d * d; i += 1 }
         (sumSq / n).asInstanceOf[T]
       else
+        // Stride-aware accumulation: folding m.tdata would read the parent array of a view
         val mu    = m.mean
         val n     = m.size
-        val sumSq = m.tdata.foldLeft(frac.zero) { (acc, x) =>
-          val diff = frac.minus(x, mu)
-          frac.plus(acc, frac.times(diff, diff))
-        }
+        var sumSq = frac.zero
+        var r = 0
+        while r < m.rows do
+          var c = 0
+          while c < m.cols do
+            val diff = frac.minus(m(r, c), mu)
+            sumSq = frac.plus(sumSq, frac.times(diff, diff))
+            c += 1
+          r += 1
         frac.div(sumSq, frac.fromInt(n))
 
     def describe(using frac: Fractional[T], ord: Ordering[T]): (Array[String], Mat[Double]) =
@@ -4205,7 +4252,7 @@ object Mat {
         if other.rows == rows && other.cols == cols && other.tdata.length == rows * cols then
           // Same-shape: element-wise, parallel
           val b = other.tdata.asInstanceOf[Array[Double]]
-          java.util.Arrays.parallelSetAll(out, i => a(i) / b(i))
+          fillD(out)(i => a(i) / b(i))
         else if other.rows == 1 && other.cols == cols && other.tdata.length == cols then
           // Broadcast 1×N: divide each row by the same divisor row
           val b = other.tdata.asInstanceOf[Array[Double]]
@@ -4228,11 +4275,11 @@ object Mat {
         // Fast path: parallel, no boxing, numerically stable.
         val src = m.tdata.asInstanceOf[Array[Double]]
         val out = new Array[Double](src.length)
-        java.util.Arrays.parallelSetAll(out, i => {
+        fillD(out) { i =>
           val x = src(i)
           if x >= 0 then 1.0 / (1.0 + math.exp(-x))
           else { val e = math.exp(x); e / (1.0 + e) }
-        })
+        }
         Mat.create(out, m.rows, m.cols)
       else
         val data = Array.ofDim[Double](m.size)
@@ -4260,7 +4307,7 @@ object Mat {
         // Fast path: parallel, no boxing.
         val src = m.tdata.asInstanceOf[Array[Double]]
         val out = new Array[Double](src.length)
-        java.util.Arrays.parallelSetAll(out, i => math.max(src(i), 0.0))
+        fillD(out)(i => math.max(src(i), 0.0))
         Mat.create(out, m.rows, m.cols).asInstanceOf[Mat[T]]
       else
         val zero = num.zero
@@ -4787,7 +4834,7 @@ object Mat {
       res
     }
 
-    def vsplit(indices: Array[Int])(using frac: Fractional[T]): Seq[Mat[T]] = {
+    def vsplit(indices: Array[Int]): Seq[Mat[T]] = {
       require(indices.forall(i => i > 0 && i < m.rows), 
         s"Split indices must be in range (0, ${m.rows})")
       require(indices.sorted.sameElements(indices), "Indices must be sorted")
@@ -4801,7 +4848,7 @@ object Mat {
       }
     }
 
-    def vsplit(n: Int)(using frac: Fractional[T]): Seq[Mat[T]] = {
+    def vsplit(n: Int): Seq[Mat[T]] = {
       require(m.rows % n == 0, s"Cannot split ${m.rows} rows into $n equal parts")
       
       val rowsPerSplit = m.rows / n
@@ -4810,7 +4857,7 @@ object Mat {
       }
     }
 
-    def hsplit(indices: Array[Int])(using frac: Fractional[T]): Seq[Mat[T]] = {
+    def hsplit(indices: Array[Int]): Seq[Mat[T]] = {
       require(indices.forall(i => i > 0 && i < m.cols), 
         s"Split indices must be in range (0, ${m.cols})")
       require(indices.sorted.sameElements(indices), "Indices must be sorted")
@@ -4824,7 +4871,7 @@ object Mat {
       }
     }
 
-    def hsplit(n: Int)(using frac: Fractional[T]): Seq[Mat[T]] = {
+    def hsplit(n: Int): Seq[Mat[T]] = {
       require(m.cols % n == 0, s"Cannot split ${m.cols} cols into $n equal parts")
       
       val colsPerSplit = m.cols / n
@@ -4833,12 +4880,12 @@ object Mat {
       }
     }
 
-    def split(indices: Array[Int], axis: Int = 0)(using frac: Fractional[T]): Seq[Mat[T]] = {
+    def split(indices: Array[Int], axis: Int = 0): Seq[Mat[T]] = {
       require(axis == 0 || axis == 1, "axis must be 0 (rows) or 1 (columns)")
       if (axis == 0) vsplit(indices) else hsplit(indices)
     }
 
-    def split(n: Int, axis: Int)(using frac: Fractional[T]): Seq[Mat[T]] = {
+    def split(n: Int, axis: Int): Seq[Mat[T]] = {
       require(axis == 0 || axis == 1, "axis must be 0 (rows) or 1 (columns)")
       if (axis == 0) vsplit(n) else hsplit(n)
     }
@@ -5379,7 +5426,9 @@ object MatD {
 
   def apply(rows: Int, cols: Int, data: Array[Double]): Mat[Double] = Mat.apply[Double](rows, cols, data)
   def apply(value: Double): Mat[Double] = Mat.apply[Double](value)
-  def apply(first: Double, rest: Double*): Mat[Double] = Mat.row[Double](first +: rest*)
+  // Column vector, matching Mat(...), CVec(...), and Breeze's DenseVector(...) convention
+  // (changed from row in v0.14.0). For a row vector use MatD.row(...) or RVec(...).
+  def apply(first: Double, rest: Double*): Mat[Double] = Mat.col[Double](first +: rest*)
   def apply(tuples: Tuple*): Mat[Double] = Mat.apply[Double](tuples*)
   def single(value: Double): Mat[Double] = Mat.single[Double](value)
   def fromSeq(values: Seq[Double]): CVec[Double] = Mat.fromSeq[Double](values)
@@ -5456,7 +5505,8 @@ object MatB {
 
   def apply(rows: Int, cols: Int, data: Array[Big]): Mat[Big] = Mat.apply[Big](rows, cols, data)
   def apply(value: Double): Mat[Big] = Mat.apply[Big](value)
-  def apply(first: Double, rest: Double*): Mat[Big] = Mat.row[Big](Big(first) +: rest.map(Big(_))*)
+  // Column vector since v0.14.0 (see MatD.apply); for a row use MatB.row(...)
+  def apply(first: Double, rest: Double*): Mat[Big] = Mat.col[Big](Big(first) +: rest.map(Big(_))*)
   def apply(tuples: Tuple*): Mat[Big] = Mat.apply[Big](tuples*)
   def single(value: Double): Mat[Big] = Mat.single[Big](value)
   def fromSeq(values: Seq[Big]): CVec[Big] = Mat.fromSeq[Big](values)
@@ -5538,7 +5588,8 @@ object MatF {
 
   def apply(rows: Int, cols: Int, data: Array[Float]): Mat[Float] = Mat.apply[Float](rows, cols, data)
   def apply(value: Double): Mat[Float] = Mat.apply[Float](value.toFloat)
-  def apply(first: Double, rest: Double*): Mat[Float] = Mat.row[Float](first.toFloat +: rest.map(_.toFloat)*)
+  // Column vector since v0.14.0 (see MatD.apply); for a row use MatF.row(...)
+  def apply(first: Double, rest: Double*): Mat[Float] = Mat.col[Float](first.toFloat +: rest.map(_.toFloat)*)
   def apply(tuples: Tuple*): Mat[Float] = Mat.apply[Float](tuples*)
   def single(value: Double): Mat[Float] = Mat.single[Float](value.toFloat)
   def fromSeq(values: Seq[Float]): CVec[Float] = Mat.fromSeq[Float](values)
