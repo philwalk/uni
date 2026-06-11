@@ -25,7 +25,7 @@ Pass a `PlotStyle` to control dimensions, colours, and export consistency.
 
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
-//> using dep org.vastblue:uni_3:0.13.4
+//> using dep org.vastblue:uni_3:0.14.0
 import uni.data.*
 import uni.plot.*
 
@@ -85,7 +85,7 @@ NumPy 2.4.x's single-threaded SIMD reductions had briefly overtaken `sum`/`mean`
 
 ### Linux (Intel Core i5-6500, Ubuntu 24.04, OpenBLAS)
 
-Breeze/MatD: uni 0.13.x / Scala 3.8.2 / JVM 21, both using native OpenBLAS via netlib JNIBLAS.
+Breeze/MatD: uni 0.14.0 / Scala 3.8.2 / JVM 21, both using native OpenBLAS via netlib JNIBLAS.
 (`sum` predates the v0.14.0 reduction rewrite; the marginal Breeze win there is expected to flip on remeasurement.)
 
 | Operation | Breeze | MatD | Bz/MD |
@@ -147,7 +147,7 @@ Note: inline annotations were removed before running JaCoCo to prevent Scala 3's
 Add the following to your `build.sbt`:
 
 ```scala
-libraryDependencies += "org.vastblue" %% "uni" % "0.13.4"
+libraryDependencies += "org.vastblue" %% "uni" % "0.14.0"
 ```
 
 ### Native BLAS backend
@@ -211,7 +211,7 @@ Without this, `libblas.so.3` may resolve to the slow single-threaded reference B
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.13.4
+//> using dep org.vastblue:uni_3:0.14.0
 
 import uni.data.*
 
@@ -289,7 +289,7 @@ Each alias has a matching factory object mirroring the `MatD` API:
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.13.4
+//> using dep org.vastblue:uni_3:0.14.0
 
 import uni.data.*
 
@@ -309,7 +309,7 @@ val identityB: MatB = MatB.eye(5)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.13.4
+//> using dep org.vastblue:uni_3:0.14.0
 
 import uni.data.*
 import uni.data.MatD.*
@@ -334,7 +334,7 @@ println(s"rotated: ${rotated.show("%7.2f")}")
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.13.4
+//> using dep org.vastblue:uni_3:0.14.0
 
 import uni.data.*
 
@@ -352,7 +352,7 @@ val f = a.relu    // built-in activation function
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.13.4
+//> using dep org.vastblue:uni_3:0.14.0
 
 import uni.data.*
 import uni.data.MatD.*
@@ -372,7 +372,7 @@ m :+= n      // element-wise add matrix in-place
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.13.4
+//> using dep org.vastblue:uni_3:0.14.0
 
 import uni.data.*
 import uni.data.MatD.*
@@ -391,7 +391,7 @@ val allTrue  = mask.all
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.13.4
+//> using dep org.vastblue:uni_3:0.14.0
 
 import uni.data.*
 import uni.data.MatD.*
@@ -413,7 +413,7 @@ val cols  = wide.hsplit(2)               // Seq of two 4x2 Mats
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.13.4
+//> using dep org.vastblue:uni_3:0.14.0
 
 import uni.data.*
 import uni.data.MatD.*
@@ -437,7 +437,7 @@ The following example demonstrates a wide array of `uni.MatD` capabilities
 
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
-//> using dep org.vastblue:uni_3:0.13.4
+//> using dep org.vastblue:uni_3:0.14.0
 
 import uni.data.*
 import uni.data.MatD.*
@@ -507,7 +507,7 @@ Because activation functions are members of the `MatD` type, building layers is 
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.13.4
+//> using dep org.vastblue:uni_3:0.14.0
 
 import uni.data.*
 
@@ -543,7 +543,7 @@ Raw financial and scientific datasets rarely arrive in clean form. `uni.data.Big
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.13.4
+//> using dep org.vastblue:uni_3:0.14.0
 
 import uni.data.*
 import uni.data.BigUtils.*

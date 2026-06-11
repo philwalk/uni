@@ -120,9 +120,9 @@ libraryDependencies ++= Seq(
   "dev.ludovic.netlib"       % "blas"                       % "3.2.0",
   "org.bytedeco"             % "openblas-platform"          % "0.3.31-1.5.13",
   "org.scala-lang.modules"  %% "scala-parallel-collections" % "1.2.0",
-  "org.knowm.xchart"         % "xchart"                     % "3.8.8",
-  "org.scalameta"           %% "munit"                      % "1.2.4" % Test,
-  "org.scalameta"           %% "munit-scalacheck"           % "1.2.0" % Test,
+  "org.knowm.xchart"         % "xchart"                     % "4.0.1",
+  "org.scalameta"           %% "munit"                      % "1.3.3" % Test,
+  "org.scalameta"           %% "munit-scalacheck"           % "1.3.0" % Test,
 )
 
 /*

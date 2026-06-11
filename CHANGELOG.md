@@ -99,6 +99,37 @@ stride/offset-aware access:
 
 **Internals**
 
+- TASTY transparency fix: `object CVec` / `object RVec` moved from inside
+  `object Mat` to package level (VecExts.scala), constructing through new
+  `private[data]` cast bridges `Mat.mkCVec` / `Mat.mkRVec`. Inside `object Mat`
+  the opaque types are transparent (`CVec[T] = Mat[T]`), so every method
+  declared there recorded `Mat[T]` return types in TASTY, breaking typed
+  dispatch for external callers; at package level the signatures stay
+  `CVec[T]`/`RVec[T]`. The companions' extension methods (accessors,
+  converters, scalar ops, `update`) moved into `VecOps` alongside the existing
+  `.T`/`*@` overloads and now simply delegate via `asMat` — the
+  inside-object-Mat recursion hazards (and the raw `MatData` field access they
+  forced) no longer apply. Because the package-level companions are no longer
+  in the opaque types' implicit scope, `uni/package.scala` now forwards
+  `export uni.data.VecOps.*` so `import uni.*`-only clients keep (and gain
+  TASTY-correct versions of) the full vector API — verified from an external
+  scala-cli script (`jsrc/tastyCheck.sc`): `val rv: RVecD = cv.T`,
+  typed `*@` dot/outer products, `show` labels, and `CVec(…)` factories all
+  dispatch correctly against the published jar
+- The MatD/MatB/MatF facades (~80 near-identical forwarders × 3) now share one
+  `private[data] trait MatFacade[T: ClassTag: Fractional: MatElem]`; the only
+  per-type members left are an abstract `fromBig` (CSV element conversion),
+  MatD's Double-only extras (leastSquares, signal processing, `zeros(n)`/
+  `ones(n)`/`randn(n)`/`rnorm(n)`, specialized RNG fills), and one-line
+  `object MatB` / `object MatF` declarations. Behavioral nuance: facade
+  Double-argument conversions now go through `MatElem.fromDouble`, so e.g.
+  `MatB.full(r, c, Double.NaN)` produces `BigNaN` cells instead of throwing
+  from `BigDecimal(NaN)` (consistent with the v0.14.0 MatB non-finite policy)
+- File split (first step): the facades, `MatFacade`, `LeastSquaresResult`, and
+  the `MatD`/`MatB`/`MatF`/vector type aliases moved from Mat.scala to a new
+  `MatFacades.scala` (Mat.scala: 5,352 → 4,860 lines). Pure relocation of
+  package-level definitions — no dispatch or API change
+
 - The ~25 hand-copied Double fast-path guards
   (`runtimeClass == classOf[Double] && isContiguous && offset == 0 && …`) are now
   one pair of inline helpers, `fastD` / `fastD2`; `+`, `-`, `*:*`, `/` share a
