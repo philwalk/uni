@@ -81,12 +81,21 @@ Both use native OpenBLAS via netlib JNIBLAS. See [`jsrc/benchBreeze.sc`](../jsrc
 | All zeros | `MatD.zeros(r, c)` | `np.zeros((r, c))` | `DenseMatrix.zeros[Double](r, c)` | `matrix(0, r, c)` | `zeros(r, c)` |
 | All ones | `MatD.ones(r, c)` | `np.ones((r, c))` | `DenseMatrix.ones[Double](r, c)` | `matrix(1, r, c)` | `ones(r, c)` |
 | Identity | `MatD.eye(n)` | `np.eye(n)` | `DenseMatrix.eye[Double](n)` | `diag(n)` | `eye(n)` |
-| From array | `MatD.from(arr, r, c)` | `np.array(lst).reshape(r, c)` | `new DenseMatrix(r, c, arr)` | `matrix(v, r, c)` | `reshape(v, r, c)` |
+| From array | `MatD(r, c, arr)` | `np.array(lst).reshape(r, c)` | `new DenseMatrix(r, c, arr)` | `matrix(v, r, c)` | `reshape(v, r, c)` |
+| From rows (tuples) | `MatD((1,2),(3,4))` | `np.array([[1,2],[3,4]])` | `DenseMatrix((1.0,2.0),(3.0,4.0))` | `rbind(c(1,2),c(3,4))` | `[1 2; 3 4]` |
+| Column vector | `MatD(1.0, 2.0, 3.0)` | `np.array([[1],[2],[3]])` | `DenseVector(1.0, 2.0, 3.0)` | `matrix(1:3)` | `[1; 2; 3]` |
+| Row vector | `MatD.row(1, 2, 3)` | `np.array([[1, 2, 3]])` | `DenseVector(1.0, 2.0, 3.0).t` | `t(matrix(1:3))` | `[1 2 3]` |
 | From function | `MatD.tabulate(r,c)((i,j) => f(i,j))` | `np.fromfunction(f, (r,c))` | `DenseMatrix.tabulate(r,c)(f)` | `outer(1:r, 1:c, f)` | `arrayfun(f, I, J)` |
 | Diagonal matrix | `MatD.diag(vec)` | `np.diag(v)` | `diag(v)` | `diag(v)` | `diag(v)` |
 | Zeros like | `MatD.zerosLike(m)` | `np.zeros_like(m)` | `DenseMatrix.zeros[Double](m.rows, m.cols)` | `matrix(0, nrow(m), ncol(m))` | `zeros(size(m))` |
 | Ones like | `MatD.onesLike(m)` | `np.ones_like(m)` | `DenseMatrix.ones[Double](m.rows, m.cols)` | `matrix(1, nrow(m), ncol(m))` | `ones(size(m))` |
 | Fill like | `MatD.fullLike(m, v)` | `np.full_like(m, v)` | `DenseMatrix.fill(m.rows, m.cols)(v)` | `matrix(v, nrow(m), ncol(m))` | `repmat(v, size(m))` |
+
+> **Since v0.14.0:** flat varargs `MatD(1.0, 2.0, 3.0)` (also `MatB`, `MatF`) build a **column**
+> vector, matching `Mat(…)`, `CVec(…)`, and Breeze's `DenseVector(…)` — previously they built a row.
+> Use `MatD.row(…)` for an explicit row vector.
+> Watch out: integer arguments select the zeros constructor — `MatD(3, 4)` is a 3×4 zero matrix,
+> while `MatD(3.0, 4.0)` is a 2×1 column vector.
 
 ---
 
@@ -125,11 +134,14 @@ Both use native OpenBLAS via netlib JNIBLAS. See [`jsrc/benchBreeze.sc`](../jsrc
 | Operation | MatD | NumPy | Breeze | R | MATLAB |
 |---|---|---|---|---|---|
 | Single element | `m(i, j)` | `m[i, j]` | `m(i, j)` | `m[i+1, j+1]` | `m(i+1, j+1)` |
-| Row slice (view) | `m(i, ::)` | `m[i, :]` | `m(i, ::)` | `m[i+1,]` | `m(i+1,:)` |
-| Column slice (view) | `m(::, j)` | `m[:, j]` | `m(::, j)` | `m[,j+1]` | `m(:,j+1)` |
+| Row slice (copy) | `m(i, ::)` | `m[i, :]` | `m(i, ::)` | `m[i+1,]` | `m(i+1,:)` |
+| Column slice (copy) | `m(::, j)` | `m[:, j]` | `m(::, j)` | `m[,j+1]` | `m(:,j+1)` |
+| Zero-copy view | `m.slice(rows, cols)` | `m[r0:r1, c0:c1]` | — | — | — |
 | Transpose (O(1)) | `m.T` or `m.transpose` | `m.T` | `m.t` | `t(m)` | `m'` |
 
-> MatD slices are **zero-indexed views** with O(1) cost (no data copy), matching NumPy's strided semantics.
+> Indexing is **zero-based** with negative-index support. Unlike NumPy, the `m(...)` slice
+> forms return independent **copies**; `m.slice(rows, cols)` (and `.T`) are zero-copy views
+> that share storage with the parent.
 
 ---
 
@@ -167,6 +179,7 @@ operator names and a few method renames.
 | `X * Y` | `X *@ Y` | Matrix multiply (`*` is element-wise in MatD) |
 | `X :* Y` | `X * Y` | Element-wise multiply |
 | `X :/ Y` | `X / Y` | Element-wise divide |
+| `X ^:^ p` | `X ~^ p` | Element-wise power; `~^` binds tighter than `*@` — write `(X ~^ 2) *@ Y` |
 | `X.t` | `X.T` | Transpose |
 | `sum(X, Axis._0)` | `X.sum(axis=0)` | Column-wise sum |
 | `sum(X, Axis._1)` | `X.sum(axis=1)` | Row-wise sum |
@@ -228,6 +241,11 @@ use `X.eachCol` / `X.eachRow` to sidestep the name collision, or rename at impor
 | Mean all | `m.mean` | `m.mean()` | `mean(m)` | `mean(m)` | `mean(m(:))` |
 | Min all | `m.min` | `m.min()` | `min(m)` | `min(m)` | `min(m(:))` |
 | Max all | `m.max` | `m.max()` | `max(m)` | `max(m)` | `max(m(:))` |
+| Std dev all | `m.std` | `m.std()` | `stddev(m)` | `sd(m)` | `std(m(:))` |
+| Variance all | `m.variance` | `m.var()` | `variance(m)` | `var(c(m))` | `var(m(:))` |
+| Median all | `m.median` | `np.median(m)` | `median(m)` | `median(m)` | `median(m(:))` |
+| Per column | `m.sum(axis=0)` → 1×cols | `m.sum(axis=0)` | `sum(m, Axis._0)` | `colSums(m)` | `sum(m, 1)` |
+| Per row | `m.sum(axis=1)` → rows×1 | `m.sum(axis=1)` | `sum(m, Axis._1)` | `rowSums(m)` | `sum(m, 2)` |
 
 ---
 
@@ -239,7 +257,7 @@ use `X.eachCol` / `X.eachRow` to sidestep the name collision, or rename at impor
 | Square root | `m.map(math.sqrt)` | `np.sqrt(m)` | `sqrt(m)` | `sqrt(m)` | `sqrt(m)` |
 | Exponential | `m.map(math.exp)` | `np.exp(m)` | `exp(m)` | `exp(m)` | `exp(m)` |
 | Log | `m.map(math.log)` | `np.log(m)` | `log(m)` | `log(m)` | `log(m)` |
-| Power (scalar) | `m.map(math.pow(_, p))` | `m ** p` | `m ^:^ p` | `m ^ p` | `m .^ p` |
+| Power (scalar) | `m ~^ p` | `m ** p` | `m ^:^ p` | `m ^ p` | `m .^ p` |
 | Map arbitrary fn | `m.map(f)` | `np.vectorize(f)(m)` | `m.map(f)` | `apply(m, c(1,2), f)` | `arrayfun(f, m)` |
 
 ---
@@ -260,6 +278,11 @@ use `X.eachCol` / `X.eachRow` to sidestep the name collision, or rename at impor
 | Operation | MatD | NumPy | Breeze | R | MATLAB |
 |---|---|---|---|---|---|
 | Element comparison | `m :== 0.0` → `Mat[Boolean]` | `m == 0` | `m :== 0.0` | `m == 0` | `m == 0` |
+| Not equal | `m :!= 0.0` | `m != 0` | `m :!= 0.0` | `m != 0` | `m ~= 0` |
+| Greater / less | `m > 2.0`, `m < 2.0` (or `gt`/`lt`) | `m > 2`, `m < 2` | `m >:> 2.0`, `m <:< 2.0` | `m > 2`, `m < 2` | `m > 2`, `m < 2` |
+| Greater/less or equal | `m >= 2.0`, `m <= 2.0` (or `gte`/`lte`) | `m >= 2`, `m <= 2` | `m >:= 2.0`, `m <:= 2.0` | `m >= 2`, `m <= 2` | `m >= 2`, `m <= 2` |
+| In range | `m.between(lo, hi)` | `(m >= lo) & (m <= hi)` | — | `m >= lo & m <= hi` | `m >= lo & m <= hi` |
+| Combine masks | `a && b`, `a \|\| b` | `a & b`, `a \| b` | `a &:& b`, `a \|:\| b` | `a & b`, `a \| b` | `a & b`, `a \| b` |
 | Negate mask | `!mask` | `~mask` | `!mask` | `!mask` | `~mask` |
 | Count true | `mask.sum` | `mask.sum()` | `sum(mask)` | `sum(mask)` | `sum(mask(:))` |
 | Any true | `mask.any` | `mask.any()` | `any(mask)` | `any(mask)` | `any(mask(:))` |
@@ -383,10 +406,10 @@ val c = MatD.eye(3)
 MatD.setSeed(42)
 val w = MatD.uniform(-0.1, 0.1, 64, 32)
 
-// Slice (zero-indexed, O(1) views)
-val row0 = b(0, ::)   // first row
-val col0 = b(::, 0)   // first column
-val bT   = b.T        // transpose
+// Slice (zero-indexed; m(...) forms copy, m.slice/.T are zero-copy views)
+val row0 = b(0, ::)   // first row (copy)
+val col0 = b(::, 0)   // first column (copy)
+val bT   = b.T        // transpose (O(1) view)
 
 // Arithmetic
 val d = a + b         // element-wise

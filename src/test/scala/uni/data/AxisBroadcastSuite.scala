@@ -225,3 +225,31 @@ class AxisBroadcastSuite extends FunSuite:
     for (_ <- empty(::, *)) count += 1
     assertEquals(count, 0)
   }
+
+  // ============================================================================
+  // Plain-operator N×1 column broadcast (Double fast path, v0.14.0)
+  // ============================================================================
+
+  test("data - rowMeans (rows×1) via plain operator: centers each row") {
+    assertEquals(cells(data - rowMeansCol).toSeq, cells(expectedRowCentered).toSeq)
+  }
+
+  test("plain N×1 broadcast +, -, *, / agree with the boxed Big path") {
+    val colV   = MatD(10.0, 20.0, 30.0)  // 3×1
+    val bigM   = MatB((1, 2, 3), (4, 5, 6), (7, 8, 9))
+    val bigCol = MatB(10.0, 20.0, 30.0)
+    def bigCells(b: MatB): Seq[Double] =
+      (for i <- 0 until 3; j <- 0 until 3 yield b(i, j).toDouble).toSeq
+    assertEquals(cells(data + colV).toSeq, bigCells(bigM + bigCol))
+    assertEquals(cells(data - colV).toSeq, bigCells(bigM - bigCol))
+    assertEquals(cells(data * colV).toSeq, bigCells(bigM * bigCol))
+    assertEquals(cells(data / colV).toSeq, bigCells(bigM / bigCol))
+  }
+
+  test("plain 1×N and N×1 broadcasts agree with broadcastTo-based general path") {
+    val rowV = MatD.row(10, 20, 30)      // 1×3
+    val colV = MatD(10.0, 20.0, 30.0)    // 3×1
+    assertEquals(cells(data + rowV).toSeq, cells(data + rowV.broadcastTo(3, 3)).toSeq)
+    assertEquals(cells(data + colV).toSeq, cells(data + colV.broadcastTo(3, 3)).toSeq)
+    assertEquals(cells(data * colV).toSeq, cells(data * colV.broadcastTo(3, 3)).toSeq)
+  }

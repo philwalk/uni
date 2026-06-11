@@ -1729,11 +1729,13 @@ class MatTest extends munit.FunSuite {
   test("svd: U *@ diag(s) *@ Vt = original matrix") {
     val m = Mat[Double]((1, 2, 3), (4, 5, 6))  // 2x3
     val (u, s, vt) = m.svd
-    // Reconstruct: U *@ S *@ Vt
+    // Economy SVD: U is nRows×p, Vt is p×nCols, sigma is p×p
     val nRows = m.rows; val nCols = m.cols
     val p = s.length
-    // Build sigma: nRows×nCols with s on diagonal
-    val sigma = Mat.zeros[Double](nRows, nCols)
+    assertEquals(p, math.min(nRows, nCols))
+    assertEquals(u.shape, (nRows, p))
+    assertEquals(vt.shape, (p, nCols))
+    val sigma = Mat.zeros[Double](p, p)
     var i = 0
     while i < p do
       sigma(i, i) = s(i)

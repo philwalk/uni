@@ -28,10 +28,11 @@ object matResultOps:
       }
       Mat.create(arr, rowIdxs.length, m.cols)
 
-  extension [T](@annotation.unused mr: MatResult[T])(using 
-    @annotation.unused ct: ClassTag[T], 
-    @annotation.unused frac: Fractional[T], 
-    @annotation.unused ord: Ordering[T]
+  extension [T](@annotation.unused mr: MatResult[T])(using
+    @annotation.unused ct: ClassTag[T],
+    @annotation.unused frac: Fractional[T],
+    @annotation.unused ord: Ordering[T],
+    @annotation.unused elem: uni.data.MatElem[T]
   )
 
     /** Group rows by distinct values in `keyCol` and aggregate all other columns

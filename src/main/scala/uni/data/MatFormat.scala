@@ -17,11 +17,13 @@ def formatMatrix[T](
   def getValue(i: Int, j: Int): T =
     tdata(offset + i * rs + j * cs)
 
-  // Truncation thresholds
-  val maxRows = Mat.PrintOptions.maxRows
-  val maxCols = Mat.PrintOptions.maxCols
-  val edgeRows = Mat.PrintOptions.edgeItems
-  val edgeCols = Mat.PrintOptions.edgeItems
+  // Truncation thresholds — one snapshot so a concurrent setPrintOptions
+  // can't yield a mixed configuration mid-format
+  val opts = Mat.PrintOptions.snapshot
+  val maxRows = opts.maxRows
+  val maxCols = opts.maxCols
+  val edgeRows = opts.edgeItems
+  val edgeCols = opts.edgeItems
 
   val truncateRows = rows > maxRows
   val truncateCols = cols > maxCols

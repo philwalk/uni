@@ -22,6 +22,66 @@ stride/offset-aware access:
   (previously returned `start.toInt`)
 - `power(n: Int)`: negative exponents are rejected before computing instead of
   throwing mid-loop after wasted work
+- Tuple factory `Mat[T]((…), (…))`: `Float`, `Double`, `BigDecimal`, and `Long`
+  elements are now *converted* to the target element type instead of cast —
+  previously `MatD((1.0, 2.5f))` threw `ClassCastException`, `MatB((1, 2.5))`
+  threw `ArrayStoreException`, and `Long` elements were rejected outright
+
+**API additions**
+
+- `<`, `<=`, `>`, `>=` operator aliases for `lt` / `lte` / `gt` / `gte` (scalar `T`
+  and `Int` overloads, returning `Mat[Boolean]`), so NumPy-style `m > 0.0` now works.
+  Equality remains `:==` / `:!=` — `==` and `!=` are defined on `Any` and cannot
+  return `Mat[Boolean]`
+- New `MatElem[T]` type class (`MatElem.scala`, exported from `uni`): bundles the
+  Double→T conversion, precision-aware sqrt, and NaN sentinel, with givens for
+  Double, Float, Big, and plain BigDecimal. Methods that previously dispatched on
+  `ClassTag.runtimeClass` (sqrt, norm, std, round, power, percentile/median,
+  nanToNum, corrcoef, rolling aggregations, arange/linspace, scale, describe,
+  pct_change, qrDecomposition, eigenvalues, ~^, the tuple factory) now take
+  `using MatElem[T]` — resolved silently from companion scope for normal callers;
+  unsupported element types become compile-time errors instead of runtime throws.
+  16 of 26 runtime-dispatch blocks deleted; the rest are per-type kernel selection
+  and Double-only LAPACK gates
+
+**API changes (breaking) — continued**
+
+- `m.svd` returns **economy** shapes: U is nRows×p and Vt is p×nCols
+  (p = min(nRows, nCols)) instead of full nRows×nRows / nCols×nCols — full U was
+  O(n²) memory for tall-skinny regression matrices and no consumer (lstsq, pinv,
+  matrixRank) ever read past column p. Reconstruction is `U *@ diag(s) *@ Vt`
+  with a p×p sigma
+- `round` / `power(Double)` / `nanToNum` on `MatB`: a non-finite Double result now
+  becomes `BigNaN` instead of throwing `NumberFormatException` from
+  `BigDecimal(Double.NaN)`
+
+**Performance — continued**
+
+- `eigenvalues()` on `Mat[Double]` routes through LAPACK `dgeev` (eigenvalues-only,
+  no eigenvector computation) instead of 500 unshifted QR iterations — O(n³) once
+  with exact results (and correct real parts for non-symmetric input); the QR
+  fallback remains for Float/Big
+- Plain `*` (element-wise multiply) now takes the same contiguous-Double fast path
+  as `*:*` — previously it always used the boxed generic loop
+- New N×1 column-broadcast fast path in `+`, `-`, `*`, `*:*`, `/`
+  (e.g. `m - m.mean(axis = 1)`); previously only 1×N row broadcasts had one and
+  column broadcasts fell to the boxed path
+
+**Internals**
+
+- The ~25 hand-copied Double fast-path guards
+  (`runtimeClass == classOf[Double] && isContiguous && offset == 0 && …`) are now
+  one pair of inline helpers, `fastD` / `fastD2`; `+`, `-`, `*:*`, `/` share a
+  single `fastBinOp` kernel (also removing the mid-expression `return`s)
+- ~350 lines of identical trig/activation loops (sin, cos, tan, arcsin, arccos,
+  arctan, sinh, cosh, tanh, floor, ceil, log10, log2, trunc, leakyRelu, elu, gelu)
+  collapsed to one-liners over a shared stride-aware `mapToDouble` kernel — which
+  also gains the parallel contiguous-Double fast path these methods never had
+- Thread safety: `globalRNG` is `@volatile` and every fill captures the generator
+  once, so a concurrent `setSeed` cannot interleave two generators within one
+  fill (NumPyRNG itself remains single-thread-reproducible, same contract as
+  NumPy's global generator); print options are an immutable `PrintConfig` swapped
+  atomically and `formatMatrix` reads one consistent snapshot
 
 **API changes (breaking)**
 
@@ -68,8 +128,10 @@ stride/offset-aware access:
 - `ViewOpsSuite`: regression suite running every fixed operation against an offset
   row-slice view and a transposed matrix, compared against `matCopy` results
 - `MatSemanticsSuite`: pins `~^` element-wise semantics, the `power` guard,
-  `linspace(num=1)`, `containsNaN` (Double and BigNaN), and `Fractional`-free
-  slicing/splitting on `Mat[Int]`
+  `linspace(num=1)`, `containsNaN` (Double and BigNaN), `Fractional`-free
+  slicing/splitting on `Mat[Int]`, the comparison-operator aliases (including
+  offset-view correctness and precedence vs arithmetic), and tuple-factory
+  element conversion for all numeric element types
 
 **Build**
 
@@ -89,6 +151,19 @@ stride/offset-aware access:
   (JVM 21): MatD wins 9/9 scored ops vs NumPy and wins or ties 9/9 vs Breeze
   (geomean ~6.2×); 3PRF table updated to the forked-JVM numbers (IS Full gap vs
   scipy-openblas narrowed from 1.9× to 1.2×)
+- `docs/ReferenceGuide.md`: added the eleven sections its table of contents promised
+  but never delivered (Indexing and Slicing, Arithmetic, Broadcasting, Linear Algebra,
+  Statistics, Element-wise Math, Machine Learning, RNG, Data Manipulation,
+  Comparison/Boolean, Display), plus the v0.14.0 column-vararg factories and the
+  `MatD(3, 4)`-is-zeros vs `MatD(3.0, 4.0)`-is-a-vector gotcha
+- Fixed examples that never compiled: `docs/QuickStartGuide.md` used nonexistent
+  `m > 5.0` / `m < 0.0` comparison operators (Mat has only `gt`/`lt`/`gte`/`lte`)
+  and `Mat.randn[Double](r, c)` (randn is not generic); `docs/MatDCheatSheet.md`
+  listed nonexistent `MatD.from(arr, r, c)` (now `MatD(r, c, arr)`)
+- Corrected `.norm` (vector-only; matrices need `norm("fro")`), `cov` (NumPy
+  rows-as-variables convention), and `sort()` (flattens by default) descriptions
+- New `jsrc/docCheck.sc` compile-checks and runs every ReferenceGuide/QuickStart
+  snippet against the published library — this is what caught the errors above
 
 ---
 

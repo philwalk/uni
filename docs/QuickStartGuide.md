@@ -17,11 +17,18 @@ A NumPy-compatible matrix library for Scala with exact reproducibility and compr
 
 import uni.data.*
 
-// From literal values (tuple syntax)
+// From literal values (tuple syntax — each tuple is one row)
 val m = Mat[Double]((1, 2, 3), (4, 5, 6))  // 2x3 matrix
 
-// Column vector from scalars
-val v = Mat(1.0, 2.0, 3.0)  // 3x1 column vector
+// Column vector from scalars — Mat(...), MatD(...), MatB(...), MatF(...) all agree
+// (MatD/MatB/MatF flat varargs build a column since v0.14.0; use .row for a row vector)
+val v  = Mat(1.0, 2.0, 3.0)   // 3x1 column vector
+val v2 = MatD(1.0, 2.0, 3.0)  // 3x1 column vector (same as Mat(...))
+val r  = MatD.row(1, 2, 3)    // 1x3 row vector — the explicit row factory
+
+// Gotcha: Int arguments select the (rows, cols) zeros constructor, not varargs
+val z3x4 = MatD(3, 4)         // 3x4 matrix of zeros — NOT a 2-element vector
+val pair = MatD(3.0, 4.0)     // 2x1 column vector
 
 // Common constructors — MatD is an alias for Mat[Double]; the two forms are equivalent:
 //   MatD.zeros(3, 4)          ==  Mat.zeros[Double](3, 4)
@@ -58,16 +65,18 @@ val m = Mat[Double]((1, 2, 3), (4, 5, 6))
 val value = m(0, 1)                   // Element at row 0, col 1
 val value2 = m(-1, -1)                // Last element (negative indexing)
 
-// Slicing (:: means "all")
+// Slicing (:: means "all") — m(...) forms return copies;
+// use m.slice(rows, cols) for a zero-copy view that shares storage with m
 val row = m(0, ::)                    // First row
 val col = m(::, 2)                    // Third column
 val sub = m(0 until 2, 1 until 3)     // Submatrix [rows 0-1, cols 1-2]
+val view = m.slice(0 until 2, 0 until 3)  // zero-copy view of the same cells
 
 // Fancy indexing with arrays
 val indices = Array(0, 2, 1)
 val reordered = m(indices, ::)        // Select and reorder rows
 
-// Boolean masking
+// Boolean masking (equality uses :== / :!=; ordering uses > < >= <= or gt/lt/gte/lte)
 val mask = m > 5.0
 val filtered = m(mask)                // Elements > 5.0
 m(mask) = 0.0                         // Set matching elements to 0
@@ -98,6 +107,10 @@ val shifted = A + 10.0                // Add 10 to all elements
 // Matrix multiplication
 val matmul = A *@ B                   // or A.dot(B)
 
+// Element-wise power (NumPy **). ~^ binds tighter than *@ — parenthesize when mixing
+val squared = A ~^ 2                  // each element squared
+val roots = A ~^ 0.5                  // fractional exponents supported
+
 // Broadcasting with vectors
 val rowVec = Mat.row[Double](1, 2)
 val result = A + rowVec               // Adds rowVec to each row
@@ -122,7 +135,7 @@ val det = A.determinant               // Determinant
 val tr = A.trace                      // Trace (sum of diagonal)
 
 // Solve Ax = b
-val b = Mat[Double](1, 2)
+val b = Mat[Double](1.0, 2.0)         // 2x1 column vector
 val x = A.solve(b)                    // Returns solution x
 
 // Decompositions
@@ -144,7 +157,7 @@ val frobNorm = A.norm("fro")          // Frobenius norm
 import uni.data.Mat
 import uni.data.Mat.*
 
-val m = Mat.randn[Double](5, 4)
+val m = Mat.randn(5, 4)
 
 // Reductions
 val min = m.min                       // Minimum element
@@ -177,9 +190,9 @@ val p90 = m.percentile(90)            // 90th percentile
 import uni.data.Mat
 import uni.data.Mat.*
 
-val m  = Mat.randn[Double](5, 4)
-val m1 = Mat.randn[Double](5, 4)
-val m2 = Mat.randn[Double](5, 4)
+val m  = Mat.randn(5, 4)
+val m1 = Mat.randn(5, 4)
+val m2 = Mat.randn(5, 4)
 
 // Basic math
 val absM = m.abs                      // Absolute value
@@ -214,7 +227,7 @@ val minElems = m1.minimum(m2)         // Element-wise min
 import uni.data.Mat
 import uni.data.Mat.*
 
-val m = Mat.randn[Double](5, 4)
+val m = Mat.randn(5, 4)
 
 // Activation functions
 val sigmoid = m.sigmoid               // σ(x) = 1/(1+e^-x)
@@ -239,10 +252,10 @@ val custom = Mat.normal(mean = 5.0, std = 2.0, rows = 100, cols = 10)
 import uni.data.Mat
 import uni.data.Mat.*
 
-val m  = Mat.randn[Double](9, 6)    // 9 rows, 6 cols (54 elements)
-val m1 = Mat.randn[Double](3, 6)
-val m2 = Mat.randn[Double](3, 6)
-val m3 = Mat.randn[Double](3, 6)
+val m  = Mat.randn(9, 6)    // 9 rows, 6 cols (54 elements)
+val m1 = Mat.randn(3, 6)
+val m2 = Mat.randn(3, 6)
+val m3 = Mat.randn(3, 6)
 
 // Reshaping
 val reshaped = m.reshape(6, 9)        // Change shape (must have same size: 9×6 = 6×9)
@@ -272,12 +285,18 @@ val tiled = m.tile(2, 3)              // Tile 2 rows × 3 cols
 import uni.data.Mat
 import uni.data.Mat.*
 
-val m = Mat.randn[Double](5, 4)
+val m = Mat.randn(5, 4)
 
 // Comparisons return Boolean matrices
+// (> < >= <= are aliases for gt/lt/gte/lte; equality is :== / :!= because
+//  Scala's == and != are defined on Any and cannot return Mat[Boolean])
 val mask1 = m > 5.0                   // Greater than
-val mask2 = m.lte(10.0)               // Less than or equal
+val mask2 = m <= 10.0                 // Less than or equal (or m.lte(10.0))
 val mask3 = m :== 0.0                 // Equal to
+
+// Combine masks with && / || / ! — unlike NumPy's &, no parentheses needed
+val band = m >= 2.0 && m <= 8.0       // In range [2, 8]
+val outside = !band
 
 // Boolean reductions
 val allPositive = (m > 0.0).all       // All elements > 0?
@@ -300,7 +319,7 @@ val cleaned = m.nanToNum(nan = 0.0)   // Replace NaN with 0
 import uni.data.Mat
 import uni.data.Mat.*
 
-val m = Mat.randn[Double](5, 7)
+val m = Mat.randn(5, 7)
 
 // Default display (auto-formatted)
 println(m.show)
@@ -444,7 +463,9 @@ val pred = X *@ weights
 2. **Matrix multiplication**: `*@` or `.dot()` vs NumPy's `@`
 3. **Ranges**: `0 until 5` vs NumPy's `0:5`
 4. **All syntax**: `::` vs NumPy's `:`
-5. **Equality**: `:==` vs NumPy's `==` (to avoid conflicts with Scala's ==)
+5. **Equality**: `:==` / `:!=` vs NumPy's `==` / `!=` (Scala defines those on `Any`);
+   ordering comparisons `>` `<` `>=` `<=` work as in NumPy
+6. **Element-wise power**: `m ~^ p` vs NumPy's `m ** p` (note: `~^` binds tighter than `*@`)
 
 ## Next Steps
 
@@ -463,4 +484,4 @@ val pred = X *@ weights
 
 ---
 
-**1461 comprehensive tests** • **~99% NumPy API coverage** • **Exact reproducibility**
+**2,200+ comprehensive tests** • **~99% NumPy API coverage** • **Exact reproducibility**

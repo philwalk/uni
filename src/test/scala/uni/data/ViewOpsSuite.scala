@@ -126,4 +126,88 @@ class MatSemanticsSuite extends munit.FunSuite {
     assertEquals(parts(0).shape, (1, 2))
     assertEquals(parts(1).shape, (2, 2))
   }
+
+  // ---- comparison operator aliases ------------------------------------------
+
+  test("< <= > >= are aliases for lt/lte/gt/gte (Double argument)") {
+    val m = MatD((1, 2), (3, 4))
+    assertEquals((m > 2.0).toArray.toSeq, m.gt(2.0).toArray.toSeq)
+    assertEquals((m < 2.0).toArray.toSeq, m.lt(2.0).toArray.toSeq)
+    assertEquals((m >= 3.0).toArray.toSeq, m.gte(3.0).toArray.toSeq)
+    assertEquals((m <= 3.0).toArray.toSeq, m.lte(3.0).toArray.toSeq)
+    assertEquals((m > 2.0).toArray.toSeq, Seq(false, false, true, true))
+  }
+
+  test("< <= > >= accept Int arguments like the named methods") {
+    val m = MatD((1, 2), (3, 4))
+    assertEquals((m > 2).toArray.toSeq, m.gt(2).toArray.toSeq)
+    assertEquals((m < 2).toArray.toSeq, m.lt(2).toArray.toSeq)
+    assertEquals((m >= 3).toArray.toSeq, m.gte(3).toArray.toSeq)
+    assertEquals((m <= 3).toArray.toSeq, m.lte(3).toArray.toSeq)
+  }
+
+  test("comparison aliases compose with masks and bind looser than arithmetic") {
+    val m = MatD((1, 2), (3, 4))
+    val band = (m >= 2.0) && (m <= 3.0)
+    assertEquals(band.sum, 2)
+    // comparisons bind looser than arithmetic: m < 1.0 + 2.0 means m < 3.0
+    assertEquals((m < 1.0 + 2.0).toArray.toSeq, m.lt(3.0).toArray.toSeq)
+  }
+
+  test("comparison aliases are stride-aware on offset views") {
+    val parent = Mat.tabulate[Double](6, 5)((i, j) => (i * 5 + j).toDouble)
+    val v = parent.slice(2 until 5, 0 until 5)
+    assert(v.offset > 0)
+    assertEquals((v > 17.0).toArray.toSeq, v.matCopy.gt(17.0).toArray.toSeq)
+  }
+
+  // ---- tuple-factory element conversion --------------------------------------
+
+  test("tuple factory converts Float elements into Mat[Double]") {
+    val m = MatD((1.0, 2.5f), (3.0f, 4.0))
+    assertEquals(m(0, 1), 2.5)
+    assertEquals(m(1, 0), 3.0)
+  }
+
+  test("tuple factory converts Long elements") {
+    val m = MatD((1L, 2L), (3L, 4L))
+    assertEquals(m(1, 1), 4.0)
+  }
+
+  test("tuple factory converts Double and Float elements into Mat[Big]") {
+    val b = MatB((1, 2.5), (3.5f, Big(4.5)))
+    assertEquals(b(0, 1), Big(2.5))
+    assertEquals(b(1, 0), Big(3.5))
+    assertEquals(b(1, 1), Big(4.5))
+  }
+
+  test("tuple factory converts Double and BigDecimal elements into Mat[Float]") {
+    val f = MatF((1.5, 2.5f), (BigDecimal(3.5), 4))
+    assertEquals(f(0, 0), 1.5f)
+    assertEquals(f(1, 0), 3.5f)
+    assertEquals(f(1, 1), 4.0f)
+  }
+
+  test("tuple factory converts BigDecimal elements into Mat[Double]") {
+    val m = MatD((BigDecimal(1.5), 2.0))
+    assertEquals(m(0, 0), 1.5)
+  }
+
+  // ---- MatElem type class ----------------------------------------------------
+
+  test("MatElem[Big].sqrtT keeps arbitrary precision (no Double round-trip)") {
+    val two  = MatB((2.0, 2.0))
+    val root = two.sqrt(0, 0)
+    // sqrt(2) to DECIMAL128 has far more correct digits than a Double can hold
+    val asString = root.toString
+    assert(asString.startsWith("1.41421356237309504880168872420969"),
+      s"expected DECIMAL128-precision sqrt(2), got $asString")
+  }
+
+  test("MatElem[Big].fromDouble maps non-finite values to BigNaN") {
+    val m = MatB((1.0, 2.0))
+    // power produces NaN for fractional exponents of negative numbers
+    val r = (m - Big(3.0)).power(0.5)   // sqrt of negatives → NaN → BigNaN
+    assert(r.containsNaN)
+  }
 }
