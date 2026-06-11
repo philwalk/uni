@@ -4,7 +4,6 @@ import scala.reflect.ClassTag
 import scala.compiletime.{erasedValue, summonFrom}
 import uni.io.FileOps.*
 
-//export Mat.MatD as MatD
 import uni.data.Big.Big
 export Mat.{Mat, `::`, `~^`, ColsView, RowsView, CVec, RVec, Vec, RowVec, ColVec, rows, cols, shape, shapes, size, isEmpty, transposed, isContiguous, apply}
 export MatD.leastSquares
@@ -41,11 +40,9 @@ object Mat {
     inline def at(r: Int, c: Int): T = 
       underlying(offset + r * rs + c * cs)
 
-    // Flat access (requires caution with strides!)
-    // In your "Phase 0" where isContiguous is usually true, 
-    // this is simple. If you allow non-contiguous flat access, 
-    // you'd typically calculate (i / cols) and (i % cols).
-    inline def at(i: Int): T = 
+    // Flat access: direct for contiguous layouts, otherwise routed through
+    // stride-aware 2D access via (i / cols, i % cols)
+    inline def at(i: Int): T =
       if isContiguous then underlying(offset + i)
       else at(i / cols, i % cols)
 
@@ -90,8 +87,8 @@ object Mat {
               case f: Float  if f.isPosInfinity => "Inf"
               case f: Float  if f.isNegInfinity => "-Inf"
 
-              // Big Types
-              case BigNaN         => "N/A"            // Prevents 1E+10 formatting
+              // Big Types — BigNaN honors nanAs exactly like Double/Float NaN
+              case BigNaN         => nanAs
               case bd: BigDecimal => bd.bigDecimal.toPlainString // Prevents 1E+10 formatting
               case bi: BigInt     => bi.toString
 
@@ -116,10 +113,10 @@ object Mat {
       private[Mat] val _tdata: Array[T],
       private[Mat] val _rows: Int,
       private[Mat] val _cols: Int,
-      private[Mat] val _transposed: Boolean = false, // Keep this temporarily for staging
-      private[Mat] val _offset: Int = 0,  // Default to 0
-      private[Mat] val _rs: Int = -1,     // rowSride ; phase 0_: always 'cols'
-      private[Mat] val _cs: Int = -1,     // colStride ; phase 0_: always 1
+      private[Mat] val _transposed: Boolean = false,
+      private[Mat] val _offset: Int = 0,
+      private[Mat] val _rs: Int = -1,     // row stride; 'cols' for standard row-major
+      private[Mat] val _cs: Int = -1,     // col stride; 1 for standard row-major
     ) {
     override def toString: String = {
       val componentType = _tdata.getClass.getComponentType
@@ -166,20 +163,16 @@ object Mat {
       _rs: Int = -1, // rowStride
       _cs: Int = -1, // colStride
     ): Mat[T] = {
-      // We explicitly calculate the strides that your legacy code
-      // was previously calculating implicitly inside the 'apply' if/else.
+      // Negative stride arguments mean "derive the standard stride for this orientation"
       val actualRs = if (_rs >= 0) _rs else (if _transposed then 1 else _cols)
       val actualCs = if (_cs >= 0) _cs else (if _transposed then _rows else 1)
 
       // must be the ONLY place the private constructor is used!
       val m = new MatData(_tdata, _rows, _cols, _transposed, _offset, actualRs, actualCs)
 
-      if m.isWeirdLayout then
-        val clean = m.matCopy
-        //println(s"GUARD TRIGGERED: Original Transposed=${m.transposed}, clean Transposed=${clean.transposed}")
-        clean
-      else
-        m
+      // Layout guard: fragmented layouts are materialized to a clean copy so the
+      // rest of the library only ever sees standard or simple-offset strides
+      if m.isWeirdLayout then m.matCopy else m
     }
 
     // 'Internal.create' is the ONLY way to create a Mat.
@@ -650,9 +643,11 @@ object Mat {
   extension (base: Double)
     def ~^(exponent: Double): Double = Math.pow(base, exponent)
 
+  // ~^ is element-wise power (NumPy ** semantics): m ~^ 0 and m ~^ 0.0 are all-ones.
+  // Separate blocks because only the Double overload needs MatElem (fromDouble/nan).
+  extension [T: ClassTag](m: Mat[T])(using frac: Fractional[T])
+    def ~^(exponent: Int): Mat[T] = m.power(exponent)
   extension [T: ClassTag](m: Mat[T])(using frac: Fractional[T], elem: MatElem[T])
-    // ~^ is element-wise power (NumPy ** semantics): m ~^ 0 and m ~^ 0.0 are all-ones
-    def ~^(exponent: Int): Mat[T]    = m.power(exponent)
     def ~^(exponent: Double): Mat[T] = m.power(exponent)
 
   extension [T: ClassTag](m: Mat[T])
@@ -749,10 +744,6 @@ object Mat {
   // ============================================================================
   
   extension [T](@annotation.unused m: Mat[T])
-    // This is the "Unwrapper".
-    // It MUST exist to tell the compiler: "Treat this as the class, not the opaque type."
-    //private def asData: MatData[T] = m.asInstanceOf[MatData[T]]
-
     def foreach(f: T => Unit): Unit = {
       if (m.isContiguous) {
         // Fast path for contiguous data
@@ -1079,10 +1070,9 @@ object Mat {
   // Indexing (NumPy-aligned with negative index support)
   // ============================================================================
   extension [T](m: Mat[T])(using @annotation.unused ct: ClassTag[T]) {
-    // 1. Helper to check if layout is standard row-major
-    // All "Phase 0" creation methods must funnel through this helper
-    // to set the default Row-Major strides.
-    // Your temporary Phase 1 "Choke Point"
+    // True when the strided layout is fragmented (major stride exceeds the
+    // leading dimension), i.e. the view skips over backing-array elements.
+    // Internal.create materializes such views into a contiguous copy.
     def isWeirdLayout: Boolean = {
       // If it's already standard, it's definitely not weird.
       if m.isStandardContiguous then
@@ -1131,21 +1121,19 @@ object Mat {
       val newRows = rows.length
       val newCols = cols.length
 
-      // 2. Bounds check
-      if (rStart < 0 || rStart + newRows > m.rows ||
-          cStart < 0 || cStart + newCols > m.cols) {
-        throw new IndexOutOfBoundsException(s"Slice $rows, $cols out of bounds for ${m.rows}x${m.cols}")
-      }
+      // 2. Bounds check (IllegalArgumentException via require, like all other
+      // argument/bounds validation in Mat)
+      require(rStart >= 0 && rStart + newRows <= m.rows &&
+              cStart >= 0 && cStart + newCols <= m.cols,
+        s"Slice $rows, $cols out of bounds for ${m.rows}x${m.cols}")
 
       // 3. The Stride Magic: Calculate the new physical offset
       // The new starting point is the old offset plus the
       // jump to the first element of the slice.
       val newOffset = m.offset + (rStart * m.rs) + (cStart * m.cs)
 
-      // 4. Funnel through the Choke Point
-      // We pass the existing strides (rs, cs) and the new offset.
-      // The Layout Guard will automatically check if this specific
-      // sub-view is "weird" and copy it if necessary!
+      // 4. Build the view with existing strides (rs, cs) and the new offset;
+      // Internal.create materializes it into a copy if the layout is fragmented.
       Internal.create(m.underlying, newRows, newCols, m.transposed, newOffset, m.rs, m.cs)
     }
 
@@ -1757,7 +1745,6 @@ object Mat {
   def arange[T: ClassTag](start: Double, stop: Double)(using elem: MatElem[T]): CVec[T] =
     arange[T](start, stop, 1.0)
 
-  @annotation.unused
   def arange[T: ClassTag](start: Double, stop: Double, step: Double)(using elem: MatElem[T]): CVec[T] = {
     require(step != 0.0, "step cannot be zero")
     val n = math.max(0, math.ceil((stop - start) / step).toInt)
@@ -1776,8 +1763,7 @@ object Mat {
     Mat.create(data, rows, cols)
   }
   
-  @annotation.unused
-  def apply[T: ClassTag](unit: Unit): Mat[T] = Mat.create(Array.ofDim[T](0), 0, 0)
+  def apply[T: ClassTag](@annotation.unused unit: Unit): Mat[T] = Mat.create(Array.ofDim[T](0), 0, 0)
   def apply[T: ClassTag](value: T): Mat[T]   = Mat.create(Array(value), 1, 1)
   def apply[T: ClassTag](tuples: Tuple*)(using frac: Fractional[T], elem: MatElem[T]): Mat[T] = {
     val rows = tuples.length
@@ -2921,8 +2907,9 @@ object Mat {
       (Mat.create(u, nRows, p), s, Mat.create(vt, p, nCols))
     }
 
-    @annotation.unused 
-    def svd(using frac: Fractional[T]): (Mat[T], Array[T], Mat[T]) =
+    // The Fractional evidence on svd/lstsq/matrixRank/eig/pinv/cholesky is unused at
+    // runtime (Double-only kernels) but restricts the API to numeric element types.
+    def svd(using @annotation.unused frac: Fractional[T]): (Mat[T], Array[T], Mat[T]) =
       summon[ClassTag[T]].runtimeClass match
         case c if c == classOf[Double] =>
           val (u, s, vt) = m.asInstanceOf[Mat[Double]].svdDouble
@@ -2930,8 +2917,7 @@ object Mat {
         case c =>
           throw UnsupportedOperationException(s"svd only supported for Double, got ${c.getName}")
 
-    @annotation.unused 
-    def lstsq(b: Mat[T])(using frac: Fractional[T]): (Mat[T], Mat[T], Int, Array[T]) = {
+    def lstsq(b: Mat[T])(using @annotation.unused frac: Fractional[T]): (Mat[T], Mat[T], Int, Array[T]) = {
       summon[ClassTag[T]].runtimeClass match
         case c if c == classOf[Double] =>
           val md   = m.asInstanceOf[Mat[Double]]
@@ -3336,8 +3322,7 @@ object Mat {
 
     // matrix_rank:
     /** NumPy: np.linalg.matrix_rank(m) - rank via SVD singular value threshold */
-    @annotation.unused 
-    def matrixRank(tol: Double = -1.0)(using frac: Fractional[T]): Int = {
+    def matrixRank(tol: Double = -1.0)(using @annotation.unused frac: Fractional[T]): Int = {
       summon[ClassTag[T]].runtimeClass match
         case c if c == classOf[Double] =>
           val (_, s, _) = m.asInstanceOf[Mat[Double]].svdDouble
@@ -3557,7 +3542,6 @@ object Mat {
     /** NumPy: np.linalg.eig(m) - eigenvalues and right eigenvectors
      *  Returns (realParts, imagParts, eigenvectors) since we have no Complex type
      *  For symmetric matrices prefer eigenvalues() which is more efficient */
-    @annotation.unused 
     private[data] def eigDouble: (Array[Double], Array[Double], Mat[Double]) = {
       import org.bytedeco.openblas.global.openblas.*
       val md    = m.asInstanceOf[Mat[Double]]
@@ -3587,8 +3571,7 @@ object Mat {
     /*
      * returns (realParts, imagParts, eigenvectors) as separate arrays.
      */
-    @annotation.unused 
-    def eig(using frac: Fractional[T]): (Array[T], Array[T], Mat[T]) = {
+    def eig(using @annotation.unused frac: Fractional[T]): (Array[T], Array[T], Mat[T]) = {
       summon[ClassTag[T]].runtimeClass match
         case c if c == classOf[Double] =>
           val (wr, wi, vr) = m.asInstanceOf[Mat[Double]].eigDouble
@@ -3645,8 +3628,9 @@ object Mat {
 
     /** Integer exponent overload - no Fractional needed */
     def power(n: Int)(using num: Numeric[T]): Mat[T] = {
-      if n < 0 then
-        throw UnsupportedOperationException("negative integer power requires Fractional")
+      // argument error → IAE (UnsupportedOperationException is reserved for
+      // unsupported element types)
+      require(n >= 0, "negative integer power requires Fractional — use power(n: Double) or 1.0 / m")
       m.map((x: T) => {
         var result = num.one
         var k = 0
@@ -3740,8 +3724,7 @@ object Mat {
     }
 
     /** NumPy: np.linalg.pinv(m) - Moore-Penrose pseudoinverse via SVD */
-    @annotation.unused 
-    def pinv(tol: Double = -1.0)(using frac: Fractional[T]): Mat[T] = {
+    def pinv(tol: Double = -1.0)(using @annotation.unused frac: Fractional[T]): Mat[T] = {
       summon[ClassTag[T]].runtimeClass match
         case c if c == classOf[Double] =>
           val md = m.asInstanceOf[Mat[Double]]
@@ -3784,8 +3767,7 @@ object Mat {
     /** NumPy: np.linalg.cholesky(m) - Cholesky decomposition
      *  Returns lower triangular L such that m = L * L^T
      *  m must be symmetric positive definite */
-    @annotation.unused 
-    def cholesky(using frac: Fractional[T]): Mat[T] =
+    def cholesky(using @annotation.unused frac: Fractional[T]): Mat[T] =
       summon[ClassTag[T]].runtimeClass match
         case c if c == classOf[Double] =>
           import org.bytedeco.openblas.global.openblas.*
@@ -3922,11 +3904,21 @@ object Mat {
           i += 1
         Mat.create(result, m.rows, 1)
 
-    /** R: scale(x, center=TRUE, scale=TRUE) — subtract column means and/or divide by column std devs.
-     *  Returns a new matrix with zero-mean columns (center=true) and/or unit-variance columns (scale=true). */
+    /** R: scale(x, center=TRUE, scale=TRUE) — subtract column means and/or divide by
+     *  column std devs. Returns a new matrix with zero-mean columns (center=true)
+     *  and/or unit-variance columns (scale=true).
+     *
+     *  Matches R's convention: the divisor is the SAMPLE std (÷(n−1), Bessel) —
+     *  rows are treated as observations sampled from a population. For
+     *  NumPy/sklearn-style POPULATION scaling (÷n) use `m / m.std(axis = 0)`
+     *  after centering (`m.std` keeps NumPy's ddof=0 semantics). */
     def scale(center: Boolean = true, doScale: Boolean = true)(using frac: Fractional[T], elem: MatElem[T]): Mat[T] =
       val c = if center then m - m.mean(axis = 0) else m
-      if doScale then c / m.std(axis = 0) else c
+      if doScale then
+        // sampleStd = populationStd * sqrt(n / (n−1))
+        val bessel = elem.fromDouble(math.sqrt(m.rows.toDouble / (m.rows - 1)))
+        c / (m.std(axis = 0) * bessel)
+      else c
 
     /** NumPy: np.var(m) - variance */
     def variance(using frac: Fractional[T]): T =
@@ -4965,7 +4957,6 @@ object Mat {
   object RVec:
     def apply[T: ClassTag](elems: T*): RVec[T] =
       Mat.create(elems.toArray, 1, elems.length)
-    @annotation.unused
     def zeros[T: ClassTag: Fractional](n: Int): RVec[T] = Mat.zeros[T](1, n)
     def ones[T: ClassTag: Fractional](n: Int): RVec[T]  = Mat.ones[T](1, n)
     def fromArray[T: ClassTag](arr: Array[T]): RVec[T] =
@@ -5122,7 +5113,7 @@ object MatD {
   def linspace(start: Double, stop: Double, num: Int = 50): CVec[Double] = Mat.linspace[Double](start, stop, num)
 
   def apply(rows: Int, cols: Int): Mat[Double] = Mat.zeros[Double](rows, cols)
-  def apply(m: Mat[Double], row: Int, col: Int): Double = m.apply(row, col) // This uses the extension method exactly like your tests
+  def apply(m: Mat[Double], row: Int, col: Int): Double = m.apply(row, col)
 
   def apply(rows: Int, cols: Int, data: Array[Double]): Mat[Double] = Mat.apply[Double](rows, cols, data)
   def apply(value: Double): Mat[Double] = Mat.apply[Double](value)
@@ -5201,7 +5192,7 @@ object MatB {
   def linspace(start: Double, stop: Double, num: Int = 50): CVec[Big] = Mat.linspace[Big](start, stop, num)
 
   def apply(rows: Int, cols: Int): Mat[Big] = Mat.zeros[Big](rows, cols)
-  def apply(m: Mat[Big], row: Int, col: Int): Big = m.apply(row, col) // This uses the extension method exactly like your tests
+  def apply(m: Mat[Big], row: Int, col: Int): Big = m.apply(row, col)
 
   def apply(rows: Int, cols: Int, data: Array[Big]): Mat[Big] = Mat.apply[Big](rows, cols, data)
   def apply(value: Double): Mat[Big] = Mat.apply[Big](value)

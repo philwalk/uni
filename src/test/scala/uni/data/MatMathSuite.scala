@@ -437,9 +437,9 @@ class MatMathSuite extends FunSuite:
     assertEquals(r(0, 1).toDouble, 9.0, 0.001)
   }
 
-  test("power(Int) negative exponent throws UnsupportedOperationException") {
+  test("power(Int) negative exponent throws IllegalArgumentException") {
     val m = MatD.row(2.0)
-    intercept[UnsupportedOperationException] { m.power(-1) }
+    intercept[IllegalArgumentException] { m.power(-1) }
   }
 
   // ============================================================================

@@ -94,7 +94,7 @@ class MatSemanticsSuite extends munit.FunSuite {
 
   test("power with negative Int exponent throws before computing") {
     val m = Mat[Double]((2.0, 3.0), (4.0, 5.0))
-    intercept[UnsupportedOperationException](m.power(-1))
+    intercept[IllegalArgumentException](m.power(-1))
   }
 
   test("linspace with num=1 preserves fractional start value") {

@@ -112,7 +112,7 @@ class MatNaNSuite extends FunSuite:
     assert(content.contains("-Inf"), s"expected -Inf in: $content")
   }
 
-  test("saveCSV: BigNaN written as N/A") {
+  test("saveCSV: BigNaN honors the nanAs parameter like Double NaN") {
     import java.nio.file.Files
     val tmpPath = Files.createTempFile("mat-bignan-", ".csv")
     tmpPath.toFile.deleteOnExit()
@@ -120,7 +120,11 @@ class MatNaNSuite extends FunSuite:
     val m = Mat.create(vals, 1, 2)
     m.saveCSV(uni.Paths.get(tmpPath.toString))
     val content = new String(Files.readAllBytes(tmpPath))
-    assert(content.contains("N/A"), s"expected N/A in: $content")
+    assert(content.contains("NaN"), s"expected default nanAs (NaN) in: $content")
+
+    m.saveCSV(uni.Paths.get(tmpPath.toString), nanAs = "N/A")
+    val content2 = new String(Files.readAllBytes(tmpPath))
+    assert(content2.contains("N/A"), s"expected N/A in: $content2")
   }
 
   test("saveCSV: Float NaN and Inf written correctly") {

@@ -3111,7 +3111,7 @@ class MatTest extends munit.FunSuite {
 
   test("power negative Int throws") {
     val m = Mat[Double]((1, 2), (3, 4))
-    intercept[UnsupportedOperationException] { m.power(-1) }
+    intercept[IllegalArgumentException] { m.power(-1) }
   }
 
   // ============================================================================

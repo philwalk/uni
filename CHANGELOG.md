@@ -26,6 +26,9 @@ stride/offset-aware access:
   elements are now *converted* to the target element type instead of cast —
   previously `MatD((1.0, 2.5f))` threw `ClassCastException`, `MatB((1, 2.5))`
   threw `ArrayStoreException`, and `Long` elements were rejected outright
+- `saveCSV` on `MatB`: `BigNaN` now honors the `nanAs` parameter like Double/Float
+  NaN (default `"NaN"`) — previously it was hard-coded to `"N/A"` regardless of
+  `nanAs`, so a `loadMatB`/`saveCSV` round-trip silently changed the NaN spelling
 
 **API additions**
 
@@ -54,6 +57,17 @@ stride/offset-aware access:
 - `round` / `power(Double)` / `nanToNum` on `MatB`: a non-finite Double result now
   becomes `BigNaN` instead of throwing `NumberFormatException` from
   `BigDecimal(Double.NaN)`
+- `scale()` now standardizes with the **sample** standard deviation (ddof = 1,
+  matching R's `scale()` and the inference convention, and consistent with
+  `Tprf3.nanStdCols`) instead of the population std — values shrink by
+  √(n/(n−1)). `m.std` itself is unchanged (population, NumPy `ddof=0` parity);
+  the doc comment spells out both conventions
+- Exception types are now consistent across the API — `IllegalArgumentException`
+  (via `require`) for bad arguments/bounds, `UnsupportedOperationException` for
+  unsupported element types, `ArithmeticException` for numerical failure
+  (singular matrix, LAPACK `info ≠ 0`). Changed: `slice(rows, cols)` out of
+  bounds threw `IndexOutOfBoundsException`, `power(n < 0)` threw
+  `UnsupportedOperationException` — both now `IllegalArgumentException`
 
 **Performance — continued**
 
@@ -98,6 +112,14 @@ stride/offset-aware access:
   fill (NumPyRNG itself remains single-thread-reproducible, same contract as
   NumPy's global generator); print options are an immutable `PrintConfig` swapped
   atomically and `formatMatrix` reads one consistent snapshot
+- Source hygiene in `Mat.scala`: removed first-person scaffolding comments
+  ("Phase 0", "Choke Point", "your legacy code", "exactly like your tests"),
+  a stray debug `println`, and commented-out code; `@annotation.unused` removed
+  from public API methods (`svd`, `lstsq`, `matrixRank`, `eig`, `pinv`,
+  `cholesky`, `arange`, `apply(unit)`, `RVec.zeros`) — where the `Fractional`
+  evidence is intentionally unused (Double-only LAPACK kernels) the annotation
+  now sits on the parameter, with a comment explaining it restricts the API to
+  numeric element types
 
 **API changes (breaking)**
 
