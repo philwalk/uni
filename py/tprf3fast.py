@@ -46,9 +46,18 @@ class AvarEstimates:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _j(n: int) -> np.ndarray:
-    """Centering matrix: I_n - (1/n) * ones(n, n)."""
-    return np.eye(n) - np.ones((n, n)) / n
+# The K&P centering matrix J(n) = I_n - (1/n)·1·1' is never built explicitly:
+# J(rows) @ M subtracts column means and M @ J(cols) subtracts row means,
+# which is O(rows·cols) instead of O(rows²·cols).
+
+def _center_cols(M: np.ndarray) -> np.ndarray:
+    """J(M.rows) @ M — subtract column means."""
+    return M - M.mean(axis=0, keepdims=True)
+
+
+def _center_rows(M: np.ndarray) -> np.ndarray:
+    """M @ J(M.cols) — subtract row means."""
+    return M - M.mean(axis=1, keepdims=True)
 
 
 def _nanstd_cols(X: np.ndarray) -> np.ndarray:
@@ -315,11 +324,11 @@ def estimate3prf_fast(
 
     alpha = None
     if procedure == 'IS Full' and Z_final is not None:
-        jt   = _j(T); jn = _j(N)
-        XtJt = Xn.T @ jt
-        Wxz  = jn @ XtJt @ Z_final
+        # J(T)/J(N) products expressed as centering — no dense T×T matrix
+        XtJt = _center_cols(Xn).T               # Xn' J(T)
+        Wxz  = _center_cols(XtJt @ Z_final)     # J(N) Xn' J(T) Z
         Sxx  = XtJt @ Xn
-        alpha = Wxz @ np.linalg.inv(Wxz.T @ Sxx @ Wxz) @ Wxz.T @ XtJt @ y
+        alpha = Wxz @ np.linalg.inv(Wxz.T @ Sxx @ Wxz) @ Wxz.T @ (XtJt @ y)
 
     pointests = PointEstimates(
         forecasts=forecasts, ferrors=ferrors, rsquare=rsq,
@@ -329,21 +338,26 @@ def estimate3prf_fast(
     # ── asymptotic variance (IS Full only) ────────────────────────────────────
     avarests = None
     if compute_avar and procedure == 'IS Full' and Z_final is not None:
-        jt = _j(T); jn = _j(N)
-        A  = (1 / T) * Xn.T @ jt @ Z_final
-        B  = ((T**-3) * (N**-2) *
-              Z_final.T @ jt @ Xn @ jn @ Xn.T @ jt @ Xn @ jn @ Xn.T @ jt @ Z_final)
-        C  = (1 / T / N) * Z_final.T @ jt @ Xn @ jn
-        omega_a = jn @ A @ np.linalg.inv(B) @ C
+        # Every J(T)/J(N) factor expressed as centering; groupings preserve the
+        # original term structure: [Z'J(T)XnJ(N)] [Xn'J(T)XnJ(N)] [Xn'J(T)Z]
+        Xc        = _center_cols(Xn)             # J(T) Xn   (T×N)
+        Zc        = _center_cols(Z_final)        # J(T) Z    (T×L)
+        XtJtZ     = Xc.T @ Z_final               # Xn' J(T) Z       (N×L)
+        ZtJtXnJn  = _center_rows(Zc.T @ Xn)      # Z' J(T) Xn J(N)  (L×N)
+        XtJtXnJn  = _center_rows(Xc.T @ Xn)      # Xn' J(T) Xn J(N) (N×N)
+        A  = (1 / T) * XtJtZ
+        B  = (T**-3) * (N**-2) * (ZtJtXnJn @ XtJtXnJn @ XtJtZ)
+        C  = (1 / T / N) * ZtJtXnJn
+        omega_a = _center_cols(A) @ np.linalg.inv(B) @ C   # J(N) A B⁻¹ C
         Xm  = Xn.mean(axis=0)
         tmp = np.zeros((N, N))
         for ti in range(T):
             xrow = Xn[ti] - Xm
-            tmp += (1 / T) * float(ferrors[ti]) ** 2 * np.outer(xrow, xrow)
+            tmp += (1 / T) * ferrors[ti].item() ** 2 * np.outer(xrow, xrow)
         alpha_avar = omega_a @ tmp @ omega_a.T
         avarests = AvarEstimates(
             alpha=alpha_avar,
-            forecasts=(N**-2) * jt @ Xn @ alpha_avar @ Xn.T @ jt,
+            forecasts=(N**-2) * Xc @ alpha_avar @ Xc.T,    # J(T) Xn αA Xn' J(T)
         )
 
     return forecasts, pointests, avarests

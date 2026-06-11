@@ -57,6 +57,22 @@ stride/offset-aware access:
 
 **Performance — continued**
 
+- `Tprf3`: all K&P `J(k) = I − (1/k)·1·1'` products rewritten as row/column
+  centering (`J(T) *@ M` ≡ subtract column means) instead of building a dense
+  T×T matrix and multiplying — O(T·N) instead of O(T²·N). The always-on IS Full
+  alpha block's `Xn' *@ J(T)` was the dominant cost of the whole benchmark and
+  hypersensitive to BLAS/threading state (9.7 vs 75 ms across machine states for
+  identical code). After: IS Full Large (T=650, N=40) ≈ **2.5 ms** without avar
+  (was 56 ms same-machine), ≈ 21 ms with avar (was 138 ms). Affected sites:
+  `estimate3prf` alpha and avar blocks, `tprfClosedForm`, `degreesOfFreedom`;
+  `jMat` deleted, `centerRows` helper added. Validated bit-equivalent against
+  the MATLAB K&P references (`jsrc/verifyTprfResults.sc`: max diff ≤ 4.4e-16).
+  For benchmark fairness the same rewrite was applied to `py/tprf3fast.py`
+  (verified against its explicit-J formulas at ≤ 4e-13): Python IS Full Large
+  drops 10.0 → 1.8 ms, making IS Full roughly a tie — the honest result, since
+  both sides are dominated by the same two batch solves. Also fixed a latent
+  NumPy 2.x incompatibility in its avar loop (`float(1-element array)` was
+  removed in NumPy 2.0; now `.item()`)
 - `eigenvalues()` on `Mat[Double]` routes through LAPACK `dgeev` (eigenvalues-only,
   no eigenvector computation) instead of 500 unshifted QR iterations — O(n³) once
   with exact results (and correct real parts for non-symmetric input); the QR
@@ -149,8 +165,9 @@ stride/offset-aware access:
 - Refreshed all benchmark tables in `README.md` and `docs/MatDCheatSheet.md` with
   same-day, same-machine measurements of uni 0.14.0 vs NumPy 2.4.1 vs Breeze 2.1.0
   (JVM 21): MatD wins 9/9 scored ops vs NumPy and wins or ties 9/9 vs Breeze
-  (geomean ~6.2×); 3PRF table updated to the forked-JVM numbers (IS Full gap vs
-  scipy-openblas narrowed from 1.9× to 1.2×)
+  (geomean ~6.2×); 3PRF tables updated to the post-centering numbers with both
+  implementations optimized (loops=5 OOS measurements): IS Full 1.2/1.3 ms tied,
+  OOS Recursive 270/42 ms (6.4×), OOS Cross Val 720/77 ms (9.4×)
 - `docs/ReferenceGuide.md`: added the eleven sections its table of contents promised
   but never delivered (Indexing and Slicing, Arithmetic, Broadcasting, Linear Algebra,
   Statistics, Element-wise Math, Machine Learning, RNG, Data Manipulation,

@@ -106,12 +106,15 @@ MatD faster 5/7 scored, geometric mean **2.24× faster** than Breeze.
 
 Measured on Windows 11 (uni 0.14.0 / JVM 17 / Scala 3.8.2, forked JVM, vs Python 3.14.3 / WinPython scipy-openblas).
 See [`src/main/scala/apps/Tprf3Bench.scala`](src/main/scala/apps/Tprf3Bench.scala) and [Kelly & Pruitt (2015)](https://doi.org/10.1111/jofi.12246).
+Both implementations were optimized identically in v0.14.0 (the K&P `J(k)` centering
+products are computed as O(T·N) centering instead of dense T×T matmuls), so the
+comparison is between equivalent algorithms.
 
 | Operation | Python | MatD | Ratio |
 | :--- | ---: | ---: | :--- |
-| `3PRF IS Full (T=650, N=40, L=2)` | 8.1 ms | 9.7 ms | **1.2× slower** |
-| `3PRF OOS Recursive (T=650, N=40, L=2)` | 269 ms | 24 ms | **11× faster** |
-| `3PRF OOS Cross Val (T=650, N=40, L=2)` | 755 ms | 61 ms | **12× faster** |
+| `3PRF IS Full (T=650, N=40, L=2)` | 1.2 ms | 1.3 ms | **tied** |
+| `3PRF OOS Recursive (T=650, N=40, L=2)` | 270 ms | 42 ms | **6.4× faster** |
+| `3PRF OOS Cross Val (T=650, N=40, L=2)` | 720 ms | 77 ms | **9.4× faster** |
 
   | Label | Description |
   | :--- | :--- |

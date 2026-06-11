@@ -23,9 +23,9 @@ Both use OpenBLAS (MatD via netlib JNIBLAS). See [`jsrc/bench.sc`](../jsrc/bench
 | `std(1000×1000)` | 3.3 ms | 1.1 ms | **2.9× faster** | Two-pass; mean pass uses the v0.14.0 reduction |
 | `transpose(1000×1000)` | ≈0 ms | ≈0 ms | **tied** | O(1) stride-flip in both — no data copy |
 | `mapParallel` custom fn | 434 ms | 0.73 ms | **~590× faster** | `np.vectorize` is a Python loop; JVM is compiled |
-| `3PRF IS Full (T=650, N=40, L=2)` | 8.1 ms | 9.7 ms | **1.2× slower** | includes K&P alpha computation; Python: WinPython scipy-openblas |
-| `3PRF OOS Recursive (T=650, N=40, L=2)` | 269 ms | 24 ms | **11× faster** | double-unboxing elimination; Scala: parallel collections; Python: vectorized per-window |
-| `3PRF OOS Cross Val (T=650, N=40, L=2)` | 755 ms | 61 ms | **12× faster** | double-unboxing elimination; Scala: parallel collections; Python: vectorized per-window |
+| `3PRF IS Full (T=650, N=40, L=2)` | 1.2 ms | 1.3 ms | **tied** | both sides reduced to the same two batch solves by the v0.14.0 J(k)-centering rewrite; Python: WinPython scipy-openblas |
+| `3PRF OOS Recursive (T=650, N=40, L=2)` | 270 ms | 42 ms | **6.4× faster** | Scala: parallel collections across windows; Python: vectorized per-window |
+| `3PRF OOS Cross Val (T=650, N=40, L=2)` | 720 ms | 77 ms | **9.4× faster** | Scala: parallel collections across windows; Python: vectorized per-window |
 
 **Practical guidance:**
 - MatD wins all 9 scored matrix operations vs NumPy on Windows (JVM 21, MSYS2 Python).
@@ -33,7 +33,7 @@ Both use OpenBLAS (MatD via netlib JNIBLAS). See [`jsrc/bench.sc`](../jsrc/bench
 - Reductions (`sum`, `mean`, `std`): NumPy 2.4.x's SIMD pairwise summation had briefly overtaken MatD here; the v0.14.0 chunked multi-accumulator parallel reduction reclaims all three (2.8–3.0×) by aggregating multi-core memory bandwidth.
 - Custom scalar functions: `mapParallel` vs `np.vectorize` shows a ~590× JVM advantage; the Python interpreter overhead dominates.
 - Matmul: MatD wins ~1.6× — netlib JNIBLAS passes arrays directly with no DoublePointer overhead.
-- 3PRF IS Full: Python (scipy-openblas) leads by ~1.2× (was 1.9× before the v0.14.0 small-matrix parallel-threshold fix and forked-JVM benchmarking) — IS Full is dominated by two BLAS batch solves where NumPy's native path has an edge; OOS modes strongly favour Scala at 11–12×.
+- 3PRF IS Full is a tie (~1.2–1.3 ms): v0.14.0 rewrote the K&P `J(k)` centering products as O(T·N) centering in **both** the Scala and Python implementations (previously each built a dense T×T matrix, and the comparison mostly measured that shared waste). What remains is the same two BLAS batch solves on both sides. OOS modes favour Scala at 6–9× — parallel collections across expanding/cross-validation windows vs NumPy's sequential per-window loop.
 
 ---
 

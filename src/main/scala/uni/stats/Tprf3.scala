@@ -172,9 +172,9 @@ object Tprf3 {
     def estimateYhat(oos: VecD): Double //= Double.NaN
 
     def degreesOfFreedom: Double =
-      val Jt   = jMat(X.rows); val Jn = jMat(X.cols)
-      val XtJt = X.T *@ Jt
-      val Wxz  = Jn *@ XtJt *@ Z
+      // J(T)/J(N) products expressed as centering — no dense T×T matrix
+      val XtJt = centerColumns(X).T                  // X'·J(T)
+      val Wxz  = centerColumns(XtJt *@ Z)            // J(N)·X'·J(T)·Z
       val Sxx  = XtJt *@ X
       val hatX = Wxz *@ (Wxz.T *@ Sxx *@ Wxz).inverse *@ Wxz.T *@ XtJt
       val centered = centerColumns(hatX)
@@ -199,10 +199,10 @@ object Tprf3 {
   def tprfClosedForm(y: MatD, X: MatD, Z: MatD): Tprf3Result =
     val Xn   = X / nanStdCols(X)
     val T    = Xn.rows; val N = Xn.cols
-    val Jt   = jMat(T); val Jn = jMat(N)
-    val XtJt = Xn.T *@ Jt
-    val JtX  = Jt *@ Xn
-    val Wxz  = Jn *@ XtJt *@ Z
+    // J(T)/J(N) products expressed as centering — no dense T×T matrix
+    val JtX  = centerColumns(Xn)                   // J(T)·Xn
+    val XtJt = JtX.T                               // Xn'·J(T)
+    val Wxz  = centerColumns(XtJt *@ Z)            // J(N)·Xn'·J(T)·Z
     val Sxx  = XtJt *@ Xn
     val alpha_hat_factor: MatD = Wxz *@ (Wxz.T *@ Sxx *@ Wxz).inverse *@ Wxz.T *@ XtJt
     val alpha_hat = alpha_hat_factor *@ y           // N×1
@@ -231,7 +231,7 @@ object Tprf3 {
     val beta3 = (Xaug.T *@ Xaug).inverse *@ (Xaug.T *@ y)  // L+1×1
 
     // K&P: Szz = Z'·J(T)·Z; beta_hat = Szz⁻¹·Wxz'·alpha_hat (closed-form pass-3 alt)
-    val JtZ      = Jt *@ Z
+    val JtZ      = centerColumns(Z)                // J(T)·Z
     val Szz      = Z.T *@ JtZ
     @annotation.unused
     lazy val _beta_hat = Szz.inverse *@ Wxz.T *@ alpha_hat       // L×1, K&P closed-form alt
@@ -332,12 +332,18 @@ object Tprf3 {
     Mat.create(arr, rows.length, m.cols)
 
   /** Centering matrix: I_n − (1/n)·1·1ᵀ */
-  private def jMat(n: Int): MatD =
-    MatD.eye(n) - MatD.ones(n, n) * (1.0 / n)
+  // The K&P centering matrix J(k) = I_k − (1/k)·1·1' never needs to be built:
+  // J(rows) *@ m subtracts column means and m *@ J(cols) subtracts row means.
+  // (The former jMat-based products built a dense T×T matrix and did O(T²·N)
+  // work where O(T·N) centering suffices — and dominated IS Full timing.)
 
-  /** Centre each column (subtract column mean). */
+  /** Centre each column (subtract column mean): equivalent to J(m.rows) *@ m. */
   private def centerColumns(m: MatD): MatD =
     m - (m.sum(0) / m.rows.toDouble)
+
+  /** Centre each row (subtract row mean): equivalent to m *@ J(m.cols). */
+  private def centerRows(m: MatD): MatD =
+    m - (m.sum(1) / m.cols.toDouble)
 
   /** Column std-dev ignoring NaN; returns (1×N). Zero/degenerate columns → 1. */
   private def nanStdCols(m: MatD): MatD =
@@ -682,12 +688,12 @@ object Tprf3 {
     val alpha: Option[MatD] =
       if procedure == "IS Full" then
         zFinal.map { zf =>
-          val jt   = jMat(T)
-          val jn   = jMat(N)
-          val XtJt = Xn.T *@ jt
-          val Wxz  = jn *@ XtJt *@ zf
+          // J(T)/J(N) products expressed as centering — the former dense T×T
+          // jMat matmul here dominated the whole IS Full timing
+          val XtJt = centerColumns(Xn).T                 // Xn'·J(T)
+          val Wxz  = centerColumns(XtJt *@ zf)           // J(N)·Xn'·J(T)·zf
           val Sxx  = XtJt *@ Xn
-          Wxz *@ (Wxz.T *@ Sxx *@ Wxz).inverse *@ Wxz.T *@ XtJt *@ y
+          Wxz *@ (Wxz.T *@ Sxx *@ Wxz).inverse *@ Wxz.T *@ (XtJt *@ y)
         }
       else None
 
@@ -695,12 +701,17 @@ object Tprf3 {
     val avarests: Option[AvarEstimates] =
       if computeAvar && procedure == "IS Full" then
         zFinal.map { zf =>
-          val jt = jMat(T); val jn = jMat(N)
-          val a  = Xn.T *@ jt *@ zf * (1.0 / T)
-          val b  = (zf.T *@ jt *@ Xn *@ jn *@ Xn.T *@ jt *@ Xn *@
-                    jn *@ Xn.T *@ jt *@ zf) * (math.pow(T, -3) * math.pow(N, -2))
-          val c  = zf.T *@ jt *@ Xn *@ jn * (1.0 / T / N)
-          val omegaA = jn *@ a *@ b.inverse *@ c
+          // Every J(T)/J(N) factor expressed as centering (see jMat identity note);
+          // groupings preserve the original left-to-right evaluation order
+          val Xc       = centerColumns(Xn)               // J(T)·Xn      (T×N)
+          val Zc       = centerColumns(zf)               // J(T)·zf      (T×L)
+          val XtJtZ    = Xc.T *@ zf                      // Xn'·J(T)·zf  (N×L)
+          val ZtJtXnJn = centerRows(Zc.T *@ Xn)          // zf'·J(T)·Xn·J(N)  (L×N)
+          val XtJtXnJn = centerRows(Xc.T *@ Xn)          // Xn'·J(T)·Xn·J(N)  (N×N)
+          val a  = XtJtZ * (1.0 / T)
+          val b  = (ZtJtXnJn *@ XtJtXnJn *@ XtJtZ) * (math.pow(T, -3) * math.pow(N, -2))
+          val c  = ZtJtXnJn * (1.0 / T / N)
+          val omegaA = centerColumns(a) *@ b.inverse *@ c   // J(N)·a·b⁻¹·c
           val Xm = Xn.sum(0) / T.toDouble
           var tmp = MatD.zeros(N, N)
           for ti <- 0 until T do
@@ -709,7 +720,7 @@ object Tprf3 {
           val alphaAvar = omegaA *@ tmp *@ omegaA.T
           AvarEstimates(
             alpha     = alphaAvar,
-            forecasts = jt *@ Xn *@ alphaAvar *@ Xn.T *@ jt * math.pow(N, -2))
+            forecasts = Xc *@ alphaAvar *@ Xc.T * math.pow(N, -2))  // J(T)·Xn·αA·Xn'·J(T)
         }
       else None
 
