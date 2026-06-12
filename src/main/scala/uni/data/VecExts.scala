@@ -168,8 +168,10 @@ object VecOps:
     def toArray(using ClassTag[T]): Array[T] = rv.asMat.toArray
     @annotation.targetName("rvecFlatten")
     def flatten(using ClassTag[T]): Array[T] = rv.asMat.flatten
-    @annotation.targetName("rvecNorm")
-    def norm(using ClassTag[T], Fractional[T], MatElem[T]): T = rv.asMat.norm
+    // NO `norm` here: rv.norm resolves to Mat's norm via companion implicit
+    // scope (RVec[T] <: Mat[T]).  A VecOps norm would become an importable
+    // term of package uni.data (via `export VecOps.*`), making `norm` E049-
+    // ambiguous for clients that also wildcard-import e.g. breeze.linalg.*
     @annotation.targetName("rvecShape")
     def shape: (Int, Int) = rv.asMat.shape
     @annotation.targetName("rvecRows")
@@ -247,8 +249,7 @@ object VecOps:
     def toArray(using ClassTag[T]): Array[T] = cv.asMat.toArray
     @annotation.targetName("cvecFlatten")
     def flatten(using ClassTag[T]): Array[T] = cv.asMat.flatten
-    @annotation.targetName("cvecNorm")
-    def norm(using ClassTag[T], Fractional[T], MatElem[T]): T = cv.asMat.norm
+    // NO `norm` here — see rvecFlatten note above (E049 with breeze et al.)
     @annotation.targetName("cvecShape")
     def shape: (Int, Int) = cv.asMat.shape
     @annotation.targetName("cvecRows")

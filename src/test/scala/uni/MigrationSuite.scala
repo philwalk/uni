@@ -29,9 +29,15 @@ class MigrationSuite extends FunSuite:
     assertEquals(sorted, testSeq.sorted)
   }
 
-  test("CVec.show and RVec.show work with import uni.* only") {
+  // With `import uni.*` only, CVec/RVec values dispatch to Mat's companion-scope
+  // extensions (CVec[T] <: Mat[T]), so show labels them as Mat.  Vector-typed
+  // dispatch (CVec/RVec show labels, .T refinement) requires `import uni.data.*`
+  // — uni/package.scala must NOT re-export VecOps.* or every VecOps name becomes
+  // ambiguous (E049) for clients importing both uni.* and uni.data.*
+  // (see test.client.DualImportSuite).
+  test("CVec/RVec construction and show work with import uni.* only") {
     val v: CVecD = CVec(1.0, 2.0, 3.0)
     val r: RVecD = RVec(4.0, 5.0, 6.0)
-    assert(v.show.startsWith("3x1 CVec[Double]:"))
-    assert(r.show.startsWith("1x3 RVec[Double]:"))
+    assert(v.show.startsWith("3x1 Mat[Double]:"))
+    assert(r.show.startsWith("1x3 Mat[Double]:"))
   }

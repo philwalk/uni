@@ -5,10 +5,12 @@ export pathExts.*
 export stringExts.*
 export helpers.*
 export uni.data.{MatD, MatB, MatF, CVecD, RVecD, CVecF, RVecF, CVecB, RVecB, CVec, RVec, MatElem}
-// CVec/RVec extension methods: the companions are package-level objects (not
-// companions of the opaque types, which live inside object Mat), so these are
-// NOT in implicit scope — `import uni.*` clients need this explicit forward.
-export uni.data.VecOps.*
+// Do NOT re-export uni.data.VecOps.* here: uni.data already exports it at
+// package level (VecExts.scala), and a second forwarder makes every VecOps
+// name ambiguous (E049) for clients that import both uni.* and uni.data.*.
+// `import uni.*`-only clients still reach Mat methods on CVec/RVec values via
+// object Mat's companion implicit scope (CVec[T] <: Mat[T]); vector-typed
+// dispatch (.T: RVec, etc.) requires `import uni.data.*`.
 export uni.io.{AggOp, JoinType}
 export io.matResultOps.*
 def cksum(bytes: Array[Byte]): (Long, Long)    = io.Cksum.cksum(bytes)
