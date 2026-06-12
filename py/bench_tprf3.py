@@ -37,12 +37,13 @@ def run(label: str, T: int, N: int, L: int, warmup: int, loops: int):
     y = rng.standard_normal((T, 1))
     Z = rng.standard_normal((T, L))
 
-    # ── warm-up ──────────────────────────────────────────────────────────────
+    # ── warm-up: no JIT in Python; a few calls cover OpenBLAS thread-pool
+    # spin-up and CPU frequency ramp. The loop-based estimate3prf is not
+    # measured (rows commented out below), so it is not warmed either —
+    # restore its warmup calls if those rows are re-enabled.
     print("  warming up ... ", end="", flush=True)
     for _ in range(warmup):
-        estimate3prf(y, X, Z, procedure="IS Full")
         estimate3prf_fast(y, X, Z, procedure="IS Full")
-    estimate3prf(y, X, Z, procedure="OOS Recursive", mintrain=T // 2)
     estimate3prf_fast(y, X, Z, procedure="OOS Recursive", mintrain=T // 2)
     print("done")
 

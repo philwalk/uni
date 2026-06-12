@@ -129,6 +129,26 @@ stride/offset-aware access:
   the `MatD`/`MatB`/`MatF`/vector type aliases moved from Mat.scala to a new
   `MatFacades.scala` (Mat.scala: 5,352 → 4,860 lines). Pure relocation of
   package-level definitions — no dispatch or API change
+- File split (completed): three method groups with no companion-dispatch
+  constraint moved out of `object Mat` into sibling files, re-exported inside
+  `object Mat` (`export MatXxxOps.*`) so they remain companion members —
+  implicit-scope and `import Mat.*` dispatch are byte-for-byte unchanged for
+  clients (verified by the full suite plus `jsrc/docCheck.sc` /
+  `jsrc/tastyCheck.sc` against the published jar):
+  - `MatMathOps.scala` — trig/hyperbolic/floor/ceil/log10/log2/trunc and the
+    ML activations (sigmoid, relu, leakyRelu, softmax, logSoftmax, elu, gelu,
+    dropout) plus their shared `mapToDouble` kernel
+  - `MatPandasOps.scala` — sort/argsort/nlargest/nsmallest/between/unique/
+    nunique/valueCounts, diff/shift/pct_change, percentile/median (+ the
+    private `percentileOf` kernel), describe, idxmin/idxmax, histogram, and
+    the `rolling` entry point (`class RollingWindow` itself stays in Mat.scala)
+  - `MatSignalOps.scala` — polyfit/polyval/convolve/correlate companion methods
+  Mat.scala: 4,860 → 4,025 lines. Internals widened to `private[data]` for the
+  new files: `fastD`, `fillD`, `nanFill`. One subtlety the new files must
+  respect: the opaque type must be imported as a direct member
+  (`import Mat.Mat`) — the package-level forwarder (`export Mat.{Mat, …}`)
+  cannot be elaborated while `object Mat` is mid-completion with the
+  `export MatXxxOps.*` clauses (cyclic; manifests as "Not found: type Mat")
 
 - The ~25 hand-copied Double fast-path guards
   (`runtimeClass == classOf[Double] && isContiguous && offset == 0 && …`) are now

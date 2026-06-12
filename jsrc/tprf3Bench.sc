@@ -16,27 +16,70 @@ import scala.sys.process.*
  */
 object Tprf3Bench {
 
-  /** Returns ms-per-call for the given block run `loops` times. */
-  private def bench(loops: Int)(block: => Unit): Double =
-    val t0 = System.currentTimeMillis()
-    var i  = 0
-    while i < loops do { block; i += 1 }
-    (System.currentTimeMillis() - t0).toDouble / loops
+  private def medianOf(samples: Array[Double]): Double =
+    java.util.Arrays.sort(samples)
+    val n = samples.length
+    if n % 2 == 1 then samples(n / 2)
+    else (samples(n / 2 - 1) + samples(n / 2)) / 2.0
 
-  def run(label: String, T: Int, N: Int, L: Int, warmup: Int, loops: Int): Unit =
-    println(s"\n── $label  (T=$T  N=$N  L=$L  warmup=$warmup  loops=$loops) ──")
+  /** Median ms-per-call over `loops` individually timed runs. Median, not
+   *  mean: a residual JIT tail or a single background blip then shifts one
+   *  sample instead of polluting the whole reading. */
+  private def bench(loops: Int)(block: => Unit): Double =
+    val times = Array.ofDim[Double](loops)
+    var i = 0
+    while i < loops do
+      val t0 = System.nanoTime()
+      block
+      times(i) = (System.nanoTime() - t0) / 1e6
+      i += 1
+    medianOf(times)
+
+  /** Adaptive warm-up: times `block` in batches of `win` calls and stops once
+   *  the last three batch medians agree within `tol` (and at least `minMs` has
+   *  elapsed), or at `maxMs`. A fixed-duration warm-up loses to external
+   *  disturbances that outlast it — the Bloop server settling after a compile,
+   *  CPU boost/core-unparking — observed medians of 3–4 ms/call (vs 0.6
+   *  steady-state) over a whole 50-loop section. Waiting for stability
+   *  sidesteps the cause. Limitation: a disturbance that is itself stable for
+   *  seconds is indistinguishable from steady state from inside the process;
+   *  the elapsed time is returned (and printed) so such runs are visible.
+   */
+  private def warmupUntilStable(minMs: Int, maxMs: Int = 15000, win: Int = 15,
+                                tol: Double = 0.20)(block: => Unit): Double =
+    val start = System.nanoTime()
+    def elapsedMs: Double = (System.nanoTime() - start) / 1e6
+    val batch = Array.ofDim[Double](win)
+    var m2, m1 = Double.MaxValue   // medians of the two previous batches
+    var stable = false
+    while !stable && elapsedMs < maxMs do
+      var i = 0
+      while i < win do
+        val t0 = System.nanoTime()
+        block
+        batch(i) = (System.nanoTime() - t0) / 1e6
+        i += 1
+      val m0 = medianOf(batch)
+      val hi = math.max(m0, math.max(m1, m2))
+      val lo = math.min(m0, math.min(m1, m2))
+      stable = elapsedMs >= minMs && hi <= lo * (1 + tol)
+      m2 = m1; m1 = m0
+    elapsedMs / 1000.0
+
+  def run(label: String, T: Int, N: Int, L: Int, warmupMs: Int, loops: Int): Unit =
+    println(s"\n── $label  (T=$T  N=$N  L=$L  warmup>=${warmupMs}ms  loops=$loops) ──")
     Mat.setSeed(0)
     val X: MatD = MatD.randn(T, N)
     val y: MatD = MatD.randn(T, 1)
     val Z: MatD = MatD.randn(T, L)
 
-    // ── warm-up (let JIT settle) ──────────────────────────────────────────
     print("  warming up ... ")
     Console.flush()
-    for _ <- 0 until warmup do
+    val warmSecs = warmupUntilStable(minMs = warmupMs) {
       Tprf3.t3prf(y, X, Z)
       Tprf3.estimate3prf(y, X, Right(Z), procedure = "IS Full")
-    println("done")
+    }
+    printf("done (%.1f s)%n", warmSecs)
 
     // ── IS Full ───────────────────────────────────────────────────────────
     val msFast   = bench(loops) { Tprf3.t3prf(y, X, Z) }
@@ -46,7 +89,8 @@ object Tprf3Bench {
     printf("  [Scala]  %-26s  %8.2f ms/call%n", "Tprf3.estimate3prf IS Full", ms3prf)
 
     // ── OOS Recursive (fewer loops — it iterates T times internally) ──────
-    // floor of 5: at loops/10 = 2 a single background blip dominated the mean
+    // floor of 5: the median of 5 tolerates up to two outlier samples; at
+    // loops/10 = 2 a single background blip dominated the reading
     // (observed OOS Rec readings of 24–112 ms for identical code)
     val oosLoops = math.max(5, loops / 10)
     val msOosRec = bench(oosLoops) {
@@ -109,10 +153,12 @@ object Tprf3Bench {
     val script  = Paths.get(s"$rootDir/py/bench_tprf3.py").posx
 
     println("── Scala benchmarks ─────────────────────────────────────────────────────────")
-    // Small runs first in the freshly forked JVM; warmup=15 lets C2 finish
-    // compiling before measurement (warmup=5 intermittently read ~4× slow)
-    run("Small", T = 200, N = 30, L = 2, warmup = 15, loops = 50)
-    run("Large", T = 650, N = 40, L = 2, warmup = 3,  loops = 20)
+    // Small runs first in the freshly forked JVM and bears JIT startup plus
+    // any post-compile/Bloop or CPU-ramp disturbance; warmupMs is the floor —
+    // warmupUntilStable keeps going until per-call time settles. Large reuses
+    // the now-hot code paths, so a shorter floor suffices.
+    run("Small", T = 200, N = 30, L = 2, warmupMs = 2000, loops = 50)
+    run("Large", T = 650, N = 40, L = 2, warmupMs = 500,  loops = 20)
 
     if !java.io.File(script).exists() then
       println(s"\n(bench script not found: $script)")
