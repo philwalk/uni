@@ -282,8 +282,13 @@ object Mat {
   /** Fast-path guard for binary ops: both operands directly addressable.
    *  `other` needs no length check — with offset 0 and standard strides its
    *  logical data occupies the front of the backing array. */
-  private inline def fastD2[T](m: Mat[T], other: Mat[T])(using ct: ClassTag[T]): Boolean =
-    fastD(m) && other.isContiguous && other.offset == 0
+  /** Looser left-operand guard: `m` only needs to BE Double (any layout — views,
+   *  transposes, offsets). `fastBinOp` reads `m` through the stride equation, so a
+   *  row/col view (e.g. `Xn(t, ::)`) no longer falls back to the boxed binOp path. */
+  private[data] inline def fastDL[T](@annotation.unused m: Mat[T])(using ct: ClassTag[T]): Boolean =
+    ct.runtimeClass == classOf[Double]
+  private inline def fastD2L[T](m: Mat[T], other: Mat[T])(using ct: ClassTag[T]): Boolean =
+    fastDL(m) && other.isContiguous && other.offset == 0
 
   /** Fill `out` with f(i); parallel for large arrays, sequential below ParallelThreshold. */
   private[data] def fillD(out: Array[Double])(f: Int => Double): Unit =
@@ -513,6 +518,18 @@ object Mat {
   //          2 * 3 ~^ 2 = 18 ; 2*(3^2)
   // whereas  2 * 3  ^ 2 = 36 ; (2*3)^2
   //
+  // Unboxed element read for Mat[Double]. The generic Mat[T].apply reads m.tdata,
+  // typed Array[T] — for abstract T that erases to java.lang.Object, so every
+  // element goes through ScalaRuntime.array_apply and boxes a java.lang.Double.
+  // `atD` reads the backing double[] directly via the stride equation (correct for
+  // views/transposes, so no contiguity guard needed) and stays primitive. It is a
+  // distinct name on purpose: overloading `apply`/`at` in this more-specific
+  // Mat[Double] clause would shadow the generic clause's rich apply/at overload
+  // set (m(::, 0), m(range, ::), v(mask), …) for MatD receivers.
+  extension (m: Mat[Double])
+    private[uni] inline def atD(r: Int, c: Int): Double =
+      m.tdata.asInstanceOf[Array[Double]](m.offset + r * m.rs + c * m.cs)
+
   // not directly related to exponentiation, but needed
   // to support the usage in the above comment
   // (to left-multiply a matrix by a scalar).
@@ -1090,47 +1107,82 @@ object Mat {
     /** Double fast paths shared by +, -, *:* (and /): same-shape (parallel via
      *  fillD), 1×N row broadcast, and N×1 column broadcast. None when shapes
      *  need general broadcasting — caller falls back to the boxed binOp.
-     *  Only valid when fastD2(m, other) already holds. */
+     *  Only valid when fastD2L(m, other) already holds. */
     private def fastBinOp(other: Mat[T])(f: (Double, Double) => Double): Option[Mat[T]] =
       val a    = m.tdata.asInstanceOf[Array[Double]]
       val rows = m.rows; val cols = m.cols
-      if other.rows == rows && other.cols == cols && other.tdata.length == rows * cols then
-        val b   = other.tdata.asInstanceOf[Array[Double]]
-        val out = Array.ofDim[Double](rows * cols)
-        fillD(out)(i => f(a(i), b(i)))
-        Some(Mat.create(out, rows, cols).asInstanceOf[Mat[T]])
-      else if other.rows == 1 && other.cols == cols && other.tdata.length == cols then
-        // Broadcast 1×N: combine the same row vector with every row
-        val b   = other.tdata.asInstanceOf[Array[Double]]
-        val out = Array.ofDim[Double](rows * cols)
-        var r = 0
-        while r < rows do
-          val base = r * cols; var c = 0
-          while c < cols do { out(base + c) = f(a(base + c), b(c)); c += 1 }
-          r += 1
-        Some(Mat.create(out, rows, cols).asInstanceOf[Mat[T]])
-      else if other.rows == rows && other.cols == 1 && other.tdata.length == rows then
-        // Broadcast N×1: combine each row's scalar with that row (e.g. m - m.mean(axis=1))
-        val b   = other.tdata.asInstanceOf[Array[Double]]
-        val out = Array.ofDim[Double](rows * cols)
-        var r = 0
-        while r < rows do
-          val base = r * cols; val s = b(r); var c = 0
-          while c < cols do { out(base + c) = f(a(base + c), s); c += 1 }
-          r += 1
-        Some(Mat.create(out, rows, cols).asInstanceOf[Mat[T]])
-      else None
+      if m.isContiguous && m.offset == 0 && a.length == rows * cols then
+        // Hot path: `m` occupies the front of its backing array, indexed linearly.
+        if other.rows == rows && other.cols == cols && other.tdata.length == rows * cols then
+          val b   = other.tdata.asInstanceOf[Array[Double]]
+          val out = Array.ofDim[Double](rows * cols)
+          fillD(out)(i => f(a(i), b(i)))
+          Some(Mat.create(out, rows, cols).asInstanceOf[Mat[T]])
+        else if other.rows == 1 && other.cols == cols && other.tdata.length == cols then
+          // Broadcast 1×N: combine the same row vector with every row
+          val b   = other.tdata.asInstanceOf[Array[Double]]
+          val out = Array.ofDim[Double](rows * cols)
+          var r = 0
+          while r < rows do
+            val base = r * cols; var c = 0
+            while c < cols do { out(base + c) = f(a(base + c), b(c)); c += 1 }
+            r += 1
+          Some(Mat.create(out, rows, cols).asInstanceOf[Mat[T]])
+        else if other.rows == rows && other.cols == 1 && other.tdata.length == rows then
+          // Broadcast N×1: combine each row's scalar with that row (e.g. m - m.mean(axis=1))
+          val b   = other.tdata.asInstanceOf[Array[Double]]
+          val out = Array.ofDim[Double](rows * cols)
+          var r = 0
+          while r < rows do
+            val base = r * cols; val s = b(r); var c = 0
+            while c < cols do { out(base + c) = f(a(base + c), s); c += 1 }
+            r += 1
+          Some(Mat.create(out, rows, cols).asInstanceOf[Mat[T]])
+        else None
+      else
+        // `m` is a Double view (strided/offset, e.g. a row slice). Read it through the
+        // stride equation; `other` and `out` stay contiguous (indexed r*cols + c).
+        val off = m.offset; val rs = m.rs; val cs = m.cs
+        inline def ma(r: Int, c: Int): Double = a(off + r * rs + c * cs)
+        if other.rows == rows && other.cols == cols && other.tdata.length == rows * cols then
+          val b   = other.tdata.asInstanceOf[Array[Double]]
+          val out = Array.ofDim[Double](rows * cols)
+          var r = 0
+          while r < rows do
+            val base = r * cols; var c = 0
+            while c < cols do { out(base + c) = f(ma(r, c), b(base + c)); c += 1 }
+            r += 1
+          Some(Mat.create(out, rows, cols).asInstanceOf[Mat[T]])
+        else if other.rows == 1 && other.cols == cols && other.tdata.length == cols then
+          val b   = other.tdata.asInstanceOf[Array[Double]]
+          val out = Array.ofDim[Double](rows * cols)
+          var r = 0
+          while r < rows do
+            val base = r * cols; var c = 0
+            while c < cols do { out(base + c) = f(ma(r, c), b(c)); c += 1 }
+            r += 1
+          Some(Mat.create(out, rows, cols).asInstanceOf[Mat[T]])
+        else if other.rows == rows && other.cols == 1 && other.tdata.length == rows then
+          val b   = other.tdata.asInstanceOf[Array[Double]]
+          val out = Array.ofDim[Double](rows * cols)
+          var r = 0
+          while r < rows do
+            val base = r * cols; val s = b(r); var c = 0
+            while c < cols do { out(base + c) = f(ma(r, c), s); c += 1 }
+            r += 1
+          Some(Mat.create(out, rows, cols).asInstanceOf[Mat[T]])
+        else None
 
     def +(other: Mat[T])(using num: Numeric[T]): Mat[T] =
-      if fastD2(m, other) then m.fastBinOp(other)(_ + _).getOrElse(m.binOp(other)(num.plus))
+      if fastD2L(m, other) then m.fastBinOp(other)(_ + _).getOrElse(m.binOp(other)(num.plus))
       else m.binOp(other)(num.plus)
 
     def -(other: Mat[T])(using num: Numeric[T]): Mat[T] =
-      if fastD2(m, other) then m.fastBinOp(other)(_ - _).getOrElse(m.binOp(other)(num.minus))
+      if fastD2L(m, other) then m.fastBinOp(other)(_ - _).getOrElse(m.binOp(other)(num.minus))
       else m.binOp(other)(num.minus)
 
     def *:*(other: Mat[T])(using num: Numeric[T]): Mat[T] =
-      if fastD2(m, other) then m.fastBinOp(other)(_ * _).getOrElse(m.binOp(other)(num.times))
+      if fastD2L(m, other) then m.fastBinOp(other)(_ * _).getOrElse(m.binOp(other)(num.times))
       else m.binOp(other)(num.times)
 
     def hadamard(other: Mat[T])(using num: Numeric[T]): Mat[T] = m *:* other
@@ -3565,7 +3617,7 @@ object Mat {
 
     // Division with broadcasting
     def /(other: Mat[T])(using frac: Fractional[T]): Mat[T] =
-      if fastD2(m, other) then m.fastBinOp(other)(_ / _).getOrElse(m.binOp(other)(frac.div))
+      if fastD2L(m, other) then m.fastBinOp(other)(_ / _).getOrElse(m.binOp(other)(frac.div))
       else m.binOp(other)(frac.div)
 
     /** Element-wise maximum between two matrices (NumPy: np.maximum) */

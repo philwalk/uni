@@ -217,7 +217,7 @@ object Tprf3 {
       phiMat(i until i+1, ::) = m.coef_.T
       phiHatFull(::, i until i+1) = m.beta
       val v = m.rSquared
-      r2(i) = if v.isNaN || v.isInfinite then 0.0 else v
+      r2(i) = if isNan(v) || java.lang.Double.isInfinite(v) then 0.0 else v
     val phi = phiMat                                // N×L
 
     // Pass-2 (K&P: Sigma T×L)
@@ -323,12 +323,17 @@ object Tprf3 {
 
   // ── Private helpers ────────────────────────────────────────────────────────
 
+  /** Primitive NaN test. `x.isNaN` on a `Double` routes through `Predef.double2Double`,
+   *  which BOXES x into a java.lang.Double just to call its instance `isNaN` — defeating
+   *  the unboxed `atD` reads in the hot loops below. The static method takes a primitive. */
+  private inline def isNan(x: Double): Boolean = java.lang.Double.isNaN(x)
+
   /** Extract selected rows into a new MatD (shared by Lm, nanOls, OOS modes). */
   private def selectRows(m: MatD, rows: Seq[Int]): MatD =
     val arr = Array.ofDim[Double](rows.length * m.cols)
     for (r, ri) <- rows.zipWithIndex do
       for c <- 0 until m.cols do
-        arr(ri * m.cols + c) = m(r, c)
+        arr(ri * m.cols + c) = m.atD(r, c)
     Mat.create(arr, rows.length, m.cols)
 
   /** Centering matrix: I_n − (1/n)·1·1ᵀ */
@@ -353,8 +358,8 @@ object Tprf3 {
       var n = 0; var sum = 0.0
       var i = 0
       while i < m.rows do
-        val v = m(i, j)
-        if !v.isNaN then { n += 1; sum += v }
+        val v = m.atD(i, j)
+        if !isNan(v) then { n += 1; sum += v }
         i += 1
       arr(j) =
         if n > 1 then
@@ -362,8 +367,8 @@ object Tprf3 {
           var ss = 0.0
           i = 0
           while i < m.rows do
-            val v = m(i, j)
-            if !v.isNaN then { val d = v - mu; ss += d * d }
+            val v = m.atD(i, j)
+            if !isNan(v) then { val d = v - mu; ss += d * d }
             i += 1
           val sd = math.sqrt(ss / (n - 1))
           if sd == 0.0 then 1.0 else sd
@@ -379,8 +384,8 @@ object Tprf3 {
       var n = 0; var sum = 0.0
       var i = 0
       while i < m.rows do
-        val v = m(i, j)
-        if !v.isNaN then { n += 1; sum += v }
+        val v = m.atD(i, j)
+        if !isNan(v) then { n += 1; sum += v }
         i += 1
       arr(j) = if n > 0 then sum / n else Double.NaN
       j += 1
@@ -391,8 +396,8 @@ object Tprf3 {
     var n = 0; var sum = 0.0
     var i = 0
     while i < v.rows do
-      val x = v(i, 0)
-      if !x.isNaN then { n += 1; sum += x }
+      val x = v.atD(i, 0)
+      if !isNan(x) then { n += 1; sum += x }
       i += 1
     if n > 0 then sum / n else Double.NaN
 
@@ -401,11 +406,11 @@ object Tprf3 {
     val validBuf = Array.newBuilder[Int]
     var i = 0
     while i < y.rows do
-      if !y(i, 0).isNaN then
+      if !isNan(y.atD(i, 0)) then
         var allOk = true
         var jj = 0
         while jj < X.cols && allOk do
-          if X(i, jj).isNaN then allOk = false
+          if isNan(X.atD(i, jj)) then allOk = false
           jj += 1
         if allOk then validBuf += i
       i += 1

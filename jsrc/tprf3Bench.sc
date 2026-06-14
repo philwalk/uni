@@ -15,6 +15,45 @@ import scala.sys.process.*
  * Run:  sbt "runMain apps.Tprf3Bench"
  */
 object Tprf3Bench {
+  def usage(m: String = ""): Nothing = {
+    showUsage(m, "",
+      "[-nopython]     ; only show scala benchmark results",
+    )
+  }
+
+  var runPython = true
+  def main(args: Array[String]): Unit = {
+    eachArg(args.toSeq, usage) {
+    case "-nopython" =>
+      runPython = false
+    case arg =>
+      usage(s"unrecognized arg [$arg]")
+    }
+
+    val rootDir = sys.props.getOrElse("user.dir", ".")
+    val script  = Paths.get(s"$rootDir/py/bench_tprf3.py").posx
+
+    println("── Scala benchmarks ─────────────────────────────────────────────────────────")
+    // Small runs first in the freshly forked JVM and bears JIT startup plus
+    // any post-compile/Bloop or CPU-ramp disturbance; warmupMs is the floor —
+    // warmupUntilStable keeps going until per-call time settles. Large reuses
+    // the now-hot code paths, so a shorter floor suffices.
+    run("Small", T = 200, N = 30, L = 2, warmupMs = 2000, loops = 50)
+    run("Large", T = 650, N = 40, L = 2, warmupMs = 500,  loops = 20)
+    if !runPython then
+      sys.exit(0)
+
+    if !java.io.File(script).exists() then
+      println(s"\n(bench script not found: $script)")
+    else
+      findPython() match
+        case None      => println("\n(MSYS2 python3 not found; skipping)")
+        case Some(exe) => runBench(s"── Python benchmarks  [${pythonLabel(exe)}] ──────────────────────────────", exe, script)
+
+      findWinPython() match
+        case None      => println("\n(WinPython not found; skipping)")
+        case Some(exe) => runBench(s"── WinPython benchmarks  [${pythonLabel(exe)}] ───────────────────────────", exe, script)
+  }
 
   private def medianOf(samples: Array[Double]): Double =
     java.util.Arrays.sort(samples)
@@ -148,26 +187,4 @@ object Tprf3Bench {
     println(s"\n$header")
     Seq(exe, "-u", script).!
 
-  def main(args: Array[String]): Unit =
-    val rootDir = sys.props.getOrElse("user.dir", ".")
-    val script  = Paths.get(s"$rootDir/py/bench_tprf3.py").posx
-
-    println("── Scala benchmarks ─────────────────────────────────────────────────────────")
-    // Small runs first in the freshly forked JVM and bears JIT startup plus
-    // any post-compile/Bloop or CPU-ramp disturbance; warmupMs is the floor —
-    // warmupUntilStable keeps going until per-call time settles. Large reuses
-    // the now-hot code paths, so a shorter floor suffices.
-    run("Small", T = 200, N = 30, L = 2, warmupMs = 2000, loops = 50)
-    run("Large", T = 650, N = 40, L = 2, warmupMs = 500,  loops = 20)
-
-    if !java.io.File(script).exists() then
-      println(s"\n(bench script not found: $script)")
-    else
-      findPython() match
-        case None      => println("\n(MSYS2 python3 not found; skipping)")
-        case Some(exe) => runBench(s"── Python benchmarks  [${pythonLabel(exe)}] ──────────────────────────────", exe, script)
-
-      findWinPython() match
-        case None      => println("\n(WinPython not found; skipping)")
-        case Some(exe) => runBench(s"── WinPython benchmarks  [${pythonLabel(exe)}] ───────────────────────────", exe, script)
 }
