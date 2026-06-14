@@ -103,6 +103,26 @@ Breeze/MatD: uni 0.14.0 / Scala 3.8.2 / JVM 21, both using native OpenBLAS via n
 MatD faster 8/9 scored, geometric mean **4.03× faster** than Breeze.
 `matmul` is tied (both use OpenBLAS via JNIBLAS); `add` is the lone Breeze win (0.79×). `sum` flipped to a 6.7× MatD win after the v0.14.0 chunked parallel-reduction rewrite.
 
+### macOS (Apple Silicon)
+
+Breeze/MatD: uni 0.14.0 / Scala 3.8.2 / JVM 21, both using native OpenBLAS via netlib JNIBLAS.
+
+| Operation | Breeze | MatD | Bz/MD |
+| :--- | ---: | ---: | ---: |
+| `randn(1000×1000)` | 40.0 ms | 3.93 ms | 10.2× |
+| `matmul 512×512` | 1.06 ms | 1.05 ms | 1.01× |
+| `sigmoid(1000×1000)` | 12.5 ms | 2.64 ms | 4.7× |
+| `relu(1000×1000)` | 1.66 ms | 0.37 ms | 4.5× |
+| `add(1000×1000)` | 0.78 ms | 1.04 ms | 0.75× |
+| `sum(1000×1000)` | 0.97 ms | 0.10 ms | 9.3× |
+| `mean(1000×1000)` | 5.45 ms | 0.08 ms | 72× |
+| `std(1000×1000)` | 8.06 ms | 1.03 ms | 7.8× |
+| `transpose(1000×1000)` | ≈0 ms | ≈0 ms | — |
+| custom fn (`mapParallel` / `map`) | 5.99 ms | 0.42 ms | 14.2× |
+
+MatD faster 8/9 scored, geometric mean **6.11× faster** than Breeze.
+`matmul` is tied (both use OpenBLAS via JNIBLAS); `add` is the lone Breeze win (0.75×).
+
 ### 3PRF (Three-Pass Regression Filter)
 
 Measured on Windows 11 (uni 0.14.0 / JVM 21 / Scala 3.8.2, forked JVM, vs Python 3.14.3 / WinPython scipy-openblas).
@@ -126,6 +146,14 @@ Linux (Intel Core i5-6500, Ubuntu 24.04, vs Python 3.12.3 / system OpenBLAS):
 | `3PRF IS Full (T=650, N=40, L=2)` | 3.1 ms | 0.46 ms | **6.6× faster** |
 | `3PRF OOS Recursive (T=650, N=40, L=2)` | 330 ms | 47 ms | **7.0× faster** |
 | `3PRF OOS Cross Val (T=650, N=40, L=2)` | 862 ms | 86 ms | **10.0× faster** |
+
+macOS (Apple Silicon, vs Python 3.14.6):
+
+| Operation | Python | MatD | Ratio |
+| :--- | ---: | ---: | :--- |
+| `3PRF IS Full (T=650, N=40, L=2)` | 0.79 ms | 0.22 ms | **3.6× faster** |
+| `3PRF OOS Recursive (T=650, N=40, L=2)` | 171 ms | 22 ms | **7.8× faster** |
+| `3PRF OOS Cross Val (T=650, N=40, L=2)` | 447 ms | 48 ms | **9.2× faster** |
 
   | Label | Description |
   | :--- | :--- |

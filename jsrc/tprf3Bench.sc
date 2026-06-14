@@ -1,6 +1,8 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation -q
 //package uni.apps
 
+//> using jvm 22
+//> using scala 3.8.4
 //> using dep org.vastblue:uni_3:0.14.0
 
 import uni.*
@@ -47,7 +49,7 @@ object Tprf3Bench {
       println(s"\n(bench script not found: $script)")
     else
       findPython() match
-        case None      => println("\n(MSYS2 python3 not found; skipping)")
+        case None      => println("\n(python3 not found; skipping)")
         case Some(exe) => runBench(s"── Python benchmarks  [${pythonLabel(exe)}] ──────────────────────────────", exe, script)
 
       findWinPython() match
@@ -153,7 +155,9 @@ object Tprf3Bench {
 
   private def findPython(): Option[String] =
     // MSYS2 paths resolved to Windows equivalents via Paths.get().posx
-    val msys2Paths = List("/ucrt64/bin/python3.exe", "/usr/bin/python3")
+    // for MacOs, this must list homebrew ahead of /usr/bin/python3 (otherwise, no numpy)
+    // (or, may need to brew install numpy)
+    val msys2Paths = List("/ucrt64/bin/python3.exe", "/opt/homebrew/bin/python3", "/usr/bin/python3")
     val candidates = msys2Paths.map(Paths.get(_).posx) ++ List("python3", "python")
     candidates.find { p =>
       try Seq(p, "--version").!(ProcessLogger(_ => ())) == 0
