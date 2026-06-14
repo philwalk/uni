@@ -86,21 +86,22 @@ NumPy 2.4.x's single-threaded SIMD reductions had briefly overtaken `sum`/`mean`
 ### Linux (Intel Core i5-6500, Ubuntu 24.04, OpenBLAS)
 
 Breeze/MatD: uni 0.14.0 / Scala 3.8.2 / JVM 21, both using native OpenBLAS via netlib JNIBLAS.
-(`sum` predates the v0.14.0 reduction rewrite; the marginal Breeze win there is expected to flip on remeasurement.)
 
 | Operation | Breeze | MatD | Bz/MD |
 | :--- | ---: | ---: | ---: |
-| `randn(1000×1000)` | 59.7 ms | 16.4 ms | 3.6× |
-| `matmul 512×512` | 1.86 ms | 1.80 ms | 1.03× |
-| `sigmoid(1000×1000)` | 8.70 ms | 3.68 ms | 2.4× |
-| `relu(1000×1000)` | 4.05 ms | 1.07 ms | 3.8× |
-| `add(1000×1000)` | 1.86 ms | 1.93 ms | 0.96× |
-| `sum(1000×1000)` | 1.17 ms | 1.36 ms | 0.86× |
+| `randn(1000×1000)` | 57.7 ms | 15.6 ms | 3.7× |
+| `matmul 512×512` | 1.83 ms | 1.82 ms | 1.00× |
+| `sigmoid(1000×1000)` | 9.52 ms | 3.66 ms | 2.6× |
+| `relu(1000×1000)` | 3.87 ms | 1.06 ms | 3.7× |
+| `add(1000×1000)` | 1.85 ms | 2.34 ms | 0.79× |
+| `sum(1000×1000)` | 1.17 ms | 0.18 ms | 6.7× |
+| `mean(1000×1000)` | 7.33 ms | 0.27 ms | 27× |
+| `std(1000×1000)` | 8.97 ms | 1.55 ms | 5.8× |
 | `transpose(1000×1000)` | ≈0 ms | ≈0 ms | — |
-| custom fn (`mapParallel` / `map`) | 11.20 ms | 1.11 ms | 10.1× |
+| custom fn (`mapParallel` / `map`) | 10.68 ms | 1.08 ms | 9.9× |
 
-MatD faster 5/7 scored, geometric mean **2.24× faster** than Breeze.
-`matmul` is tied (both use OpenBLAS via JNIBLAS). `add` and `sum` are marginal Breeze wins.
+MatD faster 8/9 scored, geometric mean **4.03× faster** than Breeze.
+`matmul` is tied (both use OpenBLAS via JNIBLAS); `add` is the lone Breeze win (0.79×). `sum` flipped to a 6.7× MatD win after the v0.14.0 chunked parallel-reduction rewrite.
 
 ### 3PRF (Three-Pass Regression Filter)
 
@@ -117,6 +118,14 @@ post-processing), roughly halving the OOS times and pulling IS Full ahead of Pyt
 | `3PRF IS Full (T=650, N=40, L=2)` | 1.3 ms | 0.55 ms | **2.3× faster** |
 | `3PRF OOS Recursive (T=650, N=40, L=2)` | 287 ms | 21 ms | **13.7× faster** |
 | `3PRF OOS Cross Val (T=650, N=40, L=2)` | 781 ms | 56 ms | **13.9× faster** |
+
+Linux (Intel Core i5-6500, Ubuntu 24.04, vs Python 3.12.3 / system OpenBLAS):
+
+| Operation | Python | MatD | Ratio |
+| :--- | ---: | ---: | :--- |
+| `3PRF IS Full (T=650, N=40, L=2)` | 3.1 ms | 0.46 ms | **6.6× faster** |
+| `3PRF OOS Recursive (T=650, N=40, L=2)` | 330 ms | 47 ms | **7.0× faster** |
+| `3PRF OOS Cross Val (T=650, N=40, L=2)` | 862 ms | 86 ms | **10.0× faster** |
 
   | Label | Description |
   | :--- | :--- |
