@@ -29,6 +29,14 @@ stride/offset-aware access:
 - `saveCSV` on `MatB`: `BigNaN` now honors the `nanAs` parameter like Double/Float
   NaN (default `"NaN"`) — previously it was hard-coded to `"N/A"` regardless of
   `nanAs`, so a `loadMatB`/`saveCSV` round-trip silently changed the NaN spelling
+- `proc(...).timeout(ms).run()` / `.stream(...)` now return promptly when the timeout
+  fires instead of blocking until the child process exits. On a forced-timeout kill,
+  orphaned grandchildren (e.g. bash's `sleep`) can keep the stdout/stderr pipes open,
+  so the reader threads never saw EOF and the drain-thread joins blocked for the
+  child's full lifetime (a 200 ms timeout on `sleep 10` took ~10 s, longer with an
+  orphaned child). `awaitProcess` now reports whether it timed out, and `run`/`stream`
+  bound the drain joins in that case (the drain/reader threads are daemons, so
+  abandoning them is safe). Status is unchanged (`-1` on timeout)
 
 **API additions**
 
@@ -109,6 +117,22 @@ stride/offset-aware access:
   (`atD` reads, `java.lang.Double.isNaN`, the rsq post-processing loops). Result
   (Large, T=650 N=40 L=2, JVM 21): OOS Recursive 42 → 21 ms, OOS Cross Val
   77 → 56 ms, IS Full 1.3 → 0.55 ms.
+- Client-facing element boxing eliminated for `MatD`/`MatF`: the ordinary `m(i, j)`
+  read and `m(i, j) = v` write (and the rest of the indexing family) on a
+  `Mat[Double]`/`Mat[Float]` no longer allocate a `java.lang.Double`/`Float` for
+  external (`import uni.data.*`) callers — no special accessor needed. The generic
+  `apply(i,j): T` / `update(i,j,v: T)` box because `Array[T]` erases to `Object[]`;
+  a new package-level facade (`MatDOps.scala`) re-supplies the **complete** family —
+  scalar access/assignment, slices, boolean masks, fancy `Array[Int]` indexing,
+  slice assignment, and `at` — specialized to `Mat[Double]` and reading the primitive
+  backing array directly. (Scala 3 extension overloads don't merge across receiver
+  specificity, so adding any `Mat[Double]` `apply` shadows the entire generic family
+  for that receiver — hence the whole family is re-supplied.) These win by specificity
+  for a `Mat[Double]` receiver; in-package `import Mat.*` sites keep the generic path.
+  The `Mat[Float]` twin (`MatFOps.scala`) is generated from `MatDOps.scala` by a
+  `build.sbt` sourceGenerator (generated into `sourceManaged`, never checked in) so the
+  two cannot drift. Verified at the bytecode level (`daload`/`faload`, no `*.valueOf`)
+  and by JFR allocation profiling (zero boxed-scalar samples on the element path).
 
 **Internals**
 

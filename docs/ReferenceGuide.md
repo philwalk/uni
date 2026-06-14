@@ -197,6 +197,13 @@ copies**; for a NumPy-style zero-copy view use `m.slice(rows, cols)` — like `.
 `broadcastTo`, it shares storage with the parent, so writes through it are visible there.
 Since v0.14.0, slicing works for any element type (e.g. `Mat[Int]`) — no `Fractional` required.
 
+**No boxing on `MatD`/`MatF`.** On `Mat[Double]` and `Mat[Float]` the whole indexing family
+below — scalar `m(i, j)` read/`m(i, j) = v` write, slices, masks, fancy `Array[Int]` indexing,
+and slice assignment — is type-specialized to read/write the primitive backing array directly,
+so it allocates no `java.lang.Double`/`java.lang.Float`. There is no separate "fast" accessor to
+learn; the ordinary syntax is already unboxed. (Generic `Mat[T]` for other element types boxes
+element access — an inherent JVM-erasure cost.)
+
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 

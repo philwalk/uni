@@ -167,6 +167,25 @@ Full results and methodology: [MatD Cheat Sheet — Performance](docs/MatDCheatS
 
 uni.Mat is built on the principle that developers shouldn't have to choose between type safety and the ergonomics of NumPy. Its design leverages strides, offsets, and broadcasting for high efficiency—including LAPACK integration—all while maintaining a clean, expression-oriented API.
 
+### No element boxing — by construction, not by convention
+
+A generic JVM matrix `Mat[T]` stores its data in an `Array[T]` that erases to `Object[]`, so the natural `m(i, j)` element read and `m(i, j) = v` write would box every value into a `java.lang.Double`/`java.lang.Float`. uni avoids this **without asking the client to learn a special "fast" accessor**: for the two numeric workhorses, `MatD` (`Mat[Double]`) and `MatF` (`Mat[Float]`), the entire indexing family — scalar access and assignment, row/column/range slices, boolean masking, fancy `Array[Int]` indexing, and slice assignment — is supplied in a type-specialized form that reads and writes the primitive backing array directly.
+
+So ordinary client code written the obvious way is already allocation-free for the element value:
+
+```scala
+import uni.data.*
+
+val m = MatD((1.0, 2.0, 3.0), (4.0, 5.0, 6.0))
+val x = m(0, 1)        // primitive double load — no java.lang.Double allocated
+m(1, 2) = 99.0         // primitive double store
+m(0, ::) = 0.0         // slice assignment, also unboxed
+```
+
+This is verified at the bytecode level (primitive `daload`/`dastore`, no `Double.valueOf`) and confirmed end-to-end by JFR allocation profiling, which shows zero boxed-scalar allocations on the element path. The `MatF` specialization is generated from the `MatD` source by the build, so the two never drift.
+
+Note the scope: this covers the element **value** type on `MatD`/`MatF`. Other element types (`Mat[Int]`, `Mat[Big]`, …) still box element access — an inherent cost of generic JVM arrays — and a few collection-iteration paths box loop *indices* (`Int`), which is unrelated to the numeric data.
+
 ## Test Coverage
 
 Measured with `sbt jacoco` (1,980 tests). Branch coverage measures both true and false outcomes of every conditional, so it is typically lower than line coverage.

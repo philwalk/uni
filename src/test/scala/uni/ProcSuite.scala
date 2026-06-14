@@ -404,6 +404,18 @@ class ProcSuite extends FunSuite:
     assertEquals(r.status, -1, s"timed-out process should return status -1")
   }
 
+  test("proc.timeout: returns promptly, not after the child exits") {
+    // Regression guard: before the bounded-join fix, run() blocked until the
+    // orphaned `sleep` child exited (~10s) even though destroyForcibly returned at
+    // 200ms. Ceiling (5s) is well below the 10s sleep but above timeout + grace.
+    val t0        = System.nanoTime()
+    val r         = proc(bashExe, "-c", "sleep 10").timeout(200L).run()
+    val elapsedMs = (System.nanoTime() - t0) / 1_000_000L
+    assertEquals(r.status, -1)
+    assert(elapsedMs < 5000L,
+      s"timed-out run should return well before the 10s child; took ${elapsedMs}ms")
+  }
+
   // ============================================================================
   // ProcResult.headOnly / takeOnly / IndexedSeq
   // ============================================================================
