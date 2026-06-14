@@ -96,6 +96,19 @@ stride/offset-aware access:
 - New N×1 column-broadcast fast path in `+`, `-`, `*`, `*:*`, `/`
   (e.g. `m - m.mean(axis = 1)`); previously only 1×N row broadcasts had one and
   column broadcasts fell to the boxed path
+- `Double` autoboxing eliminated from the remaining `Mat[Double]` hot paths,
+  driven by JFR profiling of `jsrc/tprf3Bench.sc` (boxed `java.lang.Double`
+  allocation samples 188 → 0). `MatData._tdata: Array[T]` erases to `Object`, so
+  the generic element accessor and `Numeric`/`Fractional` dispatch boxed every
+  read; each site now branches to a primitive `Array[Double]` path under a
+  `ClassTag == Double` guard (correct for views via the stride equation). Sites:
+  row/column extraction (`m(i, ::)`, `m(::, j)`), `m(Range, Range)` slicing,
+  `inverse`/`luDecompose` (shared primitive-LU helper), `zeros`/`ones`/`eye`,
+  `randn`/`normal`/`uniform` (primitive fills preserving RNG call order), `power`
+  (both overloads), `hstack`, `map`/`zipMap`, and the `Tprf3` OOS hot path
+  (`atD` reads, `java.lang.Double.isNaN`, the rsq post-processing loops). Result
+  (Large, T=650 N=40 L=2, JVM 21): OOS Recursive 42 → 21 ms, OOS Cross Val
+  77 → 56 ms, IS Full 1.3 → 0.55 ms.
 
 **Internals**
 

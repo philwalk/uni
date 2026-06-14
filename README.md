@@ -68,18 +68,18 @@ Note: v0.10.2 and earlier used bytedeco/OpenBLAS for matmul; switching to netlib
 
 | Operation | NumPy | Breeze | MatD |
 | :--- | ---: | ---: | ---: |
-| `randn(1000×1000)` | 19 ms | 51 ms | 14 ms |
+| `randn(1000×1000)` | 19 ms | 51 ms | 11 ms |
 | `matmul 512×512` | 1.7 ms | 1.1 ms | 1.1 ms |
-| `sigmoid(1000×1000)` | 12 ms | 11.7 ms | 1.8 ms |
-| `relu(1000×1000)` | 1.9 ms | 3.6 ms | 0.72 ms |
-| `add(1000×1000)` | 2.2 ms | 1.7 ms | 1.2 ms |
-| `sum(1000×1000)` | 0.25 ms | 1.0 ms | 0.09 ms |
-| `mean(1000×1000)` | 0.27 ms | 6.5 ms | 0.09 ms |
-| `std(1000×1000)` | 3.3 ms | 8.1 ms | 1.1 ms |
+| `sigmoid(1000×1000)` | 12 ms | 11.8 ms | 1.9 ms |
+| `relu(1000×1000)` | 1.9 ms | 3.6 ms | 0.75 ms |
+| `add(1000×1000)` | 2.2 ms | 1.7 ms | 1.3 ms |
+| `sum(1000×1000)` | 0.25 ms | 1.0 ms | 0.10 ms |
+| `mean(1000×1000)` | 0.27 ms | 6.6 ms | 0.11 ms |
+| `std(1000×1000)` | 3.3 ms | 8.2 ms | 1.2 ms |
 | `transpose(1000×1000)` | ≈0 ms | ≈0 ms | ≈0 ms |
-| custom fn (`mapParallel` / `map` / `np.vectorize`) | 434 ms | 10.1 ms | 0.73 ms |
+| custom fn (`mapParallel` / `map` / `np.vectorize`) | 434 ms | 10.1 ms | 0.77 ms |
 
-MatD wins 9/9 scored operations vs NumPy and wins or ties all 9 scored vs Breeze (geometric mean **~6.2× faster** than Breeze).
+MatD wins 9/9 scored operations vs NumPy and wins or ties all 9 scored vs Breeze (geometric mean **~6.0× faster** than Breeze).
 NumPy 2.4.x's single-threaded SIMD reductions had briefly overtaken `sum`/`mean`; the v0.14.0 chunked multi-accumulator parallel reduction reclaims both (~2.8× faster than NumPy).
 `matmul` is tied with Breeze — switching from bytedeco to netlib JNIBLAS eliminated the prior overhead gap; both now call OpenBLAS at the same latency (~1.1 ms).
 
@@ -104,17 +104,19 @@ MatD faster 5/7 scored, geometric mean **2.24× faster** than Breeze.
 
 ### 3PRF (Three-Pass Regression Filter)
 
-Measured on Windows 11 (uni 0.14.0 / JVM 17 / Scala 3.8.2, forked JVM, vs Python 3.14.3 / WinPython scipy-openblas).
+Measured on Windows 11 (uni 0.14.0 / JVM 21 / Scala 3.8.2, forked JVM, vs Python 3.14.3 / WinPython scipy-openblas).
 See [`src/main/scala/apps/Tprf3Bench.scala`](src/main/scala/apps/Tprf3Bench.scala) and [Kelly & Pruitt (2015)](https://doi.org/10.1111/jofi.12246).
 Both implementations were optimized identically in v0.14.0 (the K&P `J(k)` centering
 products are computed as O(T·N) centering instead of dense T×T matmuls), so the
-comparison is between equivalent algorithms.
+comparison is between equivalent algorithms. The Scala OOS hot path was then freed of
+`Double` autoboxing (element access, view division, matrix construction, and the rsq
+post-processing), roughly halving the OOS times and pulling IS Full ahead of Python.
 
 | Operation | Python | MatD | Ratio |
 | :--- | ---: | ---: | :--- |
-| `3PRF IS Full (T=650, N=40, L=2)` | 1.2 ms | 1.3 ms | **tied** |
-| `3PRF OOS Recursive (T=650, N=40, L=2)` | 270 ms | 42 ms | **6.4× faster** |
-| `3PRF OOS Cross Val (T=650, N=40, L=2)` | 720 ms | 77 ms | **9.4× faster** |
+| `3PRF IS Full (T=650, N=40, L=2)` | 1.3 ms | 0.55 ms | **2.3× faster** |
+| `3PRF OOS Recursive (T=650, N=40, L=2)` | 287 ms | 21 ms | **13.7× faster** |
+| `3PRF OOS Cross Val (T=650, N=40, L=2)` | 781 ms | 56 ms | **13.9× faster** |
 
   | Label | Description |
   | :--- | :--- |

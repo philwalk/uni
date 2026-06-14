@@ -290,6 +290,55 @@ object Mat {
   private inline def fastD2L[T](m: Mat[T], other: Mat[T])(using ct: ClassTag[T]): Boolean =
     fastDL(m) && other.isContiguous && other.offset == 0
 
+  /** In-place primitive LU decomposition (partial pivoting) of a row-major n×n
+   *  Double array. Returns (pivot indices, swap count). Shared by the Double
+   *  fast paths of luDecompose/determinant/inverse so they avoid the per-element
+   *  Fractional[T] boxing (both the erased `Array[T]` access and `frac.*`). */
+  private def luDecomposeD(lu: Array[Double], n: Int): (Array[Int], Int) =
+    val pivots = Array.range(0, n)
+    var swaps  = 0
+    var i = 0
+    while i < n do
+      var maxRow = i
+      var maxAbs = math.abs(lu(i * n + i))
+      var k = i + 1
+      while k < n do
+        val v = math.abs(lu(k * n + i))
+        if v > maxAbs then { maxAbs = v; maxRow = k }
+        k += 1
+      if maxRow != i then
+        var c = 0
+        while c < n do
+          val tmp = lu(i * n + c); lu(i * n + c) = lu(maxRow * n + c); lu(maxRow * n + c) = tmp
+          c += 1
+        val tp = pivots(i); pivots(i) = pivots(maxRow); pivots(maxRow) = tp
+        swaps += 1
+      val pivot = lu(i * n + i)
+      if pivot == 0.0 then throw ArithmeticException("Matrix is singular or nearly singular")
+      var r = i + 1
+      while r < n do
+        val factor = lu(r * n + i) / pivot
+        lu(r * n + i) = factor
+        var c = i + 1
+        while c < n do
+          lu(r * n + c) = lu(r * n + c) - factor * lu(i * n + c)
+          c += 1
+        r += 1
+      i += 1
+    (pivots, swaps)
+
+  /** Materialize a Mat[Double] (any layout) into a fresh row-major Double array. */
+  private def toFlatD[T](m: Mat[T], n: Int): Array[Double] =
+    val a   = m.tdata.asInstanceOf[Array[Double]]
+    val off = m.offset; val rs = m.rs; val cs = m.cs
+    val out = new Array[Double](n * n)
+    var i = 0
+    while i < n do
+      var j = 0
+      while j < n do { out(i * n + j) = a(off + i * rs + j * cs); j += 1 }
+      i += 1
+    out
+
   /** Fill `out` with f(i); parallel for large arrays, sequential below ParallelThreshold. */
   private[data] def fillD(out: Array[Double])(f: Int => Double): Unit =
     if out.length >= ParallelThreshold then
@@ -629,22 +678,33 @@ object Mat {
 
   /** NumPy: np.random.randn(rows, cols) - standard normal */
   def randn(rows: Int, cols: Int): Mat[Double] = {
+    // Primitive loop, not Array.fill (whose by-name element boxes each draw).
+    // Sequential fill preserves RNG call order → seeded reproducibility.
     val rng  = globalRNG
-    val data = Array.fill(rows * cols)(rng.randn())
+    val n    = rows * cols
+    val data = new Array[Double](n)
+    var i = 0
+    while i < n do { data(i) = rng.randn(); i += 1 }
     Mat.create(data, rows, cols)
   }
 
   /** NumPy: np.random.normal(mean, std, size=(rows, cols)) */
   def normal(mean: Double, std: Double, rows: Int, cols: Int): Mat[Double] = {
     val rng  = globalRNG
-    val data = Array.fill(rows * cols)(mean + std * rng.randn())
+    val n    = rows * cols
+    val data = new Array[Double](n)
+    var i = 0
+    while i < n do { data(i) = mean + std * rng.randn(); i += 1 }
     create(data, rows, cols)
   }
 
   /** NumPy: np.random.uniform(low, high, (rows, cols)) */
   def uniform(low: Double, high: Double, rows: Int, cols: Int): Mat[Double] = {
     val rng  = globalRNG
-    val data = Array.fill(rows * cols)(rng.uniform(low, high))
+    val n    = rows * cols
+    val data = new Array[Double](n)
+    var i = 0
+    while i < n do { data(i) = rng.uniform(low, high); i += 1 }
     Mat.create(data, rows, cols)
   }
 
@@ -1551,12 +1611,20 @@ object Mat {
     def apply(rows: ::.type, col: Int): CVec[T] = {
       val c = if col < 0 then m.cols + col else col
       require(c >= 0 && c < m.cols, s"Column index $c out of bounds")
-      val result = Array.ofDim[T](m.rows)
-      var i = 0
-      while i < m.rows do
-        result(i) = m(i, c)
-        i += 1
-      Mat.create(result, m.rows, 1)
+      if fastDL(m) then
+        val a   = m.tdata.asInstanceOf[Array[Double]]
+        val off = m.offset; val rs = m.rs; val cs = m.cs
+        val out = new Array[Double](m.rows)
+        var i = 0
+        while i < m.rows do { out(i) = a(off + i * rs + c * cs); i += 1 }
+        Mat.create(out, m.rows, 1).asInstanceOf[Mat[T]]
+      else
+        val result = Array.ofDim[T](m.rows)
+        var i = 0
+        while i < m.rows do
+          result(i) = m(i, c)
+          i += 1
+        Mat.create(result, m.rows, 1)
     }
 
     /**
@@ -1566,12 +1634,20 @@ object Mat {
     def apply(row: Int, cols: ::.type): RVec[T] = {
       val r = if row < 0 then m.rows + row else row
       require(r >= 0 && r < m.rows, s"Row index $r out of bounds")
-      val result = Array.ofDim[T](m.cols)
-      var j = 0
-      while j < m.cols do
-        result(j) = m(r, j)
-        j += 1
-      Mat.create(result, 1, m.cols)
+      if fastDL(m) then
+        val a   = m.tdata.asInstanceOf[Array[Double]]
+        val off = m.offset; val rs = m.rs; val cs = m.cs
+        val out = new Array[Double](m.cols)
+        var j = 0
+        while j < m.cols do { out(j) = a(off + r * rs + j * cs); j += 1 }
+        Mat.create(out, 1, m.cols).asInstanceOf[Mat[T]]
+      else
+        val result = Array.ofDim[T](m.cols)
+        var j = 0
+        while j < m.cols do
+          result(j) = m(r, j)
+          j += 1
+        Mat.create(result, 1, m.cols)
     }
 
     /** Breeze: X(::, *) — returns a ColsView for per-column mapping via .map(f) */
@@ -1595,15 +1671,31 @@ object Mat {
       val colSeq = cols.toSeq
       val newRows = rowSeq.length
       val newCols = colSeq.length
-      val result = Array.ofDim[T](newRows * newCols)
-      var i = 0
-      while i < newRows do
-        var j = 0
-        while j < newCols do
-          result(i * newCols + j) = m(rowSeq(i), colSeq(j))
-          j += 1
-        i += 1
-      Mat.create(result, newRows, newCols)
+      // Double fast path: read the backing array primitively via the stride
+      // equation (correct for views/transposes); generic m(r,c) would box every
+      // element. rowSeq/colSeq are Ranges, so apply(i) returns an unboxed Int.
+      if fastDL(m) then
+        val a   = m.tdata.asInstanceOf[Array[Double]]
+        val off = m.offset; val rs = m.rs; val cs = m.cs
+        val out = new Array[Double](newRows * newCols)
+        var i = 0; var idx = 0
+        while i < newRows do
+          val rBase = off + rowSeq(i) * rs
+          var j = 0
+          while j < newCols do
+            out(idx) = a(rBase + colSeq(j) * cs); idx += 1; j += 1
+          i += 1
+        Mat.create(out, newRows, newCols).asInstanceOf[Mat[T]]
+      else
+        val result = Array.ofDim[T](newRows * newCols)
+        var i = 0
+        while i < newRows do
+          var j = 0
+          while j < newCols do
+            result(i * newCols + j) = m(rowSeq(i), colSeq(j))
+            j += 1
+          i += 1
+        Mat.create(result, newRows, newCols)
     }
 
   extension [T: ClassTag](m: Mat[T])(using frac: Fractional[T])
@@ -1630,26 +1722,46 @@ object Mat {
   // ============================================================================
   // Factory Methods
   // ============================================================================
+  // `Array.fill(n)(frac.zero/one)` evaluates the element by-name n times, boxing
+  // each result. The Double fast paths allocate a primitive array directly:
+  // `new Array[Double](n)` is already 0.0-filled, so `zeros` needs no fill.
+  private inline def isDoubleCt[T](using ct: ClassTag[T]): Boolean =
+    ct.runtimeClass == classOf[Double]
+
   def zeros[T: ClassTag](rows: Int, cols: Int)(using frac: Fractional[T]): Mat[T] =
-    Mat.create(Array.fill(rows * cols)(frac.zero), rows, cols)
+    if isDoubleCt[T] then Mat.create(new Array[Double](rows * cols), rows, cols).asInstanceOf[Mat[T]]
+    else Mat.create(Array.fill(rows * cols)(frac.zero), rows, cols)
 
   def zeros[T: ClassTag](shape: (Int, Int))(using frac: Fractional[T]): Mat[T] =
     zeros(shape._1, shape._2)
 
   def ones[T: ClassTag](rows: Int, cols: Int)(using frac: Fractional[T]): Mat[T] =
-    Mat.create(Array.fill(rows * cols)(frac.one), rows, cols)
+    if isDoubleCt[T] then
+      val a = new Array[Double](rows * cols)
+      java.util.Arrays.fill(a, 1.0)
+      Mat.create(a, rows, cols).asInstanceOf[Mat[T]]
+    else Mat.create(Array.fill(rows * cols)(frac.one), rows, cols)
 
   def ones[T: ClassTag](shape: (Int, Int))(using frac: Fractional[T]): Mat[T] =
     ones(shape._1, shape._2)
 
   def eye[T: ClassTag](n: Int, k: Int = 0)(using frac: Fractional[T]): Mat[T] = {
-    val result = Array.fill(n * n)(frac.zero)
-    var i = 0
-    while i < n do
-      val j = i + k
-      if j >= 0 && j < n then result(i * n + j) = frac.one
-      i += 1
-    Mat.create(result, n, n)
+    if isDoubleCt[T] then
+      val a = new Array[Double](n * n)   // already 0.0-filled
+      var i = 0
+      while i < n do
+        val j = i + k
+        if j >= 0 && j < n then a(i * n + j) = 1.0
+        i += 1
+      Mat.create(a, n, n).asInstanceOf[Mat[T]]
+    else
+      val result = Array.fill(n * n)(frac.zero)
+      var i = 0
+      while i < n do
+        val j = i + k
+        if j >= 0 && j < n then result(i * n + j) = frac.one
+        i += 1
+      Mat.create(result, n, n)
   }
 
   def full[T: ClassTag](rows: Int, cols: Int, value: T): Mat[T] =
@@ -1862,49 +1974,54 @@ object Mat {
     private def luDecompose(using frac: Fractional[T]): (Mat[T], Array[Int], Int) = {
       require(m.rows == m.cols, s"LU requires square matrix, got ${m.shape}")
       val n = m.rows
-      // Materialize to fresh flat array respecting transposed flag
-      val lu = Array.ofDim[T](n * n)
-      var i = 0
-      while i < n do
-        var j = 0
-        while j < n do { lu(i * n + j) = m(i, j); j += 1 }
-        i += 1
-      val pivots = Array.range(0, n)
-      var swaps  = 0
+      if fastDL(m) then
+        val lu = toFlatD(m, n)
+        val (pivots, swaps) = luDecomposeD(lu, n)
+        (Mat.create(lu, n, n).asInstanceOf[Mat[T]], pivots, swaps)
+      else
+        // Materialize to fresh flat array respecting transposed flag
+        val lu = Array.ofDim[T](n * n)
+        var i = 0
+        while i < n do
+          var j = 0
+          while j < n do { lu(i * n + j) = m(i, j); j += 1 }
+          i += 1
+        val pivots = Array.range(0, n)
+        var swaps  = 0
 
-      i = 0
-      while i < n do
-        // Find pivot: largest absolute value in column i at or below row i
-        var maxRow = i
-        var maxAbs = math.abs(frac.toDouble(lu(i * n + i)))
-        var k = i + 1
-        while k < n do
-          val v = math.abs(frac.toDouble(lu(k * n + i)))
-          if v > maxAbs then { maxAbs = v; maxRow = k }
-          k += 1
-        // Swap rows
-        if maxRow != i then
-          var c = 0
-          while c < n do
-            val tmp = lu(i * n + c); lu(i * n + c) = lu(maxRow * n + c); lu(maxRow * n + c) = tmp
-            c += 1
-          val tp = pivots(i); pivots(i) = pivots(maxRow); pivots(maxRow) = tp
-          swaps += 1
-        val pivot = lu(i * n + i)
-        if math.abs(frac.toDouble(pivot)) == 0.0 then
-          throw ArithmeticException("Matrix is singular or nearly singular")
-        // Eliminate below pivot
-        var r = i + 1
-        while r < n do
-          val factor = frac.div(lu(r * n + i), pivot)
-          lu(r * n + i) = factor
-          var c = i + 1
-          while c < n do
-            lu(r * n + c) = frac.minus(lu(r * n + c), frac.times(factor, lu(i * n + c)))
-            c += 1
-          r += 1
-        i += 1
-      (Mat.create(lu, n, n), pivots, swaps)
+        i = 0
+        while i < n do
+          // Find pivot: largest absolute value in column i at or below row i
+          var maxRow = i
+          var maxAbs = math.abs(frac.toDouble(lu(i * n + i)))
+          var k = i + 1
+          while k < n do
+            val v = math.abs(frac.toDouble(lu(k * n + i)))
+            if v > maxAbs then { maxAbs = v; maxRow = k }
+            k += 1
+          // Swap rows
+          if maxRow != i then
+            var c = 0
+            while c < n do
+              val tmp = lu(i * n + c); lu(i * n + c) = lu(maxRow * n + c); lu(maxRow * n + c) = tmp
+              c += 1
+            val tp = pivots(i); pivots(i) = pivots(maxRow); pivots(maxRow) = tp
+            swaps += 1
+          val pivot = lu(i * n + i)
+          if math.abs(frac.toDouble(pivot)) == 0.0 then
+            throw ArithmeticException("Matrix is singular or nearly singular")
+          // Eliminate below pivot
+          var r = i + 1
+          while r < n do
+            val factor = frac.div(lu(r * n + i), pivot)
+            lu(r * n + i) = factor
+            var c = i + 1
+            while c < n do
+              lu(r * n + c) = frac.minus(lu(r * n + c), frac.times(factor, lu(i * n + c)))
+              c += 1
+            r += 1
+          i += 1
+        (Mat.create(lu, n, n), pivots, swaps)
     }
 
     // ---- Determinant ---------------------------------------------------
@@ -1924,32 +2041,58 @@ object Mat {
     def inverse(using frac: Fractional[T]): Mat[T] = {
       require(m.rows == m.cols, s"inverse requires square matrix, got ${m.shape}")
       val n = m.rows
-      val (lu, pivots, _) = luDecompose
-      val result = Array.ofDim[T](n * n)
-      var col = 0
-      while col < n do
-        // Permuted RHS for this column
-        val x = Array.ofDim[T](n)
-        var i = 0
-        while i < n do { x(i) = if pivots(i) == col then frac.one else frac.zero; i += 1 }
-        // Forward substitution: Lx = b (L has 1s on diagonal, stored below)
-        i = 1
-        while i < n do
-          var k = 0
-          while k < i do { x(i) = frac.minus(x(i), frac.times(lu(i, k), x(k))); k += 1 }
-          i += 1
-        // Backward substitution: Ux = y
-        i = n - 1
-        while i >= 0 do
-          var k = i + 1
-          while k < n do { x(i) = frac.minus(x(i), frac.times(lu(i, k), x(k))); k += 1 }
-          x(i) = frac.div(x(i), lu(i, i))
-          i -= 1
-        // Write column into result
-        var row = 0
-        while row < n do { result(row * n + col) = x(row); row += 1 }
-        col += 1
-      Mat.create(result, n, n)
+      if fastDL(m) then
+        // Primitive LU + forward/backward substitution, no Fractional[T] boxing.
+        val lu = toFlatD(m, n)
+        val (pivots, _) = luDecomposeD(lu, n)
+        val result = new Array[Double](n * n)
+        var col = 0
+        while col < n do
+          val x = new Array[Double](n)
+          var i = 0
+          while i < n do { x(i) = if pivots(i) == col then 1.0 else 0.0; i += 1 }
+          i = 1
+          while i < n do
+            var k = 0
+            while k < i do { x(i) = x(i) - lu(i * n + k) * x(k); k += 1 }
+            i += 1
+          i = n - 1
+          while i >= 0 do
+            var k = i + 1
+            while k < n do { x(i) = x(i) - lu(i * n + k) * x(k); k += 1 }
+            x(i) = x(i) / lu(i * n + i)
+            i -= 1
+          var row = 0
+          while row < n do { result(row * n + col) = x(row); row += 1 }
+          col += 1
+        Mat.create(result, n, n).asInstanceOf[Mat[T]]
+      else
+        val (lu, pivots, _) = luDecompose
+        val result = Array.ofDim[T](n * n)
+        var col = 0
+        while col < n do
+          // Permuted RHS for this column
+          val x = Array.ofDim[T](n)
+          var i = 0
+          while i < n do { x(i) = if pivots(i) == col then frac.one else frac.zero; i += 1 }
+          // Forward substitution: Lx = b (L has 1s on diagonal, stored below)
+          i = 1
+          while i < n do
+            var k = 0
+            while k < i do { x(i) = frac.minus(x(i), frac.times(lu(i, k), x(k))); k += 1 }
+            i += 1
+          // Backward substitution: Ux = y
+          i = n - 1
+          while i >= 0 do
+            var k = i + 1
+            while k < n do { x(i) = frac.minus(x(i), frac.times(lu(i, k), x(k))); k += 1 }
+            x(i) = frac.div(x(i), lu(i, i))
+            i -= 1
+          // Write column into result
+          var row = 0
+          while row < n do { result(row * n + col) = x(row); row += 1 }
+          col += 1
+        Mat.create(result, n, n)
     }
 
     // ---- QR Decomposition (Householder reflections) -------------------
@@ -3330,21 +3473,54 @@ object Mat {
 
     /** NumPy: np.power(m, n) - element-wise x^n */
     def power(n: Double)(using frac: Fractional[T], elem: MatElem[T]): Mat[T] =
-      m.map((x: T) => elem.fromDouble(math.pow(frac.toDouble(x), n)))
+      // `map`'s Double fast path can't specialize this lambda (it compiles as
+      // T=>T inside the generic extension), so go primitive directly. The stride
+      // equation keeps it correct for views/transposes.
+      if fastDL(m) then
+        val a   = m.tdata.asInstanceOf[Array[Double]]
+        val rows = m.rows; val cols = m.cols
+        val off = m.offset; val rs = m.rs; val cs = m.cs
+        val out = new Array[Double](rows * cols)
+        var r = 0; var idx = 0
+        while r < rows do
+          var c = 0
+          while c < cols do
+            out(idx) = math.pow(a(off + r * rs + c * cs), n); idx += 1; c += 1
+          r += 1
+        Mat.create(out, rows, cols).asInstanceOf[Mat[T]]
+      else
+        m.map((x: T) => elem.fromDouble(math.pow(frac.toDouble(x), n)))
 
     /** Integer exponent overload - no Fractional needed */
     def power(n: Int)(using num: Numeric[T]): Mat[T] = {
       // argument error → IAE (UnsupportedOperationException is reserved for
       // unsupported element types)
       require(n >= 0, "negative integer power requires Fractional — use power(n: Double) or 1.0 / m")
-      m.map((x: T) => {
-        var result = num.one
-        var k = 0
-        while k < n do
-          result = num.times(result, x)
-          k += 1
-        result
-      })
+      if fastDL(m) then
+        val a   = m.tdata.asInstanceOf[Array[Double]]
+        val rows = m.rows; val cols = m.cols
+        val off = m.offset; val rs = m.rs; val cs = m.cs
+        val out = new Array[Double](rows * cols)
+        var r = 0; var idx = 0
+        while r < rows do
+          var c = 0
+          while c < cols do
+            // integer exponent by repeated multiply — matches the generic branch
+            var result = 1.0; var k = 0
+            val x = a(off + r * rs + c * cs)
+            while k < n do { result = result * x; k += 1 }
+            out(idx) = result; idx += 1; c += 1
+          r += 1
+        Mat.create(out, rows, cols).asInstanceOf[Mat[T]]
+      else
+        m.map((x: T) => {
+          var result = num.one
+          var k = 0
+          while k < n do
+            result = num.times(result, x)
+            k += 1
+          result
+        })
     }
 
     // newaxis equivalents

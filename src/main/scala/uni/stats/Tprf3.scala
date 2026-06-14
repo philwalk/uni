@@ -427,7 +427,10 @@ object Tprf3 {
     val s = drop.toSet; (0 until T).filterNot(s.contains)
 
   private def nanCol(T: Int): MatD =
-    Mat.create(Array.fill(T)(Double.NaN), T, 1)
+    // Array.fill boxes each element (by-name generic); fill a primitive array.
+    val a = new Array[Double](T)
+    java.util.Arrays.fill(a, Double.NaN)
+    Mat.create(a, T, 1)
 
   private def encnew(foreErr1: MatD, foreErr2: MatD): Double =
     val valid = (0 until foreErr1.rows).filter(i =>
@@ -670,20 +673,32 @@ object Tprf3 {
 
     // ── Point estimates ──────────────────────────────────────────────────────
     val residuals = y - forecasts
-    val loc     = (0 until T).filter(i => !residuals(i, 0).isNaN)
+    val loc     = (0 until T).filter(i => !isNan(residuals.atD(i, 0)))
 
+    // Primitive sums over `loc` via atD — the prior loc.map(...).sum chains boxed
+    // every element (Seq[Double] storage + Numeric.plus). idxs avoids Int boxing.
+    val idxs  = loc.toArray
+    val nLoc  = idxs.length
     val rsq =
       if procedure == "IS Full" then
-        val fe = loc.map(i => residuals(i, 0))
-        val yv = loc.map(i => y(i, 0))
-        val mu = yv.sum / yv.length
-        1.0 - fe.map(e => e*e).sum / yv.map(v => (v-mu)*(v-mu)).sum
+        var sy = 0.0; var k = 0
+        while k < nLoc do { sy += y.atD(idxs(k), 0); k += 1 }
+        val mu = sy / nLoc
+        var see = 0.0; var syy = 0.0; k = 0
+        while k < nLoc do
+          val i = idxs(k)
+          val e = residuals.atD(i, 0); see += e * e
+          val d = y.atD(i, 0) - mu;   syy += d * d
+          k += 1
+        1.0 - see / syy
       else
-        val fe  = loc.map(i => residuals(i, 0))
-        val yv  = loc.map(i => y(i, 0))
-        val rfv = loc.map(i => rollfore(i, 0))
-        val ssT = yv.zip(rfv).map((yi, ri) => (yi - ri)*(yi - ri)).sum
-        if ssT != 0.0 then 1.0 - fe.map(e => e*e).sum / ssT else Double.NaN
+        var see = 0.0; var ssT = 0.0; var k = 0
+        while k < nLoc do
+          val i = idxs(k)
+          val e = residuals.atD(i, 0);          see += e * e
+          val d = y.atD(i, 0) - rollfore.atD(i, 0); ssT += d * d
+          k += 1
+        if ssT != 0.0 then 1.0 - see / ssT else Double.NaN
 
     val encStat =
       if procedure == "OOS Recursive" then
