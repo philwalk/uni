@@ -402,18 +402,41 @@ object Mat {
     val rows = matrices.head.rows
     require(matrices.forall(_.rows == rows), "hstack requires equal row counts")
     val totalCols = matrices.map(_.cols).sum
-    val result = Array.ofDim[U](rows * totalCols)
-    var i = 0
-    while i < rows do
-      var colOffset = 0
-      for mat <- matrices do
-        var j = 0
-        while j < mat.cols do
-          result(i * totalCols + colOffset + j) = mat(i, j)
-          j += 1
-        colOffset += mat.cols
-      i += 1
-    Mat.create(result, rows, totalCols)
+    if summon[ClassTag[U]].runtimeClass == classOf[Double] then
+      // Unboxed fast path: primitive result array + atD reads (honour view strides).
+      // Indexed while (not `for mat <- matrices`) avoids the foreach closure and the
+      // IntRef boxing of the captured colOffset var.
+      val ms  = matrices.toIndexedSeq
+      val n   = ms.length
+      val out = new Array[Double](rows * totalCols)
+      var i = 0
+      while i < rows do
+        var colOffset = 0
+        var k = 0
+        while k < n do
+          val mat = ms(k).asInstanceOf[Mat[Double]]
+          val mc  = mat.cols
+          var j = 0
+          while j < mc do
+            out(i * totalCols + colOffset + j) = mat.atD(i, j)
+            j += 1
+          colOffset += mc
+          k += 1
+        i += 1
+      Mat.create(out, rows, totalCols).asInstanceOf[Mat[U]]
+    else
+      val result = Array.ofDim[U](rows * totalCols)
+      var i = 0
+      while i < rows do
+        var colOffset = 0
+        for mat <- matrices do
+          var j = 0
+          while j < mat.cols do
+            result(i * totalCols + colOffset + j) = mat(i, j)
+            j += 1
+          colOffset += mat.cols
+        i += 1
+      Mat.create(result, rows, totalCols)
   }
 
   def concatenate[U: ClassTag](matrices: Seq[Mat[U]], axis: Int = 0): Mat[U] =
@@ -967,7 +990,7 @@ object Mat {
   // ============================================================================
   // Indexing (NumPy-aligned with negative index support)
   // ============================================================================
-  extension [T](m: Mat[T])(using @annotation.unused ct: ClassTag[T]) {
+  extension [T](m: Mat[T])(using ct: ClassTag[T]) {
     // True when the strided layout is fragmented (major stride exceeds the
     // leading dimension), i.e. the view skips over backing-array elements.
     // Internal.create materializes such views into a contiguous copy.
@@ -1062,17 +1085,28 @@ object Mat {
     }
 
     def zipMap[U, V: ClassTag](other: Mat[U])(f: (T, U) => V): Mat[V] = {
-      require(m.rows == other.rows && m.cols == other.cols, 
+      require(m.rows == other.rows && m.cols == other.cols,
         s"Dimension mismatch: (${m.rows}x${m.cols}) vs (${other.rows}x${other.cols})")
-      
+
       val len = m.rows * m.cols
-      val res = new Array[V](len)
-      var i = 0
-      while (i < len) {
-        res(i) = f(m.at(i), other.at(i))
-        i += 1
-      }
-      Mat.create(res, m.rows, m.cols)
+      if ct.runtimeClass == classOf[Double]
+         && summon[ClassTag[V]].runtimeClass == classOf[Double]
+         && other.tdata.isInstanceOf[Array[Double]]
+         && m.isContiguous && m.offset == 0 && m.tdata.length == len
+         && other.isContiguous && other.offset == 0 && other.tdata.length == len then
+        // Unboxed (Double, Double)→Double fast path (both operands contiguous).
+        val a = m.tdata.asInstanceOf[Array[Double]]
+        val b = other.tdata.asInstanceOf[Array[Double]]
+        val g = f.asInstanceOf[(Double, Double) => Double]
+        val out = new Array[Double](len)
+        var i = 0
+        while i < len do { out(i) = g(a(i), b(i)); i += 1 }
+        Mat.create(out, m.rows, m.cols).asInstanceOf[Mat[V]]
+      else
+        val res = new Array[V](len)
+        var i = 0
+        while i < len do { res(i) = f(m.at(i), other.at(i)); i += 1 }
+        Mat.create(res, m.rows, m.cols)
     }
 
 //    /** * Enables: m(i, ::) := 10.0
@@ -1431,23 +1465,37 @@ object Mat {
     // Functional Operations
     // ============================================================================
 
-    def map[U: ClassTag](f: T => U): Mat[U] = {
-      // Allocate a fresh, contiguous array for the result
-      val resData = new Array[U](m.rows * m.cols)
-      var r = 0
-      var idx = 0
-      while (r < m.rows) {
-        var c = 0
-        while (c < m.cols) {
-          // m(r, c) uses your stride/offset logic to find the REAL element
-          resData(idx) = f(m(r, c))
-          idx += 1
-          c += 1
-        }
-        r += 1
-      }
-      Mat.create(resData, m.rows, m.cols)
-    }
+    def map[U: ClassTag](f: T => U): Mat[U] =
+      if ct.runtimeClass == classOf[Double] && summon[ClassTag[U]].runtimeClass == classOf[Double] then
+        // Unboxed Double→Double fast path. Reads via the stride equation (honours
+        // views/offset); the cast `g` calls the specialized apply$mcDD$sp when the
+        // caller's lambda is a monomorphic Double function (the common case).
+        val a = m.tdata.asInstanceOf[Array[Double]]
+        val g = f.asInstanceOf[Double => Double]
+        val rows = m.rows; val cols = m.cols
+        val off = m.offset; val rs = m.rs; val cs = m.cs
+        val out = new Array[Double](rows * cols)
+        var r = 0; var idx = 0
+        while r < rows do
+          var c = 0
+          while c < cols do
+            out(idx) = g(a(off + r * rs + c * cs)); idx += 1; c += 1
+          r += 1
+        Mat.create(out, rows, cols).asInstanceOf[Mat[U]]
+      else
+        // Allocate a fresh, contiguous array for the result
+        val resData = new Array[U](m.rows * m.cols)
+        var r = 0
+        var idx = 0
+        while r < m.rows do
+          var c = 0
+          while c < m.cols do
+            // m(r, c) uses your stride/offset logic to find the REAL element
+            resData(idx) = f(m(r, c))
+            idx += 1
+            c += 1
+          r += 1
+        Mat.create(resData, m.rows, m.cols)
 
     /** Apply a Double→Double function in parallel using the fork/join pool.
      *  Requires a contiguous, non-offset Mat[Double].
