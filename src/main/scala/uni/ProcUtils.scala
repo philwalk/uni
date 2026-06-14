@@ -147,14 +147,21 @@ object Proc {
         t.start()
       }
 
-    private def awaitProcess(process: java.lang.Process): Int =
+    // Returns (status, timedOut).  On a forced-timeout kill, orphaned grandchildren
+    // (e.g. bash's `sleep` child) can keep the stdout/stderr pipes open, so the reader
+    // threads never see EOF; callers must bound their drain-thread joins in that case.
+    private def awaitProcess(process: java.lang.Process): (Int, Boolean) =
       _timeout match
         case Some(ms) =>
           if !process.waitFor(ms, TimeUnit.MILLISECONDS) then
             process.destroyForcibly()
-            -1
-          else process.exitValue()
-        case None => process.waitFor()
+            (-1, true)
+          else (process.exitValue(), false)
+        case None => (process.waitFor(), false)
+
+    // Joining drain/reader threads after a timeout could block until an orphaned
+    // grandchild exits; these threads are daemons, so a bounded join is safe.
+    private val timeoutJoinGraceMs = 250L
 
     def run(): ProcResult =
       val routed  = routeCmd(cmd)
@@ -169,9 +176,9 @@ object Proc {
         startReader(process.getErrorStream, errQ)
         val outD    = drainingThread(outQ, outBuf)
         val errD    = drainingThread(errQ, errBuf)
-        val status  = awaitProcess(process)
-        outD.join()
-        errD.join()
+        val (status, timedOut) = awaitProcess(process)
+        if timedOut then { outD.join(timeoutJoinGraceMs); errD.join(timeoutJoinGraceMs) }
+        else            { outD.join();                    errD.join() }
         ProcResult(status, outBuf.toSeq, errBuf.toSeq, routed)
       catch
         case e: java.io.IOException =>
@@ -198,9 +205,9 @@ object Proc {
           t
         val outT   = streamReader(process.getInputStream, out)
         val errT   = streamReader(process.getErrorStream, err)
-        val status = awaitProcess(process)
-        outT.join()
-        errT.join()
+        val (status, timedOut) = awaitProcess(process)
+        if timedOut then { outT.join(timeoutJoinGraceMs); errT.join(timeoutJoinGraceMs) }
+        else            { outT.join();                    errT.join() }
         status
       catch case e: java.io.IOException => err(e.getMessage); -1
 

@@ -273,3 +273,14 @@ object VecOps:
 // (step 5) for cross-package callers.  Must be in THIS file (VecExts.scala)
 // so all `*` overloads share the same top-level definition group (E161).
 export VecOps.*
+
+// Re-export the unboxed Mat[Double] indexing facade (MatDOps.scala) here, in
+// the SAME definition group as `export Mat.{… apply}` and `export VecOps.*`:
+// E161 requires all re-exported overloads of `apply`/`update` to live together.
+// External callers (import uni.data.*) select the Mat[Double] overloads by
+// receiver specificity → unboxed m(i,j) / m(i,j)=v.
+export MatDOps.*
+
+// Mat[Float] twin of MatDOps, generated into sourceManaged by the build.sbt
+// sourceGenerator (see MatDOps.scala header).  Same export-group requirement.
+export MatFOps.*

@@ -84,6 +84,27 @@ Compile / run / connectInput := true // forward stdin to forked process
 // sessions too (plain StdoutOutput goes to the server console, not the client)
 Compile / run / outputStrategy := Some(OutputStrategy.LoggedOutput(sLog.value))
 
+// Generate MatFOps.scala (the Mat[Float] indexing facade) from MatDOps.scala by
+// scoped textual substitution.  Generated-only: emitted into sourceManaged (under
+// target/, gitignored) and regenerated on every compile, so it can never drift
+// from the Double source of truth and never appears as a tracked change (keeping
+// the release pre-flight clean-tree gate happy).  MatDOps.scala is pure indexing
+// (no BLAS / math.* / bare Double literals), so blanket Double→Float / matD→matF
+// substitution is safe.
+Compile / sourceGenerators += Def.task {
+  val src = (Compile / scalaSource).value / "uni" / "data" / "MatDOps.scala"
+  val out = (Compile / sourceManaged).value / "uni" / "data" / "MatFOps.scala"
+  val banner =
+    "// DO NOT EDIT — generated from MatDOps.scala by the build.sbt sourceGenerator.\n" +
+    "// Edit MatDOps.scala (the Double source of truth); the Float twin regenerates.\n\n"
+  val generated = IO.read(src)
+    .replace("MatDOps", "MatFOps")
+    .replace("matD", "matF")
+    .replace("Double", "Float")
+  IO.write(out, banner + generated)
+  Seq(out)
+}.taskValue
+
 Test / envVars ++= Map("OPENBLAS_NUM_THREADS" -> "1")
 
   // Enable Java Vector API (used by netlib VectorBLAS for SIMD-accelerated BLAS)

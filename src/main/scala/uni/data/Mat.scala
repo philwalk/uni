@@ -1050,7 +1050,7 @@ object Mat {
   // ============================================================================
   // Indexing (NumPy-aligned with negative index support)
   // ============================================================================
-  extension [T](m: Mat[T])(using ct: ClassTag[T]) {
+  extension [T](m: Mat[T])(using @scala.annotation.unused ct: ClassTag[T]) {
     // True when the strided layout is fragmented (major stride exceeds the
     // leading dimension), i.e. the view skips over backing-array elements.
     // Internal.create materializes such views into a contiguous copy.
