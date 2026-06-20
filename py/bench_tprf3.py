@@ -23,11 +23,22 @@ from tprf3fast import estimate3prf_fast
 
 
 def bench(loops: int, fn) -> float:
-    """Returns ms-per-call for fn() run loops times."""
-    t0 = time.perf_counter()
+    """Returns the MEDIAN ms-per-call over `loops` individually timed runs.
+    Median, not mean: a single GC/scheduler spike then shifts one sample instead
+    of inflating the whole reading (the mean form did the latter)."""
+    times = []
     for _ in range(loops):
+        t0 = time.perf_counter()
         fn()
-    return (time.perf_counter() - t0) * 1000.0 / loops
+        times.append((time.perf_counter() - t0) * 1000.0)
+    times.sort()
+    return times[len(times) // 2]
+
+
+def warm(calls: int, fn) -> None:
+    """Spin up the OpenBLAS thread pool / warm caches for fn before timing it."""
+    for _ in range(calls):
+        fn()
 
 
 def run(label: str, T: int, N: int, L: int, warmup: int, loops: int):
@@ -37,34 +48,29 @@ def run(label: str, T: int, N: int, L: int, warmup: int, loops: int):
     y = rng.standard_normal((T, 1))
     Z = rng.standard_normal((T, L))
 
-    # ── warm-up: no JIT in Python; a few calls cover OpenBLAS thread-pool
-    # spin-up and CPU frequency ramp. The loop-based estimate3prf is not
-    # measured (rows commented out below), so it is not warmed either —
-    # restore its warmup calls if those rows are re-enabled.
-    print("  warming up ... ", end="", flush=True)
-    for _ in range(warmup):
-        estimate3prf_fast(y, X, Z, procedure="IS Full")
-    estimate3prf_fast(y, X, Z, procedure="OOS Recursive", mintrain=T // 2)
-    print("done")
+    # No JIT in Python, but warm each measured op right before timing it so
+    # OpenBLAS thread-pool spin-up / CPU ramp / cache misses don't land in the
+    # samples — and warm OOS Cross Val too (previously only OOS Recursive was).
+    oos_warm  = 10
+    oos_loops = 25
 
-    oos_loops = max(1, loops // 10)
+    print("  warming up ... ", end="", flush=True)
 
     # ── IS Full ───────────────────────────────────────────────────────────────
-#   ms_is      = bench(loops, lambda: estimate3prf(y, X, Z, procedure="IS Full"))
+    warm(warmup, lambda: estimate3prf_fast(y, X, Z, procedure="IS Full"))
     ms_is_fast = bench(loops, lambda: estimate3prf_fast(y, X, Z, procedure="IS Full"))
-#   print(f"  [Python]      {'estimate3prf IS Full':<22}  {ms_is:8.2f} ms/call")
-    print(f"  [Python Fast] {'estimate3prf IS Full':<22}  {ms_is_fast:8.2f} ms/call")
 
     # ── OOS Recursive ─────────────────────────────────────────────────────────
-#   ms_rec      = bench(oos_loops, lambda: estimate3prf(y, X, Z, procedure="OOS Recursive", mintrain=T // 2))
+    warm(oos_warm, lambda: estimate3prf_fast(y, X, Z, procedure="OOS Recursive", mintrain=T // 2))
     ms_rec_fast = bench(oos_loops, lambda: estimate3prf_fast(y, X, Z, procedure="OOS Recursive", mintrain=T // 2))
-#   print(f"  [Python]      {'estimate3prf OOS Rec':<22}  {ms_rec:8.2f} ms/call  (loops={oos_loops})")
-    print(f"  [Python Fast] {'estimate3prf OOS Rec':<22}  {ms_rec_fast:8.2f} ms/call  (loops={oos_loops})")
 
     # ── OOS Cross Val ─────────────────────────────────────────────────────────
-#   ms_cv      = bench(oos_loops, lambda: estimate3prf(y, X, Z, procedure="OOS Cross Val"))
+    warm(oos_warm, lambda: estimate3prf_fast(y, X, Z, procedure="OOS Cross Val"))
     ms_cv_fast = bench(oos_loops, lambda: estimate3prf_fast(y, X, Z, procedure="OOS Cross Val"))
-#   print(f"  [Python]      {'estimate3prf OOS CV':<22}  {ms_cv:8.2f} ms/call  (loops={oos_loops})")
+
+    print("done")
+    print(f"  [Python Fast] {'estimate3prf IS Full':<22}  {ms_is_fast:8.2f} ms/call")
+    print(f"  [Python Fast] {'estimate3prf OOS Rec':<22}  {ms_rec_fast:8.2f} ms/call  (loops={oos_loops})")
     print(f"  [Python Fast] {'estimate3prf OOS CV':<22}  {ms_cv_fast:8.2f} ms/call  (loops={oos_loops})")
 
 

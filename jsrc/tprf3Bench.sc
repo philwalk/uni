@@ -12,9 +12,11 @@ import scala.sys.process.*
 
 /**
  * Benchmarks Tprf3.t3prf and Tprf3.estimate3prf across two data sizes,
- * then invokes py/bench_tprf3.py so Scala and Python results appear side-by-side.
+ * then invokes py/bench_tprf3.py and prints a side-by-side comparison table
+ * (Python vs Scala, with the ratio) in the same markdown style as
+ * docs/MatDCheatSheet.md.
  *
- * Run:  sbt "runMain apps.Tprf3Bench"
+ * Run:  scala-cli jsrc/tprf3Bench.sc
  */
 object Tprf3Bench {
   def usage(m: String = ""): Nothing = {
@@ -22,6 +24,15 @@ object Tprf3Bench {
       "[-nopython]     ; only show scala benchmark results",
     )
   }
+
+  /** Scala timings for one data size. `isFull` is `estimate3prf IS Full`
+   *  (the apples-to-apples match for Python's `estimate3prf_fast`); `t3prf`
+   *  is the direct fast path, reported but not compared (Python has no twin). */
+  case class ScalaRes(label: String, T: Int, N: Int, L: Int,
+                      t3prf: Double, isFull: Double, oosRec: Double, oosCv: Double)
+
+  /** The three scenarios that exist on both sides, in display order. */
+  private val scenarios = List("IS Full", "OOS Rec", "OOS CV")
 
   var runPython = true
   def main(args: Array[String]): Unit = {
@@ -40,21 +51,19 @@ object Tprf3Bench {
     // any post-compile/Bloop or CPU-ramp disturbance; warmupMs is the floor —
     // warmupUntilStable keeps going until per-call time settles. Large reuses
     // the now-hot code paths, so a shorter floor suffices.
-    run("Small", T = 200, N = 30, L = 2, warmupMs = 2000, loops = 50)
-    run("Large", T = 650, N = 40, L = 2, warmupMs = 500,  loops = 20)
-    if !runPython then
-      sys.exit(0)
+    val scalaResults = List(
+      run("Small", T = 200, N = 30, L = 2, warmupMs = 2000, loops = 50),
+      run("Large", T = 650, N = 40, L = 2, warmupMs = 500,  loops = 20),
+    )
 
-    if !java.io.File(script).exists() then
-      println(s"\n(bench script not found: $script)")
-    else
-      findPython() match
-        case None      => println("\n(python3 not found; skipping)")
-        case Some(exe) => runBench(s"── Python benchmarks  [${pythonLabel(exe)}] ──────────────────────────────", exe, script)
+    // ── Python benchmarks: run, echo live, and capture lines for the table ──
+    val pyLines: List[String] =
+      if !runPython then Nil
+      else selectPython(script) match
+        case None              => Nil
+        case Some((hdr, exe))  => runBenchCapture(hdr, exe, script)
 
-      findWinPython() match
-        case None      => println("\n(WinPython not found; skipping)")
-        case Some(exe) => runBench(s"── WinPython benchmarks  [${pythonLabel(exe)}] ───────────────────────────", exe, script)
+    printComparison(scalaResults, parsePython(pyLines))
   }
 
   private def medianOf(samples: Array[Double]): Double =
@@ -75,6 +84,14 @@ object Tprf3Bench {
       times(i) = (System.nanoTime() - t0) / 1e6
       i += 1
     medianOf(times)
+
+  /** Drive `block` `n` times before timing — forces JIT compilation and spins
+   *  up the ForkJoin pool. Needed for the OOS procedures: they take a different
+   *  code path (the OOS branch + parallel collections) than the IS Full
+   *  warm-up exercises, so without this they are timed from cold. */
+  private def warm(n: Int)(block: => Unit): Unit =
+    var i = 0
+    while i < n do { block; i += 1 }
 
   /** Adaptive warm-up: times `block` in batches of `win` calls and stops once
    *  the last three batch medians agree within `tol` (and at least `minMs` has
@@ -107,7 +124,7 @@ object Tprf3Bench {
       m2 = m1; m1 = m0
     elapsedMs / 1000.0
 
-  def run(label: String, T: Int, N: Int, L: Int, warmupMs: Int, loops: Int): Unit =
+  def run(label: String, T: Int, N: Int, L: Int, warmupMs: Int, loops: Int): ScalaRes =
     println(s"\n── $label  (T=$T  N=$N  L=$L  warmup>=${warmupMs}ms  loops=$loops) ──")
     Mat.setSeed(0)
     val X: MatD = MatD.randn(T, N)
@@ -129,24 +146,34 @@ object Tprf3Bench {
     printf("  [Scala]  %-26s  %8.2f ms/call%n", "Tprf3.t3prf", msFast)
     printf("  [Scala]  %-26s  %8.2f ms/call%n", "Tprf3.estimate3prf IS Full", ms3prf)
 
-    // ── OOS Recursive (fewer loops — it iterates T times internally) ──────
-    // floor of 5: the median of 5 tolerates up to two outlier samples; at
-    // loops/10 = 2 a single background blip dominated the reading
-    // (observed OOS Rec readings of 24–112 ms for identical code)
-    val oosLoops = math.max(5, loops / 10)
+    // ── OOS Recursive / Cross Val ─────────────────────────────────────────
+    // Warm each OOS procedure explicitly (the IS Full warm-up above never runs
+    // them, so the old code timed them cold — JIT + ForkJoin spin-up landed in
+    // the samples) and take the median of many runs (the OOS path allocates per
+    // window, so a GC pause then shifts one sample, not the reading). The prior
+    // `max(5, loops/10)` = 5 cold samples gave 5–55 ms spreads for identical code.
+    val oosWarm  = 10
+    val oosLoops = 25
+
+    warm(oosWarm) {
+      Tprf3.estimate3prf(y, X, Right(Z), procedure = "OOS Recursive", mintrain = (T / 2, 0))
+    }
     val msOosRec = bench(oosLoops) {
-      Tprf3.estimate3prf(y, X, Right(Z), procedure = "OOS Recursive",
-        mintrain = (T / 2, 0))
+      Tprf3.estimate3prf(y, X, Right(Z), procedure = "OOS Recursive", mintrain = (T / 2, 0))
     }
     printf("  [Scala]  %-26s  %8.2f ms/call  (loops=%d)%n",
       "Tprf3.estimate3prf OOS Rec", msOosRec, oosLoops)
 
-    // ── OOS Cross Val ─────────────────────────────────────────────────────
+    warm(oosWarm) {
+      Tprf3.estimate3prf(y, X, Right(Z), procedure = "OOS Cross Val")
+    }
     val msCv = bench(oosLoops) {
       Tprf3.estimate3prf(y, X, Right(Z), procedure = "OOS Cross Val")
     }
     printf("  [Scala]  %-26s  %8.2f ms/call  (loops=%d)%n",
       "Tprf3.estimate3prf OOS CV", msCv, oosLoops)
+
+    ScalaRes(label, T, N, L, msFast, ms3prf, msOosRec, msCv)
 
   /** Known native-Windows Python installations to try, in preference order. */
   private val winPythonCandidates: List[String] = List(
@@ -170,6 +197,24 @@ object Tprf3Bench {
       catch case _: Exception => false
     }
 
+  /** Resolves the python interpreter to run and the section header to print,
+   *  or None (with a diagnostic) when none is available. */
+  private def selectPython(script: String): Option[(String, String)] =
+    if !java.io.File(script).exists() then
+      println(s"\n(bench script not found: $script)")
+      None
+    else findWinPython() match
+      case Some(exe) =>
+        Some((s"── WinPython benchmarks  [${pythonLabel(exe)}] ───────────────────────────", exe))
+      case None =>
+        if isWin then println("\n(WinPython not found)")
+        findPython() match
+          case Some(exe) =>
+            Some((s"── Python benchmarks  [${pythonLabel(exe)}] ──────────────────────────────", exe))
+          case None =>
+            println("\n(python3 not found; skipping)")
+            None
+
   /** Returns "Python X.Y.Z  (blas-name)" for display in the section header. */
   private def pythonLabel(exe: String): String =
     val ver = try
@@ -187,8 +232,59 @@ object Tprf3Bench {
     catch case _: Exception => "?"
     s"Python $ver  ($blas)"
 
-  private def runBench(header: String, exe: String, script: String): Unit =
+  /** Runs the python bench, echoing each stdout line live (preserving the
+   *  original streamed output) while collecting the lines for later parsing. */
+  private def runBenchCapture(header: String, exe: String, script: String): List[String] =
     println(s"\n$header")
-    Seq(exe, "-u", script).!
+    val buf = scala.collection.mutable.ListBuffer.empty[String]   // local accumulator only
+    val logger = ProcessLogger(
+      out => { println(out); buf += out },
+      err => System.err.println(err),
+    )
+    Seq(exe, "-u", script).!(logger)
+    buf.toList
+
+  /** Parses the `[Python Fast] estimate3prf <scenario>  N.NN ms/call` lines,
+   *  keyed by (size-label, scenario). A pure fold: section headers set the
+   *  current label, row lines add a timing. */
+  private def parsePython(lines: List[String]): Map[(String, String), Double] =
+    val labelRe = """──\s+(\S+)\s+\(T=.*""".r
+    val rowRe   = """.*\[Python Fast\]\s+estimate3prf\s+(IS Full|OOS Rec|OOS CV)\s+([0-9.]+)\s+ms/call.*""".r
+    lines.foldLeft((Option.empty[String], Map.empty[(String, String), Double])) {
+      case ((_, acc), labelRe(lbl))     => (Some(lbl), acc)
+      case ((cur, acc), rowRe(scn, ms)) => (cur, acc + ((cur.getOrElse("?"), scn) -> ms.toDouble))
+      case (state, _)                   => state
+    }._2
+
+  /** Renders `python / scala` as the doc-style ratio cell. */
+  private def ratioCell(pyMs: Double, scalaMs: Double): String =
+    val r = pyMs / scalaMs
+    if r >= 1.0 then f"**$r%.1f× faster**" else f"**${1.0 / r}%.1f× slower**"
+
+  /** Prints the side-by-side markdown table (Python vs Scala, with ratio),
+   *  in the same style as docs/MatDCheatSheet.md. */
+  private def printComparison(scala: List[ScalaRes], py: Map[(String, String), Double]): Unit =
+    val hasPy = py.nonEmpty
+    println("\n## 3PRF Scala vs Python — ms/call")
+    println()
+    if hasPy then
+      println("| Operation | Python | Scala | Ratio |")
+      println("|---|---:|---:|---|")
+    else
+      println("(no python results — Scala timings only)\n")
+      println("| Operation | Scala |")
+      println("|---|---:|")
+
+    for sr <- scala do
+      val scalaMs = Map("IS Full" -> sr.isFull, "OOS Rec" -> sr.oosRec, "OOS CV" -> sr.oosCv)
+      for scn <- scenarios do
+        val op = s"3PRF $scn (${sr.label}: T=${sr.T}, N=${sr.N}, L=${sr.L})"
+        val sMs = scalaMs(scn)
+        if hasPy then
+          py.get((sr.label, scn)) match
+            case Some(pMs) => println(f"| $op | $pMs%.2f ms | $sMs%.2f ms | ${ratioCell(pMs, sMs)} |")
+            case None      => println(f"| $op | — | $sMs%.2f ms | — |")
+        else
+          println(f"| $op | $sMs%.2f ms |")
 
 }

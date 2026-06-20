@@ -68,6 +68,38 @@ def _nanstd_cols(X: np.ndarray) -> np.ndarray:
     return s.reshape(1, -1)
 
 
+def _std_cols(X: np.ndarray, has_nan: bool) -> np.ndarray:
+    """Column-wise sample std dev; returns (1, N) row. Columns with std = 0 are
+    set to 1 to avoid division by zero. Uses the much faster NaN-free `std` path
+    when the data has no NaNs (detected once per call); only falls back to the
+    `nanstd` machinery when NaNs are actually present."""
+    s = np.nanstd(X, axis=0, ddof=1) if has_nan else X.std(axis=0, ddof=1)
+    s[s == 0] = 1.0
+    return s.reshape(1, -1)
+
+
+def _col_mean(v: np.ndarray, has_nan: bool) -> float:
+    """Mean of a column vector, skipping the `nanmean` overhead when NaN-free."""
+    return float(np.nanmean(v)) if has_nan else float(v.mean())
+
+
+def _ols(A: np.ndarray, Y: np.ndarray) -> np.ndarray:
+    """Least-squares solution of A·B = Y via the normal equations.
+
+    The 3PRF design matrices have only L+1 columns (typically 3), so AᵀA is a
+    tiny SPD matrix and `solve` is several times faster than the SVD driver in
+    `np.linalg.lstsq`. For full-rank, well-conditioned designs the result is
+    identical to lstsq to machine precision; if AᵀA is exactly singular (a
+    rank-deficient design), `solve` raises and we fall back to the rank-revealing
+    `lstsq(rcond=None)` to preserve the original minimum-norm behaviour."""
+    AtA = A.T @ A
+    AtY = A.T @ Y
+    try:
+        return np.linalg.solve(AtA, AtY)
+    except np.linalg.LinAlgError:
+        return np.linalg.lstsq(A, Y, rcond=None)[0]
+
+
 def _encnew(fore_err1: np.ndarray, fore_err2: np.ndarray) -> float:
     """Clark-McCracken (2001) ENC-NEW statistic."""
     e1, e2 = fore_err1.ravel(), fore_err2.ravel()
@@ -94,26 +126,23 @@ def _t3prf_core(
     """
     T, N = X.shape
 
-    # Pass 1
+    # Pass 1  — normal-equations solve (L+1 columns ⇒ tiny AᵀA), see _ols
     dZ  = np.column_stack([np.ones(T), Z])
-    B1, _, _, _ = np.linalg.lstsq(dZ, X, rcond=None)
-    Phi = B1[1:].T              # N×L
+    Phi = _ols(dZ, X)[1:].T     # N×L
 
     # Pass 2
     dP  = np.column_stack([np.ones(N), Phi])
-    B2, _, _, _ = np.linalg.lstsq(dP, X.T, rcond=None)
-    Sigma = B2[1:].T            # T×L
+    Sigma = _ols(dP, X.T)[1:].T # T×L
 
     # Pass 3
     dS   = np.column_stack([np.ones(T), Sigma])
-    beta, _, _, _ = np.linalg.lstsq(dS, y, rcond=None)
+    beta = _ols(dS, y)
     yhat = dS @ beta
 
     # OOS point forecast (reuse dP)
     yhatt = np.nan
     if oos_x is not None:
-        soo, _, _, _ = np.linalg.lstsq(dP, oos_x.T, rcond=None)
-        sigma_t = soo[1:]
+        sigma_t = _ols(dP, oos_x.T)[1:]
         yhatt = float(np.insert(sigma_t.ravel(), 0, 1.0) @ beta.ravel())
 
     return yhat, yhatt
@@ -189,8 +218,14 @@ def estimate3prf_fast(
 
     window = (abs(int(window[0])), abs(int(window[1])))
 
+    # ── NaN detection (once) — gates the fast NaN-free std/mean paths ────────
+    has_nan = bool(
+        np.isnan(X).any() or np.isnan(y).any()
+        or (Z_mat is not None and np.isnan(Z_mat).any())
+    )
+
     # ── global normalisation (matches tprf3.py) ──────────────────────────────
-    Xstd = _nanstd_cols(X)
+    Xstd = _std_cols(X, has_nan)
     Xn   = X / Xstd
 
     forecasts = np.full((T, 1), np.nan)
@@ -215,23 +250,29 @@ def estimate3prf_fast(
 
     # ── OOS Cross Val ─────────────────────────────────────────────────────────
     elif procedure == 'OOS Cross Val':
-        all_idx = np.arange(T)
 
         def _cv_task(t: int) -> tuple[int, float, float]:
-            drop = np.arange(t - window[0], t - window[0] + window[1])
-            drop = drop[(drop >= 0) & (drop < T)]
-            ts   = np.setdiff1d(all_idx, drop)
-            Xt0  = Xn[ts]; Xts = _nanstd_cols(Xt0); Xt = Xt0 / Xts
-            oos  = Xn[t:t+1] / Xts
-            rf   = float(np.nanmean(y[ts]))
+            # The dropped block is a contiguous index range; a boolean mask
+            # selects the complement directly, avoiding setdiff1d's hash/sort.
+            lo = max(t - window[0], 0)
+            hi = min(t - window[0] + window[1], T)
+            if hi > lo:
+                keep = np.ones(T, dtype=bool); keep[lo:hi] = False
+                Xt0 = Xn[keep]; yt = y[keep]
+                Zt  = Z_mat[keep] if Z_mat is not None else None
+            else:
+                Xt0 = Xn; yt = y; Zt = Z_mat
+            Xts = _std_cols(Xt0, has_nan); Xt = Xt0 / Xts
+            oos = Xn[t:t+1] / Xts
+            rf  = _col_mean(yt, has_nan)
             if autoproxy:
-                r0 = y[ts].copy(); tmpt = np.nan
+                r0 = yt.copy(); tmpt = np.nan
                 for _ in range(L):
-                    tmp, tmpt = _t3prf_core(y[ts], Xt, r0, oos_x=oos)
-                    r0 = np.hstack([y[ts] - tmp, r0])
+                    tmp, tmpt = _t3prf_core(yt, Xt, r0, oos_x=oos)
+                    r0 = np.hstack([yt - tmp, r0])
                 return t, tmpt, rf
             else:
-                _, f_t = _t3prf_core(y[ts], Xt, Z_mat[ts], oos_x=oos)
+                _, f_t = _t3prf_core(yt, Xt, Zt, oos_x=oos)
                 return t, f_t, rf
 
         if nw > 1:
@@ -248,18 +289,21 @@ def estimate3prf_fast(
         mt, gap = mintrain
 
         def _rec_task(t: int) -> tuple[int, float, float]:
-            ts  = np.arange(0, t - 1 - gap)
-            Xt0 = Xn[ts]; Xts = _nanstd_cols(Xt0); Xt = Xt0 / Xts
+            # Training rows are the contiguous prefix [0, end); slicing yields a
+            # view (no copy) instead of fancy-indexing a freshly built index array.
+            end = t - 1 - gap
+            Xt0 = Xn[:end]; Xts = _std_cols(Xt0, has_nan); Xt = Xt0 / Xts
             oos = Xn[t:t+1] / Xts
-            rf  = float(np.nanmean(y[ts]))
+            yt  = y[:end]
+            rf  = _col_mean(yt, has_nan)
             if autoproxy:
-                r0 = y[ts].copy(); tmpt = np.nan
+                r0 = yt.copy(); tmpt = np.nan
                 for _ in range(L):
-                    tmp, tmpt = _t3prf_core(y[ts], Xt, r0, oos_x=oos)
-                    r0 = np.hstack([y[ts] - tmp, r0])
+                    tmp, tmpt = _t3prf_core(yt, Xt, r0, oos_x=oos)
+                    r0 = np.hstack([yt - tmp, r0])
                 return t, tmpt, rf
             else:
-                _, f_t = _t3prf_core(y[ts], Xt, Z_mat[ts], oos_x=oos)
+                _, f_t = _t3prf_core(yt, Xt, Z_mat[:end], oos_x=oos)
                 return t, f_t, rf
 
         ts_range = range(mt + 1 + gap, T)
@@ -277,19 +321,21 @@ def estimate3prf_fast(
         win, min_nona, gap = rollwin
 
         def _roll_task(t: int) -> tuple[int, float, float]:
-            ts0 = np.arange(t - win - gap, t - 1 - gap)
-            ts0 = ts0[(ts0 >= 0) & (ts0 < T)]
-            Xt0 = Xn[ts0]; Xts = _nanstd_cols(Xt0); Xt = Xt0 / Xts
+            # Rolling window is a contiguous index range; slice it as a view.
+            lo  = max(t - win - gap, 0)
+            hi  = min(t - 1 - gap, T)
+            Xt0 = Xn[lo:hi]; Xts = _std_cols(Xt0, has_nan); Xt = Xt0 / Xts
             oos = Xn[t:t+1] / Xts
-            rf  = float(np.nanmean(y[ts0]))
+            yt  = y[lo:hi]
+            rf  = _col_mean(yt, has_nan)
             if autoproxy:
-                r0 = y[ts0].copy(); tmpt = np.nan
+                r0 = yt.copy(); tmpt = np.nan
                 for _ in range(L):
-                    tmp, tmpt = _t3prf_core(y[ts0], Xt, r0, oos_x=oos)
-                    r0 = np.hstack([y[ts0] - tmp, r0])
+                    tmp, tmpt = _t3prf_core(yt, Xt, r0, oos_x=oos)
+                    r0 = np.hstack([yt - tmp, r0])
                 return t, tmpt, rf
             else:
-                _, f_t = _t3prf_core(y[ts0], Xt, Z_mat[ts0], oos_x=oos)
+                _, f_t = _t3prf_core(yt, Xt, Z_mat[lo:hi], oos_x=oos)
                 return t, f_t, rf
 
         ts_range = range(win + 1 + gap, T)

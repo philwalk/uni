@@ -272,6 +272,13 @@ object Mat {
   // run sequentially for small arrays.
   private final val ParallelThreshold = 4096
 
+  // bcastRows uses IntStream.parallel(), whose pipeline/spliterator/task setup
+  // floor (~100µs measured) is far higher than parallelSetAll's. Parallelizing a
+  // broadcast only pays once the sequential cost clears that floor — empirically
+  // ~64K elements (below it, e.g. a 100×100 normalize, the stream setup makes it
+  // SLOWER). Keep a dedicated, higher threshold so medium broadcasts stay serial.
+  private final val BcastParallelThreshold = 1 << 16   // 65536
+
   /** The single guard for every Double fast path: a plain contiguous Mat[Double]
    *  with no view offset, whose backing array is exactly its logical data.
    *  One definition keeps per-site copies from drifting. */
@@ -348,6 +355,19 @@ object Mat {
       while i < out.length do
         out(i) = f(i)
         i += 1
+
+  /** Run `rowFn(r, r*cols)` for each row 0..rows, in parallel above
+   *  ParallelThreshold (by total element count), sequential below. Rows write
+   *  disjoint output slices with no reduction, so the result is bit-identical
+   *  regardless of execution order. Used to parallelize the broadcast branches
+   *  of fastBinOp (row/col-vector broadcasts), which were otherwise single-
+   *  threaded no matter the size. */
+  private[data] inline def bcastRows(rows: Int, cols: Int)(inline rowFn: (Int, Int) => Unit): Unit =
+    if rows.toLong * cols >= BcastParallelThreshold then
+      java.util.stream.IntStream.range(0, rows).parallel().forEach(r => rowFn(r, r * cols))
+    else
+      var r = 0
+      while r < rows do { rowFn(r, r * cols); r += 1 }
 
   /** Sum of a(from until until) with 8 independent accumulators: a single-accumulator
    *  loop is serialized by FP-add latency (~4 cycles); independent chains let the CPU
@@ -1216,54 +1236,48 @@ object Mat {
           // Broadcast 1×N: combine the same row vector with every row
           val b   = other.tdata.asInstanceOf[Array[Double]]
           val out = Array.ofDim[Double](rows * cols)
-          var r = 0
-          while r < rows do
-            val base = r * cols; var c = 0
+          bcastRows(rows, cols) { (r, base) =>
+            var c = 0
             while c < cols do { out(base + c) = f(a(base + c), b(c)); c += 1 }
-            r += 1
+          }
           Some(Mat.create(out, rows, cols).asInstanceOf[Mat[T]])
         else if other.rows == rows && other.cols == 1 && other.tdata.length == rows then
           // Broadcast N×1: combine each row's scalar with that row (e.g. m - m.mean(axis=1))
           val b   = other.tdata.asInstanceOf[Array[Double]]
           val out = Array.ofDim[Double](rows * cols)
-          var r = 0
-          while r < rows do
-            val base = r * cols; val s = b(r); var c = 0
+          bcastRows(rows, cols) { (r, base) =>
+            val s = b(r); var c = 0
             while c < cols do { out(base + c) = f(a(base + c), s); c += 1 }
-            r += 1
+          }
           Some(Mat.create(out, rows, cols).asInstanceOf[Mat[T]])
         else None
       else
         // `m` is a Double view (strided/offset, e.g. a row slice). Read it through the
         // stride equation; `other` and `out` stay contiguous (indexed r*cols + c).
         val off = m.offset; val rs = m.rs; val cs = m.cs
-        inline def ma(r: Int, c: Int): Double = a(off + r * rs + c * cs)
         if other.rows == rows && other.cols == cols && other.tdata.length == rows * cols then
           val b   = other.tdata.asInstanceOf[Array[Double]]
           val out = Array.ofDim[Double](rows * cols)
-          var r = 0
-          while r < rows do
-            val base = r * cols; var c = 0
-            while c < cols do { out(base + c) = f(ma(r, c), b(base + c)); c += 1 }
-            r += 1
+          bcastRows(rows, cols) { (r, base) =>
+            var c = 0
+            while c < cols do { out(base + c) = f(a(off + r * rs + c * cs), b(base + c)); c += 1 }
+          }
           Some(Mat.create(out, rows, cols).asInstanceOf[Mat[T]])
         else if other.rows == 1 && other.cols == cols && other.tdata.length == cols then
           val b   = other.tdata.asInstanceOf[Array[Double]]
           val out = Array.ofDim[Double](rows * cols)
-          var r = 0
-          while r < rows do
-            val base = r * cols; var c = 0
-            while c < cols do { out(base + c) = f(ma(r, c), b(c)); c += 1 }
-            r += 1
+          bcastRows(rows, cols) { (r, base) =>
+            var c = 0
+            while c < cols do { out(base + c) = f(a(off + r * rs + c * cs), b(c)); c += 1 }
+          }
           Some(Mat.create(out, rows, cols).asInstanceOf[Mat[T]])
         else if other.rows == rows && other.cols == 1 && other.tdata.length == rows then
           val b   = other.tdata.asInstanceOf[Array[Double]]
           val out = Array.ofDim[Double](rows * cols)
-          var r = 0
-          while r < rows do
-            val base = r * cols; val s = b(r); var c = 0
-            while c < cols do { out(base + c) = f(ma(r, c), s); c += 1 }
-            r += 1
+          bcastRows(rows, cols) { (r, base) =>
+            val s = b(r); var c = 0
+            while c < cols do { out(base + c) = f(a(off + r * rs + c * cs), s); c += 1 }
+          }
           Some(Mat.create(out, rows, cols).asInstanceOf[Mat[T]])
         else None
 
