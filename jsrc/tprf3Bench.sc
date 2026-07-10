@@ -22,6 +22,7 @@ object Tprf3Bench {
   def usage(m: String = ""): Nothing = {
     showUsage(m, "",
       "[-nopython]     ; only show scala benchmark results",
+      "[-python <exe>] ; python interpreter (default: first on PATH that has numpy)",
     )
   }
 
@@ -35,10 +36,13 @@ object Tprf3Bench {
   private val scenarios = List("IS Full", "OOS Rec", "OOS CV")
 
   var runPython = true
+  var pythonOverride: Option[String] = None
   def main(args: Array[String]): Unit = {
     eachArg(args.toSeq, usage) {
     case "-nopython" =>
       runPython = false
+    case "-python" =>
+      pythonOverride = Some(consumeNext)
     case arg =>
       usage(s"unrecognized arg [$arg]")
     }
@@ -175,44 +179,59 @@ object Tprf3Bench {
 
     ScalaRes(label, T, N, L, msFast, ms3prf, msOosRec, msCv)
 
-  /** Known native-Windows Python installations to try, in preference order. */
-  private val winPythonCandidates: List[String] = List(
-    "F:/WPy64-3.14.3.0/python/python.exe",
-  )
+  /** Every PATH entry holding `prog`, in PATH order — unlike uni.whereInPath,
+   *  which stops at the first hit. All hits matter here: on macOS a numpy-less
+   *  /usr/bin/python3 often shadows a numpy-capable homebrew python3, and the
+   *  numpy filter below needs to be able to look past it. */
+  private def allInPath(prog: String): List[String] =
+    val name = if isWin && !prog.endsWith(".exe") then prog + ".exe" else prog
+    Option(System.getenv("PATH")).toList
+      .flatMap(_.split(java.io.File.pathSeparator).toList)
+      .filter(_.nonEmpty)
+      .map(dir => Paths.get(dir, name))
+      .filter(p => if isWin then java.nio.file.Files.exists(p) else java.nio.file.Files.isExecutable(p))
+      .map(_.posx)
 
-  private def findPython(): Option[String] =
-    // MSYS2 paths resolved to Windows equivalents via Paths.get().posx
-    // for MacOs, this must list homebrew ahead of /usr/bin/python3 (otherwise, no numpy)
-    // (or, may need to brew install numpy)
-    val msys2Paths = List("/ucrt64/bin/python3.exe", "/opt/homebrew/bin/python3", "/usr/bin/python3")
-    val candidates = msys2Paths.map(Paths.get(_).posx) ++ List("python3", "python")
-    candidates.find { p =>
-      try Seq(p, "--version").!(ProcessLogger(_ => ())) == 0
-      catch case _: Exception => false
-    }
+  /** Candidate interpreters in preference order: every python3/python on PATH,
+   *  then the bare names as a last resort for environments where PATH-string
+   *  parsing and process spawning disagree (e.g. MSYS2 shims). */
+  private def pythonCandidates: List[String] =
+    (List("python3", "python").flatMap(allInPath) ++ List("python3", "python")).distinct
 
-  private def findWinPython(): Option[String] =
-    winPythonCandidates.find { p =>
-      try Seq(p, "--version").!(ProcessLogger(_ => ())) == 0
-      catch case _: Exception => false
-    }
+  /** True if `exe` runs and exits 0 — filters broken shims such as the
+   *  Microsoft Store `python.exe` app-execution alias, which exists on PATH
+   *  but exits non-zero when python is not actually installed. */
+  private def runnable(exe: String): Boolean =
+    try Seq(exe, "--version").!(ProcessLogger(_ => (), _ => ())) == 0
+    catch case _: Exception => false
+
+  private def hasNumpy(exe: String): Boolean =
+    try Seq(exe, "-c", "import numpy").!(ProcessLogger(_ => (), _ => ())) == 0
+    catch case _: Exception => false
 
   /** Resolves the python interpreter to run and the section header to print,
-   *  or None (with a diagnostic) when none is available. */
+   *  or None (with a diagnostic) when none is usable. An explicit -python
+   *  override is validated rather than silently falling back to PATH. */
   private def selectPython(script: String): Option[(String, String)] =
+    def header(exe: String) =
+      s"── Python benchmarks  [${pythonLabel(exe)}] ──────────────────────────────"
     if !java.io.File(script).exists() then
       println(s"\n(bench script not found: $script)")
       None
-    else findWinPython() match
+    else pythonOverride match
       case Some(exe) =>
-        Some((s"── WinPython benchmarks  [${pythonLabel(exe)}] ───────────────────────────", exe))
+        if !runnable(exe) then usage(s"not a runnable python: $exe")
+        if !hasNumpy(exe) then usage(s"numpy not installed for: $exe")
+        Some((header(exe), exe))
       case None =>
-        if isWin then println("\n(WinPython not found)")
-        findPython() match
-          case Some(exe) =>
-            Some((s"── Python benchmarks  [${pythonLabel(exe)}] ──────────────────────────────", exe))
+        val runnables = pythonCandidates.filter(runnable)
+        if runnables.isEmpty then
+          println("\n(no python found on PATH; skipping — see -python <exe>)")
+          None
+        else runnables.find(hasNumpy) match
+          case Some(exe) => Some((header(exe), exe))
           case None =>
-            println("\n(python3 not found; skipping)")
+            println(s"\n(numpy not installed for ${runnables.head}; `pip install numpy`, or -python <exe>; skipping)")
             None
 
   /** Returns "Python X.Y.Z  (blas-name)" for display in the section header. */
@@ -222,13 +241,22 @@ object Tprf3Bench {
       Seq(exe, "-c", "import sys; print(sys.version.split()[0])").!(ProcessLogger(v = _, _ => ()))
       v.trim
     catch case _: Exception => "?"
+    // numpy >= 1.25: query the config as data (immune to the print format,
+    // which varies by build — MSYS2 numpy prints JSON). Fall back to scraping
+    // the classic `name:` line for older numpy.
     val blas = try
-      var lines = List.empty[String]
-      Seq(exe, "-c",
-        "import numpy as np, warnings; warnings.filterwarnings('ignore'); np.show_config()"
-      ).!(ProcessLogger(l => lines ::= l, _ => ()))
-      val nameLine = lines.reverse.find(_.trim.startsWith("name:"))
-      nameLine.map(_.trim.stripPrefix("name:").trim).getOrElse("?")
+      var v = ""
+      val rc = Seq(exe, "-c",
+        "import numpy as np; print(np.show_config(mode='dicts')['Build Dependencies']['blas']['name'])"
+      ).!(ProcessLogger(v = _, _ => ()))
+      if rc == 0 && v.trim.nonEmpty then v.trim
+      else
+        var lines = List.empty[String]
+        Seq(exe, "-c",
+          "import numpy as np, warnings; warnings.filterwarnings('ignore'); np.show_config()"
+        ).!(ProcessLogger(l => lines ::= l, _ => ()))
+        lines.reverse.find(_.trim.startsWith("name:"))
+          .map(_.trim.stripPrefix("name:").trim).getOrElse("?")
     catch case _: Exception => "?"
     s"Python $ver  ($blas)"
 
@@ -241,7 +269,13 @@ object Tprf3Bench {
       out => { println(out); buf += out },
       err => System.err.println(err),
     )
-    Seq(exe, "-u", script).!(logger)
+    // Explicitly create a Process configuration with the UTF-8 environment variable
+    val proc = Process(
+      Seq(exe, "-u", script),
+      None,                  // Use the current working directory
+      "PYTHONUTF8" -> "1"    // Forces Python's stdout/stderr to use UTF-8
+    )
+    proc.!(logger)
     buf.toList
 
   /** Parses the `[Python Fast] estimate3prf <scenario>  N.NN ms/call` lines,

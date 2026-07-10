@@ -4,8 +4,8 @@
 //> using scala 3.8.2
 //> using javaOpt --add-modules jdk.incubator.vector
 //> using repository m2Local
-//> using dep dev.ludovic.netlib:blas:3.2.0 // need this for breeze, uni_3 0.10.2 doesn't transitively provide it
-//> using dep org.vastblue:uni_3:0.10.2 // pinned (so jsrc/updateVersion.sc will leave this as-is)
+//> using dep dev.ludovic.netlib:blas:3.2.0 // need this for breeze; uni_3 0.10.2 doesn't transitively provide it
+//> using dep org.vastblue:uni_3:0.10.2     // pinned
 //> using dep org.scalanlp::breeze:2.1.0
 
 /**
