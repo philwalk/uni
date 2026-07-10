@@ -25,7 +25,7 @@ Pass a `PlotStyle` to control dimensions, colours, and export consistency.
 
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
-//> using dep org.vastblue:uni_3:0.14.0
+//> using dep org.vastblue:uni_3:0.14.1
 import uni.data.*
 import uni.plot.*
 
@@ -63,7 +63,7 @@ and [Plot Guide](docs/PlotGuide.md) for the full `PlotStyle` API.
 ### Core matrix operations
 
 NumPy: Python 3.14.3 / NumPy 2.4.1 (see [`py/bench.py`](py/bench.py)).
-Breeze/MatD: uni 0.14.0 / Scala 3.8.2 / JVM 21, both using native OpenBLAS via netlib JNIBLAS (see [`jsrc/benchBreeze.sc`](jsrc/benchBreeze.sc)).
+Breeze/MatD: uni 0.14.1 / Scala 3.8.2 / JVM 21, both using native OpenBLAS via netlib JNIBLAS (see [`jsrc/benchBreeze.sc`](jsrc/benchBreeze.sc)).
 Note: v0.10.2 and earlier used bytedeco/OpenBLAS for matmul; switching to netlib JNIBLAS in v0.11.0 eliminated the prior JNI overhead and brought matmul latency level with Breeze.
 
 | Operation | NumPy | Breeze | MatD |
@@ -80,12 +80,12 @@ Note: v0.10.2 and earlier used bytedeco/OpenBLAS for matmul; switching to netlib
 | custom fn (`mapParallel` / `map` / `np.vectorize`) | 434 ms | 10.1 ms | 0.77 ms |
 
 MatD wins 9/9 scored operations vs NumPy and wins or ties all 9 scored vs Breeze (geometric mean **~6.0× faster** than Breeze).
-NumPy 2.4.x's single-threaded SIMD reductions had briefly overtaken `sum`/`mean`; the v0.14.0 chunked multi-accumulator parallel reduction reclaims both (~2.8× faster than NumPy).
+NumPy 2.4.x's single-threaded SIMD reductions had briefly overtaken `sum`/`mean`; the v0.14.1 chunked multi-accumulator parallel reduction reclaims both (~2.8× faster than NumPy).
 `matmul` is tied with Breeze — switching from bytedeco to netlib JNIBLAS eliminated the prior overhead gap; both now call OpenBLAS at the same latency (~1.1 ms).
 
 ### Linux (Intel Core i5-6500, Ubuntu 24.04, OpenBLAS)
 
-Breeze/MatD: uni 0.14.0 / Scala 3.8.2 / JVM 21, both using native OpenBLAS via netlib JNIBLAS.
+Breeze/MatD: uni 0.14.1 / Scala 3.8.2 / JVM 21, both using native OpenBLAS via netlib JNIBLAS.
 
 | Operation | Breeze | MatD | Bz/MD |
 | :--- | ---: | ---: | ---: |
@@ -101,11 +101,11 @@ Breeze/MatD: uni 0.14.0 / Scala 3.8.2 / JVM 21, both using native OpenBLAS via n
 | custom fn (`mapParallel` / `map`) | 10.68 ms | 1.08 ms | 9.9× |
 
 MatD faster 8/9 scored, geometric mean **4.03× faster** than Breeze.
-`matmul` is tied (both use OpenBLAS via JNIBLAS); `add` is the lone Breeze win (0.79×). `sum` flipped to a 6.7× MatD win after the v0.14.0 chunked parallel-reduction rewrite.
+`matmul` is tied (both use OpenBLAS via JNIBLAS); `add` is the lone Breeze win (0.79×). `sum` flipped to a 6.7× MatD win after the v0.14.1 chunked parallel-reduction rewrite.
 
 ### macOS (Apple Silicon)
 
-Breeze/MatD: uni 0.14.0 / Scala 3.8.2 / JVM 21, both using native OpenBLAS via netlib JNIBLAS.
+Breeze/MatD: uni 0.14.1 / Scala 3.8.2 / JVM 21, both using native OpenBLAS via netlib JNIBLAS.
 
 | Operation | Breeze | MatD | Bz/MD |
 | :--- | ---: | ---: | ---: |
@@ -125,19 +125,23 @@ MatD faster 8/9 scored, geometric mean **6.11× faster** than Breeze.
 
 ### 3PRF (Three-Pass Regression Filter)
 
-Measured on Windows 11 (uni 0.14.0 / JVM 21 / Scala 3.8.2, forked JVM, vs Python 3.14.3 / WinPython scipy-openblas).
-See [`src/main/scala/apps/Tprf3Bench.scala`](src/main/scala/apps/Tprf3Bench.scala) and [Kelly & Pruitt (2015)](https://doi.org/10.1111/jofi.12246).
-Both implementations were optimized identically in v0.14.0 (the K&P `J(k)` centering
-products are computed as O(T·N) centering instead of dense T×T matmuls), so the
-comparison is between equivalent algorithms. The Scala OOS hot path was then freed of
-`Double` autoboxing (element access, view division, matrix construction, and the rsq
-post-processing), roughly halving the OOS times and pulling IS Full ahead of Python.
+Measured on Windows 11 (uni 0.14.1 / JVM 21 / Scala 3.8.2, vs Python 3.14.6 / NumPy
+on OpenBLAS; medians of 25 timed calls per OOS procedure after explicit warm-up).
+See [`jsrc/tprf3Bench.sc`](jsrc/tprf3Bench.sc) and [Kelly & Pruitt (2015)](https://doi.org/10.1111/jofi.12246).
+Both implementations are kept equivalently optimized so the comparison is between
+equivalent algorithms: v0.14.0 rewrote the K&P `J(k)` centering products as O(T·N)
+centering on both sides, and v0.14.1 tuned both sides again — Python's three `lstsq`
+passes became normal-equations solves (several-fold faster on the tiny L+1-column
+designs) and its std/mean paths are NaN-gated; Scala's OOS windows now standardize
+through fused, copy-free kernels (incremental std downdates for Cross Val). IS Full
+is now essentially a tie — both sides reduce to the same two batch solves — while
+the OOS procedures, where the window loop structure differs, stay ~9–12× ahead.
 
 | Operation | Python | MatD | Ratio |
 | :--- | ---: | ---: | :--- |
-| `3PRF IS Full (T=650, N=40, L=2)` | 1.3 ms | 0.55 ms | **2.3× faster** |
-| `3PRF OOS Recursive (T=650, N=40, L=2)` | 287 ms | 21 ms | **13.7× faster** |
-| `3PRF OOS Cross Val (T=650, N=40, L=2)` | 781 ms | 56 ms | **13.9× faster** |
+| `3PRF IS Full (T=650, N=40, L=2)` | 0.36 ms | 0.34 ms | ≈ tied |
+| `3PRF OOS Recursive (T=650, N=40, L=2)` | 32.6 ms | 3.6 ms | **9.1× faster** |
+| `3PRF OOS Cross Val (T=650, N=40, L=2)` | 87.7 ms | 7.4 ms | **11.9× faster** |
 
 Linux (Intel Core i5-6500, Ubuntu 24.04, vs Python 3.12.3 / system OpenBLAS):
 
@@ -205,7 +209,7 @@ Note: inline annotations were removed before running JaCoCo to prevent Scala 3's
 Add the following to your `build.sbt`:
 
 ```scala
-libraryDependencies += "org.vastblue" %% "uni" % "0.14.0"
+libraryDependencies += "org.vastblue" %% "uni" % "0.14.1"
 ```
 
 ### Native BLAS backend
@@ -269,7 +273,7 @@ Without this, `libblas.so.3` may resolve to the slow single-threaded reference B
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.14.0
+//> using dep org.vastblue:uni_3:0.14.1
 
 import uni.data.*
 
@@ -347,7 +351,7 @@ Each alias has a matching factory object mirroring the `MatD` API:
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.14.0
+//> using dep org.vastblue:uni_3:0.14.1
 
 import uni.data.*
 
@@ -367,7 +371,7 @@ val identityB: MatB = MatB.eye(5)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.14.0
+//> using dep org.vastblue:uni_3:0.14.1
 
 import uni.data.*
 import uni.data.MatD.*
@@ -392,7 +396,7 @@ println(s"rotated: ${rotated.show("%7.2f")}")
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.14.0
+//> using dep org.vastblue:uni_3:0.14.1
 
 import uni.data.*
 
@@ -410,7 +414,7 @@ val f = a.relu    // built-in activation function
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.14.0
+//> using dep org.vastblue:uni_3:0.14.1
 
 import uni.data.*
 import uni.data.MatD.*
@@ -430,7 +434,7 @@ m :+= n      // element-wise add matrix in-place
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.14.0
+//> using dep org.vastblue:uni_3:0.14.1
 
 import uni.data.*
 import uni.data.MatD.*
@@ -449,7 +453,7 @@ val allTrue  = mask.all
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.14.0
+//> using dep org.vastblue:uni_3:0.14.1
 
 import uni.data.*
 import uni.data.MatD.*
@@ -471,7 +475,7 @@ val cols  = wide.hsplit(2)               // Seq of two 4x2 Mats
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.14.0
+//> using dep org.vastblue:uni_3:0.14.1
 
 import uni.data.*
 import uni.data.MatD.*
@@ -495,7 +499,7 @@ The following example demonstrates a wide array of `uni.MatD` capabilities
 
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
-//> using dep org.vastblue:uni_3:0.14.0
+//> using dep org.vastblue:uni_3:0.14.1
 
 import uni.data.*
 import uni.data.MatD.*
@@ -565,7 +569,7 @@ Because activation functions are members of the `MatD` type, building layers is 
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.14.0
+//> using dep org.vastblue:uni_3:0.14.1
 
 import uni.data.*
 
@@ -601,7 +605,7 @@ Raw financial and scientific datasets rarely arrive in clean form. `uni.data.Big
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.14.0
+//> using dep org.vastblue:uni_3:0.14.1
 
 import uni.data.*
 import uni.data.BigUtils.*

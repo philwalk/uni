@@ -1,4 +1,73 @@
-## v0.14.0 — unreleased
+## v0.14.1 — 2026-07-10
+
+*(v0.14.0 was tagged but never published; this entry covers everything since
+v0.13.4, including all changes originally staged for v0.14.0.)*
+
+**Performance — 3PRF OOS hot path (`Tprf3.scala`, `Mat.scala`)**
+
+- NaN presence is now detected once per `estimate3prf` call (`anyNan` over X, y, Z)
+  and gates NaN-free fast paths throughout: `stdCols`/`colMean` skip the
+  per-element NaN test and per-column observation counts, and `nanOls` skips the
+  row scan and `selectRows` copies entirely (with no NaNs every row is kept, so
+  the filtered fit equals the direct one)
+- `nanStdCols` / `nanMeanCols` rewritten as row-major sweeps — the same
+  per-column accumulation order (bit-identical results) but sequential memory
+  access over the row-major backing array instead of striding cols×8 bytes/step
+- OOS Cross Val: the dropped window is a contiguous block [lo, hi), so the
+  `setdiff` Set build + `selectRows` copies are replaced by
+  `standardizeDropRows`, which fuses the row drop, the column std, and the
+  normalize into one pass-set with a single output allocation. Clean (NaN-free)
+  inputs go further via `standardizeDropRowsInc`: full-data column stats are
+  computed once per call and each window's std becomes an O(drop·N) downdate
+  instead of an O(keep·N) recompute, with a cancellation guard that recomputes
+  directly when the kept set is not the majority. Downdated stds drift ≤ ~1e-13
+  from the two-pass form (not bit-identical)
+- OOS Recursive / Rolling: training windows are read through zero-copy slice
+  views — `standardize` reads the view stride-safely and emits one fresh
+  contiguous matrix, so no intermediate window copy is materialized
+- `withIntercept` writes `[1 | X]` into a single buffer instead of allocating a
+  `ones` column and routing through `hstack`
+- `Mat`: `fastBinOp`'s broadcast branches (1×N row, N×1 column, and the
+  strided-view forms) now run in parallel above a dedicated 64K-element
+  threshold (`bcastRows`) — previously single-threaded at any size. The
+  threshold is higher than the usual 4096 because `IntStream.parallel()` setup
+  (~100 µs measured) makes medium-sized broadcasts slower in parallel
+- Measured (`jsrc/tprf3Bench.sc` side-by-side, Windows 11, netlib Java11BLAS,
+  vs Python 3.14.6 / NumPy on OpenBLAS; medians of 25 timed calls per OOS
+  procedure after explicit warm-up):
+
+  | Scenario | Python | Scala | Ratio |
+  | :--- | ---: | ---: | :--- |
+  | IS Full (Small: T=200, N=30, L=2) | 0.12 ms | 0.06 ms | 2.1× |
+  | OOS Recursive (Small) | 5.47 ms | 1.00 ms | 5.5× |
+  | OOS Cross Val (Small) | 13.89 ms | 1.40 ms | 9.9× |
+  | IS Full (Large: T=650, N=40, L=2) | 0.36 ms | 0.34 ms | ~tie |
+  | OOS Recursive (Large) | 32.59 ms | 3.60 ms | 9.1× |
+  | OOS Cross Val (Large) | 87.65 ms | 7.37 ms | 11.9× |
+
+**Benchmarks — measurement fairness and stability**
+
+- `Tprf3Bench` / `jsrc/tprf3Bench.sc` / `py/bench_tprf3.py`: each OOS procedure
+  is explicitly warmed before timing (previously they were timed cold — JIT and
+  ForkJoin/OpenBLAS spin-up landed in the samples) and readings are the median
+  of 25 individually-timed runs instead of a mean over 5 (which showed 5–55 ms
+  spreads for identical code). The Scala driver now captures the Python output
+  and prints a side-by-side markdown comparison table (Python vs Scala with
+  ratio) in the MatDCheatSheet style
+- `py/tprf3fast.py` (the benchmark-fairness twin): gains the same once-per-call
+  NaN detection gating `np.std` vs the slower `nanstd` machinery; the three
+  `lstsq` passes are replaced by `_ols` normal-equations solves — the 3PRF
+  designs have only L+1 columns, so AᵀA is tiny and `solve` beats the SVD
+  driver several-fold, with a rank-revealing `lstsq` fallback if AᵀA is
+  singular; OOS Cross Val drops the contiguous block directly instead of
+  `setdiff` indexing
+- `jsrc/tprf3Bench.sc`: python interpreter discovery no longer relies on a
+  hard-coded WinPython install path — it scans every `python3`/`python` on
+  PATH and picks the first that is runnable *and* has numpy (skipping broken
+  shims such as the Microsoft Store app-execution alias, and looking past a
+  numpy-less `/usr/bin/python3` to a numpy-capable homebrew python). New
+  `-python <exe>` flag overrides discovery (validated rather than silently
+  falling back)
 
 **Bug fixes — view correctness (`Mat.scala`)**
 
@@ -161,7 +230,7 @@ stride/offset-aware access:
   `object MatB` / `object MatF` declarations. Behavioral nuance: facade
   Double-argument conversions now go through `MatElem.fromDouble`, so e.g.
   `MatB.full(r, c, Double.NaN)` produces `BigNaN` cells instead of throwing
-  from `BigDecimal(NaN)` (consistent with the v0.14.0 MatB non-finite policy)
+  from `BigDecimal(NaN)` (consistent with this release's MatB non-finite policy)
 - File split (first step): the facades, `MatFacade`, `LeastSquaresResult`, and
   the `MatD`/`MatB`/`MatF`/vector type aliases moved from Mat.scala to a new
   `MatFacades.scala` (Mat.scala: 5,352 → 4,860 lines). Pure relocation of
@@ -273,7 +342,7 @@ stride/offset-aware access:
 **Docs**
 
 - Refreshed all benchmark tables in `README.md` and `docs/MatDCheatSheet.md` with
-  same-day, same-machine measurements of uni 0.14.0 vs NumPy 2.4.1 vs Breeze 2.1.0
+  same-day, same-machine measurements of uni 0.14.x vs NumPy 2.4.1 vs Breeze 2.1.0
   (JVM 21): MatD wins 9/9 scored ops vs NumPy and wins or ties 9/9 vs Breeze
   (geomean ~6.2×); 3PRF tables updated to the post-centering numbers with both
   implementations optimized (loops=5 OOS measurements): IS Full 1.2/1.3 ms tied,
@@ -281,7 +350,7 @@ stride/offset-aware access:
 - `docs/ReferenceGuide.md`: added the eleven sections its table of contents promised
   but never delivered (Indexing and Slicing, Arithmetic, Broadcasting, Linear Algebra,
   Statistics, Element-wise Math, Machine Learning, RNG, Data Manipulation,
-  Comparison/Boolean, Display), plus the v0.14.0 column-vararg factories and the
+  Comparison/Boolean, Display), plus the new column-vararg factories and the
   `MatD(3, 4)`-is-zeros vs `MatD(3.0, 4.0)`-is-a-vector gotcha
 - Fixed examples that never compiled: `docs/QuickStartGuide.md` used nonexistent
   `m > 5.0` / `m < 0.0` comparison operators (Mat has only `gt`/`lt`/`gte`/`lte`)

@@ -2,7 +2,7 @@
 
 //> using scala 3.7.0
 //> using javaOpt "--add-modules=jdk.incubator.vector"
-//> using dep org.vastblue:uni_3:0.14.0
+//> using dep org.vastblue:uni_3:0.14.1
 //> using dep org.scalanlp::breeze:2.1.0
 
 /////////////////////////////////////////////

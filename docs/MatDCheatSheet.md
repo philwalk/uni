@@ -8,7 +8,7 @@ Side-by-side reference for **uni.MatD**, NumPy, Breeze, R, and MATLAB.
 
 ## Performance vs NumPy
 
-Measured on the same machine: NumPy 2.4.1 / Python 3.14.3 vs uni.MatD 0.14.0 / Scala 3.8.2 / JVM 21.
+Measured on the same machine: NumPy 2.4.1 / Python 3.14.3 vs uni.MatD 0.14.1 / Scala 3.8.2 / JVM 21.
 Both use OpenBLAS (MatD via netlib JNIBLAS). See [`jsrc/bench.sc`](../jsrc/bench.sc) and [`py/bench.py`](../py/bench.py) to reproduce.
 
 | Operation | NumPy | MatD | Ratio | Notes |
@@ -18,28 +18,28 @@ Both use OpenBLAS (MatD via netlib JNIBLAS). See [`jsrc/bench.sc`](../jsrc/bench
 | `sigmoid(1000×1000)` | 12 ms | 1.9 ms | **6.3× faster** | Parallel fork/join beats single-core SIMD |
 | `relu(1000×1000)` | 1.9 ms | 0.75 ms | **2.5× faster** | Parallel fork/join beats single-core SIMD |
 | `add(1000×1000)` | 2.2 ms | 1.3 ms | **1.7× faster** | Parallel fork/join beats single-core SIMD |
-| `sum(1000×1000)` | 0.25 ms | 0.10 ms | **2.5× faster** | v0.14.0 chunked multi-accumulator parallel reduction (~90 GB/s) |
+| `sum(1000×1000)` | 0.25 ms | 0.10 ms | **2.5× faster** | v0.14.1 chunked multi-accumulator parallel reduction (~90 GB/s) |
 | `mean(1000×1000)` | 0.27 ms | 0.11 ms | **2.5× faster** | Routes through the same reduction as `sum` |
-| `std(1000×1000)` | 3.3 ms | 1.2 ms | **2.8× faster** | Two-pass; mean pass uses the v0.14.0 reduction |
+| `std(1000×1000)` | 3.3 ms | 1.2 ms | **2.8× faster** | Two-pass; mean pass uses the v0.14.1 reduction |
 | `transpose(1000×1000)` | ≈0 ms | ≈0 ms | **tied** | O(1) stride-flip in both — no data copy |
 | `mapParallel` custom fn | 434 ms | 0.77 ms | **~560× faster** | `np.vectorize` is a Python loop; JVM is compiled |
-| `3PRF IS Full (T=650, N=40, L=2)` | 1.3 ms | 0.55 ms | **2.3× faster** | post-processing freed of `Double` boxing; Python: WinPython scipy-openblas |
-| `3PRF OOS Recursive (T=650, N=40, L=2)` | 287 ms | 21 ms | **13.7× faster** | Scala: parallel collections + unboxed hot path; Python: vectorized per-window |
-| `3PRF OOS Cross Val (T=650, N=40, L=2)` | 781 ms | 56 ms | **13.9× faster** | Scala: parallel collections + unboxed hot path; Python: vectorized per-window |
+| `3PRF IS Full (T=650, N=40, L=2)` | 0.36 ms | 0.34 ms | **≈ tied** | both sides reduce to the same two batch solves (v0.14.1: Python's lstsq passes → normal-equations solves) |
+| `3PRF OOS Recursive (T=650, N=40, L=2)` | 32.6 ms | 3.6 ms | **9.1× faster** | Scala: parallel windows + fused copy-free standardization; Python: vectorized per-window |
+| `3PRF OOS Cross Val (T=650, N=40, L=2)` | 87.7 ms | 7.4 ms | **11.9× faster** | Scala: incremental per-window std downdates; Python: vectorized per-window |
 
 **Practical guidance:**
 - MatD wins all 9 scored matrix operations vs NumPy on Windows (JVM 21, MSYS2 Python).
 - Element-wise ops (`relu`, `sigmoid`, `add`) run faster than NumPy — parallel JVM cores beat single-core C SIMD.
-- Reductions (`sum`, `mean`, `std`): NumPy 2.4.x's SIMD pairwise summation had briefly overtaken MatD here; the v0.14.0 chunked multi-accumulator parallel reduction reclaims all three (2.5–2.8×) by aggregating multi-core memory bandwidth.
+- Reductions (`sum`, `mean`, `std`): NumPy 2.4.x's SIMD pairwise summation had briefly overtaken MatD here; the v0.14.1 chunked multi-accumulator parallel reduction reclaims all three (2.5–2.8×) by aggregating multi-core memory bandwidth.
 - Custom scalar functions: `mapParallel` vs `np.vectorize` shows a ~560× JVM advantage; the Python interpreter overhead dominates.
 - Matmul: MatD wins ~1.5× — netlib JNIBLAS passes arrays directly with no DoublePointer overhead.
-- 3PRF: v0.14.0 rewrote the K&P `J(k)` centering products as O(T·N) centering in **both** the Scala and Python implementations (previously each built a dense T×T matrix, and the comparison mostly measured that shared waste). The Scala OOS hot path was then freed of `Double` autoboxing (element access, view division, matrix construction, and the rsq post-processing) — this pulls IS Full ahead (2.3×) and roughly halves the OOS times, widening the OOS lead to ~14× over NumPy's sequential per-window loop.
+- 3PRF: both implementations are kept equivalently optimized so the comparison stays between equivalent algorithms. v0.14.0 rewrote the K&P `J(k)` centering products as O(T·N) centering on **both** sides (previously each built a dense T×T matrix, and the comparison mostly measured that shared waste) and freed the Scala OOS hot path of `Double` autoboxing. v0.14.1 tuned both sides again: Python's three `lstsq` passes became normal-equations solves (several-fold faster on the tiny L+1-column designs) with NaN-gated std/mean paths, and Scala's OOS windows now standardize through fused, copy-free kernels (incremental std downdates for Cross Val). IS Full lands as a tie — both sides reduce to the same two batch solves — while the OOS procedures, where window-loop structure differs, run 9.1×/11.9× ahead of NumPy's sequential per-window loop. 3PRF timings: Python 3.14.6 / NumPy on OpenBLAS, medians of 25 timed calls after warm-up (`jsrc/tprf3Bench.sc`).
 
 ---
 
 ## Performance vs Breeze
 
-Measured on the same machine: Breeze 2.1.0 vs uni.MatD 0.14.0 / Scala 3.8.2 / JVM 21.
+Measured on the same machine: Breeze 2.1.0 vs uni.MatD 0.14.1 / Scala 3.8.2 / JVM 21.
 Both use native OpenBLAS via netlib JNIBLAS. See [`jsrc/benchBreeze.sc`](../jsrc/benchBreeze.sc) to reproduce.
 
 | Operation | MatD | Breeze | Ratio | Notes |
@@ -49,9 +49,9 @@ Both use native OpenBLAS via netlib JNIBLAS. See [`jsrc/benchBreeze.sc`](../jsrc
 | `sigmoid(1000×1000)` | 1.9 ms | 11.8 ms | **6.1× faster** | Parallel fork/join (MatD) vs sequential UFunc (Breeze) |
 | `relu(1000×1000)` | 0.75 ms | 3.6 ms | **4.9× faster** | Parallel fork/join (MatD) vs sequential map (Breeze) |
 | `add(1000×1000)` | 1.3 ms | 1.7 ms | **1.3× faster** | Parallel fork/join (MatD) vs sequential element-wise (Breeze) |
-| `sum(1000×1000)` | 0.10 ms | 1.0 ms | **9.8× faster** | v0.14.0 chunked multi-accumulator parallel reduction vs sequential loop |
+| `sum(1000×1000)` | 0.10 ms | 1.0 ms | **9.8× faster** | v0.14.1 chunked multi-accumulator parallel reduction vs sequential loop |
 | `mean(1000×1000)` | 0.11 ms | 6.6 ms | **59× faster** | Same reduction as `sum`; Breeze mean is a slow generic path |
-| `std(1000×1000)` | 1.2 ms | 8.2 ms | **7.0× faster** | Two-pass with the v0.14.0 reduction for the mean pass |
+| `std(1000×1000)` | 1.2 ms | 8.2 ms | **7.0× faster** | Two-pass with the v0.14.1 reduction for the mean pass |
 | `transpose(1000×1000)` | ≈0 ms | ≈0 ms | **tied** | O(1) stride-flip in both — no data copy |
 | `mapParallel` custom fn | 0.77 ms | 10.1 ms | **13× faster** | Parallel fork/join (MatD) vs sequential map (Breeze) |
 
@@ -91,7 +91,7 @@ Both use native OpenBLAS via netlib JNIBLAS. See [`jsrc/benchBreeze.sc`](../jsrc
 | Ones like | `MatD.onesLike(m)` | `np.ones_like(m)` | `DenseMatrix.ones[Double](m.rows, m.cols)` | `matrix(1, nrow(m), ncol(m))` | `ones(size(m))` |
 | Fill like | `MatD.fullLike(m, v)` | `np.full_like(m, v)` | `DenseMatrix.fill(m.rows, m.cols)(v)` | `matrix(v, nrow(m), ncol(m))` | `repmat(v, size(m))` |
 
-> **Since v0.14.0:** flat varargs `MatD(1.0, 2.0, 3.0)` (also `MatB`, `MatF`) build a **column**
+> **Since v0.14.1:** flat varargs `MatD(1.0, 2.0, 3.0)` (also `MatB`, `MatF`) build a **column**
 > vector, matching `Mat(…)`, `CVec(…)`, and Breeze's `DenseVector(…)` — previously they built a row.
 > Use `MatD.row(…)` for an explicit row vector.
 > Watch out: integer arguments select the zeros constructor — `MatD(3, 4)` is a 3×4 zero matrix,
@@ -358,7 +358,7 @@ use `X.eachCol` / `X.eachRow` to sidestep the name collision, or rename at impor
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.14.0
+//> using dep org.vastblue:uni_3:0.14.1
 
 import uni.data.*
 
@@ -373,7 +373,7 @@ val (labels, stats) = m.describe
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.14.0
+//> using dep org.vastblue:uni_3:0.14.1
 
 import uni.*
 import uni.io.FileOps.*
@@ -393,7 +393,7 @@ r.columnIndex       // Map[String, Int]  (pre-computed; free repeated lookups)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.14.0
+//> using dep org.vastblue:uni_3:0.14.1
 
 import uni.data.*
 

@@ -22,7 +22,7 @@ object MigrateToV13 {
   val rewrites: Seq[(String, String)] = Seq(
     // 1. Dependency version bump
     ("""//> using dep org\.vastblue:uni_3:[0-9]+\.[0-9]+\.[0-9]+""",
-     "//> using dep org.vastblue:uni_3:0.14.0"),
+     "//> using dep org.vastblue:uni_3:0.14.1"),
     (""""org\.vastblue" %% "uni" % "[0-9]+\.[0-9]+\.[0-9]+"""",
      """"org.vastblue" %% "uni" +%+ +"0.13.1""""),
     // 2. ProcStatus → ProcResult (field names unchanged, cmd field added)
