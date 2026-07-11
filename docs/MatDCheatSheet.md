@@ -8,56 +8,59 @@ Side-by-side reference for **uni.MatD**, NumPy, Breeze, R, and MATLAB.
 
 ## Performance vs NumPy
 
-Measured on the same machine: NumPy 2.4.1 / Python 3.14.3 vs uni.MatD 0.14.1 / Scala 3.8.2 / JVM 21.
-Both use OpenBLAS (MatD via netlib JNIBLAS). See [`jsrc/bench.sc`](../jsrc/bench.sc) and [`py/bench.py`](../py/bench.py) to reproduce.
+Measured on the same machine: NumPy 2.4.6 / Python 3.14.6 vs uni.MatD 0.14.1 / Scala 3.8.2 / JVM 21; min times.
+NumPy uses native OpenBLAS; on this machine netlib's JNIBLAS could not load `libopenblas.dll`,
+so MatD's `matmul` ran on the pure-JVM fallback (see the matmul row).
+See [`jsrc/bench.sc`](../jsrc/bench.sc) and [`py/bench.py`](../py/bench.py) to reproduce.
 
 | Operation | NumPy | MatD | Ratio | Notes |
 |---|---:|---:|---|---|
-| `randn(1000×1000)` | 19 ms | 11 ms | **1.7× faster** | PCG64 with Long arithmetic; primitive fill (no `Double` boxing) |
-| `matmul 512×512` | 1.7 ms | 1.1 ms | **1.5× faster** | Both use OpenBLAS; netlib JNIBLAS passes arrays directly, matching NumPy latency |
-| `sigmoid(1000×1000)` | 12 ms | 1.9 ms | **6.3× faster** | Parallel fork/join beats single-core SIMD |
-| `relu(1000×1000)` | 1.9 ms | 0.75 ms | **2.5× faster** | Parallel fork/join beats single-core SIMD |
-| `add(1000×1000)` | 2.2 ms | 1.3 ms | **1.7× faster** | Parallel fork/join beats single-core SIMD |
-| `sum(1000×1000)` | 0.25 ms | 0.10 ms | **2.5× faster** | v0.14.1 chunked multi-accumulator parallel reduction (~90 GB/s) |
-| `mean(1000×1000)` | 0.27 ms | 0.11 ms | **2.5× faster** | Routes through the same reduction as `sum` |
-| `std(1000×1000)` | 3.3 ms | 1.2 ms | **2.8× faster** | Two-pass; mean pass uses the v0.14.1 reduction |
+| `randn(1000×1000)` | 8.5 ms | 6.8 ms | **1.3× faster** | PCG64 with Long arithmetic; primitive fill (no `Double` boxing) |
+| `matmul 512×512` | 0.79 ms | 3.2 ms | **4× slower** | NumPy: native OpenBLAS; MatD: pure-JVM fallback (JNIBLAS unavailable on this machine — level when it loads) |
+| `sigmoid(1000×1000)` | 9.0 ms | 0.73 ms | **12× faster** | Parallel fork/join beats single-core SIMD |
+| `relu(1000×1000)` | 1.3 ms | 0.51 ms | **2.5× faster** | Parallel fork/join beats single-core SIMD |
+| `add(1000×1000)` | 1.7 ms | 0.58 ms | **3.0× faster** | Parallel fork/join beats single-core SIMD |
+| `sum(1000×1000)` | 0.13 ms | 0.03 ms | **4.3× faster** | v0.14.1 chunked multi-accumulator parallel reduction |
+| `mean(1000×1000)` | 0.14 ms | 0.03 ms | **4.7× faster** | Routes through the same reduction as `sum` |
+| `std(1000×1000)` | 2.4 ms | 0.43 ms | **5.6× faster** | Two-pass; mean pass uses the v0.14.1 reduction |
 | `transpose(1000×1000)` | ≈0 ms | ≈0 ms | **tied** | O(1) stride-flip in both — no data copy |
-| `mapParallel` custom fn | 434 ms | 0.77 ms | **~560× faster** | `np.vectorize` is a Python loop; JVM is compiled |
+| `mapParallel` custom fn | 64 ms | 0.53 ms | **~120× faster** | `np.vectorize` is a Python loop; JVM is compiled |
 | `3PRF IS Full (T=650, N=40, L=2)` | 0.36 ms | 0.34 ms | **≈ tied** | both sides reduce to the same two batch solves (v0.14.1: Python's lstsq passes → normal-equations solves) |
 | `3PRF OOS Recursive (T=650, N=40, L=2)` | 32.6 ms | 3.6 ms | **9.1× faster** | Scala: parallel windows + fused copy-free standardization; Python: vectorized per-window |
 | `3PRF OOS Cross Val (T=650, N=40, L=2)` | 87.7 ms | 7.4 ms | **11.9× faster** | Scala: incremental per-window std downdates; Python: vectorized per-window |
 
 **Practical guidance:**
-- MatD wins all 9 scored matrix operations vs NumPy on Windows (JVM 21, MSYS2 Python).
+- MatD wins 8/9 scored matrix operations vs NumPy on Windows (JVM 21); matmul is the exception on this machine — see below.
 - Element-wise ops (`relu`, `sigmoid`, `add`) run faster than NumPy — parallel JVM cores beat single-core C SIMD.
-- Reductions (`sum`, `mean`, `std`): NumPy 2.4.x's SIMD pairwise summation had briefly overtaken MatD here; the v0.14.1 chunked multi-accumulator parallel reduction reclaims all three (2.5–2.8×) by aggregating multi-core memory bandwidth.
-- Custom scalar functions: `mapParallel` vs `np.vectorize` shows a ~560× JVM advantage; the Python interpreter overhead dominates.
-- Matmul: MatD wins ~1.5× — netlib JNIBLAS passes arrays directly with no DoublePointer overhead.
+- Reductions (`sum`, `mean`, `std`): NumPy 2.4.x's SIMD pairwise summation had briefly overtaken MatD here; the v0.14.1 chunked multi-accumulator parallel reduction reclaims all three (4.3–5.6×) by aggregating multi-core memory bandwidth.
+- Custom scalar functions: `mapParallel` vs `np.vectorize` shows a ~120× JVM advantage; the Python interpreter overhead dominates.
+- Matmul: on this machine netlib's JNIBLAS could not load `libopenblas.dll`, so MatD ran the pure-JVM fallback and lost ~4× to NumPy's native OpenBLAS. Where JNIBLAS loads (see the Linux/macOS tables in the README) both call OpenBLAS and matmul is level.
 - 3PRF: both implementations are kept equivalently optimized so the comparison stays between equivalent algorithms. v0.14.0 rewrote the K&P `J(k)` centering products as O(T·N) centering on **both** sides (previously each built a dense T×T matrix, and the comparison mostly measured that shared waste) and freed the Scala OOS hot path of `Double` autoboxing. v0.14.1 tuned both sides again: Python's three `lstsq` passes became normal-equations solves (several-fold faster on the tiny L+1-column designs) with NaN-gated std/mean paths, and Scala's OOS windows now standardize through fused, copy-free kernels (incremental std downdates for Cross Val). IS Full lands as a tie — both sides reduce to the same two batch solves — while the OOS procedures, where window-loop structure differs, run 9.1×/11.9× ahead of NumPy's sequential per-window loop. 3PRF timings: Python 3.14.6 / NumPy on OpenBLAS, medians of 25 timed calls after warm-up (`jsrc/tprf3Bench.sc`).
 
 ---
 
 ## Performance vs Breeze
 
-Measured on the same machine: Breeze 2.1.0 vs uni.MatD 0.14.1 / Scala 3.8.2 / JVM 21.
-Both use native OpenBLAS via netlib JNIBLAS. See [`jsrc/benchBreeze.sc`](../jsrc/benchBreeze.sc) to reproduce.
+Measured on the same machine: Breeze 2.1.0 vs uni.MatD 0.14.1 / Scala 3.8.2 / JVM 21; min times.
+Both ran `matmul` on the same pure-JVM VectorBLAS fallback (JNIBLAS unavailable on this
+machine), so that row is a like-for-like comparison. See [`jsrc/benchBreeze.sc`](../jsrc/benchBreeze.sc) to reproduce.
 
 | Operation | MatD | Breeze | Ratio | Notes |
 |---|---:|---:|---|---|
-| `randn(1000×1000)` | 11 ms | 51 ms | **4.8× faster** | PCG64 (MatD) vs Gaussian sampler (Breeze) |
-| `matmul 512×512` | 1.1 ms | 1.1 ms | **tied** | Same OpenBLAS backend; switching to netlib JNIBLAS eliminated prior bytedeco overhead |
-| `sigmoid(1000×1000)` | 1.9 ms | 11.8 ms | **6.1× faster** | Parallel fork/join (MatD) vs sequential UFunc (Breeze) |
-| `relu(1000×1000)` | 0.75 ms | 3.6 ms | **4.9× faster** | Parallel fork/join (MatD) vs sequential map (Breeze) |
-| `add(1000×1000)` | 1.3 ms | 1.7 ms | **1.3× faster** | Parallel fork/join (MatD) vs sequential element-wise (Breeze) |
-| `sum(1000×1000)` | 0.10 ms | 1.0 ms | **9.8× faster** | v0.14.1 chunked multi-accumulator parallel reduction vs sequential loop |
-| `mean(1000×1000)` | 0.11 ms | 6.6 ms | **59× faster** | Same reduction as `sum`; Breeze mean is a slow generic path |
-| `std(1000×1000)` | 1.2 ms | 8.2 ms | **7.0× faster** | Two-pass with the v0.14.1 reduction for the mean pass |
+| `randn(1000×1000)` | 7.1 ms | 21.6 ms | **3.1× faster** | PCG64 (MatD) vs Gaussian sampler (Breeze) |
+| `matmul 512×512` | 5.4 ms | 5.3 ms | **tied** | Same VectorBLAS fallback backend on both; with JNIBLAS both call OpenBLAS at the same latency |
+| `sigmoid(1000×1000)` | 0.73 ms | 4.2 ms | **5.7× faster** | Parallel fork/join (MatD) vs sequential UFunc (Breeze) |
+| `relu(1000×1000)` | 0.51 ms | 2.9 ms | **5.7× faster** | Parallel fork/join (MatD) vs sequential map (Breeze) |
+| `add(1000×1000)` | 0.59 ms | 1.2 ms | **2.0× faster** | Parallel fork/join (MatD) vs sequential element-wise (Breeze) |
+| `sum(1000×1000)` | 0.04 ms | 0.37 ms | **8.4× faster** | v0.14.1 chunked multi-accumulator parallel reduction vs sequential loop |
+| `mean(1000×1000)` | 0.03 ms | 3.6 ms | **~109× faster** | Same reduction as `sum`; Breeze mean is a slow generic path |
+| `std(1000×1000)` | 0.48 ms | 5.4 ms | **11× faster** | Two-pass with the v0.14.1 reduction for the mean pass |
 | `transpose(1000×1000)` | ≈0 ms | ≈0 ms | **tied** | O(1) stride-flip in both — no data copy |
-| `mapParallel` custom fn | 0.77 ms | 10.1 ms | **13× faster** | Parallel fork/join (MatD) vs sequential map (Breeze) |
+| `mapParallel` custom fn | 0.52 ms | 5.9 ms | **11× faster** | Parallel fork/join (MatD) vs sequential map (Breeze) |
 
 **Practical guidance:**
-- MatD wins or ties all 9 scored operations; geometric mean: MatD is **~6.0×** faster overall (~4.3× on the original 7-op basis; the `mean`/`std` rows added in v0.13.4 widen it).
-- Matmul is tied: switching from bytedeco to netlib JNIBLAS (direct Java array passing, no DoublePointer/DirectBuffer overhead) brings MatD to the same OpenBLAS latency as Breeze (~1.1 ms).
+- MatD wins 6 of the 7 operations `benchBreeze.sc` scores and ties the seventh (matmul); geometric mean: MatD is **~4.3×** faster overall (the sub-50 µs `sum`/`mean`/`transpose` rows are excluded from scoring).
+- Matmul is tied: both libraries ran the same VectorBLAS fallback here; with netlib JNIBLAS loaded (direct Java array passing, no DoublePointer/DirectBuffer overhead) both call native OpenBLAS at the same latency.
 - Element-wise, reduction, and custom-function operations show the largest gaps because MatD parallelizes with fork/join while Breeze processes elements sequentially.
 
 ---

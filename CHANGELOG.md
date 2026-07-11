@@ -341,6 +341,17 @@ stride/offset-aware access:
 
 **Docs**
 
+- Windows benchmark tables in `README.md` and `docs/MatDCheatSheet.md` re-measured
+  once more at release time, all on the same (faster) machine: NumPy 2.4.6 /
+  Python 3.14.6 vs uni 0.14.1 / JVM 21, min times. MatD wins 8/9 scored ops vs
+  NumPy — the matmul row is now an honest fallback-vs-native comparison (netlib
+  JNIBLAS could not load `libopenblas.dll` on that machine, so MatD/Breeze matmul
+  ran pure-JVM while NumPy used native OpenBLAS; level where JNIBLAS loads) — and
+  6 wins + 1 tie over Breeze's 7 scored ops (geomean ~4.3×). 3PRF tables updated
+  with the v0.14.1-tuned numbers (IS Full ≈ tied, OOS Recursive 9.1×,
+  OOS Cross Val 11.9×). The Linux/macOS tables are current as measured on their
+  own machines. Version references across the docs now cite v0.14.1 (v0.14.0 was
+  never published)
 - Refreshed all benchmark tables in `README.md` and `docs/MatDCheatSheet.md` with
   same-day, same-machine measurements of uni 0.14.x vs NumPy 2.4.1 vs Breeze 2.1.0
   (JVM 21): MatD wins 9/9 scored ops vs NumPy and wins or ties 9/9 vs Breeze

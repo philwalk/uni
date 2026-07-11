@@ -62,26 +62,33 @@ and [Plot Guide](docs/PlotGuide.md) for the full `PlotStyle` API.
 
 ### Core matrix operations
 
-NumPy: Python 3.14.3 / NumPy 2.4.1 (see [`py/bench.py`](py/bench.py)).
-Breeze/MatD: uni 0.14.1 / Scala 3.8.2 / JVM 21, both using native OpenBLAS via netlib JNIBLAS (see [`jsrc/benchBreeze.sc`](jsrc/benchBreeze.sc)).
-Note: v0.10.2 and earlier used bytedeco/OpenBLAS for matmul; switching to netlib JNIBLAS in v0.11.0 eliminated the prior JNI overhead and brought matmul latency level with Breeze.
+NumPy: Python 3.14.6 / NumPy 2.4.6 (see [`py/bench.py`](py/bench.py)).
+Breeze/MatD: uni 0.14.1 / Scala 3.8.2 / JVM 21 (see [`jsrc/bench.sc`](jsrc/bench.sc), [`jsrc/benchBreeze.sc`](jsrc/benchBreeze.sc)); min times.
+Note: on this machine netlib's JNIBLAS could not load `libopenblas.dll`, so MatD and
+Breeze `matmul` ran on the pure-JVM fallback (Java11BLAS / VectorBLAS) while NumPy used
+native OpenBLAS — the matmul row compares fallback vs native. Where JNIBLAS loads
+(Linux and macOS tables below), matmul is level.
 
 | Operation | NumPy | Breeze | MatD |
 | :--- | ---: | ---: | ---: |
-| `randn(1000×1000)` | 19 ms | 51 ms | 11 ms |
-| `matmul 512×512` | 1.7 ms | 1.1 ms | 1.1 ms |
-| `sigmoid(1000×1000)` | 12 ms | 11.8 ms | 1.9 ms |
-| `relu(1000×1000)` | 1.9 ms | 3.6 ms | 0.75 ms |
-| `add(1000×1000)` | 2.2 ms | 1.7 ms | 1.3 ms |
-| `sum(1000×1000)` | 0.25 ms | 1.0 ms | 0.10 ms |
-| `mean(1000×1000)` | 0.27 ms | 6.6 ms | 0.11 ms |
-| `std(1000×1000)` | 3.3 ms | 8.2 ms | 1.2 ms |
+| `randn(1000×1000)` | 8.5 ms | 21.6 ms | 6.8 ms |
+| `matmul 512×512` | 0.79 ms | 5.3 ms | 3.2 ms |
+| `sigmoid(1000×1000)` | 9.0 ms | 4.2 ms | 0.73 ms |
+| `relu(1000×1000)` | 1.3 ms | 2.9 ms | 0.51 ms |
+| `add(1000×1000)` | 1.7 ms | 1.2 ms | 0.58 ms |
+| `sum(1000×1000)` | 0.13 ms | 0.37 ms | 0.03 ms |
+| `mean(1000×1000)` | 0.14 ms | 3.6 ms | 0.03 ms |
+| `std(1000×1000)` | 2.4 ms | 5.4 ms | 0.43 ms |
 | `transpose(1000×1000)` | ≈0 ms | ≈0 ms | ≈0 ms |
-| custom fn (`mapParallel` / `map` / `np.vectorize`) | 434 ms | 10.1 ms | 0.77 ms |
+| custom fn (`mapParallel` / `map` / `np.vectorize`) | 64 ms | 5.9 ms | 0.53 ms |
 
-MatD wins 9/9 scored operations vs NumPy and wins or ties all 9 scored vs Breeze (geometric mean **~6.0× faster** than Breeze).
-NumPy 2.4.x's single-threaded SIMD reductions had briefly overtaken `sum`/`mean`; the v0.14.1 chunked multi-accumulator parallel reduction reclaims both (~2.8× faster than NumPy).
-`matmul` is tied with Breeze — switching from bytedeco to netlib JNIBLAS eliminated the prior overhead gap; both now call OpenBLAS at the same latency (~1.1 ms).
+MatD wins 8/9 scored operations vs NumPy — matmul is the exception, the pure-JVM
+fallback losing ~4× to NumPy's native OpenBLAS — and wins or ties all scored operations
+vs Breeze (benchBreeze geometric mean **~4.3×** over its 7 scored ops).
+The v0.14.1 chunked multi-accumulator parallel reduction keeps `sum`/`mean`/`std`
+4–6× ahead of NumPy 2.4.x's SIMD reductions.
+`matmul` vs Breeze is tied — both ran the same fallback backend here; with JNIBLAS
+loaded both call OpenBLAS at the same latency.
 
 ### Linux (Intel Core i5-6500, Ubuntu 24.04, OpenBLAS)
 
