@@ -51,6 +51,9 @@ export Mat.{rows, cols, shape, shapes, size, isEmpty, transposed, isContiguous, 
 object CVec:
   def apply[T: ClassTag](elems: T*): CVec[T] =
     Mat.mkCVec(Mat.create(elems.toArray, elems.length, 1))
+  /** Array → column vector. Without this overload `CVec(arr)` binds the varargs
+   *  case with `T := Array[T]`, silently yielding a 1×1 holding the array. */
+  def apply[T: ClassTag](arr: Array[T]): CVec[T] = fromArray(arr)
   def zeros[T: ClassTag: Fractional](n: Int): CVec[T] = Mat.mkCVec(Mat.zeros[T](n, 1))
   def ones[T: ClassTag: Fractional](n: Int): CVec[T]  = Mat.mkCVec(Mat.ones[T](n, 1))
   def fromArray[T: ClassTag](arr: Array[T]): CVec[T] =
@@ -64,6 +67,8 @@ object CVec:
 object RVec:
   def apply[T: ClassTag](elems: T*): RVec[T] =
     Mat.mkRVec(Mat.create(elems.toArray, 1, elems.length))
+  /** Array → row vector. See the note on `CVec.apply(Array)`. */
+  def apply[T: ClassTag](arr: Array[T]): RVec[T] = fromArray(arr)
   def zeros[T: ClassTag: Fractional](n: Int): RVec[T] = Mat.mkRVec(Mat.zeros[T](1, n))
   def ones[T: ClassTag: Fractional](n: Int): RVec[T]  = Mat.mkRVec(Mat.ones[T](1, n))
   def fromArray[T: ClassTag](arr: Array[T]): RVec[T] =
@@ -267,6 +272,40 @@ object VecOps:
     def update(i: Int, value: T): Unit =
       val m = cv.asMat
       m.tdata(m.offset + i * m.rs) = value
+
+  // ── Array → Mat / CVec / RVec ───────────────────────────────────────────
+  //
+  // These exist for discoverability: they are what an IDE offers on an Array,
+  // so callers land on a conversion without having to already know the
+  // `CVec.fromArray` / `MatD(rows, cols, flat)` spellings.
+  //
+  // A 1-D array becomes a COLUMN, matching MatD(...), CVec(...) and Breeze's
+  // DenseVector (the convention adopted in v0.14.0). Use `.toRVec` for a row.
+  //
+  // Blocks stay bare `[T]` with ClassTag on the method, not `[T: ClassTag]` on
+  // the block — see the specificity note in this file's header.
+
+  extension [T](arr: Array[T])
+    /** Column vector (n×1). */
+    @annotation.targetName("arrToCVec")
+    def toCVec(using ClassTag[T]): CVec[T] = CVec.fromArray(arr)
+    /** Row vector (1×n). */
+    @annotation.targetName("arrToRVec")
+    def toRVec(using ClassTag[T]): RVec[T] = RVec.fromArray(arr)
+    /** Column vector (n×1), widened to Mat — same as [[toCVec]]. */
+    @annotation.targetName("arrToMat")
+    def toMat(using ClassTag[T]): Mat[T] = CVec.fromArray(arr)
+
+  extension [T](rows: Array[Array[T]])
+    /** Row-major 2-D array → Mat (rows.length × rows(0).length). */
+    @annotation.targetName("arr2dToMat")
+    def toMat(using ClassTag[T]): Mat[T] = Mat.fromRows(rows)
+
+  extension [T](rows: Seq[Array[T]])
+    /** Row-major sequence of rows → Mat. Covers the `Vector[Array[Double]]`
+     *  shape that panel/window code tends to produce. */
+    @annotation.targetName("seqArrToMat")
+    def toMat(using ClassTag[T]): Mat[T] = Mat.fromRows(rows)
 
 // Re-export CVec/RVec extensions from VecOps at package level so that
 // `import uni.data.*` (step 2, explicit) beats companion-scope Mat methods

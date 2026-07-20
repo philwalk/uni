@@ -1,5 +1,5 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
-//> using dep org.vastblue:uni_3:0.14.2
+//> using dep org.vastblue:uni_3:0.15.0
 
 // Compile-checks the example code in docs/ReferenceGuide.md and docs/QuickStartGuide.md.
 // Each block below mirrors a documented snippet; if this script compiles and runs,
@@ -14,10 +14,12 @@ object docCheck {
     val v  = Mat[Double](1.0, 2.0, 3.0)
     val v2 = MatD(1.0, 2.0, 3.0)
     val r  = MatD.row(1, 2, 3)
-    val z  = MatD(3, 4)
+    val z  = MatD.zeros(3, 4)   // v0.15.0: MatD(3, 4) is a compile error
     val p  = MatD(3.0, 4.0)
+    val i  = MatD(1, 2, 3)      // Ints are values at every arity
     assert(v.shape == (3, 1) && v2.shape == (3, 1) && r.shape == (1, 3))
     assert(z.shape == (3, 4) && z.sum == 0.0 && p.shape == (2, 1))
+    assert(i.shape == (3, 1) && i(0, 0) == 1.0)
     val a = MatD.arange(0, 10)
     val b = MatD.arange(0.0, 1.0, 0.25)
     val c = MatD.linspace(0.0, 1.0, 5)

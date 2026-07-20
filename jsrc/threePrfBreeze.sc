@@ -2,7 +2,7 @@
 
 //> using scala 3.7.0
 //> using javaOpt "--add-modules=jdk.incubator.vector"
-//> using dep org.vastblue:uni_3:0.14.2
+//> using dep org.vastblue:uni_3:0.15.0
 //> using dep org.scalanlp::breeze:2.1.0
 
 /////////////////////////////////////////////
@@ -44,11 +44,11 @@ object ThreePrfBreeze {
   val ThreePrf = ThreePrfBreeze
 
   def usage(m: String=""): Nothing = {
-    _usage(m, Seq(
+    showUsage(m,
       "<input-text-file>",
       "-pls            partial least squares",
       "-closed         closed form T3PRF",
-    ))
+    )
   }
 
   var seed: Int = 42
@@ -62,7 +62,7 @@ object ThreePrfBreeze {
 
   def main(args: Array[String]): Unit = {
     rng = new NumPyRNG(seed) // reset to match uni version's Mat.setSeed(seed)
-    var (_T, _N, _K_f, _L, center, scale, pls, closed_form, fitalg) = (200, 200, 1, 1, true, true, true, false, 2)
+    var (_T, _N, _K_f, _L, center, scale, pls, closed_form, fitalg) = (200, 200, 1, 1, true, true, false, false, 2)
     eachArg(args.toSeq, usage){
     case "-v" => verbose = !verbose
     case "-pls" => pls = !pls
@@ -192,10 +192,14 @@ object ThreePrfBreeze {
     val loadings = MatrixNaN(X.cols, Z.cols + plsNum)
     printf("fit_iter:loadings:  %s\n", loadings.shapes)
 
+    // NOTE on the R formulas quoted below: `- 1` and `1 +` are FORMULA terms
+    // (drop / add an intercept COLUMN), not arithmetic. This code previously
+    // transcribed them as `:+= -1.0` / `:+= 1.0`, i.e. adding a constant to
+    // every element, which corrupts the design instead of building it.
     if (pls) {
       for (j <- 0 until loadings.rows) {
-        var Zm: MatD = Z.copy
-        Zm :+= -1.0
+        // `~ Z - 1`: no intercept, so the design is Z itself.
+        val Zm: MatD = Z.copy
         val Xj = X(::, j)
         val result: LeastSquaresRegressionResult = leastSquares(Zm, Xj) // fit
         val coefs: VecD = result.coefficients
@@ -204,10 +208,17 @@ object ThreePrfBreeze {
         loadings(j, ::) := coefs.t // row vector
       }
     } else {
-      loadings(::, 0) := DenseVector.ones[D](loadings.rows)
-      for (j <- 1 until loadings.rows) {
-        var Zm: MatD = prependOnesColumn(Z.copy)
-        Zm :+= 1.0
+      // Was `for (j <- 1 until loadings.rows)`, which skipped j=0 and left
+      // loadings(0, 1) at its MatrixNaN initial value. Breeze's LAPACK fallback
+      // propagated that NaN silently instead of raising, so it surfaced as
+      // `1.0000000 NaN` in row 0 of the printed loadings rather than as an error.
+      // (The `if (j==0)` printf below was dead code, which is the tell.) The pls
+      // branch above already used `0 until`. With the loop covering every row the
+      // ones preset is fully overwritten, so it has been dropped.
+      for (j <- 0 until loadings.rows) {
+        // `~ 1 + Z`: intercept column then Z. prependOnesColumn already IS the
+        // `1 +` term; the former `Zm :+= 1.0` then added 1 to every element.
+        val Zm: MatD = prependOnesColumn(Z.copy)
         val Xj = X(::, j)
         val result = leastSquares(Zm, Xj) // fit
         val coefs = result.coefficients
@@ -223,21 +234,25 @@ object ThreePrfBreeze {
     // Loadings has no intercept in pls
     if (pls) {
       for (i <- 0 until factors.rows) {
-        var L1 = loadings.copy
-        L1 :+= -1.0
+        // `~ loadings - 1`: no intercept, so the design is loadings itself.
+        val L1 = loadings.copy
         val result = leastSquares(L1, X(i, ::).t) // fit
         val coeffs: VecD = result.coefficients
         //factors[i, ] <- coef(lm(formula=X[i,] ~ loadings - 1,       na.action=na.exclude, model=false))
         factors(i, ::) := coeffs.t
       }
     } else {
-      for (i <- 1 until factors.rows) {
-        var L1 = loadings.copy
-//        L1  :+= 1.0
+      // Was `1 until factors.rows`, leaving factors(0, ::) NaN — same off-by-one
+      // as Pass I. The pls branch above already used `0 until`.
+      for (i <- 0 until factors.rows) {
+        // `~ 1 + loadings[, -1]`: drop loadings' first column, then prepend an
+        // intercept. Transcribed literally, so it is right regardless of what
+        // column 0 holds. Was `L1 = loadings.copy` (all columns, no intercept).
+        val L1 = prependOnesColumn(loadings(::, 1 until loadings.cols).copy)
         val result = leastSquares(L1, X(i, ::).t) // fit
         val coefs: VecD = result.coefficients
-        if (i==1) printf("fit_iter:L1:        %s\n", L1.shapes)
-        if (i==1) printf("fit_iter:coefs:     %s\n", coefs.shapes)
+        if (i==0) printf("fit_iter:L1:        %s\n", L1.shapes)
+        if (i==0) printf("fit_iter:coefs:     %s\n", coefs.shapes)
         //factors[i, ] <- coef(lm(formula=X[i,] ~ 1 + loadings[, -1], na.action=na.exclude, model=false))
         factors(i, ::) := coefs.t
       }
@@ -245,9 +260,14 @@ object ThreePrfBreeze {
 
     // Pass III predictive regression
     // Factors has no intercept in pls
-    def dropColZero: MatD = factors(::, 1 to -1).copy
+    // R's `factors[, -1]` (drop the first column). `1 to -1` does NOT express
+    // that in Scala: it is evaluated as a Range before the matrix sees it, and
+    // `1 to -1` is EMPTY, so this selected zero columns.
+    def dropColZero: MatD = factors(::, 1 until factors.cols).copy
     val factors_reg: MatD = if(pls) factors.copy else dropColZero // factors[, -1, drop=false]
-    val result = leastSquares(factors_reg :+= 1.0, y) // fit
+    // `~ 1 + factors_reg`: intercept column then factors_reg. Was
+    // `factors_reg :+= 1.0`, which added 1 to every element instead.
+    val result = leastSquares(prependOnesColumn(factors_reg), y) // fit
       // lm(formula=y ~ 1 + factors_reg, na.action=na.exclude, model=false)
 
     //predictive_reg <- lm(formula=y ~ 1 + factors_reg, na.action=na.exclude, model=false)
@@ -708,18 +728,42 @@ object ThreePrfBreeze {
     require(data.rows >= data.cols)
     require(workArray.length >= 2  * data.rows  * data.cols)
 
+    // dgelss (SVD) rather than dgels (QR).
+    //
+    // dgels assumes the design has full rank and silently returns garbage when it
+    // does not — for an exactly collinear 2-column design it produced coefficients
+    // of order 1e16 where the SVD minimum-norm solution is O(1). uni's
+    // MatD.leastSquares goes through an SVD (lstsq/dgesdd), so while this script
+    // used dgels the two implementations could not be compared on any
+    // ill-conditioned fit: the non-pls path fits 2-column designs and diverged,
+    // while the pls path fits single-column designs and agreed.
+    //
+    // dgelss leaves the solution in the first n rows of b and, for m >= n with
+    // full rank, the residual components in rows n+1..m — same layout as dgels, so
+    // the coefficient/r2 extraction below is unchanged.
     val info = new intW(0)
-    lapack.dgels(
-      "N",
-      data.rows,
-      data.cols,
+    val rank = new intW(0)
+    val mRows = data.rows
+    val nCols = data.cols
+    val minMN = math.min(mRows, nCols)
+    val sv    = new Array[D](math.max(1, minMN))
+    // LAPACK's documented minimum is 3*min + max(2*min, max(m,n), nrhs); allocate
+    // that or the caller's buffer, whichever is larger.
+    val need  = 3 * minMN + math.max(math.max(2 * minMN, math.max(mRows, nCols)), 1)
+    val work  = if (workArray.length >= need) workArray else new Array[D](need)
+    lapack.dgelss(
+      mRows,
+      nCols,
       1,
       data.data,
-      data.rows,
+      mRows,
       outputs.data,
-      data.rows,
-      workArray,
-      workArray.length,
+      mRows,
+      sv,
+      -1.0,        // rcond < 0: use machine precision for the rank cutoff
+      rank,
+      work,
+      work.length,
       info
     )
     if (info.`val` < 0) {

@@ -2,7 +2,7 @@
 
 //> using scala 3.7.0
 //> using javaOpt "--add-modules=jdk.incubator.vector"
-//> using dep org.vastblue:uni_3:0.14.2
+//> using dep org.vastblue:uni_3:0.15.0
 
 
 /////////////////////////////////////////////
@@ -44,11 +44,11 @@ object ThreePrf {
 
   
   def usage(m: String=""): Nothing = {
-    _usage(m, Seq(
+    showUsage(m,
       "<input-text-file>",
       "-pls            partial least squares",
       "-closed         closed form T3PRF",
-    ))
+    )
   }
 
   var seed: Int = 42
@@ -62,7 +62,7 @@ object ThreePrf {
 
   def main(args: Array[String]): Unit = {
     MatD.setSeed(seed)
-    var (_T, _N, _K_f, _L, center, scale, pls, closed_form, fitalg) = (200, 200, 1, 1, true, true, true, false, 2)
+    var (_T, _N, _K_f, _L, center, scale, pls, closed_form, fitalg) = (200, 200, 1, 1, true, true, false, false, 2)
     eachArg(args.toSeq, usage){
     case "-v" => verbose = !verbose
     case "-pls" => pls = !pls
@@ -155,7 +155,7 @@ object ThreePrf {
 
   def autoProxies(n_proxy: Int, X: MatD, y: VecD, pls: Boolean=false, closed_form: Boolean=true, fitalg: Int=2): MatD = {
     // Computing automatic proxies
-    val r = MatD(y.size, n_proxy)
+    val r = MatD.zeros(y.size, n_proxy)
     r(::, 0)  = y // r[, 1] <- y
     printf("auprx:X             %s\n", X.shapex)
     printf("auprx:y             %s\n", y.shapex)
@@ -192,10 +192,14 @@ object ThreePrf {
     val loadings = MatrixNaN(X.cols, Z.cols + plsNum)
     printf("fit_iter:loadings:  %s\n", loadings.shapex)
     
+    // NOTE on the R formulas quoted below: `- 1` and `1 +` are FORMULA terms
+    // (drop / add an intercept COLUMN), not arithmetic. This code previously
+    // transcribed them as `:+= -1.0` / `:+= 1.0`, i.e. adding a constant to
+    // every element, which corrupts the design instead of building it.
     if (pls) {
       for (j <- 0 until loadings.rows) {
-        var Zm: MatD = Z.copy
-        Zm :+= -1.0
+        // `~ Z - 1`: no intercept, so the design is Z itself.
+        val Zm: MatD = Z.copy
         val Xj = X(::, j)
         val result = leastSquares(Zm, Xj) // fit
         val coefs = result.coefficients
@@ -204,10 +208,17 @@ object ThreePrf {
         loadings(j, ::) = coefs.T // row vector
       }
     } else {
-      loadings(::, 0) = MatD.ones(loadings.rows)
-      for (j <- 1 until loadings.rows) {
-        var Zm: MatD = prependOnesColumn(Z.copy)
-        Zm :+= 1.0
+      // Was `for (j <- 1 until loadings.rows)`, which skipped j=0 and left
+      // loadings(0, ::) at its MatrixNaN initial value in every column the
+      // preceding `loadings(::, 0) = ones` did not cover — i.e. loadings(0, 1)
+      // stayed NaN and poisoned Pass II. (The `if (j==0)` printf below was dead
+      // code, which is the tell.) The pls branch above already used `0 until`.
+      // With the loop covering every row, the ones preset is fully overwritten,
+      // so it has been dropped.
+      for (j <- 0 until loadings.rows) {
+        // `~ 1 + Z`: intercept column then Z. prependOnesColumn already IS the
+        // `1 +` term; the former `Zm :+= 1.0` then added 1 to every element.
+        val Zm: MatD = prependOnesColumn(Z.copy)
         val Xj = X(::, j)
         val result = leastSquares(Zm, Xj) // fit
         val coefs = result.coefficients
@@ -223,21 +234,25 @@ object ThreePrf {
     // Loadings has no intercept in pls
     if (pls) {
       for (i <- 0 until factors.rows) {
-        var L1 = loadings.copy
-        L1 :+= -1.0
+        // `~ loadings - 1`: no intercept, so the design is loadings itself.
+        val L1 = loadings.copy
         val result = leastSquares(L1, X(i, ::).T) // fit
         val coeffs = result.coefficients
         //factors[i, ] <- coef(lm(formula=X[i,] ~ loadings - 1,       na.action=na.exclude, model=false))
         factors(i, ::) = coeffs.T
       }
     } else {
-      for (i <- 1 until factors.rows) {
-        var L1 = loadings.copy
-//        L1  :+= 1.0
+      // Was `1 until factors.rows`, leaving factors(0, ::) NaN — same off-by-one
+      // as Pass I. The pls branch above already used `0 until`.
+      for (i <- 0 until factors.rows) {
+        // `~ 1 + loadings[, -1]`: drop loadings' first column, then prepend an
+        // intercept. Transcribed literally, so it is right regardless of what
+        // column 0 holds. Was `L1 = loadings.copy` (all columns, no intercept).
+        val L1 = prependOnesColumn(loadings(::, 1 until loadings.cols).copy)
         val result = leastSquares(L1, X(i, ::).T) // fit
         val coefs = result.coefficients
-        if (i==1) printf("fit_iter:L1:        %s\n", L1.shapex)
-        if (i==1) printf("fit_iter:coefs:     %s\n", coefs.shapex)
+        if (i==0) printf("fit_iter:L1:        %s\n", L1.shapex)
+        if (i==0) printf("fit_iter:coefs:     %s\n", coefs.shapex)
         //factors[i, ] <- coef(lm(formula=X[i,] ~ 1 + loadings[, -1], na.action=na.exclude, model=false))
         factors(i, ::) = coefs.T
       }
@@ -245,9 +260,15 @@ object ThreePrf {
 
     // Pass III predictive regression
     // Factors has no intercept in pls
-    def dropColZero: MatD = factors(::, 1 to -1).copy
+    // R's `factors[, -1]` (drop the first column). `1 to -1` does NOT express
+    // that in Scala: it is evaluated as a Range before the matrix sees it, and
+    // `1 to -1` is EMPTY, so this selected zero columns and Pass III regressed
+    // on an empty design.
+    def dropColZero: MatD = factors(::, 1 until factors.cols).copy
     val factors_reg: MatD = if(pls) factors.copy else dropColZero // factors[, -1, drop=false]
-    val result = leastSquares(factors_reg :+= 1.0, y) // fit
+    // `~ 1 + factors_reg`: intercept column then factors_reg. Was
+    // `factors_reg :+= 1.0`, which added 1 to every element instead.
+    val result = leastSquares(prependOnesColumn(factors_reg), y) // fit
       // lm(formula=y ~ 1 + factors_reg, na.action=na.exclude, model=false)
 
     //predictive_reg <- lm(formula=y ~ 1 + factors_reg, na.action=na.exclude, model=false)
@@ -259,7 +280,7 @@ object ThreePrf {
     val predreg = PredReg(NullMat, NullMat, NullMat, loadings, factors)
     predreg
   }
-  lazy val NullMat = MatD(0, 0)
+  lazy val NullMat = MatD.empty
 
   def J(T: Double): MatD = {
     val Iᴛ: MatD = MatD.eye(T.toInt) // MatD (a row vector)
@@ -540,11 +561,18 @@ object ThreePrf {
     sigma_y: Double
   )
   //////////////////////////////////////////////////
-  def prependOnesColumn(original: MatD): MatD = {
-    val ones = MatD.ones(original.rows, 1)
-    val dataWithOnes = ones.data ++ original.data
-    MatD(original.rows, original.cols + 1, dataWithOnes)
-  }
+  // [1 | X]. Was: `MatD(rows, cols+1, ones.data ++ original.data)`, which is only
+  // correct for a COLUMN-major backing array (Breeze/R — threePrfBreeze.sc:544 has
+  // the identical line and is correct there). uni is ROW-major, so concatenating
+  // the flat arrays put the ones in the first ROW and shifted every element: for a
+  // 3x2 input it gave (1,1,1),(10,20,30),(40,50,60) instead of the intended
+  // (1,10,20),(1,30,40),(1,50,60).
+  //
+  // The wrong result was silent while `Mat.data` was public (f22e42b, 2026-02-16);
+  // it only became a compile error when `data` was restricted to private[data]
+  // (deeabe0, 2026-06-10), which is the sole reason it was ever noticed.
+  def prependOnesColumn(original: MatD): MatD =
+    MatD.hstack(MatD.ones(original.rows, 1), original)
   def runif(n: Int, min: Double=0.0, max: Double=1.0): Array[Double] = {
     uniform(min, max, n, 1).flatten
   }

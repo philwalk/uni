@@ -84,10 +84,15 @@ machine), so that row is a like-for-like comparison. See [`jsrc/benchBreeze.sc`]
 | All zeros | `MatD.zeros(r, c)` | `np.zeros((r, c))` | `DenseMatrix.zeros[Double](r, c)` | `matrix(0, r, c)` | `zeros(r, c)` |
 | All ones | `MatD.ones(r, c)` | `np.ones((r, c))` | `DenseMatrix.ones[Double](r, c)` | `matrix(1, r, c)` | `ones(r, c)` |
 | Identity | `MatD.eye(n)` | `np.eye(n)` | `DenseMatrix.eye[Double](n)` | `diag(n)` | `eye(n)` |
-| From array | `MatD(r, c, arr)` | `np.array(lst).reshape(r, c)` | `new DenseMatrix(r, c, arr)` | `matrix(v, r, c)` | `reshape(v, r, c)` |
+| From flat array | `MatD(r, c, arr)` | `np.array(lst).reshape(r, c)` | `new DenseMatrix(r, c, arr)` | `matrix(v, r, c)` | `reshape(v, r, c)` |
+| From 2-D array | `arr2d.toMat` / `MatD(arr2d)` | `np.array(lst2d)` | `DenseMatrix(rows: _*)` | `do.call(rbind, l)` | `cell2mat(c)` |
+| From rows (Seq) | `rows.toMat` / `MatD.fromRows(rows)` | `np.array(list(rows))` | `DenseMatrix(rows: _*)` | `do.call(rbind, l)` | `cell2mat(c)` |
 | From rows (tuples) | `MatD((1,2),(3,4))` | `np.array([[1,2],[3,4]])` | `DenseMatrix((1.0,2.0),(3.0,4.0))` | `rbind(c(1,2),c(3,4))` | `[1 2; 3 4]` |
 | Column vector | `MatD(1.0, 2.0, 3.0)` | `np.array([[1],[2],[3]])` | `DenseVector(1.0, 2.0, 3.0)` | `matrix(1:3)` | `[1; 2; 3]` |
+| Column from array | `arr.toCVec` / `MatD(arr)` | `np.array(lst)[:,None]` | `DenseVector(arr)` | `matrix(v)` | `v(:)` |
 | Row vector | `MatD.row(1, 2, 3)` | `np.array([[1, 2, 3]])` | `DenseVector(1.0, 2.0, 3.0).t` | `t(matrix(1:3))` | `[1 2 3]` |
+| Row from array | `arr.toRVec` | `np.array(lst)[None,:]` | `DenseVector(arr).t` | `t(matrix(v))` | `v(:).'` |
+| Wrap array, no copy | `Mat.wrap(arr, r, c)` | `np.frombuffer(...)` | `new DenseMatrix(r, c, arr)` | — | — |
 | From function | `MatD.tabulate(r,c)((i,j) => f(i,j))` | `np.fromfunction(f, (r,c))` | `DenseMatrix.tabulate(r,c)(f)` | `outer(1:r, 1:c, f)` | `arrayfun(f, I, J)` |
 | Diagonal matrix | `MatD.diag(vec)` | `np.diag(v)` | `diag(v)` | `diag(v)` | `diag(v)` |
 | Zeros like | `MatD.zerosLike(m)` | `np.zeros_like(m)` | `DenseMatrix.zeros[Double](m.rows, m.cols)` | `matrix(0, nrow(m), ncol(m))` | `zeros(size(m))` |
@@ -97,8 +102,56 @@ machine), so that row is a like-for-like comparison. See [`jsrc/benchBreeze.sc`]
 > **Since v0.14.1:** flat varargs `MatD(1.0, 2.0, 3.0)` (also `MatB`, `MatF`) build a **column**
 > vector, matching `Mat(…)`, `CVec(…)`, and Breeze's `DenseVector(…)` — previously they built a row.
 > Use `MatD.row(…)` for an explicit row vector.
-> Watch out: integer arguments select the zeros constructor — `MatD(3, 4)` is a 3×4 zero matrix,
-> while `MatD(3.0, 4.0)` is a 2×1 column vector.
+> Integer arguments are **values**, as in NumPy — `MatD(1, 2, 3)` is a 3×1 column of
+> `1.0, 2.0, 3.0`, just like `np.array([1, 2, 3])`. This holds at every arity.
+>
+> **Changed in v0.15.0:** `MatD(rows, cols)` — exactly two Ints — used to be a `(rows, cols)`
+> zero-matrix constructor, the one place where Ints meant dimensions instead of values.
+> It no longer compiles. Use `MatD.zeros(3, 4)` for a zero matrix, `MatD.empty` for 0×0, or
+> `MatD(3.0, 4.0)` for a 2×1 column of values. NumPy separates the two the same way —
+> `np.array([1, 2])` vs `np.zeros((3, 4))` — by name rather than by argument type.
+> The overload is retained as a compile-time tombstone, so the old spelling gives an error
+> naming the replacements rather than silently becoming a 2×1 column.
+
+### Converting arrays
+
+Every conversion below **copies**, so the result shares no storage with the source array.
+
+```scala
+val arr   = Array(1.0, 2.0, 3.0)
+val arr2d = Array(Array(1.0, 2.0, 3.0), Array(4.0, 5.0, 6.0))
+
+arr.toCVec        // 3×1 column      arr.toRVec   // 1×3 row
+arr.toMat         // 3×1 (column is the default)
+arr2d.toMat       // 2×3, row-major
+
+Vector(rowA, rowB).toMat        // Seq[Array[T]] works too
+List(rowA, rowB).toMat
+```
+
+The same shapes are reachable through the companions, so whichever spelling you
+reach for first works:
+
+| you write | you get |
+|---|---|
+| `arr.toCVec`, `CVec(arr)`, `MatD(arr)`, `Mat(arr)` | n×1 column |
+| `arr.toRVec`, `RVec(arr)` | 1×n row |
+| `arr2d.toMat`, `MatD(arr2d)`, `Mat(arr2d)`, `MatD.fromRows(arr2d)` | row-major matrix |
+| `rows.toMat`, `MatD.fromRows(rows)` | row-major matrix from `Seq[Array[T]]` |
+
+2-D input is **row-major**: `arr2d.toMat(0, 1) == 2.0` and `arr2d.toMat(1, 0) == 4.0`.
+Ragged input raises `IllegalArgumentException` naming the offending row; empty input gives 0×0.
+
+> **Copy vs alias.** `Mat` is mutable — `m(r, c) = v` writes into the backing array — so the
+> conversions above copy to keep the matrix and the source array independent.
+> Two entry points do **not** copy and alias the array you hand them:
+> `Mat.create(arr, r, c)` and `MatD(r, c, arr)`. After either, writing to the matrix changes
+> your array and vice versa. When you want that, prefer `Mat.wrap(arr, r, c)` — same behaviour,
+> but the intent is visible at the call site.
+
+> **Before v0.15.0**, `CVec(arr)` bound the varargs overload with `T := Array[Double]` and produced
+> a **1×1 holding the array object** rather than a 3×1 column; `Mat(arr)` did the same via the
+> scalar lift. Both now do the obvious thing. The scalar lift `Mat(42.0)` → 1×1 is unchanged.
 
 ---
 
@@ -361,7 +414,7 @@ use `X.eachCol` / `X.eachRow` to sidestep the name collision, or rename at impor
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.14.2
+//> using dep org.vastblue:uni_3:0.15.0
 
 import uni.data.*
 
@@ -376,7 +429,7 @@ val (labels, stats) = m.describe
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.14.2
+//> using dep org.vastblue:uni_3:0.15.0
 
 import uni.*
 import uni.io.FileOps.*
@@ -396,7 +449,7 @@ r.columnIndex       // Map[String, Int]  (pre-computed; free repeated lookups)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.14.2
+//> using dep org.vastblue:uni_3:0.15.0
 
 import uni.data.*
 
@@ -469,4 +522,9 @@ val r: RVecD = RVec(4.0, 5.0, 6.0)
 val z  = CVec.zeros[Double](5)
 val o  = RVec.ones[Double](5)
 val s: Double = (y *@ y)           // dot product = 14.0
+
+// from an existing array (copies)
+val arr = Array(1.0, 2.0, 3.0)
+val c: CVecD = arr.toCVec          // or CVec(arr) / CVec.fromArray(arr)
+val w: RVecD = arr.toRVec          // or RVec(arr) / RVec.fromArray(arr)
 ```

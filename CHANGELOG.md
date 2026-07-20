@@ -1,3 +1,90 @@
+## v0.15.0 — unreleased
+
+**BREAKING — `MatD(rows, cols)` removed (`MatFacades.scala`)**
+
+- Two `Int` arguments used to select a `(rows, cols)` zero-matrix constructor.
+  That was the one place where Ints meant *dimensions*; at every other arity —
+  and for Doubles at every arity — Ints mean *values*, NumPy-style
+  (`MatD(1, 2, 3)` is a 3×1 column of `1.0, 2.0, 3.0`, as `np.array([1, 2, 3])`
+  is). Applies to `MatD`, `MatF` and `MatB` alike, via the shared `MatFacade`
+- **Migration:** `MatD.zeros(r, c)` for a zero matrix, `MatD.empty` for 0×0, or
+  `MatD(3.0, 4.0)` for a 2×1 column of values
+- The overload is retained as a `@compileTimeOnly` **tombstone**. Deleting it
+  outright would have left `MatD(3, 4)` compiling and silently resolving to the
+  Double varargs overload — a 2×1 column instead of a 3×4 matrix. The tombstone
+  turns that into a compile error naming the replacements. It should be deleted
+  in a later release, once downstream code has migrated
+- Note this cannot be covered by a `compileErrors` unit test: munit's
+  `compileErrors` runs the typer only, while `@compileTimeOnly` is enforced in a
+  later phase. See `src/test/resources/tombstone-check.md`
+- NumPy draws the same line by naming rather than by argument type:
+  `np.array([1, 2])` vs `np.zeros((3, 4))`
+
+**Fix — `Mat.scale(center = false, doScale = true)` (`Mat.scala`)**
+
+- The divisor is now the root-mean-square of the (possibly centered) values with
+  Bessel's correction, `sqrt(Σc²/(n−1))`, computed from the data actually being
+  scaled. Previously it always divided by the CENTERED std, even when
+  `center = false`
+- `center = true` (the default) is **unchanged** — centered data has zero mean,
+  so its RMS is exactly the sample std. Only the uncentered case moves
+- Why: dividing uncentered data by a statistic that measures only variation
+  leaves the result unbounded when the mean dwarfs the sd. A column of
+  1000 ± 0.001 scaled to ≈1e6 instead of ≈1, inflating the condition number of
+  any design built from it. The RMS bounds every scaled column to unit RMS, and
+  it is one rule that specializes to the sample std when centered rather than
+  two cases
+- This also matches R's `scale(x, center = FALSE, scale = TRUE)`, which the
+  method's docstring already claimed to follow. Note sklearn's
+  `StandardScaler(with_mean = False)` uses the centered std instead, so uni
+  differs from sklearn here
+
+**Array → Mat / CVec / RVec conversions (`Mat.scala`, `VecExts.scala`, `MatFacades.scala`)**
+
+- New extension methods on arrays: `arr.toCVec` (n×1), `arr.toRVec` (1×n),
+  `arr.toMat` (column), and `.toMat` on `Array[Array[T]]` and `Seq[Array[T]]`
+  (row-major). A 1-D array becomes a column, matching `MatD(…)` / `CVec(…)`
+- New `Mat.fromRows` (`Array[Array[T]]` and `Seq[Array[T]]` overloads) — the
+  first 2-D factory in the library; also surfaced as `MatD.fromRows`. Previously
+  the only route was `MatD(rows, cols, arr2d.flatten)`
+- New `apply` overloads taking arrays on `CVec`, `RVec`, `Mat`, and the
+  `MatD`/`MatB`/`MatF` facades
+- **Fixes a wrong-shape result:** `CVec(arr)` / `RVec(arr)` previously bound the
+  varargs overload with `T := Array[Double]`, and `Mat(arr)` / `Mat(arr2d)` bound
+  the scalar lift — all four produced a **1×1 matrix holding the array object**
+  rather than a vector or matrix of its elements. The scalar lift `Mat(42.0)` →
+  1×1 is unchanged
+- `Mat.apply(Array)` carries `@targetName` because `Array[T]` and a bare `T`
+  erase to the same signature
+- New `Mat.wrap(arr, rows, cols)`: explicit zero-copy wrapping. All the new
+  conversions **copy**, since `Mat` is mutable (`m(r,c) = v` writes into the
+  backing array) and aliasing would make the matrix and the caller's array share
+  state in both directions. `Mat.create` and `MatD(rows, cols, data)` still
+  alias — unchanged, now documented
+
+**Fixes (`Tprf3.scala`)**
+
+- `estimate3prf(…, pls = true)` returned **all-NaN whenever N < 10**. Pass 2 is a
+  cross-sectional regression whose observation count is N, but it was gated on
+  `minObs` (a time-series guard, default 10). Now gated on `L + 1`, the
+  identification floor. Every real predictor count downstream is below 10, so
+  this affected essentially every call
+- Fixing that made the pls OOS forecast branch reachable for the first time and
+  exposed a latent transpose bug: `xt - colMeans.T` subtracted an N×1 from a 1×N,
+  broadcasting to N×N. Now `xt - colMeans`
+- `pls1Fit` no longer aliases the caller's `y` array
+
+**Additions (`Tprf3.scala`)**
+
+- `plsClosedForm(y, X)`: vectorized closed form of the PLS-variant 3PRF
+  (autoproxy L=1, no intercept in passes 1–2). Both passes collapse to
+  projections, replacing the N+T separate OLS solves — 4–6× faster to fit than
+  the iterative path. Requires NaN-free input
+- `pls1Fit(x: Array[Array[Double]], y: Array[Double])`: array-friendly wrapper
+- `Pls3prfModel`: retains phi/sigma/beta *and* the column mean/scale, so
+  `predict(rawRow)` takes an un-normalized row (`Tprf3Result.estimateYhat`
+  silently requires a pre-scaled one)
+
 ## v0.14.1 — 2026-07-10
 
 *(v0.14.0 was tagged but never published; this entry covers everything since

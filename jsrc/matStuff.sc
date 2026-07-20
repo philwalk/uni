@@ -1,7 +1,7 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 //package apps
 
-//> using dep org.vastblue:uni_3:0.14.2
+//> using dep org.vastblue:uni_3:0.15.0
 
 import uni.data.*
 import uni.data.Mat.*
@@ -9,7 +9,7 @@ import uni.data.Mat.*
 object MatStuff {
   def main(args: Array[String]): Unit = {
     val m              = Mat.zeros[Double](3, 4) // .asInstanceOf[Mat[Double]]
-    val n: Mat[Double] = MatD(3, 4) // .asInstanceOf[Mat[Double]]
+    val n: Mat[Double] = MatD.zeros(3, 4) // .asInstanceOf[Mat[Double]]
     println(s"m: $m")
     println(s"n: $n")
     val col = m(::, 0)

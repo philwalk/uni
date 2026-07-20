@@ -13,6 +13,50 @@ class ExternalApiSuite extends munit.FunSuite:
     assertEquals(result(0), 2.0)
   }
 
+  // Array conversions from external scope. ArrayConvSuite lives in package
+  // uni.data and so exercises the INTERNAL resolution path; these repeat the
+  // essentials as a client sees them, where extension dispatch and the opaque
+  // CVec/RVec TASTY types have to survive `export VecOps.*`.
+  test("cross-package: array conversions resolve and keep their opaque types") {
+    val arr   = Array(1.0, 2.0, 3.0)
+    val arr2d = Array(Array(1.0, 2.0, 3.0), Array(4.0, 5.0, 6.0))
+
+    // Ascribed types matter: if the opaque return type degraded to Mat[Double]
+    // in TASTY, these assignments would not compile.
+    val c: CVecD = arr.toCVec
+    val r: RVecD = arr.toRVec
+    val ca: CVecD = CVec(arr)
+    val ra: RVecD = RVec(arr)
+    assertEquals((c.rows, c.cols), (3, 1))
+    assertEquals((r.rows, r.cols), (1, 3))
+    assertEquals((ca.rows, ca.cols), (3, 1))
+    assertEquals((ra.rows, ra.cols), (1, 3))
+    assertEquals(c(0), 1.0)
+
+    val m: MatD = arr2d.toMat
+    assertEquals((m.rows, m.cols), (2, 3))
+    assertEquals(m(0, 1), 2.0)   // row-major
+    assertEquals(m(1, 0), 4.0)
+
+    val s: MatD = Vector(Array(1.0, 2.0), Array(3.0, 4.0)).toMat
+    assertEquals((s.rows, s.cols), (2, 2))
+    assertEquals(MatD(arr2d).shape, (2, 3))
+    assertEquals(MatD(arr).shape, (3, 1))
+    assertEquals(MatD.fromRows(arr2d).shape, (2, 3))
+  }
+
+  test("cross-package: conversions copy, Mat.wrap aliases") {
+    val a = Array(1.0, 2.0, 3.0)
+    val c = a.toCVec
+    a(0) = 99.0
+    assertEquals(c(0), 1.0)
+
+    val b = Array(1.0, 2.0, 3.0)
+    val w = Mat.wrap(b, 3, 1)
+    b(0) = 99.0
+    assertEquals(w(0, 0), 99.0)
+  }
+
   test("chain: y.T *@ X *@ y = Double") {
     val y: CVecD = CVec(1.0, 2.0, 3.0)
     val X: MatD = MatD((2,0,0),(0,3,0),(0,0,4))

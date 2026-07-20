@@ -2,7 +2,7 @@
 
 //> using jvm 21
 //> using scala 3.8.2
-//> using dep org.vastblue:uni_3:0.14.2
+//> using dep org.vastblue:uni_3:0.15.0
 
 /**
  * MatD benchmark — counterpart to py/bench.py (NumPy/Python).

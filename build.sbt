@@ -19,7 +19,7 @@ ThisBuild / watchTriggeredMessage := Watch.clearScreenOnTrigger
 ThisBuild / scalaVersion  := scalaVer
 
 lazy val projectName = "uni"
-ThisBuild / version       := "0.14.2"
+ThisBuild / version       := "0.15.0"
 ThisBuild / versionScheme := Some("semver-spec")
 
 ThisBuild / organization         := "org.vastblue"

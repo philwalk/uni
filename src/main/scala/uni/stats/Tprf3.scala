@@ -396,9 +396,9 @@ object Tprf3 {
     require(x.nonEmpty, "x is empty")
     require(x.length == y.length,
       s"x has ${x.length} rows but y has ${y.length}")
-    val n = x(0).length
-    require(x.forall(_.length == n), "x is ragged: all rows must have the same length")
-    plsClosedForm(MatD(y.length, 1, y), MatD(x.length, n, x.flatten))
+    // toCVec/toMat copy, so the returned model shares no storage with the
+    // caller's arrays — MatD(rows, cols, data) would have aliased `y`.
+    plsClosedForm(y.toCVec, x.toMat)
 
   // ── NaN-aware OLS ──────────────────────────────────────────────────────────
 

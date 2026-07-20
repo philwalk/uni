@@ -1886,6 +1886,61 @@ object Mat {
   /** Create column vector from values */
   def col[T: ClassTag](values: T*): Mat[T] = Mat.create(values.toArray, values.length, 1)
 
+  /** Row-major 2-D array → Mat (rows.length × rows(0).length).
+   *  Copies into one flat buffer, so the result shares nothing with `rows`. */
+  def fromRows[T: ClassTag](rows: Array[Array[T]]): Mat[T] =
+    if rows.isEmpty then Mat.empty[T]
+    else
+      val nr  = rows.length
+      val nc  = rows(0).length
+      val out = Array.ofDim[T](nr * nc)
+      var i = 0
+      while i < nr do
+        val r = rows(i)
+        require(r.length == nc, s"ragged input: row $i has ${r.length} elements, expected $nc")
+        System.arraycopy(r, 0, out, i * nc, nc)
+        i += 1
+      Mat.create(out, nr, nc)
+
+  /** Row-major sequence of rows → Mat. Iterates rather than indexing, so it
+   *  stays linear for `List` as well as `Vector`. */
+  def fromRows[T: ClassTag](rows: Seq[Array[T]]): Mat[T] =
+    if rows.isEmpty then Mat.empty[T]
+    else
+      val nr  = rows.length
+      val nc  = rows.head.length
+      val out = Array.ofDim[T](nr * nc)
+      var i  = 0
+      val it = rows.iterator
+      while it.hasNext do
+        val r = it.next()
+        require(r.length == nc, s"ragged input: row $i has ${r.length} elements, expected $nc")
+        System.arraycopy(r, 0, out, i * nc, nc)
+        i += 1
+      Mat.create(out, nr, nc)
+
+  /** Wrap `arr` WITHOUT copying: the Mat and the array share storage, so writing
+   *  to either is visible in the other. This is the deliberate zero-copy path —
+   *  the `.toMat`/`.toCVec`/`.toRVec` conversions copy instead. Callers must not
+   *  mutate `arr` afterwards unless that aliasing is intended.
+   *
+   *  Note `Mat.create` and `MatD(rows, cols, data)` also alias; this method
+   *  exists so the intent is visible at the call site. */
+  def wrap[T: ClassTag](arr: Array[T], rows: Int, cols: Int): Mat[T] =
+    require(arr.length == rows * cols, s"array length ${arr.length} != $rows x $cols")
+    Mat.create(arr, rows, cols)
+
+  /** Array → column vector. Without this overload `Mat(arr)` binds
+   *  `apply(value: T)` with `T := Array[T]`, silently yielding a 1×1 holding
+   *  the array. The scalar lift `Mat(3.0)` → 1×1 is unaffected.
+   *  `@targetName` is required: `Array[T]` and a bare `T` both erase to Object. */
+  @annotation.targetName("applyArray")
+  def apply[T: ClassTag](arr: Array[T]): Mat[T] = Mat.create(arr.clone(), arr.length, 1)
+
+  /** Row-major 2-D array → Mat. See the note on `apply(Array)`. */
+  @annotation.targetName("applyArray2d")
+  def apply[T: ClassTag](rows: Array[Array[T]]): Mat[T] = fromRows(rows)
+
   /** Create column vector from varargs: Mat(1.0, 2.0, 3.0) → 3x1 */
   def apply[T: ClassTag](first: T, rest: T*): ColVec[T] = {
     val values = first +: rest
@@ -3804,16 +3859,42 @@ object Mat {
      *  column std devs. Returns a new matrix with zero-mean columns (center=true)
      *  and/or unit-variance columns (scale=true).
      *
-     *  Matches R's convention: the divisor is the SAMPLE std (÷(n−1), Bessel) —
-     *  rows are treated as observations sampled from a population. For
-     *  NumPy/sklearn-style POPULATION scaling (÷n) use `m / m.std(axis = 0)`
-     *  after centering (`m.std` keeps NumPy's ddof=0 semantics). */
+     *  Matches R's convention: the divisor is the root-mean-square of the
+     *  (possibly centered) values with Bessel's correction, sqrt(Σc²/(n−1)) —
+     *  rows are treated as observations sampled from a population. With
+     *  `center = true` that is exactly the SAMPLE std; with `center = false` it
+     *  is the uncentered second moment, as in R's
+     *  `scale(x, center = FALSE, scale = TRUE)`.
+     *
+     *  For NumPy/sklearn-style POPULATION scaling (÷n) use `m / m.std(axis = 0)`
+     *  after centering (`m.std` keeps NumPy's ddof=0 semantics). Note sklearn's
+     *  `StandardScaler(with_mean = False)` divides by the CENTERED std instead,
+     *  so it differs from this method when `center = false`.
+     *
+     *  Changed in v0.15.0: `center = false` previously divided by the centered
+     *  std, which mismatched the statistic to the data and left the result
+     *  unbounded when the mean greatly exceeded the sd. `center = true` (the
+     *  default) is unaffected. */
     def scale(center: Boolean = true, doScale: Boolean = true)(using frac: Fractional[T], elem: MatElem[T]): Mat[T] =
       val c = if center then m - m.mean(axis = 0) else m
       if doScale then
-        // sampleStd = populationStd * sqrt(n / (n−1))
-        val bessel = elem.fromDouble(math.sqrt(m.rows.toDouble / (m.rows - 1)))
-        c / (m.std(axis = 0) * bessel)
+        // Divisor is the root-mean-square of `c` with Bessel's correction:
+        //   sqrt( Σc² / (n−1) )
+        //
+        // Centered data has zero mean, so this IS the sample std — the
+        // `center = true` path (the default) is unchanged.
+        //
+        // Uncentered it must stay the raw second moment. Dividing uncentered
+        // data by the CENTERED std (as this did) mismatches the statistic to
+        // the data and leaves the result unbounded when mean ≫ sd: a column of
+        // 1000 ± 0.001 has sd ≈ 0.001 and scaled to ≈1e6 instead of ≈1,
+        // inflating the condition number of any design built from it. Using the
+        // RMS bounds every scaled column to unit RMS.
+        //
+        // One rule — "divide by the RMS of whatever is being scaled" — that
+        // specializes to the sample std when centered, rather than two cases.
+        val denom = ((c ~^ 2.0).sum(0) / elem.fromDouble((m.rows - 1).toDouble)).sqrt
+        c / denom
       else c
 
     /** NumPy: np.var(m) - variance */

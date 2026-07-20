@@ -94,8 +94,8 @@ class Pls3prfSuite extends FunSuite:
   test("plsClosedForm agrees with estimate3prf(pls = true), including small N") {
     for (rows, cols) <- shapes do
       val (x, y, _) = dataset(rows, cols, 42)
-      val matX      = MatD(rows, cols, x.flatten)
-      val matY      = MatD(rows, 1, y)
+      val matX      = x.toMat
+      val matY      = y.toCVec
       val closed    = plsClosedForm(matY, matX)
       val iterative = estimate3prf(matY, matX, Left(1), pls = true)
       for i <- 0 until rows do
@@ -108,8 +108,8 @@ class Pls3prfSuite extends FunSuite:
   // (L parameters, no intercept, so N > L).
   test("iterative pls path reaches its identification floor at N = 2") {
     val (x, y, _) = dataset(80, 2, 17)
-    val matX      = MatD(80, 2, x.flatten)
-    val matY      = MatD(80, 1, y)
+    val matX      = x.toMat
+    val matY      = y.toCVec
     val iterative = estimate3prf(matY, matX, Left(1), pls = true)
     val ref       = pls1Reference(x, y)
     for i <- 0 until 80 do
@@ -123,8 +123,8 @@ class Pls3prfSuite extends FunSuite:
   for procedure <- Seq("OOS Recursive", "OOS Cross Val", "OOS Rolling") do
     test(s"$procedure with pls = true produces finite forecasts") {
       val (x, y, _) = dataset(80, 6, 23)
-      val matX      = MatD(80, 6, x.flatten)
-      val matY      = MatD(80, 1, y)
+      val matX      = x.toMat
+      val matY      = y.toCVec
       val r = estimate3prf(matY, matX, Left(1), procedure = procedure,
                            mintrain = (20, 0), window = (0, 1),
                            rollwin = (30, 20, 0), pls = true)
@@ -249,8 +249,8 @@ class Pls3prfSuite extends FunSuite:
       val window   = (0, 1)
       val rollwin  = (30, 20, 0)
       val (x, y, _) = dataset(80, 6, 23)
-      val matX = MatD(80, 6, x.flatten)
-      val matY = MatD(80, 1, y)
+      val matX = x.toMat
+      val matY = y.toCVec
       val r = estimate3prf(matY, matX, Left(1), procedure = procedure,
                            mintrain = mintrain, window = window,
                            rollwin = rollwin, pls = true)
@@ -267,6 +267,24 @@ class Pls3prfSuite extends FunSuite:
       // Guard against a reference that is NaN everywhere trivially "matching".
       assert(compared > 10, s"only $compared rows carried a real forecast")
     }
+
+  // pls1Fit used to pass the caller's y array straight into MatD(len, 1, y),
+  // which aliases — the fitted model shared storage with the caller. Safe only
+  // by luck, since plsClosedForm happens to use non-mutating ops.
+  test("pls1Fit does not alias the caller's arrays") {
+    val (x, y, testRow) = dataset(60, 4, 31)
+    val model  = pls1Fit(x, y)
+    val before = model.predict(testRow)
+    val fitted = (0 until 60).map(i => model.forecasts(i, 0)).toVector
+
+    for i <- 0 until 60 do
+      y(i) = 12345.0
+      for j <- 0 until 4 do x(i)(j) = 54321.0
+
+    assertEqualsDouble(model.predict(testRow), before, 0.0)
+    for i <- 0 until 60 do
+      assertEqualsDouble(model.forecasts(i, 0), fitted(i), 0.0)
+  }
 
   test("retains fitted state with the documented shapes") {
     val (x, y, _) = dataset(200, 9, 3)

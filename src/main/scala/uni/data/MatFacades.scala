@@ -60,9 +60,42 @@ private[data] trait MatFacade[T: ClassTag: Fractional: MatElem]:
   def arange(start: Double, stop: Double, step: Double): CVec[T] = Mat.arange[T](start, stop, step)
   def linspace(start: Double, stop: Double, num: Int = 50): CVec[T] = Mat.linspace[T](start, stop, num)
 
+  /** REMOVED in v0.15.0 — retained only as a tombstone so the call fails loudly.
+   *
+   *  This overload made Int arguments mean *dimensions* at arity two, while Ints
+   *  at every other arity — and Doubles at every arity — mean *values*:
+   *
+   *    MatD(3, 4)      // was a 3x4 zero matrix   (dimensions)
+   *    MatD(3.0, 4.0)  // a 2x1 column            (values)
+   *    MatD(3, 4, 5)   // a 3x1 column            (values)
+   *
+   *  Deleting it outright would have been worse than leaving it: `MatD(3, 4)`
+   *  would still compile and silently become a 2x1 column via the Double varargs
+   *  overload. Keeping it as `@compileTimeOnly` turns that silent reinterpretation
+   *  into an error naming both intents. Delete this method once downstream code
+   *  has moved on.
+   *
+   *  NumPy draws the same line by naming: `np.array([1, 2])` vs `np.zeros((3, 4))`. */
+  @scala.annotation.compileTimeOnly(
+    "M(rows, cols) is ambiguous and was removed in v0.15.0: two Int arguments used to mean " +
+    "dimensions, while Ints at any other arity — and Doubles at any arity — mean values. " +
+    "Use `.zeros(rows, cols)` for a zero matrix, `.empty` for 0x0, or pass Doubles " +
+    "(e.g. MatD(3.0, 4.0)) for a 2x1 column of values.")
   def apply(rows: Int, cols: Int): Mat[T] = Mat.zeros[T](rows, cols)
   def apply(m: Mat[T], row: Int, col: Int): T = m.apply(row, col)
+  /** NOTE: aliases `data` — the Mat and the array share storage. Use
+   *  `data.toMat` / `MatD(data)` for a copy, or `Mat.wrap` to say so explicitly. */
   def apply(rows: Int, cols: Int, data: Array[T]): Mat[T] = Mat.apply[T](rows, cols, data)
+  /** 1-D array → column vector (n×1), copying. Matches the `apply(first, rest*)`
+   *  column convention; use `data.toRVec` for a row. */
+  def apply(data: Array[T]): CVec[T] = CVec.fromArray(data)
+  /** Row-major 2-D array → Mat, copying. */
+  def apply(data: Array[Array[T]]): Mat[T] = Mat.fromRows[T](data)
+  /** Named form of `apply(Array[Array[T]])`, for call sites that read better
+   *  spelled out (and for grepping). */
+  def fromRows(data: Array[Array[T]]): Mat[T] = Mat.fromRows[T](data)
+  /** Row-major rows → Mat, copying. Covers `Vector[Array[T]]` panel shapes. */
+  def fromRows(data: Seq[Array[T]]): Mat[T] = Mat.fromRows[T](data)
   def apply(value: Double): Mat[T] = Mat.apply[T](elem.fromDouble(value))
   // Column vector, matching Mat(...), CVec(...), and Breeze's DenseVector(...)
   // convention (changed from row in v0.14.0). For a row vector use row(...).
