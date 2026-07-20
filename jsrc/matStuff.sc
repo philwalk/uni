@@ -1,12 +1,12 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 //package apps
 
-//> using dep org.vastblue:uni_3:0.14.1
+//> using dep org.vastblue:uni_3:0.14.2
 
 import uni.data.*
 import uni.data.Mat.*
 
-object MatDCheck {
+object MatStuff {
   def main(args: Array[String]): Unit = {
     val m              = Mat.zeros[Double](3, 4) // .asInstanceOf[Mat[Double]]
     val n: Mat[Double] = MatD(3, 4) // .asInstanceOf[Mat[Double]]

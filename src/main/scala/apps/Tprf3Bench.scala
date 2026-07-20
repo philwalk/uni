@@ -3,7 +3,7 @@ package uni.apps
 
 //> using jvm 22
 //> using scala 3.8.4
-//> using dep org.vastblue:uni_3:0.14.1
+//> using dep org.vastblue:uni_3:0.14.2
 
 import uni.*
 import uni.data.*
@@ -22,6 +22,7 @@ object Tprf3Bench {
   def usage(m: String = ""): Nothing = {
     showUsage(m, "",
       "[-nopython]     ; only show scala benchmark results",
+      "[-python <exe>] ; python interpreter (default: first on PATH that has numpy)",
     )
   }
 
@@ -35,10 +36,13 @@ object Tprf3Bench {
   private val scenarios = List("IS Full", "OOS Rec", "OOS CV")
 
   var runPython = true
+  var pythonOverride: Option[String] = None
   def main(args: Array[String]): Unit = {
     eachArg(args.toSeq, usage) {
     case "-nopython" =>
       runPython = false
+    case "-python" =>
+      pythonOverride = Some(consumeNext)
     case arg =>
       usage(s"unrecognized arg [$arg]")
     }

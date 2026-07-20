@@ -1,14 +1,13 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.14.1
+//> using dep org.vastblue:uni_3:0.14.2
 
 import uni.*
 import uni.time.*
 
 object VerifyTestDates {
   def usage(m: String = ""): Nothing = {
-    showUsage(m, "",
-      "<filename>    ; input",
+    showUsage(m, "<date-time-string> [options]",
       " [-s]         ; smart parse",
       " [-c]         ; chrono parse",
       " [-f]         ; smart with fallback",
@@ -16,8 +15,11 @@ object VerifyTestDates {
   }
 
   var parseType = ""
+  var datestr = ""
   def main(args: Array[String]): Unit = {
     eachArg(args.toSeq, usage) {
+    case s if datestr.isEmpty =>
+      datestr = s
     case "-s" | "-c" | "-f" =>
       parseType = thisArg
     case arg =>

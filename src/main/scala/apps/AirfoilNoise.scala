@@ -1,8 +1,8 @@
 //#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 package uni.apps
 
-//> using java-home /opt/jdk17
-//> using dep org.vastblue:uni_3:0.14.1
+//> using jvm 17
+//> using dep org.vastblue:uni_3:0.14.2
 //> using dep com.github.darrenjw::scala-glm:0.9
 
 import uni.data.*
@@ -17,7 +17,7 @@ object AirfoilNoise {
     val file = new java.io.File(fileName)
     if (!file.exists) {
       val s = new java.io.PrintWriter(file)
-      val data = scala.io.Source.fromURL(url).getLines
+      val data = scala.io.Source.fromURL(url).getLines()
       data.foreach(l => s.write(l.trim.
         split('\t').filter(_ != "").
         mkString("", ",", "\n")))
@@ -27,6 +27,12 @@ object AirfoilNoise {
     //Once we have a CSV file on disk, we can load it up and look at it.
     val mat = MatD.readCsv(fileName)
     println("Dim: " + mat.rows + " " + mat.cols)
-    mat.pairs(labels = Seq("Freq", "Angle", "Chord", "Velo", "Thick", "Sound"))
+
+    mat.pairs(
+      labels = Seq("Freq", "Angle", "Chord", "Velo", "Thick", "Sound"),
+      bins = 10,
+      dotSize = 3,
+      style = PlotStyle(width = 1500, height = 900)
+    )
   }
 }

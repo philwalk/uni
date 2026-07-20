@@ -1236,7 +1236,7 @@ object Mat {
           // Broadcast 1×N: combine the same row vector with every row
           val b   = other.tdata.asInstanceOf[Array[Double]]
           val out = Array.ofDim[Double](rows * cols)
-          bcastRows(rows, cols) { (r, base) =>
+          bcastRows(rows, cols) { (_, base) =>
             var c = 0
             while c < cols do { out(base + c) = f(a(base + c), b(c)); c += 1 }
           }

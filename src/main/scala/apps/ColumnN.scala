@@ -1,18 +1,17 @@
 //#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 package uni.apps
 
-//> using dep org.vastblue:uni_3:0.14.1
+//> using dep org.vastblue:uni_3:0.14.2
 
 import uni.*
-//import uni.ext.*
 import uni.io.*
 
 object ColumnN {
   def usage(m: String = ""): Nothing = {
-    if (m.nonEmpty) printf("%s\n", m)
-    printf("usage: %s <colnum> <csvFile>\n", progName)
-    printf("<colnum>   ; zero-based column index")
-    sys.exit(1)
+    showUsage(m, "",
+      "<inputCsvFile>",
+      "<colnum>   ; zero-based column index"
+    )
   }
 
   var verbose = false
@@ -22,11 +21,11 @@ object ColumnN {
 
   def main(args: Array[String]): Unit = {
     try {
-      args.foreach { arg =>
-        arg match {
+      eachArg(args.toSeq, usage) {
         case "-fullstack" =>
           fullstack = true
-        case "-v" => verbose = true
+        case "-v" =>
+          verbose = true
         case fname if fname.asPath.isFile =>
           if inputFile.nonEmpty then
             usage(s"2nd filename [$fname] but already specified [${inputFile.get}]")
@@ -39,7 +38,8 @@ object ColumnN {
           if colnum >= 0 then
             usage(s"2nd column number [$n] but already specified [$colnum]")
           colnum = n.toInt
-        }
+        case arg =>
+          usage(s"unrecognized arg [$arg]")
       }
       if (colnum < 0) {
         usage()
@@ -57,9 +57,9 @@ object ColumnN {
       if (fullstack) {
         throw e
       } else {
-        Thread.currentThread.getStackTrace .filter(_.toString.toLowerCase.contains(progName.toLowerCase))
+        //showLimitedStack(e)    // removes java, scala, sun, oracle, etc.
+        showMinimalStack(e) // removes all but stack entries with this object name (case-insensitive)
       }
     }
   }
-  def progName = Option(sys.props("scala.source.names")).getOrElse(this.getClass.getName)
 }

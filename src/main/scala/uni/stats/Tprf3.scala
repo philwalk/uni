@@ -288,6 +288,118 @@ object Tprf3 {
     )
   }
 
+  // ── PLS-variant 3PRF (closed form) ─────────────────────────────────────────
+
+  /** Fitted PLS-variant 3PRF model, retaining the pass-1/2/3 state.
+   *
+   *  Unlike [[Tprf3Result]] this also keeps the column mean and scale used to
+   *  normalise X, so [[predict]] takes a raw row — callers never have to
+   *  reproduce the internal normalisation (`Tprf3Result.estimateYhat` silently
+   *  requires an already-scaled row, since the scale is not part of that type). */
+  case class Pls3prfModel(
+    phi:       MatD,     // (N×1) pass-1 loadings
+    sigma:     MatD,     // (T×1) pass-2 factor scores
+    beta:      MatD,     // (2×1) pass-3 coefficients: [intercept, slope]
+    forecasts: MatD,     // (T×1) in-sample fitted values
+    colMean:   MatD,     // (1×N) column means of the scaled X
+    colStd:    MatD,     // (1×N) column std-devs of the raw X
+    rSquared:  Double,
+  ):
+    // Predicting a new row re-runs passes 2 and 3 for that row alone:
+    //   sigma_new = (phi'phi)⁻¹·phi'·xc,   yhat = b0 + b1·sigma_new
+    // Both passes are 1-D here, so this is a dot product — no matrix work to
+    // amortise. Held as primitive arrays so the hot path allocates nothing and
+    // avoids Mat indexing indirection.
+    private val phiA:  Array[Double] = phi.toArray
+    private val meanA: Array[Double] = colMean.toArray
+    private val stdA:  Array[Double] = colStd.toArray
+    private val phiSS: Double =
+      var s = 0.0; var j = 0
+      while j < phiA.length do { s += phiA(j) * phiA(j); j += 1 }
+      s
+    private val b0: Double = beta(0, 0)
+    private val b1: Double = beta(1, 0)
+
+    /** Forecast for one raw (un-normalised) predictor row. */
+    def predict(row: Array[Double]): Double =
+      require(row.length == phiA.length,
+        s"row length ${row.length} != ${phiA.length} predictors")
+      var dot = 0.0
+      var j = 0
+      while j < phiA.length do
+        dot += (row(j) / stdA(j) - meanA(j)) * phiA(j)
+        j += 1
+      b0 + b1 * (dot / phiSS)
+
+    /** Forecast for each raw predictor row. */
+    def predictAll(rows: Array[Array[Double]]): Array[Double] =
+      val out = Array.ofDim[Double](rows.length)
+      var i = 0
+      while i < rows.length do { out(i) = predict(rows(i)); i += 1 }
+      out
+
+  /** Closed-form PLS-variant 3PRF: K&P autoproxy with L=1 and no intercept in
+   *  passes 1 and 2 — i.e. `estimate3prf(y, X, Z = Left(1), pls = true)`.
+   *
+   *  Dropping those intercepts makes both passes plain projections, so the N+T
+   *  separate `nanOls` solves of [[runT3prf]]'s pls branch collapse to three
+   *  matrix products (the same relationship [[t3prf]] has to [[tprfClosedForm]]
+   *  for the non-pls variant):
+   *
+   *    Phi   = Xc'y / (y'y)          pass 1  (N×1)
+   *    Sigma = Xc·Phi / (Phi'Phi)    pass 2  (T×1)
+   *    beta  = [iota(T) Sigma] \ y   pass 3  (2×1)
+   *
+   *  where Xc is X scaled to unit column variance, then column-centred.
+   *
+   *  With L=1 the autoproxy loop runs once with the proxy equal to y, so this is
+   *  the 3PRF form that coincides with one-component PLS-1 — see [[pls1Fit]].
+   *
+   *  Requires NaN-free input: the vectorised passes cannot do the per-regression
+   *  NaN-row dropping that `nanOls` does. Use `estimate3prf` for gappy data. */
+  def plsClosedForm(y: MatD, X: MatD): Pls3prfModel =
+    require(X.rows == y.rows,
+      s"X has ${X.rows} rows but y has ${y.rows}")
+    require(!anyNan(X) && !anyNan(y),
+      "plsClosedForm requires NaN-free input; use estimate3prf(pls = true) for gappy data")
+
+    val colStd  = stdCols(X, hasNan = false)      // 1×N
+    val Xn      = X / colStd
+    val colMean = nanMeanCols(Xn)                 // 1×N
+    val Xc      = Xn - colMean
+
+    // Pass 1 — no intercept, proxy is y itself
+    val yss = (y.T *@ y)(0, 0)
+    val phi = (Xc.T *@ y) / yss                   // N×1
+
+    // Pass 2 — no intercept, design is phi
+    val phiSS = (phi.T *@ phi)(0, 0)
+    val sigma = (Xc *@ phi) / phiSS               // T×1
+
+    // Pass 3 — with intercept, as in every 3PRF variant
+    val Xaug = withIntercept(sigma)               // T×2
+    val beta = (Xaug.T *@ Xaug).inverse *@ (Xaug.T *@ y)
+
+    val forecasts = Xaug *@ beta
+    val resids    = y - forecasts
+    val ssy       = ((y - y.mean) ~^ 2.0).sum
+    val rsq       = if ssy == 0.0 then 0.0 else 1.0 - (resids ~^ 2.0).sum / ssy
+
+    Pls3prfModel(phi, sigma, beta, forecasts, colMean, colStd, rsq)
+
+  /** [[plsClosedForm]] over plain arrays: `x` is row-major (T rows × N columns).
+   *
+   *  The 3PRF whose forecasts equal one-component PLS-1, fitted from the same
+   *  argument shapes a hand-rolled PLS-1 would take. Predict with
+   *  `model.predict(row)`. */
+  def pls1Fit(x: Array[Array[Double]], y: Array[Double]): Pls3prfModel =
+    require(x.nonEmpty, "x is empty")
+    require(x.length == y.length,
+      s"x has ${x.length} rows but y has ${y.length}")
+    val n = x(0).length
+    require(x.forall(_.length == n), "x is ragged: all rows must have the same length")
+    plsClosedForm(MatD(y.length, 1, y), MatD(x.length, n, x.flatten))
+
   // ── NaN-aware OLS ──────────────────────────────────────────────────────────
 
   /** OLS with silent NaN-row filtering.
@@ -785,10 +897,16 @@ object Tprf3 {
           case Some(phi) => Phi(i until i+1, ::) = phi.T
           case None      => ()
 
-      // Pass 2
+      // Pass 2 — cross-sectional: each row's N predictor values are regressed on
+      // Phi, so this fit has N observations, not T.  `minObs` is a time-series
+      // guard (it belongs on pass 1 and on t3prfFast's `T < minObs` check);
+      // applying it here rejected every row whenever N < minObs, leaving Sigma
+      // all-NaN and silently producing NaN forecasts.  The floor that actually
+      // applies is identification: L parameters, no intercept, so N > L.
+      val pass2MinObs = L + 1
       val designPhi = Phi
       for t <- 0 until T do
-        nanOls(xCentered(t, ::).T, designPhi, minObs, hasNan) match
+        nanOls(xCentered(t, ::).T, designPhi, pass2MinObs, hasNan) match
           case Some(sigma) => Sigma(t until t+1, ::) = sigma.T
           case None        => ()
 
@@ -801,8 +919,13 @@ object Tprf3 {
       val yhatt = oosX match
         case None => Double.NaN
         case Some(xt) =>
-          val xc = xt - colMeans.T
-          nanOls(xc.T, designPhi, minObs, hasNan) match
+          // xt and colMeans are both (1×N); subtracting colMeans.T (N×1) here
+          // broadcast to an N×N matrix, which made the fit below return an L×N
+          // sigma and the hstack fail.  Latent until pass2MinObs made this
+          // branch reachable — nanOls previously rejected every call.
+          val xc = xt - colMeans
+          // Same cross-sectional fit as pass 2 — see pass2MinObs above.
+          nanOls(xc.T, designPhi, pass2MinObs, hasNan) match
             case None      => Double.NaN
             case Some(sigma) =>
               (MatD.hstack(MatD.ones(1, 1), sigma.T) *@ beta)(0, 0)

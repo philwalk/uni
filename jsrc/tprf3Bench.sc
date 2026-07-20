@@ -3,7 +3,7 @@
 
 //> using jvm 22
 //> using scala 3.8.4
-//> using dep org.vastblue:uni_3:0.14.1
+//> using dep org.vastblue:uni_3:0.14.2
 
 import uni.*
 import uni.data.*
@@ -178,6 +178,11 @@ object Tprf3Bench {
       "Tprf3.estimate3prf OOS CV", msCv, oosLoops)
 
     ScalaRes(label, T, N, L, msFast, ms3prf, msOosRec, msCv)
+
+  /** Known native-Windows Python installations to try, in preference order. */
+  private val winPythonCandidates: List[String] = List(
+    "F:/WPy64-3.14.3.0/python/python.exe",
+  )
 
   /** Every PATH entry holding `prog`, in PATH order — unlike uni.whereInPath,
    *  which stops at the first hit. All hits matter here: on macOS a numpy-less

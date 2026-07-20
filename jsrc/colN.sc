@@ -1,12 +1,12 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+//package uni.apps
 
-//> using dep org.vastblue:uni_3:0.14.1
+//> using dep org.vastblue:uni_3:0.14.2
 
 import uni.*
 import uni.io.*
 
-// 
-object ColumnN {
+object ColN {
   def usage(m: String = ""): Nothing = {
     showUsage(m, "",
       "<inputCsvFile>",
@@ -15,9 +15,9 @@ object ColumnN {
   }
 
   var verbose = false
-  var colnum = -5
-  var fullstack = false
-  var inputFile: Option[Path] = None
+  private var colnum = -1
+  private var fullstack = false
+  private var inputFile: Option[Path] = None
 
   def main(args: Array[String]): Unit = {
     try {
@@ -34,8 +34,8 @@ object ColumnN {
             usage(s"not found [${p.posx}]")
           }
           inputFile = Some(p)
-        case n if n.matches("[0-9]+") =>
-          if colnum != -5 then
+        case n if n.matches("[1-9][0-9]*") =>
+          if colnum >= 0 then
             usage(s"2nd column number [$n] but already specified [$colnum]")
           colnum = n.toInt
         case arg =>

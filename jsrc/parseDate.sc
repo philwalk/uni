@@ -1,13 +1,11 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.14.1
+//> using dep org.vastblue:uni_3:0.14.2
 
-//import uni.{showUsage, eachArg, thisArg}
 import uni.*
-//import uni.time.TimeUtils.parseDate
 import uni.time.*
 
-object VerifyTestDates {
+object ParseDate {
   def usage(m: String = ""): Nothing = {
     showUsage(m, "<date-time-string> [options]",
       " [-s]         ; smart parse",
