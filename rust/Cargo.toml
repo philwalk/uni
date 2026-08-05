@@ -1,0 +1,79 @@
+[package]
+name = "t3prf"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[lib]
+name = "t3prf"
+crate-type = ["rlib"]
+
+[lints.rust]
+unreachable_pub = "warn"
+unused_qualifications = "warn"
+dead_code = "warn"
+unused_variables = "warn"
+
+[lints.clippy]
+cognitive_complexity = "warn"
+too_many_lines = "warn"
+absolute_paths = "warn"
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+wildcard_imports = "warn"
+enum_glob_use = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+todo = "warn"
+unimplemented = "warn"
+dbg_macro = "warn"
+await_holding_lock = "warn"
+rc_mutex = "warn"
+mem_forget = "warn"
+panic = "warn"
+unwrap_used = "warn"
+expect_used = "warn"
+unwrap_in_result = "warn"
+map_err_ignore = "warn"
+let_underscore_must_use = "warn"
+
+[features]
+default = []
+# Route ndarray's matmul through a system OpenBLAS instead of the pure-Rust
+# `matrixmultiply` kernels. Worth ~3x on the OOS paths, whose gemms are skinny
+# (one operand has only L+1 columns) — a shape matrixmultiply handles poorly.
+#
+# Opt-in: needs OpenBLAS installed and on the linker path
+#   MSYS2:  pacman -S mingw-w64-ucrt-x86_64-openblas
+#   build:  OPENBLAS_LIB_DIR=/ucrt64/lib cargo build --release --features blas
+#
+# Set OPENBLAS_NUM_THREADS=1 when running: the OOS loops are already parallel
+# over windows via rayon, so letting OpenBLAS spawn its own threads nests
+# fork/join inside fork/join and costs ~10%.
+blas = ["ndarray/blas", "dep:blas-src", "dep:openblas-src"]
+
+[dependencies]
+ndarray = "0.17.2"
+rayon = "1.10"
+rand = "0.10.2"
+thiserror = "2"
+blas-src = { version = "0.11", optional = true, features = ["openblas"] }
+openblas-src = { version = "0.10", optional = true, features = ["system"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+# Optimize this crate in dev too, not just its dependencies: `package."*"` alone
+# leaves t3prf itself unoptimized, which made `cargo run --bin bench_tprf3`
+# report numbers ~10-25x slower than the code actually runs.
+[profile.dev]
+opt-level = 3
+
+[profile.dev.package."*"]
+opt-level = 3
+debug = false
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

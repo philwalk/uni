@@ -1,0 +1,11 @@
+absolute-paths-max-segments = 2
+absolute-paths-allowed-crates = ["std", "core", "alloc"]
+
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-dbg-in-tests = true
+
+too-many-arguments-threshold = 6
+too-many-lines-threshold = 60
+cognitive-complexity-threshold = 15

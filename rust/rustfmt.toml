@@ -1,0 +1,11 @@
+# Both options below are nightly-only, so formatting must go through
+# `cargo +nightly fmt` (which is what `make lint` runs).
+unstable_features = true
+
+# Three blocks separated by blank lines: std, external crates, then our own
+# `crate::` / `super::` imports.
+group_imports = "StdExternalCrate"
+
+# One `use` statement per imported item, each on its own line with its full
+# path.
+imports_granularity = "Item"

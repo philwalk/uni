@@ -605,84 +605,41 @@ object Tprf3 {
       r += 1
     Mat.create(arr, keep, cols)
 
-  /** Read `m` (which may be a strided slice view) and write a fresh contiguous
-   *  matrix with every column divided by `stds(0, j)`. Bit-identical to
-   *  `m / stds` — `Mat./` now handles views fine (fastBinOp's strided path) —
-   *  but kept as an explicit SEQUENTIAL kernel because this runs inside the OOS
-   *  `.par` window loop: `m / stds` would route a large window through the
-   *  (to-be-)parallel broadcast path, nesting fork/join inside fork/join. Doing
-   *  it sequentially here keeps all the parallelism at the window level. */
-  private def normalizeContig(m: MatD, stds: MatD): MatD =
-    val rows = m.rows; val cols = m.cols
-    // hoist the 1×N std row into a primitive local so the inner loop reads a
-    // plain array slot instead of re-dispatching stds.atD(0, j) per element
-    val sd = Array.tabulate(cols)(j => stds.atD(0, j))
-    val out = Array.ofDim[Double](rows * cols)
-    var i = 0
-    while i < rows do
-      var j = 0
-      while j < cols do { out(i * cols + j) = m.atD(i, j) / sd(j); j += 1 }
-      i += 1
-    Mat.create(out, rows, cols)
-
-  /** Standardize a window of predictors: returns (normalized contiguous window,
-   *  column stds). `window` may be a zero-copy `slice` view — its values are
-   *  read through stride-safe `atD` in both the std pass and the normalizing
-   *  write, so no intermediate copy of the window is materialized. */
-  private def standardize(window: MatD, hasNan: Boolean): (MatD, MatD) =
+  /** Reciprocal column std-devs — the form the three passes actually consume.
+   *  `window` may be a zero-copy `slice` view; it is read through stride-safe
+   *  `atD` and nothing the size of the window is allocated. */
+  private def invStdCols(window: MatD, hasNan: Boolean): Array[Double] =
     val stds = stdCols(window, hasNan)
-    (normalizeContig(window, stds), stds)
+    Array.tabulate(stds.cols)(j => 1.0 / stds.atD(0, j))
 
-  /** Like `standardize`, but for the OOS Cross Val selection (all rows of `src`
-   *  except the contiguous block [lo, hi)). Fuses the row-drop, the column std,
-   *  and the normalize into a single pass-set reading `src` directly — so the
-   *  intermediate `dropRows` copy is never materialized (one output allocation
-   *  instead of two). Bit-identical to `dropRows`→`stdCols`→`/`. The NaN case
-   *  is rare here and delegates to the materializing helpers for simplicity. */
-  private def standardizeDropRows(src: MatD, lo: Int, hi: Int, hasNan: Boolean): (MatD, MatD) =
-    if hasNan then
-      val Xt0  = dropRows(src, lo, hi)
-      val stds = nanStdCols(Xt0)
-      (normalizeContig(Xt0, stds), stds)
-    else
-      val rows = src.rows; val cols = src.cols
-      val a = math.max(lo, 0); val b = math.min(hi, rows)
-      val drop = if b > a then b - a else 0
-      val keep = rows - drop
-      val sum  = Array.ofDim[Double](cols)
+  /** Multiply column j of `m` by `f(j)`; identity when `f` is absent.
+   *  Only ever applied to an (L+1)-row or (L+1)-column intermediate — see
+   *  t3prfFast for why the window itself never needs scaling. */
+  private def scaleCols(m: MatD, f: Option[Array[Double]]): MatD = f match
+    case None => m
+    case Some(sd) =>
+      val rows = m.rows; val cols = m.cols
+      val out  = Array.ofDim[Double](rows * cols)
       var i = 0
-      while i < keep do
-        val r = if i < a then i else i + drop   // skip the dropped block
+      while i < rows do
         var j = 0
-        while j < cols do { sum(j) += src.atD(r, j); j += 1 }
+        while j < cols do { out(i * cols + j) = m.atD(i, j) * sd(j); j += 1 }
         i += 1
-      val mu = Array.ofDim[Double](cols)
-      var j = 0
-      while j < cols do { if keep > 1 then mu(j) = sum(j) / keep; j += 1 }
-      val ss = Array.ofDim[Double](cols)
-      i = 0
-      while i < keep do
-        val r = if i < a then i else i + drop
-        var jj = 0
-        while jj < cols do { val d = src.atD(r, jj) - mu(jj); ss(jj) += d * d; jj += 1 }
+      Mat.create(out, rows, cols)
+
+  /** Multiply row i of `m` by `f(i)`; identity when `f` is absent. */
+  private def scaleRows(m: MatD, f: Option[Array[Double]]): MatD = f match
+    case None => m
+    case Some(sd) =>
+      val rows = m.rows; val cols = m.cols
+      val out  = Array.ofDim[Double](rows * cols)
+      var i = 0
+      while i < rows do
+        val s = sd(i)
+        var j = 0
+        while j < cols do { out(i * cols + j) = m.atD(i, j) * s; j += 1 }
         i += 1
-      val sd = Array.ofDim[Double](cols)
-      j = 0
-      while j < cols do
-        sd(j) =
-          if keep > 1 then
-            val s = math.sqrt(ss(j) / (keep - 1))
-            if s == 0.0 then 1.0 else s
-          else 1.0
-        j += 1
-      val out = Array.ofDim[Double](keep * cols)
-      i = 0
-      while i < keep do
-        val r = if i < a then i else i + drop
-        var jj = 0
-        while jj < cols do { out(i * cols + jj) = src.atD(r, jj) / sd(jj); jj += 1 }
-        i += 1
-      (Mat.create(out, keep, cols), Mat.create(sd, 1, cols))
+      Mat.create(out, rows, cols)
 
   /** Full-data per-column sufficient statistics: column sums and Σ(x−μ)²
    *  (the latter via the stable two-pass form). Computed once per Cross Val
@@ -707,59 +664,61 @@ object Tprf3 {
       i += 1
     (sum, ssd)
 
-  /** Incremental variant of `standardizeDropRows` using precomputed full-data
-   *  stats. The kept-set std comes from the parallel-axis identity
-   *  Σ_kept(x−m_loo)² = (Σ_all(x−μ)² − Σ_drop(x−μ)²) − keep·(m_loo−μ)², i.e. an
-   *  O(drop·N) downdate of the dropped block. Numerically this is O(ε) — same
-   *  order as the direct two-pass — PROVIDED the kept set is the majority, so
-   *  `Σ_all − Σ_drop` doesn't cancel. When the dropped block is large (keep
-   *  small) we recompute directly (cheap there anyway), keeping it not-inferior
-   *  to the two-pass form in every regime. Not bit-identical (~1e-13 drift). */
-  private def standardizeDropRowsInc(
+  /** The OOS Cross Val kept-set (all rows of `src` except the contiguous block
+   *  [lo, hi)) together with its reciprocal column std-devs.
+   *
+   *  Given precomputed full-data stats the std is an O(drop·N) downdate of the
+   *  dropped block, via the parallel-axis identity
+   *  Σ_kept(x−m_loo)² = (Σ_all(x−μ)² − Σ_drop(x−μ)²) − keep·(m_loo−μ)², rather
+   *  than an O(keep·N) recompute. Numerically O(ε) — same order as the direct
+   *  two-pass — PROVIDED the kept set is the majority, so `Σ_all − Σ_drop`
+   *  doesn't cancel. When the dropped block is large (keep small) we recompute
+   *  directly, cheap in that regime, keeping this not-inferior to the two-pass
+   *  form everywhere. Not bit-identical (~1e-13 drift).
+   *
+   *  The kept rows are copied but never scaled — the scaling rides on the
+   *  returned reciprocals and lands on an (L+1)-column operand inside
+   *  `t3prfFast`, so the window is written exactly once. */
+  private def keptRowsInvStd(
     src: MatD, lo: Int, hi: Int,
-    fullSum: Array[Double], fullSsd: Array[Double],
-  ): (MatD, MatD) =
+    stats: Option[(Array[Double], Array[Double])],
+    hasNan: Boolean,
+  ): (MatD, Array[Double]) =
     val rows = src.rows; val cols = src.cols
     val a = math.max(lo, 0); val b = math.min(hi, rows)
     val drop = if b > a then b - a else 0
     val keep = rows - drop
-    // guard: downdate only when the kept set dominates (cancellation < ~1 bit);
-    // otherwise recompute directly — that branch is cheap since keep is small
-    if keep < 2 || keep * 2 < rows then standardizeDropRows(src, lo, hi, hasNan = false)
-    else
-      // dropped-block sufficient stats relative to the full-data column mean
-      val dropSum = Array.ofDim[Double](cols)
-      val dropSsd = Array.ofDim[Double](cols)
-      var r = a
-      while r < b do
+    val kept = dropRows(src, lo, hi)
+    stats match
+      // downdate only when the kept set dominates (cancellation < ~1 bit)
+      case Some((fullSum, fullSsd)) if !hasNan && keep >= 2 && keep * 2 >= rows =>
+        val dropSum = Array.ofDim[Double](cols)
+        val dropSsd = Array.ofDim[Double](cols)
+        var r = a
+        while r < b do
+          var j = 0
+          while j < cols do
+            val v  = src.atD(r, j)
+            val mu = fullSum(j) / rows
+            dropSum(j) += v
+            val d = v - mu
+            dropSsd(j) += d * d
+            j += 1
+          r += 1
+        val inv = Array.ofDim[Double](cols)
         var j = 0
         while j < cols do
-          val v  = src.atD(r, j)
-          val mu = fullSum(j) / rows
-          dropSum(j) += v
-          val d = v - mu
-          dropSsd(j) += d * d
+          val mu    = fullSum(j) / rows
+          val muLoo = (fullSum(j) - dropSum(j)) / keep
+          val shift = muLoo - mu
+          val ss0   = (fullSsd(j) - dropSsd(j)) - keep.toDouble * shift * shift
+          val ss    = if ss0 > 0.0 then ss0 else 0.0     // clamp tiny negative from rounding
+          val s     = math.sqrt(ss / (keep - 1))
+          inv(j) = 1.0 / (if s == 0.0 then 1.0 else s)
           j += 1
-        r += 1
-      val sd = Array.ofDim[Double](cols)
-      var j = 0
-      while j < cols do
-        val mu    = fullSum(j) / rows
-        val muLoo = (fullSum(j) - dropSum(j)) / keep
-        val shift = muLoo - mu
-        val ss0   = (fullSsd(j) - dropSsd(j)) - keep.toDouble * shift * shift
-        val ss    = if ss0 > 0.0 then ss0 else 0.0       // clamp tiny negative from rounding
-        val s     = math.sqrt(ss / (keep - 1))
-        sd(j) = if s == 0.0 then 1.0 else s
-        j += 1
-      val out = Array.ofDim[Double](keep * cols)
-      var i = 0
-      while i < keep do
-        val rr = if i < a then i else i + drop
-        var jj = 0
-        while jj < cols do { out(i * cols + jj) = src.atD(rr, jj) / sd(jj); jj += 1 }
-        i += 1
-      (Mat.create(out, keep, cols), Mat.create(sd, 1, cols))
+        (kept, inv)
+      case _ =>
+        (kept, invStdCols(kept, hasNan))
 
   /** OLS with NaN-row filtering and minObs guard; returns Some(beta) or None.
    *  `hasNan = false` skips the row scan and the selectRows copies entirely —
@@ -824,10 +783,26 @@ object Tprf3 {
   // ── Core 3-pass engine (used by estimate3prf) ───────────────────────────────
 
   /** Vectorized three-pass engine: 2 batch matrix solves replace N+T OLS loops.
-   *  No NaN-per-column tolerance in passes 1/2; pass 3 retains nanOls guard. */
+   *  No NaN-per-column tolerance in passes 1/2; pass 3 retains nanOls guard.
+   *
+   *  `X` is the RAW (unscaled) window and `invSd`, when present, holds
+   *  1/column-std. Column scaling commutes with both products the filter takes
+   *  against X:
+   *
+   *    designZ'·(X·D⁻¹)  == (designZ'·X)·D⁻¹      — scale the (L+1)×N result
+   *    (X·D⁻¹)·designPhi == X·(D⁻¹·designPhi)     — scale the N×(L+1) operand
+   *
+   *  so the scaling always lands on a matrix with L+1 columns and the T×N
+   *  product X·D⁻¹ is never materialized. The OOS windows therefore pass a
+   *  plain slice view and allocate nothing window-sized for X.
+   *
+   *  Pass 2 also works in natural order: B2' = X·designPhi·PtPinv' delivers
+   *  Sigma directly, where the former `designPhi.T *@ X.T` read BOTH operands
+   *  through transpose views. */
   private def t3prfFast(
     y:      MatD,
     X:      MatD,
+    invSd:  Option[Array[Double]],
     Z:      MatD,
     oosX:   Option[MatD],
     minObs: Int,
@@ -840,14 +815,15 @@ object Tprf3 {
     else
       // Pass 1: batch OLS — all N columns of X on Z simultaneously
       val designZ = withIntercept(Z)
-      val B1      = (designZ.T *@ designZ).inverse *@ (designZ.T *@ X)
+      val ZtX     = scaleCols(designZ.T *@ X, invSd)    // == designZ'·(X·D⁻¹)
+      val B1      = (designZ.T *@ designZ).inverse *@ ZtX
       val Phi     = B1(1 until B1.rows, ::).T          // N×L
 
       // Pass 2: batch OLS — all T rows of X on Phi simultaneously
       val designPhi = withIntercept(Phi)
       val PtPinv    = (designPhi.T *@ designPhi).inverse
-      val B2        = PtPinv *@ (designPhi.T *@ X.T)
-      val Sigma     = B2(1 until B2.rows, ::).T         // T×L
+      val dpScaled  = scaleRows(designPhi, invSd)      // == D⁻¹·designPhi
+      val Sigma     = ((X *@ dpScaled) *@ PtPinv.T)(::, 1 until L + 1)   // T×L
 
       // Pass 3
       val Xaug = withIntercept(Sigma)
@@ -855,13 +831,15 @@ object Tprf3 {
         Mat.create(Array.fill(L + 1)(Double.NaN), L + 1, 1))
       val yhat  = Xaug *@ beta
 
-      // OOS point forecast — reuse PtPinv; xt arrives as (1×N) row, needs (N×1)
+      // OOS point forecast — reuse PtPinv and the scaled design; xt is (1×N)
       val yhatt = oosX match
         case None => Double.NaN
         case Some(xt) =>
-          val b_oos     = PtPinv *@ (designPhi.T *@ xt.T)
-          val sigma_oos = b_oos(1 until b_oos.rows, ::)
-          (MatD.hstack(MatD.ones(1, 1), sigma_oos.T) *@ beta)(0, 0)
+          val bo = (xt *@ dpScaled) *@ PtPinv.T        // 1×(L+1)
+          var acc = beta(0, 0)
+          var j = 0
+          while j < L do { acc += bo(0, j + 1) * beta(j + 1, 0); j += 1 }
+          acc
 
       (yhat, yhatt)
     }
@@ -871,15 +849,21 @@ object Tprf3 {
    *  @param oosX  (1×N) out-of-sample predictor row, or None */
   private def runT3prf(
     y:      MatD,
-    X:      MatD,
+    X0:     MatD,
+    invSd:  Option[Array[Double]],
     Z:      MatD,
     pls:    Boolean,
-    oosX:   Option[MatD] = None,
+    oosX0:  Option[MatD] = None,
     minObs: Int          = 10,
     hasNan: Boolean,
   ): (MatD, Double) =
-    if !pls then t3prfFast(y, X, Z, oosX, minObs, hasNan)
+    if !pls then t3prfFast(y, X0, invSd, Z, oosX0, minObs, hasNan)
     else
+      // The pls branch centres X and fits column-by-column, so it cannot fold
+      // the scaling into a small operand the way t3prfFast does — materialize
+      // the scaled window here instead.
+      val X    = scaleCols(X0, invSd)
+      val oosX = oosX0.map(xt => scaleCols(xt, invSd))
       val T = y.rows
       val N = X.cols
       val L = Z.cols
@@ -985,13 +969,14 @@ object Tprf3 {
           var r0   = y * 1.0
           var fore = nanCol(T)
           for j <- 0 until l do
-            val (f, _) = runT3prf(y, Xn, r0, effPls, hasNan = hasNan)
+            // Xn is already unit-variance, so no further scaling to fold in
+            val (f, _) = runT3prf(y, Xn, None, r0, effPls, hasNan = hasNan)
             if j == l - 1 then zFinal = Some(r0)
             r0   = MatD.hstack(r0, y - f)
             fore = f
           for i <- 0 until T do forecasts(i, 0) = fore(i, 0)
         else
-          val (f, _) = runT3prf(y, Xn, zMat.get, effPls, hasNan = hasNan)
+          val (f, _) = runT3prf(y, Xn, None, zMat.get, effPls, hasNan = hasNan)
           for i <- 0 until T do forecasts(i, 0) = f(i, 0)
           zFinal = zMat
 
@@ -1005,21 +990,20 @@ object Tprf3 {
           val lo   = math.max(t - window._1, 0)
           val hi   = math.min(t - window._1 + window._2, T)
           val yt   = dropRows(y, lo, hi)
-          val sdr  = cvStats match
-            case Some((fullSum, fullSsd)) => standardizeDropRowsInc(Xn, lo, hi, fullSum, fullSsd)
-            case None                     => standardizeDropRows(Xn, lo, hi, hasNan)
-          val Xt   = sdr._1
-          val Xts  = sdr._2
-          val oos  = Some(Xn(t, ::) / Xts)
+          val kri  = keptRowsInvStd(Xn, lo, hi, cvStats, hasNan)
+          val Xt   = kri._1
+          val inv  = Some(kri._2)
+          // raw row: the window's scaling rides on `inv` (see t3prfFast)
+          val oos  = Some(Xn(t, ::))
           val tmpt =
             if autoproxy then
               var r0 = yt * 1.0; var tp = Double.NaN
               for _ <- 0 until l do
-                val (tmp, t2) = runT3prf(yt, Xt, r0, effPls, oos, hasNan = hasNan)
+                val (tmp, t2) = runT3prf(yt, Xt, inv, r0, effPls, oos, hasNan = hasNan)
                 r0 = MatD.hstack(yt - tmp, r0); tp = t2
               tp
             else
-              runT3prf(yt, Xt, dropRows(zMat.get, lo, hi), effPls, oos, hasNan = hasNan)._2
+              runT3prf(yt, Xt, inv, dropRows(zMat.get, lo, hi), effPls, oos, hasNan = hasNan)._2
           forecasts(t, 0) = tmpt
           rollfore(t, 0)  = colMean(yt, hasNan)
         }
@@ -1031,19 +1015,20 @@ object Tprf3 {
           // directly and emits a fresh contiguous Xt — no window copy.
           val end = t - 1 - mt._2
           val yt  = y(0 until end, ::)
-          val std = standardize(Xn.slice(0 until end, 0 until Xn.cols), hasNan)
-          val Xt  = std._1
-          val Xts = std._2
-          val oos = Some(Xn(t, ::) / Xts)
+          // zero-copy view; nothing window-sized is allocated for X, since the
+          // scaling folds into an (L+1)-column operand inside t3prfFast
+          val Xt  = Xn.slice(0 until end, 0 until Xn.cols)
+          val inv = Some(invStdCols(Xt, hasNan))
+          val oos = Some(Xn(t, ::))
           val tmpt =
             if autoproxy then
               var r0 = yt * 1.0; var tp = Double.NaN
               for _ <- 0 until l do
-                val (tmp, t2) = runT3prf(yt, Xt, r0, effPls, oos, mt._1, hasNan)
+                val (tmp, t2) = runT3prf(yt, Xt, inv, r0, effPls, oos, mt._1, hasNan)
                 r0 = MatD.hstack(yt - tmp, r0); tp = t2
               tp
             else
-              runT3prf(yt, Xt, zMat.get(0 until end, ::), effPls, oos, hasNan = hasNan)._2
+              runT3prf(yt, Xt, inv, zMat.get(0 until end, ::), effPls, oos, hasNan = hasNan)._2
           forecasts(t, 0) = tmpt
           rollfore(t, 0)  = colMean(yt, hasNan)
         }
@@ -1056,19 +1041,18 @@ object Tprf3 {
           val lo  = math.max(t - win - gap, 0)
           val hi  = math.min(t - 1 - gap, T)
           val yt  = y(lo until hi, ::)
-          val std = standardize(Xn.slice(lo until hi, 0 until Xn.cols), hasNan)
-          val Xt  = std._1
-          val Xts = std._2
-          val oos = Some(Xn(t, ::) / Xts)
+          val Xt  = Xn.slice(lo until hi, 0 until Xn.cols)
+          val inv = Some(invStdCols(Xt, hasNan))
+          val oos = Some(Xn(t, ::))
           val tmpt =
             if autoproxy then
               var r0 = yt * 1.0; var tp = Double.NaN
               for _ <- 0 until l do
-                val (tmp, t2) = runT3prf(yt, Xt, r0, effPls, oos, minNona, hasNan)
+                val (tmp, t2) = runT3prf(yt, Xt, inv, r0, effPls, oos, minNona, hasNan)
                 r0 = MatD.hstack(yt - tmp, r0); tp = t2
               tp
             else
-              runT3prf(yt, Xt, zMat.get(lo until hi, ::), effPls, oos, hasNan = hasNan)._2
+              runT3prf(yt, Xt, inv, zMat.get(lo until hi, ::), effPls, oos, hasNan = hasNan)._2
           forecasts(t, 0) = tmpt
           rollfore(t, 0)  = colMean(yt, hasNan)
         }
