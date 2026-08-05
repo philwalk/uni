@@ -1,7 +1,7 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
-//package uni
+//package uni.apps
 
-//> using dep org.vastblue:uni_3:0.15.0
+//> using dep org.vastblue:uni_3:0.15.1
 
 import uni.*
 import uni.io.*
@@ -38,7 +38,7 @@ object DelimiterCheck {
     // filenames can also be piped in from STDIN
     if (csvfiles.isEmpty) {
       import LinesIterator.*
-      iterateLines(None){ (raw: String, w: PrintWriter) =>
+      iterateLines(None){ (raw: String, _: PrintWriter) =>
         if raw.asPath.isFile then
           csvfiles :+= raw
         else

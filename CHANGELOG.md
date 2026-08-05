@@ -1,4 +1,8 @@
-## v0.15.0 — unreleased
+## v0.15.1 — 2026-08-05
+
+*v0.15.0 was built and published to the local Ivy repository but never released
+to Maven Central, so this entry covers everything since v0.14.1. Same convention
+as the unpublished v0.14.0 folded into v0.14.1.*
 
 **BREAKING — `MatD(rows, cols)` removed (`MatFacades.scala`)**
 
@@ -84,6 +88,76 @@
 - `Pls3prfModel`: retains phi/sigma/beta *and* the column mean/scale, so
   `predict(rawRow)` takes an un-normalized row (`Tprf3Result.estimateYhat`
   silently requires a pre-scaled one)
+
+**Performance — 3PRF out-of-sample procedures (`Tprf3.scala`)**
+
+- The OOS windows no longer materialize the scaled predictor block. Column
+  scaling commutes with both products the filter takes against X —
+  `Z'·(X·D⁻¹) == (Z'·X)·D⁻¹` and `(X·D⁻¹)·P == X·(D⁻¹·P)` — so the scaling now
+  lands on a matrix with `L+1` columns and `X·D⁻¹` is never built. OOS Recursive
+  passes a plain slice view and allocates nothing window-sized for X
+- Pass 2 runs in natural order: `B2' = X·designPhi·PtPinv'` yields Sigma
+  directly, where the previous `designPhi.T *@ X.T` read **both** operands
+  through transpose views
+- Each window's pass-1 cross products are now downdated from full-sample ones
+  (`FullSample.pass1Downdated`) rather than recomputed: the Cross Val window
+  drops an interior block, the Recursive window the suffix `[end, T)`, so both
+  cost O(drop·N·L) instead of O(keep·N·L). Only valid when the proxy matrix is
+  the same for every window, so autoproxy and the pls branch keep the direct path
+- `yhat` is computed lazily (`TailResult`): only IS Full reads the fitted series,
+  while every OOS window reads just the point forecast
+- Net on Windows (T=650, N=40, L=2): OOS Recursive 3.6 → 1.8 ms, OOS Cross Val
+  7.4 → 7.1 ms. **The NumPy twin was not tuned this round**, so the published
+  ratios are no longer like-for-like algorithm work — see the README note
+
+**Additions — Rust port (`rust/`)**
+
+- `t3prf` crate: a Rust implementation of the three IS/OOS procedures, matching
+  the Scala results to ~3e-15 relative. Carries the same optimizations plus a
+  Cross Val specialisation that avoids gathering X at all — `X_kept·dps` is
+  `X_full·dps` with the dropped rows skipped, so the only per-window copy is
+  `L+1` wide rather than `N` wide
+- Optional `blas` feature routes ndarray's matmul through a system OpenBLAS,
+  worth ~3× on the OOS paths, whose gemms are skinny. Set `OPENBLAS_NUM_THREADS=1`:
+  the window loop is already parallel, and nesting BLAS threads inside it costs ~10%
+- Fixes carried over from reviewing the port against the Scala reference: the
+  out-of-sample R² is measured against the prevailing training-window mean
+  (`rollfore`) rather than the full-sample mean, the recursive training window is
+  `[0, t-1)`, the `min_obs` guard is honoured, and the Cross Val drop block is
+  clipped with signed arithmetic
+
+**Additions — cross-language parity test**
+
+- `test-data/tprf3-parity/`: committed input fixtures at 17 significant digits
+  plus `scala-reference.txt`, 2424 reference values across 3 sizes × 4 procedures
+- `uni.stats.Tprf3ParitySuite` (MUnit) and `rust/tests/scala_parity.rs` both check
+  against those files, so neither test needs the other language installed — a
+  change that moves one implementation fails on that side alone, localizing drift
+- Regenerate with `sbt "runMain uni.apps.Tprf3ParityGen"`, and only when the
+  values are meant to move
+
+**Benchmark harness (`jsrc/tprf3Bench.sc`, `uni.apps.Tprf3Bench`)**
+
+- Reports Rust alongside Python and Scala when a release binary is already built,
+  gated on its presence rather than invoking cargo — so the Scala/Python
+  comparison still runs on a machine with no Rust toolchain. Both Rust builds land
+  at the same path and differ ~3× on the OOS rows, so the binary reports its own
+  configuration and the table states which one produced the numbers. Warns when
+  the binary is older than `rust/src`
+- Ratio cells within 5% now render `≈ tied` instead of `1.0× slower`, which
+  presented run-to-run noise as a directional result
+- IS Full is sampled at least 200 times with the heap settled first. At `loops`
+  sized for the OOS procedures it saw only a few ms of measurement, and GC pauses
+  from the neighbouring OOS sections moved its median by 2× (Large read 0.56 ms
+  against 0.25 ms measured standalone)
+- Python discovery prefers WinPython installs found under `/opt/winPython`,
+  globbed rather than hard-coded, and probes candidates with `import numpy`
+  instead of `--version` — the previously preferred install has a broken numpy
+  that passed the old check and then failed inside the bench script
+- The documented `-python <exe>` override was parsed but never read; it now works,
+  with MSYS2-style paths resolved. Added `-norust`
+- The NumPy BLAS name in the section header is read from `show_config('dicts')`;
+  the old text scan returned `?` on builds that emit JSON-ish output
 
 ## v0.14.1 — 2026-07-10
 

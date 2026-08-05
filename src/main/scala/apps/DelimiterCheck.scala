@@ -1,27 +1,78 @@
 //#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 package uni.apps
 
-//> using dep org.vastblue:uni_3:0.15.0
+//> using dep org.vastblue:uni_3:0.15.1
 
 import uni.*
 import uni.io.*
 
 object DelimiterCheck {
+  var concise = false
+  var verbose = false
+  var csvfiles = Vector.empty[String]
+
+  def usage(m: String = ""): Nothing = {
+    showUsage(m, "[<file1> [<file2> ...]] | <filenames-on-stdin>",
+      "if no files on command line, filenames piped from STDIN",
+    )
+  }
+
   def main(args: Array[String]): Unit = {
-    val paths: Seq[Path] = args.toSeq.map(Paths.get(_))
-    if (paths.isEmpty) {
-      def prog = Option(sys.props("scala.source.names")).getOrElse("delimiterCheck.sc")
-      printf("usage: %s <csvFilePath> [<csv2path> ...]\n", prog)
-      sys.exit(1)
+    args.foreach { arg =>
+      arg match {
+      case "-c" =>
+        concise = true
+      case fname if fname.asPath.isFile =>
+        csvfiles :+= fname
+      case _ =>
+        usage(s"unrecognized arg / file-not-found: [$arg]")
+      }
     }
-    for (path <- paths) {
+
+    val stdinHasInput = System.in.available() > 0
+
+    if (csvfiles.isEmpty && !stdinHasInput) {
+      usage(s"No filenames the command line and no filenames on stdin")
+    }
+    
+    // filenames can also be piped in from STDIN
+    if (csvfiles.isEmpty) {
+      import LinesIterator.*
+      iterateLines(None){ (raw: String, _: PrintWriter) =>
+        if raw.asPath.isFile then
+          csvfiles :+= raw
+        else
+          usage(s"file not found: $raw")
+      }
+    }
+
+    val paths: Seq[Path] = csvfiles.map(Paths.get(_))
+    for ((path, i) <- paths.zipWithIndex) {
       if (!path.isFile) {
         printf("not found: %s\n", path.posx)
       } else {
-        printf("%-56s", path.posx)
-        val res = Delimiter.detect(path, maxRows = 3)
+        if (concise) {
+          printf("%9s: ", "file-"+(i+1))
+        } else {
+          printf("%9s: ", path.posx)
+        }
+        val res = Delimiter.detect(path, maxRows = 20)
         printf("%s\n", res)
       }
     }
+  }
+
+  def parseArgs(args: Array[String]): Option[Path] = {
+    var inputPathOpt: Option[Path] = None
+    args.foreach { arg =>
+      arg match {
+      case "-v" => verbose = true
+      case f if Paths.get(f).toFile.isFile =>
+        inputPathOpt = Some(Paths.get(f))
+      case _ =>
+        usage(s"unrecognized arg [$arg]")
+      }
+    }
+    inputPathOpt
   }
 }

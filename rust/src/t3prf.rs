@@ -205,15 +205,33 @@ fn scale_rows(m: &mut Array2<f64>, f: &[f64]) {
     }
 }
 
-/// Copy every row of `m` except the contiguous block `[lo, hi)` — two block
-/// copies rather than an index-gather through a mask array.
-fn drop_rows(m: ArrayView2<'_, f64>, lo: usize, hi: usize) -> Array2<f64> {
-    let rows = m.nrows();
-    let lo = lo.min(rows);
-    let hi = hi.min(rows).max(lo);
-    let mut out = Array2::<f64>::zeros((rows - (hi - lo), m.ncols()));
-    out.slice_mut(s![..lo, ..]).assign(&m.slice(s![..lo, ..]));
-    out.slice_mut(s![lo.., ..]).assign(&m.slice(s![hi.., ..]));
+/// Column sample std-devs (ddof = 1) over the rows outside `[lo, hi)`, computed
+/// without materializing that subset. Zero std becomes 1.0.
+fn std_cols_excluding(m: ArrayView2<'_, f64>, lo: usize, hi: usize) -> Array2<f64> {
+    let (rows, cols) = (m.nrows(), m.ncols());
+    let keep = rows - (hi - lo);
+    let mut out = Array2::<f64>::ones((1, cols));
+    if keep <= 1 {
+        return out;
+    }
+    let mut sum = vec![0.0_f64; cols];
+    for i in (0..lo).chain(hi..rows) {
+        for (j, &v) in m.row(i).iter().enumerate() {
+            sum[j] += v;
+        }
+    }
+    let mu: Vec<f64> = sum.iter().map(|s| s / keep as f64).collect();
+    let mut ss = vec![0.0_f64; cols];
+    for i in (0..lo).chain(hi..rows) {
+        for (j, &v) in m.row(i).iter().enumerate() {
+            let d = v - mu[j];
+            ss[j] += d * d;
+        }
+    }
+    for j in 0..cols {
+        let sd = (ss[j] / (keep - 1) as f64).sqrt();
+        out[[0, j]] = if sd == 0.0 { 1.0 } else { sd };
+    }
     out
 }
 
@@ -256,15 +274,17 @@ fn full_col_stats(m: ArrayView2<'_, f64>) -> (Vec<f64>, Vec<f64>) {
 /// to the direct two-pass form (~1e-13 drift).
 fn kept_inv_std(
     src: ArrayView2<'_, f64>,
-    kept: ArrayView2<'_, f64>,
     lo: usize,
     hi: usize,
     full: &(Vec<f64>, Vec<f64>),
 ) -> Vec<f64> {
     let (rows, cols) = (src.nrows(), src.ncols());
-    let keep = kept.nrows();
+    let keep = rows - (hi - lo);
     if keep < 2 || keep * 2 < rows {
-        return inv_std_cols(kept);
+        return std_cols_excluding(src, lo, hi)
+            .iter()
+            .map(|s| 1.0 / s)
+            .collect();
     }
 
     let (full_sum, full_ssd) = full;
@@ -315,11 +335,10 @@ fn t3prf_view(
     z: ArrayView2<'_, f64>,
     oos_raw: Option<ArrayView2<'_, f64>>,
     min_obs: usize,
-) -> Result<(Array2<f64>, f64), Error> {
+) -> Result<Option<Tail>, Error> {
     let t = x_raw.nrows();
-    let l = z.ncols();
     if t < min_obs {
-        return Ok((nan_col(t), f64::NAN));
+        return Ok(None);
     }
 
     // Pass 1: regress X on [1 | Z] → Phi (N×L, held transposed as the L×N tail)
@@ -329,6 +348,36 @@ fn t3prf_view(
     scale_cols(&mut rhs1, inv_sd); // == dzᵀ·(X·D⁻¹)
     let beta1 = ne1.solve_normal(rhs1.view());
     let dp = with_intercept(beta1.slice(s![1.., ..]).t());
+    Ok(Some(t3prf_tail(y, x_raw, inv_sd, &dp, oos_raw)?))
+}
+
+/// Three-pass outputs. The fitted series is not built here: only IS Full reads
+/// it, while every OOS window reads just `yhatt` — materializing it there would
+/// cost a matmul and a T×1 allocation per window, discarded immediately. Call
+/// [`Tail::fitted`] where it is actually wanted.
+struct Tail {
+    ds: Array2<f64>,
+    beta3: Array2<f64>,
+    yhatt: f64,
+}
+
+impl Tail {
+    fn fitted(&self) -> Array2<f64> {
+        self.ds.dot(&self.beta3)
+    }
+}
+
+/// Passes 2 and 3 plus the optional out-of-sample forecast, given the pass-1
+/// design `dp = [1 | Phi]`. Shared by the direct pass-1 path above and the
+/// downdated one used by OOS Recursive.
+fn t3prf_tail(
+    y: ArrayView2<'_, f64>,
+    x_raw: ArrayView2<'_, f64>,
+    inv_sd: &[f64],
+    dp: &Array2<f64>,
+    oos_raw: Option<ArrayView2<'_, f64>>,
+) -> Result<Tail, Error> {
+    let l = dp.ncols() - 1;
 
     // Pass 2: regress Xᵀ on [1 | Phi] → Sigma (T×L).
     // dpᵀ·Xᵀ == (X·dp)ᵀ, so form the small T×(L+1) product and swap axes; the
@@ -342,7 +391,6 @@ fn t3prf_view(
     let ds = with_intercept(beta2.slice(s![1.., ..]).t());
     let ne3 = NormalEq::factor(ds.view())?;
     let beta3 = ne3.solve_normal(ds.t().dot(&y).view());
-    let yhat = ds.dot(&beta3);
 
     let yhatt = match oos_raw {
         None => f64::NAN,
@@ -354,7 +402,166 @@ fn t3prf_view(
             })
         }
     };
-    Ok((yhat, yhatt))
+    Ok(Tail { ds, beta3, yhatt })
+}
+
+// ── OOS window specialisations ──────────────────────────────────────────────
+
+/// Full-sample quantities shared read-only across the windows of an OOS run.
+///
+/// Every window keeps all rows but one contiguous block — an interior block for
+/// Cross Val, the suffix `[end, T)` for Recursive — so its pass-1 cross products
+/// are the full-sample ones minus that block's contribution: an O(drop·N·L)
+/// downdate instead of an O(keep·N·L) product.
+struct FullSample {
+    dz: Array2<f64>,           // [1 | Z]    T×(L+1)
+    ztz: Array2<f64>,          // dzᵀ·dz     (L+1)×(L+1)
+    ztx: Array2<f64>,          // dzᵀ·X      (L+1)×N
+    col: (Vec<f64>, Vec<f64>), // column sums and Σ(x−μ)², for the std downdate
+}
+
+impl FullSample {
+    fn new(x_norm: ArrayView2<'_, f64>, z: ArrayView2<'_, f64>) -> Self {
+        let dz = with_intercept(z);
+        let ztz = dz.t().dot(&dz);
+        let ztx = dz.t().dot(&x_norm);
+        Self {
+            dz,
+            ztz,
+            ztx,
+            col: full_col_stats(x_norm),
+        }
+    }
+
+    /// Pass-1 normal equations for the window that drops rows `[lo, hi)`:
+    /// `(dz_keptᵀ·dz_kept, dz_keptᵀ·X_kept·D⁻¹)`.
+    fn pass1_downdated(
+        &self,
+        x_norm: ArrayView2<'_, f64>,
+        lo: usize,
+        hi: usize,
+        inv_sd: &[f64],
+    ) -> (Array2<f64>, Array2<f64>) {
+        let dz_drop = self.dz.slice(s![lo..hi, ..]);
+        let x_drop = x_norm.slice(s![lo..hi, ..]);
+        let ztz = &self.ztz - &dz_drop.t().dot(&dz_drop);
+        let mut rhs = &self.ztx - &dz_drop.t().dot(&x_drop);
+        scale_cols(&mut rhs, inv_sd);
+        (ztz, rhs)
+    }
+}
+
+/// One Recursive window: fit on the prefix `[0, end)` and forecast row `t`.
+///
+/// The prefix is the full sample minus the suffix `[end, T)`, so pass 1 and the
+/// column std both come from downdating that block — O((T−end)·N·L) instead of
+/// O(end·N·L), the cheaper side of the trade for every window past the halfway
+/// point (and `kept_inv_std` falls back to a direct pass below it).
+///
+/// Pass 2 runs on the prefix slice itself: unlike Cross Val the kept rows are
+/// contiguous, so it is a zero-copy view and there is nothing to gain from
+/// computing over the full matrix.
+fn t3prf_rec_step(
+    full: &FullSample,
+    x_norm: ArrayView2<'_, f64>,
+    y: ArrayView2<'_, f64>,
+    t: usize,
+    end: usize,
+    min_obs: usize,
+) -> Result<(f64, f64), Error> {
+    let rows = x_norm.nrows();
+    let y_tr = y.slice(s![..end, ..]);
+    let roll = mean_col(y_tr);
+    if end < min_obs {
+        return Ok((f64::NAN, roll));
+    }
+
+    let inv_sd = kept_inv_std(x_norm, end, rows, &full.col);
+    let (ztz, rhs1) = full.pass1_downdated(x_norm, end, rows, &inv_sd);
+    let beta1 = Chol::new(ztz.view())?.solve(rhs1.view());
+    let dp = with_intercept(beta1.slice(s![1.., ..]).t());
+
+    let tail = t3prf_tail(
+        y_tr,
+        x_norm.slice(s![..end, ..]),
+        &inv_sd,
+        &dp,
+        Some(x_norm.slice(s![t..=t, ..])),
+    )?;
+    Ok((tail.yhatt, roll))
+}
+
+/// A Cross Val fold: forecast row `t` with rows `[lo, hi)` held out.
+#[derive(Clone, Copy)]
+struct CvWindow {
+    t: usize,
+    lo: usize,
+    hi: usize,
+}
+
+/// One Cross Val window: fit on every row outside `[lo, hi)`, forecast row `t`.
+/// Returns `(forecast, rollfore)`.
+///
+/// X is never gathered. Pass 1 downdates the precomputed full-sample cross
+/// products by the dropped block, and pass 2's `X_kept·dps` is just `X_full·dps`
+/// with the dropped rows skipped — identical flops, but the only per-window copy
+/// is `L+1` wide instead of `N` wide. Row `t` of that same product is the
+/// out-of-sample design, so the forecast costs nothing extra.
+fn t3prf_cv_step(
+    pre: &FullSample,
+    x_norm: ArrayView2<'_, f64>,
+    y: ArrayView2<'_, f64>,
+    win: CvWindow,
+    min_obs: usize,
+) -> Result<(f64, f64), Error> {
+    let CvWindow { t, lo, hi } = win;
+    let rows = x_norm.nrows();
+    let l = pre.dz.ncols() - 1;
+    let keep = rows - (hi - lo);
+
+    // prevailing mean of the kept response, the OOS R² benchmark
+    let (mut ysum, mut yn) = (0.0_f64, 0_usize);
+    for i in (0..lo).chain(hi..rows) {
+        let v = y[[i, 0]];
+        if !v.is_nan() {
+            ysum += v;
+            yn += 1;
+        }
+    }
+    let roll = if yn > 0 { ysum / yn as f64 } else { f64::NAN };
+    if keep < min_obs {
+        return Ok((f64::NAN, roll));
+    }
+
+    let inv_sd = kept_inv_std(x_norm, lo, hi, &pre.col);
+    let (ztz, rhs1) = pre.pass1_downdated(x_norm, lo, hi, &inv_sd);
+    let beta1 = Chol::new(ztz.view())?.solve(rhs1.view());
+    let dp = with_intercept(beta1.slice(s![1.., ..]).t());
+
+    // Pass 2 — over every row; the kept ones are read out below
+    let ne2 = NormalEq::factor(dp.view())?;
+    let mut dps = dp.clone();
+    scale_rows(&mut dps, &inv_sd);
+    let w_full = x_norm.dot(&dps); // T×(L+1)
+    let b2 = ne2.solve_normal(w_full.t()); // (L+1)×T
+
+    // Pass 3 — gather the kept design and response together, L+1 wide
+    let mut ds = Array2::<f64>::ones((keep, l + 1));
+    let mut y_kept = Array2::<f64>::zeros((keep, 1));
+    for (oi, si) in (0..lo).chain(hi..rows).enumerate() {
+        for j in 0..l {
+            ds[[oi, j + 1]] = b2[[j + 1, si]];
+        }
+        y_kept[[oi, 0]] = y[[si, 0]];
+    }
+    let ne3 = NormalEq::factor(ds.view())?;
+    let beta3 = ne3.solve_normal(ds.t().dot(&y_kept).view());
+
+    // column t of b2 is already the out-of-sample solve
+    let yhatt = (0..l).fold(beta3[[0, 0]], |acc, j| {
+        acc + b2[[j + 1, t]] * beta3[[j + 1, 0]]
+    });
+    Ok((yhatt, roll))
 }
 
 // ── Scoring ─────────────────────────────────────────────────────────────────
@@ -415,7 +622,10 @@ pub fn estimate_3prf_is_full(
 ) -> Result<Tprf3Result, Error> {
     // the scaling rides on `inv_sd`, so the normalized copy of X is never built
     let inv_sd = inv_std_cols(x.view());
-    let (forecasts, _) = t3prf_view(y.view(), x.view(), &inv_sd, z.view(), None, MIN_OBS)?;
+    let forecasts = match t3prf_view(y.view(), x.view(), &inv_sd, z.view(), None, MIN_OBS)? {
+        Some(tail) => tail.fitted(),
+        None => nan_col(y.nrows()),
+    };
     let residuals = y - &forecasts;
     let r_squared = is_full_r2(y.view(), residuals.view());
     Ok(Tprf3Result {
@@ -438,23 +648,15 @@ pub fn estimate_3prf_oos_rec(
 ) -> Result<Tprf3Result, Error> {
     let t_total = x.nrows();
     let x_norm = standardize_columns(x);
+    let full = FullSample::new(x_norm.view(), z.view());
 
     let fitted: Vec<(usize, f64, f64)> = (min_train + 1..t_total)
         .into_par_iter()
         .map(|t| {
-            let end = t - 1; // training rows [0, t-1), matching the reference
-            let win = x_norm.slice(s![..end, ..]);
-            let inv_sd = inv_std_cols(win);
-            let y_tr = y.slice(s![..end, ..]);
-            let (_, yhatt) = t3prf_view(
-                y_tr,
-                win,
-                &inv_sd,
-                z.slice(s![..end, ..]),
-                Some(x_norm.slice(s![t..=t, ..])),
-                MIN_OBS,
-            )?;
-            Ok((t, yhatt, mean_col(y_tr)))
+            // training rows [0, t-1), matching the reference
+            let (yhatt, roll) =
+                t3prf_rec_step(&full, x_norm.view(), y.view(), t, t - 1, MIN_OBS)?;
+            Ok((t, yhatt, roll))
         })
         .collect::<Result<Vec<_>, Error>>()?;
 
@@ -488,7 +690,7 @@ pub fn estimate_3prf_oos_cv(
 ) -> Result<Tprf3Result, Error> {
     let t_total = x.nrows();
     let x_norm = standardize_columns(x);
-    let full = full_col_stats(x_norm.view());
+    let pre = FullSample::new(x_norm.view(), z.view());
 
     let fitted: Vec<(usize, f64, f64)> = (0..t_total)
         .into_par_iter()
@@ -500,21 +702,9 @@ pub fn estimate_3prf_oos_cv(
             let hi = (lo_raw + win_right as i64).clamp(0, t_total as i64) as usize;
             let hi = hi.max(lo);
 
-            // the kept rows are not contiguous, so X must be gathered; the
-            // scaling still rides on `inv_sd` rather than a second pass
-            let x_tr = drop_rows(x_norm.view(), lo, hi);
-            let inv_sd = kept_inv_std(x_norm.view(), x_tr.view(), lo, hi, &full);
-            let y_tr = drop_rows(y.view(), lo, hi);
-            let z_tr = drop_rows(z.view(), lo, hi);
-            let (_, yhatt) = t3prf_view(
-                y_tr.view(),
-                x_tr.view(),
-                &inv_sd,
-                z_tr.view(),
-                Some(x_norm.slice(s![t..=t, ..])),
-                MIN_OBS,
-            )?;
-            Ok((t, yhatt, mean_col(y_tr.view())))
+            let win = CvWindow { t, lo, hi };
+            let (yhatt, roll) = t3prf_cv_step(&pre, x_norm.view(), y.view(), win, MIN_OBS)?;
+            Ok((t, yhatt, roll))
         })
         .collect::<Result<Vec<_>, Error>>()?;
 
@@ -569,12 +759,16 @@ pub fn t3prf_core(
     oos_x: Option<&Array2<f64>>,
 ) -> Result<(Array2<f64>, f64), Error> {
     let unit = vec![1.0_f64; x_std.ncols()];
-    t3prf_view(
+    let tail = t3prf_view(
         y.view(),
         x_std.view(),
         &unit,
         z.view(),
         oos_x.map(|m| m.view()),
         MIN_OBS,
-    )
+    )?;
+    Ok(match tail {
+        Some(tail) => (tail.fitted(), tail.yhatt),
+        None => (nan_col(x_std.nrows()), f64::NAN),
+    })
 }

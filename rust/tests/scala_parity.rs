@@ -9,8 +9,15 @@
 //! Regenerate the reference with `sbt "runMain uni.apps.Tprf3ParityGen"` — and
 //! only when the values are meant to move.
 
+#![allow(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "a missing or malformed fixture should abort the test loudly, not be handled"
+)]
+
 use std::collections::HashMap;
 use std::fs;
+use std::path::Path;
 use std::path::PathBuf;
 
 use ndarray::Array2;
@@ -23,8 +30,9 @@ use t3prf::estimate_3prf_oos_rec;
 const CASES: &[(usize, usize, usize)] = &[(100, 10, 2), (140, 12, 3), (60, 25, 2)];
 
 /// Absolute floor plus relative term — a plain relative test is too harsh on
-/// forecasts that land near zero. Comfortably above the ~3e-12 drift seen
-/// between the two implementations, far below anything economically real.
+/// forecasts that land near zero. On these fixtures the two implementations
+/// actually agree to ~3e-15 relative, so this leaves ~6 orders of headroom for
+/// platform BLAS differences while still catching anything economically real.
 const ATOL: f64 = 1e-12;
 const RTOL: f64 = 1e-9;
 
@@ -36,7 +44,7 @@ fn fixture_dir() -> PathBuf {
         .expect("test-data/tprf3-parity missing — regenerate with: sbt \"runMain uni.apps.Tprf3ParityGen\"")
 }
 
-fn load_csv(path: &PathBuf) -> Array2<f64> {
+fn load_csv(path: &Path) -> Array2<f64> {
     let text =
         fs::read_to_string(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
     let rows: Vec<Vec<f64>> = text
@@ -54,7 +62,7 @@ fn load_csv(path: &PathBuf) -> Array2<f64> {
 }
 
 /// Reference values keyed by "<tag> <field>".
-fn load_reference(dir: &PathBuf) -> HashMap<String, f64> {
+fn load_reference(dir: &Path) -> HashMap<String, f64> {
     let path = dir.join("scala-reference.txt");
     let text =
         fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));

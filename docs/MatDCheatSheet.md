@@ -25,9 +25,9 @@ See [`jsrc/bench.sc`](../jsrc/bench.sc) and [`py/bench.py`](../py/bench.py) to r
 | `std(1000×1000)` | 2.4 ms | 0.43 ms | **5.6× faster** | Two-pass; mean pass uses the v0.14.1 reduction |
 | `transpose(1000×1000)` | ≈0 ms | ≈0 ms | **tied** | O(1) stride-flip in both — no data copy |
 | `mapParallel` custom fn | 64 ms | 0.53 ms | **~120× faster** | `np.vectorize` is a Python loop; JVM is compiled |
-| `3PRF IS Full (T=650, N=40, L=2)` | 0.36 ms | 0.34 ms | **≈ tied** | both sides reduce to the same two batch solves (v0.14.1: Python's lstsq passes → normal-equations solves) |
-| `3PRF OOS Recursive (T=650, N=40, L=2)` | 32.6 ms | 3.6 ms | **9.1× faster** | Scala: parallel windows + fused copy-free standardization; Python: vectorized per-window |
-| `3PRF OOS Cross Val (T=650, N=40, L=2)` | 87.7 ms | 7.4 ms | **11.9× faster** | Scala: incremental per-window std downdates; Python: vectorized per-window |
+| `3PRF IS Full (T=650, N=40, L=2)` | 0.31 ms | 0.36 ms | **≈ tied** | both sides reduce to the same two batch solves; 0.25 ms measured in isolation |
+| `3PRF OOS Recursive (T=650, N=40, L=2)` | 31.8 ms | 1.8 ms | **17.7× faster** | Scala: parallel windows, scaling folded onto an (L+1)-column operand, pass-1 cross products downdated from full-sample ones; Python: vectorized per-window |
+| `3PRF OOS Cross Val (T=650, N=40, L=2)` | 88.9 ms | 7.1 ms | **12.6× faster** | Scala: incremental per-window std and cross-product downdates; Python: vectorized per-window |
 
 **Practical guidance:**
 - MatD wins 8/9 scored matrix operations vs NumPy on Windows (JVM 21); matmul is the exception on this machine — see below.
@@ -35,7 +35,7 @@ See [`jsrc/bench.sc`](../jsrc/bench.sc) and [`py/bench.py`](../py/bench.py) to r
 - Reductions (`sum`, `mean`, `std`): NumPy 2.4.x's SIMD pairwise summation had briefly overtaken MatD here; the v0.14.1 chunked multi-accumulator parallel reduction reclaims all three (4.3–5.6×) by aggregating multi-core memory bandwidth.
 - Custom scalar functions: `mapParallel` vs `np.vectorize` shows a ~120× JVM advantage; the Python interpreter overhead dominates.
 - Matmul: on this machine netlib's JNIBLAS could not load `libopenblas.dll`, so MatD ran the pure-JVM fallback and lost ~4× to NumPy's native OpenBLAS. Where JNIBLAS loads (see the Linux/macOS tables in the README) both call OpenBLAS and matmul is level.
-- 3PRF: both implementations are kept equivalently optimized so the comparison stays between equivalent algorithms. v0.14.0 rewrote the K&P `J(k)` centering products as O(T·N) centering on **both** sides (previously each built a dense T×T matrix, and the comparison mostly measured that shared waste) and freed the Scala OOS hot path of `Double` autoboxing. v0.14.1 tuned both sides again: Python's three `lstsq` passes became normal-equations solves (several-fold faster on the tiny L+1-column designs) with NaN-gated std/mean paths, and Scala's OOS windows now standardize through fused, copy-free kernels (incremental std downdates for Cross Val). IS Full lands as a tie — both sides reduce to the same two batch solves — while the OOS procedures, where window-loop structure differs, run 9.1×/11.9× ahead of NumPy's sequential per-window loop. 3PRF timings: Python 3.14.6 / NumPy on OpenBLAS, medians of 25 timed calls after warm-up (`jsrc/tprf3Bench.sc`).
+- 3PRF: through v0.14.1 both implementations were kept equivalently optimized, so the comparison stayed between equivalent algorithms. v0.14.0 rewrote the K&P `J(k)` centering products as O(T·N) centering on **both** sides (previously each built a dense T×T matrix, and the comparison mostly measured that shared waste) and freed the Scala OOS hot path of `Double` autoboxing. v0.14.1 tuned both sides again: Python's three `lstsq` passes became normal-equations solves with NaN-gated std/mean paths, and Scala's OOS windows gained fused, copy-free standardization. **v0.15.1 tuned the Scala side only** — the NumPy twin is unchanged since v0.14.1, so the OOS figures above are no longer like-for-like algorithm work. Scala's OOS windows now push the column scaling onto an (L+1)-column operand rather than materializing `X·D⁻¹`, run pass 2 in natural order, and derive each window's pass-1 cross products by downdating full-sample ones; the same techniques are portable to NumPy but have not been applied there. IS Full remains a tie — both sides reduce to the same two batch solves. 3PRF timings: Python 3.13.13 / NumPy on scipy-openblas, medians of 25 timed calls after warm-up, themselves medians of 3 runs (`jsrc/tprf3Bench.sc`).
 
 ---
 
@@ -414,7 +414,7 @@ use `X.eachCol` / `X.eachRow` to sidestep the name collision, or rename at impor
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.15.0
+//> using dep org.vastblue:uni_3:0.15.1
 
 import uni.data.*
 
@@ -429,7 +429,7 @@ val (labels, stats) = m.describe
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.15.0
+//> using dep org.vastblue:uni_3:0.15.1
 
 import uni.*
 import uni.io.FileOps.*
@@ -449,7 +449,7 @@ r.columnIndex       // Map[String, Int]  (pre-computed; free repeated lookups)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.15.0
+//> using dep org.vastblue:uni_3:0.15.1
 
 import uni.data.*
 

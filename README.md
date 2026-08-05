@@ -132,23 +132,33 @@ MatD faster 8/9 scored, geometric mean **6.11× faster** than Breeze.
 
 ### 3PRF (Three-Pass Regression Filter)
 
-Measured on Windows 11 (uni 0.14.1 / JVM 21 / Scala 3.8.2, vs Python 3.14.6 / NumPy
-on OpenBLAS; medians of 25 timed calls per OOS procedure after explicit warm-up).
-See [`jsrc/tprf3Bench.sc`](jsrc/tprf3Bench.sc) and [Kelly & Pruitt (2015)](https://doi.org/10.1111/jofi.12246).
-Both implementations are kept equivalently optimized so the comparison is between
-equivalent algorithms: v0.14.0 rewrote the K&P `J(k)` centering products as O(T·N)
-centering on both sides, and v0.14.1 tuned both sides again — Python's three `lstsq`
-passes became normal-equations solves (several-fold faster on the tiny L+1-column
-designs) and its std/mean paths are NaN-gated; Scala's OOS windows now standardize
-through fused, copy-free kernels (incremental std downdates for Cross Val). IS Full
-is now essentially a tie — both sides reduce to the same two batch solves — while
-the OOS procedures, where the window loop structure differs, stay ~9–12× ahead.
+Measured on Windows 11 (uni 0.15.1 / JVM 22 / Scala 3.8.4, vs Python 3.13.13 / NumPy
+on scipy-openblas; medians of 25 timed calls per OOS procedure after explicit warm-up,
+themselves medians of 3 runs). See [`jsrc/tprf3Bench.sc`](jsrc/tprf3Bench.sc) and
+[Kelly & Pruitt (2015)](https://doi.org/10.1111/jofi.12246).
+
+Through v0.14.1 both implementations were kept equivalently optimized, so published
+ratios compared equivalent algorithms: v0.14.0 rewrote the K&P `J(k)` centering
+products as O(T·N) centering on both sides, and v0.14.1 tuned both again — Python's
+three `lstsq` passes became normal-equations solves and its std/mean paths are
+NaN-gated; Scala's OOS windows gained fused, copy-free standardization.
+
+**v0.15.1 tuned the Scala side only** — the NumPy twin is unchanged since v0.14.1, so
+the OOS gains below are not like-for-like algorithm work. The Scala OOS windows now
+push the column scaling onto an (L+1)-column operand instead of materializing `X·D⁻¹`,
+run pass 2 in natural order, and derive each window's pass-1 cross products by
+downdating full-sample ones. The techniques are portable to NumPy; they simply have
+not been applied there yet.
 
 | Operation | Python | MatD | Ratio |
 | :--- | ---: | ---: | :--- |
-| `3PRF IS Full (T=650, N=40, L=2)` | 0.36 ms | 0.34 ms | ≈ tied |
-| `3PRF OOS Recursive (T=650, N=40, L=2)` | 32.6 ms | 3.6 ms | **9.1× faster** |
-| `3PRF OOS Cross Val (T=650, N=40, L=2)` | 87.7 ms | 7.4 ms | **11.9× faster** |
+| `3PRF IS Full (T=650, N=40, L=2)` | 0.31 ms | 0.36 ms | ≈ tied |
+| `3PRF OOS Recursive (T=650, N=40, L=2)` | 31.8 ms | 1.8 ms | **17.7× faster** |
+| `3PRF OOS Cross Val (T=650, N=40, L=2)` | 88.9 ms | 7.1 ms | **12.6× faster** |
+
+IS Full stays a tie — both sides reduce to the same two batch solves. Measured in
+isolation it runs 0.25 ms; the 0.36 ms above is the figure from a full benchmark run,
+where it shares JIT call-site profiles with the OOS procedures.
 
 Linux (Intel Core i5-6500, Ubuntu 24.04, vs Python 3.12.3 / system OpenBLAS):
 
