@@ -1,0 +1,57 @@
+# .github/workflows/rust.yml
+#
+# Builds and tests the `rust/` port of Tprf3. Its parity test reads the same
+# fixtures as uni.stats.Tprf3ParitySuite, so this workflow is what keeps the
+# Rust half of that pair honest — scala.yml only enforces the Scala half.
+#
+# The crate is not published; nothing here gates release.yml.
+#
+# Steps call rust/Makefile targets rather than restating their commands, so the
+# gate has one definition and `make lint` locally means what CI means.
+name: Rust CI
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'rust/**'
+      - 'test-data/tprf3-parity/**'
+      - '.github/workflows/rust.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'rust/**'
+      - 'test-data/tprf3-parity/**'
+      - '.github/workflows/rust.yml'
+
+env:
+  CARGO_TERM_COLOR: always
+
+defaults:
+  run:
+    working-directory: rust
+
+jobs:
+  build:
+    name: Test and lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # rust/rust-toolchain.toml pins the channel, so cargo installs it on first
+      # use. rustfmt.toml sets nightly-only options, so `make lint` shells out to
+      # a dated nightly as well — install it here, and bump both together.
+      - name: Install pinned nightly for rustfmt
+        run: rustup toolchain install nightly-2026-08-02 --component rustfmt --profile minimal
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      # Default features only: `blas` needs a system OpenBLAS on the linker path.
+      - name: Lint
+        run: make lint
+
+      - name: Test
+        run: make test

@@ -45,8 +45,7 @@ fn fixture_dir() -> PathBuf {
 }
 
 fn load_csv(path: &Path) -> Array2<f64> {
-    let text =
-        fs::read_to_string(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    let text = fs::read_to_string(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
     let rows: Vec<Vec<f64>> = text
         .lines()
         .filter(|l| !l.trim().is_empty())
@@ -64,8 +63,7 @@ fn load_csv(path: &Path) -> Array2<f64> {
 /// Reference values keyed by "<tag> <field>".
 fn load_reference(dir: &Path) -> HashMap<String, f64> {
     let path = dir.join("scala-reference.txt");
-    let text =
-        fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    let text = fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
     text.lines()
         .map(str::trim)
         .filter(|l| !l.is_empty() && !l.starts_with('#'))

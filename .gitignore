@@ -83,8 +83,13 @@ mathOps.sc
 matlab/
 py/__pycache__/
 slice.sc
-test-data/
-bin/
+# scratch data stays out, but the 3PRF cross-language parity fixtures are
+# checked in — Tprf3ParitySuite and rust/tests/scala_parity.rs both require them.
+test-data/*
+!test-data/tprf3-parity/
+# Anchored: an unanchored `bin/` also swallows rust/src/bin/, whose contents are
+# real source.
+/bin/
 doc/Tprf3-cleanup-Plan.md
 idea-report/
 kp_alpha.csv

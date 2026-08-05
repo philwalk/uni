@@ -593,7 +593,11 @@ fn oos_r2(
             sst += d * d;
         }
     }
-    if sst != 0.0 { 1.0 - sse / sst } else { f64::NAN }
+    if sst != 0.0 {
+        1.0 - sse / sst
+    } else {
+        f64::NAN
+    }
 }
 
 /// Clark–McCracken ENC-NEW statistic, over rows where both series are present.
@@ -654,8 +658,7 @@ pub fn estimate_3prf_oos_rec(
         .into_par_iter()
         .map(|t| {
             // training rows [0, t-1), matching the reference
-            let (yhatt, roll) =
-                t3prf_rec_step(&full, x_norm.view(), y.view(), t, t - 1, MIN_OBS)?;
+            let (yhatt, roll) = t3prf_rec_step(&full, x_norm.view(), y.view(), t, t - 1, MIN_OBS)?;
             Ok((t, yhatt, roll))
         })
         .collect::<Result<Vec<_>, Error>>()?;

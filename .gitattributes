@@ -3,3 +3,7 @@
 *.sbt     text eol=lf
 *.yml     text eol=lf
 *.md      text eol=lf
+
+# Parity fixtures are read verbatim by both the Scala and Rust tests; keep them
+# byte-identical on every platform rather than relying on each parser to trim CR.
+test-data/tprf3-parity/** text eol=lf
