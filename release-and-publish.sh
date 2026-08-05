@@ -10,14 +10,46 @@ echo "==> Release: $TAG"
 # 1. Version parsed successfully
 [ -n "$VERSION" ] || { echo "ERROR: could not parse version from build.sbt"; exit 1; }
 
-# 2. Remote tag must not already exist — unless the GitHub release is also missing,
-#    which means a previous run pushed the tag but crashed before gh release create.
-#    In that case skip straight to the release step.
-if git ls-remote --tags origin "refs/tags/$TAG" | grep -q .; then
-  if gh release view "$TAG" &>/dev/null; then
-    echo "ERROR: release $TAG already fully published — bump the version first"
-    exit 1
-  else
+# Publish coordinates, likewise read from build.sbt, for the Central check below.
+ORG=$(grep -E 'ThisBuild\s*/\s*organization\s*:=\s*"[^"]+"' build.sbt | grep -oE '"[^"]+"' | tr -d '"')
+PROJECT=$(grep -E 'lazy val projectName\s*=\s*"[^"]+"' build.sbt | grep -oE '"[^"]+"' | tr -d '"')
+SCALA_MAJOR=$(grep -E 'lazy val scala3\s*=\s*"[^"]+"' build.sbt | grep -oE '"[^"]+"' | tr -d '"' | cut -d. -f1)
+ARTIFACT="${PROJECT}_${SCALA_MAJOR}"
+CENTRAL_POM="https://repo1.maven.org/maven2/${ORG//./\/}/$ARTIFACT/$VERSION/$ARTIFACT-$VERSION.pom"
+
+# "Published" has to mean the artifacts are public and immutable, because that is
+# the one state a re-release cannot recover from. Two signals, because neither is
+# sufficient alone: Central is authoritative but lags the workflow by up to ~30
+# minutes, and the workflow's own verdict is immediate but only covers publishes
+# that went through CI.
+# Takes the Release workflow's conclusion for this tag as $1.
+already_published() {
+  [ "$1" = "success" ] && return 0
+  command -v curl >/dev/null 2>&1 && curl -sfI --max-time 20 "$CENTRAL_POM" >/dev/null 2>&1
+}
+
+# 2. Work out what a pre-existing remote tag actually means.
+#
+#    A first attempt can push the tag and still leave the release unfinished —
+#    the CI test job fails, or the script dies before `gh release create`. Both
+#    leave a tag naming a version that was never published to anyone, so simply
+#    refusing to proceed would force a version bump to work around a CI failure
+#    that left no trace in any registry. Instead, ask how far the attempt got.
+MODE=fresh
+TAG_REFS=$(git ls-remote --tags origin "refs/tags/$TAG" || true)
+REMOTE_TAG_REF=$(printf '%s' "$TAG_REFS" | head -1 | cut -f1)     # ref value; a tag object if annotated
+REMOTE_TAG_COMMIT=$(printf '%s' "$TAG_REFS" | tail -1 | cut -f1)  # the commit it resolves to
+
+if [ -n "$REMOTE_TAG_REF" ]; then
+  RUN=$(gh run list --workflow=release.yml --branch "$TAG" --limit 1 \
+          --json status,conclusion -q '.[0] | "\(.status) \(.conclusion)"' 2>/dev/null || true)
+  RUN_STATUS=${RUN%% *}
+  RUN_CONCLUSION=${RUN##* }
+
+  # Creating a missing GitHub release is purely additive, so it is safe whatever
+  # the publish did — and it is the only repair for a run that died between the
+  # tag push and `gh release create`. Handle it before any refusal below.
+  if ! gh release view "$TAG" &>/dev/null; then
     echo "==> Tag $TAG already on remote but GitHub release missing — resuming from gh release create..."
     RELEASE_NOTES=$(awk "/^## v$VERSION/{found=1; next} found && /^## v/{exit} found{print}" CHANGELOG.md)
     gh release create "$TAG" \
@@ -26,6 +58,30 @@ if git ls-remote --tags origin "refs/tags/$TAG" | grep -q .; then
     echo "==> Done."
     exit 0
   fi
+
+  # The tag and the release both exist, so the incomplete step is the publish.
+  if already_published "$RUN_CONCLUSION"; then
+    echo "ERROR: release $TAG already fully published — bump the version first"
+    exit 1
+  fi
+
+  if [ "$RUN_STATUS" = "in_progress" ] || [ "$RUN_STATUS" = "queued" ]; then
+    echo "ERROR: the Release workflow for $TAG is still running — wait for it to finish"
+    echo "       gh run watch \$(gh run list --workflow=release.yml --branch $TAG --limit 1 --json databaseId -q '.[0].databaseId')"
+    exit 1
+  fi
+
+  # Re-pushing a tag at the same commit is a no-op and would not re-trigger
+  # release.yml, so there has to be something new to move the tag onto.
+  if [ "$REMOTE_TAG_COMMIT" = "$(git rev-parse HEAD)" ] && git diff --cached --quiet; then
+    echo "ERROR: $TAG did not publish, and nothing new is committed or staged since."
+    echo "       Fix the failure and commit, then re-run — the tag will move to it."
+    exit 1
+  fi
+
+  MODE=resume
+  echo "==> $TAG is on the remote but never published (run: ${RUN:-none});"
+  echo "    new work exists — the tag will be moved forward to re-trigger the publish."
 fi
 
 # 3. Must be on main and not behind origin
@@ -56,14 +112,24 @@ git tag -f "$TAG"
 # 9. Push main and tag
 echo "==> Pushing main and $TAG..."
 git push origin main
-git push origin "$TAG"
+if [ "$MODE" = "resume" ]; then
+  # Moving the tag is what re-triggers release.yml. The lease pins the remote to
+  # the ref inspected in check #2, so a tag pushed by someone else in the interim
+  # aborts the push rather than being overwritten.
+  git push --force-with-lease="refs/tags/$TAG:$REMOTE_TAG_REF" origin "$TAG"
+else
+  git push origin "$TAG"
+fi
 
-# 10. Extract this version's changelog section and create GitHub release
-echo "==> Creating GitHub release $TAG..."
+# 10. Extract this version's changelog section and create or refresh the GitHub release
 RELEASE_NOTES=$(awk "/^## v$VERSION/{found=1; next} found && /^## v/{exit} found{print}" CHANGELOG.md)
-gh release create "$TAG" \
-  --title "uni $VERSION" \
-  --notes "$RELEASE_NOTES"
+if [ "$MODE" = "resume" ]; then
+  echo "==> Updating GitHub release $TAG..."
+  gh release edit "$TAG" --title "uni $VERSION" --notes "$RELEASE_NOTES"
+else
+  echo "==> Creating GitHub release $TAG..."
+  gh release create "$TAG" --title "uni $VERSION" --notes "$RELEASE_NOTES"
+fi
 
 echo "==> Done: https://github.com/$(gh repo view --json nameWithOwner -q .nameWithOwner)/releases/tag/$TAG"
 
