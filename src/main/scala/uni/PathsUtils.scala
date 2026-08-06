@@ -378,46 +378,62 @@ inline private def parentDirOf(s: String): String =
  *   convert rawstr path to `cygpath -u` format
  *   in some cases java sees a different path than cygpath; defer to java.
  */
-def posixAbs(raw: String): String = {
+/** Plumbing behind `Path.posix` and `String.posix`. Prefer those. */
+@deprecated("Use `Path.posix` or `String.posix`; this becomes private[uni]", "0.16.0")
+def posixAbs(raw: String): String = toPosixAbs(raw)
+
+/** Implementation of [[posixAbs]], callable from inside the library without
+ *  tripping the deprecation warning. When `posixAbs` is finally narrowed, this
+ *  becomes the only form and the wrapper above just disappears. */
+private[uni] def toPosixAbs(raw: String): String = {
   if !isWin then
     Resolver.resolvePathstr(raw) match {
     case "/" => "/"
     case s   => s.stripSuffix("/")
     }
-    
+
   else if raw.startsWith("/") then
     noTrailingSlash(raw)
   else {
     if raw == "file.txt" then
       hook += 1
     val cygMixed = Resolver.resolvePathstr(raw)
-    val absPosix =
-      if cygMixed.startsWithIgnoreCase(config.cygRoot) then
-        cygMixed.drop(config.cygRoot.length)
-      else {
-//        val win2posx = config.win2posix.toSeq // TODO: remove IDE helper vals
-//        val posx2win = config.posix2win.toSeq
-        Resolver.findPrefix(cygMixed, config.win2posixKeys) match
-          case Some(winPrefix) =>
-            val suffix = cygMixed.drop(winPrefix.length).stripSuffix("/")
-            config.win2posix.get(winPrefix) match
-              case Some(posixSeq) =>
-                joinPosix(posixSeq.head, suffix)
-              case None =>
-                winAbsToPosixAbs(cygMixed)
+    if Resolver.classify(cygMixed) == Resolver.Relative then
+      // A relative path has no absolute POSIX form, and resolution deliberately
+      // leaves it alone: `applyTildeAndDots` absolutises a bare filename but
+      // treats anything containing a slash as already a path. Such a value used to
+      // fall through to the cygdrive branch and fail `winAbsToPosixAbs`'s
+      // `require(cygMixed(1) == ':')`, so `Paths.get("a/b").posix` threw while
+      // `Paths.get("bare.txt").posix` succeeded. Preserve it instead, which is
+      // what `cygpath -u a/b` does.
+      normalizePosix(cygMixed)
+    else if cygMixed.startsWithIgnoreCase(config.cygRoot) then
+      cygMixed.drop(config.cygRoot.length)
+    else
+      Resolver.findPrefix(cygMixed, config.win2posixKeys) match
+        case Some(winPrefix) =>
+          val suffix = cygMixed.drop(winPrefix.length).stripSuffix("/")
+          config.win2posix.get(winPrefix) match
+            case Some(posixSeq) =>
+              joinPosix(posixSeq.head, suffix)
+            case None =>
+              winAbsToPosixAbs(cygMixed)
 
-          case None =>
-            // No matching Windows prefix at all → cygdrive fallback
-            winAbsToPosixAbs(cygMixed)
-      }
-    absPosix
+        case None =>
+          // No matching Windows prefix at all → cygdrive fallback
+          winAbsToPosixAbs(cygMixed)
   }
 }
 
-// leverage posixAbs to deal with ~, trailing slash, etc.
-def posixRel(raw: String): String =
-  val cwd = posixAbs(config.userdir)
-  val abs = posixAbs(raw)
+/** Plumbing behind `Path.relpath`. Prefer that. */
+@deprecated("Use `Path.relpath`; this becomes private[uni]", "0.16.0")
+def posixRel(raw: String): String = toPosixRel(raw)
+
+/** Implementation of [[posixRel]]; see [[toPosixAbs]] for why the pair exists.
+ *  Leverages `toPosixAbs` to deal with `~`, trailing slashes and the mount map. */
+private[uni] def toPosixRel(raw: String): String =
+  val cwd = toPosixAbs(config.userdir)
+  val abs = toPosixAbs(raw)
 
   if abs.equalsIgnoreCase(cwd) then
     "."

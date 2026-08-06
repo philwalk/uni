@@ -17,7 +17,7 @@ object stringExts {
     def toFile: JFile = Paths.get(str).toFile
     def absPath: Path = Paths.get(str).toAbsolutePath.normalize
     def posx: String  = normalizePosix(str)
-    def posix: String = posixAbs(str)
+    def posix: String = toPosixAbs(str)
 
     def lc: String = str.toLowerCase
     def uc: String = str.toUpperCase

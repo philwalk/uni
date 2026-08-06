@@ -73,7 +73,7 @@ object pathExts {
     def abspath: Path    = p.toAbsolutePath.normalize
     def stdpath: String  = standardizePath(p)
     def posx: String     = normalizePosix(p.toString)
-    def posix: String    = posixAbs(p.toString)
+    def posix: String    = toPosixAbs(p.toString)
     def local: String    = normalizePosix(p.toString)
 
     def localpath: String = {

@@ -6,6 +6,7 @@ extern crate blas_src;
 pub mod error;
 pub mod numpy_rng;
 pub mod t3prf;
+pub mod upath;
 
 pub use error::Error;
 pub use numpy_rng::NumPyRng;

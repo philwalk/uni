@@ -1,5 +1,134 @@
 ## Unreleased
 
+**BUG — the RNG parity fixture was never tracked (`.gitignore`)**
+
+- `.gitignore` has `test-data/*` with a single `!test-data/tprf3-parity/`
+  exception, so `test-data/numpy-rng-parity/` — added last commit — was silently
+  ignored and never committed. `rust/tests/numpy_rng_parity.rs` and
+  `uni.data.NumPyRngParitySuite` both pass on the machine that generated it,
+  because the file is simply there, and both fail everywhere else with a missing
+  fixture. The failure mode is invisible to the author by construction
+- Exceptions added for `numpy-rng-parity/` and `path-parity/`, and the comment now
+  says that each new fixture directory needs one
+
+**Deprecated — `posixAbs` and `posixRel` (`PathsUtils.scala`)**
+
+- Both are plumbing behind `Path.posix`, `String.posix` and `Path.relpath`, are
+  undocumented, and have no callers outside the library. They will become
+  `private[uni]` in a later release; deprecating first rather than narrowing
+  outright, since narrowing is source-breaking for a published artifact
+- Each is now a one-line delegate to a `private[uni]` `toPosixAbs` / `toPosixRel`
+  holding the implementation. That keeps the library's own call sites
+  warning-free, and when the narrowing happens the deprecated wrapper simply
+  disappears rather than needing the body moved
+- The only remaining callers of the deprecated names are the suites that test
+  them by name (`PathsUtilsCoverageSuite`, `PosixFmtSuite`, `UniRootCoverageSuite`,
+  `PathSpec`). Those warn on a fresh compile, deliberately — the warning is the
+  reminder that the narrowing is still pending
+
+**BUG — `.posix` threw on any relative path containing a separator (`PathsUtils.scala`)**
+
+- `Paths.get("a/b").posix` raised `IllegalArgumentException`, while
+  `Paths.get("bare.txt").posix` returned `/c/munit/test/bare.txt`. `posixRel`
+  delegates to `posixAbs`, so it threw too
+- Cause: `applyTildeAndDots` absolutises a bare filename but deliberately leaves
+  anything containing a slash alone. Such a value survived resolution untouched,
+  matched no mount prefix, and reached `winAbsToPosixAbs`, whose
+  `require(cygMixed(1) == ':')` fails for a path with no drive letter
+- `posixAbs` now returns a relative result unchanged, matching `cygpath -u a/b`,
+  which likewise preserves it. The `bare.txt` / `a/b` asymmetry in
+  `applyTildeAndDots` is left as-is — narrowing that is a semantics change rather
+  than a bug fix, and `cygpath` would preserve both
+
+**BUG — four defects in mount-table parsing and resolution (`Paths.scala`)**
+
+All four are latent behind "if uni is ever handed an fstab": production parses
+`mount.exe` output, which has no comments and no `none` line, and on MSYS2 the
+default cygdrive prefix `/` happens to be right. The Rust port needs an fstab
+fallback — there is no `mount.exe` on non-MSYS Windows, and fstab is the only
+source on Linux and macOS — which is how all four surfaced.
+
+- **Comment lines were parsed as mounts.** MSYS2's shipped `/etc/fstab` has 16
+  comment lines, several of them commented-out example mounts written with no
+  space after the `#`: `#C:/cygwin64 / ntfs binary,noacl,auto` splits into
+  `("#C:/cygwin64", "/")`. Those became live entries whose Windows side starts
+  with `#`, so resolution built strings like `#C://Users` and `JPaths.get` threw
+  `InvalidPathException` — `/c/Users` and `/etc/fstab` failed outright. A
+  comment-derived `/c` entry also satisfied `isRealDrive` and suppressed the
+  synthetic `C:` drive that should have mapped it
+- **`none` was treated as a device.** It is a directive; the shipped line's own
+  comment reads *"It removes cygdrive prefix from path"*. Read as a mount it made
+  `msysRoot` the literal string `none`, so `/` resolved to `none`
+- **cygdrive derivation only examined the first entry.** The `collectFirst`
+  pattern `case (win, posix)` is total, so it was satisfied by entry 0 and never
+  scanned on; the `else null` shows the intent was to keep looking. The prefix
+  silently defaulted to `/` unless the declaring line came first. Measured on
+  tables differing only in line order: marker first → `/cygdrive/` and
+  `/cygdrive/c/tmp` → `C:/tmp`; marker second → `/` and `/cygdrive/c/tmp` →
+  **`none/c/tmp`**. That is the one case where a valid POSIX path yielded a wrong
+  `Path`, and it is the normal situation on Cygwin, whose `mount` output does not
+  list the drive-root line first. Fixed with guards on the cases
+- **A bare-drive mount produced a doubled separator.** `/c/Users` resolved to
+  `C://Users`, because a target ending in `:` had `/` appended while the suffix
+  already began with one. `JPaths.get` collapses the pair, which is why it went
+  unnoticed — but the raw string is what other implementations must reproduce, and
+  Rust has no such collapser
+
+Verified against `cygpath -m` on 28 real POSIX paths: the only remaining
+differences are a trailing slash on `/`, cygpath's `.exe` suffixing, and
+`/proc/cpuinfo`, which has no Windows equivalent.
+
+**NEW — Rust port of mount-aware path resolution (`rust/src/upath/`)**
+
+Tier 1 of the `uni.Paths` port: the mount-dependent POSIX↔Windows conversion, so
+Rust client code can be written once for Windows, Linux and macOS. `std::path`
+understands drive letters and UNC but nothing about MSYS2/Cygwin mount tables, so
+`/database-backups/x` had no way to reach its Windows location.
+
+- `MountMaps::parse` handles both `mount.exe` output and `/etc/fstab` columns,
+  derives the cygdrive prefix, and synthesises the `X: -> /x` entries for unmapped
+  drives plus a root entry when the table lacks one — which is what makes `/q/file`
+  resolve to `Q:/file` on a machine whose fstab never mentions Q:
+- `classify` covers all seven path shapes and `find_prefix` does **longest-prefix**
+  matching with a segment-boundary check, so overlapping mounts resolve to the
+  deeper target: with `/opt` and `/opt/ue` both mounted, `/opt/ue/src` is `D:/ue/src`
+- `resolve_pathstr`, `posix_abs`, `posix_rel` and `apply_tilde_and_dots` ported from
+  `Resolver` and `PathsUtils`, including the hidden-file carve-out that keeps
+  `.gitignore`'s leading dot
+- **`is_windows` is data, not `cfg!(windows)`.** Rust's is compile-time, unlike the
+  JVM's runtime `os.name`, so gating on it would make the Windows rules
+  uncompilable — and untestable — off Windows. One live `cfg!(windows)` remains, in
+  `PathContext::from_env`. This is strictly better than the Scala, whose path suites
+  are `if isWin`-gated and skip entirely on Linux
+- `drive_cwd` needs no `windows` crate and no subprocess. Windows keeps the
+  per-drive working directory as **per-process** state in hidden `=X:` environment
+  slots, inherited by children; `GetFullPathNameW("X:.")` — what the JVM's
+  `toAbsolutePath` calls — is defined in terms of those, so reading them agrees with
+  the Scala by construction. A drive never visited has no slot and Windows itself
+  answers with the root, so that is the correct answer rather than a fallback
+- Two places where fidelity beat instinct, both caught by the fixtures: a bare `C:`
+  input keeps Windows **backslashes**, because `applyTildeAndDots` interpolates the
+  `Path` verbatim while `resolveDriveRelPathstr` normalises separately; and
+  `posix_abs` **fails** for a relative path containing a slash, because it reaches
+  the cygdrive fallback with no drive letter, exactly as `winAbsToPosixAbs`'s
+  `require` does
+
+**Path parity fixtures (`test-data/path-parity/`)**
+
+- `uni.apps.PathParityGen` writes a per-platform reference over six synthetic mount
+  tables × 32 inputs × 3 fields, plus derived facts and `driveCwd` — 618 cases.
+  Checked independently by `uni.PathParitySuite` and `rust/tests/path_parity.rs`
+- Tables are chosen to pin one thing each: minimal root, drive mounts, cygdrive
+  style, **overlapping** mounts, **one-to-many** reverse mapping, and fstab format
+  with no root entry
+- Every case is driven by `withMountLines` and a fake user, so nothing depends on
+  the host's drives. The fixture is tagged with the platform that produced it,
+  because Scala can only record the rules of the host it runs on; the Rust test
+  takes `is_windows` from the tag and so verifies Windows semantics from any host.
+  Regenerate on a second platform to add its block
+- 15 Rust unit tests cover the pieces directly, including that the Windows rules
+  run with `is_windows = true` regardless of host
+
 **BUG — `NumPyRNG.randn` tail draws were displaced by 0.2115 (`NumPyRNG.scala`)**
 
 - `ZIGNOR_R`, the Ziggurat's right edge, was `3.442619855899` — Marsaglia &

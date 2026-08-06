@@ -83,10 +83,15 @@ mathOps.sc
 matlab/
 py/__pycache__/
 slice.sc
-# scratch data stays out, but the 3PRF cross-language parity fixtures are
-# checked in — Tprf3ParitySuite and rust/tests/scala_parity.rs both require them.
+# Scratch data stays out, but every cross-language parity fixture is checked in:
+# each one is required by BOTH a Scala suite and a Rust test, and the whole point
+# is that neither needs the other language installed. A fixture that is ignored
+# still passes locally — the file is simply there — and fails for everyone else,
+# so each new fixture directory needs its own exception here.
 test-data/*
 !test-data/tprf3-parity/
+!test-data/numpy-rng-parity/
+!test-data/path-parity/
 # Anchored: an unanchored `bin/` also swallows rust/src/bin/, whose contents are
 # real source.
 /bin/

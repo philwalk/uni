@@ -208,14 +208,19 @@ private[uni] object Resolver {
         val maybeMount = Resolver.findPrefix(pstr, config.posix2winKeys)
         maybeMount match {
           case Some(mountKey) =>
-            val mountedWinPath = config.posix2win(mountKey) match
-              case s if s.endsWith(":") =>
-                s"$s/" // msys mounts are not drive-relative
-              case s =>
-                s
-            val pstrTrim = stripTrailingSlash(pstr)
+            val target     = config.posix2win(mountKey)
+            val pstrTrim   = stripTrailingSlash(pstr)
             val postPrefix = pstrTrim.drop(mountKey.length)
-            s"$mountedWinPath$postPrefix"
+            if postPrefix.isEmpty then
+              // A bare drive target must keep its separator to stay absolute:
+              // `C:` alone is drive-relative, `C:/` is the drive root.
+              if target.endsWith(":") then s"$target/" else target
+            else
+              // postPrefix already begins with '/', so appending one to a bare
+              // drive target duplicated it — `/c/Users` produced `C://Users`.
+              // JPaths.get collapses that, which is why it went unnoticed, but
+              // the raw string is what other implementations have to reproduce.
+              s"$target$postPrefix"
           case None =>
             val root = config.posix2win("/")
             if pstr.startsWith(root) then pstr else s"$root$pstr"
@@ -292,9 +297,25 @@ private[uni] object Resolver {
 /** Parsing /etc/fstab entries */
 object ParseMounts {
   def parseMountLines(lines: Seq[String]): MountMaps = {
+    // Drop comments and blanks before anything else.
+    //
+    // Only fstab has them, but it has a lot: the shipped MSYS2 file carries 16
+    // comment lines, several of which are commented-out *example mounts written
+    // without a space after the `#`* —
+    //   #C:/cygwin64 / ntfs binary,noacl,auto
+    //   #C:/cygwin64/usr/bin /bin ntfs binary,noacl,auto
+    // Split on whitespace those yield ("#C:/cygwin64", "/") and friends, i.e. live
+    // mount entries whose Windows side starts with '#'. Resolution then built
+    // strings like `#C://Users`, and JPaths.get threw InvalidPathException because
+    // the colon was no longer at index 1 — ordinary inputs such as /c/Users failed
+    // outright. A comment-derived `/c` entry also satisfied isRealDrive and so
+    // suppressed the synthetic C: drive that should have mapped it.
+    val uncommented: Seq[String] =
+      lines.map(_.trim).filter(l => l.nonEmpty && !l.startsWith("#"))
+
     // parse raw entries
     val rawEntries: Seq[(String, String)] =
-      lines.flatMap { line =>
+      uncommented.flatMap { line =>
         if line.contains(" on ") then
           // mount.exe format
           val parts = line.split(" on | type ").map(_.trim)
@@ -317,31 +338,40 @@ object ParseMounts {
 
     def isDriveRoot(s: String): Boolean = s.matches("^[A-Za-z]:$")
 
-    // derive cygdrive
-    val cygdrive: String = {
+    // Derive cygdrive from the first entry that declares it: either a `none`
+    // device (the shipped `none / cygdrive ...` directive, whose own comment says
+    // "It removes cygdrive prefix from path") or a drive-root mount such as
+    // `C: on /cygdrive/c`.
+    //
+    // The guards matter. Without them the pattern `case (win, posix)` matches
+    // every tuple, so collectFirst is satisfied by entry 0 and never scans on —
+    // the prefix then silently defaulted to "/" unless the declaring line
+    // happened to come first. On Cygwin, where `mount` does not list the
+    // drive-root line first, that left `/cygdrive/...` resolving through the
+    // leftover `none` entry and emitting the device name literally.
+    val cygdrive: String =
       entries.collectFirst {
-        case (win, posix) => {
-          if win == "none" then
-            s"${posix.stripSuffix("/")}/"
-          else if isDriveRoot(win) &&
-            posix.startsWith("/") &&
-            posix.length >= 3 &&
-            posix.charAt(posix.length - 2) == '/'
-          then
-            posix.substring(0, posix.length - 1)
-          else
-            null
-        }
-      }.collectFirst { case p if p != null => p }
-        .getOrElse("/")
-    }
+        case (win, posix) if win == "none" =>
+          s"${posix.stripSuffix("/")}/"
+        case (win, posix) if isDriveRoot(win) &&
+          posix.startsWith("/") &&
+          posix.length >= 3 &&
+          posix.charAt(posix.length - 2) == '/' =>
+          posix.substring(0, posix.length - 1)
+      }.getOrElse("/")
+
+    // `none` is a directive, not a device: it declares the cygdrive prefix above
+    // and mounts nothing. Having informed `cygdrive`, it must not reach the maps —
+    // otherwise the shipped `none / cygdrive ...` line makes msysRoot the literal
+    // string "none", and `/` resolves to it.
+    val mountable: Seq[(String, String)] = entries.filterNot(_._1 == "none")
 
     def isRealDrive(posix: String): Boolean =
       posix == s"$cygdrive${posix.last}" &&
         posix.length == cygdrive.length + 1
 
     val posixDriveRefs: Set[Char] =
-      entries.collect {
+      mountable.collect {
         case (_, posix) if isRealDrive(posix) =>
           posix.last.toLower
       }.toSet
@@ -357,7 +387,7 @@ object ParseMounts {
     val syntheticDrives =
       if isWin then missingDrives(cygdrive, posixDriveRefs) else Nil
 
-    val hasRoot: Boolean = entries.exists(_._2 == "/")
+    val hasRoot: Boolean = mountable.exists(_._2 == "/")
 
     // synthesize root entry (if missing)
     val syntheticRoot: Seq[(String, String)] =
@@ -368,7 +398,7 @@ object ParseMounts {
 
     // --- combine all entries
     val allEntries: Seq[(String, String)] =
-      (entries ++ syntheticDrives ++ syntheticRoot)
+      (mountable ++ syntheticDrives ++ syntheticRoot)
         .map { case (w, p) => stripSlash(w) -> stripSlash(p) }
         .distinct
 
