@@ -27,4 +27,34 @@ class NumPyRNGTest extends munit.FunSuite {
   test(s"negative Seed is rejected") {
     intercept[IllegalArgumentException] { getInitialStateNumpy242(-1L) }
   }
+
+  // Tail draws from np.random.default_rng(0).standard_normal(), by index and
+  // exact bit pattern.
+  //
+  // The parity fixture cannot catch a Ziggurat constant that is wrong here and
+  // in the Rust port at once — regenerating it would just bless the new numbers.
+  // These are absolute, and they are tail draws (|z| > ZIGNOR_R), so they pin
+  // the two constants only the tail sampler reads. ZIGNOR_R was previously
+  // Marsaglia & Tsang's 3.442619855899 rather than NumPy's 3.6541528853610088,
+  // which left 99.97% of draws correct and displaced every tail draw by 0.2115 —
+  // invisible to a mean/variance check, and this is what catches it.
+  val numpyTailDraws: Seq[(Int, Long)] = Seq(
+    303   -> 0xc00e2d9e98d87bc6L,
+    478   -> 0xc00f3204051f2938L,
+    10477 -> 0x400f907c5aa2ff63L,
+    13325 -> 0xc00f5ad782db91bdL,
+  )
+
+  test("randn tail draws match numpy exactly") {
+    val rng   = new NumPyRNG(0)
+    val wants = numpyTailDraws.toMap
+    val last  = numpyTailDraws.map(_._1).max
+    for i <- 0 to last do
+      val got = rng.randn()
+      wants.get(i).foreach { want =>
+        assertEquals(
+          java.lang.Double.doubleToRawLongBits(got), want,
+          f"draw $i: got $got%.17e, numpy gives ${java.lang.Double.longBitsToDouble(want)}%.17e")
+      }
+  }
 }

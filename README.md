@@ -17,6 +17,50 @@ For high-accuracy scientific modeling or other applications requiring extreme pr
 
 * **High Precision:** [Big Type Guide](docs/BigTypeGuide.md) — Learn about high-precision matrices, and how to use `Mat[Big]`.
 
+## Rust companion crate (`rust/`)
+
+The `rust/` directory holds a Rust port of the numerically heavy parts of the
+library. It is a standalone crate (`t3prf`), not a JNI binding — nothing in the
+Scala library calls into it. It exists so the same algorithms can be run outside
+the JVM and so the Scala implementations have an independent second opinion to be
+checked against.
+
+* **Bit-identical NumPy random numbers.** `NumPyRng` reproduces
+  `np.random.default_rng(seed)` — PCG64 XSL RR 128 behind NumPy's SeedSequence
+  expansion — and therefore also reproduces `uni.data.NumPyRNG` draw for draw.
+  Seed it with 0 in Scala, Rust or Python and all three yield the same stream.
+  `next_u64`, `next_i32`, `next_f64`, `uniform` and `next_bounded_u32` are exact
+  by construction: integer arithmetic plus one exactly-representable division by
+  2⁵³, no tolerance involved.
+* **`randn` too**, via the same 256-layer Ziggurat, with the tables generated
+  from the Scala source rather than transcribed. It matches NumPy bit-for-bit.
+  Against the JVM it differs on roughly 2.5 draws per million — always a tail
+  draw, always by exactly one ulp, because `Math.log1p` and C's `log1p` round a
+  few arguments differently. Never a control-flow divergence, so the streams stay
+  aligned rather than drifting apart.
+* **3PRF** (`estimate_3prf_is_full`, `_oos_rec`, `_oos_cv`) — the same three
+  procedures as `uni.stats.Tprf3`, including the per-window cross-product
+  downdates.
+
+Both halves are pinned by cross-language parity fixtures that neither side can
+quietly move: `test-data/numpy-rng-parity/` for the generator and
+`test-data/tprf3-parity/` for 3PRF. Each is checked independently by a Scala
+suite and a Rust test against the same committed reference, so neither test needs
+the other language installed. The RNG fixtures additionally pin specific draws to
+NumPy's own bit patterns as absolute values — a check that regenerating the
+fixtures cannot launder.
+
+Being able to compare the two directly is the point: it is what surfaced a
+long-standing bug in the Scala `randn` tail, where `ZIGNOR_R` held Marsaglia &
+Tsang's constant instead of NumPy's and displaced every draw beyond the ziggurat
+edge (about 1 in 3900) by 0.2115 — invisible to every distributional and
+reproducibility test in the suite.
+
+```bash
+cd rust && make all          # test, fmt, clippy, file-size check
+cargo run --release --bin bench_tprf3
+```
+
 ## Visualization (`uni.plot`)
 
 `import uni.plot.*` adds `.scatter()`, `.hist()`, and `.plot()` directly on `MatD`.
@@ -132,9 +176,10 @@ MatD faster 8/9 scored, geometric mean **6.11× faster** than Breeze.
 
 ### 3PRF (Three-Pass Regression Filter)
 
-Measured on Windows 11 (uni 0.15.1 / JVM 22 / Scala 3.8.4, vs Python 3.13.13 / NumPy
-on scipy-openblas; medians of 25 timed calls per OOS procedure after explicit warm-up,
-themselves medians of 3 runs). See [`jsrc/tprf3Bench.sc`](jsrc/tprf3Bench.sc) and
+Measured on Windows 11 (uni 0.15.1+ / JVM 22 / Scala 3.8.4, vs Python 3.13.13 / NumPy
+on scipy-openblas, and the `t3prf` Rust crate on OpenBLAS; medians of 25 timed calls
+per OOS procedure after explicit warm-up). See [`jsrc/tprf3Bench.sc`](jsrc/tprf3Bench.sc),
+[`rust/src/bin/bench_tprf3.rs`](rust/src/bin/bench_tprf3.rs) and
 [Kelly & Pruitt (2015)](https://doi.org/10.1111/jofi.12246).
 
 Through v0.14.1 both implementations were kept equivalently optimized, so published
@@ -150,15 +195,41 @@ run pass 2 in natural order, and derive each window's pass-1 cross products by
 downdating full-sample ones. The techniques are portable to NumPy; they simply have
 not been applied there yet.
 
-| Operation | Python | MatD | Ratio |
-| :--- | ---: | ---: | :--- |
-| `3PRF IS Full (T=650, N=40, L=2)` | 0.31 ms | 0.36 ms | ≈ tied |
-| `3PRF OOS Recursive (T=650, N=40, L=2)` | 31.8 ms | 1.8 ms | **17.7× faster** |
-| `3PRF OOS Cross Val (T=650, N=40, L=2)` | 88.9 ms | 7.1 ms | **12.6× faster** |
+| Operation | Python | MatD | Rust | Py/MatD | MatD/Rust |
+| :--- | ---: | ---: | ---: | :--- | :--- |
+| `3PRF IS Full (T=650, N=40, L=2)` | 0.29 ms | 0.215 ms | 0.051 ms | **1.3× faster** | **4.2× faster** |
+| `3PRF OOS Recursive (T=650, N=40, L=2)` | 30.6 ms | 1.845 ms | 1.42 ms | **16.6× faster** | **1.3× faster** |
+| `3PRF OOS Cross Val (T=650, N=40, L=2)` | 84.3 ms | 6.179 ms | 2.06 ms | **13.6× faster** | **3.0× faster** |
 
-IS Full stays a tie — both sides reduce to the same two batch solves. Measured in
-isolation it runs 0.25 ms; the 0.36 ms above is the figure from a full benchmark run,
+All three columns come from one run of [`uni.apps.Tprf3Bench`](src/main/scala/apps/Tprf3Bench.scala),
+which measures Python and Scala in the same process and shells out to the prebuilt
+Rust binary — so the ratios are internally consistent rather than spliced across
+sessions. Earlier releases published median-of-3 figures for the two-way
+comparison; those read 0.31 / 0.36 ms for IS Full, 31.8 / 1.8 ms for OOS Recursive
+and 88.9 / 7.1 ms for OOS Cross Val.
+
+**All three languages now run on bit-identical input matrices** — each seeds a
+NumPy-compatible PCG64 with 0 and draws X, y, Z in that order, so the table
+measures implementations and not a mix of implementation and input. Until the Rust
+bench moved to `NumPyRng` it generated its own inputs from `StdRng` and a
+Box–Muller transform.
+
+The Rust column is a `--features blas` build, which is the like-for-like
+comparison: MatD runs on JNIBLAS-backed native OpenBLAS, so a default pure-Rust
+build is not the right baseline. Pure-Rust reads 0.054 / 3.54 / 4.51 ms on the
+same rows — about 2.3× slower on both OOS procedures, enough to flip OOS Recursive
+from a win to a loss, because those gemms are skinny (one operand has only `L+1`
+columns) and `matrixmultiply` handles that shape poorly. It reverses at the small
+size, where BLAS call overhead outweighs the kernel win: at T=200/N=30 OOS
+Recursive is *faster* pure-Rust (0.38 vs 0.51 ms). Neither build dominates, so the
+benchmark prints its `config:` line and figures should say which they are.
+
+IS Full stays close — both sides reduce to the same two batch solves. Measured in
+isolation MatD runs 0.25 ms; the figure above comes from a full benchmark run,
 where it shares JIT call-site profiles with the OOS procedures.
+
+The Linux and macOS tables below predate the Rust port and carry no Rust column;
+the crate has not been benchmarked on those platforms.
 
 Linux (Intel Core i5-6500, Ubuntu 24.04, vs Python 3.12.3 / system OpenBLAS):
 

@@ -16,6 +16,12 @@ import scala.sys.process.*
  * (Python vs Scala, with the ratio) in the same markdown style as
  * docs/MatDCheatSheet.md.
  *
+ * All three columns now run on bit-identical input matrices: each side seeds its
+ * NumPy-compatible PCG64 with 0 and draws X, y, Z in that order, so the table
+ * measures implementations rather than a mix of implementation and input. The
+ * Rust column used to generate its own inputs with `StdRng` and a Box-Muller
+ * transform, which made it the odd one out.
+ *
  * Run:  scala-cli jsrc/tprf3Bench.sc
  */
 object Tprf3Bench {

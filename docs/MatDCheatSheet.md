@@ -39,6 +39,49 @@ See [`jsrc/bench.sc`](../jsrc/bench.sc) and [`py/bench.py`](../py/bench.py) to r
 
 ---
 
+## 3PRF: Python vs Scala vs Rust
+
+The `rust/` companion crate implements the same three procedures, so 3PRF has a
+third column. Separate from the table above because it is a different run with a
+different methodology — medians of 25 timed calls rather than min times, and all
+three languages measured in one pass of `uni.apps.Tprf3Bench` so the ratios are
+internally consistent.
+
+| Operation (T=650, N=40, L=2) | Python | Scala | Rust | Py/Scala | Scala/Rust |
+|---|---:|---:|---:|---|---|
+| `3PRF IS Full` | 0.29 ms | 0.215 ms | 0.051 ms | **1.3× faster** | **4.2× faster** |
+| `3PRF OOS Recursive` | 30.6 ms | 1.845 ms | 1.42 ms | **16.6× faster** | **1.3× faster** |
+| `3PRF OOS Cross Val` | 84.3 ms | 6.179 ms | 2.06 ms | **13.6× faster** | **3.0× faster** |
+
+| Operation (T=200, N=30, L=2) | Python | Scala | Rust | Py/Scala | Scala/Rust |
+|---|---:|---:|---:|---|---|
+| `3PRF IS Full` | 0.12 ms | 0.072 ms | 0.015 ms | **1.7× faster** | **4.8× faster** |
+| `3PRF OOS Recursive` | 5.37 ms | 1.385 ms | 0.51 ms | **3.9× faster** | **2.7× faster** |
+| `3PRF OOS Cross Val` | 13.14 ms | 1.460 ms | 0.80 ms | **9.0× faster** | **1.8× faster** |
+
+**All three run on bit-identical inputs.** Each seeds a NumPy-compatible PCG64
+with 0 and draws X, y, Z in that order, so these measure implementations rather
+than a mix of implementation and input. The Rust bench previously used `StdRng`
+with a Box–Muller transform, which made its column the only one measured on
+different matrices — see `rust/src/numpy_rng.rs`.
+
+**Build configuration changes which language wins, so quote it.** The Rust column
+is `--features blas`, the like-for-like choice against JNIBLAS-backed Scala. A
+default pure-Rust build reads 0.054 / 3.54 / 4.51 ms on the large rows — roughly
+2.3× slower on both OOS procedures, enough to turn OOS Recursive from a 1.3× win
+into a 1.9× loss, because those gemms are skinny (one operand has only `L+1`
+columns) and `matrixmultiply` handles that shape badly. It inverts at the small
+size, where BLAS call overhead exceeds the kernel win: OOS Recursive is faster
+pure-Rust there (0.38 vs 0.51 ms), while OOS Cross Val still prefers BLAS
+(0.95 → 0.80 ms). The benchmark prints a `config:` line for this reason.
+
+Caveat on the Scala OOS rows: they benefit from v0.15.1 tuning the Scala side
+only, as described above, so Py/Scala is not like-for-like algorithm work. The
+Scala/Rust comparison is between two implementations that both carry the
+per-window cross-product downdates.
+
+---
+
 ## Performance vs Breeze
 
 Measured on the same machine: Breeze 2.1.0 vs uni.MatD 0.14.1 / Scala 3.8.2 / JVM 21; min times.

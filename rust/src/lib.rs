@@ -4,9 +4,11 @@
 extern crate blas_src;
 
 pub mod error;
+pub mod numpy_rng;
 pub mod t3prf;
 
 pub use error::Error;
+pub use numpy_rng::NumPyRng;
 pub use t3prf::Tprf3Result;
 pub use t3prf::estimate_3prf_is_full;
 pub use t3prf::estimate_3prf_oos_cv;

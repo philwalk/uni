@@ -1,3 +1,82 @@
+## Unreleased
+
+**BUG — `NumPyRNG.randn` tail draws were displaced by 0.2115 (`NumPyRNG.scala`)**
+
+- `ZIGNOR_R`, the Ziggurat's right edge, was `3.442619855899` — Marsaglia &
+  Tsang's constant for *their* 256-level table, not NumPy's `3.6541528853610088`.
+  It was also inconsistent with the file's own `ziggurat_nor_inv_r`, which is
+  NumPy's and is supposed to be its reciprocal
+- `ZIGNOR_R` is read in exactly one place, the tail sampler's `R + xx` return, and
+  in no comparison. So the effect was confined to draws beyond the ziggurat edge —
+  about 1 in 3900, or 0.026% — each returned 0.2115 too far from zero, with the
+  other 99.97% of draws bit-exact against NumPy. That is invisible to a
+  mean/variance check (it moves a 10,000-sample mean by ~6e-5) and to every
+  reproducibility test, since it was deterministic
+- **Impact:** anything reading the far tail — extreme quantiles, VaR/expected
+  shortfall, tail-dependence, rare-event Monte Carlo — was drawing from a
+  slightly wrong distribution. Ordinary uses of `Mat.randn`/`normal` were not
+  measurably affected
+- `nextLong`, `nextInt`, `nextDouble`, `uniform` and `nextBoundedInt` were never
+  affected: they do not touch the Ziggurat
+- Now verified against NumPy 2.4.6 draw-for-draw, and guarded three ways: the
+  generator refuses to emit tables whose `R` is not `1/inv_r`, and both test
+  suites pin specific tail draws to NumPy's exact bit patterns — an absolute
+  check, so regenerating the fixtures cannot bless a wrong constant
+
+**NEW — Rust port of `NumPyRNG` (`rust/src/numpy_rng.rs`)**
+
+- `NumPyRng` reproduces PCG64 XSL RR 128 and NumPy's SeedSequence expansion,
+  giving the same stream as the Scala class for the same seed. The 128-bit state
+  is a plain `u128` rather than the Scala version's two-`Long` split, which the
+  JVM needs and Rust does not
+- Exact by construction for `next_u64`, `next_i32`, `next_f64`, `uniform` and
+  `next_bounded_u32`: integer arithmetic plus one exactly-representable division
+  by 2^53
+- `randn` agrees with NumPy bit-for-bit, and with the JVM on all but ~2.5 tail
+  draws per million, where `Math.log1p` and C's `log1p` round differently by one
+  ulp. Never a control-flow divergence: over 6M draws the wedge's `exp`
+  comparison never disagreed, so the streams stay aligned rather than
+  desynchronizing. The parity fixture snaps `randn` to a 2^-40 grid for this
+  reason and this reason only
+- Ziggurat tables are generated from the Scala source by `py/gen_ziggurat_rs.py`
+  rather than transcribed, so the 768 constants cannot drift apart
+- Cross-checked by `uni.data.NumPyRngParitySuite` and
+  `rust/tests/numpy_rng_parity.rs` against one committed fixture
+  (`test-data/numpy-rng-parity/`), covering 6 seeds × 7 draw patterns; neither
+  side needs the other language installed. One pattern interleaves the methods,
+  which is the only way to pin the half-draw `nextBoundedInt` carries in state
+**Benchmark inputs are now identical across all three languages (`bench_tprf3.rs`)**
+
+- `rust/src/bin/bench_tprf3.rs` drew its inputs from `StdRng` seeded with 42 and
+  a Box–Muller transform, while `jsrc/tprf3Bench.sc` and `py/bench_tprf3.py` both
+  seed 0 and draw `randn`/`standard_normal` for X, y, Z in order. The Rust column
+  of the `uni.apps.Tprf3Bench` table was therefore measured on different matrices
+  than the other two — a confound in a table whose whole purpose is comparison
+- It now uses `NumPyRng::new(0)` with a row-major fill, verified element-for-element
+  against NumPy: `Mat`, NumPy and `ndarray` are all row-major, so the same value
+  lands at the same `(r, c)` in all three
+- Rust timings from before this change are not comparable with ones after it. No
+  committed table carried Rust numbers, so nothing published needed revising
+- Drops the `rand` dependency, which the benchmark was its only user of
+- `print_config` in the bench now documents what the `blas` feature is worth:
+  ~2.3× on both large OOS rows, enough to turn OOS Recursive from a 1.9× loss
+  against Scala into a 1.3× win, since Scala runs on JNIBLAS-backed OpenBLAS and a
+  default pure-Rust build is not the like-for-like baseline. It inverts at the
+  small size, where BLAS call overhead exceeds the kernel win
+
+**Docs — Rust crate and its 3PRF numbers (`README.md`, `docs/MatDCheatSheet.md`)**
+
+- New "Rust companion crate" section near the top of the README, covering the
+  bit-identical NumPy RNG, `randn`'s one-ulp JVM caveat, the 3PRF procedures and
+  the parity fixtures that pin them
+- The Windows 3PRF table now carries a Rust column, and the cheat sheet gains a
+  three-way section with both data sizes. Both state the build configuration,
+  because it decides which language wins
+- Figures come from a single `uni.apps.Tprf3Bench` run so the ratios are
+  internally consistent; the previously published median-of-3 two-way numbers are
+  retained in prose. The Linux and macOS tables are untouched and carry no Rust
+  column — the crate has not been benchmarked there
+
 ## v0.15.1 — 2026-08-05
 
 *v0.15.0 was built and published to the local Ivy repository but never released

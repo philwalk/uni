@@ -55,7 +55,6 @@ blas = ["ndarray/blas", "dep:blas-src", "dep:openblas-src"]
 [dependencies]
 ndarray = "0.17.2"
 rayon = "1.10"
-rand = "0.10.2"
 thiserror = "2"
 blas-src = { version = "0.11", optional = true, features = ["openblas"] }
 openblas-src = { version = "0.10", optional = true, features = ["system"] }

@@ -105,9 +105,17 @@ class NumPyRNG(seed: Long = 0L) {
     ((m >>> 32) & 0xFFFFFFFFL).toInt
   }
 
-  // Ziggurat constants for standard normal
-  private val ZIGNOR_R = 3.442619855899
-  
+  // Ziggurat constants for standard normal.
+  //
+  // ZIGNOR_R is the right edge of the layered region: draws beyond it are
+  // returned as R + xx by the tail sampler. It must be NumPy's value, and must
+  // be the reciprocal of ziggurat_nor_inv_r below — it is used nowhere else, so
+  // a wrong value shifts every tail draw by a constant and touches nothing
+  // else, which is exactly the kind of error no distributional smoke test
+  // notices. 3.442619855899 (Marsaglia & Tsang 2000, for their own 256-level
+  // table) was here previously and put every |z| > R draw out by 0.2115.
+  private val ZIGNOR_R = 3.6541528853610088
+
   // Precomputed Ziggurat tables
   private val (ziggurat_ki, ziggurat_wi, ziggurat_fi) = initZiggurat()
   private val ziggurat_nor_inv_r = 0.27366123732975827
