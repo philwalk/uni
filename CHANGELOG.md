@@ -22,6 +22,13 @@
   generator refuses to emit tables whose `R` is not `1/inv_r`, and both test
   suites pin specific tail draws to NumPy's exact bit patterns — an absolute
   check, so regenerating the fixtures cannot bless a wrong constant
+- Found by the Rust port below. Building a second implementation of the same
+  algorithm and demanding the two streams agree bit-for-bit is what exposed it:
+  the mismatch was 266 draws in a million, all displaced by an identical
+  0.2115, which is what identified `ZIGNOR_R` as the single constant involved.
+  Nothing weaker would have caught it — the draws are correctly distributed
+  apart from a shifted tail, so every distributional and reproducibility test in
+  the suite passed both before and after
 
 **NEW — Rust port of `NumPyRNG` (`rust/src/numpy_rng.rs`)**
 
@@ -45,6 +52,7 @@
   (`test-data/numpy-rng-parity/`), covering 6 seeds × 7 draw patterns; neither
   side needs the other language installed. One pattern interleaves the methods,
   which is the only way to pin the half-draw `nextBoundedInt` carries in state
+
 **Benchmark inputs are now identical across all three languages (`bench_tprf3.rs`)**
 
 - `rust/src/bin/bench_tprf3.rs` drew its inputs from `StdRng` seeded with 42 and
@@ -59,10 +67,82 @@
   committed table carried Rust numbers, so nothing published needed revising
 - Drops the `rand` dependency, which the benchmark was its only user of
 - `print_config` in the bench now documents what the `blas` feature is worth:
-  ~2.3× on both large OOS rows, enough to turn OOS Recursive from a 1.9× loss
-  against Scala into a 1.3× win, since Scala runs on JNIBLAS-backed OpenBLAS and a
+  ~2.3× on both large OOS rows, enough to turn OOS Recursive from a 2.2× loss
+  against Scala into a 1.2× win, since Scala runs on JNIBLAS-backed OpenBLAS and a
   default pure-Rust build is not the like-for-like baseline. It inverts at the
   small size, where BLAS call overhead exceeds the kernel win
+
+**BUG — `tprf3.py` autoproxy returned no OOS forecasts at all (`py/tprf3.py`)**
+
+- `mintrain` (OOS Recursive) and `min_nona` (OOS Rolling) were passed down as
+  `_t3prf`'s `min_obs`, which also gated **pass 2** and the **out-of-sample
+  fit** — both cross-sectional regressions whose observation count is N, the
+  predictor count, not T. With the default `mintrain = T/2 = 45` and N = 12,
+  `_ols` demanded 45 valid rows out of 12 and returned NaN for every one, so
+  `Sigma` came out all-NaN and every forecast with it
+- Symptom was a clean cliff at `mintrain = N`: with N = 12, mintrain 12 produced
+  77 forecasts and mintrain 13 produced **zero**. Affected autoproxy OOS
+  Recursive and OOS Rolling; Cross Val was spared only because its call site
+  never passed `min_obs`
+- Both sites now take the identification floor — one more observation than the
+  design has parameters — leaving `min_obs` to gate pass 1, where a time-series
+  threshold belongs. Restores 44 and 59 forecasts on a T=90/N=12 case, matching
+  `tprf3fast.py` to 6e-13
+- This is the same defect v0.15.1 fixed in `Tprf3.scala` (`pass2MinObs = L + 1`).
+  Scala had corrected *both* its pass 2 and its OOS fit; Python had neither, and
+  fixing only pass 2 left the point forecast NaN while `yhat` came out correct —
+  so the visible symptom survived the first half of the fix
+- Bit-identical on all twelve fixture/procedure combinations in
+  `test-data/tprf3-parity/`, which all have N ≥ 10 and so never tripped it
+
+**`estimate3prf_fast` now rejects NaN input instead of returning all-NaN (`py/tprf3fast.py`)**
+
+- The vectorized passes batch every per-column and per-row regression into one
+  solve, which cannot carry the per-regression NaN masks `tprf3.py` applies. A
+  single NaN therefore poisoned `AᵀA` and the function returned an all-NaN
+  series, giving a caller no way to distinguish an unsupported input from a model
+  that fitted nothing
+- Raises `ValueError` naming the offending array and its NaN count, and pointing
+  at `tprf3.estimate3prf` for data with missing values. NaN support is not
+  implemented rather than broken — the Rust port declines the same way
+- `tprf3.py` is unchanged here and still filters NaN rows per regression
+
+**NumPy 3PRF gets the v0.15.1 OOS optimizations (`py/tprf3fast.py`)**
+
+- v0.15.1 tuned the Scala OOS windows only, which made the published Py/Scala OOS
+  ratios a comparison between differently-optimized algorithms rather than between
+  implementations. All three techniques are now in `tprf3fast.py`, so the
+  comparison is like-for-like again:
+  - **Pass-1 cross products by downdate.** Every OOS Recursive and Cross Val
+    window keeps all rows but one contiguous block, so `dZᵀdZ` and `dZᵀX` are the
+    full-sample ones minus that block's contribution — O(drop·N·L) rather than
+    O(keep·N·L). For a Cross Val window dropping one row that is O(N·L) instead
+    of O(T·N·L)
+  - **Column std by downdate**, via
+    `Σ_kept(x−m_keep)² = (Σ_all(x−μ)² − Σ_drop(x−μ)²) − keep·(m_keep−μ)²`, with
+    the same majority-kept guard and direct-recompute fallback as Scala and Rust
+  - **Scaling folded onto the (L+1)-column operand.** `Zᵀ(X·D⁻¹) == (ZᵀX)·D⁻¹`
+    and `(X·D⁻¹)·P == X·(D⁻¹·P)`, so the normalised window is never materialised —
+    which also removes the per-window keep×N gather and divide
+  - **Pass 2 in natural order.** `dpᵀ·Xᵀ == (X·dp)ᵀ`, so the small keep×(L+1)
+    product is formed and transposed instead of taking products against Xᵀ. For
+    Cross Val, pass 2 is a cross-sectional regression and therefore independent
+    per row, so running it over all T rows yields the held-out row's design as a
+    by-product: the forecast costs nothing and the only per-window gather is
+    `L+1` wide
+- Measured at T=650/N=40/L=2: OOS Cross Val 84.3 → 38.6 ms (2.2×), OOS Recursive
+  30.6 → 21.7 ms (1.4×). Scala's lead on Cross Val halves as a result — 13.6×
+  against the un-ported NumPy, 6.7× against the ported one — which is the measure
+  of how much of the previously published gap was algorithm rather than language.
+  At T=200/N=30: OOS Cross Val 13.1 → 8.5 ms, OOS Recursive 5.4 → 4.7 ms
+- IS Full is untouched and bit-identical. The OOS forecasts move by ~1e-16 from
+  reassociation, well inside the 1e-12/1e-9 tolerance the cross-language fixtures
+  already use; verified against both `test-data/tprf3-parity/`'s Scala golden
+  values and `py/tprf3.py`, the loop-based reference, on 2424 recorded quantities
+- Unchanged where the downdate does not apply, matching where Scala and Rust draw
+  the same line: autoproxy rebuilds the proxies each inner iteration, the
+  downdates have no NaN-aware form, and OOS Rolling's kept set is the short window
+  itself, so a direct pass is already cheaper
 
 **Docs — Rust crate and its 3PRF numbers (`README.md`, `docs/MatDCheatSheet.md`)**
 
@@ -72,10 +152,12 @@
 - The Windows 3PRF table now carries a Rust column, and the cheat sheet gains a
   three-way section with both data sizes. Both state the build configuration,
   because it decides which language wins
-- Figures come from a single `uni.apps.Tprf3Bench` run so the ratios are
-  internally consistent; the previously published median-of-3 two-way numbers are
-  retained in prose. The Linux and macOS tables are untouched and carry no Rust
-  column — the crate has not been benchmarked there
+- Python and Scala figures come from a single `uni.apps.Tprf3Bench` run so those
+  ratios are internally consistent; the Rust column is a `--features blas` build
+  measured separately, cross-checked by its pure-Rust baseline landing within 5% of
+  the pure-Rust column the same run produced. The previously published median-of-3
+  two-way numbers are retained in prose. The Linux and macOS tables are untouched
+  and carry no Rust column — the crate has not been benchmarked there
 
 ## v0.15.1 — 2026-08-05
 

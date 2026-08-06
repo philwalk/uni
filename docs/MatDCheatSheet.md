@@ -35,7 +35,7 @@ See [`jsrc/bench.sc`](../jsrc/bench.sc) and [`py/bench.py`](../py/bench.py) to r
 - Reductions (`sum`, `mean`, `std`): NumPy 2.4.x's SIMD pairwise summation had briefly overtaken MatD here; the v0.14.1 chunked multi-accumulator parallel reduction reclaims all three (4.3–5.6×) by aggregating multi-core memory bandwidth.
 - Custom scalar functions: `mapParallel` vs `np.vectorize` shows a ~120× JVM advantage; the Python interpreter overhead dominates.
 - Matmul: on this machine netlib's JNIBLAS could not load `libopenblas.dll`, so MatD ran the pure-JVM fallback and lost ~4× to NumPy's native OpenBLAS. Where JNIBLAS loads (see the Linux/macOS tables in the README) both call OpenBLAS and matmul is level.
-- 3PRF: through v0.14.1 both implementations were kept equivalently optimized, so the comparison stayed between equivalent algorithms. v0.14.0 rewrote the K&P `J(k)` centering products as O(T·N) centering on **both** sides (previously each built a dense T×T matrix, and the comparison mostly measured that shared waste) and freed the Scala OOS hot path of `Double` autoboxing. v0.14.1 tuned both sides again: Python's three `lstsq` passes became normal-equations solves with NaN-gated std/mean paths, and Scala's OOS windows gained fused, copy-free standardization. **v0.15.1 tuned the Scala side only** — the NumPy twin is unchanged since v0.14.1, so the OOS figures above are no longer like-for-like algorithm work. Scala's OOS windows now push the column scaling onto an (L+1)-column operand rather than materializing `X·D⁻¹`, run pass 2 in natural order, and derive each window's pass-1 cross products by downdating full-sample ones; the same techniques are portable to NumPy but have not been applied there. IS Full remains a tie — both sides reduce to the same two batch solves. 3PRF timings: Python 3.13.13 / NumPy on scipy-openblas, medians of 25 timed calls after warm-up, themselves medians of 3 runs (`jsrc/tprf3Bench.sc`).
+- 3PRF: through v0.14.1 both implementations were kept equivalently optimized, so the comparison stayed between equivalent algorithms. v0.14.0 rewrote the K&P `J(k)` centering products as O(T·N) centering on **both** sides (previously each built a dense T×T matrix, and the comparison mostly measured that shared waste) and freed the Scala OOS hot path of `Double` autoboxing. v0.14.1 tuned both sides again: Python's three `lstsq` passes became normal-equations solves with NaN-gated std/mean paths, and Scala's OOS windows gained fused, copy-free standardization. v0.15.1 tuned the Scala side only, briefly making the OOS figures a comparison between differently-optimized algorithms; **those techniques have since been ported to NumPy too** (see the three-way section below), so the OOS rows are like-for-like again. Both sides push the column scaling onto an (L+1)-column operand rather than materializing `X·D⁻¹`, run pass 2 in natural order, and derive each window's pass-1 cross products and column std by downdating full-sample ones. Note the 3PRF rows in the table above were measured before that port and understate NumPy. IS Full remains a tie — both sides reduce to the same two batch solves. 3PRF timings: Python 3.13.13 / NumPy on scipy-openblas, medians of 25 timed calls after warm-up, themselves medians of 3 runs (`jsrc/tprf3Bench.sc`).
 
 ---
 
@@ -43,21 +43,22 @@ See [`jsrc/bench.sc`](../jsrc/bench.sc) and [`py/bench.py`](../py/bench.py) to r
 
 The `rust/` companion crate implements the same three procedures, so 3PRF has a
 third column. Separate from the table above because it is a different run with a
-different methodology — medians of 25 timed calls rather than min times, and all
-three languages measured in one pass of `uni.apps.Tprf3Bench` so the ratios are
-internally consistent.
+different methodology: medians of 25 timed calls rather than min times. Python and
+Scala are measured in one pass of `uni.apps.Tprf3Bench`, so Py/Scala is internally
+consistent; the Rust column is a `--features blas` build measured separately, whose
+own pure-Rust baseline lands within 5% of the pure-Rust column this run produced.
 
 | Operation (T=650, N=40, L=2) | Python | Scala | Rust | Py/Scala | Scala/Rust |
 |---|---:|---:|---:|---|---|
-| `3PRF IS Full` | 0.29 ms | 0.215 ms | 0.051 ms | **1.3× faster** | **4.2× faster** |
-| `3PRF OOS Recursive` | 30.6 ms | 1.845 ms | 1.42 ms | **16.6× faster** | **1.3× faster** |
-| `3PRF OOS Cross Val` | 84.3 ms | 6.179 ms | 2.06 ms | **13.6× faster** | **3.0× faster** |
+| `3PRF IS Full` | 0.27 ms | 0.202 ms | 0.051 ms | **1.3× faster** | **4.0× faster** |
+| `3PRF OOS Recursive` | 21.7 ms | 1.646 ms | 1.42 ms | **13.2× faster** | **1.2× faster** |
+| `3PRF OOS Cross Val` | 38.6 ms | 5.735 ms | 2.06 ms | **6.7× faster** | **2.8× faster** |
 
 | Operation (T=200, N=30, L=2) | Python | Scala | Rust | Py/Scala | Scala/Rust |
 |---|---:|---:|---:|---|---|
 | `3PRF IS Full` | 0.12 ms | 0.072 ms | 0.015 ms | **1.7× faster** | **4.8× faster** |
-| `3PRF OOS Recursive` | 5.37 ms | 1.385 ms | 0.51 ms | **3.9× faster** | **2.7× faster** |
-| `3PRF OOS Cross Val` | 13.14 ms | 1.460 ms | 0.80 ms | **9.0× faster** | **1.8× faster** |
+| `3PRF OOS Recursive` | 4.72 ms | 1.317 ms | 0.51 ms | **3.6× faster** | **2.6× faster** |
+| `3PRF OOS Cross Val` | 8.51 ms | 1.115 ms | 0.80 ms | **7.6× faster** | **1.4× faster** |
 
 **All three run on bit-identical inputs.** Each seeds a NumPy-compatible PCG64
 with 0 and draws X, y, Z in that order, so these measure implementations rather
@@ -67,18 +68,28 @@ different matrices — see `rust/src/numpy_rng.rs`.
 
 **Build configuration changes which language wins, so quote it.** The Rust column
 is `--features blas`, the like-for-like choice against JNIBLAS-backed Scala. A
-default pure-Rust build reads 0.054 / 3.54 / 4.51 ms on the large rows — roughly
-2.3× slower on both OOS procedures, enough to turn OOS Recursive from a 1.3× win
-into a 1.9× loss, because those gemms are skinny (one operand has only `L+1`
+default pure-Rust build reads 0.052 / 3.69 / 4.31 ms on the large rows — roughly
+2.3× slower on both OOS procedures, enough to turn OOS Recursive from a 1.2× win
+into a 2.2× loss, because those gemms are skinny (one operand has only `L+1`
 columns) and `matrixmultiply` handles that shape badly. It inverts at the small
 size, where BLAS call overhead exceeds the kernel win: OOS Recursive is faster
 pure-Rust there (0.38 vs 0.51 ms), while OOS Cross Val still prefers BLAS
-(0.95 → 0.80 ms). The benchmark prints a `config:` line for this reason.
+(0.92 → 0.80 ms). The benchmark prints a `config:` line for this reason.
 
-Caveat on the Scala OOS rows: they benefit from v0.15.1 tuning the Scala side
-only, as described above, so Py/Scala is not like-for-like algorithm work. The
-Scala/Rust comparison is between two implementations that both carry the
-per-window cross-product downdates.
+Porting the v0.15.1 optimizations to NumPy took OOS Cross Val from 84.3 to 38.6 ms
+and OOS Recursive from 30.6 to 21.7 ms at the large size. Scala's lead on Cross Val
+halved as a result — 13.6× against the un-ported NumPy, 6.7× against the ported
+one — which is a direct measure of how much of the published gap had been algorithm
+rather than language.
+
+All three implementations now carry the same OOS window optimizations: the column
+scaling folded onto an (L+1)-column operand rather than materializing `X·D⁻¹`,
+pass 2 in natural order, and per-window pass-1 cross products and column std
+obtained by downdating full-sample ones. v0.15.1 had applied these to Scala only,
+which briefly made Py/Scala a comparison between differently-optimized algorithms;
+that is no longer the case. NumPy keeps the direct per-window path for autoproxy
+(the proxies are rebuilt each inner iteration) and for NaN input (the downdates
+have no NaN-aware form), matching where Scala and Rust draw the same line.
 
 ---
 

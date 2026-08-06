@@ -100,6 +100,150 @@ def _ols(A: np.ndarray, Y: np.ndarray) -> np.ndarray:
         return np.linalg.lstsq(A, Y, rcond=None)[0]
 
 
+def _solve_normal(AtA: np.ndarray, AtY: np.ndarray) -> np.ndarray:
+    """`_ols` for callers that already hold the cross-products `AᵀA` and `AᵀY`.
+
+    The OOS windows below build those by downdating full-sample quantities, so
+    the design matrix `A` is never assembled and the `lstsq(A, Y)` fallback in
+    `_ols` is not available. The degenerate branch resolves the normal system
+    instead; for a rank-deficient design that picks a different least-squares
+    solution than `_ols` would, which only matters in a regime where the
+    forecast is meaningless anyway."""
+    try:
+        return np.linalg.solve(AtA, AtY)
+    except np.linalg.LinAlgError:
+        return np.linalg.lstsq(AtA, AtY, rcond=None)[0]
+
+
+@dataclass(frozen=True)
+class _FullSample:
+    """Full-sample quantities shared read-only across the windows of an OOS run.
+
+    Every window of OOS Recursive and OOS Cross Val keeps all rows but one
+    contiguous block — the suffix `[end, T)` for Recursive, an interior block for
+    Cross Val — so its pass-1 cross products are the full-sample ones minus that
+    block's contribution. That makes pass 1 an O(drop·N·L) downdate instead of an
+    O(keep·N·L) product, which for a Cross Val window dropping a single row is
+    the difference between O(N·L) and O(T·N·L)."""
+    dZ:      np.ndarray   # [1 | Z]                (T, L+1)
+    ZtZ:     np.ndarray   # dZᵀ·dZ                 (L+1, L+1)
+    ZtX:     np.ndarray   # dZᵀ·Xn                 (L+1, N)
+    col_sum: np.ndarray   # column sums of Xn      (N,)
+    col_ssd: np.ndarray   # Σ(x − μ)² per column   (N,)
+
+
+def _full_sample(Xn: np.ndarray, Z: np.ndarray) -> _FullSample:
+    T = Xn.shape[0]
+    dZ = np.column_stack([np.ones(T), Z])
+    return _FullSample(
+        dZ=dZ, ZtZ=dZ.T @ dZ, ZtX=dZ.T @ Xn,
+        col_sum=Xn.sum(axis=0),
+        col_ssd=((Xn - Xn.mean(axis=0)) ** 2).sum(axis=0),
+    )
+
+
+def _kept_inv_std(Xn: np.ndarray, lo: int, hi: int, full: _FullSample) -> np.ndarray:
+    """Reciprocal column std devs of the kept set (every row but `[lo, hi)`).
+
+    Derived from the precomputed full-sample stats via
+
+        Σ_kept(x − m_keep)² = (Σ_all(x − μ)² − Σ_drop(x − μ)²) − keep·(m_keep − μ)²
+
+    an O(drop·N) downdate rather than an O(keep·N) pass. Cancellation is
+    negligible while the kept set is the majority; when it is not, the direct
+    recompute is cheap in that regime anyway, so take it. Not bit-identical to
+    the two-pass form — expect ~1e-13 drift, the same trade the Scala and Rust
+    implementations make."""
+    rows = Xn.shape[0]
+    keep = rows - (hi - lo)
+    if keep < 2 or keep * 2 < rows:
+        kept = np.concatenate([Xn[:lo], Xn[hi:]]) if hi > lo else Xn
+        return 1.0 / _std_cols(kept, False).ravel()
+
+    mu       = full.col_sum / rows
+    drop     = Xn[lo:hi]
+    drop_sum = drop.sum(axis=0)
+    drop_ssd = ((drop - mu) ** 2).sum(axis=0)
+    mu_keep  = (full.col_sum - drop_sum) / keep
+    shift    = mu_keep - mu
+    # clamp the tiny negative that rounding can leave when a column is constant
+    ss = np.maximum((full.col_ssd - drop_ssd) - keep * shift * shift, 0.0)
+    s  = np.sqrt(ss / (keep - 1))
+    s[s == 0.0] = 1.0
+    return 1.0 / s
+
+
+def _pass1_downdated(full: _FullSample, Xn: np.ndarray, lo: int, hi: int,
+                     inv_sd: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Pass-1 cross products for the kept set, and the scaled right-hand side.
+
+    Column scaling commutes with the product pass 1 takes against X:
+
+        Zᵀ·(X·D⁻¹) == (Zᵀ·X)·D⁻¹
+
+    so the scaling lands on the (L+1)×N result instead of on a keep×N copy of X,
+    and the normalised window is never materialised."""
+    dz_drop = full.dZ[lo:hi]
+    ZtZ = full.ZtZ - dz_drop.T @ dz_drop
+    ZtX = full.ZtX - dz_drop.T @ Xn[lo:hi]
+    return ZtZ, ZtX * inv_sd
+
+
+def _dp_from_pass1(ZtZ: np.ndarray, ZtX: np.ndarray, N: int) -> np.ndarray:
+    """[1 | Phi] — the pass-2 design, N×(L+1)."""
+    return np.column_stack([np.ones(N), _solve_normal(ZtZ, ZtX)[1:].T])
+
+
+def _rec_step(full: _FullSample, Xn: np.ndarray, y: np.ndarray,
+              t: int, end: int, has_nan: bool) -> float:
+    """One OOS Recursive window: fit on the prefix `[0, end)`, forecast row `t`.
+
+    The prefix is the full sample minus the suffix `[end, T)`, so pass 1 and the
+    column std both come from downdating that block. Pass 2 runs in natural
+    order — `dpᵀ·Xᵀ == (X·dp)ᵀ`, so the small end×(L+1) product is formed and
+    transposed rather than materialising X's transpose — and the scaling rides on
+    the N×(L+1) operand, since `(X·D⁻¹)·dp == X·(D⁻¹·dp)`."""
+    T, N   = Xn.shape
+    inv_sd = _kept_inv_std(Xn, end, T, full)
+    dp     = _dp_from_pass1(*_pass1_downdated(full, Xn, end, T, inv_sd), N)
+    dps    = dp * inv_sd[:, None]
+    AtA2   = dp.T @ dp
+
+    Sigma = _solve_normal(AtA2, (Xn[:end] @ dps).T)[1:].T      # end×L
+    dS    = np.column_stack([np.ones(end), Sigma])
+    beta  = _solve_normal(dS.T @ dS, dS.T @ y[:end])
+
+    sigma_t = _solve_normal(AtA2, (Xn[t:t + 1] @ dps).T)[1:]
+    return float(np.insert(sigma_t.ravel(), 0, 1.0) @ beta.ravel())
+
+
+def _cv_step(full: _FullSample, Xn: np.ndarray, y: np.ndarray,
+             t: int, lo: int, hi: int, has_nan: bool) -> tuple[float, float]:
+    """One OOS Cross Val window: fit outside `[lo, hi)`, forecast row `t`.
+
+    X is never gathered. Pass 2 is a *cross-sectional* regression, independent
+    per row, so running it over all T rows costs one extra row and yields the
+    held-out row's design as a by-product — the forecast comes free and the only
+    per-window gather is `L+1` wide instead of `N` wide."""
+    T, N   = Xn.shape
+    inv_sd = _kept_inv_std(Xn, lo, hi, full)
+    dp     = _dp_from_pass1(*_pass1_downdated(full, Xn, lo, hi, inv_sd), N)
+    dps    = dp * inv_sd[:, None]
+    AtA2   = dp.T @ dp
+
+    Sigma = _solve_normal(AtA2, (Xn @ dps).T)[1:].T            # T×L, row t included
+    if hi > lo:
+        Sig_k = np.concatenate([Sigma[:lo], Sigma[hi:]])
+        y_k   = np.concatenate([y[:lo], y[hi:]])
+    else:
+        Sig_k, y_k = Sigma, y
+
+    dS   = np.column_stack([np.ones(Sig_k.shape[0]), Sig_k])
+    beta = _solve_normal(dS.T @ dS, dS.T @ y_k)
+    yhat = float(np.insert(Sigma[t], 0, 1.0) @ beta.ravel())
+    return yhat, _col_mean(y_k, has_nan)
+
+
 def _encnew(fore_err1: np.ndarray, fore_err2: np.ndarray) -> float:
     """Clark-McCracken (2001) ENC-NEW statistic."""
     e1, e2 = fore_err1.ravel(), fore_err2.ravel()
@@ -185,6 +329,14 @@ def estimate3prf_fast(
       - X is normalised globally once at entry.
       - OOS loops re-normalise each training window (per-window on top of global).
 
+    Raises
+    ------
+    ValueError
+        If X, y or Z contains NaN. The batched solves cannot carry the
+        per-regression NaN masks that tprf3.estimate3prf applies, so NaN input is
+        rejected rather than silently yielding an all-NaN series. Use
+        tprf3.estimate3prf for data with missing values.
+
     Parameters
     ----------
     n_jobs : int
@@ -218,11 +370,31 @@ def estimate3prf_fast(
 
     window = (abs(int(window[0])), abs(int(window[1])))
 
-    # ── NaN detection (once) — gates the fast NaN-free std/mean paths ────────
-    has_nan = bool(
-        np.isnan(X).any() or np.isnan(y).any()
-        or (Z_mat is not None and np.isnan(Z_mat).any())
-    )
+    # ── NaN input is rejected, not tolerated ─────────────────────────────────
+    #
+    # tprf3.py drops NaN rows per regression, and each of the N pass-1 fits may
+    # drop a different row set — which is exactly what batching them into single
+    # solves gives up. A NaN here therefore poisons AᵀA and every result derived
+    # from it, and the function used to return an all-NaN series: a caller could
+    # not tell an unsupported input from a model that fitted nothing. Fail
+    # instead, and name the offending array. Use estimate3prf from tprf3.py for
+    # NaN data; the Rust port declines the same way ("inputs must be NaN-free").
+    offending = [(name, int(np.isnan(arr).sum()))
+                 for name, arr in (("X", X), ("y", y), ("Z", Z_mat))
+                 if arr is not None and np.isnan(arr).any()]
+    if offending:
+        found = ", ".join(f"{name} ({n} NaN)" for name, n in offending)
+        raise ValueError(
+            f"estimate3prf_fast does not support NaN input; found NaN in: {found}. "
+            "The vectorized passes batch every per-column and per-row regression "
+            "into one solve, which cannot carry a per-regression NaN mask. "
+            "Use tprf3.estimate3prf, which filters NaN rows per regression."
+        )
+    # Constant from here on. The `has_nan` parameters downstream are kept rather
+    # than stripped: they mark which steps would need a NaN-aware form if this
+    # ever grows one, and `_std_cols`/`_col_mean` are shared with the NaN-aware
+    # `_t3prf_fast` wrapper.
+    has_nan = False
 
     # ── global normalisation (matches tprf3.py) ──────────────────────────────
     Xstd = _std_cols(X, has_nan)
@@ -233,6 +405,17 @@ def estimate3prf_fast(
     Z_final   = Z_mat
 
     nw = os.cpu_count() if n_jobs == -1 else max(1, n_jobs)
+
+    # Full-sample cross products, shared read-only by every window of the two
+    # procedures whose kept set is "all rows but one contiguous block". Built
+    # only where the downdate is valid: autoproxy rebuilds Z on every inner
+    # iteration so there is nothing to precompute, and the downdates have no
+    # NaN-aware form, so those two cases keep the direct per-window path.
+    # OOS Rolling is excluded for a different reason — its kept set is the small
+    # contiguous window itself, so a direct pass is already the cheap side.
+    full: Optional[_FullSample] = None
+    if (not autoproxy) and (not has_nan) and procedure in ('OOS Recursive', 'OOS Cross Val'):
+        full = _full_sample(Xn, Z_mat)
 
     # ── IS Full ───────────────────────────────────────────────────────────────
     if procedure == 'IS Full':
@@ -256,6 +439,9 @@ def estimate3prf_fast(
             # selects the complement directly, avoiding setdiff1d's hash/sort.
             lo = max(t - window[0], 0)
             hi = min(t - window[0] + window[1], T)
+            if full is not None:
+                f_t, rf = _cv_step(full, Xn, y, t, lo, hi, has_nan)
+                return t, f_t, rf
             if hi > lo:
                 keep = np.ones(T, dtype=bool); keep[lo:hi] = False
                 Xt0 = Xn[keep]; yt = y[keep]
@@ -292,6 +478,8 @@ def estimate3prf_fast(
             # Training rows are the contiguous prefix [0, end); slicing yields a
             # view (no copy) instead of fancy-indexing a freshly built index array.
             end = t - 1 - gap
+            if full is not None:
+                return t, _rec_step(full, Xn, y, t, end, has_nan), _col_mean(y[:end], has_nan)
             Xt0 = Xn[:end]; Xts = _std_cols(Xt0, has_nan); Xt = Xt0 / Xts
             oos = Xn[t:t+1] / Xts
             yt  = y[:end]

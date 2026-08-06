@@ -91,13 +91,20 @@ def _t3prf(
             phi = _ols(X[:, i:i+1], np.hstack([_iota(T), Z]), min_obs)
             Phi[i, :] = phi[1:].ravel()     # drop intercept
 
-    # Pass 2: regress each cross-section row on Phi
+    # Pass 2 — cross-sectional: each row's N predictor values are regressed on
+    # Phi, so this fit has N observations, not T. `min_obs` is a time-series
+    # guard and belongs on pass 1; applying it here rejected every row whenever
+    # N < min_obs, leaving Sigma all-NaN and silently returning NaN forecasts.
+    # The floor that actually applies is identification — one more observation
+    # than the design has parameters. Matches the same fix on the Scala side
+    # (`Tprf3.scala`, `pass2MinObs = L + 1` for its intercept-free pls design).
     for t in range(T):
         if pls:
-            sigma = _ols(Xd[t:t+1, :].T, Phi, min_obs)
+            sigma = _ols(Xd[t:t+1, :].T, Phi, Phi.shape[1] + 1)
             Sigma[t, :] = sigma.ravel()
         else:
-            sigma = _ols(X[t:t+1, :].T, np.hstack([_iota(N), Phi]), min_obs)
+            design = np.hstack([_iota(N), Phi])
+            sigma = _ols(X[t:t+1, :].T, design, design.shape[1] + 1)
             Sigma[t, :] = sigma[1:].ravel()  # drop intercept
 
     # Pass 3: regress y on Sigma
@@ -106,13 +113,19 @@ def _t3prf(
     yhat  = Xaug @ beta
 
     # Out-of-sample point forecast
+    # The held-out row's fit is pass 2 applied to one more row, so it is
+    # cross-sectional too and takes the identification floor rather than the
+    # time-series `min_obs` — same reasoning as pass 2 above. Gating it on
+    # `min_obs` left `yhat` correct while returning a NaN point forecast, so the
+    # only visible symptom was an empty OOS forecast series.
     yhatt = np.nan
     if oos_x is not None:                    # oos_x is (1, N)
         if pls:
-            sigma_t = _ols((oos_x - Xm).T, Phi, min_obs)
+            sigma_t = _ols((oos_x - Xm).T, Phi, Phi.shape[1] + 1)
             yhatt = float(np.hstack([[1.0], sigma_t.ravel()]) @ beta.ravel())
         else:
-            sigma_t = _ols(oos_x.T, np.hstack([_iota(N), Phi]), min_obs)
+            design = np.hstack([_iota(N), Phi])
+            sigma_t = _ols(oos_x.T, design, design.shape[1] + 1)
             yhatt = float(np.hstack([[1.0], sigma_t[1:].ravel()]) @ beta.ravel())
 
     return yhat, float(yhatt)

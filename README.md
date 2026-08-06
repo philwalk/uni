@@ -50,12 +50,6 @@ the other language installed. The RNG fixtures additionally pin specific draws t
 NumPy's own bit patterns as absolute values — a check that regenerating the
 fixtures cannot launder.
 
-Being able to compare the two directly is the point: it is what surfaced a
-long-standing bug in the Scala `randn` tail, where `ZIGNOR_R` held Marsaglia &
-Tsang's constant instead of NumPy's and displaced every draw beyond the ziggurat
-edge (about 1 in 3900) by 0.2115 — invisible to every distributional and
-reproducibility test in the suite.
-
 ```bash
 cd rust && make all          # test, fmt, clippy, file-size check
 cargo run --release --bin bench_tprf3
@@ -188,25 +182,44 @@ products as O(T·N) centering on both sides, and v0.14.1 tuned both again — Py
 three `lstsq` passes became normal-equations solves and its std/mean paths are
 NaN-gated; Scala's OOS windows gained fused, copy-free standardization.
 
-**v0.15.1 tuned the Scala side only** — the NumPy twin is unchanged since v0.14.1, so
-the OOS gains below are not like-for-like algorithm work. The Scala OOS windows now
-push the column scaling onto an (L+1)-column operand instead of materializing `X·D⁻¹`,
-run pass 2 in natural order, and derive each window's pass-1 cross products by
-downdating full-sample ones. The techniques are portable to NumPy; they simply have
-not been applied there yet.
+v0.15.1 tuned the Scala side only, which briefly made the OOS rows a comparison
+between differently-optimized algorithms. **Those three techniques are now applied
+to NumPy as well**, so the OOS comparison is back to being like-for-like: both
+sides push the column scaling onto an (L+1)-column operand instead of materializing
+`X·D⁻¹`, run pass 2 in natural order, and derive each window's pass-1 cross
+products — and the per-window column std — by downdating full-sample ones. The
+same three are in the Rust port. For a Cross Val window dropping a single row,
+downdating turns pass 1 from O(T·N·L) into O(N·L).
+
+NumPy keeps the direct per-window path where the downdate does not apply:
+autoproxy rebuilds the proxies each inner iteration, so there is nothing to
+precompute, and the downdates have no NaN-aware form. OOS Rolling is excluded for
+a different reason — its kept set is the short window itself, so a direct pass is
+already the cheap side.
 
 | Operation | Python | MatD | Rust | Py/MatD | MatD/Rust |
 | :--- | ---: | ---: | ---: | :--- | :--- |
-| `3PRF IS Full (T=650, N=40, L=2)` | 0.29 ms | 0.215 ms | 0.051 ms | **1.3× faster** | **4.2× faster** |
-| `3PRF OOS Recursive (T=650, N=40, L=2)` | 30.6 ms | 1.845 ms | 1.42 ms | **16.6× faster** | **1.3× faster** |
-| `3PRF OOS Cross Val (T=650, N=40, L=2)` | 84.3 ms | 6.179 ms | 2.06 ms | **13.6× faster** | **3.0× faster** |
+| `3PRF IS Full (T=650, N=40, L=2)` | 0.27 ms | 0.202 ms | 0.051 ms | **1.3× faster** | **4.0× faster** |
+| `3PRF OOS Recursive (T=650, N=40, L=2)` | 21.7 ms | 1.646 ms | 1.42 ms | **13.2× faster** | **1.2× faster** |
+| `3PRF OOS Cross Val (T=650, N=40, L=2)` | 38.6 ms | 5.735 ms | 2.06 ms | **6.7× faster** | **2.8× faster** |
 
-All three columns come from one run of [`uni.apps.Tprf3Bench`](src/main/scala/apps/Tprf3Bench.scala),
-which measures Python and Scala in the same process and shells out to the prebuilt
-Rust binary — so the ratios are internally consistent rather than spliced across
-sessions. Earlier releases published median-of-3 figures for the two-way
-comparison; those read 0.31 / 0.36 ms for IS Full, 31.8 / 1.8 ms for OOS Recursive
-and 88.9 / 7.1 ms for OOS Cross Val.
+Porting those optimizations to NumPy moved OOS Cross Val from 84.3 to 38.6 ms and
+OOS Recursive from 30.6 to 21.7 ms, which halved MatD's lead on Cross Val — it read
+13.6× against the un-ported NumPy and reads 6.7× against the ported one. That
+difference is the measure of how much of the earlier gap was algorithm rather than
+language.
+
+Python and MatD come from one run of [`uni.apps.Tprf3Bench`](src/main/scala/apps/Tprf3Bench.scala),
+which measures both in the same process, so the Py/MatD ratios are internally
+consistent rather than spliced across sessions. The Rust column is from a
+`--features blas` build measured separately — see below for why that is the right
+baseline. That run's pure-Rust figures (3.54 / 4.51 ms on the two OOS rows) sit
+within 5% of the pure-Rust column this run produced (3.69 / 4.31 ms), which is the
+check that the two sessions are comparable at all.
+
+Earlier releases published median-of-3 figures for the two-way comparison; those
+read 0.31 / 0.36 ms for IS Full, 31.8 / 1.8 ms for OOS Recursive and 88.9 / 7.1 ms
+for OOS Cross Val.
 
 **All three languages now run on bit-identical input matrices** — each seeds a
 NumPy-compatible PCG64 with 0 and draws X, y, Z in that order, so the table
@@ -215,14 +228,15 @@ bench moved to `NumPyRng` it generated its own inputs from `StdRng` and a
 Box–Muller transform.
 
 The Rust column is a `--features blas` build, which is the like-for-like
-comparison: MatD runs on JNIBLAS-backed native OpenBLAS, so a default pure-Rust
-build is not the right baseline. Pure-Rust reads 0.054 / 3.54 / 4.51 ms on the
-same rows — about 2.3× slower on both OOS procedures, enough to flip OOS Recursive
-from a win to a loss, because those gemms are skinny (one operand has only `L+1`
-columns) and `matrixmultiply` handles that shape poorly. It reverses at the small
-size, where BLAS call overhead outweighs the kernel win: at T=200/N=30 OOS
-Recursive is *faster* pure-Rust (0.38 vs 0.51 ms). Neither build dominates, so the
-benchmark prints its `config:` line and figures should say which they are.
+comparison: MatD runs on JNIBLAS-backed native OpenBLAS (the benchmark log names
+it), so a default pure-Rust build is not the right baseline. Pure-Rust reads
+0.052 / 3.69 / 4.31 ms on the same rows — roughly 2.3× slower on both OOS
+procedures, enough to turn OOS Recursive from a 1.2× win into a 2.2× loss, because
+those gemms are skinny (one operand has only `L+1` columns) and `matrixmultiply`
+handles that shape poorly. It reverses at the small size, where BLAS call overhead
+outweighs the kernel win: at T=200/N=30 OOS Recursive is *faster* pure-Rust
+(0.38 vs 0.51 ms). Neither build dominates, so the benchmark prints its `config:`
+line and any quoted figure should say which build it is.
 
 IS Full stays close — both sides reduce to the same two batch solves. Measured in
 isolation MatD runs 0.25 ms; the figure above comes from a full benchmark run,
