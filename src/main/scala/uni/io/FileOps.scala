@@ -100,14 +100,37 @@ object FileOps {
   /** * The generic version: returns MatResult[T]
    * Used when you want to transform to Double, Int, etc.
    */
+  /** Header labels, with any blank replaced by a canonical `colN`.
+   *
+   *  Numbered by position and 1-based, so `col3` is always the third column —
+   *  counting blanks instead would renumber the rest whenever one was filled in.
+   *
+   *  Blanks are not hypothetical: a header row shorter than the data now gets
+   *  padded rather than dropping rows, and the padding arrives as "". An unnamed
+   *  column cannot be looked up by name at all, so leaving it blank would trade a
+   *  lost row for an unreachable column.
+   *
+   *  A real header that happens to read `col2` while sitting elsewhere can collide
+   *  with a generated name. Not handled: the file is already odd, and inventing a
+   *  disambiguator would surprise more than it helps.
+   */
+  private def namedHeaders(row: Seq[String]): Vector[String] =
+    row.iterator.zipWithIndex.map { (h, i) =>
+      val trimmed = h.trim
+      if trimmed.nonEmpty then trimmed else s"col${i + 1}"
+    }.toVector
+
   def loadSmart[T: ClassTag](p: Path, map: Big => T): MatResult[T] = {
     // 1. Get ALL rows from the CSV
     val allRows = p.csvRowsStream.toVector
     if allRows.isEmpty then
       MatResult(Vector.empty, create(Array.empty[T], 0, 0))
     else
-      val width = allRows.head.length
-      val alignedRows = allRows.filter(_.length == width)
+      // Pad rather than discard. Keying the width off `head` and dropping every
+      // row that missed it lost data silently — worst of all when the *first* row
+      // was the odd one, which reduced a whole file to a single cell.
+      val alignedRows = uni.io.FastCsv.rectangular(allRows)
+      val width = alignedRows.head.length
 
       // 2. HEADER DETECTION
       // We only consider a header if we have at least TWO rows
@@ -127,7 +150,7 @@ object FileOps {
       }
 
       // 3. SLICE DATA
-      val headers = if (headerOffset == 1) alignedRows(0).map(_.trim).toVector else Vector.empty[String]
+      val headers = if (headerOffset == 1) namedHeaders(alignedRows(0)) else Vector.empty[String]
       val dataRows = alignedRows.drop(headerOffset)
 
       // 4. REIFICATION

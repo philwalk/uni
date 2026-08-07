@@ -1,5 +1,117 @@
 ## Unreleased
 
+**BUG — ragged CSV rows were silently discarded, sometimes almost all of them (`FileOps.scala`)**
+
+- `loadSmart` took the column count from the *first* row and dropped every row that
+  did not match it. A single malformed line lost that line; a malformed **first**
+  line lost nearly the whole file:
+
+  | input | matrix before | matrix now |
+  |---|---|---|
+  | short row in the middle | 2x2 | 3x2 |
+  | long row in the middle | 2x2 | 3x3 |
+  | **first** row short | **1x1** | 4x2 |
+  | **first** row long | 1x3 | 3x3 |
+
+- Rows are now padded to the widest rather than filtered. Widest rather than
+  first-row width on purpose: keying off the first row means truncating anything
+  longer, which is the same data loss wearing a different hat. A padded cell is
+  `""`, which already reads back as NaN — no new concept
+- `csvRows` and `loadSmart` now share `FastCsv.rectangular`, because the two must
+  not disagree about which rows a file contains. They previously did: `csvRows`
+  returned every row while `loadSmart` dropped the mismatched ones
+- The streaming readers cannot pad to a true maximum — the width is unknown until
+  the last row — so each buffers a 100-row window, takes the widest row in it, and
+  streams the rest padded to that. A row wider than the window is emitted at its own
+  width rather than truncated
+- Reusing the widths `Delimiter.detect` already tallies looked free and does not
+  work: `detect` stops as soon as a candidate dominates, which for a row over its
+  100-character check interval happens partway through the **first** row. Every row
+  is then recorded as truncated, `rowCounts` comes back empty, and nothing is padded
+  — on most real files. The width is now measured by the reader, from rows the real
+  parser produced, so it is exact for the window rather than an undercount
+- `eachRow` — which backs the callback overload of `PathExts.csvRows` — had neither
+  the blank-row filter nor padding, so `p.csvRows` and `p.csvRows(fn)` disagreed
+  about a file's contents. Now aligned, and pinned by a shared fixture
+
+**BUG — `FastCsv.rowsAsync` hung when `hasNext` was called twice after exhaustion**
+
+- The producer thread puts exactly one end-of-stream marker. `hasNext` took from the
+  queue on every call, so a second call after the marker blocked forever on a
+  producer that had already exited. Any caller checking twice hung outright
+- `hasNext` is now idempotent
+
+**BUG — `hash64` ignored bytes 32–63 of every 64-byte block (`Hash64.scala`)**
+
+- `processChunk` advanced 64 bytes per chunk but mixed only offsets 0, 8, 16 and 24,
+  so half of every block never reached the hash. Two 128-byte inputs differing in 64
+  of their bytes hashed identically — for a duplicate-file finder, a false positive
+  on entirely different files
+- Fixed by mixing both 32-byte stripes. A test now flips every byte position in a
+  128-byte file and requires the hash to change
+- **`hash64` values recorded before this change do not match values produced after
+  it.** Only inputs of 64 bytes or more are affected; shorter files never reached
+  `processChunk` and are unchanged
+- `md5`, `sha256` and `cksum` are unaffected
+- Blank header labels become canonical `colN`, numbered by position so `col3` is
+  the third column. Padding a short header row would otherwise produce columns that
+  cannot be looked up by name — trading a lost row for an unreachable column. A
+  file with no header row still reports no headers
+- Six regression tests, including that `csvRows.length` equals `readCsv.rows` for
+  every ragged shape
+
+**BUG — `FastCsv.rowsAsync` discarded every row of a single-column file (`FastCsv.scala`)**
+
+- The two readers filtered rows differently: `rowsPulled` dropped rows with no
+  non-blank field, `rowsAsync` dropped rows with fewer than two fields. Both
+  carried the same comment — "discard if empty or text-with-no-delimiter" — and
+  neither implemented it; they had drifted into opposite halves of it
+- Consequence: `rowsAsync` on a one-column CSV returned an empty iterator. The two
+  also disagreed on blank rows (kept by async, dropped by pulled) and on ragged
+  rows (dropped by async, kept by pulled)
+
+  | input | `rowsPulled` | `rowsAsync` |
+  |---|---|---|
+  | `alpha
+beta
+gamma` | 3 rows | **none** |
+  | `a,b` / ` , ` / `c,d` | 2 rows | 3 rows |
+  | `a,b` / `solo` / `c,d` | 3 rows | 2 rows |
+
+- Unified on `isContentRow` — at least one field with non-whitespace content —
+  named once so the two cannot drift again. A blank row is dropped; a single-field
+  row is kept, because one column is a legitimate CSV and dropping it silently is
+  worse than keeping a delimiter-less line
+- Two regression tests: one asserting the readers agree across all four shapes, one
+  pinning the single-column case on `rowsAsync` specifically
+- Found while scoping the Rust CSV port, which will now reproduce one rule rather
+  than choosing between two
+
+**NEW — Rust file I/O (`rust/src/upath/io.rs`)**
+
+Tier 3, first half: the text read/write surface.
+
+- Every operation exists twice. `uni`'s I/O is deliberately total — a missing file
+  gives an empty result and nothing throws — which is good for scripting but would
+  make failures permanently unreportable if that were the only form. So `lines()`
+  returns `vec![]` and `try_lines()` returns the `io::Error`, with the total form a
+  one-line wrapper over the fallible one
+- Ported: `byteArray`, `contentAsString` (both arities), `lines`, `linesStream`,
+  `firstLine`, `eachLine`, `write`, `writeLines`
+- `Charset` covers UTF-8 and Latin-1, which is all `uni` actually uses —
+  `contentAsString` tries UTF-8 then falls back to Latin-1. `Charset::by_name`
+  resolves anything unrecognised to UTF-8, matching `Charset.forName` being caught
+  and defaulted. `#[non_exhaustive]`, so a real encoding table can arrive later
+  without breaking callers and without a dependency today
+- `writeLines` keeps its trailing newline, and always emits LF — the Scala comment
+  says it "ensures the file isn't missing a newline at EOF", so it is intent rather
+  than an accident to tidy away. Both are pinned by tests
+- `as_std_path()` is the bridge to `std::fs`. No wrappers for `exists`, `len`,
+  `read_dir` and the rest: they are one-liners on the far side of that call
+- 8 round-trip tests against a real temp directory, covering CRLF input, the
+  trailing newline, invalid UTF-8 falling back to Latin-1 while strict UTF-8
+  errors, and the total-vs-fallible split on a missing file
+
 **NEW — Rust path-string conversions (`rust/src/upath/ext.rs`)**
 
 Tier 2 of the `uni.Paths` port: the `Path` extension methods scripts actually call.

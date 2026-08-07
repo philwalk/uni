@@ -213,7 +213,15 @@ object pathExts {
     // ---- CSV ----
     def csvRowsAsync:  Iterator[Seq[String]] = if isFile then uni.io.FastCsv.rowsAsync(p) else Iterator.empty
     def csvRowsStream: Iterator[Seq[String]] = if isFile then uni.io.FastCsv.rowsPulled(p) else Iterator.empty
-    def csvRows:       Seq[Seq[String]]      = csvRowsStream.toSeq
+    /** All rows, padded to a common width so the result is rectangular.
+     *
+     *  Matches `loadSmart`, which needs rectangular data and now pads for it too —
+     *  the two must not disagree about which rows a file contains.
+     *
+     *  The streaming forms above pad too, but only to the widest row in the
+     *  delimiter-sniffing sample -- they cannot see the whole file. This one reads
+     *  it all, so it is the only form guaranteed rectangular. */
+    def csvRows:       Seq[Seq[String]]      = uni.io.FastCsv.rectangular(csvRowsStream.toSeq)
     def csvRows(onRow: Seq[String] => Unit): Unit =
       if isFile then
         uni.io.FastCsv.eachRow(p) { (row: IterableOnce[String]) =>

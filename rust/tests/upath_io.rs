@@ -16,6 +16,7 @@ use std::sync::Arc;
 use t3prf::upath::Charset;
 use t3prf::upath::PathContext;
 use t3prf::upath::UPath;
+use t3prf::upath::UserInfo;
 
 /// A context rooted at a real temp directory, so `UPath` resolution and the
 /// filesystem agree about where things are.
@@ -23,7 +24,7 @@ fn ctx(dir: &std::path::Path) -> Arc<PathContext> {
     let dir = dir.to_string_lossy().replace('\\', "/");
     Arc::new(PathContext::synthetic(
         &[],
-        t3prf::upath::UserInfo::new("tester", &dir, &dir),
+        UserInfo::new("tester", &dir, &dir),
         cfg!(windows),
     ))
 }

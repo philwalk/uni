@@ -25,7 +25,11 @@
 //! - [`resolve`] — the algorithm: classify, then translate either direction.
 
 pub mod context;
+pub mod csv;
+pub mod delim;
+pub mod matcsv;
 pub mod ext;
+pub mod hash;
 pub mod io;
 pub mod mount;
 pub mod resolve;
@@ -33,7 +37,18 @@ pub mod resolve;
 pub use context::DriveCwdSource;
 pub use context::PathContext;
 pub use context::UserInfo;
+pub use csv::CsvConfig;
+pub use csv::CsvWriter;
+pub use csv::RowParser;
+pub use delim::DelimState;
+pub use matcsv::CsvCell;
+pub use matcsv::CsvTable;
 pub use ext::UPath;
+pub use hash::Cksum;
+pub use hash::CksumResult;
+pub use hash::Hash64;
+pub use hash::Md5;
+pub use hash::Sha256;
 pub use io::Charset;
 pub use mount::MountMaps;
 pub use resolve::PathKind;

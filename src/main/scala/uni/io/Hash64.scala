@@ -93,13 +93,23 @@ object Hash64 {
       (x << r) | (x >>> (64 - r))
     }
 
+    /** Mixes a whole 64-byte chunk: two 32-byte stripes through the four lanes.
+     *
+     *  The second stripe used to be missing -- `update` advanced 64 bytes while this
+     *  mixed only the first 32 -- so bytes 32..63 of every block never reached the
+     *  hash at all. Two 128-byte inputs differing in 64 of their bytes hashed
+     *  identically, which for a duplicate-file finder means silently declaring
+     *  distinct files equal.
+     */
     private def processChunk(b: Array[Byte], off: Int): Unit = {
       acc1 = mixLane(acc1, readLE64(b, off))
       acc2 = mixLane(acc2, readLE64(b, off + 8))
       acc3 = mixLane(acc3, readLE64(b, off + 16))
       acc4 = mixLane(acc4, readLE64(b, off + 24))
-      // remaining 32 bytes could be mixed similarly if we wanted a closer xxHash3 mimic;
-      // this is a simplified 4-lane structure for streaming.
+      acc1 = mixLane(acc1, readLE64(b, off + 32))
+      acc2 = mixLane(acc2, readLE64(b, off + 40))
+      acc3 = mixLane(acc3, readLE64(b, off + 48))
+      acc4 = mixLane(acc4, readLE64(b, off + 56))
     }
 
     private inline def mixLane(acc: Long, lane: Long): Long = {

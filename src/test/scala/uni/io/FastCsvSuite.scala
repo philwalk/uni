@@ -273,3 +273,120 @@ class FastCsvSuite extends FunSuite:
       autoDetect(text, "f.txt", ignoreErrors = false)
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // The two readers must agree on which rows survive
+  // ---------------------------------------------------------------------------
+
+  test("rowsPulled and rowsAsync keep the same rows") {
+    // They used to differ: rowsPulled dropped rows with no non-blank field, while
+    // rowsAsync dropped rows with a single field. The second returned *nothing* for
+    // a one-column file, and the two disagreed on blank and ragged rows too. Both
+    // now share FastCsv.isContentRow.
+    val cases = Seq(
+      "one column"  -> "alpha\nbeta\ngamma\n",
+      "two columns" -> "a,b\nc,d\n",
+      "blank row"   -> "a,b\n , \nc,d\n",
+      "ragged row"  -> "a,b\nsolo\nc,d\n",
+    )
+    for (label, content) <- cases do
+      val p = java.nio.file.Files.createTempFile("fastcsv_agree_", ".csv")
+      try
+        java.nio.file.Files.writeString(p, content)
+        val pulled = uni.io.FastCsv.rowsPulled(p).toList.map(_.toList)
+        val async  = uni.io.FastCsv.rowsAsync(p).toList.map(_.toList)
+        assertEquals(pulled, async, s"readers disagree for [$label]")
+      finally java.nio.file.Files.deleteIfExists(p)
+  }
+
+  test("a single-column file yields all of its rows") {
+    // rowsAsync returned an empty iterator here, discarding a perfectly valid file.
+    val p = java.nio.file.Files.createTempFile("fastcsv_onecol_", ".csv")
+    try
+      java.nio.file.Files.writeString(p, "alpha\nbeta\ngamma\n")
+      assertEquals(uni.io.FastCsv.rowsAsync(p).toList.map(_.toList),
+                   List(List("alpha"), List("beta"), List("gamma")))
+    finally java.nio.file.Files.deleteIfExists(p)
+  }
+
+  // ---------------------------------------------------------------------------
+  // Streaming padding: the sniffing sample also decides a width
+  // ---------------------------------------------------------------------------
+
+  test("a short row is padded to the sampled width rather than left ragged") {
+    // `solo` used to come back as a one-element row, so a caller indexing (1)
+    // got an IndexOutOfBounds on a file that looked rectangular.
+    val p = writeTempCsv("a,b\nsolo\nc,d\n")
+    assertEquals(uni.io.FastCsv.rowsPulled(p).toList.map(_.toList),
+                 List(List("a", "b"), List("solo", ""), List("c", "d")))
+  }
+
+  test("all three Seq[String] readers agree, including on ragged input") {
+    // eachRow backs the callback overload of `PathExts.csvRows`; it must not
+    // disagree with the no-arg one just because of how the caller asked.
+    val cases = Seq(
+      "one column"  -> "alpha\nbeta\n",
+      "ragged row"  -> "a,b\nsolo\nc,d\n",
+      "blank row"   -> "a,b\n , \nc,d\n",
+      "wide row"    -> "a,b\nw,x,y,z\nc,d\n",
+    )
+    for (label, content) <- cases do
+      val p = writeTempCsv(content)
+      val pulled = uni.io.FastCsv.rowsPulled(p).toList.map(_.toList)
+      val async  = uni.io.FastCsv.rowsAsync(p).toList.map(_.toList)
+      val each   = List.newBuilder[List[String]]
+      uni.io.FastCsv.eachRow(p)(r => each += r.toList)
+      assertEquals(async, pulled, s"rowsAsync differs for [$label]")
+      assertEquals(each.result(), pulled, s"eachRow differs for [$label]")
+  }
+
+  test("a row wider than the sample is emitted jagged, never truncated") {
+    // The sample only sees the first `sampleRows` rows, so a later, wider row
+    // cannot be padded for -- but losing its extra fields would be worse than
+    // returning it at its own width.
+    val narrow = List.fill(100)("a,b").mkString("", "\n", "\n")
+    val p = writeTempCsv(narrow + "v,w,x,y,z\n")
+    val rows = uni.io.FastCsv.rowsPulled(p).toList
+    assertEquals(rows.length, 101)
+    assertEquals(rows.last.toList, List("v", "w", "x", "y", "z"))
+  }
+
+  test("padding does not depend on how the delimiter was chosen") {
+    // The width comes from the reader's own window, not from the sniffer, so
+    // supplying the delimiter -- which skips sniffing entirely -- pads the same.
+    val p = writeTempCsv("a,b\nsolo\nc,d\n")
+    val cfg = FastCsv.Config(delimiterChar = Some(','))
+    assertEquals(uni.io.FastCsv.rowsPulled(p, cfg).toList.map(_.toList),
+                 uni.io.FastCsv.rowsPulled(p).toList.map(_.toList))
+  }
+
+  test("a wide row past the sniffer's check interval is still padded for") {
+    // Regression: the width used to be taken from `Delimiter.detect`, which
+    // declares a winner partway through the first row whenever that row is over
+    // ~100 chars, and then records every row as truncated. `rowCounts` came back
+    // empty and nothing was padded at all -- on most real files.
+    val wide  = (1 to 12).map(i => f"value_$i%05d").mkString(",")
+    val short = (1 to  9).map(i => f"v_$i%05d").mkString(",")
+    val p = writeTempCsv(Seq(wide, short, wide).mkString("", "\n", "\n"))
+    assertEquals(uni.io.FastCsv.rowsPulled(p).toList.map(_.length), List(12, 12, 12))
+  }
+
+  test("csvRows agrees with its own callback overload") {
+    import uni.*
+    val p = writeTempCsv("a,b\nsolo\nc,d\n")
+    val viaCallback = List.newBuilder[List[String]]
+    p.csvRows(r => viaCallback += r.toList)
+    assertEquals(viaCallback.result(), p.csvRows.toList.map(_.toList))
+  }
+
+  test("rowsAsync: hasNext is idempotent once the stream is exhausted") {
+    // It used to take from the queue every call. The producer puts exactly one
+    // end-of-stream marker, so the second call blocked forever -- an outright hang
+    // for any caller that checked twice.
+    val p = writeTempCsv("a,b\n1,2\n")
+    val it = FastCsv.rowsAsync(p, FastCsv.Config(delimiterChar = Some(',')))
+    while it.hasNext do it.next()
+    assert(!it.hasNext)
+    assert(!it.hasNext)
+  }
+

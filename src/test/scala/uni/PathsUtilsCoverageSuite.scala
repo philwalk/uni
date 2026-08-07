@@ -188,3 +188,22 @@ class PathsUtilsCoverageSuite extends FunSuite:
       // The genuine child still resolves through the root mount.
       assertEquals("C:/msys64/usr/bin".asPath.stdpath, "/usr/bin")
     }
+
+  // ============================================================================
+  // pwd must follow the active config
+  // ============================================================================
+
+  test("pwd follows an injected config, even after it has already been read") {
+    // `pwd` was a top-level `lazy val`, so the first read anywhere in the JVM froze
+    // it and no later `withMountLines` was seen. Reading it here *before* injecting
+    // is what makes this fail against that version rather than depending on which
+    // test happened to run first.
+    resetConfig()
+    val real = pwd.posx
+
+    withMountLines(Seq("C:/msys64 on / type ntfs (binary)"), testUser)
+    assertEquals(pwd.posx, testUser.dir, "pwd should report the injected user's dir")
+
+    resetConfig()
+    assertEquals(pwd.posx, real, "and should revert with the config")
+  }

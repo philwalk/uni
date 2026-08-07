@@ -99,4 +99,66 @@ class MatCsvSuite extends FunSuite {
     // Row 0 should be the first line of the file, not skipped!
     assertEquals(result.mat(0, 0), 1.1) 
   }
+
+  // ---------------------------------------------------------------------------
+  // Ragged input: pad rather than drop, and name the columns that padding creates
+  // ---------------------------------------------------------------------------
+
+  private def withCsv[A](content: String)(f: uni.Path => A): A =
+    val p = java.nio.file.Files.createTempFile("ragged_", ".csv")
+    try
+      java.nio.file.Files.writeString(p, content)
+      f(p)
+    finally java.nio.file.Files.deleteIfExists(p)
+
+  test("a short first row no longer collapses the whole file") {
+    // The width came from `head`, and every row that missed it was discarded — so
+    // one malformed first line reduced this file to a single cell.
+    withCsv("9\n1,2\n3,4\n5,6\n") { p =>
+      val m = p.readCsv
+      assertEquals((m.rows, m.cols), (4, 2))
+    }
+  }
+
+  test("a long row widens the matrix instead of being dropped") {
+    withCsv("1,2\n7,8,9\n5,6\n") { p =>
+      val m = p.readCsv
+      assertEquals((m.rows, m.cols), (3, 3))
+    }
+  }
+
+  test("csvRows and readCsv agree on how many rows a file has") {
+    // They must not disagree about which rows exist; both go through
+    // FastCsv.rectangular.
+    for content <- Seq("1,2\n3,4\n", "1,2\n9\n5,6\n", "9\n1,2\n3,4\n", "1,2\n7,8,9\n") do
+      withCsv(content) { p =>
+        assertEquals(p.csvRows.length, p.readCsv.rows, s"row count differs for [$content]")
+      }
+  }
+
+  test("padded cells read back as NaN") {
+    withCsv("1,2,3\n4,5\n") { p =>
+      val m = p.readCsv
+      assert(m(1, 2).isNaN, s"padded cell should be NaN, got ${m(1, 2)}")
+    }
+  }
+
+  test("blank header names become canonical colN, by position") {
+    withCsv("a,,c\n1,2,3\n") { p =>
+      assertEquals(p.loadSmartD.headers, Vector("a", "col2", "c"))
+    }
+    // A header shorter than the data gets padded, and the new columns are named
+    // rather than left unreachable by name.
+    withCsv("a,b\n1,2,3\n4,5,6\n") { p =>
+      assertEquals(p.loadSmartD.headers, Vector("a", "b", "col3"))
+    }
+  }
+
+  test("a file with no header row still reports no headers") {
+    // Naming blanks must not turn "no header" into a synthesised one.
+    withCsv("1,2,3\n4,5,6\n") { p =>
+      assertEquals(p.loadSmartD.headers, Vector.empty[String])
+    }
+  }
+
 }
