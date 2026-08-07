@@ -1,5 +1,125 @@
 ## Unreleased
 
+**NEW — Rust path-string conversions (`rust/src/upath/ext.rs`)**
+
+Tier 2 of the `uni.Paths` port: the `Path` extension methods scripts actually call.
+
+- `UPath` reproduces what `java.nio.file.Path` contributes, which is the reason
+  this needed a type rather than a handful of string functions. Measured, not
+  assumed: `Paths.get` collapses duplicate separators (`a//b` → `a/b`) and drops
+  trailing ones (`a/b/` → `a/b`), but does **not** resolve dot segments — `a/./b`
+  and `a/../b` survive intact, since only `normalize()` touches those
+- Ported: `posx`, `local`/`localpath`, `dospath`, `posix`, `noDrive`, `last`,
+  `baseName`, `ext`, `dotsuffix`, `extension`, `segments`, `reversePath`, `parent`,
+  `stdpath`, `relpath`, `abs`/`abspath`, plus `normalize`, `toAbsolutePath`,
+  `relativize` and `isAbsolute` as the supporting Path machinery
+- `abs`, `stdpath` and `relpath` are covered by unit tests rather than the shared
+  fixture, because each consults the machine: `abs` branches on `Files.exists`, and
+  the other two reach `toAbsolutePath`, which resolves against the JVM's real
+  `user.dir` — Java knows nothing about an injected config. Pinning them would have
+  committed this checkout's own paths (it briefly did: 126 lines)
+- `segments` yields Java's *name* elements only, so `C:/Users` has one and `C:/`
+  has none; `last` on a root-only path is an error, where the Scala throws on a
+  null `getFileName`
+- `dospath` is deliberately not `localpath`: Java renders a root with its trailing
+  separator (`\server\share\`), which `posx` strips from the UNC form
+
+**Path fixture now pins the extension methods (`test-data/path-parity/`)**
+
+- Previously only `classify`, `resolvePathstr` and `posixAbs` were pinned — the
+  internals. Scripts call `.posx`/`.posix`/`.dospath`, which differ from those
+  precisely because `Paths.get` normalises on the way in, so the two `posixAbs`
+  could agree while the two `.posix` diverged
+- 11 extension fields added across all 9 mount tables, plus inputs covering
+  interior `.`, `..` and doubled separators. 4,127 cases, up from 638
+- It immediately earned its keep: `Paths.get` special-cases `file://`
+  (`Paths.scala:26-31`), routing URIs through `resolvePath(uri)` rather than
+  rejecting them, so `Paths.get("file:///c/tmp").posx` is `C:/tmp` while
+  `Resolver.resolvePathstr` on the same string throws. Nothing pinned that
+  asymmetry before, and the Rust port did not have it
+- Both harnesses had the same encode/decode bug — re-encoding an empty result as
+  `!empty` when the fixture side had already decoded it to `""`. The generator
+  still writes `!empty`, which keeps the committed file unambiguous
+- The Scala suite evaluates these fields via `PathParityGen.extFields`, so the
+  suite and the generator cannot disagree about what a field means
+
+**Found — `relpath` never returns a relative path, and mixes two working directories**
+
+Not fixed; recorded because it needs a decision rather than a patch.
+
+- `relpath` is `standardizePath(relativePathToCwd(p))`. The first half relativises
+  against the working directory, the second half calls `toAbsolutePath` and
+  absolutises it again — so the result is always absolute, despite the name and
+  despite `docs/PathIOReference.md` describing it as "path relative to the current
+  working directory"
+- Worse, the two halves disagree about *which* directory is current:
+  `relativePathToCwd` reads `config.userdir`, which `withMountLines` can inject,
+  while `standardizePath` falls through to Java's real `user.dir`. Visible in one
+  pair of values under an injected user — `stdpath "."` gives the injected
+  `/c/munit/test`, `relpath "."` gives the real checkout path
+- So the earlier `pwd` fix only reached half of it. The Rust port has both halves
+  agreeing, which makes the relativise-then-absolutise round trip an exact no-op
+  and `relpath` identical to `stdpath` — arguably revealing that the relativisation
+  step earns nothing as written
+
+**BUG — `standardizePath` matched mount prefixes without a segment boundary (`PathsUtils.scala`)**
+
+- It scanned the mount keys itself —
+  `keys.filter(pstr.startsWithIgnoreCase).sortBy(-_.length).headOption` —
+  longest-first, but a plain string prefix. So `C:/msys64extra/x` matched the
+  `c:/msys64` root mount and `.stdpath` returned the bare remainder `extra/x`: a
+  relative string standing in for an absolute path
+- Now uses `Resolver.findPrefix`, which requires the next character to be `/` or
+  `:` and is the matcher the rest of resolution already uses. `C:/msys64extra/x`
+  falls through to the drive mount and yields `/c/msys64extra/x`; the genuine child
+  `C:/msys64/usr/bin` still resolves to `/usr/bin`
+- This was the third hand-rolled prefix scan in the codebase, after the two in
+  `String.local`. All three are now the one matcher
+- Covered by a new test in `PathsUtilsCoverageSuite`, verified to fail against the
+  old scan
+
+**BUG — `String.local` produced garbage on Windows (`StringExts.scala`)**
+
+- Every Windows result was wrong: `/tmp/x` came back as `Tmp/x`, `/c/Users` as
+  `C/Users`, `/usr/bin` as `Usr/bin`. Two faults in one expression:
+  - `winSeq.head` was taken from a `posix2win` value, but that map is
+    `LcLookupMap[String]` — `.head` was the first *character* of the Windows path,
+    not the path. The variable name suggests `win2posix` (`Seq[String]`) was meant,
+    which maps the other direction
+  - `collectFirst` over an unordered map returned an arbitrary matching prefix with
+    no segment-boundary check, so the synthetic drive mount `/t` beat the real
+    `/tmp` — the stray `T` in `Tmp/x`
+- Now routed through `Resolver`, which already does longest-prefix matching with a
+  boundary check and is covered by the cross-language parity fixtures
+- It survived because the Windows assertion in `StringExtsSuite` was
+  `assert(result.nonEmpty)` — true of garbage. Replaced with value assertions over
+  a synthetic mount table, plus an equivalence check against `Path.localpath` that
+  cannot drift with the machine's mounts
+- Non-POSIX input is still returned untouched, which is what makes `String.local`
+  differ from `Path.localpath`; that distinction is now documented and tested
+
+**`Path.local` now yields the native form (`PathExts.scala`)**
+
+- It was `normalizePosix(p.toString)` — character-for-character identical to
+  `.posx`, which made the pair pointless. The intended split is that `.posx`
+  always gives forward slashes and `.local` gives whatever the platform uses, so
+  `.local` is now an alias for `.localpath`: `C:\tmp\x` on Windows, unchanged
+  elsewhere
+- **Behaviour change** for callers of `.local` on Windows. `docs/PathIOReference.md`
+  documented the old aliasing and has been corrected
+
+**`pwd` tracks the active config (`PathsUtils.scala`, `Paths.scala`)**
+
+- `pwd` was a top-level `lazy val`, so it captured `config.userdir` at first access
+  and never saw a later `withMountLines`. Correct in production — the JVM's
+  `user.dir` is fixed for the process — but it meant an injected user was ignored,
+  so `relativePathToCwd` and `Path.relpath` relativised against the wrong directory
+  and could not be covered by the synthetic-mount suites
+- Now a `def` reading `PathsConfig.pwdPath`, a `lazy val` on the config itself. The
+  cache lives where the lifetime does: one instance per `withMountLines`, so it is
+  invalidated exactly when the user changes, and `pwd` stays allocation-free at the
+  call site. No observable change in production
+
 **BUG — the RNG parity fixture was never tracked (`.gitignore`)**
 
 - `.gitignore` has `test-data/*` with a single `!test-data/tprf3-parity/`

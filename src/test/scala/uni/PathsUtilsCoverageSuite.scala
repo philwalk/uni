@@ -167,3 +167,24 @@ class PathsUtilsCoverageSuite extends FunSuite:
       val result = posixAbs("/usr/bin")
       assertEquals(result, "/usr/bin")
     }
+
+  // ============================================================================
+  // standardizePath — mount prefix matching must respect segment boundaries
+  // ============================================================================
+
+  if isWin then
+    test("standardizePath: a mount prefix only matches on a segment boundary") {
+      withMountLines(Seq(
+        "C:/msys64 on / type ntfs (binary)",
+        "C:/ on /c type ntfs (binary)"), testUser)
+
+      // `C:/msys64extra` merely starts with the `c:/msys64` mount as a string; it
+      // is not under it. The old scan used a plain startsWith, matched the root
+      // mount, and rewrote this to the bare remainder "extra/x" — a relative
+      // string standing in for an absolute path. It must fall through to the
+      // drive mount instead.
+      assertEquals("C:/msys64extra/x".asPath.stdpath, "/c/msys64extra/x")
+
+      // The genuine child still resolves through the root mount.
+      assertEquals("C:/msys64/usr/bin".asPath.stdpath, "/usr/bin")
+    }

@@ -86,10 +86,31 @@ class StringExtsSuite extends FunSuite:
       assertEquals(s.local, s)
   }
 
-  test("local: Windows POSIX path returns non-empty result") {
+  // `assert(result.nonEmpty)` used to be the whole Windows assertion here, which is
+  // why a thoroughly broken conversion survived: it returned `Tmp/x` for `/tmp/x`
+  // and `C/Users` for `/c/Users` — non-empty every time. These pin the value.
+
+  test("local: String.local agrees with Path.localpath for POSIX input") {
+    // Machine-independent: for a path it actually converts, String.local is the
+    // native form of the same conversion, so the two cannot drift apart whatever
+    // the mount table says. They differ only for non-POSIX input, where
+    // String.local is a deliberate no-op — see the test below.
+    for s <- Seq("/usr/bin", "/tmp", "/c/Users") do
+      assertEquals(s.local, s.asPath.localpath, s"local mismatch for [$s]")
+  }
+
+  test("local: Windows POSIX path converts via the mount table") {
     if isWin then
-      val result = "/usr/bin".local
-      assert(result.nonEmpty, "local should return a non-empty string")
+      withMountLines(Seq(
+        "C:/msys64 on / type ntfs (binary)",
+        "C:/tmp on /tmp type ntfs (binary)",
+        "C:/ on /c type ntfs (binary)"), TestUtils.testUser)
+      // A synthetic drive mount `/t` exists for the unmapped T: drive, so the
+      // longest-prefix rule is what keeps `/tmp/x` off it.
+      assertEquals("/tmp/x".local, """C:\tmp\x""")
+      assertEquals("/c/Users".local, """C:\Users""")
+      assertEquals("/usr/bin".local, """C:\msys64\usr\bin""")
+      resetConfig()
   }
 
   test("local: Windows non-POSIX string returns unchanged") {

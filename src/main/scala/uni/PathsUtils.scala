@@ -74,7 +74,13 @@ lazy val userHome = sys.props("user.home").replace('\\', '/')
 
 // object Proc lives in ProcUtils.scala
 
-lazy val pwd: Path = JPaths.get(config.userdir)
+/** Working directory as the *current* config sees it.
+ *
+ *  A `def` so it tracks `withMountLines`, but the Path itself is cached per config
+ *  instance (`PathsConfig.pwdPath`) — this is called often enough that rebuilding
+ *  it each time would be waste, and the config is what invalidates it.
+ */
+def pwd: Path = config.pwdPath
 
 def isWinshell: Boolean = isWin && Properties.propOrNone("MSYSTEM").nonEmpty
 
@@ -166,13 +172,16 @@ private[uni] object Internals {
       case s => s.stripSuffix("/") // no trailing slash
       }
 
-      // First check explicit mounts
+      // First check explicit mounts.
+      //
+      // Via `Resolver.findPrefix`, not a local scan. The scan this replaces was
+      // `keys.filter(pstr.startsWithIgnoreCase).sortBy(-_.length).headOption` —
+      // longest-first, but a plain string prefix with no segment boundary, so
+      // `C:/msys64extra/x` matched the `c:/msys64` mount and was rewritten as if it
+      // lived under it. `findPrefix` requires the next character to be '/' or ':',
+      // and is the same matcher the rest of resolution uses.
       val w2pm = config.win2posix
-      val maybeMount = w2pm.keys
-        .filter(pstr.startsWithIgnoreCase)
-        .toList
-        .sortBy(-_.length)
-        .headOption
+      val maybeMount = Resolver.findPrefix(pstr, config.win2posixKeys)
 
       maybeMount match {
         case Some(winRoot) =>
@@ -223,8 +232,9 @@ private[uni] object Internals {
  
   //def shellRoot: String = if isWin then call("cygpath.exe", "-m", "/").getOrElse("") else ""
 
-  lazy val here  = pwd.toAbsolutePath.normalize.toString.toLowerCase(Locale.ROOT).replace('\\', '/')
-  lazy val uhere = here.replaceFirst("^[a-zA-Z]:", "")
+  // `def`s for the same reason as `pwd`, which these derive from.
+  def here  = pwd.toAbsolutePath.normalize.toString.toLowerCase(Locale.ROOT).replace('\\', '/')
+  def uhere = here.replaceFirst("^[a-zA-Z]:", "")
   def hereDrive: String = {
     if (isWin) new JFile("/").getAbsolutePath.take(2).mkString else ""
   }

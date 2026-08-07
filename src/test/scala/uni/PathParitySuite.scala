@@ -28,11 +28,12 @@ class PathParitySuite extends FunSuite:
 
   private def decode(s: String): String = if s == "!empty" then "" else s
 
+  /** Only `!error` is encoded here. `!empty` is not: `decode` has already turned
+   *  the fixture's `!empty` into "", so re-encoding an empty result would compare
+   *  `!empty` against "" and never match. The generator still writes `!empty`,
+   *  which is what keeps the committed file unambiguous. */
   private def attempt(f: => String): String =
-    try
-      val s = f
-      if s.isEmpty then "!empty" else s
-    catch case _: Throwable => "!error"
+    try f catch case _: Throwable => "!error"
 
   /** Records grouped by kind, each already split on ' | ' and trimmed. */
   private lazy val records: Vector[Vector[String]] =
@@ -67,7 +68,15 @@ class PathParitySuite extends FunSuite:
     case "win"      => attempt(Resolver.resolvePathstr(input))
     case "posixabs" => attempt(toPosixAbs(input))
     case "drivecwd" => attempt(config.driveCwd(input.head).toString)
-    case other      => fail(s"fixture names field $other, which this suite cannot evaluate")
+    case other      =>
+      // Extension-method fields come straight from the generator's own table, so
+      // the suite and the fixture cannot drift apart on what a field means.
+      extByName.get(other) match
+        case Some(f) => attempt(f(input))
+        case None    => fail(s"fixture names field $other, which this suite cannot evaluate")
+
+  private lazy val extByName: Map[String, String => String] =
+    uni.apps.PathParityGen.extFields.toMap
 
   for id <- tables.keys.toSeq.sorted do
     test(s"$platform/$id matches the parity reference"):

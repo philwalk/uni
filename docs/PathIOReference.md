@@ -75,7 +75,7 @@ Complete reference for all non-deprecated extension methods added to `java.nio.f
 | `.relpath` | `String` | path relative to the current working directory |
 | `.relativePath` | `Path` | relative path to CWD as a `Path` |
 | `.localpath` | `String` | native path (backslashes on Windows, forward slashes elsewhere) |
-| `.local` | `String` | forward-slash form (alias for `.posx`) |
+| `.local` | `String` | native path — alias for `.localpath` |
 | `.dospath` | `String` | native Windows path format |
 | `.noDrive` | `String` | path string without Windows drive letter (`C:/foo` → `/foo`) |
 

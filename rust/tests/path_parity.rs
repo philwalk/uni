@@ -23,8 +23,10 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use t3prf::upath::PathContext;
+use t3prf::upath::UPath;
 use t3prf::upath::UserInfo;
 use t3prf::upath::resolve::classify;
 use t3prf::upath::resolve::posix_abs;
@@ -97,11 +99,9 @@ fn parse(text: &str) -> Reference {
 
 /// Runs one case, rendering the outcome the way the generator rendered it.
 fn evaluate(ctx: &PathContext, field: &str, input: &str) -> String {
-    let render = |r: Result<String, _>| match r {
-        Ok(s) if s.is_empty() => EMPTY.to_owned(),
-        Ok(s) => s,
-        Err(_) => ERROR.to_owned(),
-    };
+    // `!error` is compared literally, but `!empty` is not: `decode` already turned
+    // the fixture's `!empty` into "", so re-encoding here would never match.
+    let render = |r: Result<String, _>| r.unwrap_or_else(|_| ERROR.to_owned());
     match field {
         "classify" => format!("{:?}", classify(input)),
         "win" => render(resolve_pathstr(ctx, input, &[])),
@@ -110,7 +110,27 @@ fn evaluate(ctx: &PathContext, field: &str, input: &str) -> String {
             let drive = input.chars().next().unwrap_or('?');
             render(ctx.drive_cwd(drive))
         }
-        other => panic!("fixture names field {other}, which this test cannot evaluate"),
+        // Extension methods: everything below goes through UPath, which reproduces
+        // the `Paths.get` normalisation the Scala gets for free.
+        other => {
+            let arc = Arc::new(ctx.clone());
+            let Ok(p) = UPath::resolve(&arc, input) else {
+                return ERROR.to_owned();
+            };
+            match other {
+                "posx" => p.posx().to_owned(),
+                "local" | "localpath" => p.localpath(),
+                "dospath" => p.dospath(),
+                "nodrive" => p.no_drive().to_owned(),
+                "last" => render(p.last().map(str::to_owned)),
+                "basename" => render(p.base_name().map(str::to_owned)),
+                "ext" => render(p.ext().map(str::to_owned)),
+                "dotsuffix" => render(p.dotsuffix().map(str::to_owned)),
+                "revpath" => p.reverse_path(),
+                "segments" => p.segments().join(","),
+                _ => panic!("fixture names field {other}, which this test cannot evaluate"),
+            }
+        }
     }
 }
 

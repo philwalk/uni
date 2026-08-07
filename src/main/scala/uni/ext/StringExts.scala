@@ -34,19 +34,31 @@ object stringExts {
       if str.startsWith(prefix) then str.substring(prefix.length)
       else str
 
+    /** MSYS2-aware POSIX→Windows conversion, in native form.
+     *
+     *  Matches `asPath.localpath` for any POSIX input. It differs only for input
+     *  that is not a POSIX path, which is returned untouched rather than having
+     *  its separators rewritten — a deliberate no-op, so a relative string survives
+     *  a round trip unchanged.
+     *
+     *  Routed through the resolver rather than scanning the mount map here. The
+     *  hand-rolled scan this
+     *  replaces had two faults that between them made every Windows result
+     *  garbage — `/tmp/x` came back as `Tmp/x` and `/c/Users` as `C/Users`:
+     *
+     *  - it took `winSeq.head` from a `posix2win` value, but that map is
+     *    `LcLookupMap[String]`, so `.head` was the first *character* of the
+     *    Windows path rather than the path itself;
+     *  - `collectFirst` over an unordered map returned an arbitrary matching
+     *    prefix with no segment-boundary check, so the synthetic drive mount `/t`
+     *    matched `/tmp/x` ahead of the real `/tmp`.
+     *
+     *  `Resolver` already does longest-prefix matching with a boundary check and
+     *  is covered by the cross-language parity fixtures. */
     def local: String = {
       val forward = normalizePosix(str)
-      val isPosix = forward.startsWith("/")
-      if (!isWin || !isPosix) {
-        str
-      } else {
-        config.posix2win.collectFirst {
-          case (posix, winSeq) if posix != "/" && str.startsWithIgnoreCase(posix) =>
-            s"${winSeq.head}${str.stripPrefixIgnoreCase(posix)}"
-        }.getOrElse {
-          s"${config.msysRoot}$str"
-        }
-      }
+      if !isWin || !forward.startsWith("/") then str
+      else Resolver.resolveWindowsPathstr(forward).replace('/', '\\')
     }
 
     def readCsv: MatD  =

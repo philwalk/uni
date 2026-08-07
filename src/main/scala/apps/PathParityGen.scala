@@ -118,10 +118,53 @@ object PathParityGen:
     ".gitignore",                         // hidden file keeps its dot
     "bare.txt", "a/b",                    // bare name vs relative path
     "",                                   // empty → userdir
+    // Interior separators and dot segments. `Paths.get` normalises some of these
+    // and leaves others alone, and which is which is exactly what the Rust port
+    // has to reproduce — it has no `Paths.get` to lean on.
+    "a//b", "a/./b", "a/../b",
+    "/usr//bin", "/usr/./bin", "/usr/../bin",
+    "/usr/bin/.", "/usr/bin/..",
   )
 
   /** Drive letters to pin `driveCwd` against. */
   val drives: Seq[Char] = Seq('C', 'F', 'Z')
+
+  /** The `Path` extension methods, keyed by fixture field name.
+   *
+   *  Each goes through `Paths.get` first, so these pin the whole chain — mount
+   *  resolution *and* the `java.nio.file.Path` normalisation layered on top. The
+   *  Rust port has no `Paths.get` doing that second part, so it has to reproduce
+   *  it explicitly; without these fields nothing would catch it failing to. */
+  val extFields: Seq[(String, String => String)] = Seq(
+    "posx"      -> (s => Paths.get(s).posx),
+    "local"     -> (s => Paths.get(s).local),
+    "localpath" -> (s => Paths.get(s).localpath),
+    "dospath"   -> (s => Paths.get(s).dospath),
+    "nodrive"   -> (s => Paths.get(s).noDrive),
+    "last"      -> (s => Paths.get(s).last),
+    "basename"  -> (s => Paths.get(s).baseName),
+    "ext"       -> (s => Paths.get(s).ext),
+    "dotsuffix" -> (s => Paths.get(s).dotsuffix),
+    "revpath"   -> (s => Paths.get(s).reversePath),
+    "segments"  -> (s => Paths.get(s).segments.mkString(",")),
+  )
+
+  /* Three methods are deliberately absent, all for the same reason: their result
+   * depends on the machine that generated the fixture, so pinning them here would
+   * commit this checkout's paths and fail everywhere else.
+   *
+   *   abs      branches on `Files.exists(p)`.
+   *   stdpath  calls `p.toAbsolutePath`, which resolves against the JVM's real
+   *            `user.dir` — Java knows nothing about the injected config — so any
+   *            relative input picks up the real working directory.
+   *   relpath  is `standardizePath(relativePathToCwd(p))`, and those two disagree
+   *            about which directory is current: the first uses `config.userdir`,
+   *            the second the real one. Visible in a single pair of values —
+   *            `stdpath "."` gave the injected `/c/munit/test` while `relpath "."`
+   *            gave the real `/c/Users/.../uni`.
+   *
+   * The Rust ports are covered by unit tests using absolute inputs, where no
+   * working directory is consulted and the answer is deterministic. */
 
   private def attempt(f: => String): String =
     try
@@ -161,6 +204,12 @@ object PathParityGen:
         sb ++= s"case | $id | classify | ${esc(in)} | ${attempt(Resolver.classify(in).toString)}\n"
         sb ++= s"case | $id | win      | ${esc(in)} | ${attempt(Resolver.resolvePathstr(in))}\n"
         sb ++= s"case | $id | posixabs | ${esc(in)} | ${attempt(toPosixAbs(in))}\n"
+        // Extension methods — the surface scripts actually call. These differ from
+        // the raw functions above precisely because `Paths.get` normalises on the
+        // way in (separators, duplicate slashes, `.`/`..`), so pinning only the raw
+        // functions lets the two `posixAbs` agree while the two `.posix` disagree.
+        for (field, f) <- extFields do
+          sb ++= s"case | $id | $field | ${esc(in)} | ${attempt(f(in))}\n"
       println(s"  $id: ${inputs.length} inputs × 3 fields + ${drives.length} drives")
     resetConfig()
 

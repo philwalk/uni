@@ -25,12 +25,16 @@
 //! - [`resolve`] — the algorithm: classify, then translate either direction.
 
 pub mod context;
+pub mod ext;
+pub mod io;
 pub mod mount;
 pub mod resolve;
 
 pub use context::DriveCwdSource;
 pub use context::PathContext;
 pub use context::UserInfo;
+pub use ext::UPath;
+pub use io::Charset;
 pub use mount::MountMaps;
 pub use resolve::PathKind;
 
@@ -54,6 +58,11 @@ pub enum PathError {
     /// A drive letter outside `A-Za-z`.
     #[error("not a valid drive letter: {0}")]
     BadDriveLetter(char),
+
+    /// A root-only path has no final name element. Java's `getFileName` returns
+    /// null here and the Scala throws; this reports it instead.
+    #[error("path has no file name: {0}")]
+    NoFileName(String),
 
     /// The cygdrive fallback was reached with a path that has no drive letter —
     /// typically a relative path containing a slash, which resolution leaves

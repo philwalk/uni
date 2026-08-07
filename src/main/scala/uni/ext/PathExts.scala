@@ -74,7 +74,13 @@ object pathExts {
     def stdpath: String  = standardizePath(p)
     def posx: String     = normalizePosix(p.toString)
     def posix: String    = toPosixAbs(p.toString)
-    def local: String    = normalizePosix(p.toString)
+
+    /** Native form: backslashes on Windows, forward slashes elsewhere.
+     *
+     *  Was identical to `posx`, which made the pair pointless — the intended split
+     *  is that `posx` always yields forward slashes and `local` yields whatever the
+     *  platform uses. Same as [[localpath]]. */
+    def local: String    = localpath
 
     def localpath: String = {
       val s = normalizePosix(p.toString)

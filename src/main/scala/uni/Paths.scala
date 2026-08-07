@@ -59,6 +59,17 @@ trait PathsConfig {
     val i = userdir.lastIndexOf('/')
     if i <= 0 then "/" else userdir.substring(0, i)
 
+  /** `userdir` as a Path, built once per config instance.
+   *
+   *  Cached here rather than at top level because the config is the thing whose
+   *  lifetime matters: `withMountLines` installs a new instance, so the cache is
+   *  invalidated exactly when the user changes. A process-wide `lazy val` instead
+   *  froze whichever value was seen first — correct in production, where the JVM's
+   *  `user.dir` cannot change, but it meant an injected user was ignored and
+   *  `Path.relpath` relativised against the wrong directory under test.
+   */
+  private[uni] lazy val pwdPath: Path = JPaths.get(userdir)
+
   lazy val posix2winKeys: Array[String] = keysArray(posix2win)
   lazy val win2posixKeys: Array[String] = keysArray(win2posix)
 
