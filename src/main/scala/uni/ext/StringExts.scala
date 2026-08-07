@@ -57,7 +57,7 @@ object stringExts {
      *  is covered by the cross-language parity fixtures. */
     def local: String = {
       val forward = normalizePosix(str)
-      if !isWin || !forward.startsWith("/") then str
+      if !config.isWindows || !forward.startsWith("/") then str
       else Resolver.resolveWindowsPathstr(forward).replace('/', '\\')
     }
 

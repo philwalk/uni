@@ -238,8 +238,20 @@ fn expand_dot(dir: &str, parent: &str, raw: &str) -> String {
 /// Everything not starting with `~` or `.`.
 fn expand_bare(ctx: &PathContext, raw: &str) -> Result<String, PathError> {
     let b = raw.as_bytes();
-    if raw.len() == 2 && b[1] == b':' {
-        return ctx.drive_cwd(raw.chars().next().unwrap_or('?'));
+    // A drive letter belongs to `classify`, which routes it to `resolve_drive_rel` --
+    // the one place that knows the per-drive working directory and slash-converts
+    // what it finds. Resolving it here got both drive-relative forms wrong: bare
+    // `C:` came back as the raw `drive_cwd` string, backslashes and all, so
+    // `posix_abs("C:")` produced `/c\munit	est`; and single-segment `C:foo` --
+    // having no '/' -- fell through to the bare-filename branch and was glued onto
+    // the user directory as `.../uni/C:foo`, with a colon buried inside it.
+    //
+    // Guarded by `is_windows` because on Linux and macOS `C:foo` is an ordinary
+    // filename that happens to contain a colon, and must stay relative to the
+    // working directory. `C:/foo` reaches this branch too and is equally fine to
+    // pass through -- `classify` calls it Absolute and leaves it alone.
+    if ctx.is_windows && raw.len() >= 2 && b[1] == b':' {
+        return Ok(raw.to_owned());
     }
     // Only a true bare filename is treated as relative to the working directory;
     // anything containing a slash is already a path.
@@ -496,4 +508,91 @@ mod tests {
             "/c/munit/test/bare.txt"
         );
     }
+
+    // -----------------------------------------------------------------------
+    // Drive-relative paths
+    // -----------------------------------------------------------------------
+
+    /// `is_windows` is data here, so these run on Linux and macOS too — the Scala
+    /// equivalents can only run on Windows, where `isWin` comes from `os.name`.
+    fn drive_ctx(is_windows: bool) -> PathContext {
+        PathContext::synthetic(
+            &keys(&["C:/msys64 on / type ntfs (binary)"]),
+            UserInfo::new("liam", "C:/Persons/liam", "C:/munit/test"),
+            is_windows,
+        )
+    }
+
+    #[test]
+    fn a_bare_drive_resolves_to_that_drives_working_directory() {
+        let ctx = drive_ctx(true);
+        assert_eq!(classify("C:"), PathKind::DriveRel);
+        assert_eq!(resolve_pathstr(&ctx, "C:", &[]).expect("resolves"), "C:/munit/test");
+    }
+
+    #[test]
+    fn a_single_segment_drive_relative_path_resolves() {
+        // The case that used to be mangled into `<userdir>/C:foo` and then rejected:
+        // it has no slash, so the bare-filename branch claimed it.
+        let ctx = drive_ctx(true);
+        assert_eq!(classify("C:foo"), PathKind::DriveRel);
+        assert_eq!(
+            resolve_pathstr(&ctx, "C:foo", &[]).expect("resolves"),
+            "C:/munit/test/foo"
+        );
+    }
+
+    #[test]
+    fn a_multi_segment_drive_relative_path_resolves_the_same_way() {
+        let ctx = drive_ctx(true);
+        assert_eq!(
+            resolve_pathstr(&ctx, "C:foo/bar", &[]).expect("resolves"),
+            "C:/munit/test/foo/bar"
+        );
+    }
+
+    #[test]
+    fn a_drive_relative_path_never_keeps_a_backslash_or_a_dot() {
+        let ctx = drive_ctx(true);
+        for input in ["C:", "C:foo", "C:foo/bar"] {
+            let win = resolve_pathstr(&ctx, input, &[]).expect("resolves");
+            let posix = posix_abs(&ctx, input).expect("posix");
+            for out in [&win, &posix] {
+                assert!(!out.contains('\\'), "{input} produced backslashes: {out}");
+                assert!(!out.ends_with("/."), "{input} left a trailing dot: {out}");
+                assert!(!out.contains("/./"), "{input} left an embedded dot: {out}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_drive_absolute_path_is_left_alone() {
+        let ctx = drive_ctx(true);
+        assert_eq!(classify("C:/foo"), PathKind::Absolute);
+        assert_eq!(resolve_pathstr(&ctx, "C:/foo", &[]).expect("resolves"), "C:/foo");
+    }
+
+    #[test]
+    fn off_windows_a_colon_bearing_name_stays_a_filename() {
+        // The reason the drive branch is guarded: `C:foo` is a legal POSIX filename.
+        let ctx = drive_ctx(false);
+        assert_eq!(
+            resolve_pathstr(&ctx, "C:foo", &[]).expect("resolves"),
+            "C:/munit/test/C:foo"
+        );
+    }
+
+    #[test]
+    fn apply_tilde_and_dots_passes_drive_letters_through_untouched() {
+        // It must not resolve them itself; `classify` owns that decision.
+        let ctx = drive_ctx(true);
+        for input in ["C:", "C:foo", "C:foo/bar", "C:/foo"] {
+            assert_eq!(
+                apply_tilde_and_dots(&ctx, input).expect("expands"),
+                input,
+                "{input} was rewritten"
+            );
+        }
+    }
 }
+

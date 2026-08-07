@@ -254,7 +254,7 @@ private[uni] object Internals {
       .fold(Seq.empty[String])(_.map(_.getAbsolutePath.take(2)).toSeq)
 
   def safeAbsolutePath(p: Path): Path =
-    if !isWin then
+    if !config.isWindows then
       p.toAbsolutePath
     else
       val s = p.toString
@@ -363,8 +363,20 @@ def applyTildeAndDots(raw: String): String = {
 
       case _ =>
         // treat only true bare filenames as relative
-        if raw.length == 2 && raw(1) == ':' then
-          s"${config.driveCwd(raw(0))}"
+        if config.isWindows && raw.length >= 2 && raw(1) == ':' then
+          // A drive letter belongs to `Resolver.classify`, which routes it to
+          // `resolveDriveRelPathstr` -- the one place that knows the per-drive
+          // working directory. Resolving it here got both drive-relative forms
+          // wrong: bare `C:` came back with a `.` component still attached
+          // (`driveCwd` built it from `C:.`), and single-segment `C:foo` -- having
+          // no '/' -- fell into the bare-filename branch below and was glued onto
+          // userdir as `.../uni/C:foo`, which java.nio rejected outright.
+          //
+          // Guarded by `isWin` because on Linux and macOS `C:foo` is an ordinary
+          // filename that happens to contain a colon, and must stay relative to
+          // userdir. `C:/foo` reaches the same branch and is equally fine to pass
+          // through -- classify calls it Absolute and leaves it alone.
+          raw
         else if !raw.contains('/') then
           s"${config.userdir}/$raw"
         else
@@ -396,7 +408,7 @@ def posixAbs(raw: String): String = toPosixAbs(raw)
  *  tripping the deprecation warning. When `posixAbs` is finally narrowed, this
  *  becomes the only form and the wrapper above just disappears. */
 private[uni] def toPosixAbs(raw: String): String = {
-  if !isWin then
+  if !config.isWindows then
     Resolver.resolvePathstr(raw) match {
     case "/" => "/"
     case s   => s.stripSuffix("/")

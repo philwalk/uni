@@ -20,8 +20,15 @@ import munit.FunSuite
  */
 class PathParitySuite extends FunSuite:
 
-  private val platform = if isWin then "windows" else "posix"
-  private val fixture =
+  /** Both rule sets are checked, on every host.
+   *
+   *  This used to check only `if isWin then "windows" else "posix"` -- and since only
+   *  the Windows block was ever committed, a Linux or macOS run did not skip, it
+   *  *failed* on the missing file. `config.isWindows` is injected now, so one run
+   *  checks both blocks from anywhere. */
+  private val platforms = Seq("windows", "posix")
+
+  private def fixtureFor(platform: String): String =
     s"${sys.props.getOrElse("user.dir", ".")}/test-data/path-parity/scala-reference-$platform.txt"
 
   override def afterEach(context: AfterEach): Unit = resetConfig()
@@ -36,8 +43,8 @@ class PathParitySuite extends FunSuite:
     try f catch case _: Throwable => "!error"
 
   /** Records grouped by kind, each already split on ' | ' and trimmed. */
-  private lazy val records: Vector[Vector[String]] =
-    val p = fixture.asPath
+  private def recordsFor(platform: String): Vector[Vector[String]] =
+    val p = fixtureFor(platform).asPath
     require(p.isFile,
       s"missing ${p.posx} — regenerate with: sbt \"runMain uni.apps.PathParityGen\"")
     p.lines.iterator
@@ -46,22 +53,35 @@ class PathParitySuite extends FunSuite:
       .map(_.split('|').map(_.trim).toVector)
       .toVector
 
-  private lazy val user: UserInfo = records.collectFirst {
-    case Vector("user", name, home, dir) => UserInfo(name, home, dir)
-  }.getOrElse(fail("fixture has no user record"))
+  /** Everything one platform's fixture says, bundled so both can be held at once. */
+  private case class Block(
+    platform: String,
+    isWindows: Boolean,
+    user: UserInfo,
+    tables: Map[String, Seq[String]],
+    derived: Map[(String, String), String],
+    cases: Vector[(String, String, String, String)])
 
-  /** Mount lines per table id, in fixture order — the order decides one-to-many. */
-  private lazy val tables: Map[String, Seq[String]] =
-    records.collect { case Vector("table", id, rest*) => id -> rest.mkString(" | ") }
-      .groupMap(_._1)(_._2)
-
-  private lazy val derived: Map[(String, String), String] =
-    records.collect { case Vector("derived", id, field, v) => (id, field) -> decode(v) }.toMap
-
-  private lazy val cases: Vector[(String, String, String, String)] =
-    records.collect {
-      case Vector("case", id, field, in, want) => (id, field, decode(in), decode(want))
-    }
+  private def blockFor(platform: String): Block =
+    val records = recordsFor(platform)
+    val tag = records.collectFirst { case Vector("platform", p) => p }
+      .getOrElse(fail(s"fixture $platform has no platform record"))
+    assertEquals(tag, platform, s"fixture is tagged $tag but named $platform")
+    Block(
+      platform  = platform,
+      isWindows = platform == "windows",
+      user = records.collectFirst {
+        case Vector("user", name, home, dir) => UserInfo(name, home, dir)
+      }.getOrElse(fail("fixture has no user record")),
+      // Mount lines per table id, in fixture order -- order decides one-to-many.
+      tables = records.collect { case Vector("table", id, rest*) => id -> rest.mkString(" | ") }
+        .groupMap(_._1)(_._2),
+      derived = records.collect {
+        case Vector("derived", id, field, v) => (id, field) -> decode(v)
+      }.toMap,
+      cases = records.collect {
+        case Vector("case", id, field, in, want) => (id, field, decode(in), decode(want))
+      })
 
   private def evaluate(field: String, input: String): String = field match
     case "classify" => attempt(Resolver.classify(input).toString)
@@ -78,21 +98,24 @@ class PathParitySuite extends FunSuite:
   private lazy val extByName: Map[String, String => String] =
     uni.apps.PathParityGen.extFields.toMap
 
-  for id <- tables.keys.toSeq.sorted do
-    test(s"$platform/$id matches the parity reference"):
-      withMountLines(tables(id), user)
+  for platform <- platforms do
+    val block = blockFor(platform)
+    for id <- block.tables.keys.toSeq.sorted do
+      test(s"$platform/$id matches the parity reference"):
+        withMountLines(block.tables(id), block.user, block.isWindows)
 
-      // Derived facts first: a wrong cygdrive or msysRoot explains every case
-      // under that table, so a separate assertion keeps the diagnosis short.
-      for field <- Seq("cygdrive", "msysroot") do
-        derived.get((id, field)).foreach { want =>
-          val got = if field == "cygdrive" then config.cygdrive else config.msysRoot
-          assertEquals(got, want, s"$id derived $field")
+        // Derived facts first: a wrong cygdrive or msysRoot explains every case
+        // under that table, so a separate assertion keeps the diagnosis short.
+        for field <- Seq("cygdrive", "msysroot") do
+          block.derived.get((id, field)).foreach { want =>
+            val got = if field == "cygdrive" then config.cygdrive else config.msysRoot
+            assertEquals(got, want, s"$id derived $field")
+          }
+
+        val failures = block.cases.collect {
+          case (`id`, field, input, want) if evaluate(field, input) != want =>
+            s"$field [$input]: got [${evaluate(field, input)}], want [$want]"
         }
-
-      val failures = cases.collect {
-        case (`id`, field, input, want) if evaluate(field, input) != want =>
-          s"$field [$input]: got [${evaluate(field, input)}], want [$want]"
-      }
-      assert(failures.isEmpty,
-        s"${failures.length} case(s) diverged for $id:\n  ${failures.mkString("\n  ")}")
+        assert(failures.isEmpty,
+          s"${failures.length} case(s) diverged for $platform/$id:\n  " +
+            failures.mkString("\n  "))

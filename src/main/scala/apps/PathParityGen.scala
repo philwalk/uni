@@ -36,8 +36,8 @@ object PathParityGen:
   /** Fake user shared by every case. Matches `TestUtils.windowsTestUser` so the
    *  fixture lines up with the existing suites; the POSIX variant drops the drive,
    *  as `TestUtils.unixTestUser` does. */
-  val user: UserInfo =
-    if isWin then UserInfo("liam", "C:/Persons/liam", "C:/munit/test")
+  def userFor(isWindows: Boolean): UserInfo =
+    if isWindows then UserInfo("liam", "C:/Persons/liam", "C:/munit/test")
     else UserInfo("liam", "/Persons/liam", "/munit/test")
 
   /** Mount tables, each chosen to pin one thing the resolution has to get right. */
@@ -178,8 +178,16 @@ object PathParityGen:
     val root = sys.props.getOrElse("user.dir", ".")
     val dir  = s"$root/test-data/path-parity"
     java.nio.file.Files.createDirectories(dir.asPath)
+    // Both blocks from one run, on any host: `config.isWindows` is injected rather
+    // than read from `os.name`, so the Windows rule set is reachable from Linux and
+    // macOS. This used to emit only the host's own block, which left Linux and macOS
+    // with no fixture at all and `PathParitySuite` failing on a missing file.
+    for (platform, isWindows) <- Seq("windows" -> true, "posix" -> false) do
+      generate(dir, platform, isWindows)
+    resetConfig()
 
-    val platform = if isWin then "windows" else "posix"
+  private def generate(dir: String, platform: String, isWindows: Boolean): Unit =
+    val user = userFor(isWindows)
     val sb = StringBuilder()
     sb ++= header(platform)
     sb ++= s"platform | $platform\n"
@@ -190,28 +198,34 @@ object PathParityGen:
         sb ++= s"table | $id | $line\n"
 
     for (id, lines) <- tables do
-      withMountLines(lines, user)
+      withMountLines(lines, user, isWindows)
       // Derived table facts first — a mismatch here explains every case below it.
       sb ++= s"derived | $id | cygdrive | ${esc(config.cygdrive)}\n"
       sb ++= s"derived | $id | msysroot | ${esc(config.msysRoot)}\n"
-      for d <- drives do
-        // Native form, no slash normalisation: `applyTildeAndDots` interpolates
-        // this Path verbatim, so a bare `C:` input keeps Windows backslashes while
-        // `resolveDriveRelPathstr` normalises separately. Recording the normalised
-        // form here would hide that split.
-        sb ++= s"case | $id | drivecwd | $d | ${attempt(config.driveCwd(d).toString)}\n"
+      // `drivecwd` is recorded for the Windows block only, and it is the one field
+      // that still depends on the generating host. `PathsConfig.driveCwd` returns a
+      // `java.nio.file.Path`, which renders through the host's own FileSystem -- so
+      // `Paths.get("F:/")` is the root `F:\` on Windows but the relative name `F:` on
+      // Linux, and no rule injection changes that. Under POSIX rules the concept is
+      // meaningless anyway: there are no drives.
+      if isWindows && isWindows == isWin then
+        for d <- drives do
+          sb ++= s"case | $id | drivecwd | $d | ${attempt(config.driveCwd(d).toString)}\n"
       for in <- inputs do
         sb ++= s"case | $id | classify | ${esc(in)} | ${attempt(Resolver.classify(in).toString)}\n"
         sb ++= s"case | $id | win      | ${esc(in)} | ${attempt(Resolver.resolvePathstr(in))}\n"
         sb ++= s"case | $id | posixabs | ${esc(in)} | ${attempt(toPosixAbs(in))}\n"
-        // Extension methods — the surface scripts actually call. These differ from
-        // the raw functions above precisely because `Paths.get` normalises on the
-        // way in (separators, duplicate slashes, `.`/`..`), so pinning only the raw
-        // functions lets the two `posixAbs` agree while the two `.posix` disagree.
-        for (field, f) <- extFields do
-          sb ++= s"case | $id | $field | ${esc(in)} | ${attempt(f(in))}\n"
+        // Extension methods go through `Paths.get`, so they render through the
+        // *host's* java.nio FileSystem -- `Paths.get("/munit/test").toString` is
+        // `\\munit\\test` on Windows whatever rule set is injected, and
+        // `Paths.get("C:").getFileName` is null there but "C:" on Linux. Injecting
+        // `isWindows` cannot reach that, so these rows are recorded only for the block
+        // matching the generating host. classify/win/posixabs above are pure string
+        // work and are recorded for both.
+        if isWindows == isWin then
+                  for (field, f) <- extFields do
+            sb ++= s"case | $id | $field | ${esc(in)} | ${attempt(f(in))}\n"
       println(s"  $id: ${inputs.length} inputs × 3 fields + ${drives.length} drives")
-    resetConfig()
 
     val out = s"$dir/scala-reference-$platform.txt"
     java.nio.file.Files.writeString(out.asPath, sb.toString)

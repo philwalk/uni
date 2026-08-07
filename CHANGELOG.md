@@ -41,6 +41,62 @@
   producer that had already exited. Any caller checking twice hung outright
 - `hasNext` is now idempotent
 
+**Windows path rules are now testable on Linux and macOS**
+
+- `isWin` came straight from `scala.util.Properties` (i.e. `os.name`), so the Windows
+  rules could only be exercised on Windows. `PathsConfig` gained an injectable
+  `isWindows`, defaulted from the real platform and settable through
+  `withMountLines`. Nine rule-selection sites read it: the main gate in
+  `resolvePathstr`, two in `parseMountLines`, plus `safeAbsolutePath`, `toPosixAbs`,
+  the drive-letter guard, `PathExts.localpath`, `PathExts.dospath` and
+  `StringExts.local`
+- Windows-only tests dropped from ~117 to 13. `PosixFmtSuite`'s 66 mount-translation
+  cases and all 17 of `SyntheticMountsSuite` now run everywhere
+- `PathParitySuite` used to *fail* off Windows rather than skip: it required
+  `scala-reference-$platform.txt` and only the Windows file was committed.
+  `PathParityGen` now emits both blocks from one run on any host, and the suite
+  checks both (9 tests -> 18). The Rust test already looped over both platforms
+- What stays host-bound, and why: anything reaching `java.nio.file.Path` renders
+  through the *host's* FileSystem, which no flag can override --
+  `Paths.get("/munit/test").toString` is backslashed on Windows regardless, and
+  `Paths.get("F:/")` is a root there but a relative name on Linux. So the fixture
+  records `classify`/`win`/`posixabs` for both platforms and the extension-method
+  rows only for the generating host. Environment probes (`mount.exe`, `cygpath.exe`,
+  `File.listRoots`) still read the real platform, as they must
+- Four tests were gated for no reason at all: `winAbsToPosixAbs` is pure string work
+  with no `isWin` in it, and `UniRootCoverageSuite`'s `resolveWindowsPathstr` cases
+  were reading the *ambient* MSYS mount table. Those now use an injected table, so
+  they no longer depend on a particular developer's install
+
+**BUG - drive-relative paths (`C:`, `C:foo`) resolved wrongly, and `C:foo` threw**
+
+- `Resolver.resolvePathstr` calls `applyTildeAndDots` *before* `classify`, and
+  `applyTildeAndDots` claimed any two-character drive string for itself. So the
+  `DriveRel` branch that exists to handle these -- `resolveDriveRelPathstr`, the one
+  place that knows the per-drive working directory -- never saw them:
+
+  | input | before | now |
+  |---|---|---|
+  | `Paths.get("C:")` | `C:\...\uni\.` | `C:\...\uni` |
+  | `Paths.get("C:foo")` | **throws** `InvalidPathException` | `C:\...\uni\foo` |
+  | `Paths.get("C:foo/bar")` | `C:\...\uni\.\foo\bar` | `C:\...\uni\foo\bar` |
+
+- `C:foo` contains no `/`, so it fell into the bare-filename branch and was appended
+  to the user directory as `C:/Users/.../uni/C:foo` -- a colon buried mid-path, which
+  `java.nio` rejects. `C:foo/bar` escaped that only by containing a slash
+- The stray `.` came from `driveCwd` building its answer from the string `C:.`:
+  `Paths.get("C:.").toAbsolutePath` keeps the dot, `Paths.get("C:").toAbsolutePath`
+  does not. `toAbsolutePath` is what asks Windows for the drive's own cwd
+- Expectations are asserted against `java.nio.file.Paths` rather than written by
+  hand, so they cannot drift from real Windows behaviour
+- The committed path-parity reference had recorded the broken values, including
+  POSIX paths with backslashes in them (`posixabs "C:"` was `/c\munit\test`, and
+  under a `cygdrive` mount it ignored the prefix entirely). Regenerated; the diff is
+  36 lines, all of them the `C:` and `F:` cases
+- Fixed identically in the Rust port (`upath::resolve::expand_bare`), which had
+  faithfully reproduced the same defect. Both fixes are guarded so that off Windows
+  `C:foo` stays an ordinary filename containing a colon
+
 **BUG — `hash64` ignored bytes 32–63 of every 64-byte block (`Hash64.scala`)**
 
 - `processChunk` advanced 64 bytes per chunk but mixed only offsets 0, 8, 16 and 24,

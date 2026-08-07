@@ -86,6 +86,11 @@ class TestInvariants extends FunSuite {
   }
 
   test("invariants: mount map values should be valid Windows paths") {
+    // Host-gated on purpose. This reads the *real* machine's mount table and asks
+    // java.nio whether each value is absolute -- `Paths.get("C:/msys64").isAbsolute`
+    // is true on Windows and false on Linux. It is a smoke test of the installed
+    // MSYS/Cygwin environment, so there is nothing for an injected flag to reach.
+    // The portable version of the same invariant is the next test down.
     val mounts = config.posix2win.toSeq
     noisy(s"mount map entries = $mounts")
 
@@ -104,5 +109,31 @@ class TestInvariants extends FunSuite {
         clues(s"posix=$posix win=$win absolute=$isAbsolute driveRelative=$isDriveRelative")
       )
     }
+  }
+
+  test("invariants: parsed mount values are drive-absolute or drive-relative") {
+    // The portable half: same invariant, but over an injected table and with a
+    // string test instead of java.nio's `isAbsolute`, so it holds on every host.
+    // Deliberately not a replacement for the test above -- that one checks the real
+    // machine, which is worth checking on the machine.
+    withMountLines(Seq(
+      "C:/msys64 on / type ntfs (binary)",
+      "C:/opt on /opt type ntfs (binary)",
+      "D:/ue on /opt/ue type ntfs (binary)",
+      "none on /cygdrive type ntfs (binary)",
+    ), TestUtils.windowsTestUser, isWindows = true)
+    try
+      val mounts = config.posix2win.toSeq
+      assert(mounts.nonEmpty, "injected table produced no entries")
+      mounts.foreach { case (posix, win) =>
+        assert(posix.startsWith("/"), clues(s"mount key must be POSIX-style: $posix"))
+        // `C:`, `C:/`, `C:/dir` or a UNC `//host/share` -- and never a bare relative
+        // name, which is what a mis-parsed entry would leave behind.
+        assert(
+          win.matches("^[A-Za-z]:(/.*)?$") || win.startsWith("//"),
+          clues(s"posix=$posix win=$win is not a Windows path")
+        )
+      }
+    finally resetConfig()
   }
 }

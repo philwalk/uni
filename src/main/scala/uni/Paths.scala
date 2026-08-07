@@ -55,6 +55,22 @@ trait PathsConfig {
   def userhome: String
   def userdir: String
 
+  /** Whether Windows path rules apply.
+   *
+   *  A config field rather than a read of `scala.util.Properties.isWin`, so a test
+   *  can exercise the Windows rules on Linux and macOS. That is not hypothetical
+   *  tidiness: `isWin` came straight from `os.name`, which left 39 tests -- all of
+   *  `SyntheticMountsSuite` among them -- unable to run anywhere but Windows, and
+   *  made `PathParitySuite` demand a per-platform fixture. The Rust port already
+   *  takes `is_windows` as data for exactly this reason, and its path-parity test
+   *  checks the Windows rules from any host.
+   *
+   *  This selects *rules* only. Probing the actual machine -- `mount.exe`,
+   *  `cygpath.exe`, `File.listRoots` -- still reads the real platform, and is
+   *  already replaced wholesale by `SyntheticPathsConfig`.
+   */
+  def isWindows: Boolean
+
   lazy val userdirParent: String =
     val i = userdir.lastIndexOf('/')
     if i <= 0 then "/" else userdir.substring(0, i)
@@ -83,7 +99,7 @@ trait PathsConfig {
 
 // Default config: spawns mount.exe and parses stdout lazily
 object DefaultPathsConfig extends PathsConfig {
-  private lazy val mountInfo: MountMaps = ParseMounts.parseMountLines(MountExe.lines())
+  private lazy val mountInfo: MountMaps = ParseMounts.parseMountLines(MountExe.lines(), isWindows)
   def msysRoot: String = mountInfo.msysRoot
   def cygdrive: String = mountInfo.cygdrive
   def win2posix: Win2posixMap = mountInfo.win2posix
@@ -93,13 +109,22 @@ object DefaultPathsConfig extends PathsConfig {
   def username: String = realUserName
   def userhome: String = realUserHome
   def userdir: String  = realUserDir
+  def isWindows: Boolean = scala.util.Properties.isWin
   def driveCwd(drive: Char): Path =
     val upper = drive.toUpper
     require(upper.isLetter, s"Not a valid drive letter: $drive")
-    // Query the JVM for the drive’s working directory
-    val p = java.nio.file.Paths.get(s"$upper:.")
+    // Query the JVM for the drive's working directory. `C:` is drive-relative, so
+    // `toAbsolutePath` resolves it against the current directory Windows keeps for
+    // that drive.
+    //
+    // Built from `C:` and not `C:.` -- the dot survives resolution:
+    // `Paths.get("C:.").toAbsolutePath` is `C:\dir\.` while
+    // `Paths.get("C:").toAbsolutePath` is `C:\dir`. That stray component was
+    // reaching callers. `normalize` is belt-and-braces for a cwd holding dot
+    // segments of its own.
+    val p = java.nio.file.Paths.get(s"$upper:").toAbsolutePath.normalize
     if Files.exists(p) then
-      p.toAbsolutePath
+      p
     else
       java.nio.file.Paths.get(s"$upper:/")
 }
@@ -112,8 +137,15 @@ case class UserInfo(name: String, home: String, dir: String)
 lazy val realUser: UserInfo = UserInfo(realUserName, realUserHome, realUserDir)
 
 // Synthetic config: uses injected mount lines
-final class SyntheticPathsConfig(mountLines: Seq[String], val user: UserInfo) extends PathsConfig {
-  private val mountInfo: MountMaps = ParseMounts.parseMountLines(mountLines)
+final class SyntheticPathsConfig(
+  mountLines: Seq[String],
+  val user: UserInfo,
+  val isWindows: Boolean = scala.util.Properties.isWin
+) extends PathsConfig {
+  // Passed rather than read back from `this`: `parseMountLines` runs while the
+  // config is still being constructed, so `isWindows` is not reachable through the
+  // usual field access yet.
+  private val mountInfo: MountMaps = ParseMounts.parseMountLines(mountLines, isWindows)
   def msysRoot: String = mountInfo.msysRoot
   def cygdrive: String = mountInfo.cygdrive
   def win2posix: Win2posixMap = mountInfo.win2posix
@@ -135,11 +167,15 @@ final class SyntheticPathsConfig(mountLines: Seq[String], val user: UserInfo) ex
 }
 
 // inject mount lines for testing
-private[uni] def withMountLines(mountLines: Seq[String], testUser: UserInfo): Unit = {
+private[uni] def withMountLines(
+  mountLines: Seq[String],
+  testUser: UserInfo,
+  isWindows: Boolean = scala.util.Properties.isWin
+): Unit = {
   if verboseUni then
     // PathSpec
     print(s"============== set SyntheticPathsConfig for mountMap[${mountLines.mkString("\n")}] and testUser [${testUser}]")
-  config = new SyntheticPathsConfig(mountLines, testUser)
+  config = new SyntheticPathsConfig(mountLines, testUser, isWindows)
 }
 
 // restore default config
@@ -197,7 +233,7 @@ private[uni] object Resolver {
       val fname = (first +: more).mkString("/").replace('\\', '/')
       applyTildeAndDots(fname) // real or test user
 
-    if !isWin then
+    if !config.isWindows then
       pstr
     else {
       resolveWindowsPathstr(pstr)
@@ -307,7 +343,7 @@ private[uni] object Resolver {
 
 /** Parsing /etc/fstab entries */
 object ParseMounts {
-  def parseMountLines(lines: Seq[String]): MountMaps = {
+  def parseMountLines(lines: Seq[String], isWindows: Boolean): MountMaps = {
     // Drop comments and blanks before anything else.
     //
     // Only fstab has them, but it has a lot: the shipped MSYS2 file carries 16
@@ -396,13 +432,13 @@ object ParseMounts {
       }
 
     val syntheticDrives =
-      if isWin then missingDrives(cygdrive, posixDriveRefs) else Nil
+      if isWindows then missingDrives(cygdrive, posixDriveRefs) else Nil
 
     val hasRoot: Boolean = mountable.exists(_._2 == "/")
 
     // synthesize root entry (if missing)
     val syntheticRoot: Seq[(String, String)] =
-      if isWin && !hasRoot then
+      if isWindows && !hasRoot then
         Seq(MountExe.defaultMsysRoot -> "/")
       else
         Nil

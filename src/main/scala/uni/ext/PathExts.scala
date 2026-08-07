@@ -84,14 +84,16 @@ object pathExts {
 
     def localpath: String = {
       val s = normalizePosix(p.toString)
-      if isWin then s.replace('/', '\\') else s
+      // `config.isWindows` rather than the global `isWin`, so a test can exercise
+      // the Windows separator rule from Linux or macOS.
+      if config.isWindows then s.replace('/', '\\') else s
     }
 
     def dospath: String = {
       val pstr = p.toString
       pstr match {
         case "." => "."
-        case s if !isWin || s.length > 2 =>
+        case s if !config.isWindows || s.length > 2 =>
           s
         case s if s.endsWith(":") =>
           if rootDrives.contains(s.toUpperCase) then

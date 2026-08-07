@@ -157,7 +157,7 @@ class UniRootCoverageSuite extends FunSuite:
       "C:/msys64 /",
       "C:/msys64/usr /usr"
     )
-    val mounts = ParseMounts.parseMountLines(lines)
+    val mounts = ParseMounts.parseMountLines(lines, isWindows = true)
     assertEquals(mounts.posix2win.get("/"),    Some("C:/msys64"))
     assertEquals(mounts.posix2win.get("/usr"), Some("C:/msys64/usr"))
   }
@@ -167,7 +167,7 @@ class UniRootCoverageSuite extends FunSuite:
       "C:/msys64 on / type ntfs",
       "badline"
     )
-    val mounts = ParseMounts.parseMountLines(lines)
+    val mounts = ParseMounts.parseMountLines(lines, isWindows = true)
     assertEquals(mounts.posix2win.get("/"), Some("C:/msys64"))
   }
 
@@ -176,7 +176,7 @@ class UniRootCoverageSuite extends FunSuite:
       "C: on /cygdrive/c type ntfs",
       "D: on /cygdrive/d type ntfs"
     )
-    val mounts = ParseMounts.parseMountLines(lines)
+    val mounts = ParseMounts.parseMountLines(lines, isWindows = true)
     assertEquals(mounts.cygdrive, "/cygdrive/")
   }
 
@@ -185,7 +185,7 @@ class UniRootCoverageSuite extends FunSuite:
       "C:/msys64 on / type ntfs",
       "C:/msys64/usr on /usr type ntfs"
     )
-    val mounts = ParseMounts.parseMountLines(lines)
+    val mounts = ParseMounts.parseMountLines(lines, isWindows = true)
     val keys = mounts.posix2win.keysIterator.toSeq
     assertEquals(keys.head, "/", s"expected '/' first in iterator: ${keys.mkString(", ")}")
   }
@@ -194,31 +194,43 @@ class UniRootCoverageSuite extends FunSuite:
   // Resolver.resolveWindowsPathstr — Windows-specific branches
   // ============================================================================
 
-  if isWin then
-    test("resolveWindowsPathstr: Invalid path throws RuntimeException") {
-      intercept[RuntimeException] {
-        Resolver.resolveWindowsPathstr("http://example.com")
-      }
-    }
+  // Driven by an injected mount table rather than the machine's own. These were
+  // gated to Windows not because the code under test needs Windows -- it is pure
+  // string logic -- but because they read the ambient MSYS2 mount table for
+  // `msysRoot` and the `/d` drive. Injecting the table removes both the platform
+  // gate and the dependency on this developer's install.
+  private def winRules(): Unit =
+    withMountLines(Seq("C:/msys64 on / type ntfs (binary)"), TestUtils.windowsTestUser,
+      isWindows = true)
 
-    test("resolveWindowsPathstr: Relative path returned as-is") {
-      assertEquals(Resolver.resolveWindowsPathstr("relative/path"), "relative/path")
+  test("resolveWindowsPathstr: Invalid path throws RuntimeException") {
+    winRules()
+    intercept[RuntimeException] {
+      Resolver.resolveWindowsPathstr("http://example.com")
     }
+  }
 
-    test("resolveWindowsPathstr: Posix with synthetic drive mount (endsWith ':') gets slash") {
-      // posix2win("/d") = "D:" → endsWith(":") → "D:/" appended
-      val result = Resolver.resolveWindowsPathstr("/d/foo")
-      assert(result.toLowerCase.startsWith("d:/"), s"expected d:/… but got: $result")
-    }
+  test("resolveWindowsPathstr: Relative path returned as-is") {
+    winRules()
+    assertEquals(Resolver.resolveWindowsPathstr("relative/path"), "relative/path")
+  }
 
-    test("resolveWindowsPathstr: Posix with no matching mount → prepends msysRoot") {
-      // findPrefix("/no-mount-here/x") returns None since 'n' is not '/' or ':'
-      val result = Resolver.resolveWindowsPathstr("/no-mount-here/x")
-      assert(
-        result.toLowerCase.startsWith("c:/msys64"),
-        s"expected c:/msys64… but got: $result"
-      )
-    }
+  test("resolveWindowsPathstr: Posix with synthetic drive mount gets a slash") {
+    // posix2win("/d") is the synthetic "D:", which ends with ':' and so must gain a
+    // separator to stay absolute -- a bare "D:" would be drive-relative.
+    winRules()
+    val result = Resolver.resolveWindowsPathstr("/d/foo")
+    assert(result.toLowerCase.startsWith("d:/"), s"expected d:/ prefix, got: $result")
+  }
+
+  test("resolveWindowsPathstr: Posix with no matching mount prepends msysRoot") {
+    winRules()
+    val result = Resolver.resolveWindowsPathstr("/no-mount-here/x")
+    assert(
+      result.toLowerCase.startsWith("c:/msys64"),
+      s"expected c:/msys64 prefix, got: $result"
+    )
+  }
 
   // ============================================================================
   // Internals.canExist — relative path (root == null) branch

@@ -14,6 +14,10 @@ class RootRelativeTest extends FunSuite {
   // ---------------------------------------
   // basic environment info
   // ---------------------------------------
+  // Host-gated on purpose: this and the block below assert facts about the *real*
+  // machine -- its current drive, its installed MSYS mount table, whether those
+  // directories exist. They are environment smoke tests, not tests of uni's rules,
+  // so there is nothing for an injected flag to reach.
   if isWin then
     test("env: print cwd and drive info") {
       println(s"cwd: $workingDir")
@@ -72,7 +76,10 @@ class RootRelativeTest extends FunSuite {
     noisy(jvmpath)
   }
 
-  if (isWin) {
+  // Runs on every host: the mount table is injected, and so is `config.isWindows`,
+  // so nothing here reads the real platform. `dirPath.toString` is host-rendered but
+  // the comparison normalises separators, which erases the difference.
+  locally {
     val testdirs = Seq("/opt", "/optx")
 
     testdirs.foreach { testdir =>
@@ -81,7 +88,7 @@ class RootRelativeTest extends FunSuite {
           "C:/msys64 on / type ntfs (binary)",
           "C:/opt on /opt type ntfs (binary)",
         )
-        withMountLines(mountLines, testUser)
+        withMountLines(mountLines, TestUtils.windowsTestUser, isWindows = true)
 
         val mounts = config.posix2win.keySet.toArray
         assume(mounts.nonEmpty, "No mount map entries available")

@@ -27,39 +27,48 @@ final class PosixFmtSuite extends FunSuite {
     assertEquals(userHome, testUser.home)
   }
 
-  if isWin then
-    // NOTE: when multiple posix paths are mounted to directory (e.g., C:/Users)
-    // the tie-breaker rule for `cygpath -u C:/Users` differs between Msys and Cygwin:
-    //    Cygwin reports the chronologically newer (most recently mounted) posix path;
-    //    Msys reports the lexicographically greater posix path.
+  // The Windows branch runs on every host now. `posixAbs` is pure string work --
+  // `resolvePathstr`, `classify`, `findPrefix`, `winAbsToPosixAbs` and
+  // `normalizePosix`, with no java.nio in the chain -- so injecting
+  // `config.isWindows` is enough to exercise it from Linux and macOS. That is ~66
+  // tests that previously only ran on Windows.
+  // NOTE: when multiple posix paths are mounted to directory (e.g., C:/Users)
+  // the tie-breaker rule for `cygpath -u C:/Users` differs between Msys and Cygwin:
+  //    Cygwin reports the chronologically newer (most recently mounted) posix path;
+  //    Msys reports the lexicographically greater posix path.
 
-    // Shared test runner for all Windows mount configurations.
-    def runWinTests(expectsAndMounts: ExpectsGivenMounts): Unit = {
-      val mountLines: Seq[String] = expectsAndMounts.mounts
-      val expected: Seq[(String, String)] = expectsAndMounts.expects
+  // Shared test runner for all Windows mount configurations.
+  def runWinTests(expectsAndMounts: ExpectsGivenMounts): Unit = {
+    val mountLines: Seq[String] = expectsAndMounts.mounts
+    val expected: Seq[(String, String)] = expectsAndMounts.expects
 
-      for ((win, expect), i) <- expected.zipWithIndex do {
-        if i == 0 then runsTotal += 1
-        test(s"$i: String.posix converts $win to $expect"):
-          // Install mount table
-          withMountLines(mountLines, testUser)
-          val posixPath = posixAbs(win)
-          if posixPath != expect then
-            posixAbs(win) // hook
-          assertEquals(
-            posixPath,
-            expect,
-            s"input: $win, result: $posixPath, expect: $expect"
-          )
-      }
+    for ((win, expect), i) <- expected.zipWithIndex do {
+      if i == 0 then runsTotal += 1
+      test(s"$i: String.posix converts $win to $expect"):
+        // Install mount table
+        withMountLines(mountLines, windowsTestUser, isWindows = true)
+        val posixPath = posixAbs(win)
+        if posixPath != expect then
+          posixAbs(win) // hook
+        assertEquals(
+          posixPath,
+          expect,
+          s"input: $win, result: $posixPath, expect: $expect"
+        )
     }
+  }
 
-    runWinTests(expectsAndMountsMisc) // affected by actual test server mount table
-    runWinTests(expectsAndMountsA)    // C:/Uzers -> $mount1
-    runWinTests(expectsAndMountsB)    // C:/Uzers -> $mount1 and $mount2
-    runWinTests(expectsAndMountsC)    // C:/Uzers unmounted
+  runWinTests(expectsAndMountsMisc) // affected by actual test server mount table
+  runWinTests(expectsAndMountsA)    // C:/Uzers -> $mount1
+  runWinTests(expectsAndMountsB)    // C:/Uzers -> $mount1 and $mount2
+  runWinTests(expectsAndMountsC)    // C:/Uzers unmounted
 
-  else
+
+  // Stays host-gated, and not for want of the flag: its oracle is
+  // `JPaths.get(p).toAbsolutePath.normalize`, which resolves against the real
+  // working directory and renders through the host's FileSystem. Checking POSIX
+  // behaviour against real java.nio is the point of this branch.
+  if !isWin then
     // Non-Windows tests: the only affect on the input path
     // should be to convert it to an absolute normalized path.
     val nonWinCases: Seq[(String, String)] = Seq(
@@ -95,7 +104,7 @@ final class PosixFmtSuite extends FunSuite {
   )
 
   private lazy val expectsAndMountsMisc = {
-    withMountLines(mountLinesMisc, testUser)
+    withMountLines(mountLinesMisc, windowsTestUser, isWindows = true)
     ExpectsGivenMounts(
       s"no additional mounts",
       mountLinesMisc,
@@ -230,9 +239,9 @@ final class PosixFmtSuite extends FunSuite {
   private lazy val mount2     = "/mount2"
   private lazy val uzers      = "C:/Uzers"
 
-  def testDir      = testUser.dir
-  def testUsername = testUser.name
-  def testHome     = testUser.home
+  def testDir      = windowsTestUser.dir
+  def testUsername = windowsTestUser.name
+  def testHome     = windowsTestUser.home
 
   def testDirPosix       = config.userdir.posix
   def testHomePosix      = config.userhome.posix

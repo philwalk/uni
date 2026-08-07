@@ -26,41 +26,43 @@ class PathsUtilsCoverageSuite extends FunSuite:
   // winAbsToPosixAbs
   // ============================================================================
 
-  if isWin then
-    test("winAbsToPosixAbs: uppercase drive letter is lowercased") {
-      val result = winAbsToPosixAbs("C:/Windows/System32")
-      assert(result.startsWith("/c/"), s"expected /c/… but got: $result")
-    }
+  // Never needed a platform gate: `winAbsToPosixAbs` is pure string work with no
+  // config and no `isWin` in it. The gate was simply inherited from its
+  // neighbours.
+  test("winAbsToPosixAbs: uppercase drive letter is lowercased") {
+    val result = winAbsToPosixAbs("C:/Windows/System32")
+    assert(result.startsWith("/c/"), s"expected /c/… but got: $result")
+  }
 
-    test("winAbsToPosixAbs: lowercase drive letter stays lowercase") {
-      val result = winAbsToPosixAbs("c:/Windows/System32")
-      assert(result.startsWith("/c/"), s"expected /c/… but got: $result")
-    }
+  test("winAbsToPosixAbs: lowercase drive letter stays lowercase") {
+    val result = winAbsToPosixAbs("c:/Windows/System32")
+    assert(result.startsWith("/c/"), s"expected /c/… but got: $result")
+  }
 
-    test("winAbsToPosixAbs: upper and lower drive letters produce identical result") {
-      assertEquals(winAbsToPosixAbs("F:/data/logs"), winAbsToPosixAbs("f:/data/logs"))
-    }
+  test("winAbsToPosixAbs: upper and lower drive letters produce identical result") {
+    assertEquals(winAbsToPosixAbs("F:/data/logs"), winAbsToPosixAbs("f:/data/logs"))
+  }
 
-    test("winAbsToPosixAbs: drive root C:/ → /c/") {
-      val result = winAbsToPosixAbs("C:/")
-      assertEquals(result, "/c/")
-    }
+  test("winAbsToPosixAbs: drive root C:/ → /c/") {
+    val result = winAbsToPosixAbs("C:/")
+    assertEquals(result, "/c/")
+  }
 
-    test("winAbsToPosixAbs: non-C drive letter (D:)") {
-      val result = winAbsToPosixAbs("D:/data")
-      assert(result.startsWith("/d/"), s"expected /d/… but got: $result")
-    }
+  test("winAbsToPosixAbs: non-C drive letter (D:)") {
+    val result = winAbsToPosixAbs("D:/data")
+    assert(result.startsWith("/d/"), s"expected /d/… but got: $result")
+  }
 
-    test("winAbsToPosixAbs: deep path preserves segments") {
-      val result = winAbsToPosixAbs("C:/Program Files/Git/bin")
-      assertEquals(result, "/c/Program Files/Git/bin")
-    }
+  test("winAbsToPosixAbs: deep path preserves segments") {
+    val result = winAbsToPosixAbs("C:/Program Files/Git/bin")
+    assertEquals(result, "/c/Program Files/Git/bin")
+  }
 
-    test("winAbsToPosixAbs: requires drive-letter path — throws on POSIX input") {
-      intercept[IllegalArgumentException] {
-        winAbsToPosixAbs("/usr/bin")
-      }
+  test("winAbsToPosixAbs: requires drive-letter path — throws on POSIX input") {
+    intercept[IllegalArgumentException] {
+      winAbsToPosixAbs("/usr/bin")
     }
+  }
 
   // ============================================================================
   // tmpDir
@@ -140,13 +142,19 @@ class PathsUtilsCoverageSuite extends FunSuite:
   // applyTildeAndDots: drive-only "C:" branch (Windows only)
   // ============================================================================
 
-  if isWin then
-    test("applyTildeAndDots: drive-only 'C:' resolves to cwd of that drive") {
-      val result = applyTildeAndDots("C:")
-      assert(result.nonEmpty, "drive-only path should resolve to something")
-      assert(result.startsWith("C:") || result.startsWith("c:") || result.startsWith("/c"),
-        s"drive-only 'C:' should resolve to C drive path: $result")
-    }
+  test("applyTildeAndDots: a drive-only path is passed through, not resolved here") {
+    // It used to resolve `C:` itself via `driveCwd`, which left a `.` component in
+    // the answer, and `C:foo` -- having no '/' -- fell through to the bare-filename
+    // branch and became `<userdir>/C:foo`. `classify` owns drive letters now, so
+    // both come back untouched and `resolveDriveRelPathstr` does the work.
+    //
+    // Runs on any host: `config.isWindows` is injected rather than read from
+    // `os.name`, so the Windows rule is reachable from Linux and macOS.
+    withMountLines(mountLines, TestUtils.windowsTestUser, isWindows = true)
+    assertEquals(applyTildeAndDots("C:"), "C:")
+    assertEquals(applyTildeAndDots("C:foo"), "C:foo")
+    assertEquals(applyTildeAndDots("C:foo/bar"), "C:foo/bar")
+  }
 
   // ============================================================================
   // posixAbs: trailing-slash stripping (non-Windows is the simplest branch)
@@ -172,6 +180,11 @@ class PathsUtilsCoverageSuite extends FunSuite:
   // standardizePath — mount prefix matching must respect segment boundaries
   // ============================================================================
 
+  // Still Windows-only, and not for want of an injectable flag: `standardizePath`
+  // starts from `p.toFile.getAbsolutePath`, so its input is whatever the *host*
+  // filesystem says. On Linux `"C:/msys64extra/x"` is a relative name and picks up
+  // the real cwd, which no amount of rule injection can change. The Rust port covers
+  // the same prefix-boundary rule portably, in `resolve::find_prefix`.
   if isWin then
     test("standardizePath: a mount prefix only matches on a segment boundary") {
       withMountLines(Seq(
