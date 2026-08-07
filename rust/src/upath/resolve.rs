@@ -294,8 +294,22 @@ pub fn posix_abs(ctx: &PathContext, raw: &str) -> Result<String, PathError> {
 /// Maps an already-resolved Windows path back to POSIX.
 fn windows_to_posix(ctx: &PathContext, cyg_mixed: &str) -> Result<String, PathError> {
     let cyg_root = ctx.msys_root();
-    if !cyg_root.is_empty() && starts_with_ignore_case(cyg_mixed, cyg_root) {
-        return Ok(cyg_mixed[cyg_root.len()..].to_owned());
+    // `find_prefix` rather than a bare `starts_with`: `C:/msys64extra` starts with the
+    // `C:/msys64` root as a *string* while living somewhere else, and rewriting it as
+    // though it were inside produced `extra` — a relative string standing in for an
+    // absolute path. `find_prefix` requires the next character to be '/' or ':' and
+    // treats an exact match as a match.
+    if !cyg_root.is_empty()
+        && find_prefix(cyg_mixed, &[cyg_root.to_lowercase()]).is_some()
+    {
+        let rest = &cyg_mixed[cyg_root.len()..];
+        // The root itself maps to "/", not to "": dropping the whole prefix leaves
+        // nothing, so the root of the filesystem came back as the empty string.
+        return Ok(if rest.is_empty() || rest == "/" {
+            "/".to_owned()
+        } else {
+            rest.to_owned()
+        });
     }
     match find_prefix(cyg_mixed, &ctx.win2posix_keys) {
         Some(win_prefix) => {

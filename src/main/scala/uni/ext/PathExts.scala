@@ -59,10 +59,24 @@ object pathExts {
 
     // ---- path forms ----
     def relativePath: Path = relativePathToCwd(p)
-    def relpath: String = {
-      val rp: Path = relativePathToCwd(p)
-      standardizePath(rp)
-    }
+    /** This path relative to the working directory: `.` when it *is* that directory,
+     *  a relative path when it is below it, and its absolute POSIX form otherwise.
+     *
+     *  Was `standardizePath(relativePathToCwd(p))`, which never returned anything
+     *  relative -- `relativePathToCwd` computed the relative form and
+     *  `standardizePath` immediately threw it away by calling `toAbsolutePath`.
+     *
+     *  Worse, the two disagreed about which working directory they meant:
+     *  `relativePathToCwd` relativised against the *config's* `pwd` while
+     *  `standardizePath` re-absolutised against the *JVM's* `user.dir`. Under an
+     *  injected user those are different directories, so the result named a
+     *  different file -- `C:/munit/test/foo` came back as
+     *  `/c/Users/philwalk/workspace/uni/foo`.
+     *
+     *  Now the Path-facing form of `posixRel`, which is what that method's own
+     *  deprecation note already promised ("Use `Path.relpath`"). One working
+     *  directory, `config.userdir`, and pure string work throughout. */
+    def relpath: String = toPosixRel(p.toString)
 
     def abs: String =
       if (java.nio.file.Files.exists(p))

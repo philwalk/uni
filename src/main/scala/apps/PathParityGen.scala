@@ -110,6 +110,12 @@ object PathParityGen:
     "/weekly/x",
     "/cygdrive/c/tmp",
     "C:/Windows", "c:/windows/system32",  // Absolute
+    // The mount root in Windows form, and a *sibling* whose name merely starts with
+    // it. The root used to map to "" -- so `Paths.get("/").posix` was empty -- and the
+    // sibling was rewritten as if it lived inside, yielding the relative string
+    // `extra` for an absolute path. Both languages had it; both are fixed.
+    "C:/msys64", "C:/msys64/", "C:/msys64/usr",
+    "C:/msys64extra", "C:/msys64extra/x",
     "C:", "F:", "F:config/bin",           // DriveRel, bare and with a suffix
     "//server/share",                     // UNC
     "file:///c/tmp",                      // Invalid

@@ -404,6 +404,18 @@ inline private def parentDirOf(s: String): String =
 @deprecated("Use `Path.posix` or `String.posix`; this becomes private[uni]", "0.16.0")
 def posixAbs(raw: String): String = toPosixAbs(raw)
 
+/** True when `pathstr` is the mount root itself, or lies beneath it.
+ *
+ *  A plain `startsWith` is not enough: `C:/msys64extra` starts with the `C:/msys64`
+ *  root as a *string* while living somewhere else entirely, and rewriting it as
+ *  though it were inside produced `extra` -- a relative string standing in for an
+ *  absolute path. `Resolver.findPrefix` is the matcher the rest of resolution uses:
+ *  it requires the next character to be '/' or ':', and treats an exact match as a
+ *  match. `standardizePath` had the same defect and was routed here first.
+ */
+private inline def isUnderRoot(pathstr: String, root: String): Boolean =
+  Resolver.findPrefix(pathstr, Array(root.toLowerCase(java.util.Locale.ROOT))).nonEmpty
+
 /** Implementation of [[posixAbs]], callable from inside the library without
  *  tripping the deprecation warning. When `posixAbs` is finally narrowed, this
  *  becomes the only form and the wrapper above just disappears. */
@@ -429,8 +441,12 @@ private[uni] def toPosixAbs(raw: String): String = {
       // `Paths.get("bare.txt").posix` succeeded. Preserve it instead, which is
       // what `cygpath -u a/b` does.
       normalizePosix(cygMixed)
-    else if cygMixed.startsWithIgnoreCase(config.cygRoot) then
-      cygMixed.drop(config.cygRoot.length)
+    else if isUnderRoot(cygMixed, config.cygRoot) then
+      val rest = cygMixed.drop(config.cygRoot.length)
+      // The root itself maps to "/", not to "". Dropping the whole prefix leaves
+      // nothing, so `toPosixAbs("C:/msys64")` -- and therefore `Paths.get("/").posix`
+      // -- returned the empty string for the root of the filesystem.
+      if rest.isEmpty || rest == "/" then "/" else rest
     else
       Resolver.findPrefix(cygMixed, config.win2posixKeys) match
         case Some(winPrefix) =>

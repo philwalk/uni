@@ -41,6 +41,48 @@
   producer that had already exited. Any caller checking twice hung outright
 - `hasNext` is now idempotent
 
+**BUG - `Path.relpath` never returned a relative path, and mixed two working directories**
+
+- It was `standardizePath(relativePathToCwd(p))`. The first computed the relative
+  form; the second immediately threw it away by calling `toAbsolutePath`:
+
+  | call | before | now |
+  |---|---|---|
+  | `Paths.get(cwd + "/src/main").relpath` | `/Users/philwalk/workspace/uni/src/main` | `src/main` |
+  | `Paths.get(cwd).relpath` | `/Users/philwalk/workspace/uni` | `.` |
+  | `Paths.get("/tmp").relpath` | `/tmp` | `/tmp` |
+
+- The worse half: the two halves disagreed about which working directory they meant.
+  `relativePathToCwd` relativised against the *config's* `pwd` while
+  `standardizePath` re-absolutised against the *JVM's* `user.dir`. Under an injected
+  user those differ, so the answer named a different file -- `C:/munit/test/foo` came
+  back as `/c/Users/philwalk/workspace/uni/foo`
+- `relpath` is now the `Path`-facing form of `posixRel`, which is what that method's
+  own deprecation note already promised ("Use `Path.relpath`"). The two returned
+  different answers for the same input; `PathSpec` had already worked around it by
+  calling `posixRel` directly
+
+**BUG - the mount root mapped to the empty string, and a sibling matched it (`toPosixAbs`)**
+
+- Found while fixing `relpath`, which surfaced the divergence. Two defects in one
+  expression, `cygMixed.startsWithIgnoreCase(config.cygRoot)`:
+
+  | input | before | now |
+  |---|---|---|
+  | `toPosixAbs("C:/msys64")` (the root) | `""` | `/` |
+  | `Paths.get("/").posix` | `""` | `/` |
+  | `toPosixAbs("C:/msys64extra")` | `extra` | `/c/msys64extra` |
+
+- Dropping the whole prefix left nothing, so the root of the filesystem came back as
+  the empty string. And the prefix test had no segment boundary, so a *sibling*
+  directory whose name merely starts with the mount root was rewritten as though it
+  were inside -- returning a relative string for an absolute path. Same defect
+  `standardizePath` had; both now go through `Resolver.findPrefix`
+- Fixed identically in the Rust port (`upath::resolve::windows_to_posix`), which had
+  faithfully reproduced both. The parity fixture missed them because it had no
+  mount-root input; `C:/msys64`, `C:/msys64/`, `C:/msys64/usr`, `C:/msys64extra` and
+  `C:/msys64extra/x` are now among its cases
+
 **Windows path rules are now testable on Linux and macOS**
 
 - `isWin` came straight from `scala.util.Properties` (i.e. `os.name`), so the Windows
