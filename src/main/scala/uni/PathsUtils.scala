@@ -158,10 +158,18 @@ private[uni] object Internals {
   def exists(fname: String): Boolean = Files.exists(JPaths.get(fname))
 
   def standardizePath(p: Path): String = {
-    val winPath: String = if canExist(p) then
-      p.toAbsolutePath.normalize.toString
+    // Absolutise against the *config's* working directory, not the JVM's.
+    // `toAbsolutePath` and `File.getAbsolutePath` both consult `user.dir`, which
+    // `withMountLines` cannot change -- so a relative input was resolved against one
+    // directory while the rest of resolution used another. In production they
+    // coincide, which is why it went unnoticed; under an injected user `stdpath("a/b")`
+    // named a file in the real working directory. Same defect that made `relpath`
+    // point at the wrong file.
+    val abs: Path = if p.isAbsolute then p else pwd.resolve(p)
+    val winPath: String = if canExist(abs) then
+      abs.normalize.toString
     else
-      p.toFile.getAbsolutePath // is this adequate?
+      abs.toFile.getAbsolutePath // is this adequate?
 
     val pathstr = winPath
     if (!isWin) {
@@ -294,16 +302,22 @@ private[uni] object Internals {
 private val driveLetterPattern =
   java.util.regex.Pattern.compile("^([A-Za-z]):")
 
+/** Removes trailing separators. `/` and a bare drive root keep theirs.
+ *
+ *  All of them, not one: this used `stripSuffix("/")`, so `/usr/bin//` came back as
+ *  `/usr/bin/` -- still trailing, from a function whose name says otherwise.
+ */
 private def noTrailingSlash(p: String): String =
-  if p == "/" then
-    "/"
-  else if p.length >= 3 && p(1) == ':' && p(2) == '/' then
-    if p.length > 3 then
-      p.stripSuffix("/")
-    else
-      p
+  if p == "/" then "/"
   else
-    p.stripSuffix("/")
+    val bare = p.replaceAll("/+$", "")
+    // All separators (`//`, `///`) reduces to the root; an *empty* input stays empty.
+    // Conflating them turned `""` into `/`, which then resolved as the msys root.
+    if bare.isEmpty then (if p.isEmpty then "" else "/")
+    // `C:/` is the drive root and keeps its separator; bare `C:` is drive-relative and
+    // must not gain one. Preserve, never add.
+    else if bare.length == 2 && bare(1) == ':' && p.length > 2 then s"$bare/"
+    else bare
 
 private def normalizePosix(p: Path): String =
   normalizePosix(p.toString)
@@ -419,7 +433,14 @@ private inline def isUnderRoot(pathstr: String, root: String): Boolean =
 /** Implementation of [[posixAbs]], callable from inside the library without
  *  tripping the deprecation warning. When `posixAbs` is finally narrowed, this
  *  becomes the only form and the wrapper above just disappears. */
-private[uni] def toPosixAbs(raw: String): String = {
+private[uni] def toPosixAbs(raw0: String): String = {
+  // Compare the POSIX form. The extension methods pass `Path.toString`, which on
+  // Windows renders UNC as `\server\share` -- that failed the `startsWith("/")`
+  // test below, fell through to the drive-letter fallback and threw. So
+  // `Paths.get("//server/share").posix` failed while `posixAbs("//server/share")` --
+  // the same path, forward slashes -- succeeded. `normalizePosix` swaps separators
+  // and strips trailing slashes; interior ones are untouched, so UNC survives.
+  val raw = normalizePosix(raw0)
   if !config.isWindows then
     Resolver.resolvePathstr(raw) match {
     case "/" => "/"

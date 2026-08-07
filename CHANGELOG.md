@@ -41,6 +41,20 @@
   producer that had already exited. Any caller checking twice hung outright
 - `hasNext` is now idempotent
 
+**BUG - `noTrailingSlash` stripped only one trailing separator**
+
+- It used `stripSuffix("/")`, so `/usr/bin//` came back as `/usr/bin/` -- still
+  trailing, from a function whose name says otherwise. It now strips all of them.
+  `/` keeps its slash, and a bare `C:` must not *gain* one: `C:/` is the drive root
+  while `C:` is drive-relative, and turning one into the other changes which
+  directory is meant.
+- Affects `joinPosix` and `toPosixAbs` as well as `posx`, all of which route through
+  it. Mirrored in the Rust port.
+- `posx` itself is unchanged in meaning: it converts `\` to `/` and nothing more.
+  Interior runs of separators are deliberately *not* collapsed -- `"a//b".posx` stays
+  `a//b`. Collapsing duplicates is what `Paths.get` does, so code wanting that should
+  go through a path rather than a string.
+
 **BUG - `Path.relpath` never returned a relative path, and mixed two working directories**
 
 - It was `standardizePath(relativePathToCwd(p))`. The first computed the relative

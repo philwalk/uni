@@ -33,6 +33,7 @@ pub mod hash;
 pub mod io;
 pub mod mount;
 pub mod resolve;
+pub mod strext;
 
 pub use context::DriveCwdSource;
 pub use context::PathContext;
@@ -52,6 +53,8 @@ pub use hash::Sha256;
 pub use io::Charset;
 pub use mount::MountMaps;
 pub use resolve::PathKind;
+pub use strext::StrExts;
+pub use strext::StrPathExts;
 
 /// Why a path could not be resolved.
 ///
@@ -79,12 +82,37 @@ pub enum PathError {
     #[error("path has no file name: {0}")]
     NoFileName(String),
 
+    /// An I/O failure behind a `str`-level convenience method. Those resolve a path
+    /// and then read or write it, so one error type has to span both halves.
+    ///
+    /// The kind and message are carried rather than the `std::io::Error` itself:
+    /// `io::Error` is neither `Clone` nor `Eq`, and this enum is both — which tests
+    /// rely on to compare errors directly.
+    #[error("io error ({kind:?}): {message}")]
+    Io {
+        /// The underlying [`std::io::ErrorKind`].
+        kind: std::io::ErrorKind,
+        /// The error's `Display` text.
+        message: String,
+    },
+
     /// The cygdrive fallback was reached with a path that has no drive letter —
     /// typically a relative path containing a slash, which resolution leaves
     /// untouched and which therefore has no absolute POSIX form. `uni` fails the
     /// same way, via `require(cygMixed(1) == ':')` in `winAbsToPosixAbs`.
     #[error("not a Windows absolute path: {0}")]
     NotDriveQualified(String),
+}
+
+impl PathError {
+    /// Wraps an [`std::io::Error`], keeping its kind and message.
+    #[must_use]
+    pub fn from_io(e: &std::io::Error) -> Self {
+        Self::Io {
+            kind: e.kind(),
+            message: e.to_string(),
+        }
+    }
 }
 
 /// Map whose lookups ignore ASCII case, mirroring `uni.LcLookupMap`.
@@ -154,22 +182,29 @@ pub(crate) fn strip_trailing_slash(s: &str) -> String {
     }
 }
 
-/// `PathsUtils.noTrailingSlash`: keeps `/` and a bare drive root `X:/` intact,
-/// strips the trailing slash otherwise.
+/// `PathsUtils.noTrailingSlash`: removes trailing separators, keeping `/` and a bare
+/// drive root intact.
+///
+/// All of them, not one: this used to strip a single `/`, so `/usr/bin//` came back as
+/// `/usr/bin/` — still trailing, from a function whose name says otherwise.
 #[must_use]
 pub(crate) fn no_trailing_slash(p: &str) -> String {
     if p == "/" {
         return "/".to_owned();
     }
-    let b = p.as_bytes();
-    if p.len() >= 3 && b[1] == b':' && b[2] == b'/' {
-        // `C:/` is already minimal; `C:/foo/` is not
-        if p.len() > 3 {
-            return p.strip_suffix('/').unwrap_or(p).to_owned();
-        }
-        return p.to_owned();
+    let bare = p.trim_end_matches('/');
+    if bare.is_empty() {
+        // All separators (`//`, `///`) reduces to the root; an *empty* input stays
+        // empty. Conflating them made `"".local()` resolve to the msys root.
+        return if p.is_empty() { String::new() } else { "/".to_owned() };
     }
-    p.strip_suffix('/').unwrap_or(p).to_owned()
+    // `C:/` is the drive root and keeps its separator; bare `C:` is drive-relative
+    // and must not gain one. Preserve, never add — an earlier attempt at this turned
+    // `"C:"` into `"C:/"`, changing what the string means.
+    if bare.len() == 2 && bare.as_bytes()[1] == b':' && p.len() > 2 {
+        return format!("{bare}/");
+    }
+    bare.to_owned()
 }
 
 /// `PathsUtils.joinPosix`: exactly one slash between the parts, no trailing slash.
@@ -180,7 +215,11 @@ pub(crate) fn join_posix(prefix: &str, suffix: &str) -> String {
     no_trailing_slash(&format!("{pre}/{post}"))
 }
 
-/// `PathsUtils.normalizePosix`: backslashes to forward, then `no_trailing_slash`.
+/// `PathsUtils.normalizePosix`: backslashes to forward, then [`no_trailing_slash`].
+///
+/// A separator swap and nothing more — interior runs are left alone, deliberately.
+/// `posx` is defined as that swap, not as path normalisation. `Paths.get` is what
+/// collapses duplicate separators, so code wanting that should go through a path.
 #[must_use]
 pub(crate) fn normalize_posix(p: &str) -> String {
     let s = p.replace('\\', "/");

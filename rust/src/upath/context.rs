@@ -4,10 +4,16 @@
 //! context for a platform it is not running on. `uni` cannot do this: `isWin` comes
 //! from `os.name` and its path suites skip off Windows.
 
+use std::sync::Arc;
+use std::sync::OnceLock;
+
 use crate::upath::PathError;
 use crate::upath::mount::DEFAULT_MSYS_ROOT;
 use crate::upath::mount::MountMaps;
 use crate::upath::normalize_posix;
+
+/// Set at most once; see [`PathContext::default_context`].
+static DEFAULT: OnceLock<Arc<PathContext>> = OnceLock::new();
 
 /// The user identity resolution depends on, matching `uni.UserInfo`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,6 +109,44 @@ impl PathContext {
         }
     }
 
+    /// The process-wide default context, built from the environment on first use.
+    ///
+    /// # Why this exists
+    ///
+    /// Threading a context explicitly is the right default for a library, and every
+    /// function here still takes one. But this port's purpose is that a script can be
+    /// maintained in Scala and Rust side by side, and `"path".asPath` is among the
+    /// most-called things in `uni`'s API. Without a default there is nothing for
+    /// `str::as_path` to resolve against, and the Rust mirror of a one-line script
+    /// grows a context parameter that the Scala has no counterpart for.
+    ///
+    /// # What it deliberately is not
+    ///
+    /// A `OnceLock`, not a lock around a mutable slot. `uni` keeps its config in a
+    /// `var` that `withMountLines` swaps at will; reproducing that would put shared
+    /// mutable state back into a port that had none, and let one test's mount table
+    /// leak into another's. Here the default can be *set once, before first use*, and
+    /// is immutable after — see [`PathContext::set_default`]. Tests that need several
+    /// tables build explicit contexts instead, which is what every test in this crate
+    /// already does.
+    pub fn default_context() -> &'static Arc<Self> {
+        DEFAULT.get_or_init(|| Arc::new(Self::from_env()))
+    }
+
+    /// Installs the default context, if nothing has read or set it yet.
+    ///
+    /// Returns `false` when a default is already in place, in which case the argument
+    /// is discarded and the existing one stands. Call it before touching any `str`
+    /// path method — typically once at start-up — or not at all.
+    ///
+    /// This cannot swap a live default on purpose: code already holding an `Arc` from
+    /// [`PathContext::default_context`] would keep the old one, so a "swap" would be
+    /// visible to some callers and not others. Explicit contexts are the supported way
+    /// to use more than one.
+    pub fn set_default(ctx: Self) -> bool {
+        DEFAULT.set(Arc::new(ctx)).is_ok()
+    }
+
     /// `PathsConfig.userdirParent`: everything before the last slash, or `/`.
     #[must_use]
     pub fn userdir_parent(&self) -> String {
@@ -120,11 +164,15 @@ impl PathContext {
 
     /// Current directory on `drive`, in the platform's **native** form.
     ///
-    /// Native, i.e. backslashes on Windows, because that is what `driveCwd`'s
-    /// `java.nio.file.Path.toString` yields and `applyTildeAndDots` interpolates it
-    /// verbatim — a bare `C:` input resolves to `C:\munit\test`, not
-    /// `C:/munit/test`. `resolve_drive_rel` normalises separately, which is the
-    /// same split the Scala makes. Callers wanting forward slashes should convert.
+    /// Native, i.e. backslashes on Windows, matching `PathsConfig.driveCwd`, which
+    /// hands back a `java.nio.file.Path` whose `toString` is backslashed there. The
+    /// parity fixture's `drivecwd` field records that form, so this has to agree.
+    ///
+    /// It used to matter more: `apply_tilde_and_dots` once consumed this value
+    /// verbatim, so a bare `C:` resolved to `C:\munit\test` with separators no other
+    /// path had. That was a defect in both languages, now fixed — drive letters reach
+    /// `resolve_drive_rel`, which converts to forward slashes itself. Callers wanting
+    /// POSIX form should still convert.
     ///
     /// # Errors
     /// [`PathError::BadDriveLetter`] if `drive` is not `A-Za-z`.

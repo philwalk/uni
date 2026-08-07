@@ -26,6 +26,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use t3prf::upath::PathContext;
+use t3prf::upath::StrExts;
 use t3prf::upath::UPath;
 use t3prf::upath::UserInfo;
 use t3prf::upath::resolve::classify;
@@ -106,6 +107,9 @@ fn evaluate(ctx: &PathContext, field: &str, input: &str) -> String {
         "classify" => format!("{:?}", classify(input)),
         "win" => render(resolve_pathstr(ctx, input, &[])),
         "posixabs" => render(posix_abs(ctx, input)),
+        // Pure `String` extensions — no context, so they need no `UPath`.
+        "strposx" => input.posx(),
+        "dropsuffix" => input.drop_suffix().to_owned(),
         "drivecwd" => {
             let drive = input.chars().next().unwrap_or('?');
             render(ctx.drive_cwd(drive))
@@ -128,6 +132,9 @@ fn evaluate(ctx: &PathContext, field: &str, input: &str) -> String {
                 "dotsuffix" => render(p.dotsuffix().map(str::to_owned)),
                 "revpath" => p.reverse_path(),
                 "segments" => p.segments().join(","),
+                "relpath" => p.relpath(),
+                "posix" => render(p.posix()),
+                "stdpath" => p.stdpath(),
                 _ => panic!("fixture names field {other}, which this test cannot evaluate"),
             }
         }

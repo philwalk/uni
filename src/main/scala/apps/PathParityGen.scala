@@ -132,6 +132,16 @@ object PathParityGen:
     "/usr/bin/.", "/usr/bin/..",
   )
 
+  /** Pure `String` extensions -- no context and no `Paths.get`, so unlike `extFields`
+   *  these are host-independent and are recorded for both platform blocks.
+   *
+   *  Pinned because `relpath` taught the lesson: a method the fixture does not carry
+   *  can drift between the two languages with nothing watching. */
+  val strFields: Seq[(String, String => String)] = Seq(
+    "strposx"    -> (s => s.posx),
+    "dropsuffix" -> (s => s.dropSuffix),
+  )
+
   /** Drive letters to pin `driveCwd` against. */
   val drives: Seq[Char] = Seq('C', 'F', 'Z')
 
@@ -153,6 +163,13 @@ object PathParityGen:
     "dotsuffix" -> (s => Paths.get(s).dotsuffix),
     "revpath"   -> (s => Paths.get(s).reversePath),
     "segments"  -> (s => Paths.get(s).segments.mkString(",")),
+    // `relpath` was absent, which let the Rust port keep the old algorithm after the
+    // Scala one was fixed -- a silent divergence with nothing watching it. `posix`
+    // and `stdpath` are the other two conversions the port implements and the
+    // fixture was not pinning.
+    "relpath"   -> (s => Paths.get(s).relpath),
+    "posix"     -> (s => Paths.get(s).posix),
+    "stdpath"   -> (s => Paths.get(s).stdpath),
   )
 
   /* Three methods are deliberately absent, all for the same reason: their result
@@ -221,6 +238,8 @@ object PathParityGen:
         sb ++= s"case | $id | classify | ${esc(in)} | ${attempt(Resolver.classify(in).toString)}\n"
         sb ++= s"case | $id | win      | ${esc(in)} | ${attempt(Resolver.resolvePathstr(in))}\n"
         sb ++= s"case | $id | posixabs | ${esc(in)} | ${attempt(toPosixAbs(in))}\n"
+        for (field, f) <- strFields do
+          sb ++= s"case | $id | $field | ${esc(in)} | ${attempt(f(in))}\n"
         // Extension methods go through `Paths.get`, so they render through the
         // *host's* java.nio FileSystem -- `Paths.get("/munit/test").toString` is
         // `\\munit\\test` on Windows whatever rule set is injected, and

@@ -95,8 +95,10 @@ class PathParitySuite extends FunSuite:
         case Some(f) => attempt(f(input))
         case None    => fail(s"fixture names field $other, which this suite cannot evaluate")
 
+  /** Both field maps the generator writes, so the suite cannot fall behind it: the
+   *  `Path` extensions and the pure `String` ones. */
   private lazy val extByName: Map[String, String => String] =
-    uni.apps.PathParityGen.extFields.toMap
+    (uni.apps.PathParityGen.extFields ++ uni.apps.PathParityGen.strFields).toMap
 
   for platform <- platforms do
     val block = blockFor(platform)

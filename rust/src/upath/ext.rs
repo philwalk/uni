@@ -26,6 +26,7 @@
 use std::sync::Arc;
 
 use crate::upath::PathContext;
+use crate::upath::resolve::posix_rel;
 use crate::upath::PathError;
 use crate::upath::no_trailing_slash;
 use crate::upath::resolve::find_prefix;
@@ -400,10 +401,26 @@ impl UPath {
     }
 
     /// Relative to the working directory when it lies below it, else unchanged.
-    /// `Internals.relativePathToCwd`, then standardised — i.e. `PathExts.relpath`.
+    /// This path relative to the working directory. `PathExts.relpath`.
     #[must_use]
     pub fn relpath(&self) -> String {
-        self.relative_to_cwd().stdpath()
+        // `posix_rel`, not `relative_to_cwd().stdpath()`. That older form was a
+        // faithful port of a Scala defect: `relativePathToCwd` computed the relative
+        // path and `standardizePath` immediately threw it away by re-absolutising,
+        // and the two used different working directories into the bargain. Fixed in
+        // `uni` first; this is the matching change.
+        posix_rel(&self.ctx, &self.s).unwrap_or_else(|_| self.s.clone())
+    }
+
+    /// This path relative to the working directory, as a path rather than a string.
+    /// `PathExts.relativePath`.
+    ///
+    /// Kept when [`UPath::relpath`] stopped using it: `relpath` now goes through
+    /// `posix_rel`, but the `Path`-returning form is part of `uni`'s surface and this
+    /// is what implements it.
+    #[must_use]
+    pub fn relative_path(&self) -> Self {
+        self.relative_to_cwd()
     }
 
     /// `Internals.relativePathToCwd`.
@@ -492,19 +509,22 @@ mod tests {
     }
 
     #[test]
-    fn relpath_round_trips_back_to_absolute() {
-        // `relpath` relativises against the working directory and then hands the
-        // result to `standardizePath`, which absolutises it again — so despite the
-        // name it never returns a relative path.
-        //
-        // In this port the two halves agree about which directory is current, so
-        // the round trip is exactly a no-op and `relpath` equals `stdpath`. uni
-        // gets a different answer only because its halves disagree:
-        // `relativePathToCwd` reads `config.userdir` while `standardizePath` falls
-        // through to Java's `toAbsolutePath` and the real process cwd.
+    fn relpath_returns_a_relative_path_below_the_working_directory() {
+        // This used to assert the opposite, and said so in its own name: `relpath`
+        // relativised against the working directory and then handed the result to
+        // `standardizePath`, which absolutised it again. Fixed in `uni` first --
+        // along with the two halves disagreeing about *which* working directory --
+        // and `relpath` is now a fixture field, so the two languages are held
+        // together on it.
         let path = p("C:/munit/test/sub/f.txt");
-        assert_eq!(path.relpath(), "/c/munit/test/sub/f.txt");
-        assert_eq!(path.relpath(), path.stdpath());
+        assert_eq!(path.relpath(), "sub/f.txt");
+        assert_eq!(p("C:/munit/test").relpath(), ".");
+    }
+
+    #[test]
+    fn relative_path_agrees_with_relpath_below_the_working_directory() {
+        // The `Path`-returning sibling, `PathExts.relativePath`.
+        assert_eq!(p("C:/munit/test/sub").relative_path().posx(), "sub");
     }
 
     #[test]

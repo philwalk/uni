@@ -266,7 +266,12 @@ fn expand_bare(ctx: &PathContext, raw: &str) -> Result<String, PathError> {
 ///
 /// # Errors
 /// Propagates [`PathError`] from resolution.
-pub fn posix_abs(ctx: &PathContext, raw: &str) -> Result<String, PathError> {
+pub fn posix_abs(ctx: &PathContext, raw0: &str) -> Result<String, PathError> {
+    // Normalise the input first, as `toPosixAbs` does: separators swapped, runs of
+    // them collapsed, trailing slash dropped. Skipping it let `//`-bearing input
+    // survive into the answer, so `posix_abs("/usr//bin")` kept the double slash.
+    let normalized = normalize_posix(raw0);
+    let raw = normalized.as_str();
     if !ctx.is_windows {
         let s = resolve_pathstr(ctx, raw, &[])?;
         return Ok(if s == "/" {
