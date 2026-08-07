@@ -468,7 +468,7 @@ use `X.eachCol` / `X.eachRow` to sidestep the name collision, or rename at impor
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.15.1
+//> using dep org.vastblue:uni_3:0.15.2
 
 import uni.data.*
 
@@ -483,7 +483,7 @@ val (labels, stats) = m.describe
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.15.1
+//> using dep org.vastblue:uni_3:0.15.2
 
 import uni.*
 import uni.io.FileOps.*
@@ -503,7 +503,7 @@ r.columnIndex       // Map[String, Int]  (pre-computed; free repeated lookups)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.15.1
+//> using dep org.vastblue:uni_3:0.15.2
 
 import uni.data.*
 
