@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Emit rust/src/numpy_rng/ziggurat.rs from the tables in NumPyRNG.scala.
 
 Transcribing 768 constants by hand is a bad idea, so don't: run this from the

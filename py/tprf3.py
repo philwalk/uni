@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Three-Pass Regression Filter (Kelly & Pruitt, 2015)
 NumPy translation of estimate3PRF.m and forecast3PRF.m

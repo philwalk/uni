@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Three-Pass Regression Filter (Kelly & Pruitt, 2015)
 Vectorized implementation: batch lstsq replaces per-column/per-row loops.
