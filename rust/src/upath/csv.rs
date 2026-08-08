@@ -442,6 +442,35 @@ impl<W: Write> CsvWriter<W> {
 
 impl UPath {
     /// The delimiter for this file: the configured one, or sniffed from a sample.
+    /// The guessed CSV delimiter as a string, or empty when none was found.
+    ///
+    /// Scala's `Path.delim`. Empty for a path that is not a file, and empty when the sniffer finds
+    /// nothing it is confident about.
+    ///
+    /// Two differences from the internal [`Self::csv_delimiter`] are deliberate, because the two
+    /// answer different questions:
+    ///
+    /// - **50 sample rows**, matching `Delimiter.detect(p, 50)`, not `CsvConfig::sample_rows`.
+    /// - **Empty rather than a comma** when the score is zero. `csv_delimiter` has to name a byte
+    ///   to parse with, so it falls back; this reports whether a delimiter was found at all, and
+    ///   substituting a comma would turn "no" into a confident wrong answer.
+    ///
+    /// Returns `String` rather than `Option<char>` to mirror the Scala, whose callers test for
+    /// emptiness.
+    #[must_use]
+    pub fn delim(&self) -> String {
+        if !self.isFile() {
+            return String::new();
+        }
+        let sample: Vec<String> = self.lines().into_iter().take(50).collect();
+        let state = delim::detect_lines(sample, 50);
+        if state.score > 0 {
+            state.delimiter.to_string()
+        } else {
+            String::new()
+        }
+    }
+
     fn csv_delimiter(&self, cfg: &CsvConfig) -> u8 {
         cfg.delimiter.unwrap_or_else(|| {
             let sample: Vec<String> = self.lines().into_iter().take(cfg.sample_rows).collect();

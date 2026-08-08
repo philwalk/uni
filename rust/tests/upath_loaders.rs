@@ -121,3 +121,37 @@ fn csv_rows_async_is_empty_for_a_missing_file() {
     let missing = UPath::resolve(&ctx, &format!("{d}/nope.csv")).expect("resolve");
     assert_eq!(missing.csvRowsAsync().count(), 0);
 }
+
+/// `delim` against the Scala's own answers.
+///
+/// The expectations are what `uni` produced for these exact inputs, not a guess: single-column,
+/// empty and prose files all yield **empty**, because the sniffer found nothing it was confident
+/// about and `delim` reports that rather than falling back to a comma.
+#[test]
+fn delim_matches_the_scala_answers() {
+    let t = tempfile::tempdir().expect("tmp");
+    let cases: [(&str, &str, &str); 7] = [
+        ("comma.csv", "a,b,c\n1,2,3\n4,5,6\n", ","),
+        ("tab.csv", "a\tb\tc\n1\t2\t3\n", "\t"),
+        ("semi.csv", "a;b;c\n1;2;3\n", ";"),
+        ("pipe.csv", "a|b|c\n1|2|3\n", "|"),
+        ("single.txt", "alpha\nbeta\ngamma\n", ""),
+        ("empty.txt", "", ""),
+        ("prose.txt", "the quick brown fox\njumped over\n", ""),
+    ];
+    for (name, body, want) in cases {
+        let p = csv_at(t.path(), name, body);
+        assert_eq!(p.delim(), want, "delim of {name}");
+    }
+    // Not a file, and a directory: both empty rather than an error.
+    let d = t.path().to_string_lossy().replace('\\', "/");
+    let ctx = Arc::new(PathContext::synthetic(
+        &[],
+        UserInfo::new("tester", &d, &d),
+        cfg!(windows),
+    ));
+    let absent = UPath::resolve(&ctx, &format!("{d}/no-such.csv")).expect("resolve");
+    assert_eq!(absent.delim(), "", "a missing file has no delimiter");
+    let dir = UPath::resolve(&ctx, &d).expect("resolve dir");
+    assert_eq!(dir.delim(), "", "a directory has no delimiter");
+}
