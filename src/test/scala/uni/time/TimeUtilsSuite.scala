@@ -107,7 +107,7 @@ class TimeUtilsSuite extends FunSuite:
   }
 
   // ============================================================================
-  // parseDate — SmartParse-then-ChronoParse fallback
+  // parseDate — SmartParse only, since the ChronoParse fallback was removed
   // ============================================================================
 
   test("parseDate: valid ISO date parses correctly") {

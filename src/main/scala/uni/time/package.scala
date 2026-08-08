@@ -7,10 +7,6 @@ import java.time.DayOfWeek
 // Top-level exports (internal package visibility)
 export TimeUtils.{parseDate as parseDateTime}
 export TimeUtils.*
-/** @deprecated Superseded by `parseDateSmart`, which `parseDate` now uses directly.
- *  See the note on `ChronoParse` for the measurements behind the change. */
-@deprecated("Use parseDate or parseDateSmart", "0.15.2")
-def parseDateChrono(datestr: String): LocalDateTime = ChronoParse.parseDateChrono(datestr)
 export SmartParse.parseDateSmart
 export java.time.LocalDateTime
 
