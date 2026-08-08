@@ -224,10 +224,12 @@ performance-sensitive parts under `rust/src/upath/`:
 | `.cksum` `.md5` `.sha256` `.hash64` | `upath::hash` | the four hashes |
 | `.posix` `.relpath` `.stdpath`, mount handling | `upath::resolve`, `upath::mount`, `upath::ext` | path translation |
 | `String` extensions (`.lc`, `.posx`, ...) | `upath::strext` | string helpers |
+| `uni.time.UniDateTime`, `DateFormat` | `utime::datetime`, `utime::format` | the date type, its arithmetic and pattern formatting |
 
 Each Rust module is checked against a committed fixture generated from the Scala
 implementation, so a divergence fails a test rather than appearing at runtime. Directory
-traversal, file timestamps and the date/time package are **not** ported yet.
+traversal, file timestamps and `SmartParse` (the date *parser*, as distinct from the date
+type) are **not** ported yet.
 
 The crate is currently named `t3prf` (`rust/Cargo.toml`); `upath` is a module inside it,
 not a separately published crate.

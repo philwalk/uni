@@ -15,6 +15,22 @@ argument of `@deprecated`, not a removal target. They still work; removal is a l
 release.
 
 
+**RUST — `uni.time` ported to `rust/src/utime/`**
+
+- `utime::datetime::UniDateTime` and `utime::format` mirror the Scala type and formatter:
+  same fields, same validation, same day-0 sentinels and `<BadDate>` rendering, same
+  epoch-day arithmetic, **no date-library dependency**. That last part is what decoupling the
+  Scala type from `java.time` bought.
+- `SmartParse` is not ported; only the date type and its formatter are.
+- The Scala arithmetic delegates to `java.time`, which the port cannot, so the calendar math
+  is written out — Hinnant's civil-calendar algorithms, month-end clamping, time-shift carry.
+  `test-data/date-parity/` pins the two languages across 4020 cases, making `java.time` the
+  transitive oracle. It caught a real defect on the first run: the port returned
+  **2000-03-01 for 2000-02-29**, from using 146097 rather than 146096 as the day-of-era
+  divisor — visible only on the last day of a 400-year era.
+- Checked from both sides (`uni.time.DateParitySuite`, `rust/tests/date_parity.rs`) so
+  regenerating the fixture cannot quietly rewrite the expectations.
+
 **API — the date type is now `uni.time.UniDateTime`, not `java.time.LocalDateTime`**
 
 - `type DateTime` and `parseDate`/`parseDateSmart` now yield `UniDateTime`: a plain case

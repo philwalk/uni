@@ -94,6 +94,7 @@ test-data/*
 !test-data/path-parity/
 !test-data/csv-parity/
 !test-data/hash-parity/
+!test-data/date-parity/
 # Anchored: an unanchored `bin/` also swallows rust/src/bin/, whose contents are
 # real source.
 /bin/

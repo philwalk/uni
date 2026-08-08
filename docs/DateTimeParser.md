@@ -238,10 +238,32 @@ The same applies to `Option[LocalDateTime]`, an explicit `Ordering[LocalDateTime
 
 ## Rust counterpart
 
-**Not yet ported.** `uni.time` is Scala-only today; the note below is about why porting is tractable, not about something you can call.
+**`rust/src/utime/`** ports the date type and its formatter:
 
-This repo carries a Rust port of several uni subsystems under `rust/src/upath/`, for cases where per-row overhead dominates — CSV parsing (`csv.rs`, `matcsv.rs`), delimiter sniffing (`delim.rs`), path resolution (`resolve.rs`, `mount.rs`, `ext.rs`), the hashes (`hash.rs`) and the string extensions (`strext.rs`). Each is verified against a committed fixture generated from the Scala implementation, so the two cannot drift silently.
+| Scala | Rust |
+| :--- | :--- |
+| `uni.time.UniDateTime` | `utime::datetime::UniDateTime` |
+| `uni.time.DateFormat` | `utime::format` |
 
-`DateFormat` and `UniDateTime` are the next modules planned, and the date type was designed for it: `UniDateTime` is plain integer fields, formatting is written against those fields rather than a `java.time` object, and `toEpochDay`/`ofEpochDay` are integer arithmetic. So the Rust side needs **no date-library dependency** — the alternative would have been `jiff` plus a Java-pattern-to-strftime translation layer. Until it lands, a Rust script needing dates must bring its own.
+Same fields, same validation, same sentinels (day 0, `<BadDate>`), same epoch-day arithmetic —
+and **no date-library dependency**, which was the point of decoupling the Scala type in the
+first place. The alternative would have been a crate plus a translation layer from Java's
+pattern letters to strftime codes.
 
-Note the crate is currently named `t3prf` (`rust/Cargo.toml`) and `upath` is a module within it rather than a separately published crate.
+`SmartParse` is **not** ported. Only the date type and its formatter are, so a Rust script
+that needs to read arbitrary date text must still do that itself.
+
+One difference in the arithmetic, and it matters for trust: the Scala delegates to `java.time`
+for calendar math, while the Rust has nothing to delegate to and writes it out — Hinnant's
+civil-calendar algorithms for epoch days, explicit month-end clamping, explicit carry for time
+shifts. `test-data/date-parity/` pins the two together across 4020 cases, which makes
+`java.time` the transitive oracle for the hand-rolled version. It earned its keep immediately:
+it caught the port returning **2000-03-01 for 2000-02-29**, an off-by-one in the day-of-era
+divisor that shows up only on the last day of a 400-year era.
+
+Regenerate the fixture with `sbt "runMain uni.apps.DateParityGen"`, and only when the reference
+is meant to move — both `uni.time.DateParitySuite` and `rust/tests/date_parity.rs` check
+against it, so a change to either language fails until the other agrees.
+
+Note the crate is currently named `t3prf` (`rust/Cargo.toml`); `utime` and `upath` are modules
+within it rather than separately published crates.
