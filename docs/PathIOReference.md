@@ -338,6 +338,35 @@ The `Big` loaders are blocked on `Big` itself, which is a project rather than a 
 propagation contract that goes with it. `std` has no decimal type, so this would be the first
 real dependency the port takes. `loadMatD`/`loadMatF` cover the `Double` and `Float` cases.
 
+**Charsets.** Both languages support UTF-8, Latin-1 and the three UTF-16 forms (`UTF-16`,
+`UTF-16LE`, `UTF-16BE`). The Scala resolves through `Charset.forName`, so it also honours every
+other charset the JVM knows; the Rust falls back to UTF-8 for those. **That is the one silent
+divergence left in the port** -- `lines("Shift_JIS")` decodes properly in Scala and mis-decodes in
+Rust. It is a missing-encoding gap, not a design choice: `std` ships no charset tables.
+
+A charset wider than one byte cannot use the streaming reader, in either language. `0x0A` is half
+of a code unit in UTF-16, so splitting on the byte before decoding cuts characters in half -- which
+is exactly what used to happen, the failed decode falling back to Latin-1 and handing back raw
+bytes with embedded NULs. Wide charsets now decode the file and split the text on the same
+`\r?\n` rule. The cost is laziness, and there is no way to have both.
+
+**Lazy versus ordered listing.** These are two methods on purpose, and the `Iter` spelling marks
+which is which:
+
+| eager, canonical order | lazy, filesystem order |
+| :--- | :--- |
+| `paths` `files` | `pathsIter` `filesIter` |
+| `pathsTree` | `pathsTreeIter`, `walk` |
+
+An ordered listing has to be **complete** before it can be ordered, so laziness and a canonical
+order are mutually exclusive and each spelling buys one. On a USB or network directory holding
+thousands of entries the eager form is unusably slow -- it yields nothing until the last entry has
+arrived -- which is the whole reason the lazy form exists.
+
+The lazy forms hold an open directory handle. In Rust it is released when the iterator is exhausted
+or dropped; in Scala exhausting it closes it but abandoning it does not, so use `eachPath` or
+`Using.resource`. Same asymmetry as `linesStream` beside `withLines`, and for the same reason.
+
 A few methods are present under one name rather than two. `files` and `paths` coincide, Rust
 having no second path type; the `*Iter` variants are covered by `paths` and `walkIter`; and
 `asFile` is the **identity**, kept so a line written against the Scala ports unchanged.

@@ -158,7 +158,8 @@ fn walk_and_files_are_aliases() {
     for r in rows() {
         match r[0].as_str() {
             "alias-walk" => assert_eq!(
-                (sorted_rel(&root, &root.walk()) == sorted_rel(&root, &root.pathsTree()))
+                (sorted_rel(&root, &root.walk().collect::<Vec<_>>())
+                    == sorted_rel(&root, &root.pathsTree()))
                     .to_string(),
                 r[2]
             ),

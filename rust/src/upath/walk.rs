@@ -131,10 +131,34 @@ impl UPath {
         v
     }
 
-    /// Alias for [`Self::pathsTree`], matching the Scala `walk`.
+    /// Alias for [`Self::walkIter`], matching the Scala `walk`.
+    ///
+    /// Lazy and in walk order, **not** the sorted [`Self::pathsTree`]. Scala's `walk` is an alias
+    /// of `pathsTreeIter` for the same reason: the `Iter` spelling and the lazy spelling have to
+    /// agree across both languages or a ported line changes meaning silently.
+    pub fn walk(&self) -> TreeWalk {
+        self.walkIter()
+    }
+
+    /// This directory, lazily, in filesystem order. `PathExts.pathsIter`.
+    ///
+    /// Yields the first entry as soon as `read_dir` returns it instead of waiting for the whole
+    /// listing, which is what makes a slow USB or network directory usable. [`Self::paths`] cannot
+    /// do that: it sorts, and a sort has to see everything first. Each spelling buys one of the two.
+    ///
+    /// Unreadable entries are skipped rather than failing the listing, as in [`Self::paths`].
     #[must_use]
-    pub fn walk(&self) -> Vec<Self> {
-        self.pathsTree()
+    pub fn pathsIter(&self) -> DirIter {
+        DirIter {
+            inner: fs::read_dir(self.as_std_path()).ok(),
+            parent: self.clone(),
+        }
+    }
+
+    /// Alias for [`Self::pathsIter`]. `PathExts.filesIter`; Rust has no second path type.
+    #[must_use]
+    pub fn filesIter(&self) -> DirIter {
+        self.pathsIter()
     }
 
     /// The tree walk as a lazy iterator — the counterpart to Scala's `pathsTreeIter`.
@@ -163,6 +187,40 @@ impl UPath {
 }
 
 /// Pre-order depth-first walk, yielding the root first. See [`UPath::walkIter`].
+/// A lazy directory listing. See [`UPath::pathsIter`].
+///
+/// Drops its handle when exhausted or dropped, so an abandoned listing releases the directory --
+/// the Scala equivalent must be closed, which is why `eachPath` exists beside it there.
+pub struct DirIter {
+    /// `None` once exhausted, or from the start when the path was not a readable directory.
+    inner: Option<fs::ReadDir>,
+    /// Kept so each entry resolves in the same context as its parent.
+    parent: UPath,
+}
+
+impl Iterator for DirIter {
+    type Item = UPath;
+
+    fn next(&mut self) -> Option<UPath> {
+        let entries = self.inner.as_mut()?;
+        loop {
+            match entries.next() {
+                None => {
+                    self.inner = None;
+                    return None;
+                }
+                // A single unreadable entry drops out; the rest of the directory still lists.
+                Some(Err(_)) => continue,
+                Some(Ok(entry)) => {
+                    if let Some(p) = self.parent.sibling(&entry.path()) {
+                        return Some(p);
+                    }
+                }
+            }
+        }
+    }
+}
+
 pub struct TreeWalk {
     /// Kept for its resolution context, so every yielded path shares the root's.
     root: UPath,
@@ -255,7 +313,15 @@ mod tests {
         // 5 entries: the root, b, deep.txt, one.txt, two.txt. Forgetting the root is the classic
         // off-by-one against `Files.walk`.
         assert_eq!(names(&tree), vec!["a", "b", "deep.txt", "one.txt", "two.txt"]);
-        assert_eq!(names(&root.walk()), names(&tree), "walk aliases pathsTree");
+        // `walk` is the lazy alias now, so it matches `walkIter` and only matches
+        // `pathsTree` as a set -- the sort is what `pathsTree` adds.
+        let walked: Vec<UPath> = root.walk().collect();
+        assert_eq!(names(&walked), names(&root.walkIter().collect::<Vec<_>>()));
+        let mut a = names(&walked);
+        let mut b = names(&tree);
+        a.sort_unstable();
+        b.sort_unstable();
+        assert_eq!(a, b, "same entries as pathsTree, order aside");
     }
 
     #[test]

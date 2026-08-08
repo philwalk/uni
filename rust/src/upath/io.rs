@@ -53,26 +53,76 @@ pub enum Charset {
     Utf8,
     /// One byte per code point. Cannot fail.
     Latin1,
+    /// UTF-16 with the byte order taken from a BOM, big-endian when there is none, and the BOM
+    /// consumed. Java's `UTF-16`, which is what `Charset.forName("UTF-16")` gives the Scala.
+    Utf16,
+    /// UTF-16, little-endian, no BOM assumed. Java's `UTF-16LE`.
+    Utf16Le,
+    /// UTF-16, big-endian, no BOM assumed. Java's `UTF-16BE`.
+    Utf16Be,
+}
+
+/// Decodes UTF-16 code units of the given byte order.
+///
+/// An odd byte count is an error rather than a silently dropped trailing byte: the Scala's
+/// `Files.readString` raises `MalformedInputException` for the same input, which `contentAsString`
+/// turns into an empty string, so erroring here keeps the two ends aligned.
+fn decode_utf16(bytes: &[u8], big_endian: bool) -> io::Result<String> {
+    if !bytes.len().is_multiple_of(2) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("UTF-16 needs an even byte count, got {}", bytes.len()),
+        ));
+    }
+    let units: Vec<u16> = bytes
+        .chunks_exact(2)
+        .map(|c| {
+            if big_endian {
+                u16::from_be_bytes([c[0], c[1]])
+            } else {
+                u16::from_le_bytes([c[0], c[1]])
+            }
+        })
+        .collect();
+    String::from_utf16(&units).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
 
 impl Charset {
-    /// Resolves a charset *name*, defaulting to UTF-8 for anything unrecognised.
+    /// Resolves a charset *name* to one of the supported encodings, falling back to UTF-8.
     ///
-    /// `uni` does the same through `try Charset.forName(charset) catch => UTF_8`,
-    /// so an unknown name is tolerated rather than rejected.
+    /// The Scala resolves through `try Charset.forName(name) catch => UTF_8`, so it honours
+    /// **every** charset the JVM knows. This supports UTF-8, Latin-1 and the three UTF-16
+    /// forms; anything else -- Shift_JIS, EUC-JP, UTF-32, the EBCDIC family -- falls back to
+    /// UTF-8 here while the Scala would decode it properly. That is the one silent divergence
+    /// left in the port, and it is a missing-encoding gap rather than a design decision: `std`
+    /// ships no charset tables, so each one has to be written out or a crate taken on.
+    ///
+    /// The fallback matches the Scala only for names the JVM *also* rejects.
     #[must_use]
     pub fn by_name(name: &str) -> Self {
         match name.to_ascii_lowercase().replace(['-', '_'], "").as_str() {
             "" => Self::default(),
             "latin1" | "iso88591" | "cp1252" => Self::Latin1,
+            "utf16" => Self::Utf16,
+            "utf16le" => Self::Utf16Le,
+            "utf16be" => Self::Utf16Be,
             _ => Self::Utf8,
         }
     }
 
-    /// Decodes `bytes`.
+    /// Whether a newline encodes to the single byte `0x0A` in this charset.
     ///
-    /// # Errors
-    /// [`io::ErrorKind::InvalidData`] when [`Charset::Utf8`] meets invalid bytes.
+    /// The byte-oriented line reader splits on that byte before decoding, which is only sound
+    /// when the byte cannot appear inside a character. False for the UTF-16 forms, where `0x0A`
+    /// is half of a code unit and a byte-level split would cut a character in two.
+    #[must_use]
+    pub const fn newline_is_one_byte(self) -> bool {
+        match self {
+            Self::Utf8 | Self::Utf8ThenLatin1 | Self::Latin1 => true,
+            Self::Utf16 | Self::Utf16Le | Self::Utf16Be => false,
+        }
+    }
+
     /// Encodes text in this charset.
     ///
     /// The reverse of [`Self::decode`], and the reason `withWriter` can honour its charset
@@ -88,6 +138,13 @@ impl Charset {
             // Utf8ThenLatin1 is a *decoding* fallback; there is nothing to fall back to when
             // encoding, so it means UTF-8 here.
             Self::Utf8 | Self::Utf8ThenLatin1 => Ok(s.as_bytes().to_vec()),
+            // Java's `UTF-16` encoder emits a big-endian BOM; `UTF-16BE`/`LE` emit none.
+            Self::Utf16 => Ok(std::iter::once(0xFEu8)
+                .chain(std::iter::once(0xFFu8))
+                .chain(s.encode_utf16().flat_map(u16::to_be_bytes))
+                .collect()),
+            Self::Utf16Be => Ok(s.encode_utf16().flat_map(u16::to_be_bytes).collect()),
+            Self::Utf16Le => Ok(s.encode_utf16().flat_map(u16::to_le_bytes).collect()),
             Self::Latin1 => s
                 .chars()
                 .map(|c| {
@@ -104,9 +161,23 @@ impl Charset {
         }
     }
 
+    /// Decodes `bytes`.
+    ///
+    /// # Errors
+    /// [`io::ErrorKind::InvalidData`] when [`Charset::Utf8`] meets invalid bytes, or when a
+    /// UTF-16 form meets an odd byte count or an unpaired surrogate.
     pub fn decode(self, bytes: Vec<u8>) -> io::Result<String> {
         match self {
             Self::Latin1 => Ok(bytes.iter().map(|&b| b as char).collect()),
+            Self::Utf16Be => decode_utf16(&bytes, true),
+            Self::Utf16Le => decode_utf16(&bytes, false),
+            // A BOM decides, big-endian when absent, and it is consumed rather than returned as
+            // a zero-width character -- both are what the JVM's `UTF-16` decoder does.
+            Self::Utf16 => match bytes.get(..2) {
+                Some([0xFF, 0xFE]) => decode_utf16(&bytes[2..], false),
+                Some([0xFE, 0xFF]) => decode_utf16(&bytes[2..], true),
+                _ => decode_utf16(&bytes, true),
+            },
             Self::Utf8 => {
                 String::from_utf8(bytes).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
             }
@@ -239,12 +310,26 @@ impl UPath {
     pub fn linesStream(&self, charset: Charset) -> LineStream {
         // `isFile` rather than `exists`: a directory opens on Unix and then fails on read, which
         // would surface as a truncated stream rather than an empty one.
+        if !charset.newline_is_one_byte() {
+            // See `LineStream::decoded`. Eager, because a byte-level split cannot find a
+            // terminator that is not a whole byte.
+            let decoded = self.try_lines_with(charset).unwrap_or_default();
+            return LineStream {
+                reader: None,
+                charset,
+                decoded: Some(decoded.into_iter()),
+            };
+        }
         let reader = if self.isFile() {
             fs::File::open(self.as_std_path()).ok().map(io::BufReader::new)
         } else {
             None
         };
-        LineStream { reader, charset }
+        LineStream {
+            reader,
+            charset,
+            decoded: None,
+        }
     }
 
     /// Passes a lazy line iterator to `f` and returns its result.
@@ -310,12 +395,23 @@ pub struct LineStream {
     /// `None` when the path was not a readable file, which makes the stream empty.
     reader: Option<io::BufReader<fs::File>>,
     charset: Charset,
+    /// The wide-charset path: lines already decoded and split.
+    ///
+    /// `0x0A` is not a self-contained line terminator in UTF-16 -- it is half of a code unit --
+    /// so reading to that byte and decoding each piece would cut characters in half. Those
+    /// charsets decode the whole file and split it on the same CR-optional-newline rule, which
+    /// costs the laziness and is the only way to get the right answer. `None` for the
+    /// byte-oriented charsets, which stream as before.
+    decoded: Option<std::vec::IntoIter<String>>,
 }
 
 impl Iterator for LineStream {
     type Item = String;
 
     fn next(&mut self) -> Option<String> {
+        if let Some(decoded) = self.decoded.as_mut() {
+            return decoded.next();
+        }
         let reader = self.reader.as_mut()?;
         let mut buf = Vec::new();
         // Reads to `\n` as bytes rather than through `BufRead::lines`, so a non-UTF-8 charset is

@@ -174,12 +174,37 @@ object pathExts {
       val s = path.posx
       (s.toLowerCase(java.util.Locale.ROOT), s)
 
-    def filesIter: Iterator[JFile] = files.iterator
+    /** This directory, lazily, in **filesystem order**.
+      *
+      *  Yields the first entry as soon as the filesystem returns it, rather than waiting for the
+      *  last. On a USB or network directory holding thousands of files [[paths]] is unusably slow
+      *  for that reason: it cannot produce anything until the whole listing has arrived and been
+      *  sorted.
+      *
+      *  The order therefore differs from [[paths]]. That is the trade the name records -- an
+      *  ordered listing has to be complete before it can be ordered, so laziness and a canonical
+      *  order are mutually exclusive, and each spelling gives one of them.
+      *
+      *  Holds an open directory handle. Exhausting it closes it; abandoning it early does not, so
+      *  prefer [[eachPath]] or close it yourself -- the same contract as `linesStream` beside
+      *  `withLines`.
+      */
+    def pathsIter: Iterator[Path] & AutoCloseable = lazyDirIter(p)
+
+    /** As [[pathsIter]], yielding `JFile`. Lazy, filesystem order, holds a handle. */
+    def filesIter: Iterator[JFile] & AutoCloseable = mapClosable(lazyDirIter(p))(_.toFile)
+
+    /** Applies `f` to each entry lazily, closing the handle even if `f` throws. */
+    def eachPath(f: Path => Unit): Unit = Using.resource(lazyDirIter(p))(_.foreach(f))
+
     def files: Seq[JFile]          = paths.map(_.toFile)
-    def pathsIter: Iterator[Path]  = paths.iterator
-    def paths: Seq[Path]           =
-      val raw = Option(p.toFile.listFiles).map(_.toSeq).getOrElse(Seq.empty).map(_.toPath)
-      raw.sortBy(listOrder)
+    /** This directory in canonical order. Eager by necessity -- see [[pathsIter]].
+      *
+      *  Built on the same `newDirectoryStream` iterator as [[pathsIter]] rather than on
+      *  `File.listFiles`, which materialises a `File[]` only for every element to be converted
+      *  straight back to a `Path`. One pass, one collection, then the sort.
+      */
+    def paths: Seq[Path]           = Using.resource(lazyDirIter(p))(_.toSeq).sortBy(listOrder)
     def subdirs: Seq[Path]         = paths.filter(Files.isDirectory(_))
     def subfiles: Seq[Path]        = paths.filter(Files.isRegularFile(_))
 
@@ -187,7 +212,8 @@ object pathExts {
 
     // ---- tree walk ----
 
-    def walk: Iterator[Path] = pathsTreeIter // alias
+    /** Alias for [[pathsTreeIter]]: lazy, `Files.walk` order. */
+    def walk: Iterator[Path] & AutoCloseable = pathsTreeIter
 
     /** The tree rooted here, **including this path**, in a specified order.
      *
@@ -195,13 +221,25 @@ object pathExts {
      *  before its descendants -- a path is a prefix of its children, so it compares smaller --
      *  which is the one ordering guarantee `Files.walk` made and which callers rely on.
      */
-    def pathsTree: Seq[Path] = pathsTreeIter.toSeq
-    def pathsTreeIter: Iterator[Path] =
-      if Files.exists(p) then
-        import scala.jdk.CollectionConverters.*
-        Files.walk(p).iterator().asScala.toSeq.sortBy(listOrder).iterator
+    def pathsTree: Seq[Path] = Using.resource(pathsTreeIter)(_.toSeq.sortBy(listOrder))
+
+    /** The tree rooted here, lazily, in `Files.walk` order.
+      *
+      *  Depth-first pre-order, so a parent still precedes its descendants -- that guarantee comes
+      *  from the walk itself, not from the sort [[pathsTree]] applies, which only orders siblings.
+      *
+      *  Yields as it descends instead of draining the tree first, which is the point on a slow
+      *  filesystem. Holds open directory handles; exhausting it closes them, abandoning it early
+      *  does not.
+      */
+    def pathsTreeIter: Iterator[Path] & AutoCloseable =
+      if !Files.exists(p) then emptyClosable
       else
-        Iterator.empty
+        import scala.jdk.CollectionConverters.*
+        try
+          val stream = Files.walk(p)
+          closableIter(stream.iterator().asScala, () => stream.close())
+        catch case _: Exception => emptyClosable
 
     // ---- read content ----
     def linesStream: Iterator[String] = if isFile then streamLines(p) else Iterator.empty
@@ -564,9 +602,9 @@ object pathExts {
     def diff(other: JFile): Seq[String] = run("diff", f.toPath.posx, other.toPath.posx).lines
 
     // ---- directory listing ----
-    def filesIter: Iterator[JFile]  = f.toPath.filesIter
+    def filesIter: Iterator[JFile] & AutoCloseable  = f.toPath.filesIter
     def files: Seq[JFile]           = f.toPath.files
-    def pathsIter: Iterator[Path]   = f.toPath.pathsIter
+    def pathsIter: Iterator[Path] & AutoCloseable   = f.toPath.pathsIter
     def paths: Seq[Path]            = f.toPath.paths
     def subdirs: Seq[Path]          = f.toPath.subdirs
     def subfiles: Seq[Path]         = f.toPath.subfiles
@@ -575,7 +613,7 @@ object pathExts {
     def filesTree: Seq[JFile]          = filesTreeIter.toSeq
     def filesTreeIter: Iterator[JFile] = f.toPath.pathsTreeIter.map(_.toFile)
     def pathsTree: Seq[Path]           = f.toPath.pathsTree
-    def pathsTreeIter: Iterator[Path]  = f.toPath.pathsTreeIter
+    def pathsTreeIter: Iterator[Path] & AutoCloseable  = f.toPath.pathsTreeIter
 
     // ---- read content ----
     def linesStream: Iterator[String]                                  = f.toPath.linesStream
@@ -663,7 +701,73 @@ object pathExts {
   import java.nio.charset.{StandardCharsets, CodingErrorAction}
   import java.io.InputStream
 
-  private def streamLines(p: Path, cs: Charset = StandardCharsets.UTF_8): Iterator[String] & AutoCloseable = new Iterator[String] with AutoCloseable {
+  /** Wraps a lazy iterator so exhausting it releases the resource, and `close` is idempotent.
+    *
+    * The mutable `closed` flag is local to this instance and never escapes -- the alternative,
+    * threading a state value through an `Iterator`, cannot be done behind that interface.
+    */
+  private def closableIter[A](under: Iterator[A], closer: () => Unit): Iterator[A] & AutoCloseable =
+    new Iterator[A] with AutoCloseable:
+      private var closed = false
+      def hasNext: Boolean =
+        if closed then false
+        else if under.hasNext then true
+        else
+          close()
+          false
+      def next(): A = under.next()
+      def close(): Unit =
+        if !closed then
+          closed = true
+          closer()
+
+  private def emptyClosable[A]: Iterator[A] & AutoCloseable =
+    closableIter(Iterator.empty, () => ())
+
+  /** Maps a closable iterator, keeping the close obligation attached to the result. */
+  private def mapClosable[A, B](it: Iterator[A] & AutoCloseable)(f: A => B): Iterator[B] & AutoCloseable =
+    closableIter(it.map(f), () => it.close())
+
+  /** One directory, lazily. Empty rather than throwing when `p` is not a readable directory,
+    * matching `listFiles` returning `null` there.
+    */
+  private def lazyDirIter(p: Path): Iterator[Path] & AutoCloseable =
+    if !Files.isDirectory(p) then emptyClosable
+    else
+      import scala.jdk.CollectionConverters.*
+      try
+        val ds = Files.newDirectoryStream(p)
+        closableIter(ds.iterator().asScala, () => ds.close())
+      catch case _: Exception => emptyClosable
+
+  /** True when a newline encodes to the single byte 0x0A in this charset.
+    *
+    * The byte-oriented reader splits on that byte before decoding, which is only sound when the
+    * byte cannot occur inside a character. False for UTF-16 and UTF-32, where 0x0A is half of a
+    * code unit: splitting there cuts a character in two, the decode fails, and the reader's
+    * Latin-1 fallback hands back the raw bytes with embedded NULs. Measured, not assumed.
+    */
+  private def newlineIsOneByte(cs: Charset): Boolean =
+    try "\n".getBytes(cs).sameElements(Array('\n'.toByte))
+    catch case _: Exception => false
+
+  /** Decode the whole file, then split. Used for charsets where a byte-level split cannot find
+    * the terminator, so laziness is not available at any price. Same split rule as the streaming
+    * reader, and the same empty-on-failure behaviour as `contentAsString`.
+    */
+  private def decodedLines(p: Path, cs: Charset): Iterator[String] & AutoCloseable =
+    val text  = try Files.readString(p, cs) catch case _: Exception => ""
+    val parts = text.split("\r?\n", -1).toIndexedSeq
+    val lines = if parts.nonEmpty && parts.last.isEmpty then parts.dropRight(1) else parts
+    new Iterator[String] with AutoCloseable:
+      private val under = lines.iterator
+      def hasNext: Boolean = under.hasNext
+      def next(): String   = under.next()
+      def close(): Unit    = () // nothing held open; the file was read and released
+
+  private def streamLines(p: Path, cs: Charset = StandardCharsets.UTF_8): Iterator[String] & AutoCloseable =
+    if !newlineIsOneByte(cs) then decodedLines(p, cs)
+    else new Iterator[String] with AutoCloseable {
     private val in: InputStream = new java.io.BufferedInputStream(Files.newInputStream(p))
     // Use a reusable BAOS to avoid constant ArrayBuffer re-allocations
     private val bos = new java.io.ByteArrayOutputStream(128)

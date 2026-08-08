@@ -22,6 +22,62 @@ argument of `@deprecated`, not a removal target. They still work; removal is a l
 release.
 
 
+**BREAKING — the `*Iter` traversal methods are now genuinely lazy**
+
+- `filesIter` was `files.iterator` and `pathsIter` was `paths.iterator`, over an already-listed,
+  already-sorted `Seq`. `pathsTreeIter` was `Files.walk(p).iterator.asScala.toSeq.sortBy(...)`.
+  All three were eager collections wearing an `Iterator` type, so the name promised something it
+  did not deliver.
+- That is not cosmetic. On a USB or network directory with thousands of entries an eager listing
+  yields nothing until the last entry arrives, which is the difference between usable and not.
+- Now backed by `Files.newDirectoryStream` and a lazy `Files.walk` stream, yielding as the
+  filesystem returns entries. **They no longer sort**, because sorting requires the complete
+  listing -- the two properties are mutually exclusive, and now each spelling provides one:
+  `paths`/`files`/`pathsTree` for canonical order, `pathsIter`/`filesIter`/`pathsTreeIter` for
+  latency.
+- They return `Iterator[Path] & AutoCloseable` and hold an open handle. Exhausting closes it;
+  abandoning does not. **New `eachPath(f)`** applies `f` to each entry and closes even if `f`
+  throws -- the safe form, as `withLines` is beside `linesStream`.
+- `paths` is now built on the same `newDirectoryStream` iterator instead of `File.listFiles`,
+  which materialised a `File[]` only for every element to be converted straight back to a
+  `Path`. One pass and one collection, then the sort. `paths`/`files` keep `Seq` and their
+  canonical order -- a sorted listing has to be complete, so lazy access stays with the
+  `Iter` spellings.
+- `pathsTree` keeps its sorted contract, now as `Using.resource(pathsTreeIter)(_.toSeq.sortBy(...))`.
+  Parent-before-descendant never needed the sort: `Files.walk` is depth-first pre-order, so the
+  sort only ever ordered siblings, contrary to what the old comment claimed.
+- **RUST:** new `pathsIter`/`filesIter` over `read_dir`, lazy and handle-releasing on drop.
+  `walk()` changed from an alias of `pathsTree` (sorted `Vec`) to an alias of `walkIter` (lazy),
+  matching Scala -- otherwise the same line means different things in the two languages.
+- `test-data/walk-parity/` was unaffected: it pins `paths`, `subdirs`, `subfiles` and `pathsTree`,
+  all of which keep their order. Laziness is pinned separately by `uni.LazyTraversalSuite` and
+  `rust/tests/upath_lazy_walk.rs`.
+
+**FIXED — a charset wider than one byte garbled every line it read**
+
+- `lines("UTF-16BE")` returned the raw bytes with embedded NULs, not text. The byte-oriented
+  reader splits on `0x0A` before decoding; in UTF-16 that byte is half of a code unit, so each
+  line arrived with an odd byte count, the strict decoder rejected it, and the reader's Latin-1
+  fallback handed back the bytes. `contentAsString(UTF_16BE)` was always correct, which is what
+  made the reader look fine.
+- Wide charsets now decode the whole file and split the text. Selected by a general predicate --
+  does a newline encode to the single byte `0x0A` in this charset -- so UTF-32 and the EBCDIC
+  family are covered by the same branch rather than by a list of names.
+- **The cost is laziness**, unavoidably: a byte-level split cannot find a terminator that is not a
+  whole byte. Single-byte and UTF-8 charsets still stream exactly as before.
+- **RUST:** `Charset` gains `Utf16`, `Utf16Le` and `Utf16Be`, with `Utf16` taking its byte order
+  from a BOM and consuming it, defaulting to big-endian -- matching the JVM. `encode` emits a
+  big-endian BOM for `Utf16` and none for the explicit forms, again as Java does. No dependency:
+  `String::from_utf16` and `str::encode_utf16` are in `std`.
+- Pinned by `uni.CharsetSuite` and `rust/tests/upath_charset.rs`, mirrored case for case.
+- **Still divergent, and now documented as such:** the Scala honours every charset the JVM knows,
+  while Rust supports UTF-8, Latin-1 and UTF-16 and falls back to UTF-8 for the rest. The Rust doc
+  previously claimed `uni` "does the same" -- true only for names the JVM also rejects. This is the
+  one silent parity gap left in the port.
+- Also corrected: `upath::mutate` still said `copyTo`'s `overwrite` was "not defaulted, unlike the
+  Scala where it defaults to `true`". The Scala default was removed earlier in this same release,
+  so the comment documented a divergence that no longer existed.
+
 **BREAKING — line readers split on `\r?\n`; an interior carriage return is preserved**
 
 - Earlier in this release cycle the rule was written as "a line-oriented reader removes **every**

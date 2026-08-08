@@ -41,8 +41,9 @@ use crate::upath::io::Charset;
 impl UPath {
     /// Copies this file to `dest`, returning `dest`.
     ///
-    /// `overwrite` is **not** defaulted, unlike the Scala where it defaults to `true` — see the
-    /// module docs.
+    /// `overwrite` is required, and so is the Scala's as of 0.16.0 -- the default was removed there
+    /// so the compiler flags every call site rather than letting a silent clobber through. The two
+    /// signatures now agree; this comment previously claimed a divergence that no longer exists.
     ///
     /// `copyAttributes` covers the modification time and the permission bits, which is what
     /// `COPY_ATTRIBUTES` reaches for in practice. It does **not** carry owner or ACLs: `std`
