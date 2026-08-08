@@ -7,7 +7,15 @@ import java.time.LocalDateTime
 
 object SmartParse {
   //  Public API
-  def parseDateSmart(datestr: String): LocalDateTime = parseSmart(datestr).getOrElse(BadDate) // alias
+  /** Parses `datestr`, or `BadDate` when it cannot be read.
+   *
+   *  Total by contract: the sentinel is what makes this usable for ripping through a
+   *  CSV column without wrapping every cell in a `Try`. `LocalDateTime.of` can still
+   *  throw on a field that survived the checks above -- it did, for a UTC offset that
+   *  reached the seconds slot -- so the boundary catches rather than trusting them.
+   */
+  def parseDateSmart(datestr: String): LocalDateTime =
+    scala.util.Try(parseSmart(datestr)).toOption.flatten.getOrElse(BadDate)
 
   private def parseSmart(s: String): Option[LocalDateTime] = {
     val cleaned  = preNormalize(s)
@@ -62,14 +70,65 @@ object SmartParse {
     val ws        = ascii.replaceAll("\\p{Z}+", " ").replaceAll("\\s", " ")
     val noParenTz = stripParenTimezone(ws)
     val noT       = noParenTz.replaceAll("(?<=\\d)T(?=\\d)", " ")
-    val cleaned   = noT.replaceAll("[^A-Za-z0-9]+$", "").trim
+    val expanded  = expandCompactDate(noT)
+    val ordered   = timeFirstToLast(expanded)
+    val cleaned   = ordered.replaceAll("[^A-Za-z0-9]+$", "").trim
     cleaned
+
+  private val CompactDateRegex = """^(\d{4})(\d{2})(\d{2})(?!\d)(?:\s+(\d{2})(\d{2})(\d{2})?(?![\d:]))?""".r
+
+  /** Expands a bare `yyyyMMdd[ HHmm[ss]]` into separated form.
+   *
+   *  Folded in from `ChronoParse`, which read it while `SmartParse` returned
+   *  `BadDate`. Rewriting rather than adding a shape lets the existing ISO/YMD path
+   *  do the work.
+   *
+   *  The compact *time* has to come with it: `20240512 1430 MST` is one format, and
+   *  expanding only the date left `1430` to be read as an hour.
+   *
+   *  Guarded on every field being plausible -- eight digits are not necessarily a
+   *  date, and misreading an identifier as one is worse than leaving it unparsed.
+   */
+  private def expandCompactDate(s: String): String =
+    CompactDateRegex.findPrefixMatchOf(s) match
+      case Some(m) =>
+        val (y, mo, d) = (m.group(1).toInt, m.group(2).toInt, m.group(3).toInt)
+        val dateOk = isYear(y) && isMonth(mo) && d >= 1 && d <= 31
+        val time = Option(m.group(4)).map { hh =>
+          val (h, mi) = (hh.toInt, m.group(5).toInt)
+          val sec = Option(m.group(6)).map(_.toInt)
+          val ok = h <= 23 && mi <= 59 && sec.forall(_ <= 59)
+          val text = s"$hh:${m.group(5)}" + sec.fold("")(_ => s":${m.group(6)}")
+          (ok, text)
+        }
+        // All or nothing: a valid date followed by an implausible time is not this
+        // format, and half a rewrite would be worse than none.
+        if dateOk && time.forall(_._1) then
+          val datePart = s"${m.group(1)}-${m.group(2)}-${m.group(3)}"
+          val timePart = time.fold("")(t => s" ${t._2}")
+          s"$datePart$timePart${s.drop(m.end)}"
+        else s
+      case None => s
+
+  private val LeadingTimeRegex = """^(\d{1,2}:\d{2}(?::\d{2})?)\s+(.+)$""".r
+
+  /** Moves a leading time to the end: `13:45 2020-01-02` becomes `2020-01-02 13:45`.
+   *
+   *  Also folded in from `ChronoParse`. Every shape here expects the date first, so
+   *  rotating the halves is enough -- no new shape, and the time is then picked up by
+   *  whichever date shape applies.
+   */
+  private def timeFirstToLast(s: String): String =
+    s match
+      case LeadingTimeRegex(time, rest) => s"$rest $time"
+      case _                            => s
 
   private val ParenTzRegex =
     """\([A-Za-z0-9+\-: ]+\)""".r
 
   private def stripParenTimezone(s: String): String =
     ParenTzRegex.replaceAllIn(s, "")
+
 
   private val weekdayPrefixes =
     Set("mon","tue","wed","thu","fri","sat","sun")
@@ -231,18 +290,44 @@ object SmartParse {
       // Standard patterns
       // YMD with optional time
       if isYear(a) && isMonth(b) && isDay(c) then Shape.YMD
-      // Ambiguous MDY/DMY case
+      // Ambiguous MDY/DMY case: both readings valid, so the configured order decides.
       else if isMonth(a) && isDay(a) && isMonth(b) && isDay(b) && (isYear(c) || isTwoDigitYear(c)) then
         if timeConfig.monthFirst then Shape.MDY else Shape.DMY
-      // MDY with optional time
-      else if isMonth(a) && isDay(b) && (isYear(c) || isTwoDigitYear(c)) then Shape.MDY
-      // DMY with optional time
-      else if isDay(a) && isMonth(b) && (isYear(c) || isTwoDigitYear(c)) then Shape.DMY
+      // Only one reading is valid. Under `Auto` take it -- that is the ease-of-use
+      // behaviour, and it is why a consistent European column comes out mixed under
+      // `monthFirst = true`. Under an enforced order, refuse it instead: a date that
+      // contradicts the declared convention is bad data, and `BadDate` says so.
+      else if isMonth(a) && isDay(b) && (isYear(c) || isTwoDigitYear(c)) then
+        if timeConfig.order == DateOrder.DayFirst then Shape.Unknown else Shape.MDY
+      else if isDay(a) && isMonth(b) && (isYear(c) || isTwoDigitYear(c)) then
+        if timeConfig.order == DateOrder.MonthFirst then Shape.Unknown else Shape.DMY
       else Shape.Unknown
 
     else
       Shape.Unknown
   }
+
+  /** Which convention a numeric date *proves*, or `None` when it fits both.
+   *
+   *  Only the unambiguous rows carry information: a first or second number above 12
+   *  can only be a day. Feeding a column through this is how `inferDateOrder` settles
+   *  a file's convention without being told it.
+   *
+   *  Deliberately independent of the active `TimeConfig` -- it reports what the string
+   *  says, not what the configuration would make of it.
+   */
+  private[uni] def numericDateOrder(s: String): Option[DateOrder] =
+    val nums = tokenize(preNormalize(s)).collect { case Token.Num(v, _) => v }
+    if nums.length < 3 then None
+    else
+      val (a, b, c) = (nums(0), nums(1), nums(2))
+      // A leading 4-digit year is ISO and says nothing about day/month order.
+      if isYear(a) then None
+      else if !(isYear(c) || isTwoDigitYear(c)) then None
+      else if isMonth(a) && isDay(a) && isMonth(b) && isDay(b) then None // ambiguous
+      else if isMonth(a) && isDay(b) then Some(DateOrder.MonthFirst)
+      else if isDay(a) && isMonth(b) then Some(DateOrder.DayFirst)
+      else None
 
   //  Helpers
   private def isMonth(n: Int): Boolean = n >= 1 && n <= 12
@@ -363,18 +448,51 @@ object SmartParse {
     val ampm  = tokens.collectFirst { case Token.AmPm(isPm) => isPm }
 
     if words.nonEmpty && isMonthWord(words.head) && nums.length >= 2 && isDay(nums(0)) then
-      // Find first 4-digit year, else use second num if it's 2-digit
-      val yearValue = nums.drop(1).find(isYear)
-        .orElse(if nums.length >= 2 && isTwoDigitYear(nums(1)) then Some(expand2DigitYear(nums(1))) else None)
-      
-      yearValue.map { year =>
+      // Locate the year *and* its position together.
+      //
+      // Searching for the position afterwards -- by value, allowing 2-digit expansion
+      // -- matched whichever number happened to expand to the same year. In
+      // `MMM d HH:mm:ss yyyy` that is a time component or the day: the day `18` looks
+      // like 2018, the hour `22` looks like 2022, the minute `29` looks like 2029. Each
+      // truncated the time at a different point and returned a plausible-looking
+      // result, so `Aug 18 22:29:47 2018` silently became midnight while
+      // `Aug 1 22:29:47 2029` became 22:00.
+      //
+      // A 4-digit year is unambiguous, so prefer it and take its index directly. Only
+      // fall back to the 2-digit reading, which is fixed at index 1 by construction.
+      val fourDigitIdx = nums.indexWhere(isYear, 1)
+      val yearAndIndex: Option[(Int, Int)] =
+        if fourDigitIdx >= 0 then Some((nums(fourDigitIdx), fourDigitIdx))
+        else if nums.length >= 2 && isTwoDigitYear(nums(1)) then
+          Some((expand2DigitYear(nums(1)), 1))
+        else None
+
+      yearAndIndex.map { (year, yearIdx) =>
         val month = monthFromWord(words.head)
         val day = nums(0)
-        // Find where the year is in the nums array
-        val yearIdx = nums.indexWhere(n => n == year || (isTwoDigitYear(n) && expand2DigitYear(n) == year))
-        // Time components are between day (index 0) and year (yearIdx)
-        // Format: MonthWord Day [Hour Min Sec] Year
-        val timeNums = if yearIdx > 1 then nums.slice(1, yearIdx) else Nil
+        // The time is whatever numbers remain once the day and the year are
+        // accounted for -- not merely what sits *between* them.
+        //
+        // The old slice assumed the layout `<date> [time] Year`, only one of the
+        // arrangements in use. When the year comes first the slice was empty and the
+        // time vanished: `01 Jan 2001 12:34:56 -0700` and
+        // `Sun, 12 May 2024 14:30:00 GMT` -- RFC 2822, i.e. every email header --
+        // parsed as midnight, and `May 12, 2024 2:30 PM` became 12:00 because the PM
+        // flag was applied to an hour of zero. None failed; all returned plausible
+        // wrong answers.
+        //
+        // Capped at three: a trailing zone offset (`-0700`, `+0000`) tokenises as
+        // another number and must not be read as a fourth time field.
+        val timeNums = nums.zipWithIndex
+          .collect { case (n, i) if i != 0 && i != yearIdx => n }
+          .take(3)
+          // Stop at the first number that cannot be the field it would fill. A
+          // trailing UTC offset tokenizes as a number -- `12:34 -0700` yields
+          // [12, 34, 700] -- and 700 seconds is not a time, it is timezone data that
+          // `LocalDateTime` has nowhere to put. Taking it threw `DateTimeException`.
+          .zipWithIndex
+          .takeWhile((n, i) => n >= 0 && n <= (if i == 0 then 23 else 59))
+          .map(_._1)
         buildDateTimeWithAmPm(year, month, day, timeNums, ampm)
       }
     else None
@@ -386,20 +504,53 @@ object SmartParse {
     val ampm  = tokens.collectFirst { case Token.AmPm(isPm) => isPm }
 
     if nums.nonEmpty && isDay(nums(0)) && words.nonEmpty && isMonthWord(words.head) then
-      // Find first 4-digit year, else use second num if it's 2-digit
-      val yearValue = nums.drop(1).find(isYear)
-        .orElse(if nums.length >= 2 && isTwoDigitYear(nums(1)) then Some(expand2DigitYear(nums(1))) else None)
-      
-      yearValue.map { year =>
+      // Locate the year *and* its position together.
+      //
+      // Searching for the position afterwards -- by value, allowing 2-digit expansion
+      // -- matched whichever number happened to expand to the same year. In
+      // `MMM d HH:mm:ss yyyy` that is a time component or the day: the day `18` looks
+      // like 2018, the hour `22` looks like 2022, the minute `29` looks like 2029. Each
+      // truncated the time at a different point and returned a plausible-looking
+      // result, so `Aug 18 22:29:47 2018` silently became midnight while
+      // `Aug 1 22:29:47 2029` became 22:00.
+      //
+      // A 4-digit year is unambiguous, so prefer it and take its index directly. Only
+      // fall back to the 2-digit reading, which is fixed at index 1 by construction.
+      val fourDigitIdx = nums.indexWhere(isYear, 1)
+      val yearAndIndex: Option[(Int, Int)] =
+        if fourDigitIdx >= 0 then Some((nums(fourDigitIdx), fourDigitIdx))
+        else if nums.length >= 2 && isTwoDigitYear(nums(1)) then
+          Some((expand2DigitYear(nums(1)), 1))
+        else None
+
+      yearAndIndex.map { (year, yearIdx) =>
         val month = monthFromWord(words.head)
         val day = nums(0)
         
-        // Find where the year is in the nums array
-        val yearIdx = nums.indexWhere(n => n == year || (isTwoDigitYear(n) && expand2DigitYear(n) == year))
         
-        // Time components are between day (index 0) and year (yearIdx)
-        // Format: Day MonthWord [Hour Min Sec] Year
-        val timeNums = if yearIdx > 1 then nums.slice(1, yearIdx) else Nil
+        // The time is whatever numbers remain once the day and the year are
+        // accounted for -- not merely what sits *between* them.
+        //
+        // The old slice assumed the layout `<date> [time] Year`, only one of the
+        // arrangements in use. When the year comes first the slice was empty and the
+        // time vanished: `01 Jan 2001 12:34:56 -0700` and
+        // `Sun, 12 May 2024 14:30:00 GMT` -- RFC 2822, i.e. every email header --
+        // parsed as midnight, and `May 12, 2024 2:30 PM` became 12:00 because the PM
+        // flag was applied to an hour of zero. None failed; all returned plausible
+        // wrong answers.
+        //
+        // Capped at three: a trailing zone offset (`-0700`, `+0000`) tokenises as
+        // another number and must not be read as a fourth time field.
+        val timeNums = nums.zipWithIndex
+          .collect { case (n, i) if i != 0 && i != yearIdx => n }
+          .take(3)
+          // Stop at the first number that cannot be the field it would fill. A
+          // trailing UTC offset tokenizes as a number -- `12:34 -0700` yields
+          // [12, 34, 700] -- and 700 seconds is not a time, it is timezone data that
+          // `LocalDateTime` has nowhere to put. Taking it threw `DateTimeException`.
+          .zipWithIndex
+          .takeWhile((n, i) => n >= 0 && n <= (if i == 0 then 23 else 59))
+          .map(_._1)
         
         buildDateTimeWithAmPm(year, month, day, timeNums, ampm)
       }

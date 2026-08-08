@@ -12,19 +12,48 @@ object TimeUtils {
   val BadDate: LocalDateTime   = LocalDateTime.of(1900, 1, 2, 3, 4, 5)
   val EmptyDate: LocalDateTime = LocalDateTime.of(1800, 1, 2, 3, 4, 5)
 
-  def parseDate(datestr: String): LocalDateTime = {
-    parseDateSmart(datestr) match {
-    case BadDate | EmptyDate =>
-      if verboseUni then
-        val dtype = SmartParse.classify(datestr)
-        System.err.print(s"[$datestr] classified as [$dtype]\n")
-      parseDateChrono(datestr) // return BadDate rather than throwing an exception
-    case d: LocalDateTime =>
-      d
-    case null =>
-      throw new IllegalArgumentException(s"null returned when parsing datestr [$datestr]")
-    }
-  }
+  /** Parses `datestr`, or `BadDate`.
+   *
+   *  `SmartParse` only, as of the ChronoParse deprecation. The fallback it replaces was
+   *  measured against the project's own 132-date corpus: `ChronoParse` rescued **zero**
+   *  inputs that `SmartParse` failed, and of the cases where both succeeded and
+   *  disagreed, every remaining one has `ChronoParse` wrong (it reads `12:00:00 AM` as
+   *  noon). The two formats it genuinely handled alone -- bare `yyyyMMdd` and a
+   *  leading time -- are folded into `SmartParse.preNormalize`.
+   *
+   *  The fallback could only fire on `BadDate`/`EmptyDate` anyway, so it never masked a
+   *  wrong answer, only an unparsed one.
+   */
+  def parseDate(datestr: String): LocalDateTime = parseDateSmart(datestr)
+
+  /** Month number from a name or abbreviation, or -1 when it is not one.
+   *
+   *  Moved here from `ChronoParse` when that stopped being consulted; this was its last
+   *  live dependency. Deliberately *not* merged with `SmartParse.monthFromWord`, which is
+   *  more capable -- prefix and fuzzy matching -- but **throws** on an unrecognised word.
+   *  One of the call sites below is not guarded by a month match, so switching would turn
+   *  a -1 into an exception.
+   *
+   *  `take(3)` rather than `substring(0, 3)`: the original threw
+   *  `StringIndexOutOfBoundsException` on any input shorter than three characters, which
+   *  the unguarded path could reach.
+   */
+  def monthAbbrev2Number(name: String): Int =
+    name.toLowerCase.take(3) match
+      case "jan" => 1
+      case "feb" => 2
+      case "mar" => 3
+      case "apr" => 4
+      case "may" => 5
+      case "jun" => 6
+      case "jul" => 7
+      case "aug" => 8
+      case "sep" => 9
+      case "oct" => 10
+      case "nov" => 11
+      case "dec" => 12
+      case _     => -1
+
 
   // a very fast conversion 8 char yyyyMMdd formatted Strings
   def quikDate(s: String): LocalDateTime = {
@@ -88,7 +117,7 @@ object TimeUtils {
       
       parts.indexWhere(s => MonthPattern.matches(s)) match
         case idx if idx >= 0 =>
-          val monthNum = ChronoParse.monthAbbrev2Number(parts(idx))
+          val monthNum = monthAbbrev2Number(parts(idx))
           noWeekday.replaceAll(parts(idx), f"$monthNum%02d")
         
         case _ =>
@@ -96,7 +125,7 @@ object TimeUtils {
             if parts.head.matches("\\d+") then (parts(1), parts.head +: parts.drop(2))
             else (parts.head, parts.tail)
           
-          val month = ChronoParse.monthAbbrev2Number(monthStr.take(3))
+          val month = monthAbbrev2Number(monthStr.take(3))
           
           rest.toList match
             case d :: y :: Nil =>

@@ -3,6 +3,17 @@ package uni.time
 import uni.*
 import java.time.LocalDateTime
 
+/** Ad-hoc date parsing, superseded by [[SmartParse]].
+ *
+ *  Retained for now because `monthAbbrev2Number` is still used by `TimeUtils`, and
+ *  because removing 900 lines is a separate step from ceasing to depend on them.
+ *  Nothing in `uni` calls [[parseDateChrono]] any more.
+ *
+ *  Measured against the project's 132-date corpus, `SmartParse` fails nothing that
+ *  this rescues, and where the two disagree this is the one that is wrong:
+ *  `12:00:00 AM` reads as noon rather than midnight, `2nd Jan 2020` as February 1st,
+ *  `19 Jun.2023` as 2026, and a fractional second rounds up.
+ */
 object ChronoParse {
   private lazy val now: LocalDateTime = LocalDateTime.now()
   private lazy val MonthNamesPattern = "(?i)(.*)(Jan[uary]*|Feb[ruary]*|Mar[ch]*|Apr[il]*|May|June?|July?|Aug[ust]*|Sep[tember]*|Oct[ober]*|Nov[ember]*|Dec[ember]*)(.*)".r
@@ -916,6 +927,10 @@ object ChronoParse {
     }
   }
 
+  /** @deprecated Moved to `TimeUtils`, which was its only caller. This copy also
+   *  throws `StringIndexOutOfBoundsException` on input shorter than three characters,
+   *  which the moved version does not. */
+  @deprecated("Use TimeUtils.monthAbbrev2Number", "0.15.2")
   def monthAbbrev2Number(name: String): Int = {
     name.toLowerCase.substring(0, 3) match {
     case "jan" => 1

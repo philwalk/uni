@@ -41,6 +41,82 @@
   producer that had already exited. Any caller checking twice hung outright
 - `hasNext` is now idempotent
 
+**BUG - `SmartParse` lost the time whenever the year came before it**
+
+- `parseMonthDayYear` / `parseDayMonthYear` took the time to be the numbers *between*
+  the day and the year. That holds for `Aug 18 22:29:47 2018` and little else:
+
+  | input | before | now |
+  |---|---|---|
+  | `01 Jan 2001 12:34:56 -0700` | `2001-01-01T00:00` | `12:34:56` |
+  | `Sun, 12 May 2024 14:30:00 GMT` | `2024-05-12T00:00` | `14:30` |
+  | `May 12, 2024 2:30 PM` | `2024-05-12T12:00` | `14:30` |
+
+- The first two are RFC 2822, i.e. every email header. The third read `2:30 PM` as
+  noon because the PM adjustment was applied to an hour of zero. The time is now
+  whatever numbers remain once day and year are accounted for, with positional
+  validation so a trailing `-0700` cannot fill the seconds slot.
+- Measured against the project's 132-date corpus, disagreements with `ChronoParse`
+  fell from 24 to 11, and every remaining one is `ChronoParse` being wrong.
+
+**BUG - `parseDateSmart` could throw instead of returning `BadDate`**
+
+- `12:34 -0700` put 700 in the seconds field and `LocalDateTime.of` threw
+  `DateTimeException`. The sentinel is the whole reason this is usable for a CSV
+  column without wrapping every cell in a `Try`, so the boundary now catches.
+
+**NEW - enforceable day/month order (`DateOrder`, `inferDateOrder`)**
+
+- `monthFirst` only ever decided the *ambiguous* case; an unambiguous date overrode
+  it. So a consistent European column parsed as a mixture under the default -- rows
+  with a day of 12 or less read month-first, the rest day-first -- and nothing looked
+  wrong. The file was internally consistent; the parse was not.
+- `DateOrder.Auto` is that behaviour and remains the default, so nothing has to be
+  declared. `MonthFirst` / `DayFirst` enforce, turning a contradicting date into
+  `BadDate` instead of silently reinterpreting it.
+- `withDateOrder(order) { ... }` is dynamically scoped and thread-local, like
+  `withTimeConfig`. It derives from the enclosing config, so `Auto` keeps an outer
+  `monthFirst` rather than resetting it.
+- `inferDateOrder(column)` reads the convention off the unambiguous rows: `Some(order)`
+  when one is proved, `Some(Auto)` when nothing is decisive, and **`None`** when rows
+  prove both -- a genuinely mixed column, reported rather than guessed at.
+
+**CHANGED - `ChronoParse` deprecated; two of its formats folded into `SmartParse`**
+
+- `parseDate` is now `parseDateSmart` alone. Across the 132-date corpus `ChronoParse`
+  rescued **zero** inputs that `SmartParse` failed, and where both succeeded and
+  disagreed it is the wrong one: `12:00:00 AM` as noon, `2nd Jan 2020` as February 1st,
+  `19 Jun.2023` as 2026.
+- The two formats it did handle alone are folded in, as `preNormalize` rewrites so the
+  existing ISO/YMD path does the parsing: bare `yyyyMMdd` (with `HHmm`/`HHmmss`, since
+  the compact time is part of the same format) and a leading time
+  (`13:45 2020-01-02`). Guarded: `99999999` and `20201345` stay `BadDate`.
+- `parseDateChrono` is `@deprecated`, not removed -- `TimeUtils` still uses its
+  `monthAbbrev2Number`, and deleting 900 lines is a separate step.
+
+**BUG - `SmartParse` silently dropped part of the time when a number collided with the year**
+
+- `parseMonthDayYear` and `parseDayMonthYear` found the year's *value*, then searched
+  the number list for its *position* by value, allowing a two-digit expansion. That
+  matched whichever number expanded to the same year, and the slice between day and
+  year then cut the time at the wrong point:
+
+  | input | before | now |
+  |---|---|---|
+  | `Aug 18 22:29:47 2018` | `2018-08-18T00:00` | `2018-08-18T22:29:47` |
+  | `Aug 1 22:29:47 2022` | `2022-08-01T00:00` | `2022-08-01T22:29:47` |
+  | `Aug 1 22:29:47 2029` | `2029-08-01T22:00` | `2029-08-01T22:29:47` |
+
+- Three separate collisions, one per field: the day `18` expands to 2018, the hour
+  `22` to 2022, the minute `29` to 2029. Nothing threw and nothing returned `BadDate`
+  -- the results were plausible timestamps -- and it struck roughly one row in a
+  hundred. For the CSV date-column use case that is the worst available failure mode.
+- The year and its index are now determined together, preferring an unambiguous
+  4-digit token and falling back to the 2-digit reading at its fixed position. A
+  regression suite sweeps 28 days x 46 years through both parsers: 0 wrong, from 56.
+- `Aug 18 22:29:47 2018` is the standard `ls -l` / syslog timestamp, so this was not
+  an exotic input.
+
 **BUG - `noTrailingSlash` stripped only one trailing separator**
 
 - It used `stripSuffix("/")`, so `/usr/bin//` came back as `/usr/bin/` -- still
