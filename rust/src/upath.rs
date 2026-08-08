@@ -41,6 +41,7 @@ pub mod mount;
 pub mod resolve;
 pub mod strext;
 pub mod times;
+pub mod walk;
 
 pub use context::DriveCwdSource;
 pub use context::PathContext;
@@ -55,6 +56,7 @@ pub use ext::UPath;
 pub use times::Ago;
 pub use times::agoFromMillis;
 pub use times::epoch2DateTime;
+pub use walk::TreeWalk;
 pub use hash::Cksum;
 pub use hash::CksumResult;
 pub use hash::Hash64;

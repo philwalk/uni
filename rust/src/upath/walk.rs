@@ -1,0 +1,265 @@
+//! Directory listing and tree walking — a port of the `files`/`paths`/`pathsTree` family in
+//! `uni.ext.PathExts`.
+//!
+//! # Order is unspecified, in both languages
+//!
+//! The Scala goes through `File.listFiles` and `Files.walk`, **neither of which guarantees the
+//! order of siblings** — it is whatever the filesystem hands back, which is roughly alphabetical
+//! on NTFS and arbitrary on ext4. Rust's `read_dir` is the same. So none of these methods
+//! promises an order, and code that needs one must sort.
+//!
+//! That is why `test-data/date-parity/`-style comparison would be flaky here: the parity fixture
+//! sorts both sides before comparing. Sorting in the *fixture* rather than in the API keeps the
+//! Scala behaviour unchanged while still pinning the contents.
+//!
+//! # Semantics worth getting right
+//!
+//! - A missing path, or one that is not a directory, lists **empty** rather than erroring —
+//!   `listFiles` returns `null` there and the Scala maps that to an empty iterator.
+//! - [`UPath::pathsTree`] **includes the root itself**, because `Files.walk(p)` yields `p` first.
+//!   Easy to miss, and it changes every count by one.
+//! - The walk is **pre-order** depth-first: a directory appears before its contents.
+//! - The walk does **not follow symlinks**. `Files.walk` without `FOLLOW_LINKS` lists a symlinked
+//!   directory but does not descend into it, so neither does this — which is also what stops a
+//!   cyclic link from hanging the traversal.
+//! - [`UPath::subfiles`] filters on *regular* files, not "not a directory", so a device or socket
+//!   is excluded. Symlinks to regular files are included, since `isRegularFile` follows links.
+//!
+//! # `files` and `paths` are the same thing here
+//!
+//! In Scala they differ only in element type — `Seq[java.io.File]` versus `Seq[Path]`. Rust has
+//! no second path type, so both return `Vec<UPath>`. `files` is kept as an alias so a script
+//! ported from Scala compiles unchanged.
+
+#![allow(
+    non_snake_case,
+    reason = "public items mirror the Scala API name-for-name, so a script kept in both \
+              languages needs no mental translation. Internal helpers and Rust trait \
+              contracts stay snake_case, so the case says whether a Scala counterpart exists."
+)]
+
+use std::fs;
+use std::path::PathBuf;
+
+use crate::upath::UPath;
+
+impl UPath {
+    /// The immediate entries of this directory, in unspecified order.
+    ///
+    /// Empty when the path does not exist or is not a directory, mirroring `listFiles`
+    /// returning `null` there.
+    #[must_use]
+    pub fn paths(&self) -> Vec<Self> {
+        let Ok(entries) = fs::read_dir(self.as_std_path()) else {
+            return Vec::new();
+        };
+        entries
+            .filter_map(Result::ok)
+            .filter_map(|e| self.sibling(&e.path()))
+            .collect()
+    }
+
+    /// Alias for [`Self::paths`]. In Scala this returns `Seq[java.io.File]`; Rust has no second
+    /// path type, so the two coincide.
+    #[must_use]
+    pub fn files(&self) -> Vec<Self> {
+        self.paths()
+    }
+
+    /// The immediate subdirectories, in unspecified order.
+    #[must_use]
+    pub fn subdirs(&self) -> Vec<Self> {
+        self.paths().into_iter().filter(Self::isDirectory).collect()
+    }
+
+    /// The immediate *regular* files, in unspecified order.
+    ///
+    /// Regular files, not "everything that is not a directory" — the Scala filters on
+    /// `Files.isRegularFile`, so a device or socket is excluded.
+    #[must_use]
+    pub fn subfiles(&self) -> Vec<Self> {
+        self.paths().into_iter().filter(Self::isFile).collect()
+    }
+
+    /// Every path in the tree rooted here, **including this path itself**, pre-order.
+    ///
+    /// Matches `Files.walk(p)`: the root comes first, a directory precedes its contents, and
+    /// symlinks are listed but not descended into. Sibling order is unspecified.
+    ///
+    /// Empty when the path does not exist. A path that exists but is not a directory yields just
+    /// itself, as `Files.walk` does.
+    #[must_use]
+    pub fn pathsTree(&self) -> Vec<Self> {
+        self.walkIter().collect()
+    }
+
+    /// Alias for [`Self::pathsTree`], matching the Scala `walk`.
+    #[must_use]
+    pub fn walk(&self) -> Vec<Self> {
+        self.pathsTree()
+    }
+
+    /// The tree walk as a lazy iterator — the counterpart to Scala's `pathsTreeIter`.
+    ///
+    /// Explicit stack rather than recursion, so a deep tree cannot overflow, and so the caller
+    /// can stop early without having listed the rest.
+    pub fn walkIter(&self) -> TreeWalk {
+        TreeWalk {
+            root: self.clone(),
+            stack: if self.exists() {
+                vec![self.as_std_path()]
+            } else {
+                Vec::new()
+            },
+        }
+    }
+
+    /// A `UPath` for `child`, in this path's resolution context.
+    ///
+    /// Returns `None` when the child cannot be resolved, which drops the entry rather than
+    /// failing the whole listing — a directory holding one undecodable name should still list.
+    fn sibling(&self, child: &std::path::Path) -> Option<Self> {
+        let s = child.to_string_lossy().replace('\\', "/");
+        Self::resolve(self.ctx(), &s).ok()
+    }
+}
+
+/// Pre-order depth-first walk, yielding the root first. See [`UPath::walkIter`].
+pub struct TreeWalk {
+    /// Kept for its resolution context, so every yielded path shares the root's.
+    root: UPath,
+    /// Paths still to visit, in reverse order so `pop` yields the next one.
+    stack: Vec<PathBuf>,
+}
+
+impl Iterator for TreeWalk {
+    type Item = UPath;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let current = self.stack.pop()?;
+            // Push children before yielding, so the next `pop` continues depth-first. Reversed,
+            // so entries come back in the order `read_dir` gave them rather than backwards.
+            //
+            // `symlink_metadata`, not `metadata`: a symlinked directory must be listed without
+            // being descended into, matching `Files.walk` without FOLLOW_LINKS. That is also
+            // what keeps a cyclic link from looping forever.
+            let is_real_dir = fs::symlink_metadata(&current)
+                .map(|m| m.is_dir())
+                .unwrap_or(false);
+            if is_real_dir && let Ok(entries) = fs::read_dir(&current) {
+                let mut children: Vec<PathBuf> =
+                    entries.filter_map(Result::ok).map(|e| e.path()).collect();
+                children.reverse();
+                self.stack.extend(children);
+            }
+            let s = current.to_string_lossy().replace('\\', "/");
+            if let Ok(p) = UPath::resolve(self.root.ctx(), &s) {
+                return Some(p);
+            }
+            // Undecodable entry: skip it and continue rather than ending the walk.
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use crate::upath::PathContext;
+    use crate::upath::UPath;
+    use crate::upath::UserInfo;
+
+    fn root_of(dir: &std::path::Path) -> UPath {
+        let d = dir.to_string_lossy().replace('\\', "/");
+        let ctx = Arc::new(PathContext::synthetic(
+            &[],
+            UserInfo::new("tester", &d, &d),
+            cfg!(windows),
+        ));
+        UPath::resolve(&ctx, &d).unwrap_or_else(|e| panic!("resolve: {e}"))
+    }
+
+    /// `a/`, `a/b/`, `a/b/deep.txt`, `a/one.txt`, `a/two.txt`
+    fn fixture() -> (tempfile::TempDir, UPath) {
+        let tmp = tempfile::tempdir().unwrap_or_else(|e| panic!("tempdir: {e}"));
+        let a = tmp.path().join("a");
+        std::fs::create_dir_all(a.join("b")).unwrap_or_else(|e| panic!("mkdir: {e}"));
+        std::fs::write(a.join("one.txt"), b"1").unwrap_or_else(|e| panic!("write: {e}"));
+        std::fs::write(a.join("two.txt"), b"22").unwrap_or_else(|e| panic!("write: {e}"));
+        std::fs::write(a.join("b/deep.txt"), b"333").unwrap_or_else(|e| panic!("write: {e}"));
+        let root = root_of(&a);
+        (tmp, root)
+    }
+
+    fn names(v: &[UPath]) -> Vec<String> {
+        let mut out: Vec<String> = v
+            .iter()
+            .map(|p| p.posx().rsplit('/').next().unwrap_or("").to_owned())
+            .collect();
+        out.sort();
+        out
+    }
+
+    #[test]
+    fn lists_immediate_entries_only() {
+        let (_tmp, root) = fixture();
+        assert_eq!(names(&root.paths()), vec!["b", "one.txt", "two.txt"]);
+        assert_eq!(names(&root.files()), names(&root.paths()), "files aliases paths");
+        assert_eq!(names(&root.subdirs()), vec!["b"]);
+        assert_eq!(names(&root.subfiles()), vec!["one.txt", "two.txt"]);
+    }
+
+    #[test]
+    fn tree_includes_the_root_itself() {
+        let (_tmp, root) = fixture();
+        let tree = root.pathsTree();
+        // 5 entries: the root, b, deep.txt, one.txt, two.txt. Forgetting the root is the classic
+        // off-by-one against `Files.walk`.
+        assert_eq!(names(&tree), vec!["a", "b", "deep.txt", "one.txt", "two.txt"]);
+        assert_eq!(names(&root.walk()), names(&tree), "walk aliases pathsTree");
+    }
+
+    #[test]
+    fn walk_is_preorder_parent_before_children() {
+        let (_tmp, root) = fixture();
+        let order: Vec<String> = root
+            .walkIter()
+            .map(|p| p.posx().rsplit('/').next().unwrap_or("").to_owned())
+            .collect();
+        let idx = |n: &str| {
+            order
+                .iter()
+                .position(|x| x == n)
+                .unwrap_or_else(|| panic!("{n} missing from {order:?}"))
+        };
+        assert_eq!(order.first().map(String::as_str), Some("a"), "root first");
+        assert!(idx("b") < idx("deep.txt"), "parent before child: {order:?}");
+    }
+
+    #[test]
+    fn missing_and_non_directory_paths_behave_like_the_scala() {
+        let (tmp, root) = fixture();
+        let missing = root_of(&tmp.path().join("nope"));
+        assert!(missing.paths().is_empty(), "missing path lists empty");
+        assert!(missing.pathsTree().is_empty(), "missing path walks empty");
+
+        // A path that exists but is not a directory: empty listing, but the walk yields itself.
+        let one = root
+            .paths()
+            .into_iter()
+            .find(|p| p.posx().ends_with("one.txt"))
+            .unwrap_or_else(|| panic!("fixture missing one.txt"));
+        assert!(one.paths().is_empty(), "a file lists empty");
+        assert_eq!(names(&one.pathsTree()), vec!["one.txt"], "a file walks to itself");
+    }
+
+    #[test]
+    fn walk_iter_is_lazy_enough_to_stop_early() {
+        let (_tmp, root) = fixture();
+        // Taking one item must not require listing the tree; asserting the root comes back is the
+        // observable part, the point being that this does not collect first.
+        let first: Vec<UPath> = root.walkIter().take(1).collect();
+        assert_eq!(names(&first), vec!["a"]);
+    }
+}
