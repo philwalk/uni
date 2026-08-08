@@ -175,13 +175,10 @@ impl UPath {
         if charset == Charset::Utf8 {
             // Streams, so a large file is not held twice.
             //
-            // `BufRead::lines` strips only a trailing `\r`, so each line still needs `strip_cr`:
-            // uni yields no carriage returns from a line-oriented reader. See `split_lines`.
+            // `BufRead::lines` already implements uni's rule exactly: it drops a `\r` only
+            // when the `\n` consumed it, leaving an interior or end-of-file `\r` alone.
             let file = fs::File::open(self.as_std_path())?;
-            return io::BufReader::new(file)
-                .lines()
-                .map(|r| r.map(|l| strip_cr(&l)))
-                .collect();
+            return io::BufReader::new(file).lines().collect();
         }
         // Latin-1 and the fallback need the bytes in hand to decide, so they cannot
         // go through `BufRead::lines`, which is UTF-8 only.
@@ -333,9 +330,14 @@ impl Iterator for LineStream {
             Ok(_) => {
                 if buf.last() == Some(&b'\n') {
                     buf.pop();
+                    // Only the CR the newline consumed; an interior one is data. Popping the
+                    // byte before decoding is safe -- 0x0D is never a UTF-8 continuation byte.
+                    if buf.last() == Some(&b'\r') {
+                        buf.pop();
+                    }
                 }
                 match self.charset.decode(buf) {
-                    Ok(line) => Some(strip_cr(&line)),
+                    Ok(line) => Some(line),
                     Err(_) => {
                         self.reader = None;
                         None
@@ -350,35 +352,39 @@ impl Iterator for LineStream {
     }
 }
 
-/// Splits into lines, removing **every** carriage return, not just a trailing one.
+/// Splits into lines exactly as a split on `\r?\n` would.
 ///
-/// This is uni policy rather than an accident, and it is deliberately stricter than Rust's own
-/// `BufRead::lines`, which strips only a `\r` immediately before the `\n`. A residual `\r` inside
-/// a line is one of the larger classes of hard-to-diagnose bug: it is invisible in most output,
-/// survives comparisons, and breaks string matches for no visible reason. A line-oriented reader
-/// in this API never yields one.
+/// The only carriage return removed is the one a newline consumed. **An interior `\r` survives,
+/// and so does a trailing `\r` at end-of-file**, because in neither case did a `\n` pair with
+/// it. Rust's `BufRead::lines` applies the same rule, as does `PathExts.readNextLine` in Scala, so
+/// all three agree byte for byte.
 ///
-/// Splitting on `\n` and discarding `\r` also makes the result independent of where the file came
-/// from -- `\r\n` and `\n` both land on the same lines, which is the point, since Windows itself
-/// emits either.
+/// Splitting this way still makes the result independent of where the file came from -- `\r\n` and
+/// `\n` land on the same lines, which is the point, since Windows emits either. What it does not do
+/// is discard a `\r` that carries information: that is why the rule is stated as a pattern rather
+/// than as "remove every `\r`".
 ///
-/// The escape hatch is [`UPath::contentAsString`] or [`UPath::byteArray`]: take the bytes and split
-/// them by whatever rule the context actually calls for. That is the only way to see a `\r` through
-/// this API, and it should be.
+/// For the bytes exactly as stored, use [`UPath::contentAsString`] or [`UPath::byteArray`].
 fn split_lines(text: &str) -> Vec<String> {
-    let mut out: Vec<String> = text.split('\n').map(strip_cr).collect();
+    let mut out: Vec<String> = Vec::new();
+    let mut rest = text;
+    loop {
+        match rest.find('\n') {
+            Some(i) => {
+                let line = &rest[..i];
+                out.push(line.strip_suffix('\r').unwrap_or(line).to_owned());
+                rest = &rest[i + 1..];
+            }
+            None => {
+                // The final segment ended at EOF, not at a newline, so a trailing CR here is
+                // data. Pushed as-is and the loop ends.
+                out.push(rest.to_owned());
+                break;
+            }
+        }
+    }
     if out.last().is_some_and(String::is_empty) {
         out.pop();
     }
     out
-}
-
-/// One line with every `\r` removed. See [`split_lines`].
-fn strip_cr(line: &str) -> String {
-    if line.contains('\r') {
-        line.chars().filter(|&c| c != '\r').collect()
-    } else {
-        // The common case allocates once and scans no further.
-        line.to_owned()
-    }
 }

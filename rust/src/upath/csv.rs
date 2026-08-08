@@ -441,7 +441,6 @@ impl<W: Write> CsvWriter<W> {
 }
 
 impl UPath {
-    /// The delimiter for this file: the configured one, or sniffed from a sample.
     /// The guessed CSV delimiter as a string, or empty when none was found.
     ///
     /// Scala's `Path.delim`. Empty for a path that is not a file, and empty when the sniffer finds

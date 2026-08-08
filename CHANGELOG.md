@@ -9,7 +9,8 @@ path where it returned an absolute one; `toString` rejects a pattern it used to 
 resolves against the config's working directory rather than the JVM's; `DateFormat`
 renders month names in English regardless of locale; file timestamps render in UTC where
 they rendered in system-local time; `Path.weekDay` returns an `Int` rather than a
-`java.time.DayOfWeek`; and `copyTo` requires its `overwrite` argument, with
+`java.time.DayOfWeek`; every line reader preserves an interior carriage return where it
+used to discard it; and `copyTo` requires its `overwrite` argument, with
 `File.copyTo(dest)` removed. Bigger than any of those: the date type moved off `java.time`
 (below).
 
@@ -20,6 +21,41 @@ quietly, which is why it was done that way.
 argument of `@deprecated`, not a removal target. They still work; removal is a later
 release.
 
+
+**BREAKING — line readers split on `\r?\n`; an interior carriage return is preserved**
+
+- Earlier in this release cycle the rule was written as "a line-oriented reader removes **every**
+  `\r`". That is not the same rule as the split on `\r?\n` the docs also described, and the two
+  disagree on two cases: an **interior** CR (`a\rb`) and a **trailing** CR at end-of-file,
+  neither of which has a `\n` to pair with.
+- The pattern is the rule that shipped, because it is the self-consistent one. Splitting on
+  `\r?\n` is what makes lines immune to the OS that wrote the file -- that was always the
+  justification -- and it reaches only the CR a newline consumed. Discarding an interior CR is a
+  separate act with a separate cost: it destroys data, silently, in the one API that is supposed to
+  be the faithful one.
+- **Scala behaviour change.** `PathExts.readNextLine` dropped every `0x0D` byte in a line; it now
+  drops one only when the newline consumed it. So `a\rb\nc\r\nd\re\n` reads as
+  `[a\rb, c, d\re]` where it previously read as `[ab, c, de]`. `lines`, `linesStream`,
+  `withLines`, `eachLine` and `firstLine` are all affected, being one reader.
+- Rust matches, and is now simpler for it: the UTF-8 path is plain `BufRead::lines`, whose rule this
+  already is, and `strip_cr` is gone.
+- Unchanged: a CRLF terminator still loses its CR, so CRLF, LF and a missing final newline still
+  yield identical lines; `contentAsString` and `byteArray` still keep the bytes exactly.
+- Pinned on both sides, case for case, by `uni.CarriageReturnSuite` and
+  `rust/tests/upath_lines.rs`. **Scala had no test for the CR rule at all** before this -- the full
+  2546-test suite passed both before and after a change to what every line reader returns, which is
+  the sharpest example yet of a suite that looks like coverage.
+
+**RUST — `Path.delim` ported**
+
+- `UPath::delim` reports the sniffed CSV delimiter, or **empty** when nothing was found. It is
+  not the same question as the delimiter the parser uses: `csv_delimiter` must name a byte to
+  parse with, so it falls back to a comma, while `delim` reports whether a delimiter was found
+  at all -- and substituting a comma there would turn "no" into a confident wrong answer.
+- Samples 50 rows, matching `Delimiter.detect(p, 50)` rather than `CsvConfig::sample_rows`, and
+  returns `String` rather than `Option<char>` because the Scala callers test for emptiness.
+- Pinned against the Scala's own answers for seven inputs, including the three that surprise:
+  a single-column file, an empty file and a prose file all yield empty rather than a comma.
 
 **RUST BUG — `readCsv` counted the header row as data**
 
@@ -55,10 +91,11 @@ release.
 
 **RUST — the carriage-return policy is now enforced, and reads are ported**
 
-- uni's line-oriented readers remove **every** `\r` from a line, not merely one before the `\n`.
-  That is policy, not accident: a residual carriage return inside a line is invisible in most
-  output, survives comparison, and breaks a string match for no visible reason. It also makes
-  lines independent of where a file came from, since `\r\n` and `\n` land on the same lines.
+- uni's line-oriented readers were taken to remove **every** `\r` from a line, and the Rust port
+  was made to match. **That rule was superseded within this same release** -- see "line readers
+  split on `\r?\n`" above, which is the rule that shipped. What stands from this entry is that
+  Rust's line handling was brought under the Scala's control rather than left to
+  `BufRead::lines` by default.
 - The Rust port **did not** do this. `split_lines` used `strip_suffix('\r')` and the UTF-8 path
   used `BufRead::lines`, which strips only the terminator. So `a\rb\nc\r\nd\re\n` gave
   `[a\rb, c, d\re]` in Rust against `[ab, c, de]` in Scala. Fixed; both now agree.

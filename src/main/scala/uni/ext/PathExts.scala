@@ -696,11 +696,19 @@ object pathExts {
       if (b == -1) return null
 
       while (b != -1 && b != '\n'.toInt) {
-        if (b != '\r'.toInt) bos.write(b)
+        bos.write(b)
         b = in.read()
       }
 
-      val bytes = bos.toByteArray
+      // Exactly a split on "\r?\n": the only CR removed is the one the newline
+      // consumed. An interior CR is data, and so is a trailing CR at end-of-file, where
+      // no newline followed it to pair with.
+      val sawNewline = b == '\n'.toInt
+      val raw = bos.toByteArray
+      val bytes =
+        if (sawNewline && raw.length > 0 && raw(raw.length - 1) == '\r'.toByte)
+          raw.slice(0, raw.length - 1)
+        else raw
       try {
         decoder.decode(java.nio.ByteBuffer.wrap(bytes)).toString
       } catch {

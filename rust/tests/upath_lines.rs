@@ -1,21 +1,22 @@
 //! Line-oriented reading: `lines`, `firstLine`, `eachLine`, `linesStream`, `withLines`.
 //!
-//! # Carriage returns never survive a line
+//! # Carriage returns: exactly a split on `\r?\n`
 //!
-//! That is uni policy, and this file is where it is pinned. A residual `\r` inside a line is one
-//! of the larger classes of hard-to-diagnose bug: invisible in most output, survives comparison,
-//! and breaks a string match for no visible reason. Every line-oriented reader here removes **all**
-//! of them — deliberately stricter than Rust's `BufRead::lines`, which strips only the one
-//! immediately before the `\n`.
+//! That is uni policy, and this file is where it is pinned. The only CR a line reader removes is
+//! the one a newline consumed -- so a CRLF terminator loses its CR, while **an interior `\r` and a
+//! trailing `\r` at end-of-file both survive**, neither having a `\n` to pair with.
 //!
-//! Splitting on `\n` and discarding `\r` also makes the result independent of where the file came
-//! from: `\r\n` and `\n` land on the same lines, which matters because Windows emits either.
+//! Stated as a pattern rather than as "remove every `\r`" because those two rules disagree, and
+//! only the pattern is self-consistent: it is what makes lines independent of the OS that wrote
+//! the file (`\r\n` and `\n` land on the same lines, and Windows emits either) without
+//! discarding a `\r` that carries information. Rust's `BufRead::lines` applies the same rule.
 //!
-//! `contentAsString` and `byteArray` are the escape hatch, and are asserted below to keep the
-//! bytes intact — they are the only way to see a `\r` through this API, and that is the design.
+//! `contentAsString` and `byteArray` keep the bytes exactly, and are asserted below.
 //!
-//! This divergence went unnoticed until an interior-CR case was tried by hand: `csv-parity` has a
-//! `lone-cr` case, but it exercises CR as a line *separator*, never inside a line.
+//! Both halves of this went unnoticed for a while. The interior-CR case surfaced only when tried
+//! by hand -- `csv-parity` has a `lone-cr` case, but it exercises CR as a line *separator*. The
+//! end-of-file case surfaced later still, from noticing that "remove every CR" and the stated
+//! `\r?\n` split cannot both be true.
 
 #![allow(
     clippy::expect_used,
@@ -44,13 +45,13 @@ fn with_bytes(dir: &std::path::Path, name: &str, bytes: &[u8]) -> UPath {
     p
 }
 
-/// Interior CR, a CRLF terminator, and a lone CR mid-line — the exact bytes the Scala was probed
-/// with, so the expected values are the Scala's answers rather than a guess.
+/// Interior CR, a CRLF terminator, and a second interior CR: the CRLF loses its CR, the two
+/// interior ones stay. Kept as the Scala is probed with the same bytes.
 const MIXED: &[u8] = b"a\rb\nc\r\nd\re\n";
-const EXPECTED: [&str; 3] = ["ab", "c", "de"];
+const EXPECTED: [&str; 3] = ["a\rb", "c", "d\re"];
 
 #[test]
-fn lines_removes_every_carriage_return() {
+fn lines_keeps_an_interior_carriage_return() {
     let t = tempfile::tempdir().expect("tmp");
     let p = with_bytes(t.path(), "mixed.txt", MIXED);
     assert_eq!(p.lines(), EXPECTED, "lines");
@@ -62,7 +63,7 @@ fn lines_removes_every_carriage_return() {
 }
 
 #[test]
-fn lines_stream_removes_every_carriage_return() {
+fn lines_stream_keeps_an_interior_carriage_return() {
     let t = tempfile::tempdir().expect("tmp");
     let p = with_bytes(t.path(), "mixed.txt", MIXED);
     let got: Vec<String> = p.linesStream(Charset::default()).collect();
@@ -80,7 +81,7 @@ fn with_lines_and_each_line_agree() {
     let mut seen: Vec<String> = Vec::new();
     p.eachLine(|l| seen.push(l.to_owned()));
     assert_eq!(seen, EXPECTED, "eachLine");
-    assert_eq!(p.firstLine(), "ab", "firstLine");
+    assert_eq!(p.firstLine(), "a\rb", "firstLine");
 }
 
 #[test]
@@ -98,8 +99,8 @@ fn content_and_bytes_keep_the_carriage_returns() {
 
 #[test]
 fn line_endings_do_not_change_the_lines() {
-    // The point of splitting on `\n` and discarding `\r`: the same content sourced from Windows or
-    // Unix yields identical lines.
+    // The half of the rule that does hold unconditionally: a terminator's CR always goes, so the
+    // same content sourced from Windows or Unix yields identical lines.
     let t = tempfile::tempdir().expect("tmp");
     let unix = with_bytes(t.path(), "unix.txt", b"one\ntwo\nthree\n");
     let dos = with_bytes(t.path(), "dos.txt", b"one\r\ntwo\r\nthree\r\n");
@@ -141,4 +142,19 @@ fn lines_stream_is_lazy_and_closes_early() {
         std::fs::remove_file(p.as_std_path()).is_ok(),
         "the handle must be closed after an abandoned stream"
     );
+}
+
+#[test]
+fn a_trailing_carriage_return_at_eof_is_data() {
+    // The case that exposed the inconsistency. No `\n` follows this CR, so a split on `\r?\n`
+    // never consumes it -- it belongs to the line. "Remove every CR" would have eaten it, which is
+    // why that phrasing was wrong.
+    let t = tempfile::tempdir().expect("tmp");
+    let p = with_bytes(t.path(), "eofcr.txt", b"one\ntwo\r");
+    assert_eq!(p.lines(), ["one", "two\r"], "lines");
+    let streamed: Vec<String> = p.linesStream(Charset::default()).collect();
+    assert_eq!(streamed, p.lines(), "linesStream agrees");
+    // Contrast: the identical CR *with* a newline after it is a terminator and goes.
+    let q = with_bytes(t.path(), "crlf.txt", b"one\ntwo\r\n");
+    assert_eq!(q.lines(), ["one", "two"], "the same CR, now paired with a newline");
 }

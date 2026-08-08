@@ -116,24 +116,24 @@ Complete reference for all non-deprecated extension methods added to `java.nio.f
 | `.contentAsString(charset)` | `String` | entire file as a string with explicit `Charset` |
 | `.byteArray` | `Array[Byte]` | raw file content as bytes |
 
-> **A line-oriented reader never yields a carriage return.**
+> **Lines are split on `\r?\n`, and nothing else about a carriage return is special.**
 >
-> `lines`, `linesStream`, `withLines`, `eachLine` and `firstLine` remove **every** `\r` from a
-> line, not merely one before the `\n`. A residual carriage return inside a line is one of the
-> larger classes of hard-to-diagnose bug: invisible in most output, it survives comparison and
-> breaks a string match for no visible reason.
+> `lines`, `linesStream`, `withLines`, `eachLine` and `firstLine` remove the CR that a newline
+> consumed, and only that one. Two consequences follow, and both are intended:
 >
-> Splitting on `\n` and discarding `\r` also makes the result independent of where a file came
-> from. `\r\n` and `\n` land on the same lines, which matters because Windows emits either, so
-> the same content read on Linux and Windows yields identical lines.
+> - **A CRLF terminator loses its `\r`.** `\r\n` and `\n` land on the same lines, so the same
+>   content read on Linux and Windows yields identical lines. Windows emits either convention, and
+>   this is what makes a reader immune to which one produced the file.
+> - **An interior `\r` survives**, as does a trailing `\r` at end-of-file. Neither has a `\n` to
+>   pair with, so the split never reaches them, and they are data.
 >
-> **`contentAsString` and `byteArray` are the escape hatch** and keep the bytes exactly. When
-> carriage returns are the point — inspecting line endings, or a quoted CSV field that
-> genuinely contains one — take the content and split it by whatever rule the context
-> calls for. That is deliberately the only way to see a `\r` through this API.
+> The rule is deliberately stated as a pattern rather than as "remove every `\r`", because those
+> two are different rules and disagree on exactly the cases above. Only the pattern is
+> self-consistent, and it is the one both languages implement -- the same rule as Java's
+> `BufferedReader.readLine` and Rust's `BufRead::lines`.
 >
-> Stricter than either host language: Java's `BufferedReader.readLine` and Rust's
-> `BufRead::lines` each strip only the terminator.
+> **`contentAsString` and `byteArray` keep the bytes exactly.** When line endings themselves are
+> the subject, take the content and split it by whatever rule the context calls for.
 
 ### CSV
 
@@ -300,7 +300,7 @@ performance-sensitive parts under `rust/src/upath/`:
 | Scala | Rust module | covers |
 | :--- | :--- | :--- |
 | `uni.io.FastCsv`, `.csvRows` | `upath::csv` | row parsing, quoting, the writer |
-| `Delimiter.detect` | `upath::delim` | delimiter sniffing |
+| `Delimiter.detect`, `.delim` | `upath::delim`, `upath::csv` | delimiter sniffing, and the per-file guess |
 | `loadSmart` into a matrix | `upath::matcsv` | CSV to a typed table |
 | `.cksum` `.md5` `.sha256` `.hash64` | `upath::hash` | the four hashes |
 | `.posix` `.relpath` `.stdpath`, mount handling | `upath::resolve`, `upath::mount`, `upath::ext` | path translation |
