@@ -9,7 +9,6 @@ object ParseDate {
   def usage(m: String = ""): Nothing = {
     showUsage(m, "<date-time-string> [options]",
       " [-s]         ; smart parse",
-      " [-c]         ; chrono parse",
       " [-f]         ; smart with fallback",
     )
   }
@@ -40,7 +39,7 @@ object ParseDate {
     def parse(target: String): java.time.LocalDateTime = {
       parseType match {
       case "-s" => parseDateSmart(target)
-      case "-c" => parseDateChrono(target)
+      // `-c` removed with ChronoParse in 0.16.0; `-s` and `-f` are the same parser now.
       case "-f" => uni.time.TimeUtils.parseDate(target)
       case _ => usage(s"bad parseType [$parseType]")
       }

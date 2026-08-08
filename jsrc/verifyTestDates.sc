@@ -1,6 +1,6 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.15.2
+//> using dep org.vastblue:uni_3:0.16.0
 
 import uni.*
 import uni.time.*
@@ -34,7 +34,7 @@ object VerifyTestDates {
     def parse(target: String): java.time.LocalDateTime = {
       parseType match {
       case "-s" => parseDateSmart(target)
-      case "-c" => parseDateChrono(target)
+      // `-c` removed with ChronoParse in 0.16.0; `-s` and `-f` are the same parser now.
       case "-f" => parseDate(target)
       case _ => usage(s"bad parseType [$parseType]")
       }

@@ -56,6 +56,45 @@ private[uni] def withTimeConfigGlobal(config: TimeConfig): Unit =
   () 
 
 type DateTime = java.time.LocalDateTime // alias used by pallet
+
+/** Term-level companion for the [[DateTime]] alias.
+ *
+ *  A type alias lives in the type namespace only, so `type DateTime = ...` supplies the
+ *  type and never an object: `DateTime.now()` has nothing to resolve against. Scripts
+ *  had been getting that object from `import java.time.{LocalDateTime as DateTime}`,
+ *  which renames both halves, and dropping that import broke `DateTime.now()` with
+ *  nothing in `uni` to catch it.
+ *
+ *  It has to be a delegating object rather than an alias. `LocalDateTime`'s statics live
+ *  in a synthetic companion with no value-level identity in Scala, so there is nothing
+ *  for `val DateTime = java.time.LocalDateTime` to bind, and `export ... .*` would bring
+ *  the members into scope unqualified rather than under this name.
+ *
+ *  The members are the ones the script corpus actually calls, counted across the 166
+ *  files importing `uni.time`: `of` (10), `now` (9), `ofInstant` (2). `now()` takes empty
+ *  parens because that is how every call site writes it and Scala 3 dropped
+ *  auto-application.
+ *
+ *  Declared beside the alias so both can be repointed at `UniDateTime` together, leaving
+ *  scripts unedited either way.
+ */
+object DateTime:
+  def now(): DateTime = java.time.LocalDateTime.now()
+
+  def of(year: Int, month: Int, day: Int,
+         hour: Int = 0, minute: Int = 0, second: Int = 0, nano: Int = 0): DateTime =
+    java.time.LocalDateTime.of(year, month, day, hour, minute, second, nano)
+
+  def ofInstant(instant: java.time.Instant,
+                zone: java.time.ZoneId = java.time.ZoneId.systemDefault()): DateTime =
+    java.time.LocalDateTime.ofInstant(instant, zone)
+
+  /** Parses via `SmartParse`, yielding `BadDate` rather than throwing.
+   *
+   *  Deliberately not `LocalDateTime.parse`, which is ISO-only and throws. A script
+   *  reaching for `DateTime.parse` in a `uni` context wants uni's parser.
+   */
+  def parse(text: String): DateTime = TimeUtils.parseDate(text)
 type Instant = java.time.Instant
 type ZoneId = java.time.ZoneId
 type Duration = java.time.Duration

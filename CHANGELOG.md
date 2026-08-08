@@ -1,5 +1,16 @@
 ## Unreleased
 
+**0.16.0, not 0.15.2.** `versionScheme := semver-spec` is declared, and under 0.x the
+MINOR position acts as MAJOR -- so a release that removes public API and changes output
+bumps it. This one does both: `ChronoParse` and `parseDateChrono` are gone; `hash64`
+returns a different value for any file of 64 bytes or more; `relpath` returns a relative
+path where it returned an absolute one; `toString` rejects a pattern it used to accept
+(capital `Y`); `posx` strips every trailing separator rather than one; `standardizePath`
+resolves against the config's working directory rather than the JVM's; and `DateFormat`
+renders month names in English regardless of locale. The `posixAbs`/`posixRel`
+deprecations already named 0.16.0 as their removal target.
+
+
 **BUG — ragged CSV rows were silently discarded, sometimes almost all of them (`FileOps.scala`)**
 
 - `loadSmart` took the column count from the *first* row and dropped every row that

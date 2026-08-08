@@ -28,13 +28,11 @@ object DateTester {
     }
     if testdate.nonEmpty then
       val smartr = parseDateSmart(testdate)
-      val chrono = parseDateChrono(testdate)
-      val fallbk = parseDate(testdate)
-      if verbose || chrono != smartr then
+      // Was a three-way smart/chrono/fallback comparison. ChronoParse is gone as of
+      // 0.16.0 and `parseDate` is now `parseDateSmart`, so there is one answer to show.
+      if verbose || smartr == BadDate then
         printf("# [%s]\n", testdate)
         printf("  smartr: %s\n", smartr)
-        printf("  chrono: %s\n", chrono)
-        printf("  fallbk: %s\n", fallbk)
 
     else
       val expectedVersusInput = "data/generatedTestdates.csv".asPath

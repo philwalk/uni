@@ -44,7 +44,9 @@ import scala.language.implicitConversions
 case class UniDateTime private (
   year: Int, month: Int, day: Int,
   hour: Int, minute: Int, second: Int, nano: Int,
-  offsetMinutes: Option[Int] = None
+  // No default: the constructor is private and every call site passes this
+  // explicitly, so a default only generates an unused accessor.
+  offsetMinutes: Option[Int]
 ):
   /** Formats with a `java.time`-style pattern. See [[DateFormat]] for the subset. */
   def toString(fmt: String): String =
@@ -160,6 +162,29 @@ object UniDateTime:
         val signed = if m.group(1) == "-" then -magnitude else magnitude
         Option.when(isValidOffset(signed))(signed)
       case None => Option.when(zulu)(0)
+
+  // ── Companion surface mirroring `LocalDateTime`'s statics ──────────────────
+  //
+  // A type alias carries the type but never the companion, so `type DateTime =
+  // UniDateTime` alone would break every `DateTime.now()`. Scripts reached that object
+  // through `import java.time.{LocalDateTime as DateTime}`, which renames both. These
+  // are the members they actually call -- measured across the 166 scripts importing
+  // `uni.time`: `of` (10), `now` (9), `ofInstant` (2).
+
+  /** Now, to the nanosecond the platform provides. `LocalDateTime.now()`.
+   *
+   *  Empty parens, not a bare `def`. Scala 3 removed auto-application, so `def now`
+   *  cannot be called as `now()` -- and all nine call sites in the script corpus write
+   *  `DateTime.now()`, since that is how `LocalDateTime.now()` reads. `TimeUtils.now`
+   *  keeps its bare form, which is how scripts call *that* one; the two spellings exist
+   *  because the two origins do.
+   */
+  def now(): UniDateTime = from(LocalDateTime.now())
+
+  /** An instant rendered in `zone`. `LocalDateTime.ofInstant`. */
+  def ofInstant(instant: java.time.Instant,
+                zone: java.time.ZoneId = java.time.ZoneId.systemDefault()): UniDateTime =
+    from(LocalDateTime.ofInstant(instant, zone))
 
   def from(dt: LocalDateTime): UniDateTime =
     unchecked(dt.getYear, dt.getMonthValue, dt.getDayOfMonth,

@@ -205,3 +205,32 @@ class UniDateTimeSuite extends FunSuite:
     for s <- Seq("12-05-1024", "12-05-2024", "1024-05-12", "2024-05-12", "10-24-1130") do
       assertEquals(UniDateTime.offsetMinutesOf(s), None, s"found an offset in [$s]")
   }
+
+  test("the companion carries the members scripts call on the alias") {
+    // A type alias never carries a companion, so `type DateTime = UniDateTime` alone
+    // would break `DateTime.now()`. Scripts got that object from
+    // `import java.time.{LocalDateTime as DateTime}`, which renames type *and* term.
+    // These three are what they actually call: of (10), now (9), ofInstant (2).
+    // `now()` takes empty parens: Scala 3 dropped auto-application, and every script
+    // call site writes it that way.
+    val n = UniDateTime.now()
+    assert(n.year >= 2024, s"now looks wrong: $n")
+    assertEquals(n.offsetMinutes, None)
+
+    val inst = java.time.Instant.ofEpochSecond(1_715_524_200L)
+    val utc  = java.time.ZoneId.of("UTC")
+    assertEquals(UniDateTime.ofInstant(inst, utc),
+      UniDateTime.from(LocalDateTime.ofInstant(inst, utc)))
+    assertEquals(UniDateTime.ofInstant(inst, utc).toString, "2024-05-12T14:30")
+
+    // `of` was already present; named here so the trio is documented together.
+    assertEquals(UniDateTime.of(2024, 5, 12, 14, 30).toString, "2024-05-12T14:30")
+  }
+
+  test("now agrees with LocalDateTime.now to the second") {
+    val a = UniDateTime.now()
+    val b = LocalDateTime.now()
+    assertEquals(a.year, b.getYear)
+    assertEquals(a.month, b.getMonthValue)
+    assertEquals(a.day, b.getDayOfMonth)
+  }

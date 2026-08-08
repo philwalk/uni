@@ -97,7 +97,7 @@ object CsvParityGen:
       s"$kind\t$name\t$i\t${row.map(esc).mkString("\t")}"
 
   def main(args: Array[String]): Unit =
-    val root    = Paths.get("test-data/csv-parity")
+    //val root    = Paths.get("test-data/csv-parity")
     val inputs  = Paths.get("test-data/csv-parity/inputs")
     java.nio.file.Files.createDirectories(inputs)
 
