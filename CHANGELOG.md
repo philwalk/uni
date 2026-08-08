@@ -21,6 +21,38 @@ argument of `@deprecated`, not a removal target. They still work; removal is a l
 release.
 
 
+**RUST BUG — `readCsv` counted the header row as data**
+
+- `upath::matcsv`'s `try_read_csv` took every row as data (its own doc said so), while Scala's
+  `readCsv` **is** `loadMatD`, which **is** `loadSmart(p, map).mat` -- and `loadSmart` excludes a
+  detected header row. So a CSV with headers came back one row taller than the Scala's, topped
+  with a row of `missing` cells.
+- Fixed to go through the smart path. Nothing is lost for a headerless file: `loadSmart` drops
+  row 0 only when it looks like a header.
+- **`csv-parity` did not catch it.** The fixture exercises `csvRows` and `loadSmart` directly and
+  so never compared Scala's `readCsv` against Rust's. That is the second divergence this release
+  found hiding behind a fixture that looked like coverage -- the first was the carriage-return
+  policy, where the `lone-cr` case tested CR as a line *separator* and never inside a line. Both
+  surfaced only from writing a test that used the method the way a caller would.
+
+**RUST — the `Double`/`Float` matrix loaders and `csvRowsAsync` ported**
+
+- `loadMatD`, `loadMatF`, `readCsvF` and `loadSmartD` as named wrappers over the generic
+  `readCsv::<T>`/`read_csv_smart::<T>`. Thin, but they are why a line ported from Scala needs no
+  edit -- the same reasoning as the CamelCase naming and `asFile`.
+- `csvRowsAsync` is a real prefetching reader, not an alias: a thread plus a bounded `mpsc`
+  channel, no dependency. Bounded so a slow consumer applies backpressure rather than letting the
+  reader pull the file into memory; abandoning the iterator closes the channel and ends the
+  thread. Tested to yield exactly what `csvRowsStream` yields, in the same order -- including the
+  final row, whose loss when the channel closes is the classic failure -- and to release the file
+  when abandoned.
+- The four `Big`-typed loaders (`loadMatBig`, `loadMatB`, `loadSmartBig`, `readCsvB`) remain
+  unported, blocked on `Big`: an opaque `BigDecimal` with `MathContext.DECIMAL128` plus a NaN
+  sentinel recognised by equality. `std` has no decimal type, so it would be the port's first real
+  dependency.
+- Worth recording, since it nearly produced a wrong port: **`MatB` is `Mat[Big]`, not
+  `Mat[Boolean]`** (`MatFacades.scala:23`).
+
 **RUST — the carriage-return policy is now enforced, and reads are ported**
 
 - uni's line-oriented readers remove **every** `\r` from a line, not merely one before the `\n`.

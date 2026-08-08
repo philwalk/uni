@@ -246,10 +246,14 @@ impl UPath {
     ///
     /// # Errors
     /// Any failure opening or reading the file.
+    /// Header-aware, matching Scala's `readCsv`/`loadMatD`, which are
+    /// `loadSmart(p, map).mat` -- and `loadSmart`'s `mat` **excludes a detected header row**.
+    ///
+    /// This used to take every row as data, so a file with a header came back one row taller than
+    /// the Scala's and with a row of `missing` cells on top. Nothing lost for a headerless file:
+    /// `loadSmart` only drops row 0 when it looks like a header, so those still come back whole.
     pub fn try_read_csv<T: CsvCell>(&self) -> std::io::Result<Array2<T>> {
-        let rows = self.try_csv_rows()?;
-        let width = rows.first().map_or(0, Vec::len);
-        Ok(matrix_of(&rows, width))
+        Ok(self.try_read_csv_smart::<T>()?.mat)
     }
 
     /// Every content row as data; an empty matrix when unreadable.
@@ -264,6 +268,34 @@ impl UPath {
     /// Any failure opening or reading the file.
     pub fn try_read_csv_smart<T: CsvCell>(&self) -> std::io::Result<CsvTable<T>> {
         Ok(table_of(self.try_csv_rows()?))
+    }
+
+    /// `Array2<f64>` from a CSV. Scala's `loadMatD`, and `readCsv`, which aliases it.
+    ///
+    /// A named wrapper over [`Self::readCsv`], which is generic. The generic form covers this
+    /// already, but a script ported from Scala says `loadMatD` -- so this exists for the same
+    /// reason the method names match: no mental translation at the call site.
+    #[must_use]
+    pub fn loadMatD(&self) -> Array2<f64> {
+        self.readCsv::<f64>()
+    }
+
+    /// `Array2<f32>` from a CSV. Scala's `loadMatF`, and `readCsvF`, which aliases it.
+    #[must_use]
+    pub fn loadMatF(&self) -> Array2<f32> {
+        self.readCsv::<f32>()
+    }
+
+    /// Alias for [`Self::loadMatF`], matching Scala's `readCsvF`.
+    #[must_use]
+    pub fn readCsvF(&self) -> Array2<f32> {
+        self.loadMatF()
+    }
+
+    /// A named table of `f64`, headers included. Scala's `loadSmartD`.
+    #[must_use]
+    pub fn loadSmartD(&self) -> CsvTable<f64> {
+        self.read_csv_smart::<f64>()
     }
 
     /// Data plus column names; empty when unreadable.

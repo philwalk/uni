@@ -160,6 +160,17 @@ Requires `import uni.data.*` for the return types (`MatD`, `MatB`, `MatF`).
 | `.loadMatBig` | `MatB` | parse CSV into a `Mat[Big]` |
 | `.loadMatB` | `MatB` | alias for `.loadMatBig` |
 | `.loadMatF` | `MatF` | parse CSV into a `Mat[Float]` |
+
+> **These are header-aware.** `readCsv` is `loadMatD`, which is `loadSmart(p, map).mat` — and
+> `loadSmart` detects a header row and excludes it from `mat`. A two-data-row file with a header
+> yields a 2-row matrix, not 3. Nothing is lost for a headerless file: row 0 is dropped only when
+> it looks like a header.
+>
+> Use `loadSmartD` (or `loadSmartBig`) when the column names are wanted as well — it returns a
+> `MatResult` carrying `headers` alongside `mat`.
+>
+> Note `MatB` is `Mat[Big]`, **not** `Mat[Boolean]`, so `readCsvB`/`loadMatB` are the arbitrary-
+> precision loaders. See `docs/BigTypeGuide.md`.
 | `.loadSmartD` | `MatResult[Double]` | parse CSV, returning column headers and matrix |
 | `.loadSmartBig` | `MatResult[Big]` | parse CSV, returning column headers and matrix |
 
@@ -300,6 +311,7 @@ performance-sensitive parts under `rust/src/upath/`:
 | `.paths` `.files` `.subdirs` `.subfiles` `.pathsTree` `.walk` | `upath::walk` | listing and tree walking |
 | `.copyTo` `.renameTo` `.delete` `.mkdirs` `.withWriter` | `upath::mutate` | copy, move, delete, create |
 | `.lines` `.linesStream` `.withLines` `.eachLine` `.contentAsString` | `upath::io` | reading, and the carriage-return policy above |
+| `.readCsv` `.loadMatD` `.loadMatF` `.loadSmartD` `.csvRowsAsync` | `upath::matcsv`, `upath::csv` | the `Double`/`Float` loaders |
 
 Most Rust modules are checked against a committed fixture generated from the Scala
 implementation, so a divergence fails a test rather than appearing at runtime. Two are covered
@@ -316,9 +328,15 @@ by unit tests on each side instead, for reasons worth knowing:
 sort by the same key, so `test-data/walk-parity/` records the order the API returns rather than
 sorting it away. It used to sort both sides, back when neither language promised an order.
 
-Still **not** ported: the matrix/CSV loaders and the parent-name variants. `SmartParse` — the
-date *parser*, as distinct from the date type — is also absent, so a Rust script that needs to
-read arbitrary date text must do that itself.
+Still **not** ported: the `Big`-typed loaders (`loadMatBig`, `loadMatB`, `loadSmartBig`,
+`readCsvB`) and the parent-name variants. `SmartParse` — the date *parser*, as distinct from
+the date type — is also absent, so a Rust script needing to read arbitrary date text must do
+that itself.
+
+The `Big` loaders are blocked on `Big` itself, which is a project rather than a method: an opaque
+`BigDecimal` with `MathContext.DECIMAL128`, plus a NaN sentinel recognised by equality and the
+propagation contract that goes with it. `std` has no decimal type, so this would be the first
+real dependency the port takes. `loadMatD`/`loadMatF` cover the `Double` and `Float` cases.
 
 A few methods are present under one name rather than two. `files` and `paths` coincide, Rust
 having no second path type; the `*Iter` variants are covered by `paths` and `walkIter`; and

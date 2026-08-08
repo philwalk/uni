@@ -508,6 +508,41 @@ impl UPath {
         }
     }
 
+    /// Rows read on a background thread, handed over through a bounded channel.
+    ///
+    /// Scala's `csvRowsAsync`, which exists so parsing overlaps I/O rather than alternating with
+    /// it. Implemented here with a thread and an `mpsc` channel -- no dependency needed.
+    ///
+    /// Yields exactly what [`Self::csvRowsStream`] yields, in the same order; only the timing
+    /// differs. A test asserts that equality, because a prefetching reader that silently drops or
+    /// reorders a row would otherwise be very hard to notice.
+    ///
+    /// Empty when the file cannot be read, matching the Scala.
+    ///
+    /// The channel is bounded, so a slow consumer applies backpressure instead of letting the
+    /// reader pull the whole file into memory -- which would defeat the point of streaming. If the
+    /// consumer stops early the channel closes, the send fails, and the thread ends; nothing is
+    /// left running.
+    #[must_use]
+    pub fn csvRowsAsync(&self) -> Box<dyn Iterator<Item = Vec<String>>> {
+        // The delimiter is sniffed on this thread, before the move: it needs the path, and doing
+        // it here keeps the reader thread to pure parsing.
+        let cfg = CsvConfig::default();
+        let Ok(rows) = self.try_csv_rows_stream(&cfg) else {
+            return Box::new(std::iter::empty());
+        };
+        let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<String>>(256);
+        std::thread::spawn(move || {
+            for row in rows {
+                // A send error means the consumer is gone; stop rather than reading on.
+                if tx.send(row).is_err() {
+                    break;
+                }
+            }
+        });
+        Box::new(rx.into_iter())
+    }
+
     /// Writes rows as CSV, replacing any existing content.
     ///
     /// # Errors
