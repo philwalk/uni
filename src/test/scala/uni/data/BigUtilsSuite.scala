@@ -11,6 +11,61 @@ class BigUtilsSuite extends FunSuite {
   // isBad / orBad
   // ============================================================================
 
+  test("BigNaN propagates through every operation, as Double.NaN does") {
+    // The contract: BigNaN never participates in arithmetic, it absorbs it. Worth pinning
+    // per-operation rather than in aggregate, because the sentinel is recognised by
+    // *equality* -- so any operation that quietly transforms it destroys it, and the loss is
+    // invisible at the call site. `setScale` and `~^` both did exactly that.
+    import scala.math.BigDecimal.RoundingMode
+    assert((BigNaN + Big(1)).isNaN, "+")
+    assert((BigNaN - Big(1)).isNaN, "-")
+    assert((BigNaN * Big(2)).isNaN, "*")
+    assert((BigNaN / Big(2)).isNaN, "/")
+    assert((-BigNaN).isNaN, "unary -")
+    assert(BigNaN.abs.isNaN, "abs")
+    assert(BigNaN.sqrt.isNaN, "sqrt")
+    assert(BigNaN.max(Big(1)).isNaN, "max")
+    assert(BigNaN.min(Big(1)).isNaN, "min")
+    // And from the other side of the operator.
+    assert((Big(1) + BigNaN).isNaN, "lhs +")
+    assert((Big(1) * BigNaN).isNaN, "lhs *")
+  }
+
+  test("setScale propagates BigNaN instead of rounding it to zero") {
+    // The sentinel's magnitude is tiny, so rounding it to any ordinary scale produced
+    // `0.00` -- an unremarkable zero that no longer equals BigNaN. A NaN reaching a report
+    // formatter emerged as zero, the worst failure available to a numeric pipeline.
+    import scala.math.BigDecimal.RoundingMode
+    for scale <- Seq(0, 2, 4, 8) do
+      assert(BigNaN.setScale(scale, RoundingMode.HALF_UP).isNaN, s"setScale($scale)")
+    // A real value still rounds.
+    assertEquals(Big(BigDecimal("1.239")).setScale(2, RoundingMode.HALF_UP).toString, "1.24")
+  }
+
+  test("~^ propagates BigNaN for both integer and fractional exponents") {
+    // Two separate defects: the integer branch raised the sentinel to a power and returned
+    // an ordinary tiny number; the fractional branch produced Double.NaN and then threw
+    // NumberFormatException building `BigDecimal("NaN")`.
+    assert((BigNaN ~^ 2).isNaN, "integer exponent")
+    assert((BigNaN ~^ 3).isNaN, "integer exponent 3")
+    assert((BigNaN ~^ 0.5).isNaN, "fractional exponent")
+    assert((BigNaN ~^ 1.5).isNaN, "fractional exponent 1.5")
+    // Real values still exponentiate.
+    assertEquals((Big(3) ~^ 2).toDouble, 9.0)
+  }
+
+  test("the BigNaN literal stays clear of the rounding precision limit") {
+    // `isBad` is an equality test, so the sentinel must survive MathContext.DECIMAL128's
+    // 34 significant digits untouched. This asserts the headroom rather than the exact
+    // value, so lengthening the literal further stays honest but cannot silently reach the
+    // boundary where rounding would begin to alter it.
+    val digits = BigNaN.toString.filter(_.isDigit).length
+    assert(digits <= 30, s"BigNaN mantissa has $digits digits; DECIMAL128 allows 34")
+    assert(digits >= 20, s"BigNaN mantissa has only $digits digits — too plausible as data")
+    // And it round-trips through its own string form unchanged.
+    assert(Big(BigDecimal(BigNaN.toString)).isNaN, "BigNaN must survive a string round trip")
+  }
+
   test("isBad is true for BigNaN, false otherwise") {
     assert(isBad(BigNaN))
     assert(!isBad(Big(0)))
@@ -235,6 +290,14 @@ class BigUtilsSuite extends FunSuite {
 
   test("toStr handles Long") {
     assertEquals(toStr(100L), "100")
+  }
+
+  test("toStr handles a date") {
+    // Absent before, which is why `CVD` naming `LocalDateTime` while `parseDate` returned
+    // a `UniDateTime` went unnoticed: the match is `@unchecked`, so the mismatch would
+    // have surfaced as a MatchError at runtime rather than a compile error.
+    assertEquals(toStr(uni.time.UniDateTime.of(2024, 5, 12, 14, 30)), "2024-05-12")
+    assertEquals(toStr(uni.time.TimeUtils.parseDate("2024-05-12")), "2024-05-12")
   }
 
   test("toStr handles BigNaN") {

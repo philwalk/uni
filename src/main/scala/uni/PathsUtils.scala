@@ -13,7 +13,7 @@ import scala.concurrent.ExecutionContext
 given ExecutionContext = ExecutionContext.global
 
 export scala.util.Properties.{isWin, isMac, isLinux}
-export Proc.{ProcResult, ProcBuilder, run, proc, bashExe, pythonExe, unameExe, uname, osType, where, isWsl, hostname}
+export Proc.{ProcResult, ProcBuilder, run, proc, bashExe, pythonExe, unameExe, uname, osType, where, whereInPath, isWsl, hostname}
 export System.err.print as eprint // returns Unit
 def eprintln(s: String): Unit = System.err.print(s"$s\n")
 def withFileWriter(p: Path, charsetName: String = "UTF-8", append: Boolean = false)(func: java.io.PrintWriter => Any): Unit =

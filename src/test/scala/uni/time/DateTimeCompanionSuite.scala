@@ -14,6 +14,13 @@ import munit.FunSuite
  * Members and call form are taken from the script corpus: `of` (10 calls), `now` (9),
  * `ofInstant` (2), and `now()` with empty parens, since Scala 3 dropped
  * auto-application.
+ *
+ * The alias now points at [[UniDateTime]], so the equivalences below are asserted on the
+ * `java.time` side of the conversion rather than directly. That is not a weaker check: it
+ * is the only well-typed one, because `UniDateTime` and `LocalDateTime` are unrelated
+ * types. munit's `assertEquals` requires a `Compare` and so refuses the mixed comparison
+ * at compile time -- which is exactly the mistake that plain `==` would have accepted and
+ * silently answered `false`.
  */
 class DateTimeCompanionSuite extends FunSuite:
 
@@ -23,16 +30,25 @@ class DateTimeCompanionSuite extends FunSuite:
   }
 
   test("DateTime.of matches LocalDateTime.of") {
-    assertEquals(DateTime.of(2024, 5, 12, 14, 30, 45),
+    assertEquals(DateTime.of(2024, 5, 12, 14, 30, 45).toLocalDateTime,
       java.time.LocalDateTime.of(2024, 5, 12, 14, 30, 45))
     // Defaulted time fields, as scripts use it.
-    assertEquals(DateTime.of(2024, 5, 12), java.time.LocalDateTime.of(2024, 5, 12, 0, 0))
+    assertEquals(DateTime.of(2024, 5, 12).toLocalDateTime,
+      java.time.LocalDateTime.of(2024, 5, 12, 0, 0))
+  }
+
+  test("DateTime.of yields BadDate where LocalDateTime.of would throw") {
+    // The one intended difference. An unrepresentable date is data here, not a
+    // programming error, which is what lets a CSV column be read without a `Try` a cell.
+    assertEquals(DateTime.of(2023, 2, 29), BadDate)
+    intercept[java.time.DateTimeException](java.time.LocalDateTime.of(2023, 2, 29, 0, 0))
   }
 
   test("DateTime.ofInstant matches LocalDateTime.ofInstant") {
     val inst = java.time.Instant.ofEpochSecond(1_715_524_200L)
     val utc = java.time.ZoneId.of("UTC")
-    assertEquals(DateTime.ofInstant(inst, utc), java.time.LocalDateTime.ofInstant(inst, utc))
+    assertEquals(DateTime.ofInstant(inst, utc).toLocalDateTime,
+      java.time.LocalDateTime.ofInstant(inst, utc))
     assertEquals(DateTime.ofInstant(inst, utc).toString, "2024-05-12T14:30")
   }
 

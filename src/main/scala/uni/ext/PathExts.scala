@@ -3,7 +3,8 @@ package uni
 import java.nio.charset.{Charset, StandardCharsets}
 import java.io.{File as JFile, PrintWriter}
 import java.nio.file.{Path, Files, StandardCopyOption}
-import java.time.{DayOfWeek, LocalDateTime, ZoneId}
+import java.time.{DayOfWeek, ZoneId}
+import uni.time.UniDateTime
 import StandardCharsets.{UTF_8, ISO_8859_1 as Latin1}
 import scala.jdk.CollectionConverters.*
 import uni.*
@@ -280,8 +281,14 @@ object pathExts {
       ymdHms.format(date)
     }
 
-    def lastModifiedTime: LocalDateTime = {
-      LocalDateTime.ofInstant(
+    /** A [[uni.time.UniDateTime]], in step with the rest of the date surface.
+     *
+     *  A file timestamp gets compared and combined with parsed dates constantly, and two
+     *  date types meeting in one expression infers the union `LocalDateTime | UniDateTime`,
+     *  which no position accepts and no conversion repairs.
+     */
+    def lastModifiedTime: UniDateTime = {
+      UniDateTime.ofInstant(
         java.time.Instant.ofEpochMilli(p.toFile.lastModified),
         ZoneId.systemDefault()
       )
@@ -289,8 +296,8 @@ object pathExts {
 
     def weekDay: DayOfWeek = lastModifiedTime.getDayOfWeek
 
-    def epoch2DateTime(epoch: Long, timezone: ZoneId = UTC): LocalDateTime = {
-      LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(epoch), timezone)
+    def epoch2DateTime(epoch: Long, timezone: ZoneId = UTC): UniDateTime = {
+      UniDateTime.ofInstant(java.time.Instant.ofEpochMilli(epoch), timezone)
     }
 
     // ---- age comparisons ----
@@ -531,7 +538,7 @@ object pathExts {
     def lastModDays: Double       = f.toPath.lastModDays
     def ageInDays: Double         = f.toPath.ageInDays
     def lastModifiedYMD: String   = f.toPath.lastModifiedYMD
-    def lastModifiedTime: LocalDateTime = f.toPath.lastModifiedTime
+    def lastModifiedTime: UniDateTime = f.toPath.lastModifiedTime
     def weekDay: DayOfWeek        = f.toPath.weekDay
 
     // ---- age comparisons ----

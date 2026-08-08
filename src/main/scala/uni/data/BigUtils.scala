@@ -12,7 +12,11 @@ object BigUtils:
   import uni.data.Big.Big
   import uni.data.Big.*
 
-  type CVD = LocalDateTime|Big|Option[Int]|String|Int
+  /** A CSV cell value, once typed. Names [[uni.time.UniDateTime]] because that is what
+   *  `parseDate` produces -- a union cannot be entered through an implicit conversion, so
+   *  a `LocalDateTime` member here would be unreachable from uni's own parser and would
+   *  make `toStr` throw `MatchError` on the very values it exists to render. */
+  type CVD = UniDateTime|Big|Option[Int]|String|Int
 
   // ------------------------------------------------------------
   // Core type & sentinels
@@ -249,7 +253,7 @@ object BigUtils:
     case n: (Int | Long)  => n.toString
     case BigNaN           => "N/A"
     case b: Big           => b.toString
-    case d: LocalDateTime => d.toString("yyyy-MM-dd")
+    case d: UniDateTime   => d.toString("yyyy-MM-dd")
     case Some(oi: Int)    => oi.toString
     case None             => ""
     }

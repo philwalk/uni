@@ -7,9 +7,113 @@ returns a different value for any file of 64 bytes or more; `relpath` returns a 
 path where it returned an absolute one; `toString` rejects a pattern it used to accept
 (capital `Y`); `posx` strips every trailing separator rather than one; `standardizePath`
 resolves against the config's working directory rather than the JVM's; and `DateFormat`
-renders month names in English regardless of locale. The `posixAbs`/`posixRel`
-deprecations already named 0.16.0 as their removal target.
+renders month names in English regardless of locale. Bigger than any of those: the date
+type moved off `java.time` (below).
 
+`posixAbs`/`posixRel` are **deprecated as of** this release -- `"0.16.0"` is the `since`
+argument of `@deprecated`, not a removal target. They still work; removal is a later
+release.
+
+
+**API — the date type is now `uni.time.UniDateTime`, not `java.time.LocalDateTime`**
+
+- `type DateTime` and `parseDate`/`parseDateSmart` now yield `UniDateTime`: a plain case
+  class of integer fields. The parser therefore carries no `java.time` coupling and ports
+  to Rust as a struct with **no date-library dependency** -- the alternative was `jiff`
+  plus a Java-pattern-to-strftime translation layer.
+- Source compatibility comes from implicit conversions **both ways**, so a parsed date
+  still flows into a `java.time` API and back. All 166 client scripts in the reference
+  corpus compile.
+- **Everything that produces or shifts a date moved with it**, and had to: `now`,
+  `yesterday`, `nowZoned`, `quikDate`, `quikDateTime`, `NullDate`, `whenModified`,
+  `epoch2DateTime`, `Path`/`File`.`lastModifiedTime`, `endOfMonth`, the
+  `elapsed*`/`*Between` family, `getDuration`, `TimeArith`'s `+`/`-`, and a full
+  `plusX`/`minusX`/`withX`/`atStartOfDay`/`lastDayOfMonth` surface on `UniDateTime`.
+  Leaving any of them on `LocalDateTime` makes a script that mixes the two infer the union
+  `LocalDateTime | UniDateTime`, which satisfies neither position and which no conversion
+  repairs. That union was the single largest source of breakage while converting.
+- The overloaded `secondsBetween` and `getDuration` gained explicit `UniDateTime`
+  alternatives, because **implicit conversions are not applied during overload
+  resolution** -- Scala reports "none of the overloaded alternatives match" without ever
+  retrying with a conversion in hand.
+- `uni.data.CVD` is now `UniDateTime | Big | Option[Int] | String | Int`. A union cannot be
+  entered through a conversion, so a `LocalDateTime` member would have been unreachable
+  from uni's own parser and `toStr` would have thrown `MatchError` on parsed dates.
+- What does **not** survive: a `java.time.LocalDateTime` written in a generic position --
+  assigning an existing `Seq[UniDateTime]` to a `Seq[LocalDateTime]`, an explicit
+  `Ordering[LocalDateTime]`, or `case d: LocalDateTime`. Each is a compile error, never a
+  silent difference. Note `val xs: Seq[LocalDateTime] = lines.map(parseDate)` *does* still
+  compile, since the expected element type propagates into `map`.
+- Caution: `==` across the two types compiles, warns nothing, and is always `false`. That
+  is why the sentinels and the parser's return type had to move in one change rather than
+  one at a time.
+
+**BEHAVIOUR — `BadDate`/`EmptyDate` are dates that cannot exist, and print as markers**
+
+- Both now carry **day 0**, which occurs in no month. `of` validates, so no parsed date can
+  equal a sentinel: a file containing a real `1900-01-02` yields an ordinary date instead of
+  a false parse failure. It previously *was* that value, and 1900-01-02 is a common
+  placeholder in financial data -- so the collision was not hypothetical.
+- `BadDate.toString` is now `<BadDate>` (`<EmptyDate>` likewise) rather than
+  `1900-01-02T03:04:05`, which read as real data in every log line and printed column.
+- The pattern formatters still yield digits -- `BadDate.fmt("yyyyMMdd")` is `19000100` --
+  because they feed filenames, CSV keys and SQL binds, where a marker would produce
+  valid-looking output that quietly matches nothing. Guard those paths with `isValid`.
+- `toLocalDateTime` projects each sentinel onto the moment it historically was, so every
+  arithmetic helper and every conversion behaves exactly as before.
+- Sentinels now absorb arithmetic and `withOffsetMinutes`, as `Double.NaN` does;
+  `toEpochDay` yields `Long.MinValue`.
+
+**BUG — `BigNaN` was destroyed by three operations (`Big.scala`)**
+
+`BigNaN` is meant to behave as `Double.NaN` and never participate in arithmetic. Three
+operations broke that, and because the sentinel is recognised by *equality*, the loss was
+silent:
+
+| operation | before | now |
+|---|---|---|
+| `BigNaN.setScale(2, HALF_UP)` | `0.00`, `isNaN` **false** | propagates |
+| `BigNaN ~^ 2` (integer exponent) | `1.52…E-16`, `isNaN` **false** | propagates |
+| `BigNaN ~^ 0.5` (fractional) | threw `NumberFormatException` | propagates |
+
+`setScale` is the serious one: the sentinel is a tiny magnitude, so rounding it to any
+ordinary scale produced an unremarkable zero. **A NaN reaching a report formatter emerged
+as `0.00`.** All other arithmetic, comparison and conversion operations were already
+correct.
+
+The sentinel literal also went from 19 to 28 significant digits, keeping deliberate slack
+below `MathContext.DECIMAL128`'s 34 -- an operation that rounded it would corrupt it, which
+is exactly the failure just fixed. A test asserts the headroom.
+
+**API — `where` fails loudly, and `whereInPath` is exported (`ProcUtils.scala`)**
+
+- `Proc.where` returned a **multi-line** string on Windows: `where.exe` prints every match
+  and `ProcResult.toOption` joins stdout with newlines, so a tool present in both msys and
+  System32 came back as two paths. Unusable as a command, and misleading to a caller
+  screening the result with `.contains("Windows")`. It now takes the first (PATH-first)
+  match.
+- Absence now raises `sys.error(s"prog [$prog] not in PATH")` instead of returning `prog`
+  unchanged. The old fallback deferred the failure to the launch, where nothing pointed at
+  the PATH any more. Use `whereInPath` when absence is a case to handle.
+- `whereInPath` is now in the package export, so `import uni.*` reaches it unqualified.
+- `unameExe` deliberately uses `whereInPath`, since a Windows host without msys
+  legitimately has no `uname` and `where` now throws.
+- Worth knowing on Windows: neither function predicts what a *bare* name would launch.
+  `ProcessBuilder` goes through `CreateProcess`, which searches the system directory
+  **before** the PATH, so `C:\Windows\System32\find.exe` wins over an msys `find.exe`
+  however the PATH is ordered. Passing the absolute path is the only way to reach the tool
+  the PATH nominates.
+
+**DOCS**
+
+- `docs/DateTimeParser.md` rewritten as the client reference for `uni.time`: the date type
+  and its companion, sentinels, formatting, arithmetic, strict `DateOrder`, and the
+  pitfalls above. It had documented `ChronoParse` as a fallback parser, which no longer
+  exists, and pinned `0.15.2`. Its "BigData Prep" example also did not compile --
+  `import uni.data.*` and `import uni.data.BigUtils.*` together make `getMostSpecificType`
+  ambiguous.
+- `UniScriptingTools.md` and `PathIOReference.md` corrected for the new date type, and
+  `PathIOReference.md` gained a table of which subsystems have Rust counterparts.
 
 **BUG — ragged CSV rows were silently discarded, sometimes almost all of them (`FileOps.scala`)**
 

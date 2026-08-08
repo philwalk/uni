@@ -21,7 +21,15 @@ object Big:
       case b: BigDecimal => Some(b.asInstanceOf[x.type & Big])
       case _ => None
 
-  private val BadNumLiteral = "-0.00000001234567890123456789"
+  // The BigNaN sentinel value. Chosen to be a magnitude no real datum occupies *and* a
+  // mantissa no computation lands on: 28 significant digits of a walking pattern.
+  //
+  // Deliberately short of `MC`'s 34-digit DECIMAL128 precision, with slack. The sentinel is
+  // recognised by equality (`isBad`), so any operation that rounded it would silently
+  // destroy it -- which is exactly the bug `setScale` and `~^` had. Arithmetic never touches
+  // it, because every operator short-circuits on `isBad` and returns BigNaN, mirroring
+  // Double.NaN; the slack guards against a future path that forgets to.
+  private val BadNumLiteral = "-0.000000012345678901234567890123"
 
   // Ensure BigNaN is defined as the opaque type Big
   val BigNaN: Big = Big(BigDecimal(BadNumLiteral))
@@ -112,20 +120,35 @@ object Big:
     inline def toPlainString: String = n.bigDecimal.toPlainString // Inside this scope, b is treated as a BigDecimal
 
     def ~^[T](exponent: T)(using frac: Fractional[T]): Big =
-      val expDouble = frac.toDouble(exponent)
-      if (expDouble == expDouble.toInt) {
-        // Integer exponent - use BigDecimal.pow for precision
-        val value: BigDecimal = n.underlying.pow(expDouble.toInt)
-        uni.data.Big(value)
-      } else {
-        // Fractional exponent - fall back to double precision
-        uni.data.Big(math.pow(n.toDouble, expDouble))
-      }
+      // BigNaN propagates, as Double.NaN does through math.pow. Neither branch below did:
+      // the integer one raised the sentinel to a power and produced an ordinary tiny
+      // number, silently losing the NaN; the fractional one reached `Big(Double.NaN)`,
+      // whose `BigDecimal("NaN")` throws NumberFormatException.
+      if isBad(n) then BigNaN
+      else
+        val expDouble = frac.toDouble(exponent)
+        if (expDouble == expDouble.toInt) {
+          // Integer exponent - use BigDecimal.pow for precision
+          val value: BigDecimal = n.underlying.pow(expDouble.toInt)
+          uni.data.Big(value)
+        } else {
+          // Fractional exponent - fall back to double precision
+          val d = math.pow(n.toDouble, expDouble)
+          if d.isNaN then BigNaN else uni.data.Big(d)
+        }
     def ~^(exponent: Int): Big  = n ~^ exponent.toDouble
     def ~^(exponent: Long): Big = n ~^ exponent.toDouble
 
+    /** Rounds to `scale` decimal places, propagating BigNaN.
+     *
+     *  The guard is essential rather than tidy: the sentinel is a very small magnitude, so
+     *  rounding it to any normal scale yielded `0.00` -- a perfectly ordinary zero that no
+     *  longer compares equal to `BigNaN`. A NaN entering a report formatter came out as
+     *  zero, which is the worst possible failure for a numeric pipeline. `Double.NaN`
+     *  survives rounding; so does this now.
+     */
     def setScale(scale: Int, roundingMode: scala.math.BigDecimal.RoundingMode.RoundingMode): Big =
-      n.setScale(scale, roundingMode)
+      if isBad(n) then BigNaN else n.setScale(scale, roundingMode)
 
     // --- BigNaN helpers -------------------------------------------------------
 

@@ -140,7 +140,7 @@ machine), so that row is a like-for-like comparison. See [`jsrc/benchBreeze.sc`]
 | Identity | `MatD.eye(n)` | `np.eye(n)` | `DenseMatrix.eye[Double](n)` | `diag(n)` | `eye(n)` |
 | From flat array | `MatD(r, c, arr)` | `np.array(lst).reshape(r, c)` | `new DenseMatrix(r, c, arr)` | `matrix(v, r, c)` | `reshape(v, r, c)` |
 | From 2-D array | `arr2d.toMat` / `MatD(arr2d)` | `np.array(lst2d)` | `DenseMatrix(rows: _*)` | `do.call(rbind, l)` | `cell2mat(c)` |
-| From rows (Seq) | `rows.toMat` / `MatD.fromRows(rows)` | `np.array(list(rows))` | `DenseMatrix(rows: _*)` | `do.call(rbind, l)` | `cell2mat(c)` |
+| From rows (`Seq[Array]`) | `rows.toMat` / `MatD.fromRows(rows)` | `np.array(list(rows))` | `DenseMatrix(rows: _*)` | `do.call(rbind, l)` | `cell2mat(c)` |
 | From rows (tuples) | `MatD((1,2),(3,4))` | `np.array([[1,2],[3,4]])` | `DenseMatrix((1.0,2.0),(3.0,4.0))` | `rbind(c(1,2),c(3,4))` | `[1 2; 3 4]` |
 | Column vector | `MatD(1.0, 2.0, 3.0)` | `np.array([[1],[2],[3]])` | `DenseVector(1.0, 2.0, 3.0)` | `matrix(1:3)` | `[1; 2; 3]` |
 | Column from array | `arr.toCVec` / `MatD(arr)` | `np.array(lst)[:,None]` | `DenseVector(arr)` | `matrix(v)` | `v(:)` |
@@ -433,6 +433,20 @@ use `X.eachCol` / `X.eachRow` to sidestep the name collision, or rename at impor
 | Custom format | `m.show("%.2f")` | `np.set_printoptions(...)` | — | `format(m, digits=2)` | `format short` |
 | Set thresholds | `Mat.setPrintOptions(maxRows=20, maxCols=20, edgeItems=5)` | `np.set_printoptions(threshold=...)` | — | `options(max.print=...)` | `format compact` |
 
+> **`show` returns the rendering, it does not print it** — like NumPy's `str(m)`, and unlike
+> `disp`. `m.show` alone on a line discards the result and outputs nothing; write
+> `println(m.show)`.
+>
+> The two renderings also differ: `show` is compact (`(1, 2)`) where `toString` pads to a
+> fixed width (`(1.00000, 2.00000)`). Use `show` for eyeballing, interpolation for a stable
+> shape.
+>
+> **`println(m)` and the CR-free output convention conflict.** Scripts that shadow `println`
+> to avoid carriage returns —
+> `def println(s: String = ""): Unit = print(s"$s\n")` — give it a `String`-only signature,
+> so `println(m)` no longer compiles for a matrix. Use `println(m.show)` or
+> `println(s"$m")`; both reach the shadowed `String` overload.
+
 ---
 
 ## Pandas-Style Data Analysis
@@ -468,7 +482,7 @@ use `X.eachCol` / `X.eachRow` to sidestep the name collision, or rename at impor
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.15.2
+//> using dep org.vastblue:uni_3:0.16.0
 
 import uni.data.*
 
@@ -483,7 +497,7 @@ val (labels, stats) = m.describe
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.15.2
+//> using dep org.vastblue:uni_3:0.16.0
 
 import uni.*
 import uni.io.FileOps.*
@@ -503,7 +517,7 @@ r.columnIndex       // Map[String, Int]  (pre-computed; free repeated lookups)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.15.2
+//> using dep org.vastblue:uni_3:0.16.0
 
 import uni.data.*
 

@@ -296,6 +296,62 @@ class ProcSuite extends FunSuite:
     assertEquals(result, None)
   }
 
+  test("whereInPath is reachable unqualified, via the package export") {
+    // Deliberately written without the `Proc.` prefix: the point of the export is that
+    // `import uni.*` is enough. Every other test here qualifies it, so dropping it from
+    // the export list would not have failed anything.
+    val tool = if isWin then "cmd" else "sh"
+    assert(whereInPath(tool).isDefined, s"whereInPath($tool) should find the tool")
+    assertEquals(whereInPath("no-such-program-xyz-abc"), None)
+  }
+
+  test("where fails loudly for a program that is not on the PATH") {
+    // It used to return the name unchanged, which is a non-empty string indistinguishable
+    // from a real result -- so a caller checking `.nonEmpty` saw success, and the failure
+    // resurfaced later at the launch with nothing left pointing at the PATH.
+    val absent = "no-such-program-xyz-abc"
+    val ex = intercept[RuntimeException](where(absent))
+    assert(ex.getMessage.contains(absent), s"message should name the program: ${ex.getMessage}")
+    assert(ex.getMessage.contains("PATH"), s"message should name the cause: ${ex.getMessage}")
+    // The Option-returning sibling stays graceful, for callers handling absence.
+    assertEquals(whereInPath(absent), None)
+  }
+
+  test("where returns a single line, never every match") {
+    val tool = if isWin then "cmd" else "sh"
+    val path = where(tool)
+    assertEquals(path.linesIterator.size, 1, s"expected one line, got [$path]")
+    assertEquals(path.trim, path, s"expected no surrounding whitespace in [$path]")
+    assert(java.nio.file.Files.exists(java.nio.file.Paths.get(path)), s"[$path] should exist")
+  }
+
+  test("where takes the first match when where.exe reports several") {
+    // The actual regression. `where.exe` prints every match on the PATH, one per line, and
+    // ProcResult.toOption joins stdout with newlines -- so a tool present in both msys and
+    // System32 came back as two lines: unusable as a command, and misleading to a caller
+    // screening the result with `.contains("Windows")`.
+    assume(isWin, "where.exe multi-match is a Windows concern")
+    val raw = Proc.run("where.exe", "find.exe").toOption
+    assume(raw.exists(_.linesIterator.size > 1),
+      "find.exe resolves to a single location on this host — nothing to disambiguate")
+    val lines = raw.get.linesIterator.map(_.trim).filter(_.nonEmpty).toList
+    assertEquals(where("find"), lines.head, s"should be the PATH-first match of $lines")
+    assertEquals(where("find").linesIterator.size, 1)
+  }
+
+  test("where result is directly launchable, unlike the bare name on Windows") {
+    // Why an absolute path is the point: ProcessBuilder goes through CreateProcess, which
+    // searches the system directory *before* the PATH. So on Windows a bare `find` reaches
+    // System32 regardless of PATH order, and only the resolved path reaches the PATH's own
+    // choice. This asserts the resolved path runs; it does not assume which tool it is.
+    val tool = if isWin then "find" else "sh"
+    assume(whereInPath(tool).isDefined, s"$tool not on PATH — skipping")
+    val exe = where(tool)
+    val st = Proc.run(exe, if isWin then "--version" else "-c", if isWin then "" else "exit 0")
+    assert(st.status == 0 || st.stdout.nonEmpty || st.stderr.nonEmpty,
+      s"[$exe] should have been launchable")
+  }
+
   // ============================================================================
   // Shell routing — .sh, .py, .sc
   // On Linux/macOS the kernel handles shebangs directly; on Windows the interpreter

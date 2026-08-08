@@ -55,7 +55,30 @@ private[uni] def withTimeConfigGlobal(config: TimeConfig): Unit =
   // But if the user really wants to change the global default:
   () 
 
-type DateTime = java.time.LocalDateTime // alias used by pallet
+/** The date/time type `uni` hands back and that client scripts annotate with.
+ *
+ *  Repointed from `java.time.LocalDateTime` to [[UniDateTime]] so the parser -- and the
+ *  144 script annotations that follow this alias -- carry no `java.time` dependency, and
+ *  the Rust port can mirror the type as plain fields.
+ *
+ *  Scripts mostly need no edit: `UniDateTime` defines the everyday members itself and
+ *  converts to `LocalDateTime` implicitly where a `java.time` API is genuinely wanted.
+ *
+ *  A `java.time.LocalDateTime` spelled out in a *generic* position is the case to know
+ *  about, and it is narrower than it first appears. This compiles, because the expected
+ *  element type propagates into `map`'s type parameter and the conversion is applied to
+ *  the lambda's result:
+ *
+ *  {{{ val dates: Seq[LocalDateTime] = lines.map(parseDate) }}}
+ *
+ *  What fails is a `Seq[UniDateTime]` that already exists as a value, with no inference
+ *  left to redirect -- assigning it to a `Seq[LocalDateTime]`, passing it to a method
+ *  expecting one, or a `case d: LocalDateTime` test on a scrutinee that is now a
+ *  `UniDateTime`. A conversion applies to a value, never through a type constructor.
+ *  Every such case is a compile error rather than a silent difference, and the fix is to
+ *  write `DateTime` so the annotation tracks this alias.
+ */
+type DateTime = UniDateTime
 
 /** Term-level companion for the [[DateTime]] alias.
  *
@@ -79,15 +102,20 @@ type DateTime = java.time.LocalDateTime // alias used by pallet
  *  scripts unedited either way.
  */
 object DateTime:
-  def now(): DateTime = java.time.LocalDateTime.now()
+  def now(): DateTime = UniDateTime.now()
 
+  /** Yields `BadDate` on fields that name no real moment, where `LocalDateTime.of` threw.
+   *
+   *  A deliberate difference, and the same one the parser makes: in this API an
+   *  unrepresentable date is data, not a programming error.
+   */
   def of(year: Int, month: Int, day: Int,
          hour: Int = 0, minute: Int = 0, second: Int = 0, nano: Int = 0): DateTime =
-    java.time.LocalDateTime.of(year, month, day, hour, minute, second, nano)
+    UniDateTime.of(year, month, day, hour, minute, second, nano)
 
   def ofInstant(instant: java.time.Instant,
                 zone: java.time.ZoneId = java.time.ZoneId.systemDefault()): DateTime =
-    java.time.LocalDateTime.ofInstant(instant, zone)
+    UniDateTime.ofInstant(instant, zone)
 
   /** Parses via `SmartParse`, yielding `BadDate` rather than throwing.
    *
@@ -134,10 +162,13 @@ extension (dt: LocalDateTime)
   def toString(fmt: String): String = formatted(fmt)
 
   // comparisons
-  def >(other: DateTime): Boolean  = dt.isAfter(other)
-  def <=(other: DateTime): Boolean = !dt.isAfter(other)
-  def <(other: DateTime): Boolean  = dt.isBefore(other)
-  def >=(other: DateTime): Boolean = !dt.isBefore(other)
+  // Spelled `LocalDateTime`, not `DateTime`: this extension is on the `java.time` type,
+  // and now that the alias points elsewhere, `DateTime` here would have made a
+  // LocalDateTime-to-LocalDateTime comparison detour through a conversion on each side.
+  def >(other: LocalDateTime): Boolean  = dt.isAfter(other)
+  def <=(other: LocalDateTime): Boolean = !dt.isAfter(other)
+  def <(other: LocalDateTime): Boolean  = dt.isBefore(other)
+  def >=(other: LocalDateTime): Boolean = !dt.isBefore(other)
 
   // field accessors
   def year: Int        = dt.getYear
@@ -158,10 +189,10 @@ extension (dt: LocalDateTime)
   def atStartOfDay(): LocalDateTime = dt.withHour(0).withMinute(0).withSecond(0).withNano(0)
 
   // elapsed duration to another DateTime
-  def to(other: DateTime): Duration = Duration.between(dt, other)
+  def to(other: LocalDateTime): Duration = Duration.between(dt, other)
 
   // calendar adjustments
-  def withDayOfWeek(dow: DayOfWeek): DateTime      = dt.`with`(TemporalAdjusters.next(dow))
+  def withDayOfWeek(dow: DayOfWeek): LocalDateTime = dt.`with`(TemporalAdjusters.next(dow))
   def lastDayOfMonth: LocalDateTime                 = dt.`with`(TemporalAdjusters.lastDayOfMonth())
 
 extension (n: Int)
@@ -170,9 +201,9 @@ extension (n: Int)
   def seconds: Duration = Duration.ofSeconds(n.toLong)
   def days: Duration    = Duration.ofDays(n)
 
-/** Seconds between two LocalDateTimes (absolute value). */
-def elapsedSeconds(t1: LocalDateTime, t2: LocalDateTime): Long =
-  Duration.between(t1, t2).abs.getSeconds
+/** Seconds between two moments, absolute value. */
+def elapsedSeconds(t1: UniDateTime, t2: UniDateTime): Long =
+  Duration.between(t1.toLocalDateTime, t2.toLocalDateTime).abs.getSeconds
 
 extension (d: Duration)
   def getStandardSeconds: Long = d.getSeconds
@@ -190,6 +221,16 @@ extension (dow: DayOfWeek)
  *  Re-exported at the package level so `import uni.time.*` provides them.
  */
 object TimeArith:
+  // Defined for both date types, and returning whichever went in. Shifting a date is one
+  // of the most common things a script does, so if `d + 1.days` handed back a
+  // `LocalDateTime` for a `UniDateTime` input, the result would mix with unshifted values
+  // and infer the union `LocalDateTime | UniDateTime` -- which nothing accepts.
+  extension (dt: UniDateTime)
+    def -(d: Duration): UniDateTime      = UniDateTime.from(dt.toLocalDateTime.minus(d))
+    def +(d: Duration): UniDateTime      = UniDateTime.from(dt.toLocalDateTime.plus(d))
+    def -(period: Period): UniDateTime   = UniDateTime.from(dt.toLocalDateTime.minus(period))
+    def +(period: Period): UniDateTime   = UniDateTime.from(dt.toLocalDateTime.plus(period))
+
   extension (dt: LocalDateTime)
     def -(d: Duration): LocalDateTime       = dt.minus(d)
     def +(d: Duration): LocalDateTime       = dt.plus(d)

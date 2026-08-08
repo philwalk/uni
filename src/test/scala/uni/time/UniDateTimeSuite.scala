@@ -70,8 +70,12 @@ class UniDateTimeSuite extends FunSuite:
       LocalDateTime.of(2024, 5, 12, 14, 30, 45, 123_456_000),
       LocalDateTime.of(2024, 5, 12, 14, 30, 45, 123_456_789),
       LocalDateTime.of(2024, 5, 12, 0, 0, 0, 0),
-      LocalDateTime.of(1900, 1, 2, 3, 4, 5, 0),
       LocalDateTime.of(999, 1, 1, 0, 0, 0, 0),
+      // Back in the list, and worth keeping there: this was `BadDate`'s value while the
+      // sentinel was a legal date, so a `UniDateTime` built from it *was* the sentinel and
+      // rendered as `<BadDate>`. Now that the sentinel is an impossible date, this is an
+      // ordinary moment again -- which is the whole point of the change.
+      LocalDateTime.of(1900, 1, 2, 3, 4, 5, 0),
     )
     for d <- moments do
       assertEquals(UniDateTime.from(d).toString, d.toString, s"for $d")
@@ -98,13 +102,76 @@ class UniDateTimeSuite extends FunSuite:
     assert(summon[Ordering[UniDateTime]].lt(a, b))
   }
 
-  test("the sentinels match the LocalDateTime ones field for field") {
-    // So the two agree across the conversion, and an existing `d == BadDate` holds.
-    assertEquals(UniDateTime.BadDate.toLocalDateTime, BadDate)
-    assertEquals(UniDateTime.EmptyDate.toLocalDateTime, EmptyDate)
+  test("the sentinels keep their historical field values, and TimeUtils shares them") {
+    // The compatibility surface is the `java.time` *projection*: the moment each sentinel
+    // historically was. Every arithmetic helper and every implicit conversion goes through
+    // it, so it must not move even though the sentinel's own fields now name no real date.
+    assertEquals(UniDateTime.BadDate.toLocalDateTime, LocalDateTime.of(1900, 1, 2, 3, 4, 5))
+    assertEquals(UniDateTime.EmptyDate.toLocalDateTime, LocalDateTime.of(1800, 1, 2, 3, 4, 5))
+    // And `TimeUtils` must hand out these very values rather than its own of the same
+    // shape. Same type and same value is what keeps `if (d == BadDate)` meaningful in a
+    // client script -- two distinct types with equal fields would compare `false` forever.
+    assertEquals(BadDate, UniDateTime.BadDate)
+    assertEquals(EmptyDate, UniDateTime.EmptyDate)
     assert(!UniDateTime.BadDate.isValid)
     assert(!UniDateTime.EmptyDate.isValid)
     assert(UniDateTime.of(2024, 5, 12).isValid)
+  }
+
+  test("a sentinel renders as a marker, not as a date from 1900") {
+    assertEquals(UniDateTime.BadDate.toString, "<BadDate>")
+    assertEquals(UniDateTime.EmptyDate.toString, "<EmptyDate>")
+    // Interpolation is the path that matters, since that is how scripts print.
+    assertEquals(s"${UniDateTime.BadDate}", "<BadDate>")
+    assertEquals(s"${TimeUtils.parseDate("not a date")}", "<BadDate>")
+  }
+
+  test("the pattern formatters still yield digits for a sentinel") {
+    // Deliberate asymmetry: `fmt` feeds filenames, CSV keys and SQL binds, where a marker
+    // would produce valid-looking output that quietly matches nothing rather than failing.
+    // Day zero makes the digits self-evidently not a date, which is the best of both.
+    assertEquals(UniDateTime.BadDate.fmt("yyyyMMdd"), "19000100")
+    assertEquals(UniDateTime.BadDate.ymd, "1900-01-00")
+    assertEquals(UniDateTime.BadDate.toString("yyyy-MM-dd"), "1900-01-00")
+    assert(!UniDateTime.BadDate.isValid)
+  }
+
+  test("a sentinel is a date that cannot exist, so `of` can never produce one") {
+    // The guarantee this buys: an in-band sentinel that is a *legal* date collides with real
+    // data, and 1900-01-02 is a common placeholder in financial files. Day zero exists in no
+    // month, and `of` validates, so the collision is impossible rather than unlikely.
+    assertEquals(UniDateTime.BadDate.day, 0)
+    assertEquals(UniDateTime.EmptyDate.day, 0)
+    assert(!UniDateTime.isValid(1900, 1, 0, 3, 4, 5, 0), "day zero must not validate")
+    assertEquals(UniDateTime.of(1900, 1, 0, 3, 4, 5), UniDateTime.BadDate,
+      "an invalid request yields BadDate rather than an invalid value")
+    // The moment BadDate used to be is now an ordinary date, distinguishable from a failure.
+    val realMoment = UniDateTime.of(1900, 1, 2, 3, 4, 5)
+    assertNotEquals(realMoment, UniDateTime.BadDate)
+    assert(realMoment.isValid)
+    assertEquals(realMoment.toString, "1900-01-02T03:04:05")
+  }
+
+  test("a sentinel absorbs withOffsetMinutes") {
+    // Otherwise the copy is not a sentinel yet still names an impossible date, so `isValid`
+    // would answer true and `toLocalDateTime` would throw.
+    for sentinel <- Seq(UniDateTime.BadDate, UniDateTime.EmptyDate) do
+      assertEquals(sentinel.withOffsetMinutes(Some(0)), sentinel)
+      assertEquals(sentinel.withOffsetMinutes(Some(-420)), sentinel)
+      assert(!sentinel.withOffsetMinutes(Some(0)).isValid)
+      // And the projection stays total.
+      assertEquals(sentinel.withOffsetMinutes(Some(0)).toLocalDateTime, sentinel.toLocalDateTime)
+  }
+
+  test("a real date with the sentinel's field values still renders as a date") {
+    // The marker keys on sentinel identity, and the offset is part of that identity, so a
+    // value genuinely representing that moment is not hidden behind the marker.
+    val realish = UniDateTime.of(1900, 1, 2, 3, 4, 5, offsetMinutes = Some(0))
+    assertNotEquals(realish, UniDateTime.BadDate)
+    assertEquals(realish.toString, "1900-01-02T03:04:05")
+    // And the java.time value of the same moment is untouched, because the check lives in
+    // UniDateTime rather than DateFormat, which the LocalDateTime extension shares.
+    assertEquals(LocalDateTime.of(1900, 1, 2, 3, 4, 5).toString, "1900-01-02T03:04:05")
   }
 
   test("the implicit conversion lets one stand in for a LocalDateTime") {

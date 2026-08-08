@@ -10,14 +10,23 @@ object SmartParse {
   /** Parses `datestr`, or `BadDate` when it cannot be read.
    *
    *  Total by contract: the sentinel is what makes this usable for ripping through a
-   *  CSV column without wrapping every cell in a `Try`. `LocalDateTime.of` can still
-   *  throw on a field that survived the checks above -- it did, for a UTC offset that
-   *  reached the seconds slot -- so the boundary catches rather than trusting them.
+   *  CSV column without wrapping every cell in a `Try`.
+   *
+   *  Returns a [[UniDateTime]] rather than a `LocalDateTime` so the parser carries no
+   *  `java.time` dependency and ports to Rust as plain fields. Client code is unaffected
+   *  by the change: `UniDateTime` defines the common members itself, and
+   *  [[UniDateTime.given_Conversion_UniDateTime_LocalDateTime]] covers the rest.
+   *
+   *  The `Try` still earns its place, though for a different reason than before. Building
+   *  the result no longer throws -- [[UniDateTime.of]] validates and yields `BadDate`
+   *  where `LocalDateTime.of` threw -- but two paths further in still do: `monthFromWord`
+   *  raises on a word it cannot match, and the ISO fast path's `toInt` calls overflow on
+   *  an absurd run of digits. Both are reachable from data, so the boundary catches.
    */
-  def parseDateSmart(datestr: String): LocalDateTime =
+  def parseDateSmart(datestr: String): UniDateTime =
     scala.util.Try(parseSmart(datestr)).toOption.flatten.getOrElse(BadDate)
 
-  private def parseSmart(s: String): Option[LocalDateTime] = {
+  private def parseSmart(s: String): Option[UniDateTime] = {
     val cleaned  = preNormalize(s)
     val tokens   = {
       val tokenlist = tokenize(cleaned)
@@ -404,17 +413,21 @@ object SmartParse {
     s.count(_ == '-') == 2 &&
     s.exists(_ == ':')
 
-  private def parseISO8601(raw: String): Option[LocalDateTime] =
+  // The one place `java.time` is still consulted: `ISO_DATE_TIME` is a correct,
+  // well-tested reader for the strictest format, so it stays rather than being
+  // reimplemented. The Rust port needs its own ISO reader here; everything else in this
+  // object is already field arithmetic.
+  private def parseISO8601(raw: String): Option[UniDateTime] =
     try
-      Some(LocalDateTime.parse(raw, DateTimeFormatter.ISO_DATE_TIME))
+      Some(UniDateTime.from(LocalDateTime.parse(raw, DateTimeFormatter.ISO_DATE_TIME)))
     catch case _: Throwable => None
 
-  private def parseISO8601Tokens(tokens: List[Token]): Option[LocalDateTime] =
+  private def parseISO8601Tokens(tokens: List[Token]): Option[UniDateTime] =
     parseYMD(tokens) // fallback: treat as YMD + time tokens
 
 
   //  Semantic parsers
-  private def parseYMD(tokens: List[Token]): Option[LocalDateTime] =
+  private def parseYMD(tokens: List[Token]): Option[UniDateTime] =
     val nums = tokens.collect { case Token.Num(v, _) => v }
     val ampm = tokens.collectFirst { case Token.AmPm(isPm) => isPm }
 
@@ -422,7 +435,7 @@ object SmartParse {
       Some(buildDateTimeWithAmPm(nums(0), nums(1), nums(2), nums.drop(3), ampm))
     else None
 
-  private def parseMDY(tokens: List[Token]): Option[LocalDateTime] =
+  private def parseMDY(tokens: List[Token]): Option[UniDateTime] =
     val nums = tokens.collect { case Token.Num(v, _) => v }
     val ampm = tokens.collectFirst { case Token.AmPm(isPm) => isPm }
 
@@ -432,7 +445,7 @@ object SmartParse {
       Some(buildDateTimeWithAmPm(year, nums(0), nums(1), timeNums, ampm))
     else None
 
-  private def parseDMY(tokens: List[Token]): Option[LocalDateTime] =
+  private def parseDMY(tokens: List[Token]): Option[UniDateTime] =
     val nums = tokens.collect { case Token.Num(v, _) => v }
     val ampm = tokens.collectFirst { case Token.AmPm(isPm) => isPm }
     
@@ -442,7 +455,7 @@ object SmartParse {
       Some(buildDateTimeWithAmPm(year, nums(1), nums(0), timeNums, ampm))
     else None
 
-  private def parseMonthDayYear(tokens: List[Token]): Option[LocalDateTime] = {
+  private def parseMonthDayYear(tokens: List[Token]): Option[UniDateTime] = {
     val words = tokens.collect { case Token.Word(w) => w }
     val nums  = tokens.collect { case Token.Num(v, _) => v }
     val ampm  = tokens.collectFirst { case Token.AmPm(isPm) => isPm }
@@ -498,7 +511,7 @@ object SmartParse {
     else None
   }
 
-  private def parseDayMonthYear(tokens: List[Token]): Option[LocalDateTime] = {
+  private def parseDayMonthYear(tokens: List[Token]): Option[UniDateTime] = {
     val words = tokens.collect { case Token.Word(w) => w }
     val nums  = tokens.collect { case Token.Num(v, _) => v }
     val ampm  = tokens.collectFirst { case Token.AmPm(isPm) => isPm }
@@ -557,7 +570,7 @@ object SmartParse {
     else None
   }
 
-  private def parseMDYWithTime(tokens: List[Token]): Option[LocalDateTime] = {
+  private def parseMDYWithTime(tokens: List[Token]): Option[UniDateTime] = {
     val nums = tokens.collect { case Token.Num(v, _) => v }
     val ampm = tokens.collectFirst { case Token.AmPm(isPm) => isPm }
     
@@ -585,7 +598,7 @@ object SmartParse {
           case Some(true) if hour < 12 => hour + 12  // PM
           case Some(false) if hour == 12 => 0        // 12 AM = midnight
           case _ => hour
-        Some(LocalDateTime.of(year, month, day, adjustedHour, minute, second))
+        Some(UniDateTime.of(year, month, day, adjustedHour, minute, second))
       else None
     else None
   }
@@ -597,20 +610,23 @@ object SmartParse {
 //    val sec  = rest.lift(2).getOrElse(0)
 //    LocalDateTime.of(year, month, day, hour, min, sec)
 
-  private def buildDateTimeWithAmPm(year: Int, month: Int, day: Int, rest: List[Int], ampm: Option[Boolean]): LocalDateTime =
+  /** Assembles the fields, or `BadDate` when they do not name a real moment.
+   *
+   *  `UniDateTime.of` performs the check that `LocalDateTime.of` used to perform by
+   *  throwing, which is what let a stray debug counter here be dropped: the range test it
+   *  guarded was never acted on, and `day > 31` accepted February 30th anyway. Validation
+   *  now lives in one place and is the calendar's, leap years included.
+   */
+  private def buildDateTimeWithAmPm(year: Int, month: Int, day: Int, rest: List[Int], ampm: Option[Boolean]): UniDateTime =
     val hour = rest.lift(0).getOrElse(0)
     val min  = rest.lift(1).getOrElse(0)
     val sec  = rest.lift(2).getOrElse(0)
-    
+
     // Adjust hour for AM/PM
     val adjustedHour = ampm match
-      case Some(true) if hour < 12 => hour + 12  // PM: add 12 unless already 12
-      case Some(false) if hour == 12 => 0        // 12 AM = midnight
-      case _ => hour                              // No AM/PM or already 24-hour
+      case Some(true) if hour < 12   => hour + 12 // PM: add 12 unless already 12
+      case Some(false) if hour == 12 => 0         // 12 AM = midnight
+      case _                         => hour      // No AM/PM or already 24-hour
 
-      if (year < 1900 || month < 1 || month > 12 || day < 1 || day > 31 || adjustedHour < 0 || adjustedHour > 23 || min < 0 || min > 59 || sec < 0 || sec > 59) {
-        hook += 1
-      }
-
-    LocalDateTime.of(year, month, day, adjustedHour, min, sec)
+    UniDateTime.of(year, month, day, adjustedHour, min, sec)
 }

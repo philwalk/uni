@@ -187,9 +187,9 @@ Requires `import uni.data.*` for the return types (`MatD`, `MatB`, `MatF`).
 | `.lastModDays` | `Double` | alias for `.lastModDaysAgo` |
 | `.ageInDays` | `Double` | alias for `.lastModDaysAgo` |
 | `.lastModifiedYMD` | `String` | last-modified time formatted as `"yyyy-MM-dd HH:mm:ss"` |
-| `.lastModifiedTime` | `LocalDateTime` | last-modified time in the local timezone |
+| `.lastModifiedTime` | `DateTime` | last-modified time in the local timezone (a `uni.time.UniDateTime`; converts implicitly to `java.time.LocalDateTime`) |
 | `.weekDay` | `DayOfWeek` | day of the week of last modification |
-| `.epoch2DateTime(epoch, timezone)` | `LocalDateTime` | convert an epoch-millisecond value to `LocalDateTime` in the given `ZoneId` |
+| `.epoch2DateTime(epoch, timezone)` | `DateTime` | convert an epoch-millisecond value to a date in the given `ZoneId` |
 
 ### Hashing and checksums
 
@@ -210,3 +210,24 @@ Requires `import uni.data.*` for the return types (`MatD`, `MatB`, `MatF`).
 - **Only on `JFile`:** `.filesTree: Seq[JFile]` and `.filesTreeIter: Iterator[JFile]` — recursive tree returning `JFile` values (`.pathsTree` / `.pathsTreeIter` are also available on `JFile` and return `Path` values).
 - **Not on `JFile`:** `.canRead`, `.canExecute` (use `java.io.File`'s own methods directly).
 - **Not on `JFile`:** `.write(text)`, `.withWriter(...)` (use `Path` or `uni.io.FileOps` directly).
+
+## Rust counterparts
+
+Where per-row or per-file overhead dominates, this repo carries a Rust port of the
+performance-sensitive parts under `rust/src/upath/`:
+
+| Scala | Rust module | covers |
+| :--- | :--- | :--- |
+| `uni.io.FastCsv`, `.csvRows` | `upath::csv` | row parsing, quoting, the writer |
+| `Delimiter.detect` | `upath::delim` | delimiter sniffing |
+| `loadSmart` into a matrix | `upath::matcsv` | CSV to a typed table |
+| `.cksum` `.md5` `.sha256` `.hash64` | `upath::hash` | the four hashes |
+| `.posix` `.relpath` `.stdpath`, mount handling | `upath::resolve`, `upath::mount`, `upath::ext` | path translation |
+| `String` extensions (`.lc`, `.posx`, ...) | `upath::strext` | string helpers |
+
+Each Rust module is checked against a committed fixture generated from the Scala
+implementation, so a divergence fails a test rather than appearing at runtime. Directory
+traversal, file timestamps and the date/time package are **not** ported yet.
+
+The crate is currently named `t3prf` (`rust/Cargo.toml`); `upath` is a module inside it,
+not a separately published crate.

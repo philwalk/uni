@@ -267,11 +267,41 @@ object Proc {
     catch
       case e: java.io.IOException => err(e.getMessage); -1
 
+  /** The absolute path of `prog` on the PATH.
+   *
+   *  Two fixes over the obvious implementation, both of which bit in practice:
+   *
+   *  **Only the first line.** On Windows `where.exe` prints *every* match, and
+   *  `ProcResult.toOption` wraps `stdout.mkString("\n")` -- so on a machine carrying both
+   *  msys and Windows builds of a tool this returned a two-line string, e.g.
+   *  `"C:\\msys64\\usr\\bin\\find.exe\nC:\\Windows\\System32\\find.exe"`. Unusable as a
+   *  command, and worse, a caller screening the result with `.contains("Windows")` got the
+   *  wrong answer about which tool had been found. The first line is the PATH-first match,
+   *  which is the one meant.
+   *
+   *  **Absence is an error.** This used to return `prog` unchanged, on the thought that a
+   *  program missing from the PATH might still be callable under some other extension. But
+   *  handing back a bare name does not make it callable -- it only defers the failure to
+   *  the launch, where the message no longer mentions the PATH. Failing here names the
+   *  cause once, at the point it is known.
+   *
+   *  Note what this does *not* promise on Windows: that a bare `prog` would launch the same
+   *  file. `ProcessBuilder` goes through `CreateProcess`, which searches the system
+   *  directory **before** the PATH, so `C:\Windows\System32\find.exe` beats an msys
+   *  `find.exe` however the PATH is ordered. Passing the path returned here is the way to
+   *  reach the tool the PATH nominates.
+   *
+   *  @throws RuntimeException when `prog` is not on the PATH. Use [[whereInPath]] when a
+   *          missing program is an expected case rather than a failure.
+   */
   def where(prog: String): String =
-    if isWin then
-      run("where.exe", prog.stripSuffix(".exe") + ".exe").toOption.getOrElse(prog)
-    else
-      run("which", prog).toOption.getOrElse(prog)
+    val found =
+      if isWin then run("where.exe", prog.stripSuffix(".exe") + ".exe").toOption
+      else run("which", prog).toOption
+    found
+      // `where.exe` lists one match per line, best first; `which` yields a single line.
+      .flatMap(_.linesIterator.map(_.trim).find(_.nonEmpty))
+      .getOrElse(sys.error(s"prog [$prog] not in PATH"))
 
   def whereInPath(prog: String): Option[String] =
     val name  = if isWin && !prog.endsWith(".exe") then prog + ".exe" else prog
@@ -302,7 +332,10 @@ object Proc {
         .orElse(callQuiet("which", "python"))
         .getOrElse("python3")
 
-  lazy val unameExe: String = where("uname")
+  // Deliberately `whereInPath`, not `where`: this is a `lazy val` on the exported API and
+  // a plain Windows box without msys legitimately has no `uname`. `where` now throws, so
+  // using it here would turn a missing optional tool into a crash on first reference.
+  lazy val unameExe: String = whereInPath("uname").getOrElse(s"uname$exe")
 
   def uname(arg: String = "-a"): String =
     run(s"uname$exe", arg).toOption.getOrElse("")

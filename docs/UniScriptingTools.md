@@ -148,12 +148,14 @@ The program name (`hash64demo.sc`) is derived automatically from the runtime env
 
 ## Smart Date Parsing
 
-`uni.time` parses date and timestamp strings to `java.time.LocalDateTime` without a format string. It recognises a wide range of formats automatically, which makes it particularly useful when reading CSV files whose date columns use an unknown or inconsistent format. Strings that cannot be parsed return the `BadDate` sentinel value rather than throwing an exception.
+`uni.time` parses date and timestamp strings without a format string, returning a `DateTime` (`uni.time.UniDateTime`, which converts implicitly to `java.time.LocalDateTime` wherever one is wanted). It recognises a wide range of formats automatically, which makes it particularly useful when reading CSV files whose date columns use an unknown or inconsistent format. Strings that cannot be parsed return the `BadDate` sentinel rather than throwing an exception; `BadDate` prints as `<BadDate>` so a parse failure is visible rather than reading as a date from 1900.
+
+See [DateTimeParser.md](DateTimeParser.md) for the full `uni.time` reference: the sentinels, formatting patterns, date arithmetic, strict day/month ordering, and the pitfalls of mixing `DateTime` with `java.time.LocalDateTime`.
 
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.15.2
+//> using dep org.vastblue:uni_3:0.16.0
 
 import uni.time.*
 
