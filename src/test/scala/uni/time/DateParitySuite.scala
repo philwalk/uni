@@ -66,6 +66,8 @@ class DateParitySuite extends FunSuite:
     for r <- of("dow") do
       val d = moment(r)
       assertEquals(DateFormat.dayOfWeek(d.year, d.month, d.day).toString, r(8), s"dow ${r.slice(1, 8)}")
+      assertEquals(d.dayOfWeekName, r(9), s"dayOfWeekName ${r.slice(1, 8)}")
+      assertEquals(d.dayOfWeekFull, r(10), s"dayOfWeekFull ${r.slice(1, 8)}")
     for r <- of("epochday") do
       assertEquals(moment(r).toEpochDay.toString, r(8), s"epochDay ${r.slice(1, 8)}")
     for r <- of("valid") do
@@ -122,6 +124,48 @@ class DateParitySuite extends FunSuite:
     for r <- of("sentinel") do
       val op = ops.getOrElse(r(8), fail(s"unknown shift op [${r(8)}]"))
       assertEquals(op(moment(r), 1L).toString, unesc(r(9)), s"${r(8)} on ${r.slice(1, 8)}")
+  }
+
+  test("round(_, 6) matches the reference") {
+    // The primitive the file-age chain is built on. Pinned here because the `lastMod*Ago`
+    // methods read the clock and so cannot be pinned themselves.
+    for r <- of("round6") do
+      assertEquals(round(r(1).toDouble, 6), r(2).toDouble, s"round(${r(1)}, 6)")
+  }
+
+  test("epoch2DateTime matches the reference at fixed offsets") {
+    // Fixed offsets rather than named zones: a zone name needs a timezone database, which the
+    // Rust port cannot consult, and a system-default zone would make the fixture depend on
+    // where it was generated.
+    for r <- of("epochconv") do
+      val millis = r(1).toLong
+      val offMin = r(2).toInt
+      val z = java.time.ZoneOffset.ofTotalSeconds(offMin * 60)
+      val d = TimeUtils.epoch2DateTime(millis, z)
+      assertEquals(d.toString, unesc(r(3)), s"epoch2DateTime($millis, $offMin)")
+      // The offset is deliberately NOT recorded -- the zone shifts the fields and is then
+      // discarded. The Rust port matched this only after the fixture forced the question.
+      val expectedOffset = if r(4) == "none" then None else Some(r(4).toInt)
+      assertEquals(d.offsetMinutes, expectedOffset, s"offsetMinutes for $millis at $offMin")
+  }
+
+  test("the file-reading path matches the reference, at a set mtime") {
+    // The mtime is *set* by the generator, which is what makes this deterministic. Reading
+    // whatever an arbitrary file happened to carry would not be.
+    //
+    // No offset anywhere: file timestamps are UTC in both languages. A system-local expected
+    // value would have depended on where the fixture was generated.
+    for r <- of("mtime") do
+      val f = Paths.get(s"test-data/date-parity/inputs/${r(1)}")
+      assert(f.exists, s"missing fixture input ${f.posx}")
+      assertEquals(f.lastModified.toString, r(2), s"lastModified of ${r(1)}")
+      assertEquals(f.lastModifiedTime.toString, unesc(r(3)), s"lastModifiedTime of ${r(1)}")
+      assertEquals(f.lastModifiedYMD, unesc(r(4)), s"lastModifiedYMD of ${r(1)}")
+      assertEquals(f.weekDay.toString, r(5), s"weekDay of ${r(1)}")
+      assertEquals(f.weekDayName, r(6), s"weekDayName of ${r(1)}")
+      // The inconsistency this change removed: these used to disagree by the local offset.
+      assertEquals(f.lastModifiedTime, f.epoch2DateTime(f.lastModified),
+        s"lastModifiedTime must agree with epoch2DateTime for ${r(1)}")
   }
 
   test("offset extraction matches the reference, anchoring included") {

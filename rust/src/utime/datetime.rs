@@ -29,6 +29,15 @@
 //! They render as `<BadDate>` / `<EmptyDate>` so a failure is visible instead of reading as a
 //! date from 1900, and they absorb arithmetic the way a NaN does.
 
+#![allow(
+    non_snake_case,
+    reason = "public methods mirror the Scala API name-for-name, so a script kept in \
+              both languages needs no mental translation -- the same reason windows-rs \
+              spells Win32 functions SetEvent rather than set_event. Internal helpers \
+              and Rust trait contracts stay snake_case, so the case says whether a \
+              Scala counterpart exists."
+)]
+
 use core::cmp::Ordering;
 use core::fmt;
 
@@ -103,7 +112,7 @@ impl UniDateTime {
     }
     /// Alias for [`Self::month`], mirroring the Scala `monthNum`.
     #[must_use]
-    pub const fn month_num(&self) -> i32 {
+    pub const fn monthNum(&self) -> i32 {
         self.month
     }
     /// The day of the month, 1-31 (0 for a sentinel).
@@ -113,7 +122,7 @@ impl UniDateTime {
     }
     /// Alias for [`Self::day`].
     #[must_use]
-    pub const fn day_of_month(&self) -> i32 {
+    pub const fn dayOfMonth(&self) -> i32 {
         self.day
     }
     /// The hour, 0-23.
@@ -138,7 +147,7 @@ impl UniDateTime {
     }
     /// The stated UTC offset in minutes east of Greenwich, if any.
     #[must_use]
-    pub const fn offset_minutes(&self) -> Option<i32> {
+    pub const fn offsetMinutes(&self) -> Option<i32> {
         self.offset_minutes
     }
 
@@ -146,7 +155,7 @@ impl UniDateTime {
 
     /// Days in `month` of `year`, Gregorian leap rule included. `0` for a month out of range.
     #[must_use]
-    pub const fn days_in_month(year: i32, month: i32) -> i32 {
+    pub const fn daysInMonth(year: i32, month: i32) -> i32 {
         match month {
             1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
             4 | 6 | 9 | 11 => 30,
@@ -168,7 +177,7 @@ impl UniDateTime {
         reason = "taking the fields rather than a date object is the decoupled design; a struct \
                   parameter would only move the list"
     )]
-    pub const fn fields_valid(
+    pub const fn isValidFields(
         year: i32,
         month: i32,
         day: i32,
@@ -180,7 +189,7 @@ impl UniDateTime {
         month >= 1
             && month <= 12
             && day >= 1
-            && day <= Self::days_in_month(year, month)
+            && day <= Self::daysInMonth(year, month)
             && hour >= 0
             && hour <= 23
             && minute >= 0
@@ -193,7 +202,7 @@ impl UniDateTime {
 
     /// Offsets ISO 8601 admits: +/-18:00.
     #[must_use]
-    pub const fn is_valid_offset(minutes: i32) -> bool {
+    pub const fn isValidOffset(minutes: i32) -> bool {
         minutes >= -1080 && minutes <= 1080
     }
 
@@ -203,7 +212,7 @@ impl UniDateTime {
         clippy::too_many_arguments,
         reason = "mirrors the Scala `UniDateTime.of`, whose parameter list is the type's shape"
     )]
-    pub const fn of_full(
+    pub const fn ofFull(
         year: i32,
         month: i32,
         day: i32,
@@ -214,10 +223,10 @@ impl UniDateTime {
         offset_minutes: Option<i32>,
     ) -> Self {
         let offset_ok = match offset_minutes {
-            Some(o) => Self::is_valid_offset(o),
+            Some(o) => Self::isValidOffset(o),
             None => true,
         };
-        if Self::fields_valid(year, month, day, hour, minute, second, nano) && offset_ok {
+        if Self::isValidFields(year, month, day, hour, minute, second, nano) && offset_ok {
             Self {
                 year,
                 month,
@@ -235,19 +244,19 @@ impl UniDateTime {
 
     /// A date at midnight, or [`Self::BAD_DATE`].
     #[must_use]
-    pub const fn of_ymd(year: i32, month: i32, day: i32) -> Self {
-        Self::of_full(year, month, day, 0, 0, 0, 0, None)
+    pub const fn ofYmd(year: i32, month: i32, day: i32) -> Self {
+        Self::ofFull(year, month, day, 0, 0, 0, 0, None)
     }
 
     /// A date and time to the second, or [`Self::BAD_DATE`].
     #[must_use]
     pub const fn of(year: i32, month: i32, day: i32, hour: i32, minute: i32, second: i32) -> Self {
-        Self::of_full(year, month, day, hour, minute, second, 0, None)
+        Self::ofFull(year, month, day, hour, minute, second, 0, None)
     }
 
     /// True unless this is one of the sentinels.
     #[must_use]
-    pub fn is_valid(&self) -> bool {
+    pub fn isValid(&self) -> bool {
         *self != Self::BAD_DATE && *self != Self::EMPTY_DATE
     }
 
@@ -260,7 +269,7 @@ impl UniDateTime {
 
     /// Days from 1970-01-01 to the given civil date.
     #[must_use]
-    pub fn epoch_day_of(year: i32, month: i32, day: i32) -> i64 {
+    pub fn epochDayOf(year: i32, month: i32, day: i32) -> i64 {
         let m = i64::from(month);
         let y0 = i64::from(year) - i64::from(month <= 2);
         let era = y0.div_euclid(400);
@@ -276,9 +285,9 @@ impl UniDateTime {
     /// A sentinel has no meaningful epoch day; both yield `i64::MIN` so a caller sorting or
     /// comparing cannot mistake one for a date near the epoch.
     #[must_use]
-    pub fn to_epoch_day(&self) -> i64 {
-        if self.is_valid() {
-            Self::epoch_day_of(self.year, self.month, self.day)
+    pub fn toEpochDay(&self) -> i64 {
+        if self.isValid() {
+            Self::epochDayOf(self.year, self.month, self.day)
         } else {
             i64::MIN
         }
@@ -286,9 +295,9 @@ impl UniDateTime {
 
     /// The civil date `epoch_day` days after 1970-01-01, at midnight.
     #[must_use]
-    pub fn of_epoch_day(epoch_day: i64) -> Self {
+    pub fn ofEpochDay(epoch_day: i64) -> Self {
         let (y, m, d) = Self::civil_from_days(epoch_day);
-        Self::of_ymd(y, m, d)
+        Self::ofYmd(y, m, d)
     }
 
     fn civil_from_days(epoch_day: i64) -> (i32, i32, i32) {
@@ -323,7 +332,7 @@ impl UniDateTime {
         let within = nanos.rem_euclid(day_nanos);
         let (y, m, d) = Self::civil_from_days(epoch_day + extra_days);
         let secs = within / NANOS_PER_SEC;
-        Self::of_full(
+        Self::ofFull(
             y,
             m,
             d,
@@ -343,18 +352,18 @@ impl UniDateTime {
     // it.
 
     fn shift_nanos(&self, delta: i64) -> Self {
-        if !self.is_valid() {
+        if !self.isValid() {
             return *self;
         }
-        let base = Self::epoch_day_of(self.year, self.month, self.day);
+        let base = Self::epochDayOf(self.year, self.month, self.day);
         self.rebuilt_from(base, self.nano_of_day().saturating_add(delta))
     }
 
     fn shift_days(&self, days: i64) -> Self {
-        if !self.is_valid() {
+        if !self.isValid() {
             return *self;
         }
-        let base = Self::epoch_day_of(self.year, self.month, self.day).saturating_add(days);
+        let base = Self::epochDayOf(self.year, self.month, self.day).saturating_add(days);
         self.rebuilt_from(base, self.nano_of_day())
     }
 
@@ -363,14 +372,14 @@ impl UniDateTime {
     /// January 31st plus one month is February 28th or 29th, never March 3rd — matching
     /// `java.time.LocalDateTime::plusMonths`, which the Scala side delegates to.
     fn shift_months(&self, months: i64) -> Self {
-        if !self.is_valid() {
+        if !self.isValid() {
             return *self;
         }
         let total = (i64::from(self.year) * 12 + i64::from(self.month) - 1).saturating_add(months);
         let y = i32::try_from(total.div_euclid(12)).unwrap_or(self.year);
         let m = i32::try_from(total.rem_euclid(12) + 1).unwrap_or(self.month);
-        let d = self.day.min(Self::days_in_month(y, m));
-        Self::of_full(
+        let d = self.day.min(Self::daysInMonth(y, m));
+        Self::ofFull(
             y,
             m,
             d,
@@ -384,114 +393,114 @@ impl UniDateTime {
 
     /// Adds nanoseconds.
     #[must_use]
-    pub fn plus_nanos(&self, n: i64) -> Self {
+    pub fn plusNanos(&self, n: i64) -> Self {
         self.shift_nanos(n)
     }
     /// Adds seconds.
     #[must_use]
-    pub fn plus_seconds(&self, n: i64) -> Self {
+    pub fn plusSeconds(&self, n: i64) -> Self {
         self.shift_nanos(n.saturating_mul(NANOS_PER_SEC))
     }
     /// Adds minutes.
     #[must_use]
-    pub fn plus_minutes(&self, n: i64) -> Self {
-        self.plus_seconds(n.saturating_mul(60))
+    pub fn plusMinutes(&self, n: i64) -> Self {
+        self.plusSeconds(n.saturating_mul(60))
     }
     /// Adds hours.
     #[must_use]
-    pub fn plus_hours(&self, n: i64) -> Self {
-        self.plus_seconds(n.saturating_mul(3600))
+    pub fn plusHours(&self, n: i64) -> Self {
+        self.plusSeconds(n.saturating_mul(3600))
     }
     /// Adds days.
     #[must_use]
-    pub fn plus_days(&self, n: i64) -> Self {
+    pub fn plusDays(&self, n: i64) -> Self {
         self.shift_days(n)
     }
     /// Adds weeks.
     #[must_use]
-    pub fn plus_weeks(&self, n: i64) -> Self {
+    pub fn plusWeeks(&self, n: i64) -> Self {
         self.shift_days(n.saturating_mul(7))
     }
     /// Adds months, clamping the day.
     #[must_use]
-    pub fn plus_months(&self, n: i64) -> Self {
+    pub fn plusMonths(&self, n: i64) -> Self {
         self.shift_months(n)
     }
     /// Adds years, clamping a leap day.
     #[must_use]
-    pub fn plus_years(&self, n: i64) -> Self {
+    pub fn plusYears(&self, n: i64) -> Self {
         self.shift_months(n.saturating_mul(12))
     }
 
     /// Subtracts nanoseconds.
     #[must_use]
-    pub fn minus_nanos(&self, n: i64) -> Self {
+    pub fn minusNanos(&self, n: i64) -> Self {
         self.shift_nanos(-n)
     }
     /// Subtracts seconds.
     #[must_use]
-    pub fn minus_seconds(&self, n: i64) -> Self {
-        self.plus_seconds(-n)
+    pub fn minusSeconds(&self, n: i64) -> Self {
+        self.plusSeconds(-n)
     }
     /// Subtracts minutes.
     #[must_use]
-    pub fn minus_minutes(&self, n: i64) -> Self {
-        self.plus_minutes(-n)
+    pub fn minusMinutes(&self, n: i64) -> Self {
+        self.plusMinutes(-n)
     }
     /// Subtracts hours.
     #[must_use]
-    pub fn minus_hours(&self, n: i64) -> Self {
-        self.plus_hours(-n)
+    pub fn minusHours(&self, n: i64) -> Self {
+        self.plusHours(-n)
     }
     /// Subtracts days.
     #[must_use]
-    pub fn minus_days(&self, n: i64) -> Self {
+    pub fn minusDays(&self, n: i64) -> Self {
         self.shift_days(-n)
     }
     /// Subtracts weeks.
     #[must_use]
-    pub fn minus_weeks(&self, n: i64) -> Self {
+    pub fn minusWeeks(&self, n: i64) -> Self {
         self.shift_days(-n.saturating_mul(7))
     }
     /// Subtracts months, clamping the day.
     #[must_use]
-    pub fn minus_months(&self, n: i64) -> Self {
+    pub fn minusMonths(&self, n: i64) -> Self {
         self.shift_months(-n)
     }
     /// Subtracts years, clamping a leap day.
     #[must_use]
-    pub fn minus_years(&self, n: i64) -> Self {
+    pub fn minusYears(&self, n: i64) -> Self {
         self.shift_months(-n.saturating_mul(12))
     }
 
     /// Replaces the year, clamping a leap day into a non-leap February.
     #[must_use]
-    pub fn with_year(&self, y: i32) -> Self {
-        self.replaced(y, self.month, self.day.min(Self::days_in_month(y, self.month)))
+    pub fn withYear(&self, y: i32) -> Self {
+        self.replaced(y, self.month, self.day.min(Self::daysInMonth(y, self.month)))
     }
 
     /// Replaces the month, clamping the day to the shorter month.
     #[must_use]
-    pub fn with_month(&self, m: i32) -> Self {
+    pub fn withMonth(&self, m: i32) -> Self {
         self.replaced(
             self.year,
             m,
-            self.day.min(Self::days_in_month(self.year, m).max(1)),
+            self.day.min(Self::daysInMonth(self.year, m).max(1)),
         )
     }
 
     /// Replaces the day of the month. A day the month does not have yields
     /// [`Self::BAD_DATE`], where `java.time` throws.
     #[must_use]
-    pub fn with_day_of_month(&self, d: i32) -> Self {
+    pub fn withDayOfMonth(&self, d: i32) -> Self {
         self.replaced(self.year, self.month, d)
     }
 
     fn replaced(&self, y: i32, m: i32, d: i32) -> Self {
-        if !self.is_valid() {
+        if !self.isValid() {
             return *self;
         }
-        Self::of_full(
+        Self::ofFull(
             y,
             m,
             d,
@@ -505,30 +514,30 @@ impl UniDateTime {
 
     /// Replaces the hour. Out of range yields [`Self::BAD_DATE`].
     #[must_use]
-    pub fn with_hour(&self, h: i32) -> Self {
+    pub fn withHour(&self, h: i32) -> Self {
         self.replaced_time(h, self.minute, self.second, self.nano)
     }
     /// Replaces the minute. Out of range yields [`Self::BAD_DATE`].
     #[must_use]
-    pub fn with_minute(&self, mi: i32) -> Self {
+    pub fn withMinute(&self, mi: i32) -> Self {
         self.replaced_time(self.hour, mi, self.second, self.nano)
     }
     /// Replaces the second. Out of range yields [`Self::BAD_DATE`].
     #[must_use]
-    pub fn with_second(&self, s: i32) -> Self {
+    pub fn withSecond(&self, s: i32) -> Self {
         self.replaced_time(self.hour, self.minute, s, self.nano)
     }
     /// Replaces the nanosecond. Out of range yields [`Self::BAD_DATE`].
     #[must_use]
-    pub fn with_nano(&self, n: i32) -> Self {
+    pub fn withNano(&self, n: i32) -> Self {
         self.replaced_time(self.hour, self.minute, self.second, n)
     }
 
     fn replaced_time(&self, h: i32, mi: i32, s: i32, nano: i32) -> Self {
-        if !self.is_valid() {
+        if !self.isValid() {
             return *self;
         }
-        Self::of_full(
+        Self::ofFull(
             self.year,
             self.month,
             self.day,
@@ -542,8 +551,8 @@ impl UniDateTime {
 
     /// Midnight on the same date.
     #[must_use]
-    pub fn at_start_of_day(&self) -> Self {
-        if !self.is_valid() {
+    pub fn atStartOfDay(&self) -> Self {
+        if !self.isValid() {
             return *self;
         }
         Self {
@@ -557,12 +566,12 @@ impl UniDateTime {
 
     /// The last day of this month, keeping the time.
     #[must_use]
-    pub fn last_day_of_month(&self) -> Self {
-        if !self.is_valid() {
+    pub fn lastDayOfMonth(&self) -> Self {
+        if !self.isValid() {
             return *self;
         }
         Self {
-            day: Self::days_in_month(self.year, self.month),
+            day: Self::daysInMonth(self.year, self.month),
             ..*self
         }
     }
@@ -572,19 +581,35 @@ impl UniDateTime {
     /// Matches the Scala `withDayOfWeek`, which uses `TemporalAdjusters.next`: a date already
     /// on `dow` moves a full week forward rather than standing still.
     #[must_use]
-    pub fn with_day_of_week(&self, dow: i32) -> Self {
-        if !self.is_valid() {
+    pub fn withDayOfWeek(&self, dow: i32) -> Self {
+        if !self.isValid() {
             return *self;
         }
-        let current = self.day_of_week_num();
+        let current = self.dayOfWeekNum();
         let delta = (dow - current).rem_euclid(7);
-        self.plus_days(if delta == 0 { 7 } else { i64::from(delta) })
+        self.plusDays(if delta == 0 { 7 } else { i64::from(delta) })
     }
 
     /// 1 = Monday .. 7 = Sunday.
     #[must_use]
-    pub fn day_of_week_num(&self) -> i32 {
-        format::day_of_week(self.year, self.month, self.day)
+    pub fn dayOfWeekNum(&self) -> i32 {
+        format::dayOfWeek(self.year, self.month, self.day)
+    }
+
+    /// The three-letter English weekday abbreviation: `Mon` .. `Sun`.
+    ///
+    /// The form client code actually wants. On the Scala side this replaced a hand-rolled
+    /// `getDisplayName(TextStyle.SHORT, Locale.ENGLISH)`; here there is no locale to get wrong,
+    /// because the names are English by construction.
+    #[must_use]
+    pub fn dayOfWeekName(&self) -> String {
+        self.fmt("E")
+    }
+
+    /// The full English weekday name: `Monday` .. `Sunday`.
+    #[must_use]
+    pub fn dayOfWeekFull(&self) -> String {
+        self.fmt("EEEE")
     }
 
     // ── The offset ────────────────────────────────────────────────────────────
@@ -592,15 +617,15 @@ impl UniDateTime {
     /// This moment with a UTC offset attached, or removed by passing `None`.
     ///
     /// A sentinel absorbs this. Copying one with a new offset would otherwise yield a value
-    /// that is *not* a sentinel yet still names an impossible date, so `is_valid` would answer
+    /// that is *not* a sentinel yet still names an impossible date, so `isValid` would answer
     /// `true` and the field accessors would hand out day 0.
     #[must_use]
-    pub fn with_offset_minutes(&self, offset: Option<i32>) -> Self {
-        if !self.is_valid() {
+    pub fn withOffsetMinutes(&self, offset: Option<i32>) -> Self {
+        if !self.isValid() {
             return *self;
         }
         match offset {
-            Some(o) if !Self::is_valid_offset(o) => *self,
+            Some(o) if !Self::isValidOffset(o) => *self,
             other => Self {
                 offset_minutes: other,
                 ..*self
@@ -610,7 +635,7 @@ impl UniDateTime {
 
     /// The offset as `+HH:MM`, or empty when there is none.
     #[must_use]
-    pub fn offset_text(&self) -> String {
+    pub fn offsetText(&self) -> String {
         match self.offset_minutes {
             None => String::new(),
             Some(o) => {
@@ -659,7 +684,7 @@ impl UniDateTime {
     /// The pattern formatters deliberately render a sentinel as digits rather than as a
     /// marker: they feed filenames, CSV keys and SQL binds, where a marker would produce
     /// valid-looking output that quietly matches nothing. Day zero makes the digits
-    /// self-evidently not a date. Guard those paths with [`Self::is_valid`].
+    /// self-evidently not a date. Guard those paths with [`Self::isValid`].
     #[must_use]
     pub fn fmt(&self, pattern: &str) -> String {
         self.format(pattern).unwrap_or_default()
@@ -679,7 +704,7 @@ impl UniDateTime {
     /// implementations together: an unanchored search finds an offset inside a bare date,
     /// reading `12-05-1024` as +10:24.
     #[must_use]
-    pub fn offset_minutes_of(text: &str) -> Option<i32> {
+    pub fn offsetMinutesOf(text: &str) -> Option<i32> {
         let zulu = Self::has_zulu(text);
         Self::scan_offset(text).or_else(|| zulu.then_some(0))
     }
@@ -719,7 +744,7 @@ impl UniDateTime {
                 continue;
             }
             let signed = if c == '-' { -magnitude } else { magnitude };
-            return Self::is_valid_offset(signed).then_some(signed);
+            return Self::isValidOffset(signed).then_some(signed);
         }
         None
     }
@@ -837,15 +862,15 @@ mod tests {
 
     #[test]
     fn of_validates_and_yields_bad_date() {
-        assert_eq!(UniDateTime::of_ymd(2023, 2, 29), UniDateTime::BAD_DATE);
-        assert_eq!(UniDateTime::of_ymd(2024, 13, 1), UniDateTime::BAD_DATE);
-        assert!(UniDateTime::of_ymd(2024, 2, 29).is_valid());
+        assert_eq!(UniDateTime::ofYmd(2023, 2, 29), UniDateTime::BAD_DATE);
+        assert_eq!(UniDateTime::ofYmd(2024, 13, 1), UniDateTime::BAD_DATE);
+        assert!(UniDateTime::ofYmd(2024, 2, 29).isValid());
     }
 
     #[test]
     fn sentinels_are_impossible_dates() {
         assert_eq!(UniDateTime::BAD_DATE.day(), 0);
-        assert!(!UniDateTime::fields_valid(1900, 1, 0, 3, 4, 5, 0));
+        assert!(!UniDateTime::isValidFields(1900, 1, 0, 3, 4, 5, 0));
         // The moment BAD_DATE used to be is an ordinary date again.
         let real = UniDateTime::of(1900, 1, 2, 3, 4, 5);
         assert_ne!(real, UniDateTime::BAD_DATE);
@@ -866,58 +891,58 @@ mod tests {
     #[test]
     fn epoch_day_round_trips() {
         for n in (-40_000_i64..40_000).step_by(97) {
-            let d = UniDateTime::of_epoch_day(n);
-            assert_eq!(d.to_epoch_day(), n, "round trip for {n}");
+            let d = UniDateTime::ofEpochDay(n);
+            assert_eq!(d.toEpochDay(), n, "round trip for {n}");
         }
-        assert_eq!(UniDateTime::of_epoch_day(0).ymd(), "1970-01-01");
-        assert_eq!(UniDateTime::of_epoch_day(-1).ymd(), "1969-12-31");
+        assert_eq!(UniDateTime::ofEpochDay(0).ymd(), "1970-01-01");
+        assert_eq!(UniDateTime::ofEpochDay(-1).ymd(), "1969-12-31");
     }
 
     #[test]
     fn month_arithmetic_clamps() {
-        assert_eq!(UniDateTime::of_ymd(2024, 1, 31).plus_months(1).ymd(), "2024-02-29");
-        assert_eq!(UniDateTime::of_ymd(2023, 1, 31).plus_months(1).ymd(), "2023-02-28");
-        assert_eq!(UniDateTime::of_ymd(2024, 2, 29).plus_years(1).ymd(), "2025-02-28");
+        assert_eq!(UniDateTime::ofYmd(2024, 1, 31).plusMonths(1).ymd(), "2024-02-29");
+        assert_eq!(UniDateTime::ofYmd(2023, 1, 31).plusMonths(1).ymd(), "2023-02-28");
+        assert_eq!(UniDateTime::ofYmd(2024, 2, 29).plusYears(1).ymd(), "2025-02-28");
     }
 
     #[test]
     fn sentinels_absorb_arithmetic() {
         for s in [UniDateTime::BAD_DATE, UniDateTime::EMPTY_DATE] {
-            assert_eq!(s.plus_days(1), s);
-            assert_eq!(s.plus_months(3), s);
-            assert_eq!(s.at_start_of_day(), s);
-            assert_eq!(s.last_day_of_month(), s);
-            assert_eq!(s.with_offset_minutes(Some(0)), s);
-            assert_eq!(s.to_epoch_day(), i64::MIN);
+            assert_eq!(s.plusDays(1), s);
+            assert_eq!(s.plusMonths(3), s);
+            assert_eq!(s.atStartOfDay(), s);
+            assert_eq!(s.lastDayOfMonth(), s);
+            assert_eq!(s.withOffsetMinutes(Some(0)), s);
+            assert_eq!(s.toEpochDay(), i64::MIN);
         }
     }
 
     #[test]
     fn time_shift_carries_into_the_date() {
         let d = UniDateTime::of(2024, 5, 12, 23, 59, 59);
-        assert_eq!(d.plus_seconds(1).to_string(), "2024-05-13T00:00");
-        assert_eq!(d.plus_nanos(1_000_000_000).to_string(), "2024-05-13T00:00");
+        assert_eq!(d.plusSeconds(1).to_string(), "2024-05-13T00:00");
+        assert_eq!(d.plusNanos(1_000_000_000).to_string(), "2024-05-13T00:00");
         let m = UniDateTime::of(2024, 5, 12, 0, 0, 0);
-        assert_eq!(m.minus_seconds(1).to_string(), "2024-05-11T23:59:59");
+        assert_eq!(m.minusSeconds(1).to_string(), "2024-05-11T23:59:59");
     }
 
     #[test]
     fn offset_extraction_is_anchored() {
         assert_eq!(
-            UniDateTime::offset_minutes_of("Thu, 14 Mar 2024 15:30:00 -0700"),
+            UniDateTime::offsetMinutesOf("Thu, 14 Mar 2024 15:30:00 -0700"),
             Some(-420)
         );
-        assert_eq!(UniDateTime::offset_minutes_of("2024-03-14T15:30:00Z"), Some(0));
-        assert_eq!(UniDateTime::offset_minutes_of("14 Mar 2024 15:30 UTC"), Some(0));
+        assert_eq!(UniDateTime::offsetMinutesOf("2024-03-14T15:30:00Z"), Some(0));
+        assert_eq!(UniDateTime::offsetMinutesOf("14 Mar 2024 15:30 UTC"), Some(0));
         // A bare date must not read its own digits as an offset.
-        assert_eq!(UniDateTime::offset_minutes_of("12-05-1024"), None);
-        assert_eq!(UniDateTime::offset_minutes_of("2024-03-14"), None);
+        assert_eq!(UniDateTime::offsetMinutesOf("12-05-1024"), None);
+        assert_eq!(UniDateTime::offsetMinutesOf("2024-03-14"), None);
     }
 
     #[test]
     fn ordering_ignores_the_offset_where_equality_does_not() {
         let a = UniDateTime::of(2024, 5, 12, 14, 30, 0);
-        let b = a.with_offset_minutes(Some(-420));
+        let b = a.withOffsetMinutes(Some(-420));
         assert_ne!(a, b);
         assert_eq!(a.cmp(&b), core::cmp::Ordering::Equal);
     }

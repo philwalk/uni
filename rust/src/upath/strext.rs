@@ -6,7 +6,7 @@
 //! justify a trait. The reason is **symmetry**: the point of this port is that a
 //! script can be maintained in both languages side by side, and an API that drifts
 //! into per-language idiom defeats that. `p.baseName.lc` in Scala should read
-//! `p.base_name()?.lc()` here, not `p.base_name()?.to_lowercase()`. Every name below
+//! `p.baseName()?.lc()` here, not `p.baseName()?.to_lowercase()`. Every name below
 //! is Scala's, adjusted only for `snake_case`.
 //!
 //! # Two traits
@@ -25,6 +25,15 @@
 //! direct analogue of `s.asPath`, and resolution failure is real — an embedded NUL or
 //! colon — so it is reported rather than swallowed.
 
+#![allow(
+    non_snake_case,
+    reason = "public methods mirror the Scala API name-for-name, so a script kept in \
+              both languages needs no mental translation -- the same reason windows-rs \
+              spells Win32 functions SetEvent rather than set_event. Internal helpers \
+              and Rust trait contracts stay snake_case, so the case says whether a \
+              Scala counterpart exists."
+)]
+
 use ndarray::Array2;
 
 use crate::upath::PathContext;
@@ -34,12 +43,12 @@ use crate::upath::matcsv::CsvCell;
 use crate::upath::normalize_posix;
 use crate::upath::resolve::posix_abs;
 use crate::upath::resolve::resolve_windows_pathstr;
-use crate::upath::starts_with_ignore_case;
+use crate::upath::startsWithIgnoreCase;
 
 /// The context-free `String` extensions from `uni`.
 ///
 /// Implemented for `str`, so it applies to `&str`, `String` and anything derefing to
-/// `str` — including the `&str` that [`UPath::base_name`](crate::upath::UPath::base_name)
+/// `str` — including the `&str` that [`UPath::baseName`](crate::upath::UPath::baseName)
 /// and friends return.
 pub trait StrExts {
     /// Lowercase. `StringExts.lc`.
@@ -62,10 +71,10 @@ pub trait StrExts {
     ///
     /// A leading dot is not an extension: `.gitignore` comes back unchanged, which is
     /// why the test is `i <= 0` and not `i < 0`.
-    fn drop_suffix(&self) -> &str;
+    fn dropSuffix(&self) -> &str;
 
     /// Case-insensitive `starts_with`. `StringExts.startsWithIgnoreCase`.
-    fn starts_with_ignore_case(&self, prefix: &str) -> bool;
+    fn startsWithIgnoreCase(&self, prefix: &str) -> bool;
 
     /// Removes `prefix` if present, else returns the string unchanged.
     /// `StringExts.stripPrefix`.
@@ -90,15 +99,15 @@ impl StrExts for str {
         normalize_posix(self)
     }
 
-    fn drop_suffix(&self) -> &str {
+    fn dropSuffix(&self) -> &str {
         match self.rfind('.') {
             Some(i) if i > 0 => &self[..i],
             _ => self,
         }
     }
 
-    fn starts_with_ignore_case(&self, prefix: &str) -> bool {
-        starts_with_ignore_case(self, prefix)
+    fn startsWithIgnoreCase(&self, prefix: &str) -> bool {
+        startsWithIgnoreCase(self, prefix)
     }
 
     fn strip_prefix_or_self(&self, prefix: &str) -> &str {
@@ -121,7 +130,7 @@ mod tests {
 
     #[test]
     fn lc_composes_with_the_path_accessors() {
-        // The reason this trait exists: `baseName.lc` in Scala reads `base_name()?.lc()`
+        // The reason this trait exists: `baseName.lc` in Scala reads `baseName()?.lc()`
         // here rather than drifting to `to_lowercase()`.
         assert_eq!("README".lc(), "readme");
         assert_eq!("TXT".lc(), "txt");
@@ -137,20 +146,20 @@ mod tests {
 
     #[test]
     fn drop_suffix_leaves_a_dotfile_alone() {
-        assert_eq!("archive.tar.gz".drop_suffix(), "archive.tar");
-        assert_eq!("plain".drop_suffix(), "plain");
+        assert_eq!("archive.tar.gz".dropSuffix(), "archive.tar");
+        assert_eq!("plain".dropSuffix(), "plain");
         // The `i > 0` guard: a leading dot is a hidden file, not an extension.
-        assert_eq!(".gitignore".drop_suffix(), ".gitignore");
-        assert_eq!("".drop_suffix(), "");
-        assert_eq!("trailing.".drop_suffix(), "trailing");
+        assert_eq!(".gitignore".dropSuffix(), ".gitignore");
+        assert_eq!("".dropSuffix(), "");
+        assert_eq!("trailing.".dropSuffix(), "trailing");
     }
 
     #[test]
     fn starts_with_ignore_case_ignores_case() {
-        assert!("C:/Users".starts_with_ignore_case("c:/users"));
-        assert!("c:/users".starts_with_ignore_case("C:/USERS"));
-        assert!(!"C:/Users".starts_with_ignore_case("D:/"));
-        assert!("anything".starts_with_ignore_case(""));
+        assert!("C:/Users".startsWithIgnoreCase("c:/users"));
+        assert!("c:/users".startsWithIgnoreCase("C:/USERS"));
+        assert!(!"C:/Users".startsWithIgnoreCase("D:/"));
+        assert!("anything".startsWithIgnoreCase(""));
     }
 
     #[test]
@@ -221,13 +230,13 @@ pub trait StrPathExts {
     ///
     /// # Errors
     /// As [`StrPathExts::as_path`], plus any read failure.
-    fn read_csv<T: CsvCell>(&self) -> Result<Array2<T>, PathError>;
+    fn readCsv<T: CsvCell>(&self) -> Result<Array2<T>, PathError>;
 
     /// Writes a matrix to this path as CSV. `StringExts.writeCsv`.
     ///
     /// # Errors
     /// As [`StrPathExts::as_path`], plus any write failure.
-    fn write_csv(&self, mat: &Array2<f64>) -> Result<(), PathError>;
+    fn writeCsv(&self, mat: &Array2<f64>) -> Result<(), PathError>;
 }
 
 impl StrPathExts for str {
@@ -253,11 +262,11 @@ impl StrPathExts for str {
         Ok(resolve_windows_pathstr(ctx, &forward)?.replace('/', "\\"))
     }
 
-    fn read_csv<T: CsvCell>(&self) -> Result<Array2<T>, PathError> {
+    fn readCsv<T: CsvCell>(&self) -> Result<Array2<T>, PathError> {
         self.as_path()?.try_read_csv().map_err(|e| PathError::from_io(&e))
     }
 
-    fn write_csv(&self, mat: &Array2<f64>) -> Result<(), PathError> {
+    fn writeCsv(&self, mat: &Array2<f64>) -> Result<(), PathError> {
         self.as_path()?.try_write_matrix(mat).map_err(|e| PathError::from_io(&e))
     }
 }

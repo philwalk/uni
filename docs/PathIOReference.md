@@ -186,10 +186,29 @@ Requires `import uni.data.*` for the return types (`MatD`, `MatB`, `MatF`).
 | `.lastModHours` | `Double` | alias for `.lastModHoursAgo` |
 | `.lastModDays` | `Double` | alias for `.lastModDaysAgo` |
 | `.ageInDays` | `Double` | alias for `.lastModDaysAgo` |
-| `.lastModifiedYMD` | `String` | last-modified time formatted as `"yyyy-MM-dd HH:mm:ss"` |
-| `.lastModifiedTime` | `DateTime` | last-modified time in the local timezone (a `uni.time.UniDateTime`; converts implicitly to `java.time.LocalDateTime`) |
-| `.weekDay` | `DayOfWeek` | day of the week of last modification |
-| `.epoch2DateTime(epoch, timezone)` | `DateTime` | convert an epoch-millisecond value to a date in the given `ZoneId` |
+| `.lastModifiedYMD` | `String` | last-modified time as `"yyyy-MM-dd HH:mm:ss"`, in **UTC** |
+| `.lastModifiedTime` | `DateTime` | last-modified time, in **UTC** (a `uni.time.UniDateTime`; converts implicitly to `java.time.LocalDateTime`) |
+| `.weekDay` | `Int` | day of the week of last modification, 1 = Monday .. 7 = Sunday |
+| `.weekDayName` | `String` | three-letter weekday abbreviation, `Mon` .. `Sun` |
+| `.epoch2DateTime(epoch, timezone)` | `DateTime` | convert an epoch-millisecond value to a date in the given `ZoneId` (default `UTC`) |
+
+> **File timestamps are UTC, and no zone or offset appears in these signatures.**
+>
+> `lastModifiedTime` used `ZoneId.systemDefault()`, which cannot be reproduced outside the
+> JVM — Rust's `std` has no timezone database and no way to read the local offset. The
+> alternative was an offset parameter on every call, a value almost no caller has an opinion
+> about: a file timestamp is used either for *comparison*, where any consistent offset
+> cancels out, or for *display*, where being machine-independent is an advantage.
+>
+> It also removed an inconsistency that was already here: `epoch2DateTime` has always
+> defaulted to `UTC`, so `p.epoch2DateTime(p.lastModified)` and `p.lastModifiedTime`
+> disagreed by the local offset for the same file. They now agree, and a test asserts it.
+>
+> Local time needs no API of its own — it is one explicit call:
+> `p.epoch2DateTime(p.lastModified, ZoneId.systemDefault())`.
+>
+> `weekDay` also moved off `java.time.DayOfWeek` to a plain `Int` with the same numbering,
+> which makes it portable. It had no callers in the reference script corpus.
 
 ### Hashing and checksums
 
@@ -225,11 +244,29 @@ performance-sensitive parts under `rust/src/upath/`:
 | `.posix` `.relpath` `.stdpath`, mount handling | `upath::resolve`, `upath::mount`, `upath::ext` | path translation |
 | `String` extensions (`.lc`, `.posx`, ...) | `upath::strext` | string helpers |
 | `uni.time.UniDateTime`, `DateFormat` | `utime::datetime`, `utime::format` | the date type, its arithmetic and pattern formatting |
+| `.lastModified`, `.lastMod*Ago`, `.lastModifiedTime` | `upath::times` | file timestamps and file age |
 
 Each Rust module is checked against a committed fixture generated from the Scala
 implementation, so a divergence fails a test rather than appearing at runtime. Directory
-traversal, file timestamps and `SmartParse` (the date *parser*, as distinct from the date
-type) are **not** ported yet.
+traversal, the mutation methods, the matrix/CSV loaders and `SmartParse` (the date *parser*,
+as distinct from the date type) are **not** ported yet.
+
+The `lastMod*Ago` aliases (`lastModSeconds`, `lastModMinutes`, `lastModHours`, `lastModDays`,
+`ageInDays`, `lastModSecondsDbl`) are deliberately absent from the Rust: they add names, not
+capability. Use the `*Ago` spelling, or `ago()` for all four values from a single clock read.
+
+### Method names match Scala, deliberately
+
+The Rust API uses the **Scala spelling** — `baseName`, `plusDays`, `lastModifiedTime` — rather
+than snake_case, under a module-scoped `#![allow(non_snake_case)]`. Same reason `windows-rs`
+spells Win32 functions `SetEvent` rather than `set_event`: the documented API is the contract,
+and here that contract is the Scala one, for anyone maintaining a script in both languages.
+
+Internal helpers and Rust trait contracts (`Display::fmt`, `cmp`, `to_string`) stay
+snake_case, so **the case tells you whether a Scala counterpart exists**. Where Rust cannot
+overload or default an argument, one Scala member becomes several with a suffix — `ofFull`,
+`ofYmd`, `isValidFields` for `UniDateTime.of` and `isValid` — and those keep CamelCase, since
+they are API rather than internals.
 
 The crate is currently named `t3prf` (`rust/Cargo.toml`); `upath` is a module inside it,
 not a separately published crate.

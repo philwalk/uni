@@ -27,6 +27,11 @@
 //! An unsupported letter is an error rather than a literal, matching Java, which reserves
 //! every ASCII letter in a pattern.
 
+#![allow(
+    non_snake_case,
+    reason = "public items mirror the Scala API name-for-name, so a script kept in both \n              languages needs no mental translation. Internal helpers stay snake_case, so \n              the case says whether a Scala counterpart exists."
+)]
+
 use core::fmt;
 
 /// A pattern that cannot be rendered. A malformed *pattern* is a programming error, unlike a
@@ -101,10 +106,10 @@ const DAY_NAMES: [&str; 7] = [
 
 /// Day of week for a proleptic Gregorian date: 1 = Monday .. 7 = Sunday.
 ///
-/// Sakamoto's method. Needed here for `E`, and by the date type for `day_of_week`, so it
+/// Sakamoto's method. Needed here for `E`, and by the date type for `dayOfWeek`, so it
 /// lives with the calendar arithmetic rather than being derived from a date object.
 #[must_use]
-pub fn day_of_week(year: i32, month: i32, day: i32) -> i32 {
+pub fn dayOfWeek(year: i32, month: i32, day: i32) -> i32 {
     const T: [i32; 12] = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4];
     let y = if month < 3 { year - 1 } else { year };
     let idx = usize::try_from(month.clamp(1, 12) - 1).unwrap_or(0);
@@ -246,7 +251,7 @@ fn field(
         }
         'a' => (if hour < 12 { "AM" } else { "PM" }).to_owned(),
         'E' => {
-            let idx = usize::try_from(day_of_week(year, month, day) - 1).unwrap_or(0);
+            let idx = usize::try_from(dayOfWeek(year, month, day) - 1).unwrap_or(0);
             let name = DAY_NAMES[idx];
             if n >= 4 {
                 name.to_owned()
@@ -265,7 +270,7 @@ fn field(
 
 #[cfg(test)]
 mod tests {
-    use super::day_of_week;
+    use super::dayOfWeek;
     use super::format;
     use super::pad;
     use super::FormatError;
@@ -325,8 +330,8 @@ mod tests {
     #[test]
     fn day_of_week_matches_known_dates() {
         // 2024-05-12 was a Sunday; 2000-02-29 a Tuesday; 1900-03-01 a Thursday.
-        assert_eq!(day_of_week(2024, 5, 12), 7);
-        assert_eq!(day_of_week(2000, 2, 29), 2);
-        assert_eq!(day_of_week(1900, 3, 1), 4);
+        assert_eq!(dayOfWeek(2024, 5, 12), 7);
+        assert_eq!(dayOfWeek(2000, 2, 29), 2);
+        assert_eq!(dayOfWeek(1900, 3, 1), 4);
     }
 }

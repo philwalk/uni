@@ -110,8 +110,8 @@ fn csv_rows_matches_the_scala_reference() {
         if kind != "rows" {
             continue;
         }
-        let actual = input(case).csv_rows();
-        assert_eq!(&actual, expected, "csv_rows differs for case [{case}]");
+        let actual = input(case).csvRows();
+        assert_eq!(&actual, expected, "csvRows differs for case [{case}]");
         checked += 1;
     }
     assert!(checked >= 20, "only {checked} cases checked");
@@ -125,8 +125,8 @@ fn csv_rows_stream_matches_the_scala_reference() {
         if kind != "stream" {
             continue;
         }
-        let actual: Vec<Vec<String>> = input(case).csv_rows_stream().collect();
-        assert_eq!(&actual, expected, "csv_rows_stream differs for case [{case}]");
+        let actual: Vec<Vec<String>> = input(case).csvRowsStream().collect();
+        assert_eq!(&actual, expected, "csvRowsStream differs for case [{case}]");
         checked += 1;
     }
     assert!(checked >= 20, "only {checked} cases checked");
@@ -164,8 +164,8 @@ fn the_streaming_window_leaves_a_later_wider_row_jagged() {
     // The one case where the two readings are *meant* to differ, called out so a
     // change to the window is a deliberate act rather than a quiet fixture diff.
     let p = input("past-window");
-    let stream: Vec<Vec<String>> = p.csv_rows_stream().collect();
-    let all = p.csv_rows();
+    let stream: Vec<Vec<String>> = p.csvRowsStream().collect();
+    let all = p.csvRows();
 
     assert_eq!(stream[0].len(), 2, "window saw only 2-wide rows");
     assert_eq!(stream[100].len(), 4, "the wide row must not be truncated");

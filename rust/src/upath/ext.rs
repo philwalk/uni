@@ -23,6 +23,15 @@
 //! Only `normalize()` resolves dot segments, and none of these methods call it, so
 //! `.` and `..` survive as ordinary name elements.
 
+#![allow(
+    non_snake_case,
+    reason = "public methods mirror the Scala API name-for-name, so a script kept in \
+              both languages needs no mental translation -- the same reason windows-rs \
+              spells Win32 functions SetEvent rather than set_event. Internal helpers \
+              and Rust trait contracts stay snake_case, so the case says whether a \
+              Scala counterpart exists."
+)]
+
 use std::sync::Arc;
 
 use crate::upath::PathContext;
@@ -107,7 +116,7 @@ impl UPath {
 
     /// Path with any drive letter removed: `C:/foo` → `/foo`. `PathExts.noDrive`.
     #[must_use]
-    pub fn no_drive(&self) -> &str {
+    pub fn noDrive(&self) -> &str {
         let b = self.s.as_bytes();
         if self.s.len() >= 2 && b[1] == b':' {
             &self.s[2..]
@@ -150,7 +159,7 @@ impl UPath {
 
     /// Name elements joined in reverse. `PathExts.reversePath`.
     #[must_use]
-    pub fn reverse_path(&self) -> String {
+    pub fn reversePath(&self) -> String {
         let mut parts = self.segments();
         parts.reverse();
         parts.join("/")
@@ -176,7 +185,7 @@ impl UPath {
     ///
     /// # Errors
     /// As [`UPath::last`].
-    pub fn base_name(&self) -> Result<&str, PathError> {
+    pub fn baseName(&self) -> Result<&str, PathError> {
         let n = self.last()?;
         Ok(match n.rfind('.') {
             Some(i) => &n[..i],
@@ -419,7 +428,7 @@ impl UPath {
     /// `posix_rel`, but the `Path`-returning form is part of `uni`'s surface and this
     /// is what implements it.
     #[must_use]
-    pub fn relative_path(&self) -> Self {
+    pub fn relativePath(&self) -> Self {
         self.relative_to_cwd()
     }
 
@@ -524,7 +533,7 @@ mod tests {
     #[test]
     fn relative_path_agrees_with_relpath_below_the_working_directory() {
         // The `Path`-returning sibling, `PathExts.relativePath`.
-        assert_eq!(p("C:/munit/test/sub").relative_path().posx(), "sub");
+        assert_eq!(p("C:/munit/test/sub").relativePath().posx(), "sub");
     }
 
     #[test]

@@ -20,8 +20,13 @@
 
 use std::path::PathBuf;
 
+use t3prf::upath::PathContext;
+use t3prf::upath::UPath;
+use t3prf::upath::UserInfo;
+use t3prf::upath::epoch2DateTime;
+use t3prf::upath::times::round6;
 use t3prf::utime::UniDateTime;
-use t3prf::utime::day_of_week;
+use t3prf::utime::dayOfWeek;
 
 fn fixture() -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../test-data/date-parity/scala-reference.txt");
@@ -66,7 +71,7 @@ fn moment(f: &[String]) -> UniDateTime {
     } else if d == 0 && y == 1800 {
         UniDateTime::EMPTY_DATE
     } else {
-        UniDateTime::of_full(y, mo, d, h, mi, s, nano, None)
+        UniDateTime::ofFull(y, mo, d, h, mi, s, nano, None)
     }
 }
 
@@ -76,35 +81,35 @@ fn of_kind(kind: &str) -> Vec<Vec<String>> {
 
 fn shift(d: &UniDateTime, op: &str, n: i64) -> UniDateTime {
     match op {
-        "plusNanos" => d.plus_nanos(n),
-        "plusSeconds" => d.plus_seconds(n),
-        "plusMinutes" => d.plus_minutes(n),
-        "plusHours" => d.plus_hours(n),
-        "plusDays" => d.plus_days(n),
-        "plusWeeks" => d.plus_weeks(n),
-        "plusMonths" => d.plus_months(n),
-        "plusYears" => d.plus_years(n),
-        "minusNanos" => d.minus_nanos(n),
-        "minusSeconds" => d.minus_seconds(n),
-        "minusMinutes" => d.minus_minutes(n),
-        "minusHours" => d.minus_hours(n),
-        "minusDays" => d.minus_days(n),
-        "minusWeeks" => d.minus_weeks(n),
-        "minusMonths" => d.minus_months(n),
-        "minusYears" => d.minus_years(n),
+        "plusNanos" => d.plusNanos(n),
+        "plusSeconds" => d.plusSeconds(n),
+        "plusMinutes" => d.plusMinutes(n),
+        "plusHours" => d.plusHours(n),
+        "plusDays" => d.plusDays(n),
+        "plusWeeks" => d.plusWeeks(n),
+        "plusMonths" => d.plusMonths(n),
+        "plusYears" => d.plusYears(n),
+        "minusNanos" => d.minusNanos(n),
+        "minusSeconds" => d.minusSeconds(n),
+        "minusMinutes" => d.minusMinutes(n),
+        "minusHours" => d.minusHours(n),
+        "minusDays" => d.minusDays(n),
+        "minusWeeks" => d.minusWeeks(n),
+        "minusMonths" => d.minusMonths(n),
+        "minusYears" => d.minusYears(n),
         other => panic!("unknown shift op [{other}]"),
     }
 }
 
 fn with_field(d: &UniDateTime, op: &str, a: i32) -> UniDateTime {
     match op {
-        "withYear" => d.with_year(a),
-        "withMonth" => d.with_month(a),
-        "withDayOfMonth" => d.with_day_of_month(a),
-        "withHour" => d.with_hour(a),
-        "withMinute" => d.with_minute(a),
-        "withSecond" => d.with_second(a),
-        "withNano" => d.with_nano(a),
+        "withYear" => d.withYear(a),
+        "withMonth" => d.withMonth(a),
+        "withDayOfMonth" => d.withDayOfMonth(a),
+        "withHour" => d.withHour(a),
+        "withMinute" => d.withMinute(a),
+        "withSecond" => d.withSecond(a),
+        "withNano" => d.withNano(a),
         other => panic!("unknown with op [{other}]"),
     }
 }
@@ -152,22 +157,24 @@ fn day_of_week_epoch_day_and_validity_match() {
     for r in of_kind("dow") {
         let d = moment(&r);
         assert_eq!(
-            day_of_week(d.year(), d.month(), d.day()).to_string(),
+            dayOfWeek(d.year(), d.month(), d.day()).to_string(),
             r[8],
             "dow {:?}",
             &r[1..8]
         );
+        assert_eq!(d.dayOfWeekName(), r[9], "dayOfWeekName {:?}", &r[1..8]);
+        assert_eq!(d.dayOfWeekFull(), r[10], "dayOfWeekFull {:?}", &r[1..8]);
     }
     for r in of_kind("epochday") {
         assert_eq!(
-            moment(&r).to_epoch_day().to_string(),
+            moment(&r).toEpochDay().to_string(),
             r[8],
             "epochDay {:?}",
             &r[1..8]
         );
     }
     for r in of_kind("valid") {
-        let got = UniDateTime::fields_valid(
+        let got = UniDateTime::isValidFields(
             i(&r[1]),
             i(&r[2]),
             i(&r[3]),
@@ -176,7 +183,7 @@ fn day_of_week_epoch_day_and_validity_match() {
             i(&r[6]),
             i(&r[7]),
         );
-        assert_eq!(got.to_string(), r[8], "fields_valid {:?}", &r[1..8]);
+        assert_eq!(got.to_string(), r[8], "isValidFields {:?}", &r[1..8]);
     }
 }
 
@@ -184,9 +191,9 @@ fn day_of_week_epoch_day_and_validity_match() {
 fn days_in_month_matches_including_out_of_range() {
     for r in of_kind("dim") {
         assert_eq!(
-            UniDateTime::days_in_month(i(&r[1]), i(&r[2])).to_string(),
+            UniDateTime::daysInMonth(i(&r[1]), i(&r[2])).to_string(),
             r[3],
-            "days_in_month({}, {})",
+            "daysInMonth({}, {})",
             r[1],
             r[2]
         );
@@ -197,9 +204,9 @@ fn days_in_month_matches_including_out_of_range() {
 fn of_epoch_day_matches_across_era_boundaries() {
     for r in of_kind("ofepoch") {
         assert_eq!(
-            UniDateTime::of_epoch_day(l(&r[1])).to_string(),
+            UniDateTime::ofEpochDay(l(&r[1])).to_string(),
             unesc(&r[2]),
-            "of_epoch_day({})",
+            "ofEpochDay({})",
             r[1]
         );
     }
@@ -225,8 +232,8 @@ fn at_start_of_day_and_last_day_of_month_match() {
     for r in of_kind("unary") {
         let d = moment(&r);
         let got = match r[8].as_str() {
-            "atStartOfDay" => d.at_start_of_day(),
-            "lastDayOfMonth" => d.last_day_of_month(),
+            "atStartOfDay" => d.atStartOfDay(),
+            "lastDayOfMonth" => d.lastDayOfMonth(),
             other => panic!("unknown unary op [{other}]"),
         };
         assert_eq!(got.to_string(), unesc(&r[9]), "{} on {:?}", r[8], &r[1..8]);
@@ -251,11 +258,11 @@ fn with_field_matches_including_out_of_range() {
 #[test]
 fn with_day_of_week_matches() {
     for r in of_kind("withdow") {
-        let got = moment(&r).with_day_of_week(i(&r[8]));
+        let got = moment(&r).withDayOfWeek(i(&r[8]));
         assert_eq!(
             got.to_string(),
             unesc(&r[9]),
-            "with_day_of_week({}) on {:?}",
+            "withDayOfWeek({}) on {:?}",
             r[8],
             &r[1..8]
         );
@@ -270,6 +277,86 @@ fn sentinels_absorb_every_shift() {
     }
 }
 
+fn f(s: &str) -> f64 {
+    s.parse().unwrap_or_else(|_| panic!("not an f64: [{s}]"))
+}
+
+#[test]
+fn round6_matches() {
+    // Parsed, not string-compared: Scala renders 5e-7 as "5.0E-7" and Rust as "5e-7". The
+    // fixture pins the value, not either language's float formatter.
+    for r in of_kind("round6") {
+        let got = round6(f(&r[1]));
+        let want = f(&r[2]);
+        assert!(
+            (got - want).abs() < 1e-15,
+            "round6({}) was {got}, expected {want}",
+            r[1]
+        );
+    }
+}
+
+#[test]
+fn epoch_conversion_matches_at_fixed_offsets() {
+    for r in of_kind("epochconv") {
+        let millis = l(&r[1]);
+        let off = i(&r[2]);
+        let d = epoch2DateTime(millis, off);
+        assert_eq!(
+            d.to_string(),
+            unesc(&r[3]),
+            "epoch2DateTime({millis}, {off})"
+        );
+        // `none` in the fixture: the zone shifts the fields and is then discarded. Recording
+        // the offset here would make the same timestamp compare unequal across the two
+        // languages.
+        let expected = if r[4] == "none" { None } else { Some(i(&r[4])) };
+        assert_eq!(
+            d.offsetMinutes(),
+            expected,
+            "offsetMinutes for {millis} at {off}"
+        );
+    }
+}
+
+#[test]
+fn file_reading_path_matches_at_a_set_mtime() {
+    // The generator *sets* each mtime, so this is deterministic. Whole seconds only: mtime
+    // granularity varies by filesystem, and a sub-second value would round differently per
+    // host.
+    //
+    // The only test here that touches the filesystem, and what distinguishes a fixture over the
+    // conversion arithmetic from one over the whole `lastModified` path. No offset: file
+    // timestamps are UTC in both languages.
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../test-data/date-parity/inputs");
+    let ctx = std::sync::Arc::new(PathContext::synthetic(
+        &[],
+        UserInfo::new("tester", "/tmp", "/tmp"),
+        cfg!(windows),
+    ));
+    for r in of_kind("mtime") {
+        let file = dir.join(&r[1]);
+        assert!(file.is_file(), "missing fixture input {file:?}");
+        let p = UPath::resolve(&ctx, &file.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_else(|e| panic!("cannot resolve {file:?}: {e}"));
+        assert_eq!(p.lastModified().to_string(), r[2], "lastModified of {}", r[1]);
+        assert_eq!(
+            p.lastModifiedTime().to_string(),
+            unesc(&r[3]),
+            "lastModifiedTime of {}",
+            r[1]
+        );
+        assert_eq!(
+            p.lastModifiedYMD(),
+            unesc(&r[4]),
+            "lastModifiedYMD of {}",
+            r[1]
+        );
+        assert_eq!(p.weekDay().to_string(), r[5], "weekDay of {}", r[1]);
+        assert_eq!(p.weekDayName(), r[6], "weekDayName of {}", r[1]);
+    }
+}
+
 #[test]
 fn offset_extraction_matches_including_anchoring() {
     for r in of_kind("offset") {
@@ -280,9 +367,9 @@ fn offset_extraction_matches_including_anchoring() {
             Some(i(&r[2]))
         };
         assert_eq!(
-            UniDateTime::offset_minutes_of(&text),
+            UniDateTime::offsetMinutesOf(&text),
             expected,
-            "offset_minutes_of [{text}]"
+            "offsetMinutesOf [{text}]"
         );
     }
 }
@@ -292,12 +379,12 @@ fn offset_validity_and_rendering_match() {
     for r in of_kind("offsettext") {
         let o = i(&r[1]);
         assert_eq!(
-            UniDateTime::is_valid_offset(o).to_string(),
+            UniDateTime::isValidOffset(o).to_string(),
             r[2],
-            "is_valid_offset({o})"
+            "isValidOffset({o})"
         );
-        let d = UniDateTime::of_full(2024, 5, 12, 14, 30, 0, 0, Some(o));
-        assert_eq!(d.offset_text(), unesc(&r[3]), "offset_text for {o}");
+        let d = UniDateTime::ofFull(2024, 5, 12, 14, 30, 0, 0, Some(o));
+        assert_eq!(d.offsetText(), unesc(&r[3]), "offsetText for {o}");
         assert_eq!(d.to_string(), unesc(&r[4]), "to_string for offset {o}");
     }
 }

@@ -1,6 +1,6 @@
 //! CSV → matrix bridge — a port of `uni.io.FileOps.loadSmart` and friends.
 //!
-//! [`UPath::csv_rows`](crate::upath::UPath::csv_rows) already returns rectangular
+//! [`UPath::csvRows`](crate::upath::UPath::csvRows) already returns rectangular
 //! rows, so this layer only has to choose a shape, decide whether row 0 is a header,
 //! and parse cells. The result is an [`Array2`], which is what `t3prf` already speaks
 //! — so a matrix read here feeds the 3PRF port with no conversion at the seam.
@@ -12,6 +12,15 @@
 //! rely on, so [`CsvCell`] reproduces it: parsing is total, and a cell that makes no
 //! sense becomes [`CsvCell::missing`]. Structural failures (no such file) are still
 //! errors, and still reported by the `try_` layer.
+
+#![allow(
+    non_snake_case,
+    reason = "public methods mirror the Scala API name-for-name, so a script kept in \
+              both languages needs no mental translation -- the same reason windows-rs \
+              spells Win32 functions SetEvent rather than set_event. Internal helpers \
+              and Rust trait contracts stay snake_case, so the case says whether a \
+              Scala counterpart exists."
+)]
 
 use ndarray::Array2;
 use ndarray::ArrayView1;
@@ -245,7 +254,7 @@ impl UPath {
 
     /// Every content row as data; an empty matrix when unreadable.
     #[must_use]
-    pub fn read_csv<T: CsvCell>(&self) -> Array2<T> {
+    pub fn readCsv<T: CsvCell>(&self) -> Array2<T> {
         self.try_read_csv().unwrap_or_else(|_| empty_matrix(0))
     }
 
@@ -260,7 +269,7 @@ impl UPath {
     /// Data plus column names; empty when unreadable.
     #[must_use]
     pub fn read_csv_smart<T: CsvCell>(&self) -> CsvTable<T> {
-        table_of(self.csv_rows())
+        table_of(self.csvRows())
     }
 
     /// Writes a matrix as CSV, one row per line.

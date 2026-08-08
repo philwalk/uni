@@ -6,14 +6,82 @@ bumps it. This one does both: `ChronoParse` and `parseDateChrono` are gone; `has
 returns a different value for any file of 64 bytes or more; `relpath` returns a relative
 path where it returned an absolute one; `toString` rejects a pattern it used to accept
 (capital `Y`); `posx` strips every trailing separator rather than one; `standardizePath`
-resolves against the config's working directory rather than the JVM's; and `DateFormat`
-renders month names in English regardless of locale. Bigger than any of those: the date
-type moved off `java.time` (below).
+resolves against the config's working directory rather than the JVM's; `DateFormat`
+renders month names in English regardless of locale; file timestamps render in UTC where
+they rendered in system-local time; and `Path.weekDay` returns an `Int` rather than a
+`java.time.DayOfWeek`. Bigger than any of those: the date type moved off `java.time`
+(below).
 
 `posixAbs`/`posixRel` are **deprecated as of** this release -- `"0.16.0"` is the `since`
 argument of `@deprecated`, not a removal target. They still work; removal is a later
 release.
 
+
+**BEHAVIOUR — file timestamps are now UTC, and timezone is gone from that API**
+
+- `lastModifiedTime` and `lastModifiedYMD` render in **UTC**. They used
+  `ZoneId.systemDefault()`, which no port outside the JVM can reproduce: Rust's `std` has no
+  timezone database and no way to read the local offset. The alternative was an offset
+  parameter on every call — a value almost no caller has an opinion about, since a file
+  timestamp is used either for *comparison*, where any consistent offset cancels, or for
+  *display*, where machine-independence is an advantage.
+- **This changes printed output.** Measured across the 166-script corpus: `lastModifiedYMD` and
+  `weekDay` had **zero** callers, and of eight `lastModifiedTime` callers three are pure
+  comparisons (`parquetTableStatus` `maxByOption`, `fyoSourceCopy`'s `sd`/`dd`) where the offset
+  cancels. So **three** sites print a value shifted by the local offset: `fidgrab.sc` (an
+  `_HH-mm` filename label) and `fidPdf2txt.sc` twice.
+- It also removed an inconsistency already present: `epoch2DateTime` has always defaulted to
+  `UTC`, so `p.epoch2DateTime(p.lastModified)` and `p.lastModifiedTime` disagreed by the local
+  offset for the same file, in the same extension block. They now agree, and a parity test
+  asserts it.
+- Local time needs no API — it is one explicit call:
+  `p.epoch2DateTime(p.lastModified, ZoneId.systemDefault())`.
+- `lastModifiedYMD` also stopped constructing a `SimpleDateFormat` per call. That class is not
+  thread-safe, and it was the reason this rendered local time in the first place.
+
+**API — weekday off `java.time`, and the abbreviation it was missing**
+
+- `Path.weekDay` returns `Int` (1 = Monday .. 7 = Sunday) rather than `java.time.DayOfWeek`.
+  Same numbering, so nothing is lost, and it becomes portable. Zero corpus callers.
+- New: `UniDateTime.dayOfWeekName` (`"Mon"`..`"Sun"`), `dayOfWeekFull` (`"Monday"`..), and
+  `Path.weekDayName`. This is the form client code was hand-rolling as
+  `getDisplayName(TextStyle.SHORT, Locale.ENGLISH)` — several scripts wrap exactly that in a
+  local `dow` helper. The explicit `Locale` there is load-bearing: without it the same script
+  yields `lun.` on a French machine. These are English by construction.
+- Two vacuous assertions surfaced when the type changed: `assert(p.weekDay != null)` was always
+  true for a `DayOfWeek`. Now range checks.
+- Fixed a comment in `DateFormat` claiming `dayNames` was Sunday-first; the data has always
+  been Monday-first, which is what the `dayOfWeek - 1` indexing requires.
+
+**RUST — file timestamps ported to `upath::times`**
+
+- `lastModified`, `lastModMillisAgo`, the four `lastMod*Ago` values, `lastModifiedTime`,
+  `lastModifiedYMD`, `weekDay`, `weekDayName`, `newerThan`, `olderThan`, plus `epoch2DateTime`
+  and `agoFromMillis`.
+- The `Ago` arithmetic is split from the clock read, which is what makes it testable. It also
+  had to be transcribed *exactly*: the Scala rounds at every step on an already-rounded value,
+  so `daysAgo` is not `round(millis / 86_400_000, 6)`. Measured over 200k realistic file ages,
+  the chained and direct forms disagree for **2.0% of inputs**, always by one unit in the sixth
+  decimal — and since these read the clock, no fixture could catch a regression.
+- Fixed a sign bug found while documenting: `SystemTime::duration_since` returns `Err` when the
+  receiver is *earlier*, so the obvious `.ok().unwrap_or(0)` reported a pre-1970 file as the
+  epoch. Java returns a negative value there. Now handled by `millisOf`, which measures the
+  other way on the error branch.
+- The `lastMod*Ago` aliases are deliberately absent: they add names, not capability.
+
+**RUST — public method names now match the Scala spelling**
+
+- `baseName`, `plusDays`, `lastModifiedTime` rather than snake_case, under a **module-scoped**
+  `#![allow(non_snake_case)]` — no crate-root allow, so `t3prf` and `numpy_rng` keep the lint.
+  The precedent is `windows-rs`, which spells Win32 functions `SetEvent` rather than
+  `set_event`: the documented API is the contract, and here that contract is the Scala one.
+- 63 methods CamelCase, 326 snake_case. Internal helpers and Rust trait contracts
+  (`Display::fmt`, `cmp`) stay snake_case, so **the case says whether a Scala counterpart
+  exists**. Where Rust cannot overload or default an argument, one Scala member becomes several
+  with a suffix — `ofFull`, `ofYmd`, `isValidFields` — and those keep CamelCase, being API
+  rather than internals.
+- `is_file` was the only name colliding with a `std` method, so it was renamed by hand:
+  `UPath::isFile` now sits directly above a preserved `self.as_std_path().is_file()`.
 
 **RUST — `uni.time` ported to `rust/src/utime/`**
 
@@ -130,6 +198,16 @@ is exactly the failure just fixed. A test asserts the headroom.
   ambiguous.
 - `UniScriptingTools.md` and `PathIOReference.md` corrected for the new date type, and
   `PathIOReference.md` gained a table of which subsystems have Rust counterparts.
+- `MatDCheatSheet.md` verified rather than read: every MatD expression in its API tables was
+  extracted and compiled (148/148 type-check, 6/6 code blocks compile). That found three
+  errors -- its "From rows (Seq)" row invited `Seq[Seq[Double]]`, which `toMat`/`fromRows`
+  do **not** accept (only `Seq[Array[T]]`); `show` returns the rendering rather than printing
+  it, so the documented `m.show` on its own line outputs nothing; and the documented
+  `println(m)` cannot compile in a script that shadows `println` to a `String`-only signature,
+  as the CR-free output convention requires. All three now documented, with `println(m.show)`
+  and `println(s"$m")` as the working forms.
+- `PathIOReference.md` and `DateTimeParser.md` updated for the UTC timestamp decision, the
+  weekday changes, `upath::times`, and the Rust CamelCase naming convention.
 
 **BUG — ragged CSV rows were silently discarded, sometimes almost all of them (`FileOps.scala`)**
 

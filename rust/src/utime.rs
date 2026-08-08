@@ -33,4 +33,4 @@ pub mod format;
 
 pub use datetime::UniDateTime;
 pub use format::FormatError;
-pub use format::day_of_week;
+pub use format::dayOfWeek;

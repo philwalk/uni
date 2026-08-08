@@ -24,6 +24,11 @@
 //! - [`context`] — resolution inputs: mount maps, user, per-drive cwd.
 //! - [`resolve`] — the algorithm: classify, then translate either direction.
 
+#![allow(
+    non_snake_case,
+    reason = "public items mirror the Scala API name-for-name, so a script kept in both \n              languages needs no mental translation -- the same reason windows-rs spells \n              Win32 functions SetEvent rather than set_event. Internal helpers and Rust \n              trait contracts stay snake_case, so the case says whether a Scala \n              counterpart exists."
+)]
+
 pub mod context;
 pub mod csv;
 pub mod delim;
@@ -34,6 +39,7 @@ pub mod io;
 pub mod mount;
 pub mod resolve;
 pub mod strext;
+pub mod times;
 
 pub use context::DriveCwdSource;
 pub use context::PathContext;
@@ -45,6 +51,9 @@ pub use delim::DelimState;
 pub use matcsv::CsvCell;
 pub use matcsv::CsvTable;
 pub use ext::UPath;
+pub use times::Ago;
+pub use times::agoFromMillis;
+pub use times::epoch2DateTime;
 pub use hash::Cksum;
 pub use hash::CksumResult;
 pub use hash::Hash64;
@@ -232,6 +241,6 @@ pub(crate) fn normalize_posix(p: &str) -> String {
 /// case-preserving; technically wrong on Linux. Load-bearing on two of the three
 /// platforms, so it is ported as-is rather than "fixed".
 #[must_use]
-pub(crate) fn starts_with_ignore_case(s: &str, prefix: &str) -> bool {
+pub(crate) fn startsWithIgnoreCase(s: &str, prefix: &str) -> bool {
     s.len() >= prefix.len() && s[..prefix.len()].eq_ignore_ascii_case(prefix)
 }

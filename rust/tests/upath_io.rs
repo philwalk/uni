@@ -46,7 +46,7 @@ fn write_then_read_round_trips() {
     assert!(p.write("hello\nworld\n"));
     assert_eq!(p.content_string(), "hello\nworld\n");
     assert_eq!(p.lines(), vec!["hello", "world"]);
-    assert_eq!(p.first_line(), "hello");
+    assert_eq!(p.firstLine(), "hello");
     assert_eq!(p.bytes().len(), 12);
 }
 
@@ -58,7 +58,7 @@ fn write_lines_appends_a_trailing_newline() {
     let c = ctx(dir.path());
     let p = at(&c, "lines.txt");
 
-    assert!(p.write_lines(&["a", "b"]));
+    assert!(p.writeLines(&["a", "b"]));
     assert_eq!(p.content_string(), "a\nb\n");
     // And the trailing newline does not produce a phantom empty last line.
     assert_eq!(p.lines(), vec!["a", "b"]);
@@ -70,7 +70,7 @@ fn write_lines_uses_lf_on_every_platform() {
     let c = ctx(dir.path());
     let p = at(&c, "endings.txt");
 
-    p.write_lines(&["x", "y"]);
+    p.writeLines(&["x", "y"]);
     assert!(!p.bytes().contains(&b'\r'), "must not emit CR");
 }
 
@@ -100,12 +100,12 @@ fn missing_file_is_empty_but_try_reports_why() {
     assert_eq!(p.content_string(), "");
     assert_eq!(p.lines(), Vec::<String>::new());
     assert_eq!(p.bytes(), Vec::<u8>::new());
-    assert_eq!(p.first_line(), "");
+    assert_eq!(p.firstLine(), "");
 
     let err = p.try_bytes().expect_err("missing file should error");
     assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
     assert!(p.try_lines().is_err());
-    assert!(!p.is_file());
+    assert!(!p.isFile());
 }
 
 #[test]
@@ -133,14 +133,14 @@ fn each_line_visits_every_line_and_tolerates_a_missing_file() {
     let dir = temp_dir();
     let c = ctx(dir.path());
     let p = at(&c, "each.txt");
-    p.write_lines(&["1", "2", "3"]);
+    p.writeLines(&["1", "2", "3"]);
 
     let mut seen = Vec::new();
-    p.each_line(|l| seen.push(l.to_owned()));
+    p.eachLine(|l| seen.push(l.to_owned()));
     assert_eq!(seen, vec!["1", "2", "3"]);
 
     let mut none = 0;
-    at(&c, "gone.txt").each_line(|_| none += 1);
+    at(&c, "gone.txt").eachLine(|_| none += 1);
     assert_eq!(none, 0);
 }
 

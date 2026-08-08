@@ -151,7 +151,7 @@ object DateParityGen:
 
     // Field-level predicates and the calendar.
     for d <- moments do
-      out += s"dow\t${key(d)}\t${DateFormat.dayOfWeek(d.year, d.month, d.day)}"
+      out += s"dow\t${key(d)}\t${DateFormat.dayOfWeek(d.year, d.month, d.day)}\t${d.dayOfWeekName}\t${d.dayOfWeekFull}"
       out += s"epochday\t${key(d)}\t${d.toEpochDay}"
       out += s"valid\t${key(d)}\t${UniDateTime.isValid(d.year, d.month, d.day, d.hour, d.minute, d.second, d.nano)}"
 
@@ -180,6 +180,41 @@ object DateParityGen:
     // Sentinels absorb everything.
     for s <- Seq(BadDate, EmptyDate); (name, op) <- shiftOps do
       out += s"sentinel\t${key(s)}\t$name\t${esc(op(s, 1L).toString)}"
+
+    // `helpers.round(_, 6)`, the primitive the file-age chain is built on. Pinned here
+    // because the `lastMod*Ago` methods themselves read the clock and so cannot be.
+    for v <- Seq(0.0, 1.0, 1.23456749, 1.2345675, -1.2345675, 0.0000005, 1e-9, 138.9093575,
+                 1234567.891234567, -0.5e-6) do
+      out += s"round6\t$v\t${uni.round(v, 6)}"
+
+    // `epoch2DateTime` at fixed offsets. Fixed offsets rather than named zones on purpose:
+    // a zone name needs a timezone database, which the Rust port has no way to consult, and a
+    // system-default zone would make the fixture depend on where it was generated.
+    for millis <- Seq(0L, 1L, -1L, 1000L, -1000L, 86400000L, -86400000L,
+                      1715524200000L, 1715524200123L, -2208988800000L, 253402300799000L)
+        offMin <- Seq(0, -420, 330, 720, -720)
+    do
+      val z = java.time.ZoneOffset.ofTotalSeconds(offMin * 60)
+      val d = TimeUtils.epoch2DateTime(millis, z)
+      out += s"epochconv\t$millis\t$offMin\t${esc(d.toString)}\t${d.offsetMinutes.map(_.toString).getOrElse("none")}"
+
+    // The file-reading path, with a **set** mtime so it is deterministic. Setting the
+    // timestamp is what makes this fixturable at all -- reading whatever an arbitrary file
+    // happens to carry would not be.
+    //
+    // No offset column: file timestamps are UTC in both languages, so there is nothing to
+    // vary. That is the whole point of removing the zone from this API.
+    //
+    // Whole seconds only: mtime granularity varies by filesystem (FAT 2s, ext4 ns, NTFS
+    // 100ns), so a sub-second value would round differently per host and the fixture would
+    // fail somewhere other than where it was generated.
+    val mtimeDir = Paths.get("test-data/date-parity/inputs")
+    java.nio.file.Files.createDirectories(mtimeDir)
+    for millis <- Seq(0L, 1000L, -86400000L, 1715524200000L, 946684800000L) do
+      val f = mtimeDir.resolve(s"mtime_$millis.txt")
+      java.nio.file.Files.write(f, s"mtime fixture $millis\n".getBytes(java.nio.charset.StandardCharsets.UTF_8))
+      java.nio.file.Files.setLastModifiedTime(f, java.nio.file.attribute.FileTime.fromMillis(millis))
+      out += s"mtime\t${f.getFileName}\t${f.lastModified}\t${esc(f.lastModifiedTime.toString)}\t${esc(f.lastModifiedYMD)}\t${f.weekDay}\t${f.weekDayName}"
 
     // Offset extraction and rendering.
     for t <- offsetTexts do

@@ -109,7 +109,7 @@ fn evaluate(ctx: &PathContext, field: &str, input: &str) -> String {
         "posixabs" => render(posix_abs(ctx, input)),
         // Pure `String` extensions — no context, so they need no `UPath`.
         "strposx" => input.posx(),
-        "dropsuffix" => input.drop_suffix().to_owned(),
+        "dropsuffix" => input.dropSuffix().to_owned(),
         "drivecwd" => {
             let drive = input.chars().next().unwrap_or('?');
             render(ctx.drive_cwd(drive))
@@ -125,12 +125,12 @@ fn evaluate(ctx: &PathContext, field: &str, input: &str) -> String {
                 "posx" => p.posx().to_owned(),
                 "local" | "localpath" => p.localpath(),
                 "dospath" => p.dospath(),
-                "nodrive" => p.no_drive().to_owned(),
+                "nodrive" => p.noDrive().to_owned(),
                 "last" => render(p.last().map(str::to_owned)),
-                "basename" => render(p.base_name().map(str::to_owned)),
+                "basename" => render(p.baseName().map(str::to_owned)),
                 "ext" => render(p.ext().map(str::to_owned)),
                 "dotsuffix" => render(p.dotsuffix().map(str::to_owned)),
-                "revpath" => p.reverse_path(),
+                "revpath" => p.reversePath(),
                 "segments" => p.segments().join(","),
                 "relpath" => p.relpath(),
                 "posix" => render(p.posix()),

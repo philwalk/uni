@@ -16,7 +16,7 @@ use crate::upath::PathError;
 use crate::upath::join_posix;
 use crate::upath::no_trailing_slash;
 use crate::upath::normalize_posix;
-use crate::upath::starts_with_ignore_case;
+use crate::upath::startsWithIgnoreCase;
 use crate::upath::strip_trailing_slash;
 
 /// The five Windows path shapes, plus root and the reject case.
@@ -351,7 +351,7 @@ pub fn posix_rel(ctx: &PathContext, raw: &str) -> Result<String, PathError> {
         return Ok(".".to_owned());
     }
     let with_slash = format!("{cwd}/");
-    if starts_with_ignore_case(&abs, &with_slash) {
+    if startsWithIgnoreCase(&abs, &with_slash) {
         return Ok(abs[with_slash.len()..].to_owned());
     }
     Ok(abs)

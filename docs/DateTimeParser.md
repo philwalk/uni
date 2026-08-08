@@ -109,6 +109,9 @@ d.plusDays(7); d.minusWeeks(2); d.plusMonths(1); d.plusYears(1)
 d.withDayOfMonth(1); d.withHour(0)
 d.atStartOfDay(); d.lastDayOfMonth
 d.withDayOfWeek(java.time.DayOfWeek.FRIDAY)   // the NEXT such day
+d.dayOfWeekNum                                 // 1 = Monday .. 7 = Sunday
+d.dayOfWeekName                                // "Sun"    (three-letter, always English)
+d.dayOfWeekFull                                // "Sunday"
 d.toEpochDay                                   // days since 1970-01-01
 DateTime.ofInstant(inst)
 UniDateTime.ofEpochDay(19800)
@@ -117,6 +120,12 @@ UniDateTime.ofEpochDay(19800)
 Month arithmetic clamps to the shorter month, as `java.time` does: January 31st plus one month is February 28th or 29th. An impossible result yields `BadDate` rather than throwing.
 
 Comparison uses local fields: `<`, `<=`, `>`, `>=`, `isBefore`, `isAfter`, and an `Ordering[UniDateTime]` so `Seq[DateTime].sorted` works.
+
+`dayOfWeekName` is the form most code actually wants, and replaces a hand-rolled
+`getDisplayName(TextStyle.SHORT, Locale.ENGLISH)`. The explicit `Locale` in that idiom is
+load-bearing: without it `getDisplayName` follows the JVM default and the same script yields
+`lun.` on a French machine. These are English by construction, so there is nothing to get
+wrong — and nothing to make the output depend on the host.
 
 Interval helpers take dates in either representation: `daysBetween`, `secondsBetween`, `minutesBetween`, `hoursBetween`, `elapsedDays`, `getDuration`, `endOfMonth`.
 
@@ -244,6 +253,18 @@ The same applies to `Option[LocalDateTime]`, an explicit `Ordering[LocalDateTime
 | :--- | :--- |
 | `uni.time.UniDateTime` | `utime::datetime::UniDateTime` |
 | `uni.time.DateFormat` | `utime::format` |
+| `Path.lastModifiedTime`, `.lastMod*Ago` | `upath::times` |
+
+**Method names match the Scala spelling** — `plusDays`, `dayOfWeekName`, `lastModifiedTime` —
+not snake_case, so a script kept in both languages needs no mental translation. Internal
+helpers stay snake_case, which means the case tells you whether a Scala counterpart exists.
+See `docs/PathIOReference.md` for the full rule.
+
+File timestamps are **UTC** on both sides, with no zone or offset parameter. That was the one
+place the two languages could not have matched: `std` has no timezone database, so a
+system-local `lastModifiedTime` was unreproducible. Defining it as UTC removed the problem
+rather than working around it, and incidentally fixed a Scala inconsistency — `epoch2DateTime`
+had always defaulted to UTC while `lastModifiedTime` used the system zone.
 
 Same fields, same validation, same sentinels (day 0, `<BadDate>`), same epoch-day arithmetic —
 and **no date-library dependency**, which was the point of decoupling the Scala type in the

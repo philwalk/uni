@@ -22,6 +22,15 @@
 //! [`Charset`] is `#[non_exhaustive]` so a real encoding table can be added later
 //! without breaking callers.
 
+#![allow(
+    non_snake_case,
+    reason = "public methods mirror the Scala API name-for-name, so a script kept in \
+              both languages needs no mental translation -- the same reason windows-rs \
+              spells Win32 functions SetEvent rather than set_event. Internal helpers \
+              and Rust trait contracts stay snake_case, so the case says whether a \
+              Scala counterpart exists."
+)]
+
 use std::fs;
 use std::io;
 use std::io::BufRead;
@@ -92,7 +101,9 @@ impl UPath {
     /// True when this names an existing regular file — the guard every read in
     /// `PathExts` starts with.
     #[must_use]
-    pub fn is_file(&self) -> bool {
+    pub fn isFile(&self) -> bool {
+        // The inner call is `std::path::Path::is_file`, deliberately left snake_case: it is
+        // Rust's method, not a mirror of a Scala one.
         self.as_std_path().is_file()
     }
 
@@ -156,7 +167,7 @@ impl UPath {
 
     /// First line, or empty. `PathExts.firstLine`.
     #[must_use]
-    pub fn first_line(&self) -> String {
+    pub fn firstLine(&self) -> String {
         self.lines().into_iter().next().unwrap_or_default()
     }
 
@@ -172,7 +183,7 @@ impl UPath {
     }
 
     /// Applies `f` to every line, doing nothing when unreadable.
-    pub fn each_line(&self, mut f: impl FnMut(&str)) {
+    pub fn eachLine(&self, mut f: impl FnMut(&str)) {
         for line in self.lines() {
             f(&line);
         }
@@ -211,7 +222,7 @@ impl UPath {
     }
 
     /// Writes each line with a trailing newline; `false` when it failed.
-    pub fn write_lines<S: AsRef<str>>(&self, lines: &[S]) -> bool {
+    pub fn writeLines<S: AsRef<str>>(&self, lines: &[S]) -> bool {
         self.try_write_lines(lines).is_ok()
     }
 }

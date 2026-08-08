@@ -24,6 +24,15 @@
 //! - **A quote that does not close a field is literal.** `a"b` is three characters,
 //!   not a parse error.
 
+#![allow(
+    non_snake_case,
+    reason = "public methods mirror the Scala API name-for-name, so a script kept in \
+              both languages needs no mental translation -- the same reason windows-rs \
+              spells Win32 functions SetEvent rather than set_event. Internal helpers \
+              and Rust trait contracts stay snake_case, so the case says whether a \
+              Scala counterpart exists."
+)]
+
 use std::fs;
 use std::io;
 use std::io::BufWriter;
@@ -484,15 +493,15 @@ impl UPath {
     /// All rows, rectangular; empty when unreadable.
     ///
     /// This is the one form guaranteed rectangular — it reads the whole file, so it
-    /// knows the true width. [`UPath::csv_rows_stream`] only knows its window.
+    /// knows the true width. [`UPath::csvRowsStream`] only knows its window.
     #[must_use]
-    pub fn csv_rows(&self) -> Vec<Vec<String>> {
+    pub fn csvRows(&self) -> Vec<Vec<String>> {
         self.try_csv_rows().unwrap_or_default()
     }
 
     /// Streams rows, yielding nothing when unreadable.
     #[must_use]
-    pub fn csv_rows_stream(&self) -> Box<dyn Iterator<Item = Vec<String>>> {
+    pub fn csvRowsStream(&self) -> Box<dyn Iterator<Item = Vec<String>>> {
         match self.try_csv_rows_stream(&CsvConfig::default()) {
             Ok(rows) => Box::new(rows),
             Err(_) => Box::new(std::iter::empty()),
@@ -513,7 +522,7 @@ impl UPath {
     }
 
     /// Writes rows as CSV; `false` when it failed.
-    pub fn write_csv<S: AsRef<str>>(&self, rows: &[Vec<S>]) -> bool {
+    pub fn writeCsv<S: AsRef<str>>(&self, rows: &[Vec<S>]) -> bool {
         self.try_write_csv(rows).is_ok()
     }
 }

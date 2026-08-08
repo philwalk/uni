@@ -48,8 +48,8 @@ fn write_then_read_round_trips() {
     let p = at(&c, "round.csv");
 
     let data = rows(&[&["a", "b"], &["1", "2"]]);
-    assert!(p.write_csv(&data));
-    assert_eq!(p.csv_rows(), data);
+    assert!(p.writeCsv(&data));
+    assert_eq!(p.csvRows(), data);
 }
 
 #[test]
@@ -65,8 +65,8 @@ fn awkward_fields_survive_a_round_trip() {
         &["plain", "a,b", "say \"hi\"", " padded "],
         &["x", "line\nbreak", "semi;colon", "tab\there"],
     ]);
-    assert!(p.write_csv(&data));
-    assert_eq!(p.csv_rows(), data);
+    assert!(p.writeCsv(&data));
+    assert_eq!(p.csvRows(), data);
 }
 
 #[test]
@@ -74,7 +74,7 @@ fn written_files_use_lf_on_every_platform() {
     let dir = temp_dir();
     let c = ctx(dir.path());
     let p = at(&c, "endings.csv");
-    p.write_csv(&rows(&[&["a", "b"], &["c", "d"]]));
+    p.writeCsv(&rows(&[&["a", "b"], &["c", "d"]]));
     assert!(!p.bytes().contains(&b'\r'), "must not emit CR");
 }
 
@@ -84,8 +84,8 @@ fn a_missing_file_reads_as_empty_but_try_reports_why() {
     let c = ctx(dir.path());
     let p = at(&c, "absent.csv");
 
-    assert_eq!(p.csv_rows(), Vec::<Vec<String>>::new());
-    assert_eq!(p.csv_rows_stream().count(), 0);
+    assert_eq!(p.csvRows(), Vec::<Vec<String>>::new());
+    assert_eq!(p.csvRowsStream().count(), 0);
     let err = p.try_csv_rows().expect_err("missing file should error");
     assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
 }
@@ -102,7 +102,7 @@ fn the_delimiter_is_sniffed_from_the_file() {
     ] {
         let p = at(&c, name);
         p.write(text);
-        assert_eq!(p.csv_rows()[0], want, "sniffing failed for {name}");
+        assert_eq!(p.csvRows()[0], want, "sniffing failed for {name}");
     }
 }
 
@@ -127,7 +127,7 @@ fn a_directory_is_not_readable_as_csv() {
     let dir = temp_dir();
     let c = ctx(dir.path());
     let p = at(&c, ".");
-    assert_eq!(p.csv_rows(), Vec::<Vec<String>>::new());
+    assert_eq!(p.csvRows(), Vec::<Vec<String>>::new());
     assert!(p.try_csv_rows().is_err());
 }
 
@@ -137,12 +137,12 @@ fn an_empty_file_yields_no_rows_rather_than_one_blank_one() {
     let c = ctx(dir.path());
     let p = at(&c, "empty.csv");
     p.write("");
-    assert_eq!(p.csv_rows(), Vec::<Vec<String>>::new());
+    assert_eq!(p.csvRows(), Vec::<Vec<String>>::new());
 
     // And a file of nothing but blank lines is equally empty.
     let q = at(&c, "blanks.csv");
     q.write("\n\n   \n");
-    assert_eq!(q.csv_rows(), Vec::<Vec<String>>::new());
+    assert_eq!(q.csvRows(), Vec::<Vec<String>>::new());
 }
 
 #[test]
@@ -150,7 +150,7 @@ fn writing_zero_rows_produces_an_empty_file() {
     let dir = temp_dir();
     let c = ctx(dir.path());
     let p = at(&c, "none.csv");
-    assert!(p.write_csv::<String>(&[]));
+    assert!(p.writeCsv::<String>(&[]));
     assert_eq!(p.bytes().len(), 0);
-    assert_eq!(p.csv_rows(), Vec::<Vec<String>>::new());
+    assert_eq!(p.csvRows(), Vec::<Vec<String>>::new());
 }

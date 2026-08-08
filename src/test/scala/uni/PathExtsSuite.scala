@@ -342,7 +342,10 @@ class PathExtsSuite extends FunSuite:
 
   test("weekDay: returns non-null day of week") {
     val p = tempFile("ts")
-    assert(p.weekDay != null)
+    // 1 = Monday .. 7 = Sunday. An actual range check: the previous `!= null` was
+    // vacuously true for the `DayOfWeek` this used to return.
+    assert(p.weekDay >= 1 && p.weekDay <= 7, s"weekDay was ${p.weekDay}")
+    assert(p.weekDayName.length == 3, s"weekDayName was [${p.weekDayName}]")
   }
 
   test("ageInDays: freshly created file age is < 1 day") {
@@ -714,7 +717,8 @@ class PathExtsSuite extends FunSuite:
 
   test("JFile.weekDay: returns non-null") {
     val f = tempJFile("ts")
-    assert(f.weekDay != null)
+    assert(f.weekDay >= 1 && f.weekDay <= 7, s"weekDay was ${f.weekDay}")
+    assert(f.weekDayName.length == 3, s"weekDayName was [${f.weekDayName}]")
   }
 
   test("JFile.hash64: returns non-empty string") {

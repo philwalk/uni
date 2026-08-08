@@ -3,7 +3,7 @@ package uni
 import java.nio.charset.{Charset, StandardCharsets}
 import java.io.{File as JFile, PrintWriter}
 import java.nio.file.{Path, Files, StandardCopyOption}
-import java.time.{DayOfWeek, ZoneId}
+import java.time.ZoneId
 import uni.time.UniDateTime
 import StandardCharsets.{UTF_8, ISO_8859_1 as Latin1}
 import scala.jdk.CollectionConverters.*
@@ -275,26 +275,47 @@ object pathExts {
     /** Alias for lastModDaysAgo. pallet compat: p.ageInDays */
     def ageInDays: Double = lastModDaysAgo
 
-    def lastModifiedYMD: String = {
-      val date   = new java.util.Date(p.toFile.lastModified)
-      val ymdHms = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
-      ymdHms.format(date)
-    }
-
-    /** A [[uni.time.UniDateTime]], in step with the rest of the date surface.
+    /** The file's last-modified time as `yyyy-MM-dd HH:mm:ss`, in **UTC**.
      *
-     *  A file timestamp gets compared and combined with parsed dates constantly, and two
-     *  date types meeting in one expression infers the union `LocalDateTime | UniDateTime`,
-     *  which no position accepts and no conversion repairs.
+     *  See [[lastModifiedTime]] on why UTC. Also no longer goes through `SimpleDateFormat`,
+     *  which is not thread-safe and was being constructed per call.
      */
-    def lastModifiedTime: UniDateTime = {
-      UniDateTime.ofInstant(
-        java.time.Instant.ofEpochMilli(p.toFile.lastModified),
-        ZoneId.systemDefault()
-      )
-    }
+    def lastModifiedYMD: String = lastModifiedTime.ymdhms
 
-    def weekDay: DayOfWeek = lastModifiedTime.getDayOfWeek
+    /** The file's last-modified time, in **UTC**.
+     *
+     *  A [[uni.time.UniDateTime]], in step with the rest of the date surface: a file timestamp
+     *  gets compared and combined with parsed dates constantly, and two date types meeting in
+     *  one expression infers the union `LocalDateTime | UniDateTime`, which no position accepts
+     *  and no conversion repairs.
+     *
+     *  # Why UTC rather than system-local
+     *
+     *  This used `ZoneId.systemDefault()`, which cannot be reproduced outside the JVM: Rust's
+     *  `std` has no timezone database and no way to read the local offset. The alternative was
+     *  an offset parameter on every call -- a value nearly every caller does not care about,
+     *  since a file timestamp is used for *comparison* (where any consistent offset cancels)
+     *  or for *display* (where being machine-independent is an advantage, not a cost).
+     *
+     *  It also removes an inconsistency that was already here: `epoch2DateTime` has always
+     *  defaulted to `UTC`, so `p.epoch2DateTime(p.lastModified)` and `p.lastModifiedTime`
+     *  disagreed by the local offset for the same file. They now agree.
+     *
+     *  Local time is still one explicit call away and needs no API of its own:
+     *  {{{ p.epoch2DateTime(p.lastModified, ZoneId.systemDefault()) }}}
+     */
+    def lastModifiedTime: UniDateTime = epoch2DateTime(p.toFile.lastModified)
+
+    /** Day of the week of last modification, in UTC: 1 = Monday .. 7 = Sunday.
+     *
+     *  An `Int` rather than a `java.time.DayOfWeek`. That is a deliberate move off `java.time`
+     *  — the numbering is the same, so nothing is lost, and the method becomes portable. Safe
+     *  to change: measured across the 166-script corpus, `weekDay` had zero callers.
+     */
+    def weekDay: Int = lastModifiedTime.dayOfWeekNum
+
+    /** Three-letter weekday abbreviation of last modification, in UTC: `Mon` .. `Sun`. */
+    def weekDayName: String = lastModifiedTime.dayOfWeekName
 
     def epoch2DateTime(epoch: Long, timezone: ZoneId = UTC): UniDateTime = {
       UniDateTime.ofInstant(java.time.Instant.ofEpochMilli(epoch), timezone)
@@ -539,7 +560,8 @@ object pathExts {
     def ageInDays: Double         = f.toPath.ageInDays
     def lastModifiedYMD: String   = f.toPath.lastModifiedYMD
     def lastModifiedTime: UniDateTime = f.toPath.lastModifiedTime
-    def weekDay: DayOfWeek        = f.toPath.weekDay
+    def weekDay: Int              = f.toPath.weekDay
+    def weekDayName: String       = f.toPath.weekDayName
 
     // ---- age comparisons ----
     def newerThan(other: Path): Boolean = f.toPath.newerThan(other)

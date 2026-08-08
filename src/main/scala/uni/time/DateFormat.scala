@@ -47,7 +47,9 @@ object DateFormat:
     "January", "February", "March", "April", "May", "June",
     "July", "August", "September", "October", "November", "December")
 
-  /** Sunday-first, matching `java.time`'s `EEE` output for `DayOfWeek`. */
+  /** Monday-first, so index `dayOfWeek - 1` lines up with `java.time.DayOfWeek`'s
+   *  numbering (1 = Monday .. 7 = Sunday). The comment here used to read Sunday-first,
+   *  which the data never was. */
   private val dayNames = Vector(
     "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 

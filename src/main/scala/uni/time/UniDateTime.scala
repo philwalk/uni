@@ -234,6 +234,21 @@ case class UniDateTime private (
   /** 1 = Monday .. 7 = Sunday, as [[DateFormat.dayOfWeek]] numbers it. */
   def dayOfWeekNum: Int = DateFormat.dayOfWeek(year, month, day)
 
+  /** The three-letter English weekday abbreviation: `Mon` .. `Sun`.
+   *
+   *  The form client code actually wants, and was hand-rolling as
+   *  `getDisplayName(TextStyle.SHORT, Locale.ENGLISH)` — several scripts wrap exactly that in a
+   *  local `dow` helper. Naming it here removes the boilerplate and the locale hazard:
+   *  `getDisplayName` without an explicit `Locale` follows the JVM default, so the same script
+   *  yields `lun.` on a French machine.
+   *
+   *  Always English, and portable — no `java.time` involved, so the Rust port has it too.
+   */
+  def dayOfWeekName: String = toString("E")
+
+  /** The full English weekday name: `Monday` .. `Sunday`. */
+  def dayOfWeekFull: String = toString("EEEE")
+
   def dayOfWeek: java.time.DayOfWeek = java.time.DayOfWeek.of(dayOfWeekNum)
 
   def dayOfMonth: Int = day
