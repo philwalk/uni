@@ -3,10 +3,10 @@
 # kind<TAB>relative-start<TAB>comma-separated relative paths, SORTED
 # Order is NOT pinned: neither listFiles nor Files.walk guarantees sibling order.
 # rows: 30
-paths	.	.dotfile,UPPER.TXT,a,empty-dir,top.txt,with space.txt
+paths	.	.dotfile,a,empty-dir,top.txt,UPPER.TXT,with space.txt
 subdirs	.	a,empty-dir
-subfiles	.	.dotfile,UPPER.TXT,top.txt,with space.txt
-tree	.	.,.dotfile,UPPER.TXT,a,a/b,a/b/c,a/b/c/deeper.txt,a/b/c/leaf-dir,a/b/deep.txt,a/one.txt,a/two.txt,empty-dir,empty-dir/.gitkeep,top.txt,with space.txt
+subfiles	.	.dotfile,top.txt,UPPER.TXT,with space.txt
+tree	.	.,.dotfile,a,a/b,a/b/c,a/b/c/deeper.txt,a/b/c/leaf-dir,a/b/deep.txt,a/one.txt,a/two.txt,empty-dir,empty-dir/.gitkeep,top.txt,UPPER.TXT,with space.txt
 paths	a	a/b,a/one.txt,a/two.txt
 subdirs	a	a/b
 subfiles	a	a/one.txt,a/two.txt

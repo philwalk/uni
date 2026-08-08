@@ -73,6 +73,37 @@ impl Charset {
     ///
     /// # Errors
     /// [`io::ErrorKind::InvalidData`] when [`Charset::Utf8`] meets invalid bytes.
+    /// Encodes text in this charset.
+    ///
+    /// The reverse of [`Self::decode`], and the reason `withWriter` can honour its charset
+    /// argument at all -- it previously took one and discarded it, so a caller asking for
+    /// Latin-1 silently got UTF-8.
+    ///
+    /// # Errors
+    ///
+    /// [`Self::Latin1`] cannot represent a code point above U+00FF, and says so rather than
+    /// substituting a replacement character.
+    pub fn encode(self, s: &str) -> io::Result<Vec<u8>> {
+        match self {
+            // Utf8ThenLatin1 is a *decoding* fallback; there is nothing to fall back to when
+            // encoding, so it means UTF-8 here.
+            Self::Utf8 | Self::Utf8ThenLatin1 => Ok(s.as_bytes().to_vec()),
+            Self::Latin1 => s
+                .chars()
+                .map(|c| {
+                    // The TryFromIntError carries nothing the caller needs -- the code point is
+                    // the useful information, and it is in the message.
+                    u8::try_from(u32::from(c)).map_err(|e| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("[{c}] has no Latin-1 encoding ({e})"),
+                        )
+                    })
+                })
+                .collect(),
+        }
+    }
+
     pub fn decode(self, bytes: Vec<u8>) -> io::Result<String> {
         match self {
             Self::Latin1 => Ok(bytes.iter().map(|&b| b as char).collect()),
@@ -143,8 +174,14 @@ impl UPath {
     pub fn try_lines_with(&self, charset: Charset) -> io::Result<Vec<String>> {
         if charset == Charset::Utf8 {
             // Streams, so a large file is not held twice.
+            //
+            // `BufRead::lines` strips only a trailing `\r`, so each line still needs `strip_cr`:
+            // uni yields no carriage returns from a line-oriented reader. See `split_lines`.
             let file = fs::File::open(self.as_std_path())?;
-            return io::BufReader::new(file).lines().collect();
+            return io::BufReader::new(file)
+                .lines()
+                .map(|r| r.map(|l| strip_cr(&l)))
+                .collect();
         }
         // Latin-1 and the fallback need the bytes in hand to decide, so they cannot
         // go through `BufRead::lines`, which is UTF-8 only.
@@ -189,6 +226,42 @@ impl UPath {
         }
     }
 
+    /// Lines as a lazy iterator, so a large file is never held in memory.
+    ///
+    /// Empty when the path is not a file, mirroring the Scala, which returns `Iterator.empty`
+    /// rather than failing. Carriage returns are removed as everywhere else -- see `split_lines`.
+    ///
+    /// # The resource concern does not carry over
+    ///
+    /// Scala's `linesStream` returns an `Iterator[String] & AutoCloseable` and leaks the file
+    /// handle unless the caller closes it or exhausts it -- which is why `withLines` exists beside
+    /// it. Here the iterator owns its reader, so the handle closes when it drops, whether the
+    /// caller exhausts it or abandons it early. [`Self::withLines`] is still offered for symmetry
+    /// and for scoped use, but it is not the safety net it is in Scala.
+    #[must_use]
+    pub fn linesStream(&self, charset: Charset) -> LineStream {
+        // `isFile` rather than `exists`: a directory opens on Unix and then fails on read, which
+        // would surface as a truncated stream rather than an empty one.
+        let reader = if self.isFile() {
+            fs::File::open(self.as_std_path()).ok().map(io::BufReader::new)
+        } else {
+            None
+        };
+        LineStream { reader, charset }
+    }
+
+    /// Passes a lazy line iterator to `f` and returns its result.
+    ///
+    /// The scoped counterpart to [`Self::linesStream`]. `f` receives an empty iterator when the
+    /// path is not a file, matching the Scala.
+    pub fn withLines<R, F>(&self, charset: Charset, f: F) -> R
+    where
+        F: FnOnce(&mut LineStream) -> R,
+    {
+        let mut stream = self.linesStream(charset);
+        f(&mut stream)
+    }
+
     /// Writes `text`, replacing any existing content. `PathExts.write`.
     ///
     /// # Errors
@@ -231,13 +304,81 @@ impl UPath {
 ///
 /// `BufRead::lines` already behaves this way; the decoded-string path needs it too
 /// so the two agree on CRLF input and on a trailing newline.
+/// A lazy line iterator that owns its reader. See [`UPath::linesStream`].
+///
+/// Yields `String`, not `io::Result<String>`: the Scala iterator yields plain lines and this
+/// mirrors it, stopping at the first read error rather than reporting it. Use
+/// [`UPath::try_lines`] when an error must be visible.
+pub struct LineStream {
+    /// `None` when the path was not a readable file, which makes the stream empty.
+    reader: Option<io::BufReader<fs::File>>,
+    charset: Charset,
+}
+
+impl Iterator for LineStream {
+    type Item = String;
+
+    fn next(&mut self) -> Option<String> {
+        let reader = self.reader.as_mut()?;
+        let mut buf = Vec::new();
+        // Reads to `\n` as bytes rather than through `BufRead::lines`, so a non-UTF-8 charset is
+        // decoded by `Charset` rather than rejected by the reader.
+        match reader.read_until(b'\n', &mut buf) {
+            Ok(0) => {
+                // End of file: drop the reader so the handle closes now rather than when the
+                // iterator does.
+                self.reader = None;
+                None
+            }
+            Ok(_) => {
+                if buf.last() == Some(&b'\n') {
+                    buf.pop();
+                }
+                match self.charset.decode(buf) {
+                    Ok(line) => Some(strip_cr(&line)),
+                    Err(_) => {
+                        self.reader = None;
+                        None
+                    }
+                }
+            }
+            Err(_) => {
+                self.reader = None;
+                None
+            }
+        }
+    }
+}
+
+/// Splits into lines, removing **every** carriage return, not just a trailing one.
+///
+/// This is uni policy rather than an accident, and it is deliberately stricter than Rust's own
+/// `BufRead::lines`, which strips only a `\r` immediately before the `\n`. A residual `\r` inside
+/// a line is one of the larger classes of hard-to-diagnose bug: it is invisible in most output,
+/// survives comparisons, and breaks string matches for no visible reason. A line-oriented reader
+/// in this API never yields one.
+///
+/// Splitting on `\n` and discarding `\r` also makes the result independent of where the file came
+/// from -- `\r\n` and `\n` both land on the same lines, which is the point, since Windows itself
+/// emits either.
+///
+/// The escape hatch is [`UPath::contentAsString`] or [`UPath::byteArray`]: take the bytes and split
+/// them by whatever rule the context actually calls for. That is the only way to see a `\r` through
+/// this API, and it should be.
 fn split_lines(text: &str) -> Vec<String> {
-    let mut out: Vec<String> = text
-        .split('\n')
-        .map(|l| l.strip_suffix('\r').unwrap_or(l).to_owned())
-        .collect();
+    let mut out: Vec<String> = text.split('\n').map(strip_cr).collect();
     if out.last().is_some_and(String::is_empty) {
         out.pop();
     }
     out
+}
+
+/// One line with every `\r` removed. See [`split_lines`].
+fn strip_cr(line: &str) -> String {
+    if line.contains('\r') {
+        line.chars().filter(|&c| c != '\r').collect()
+    } else {
+        // The common case allocates once and scans no further.
+        line.to_owned()
+    }
 }

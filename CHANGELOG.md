@@ -8,14 +8,119 @@ path where it returned an absolute one; `toString` rejects a pattern it used to 
 (capital `Y`); `posx` strips every trailing separator rather than one; `standardizePath`
 resolves against the config's working directory rather than the JVM's; `DateFormat`
 renders month names in English regardless of locale; file timestamps render in UTC where
-they rendered in system-local time; and `Path.weekDay` returns an `Int` rather than a
-`java.time.DayOfWeek`. Bigger than any of those: the date type moved off `java.time`
+they rendered in system-local time; `Path.weekDay` returns an `Int` rather than a
+`java.time.DayOfWeek`; and `copyTo` requires its `overwrite` argument, with
+`File.copyTo(dest)` removed. Bigger than any of those: the date type moved off `java.time`
 (below).
+
+Of those, `copyTo` is the only one that fails to *compile* rather than changing behaviour
+quietly, which is why it was done that way.
 
 `posixAbs`/`posixRel` are **deprecated as of** this release -- `"0.16.0"` is the `since`
 argument of `@deprecated`, not a removal target. They still work; removal is a later
 release.
 
+
+**RUST — the carriage-return policy is now enforced, and reads are ported**
+
+- uni's line-oriented readers remove **every** `\r` from a line, not merely one before the `\n`.
+  That is policy, not accident: a residual carriage return inside a line is invisible in most
+  output, survives comparison, and breaks a string match for no visible reason. It also makes
+  lines independent of where a file came from, since `\r\n` and `\n` land on the same lines.
+- The Rust port **did not** do this. `split_lines` used `strip_suffix('\r')` and the UTF-8 path
+  used `BufRead::lines`, which strips only the terminator. So `a\rb\nc\r\nd\re\n` gave
+  `[a\rb, c, d\re]` in Rust against `[ab, c, de]` in Scala. Fixed; both now agree.
+- `csv-parity` did not catch it. It has a `lone-cr` case, but that exercises CR as a line
+  *separator* -- never inside a line. The fixture looked like coverage and was not. Now pinned by
+  `rust/tests/upath_lines.rs`, which also asserts that CRLF, LF and a missing final newline all
+  yield identical lines, and that `contentAsString`/`byteArray` keep the bytes intact -- they are
+  the escape hatch, and deliberately the only way to see a `\r` through this API.
+- `linesStream` and `withLines` ported. Reads with `read_until` on bytes rather than
+  `BufRead::lines`, so a non-UTF-8 charset is decoded by `Charset` instead of rejected.
+- One place the port is stronger, and it is documented rather than claimed as parity: Scala's
+  `linesStream` returns an `Iterator & AutoCloseable` that leaks the handle unless closed or
+  exhausted -- which is *why* `withLines` exists beside it. `LineStream` owns its reader, so the
+  handle closes on drop whether the caller exhausts it or abandons it. There is a test for the
+  abandoned case, observable on Windows where an open handle blocks deletion.
+- `asFile` is the **identity** in Rust rather than absent. Scala converts `Path` to
+  `java.io.File`; Rust has one path type, so there is nothing to convert to -- but Scala's `File`
+  extensions mirror the `Path` ones, so `p.asFile.lastModifiedYMD` ports unchanged. Earlier notes
+  called this unportable, which confused the return type with the method.
+- `withWriter` **honoured its charset**, having previously accepted and discarded it (`let _ =
+  charset`), so a caller asking for Latin-1 silently got UTF-8. Added `Charset::encode` and a
+  `TextWriter` that takes text, mirroring the `PrintWriter` Scala hands its body -- deliberately
+  not an `io::Write`, which takes bytes and would let a caller bypass the encoding again.
+- `isSameFile` **folds case on Windows and macOS**, matching Scala's `samePathString`. It was
+  case-sensitive everywhere, so `C:/x/File.txt` and `C:/x/file.txt` -- one file on Windows --
+  compared unequal when neither existed and `canonicalize` could not help.
+
+**BEHAVIOUR — directory listings have a specified order, in both languages**
+
+- `paths`, `files`, `subdirs`, `subfiles`, `pathsTree` and `walk` now sort: case-insensitive
+  first, case-sensitive as a tiebreak. `listFiles`, `Files.walk` and `read_dir` all promise no
+  sibling order, so the same script listed a directory differently on Linux and Windows and no
+  fixture could pin it.
+- Deliberately **not** `Seq[Path].sorted`, whose `Path.compareTo` is case-insensitive on Windows
+  and case-sensitive on Linux. The Rust port could have matched that per-platform -- its
+  `is_windows` is data, and `isSameFile` folds case exactly that way -- so this is a choice: one
+  platform-independent order means a script lists a directory identically everywhere, and one
+  parity fixture instead of the per-platform pair `test-data/path-parity/` needs.
+- `Locale.ROOT` on the Scala side, since `toLowerCase()` without a locale maps `I` to a dotless
+  `i` under a Turkish locale, which would make listing order depend on where the machine thinks
+  it is.
+- `walkIter` stays unsorted: sorting needs the whole listing, which is what its laziness avoids.
+
+**API — `copyTo` requires `overwrite`; the rename family does not**
+
+- `Path.copyTo(dest, overwrite, copyAttributes = false)` — `overwrite` has **no default**. It
+  used to default to `true`, so `copyTo(dest)` clobbered silently while `renameTo(dest)` —
+  defaulting to `false` — did not. The asymmetry ran in the dangerous direction and no reader
+  could guess it.
+- Flipping the default was considered and rejected: it changes behaviour at every call site with
+  **nothing to catch it at build time**. Requiring the parameter makes the compiler name each
+  one. `File.copyTo(dest)` is gone for the same reason — that overload *was* the old default.
+- Measured across `jsrc`, `apps` and `vast` (1745 sources): **19 call sites**, 1 already
+  explicit, 18 needing a decision. Of those, **6 wanted `false`** — and in every one the
+  surrounding code already guarded against clobbering, so the old default had been working
+  against the author's intent. `bankfileNorm` throws `"avoiding clobber"` three lines above its
+  copy; `fnameDate` builds its destination with `nextUniquePath`; `fyoSourceCopy` is only reached
+  in the branch where the backup is absent.
+- The 13 `true` sites preserve the previous behaviour exactly, so they cannot introduce data
+  loss. The 6 `false` sites are the only behaviour change, and the failure mode if a reading was
+  wrong is a thrown `FileAlreadyExistsException` — loud, never silent.
+- `renameTo`, `renameToOpt` and `renameViaCopy` keep `overwrite = false`: already the safe
+  answer, meant by every existing call site, and requiring it would have been ~24 edits for no
+  behavioural change. `copyAttributes` keeps its default on the same principle — a flag that can
+  destroy data must be stated, one that cannot may default.
+
+**RUST — metadata, traversal and mutation ported**
+
+- `upath::meta` — `exists`, `isDirectory`, `length`, `isEmpty`, `nonEmpty`, `canRead`,
+  `canExecute`, `isSymbolicLink`, `isSameFile`, `realPath`. This module *does* use `cfg(unix)`,
+  for a permission bit, and that is not a departure from the "everything is data" rule in
+  `upath`: that rule is about the path *algorithm*, where `cfg` would make the Windows rules
+  untestable off Windows. Here the question is what the host filesystem provides, and the answer
+  genuinely differs per platform. **`cfg` for what the OS provides, data for what the path rules
+  are.**
+- `upath::walk` — `paths`, `files`, `subdirs`, `subfiles`, `pathsTree`, `walk`, and `walkIter`
+  (a lazy stack-based `TreeWalk`, so a deep tree cannot overflow and a caller can stop early).
+  Fixture-backed via `test-data/walk-parity/`, which **sorts both sides**: neither language
+  promises sibling order, so it pins what is traversed and not the order. Pre-order — a directory
+  before its contents — is guaranteed and is asserted by unit tests on each side instead.
+- `upath::mutate` — `copyTo`, `renameTo`, `renameToOpt`, `renameViaCopy`, `delete`, `mkdirs`,
+  `withWriter`, each with a `try_*` form that keeps the outcomes Scala distinguishes. `delete` is
+  the example: Scala returns `true` deleted, `false` absent, and *throws* on a real failure;
+  `try_delete() -> io::Result<bool>` keeps all three, and `delete() -> bool` collapses them for
+  callers who do not care.
+- No-clobber copy is **atomic**: `create_new` (O_EXCL / CREATE_NEW) rather than checking
+  `exists()` and then calling `fs::copy`, which always overwrites and would leave a TOCTOU window.
+  `fs::rename` has no non-replacing variant, so `renameTo` checks first — which matches Java's
+  `Files.move` on Unix, race included.
+- Semantics pinned that are easy to get wrong: `pathsTree` includes the starting path; the walk
+  does not follow symlinks (which also stops a cyclic link hanging it); `subfiles` filters on
+  *regular* files, so a device or socket is excluded; a file lists empty but walks to itself.
+- `files` and `paths` coincide in Rust — in Scala they differ only in `java.io.File` versus
+  `Path`, and there is no second path type here. `files` is kept as an alias.
 
 **BEHAVIOUR — file timestamps are now UTC, and timezone is gone from that API**
 

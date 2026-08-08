@@ -380,11 +380,13 @@ class PathExtsSuite extends FunSuite:
   // copyTo: all 4 branches of overwrite × copyAttributes
   // ============================================================================
 
-  test("copyTo default (overwrite=true, copyAttributes=false): copies file") {
+  test("copyTo overwrite=true, copyAttributes defaulted: copies onto an existing file") {
     val src = tempFile("copy-me")
+    // `createTempFile` creates it, so the destination exists: this needs overwrite = true, and
+    // used to get it from a default. No longer defaulted -- see `copyTo`.
     val dst = Files.createTempFile("pathexts-dst-", ".txt")
     dst.toFile.deleteOnExit()
-    val result = src.copyTo(dst)
+    val result = src.copyTo(dst, overwrite = true)
     assertEquals(result, dst)
     assertEquals(new String(Files.readAllBytes(dst), StandardCharsets.UTF_8), "copy-me")
   }
@@ -778,7 +780,7 @@ class PathExtsSuite extends FunSuite:
     val src = tempJFile("copy-content")
     val dst = Files.createTempFile("pathexts-jf-dst-", ".txt")
     dst.toFile.deleteOnExit()
-    src.copyTo(dst)
+    src.copyTo(dst, overwrite = true)   // the destination exists; see the Path copyTo test
     assertEquals(new String(Files.readAllBytes(dst), StandardCharsets.UTF_8), "copy-content")
   }
 

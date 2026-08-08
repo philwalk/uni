@@ -79,10 +79,12 @@ fn rel(root: &UPath, p: &UPath) -> String {
     }
 }
 
+/// The order the API returns, **not** re-sorted.
+///
+/// This used to sort, because neither language promised an order. Both now specify the same one,
+/// so the fixture pins order too -- re-sorting here would hide the divergence it exists to catch.
 fn sorted_rel(root: &UPath, ps: &[UPath]) -> Vec<String> {
-    let mut v: Vec<String> = ps.iter().map(|p| rel(root, p)).collect();
-    v.sort();
-    v
+    ps.iter().map(|p| rel(root, p)).collect()
 }
 
 /// The recorded list; an empty field is an empty Vec rather than a one-element Vec of "".

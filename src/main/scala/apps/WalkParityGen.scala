@@ -21,16 +21,12 @@ import java.nio.charset.StandardCharsets.UTF_8
  * The tree is written under `inputs/` and committed, so both languages walk the identical
  * shape rather than each building its own and hoping they match.
  *
- * # Order is deliberately not pinned
+ * # Order IS pinned, as of the ordering fix
  *
- * `File.listFiles` and `Files.walk` guarantee **no** sibling order -- it is whatever the
- * filesystem returns, roughly alphabetical on NTFS and arbitrary on ext4. Rust's `read_dir` is
- * the same. So every listing here is **sorted before recording**, and both test sides sort
- * before comparing.
- *
- * That is a real limitation of the fixture, not a detail: it pins *what* is traversed and not
- * *in what order*. The one ordering property that IS guaranteed -- pre-order, parent before
- * child -- is checked by unit tests on each side instead, since it survives sorting nowhere.
+ * `File.listFiles`, `Files.walk` and `read_dir` promise no sibling order, so this fixture used to
+ * sort both sides and pin only *what* was traversed. Both languages now sort by the same key --
+ * case-insensitive, then case-sensitive -- so the recorded order is the order the API returns,
+ * and a divergence in ordering fails a test instead of being sorted away.
  *
  * Paths are recorded relative to the fixture root, because the absolute prefix differs per
  * machine.
@@ -75,8 +71,13 @@ object WalkParityGen:
     // implementations disagree about leading and trailing empties.
     if r.isEmpty then "." else r
 
-  /** Sorted, because neither language promises an order. See the note above. */
-  def sortedRel(ps: Seq[java.nio.file.Path]): Seq[String] = ps.map(rel).sorted
+  /** The order the API returns, **not** re-sorted.
+   *
+   *  This used to sort, because neither language promised an order. Both now specify one -- and
+   *  the same one -- so the fixture pins the order too. Re-sorting here would hide exactly the
+   *  divergence it exists to catch.
+   */
+  def sortedRel(ps: Seq[java.nio.file.Path]): Seq[String] = ps.map(rel)
 
   def main(args: Array[String]): Unit =
     build()
@@ -106,8 +107,11 @@ object WalkParityGen:
     out += s"tree\tno-such-entry\t${sortedRel(missing.pathsTree).mkString(",")}"
 
     // `walk` and `files` are aliases; recorded so a port cannot quietly diverge from them.
-    out += s"alias-walk\t.\t${(root.walk.toSeq.map(rel).sorted == sortedRel(root.pathsTree))}"
-    out += s"alias-files\t.\t${(root.files.toSeq.map(f => rel(f.toPath)).sorted == sortedRel(root.paths))}"
+    // No `.sorted` here. The API specifies the order now, so re-sorting one side would compare a
+    // sorted list against an unsorted one and report the aliases as differing -- which is exactly
+    // what happened on the first run after the ordering change.
+    out += s"alias-walk\t.\t${(root.walk.toSeq.map(rel) == sortedRel(root.pathsTree))}"
+    out += s"alias-files\t.\t${(root.files.toSeq.map(f => rel(f.toPath)) == sortedRel(root.paths))}"
 
     val header = Seq(
       "# Cross-language directory-traversal parity reference.",

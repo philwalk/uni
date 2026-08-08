@@ -1,16 +1,38 @@
 //! Directory listing and tree walking — a port of the `files`/`paths`/`pathsTree` family in
 //! `uni.ext.PathExts`.
 //!
-//! # Order is unspecified, in both languages
+//! # Order is specified, and identical to the Scala
 //!
-//! The Scala goes through `File.listFiles` and `Files.walk`, **neither of which guarantees the
-//! order of siblings** — it is whatever the filesystem hands back, which is roughly alphabetical
-//! on NTFS and arbitrary on ext4. Rust's `read_dir` is the same. So none of these methods
-//! promises an order, and code that needs one must sort.
+//! `File.listFiles`, `Files.walk` and Rust's `read_dir` all promise **no** sibling order — it is
+//! whatever the filesystem hands back, roughly alphabetical on NTFS and arbitrary on ext4. So the
+//! same script listed a directory differently on Linux and Windows, and no fixture could pin it.
 //!
-//! That is why `test-data/date-parity/`-style comparison would be flaky here: the parity fixture
-//! sorts both sides before comparing. Sorting in the *fixture* rather than in the API keeps the
-//! Scala behaviour unchanged while still pinning the contents.
+//! Both languages now sort by the same key: **case-insensitive, then case-sensitive as a
+//! tiebreak**. That yields `(a.txt, B.txt)` rather than `(B.txt, a.txt)`, which is what a reader
+//! expects, while the second component keeps the order total where two names differ only in case
+//! — possible on Linux, not on Windows.
+//!
+//! # Why not Java's own `Path` ordering
+//!
+//! `Seq[Path].sorted` uses `Path.compareTo`, which is **case-insensitive on Windows and
+//! case-sensitive on Linux**. That could have been matched here — `PathContext::is_windows` is
+//! data, and [`UPath::isSameFile`] already folds case that way — so this is a choice, not a
+//! limitation. Two reasons against it:
+//!
+//! - **One order everywhere.** A script that lists a directory produces the same order on Linux
+//!   and Windows, so generated files, reports and diffs are comparable across machines.
+//! - **One fixture.** Platform-dependent ordering would split `test-data/walk-parity/` into
+//!   per-platform references, which is what `test-data/path-parity/` had to do — it carries
+//!   separate `scala-reference-windows.txt` and `-posix.txt` files because the path *rules* really
+//!   are platform-specific. Sort order does not have to be.
+//!
+//! Locale-sensitive lowering is avoided for a plainer reason: Java's `toLowerCase()` with no
+//! locale maps `I` to a dotless `i` under a Turkish locale, so listing order would depend on where
+//! the machine thinks it is. The Scala passes `Locale.ROOT`; `to_lowercase` here has no locale to
+//! get wrong.
+//!
+//! [`UPath::walkIter`] is the exception and stays unsorted — sorting needs the whole listing,
+//! which is what its laziness exists to avoid.
 //!
 //! # Semantics worth getting right
 //!
@@ -43,8 +65,17 @@ use std::path::PathBuf;
 
 use crate::upath::UPath;
 
+/// The listing sort key: case-insensitive, then case-sensitive as a tiebreak.
+///
+/// Must stay identical to `PathExts.listOrder` on the Scala side, or the two languages order
+/// listings differently and `test-data/walk-parity/` fails.
+fn list_order(p: &UPath) -> (String, String) {
+    let s = p.posx().to_owned();
+    (s.to_lowercase(), s)
+}
+
 impl UPath {
-    /// The immediate entries of this directory, in unspecified order.
+    /// The immediate entries of this directory, sorted. See the module docs on the order.
     ///
     /// Empty when the path does not exist or is not a directory, mirroring `listFiles`
     /// returning `null` there.
@@ -53,10 +84,12 @@ impl UPath {
         let Ok(entries) = fs::read_dir(self.as_std_path()) else {
             return Vec::new();
         };
-        entries
+        let mut v: Vec<Self> = entries
             .filter_map(Result::ok)
             .filter_map(|e| self.sibling(&e.path()))
-            .collect()
+            .collect();
+        v.sort_by_key(list_order);
+        v
     }
 
     /// Alias for [`Self::paths`]. In Scala this returns `Seq[java.io.File]`; Rust has no second
@@ -90,7 +123,12 @@ impl UPath {
     /// itself, as `Files.walk` does.
     #[must_use]
     pub fn pathsTree(&self) -> Vec<Self> {
-        self.walkIter().collect()
+        // Sorted by the same key as `paths`. A full sort of the flattened walk keeps every parent
+        // before its descendants -- a path is a prefix of its children, so it compares smaller --
+        // which preserves the one ordering guarantee `Files.walk` made.
+        let mut v: Vec<Self> = self.walkIter().collect();
+        v.sort_by_key(list_order);
+        v
     }
 
     /// Alias for [`Self::pathsTree`], matching the Scala `walk`.

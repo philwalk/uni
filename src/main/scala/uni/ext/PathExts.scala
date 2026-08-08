@@ -149,15 +149,39 @@ object pathExts {
     @deprecated("Use `asFile`", "uni") def file: JFile = p.toFile
 
     // ---- directory listing ----
-    def filesIter: Iterator[JFile] = Option(p.toFile.listFiles) match {
-      case Some(arr) => arr.iterator
-      case None      => Iterator.empty
-    }
-    def files: Seq[JFile]          = filesIter.toSeq
-    def pathsIter: Iterator[Path]  = filesIter.map(_.toPath)
-    def paths: Seq[Path]           = pathsIter.toSeq
-    def subdirs: Seq[Path]         = pathsIter.filter(Files.isDirectory(_)).toSeq
-    def subfiles: Seq[Path]        = pathsIter.filter(Files.isRegularFile(_)).toSeq
+    /** Sort key giving these listings a **specified** order.
+     *
+     *  `listFiles` and `Files.walk` promise none -- roughly alphabetical on NTFS, arbitrary on
+     *  ext4 -- so the same script listed a directory differently on Linux and Windows and no
+     *  test could pin it. Sorting here makes the order part of the contract.
+     *
+     *  Case-insensitive first, then case-sensitive as a tiebreak: `(a.txt, B.txt)` rather than
+     *  `(B.txt, a.txt)`, which is what a reader expects, while the second component keeps the
+     *  order total where two names differ only in case (possible on Linux, not on Windows).
+     *
+     *  `Locale.ROOT`, not the default locale: `toLowerCase` is locale-sensitive, and under a
+     *  Turkish locale `I` lowercases to a dotless `ı`, which would reorder listings by where the
+     *  machine thinks it is.
+     *
+     *  And deliberately *not* `Seq[Path].sorted`, whose `Path.compareTo` is case-insensitive on
+     *  Windows and case-sensitive on Linux. The Rust port could match that per-platform -- its
+     *  `is_windows` is data, and `isSameFile` already folds case that way -- so this is a choice
+     *  rather than a limitation. One platform-independent order means a script lists a directory
+     *  identically on Linux and Windows, so generated files and diffs compare across machines; and
+     *  it means one parity fixture instead of the per-platform pair `test-data/path-parity/` needs.
+     */
+    private def listOrder(path: Path): (String, String) =
+      val s = path.posx
+      (s.toLowerCase(java.util.Locale.ROOT), s)
+
+    def filesIter: Iterator[JFile] = files.iterator
+    def files: Seq[JFile]          = paths.map(_.toFile)
+    def pathsIter: Iterator[Path]  = paths.iterator
+    def paths: Seq[Path]           =
+      val raw = Option(p.toFile.listFiles).map(_.toSeq).getOrElse(Seq.empty).map(_.toPath)
+      raw.sortBy(listOrder)
+    def subdirs: Seq[Path]         = paths.filter(Files.isDirectory(_))
+    def subfiles: Seq[Path]        = paths.filter(Files.isRegularFile(_))
 
     def reversePath: String = p.iterator.asScala.map(_.toString).toList.reverse.mkString("/")
 
@@ -165,10 +189,17 @@ object pathExts {
 
     def walk: Iterator[Path] = pathsTreeIter // alias
 
+    /** The tree rooted here, **including this path**, in a specified order.
+     *
+     *  Sorted by the same key as [[paths]]. A full sort of the flattened walk keeps every parent
+     *  before its descendants -- a path is a prefix of its children, so it compares smaller --
+     *  which is the one ordering guarantee `Files.walk` made and which callers rely on.
+     */
     def pathsTree: Seq[Path] = pathsTreeIter.toSeq
     def pathsTreeIter: Iterator[Path] =
       if Files.exists(p) then
-        Files.walk(p).iterator().asScala
+        import scala.jdk.CollectionConverters.*
+        Files.walk(p).iterator().asScala.toSeq.sortBy(listOrder).iterator
       else
         Iterator.empty
 
@@ -329,7 +360,27 @@ object pathExts {
 
     // ---- copy / move / delete ----
     /** Copy to dest. Overwrites by default. */
-    def copyTo(dest: Path, overwrite: Boolean = true, copyAttributes: Boolean = false): Path = {
+    /** Copies to `dest`, returning `dest`.
+     *
+     *  `overwrite` has **no default, on purpose**, and this is the only method here without one.
+     *  It used to default to `true`, so `copyTo(dest)` clobbered silently while
+     *  `renameTo(dest)` -- defaulting to `false` -- did not: an asymmetry no reader could guess,
+     *  and the dangerous direction of it. Flipping the default would have changed behaviour at
+     *  every existing call site with nothing to catch it at build time, so the parameter is
+     *  required instead and the compiler names each one.
+     *
+     *  The rename family keeps its `overwrite = false` default deliberately. That default is
+     *  already the safe answer, every existing call site means it, and requiring it there would
+     *  have meant ~24 mechanical edits across `jsrc`, `apps` and `vast` for no change in
+     *  behaviour.
+     *
+     *  `copyAttributes` keeps its default, and that line is drawn on purpose: a flag that can
+     *  destroy data must be stated, one that cannot may default.
+     *
+     *  @throws java.nio.file.FileAlreadyExistsException when `dest` exists and `overwrite` is
+     *          false.
+     */
+    def copyTo(dest: Path, overwrite: Boolean, copyAttributes: Boolean = false): Path = {
       val options =
         if (overwrite && copyAttributes)
           Array(StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES)
@@ -568,7 +619,10 @@ object pathExts {
     def olderThan(other: Path): Boolean = f.toPath.olderThan(other)
 
     // ---- copy / move ----
-    def copyTo(dest: Path): Path                                    = f.toPath.copyTo(dest)
+    // `copyTo` has no single-argument form: that overload *was* the old `overwrite = true`
+    // default wearing a different hat, so keeping it would have left `f.copyTo(dest)` clobbering
+    // silently while the Path version required the flag. The rename forms keep theirs -- their
+    // default is `false`, which is already the safe answer.
     def copyTo(dest: Path, overwrite: Boolean): Path                = f.toPath.copyTo(dest, overwrite)
     def copyTo(dest: Path, overwrite: Boolean, copyAttributes: Boolean): Path = f.toPath.copyTo(dest, overwrite, copyAttributes)
     def renameTo(other: Path): Boolean                  = f.toPath.renameTo(other)

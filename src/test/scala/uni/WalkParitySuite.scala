@@ -29,7 +29,13 @@ class WalkParitySuite extends FunSuite:
       .toString.replace('\\', '/')
     if r.isEmpty then "." else r
 
-  def sortedRel(ps: Seq[java.nio.file.Path]): Seq[String] = ps.map(rel).sorted
+  /** The order the API returns, **not** re-sorted.
+   *
+   *  This used to sort, because neither language promised an order. Both now specify the same one,
+   *  so the fixture pins order too -- re-sorting here would hide the divergence it exists to
+   *  catch.
+   */
+  def sortedRel(ps: Seq[java.nio.file.Path]): Seq[String] = ps.map(rel)
 
   /** The recorded list, split so an empty field yields an empty Seq rather than `Seq("")`. */
   def expected(r: Vector[String]): Seq[String] =
@@ -62,10 +68,12 @@ class WalkParitySuite extends FunSuite:
   }
 
   test("walk and files are aliases, per the reference") {
+    // No `.sorted`: the API specifies the order, so sorting one side would compare it against an
+    // unsorted one and report the aliases as differing.
     for r <- rows if r.head == "alias-walk" do
-      assertEquals((root.walk.toSeq.map(rel).sorted == sortedRel(root.pathsTree)).toString, r(2))
+      assertEquals((root.walk.toSeq.map(rel) == sortedRel(root.pathsTree)).toString, r(2))
     for r <- rows if r.head == "alias-files" do
-      assertEquals((root.files.toSeq.map(f => rel(f.toPath)).sorted == sortedRel(root.paths)).toString, r(2))
+      assertEquals((root.files.toSeq.map(f => rel(f.toPath)) == sortedRel(root.paths)).toString, r(2))
   }
 
   test("the tree walk is pre-order and includes the root") {

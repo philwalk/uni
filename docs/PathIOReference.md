@@ -103,12 +103,37 @@ Complete reference for all non-deprecated extension methods added to `java.nio.f
 | `.linesStream(charset)` | `Iterator[String]` | lazy streaming lines with explicit charset name |
 | `.withLines(f)` | `A` | resource-safe bracket: opens iterator, calls `f`, closes on return or exception |
 | `.withLines(charset)(f)` | `A` | resource-safe bracket with explicit charset name |
+
+> **`withLines` matters less in the Rust port.** Scala's `linesStream` returns an
+> `Iterator[String] & AutoCloseable` and leaks the file handle unless the caller closes it or runs
+> it to exhaustion, which is why `withLines` exists beside it. The port's `LineStream` owns its
+> reader, so the handle closes when the iterator drops — exhausted or abandoned.
+> `withLines` is offered there for symmetry and scoping, not as a safety net.
 | `.eachLine(f)` | `Unit` | calls `f` once per line; streaming, resource-safe |
 | `.eachLine(charset)(f)` | `Unit` | per-line callback with explicit charset name |
 | `.firstLine` | `String` | first line only (empty string if file is empty or absent) |
 | `.contentAsString` | `String` | entire file as a string; UTF-8 with Latin-1 fallback |
 | `.contentAsString(charset)` | `String` | entire file as a string with explicit `Charset` |
 | `.byteArray` | `Array[Byte]` | raw file content as bytes |
+
+> **A line-oriented reader never yields a carriage return.**
+>
+> `lines`, `linesStream`, `withLines`, `eachLine` and `firstLine` remove **every** `\r` from a
+> line, not merely one before the `\n`. A residual carriage return inside a line is one of the
+> larger classes of hard-to-diagnose bug: invisible in most output, it survives comparison and
+> breaks a string match for no visible reason.
+>
+> Splitting on `\n` and discarding `\r` also makes the result independent of where a file came
+> from. `\r\n` and `\n` land on the same lines, which matters because Windows emits either, so
+> the same content read on Linux and Windows yields identical lines.
+>
+> **`contentAsString` and `byteArray` are the escape hatch** and keep the bytes exactly. When
+> carriage returns are the point — inspecting line endings, or a quoted CSV field that
+> genuinely contains one — take the content and split it by whatever rule the context
+> calls for. That is deliberately the only way to see a `\r` through this API.
+>
+> Stricter than either host language: Java's `BufferedReader.readLine` and Rust's
+> `BufRead::lines` each strip only the terminator.
 
 ### CSV
 
@@ -148,9 +173,18 @@ Requires `import uni.data.*` for the return types (`MatD`, `MatB`, `MatF`).
 | `.filesIter` | `Iterator[JFile]` | immediate contents as a `File` iterator |
 | `.subdirs` | `Seq[Path]` | immediate child directories |
 | `.subfiles` | `Seq[Path]` | immediate child regular files |
-| `.pathsTree` | `Seq[Path]` | recursive directory tree (depth-first) |
+| `.pathsTree` | `Seq[Path]` | recursive tree, pre-order, **including this path itself** |
 | `.pathsTreeIter` | `Iterator[Path]` | recursive tree as a lazy iterator |
 | `.walk` | `Iterator[Path]` | alias for `.pathsTreeIter` |
+
+> **Two things about the tree walk that are easy to miss.** It **includes the starting path**,
+> because `Files.walk(p)` yields `p` first — so every count is off by one if you assume
+> otherwise. And it does **not follow symlinks**: a symlinked directory is listed but not
+> descended into, which is also what keeps a cyclic link from hanging the traversal.
+>
+> **Sibling order is unspecified.** Neither `File.listFiles` nor `Files.walk` promises one, and
+> it varies by filesystem — roughly alphabetical on NTFS, arbitrary on ext4. Sort if you need
+> an order. Pre-order (a directory before its contents) *is* guaranteed.
 
 ### File writing
 
@@ -164,12 +198,29 @@ Requires `import uni.data.*` for the return types (`MatD`, `MatB`, `MatF`).
 
 | Method | Returns | Description |
 | :--- | :--- | :--- |
-| `.copyTo(dest, overwrite, copyAttributes)` | `Path` | copy file to destination; `overwrite` defaults to `true` |
+| `.copyTo(dest, overwrite, copyAttributes)` | `Path` | copy file to destination; **`overwrite` is required**, `copyAttributes` defaults to `false` |
 | `.renameTo(other, overwrite)` | `Boolean` | rename/move file; returns `false` on failure |
 | `.renameToOpt(other, overwrite)` | `Option[Path]` | rename/move; returns `Some(dest)` on success, `None` on failure |
 | `.renameViaCopy(dest, overwrite)` | `Int` | rename by copy+delete, works across filesystems; 0 on success, -1 on failure |
 | `.delete()` | `Boolean` | delete file if it exists; `true` if deleted |
 | `.mkdirs` | `Boolean` | create directory and all missing parents |
+
+> **`copyTo` requires `overwrite`; the rename family does not.**
+>
+> `copyTo` used to default it to `true`, so `copyTo(dest)` clobbered silently while
+> `renameTo(dest)` — defaulting to `false` — did not. That asymmetry ran in the dangerous
+> direction and no reader could guess it. Flipping the default would have changed behaviour at
+> every call site with nothing to catch it at build time, so the parameter is required instead
+> and the compiler names each one.
+>
+> Measured across `jsrc`, `apps` and `vast`: 19 call sites, of which **6 wanted `false`** — and
+> in every one of those the surrounding code already guarded against clobbering, so the old
+> default had been working against the author's intent.
+>
+> `renameTo`, `renameToOpt` and `renameViaCopy` keep `overwrite = false`. That default is
+> already the safe answer and every existing call site means it, so requiring it there would
+> have been ~24 edits for no change in behaviour. `copyAttributes` keeps its default too: the
+> line is that a flag which can destroy data must be stated, one which cannot may default.
 
 ### Timestamps
 
@@ -245,11 +296,33 @@ performance-sensitive parts under `rust/src/upath/`:
 | `String` extensions (`.lc`, `.posx`, ...) | `upath::strext` | string helpers |
 | `uni.time.UniDateTime`, `DateFormat` | `utime::datetime`, `utime::format` | the date type, its arithmetic and pattern formatting |
 | `.lastModified`, `.lastMod*Ago`, `.lastModifiedTime` | `upath::times` | file timestamps and file age |
+| `.exists` `.isFile` `.isDirectory` `.length` `.realPath` `.isSameFile` | `upath::meta` | metadata predicates |
+| `.paths` `.files` `.subdirs` `.subfiles` `.pathsTree` `.walk` | `upath::walk` | listing and tree walking |
+| `.copyTo` `.renameTo` `.delete` `.mkdirs` `.withWriter` | `upath::mutate` | copy, move, delete, create |
+| `.lines` `.linesStream` `.withLines` `.eachLine` `.contentAsString` | `upath::io` | reading, and the carriage-return policy above |
 
-Each Rust module is checked against a committed fixture generated from the Scala
-implementation, so a divergence fails a test rather than appearing at runtime. Directory
-traversal, the mutation methods, the matrix/CSV loaders and `SmartParse` (the date *parser*,
-as distinct from the date type) are **not** ported yet.
+Most Rust modules are checked against a committed fixture generated from the Scala
+implementation, so a divergence fails a test rather than appearing at runtime. Two are covered
+by unit tests on each side instead, for reasons worth knowing:
+
+- `upath::mutate` — a fixture would have to perform the mutation to record it, so the
+  expected values would be whatever the last run happened to do. The semantics that matter
+  (does `overwrite = false` refuse, does `delete` distinguish absent from failed, does
+  `mkdirs` report `false` for an occupied name) are asserted directly.
+- `upath::meta` — likewise for `canRead`/`canExecute`, whose answers depend on the host's
+  permissions rather than on committed data.
+
+`upath::walk` *is* fixture-backed, and pins the order as well as the contents: both languages
+sort by the same key, so `test-data/walk-parity/` records the order the API returns rather than
+sorting it away. It used to sort both sides, back when neither language promised an order.
+
+Still **not** ported: the matrix/CSV loaders and the parent-name variants. `SmartParse` — the
+date *parser*, as distinct from the date type — is also absent, so a Rust script that needs to
+read arbitrary date text must do that itself.
+
+A few methods are present under one name rather than two. `files` and `paths` coincide, Rust
+having no second path type; the `*Iter` variants are covered by `paths` and `walkIter`; and
+`asFile` is the **identity**, kept so a line written against the Scala ports unchanged.
 
 The `lastMod*Ago` aliases (`lastModSeconds`, `lastModMinutes`, `lastModHours`, `lastModDays`,
 `ageInDays`, `lastModSecondsDbl`) are deliberately absent from the Rust: they add names, not

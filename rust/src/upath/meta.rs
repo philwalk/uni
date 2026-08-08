@@ -30,6 +30,23 @@ use std::fs;
 use crate::upath::UPath;
 
 impl UPath {
+    /// Identity. Present so a script written against the Scala keeps its shape.
+    ///
+    /// Scala's `asFile` converts a `java.nio.file.Path` to a `java.io.File` — two JVM types for one
+    /// concept. Rust has one, so there is nothing to convert to and this returns `self`.
+    ///
+    /// That is more useful than omitting it. Scala's `File` extension methods mirror the `Path`
+    /// ones almost exactly (`def lastModifiedYMD = f.toPath.lastModifiedYMD` and so on), so
+    /// `p.asFile.lastModifiedYMD` and `p.asFile().lastModifiedYMD()` both work and a line ported
+    /// between the languages needs no edit.
+    ///
+    /// For the underlying `std` path, use `as_std_path` — snake_case, because that one has no Scala
+    /// counterpart.
+    #[must_use]
+    pub fn asFile(&self) -> Self {
+        self.clone()
+    }
+
     /// Whether the path exists, following symlinks. `Files.exists`.
     #[must_use]
     pub fn exists(&self) -> bool {
@@ -118,10 +135,29 @@ impl UPath {
     /// `Files.isSameFile` would throw there. So string equality of the absolute forms comes
     /// first, and only then does this touch the disk to catch links and distinct paths that
     /// resolve to one file.
+    /// The textual comparison folds case on Windows and macOS, matching Scala's
+    /// `samePathString`:
+    ///
+    /// ```text
+    /// if (isWin || isMac) s1.equalsIgnoreCase(s2) else s1 == s2
+    /// ```
+    ///
+    /// Case-sensitive comparison was a real bug here, not a nicety: on Windows
+    /// `C:/x/File.txt` and `C:/x/file.txt` name one file, and for two paths that do not exist
+    /// yet -- where `canonicalize` cannot help -- the string test is the only answer. Scala said
+    /// `true`, this said `false`.
+    ///
+    /// Case folding is keyed on the context's `is_windows`, not on `cfg!(windows)`, so the rule
+    /// travels with the path semantics rather than with the host.
     #[must_use]
     pub fn isSameFile(&self, other: &Self) -> bool {
         let (a, b) = (self.to_absolute(), other.to_absolute());
-        if a.posx() == b.posx() {
+        let same_text = if self.ctx().is_windows || cfg!(target_os = "macos") {
+            a.posx().eq_ignore_ascii_case(b.posx())
+        } else {
+            a.posx() == b.posx()
+        };
+        if same_text {
             return true;
         }
         match (
