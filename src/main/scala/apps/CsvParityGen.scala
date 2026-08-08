@@ -119,3 +119,4 @@ object CsvParityGen:
     val out = Paths.get("test-data/csv-parity/scala-reference.txt")
     out.writeLines(header ++ lines)
     println(s"wrote ${lines.length} rows for ${cases.length} cases -> ${out.posx}")
+    FixtureGuard.warnIfIgnored(out.getParent)

@@ -184,3 +184,4 @@ object NumPyRngParityGen:
     val out = s"$dir/scala-reference.txt"
     java.nio.file.Files.writeString(out.asPath, sb.toString)
     println(s"wrote $out")
+    FixtureGuard.warnIfIgnored(dir.asPath)

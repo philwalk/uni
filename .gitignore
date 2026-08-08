@@ -84,17 +84,22 @@ matlab/
 py/__pycache__/
 slice.sc
 # Scratch data stays out, but every cross-language parity fixture is checked in:
-# each one is required by BOTH a Scala suite and a Rust test, and the whole point
-# is that neither needs the other language installed. A fixture that is ignored
-# still passes locally — the file is simply there — and fails for everyone else,
-# so each new fixture directory needs its own exception here.
+# each one is required by BOTH a Scala suite and a Rust test, and the whole point is
+# that neither needs the other language installed.
+#
+# The negation is by *pattern*, not a per-directory list, and that is deliberate. The
+# list version meant a new fixture needed a line here, and forgetting it fails in the
+# worst available way: the file is present locally, so every test passes for whoever
+# generated it and the suite is simply absent for everyone else. That went unnoticed
+# once already. Naming a fixture directory `<name>-parity` now makes it tracked with
+# no edit to this file.
+#
+# Residual: a fixture directory NOT matching `*-parity` is still silently ignored. If
+# you add one, either follow the convention or verify with
+#   git check-ignore -v test-data/<dir>/<file>
+# which prints nothing when the file will be committed.
 test-data/*
-!test-data/tprf3-parity/
-!test-data/numpy-rng-parity/
-!test-data/path-parity/
-!test-data/csv-parity/
-!test-data/hash-parity/
-!test-data/date-parity/
+!test-data/*-parity/
 # Anchored: an unanchored `bin/` also swallows rust/src/bin/, whose contents are
 # real source.
 /bin/

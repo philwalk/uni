@@ -208,6 +208,9 @@ object PathParityGen:
     for (platform, isWindows) <- Seq("windows" -> true, "posix" -> false) do
       generate(dir, platform, isWindows)
     resetConfig()
+    // After both platform blocks, not inside the loop: it is the directory that is admitted
+    // or excluded, and warning twice would only be noise.
+    FixtureGuard.warnIfIgnored(dir.asPath)
 
   private def generate(dir: String, platform: String, isWindows: Boolean): Unit =
     val user = userFor(isWindows)

@@ -73,3 +73,4 @@ object HashParityGen:
     val out = Paths.get("test-data/hash-parity/scala-reference.txt")
     out.writeLines(header ++ lines)
     println(s"wrote ${lines.length} cases -> ${out.posx}")
+    FixtureGuard.warnIfIgnored(out.getParent)

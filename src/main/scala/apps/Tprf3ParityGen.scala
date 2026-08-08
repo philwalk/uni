@@ -87,4 +87,5 @@ object Tprf3ParityGen {
 
     java.nio.file.Files.writeString(s"$dir/scala-reference.txt".asPath, sb.toString)
     println(s"wrote $dir/scala-reference.txt")
+    FixtureGuard.warnIfIgnored(dir.asPath)
 }

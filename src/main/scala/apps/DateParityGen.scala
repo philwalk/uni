@@ -200,3 +200,4 @@ object DateParityGen:
     java.nio.file.Files.createDirectories(file.getParent)
     file.writeLines(header ++ out.toSeq)
     println(s"wrote ${out.length} rows -> ${file.posx}")
+    FixtureGuard.warnIfIgnored(file.getParent)
