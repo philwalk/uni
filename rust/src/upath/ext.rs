@@ -238,6 +238,14 @@ impl UPath {
         }
     }
 
+    /// The resolution context this path was built with.
+    ///
+    /// `pub(crate)` and snake_case: plumbing for sibling modules that need to build a new
+    /// `UPath` in the same context, with no Scala counterpart to mirror.
+    pub(crate) fn ctx(&self) -> &Arc<PathContext> {
+        &self.ctx
+    }
+
     fn with(&self, s: &str) -> Self {
         Self {
             ctx: Arc::clone(&self.ctx),

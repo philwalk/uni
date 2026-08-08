@@ -75,7 +75,7 @@ fn written_files_use_lf_on_every_platform() {
     let c = ctx(dir.path());
     let p = at(&c, "endings.csv");
     p.writeCsv(&rows(&[&["a", "b"], &["c", "d"]]));
-    assert!(!p.bytes().contains(&b'\r'), "must not emit CR");
+    assert!(!p.byteArray().contains(&b'\r'), "must not emit CR");
 }
 
 #[test]
@@ -151,6 +151,6 @@ fn writing_zero_rows_produces_an_empty_file() {
     let c = ctx(dir.path());
     let p = at(&c, "none.csv");
     assert!(p.writeCsv::<String>(&[]));
-    assert_eq!(p.bytes().len(), 0);
+    assert_eq!(p.byteArray().len(), 0);
     assert_eq!(p.csvRows(), Vec::<Vec<String>>::new());
 }

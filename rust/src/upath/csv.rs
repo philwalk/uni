@@ -416,7 +416,7 @@ impl<W: Write> CsvWriter<W> {
             let f = field.as_ref();
             if self.needs_quoting(f) {
                 self.out.write_all(&[self.quote])?;
-                for b in f.bytes() {
+                for b in f.bytes() {   // `str::bytes`, not UPath::byteArray
                     if b == self.quote {
                         self.out.write_all(&[self.quote])?;
                     }

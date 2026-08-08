@@ -44,10 +44,10 @@ fn write_then_read_round_trips() {
     let p = at(&c, "round.txt");
 
     assert!(p.write("hello\nworld\n"));
-    assert_eq!(p.content_string(), "hello\nworld\n");
+    assert_eq!(p.contentAsString(), "hello\nworld\n");
     assert_eq!(p.lines(), vec!["hello", "world"]);
     assert_eq!(p.firstLine(), "hello");
-    assert_eq!(p.bytes().len(), 12);
+    assert_eq!(p.byteArray().len(), 12);
 }
 
 #[test]
@@ -59,7 +59,7 @@ fn write_lines_appends_a_trailing_newline() {
     let p = at(&c, "lines.txt");
 
     assert!(p.writeLines(&["a", "b"]));
-    assert_eq!(p.content_string(), "a\nb\n");
+    assert_eq!(p.contentAsString(), "a\nb\n");
     // And the trailing newline does not produce a phantom empty last line.
     assert_eq!(p.lines(), vec!["a", "b"]);
 }
@@ -71,7 +71,7 @@ fn write_lines_uses_lf_on_every_platform() {
     let p = at(&c, "endings.txt");
 
     p.writeLines(&["x", "y"]);
-    assert!(!p.bytes().contains(&b'\r'), "must not emit CR");
+    assert!(!p.byteArray().contains(&b'\r'), "must not emit CR");
 }
 
 #[test]
@@ -97,9 +97,9 @@ fn missing_file_is_empty_but_try_reports_why() {
     let p = at(&c, "absent.txt");
 
     // The whole point of the two layers.
-    assert_eq!(p.content_string(), "");
+    assert_eq!(p.contentAsString(), "");
     assert_eq!(p.lines(), Vec::<String>::new());
-    assert_eq!(p.bytes(), Vec::<u8>::new());
+    assert_eq!(p.byteArray(), Vec::<u8>::new());
     assert_eq!(p.firstLine(), "");
 
     let err = p.try_bytes().expect_err("missing file should error");
@@ -117,7 +117,7 @@ fn invalid_utf8_falls_back_to_latin1_but_strict_utf8_errors() {
     // 0xE9 is `é` in Latin-1 and not valid UTF-8 on its own.
     std::fs::write(p.as_std_path(), [b'a', 0xE9, b'b']).expect("write bytes");
 
-    assert_eq!(p.content_string(), "a\u{e9}b");
+    assert_eq!(p.contentAsString(), "a\u{e9}b");
     assert_eq!(
         p.try_content_string(Charset::Latin1).expect("latin1"),
         "a\u{e9}b"

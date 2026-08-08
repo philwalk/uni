@@ -10,7 +10,7 @@
 //! swallows it, exactly as the Scala does.
 //!
 //! ```ignore
-//! let text = p.content_string();          // "" if anything went wrong
+//! let text = p.contentAsString();          // "" if anything went wrong
 //! let text = p.try_content_string(cs)?;   // io::Error says what
 //! ```
 //!
@@ -117,7 +117,7 @@ impl UPath {
 
     /// Raw bytes, empty when unreadable.
     #[must_use]
-    pub fn bytes(&self) -> Vec<u8> {
+    pub fn byteArray(&self) -> Vec<u8> {
         self.try_bytes().unwrap_or_default()
     }
 
@@ -131,7 +131,7 @@ impl UPath {
 
     /// Whole file as text, empty when unreadable. UTF-8 with a Latin-1 fallback.
     #[must_use]
-    pub fn content_string(&self) -> String {
+    pub fn contentAsString(&self) -> String {
         self.try_content_string(Charset::default())
             .unwrap_or_default()
     }

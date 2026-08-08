@@ -33,6 +33,7 @@ pub mod context;
 pub mod csv;
 pub mod delim;
 pub mod matcsv;
+pub mod meta;
 pub mod ext;
 pub mod hash;
 pub mod io;
