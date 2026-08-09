@@ -1,4 +1,5 @@
-//! One half of the cross-language pair probe; `scratchpad/pairprobe/pairProbe.sc` is the other.
+//! One half of the cross-language pair probe; `jsrc/pairProbe.sc` is the other. The outputs are
+//! byte-identical -- `copyTo` returns an Option in both languages, so no line differs by design.
 //! Both build the same tree with the same fixed mtimes, run the same ops, and print
 //! `op<TAB>key<TAB>value` with the temp prefix normalised to `<T>`, so the outputs diff directly.
 

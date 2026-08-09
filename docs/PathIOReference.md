@@ -350,10 +350,12 @@ is exactly what used to happen, the failed decode falling back to Latin-1 and ha
 bytes with embedded NULs. Wide charsets now decode the file and split the text on the same
 `\r?\n` rule. The cost is laziness, and there is no way to have both.
 
-**Error shape.** Scala signals failure by exception; the Rust port never panics and shapes the
-same failure as a value: `copyTo` returns `Option<UPath>` (`None` on a refused overwrite, where
-Scala throws `FileAlreadyExistsException`), with `try_copyTo` carrying the underlying error. This
-is the one probe line that differs by design.
+**Error shape.** `copyTo` returns `Option[Path]` / `Option<UPath>` in **both** languages:
+`Some(dest)` when the copy happened, `None` on a refused overwrite. A refused overwrite is the
+answer to a question a caller can plan for, not an exceptional event -- and it is the same shape
+`renameToOpt` already had. The residual difference is the *unplanned* failures: permissions and
+disk errors still throw in Scala, while Rust folds them into `None` with `try_copyTo` carrying
+the reason, since the port never panics.
 
 **`canExecute` on Windows** is an approximation in Rust: Java asks the ACL, `std` cannot, so Rust
 answers `exists()` -- right for files, directories and missing paths, wrong only for a file whose
@@ -362,8 +364,7 @@ ACL explicitly denies execute.
 **The pair probe.** `jsrc/pairProbe.sc` and `rust/examples/pair_probe.rs` build identical trees
 with fixed mtimes, run the same ~50 operations, and print diffable output. Fixtures pin methods
 one at a time against recorded values; the probe covers the methods no fixture reaches and the
-compositions fixtures cannot. Run both and `diff` -- one designed difference (`copyTo-collision`),
-everything else byte-identical.
+compositions fixtures cannot. Run both and `diff` -- the outputs are byte-identical.
 
 **Lazy versus ordered listing.** These are two methods on purpose, and the `Iter` spelling marks
 which is which:

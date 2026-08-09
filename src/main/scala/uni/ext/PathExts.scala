@@ -413,10 +413,14 @@ object pathExts {
      *  `copyAttributes` keeps its default, and that line is drawn on purpose: a flag that can
      *  destroy data must be stated, one that cannot may default.
      *
-     *  @throws java.nio.file.FileAlreadyExistsException when `dest` exists and `overwrite` is
-     *          false.
+     *  Returns `Some(dest)` when the copy happened, `None` when `overwrite = false` and `dest`
+     *  already exists -- a refused overwrite is the answer to a question, not an exceptional
+     *  event, and it is the same answer the Rust port gives, so the two languages agree on the
+     *  case a caller can actually plan for. Real I/O failures (permissions, disk) still throw.
+     *  Detected by catching `FileAlreadyExistsException` rather than by a pre-check, so there is
+     *  no window in which another process creates `dest` and the copy clobbers it anyway.
      */
-    def copyTo(dest: Path, overwrite: Boolean, copyAttributes: Boolean = false): Path = {
+    def copyTo(dest: Path, overwrite: Boolean, copyAttributes: Boolean = false): Option[Path] = {
       val options =
         if (overwrite && copyAttributes)
           Array(StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES)
@@ -426,8 +430,10 @@ object pathExts {
           Array(StandardCopyOption.COPY_ATTRIBUTES)
         else
           Array.empty[StandardCopyOption]
-      Files.copy(p, dest, options*)
-      dest
+      try
+        Files.copy(p, dest, options*)
+        Some(dest)
+      catch case _: java.nio.file.FileAlreadyExistsException => None
     }
 
     /** Rename by copy+delete — works across filesystems. Returns 0 on success, -1 on failure. */
@@ -661,8 +667,8 @@ object pathExts {
     // default wearing a different hat, so keeping it would have left `f.copyTo(dest)` clobbering
     // silently while the Path version required the flag. The rename forms keep theirs -- their
     // default is `false`, which is already the safe answer.
-    def copyTo(dest: Path, overwrite: Boolean): Path                = f.toPath.copyTo(dest, overwrite)
-    def copyTo(dest: Path, overwrite: Boolean, copyAttributes: Boolean): Path = f.toPath.copyTo(dest, overwrite, copyAttributes)
+    def copyTo(dest: Path, overwrite: Boolean): Option[Path]        = f.toPath.copyTo(dest, overwrite)
+    def copyTo(dest: Path, overwrite: Boolean, copyAttributes: Boolean): Option[Path] = f.toPath.copyTo(dest, overwrite, copyAttributes)
     def renameTo(other: Path): Boolean                  = f.toPath.renameTo(other)
     def renameTo(other: Path, overwrite: Boolean): Boolean = f.toPath.renameTo(other, overwrite)
     def renameToOpt(other: Path): Option[Path]          = f.toPath.renameToOpt(other)

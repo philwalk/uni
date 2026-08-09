@@ -400,24 +400,18 @@ class PathExtsSuite extends FunSuite:
     val dst = Files.createTempFile("pathexts-dst-", ".txt")
     dst.toFile.deleteOnExit()
     val result = src.copyTo(dst, overwrite = true)
-    assertEquals(result, dst)
+    assertEquals(result, Some(dst))
     assertEquals(new String(Files.readAllBytes(dst), StandardCharsets.UTF_8), "copy-me")
   }
 
-  test("copyTo overwrite=false, copyAttributes=false: throws if target exists") {
+  test("copyTo overwrite=false: a refused overwrite is None, and the target is untouched") {
+    // Pre-0.16.0 this threw FileAlreadyExistsException. None is the same answer the Rust port
+    // gives, which is what lets the pair probe's outputs be byte-identical.
     val src = tempFile("src-content")
     val dst = tempFile("dst-content")
-    intercept[java.nio.file.FileAlreadyExistsException] {
-      src.copyTo(dst, overwrite = false, copyAttributes = false)
-    }
-  }
-
-  test("copyTo overwrite=false, copyAttributes=true: throws if target exists") {
-    val src = tempFile("src-content")
-    val dst = tempFile("dst-content")
-    intercept[java.nio.file.FileAlreadyExistsException] {
-      src.copyTo(dst, overwrite = false, copyAttributes = true)
-    }
+    assertEquals(src.copyTo(dst, overwrite = false, copyAttributes = false), None)
+    assertEquals(src.copyTo(dst, overwrite = false, copyAttributes = true), None)
+    assertEquals(new String(Files.readAllBytes(dst), StandardCharsets.UTF_8), "dst-content")
   }
 
   test("copyTo overwrite=true, copyAttributes=true: copies with attributes") {

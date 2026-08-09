@@ -9,8 +9,8 @@
 //   cargo run --example pair_probe           > rust.out     (from rust/)
 //   diff scala.out rust.out
 //
-// The one line that differs by design is `copyTo-collision`: Scala throws
-// FileAlreadyExistsException where Rust's Option-shaped copyTo returns None.
+// The outputs are byte-identical: since `copyTo` returns Option[Path] in both languages
+// (0.16.0), a refused overwrite prints None on both sides and no line differs by design.
 //
 // This exists because parity fixtures pin methods one at a time against recorded values, so a
 // method with no fixture is pinned by nothing. On its first run this caught canRead/canExecute
@@ -18,7 +18,7 @@
 object PairProbe {
   def println(s: String = ""): Unit = print(s"$s\n")
 
-  import java.nio.file.{Files, Paths as JPaths}
+  import java.nio.file.Files
   import java.nio.file.attribute.FileTime
   import uni.*
 
@@ -67,8 +67,9 @@ object PairProbe {
 
     // mutation semantics: collision handling and status codes
     val cp = t.resolve("copy1.txt")
-    emit("copyTo", "fresh", rel(a.copyTo(cp, overwrite = false).posx))
-    emit("copyTo-collision", "no-overwrite", try { a.copyTo(cp, overwrite = false); "no-throw" } catch { case ex: Exception => ex.getClass.getSimpleName })
+    def optStr(o: Option[java.nio.file.Path]): String = o.map(_.posx).getOrElse("None")
+    emit("copyTo", "fresh", rel(optStr(a.copyTo(cp, overwrite = false))))
+    emit("copyTo-collision", "no-overwrite", optStr(a.copyTo(cp, overwrite = false)))
     emit("renameToOpt", "collision-no-overwrite", b.renameToOpt(cp, overwrite = false))
     emit("renameTo", "missing-source", missing.renameTo(t.resolve("x.txt"), overwrite = false))
     emit("renameViaCopy", "missing-source", missing.renameViaCopy(t.resolve("y.txt"), overwrite = false))

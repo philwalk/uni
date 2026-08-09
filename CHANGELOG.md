@@ -11,7 +11,8 @@ renders month names in English regardless of locale; file timestamps render in U
 they rendered in system-local time; `Path.weekDay` returns an `Int` rather than a
 `java.time.DayOfWeek`; every line reader preserves an interior carriage return where it
 used to discard it; the six `lastMod*` alias spellings are gone; the `*Iter` traversal
-methods are lazy and no longer sorted; and `copyTo` requires its `overwrite` argument, with
+methods are lazy and no longer sorted; `newerThan`/`olderThan` compare in the direction their
+names say; and `copyTo` requires its `overwrite` argument and returns `Option[Path]`, with
 `File.copyTo(dest)` removed. Bigger than any of those: the date type moved off `java.time`
 (below).
 
@@ -46,6 +47,20 @@ release.
   `weekDayName`/`epoch2DateTime` render identically, `renameViaCopy` status codes, `renameToOpt`
   collision handling, `realPath` on a missing child, `length`/`isEmpty` on missing files, and
   `write`/`writeLines` roundtrips -- 53 of 54 lines byte-identical.
+
+**BREAKING — `copyTo` returns `Option[Path]`; a refused overwrite is `None`, not an exception**
+
+- `Some(dest)` when the copy happened, `None` when `overwrite = false` and `dest` exists -- which
+  is the shape `renameToOpt` already had, and the answer the Rust port already gave, so the two
+  languages now agree and the pair probe's outputs are **byte-identical** with no designed
+  difference left.
+- Nearly free in practice: every production call site in the corpus (20 across `apps`, `jsrc`,
+  `vast`) discards the return value; the only binding uses were one test line and the probe.
+- Detected by catching `FileAlreadyExistsException` rather than by an `exists` pre-check, so
+  there is no TOCTOU window -- the same reasoning as the Rust side's `create_new`.
+- Real I/O failures (permissions, disk) still throw in Scala. In Rust they fold into `None` with
+  `try_copyTo` carrying the reason; that residual is inherent to a port that never panics, and it
+  is now the *only* error-shape difference in the mutation family.
 
 **BREAKING — `newerThan`/`olderThan` now compare in the direction their names say**
 

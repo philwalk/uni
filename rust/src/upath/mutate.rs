@@ -42,8 +42,13 @@ impl UPath {
     /// Copies this file to `dest`, returning `dest`.
     ///
     /// `overwrite` is required, and so is the Scala's as of 0.16.0 -- the default was removed there
-    /// so the compiler flags every call site rather than letting a silent clobber through. The two
-    /// signatures now agree; this comment previously claimed a divergence that no longer exists.
+    /// so the compiler flags every call site rather than letting a silent clobber through.
+    ///
+    /// Returns `Some(dest)` when the copy happened, `None` when it did not -- and as of 0.16.0 the
+    /// Scala returns `Option[Path]` with the same meaning, so a refused overwrite is `None` in both
+    /// languages. The residual difference is the *unplanned* failures: permissions or disk errors
+    /// still throw in Scala, while here they fold into `None` with [`Self::try_copyTo`] carrying
+    /// the reason -- inherent to a port that never panics.
     ///
     /// `copyAttributes` covers the modification time and the permission bits, which is what
     /// `COPY_ATTRIBUTES` reaches for in practice. It does **not** carry owner or ACLs: `std`
