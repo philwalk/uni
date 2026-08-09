@@ -253,6 +253,7 @@ The same applies to `Option[LocalDateTime]`, an explicit `Ordering[LocalDateTime
 | :--- | :--- |
 | `uni.time.UniDateTime` | `utime::datetime::UniDateTime` |
 | `uni.time.DateFormat` | `utime::format` |
+| `uni.time.SmartParse`, `parseDate` | `utime::smartparse` |
 | `Path.lastModifiedTime`, `.lastMod*Ago` | `upath::times` |
 
 **Method names match the Scala spelling** — `plusDays`, `dayOfWeekName`, `lastModifiedTime` —
@@ -271,8 +272,22 @@ and **no date-library dependency**, which was the point of decoupling the Scala 
 first place. The alternative would have been a crate plus a translation layer from Java's
 pattern letters to strftime codes.
 
-`SmartParse` is **not** ported. Only the date type and its formatter are, so a Rust script
-that needs to read arbitrary date text must still do that itself.
+`SmartParse` is ported as `utime::smartparse` -- `parseDateSmart(s)` reads a date string of
+unknown format or answers `BAD_DATE`, exactly as in Scala, and `classify` / `numericDateOrder`
+come with it. Two adaptations, both visible in the signatures rather than the behaviour:
+
+- **Configuration is a parameter.** The Scala consults the dynamically-scoped `timeConfig`;
+  Rust has no dynamic scope, so `parseDateSmartWith(s, TimeConfig { monthFirst, order })` takes
+  it explicitly and `parseDateSmart` fixes the default (`monthFirst = true`, `order = Auto`).
+- **The fuzzy month scan has a defined order.** A typo within edit distance 1 of *two* months
+  (`jum`) resolves by `Map` iteration order in Scala, which is unspecified; the Rust scans
+  January to December. The parity fixture pins only unambiguous typos, on purpose.
+
+Pinned by `test-data/smartparse-parity/` -- 539 recorded answers over the shared date corpus
+plus one input per documented trap (the RFC 2822 layout, trailing `-0700` offsets, compact
+`yyyyMMdd HHmm`, AM/PM edge cases, 2-digit-year expansion, fuzzy month words), under all four
+day/month-order configurations for the ambiguous cases. Regenerate with
+`sbt "Test/runMain uni.apps.SmartParseParityGen"`.
 
 One difference in the arithmetic, and it matters for trust: the Scala delegates to `java.time`
 for calendar math, while the Rust has nothing to delegate to and writes it out — Hinnant's

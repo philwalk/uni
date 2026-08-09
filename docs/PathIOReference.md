@@ -331,9 +331,9 @@ sorting it away. It used to sort both sides, back when neither language promised
 Still **not** ported: the `Big`-typed loaders (`loadMatBig`, `loadMatB`, `loadSmartBig`,
 `readCsvB`), and `eachPath` -- deliberately Scala-only, since Rust's directory iterator closes
 on drop and needs no scoping helper. Everything else on the `Path` surface has a Rust
-counterpart under the same name, aliases included. `SmartParse` — the date *parser*, as distinct
-from the date type — is also absent, so a Rust script needing to read arbitrary date text must do
-that itself.
+counterpart under the same name, aliases included. `SmartParse` is ported as
+`utime::smartparse` (see `docs/DateTimeParser.md`), so the whole of `uni.time` now has a Rust
+counterpart.
 
 The `Big` loaders are blocked on `Big` itself, which is a project rather than a method: an opaque
 `BigDecimal` with `MathContext.DECIMAL128`, plus a NaN sentinel recognised by equality and the

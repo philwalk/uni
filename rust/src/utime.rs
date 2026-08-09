@@ -15,10 +15,12 @@
 //! formatter works on those integers rather than on a `java.time` object, the port needs
 //! neither.
 //!
-//! # What is *not* ported
+//! # The parser
 //!
-//! `SmartParse` — the format-autodetecting parser. Only the date type and its formatter are
-//! here. A Rust script that needs to read arbitrary date text still has to do that itself.
+//! [`smartparse`] is the port of `SmartParse`, the format-autodetecting parser --
+//! [`parseDateSmart`] reads a date string of unknown format or answers `BAD_DATE`. The
+//! dynamically-scoped `timeConfig` of the Scala becomes an explicit [`smartparse::TimeConfig`]
+//! parameter on the `*With` forms.
 //!
 //! # Parity
 //!
@@ -30,7 +32,10 @@
 
 pub mod datetime;
 pub mod format;
+pub mod smartparse;
 
 pub use datetime::UniDateTime;
 pub use format::FormatError;
 pub use format::dayOfWeek;
+pub use smartparse::parseDate;
+pub use smartparse::parseDateSmart;
