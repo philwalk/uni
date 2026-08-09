@@ -328,21 +328,12 @@ object pathExts {
     def lastModified: Long       = p.toFile.lastModified
     def lastModMillisAgo: Long   = System.currentTimeMillis - p.toFile.lastModified
 
-    @deprecated("Use `lastModSecondsAgo`", "uni")
-    def lastModSecondsDbl: Double = lastModSecondsAgo
 
     def lastModSecondsAgo: Double = lastModMillisAgo / 1000.0
     def lastModMinutesAgo: Double = round(lastModSecondsAgo / 60.0)
     def lastModHoursAgo: Double   = round(lastModMinutesAgo / 60.0)
     def lastModDaysAgo: Double    = round(lastModHoursAgo / 24.0)
 
-    def lastModSeconds: Double = lastModSecondsAgo  // alias
-    def lastModMinutes: Double = lastModMinutesAgo  // alias
-    def lastModHours: Double   = lastModHoursAgo    // alias
-    def lastModDays: Double    = lastModDaysAgo     // alias
-
-    /** Alias for lastModDaysAgo. pallet compat: p.ageInDays */
-    def ageInDays: Double = lastModDaysAgo
 
     /** The file's last-modified time as `yyyy-MM-dd HH:mm:ss`, in **UTC**.
      *
@@ -642,11 +633,6 @@ object pathExts {
     def lastModMinutesAgo: Double = f.toPath.lastModMinutesAgo
     def lastModHoursAgo: Double   = f.toPath.lastModHoursAgo
     def lastModDaysAgo: Double    = f.toPath.lastModDaysAgo
-    def lastModSeconds: Double    = f.toPath.lastModSeconds
-    def lastModMinutes: Double    = f.toPath.lastModMinutes
-    def lastModHours: Double      = f.toPath.lastModHours
-    def lastModDays: Double       = f.toPath.lastModDays
-    def ageInDays: Double         = f.toPath.ageInDays
     def lastModifiedYMD: String   = f.toPath.lastModifiedYMD
     def lastModifiedTime: UniDateTime = f.toPath.lastModifiedTime
     def weekDay: Int              = f.toPath.weekDay

@@ -371,9 +371,11 @@ A few methods are present under one name rather than two. `files` and `paths` co
 having no second path type; the `*Iter` variants are covered by `paths` and `walkIter`; and
 `asFile` is the **identity**, kept so a line written against the Scala ports unchanged.
 
-The `lastMod*Ago` aliases (`lastModSeconds`, `lastModMinutes`, `lastModHours`, `lastModDays`,
-`ageInDays`, `lastModSecondsDbl`) are deliberately absent from the Rust: they add names, not
-capability. Use the `*Ago` spelling, or `ago()` for all four values from a single clock read.
+The alias spellings `lastModSeconds`, `lastModMinutes`, `lastModHours`, `lastModDays`,
+`ageInDays` and `lastModSecondsDbl` were **removed in 0.16.0** rather than ported. Each was a
+one-line forward to the `*Ago` method of the same name, so there was nothing to port and nothing
+lost -- use `lastModSecondsAgo`, `lastModMinutesAgo`, `lastModHoursAgo`, `lastModDaysAgo`, or
+`ago()` in Rust for all four values from a single clock read.
 
 ### Method names match Scala, deliberately
 

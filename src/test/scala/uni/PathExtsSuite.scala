@@ -324,10 +324,10 @@ class PathExtsSuite extends FunSuite:
     assert(p.lastModHoursAgo >= 0.0)
     assert(p.lastModDaysAgo >= 0.0)
     // aliases
-    assert(p.lastModSeconds >= 0.0)
-    assert(p.lastModMinutes >= 0.0)
-    assert(p.lastModHours >= 0.0)
-    assert(p.lastModDays >= 0.0)
+    assert(p.lastModSecondsAgo >= 0.0)
+    assert(p.lastModMinutesAgo >= 0.0)
+    assert(p.lastModHoursAgo >= 0.0)
+    assert(p.lastModDaysAgo >= 0.0)
   }
 
   test("lastModifiedYMD: returns non-empty string for existing file") {
@@ -348,9 +348,9 @@ class PathExtsSuite extends FunSuite:
     assert(p.weekDayName.length == 3, s"weekDayName was [${p.weekDayName}]")
   }
 
-  test("ageInDays: freshly created file age is < 1 day") {
+  test("lastModDaysAgo: freshly created file age is < 1 day") {
     val p = tempFile("age")
-    assert(p.ageInDays >= 0.0 && p.ageInDays < 1.0)
+    assert(p.lastModDaysAgo >= 0.0 && p.lastModDaysAgo < 1.0)
   }
 
   // ============================================================================
@@ -696,15 +696,15 @@ class PathExtsSuite extends FunSuite:
     assert(f.lastModMinutesAgo >= 0.0)
     assert(f.lastModHoursAgo >= 0.0)
     assert(f.lastModDaysAgo >= 0.0)
-    assert(f.lastModSeconds >= 0.0)
-    assert(f.lastModMinutes >= 0.0)
-    assert(f.lastModHours >= 0.0)
-    assert(f.lastModDays >= 0.0)
+    assert(f.lastModSecondsAgo >= 0.0)
+    assert(f.lastModMinutesAgo >= 0.0)
+    assert(f.lastModHoursAgo >= 0.0)
+    assert(f.lastModDaysAgo >= 0.0)
   }
 
-  test("JFile.ageInDays: fresh file is < 1 day") {
+  test("JFile.lastModDaysAgo: fresh file is < 1 day") {
     val f = tempJFile("age")
-    assert(f.ageInDays >= 0.0 && f.ageInDays < 1.0)
+    assert(f.lastModDaysAgo >= 0.0 && f.lastModDaysAgo < 1.0)
   }
 
   test("JFile.lastModifiedYMD: returns non-empty string") {

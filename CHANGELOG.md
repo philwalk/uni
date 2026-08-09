@@ -10,7 +10,8 @@ resolves against the config's working directory rather than the JVM's; `DateForm
 renders month names in English regardless of locale; file timestamps render in UTC where
 they rendered in system-local time; `Path.weekDay` returns an `Int` rather than a
 `java.time.DayOfWeek`; every line reader preserves an interior carriage return where it
-used to discard it; and `copyTo` requires its `overwrite` argument, with
+used to discard it; the six `lastMod*` alias spellings are gone; the `*Iter` traversal
+methods are lazy and no longer sorted; and `copyTo` requires its `overwrite` argument, with
 `File.copyTo(dest)` removed. Bigger than any of those: the date type moved off `java.time`
 (below).
 
@@ -21,6 +22,23 @@ quietly, which is why it was done that way.
 argument of `@deprecated`, not a removal target. They still work; removal is a later
 release.
 
+
+**BREAKING — the six `lastMod*` alias spellings are removed**
+
+- Gone: `lastModSeconds`, `lastModMinutes`, `lastModHours`, `lastModDays`, `ageInDays` and the
+  already-deprecated `lastModSecondsDbl`, from both the `Path` and `JFile` extensions. Each was a
+  one-line forward to the `*Ago` method of the same name.
+- Use `lastModSecondsAgo`, `lastModMinutesAgo`, `lastModHoursAgo`, `lastModDaysAgo`. `ageInDays`
+  was `lastModDaysAgo` under a name kept for pallet compatibility.
+- **Nothing is lost**: no alias had behaviour of its own, which is also why the Rust port never
+  carried them. Removing them closes that group of parity exceptions by deleting the difference
+  rather than by porting names -- 6 of the 18 unported methods were this one issue.
+- `uni.time.TimeUtils.ageInDays(File)` is **untouched**: a standalone function taking an argument,
+  not one of these extensions.
+- 41 call sites rewritten across 13 files -- 4 in `/opt/ue/apps`, 6 `/opt/ue/jsrc` scripts, 2 in
+  `/opt/ue/vast`, and this repo's own suite. Verified: `/opt/ue` compiles (200 `vast` + 303 `apps`
+  sources) and all six edited scripts compile under scala-cli, which matters because they pin
+  `uni_3:0.16.0` and therefore see the removal.
 
 **BREAKING — the `*Iter` traversal methods are now genuinely lazy**
 
