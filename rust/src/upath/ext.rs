@@ -226,8 +226,12 @@ impl UPath {
     }
 
     /// Parent path, or this path when it has no parent. `PathExts.getParentNonNull`.
+    ///
+    /// **Not** `PathExts.parent`, which absolutises first -- see [`Self::parent`]. This method was
+    /// named `parent` until 0.16.0, which made the audit read it as a match for the Scala `parent`
+    /// while it implemented a different method, and nothing tested the difference.
     #[must_use]
-    pub fn parent(&self) -> Self {
+    pub fn getParentNonNull(&self) -> Self {
         let root = self.root_len();
         let tail = &self.s[root..];
         let trimmed = tail.trim_end_matches('/');
@@ -236,6 +240,27 @@ impl UPath {
             None if root > 0 => self.with(&self.s[..root]),
             None => self.clone(),
         }
+    }
+
+    /// Parent of the absolutised path. `PathExts.parent` (`p.toAbsolutePath.getParent`).
+    ///
+    /// **Identical to [`Self::getParentNonNull`] here, and that is structural, not laziness.** In
+    /// Scala the three parent methods differ only for a *relative* `java.nio.file.Path`; a `UPath`
+    /// is resolved against its context at construction and so is always absolute, which collapses
+    /// the distinction. Kept as a separate name so a line ported from Scala reads the same.
+    #[must_use]
+    pub fn parent(&self) -> Self {
+        self.to_absolute().getParentNonNull()
+    }
+
+    /// `PathExts.getParentPath`, and its alias `parentPath`.
+    ///
+    /// The third parent spelling. Also identical to the other two here, for the reason given on
+    /// [`Self::parent`]: the fallback it exists to provide in Scala -- absolutise when the path has
+    /// no relative parent -- can never trigger on an always-absolute `UPath`.
+    #[must_use]
+    pub fn getParentPath(&self) -> Self {
+        self.getParentNonNull()
     }
 
     /// The resolution context this path was built with.

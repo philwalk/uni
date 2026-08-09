@@ -93,7 +93,14 @@ impl UPath {
     /// exclusively locked by another process reports `false` here where Java may report `true`.
     #[must_use]
     pub fn canRead(&self) -> bool {
-        fs::File::open(self.as_std_path()).is_ok()
+        // A directory cannot be `File::open`ed on Windows, but Java's `canRead` answers true for
+        // a readable directory -- so ask the equivalent question per kind: can it be listed, or
+        // can it be opened. Found by the cross-language pair probe, not by review.
+        if self.isDirectory() {
+            fs::read_dir(self.as_std_path()).is_ok()
+        } else {
+            fs::File::open(self.as_std_path()).is_ok()
+        }
     }
 
     /// Whether the file is executable.
@@ -113,7 +120,12 @@ impl UPath {
         }
         #[cfg(not(unix))]
         {
-            self.isFile()
+            // Java's `canExecute` on Windows is an ACL check that is true for a traversable
+            // directory and for nearly every readable file -- extensions play no part. `exists`
+            // matches Java on all three common cases (file, directory, missing); a file whose
+            // ACL actually denies execute is misreported `true`, which `std` cannot see without
+            // reading ACLs. The previous `isFile()` answered `false` for every directory.
+            self.exists()
         }
     }
 
@@ -236,6 +248,21 @@ mod tests {
     fn probe(dir: &std::path::Path, name: &str) -> UPath {
         let d = dir.to_string_lossy().replace('\\', "/");
         UPath::resolve(&ctx(&d), &format!("{d}/{name}")).unwrap_or_else(|e| panic!("resolve: {e}"))
+    }
+
+    #[test]
+    fn can_read_and_can_execute_are_true_for_a_directory() {
+        // Java's canRead/canExecute are ACL checks that answer true for a readable, traversable
+        // directory. `File::open` on a directory fails on Windows, so the first port answered
+        // false for every directory -- caught by the cross-language pair probe, not by review.
+        let tmp = tempfile::tempdir().unwrap_or_else(|e| panic!("tempdir: {e}"));
+        let d = probe(tmp.path(), "sub");
+        std::fs::create_dir(d.as_std_path()).unwrap_or_else(|e| panic!("mkdir: {e}"));
+        assert!(d.canRead(), "a readable directory can be read");
+        assert!(d.canExecute(), "a directory is traversable");
+        let ghost = probe(tmp.path(), "no-such");
+        assert!(!ghost.canRead());
+        assert!(!ghost.canExecute());
     }
 
     #[test]

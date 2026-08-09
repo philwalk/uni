@@ -197,19 +197,21 @@ impl UPath {
         self.lastModifiedTime().dayOfWeekName()
     }
 
-    /// True when `other` is strictly newer, and both are files.
+    /// True when **this** file was modified more recently than `other`, and both are files.
     ///
-    /// The `isFile` guards are the Scala's, and they are what make the epoch-zero sentinel
-    /// unreachable here.
+    /// The comparison reads as the name does. Before 0.16.0 both languages had it inverted --
+    /// `a.newerThan(b)` answered whether *b* was newer -- and this port faithfully reproduced the
+    /// inversion; both flipped together. The `isFile` guards are the Scala's, and they are what
+    /// make the epoch-zero sentinel unreachable here.
     #[must_use]
     pub fn newerThan(&self, other: &Self) -> bool {
-        self.isFile() && other.isFile() && other.lastModified() > self.lastModified()
+        self.isFile() && other.isFile() && self.lastModified() > other.lastModified()
     }
 
-    /// True when `other` is strictly older, and both are files.
+    /// True when **this** file was modified less recently than `other`, and both are files.
     #[must_use]
     pub fn olderThan(&self, other: &Self) -> bool {
-        self.isFile() && other.isFile() && other.lastModified() < self.lastModified()
+        self.isFile() && other.isFile() && self.lastModified() < other.lastModified()
     }
 }
 

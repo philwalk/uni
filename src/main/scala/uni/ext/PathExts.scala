@@ -382,13 +382,20 @@ object pathExts {
     }
 
     // ---- age comparisons ----
+    /** True when this file was modified more recently than `other`, and both are files.
+      *
+      *  The comparison reads as the name does: `a.newerThan(b)` asks whether **a** is newer.
+      *  Before 0.16.0 it was inverted -- true when *b* was newer -- and the two known callers in
+      *  the wild read as if the name were true, so they were silently backwards until this flip.
+      */
     def newerThan(other: Path): Boolean =
-      p.isFile && other.isFile && other.lastModified > p.lastModified
+      p.isFile && other.isFile && p.lastModified > other.lastModified
+
+    /** True when this file was modified less recently than `other`, and both are files. */
     def olderThan(other: Path): Boolean =
-      p.isFile && other.isFile && other.lastModified < p.lastModified
+      p.isFile && other.isFile && p.lastModified < other.lastModified
 
     // ---- copy / move / delete ----
-    /** Copy to dest. Overwrites by default. */
     /** Copies to `dest`, returning `dest`.
      *
      *  `overwrite` has **no default, on purpose**, and this is the only method here without one.
@@ -454,8 +461,15 @@ object pathExts {
       */
     def delete(): Boolean = Files.deleteIfExists(p)
 
+    /** Creates this directory and any missing parents, reporting whether it is now a directory.
+      *
+      *  The result is the re-check, not `createDirectories`' word for it: a name already occupied
+      *  by a *file* reports `false` rather than throwing. Before 0.16.0 that case threw
+      *  `FileAlreadyExistsException`, which made the `Boolean` decorative -- success returned
+      *  `true` and every failure threw, so `false` was unreachable.
+      */
     def mkdirs: Boolean = {
-      Files.createDirectories(p)
+      try Files.createDirectories(p) catch case _: Exception => ()
       p.toFile.isDirectory
     }
 

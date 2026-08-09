@@ -368,6 +368,19 @@ class PathExtsSuite extends FunSuite:
   // newerThan / olderThan
   // ============================================================================
 
+  test("newerThan / olderThan: the comparison reads as the name does") {
+    // Direction was never pinned, which is how both languages carried it inverted until 0.16.0.
+    val old  = Files.createTempFile("pathexts-older-", ".txt")
+    val fresh = Files.createTempFile("pathexts-newer-", ".txt")
+    Files.setLastModifiedTime(old,  java.nio.file.attribute.FileTime.fromMillis(1000000000000L))
+    Files.setLastModifiedTime(fresh, java.nio.file.attribute.FileTime.fromMillis(2000000000000L))
+    assert(fresh.newerThan(old),  "the newer file IS newerThan the older")
+    assert(!old.newerThan(fresh), "the older file is NOT newerThan the newer")
+    assert(old.olderThan(fresh),  "the older file IS olderThan the newer")
+    assert(!fresh.olderThan(old), "the newer file is NOT olderThan the older")
+    assert(!old.newerThan(old),   "strict: a file is not newer than itself")
+  }
+
   test("newerThan / olderThan: non-file path returns false") {
     val real = tempFile("real")
     val ghost = JPaths.get("/nonexistent/pathexts-ghost.tmp")
@@ -489,6 +502,25 @@ class PathExtsSuite extends FunSuite:
   test("delete: existing file returns true") {
     val p = tempFile("to-be-deleted")
     assert(p.delete())
+  }
+
+  test("mkdirs: a name occupied by a file reports false rather than throwing") {
+    // Pre-0.16.0 this threw FileAlreadyExistsException, which made the Boolean decorative:
+    // success returned true and every failure threw, so false was unreachable.
+    val f = Files.createTempFile("pathexts-mkdirs-file-", ".txt")
+    assert(!f.mkdirs)
+    assert(f.isFile, "the file survives the attempt")
+  }
+
+  test("canRead / canExecute: true for a readable directory, false for a missing path") {
+    // Pinned because the Rust port answered false for every directory until the pair probe
+    // caught it; this is the Scala side of that agreement.
+    val d = Files.createTempDirectory("pathexts-canread-")
+    assert(d.canRead)
+    assert(d.canExecute)
+    val ghost = d.resolve("no-such")
+    assert(!ghost.canRead)
+    assert(!ghost.canExecute)
   }
 
   test("mkdirs: creates nested directories") {

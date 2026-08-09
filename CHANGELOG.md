@@ -23,6 +23,67 @@ argument of `@deprecated`, not a removal target. They still work; removal is a l
 release.
 
 
+**FIXED — divergences caught by the new cross-language pair probe**
+
+- `jsrc/pairProbe.sc` + `rust/examples/pair_probe.rs`: both halves build the same tree with the
+  same fixed mtimes, run the same ~50 operations, and print diffable `op/key/value` lines. This is
+  the "matched pair of scripts" idea -- fixtures pin one method at a time, so a method without a
+  fixture was pinned by nothing, and that is exactly where all three catches came from.
+- **RUST BUG -- `canRead` and `canExecute` answered `false` for every directory.** Java's checks
+  are ACL checks, true for a readable, traversable directory; the port asked `File::open` (fails
+  on a Windows directory) and `isFile()`. Now: directories answer via `read_dir`, and `canExecute`
+  on Windows answers `exists()` -- an approximation Java's ACL check can beat only for a file
+  whose ACL explicitly denies execute.
+- **BREAKING (Scala) -- `mkdirs` over a name occupied by a file returns `false` instead of
+  throwing.** `Files.createDirectories` threw `FileAlreadyExistsException` there, which made the
+  `Boolean` decorative: success returned `true` and every failure threw, so `false` was
+  unreachable. The Rust port already had the re-check semantics; its doc claimed the Scala did
+  too, and the probe showed the claim false. The Scala now matches its own documentation.
+- **Documented, not changed:** on a refused overwrite `copyTo` throws in Scala and returns `None`
+  in Rust -- the port's error shape is values, not panics. The probe pins this as its one designed
+  difference.
+- The probe also **confirmed** parity where nothing had: `lastModifiedYMD`/`weekDay`/
+  `weekDayName`/`epoch2DateTime` render identically, `renameViaCopy` status codes, `renameToOpt`
+  collision handling, `realPath` on a missing child, `length`/`isEmpty` on missing files, and
+  `write`/`writeLines` roundtrips -- 53 of 54 lines byte-identical.
+
+**BREAKING — `newerThan`/`olderThan` now compare in the direction their names say**
+
+- `a.newerThan(b)` was true when **b** had the larger `lastModified` -- inverted, in both
+  languages, with the Rust port faithfully reproducing the inversion. Flipped together, so
+  `a.newerThan(b)` now asks whether *a* is newer, and `olderThan` likewise.
+- The caller survey is why the flip was safe: the only extension callers in the corpus
+  (`manifestClasspath`, twice: `val ojStale = ij.newerThan(oj)`) read as if the name were true,
+  so they were silently backwards and are silently corrected. The other two candidates
+  (`RouteTripReport`, `sclaunch.sc`) had each written their **own local `newerThan`** with the
+  name's semantics rather than use the extension -- independent evidence for which direction is
+  the expected one.
+- Direction was never pinned in either language, which is how it survived: the only tests
+  asserted `false` for non-files, which both directions satisfy. Now pinned by a mirrored pair --
+  `PathExtsSuite` and `rust/tests/upath_times.rs` -- and by the `newerThan`/`olderThan` lines of
+  the pair probe.
+
+**RUST — the method named `parent` was implementing a different Scala method**
+
+- `UPath::parent` was documented, in its own doc comment, as `PathExts.getParentNonNull`. So the
+  API audit matched it to Scala's `parent` **by name** and reported the pair as ported while the
+  semantics differed -- and `PathParityGen` records no parent method at all, so nothing tested it.
+  A name match counted as parity for the whole life of the port.
+- Renamed to `getParentNonNull`, with `parent` and `getParentPath` added beside it. Free of charge:
+  there were **zero** `UPath::parent()` call sites -- the one apparent hit was
+  `std::path::Path::parent` on a `&Path` cursor inside `realPath`.
+- **The three then turn out to coincide in Rust, structurally.** Scala's three differ only for a
+  *relative* `java.nio.file.Path`: `getParentNonNull` falls back to self, `parent` absolutises,
+  `getParentPath` absolutises only as a fallback. A `UPath` is resolved against its context when
+  constructed and is therefore always absolute, so no relative input exists to distinguish them.
+  All three names are kept so a ported line reads unchanged.
+- That was found by writing the test, not by reading: the first version asserted the Scala
+  behaviour and failed, because `resolve(ctx, "loneName.txt")` yields
+  `/home/tester/loneName.txt`. The doc comments written minutes earlier claimed a difference that
+  cannot occur, and were corrected.
+- Pinned by `rust/tests/upath_parent.rs`, which asserts the agreement rather than leaving it
+  implied -- including the premise that a `UPath` is always absolute.
+
 **BREAKING — the six `lastMod*` alias spellings are removed**
 
 - Gone: `lastModSeconds`, `lastModMinutes`, `lastModHours`, `lastModDays`, `ageInDays` and the
