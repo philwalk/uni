@@ -26,6 +26,7 @@ use ndarray::Array2;
 use ndarray::ArrayView1;
 use ndarray::Axis;
 
+use crate::udata::Big;
 use crate::upath::ext::UPath;
 
 /// A cell type a CSV can be read into.
@@ -115,6 +116,19 @@ impl CsvCell for i64 {
     /// missing cells need to stay distinguishable from real zeros.
     fn missing() -> Self {
         0
+    }
+}
+
+/// `Big` cells parse with `Big::parse`'s full grammar (`$`, `,`, `%`), and a missing or
+/// unparseable cell is the BigNaN sentinel -- which, unlike `i64`'s zero stand-in, stays
+/// distinguishable from real data. Closes the last loader gap in the port.
+impl CsvCell for Big {
+    fn parse_cell(s: &str) -> Option<Self> {
+        let v = Self::parse(s);
+        if v.isNaN() { None } else { Some(v) }
+    }
+    fn missing() -> Self {
+        Self::nan()
     }
 }
 
@@ -296,6 +310,31 @@ impl UPath {
     #[must_use]
     pub fn loadSmartD(&self) -> CsvTable<f64> {
         self.read_csv_smart::<f64>()
+    }
+
+    /// `PathExts.loadMatBig`: the CSV as a matrix of exact decimals.
+    #[must_use]
+    pub fn loadMatBig(&self) -> Array2<Big> {
+        self.readCsv::<Big>()
+    }
+
+    /// Alias for [`Self::loadMatBig`]. `PathExts.loadMatB` -- note `MatB` is `Mat[Big]`,
+    /// not `Mat[Boolean]`.
+    #[must_use]
+    pub fn loadMatB(&self) -> Array2<Big> {
+        self.loadMatBig()
+    }
+
+    /// Alias for [`Self::loadMatBig`]. `PathExts.readCsvB`.
+    #[must_use]
+    pub fn readCsvB(&self) -> Array2<Big> {
+        self.loadMatBig()
+    }
+
+    /// `PathExts.loadSmartBig`: header-aware, cells as exact decimals.
+    #[must_use]
+    pub fn loadSmartBig(&self) -> CsvTable<Big> {
+        self.read_csv_smart::<Big>()
     }
 
     /// Data plus column names; empty when unreadable.

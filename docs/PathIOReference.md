@@ -328,17 +328,19 @@ by unit tests on each side instead, for reasons worth knowing:
 sort by the same key, so `test-data/walk-parity/` records the order the API returns rather than
 sorting it away. It used to sort both sides, back when neither language promised an order.
 
-Still **not** ported: the `Big`-typed loaders (`loadMatBig`, `loadMatB`, `loadSmartBig`,
-`readCsvB`), and `eachPath` -- deliberately Scala-only, since Rust's directory iterator closes
-on drop and needs no scoping helper. Everything else on the `Path` surface has a Rust
-counterpart under the same name, aliases included. `SmartParse` is ported as
-`utime::smartparse` (see `docs/DateTimeParser.md`), so the whole of `uni.time` now has a Rust
-counterpart.
+The `Big`-typed loaders (`loadMatBig`, `loadMatB`, `loadSmartBig`, `readCsvB`) are ported,
+backed by `udata::big` -- a hand-rolled arbitrary-precision decimal with
+`java.math.BigDecimal` semantics, pinned by `test-data/big-parity/` (see
+`docs/BigTypeGuide.md`). **Every `Path` extension method now has a Rust counterpart under
+the same name** -- including `eachPath`, which in Rust adds nothing over
+`pathsIter().for_each(f)` (the iterator closes on drop, so there is no handle to scope) and
+exists so a ported line compiles unchanged. `SmartParse` is ported as `utime::smartparse`
+(see `docs/DateTimeParser.md`), so the whole of `uni.time` has a Rust counterpart too.
 
-The `Big` loaders are blocked on `Big` itself, which is a project rather than a method: an opaque
-`BigDecimal` with `MathContext.DECIMAL128`, plus a NaN sentinel recognised by equality and the
-propagation contract that goes with it. `std` has no decimal type, so this would be the first
-real dependency the port takes. `loadMatD`/`loadMatF` cover the `Double` and `Float` cases.
+`Big` itself lives at `rust/src/udata/big.rs`: exact `+`/`-`/`*` under each value's
+MathContext, DECIMAL128-rounded `/` and `sqrt`, the equality-recognised BigNaN sentinel with
+its propagation contract, and Java's `toString` notation rules -- with no dependency, on
+base-10^9 limbs. `test-data/big-parity/` holds `java.math.BigDecimal`'s own answers.
 
 **Charsets.** Both languages support UTF-8, Latin-1 and the three UTF-16 forms (`UTF-16`,
 `UTF-16LE`, `UTF-16BE`). The Scala resolves through `Charset.forName`, so it also honours every

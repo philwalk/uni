@@ -161,6 +161,16 @@ impl UPath {
         self.pathsIter()
     }
 
+    /// Applies `f` to each directory entry. `PathExts.eachPath`.
+    ///
+    /// In Scala this is the *safe* form: `pathsIter` holds a directory handle that leaks if
+    /// the iterator is abandoned, and `eachPath` scopes the close. [`DirIter`] closes on
+    /// drop, so here the method adds nothing over `pathsIter().for_each(f)` -- it exists so
+    /// a line written against the Scala ports unchanged, the same contract as `asFile`.
+    pub fn eachPath(&self, f: impl FnMut(Self)) {
+        self.pathsIter().for_each(f);
+    }
+
     /// The tree walk as a lazy iterator — the counterpart to Scala's `pathsTreeIter`.
     ///
     /// Explicit stack rather than recursion, so a deep tree cannot overflow, and so the caller

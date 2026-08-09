@@ -71,6 +71,18 @@ fn lazy_and_eager_see_the_same_entries() {
 }
 
 #[test]
+fn each_path_visits_what_paths_iter_yields() {
+    let (_t, root) = tree_of(5);
+    let mut visited: Vec<String> = Vec::new();
+    root.eachPath(|p| visited.push(p.baseName().unwrap_or_default().to_owned()));
+    let mut yielded: Vec<String> =
+        root.pathsIter().map(|p| p.baseName().unwrap_or_default().to_owned()).collect();
+    visited.sort_unstable();
+    yielded.sort_unstable();
+    assert_eq!(visited, yielded, "same entries, either spelling");
+}
+
+#[test]
 fn files_iter_aliases_paths_iter() {
     let (_t, root) = tree_of(5);
     let a: Vec<String> = root.pathsIter().map(|p| p.baseName().unwrap_or_default().to_owned()).collect();

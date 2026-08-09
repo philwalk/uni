@@ -263,3 +263,30 @@ Use `Big` when accumulated rounding error matters — financial totals, high-pre
 regression coefficients, or anywhere you need reproducible exact decimal arithmetic.
 Use `Double` for large-scale numerical computation where throughput matters more than
 the last few digits of precision.
+
+## Rust counterpart
+
+**`rust/src/udata/big.rs`** ports the type with no dependency: an arbitrary-precision decimal
+on base-10^9 limbs with `java.math.BigDecimal` semantics, chosen for accounting exactness.
+
+The semantics worth knowing, identical in both languages and pinned by
+`test-data/big-parity/` (335 recorded answers, `java.math.BigDecimal` as the oracle):
+
+- **Construction never rounds.** A 35-digit literal keeps 35 digits and carries
+  `MathContext(35, HALF_EVEN)` -- the context is `max(34, literal digits)`. Operators apply
+  the **left operand's** context to the exact result, so 34-digit values round to 34 while a
+  wider literal keeps its width. This is `scala.math.BigDecimal`'s actual behaviour, measured;
+  it is not what a reading of `MathContext.DECIMAL128` suggests.
+- `+`, `-`, `*` are exact up to that context; `/` and `sqrt` round, with Java's
+  preferred-scale and trailing-zero rules (`2.50 / 0.25` is `10`).
+- The BigNaN sentinel is recognised by numeric equality and survives every operation by
+  short-circuit; it is also the missing-cell value for the `Big` CSV loaders (`loadMatBig`,
+  `loadMatB`, `loadSmartBig`, `readCsvB`, all ported).
+- `toString` follows Java's notation rules, so scale is part of the rendering contract.
+
+Two loud divergences, by the port's no-panic rule: `sqrt` of a negative and a negative `pow`
+exponent **throw** in Scala and answer BigNaN in Rust. The wider `Mat[Big]` arithmetic surface
+is not ported -- this is the type and the loaders.
+
+Regenerate the fixture with `sbt "runMain uni.apps.BigParityGen"`, only when the change in
+answers is intended.
