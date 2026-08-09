@@ -3,7 +3,6 @@ package uni.io
 import munit.FunSuite
 import java.nio.file.{Files, Path}
 import java.nio.charset.StandardCharsets
-import scala.annotation.nowarn
 
 class FastCsvSuite extends FunSuite:
 
@@ -230,48 +229,6 @@ class FastCsvSuite extends FunSuite:
   test("decodeFields: converts byte arrays to strings") {
     val fields = Array("hello".getBytes, "world".getBytes)
     assertEquals(FastCsv.decodeFields(fields, StandardCharsets.UTF_8).toList, List("hello", "world"))
-  }
-
-  // ============================================================================
-  // autoDetectDelimiter (deprecated) — routed via @nowarn helper
-  // ============================================================================
-
-  // Suppress the deprecation warning: we intentionally test the deprecated method
-  // to cover its branching logic, which still exists in the compiled code.
-  @nowarn("msg=deprecated")
-  private def autoDetect(text: String, fname: String, ignoreErrors: Boolean = true): String =
-    FastCsv.autoDetectDelimiter(text, fname, ignoreErrors)
-
-  test("autoDetectDelimiter: commas win") {
-    assertEquals(autoDetect("a,b,c", "f.csv"), ",")
-  }
-
-  test("autoDetectDelimiter: tabs win") {
-    assertEquals(autoDetect("a\tb\tc", "f.tsv"), "\t")
-  }
-
-  test("autoDetectDelimiter: pipes win") {
-    assertEquals(autoDetect("a|b|c", "f.txt"), "|")
-  }
-
-  test("autoDetectDelimiter: semicolons win") {
-    assertEquals(autoDetect("a;b;c", "f.txt"), ";")
-  }
-
-  test("autoDetectDelimiter: all-zero counts → commas win (tie goes to comma)") {
-    assertEquals(autoDetect("abc", "f.csv"), ",")
-  }
-
-  test("autoDetectDelimiter: ambiguous (pipes=semis > commas=tabs) with ignoreErrors=true → empty") {
-    val text = ",,," + "\t\t\t" + "|||||" + ";;;;;"
-    assertEquals(autoDetect(text, "f.txt", ignoreErrors = true), "")
-  }
-
-  test("autoDetectDelimiter: ambiguous with ignoreErrors=false → throws") {
-    val text = ",,," + "\t\t\t" + "|||||" + ";;;;;"
-    intercept[RuntimeException] {
-      autoDetect(text, "f.txt", ignoreErrors = false)
-    }
   }
 
   // ---------------------------------------------------------------------------

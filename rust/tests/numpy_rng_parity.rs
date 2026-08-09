@@ -29,7 +29,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
-use t3prf::NumPyRng;
+use uni::NumPyRng;
 
 /// Must match `NumPyRngParityGen`: FNV-1a over 64-bit words.
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;

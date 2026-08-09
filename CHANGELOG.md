@@ -48,6 +48,40 @@ release.
   collision handling, `realPath` on a missing child, `length`/`isEmpty` on missing files, and
   `write`/`writeLines` roundtrips -- 53 of 54 lines byte-identical.
 
+**BREAKING — the 0.9-era deprecated members are removed**
+
+- Gone: `basename`, `lcbasename`, `lcname`, `lcsuffix`, `suffix`, `trimmedLines` (both the
+  `Path` and `JFile` extensions), `Big.BadNum`, `Big.BigZero`, and
+  `FastCsv.autoDetectDelimiter` with its tests. Replacements: `baseName`, `baseName.lc`,
+  `last.lc`, `ext.lc`, `ext`, `lines`, `BigNaN`, `Big.zero`, `uni.io.Delimiter.detect`.
+- None of these exist in the Rust port -- deliberately -- so their removal makes the two API
+  surfaces genuinely identical rather than Scala carrying a deprecated surplus.
+- **Two measurement findings from the sweep, worth more than the sweep:**
+  - A clean `-deprecation` compile of the entire `vast`+`apps` corpus produced **zero**
+    warnings for any uni-deprecated member: every apparent grep hit was a *different* API --
+    pallet's (`vastblue.*`), a local extension (`TaxFile.lcname`, `ScalaSource.suffix`), or a
+    class's own member (`Link.basename`). Grep counted 598 "uses" of `.name`; the compiler
+    counted zero.
+  - **Scala 3 `export` aliases silently drop `@deprecated`.** `BadNum` was re-exported from
+    `object Big`, so its 20+ real call sites never produced a single deprecation warning in
+    the years it was deprecated. An export-aliased deprecation reaches nobody.
+- 24 call sites rewritten across 15 files (1 in `apps`, 14 `jsrc` scripts), each first
+  verified to resolve to uni -- scripts on `pallet_3`/`unifile_3`, files with local shadows,
+  and the self-referential `applyMigrations.sc` rule table were excluded. Two rewrites were
+  applied and then reverted when compilation proved the receivers were vast's own types.
+- Not removed: the class-2 generic names (`name`, `file`, `text`, `path`, `toPath` --
+  compiler-proven unused in the sbt corpus but unmeasured in scripts), and
+  `posixAbs`/`posixRel`, whose deferred removal is already documented.
+
+**RUST — the crate is `uni` now, not `t3prf`**
+
+- With the port complete, the old name described one module of six. `Cargo.toml` renames the
+  package and lib to `uni`, every test/example/bench import moves from `use t3prf::` to
+  `use uni::`, and the docs drop their "currently named" apology. Done **before** any release
+  or external consumer exists, which is the only cheap moment to do it.
+- The `t3prf` *module* keeps its name -- it genuinely is the Kelly-Pruitt 3PRF estimator, and
+  `uni::t3prf::...` reads correctly. Nothing about its API changed.
+
 **RUST — `Big` ported, and with it the last four loaders: the audit reads 92 of 92**
 
 - `udata::big` is a hand-rolled arbitrary-precision decimal with `java.math.BigDecimal`

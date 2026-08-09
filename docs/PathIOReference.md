@@ -413,5 +413,6 @@ overload or default an argument, one Scala member becomes several with a suffix 
 `ofYmd`, `isValidFields` for `UniDateTime.of` and `isValid` — and those keep CamelCase, since
 they are API rather than internals.
 
-The crate is currently named `t3prf` (`rust/Cargo.toml`); `upath` is a module inside it,
-not a separately published crate.
+The crate is named `uni` (`rust/Cargo.toml`), mirroring the Scala library; `upath`,
+`utime` and `udata` are modules inside it. The `t3prf` module keeps its own name -- it
+genuinely is the 3PRF estimator, and it predates the port.

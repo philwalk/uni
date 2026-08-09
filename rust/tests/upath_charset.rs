@@ -13,10 +13,10 @@
 
 use std::sync::Arc;
 
-use t3prf::upath::PathContext;
-use t3prf::upath::UPath;
-use t3prf::upath::UserInfo;
-use t3prf::upath::io::Charset;
+use uni::upath::PathContext;
+use uni::upath::UPath;
+use uni::upath::UserInfo;
+use uni::upath::io::Charset;
 
 fn with_bytes(dir: &std::path::Path, name: &str, bytes: &[u8]) -> UPath {
     let d = dir.to_string_lossy().replace('\\', "/");

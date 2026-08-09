@@ -20,13 +20,13 @@
 
 use std::path::PathBuf;
 
-use t3prf::upath::PathContext;
-use t3prf::upath::UPath;
-use t3prf::upath::UserInfo;
-use t3prf::upath::epoch2DateTime;
-use t3prf::upath::times::round6;
-use t3prf::utime::UniDateTime;
-use t3prf::utime::dayOfWeek;
+use uni::upath::PathContext;
+use uni::upath::UPath;
+use uni::upath::UserInfo;
+use uni::upath::epoch2DateTime;
+use uni::upath::times::round6;
+use uni::utime::UniDateTime;
+use uni::utime::dayOfWeek;
 
 fn fixture() -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../test-data/date-parity/scala-reference.txt");

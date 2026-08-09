@@ -7,11 +7,11 @@ use std::hint::black_box;
 use std::time::Instant;
 
 use ndarray::Array2;
-use t3prf::Error;
-use t3prf::NumPyRng;
-use t3prf::estimate_3prf_is_full;
-use t3prf::estimate_3prf_oos_cv;
-use t3prf::estimate_3prf_oos_rec;
+use uni::Error;
+use uni::NumPyRng;
+use uni::estimate_3prf_is_full;
+use uni::estimate_3prf_oos_cv;
+use uni::estimate_3prf_oos_rec;
 
 /// Standard normal matrix, drawn to match the Scala and Python benchmarks
 /// element for element.

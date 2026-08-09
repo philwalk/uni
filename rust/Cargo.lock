@@ -528,18 +528,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "t3prf"
-version = "0.1.0"
-dependencies = [
- "blas-src",
- "ndarray",
- "openblas-src",
- "rayon",
- "tempfile",
- "thiserror",
-]
-
-[[package]]
 name = "tar"
 version = "0.4.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -581,6 +569,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "uni"
+version = "0.1.0"
+dependencies = [
+ "blas-src",
+ "ndarray",
+ "openblas-src",
+ "rayon",
+ "tempfile",
+ "thiserror",
 ]
 
 [[package]]

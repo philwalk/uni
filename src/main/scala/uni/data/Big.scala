@@ -4,7 +4,7 @@ import scala.math.BigDecimal
 import scala.math.BigDecimal.*
 export scala.math.BigDecimal.RoundingMode
 
-export Big.{Big, big, asBig, zero, one, BigOne, ten, hundred, BigNaN, BadNum, BigZero}
+export Big.{Big, big, asBig, zero, one, BigOne, ten, hundred, BigNaN}
 export Big.{given Conversion[Int, Big], given Conversion[Long, Big], given Conversion[Float, Big], given Conversion[Double, Big]}
 // Mat
 object Big:
@@ -34,8 +34,6 @@ object Big:
   // Ensure BigNaN is defined as the opaque type Big
   val BigNaN: Big = Big(BigDecimal(BadNumLiteral))
   lazy val zero: Big = Big(BigDecimal(0))
-  @deprecated("use BigNaN", "0.9") lazy val BadNum: Big  = BigNaN
-  @deprecated("use Big.zero", "0.9") lazy val BigZero: Big = zero
   lazy val one: Big    = Big(BigDecimal(1))
   lazy val BigOne: Big = one
   lazy val ten: Big    = Big(BigDecimal(10))

@@ -21,10 +21,10 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use ndarray::Array2;
-use t3prf::Tprf3Result;
-use t3prf::estimate_3prf_is_full;
-use t3prf::estimate_3prf_oos_cv;
-use t3prf::estimate_3prf_oos_rec;
+use uni::Tprf3Result;
+use uni::estimate_3prf_is_full;
+use uni::estimate_3prf_oos_cv;
+use uni::estimate_3prf_oos_rec;
 
 /// Matches the fixtures written by Tprf3ParityGen.
 const CASES: &[(usize, usize, usize)] = &[(100, 10, 2), (140, 12, 3), (60, 25, 2)];

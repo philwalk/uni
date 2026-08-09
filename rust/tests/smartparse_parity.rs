@@ -12,8 +12,8 @@
     reason = "a missing or malformed fixture should abort the test loudly"
 )]
 
-use t3prf::utime::UniDateTime;
-use t3prf::utime::smartparse::{
+use uni::utime::UniDateTime;
+use uni::utime::smartparse::{
     self, DateOrder, TimeConfig, classifyWith, numericDateOrder, parseDateSmartWith,
 };
 

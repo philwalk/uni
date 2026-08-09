@@ -41,11 +41,6 @@ object pathExts {
 
     // ---- deprecated in favour of os-lib names ----
     @deprecated("Use `last`", "uni")        def name: String       = last
-    @deprecated("Use `baseName`", "uni")    def basename: String   = baseName
-    @deprecated("Use `baseName.lc`", "uni") def lcbasename: String = baseName.toLowerCase
-    @deprecated("Use `last.lc`", "uni")     def lcname: String     = last.toLowerCase
-    @deprecated("Use `ext.lc`", "uni")      def lcsuffix: String   = ext.toLowerCase
-    @deprecated("Use `ext`", "uni")         def suffix: String     = ext
 
     // ---- path segments ----
     /** All path name elements as an IndexedSeq of strings. os-lib: p.segments */
@@ -292,7 +287,6 @@ object pathExts {
       else ""
 
     @deprecated("Use `contentAsString`", "uni") def text: String           = contentAsString
-    @deprecated("Use `lines`", "uni")           def trimmedLines: Seq[String] = lines.toSeq
 
     def byteArray: Array[Byte] = if isFile then (try Files.readAllBytes(p) catch case _: Exception => Array.empty[Byte]) else Array.empty[Byte]
 
@@ -572,11 +566,6 @@ object pathExts {
 
     // ---- deprecated in favour of os-lib names ----
     @deprecated("Use `last`", "uni")        def name: String       = last
-    @deprecated("Use `baseName`", "uni")    def basename: String   = baseName
-    @deprecated("Use `baseName.lc`", "uni") def lcbasename: String = baseName.toLowerCase
-    @deprecated("Use `ext`", "uni")         def suffix: String     = ext
-    @deprecated("Use `last.lc`", "uni")     def lcname: String     = last.toLowerCase
-    @deprecated("Use `ext.lc`", "uni")      def lcsuffix: String   = ext.toLowerCase
 
     // ---- path forms ----
     @deprecated("Use `asPath`", "uni")      def path: Path = f.toPath

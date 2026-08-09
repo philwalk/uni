@@ -11,8 +11,8 @@
 
 use std::sync::Arc;
 
-use t3prf::udata::Big;
-use t3prf::upath::{PathContext, UPath, UserInfo};
+use uni::udata::Big;
+use uni::upath::{PathContext, UPath, UserInfo};
 
 fn fixture_root() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-data/big-parity")

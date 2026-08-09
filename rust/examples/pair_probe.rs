@@ -16,7 +16,7 @@ use std::fs;
 use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
-use t3prf::upath::{PathContext, UPath, UserInfo};
+use uni::upath::{PathContext, UPath, UserInfo};
 
 fn set_mtime(p: &UPath, millis: u64) {
     let f = fs::OpenOptions::new().write(true).open(p.as_std_path()).expect("open");
@@ -65,8 +65,8 @@ fn main() {
     emit("weekDayName", "a", a.weekDayName().to_string());
     emit("newerThan", "a-vs-b", a.newerThan(&b).to_string()); emit("newerThan", "b-vs-a", b.newerThan(&a).to_string());
     emit("olderThan", "a-vs-b", a.olderThan(&b).to_string()); emit("olderThan", "dir-vs-a", d.olderThan(&a).to_string());
-    emit("epoch2DateTime", "0", t3prf::upath::times::epoch2DateTime(0, 0).to_string());
-    emit("epoch2DateTime", "1715524200000", t3prf::upath::times::epoch2DateTime(1_715_524_200_000, 0).to_string());
+    emit("epoch2DateTime", "0", uni::upath::times::epoch2DateTime(0, 0).to_string());
+    emit("epoch2DateTime", "1715524200000", uni::upath::times::epoch2DateTime(1_715_524_200_000, 0).to_string());
     emit("realPath", "existing", rel(posx_of(&c.realPath())));
     emit("realPath", "missing-child", rel(posx_of(&at("subdir/ghost.txt").realPath())));
     emit("firstLine", "file", a.firstLine()); emit("firstLine", "missing", missing.firstLine());

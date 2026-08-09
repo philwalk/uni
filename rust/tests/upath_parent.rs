@@ -15,9 +15,9 @@
 
 use std::sync::Arc;
 
-use t3prf::upath::PathContext;
-use t3prf::upath::UPath;
-use t3prf::upath::UserInfo;
+use uni::upath::PathContext;
+use uni::upath::UPath;
+use uni::upath::UserInfo;
 
 fn at(p: &str) -> UPath {
     let ctx = Arc::new(PathContext::synthetic(

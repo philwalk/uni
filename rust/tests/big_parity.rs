@@ -8,8 +8,8 @@
     reason = "a missing or malformed fixture should abort the test loudly"
 )]
 
-use t3prf::udata::Big;
-use t3prf::udata::big::RoundingMode;
+use uni::udata::Big;
+use uni::udata::big::RoundingMode;
 
 fn fixture_path() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

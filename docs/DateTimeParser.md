@@ -301,5 +301,5 @@ Regenerate the fixture with `sbt "runMain uni.apps.DateParityGen"`, and only whe
 is meant to move — both `uni.time.DateParitySuite` and `rust/tests/date_parity.rs` check
 against it, so a change to either language fails until the other agrees.
 
-Note the crate is currently named `t3prf` (`rust/Cargo.toml`); `utime` and `upath` are modules
-within it rather than separately published crates.
+The crate is named `uni` (`rust/Cargo.toml`), mirroring the Scala library; `utime` and
+`upath` are modules within it.

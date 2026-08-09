@@ -1,7 +1,7 @@
 use ndarray::Array2;
-use t3prf::estimate_3prf_is_full;
-use t3prf::estimate_3prf_oos_cv;
-use t3prf::estimate_3prf_oos_rec;
+use uni::estimate_3prf_is_full;
+use uni::estimate_3prf_oos_cv;
+use uni::estimate_3prf_oos_rec;
 
 fn create_synthetic_data(t: usize, n: usize, l: usize) -> (Array2<f64>, Array2<f64>, Array2<f64>) {
     let mut x = Array2::<f64>::zeros((t, n));

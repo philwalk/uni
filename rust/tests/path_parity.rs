@@ -25,13 +25,13 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use t3prf::upath::PathContext;
-use t3prf::upath::StrExts;
-use t3prf::upath::UPath;
-use t3prf::upath::UserInfo;
-use t3prf::upath::resolve::classify;
-use t3prf::upath::resolve::posix_abs;
-use t3prf::upath::resolve::resolve_pathstr;
+use uni::upath::PathContext;
+use uni::upath::StrExts;
+use uni::upath::UPath;
+use uni::upath::UserInfo;
+use uni::upath::resolve::classify;
+use uni::upath::resolve::posix_abs;
+use uni::upath::resolve::resolve_pathstr;
 
 /// Sentinels the generator writes for values that are not plain strings.
 const ERROR: &str = "!error";

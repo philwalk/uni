@@ -525,41 +525,6 @@ object FastCsv {
     }
   }
 
-  @deprecated("use uni.io.FastCsv", "0.9")
-  def autoDetectDelimiter(sampleText: String, fname: String, ignoreErrors: Boolean = true): String = {
-    var (tabs, commas, semis, pipes) = (0, 0, 0, 0)
-    sampleText.toCharArray.foreach {
-      case '\t' => tabs += 1
-      case ','  => commas += 1
-      case ';'  => semis += 1
-      case '|'  => pipes += 1
-      case _    =>
-    }
-    // Premise:
-    //   tab-delimited files contain more tabs than commas,
-    //   comma-delimited files contain more commas than tabs.
-    // Provides a reasonably fast guess, but can potentially fail.
-    //
-    // A much slower but more thorough approach would be:
-    //    1. replaceAll("""(?m)"[^"]*", "") // remove quoted strings
-    //    2. split("[\r\n]+") // extract multiple lines
-    //    3. count columns-per-row tallies using various delimiters
-    //    4. the tally with the most consistency is the "winner"
-    (commas, tabs, pipes, semis) match {
-      // in case of a tie between commas and tabs, commas win (TODO: configurable)
-    case (cms, tbs, pps, sms) if cms >= tbs && cms >= pps && cms >= sms  => ","
-    case (cms, tbs, pps, sms) if tbs >= cms && tbs >= pps && tbs >= sms => "\t"
-    case (cms, tbs, pps, sms) if pps > cms && pps > tbs && pps > sms    => "|"
-    case (cms, tbs, pps, sms) if sms > cms && sms > tbs && sms > pps    => ";"
-
-    case _ if ignoreErrors => ""
-
-    case _ =>
-      sys.error(
-        s"unable to choose delimiter: tabs[$tabs], commas[$commas], semis[$semis], pipes[$pipes] for file:\n[${fname}]"
-      )
-    }
-  }
 
   def parseCsvLine(line: String, cfg: Config = Config()): Seq[String] = {
     // default to comma (the byte literal for a comma: 44.toByte or ',')

@@ -9,7 +9,7 @@ use std::fs;
 use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
-use t3prf::upath::{PathContext, UPath, UserInfo};
+use uni::upath::{PathContext, UPath, UserInfo};
 
 fn file_with_mtime(dir: &std::path::Path, name: &str, millis: u64) -> UPath {
     let d = dir.to_string_lossy().replace('\\', "/");

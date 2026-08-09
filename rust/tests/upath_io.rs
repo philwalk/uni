@@ -13,10 +13,10 @@
 
 use std::sync::Arc;
 
-use t3prf::upath::Charset;
-use t3prf::upath::PathContext;
-use t3prf::upath::UPath;
-use t3prf::upath::UserInfo;
+use uni::upath::Charset;
+use uni::upath::PathContext;
+use uni::upath::UPath;
+use uni::upath::UserInfo;
 
 /// A context rooted at a real temp directory, so `UPath` resolution and the
 /// filesystem agree about where things are.
