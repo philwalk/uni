@@ -40,7 +40,6 @@ object pathExts {
     }
 
     // ---- deprecated in favour of os-lib names ----
-    @deprecated("Use `last`", "uni")        def name: String       = last
 
     // ---- path segments ----
     /** All path name elements as an IndexedSeq of strings. os-lib: p.segments */
@@ -141,7 +140,6 @@ object pathExts {
     def parentFile: JFile      = p.getParentPath.toFile
     def asFile: JFile          = p.toFile
 
-    @deprecated("Use `asFile`", "uni") def file: JFile = p.toFile
 
     // ---- directory listing ----
     /** Sort key giving these listings a **specified** order.
@@ -286,7 +284,6 @@ object pathExts {
         }
       else ""
 
-    @deprecated("Use `contentAsString`", "uni") def text: String           = contentAsString
 
     def byteArray: Array[Byte] = if isFile then (try Files.readAllBytes(p) catch case _: Exception => Array.empty[Byte]) else Array.empty[Byte]
 
@@ -565,10 +562,8 @@ object pathExts {
     def extension: Option[String] = f.toPath.extension
 
     // ---- deprecated in favour of os-lib names ----
-    @deprecated("Use `last`", "uni")        def name: String       = last
 
     // ---- path forms ----
-    @deprecated("Use `asPath`", "uni")      def path: Path = f.toPath
 
     def posx: String     = f.toPath.posx
     def abs: String      = f.toPath.abs
@@ -610,6 +605,10 @@ object pathExts {
     def subfiles: Seq[Path]         = f.toPath.subfiles
 
     // ---- tree walk ----
+    /** The `Path` view of this file: the symmetric partner of `Path.asFile`, and what the
+      * migration rule `.path` -> `.asPath` lands on for a `File` receiver. */
+    def asPath: Path = f.toPath
+
     def filesTree: Seq[JFile]          = filesTreeIter.toSeq
     def filesTreeIter: Iterator[JFile] = f.toPath.pathsTreeIter.map(_.toFile)
     def pathsTree: Seq[Path]           = f.toPath.pathsTree

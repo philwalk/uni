@@ -47,6 +47,12 @@ impl UPath {
         self.clone()
     }
 
+    /// Alias of [`Self::asFile`], i.e. also the identity: Rust has one path type. `JFile.asPath`.
+    #[must_use]
+    pub fn asPath(&self) -> Self {
+        self.clone()
+    }
+
     /// Whether the path exists, following symlinks. `Files.exists`.
     #[must_use]
     pub fn exists(&self) -> bool {

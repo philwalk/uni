@@ -11,8 +11,6 @@ object stringExts {
   extension (str: String) {
     def asPath: Path = Paths.get(str)
 
-    @deprecated("Use `asPath`", "uni") def path: Path   = Paths.get(str)
-    @deprecated("Use `asPath`", "uni") def toPath: Path = Paths.get(str)
 
     def toFile: JFile = Paths.get(str).toFile
     def absPath: Path = Paths.get(str).toAbsolutePath.normalize

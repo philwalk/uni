@@ -48,6 +48,33 @@ release.
   collision handling, `realPath` on a missing child, `length`/`isEmpty` on missing files, and
   `write`/`writeLines` roundtrips -- 53 of 54 lines byte-identical.
 
+**DOCS — the Rust crate gets its introduction**
+
+- The README's "Rust companion crate" section was three releases stale: it still named the
+  crate `t3prf` and described only the numerics, while the port had grown to the whole
+  path/time/decimal surface. Rewritten as the crate's actual introduction -- the naming
+  contract, module coverage, the nine parity fixtures and the probe pair -- with every count
+  verified against the audit rather than asserted.
+- New `rust/README.md` for anyone landing in the crate directly: the contract, a module
+  table, the parity methodology and its regeneration warning, build lines, and pointers back
+  to the per-area Scala docs.
+
+**BREAKING — the generic-named deprecated members are removed too**
+
+- Gone: `Path.name`, `Path.file`, `Path.text`, `JFile.name`, `JFile.path`, `String.path` and
+  `String.toPath`. Replacements: `last`, `asFile`, `contentAsString`, `asPath`. The compiler
+  had already proven all 503 `vast`+`apps` sources clean of them (a `-deprecation` clean
+  compile shows zero warnings), and grep could not: it counted 598 "uses" of `.name`, every
+  one a different receiver.
+- **New `JFile.asPath`** (and its Rust identity alias), completing the conversion square with
+  `Path.asFile` and `String.asPath` -- also what the migration rule `.path -> .asPath` needs
+  to land on for a `File` receiver.
+- The `jsrc` script corpus (935 uni_3 scripts) is migrated per-script by
+  `applyMigrations.sc`, whose rule table gained the missing rules: `.lcname`, `.trimmedLines`,
+  `.toPath`, and `.text` (the last with an XML caveat -- `NodeSeq.text` is not a file read).
+  Scripts still using the removed members fail loudly at compile and migrate on touch, which
+  is the corpus's established mechanism.
+
 **BREAKING — the 0.9-era deprecated members are removed**
 
 - Gone: `basename`, `lcbasename`, `lcname`, `lcsuffix`, `suffix`, `trimmedLines` (both the

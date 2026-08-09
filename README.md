@@ -19,36 +19,45 @@ For high-accuracy scientific modeling or other applications requiring extreme pr
 
 ## Rust companion crate (`rust/`)
 
-The `rust/` directory holds a Rust port of the numerically heavy parts of the
-library. It is a standalone crate (`t3prf`), not a JNI binding — nothing in the
-Scala library calls into it. It exists so the same algorithms can be run outside
-the JVM and so the Scala implementations have an independent second opinion to be
-checked against.
+The `rust/` directory holds **`uni` for Rust**: a standalone crate (no JNI — nothing in the
+Scala library calls into it) that ports the library's scripting surface and its numerics, so
+the same script logic can run outside the JVM and each implementation serves as the other's
+independent second opinion. New in 0.16.0: what began as a port of the numerically heavy
+parts now covers the whole path/time/decimal API.
 
+**Method names match the Scala spelling** — `baseName`, `lastModifiedTime`, `parseDateSmart` —
+so a line written against the Scala ports unchanged. CamelCase means "this mirrors uni's
+API"; snake_case means an internal helper or a `try_*` Result variant, so the case tells you
+whether a Scala counterpart exists (the same convention `windows-rs` uses for Win32 names).
+
+What is covered, with **no dependency** taken for any of it:
+
+* **`upath`** — every one of the 92 `Path` extension methods, same names, same semantics:
+  path forms and mount handling, metadata, lazy and ordered traversal, mutation with the
+  same collision answers, line reading with the same carriage-return rule, CSV parsing and
+  the matrix loaders, hashing. See `docs/PathIOReference.md` for the per-method table and
+  the deliberate differences (error shape, `canExecute` on Windows).
+* **`utime`** — `UniDateTime` (field arithmetic via Hinnant's civil-calendar algorithms),
+  the pattern formatter, and `SmartParse`, the format-autodetecting date parser. See
+  `docs/DateTimeParser.md`.
+* **`udata`** — `Big`, an arbitrary-precision decimal with `java.math.BigDecimal` semantics
+  (exact `+`/`-`/`*` under each value's MathContext, DECIMAL128-rounded `/` and `sqrt`, the
+  equality-recognised BigNaN sentinel), backing the `Big` CSV loaders. See
+  `docs/BigTypeGuide.md`.
 * **Bit-identical NumPy random numbers.** `NumPyRng` reproduces
-  `np.random.default_rng(seed)` — PCG64 XSL RR 128 behind NumPy's SeedSequence
-  expansion — and therefore also reproduces `uni.data.NumPyRNG` draw for draw.
-  Seed it with 0 in Scala, Rust or Python and all three yield the same stream.
-  `next_u64`, `next_i32`, `next_f64`, `uniform` and `next_bounded_u32` are exact
-  by construction: integer arithmetic plus one exactly-representable division by
-  2⁵³, no tolerance involved.
-* **`randn` too**, via the same 256-layer Ziggurat, with the tables generated
-  from the Scala source rather than transcribed. It matches NumPy bit-for-bit.
-  Against the JVM it differs on roughly 2.5 draws per million — always a tail
-  draw, always by exactly one ulp, because `Math.log1p` and C's `log1p` round a
-  few arguments differently. Never a control-flow divergence, so the streams stay
-  aligned rather than drifting apart.
-* **3PRF** (`estimate_3prf_is_full`, `_oos_rec`, `_oos_cv`) — the same three
-  procedures as `uni.stats.Tprf3`, including the per-window cross-product
-  downdates.
+  `np.random.default_rng(seed)` — PCG64 XSL RR 128 behind NumPy's SeedSequence expansion —
+  and therefore also reproduces `uni.data.NumPyRNG` draw for draw. `randn` too, via the same
+  256-layer Ziggurat; against the JVM it differs on ~2.5 tail draws per million by exactly
+  one ulp (`log1p` rounding), never a control-flow divergence.
+* **3PRF** (`estimate_3prf_is_full`, `_oos_rec`, `_oos_cv`) — the same three procedures as
+  `uni.stats.Tprf3`, in the `t3prf` module the crate was originally named for.
 
-Both halves are pinned by cross-language parity fixtures that neither side can
-quietly move: `test-data/numpy-rng-parity/` for the generator and
-`test-data/tprf3-parity/` for 3PRF. Each is checked independently by a Scala
-suite and a Rust test against the same committed reference, so neither test needs
-the other language installed. The RNG fixtures additionally pin specific draws to
-NumPy's own bit patterns as absolute values — a check that regenerating the
-fixtures cannot launder.
+**Parity is pinned, not promised.** Nine committed fixtures under `test-data/*-parity/` hold
+the Scala side's own answers (with `java.time`, `java.math.BigDecimal` and NumPy as the
+transitive oracles), each checked independently by a Scala suite and a Rust test — neither
+language needs the other installed. A matched pair of probe programs (`jsrc/pairProbe.sc` +
+`rust/examples/pair_probe.rs`) exercises ~50 operations on identical trees and diffs
+byte-identical output, covering what per-method fixtures cannot: composition.
 
 ```bash
 cd rust && make all          # test, fmt, clippy, file-size check
