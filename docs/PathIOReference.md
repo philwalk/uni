@@ -329,8 +329,10 @@ sort by the same key, so `test-data/walk-parity/` records the order the API retu
 sorting it away. It used to sort both sides, back when neither language promised an order.
 
 Still **not** ported: the `Big`-typed loaders (`loadMatBig`, `loadMatB`, `loadSmartBig`,
-`readCsvB`) and the parent-name variants. `SmartParse` — the date *parser*, as distinct from
-the date type — is also absent, so a Rust script needing to read arbitrary date text must do
+`readCsvB`), and `eachPath` -- deliberately Scala-only, since Rust's directory iterator closes
+on drop and needs no scoping helper. Everything else on the `Path` surface has a Rust
+counterpart under the same name, aliases included. `SmartParse` — the date *parser*, as distinct
+from the date type — is also absent, so a Rust script needing to read arbitrary date text must do
 that itself.
 
 The `Big` loaders are blocked on `Big` itself, which is a project rather than a method: an opaque
@@ -340,9 +342,12 @@ real dependency the port takes. `loadMatD`/`loadMatF` cover the `Double` and `Fl
 
 **Charsets.** Both languages support UTF-8, Latin-1 and the three UTF-16 forms (`UTF-16`,
 `UTF-16LE`, `UTF-16BE`). The Scala resolves through `Charset.forName`, so it also honours every
-other charset the JVM knows; the Rust falls back to UTF-8 for those. **That is the one silent
-divergence left in the port** -- `lines("Shift_JIS")` decodes properly in Scala and mis-decodes in
-Rust. It is a missing-encoding gap, not a design choice: `std` ships no charset tables.
+other charset the JVM knows. The Rust cannot -- `std` ships no charset tables -- and **refuses
+loudly rather than guessing**: `Charset::by_name` returns `ErrorKind::Unsupported` for a name it
+recognises as a real charset it has no tables for (Shift_JIS, the EUC and GB families, Big5,
+UTF-32, ISO-8859-2..16, the windows-125x pages, KOI8, EBCDIC, ISO-2022), and falls back to UTF-8
+only for names the JVM would also reject. There is no silent charset divergence left; honouring
+those encodings for real would mean the port's first dependency.
 
 A charset wider than one byte cannot use the streaming reader, in either language. `0x0A` is half
 of a code unit in UTF-16, so splitting on the byte before decoding cuts characters in half -- which

@@ -88,26 +88,55 @@ fn decode_utf16(bytes: &[u8], big_endian: bool) -> io::Result<String> {
 }
 
 impl Charset {
-    /// Resolves a charset *name* to one of the supported encodings, falling back to UTF-8.
+    /// Resolves a charset *name* to one of the supported encodings.
     ///
-    /// The Scala resolves through `try Charset.forName(name) catch => UTF_8`, so it honours
-    /// **every** charset the JVM knows. This supports UTF-8, Latin-1 and the three UTF-16
-    /// forms; anything else -- Shift_JIS, EUC-JP, UTF-32, the EBCDIC family -- falls back to
-    /// UTF-8 here while the Scala would decode it properly. That is the one silent divergence
-    /// left in the port, and it is a missing-encoding gap rather than a design decision: `std`
-    /// ships no charset tables, so each one has to be written out or a crate taken on.
+    /// Three outcomes, matching what a caller can do about each:
     ///
-    /// The fallback matches the Scala only for names the JVM *also* rejects.
-    #[must_use]
-    pub fn by_name(name: &str) -> Self {
-        match name.to_ascii_lowercase().replace(['-', '_'], "").as_str() {
+    /// - a supported name (UTF-8, Latin-1, the UTF-16 forms) resolves to its variant;
+    /// - a name this port **knows is a real charset it cannot decode** -- Shift_JIS, the EUC and
+    ///   GB families, Big5, UTF-32, ISO-8859-2..16, the windows-125x pages, KOI8, EBCDIC,
+    ///   ISO-2022 -- is an **error**, because the Scala side would decode it properly and
+    ///   silently reading it as UTF-8 here would be a wrong answer with no symptom. `std` ships
+    ///   no charset tables, so honouring these means taking a dependency; refusing is the honest
+    ///   alternative;
+    /// - anything unrecognised falls back to UTF-8, which **is** the Scala behaviour there:
+    ///   `try Charset.forName(name) catch => UTF_8`.
+    ///
+    /// So the divergence from Scala is confined to the middle case, and it is loud.
+    ///
+    /// # Errors
+    /// [`io::ErrorKind::Unsupported`] for a real charset this port has no tables for.
+    pub fn by_name(name: &str) -> io::Result<Self> {
+        let folded = name.to_ascii_lowercase().replace(['-', '_', ' '], "");
+        let known_unsupported = matches!(
+            folded.as_str(),
+            "shiftjis" | "sjis" | "ms932" | "windows31j" | "mskanji"
+        ) || folded.starts_with("euc")
+            || folded.starts_with("gb")
+            || folded.starts_with("big5")
+            || folded.starts_with("utf32")
+            || folded.starts_with("koi8")
+            || folded.starts_with("ibm")
+            || folded.starts_with("iso2022")
+            || folded.starts_with("macroman")
+            || folded.starts_with("xmacroman")
+            || (folded.starts_with("cp") && folded != "cp1252")
+            || (folded.starts_with("iso8859") && folded != "iso88591")
+            || (folded.starts_with("windows125") && folded != "windows1252");
+        if known_unsupported {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                format!("charset {name} is real but this port has no tables for it;                          the Scala side would decode it -- refusing rather than silently                          mis-reading it as UTF-8"),
+            ));
+        }
+        Ok(match folded.as_str() {
             "" => Self::default(),
-            "latin1" | "iso88591" | "cp1252" => Self::Latin1,
+            "latin1" | "iso88591" | "cp1252" | "windows1252" => Self::Latin1,
             "utf16" => Self::Utf16,
             "utf16le" => Self::Utf16Le,
             "utf16be" => Self::Utf16Be,
             _ => Self::Utf8,
-        }
+        })
     }
 
     /// Whether a newline encodes to the single byte `0x0A` in this charset.

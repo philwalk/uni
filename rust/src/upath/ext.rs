@@ -86,6 +86,12 @@ impl UPath {
         }
     }
 
+    /// Alias for [`Self::localpath`]. `PathExts.local`, a true alias there too.
+    #[must_use]
+    pub fn local(&self) -> String {
+        self.localpath()
+    }
+
     /// Native Windows form. `PathExts.dospath`.
     ///
     /// Not the same as [`UPath::localpath`], though they agree for every path that
@@ -242,6 +248,19 @@ impl UPath {
         }
     }
 
+    /// Alias for [`Self::getParentPath`]. `PathExts.parentPath`, a true alias there too.
+    #[must_use]
+    pub fn parentPath(&self) -> Self {
+        self.getParentPath()
+    }
+
+    /// Alias for [`Self::getParentPath`]. `PathExts.parentFile` returns `java.io.File`; Rust has
+    /// one path type, so this is the same alias with the Scala's other return spelling.
+    #[must_use]
+    pub fn parentFile(&self) -> Self {
+        self.getParentPath()
+    }
+
     /// Parent of the absolutised path. `PathExts.parent` (`p.toAbsolutePath.getParent`).
     ///
     /// **Identical to [`Self::getParentNonNull`] here, and that is structural, not laziness.** In
@@ -388,6 +407,13 @@ impl UPath {
         } else {
             self.normalized().s
         }
+    }
+
+    /// Absolute, normalised path. `PathExts.abspath` (`p.toAbsolutePath.normalize`), which unlike
+    /// [`Self::abs`] neither consults the filesystem nor returns a string.
+    #[must_use]
+    pub fn abspath(&self) -> Self {
+        self.to_absolute().normalized()
     }
 
     /// Standardised POSIX form: absolute, normalised, then mapped back through the

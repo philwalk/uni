@@ -48,6 +48,23 @@ release.
   collision handling, `realPath` on a missing child, `length`/`isEmpty` on missing files, and
   `write`/`writeLines` roundtrips -- 53 of 54 lines byte-identical.
 
+**RUST — the audit table is closed: 87 of 92, and nothing silent remains**
+
+- Five alias spellings added so a line ported from Scala compiles untranslated: `parentPath` and
+  `parentFile` (≡ `getParentPath`; Rust has one path type), `local` (≡ `localpath`), `abspath`
+  (`toAbsolutePath.normalize`, distinct from `abs` which consults the filesystem and returns a
+  string), and `pathsTreeIter` (≡ `walkIter`). Each is a one-line forward under the
+  CamelCase-means-parity rule.
+- **The last silent divergence is now loud.** `Charset::by_name` returned UTF-8 for *any*
+  unrecognised name, so `lines("Shift_JIS")` decoded properly in Scala and silently mis-read as
+  UTF-8 in Rust. It now returns `ErrorKind::Unsupported` for a name it recognises as a real
+  charset it has no tables for -- the Shift_JIS/EUC/GB families, Big5, UTF-32, ISO-8859-2..16,
+  windows-125x, KOI8, EBCDIC, ISO-2022 -- and keeps the UTF-8 fallback only where the Scala has
+  it too, for names `Charset.forName` would also reject. Free of breakage: `by_name` had no
+  production callers, the Rust API taking `Charset` values directly.
+- What remains unported is exactly: the four `Big` loaders (blocked on `Big`), `eachPath`
+  (Scala-only by design; Rust's `DirIter` closes on drop), and `SmartParse`.
+
 **BREAKING — `copyTo` returns `Option[Path]`; a refused overwrite is `None`, not an exception**
 
 - `Some(dest)` when the copy happened, `None` when `overwrite = false` and `dest` exists -- which

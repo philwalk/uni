@@ -87,12 +87,25 @@ fn round_trips_through_encode() {
 
 #[test]
 fn by_name_resolves_the_utf16_spellings() {
-    assert_eq!(Charset::by_name("UTF-16"), Charset::Utf16);
-    assert_eq!(Charset::by_name("utf16le"), Charset::Utf16Le);
-    assert_eq!(Charset::by_name("UTF_16BE"), Charset::Utf16Be);
-    // Unsupported-but-real charsets still fall back, and that is the documented gap.
-    assert_eq!(Charset::by_name("Shift_JIS"), Charset::Utf8);
-    assert_eq!(Charset::by_name("NoSuchCharset"), Charset::Utf8);
+    assert_eq!(Charset::by_name("UTF-16").expect("utf-16"), Charset::Utf16);
+    assert_eq!(Charset::by_name("utf16le").expect("le"), Charset::Utf16Le);
+    assert_eq!(Charset::by_name("UTF_16BE").expect("be"), Charset::Utf16Be);
+}
+
+#[test]
+fn a_real_but_unsupported_charset_is_refused_loudly() {
+    // The former silent divergence: these decoded properly in Scala and silently mis-read as
+    // UTF-8 here. A wrong answer with no symptom is worse than an error, so it is an error.
+    for name in ["Shift_JIS", "EUC-JP", "GB18030", "Big5", "UTF-32", "ISO-8859-2",
+                 "windows-1251", "KOI8-R", "IBM037", "cp850", "ISO-2022-JP", "MacRoman"] {
+        let e = Charset::by_name(name).expect_err(name);
+        assert_eq!(e.kind(), std::io::ErrorKind::Unsupported, "{name}");
+    }
+    // Unrecognised names still fall back to UTF-8, which IS the Scala behaviour there.
+    assert_eq!(Charset::by_name("NoSuchCharset").expect("fallback"), Charset::Utf8);
+    // And the supported page keeps working under all its spellings.
+    assert_eq!(Charset::by_name("windows-1252").expect("1252"), Charset::Latin1);
+    assert_eq!(Charset::by_name("cp1252").expect("cp1252"), Charset::Latin1);
 }
 
 #[test]

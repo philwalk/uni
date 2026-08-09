@@ -176,6 +176,13 @@ impl UPath {
         }
     }
 
+    /// Alias for [`Self::walkIter`]: the Scala spelling `pathsTreeIter`, kept so the lazy tree
+    /// walk is greppable under both names.
+    #[must_use]
+    pub fn pathsTreeIter(&self) -> TreeWalk {
+        self.walkIter()
+    }
+
     /// A `UPath` for `child`, in this path's resolution context.
     ///
     /// Returns `None` when the child cannot be resolved, which drops the entry rather than
