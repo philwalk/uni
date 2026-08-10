@@ -41,10 +41,17 @@ object BigUtils:
   // Regex patterns (kept from original)
   // ------------------------------------------------------------
 
+  // Repaired 0.16.0 (behavior pinned by the big-parity `isnumeric` rows):
+  //  - NumPattern3 gained the `(?i)` the other suffix pattern always had, so `5k`
+  //    classifies like `5K` instead of depending on the author's shift key;
+  //  - NumPattern4's decimal point is now escaped -- the bare `.` matched ANY
+  //    character, so `12x34E+5` counted as numeric.
   private val NumPattern1: Regex = """(?i)([-\(]\s*)?(\d[\.\d,]+)[%\)]?[%KMB]?""".r
-  private val NumPattern2: Regex = """(-?\s*[\.\d,]+)(E-?\d+)([%\)]?)([%KMB]?)""".r
-  private val NumPattern3: Regex = """-?(\d+)([%KMB]?)""".r
-  private val NumPattern4: Regex = """-?(\d+)(.?[0-9]*E[-+][0-9]+)?""".r
+  //  - NumPattern2 gained `(?i)` with the others (0.16.0): "1.5e5%" classifies like
+  //    "1.5E5%" -- str2num could always parse both, so the two disagreed;
+  private val NumPattern2: Regex = """(?i)(-?\s*[\.\d,]+)(E-?\d+)([%\)]?)([%KMB]?)""".r
+  private val NumPattern3: Regex = """(?i)-?(\d+)([%KMB]?)""".r
+  private val NumPattern4: Regex = """-?(\d+)(\.?[0-9]*E[-+][0-9]+)?""".r
 
   // ------------------------------------------------------------
   // Character validation
@@ -64,22 +71,22 @@ object BigUtils:
     if !trimmed.forall(validNumChar) then
       BigNaN
     else
-      val cleaned =
-        trimmed
-          .replaceAll("^[^-\\.\\d]+", "")
-          .replaceAll("[$,]", "")
+      // `$` and `,` are decoration wherever they appear. The old leading-junk strip
+      // (^[^-\.\d]+) discarded ANY non-numeric prefix, so "%50" parsed as 50 -- the
+      // percent went as junk and never divided -- while "50%" was 0.5, and "E5"
+      // read as 5. Repaired 0.16.0; BigDecimal handles a leading '+' natively.
+      val cleaned = trimmed.replaceAll("[$,]", "")
 
       val normalized =
         if cleaned.startsWith(".") then "0" + cleaned else cleaned
 
-      if normalized.isEmpty || !normalized.forall(validNumChar) then
+      if normalized.isEmpty then
         BigNaN
       else
-        val nopct = normalized.replace("%", "")
-        val base: Big   = {
-          val parsed: Option[Big] = Try(Big(BigDecimal(nopct))).toOption
-          orBad(parsed)
-        }
+        // percent is one trailing suffix, not a character to delete globally --
+        // the old replace-all made "5%5" parse as 55
+        val nopct = normalized.stripSuffix("%")
+        val base: Big = orBad(Try(Big(BigDecimal(nopct))).toOption)
         if isBad(base) then BigNaN
         else if nopct != normalized then base / Big.hundred
         else base
@@ -93,7 +100,8 @@ object BigUtils:
     if s.isEmpty then false
     else
       val numsAndSuch = s.filter(validNumChar)
-      if numsAndSuch.count(c => c == '-' || c == '/') > 1 then false
+      // just '-': the old `|| c == '/'` half was dead, since '/' is not a validNumChar
+      if numsAndSuch.count(_ == '-') > 1 then false
       else if s.length == numsAndSuch.length then
         // All chars are basic numeric — try direct parse then all regex patterns
         Try(s.toDouble).isSuccess || (s match
@@ -164,9 +172,14 @@ object BigUtils:
         if isBad(pctAdjusted) then BigNaN
         else pctAdjusted * factor
 
-      else if col.length < 7 then col
+      // < 6, not < 7 (0.16.0): "1/2/24" is a date. And `parseDate` answers BadDate
+      // rather than throwing since the SmartParse migration, so the old
+      // Try(..).getOrElse(col) returned the *sentinel* as a DateTime for every
+      // unparseable longer string -- the String has to be restored explicitly.
+      else if col.length < 6 then col
       else
-        Try(parseDate(col)).getOrElse(col)
+        val d = parseDate(col)
+        if d == BadDate || d == EmptyDate then col else d
 
     value match
       case bd: BigDecimal => Big(bd)
@@ -223,20 +236,23 @@ object BigUtils:
       val fmtMain  = s"%${colWidth}.${dec}f"
       val fmtShort = s"%${colWidth - 1}.${dec}f"
       val scaled   = xx * Big(factor)
+      // abbreviation is by magnitude (0.16.0): -2.5e9 gets its "B" like +2.5e9 does
+      val mag      = scaled.abs
 
       val raw =
-        if abbreviate && scaled >= Big(1e9) then
+        if abbreviate && mag >= Big(1e9) then
           fmtShort.format((scaled / Big(1e9)).toDouble) + "B"
-        else if abbreviate && scaled >= Big(1e6) then
+        else if abbreviate && mag >= Big(1e6) then
           fmtShort.format((scaled / Big(1e6)).toDouble) + "M"
         else
           fmtMain.format(scaled.toDouble)
 
-      val withSuffix = raw + suffix
-
-      withSuffix.trim match
-        case "-0.00" => withSuffix.replace("-", " ")
-        case _       => withSuffix
+      // ANY all-zero negative rendering blanks its sign (0.16.0) -- the old exact
+      // "-0.00" match let "-0.000" (dec 3) and "-0.00%" (checked after the suffix
+      // was appended) keep a minus sign on a zero
+      val unsigned =
+        if raw.trim.matches("-0(\\.0+)?") then raw.replace("-", " ") else raw
+      unsigned + suffix
 
   def numStrPct(xx: Big, fmt: NumFormat = NumFormat.Percent): String =
     numStr(xx, fmt)

@@ -49,7 +49,9 @@ Nine committed fixtures under `../test-data/*-parity/` pin these; see `README.md
    (`upath::times`).
 3. **`udata`: Big is ported, BigUtils is not.** **Done (2026-08-10):** `udata::bigutils`
    ports `numStr`/`numStrPct`/`num2string` + `NumFormat`, `str2num`, `isNumeric`
-   (the four Scala regexes as bug-compatible character scans), `isBad`/`orBad` and
+   (the four Scala regexes as character scans; two authoring accidents in them were
+   repaired Scala-first in 0.16.0 — pattern 3's missing `(?i)`, pattern 4's unescaped
+   dot — and the repaired behavior is what both sides pin), `isBad`/`orBad` and
    `big2double`; `Big.round` landed on **both** sides (`round(MathContext)` in Scala,
    `round(precision, mode)` here — `QuaxMerge` now calls it directly). 286 rows added
    to `big-parity`, including the significant-digit carry cases and Java's `%f`
@@ -117,7 +119,9 @@ This is the only multi-session item; everything above it is hours, not days.
 - `failFast`/`boundary` — the `?` operator.
 - `eprint`/`eprintln`/`eprintf` — macros.
 - `LcLookupOrderedMap` — internal to the mount tables on both sides.
-- `posixAbs`/`posixRel` — deprecated on the Scala side; not ported.
+- `posixAbs`/`posixRel` — deprecated on the Scala side, headed for `private[uni]`
+  (never removal: they power `posix`/`relpath`). Not ported as public API; the same
+  machinery lives internally in `upath::resolve`, quirks and all.
 - `FileOps.loadSmartUrl` — HTTP; would need a network dependency. Feature-gate later
   if ever.
 

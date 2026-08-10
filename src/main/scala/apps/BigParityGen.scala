@@ -150,7 +150,9 @@ object BigParityGen:
       ("1.5E9", NumFormat.Abbrev),
       ("2.5E6", NumFormat.Abbrev),
       ("999999", NumFormat.Abbrev),            // below the M threshold
-      ("-0.00001", NumFormat.Percent),         // suffix defeats the blanking: -0.00%
+      ("-0.00001", NumFormat.Percent),         // blanking beats the suffix (0.16.0):  0.00%
+      ("-0.0001", NumFormat(dec = 3)),         // dec != 2 blanks too (0.16.0):  0.000
+      ("-2.5E9", NumFormat.Abbrev),            // abbreviation by magnitude (0.16.0): -2.50B
       ("0.4567", NumFormat.Percent),
       ("0.4567", NumFormat.IntPercent),
       ("!nan", NumFormat.IntPercent),
@@ -161,13 +163,17 @@ object BigParityGen:
 
     val str2numInputs = Seq("12.5", "$2,000.00", " 15% ", "-3.5", "(45)", "abc", "",
                             ".5", "+7", "1e3", "1E3", "5.5%", "$-2.50", "12,34,56", "--5",
-                            "%50", "2.5E-2%")
+                            "%50", "2.5E-2%", "5%5", "E5")
     for s <- str2numInputs do
       out += s"str2num\t$s\t${render(str2num(s))}"
 
-    val isNumericInputs = Seq("123", "1.5", "-2", "5K", "5k", "(3.5)", "3.5%", "1,234",
+    val isNumericInputs = Seq("123", "1.5", "-2", "5K", "5k", "5m", "(3.5)", "3.5%", "1,234",
                               "12-34", "1-2-3", "abc", "", "2024-05-12", "1/2", "1E5",
-                              "1.5e5", "(  42%", "999B", "999b", "12x34E+5", "5.", "- 6")
+                              "1.5e5", "(  42%", "999B", "999b", "12x34E+5", "5.", "- 6",
+                              // the 0.16.0 regex repairs: NumPattern4's dot is literal now,
+                              // so a comma or dollar sign in the "decimal point" slot no
+                              // longer reads as numeric
+                              "12,34E+5", "12$34E+5", "1.5E+3")
     for s <- isNumericInputs do
       out += s"isnumeric\t$s\t${isNumeric(s)}"
 

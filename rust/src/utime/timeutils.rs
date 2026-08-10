@@ -266,9 +266,11 @@ pub fn elapsedDays(d1: &UniDateTime, d2: &UniDateTime) -> i64 {
     daysBetween(d1, d2)
 }
 
-/// `(days, hours, minutes, seconds)` between the timestamps, sign carried on `days`
-/// alone. Total seconds **floor** rather than truncate (the `java.time.Duration`
-/// normalization Scala inherits), so a −0.5 s difference reports one second, not zero.
+/// `(days, hours, minutes, seconds)` between the timestamps, sign carried on the
+/// largest **nonzero** unit (0.16.0: the old sign-on-days rule reported −5 hours as
+/// `(0, 5, 0, 0)`, indistinguishable from +5). Total seconds **floor** rather than
+/// truncate (the `java.time.Duration` normalization Scala inherits), so a −0.5 s
+/// difference reports one second, not zero.
 #[must_use]
 pub fn getDuration(d1: &UniDateTime, d2: &UniDateTime) -> (i64, i64, i64, i64) {
     let total = i64::try_from((epoch_nanos(d2) - epoch_nanos(d1)).div_euclid(NANOS_PER_SEC))
@@ -280,8 +282,14 @@ pub fn getDuration(d1: &UniDateTime, d2: &UniDateTime) -> (i64, i64, i64, i64) {
     let seconds = abs % 60;
     if total >= 0 {
         (days, hours, minutes, seconds)
-    } else {
+    } else if days > 0 {
         (-days, hours, minutes, seconds)
+    } else if hours > 0 {
+        (0, -hours, minutes, seconds)
+    } else if minutes > 0 {
+        (0, 0, -minutes, seconds)
+    } else {
+        (0, 0, 0, -seconds)
     }
 }
 
@@ -433,7 +441,7 @@ mod tests {
         assert_eq!(secondsBetween(&a, &b), 0);
         assert_eq!(secondsBetween(&b, &a), 0); // trunc toward zero
         assert_eq!(getDuration(&a, &b), (0, 0, 0, 0));
-        assert_eq!(getDuration(&b, &a), (0, 0, 0, 1)); // floor: −0.5 s is one second
+        assert_eq!(getDuration(&b, &a), (0, 0, 0, -1)); // floor: −0.5 s is one second, signed
     }
 
     #[test]

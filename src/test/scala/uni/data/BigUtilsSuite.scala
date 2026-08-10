@@ -4,6 +4,7 @@ import munit.FunSuite
 import uni.data.Big
 import uni.data.Big.*
 import uni.data.BigUtils.*
+import uni.time.DateTime
 
 class BigUtilsSuite extends FunSuite {
 
@@ -110,6 +111,19 @@ class BigUtilsSuite extends FunSuite {
     assertEquals(str2num("$"), BigNaN)
   }
 
+  test("str2num: percent is a trailing suffix only (0.16.0 repairs)") {
+    // the old leading-junk strip made "%50" parse as 50 with no percent divide,
+    // and the old global %-removal made "5%5" parse as 55
+    assertEquals(str2num("%50"), BigNaN)
+    assertEquals(str2num("5%5"), BigNaN)
+    assertEqualsDouble(str2num("50%").toDouble, 0.5, 1e-12)
+  }
+
+  test("str2num: an explicit plus sign parses as a sign, not as junk") {
+    assertEquals(str2num("+7").value, BigDecimal(7))
+    assertEquals(str2num("E5"), BigNaN) // used to junk-strip the E and answer 5
+  }
+
   // ============================================================================
   // validNumChar
   // ============================================================================
@@ -175,6 +189,20 @@ class BigUtilsSuite extends FunSuite {
     getMostSpecificType("42") match
       case b: BigDecimal => assertEqualsDouble(b.toDouble, 42.0, 1e-10)
       case other         => fail(s"expected Big, got $other")
+  }
+
+  test("getMostSpecificType: unparseable long strings stay String, not BadDate") {
+    // regression: parseDate stopped throwing in the SmartParse migration, so the
+    // vestigial Try(..).getOrElse returned the BadDate SENTINEL as a DateTime here
+    assertEquals(getMostSpecificType("zebra-stripes"), "zebra-stripes")
+    assertEquals(getMostSpecificType("n/a n/a n/a"), "n/a n/a n/a")
+  }
+
+  test("getMostSpecificType: six-character dates are dates (0.16.0 repair)") {
+    // the old `length < 7` guard meant "1/2/24" could never be a date
+    getMostSpecificType("1/2/24") match
+      case d: DateTime => assertEquals(d.year, 2024)
+      case other       => fail(s"expected DateTime, got $other")
   }
 
   test("getMostSpecificType: short non-numeric returns String") {

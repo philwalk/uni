@@ -264,11 +264,14 @@ object TimeUtils {
     val minutes = (abs % 3600) / 60
     val seconds = abs % 60
 
-    // preserve sign on the largest unit
-    if totalSeconds >= 0 then
-      (days, hours, minutes, seconds)
-    else
-      (-days, hours, minutes, seconds)
+    // sign on the largest NONZERO unit (0.16.0). The old "sign on days" vanished
+    // for sub-day negatives: -5 hours reported (0, 5, 0, 0), indistinguishable
+    // from +5 hours.
+    if totalSeconds >= 0 then (days, hours, minutes, seconds)
+    else if days > 0 then (-days, hours, minutes, seconds)
+    else if hours > 0 then (0, -hours, minutes, seconds)
+    else if minutes > 0 then (0, 0, -minutes, seconds)
+    else (0, 0, 0, -seconds)
 
   def nowZoned(zone: ZoneId = zoneid): UniDateTime =
     UniDateTime.from(LocalDateTime.now(zone))

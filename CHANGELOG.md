@@ -20,9 +20,33 @@ Of those, `copyTo` is the only one that fails to *compile* rather than changing 
 quietly, which is why it was done that way.
 
 `posixAbs`/`posixRel` are **deprecated as of** this release -- `"0.16.0"` is the `since`
-argument of `@deprecated`, not a removal target. They still work; removal is a later
-release.
+argument of `@deprecated`, not a removal target. They are never to be removed: the plan
+is `private[uni]` -- out of the public API, permanently alive underneath it, since they
+are the engine behind `Path.posix`/`Path.relpath` and the resolution machinery.
 
+
+**FIXED — six defects repaired Scala-first, mirrored in Rust, all fixture-pinned**
+
+The parity audit turned up quirks that were at first ported bug-for-bug; on review all
+were judged genuinely wrong and repaired on the Scala side, with the Rust port moving
+in lockstep:
+
+- `str2num`: the leading-junk strip made `"%50"` parse as `50` (the `%` went as junk,
+  so no percent divide) while `"50%"` was `0.5`, and let `"E5"` read as `5`; the
+  global `%`-removal made `"5%5"` parse as `55`. Now: `$`/`,` are decoration anywhere,
+  `%` is one *trailing* suffix, a leading `+` parses as a sign, anything else is BigNaN.
+- `NumPattern2` gained the `(?i)` the other suffix patterns have: `1.5e5%` classifies
+  like `1.5E5%` (`str2num` could always parse both, so the two disagreed).
+- `getDuration` carries its sign on the largest **nonzero** unit: −5 hours used to
+  report `(0, 5, 0, 0)` — indistinguishable from +5 hours.
+- `numStr` blanks the minus of ANY all-zero rendering, before the suffix: `-0.000`
+  (dec 3) and `-0.00%` no longer keep a sign on a zero. And abbreviation is by
+  magnitude, so `-2.5e9` renders `-2.50B` instead of full-width.
+- `getMostSpecificType`: the `length < 7` guard meant `"1/2/24"` could never be a
+  date (now `< 6`) — and a regression from the SmartParse migration is fixed: with
+  `parseDate` no longer throwing, the vestigial `Try(..).getOrElse` returned the
+  **BadDate sentinel as a DateTime** for every unparseable longer string; the String
+  is restored explicitly.
 
 **ADDED — `Big.round(MathContext)` on both sides, and the BigUtils surface in Rust**
 
@@ -33,9 +57,14 @@ carry case (`999.9` at precision 3 is `1.00E+3`, not `1000`). `udata::bigutils` 
 Rust module) ports `numStr`/`numStrPct`/`num2string` + `NumFormat`, `str2num`,
 `isNumeric`, `isBad`/`orBad` and `big2double`; `numStr` reproduces Java's
 `%f` contract exactly (shortest decimal digits of the double, rounded half-up), and
-`isNumeric`'s four regexes are ported as character scans bug-for-bug (pattern 3's
-case-sensitive `K`/`M`/`B` against pattern 1's case-insensitive ones, pattern 4's
-unescaped dot). 286 new `big-parity` rows pin all of it — parity item 3.
+`isNumeric`'s four regexes are ported as character scans. Two authoring accidents in
+those regexes are **repaired** (Scala-first, then mirrored): pattern 3 gains the `(?i)`
+pattern 1 always had, so a single-digit `5k` classifies like `5K`; and pattern 4's
+decimal point is escaped — the bare `.` matched *any* character, so `12,34E+5` and
+`12$34E+5` read as numeric. The dead `'/'` half of the double-minus guard is also
+gone ('/' was never a validNumChar). Columns whose cells include lone
+lowercase-suffixed digits may now infer as numeric where they inferred as text.
+289 new `big-parity` rows pin all of it — parity item 3.
 
 **BREAKING — the difference family is zone-free: the `ZoneId` parameters are removed**
 
@@ -180,7 +209,7 @@ part of the ported 92.
   applied and then reverted when compilation proved the receivers were vast's own types.
 - Not removed: the class-2 generic names (`name`, `file`, `text`, `path`, `toPath` --
   compiler-proven unused in the sbt corpus but unmeasured in scripts), and
-  `posixAbs`/`posixRel`, whose deferred removal is already documented.
+  `posixAbs`/`posixRel`, whose planned end state is `private[uni]`, not removal.
 
 **RUST — the crate is `uni` now, not `t3prf`**
 

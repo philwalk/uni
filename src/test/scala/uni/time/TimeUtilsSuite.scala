@@ -200,7 +200,7 @@ class TimeUtilsSuite extends FunSuite:
     assertEquals(seconds, 4L)
   }
 
-  test("getDuration: negative — sign on days only, rest positive") {
+  test("getDuration: negative — sign on the largest nonzero unit") {
     val d1 = LocalDateTime.of(2024, 1, 2, 2, 3, 4)
     val d2 = LocalDateTime.of(2024, 1, 1, 0, 0, 0)
     val (days, hours, minutes, seconds) = getDuration(d1, d2)
@@ -208,6 +208,16 @@ class TimeUtilsSuite extends FunSuite:
     assertEquals(hours,    2L)
     assertEquals(minutes,  3L)
     assertEquals(seconds,  4L)
+  }
+
+  test("getDuration: sub-day negatives keep their sign") {
+    // the old "sign on days" rule reported -5 hours as (0, 5, 0, 0) --
+    // indistinguishable from +5 hours
+    val base = LocalDateTime.of(2024, 1, 1, 12, 0, 0)
+    assertEquals(getDuration(base, base.minusHours(5)),   (0L, -5L, 0L, 0L))
+    assertEquals(getDuration(base, base.minusMinutes(7)), (0L, 0L, -7L, 0L))
+    assertEquals(getDuration(base, base.minusSeconds(9)), (0L, 0L, 0L, -9L))
+    assertEquals(getDuration(base, base),                 (0L, 0L, 0L, 0L))
   }
 
   test("getDuration is zone-free, like the rest of the difference family") {
