@@ -25,6 +25,36 @@ is `private[uni]` -- out of the public API, permanently alive underneath it, sin
 are the engine behind `Path.posix`/`Path.relpath` and the resolution machinery.
 
 
+**BREAKING — path comparisons fold case only where the platform folds, and every
+relative form absolutises**
+
+Three related repairs to the path machinery, all mirrored in the Rust port and
+pinned by the regenerated `path-parity` fixture:
+
+- **Case-folding is a context property** (`PathsConfig.caseFold` /
+  `PathContext::case_fold`), not a hard-coded behavior: Windows and macOS fold
+  (their default filesystems are case-insensitive), Linux compares exactly, and
+  synthetic configs follow the *simulated* platform so fixtures stay deterministic
+  on any host. The unconditional fold in `relpath`'s cwd test relativised
+  `/home/Phil/x` against a cwd of `/home/phil` on Linux — a different, legal
+  directory — silently pointing callers at the wrong tree. `samePathString` and
+  `UPath::relativize` consult the same flag (Java's own `relativize` is
+  case-insensitive on `WindowsPath` and exact on `UnixPath`).
+- **Every relative form resolves against the config working directory**, not just
+  bare filenames: `a/b` staying relative while `bare.txt` absolutised was an
+  asymmetry with no niche (`posx` normalises without absolutising), and it made
+  `Paths.get("a/b")` the one relative-returning constructor — diverging from the
+  Rust port's always-absolute `UPath`.
+- **Drive-lettered shapes (`X:...`) pass through under either rule set** (the
+  pass-through used to be Windows-rules-only). Under POSIX rules a colon is an
+  ordinary character, but such strings denote host-absolute paths in every real
+  corpus, and resolving them against the working directory produced
+  `/munit/test/C:/...` — unparseable on the very hosts that create them. A genuine
+  POSIX name like `C:x` is reachable explicitly as `./C:x`.
+
+The pair probe (`jsrc/pairProbe.sc` / `rust/examples/pair_probe.rs`) remains
+byte-identical across the change.
+
 **FIXED — six defects repaired Scala-first, mirrored in Rust, all fixture-pinned**
 
 The parity audit turned up quirks that were at first ported bug-for-bug; on review all

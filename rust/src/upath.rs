@@ -239,11 +239,13 @@ pub(crate) fn normalize_posix(p: &str) -> String {
     if s == "/" { s } else { no_trailing_slash(&s) }
 }
 
-/// Case-insensitive `starts_with`, as `posixAbs` uses throughout.
+/// Case-insensitive `starts_with`.
 ///
-/// Right on Windows and on macOS, whose default filesystem is case-insensitive but
-/// case-preserving; technically wrong on Linux. Load-bearing on two of the three
-/// platforms, so it is ported as-is rather than "fixed".
+/// Since 0.16.0 the *deciding* comparisons (`posix_rel`'s cwd test, `relativize`)
+/// consult `PathContext::case_fold` and call this only where the context folds —
+/// unconditional folding relativised `/home/Phil/x` against `/home/phil` on Linux.
+/// The remaining unconditional caller is the explicitly-named
+/// `StrExts::startsWithIgnoreCase`, whose insensitivity is its contract.
 #[must_use]
 pub(crate) fn startsWithIgnoreCase(s: &str, prefix: &str) -> bool {
     s.len() >= prefix.len() && s[..prefix.len()].eq_ignore_ascii_case(prefix)

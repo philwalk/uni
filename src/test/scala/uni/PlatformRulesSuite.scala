@@ -27,6 +27,11 @@ import TestUtils.unixTestUser
  */
 class PlatformRulesSuite extends FunSuite:
 
+  // Guaranteed cleanup: an injected synthetic config must not leak into later
+  // suites -- since 0.16.0 a relative Paths.get absolutises against config.userdir
+  // at construction, so a leak sends other suites' fixtures to C:/munit/test.
+  override def afterAll(): Unit = resetConfig()
+
   override def afterEach(context: AfterEach): Unit = resetConfig()
 
   private def windowsRules(): Unit =
@@ -100,10 +105,14 @@ class PlatformRulesSuite extends FunSuite:
     assertEquals(Resolver.resolvePathstr("C:/foo"), "C:/foo")
   }
 
-  test("off Windows a colon-bearing name stays a filename") {
-    // Why the drive branch is guarded: `C:foo` is a legal POSIX filename.
+  test("off Windows a colon-bearing name passes through, like every drive shape") {
+    // Changed 0.16.0: drive-lettered shapes pass through under either rule set --
+    // resolving them against userdir turned host-absolute Windows strings into
+    // `/munit/test/C:/...`, unparseable on the very hosts that create them. A
+    // genuine POSIX file named `C:foo` is reachable explicitly, as `./C:foo`.
     posixRules()
-    assertEquals(Resolver.resolvePathstr("C:foo"), s"${unixTestUser.dir}/C:foo")
+    assertEquals(Resolver.resolvePathstr("C:foo"), "C:foo")
+    assertEquals(Resolver.resolvePathstr("./C:foo"), s"${unixTestUser.dir}/C:foo")
   }
 
   test("applyTildeAndDots passes drive letters through untouched") {
@@ -122,18 +131,27 @@ class PlatformRulesSuite extends FunSuite:
   // because `normalizePosix` converts backslashes to slashes first, erasing the
   // difference before the rule is applied.
 
+  // Construction happens once, under Windows rules, where "C:/foo/bar" classifies
+  // Absolute and is preserved; only the *rendering* rule is flipped afterwards.
+  // Constructing under POSIX rules would be testing the wrong thing since 0.16.0:
+  // there a drive-lettered string is an ordinary relative name (the colon has no
+  // meaning) and resolves against userdir like any other relative path.
+
   test("localpath emits the injected platform's separator") {
     windowsRules()
-    assertEquals(Paths.get("C:/foo/bar").localpath, "C:\\foo\\bar")
+    val p = Paths.get("C:/foo/bar")
+    assertEquals(p.localpath, "C:\\foo\\bar")
     posixRules()
-    assertEquals(Paths.get("C:/foo/bar").localpath, "C:/foo/bar")
+    assertEquals(p.localpath, "C:/foo/bar")
   }
 
   test("posx always emits forward slashes, under either rule set") {
     // The intended split: `posx` is always POSIX, `local` follows the platform.
+    windowsRules()
+    val p = Paths.get("C:/foo/bar")
     for setup <- Seq(() => windowsRules(), () => posixRules()) do
       setup()
-      assertEquals(Paths.get("C:/foo/bar").posx, "C:/foo/bar")
+      assertEquals(p.posx, "C:/foo/bar")
   }
 
   test("String.local translates a POSIX path only under Windows rules") {
@@ -152,7 +170,9 @@ class PlatformRulesSuite extends FunSuite:
   test("dospath passes a long path through under POSIX rules") {
     // Only this branch is portable: the short-string branches consult `rootDrives`
     // and `toAbsolutePath`, which read the real filesystem.
+    windowsRules()
+    val p = Paths.get("C:/foo/bar") // constructed where the drive form is Absolute
     posixRules()
-    assertEquals(Paths.get("C:/foo/bar").dospath, Paths.get("C:/foo/bar").toString)
+    assertEquals(p.dospath, p.toString)
   }
 

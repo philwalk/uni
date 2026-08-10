@@ -9,6 +9,11 @@ import TestUtils.testUser
  */
 class DotfilePathSuite extends FunSuite:
 
+  // Guaranteed cleanup: an injected synthetic config must not leak into later
+  // suites -- since 0.16.0 a relative Paths.get absolutises against config.userdir
+  // at construction, so a leak sends other suites' fixtures to C:/munit/test.
+  override def afterAll(): Unit = resetConfig()
+
   override def beforeEach(context: BeforeEach): Unit =
     uni.resetConfig()
 

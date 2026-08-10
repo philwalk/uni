@@ -8,6 +8,11 @@ import java.nio.file.{Files as JFiles}
 import TestUtils.{prmsg, noisy}
 
 class PathSpec extends FunSuite {
+
+  // Guaranteed cleanup: an injected synthetic config must not leak into later
+  // suites -- since 0.16.0 a relative Paths.get absolutises against config.userdir
+  // at construction, so a leak sends other suites' fixtures to C:/munit/test.
+  override def afterAll(): Unit = resetConfig()
   lazy val testFile: Path = Paths.get(s"${TMP}/youMayDeleteThisDebrisFile.txt")
 
   var testfileb: Path = scala.compiletime.uninitialized

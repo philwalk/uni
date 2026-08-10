@@ -55,6 +55,16 @@ trait PathsConfig {
   def userhome: String
   def userdir: String
 
+  /** Fold case when comparing whole paths (`relpath`'s cwd test, `samePathString`)?
+   *
+   *  Defaults to the *simulated* platform, so synthetic configs and the fixtures they
+   *  generate stay deterministic on any host. [[DefaultPathsConfig]] overrides with
+   *  the host rule: Windows and macOS fold (their default filesystems are
+   *  case-insensitive), Linux compares exactly -- folding there relativised
+   *  `/home/Phil/x` against a cwd of `/home/phil`, silently pointing callers at a
+   *  different tree. */
+  def caseFold: Boolean = isWindows
+
   /** Whether Windows path rules apply.
    *
    *  A config field rather than a read of `scala.util.Properties.isWin`, so a test
@@ -110,6 +120,8 @@ object DefaultPathsConfig extends PathsConfig {
   def userhome: String = realUserHome
   def userdir: String  = realUserDir
   def isWindows: Boolean = scala.util.Properties.isWin
+  // the host rule (see the trait doc): fold where the default filesystem folds
+  override def caseFold: Boolean = isWindows || scala.util.Properties.isMac
   def driveCwd(drive: Char): Path =
     val upper = drive.toUpper
     require(upper.isLetter, s"Not a valid drive letter: $drive")

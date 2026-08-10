@@ -122,7 +122,12 @@ object PathParityGen:
     ".", "..", "./x", "../x",             // dot expansion
     "~", "~/sub",                         // home expansion
     ".gitignore",                         // hidden file keeps its dot
-    "bare.txt", "a/b",                    // bare name vs relative path
+    "bare.txt", "a/b",                    // both absolutise as of 0.16.0
+    // Case-probing (0.16.0): the synthetic cwd is /munit/test | C:/munit/test, so
+    // these differ from it only by case. The windows block folds (relpath answers
+    // relative); the posix block compares exactly (they stay absolute) -- pinning
+    // BOTH rules of the context-carried caseFold flag.
+    "/MUNIT/test/casefold.txt", "/munit/TEST", "C:/MUNIT/test/casefold.txt",
     "",                                   // empty → userdir
     // Interior separators and dot segments. `Paths.get` normalises some of these
     // and leaves others alone, and which is which is exactly what the Rust port

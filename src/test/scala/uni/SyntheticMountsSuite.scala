@@ -5,6 +5,11 @@ import TestUtils.windowsTestUser as winUser
 import uni.*
 
 final class SyntheticMountsSuite extends FunSuite {
+
+  // Guaranteed cleanup: an injected synthetic config must not leak into later
+  // suites -- since 0.16.0 a relative Paths.get absolutises against config.userdir
+  // at construction, so a leak sends other suites' fixtures to C:/munit/test.
+  override def afterAll(): Unit = resetConfig()
 // uncomment the next 2 lines to disable timeout
 // import scala.concurrent.duration.*
 // override def munitTimeout: Duration = Duration.Inf

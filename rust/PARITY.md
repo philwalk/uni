@@ -121,7 +121,11 @@ This is the only multi-session item; everything above it is hours, not days.
 - `LcLookupOrderedMap` — internal to the mount tables on both sides.
 - `posixAbs`/`posixRel` — deprecated on the Scala side, headed for `private[uni]`
   (never removal: they power `posix`/`relpath`). Not ported as public API; the same
-  machinery lives internally in `upath::resolve`, quirks and all.
+  machinery lives internally in `upath::resolve`. Its two long-documented quirks
+  were repaired in 0.16.0, both sides together: case-folding became a context
+  property (fold on Windows/macOS, exact on Linux — the unconditional fold
+  mis-relativised case-twin paths there), and every relative form now absolutises
+  (the `a/b`-vs-`bare.txt` asymmetry is gone).
 - `FileOps.loadSmartUrl` — HTTP; would need a network dependency. Feature-gate later
   if ever.
 

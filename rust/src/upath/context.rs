@@ -59,6 +59,14 @@ pub struct PathContext {
     /// Whether to apply the Windows translation rules. A parameter, not
     /// `cfg!(windows)` — see the module docs.
     pub is_windows: bool,
+    /// Fold case when comparing whole paths (`relpath`'s cwd test, `relativize`)?
+    ///
+    /// Synthetic contexts follow the *simulated* platform, so fixtures stay
+    /// deterministic on any host; [`from_env`](Self::from_env) applies the host
+    /// rule — Windows and macOS fold (their default filesystems are
+    /// case-insensitive), Linux compares exactly. Folding there relativised
+    /// `/home/Phil/x` against a cwd of `/home/phil`, a different, legal directory.
+    pub case_fold: bool,
     pub mounts: MountMaps,
     pub user: UserInfo,
     pub drive_cwd_source: DriveCwdSource,
@@ -74,7 +82,8 @@ impl PathContext {
     #[must_use]
     pub fn synthetic(mount_lines: &[String], user: UserInfo, is_windows: bool) -> Self {
         let mounts = MountMaps::parse(mount_lines, is_windows);
-        Self::from_parts(is_windows, mounts, user, DriveCwdSource::Synthetic)
+        // the simulated platform's rule, not the host's: fixtures must not vary by host
+        Self::from_parts(is_windows, is_windows, mounts, user, DriveCwdSource::Synthetic)
     }
 
     /// Builds a context from the running environment. The only function here that
@@ -88,11 +97,14 @@ impl PathContext {
             MountMaps::empty()
         };
         let user = UserInfo::new(&env_user_name(), &env_home(), &env_cwd());
-        Self::from_parts(is_windows, mounts, user, DriveCwdSource::Process)
+        // the host rule: fold where the default filesystem folds
+        let case_fold = is_windows || cfg!(target_os = "macos");
+        Self::from_parts(is_windows, case_fold, mounts, user, DriveCwdSource::Process)
     }
 
     fn from_parts(
         is_windows: bool,
+        case_fold: bool,
         mounts: MountMaps,
         user: UserInfo,
         drive_cwd_source: DriveCwdSource,
@@ -101,6 +113,7 @@ impl PathContext {
         let win2posix_keys = mounts.win2posix.keys_longest_first();
         Self {
             is_windows,
+            case_fold,
             mounts,
             user,
             drive_cwd_source,

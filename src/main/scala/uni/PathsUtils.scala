@@ -143,7 +143,9 @@ private[uni] object Internals {
   }
 
   def samePathString(s1: String ,s2: String): Boolean = {
-    if (isWin || isMac) {
+    // the config's rule rather than raw isWin/isMac, so synthetic configs and the
+    // fixtures built from them answer deterministically on any host
+    if (config.caseFold) {
       s1.equalsIgnoreCase(s2)
     } else {
       s1 == s2
@@ -387,8 +389,14 @@ def applyTildeAndDots(raw: String): String = {
           }
 
       case _ =>
-        // treat only true bare filenames as relative
-        if config.isWindows && raw.length >= 2 && raw(1) == ':' then
+        // Drive-lettered shapes pass through under EITHER rule set (0.16.0 -- the
+        // guard was `config.isWindows &&`). Under POSIX rules a colon is
+        // semantically an ordinary character, but `X:...` strings denote
+        // host-absolute paths in every real corpus, and gluing them onto userdir
+        // produced `/munit/test/C:/...` -- unparseable on the very hosts that
+        // create such strings. A genuine Linux name like `C:x` is reachable as
+        // `./C:x`.
+        if raw.length >= 2 && raw(1) == ':' then
           // A drive letter belongs to `Resolver.classify`, which routes it to
           // `resolveDriveRelPathstr` -- the one place that knows the per-drive
           // working directory. Resolving it here got both drive-relative forms
@@ -397,13 +405,18 @@ def applyTildeAndDots(raw: String): String = {
           // no '/' -- fell into the bare-filename branch below and was glued onto
           // userdir as `.../uni/C:foo`, which java.nio rejected outright.
           //
-          // Guarded by `isWin` because on Linux and macOS `C:foo` is an ordinary
-          // filename that happens to contain a colon, and must stay relative to
-          // userdir. `C:/foo` reaches the same branch and is equally fine to pass
-          // through -- classify calls it Absolute and leaves it alone.
+          // No longer guarded by `isWin` (0.16.0): see the branch comment above --
+          // drive shapes pass through under either rule set. Under Windows rules
+          // classify routes them; `C:/foo` classifies Absolute and is left alone.
           raw
-        else if !raw.contains('/') then
-          s"${config.userdir}/$raw"
+        else if !raw.startsWith("/") then
+          // EVERY relative form resolves against the config working directory
+          // (0.16.0), not just bare filenames. `a/b` staying relative while
+          // `bare.txt` absolutised was an asymmetry with no niche -- `posx`
+          // normalises without absolutising for callers who want that -- and it
+          // made `Paths.get("a/b")` the one relative-returning constructor,
+          // diverging from the Rust port's always-absolute `UPath`.
+          s"${config.userdir.stripSuffix("/")}/$raw"
         else
           raw
 }
@@ -465,13 +478,11 @@ private[uni] def toPosixAbs(raw0: String): String = {
       hook += 1
     val cygMixed = Resolver.resolvePathstr(raw)
     if Resolver.classify(cygMixed) == Resolver.Relative then
-      // A relative path has no absolute POSIX form, and resolution deliberately
-      // leaves it alone: `applyTildeAndDots` absolutises a bare filename but
-      // treats anything containing a slash as already a path. Such a value used to
-      // fall through to the cygdrive branch and fail `winAbsToPosixAbs`'s
-      // `require(cygMixed(1) == ':')`, so `Paths.get("a/b").posix` threw while
-      // `Paths.get("bare.txt").posix` succeeded. Preserve it instead, which is
-      // what `cygpath -u a/b` does.
+      // Defensive only, as of 0.16.0: `applyTildeAndDots` now absolutises every
+      // relative form (not just bare filenames), so resolution cannot hand a
+      // Relative back here. Kept because falling through to the cygdrive branch
+      // would fail `winAbsToPosixAbs`'s `require` -- preserving is the safe answer
+      // if a new path kind ever leaks through.
       normalizePosix(cygMixed)
     else if isUnderRoot(cygMixed, config.cygRoot) then
       val rest = cygMixed.drop(config.cygRoot.length)
@@ -504,13 +515,16 @@ def posixRel(raw: String): String = toPosixRel(raw)
 private[uni] def toPosixRel(raw: String): String =
   val cwd = toPosixAbs(config.userdir)
   val abs = toPosixAbs(raw)
+  // fold only where the config says paths fold (0.16.0): the unconditional
+  // equalsIgnoreCase relativised `/home/Phil/x` against a cwd of `/home/phil` on
+  // Linux -- a different, legal directory -- silently pointing callers elsewhere
+  val fold = config.caseFold
+  val isCwd  = if fold then abs.equalsIgnoreCase(cwd) else abs == cwd
+  val below  = if fold then abs.startsWithIgnoreCase(cwd + "/") else abs.startsWith(cwd + "/")
 
-  if abs.equalsIgnoreCase(cwd) then
-    "."
-  else if abs.startsWithIgnoreCase(cwd + "/") then
-    abs.substring(cwd.length + 1)   // skip the slash
-  else
-    abs
+  if isCwd then "."
+  else if below then abs.substring(cwd.length + 1) // skip the slash
+  else abs
 
 def winAbsToPosixAbs(cygMixed: String): String =
   require(cygMixed.length > 1 && cygMixed(1) == ':', s"not a Windows abs path [$cygMixed]")

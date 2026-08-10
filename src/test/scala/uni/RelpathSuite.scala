@@ -14,6 +14,11 @@ import munit.FunSuite
  */
 class RelpathSuite extends FunSuite:
 
+  // Guaranteed cleanup: an injected synthetic config must not leak into later
+  // suites -- since 0.16.0 a relative Paths.get absolutises against config.userdir
+  // at construction, so a leak sends other suites' fixtures to C:/munit/test.
+  override def afterAll(): Unit = resetConfig()
+
   override def afterEach(context: AfterEach): Unit = resetConfig()
 
   /** An injected config, so "the working directory" is a known value rather than
@@ -26,6 +31,20 @@ class RelpathSuite extends FunSuite:
   test("the working directory itself is '.'") {
     val cwd = injected()
     assertEquals(Paths.get(cwd).relpath, ".")
+  }
+
+  test("relpath folds case only where the config folds (0.16.0)") {
+    // Windows rules fold: a case-twin of the cwd relativises. POSIX rules compare
+    // exactly: the unconditional fold used to relativise /home/Phil/x against a cwd
+    // of /home/phil on Linux -- a different, legal directory.
+    injected() // isWindows = true → caseFold
+    assertEquals(toPosixRel("C:/MUNIT/test/casefold.txt"), "casefold.txt")
+    withMountLines(Seq("none / cygdrive binary,posix=0 0 0"), TestUtils.unixTestUser,
+      isWindows = false) // trait default: caseFold = isWindows = false
+    val dir = config.userdir // /munit/test
+    assertEquals(toPosixRel(s"$dir/casefold.txt"), "casefold.txt")
+    val twin = dir.toUpperCase
+    assertEquals(toPosixRel(s"$twin/casefold.txt"), s"$twin/casefold.txt")
   }
 
   test("a path below the working directory comes back relative") {

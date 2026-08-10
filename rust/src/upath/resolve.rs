@@ -11,13 +11,13 @@
 //! it the other way round loses information, because `std::path` on Windows will
 //! happily reinterpret a POSIX mount path as a relative one.
 
-use crate::upath::PathContext;
-use crate::upath::PathError;
 use crate::upath::join_posix;
 use crate::upath::no_trailing_slash;
 use crate::upath::normalize_posix;
 use crate::upath::startsWithIgnoreCase;
 use crate::upath::strip_trailing_slash;
+use crate::upath::PathContext;
+use crate::upath::PathError;
 
 /// The five Windows path shapes, plus root and the reject case.
 ///
@@ -246,19 +246,27 @@ fn expand_bare(ctx: &PathContext, raw: &str) -> Result<String, PathError> {
     // having no '/' -- fell through to the bare-filename branch and was glued onto
     // the user directory as `.../uni/C:foo`, with a colon buried inside it.
     //
-    // Guarded by `is_windows` because on Linux and macOS `C:foo` is an ordinary
-    // filename that happens to contain a colon, and must stay relative to the
-    // working directory. `C:/foo` reaches this branch too and is equally fine to
-    // pass through -- `classify` calls it Absolute and leaves it alone.
-    if ctx.is_windows && raw.len() >= 2 && b[1] == b':' {
+    // No longer guarded by `is_windows` (0.16.0): drive-lettered shapes pass
+    // through under EITHER rule set. Under POSIX rules a colon is semantically an
+    // ordinary character, but `X:...` strings denote host-absolute paths in every
+    // real corpus, and gluing them onto the working directory produced
+    // `/munit/test/C:/...` -- unparseable on the very hosts that create such
+    // strings. A genuine POSIX name like `C:x` is reachable as `./C:x`.
+    if raw.len() >= 2 && b[1] == b':' {
         return Ok(raw.to_owned());
     }
-    // Only a true bare filename is treated as relative to the working directory;
-    // anything containing a slash is already a path.
-    if raw.contains('/') {
+    // EVERY other relative form resolves against the working directory (0.16.0),
+    // not just bare filenames. `a/b` staying relative while `bare.txt` absolutised
+    // was an asymmetry with no niche -- `posx` normalises without absolutising for
+    // callers who want that -- and it left `posix_abs("a/b")` relative where
+    // `UPath::resolve` is always absolute.
+    if raw.starts_with('/') {
         Ok(raw.to_owned())
     } else {
-        Ok(format!("{}/{raw}", ctx.user.dir))
+        Ok(format!(
+            "{}/{raw}",
+            ctx.user.dir.strip_suffix('/').unwrap_or(&ctx.user.dir)
+        ))
     }
 }
 
@@ -304,9 +312,7 @@ fn windows_to_posix(ctx: &PathContext, cyg_mixed: &str) -> Result<String, PathEr
     // though it were inside produced `extra` — a relative string standing in for an
     // absolute path. `find_prefix` requires the next character to be '/' or ':' and
     // treats an exact match as a match.
-    if !cyg_root.is_empty()
-        && find_prefix(cyg_mixed, &[cyg_root.to_lowercase()]).is_some()
-    {
+    if !cyg_root.is_empty() && find_prefix(cyg_mixed, &[cyg_root.to_lowercase()]).is_some() {
         let rest = &cyg_mixed[cyg_root.len()..];
         // The root itself maps to "/", not to "": dropping the whole prefix leaves
         // nothing, so the root of the filesystem came back as the empty string.
@@ -347,11 +353,24 @@ fn windows_to_posix(ctx: &PathContext, cyg_mixed: &str) -> Result<String, PathEr
 pub fn posix_rel(ctx: &PathContext, raw: &str) -> Result<String, PathError> {
     let cwd = posix_abs(ctx, &ctx.user.dir.clone())?;
     let abs = posix_abs(ctx, raw)?;
-    if abs.eq_ignore_ascii_case(&cwd) {
+    // fold only where the context says paths fold (0.16.0): the unconditional
+    // eq_ignore relativised `/home/Phil/x` against a cwd of `/home/phil` on Linux
+    // -- a different, legal directory -- silently pointing callers elsewhere
+    let is_cwd = if ctx.case_fold {
+        abs.eq_ignore_ascii_case(&cwd)
+    } else {
+        abs == cwd
+    };
+    if is_cwd {
         return Ok(".".to_owned());
     }
     let with_slash = format!("{cwd}/");
-    if startsWithIgnoreCase(&abs, &with_slash) {
+    let below = if ctx.case_fold {
+        startsWithIgnoreCase(&abs, &with_slash)
+    } else {
+        abs.starts_with(&with_slash)
+    };
+    if below {
         return Ok(abs[with_slash.len()..].to_owned());
     }
     Ok(abs)
@@ -377,12 +396,12 @@ pub fn win_abs_to_posix_abs(cyg_mixed: &str) -> Result<String, PathError> {
 
 #[cfg(test)]
 mod tests {
-    use super::PathKind;
     use super::apply_tilde_and_dots;
     use super::classify;
     use super::find_prefix;
     use super::posix_abs;
     use super::resolve_pathstr;
+    use super::PathKind;
     use crate::upath::PathContext;
     use crate::upath::UserInfo;
 
@@ -498,13 +517,16 @@ mod tests {
             apply_tilde_and_dots(&ctx, ".gitignore").unwrap(),
             "C:/munit/test/.gitignore"
         );
-        // Bare name is relative to the working directory; anything with a slash is
-        // already a path and is left alone.
+        // EVERY relative form resolves against the working directory (0.16.0),
+        // not just bare filenames.
         assert_eq!(
             apply_tilde_and_dots(&ctx, "bare.txt").unwrap(),
             "C:/munit/test/bare.txt"
         );
-        assert_eq!(apply_tilde_and_dots(&ctx, "a/b").unwrap(), "a/b");
+        assert_eq!(
+            apply_tilde_and_dots(&ctx, "a/b").unwrap(),
+            "C:/munit/test/a/b"
+        );
     }
 
     #[test]
@@ -514,14 +536,16 @@ mod tests {
     }
 
     #[test]
-    fn relative_paths_are_preserved_not_absolutised() {
-        // `a/b` survives resolution untouched and has no absolute POSIX form, so it
-        // comes back as-is rather than erroring. `bare.txt` has no separator, so
-        // `apply_tilde_and_dots` absolutises it first and it does get a full path —
-        // an asymmetry inherited from uni, not introduced here.
+    fn relative_paths_absolutise_like_bare_names() {
+        // 0.16.0: `a/b` staying relative while `bare.txt` absolutised was an
+        // asymmetry with no niche (`posx` normalises without absolutising). Both
+        // sides changed together; the path-parity fixture pins it.
         let ctx = overlap_ctx(true);
-        assert_eq!(posix_abs(&ctx, "a/b").unwrap(), "a/b");
-        assert_eq!(posix_abs(&ctx, "src/main/scala").unwrap(), "src/main/scala");
+        assert_eq!(posix_abs(&ctx, "a/b").unwrap(), "/c/munit/test/a/b");
+        assert_eq!(
+            posix_abs(&ctx, "src/main/scala").unwrap(),
+            "/c/munit/test/src/main/scala"
+        );
         assert_eq!(
             posix_abs(&ctx, "bare.txt").unwrap(),
             "/c/munit/test/bare.txt"
@@ -546,7 +570,10 @@ mod tests {
     fn a_bare_drive_resolves_to_that_drives_working_directory() {
         let ctx = drive_ctx(true);
         assert_eq!(classify("C:"), PathKind::DriveRel);
-        assert_eq!(resolve_pathstr(&ctx, "C:", &[]).expect("resolves"), "C:/munit/test");
+        assert_eq!(
+            resolve_pathstr(&ctx, "C:", &[]).expect("resolves"),
+            "C:/munit/test"
+        );
     }
 
     #[test]
@@ -588,16 +615,27 @@ mod tests {
     fn a_drive_absolute_path_is_left_alone() {
         let ctx = drive_ctx(true);
         assert_eq!(classify("C:/foo"), PathKind::Absolute);
-        assert_eq!(resolve_pathstr(&ctx, "C:/foo", &[]).expect("resolves"), "C:/foo");
+        assert_eq!(
+            resolve_pathstr(&ctx, "C:/foo", &[]).expect("resolves"),
+            "C:/foo"
+        );
     }
 
     #[test]
-    fn off_windows_a_colon_bearing_name_stays_a_filename() {
-        // The reason the drive branch is guarded: `C:foo` is a legal POSIX filename.
+    fn off_windows_a_colon_bearing_name_passes_through_like_every_drive_shape() {
+        // Changed 0.16.0: drive-lettered shapes pass through under either rule set
+        // -- resolving them against the working directory turned host-absolute
+        // Windows strings into `/munit/test/C:/...`, unparseable on the very hosts
+        // that create them. A genuine POSIX file named `C:foo` is reachable
+        // explicitly, as `./C:foo`.
         let ctx = drive_ctx(false);
         assert_eq!(
             resolve_pathstr(&ctx, "C:foo", &[]).expect("resolves"),
-            "C:/munit/test/C:foo"
+            "C:foo"
+        );
+        assert_eq!(
+            resolve_pathstr(&ctx, "./C:foo", &[]).expect("resolves"),
+            "C:/munit/test/C:foo" // drive_ctx keeps a C:-style userdir even under posix rules
         );
     }
 
@@ -614,4 +652,3 @@ mod tests {
         }
     }
 }
-

@@ -34,13 +34,13 @@
 
 use std::sync::Arc;
 
-use crate::upath::PathContext;
-use crate::upath::resolve::posix_rel;
-use crate::upath::PathError;
 use crate::upath::no_trailing_slash;
 use crate::upath::resolve::find_prefix;
 use crate::upath::resolve::posix_abs;
+use crate::upath::resolve::posix_rel;
 use crate::upath::resolve::resolve_pathstr;
+use crate::upath::PathContext;
+use crate::upath::PathError;
 
 /// A resolved path, carrying the context it was resolved against.
 ///
@@ -148,7 +148,11 @@ impl UPath {
         if self.s.len() >= 3 && b[1] == b':' && b[2] == b'/' {
             return 3;
         }
-        if self.s.starts_with('/') { 1 } else { 0 }
+        if self.s.starts_with('/') {
+            1
+        } else {
+            0
+        }
     }
 
     /// Name elements, excluding the root. `PathExts.segments`.
@@ -508,16 +512,26 @@ impl UPath {
 
 /// `Path.relativize`: the route from `base` to `target`, or `None` when there is
 /// none — different roots, as Java signals with `IllegalArgumentException`.
+/// Segment comparison folds only where the context folds (0.16.0) — Java's own
+/// `relativize` is case-insensitive on `WindowsPath` and exact on `UnixPath`.
 fn relativize(base: &UPath, target: &UPath) -> Option<String> {
+    let fold = base.ctx.case_fold;
+    let seg_eq = |a: &str, b: &str| {
+        if fold {
+            a.eq_ignore_ascii_case(b)
+        } else {
+            a == b
+        }
+    };
     let (br, tr) = (&base.s[..base.root_len()], &target.s[..target.root_len()]);
-    if !br.eq_ignore_ascii_case(tr) {
+    if !seg_eq(br, tr) {
         return None;
     }
     let (bs, ts) = (base.segments(), target.segments());
     let common = bs
         .iter()
         .zip(ts.iter())
-        .take_while(|(a, b)| a.eq_ignore_ascii_case(b))
+        .take_while(|(a, b)| seg_eq(a, b))
         .count();
     let ups = std::iter::repeat_n("..", bs.len() - common);
     let down = ts[common..].iter().copied();
