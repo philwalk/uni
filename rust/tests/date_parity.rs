@@ -20,20 +20,31 @@
 
 use std::path::PathBuf;
 
+use uni::upath::epoch2DateTime;
+use uni::upath::times::round6;
 use uni::upath::PathContext;
 use uni::upath::UPath;
 use uni::upath::UserInfo;
-use uni::upath::epoch2DateTime;
-use uni::upath::times::round6;
-use uni::utime::UniDateTime;
 use uni::utime::dayOfWeek;
+use uni::utime::daysBetween;
+use uni::utime::daysRounded;
+use uni::utime::elapsedDays;
+use uni::utime::endOfMonth;
+use uni::utime::getDuration;
+use uni::utime::getMillis;
+use uni::utime::hoursBetween;
+use uni::utime::minutesBetween;
+use uni::utime::monthAbbrev2Number;
+use uni::utime::quikDate;
+use uni::utime::quikDateTime;
+use uni::utime::secondsBetween;
+use uni::utime::UniDateTime;
 
 fn fixture() -> String {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../test-data/date-parity/scala-reference.txt");
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../test-data/date-parity/scala-reference.txt");
     std::fs::read_to_string(&path).unwrap_or_else(|e| {
-        panic!(
-            "cannot read {path:?}: {e}. Regenerate with: sbt \"runMain uni.apps.DateParityGen\""
-        )
+        panic!("cannot read {path:?}: {e}. Regenerate with: sbt \"runMain uni.apps.DateParityGen\"")
     })
 }
 
@@ -119,8 +130,20 @@ fn fixture_has_every_kind_of_case() {
     let all = rows();
     assert!(all.len() > 3000, "only {} rows", all.len());
     for kind in [
-        "tostr", "fmt", "dow", "epochday", "valid", "dim", "ofepoch", "shift", "unary", "with",
-        "withdow", "sentinel", "offset", "offsettext",
+        "tostr",
+        "fmt",
+        "dow",
+        "epochday",
+        "valid",
+        "dim",
+        "ofepoch",
+        "shift",
+        "unary",
+        "with",
+        "withdow",
+        "sentinel",
+        "offset",
+        "offsettext",
     ] {
         assert!(
             all.iter().any(|r| r[0] == kind),
@@ -339,7 +362,12 @@ fn file_reading_path_matches_at_a_set_mtime() {
         assert!(file.is_file(), "missing fixture input {file:?}");
         let p = UPath::resolve(&ctx, &file.to_string_lossy().replace('\\', "/"))
             .unwrap_or_else(|e| panic!("cannot resolve {file:?}: {e}"));
-        assert_eq!(p.lastModified().to_string(), r[2], "lastModified of {}", r[1]);
+        assert_eq!(
+            p.lastModified().to_string(),
+            r[2],
+            "lastModified of {}",
+            r[1]
+        );
         assert_eq!(
             p.lastModifiedTime().to_string(),
             unesc(&r[3]),
@@ -361,11 +389,7 @@ fn file_reading_path_matches_at_a_set_mtime() {
 fn offset_extraction_matches_including_anchoring() {
     for r in of_kind("offset") {
         let text = unesc(&r[1]);
-        let expected = if r[2] == "none" {
-            None
-        } else {
-            Some(i(&r[2]))
-        };
+        let expected = if r[2] == "none" { None } else { Some(i(&r[2])) };
         assert_eq!(
             UniDateTime::offsetMinutesOf(&text),
             expected,
@@ -386,5 +410,95 @@ fn offset_validity_and_rendering_match() {
         let d = UniDateTime::ofFull(2024, 5, 12, 14, 30, 0, 0, Some(o));
         assert_eq!(d.offsetText(), unesc(&r[3]), "offsetText for {o}");
         assert_eq!(d.to_string(), unesc(&r[4]), "to_string for offset {o}");
+    }
+}
+
+/// The second moment of a two-moment row (fields at columns 8..14).
+fn moment_b(f: &[String]) -> UniDateTime {
+    let (y, mo, d) = (i(&f[8]), i(&f[9]), i(&f[10]));
+    let (h, mi, s, nano) = (i(&f[11]), i(&f[12]), i(&f[13]), i(&f[14]));
+    UniDateTime::ofFull(y, mo, d, h, mi, s, nano, None)
+}
+
+fn fl(s: &str) -> f64 {
+    s.parse().unwrap_or_else(|_| panic!("not an f64: [{s}]"))
+}
+
+#[test]
+fn the_between_family_matches_at_utc() {
+    // Exact equality on the f64 columns is intended: both sides divide the same
+    // integer seconds by the same constant, and %.17e round-trips f64 exactly.
+    for r in of_kind("between") {
+        let a = moment(&r);
+        let b = moment_b(&r);
+        let tag = format!("{:?} -> {:?}", &r[1..8], &r[8..15]);
+        assert_eq!(secondsBetween(&a, &b), l(&r[15]), "seconds {tag}");
+        assert_eq!(daysBetween(&a, &b), l(&r[16]), "days {tag}");
+        assert_eq!(elapsedDays(&a, &b), l(&r[17]), "elapsed {tag}");
+        assert!(minutesBetween(&a, &b) == fl(&r[18]), "minutes {tag}");
+        assert!(hoursBetween(&a, &b) == fl(&r[19]), "hours {tag}");
+        assert!(daysRounded(&a, &b) == fl(&r[20]), "daysRounded {tag}");
+    }
+}
+
+#[test]
+fn get_duration_matches_floor_semantics_included() {
+    for r in of_kind("duration") {
+        let got = getDuration(&moment(&r), &moment_b(&r));
+        let want = (l(&r[15]), l(&r[16]), l(&r[17]), l(&r[18]));
+        assert_eq!(got, want, "getDuration {:?} -> {:?}", &r[1..8], &r[8..15]);
+    }
+}
+
+#[test]
+fn end_of_month_matches() {
+    for r in of_kind("eom") {
+        assert_eq!(
+            endOfMonth(&moment(&r)).to_string(),
+            unesc(&r[8]),
+            "endOfMonth {:?}",
+            &r[1..8]
+        );
+    }
+}
+
+#[test]
+fn the_strict_quik_parsers_match_on_well_formed_input() {
+    for r in of_kind("quikdate") {
+        let s = unesc(&r[1]);
+        assert_eq!(quikDate(&s).to_string(), unesc(&r[2]), "quikDate [{s}]");
+    }
+    for r in of_kind("quikdt") {
+        let s = unesc(&r[1]);
+        assert_eq!(
+            quikDateTime(&s).to_string(),
+            unesc(&r[2]),
+            "quikDateTime [{s}]"
+        );
+    }
+}
+
+#[test]
+fn month_abbrev_to_number_matches() {
+    for r in of_kind("mon2num") {
+        let s = unesc(&r[1]);
+        assert_eq!(
+            monthAbbrev2Number(&s).to_string(),
+            r[2],
+            "monthAbbrev2Number [{s}]"
+        );
+    }
+}
+
+#[test]
+fn get_millis_matches_and_inverts_epoch2_date_time() {
+    for r in of_kind("getmillis") {
+        let d = moment(&r);
+        let millis = getMillis(&d);
+        assert_eq!(millis.to_string(), r[8], "getMillis {:?}", &r[1..8]);
+        // exact inverse once sub-millisecond nanos are dropped
+        let back = epoch2DateTime(millis, 0);
+        let want = d.withNano(d.nano() / 1_000_000 * 1_000_000);
+        assert_eq!(back, want, "round trip {:?}", &r[1..8]);
     }
 }

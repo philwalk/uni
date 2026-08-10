@@ -182,8 +182,12 @@ extension (dt: LocalDateTime)
   def minute: Int      = dt.getMinute
   def second: Int      = dt.getSecond
 
-  // millis since epoch
-  def getMillis(): Long = dt.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+  /** Epoch millis of the fields read at UTC -- the inverse of `epoch2DateTime(_, UTC)`,
+   *  so the round trip is exact (modulo sub-millisecond nanos). Consulted the system
+   *  zone before 0.16.0, which shifted the result by the local offset and broke the
+   *  round trip; fields-to-instant is a conversion, and UTC is the offset that means
+   *  the same thing on every host. */
+  def getMillis(): Long = dt.toInstant(java.time.ZoneOffset.UTC).toEpochMilli()
 
   // start-of-day
   def atStartOfDay(): LocalDateTime = dt.withHour(0).withMinute(0).withSecond(0).withNano(0)

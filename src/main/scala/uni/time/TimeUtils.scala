@@ -184,49 +184,54 @@ object TimeUtils {
 
   private[uni] def LastDayAdjuster: TemporalAdjuster = TemporalAdjusters.lastDayOfMonth()
 
-  // signed number of days between specified dates.
-  // if date1 > date2, a negative number of days is returned.
-  // These take the canonical [[UniDateTime]]. None of them is overloaded, so a caller
-  // still holding a `java.time` value is covered by the reverse conversion at the
-  // argument position -- which is *not* true of the overloaded pair further down.
+  // ── Differences ─────────────────────────────────────────────────────────────
+  //
+  // A difference between two local datetimes is field arithmetic: no timezone can
+  // legitimately affect it, so none of these take one. Earlier versions routed the
+  // operands through `atZone(zone).toInstant`, which imported DST artifacts into
+  // results a zone must not change: wall-clock 01:30 and 03:30 on a US spring-forward
+  // day are two hours apart *as the datetimes the caller handed us* -- that they were
+  // one hour apart in Denver that night is a fact about Denver, available only from a
+  // tz database, and callers who mean that should be working in `Instant`s -- which is
+  // exactly what the `Instant` overload of [[secondsBetween]] is for.
+  //
+  // This also makes the family identical to the Rust port (`utime::timeutils`), which
+  // could never consult a zone in the first place.
 
   // signed number of days between specified dates.
   // if date1 > date2, a negative number of days is returned.
-  def elapsedDays(d1: UniDateTime, d2: UniDateTime, zone: ZoneId = zoneid): Long =
-    ChronoUnit.DAYS.between(d1.toLocalDateTime.atZone(zone), d2.toLocalDateTime.atZone(zone))
+  def elapsedDays(d1: UniDateTime, d2: UniDateTime): Long =
+    ChronoUnit.DAYS.between(d1.toLocalDateTime, d2.toLocalDateTime)
 
   /** Seconds between two moments.
    *
-   *  Overloaded, which is why the `UniDateTime` alternatives are spelled out rather than
+   *  Overloaded, which is why the `UniDateTime` alternative is spelled out rather than
    *  left to the conversion: implicit conversions are **not** applied while resolving an
    *  overload. Scala looks for an alternative matching the arguments as given, and reports
    *  "none of the overloaded alternatives match" without ever retrying with a conversion
    *  in hand. So `secondsBetween(uniA, uniB)` failed outright until this existed, even
    *  though `UniDateTime` converts to `LocalDateTime` perfectly well.
-   *
-   *  The zone-taking `UniDateTime` form is a separate 3-parameter overload rather than a
-   *  defaulted one, because two overloads may not both declare a default in the same
-   *  position.
    */
-  def secondsBetween(d1: UniDateTime, d2: UniDateTime): Long = secondsBetween(d1, d2, zoneid)
-  def secondsBetween(d1: UniDateTime, d2: UniDateTime, zone: ZoneId): Long =
-    secondsBetween(d1.toLocalDateTime.atZone(zone).toInstant, d2.toLocalDateTime.atZone(zone).toInstant)
-  def secondsBetween(d1: LocalDateTime, d2: LocalDateTime, zone: ZoneId = zoneid): Long = secondsBetween(d1.atZone(zone).toInstant, d2.atZone(zone).toInstant)
+  def secondsBetween(d1: UniDateTime, d2: UniDateTime): Long =
+    ChronoUnit.SECONDS.between(d1.toLocalDateTime, d2.toLocalDateTime)
+  def secondsBetween(d1: LocalDateTime, d2: LocalDateTime): Long = ChronoUnit.SECONDS.between(d1, d2)
   def secondsBetween(d1: Instant, d2: Instant): Long = ChronoUnit.SECONDS.between(d1, d2)
 
   // age in seconds relative to now
-  def secondsSince(date1: UniDateTime, zone: ZoneId = zoneid): Long =
-    ChronoUnit.SECONDS.between(date1.toLocalDateTime.atZone(zone).toInstant, nowInstant)
+  def secondsSince(date1: UniDateTime): Long = secondsBetween(date1, now)
 
-  def minutesBetween(d1: UniDateTime, d2: UniDateTime, zone: ZoneId = zoneid): Double = secondsBetween(d1, d2, zone).toDouble / 60.0
-  def hoursBetween(d1: UniDateTime, d2: UniDateTime, zone: ZoneId = zoneid): Double = secondsBetween(d1, d2, zone).toDouble / 3600.0
-  def daysRounded(d1: UniDateTime, d2: UniDateTime, zone: ZoneId = zoneid): Double = secondsBetween(d1, d2, zone).toDouble / (24.0 * 3600.0)
+  def minutesBetween(d1: UniDateTime, d2: UniDateTime): Double = secondsBetween(d1, d2).toDouble / 60.0
+  def hoursBetween(d1: UniDateTime, d2: UniDateTime): Double = secondsBetween(d1, d2).toDouble / 3600.0
+  def daysRounded(d1: UniDateTime, d2: UniDateTime): Double = secondsBetween(d1, d2).toDouble / (24.0 * 3600.0)
   def daysBetween(d1: UniDateTime, d2: UniDateTime): Long =
     ChronoUnit.DAYS.between(d1.toLocalDateTime, d2.toLocalDateTime)
 
   def endOfMonth(d: UniDateTime): UniDateTime =
     d.lastDayOfMonth.atStartOfDay()
 
+  /** The file's mtime as a [[UniDateTime]], in UTC -- consistent with
+   *  `Path.lastModifiedTime` (UTC as of 0.16.0) and the Rust port. A missing file reads
+   *  as mtime `-1` ms: `1969-12-31T23:59:59.999`. */
   def whenModified(f: java.io.File): UniDateTime = {
     val lastmod = f.toPath match {
     case p if java.nio.file.Files.exists(p) =>
@@ -234,7 +239,7 @@ object TimeUtils {
     case _ =>
       -1
     }
-    epoch2DateTime(lastmod, zoneid)
+    epoch2DateTime(lastmod, UTC)
   }
 
   def epoch2DateTime(epoch: Long, timezone: java.time.ZoneId = UTC): UniDateTime = {
@@ -246,19 +251,11 @@ object TimeUtils {
   * Returns days, hours, minutes, seconds between timestamps.
   */
   def getDuration(date1: UniDateTime, date2: UniDateTime): (Long, Long, Long, Long) =
-    getDuration(date1.toLocalDateTime, date2.toLocalDateTime, ZoneId.systemDefault)
-
-  def getDuration(date1: UniDateTime, date2: UniDateTime, zone: ZoneId): (Long, Long, Long, Long) =
-    getDuration(date1.toLocalDateTime, date2.toLocalDateTime, zone)
+    getDuration(date1.toLocalDateTime, date2.toLocalDateTime)
 
   def getDuration(date1: LocalDateTime, date2: LocalDateTime): (Long, Long, Long, Long) =
-    getDuration(date1, date2, ZoneId.systemDefault)
-
-  def getDuration(date1: LocalDateTime, date2: LocalDateTime, zone: ZoneId): (Long, Long, Long, Long) =
-    val d1 = date1.atZone(zone).toInstant
-    val d2 = date2.atZone(zone).toInstant
-
-    val totalSeconds = Duration.between(d1, d2).getSeconds   // signed
+    // a difference: zone-free field arithmetic, like the whole family above
+    val totalSeconds = Duration.between(date1, date2).getSeconds   // signed; floors
 
     val abs = math.abs(totalSeconds)
 

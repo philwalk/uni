@@ -216,6 +216,61 @@ object DateParityGen:
       java.nio.file.Files.setLastModifiedTime(f, java.nio.file.attribute.FileTime.fromMillis(millis))
       out += s"mtime\t${f.getFileName}\t${f.lastModified}\t${esc(f.lastModifiedTime.toString)}\t${esc(f.lastModifiedYMD)}\t${f.weekDay}\t${f.weekDayName}"
 
+    // The between/duration family, at UTC on purpose: the zone-naive Rust port
+    // (`utime::timeutils`) computes exactly the UTC values, and a system-default zone
+    // would make the fixture depend on where it was generated. The pairs include both
+    // directions, sub-second differences (where SECONDS truncates toward zero but
+    // Duration floors), a <24h cross-midnight span, leap-day and epoch crossings, and
+    // a US DST gap — which at UTC must NOT matter.
+    val a0 = UniDateTime.of(2024, 5, 12, 14, 30, 45, 123456789)
+    val betweenPairs: Seq[(UniDateTime, UniDateTime)] = Seq(
+      (a0, a0),
+      (a0, a0.plusNanos(500000000L)),
+      (a0.plusNanos(500000000L), a0),
+      (a0, a0.plusSeconds(1)),
+      (a0, a0.minusSeconds(1)),
+      (UniDateTime.of(2024, 5, 12, 23, 0, 0), UniDateTime.of(2024, 5, 13, 22, 59, 59)),
+      (UniDateTime.of(2024, 5, 12, 23, 0, 0), UniDateTime.of(2024, 5, 13, 23, 0, 0)),
+      (UniDateTime.of(2024, 2, 28, 12, 0, 0), UniDateTime.of(2024, 3, 1, 12, 0, 0)),
+      (UniDateTime.of(2023, 2, 28, 12, 0, 0), UniDateTime.of(2023, 3, 1, 12, 0, 0)),
+      (UniDateTime.of(1969, 12, 31, 23, 59, 59), UniDateTime.of(1970, 1, 1, 0, 0, 1)),
+      (UniDateTime.of(1900, 1, 1), UniDateTime.of(2024, 12, 31, 23, 59, 59, 999999999)),
+      (UniDateTime.of(2024, 12, 31, 23, 59, 59, 999999999), UniDateTime.of(1900, 1, 1)),
+      (UniDateTime.of(2024, 3, 10, 1, 30, 0), UniDateTime.of(2024, 3, 10, 3, 30, 0)),
+    )
+    for (a, b) <- betweenPairs do
+      val secs = TimeUtils.secondsBetween(a, b)
+      val days = TimeUtils.daysBetween(a, b)
+      val mins = TimeUtils.minutesBetween(a, b)
+      val hrs  = TimeUtils.hoursBetween(a, b)
+      val dr   = TimeUtils.daysRounded(a, b)
+      val ed   = TimeUtils.elapsedDays(a, b)
+      out += f"between\t${key(a)}\t${key(b)}\t$secs\t$days\t$ed\t$mins%.17e\t$hrs%.17e\t$dr%.17e"
+      val (dd, hh, mm, ss) = TimeUtils.getDuration(a, b)
+      out += s"duration\t${key(a)}\t${key(b)}\t$dd\t$hh\t$mm\t$ss"
+
+    for d <- moments do
+      out += s"eom\t${key(d)}\t${esc(TimeUtils.endOfMonth(d).toString)}"
+
+    // getMillis reads the fields at UTC (0.16.0): the inverse of epoch2DateTime(_, UTC),
+    // so the round trip is exact modulo sub-millisecond nanos.
+    for d <- moments do
+      out += s"getmillis\t${key(d)}\t${d.toLocalDateTime.getMillis()}"
+
+    // The strict quik parsers (well-formed inputs only: Scala throws on the rest,
+    // where the Rust answers BAD_DATE — pinned by a Rust-side behavioral test).
+    for s <- Seq("20240512", "20240512143045", "2024-05-12", "2024-05-12 14:30:45",
+                 "2024/05/12x", "20240229", "19700101") do
+      out += s"quikdate\t${esc(s)}\t${esc(TimeUtils.quikDate(s).toString)}"
+    for s <- Seq("2024-05-12", "2024-05-12 14:30", "2024-05-12 14:30:45",
+                 "2024/05/12 14", "2024-05-12T14:30:45", "2024.02.29 23:59:59") do
+      out += s"quikdt\t${esc(s)}\t${esc(TimeUtils.quikDateTime(s).toString)}"
+
+    for s <- Seq("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct",
+                 "nov", "dec", "Jan", "JANUARY", "September", "sept", "December 25",
+                 "xyz", "fe", "") do
+      out += s"mon2num\t${esc(s)}\t${TimeUtils.monthAbbrev2Number(s)}"
+
     // Offset extraction and rendering.
     for t <- offsetTexts do
       val got = UniDateTime.offsetMinutesOf(t)

@@ -28,13 +28,25 @@ Nine committed fixtures under `../test-data/*-parity/` pin these; see `README.md
    **Done (2026-08-10):** all four ported, pinned by new `closed`/`pls` rows in the
    `tprf3-parity` fixture (615 rows appended; the pre-existing rows kept their
    original platform-generated values).
-2. **`utime`: no clock, no between/duration family.** `now`, `yesterday`, `nowUTC`,
-   `nowZoned`; `secondsBetween` (×4 overloads), `minutesBetween`, `hoursBetween`,
-   `daysBetween`, `daysRounded`, `elapsedDays`, `secondsSince`, `getDuration` (×4),
-   `endOfMonth`, `epoch2DateTime`, `quikDate`, `quikDateTime`, `monthAbbrev2Number`;
-   and the file-age connectives `whenModified`, `ageInDays`, `ageInMinutes` (`upath`
-   already exposes mtimes — these just join the two modules). The 2026-08 pallet
-   migration hit this gap directly (`weeksAgo.sc`, `lsltr.sc`).
+2. **`utime`: no clock, no between/duration family.** **Done (2026-08-10):**
+   `utime::timeutils` ports `now`, `yesterday`, `nowUTC`, `secondsBetween`,
+   `secondsSince`, `minutesBetween`, `hoursBetween`, `daysBetween`, `daysRounded`,
+   `elapsedDays`, `getDuration`, `endOfMonth`, `quikDate`, `quikDateTime`,
+   `monthAbbrev2Number`, `whenModified`, `ageInMinutes`, `ageInDays` — the pure parts
+   pinned by new `between`/`duration`/`eom`/`quikdate`/`quikdt`/`mon2num` rows in
+   `date-parity`. The difference family is zone-free **on both sides**: the Scala
+   `ZoneId` parameters these functions once carried were judged misguided (a
+   difference between two local datetimes is field arithmetic no zone can affect)
+   and removed in 0.16.0, so these are exact ports. `whenModified` is UTC on both
+   sides too, and `getMillis` (fields → epoch millis, at UTC — the exact inverse of
+   `epoch2DateTime`) is ported with `getmillis` fixture rows. The clock divergence is
+   closed: `localOffsetMinutes()` reads the machine's current UTC offset from one
+   platform call (`GetTimeZoneInformation` / `localtime_r`'s `tm_gmtoff`, no tzdb, no
+   new dependency), so `now` is local wall time exactly as in Scala, with a UTC
+   fallback on platforms that cannot say. Remaining documented differences: `nowZoned`
+   has no port (zone *resolution* needs a tzdb), and the `quik*` parsers answer
+   `BAD_DATE` where Scala throws. `epoch2DateTime` was already ported
+   (`upath::times`).
 3. **`udata`: Big is ported, BigUtils is not.** `numStr`/`numStrPct`/`num2string` +
    `NumFormat`, `str2num`, `isNumeric`, `isBad`/`orBad` — and `Big.round(MathContext)`,
    which real accounting code (`QuaxMerge`) needed and had to work around. `round`

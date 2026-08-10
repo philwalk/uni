@@ -47,7 +47,8 @@ class DateParitySuite extends FunSuite:
   test("the fixture is present and has every kind of case") {
     assert(rows.length > 3000, s"only ${rows.length} rows")
     for kind <- Seq("tostr", "fmt", "dow", "epochday", "valid", "dim", "ofepoch", "shift",
-                    "unary", "with", "withdow", "sentinel", "offset", "offsettext") do
+                    "unary", "with", "withdow", "sentinel", "offset", "offsettext",
+                    "between", "duration", "eom", "quikdate", "quikdt", "mon2num", "getmillis") do
       assert(of(kind).nonEmpty, s"no [$kind] rows in the fixture")
   }
 
@@ -182,6 +183,58 @@ class DateParitySuite extends FunSuite:
       val d = UniDateTime.of(2024, 5, 12, 14, 30, offsetMinutes = Some(o))
       assertEquals(d.offsetText, unesc(r(3)), s"offsetText for $o")
       assertEquals(d.toString, unesc(r(4)), s"toString for offset $o")
+  }
+
+  /** The second moment of a two-moment row (fields at columns 8..14). */
+  private def momentB(f: Vector[String]): UniDateTime =
+    moment(Vector(f.head) ++ f.slice(8, 15))
+
+  test("the between family matches the reference at UTC") {
+    for r <- of("between") do
+      val (a, b) = (moment(r), momentB(r))
+      val tag = s"${r.slice(1, 8)} -> ${r.slice(8, 15)}"
+      assertEquals(TimeUtils.secondsBetween(a, b).toString, r(15), s"seconds $tag")
+      assertEquals(TimeUtils.daysBetween(a, b).toString, r(16), s"days $tag")
+      assertEquals(TimeUtils.elapsedDays(a, b).toString, r(17), s"elapsed $tag")
+      assertEquals(f"${TimeUtils.minutesBetween(a, b)}%.17e", r(18), s"minutes $tag")
+      assertEquals(f"${TimeUtils.hoursBetween(a, b)}%.17e", r(19), s"hours $tag")
+      assertEquals(f"${TimeUtils.daysRounded(a, b)}%.17e", r(20), s"daysRounded $tag")
+  }
+
+  test("getDuration matches the reference, floor semantics included") {
+    for r <- of("duration") do
+      val (dd, hh, mm, ss) = TimeUtils.getDuration(moment(r), momentB(r))
+      assertEquals(Seq(dd, hh, mm, ss).map(_.toString), r.slice(15, 19).toSeq,
+        s"getDuration ${r.slice(1, 8)} -> ${r.slice(8, 15)}")
+  }
+
+  test("endOfMonth matches the reference") {
+    for r <- of("eom") do
+      assertEquals(TimeUtils.endOfMonth(moment(r)).toString, unesc(r(8)),
+        s"endOfMonth ${r.slice(1, 8)}")
+  }
+
+  test("getMillis matches the reference and round-trips through epoch2DateTime") {
+    for r <- of("getmillis") do
+      val d      = moment(r)
+      val millis = d.toLocalDateTime.getMillis()
+      assertEquals(millis.toString, r(8), s"getMillis ${r.slice(1, 8)}")
+      // exact inverse, once sub-millisecond nanos are dropped
+      assertEquals(TimeUtils.epoch2DateTime(millis, TimeUtils.UTC),
+        d.withNano(d.nano / 1000000 * 1000000), s"round trip ${r.slice(1, 8)}")
+  }
+
+  test("the strict quik parsers match the reference on well-formed input") {
+    for r <- of("quikdate") do
+      assertEquals(TimeUtils.quikDate(unesc(r(1))).toString, unesc(r(2)), s"quikDate [${r(1)}]")
+    for r <- of("quikdt") do
+      assertEquals(TimeUtils.quikDateTime(unesc(r(1))).toString, unesc(r(2)), s"quikDateTime [${r(1)}]")
+  }
+
+  test("monthAbbrev2Number matches the reference") {
+    for r <- of("mon2num") do
+      assertEquals(TimeUtils.monthAbbrev2Number(unesc(r(1))).toString, r(2),
+        s"monthAbbrev2Number [${r(1)}]")
   }
 
 object DateParitySuite:

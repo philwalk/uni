@@ -147,16 +147,19 @@ class TimeUtilsSuite extends FunSuite:
     assertEquals(daysBetween(d1, d2), 7L)
   }
 
-  test("secondsBetween(LocalDateTime, LocalDateTime, zone): 60 s") {
-    val d1 = LocalDateTime.of(2024, 1, 1, 0, 0, 0)
-    val d2 = LocalDateTime.of(2024, 1, 1, 0, 1, 0)
-    assertEquals(secondsBetween(d1, d2, UTC), 60L)
-  }
-
-  test("secondsBetween(LocalDateTime, LocalDateTime): default zone, 60 s") {
+  test("secondsBetween(LocalDateTime, LocalDateTime): 60 s") {
     val d1 = LocalDateTime.of(2024, 6, 15, 12, 0, 0)
     val d2 = LocalDateTime.of(2024, 6, 15, 12, 1, 0)
     assertEquals(secondsBetween(d1, d2), 60L)
+  }
+
+  test("secondsBetween is field arithmetic: a US DST gap must not matter") {
+    // 01:30 and 03:30 on a US spring-forward day are two hours apart as datetimes,
+    // whatever zone the host is in. The zone-taking overloads that could disagree
+    // here were removed; zone-sensitive arithmetic belongs on Instants.
+    val d1 = LocalDateTime.of(2024, 3, 10, 1, 30, 0)
+    val d2 = LocalDateTime.of(2024, 3, 10, 3, 30, 0)
+    assertEquals(secondsBetween(d1, d2), 7200L)
   }
 
   test("secondsBetween(Instant, Instant): 60 s") {
@@ -207,10 +210,10 @@ class TimeUtilsSuite extends FunSuite:
     assertEquals(seconds,  4L)
   }
 
-  test("getDuration(zone): explicit UTC") {
+  test("getDuration is zone-free, like the rest of the difference family") {
     val d1 = LocalDateTime.of(2024, 1, 1, 0, 0, 0)
     val d2 = LocalDateTime.of(2024, 1, 1, 0, 0, 30)
-    val (_, _, _, sec) = getDuration(d1, d2, UTC)
+    val (_, _, _, sec) = getDuration(d1, d2)
     assertEquals(sec, 30L)
   }
 
