@@ -24,6 +24,22 @@ argument of `@deprecated`, not a removal target. They still work; removal is a l
 release.
 
 
+**ADDED — two pallet-era globals join the scripting surface**
+
+Migrating the `/opt/ue` corpus off `vastblue.pallet`/`vastblue.unifile` surfaced two
+functions that scripts call constantly and uni had no spelling for:
+
+- `getLimitedStackTrace(using e: Throwable): String` -- the string-returning sibling of
+  `showLimitedStack`, with the same client-frames-only filter. The `using` parameter
+  matches the `vastblue.file.Util` signature, so `catch { case e: Exception =>
+  getLimitedStackTrace(using e) }` ports unchanged.
+- `execLines(cmd: String*): LazyList[String]` -- already implemented in `Proc`, was
+  `private[uni]`; now public and exported from `uni.*`. Same lazy semantics as the
+  pallet-era global of the same name.
+
+Neither touches the Rust parity surface: `ProcUtils` and stack-trace helpers were never
+part of the ported 92.
+
 **FIXED — divergences caught by the new cross-language pair probe**
 
 - `jsrc/pairProbe.sc` + `rust/examples/pair_probe.rs`: both halves build the same tree with the

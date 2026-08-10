@@ -13,7 +13,7 @@ import scala.concurrent.ExecutionContext
 given ExecutionContext = ExecutionContext.global
 
 export scala.util.Properties.{isWin, isMac, isLinux}
-export Proc.{ProcResult, ProcBuilder, run, proc, bashExe, pythonExe, unameExe, uname, osType, where, whereInPath, isWsl, hostname}
+export Proc.{ProcResult, ProcBuilder, run, proc, execLines, bashExe, pythonExe, unameExe, uname, osType, where, whereInPath, isWsl, hostname}
 export System.err.print as eprint // returns Unit
 def eprintln(s: String): Unit = System.err.print(s"$s\n")
 def withFileWriter(p: Path, charsetName: String = "UTF-8", append: Boolean = false)(func: java.io.PrintWriter => Any): Unit =
@@ -44,20 +44,31 @@ private def withFilteredStack(e: Throwable)(p: StackTraceElement => Boolean): Un
   e.setStackTrace(original)
 }
 
+private def isClientFrame(elem: StackTraceElement): Boolean = {
+  val cls = elem.getClassName
+  !cls.startsWith("java.") &&
+  !cls.startsWith("javax.") &&
+  !cls.startsWith("jdk.") &&
+  !cls.startsWith("sun.") &&
+  !cls.startsWith("oracle.") &&
+  !cls.startsWith("scala.")
+}
+
 /*
  * Print a less verbose stack trace.
  */
 def showLimitedStack(e: Throwable = new RuntimeException("limited-stack")): Unit = {
-  withFilteredStack(e){ elem =>
-    val cls = elem.getClassName
-    !cls.startsWith("java.") &&
-    !cls.startsWith("javax.") &&
-    !cls.startsWith("jdk.") &&
-    !cls.startsWith("sun.") &&
-    !cls.startsWith("oracle.") &&
-    !cls.startsWith("scala.")
-  }
+  withFilteredStack(e)(isClientFrame)
 }
+
+/*
+ * The less verbose stack trace as a String; the `using` parameter matches the
+ * vastblue.file.Util.getLimitedStackTrace signature, so `getLimitedStackTrace(using e)`
+ * call sites port unchanged.
+ */
+def getLimitedStackTrace(using e: Throwable): String =
+  (e.toString +: e.getStackTrace.filter(isClientFrame).map(elem => s"  at $elem").toSeq)
+    .mkString("\n")
 
 /*
  * Only show stack trace elements of caller object.

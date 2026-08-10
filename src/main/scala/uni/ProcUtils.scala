@@ -11,7 +11,8 @@ import scala.util.Properties.isWin
 
 object Proc {
 
-  private[uni] def execLines(cmd: String*): LazyList[String] =
+  // public: the pallet-era scripting surface exposed `execLines(cmd*)` with these semantics
+  def execLines(cmd: String*): LazyList[String] =
     Process(cmd.toSeq).lazyLines_!
 
   private[uni] def lazyLines(cmd: String): LazyList[String] =
