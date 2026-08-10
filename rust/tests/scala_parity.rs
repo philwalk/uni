@@ -21,10 +21,15 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use ndarray::Array2;
+use uni::Pls3prfModel;
 use uni::Tprf3Result;
 use uni::estimate_3prf_is_full;
 use uni::estimate_3prf_oos_cv;
 use uni::estimate_3prf_oos_rec;
+use uni::forecast3prf;
+use uni::pls1Fit;
+use uni::plsClosedForm;
+use uni::tprfClosedForm;
 
 /// Matches the fixtures written by Tprf3ParityGen.
 const CASES: &[(usize, usize, usize)] = &[(100, 10, 2), (140, 12, 3), (60, 25, 2)];
@@ -140,5 +145,79 @@ fn matches_scala_reference() {
             &format!("{tag}/ooscv23"),
             &estimate_3prf_oos_cv(&y, &x, &z, 2, 3).expect("OOS Cross Val (2,3)"),
         );
+        check_closed(
+            &reference,
+            &format!("{tag}/closed"),
+            &tprfClosedForm(&y, &x, &z).expect("tprfClosedForm"),
+        );
+        check_pls(
+            &reference,
+            &format!("{tag}/pls"),
+            &plsClosedForm(&y, &x).expect("plsClosedForm"),
+            &x,
+        );
+
+        // The wrappers are pinned through what they wrap: forecast3prf must
+        // return exactly the isfull forecasts, and pls1Fit exactly the
+        // plsClosedForm fit.
+        let via_wrapper =
+            forecast3prf(&y, &x, &z, "IS Full", (0, 1), (-1, 0)).expect("forecast3prf");
+        let direct = estimate_3prf_is_full(&y, &x, &z)
+            .expect("IS Full")
+            .forecasts;
+        assert_eq!(
+            via_wrapper, direct,
+            "{tag} forecast3prf != isfull forecasts"
+        );
+
+        let rows: Vec<Vec<f64>> = (0..x.nrows()).map(|i| x.row(i).to_vec()).collect();
+        let ys: Vec<f64> = (0..y.nrows()).map(|i| y[[i, 0]]).collect();
+        let via_arrays = pls1Fit(&rows, &ys).expect("pls1Fit");
+        let via_mat = plsClosedForm(&y, &x).expect("plsClosedForm");
+        assert_eq!(
+            via_arrays.forecasts, via_mat.forecasts,
+            "{tag} pls1Fit != plsClosedForm forecasts"
+        );
     }
+}
+
+/// Closed-form rows carry no enc/rollfore.
+fn check_closed(reference: &HashMap<String, f64>, tag: &str, r: &Tprf3Result) {
+    let cmp = |field: String, got: f64| {
+        let key = format!("{tag} {field}");
+        let want = *reference
+            .get(&key)
+            .unwrap_or_else(|| panic!("reference has no entry for {key}"));
+        assert!(
+            close(got, want),
+            "{key}: got {got}, reference {want} (|delta|={})",
+            (got - want).abs()
+        );
+    };
+    cmp("r2".to_string(), r.r_squared);
+    for i in 0..r.forecasts.nrows() {
+        cmp(format!("f{i}"), r.forecasts[[i, 0]]);
+    }
+}
+
+/// PLS rows also pin the pass-3 coefficients and one raw-row prediction.
+fn check_pls(reference: &HashMap<String, f64>, tag: &str, m: &Pls3prfModel, x: &Array2<f64>) {
+    let cmp = |field: String, got: f64| {
+        let key = format!("{tag} {field}");
+        let want = *reference
+            .get(&key)
+            .unwrap_or_else(|| panic!("reference has no entry for {key}"));
+        assert!(
+            close(got, want),
+            "{key}: got {got}, reference {want} (|delta|={})",
+            (got - want).abs()
+        );
+    };
+    cmp("r2".to_string(), m.rSquared);
+    cmp("b0".to_string(), m.beta[[0, 0]]);
+    cmp("b1".to_string(), m.beta[[1, 0]]);
+    for i in 0..m.forecasts.nrows() {
+        cmp(format!("f{i}"), m.forecasts[[i, 0]]);
+    }
+    cmp("pred0".to_string(), m.predict(&x.row(0).to_vec()));
 }

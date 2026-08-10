@@ -24,6 +24,17 @@ argument of `@deprecated`, not a removal target. They still work; removal is a l
 release.
 
 
+**RUST — the closed-form Tprf3 entry points are ported: `tprfClosedForm`, `plsClosedForm`, `pls1Fit`, `forecast3prf`**
+
+The `t3prf` module predated Scala's closed-form additions; the parity review
+(`rust/PARITY.md`, new) caught the gap. All four are now ported with the Scala
+spellings (the crate naming contract), `Pls3prfModel.predict` takes a raw row and
+returns NaN on a wrong-length row where Scala throws, and the `tprf3-parity` fixture
+grew `closed`/`pls` rows — appended, with every pre-existing row keeping its
+original platform-generated value (a full regeneration on Windows would have
+re-stamped 634 OOS lines with ~1e-15 drift). `Error` gained an `InvalidInput`
+variant for the NaN-input and unknown-procedure refusals.
+
 **ADDED — two pallet-era globals join the scripting surface**
 
 Migrating the `/opt/ue` corpus off `vastblue.pallet`/`vastblue.unifile` surfaced two

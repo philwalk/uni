@@ -9,8 +9,16 @@
 //! Inputs must be NaN-free. The reference implementations additionally drop
 //! NaN rows per regression; that path is not ported here.
 
+#![allow(
+    non_snake_case,
+    reason = "the closed-form entry points mirror the Scala API name-for-name (the crate's \
+              naming contract); this module's older snake_case entry points predate the \
+              contract and keep their names."
+)]
+
 use ndarray::Array2;
 use ndarray::ArrayView2;
+use ndarray::Axis;
 use ndarray::s;
 use rayon::prelude::*;
 
@@ -774,4 +782,252 @@ pub fn t3prf_core(
         Some(tail) => (tail.fitted(), tail.yhatt),
         None => (nan_col(x_std.nrows()), f64::NAN),
     })
+}
+
+// ── Closed-form variants ────────────────────────────────────────────────────
+//
+// Ports of the Scala 0.16.0 closed-form entry points: `tprfClosedForm`,
+// `plsClosedForm`, `pls1Fit` and `forecast3prf`. Pinned by the same
+// `test-data/tprf3-parity/` fixture as the procedures above (`closed` and
+// `pls` rows).
+
+/// Row of per-column means, shape `(1, cols)`.
+fn mean_cols(m: ArrayView2<'_, f64>) -> Array2<f64> {
+    let means = m.sum_axis(Axis(0)) / m.nrows() as f64;
+    means.insert_axis(Axis(0))
+}
+
+/// Centre each column (subtract its mean): `J(rows)·m` without the dense `J`.
+fn center_columns(m: ArrayView2<'_, f64>) -> Array2<f64> {
+    &m - &mean_cols(m)
+}
+
+/// `y` must be (T×1) and, when given, `z` must have T rows.
+fn check_shapes(t: usize, y: &Array2<f64>, z: Option<&Array2<f64>>) -> Result<(), Error> {
+    if y.nrows() != t || y.ncols() != 1 || z.is_some_and(|z| z.nrows() != t) {
+        return Err(Error::DimensionMismatch {
+            expected: format!("y {t}x1 with {t}-row z"),
+            actual: format!(
+                "y {}x{}, z {}",
+                y.nrows(),
+                y.ncols(),
+                z.map_or_else(
+                    || "-".to_string(),
+                    |z| format!("{}x{}", z.nrows(), z.ncols())
+                )
+            ),
+        });
+    }
+    Ok(())
+}
+
+/// In-sample R² against the full-sample mean of `y`.
+fn is_r2(y: &Array2<f64>, residuals: &Array2<f64>, ybar: f64) -> f64 {
+    let ssy: f64 = y.iter().map(|v| (v - ybar) * (v - ybar)).sum();
+    if ssy == 0.0 {
+        0.0
+    } else {
+        1.0 - residuals.iter().map(|r| r * r).sum::<f64>() / ssy
+    }
+}
+
+/// Closed-form 3PRF (K&P IS Full, algebraic matrix formula). Collapses the
+/// three passes into a single projection; normalizes `x` internally.
+/// Numerically equivalent to `estimate_3prf_is_full` (the parity fixture pins
+/// both):
+///
+/// ```text
+/// alpha = Wxz(Wxz'SxxWxz)^-1 Wxz'X'J(T)y      yhat = J(T)X·alpha + ybar
+/// ```
+///
+/// where `Wxz = J(N)·X'·J(T)·Z`, `Sxx = X'·J(T)·X`, and `J(k)` is the
+/// centering matrix, applied as column centering rather than built dense.
+/// Unlike the Scala original this does not also run passes 1 and 2 — the Rust
+/// result type carries no `phi`/`sigma` state.
+pub fn tprfClosedForm(
+    y: &Array2<f64>,
+    x: &Array2<f64>,
+    z: &Array2<f64>,
+) -> Result<Tprf3Result, Error> {
+    let t = x.nrows();
+    check_shapes(t, y, Some(z))?;
+    let xn = standardize_columns(x);
+    let jt_x = center_columns(xn.view()); // J(T)·Xn                      (T×N)
+    let wxz = center_columns(jt_x.t().dot(z).view()); // J(N)·Xn'·J(T)·Z  (N×L)
+    // Wxz'·Sxx·Wxz = (J(T)Xn·Wxz)'(J(T)Xn·Wxz): Gram form keeps it SPD for Chol.
+    let g = jt_x.dot(&wxz); //                                            (T×L)
+    let core = g.t().dot(&g); //                                          (L×L)
+    let rhs = wxz.t().dot(&jt_x.t().dot(y)); // Wxz'·Xn'·J(T)·y           (L×1)
+    let s = Chol::new(core.view())?.solve(rhs.view()); //                 (L×1)
+    let alpha = wxz.dot(&s); //                                           (N×1)
+    let ybar = mean_col(y.view());
+    let forecasts = jt_x.dot(&alpha) + ybar; //                           (T×1)
+    let residuals = y - &forecasts;
+    let r_squared = is_r2(y, &residuals, ybar);
+    Ok(Tprf3Result {
+        forecasts,
+        residuals,
+        r_squared,
+        rollfore: nan_col(t),
+        encnew: f64::NAN,
+    })
+}
+
+/// Fitted PLS-variant 3PRF model (see [`plsClosedForm`]), retaining the
+/// pass-1/2/3 state plus the column mean and scale used to normalise `x`, so
+/// [`predict`](Self::predict) takes a raw row — callers never reproduce the
+/// internal normalisation.
+#[derive(Debug, Clone)]
+pub struct Pls3prfModel {
+    /// (N×1) pass-1 loadings.
+    pub phi: Array2<f64>,
+    /// (T×1) pass-2 factor scores.
+    pub sigma: Array2<f64>,
+    /// (2×1) pass-3 coefficients: `[intercept, slope]`.
+    pub beta: Array2<f64>,
+    /// (T×1) in-sample fitted values.
+    pub forecasts: Array2<f64>,
+    /// (1×N) column means of the scaled `x`.
+    pub colMean: Array2<f64>,
+    /// (1×N) column std-devs of the raw `x`.
+    pub colStd: Array2<f64>,
+    pub rSquared: f64,
+}
+
+impl Pls3prfModel {
+    /// Forecast for one raw (un-normalised) predictor row.
+    ///
+    /// Where the Scala original throws on a wrong-length row, this returns
+    /// `NaN` (the crate never panics where Scala throws).
+    pub fn predict(&self, row: &[f64]) -> f64 {
+        let n = self.phi.nrows();
+        if row.len() != n {
+            return f64::NAN;
+        }
+        // sigma_new = phi'·xc / (phi'phi),  yhat = b0 + b1·sigma_new
+        let phi_ss: f64 = self.phi.iter().map(|p| p * p).sum();
+        let mut dot = 0.0;
+        for (j, &v) in row.iter().enumerate() {
+            dot += (v / self.colStd[[0, j]] - self.colMean[[0, j]]) * self.phi[[j, 0]];
+        }
+        self.beta[[0, 0]] + self.beta[[1, 0]] * (dot / phi_ss)
+    }
+
+    /// Forecast for each raw predictor row.
+    pub fn predictAll(&self, rows: &[Vec<f64>]) -> Vec<f64> {
+        rows.iter().map(|r| self.predict(r)).collect()
+    }
+}
+
+/// Closed-form PLS-variant 3PRF: K&P autoproxy with `L = 1` and no intercept
+/// in passes 1 and 2 — the 3PRF whose forecasts coincide with one-component
+/// PLS-1 (see [`pls1Fit`]):
+///
+/// ```text
+/// Phi   = Xc'y / (y'y)          pass 1  (N×1)
+/// Sigma = Xc·Phi / (Phi'Phi)    pass 2  (T×1)
+/// beta  = ols([1 Sigma], y)     pass 3  (2×1)
+/// ```
+///
+/// where `Xc` is `x` scaled to unit column variance, then column-centred.
+/// Requires NaN-free input (as does this whole module): the vectorised passes
+/// cannot do per-regression NaN-row dropping.
+pub fn plsClosedForm(y: &Array2<f64>, x: &Array2<f64>) -> Result<Pls3prfModel, Error> {
+    check_shapes(x.nrows(), y, None)?;
+    if x.iter().any(|v| v.is_nan()) || y.iter().any(|v| v.is_nan()) {
+        return Err(Error::InvalidInput(
+            "plsClosedForm requires NaN-free input".to_string(),
+        ));
+    }
+    let col_std = std_cols(x);
+    let xn = x / &col_std;
+    let col_mean = mean_cols(xn.view());
+    let xc = &xn - &col_mean;
+
+    // Pass 1 — no intercept, proxy is y itself
+    let yss = y.t().dot(y)[[0, 0]];
+    let phi = xc.t().dot(y) / yss; //                                     (N×1)
+
+    // Pass 2 — no intercept, design is phi
+    let phi_ss = phi.t().dot(&phi)[[0, 0]];
+    let sigma = xc.dot(&phi) / phi_ss; //                                 (T×1)
+
+    // Pass 3 — with intercept, as in every 3PRF variant
+    let xaug = with_intercept(sigma.view()); //                           (T×2)
+    let beta = ols_solve(&xaug, y)?; //                                   (2×1)
+
+    let forecasts = xaug.dot(&beta);
+    let residuals = y - &forecasts;
+    let r_squared = is_r2(y, &residuals, mean_col(y.view()));
+    Ok(Pls3prfModel {
+        phi,
+        sigma,
+        beta,
+        forecasts,
+        colMean: col_mean,
+        colStd: col_std,
+        rSquared: r_squared,
+    })
+}
+
+/// [`plsClosedForm`] over plain arrays: `x` is row-major (T rows × N columns).
+///
+/// Fitted from the argument shapes a hand-rolled PLS-1 would take; predict
+/// with `model.predict(row)`. The data is copied, so the returned model shares
+/// no storage with the caller's slices.
+pub fn pls1Fit(x: &[Vec<f64>], y: &[f64]) -> Result<Pls3prfModel, Error> {
+    if x.is_empty() {
+        return Err(Error::InvalidInput("x is empty".to_string()));
+    }
+    if x.len() != y.len() {
+        return Err(Error::DimensionMismatch {
+            expected: format!("{} rows of y", x.len()),
+            actual: format!("{} rows", y.len()),
+        });
+    }
+    let n = x[0].len();
+    if x.iter().any(|row| row.len() != n) {
+        return Err(Error::InvalidInput("ragged rows in x".to_string()));
+    }
+    let flat: Vec<f64> = x.iter().flatten().copied().collect();
+    let xm = Array2::from_shape_vec((x.len(), n), flat)
+        .map_err(|e| Error::InvalidInput(e.to_string()))?;
+    let ym = Array2::from_shape_vec((y.len(), 1), y.to_vec())
+        .map_err(|e| Error::InvalidInput(e.to_string()))?;
+    plsClosedForm(&ym, &xm)
+}
+
+/// Forecasts only — simplified wrapper around the estimate functions, keyed by
+/// the same procedure names as the Scala `forecast3prf`:
+/// `"IS Full"`, `"OOS Recursive"`, `"OOS Cross Val"`.
+///
+/// `window` is `(before, total)` for Cross Val; `mintrain` is `(minSize, gap)`
+/// for Recursive, with a negative `minSize` meaning `T/2` as in Scala. The
+/// Scala `pls` flag and `gap != 0` are not ported (no such paths here).
+pub fn forecast3prf(
+    y: &Array2<f64>,
+    x: &Array2<f64>,
+    z: &Array2<f64>,
+    procedure: &str,
+    window: (usize, usize),
+    mintrain: (i64, i64),
+) -> Result<Array2<f64>, Error> {
+    match procedure {
+        "IS Full" => Ok(estimate_3prf_is_full(y, x, z)?.forecasts),
+        "OOS Recursive" => {
+            if mintrain.1 != 0 {
+                return Err(Error::InvalidInput(
+                    "mintrain gap != 0 is not ported".to_string(),
+                ));
+            }
+            let mt = if mintrain.0 < 0 {
+                x.nrows() / 2
+            } else {
+                usize::try_from(mintrain.0).unwrap_or(0)
+            };
+            Ok(estimate_3prf_oos_rec(y, x, z, mt)?.forecasts)
+        }
+        "OOS Cross Val" => Ok(estimate_3prf_oos_cv(y, x, z, window.0, window.1)?.forecasts),
+        other => Err(Error::InvalidInput(format!("unknown procedure: {other}"))),
+    }
 }

@@ -60,6 +60,23 @@ object Tprf3ParityGen {
     for i <- 0 until r.rollfore.rows do
       sb ++= f"$tag roll$i ${r.rollfore(i, 0)}%.17e\n"
 
+  /** Closed-form rows carry no enc/rollfore: tprfClosedForm never sets them. */
+  def appendClosed(sb: StringBuilder, tag: String, r: Tprf3.Tprf3Result): Unit =
+    sb ++= f"$tag r2 ${r.rSquared}%.17e\n"
+    for i <- 0 until r.forecasts.rows do
+      sb ++= f"$tag f$i ${r.forecasts(i, 0)}%.17e\n"
+
+  /** PLS rows also pin the pass-3 coefficients and one raw-row prediction, so
+   *  the predict path (internal re-normalisation) is pinned, not just the fit. */
+  def appendPls(sb: StringBuilder, tag: String, m: Tprf3.Pls3prfModel, x: MatD): Unit =
+    sb ++= f"$tag r2 ${m.rSquared}%.17e\n"
+    sb ++= f"$tag b0 ${m.beta(0, 0)}%.17e\n"
+    sb ++= f"$tag b1 ${m.beta(1, 0)}%.17e\n"
+    for i <- 0 until m.forecasts.rows do
+      sb ++= f"$tag f$i ${m.forecasts(i, 0)}%.17e\n"
+    val row0 = Array.tabulate(x.cols)(j => x(0, j))
+    sb ++= f"$tag pred0 ${m.predict(row0)}%.17e\n"
+
   def main(args: Array[String]): Unit =
     val root = sys.props.getOrElse("user.dir", ".")
     val dir  = s"$root/test-data/tprf3-parity"
@@ -83,7 +100,9 @@ object Tprf3ParityGen {
         Tprf3.estimate3prf(y, X, Right(Z), procedure = "OOS Cross Val", window = (0, 1)))
       append(sb, s"$tag/ooscv23",
         Tprf3.estimate3prf(y, X, Right(Z), procedure = "OOS Cross Val", window = (2, 3)))
-      println(s"  $tag: wrote inputs + 4 procedures")
+      appendClosed(sb, s"$tag/closed", Tprf3.tprfClosedForm(y, X, Z))
+      appendPls(sb, s"$tag/pls", Tprf3.plsClosedForm(y, X), X)
+      println(s"  $tag: wrote inputs + 4 procedures + closed + pls")
 
     java.nio.file.Files.writeString(s"$dir/scala-reference.txt".asPath, sb.toString)
     println(s"wrote $dir/scala-reference.txt")
