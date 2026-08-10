@@ -148,6 +148,13 @@ object Big:
     def setScale(scale: Int, roundingMode: scala.math.BigDecimal.RoundingMode.RoundingMode): Big =
       if isBad(n) then BigNaN else n.setScale(scale, roundingMode)
 
+    /** Rounds to `mc.getPrecision` significant digits -- `java.math.BigDecimal.round`
+     *  semantics, wanted by accounting code that trims to a measured number of
+     *  significant digits (round-off detection). Precision 0 means unlimited: the value
+     *  returns unchanged. Propagates BigNaN for the same reason [[setScale]] does. */
+    def round(mc: java.math.MathContext): Big =
+      if isBad(n) then BigNaN else n.round(mc)
+
     // --- BigNaN helpers -------------------------------------------------------
 
     // unary guard

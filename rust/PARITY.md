@@ -47,12 +47,14 @@ Nine committed fixtures under `../test-data/*-parity/` pin these; see `README.md
    has no port (zone *resolution* needs a tzdb), and the `quik*` parsers answer
    `BAD_DATE` where Scala throws. `epoch2DateTime` was already ported
    (`upath::times`).
-3. **`udata`: Big is ported, BigUtils is not.** `numStr`/`numStrPct`/`num2string` +
-   `NumFormat`, `str2num`, `isNumeric`, `isBad`/`orBad` — and `Big.round(MathContext)`,
-   which real accounting code (`QuaxMerge`) needed and had to work around. `round`
-   belongs on **both** sides, with rows added to the `big-parity` fixture.
-   (`getMostSpecificType: String | Big | DateTime` and `toStr(CVD)` also live here but
-   depend on dates and vectors — see inference and Mat below.)
+3. **`udata`: Big is ported, BigUtils is not.** **Done (2026-08-10):** `udata::bigutils`
+   ports `numStr`/`numStrPct`/`num2string` + `NumFormat`, `str2num`, `isNumeric`
+   (the four Scala regexes as bug-compatible character scans), `isBad`/`orBad` and
+   `big2double`; `Big.round` landed on **both** sides (`round(MathContext)` in Scala,
+   `round(precision, mode)` here — `QuaxMerge` now calls it directly). 286 rows added
+   to `big-parity`, including the significant-digit carry cases and Java's `%f`
+   shortest-digits-half-up formatting quirks. (`getMostSpecificType: String | Big |
+   DateTime` and `toStr(CVD)` still wait on inference and Mat — see below.)
 4. **String sugar:** `local`, `readCsv`/`readCsvB`/`readCsvF`/`writeCsv` on String —
    one-line delegation to the existing UPath loaders.
 5. **`uni` misc, already half-present:** `tmpDir`, `pwd`, `isWinshell`, byte-array

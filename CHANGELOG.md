@@ -24,6 +24,19 @@ argument of `@deprecated`, not a removal target. They still work; removal is a l
 release.
 
 
+**ADDED — `Big.round(MathContext)` on both sides, and the BigUtils surface in Rust**
+
+`Big` gains `round(mc)` — `java.math.BigDecimal.round` semantics, BigNaN-propagating
+like `setScale` — closing the gap accounting code (`QuaxMerge`) had to work around
+with `toBigDecimal`. The Rust `Big::round(precision, mode)` matches, including the
+carry case (`999.9` at precision 3 is `1.00E+3`, not `1000`). `udata::bigutils` (new
+Rust module) ports `numStr`/`numStrPct`/`num2string` + `NumFormat`, `str2num`,
+`isNumeric`, `isBad`/`orBad` and `big2double`; `numStr` reproduces Java's
+`%f` contract exactly (shortest decimal digits of the double, rounded half-up), and
+`isNumeric`'s four regexes are ported as character scans bug-for-bug (pattern 3's
+case-sensitive `K`/`M`/`B` against pattern 1's case-insensitive ones, pattern 4's
+unescaped dot). 286 new `big-parity` rows pin all of it — parity item 3.
+
 **BREAKING — the difference family is zone-free: the `ZoneId` parameters are removed**
 
 A difference between two local datetimes is field arithmetic: no timezone can

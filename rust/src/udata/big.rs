@@ -779,6 +779,33 @@ impl Big {
         }
     }
 
+    /// `java.math.BigDecimal.round(new MathContext(precision, mode))`: the value rounded
+    /// to `precision` significant digits. Precision <= 0 means unlimited — the value
+    /// returns unchanged — as does a value that already fits. When rounding carries into
+    /// an extra digit (`999.9` at precision 3 → `1000`), the exact trailing zero is
+    /// dropped just as Java's `doRound` drops it: `1.00E+3`, three digits, scale −1.
+    /// NaN propagates, for the same reason it does through [`setScale`](Self::setScale).
+    #[must_use]
+    pub fn round(&self, precision: i32, mode: RoundingMode) -> Self {
+        if self.isNaN() {
+            return Self::nan();
+        }
+        if precision <= 0 {
+            return self.clone();
+        }
+        let digits = self.coeff.digits() as i32;
+        if digits <= precision {
+            return self.clone();
+        }
+        let mut r = self.setScale(self.scale - (digits - precision), mode);
+        while r.coeff.digits() as i32 > precision {
+            let (q, rem) = r.coeff.divrem_pow10(1);
+            debug_assert!(rem.is_zero(), "carry digit must be an exact zero");
+            r = Self { neg: r.neg, coeff: q, scale: r.scale - 1, prec: r.prec };
+        }
+        r
+    }
+
     /// `sqrt(MathContext.DECIMAL128)`: 34 significant digits, exact results stripped to the
     /// preferred scale `self.scale / 2`. **BigNaN for a negative**, where Scala throws.
     #[must_use]

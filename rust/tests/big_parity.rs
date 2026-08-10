@@ -8,8 +8,12 @@
     reason = "a missing or malformed fixture should abort the test loudly"
 )]
 
-use uni::udata::Big;
 use uni::udata::big::RoundingMode;
+use uni::udata::isNumeric;
+use uni::udata::numStr;
+use uni::udata::str2num;
+use uni::udata::Big;
+use uni::udata::NumFormat;
 
 fn fixture_path() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -18,11 +22,19 @@ fn fixture_path() -> std::path::PathBuf {
 
 /// `!nan` in an operand column means the sentinel itself.
 fn read(s: &str) -> Big {
-    if s == "!nan" { Big::nan() } else { Big::parse(s) }
+    if s == "!nan" {
+        Big::nan()
+    } else {
+        Big::parse(s)
+    }
 }
 
 fn render(b: &Big) -> String {
-    if b.isNaN() { "!nan".to_owned() } else { b.toString() }
+    if b.isNaN() {
+        "!nan".to_owned()
+    } else {
+        b.toString()
+    }
 }
 
 fn mode_of(name: &str) -> RoundingMode {
@@ -45,7 +57,11 @@ fn java_double_string(d: f64) -> String {
         return "NaN".to_owned();
     }
     if d == 0.0 {
-        return if d.is_sign_negative() { "-0.0".into() } else { "0.0".into() };
+        return if d.is_sign_negative() {
+            "-0.0".into()
+        } else {
+            "0.0".into()
+        };
     }
     let sci = format!("{d:e}");
     let (mantissa, exp_str) = sci.split_once('e').unwrap_or((sci.as_str(), "0"));
@@ -60,9 +76,17 @@ fn java_double_string(d: f64) -> String {
         if point <= 0 {
             format!("{sign}0.{}{}", "0".repeat((-point) as usize), digits)
         } else if (point as usize) >= digits.len() {
-            format!("{sign}{}{}.0", digits, "0".repeat(point as usize - digits.len()))
+            format!(
+                "{sign}{}{}.0",
+                digits,
+                "0".repeat(point as usize - digits.len())
+            )
         } else {
-            format!("{sign}{}.{}", &digits[..point as usize], &digits[point as usize..])
+            format!(
+                "{sign}{}.{}",
+                &digits[..point as usize],
+                &digits[point as usize..]
+            )
         }
     } else {
         let head = &digits[..1];
@@ -72,13 +96,21 @@ fn java_double_string(d: f64) -> String {
 }
 
 #[test]
-#[expect(clippy::too_many_lines, reason = "one row loop, one match arm per fixture op")]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one row loop, one match arm per fixture op"
+)]
 fn every_fixture_row_reproduces() {
-    let text =
-        std::fs::read_to_string(fixture_path()).expect("missing fixture; run BigParityGen");
-    let rows: Vec<&str> =
-        text.lines().filter(|l| !l.is_empty() && !l.starts_with('#')).collect();
-    assert!(rows.len() > 300, "suspiciously small fixture: {} rows", rows.len());
+    let text = std::fs::read_to_string(fixture_path()).expect("missing fixture; run BigParityGen");
+    let rows: Vec<&str> = text
+        .lines()
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .collect();
+    assert!(
+        rows.len() > 300,
+        "suspiciously small fixture: {} rows",
+        rows.len()
+    );
 
     let mut failures: Vec<String> = Vec::new();
     let mut check = |label: String, got: String, want: &str| {
@@ -89,10 +121,16 @@ fn every_fixture_row_reproduces() {
     for row in &rows {
         let p: Vec<&str> = row.split('\t').collect();
         match p.as_slice() {
-            ["parse", input, want] => check(format!("parse '{input}'"), render(&Big::parse(input)), want),
+            ["parse", input, want] => {
+                check(format!("parse '{input}'"), render(&Big::parse(input)), want)
+            }
             ["parse", want] => check("parse ''".into(), render(&Big::parse("")), want),
             ["plain", input, want] => {
-                check(format!("plain '{input}'"), Big::parse(input).toPlainString(), want);
+                check(
+                    format!("plain '{input}'"),
+                    Big::parse(input).toPlainString(),
+                    want,
+                );
             }
             [op @ ("add" | "sub" | "mul" | "div"), a, b, want] => {
                 let (x, y) = (read(a), read(b));
@@ -105,7 +143,11 @@ fn every_fixture_row_reproduces() {
                 check(format!("{op} {a} {b}"), render(&got), want);
             }
             ["cmp", a, b, want] => {
-                check(format!("cmp {a} {b}"), read(a).compare(&read(b)).to_string(), want);
+                check(
+                    format!("cmp {a} {b}"),
+                    read(a).compare(&read(b)).to_string(),
+                    want,
+                );
             }
             ["setscale", a, sc, mode, want] => {
                 let scale: i32 = sc.parse().expect("scale");
@@ -128,10 +170,43 @@ fn every_fixture_row_reproduces() {
                 check(format!("fromdouble {d}"), render(&Big::from_f64(v)), want);
             }
             ["todouble", a, want] => {
-                check(format!("todouble {a}"), java_double_string(read(a).toDouble()), want);
+                check(
+                    format!("todouble {a}"),
+                    java_double_string(read(a).toDouble()),
+                    want,
+                );
             }
             ["toint", a, want] => check(format!("toint {a}"), read(a).toInt().to_string(), want),
             ["tolong", a, want] => check(format!("tolong {a}"), read(a).toLong().to_string(), want),
+            ["round", a, p, m, want] => {
+                let prec: i32 = p.parse().expect("precision");
+                let got = read(a).round(prec, mode_of(m));
+                check(format!("round {a} {p} {m}"), render(&got), want);
+            }
+            ["numstr", a, w, d, f, ab, suffix, want] => {
+                let fmt = NumFormat {
+                    colWidth: w.parse().expect("width"),
+                    dec: d.parse().expect("dec"),
+                    factor: f.parse().expect("factor"),
+                    abbreviate: ab.parse().expect("abbrev"),
+                    suffix: (*suffix).to_string(),
+                };
+                check(
+                    format!("numstr {a} {w}.{d} x{f} {ab} '{suffix}'"),
+                    numStr(&read(a), &fmt),
+                    want,
+                );
+            }
+            ["str2num", raw, want] => {
+                check(format!("str2num '{raw}'"), render(&str2num(raw)), want);
+            }
+            ["isnumeric", raw, want] => {
+                check(
+                    format!("isnumeric '{raw}'"),
+                    isNumeric(raw).to_string(),
+                    want,
+                );
+            }
             // The loader rows are checked by `big_loaders.rs`, which needs the csv module.
             ["csvdim" | "csvcell", ..] => {}
             _ => check("row".into(), (*row).to_owned(), "a known op"),

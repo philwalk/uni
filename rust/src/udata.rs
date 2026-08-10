@@ -10,5 +10,15 @@
 //! every rounding boundary, preferred-scale rule and `toString` threshold.
 
 pub mod big;
+pub mod bigutils;
 
 pub use big::Big;
+pub use bigutils::big2double;
+pub use bigutils::isBad;
+pub use bigutils::isNumeric;
+pub use bigutils::num2string;
+pub use bigutils::numStr;
+pub use bigutils::numStrPct;
+pub use bigutils::orBad;
+pub use bigutils::str2num;
+pub use bigutils::NumFormat;

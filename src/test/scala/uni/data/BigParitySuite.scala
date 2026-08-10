@@ -61,6 +61,14 @@ class BigParitySuite extends FunSuite:
         case Array("todouble", a, want) => diff(s"todouble $a", read(a).toDouble.toString, want)
         case Array("toint", a, want)  => diff(s"toint $a", read(a).toInt.toString, want)
         case Array("tolong", a, want) => diff(s"tolong $a", read(a).toLong.toString, want)
+        case Array("round", a, p, m, want) =>
+          val mc = new java.math.MathContext(p.toInt, java.math.RoundingMode.valueOf(m))
+          diff(s"round $a $p $m", render(read(a).round(mc)), want)
+        case Array("numstr", a, w, d, f, ab, suffix, want) =>
+          val fmt = NumFormat(w.toInt, d.toInt, f.toDouble, ab.toBoolean, suffix)
+          diff(s"numstr $a $fmt", numStr(read(a), fmt), want)
+        case Array("str2num", raw, want)   => diff(s"str2num '$raw'", render(str2num(raw)), want)
+        case Array("isnumeric", raw, want) => diff(s"isnumeric '$raw'", isNumeric(raw).toString, want)
         case Array("csvdim", _, want) => diff("csvdim", s"${csvMat.rows},${csvMat.cols}", want)
         case Array("csvcell", rc, want) =>
           val Array(r, c) = rc.split(',').map(_.toInt)
