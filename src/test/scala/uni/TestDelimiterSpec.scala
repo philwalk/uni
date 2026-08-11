@@ -20,7 +20,11 @@ class TestDelimiterSpec extends FunSuite {
     * The file is automatically deleted after the test.
     */
   private def writeTempFile(name: String, lines: Seq[String])(using @annotation.unused loc: munit.Location): java.nio.file.Path = {
-    val path = Paths.get("target", s"$name.csv")
+    // Host JPaths, not uni.Paths: under a leaked synthetic config a relative
+    // `target` absolutises to the fake user dir (C:/munit/test/target) and this
+    // helper then creates that directory on the REAL filesystem — the CI-only
+    // quikResolve failure traced back to exactly that leftover.
+    val path = java.nio.file.Paths.get("target", s"$name.csv")
     Files.createDirectories(path.getParent)
     Files.write(path, lines.mkString("\n").getBytes(StandardCharsets.UTF_8))
 

@@ -122,6 +122,10 @@ class PathsUtilsCoverageSuite extends FunSuite:
   // ============================================================================
 
   test("quikResolve: '.' resolves to existing directory") {
+    // Against the DEFAULT config: under the suite's synthetic one, '.' resolves
+    // to the fake user dir (C:/munit/test), which only exists on machines where
+    // a past leak created it -- green locally, red on every clean CI runner.
+    resetConfig()
     val p = quikResolve(".")
     assert(p.toFile.isDirectory, s"quikResolve('.') should point to a directory: $p")
   }
