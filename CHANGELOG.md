@@ -1,4 +1,4 @@
-## Unreleased
+## v0.16.0 — 2026-08-11
 
 **0.16.0, not 0.15.2.** `versionScheme := semver-spec` is declared, and under 0.x the
 MINOR position acts as MAJOR -- so a release that removes public API and changes output

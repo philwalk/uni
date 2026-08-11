@@ -1,6 +1,6 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.15.2
+//> using dep org.vastblue:uni_3:0.16.0
 
 import uni.*
 import java.nio.file.{Files, FileSystems}
@@ -42,11 +42,15 @@ object UpdateVersion {
       walkDirs(dirs) ++ files
 
     else
-      // by default, collect files below current dir
-      val roots: Seq[Path] = Paths.get(".").paths.filter { dir =>
+      // by default, collect files below current dir -- and the files IN it.
+      // `walkDirs` only ever sees directories, so top-level files (README.md
+      // above all) were silently skipped: the 0.16.0 sweep left twelve stale dep
+      // lines in the README because nothing here ever looked at it.
+      val entries: Seq[Path] = Paths.get(".").paths
+      val roots: Seq[Path] = entries.filter { dir =>
         dir.isDirectory && ! ignoredDirs.contains(dir.last)
       }
-      walkDirs(roots)
+      entries.filter(fileFilter) ++ walkDirs(roots)
 
     files.distinct.foreach(updateFile(_, version))
     println("Done.")
@@ -66,14 +70,30 @@ object UpdateVersion {
   def isScala(p: Path): Boolean =
     matcher.matches(p) || p.firstLine.contains("scala")
 
+  /** Directory names never descended into. Grouped and deduplicated -- the flat
+   *  list had accumulated `.git` and `.idea` twice, which a membership test
+   *  tolerates but a reader should not have to. Names, not paths: `ignored`
+   *  matches `/<name>/` anywhere in the path, so one entry covers every depth.
+   *  Spans this repo and the working script corpus, since the tool runs in both. */
   lazy val ignoredDirs = Seq(
-    ".git", ".idea", ".scala-build", "target", "jsrcArchive", "archive", "archive-sv", "ksrc", "mortgage", "osxbin",
-    "rbin", "rs", "ruby", "js", "quad20240228", "qdsaved", "march2quadreports", "data_200_scala_01", "drop-finstr",
-    "drop-qual", "drop-mom", "drop-earnest", "drop-perf", "drop-bsdrank", "drop-rev", "drop-overall",
-    "scalaArchive", "drop-value", "debris-files-to-be-reviewed", "assessor", "saved-assessor", ".vscode", ".metals",
-    "CobraWinLDTP", "clisrcArchive", "data_200_scala_12", "data_200_scala_15", "idea-2024.3.1.lib", ".cargo",
-    ".sqlx", ".bloop", "artifacts", "some", "luxbin", ".bsp", "deduplication", "tmp", "data", "jar", "lib",
-    "exes", "obsolete-staging", "py", "roadtrip", "biz", "cygbin", ".claude", ".git", ".idea",
+    // tooling and build output
+    ".git", ".idea", ".vscode", ".metals", ".bloop", ".bsp", ".cargo", ".claude", ".sqlx",
+    ".scala-build", "target", "idea-2024.3.1.lib",
+    // committed test fixtures: their bytes ARE the test, so a version-like string
+    // inside one must never be rewritten by a doc sweep
+    "test-data", "t3prf-validation",
+    // archived and superseded sources
+    "jsrcArchive", "scalaArchive", "clisrcArchive", "archive", "archive-sv", "obsolete-staging",
+    "qdsaved", "saved-assessor", "debris-files-to-be-reviewed",
+    // other languages, binaries, jars
+    "rs", "ruby", "py", "js", "ksrc", "rbin", "osxbin", "luxbin", "cygbin", "exes", "jar", "lib",
+    "CobraWinLDTP",
+    // data and generated reports
+    "data", "data_200_scala_01", "data_200_scala_12", "data_200_scala_15", "march2quadreports",
+    "quad20240228", "artifacts", "tmp", "deduplication",
+    // corpus project directories
+    "mortgage", "assessor", "roadtrip", "biz", "some", "drop-finstr", "drop-qual", "drop-mom",
+    "drop-earnest", "drop-perf", "drop-bsdrank", "drop-rev", "drop-overall", "drop-value",
   )
   def ignored(fname: String): Boolean = {
     ignoredDirs.find(dir => fname.contains(s"/$dir/")).nonEmpty
