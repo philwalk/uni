@@ -8,12 +8,12 @@
     reason = "a missing or malformed fixture should abort the test loudly"
 )]
 
+use uni::udata::Big;
+use uni::udata::NumFormat;
 use uni::udata::big::RoundingMode;
 use uni::udata::isNumeric;
 use uni::udata::numStr;
 use uni::udata::str2num;
-use uni::udata::Big;
-use uni::udata::NumFormat;
 
 fn fixture_path() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -162,8 +162,26 @@ fn every_fixture_row_reproduces() {
                 check(format!("pow {a} {e}"), render(&read(a).pow(exp)), want);
             }
             ["powf", a, e, want] => {
+                // Fractional pow runs on the platform's libm (`f64::powf` here,
+                // JVM Math.pow in Scala), which is permitted 1 ulp of error and
+                // really does differ across platforms -- macOS/aarch64's JVM
+                // answered 1 ulp under the fixture value for 2^1.5. Exact strings
+                // would pin one platform's libm, so like the tprf3 fixtures this
+                // row tolerates ulp-level drift. Mirrors the Scala suite.
                 let exp: f64 = e.parse().expect("exp");
-                check(format!("powf {a} {e}"), render(&read(a).powf(exp)), want);
+                let got = render(&read(a).powf(exp));
+                let close = got == *want
+                    || match (got.parse::<f64>(), want.parse::<f64>()) {
+                        (Ok(g), Ok(w)) => {
+                            let ulp = (f64::from_bits(w.abs().to_bits() + 1) - w.abs()).abs();
+                            (g - w).abs() <= ulp
+                        }
+                        _ => false,
+                    };
+                if !close {
+                    // `close` false implies got != want, so check records the miss
+                    check(format!("powf {a} {e}"), got, want);
+                }
             }
             ["fromdouble", d, want] => {
                 let v: f64 = d.parse().expect("double literal");

@@ -12,7 +12,9 @@
 use std::sync::Arc;
 
 use uni::udata::Big;
-use uni::upath::{PathContext, UPath, UserInfo};
+use uni::upath::PathContext;
+use uni::upath::UPath;
+use uni::upath::UserInfo;
 
 fn fixture_root() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-data/big-parity")
@@ -30,7 +32,11 @@ fn csv_path() -> UPath {
 }
 
 fn render(b: &Big) -> String {
-    if b.isNaN() { "!nan".to_owned() } else { b.toString() }
+    if b.isNaN() {
+        "!nan".to_owned()
+    } else {
+        b.toString()
+    }
 }
 
 #[test]
@@ -56,7 +62,10 @@ fn every_cell_matches_the_scala() {
             _ => {}
         }
     }
-    assert!(checked > 10, "the csv rows must actually be present: {checked}");
+    assert!(
+        checked > 10,
+        "the csv rows must actually be present: {checked}"
+    );
 }
 
 #[test]

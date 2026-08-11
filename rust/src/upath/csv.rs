@@ -416,7 +416,8 @@ impl<W: Write> CsvWriter<W> {
             let f = field.as_ref();
             if self.needs_quoting(f) {
                 self.out.write_all(&[self.quote])?;
-                for b in f.bytes() {   // `str::bytes`, not UPath::byteArray
+                for b in f.bytes() {
+                    // `str::bytes`, not UPath::byteArray
                     if b == self.quote {
                         self.out.write_all(&[self.quote])?;
                     }
@@ -618,9 +619,15 @@ mod tests {
 
     #[test]
     fn crlf_is_one_terminator() {
-        assert_eq!(parse("a,b\r\nc,d\n", b','), vec![vec!["a", "b"], vec!["c", "d"]]);
+        assert_eq!(
+            parse("a,b\r\nc,d\n", b','),
+            vec![vec!["a", "b"], vec!["c", "d"]]
+        );
         // A lone CR still ends a row.
-        assert_eq!(parse("a,b\rc,d\n", b','), vec![vec!["a", "b"], vec!["c", "d"]]);
+        assert_eq!(
+            parse("a,b\rc,d\n", b','),
+            vec![vec!["a", "b"], vec!["c", "d"]]
+        );
     }
 
     #[test]
@@ -636,7 +643,10 @@ mod tests {
 
     #[test]
     fn a_doubled_quote_is_one_literal_quote() {
-        assert_eq!(parse("\"say \"\"hi\"\"\",b\n", b','), vec![vec!["say \"hi\"", "b"]]);
+        assert_eq!(
+            parse("\"say \"\"hi\"\"\",b\n", b','),
+            vec![vec!["say \"hi\"", "b"]]
+        );
     }
 
     #[test]
@@ -658,7 +668,10 @@ mod tests {
 
     #[test]
     fn a_tab_delimiter_works() {
-        assert_eq!(parse("x\ty\n1\t2\n", b'\t'), vec![vec!["x", "y"], vec!["1", "2"]]);
+        assert_eq!(
+            parse("x\ty\n1\t2\n", b'\t'),
+            vec![vec!["x", "y"], vec!["1", "2"]]
+        );
     }
 
     #[test]

@@ -1,7 +1,7 @@
 package uni
 
 import munit.FunSuite
-import java.nio.file.{Paths => JPaths}
+import java.nio.file.{Files, Paths => JPaths}
 
 /**
  * Drive-relative Windows paths (`C:`, `C:foo`), checked against `java.nio` rather
@@ -25,6 +25,30 @@ import java.nio.file.{Paths => JPaths}
 class DriveRelativeSuite extends FunSuite:
 
   private val driveForms = Seq("C:", "C:foo", "C:foo/bar", "C:/", "C:/foo", "C:/foo/bar")
+
+  test("driveCwd: a drive letter absent from rootDrives answers its root") {
+    // The test the git history shows was missing. `DefaultPathsConfig.driveCwd` is
+    // the one method the synthetic harness stubs, so no synthetic test can reach
+    // it -- and its unguarded JVM probe threw `java.io.IOError` for an absent
+    // drive (and can hang on a mapped-but-disconnected network drive). The guard
+    // makes the absent-drive branch pure: drive not in `rootDrives` means the
+    // `X:/` fallback, no OS touch.
+    //
+    // Windows-only: the fallback is returned as a host `Path`, and a posix JVM
+    // renders `Paths.get("A:/")` as the bare relative name `A:` -- the first
+    // Linux run caught this asserting on the host rendering.
+    assume(isWin, "driveCwd returns host Paths; drive letters are a Windows-host concept")
+    resetConfig()
+    val absent = ('A' to 'Z').find(c => !Internals.rootDrives.contains(s"$c:"))
+      .getOrElse(fail("all 26 drive letters exist on this machine?"))
+    val got = normalizePosix(DefaultPathsConfig.driveCwd(absent).toString)
+    assertEquals(got, s"$absent:/")
+    // and a drive that certainly exists still resolves through the JVM
+    if isWin then
+      val sysDrive = realUser.dir.take(1).head.toUpper
+      val cwd = DefaultPathsConfig.driveCwd(sysDrive)
+      assert(Files.exists(cwd), s"driveCwd($sysDrive) should name a real directory: $cwd")
+  }
 
   test("drive-relative paths resolve the way java.nio resolves them") {
     assume(isWin, "drive letters are a Windows concept")

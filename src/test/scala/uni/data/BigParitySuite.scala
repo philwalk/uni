@@ -56,7 +56,18 @@ class BigParitySuite extends FunSuite:
         case Array("abs", a, want)  => diff(s"abs $a", render(read(a).abs), want)
         case Array("sqrt", a, want) => diff(s"sqrt $a", render(read(a).sqrt), want)
         case Array("pow", a, e, want)  => diff(s"pow $a $e", render(read(a) ~^ e.toInt), want)
-        case Array("powf", a, e, want) => diff(s"powf $a $e", render(read(a) ~^ e.toDouble), want)
+        case Array("powf", a, e, want) =>
+          // Fractional pow runs on the platform's `pow` (JVM Math.pow here,
+          // f64::powf in Rust), which is permitted 1 ulp of error and really does
+          // differ: macOS/aarch64's JVM answered 1 ulp under the fixture value for
+          // 2^1.5. Exact strings would pin one platform's libm, so like the tprf3
+          // fixtures this row tolerates ulp-level drift.
+          val got = render(read(a) ~^ e.toDouble)
+          val close = got == want ||
+            got.toDoubleOption.zip(want.toDoubleOption).exists { (g, w) =>
+              (g - w).abs <= math.ulp(w)
+            }
+          Option.when(!close)(s"powf $a $e: got $got, want $want")
         case Array("fromdouble", d, want) => diff(s"fromdouble $d", render(Big(d.toDouble)), want)
         case Array("todouble", a, want) => diff(s"todouble $a", read(a).toDouble.toString, want)
         case Array("toint", a, want)  => diff(s"toint $a", read(a).toInt.toString, want)

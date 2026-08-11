@@ -318,7 +318,11 @@ mod tests {
     fn lists_immediate_entries_only() {
         let (_tmp, root) = fixture();
         assert_eq!(names(&root.paths()), vec!["b", "one.txt", "two.txt"]);
-        assert_eq!(names(&root.files()), names(&root.paths()), "files aliases paths");
+        assert_eq!(
+            names(&root.files()),
+            names(&root.paths()),
+            "files aliases paths"
+        );
         assert_eq!(names(&root.subdirs()), vec!["b"]);
         assert_eq!(names(&root.subfiles()), vec!["one.txt", "two.txt"]);
     }
@@ -329,7 +333,10 @@ mod tests {
         let tree = root.pathsTree();
         // 5 entries: the root, b, deep.txt, one.txt, two.txt. Forgetting the root is the classic
         // off-by-one against `Files.walk`.
-        assert_eq!(names(&tree), vec!["a", "b", "deep.txt", "one.txt", "two.txt"]);
+        assert_eq!(
+            names(&tree),
+            vec!["a", "b", "deep.txt", "one.txt", "two.txt"]
+        );
         // `walk` is the lazy alias now, so it matches `walkIter` and only matches
         // `pathsTree` as a set -- the sort is what `pathsTree` adds.
         let walked: Vec<UPath> = root.walk().collect();
@@ -372,7 +379,11 @@ mod tests {
             .find(|p| p.posx().ends_with("one.txt"))
             .unwrap_or_else(|| panic!("fixture missing one.txt"));
         assert!(one.paths().is_empty(), "a file lists empty");
-        assert_eq!(names(&one.pathsTree()), vec!["one.txt"], "a file walks to itself");
+        assert_eq!(
+            names(&one.pathsTree()),
+            vec!["one.txt"],
+            "a file walks to itself"
+        );
     }
 
     #[test]

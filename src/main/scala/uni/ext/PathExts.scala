@@ -18,9 +18,26 @@ import scala.util.Using
 object pathExts {
 
   extension (@annotation.unused p: Path) {
-    def exists: Boolean      = Files.exists(p)
-    def isDirectory: Boolean = Files.isDirectory(p)
-    def isFile: Boolean      = Files.isRegularFile(p)
+    // BadPath members short-circuit to false with zero OS contact, so the
+    // canonical `if ("some-str".asPath.isFile) ...` idiom never pays even a
+    // fast-fail probe on the sentinel's nonexistent drive.
+    def exists: Boolean      = !p.isBadPath && Files.exists(p)
+    def isDirectory: Boolean = !p.isBadPath && Files.isDirectory(p)
+    def isFile: Boolean      = !p.isBadPath && Files.isRegularFile(p)
+
+    /** True when this Path is a BadPath family member: the stand-in a total
+      * `uni.Paths.get`/`asPath` returns for a string the host filesystem cannot
+      * represent. Structural test -- two name elements, the first the marker --
+      * so it survives `normalize` and `toAbsolutePath`. */
+    def isBadPath: Boolean =
+      p.getNameCount == 2 && p.getName(0).toString == BadPath.Marker
+
+    /** The originally specified path string. For a BadPath member, decodes the
+      * payload back to the exact input -- the designated diagnostic form:
+      * `println(s"bad path [${p.badPathString}]")`. Ordinary paths degrade to
+      * their posix rendering, keeping the method total. */
+    def badPathString: String =
+      if p.isBadPath then BadPath.decode(p.getFileName.toString) else p.posx
 
     // ---- os-lib compatible names (primary) ----
     /** Last path segment (filename). os-lib: p.last */
@@ -466,8 +483,13 @@ object pathExts {
       *  `true` and every failure threw, so `false` was unreachable.
       */
     def mkdirs: Boolean = {
-      try Files.createDirectories(p) catch case _: Exception => ()
-      p.toFile.isDirectory
+      // a BadPath must never come into existence: creating the marker directory
+      // is the one way to defeat the family's cannot-be-written guarantee
+      if p.isBadPath then false
+      else {
+        try Files.createDirectories(p) catch case _: Exception => ()
+        p.toFile.isDirectory
+      }
     }
 
     // ---- hashes / checksums ----

@@ -92,6 +92,15 @@ class PathParitySuite extends FunSuite:
     case "classify" => attempt(Resolver.classify(input).toString)
     case "win"      => attempt(Resolver.resolvePathstr(input))
     case "posixabs" => attempt(toPosixAbs(input))
+    // BadPath family rows record only root-independent facts -- the sentinel's
+    // drive letter is machine-chosen, so the fixture pins membership, recovery,
+    // and the PUA payload, never the rooted path itself.
+    case "badpath" =>
+      val p = Paths.get(input)
+      if p.isBadPath then p.badPathString else "!ordinary"
+    case "badpayload" =>
+      val p = Paths.get(input)
+      if p.isBadPath then p.getFileName.toString else "!ordinary"
     case "drivecwd" => attempt(config.driveCwd(input.head).toString)
     case other      =>
       // Extension-method fields come straight from the generator's own table, so
@@ -104,6 +113,17 @@ class PathParitySuite extends FunSuite:
    *  `Path` extensions and the pure `String` ones. */
   private lazy val extByName: Map[String, String => String] =
     (uni.apps.PathParityGen.extFields ++ uni.apps.PathParityGen.strFields).toMap
+
+  /** Fields whose evaluation is host-bound: `drivecwd` and the `Path`-typed
+   *  extension methods construct host `Path`s, and the BadPath family follows the
+   *  host parser's rules. Per the TEST-HARNESS BOUNDARY rule (Paths.scala), these
+   *  are only meaningful when the block's rule set matches the running JVM's.
+   *  The generator emits them only into the generating host's block; this is the
+   *  consuming half of the same gate, so a fixture generated on Windows does not
+   *  fail its Path-typed rows on a Linux or macOS host. String-layer fields
+   *  (classify/win/posixabs/strposx/dropsuffix) stay checked on every host. */
+  private val hostBoundFields: Set[String] =
+    Set("drivecwd", "badpath", "badpayload") ++ uni.apps.PathParityGen.extFields.map(_._1)
 
   for platform <- platforms do
     val block = blockFor(platform)
@@ -120,7 +140,9 @@ class PathParitySuite extends FunSuite:
           }
 
         val failures = block.cases.collect {
-          case (`id`, field, input, want) if evaluate(field, input) != want =>
+          case (`id`, field, input, want)
+              if (block.isWindows == isWin || !hostBoundFields(field))
+                && evaluate(field, input) != want =>
             s"$field [$input]: got [${evaluate(field, input)}], want [$want]"
         }
         assert(failures.isEmpty,

@@ -105,13 +105,13 @@ class PlatformRulesSuite extends FunSuite:
     assertEquals(Resolver.resolvePathstr("C:/foo"), "C:/foo")
   }
 
-  test("off Windows a colon-bearing name passes through, like every drive shape") {
-    // Changed 0.16.0: drive-lettered shapes pass through under either rule set --
-    // resolving them against userdir turned host-absolute Windows strings into
-    // `/munit/test/C:/...`, unparseable on the very hosts that create them. A
-    // genuine POSIX file named `C:foo` is reachable explicitly, as `./C:foo`.
+  test("off Windows a colon-bearing name is an ordinary relative") {
+    // POSIX rules follow the posix host oracle (`java.nio.file.Paths.get` there):
+    // a colon is an ordinary character, so `C:foo` absolutises like any other
+    // relative. Restored after 0.16.0 briefly passed drive shapes through under
+    // both rule sets -- see the branch comment in `applyTildeAndDots`.
     posixRules()
-    assertEquals(Resolver.resolvePathstr("C:foo"), "C:foo")
+    assertEquals(Resolver.resolvePathstr("C:foo"), s"${unixTestUser.dir}/C:foo")
     assertEquals(Resolver.resolvePathstr("./C:foo"), s"${unixTestUser.dir}/C:foo")
   }
 

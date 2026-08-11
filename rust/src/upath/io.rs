@@ -126,7 +126,9 @@ impl Charset {
         if known_unsupported {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
-                format!("charset {name} is real but this port has no tables for it;                          the Scala side would decode it -- refusing rather than silently                          mis-reading it as UTF-8"),
+                format!(
+                    "charset {name} is real but this port has no tables for it;                          the Scala side would decode it -- refusing rather than silently                          mis-reading it as UTF-8"
+                ),
             ));
         }
         Ok(match folded.as_str() {
@@ -230,12 +232,13 @@ impl UPath {
     }
 
     /// True when this names an existing regular file — the guard every read in
-    /// `PathExts` starts with.
+    /// `PathExts` starts with. BadPath members answer `false` without touching
+    /// the OS.
     #[must_use]
     pub fn isFile(&self) -> bool {
         // The inner call is `std::path::Path::is_file`, deliberately left snake_case: it is
         // Rust's method, not a mirror of a Scala one.
-        self.as_std_path().is_file()
+        !self.isBadPath() && self.as_std_path().is_file()
     }
 
     /// Raw bytes. `PathExts.byteArray`.
@@ -350,7 +353,9 @@ impl UPath {
             };
         }
         let reader = if self.isFile() {
-            fs::File::open(self.as_std_path()).ok().map(io::BufReader::new)
+            fs::File::open(self.as_std_path())
+                .ok()
+                .map(io::BufReader::new)
         } else {
             None
         };

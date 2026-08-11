@@ -249,7 +249,11 @@ mod tests {
             ("a|b|c\n1|2|3\n", '|'),
             ("a\tb\tc\n1\t2\t3\n", '\t'),
         ] {
-            assert_eq!(detect_lines(lines(text), 100).delimiter, want, "for {text:?}");
+            assert_eq!(
+                detect_lines(lines(text), 100).delimiter,
+                want,
+                "for {text:?}"
+            );
         }
     }
 
@@ -290,10 +294,17 @@ mod tests {
         // The behaviour that made reusing these widths for padding unworkable, and
         // the reason the reader measures its own. Rows here are far over the check
         // interval, so the winner lands partway through the first one.
-        let wide = (0..40).map(|i| format!("value_{i:05}")).collect::<Vec<_>>().join(",");
+        let wide = (0..40)
+            .map(|i| format!("value_{i:05}"))
+            .collect::<Vec<_>>()
+            .join(",");
         let st = detect_lines(vec![wide.clone(), wide], 100);
         assert_eq!(st.delimiter, ',');
-        assert!(st.row_counts.is_empty(), "expected no complete rows, got {:?}", st.row_counts);
+        assert!(
+            st.row_counts.is_empty(),
+            "expected no complete rows, got {:?}",
+            st.row_counts
+        );
         assert!(!st.partial_counts.is_empty());
     }
 

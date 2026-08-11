@@ -9,7 +9,10 @@
 #   derived  | <id> | cygdrive|msysroot | <value>
 #   case     | <id> | classify|win|posixabs | <input> | <expected>
 #   case     | <id> | drivecwd | <drive> | <expected>
-# '!error' means the call threw; '!empty' means an empty string.
+#   case     | <id> | badpath | <input> | <recovered original, or !ordinary>
+#   case     | <id> | badpayload | <input> | <PUA-encoded element, or !ordinary>
+# '!error' means the call threw; '!empty' means an empty string;
+# '!ordinary' means the input is not a BadPath family member.
 #
 # isWin is not overridable from Scala, so this file records one platform's
 # rules. The Rust port takes is_windows as data and checks whichever blocks
@@ -965,6 +968,42 @@ case | root | segments | /usr/bin/.. | msys64,usr,bin,..
 case | root | relpath | /usr/bin/.. | /usr/bin/..
 case | root | posix | /usr/bin/.. | /usr/bin/..
 case | root | stdpath | /usr/bin/.. | /usr
+case | root | badpath | a:b:c | a:b:c
+case | root | badpayload | a:b:c | abc
+case | root | badpath | 1:foo | 1:foo
+case | root | badpayload | 1:foo | 1foo
+case | root | badpath | : | :
+case | root | badpayload | : | 
+case | root | badpath | :: | ::
+case | root | badpayload | :: | 
+case | root | badpath | a<b | a<b
+case | root | badpayload | a<b | ab
+case | root | badpath | a>b | a>b
+case | root | badpayload | a>b | ab
+case | root | badpath | wild*card | wild*card
+case | root | badpayload | wild*card | wildcard
+case | root | badpath | quo"te | quo"te
+case | root | badpayload | quo"te | quote
+case | root | badpath | what? | what?
+case | root | badpayload | what? | what
+case | root | badpath | tab	char | tab	char
+case | root | badpayload | tab	char | tabchar
+case | root | badpath | C:/ok/until:here | C:/ok/until:here
+case | root | badpayload | C:/ok/until:here | Cokuntilhere
+case | root | badpath | /lead<ing | /lead<ing
+case | root | badpayload | /lead<ing | leading
+case | root | badpath | //doubled//slash<es// | //doubled//slash<es//
+case | root | badpayload | //doubled//slash<es// | doubledslashes
+case | root | badpath | trail<ing/ | trail<ing/
+case | root | badpayload | trail<ing/ | trailing
+case | root | badpath | back\slash<mix | back\slash<mix
+case | root | badpayload | back\slash<mix | backslashmix
+case | root | badpath | q:pics | !ordinary
+case | root | badpayload | q:pics | !ordinary
+case | root | badpath | C:/Users | !ordinary
+case | root | badpayload | C:/Users | !ordinary
+case | root | badpath | ab | !ordinary
+case | root | badpayload | ab | !ordinary
 derived | drives | cygdrive | /
 derived | drives | msysroot | C:/msys64
 case | drives | drivecwd | C | C:\munit\test

@@ -87,9 +87,13 @@ final class SyntheticMountsSuite extends FunSuite {
       """\\server\share on /mnt/share type smbfs (binary)"""
     ), winUser, isWindows = true)
 
-    val p = Paths.get("/mnt/share/docs")
+    // String layer, not a host Path: a posix JVM collapses a leading `//`
+    // (implementation-defined in POSIX), so `Paths.get(...).posx` loses the UNC
+    // root everywhere but Windows. `resolvePathstr` is a pure function of the
+    // injected config and asserts the same fact on every host -- the
+    // TEST-HARNESS BOUNDARY rule in Paths.scala.
     assertEqualsIgnoreCase(
-      p.posx,
+      normalizePosix(Resolver.resolvePathstr("/mnt/share/docs")),
       """//server/share/docs"""
     )
   }
@@ -170,6 +174,10 @@ final class SyntheticMountsSuite extends FunSuite {
 
   // synthetic round-trip: posix → win → posix
   test("synthetic: round-trip posix→win→posix is stable") {
+    // Windows-only: `stdpath` calls the host `toAbsolutePath`, and on a posix
+    // JVM the windows-rules string `C:/msys64/...` is a *relative* path that
+    // absolutises into garbage. The subject is genuinely host-bound.
+    assume(isWin, "stdpath absolutises through the host JVM")
     withMountLines(Seq(
       "C:/msys64 on / type ntfs (binary)"
     ), winUser, isWindows = true)

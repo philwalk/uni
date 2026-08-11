@@ -389,14 +389,18 @@ def applyTildeAndDots(raw: String): String = {
           }
 
       case _ =>
-        // Drive-lettered shapes pass through under EITHER rule set (0.16.0 -- the
-        // guard was `config.isWindows &&`). Under POSIX rules a colon is
-        // semantically an ordinary character, but `X:...` strings denote
-        // host-absolute paths in every real corpus, and gluing them onto userdir
-        // produced `/munit/test/C:/...` -- unparseable on the very hosts that
-        // create such strings. A genuine Linux name like `C:x` is reachable as
-        // `./C:x`.
-        if raw.length >= 2 && raw(1) == ':' then
+        // Drive-lettered shapes pass through under WINDOWS rules only. Under
+        // POSIX rules the oracle is the posix JVM's own `java.nio.file.Paths.get`:
+        // a colon is an ordinary character there, so `C:foo` is a relative
+        // filename and absolutises against userdir like every other relative.
+        // (0.16.0 briefly passed drive shapes through under either rule set;
+        // ruled back: real posix hosts must match their host oracle. The one
+        // configuration that cannot follow it -- a Windows host running a
+        // synthetic-posix config -- does not attempt these shapes at all, per the
+        // TEST-HARNESS BOUNDARY rule; if one leaks through, the absolutised
+        // string is unparseable by the Windows host parser and the BadPath
+        // backstop absorbs it.)
+        if config.isWindows && raw.length >= 2 && raw(1) == ':' then
           // A drive letter belongs to `Resolver.classify`, which routes it to
           // `resolveDriveRelPathstr` -- the one place that knows the per-drive
           // working directory. Resolving it here got both drive-relative forms
@@ -404,10 +408,7 @@ def applyTildeAndDots(raw: String): String = {
           // (`driveCwd` built it from `C:.`), and single-segment `C:foo` -- having
           // no '/' -- fell into the bare-filename branch below and was glued onto
           // userdir as `.../uni/C:foo`, which java.nio rejected outright.
-          //
-          // No longer guarded by `isWin` (0.16.0): see the branch comment above --
-          // drive shapes pass through under either rule set. Under Windows rules
-          // classify routes them; `C:/foo` classifies Absolute and is left alone.
+          // `C:/foo` classifies Absolute and is left alone.
           raw
         else if !raw.startsWith("/") then
           // EVERY relative form resolves against the config working directory

@@ -8,18 +8,22 @@ deliberately out of scope. Method counts are from the 0.16.0 sources.
 Naming contract (unchanged): public CamelCase names mirror the Scala spelling;
 snake_case marks an internal helper or a `try_*` Result variant.
 
-## At parity today (fixture/test-verified)
+## At parity today (fixture/test-verified, as of 2026-08-10)
 
 | Scala | Rust | Coverage |
 | :--- | :--- | :--- |
-| `uni.ext.PathExts` (188 defs: Path + JFile mirrors) | `upath` (174 pub fns) | the audited 92-method surface: paths, metadata, traversal, mutation, line I/O, charsets, CSV, hashes (`cksum`/`md5`/`sha256`/`hash64` + `try_*`), `delim` detection |
-| `UniDateTime` (57 methods), `DateFormat`, `SmartParse` | `utime` (47 fns) | field arithmetic, plus/minus/with families, epoch-day, pattern formatting, smart parsing incl. `parseDateSmartWith(config)` |
-| `Big` + its CSV loaders | `udata` (30 fns) | full arithmetic, HALF_EVEN contexts, `loadMatBig`/`loadSmartBig` |
-| `NumPyRNG` | `numpy_rng` | bit-identical `uniform`/`randn`/`next_*` |
-| `Tprf3` core | `t3prf` | `t3prf_core`, `estimate_3prf_is_full`/`oos_cv`/`oos_rec`, `ols_solve`, `standardize_columns` |
+| `uni.ext.PathExts` (188 defs: Path + JFile mirrors) | `upath` (174 pub fns) | the audited 92-method surface: paths, metadata, traversal, mutation, line I/O, charsets, CSV, hashes (`cksum`/`md5`/`sha256`/`hash64` + `try_*`), `delim` detection — case-folding now a context property, all relatives absolutise |
+| `uni.BadPath` + `isBadPath`/`badPathString` | `upath::badpath` + `UPath::isBadPath`/`badPathString` | total `Paths.get`/`resolve`: unrepresentable strings become `<absent-drive>:/__uni-BadPath__/<PUA payload>` (cygwin `U+F000+c` mapping, `/`→U+F02F uni extension); byte-exact `badPathString` recovery; `exists`/`isFile`/`isDirectory`/`mkdirs` short-circuit; design: `docs/PathProviderDesignNote.md` |
+| `UniDateTime` (57 methods), `DateFormat`, `SmartParse`, `TimeUtils` | `utime` (67 pub fns) | field arithmetic, plus/minus/with families, epoch-day, pattern formatting, smart parsing incl. `parseDateSmartWith(config)`; the clock (local wall time via `localOffsetMinutes`, no tzdb), the zone-free between/duration family, `getMillis`, `endOfMonth`, `quik*`, `whenModified`/`ageIn*` |
+| `Big`, `BigUtils` + the CSV loaders | `udata` (43 pub fns) | full arithmetic incl. `round(precision, mode)`, HALF_EVEN contexts, `loadMatBig`/`loadSmartBig`; `numStr`/`NumFormat` (Java `%f` fidelity), `str2num`, `isNumeric`, `isBad`/`orBad` |
+| `NumPyRNG` | `numpy_rng` (7 fns) | bit-identical `uniform`/`randn`/`next_*` |
+| `Tprf3`, complete | `t3prf` (13 pub fns) | `t3prf_core`, `estimate_3prf_is_full`/`oos_cv`/`oos_rec`, `ols_solve`, `standardize_columns`, and the closed forms: `tprfClosedForm`, `plsClosedForm`, `pls1Fit`, `forecast3prf` |
 | `StringExts` (partial) | `StrExts`/`StrPathExts` | `lc uc posx dropSuffix startsWithIgnoreCase stripPrefix asPath absPath posix` |
 
-Nine committed fixtures under `../test-data/*-parity/` pin these; see `README.md`.
+Nine committed fixtures under `../test-data/*-parity/` pin these — roughly 19,800 rows
+(path 10,537 — incl. 38 `badpath`/`badpayload` rows · date 4,173 · tprf3 3,039 · big 629 · smartparse 539 · csv 458 ·
+numpy-rng 378 · walk 30 · hash 23) — plus the byte-identical pair probe
+(`jsrc/pairProbe.sc` / `examples/pair_probe.rs`). See `README.md`.
 
 ## Gaps inside already-ported modules (Tier 1 — cheapest wins, fixtures exist)
 

@@ -1,6 +1,6 @@
 package uni
 
-import java.nio.file.{Files, Paths as JPaths}
+import java.nio.file.{Files, InvalidPathException, Paths as JPaths}
 import java.net.URI
 import java.util.{Arrays, Comparator, Locale}
 import scala.collection.immutable.SortedMap
@@ -22,11 +22,13 @@ type Path = java.nio.file.Path
 
 object Paths {
 
-  // API same as java.nio.file.Paths.get
+  // API same as java.nio.file.Paths.get, except total: input the host parser
+  // rejects returns a BadPath family member instead of throwing (see BadPath).
   def get(first: String, more: String*): Path =
     if first.startsWith("file://") && more.isEmpty then
-      // explicit URI semantics
-      get(java.net.URI.create(first))
+      // explicit URI semantics; a malformed URI string stays total via BadPath
+      try get(java.net.URI.create(first))
+      catch case scala.util.control.NonFatal(_) => BadPath(first)
     else
       config.get(first, more *)
 
@@ -125,20 +127,33 @@ object DefaultPathsConfig extends PathsConfig {
   def driveCwd(drive: Char): Path =
     val upper = drive.toUpper
     require(upper.isLetter, s"Not a valid drive letter: $drive")
-    // Query the JVM for the drive's working directory. `C:` is drive-relative, so
-    // `toAbsolutePath` resolves it against the current directory Windows keeps for
-    // that drive.
-    //
-    // Built from `C:` and not `C:.` -- the dot survives resolution:
-    // `Paths.get("C:.").toAbsolutePath` is `C:\dir\.` while
-    // `Paths.get("C:").toAbsolutePath` is `C:\dir`. That stray component was
-    // reaching callers. `normalize` is belt-and-braces for a cwd holding dot
-    // segments of its own.
-    val p = java.nio.file.Paths.get(s"$upper:").toAbsolutePath.normalize
-    if Files.exists(p) then
-      p
-    else
+    // Consult the drive list BEFORE any JVM call: `toAbsolutePath` on a drive
+    // letter that does not exist throws `java.io.IOError`, and on a mapped but
+    // disconnected network drive can hang inside GetFullPathName for minutes.
+    // `rootDrives` is a GetLogicalDrives bitmask read -- cheap, and deliberately
+    // fresh on every call so a just-plugged USB drive is seen. An absent drive
+    // takes the same `X:/` fallback the exists-check below always provided, just
+    // without the OS touch ahead of it; drives that exist resolve exactly as
+    // before. (The guarded helper `safeAbsolutePath` predates this method by a
+    // week -- 3f68ac8 vs cd511e2 -- but this path never consulted it, and no test
+    // could catch that: the synthetic harness stubs this very method.)
+    if !Internals.rootDrives.contains(s"$upper:") then
       java.nio.file.Paths.get(s"$upper:/")
+    else
+      // Query the JVM for the drive's working directory. `C:` is drive-relative, so
+      // `toAbsolutePath` resolves it against the current directory Windows keeps for
+      // that drive.
+      //
+      // Built from `C:` and not `C:.` -- the dot survives resolution:
+      // `Paths.get("C:.").toAbsolutePath` is `C:\dir\.` while
+      // `Paths.get("C:").toAbsolutePath` is `C:\dir`. That stray component was
+      // reaching callers. `normalize` is belt-and-braces for a cwd holding dot
+      // segments of its own.
+      val p = java.nio.file.Paths.get(s"$upper:").toAbsolutePath.normalize
+      if Files.exists(p) then
+        p
+      else
+        java.nio.file.Paths.get(s"$upper:/")
 }
 
 private lazy val realUserName: String = sys.props("user.name")
@@ -147,6 +162,24 @@ private lazy val realUserDir: String  = normalizePosix(sys.props("user.dir"))
 
 case class UserInfo(name: String, home: String, dir: String)
 lazy val realUser: UserInfo = UserInfo(realUserName, realUserHome, realUserDir)
+
+// ── TEST-HARNESS BOUNDARY ────────────────────────────────────────────────────
+//
+// uni's resolution has two layers, and the synthetic harness can only simulate
+// one of them. The STRING layer -- resolvePathstr, toPosixAbs, toPosixRel,
+// classify, the mount tables -- is a pure function of the active config and can
+// be exercised on any host under any injected rule set; that is the point of
+// this class. The HOST-BOUND TAIL -- the final `JPaths.get(result)` inside
+// `Resolver.resolvePath`, and every Path-typed extension method -- always speaks
+// the *running* JVM's dialect, whatever rules are injected.
+//
+// The rule that keeps cross-host testing sound: under an injected foreign rule
+// set, assert on STRINGS; construct host Paths only under host-matching rules.
+// A posix-rules string like `/munit/test/C:/x` is unparseable on a Windows
+// host, and a windows-rules `C:foo` parses differently on Linux. (This is also
+// why `PathParityGen` records its Path-typed rows only for the block matching
+// the generating host, and why `DefaultPathsConfig.driveCwd` -- stubbed by this
+// class -- needs its own direct unit test: the seam replaces exactly that code.)
 
 // Synthetic config: uses injected mount lines
 final class SyntheticPathsConfig(
@@ -211,13 +244,20 @@ private[uni] object Resolver {
    msys-mounted:        /usr/bin
    */
   def resolvePath(first: String, more: Seq[String]): Path =
-    val result = resolvePathstr(first, more)
-    try {
-      JPaths.get(result)
-    } catch
-      case e: Throwable =>
-        hook += 1
-        throw e
+    val joined = (first +: more).mkString("/")
+    if BadPath.isUnrepresentable(joined) then
+      // Total Paths.get: the RAW input -- not any absolutised or mount-rewritten
+      // form -- rides along in the family member, recoverable via badPathString.
+      // Validated before resolution, so hostile strings never reach driveCwd,
+      // classify, or the JVM parser.
+      BadPath(joined)
+    else
+      val result = resolvePathstr(first, more)
+      try JPaths.get(result)
+      catch
+        // Backstop for host-parser corner cases the predicate misses. The parse
+        // is a pure string operation -- reaching it never probes the OS.
+        case _: InvalidPathException => BadPath(joined)
 
   enum WinPathKind:
     case Root, Absolute, UNC, Posix, Relative, DriveRel, Invalid
@@ -291,7 +331,13 @@ private[uni] object Resolver {
   private def resolveDriveRelPathstr(pstr: String): String = {
     val drive   = pstr.charAt(0).toLower
     val cwd     = config.driveCwd(drive)
-    val dir     = cwd.toString.replace('\\', '/')
+    val dir0    = cwd.toString.replace('\\', '/')
+    // `driveCwd` answers with a host Path, and a POSIX JVM renders the drive-root
+    // fallback `Paths.get("X:/")` as the bare relative name `X:` -- the trailing
+    // slash that makes it a root does not survive. Restore it: this is
+    // windows-RULES string work, and `X:` alone is drive-relative, not a root.
+    // On a Windows host the render is `X:\` and this never fires.
+    val dir     = if dir0.length == 2 && dir0(1) == ':' then s"$dir0/" else dir0
     val dirbare = dir.stripSuffix("/")
     val suffix = pstr.substring(2)
     val pathstr = if suffix.isEmpty then dir else s"$dirbare/$suffix"

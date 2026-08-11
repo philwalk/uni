@@ -13,9 +13,12 @@
 )]
 
 use uni::utime::UniDateTime;
-use uni::utime::smartparse::{
-    self, DateOrder, TimeConfig, classifyWith, numericDateOrder, parseDateSmartWith,
-};
+use uni::utime::smartparse::DateOrder;
+use uni::utime::smartparse::TimeConfig;
+use uni::utime::smartparse::classifyWith;
+use uni::utime::smartparse::numericDateOrder;
+use uni::utime::smartparse::parseDateSmartWith;
+use uni::utime::smartparse::{self};
 
 fn fixture_path() -> std::path::PathBuf {
     // CARGO_MANIFEST_DIR is rust/, the fixture lives beside it in the repo root.
@@ -25,11 +28,23 @@ fn fixture_path() -> std::path::PathBuf {
 
 fn config_for(mode: &str) -> TimeConfig {
     match mode {
-        "Auto" => TimeConfig { monthFirst: true, order: DateOrder::Auto },
-        "AutoDayPref" => TimeConfig { monthFirst: false, order: DateOrder::Auto },
+        "Auto" => TimeConfig {
+            monthFirst: true,
+            order: DateOrder::Auto,
+        },
+        "AutoDayPref" => TimeConfig {
+            monthFirst: false,
+            order: DateOrder::Auto,
+        },
         // `withDateOrder` derives `monthFirst` from the enforced order in Scala.
-        "MonthFirst" => TimeConfig { monthFirst: true, order: DateOrder::MonthFirst },
-        "DayFirst" => TimeConfig { monthFirst: false, order: DateOrder::DayFirst },
+        "MonthFirst" => TimeConfig {
+            monthFirst: true,
+            order: DateOrder::MonthFirst,
+        },
+        "DayFirst" => TimeConfig {
+            monthFirst: false,
+            order: DateOrder::DayFirst,
+        },
         other => panic!("unknown fixture mode {other}"),
     }
 }
@@ -54,17 +69,24 @@ fn render(d: UniDateTime) -> String {
 }
 
 #[test]
-#[expect(clippy::too_many_lines, reason = "one row loop, one match; splitting the row
-                                                   kinds apart would hide their symmetry")]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one row loop, one match; splitting the row
+                                                   kinds apart would hide their symmetry"
+)]
 fn every_fixture_row_reproduces() {
-    let text = std::fs::read_to_string(fixture_path())
-        .expect("missing fixture; run SmartParseParityGen");
+    let text =
+        std::fs::read_to_string(fixture_path()).expect("missing fixture; run SmartParseParityGen");
     let rows: Vec<&str> = text
         .lines()
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
         .collect();
     // A fixture that shrank is a fixture that stopped checking.
-    assert!(rows.len() > 500, "suspiciously small fixture: {} rows", rows.len());
+    assert!(
+        rows.len() > 500,
+        "suspiciously small fixture: {} rows",
+        rows.len()
+    );
 
     let mut failures: Vec<String> = Vec::new();
     for row in rows {
@@ -73,7 +95,9 @@ fn every_fixture_row_reproduces() {
             ["parse", mode, input, expected] => {
                 let got = render(parseDateSmartWith(input, config_for(mode)));
                 if got != *expected {
-                    failures.push(format!("parse[{mode}] '{input}': got {got}, want {expected}"));
+                    failures.push(format!(
+                        "parse[{mode}] '{input}': got {got}, want {expected}"
+                    ));
                 }
             }
             // The empty-string input drops its column.
@@ -107,7 +131,11 @@ fn every_fixture_row_reproduces() {
                 }
             }
             ["order", expected] => {
-                let got = if numericDateOrder("").is_none() { "!none" } else { "some" };
+                let got = if numericDateOrder("").is_none() {
+                    "!none"
+                } else {
+                    "some"
+                };
                 if got != *expected {
                     failures.push(format!("order '': got {got}, want {expected}"));
                 }
@@ -126,7 +154,11 @@ fn every_fixture_row_reproduces() {
 #[test]
 fn the_alias_and_default_forms_agree() {
     for s in ["2024-05-12", "May 12, 2024 2:30 PM", "garbage"] {
-        assert_eq!(smartparse::parseDate(s), smartparse::parseDateSmart(s), "{s}");
+        assert_eq!(
+            smartparse::parseDate(s),
+            smartparse::parseDateSmart(s),
+            "{s}"
+        );
         assert_eq!(
             smartparse::parseDateSmart(s),
             parseDateSmartWith(s, TimeConfig::default()),

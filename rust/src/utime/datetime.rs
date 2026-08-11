@@ -476,7 +476,11 @@ impl UniDateTime {
     /// Replaces the year, clamping a leap day into a non-leap February.
     #[must_use]
     pub fn withYear(&self, y: i32) -> Self {
-        self.replaced(y, self.month, self.day.min(Self::daysInMonth(y, self.month)))
+        self.replaced(
+            y,
+            self.month,
+            self.day.min(Self::daysInMonth(y, self.month)),
+        )
     }
 
     /// Replaces the month, clamping the day to the shorter month.
@@ -879,7 +883,10 @@ mod tests {
 
     #[test]
     fn display_omits_zero_seconds_and_fraction() {
-        assert_eq!(UniDateTime::of(2024, 5, 12, 14, 30, 0).to_string(), "2024-05-12T14:30");
+        assert_eq!(
+            UniDateTime::of(2024, 5, 12, 14, 30, 0).to_string(),
+            "2024-05-12T14:30"
+        );
         assert_eq!(
             UniDateTime::of(2024, 5, 12, 14, 30, 45).to_string(),
             "2024-05-12T14:30:45"
@@ -900,9 +907,18 @@ mod tests {
 
     #[test]
     fn month_arithmetic_clamps() {
-        assert_eq!(UniDateTime::ofYmd(2024, 1, 31).plusMonths(1).ymd(), "2024-02-29");
-        assert_eq!(UniDateTime::ofYmd(2023, 1, 31).plusMonths(1).ymd(), "2023-02-28");
-        assert_eq!(UniDateTime::ofYmd(2024, 2, 29).plusYears(1).ymd(), "2025-02-28");
+        assert_eq!(
+            UniDateTime::ofYmd(2024, 1, 31).plusMonths(1).ymd(),
+            "2024-02-29"
+        );
+        assert_eq!(
+            UniDateTime::ofYmd(2023, 1, 31).plusMonths(1).ymd(),
+            "2023-02-28"
+        );
+        assert_eq!(
+            UniDateTime::ofYmd(2024, 2, 29).plusYears(1).ymd(),
+            "2025-02-28"
+        );
     }
 
     #[test]
@@ -932,8 +948,14 @@ mod tests {
             UniDateTime::offsetMinutesOf("Thu, 14 Mar 2024 15:30:00 -0700"),
             Some(-420)
         );
-        assert_eq!(UniDateTime::offsetMinutesOf("2024-03-14T15:30:00Z"), Some(0));
-        assert_eq!(UniDateTime::offsetMinutesOf("14 Mar 2024 15:30 UTC"), Some(0));
+        assert_eq!(
+            UniDateTime::offsetMinutesOf("2024-03-14T15:30:00Z"),
+            Some(0)
+        );
+        assert_eq!(
+            UniDateTime::offsetMinutesOf("14 Mar 2024 15:30 UTC"),
+            Some(0)
+        );
         // A bare date must not read its own digits as an offset.
         assert_eq!(UniDateTime::offsetMinutesOf("12-05-1024"), None);
         assert_eq!(UniDateTime::offsetMinutesOf("2024-03-14"), None);

@@ -122,6 +122,26 @@ fn evaluate(ctx: &PathContext, field: &str, input: &str) -> String {
                 return ERROR.to_owned();
             };
             match other {
+                // BadPath family rows pin only root-independent facts (membership,
+                // recovery, the PUA payload): the sentinel's drive letter is chosen
+                // from the generating machine's absent drives at runtime, so the
+                // rooted path itself must never be compared across machines.
+                "badpath" => {
+                    if p.isBadPath() {
+                        p.badPathString()
+                    } else {
+                        "!ordinary".to_owned()
+                    }
+                }
+                "badpayload" => {
+                    if p.isBadPath() {
+                        p.segments()
+                            .last()
+                            .map_or_else(String::new, |s| (*s).to_owned())
+                    } else {
+                        "!ordinary".to_owned()
+                    }
+                }
                 "posx" => p.posx().to_owned(),
                 "local" | "localpath" => p.localpath(),
                 "dospath" => p.dospath(),

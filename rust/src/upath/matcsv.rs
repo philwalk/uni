@@ -62,7 +62,11 @@ pub trait CsvCell: Sized + Clone {
 /// - `BigDecimal` *does* accept a trailing dot: `"4."` is 4, not junk. Both of these
 ///   were found by the parity fixture after being guessed wrong.
 fn parse_big(s: &str) -> Option<f64> {
-    let cleaned: String = s.trim().chars().filter(|c| *c != ',' && *c != '$').collect();
+    let cleaned: String = s
+        .trim()
+        .chars()
+        .filter(|c| *c != ',' && *c != '$')
+        .collect();
     let (body, percent) = match cleaned.strip_suffix('%') {
         Some(b) => (b, true),
         None => (cleaned.as_str(), false),
@@ -189,9 +193,7 @@ fn empty_matrix<T: CsvCell>(cols: usize) -> Array2<T> {
 fn matrix_of<T: CsvCell>(rows: &[Vec<String>], width: usize) -> Array2<T> {
     let flat: Vec<T> = rows
         .iter()
-        .flat_map(|r| {
-            (0..width).map(move |c| T::from_cell(r.get(c).map_or("", String::as_str)))
-        })
+        .flat_map(|r| (0..width).map(move |c| T::from_cell(r.get(c).map_or("", String::as_str))))
         .collect();
     // `from_shape_vec` can only fail on a length mismatch, which the comprehension
     // above rules out by construction.
@@ -375,8 +377,13 @@ mod tests {
 
     #[test]
     fn plain_numbers_parse() {
-        for (text, want) in [("1", 1.0), ("-2.5", -2.5), ("+5", 5.0), (".5", 0.5), ("1e3", 1000.0)]
-        {
+        for (text, want) in [
+            ("1", 1.0),
+            ("-2.5", -2.5),
+            ("+5", 5.0),
+            (".5", 0.5),
+            ("1e3", 1000.0),
+        ] {
             assert_eq!(parse_big(text), Some(want), "for {text:?}");
         }
     }
@@ -408,7 +415,10 @@ mod tests {
         assert_eq!(parse_big("-0.0").map(f64::to_bits), Some(0_f64.to_bits()));
         // Percent scales by division, matching Scala's decimal divide to the bit.
         assert_eq!(parse_big("12%").map(f64::to_bits), Some(0.12_f64.to_bits()));
-        assert_eq!(parse_big("-3.5%").map(f64::to_bits), Some((-0.035_f64).to_bits()));
+        assert_eq!(
+            parse_big("-3.5%").map(f64::to_bits),
+            Some((-0.035_f64).to_bits())
+        );
     }
 
     #[test]

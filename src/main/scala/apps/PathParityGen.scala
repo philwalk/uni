@@ -137,6 +137,30 @@ object PathParityGen:
     "/usr/bin/.", "/usr/bin/..",
   )
 
+  /** BadPath family probes: members under Windows rules, plus near-miss negatives
+   *  that must stay ordinary. Fixture-safe subset of `BadPathSuite`'s list: NUL is
+   *  excluded (this is a text fixture) and pipe is excluded (`|` is the record
+   *  separator) -- both stay covered by `BadPathSuite` and `upath::badpath` tests.
+   *
+   *  Recorded only for the block matching the generating host, like `extFields`:
+   *  Scala's membership predicate guards the host JVM parser and follows host
+   *  rules, so only the host-matching block's verdicts are Scala-observable. The
+   *  Rust side follows the *context* rules (its `PathBuf` has no host parser), so
+   *  it checks these rows from any host. Only root-independent facts are recorded
+   *  -- membership, `badPathString` recovery, the encoded payload -- because the
+   *  sentinel's drive letter is chosen at runtime from the generating machine's
+   *  absent drives and must never enter a committed fixture. */
+  val badInputs: Seq[String] = Seq(
+    "a:b:c", "1:foo", ":", "::",
+    "a<b", "a>b", "wild*card", "quo\"te", "what?",
+    "tab\tchar",
+    "C:/ok/until:here",
+    "/lead<ing", "//doubled//slash<es//", "trail<ing/",
+    "back\\slash<mix",
+    // negatives: near misses that must stay ordinary
+    "q:pics", "C:/Users", "a\uF03Ab",
+  )
+
   /** Pure `String` extensions -- no context and no `Paths.get`, so unlike `extFields`
    *  these are host-independent and are recorded for both platform blocks.
    *
@@ -193,6 +217,18 @@ object PathParityGen:
    *
    * The Rust ports are covered by unit tests using absolute inputs, where no
    * working directory is consulted and the answer is deterministic. */
+
+  /** `badpath`: the recovered original for a family member, `!ordinary` otherwise. */
+  private def evalBadPath(in: String): String =
+    val p = Paths.get(in)
+    if p.isBadPath then p.badPathString else "!ordinary"
+
+  /** `badpayload`: the PUA-encoded name element, pinning the encoding itself --
+   *  `badpath` alone only proves decode∘encode is the identity, which a divergent
+   *  pair of codecs could also satisfy. */
+  private def evalBadPayload(in: String): String =
+    val p = Paths.get(in)
+    if p.isBadPath then p.getFileName.toString else "!ordinary"
 
   private def attempt(f: => String): String =
     try
@@ -258,10 +294,23 @@ object PathParityGen:
         if isWindows == isWin then
                   for (field, f) <- extFields do
             sb ++= s"case | $id | $field | ${esc(in)} | ${attempt(f(in))}\n"
+      // BadPath rows: host-gated for the same reason as extFields (the Scala
+      // predicate follows host rules), and under one table id -- membership never
+      // consults the mount table, so per-table repetition would pin nothing new.
+      if isWindows == isWin && id == "root" then
+        for in <- badInputs do
+          sb ++= s"case | $id | badpath | ${esc(in)} | ${attempt(evalBadPath(in))}\n"
+          sb ++= s"case | $id | badpayload | ${esc(in)} | ${attempt(evalBadPayload(in))}\n"
       println(s"  $id: ${inputs.length} inputs × 3 fields + ${drives.length} drives")
 
     val out = s"$dir/scala-reference-$platform.txt"
-    java.nio.file.Files.writeString(out.asPath, sb.toString)
+    // Host JPaths, not `.asPath`: the synthetic config for the block just
+    // generated is still active, and the generator's own file lives on the HOST
+    // filesystem. Under a synthetic-posix config on a Windows host, `.asPath` of
+    // `C:/...` absolutises into an unparseable string and comes back as a
+    // BadPath -- whose never-created marker directory then (correctly) refuses
+    // the write. The guard catching its own generator was this bug's discovery.
+    java.nio.file.Files.writeString(java.nio.file.Paths.get(out), sb.toString)
     println(s"wrote $out")
 
   private def header(platform: String): String =
@@ -276,7 +325,10 @@ object PathParityGen:
         |#   derived  | <id> | cygdrive|msysroot | <value>
         |#   case     | <id> | classify|win|posixabs | <input> | <expected>
         |#   case     | <id> | drivecwd | <drive> | <expected>
-        |# '!error' means the call threw; '!empty' means an empty string.
+        |#   case     | <id> | badpath | <input> | <recovered original, or !ordinary>
+        |#   case     | <id> | badpayload | <input> | <PUA-encoded element, or !ordinary>
+        |# '!error' means the call threw; '!empty' means an empty string;
+        |# '!ordinary' means the input is not a BadPath family member.
         |#
         |# isWin is not overridable from Scala, so this file records one platform's
         |# rules. The Rust port takes is_windows as data and checks whichever blocks

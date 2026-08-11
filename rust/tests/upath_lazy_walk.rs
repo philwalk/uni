@@ -44,7 +44,10 @@ fn paths_iter_yields_before_the_listing_is_complete() {
     assert!(first.exists(), "yielded a real entry");
     // Dropping mid-listing must release the handle; on Windows a held handle blocks removal.
     drop(it);
-    assert!(root.isDirectory(), "still a directory after an abandoned listing");
+    assert!(
+        root.isDirectory(),
+        "still a directory after an abandoned listing"
+    );
 }
 
 #[test]
@@ -57,14 +60,28 @@ fn taking_five_does_not_walk_the_whole_tree() {
 #[test]
 fn lazy_and_eager_see_the_same_entries() {
     let (_t, root) = tree_of(20);
-    let mut lazy_names: Vec<String> = root.pathsIter().map(|p| p.baseName().unwrap_or_default().to_owned()).collect();
-    let mut eager_names: Vec<String> = root.paths().iter().map(|p| p.baseName().unwrap_or_default().to_owned()).collect();
+    let mut lazy_names: Vec<String> = root
+        .pathsIter()
+        .map(|p| p.baseName().unwrap_or_default().to_owned())
+        .collect();
+    let mut eager_names: Vec<String> = root
+        .paths()
+        .iter()
+        .map(|p| p.baseName().unwrap_or_default().to_owned())
+        .collect();
     lazy_names.sort_unstable();
     eager_names.sort_unstable();
     assert_eq!(lazy_names, eager_names, "same directory entries");
 
-    let mut lazy_tree: Vec<String> = root.walk().map(|p| p.baseName().unwrap_or_default().to_owned()).collect();
-    let mut eager_tree: Vec<String> = root.pathsTree().iter().map(|p| p.baseName().unwrap_or_default().to_owned()).collect();
+    let mut lazy_tree: Vec<String> = root
+        .walk()
+        .map(|p| p.baseName().unwrap_or_default().to_owned())
+        .collect();
+    let mut eager_tree: Vec<String> = root
+        .pathsTree()
+        .iter()
+        .map(|p| p.baseName().unwrap_or_default().to_owned())
+        .collect();
     lazy_tree.sort_unstable();
     eager_tree.sort_unstable();
     assert_eq!(lazy_tree, eager_tree, "same tree entries");
@@ -75,8 +92,10 @@ fn each_path_visits_what_paths_iter_yields() {
     let (_t, root) = tree_of(5);
     let mut visited: Vec<String> = Vec::new();
     root.eachPath(|p| visited.push(p.baseName().unwrap_or_default().to_owned()));
-    let mut yielded: Vec<String> =
-        root.pathsIter().map(|p| p.baseName().unwrap_or_default().to_owned()).collect();
+    let mut yielded: Vec<String> = root
+        .pathsIter()
+        .map(|p| p.baseName().unwrap_or_default().to_owned())
+        .collect();
     visited.sort_unstable();
     yielded.sort_unstable();
     assert_eq!(visited, yielded, "same entries, either spelling");
@@ -85,8 +104,14 @@ fn each_path_visits_what_paths_iter_yields() {
 #[test]
 fn files_iter_aliases_paths_iter() {
     let (_t, root) = tree_of(5);
-    let a: Vec<String> = root.pathsIter().map(|p| p.baseName().unwrap_or_default().to_owned()).collect();
-    let b: Vec<String> = root.filesIter().map(|p| p.baseName().unwrap_or_default().to_owned()).collect();
+    let a: Vec<String> = root
+        .pathsIter()
+        .map(|p| p.baseName().unwrap_or_default().to_owned())
+        .collect();
+    let b: Vec<String> = root
+        .filesIter()
+        .map(|p| p.baseName().unwrap_or_default().to_owned())
+        .collect();
     assert_eq!(a.len(), b.len(), "same count");
 }
 

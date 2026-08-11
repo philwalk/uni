@@ -11,13 +11,13 @@
 //! it the other way round loses information, because `std::path` on Windows will
 //! happily reinterpret a POSIX mount path as a relative one.
 
+use crate::upath::PathContext;
+use crate::upath::PathError;
 use crate::upath::join_posix;
 use crate::upath::no_trailing_slash;
 use crate::upath::normalize_posix;
 use crate::upath::startsWithIgnoreCase;
 use crate::upath::strip_trailing_slash;
-use crate::upath::PathContext;
-use crate::upath::PathError;
 
 /// The five Windows path shapes, plus root and the reject case.
 ///
@@ -246,13 +246,13 @@ fn expand_bare(ctx: &PathContext, raw: &str) -> Result<String, PathError> {
     // having no '/' -- fell through to the bare-filename branch and was glued onto
     // the user directory as `.../uni/C:foo`, with a colon buried inside it.
     //
-    // No longer guarded by `is_windows` (0.16.0): drive-lettered shapes pass
-    // through under EITHER rule set. Under POSIX rules a colon is semantically an
-    // ordinary character, but `X:...` strings denote host-absolute paths in every
-    // real corpus, and gluing them onto the working directory produced
-    // `/munit/test/C:/...` -- unparseable on the very hosts that create such
-    // strings. A genuine POSIX name like `C:x` is reachable as `./C:x`.
-    if raw.len() >= 2 && b[1] == b':' {
+    // Windows rules only. Under POSIX rules the oracle is the posix JVM's own
+    // `Paths.get`: a colon is an ordinary character there, so `C:foo` is a
+    // relative filename and absolutises like every other relative. (0.16.0
+    // briefly passed drive shapes through under either rule set; ruled back --
+    // real posix hosts must match their host oracle. A genuine POSIX name like
+    // `C:x` needs no `./` escape any more.)
+    if ctx.is_windows && raw.len() >= 2 && b[1] == b':' {
         return Ok(raw.to_owned());
     }
     // EVERY other relative form resolves against the working directory (0.16.0),
@@ -396,12 +396,12 @@ pub fn win_abs_to_posix_abs(cyg_mixed: &str) -> Result<String, PathError> {
 
 #[cfg(test)]
 mod tests {
+    use super::PathKind;
     use super::apply_tilde_and_dots;
     use super::classify;
     use super::find_prefix;
     use super::posix_abs;
     use super::resolve_pathstr;
-    use super::PathKind;
     use crate::upath::PathContext;
     use crate::upath::UserInfo;
 
@@ -622,20 +622,19 @@ mod tests {
     }
 
     #[test]
-    fn off_windows_a_colon_bearing_name_passes_through_like_every_drive_shape() {
-        // Changed 0.16.0: drive-lettered shapes pass through under either rule set
-        // -- resolving them against the working directory turned host-absolute
-        // Windows strings into `/munit/test/C:/...`, unparseable on the very hosts
-        // that create them. A genuine POSIX file named `C:foo` is reachable
-        // explicitly, as `./C:foo`.
+    fn off_windows_a_colon_bearing_name_is_an_ordinary_relative() {
+        // POSIX rules follow the posix host oracle (`java.nio.file.Paths.get`
+        // there): a colon is an ordinary character, so `C:foo` absolutises like
+        // any other relative. Restored after 0.16.0 briefly passed drive shapes
+        // through under both rule sets -- mirrors `applyTildeAndDots` in Scala.
         let ctx = drive_ctx(false);
         assert_eq!(
             resolve_pathstr(&ctx, "C:foo", &[]).expect("resolves"),
-            "C:foo"
+            "C:/munit/test/C:foo" // drive_ctx keeps a C:-style userdir even under posix rules
         );
         assert_eq!(
             resolve_pathstr(&ctx, "./C:foo", &[]).expect("resolves"),
-            "C:/munit/test/C:foo" // drive_ctx keeps a C:-style userdir even under posix rules
+            "C:/munit/test/C:foo"
         );
     }
 

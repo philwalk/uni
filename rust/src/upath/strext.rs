@@ -263,11 +263,15 @@ impl StrPathExts for str {
     }
 
     fn readCsv<T: CsvCell>(&self) -> Result<Array2<T>, PathError> {
-        self.as_path()?.try_read_csv().map_err(|e| PathError::from_io(&e))
+        self.as_path()?
+            .try_read_csv()
+            .map_err(|e| PathError::from_io(&e))
     }
 
     fn writeCsv(&self, mat: &Array2<f64>) -> Result<(), PathError> {
-        self.as_path()?.try_write_matrix(mat).map_err(|e| PathError::from_io(&e))
+        self.as_path()?
+            .try_write_matrix(mat)
+            .map_err(|e| PathError::from_io(&e))
     }
 }
 
@@ -286,7 +290,11 @@ mod default_context_tests {
         let p = "some/relative/file.txt".as_path().expect("resolves");
         // Resolution absolutises a bare relative path against the working directory,
         // so the tail survives and the result is longer than the input.
-        assert!(p.posx().ends_with("some/relative/file.txt"), "got {}", p.posx());
+        assert!(
+            p.posx().ends_with("some/relative/file.txt"),
+            "got {}",
+            p.posx()
+        );
     }
 
     #[test]
@@ -316,8 +324,16 @@ mod default_context_tests {
         // assert the wrong thing once already.
         use super::StrExts;
         assert_eq!("a\\b".posx(), "a/b", "one backslash, one slash");
-        assert_eq!("a\\\\b".posx(), "a//b", "two backslashes, two slashes: no collapsing");
-        assert_eq!("a//b".posx(), "a//b", "already-forward duplicates are left alone");
+        assert_eq!(
+            "a\\\\b".posx(),
+            "a//b",
+            "two backslashes, two slashes: no collapsing"
+        );
+        assert_eq!(
+            "a//b".posx(),
+            "a//b",
+            "already-forward duplicates are left alone"
+        );
         assert_eq!("\\\\server\\share".posx(), "//server/share");
         assert_eq!("".posx(), "");
         // An absolute POSIX path always has an absolute POSIX form, on either
@@ -348,6 +364,9 @@ mod default_context_tests {
         // context that other holders already have an `Arc` to.
         let _ = PathContext::default_context();
         let replacement = PathContext::synthetic(&[], UserInfo::new("x", "/h", "/d"), false);
-        assert!(!PathContext::set_default(replacement), "a live default was replaced");
+        assert!(
+            !PathContext::set_default(replacement),
+            "a live default was replaced"
+        );
     }
 }

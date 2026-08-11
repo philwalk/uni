@@ -11,7 +11,11 @@
 //! Rust's method named `parent` used to implement `getParentNonNull`, which made the API audit
 //! match it to Scala's `parent` while the semantics differed, with no test either side.
 
-#![allow(clippy::expect_used, clippy::panic, reason = "a failed setup should abort loudly")]
+#![allow(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "a failed setup should abort loudly"
+)]
 
 use std::sync::Arc;
 
@@ -36,7 +40,11 @@ fn posix(p: &UPath) -> String {
 fn a_upath_is_always_absolute() {
     // The premise everything below rests on: a bare name resolves against the context.
     let p = at("loneName.txt");
-    assert_eq!(posix(&p), "/home/tester/loneName.txt", "resolved, not relative");
+    assert_eq!(
+        posix(&p),
+        "/home/tester/loneName.txt",
+        "resolved, not relative"
+    );
 }
 
 #[test]
@@ -45,12 +53,19 @@ fn the_three_spellings_agree_because_upath_is_absolute() {
         let p = at(input);
         let non_null = posix(&p.getParentNonNull());
         assert_eq!(posix(&p.parent()), non_null, "parent, for {input}");
-        assert_eq!(posix(&p.getParentPath()), non_null, "getParentPath, for {input}");
+        assert_eq!(
+            posix(&p.getParentPath()),
+            non_null,
+            "getParentPath, for {input}"
+        );
     }
 }
 
 #[test]
 fn the_parent_of_a_resolved_name_is_its_directory() {
     assert_eq!(posix(&at("loneName.txt").parent()), "/home/tester");
-    assert_eq!(posix(&at("/home/tester/dir/file.txt").parent()), "/home/tester/dir");
+    assert_eq!(
+        posix(&at("/home/tester/dir/file.txt").parent()),
+        "/home/tester/dir"
+    );
 }

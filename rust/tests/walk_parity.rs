@@ -157,12 +157,16 @@ fn walk_and_files_are_aliases() {
     let (_ctx, root) = ctx_and_root();
     for r in rows() {
         match r[0].as_str() {
-            "alias-walk" => assert_eq!(
-                (sorted_rel(&root, &root.walk().collect::<Vec<_>>())
-                    == sorted_rel(&root, &root.pathsTree()))
-                    .to_string(),
-                r[2]
-            ),
+            // `walk` is the lazy spelling -- raw readdir order, which no filesystem
+            // promises (NTFS sorted, ext4 not) -- so both sides are sorted here, as in
+            // the Scala: the pinned alias property is "same elements as pathsTree".
+            "alias-walk" => {
+                let mut a = sorted_rel(&root, &root.walk().collect::<Vec<_>>());
+                let mut b = sorted_rel(&root, &root.pathsTree());
+                a.sort();
+                b.sort();
+                assert_eq!((a == b).to_string(), r[2]);
+            }
             "alias-files" => assert_eq!(
                 (sorted_rel(&root, &root.files()) == sorted_rel(&root, &root.paths())).to_string(),
                 r[2]

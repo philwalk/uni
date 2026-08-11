@@ -279,8 +279,8 @@ fn nowMillis() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::agoFromMillis;
-    use super::millisOf;
     use super::epoch2DateTime;
+    use super::millisOf;
     use super::round6;
 
     #[test]
@@ -381,6 +381,9 @@ mod tests {
     #[test]
     fn before_the_epoch_borrows_correctly() {
         assert_eq!(epoch2DateTime(-1, 0).to_string(), "1969-12-31T23:59:59.999");
-        assert_eq!(epoch2DateTime(-86_400_000, 0).to_string(), "1969-12-31T00:00");
+        assert_eq!(
+            epoch2DateTime(-86_400_000, 0).to_string(),
+            "1969-12-31T00:00"
+        );
     }
 }

@@ -115,10 +115,7 @@ fn an_explicit_delimiter_overrides_sniffing() {
     p.write("a,b;c,d\n1,2;3,4\n");
 
     let cfg = CsvConfig::with_delimiter(b';');
-    let out: Vec<Vec<String>> = p
-        .try_csv_rows_stream(&cfg)
-        .expect("opens")
-        .collect();
+    let out: Vec<Vec<String>> = p.try_csv_rows_stream(&cfg).expect("opens").collect();
     assert_eq!(out[0], vec!["a,b", "c,d"]);
 }
 

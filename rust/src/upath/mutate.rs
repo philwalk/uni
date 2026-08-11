@@ -70,7 +70,12 @@ impl UPath {
     /// The underlying copy failing, or `dest` existing with `overwrite` false — the latter
     /// mirroring `Files.copy` without `REPLACE_EXISTING`, which throws
     /// `FileAlreadyExistsException` rather than returning quietly.
-    pub fn try_copyTo(&self, dest: &Self, overwrite: bool, copyAttributes: bool) -> io::Result<Self> {
+    pub fn try_copyTo(
+        &self,
+        dest: &Self,
+        overwrite: bool,
+        copyAttributes: bool,
+    ) -> io::Result<Self> {
         if overwrite {
             fs::copy(self.as_std_path(), dest.as_std_path())?;
         } else {
@@ -199,6 +204,11 @@ impl UPath {
     /// occupied by a *file* reports `false` instead of erroring.
     #[must_use]
     pub fn mkdirs(&self) -> bool {
+        // a BadPath must never come into existence: creating the marker directory
+        // is the one way to defeat the family's cannot-be-written guarantee
+        if self.isBadPath() {
+            return false;
+        }
         #[expect(
             clippy::let_underscore_must_use,
             reason = "the result is deliberately discarded: the Scala calls createDirectories and                       then re-checks isDirectory rather than trusting it, which is what makes an                       already-existing directory report true and a name occupied by a file report                       false instead of erroring. The check below is the real answer."
@@ -345,7 +355,8 @@ mod tests {
             .write(true)
             .open(src.as_std_path())
             .unwrap_or_else(|e| panic!("open: {e}"));
-        f.set_modified(back).unwrap_or_else(|e| panic!("set_modified: {e}"));
+        f.set_modified(back)
+            .unwrap_or_else(|e| panic!("set_modified: {e}"));
         drop(f);
 
         // Deliberately no assertion for `copyAttributes = false`. On Windows both `fs::copy` and
@@ -391,7 +402,10 @@ mod tests {
 
         let c = at(t.path(), "c.txt");
         c.write("C");
-        assert!(!c.renameTo(&b, false), "must refuse an occupied destination");
+        assert!(
+            !c.renameTo(&b, false),
+            "must refuse an occupied destination"
+        );
         assert_eq!(b.contentAsString(), "A", "destination untouched");
         assert!(c.exists(), "source survives a refused move");
 
@@ -416,7 +430,11 @@ mod tests {
 
         let c = at(t.path(), "c.txt");
         c.write("C");
-        assert_eq!(c.renameViaCopy(&b, false), -1, "-1 for an occupied destination");
+        assert_eq!(
+            c.renameViaCopy(&b, false),
+            -1,
+            "-1 for an occupied destination"
+        );
         assert!(c.exists(), "source survives");
         assert_eq!(c.renameViaCopy(&b, true), 0);
 
@@ -431,7 +449,11 @@ mod tests {
         f.write("x");
         assert_eq!(f.try_delete().ok(), Some(true), "deleted");
         assert!(!f.exists());
-        assert_eq!(f.try_delete().ok(), Some(false), "absent is Ok(false), not an error");
+        assert_eq!(
+            f.try_delete().ok(),
+            Some(false),
+            "absent is Ok(false), not an error"
+        );
         assert!(!f.delete(), "the bool form reports false for absent");
 
         // An empty directory can go; a non-empty one cannot -- matching deleteIfExists.

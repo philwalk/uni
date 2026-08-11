@@ -148,10 +148,16 @@ fn each_line_visits_every_line_and_tolerates_a_missing_file() {
 fn charset_names_resolve_the_way_forname_does() {
     assert_eq!(Charset::by_name("UTF-8").expect("utf-8"), Charset::Utf8);
     assert_eq!(Charset::by_name("utf8").expect("utf8"), Charset::Utf8);
-    assert_eq!(Charset::by_name("ISO-8859-1").expect("iso"), Charset::Latin1);
+    assert_eq!(
+        Charset::by_name("ISO-8859-1").expect("iso"),
+        Charset::Latin1
+    );
     assert_eq!(Charset::by_name("latin1").expect("latin1"), Charset::Latin1);
     assert_eq!(Charset::by_name("").expect("empty"), Charset::default());
     // Unknown names default to UTF-8 rather than failing, as the Scala does by
     // catching whatever `Charset.forName` throws.
-    assert_eq!(Charset::by_name("no-such-charset").expect("fallback"), Charset::Utf8);
+    assert_eq!(
+        Charset::by_name("no-such-charset").expect("fallback"),
+        Charset::Utf8
+    );
 }

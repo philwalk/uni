@@ -29,16 +29,17 @@
     reason = "public items mirror the Scala API name-for-name, so a script kept in both \n              languages needs no mental translation -- the same reason windows-rs spells \n              Win32 functions SetEvent rather than set_event. Internal helpers and Rust \n              trait contracts stay snake_case, so the case says whether a Scala \n              counterpart exists."
 )]
 
+pub(crate) mod badpath;
 pub mod context;
 pub mod csv;
 pub mod delim;
-pub mod matcsv;
-pub mod meta;
-pub mod mutate;
 pub mod ext;
 pub mod hash;
 pub mod io;
+pub mod matcsv;
+pub mod meta;
 pub mod mount;
+pub mod mutate;
 pub mod resolve;
 pub mod strext;
 pub mod times;
@@ -51,23 +52,23 @@ pub use csv::CsvConfig;
 pub use csv::CsvWriter;
 pub use csv::RowParser;
 pub use delim::DelimState;
-pub use matcsv::CsvCell;
-pub use matcsv::CsvTable;
 pub use ext::UPath;
-pub use times::Ago;
-pub use times::agoFromMillis;
-pub use times::epoch2DateTime;
-pub use walk::TreeWalk;
 pub use hash::Cksum;
 pub use hash::CksumResult;
 pub use hash::Hash64;
 pub use hash::Md5;
 pub use hash::Sha256;
 pub use io::Charset;
+pub use matcsv::CsvCell;
+pub use matcsv::CsvTable;
 pub use mount::MountMaps;
 pub use resolve::PathKind;
 pub use strext::StrExts;
 pub use strext::StrPathExts;
+pub use times::Ago;
+pub use times::agoFromMillis;
+pub use times::epoch2DateTime;
+pub use walk::TreeWalk;
 
 /// Why a path could not be resolved.
 ///
@@ -209,7 +210,11 @@ pub(crate) fn no_trailing_slash(p: &str) -> String {
     if bare.is_empty() {
         // All separators (`//`, `///`) reduces to the root; an *empty* input stays
         // empty. Conflating them made `"".local()` resolve to the msys root.
-        return if p.is_empty() { String::new() } else { "/".to_owned() };
+        return if p.is_empty() {
+            String::new()
+        } else {
+            "/".to_owned()
+        };
     }
     // `C:/` is the drive root and keeps its separator; bare `C:` is drive-relative
     // and must not gain one. Preserve, never add — an earlier attempt at this turned

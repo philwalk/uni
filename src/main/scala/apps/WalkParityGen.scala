@@ -107,10 +107,11 @@ object WalkParityGen:
     out += s"tree\tno-such-entry\t${sortedRel(missing.pathsTree).mkString(",")}"
 
     // `walk` and `files` are aliases; recorded so a port cannot quietly diverge from them.
-    // No `.sorted` here. The API specifies the order now, so re-sorting one side would compare a
-    // sorted list against an unsorted one and report the aliases as differing -- which is exactly
-    // what happened on the first run after the ordering change.
-    out += s"alias-walk\t.\t${(root.walk.toSeq.map(rel) == sortedRel(root.pathsTree))}"
+    // `walk` is the LAZY spelling -- raw readdir order, which no filesystem promises: NTFS
+    // enumerates sorted, ext4 does not (the first Linux run caught this row recording a
+    // filesystem coincidence). So the walk comparison sorts BOTH sides: the alias property
+    // worth pinning is "same elements as pathsTree", never an enumeration order.
+    out += s"alias-walk\t.\t${(root.walk.toSeq.map(rel).sorted == root.pathsTree.map(rel).sorted)}"
     out += s"alias-files\t.\t${(root.files.toSeq.map(f => rel(f.toPath)) == sortedRel(root.paths))}"
 
     val header = Seq(

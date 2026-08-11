@@ -150,7 +150,11 @@ fn the_two_readings_agree_on_which_rows_exist() {
                 wide.len() >= narrow.len(),
                 "[{case}] row {r}: stream is wider than the full read"
             );
-            assert_eq!(&wide[..narrow.len()], &narrow[..], "[{case}] row {r} content");
+            assert_eq!(
+                &wide[..narrow.len()],
+                &narrow[..],
+                "[{case}] row {r} content"
+            );
             assert!(
                 wide[narrow.len()..].iter().all(String::is_empty),
                 "[{case}] row {r}: full read added a non-empty field"
@@ -253,9 +257,11 @@ fn the_numeric_cell_case_pins_big_string_parsing() {
     assert_eq!(by("leading-dot", 0), 0.5);
     assert!(by("blank", 0).is_nan());
     assert!(by("junk", 0).is_nan());
-    assert!(by("infinite", 0).is_nan(), "inf must not survive as infinity");
+    assert!(
+        by("infinite", 0).is_nan(),
+        "inf must not survive as infinity"
+    );
     assert!(by("notanumber", 0).is_nan());
     // BigDecimal has no signed zero.
     assert_eq!(by("plus", 1).to_bits(), 0_f64.to_bits());
 }
-

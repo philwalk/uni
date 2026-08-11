@@ -68,10 +68,10 @@ class WalkParitySuite extends FunSuite:
   }
 
   test("walk and files are aliases, per the reference") {
-    // No `.sorted`: the API specifies the order, so sorting one side would compare it against an
-    // unsorted one and report the aliases as differing.
+    // `walk` is the lazy spelling -- raw readdir order, which no filesystem promises (NTFS
+    // sorted, ext4 not) -- so both sides are sorted: the pinned property is "same elements".
     for r <- rows if r.head == "alias-walk" do
-      assertEquals((root.walk.toSeq.map(rel) == sortedRel(root.pathsTree)).toString, r(2))
+      assertEquals((root.walk.toSeq.map(rel).sorted == root.pathsTree.map(rel).sorted).toString, r(2))
     for r <- rows if r.head == "alias-files" do
       assertEquals((root.files.toSeq.map(f => rel(f.toPath)) == sortedRel(root.paths)).toString, r(2))
   }

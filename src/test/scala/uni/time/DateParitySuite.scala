@@ -159,6 +159,12 @@ class DateParitySuite extends FunSuite:
     for r <- of("mtime") do
       val f = Paths.get(s"test-data/date-parity/inputs/${r(1)}")
       assert(f.exists, s"missing fixture input ${f.posx}")
+      // Re-set the mtime from the row before asserting: a disk timestamp survives
+      // neither `git clone` (checkout time) nor every transport (macOS received a
+      // pre-epoch mtime wrapped to unsigned 32-bit). The row is the authority; the
+      // file on disk is just the vehicle. The generator still sets it at creation.
+      java.nio.file.Files.setLastModifiedTime(
+        f, java.nio.file.attribute.FileTime.fromMillis(r(2).toLong))
       assertEquals(f.lastModified.toString, r(2), s"lastModified of ${r(1)}")
       assertEquals(f.lastModifiedTime.toString, unesc(r(3)), s"lastModifiedTime of ${r(1)}")
       assertEquals(f.lastModifiedYMD, unesc(r(4)), s"lastModifiedYMD of ${r(1)}")

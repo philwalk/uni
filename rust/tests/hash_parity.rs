@@ -111,7 +111,11 @@ fn the_block_halves_pair_is_separated_by_every_hash() {
     assert_ne!(a.md5(), b.md5());
     assert_ne!(a.sha256(), b.sha256());
     assert_ne!(a.cksum().crc, b.cksum().crc);
-    assert_eq!(a.cksum().len, b.cksum().len, "same length, different content");
+    assert_eq!(
+        a.cksum().len,
+        b.cksum().len,
+        "same length, different content"
+    );
 }
 
 #[test]

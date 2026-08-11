@@ -107,7 +107,11 @@ fn line_endings_do_not_change_the_lines() {
     let no_final = with_bytes(t.path(), "nofinal.txt", b"one\r\ntwo\r\nthree");
     assert_eq!(unix.lines(), ["one", "two", "three"]);
     assert_eq!(dos.lines(), unix.lines(), "CRLF matches LF");
-    assert_eq!(no_final.lines(), unix.lines(), "a missing final newline too");
+    assert_eq!(
+        no_final.lines(),
+        unix.lines(),
+        "a missing final newline too"
+    );
 }
 
 #[test]
@@ -121,12 +125,24 @@ fn a_missing_file_reads_as_empty_not_an_error() {
     ));
     let missing = UPath::resolve(&ctx, &format!("{d}/absent.txt")).expect("resolve");
     assert!(missing.lines().is_empty(), "lines");
-    assert_eq!(missing.linesStream(Charset::default()).count(), 0, "linesStream");
-    assert_eq!(missing.withLines(Charset::default(), |it| it.count()), 0, "withLines");
+    assert_eq!(
+        missing.linesStream(Charset::default()).count(),
+        0,
+        "linesStream"
+    );
+    assert_eq!(
+        missing.withLines(Charset::default(), |it| it.count()),
+        0,
+        "withLines"
+    );
     assert_eq!(missing.firstLine(), "", "firstLine");
     // A directory is not a file, and must read as empty rather than as a truncated stream.
     let dir = UPath::resolve(&ctx, &d).expect("resolve dir");
-    assert_eq!(dir.linesStream(Charset::default()).count(), 0, "a directory streams empty");
+    assert_eq!(
+        dir.linesStream(Charset::default()).count(),
+        0,
+        "a directory streams empty"
+    );
 }
 
 #[test]
@@ -156,5 +172,9 @@ fn a_trailing_carriage_return_at_eof_is_data() {
     assert_eq!(streamed, p.lines(), "linesStream agrees");
     // Contrast: the identical CR *with* a newline after it is a terminator and goes.
     let q = with_bytes(t.path(), "crlf.txt", b"one\ntwo\r\n");
-    assert_eq!(q.lines(), ["one", "two"], "the same CR, now paired with a newline");
+    assert_eq!(
+        q.lines(),
+        ["one", "two"],
+        "the same CR, now paired with a newline"
+    );
 }

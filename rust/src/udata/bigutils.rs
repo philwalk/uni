@@ -24,8 +24,8 @@
               so the case says whether a Scala counterpart exists."
 )]
 
-use crate::udata::big::RoundingMode;
 use crate::udata::Big;
+use crate::udata::big::RoundingMode;
 
 /// The characters `str2num`/`isNumeric` treat as potentially numeric.
 fn valid_num_char(c: char) -> bool {
@@ -272,11 +272,7 @@ fn java_format_f(v: f64, width: i32, dec: i32) -> String {
         let rounded = Big::parse(&digits)
             .setScale(dec, RoundingMode::HalfUp)
             .toPlainString();
-        if neg {
-            format!("-{rounded}")
-        } else {
-            rounded
-        }
+        if neg { format!("-{rounded}") } else { rounded }
     };
     let pad = width.max(0) as usize;
     if body.len() < pad {
@@ -343,9 +339,5 @@ pub fn num2string(xx: &Big, dec: i32, factor: f64) -> String {
 /// The double, or `NaN` for the sentinel.
 #[must_use]
 pub fn big2double(xx: &Big) -> f64 {
-    if isBad(xx) {
-        f64::NAN
-    } else {
-        xx.toDouble()
-    }
+    if isBad(xx) { f64::NAN } else { xx.toDouble() }
 }

@@ -102,7 +102,11 @@ impl Mag {
     }
 
     fn add_mag(&self, other: &Self) -> Self {
-        let (long, short) = if self.0.len() >= other.0.len() { (self, other) } else { (other, self) };
+        let (long, short) = if self.0.len() >= other.0.len() {
+            (self, other)
+        } else {
+            (other, self)
+        };
         let mut out = Vec::with_capacity(long.0.len() + 1);
         let mut carry = 0u64;
         for i in 0..long.0.len() {
@@ -223,7 +227,9 @@ impl Mag {
             let p = 10u64.pow(digit_shift as u32);
             let (q2, r2) = q.divrem_small(p);
             // r2 becomes the top digits of the remainder.
-            rem = Self::from_u64(r2).mul_pow10(limb_shift * BASE_DIGITS).add_mag(&rem);
+            rem = Self::from_u64(r2)
+                .mul_pow10(limb_shift * BASE_DIGITS)
+                .add_mag(&rem);
             q = q2;
         }
         (q.trim(), rem.trim())
@@ -246,7 +252,9 @@ impl Mag {
         let mut rem = Self::zero();
         for pos in (0..digits).rev() {
             let (_, digit_mag) = self.digit_at(pos);
-            rem = rem.mul_small(10).add_mag(&Self::from_u64(u64::from(digit_mag)));
+            rem = rem
+                .mul_small(10)
+                .add_mag(&Self::from_u64(u64::from(digit_mag)));
             // Trial digit by binary search over 0..=9.
             let mut d = 0u8;
             for t in (1..=9u8).rev() {
@@ -381,7 +389,12 @@ impl Big {
 
     #[must_use]
     pub fn zero() -> Self {
-        Self { neg: false, coeff: Mag::zero(), scale: 0, prec: MC_PRECISION }
+        Self {
+            neg: false,
+            coeff: Mag::zero(),
+            scale: 0,
+            prec: MC_PRECISION,
+        }
     }
 
     #[must_use]
@@ -393,7 +406,12 @@ impl Big {
     pub fn from_i64(v: i64) -> Self {
         let coeff = Mag::from_u64(v.unsigned_abs());
         let prec = MC_PRECISION.max(coeff.digits());
-        Self { neg: v < 0, coeff, scale: 0, prec }
+        Self {
+            neg: v < 0,
+            coeff,
+            scale: 0,
+            prec,
+        }
     }
 
     /// `Big(s)`: trims, strips `$` and `,`, honours a trailing `%`, and answers the
@@ -477,7 +495,12 @@ impl Big {
         let coeff = Mag::from_decimal_str(&digits);
         let scale = i32::try_from(scale).ok()?;
         let prec = MC_PRECISION.max(coeff.digits());
-        Some(Self { neg: neg && !coeff.is_zero(), coeff, scale, prec })
+        Some(Self {
+            neg: neg && !coeff.is_zero(),
+            coeff,
+            scale,
+            prec,
+        })
     }
 
     // ── The sentinel ──────────────────────────────────────────────────────────
@@ -546,16 +569,33 @@ impl Big {
     fn add_impl(&self, other: &Self) -> Self {
         let (a, b, scale) = self.align(other);
         let raw = if self.neg == other.neg {
-            Self { neg: self.neg, coeff: a.add_mag(&b), scale, prec: self.prec }.normal_zero()
+            Self {
+                neg: self.neg,
+                coeff: a.add_mag(&b),
+                scale,
+                prec: self.prec,
+            }
+            .normal_zero()
         } else {
             match a.cmp_mag(&b) {
-                Ordering::Equal => Self { neg: false, coeff: Mag::zero(), scale, prec: self.prec },
-                Ordering::Greater => {
-                    Self { neg: self.neg, coeff: a.sub_mag(&b), scale, prec: self.prec }
-                }
-                Ordering::Less => {
-                    Self { neg: other.neg, coeff: b.sub_mag(&a), scale, prec: self.prec }
-                }
+                Ordering::Equal => Self {
+                    neg: false,
+                    coeff: Mag::zero(),
+                    scale,
+                    prec: self.prec,
+                },
+                Ordering::Greater => Self {
+                    neg: self.neg,
+                    coeff: a.sub_mag(&b),
+                    scale,
+                    prec: self.prec,
+                },
+                Ordering::Less => Self {
+                    neg: other.neg,
+                    coeff: b.sub_mag(&a),
+                    scale,
+                    prec: self.prec,
+                },
             }
         };
         raw.round_to_prec()
@@ -586,7 +626,12 @@ impl Big {
         }
         let preferred = self.scale - other.scale;
         if self.coeff.is_zero() {
-            return Some(Self { neg: false, coeff: Mag::zero(), scale: preferred, prec: self.prec });
+            return Some(Self {
+                neg: false,
+                coeff: Mag::zero(),
+                scale: preferred,
+                prec: self.prec,
+            });
         }
         // Scale the dividend so the integer quotient lands in [10^(prec-1), 10^(prec+1)):
         // with digit counts xd, yd, the quotient of the scaled magnitudes has prec or
@@ -619,7 +664,11 @@ impl Big {
                 }
             };
             let was_exact = r.is_zero() && dropped == 0;
-            q = if round_up { q2.add_mag(&Mag::from_u64(1)) } else { q2 };
+            q = if round_up {
+                q2.add_mag(&Mag::from_u64(1))
+            } else {
+                q2
+            };
             scale -= 1;
             if q.digits() > self.prec {
                 let (q3, _) = q.divrem_small(10);
@@ -659,7 +708,13 @@ impl Big {
         }
         let scale = i32::try_from(scale).ok()?;
         Some(
-            Self { neg: self.neg != other.neg, coeff: q, scale, prec: self.prec }.normal_zero(),
+            Self {
+                neg: self.neg != other.neg,
+                coeff: q,
+                scale,
+                prec: self.prec,
+            }
+            .normal_zero(),
         )
     }
 
@@ -674,7 +729,11 @@ impl Big {
     // ── Guarded public operators ─────────────────────────────────────────────
 
     fn guarded(&self, other: &Self, f: impl FnOnce() -> Self) -> Self {
-        if self.isNaN() || other.isNaN() { Self::nan() } else { f() }
+        if self.isNaN() || other.isNaN() {
+            Self::nan()
+        } else {
+            f()
+        }
     }
 
     #[must_use]
@@ -685,7 +744,11 @@ impl Big {
     #[must_use]
     pub fn sub(&self, other: &Self) -> Self {
         self.guarded(other, || {
-            let negated = Self { neg: !other.neg, ..other.clone() }.normal_zero();
+            let negated = Self {
+                neg: !other.neg,
+                ..other.clone()
+            }
+            .normal_zero();
             self.add_impl(&negated)
         })
     }
@@ -710,7 +773,11 @@ impl Big {
         if self.isNaN() {
             return Self::nan();
         }
-        Self { neg: !self.neg, ..self.clone() }.normal_zero()
+        Self {
+            neg: !self.neg,
+            ..self.clone()
+        }
+        .normal_zero()
     }
 
     #[must_use]
@@ -718,7 +785,10 @@ impl Big {
         if self.isNaN() {
             return Self::nan();
         }
-        Self { neg: false, ..self.clone() }
+        Self {
+            neg: false,
+            ..self.clone()
+        }
     }
 
     #[must_use]
@@ -772,9 +842,19 @@ impl Big {
                             }
                         }
                     };
-                    if round_up { q.add_mag(&Mag::from_u64(1)) } else { q }
+                    if round_up {
+                        q.add_mag(&Mag::from_u64(1))
+                    } else {
+                        q
+                    }
                 };
-                Self { neg: self.neg, coeff, scale, prec: self.prec }.normal_zero()
+                Self {
+                    neg: self.neg,
+                    coeff,
+                    scale,
+                    prec: self.prec,
+                }
+                .normal_zero()
             }
         }
     }
@@ -801,20 +881,35 @@ impl Big {
         while r.coeff.digits() as i32 > precision {
             let (q, rem) = r.coeff.divrem_pow10(1);
             debug_assert!(rem.is_zero(), "carry digit must be an exact zero");
-            r = Self { neg: r.neg, coeff: q, scale: r.scale - 1, prec: r.prec };
+            r = Self {
+                neg: r.neg,
+                coeff: q,
+                scale: r.scale - 1,
+                prec: r.prec,
+            };
         }
         r
     }
 
     /// `sqrt(MathContext.DECIMAL128)`: 34 significant digits, exact results stripped to the
     /// preferred scale `self.scale / 2`. **BigNaN for a negative**, where Scala throws.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one Newton iteration with its scale bookkeeping, a direct port of the \
+                  BigDecimal algorithm; splitting it would hide the correspondence"
+    )]
     #[must_use]
     pub fn sqrt(&self) -> Self {
         if self.isNaN() || self.neg {
             return Self::nan();
         }
         if self.coeff.is_zero() {
-            return Self { neg: false, coeff: Mag::zero(), scale: self.scale / 2, prec: self.prec };
+            return Self {
+                neg: false,
+                coeff: Mag::zero(),
+                scale: self.scale / 2,
+                prec: self.prec,
+            };
         }
         // Scale the coefficient so its digit count is about 2×(34+2) and the adjusted
         // scale is even; the integer square root then has ~35-36 digits.
@@ -853,7 +948,11 @@ impl Big {
                     // tie; the floor said 5, meaning the fraction pushes it above half.
                     Ordering::Equal => true,
                 };
-                q = if round_up { q2.add_mag(&Mag::from_u64(1)) } else { q2 };
+                q = if round_up {
+                    q2.add_mag(&Mag::from_u64(1))
+                } else {
+                    q2
+                };
                 scale -= 1;
                 if q.digits() > MC_PRECISION {
                     continue;
@@ -864,7 +963,12 @@ impl Big {
             return Self::nan();
         };
         let prec = MC_PRECISION.max(q.digits());
-        Self { neg: false, coeff: q, scale, prec }
+        Self {
+            neg: false,
+            coeff: q,
+            scale,
+            prec,
+        }
     }
 
     /// `~^` with an integer exponent: exact `pow`, as Java's. **BigNaN for a negative
@@ -887,7 +991,13 @@ impl Big {
         };
         let neg = self.neg && exp % 2 == 1;
         let prec = MC_PRECISION.max(coeff.digits());
-        Self { neg, coeff, scale, prec }.normal_zero()
+        Self {
+            neg,
+            coeff,
+            scale,
+            prec,
+        }
+        .normal_zero()
     }
 
     /// `~^` with a fractional exponent: through `f64::powf`, as the Scala falls back to
@@ -898,11 +1008,18 @@ impl Big {
             return Self::nan();
         }
         if exp == exp.trunc() && (0.0..=i32::MAX as f64).contains(&exp) {
-            #[expect(clippy::cast_possible_truncation, reason = "guarded integral and in range")]
+            #[expect(
+                clippy::cast_possible_truncation,
+                reason = "guarded integral and in range"
+            )]
             return self.pow(exp as i32);
         }
         let d = self.toDouble().powf(exp);
-        if d.is_nan() { Self::nan() } else { Self::from_f64(d) }
+        if d.is_nan() {
+            Self::nan()
+        } else {
+            Self::from_f64(d)
+        }
     }
 
     // ── Comparisons ──────────────────────────────────────────────────────────
@@ -963,7 +1080,11 @@ impl Big {
             return f64::NAN;
         }
         // Through the scientific rendering, which Rust's parser rounds correctly.
-        let s = format!("{}E{}", self.coeff.to_decimal_string(), -i64::from(self.scale));
+        let s = format!(
+            "{}E{}",
+            self.coeff.to_decimal_string(),
+            -i64::from(self.scale)
+        );
         let v: f64 = s.parse().unwrap_or(f64::NAN);
         if self.neg { -v } else { v }
     }
@@ -973,7 +1094,10 @@ impl Big {
         if self.isNaN() {
             return f32::NAN;
         }
-        #[expect(clippy::cast_possible_truncation, reason = "float narrowing is the semantics")]
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "float narrowing is the semantics"
+        )]
         {
             self.toDouble() as f32
         }
@@ -983,7 +1107,10 @@ impl Big {
     /// ported because callers were compiled against it.
     #[must_use]
     pub fn toInt(&self) -> i32 {
-        #[expect(clippy::cast_possible_truncation, reason = "low-order bits are the semantics")]
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "low-order bits are the semantics"
+        )]
         {
             self.toLong() as i32
         }
@@ -1001,7 +1128,10 @@ impl Big {
             self.coeff.clone()
         };
         let low = truncated.low_u64();
-        #[expect(clippy::cast_possible_wrap, reason = "two's-complement wrap is the semantics")]
+        #[expect(
+            clippy::cast_possible_wrap,
+            reason = "two's-complement wrap is the semantics"
+        )]
         let v = low as i64;
         if self.neg { v.wrapping_neg() } else { v }
     }
@@ -1163,7 +1293,11 @@ impl std::ops::Neg for &Big {
 /// the layout is what decides the resulting `BigDecimal` scale.
 fn java_double_to_string(d: f64) -> String {
     if d == 0.0 {
-        return if d.is_sign_negative() { "-0.0".to_owned() } else { "0.0".to_owned() };
+        return if d.is_sign_negative() {
+            "-0.0".to_owned()
+        } else {
+            "0.0".to_owned()
+        };
     }
     let sci = format!("{d:e}"); // e.g. "1.2345e7", "-5e-4"
     let (mantissa, exp_str) = sci.split_once('e').unwrap_or((sci.as_str(), "0"));
@@ -1179,9 +1313,17 @@ fn java_double_to_string(d: f64) -> String {
         if point <= 0 {
             format!("{sign}0.{}{}", "0".repeat((-point) as usize), digits)
         } else if (point as usize) >= digits.len() {
-            format!("{sign}{}{}.0", digits, "0".repeat(point as usize - digits.len()))
+            format!(
+                "{sign}{}{}.0",
+                digits,
+                "0".repeat(point as usize - digits.len())
+            )
         } else {
-            format!("{sign}{}.{}", &digits[..point as usize], &digits[point as usize..])
+            format!(
+                "{sign}{}.{}",
+                &digits[..point as usize],
+                &digits[point as usize..]
+            )
         }
     } else {
         let head = &digits[..1];

@@ -71,7 +71,9 @@ impl fmt::Display for FormatError {
                  year; use lowercase [y]. It differs only near New Year, so a typo here \
                  renders a date a year out for a few days each December."
             ),
-            Self::UnclosedQuote { ref pattern } => write!(f, "unclosed quote in pattern [{pattern}]"),
+            Self::UnclosedQuote { ref pattern } => {
+                write!(f, "unclosed quote in pattern [{pattern}]")
+            }
         }
     }
 }
@@ -116,8 +118,8 @@ pub fn dayOfWeek(year: i32, month: i32, day: i32) -> i32 {
     // `rem_euclid`, not `%`: Rust's `%` keeps the sign of the dividend, so a negative year
     // would yield a negative index. Java's `%` behaves the same way, but the Scala original
     // only ever sees years >= 1, so this is the port being stricter rather than different.
-    let dow = (y + y.div_euclid(4) - y.div_euclid(100) + y.div_euclid(400) + T[idx] + day)
-        .rem_euclid(7);
+    let dow =
+        (y + y.div_euclid(4) - y.div_euclid(100) + y.div_euclid(400) + T[idx] + day).rem_euclid(7);
     // Sakamoto yields 0 = Sunday; shift so Monday is 1.
     if dow == 0 { 7 } else { dow }
 }
@@ -169,11 +171,12 @@ pub fn format(
                 out.push('\'');
                 i += 2;
             } else {
-                let close = chars[i + 1..].iter().position(|&q| q == '\'').ok_or_else(|| {
-                    FormatError::UnclosedQuote {
+                let close = chars[i + 1..]
+                    .iter()
+                    .position(|&q| q == '\'')
+                    .ok_or_else(|| FormatError::UnclosedQuote {
                         pattern: fmt.to_owned(),
-                    }
-                })?;
+                    })?;
                 out.extend(&chars[i + 1..=i + close]);
                 i += close + 2;
             }
@@ -270,10 +273,10 @@ fn field(
 
 #[cfg(test)]
 mod tests {
+    use super::FormatError;
     use super::dayOfWeek;
     use super::format;
     use super::pad;
-    use super::FormatError;
 
     #[test]
     fn pads_and_keeps_sign_outside() {
@@ -299,8 +302,14 @@ mod tests {
 
     #[test]
     fn twelve_hour_clock_maps_zero_and_noon_to_twelve() {
-        assert_eq!(format(2024, 5, 12, 0, 0, 0, 0, "h a").as_deref(), Ok("12 AM"));
-        assert_eq!(format(2024, 5, 12, 12, 0, 0, 0, "h a").as_deref(), Ok("12 PM"));
+        assert_eq!(
+            format(2024, 5, 12, 0, 0, 0, 0, "h a").as_deref(),
+            Ok("12 AM")
+        );
+        assert_eq!(
+            format(2024, 5, 12, 12, 0, 0, 0, "h a").as_deref(),
+            Ok("12 PM")
+        );
     }
 
     #[test]

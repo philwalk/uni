@@ -53,7 +53,10 @@ pub struct TimeConfig {
 
 impl Default for TimeConfig {
     fn default() -> Self {
-        Self { monthFirst: true, order: DateOrder::Auto }
+        Self {
+            monthFirst: true,
+            order: DateOrder::Auto,
+        }
     }
 }
 
@@ -138,12 +141,21 @@ pub fn classifyWith(s: &str, cfg: TimeConfig) -> Shape {
 /// Deliberately independent of any configuration -- it reports what the string says, not what
 /// a configuration would make of it. `SmartParse.numericDateOrder`.
 #[must_use]
-#[expect(clippy::if_same_then_else, reason = "the branches mirror the Scala ladder, and each
-                                             None means a different thing -- see comments")]
+#[expect(
+    clippy::if_same_then_else,
+    reason = "the branches mirror the Scala ladder, and each
+                                             None means a different thing -- see comments"
+)]
 pub fn numericDateOrder(s: &str) -> Option<DateOrder> {
     let nums: Vec<i32> = tokenize(&pre_normalize(s))
         .iter()
-        .filter_map(|t| if let Token::Num(v) = t { Some(*v) } else { None })
+        .filter_map(|t| {
+            if let Token::Num(v) = t {
+                Some(*v)
+            } else {
+                None
+            }
+        })
         .collect();
     if nums.len() < 3 {
         return None;
@@ -304,7 +316,14 @@ fn expand_compact_date(s: &str) -> String {
     }
     if date_ok && time.as_ref().is_none_or(|t| t.0) {
         let time_part = time.map(|t| format!(" {}", t.1)).unwrap_or_default();
-        format!("{}-{}-{}{}{}", &s[0..4], &s[4..6], &s[6..8], time_part, &s[rest_start..])
+        format!(
+            "{}-{}-{}{}{}",
+            &s[0..4],
+            &s[4..6],
+            &s[6..8],
+            time_part,
+            &s[rest_start..]
+        )
     } else {
         s.to_owned()
     }
@@ -426,25 +445,45 @@ fn strip_weekday(tokens: Vec<Token>) -> Vec<Token> {
 fn nums_of(tokens: &[Token]) -> Vec<i32> {
     tokens
         .iter()
-        .filter_map(|t| if let Token::Num(v) = t { Some(*v) } else { None })
+        .filter_map(|t| {
+            if let Token::Num(v) = t {
+                Some(*v)
+            } else {
+                None
+            }
+        })
         .collect()
 }
 
 fn words_of(tokens: &[Token]) -> Vec<&str> {
     tokens
         .iter()
-        .filter_map(|t| if let Token::Word(w) = t { Some(w.as_str()) } else { None })
+        .filter_map(|t| {
+            if let Token::Word(w) = t {
+                Some(w.as_str())
+            } else {
+                None
+            }
+        })
         .collect()
 }
 
 fn ampm_of(tokens: &[Token]) -> Option<bool> {
-    tokens
-        .iter()
-        .find_map(|t| if let Token::AmPm(p) = t { Some(*p) } else { None })
+    tokens.iter().find_map(|t| {
+        if let Token::AmPm(p) = t {
+            Some(*p)
+        } else {
+            None
+        }
+    })
 }
 
-#[expect(clippy::cognitive_complexity, reason = "a direct port of the Scala decision ladder;
-                                                splitting it would hide the correspondence")]
+#[expect(
+    clippy::cognitive_complexity,
+    clippy::too_many_lines,
+    reason = "a direct port of the Scala decision ladder;
+                                                splitting it would hide the correspondence"
+)]
 fn classify_tokens(tokens: &[Token], cfg: TimeConfig) -> Shape {
     let nums = nums_of(tokens);
     let words = words_of(tokens);
@@ -454,13 +493,21 @@ fn classify_tokens(tokens: &[Token], cfg: TimeConfig) -> Shape {
 
     // Word-based patterns first, in actual token order.
     if head_is_month_word && nums.len() >= 2 && is_day(nums[0]) {
-        let has_valid_year =
-            nums[1..].iter().any(|&n| is_year(n)) || (nums.len() >= 2 && is_two_digit_year(nums[1]));
-        if has_valid_year { Shape::MonthDayYear } else { Shape::Unknown }
+        let has_valid_year = nums[1..].iter().any(|&n| is_year(n))
+            || (nums.len() >= 2 && is_two_digit_year(nums[1]));
+        if has_valid_year {
+            Shape::MonthDayYear
+        } else {
+            Shape::Unknown
+        }
     } else if head_is_day_num && !words.is_empty() && is_month_word(words[0]) {
-        let has_valid_year =
-            nums[1..].iter().any(|&n| is_year(n)) || (nums.len() >= 2 && is_two_digit_year(nums[1]));
-        if has_valid_year { Shape::DayMonthYear } else { Shape::Unknown }
+        let has_valid_year = nums[1..].iter().any(|&n| is_year(n))
+            || (nums.len() >= 2 && is_two_digit_year(nums[1]));
+        if has_valid_year {
+            Shape::DayMonthYear
+        } else {
+            Shape::Unknown
+        }
     } else if nums.len() >= 3 {
         let (a, b, c) = (nums[0], nums[1], nums[2]);
 
@@ -480,14 +527,31 @@ fn classify_tokens(tokens: &[Token], cfg: TimeConfig) -> Shape {
 
         if is_year(a) && is_month(b) && is_day(c) {
             Shape::YMD
-        } else if is_month(a) && is_day(a) && is_month(b) && is_day(b) && (is_year(c) || is_two_digit_year(c)) {
+        } else if is_month(a)
+            && is_day(a)
+            && is_month(b)
+            && is_day(b)
+            && (is_year(c) || is_two_digit_year(c))
+        {
             // Both readings valid: the configured order decides.
-            if cfg.monthFirst { Shape::MDY } else { Shape::DMY }
+            if cfg.monthFirst {
+                Shape::MDY
+            } else {
+                Shape::DMY
+            }
         } else if is_month(a) && is_day(b) && (is_year(c) || is_two_digit_year(c)) {
             // Only month-first reads. Under an enforced day-first order, refuse it.
-            if cfg.order == DateOrder::DayFirst { Shape::Unknown } else { Shape::MDY }
+            if cfg.order == DateOrder::DayFirst {
+                Shape::Unknown
+            } else {
+                Shape::MDY
+            }
         } else if is_day(a) && is_month(b) && (is_year(c) || is_two_digit_year(c)) {
-            if cfg.order == DateOrder::MonthFirst { Shape::Unknown } else { Shape::DMY }
+            if cfg.order == DateOrder::MonthFirst {
+                Shape::Unknown
+            } else {
+                Shape::DMY
+            }
         } else {
             Shape::Unknown
         }
@@ -607,8 +671,12 @@ fn looks_like_iso8601_raw(s: &str) -> bool {
 ///
 /// Unreachable from [`parseDateSmart`] -- the dispatcher never answers `ISO8601`, in either
 /// language -- but ported so the dead arm it serves reads the same as the Scala's.
-#[expect(clippy::cognitive_complexity, clippy::too_many_lines, reason = "one grammar, one function: field-by-field
-                                                ISO reading does not decompose usefully")]
+#[expect(
+    clippy::cognitive_complexity,
+    clippy::too_many_lines,
+    reason = "one grammar, one function: field-by-field
+                                                ISO reading does not decompose usefully"
+)]
 fn parse_iso8601(raw: &str) -> Option<UniDateTime> {
     let b = raw.as_bytes();
     let digits = |r: std::ops::Range<usize>| -> Option<i32> {
@@ -699,7 +767,11 @@ fn parse_mdy(tokens: &[Token]) -> Option<UniDateTime> {
     let nums = nums_of(tokens);
     let ampm = ampm_of(tokens);
     if nums.len() >= 3 && is_month(nums[0]) && is_day(nums[1]) {
-        let year = if is_year(nums[2]) { nums[2] } else { expand_two_digit_year(nums[2]) };
+        let year = if is_year(nums[2]) {
+            nums[2]
+        } else {
+            expand_two_digit_year(nums[2])
+        };
         Some(build_with_ampm(year, nums[0], nums[1], &nums[3..], ampm))
     } else {
         None
@@ -710,7 +782,11 @@ fn parse_dmy(tokens: &[Token]) -> Option<UniDateTime> {
     let nums = nums_of(tokens);
     let ampm = ampm_of(tokens);
     if nums.len() >= 3 && is_day(nums[0]) && is_month(nums[1]) {
-        let year = if is_year(nums[2]) { nums[2] } else { expand_two_digit_year(nums[2]) };
+        let year = if is_year(nums[2]) {
+            nums[2]
+        } else {
+            expand_two_digit_year(nums[2])
+        };
         Some(build_with_ampm(year, nums[1], nums[0], &nums[3..], ampm))
     } else {
         None
@@ -784,10 +860,18 @@ fn parse_mdy_with_time(tokens: &[Token]) -> Option<UniDateTime> {
     if nums.len() >= 5 {
         let (month, day, hour, minute) = (nums[0], nums[1], nums[2], nums[3]);
         let (second, year) = if nums.len() >= 6 {
-            let yr = if is_year(nums[5]) { nums[5] } else { expand_two_digit_year(nums[5]) };
+            let yr = if is_year(nums[5]) {
+                nums[5]
+            } else {
+                expand_two_digit_year(nums[5])
+            };
             (nums[4], yr)
         } else {
-            let yr = if is_year(nums[4]) { nums[4] } else { expand_two_digit_year(nums[4]) };
+            let yr = if is_year(nums[4]) {
+                nums[4]
+            } else {
+                expand_two_digit_year(nums[4])
+            };
             (0, yr)
         };
         if is_month(month)

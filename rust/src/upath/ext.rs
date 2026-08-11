@@ -34,13 +34,14 @@
 
 use std::sync::Arc;
 
+use crate::upath::PathContext;
+use crate::upath::PathError;
+use crate::upath::badpath;
 use crate::upath::no_trailing_slash;
 use crate::upath::resolve::find_prefix;
 use crate::upath::resolve::posix_abs;
 use crate::upath::resolve::posix_rel;
 use crate::upath::resolve::resolve_pathstr;
-use crate::upath::PathContext;
-use crate::upath::PathError;
 
 /// A resolved path, carrying the context it was resolved against.
 ///
@@ -61,8 +62,24 @@ impl UPath {
     /// # Errors
     /// Propagates [`PathError`] from resolution.
     pub fn resolve(ctx: &Arc<PathContext>, input: &str) -> Result<Self, PathError> {
+        // URI extraction first: `file:///c/tmp` is a legal URI whose colon
+        // must not trip the badness predicate -- the same order as Scala,
+        // where the `file://` branch runs before the check.
         let target = file_uri_path(input);
-        let win = resolve_pathstr(ctx, target.as_deref().unwrap_or(input), &[])?;
+        let effective = target.as_deref().unwrap_or(input);
+        if badpath::is_unrepresentable(ctx.is_windows, effective) {
+            // Total resolve, mirroring Scala's total `Paths.get`: the input
+            // rides along PUA-encoded in a BadPath family member, recoverable
+            // via `badPathString`. Checked before resolution, so hostile
+            // strings never reach the drive-cwd rule or mount rewriting; the
+            // stored form skips `java_normalize` because the payload is a
+            // single name element with nothing to normalise.
+            return Ok(Self {
+                ctx: Arc::clone(ctx),
+                s: badpath::bad_pathstr(effective),
+            });
+        }
+        let win = resolve_pathstr(ctx, effective, &[])?;
         Ok(Self {
             ctx: Arc::clone(ctx),
             s: java_normalize(&win),
@@ -148,11 +165,7 @@ impl UPath {
         if self.s.len() >= 3 && b[1] == b':' && b[2] == b'/' {
             return 3;
         }
-        if self.s.starts_with('/') {
-            1
-        } else {
-            0
-        }
+        if self.s.starts_with('/') { 1 } else { 0 }
     }
 
     /// Name elements, excluding the root. `PathExts.segments`.
@@ -165,6 +178,28 @@ impl UPath {
             .split('/')
             .filter(|c| !c.is_empty())
             .collect()
+    }
+
+    /// Whether this is a BadPath family member — the stand-in a total resolve
+    /// returns for a string the host filesystem cannot represent. Structural
+    /// test (exactly two name elements, the first the marker), so it survives
+    /// normalisation and does not depend on which drive letter was chosen.
+    /// `PathExts.isBadPath`.
+    #[must_use]
+    pub fn isBadPath(&self) -> bool {
+        matches!(self.segments().as_slice(), [first, _] if *first == badpath::MARKER)
+    }
+
+    /// The originally specified path string. Decodes a BadPath payload back to
+    /// the exact input — the designated diagnostic form; ordinary paths degrade
+    /// to their posix rendering, keeping the method total.
+    /// `PathExts.badPathString`.
+    #[must_use]
+    pub fn badPathString(&self) -> String {
+        match self.segments().as_slice() {
+            [first, payload] if *first == badpath::MARKER => badpath::decode(payload),
+            _ => self.s.clone(),
+        }
     }
 
     /// Name elements joined in reverse. `PathExts.reversePath`.
@@ -359,7 +394,15 @@ impl UPath {
     /// than one character rather than for any root at all.
     #[must_use]
     pub fn is_absolute(&self) -> bool {
-        self.root_len() > 1
+        // Context rules, matching Path.isAbsolute on each platform's JVM. On
+        // POSIX a leading '/' is the only root there is and it IS absolute --
+        // the first Linux run of this port caught the Windows rule being
+        // applied unconditionally, which made to_absolute prefix the cwd twice.
+        if self.ctx.is_windows {
+            self.root_len() > 1
+        } else {
+            self.s.starts_with('/')
+        }
     }
 
     /// Resolved against the working directory when relative. `Path.toAbsolutePath`.

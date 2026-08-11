@@ -54,15 +54,19 @@ impl UPath {
     }
 
     /// Whether the path exists, following symlinks. `Files.exists`.
+    ///
+    /// BadPath members short-circuit to `false` with zero OS contact, so the
+    /// canonical `"some-str".as_path()?.isFile()` idiom never pays even a
+    /// fast-fail probe on the sentinel's nonexistent drive.
     #[must_use]
     pub fn exists(&self) -> bool {
-        self.as_std_path().exists()
+        !self.isBadPath() && self.as_std_path().exists()
     }
 
     /// Whether the path is a directory. `Files.isDirectory`.
     #[must_use]
     pub fn isDirectory(&self) -> bool {
-        self.as_std_path().is_dir()
+        !self.isBadPath() && self.as_std_path().is_dir()
     }
 
     /// The file size in bytes, or `0` when the path does not exist.
@@ -276,7 +280,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap_or_else(|e| panic!("tempdir: {e}"));
         let missing = probe(tmp.path(), "not-there.txt");
         assert_eq!(missing.length(), 0);
-        assert!(missing.isEmpty(), "a missing file reports empty, as in Scala");
+        assert!(
+            missing.isEmpty(),
+            "a missing file reports empty, as in Scala"
+        );
         assert!(!missing.nonEmpty());
         assert!(!missing.exists());
 
@@ -284,7 +291,10 @@ mod tests {
         std::fs::write(empty.as_std_path(), b"").unwrap_or_else(|e| panic!("write: {e}"));
         assert_eq!(empty.length(), 0);
         assert!(empty.isEmpty());
-        assert!(empty.exists(), "...and is indistinguishable from the missing one by length");
+        assert!(
+            empty.exists(),
+            "...and is indistinguishable from the missing one by length"
+        );
 
         let full = probe(tmp.path(), "full.txt");
         std::fs::write(full.as_std_path(), b"hello").unwrap_or_else(|e| panic!("write: {e}"));

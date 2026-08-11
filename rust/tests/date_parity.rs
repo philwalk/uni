@@ -20,11 +20,12 @@
 
 use std::path::PathBuf;
 
-use uni::upath::epoch2DateTime;
-use uni::upath::times::round6;
 use uni::upath::PathContext;
 use uni::upath::UPath;
 use uni::upath::UserInfo;
+use uni::upath::epoch2DateTime;
+use uni::upath::times::round6;
+use uni::utime::UniDateTime;
 use uni::utime::dayOfWeek;
 use uni::utime::daysBetween;
 use uni::utime::daysRounded;
@@ -38,7 +39,6 @@ use uni::utime::monthAbbrev2Number;
 use uni::utime::quikDate;
 use uni::utime::quikDateTime;
 use uni::utime::secondsBetween;
-use uni::utime::UniDateTime;
 
 fn fixture() -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -360,6 +360,26 @@ fn file_reading_path_matches_at_a_set_mtime() {
     for r in of_kind("mtime") {
         let file = dir.join(&r[1]);
         assert!(file.is_file(), "missing fixture input {file:?}");
+        // Re-set the mtime from the row before asserting, as the Scala suite does:
+        // a disk timestamp survives neither `git clone` (checkout time) nor every
+        // transport (macOS received a pre-epoch mtime wrapped to unsigned 32-bit).
+        // The row is the authority; the file on disk is just the vehicle.
+        let millis: i64 = r[2]
+            .parse()
+            .unwrap_or_else(|e| panic!("bad mtime row: {e}"));
+        let mtime = if millis >= 0 {
+            std::time::UNIX_EPOCH + std::time::Duration::from_millis(millis.unsigned_abs())
+        } else {
+            std::time::UNIX_EPOCH - std::time::Duration::from_millis(millis.unsigned_abs())
+        };
+        let handle = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&file)
+            .unwrap_or_else(|e| panic!("cannot open {file:?}: {e}"));
+        handle
+            .set_modified(mtime)
+            .unwrap_or_else(|e| panic!("cannot set mtime on {file:?}: {e}"));
+        drop(handle);
         let p = UPath::resolve(&ctx, &file.to_string_lossy().replace('\\', "/"))
             .unwrap_or_else(|e| panic!("cannot resolve {file:?}: {e}"));
         assert_eq!(

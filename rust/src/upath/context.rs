@@ -83,7 +83,13 @@ impl PathContext {
     pub fn synthetic(mount_lines: &[String], user: UserInfo, is_windows: bool) -> Self {
         let mounts = MountMaps::parse(mount_lines, is_windows);
         // the simulated platform's rule, not the host's: fixtures must not vary by host
-        Self::from_parts(is_windows, is_windows, mounts, user, DriveCwdSource::Synthetic)
+        Self::from_parts(
+            is_windows,
+            is_windows,
+            mounts,
+            user,
+            DriveCwdSource::Synthetic,
+        )
     }
 
     /// Builds a context from the running environment. The only function here that

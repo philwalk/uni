@@ -250,6 +250,12 @@ class UniRootCoverageSuite extends FunSuite:
   }
 
   test("samePathString: case differs → true on Win/Mac, false on Linux") {
+    // The assertion is about the HOST rule (DefaultPathsConfig.caseFold folds
+    // where the host filesystem folds), but this suite's beforeEach injects a
+    // synthetic config whose caseFold follows the SIMULATED platform -- on macOS
+    // that simulated posix, and the fold vanished. First failure came from the
+    // first real macOS run.
+    resetConfig()
     val result = samePathString("/Foo/BAR", "/foo/bar")
     if isWin || isMac then assert(result,  "expected case-insensitive match on Win/Mac")
     else              assert(!result, "expected case-sensitive mismatch on Linux")
