@@ -107,6 +107,23 @@ class BadPathSuite extends FunSuite:
     assert(p.isFile, s"build.sbt should exist through the guarded isFile: $p")
   }
 
+  test("posix renderings decode family members; windows renderings stay raw") {
+    // The MSYS2 model: the posix world (ls, cygpath -u) shows decoded names,
+    // the windows world (cygpath -m/-w) shows the on-disk PUA form. NARROW: only
+    // family members decode -- a real PUA-named file keeps raw renderings, so
+    // strings handed to Windows programs keep working.
+    if isWin then
+      val p = "a:b:c".asPath
+      assert(p.posix.endsWith("/a:b:c"), s"posix should decode: ${p.posix}")
+      assert(p.stdpath.endsWith("/a:b:c"), s"stdpath should decode: ${p.stdpath}")
+      assert(p.relpath.endsWith("/a:b:c"), s"relpath should decode: ${p.relpath}")
+      assert(p.posx.contains(''), s"posx must stay raw: ${p.posx}")
+      val real = "dir/fd".asPath // ordinary path, PUA is genuine content
+      assert(!real.isBadPath)
+      assert(real.posix.contains('') && !real.posix.contains(':'),
+        s"real PUA names stay raw in posix renderings: ${real.posix}")
+  }
+
   test("legal input containing PUA characters is not a BadPath") {
     // U+F03A is a legal filename character everywhere; only genuinely
     // unrepresentable strings enter the family

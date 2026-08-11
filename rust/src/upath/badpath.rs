@@ -191,6 +191,30 @@ mod tests {
         }
     }
 
+    #[test]
+    fn posix_renderings_decode_members_and_windows_renderings_stay_raw() {
+        // The MSYS2 model: the posix world (ls, cygpath -u) shows decoded names,
+        // the windows world (cygpath -m/-w) shows the on-disk PUA form. NARROW:
+        // only family members decode -- a real PUA-named file keeps raw
+        // renderings, so strings handed to Windows programs keep working.
+        let c = ctx();
+        let p = UPath::resolve(&c, "a:b:c").expect("total");
+        assert!(
+            p.posix().expect("posix").ends_with("/a:b:c"),
+            "posix decodes"
+        );
+        assert!(p.stdpath().ends_with("/a:b:c"), "stdpath decodes");
+        assert!(p.relpath().ends_with("/a:b:c"), "relpath decodes");
+        assert!(p.posx().contains('\u{F03A}'), "posx stays raw");
+        let real = UPath::resolve(&c, "dir/f\u{F03A}d").expect("ordinary");
+        assert!(!real.isBadPath());
+        let posix = real.posix().expect("posix");
+        assert!(
+            posix.contains('\u{F03A}') && !posix.contains(':'),
+            "real PUA names stay raw in posix renderings: {posix}"
+        );
+    }
+
     // ── through UPath::resolve, mirroring the Scala BadPathSuite ────────────
 
     use std::sync::Arc;

@@ -135,6 +135,21 @@ Q:/__uni-BadPath__/<pua-encoded-original-input>     (Windows; Q: = chosen absent
   `isBadPath` to false with zero OS contact, so the canonical idiom never
   pays even the fast-fail probe.
 
+## Rendering namespaces (decided 2026-08-11)
+
+MSYS2 shows the same file two ways: the posix world (`ls`, `cygpath -u`)
+decodes PUA back to the original characters; the windows world
+(`cygpath -m`/`-w`, the on-disk name) shows the raw lookalikes. uni's
+renderings now follow the same split — for **BadPath family members only**:
+`posix`/`stdpath`/`relpath` decode the payload, `posx`/`localpath`/`dospath`
+stay raw. Narrow by design: a real file whose name genuinely holds PUA
+characters keeps raw renderings everywhere, because rendering strings get
+handed to Windows programs and the raw form is the one that works there — a
+BadPath has no working consumers to break. Aligning *real* PUA-named files
+with `ls` is deferred to the parse-side question below (cygwin-style
+re-encoding), where render and parse can change together instead of opening a
+one-way render→parse trapdoor.
+
 ## Long-term: a uni FileSystemProvider
 
 The NIO.2 provider mechanism (precedent: the JDK's zipfs, Google's jimfs) is

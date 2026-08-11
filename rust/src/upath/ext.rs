@@ -134,7 +134,7 @@ impl UPath {
     /// Propagates [`PathError`]; a relative path is returned unchanged rather than
     /// failing, matching `posixAbs`.
     pub fn posix(&self) -> Result<String, PathError> {
-        posix_abs(&self.ctx, &self.s)
+        posix_abs(&self.ctx, &self.s).map(|s| self.decode_if_bad_path(s))
     }
 
     /// Path with any drive letter removed: `C:/foo` → `/foo`. `PathExts.noDrive`.
@@ -199,6 +199,25 @@ impl UPath {
         match self.segments().as_slice() {
             [first, payload] if *first == badpath::MARKER => badpath::decode(payload),
             _ => self.s.clone(),
+        }
+    }
+
+    /// POSIX-namespace renderings (`posix`, `stdpath`, `relpath`) of a BadPath
+    /// member decode the PUA payload back to the original characters — matching
+    /// MSYS2, whose posix world (`ls`, `cygpath -u`) always shows decoded names.
+    ///
+    /// NARROW BY DESIGN: only recognized family members decode. A real file
+    /// whose name genuinely holds PUA characters keeps raw renderings
+    /// everywhere, because rendering strings get handed to Windows programs and
+    /// the raw form is the one that works there; a BadPath has no working
+    /// consumers to break — it never names a real file. The Windows-namespace
+    /// forms (`posx`, `localpath`, `dospath`) stay raw for every path, like
+    /// `cygpath -m`/`-w`. Mirrors the Scala `pathExts.decodeIfBadPath`.
+    fn decode_if_bad_path(&self, rendered: String) -> String {
+        if self.isBadPath() {
+            badpath::decode(&rendered)
+        } else {
+            rendered
         }
     }
 
@@ -474,6 +493,10 @@ impl UPath {
     /// This always normalises.
     #[must_use]
     pub fn stdpath(&self) -> String {
+        self.decode_if_bad_path(self.stdpath_raw())
+    }
+
+    fn stdpath_raw(&self) -> String {
         let abs = self.to_absolute().normalized();
         if !self.ctx.is_windows {
             return abs.s;
@@ -524,7 +547,8 @@ impl UPath {
         // path and `standardizePath` immediately threw it away by re-absolutising,
         // and the two used different working directories into the bargain. Fixed in
         // `uni` first; this is the matching change.
-        posix_rel(&self.ctx, &self.s).unwrap_or_else(|_| self.s.clone())
+        let rel = posix_rel(&self.ctx, &self.s).unwrap_or_else(|_| self.s.clone());
+        self.decode_if_bad_path(rel)
     }
 
     /// This path relative to the working directory, as a path rather than a string.

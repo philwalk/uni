@@ -17,6 +17,23 @@ import scala.util.Using
 /** Path Extension methods */
 object pathExts {
 
+  /** POSIX-namespace renderings (`posix`, `stdpath`, `relpath`) of a BadPath
+    * member decode the PUA payload back to the original characters — matching
+    * MSYS2, whose posix world (`ls`, `cygpath -u`) always shows decoded names.
+    *
+    * NARROW BY DESIGN: only recognized family members decode. A real file whose
+    * name genuinely holds PUA characters keeps raw renderings everywhere,
+    * because rendering strings get handed to Windows programs and the raw form
+    * is the one that works there; a BadPath has no working consumers to break —
+    * it never names a real file. The Windows-namespace forms (`posx`,
+    * `localpath`, `dospath`) stay raw for every path, like `cygpath -m`/`-w`.
+    * Aligning REAL PUA-named files with `ls` is deferred to the parse-side
+    * question (cygwin-style re-encoding) in docs/PathProviderDesignNote.md,
+    * where it can be done symmetrically.
+    */
+  private def decodeIfBadPath(p: Path, rendered: String): String =
+    if p.isBadPath then BadPath.decode(rendered) else rendered
+
   extension (@annotation.unused p: Path) {
     // BadPath members short-circuit to false with zero OS contact, so the
     // canonical `if ("some-str".asPath.isFile) ...` idiom never pays even a
@@ -88,7 +105,7 @@ object pathExts {
      *  Now the Path-facing form of `posixRel`, which is what that method's own
      *  deprecation note already promised ("Use `Path.relpath`"). One working
      *  directory, `config.userdir`, and pure string work throughout. */
-    def relpath: String = toPosixRel(p.toString)
+    def relpath: String = decodeIfBadPath(p, toPosixRel(p.toString))
 
     def abs: String =
       if (java.nio.file.Files.exists(p))
@@ -97,9 +114,9 @@ object pathExts {
         normalizePosix(p.normalize.toString)
 
     def abspath: Path    = p.toAbsolutePath.normalize
-    def stdpath: String  = standardizePath(p)
+    def stdpath: String  = decodeIfBadPath(p, standardizePath(p))
     def posx: String     = normalizePosix(p.toString)
-    def posix: String    = toPosixAbs(p.toString)
+    def posix: String    = decodeIfBadPath(p, toPosixAbs(p.toString))
 
     /** Native form: backslashes on Windows, forward slashes elsewhere.
      *
