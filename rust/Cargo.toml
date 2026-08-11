@@ -1,8 +1,24 @@
 [package]
-name = "uni"
-version = "0.1.0"
+# "uni" is squatted on crates.io (abandoned 2018 WIP); the lib name below keeps
+# `use uni::…` working for client code regardless of the package name.
+name = "vastblue-uni"
+# Lockstep with the Scala library's version in build.sbt: both publish together
+# from release-and-publish.sh, which asserts the two agree. The number says
+# which uni release this port mirrors; PARITY.md says how much of it.
+version = "0.16.0"
 edition = "2024"
-license = "MIT"
+rust-version = "1.87"
+description = "Rust port of the uni Scala library: MSYS2/cygwin-aware path resolution, date-time parsing and arithmetic, BigDecimal-compatible decimals, CSV tooling, and 3PRF forecasting"
+license = "Apache-2.0"
+repository = "https://github.com/philwalk/uni"
+readme = "README.md"
+keywords = ["path", "msys2", "datetime", "csv", "forecasting"]
+categories = ["filesystem", "date-and-time", "parser-implementations", "mathematics"]
+# The tests, examples and bench bins all read ../test-data, which lives outside
+# the package root and cannot ship in the crate -- exclude them so the tarball
+# is lean and carries no tests that cannot run. rust-toolchain.toml is excluded
+# so the repo's pinned toolchain is not forced onto consumers.
+exclude = ["tests/", "examples/", "src/bin/", "Makefile", "rustfmt.toml", "rust-toolchain.toml"]
 
 [lib]
 name = "uni"

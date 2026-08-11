@@ -22,7 +22,18 @@ class WalkParitySuite extends FunSuite:
   lazy val rows: Seq[Vector[String]] =
     val f = Paths.get("test-data/walk-parity/scala-reference.txt")
     assert(f.exists, s"missing fixture ${f.posx}; regenerate with: sbt \"runMain uni.apps.WalkParityGen\"")
-    f.lines.filterNot(_.startsWith("#")).filter(_.nonEmpty).map(_.split("\t", -1).toVector).toSeq
+    val rs = f.lines.filterNot(_.startsWith("#")).filter(_.nonEmpty).map(_.split("\t", -1).toVector).toSeq
+    // Self-prime the git-dropped empty directories (the generator's `bareDirs`,
+    // which pin the empty-listing case): git cannot commit a bare directory, so a
+    // fresh clone lacks them -- CI's first run failed exactly there. Every FILE
+    // in the tree is committed and therefore present, so any referenced path
+    // missing from disk can only be one of those directories. The reference is
+    // the authority; the disk is just the vehicle.
+    for
+      r <- rs if r.head == "tree" && r(1) == "."
+      entry <- expected(r) if entry != "." && !root.resolve(entry).exists
+    do java.nio.file.Files.createDirectories(root.resolve(entry))
+    rs
 
   def rel(p: java.nio.file.Path): String =
     val r = root.toAbsolutePath.normalize.relativize(p.toAbsolutePath.normalize)

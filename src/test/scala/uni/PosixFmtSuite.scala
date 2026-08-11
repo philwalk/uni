@@ -95,7 +95,6 @@ final class PosixFmtSuite extends FunSuite {
       test(s"String.posix maps $pathstr to $pathstr"):
         val actual   = posixAbs(pathstr)
         val expected = JPaths.get(pathstr).toAbsolutePath.normalize.toString
-        if actual != expected then hook += 1
         assertEquals(actual, expected)
 
 

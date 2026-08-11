@@ -140,8 +140,6 @@ class PathSpec extends FunSuite {
     for ((fname, expected) <- pairs) {
       val name = s"File: should correctly handle posix drive for dos path $fname"
       test(name) {
-        if fname == "C:" then
-          hook += 1
         printf(s"\nfname[$fname], expected[$expected]")
         val file = Paths.get(fname)
         noisy(f"${file.stdpath}%-22s : ${file.exists}")
@@ -150,9 +148,6 @@ class PathSpec extends FunSuite {
         val df       = Paths.get(a)
         val af       = Paths.get(d)
         val sameFile = af.isSameFile(df)
-        if (!sameFile) {
-          hook += 1
-        }
         val equivalent = a == d || a.asPath.abs == d.asPath.abs
         if (sameFile && equivalent) {
           noisy(s"a [$a] == d [$d]")
@@ -166,8 +161,6 @@ class PathSpec extends FunSuite {
           val x = file.exists
           val y = new JFile(expected).exists
           if (x && y) {
-            if !sameFile then
-              hook += 1
             assert(sameFile, s"af[$af] not same as df[$df]")
           } else {
             noisy(s"[$file].exists: [$x]\n[$expected].exists: [$y]")

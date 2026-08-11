@@ -336,8 +336,6 @@ private def normalizePosix(p: Path): String =
   normalizePosix(p.toString)
 
 private def normalizePosix(p: String): String =
-  if p.trim.matches("C:[\\/]") then
-    hook += 1
   val str = p.replace('\\', '/')
   if str == "/" then "/"
   else noTrailingSlash(str)
@@ -475,8 +473,6 @@ private[uni] def toPosixAbs(raw0: String): String = {
   else if raw.startsWith("/") then
     noTrailingSlash(raw)
   else {
-    if raw == "file.txt" then
-      hook += 1
     val cygMixed = Resolver.resolvePathstr(raw)
     if Resolver.classify(cygMixed) == Resolver.Relative then
       // Defensive only, as of 0.16.0: `applyTildeAndDots` now absolutises every

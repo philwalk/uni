@@ -43,11 +43,33 @@ fn rows() -> Vec<Vec<String>> {
         .collect()
 }
 
+/// Self-primes the git-dropped empty directories (the generator's `bareDirs`,
+/// which pin the empty-listing case): git cannot commit a bare directory, so a
+/// fresh clone lacks them -- CI's first run failed exactly there. Every FILE in
+/// the tree is committed and therefore present, so any referenced path missing
+/// from disk can only be one of those directories. The reference is the
+/// authority; the disk is just the vehicle. Mirrors the Scala suite.
+fn prime_bare_dirs() {
+    let root = fixture_root();
+    for r in rows() {
+        if r[0] == "tree" && r[1] == "." {
+            for entry in r[2].split(',').filter(|e| !e.is_empty() && *e != ".") {
+                let p = root.join(entry);
+                if !p.exists() {
+                    std::fs::create_dir_all(&p)
+                        .unwrap_or_else(|e| panic!("cannot create {p:?}: {e}"));
+                }
+            }
+        }
+    }
+}
+
 /// The fixture root, with the context it was resolved in.
 ///
 /// The context comes back alongside rather than being read off the `UPath`: `ctx()` is
 /// `pub(crate)`, and an integration test is a separate crate, so it cannot reach it.
 fn ctx_and_root() -> (Arc<PathContext>, UPath) {
+    prime_bare_dirs();
     let canon = fixture_root()
         .canonicalize()
         .unwrap_or_else(|e| panic!("fixture tree missing: {e}"));

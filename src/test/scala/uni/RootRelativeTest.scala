@@ -63,9 +63,6 @@ class RootRelativeTest extends FunSuite {
         val sameDriveLetter =
           jf.toString.take(2).equalsIgnoreCase(cwdDrive)
 
-        if (mounted.isEmpty && !sameDriveLetter)
-          hook += 1
-
         assert(
           mounted.nonEmpty || sameDriveLetter,
           clues(s"testdir=$testdir thisPath=$thisPath cwdDrive=$cwdDrive")
@@ -110,8 +107,6 @@ class RootRelativeTest extends FunSuite {
           config.msysRoot + testdir
 
         val actual = dirPath.toString.replace('\\', '/')
-        if actual.toLowerCase != expected.toLowerCase then
-          hook += 1
         assertEquals(
           actual.toLowerCase,
           expected.toLowerCase,

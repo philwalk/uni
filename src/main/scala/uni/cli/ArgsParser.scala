@@ -8,11 +8,7 @@ import java.nio.file.Files
 // showUsage, eachArg, thisArg, consumeNext, peekNext, nextInt, nextLong, nextDouble
 
 object ArgsParser {
-  var hook = 0  // TEMPORARY! // all non-private fields are exported
-
   private[uni] var exitFn: Int => Nothing = (code: Int) => sys.exit(code)
-
-  inline def _usage(m: String = "", list: Seq[String]): Nothing = showUsage(m, list*) // TEMPORARY!
 
   // inline causes `currentCaller` macro to expand callers source path
   inline def showUsage(m: String = "", list: String*): Nothing = {
@@ -48,13 +44,11 @@ object ArgsParser {
       }
     }
 
-    def peekNext: String = {
-      if i + 1 < args.length then
-        withNext {
-          args(i + 1)
-        }
-      else ""
-    }
+    // "" for "no next argument" -- indistinguishable from a genuine empty-string
+    // argument, by design: peeking is for lookahead decisions, and a caller that
+    // needs the distinction uses consumeNext, which errors instead of answering.
+    def peekNext: String =
+      if i + 1 < args.length then args(i + 1) else ""
 
     def nextInt: Int = {
       consumeNext.toIntOption.getOrElse {
@@ -74,16 +68,11 @@ object ArgsParser {
       }
     }
 
-    def consumeInt: Int    = nextInt
-    def consumeLong: Long  = nextLong
-
     def run(pf: PartialFunction[String, Unit]): Unit = {
       while i < args.length do {
-        val arg = thisArg
-        if pf.isDefinedAt(arg) then
-          pf(arg)
-        else
-          usage(s"unknown argument [$arg]")
+        // applyOrElse, not isDefinedAt-then-apply: the latter evaluates every
+        // case's pattern twice per argument.
+        pf.applyOrElse(thisArg, (a: String) => usage(s"unknown argument [$a]"))
         i += 1
       }
     }
@@ -91,12 +80,12 @@ object ArgsParser {
 
   private val current = new DynamicVariable[Ctx | Null](null)
 
-  private def withArgs[A](args: Seq[String], usage: String => Nothing)
-                 (pf: PartialFunction[String, Unit]): A = {
+  private def withArgs(args: Seq[String], usage: String => Nothing)
+                 (pf: PartialFunction[String, Unit]): Unit = {
     val ctx = new Ctx(args, usage)
     current.withValue(ctx) {
       ctx.run(pf)
-    }.asInstanceOf[A]
+    }
   }
 
   private def ctx: Ctx = {
@@ -118,9 +107,6 @@ object ArgsParser {
   def nextLong: Long = ctx.nextLong
 
   def nextDouble: Double = ctx.nextDouble
-
-  def consumeInt: Int   = ctx.consumeInt
-  def consumeLong: Long = ctx.consumeLong
 
   /* returns base filename */
   inline def progName: String = {
@@ -181,11 +167,13 @@ object ArgsParser {
   }
 
   private def findFileRecursive(root: Path, fileName: String): Option[Path] = {
-    import java.nio.file.{Files, FileVisitOption}
+    import java.nio.file.Files
     import scala.jdk.StreamConverters.*
     
     try {
-      Files.walk(root, 10, FileVisitOption.FOLLOW_LINKS)
+      // No FOLLOW_LINKS: this is a display-only last resort for a usage message,
+      // and following symlinks buys cycle risk and slow scans for no benefit.
+      Files.walk(root, 10)
         .toScala(Iterator)
         .find(p => p.getFileName.toString == fileName)
     } catch {

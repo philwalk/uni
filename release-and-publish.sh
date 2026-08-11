@@ -95,9 +95,25 @@ git diff --stat | grep -v "| 0" | grep -q . && { echo "ERROR: unstaged content c
 # 5. CHANGELOG.md has an entry for this version
 grep -q "## v$VERSION" CHANGELOG.md || { echo "ERROR: CHANGELOG.md missing '## v$VERSION' entry"; exit 1; }
 
+# 5b. The Rust crate versions in lockstep with the library — both publish from
+#     this run, and the crate's number says which uni release it mirrors. Checked
+#     here, before any test or tag, so a forgotten Cargo.toml edit fails fast.
+CRATE_VERSION=$(grep -E '^version\s*=\s*"[^"]+"' rust/Cargo.toml | head -1 | grep -oE '"[^"]+"' | tr -d '"')
+[ "$CRATE_VERSION" = "$VERSION" ] || {
+  echo "ERROR: rust/Cargo.toml version ($CRATE_VERSION) != build.sbt version ($VERSION)"
+  echo "       They publish in lockstep — update rust/Cargo.toml (and Cargo.lock via a build)."
+  exit 1
+}
+
 # 6. Clean build and all tests must pass
 echo "==> Running clean test..."
 sbt clean test
+
+# 6b. The Rust crate publishes from this same commit (step 12), so it gates the
+#     release too — the same lint and test commands rust.yml runs, one
+#     definition, in the Makefile.
+echo "==> Running Rust lint and tests..."
+(cd rust && make lint && make test)
 
 # 7. Commit if anything is staged
 if git diff --cached --quiet; then
@@ -135,3 +151,22 @@ echo "==> Done: https://github.com/$(gh repo view --json nameWithOwner -q .nameW
 
 # 11. Sonatype publish is triggered automatically by .github/workflows/release.yml
 #     when the tag push (step 9) is received by GitHub — no manual sbt step needed.
+
+# 12. Publish the Rust crate ($CRATE_VERSION == $VERSION, asserted in check #5b),
+#     idempotently, in the same spirit as check #2: a version already on
+#     crates.io is immutable, so it is skipped rather than failed — which is what
+#     lets a re-run after a mid-script failure pick up where it died. Publishing
+#     runs locally with the cargo login token, unlike Sonatype which goes
+#     through CI.
+CRATE=$(grep -E '^name\s*=\s*"[^"]+"' rust/Cargo.toml | head -1 | grep -oE '"[^"]+"' | tr -d '"')
+# crates.io's API policy 403s requests without a descriptive User-Agent — and a
+# 403 here would misread "already published" as "not yet", sending a re-run into
+# a cargo publish that dies on the immutable-version error instead of skipping.
+if curl -sf --max-time 20 -A "uni-release-script (github.com/philwalk/uni)" \
+     "https://crates.io/api/v1/crates/$CRATE/$CRATE_VERSION" >/dev/null 2>&1; then
+  echo "==> crates.io already has $CRATE $CRATE_VERSION — skipping cargo publish"
+else
+  echo "==> Publishing $CRATE $CRATE_VERSION to crates.io..."
+  (cd rust && cargo publish)
+  echo "==> Published: https://crates.io/crates/$CRATE/$CRATE_VERSION"
+fi

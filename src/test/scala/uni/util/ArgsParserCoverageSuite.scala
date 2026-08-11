@@ -2,7 +2,6 @@ package uni.cli
 
 import munit.FunSuite
 import java.io.{ByteArrayOutputStream, PrintStream}
-import ArgsParser.{consumeInt, consumeLong}
 
 /** Covers ArgsParser branches not exercised by ArgCtxSuite or ArgsParserSuite. */
 class ArgsParserCoverageSuite extends FunSuite {
@@ -73,26 +72,6 @@ class ArgsParserCoverageSuite extends FunSuite {
         case "-n" => nextDouble
       }
     }
-  }
-
-  // ============================================================================
-  // consumeInt / consumeLong — aliases for nextInt / nextLong
-  // ============================================================================
-
-  test("consumeInt: parses integer correctly") {
-    var v = 0
-    eachArg(Seq("-n", "7"), _ => fail("unexpected usage")) {
-      case "-n" => v = consumeInt
-    }
-    assertEquals(v, 7)
-  }
-
-  test("consumeLong: parses long correctly") {
-    var v = 0L
-    eachArg(Seq("-n", "9876543210"), _ => fail("unexpected usage")) {
-      case "-n" => v = consumeLong
-    }
-    assertEquals(v, 9876543210L)
   }
 
   // ============================================================================
