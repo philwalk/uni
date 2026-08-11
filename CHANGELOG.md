@@ -1,3 +1,17 @@
+## Unreleased
+
+**BREAKING — `posixAbs` and `posixRel` are `private[uni]`, the deprecation removed**
+
+v0.16.0 deprecated them with the note that `private[uni]` was the destination and removal
+never was. This is that narrowing. They stay alive underneath the public API forever, since
+they are the engine behind `Path.posix`/`Path.relpath` and the resolution machinery -- what
+changes is only that the outside can no longer name them.
+
+Source-breaking in principle, but a survey of the working script corpus and of `jsrc/` found
+**no caller outside the library**; every in-repo user is `package uni`, which `private[uni]`
+still admits. Side benefit: the twelve deprecation warnings that appeared on every compile
+are gone, which was most of the noise in the build output.
+
 ## v0.16.0 — 2026-08-11
 
 **0.16.0, not 0.15.2.** `versionScheme := semver-spec` is declared, and under 0.x the

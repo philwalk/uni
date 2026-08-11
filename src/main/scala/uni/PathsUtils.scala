@@ -437,9 +437,11 @@ inline private def parentDirOf(s: String): String =
  *   convert rawstr path to `cygpath -u` format
  *   in some cases java sees a different path than cygpath; defer to java.
  */
-/** Plumbing behind `Path.posix` and `String.posix`. Prefer those. */
-@deprecated("Use `Path.posix` or `String.posix`; this becomes private[uni]", "0.16.0")
-def posixAbs(raw: String): String = toPosixAbs(raw)
+/** Plumbing behind `Path.posix` and `String.posix` -- `private[uni]` as of 0.16.0
+ *  rather than deprecated: it left the public API without ever being removed,
+ *  which is the whole plan for it. Alive underneath the extensions forever; a
+ *  survey of the working script corpus found no external caller. */
+private[uni] def posixAbs(raw: String): String = toPosixAbs(raw)
 
 /** True when `pathstr` is the mount root itself, or lies beneath it.
  *
@@ -503,9 +505,10 @@ private[uni] def toPosixAbs(raw0: String): String = {
   }
 }
 
-/** Plumbing behind `Path.relpath`. Prefer that. */
-@deprecated("Use `Path.relpath`; this becomes private[uni]", "0.16.0")
-def posixRel(raw: String): String = toPosixRel(raw)
+/** Plumbing behind `Path.relpath` -- `private[uni]` as of 0.16.0 rather than
+ *  deprecated; see [[posixAbs]] for why that is the destination and not a step
+ *  toward removal. */
+private[uni] def posixRel(raw: String): String = toPosixRel(raw)
 
 /** Implementation of [[posixRel]]; see [[toPosixAbs]] for why the pair exists.
  *  Leverages `toPosixAbs` to deal with `~`, trailing slashes and the mount map. */

@@ -127,3 +127,6 @@ warnings.txt
 CLAUDE.md
 push2mac.sh
 push2quadd.sh
+
+# transient release-notes file (release-and-publish.sh)
+uni-relnotes-*

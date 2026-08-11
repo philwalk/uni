@@ -86,10 +86,16 @@ numpy-rng 378 · walk 30 · hash 23) — plus the byte-identical pair probe
    `hostname`. Pure `std::process`, zero new dependencies. The single biggest enabler
    for porting `jsrc` scripts — the pallet migration leaned on `execLines`/`run`/
    `bashExe` at ~15 sites.
-7. **`cli.ArgsParser` → new `ucli` module.** `eachArg`/`showUsage`/`progName`/
-   `progPath`/`consumeNext`/`peekNext`/`nextInt`/`nextLong`/`nextDouble`. Every
-   script `main` uses this shape; a Rust mirror (closure over a `Ctx`, `progName`
-   from `argv[0]`) makes script ports line-for-line.
+7. **`cli.ArgsParser` → new `cli` module.** **Done (2026-08-11):** `eachArg`
+   (closure over an explicit `ArgCtx`, since Rust has neither partial functions nor
+   dynamic scoping), `showUsage`, and the cursor family `thisArg`/`consumeNext`/
+   `peekNext`/`nextInt`/`nextLong`/`nextDouble`. Named `cli`, not `ucli`, to match the
+   Scala package. The program name comes from the caller's *source* file via
+   `#[track_caller]` + `Location::caller().file()` — NOT `argv[0]` as this item
+   originally proposed: Scala names the source file (scala-cli properties, then a
+   macro), so `treestat.rs` beside `treestat.sc` is the faithful mirror while an
+   executable name would not be. Demonstrated by the `treestat` pair, which exercises
+   every cursor method.
 8. **`HereDoc.DATA/END`** — portable as a `data!()` macro using `file!()` to locate
    the source file; works for rust-script-style single files. Small; low priority.
 9. **`inferType(path, scanRows)` + `getMostSpecificType`** — column type inference
