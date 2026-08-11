@@ -25,6 +25,79 @@ is `private[uni]` -- out of the public API, permanently alive underneath it, sin
 are the engine behind `Path.posix`/`Path.relpath` and the resolution machinery.
 
 
+**ADDED — the BadPath family: `Paths.get`/`asPath` are total**
+
+A path string the host filesystem cannot represent (`"a:b:c"`, `"a<b"`, an embedded NUL on
+POSIX) no longer throws. It comes back as a member of the **BadPath family**: an ordinary
+`java.nio.file.Path` of shape `<absent-drive>:/__uni-BadPath__/<payload>`, where the payload
+is the original string encoded with cygwin/MSYS2's own on-disk convention (each rejected
+character mapped to its Private Use Area counterpart at `U+F000 + char`, plus `/` → U+F02F so
+the whole input stays one name element). `Path.badPathString` decodes it back exactly, which
+makes the canonical idiom safe on arbitrary input:
+
+```scala
+if "some-file".asPath.isFile then ...          // never throws, whatever the string
+val p = "f:/weekly".asPath
+if p.isBadPath then println(s"bad path [${p.badPathString}]")
+```
+
+`uni.Paths.get` and `.asPath` are total *identically* — the latter is a one-line delegation
+and client code treats them as interchangeable. The loud alternative is
+`java.nio.file.Paths.get`, which uni does not touch.
+
+The family cannot be written to: the root is a drive letter chosen at runtime from the
+letters absent from `GetLogicalDrives`, so `Files.write`, `createFile`, `copy` and even
+`createDirectories` fail at the driver level — no stray file can appear, even through JDK
+calls outside uni's control. Construction is a pure string parse (no `GetFullPathName`, no
+drive-cwd probe), and uni's own `exists`/`isFile`/`isDirectory` short-circuit to `false` with
+zero OS contact.
+
+Renderings follow MSYS2's namespace split: the POSIX-namespace forms (`posix`, `stdpath`,
+`relpath`) decode the payload, as `ls` and `cygpath -u` do; the Windows-namespace forms
+(`posx`, `localpath`, `dospath`) stay raw, as `cygpath -m`/`-w` do. Only family members
+decode — a real file whose name genuinely holds PUA characters keeps raw renderings, because
+those strings get handed to Windows programs and the raw form is the one that works there.
+Design, lineage (this revives `vastblue.unifile`'s `PathBad`, fixing its two flaws) and the
+deferred parse-side question: `docs/PathProviderDesignNote.md`.
+
+**ADDED — `uni.cli` in Rust, and six matched demo pairs that are also parity tests**
+
+The Rust port gains `eachArg`/`showUsage` and the argument cursor (`thisArg`, `consumeNext`,
+`peekNext`, `nextInt`, `nextLong`, `nextDouble`), with the program name derived from the
+caller's *source* file via `#[track_caller]` — the structural analogue of the Scala macro, so
+usage messages read `treestat.rs` beside `treestat.sc` rather than naming an executable.
+
+Alongside it, five new demo pairs join `pairProbe`: `treestat`, `pathshow`, `datecalc`,
+`bigcalc`, `forecast`. Each is one program written twice — `jsrc/<name>.sc` and
+`rust/examples/<name>.rs` — printing **byte-identical output**, so `diff` is a test that
+covers what per-method fixtures cannot: composition, and any method with no fixture row.
+`datecalc` and `bigcalc` use fixed inputs and no filesystem, so their output is identical on
+any machine on any day. Catalogue and technique: `docs/DemoPairs.md`.
+
+They immediately earned it, finding an `is_absolute` that applied the Windows root rule under
+POSIX rules, a walk fixture row that had pinned NTFS enumeration order as if it were API, and
+the two `Big` divergences resolved below.
+
+**FIXED — `sqrt` of a negative and a negative `pow` exponent answer BigNaN in both languages**
+
+`Big(-1).sqrt` and `x ~^ -2` used to throw `ArithmeticException` in Scala while the no-panic
+Rust port answered `BigNaN`; neither answer was fixture-pinned, so the divergence was live and
+invisible. Scala now adopts `BigNaN` — unrepresentable input travelling as data is the house
+style (compare `BadDate`, `BadPath`, `str2num`) — and both cases are recorded in the
+big-parity fixture, since an error case nobody records is an error case that can drift.
+
+**FIXED — `isNumeric` is now exactly "`str2num` can parse this"**
+
+It answered a third question that matched neither of its callers: `validNumChar` admitted `$`
+and `,`, which routed `"$1,234.56"` into a strict branch whose patterns could not accept a
+currency-with-grouping shape, so it reported `false` for a string `str2num` parses happily —
+while the CSV loaders' own type sniffing stripped the `$` and called the same string numeric.
+`isNumeric` now delegates (`!isBad(str2num(col))`), so the two cannot disagree, and
+`getMostSpecificType` gets its own predicate for the decorated shapes it alone parses (`5K`,
+`(100)`, trailing `%`). The `NumPattern1..4` regex set that only ever approximated `str2num`
+is gone, along with its hand-rolled Rust equivalent. Fixture rows move accordingly: currency
+and grouping shapes to `true`, the decorated shapes to `false`.
+
 **BREAKING — path comparisons fold case only where the platform folds, and every
 relative form absolutises**
 

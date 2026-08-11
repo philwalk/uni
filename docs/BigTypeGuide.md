@@ -111,7 +111,7 @@ val c = 100L  / x    // Long   / Big
 ```scala
 val squared   = b ~^ 2        // integer exponent — full BigDecimal precision
 val cubeRoot  = b ~^ (1.0/3)  // fractional exponent — Double precision fallback
-val sqrtExact = b.sqrt         // square root via DECIMAL128 (always high-precision)
+val sqrtExact = b.sqrt         // square root via DECIMAL128; BigNaN for a negative
 ```
 
 **Other numeric methods:**
@@ -212,7 +212,7 @@ getMostSpecificType("foo")        // "foo"           ← String passthrough
 | Function | Signature | Description |
 | :--- | :--- | :--- |
 | `getMostSpecificType` | `String → String \| Big \| DateTime` | Promote raw cell to most specific type |
-| `isNumeric` | `String → Boolean` | Whether a string is parseable as a number |
+| `isNumeric` | `String → Boolean` | Exactly "`str2num` can parse this" — one delegated definition (0.16.0), so the two cannot disagree. Accepts currency and grouping (`$1,234.56`); the decorated shapes `getMostSpecificType` handles (`5K`, `(100)`) are **not** `isNumeric` |
 | `str2num` | `String → Big` | Parse numeric string; `BigNaN` on failure |
 
 `getMostSpecificType` handles: plain numbers, parenthesised negatives `(500)`,
@@ -284,9 +284,11 @@ The semantics worth knowing, identical in both languages and pinned by
   `loadMatB`, `loadSmartBig`, `readCsvB`, all ported).
 - `toString` follows Java's notation rules, so scale is part of the rendering contract.
 
-Two loud divergences, by the port's no-panic rule: `sqrt` of a negative and a negative `pow`
-exponent **throw** in Scala and answer BigNaN in Rust. The wider `Mat[Big]` arithmetic surface
-is not ported -- this is the type and the loaders.
+`sqrt` of a negative and a negative `pow` exponent answer **BigNaN in both languages** as of
+0.16.0 — Scala used to throw and adopted the port's answer, since a sentinel travelling as
+data is the house style (compare BadDate, BadPath, `str2num`), and the fixture now pins those
+rows. The wider `Mat[Big]` arithmetic surface is not ported -- this is the type and the
+loaders.
 
 Regenerate the fixture with `sbt "runMain uni.apps.BigParityGen"`, only when the change in
 answers is intended.

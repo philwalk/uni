@@ -166,15 +166,24 @@ class BigUtilsSuite extends FunSuite {
     assert(!isNumeric("1-2-3"))
   }
 
-  test("isNumeric is true for K/M/B suffixed numbers (NumPattern3)") {
-    assert(isNumeric("5K"))
-    assert(isNumeric("2M"))
-    assert(isNumeric("100B"))
+  // 0.16.0: `isNumeric` is now exactly "str2num can parse this" — one definition,
+  // delegated, so the two can no longer disagree. The decorated shapes below
+  // (K/M/B scale suffix, parenthesised negative) are NOT things `str2num` parses;
+  // they are `getMostSpecificType`'s territory, gated by its own predicate. That
+  // split is the fix: the old pattern set answered a third question that matched
+  // neither caller, accepting `12%` while rejecting `$1,234.56`.
+
+  test("isNumeric accepts what str2num parses, including currency and grouping") {
+    assert(isNumeric("$1,234.56"), "currency with grouping: the old set rejected this")
+    assert(isNumeric("42"))
+    assert(isNumeric("-1.5e3"))
+    assert(isNumeric("12%"))
   }
 
-  test("isNumeric is true for parenthesised negatives (NumPattern1)") {
-    assert(isNumeric("(100)"))
-    assert(isNumeric("(1.5)"))
+  test("isNumeric rejects the decorated shapes str2num cannot parse") {
+    // getMostSpecificType still classifies these as numbers -- see its own tests
+    for s <- Seq("5K", "2M", "100B", "(100)", "(1.5)") do
+      assert(!isNumeric(s), s"[$s] is getMostSpecificType's shape, not str2num's")
   }
 
   // ============================================================================

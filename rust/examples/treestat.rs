@@ -48,7 +48,8 @@ fn usage(m: &str) -> ! {
     showUsage(
         m,
         &[
-            "[-n <count>]    ; rows in the top-N tables (default 5)",
+            "[-n [count]]        ; rows in the top-N tables (count optional, default 5)",
+            "[-minsize <bytes>]  ; ignore files smaller than <bytes>",
             "[-asof <date>]  ; reference date for ages (default: today)",
             "[-csv <path>]   ; write the by-extension table as CSV and read it back",
             "<dir>           ; directory tree to scan",
@@ -61,6 +62,7 @@ fn midnight(d: &UniDateTime) -> UniDateTime {
 }
 
 #[expect(
+    clippy::cognitive_complexity,
     clippy::too_many_lines,
     reason = "one linear report, mirroring the Scala twin's main statement for statement; \
               splitting it would obscure the line-for-line correspondence the pair exists for"
@@ -69,9 +71,17 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let (mut topN, mut asofArg, mut csvPath, mut dirArg) =
         (5usize, String::new(), String::new(), String::new());
+    let mut minSize = 0i64;
 
     eachArg(&args, &|m| usage(m), |ctx: &mut ArgCtx, arg| match arg {
-        "-n" => topN = ctx.nextInt() as usize,
+        // `-n` takes an OPTIONAL count: peekNext looks ahead without consuming,
+        // so `-n 8 dir` and `-n dir` both parse (the latter keeps the default)
+        "-n" => {
+            if !ctx.peekNext().is_empty() && ctx.peekNext().chars().all(|c| c.is_ascii_digit()) {
+                topN = ctx.nextInt() as usize;
+            }
+        }
+        "-minsize" => minSize = ctx.nextLong(),
         "-asof" => asofArg = ctx.consumeNext().to_owned(),
         "-csv" => csvPath = ctx.consumeNext().to_owned(),
         a if !a.starts_with('-') && dirArg.is_empty() => dirArg = a.to_owned(),
@@ -119,16 +129,24 @@ fn main() {
             (rel(p), p.length(), ext, p.clone())
         })
         .collect();
+    files.retain(|f| f.1 >= minSize);
     files.sort_by(|a, b| a.0.cmp(&b.0));
     let dirs = all.iter().filter(|p| p.isDirectory()).count();
+    // immediate listings, distinct from the recursive walk above
+    println!(
+        "top level: {} entries, {} dirs, {} files",
+        root.paths().len(),
+        root.subdirs().len(),
+        root.subfiles().len()
+    );
 
     let n = files.len();
     let total = files
         .iter()
-        .fold(Big::from_i64(0), |acc, f| acc.add(&Big::from_i64(f.1)));
+        .fold(Big::from_i64(0), |acc, f| acc + Big::from_i64(f.1));
     let abbr = NumFormat::Abbrev();
     let mean = if n > 0 {
-        total.div(&Big::from_i64(n as i64))
+        &total / Big::from_i64(n as i64)
     } else {
         Big::from_i64(0)
     };
@@ -207,6 +225,13 @@ fn main() {
             numStr(&Big::from_i64(*size), &abbr),
             p.hash64()
         );
+    }
+
+    if let Some((r, _, _, p)) = largest.first() {
+        let ck = p.cksum();
+        println!("  digests of {r}:");
+        println!("    cksum {}/{}   md5 {}", ck.crc, ck.len, p.md5());
+        println!("    sha256 {}", p.sha256());
     }
 
     // deterministic sample, with replacement: both languages draw the same

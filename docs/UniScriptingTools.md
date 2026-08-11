@@ -142,7 +142,35 @@ usage: hash64demo.sc <options>
 <dirname>    ; hash all files below directory
 ```
 
-The program name (`hash64demo.sc`) is derived automatically from the runtime environment.
+The program name (`hash64demo.sc`) is derived automatically from the runtime environment —
+via scala-cli's `scala.sources`/`scala.source.names` properties, falling back to a Scala 3
+macro that captures the caller's source path at compile time. That is what lets a `.sc`
+script and a byte-identical `.scala` copy (differing only in the first two lines) both report
+their own filename, in an IDE as well as from the shell.
+
+**The same pattern in Rust.** The port's `uni::cli` module mirrors this API: `eachArg` takes
+a closure and an argument cursor (Rust has no partial functions or dynamic scoping, so the
+cursor is explicit and a `match` plays the partial function), and `showUsage` derives the
+program name from `#[track_caller]` + `Location::caller().file()` — the caller's *source*
+file, exactly as the Scala macro does, rather than `argv[0]`'s executable name:
+
+```rust
+let usage = |m: &str| showUsage(m, &["-v          ; verbose",
+                                     "-n <count>  ; how many",
+                                     "<file> ..."]);
+eachArg(&args, &usage, |ctx, arg| match arg {
+    "-v" => verbose = true,
+    "-n" => count = ctx.nextInt(),          // consumes the value
+    f if !f.starts_with('-') => files.push(f.to_owned()),
+    other => ctx.usage(&format!("unknown argument [{other}]")),
+});
+```
+
+`ctx` carries the cursor helpers Scala reaches through dynamic scoping — `thisArg`,
+`consumeNext`, `peekNext` (lookahead without consuming, for optional values), `nextInt`,
+`nextLong`, `nextDouble` — each routing to the usage handler on a missing or unparseable
+value. See `jsrc/treestat.sc` and `rust/examples/treestat.rs` for both halves of a working
+tool that uses all of them, and prints byte-identical output either way.
 
 ---
 

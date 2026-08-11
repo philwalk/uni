@@ -72,5 +72,12 @@ object Forecast {
 
     val fc = forecast3prf(yM, xM, Right(zM))
     println(s"forecast3prf(IS Full): first ${num(fc(0, 0))}   last ${num(fc(T - 1, 0))}")
+
+    // the out-of-sample procedures: early entries are untrained, so only the
+    // final forecast is printed
+    val cv  = forecast3prf(yM, xM, Right(zM), procedure = "OOS Cross Val")
+    val rec = forecast3prf(yM, xM, Right(zM), procedure = "OOS Recursive")
+    println(s"forecast3prf(OOS Cross Val):  last ${num(cv(T - 1, 0))}")
+    println(s"forecast3prf(OOS Recursive): last ${num(rec(T - 1, 0))}")
   }
 }

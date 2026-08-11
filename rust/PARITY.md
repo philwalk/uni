@@ -27,7 +27,10 @@ mutation semantics), `treestat` (traversal, stats, hashes, seeded sampling, CSV)
 `pathshow` (every path rendering + mount-table resolution + BadPath + String
 extensions), `datecalc` (the utime surface on fixed dates — portable output),
 `forecast` (NumPyRNG randn → byte-identical CSV → `loadMatBig` → the 3PRF
-closed forms + `forecast3prf`).
+closed forms + `forecast3prf` incl. the OOS procedures), `bigcalc` (the whole
+udata surface — str2num/isNumeric, arithmetic via the `std::ops` overloads,
+every rounding mode, numStr/numStrPct variants, the BigNaN sentinel — framed
+as an exact-decimal invoice; fixed inputs, portable output).
 
 Nine committed fixtures under `../test-data/*-parity/` pin these — roughly 19,800 rows
 (path 10,537 — incl. 38 `badpath`/`badpayload` rows · date 4,173 · tprf3 3,039 · big 629 · smartparse 539 · csv 458 ·

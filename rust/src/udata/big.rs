@@ -19,9 +19,10 @@
 //!
 //! # Divergences, all documented and all loud
 //!
-//! Scala **throws** on `sqrt` of a negative, on a negative `pow` exponent and on division
-//! rounding surprises; the no-panic port answers `BigNaN` there. The fixture deliberately
-//! records none of those inputs, so neither language's answer is pinned.
+//! `sqrt` of a negative and a negative `pow` exponent are **BigNaN in both languages**
+//! as of 0.16.0: Scala used to throw and adopted the port's answer, so the fixture now
+//! pins those rows. What remains: Scala throws on some division rounding surprises where
+//! this port answers `BigNaN`, and the fixture records no such input.
 
 #![allow(
     non_snake_case,
@@ -892,7 +893,8 @@ impl Big {
     }
 
     /// `sqrt(MathContext.DECIMAL128)`: 34 significant digits, exact results stripped to the
-    /// preferred scale `self.scale / 2`. **BigNaN for a negative**, where Scala throws.
+    /// preferred scale `self.scale / 2`. **BigNaN for a negative** — as in Scala since
+    /// 0.16.0, which adopted this answer in place of throwing.
     #[expect(
         clippy::too_many_lines,
         reason = "one Newton iteration with its scale bookkeeping, a direct port of the \
@@ -972,7 +974,8 @@ impl Big {
     }
 
     /// `~^` with an integer exponent: exact `pow`, as Java's. **BigNaN for a negative
-    /// exponent**, where Scala throws `ArithmeticException`.
+    /// exponent** — as in Scala since 0.16.0, which adopted this answer in place of
+    /// throwing `ArithmeticException`.
     #[must_use]
     pub fn pow(&self, exp: i32) -> Self {
         if self.isNaN() || exp < 0 {
@@ -1348,5 +1351,48 @@ fn isqrt(n: &Mag) -> Mag {
             return x;
         }
         x = next;
+    }
+}
+
+// ── std::ops overloads: the OWNED and MIXED ownership combos ────────────────
+//
+// The `&Big op &Big` forms above predate these; without the owned combos,
+// `a + b` only compiled as `&a + &b`, which is not how the Scala twin reads.
+// All forward to the inherent methods, so the BigNaN-absorbing semantics ride
+// along unchanged. Comparison operators are deliberately NOT provided:
+// `PartialOrd` would have to answer `None` for BigNaN, and the sentinel's
+// equality-recognised semantics (BigNaN == BigNaN) disagree with IEEE — the
+// explicit `compare` keeps that decision visible.
+macro_rules! forward_binop_owned {
+    ($trait:ident, $method:ident) => {
+        impl core::ops::$trait<Big> for &Big {
+            type Output = Big;
+            fn $method(self, rhs: Big) -> Big {
+                Big::$method(self, &rhs)
+            }
+        }
+        impl core::ops::$trait<&Big> for Big {
+            type Output = Big;
+            fn $method(self, rhs: &Big) -> Big {
+                Big::$method(&self, rhs)
+            }
+        }
+        impl core::ops::$trait<Big> for Big {
+            type Output = Big;
+            fn $method(self, rhs: Big) -> Big {
+                Big::$method(&self, &rhs)
+            }
+        }
+    };
+}
+forward_binop_owned!(Add, add);
+forward_binop_owned!(Sub, sub);
+forward_binop_owned!(Mul, mul);
+forward_binop_owned!(Div, div);
+
+impl core::ops::Neg for Big {
+    type Output = Big;
+    fn neg(self) -> Big {
+        Big::neg(&self)
     }
 }

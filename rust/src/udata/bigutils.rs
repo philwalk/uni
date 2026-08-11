@@ -78,117 +78,12 @@ pub fn str2num(raw: &str) -> Big {
 //
 // Each is a full-string match, like Scala's `s match { case NumPattern(..) }`.
 
-type Scan<'a> = std::iter::Peekable<std::str::Chars<'a>>;
-
-/// Consume one char if it satisfies `pred`; whether one was taken.
-fn take_one(it: &mut Scan<'_>, pred: impl Fn(char) -> bool) -> bool {
-    if it.peek().copied().is_some_and(&pred) {
-        it.next();
-        true
-    } else {
-        false
-    }
-}
-
-/// Consume a run satisfying `pred`; how many were taken.
-fn take_while(it: &mut Scan<'_>, pred: impl Fn(char) -> bool) -> usize {
-    let mut n = 0;
-    while take_one(it, &pred) {
-        n += 1;
-    }
-    n
-}
-
-fn num_body(c: char) -> bool {
-    c == '.' || c == ',' || c.is_ascii_digit()
-}
-
-/// `(?i)([-\(]\s*)?(\d[\.\d,]+)[%\)]?[%KMB]?`
-fn pat1(s: &str) -> bool {
-    let it = &mut s.chars().peekable();
-    if take_one(it, |c| c == '-' || c == '(') {
-        take_while(it, char::is_whitespace);
-    }
-    if !take_one(it, |c| c.is_ascii_digit()) || take_while(it, num_body) == 0 {
-        return false;
-    }
-    take_one(it, |c| c == '%' || c == ')');
-    take_one(it, |c| {
-        matches!(c.to_ascii_uppercase(), '%' | 'K' | 'M' | 'B')
-    });
-    it.next().is_none()
-}
-
-/// `(?i)(-?\s*[\.\d,]+)(E-?\d+)([%\)]?)([%KMB]?)` — case-insensitive since the
-/// 0.16.0 repair: `1.5e5%` classifies like `1.5E5%` (str2num always parsed both)
-fn pat2(s: &str) -> bool {
-    let it = &mut s.chars().peekable();
-    take_one(it, |c| c == '-');
-    take_while(it, char::is_whitespace);
-    if take_while(it, num_body) == 0 || !take_one(it, |c| c.eq_ignore_ascii_case(&'E')) {
-        return false;
-    }
-    take_one(it, |c| c == '-');
-    if take_while(it, |c| c.is_ascii_digit()) == 0 {
-        return false;
-    }
-    take_one(it, |c| c == '%' || c == ')');
-    take_one(it, |c| {
-        matches!(c.to_ascii_uppercase(), '%' | 'K' | 'M' | 'B')
-    });
-    it.next().is_none()
-}
-
-/// `(?i)-?(\d+)([%KMB]?)` — case-insensitive since the 0.16.0 repair, like pattern 1
-fn pat3(s: &str) -> bool {
-    let it = &mut s.chars().peekable();
-    take_one(it, |c| c == '-');
-    if take_while(it, |c| c.is_ascii_digit()) == 0 {
-        return false;
-    }
-    take_one(it, |c| {
-        matches!(c.to_ascii_uppercase(), '%' | 'K' | 'M' | 'B')
-    });
-    it.next().is_none()
-}
-
-/// `-?(\d+)(\.?[0-9]*E[-+][0-9]+)?` — the decimal point is literal since the 0.16.0
-/// repair (the original's unescaped `.` accepted any character in that slot)
-fn pat4(s: &str) -> bool {
-    let it = &mut s.strip_prefix('-').unwrap_or(s).chars().peekable();
-    if take_while(it, |c| c.is_ascii_digit()) == 0 {
-        return false;
-    }
-    if it.peek().is_none() {
-        return true; // the whole exponent group is optional
-    }
-    take_one(it, |c| c == '.');
-    take_while(it, |c| c.is_ascii_digit());
-    take_one(it, |c| c == 'E')
-        && take_one(it, |c| c == '-' || c == '+')
-        && take_while(it, |c| c.is_ascii_digit()) > 0
-        && it.next().is_none()
-}
-
-/// Could this cell be a number? The Scala heuristic, verbatim: all-plain strings try
-/// `Double.parseDouble` then all four patterns; strings with other characters
-/// (parentheses, suffixes) try patterns 1 and 3 only. More than one `-` disqualifies.
-#[must_use]
+/// One definition of "numeric": whatever `str2num` can parse. Delegating keeps
+/// the two functions coherent by construction — the previous pattern-set
+/// rejected `$1,234.56` while `str2num` (and the CSV loaders' type sniffing)
+/// parsed it happily. Mirrors the Scala.
 pub fn isNumeric(col: &str) -> bool {
-    let s = col.trim();
-    if s.is_empty() {
-        return false;
-    }
-    let nums_and_such: String = s.chars().filter(|&c| valid_num_char(c)).collect();
-    // just '-': Scala's old `|| c == '/'` half was dead ('/' is not a valid_num_char)
-    if nums_and_such.chars().filter(|&c| c == '-').count() > 1 {
-        return false;
-    }
-    if s.len() == nums_and_such.len() {
-        s.parse::<f64>().is_ok() || pat1(s) || pat2(s) || pat3(s) || pat4(s)
-    } else {
-        pat1(s) || pat3(s)
-    }
+    !isBad(&str2num(col))
 }
 
 // ── Formatting ────────────────────────────────────────────────────────────────

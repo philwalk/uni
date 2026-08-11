@@ -148,4 +148,11 @@ fn main() {
         num(fc[[0, 0]]),
         num(fc[[T - 1, 0]])
     );
+
+    // the out-of-sample procedures: early entries are untrained, so only the
+    // final forecast is printed
+    let cv = forecast3prf(&yM, &xM, &z, "OOS Cross Val", (0, 1), (-1, 0)).expect("oos cross val");
+    let rec = forecast3prf(&yM, &xM, &z, "OOS Recursive", (0, 1), (-1, 0)).expect("oos rec");
+    println!("forecast3prf(OOS Cross Val):  last {}", num(cv[[T - 1, 0]]));
+    println!("forecast3prf(OOS Recursive): last {}", num(rec[[T - 1, 0]]));
 }

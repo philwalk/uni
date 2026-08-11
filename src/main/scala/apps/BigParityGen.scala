@@ -24,9 +24,10 @@ import uni.data.Big.Big
  * Values are rendered with `toString`, so scale is pinned as well as numeric value:
  * `2.50 + 0.25` must render `2.75`, and `1E+3` must stay scientific.
  *
- * Deliberately absent: negative `pow` exponents and `sqrt` of negatives, which THROW in
- * Scala (a wart) while the no-panic Rust returns BigNaN -- a documented divergence, so
- * neither answer is recorded.
+ * Recorded as of 0.16.0: negative `pow` exponents and `sqrt` of negatives now answer
+ * BigNaN in BOTH languages (Scala used to throw), so they are legal fixture rows --
+ * and an error case nobody records is an error case that can diverge unnoticed.
+ * Historical note: they were absent while Scala threw and only Rust answered BigNaN.
  *
  * Run ONLY when the reference is meant to move; review the diff before keeping it.
  *
@@ -77,10 +78,15 @@ object BigParityGen:
     "2.50", "-2.50", "0.00", "1E+3", "-0.000001", "!nan",
   )
 
-  val sqrtInputs: Seq[String] = Seq("4", "2", "2.25", "0.0001", "1E-34", "0", "152.2756", "!nan")
+  val sqrtInputs: Seq[String] =
+    Seq("4", "2", "2.25", "0.0001", "1E-34", "0", "152.2756", "!nan", "-1", "-0.25")
 
   val powCases: Seq[(String, Int)] = Seq(
     ("1.05", 10), ("2", 100), ("10", 34), ("0.1", 5), ("-2", 3), ("2.5", 0), ("!nan", 2),
+    // A negative exponent is BigNaN as of 0.16.0 (it used to throw), so it is now
+    // legal to pin -- which is the point: an error case nobody records is an error
+    // case that can diverge. Same for the negative sqrt below.
+    ("2", -2), ("10", -1),
   )
   val powfCases: Seq[(String, Double)] = Seq(
     ("2", 0.5), ("1.21", 0.5), ("2", 1.5), ("10", 0.25), ("!nan", 0.5),

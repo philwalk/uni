@@ -126,9 +126,14 @@ object Big:
       else
         val expDouble = frac.toDouble(exponent)
         if (expDouble == expDouble.toInt) {
-          // Integer exponent - use BigDecimal.pow for precision
-          val value: BigDecimal = n.underlying.pow(expDouble.toInt)
-          uni.data.Big(value)
+          // Integer exponent - use BigDecimal.pow for precision.
+          // A NEGATIVE integer exponent is BigNaN (0.16.0): `BigDecimal.pow`
+          // throws for one, and the sentinel is uni's answer for input an
+          // operation cannot represent -- the same decision as `sqrt` of a
+          // negative just above, and what the Rust port already answered.
+          val e = expDouble.toInt
+          if e < 0 then BigNaN
+          else uni.data.Big(n.underlying.pow(e))
         } else {
           // Fractional exponent - fall back to double precision
           val d = math.pow(n.toDouble, expDouble)
@@ -270,8 +275,15 @@ object Big:
     }
     inline def isNotNaN: Boolean = n != BigNaN
   
+    /** BigNaN for a negative operand (0.16.0), where this used to let
+     *  `BigDecimal.sqrt` throw `ArithmeticException`. uni's house style is that
+     *  unrepresentable input travels as data -- the same decision as BadDate,
+     *  BadPath and `str2num` -- and BigNaN already propagates through every
+     *  operation, so a caller checks `isBad` instead of catching. This also
+     *  closes the last live Scala/Rust divergence in `Big`: the port answered
+     *  BigNaN here from the start because it never panics. */
     def sqrt: Big =
-      if isBad(n) then BigNaN
+      if isBad(n) || n.signum < 0 then BigNaN
       else
         // BigDecimal.sqrt is available in Java 9+
         // .bigDecimal converts scala.math.BigDecimal -> java.math.BigDecimal

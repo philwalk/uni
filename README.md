@@ -52,12 +52,59 @@ What is covered, with **no dependency** taken for any of it:
 * **3PRF** (`estimate_3prf_is_full`, `_oos_rec`, `_oos_cv`) — the same three procedures as
   `uni.stats.Tprf3`, in the `t3prf` module the crate was originally named for.
 
-**Parity is pinned, not promised.** Nine committed fixtures under `test-data/*-parity/` hold
-the Scala side's own answers (with `java.time`, `java.math.BigDecimal` and NumPy as the
-transitive oracles), each checked independently by a Scala suite and a Rust test — neither
-language needs the other installed. A matched pair of probe programs (`jsrc/pairProbe.sc` +
-`rust/examples/pair_probe.rs`) exercises ~50 operations on identical trees and diffs
-byte-identical output, covering what per-method fixtures cannot: composition.
+### Parity is pinned, not promised
+
+Two independent mechanisms, because they catch different things.
+
+**1. Committed fixtures — per-method values.** Nine files under `test-data/*-parity/` hold
+roughly 19,900 rows of the Scala side's own answers (with `java.time`,
+`java.math.BigDecimal` and NumPy as the transitive oracles): path 10,535 · date 4,173 ·
+tprf3 3,039 · big 633 · smartparse 539 · csv 458 · numpy-rng 378 · walk 30 · hash 23. A
+Scala suite and a Rust test each check themselves against the same file, so **neither
+language needs the other installed** — and CI runs both. Regenerate only when the
+expectations are meant to move (`sbt "runMain uni.apps.PathParityGen"`, and the
+`*ParityGen` siblings).
+
+Because `PathContext` takes `is_windows` as *data*, the Rust side verifies the **Windows**
+rule set from Linux and macOS too — the Scala suite cannot, since its `isWin` comes from
+`os.name`. That asymmetry is why the path fixture is split by platform.
+
+**2. Matched demo pairs — composition, and documentation that cannot rot.** Fixtures pin
+one method at a time; a method with no fixture is pinned by nothing, and *sequences* of
+calls are pinned by nothing either. So each demo below exists twice — `jsrc/<name>.sc` and
+`rust/examples/<name>.rs`, written to read line-for-line alike — and the two print
+**byte-identical output**, which `diff` checks:
+
+| pair | what it demonstrates | output |
+| :--- | :--- | :--- |
+| `pairProbe` | ~50 metadata and mutation operations on identical trees, including collision answers and status codes | identical per machine |
+| `treestat` | a real tool: walk a tree, aggregate sizes by extension, bucket file ages, digest the largest file (`hash64`/`cksum`/`md5`/`sha256`), sample deterministically, round-trip a CSV | identical per machine |
+| `pathshow` | every path rendering (`posx`/`localpath`/`dospath`/`relpath`/`stdpath`/`posix`/`segments`/…), mount-table resolution, drive-relative forms, the BadPath family, the `String` extensions | identical per machine |
+| `datecalc` | the date surface on **fixed** inputs: smart parsing incl. day-first configuration, the shift and `with*` families, epoch-day round trips, the between/duration family, sentinels | identical **everywhere, any day** |
+| `bigcalc` | the decimal surface as an exact-money invoice: `str2num`/`isNumeric`, arithmetic, every rounding mode, `numStr`/`numStrPct`, the BigNaN sentinel | identical **everywhere** |
+| `forecast` | seeded `randn` → byte-identical CSV → `loadMatBig` → the 3PRF closed forms and `forecast3prf` (in-sample and both OOS procedures) | identical per machine |
+
+Two of the pairs are machine-independent by construction (fixed inputs, no filesystem, no
+clock), so they double as portable acceptance tests; the rest agree on any one machine
+because they read the same tree. Every float in every pair prints through `Big` + `numStr`,
+whose rendering is itself fixture-pinned, so platform float formatting cannot leak in.
+
+```bash
+# run a pair and compare
+scala-cli run jsrc/bigcalc.sc                      > scala.out
+cargo build --manifest-path rust/Cargo.toml --example bigcalc
+rust/target/debug/examples/bigcalc                 > rust.out
+diff scala.out rust.out          # expect no output
+```
+
+Full catalogue, the determinism techniques, and how to add a pair:
+[docs/DemoPairs.md](docs/DemoPairs.md).
+
+These pairs have earned their keep: they surfaced `canRead`/`canExecute` answering `false`
+for directories on Windows, a `mkdirs` that threw on one side, an `is_absolute` that applied
+the Windows root rule under POSIX rules, and two genuine API divergences that were then
+**fixed rather than documented** — `sqrt` of a negative and a negative `pow` exponent now
+answer `BigNaN` in both languages (Scala used to throw), and those rows are pinned.
 
 ```bash
 cd rust && make all          # test, fmt, clippy, file-size check

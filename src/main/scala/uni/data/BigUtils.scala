@@ -2,7 +2,6 @@ package uni.data
 
 import uni.time.*
 import scala.util.Try
-import scala.util.matching.Regex
 import scala.math.BigDecimal
 
 //export BigUtils.getMostSpecificType
@@ -41,17 +40,9 @@ object BigUtils:
   // Regex patterns (kept from original)
   // ------------------------------------------------------------
 
-  // Repaired 0.16.0 (behavior pinned by the big-parity `isnumeric` rows):
-  //  - NumPattern3 gained the `(?i)` the other suffix pattern always had, so `5k`
-  //    classifies like `5K` instead of depending on the author's shift key;
-  //  - NumPattern4's decimal point is now escaped -- the bare `.` matched ANY
-  //    character, so `12x34E+5` counted as numeric.
-  private val NumPattern1: Regex = """(?i)([-\(]\s*)?(\d[\.\d,]+)[%\)]?[%KMB]?""".r
-  //  - NumPattern2 gained `(?i)` with the others (0.16.0): "1.5e5%" classifies like
-  //    "1.5E5%" -- str2num could always parse both, so the two disagreed;
-  private val NumPattern2: Regex = """(?i)(-?\s*[\.\d,]+)(E-?\d+)([%\)]?)([%KMB]?)""".r
-  private val NumPattern3: Regex = """(?i)-?(\d+)([%KMB]?)""".r
-  private val NumPattern4: Regex = """-?(\d+)(\.?[0-9]*E[-+][0-9]+)?""".r
+  // The NumPattern1..4 regex set died with the old isNumeric (0.16.0): the
+  // patterns existed only to approximate what str2num accepts, and isNumeric
+  // now asks str2num directly.
 
   // ------------------------------------------------------------
   // Character validation
@@ -95,29 +86,35 @@ object BigUtils:
   // Numeric detection
   // ------------------------------------------------------------
 
+  /** One definition of "numeric": whatever `str2num` can parse. Delegating keeps
+   *  the two functions coherent by construction. The previous pattern-set
+   *  answered neither "is this strictly a number" (it accepted `12%`) nor "can
+   *  str2num parse this" (it rejected `$1,234.56`): `validNumChar` admitted `$`
+   *  and `,` into a strict branch whose patterns could not accept a
+   *  currency-with-grouping shape — while the CSV loaders' own type sniffing
+   *  stripped the `$` and called the same string numeric. */
   def isNumeric(col: String): Boolean =
+    !isBad(str2num(col))
+
+  /** The gate for `getMostSpecificType`, which parses MORE shapes than `str2num`:
+   *  a `K`/`M`/`B` scale suffix, a parenthesised negative, a percent. Those were
+   *  the other half of what the old `isNumeric` pattern set accepted, and folding
+   *  them into `isNumeric` is what made it incoherent — the two callers want
+   *  different questions answered, so they get two predicates. Strips the
+   *  decorations this function's own body then re-parses, and delegates the
+   *  numeric core to `str2num`, so it cannot drift from what follows it. */
+  private def isNumericDecorated(col: String): Boolean =
     val s = col.trim
     if s.isEmpty then false
     else
-      val numsAndSuch = s.filter(validNumChar)
-      // just '-': the old `|| c == '/'` half was dead, since '/' is not a validNumChar
-      if numsAndSuch.count(_ == '-') > 1 then false
-      else if s.length == numsAndSuch.length then
-        // All chars are basic numeric — try direct parse then all regex patterns
-        Try(s.toDouble).isSuccess || (s match
-          case NumPattern1(_, _)        => true
-          case NumPattern2(_, _, _, _)  => true
-          case NumPattern3(_, _)        => true
-          case NumPattern4(_, _)        => true
-          case _                        => false
-        )
-      else
-        // Has chars outside validNumChar (K/M/B, parentheses, etc.) —
-        // try the patterns designed to handle them
-        s match
-          case NumPattern1(_, _) => true
-          case NumPattern3(_, _) => true
-          case _                 => false
+      val unparen =
+        if s.startsWith("(") && s.endsWith(")") then s.substring(1, s.length - 1).trim
+        else if s.startsWith("(") then s.substring(1).trim // the old set accepted `(  42%`
+        else s
+      val unsuffixed = unparen.lastOption match
+        case Some(c) if "kmbKMB".contains(c) => unparen.dropRight(1)
+        case _                               => unparen
+      isNumeric(unsuffixed)
 
   // ------------------------------------------------------------
   // Most specific type: String | Big | DateTime
@@ -130,7 +127,7 @@ object BigUtils:
 
     val value: Any =
       if col.isEmpty then col
-      else if isNumeric(col) then
+      else if isNumericDecorated(col) then
         if debug then print("Numeric match\n")
 
         var negative = false

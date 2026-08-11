@@ -28,7 +28,8 @@ object Treestat {
 
   def usage(m: String = ""): Nothing =
     showUsage(m,
-      "[-n <count>]    ; rows in the top-N tables (default 5)",
+      "[-n [count]]        ; rows in the top-N tables (count optional, default 5)",
+      "[-minsize <bytes>]  ; ignore files smaller than <bytes>",
       "[-asof <date>]  ; reference date for ages (default: today)",
       "[-csv <path>]   ; write the by-extension table as CSV and read it back",
       "<dir>           ; directory tree to scan",
@@ -36,12 +37,16 @@ object Treestat {
 
   def main(args: Array[String]): Unit = {
     var topN            = 5
+    var minSize         = 0L
     var asofArg         = ""
     var csvPath         = ""
     var dirArg          = ""
 
     eachArg(args.toSeq, usage) {
-      case "-n"    => topN = nextInt
+      // `-n` takes an OPTIONAL count: peekNext looks ahead without consuming,
+      // so `-n 8 dir` and `-n dir` both parse (the latter keeps the default)
+      case "-n"    => if peekNext.matches("[0-9]+") then topN = nextInt
+      case "-minsize" => minSize = nextLong
       case "-asof" => asofArg = consumeNext
       case "-csv"  => csvPath = consumeNext
       case arg if !arg.startsWith("-") && dirArg.isEmpty => dirArg = arg
@@ -67,8 +72,11 @@ object Treestat {
 
     // one traversal, files and dirs split; everything downstream sorts on `rel`
     val all   = root.pathsTree
-    val files = all.filter(_.isFile).map(p => (rel(p), p.length, p.ext, p)).sortBy(_._1)
+    val files = all.filter(_.isFile).map(p => (rel(p), p.length, p.ext, p))
+      .filter(_._2 >= minSize).sortBy(_._1)
     val dirs  = all.count(_.isDirectory)
+    // immediate listings, distinct from the recursive walk above
+    println(s"top level: ${root.paths.length} entries, ${root.subdirs.length} dirs, ${root.subfiles.length} files")
 
     val n     = files.length
     val total = files.foldLeft(Big(0))((acc, f) => acc + Big(f._2))
@@ -101,6 +109,12 @@ object Treestat {
     for (r, size, _, p) <- largest do
       val age = daysBetween(p.lastModifiedTime, asof)
       println(f"  ${numStr(Big(size), abbr)} $age%5dd  ${p.hash64}  $r")
+    largest.headOption.foreach { (r, _, _, p) =>
+      val (crc, len) = p.cksum
+      println(s"  digests of $r:")
+      println(s"    cksum $crc/$len   md5 ${p.md5}")
+      println(s"    sha256 ${p.sha256}")
+    }
 
     // deterministic sample, with replacement: both languages draw the same
     // uniform doubles from the same seed, so the same rows print
