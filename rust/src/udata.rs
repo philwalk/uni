@@ -11,8 +11,10 @@
 
 pub mod big;
 pub mod bigutils;
+pub mod mat;
 
 pub use big::Big;
+pub use mat::MatD;
 pub use bigutils::NumFormat;
 pub use bigutils::big2double;
 pub use bigutils::isBad;
