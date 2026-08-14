@@ -456,7 +456,13 @@ object Mat {
     if !verbose then lg.setLevel(java.util.logging.Level.WARNING)
     lg
 
-  private val netlib = dev.ludovic.netlib.blas.BLAS.getInstance()
+  private val netlib =
+    // Name netlibLogger FIRST: getInstance() below is what emits the INFO line, so the level
+    // has to be set before it runs. Referencing it here makes that a real dependency rather
+    // than an accident of declaration order -- and is why it is no longer "unused", though its
+    // job was always to exist (JUL holds loggers weakly; see the note above).
+    val _ = netlibLogger
+    dev.ludovic.netlib.blas.BLAS.getInstance()
   // JNIBLAS on Linux may be backed by the slow reference Fortran BLAS (libblas3) when system
   // OpenBLAS is absent. A 64×64 timing probe distinguishes it: OpenBLAS ~0.01ms, reference ~1ms.
   // F2JBLAS / Java11BLAS are always slow. VectorBLAS and JNIBLAS+OpenBLAS are fast.

@@ -17,7 +17,6 @@ class BigUtilsSuite extends FunSuite {
     // per-operation rather than in aggregate, because the sentinel is recognised by
     // *equality* -- so any operation that quietly transforms it destroys it, and the loss is
     // invisible at the call site. `setScale` and `~^` both did exactly that.
-    import scala.math.BigDecimal.RoundingMode
     assert((BigNaN + Big(1)).isNaN, "+")
     assert((BigNaN - Big(1)).isNaN, "-")
     assert((BigNaN * Big(2)).isNaN, "*")
