@@ -39,6 +39,10 @@
     reason = "a demo prints its report; here the report IS the parity check"
 )]
 
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
+use std::sync::Arc;
+
 use rayon::prelude::*;
 use uni::NumPyRng;
 use uni::udata::MatD;
@@ -107,12 +111,10 @@ struct World {
 #[derive(Clone, Debug)]
 struct Path {
     price: Vec<f64>,
-    #[expect(dead_code, reason = "consumed by the exposure rules in a later milestone")]
     rate: Vec<f64>,
-    #[expect(dead_code, reason = "consumed by the exposure rules in a later milestone")]
+    #[expect(dead_code, reason = "read by fundamentalLed, which lands with the strategy sweep")]
     fundamental: Vec<f64>,
     /// per-session slippage multiplier (equity market)
-    #[expect(dead_code, reason = "consumed by armPath in a later milestone")]
     liq: Vec<f64>,
     /// flight-to-safety asset price (its own Market)
     bond: Vec<f64>,
@@ -823,6 +825,605 @@ fn sim_paths(w: &World, paths: usize, years: usize, seed: u64) -> Vec<Path> {
         .collect()
 }
 
+// ---- exposure rules ---------------------------------------------------------------------
+
+fn banded(target: &[f64]) -> Vec<f64> {
+    let mut out = vec![0.0f64; target.len()];
+    let mut held = 1.0f64;
+    for i in 0..target.len() {
+        if (target[i] - held).abs() > BAND {
+            held = target[i];
+        }
+        out[i] = held;
+    }
+    out
+}
+
+fn trailing_mean(px: &[f64], win: usize) -> Vec<f64> {
+    let mut out = vec![0.0f64; px.len()];
+    let mut s = 0.0f64;
+    for i in 0..px.len() {
+        s += px[i];
+        if i >= win {
+            s -= px[i - win];
+        }
+        out[i] = s / (i + 1).min(win) as f64;
+    }
+    out
+}
+
+fn sessions_for(cal_days: i32) -> usize {
+    2.max((f64::from(cal_days) * 252.0 / 365.25).round() as usize)
+}
+
+/// `f64` ordered by `total_cmp`, so it can sit in a `BinaryHeap`. Scala's
+/// `PriorityQueue[Double]` is a max-heap under `Ordering[Double]`; this is its counterpart.
+#[derive(PartialEq)]
+struct Ord64(f64);
+impl Eq for Ord64 {}
+impl Ord for Ord64 {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.total_cmp(&other.0)
+    }
+}
+// Derived on purpose from `cmp` rather than from the field: `f64`'s own `PartialOrd`
+// returns None for NaN, which would make the heap ordering inconsistent with `Ord`.
+impl PartialOrd for Ord64 {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Per-path indicator cache. The moving averages are memoised because several rules ask for
+/// the same window, and `vol_ratio` is computed once — mirroring Scala's `HashMap` +
+/// `lazy val`. Interior mutability is what lets the exposure closures take `&Indicators`;
+/// an `Indicators` never crosses a thread, it is built inside each parallel path.
+struct Indicators {
+    px: Vec<f64>,
+    ma_cache: std::cell::RefCell<std::collections::HashMap<usize, std::rc::Rc<Vec<f64>>>>,
+    vol_ratio: std::cell::OnceCell<Vec<f64>>,
+}
+
+impl Indicators {
+    fn new(px: &[f64]) -> Self {
+        Self {
+            px: px.to_vec(),
+            ma_cache: std::cell::RefCell::new(std::collections::HashMap::new()),
+            vol_ratio: std::cell::OnceCell::new(),
+        }
+    }
+
+    fn ma(&self, sessions: usize) -> std::rc::Rc<Vec<f64>> {
+        if let Some(v) = self.ma_cache.borrow().get(&sessions) {
+            return std::rc::Rc::clone(v);
+        }
+        let v = std::rc::Rc::new(trailing_mean(&self.px, sessions));
+        self.ma_cache
+            .borrow_mut()
+            .insert(sessions, std::rc::Rc::clone(&v));
+        v
+    }
+
+    /// Realised vol relative to its own running MEDIAN, via the two-heap median: `lower` is
+    /// a max-heap holding the smaller half, `upper` a min-heap holding the larger, so
+    /// `lower`'s root IS the median. Scala gets `upper` by passing `Ordering[Double].reverse`
+    /// to `PriorityQueue`; `Reverse<Ord64>` is the same thing.
+    fn vol_ratio(&self) -> &[f64] {
+        self.vol_ratio.get_or_init(|| {
+            let px = &self.px;
+            let n = px.len();
+            let mut rv = vec![0.0f64; n];
+            let mut ew = 0.01 * 0.01f64;
+            for i in 1..n {
+                let r = (px[i] / px[i - 1]).ln();
+                ew = 0.94 * ew + 0.06 * r * r;
+                rv[i] = (ew * DAYS_PER_YEAR as f64).sqrt();
+            }
+            let mut lower: BinaryHeap<Ord64> = BinaryHeap::new();
+            let mut upper: BinaryHeap<Reverse<Ord64>> = BinaryHeap::new();
+            let mut out = vec![0.0f64; n];
+            out[0] = 1.0;
+            for i in 1..n {
+                if i > 260 {
+                    let x = rv[i];
+                    if lower.is_empty() || lower.peek().is_some_and(|m| x <= m.0) {
+                        lower.push(Ord64(x));
+                    } else {
+                        upper.push(Reverse(Ord64(x)));
+                    }
+                    if lower.len() > upper.len() + 1 {
+                        if let Some(m) = lower.pop() {
+                            upper.push(Reverse(m));
+                        }
+                    } else if upper.len() > lower.len() {
+                        if let Some(Reverse(m)) = upper.pop() {
+                            lower.push(m);
+                        }
+                    }
+                    out[i] = if rv[i] > 0.0 {
+                        lower.peek().map_or(1.0, |m| m.0) / rv[i]
+                    } else {
+                        1.0
+                    };
+                } else {
+                    out[i] = 1.0;
+                }
+            }
+            out
+        })
+    }
+}
+
+/// `Arc` rather than `Box` so the matched-constant arms can wrap a rule's own exposure
+/// function, and so the rules survive being shared across rayon threads.
+type ExposeFn = Arc<dyn Fn(&Indicators) -> Vec<f64> + Send + Sync>;
+
+struct Rule {
+    name: String,
+    expose: ExposeFn,
+}
+
+fn trend_rule(cal_days: i32, floor: f64) -> Rule {
+    let name = format!(
+        "trend {cal_days}d, floor {}%",
+        jf(floor * 100.0, 0, 0)
+    );
+    Rule {
+        name,
+        expose: Arc::new(move |ind: &Indicators| {
+            let ma = ind.ma(sessions_for(cal_days));
+            let t: Vec<f64> = (0..ind.px.len())
+                .map(|i| if ind.px[i] >= ma[i] { 1.0 } else { floor })
+                .collect();
+            banded(&t)
+        }),
+    }
+}
+
+fn drawdown_rule(pct: f64, floor: f64) -> Rule {
+    let name = format!(
+        "cut below -{}%, floor {}%",
+        jf(pct, 0, 0),
+        jf(floor * 100.0, 0, 0)
+    );
+    Rule {
+        name,
+        expose: Arc::new(move |ind: &Indicators| {
+            let px = &ind.px;
+            let mut out = vec![0.0f64; px.len()];
+            let mut pk = 0.0f64;
+            for i in 0..px.len() {
+                pk = pk.max(px[i]);
+                out[i] = if px[i] < pk * (1.0 - pct / 100.0) {
+                    floor
+                } else {
+                    1.0
+                };
+            }
+            banded(&out)
+        }),
+    }
+}
+
+fn vol_rule(floor: f64) -> Rule {
+    let name = format!("volatility-scaled, floor {}%", jf(floor * 100.0, 0, 0));
+    Rule {
+        name,
+        expose: Arc::new(move |ind: &Indicators| {
+            let t: Vec<f64> = ind
+                .vol_ratio()
+                .iter()
+                .map(|r| floor.max(1.0f64.min(*r)))
+                .collect();
+            banded(&t)
+        }),
+    }
+}
+
+fn combo_rule(cal_days: i32, floor: f64) -> Rule {
+    let name = format!(
+        "volatility + trend {cal_days}d, floor {}%",
+        jf(floor * 100.0, 0, 0)
+    );
+    Rule {
+        name,
+        expose: Arc::new(move |ind: &Indicators| {
+            let ma = ind.ma(sessions_for(cal_days));
+            let vr = ind.vol_ratio();
+            let t: Vec<f64> = (0..ind.px.len())
+                .map(|i| {
+                    let v = 1.0f64.min(0.0f64.max(vr[i]));
+                    let tr = if ind.px[i] >= ma[i] { 1.0 } else { 0.0 };
+                    floor.max(v.min(tr))
+                })
+                .collect();
+            banded(&t)
+        }),
+    }
+}
+
+fn rules() -> Vec<Rule> {
+    vec![
+        Rule {
+            name: "always fully invested".to_string(),
+            expose: Arc::new(|ind: &Indicators| vec![1.0; ind.px.len()]),
+        },
+        // production analog — the paired-comparison reference
+        vol_rule(0.4),
+        vol_rule(0.0),
+        trend_rule(150, 0.0),
+        trend_rule(200, 0.4),
+        trend_rule(200, 0.0),
+        trend_rule(250, 0.0),
+        drawdown_rule(10.0, 0.0),
+        combo_rule(200, 0.0),
+    ]
+}
+
+#[expect(
+    clippy::panic,
+    reason = "mirrors the Scala's sys.error: a report naming a nonexistent rule is a coding \
+              error in this file, not a runtime condition to recover from"
+)]
+fn rule_named(nm: &str) -> Rule {
+    rules()
+        .into_iter()
+        .find(|r| r.name == nm)
+        .unwrap_or_else(|| panic!("report names a rule not in Rules: [{nm}]"))
+}
+
+// ---- evaluation -------------------------------------------------------------------------
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Safe {
+    #[expect(dead_code, reason = "used by evaluate(), which lands with the strategy sweep")]
+    Cash,
+    Bond,
+}
+
+/// The exposure-matched constant twin of a rule ON THIS PATH: the same average exposure,
+/// held flat, in the same two assets.
+fn matched_constant(e: &[f64]) -> Vec<f64> {
+    // bound FIRST: the Scala note is that an inline e.sum would be recomputed per element
+    let m = e.iter().sum::<f64>() / e.len() as f64;
+    vec![m; e.len()]
+}
+
+struct ArmPath {
+    #[expect(dead_code, reason = "read by gradingStats/evaluate, which land with the strategy sweep")]
+    log_eq: Vec<f64>,
+    real_log_eq: Vec<f64>,
+    #[expect(dead_code, reason = "read by gradingStats, which lands with the strategy sweep")]
+    steps: Vec<f64>,
+    #[expect(dead_code, reason = "read by evaluate, which lands with the strategy sweep")]
+    mean_e: f64,
+    #[expect(dead_code, reason = "read by evaluate, which lands with the strategy sweep")]
+    churn: f64,
+    #[expect(dead_code, reason = "read by evaluate, which lands with the strategy sweep")]
+    eff_churn: f64,
+    #[expect(dead_code, reason = "read by evaluate, which lands with the strategy sweep")]
+    cost_paid: f64,
+    #[expect(dead_code, reason = "read by evaluate, which lands with the strategy sweep")]
+    eq_ret_sum: f64,
+    #[expect(dead_code, reason = "read by evaluate, which lands with the strategy sweep")]
+    safe_ret_sum: f64,
+}
+
+/// What ONE arm actually earned: its log-equity path, the real counterpart, the daily steps,
+/// and the trading totals. Everything that grades an arm reads this, so no two reports can
+/// disagree about what the arm did.
+fn arm_path(p: &Path, e: &[f64], cost: f64, safe: Safe) -> ArmPath {
+    let n = p.price.len();
+    // day i earns: exposure e(i-1) times the asset return, the remainder times the safe
+    // return, minus |exposure change| * cost * that session's liquidity state
+    let eq_rets = MatD::apply(&daily_returns(&p.price));
+    let safe_rets = match safe {
+        Safe::Cash => MatD::apply(
+            &(0..n - 1)
+                .map(|k| p.rate[k].ln_1p() / DAYS_PER_YEAR as f64)
+                .collect::<Vec<f64>>(),
+        ),
+        Safe::Bond => MatD::apply(&daily_returns(&p.bond)),
+    };
+    let e_held = MatD::apply(e).head(n - 1);
+    let d_e = MatD::apply(
+        &(0..n - 1)
+            .map(|k| (e[k + 1] - e[k]).abs())
+            .collect::<Vec<f64>>(),
+    );
+    // tail is end-anchored where copyOfRange(p.liq, 1, n) was start-anchored; these agree
+    // because every Path series is allocated at `tot` and dropped by BurnIn together
+    let liq_t = MatD::apply(&p.liq).tail(n - 1);
+    let costs = &(&d_e * cost) * &liq_t;
+    let steps = &(&(&e_held * &eq_rets) + &(&(1.0 - &e_held) * &safe_rets)) - &costs;
+    let mut eq = vec![0.0f64; n];
+    eq[1..n].copy_from_slice(&steps.cumsum().toArray());
+    let real_eq = (&MatD::apply(&eq)
+        - &MatD::apply(
+            &(0..n)
+                .map(|k| (p.cpi[k] / p.cpi[0]).ln())
+                .collect::<Vec<f64>>(),
+        ))
+        .toArray();
+    ArmPath {
+        log_eq: eq,
+        real_log_eq: real_eq,
+        steps: steps.toArray(),
+        mean_e: e.iter().sum::<f64>() / e.len() as f64,
+        churn: d_e.sum(),
+        eff_churn: (&d_e * &liq_t).sum(),
+        cost_paid: costs.sum(),
+        eq_ret_sum: eq_rets.sum(),
+        safe_ret_sum: safe_rets.sum(),
+    }
+}
+
+/// Depth below the running peak, session by session — the series every depth measure reduces.
+#[expect(dead_code, reason = "read by gradingStats, which lands with the strategy sweep")]
+fn drawdown_series(log_eq: &[f64]) -> Vec<f64> {
+    let mut out = vec![0.0f64; log_eq.len()];
+    let mut pk = log_eq[0];
+    for i in 0..log_eq.len() {
+        pk = pk.max(log_eq[i]);
+        out[i] = 1.0 - (log_eq[i] - pk).exp();
+    }
+    out
+}
+
+/// An underwater stretch: from a running peak until the path regains it. A stretch still
+/// under water at path end is INCLUDED at its length so far.
+#[derive(Clone, Copy, Debug)]
+struct Underwater {
+    peak: usize,
+    end: usize,
+    worst_depth: f64,
+}
+
+impl Underwater {
+    fn sessions(self) -> usize {
+        self.end - self.peak
+    }
+}
+
+fn underwater(log_eq: &[f64]) -> Vec<Underwater> {
+    let mut out: Vec<Underwater> = Vec::new();
+    let mut pk = log_eq[0];
+    let mut pk_i = 0usize;
+    let mut i = 1usize;
+    while i < log_eq.len() {
+        if log_eq[i] >= pk {
+            pk = log_eq[i];
+            pk_i = i;
+            i += 1;
+        } else {
+            let mut j = i;
+            let mut worst = 0.0f64;
+            while j < log_eq.len() && log_eq[j] < pk {
+                worst = worst.max(1.0 - (log_eq[j] - pk).exp());
+                j += 1;
+            }
+            out.push(Underwater {
+                peak: pk_i,
+                end: j,
+                worst_depth: worst,
+            });
+            if j < log_eq.len() {
+                pk = log_eq[j];
+                pk_i = j;
+                i = j + 1;
+            } else {
+                i = log_eq.len();
+            }
+        }
+    }
+    out
+}
+
+/// Worst depth reached only AFTER a stretch has outlasted a cash buffer of `buf_sessions`.
+/// NaN when the stretch never exhausts the buffer — such an episode forces no sale and costs
+/// nothing, so entering it as a zero would flatter the average with episodes that never
+/// happened.
+fn depth_at_exhaustion(log_eq: &[f64], u: Underwater, buf_sessions: usize) -> f64 {
+    let from = u.peak + buf_sessions;
+    if from >= u.end {
+        return f64::NAN;
+    }
+    let pk = log_eq[u.peak];
+    let vals: Vec<f64> = (from..u.end)
+        .map(|k| 1.0 - (log_eq[k] - pk).exp())
+        .collect();
+    max_total(&vals)
+}
+
+/// `.max` on a Scala `Seq[Double]` under `TotalOrdering`.
+fn max_total(v: &[f64]) -> f64 {
+    if v.is_empty() {
+        return f64::NAN;
+    }
+    let s = sorted_total(v);
+    s[s.len() - 1]
+}
+
+// ---- the buffer report ------------------------------------------------------------------
+
+type BufferArm = (Vec<f64>, Vec<f64>, Vec<Vec<f64>>);
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "one linear report, mirroring the Scala twin statement for statement"
+)]
+fn run_buffer_report(paths: usize, years: usize, seed: u64, cost: f64, single: bool, base: &World) {
+    // 15% is the repo's existing episode threshold; reusing it keeps this report from
+    // introducing a new arbitrary constant. Without it the distribution is drowned.
+    const MATERIAL_DEPTH: f64 = 0.15;
+    let focus = [
+        ("vol-scaled 40%", "volatility-scaled, floor 40%"),
+        ("vol+trend 200d", "volatility + trend 200d, floor 0%"),
+    ];
+    let mut arms: Vec<(String, ExposeFn)> = vec![(
+        "100% equity".to_string(),
+        Arc::new(|ind: &Indicators| vec![1.0; ind.px.len()]) as ExposeFn,
+    )];
+    for (short, nm) in &focus {
+        let r = rule_named(nm);
+        arms.push(((*short).to_string(), Arc::clone(&r.expose)));
+        let inner = Arc::clone(&r.expose);
+        arms.push((
+            format!("static mix @ {short}"),
+            Arc::new(move |i: &Indicators| matched_constant(&inner(i))) as ExposeFn,
+        ));
+    }
+    let buffers = [5usize, 15usize];
+    let overruns = [3.0f64, 5.0, 10.0, 15.0];
+    let path_years = paths as f64 * years as f64;
+
+    // per arm: (material-stretch lengths in years, ALL stretch lengths, depth at exhaustion
+    // per buffer). ALL stretches are kept for the time-share column, because a buffer policy
+    // is chosen before knowing which stretch you land in.
+    let buffer_stats = |w: &World| -> (bool, Vec<BufferArm>) {
+        let sims = sim_paths(w, paths, years, seed);
+        let ok = gate_checks(&measure(&sims, years)).iter().all(|(_, o)| *o);
+        let per: Vec<Vec<BufferArm>> = (0..sims.len())
+            .into_par_iter()
+            .map(|k| {
+                let p = &sims[k];
+                let ind = Indicators::new(&p.price);
+                arms.iter()
+                    .map(|(_, f)| {
+                        let ap = arm_path(p, &f(&ind), cost, Safe::Bond);
+                        let us = underwater(&ap.real_log_eq);
+                        let yrs: Vec<f64> = us
+                            .iter()
+                            .map(|u| u.sessions() as f64 / DAYS_PER_YEAR as f64)
+                            .collect();
+                        let mat: Vec<f64> = us
+                            .iter()
+                            .zip(&yrs)
+                            .filter(|(u, _)| u.worst_depth >= MATERIAL_DEPTH)
+                            .map(|(_, y)| *y)
+                            .collect();
+                        let by_buf: Vec<Vec<f64>> = buffers
+                            .iter()
+                            .map(|b| {
+                                us.iter()
+                                    .map(|u| {
+                                        depth_at_exhaustion(&ap.real_log_eq, *u, b * DAYS_PER_YEAR)
+                                    })
+                                    .filter(|x| !x.is_nan())
+                                    .collect()
+                            })
+                            .collect();
+                        (mat, yrs, by_buf)
+                    })
+                    .collect()
+            })
+            .collect();
+        let res: Vec<BufferArm> = (0..arms.len())
+            .map(|j| {
+                (
+                    per.iter().flat_map(|r| r[j].0.iter().copied()).collect(),
+                    per.iter().flat_map(|r| r[j].1.iter().copied()).collect(),
+                    (0..buffers.len())
+                        .map(|b| per.iter().flat_map(|r| r[j].2[b].iter().copied()).collect())
+                        .collect(),
+                )
+            })
+            .collect();
+        (ok, res)
+    };
+
+    let (ok, res) = buffer_stats(base);
+    println!("THE BUFFER QUESTION — length of REAL (CPI-deflated) underwater stretches, pooled over");
+    println!(
+        "{paths} independent {years}-year histories = {} path-years.  Safe leg is the BOND,",
+        path_years as i64
+    );
+    println!("so a 'static mix' arm is a constant equity/bond portfolio at that rule's own average");
+    println!("exposure.  Stretches still under water at path end are INCLUDED at their length so far.");
+    println!(
+        "  baseline world: {}",
+        if ok {
+            "gate PASS"
+        } else {
+            "gate FAIL — read nothing below"
+        }
+    );
+    println!();
+    println!(
+        "  material stretches (real depth >= {}%)        share of ALL calendar time spent inside a",
+        jf(MATERIAL_DEPTH * 100.0, 0, 0)
+    );
+    println!("                                                     stretch that ends up running longer than");
+    let head_over: String = overruns
+        .iter()
+        .map(|b| format!("{:>7}", format!("{}y", jf(*b, 0, 0))))
+        .collect();
+    println!(
+        "  {:<28} {:>7} {:>6} {:>6} {:>6} {:>6}  {}",
+        "arm", "n", "med", "90th", "99th", "worst", head_over
+    );
+    for j in 0..arms.len() {
+        let (mat, all, _) = &res[j];
+        let share = |y: f64| -> f64 {
+            all.iter().filter(|x| **x > y).sum::<f64>() / path_years * 100.0
+        };
+        let cols: Vec<String> = overruns
+            .iter()
+            .map(|b| format!("{}%", jf(share(*b), 6, 1)))
+            .collect();
+        println!(
+            "  {:<28} {:>7} {} {} {} {}  {}",
+            arms[j].0,
+            mat.len(),
+            jf(pctile(mat, 0.5), 6, 1),
+            jf(pctile(mat, 0.90), 6, 1),
+            jf(pctile(mat, 0.99), 6, 1),
+            jf(max_total(mat), 6, 1),
+            cols.join(" ")
+        );
+    }
+
+    println!("\n  DEPTH AT EXHAUSTION — how often a buffer of B years is outlasted, and how deep it has");
+    println!("  got by then.  Stretches that never outlast the buffer force no sale and are EXCLUDED;");
+    println!("  entering them as zeros would average in episodes that cost nothing.");
+    let head_buf: String = buffers
+        .iter()
+        .map(|b| {
+            format!(
+                "    {:>18} {:>7} {:>7}",
+                format!("B={b}y per century"),
+                "median",
+                "worst"
+            )
+        })
+        .collect();
+    println!("  {:<28}{}", "arm", head_buf);
+    for j in 0..arms.len() {
+        let row: String = (0..buffers.len())
+            .map(|b| {
+                let e = &res[j].2[b];
+                let per_century = e.len() as f64 * 100.0 / path_years;
+                if e.is_empty() {
+                    format!("    {} {:>7} {:>7}", jf(per_century, 18, 2), "n/a", "n/a")
+                } else {
+                    format!(
+                        "    {} {}% {}%",
+                        jf(per_century, 18, 2),
+                        jf(pctile(e, 0.5) * 100.0, 6, 1),
+                        jf(max_total(e) * 100.0, 6, 1)
+                    )
+                }
+            })
+            .collect();
+        println!("  {:<28}{}", arms[j].0, row);
+    }
+
+    if !single {
+        eprintln!("the world sweep is not ported yet; run with -single");
+        std::process::exit(2);
+    }
+}
+
 // ---- Java-compatible formatting ---------------------------------------------------------
 
 /// `%<width>.<dec>f`
@@ -856,6 +1457,9 @@ fn main() {
     let mut seed = 20_260_813u64;
     let mut emit = String::new();
     let mut validate = false;
+    let mut buffer_report = false;
+    let mut single = false;
+    let mut cost = 0.0010f64;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -864,6 +1468,9 @@ fn main() {
             "-seed" => seed = it.next().and_then(|v| v.parse().ok()).unwrap_or(seed),
             "-emit" => emit = it.next().cloned().unwrap_or_default(),
             "-validate" => validate = true,
+            "-buffer" => buffer_report = true,
+            "-single" => single = true,
+            "-cost" => cost = it.next().and_then(|v| v.parse().ok()).unwrap_or(cost),
             other => {
                 eprintln!("not ported yet: [{other}]");
                 std::process::exit(2);
@@ -896,6 +1503,11 @@ fn main() {
         discount: 4.0,
         margin: 0.0008,
     };
+
+    if buffer_report {
+        run_buffer_report(paths, years, seed, cost, single, &w);
+        return;
+    }
 
     eprintln!("simulating {paths} paths x {years} years");
     let sims = sim_paths(&w, paths, years, seed);
