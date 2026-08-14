@@ -129,6 +129,11 @@ machine), so that row is a like-for-like comparison. See [`jsrc/benchBreeze.sc`]
 | **R** | *(built-in)* |
 | **MATLAB** | *(built-in)* |
 
+netlib's BLAS-backend announcement (`INFO: Using dev.ludovic.netlib.blas.JNIBLAS` on
+stderr at first MatD use) is suppressed by default; run with `-Duni.blas.verbose=true`
+to see it again, or enable uni's generic verbosity mode with `-Duni.verbose=true` or
+the `VERBOSE_UNI` env var (for scala-cli: `--java-opt -Duni.blas.verbose=true`).
+
 ---
 
 ## Matrix Creation
@@ -316,6 +321,18 @@ use `X.eachCol` / `X.eachRow` to sidestep the name collision, or rename at impor
 | Divide | `a / b` | `a / b` | `a :/ b` | `a / b` | `a ./ b` |
 | Add scalar | `a + 2.0` | `a + 2.0` | `a + 2.0` | `a + 2` | `a + 2` |
 | Multiply scalar | `a * 3.0` | `a * 3.0` | `a * 3.0` | `a * 3` | `a * 3` |
+
+All four operators work with `CVecD`/`RVecD` operands too, elementwise, and keep the
+vector type: `vecA * vecB`, `vecA / vecB`, and `cvec op mat` (a Mat-typed vector
+expression such as `eq - eq.cummax(0)`) all return the vector type of the left operand.
+
+Vector idioms for two NumPy 1-D forms:
+
+| NumPy (1-D `v`) | MatD | Notes |
+|---|---|---|
+| `v[:k]` | `v(0 until k, 0)` (CVec), `r(0, 0 until k)` (RVec) | returns `CVecD` / `RVecD` |
+| `np.maximum.accumulate(v)` | `v.cummax(0)` (CVec), `r.cummax(1)` (RVec) | `cummin` likewise |
+| max drawdown | `1.0 - (eq - eq.cummax(0)).exp.min` | log-equity curve `eq: CVecD` |
 
 ---
 

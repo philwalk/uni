@@ -33,6 +33,9 @@ object Mat {
   // opaque types (declared here, return types would dealias to Mat[T]).
   private[data] def mkCVec[T](m: Mat[T]): CVec[T] = m
   private[data] def mkRVec[T](m: Mat[T]): RVec[T] = m
+  // Runtime discriminator for the union-typed scalar/matrix overloads in
+  // VecExts (Internal.MatData is not visible there).
+  private[data] def isMatRuntime(x: Any): Boolean = x.isInstanceOf[Internal.MatData[?]]
 
   extension [T](m: Mat[T])
     // public extension methods:
@@ -272,6 +275,16 @@ object Mat {
   // run sequentially for small arrays.
   private final val ParallelThreshold = 4096
 
+  // Chunk-count cap for sumD. Pinned to a constant, NOT to availableProcessors: the chunk
+  // count fixes the order the partial sums are combined in, so anything machine-dependent
+  // makes a large sum reproducible only run-to-run on one box, never across boxes. The
+  // count varied with core count, container CPU limits and -XX:ActiveProcessorCount --
+  // each value landing on a different last ulp. 16 chunks of >= ParallelThreshold elements
+  // already saturate the memory bandwidth this reduction is limited by, and the cap bounds
+  // task count on very large arrays. Changing this constant, or ParallelThreshold, moves
+  // the low-order bits of every sum above the threshold.
+  private final val MaxSumChunks = 16
+
   // bcastRows uses IntStream.parallel(), whose pipeline/spliterator/task setup
   // floor (~100µs measured) is far higher than parallelSetAll's. Parallelizing a
   // broadcast only pays once the sequential cost clears that floor — empirically
@@ -388,8 +401,9 @@ object Mat {
       i += 1
     s
 
-  /** Sum of a Double array; parallel chunked for large arrays. Chunk boundaries are
-   *  fixed by length (not scheduling), so results are deterministic run-to-run.
+  /** Sum of a Double array; parallel chunked for large arrays. Chunk boundaries AND chunk
+   *  count are fixed by length alone (see [[MaxSumChunks]]), so the result is identical on
+   *  every machine and under any load, not merely deterministic run-to-run.
    *  Note: plain summation, not DoubleStream's compensated summation — last-ulp
    *  rounding may differ from pre-0.14 results, but it benchmarks ~2× faster
    *  (NumPy-class reduction throughput). */
@@ -397,7 +411,7 @@ object Mat {
     val n = a.length
     if n < ParallelThreshold then sumRange(a, 0, n)
     else
-      val chunks   = math.min(Runtime.getRuntime.availableProcessors, math.max(n / ParallelThreshold, 1))
+      val chunks   = math.min(MaxSumChunks, math.max(n / ParallelThreshold, 1))
       val step     = (n + chunks - 1) / chunks
       val partials = new Array[Double](chunks)
       java.util.stream.IntStream.range(0, chunks).parallel().forEach { c =>
@@ -428,6 +442,19 @@ object Mat {
       val arr  = new Array[Float](rows * cols)
       var i = 0; while i < rows do { var j = 0; while j < cols do { arr(i*cols+j) = m(i,j); j+=1 }; i+=1 }
       Mat.create(arr, rows, cols)
+
+  // netlib announces its backend ("INFO: Using dev.ludovic.netlib.blas.JNIBLAS") at
+  // INFO via java.util.logging when getInstance() runs; quiet it unless the user opts
+  // in with -Duni.blas.verbose=true or the generic verbosity switch (uni.verboseUni:
+  // -Duni.verbose=true or env VERBOSE_UNI). The val holds a strong reference — JUL
+  // loggers are weakly referenced and the level would silently revert if this were a
+  // local.
+  private val netlibLogger =
+    val lg = java.util.logging.Logger.getLogger("dev.ludovic.netlib")
+    val verbose = sys.props.get("uni.blas.verbose").exists(_.equalsIgnoreCase("true"))
+      || uni.verboseUni
+    if !verbose then lg.setLevel(java.util.logging.Level.WARNING)
+    lg
 
   private val netlib = dev.ludovic.netlib.blas.BLAS.getInstance()
   // JNIBLAS on Linux may be backed by the slow reference Fortran BLAS (libblas3) when system

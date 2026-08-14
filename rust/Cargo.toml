@@ -12,6 +12,12 @@ description = "Rust port of the uni Scala library: MSYS2/cygwin-aware path resol
 license = "Apache-2.0"
 repository = "https://github.com/philwalk/uni"
 readme = "README.md"
+# TODO before the next publish: revisit these for discoverability. crates.io search
+# leans on keywords/categories/description, the name "uni" is unsearchable on its own,
+# and the budget is tight -- 5 keywords (<=20 chars each) and 5 categories, which must be
+# slugs from crates.io's fixed list. Terms a searcher would type (cygwin, scripting,
+# bigdecimal, cross-platform) compete for those slots against the numerics ones
+# (3prf, linear-algebra). Published versions are immutable, so this lands with a bump.
 keywords = ["path", "msys2", "datetime", "csv", "forecasting"]
 categories = ["filesystem", "date-and-time", "parser-implementations", "mathematics"]
 # The tests, examples and bench bins all read ../test-data, which lives outside

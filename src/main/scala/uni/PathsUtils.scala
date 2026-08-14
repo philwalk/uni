@@ -19,7 +19,10 @@ def eprintln(s: String): Unit = System.err.print(s"$s\n")
 def withFileWriter(p: Path, charsetName: String = "UTF-8", append: Boolean = false)(func: java.io.PrintWriter => Any): Unit =
   uni.io.FileOps.withFileWriter(p, charsetName, append)(func)
 
-lazy val verboseUni: Boolean = Option(System.getenv("VERBOSE_UNI")).nonEmpty
+// Library-wide verbosity switch: env var VERBOSE_UNI (any value) or -Duni.verbose=true.
+lazy val verboseUni: Boolean =
+  Option(System.getenv("VERBOSE_UNI")).nonEmpty
+    || sys.props.get("uni.verbose").exists(_.equalsIgnoreCase("true"))
 
 val userhome: String = System.getProperty("user.home").replace('\\', '/')
 

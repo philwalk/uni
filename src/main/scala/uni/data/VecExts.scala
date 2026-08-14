@@ -200,24 +200,43 @@ object VecOps:
   extension [T](cv: CVec[T])
     @annotation.targetName("voCvecT")
     def T: RVec[T] = RVec.fromMat(Mat.matTransposeOf(cv.asMat))
+    // The scalar-arg ops take `T | Mat[T]` UNIONS, not separate overloads:
+    // adding any overload to (or removing one from) this block's operator
+    // census flips extension dispatch for in-package / `import uni.data.*`
+    // callers in Scala 3.7.0 (un-ascribed `cvec * scalar` silently resolves to
+    // Mat's overload and loses its CVec type).  One union-typed method per
+    // operator covers scalar, CVec, and Mat-typed right-hand sides — this is
+    // what makes NumPy-style `vecA * vecB` and `eq - eq.cummax(0)` work.
     @annotation.targetName("voCvecMulScalar")
-    def *(s: T)(using ct: ClassTag[T], num: Numeric[T]): CVec[T] =
-      val m: Mat[T] = cv.asMat * s; CVec.fromMat(m)
+    def *(other: T | Mat[T])(using ct: ClassTag[T], num: Numeric[T]): CVec[T] =
+      val m: Mat[T] =
+        if Mat.isMatRuntime(other) then cv.asMat * other.asInstanceOf[Mat[T]]
+        else cv.asMat * other.asInstanceOf[T]
+      CVec.fromMat(m)
     @annotation.targetName("voCvecDivScalar")
-    def /(s: T)(using ct: ClassTag[T], frac: Fractional[T]): CVec[T] =
-      val m: Mat[T] = cv.asMat / s; CVec.fromMat(m)
+    def /(other: T | Mat[T])(using ct: ClassTag[T], frac: Fractional[T]): CVec[T] =
+      val m: Mat[T] =
+        if Mat.isMatRuntime(other) then cv.asMat / other.asInstanceOf[Mat[T]]
+        else cv.asMat / other.asInstanceOf[T]
+      CVec.fromMat(m)
     @annotation.targetName("voCvecAddCVec")
     def +(other: CVec[T])(using ct: ClassTag[T], ev: Numeric[T]): CVec[T] =
       val m: Mat[T] = cv.asMat + other.asMat; CVec.fromMat(m)
     @annotation.targetName("voCvecAddScalar")
-    def +(s: T)(using ct: ClassTag[T], ev: Numeric[T]): CVec[T] =
-      val m: Mat[T] = cv.asMat + s; CVec.fromMat(m)
+    def +(other: T | Mat[T])(using ct: ClassTag[T], ev: Numeric[T]): CVec[T] =
+      val m: Mat[T] =
+        if Mat.isMatRuntime(other) then cv.asMat + other.asInstanceOf[Mat[T]]
+        else cv.asMat + other.asInstanceOf[T]
+      CVec.fromMat(m)
     @annotation.targetName("voCvecSubCVec")
     def -(other: CVec[T])(using ct: ClassTag[T], ev: Numeric[T]): CVec[T] =
       val m: Mat[T] = cv.asMat - other.asMat; CVec.fromMat(m)
     @annotation.targetName("voCvecSubScalar")
-    def -(s: T)(using ct: ClassTag[T], ev: Numeric[T]): CVec[T] =
-      val m: Mat[T] = cv.asMat - s; CVec.fromMat(m)
+    def -(other: T | Mat[T])(using ct: ClassTag[T], ev: Numeric[T]): CVec[T] =
+      val m: Mat[T] =
+        if Mat.isMatRuntime(other) then cv.asMat - other.asInstanceOf[Mat[T]]
+        else cv.asMat - other.asInstanceOf[T]
+      CVec.fromMat(m)
     @annotation.targetName("voCvecNeg")
     def unary_-(using ct: ClassTag[T], ev: Numeric[T]): CVec[T] =
       val m: Mat[T] = -cv.asMat; CVec.fromMat(m)

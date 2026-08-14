@@ -355,9 +355,9 @@ object pathExts {
 
 
     def lastModSecondsAgo: Double = lastModMillisAgo / 1000.0
-    def lastModMinutesAgo: Double = round(lastModSecondsAgo / 60.0)
-    def lastModHoursAgo: Double   = round(lastModMinutesAgo / 60.0)
-    def lastModDaysAgo: Double    = round(lastModHoursAgo / 24.0)
+    def lastModMinutesAgo: Double = lastModSecondsAgo / 60.0
+    def lastModHoursAgo: Double   = lastModMinutesAgo / 60.0
+    def lastModDaysAgo: Double    = lastModHoursAgo / 24.0
 
 
     /** The file's last-modified time as `yyyy-MM-dd HH:mm:ss`, in **UTC**.
