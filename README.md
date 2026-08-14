@@ -83,11 +83,20 @@ calls are pinned by nothing either. So each demo below exists twice — `jsrc/<n
 | `datecalc` | the date surface on **fixed** inputs: smart parsing incl. day-first configuration, the shift and `with*` families, epoch-day round trips, the between/duration family, sentinels | identical **everywhere, any day** |
 | `bigcalc` | the decimal surface as an exact-money invoice: `str2num`/`isNumeric`, arithmetic, every rounding mode, `numStr`/`numStrPct`, the BigNaN sentinel | identical **everywhere** |
 | `forecast` | seeded `randn` → byte-identical CSV → `loadMatBig` → the 3PRF closed forms and `forecast3prf` (in-sample and both OOS procedures) | identical per machine |
+| `marketSim` | the odd one out: a 1,300-line workload rather than an API tour. Seeded price formation over 200 paths × 100 years, `MatD` reductions, drawdown episodes, exposure rules with a two-heap running median, and five report modes (`-emit`/`-validate`/`-strategies`/`-power`/`-buffer`) plus `-calibrate` | identical **everywhere** |
 
-Two of the pairs are machine-independent by construction (fixed inputs, no filesystem, no
+Three of the pairs are machine-independent by construction (fixed inputs, no filesystem, no
 clock), so they double as portable acceptance tests; the rest agree on any one machine
-because they read the same tree. Every float in every pair prints through `Big` + `numStr`,
-whose rendering is itself fixture-pinned, so platform float formatting cannot leak in.
+because they read the same tree. `marketSim` is machine-independent only because the
+matrix reductions it leans on are: `Mat.sumD` splits large sums into a chunk count fixed
+by *length*, never by `availableProcessors`, so the association order — and with it the
+last bit of every sum — cannot vary with the host.
+
+Float rendering is pinned rather than inherited: the earlier pairs print through
+`Big` + `numStr`, and `marketSim` through `java_format_f`, which reproduces Java's
+`%f` (shortest decimal, rounded half-up) because Rust's `{:.6}` rounds the exact binary
+value half-to-even and the two disagree on boundary cases. Either way, platform float
+formatting cannot leak in.
 
 ```bash
 # run a pair and compare

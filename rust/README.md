@@ -55,6 +55,7 @@ and the two print byte-identical output:
 | `datecalc` | the `utime` surface on fixed inputs — output is identical on any machine, any day |
 | `bigcalc` | the `udata` surface as an exact-money invoice — output is identical on any machine |
 | `forecast` | seeded `randn` → byte-identical CSV → `loadMatBig` → the 3PRF closed forms and `forecast3prf` |
+| `market_sim` | not a tour of an API but a 1,300-line workload: seeded price formation over 200 paths × 100 years, `MatD` reductions, drawdown episodes, exposure rules, and five report modes — the consumer that drove the `MatD` port |
 
 ```bash
 cargo build --example bigcalc

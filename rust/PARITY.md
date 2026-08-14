@@ -128,6 +128,63 @@ where the `MaxSumChunks` cap starts binding. Both test suites additionally asser
 naive left fold **disagrees** with `sumD` on that corpus, so a fixture that stopped
 discriminating would fail loudly rather than pass vacuously.
 
+## Porting checklist: where Scala and Rust quietly disagree
+
+The goal of this document is that porting be *mechanical*. These are the places it is not —
+each one found by byte-diffing a demo pair against its twin, mostly during the `marketSim`
+port, and each one silent until it reached a printed digit. Read this before starting a
+port, not after the diff fails.
+
+**1. `.sum` has a different identity.** Rust's `Iterator::sum` for floats folds from
+`-0.0`; Scala's `.sum` folds from `Numeric[Double].zero`, i.e. `+0.0`. `-0.0 + x == x` for
+every `x`, so the two agree on every non-empty sum and disagree only on an **empty** one —
+which then prints as `-0.0` on one side and `0.0` on the other. Fold explicitly:
+`it.fold(0.0, |a, b| a + b)`. Found in a share-of-time column where no episode cleared the
+threshold; it affected 18 call sites at once.
+
+**2. `signum` differs at zero.** Scala's `Double.sign` returns `0.0` there (preserving the
+zero's sign); Rust's `f64::signum` returns `±1.0` and never `0.0`. Any branch of the form
+`a.sign == b.sign` changes meaning. Write the three-way test out.
+
+**3. Sorting is total-order.** Scala's `.sorted`/`.sortBy`/`.min`/`.max` on `Double` use
+`Ordering.Double.TotalOrdering`, whose Rust counterpart is `f64::total_cmp` — *not*
+`partial_cmp`, which returns `None` on NaN. This also decides where `-0.0` sits relative to
+`0.0`. Both languages' sorts are stable, so `sortBy(-x)` ties keep source order in both.
+
+**4. Float formatting is not the same rounding.** Java's `%f` rounds the *shortest decimal
+representation* half-up; Rust's `{:.n}` rounds the *exact binary value* half-to-even. They
+disagree whenever the two straddle the boundary — rare per value, certain across a report
+printing thousands. Use `udata::java_format_f`. Three further Java behaviours it does not
+cover on its own: `%+w.df` joins the sign to the number *then* pads to width; `%-w.df`
+left-justifies (`java_format_f` only right-justifies); and both leave NaN unsigned.
+
+**5. `%n` is the platform line separator.** In a Java/Scala format string it is `\r\n` on
+Windows, `\n` elsewhere — so a report using it is not even byte-stable against *itself*
+across hosts. Use `\n`.
+
+**6. Transcendentals agree to ~1 ulp, not exactly.** Measured above: `exp` differs on
+0.561% of values, `log` on 0.235%, always by 1 ulp, because the JVM uses hand-written
+intrinsics where Rust uses the platform libm. This is invisible at any normal print
+precision and can only surface where a printed column's true value is **identically zero**
+and the noise is all that remains. The fix is a rendering rule, not a tolerance: **a
+rendering whose digits are all zero carries no sign.** Note it must act on the formatted
+string — the underlying value is typically a tiny non-zero that merely *rounds* to `-0.0`,
+so normalising signed zeros at the value level misses it.
+
+**7. Elementwise `f64` methods are not always the Scala expression.** `f64::abs` maps
+`-0.0` to `+0.0`, where Scala's `if x < zero then -x else x` leaves it alone; `powi` is
+repeated squaring where a Scala loop is repeated multiplication; `f64::max`/`min` propagate
+NaN differently from `math.max`/`math.min`. Port the *expression*, not the intent.
+
+**8. `!(a..=b).contains(&x)` is not `x < a || x > b`.** They differ on NaN: `contains`
+returns false for NaN, so the negation is true, where the explicit comparison chain is
+false. Clippy suggests the rewrite; refuse it wherever NaN can reach the test.
+
+The method that catches all of these is the same: a demo pair whose two halves print
+byte-identical output, diffed at more than one size. Single-size agreement is weak evidence
+— several of the above appeared only at small sample counts, where an empty collection or
+an identically-zero column becomes reachable.
+
 ## Gaps inside already-ported modules (Tier 1 — cheapest wins, fixtures exist)
 
 1. **`t3prf`: the closed-form entry points.** ~~Scala added `tprfClosedForm`,
