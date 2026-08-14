@@ -871,7 +871,7 @@ object MarketSim:
     println("portfolio at the rule's own average exposure IN THE SAME ASSETS; g/n = gross/net of")
     println("liquidity-scaled trading costs.  ruin = share of paths with a loss worse than 50%.")
     for (wname, ok, st, evald) <- results do
-      println(f"%nWORLD: $wname%-28s ${if ok then "" else "*** OUT OF RANGE — excluded from ranks ***"}%s")
+      println(f"\nWORLD: $wname%-28s ${if ok then "" else "*** OUT OF RANGE — excluded from ranks ***"}%s")
       println(f"  inflation ${st.inflAnn}%.1f%%/yr   eq vol ${st.vol * 100}%.1f%%  kurt ${st.kurt}%.1f  clus ${st.ac1}%.2f/${st.ac20}%.2f  " +
               f"crashes/path ${st.epPerPath}%.1f  depth ${st.depthMed}%.1f%%  censored ${st.censored}%d  " +
               f"trend share ${st.trendShare}%.2f  clamp ${st.clampPct}%.3f%%")
@@ -893,11 +893,11 @@ object MarketSim:
                 f"${outs.map(_.churn).sum / outs.size}%6.2f ${outs.map(_.slipMult).sum / outs.size}%7.2f $winTxt%9s")
 
     val valid = results.filter(_._2)
-    println(f"%n%nRANK STABILITY — ${valid.size}%d of ${results.size}%d worlds pass the gate; ranks use only those.")
+    println(f"\n\nRANK STABILITY — ${valid.size}%d of ${results.size}%d worlds pass the gate; ranks use only those.")
     println("Rank stability is the WEAK form of robustness: magnitudes vary far more than ranks.")
     for (metricName, get) <- Vector(("median net return", (o: Outcome) => o.ann),
                                     ("median GROSS edge vs the fixed twin", (o: Outcome) => o.vsFlatG)) do
-      println(f"%n  ranked by $metricName%s   (1 = best)")
+      println(f"\n  ranked by $metricName%s   (1 = best)")
       val ranks = Rules.indices.map { j =>
         j -> valid.map { (_, _, _, evald) =>
           val med = Rules.indices.map(k => k -> pctile(evald.map(_(k)._1).map(get), 0.5)).sortBy(-_._2)
@@ -914,7 +914,7 @@ object MarketSim:
     //            bonds — the only part attributable to timed flight.  total = static + timing per
     //            path; medians per column need not sum exactly.
     val pooled = valid.flatMap(_._4)
-    println(f"%nFLIGHT TO SAFETY — de-risking into BONDS instead of cash, pooled over the market-like")
+    println(f"\nFLIGHT TO SAFETY — de-risking into BONDS instead of cash, pooled over the market-like")
     println("worlds.  Return columns are net pp/yr and DEFLATOR-INVARIANT (the same inflation cancels")
     println("from both sides).  What real grading adds is the WITHDRAWAL column: dSwr = paired median")
     println("change in the 30-year sustainable REAL withdrawal rate from choosing the bond refuge —")
@@ -932,7 +932,7 @@ object MarketSim:
               f"${pctile(swC, 0.5)}%9.2f ${pctile(swB, 0.5)}%9.2f ${pctile(dSw, 0.5)}%+7.2f")
 
     // ---- refuge severity curve: the conclusion as a CURVE, not a point ------------------------
-    println(f"%nREFUGE SEVERITY CURVE — the same decomposition as inflation severity is dialed; where")
+    println(f"\nREFUGE SEVERITY CURVE — the same decomposition as inflation severity is dialed; where")
     println("the timing column crosses zero is where timed flight stops paying.  Baseline world")
     println("otherwise; severity multiplies inflSize.")
     println(f"  ${"severity"}%-9s ${"rule"}%-34s ${"total"}%7s ${"static"}%8s ${"timing"}%8s ${"dSwr"}%7s ${"infl-crash bond"}%16s")
@@ -960,7 +960,7 @@ object MarketSim:
                 f"${if okSev then "" else "   *** OUT OF GATE ***"}%s")
 
     // ---- cost breakeven ------------------------------------------------------------------------
-    println(f"%nCOST BREAKEVEN — the calm-market per-unit cost at which the rule's gross edge over its")
+    println(f"\nCOST BREAKEVEN — the calm-market per-unit cost at which the rule's gross edge over its")
     println("fixed twin reaches zero; liquidity-weighted churn in the denominator.  The flat-rate")
     println("column is what a constant fee would have implied.")
     println(f"  ${"rule"}%-34s ${"breakeven"}%12s ${"5th pct"}%9s ${"flat-rate"}%11s")
@@ -973,7 +973,7 @@ object MarketSim:
         println(f"  ${Rules(j).name}%-34s ${pctile(be, 0.5)}%9.0f bp ${pctile(be, 0.05)}%7.0f bp ${pctile(flat, 0.5)}%9.0f bp")
 
     // ---- crash-type decomposition --------------------------------------------------------------
-    println(f"%nCRASH TYPES — rule return minus buy-and-hold over each crash window, by whether the")
+    println(f"\nCRASH TYPES — rule return minus buy-and-hold over each crash window, by whether the")
     println("fundamental fell at least half as far as price.  Log points x 100.")
     for j <- Rules.indices do
       val entries = pooled.flatMap(_(j)._2)
@@ -1071,7 +1071,7 @@ object MarketSim:
     for L <- horizons do
       val (ok, res) = power(base, L, seed + L.toLong * 1000003L)
       val verdict = if ok then "gate PASS" else "gate FAIL — read nothing from this block"
-      println(f"%n  L = $L%3d years   ($paths%d independent histories, $verdict%s)")
+      println(f"\n  L = $L%3d years   ($paths%d independent histories, $verdict%s)")
       println(f"  ${"statistic"}%-19s" + pairs.indices.map(j => f"   C${j + 1}%-8d").mkString)
       for j <- StatNames.indices do
         println(f"  ${StatNames(j)}%-19s" + pairs.indices.map { c =>
@@ -1081,7 +1081,7 @@ object MarketSim:
 
     if !single then
       val L = horizons.head
-      println(f"%n  ACROSS THE WORLD SWEEP at L = $L%d years, contrast C1 — a measurement conclusion has")
+      println(f"\n  ACROSS THE WORLD SWEEP at L = $L%d years, contrast C1 — a measurement conclusion has")
       println("  to hold in every world the gate admits, or it is a property of one parameter setting.")
       val perWorld = sweepWorlds(base, single = false).map { (nm, w) => (nm, power(w, L, seed + 31L)) }
       val passing  = perWorld.filter(_._2._1).map(_._2._2)
@@ -1168,7 +1168,7 @@ object MarketSim:
               f"${pctile(mat, 0.99)}%6.1f ${mat.maxOption.getOrElse(Double.NaN)}%6.1f  " +
               overruns.map(b => f"${share(b)}%6.1f%%").mkString(" "))
 
-    println(f"%n  DEPTH AT EXHAUSTION — how often a buffer of B years is outlasted, and how deep it has")
+    println(f"\n  DEPTH AT EXHAUSTION — how often a buffer of B years is outlasted, and how deep it has")
     println("  got by then.  Stretches that never outlast the buffer force no sale and are EXCLUDED;")
     println("  entering them as zeros would average in episodes that cost nothing.")
     println(f"  ${"arm"}%-28s" + buffers.map(b => f"    ${f"B=${b}y per century"}%18s ${"median"}%7s ${"worst"}%7s").mkString)
@@ -1181,7 +1181,7 @@ object MarketSim:
       }.mkString)
 
     if !single then
-      println(f"%n  ACROSS THE WORLD SWEEP — gate-passing worlds only.  A buffer number that moves with")
+      println(f"\n  ACROSS THE WORLD SWEEP — gate-passing worlds only.  A buffer number that moves with")
       println("  the world parameters is a property of one parameter setting, not a planning figure.")
       val perWorld = sweepWorlds(base, single = false).map { (nm, w) => (nm, bufferStats(w)) }
       val passing  = perWorld.filter(_._2._1).map(_._2._2)
