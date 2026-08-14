@@ -31,7 +31,12 @@ extensions), `datecalc` (the utime surface on fixed dates — portable output),
 closed forms + `forecast3prf` incl. the OOS procedures), `bigcalc` (the whole
 udata surface — str2num/isNumeric, arithmetic via the `std::ops` overloads,
 every rounding mode, numStr/numStrPct variants, the BigNaN sentinel — framed
-as an exact-decimal invoice; fixed inputs, portable output).
+as an exact-decimal invoice; fixed inputs, portable output), `marketSim` /
+`market_sim` (the odd one out: not a tour of an API but a real 1,300-line workload —
+200 paths × 100 years of price formation on a seeded `NumPyRng`, then `MatD`
+reductions, drawdown episodes, exposure rules and four report modes. It is the
+consumer that drove Tier 3 milestone 1, and the pair that proved the transcendental
+question above is closable).
 
 Ten committed fixtures under `../test-data/*-parity/` pin these — roughly 19,930 rows
 (path 10,537 — incl. 38 `badpath`/`badpayload` rows · date 4,173 · tprf3 3,039 · big 629 · smartparse 539 · csv 458 ·
@@ -49,6 +54,7 @@ is measured, not assumed.** On a 200,000-value corpus:
 | system C `exp` vs JVM `Math.exp` | 1,122 (0.561%) | 1 ulp |
 | JVM `StrictMath.exp` (fdlibm) vs JVM `Math.exp` | 19,340 (9.67%) | 1 ulp |
 | Rust `libm` crate (pure-Rust musl/fdlibm) vs JVM `StrictMath.exp` | **0** | — |
+| libm `log` vs JVM `Math.log` | 470 (0.235%) | 1 ulp |
 
 Rust, the platform C library and NumPy are byte-identical to each other; the JVM stands
 apart. But **the JVM is the more accurate of the two**, which is the fact that decides
@@ -86,10 +92,32 @@ the contract is stated as "agrees to ~40 bits" rather than pretending to an exac
 does not exist. Everything else in `mat-parity`, `min`/`max`/`cummax` included, stays
 bit-for-bit.
 
-Consequence for consumers: any script whose printed output derives from `exp` — in
-`marketSim.sc` that is `mdd`/`mddR` and the SWR path — cannot be *guaranteed*
-byte-identical across the two languages, though at 1 ulp it will be in practice. That
-needs verifying per-script, not assuming.
+**The same holds for `log`**, measured the same way: the JVM's `Math.log` differs from
+libm's on **0.235%** of a 200,000-value corpus, never by more than 1 ulp. Treat every
+transcendental as agreeing to ~1 ulp rather than exactly, and assume nothing about any one
+of them without measuring it.
+
+Consequence for consumers, and how it actually plays out — `jsrc/marketSim.sc` and
+`examples/market_sim.rs` are the worked example. A 1-ulp difference is invisible at any
+normal print precision, so it can only surface where a printed column's true value is
+**identically zero** and the rounding noise is the only thing left in it. In marketSim
+that is exactly one column: the always-invested rule against buy-and-hold, where
+`eq(end) - eq(peak)` and `log(price(end)/price(peak))` are mathematically equal because
+the cumulative sum telescopes. There the printed sign was a coin flip between the two
+languages.
+
+The fix is not a tolerance, and not a workaround: **a rendering whose digits are all zero
+carries no sign.** `-0.0` and `+0.0` both print as ` 0.0`. That is the correct rendering
+on its own merits — in a signed column, a blanked sign says "zero, direction not
+resolvable at this precision", where `-0.0` would report noise as direction — and it is
+already uni's convention in `numStr`. Note it must act on the *rendered string*: the
+underlying value is a tiny non-zero (~1e-14) that merely rounds to `-0.0`, so normalising
+signed zeros at the value level would miss it.
+
+With that in place, marketSim is byte-identical across `-emit`, `-validate`, `-buffer`,
+`-power` and `-strategies` at every size tried. So the practical rule for a new script is:
+transcendental noise is only a parity risk in identically-zero columns, and blanking the
+sign there removes it.
 
 `mat-parity` is small by row count and unusually load-bearing: 13 sizes × 10 reductions,
 compared as raw IEEE-754 bit patterns rather than decimal text, over a corpus of

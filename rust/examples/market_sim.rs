@@ -67,11 +67,6 @@ const BAND: f64 = 0.05;
 /// What the non-value crowd trades on. Momentum is the generic extrapolator; the other two
 /// run the SAME RULE being tested, so its de-risking moves the price it reacts to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[expect(
-    dead_code,
-    reason = "Trend/VolScaled are constructed by the -crowd flag, which lands with the \
-              exposure rules; simulate already dispatches on them"
-)]
 enum Crowd {
     Momentum,
     Trend(i32),
@@ -568,6 +563,18 @@ struct WorldStats {
     infl_ann: f64,
 }
 
+/// Scala's `.sum` on a `Seq[Double]`, which folds from `Numeric[Double].zero` — **+0.0**.
+///
+/// Rust's `Iterator::sum` for floats folds from **-0.0** instead. That is a deliberate std
+/// choice (it makes the identity preserve the sign when every element is `-0.0`), but it
+/// means an EMPTY sum is `-0.0` in Rust and `+0.0` in Scala. Invisible until a zero reaches
+/// a report column, where it prints as `-0.0` on one side and `0.0` on the other — which is
+/// exactly how it was found, in the share-of-time columns of the buffer report where no
+/// stretch exceeded the threshold.
+fn scala_sum(it: impl Iterator<Item = f64>) -> f64 {
+    it.fold(0.0, |a, b| a + b)
+}
+
 /// Scala's `.sorted` on `Double` uses `TotalOrdering`; `total_cmp` is its exact counterpart.
 fn sorted_total(v: &[f64]) -> Vec<f64> {
     let mut s = v.to_vec();
@@ -609,7 +616,7 @@ fn measure(sims: &[Path], years: usize) -> WorldStats {
         .map(|e| e.shape())
         .filter(|x| !x.is_nan())
         .collect();
-    let days: f64 = sims.iter().map(|s| s.price.len() as f64).sum();
+    let days: f64 = scala_sum(sims.iter().map(|s| s.price.len() as f64));
 
     let bond_in_windows = |infl_regime: bool| -> f64 {
         let vals: Vec<f64> = eps_by
@@ -617,7 +624,7 @@ fn measure(sims: &[Path], years: usize) -> WorldStats {
             .flat_map(|(sp, es)| {
                 es.iter()
                     .filter(|ep| {
-                        let s: f64 = (ep.peak..=ep.trough).map(|k| sp.infl_press[k]).sum();
+                        let s: f64 = scala_sum((ep.peak..=ep.trough).map(|k| sp.infl_press[k]));
                         let infl = s / 1.max(ep.trough - ep.peak + 1) as f64;
                         (infl > 0.005) == infl_regime
                     })
@@ -682,11 +689,11 @@ fn measure(sims: &[Path], years: usize) -> WorldStats {
         u_count: shapes.iter().filter(|&&x| x < 0.67).count(),
         n_shapes: shapes.len(),
         censored: eps.iter().filter(|e| e.censored()).count(),
-        clamp_pct: sims.iter().map(|s| s.clamped_days as f64).sum::<f64>() / days * 100.0,
-        trend_share: sims.iter().map(|s| s.mean_trend_share).sum::<f64>() / n_sims,
+        clamp_pct: scala_sum(sims.iter().map(|s| s.clamped_days as f64)) / days * 100.0,
+        trend_share: scala_sum(sims.iter().map(|s| s.mean_trend_share)) / n_sims,
         years_per_path: years as f64,
-        trend_pinned: sims.iter().map(|s| s.trend_pinned).sum::<f64>() / n_sims,
-        target_sat: sims.iter().map(|s| s.target_sat).sum::<f64>() / n_sims,
+        trend_pinned: scala_sum(sims.iter().map(|s| s.trend_pinned)) / n_sims,
+        target_sat: scala_sum(sims.iter().map(|s| s.target_sat)) / n_sims,
         bond_vol: med(
             &sims
                 .iter()
@@ -697,8 +704,8 @@ fn measure(sims: &[Path], years: usize) -> WorldStats {
         bond_infl: bond_in_windows(true),
         corr_calm: corr_in(false),
         corr_infl: corr_in(true),
-        mean_bond_stress: sims.iter().map(|s| s.mean_bond_stress).sum::<f64>() / n_sims,
-        pct_bond_stress: sims.iter().map(|s| s.pct_bond_stress).sum::<f64>() / n_sims,
+        mean_bond_stress: scala_sum(sims.iter().map(|s| s.mean_bond_stress)) / n_sims,
+        pct_bond_stress: scala_sum(sims.iter().map(|s| s.pct_bond_stress)) / n_sims,
         infl_ann: med(
             &sims
                 .iter()
@@ -813,7 +820,7 @@ fn fitness(st: &WorldStats) -> (f64, Vec<(&'static str, f64, f64, f64)>) {
         })
         .collect();
     let gate_penalty = gate_checks(st).iter().filter(|(_, ok)| !ok).count() as f64 * 0.5;
-    let total: f64 = rows.iter().map(|r| r.3).sum::<f64>() + gate_penalty;
+    let total: f64 = scala_sum(rows.iter().map(|r| r.3)) + gate_penalty;
     (total, rows)
 }
 
@@ -1083,7 +1090,7 @@ enum Safe {
 /// held flat, in the same two assets.
 fn matched_constant(e: &[f64]) -> Vec<f64> {
     // bound FIRST: the Scala note is that an inline e.sum would be recomputed per element
-    let m = e.iter().sum::<f64>() / e.len() as f64;
+    let m = scala_sum(e.iter().copied()) / e.len() as f64;
     vec![m; e.len()]
 }
 
@@ -1139,7 +1146,7 @@ fn arm_path(p: &Path, e: &[f64], cost: f64, safe: Safe) -> ArmPath {
         log_eq: eq,
         real_log_eq: real_eq,
         steps: steps.toArray(),
-        mean_e: e.iter().sum::<f64>() / e.len() as f64,
+        mean_e: scala_sum(e.iter().copied()) / e.len() as f64,
         churn: d_e.sum(),
         eff_churn: (&d_e * &liq_t).sum(),
         cost_paid: costs.sum(),
@@ -1419,7 +1426,7 @@ fn grading_stats(ap: &ArmPath, years: usize) -> Vec<(&'static str, f64)> {
     let n = eq.len();
     let depths = drawdown_series(eq);
     let depths_r = drawdown_series(&ap.real_log_eq);
-    let mu = ap.steps.iter().sum::<f64>() / ap.steps.len() as f64;
+    let mu = scala_sum(ap.steps.iter().copied()) / ap.steps.len() as f64;
     let sd = (MatD::apply(&ap.steps).power(2).mean() - mu * mu).sqrt();
     let max_dd = max_total(&depths) * 100.0;
     let ann_ret = eq[n - 1] / years as f64 * 100.0;
@@ -1493,6 +1500,56 @@ fn n_star_str(x: f64) -> String {
     } else {
         jf(x.max(1.0), 5, 0)
     }
+}
+
+// ---- calibration search -----------------------------------------------------------------
+
+fn calibrate(n_samples: usize, base: &World, seed: u64) {
+    type Setter = fn(&mut World, f64);
+    let ranges: Vec<(&str, f64, f64, Setter)> = vec![
+        ("stress", 2.0, 6.0, |w, x| w.stress = x),
+        ("valuePull", 0.010, 0.035, |w, x| w.value_pull = x),
+        ("volOfVol", 0.012, 0.030, |w, x| w.vol_of_vol = x),
+        ("flight", 0.2, 1.6, |w, x| w.flight = x),
+        ("duration", 8.0, 18.0, |w, x| w.duration = x),
+        ("inflSize", 0.03, 0.12, |w, x| w.infl_size = x),
+        ("discount", 3.0, 10.0, |w, x| w.discount = x),
+        ("margin", 0.0, 0.004, |w, x| w.margin = x),
+    ];
+    // the only RNG in the program that was not already NumPyRng
+    let mut sr = NumPyRng::new(seed ^ 0x5ca1_ab1e);
+    let train_seed = seed;
+    let hold_seed = seed + 7_777_777;
+    // scored at 100-year paths: an 80-year protocol missed a worst-crash blowup that only
+    // appears at the horizon actually used — tune at the scale you evaluate at
+    let score = |w: &World, s: u64| -> f64 { fitness(&measure(&sim_paths(w, 50, 100, s), 100)).0 };
+    eprintln!("calibrate: {n_samples} samples, 50 paths x 100 years each; holdout re-score of top 5");
+    let mut scored: Vec<(f64, World, String)> = (0..n_samples)
+        .map(|k| {
+            let mut w = *base;
+            let mut desc: Vec<String> = Vec::new();
+            for (nm, lo, hi, set) in &ranges {
+                let x = sr.uniform(*lo, *hi);
+                set(&mut w, x);
+                desc.push(format!("{nm}={}", jf(x, 0, 4)));
+            }
+            let f = score(&w, train_seed);
+            eprintln!("  sample {}  train loss {}", jf(k as f64, 3, 0), jf(f, 7, 3));
+            (f, w, desc.join(" "))
+        })
+        .collect();
+    // Scala's sortBy(_._1) is stable; sort_by with total_cmp matches
+    scored.sort_by(|a, b| a.0.total_cmp(&b.0));
+    println!("top 5 of {n_samples}, re-scored on the HELD-OUT seed:");
+    for (f, w, d) in scored.iter().take(5) {
+        let h = score(w, hold_seed);
+        println!("  train {}   holdout {}   {d}", jf(*f, 7, 3), jf(h, 7, 3));
+    }
+    println!(
+        "current defaults: train {}   holdout {}",
+        jf(score(base, train_seed), 0, 3),
+        jf(score(base, hold_seed), 0, 3)
+    );
 }
 
 // ---- the strategy sweep -----------------------------------------------------------------
@@ -1629,8 +1686,8 @@ fn run_strategy_sweep(
                 jfsw(pctile(&outs.iter().map(|o| o.vs_flat_g).collect::<Vec<f64>>(), 0.5), 9, 2),
                 jfsw(pctile(&outs.iter().map(|o| o.vs_flat).collect::<Vec<f64>>(), 0.5), 9, 2),
                 jf(pctile(&outs.iter().map(|o| o.swr).collect::<Vec<f64>>(), 0.5), 6, 2),
-                jf(outs.iter().map(|o| o.churn).sum::<f64>() / outs.len() as f64, 6, 2),
-                jf(outs.iter().map(|o| o.slip_mult()).sum::<f64>() / outs.len() as f64, 7, 2),
+                jf(scala_sum(outs.iter().map(|o| o.churn)) / outs.len() as f64, 6, 2),
+                jf(scala_sum(outs.iter().map(|o| o.slip_mult())) / outs.len() as f64, 7, 2),
                 win_txt
             );
         }
@@ -1860,6 +1917,9 @@ fn run_strategy_sweep(
     }
 }
 
+/// Per contrast, per statistic: `(hit rate, n*)`.
+type PowerTable = Vec<Vec<(f64, f64)>>;
+
 // ---- the power report -------------------------------------------------------------------
 
 #[expect(
@@ -1914,7 +1974,7 @@ fn run_power_report(paths: usize, seed: u64, cost: f64, single: bool, base: &Wor
     let names = stat_names();
 
     // per contrast, per statistic: (hit rate, n*). Gate verdict travels with the numbers.
-    let power = |w: &World, l: usize, sd: u64| -> (bool, Vec<Vec<(f64, f64)>>) {
+    let power = |w: &World, l: usize, sd: u64| -> (bool, PowerTable) {
         let sims = sim_paths(w, paths, l, sd);
         let ok = gate_checks(&measure(&sims, l)).iter().all(|(_, o)| *o);
         let stats: Vec<Vec<Vec<f64>>> = (0..sims.len())
@@ -1958,15 +2018,15 @@ fn run_power_report(paths: usize, seed: u64, cost: f64, single: bool, base: &Wor
                         // truth from one half, hit rate scored on the OTHER: reading both off the
                         // same sample would grade the estimator against a target it helped define
                         let h = d.len() / 2;
-                        let truth = d[..h].iter().sum::<f64>() / h as f64;
+                        let truth = scala_sum(d[..h].iter().copied()) / h as f64;
                         let test = &d[h..];
                         let hit = test
                             .iter()
                             .filter(|x| scala_sign(**x) == scala_sign(truth))
                             .count() as f64
                             / test.len() as f64;
-                        let mu = d.iter().sum::<f64>() / d.len() as f64;
-                        let sdv = (d.iter().map(|x| (x - mu) * (x - mu)).sum::<f64>()
+                        let mu = scala_sum(d.iter().copied()) / d.len() as f64;
+                        let sdv = (scala_sum(d.iter().map(|x| (x - mu) * (x - mu)))
                             / d.len() as f64)
                             .sqrt();
                         (
@@ -2027,8 +2087,56 @@ fn run_power_report(paths: usize, seed: u64, cost: f64, single: bool, base: &Wor
     }
 
     if !single {
-        eprintln!("the world sweep is not ported yet; run with -single");
-        std::process::exit(2);
+        let l = horizons[0];
+        println!("\n  ACROSS THE WORLD SWEEP at L = {l} years, contrast C1 — a measurement conclusion has");
+        println!("  to hold in every world the gate admits, or it is a property of one parameter setting.");
+        let per_world: Vec<(bool, PowerTable)> = sweep_worlds(base, false)
+            .iter()
+            .map(|(_, w)| power(w, l, seed + 31))
+            .collect();
+        let passing: Vec<&PowerTable> = per_world
+            .iter()
+            .filter(|(ok, _)| *ok)
+            .map(|(_, r)| r)
+            .collect();
+        println!(
+            "  {} of {} worlds pass the gate",
+            passing.len(),
+            per_world.len()
+        );
+        println!(
+            "  {:<19} {:>8} {:>8} {:>8} {:>12}",
+            "statistic", "min n*", "median", "max n*", "median hit%"
+        );
+        for (j, nm) in names.iter().enumerate() {
+            let ns = sorted_total(
+                &passing
+                    .iter()
+                    .map(|r| r[0][j].1)
+                    .filter(|x| !x.is_nan())
+                    .collect::<Vec<f64>>(),
+            );
+            let hs: Vec<f64> = passing
+                .iter()
+                .map(|r| r[0][j].0)
+                .filter(|x| !x.is_nan())
+                .collect();
+            let hm = if hs.is_empty() {
+                "n/a".to_string()
+            } else {
+                format!("{}%", jf(pctile(&hs, 0.5) * 100.0, 0, 0))
+            };
+            println!(
+                "  {nm:<19} {:>8} {:>8} {:>8} {hm:>12}",
+                n_star_str(ns.first().copied().unwrap_or(f64::NAN)),
+                n_star_str(if ns.is_empty() {
+                    f64::NAN
+                } else {
+                    pctile(&ns, 0.5)
+                }),
+                n_star_str(ns.last().copied().unwrap_or(f64::NAN))
+            );
+        }
     }
 }
 
@@ -2153,7 +2261,7 @@ fn run_buffer_report(paths: usize, years: usize, seed: u64, cost: f64, single: b
     for j in 0..arms.len() {
         let (mat, all, _) = &res[j];
         let share = |y: f64| -> f64 {
-            all.iter().filter(|x| **x > y).sum::<f64>() / path_years * 100.0
+            scala_sum(all.iter().filter(|x| **x > y).copied()) / path_years * 100.0
         };
         let cols: Vec<String> = overruns
             .iter()
@@ -2207,9 +2315,62 @@ fn run_buffer_report(paths: usize, years: usize, seed: u64, cost: f64, single: b
     }
 
     if !single {
-        eprintln!("the world sweep is not ported yet; run with -single");
-        std::process::exit(2);
+        println!("\n  ACROSS THE WORLD SWEEP — gate-passing worlds only.  A buffer number that moves with");
+        println!("  the world parameters is a property of one parameter setting, not a planning figure.");
+        let per_world: Vec<(bool, Vec<BufferArm>)> = sweep_worlds(base, false)
+            .iter()
+            .map(|(_, w)| buffer_stats(w))
+            .collect();
+        let passing: Vec<&Vec<BufferArm>> = per_world
+            .iter()
+            .filter(|(ok, _)| *ok)
+            .map(|(_, r)| r)
+            .collect();
+        println!(
+            "  {} of {} worlds pass the gate",
+            passing.len(),
+            per_world.len()
+        );
+        println!(
+            "  {:<28} {:>32}   share of time in a >10y stretch",
+            "arm", "99th pct material stretch, yrs"
+        );
+        println!(
+            "  {:<28} {:>10} {:>10} {:>10}   {:>9} {:>9} {:>9}",
+            " ", "min", "median", "max", "min", "median", "max"
+        );
+        for j in 0..arms.len() {
+            let q = sorted_total(
+                &passing
+                    .iter()
+                    .map(|r| pctile(&r[j].0, 0.99))
+                    .collect::<Vec<f64>>(),
+            );
+            let t = sorted_total(
+                &passing
+                    .iter()
+                    .map(|r| {
+                        scala_sum(r[j].1.iter().filter(|x| **x > 10.0).copied()) / path_years * 100.0
+                    })
+                    .collect::<Vec<f64>>(),
+            );
+            println!(
+                "  {:<28} {} {} {}   {}% {}% {}%",
+                arms[j].0,
+                jf(q.first().copied().unwrap_or(f64::NAN), 10, 1),
+                jf(pctile(&q, 0.5), 10, 1),
+                jf(q.last().copied().unwrap_or(f64::NAN), 10, 1),
+                jf(t.first().copied().unwrap_or(f64::NAN), 8, 1),
+                jf(pctile(&t, 0.5), 8, 1),
+                jf(t.last().copied().unwrap_or(f64::NAN), 8, 1)
+            );
+        }
     }
+}
+
+/// Consume the next argument as an `f64`, keeping the default if it is missing or unparseable.
+fn next_f64<'a>(it: &mut impl Iterator<Item = &'a String>, dflt: f64) -> f64 {
+    it.next().and_then(|v| v.parse().ok()).unwrap_or(dflt)
 }
 
 // ---- Java-compatible formatting ---------------------------------------------------------
@@ -2280,6 +2441,10 @@ fn jfl(v: f64, width: i32, dec: i32) -> String {
     reason = "the MISS flag must leave a NaN ratio UNflagged, as `ratio > 1.5 || ratio < 0.667` \
               does; `!(0.667..=1.5).contains(&ratio)` would flag it"
 )]
+#[expect(
+    clippy::cognitive_complexity,
+    reason = "one linear dispatch over the CLI, as in the Scala twin"
+)]
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
@@ -2293,6 +2458,28 @@ fn main() {
     let mut strategies = false;
     let mut single = false;
     let mut cost = 0.0010f64;
+    let mut fitness_only = false;
+    let mut calibrate_n = 0usize;
+    // defaults = best of a 50-sample random search against the fitness loss, scored at
+    // 100-year paths (train 3.43, holdout 3.44 — indistinguishable, so not seed-fit)
+    let mut trend_share = 0.30f64;
+    let mut depth = 12.0f64;
+    let mut stress = 3.4f64;
+    let mut beta = 3.0f64;
+    let mut vol_persist = 0.99f64;
+    let mut vol_of_vol = 0.028f64;
+    let mut value_pull = 0.015f64;
+    let mut crowd_name = "momentum".to_string();
+    let mut crowd_impact = 0.06f64;
+    let mut panic_k = 0.0f64;
+    let mut duration = 13.5f64;
+    let mut flight = 0.38f64;
+    let mut infl_prob = 0.20f64;
+    let mut infl_size = 0.07f64;
+    let mut infl_speed = 0.010f64;
+    let mut rate_speed = 3.0f64;
+    let mut discount = 4.0f64;
+    let mut margin = 0.0008f64;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -2306,8 +2493,30 @@ fn main() {
             "-strategies" => strategies = true,
             "-single" => single = true,
             "-cost" => cost = it.next().and_then(|v| v.parse().ok()).unwrap_or(cost),
+            "-fitness" => fitness_only = true,
+            "-calibrate" => {
+                calibrate_n = it.next().and_then(|v| v.parse().ok()).unwrap_or(0);
+            }
+            "-crowd" => crowd_name = it.next().cloned().unwrap_or_default(),
+            "-trendshare" => trend_share = next_f64(&mut it, trend_share),
+            "-depth" => depth = next_f64(&mut it, depth),
+            "-stress" => stress = next_f64(&mut it, stress),
+            "-beta" => beta = next_f64(&mut it, beta),
+            "-volpersist" => vol_persist = next_f64(&mut it, vol_persist),
+            "-volofvol" => vol_of_vol = next_f64(&mut it, vol_of_vol),
+            "-value" => value_pull = next_f64(&mut it, value_pull),
+            "-crowdimpact" => crowd_impact = next_f64(&mut it, crowd_impact),
+            "-panic" => panic_k = next_f64(&mut it, panic_k),
+            "-duration" => duration = next_f64(&mut it, duration),
+            "-flight" => flight = next_f64(&mut it, flight),
+            "-inflprob" => infl_prob = next_f64(&mut it, infl_prob),
+            "-inflsize" => infl_size = next_f64(&mut it, infl_size),
+            "-inflspeed" => infl_speed = next_f64(&mut it, infl_speed),
+            "-ratespeed" => rate_speed = next_f64(&mut it, rate_speed),
+            "-discount" => discount = next_f64(&mut it, discount),
+            "-margin" => margin = next_f64(&mut it, margin),
             other => {
-                eprintln!("not ported yet: [{other}]");
+                eprintln!("unrecognized arg [{other}]");
                 std::process::exit(2);
             }
         }
@@ -2315,30 +2524,71 @@ fn main() {
 
     // defaults = best of a 50-sample random search against the fitness loss, scored at
     // 100-year paths (train 3.43, holdout 3.44 — indistinguishable, so not seed-fit)
+    let crowd = match crowd_name.to_lowercase().as_str() {
+        "momentum" => Crowd::Momentum,
+        "volscaled" => Crowd::VolScaled,
+        t if t.starts_with("trend") => match t[5..].parse::<i32>() {
+            Ok(d) => Crowd::Trend(d),
+            Err(_) => {
+                eprintln!("unknown -crowd [{crowd_name}]; use momentum, trendNNN, or volscaled");
+                std::process::exit(2);
+            }
+        },
+        _ => {
+            eprintln!("unknown -crowd [{crowd_name}]; use momentum, trendNNN, or volscaled");
+            std::process::exit(2);
+        }
+    };
     let w = World {
-        trend_share: 0.30,
-        depth: 12.0,
-        stress: 3.4,
-        beta: 3.0,
+        trend_share,
+        depth,
+        stress,
+        beta,
         drift: 0.100,
         fund_vol: 0.13,
         rate_mean: 0.042,
-        vol_persist: 0.99,
-        vol_of_vol: 0.028,
-        value_pull: 0.015,
-        crowd: Crowd::Momentum,
-        crowd_impact: 0.06,
-        panic: 0.0,
-        duration: 13.5,
-        flight: 0.38,
-        infl_prob: 0.20,
-        infl_size: 0.07,
-        infl_speed: 0.010,
-        rate_speed: 3.0,
-        discount: 4.0,
-        margin: 0.0008,
+        vol_persist,
+        vol_of_vol,
+        value_pull,
+        crowd,
+        crowd_impact,
+        panic: panic_k,
+        duration,
+        flight,
+        infl_prob,
+        infl_size,
+        infl_speed,
+        rate_speed,
+        discount,
+        margin,
     };
 
+    if calibrate_n > 0 {
+        calibrate(calibrate_n, &w, seed);
+        return;
+    }
+    if fitness_only {
+        let st = measure(&sim_paths(&w, 60, 80, seed), 80);
+        let (loss, rows) = fitness(&st);
+        println!(
+            "fitness loss {}  (lower is better; includes 0.5 per failed gate check)",
+            jf(loss, 0, 3)
+        );
+        for (n, m, t, term) in rows {
+            println!(
+                "  {n:<22} model {}   target {}   term {}",
+                jf(m, 8, 2),
+                jf(t, 8, 2),
+                jf(term, 6, 3)
+            );
+        }
+        for (n, ok) in gate_checks(&st) {
+            if !ok {
+                println!("  FAILED GATE: {n}  (+0.500)");
+            }
+        }
+        return;
+    }
     if strategies {
         run_strategy_sweep(paths, years, seed, cost, single, &w);
         return;
@@ -2396,7 +2646,7 @@ fn main() {
     let all_rets: Vec<Vec<f64>> = sims.iter().map(|s| daily_returns(&s.price)).collect();
     let ann_vol: Vec<f64> = all_rets
         .iter()
-        .map(|r| (r.iter().map(|x| x * x).sum::<f64>() / r.len() as f64 * DAYS_PER_YEAR as f64).sqrt())
+        .map(|r| (scala_sum(r.iter().map(|x| x * x)) / r.len() as f64 * DAYS_PER_YEAR as f64).sqrt())
         .collect();
     let ann_ret: Vec<f64> = sims
         .iter()
