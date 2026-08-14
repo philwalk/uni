@@ -274,6 +274,94 @@ impl MatD {
         Self::create(out, 1, n)
     }
 
+    /// Elementwise `e^x` — Scala's `exp`, i.e. `m.map(math.exp)`.
+    ///
+    /// This is the one operation here that is NOT bit-identical to the Scala side, and
+    /// the reason is on the JVM's end, not this one. Measured over 200,000 values:
+    /// `f64::exp`, the platform C `exp` and NumPy's `np.exp` agree exactly — 0
+    /// differences — while the JVM's `Math.exp` differs from all three on 0.561%, never
+    /// by more than 1 ulp. `Math.exp` is a hand-written HotSpot assembly intrinsic, not
+    /// a libm call, so no platform C library matches it; routing this through
+    /// `extern "C" { fn exp(f64) -> f64 }` would change nothing, because that is already
+    /// the symbol `f64::exp` resolves to on targets with a system libm.
+    ///
+    /// The `expq` case in `test-data/mat-parity/` therefore digests every element on a
+    /// 2^-40 grid, keeping the agreement an observed, stated bound rather than an
+    /// assumption.
+    pub fn exp(&self) -> Self {
+        self.map_elems(f64::exp)
+    }
+
+    /// Smallest element — Scala's `min`.
+    ///
+    /// # Panics
+    /// On an empty matrix, mirroring Scala's `UnsupportedOperationException`.
+    pub fn min(&self) -> f64 {
+        assert!(!self.isEmpty(), "min of an empty matrix");
+        // Scala scans with `<`, seeded from element (0,0); NaN therefore never displaces
+        // the accumulator. `f64::min` would propagate differently, so this stays a scan.
+        let mut acc = self.data[0];
+        for &x in &self.data {
+            if x < acc {
+                acc = x;
+            }
+        }
+        acc
+    }
+
+    /// Largest element — Scala's `max`. Scans with `>`, seeded from element (0,0).
+    ///
+    /// # Panics
+    /// On an empty matrix, mirroring Scala's `UnsupportedOperationException`.
+    pub fn max(&self) -> f64 {
+        assert!(!self.isEmpty(), "max of an empty matrix");
+        let mut acc = self.data[0];
+        for &x in &self.data {
+            if x > acc {
+                acc = x;
+            }
+        }
+        acc
+    }
+
+    /// Running maximum along `axis` — Scala's `cummax(axis)`. Shape is preserved.
+    ///
+    /// `axis == 0` accumulates down each column, `axis == 1` across each row. Scala seeds
+    /// the accumulator from the first cell of the lane and then compares with `>`, so the
+    /// first cell is written unconditionally; that ordering is reproduced here.
+    ///
+    /// # Panics
+    /// If `axis` is not 0 or 1, mirroring Scala's `require`.
+    pub fn cummax(&self, axis: usize) -> Self {
+        assert!(axis == 0 || axis == 1, "axis must be 0 or 1, got {axis}");
+        let (rows, cols) = (self.rows, self.cols);
+        let mut out = vec![0.0f64; rows * cols];
+        if axis == 0 {
+            for j in 0..cols {
+                let mut acc = self.data[j];
+                for i in 0..rows {
+                    let v = self.data[i * cols + j];
+                    if v > acc {
+                        acc = v;
+                    }
+                    out[i * cols + j] = acc;
+                }
+            }
+        } else {
+            for i in 0..rows {
+                let mut acc = self.data[i * cols];
+                for j in 0..cols {
+                    let v = self.data[i * cols + j];
+                    if v > acc {
+                        acc = v;
+                    }
+                    out[i * cols + j] = acc;
+                }
+            }
+        }
+        Self::create(out, rows, cols)
+    }
+
     /// Sum of every element — bit-identical to Scala's `sum` on a contiguous `Mat[Double]`.
     pub fn sum(&self) -> f64 {
         sum_d(self.as_slice())

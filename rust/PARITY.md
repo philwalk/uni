@@ -17,7 +17,7 @@ snake_case marks an internal helper or a `try_*` Result variant.
 | `UniDateTime` (57 methods), `DateFormat`, `SmartParse`, `TimeUtils` | `utime` (67 pub fns) | field arithmetic, plus/minus/with families, epoch-day, pattern formatting, smart parsing incl. `parseDateSmartWith(config)`; the clock (local wall time via `localOffsetMinutes`, no tzdb), the zone-free between/duration family, `getMillis`, `endOfMonth`, `quik*`, `whenModified`/`ageIn*` |
 | `Big`, `BigUtils` + the CSV loaders | `udata` (43 pub fns) | full arithmetic incl. `round(precision, mode)`, HALF_EVEN contexts, `loadMatBig`/`loadSmartBig`; `numStr`/`NumFormat` (Java `%f` fidelity), `str2num`, `isNumeric`, `isBad`/`orBad` |
 | `NumPyRNG` | `numpy_rng` (7 fns) | bit-identical `uniform`/`randn`/`next_*` |
-| `Mat[Double]` reductions (Tier 3 milestone 1) | `udata::mat::MatD` | construction, elementwise `+ - *` against scalar and same-shape matrix (incl. scalar-on-the-left), `abs` `power` `cumsum` `mean` `sum` `toArray` `head` `tail` `at` — **bit-identical**, not merely close: `sumD`'s 8-way unrolled combine tree and its pinned 16-chunk decomposition are reproduced exactly, and `abs` keeps `-0.0` where `f64::abs` would not. Broadcasting, slicing, transpose and `CVecD`/`RVecD` are still to come |
+| `Mat[Double]` reductions (Tier 3 milestone 1) | `udata::mat::MatD` | construction, elementwise `+ - *` against scalar and same-shape matrix (incl. scalar-on-the-left), `abs` `power` `cumsum` `mean` `sum` `min` `max` `cummax(axis)` `exp` `toArray` `head` `tail` `at` — **bit-identical except `exp`** (see below): `sumD`'s 8-way unrolled combine tree and its pinned 16-chunk decomposition are reproduced exactly, `abs` keeps `-0.0` where `f64::abs` would not, `power` is repeated multiplication rather than `powi`, and `cumsum` returns `1×n` whatever the input shape, as Scala's does. Broadcasting, slicing, transpose and `CVecD`/`RVecD` are still to come |
 | `Tprf3`, complete | `t3prf` (13 pub fns) | `t3prf_core`, `estimate_3prf_is_full`/`oos_cv`/`oos_rec`, `ols_solve`, `standardize_columns`, and the closed forms: `tprfClosedForm`, `plsClosedForm`, `pls1Fit`, `forecast3prf` |
 | `StringExts` (partial) | `StrExts`/`StrPathExts` | `lc uc posx dropSuffix startsWithIgnoreCase stripPrefix asPath absPath posix` |
 | `uni.cli.ArgsParser` | `cli` | `eachArg`/`showUsage` + cursor helpers (`thisArg consumeNext peekNext nextInt nextLong nextDouble`); prog name from the caller's source file (`#[track_caller]` mirroring the Scala macro) |
@@ -33,12 +33,65 @@ udata surface — str2num/isNumeric, arithmetic via the `std::ops` overloads,
 every rounding mode, numStr/numStrPct variants, the BigNaN sentinel — framed
 as an exact-decimal invoice; fixed inputs, portable output).
 
-Ten committed fixtures under `../test-data/*-parity/` pin these — roughly 19,880 rows
+Ten committed fixtures under `../test-data/*-parity/` pin these — roughly 19,930 rows
 (path 10,537 — incl. 38 `badpath`/`badpayload` rows · date 4,173 · tprf3 3,039 · big 629 · smartparse 539 · csv 458 ·
-numpy-rng 378 · mat 78 · walk 30 · hash 23) — plus the byte-identical pair probe
+numpy-rng 378 · mat 130 · walk 30 · hash 23) — plus the byte-identical pair probe
 (`jsrc/pairProbe.sc` / `examples/pair_probe.rs`). See `README.md`.
 
-`mat-parity` is small by row count and unusually load-bearing: 13 sizes × 6 reductions,
+**`exp` is the one operation in the port that is not bit-identical, and every claim below
+is measured, not assumed.** On a 200,000-value corpus:
+
+| pair | differ | max |
+| :--- | ---: | ---: |
+| Rust `f64::exp` vs system C `exp` (`extern "C"`) | **0** | — |
+| Rust `f64::exp` vs **NumPy** `np.exp` | **0** | — |
+| Rust `f64::exp` vs JVM `Math.exp` | 1,122 (0.561%) | 1 ulp |
+| system C `exp` vs JVM `Math.exp` | 1,122 (0.561%) | 1 ulp |
+| JVM `StrictMath.exp` (fdlibm) vs JVM `Math.exp` | 19,340 (9.67%) | 1 ulp |
+| Rust `libm` crate (pure-Rust musl/fdlibm) vs JVM `StrictMath.exp` | **0** | — |
+
+Rust, the platform C library and NumPy are byte-identical to each other; the JVM stands
+apart. But **the JVM is the more accurate of the two**, which is the fact that decides
+what to do about it. Against exact arithmetic (60-digit decimal, 20,000 values):
+
+| implementation | correctly rounded | off by 1 ulp |
+| :--- | ---: | ---: |
+| JVM `Math.exp` | **99.74%** | 0.26% |
+| C / Rust / NumPy `exp` | 99.43% | 0.575% |
+
+So matching NumPy here would mean deliberately adopting *its* last-ulp rounding errors.
+That is worth separating from real NumPy fidelity: matching NumPy's **conventions**
+(percentile interpolation, `str2num` formatting, summation order) is a genuine contract;
+matching its `exp` noise is importing someone else's error, at a cost in both accuracy and
+speed.
+
+**Decision: both sides keep their native fast path.** Rust's `f64::exp` already equals
+NumPy exactly and is the fastest option there; Scala's `Math.exp` is both the fastest
+(a HotSpot assembly intrinsic, no call boundary) and the most accurate. Three alternatives
+were measured and rejected:
+
+- **`extern "C"` from Rust** — changes nothing: `f64::exp` already *is* that symbol on
+  targets with a system libm.
+- **fdlibm on both sides** (`StrictMath.exp` + the `libm` crate, which are bit-identical,
+  verified above) — would give exact cross-language agreement for one line and one
+  pure-Rust dependency, but fdlibm is the least accurate of all the candidates and the
+  furthest from NumPy, losing on both stated priorities.
+- **FFM/Panama on the Scala side** — worst performance of all: `exp` is one native call
+  per element, so unlike BLAS (O(n³) work per O(n²) copy, hence the `blasThreshold = 216`
+  crossover) there is nothing to amortize, and it replaces an inlined intrinsic with an
+  opaque downcall that also blocks loop optimization.
+
+`exp` is therefore pinned on a 2^-40 grid, exactly as `randn` is for its `log1p` tail, and
+the contract is stated as "agrees to ~40 bits" rather than pretending to an exactness that
+does not exist. Everything else in `mat-parity`, `min`/`max`/`cummax` included, stays
+bit-for-bit.
+
+Consequence for consumers: any script whose printed output derives from `exp` — in
+`marketSim.sc` that is `mdd`/`mddR` and the SWR path — cannot be *guaranteed*
+byte-identical across the two languages, though at 1 ulp it will be in practice. That
+needs verifying per-script, not assuming.
+
+`mat-parity` is small by row count and unusually load-bearing: 13 sizes × 10 reductions,
 compared as raw IEEE-754 bit patterns rather than decimal text, over a corpus of
 alternating 1e6/1e-6 magnitudes drawn from `NumPyRNG` (not from `math.sin`, which the JVM
 and Rust may round differently in the last ulp). The sizes straddle the 8-way unroll

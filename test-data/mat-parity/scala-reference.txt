@@ -23,81 +23,155 @@
 #
 # Sizes straddle the 8-way unroll boundary and BOTH chunking thresholds (4096,
 # and 65536 where the MaxSumChunks cap starts binding).
+#
+# The exp/min/max/cummax cases use a SECOND corpus, because exp of the first
+# would be Infinity almost everywhere (its values reach 1e6) and would pin
+# nothing. It mirrors where marketSim actually applies exp -- log-equity at or
+# just below its running peak:
+#
+#   let rng2 = NumPyRNG(20260815)      // Seed + 1
+#   xe(i) = rng2.uniform(-5.0, 0.5)
+#
+# expq and cummaxfnv are FNV-1a digests (offset cbf29ce484222325, prime
+# 100000001b3) over EVERY element, so a per-element disagreement cannot hide
+# inside an aggregate.
+#
+# exp is the ONE operation here that is not bit-identical across the port, and
+# `expq` is therefore digested over values SNAPPED TO A 2^-40 GRID
+# (floor(x * 2^40 + 0.5) -- not rint, which the two languages round differently
+# on exact halves). Measured on this corpus: Java's Math.exp and Rust's f64::exp
+# differ on 0.561% of 200,000 values, never by more than 1 ulp. Exact agreement
+# is not available -- Math.exp is an unspecified HotSpot intrinsic, and the one
+# portable alternative, StrictMath.exp (fdlibm), differs from Math.exp on 9.67%
+# of the same corpus, 17x further away than Rust already is. min, max and
+# cummax involve no transcendental and stay exact.
 0 sum 0000000000000000
 0 mean 0000000000000000
 0 abssum 0000000000000000
 0 sqsum 0000000000000000
 0 sqmean 0000000000000000
 0 cumlast 0000000000000000
+0 expq 0000000000000000
+0 min 0000000000000000
+0 max 0000000000000000
+0 cummaxfnv 0000000000000000
 1 sum 4120609602a10770
 1 mean 4120609602a10770
 1 abssum 4120609602a10770
 1 sqsum 4250c37312e00c85
 1 sqmean 4250c37312e00c85
 1 cumlast 4120609602a10770
+1 expq 2f0769d437e492de
+1 min c000d25e36dfcf82
+1 max c000d25e36dfcf82
+1 cummaxfnv 4aa86e3e25791fc5
 7 sum 4141d9d198035bff
 7 mean 411466a664961fff
 7 abssum 41421ff3f77f241e
 7 sqsum 427c7160ff8ef851
 7 sqmean 425040c9b69ad70a
 7 cumlast 4141d9d198035bff
+7 expq 844775dd44c302bc
+7 min c013aab29b616a8d
+7 max 3fd97124cfb1ea10
+7 cummaxfnv 8951228afcf5acdd
 8 sum 4141d9d19803640e
 8 mean 4111d9d19803640e
 8 abssum 41421ff3f77f2c2b
 8 sqsum 427c7160ff8ef851
 8 sqmean 424c7160ff8ef851
 8 cumlast 4141d9d19803640d
+8 expq 1b852f7bee4ac2e7
+8 min c013aab29b616a8d
+8 max 3fd97124cfb1ea10
+8 cummaxfnv 6decfe011d044e57
 9 sum 413995ec15606364
 9 mean 4106be272f721f75
 9 abssum 41472ecf84d25e87
 9 sqsum 42816b5e88678197
 9 sqmean 424ef7c480b802d4
 9 cumlast 413995ec15606362
+9 expq 721b84271a044f0a
+9 min c013aab29b616a8d
+9 max 3fd97124cfb1ea10
+9 cummaxfnv 66a684450aa624a5
 4095 sum 41650bdba47508fc
 4095 mean 40a50d2c773c7cc4
 4095 abssum 41cdc3b62886bbd2
 4095 sqsum 43028fe6a61246b1
 4095 sqmean 4242910fb70db78c
 4095 cumlast 41650bdba47508ca
+4095 expq 54372549a7c33374
+4095 min c013ffd706e968a2
+4095 max 3fdffd7e551f7b30
+4095 cummaxfnv 429c067d5c5fcafd
 4096 sum 41650bdba475098e
 4096 mean 40a50bdba475098e
 4096 abssum 41cdc3b62886bbd4
 4096 sqsum 43028fe6a61246b1
 4096 sqmean 42428fe6a61246b1
 4096 cumlast 41650bdba475095e
+4096 expq c7606fdb041b5864
+4096 min c013ffd706e968a2
+4096 max 3fdffd7e551f7b30
+4096 cummaxfnv 1b355328b8ee1f57
 4097 sum 4165483b61d6f9c6
 4097 mean 40a546e6f367c34a
 4097 abssum 41cdc4a7a77c4395
 4097 sqsum 43029003201b6eb8
 4097 sqmean 42428eda32784734
 4097 cumlast 4165483b61d6f996
+4097 expq 78d090b57ef9fd64
+4097 min c013ffd706e968a2
+4097 max 3fdffd7e551f7b30
+4097 cummaxfnv ac2aa4b6512d9b05
 65535 sum c1a0bed5ff596fe9
 65535 mean c0a0bee6be402e29
 65535 abssum 420e9b0fdc95809f
 65535 sqsum 43437f39b945ab40
 65535 sqmean 42437f4d3892e3d3
 65535 cumlast c1a0bed5ff596fa4
+65535 expq 19e652fae7161e54
+65535 min c013fffe42ae504e
+65535 max 3fdffdf2e3b490b0
+65535 cummaxfnv 7b2160815622107d
 65536 sum c1a0bed5ff597000
 65536 mean c0a0bed5ff597000
 65536 abssum 420e9b0fdc95809f
 65536 sqsum 43437f39b945ab3d
 65536 sqmean 42437f39b945ab3d
 65536 cumlast c1a0bed5ff596fbc
+65536 expq df623a02578d037e
+65536 min c013fffe42ae504e
+65536 max 3fdffdf2e3b490b0
+65536 cummaxfnv d326589d8ebcdc57
 65537 sum c1a0c5fc34086de8
 65537 mean c0a0c5eb6e1cffcb
 65537 abssum 420e9b2c75683c96
 65537 sqsum 43437f401cd85353
 65537 sqmean 42437f2c9dabb5a7
 65537 cumlast c1a0c5fc34086da1
+65537 expq c4b0eb9309e47454
+65537 min c013fffe42ae504e
+65537 max 3fdffdf2e3b490b0
+65537 cummaxfnv b4810356451aac85
 98304 sum c196817324b41c1a
 98304 mean c08e01eedb9ad023
 98304 abssum 4216e64825a87749
 98304 sqsum 434d1f27ab65fa9e
 98304 sqmean 42436a1a7243fc69
 98304 cumlast c196817324b41bcd
+98304 expq 3c70c953ab05d02c
+98304 min c013fffe42ae504e
+98304 max 3fdffdf2e3b490b0
+98304 cummaxfnv cdcc17e5b6aadc57
 200000 sum c197bd855c4599b0
 200000 mean c07f1deda17e34d7
 200000 abssum 422733fedd9b7244
 200000 sqsum 435d726a1948c897
 200000 sqmean 42434c6013311792
 200000 cumlast c197bd855c4598a3
+200000 expq 5fc2b2ed7b7e844b
+200000 min c013fffe42ae504e
+200000 max 3fdfff48069b9390
+200000 cummaxfnv dd0e0e9e70495b77

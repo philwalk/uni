@@ -24,14 +24,17 @@ class MatParitySuite extends munit.FunSuite:
     val root = sys.props.getOrElse("user.dir", ".")
     s"$root/test-data/mat-parity/scala-reference.txt".asPath
 
-  /** Must match `MatParityGen.corpus`. */
-  def corpus(n: Int): Array[Double] =
-    val rng = new NumPyRNG(uni.apps.MatParityGen.Seed)
-    Array.tabulate(n) { i =>
-      if i % 2 == 0 then rng.uniform(-1e6, 1e6) else rng.uniform(-1e-6, 1e-6)
-    }
-
   def bits(d: Double): Long = java.lang.Double.doubleToRawLongBits(d)
+
+  /**
+   * Every recorded case as its raw 64-bit word, delegating to the generator so the two
+   * cannot drift apart. Recomputing the definitions here would let a bug in the
+   * generator be "confirmed" by a matching bug in the test.
+   */
+  def word(m: Mat[Double], me: Mat[Double], label: String): Long =
+    uni.apps.MatParityGen.cases(m).toMap.get(label).map(bits).orElse(
+      uni.apps.MatParityGen.expCases(me).toMap.get(label)
+    ).getOrElse(fail(s"unknown case [$label] in fixture — port it or regenerate"))
 
   test("Mat reductions match the committed reference bit for bit") {
     assert(fixture.isFile, s"missing fixture [$fixture] — run MatParityGen")
@@ -46,24 +49,27 @@ class MatParitySuite extends munit.FunSuite:
     assert(rows.nonEmpty, "fixture carried no rows")
 
     // Drawn once to the largest size; smaller sizes take a prefix, as the generator does.
-    val all = corpus(rows.map(_._1).max)
+    val maxN   = rows.map(_._1).max
+    val all    = uni.apps.MatParityGen.corpus(maxN)
+    val allExp = uni.apps.MatParityGen.corpusExp(maxN)
 
     for (n, label, want) <- rows do
       val m   = MatD(java.util.Arrays.copyOfRange(all, 0, n))
-      val got = uni.apps.MatParityGen.cases(m).toMap.apply(label)
+      val me  = MatD(java.util.Arrays.copyOfRange(allExp, 0, n))
+      val got = word(m, me, label)
       assertEquals(
-        bits(got),
+        got,
         want,
-        f"n=$n case=$label: got ${bits(got)}%016x ($got%e), want $want%016x — association order drifted",
+        f"n=$n case=$label: got $got%016x, want $want%016x — the reference has moved",
       )
 
-    assert(rows.length >= 60, s"only ${rows.length} rows; expected 13 sizes x 6 cases")
+    assert(rows.length >= 120, s"only ${rows.length} rows; expected 13 sizes x 10 cases")
   }
 
   test("the corpus is sensitive to association order") {
     // A test that cannot fail proves nothing. If a naive left fold ever agrees with
     // sumD on this corpus, the parity test above has stopped being evidence.
-    val a       = corpus(200000)
+    val a       = uni.apps.MatParityGen.corpus(200000)
     val chunked = MatD(a).sum
     val naive   = a.foldLeft(0.0)(_ + _)
     assertNotEquals(

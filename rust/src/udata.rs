@@ -19,6 +19,7 @@ pub use bigutils::NumFormat;
 pub use bigutils::big2double;
 pub use bigutils::isBad;
 pub use bigutils::isNumeric;
+pub use bigutils::java_format_f;
 pub use bigutils::num2string;
 pub use bigutils::numStr;
 pub use bigutils::numStrPct;

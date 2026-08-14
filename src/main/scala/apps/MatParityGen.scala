@@ -72,6 +72,58 @@ object MatParityGen:
   /** Raw IEEE-754 bits, so nothing is lost to decimal rendering. */
   def hex(d: Double): String = f"${java.lang.Double.doubleToRawLongBits(d)}%016x"
 
+  def bits(d: Double): Long = java.lang.Double.doubleToRawLongBits(d)
+
+  /** FNV-1a over 64-bit words, matching `NumPyRngParityGen` — one xor and one wrapping
+   *  multiply per word, so it is trivially identical in both languages.
+   *
+   *  Used for the elementwise cases. An aggregate alone (a sum) could hide compensating
+   *  per-element differences; a digest over every element cannot. That matters most for
+   *  `exp`, where the JVM and Rust each round to within ~1 ulp but are not required to
+   *  agree — this digest is what turns that question into a test result. */
+  private val FnvOffset: Long = 0xcbf29ce484222325L
+  private val FnvPrime: Long  = 0x100000001b3L
+
+  def fnv(xs: Array[Double]): Long = fnvWords(xs.map(bits))
+
+  def fnvWords(ws: Array[Long]): Long =
+    var digest = FnvOffset
+    var i      = 0
+    while i < ws.length do
+      digest = (digest ^ ws(i)) * FnvPrime
+      i += 1
+    digest
+
+  /** Grid for [[quantize]]: 2^40, leaving ~40 bits of mantissa. */
+  private val QuantumScale = 1099511627776.0
+
+  /**
+   * Snaps to a 2^-40 grid, as `NumPyRngParityGen` does for `randn`, and for the same
+   * reason: `exp` is the one operation here that is NOT bit-identical across the port.
+   *
+   * MEASURED on this corpus (200,000 values). Rust's `f64::exp`, the platform C `exp`
+   * and NumPy's `np.exp` are byte-identical to each other -- 0 differences. Java's
+   * `Math.exp` differs from all three on 0.561% of values, never by more than 1 ulp.
+   * `StrictMath.exp` (fdlibm) differs from `Math.exp` on 9.67%, 17x further away still.
+   *
+   * So the JVM is the outlier here, not Rust: `Math.exp` is a hand-written HotSpot
+   * assembly intrinsic (from Intel's LIBM), not a libm call, so no platform C library
+   * matches it -- and since this project treats NumPy as the fidelity oracle, the
+   * divergence belongs to THIS side. Closing it means giving Scala a libm-backed exp
+   * (FFM/Panama or JNI), which is a real change deliberately not taken yet. Until then,
+   * pinning agreement to ~40 bits is the honest contract, and this fixture states it
+   * rather than pretending to an exactness that does not exist.
+   *
+   * `floor(x * scale + 0.5)` rather than `rint`, because the two languages disagree on
+   * exact halves; this form is identical in both.
+   *
+   * Residual risk, stated plainly: a one-ulp difference still changes the result when the
+   * two values straddle a grid boundary — roughly 1 in 4000 per already-differing value.
+   * That is a property of the COMMITTED numbers, not a coin flip at test time: these are
+   * verified to agree once generated, and only a regeneration could introduce a straddle.
+   */
+  def quantize(d: Double): Long = Math.floor(d * QuantumScale + 0.5).toLong
+
   /**
    * The shared corpus: alternating large and tiny magnitudes so association order is
    * observable. Both languages build this from the same seed and take prefixes of it,
@@ -82,6 +134,17 @@ object MatParityGen:
     Array.tabulate(n) { i =>
       if i % 2 == 0 then rng.uniform(-1e6, 1e6) else rng.uniform(-1e-6, 1e-6)
     }
+
+  /**
+   * A second corpus for the cases that must not overflow.
+   *
+   * `exp` of the main corpus would be `Infinity` almost everywhere (its values reach
+   * 1e6), which would pin nothing. This range mirrors where marketSim actually applies
+   * `exp`: log-equity below its running peak, i.e. values at or just below zero.
+   */
+  def corpusExp(n: Int): Array[Double] =
+    val rng = new NumPyRNG(Seed + 1)
+    Array.tabulate(n)(_ => rng.uniform(-5.0, 0.5))
 
   /** The recorded reductions, each a pure function of the prefix. */
   def cases(m: Mat[Double]): Vector[(String, Double)] = Vector(
@@ -95,6 +158,27 @@ object MatParityGen:
     // the two were not conflated in either port.
     "cumlast"  -> (if m.isEmpty then 0.0 else m.cumsum.toArray.last),
   )
+
+  /**
+   * Cases over [[corpusExp]], recorded as raw Long words rather than Doubles.
+   *
+   * `expfnv` and `cummaxfnv` digest EVERY element, so a single-ulp disagreement anywhere
+   * fails. `exp` is the one op here whose cross-language agreement was an open question
+   * — Java's `Math.exp` and Rust's `f64::exp` are each permitted ~1 ulp of error and are
+   * not required to agree — so this fixture is what settles it rather than an assumption.
+   */
+  def expCases(m: Mat[Double]): Vector[(String, Long)] =
+    if m.isEmpty then
+      Vector("expq" -> 0L, "min" -> 0L, "max" -> 0L, "cummaxfnv" -> 0L)
+    else
+      Vector(
+        // QUANTIZED -- exp is the one op here that is not bit-identical; see quantize.
+        "expq"      -> fnvWords(m.exp.toArray.map(quantize)),
+        // Exact: no transcendental involved, so these stay bit-for-bit.
+        "min"       -> bits(m.min),
+        "max"       -> bits(m.max),
+        "cummaxfnv" -> fnv(m.cummax(0).toArray),
+      )
 
   val header: String =
     """|# uni.data.Mat reduction parity reference (Scala <-> Rust).
@@ -122,6 +206,28 @@ object MatParityGen:
        |#
        |# Sizes straddle the 8-way unroll boundary and BOTH chunking thresholds (4096,
        |# and 65536 where the MaxSumChunks cap starts binding).
+       |#
+       |# The exp/min/max/cummax cases use a SECOND corpus, because exp of the first
+       |# would be Infinity almost everywhere (its values reach 1e6) and would pin
+       |# nothing. It mirrors where marketSim actually applies exp -- log-equity at or
+       |# just below its running peak:
+       |#
+       |#   let rng2 = NumPyRNG(20260815)      // Seed + 1
+       |#   xe(i) = rng2.uniform(-5.0, 0.5)
+       |#
+       |# expq and cummaxfnv are FNV-1a digests (offset cbf29ce484222325, prime
+       |# 100000001b3) over EVERY element, so a per-element disagreement cannot hide
+       |# inside an aggregate.
+       |#
+       |# exp is the ONE operation here that is not bit-identical across the port, and
+       |# `expq` is therefore digested over values SNAPPED TO A 2^-40 GRID
+       |# (floor(x * 2^40 + 0.5) -- not rint, which the two languages round differently
+       |# on exact halves). Measured on this corpus: Java's Math.exp and Rust's f64::exp
+       |# differ on 0.561% of 200,000 values, never by more than 1 ulp. Exact agreement
+       |# is not available -- Math.exp is an unspecified HotSpot intrinsic, and the one
+       |# portable alternative, StrictMath.exp (fdlibm), differs from Math.exp on 9.67%
+       |# of the same corpus, 17x further away than Rust already is. min, max and
+       |# cummax involve no transcendental and stay exact.
        |""".stripMargin
 
   def main(args: Array[String]): Unit =
@@ -129,16 +235,20 @@ object MatParityGen:
     val dir  = s"$root/test-data/mat-parity"
     java.nio.file.Files.createDirectories(dir.asPath)
 
-    val maxN = sizes.max
-    val all  = corpus(maxN)
+    val maxN   = sizes.max
+    val all    = corpus(maxN)
+    val allExp = corpusExp(maxN)
 
     val sb = StringBuilder()
     sb ++= header
     for n <- sizes.sorted do
-      val m = MatD(java.util.Arrays.copyOfRange(all, 0, n))
+      val m  = MatD(java.util.Arrays.copyOfRange(all, 0, n))
+      val me = MatD(java.util.Arrays.copyOfRange(allExp, 0, n))
       for (label, value) <- cases(m) do
         sb ++= s"$n $label ${hex(value)}\n"
-      println(s"  n=$n: ${cases(m).length} cases")
+      for (label, word) <- expCases(me) do
+        sb ++= f"$n $label $word%016x\n"
+      println(s"  n=$n: ${cases(m).length + expCases(me).length} cases")
 
     val out = s"$dir/scala-reference.txt"
     java.nio.file.Files.writeString(out.asPath, sb.toString)

@@ -62,23 +62,83 @@ fn corpus(n: usize) -> Vec<f64> {
         .collect()
 }
 
-/// The recorded reductions, keyed as in `MatParityGen.cases`.
-fn case_value(m: &MatD, label: &str) -> f64 {
+/// The second corpus — must match `MatParityGen.corpusExp`. Kept in a range where `exp`
+/// does not overflow, mirroring where marketSim actually applies it.
+fn corpus_exp(n: usize) -> Vec<f64> {
+    let mut rng = NumPyRng::new(SEED + 1);
+    (0..n).map(|_| rng.uniform(-5.0, 0.5)).collect()
+}
+
+/// FNV-1a over 64-bit words — must match `MatParityGen.fnv`.
+const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+const FNV_PRIME: u64 = 0x100_0000_01b3;
+
+fn fnv(xs: &[f64]) -> u64 {
+    fnv_words(xs.iter().map(|x| x.to_bits()))
+}
+
+fn fnv_words(ws: impl Iterator<Item = u64>) -> u64 {
+    let mut digest = FNV_OFFSET;
+    for w in ws {
+        digest = (digest ^ w).wrapping_mul(FNV_PRIME);
+    }
+    digest
+}
+
+/// Must match `MatParityGen.QuantumScale`: 2^40.
+const QUANTUM_SCALE: f64 = 1099511627776.0;
+
+/// Snaps to a 2^-40 grid — must match `MatParityGen.quantize`.
+///
+/// `exp` is the one operation in this fixture that is NOT bit-identical across the port.
+/// Measured: Java's `Math.exp` and Rust's `f64::exp` differ on 0.561% of 200,000 values,
+/// never by more than 1 ulp, and exact agreement is unavailable (see the note in
+/// `MatParityGen.quantize`). `floor(x * scale + 0.5)`, not `round`/`rint`, because the
+/// languages disagree on exact halves and this form does not.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "mirroring the Scala fixture's .toLong on an already-floored value"
+)]
+fn quantize(d: f64) -> u64 {
+    (d * QUANTUM_SCALE + 0.5).floor() as i64 as u64
+}
+
+/// Every recorded case, as the raw 64-bit word the fixture carries. Reductions go in as
+/// their IEEE bits; the `*fnv` cases are already digests.
+fn case_word(m: &MatD, me: &MatD, label: &str) -> u64 {
     match label {
-        "sum" => m.sum(),
-        "mean" => m.mean(),
-        "abssum" => m.abs().sum(),
-        "sqsum" => m.power(2).sum(),
-        "sqmean" => m.power(2).mean(),
+        "sum" => m.sum().to_bits(),
+        "mean" => m.mean().to_bits(),
+        "abssum" => m.abs().sum().to_bits(),
+        "sqsum" => m.power(2).sum().to_bits(),
+        "sqmean" => m.power(2).mean().to_bits(),
         "cumlast" => {
             if m.isEmpty() {
-                0.0
+                0.0f64.to_bits()
             } else {
-                *m.cumsum()
-                    .toArray()
-                    .last()
-                    .expect("non-empty checked immediately above")
+                m.cumsum().toArray().last().copied().unwrap_or(0.0).to_bits()
             }
+        }
+        // The exp-corpus cases. Scala records 0 for all of them when the prefix is
+        // empty, since min/max are undefined there.
+        //
+        // `expq` is digested over QUANTIZED values — the only case here not compared
+        // bit-for-bit, because the two libms genuinely disagree by up to 1 ulp.
+        "expq" => {
+            if me.isEmpty() {
+                0
+            } else {
+                fnv_words(me.exp().toArray().into_iter().map(quantize))
+            }
+        }
+        "min" => {
+            if me.isEmpty() { 0 } else { me.min().to_bits() }
+        }
+        "max" => {
+            if me.isEmpty() { 0 } else { me.max().to_bits() }
+        }
+        "cummaxfnv" => {
+            if me.isEmpty() { 0 } else { fnv(&me.cummax(0).toArray()) }
         }
         other => panic!("unknown case {other} in fixture — port it or regenerate"),
     }
@@ -106,25 +166,30 @@ fn mat_reductions_match_the_scala_reference_bit_for_bit() {
     // generator does.
     let max_n = rows.iter().map(|(n, _, _)| *n).max().expect("rows non-empty");
     let all = corpus(max_n);
+    let all_exp = corpus_exp(max_n);
 
     let mut checked = 0usize;
     for (n, label, want) in &rows {
         let m = MatD::apply(&all[..*n]);
-        let got = case_value(&m, label);
+        let me = MatD::apply(&all_exp[..*n]);
+        let got = case_word(&m, &me, label);
         assert_eq!(
-            got.to_bits(),
-            *want,
-            "n={n} case={label}: got {:016x} ({got:e}), want {:016x} — association order drifted",
-            got.to_bits(),
-            want
+            got, *want,
+            "n={n} case={label}: got {got:016x}, want {want:016x} — \
+             {}",
+            if label.starts_with("exp") {
+                "Math.exp and f64::exp disagree on this corpus; see the exp note in mat.rs"
+            } else {
+                "association order drifted"
+            }
         );
         checked += 1;
     }
 
     // Guard against a fixture that silently shrinks to nothing meaningful.
     assert!(
-        checked >= 60,
-        "only {checked} rows checked; the fixture should cover 13 sizes x 6 cases"
+        checked >= 120,
+        "only {checked} rows checked; the fixture should cover 13 sizes x 10 cases"
     );
 }
 

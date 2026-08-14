@@ -151,7 +151,17 @@ impl NumFormat {
 
 /// Java's `String.format("%<width>.<dec>f", v)`: shortest decimal digits of the
 /// double, rounded half-up at `dec` decimals, right-justified to `width`.
-fn java_format_f(v: f64, width: i32, dec: i32) -> String {
+///
+/// Public because a script ported from Scala needs it directly: `f"$x%.6f"` there
+/// rounds the *shortest decimal representation* half-up, while Rust's `{:.6}` rounds
+/// the *exact binary value* half-to-even. Those disagree whenever the two fall on
+/// opposite sides of the boundary — rare per value, but a byte-identical demo pair
+/// printing thousands of numbers cannot rely on never hitting one.
+///
+/// Stays snake_case under the naming contract: it has no `uni` Scala counterpart to
+/// mirror, because on that side the behaviour comes from the `f` interpolator, a
+/// language feature rather than a library method.
+pub fn java_format_f(v: f64, width: i32, dec: i32) -> String {
     let body = if v.is_nan() {
         "NaN".to_string()
     } else if v.is_infinite() {
