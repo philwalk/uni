@@ -499,7 +499,7 @@ Vector idioms for two NumPy 1-D forms:
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.16.0
+//> using dep org.vastblue:uni_3:0.16.1
 
 import uni.data.*
 
@@ -514,7 +514,7 @@ val (labels, stats) = m.describe
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.16.0
+//> using dep org.vastblue:uni_3:0.16.1
 
 import uni.*
 import uni.io.FileOps.*
@@ -534,7 +534,7 @@ r.columnIndex       // Map[String, Int]  (pre-computed; free repeated lookups)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.16.0
+//> using dep org.vastblue:uni_3:0.16.1
 
 import uni.data.*
 
