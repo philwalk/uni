@@ -112,7 +112,6 @@ struct World {
 struct Path {
     price: Vec<f64>,
     rate: Vec<f64>,
-    #[expect(dead_code, reason = "read by fundamentalLed, which lands with the strategy sweep")]
     fundamental: Vec<f64>,
     /// per-session slippage multiplier (equity market)
     liq: Vec<f64>,
@@ -1076,7 +1075,6 @@ fn rule_named(nm: &str) -> Rule {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Safe {
-    #[expect(dead_code, reason = "used by evaluate(), which lands with the strategy sweep")]
     Cash,
     Bond,
 }
@@ -1090,22 +1088,14 @@ fn matched_constant(e: &[f64]) -> Vec<f64> {
 }
 
 struct ArmPath {
-    #[expect(dead_code, reason = "read by gradingStats/evaluate, which land with the strategy sweep")]
     log_eq: Vec<f64>,
     real_log_eq: Vec<f64>,
-    #[expect(dead_code, reason = "read by gradingStats, which lands with the strategy sweep")]
     steps: Vec<f64>,
-    #[expect(dead_code, reason = "read by evaluate, which lands with the strategy sweep")]
     mean_e: f64,
-    #[expect(dead_code, reason = "read by evaluate, which lands with the strategy sweep")]
     churn: f64,
-    #[expect(dead_code, reason = "read by evaluate, which lands with the strategy sweep")]
     eff_churn: f64,
-    #[expect(dead_code, reason = "read by evaluate, which lands with the strategy sweep")]
     cost_paid: f64,
-    #[expect(dead_code, reason = "read by evaluate, which lands with the strategy sweep")]
     eq_ret_sum: f64,
-    #[expect(dead_code, reason = "read by evaluate, which lands with the strategy sweep")]
     safe_ret_sum: f64,
 }
 
@@ -1159,7 +1149,6 @@ fn arm_path(p: &Path, e: &[f64], cost: f64, safe: Safe) -> ArmPath {
 }
 
 /// Depth below the running peak, session by session — the series every depth measure reduces.
-#[expect(dead_code, reason = "read by gradingStats, which lands with the strategy sweep")]
 fn drawdown_series(log_eq: &[f64]) -> Vec<f64> {
     let mut out = vec![0.0f64; log_eq.len()];
     let mut pk = log_eq[0];
@@ -1242,6 +1231,805 @@ fn max_total(v: &[f64]) -> f64 {
     }
     let s = sorted_total(v);
     s[s.len() - 1]
+}
+
+// ---- evaluation -------------------------------------------------------------------------
+
+/// NOTE ON FRAMES: differences of annual returns (vsFlat, the decomposition) are
+/// DEFLATOR-INVARIANT — subtracting the same inflation from both sides cancels. What real
+/// grading changes is the PATH: real drawdowns, real ruin, and the sustainable withdrawal
+/// rate. `swr` is the pipeline's own decision lens for the cash-vehicle question.
+#[derive(Clone, Copy, Debug)]
+#[expect(
+    dead_code,
+    reason = "ann_g, mean_e and swr_lo are carried by the Scala Outcome but read by no \
+              report column; kept so the record matches field for field"
+)]
+struct Outcome {
+    ann_g: f64,
+    ann: f64,
+    max_dd: f64,
+    real_dd: f64,
+    mean_e: f64,
+    vs_flat_g: f64,
+    vs_flat: f64,
+    churn: f64,
+    eff_churn: f64,
+    swr: f64,
+    swr_lo: f64,
+}
+
+impl Outcome {
+    fn slip_mult(self) -> f64 {
+        if self.churn > 1e-9 {
+            self.eff_churn / self.churn
+        } else {
+            1.0
+        }
+    }
+}
+
+fn fundamental_led(p: &Path, ep: Episode) -> bool {
+    let pd = (p.price[ep.trough] / p.price[ep.peak]).ln();
+    let fd = (p.fundamental[ep.trough] / p.fundamental[ep.peak]).ln();
+    fd <= 0.5 * pd
+}
+
+/// `vsFlat` is the advantage over a CONSTANT portfolio holding this rule's own average
+/// exposure IN THE SAME TWO ASSETS — with safe = Bond it is timing versus a static
+/// equity/bond mix, the house matched-constant control at the two-asset level.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "mirrors the Scala signature; bundling them would obscure the correspondence"
+)]
+fn evaluate(
+    p: &Path,
+    eps: &[Episode],
+    fund_led: &[bool],
+    rule: &ExposeFn,
+    ind: &Indicators,
+    cost: f64,
+    years: usize,
+    safe: Safe,
+) -> (Outcome, Vec<(bool, f64, f64)>) {
+    let n = p.price.len();
+    let ap = arm_path(p, &rule(ind), cost, safe);
+    let eq = &ap.log_eq;
+    // maximum drawdown IS this formula; the scalar scan existed only because cummax was missing
+    let eq_v = MatD::apply(eq);
+    let real_eq_v = MatD::apply(&ap.real_log_eq);
+    let mdd = 1.0 - (&eq_v - &eq_v.cummax(0)).exp().min();
+    let mdd_r = 1.0 - (&real_eq_v - &real_eq_v.cummax(0)).exp().min();
+    let (swr_med, swr_low) = swr_stats(&ap.real_log_eq);
+    let me = ap.mean_e;
+    // the constant twin never trades, so its return is exactly linear in the two totals
+    let ann_n = eq[n - 1] / years as f64 * 100.0;
+    let ann_g = (eq[n - 1] + ap.cost_paid) / years as f64 * 100.0;
+    let flat = (me * ap.eq_ret_sum + (1.0 - me) * ap.safe_ret_sum) / years as f64 * 100.0;
+    let per_ep: Vec<(bool, f64, f64)> = eps
+        .iter()
+        .zip(fund_led)
+        .map(|(ep, fl)| {
+            let end = if ep.recovered >= 0 {
+                ep.recovered as usize
+            } else {
+                n - 1
+            };
+            (
+                *fl,
+                eq[end] - eq[ep.peak],
+                (p.price[end] / p.price[ep.peak]).ln(),
+            )
+        })
+        .collect();
+    (
+        Outcome {
+            ann_g,
+            ann: ann_n,
+            max_dd: mdd * 100.0,
+            real_dd: mdd_r * 100.0,
+            mean_e: me,
+            vs_flat_g: ann_g - flat,
+            vs_flat: ann_n - flat,
+            churn: ap.churn / years as f64,
+            eff_churn: ap.eff_churn / years as f64,
+            swr: swr_med,
+            swr_lo: swr_low,
+        },
+        per_ep,
+    )
+}
+
+fn sweep_worlds(base: &World, single: bool) -> Vec<(&'static str, World)> {
+    if single {
+        return vec![("baseline", *base)];
+    }
+    let with = |f: fn(&mut World)| -> World {
+        let mut w = *base;
+        f(&mut w);
+        w
+    };
+    vec![
+        ("baseline", *base),
+        ("few trend followers", with(|w| w.trend_share = 0.15)),
+        ("many trend followers", with(|w| w.trend_share = 0.50)),
+        ("no liquidity spiral", with(|w| w.stress = 0.0)),
+        ("severe liquidity spiral", with(|w| w.stress *= 1.5)),
+        ("weak value anchor", with(|w| w.value_pull *= 0.6)),
+        ("calm volatility", with(|w| w.vol_of_vol = 0.010)),
+        ("turbulent volatility", with(|w| w.vol_of_vol = 0.030)),
+        ("sticky capital", with(|w| w.beta = 1.0)),
+        ("fickle capital", with(|w| w.beta = 6.0)),
+        ("low growth", with(|w| w.drift = 0.060)),
+        ("high growth", with(|w| w.drift = 0.140)),
+        ("shallow market", with(|w| w.depth = 10.0)),
+        ("deep market", with(|w| w.depth = 15.0)),
+        // NOT "cash leg only" any more: the rate level sets bond carry, and the zero floor
+        // binds at low rates (an emergent zero-lower-bound). These double as carry-level
+        // probes (low ~ 2022, high ~ 1970s).
+        ("low rates / low carry", with(|w| w.rate_mean = 0.01)),
+        ("high rates / high carry", with(|w| w.rate_mean = 0.07)),
+        // OFF-world: refuge
+        ("no flight bid", with(|w| w.flight = 0.0)),
+        // OFF-world: margin
+        ("no margin coupling", with(|w| w.margin = 0.0)),
+        ("double inflation severity", with(|w| w.infl_size *= 2.0)),
+    ]
+}
+
+// ---- grading statistics -----------------------------------------------------------------
+
+/// Highest constant REAL withdrawal (% of starting balance/yr, inflation-adjusted monthly) the
+/// REAL equity path could sustain for 30 years without exhaustion; closed-form, evaluated at
+/// every rolling monthly start via prefix sums. Returns (median start, worst start).
+fn swr_stats(real_log_eq: &[f64]) -> (f64, f64) {
+    let monthly: Vec<f64> = (0..real_log_eq.len() / 21)
+        .map(|m| real_log_eq[m * 21])
+        .collect();
+    // 30 years of monthly withdrawals
+    let window = 360usize;
+    if monthly.len() < window + 1 {
+        return (f64::NAN, f64::NAN);
+    }
+    // closed form: the window starting at st survives withdrawal w iff
+    //   w <= 1 / sum over the window of exp(C_st - C_t),  C = cumulative real log growth
+    let rel = &MatD::apply(&monthly) - monthly[0];
+    // pref(t) = sum of exp(-C_u), u <= t
+    let pref = (&rel * -1.0).exp().cumsum().toArray();
+    let exp_rel = rel.exp().toArray();
+    let rates: Vec<f64> = (0..monthly.len() - window)
+        .map(|st| 1200.0 / (exp_rel[st] * (pref[st + window] - pref[st])))
+        .collect();
+    (pctile(&rates, 0.5), min_total(&rates))
+}
+
+/// `.min` on a Scala `Seq[Double]` under `TotalOrdering`.
+fn min_total(v: &[f64]) -> f64 {
+    if v.is_empty() {
+        return f64::NAN;
+    }
+    sorted_total(v)[0]
+}
+
+/// The candidate grading statistics for one arm, NAMED AT THE SOURCE so no report can
+/// mislabel a column. maxDD, Calmar and max-years-under are single order statistics and are
+/// here precisely so the power report can price what reading one extremum costs.
+fn grading_stats(ap: &ArmPath, years: usize) -> Vec<(&'static str, f64)> {
+    let eq = &ap.log_eq;
+    let n = eq.len();
+    let depths = drawdown_series(eq);
+    let depths_r = drawdown_series(&ap.real_log_eq);
+    let mu = ap.steps.iter().sum::<f64>() / ap.steps.len() as f64;
+    let sd = (MatD::apply(&ap.steps).power(2).mean() - mu * mu).sqrt();
+    let max_dd = max_total(&depths) * 100.0;
+    let ann_ret = eq[n - 1] / years as f64 * 100.0;
+    let longest = underwater(&ap.real_log_eq)
+        .iter()
+        .map(|u| u.sessions())
+        .max()
+        .unwrap_or(0);
+    vec![
+        ("annRet %/yr", ann_ret),
+        (
+            "Sharpe",
+            if sd > 0.0 {
+                mu / sd * (DAYS_PER_YEAR as f64).sqrt()
+            } else {
+                f64::NAN
+            },
+        ),
+        ("maxDD %", max_dd),
+        (
+            "Calmar",
+            if max_dd > 0.0 {
+                ann_ret / max_dd
+            } else {
+                f64::NAN
+            },
+        ),
+        (
+            "frac under (nom)",
+            depths.iter().filter(|d| **d > 0.0).count() as f64 / n as f64,
+        ),
+        (
+            "frac under (real)",
+            depths_r.iter().filter(|d| **d > 0.0).count() as f64 / n as f64,
+        ),
+        (
+            "Ulcer %",
+            MatD::apply(&depths).power(2).mean().sqrt() * 100.0,
+        ),
+        ("max yrs under", longest as f64 / DAYS_PER_YEAR as f64),
+        ("real 30y SWR %", swr_stats(&ap.real_log_eq).0),
+    ]
+}
+
+fn stat_names() -> Vec<&'static str> {
+    grading_stats(
+        &ArmPath {
+            log_eq: vec![0.0, 0.0],
+            real_log_eq: vec![0.0, 0.0],
+            steps: vec![0.0],
+            mean_e: 1.0,
+            churn: 0.0,
+            eff_churn: 0.0,
+            cost_paid: 0.0,
+            eq_ret_sum: 0.0,
+            safe_ret_sum: 0.0,
+        },
+        1,
+    )
+    .into_iter()
+    .map(|(n, _)| n)
+    .collect()
+}
+
+/// n* counts histories, so it floors at 1 — rounding 0.4 to "0" would read as "none needed".
+fn n_star_str(x: f64) -> String {
+    if x.is_nan() {
+        "  n/a".to_string()
+    } else if x > 9999.0 {
+        ">9999".to_string()
+    } else {
+        jf(x.max(1.0), 5, 0)
+    }
+}
+
+// ---- the strategy sweep -----------------------------------------------------------------
+
+/// Index of the paired-comparison reference rule (the production analog, `volRule(0.4)`).
+const REF_IDX: usize = 1;
+
+/// One arm on one path: its Outcome, plus the per-crash-window entries
+/// `(fundamental-led?, rule log return, buy-and-hold log return)`.
+type ArmOutcome = (Outcome, Vec<(bool, f64, f64)>);
+type PathOutcomes = Vec<ArmOutcome>;
+type Evald = Vec<PathOutcomes>;
+
+/// Evaluate every rule on every path, cash leg then bond leg — the `2 * Rules.size` layout
+/// every column below indexes into.
+fn eval_world(sims: &[Path], cost: f64, years: usize) -> Evald {
+    let rs = rules();
+    (0..sims.len())
+        .into_par_iter()
+        .map(|k| {
+            let s = &sims[k];
+            let ind = Indicators::new(&s.price);
+            let eps = episodes(&s.price, 15.0);
+            let fl: Vec<bool> = eps.iter().map(|ep| fundamental_led(s, *ep)).collect();
+            let mut out: PathOutcomes = rs
+                .iter()
+                .map(|r| evaluate(s, &eps, &fl, &r.expose, &ind, cost, years, Safe::Cash))
+                .collect();
+            out.extend(
+                rs.iter()
+                    .map(|r| evaluate(s, &eps, &fl, &r.expose, &ind, cost, years, Safe::Bond)),
+            );
+            out
+        })
+        .collect()
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "one linear report, mirroring the Scala twin statement for statement"
+)]
+fn run_strategy_sweep(
+    paths: usize,
+    years: usize,
+    seed: u64,
+    cost: f64,
+    single: bool,
+    base: &World,
+) {
+    let rs = rules();
+    let nr = rs.len();
+    let worlds = sweep_worlds(base, single);
+    eprintln!(
+        "{} worlds x {paths} paths x {years} years, {nr} rules x {{cash,bond}}",
+        worlds.len()
+    );
+    let results: Vec<(&str, bool, WorldStats, Evald)> = worlds
+        .iter()
+        .map(|(wname, w)| {
+            let sims = sim_paths(w, paths, years, seed);
+            let st = measure(&sims, years);
+            let ok = gate_checks(&st).iter().all(|(_, o)| *o);
+            (*wname, ok, st, eval_world(&sims, cost, years))
+        })
+        .collect();
+
+    println!("Worlds failing the acceptance gate are marked and EXCLUDED from rank stability; their");
+    println!("detail stays visible so the exclusion is auditable.  vsFlat = advantage over a constant");
+    println!("portfolio at the rule's own average exposure IN THE SAME ASSETS; g/n = gross/net of");
+    println!("liquidity-scaled trading costs.  ruin = share of paths with a loss worse than 50%.");
+    for (wname, ok, st, evald) in &results {
+        println!(
+            "\nWORLD: {:<28} {}",
+            wname,
+            if *ok {
+                ""
+            } else {
+                "*** OUT OF RANGE — excluded from ranks ***"
+            }
+        );
+        println!(
+            "  inflation {}%/yr   eq vol {}%  kurt {}  clus {}/{}  crashes/path {}  depth {}%  censored {}  trend share {}  clamp {}%",
+            jf(st.infl_ann, 0, 1),
+            jf(st.vol * 100.0, 0, 1),
+            jf(st.kurt, 0, 1),
+            jf(st.ac1, 0, 2),
+            jf(st.ac20, 0, 2),
+            jf(st.ep_per_path, 0, 1),
+            jf(st.depth_med, 0, 1),
+            st.censored,
+            jf(st.trend_share, 0, 2),
+            jf(st.clamp_pct, 0, 3)
+        );
+        println!(
+            "  bond vol {}%  growth-crash {}  infl-crash {}  corr {}/{}  bond spiral {}% of sessions",
+            jf(st.bond_vol * 100.0, 0, 1),
+            jfs(st.bond_growth, 1),
+            jfs(st.bond_infl, 1),
+            jfs(st.corr_calm, 2),
+            jfs(st.corr_infl, 2),
+            jf(st.pct_bond_stress * 100.0, 0, 1)
+        );
+        println!(
+            "  {:<34} {:>8} {:>8} {:>7} {:>7} {:>5} {:>9} {:>9} {:>6} {:>6} {:>7} {:>9}",
+            "rule", "ret/yr", "worst5%", "maxDD", "realDD", "ruin", "vsFlat g", "vsFlat n",
+            "swr", "churn", "slip x", "beats ref"
+        );
+        for j in 0..nr {
+            let outs: Vec<Outcome> = evald.iter().map(|v| v[j].0).collect();
+            let refs: Vec<Outcome> = evald.iter().map(|v| v[REF_IDX].0).collect();
+            let ann: Vec<f64> = outs.iter().map(|o| o.ann).collect();
+            let ruin = outs.iter().filter(|o| o.max_dd > 50.0).count() as f64 / outs.len() as f64
+                * 100.0;
+            let win = outs
+                .iter()
+                .zip(&refs)
+                .filter(|(o, r)| o.ann > r.ann)
+                .count() as f64
+                / outs.len() as f64
+                * 100.0;
+            let win_txt = if j == REF_IDX {
+                "ref".to_string()
+            } else {
+                format!("{}%", jf(win, 0, 0))
+            };
+            println!(
+                "  {:<34} {}% {}% {}% {}% {}% {} {} {} {} {} {:>9}",
+                rs[j].name,
+                jf(pctile(&ann, 0.5), 7, 2),
+                jf(pctile(&ann, 0.05), 7, 2),
+                jf(pctile(&outs.iter().map(|o| o.max_dd).collect::<Vec<f64>>(), 0.5), 6, 1),
+                jf(pctile(&outs.iter().map(|o| o.real_dd).collect::<Vec<f64>>(), 0.5), 6, 1),
+                jf(ruin, 4, 0),
+                jfsw(pctile(&outs.iter().map(|o| o.vs_flat_g).collect::<Vec<f64>>(), 0.5), 9, 2),
+                jfsw(pctile(&outs.iter().map(|o| o.vs_flat).collect::<Vec<f64>>(), 0.5), 9, 2),
+                jf(pctile(&outs.iter().map(|o| o.swr).collect::<Vec<f64>>(), 0.5), 6, 2),
+                jf(outs.iter().map(|o| o.churn).sum::<f64>() / outs.len() as f64, 6, 2),
+                jf(outs.iter().map(|o| o.slip_mult()).sum::<f64>() / outs.len() as f64, 7, 2),
+                win_txt
+            );
+        }
+    }
+
+    let valid: Vec<&(&str, bool, WorldStats, Evald)> =
+        results.iter().filter(|(_, ok, _, _)| *ok).collect();
+    println!(
+        "\n\nRANK STABILITY — {} of {} worlds pass the gate; ranks use only those.",
+        valid.len(),
+        results.len()
+    );
+    println!("Rank stability is the WEAK form of robustness: magnitudes vary far more than ranks.");
+    type OutcomeMetric = (&'static str, fn(&Outcome) -> f64);
+    let metrics: Vec<OutcomeMetric> = vec![
+        ("median net return", |o: &Outcome| o.ann),
+        ("median GROSS edge vs the fixed twin", |o: &Outcome| {
+            o.vs_flat_g
+        }),
+    ];
+    for (metric_name, get) in metrics {
+        println!("\n  ranked by {metric_name}   (1 = best)");
+        // `j` indexes both `rs` and each path's outcome vector, so it stays an index
+        #[expect(clippy::needless_range_loop, reason = "j indexes two parallel collections")]
+        for j in 0..nr {
+            let ranks: Vec<usize> = valid
+                .iter()
+                .map(|(_, _, _, evald)| {
+                    let mut med: Vec<(usize, f64)> = (0..nr)
+                        .map(|k| {
+                            (
+                                k,
+                                pctile(
+                                    &evald.iter().map(|v| get(&v[k].0)).collect::<Vec<f64>>(),
+                                    0.5,
+                                ),
+                            )
+                        })
+                        .collect();
+                    // Scala's sortBy(-_._2): descending, and STABLE, so ties keep rule order
+                    med.sort_by(|a, b| (-a.1).total_cmp(&(-b.1)));
+                    med.iter().position(|(k, _)| *k == j).unwrap_or(0) + 1
+                })
+                .collect();
+            let cells: Vec<String> = ranks.iter().map(|r| format!("{r:>2}")).collect();
+            println!(
+                "  {:<34} {}   best {}  worst {}",
+                rs[j].name,
+                cells.join(" "),
+                ranks.iter().min().copied().unwrap_or(0),
+                ranks.iter().max().copied().unwrap_or(0)
+            );
+        }
+    }
+
+    // ---- flight to safety, DECOMPOSED so carry cannot masquerade as timing ----------------
+    //   total  = bond-refuge net return minus cash-refuge net return
+    //   static = what a CONSTANT mix at the same average exposure gains just from holding bonds
+    //   timing = the change in the rule's edge over its own constant twin when the twin also
+    //            holds bonds — the only part attributable to timed flight
+    let pooled: Vec<&PathOutcomes> =
+        valid.iter().flat_map(|(_, _, _, e)| e.iter()).collect();
+    println!("\nFLIGHT TO SAFETY — de-risking into BONDS instead of cash, pooled over the market-like");
+    println!("worlds.  Return columns are net pp/yr and DEFLATOR-INVARIANT (the same inflation cancels");
+    println!("from both sides).  What real grading adds is the WITHDRAWAL column: dSwr = paired median");
+    println!("change in the 30-year sustainable REAL withdrawal rate from choosing the bond refuge —");
+    println!("the cash-vehicle decision metric, and the axis on which 1970s-style bonds look worst.");
+    println!(
+        "  {:<34} {:>7} {:>8} {:>8} {:>9} {:>9} {:>7}",
+        "rule", "total", "static", "timing", "swr cash", "swr bond", "dSwr"
+    );
+    for j in 0..nr {
+        let tot: Vec<f64> = pooled.iter().map(|v| v[nr + j].0.ann - v[j].0.ann).collect();
+        let sta: Vec<f64> = pooled
+            .iter()
+            .map(|v| {
+                (v[nr + j].0.ann - v[nr + j].0.vs_flat) - (v[j].0.ann - v[j].0.vs_flat)
+            })
+            .collect();
+        let tim: Vec<f64> = pooled
+            .iter()
+            .map(|v| v[nr + j].0.vs_flat - v[j].0.vs_flat)
+            .collect();
+        let sw_c: Vec<f64> = pooled
+            .iter()
+            .map(|v| v[j].0.swr)
+            .filter(|x| !x.is_nan())
+            .collect();
+        let sw_b: Vec<f64> = pooled
+            .iter()
+            .map(|v| v[nr + j].0.swr)
+            .filter(|x| !x.is_nan())
+            .collect();
+        let d_sw: Vec<f64> = pooled
+            .iter()
+            .map(|v| v[nr + j].0.swr - v[j].0.swr)
+            .filter(|x| !x.is_nan())
+            .collect();
+        println!(
+            "  {:<34} {} {} {} {} {} {}",
+            rs[j].name,
+            jfsw(pctile(&tot, 0.5), 7, 2),
+            jfsw(pctile(&sta, 0.5), 8, 2),
+            jfsw(pctile(&tim, 0.5), 8, 2),
+            jf(pctile(&sw_c, 0.5), 9, 2),
+            jf(pctile(&sw_b, 0.5), 9, 2),
+            jfsw(pctile(&d_sw, 0.5), 7, 2)
+        );
+    }
+
+    // ---- refuge severity curve: the conclusion as a CURVE, not a point --------------------
+    println!("\nREFUGE SEVERITY CURVE — the same decomposition as inflation severity is dialed; where");
+    println!("the timing column crosses zero is where timed flight stops paying.  Baseline world");
+    println!("otherwise; severity multiplies inflSize.");
+    println!(
+        "  {:<9} {:<34} {:>7} {:>8} {:>8} {:>7} {:>16}",
+        "severity", "rule", "total", "static", "timing", "dSwr", "infl-crash bond"
+    );
+    for mult in [0.5f64, 1.0, 1.5, 2.5] {
+        let mut w = *base;
+        w.infl_size = base.infl_size * mult;
+        let sims = sim_paths(&w, paths.min(120), years, seed);
+        let st = measure(&sims, years);
+        // gated AT USE TIME, like every other conclusion path
+        let ok_sev = gate_checks(&st).iter().all(|(_, o)| *o);
+        let ev: Vec<Vec<Outcome>> = (0..sims.len())
+            .into_par_iter()
+            .map(|k| {
+                let s = &sims[k];
+                let ind = Indicators::new(&s.price);
+                let eps = episodes(&s.price, 15.0);
+                let fl: Vec<bool> = eps.iter().map(|ep| fundamental_led(s, *ep)).collect();
+                let mut out = Vec::new();
+                for j in [REF_IDX, nr - 1] {
+                    out.push(
+                        evaluate(s, &eps, &fl, &rs[j].expose, &ind, cost, years, Safe::Cash).0,
+                    );
+                    out.push(
+                        evaluate(s, &eps, &fl, &rs[j].expose, &ind, cost, years, Safe::Bond).0,
+                    );
+                }
+                out
+            })
+            .collect();
+        for (j, off) in [(REF_IDX, 0usize), (nr - 1, 2usize)] {
+            let tot: Vec<f64> = ev.iter().map(|v| v[off + 1].ann - v[off].ann).collect();
+            let sta: Vec<f64> = ev
+                .iter()
+                .map(|v| (v[off + 1].ann - v[off + 1].vs_flat) - (v[off].ann - v[off].vs_flat))
+                .collect();
+            let tim: Vec<f64> = ev
+                .iter()
+                .map(|v| v[off + 1].vs_flat - v[off].vs_flat)
+                .collect();
+            let d_sw: Vec<f64> = ev
+                .iter()
+                .map(|v| v[off + 1].swr - v[off].swr)
+                .filter(|x| !x.is_nan())
+                .collect();
+            println!(
+                "  x{} {:<34} {} {} {} {} {}{}",
+                jfl(mult, 8, 1),
+                rs[j].name,
+                jfsw(pctile(&tot, 0.5), 7, 2),
+                jfsw(pctile(&sta, 0.5), 8, 2),
+                jfsw(pctile(&tim, 0.5), 8, 2),
+                jfsw(pctile(&d_sw, 0.5), 7, 2),
+                jfsw(st.bond_infl, 15, 1),
+                if ok_sev { "" } else { "   *** OUT OF GATE ***" }
+            );
+        }
+    }
+
+    // ---- cost breakeven ------------------------------------------------------------------
+    println!("\nCOST BREAKEVEN — the calm-market per-unit cost at which the rule's gross edge over its");
+    println!("fixed twin reaches zero; liquidity-weighted churn in the denominator.  The flat-rate");
+    println!("column is what a constant fee would have implied.");
+    println!(
+        "  {:<34} {:>12} {:>9} {:>11}",
+        "rule", "breakeven", "5th pct", "flat-rate"
+    );
+    for j in 0..nr {
+        let os: Vec<Outcome> = pooled
+            .iter()
+            .map(|v| v[j].0)
+            .filter(|o| o.churn > 0.05)
+            .collect();
+        if os.is_empty() {
+            println!("  {:<34} (does not trade)", rs[j].name);
+        } else {
+            let be: Vec<f64> = os.iter().map(|o| o.vs_flat_g * 100.0 / o.eff_churn).collect();
+            let flat: Vec<f64> = os.iter().map(|o| o.vs_flat_g * 100.0 / o.churn).collect();
+            println!(
+                "  {:<34} {} bp {} bp {} bp",
+                rs[j].name,
+                jf(pctile(&be, 0.5), 9, 0),
+                jf(pctile(&be, 0.05), 7, 0),
+                jf(pctile(&flat, 0.5), 9, 0)
+            );
+        }
+    }
+
+    // ---- crash-type decomposition --------------------------------------------------------
+    println!("\nCRASH TYPES — rule return minus buy-and-hold over each crash window, by whether the");
+    println!("fundamental fell at least half as far as price.  Log points x 100.");
+    for j in 0..nr {
+        let entries: Vec<(bool, f64, f64)> =
+            pooled.iter().flat_map(|v| v[j].1.iter().copied()).collect();
+        let fl: Vec<f64> = entries
+            .iter()
+            .filter(|e| e.0)
+            .map(|e| (e.1 - e.2) * 100.0)
+            .collect();
+        let ll: Vec<f64> = entries
+            .iter()
+            .filter(|e| !e.0)
+            .map(|e| (e.1 - e.2) * 100.0)
+            .collect();
+        println!(
+            "  {:<34} fund-led {} (n={})   liq-led {} (n={})",
+            rs[j].name,
+            jfsw(pctile(&fl, 0.5), 7, 1),
+            fl.len(),
+            jfsw(pctile(&ll, 0.5), 7, 1),
+            ll.len()
+        );
+    }
+}
+
+// ---- the power report -------------------------------------------------------------------
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "one linear report, mirroring the Scala twin statement for statement"
+)]
+fn run_power_report(paths: usize, seed: u64, cost: f64, single: bool, base: &World) {
+    // 21 = the traded book's span; 72 = the S&P record used for calibration
+    let horizons = [21usize, 40, 72, 100];
+    let focus: Vec<Rule> = [
+        "volatility-scaled, floor 40%",
+        "trend 200d, floor 0%",
+        "volatility + trend 200d, floor 0%",
+        "cut below -10%, floor 0%",
+    ]
+    .iter()
+    .map(|n| rule_named(n))
+    .collect();
+    let mut arms: Vec<ExposeFn> = Vec::new();
+    for r in &focus {
+        arms.push(Arc::clone(&r.expose));
+        let inner = Arc::clone(&r.expose);
+        arms.push(Arc::new(move |i: &Indicators| matched_constant(&inner(i))) as ExposeFn);
+    }
+    arms.push(Arc::new(|ind: &Indicators| vec![1.0; ind.px.len()]) as ExposeFn);
+    let always_idx = arms.len() - 1;
+    let mut pairs: Vec<(String, usize, usize, bool)> = Vec::new();
+    for (k, r) in focus.iter().enumerate() {
+        pairs.push((
+            format!("{}  vs its exposure-matched constant", r.name),
+            2 * k,
+            2 * k + 1,
+            false,
+        ));
+        pairs.push((
+            format!("{}  vs always fully invested", r.name),
+            2 * k,
+            always_idx,
+            false,
+        ));
+    }
+    pairs.push((
+        format!(
+            "NULL — {}  vs ITSELF on an independent path",
+            focus[0].name
+        ),
+        0,
+        0,
+        true,
+    ));
+
+    let names = stat_names();
+
+    // per contrast, per statistic: (hit rate, n*). Gate verdict travels with the numbers.
+    let power = |w: &World, l: usize, sd: u64| -> (bool, Vec<Vec<(f64, f64)>>) {
+        let sims = sim_paths(w, paths, l, sd);
+        let ok = gate_checks(&measure(&sims, l)).iter().all(|(_, o)| *o);
+        let stats: Vec<Vec<Vec<f64>>> = (0..sims.len())
+            .into_par_iter()
+            .map(|k| {
+                let p = &sims[k];
+                let ind = Indicators::new(&p.price);
+                arms.iter()
+                    .map(|fna| {
+                        grading_stats(&arm_path(p, &fna(&ind), cost, Safe::Cash), l)
+                            .into_iter()
+                            .map(|(_, v)| v)
+                            .collect()
+                    })
+                    .collect()
+            })
+            .collect();
+        let np = stats.len();
+        let res = pairs
+            .iter()
+            .map(|(_, ia, ib, is_null)| {
+                (0..names.len())
+                    .map(|j| {
+                        // the null pairs the first half of the paths against the second, giving
+                        // genuinely independent differences; pairing every path with a shifted
+                        // partner would force the hit rate to 50% ARITHMETICALLY
+                        let d: Vec<f64> = if *is_null {
+                            (0..np / 2)
+                                .map(|k| stats[k][*ia][j] - stats[k + np / 2][*ib][j])
+                                .filter(|x| !x.is_nan())
+                                .collect()
+                        } else {
+                            (0..np)
+                                .map(|k| stats[k][*ia][j] - stats[k][*ib][j])
+                                .filter(|x| !x.is_nan())
+                                .collect()
+                        };
+                        if d.len() < 8 {
+                            return (f64::NAN, f64::NAN);
+                        }
+                        // truth from one half, hit rate scored on the OTHER: reading both off the
+                        // same sample would grade the estimator against a target it helped define
+                        let h = d.len() / 2;
+                        let truth = d[..h].iter().sum::<f64>() / h as f64;
+                        let test = &d[h..];
+                        let hit = test
+                            .iter()
+                            .filter(|x| scala_sign(**x) == scala_sign(truth))
+                            .count() as f64
+                            / test.len() as f64;
+                        let mu = d.iter().sum::<f64>() / d.len() as f64;
+                        let sdv = (d.iter().map(|x| (x - mu) * (x - mu)).sum::<f64>()
+                            / d.len() as f64)
+                            .sqrt();
+                        (
+                            hit,
+                            if sdv <= 0.0 || mu == 0.0 {
+                                f64::NAN
+                            } else {
+                                (1.96 * sdv / mu.abs()).powi(2)
+                            },
+                        )
+                    })
+                    .collect()
+            })
+            .collect();
+        (ok, res)
+    };
+
+    println!("ESTIMATOR POWER — what each grading statistic can and cannot resolve from ONE history.");
+    println!("Cells are  hit%/n*:  hit% = share of single L-year histories whose measured difference has");
+    println!("the same sign as the long-run difference at that length (50% = coin flip); n* = independent");
+    println!("L-year histories a 95% paired interval would need to exclude zero.  The real record has 1.");
+    println!("Safe leg is CASH.  Read DOWN a column (statistics against each other); across columns the");
+    println!("question changes.");
+    println!();
+    for (j, (lbl, _, _, _)) in pairs.iter().enumerate() {
+        // Scala is `f"  C${j + 1}%-3d $lbl%s"`: the width applies to the NUMBER, with the
+        // `C` outside it — not to the whole "C1" token.
+        println!("  C{:<3} {}", j + 1, lbl);
+    }
+    for l in horizons {
+        let (ok, res) = power(base, l, seed.wrapping_add(l as u64 * 1_000_003));
+        let verdict = if ok {
+            "gate PASS"
+        } else {
+            "gate FAIL — read nothing from this block"
+        };
+        println!(
+            "\n  L = {} years   ({paths} independent histories, {verdict})",
+            jf(l as f64, 3, 0)
+        );
+        let hdr: String = (0..pairs.len())
+            .map(|j| format!("   C{:<8}", j + 1))
+            .collect();
+        println!("  {:<19}{}", "statistic", hdr);
+        for (j, nm) in names.iter().enumerate() {
+            let row: String = (0..pairs.len())
+                .map(|c| {
+                    let (hit, ns) = res[c][j];
+                    if hit.is_nan() {
+                        "       n/a".to_string()
+                    } else {
+                        format!("  {}/{}", jf(hit * 100.0, 3, 0), n_star_str(ns))
+                    }
+                })
+                .collect();
+            println!("  {nm:<19}{row}");
+        }
+    }
+
+    if !single {
+        eprintln!("the world sweep is not ported yet; run with -single");
+        std::process::exit(2);
+    }
 }
 
 // ---- the buffer report ------------------------------------------------------------------
@@ -1431,13 +2219,56 @@ fn jf(v: f64, width: i32, dec: i32) -> String {
     java_format_f(v, width, dec)
 }
 
+/// A rendering whose digits are ALL ZERO carries no sign: the quantity is zero to the
+/// precision shown, so a leading `-` there reports rounding NOISE as direction. uni's own
+/// `numStr` blanks the sign for the same reason.
+///
+/// It matters here beyond tidiness. A column whose true value is identically zero — the
+/// always-invested rule against buy-and-hold, where the cumulative sum telescopes — has
+/// nothing left in it but the last-ulp gap between the JVM's `Math.log` and libm's, measured
+/// at 0.235% of calls, 1 ulp. Without this the sign printed there is a coin flip, and the
+/// two languages cannot agree on it.
+fn blank_zero_sign(s: String) -> String {
+    let has_digit = s.bytes().any(|b| b.is_ascii_digit());
+    let all_zero = s.bytes().all(|b| !b.is_ascii_digit() || b == b'0');
+    if has_digit && all_zero {
+        s.chars()
+            .map(|c| if c == '+' || c == '-' { ' ' } else { c })
+            .collect()
+    } else {
+        s
+    }
+}
+
 /// `%+.<dec>f` — Java prefixes non-negative values with `+`, and leaves NaN unsigned.
 fn jfs(v: f64, dec: i32) -> String {
     if v.is_nan() {
         return "NaN".to_string();
     }
     let s = java_format_f(v, 0, dec);
-    if s.starts_with('-') { s } else { format!("+{s}") }
+    blank_zero_sign(if s.starts_with('-') { s } else { format!("+{s}") })
+}
+
+/// `%+<width>.<dec>f` — the sign joins the number, then the whole thing is right-justified.
+fn jfsw(v: f64, width: i32, dec: i32) -> String {
+    let body = jfs(v, dec);
+    let pad = width.max(0) as usize;
+    if body.len() < pad {
+        format!("{}{body}", " ".repeat(pad - body.len()))
+    } else {
+        body
+    }
+}
+
+/// `%-<width>.<dec>f` — LEFT-justified, which `java_format_f` does not do.
+fn jfl(v: f64, width: i32, dec: i32) -> String {
+    let body = java_format_f(v, 0, dec);
+    let pad = width.max(0) as usize;
+    if body.len() < pad {
+        format!("{body}{}", " ".repeat(pad - body.len()))
+    } else {
+        body
+    }
 }
 
 #[expect(
@@ -1458,6 +2289,8 @@ fn main() {
     let mut emit = String::new();
     let mut validate = false;
     let mut buffer_report = false;
+    let mut power_report = false;
+    let mut strategies = false;
     let mut single = false;
     let mut cost = 0.0010f64;
     let mut it = args.iter();
@@ -1469,6 +2302,8 @@ fn main() {
             "-emit" => emit = it.next().cloned().unwrap_or_default(),
             "-validate" => validate = true,
             "-buffer" => buffer_report = true,
+            "-power" => power_report = true,
+            "-strategies" => strategies = true,
             "-single" => single = true,
             "-cost" => cost = it.next().and_then(|v| v.parse().ok()).unwrap_or(cost),
             other => {
@@ -1504,6 +2339,14 @@ fn main() {
         margin: 0.0008,
     };
 
+    if strategies {
+        run_strategy_sweep(paths, years, seed, cost, single, &w);
+        return;
+    }
+    if power_report {
+        run_power_report(paths, seed, cost, single, &w);
+        return;
+    }
     if buffer_report {
         run_buffer_report(paths, years, seed, cost, single, &w);
         return;

@@ -767,6 +767,20 @@ object MarketSim:
   val StatNames: Vector[String] = gradingStats(
     ArmPath(Array(0.0, 0.0), Array(0.0, 0.0), Array(0.0), 1.0, 0, 0, 0, 0, 0), 1).map(_._1)
 
+  /** `%+w.df`, except that a rendering whose digits are ALL ZERO carries no sign.  The quantity
+    * is zero to the precision shown, so a leading '-' there reports rounding NOISE as direction;
+    * uni's own `numStr` blanks the sign for the same reason.  It matters here beyond tidiness: a
+    * column whose true value is identically zero (the always-invested rule against buy-and-hold)
+    * has nothing left in it but the last-ulp gap between the JVM's Math.log and libm's, which is
+    * ~0.2% of calls at 1 ulp -- so without this the sign printed there is a coin flip, and the
+    * Rust twin in rust/examples/market_sim.rs cannot agree with it. */
+  def pm(x: Double, w: Int, d: Int): String =
+    val wpart = if w > 0 then w.toString else ""
+    val s = String.format(s"%+$wpart.${d}f", Double.box(x))
+    if s.exists(_.isDigit) && s.forall(c => !c.isDigit || c == '0')
+    then s.map(c => if c == '+' || c == '-' then ' ' else c)
+    else s
+
   def pctile(v: Seq[Double], q: Double): Double =
     if v.isEmpty then Double.NaN else v.sorted.apply(math.min((v.size * q).toInt, v.size - 1))
 
@@ -875,8 +889,8 @@ object MarketSim:
       println(f"  inflation ${st.inflAnn}%.1f%%/yr   eq vol ${st.vol * 100}%.1f%%  kurt ${st.kurt}%.1f  clus ${st.ac1}%.2f/${st.ac20}%.2f  " +
               f"crashes/path ${st.epPerPath}%.1f  depth ${st.depthMed}%.1f%%  censored ${st.censored}%d  " +
               f"trend share ${st.trendShare}%.2f  clamp ${st.clampPct}%.3f%%")
-      println(f"  bond vol ${st.bondVol * 100}%.1f%%  growth-crash ${st.bondGrowth}%+.1f  infl-crash ${st.bondInfl}%+.1f  " +
-              f"corr ${st.corrCalm}%+.2f/${st.corrInfl}%+.2f  bond spiral ${st.pctBondStress * 100}%.1f%% of sessions")
+      println(f"  bond vol ${st.bondVol * 100}%.1f%%  growth-crash ${pm(st.bondGrowth, 0, 1)}%s  infl-crash ${pm(st.bondInfl, 0, 1)}%s  " +
+              f"corr ${pm(st.corrCalm, 0, 2)}%s/${pm(st.corrInfl, 0, 2)}%s  bond spiral ${st.pctBondStress * 100}%.1f%% of sessions")
       println(f"  ${"rule"}%-34s ${"ret/yr"}%8s ${"worst5%"}%8s ${"maxDD"}%7s ${"realDD"}%7s ${"ruin"}%5s " +
               f"${"vsFlat g"}%9s ${"vsFlat n"}%9s ${"swr"}%6s ${"churn"}%6s ${"slip x"}%7s ${"beats ref"}%9s")
       for j <- Rules.indices do
@@ -888,7 +902,7 @@ object MarketSim:
         val winTxt = if j == RefIdx then "ref" else f"$win%.0f%%"
         println(f"  ${Rules(j).name}%-34s ${pctile(ann, 0.5)}%7.2f%% ${pctile(ann, 0.05)}%7.2f%% " +
                 f"${pctile(outs.map(_.maxDD), 0.5)}%6.1f%% ${pctile(outs.map(_.realDD), 0.5)}%6.1f%% $ruin%4.0f%% " +
-                f"${pctile(outs.map(_.vsFlatG), 0.5)}%+9.2f ${pctile(outs.map(_.vsFlat), 0.5)}%+9.2f " +
+                f"${pm(pctile(outs.map(_.vsFlatG), 0.5), 9, 2)}%s ${pm(pctile(outs.map(_.vsFlat), 0.5), 9, 2)}%s " +
                 f"${pctile(outs.map(_.swr), 0.5)}%6.2f " +
                 f"${outs.map(_.churn).sum / outs.size}%6.2f ${outs.map(_.slipMult).sum / outs.size}%7.2f $winTxt%9s")
 
@@ -928,8 +942,8 @@ object MarketSim:
       val swC = pooled.map(v => v(j)._1.swr).filter(x => !x.isNaN)
       val swB = pooled.map(v => v(Rules.size + j)._1.swr).filter(x => !x.isNaN)
       val dSw = pooled.map(v => v(Rules.size + j)._1.swr - v(j)._1.swr).filter(x => !x.isNaN)
-      println(f"  ${Rules(j).name}%-34s ${pctile(tot, 0.5)}%+7.2f ${pctile(sta, 0.5)}%+8.2f ${pctile(tim, 0.5)}%+8.2f " +
-              f"${pctile(swC, 0.5)}%9.2f ${pctile(swB, 0.5)}%9.2f ${pctile(dSw, 0.5)}%+7.2f")
+      println(f"  ${Rules(j).name}%-34s ${pm(pctile(tot, 0.5), 7, 2)}%s ${pm(pctile(sta, 0.5), 8, 2)}%s ${pm(pctile(tim, 0.5), 8, 2)}%s " +
+              f"${pctile(swC, 0.5)}%9.2f ${pctile(swB, 0.5)}%9.2f ${pm(pctile(dSw, 0.5), 7, 2)}%s")
 
     // ---- refuge severity curve: the conclusion as a CURVE, not a point ------------------------
     println(f"\nREFUGE SEVERITY CURVE — the same decomposition as inflation severity is dialed; where")
@@ -955,8 +969,8 @@ object MarketSim:
         val sta = ev.map(v => (v(off + 1).ann - v(off + 1).vsFlat) - (v(off).ann - v(off).vsFlat))
         val tim = ev.map(v => v(off + 1).vsFlat - v(off).vsFlat)
         val dSw = ev.map(v => v(off + 1).swr - v(off).swr).filter(x => !x.isNaN)
-        println(f"  x$mult%-8.1f ${Rules(j).name}%-34s ${pctile(tot, 0.5)}%+7.2f ${pctile(sta, 0.5)}%+8.2f " +
-                f"${pctile(tim, 0.5)}%+8.2f ${pctile(dSw, 0.5)}%+7.2f ${st.bondInfl}%+15.1f" +
+        println(f"  x$mult%-8.1f ${Rules(j).name}%-34s ${pm(pctile(tot, 0.5), 7, 2)}%s ${pm(pctile(sta, 0.5), 8, 2)}%s " +
+                f"${pm(pctile(tim, 0.5), 8, 2)}%s ${pm(pctile(dSw, 0.5), 7, 2)}%s ${pm(st.bondInfl, 15, 1)}%s" +
                 f"${if okSev then "" else "   *** OUT OF GATE ***"}%s")
 
     // ---- cost breakeven ------------------------------------------------------------------------
@@ -979,8 +993,8 @@ object MarketSim:
       val entries = pooled.flatMap(_(j)._2)
       val f = entries.filter(_._1).map(e => (e._2 - e._3) * 100.0)
       val l = entries.filterNot(_._1).map(e => (e._2 - e._3) * 100.0)
-      println(f"  ${Rules(j).name}%-34s fund-led ${pctile(f, 0.5)}%+7.1f (n=${f.size}%d)   " +
-              f"liq-led ${pctile(l, 0.5)}%+7.1f (n=${l.size}%d)")
+      println(f"  ${Rules(j).name}%-34s fund-led ${pm(pctile(f, 0.5), 7, 1)}%s (n=${f.size}%d)   " +
+              f"liq-led ${pm(pctile(l, 0.5), 7, 1)}%s (n=${l.size}%d)")
 
   // ---- estimator power -----------------------------------------------------------------------
 
@@ -1309,8 +1323,8 @@ object MarketSim:
     println(f"  drawdowns of 15%%+      ${st.nEpisodes}%d, ${st.epPerPath}%.1f per path; ${st.censored}%d unrecovered at path end (included in depth)")
     println(f"  their depth            median ${st.depthMed}%6.1f%%   worst ${st.worstDepth}%6.1f%%")
     println(f"  recovery shape         V ${st.vCount}%d   balanced ${st.midCount}%d   U ${st.uCount}%d")
-    println(f"  bond refuge            vol ${st.bondVol * 100}%.1f%%   growth-crash ${st.bondGrowth}%+.1f   infl-crash ${st.bondInfl}%+.1f")
-    println(f"  stock-bond correlation calm ${st.corrCalm}%+.2f   inflation regime ${st.corrInfl}%+.2f")
+    println(f"  bond refuge            vol ${st.bondVol * 100}%.1f%%   growth-crash ${pm(st.bondGrowth, 0, 1)}%s   infl-crash ${pm(st.bondInfl, 0, 1)}%s")
+    println(f"  stock-bond correlation calm ${pm(st.corrCalm, 0, 2)}%s   inflation regime ${pm(st.corrInfl, 0, 2)}%s")
     println(f"  realized inflation     ${st.inflAnn}%.2f%%/yr median (deterministic from regime pressure; no draws consumed)")
     println(f"  binding diagnostics    trend share ${st.trendShare}%.2f (pinned ${st.trendPinned * 100}%.1f%%, " +
             f"target saturated ${st.targetSat * 100}%.1f%%)   bond spiral ${st.pctBondStress * 100}%.1f%% of sessions   " +
