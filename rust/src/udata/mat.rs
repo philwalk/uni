@@ -1,15 +1,57 @@
-//! Dense `f64` matrices — the start of the port of Scala's `uni.data.Mat`.
+//! Dense `f64` matrices — the port of Scala's `uni.data.Mat` at `Mat[Double]`.
 //!
 //! # Scope
 //!
-//! This is milestone 1 of Tier 3 in `PARITY.md`, scoped by a real consumer rather than
-//! by API completeness: the operations `jsrc/marketSim.sc` needs. Construction from a
-//! slice, elementwise arithmetic against a scalar and against a same-shape matrix,
-//! [`MatD::abs`], [`MatD::power`], [`MatD::cumsum`], [`MatD::mean`], [`MatD::sum`],
-//! [`MatD::toArray`], [`MatD::head`], [`MatD::tail`]. Broadcasting, slicing, transpose,
-//! `CVecD`/`RVecD` and the axis reductions come next; a shape mismatch is an explicit
-//! panic here rather than a silent broadcast, so nothing can quietly do the wrong thing
-//! before that lands.
+//! Tier 3 of `PARITY.md`, phases (a) and (b). Milestone 1 covered construction,
+//! elementwise arithmetic and the whole-matrix reductions that `jsrc/marketSim.sc`
+//! needs. This adds the rest of the core: the **strided view model** (transpose,
+//! `slice`, `broadcastTo`), broadcasting arithmetic, the axis reductions, and — in
+//! `vecexts.rs` — `CVecD`/`RVecD`.
+//!
+//! # Why a matrix here carries strides
+//!
+//! It would be simpler to make every derived matrix a fresh contiguous copy, and for a
+//! library that only had to be *correct* that would be fine. It is not fine for a
+//! library that has to be **bit-identical to Scala**, because on the Scala side the
+//! layout decides which summation algorithm runs:
+//!
+//! ```text
+//! m.sum        // contiguous, offset 0 -> sumD: 8-way unrolled, chunked  (see sum_d)
+//! m.T.sum      // a transposed VIEW    -> plain sequential fold
+//! ```
+//!
+//! Those two land on different last ulps for the same numbers, because `sumD` — the
+//! chunked, 8-way unrolled sum — is only ever reached with a **contiguous array whose
+//! length is exactly `rows * cols`**. `Mat.scala` calls it from four places (`sum`,
+//! `mean`, `std`, `variance`) and every one of them is guarded that way. A strided view
+//! is summed **sequentially** instead — not by a degraded fallback, but through the same
+//! inline stride equation `tdata(offset + r * rs + c * cs)` that `apply(r, c)` uses
+//! everywhere else. The difference between the two is association ORDER, not quality:
+//! chunked-and-unrolled versus left-to-right. Materialising views in the port would
+//! silently pick the chunked order where Scala picks the sequential one.
+//!
+//! Most of the family spells that guard as the shared `fastD` predicate — contiguous,
+//! offset 0, backing array is exactly this matrix's data — which [`MatD::fast_d`]
+//! mirrors. `sum` is the exception and writes the test out itself, in three branches
+//! rather than two: `sumD`; a stride-indexed loop over the raw array when the view is
+//! contiguous at offset 0 but shares a longer parent buffer; and the general
+//! `Numeric`-dispatched loop, which reads through that same stride equation. The
+//! middle branch holds `offset == 0`, so
+//! `data(i * rs + j * cs)` is exactly `at(i, j)` — which is why [`MatD::sum`] collapses
+//! the two loops into one without changing a single bit. Note also that
+//! `min`/`max`/`argmin`/`argmax`/`cummax`/`cummin` have no fast path at all on either
+//! side: one stride-aware scan, whatever the layout.
+//!
+//! The same reasoning explains the odd-looking [`MatD::is_weird_layout`] check: Scala's
+//! `Internal.create` *materialises* a fragmented view into a contiguous copy, which
+//! flips that view back onto the fast path. Whether a given `slice` is fragmented
+//! depends on the parent's aspect ratio, so the same logical slice of a 3×5 and of a 5×3
+//! sums by two different algorithms. That is reproduced here rather than tidied up.
+//!
+//! Buffers are shared through an `Arc<Vec<f64>>` so a view stays O(1), as it is in Scala.
+//! Nothing mutates a matrix in place yet; when the `update` family lands it will need an
+//! explicit decision about aliasing, since `Arc::make_mut` would give copy-on-write
+//! where Scala writes through to the parent.
 //!
 //! # Bit-exactness is the point
 //!
@@ -41,11 +83,18 @@
               so the case says whether a Scala counterpart exists."
 )]
 
-use rayon::prelude::*;
+use std::cmp::Ordering;
+use std::fmt;
 use std::ops::Add;
+use std::ops::Div;
 use std::ops::Index;
 use std::ops::Mul;
+use std::ops::Neg;
+use std::ops::Range;
 use std::ops::Sub;
+use std::sync::Arc;
+
+use rayon::prelude::*;
 
 /// Fork/join overhead dominates below this size; sum sequentially. Mirrors
 /// `Mat.ParallelThreshold`.
@@ -54,6 +103,16 @@ pub const PARALLEL_THRESHOLD: usize = 4096;
 /// Chunk-count cap for [`sum_d`], mirroring `Mat.MaxSumChunks`. Pinned to a constant so
 /// the summation order — and therefore the last ulp — is a function of length alone.
 pub const MAX_SUM_CHUNKS: usize = 16;
+
+/// Element count above which elementwise work is spread across rows, mirroring
+/// `Mat.BcastParallelThreshold`.
+///
+/// Unlike [`sum_d`]'s chunking this cannot move a single bit, and for the reason Scala
+/// states at its own `bcastRows`: rows write **disjoint output slices with no
+/// reduction**, so each element is computed by the same expression from the same inputs
+/// no matter which thread runs it or in what order. Parallelism is only ever observable
+/// in a reduction, and no reduction happens here.
+pub const BCAST_PARALLEL_THRESHOLD: usize = 1 << 16;
 
 /// Sum of `a[from..until]`, 8-way unrolled with Scala's exact combine tree.
 ///
@@ -88,7 +147,7 @@ fn sum_range(a: &[f64], from: usize, until: usize) -> f64 {
 
 /// Sum of a slice; chunked in parallel above [`PARALLEL_THRESHOLD`], with partials
 /// combined sequentially in index order. Bit-identical to Scala's `Mat.sumD`.
-fn sum_d(a: &[f64]) -> f64 {
+pub(crate) fn sum_d(a: &[f64]) -> f64 {
     let n = a.len();
     if n < PARALLEL_THRESHOLD {
         return sum_range(a, 0, n);
@@ -103,7 +162,11 @@ fn sum_d(a: &[f64]) -> f64 {
             let from = c * step;
             let until = (from + step).min(n);
             // Scala leaves the slot at its 0.0 initialiser when the chunk is empty.
-            if from < until { sum_range(a, from, until) } else { 0.0 }
+            if from < until {
+                sum_range(a, from, until)
+            } else {
+                0.0
+            }
         })
         .collect();
     let mut s = 0.0f64;
@@ -113,22 +176,99 @@ fn sum_d(a: &[f64]) -> f64 {
     s
 }
 
-/// A dense, contiguous, row-major `f64` matrix — Scala's `Mat[Double]` / `MatD`.
+/// `java.lang.Double.compare` — the ordering Scala's `min`/`max`/`argmin`/`argmax`/
+/// `cummax`/`cummin` actually use, and **not** what `f64::total_cmp` implements.
 ///
-/// Backed by a flat `Vec<f64>` rather than `ndarray::Array2`. Every operation at this
-/// milestone is flat elementwise work or a whole-buffer reduction, for which the shape
-/// is only ever used to compute a row offset — and a `Vec` keeps both the backing-slice
-/// accessor and construction *infallible*, where `Array2` would force a `Result` and an
-/// `Option` into paths that cannot actually fail. That matters here because the crate is
-/// deliberately free of `unwrap`/`expect`/`panic!`. When transpose, matmul and the BLAS
-/// crossover land, an `ArrayView2::from_shape` over this same buffer is zero-copy and
-/// confines the fallibility to one reviewable site.
-#[derive(Clone, Debug, PartialEq)]
+/// `Ordering[Double]` resolves by default to `Ordering.Double.TotalOrdering`, whose
+/// `compare` *is* `java.lang.Double.compare`. Two of its rules differ from the primitive
+/// `<`/`>` that a port naturally reaches for:
+///
+/// - **NaN sorts above every number.** `max(&[1.0, NaN, -1.0, 2.0])` is NaN, not 2.0.
+///   With `>` it would be 2.0, because every comparison against NaN is false.
+/// - **`-0.0 < 0.0`.** `min(&[0.0, -0.0])` is `-0.0`, at index 1. With `<` the scan
+///   never moves off index 0.
+///
+/// It is also not quite `f64::total_cmp`, which implements the IEEE-754 totalOrder
+/// predicate and places **-NaN below -Infinity**. `Double.doubleToLongBits` collapses
+/// every NaN to one canonical pattern first, so the JVM treats -NaN and +NaN as equal
+/// and both as the largest value. That is the only case where the two disagree, and it
+/// is reproduced here rather than approximated.
+///
+/// Named for what it mirrors: a Java library method, not a uni one, so it keeps Java's
+/// spelling in snake_case exactly as [`crate::udata::java_format_f`] does.
+pub fn java_double_compare(a: f64, b: f64) -> Ordering {
+    if a < b {
+        return Ordering::Less;
+    }
+    if a > b {
+        return Ordering::Greater;
+    }
+    canonical_bits(a).cmp(&canonical_bits(b))
+}
+
+/// `Double.doubleToLongBits` as a signed key: every NaN collapses to one pattern, and
+/// the sign bit makes `-0.0`'s key negative, hence less than `0.0`'s zero.
+fn canonical_bits(x: f64) -> i64 {
+    if x.is_nan() {
+        0x7ff8_0000_0000_0000_u64 as i64
+    } else {
+        x.to_bits() as i64
+    }
+}
+
+/// `Ordering.Double.TotalOrdering.lt`.
+pub(crate) fn lt_total(a: f64, b: f64) -> bool {
+    java_double_compare(a, b) == Ordering::Less
+}
+
+/// `Ordering.Double.TotalOrdering.gt`.
+pub(crate) fn gt_total(a: f64, b: f64) -> bool {
+    java_double_compare(a, b) == Ordering::Greater
+}
+
+/// A dense `f64` matrix — Scala's `Mat[Double]` / `MatD` — possibly a **view** onto a
+/// shared buffer.
+///
+/// The seven fields are exactly Scala's `MatData`: the backing storage plus the logical
+/// shape, a transposed flag, and the offset/row-stride/column-stride triple that turns
+/// `(r, c)` into an index. Element access is the one stride equation
+/// `data[offset + r * rs + c * cs]`, as it is there.
+///
+/// Storage is `Arc<Vec<f64>>` rather than a bare `Vec<f64>` so a view costs a refcount bump
+/// instead of a copy, matching Scala's zero-copy `transpose`/`slice`/`broadcastTo`. It
+/// is deliberately not `ndarray::Array2`: that forces a `Result` and an `Option` into
+/// paths that cannot fail, and this crate is free of `unwrap`/`expect`/`panic!`. An
+/// `ArrayView2::from_shape` over the same buffer stays available, zero-copy, when matmul
+/// and the BLAS crossover arrive.
+///
+/// `Arc<Vec<f64>>` and not the tidier-looking `Arc<[f64]>`, for a measured reason:
+/// `Vec<f64> -> Arc<[f64]>` cannot move, so it allocates a second buffer and memcpies.
+/// Every elementwise op builds its result as a `Vec` and hands it to `create`, so that
+/// spelling put a full copy of the matrix on the cost of `m * 2.0` — 32MB at 2000x2000,
+/// and about half the runtime of the operation. `Arc::new(vec)` moves. The extra pointer
+/// hop on read is hoisted out of any loop that matters.
+#[derive(Clone)]
 pub struct MatD {
-    data: Vec<f64>,
+    data: Arc<Vec<f64>>,
     rows: usize,
     cols: usize,
+    transposed: bool,
+    offset: usize,
+    rs: usize,
+    cs: usize,
 }
+
+/// The layout half of a view — Scala's `(transposed, offset, rs, cs)` arguments to
+/// `Internal.create`. Grouped so the gatekeeper takes four parameters rather than seven;
+/// `None` for a stride means "derive the standard one", which is Scala's `-1` sentinel.
+struct Layout {
+    transposed: bool,
+    offset: usize,
+    rs: Option<usize>,
+    cs: Option<usize>,
+}
+
+// ── Construction and layout ─────────────────────────────────────────────────────
 
 impl MatD {
     /// Scala's `MatD(arr)`: an `n`×1 column matrix holding a **copy** of `arr`.
@@ -140,7 +280,7 @@ impl MatD {
         Self::create(arr.to_vec(), arr.len(), 1)
     }
 
-    /// Scala's `Mat.create(data, rows, cols)` — takes ownership, row-major.
+    /// Scala's `Mat.create(data, rows, cols)` — takes ownership, row-major, contiguous.
     ///
     /// # Panics
     /// If `data.len() != rows * cols`.
@@ -151,17 +291,50 @@ impl MatD {
             "create: {} elements does not fill {rows}x{cols}",
             data.len()
         );
-        Self { data, rows, cols }
+        // Standard strides are never fragmented, so this cannot need materialising and
+        // skips the gatekeeper — exactly as `Mat.create` reduces to in Scala.
+        Self {
+            data: Arc::new(data),
+            rows,
+            cols,
+            transposed: false,
+            offset: 0,
+            rs: cols,
+            cs: 1,
+        }
+    }
+
+    /// The gatekeeper — Scala's `Internal.create`, the only path that builds a view.
+    ///
+    /// `None` for a stride means "derive the standard one for this orientation", which
+    /// is what Scala's negative sentinel does. Fragmented layouts are materialised here
+    /// so the rest of the library only ever sees standard or simple-offset strides —
+    /// and, crucially, so a materialised view lands back on the fast summation path in
+    /// both languages together.
+    fn createView(data: &Arc<Vec<f64>>, rows: usize, cols: usize, lay: Layout) -> Self {
+        let transposed = lay.transposed;
+        let rs = lay.rs.unwrap_or(if transposed { 1 } else { cols });
+        let cs = lay.cs.unwrap_or(if transposed { rows } else { 1 });
+        let m = Self {
+            data: Arc::clone(data),
+            rows,
+            cols,
+            transposed,
+            offset: lay.offset,
+            rs,
+            cs,
+        };
+        if m.is_weird_layout() { m.matCopy() } else { m }
     }
 
     /// An `rows`×`cols` matrix of zeros.
     pub fn zeros(rows: usize, cols: usize) -> Self {
-        Self { data: vec![0.0; rows * cols], rows, cols }
+        Self::create(vec![0.0; rows * cols], rows, cols)
     }
 
     /// An `rows`×`cols` matrix of ones.
     pub fn ones(rows: usize, cols: usize) -> Self {
-        Self { data: vec![1.0; rows * cols], rows, cols }
+        Self::create(vec![1.0; rows * cols], rows, cols)
     }
 
     pub fn rows(&self) -> usize {
@@ -172,34 +345,302 @@ impl MatD {
         self.cols
     }
 
-    /// Total element count — Scala's `size`, i.e. `rows * cols`, not `rows`.
+    /// Total element count — Scala's `size`, i.e. `rows * cols`, not `rows`. For a view
+    /// this is the *logical* count, which may be smaller than the backing buffer.
     pub fn size(&self) -> usize {
-        self.data.len()
+        self.rows * self.cols
     }
 
     pub fn shape(&self) -> (usize, usize) {
-        (self.rows(), self.cols())
+        (self.rows, self.cols)
     }
 
     pub fn isEmpty(&self) -> bool {
-        self.data.is_empty()
+        self.rows == 0 || self.cols == 0
     }
 
-    /// Element at `(r, c)`. Scala's `at`; also reachable as `m[(r, c)]`.
+    /// Whether this is a transposed view — Scala's `transposed`.
+    pub fn transposed(&self) -> bool {
+        self.transposed
+    }
+
+    /// Row-major with unit column stride and no transpose — Scala's `isContiguous`.
+    /// Note it says nothing about `offset`, so it alone does not license a fast path.
+    pub fn isContiguous(&self) -> bool {
+        !self.transposed && self.rs == self.cols && self.cs == 1
+    }
+
+    /// Either orientation's standard stride pair — Scala's `isStandardContiguous`.
+    pub fn isStandardContiguous(&self) -> bool {
+        (self.rs == self.cols && self.cs == 1 && !self.transposed)
+            || (self.rs == 1 && self.cs == self.rows && self.transposed)
+    }
+
+    /// A layout whose major stride skips over backing elements, so the view is
+    /// fragmented — Scala's `isWeirdLayout`, which [`MatD::createView`] materialises.
+    ///
+    /// The comparison of a *stride* against a *count of rows* looks dimensionally odd,
+    /// and it is; it is reproduced verbatim because the predicate decides which
+    /// summation algorithm a sliced matrix gets, on both sides.
+    fn is_weird_layout(&self) -> bool {
+        if self.isStandardContiguous() {
+            false
+        } else if self.rs == 0 || self.cs == 0 {
+            // Broadcast views are deliberately fragmented; Scala exempts them.
+            false
+        } else {
+            let leading_dim = if self.transposed {
+                self.cols
+            } else {
+                self.rows
+            };
+            let major_stride = if self.transposed { self.cs } else { self.rs };
+            major_stride > leading_dim.max(1)
+        }
+    }
+
+    /// Scala's `fastD`: contiguous, no view offset, and the backing buffer is exactly
+    /// this matrix's data.
+    ///
+    /// `Mat.scala` calls this the single guard for its Double fast paths and uses it at
+    /// most of them — the scalar operators, `norm`, `sum(axis)`, `cumsum`, `std`,
+    /// `variance`, `cov`. It is not universal there: `sum` spells the same three
+    /// conditions out inline (see [`MatD::sum`]), and the order statistics never branch
+    /// at all.
+    pub(crate) fn fast_d(&self) -> bool {
+        self.isContiguous() && self.offset == 0 && self.data.len() == self.rows * self.cols
+    }
+}
+
+// ── Element access and materialisation ──────────────────────────────────────────
+
+impl MatD {
+    /// Element at `(r, c)` through the stride equation — Scala's `at`. Also reachable as
+    /// `m[(r, c)]`.
     pub fn at(&self, r: usize, c: usize) -> f64 {
-        self.data[r * self.cols + c]
+        self.data[self.offset + r * self.rs + c * self.cs]
     }
 
-    /// Row-major flat copy — Scala's `toArray` (an alias for `flatten`).
+    /// Flat access in logical row-major order — Scala's `at(i: Int)`.
+    ///
+    /// # Panics
+    /// On an empty matrix, where the row/column decomposition would divide by zero.
+    pub fn atFlat(&self, i: usize) -> f64 {
+        assert!(!self.isEmpty(), "atFlat on an empty matrix");
+        if self.isContiguous() {
+            self.data[self.offset + i]
+        } else {
+            self.at(i / self.cols, i % self.cols)
+        }
+    }
+
+    /// Fresh row-major `Vec` in logical order — Scala's `flatten`.
+    pub fn flatten(&self) -> Vec<f64> {
+        if self.fast_d() {
+            return self.data.to_vec();
+        }
+        let mut out = Vec::with_capacity(self.size());
+        for i in 0..self.rows {
+            for j in 0..self.cols {
+                out.push(self.at(i, j));
+            }
+        }
+        out
+    }
+
+    /// Alias for [`MatD::flatten`] — Scala's `toArray`.
     pub fn toArray(&self) -> Vec<f64> {
-        self.data.clone()
+        self.flatten()
     }
 
-    /// Read-only view of the backing storage, row-major. No Scala counterpart —
-    /// `Mat.data` is `private[data]` there — so this stays snake_case. Infallible by
-    /// construction: the buffer *is* the matrix.
-    fn as_slice(&self) -> &[f64] {
-        &self.data
+    /// Deep copy through the stride equation — Scala's `matCopy`.
+    ///
+    /// The result is always plain contiguous: Scala's implementation gathers logical
+    /// elements and hands them to `Mat.create`, so despite its doc comment it does *not*
+    /// preserve the transposed flag. The behaviour is what matters here, since it is
+    /// what puts a materialised view back on the fast summation path.
+    pub fn matCopy(&self) -> Self {
+        let mut out = Vec::with_capacity(self.size());
+        for i in 0..self.rows {
+            for j in 0..self.cols {
+                out.push(self.at(i, j));
+            }
+        }
+        Self::create(out, self.rows, self.cols)
+    }
+
+    /// Independent contiguous copy — Scala's `copy`, i.e. `Mat.create(m.flatten, ...)`.
+    pub fn copy(&self) -> Self {
+        Self::create(self.flatten(), self.rows, self.cols)
+    }
+
+    /// Logical order as a 1×n row — Scala's `ravel`.
+    pub fn ravel(&self) -> Self {
+        let n = self.size();
+        Self::create(self.flatten(), 1, n)
+    }
+
+    /// The single element of a 1×1 matrix — Scala's `item`.
+    ///
+    /// # Panics
+    /// If the matrix is not 1×1, mirroring Scala's `require`.
+    pub fn item(&self) -> f64 {
+        assert!(
+            self.rows == 1 && self.cols == 1,
+            "item requires a 1x1 matrix, got {:?}",
+            self.shape()
+        );
+        self.at(0, 0)
+    }
+}
+
+// ── Shape manipulation ──────────────────────────────────────────────────────────
+
+impl MatD {
+    /// O(1) transpose — Scala's `transpose`: swap dims and strides, flip the flag, move
+    /// no data. Note this deliberately bypasses the [`MatD::createView`] gatekeeper,
+    /// exactly as Scala's `Internal.transposeView` constructs `MatData` directly.
+    pub fn transpose(&self) -> Self {
+        Self {
+            data: Arc::clone(&self.data),
+            rows: self.cols,
+            cols: self.rows,
+            transposed: !self.transposed,
+            offset: self.offset,
+            rs: self.cs,
+            cs: self.rs,
+        }
+    }
+
+    /// Scala's `m.T` — alias for [`MatD::transpose`].
+    pub fn T(&self) -> Self {
+        self.transpose()
+    }
+
+    /// Zero-copy sub-matrix view — Scala's `slice(rowRange, colRange)`.
+    ///
+    /// Ranges are `i64` because Scala accepts a negative *start*, read as an offset from
+    /// the end (`-2 until 0` is the last two). Only the start is adjusted; the length is
+    /// the range's own length, as there.
+    ///
+    /// This is **not** `m(rowRange, colRange)` — see [`MatD::applyRowsCols`], which
+    /// gathers a fresh contiguous copy. The distinction is observable: a view sums by a
+    /// different algorithm.
+    ///
+    /// # Panics
+    /// If the requested rectangle leaves the matrix, mirroring Scala's `require`.
+    pub fn slice(&self, rows: Range<i64>, cols: Range<i64>) -> Self {
+        let (r0, n_rows) = normalize_range(&rows, self.rows);
+        let (c0, n_cols) = normalize_range(&cols, self.cols);
+        assert!(
+            r0 >= 0
+                && r0 + n_rows <= self.rows as i64
+                && c0 >= 0
+                && c0 + n_cols <= self.cols as i64,
+            "slice({rows:?}, {cols:?}) out of bounds for {}x{}",
+            self.rows,
+            self.cols
+        );
+        let new_offset = self.offset + (r0 as usize) * self.rs + (c0 as usize) * self.cs;
+        let lay = Layout {
+            transposed: self.transposed,
+            offset: new_offset,
+            rs: Some(self.rs),
+            cs: Some(self.cs),
+        };
+        Self::createView(&self.data, n_rows as usize, n_cols as usize, lay)
+    }
+
+    /// Virtual expansion to `targetRows`×`targetCols` — Scala's `broadcastTo`.
+    ///
+    /// A dimension of 1 is stretched by setting its stride to 0; anything else must
+    /// already match. Returns `self` unchanged when the shape already fits.
+    ///
+    /// # Panics
+    /// If a dimension is neither equal to the target nor 1, mirroring NumPy and Scala.
+    pub fn broadcastTo(&self, targetRows: usize, targetCols: usize) -> Self {
+        if self.rows == targetRows && self.cols == targetCols {
+            return self.clone();
+        }
+        assert!(
+            (self.rows == targetRows || self.rows == 1)
+                && (self.cols == targetCols || self.cols == 1),
+            "cannot broadcast shape {:?} to ({targetRows}, {targetCols})",
+            self.shape()
+        );
+        let new_rs = if self.rows == 1 && targetRows > 1 {
+            0
+        } else {
+            self.rs
+        };
+        let new_cs = if self.cols == 1 && targetCols > 1 {
+            0
+        } else {
+            self.cs
+        };
+        let lay = Layout {
+            transposed: self.transposed,
+            offset: self.offset,
+            rs: Some(new_rs),
+            cs: Some(new_cs),
+        };
+        Self::createView(&self.data, targetRows, targetCols, lay)
+    }
+
+    /// Rectangular gather — Scala's `m(rows, cols)` overload, which **copies** into a
+    /// fresh contiguous matrix rather than returning a view. Named per the `PARITY.md`
+    /// contract, since the Scala spelling is an `apply` overload with no Rust analog.
+    ///
+    /// # Panics
+    /// If either range leaves the matrix.
+    pub fn applyRowsCols(&self, rows: Range<usize>, cols: Range<usize>) -> Self {
+        assert!(
+            rows.end <= self.rows
+                && cols.end <= self.cols
+                && rows.start <= rows.end
+                && cols.start <= cols.end,
+            "({rows:?}, {cols:?}) out of bounds for {}x{}",
+            self.rows,
+            self.cols
+        );
+        let (n_rows, n_cols) = (rows.end - rows.start, cols.end - cols.start);
+        let mut out = Vec::with_capacity(n_rows * n_cols);
+        for i in rows {
+            for j in cols.clone() {
+                out.push(self.at(i, j));
+            }
+        }
+        Self::create(out, n_rows, n_cols)
+    }
+
+    /// Scala's `m(rows, ::)` — a range of rows, every column.
+    pub fn applyRowsAll(&self, rows: Range<usize>) -> Self {
+        self.applyRowsCols(rows, 0..self.cols)
+    }
+
+    /// Scala's `m(::, cols)` — every row, a range of columns.
+    pub fn applyAllCols(&self, cols: Range<usize>) -> Self {
+        self.applyRowsCols(0..self.rows, cols)
+    }
+
+    /// Scala's `m(::, col)` — one column as an `n`×1 column vector.
+    pub fn applyAllCol(&self, col: usize) -> Self {
+        self.applyRowsCols(0..self.rows, col..col + 1)
+    }
+
+    /// Scala's `m(row, ::)` — one row as a 1×n row vector.
+    pub fn applyRowAll(&self, row: usize) -> Self {
+        self.applyRowsCols(row..row + 1, 0..self.cols)
+    }
+
+    /// Scala's `m(rows, col)` — a range of rows from one column, as a column vector.
+    pub fn applyRowsCol(&self, rows: Range<usize>, col: usize) -> Self {
+        self.applyRowsCols(rows, col..col + 1)
+    }
+
+    /// Scala's `m(row, cols)` — a range of columns from one row, as a row vector.
+    pub fn applyRowCols(&self, row: usize, cols: Range<usize>) -> Self {
+        self.applyRowsCols(row..row + 1, cols)
     }
 
     /// First `min(n, rows)` rows, all columns — Scala's `head(n)`.
@@ -207,32 +648,43 @@ impl MatD {
     /// Note this is row-oriented even for a column vector, exactly as in Scala: for the
     /// `n`×1 shape [`MatD::apply`] produces, it yields the first `n` elements.
     pub fn head(&self, n: usize) -> Self {
-        let keep = n.min(self.rows());
-        self.rowsSlice(0, keep)
+        self.applyRowsAll(0..n.min(self.rows))
     }
 
     /// Last `min(n, rows)` rows, all columns — Scala's `tail(n)`.
     pub fn tail(&self, n: usize) -> Self {
-        let start = self.rows().saturating_sub(n);
-        self.rowsSlice(start, self.rows())
+        self.applyRowsAll(self.rows.saturating_sub(n)..self.rows)
     }
 
-    /// Rows `start..end`, all columns. Mirrors the Scala `apply(rows: Range, ::)`
-    /// overload collectively with the other `applyXxx`/`rowsXxx` members; see the naming
-    /// note in `PARITY.md`.
-    pub fn rowsSlice(&self, start: usize, end: usize) -> Self {
-        assert!(
-            start <= end && end <= self.rows(),
-            "rowsSlice({start}, {end}) out of bounds for {}x{}",
-            self.rows(),
-            self.cols()
+    /// Same elements in logical order, re-laid out — Scala's `reshape`.
+    ///
+    /// # Panics
+    /// If the new shape holds a different number of elements.
+    pub fn reshape(&self, rows: usize, cols: usize) -> Self {
+        assert_eq!(
+            rows * cols,
+            self.size(),
+            "reshape to {rows}x{cols} does not preserve {} elements",
+            self.size()
         );
-        let cols = self.cols();
-        let src = self.as_slice();
-        let data = src[start * cols..end * cols].to_vec();
-        Self::create(data, end - start, cols)
+        Self::create(self.flatten(), rows, cols)
     }
+}
 
+/// Scala's `Range`-start normalisation: a negative start counts from the end, and the
+/// length is the range's own, not the clamped span. Returns `(start, length)`.
+fn normalize_range(r: &Range<i64>, extent: usize) -> (i64, i64) {
+    let start = if r.start < 0 {
+        extent as i64 + r.start
+    } else {
+        r.start
+    };
+    (start, (r.end - r.start).max(0))
+}
+
+// ── Elementwise operations ──────────────────────────────────────────────────────
+
+impl MatD {
     /// Elementwise absolute value — Scala's `abs`.
     ///
     /// Tests `x < 0.0` rather than calling `f64::abs`, so `-0.0` survives as `-0.0`
@@ -245,9 +697,6 @@ impl MatD {
     ///
     /// Repeated multiplication starting from `1.0`, mirroring the Scala loop rather than
     /// calling `powi`, so the association order cannot drift.
-    ///
-    /// # Panics
-    /// Never for `u32`; Scala's `require(n >= 0)` is enforced by the type here.
     pub fn power(&self, n: u32) -> Self {
         self.map_elems(|x| {
             let mut result = 1.0f64;
@@ -256,22 +705,6 @@ impl MatD {
             }
             result
         })
-    }
-
-    /// Running total over the row-major flattening, returned as a **1×n row** matrix.
-    ///
-    /// The shape change is Scala's, not an accident: `cumsum` there ends with
-    /// `Mat.create(result, 1, a.length)` whatever the input shape was.
-    pub fn cumsum(&self) -> Self {
-        let src = self.as_slice();
-        let mut out = Vec::with_capacity(src.len());
-        let mut acc = 0.0f64;
-        for &x in src {
-            acc += x;
-            out.push(acc);
-        }
-        let n = out.len();
-        Self::create(out, 1, n)
     }
 
     /// Elementwise `e^x` — Scala's `exp`, i.e. `m.map(math.exp)`.
@@ -292,114 +725,294 @@ impl MatD {
         self.map_elems(f64::exp)
     }
 
+    /// Elementwise natural log — Scala's `log`. Carries the same ~1 ulp caveat as
+    /// [`MatD::exp`]: measured, `Math.log` and libm's `log` differ on 0.235% of a
+    /// 200,000-value corpus.
+    pub fn log(&self) -> Self {
+        self.map_elems(f64::ln)
+    }
+
+    /// Elementwise square root — Scala's `sqrt`. Exact in IEEE-754, so unlike
+    /// [`MatD::exp`] this one *is* bit-identical.
+    pub fn sqrt(&self) -> Self {
+        self.map_elems(f64::sqrt)
+    }
+
+    /// Elementwise clamp to `[lower, upper]` — Scala's `clip`.
+    ///
+    /// Written as Scala's two comparisons rather than `f64::clamp`, which panics on a
+    /// NaN bound and orders NaN inputs differently.
+    pub fn clip(&self, lower: f64, upper: f64) -> Self {
+        self.map_elems(|x| {
+            if x < lower {
+                lower
+            } else if x > upper {
+                upper
+            } else {
+                x
+            }
+        })
+    }
+
+    /// Running total over the row-major flattening, returned as a **1×n row** matrix.
+    ///
+    /// The shape change is Scala's, not an accident: `cumsum` there ends with
+    /// `Mat.create(result, 1, a.length)` whatever the input shape was.
+    pub fn cumsum(&self) -> Self {
+        let mut out = Vec::with_capacity(self.size());
+        let mut acc = 0.0f64;
+        // `flatten()` would copy the whole buffer first; a running total needs only one
+        // pass. Scala reads its raw array directly here for the same reason.
+        if self.fast_d() {
+            for &x in self.data.iter() {
+                acc += x;
+                out.push(acc);
+            }
+        } else {
+            for i in 0..self.rows {
+                for j in 0..self.cols {
+                    acc += self.at(i, j);
+                    out.push(acc);
+                }
+            }
+        }
+        let n = out.len();
+        Self::create(out, 1, n)
+    }
+
+    /// Elementwise map in logical row-major order, producing a fresh contiguous matrix.
+    ///
+    /// Internal: Scala's `map` is public and generic, and lands in a later phase. Reads
+    /// through the stride equation, as Scala's Double fast path does, so it is correct
+    /// for views.
+    pub(crate) fn map_elems(&self, f: impl Fn(f64) -> f64 + Sync + Send) -> Self {
+        self.fill_rows(|r, row| {
+            for (c, slot) in row.iter_mut().enumerate() {
+                *slot = f(self.at(r, c));
+            }
+        })
+    }
+
+    /// Broadcasting elementwise combine — Scala's `binOp`.
+    ///
+    /// The target shape is the elementwise max of the two, each operand is stretched to
+    /// it, and the result is a fresh contiguous matrix. Scala also has a `fastBinOp`
+    /// short-circuit for the same-shape, 1×N and N×1 cases; it produces identical values
+    /// in identical order, so there is one path here.
+    ///
+    /// # Panics
+    /// If the shapes do not broadcast.
+    fn bin_op(&self, other: &Self, op: impl Fn(f64, f64) -> f64 + Sync + Send) -> Self {
+        let target_rows = self.rows.max(other.rows);
+        let target_cols = self.cols.max(other.cols);
+        let a = self.broadcastTo(target_rows, target_cols);
+        let b = other.broadcastTo(target_rows, target_cols);
+        a.fill_rows(|r, row| {
+            for (c, slot) in row.iter_mut().enumerate() {
+                *slot = op(a.at(r, c), b.at(r, c));
+            }
+        })
+    }
+
+    /// Builds a fresh contiguous matrix of this shape by filling one row at a time,
+    /// spread across threads above [`BCAST_PARALLEL_THRESHOLD`] — Scala's `bcastRows`.
+    ///
+    /// Rows write disjoint slices and nothing is reduced, so the output is bit-identical
+    /// however the work is scheduled. The single shape behind every elementwise
+    /// operation here.
+    fn fill_rows(&self, f: impl Fn(usize, &mut [f64]) + Sync + Send) -> Self {
+        let (rows, cols) = (self.rows, self.cols);
+        let mut out = vec![0.0f64; rows * cols];
+        if rows * cols >= BCAST_PARALLEL_THRESHOLD {
+            out.par_chunks_mut(cols.max(1))
+                .enumerate()
+                .for_each(|(r, row)| f(r, row));
+        } else {
+            for (r, row) in out.chunks_mut(cols.max(1)).enumerate() {
+                f(r, row);
+            }
+        }
+        Self::create(out, rows, cols)
+    }
+}
+
+// ── Whole-matrix reductions ─────────────────────────────────────────────────────
+
+impl MatD {
+    /// Sum of every element — Scala's `sum`.
+    ///
+    /// On a contiguous matrix at offset 0 whose buffer is exactly `rows * cols` long,
+    /// this is `sumD`: 8 unrolled accumulators, chunked above [`PARALLEL_THRESHOLD`].
+    /// Anything else is a plain sequential row-major fold — a **different** association
+    /// order and a different last ulp. Which one a matrix gets is a property of its
+    /// layout, so `m.sum()` and `m.T().sum()` are not required to agree, in either
+    /// language.
+    ///
+    /// Scala writes this as three branches, not two, and does not route it through
+    /// `fastD`: `sumD`; a stride-indexed loop over the raw array for a contiguous view
+    /// at offset 0 that shares a longer parent buffer; and the general
+    /// `Numeric`-dispatched loop, which reads through that same stride equation rather
+    /// than degrading to anything else. The middle branch holds `offset == 0`, which makes
+    /// `data(i * rs + j * cs)` identical to `at(i, j)` — so the two loops are the same
+    /// arithmetic in the same order, and collapsing them here changes no bit.
+    pub fn sum(&self) -> f64 {
+        if self.fast_d() {
+            sum_d(&self.data)
+        } else {
+            self.strided_sum()
+        }
+    }
+
+    /// Plain row-major fold through the stride equation — Scala's general `sum` path.
+    fn strided_sum(&self) -> f64 {
+        let mut total = 0.0f64;
+        for i in 0..self.rows {
+            for j in 0..self.cols {
+                total += self.at(i, j);
+            }
+        }
+        total
+    }
+
+    /// Arithmetic mean — Scala's `mean`: the matrix sum over the element count, one
+    /// division. Inherits [`MatD::sum`]'s layout-dependent association order.
+    ///
+    /// Returns `0.0` for an empty matrix, matching Scala's `frac.zero` branch.
+    pub fn mean(&self) -> f64 {
+        if self.isEmpty() {
+            return 0.0;
+        }
+        self.sum() / self.size() as f64
+    }
+
+    /// Population variance (NumPy's `ddof=0`) — Scala's `variance`.
+    ///
+    /// The mean is taken by [`MatD::sum`] (so it follows the layout), and the squared
+    /// deviations by a plain fold in both branches.
+    pub fn variance(&self) -> f64 {
+        let n = self.size() as f64;
+        let mu = self.sum() / n;
+        let mut sum_sq = 0.0f64;
+        for i in 0..self.rows {
+            for j in 0..self.cols {
+                let d = self.at(i, j) - mu;
+                sum_sq += d * d;
+            }
+        }
+        sum_sq / n
+    }
+
+    /// Population standard deviation — Scala's `std`, i.e. `sqrt(variance)`.
+    pub fn std(&self) -> f64 {
+        self.variance().sqrt()
+    }
+
+    /// L2 norm of a vector — Scala's `norm`.
+    ///
+    /// # Panics
+    /// If the matrix is not 1×n or n×1, mirroring Scala's `require`.
+    pub fn norm(&self) -> f64 {
+        assert!(
+            self.cols == 1 || self.rows == 1,
+            "norm requires a vector (1xn or nx1), got {:?}",
+            self.shape()
+        );
+        let mut sum_sq = 0.0f64;
+        for i in 0..self.rows {
+            for j in 0..self.cols {
+                let x = self.at(i, j);
+                sum_sq += x * x;
+            }
+        }
+        sum_sq.sqrt()
+    }
+
     /// Smallest element — Scala's `min`.
+    ///
+    /// Compares with [`java_double_compare`], not `<`: Scala scans through
+    /// `Ordering[Double]`, under which `-0.0 < 0.0` and NaN outranks every number.
+    /// `min(&[0.0, -0.0])` is therefore `-0.0`. Seeded from element (0,0) and replaced
+    /// only on a strict `Less`, so ties keep their first occurrence.
     ///
     /// # Panics
     /// On an empty matrix, mirroring Scala's `UnsupportedOperationException`.
     pub fn min(&self) -> f64 {
         assert!(!self.isEmpty(), "min of an empty matrix");
-        // Scala scans with `<`, seeded from element (0,0); NaN therefore never displaces
-        // the accumulator. `f64::min` would propagate differently, so this stays a scan.
-        let mut acc = self.data[0];
-        for &x in &self.data {
-            if x < acc {
-                acc = x;
-            }
-        }
-        acc
+        self.scan(lt_total).1
     }
 
-    /// Largest element — Scala's `max`. Scans with `>`, seeded from element (0,0).
+    /// Largest element — Scala's `max`. See [`MatD::min`] on the comparison; here it
+    /// means `max(&[1.0, NaN, -1.0, 2.0])` is **NaN**, as it is in Scala.
     ///
     /// # Panics
     /// On an empty matrix, mirroring Scala's `UnsupportedOperationException`.
     pub fn max(&self) -> f64 {
         assert!(!self.isEmpty(), "max of an empty matrix");
-        let mut acc = self.data[0];
-        for &x in &self.data {
-            if x > acc {
-                acc = x;
-            }
-        }
-        acc
+        self.scan(gt_total).1
     }
 
-    /// Running maximum along `axis` — Scala's `cummax(axis)`. Shape is preserved.
-    ///
-    /// `axis == 0` accumulates down each column, `axis == 1` across each row. Scala seeds
-    /// the accumulator from the first cell of the lane and then compares with `>`, so the
-    /// first cell is written unconditionally; that ordering is reproduced here.
+    /// `(row, col)` of the smallest element — Scala's `argmin`. First occurrence wins.
     ///
     /// # Panics
-    /// If `axis` is not 0 or 1, mirroring Scala's `require`.
-    pub fn cummax(&self, axis: usize) -> Self {
-        assert!(axis == 0 || axis == 1, "axis must be 0 or 1, got {axis}");
-        let (rows, cols) = (self.rows, self.cols);
-        let mut out = vec![0.0f64; rows * cols];
-        if axis == 0 {
-            for j in 0..cols {
-                let mut acc = self.data[j];
-                for i in 0..rows {
-                    let v = self.data[i * cols + j];
-                    if v > acc {
-                        acc = v;
-                    }
-                    out[i * cols + j] = acc;
-                }
-            }
-        } else {
-            for i in 0..rows {
-                let mut acc = self.data[i * cols];
-                for j in 0..cols {
-                    let v = self.data[i * cols + j];
-                    if v > acc {
-                        acc = v;
-                    }
-                    out[i * cols + j] = acc;
-                }
-            }
-        }
-        Self::create(out, rows, cols)
+    /// On an empty matrix.
+    pub fn argmin(&self) -> (usize, usize) {
+        assert!(!self.isEmpty(), "argmin of an empty matrix");
+        self.scan(lt_total).0
     }
 
-    /// Sum of every element — bit-identical to Scala's `sum` on a contiguous `Mat[Double]`.
-    pub fn sum(&self) -> f64 {
-        sum_d(self.as_slice())
-    }
-
-    /// Arithmetic mean — Scala's `mean`: `sumD(a) / (rows * cols)`, one division.
+    /// `(row, col)` of the largest element — Scala's `argmax`. First occurrence wins.
     ///
-    /// Returns `0.0` for an empty matrix, matching Scala's `frac.zero` branch.
-    pub fn mean(&self) -> f64 {
-        if self.rows() == 0 || self.cols() == 0 {
-            return 0.0;
+    /// # Panics
+    /// On an empty matrix.
+    pub fn argmax(&self) -> (usize, usize) {
+        assert!(!self.isEmpty(), "argmax of an empty matrix");
+        self.scan(gt_total).0
+    }
+
+    /// Row-major scan seeded from (0,0), replacing the accumulator whenever `better`
+    /// holds. The single shape behind `min`/`max`/`argmin`/`argmax`, all four of which
+    /// Scala writes as this same loop.
+    fn scan(&self, better: impl Fn(f64, f64) -> bool) -> ((usize, usize), f64) {
+        let mut best = self.at(0, 0);
+        let mut at = (0usize, 0usize);
+        for i in 0..self.rows {
+            for j in 0..self.cols {
+                let current = self.at(i, j);
+                if better(current, best) {
+                    best = current;
+                    at = (i, j);
+                }
+            }
         }
-        sum_d(self.as_slice()) / (self.rows() * self.cols()) as f64
+        (at, best)
     }
+}
 
-    /// Elementwise map preserving shape. Internal — Scala's `map` is public and generic,
-    /// and lands in a later phase.
-    fn map_elems(&self, f: impl Fn(f64) -> f64) -> Self {
-        let data = self.as_slice().iter().map(|&x| f(x)).collect();
-        Self::create(data, self.rows(), self.cols())
+// ── Traits ──────────────────────────────────────────────────────────────────────
+
+/// Logical equality: same shape, same elements in row-major order. Two matrices with
+/// different layouts over different buffers compare equal if they read the same, which
+/// is what a caller means by `==`. NaN never equals NaN, as everywhere else in IEEE-754.
+impl PartialEq for MatD {
+    fn eq(&self, other: &Self) -> bool {
+        self.shape() == other.shape()
+            && (0..self.rows).all(|i| (0..self.cols).all(|j| self.at(i, j) == other.at(i, j)))
     }
+}
 
-    /// Elementwise combine of two same-shape matrices.
-    fn zip_elems(&self, other: &Self, f: impl Fn(f64, f64) -> f64) -> Self {
-        assert_eq!(
-            self.shape(),
-            other.shape(),
-            "shape mismatch: {:?} vs {:?} — broadcasting is not in this milestone",
-            self.shape(),
-            other.shape()
-        );
-        let data = self
-            .as_slice()
-            .iter()
-            .zip(other.as_slice())
-            .map(|(&a, &b)| f(a, b))
-            .collect();
-        Self::create(data, self.rows(), self.cols())
+/// Shape, layout and *logical* contents — never the raw backing buffer, which for a view
+/// is the parent's storage and would be actively misleading.
+impl fmt::Debug for MatD {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "MatD({}x{}", self.rows, self.cols)?;
+        if !self.fast_d() {
+            write!(
+                f,
+                " view[t={} off={} rs={} cs={}]",
+                self.transposed, self.offset, self.rs, self.cs
+            )?;
+        }
+        write!(f, " {:?})", self.flatten())
     }
 }
 
@@ -409,7 +1022,7 @@ impl Index<(usize, usize)> for MatD {
     type Output = f64;
 
     fn index(&self, (r, c): (usize, usize)) -> &f64 {
-        &self.data[r * self.cols + c]
+        &self.data[self.offset + r * self.rs + c * self.cs]
     }
 }
 
@@ -419,20 +1032,36 @@ impl From<&[f64]> for MatD {
     }
 }
 
+impl Neg for &MatD {
+    type Output = MatD;
+
+    fn neg(self) -> MatD {
+        self.map_elems(|x| -x)
+    }
+}
+
+impl Neg for MatD {
+    type Output = MatD;
+
+    fn neg(self) -> MatD {
+        self.map_elems(|x| -x)
+    }
+}
+
 macro_rules! elementwise_binop {
     ($trait:ident, $method:ident, $op:tt) => {
-        // MatD ⊕ MatD, elementwise. Scala's `*` on two Mats aliases `*:*`, so `Mul`
-        // here is elementwise and NOT matrix multiplication.
+        // MatD ⊕ MatD, elementwise WITH BROADCASTING. Scala's `*` on two Mats aliases
+        // `*:*`, so `Mul` here is elementwise and NOT matrix multiplication.
         impl $trait<&MatD> for &MatD {
             type Output = MatD;
             fn $method(self, rhs: &MatD) -> MatD {
-                self.zip_elems(rhs, |a, b| a $op b)
+                self.bin_op(rhs, |a, b| a $op b)
             }
         }
         impl $trait<MatD> for MatD {
             type Output = MatD;
             fn $method(self, rhs: MatD) -> MatD {
-                self.zip_elems(&rhs, |a, b| a $op b)
+                self.bin_op(&rhs, |a, b| a $op b)
             }
         }
         // MatD ⊕ scalar
@@ -448,8 +1077,18 @@ macro_rules! elementwise_binop {
                 self.map_elems(|a| a $op rhs)
             }
         }
-        // scalar ⊕ MatD — Scala defines these separately (Mat.scala:656-658) precisely
-        // so `1.0 - m` means `m.map(1.0 - _)` and not `m.map(_ - 1.0)`.
+    };
+}
+
+elementwise_binop!(Add, add, +);
+elementwise_binop!(Sub, sub, -);
+elementwise_binop!(Mul, mul, *);
+elementwise_binop!(Div, div, /);
+
+macro_rules! scalar_on_the_left {
+    ($trait:ident, $method:ident, $op:tt) => {
+        // Scala defines these separately (Mat.scala:656-658) precisely so `1.0 - m`
+        // means `m.map(1.0 - _)` and not `m.map(_ - 1.0)`.
         impl $trait<&MatD> for f64 {
             type Output = MatD;
             fn $method(self, rhs: &MatD) -> MatD {
@@ -465,9 +1104,9 @@ macro_rules! elementwise_binop {
     };
 }
 
-elementwise_binop!(Add, add, +);
-elementwise_binop!(Sub, sub, -);
-elementwise_binop!(Mul, mul, *);
+scalar_on_the_left!(Add, add, +);
+scalar_on_the_left!(Sub, sub, -);
+scalar_on_the_left!(Mul, mul, *);
 
 #[cfg(test)]
 mod tests {
@@ -476,7 +1115,9 @@ mod tests {
     /// A deterministic, badly-conditioned sequence: mixing magnitudes is what makes
     /// association order observable at all.
     fn probe(n: usize) -> Vec<f64> {
-        (0..n).map(|i| (i as f64).sin() * 1e3 + 1e-9 * i as f64).collect()
+        (0..n)
+            .map(|i| (i as f64).sin() * 1e3 + 1e-9 * i as f64)
+            .collect()
     }
 
     #[test]
@@ -491,7 +1132,8 @@ mod tests {
             }
             i += 8;
         }
-        let mut want = ((acc[0] + acc[1]) + (acc[2] + acc[3])) + ((acc[4] + acc[5]) + (acc[6] + acc[7]));
+        let mut want =
+            ((acc[0] + acc[1]) + (acc[2] + acc[3])) + ((acc[4] + acc[5]) + (acc[6] + acc[7]));
         while i < 100 {
             want += a[i];
             i += 1;
@@ -532,7 +1174,10 @@ mod tests {
     fn abs_preserves_negative_zero_like_scala() {
         let m = MatD::apply(&[-0.0, -1.5, 2.5]);
         let got = m.abs().toArray();
-        assert!(got[0].is_sign_negative(), "-0.0 must survive as -0.0, not become +0.0");
+        assert!(
+            got[0].is_sign_negative(),
+            "-0.0 must survive as -0.0, not become +0.0"
+        );
         assert_eq!(got[1], 1.5);
         assert_eq!(got[2], 2.5);
     }
@@ -585,5 +1230,151 @@ mod tests {
         let m = MatD::apply(&a);
         assert_eq!(m.mean().to_bits(), (sum_d(&a) / 10_000.0).to_bits());
         assert_eq!(MatD::zeros(0, 0).mean(), 0.0);
+    }
+
+    #[test]
+    fn transpose_is_a_view_that_reads_transposed() {
+        let m = MatD::create(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 2, 3);
+        let t = m.transpose();
+        assert_eq!(t.shape(), (3, 2));
+        assert!(
+            t.transposed() && !t.fast_d(),
+            "transpose must stay a view, not materialise"
+        );
+        assert_eq!(t.toArray(), vec![1.0, 4.0, 2.0, 5.0, 3.0, 6.0]);
+        assert_eq!(t.transpose(), m, "transposing twice is the identity");
+    }
+
+    #[test]
+    fn a_transposed_sum_takes_the_slow_path_and_may_differ() {
+        // The whole reason MatD carries strides. Association order follows layout, so
+        // these two are NOT required to agree — and on a badly-conditioned corpus they
+        // do not. If this ever passes trivially, pick a nastier probe.
+        let a = probe(8192);
+        let m = MatD::create(a, 64, 128);
+        assert!(m.fast_d() && !m.transpose().fast_d());
+        assert_ne!(
+            m.sum().to_bits(),
+            m.transpose().sum().to_bits(),
+            "chunked sumD and the strided fold happened to agree; the fixture needs a \
+             corpus that distinguishes them"
+        );
+    }
+
+    #[test]
+    fn slice_is_a_view_but_a_fragmented_one_materialises() {
+        // 3x5: dropping a column leaves rs=5 > rows=3, which Scala calls fragmented and
+        // copies — putting it back on the fast path.
+        let wide = MatD::create((1..=15).map(f64::from).collect(), 3, 5);
+        let cut = wide.slice(0..3, 1..5);
+        assert!(
+            cut.fast_d(),
+            "a fragmented slice is materialised, as Internal.create does"
+        );
+        assert_eq!(
+            cut.toArray(),
+            vec![
+                2.0, 3.0, 4.0, 5.0, 7.0, 8.0, 9.0, 10.0, 12.0, 13.0, 14.0, 15.0
+            ]
+        );
+
+        // 5x3: the same logical operation leaves rs=3 <= rows=5, so it stays a view.
+        let tall = MatD::create((1..=15).map(f64::from).collect(), 5, 3);
+        let kept = tall.slice(0..5, 1..3);
+        assert!(
+            !kept.fast_d(),
+            "aspect ratio decides; this one stays a view"
+        );
+        assert_eq!(kept.at(0, 0), 2.0);
+        assert_eq!(kept.at(4, 1), 15.0);
+    }
+
+    #[test]
+    fn slice_accepts_a_negative_start() {
+        let m = MatD::apply(&[1.0, 2.0, 3.0, 4.0]);
+        // -2 until 0: length 2 starting two from the end, exactly as Scala reads it.
+        assert_eq!(m.slice(-2..0, 0..1).toArray(), vec![3.0, 4.0]);
+    }
+
+    #[test]
+    fn broadcast_stretches_a_length_one_axis() {
+        let m = MatD::create(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 2, 3);
+        let row = MatD::create(vec![10.0, 20.0, 30.0], 1, 3);
+        assert_eq!(
+            (&m + &row).toArray(),
+            vec![11.0, 22.0, 33.0, 14.0, 25.0, 36.0]
+        );
+        let col = MatD::create(vec![100.0, 200.0], 2, 1);
+        assert_eq!(
+            (&m + &col).toArray(),
+            vec![101.0, 102.0, 103.0, 204.0, 205.0, 206.0]
+        );
+    }
+
+    #[test]
+    fn argmin_and_argmax_keep_the_first_occurrence() {
+        let m = MatD::create(vec![3.0, 1.0, 5.0, 1.0, 5.0, 2.0], 2, 3);
+        assert_eq!(m.argmin(), (0, 1));
+        assert_eq!(m.argmax(), (0, 2));
+    }
+
+    #[test]
+    fn order_statistics_follow_scalas_total_ordering_not_the_primitive_comparisons() {
+        // The bug this pins: `<`/`>` disagree with Scala on exactly two inputs, and the
+        // random parity corpus contains neither, so the 427-row fixture passed while
+        // these were wrong.
+        let nan = MatD::apply(&[1.0, f64::NAN, -1.0, 2.0]);
+        assert!(
+            nan.max().is_nan(),
+            "Ordering[Double] ranks NaN above every number"
+        );
+        assert_eq!(nan.argmax(), (1, 0));
+        assert_eq!(nan.min(), -1.0, "but NaN never becomes the minimum");
+        assert_eq!(nan.argmin(), (2, 0));
+
+        let zeros = MatD::apply(&[0.0, -0.0]);
+        assert!(
+            zeros.min().is_sign_negative(),
+            "-0.0 < 0.0 under TotalOrdering"
+        );
+        assert_eq!(zeros.argmin(), (1, 0), "the scan must move off index 0");
+        assert!(zeros.max().is_sign_positive());
+        assert_eq!(zeros.argmax(), (0, 0), "0.0 is already the max at index 0");
+    }
+
+    #[test]
+    fn java_double_compare_is_not_total_cmp() {
+        // Agree everywhere except negative NaN, which the JVM canonicalises away and
+        // IEEE totalOrder sorts below -Infinity.
+        let neg_nan = f64::from_bits(0xfff8_0000_0000_0000);
+        assert!(neg_nan.is_nan() && neg_nan.is_sign_negative());
+        assert_eq!(
+            java_double_compare(neg_nan, f64::NEG_INFINITY),
+            Ordering::Greater
+        );
+        assert_eq!(neg_nan.total_cmp(&f64::NEG_INFINITY), Ordering::Less);
+        assert_eq!(java_double_compare(neg_nan, f64::NAN), Ordering::Equal);
+        // And on the two rules that matter for min/max, it agrees with the JVM.
+        assert_eq!(java_double_compare(-0.0, 0.0), Ordering::Less);
+        assert_eq!(
+            java_double_compare(f64::NAN, f64::INFINITY),
+            Ordering::Greater
+        );
+    }
+
+    #[test]
+    fn cumulative_extrema_propagate_nan_like_scala() {
+        let m = MatD::create(vec![1.0, f64::NAN, 0.5, 3.0], 1, 4);
+        let run = m.cummax(1).toArray();
+        assert_eq!(run[0], 1.0);
+        assert!(run[1].is_nan());
+        assert!(run[2].is_nan(), "once NaN leads, nothing displaces it");
+        assert!(run[3].is_nan());
+    }
+
+    #[test]
+    fn norm_rejects_a_matrix() {
+        let v = MatD::apply(&[3.0, 4.0]);
+        assert_eq!(v.norm(), 5.0);
     }
 }

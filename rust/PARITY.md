@@ -17,7 +17,7 @@ snake_case marks an internal helper or a `try_*` Result variant.
 | `UniDateTime` (57 methods), `DateFormat`, `SmartParse`, `TimeUtils` | `utime` (67 pub fns) | field arithmetic, plus/minus/with families, epoch-day, pattern formatting, smart parsing incl. `parseDateSmartWith(config)`; the clock (local wall time via `localOffsetMinutes`, no tzdb), the zone-free between/duration family, `getMillis`, `endOfMonth`, `quik*`, `whenModified`/`ageIn*` |
 | `Big`, `BigUtils` + the CSV loaders | `udata` (43 pub fns) | full arithmetic incl. `round(precision, mode)`, HALF_EVEN contexts, `loadMatBig`/`loadSmartBig`; `numStr`/`NumFormat` (Java `%f` fidelity), `str2num`, `isNumeric`, `isBad`/`orBad` |
 | `NumPyRNG` | `numpy_rng` (7 fns) | bit-identical `uniform`/`randn`/`next_*` |
-| `Mat[Double]` reductions (Tier 3 milestone 1) | `udata::mat::MatD` | construction, elementwise `+ - *` against scalar and same-shape matrix (incl. scalar-on-the-left), `abs` `power` `cumsum` `mean` `sum` `min` `max` `cummax(axis)` `exp` `toArray` `head` `tail` `at` — **bit-identical except `exp`** (see below): `sumD`'s 8-way unrolled combine tree and its pinned 16-chunk decomposition are reproduced exactly, `abs` keeps `-0.0` where `f64::abs` would not, `power` is repeated multiplication rather than `powi`, and `cumsum` returns `1×n` whatever the input shape, as Scala's does. Broadcasting, slicing, transpose and `CVecD`/`RVecD` are still to come |
+| `Mat[Double]` core — Tier 3 phases (a) + (b) | `udata::mat::MatD`, `udata::mataxis`, `udata::vecexts::{CVecD, RVecD}` | **the strided view model** (`transpose`/`T`, `slice`, `broadcastTo`, and the fragmented-layout materialisation `Internal.create` performs), broadcasting `+ - * /`, `Neg`, the `apply*` gather family, `reshape` `ravel` `matCopy` `copy` `item` `flatten`; reductions `sum` `mean` `min` `max` `argmin` `argmax` `std` `variance` `norm`; axis family `sumAxis` `meanAxis` `minAxis` `maxAxis` `stdAxis` `cumsumAxis` `cummax` `cummin` + `rowSums`/`colSums`/`rowMeans`/`colMeans`; elementwise `abs` `power` `exp` `log` `sqrt` `clip` `cumsum`. **Bit-identical except `exp`/`log`** (see below): `sumD`'s 8-way unrolled combine tree and its pinned 16-chunk decomposition are reproduced exactly, `abs` keeps `-0.0` where `f64::abs` would not, `power` is repeated multiplication rather than `powi`, `cumsum` returns `1×n` whatever the input shape — and, critically, **which summation algorithm a matrix gets is a function of its layout in both languages alike** (see the view-model note below). Still to come: `MatDOps` indexing/`update`, `MatMathOps`, pandas ops, matmul/BLAS, `Mat[Big]` |
 | `Tprf3`, complete | `t3prf` (13 pub fns) | `t3prf_core`, `estimate_3prf_is_full`/`oos_cv`/`oos_rec`, `ols_solve`, `standardize_columns`, and the closed forms: `tprfClosedForm`, `plsClosedForm`, `pls1Fit`, `forecast3prf` |
 | `StringExts` (partial) | `StrExts`/`StrPathExts` | `lc uc posx dropSuffix startsWithIgnoreCase stripPrefix asPath absPath posix` |
 | `uni.cli.ArgsParser` | `cli` | `eachArg`/`showUsage` + cursor helpers (`thisArg consumeNext peekNext nextInt nextLong nextDouble`); prog name from the caller's source file (`#[track_caller]` mirroring the Scala macro) |
@@ -38,9 +38,9 @@ reductions, drawdown episodes, exposure rules and four report modes. It is the
 consumer that drove Tier 3 milestone 1, and the pair that proved the transcendental
 question above is closable).
 
-Ten committed fixtures under `../test-data/*-parity/` pin these — roughly 19,930 rows
+Ten committed fixtures under `../test-data/*-parity/` pin these — roughly 20,557 rows
 (path 10,537 — incl. 38 `badpath`/`badpayload` rows · date 4,173 · tprf3 3,039 · big 629 · smartparse 539 · csv 458 ·
-numpy-rng 378 · mat 130 · walk 30 · hash 23) — plus the byte-identical pair probe
+mat 757 · numpy-rng 378 · walk 30 · hash 23) — plus the byte-identical pair probe
 (`jsrc/pairProbe.sc` / `examples/pair_probe.rs`). See `README.md`.
 
 **`exp` is the one operation in the port that is not bit-identical, and every claim below
@@ -146,10 +146,23 @@ threshold; it affected 18 call sites at once.
 zero's sign); Rust's `f64::signum` returns `±1.0` and never `0.0`. Any branch of the form
 `a.sign == b.sign` changes meaning. Write the three-way test out.
 
-**3. Sorting is total-order.** Scala's `.sorted`/`.sortBy`/`.min`/`.max` on `Double` use
-`Ordering.Double.TotalOrdering`, whose Rust counterpart is `f64::total_cmp` — *not*
-`partial_cmp`, which returns `None` on NaN. This also decides where `-0.0` sits relative to
-`0.0`. Both languages' sorts are stable, so `sortBy(-x)` ties keep source order in both.
+**3. Sorting and the order statistics are total-order, and `total_cmp` is not quite it.**
+Scala's `.sorted`/`.sortBy`/`.min`/`.max` on `Double` use `Ordering.Double.TotalOrdering`,
+i.e. `java.lang.Double.compare`. Two rules follow that `<`/`>` do not have, and they are
+easy to port wrongly because a random corpus never exercises them:
+
+- **NaN ranks above every number**, so `max` of a lane containing NaN is NaN. With `>` it
+  is the largest ordinary value, since every comparison against NaN is false.
+- **`-0.0 < 0.0`**, so `min(0.0, -0.0)` is `-0.0` and `argmin` moves off index 0.
+
+The near-miss is worse than the obvious miss: `f64::total_cmp` gets both of those right
+and is still not `Double.compare`, because it implements the IEEE totalOrder predicate
+and places **-NaN below -Infinity**, where `doubleToLongBits` canonicalises every NaN so
+the JVM treats -NaN and +NaN as equal and both as the maximum. Use
+`udata::mat::java_double_compare`. This cost a real bug: the Rust port shipped `<`/`>`
+here and all 427 fixture rows passed, because `uniform(-1e6, 1e6)` produces no NaN and no
+signed zero — which is why the fixture now carries 330 `adv/` rows, `negnan` among them.
+Both languages' sorts are stable, so `sortBy(-x)` ties keep source order in both.
 
 **4. Float formatting is not the same rounding.** Java's `%f` rounds the *shortest decimal
 representation* half-up; Rust's `{:.n}` rounds the *exact binary value* half-to-even. They
@@ -179,6 +192,42 @@ NaN differently from `math.max`/`math.min`. Port the *expression*, not the inten
 **8. `!(a..=b).contains(&x)` is not `x < a || x > b`.** They differ on NaN: `contains`
 returns false for NaN, so the negation is true, where the explicit comparison chain is
 false. Clippy suggests the rewrite; refuse it wherever NaN can reach the test.
+
+**9. A view is not a copy, and the difference is arithmetic.** This is the one that would
+have been easiest to "simplify" away, and the most expensive. `sumD` — the chunked, 8-way
+unrolled sum — is only ever reached with a **contiguous array whose length is exactly
+`rows * cols`**: four call sites (`sum`, `mean`, `std`, `variance`), each guarded that
+way. `transpose`/`slice`/`broadcastTo` return zero-copy strided views that fail the guard
+and are summed sequentially instead — through the same inline stride equation
+`tdata(offset + r * rs + c * cs)` used everywhere else, not a degraded fallback. The
+difference is association ORDER, not quality. So the same numbers reduce two ways and
+`m.sum` ≠ `m.T.sum` in the last ulp.
+
+Most of the family spells the guard as the shared `fastD` predicate, but not all of it,
+and the exceptions are worth knowing before porting: `sum` writes the test out inline in
+*three* branches (`sumD`; a stride-indexed loop over the raw array when the view is
+contiguous at offset 0 but shares a longer parent buffer; the general `Numeric` loop),
+and `min`/`max`/`argmin`/`argmax`/`cummax`/`cummin` have no fast path at all. The two
+loops inside `sum`'s Double case are the same arithmetic in the same order — the middle
+branch holds `offset == 0`, so its stride equation *is* `at(i, j)` — which is why the
+Rust port collapses them without changing a bit. Verify that kind of collapse; do not
+assume it. Three consequences,
+all reproduced in `mat.rs` rather than tidied up:
+
+- Materialising every derived matrix into a fresh contiguous copy — the obvious Rust
+  simplification — silently picks the *chunked* order where Scala picks the sequential
+  one.
+- `Internal.create` materialises a *fragmented* view back into a copy, and its test
+  compares the major stride against the row count. Dropping a column therefore copies on
+  a wide matrix and stays a view on a tall one: the same logical slice, two different
+  algorithms, decided by aspect ratio.
+- `std(axis)` goes further and uses two different *mean* algorithms — a plain fold when
+  contiguous, `sumD` when not — so a matrix and its transpose report different standard
+  deviations for the same lanes.
+
+The `<rows>x<cols>` half of `test-data/mat-parity/` exists for exactly this, and both
+suites assert the corpus actually distinguishes the two paths, so the rows cannot pass
+vacuously.
 
 The method that catches all of these is the same: a demo pair whose two halves print
 byte-identical output, diffed at more than one size. Single-size agreement is weak evidence
@@ -271,12 +320,20 @@ story is specifically no JNI / no date crate / no decimal crate / no regex engin
 and `matcsv` already has a minimal matrix type with `nrows`/`ncols`/`dim`/indexing
 that the loaders return. Realistic phasing:
 
-- (a) `MatD`/`CVecD`/`RVecD` core over `Array2<f64>` — construction, slicing,
-  transpose, broadcast arithmetic — with NumPy fidelity as the oracle, exactly as on
-  the Scala side;
-- (b) the reduction/stat family (in `Mat` itself, not `MatDOps`): `sum mean std
-  variance min max argmin argmax cumsum abs power norm` + `axis` variants;
-- (c) the `MatDOps` indexing surface and `MatMathOps` elementwise math;
+- (a) ~~`MatD`/`CVecD`/`RVecD` core — construction, slicing, transpose, broadcast
+  arithmetic~~ **done**, though *not* over `Array2<f64>`: `MatD` is a flat
+  `Arc<[f64]>` plus Scala's own `(transposed, offset, rs, cs)` descriptor. `Array2`
+  forces a `Result` and an `Option` into paths that cannot fail, in a crate free of
+  `unwrap`/`expect`/`panic!`, and it cannot express Scala's stride-0 broadcast or its
+  fragmented-layout rule — which are load-bearing, not incidental (see checklist item
+  9). `ArrayView2::from_shape` over the same buffer stays available, zero-copy, when
+  matmul and the BLAS crossover arrive;
+- (b) ~~the reduction/stat family (in `Mat` itself, not `MatDOps`): `sum mean std
+  variance min max argmin argmax cumsum abs power norm` + `axis` variants~~ **done**;
+- (c) the `MatDOps` indexing surface and `MatMathOps` elementwise math — **next**. Note
+  `update` is the first thing in the port that mutates: Scala writes *through* a view to
+  the parent's array, where `Arc::make_mut` would give copy-on-write. That needs an
+  explicit decision, not a default;
 - (d) pandas ops;
 - (e) `leastSquares` + `BlasCrossover` routing (the `blas` feature already exists);
 - (f) `matResultOps` join/groupBy last.
@@ -302,6 +359,22 @@ helpers, Rust idioms and `try_*` variants, so a snake_case public name would fal
 signal that no Scala counterpart exists. Note also that `row`/`col` are unavailable as
 accessor names — in Scala they are the varargs *constructors* `Mat.row(1,2,3)` /
 `Mat.col(1,2,3)`, and must stay constructors here.
+
+**As applied in (a)/(b).** Two additions the contract did not anticipate:
+
+- **An `Axis` suffix for the axis overloads**, since `sum`/`sum(axis)` collide the same
+  way `apply` overloads do: `sumAxis`, `meanAxis`, `minAxis`, `maxAxis`, `stdAxis`,
+  `cumsumAxis`. `cummax`/`cummin` keep their bare names — Scala has no non-axis form of
+  them, so there is nothing to disambiguate.
+- **`slice` and `applyRowsCols` are different operations and must not be conflated.**
+  Scala's `m.slice(rows, cols)` is a zero-copy *view*; `m(rows, cols)` gathers a fresh
+  contiguous *copy*. They differ in more than allocation — the copy lands on the fast
+  summation path and the view does not — so the port keeps both, and `head`/`tail` build
+  on the copying one exactly as Scala's do.
+
+`slice` also takes `Range<i64>` rather than `Range<usize>`, because Scala reads a
+negative *start* as an offset from the end (`-2 until 0`). Only the start is adjusted
+there, and the length stays the range's own; that asymmetry is mirrored, not corrected.
 
 **Reductions must be bit-exact, not merely correct.** `Mat.sumD` is not a naive fold:
 `sumRange` accumulates into 8 unrolled accumulators combined as
@@ -351,9 +424,10 @@ hours, not days.
 3. BigUtils formatting + `Big.round` on both sides — accounting fidelity.
 4. `uproc`, then `ucli` — the two modules that make script ports mechanical.
 5. String sugar + misc, opportunistically.
-6. Mat phases (a)–(b), scoped by a real consumer rather than by API completeness:
-   the first milestone is the ~14 operations `jsrc/marketSim.sc` needs (construct
-   from slice, `+`/`-`/`*` against scalar and vector, `abs`, `power(2)`, `cumsum`,
-   `mean`, `sum`, `toArray`, `head`, `tail`), which lands a byte-identical demo pair
-   and pins `sumD` bit-exactness against a live workload. Then reassess before the
-   `MatDOps` indexing surface and pandas ops.
+6. ~~Mat phases (a)–(b), scoped by a real consumer rather than by API completeness:
+   the first milestone is the ~14 operations `jsrc/marketSim.sc` needs, which lands a
+   byte-identical demo pair and pins `sumD` bit-exactness against a live workload.~~
+   **Done.** The consumer-first scoping worked: `marketSim` drove milestone 1, and the
+   view model that followed was verified by re-running that same pair (still byte-
+   identical across twelve configurations) alongside a 297-row 2-D fixture. Next is
+   `MatDOps` indexing — starting with the aliasing decision `update` forces.

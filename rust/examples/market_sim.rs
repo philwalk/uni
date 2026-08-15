@@ -238,8 +238,7 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
     let k_adapt = 0.010f64;
     let k_home = 0.020f64;
     let mut log_vol = 0.0f64;
-    let vol_norm =
-        (w.vol_of_vol * w.vol_of_vol) / 1e-9f64.max(1.0 - w.vol_persist * w.vol_persist);
+    let vol_norm = (w.vol_of_vol * w.vol_of_vol) / 1e-9f64.max(1.0 - w.vol_persist * w.vol_persist);
     let crowd_win: usize = match w.crowd {
         Crowd::Trend(d) => 2.max((f64::from(d) * 252.0 / 365.25).round() as usize),
         _ => 0,
@@ -275,8 +274,7 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
         // is what makes stocks and bonds co-move in an inflation regime: both are priced off
         // the same rate, so more rate news = more shared-factor variance = the correlation flip.
         rate = 0.0f64.max(
-            rate + w.rate_speed * ((w.rate_mean + infl_press) - rate) * dt
-                - flight_cut * dt
+            rate + w.rate_speed * ((w.rate_mean + infl_press) - rate) * dt - flight_cut * dt
                 + 0.01 * (1.0 + 25.0 * infl_press) * sqdt * rng.randn(),
         );
         // bond fair value: carry minus duration times the realised rate move
@@ -413,7 +411,9 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
 // ---- stylised-fact measurements ---------------------------------------------------------
 
 fn daily_returns(px: &[f64]) -> Vec<f64> {
-    (0..px.len() - 1).map(|i| (px[i + 1] / px[i]).ln()).collect()
+    (0..px.len() - 1)
+        .map(|i| (px[i + 1] / px[i]).ln())
+        .collect()
 }
 
 /// mean(z^4) / mean(z^2)^2 for z = r - mean(r) — written as the formula it implements.
@@ -439,7 +439,7 @@ fn autocorr_abs(r: &[f64], lag: usize) -> f64 {
         let n = r.len();
         // Scala writes these as z(0 until n-lag, 0) and z(lag until n, 0); on an n x 1
         // column those are exactly row slices.
-        (&z.rowsSlice(0, n - lag) * &z.rowsSlice(lag, n)).sum() / den
+        (&z.applyRowsAll(0..n - lag) * &z.applyRowsAll(lag..n)).sum() / den
     }
 }
 
@@ -557,7 +557,10 @@ struct WorldStats {
     bond_infl: f64,
     corr_calm: f64,
     corr_infl: f64,
-    #[expect(dead_code, reason = "kept for parity with the Scala record; not printed")]
+    #[expect(
+        dead_code,
+        reason = "kept for parity with the Scala record; not printed"
+    )]
     mean_bond_stress: f64,
     pct_bond_stress: f64,
     infl_ann: f64,
@@ -606,10 +609,8 @@ fn pctile(v: &[f64], q: f64) -> f64 {
 fn measure(sims: &[Path], years: usize) -> WorldStats {
     let rets: Vec<Vec<f64>> = sims.iter().map(|s| daily_returns(&s.price)).collect();
     // once per path (was recomputed 3x)
-    let eps_by: Vec<(&Path, Vec<Episode>)> = sims
-        .iter()
-        .map(|s| (s, episodes(&s.price, 15.0)))
-        .collect();
+    let eps_by: Vec<(&Path, Vec<Episode>)> =
+        sims.iter().map(|s| (s, episodes(&s.price, 15.0))).collect();
     let eps: Vec<Episode> = eps_by.iter().flat_map(|(_, e)| e.iter().copied()).collect();
     let shapes: Vec<f64> = eps
         .iter()
@@ -661,21 +662,23 @@ fn measure(sims: &[Path], years: usize) -> WorldStats {
     let depths: Vec<f64> = eps.iter().map(|e| e.depth_pct).collect();
 
     WorldStats {
-        vol: med(
-            &rets
-                .iter()
-                .map(|r| (MatD::apply(r).power(2).mean() * dpy).sqrt())
-                .collect::<Vec<f64>>(),
-        ),
+        vol: med(&rets
+            .iter()
+            .map(|r| (MatD::apply(r).power(2).mean() * dpy).sqrt())
+            .collect::<Vec<f64>>()),
         kurt: med(&rets.iter().map(|r| kurtosis(r)).collect::<Vec<f64>>()),
-        ac1: med(&rets.iter().map(|r| autocorr_abs(r, 1)).collect::<Vec<f64>>()),
-        ac20: med(&rets.iter().map(|r| autocorr_abs(r, 20)).collect::<Vec<f64>>()),
-        ann_ret: med(
-            &sims
-                .iter()
-                .map(|s| (s.price[s.price.len() - 1] / s.price[0]).ln() / years as f64 * 100.0)
-                .collect::<Vec<f64>>(),
-        ),
+        ac1: med(&rets
+            .iter()
+            .map(|r| autocorr_abs(r, 1))
+            .collect::<Vec<f64>>()),
+        ac20: med(&rets
+            .iter()
+            .map(|r| autocorr_abs(r, 20))
+            .collect::<Vec<f64>>()),
+        ann_ret: med(&sims
+            .iter()
+            .map(|s| (s.price[s.price.len() - 1] / s.price[0]).ln() / years as f64 * 100.0)
+            .collect::<Vec<f64>>()),
         n_episodes: eps.len(),
         ep_per_path: eps.len() as f64 / n_sims,
         depth_med: med(&depths),
@@ -685,7 +688,10 @@ fn measure(sims: &[Path], years: usize) -> WorldStats {
             sorted_total(&depths)[0]
         },
         v_count: shapes.iter().filter(|&&x| x > 1.5).count(),
-        mid_count: shapes.iter().filter(|&&x| (0.67..=1.5).contains(&x)).count(),
+        mid_count: shapes
+            .iter()
+            .filter(|&&x| (0.67..=1.5).contains(&x))
+            .count(),
         u_count: shapes.iter().filter(|&&x| x < 0.67).count(),
         n_shapes: shapes.len(),
         censored: eps.iter().filter(|e| e.censored()).count(),
@@ -694,24 +700,20 @@ fn measure(sims: &[Path], years: usize) -> WorldStats {
         years_per_path: years as f64,
         trend_pinned: scala_sum(sims.iter().map(|s| s.trend_pinned)) / n_sims,
         target_sat: scala_sum(sims.iter().map(|s| s.target_sat)) / n_sims,
-        bond_vol: med(
-            &sims
-                .iter()
-                .map(|s| (MatD::apply(&daily_returns(&s.bond)).power(2).mean() * dpy).sqrt())
-                .collect::<Vec<f64>>(),
-        ),
+        bond_vol: med(&sims
+            .iter()
+            .map(|s| (MatD::apply(&daily_returns(&s.bond)).power(2).mean() * dpy).sqrt())
+            .collect::<Vec<f64>>()),
         bond_growth: bond_in_windows(false),
         bond_infl: bond_in_windows(true),
         corr_calm: corr_in(false),
         corr_infl: corr_in(true),
         mean_bond_stress: scala_sum(sims.iter().map(|s| s.mean_bond_stress)) / n_sims,
         pct_bond_stress: scala_sum(sims.iter().map(|s| s.pct_bond_stress)) / n_sims,
-        infl_ann: med(
-            &sims
-                .iter()
-                .map(|s| (s.cpi[s.cpi.len() - 1] / s.cpi[0]).ln() / years as f64 * 100.0)
-                .collect::<Vec<f64>>(),
-        ),
+        infl_ann: med(&sims
+            .iter()
+            .map(|s| (s.cpi[s.cpi.len() - 1] / s.cpi[0]).ln() / years as f64 * 100.0)
+            .collect::<Vec<f64>>()),
     }
 }
 
@@ -738,9 +740,7 @@ fn gate_checks(st: &WorldStats) -> Vec<(&'static str, bool)> {
         ),
         (
             "both recovery shapes",
-            st.n_shapes > 0
-                && st.v_count >= st.n_shapes / 10
-                && st.u_count >= st.n_shapes / 10,
+            st.n_shapes > 0 && st.v_count >= st.n_shapes / 10 && st.u_count >= st.n_shapes / 10,
         ),
         ("no runaway drift", st.ann_ret.abs() < 30.0),
         // 0.02% ~ one clamped session per 20 path-years. The old bound (0.5%) would have
@@ -782,8 +782,18 @@ fn fit_targets() -> Vec<(&'static str, StatFn, f64, f64)> {
         ),
         ("median depth %", (|st| st.depth_med) as StatFn, -27.1, 1.0),
         ("worst crash %", (|st| st.worst_depth) as StatFn, -56.8, 1.0),
-        ("bond vol %", (|st| st.bond_vol * 100.0) as StatFn, 13.0, 1.0),
-        ("bond growth-crash", (|st| st.bond_growth) as StatFn, 20.0, 1.0),
+        (
+            "bond vol %",
+            (|st| st.bond_vol * 100.0) as StatFn,
+            13.0,
+            1.0,
+        ),
+        (
+            "bond growth-crash",
+            (|st| st.bond_growth) as StatFn,
+            20.0,
+            1.0,
+        ),
         ("bond infl-crash", (|st| st.bond_infl) as StatFn, -25.0, 1.5),
     ]
 }
@@ -970,10 +980,7 @@ struct Rule {
 }
 
 fn trend_rule(cal_days: i32, floor: f64) -> Rule {
-    let name = format!(
-        "trend {cal_days}d, floor {}%",
-        jf(floor * 100.0, 0, 0)
-    );
+    let name = format!("trend {cal_days}d, floor {}%", jf(floor * 100.0, 0, 0));
     Rule {
         name,
         expose: Arc::new(move |ind: &Indicators| {
@@ -1523,7 +1530,9 @@ fn calibrate(n_samples: usize, base: &World, seed: u64) {
     // scored at 100-year paths: an 80-year protocol missed a worst-crash blowup that only
     // appears at the horizon actually used — tune at the scale you evaluate at
     let score = |w: &World, s: u64| -> f64 { fitness(&measure(&sim_paths(w, 50, 100, s), 100)).0 };
-    eprintln!("calibrate: {n_samples} samples, 50 paths x 100 years each; holdout re-score of top 5");
+    eprintln!(
+        "calibrate: {n_samples} samples, 50 paths x 100 years each; holdout re-score of top 5"
+    );
     let mut scored: Vec<(f64, World, String)> = (0..n_samples)
         .map(|k| {
             let mut w = *base;
@@ -1534,7 +1543,11 @@ fn calibrate(n_samples: usize, base: &World, seed: u64) {
                 desc.push(format!("{nm}={}", jf(x, 0, 4)));
             }
             let f = score(&w, train_seed);
-            eprintln!("  sample {}  train loss {}", jf(k as f64, 3, 0), jf(f, 7, 3));
+            eprintln!(
+                "  sample {}  train loss {}",
+                jf(k as f64, 3, 0),
+                jf(f, 7, 3)
+            );
             (f, w, desc.join(" "))
         })
         .collect();
@@ -1616,8 +1629,12 @@ fn run_strategy_sweep(
         })
         .collect();
 
-    println!("Worlds failing the acceptance gate are marked and EXCLUDED from rank stability; their");
-    println!("detail stays visible so the exclusion is auditable.  vsFlat = advantage over a constant");
+    println!(
+        "Worlds failing the acceptance gate are marked and EXCLUDED from rank stability; their"
+    );
+    println!(
+        "detail stays visible so the exclusion is auditable.  vsFlat = advantage over a constant"
+    );
     println!("portfolio at the rule's own average exposure IN THE SAME ASSETS; g/n = gross/net of");
     println!("liquidity-scaled trading costs.  ruin = share of paths with a loss worse than 50%.");
     for (wname, ok, st, evald) in &results {
@@ -1654,15 +1671,25 @@ fn run_strategy_sweep(
         );
         println!(
             "  {:<34} {:>8} {:>8} {:>7} {:>7} {:>5} {:>9} {:>9} {:>6} {:>6} {:>7} {:>9}",
-            "rule", "ret/yr", "worst5%", "maxDD", "realDD", "ruin", "vsFlat g", "vsFlat n",
-            "swr", "churn", "slip x", "beats ref"
+            "rule",
+            "ret/yr",
+            "worst5%",
+            "maxDD",
+            "realDD",
+            "ruin",
+            "vsFlat g",
+            "vsFlat n",
+            "swr",
+            "churn",
+            "slip x",
+            "beats ref"
         );
         for j in 0..nr {
             let outs: Vec<Outcome> = evald.iter().map(|v| v[j].0).collect();
             let refs: Vec<Outcome> = evald.iter().map(|v| v[REF_IDX].0).collect();
             let ann: Vec<f64> = outs.iter().map(|o| o.ann).collect();
-            let ruin = outs.iter().filter(|o| o.max_dd > 50.0).count() as f64 / outs.len() as f64
-                * 100.0;
+            let ruin =
+                outs.iter().filter(|o| o.max_dd > 50.0).count() as f64 / outs.len() as f64 * 100.0;
             let win = outs
                 .iter()
                 .zip(&refs)
@@ -1680,14 +1707,42 @@ fn run_strategy_sweep(
                 rs[j].name,
                 jf(pctile(&ann, 0.5), 7, 2),
                 jf(pctile(&ann, 0.05), 7, 2),
-                jf(pctile(&outs.iter().map(|o| o.max_dd).collect::<Vec<f64>>(), 0.5), 6, 1),
-                jf(pctile(&outs.iter().map(|o| o.real_dd).collect::<Vec<f64>>(), 0.5), 6, 1),
+                jf(
+                    pctile(&outs.iter().map(|o| o.max_dd).collect::<Vec<f64>>(), 0.5),
+                    6,
+                    1
+                ),
+                jf(
+                    pctile(&outs.iter().map(|o| o.real_dd).collect::<Vec<f64>>(), 0.5),
+                    6,
+                    1
+                ),
                 jf(ruin, 4, 0),
-                jfsw(pctile(&outs.iter().map(|o| o.vs_flat_g).collect::<Vec<f64>>(), 0.5), 9, 2),
-                jfsw(pctile(&outs.iter().map(|o| o.vs_flat).collect::<Vec<f64>>(), 0.5), 9, 2),
-                jf(pctile(&outs.iter().map(|o| o.swr).collect::<Vec<f64>>(), 0.5), 6, 2),
-                jf(scala_sum(outs.iter().map(|o| o.churn)) / outs.len() as f64, 6, 2),
-                jf(scala_sum(outs.iter().map(|o| o.slip_mult())) / outs.len() as f64, 7, 2),
+                jfsw(
+                    pctile(&outs.iter().map(|o| o.vs_flat_g).collect::<Vec<f64>>(), 0.5),
+                    9,
+                    2
+                ),
+                jfsw(
+                    pctile(&outs.iter().map(|o| o.vs_flat).collect::<Vec<f64>>(), 0.5),
+                    9,
+                    2
+                ),
+                jf(
+                    pctile(&outs.iter().map(|o| o.swr).collect::<Vec<f64>>(), 0.5),
+                    6,
+                    2
+                ),
+                jf(
+                    scala_sum(outs.iter().map(|o| o.churn)) / outs.len() as f64,
+                    6,
+                    2
+                ),
+                jf(
+                    scala_sum(outs.iter().map(|o| o.slip_mult())) / outs.len() as f64,
+                    7,
+                    2
+                ),
                 win_txt
             );
         }
@@ -1711,7 +1766,10 @@ fn run_strategy_sweep(
     for (metric_name, get) in metrics {
         println!("\n  ranked by {metric_name}   (1 = best)");
         // `j` indexes both `rs` and each path's outcome vector, so it stays an index
-        #[expect(clippy::needless_range_loop, reason = "j indexes two parallel collections")]
+        #[expect(
+            clippy::needless_range_loop,
+            reason = "j indexes two parallel collections"
+        )]
         for j in 0..nr {
             let ranks: Vec<usize> = valid
                 .iter()
@@ -1748,24 +1806,34 @@ fn run_strategy_sweep(
     //   static = what a CONSTANT mix at the same average exposure gains just from holding bonds
     //   timing = the change in the rule's edge over its own constant twin when the twin also
     //            holds bonds — the only part attributable to timed flight
-    let pooled: Vec<&PathOutcomes> =
-        valid.iter().flat_map(|(_, _, _, e)| e.iter()).collect();
-    println!("\nFLIGHT TO SAFETY — de-risking into BONDS instead of cash, pooled over the market-like");
-    println!("worlds.  Return columns are net pp/yr and DEFLATOR-INVARIANT (the same inflation cancels");
-    println!("from both sides).  What real grading adds is the WITHDRAWAL column: dSwr = paired median");
-    println!("change in the 30-year sustainable REAL withdrawal rate from choosing the bond refuge —");
-    println!("the cash-vehicle decision metric, and the axis on which 1970s-style bonds look worst.");
+    let pooled: Vec<&PathOutcomes> = valid.iter().flat_map(|(_, _, _, e)| e.iter()).collect();
+    println!(
+        "\nFLIGHT TO SAFETY — de-risking into BONDS instead of cash, pooled over the market-like"
+    );
+    println!(
+        "worlds.  Return columns are net pp/yr and DEFLATOR-INVARIANT (the same inflation cancels"
+    );
+    println!(
+        "from both sides).  What real grading adds is the WITHDRAWAL column: dSwr = paired median"
+    );
+    println!(
+        "change in the 30-year sustainable REAL withdrawal rate from choosing the bond refuge —"
+    );
+    println!(
+        "the cash-vehicle decision metric, and the axis on which 1970s-style bonds look worst."
+    );
     println!(
         "  {:<34} {:>7} {:>8} {:>8} {:>9} {:>9} {:>7}",
         "rule", "total", "static", "timing", "swr cash", "swr bond", "dSwr"
     );
     for j in 0..nr {
-        let tot: Vec<f64> = pooled.iter().map(|v| v[nr + j].0.ann - v[j].0.ann).collect();
+        let tot: Vec<f64> = pooled
+            .iter()
+            .map(|v| v[nr + j].0.ann - v[j].0.ann)
+            .collect();
         let sta: Vec<f64> = pooled
             .iter()
-            .map(|v| {
-                (v[nr + j].0.ann - v[nr + j].0.vs_flat) - (v[j].0.ann - v[j].0.vs_flat)
-            })
+            .map(|v| (v[nr + j].0.ann - v[nr + j].0.vs_flat) - (v[j].0.ann - v[j].0.vs_flat))
             .collect();
         let tim: Vec<f64> = pooled
             .iter()
@@ -1799,7 +1867,9 @@ fn run_strategy_sweep(
     }
 
     // ---- refuge severity curve: the conclusion as a CURVE, not a point --------------------
-    println!("\nREFUGE SEVERITY CURVE — the same decomposition as inflation severity is dialed; where");
+    println!(
+        "\nREFUGE SEVERITY CURVE — the same decomposition as inflation severity is dialed; where"
+    );
     println!("the timing column crosses zero is where timed flight stops paying.  Baseline world");
     println!("otherwise; severity multiplies inflSize.");
     println!(
@@ -1862,8 +1932,12 @@ fn run_strategy_sweep(
     }
 
     // ---- cost breakeven ------------------------------------------------------------------
-    println!("\nCOST BREAKEVEN — the calm-market per-unit cost at which the rule's gross edge over its");
-    println!("fixed twin reaches zero; liquidity-weighted churn in the denominator.  The flat-rate");
+    println!(
+        "\nCOST BREAKEVEN — the calm-market per-unit cost at which the rule's gross edge over its"
+    );
+    println!(
+        "fixed twin reaches zero; liquidity-weighted churn in the denominator.  The flat-rate"
+    );
     println!("column is what a constant fee would have implied.");
     println!(
         "  {:<34} {:>12} {:>9} {:>11}",
@@ -1878,7 +1952,10 @@ fn run_strategy_sweep(
         if os.is_empty() {
             println!("  {:<34} (does not trade)", rs[j].name);
         } else {
-            let be: Vec<f64> = os.iter().map(|o| o.vs_flat_g * 100.0 / o.eff_churn).collect();
+            let be: Vec<f64> = os
+                .iter()
+                .map(|o| o.vs_flat_g * 100.0 / o.eff_churn)
+                .collect();
             let flat: Vec<f64> = os.iter().map(|o| o.vs_flat_g * 100.0 / o.churn).collect();
             println!(
                 "  {:<34} {} bp {} bp {} bp",
@@ -1891,7 +1968,9 @@ fn run_strategy_sweep(
     }
 
     // ---- crash-type decomposition --------------------------------------------------------
-    println!("\nCRASH TYPES — rule return minus buy-and-hold over each crash window, by whether the");
+    println!(
+        "\nCRASH TYPES — rule return minus buy-and-hold over each crash window, by whether the"
+    );
     println!("fundamental fell at least half as far as price.  Log points x 100.");
     for j in 0..nr {
         let entries: Vec<(bool, f64, f64)> =
@@ -1962,10 +2041,7 @@ fn run_power_report(paths: usize, seed: u64, cost: f64, single: bool, base: &Wor
         ));
     }
     pairs.push((
-        format!(
-            "NULL — {}  vs ITSELF on an independent path",
-            focus[0].name
-        ),
+        format!("NULL — {}  vs ITSELF on an independent path", focus[0].name),
         0,
         0,
         true,
@@ -2044,11 +2120,21 @@ fn run_power_report(paths: usize, seed: u64, cost: f64, single: bool, base: &Wor
         (ok, res)
     };
 
-    println!("ESTIMATOR POWER — what each grading statistic can and cannot resolve from ONE history.");
-    println!("Cells are  hit%/n*:  hit% = share of single L-year histories whose measured difference has");
-    println!("the same sign as the long-run difference at that length (50% = coin flip); n* = independent");
-    println!("L-year histories a 95% paired interval would need to exclude zero.  The real record has 1.");
-    println!("Safe leg is CASH.  Read DOWN a column (statistics against each other); across columns the");
+    println!(
+        "ESTIMATOR POWER — what each grading statistic can and cannot resolve from ONE history."
+    );
+    println!(
+        "Cells are  hit%/n*:  hit% = share of single L-year histories whose measured difference has"
+    );
+    println!(
+        "the same sign as the long-run difference at that length (50% = coin flip); n* = independent"
+    );
+    println!(
+        "L-year histories a 95% paired interval would need to exclude zero.  The real record has 1."
+    );
+    println!(
+        "Safe leg is CASH.  Read DOWN a column (statistics against each other); across columns the"
+    );
     println!("question changes.");
     println!();
     for (j, (lbl, _, _, _)) in pairs.iter().enumerate() {
@@ -2088,8 +2174,12 @@ fn run_power_report(paths: usize, seed: u64, cost: f64, single: bool, base: &Wor
 
     if !single {
         let l = horizons[0];
-        println!("\n  ACROSS THE WORLD SWEEP at L = {l} years, contrast C1 — a measurement conclusion has");
-        println!("  to hold in every world the gate admits, or it is a property of one parameter setting.");
+        println!(
+            "\n  ACROSS THE WORLD SWEEP at L = {l} years, contrast C1 — a measurement conclusion has"
+        );
+        println!(
+            "  to hold in every world the gate admits, or it is a property of one parameter setting."
+        );
         let per_world: Vec<(bool, PowerTable)> = sweep_worlds(base, false)
             .iter()
             .map(|(_, w)| power(w, l, seed + 31))
@@ -2229,13 +2319,19 @@ fn run_buffer_report(paths: usize, years: usize, seed: u64, cost: f64, single: b
     };
 
     let (ok, res) = buffer_stats(base);
-    println!("THE BUFFER QUESTION — length of REAL (CPI-deflated) underwater stretches, pooled over");
+    println!(
+        "THE BUFFER QUESTION — length of REAL (CPI-deflated) underwater stretches, pooled over"
+    );
     println!(
         "{paths} independent {years}-year histories = {} path-years.  Safe leg is the BOND,",
         path_years as i64
     );
-    println!("so a 'static mix' arm is a constant equity/bond portfolio at that rule's own average");
-    println!("exposure.  Stretches still under water at path end are INCLUDED at their length so far.");
+    println!(
+        "so a 'static mix' arm is a constant equity/bond portfolio at that rule's own average"
+    );
+    println!(
+        "exposure.  Stretches still under water at path end are INCLUDED at their length so far."
+    );
     println!(
         "  baseline world: {}",
         if ok {
@@ -2249,7 +2345,9 @@ fn run_buffer_report(paths: usize, years: usize, seed: u64, cost: f64, single: b
         "  material stretches (real depth >= {}%)        share of ALL calendar time spent inside a",
         jf(MATERIAL_DEPTH * 100.0, 0, 0)
     );
-    println!("                                                     stretch that ends up running longer than");
+    println!(
+        "                                                     stretch that ends up running longer than"
+    );
     let head_over: String = overruns
         .iter()
         .map(|b| format!("{:>7}", format!("{}y", jf(*b, 0, 0))))
@@ -2279,8 +2377,12 @@ fn run_buffer_report(paths: usize, years: usize, seed: u64, cost: f64, single: b
         );
     }
 
-    println!("\n  DEPTH AT EXHAUSTION — how often a buffer of B years is outlasted, and how deep it has");
-    println!("  got by then.  Stretches that never outlast the buffer force no sale and are EXCLUDED;");
+    println!(
+        "\n  DEPTH AT EXHAUSTION — how often a buffer of B years is outlasted, and how deep it has"
+    );
+    println!(
+        "  got by then.  Stretches that never outlast the buffer force no sale and are EXCLUDED;"
+    );
     println!("  entering them as zeros would average in episodes that cost nothing.");
     let head_buf: String = buffers
         .iter()
@@ -2315,8 +2417,12 @@ fn run_buffer_report(paths: usize, years: usize, seed: u64, cost: f64, single: b
     }
 
     if !single {
-        println!("\n  ACROSS THE WORLD SWEEP — gate-passing worlds only.  A buffer number that moves with");
-        println!("  the world parameters is a property of one parameter setting, not a planning figure.");
+        println!(
+            "\n  ACROSS THE WORLD SWEEP — gate-passing worlds only.  A buffer number that moves with"
+        );
+        println!(
+            "  the world parameters is a property of one parameter setting, not a planning figure."
+        );
         let per_world: Vec<(bool, Vec<BufferArm>)> = sweep_worlds(base, false)
             .iter()
             .map(|(_, w)| buffer_stats(w))
@@ -2350,7 +2456,8 @@ fn run_buffer_report(paths: usize, years: usize, seed: u64, cost: f64, single: b
                 &passing
                     .iter()
                     .map(|r| {
-                        scala_sum(r[j].1.iter().filter(|x| **x > 10.0).copied()) / path_years * 100.0
+                        scala_sum(r[j].1.iter().filter(|x| **x > 10.0).copied()) / path_years
+                            * 100.0
                     })
                     .collect::<Vec<f64>>(),
             );
@@ -2407,7 +2514,11 @@ fn jfs(v: f64, dec: i32) -> String {
         return "NaN".to_string();
     }
     let s = java_format_f(v, 0, dec);
-    blank_zero_sign(if s.starts_with('-') { s } else { format!("+{s}") })
+    blank_zero_sign(if s.starts_with('-') {
+        s
+    } else {
+        format!("+{s}")
+    })
 }
 
 /// `%+<width>.<dec>f` — the sign joins the number, then the whole thing is right-justified.
@@ -2625,7 +2736,9 @@ fn main() {
         let start = UniDateTime::ofYmd(1900, 1, 2);
         let mut out = String::new();
         for i in 0..p.price.len() {
-            let d = start.plusDays((i as i64 * 365) / DAYS_PER_YEAR as i64).ymd();
+            let d = start
+                .plusDays((i as i64 * 365) / DAYS_PER_YEAR as i64)
+                .ymd();
             out.push_str(&d);
             out.push('\t');
             out.push_str(&jf(p.price[i], 0, 6));
@@ -2646,14 +2759,19 @@ fn main() {
     let all_rets: Vec<Vec<f64>> = sims.iter().map(|s| daily_returns(&s.price)).collect();
     let ann_vol: Vec<f64> = all_rets
         .iter()
-        .map(|r| (scala_sum(r.iter().map(|x| x * x)) / r.len() as f64 * DAYS_PER_YEAR as f64).sqrt())
+        .map(|r| {
+            (scala_sum(r.iter().map(|x| x * x)) / r.len() as f64 * DAYS_PER_YEAR as f64).sqrt()
+        })
         .collect();
     let ann_ret: Vec<f64> = sims
         .iter()
         .map(|s| (s.price[s.price.len() - 1] / s.price[0]).ln() / years as f64 * 100.0)
         .collect();
 
-    println!("paths {paths} x {years} years   {} simulated years", paths * years);
+    println!(
+        "paths {paths} x {years} years   {} simulated years",
+        paths * years
+    );
     println!();
     println!(
         "  annualised return      median {}%   5th {}%   95th {}%",

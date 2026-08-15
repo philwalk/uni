@@ -67,6 +67,24 @@ object MatParityGen:
   val sizes: Vector[Int] =
     Vector(0, 1, 7, 8, 9, 4095, 4096, 4097, 65535, 65536, 65537, 98304, 200000)
 
+  /**
+   * 2-D shapes for the view/broadcast/axis cases, each scale in BOTH aspect ratios.
+   *
+   * The aspect ratio is not decoration. `Internal.create` materializes a "fragmented"
+   * view into a contiguous copy, and its test compares the major stride against the row
+   * count — so dropping a column from a 3×5 produces a copy (which then sums by `sumD`)
+   * while the same operation on a 5×3 stays a view (which sums by a plain fold). A
+   * fixture carrying only one orientation would pin only one of the two algorithms.
+   *
+   * Element counts again straddle both thresholds: 4095/4096 at the sequential/parallel
+   * switch, 65536 where the `MaxSumChunks` cap starts binding, and 120000 above it.
+   */
+  val shapes: Vector[(Int, Int)] =
+    Vector(
+      (1, 1), (3, 5), (5, 3), (8, 9), (9, 8),
+      (64, 64), (65, 63), (256, 256), (257, 256), (300, 400), (400, 300),
+    )
+
   val Seed = 20260814L
 
   /** Raw IEEE-754 bits, so nothing is lost to decimal rendering. */
@@ -180,14 +198,155 @@ object MatParityGen:
         "cummaxfnv" -> fnv(m.cummax(0).toArray),
       )
 
+  /** A 2-D matrix over a prefix of the shared corpus, row-major. */
+  def mat2d(all: Array[Double], rows: Int, cols: Int): Mat[Double] =
+    Mat.create(java.util.Arrays.copyOfRange(all, 0, rows * cols), rows, cols)
+
+  /**
+   * The 2-D cases recorded as raw Doubles.
+   *
+   * Every one of these exists to pin something the *layout* decides rather than the
+   * arithmetic. `tsum`/`tmean`/`tstd` run on a transposed view, which in Scala falls off
+   * `fastD` and onto a plain sequential fold — a different association order from the
+   * chunked `sumD` the same numbers get when contiguous. `slicesum` is the aspect-ratio
+   * case: on a wide matrix the slice is materialized and lands back on `sumD`, on a tall
+   * one it stays a view. A port that copied every view instead of carrying strides would
+   * fail exactly here and nowhere else.
+   */
+  def cases2d(m: Mat[Double]): Vector[(String, Double)] =
+    val t = m.T
+    Vector(
+      "tsum"     -> t.sum,
+      "tmean"    -> t.mean,
+      "tstd"     -> t.std,
+      "std"      -> m.std,
+      "var"      -> m.variance,
+      "slicesum" -> m.slice(0 until m.rows, 1 until m.cols).sum,
+      "normr"    -> m.ravel.norm,
+    )
+
+  /**
+   * The 2-D cases recorded as raw Long words: FNV-1a digests over every element of a
+   * result matrix, plus the two argmin/argmax positions flattened to `row * cols + col`.
+   *
+   * A digest rather than an aggregate because these produce whole matrices, and a sum of
+   * a wrong result can still be right. Two pairs are load-bearing:
+   *
+   *   - `std0fnv` vs `tstd1fnv` cover the SAME lanes by the same formula, and are
+   *     expected to differ. Scala's `std(axis)` takes each lane's mean with a plain fold
+   *     when the matrix is contiguous, but by building the lane into a fresh matrix and
+   *     calling `std` on it — hence `sumD` — when it is not. Recording both is what
+   *     stops a port from unifying them.
+   *   - `bcast0fnv`/`bcast1fnv` are the 1×N and N×1 broadcast shapes, the two Scala
+   *     short-circuits in `fastBinOp`.
+   */
+  def wordCases2d(m: Mat[Double]): Vector[(String, Long)] =
+    val t  = m.T
+    val am = m.argmax
+    val an = m.argmin
+    Vector(
+      "sum0fnv"   -> fnv(m.sum(0).toArray),
+      "sum1fnv"   -> fnv(m.sum(1).toArray),
+      "mean0fnv"  -> fnv(m.mean(0).toArray),
+      "mean1fnv"  -> fnv(m.mean(1).toArray),
+      "min0fnv"   -> fnv(m.min(0).toArray),
+      "max1fnv"   -> fnv(m.max(1).toArray),
+      "std0fnv"   -> fnv(m.std(0).toArray),
+      "tstd1fnv"  -> fnv(t.std(1).toArray),
+      "cum0fnv"   -> fnv(m.cumsum(0).toArray),
+      "cum1fnv"   -> fnv(m.cumsum(1).toArray),
+      "cmax0fnv"  -> fnv(m.cummax(0).toArray),
+      "cmin1fnv"  -> fnv(m.cummin(1).toArray),
+      "bcast0fnv" -> fnv((m - m.mean(0)).toArray),
+      "bcast1fnv" -> fnv((m - m.mean(1)).toArray),
+      "tfnv"      -> fnv(t.toArray),
+      "slicefnv"  -> fnv(m.slice(0 until m.rows, 1 until m.cols).toArray),
+      "divfnv"    -> fnv((m / (m.abs + 1.0)).toArray),
+      "negfnv"    -> fnv((-m).toArray),
+      "argmax"    -> (am._1.toLong * m.cols + am._2),
+      "argmin"    -> (an._1.toLong * m.cols + an._2),
+    )
+
+  /**
+   * Values the random corpus cannot reach, and which decide the ORDERING semantics of
+   * `min`/`max`/`argmin`/`argmax`/`cummax`/`cummin`.
+   *
+   * These exist because the Rust port was wrong here and the 427-row fixture passed
+   * anyway: `uniform(-1e6, 1e6)` produces no NaN and no signed zero, so a port that
+   * compared with `<`/`>` looked correct. Scala compares through `Ordering[Double]`,
+   * i.e. `java.lang.Double.compare`, under which:
+   *
+   *   - NaN ranks ABOVE every number, so `max` of a lane containing NaN is NaN;
+   *   - `-0.0 < 0.0`, so `min(0.0, -0.0)` is `-0.0` and argmin moves off index 0.
+   *
+   * `negnan` is sharper still: it separates `java.lang.Double.compare` (which
+   * canonicalises every NaN, so -NaN == +NaN and both outrank +Infinity) from Rust's
+   * `f64::total_cmp` (IEEE totalOrder, which puts -NaN BELOW -Infinity). A port reaching
+   * for `total_cmp` passes every other row here and fails this one.
+   */
+  val NegNaN: Double = java.lang.Double.longBitsToDouble(0xfff8000000000000L)
+
+  val adversarial: Vector[(String, Array[Double])] = Vector(
+    "nanmid"   -> Array(1.0, Double.NaN, -1.0, 2.0),
+    "nanfirst" -> Array(Double.NaN, 1.0, -1.0),
+    "nanonly"  -> Array(Double.NaN, Double.NaN),
+    "negnan"   -> Array(NegNaN, 1.0, -1.0),
+    "zeros"    -> Array(0.0, -0.0),
+    "zerosrev" -> Array(-0.0, 0.0),
+    "zerosmix" -> Array(1.0, -0.0, 0.0, -1.0),
+    "infs"     -> Array(Double.PositiveInfinity, Double.NegativeInfinity, 0.0),
+    "infnan"   -> Array(Double.PositiveInfinity, Double.NaN, Double.NegativeInfinity),
+    "ties"     -> Array(3.0, 1.0, 1.0, 3.0),
+  )
+
+  /**
+   * Bits, with every NaN collapsed to one pattern.
+   *
+   * IEEE-754 does not specify which NaN payload an arithmetic op propagates, so a raw
+   * bit comparison of `sum` over a corpus containing NaN would pin a platform's choice
+   * rather than the language's semantics. Canonicalising records the value CLASS, which
+   * is the contract that actually holds. It is also exactly what
+   * `Double.doubleToLongBits` does, so it matches the comparison being tested.
+   */
+  def canon(d: Double): Long =
+    if d.isNaN then 0x7ff8000000000000L else bits(d)
+
+  def fnvCanon(xs: Array[Double]): Long = fnvWords(xs.map(canon))
+
+  /** The three orientations each adversarial array is recorded in. */
+  def advShapes(arr: Array[Double]): Vector[(String, Mat[Double])] = Vector(
+    "col"  -> Mat.create(arr.clone(), arr.length, 1),
+    "row"  -> Mat.create(arr.clone(), 1, arr.length),
+    "colT" -> Mat.create(arr.clone(), arr.length, 1).T,
+  )
+
+  def advCases(m: Mat[Double]): Vector[(String, Long)] =
+    val an = m.argmin
+    val ax = m.argmax
+    Vector(
+      "sum"      -> canon(m.sum),
+      "min"      -> canon(m.min),
+      "max"      -> canon(m.max),
+      "argmin"   -> (an._1.toLong * m.cols + an._2),
+      "argmax"   -> (ax._1.toLong * m.cols + ax._2),
+      "cmax0fnv" -> fnvCanon(m.cummax(0).toArray),
+      "cmax1fnv" -> fnvCanon(m.cummax(1).toArray),
+      "cmin0fnv" -> fnvCanon(m.cummin(0).toArray),
+      "cmin1fnv" -> fnvCanon(m.cummin(1).toArray),
+      "min0fnv"  -> fnvCanon(m.min(0).toArray),
+      "max1fnv"  -> fnvCanon(m.max(1).toArray),
+    )
+
   val header: String =
     """|# uni.data.Mat reduction parity reference (Scala <-> Rust).
        |# Regenerate with: sbt "runMain uni.apps.MatParityGen"
        |#
        |# Checked by uni.data.MatParitySuite and rust/tests/mat_parity.rs.
        |#
-       |# Rows are:  <n> <case> <hex>
-       |# where <hex> is the raw 64-bit IEEE-754 pattern of the result, never decimal
+       |# Rows are:  <shape> <case> <hex>
+       |# where <shape> is either a plain <n> (an n x 1 column over a prefix of the 1-D
+       |# corpus) or <rows>x<cols> (a 2-D matrix over the same corpus, row-major), and
+       |# <hex> is the raw 64-bit IEEE-754 pattern of the result, never decimal
        |# text -- what is pinned here is the floating-point ASSOCIATION ORDER of
        |# Mat.sumD (8 unrolled accumulators combined as ((s0+s1)+(s2+s3))+((s4+s5)+(s6+s7)),
        |# then min(MaxSumChunks=16, n/4096) chunks combined sequentially), and a
@@ -228,6 +387,46 @@ object MatParityGen:
        |# portable alternative, StrictMath.exp (fdlibm), differs from Math.exp on 9.67%
        |# of the same corpus, 17x further away than Rust already is. min, max and
        |# cummax involve no transcendental and stay exact.
+       |#
+       |# The <rows>x<cols> rows pin the VIEW MODEL, which is the part of Mat a port is
+       |# most likely to get subtly wrong. In Scala, transpose/slice/broadcastTo return
+       |# zero-copy strided views, and the layout decides which summation algorithm runs:
+       |# a contiguous matrix at offset 0 gets the chunked, 8-way unrolled sumD, anything
+       |# else gets a plain sequential fold. So m.sum and m.T.sum are NOT required to
+       |# agree -- and on this corpus they do not. A port that materialized every view
+       |# into a fresh contiguous copy would silently take the fast path where Scala
+       |# takes the slow one, and only these rows would notice.
+       |#
+       |# The aspect ratios are paired (3x5 and 5x3, 65x63 and 256x256, 300x400 and
+       |# 400x300) because Internal.create materializes a "fragmented" view back into a
+       |# contiguous copy, and its test compares the major stride against the row count.
+       |# Dropping a column therefore copies on a wide matrix and stays a view on a tall
+       |# one -- the same logical slice, two different summation algorithms.
+       |#
+       |# std0fnv and tstd1fnv reduce the SAME lanes by the same formula and are expected
+       |# to DIFFER: std(axis) takes each lane's mean by a plain fold when the matrix is
+       |# contiguous, and via sumD when it is not.
+       |#
+       |# The *fnv cases are FNV-1a digests over every element of a result matrix;
+       |# argmin/argmax are positions flattened as row * cols + col.
+       |#
+       |# The adv/<name>/<orientation> rows pin ORDERING semantics, on values the random
+       |# corpus cannot produce. They exist because the Rust port was wrong here while
+       |# every other row passed: uniform(-1e6, 1e6) yields no NaN and no signed zero, so
+       |# comparing with `<`/`>` looked correct. Scala compares through Ordering[Double],
+       |# i.e. java.lang.Double.compare, under which NaN ranks ABOVE every number (so max
+       |# of a lane containing NaN is NaN) and -0.0 < 0.0 (so min(0.0, -0.0) is -0.0 and
+       |# argmin moves off index 0).
+       |#
+       |# `negnan` is the sharpest of them: it separates java.lang.Double.compare, which
+       |# canonicalises every NaN so that -NaN == +NaN and both outrank +Infinity, from
+       |# Rust's f64::total_cmp, which implements IEEE totalOrder and places -NaN BELOW
+       |# -Infinity. A port reaching for total_cmp passes every other adversarial row and
+       |# fails this one.
+       |#
+       |# Values in these rows are recorded with every NaN collapsed to 7ff8000000000000.
+       |# IEEE does not specify which payload an arithmetic op propagates, so a raw bit
+       |# comparison would pin a platform's choice rather than the language's semantics.
        |""".stripMargin
 
   def main(args: Array[String]): Unit =
@@ -249,6 +448,20 @@ object MatParityGen:
       for (label, word) <- expCases(me) do
         sb ++= f"$n $label $word%016x\n"
       println(s"  n=$n: ${cases(m).length + expCases(me).length} cases")
+
+    for (rows, cols) <- shapes do
+      val m = mat2d(all, rows, cols)
+      for (label, value) <- cases2d(m) do
+        sb ++= s"${rows}x$cols $label ${hex(value)}\n"
+      for (label, word) <- wordCases2d(m) do
+        sb ++= f"${rows}x$cols $label $word%016x\n"
+      println(s"  ${rows}x$cols: ${cases2d(m).length + wordCases2d(m).length} cases")
+
+    for (name, arr) <- adversarial do
+      for (orient, m) <- advShapes(arr) do
+        for (label, word) <- advCases(m) do
+          sb ++= f"adv/$name/$orient $label $word%016x\n"
+      println(s"  adv/$name: ${advShapes(arr).length * advCases(advShapes(arr).head._2).length} cases")
 
     val out = s"$dir/scala-reference.txt"
     java.nio.file.Files.writeString(out.asPath, sb.toString)

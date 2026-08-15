@@ -310,6 +310,153 @@ object Mat {
   private inline def fastD2L[T](m: Mat[T], other: Mat[T])(using ct: ClassTag[T]): Boolean =
     fastDL(m) && other.isContiguous && other.offset == 0
 
+  /** Fast-path guard for the ORDER statistics (min/max/argmin/argmax/cummax/cummin):
+   *  `fastDL` plus a check that the caller's Ordering really is the total one.
+   *
+   *  The extra check is not pedantry. `Ordering[Double]` resolves by default to
+   *  `Double.TotalOrdering`, i.e. `java.lang.Double.compare`, under which NaN sorts
+   *  ABOVE every number and `-0.0 < 0.0` — neither of which holds for the primitive
+   *  `<`/`>`. `max(Array(1.0, NaN, -1.0, 2.0))` is NaN here, not 2.0. So an unboxed
+   *  branch has to keep `Double.compare` semantics, and may only stand in for an
+   *  Ordering that agrees: a caller who explicitly supplies `Double.IeeeOrdering` gets
+   *  the general path rather than a silently different answer.
+   *
+   *  Keeping those semantics costs one extra predictable branch per element in the
+   *  ordinary case (`Double.compare` returns on its first comparison unless the values
+   *  are equal or unordered) against the boxing and virtual dispatch it removes —
+   *  measured as noise, see `MatFastPathProbe`. */
+  private inline def fastDOrd[T](m: Mat[T], ord: Ordering[T])(using ct: ClassTag[T]): Boolean =
+    fastDL(m) && ord.isInstanceOf[Ordering.Double.TotalOrdering]
+
+  /** Unboxed row-major scan over a Mat[Double] of ANY layout — view, transpose, offset
+   *  slice, stride-0 broadcast — replacing the accumulator whenever `better(current,
+   *  best)` holds. Returns (row, col, value).
+   *
+   *  Shared by min/max/argmin/argmax so the four cannot drift apart. `inline` on both
+   *  the method and the comparator so the lambda is beta-reduced rather than allocated:
+   *  a `Function2[Double, Double, Boolean]` would box both arguments on every element
+   *  and hand back exactly the cost this exists to remove.
+   *
+   *  Only valid when `fastDOrd(m, ord)` already holds. Visits elements in the same
+   *  row-major order as the general path and replaces on the same strict comparison, so
+   *  ties keep their first occurrence exactly as before. */
+  private inline def scanValueD[T](m: Mat[T], inline better: (Double, Double) => Boolean): Double =
+    val a   = m.tdata.asInstanceOf[Array[Double]]
+    val off = m.offset; val rs = m.rs; val cs = m.cs
+    var best = a(off)          // == at(0, 0)
+    var r = 0
+    while r < m.rows do
+      val base = off + r * rs
+      var c = 0
+      while c < m.cols do
+        val current = a(base + c * cs)
+        if better(current, best) then best = current
+        c += 1
+      r += 1
+    best
+
+  /** Position of the winning element, packed as `(row << 32) | col`.
+   *
+   *  Split from [[scanValueD]] so neither caller carries the other's cost: the value
+   *  scan keeps no index bookkeeping, and this one allocates no `Tuple3[Int, Int,
+   *  Double]` (which would also box its Double on every call).
+   *
+   *  Stated honestly, the measured payoff is small — `argmin`/`argmax` already ran at
+   *  the same speed as `min`/`max` once both were unboxed, and both are bimodal enough
+   *  across runs that the split moved `max` by about 10% and `argmax` not at all. It is
+   *  kept because it is simpler to reason about, not because it bought a speedup. */
+  private inline def scanPosD[T](m: Mat[T], inline better: (Double, Double) => Boolean): Long =
+    val a   = m.tdata.asInstanceOf[Array[Double]]
+    val off = m.offset; val rs = m.rs; val cs = m.cs
+    var best = a(off)
+    var bestPos = 0L
+    var r = 0
+    while r < m.rows do
+      val base = off + r * rs
+      var c = 0
+      while c < m.cols do
+        val current = a(base + c * cs)
+        if better(current, best) then
+          best = current; bestPos = (r.toLong << 32) | c.toLong
+        c += 1
+      r += 1
+    bestPos
+
+  /** `Ordering.Double.TotalOrdering.lt`, unboxed. */
+  private inline def ltD(x: Double, y: Double): Boolean = java.lang.Double.compare(x, y) < 0
+
+  /** `Ordering.Double.TotalOrdering.gt`, unboxed. */
+  private inline def gtD(x: Double, y: Double): Boolean = java.lang.Double.compare(x, y) > 0
+
+  /** Population variance of a Mat[Double] of ANY layout, unboxed — the shared body of
+   *  `variance` and `std`.
+   *
+   *  The mean is taken from `sum`, so it inherits that method's per-layout association
+   *  order (chunked `sumD` when contiguous at offset 0, a sequential row-major fold
+   *  otherwise). The squared deviations are a plain row-major fold in every case, which
+   *  is what both of the previous branches did. Only valid when `fastDL(m)` holds. */
+  private def varianceD[T](m: Mat[T])(using Numeric[T], ClassTag[T]): Double =
+    val a   = m.tdata.asInstanceOf[Array[Double]]
+    val n   = m.rows * m.cols
+    val mu  = m.sum.asInstanceOf[Double] / n
+    val off = m.offset; val rs = m.rs; val cs = m.cs
+    var sumSq = 0.0
+    var i = 0
+    while i < m.rows do
+      val base = off + i * rs
+      var j = 0
+      while j < m.cols do
+        val d = a(base + j * cs) - mu
+        sumSq += d * d
+        j += 1
+      i += 1
+    sumSq / n
+
+  /** Unboxed running extremum along `axis` for a Mat[Double] of any layout — the shared
+   *  body of `cummax`/`cummin`, which differ only in the comparison.
+   *
+   *  Mirrors the general path exactly: the accumulator is seeded from the lane's first
+   *  cell, then every cell (including that first one) is written after a strict
+   *  comparison. Reads honour offset/strides; the result is always plain contiguous.
+   *
+   *  Only valid when `fastDOrd(m, ord)` already holds. */
+  private inline def cumExtremumD[T](m: Mat[T], axis: Int, inline better: (Double, Double) => Boolean): Mat[Double] =
+    val a   = m.tdata.asInstanceOf[Array[Double]]
+    val off = m.offset; val rs = m.rs; val cs = m.cs
+    val rows = m.rows; val cols = m.cols
+    val out = new Array[Double](rows * cols)
+    if axis == 0 then
+      // One accumulator per column, advanced row by row, rather than a column-at-a-time
+      // outer loop. Each column's running extremum still advances in increasing row
+      // order, so every cell is identical -- but reads and writes both walk `out` and
+      // `a` in row-major order instead of jumping `cols` elements per step. The
+      // column-outer form (which the boxed path still uses) measured ~60% slower than
+      // the axis-1 direction on the same data purely from that stride.
+      val acc = new Array[Double](cols)
+      var j0 = 0
+      while j0 < cols do { acc(j0) = a(off + j0 * cs); j0 += 1 }
+      var i = 0
+      while i < rows do
+        val base = off + i * rs
+        val obase = i * cols
+        var j = 0
+        while j < cols do
+          val v = a(base + j * cs)
+          if better(v, acc(j)) then acc(j) = v
+          out(obase + j) = acc(j); j += 1
+        i += 1
+    else
+      var i = 0
+      while i < rows do
+        val base = off + i * rs
+        var acc = a(base); var j = 0
+        while j < cols do
+          val v = a(base + j * cs)
+          if better(v, acc) then acc = v
+          out(i * cols + j) = acc; j += 1
+        i += 1
+    Mat.create(out, rows, cols)
+
   /** In-place primitive LU decomposition (partial pivoting) of a row-major n×n
    *  Double array. Returns (pivot indices, swap count). Shared by the Double
    *  fast paths of luDecompose/determinant/inverse so they avoid the per-element
@@ -1459,6 +1606,9 @@ object Mat {
 
     def min(using ord: Ordering[T]): T = {
       if (m.rows == 0 || m.cols == 0) throw new UnsupportedOperationException("empty matrix")
+      // Unboxed scan for Mat[Double] of ANY layout. Same row-major order, same strict
+      // comparison, same Double.compare semantics -- only the boxing is gone.
+      if fastDOrd(m, ord) then return scanValueD(m, ltD).asInstanceOf[T]
       var minValue = m(0, 0)
       var r = 0
       while (r < m.rows) {
@@ -1475,6 +1625,7 @@ object Mat {
 
     def max(using ord: Ordering[T]): T = {
       if (m.rows == 0 || m.cols == 0) throw new UnsupportedOperationException("empty matrix")
+      if fastDOrd(m, ord) then return scanValueD(m, gtD).asInstanceOf[T]
       var maxValue = m(0, 0)
       var r = 0
       while (r < m.rows) {
@@ -1490,37 +1641,50 @@ object Mat {
     }
 
     def sum(using num: Numeric[T]): T =
-      summon[ClassTag[T]].runtimeClass match
-        case c if c == classOf[Double] && m.isContiguous && m.offset == 0 =>
-          // Fast path: parallel fork/join on JVM heap — no JNI copy, uses all cores.
-          // Guard: tdata may be a parent array; only use when its length matches this view.
-          val data = m.tdata.asInstanceOf[Array[Double]]
-          if data.length == m.rows * m.cols then
-            sumD(data).asInstanceOf[T]
-          else
-            var total = 0.0
-            var i = 0
-            while i < m.rows do
-              var j = 0
-              while j < m.cols do
-                total += data(i * m.rs + j * m.cs)
-                j += 1
-              i += 1
-            total.asInstanceOf[T]
-        case _ =>
-          // General path: strided views, non-Double types, offset slices.
-          var total = num.zero
+      if fastDL(m) then
+        // Any Mat[Double], whatever its layout. Two orders live here and the choice
+        // between them is load-bearing:
+        //
+        //   - contiguous, offset 0, backing array exactly this matrix's data -> sumD,
+        //     i.e. 8 unrolled accumulators and a chunked parallel decomposition;
+        //   - everything else (views, transposes, offset slices, stride-0 broadcasts)
+        //     -> the plain sequential row-major fold it has always had, now read
+        //     through the stride equation WITHOUT boxing.
+        //
+        // Routing the second case to sumD would be faster still and is WRONG: it moves
+        // the last ulp, and MatParitySuite pins both orders against the Rust port.
+        val a = m.tdata.asInstanceOf[Array[Double]]
+        if m.isContiguous && m.offset == 0 && a.length == m.rows * m.cols then
+          sumD(a).asInstanceOf[T]
+        else
+          val off = m.offset; val rs = m.rs; val cs = m.cs
+          var total = 0.0
           var i = 0
           while i < m.rows do
+            val base = off + i * rs
             var j = 0
             while j < m.cols do
-              total = num.plus(total, m(i, j))
+              total += a(base + j * cs)
               j += 1
             i += 1
-          total
+          total.asInstanceOf[T]
+      else
+        // General path: non-Double element types.
+        var total = num.zero
+        var i = 0
+        while i < m.rows do
+          var j = 0
+          while j < m.cols do
+            total = num.plus(total, m(i, j))
+            j += 1
+          i += 1
+        total
 
     def argmin(using ord: Ordering[T]): (Int, Int) = {
       if (m.rows == 0 || m.cols == 0) throw new UnsupportedOperationException("empty matrix")
+      if fastDOrd(m, ord) then
+        val pos = scanPosD(m, ltD)
+        return ((pos >>> 32).toInt, pos.toInt)
 
       var minVal = m(0, 0)
       var minR = 0
@@ -1545,6 +1709,9 @@ object Mat {
 
     def argmax(using ord: Ordering[T]): (Int, Int) = {
       if (m.rows == 0 || m.cols == 0) throw new UnsupportedOperationException("empty matrix")
+      if fastDOrd(m, ord) then
+        val pos = scanPosD(m, gtD)
+        return ((pos >>> 32).toInt, pos.toInt)
 
       var maxVal = m(0, 0)
       var maxR = 0
@@ -2639,10 +2806,12 @@ object Mat {
 
     def mean(using frac: Fractional[T]): T =
       if m.rows == 0 || m.cols == 0 then frac.zero
-      else if fastD(m)
-      then
-        val a = m.tdata.asInstanceOf[Array[Double]]
-        (sumD(a) / (m.rows * m.cols)).asInstanceOf[T]
+      else if fastDL(m) then
+        // For Double this is exactly `sum / n` whatever the layout, so delegating to
+        // `sum` inherits its unboxed strided read without moving a bit: the contiguous
+        // case divides sumD's result (as it always did) and every other layout divides
+        // the same sequential row-major fold the boxed branch below produced.
+        (m.sum.asInstanceOf[Double] / (m.rows * m.cols)).asInstanceOf[T]
       else
         var total = frac.zero
         var r = 0
@@ -2845,6 +3014,12 @@ object Mat {
 
     def cummax(axis: Int)(using ord: Ordering[T]): Mat[T] =
       require(axis == 0 || axis == 1, s"axis must be 0 or 1, got $axis")
+      // `!m.isEmpty` is load-bearing, not defensive: with rows == 0 the general path
+      // reaches `m(0, j)` and fails apply's `require` with IllegalArgumentException,
+      // while with cols == 0 its outer loop never runs and it returns an empty Mat.
+      // An unboxed seed would raise IndexOutOfBoundsException in the first case, so
+      // empty shapes keep the old path and the old behaviour, exception type included.
+      if !m.isEmpty && fastDOrd(m, ord) then return cumExtremumD(m, axis, gtD).asInstanceOf[Mat[T]]
       val result = Array.ofDim[T](m.rows * m.cols)
       if axis == 0 then
         var j = 0
@@ -2866,6 +3041,12 @@ object Mat {
 
     def cummin(axis: Int)(using ord: Ordering[T]): Mat[T] =
       require(axis == 0 || axis == 1, s"axis must be 0 or 1, got $axis")
+      // `!m.isEmpty` is load-bearing, not defensive: with rows == 0 the general path
+      // reaches `m(0, j)` and fails apply's `require` with IllegalArgumentException,
+      // while with cols == 0 its outer loop never runs and it returns an empty Mat.
+      // An unboxed seed would raise IndexOutOfBoundsException in the first case, so
+      // empty shapes keep the old path and the old behaviour, exception type included.
+      if !m.isEmpty && fastDOrd(m, ord) then return cumExtremumD(m, axis, ltD).asInstanceOf[Mat[T]]
       val result = Array.ofDim[T](m.rows * m.cols)
       if axis == 0 then
         var j = 0
@@ -3818,14 +3999,10 @@ object Mat {
 
     /** NumPy: np.std(m) - population standard deviation of all elements */
     def std(using frac: Fractional[T], elem: MatElem[T]): T =
-      if fastD(m)
-      then
-        val a  = m.tdata.asInstanceOf[Array[Double]]
-        val n  = a.length
-        val mu = sumD(a) / n
-        var sumSq = 0.0; var i = 0
-        while i < n do { val d = a(i) - mu; sumSq += d * d; i += 1 }
-        math.sqrt(sumSq / n).asInstanceOf[T]
+      if fastDL(m) then
+        // sqrt of the shared unboxed variance. `elem.sqrtT` is `math.sqrt` for Double,
+        // so this is the same arithmetic the boxed branch below performs.
+        math.sqrt(varianceD(m)).asInstanceOf[T]
       else
         // Stride-aware accumulation: folding m.tdata would read the parent array of a view
         val mu    = m.mean
@@ -3932,14 +4109,13 @@ object Mat {
 
     /** NumPy: np.var(m) - variance */
     def variance(using frac: Fractional[T]): T =
-      if fastD(m)
-      then
-        val a  = m.tdata.asInstanceOf[Array[Double]]
-        val n  = a.length
-        val mu = sumD(a) / n
-        var sumSq = 0.0; var i = 0
-        while i < n do { val d = a(i) - mu; sumSq += d * d; i += 1 }
-        (sumSq / n).asInstanceOf[T]
+      if fastDL(m) then
+        // Any Double layout. The mean comes from `sum`, so it follows that method's
+        // per-layout association order; the squared deviations are a plain row-major
+        // fold in every case, exactly as both old branches did. Bit-identical to what
+        // the boxed path produced for views, and to the old fast path for contiguous
+        // data (where the stride equation degenerates to linear indexing).
+        varianceD(m).asInstanceOf[T]
       else
         // Stride-aware accumulation: folding m.tdata would read the parent array of a view
         val mu    = m.mean

@@ -22,6 +22,17 @@
 //! is already bit-identical across the port. `math.sin` was rejected as a generator
 //! because the JVM and Rust may round it differently in the last ulp.
 //!
+//! # The 2-D half
+//!
+//! Rows keyed `<rows>x<cols>` pin the **view model** rather than the arithmetic. In
+//! Scala `transpose`/`slice`/`broadcastTo` return zero-copy strided views, and the
+//! layout decides which summation ORDER runs — contiguous at offset 0 gets the chunked,
+//! 8-way unrolled `sumD`, anything else is summed left to right through the stride
+//! equation. So `m.sum` and `m.T.sum` are not required to agree, and on this corpus they
+//! do not. A port that materialised every view into a contiguous copy would pick the
+//! chunked order where Scala picks the sequential one, and only these rows would
+//! notice.
+//!
 //! Regenerate the reference with `sbt "runMain uni.apps.MatParityGen"` — and only when
 //! the values are meant to move.
 
@@ -37,14 +48,97 @@ use std::path::PathBuf;
 use uni::NumPyRng;
 use uni::udata::MatD;
 
+/// A fixture row's first field: a 1-D prefix length, a 2-D `<rows>x<cols>`, or an
+/// `adv/<name>/<orientation>` ordering case.
+enum Shape {
+    Column(usize),
+    Matrix(usize, usize),
+    Adversarial(String, String),
+}
+
+/// The adversarial arrays, which must match `MatParityGen.adversarial` element for
+/// element. These carry the values the random corpus cannot produce — NaN, signed zeros,
+/// infinities — which is where `<`/`>` and Scala's `Ordering[Double]` part company.
+fn adversarial_array(name: &str) -> Vec<f64> {
+    let neg_nan = f64::from_bits(0xfff8_0000_0000_0000);
+    match name {
+        "nanmid" => vec![1.0, f64::NAN, -1.0, 2.0],
+        "nanfirst" => vec![f64::NAN, 1.0, -1.0],
+        "nanonly" => vec![f64::NAN, f64::NAN],
+        "negnan" => vec![neg_nan, 1.0, -1.0],
+        "zeros" => vec![0.0, -0.0],
+        "zerosrev" => vec![-0.0, 0.0],
+        "zerosmix" => vec![1.0, -0.0, 0.0, -1.0],
+        "infs" => vec![f64::INFINITY, f64::NEG_INFINITY, 0.0],
+        "infnan" => vec![f64::INFINITY, f64::NAN, f64::NEG_INFINITY],
+        "ties" => vec![3.0, 1.0, 1.0, 3.0],
+        other => panic!("unknown adversarial array {other}"),
+    }
+}
+
+/// The three orientations, matching `MatParityGen.advShapes`. `colT` is a transposed
+/// *view*, so the strided read path meets the same values.
+fn adv_matrix(orient: &str, arr: Vec<f64>) -> MatD {
+    let n = arr.len();
+    match orient {
+        "col" => MatD::create(arr, n, 1),
+        "row" => MatD::create(arr, 1, n),
+        "colT" => MatD::create(arr, n, 1).T(),
+        other => panic!("unknown orientation {other}"),
+    }
+}
+
+/// Bits with every NaN collapsed to one pattern — `MatParityGen.canon`.
+///
+/// IEEE does not specify which NaN payload an arithmetic operation propagates, so a raw
+/// bit comparison of a sum over NaN would pin a platform's choice rather than the
+/// language's semantics. This is also exactly what `Double.doubleToLongBits` does, which
+/// is the comparison under test.
+fn canon(d: f64) -> u64 {
+    if d.is_nan() {
+        0x7ff8_0000_0000_0000
+    } else {
+        d.to_bits()
+    }
+}
+
+fn fnv_canon(xs: &[f64]) -> u64 {
+    fnv_words(xs.iter().map(|&x| canon(x)))
+}
+
+/// The ordering cases. Every one of these was passing while `min`/`max` compared with
+/// `<`/`>`, because the random corpus contains no NaN and no signed zero.
+fn case_word_adv(m: &MatD, label: &str) -> u64 {
+    let cols = m.cols() as u64;
+    match label {
+        "sum" => canon(m.sum()),
+        "min" => canon(m.min()),
+        "max" => canon(m.max()),
+        "argmin" => {
+            let (r, c) = m.argmin();
+            r as u64 * cols + c as u64
+        }
+        "argmax" => {
+            let (r, c) = m.argmax();
+            r as u64 * cols + c as u64
+        }
+        "cmax0fnv" => fnv_canon(&m.cummax(0).toArray()),
+        "cmax1fnv" => fnv_canon(&m.cummax(1).toArray()),
+        "cmin0fnv" => fnv_canon(&m.cummin(0).toArray()),
+        "cmin1fnv" => fnv_canon(&m.cummin(1).toArray()),
+        "min0fnv" => fnv_canon(&m.minAxis(0).toArray()),
+        "max1fnv" => fnv_canon(&m.maxAxis(1).toArray()),
+        other => panic!("unknown adversarial case {other} in fixture"),
+    }
+}
+
 /// Must match `MatParityGen.Seed`.
 const SEED: u64 = 20_260_814;
 
 fn fixture() -> String {
     let path: PathBuf = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../test-data/mat-parity/scala-reference.txt");
-    fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()))
+    fs::read_to_string(&path).unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()))
 }
 
 /// The shared corpus — must match `MatParityGen.corpus` exactly, including the
@@ -116,7 +210,12 @@ fn case_word(m: &MatD, me: &MatD, label: &str) -> u64 {
             if m.isEmpty() {
                 0.0f64.to_bits()
             } else {
-                m.cumsum().toArray().last().copied().unwrap_or(0.0).to_bits()
+                m.cumsum()
+                    .toArray()
+                    .last()
+                    .copied()
+                    .unwrap_or(0.0)
+                    .to_bits()
             }
         }
         // The exp-corpus cases. Scala records 0 for all of them when the prefix is
@@ -132,64 +231,190 @@ fn case_word(m: &MatD, me: &MatD, label: &str) -> u64 {
             }
         }
         "min" => {
-            if me.isEmpty() { 0 } else { me.min().to_bits() }
+            if me.isEmpty() {
+                0
+            } else {
+                me.min().to_bits()
+            }
         }
         "max" => {
-            if me.isEmpty() { 0 } else { me.max().to_bits() }
+            if me.isEmpty() {
+                0
+            } else {
+                me.max().to_bits()
+            }
         }
         "cummaxfnv" => {
-            if me.isEmpty() { 0 } else { fnv(&me.cummax(0).toArray()) }
+            if me.isEmpty() {
+                0
+            } else {
+                fnv(&me.cummax(0).toArray())
+            }
         }
         other => panic!("unknown case {other} in fixture — port it or regenerate"),
     }
 }
 
-#[test]
-fn mat_reductions_match_the_scala_reference_bit_for_bit() {
-    let text = fixture();
-    let rows: Vec<(usize, String, u64)> = text
-        .lines()
+/// The 2-D cases. Each pins something the LAYOUT decides rather than the arithmetic:
+/// `t*` run on a transposed view (summed in a different order), `slice*` on a slice
+/// whose materialisation depends on the parent's aspect ratio, and `bcast*` on the 1×N
+/// and N×1 broadcast shapes.
+///
+/// `std0fnv` and `tstd1fnv` reduce the SAME lanes by the same formula and are expected
+/// to differ above a lane length of 8: Scala's `std(axis)` takes each lane's mean by a
+/// plain fold when contiguous and via `sumD` when not.
+fn case_word_2d(m: &MatD, label: &str) -> u64 {
+    let (rows, cols) = (m.rows() as i64, m.cols() as i64);
+    let sliced = || m.slice(0..rows, 1..cols);
+    match label {
+        "tsum" => m.T().sum().to_bits(),
+        "tmean" => m.T().mean().to_bits(),
+        "tstd" => m.T().std().to_bits(),
+        "std" => m.std().to_bits(),
+        "var" => m.variance().to_bits(),
+        "slicesum" => sliced().sum().to_bits(),
+        "normr" => m.ravel().norm().to_bits(),
+        "sum0fnv" => fnv(&m.sumAxis(0).toArray()),
+        "sum1fnv" => fnv(&m.sumAxis(1).toArray()),
+        "mean0fnv" => fnv(&m.meanAxis(0).toArray()),
+        "mean1fnv" => fnv(&m.meanAxis(1).toArray()),
+        "min0fnv" => fnv(&m.minAxis(0).toArray()),
+        "max1fnv" => fnv(&m.maxAxis(1).toArray()),
+        "std0fnv" => fnv(&m.stdAxis(0).toArray()),
+        "tstd1fnv" => fnv(&m.T().stdAxis(1).toArray()),
+        "cum0fnv" => fnv(&m.cumsumAxis(0).toArray()),
+        "cum1fnv" => fnv(&m.cumsumAxis(1).toArray()),
+        "cmax0fnv" => fnv(&m.cummax(0).toArray()),
+        "cmin1fnv" => fnv(&m.cummin(1).toArray()),
+        "bcast0fnv" => fnv(&(m - &m.meanAxis(0)).toArray()),
+        "bcast1fnv" => fnv(&(m - &m.meanAxis(1)).toArray()),
+        "tfnv" => fnv(&m.T().toArray()),
+        "slicefnv" => fnv(&sliced().toArray()),
+        "divfnv" => fnv(&(m / &(&m.abs() + 1.0)).toArray()),
+        "negfnv" => fnv(&(-m).toArray()),
+        "argmax" => flat_index(m.argmax(), m.cols()),
+        "argmin" => flat_index(m.argmin(), m.cols()),
+        other => panic!("unknown 2-D case {other} in fixture — port it or regenerate"),
+    }
+}
+
+/// `(row, col)` flattened as the generator records it.
+fn flat_index((r, c): (usize, usize), cols: usize) -> u64 {
+    (r * cols + c) as u64
+}
+
+/// `12` is an n×1 column over a corpus prefix; `3x5` is a row-major 2-D matrix over the
+/// same corpus.
+fn parse_shape(tok: &str) -> Shape {
+    if let Some(rest) = tok.strip_prefix("adv/") {
+        let (name, orient) = rest
+            .split_once('/')
+            .expect("adv key needs name/orientation");
+        return Shape::Adversarial(name.to_string(), orient.to_string());
+    }
+    match tok.split_once('x') {
+        Some((r, c)) => Shape::Matrix(
+            r.parse().expect("rows not a number"),
+            c.parse().expect("cols not a number"),
+        ),
+        None => Shape::Column(tok.parse().expect("n not a number")),
+    }
+}
+
+/// Why a row failed, chosen from its key so the message names the contract that broke
+/// rather than making the reader go looking for it.
+fn failure_hint(shape: &str, label: &str) -> &'static str {
+    if label.starts_with("exp") {
+        "Math.exp and f64::exp disagree on this corpus; see the exp note in mat.rs"
+    } else if shape.starts_with("adv/") {
+        "ordering semantics drifted: Scala compares through Ordering[Double] \
+         (java.lang.Double.compare), where NaN outranks every number and -0.0 < 0.0 — \
+         see java_double_compare in mat.rs"
+    } else if label.starts_with('t') || label.contains("slice") {
+        "the view model drifted; see the layout note in mat.rs"
+    } else {
+        "association order drifted"
+    }
+}
+
+/// The fixture as `(shape key, case label, expected word)`.
+fn fixture_rows(text: &str) -> Vec<(String, String, u64)> {
+    text.lines()
         .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
         .map(|l| {
             let mut it = l.split_whitespace();
-            let n: usize = it.next().expect("missing n").parse().expect("n not a number");
+            let shape = it.next().expect("missing shape").to_string();
             let label = it.next().expect("missing case label").to_string();
             let bits = u64::from_str_radix(it.next().expect("missing hex"), 16)
                 .expect("hex not parseable");
-            (n, label, bits)
+            (shape, label, bits)
         })
-        .collect();
+        .collect()
+}
 
+#[test]
+fn mat_reductions_match_the_scala_reference_bit_for_bit() {
+    let rows = fixture_rows(&fixture());
     assert!(!rows.is_empty(), "fixture carried no rows");
 
-    // Draw once to the largest size; every smaller size takes a prefix, exactly as the
-    // generator does.
-    let max_n = rows.iter().map(|(n, _, _)| *n).max().expect("rows non-empty");
+    // Draw once to the largest prefix any row needs; every shape takes a prefix, exactly
+    // as the generator does.
+    let max_n = rows
+        .iter()
+        .map(|(shape, _, _)| match parse_shape(shape) {
+            Shape::Column(n) => n,
+            Shape::Matrix(r, c) => r * c,
+            // Adversarial rows carry their own literal values, not a corpus prefix.
+            Shape::Adversarial(..) => 0,
+        })
+        .max()
+        .expect("rows non-empty");
     let all = corpus(max_n);
     let all_exp = corpus_exp(max_n);
 
     let mut checked = 0usize;
-    for (n, label, want) in &rows {
-        let m = MatD::apply(&all[..*n]);
-        let me = MatD::apply(&all_exp[..*n]);
-        let got = case_word(&m, &me, label);
-        assert_eq!(
-            got, *want,
-            "n={n} case={label}: got {got:016x}, want {want:016x} — \
-             {}",
-            if label.starts_with("exp") {
-                "Math.exp and f64::exp disagree on this corpus; see the exp note in mat.rs"
-            } else {
-                "association order drifted"
+    let mut two_d = 0usize;
+    let mut adv = 0usize;
+    for (shape, label, want) in &rows {
+        let got = match parse_shape(shape) {
+            Shape::Column(n) => {
+                let m = MatD::apply(&all[..n]);
+                let me = MatD::apply(&all_exp[..n]);
+                case_word(&m, &me, label)
             }
+            Shape::Matrix(r, c) => {
+                two_d += 1;
+                case_word_2d(&MatD::create(all[..r * c].to_vec(), r, c), label)
+            }
+            Shape::Adversarial(name, orient) => {
+                adv += 1;
+                case_word_adv(&adv_matrix(&orient, adversarial_array(&name)), label)
+            }
+        };
+        assert_eq!(
+            got,
+            *want,
+            "shape={shape} case={label}: got {got:016x}, want {want:016x} — {}",
+            failure_hint(shape, label)
         );
         checked += 1;
     }
 
-    // Guard against a fixture that silently shrinks to nothing meaningful.
+    // Guard against a fixture that silently shrinks to nothing meaningful. Each count is
+    // asserted separately because the three groups pin different things, and losing any
+    // one of them would leave the others looking healthy.
     assert!(
-        checked >= 120,
-        "only {checked} rows checked; the fixture should cover 13 sizes x 10 cases"
+        checked >= 750,
+        "only {checked} rows checked; expected 13 sizes x 10 + 11 shapes x 27 + 10 adversarial x 33"
+    );
+    assert!(
+        two_d >= 250,
+        "only {two_d} 2-D rows; the view model would go unchecked"
+    );
+    assert!(
+        adv >= 300,
+        "only {adv} adversarial rows; NaN and signed-zero ordering would go unchecked — \
+         which is exactly how they were wrong before"
     );
 }
 
@@ -205,7 +430,69 @@ fn the_corpus_is_sensitive_to_association_order() {
     assert_ne!(
         chunked.to_bits(),
         naive.to_bits(),
-        "corpus no longer distinguishes a naive fold from sumD — the parity fixture \
-         would pass even for a wrong implementation"
+        "corpus no longer distinguishes a naive fold from sumD — the parity fixture would pass even for a wrong implementation"
+    );
+}
+
+#[test]
+fn the_adversarial_rows_would_catch_the_primitive_comparisons() {
+    // These rows exist because `<`/`>` passed all 427 of the others. Assert they really
+    // do separate the two orderings, so they cannot quietly become decoration.
+    let zeros = adversarial_array("zeros");
+    let naive_min = zeros
+        .iter()
+        .fold(f64::INFINITY, |a, &b| if b < a { b } else { a });
+    assert_ne!(
+        canon(adv_matrix("col", zeros.clone()).min()),
+        canon(naive_min),
+        "min over [0.0, -0.0] no longer distinguishes Ordering[Double] from `<`"
+    );
+
+    let nan = adversarial_array("nanmid");
+    let naive_max = nan
+        .iter()
+        .fold(f64::NEG_INFINITY, |a, &b| if b > a { b } else { a });
+    assert_ne!(
+        canon(adv_matrix("col", nan.clone()).max()),
+        canon(naive_max),
+        "max over a lane containing NaN no longer distinguishes Ordering[Double] from `>`"
+    );
+
+    // And that negnan separates Double.compare from f64::total_cmp, which is the trap a
+    // port falls into after fixing the first two.
+    let neg = adversarial_array("negnan");
+    let total_cmp_min = neg
+        .iter()
+        .copied()
+        .reduce(|a, b| {
+            if b.total_cmp(&a) == std::cmp::Ordering::Less {
+                b
+            } else {
+                a
+            }
+        })
+        .expect("non-empty");
+    assert_ne!(
+        canon(adv_matrix("col", neg.clone()).min()),
+        canon(total_cmp_min),
+        "negnan no longer separates java.lang.Double.compare from f64::total_cmp"
+    );
+}
+
+#[test]
+fn the_corpus_is_sensitive_to_the_view_model() {
+    // The 2-D half of the fixture is only evidence if a view really does sum differently
+    // from a contiguous matrix on this corpus. Both of these would pass vacuously for a
+    // port that materialised every view, so assert they do not.
+    let m = MatD::create(corpus(120_000), 300, 400);
+    assert_ne!(
+        m.sum().to_bits(),
+        m.T().sum().to_bits(),
+        "a transposed view sums identically here; the tsum rows pin nothing"
+    );
+    assert_ne!(
+        fnv(&m.stdAxis(0).toArray()),
+        fnv(&m.T().stdAxis(1).toArray()),
+        "std(axis) no longer distinguishes its two mean algorithms; std0fnv/tstd1fnv pin nothing"
     );
 }

@@ -56,8 +56,8 @@ What is covered, with **no dependency** taken for any of it:
 
 Two independent mechanisms, because they catch different things.
 
-**1. Committed fixtures — per-method values.** Nine files under `test-data/*-parity/` hold
-roughly 19,900 rows of the Scala side's own answers (with `java.time`,
+**1. Committed fixtures — per-method values.** Ten files under `test-data/*-parity/` hold
+roughly 20,600 rows of the Scala side's own answers (with `java.time`,
 `java.math.BigDecimal` and NumPy as the transitive oracles): path 10,535 · date 4,173 ·
 tprf3 3,039 · big 633 · smartparse 539 · csv 458 · numpy-rng 378 · walk 30 · hash 23. A
 Scala suite and a Rust test each check themselves against the same file, so **neither

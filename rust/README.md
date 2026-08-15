@@ -25,7 +25,7 @@ both (as of 0.16.0), with fixture rows pinning them.
 | :--- | :--- | :--- |
 | `upath` | all 92 `uni.ext.PathExts` Path extensions | paths, metadata, traversal, mutation, line I/O, CSV, hashes |
 | `utime` | `UniDateTime`, `DateFormat`, `SmartParse` | field arithmetic, pattern formatting, format-autodetecting parsing |
-| `udata` | `Big` and its CSV loaders | `java.math.BigDecimal` semantics on base-10⁹ limbs |
+| `udata` | `Big` and its CSV loaders; `Mat[Double]` as `MatD`/`CVecD`/`RVecD` | `java.math.BigDecimal` semantics on base-10⁹ limbs; matrices carry Scala's own stride descriptor, so `transpose`/`slice`/`broadcastTo` stay zero-copy views — which is what keeps the reductions bit-identical |
 | `numpy_rng` | `uni.data.NumPyRNG` | bit-identical to `np.random.default_rng` |
 | `t3prf` | `uni.stats.Tprf3` | the crate's original content, and its former name |
 
@@ -33,7 +33,7 @@ both (as of 0.16.0), with fixture rows pinning them.
 
 Two mechanisms, catching different things.
 
-**Fixtures — per-method values.** Nine files under `../test-data/*-parity/` hold ~19,900 rows
+**Fixtures — per-method values.** Ten files under `../test-data/*-parity/` hold ~20,600 rows
 of the Scala implementation's own answers — `java.time`, `java.math.BigDecimal` and NumPy are
 the transitive oracles. A Scala suite and a Rust test check each independently, so neither
 language needs the other installed. Because `PathContext` takes `is_windows` as *data*, this
