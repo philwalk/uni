@@ -566,6 +566,150 @@ object Mat {
       result(i) = s
       i += 1
 
+  /** Sum of squared deviations from `mu(j)`, down the columns `[c0, c1)`.
+   *
+   *  Eight columns at a time with the accumulators in locals, as `colSumsD`. Each column
+   *  accumulates in increasing row order, which is the order `std(axis = 0)` already
+   *  used -- what changes is only that the sweep is row-major instead of walking one
+   *  column at a time through row-major storage. */
+  private def colSqDevD(a: Array[Double], cols: Int, rows: Int, c0: Int, c1: Int,
+                        mu: Array[Double], ss: Array[Double]): Unit =
+    var jb = c0
+    while jb + 8 <= c1 do
+      var s0 = 0.0; var s1 = 0.0; var s2 = 0.0; var s3 = 0.0
+      var s4 = 0.0; var s5 = 0.0; var s6 = 0.0; var s7 = 0.0
+      val m0 = mu(jb);     val m1 = mu(jb + 1); val m2 = mu(jb + 2); val m3 = mu(jb + 3)
+      val m4 = mu(jb + 4); val m5 = mu(jb + 5); val m6 = mu(jb + 6); val m7 = mu(jb + 7)
+      var i = 0
+      while i < rows do
+        val base = i * cols + jb
+        val d0 = a(base) - m0;         s0 += d0 * d0
+        val d1 = a(base + 1) - m1;     s1 += d1 * d1
+        val d2 = a(base + 2) - m2;     s2 += d2 * d2
+        val d3 = a(base + 3) - m3;     s3 += d3 * d3
+        val d4 = a(base + 4) - m4;     s4 += d4 * d4
+        val d5 = a(base + 5) - m5;     s5 += d5 * d5
+        val d6 = a(base + 6) - m6;     s6 += d6 * d6
+        val d7 = a(base + 7) - m7;     s7 += d7 * d7
+        i += 1
+      ss(jb) = s0;     ss(jb + 1) = s1; ss(jb + 2) = s2; ss(jb + 3) = s3
+      ss(jb + 4) = s4; ss(jb + 5) = s5; ss(jb + 6) = s6; ss(jb + 7) = s7
+      jb += 8
+    while jb < c1 do
+      var s = 0.0
+      val mj = mu(jb)
+      var i = 0
+      while i < rows do { val d = a(i * cols + jb) - mj; s += d * d; i += 1 }
+      ss(jb) = s
+      jb += 1
+
+  /** Per-row standard deviation for the rows `[r0, r1)`; already row-major, so this
+   *  only gains the lane split. */
+  private def rowStdD(a: Array[Double], cols: Int, r0: Int, r1: Int,
+                      result: Array[Double]): Unit =
+    var i = r0
+    while i < r1 do
+      val base = i * cols
+      var mu = 0.0; var j = 0
+      while j < cols do { mu += a(base + j); j += 1 }
+      mu /= cols
+      var ss = 0.0; j = 0
+      while j < cols do { val d = a(base + j) - mu; ss += d * d; j += 1 }
+      result(i) = math.sqrt(ss / cols)
+      i += 1
+
+  /** Running extremum down the columns `[c0, c1)`, seeded by the caller from row 0.
+   *
+   *  Eight columns at a time with the accumulators in locals, exactly as `colSumsD`:
+   *  `result(j)` otherwise takes a load and a conditional store per element. Each column
+   *  still scans in increasing row order and replaces only on a strict comparison, so
+   *  ties keep their first occurrence and the result is bit-identical to the scalar
+   *  sweep. `wantMax` is hoisted out of the inner loops rather than tested per element. */
+  private def colExtremaD(a: Array[Double], off: Int, rs: Int, cs: Int,
+                          rows: Int, c0: Int, c1: Int, result: Array[Double],
+                          wantMax: Boolean): Unit =
+    var jb = c0
+    while jb + 8 <= c1 do
+      var s0 = result(jb);     var s1 = result(jb + 1)
+      var s2 = result(jb + 2); var s3 = result(jb + 3)
+      var s4 = result(jb + 4); var s5 = result(jb + 5)
+      var s6 = result(jb + 6); var s7 = result(jb + 7)
+      var i = 0
+      while i < rows do
+        val base = off + i * rs + jb * cs
+        val v0 = a(base);          val v1 = a(base + cs)
+        val v2 = a(base + 2 * cs); val v3 = a(base + 3 * cs)
+        val v4 = a(base + 4 * cs); val v5 = a(base + 5 * cs)
+        val v6 = a(base + 6 * cs); val v7 = a(base + 7 * cs)
+        if wantMax then
+          if gtD(v0, s0) then s0 = v0
+          if gtD(v1, s1) then s1 = v1
+          if gtD(v2, s2) then s2 = v2
+          if gtD(v3, s3) then s3 = v3
+          if gtD(v4, s4) then s4 = v4
+          if gtD(v5, s5) then s5 = v5
+          if gtD(v6, s6) then s6 = v6
+          if gtD(v7, s7) then s7 = v7
+        else
+          if ltD(v0, s0) then s0 = v0
+          if ltD(v1, s1) then s1 = v1
+          if ltD(v2, s2) then s2 = v2
+          if ltD(v3, s3) then s3 = v3
+          if ltD(v4, s4) then s4 = v4
+          if ltD(v5, s5) then s5 = v5
+          if ltD(v6, s6) then s6 = v6
+          if ltD(v7, s7) then s7 = v7
+        i += 1
+      result(jb) = s0;     result(jb + 1) = s1
+      result(jb + 2) = s2; result(jb + 3) = s3
+      result(jb + 4) = s4; result(jb + 5) = s5
+      result(jb + 6) = s6; result(jb + 7) = s7
+      jb += 8
+    while jb < c1 do
+      var s = result(jb)
+      var i = 0
+      while i < rows do
+        val v = a(off + i * rs + jb * cs)
+        if (if wantMax then gtD(v, s) else ltD(v, s)) then s = v
+        i += 1
+      result(jb) = s
+      jb += 1
+
+  /** Running extremum across the rows `[r0, r1)`. Rows are independent scans, so
+   *  splitting by row is bit-identical by construction. */
+  private def rowExtremaD(a: Array[Double], off: Int, rs: Int, cs: Int,
+                          cols: Int, r0: Int, r1: Int, result: Array[Double],
+                          wantMax: Boolean): Unit =
+    var i = r0
+    while i < r1 do
+      val base = off + i * rs
+      var s = a(base)
+      var j = 0
+      if wantMax then
+        while j < cols do { val v = a(base + j * cs); if gtD(v, s) then s = v; j += 1 }
+      else
+        while j < cols do { val v = a(base + j * cs); if ltD(v, s) then s = v; j += 1 }
+      result(i) = s
+      i += 1
+
+  /** Unboxed `min(axis)`/`max(axis)` for a Mat[Double] of any layout, split by lane.
+   *  Only valid when `fastDOrd(m, ord)` holds and `m` is non-empty. */
+  private def extremumAxisD[T](m: Mat[T], axis: Int, wantMax: Boolean): Mat[Double] =
+    val a    = m.tdata.asInstanceOf[Array[Double]]
+    val off  = m.offset; val rs = m.rs; val cs = m.cs
+    val rows = m.rows; val cols = m.cols
+    val total = rows.toLong * cols
+    if axis == 0 then
+      val result = new Array[Double](cols)
+      var j = 0
+      while j < cols do { result(j) = a(off + j * cs); j += 1 }   // seed from row 0
+      overLanes(cols, total)((c0, c1) => colExtremaD(a, off, rs, cs, rows, c0, c1, result, wantMax))
+      Mat.create(result, 1, cols)
+    else
+      val result = new Array[Double](rows)
+      overLanes(rows, total)((r0, r1) => rowExtremaD(a, off, rs, cs, cols, r0, r1, result, wantMax))
+      Mat.create(result, rows, 1)
+
   /** Runs `body(from, until)` over `lanes` split into chunks, in parallel above
    *  [[BcastParallelThreshold]] total elements. Chunk count is pinned, as elsewhere, so
    *  a failure reproduces. */
@@ -3151,6 +3295,8 @@ object Mat {
 
     def max(axis: Int)(using ord: Ordering[T]): Mat[T] = {
       require(axis == 0 || axis == 1, s"axis must be 0 or 1, got $axis")
+      if !m.isEmpty && fastDOrd(m, ord) then
+        return extremumAxisD(m, axis, wantMax = true).asInstanceOf[Mat[T]]
       if axis == 0 then
         // Max down rows → 1xcols
         val result = Array.tabulate(m.cols)(j => m(0, j))
@@ -3177,6 +3323,8 @@ object Mat {
 
     def min(axis: Int)(using ord: Ordering[T]): Mat[T] = {
       require(axis == 0 || axis == 1, s"axis must be 0 or 1, got $axis")
+      if !m.isEmpty && fastDOrd(m, ord) then
+        return extremumAxisD(m, axis, wantMax = false).asInstanceOf[Mat[T]]
       if axis == 0 then
         val result = Array.tabulate(m.cols)(j => m(0, j))
         var i = 1
@@ -4344,30 +4492,24 @@ object Mat {
       then
         val a = m.tdata.asInstanceOf[Array[Double]]
         val rows = m.rows; val cols = m.cols
+        val total = rows.toLong * cols
         if axis == 0 then
-          val result = Array.ofDim[Double](cols)
+          // Two row-major sweeps -- means, then squared deviations -- instead of one
+          // column-at-a-time double sweep. Each column still accumulates in increasing
+          // row order in both passes, so the result is bit-identical; only the traversal
+          // and the lane split are new.
+          val mu = Array.ofDim[Double](cols)
+          overLanes(cols, total)((c0, c1) => colSumsD(a, 0, cols, 1, rows, c0, c1, mu))
           var j = 0
-          while j < cols do
-            var mu = 0.0; var i = 0
-            while i < rows do { mu += a(i * cols + j); i += 1 }
-            mu /= rows
-            var ss = 0.0; i = 0
-            while i < rows do { val d = a(i * cols + j) - mu; ss += d * d; i += 1 }
-            result(j) = math.sqrt(ss / rows)
-            j += 1
-          Mat.create(result, 1, cols).asInstanceOf[Mat[T]]
+          while j < cols do { mu(j) = mu(j) / rows; j += 1 }
+          val ss = Array.ofDim[Double](cols)
+          overLanes(cols, total)((c0, c1) => colSqDevD(a, cols, rows, c0, c1, mu, ss))
+          var k = 0
+          while k < cols do { ss(k) = math.sqrt(ss(k) / rows); k += 1 }
+          Mat.create(ss, 1, cols).asInstanceOf[Mat[T]]
         else
           val result = Array.ofDim[Double](rows)
-          var i = 0
-          while i < rows do
-            val base = i * cols
-            var mu = 0.0; var j = 0
-            while j < cols do { mu += a(base + j); j += 1 }
-            mu /= cols
-            var ss = 0.0; j = 0
-            while j < cols do { val d = a(base + j) - mu; ss += d * d; j += 1 }
-            result(i) = math.sqrt(ss / cols)
-            i += 1
+          overLanes(rows, total)((r0, r1) => rowStdD(a, cols, r0, r1, result))
           Mat.create(result, rows, 1).asInstanceOf[Mat[T]]
       else if axis == 0 then
         val result = Array.ofDim[T](m.cols)

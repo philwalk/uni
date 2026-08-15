@@ -135,12 +135,6 @@ impl MatD {
         }
     }
 
-    /// Lane `k` along `axis`, gathered in order.
-    fn lane(&self, axis: usize, k: usize) -> Vec<f64> {
-        let (_, len) = self.lanes(axis);
-        (0..len).map(|t| self.lane_at(axis, k, t)).collect()
-    }
-
     /// Sums along `axis` — Scala's `sum(axis)`. Axis 0 gives a 1×cols row of column
     /// sums; axis 1 a rows×1 column of row sums.
     ///
@@ -219,40 +213,142 @@ impl MatD {
 
     /// The shape shared by [`MatD::minAxis`] and [`MatD::maxAxis`], which Scala writes
     /// as the same loop with `lt` swapped for `gt`.
-    fn extremumAxis(&self, axis: usize, better: impl Fn(f64, f64) -> bool) -> Self {
+    fn extremumAxis(&self, axis: usize, better: impl Fn(f64, f64) -> bool + Sync + Send) -> Self {
         check(axis);
         assert!(!self.isEmpty(), "min/max along an axis of an empty matrix");
         let (rows, cols) = (self.rows(), self.cols());
-        // Row-major in both cases, for the locality reason in `sumAxis`. Scala seeds
-        // from row 0 / column 0 and replaces only on a strict Less/Greater under
-        // `Ordering[Double]`, so ties keep their first occurrence -- and NaN, which
-        // that ordering ranks above every number, DOES displace a max.
+        let parallel = rows * cols >= LANE_PARALLEL_THRESHOLD;
+        // Split by LANE, as the axis sums do: every lane still scans in increasing index
+        // order and replaces only on a strict comparison, so ties keep their first
+        // occurrence and the result is bit-identical to the sequential sweep.
         let out = if axis == 0 {
             let mut acc: Vec<f64> = (0..cols).map(|j| self.at(0, j)).collect();
-            for i in 1..rows {
-                for (j, slot) in acc.iter_mut().enumerate() {
-                    let current = self.at(i, j);
-                    if better(current, *slot) {
-                        *slot = current;
-                    }
-                }
+            if parallel && cols >= 8 {
+                let step = cols.div_ceil(MAX_LANE_CHUNKS.min((cols / 8).max(1)));
+                acc.par_chunks_mut(step).enumerate().for_each(|(k, slot)| {
+                    self.col_extrema(k * step, slot, &better);
+                });
+            } else {
+                self.col_extrema(0, &mut acc, &better);
             }
             acc
         } else {
-            (0..rows)
-                .map(|i| {
-                    let mut acc = self.at(i, 0);
-                    for j in 1..cols {
-                        let current = self.at(i, j);
-                        if better(current, acc) {
-                            acc = current;
-                        }
-                    }
-                    acc
-                })
-                .collect()
+            let mut out = vec![0.0f64; rows];
+            if parallel && rows >= 8 {
+                let step = rows.div_ceil(MAX_LANE_CHUNKS.min((rows / 8).max(1)));
+                out.par_chunks_mut(step).enumerate().for_each(|(k, slot)| {
+                    self.row_extrema(k * step, slot, &better);
+                });
+            } else {
+                self.row_extrema(0, &mut out, &better);
+            }
+            out
         };
         shaped(out, axis)
+    }
+
+    /// Running extremum down the columns starting at `c0`, seeded by the caller from
+    /// row 0. Eight columns at a time with the accumulators in locals, as `col_sums`.
+    fn col_extrema(
+        &self,
+        c0: usize,
+        slot: &mut [f64],
+        better: &(impl Fn(f64, f64) -> bool + Sync + Send),
+    ) {
+        let n = slot.len();
+        let mut jb = 0usize;
+        while jb + 8 <= n {
+            let (mut s0, mut s1, mut s2, mut s3) =
+                (slot[jb], slot[jb + 1], slot[jb + 2], slot[jb + 3]);
+            let (mut s4, mut s5, mut s6, mut s7) =
+                (slot[jb + 4], slot[jb + 5], slot[jb + 6], slot[jb + 7]);
+            for i in 0..self.rows() {
+                let c = c0 + jb;
+                let v0 = self.at(i, c);
+                let v1 = self.at(i, c + 1);
+                let v2 = self.at(i, c + 2);
+                let v3 = self.at(i, c + 3);
+                let v4 = self.at(i, c + 4);
+                let v5 = self.at(i, c + 5);
+                let v6 = self.at(i, c + 6);
+                let v7 = self.at(i, c + 7);
+                if better(v0, s0) {
+                    s0 = v0;
+                }
+                if better(v1, s1) {
+                    s1 = v1;
+                }
+                if better(v2, s2) {
+                    s2 = v2;
+                }
+                if better(v3, s3) {
+                    s3 = v3;
+                }
+                if better(v4, s4) {
+                    s4 = v4;
+                }
+                if better(v5, s5) {
+                    s5 = v5;
+                }
+                if better(v6, s6) {
+                    s6 = v6;
+                }
+                if better(v7, s7) {
+                    s7 = v7;
+                }
+            }
+            slot[jb] = s0;
+            slot[jb + 1] = s1;
+            slot[jb + 2] = s2;
+            slot[jb + 3] = s3;
+            slot[jb + 4] = s4;
+            slot[jb + 5] = s5;
+            slot[jb + 6] = s6;
+            slot[jb + 7] = s7;
+            jb += 8;
+        }
+        // Tail columns, one accumulator each.
+        while jb < n {
+            slot[jb] = self.col_extremum(c0 + jb, slot[jb], better);
+            jb += 1;
+        }
+    }
+
+    /// Running extremum down one column, seeded from `seed`.
+    fn col_extremum(
+        &self,
+        col: usize,
+        seed: f64,
+        better: &(impl Fn(f64, f64) -> bool + Sync + Send),
+    ) -> f64 {
+        let mut s = seed;
+        for i in 0..self.rows() {
+            let v = self.at(i, col);
+            if better(v, s) {
+                s = v;
+            }
+        }
+        s
+    }
+
+    /// Running extremum across the rows starting at `r0`. Rows are independent scans.
+    fn row_extrema(
+        &self,
+        r0: usize,
+        slot: &mut [f64],
+        better: &(impl Fn(f64, f64) -> bool + Sync + Send),
+    ) {
+        for (k, out) in slot.iter_mut().enumerate() {
+            let i = r0 + k;
+            let mut s = self.at(i, 0);
+            for j in 1..self.cols() {
+                let v = self.at(i, j);
+                if better(v, s) {
+                    s = v;
+                }
+            }
+            *out = s;
+        }
     }
 
     /// Population standard deviations along `axis` — Scala's `std(axis)`.
@@ -274,15 +370,25 @@ impl MatD {
         let n = len as f64;
         let out = (0..count)
             .map(|k| {
-                let lane = self.lane(axis, k);
+                // Two passes over the lane READ IN PLACE. This used to materialise the
+                // lane into a Vec first, an allocation per lane on top of the work.
                 let mu = if fast {
-                    lane.iter().fold(0.0f64, |a, &b| a + b) / n
+                    let mut acc = 0.0f64;
+                    for t in 0..len {
+                        acc += self.lane_at(axis, k, t);
+                    }
+                    acc / n
                 } else {
+                    // The strided path takes its mean through the chunked `sum_d`, which
+                    // is a DIFFERENT association order from the plain fold above. That
+                    // asymmetry is Scala's and is pinned by the `std0fnv`/`tstd1fnv`
+                    // fixture rows, so it is reproduced rather than unified.
+                    let lane: Vec<f64> = (0..len).map(|t| self.lane_at(axis, k, t)).collect();
                     sum_d(&lane) / n
                 };
                 let mut sum_sq = 0.0f64;
-                for x in lane {
-                    let d = x - mu;
+                for t in 0..len {
+                    let d = self.lane_at(axis, k, t) - mu;
                     sum_sq += d * d;
                 }
                 (sum_sq / n).sqrt()
@@ -342,16 +448,33 @@ impl MatD {
         if self.isEmpty() {
             return Self::create(Vec::new(), self.rows(), self.cols());
         }
-        let (count, len) = self.lanes(axis);
-        let mut out = vec![0.0f64; self.size()];
-        for k in 0..count {
-            let mut acc = self.lane_at(axis, k, 0);
-            for t in 0..len {
-                acc = step(acc, self.lane_at(axis, k, t));
-                out[self.lane_index(axis, k, t)] = acc;
+        let (rows, cols) = (self.rows(), self.cols());
+        let mut out = vec![0.0f64; rows * cols];
+        if axis == 0 {
+            // One accumulator per column, advanced row by row, rather than a
+            // column-at-a-time outer loop. Each column's running extremum still advances
+            // in increasing row order, so every cell is identical -- but `out` is written
+            // in row-major order instead of jumping `cols` elements per store, which was
+            // costing 4x against the Scala side.
+            let mut acc: Vec<f64> = (0..cols).map(|j| self.at(0, j)).collect();
+            for i in 0..rows {
+                let obase = i * cols;
+                for (j, a) in acc.iter_mut().enumerate() {
+                    *a = step(*a, self.at(i, j));
+                    out[obase + j] = *a;
+                }
+            }
+        } else {
+            for i in 0..rows {
+                let obase = i * cols;
+                let mut acc = self.at(i, 0);
+                for j in 0..cols {
+                    acc = step(acc, self.at(i, j));
+                    out[obase + j] = acc;
+                }
             }
         }
-        Self::create(out, self.rows(), self.cols())
+        Self::create(out, rows, cols)
     }
 
     /// Row-major position in the *result* of element `t` of lane `k`.

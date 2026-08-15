@@ -55,24 +55,31 @@ Nothing in `docs/MatDCheatSheet.md` trails NumPy in either language except `matm
 which is a BLAS question rather than a `Mat` one and has no Rust column yet. Nine rows
 did, by up to 23x.
 
-Four changes on the Scala side:
+On the Scala side:
 
-- `sum`, `mean`, `std`, `variance`, `sum(axis)`, the order statistics and the elementwise
-  family (`abs` `sqrt` `exp` `log`) gained unboxed branches that read a `Mat[Double]` of
-  **any** layout through the stride equation. Previously only contiguous-at-offset-0
-  matrices avoided `Numeric`/`Ordering` dispatch on erased `T`; every view boxed per
-  element.
+- `sum`, `mean`, `std`, `variance`, `sum(axis)`, `min(axis)`, `max(axis)`, the order
+  statistics and the elementwise family (`abs` `sqrt` `exp` `log`) gained unboxed
+  branches that read a `Mat[Double]` of **any** layout through the stride equation.
+  Previously only contiguous-at-offset-0 matrices avoided `Numeric`/`Ordering` dispatch
+  on erased `T`. `min(axis)`/`max(axis)` were the worst of them, boxing on every layout
+  including contiguous.
 - The elementwise maps went parallel. That was the larger half: `m + 1.0` was already 6x
   faster than `m.abs` on identical data purely because one used `fillD` and the other did
   not.
 - The order statistics went parallel, split by row block.
-- `sum(axis)` splits by LANE — columns for axis 0, rows for axis 1 — and column sums hold
-  eight accumulators in registers across the row sweep rather than doing a
-  read-modify-write per element.
+- The axis family — `sum(axis)`, `min(axis)`, `max(axis)` — splits by LANE (columns for
+  axis 0, rows for axis 1), and the column forms hold eight accumulators in registers
+  across the row sweep rather than doing a read-modify-write per element.
+- `std(axis = 0)` walks two row-major sweeps, means then squared deviations, instead of
+  one column-at-a-time double sweep through row-major storage. 8.3x, the largest single
+  win here.
 
-The last two are ported to Rust, whose `scan` and `sumAxis` were still sequential:
-`scan` splits by row block with the same order-preserving combine, `sumAxis` splits by
-lane, and `col_sums` blocks eight columns at a time.
+Ported to Rust, whose `scan`, `sumAxis`, `minAxis`/`maxAxis`, `cummax`/`cummin` and
+`stdAxis` were all still sequential or allocating: `scan` splits by row block with the
+same order-preserving combine, the axis family splits by lane with the same eight-wide
+blocking, `cummax`/`cummin` on axis 0 carry an accumulator array so `out` is written in
+row-major order instead of jumping `cols` elements per store, and `stdAxis` reads each
+lane in place rather than materialising it into a `Vec` first.
 
 **All of these are bit-preserving**, so `test-data/mat-parity/` is unchanged by them —
 unlike the strided `sum` above, which is a genuine order change. Two properties do the
@@ -94,9 +101,13 @@ Against NumPy at 1000x1000, worst rows before and after:
 | :--- | :--- | :--- |
 | `sum0@bcast` | 23.0x slower → 2.3x faster | 3.2x slower → 2.8x faster |
 | `sum0@transposed` | 18.7x slower → at parity | 4.1x slower → 4.4x faster |
+| `max1` | 9.3x slower → 1.7x faster | 2.3x slower → 2.7x faster |
 | `max` | 8.6x slower → 1.6x faster | 2.4x slower → 2.6x faster |
+| `min0` | 6.6x slower → 1.7x faster | 2.9x slower → 1.9x faster |
 | `argmax` | 3.4x slower → 2.0x faster | 2.0x slower → 2.8x faster |
 | `sqrt` | 2.4x slower → 3.8x faster | already ahead |
+| `std0` | 2.3x → 18.8x faster | 1.6x → 2.8x faster |
+| `cummax0` | already ahead | 1.3x → 3.4x faster |
 
 Five thresholds now exist across the two languages and are not interchangeable. Two are
 NUMERIC CONTRACT, because each selects between one block and many and so changes the
@@ -155,8 +166,10 @@ generator — the label is the join key. The previous two-script manual merge ha
 drawing inputs from different generators (`MatD.setSeed` is PCG64, `np.random.seed` is the
 legacy MT19937) with different iteration counts.
 
-Coverage grew past the original list — `log`, `sqrt`, `argmax`, the axis reductions — and
-gained a second table over **layouts**. NumPy's `M.T` and `M[1:]` are views exactly as
+Coverage grew past the original list — `log`, `sqrt`, `argmax`, `mean0`, `min0`, `max1`,
+`std0`, `cumsum1`, `cummin1` — and gained a second table over **layouts**. Widening it
+paid immediately: `min(axis)`/`max(axis)` had never appeared in any table and turned out
+to be 6.6x and 9.3x behind NumPy, boxing on every layout. NumPy's `M.T` and `M[1:]` are views exactly as
 `MatD`'s are, and NumPy's reductions are flat across them (`sum` 0.127 → 0.128 ms) where
 ours are not (0.040 → 0.422 Scala, 0.033 → 0.424 Rust); `sum(axis=0)` on a transposed view
 is 19× behind NumPy on the Scala side. Rows the Rust port lacks print "—", so the table

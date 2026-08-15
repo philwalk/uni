@@ -102,7 +102,13 @@ object MatBench:
       "argmax"    -> (() => m.argmax),
       "sum0"      -> (() => m.sum(0)),
       "sum1"      -> (() => m.sum(1)),
+      "mean0"     -> (() => m.mean(0)),
+      "min0"      -> (() => m.min(0)),
+      "max1"      -> (() => m.max(1)),
+      "std0"      -> (() => m.std(0)),
       "cumsum"    -> (() => m.cumsum),
+      "cumsum1"   -> (() => m.cumsum(1)),
+      "cummin1"   -> (() => m.cummin(1)),
       "cummax0"   -> (() => m.cummax(0)),
       "transpose" -> (() => m.T),
     )
@@ -178,7 +184,8 @@ object MatBench:
   val opLabels: Vector[String] = Vector(
     "randn", "matmul", "sigmoid", "relu", "vectorize", "add", "mul", "abs", "exp",
     "log", "sqrt", "sum", "mean", "std", "min", "max", "argmax", "sum0", "sum1",
-    "cumsum", "cummax0", "transpose",
+    "mean0", "min0", "max1", "std0", "cumsum", "cumsum1", "cummax0", "cummin1",
+    "transpose",
   )
 
   val layoutLabels: Vector[String] =

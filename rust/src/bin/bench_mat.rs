@@ -105,7 +105,13 @@ fn operation_table(m: &MatD, m2: &MatD, pos: &MatD) {
     row("argmax", min_ms(|| m.argmax().0 as f64));
     row("sum0", min_ms(|| m.sumAxis(0).at(0, 0)));
     row("sum1", min_ms(|| m.sumAxis(1).at(0, 0)));
+    row("mean0", min_ms(|| m.meanAxis(0).at(0, 0)));
+    row("min0", min_ms(|| m.minAxis(0).at(0, 0)));
+    row("max1", min_ms(|| m.maxAxis(1).at(0, 0)));
+    row("std0", min_ms(|| m.stdAxis(0).at(0, 0)));
     row("cumsum", min_ms(|| m.cumsum().at(0, 0)));
+    row("cumsum1", min_ms(|| m.cumsumAxis(1).at(0, 0)));
+    row("cummin1", min_ms(|| m.cummin(1).at(0, 0)));
     row("cummax0", min_ms(|| m.cummax(0).at(0, 0)));
     // O(1) in all three: a stride flip, no data movement. A sanity row — if it ever
     // costs anything, something started copying.
