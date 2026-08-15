@@ -1311,17 +1311,17 @@ object Tprf3 {
     val rc: Tprf3Result = tprfClosedForm(y, X, Z)
     val r3: Tprf3Result = estimate3prf(y, X, Right(Z), procedure = "IS Full")
 
-    printf("t3prf          R²=%.4f  yhat[0]=%.6f  adjR²=%.4f  phi:%dx%d  sigma:%dx%d%n",
+    printf("t3prf          R²=%.4f  yhat[0]=%.6f  adjR²=%.4f  phi:%dx%d  sigma:%dx%d\n",
       rf.rSquared, rf.y_hat(0, 0), rf.adjRsq, rf.phi.rows, rf.phi.cols, rf.sigma.rows, rf.sigma.cols)
-    printf("tprfClosedForm R²=%.4f  yhat[0]=%.6f%n", rc.rSquared, rc.y_hat(0, 0))
-    printf("estimate3prf   R²=%.4f  yhat[0]=%.6f%n", r3.rSquared, r3.forecasts(0, 0))
+    printf("tprfClosedForm R²=%.4f  yhat[0]=%.6f\n", rc.rSquared, rc.y_hat(0, 0))
+    printf("estimate3prf   R²=%.4f  yhat[0]=%.6f\n", r3.rSquared, r3.forecasts(0, 0))
 
     // Autoproxy IS Full
     val r4 = estimate3prf(y, X, Left(2), procedure = "IS Full")
-    printf("Autoproxy   R²=%.4f  yhat[0]=%.6f%n", r4.rSquared, r4.forecasts(0, 0))
+    printf("Autoproxy   R²=%.4f  yhat[0]=%.6f\n", r4.rSquared, r4.forecasts(0, 0))
 
     // OOS Recursive
     val r5 = estimate3prf(y, X, Right(Z), procedure = "OOS Recursive", mintrain = (100, 0))
     val nFore = (0 until T).count(i => !r5.forecasts(i, 0).isNaN)
-    printf("OOS Rec     R²=%.4f  n_forecasts=%d%n", r5.rSquared, nFore)
+    printf("OOS Rec     R²=%.4f  n_forecasts=%d\n", r5.rSquared, nFore)
 }

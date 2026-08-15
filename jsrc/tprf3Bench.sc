@@ -154,7 +154,7 @@ object Tprf3Bench {
       Tprf3.t3prf(y, X, Z)
       Tprf3.estimate3prf(y, X, Right(Z), procedure = "IS Full")
     }
-    printf("done (%.1f s)%n", warmSecs)
+    printf("done (%.1f s)\n", warmSecs)
 
     // ── IS Full ───────────────────────────────────────────────────────────
     // IS Full is sub-millisecond, so `loops` sized for the OOS procedures gives
@@ -170,8 +170,8 @@ object Tprf3Bench {
     val msFast   = bench(isLoops) { Tprf3.t3prf(y, X, Z) }
     val ms3prf   = bench(isLoops) { Tprf3.estimate3prf(y, X, Right(Z), procedure = "IS Full") }
 
-    printf("  [Scala]  %-26s  %8.2f ms/call%n", "Tprf3.t3prf", msFast)
-    printf("  [Scala]  %-26s  %8.2f ms/call%n", "Tprf3.estimate3prf IS Full", ms3prf)
+    printf("  [Scala]  %-26s  %8.2f ms/call\n", "Tprf3.t3prf", msFast)
+    printf("  [Scala]  %-26s  %8.2f ms/call\n", "Tprf3.estimate3prf IS Full", ms3prf)
 
     // ── OOS Recursive / Cross Val ─────────────────────────────────────────
     // Warm each OOS procedure explicitly (the IS Full warm-up above never runs
@@ -188,7 +188,7 @@ object Tprf3Bench {
     val msOosRec = bench(oosLoops) {
       Tprf3.estimate3prf(y, X, Right(Z), procedure = "OOS Recursive", mintrain = (T / 2, 0))
     }
-    printf("  [Scala]  %-26s  %8.2f ms/call  (loops=%d)%n",
+    printf("  [Scala]  %-26s  %8.2f ms/call  (loops=%d)\n",
       "Tprf3.estimate3prf OOS Rec", msOosRec, oosLoops)
 
     warm(oosWarm) {
@@ -197,7 +197,7 @@ object Tprf3Bench {
     val msCv = bench(oosLoops) {
       Tprf3.estimate3prf(y, X, Right(Z), procedure = "OOS Cross Val")
     }
-    printf("  [Scala]  %-26s  %8.2f ms/call  (loops=%d)%n",
+    printf("  [Scala]  %-26s  %8.2f ms/call  (loops=%d)\n",
       "Tprf3.estimate3prf OOS CV", msCv, oosLoops)
 
     ScalaRes(label, T, N, L, msFast, ms3prf, msOosRec, msCv)

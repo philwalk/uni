@@ -198,10 +198,21 @@ have been easiest to "simplify" away, and the most expensive. `sumD` — the chu
 unrolled sum — is only ever reached with a **contiguous array whose length is exactly
 `rows * cols`**: four call sites (`sum`, `mean`, `std`, `variance`), each guarded that
 way. `transpose`/`slice`/`broadcastTo` return zero-copy strided views that fail the guard
-and are summed sequentially instead — through the same inline stride equation
-`tdata(offset + r * rs + c * cs)` used everywhere else, not a degraded fallback. The
-difference is association ORDER, not quality. So the same numbers reduce two ways and
-`m.sum` ≠ `m.T.sum` in the last ulp.
+and are summed by the SAME algorithm over a different sequence. As of 0.16.1 one rule
+covers every layout: **8 unrolled accumulators over the logical row-major sequence,
+`min(MaxSumChunks, rows/8)` row blocks above 65536 elements, partials combined in block
+order.** What differs between a matrix and its transpose is the sequence, not the
+algorithm — so `m.sum` ≠ `m.T.sum` in the last ulp, and both are chunked.
+
+Before 0.16.1 a strided view was one sequential accumulator, which made `m.T.sum` 3.3x
+slower than NumPy with no way to improve it that did not move the last ulp. Both
+languages changed together and the fixture was regenerated; `sum` on a view therefore
+differs from what pre-0.16.1 produced. The contiguous path was not touched.
+
+Two thresholds are part of that contract rather than tuning knobs, because each selects
+between one block and many: `ParallelThreshold` (4096) for the contiguous `sumD` and
+`StridedSumParallelThreshold` (65536) for the strided form. Change either and the answer
+moves.
 
 Most of the family spells the guard as the shared `fastD` predicate, but not all of it,
 and the exceptions are worth knowing before porting: `sum` writes the test out inline in

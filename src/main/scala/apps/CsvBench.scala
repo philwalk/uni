@@ -30,6 +30,6 @@ object CsvBench:
     val mbps = mb / (ms / 1000.0)
 
     printf(
-      "Rows: %d, Cells: %d, File: %.1f MiB, Time: %.1f ms, Throughput: %.1f MiB/s%n",
+      "Rows: %d, Cells: %d, File: %.1f MiB, Time: %.1f ms, Throughput: %.1f MiB/s\n",
       rows, cells, mb, ms, mbps
     )

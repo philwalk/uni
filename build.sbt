@@ -114,8 +114,29 @@ Test / envVars ++= Map("OPENBLAS_NUM_THREADS" -> "1")
   // Enable Java Vector API (used by netlib VectorBLAS for SIMD-accelerated BLAS)
 val vectorApiOpts = Seq("--add-modules=jdk.incubator.vector")
 
-Test / javaOptions ++= vectorApiOpts ++ Seq("-Xss8m")
-javaOptions ++= vectorApiOpts
+/**
+ * LF, not the platform separator, as the DEFAULT line terminator.
+ *
+ * This changes only what gets APPENDED implicitly — `println`, `%n`, `Console.println`,
+ * `PrintWriter.println`, `System.lineSeparator()`. An explicitly written `\r` still
+ * reaches the output untouched, so `print("a\r\n")` and a progress-bar `\r` behave
+ * exactly as before. That is the distinction that rules out a byte-level CRLF→LF filter,
+ * which would rewrite intentional output too.
+ *
+ * It has to be a launch flag: `System.lineSeparator()` is cached at VM init, so calling
+ * `System.setProperty("line.separator", "\n")` from `main` provably does nothing. And a
+ * PrintStream that overrides `println` cannot catch `%n`, because Scala's
+ * `Console.printf` runs `String.format` before the stream ever sees the text.
+ *
+ * Only reaches forked JVMs, which is why `Compile / run / fork` and `Test / fork` above
+ * matter. Scripts run straight from a scala-cli shebang cannot receive it — there is no
+ * way to put a literal LF in a `#!/usr/bin/env -S` line — so those rely on `uni.println`
+ * and on sources not using `%n`.
+ */
+val lfSeparatorOpt = Seq("-Dline.separator=\n")
+
+Test / javaOptions ++= vectorApiOpts ++ lfSeparatorOpt ++ Seq("-Xss8m")
+javaOptions ++= vectorApiOpts ++ lfSeparatorOpt
 
 // tell MUnit to be quiet (it uses the same arguments as ScalaTest)
 

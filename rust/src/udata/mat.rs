@@ -104,6 +104,29 @@ pub const PARALLEL_THRESHOLD: usize = 4096;
 /// the summation order — and therefore the last ulp — is a function of length alone.
 pub const MAX_SUM_CHUNKS: usize = 16;
 
+/// Element count above which a STRIDED sum splits into row blocks.
+///
+/// Part of the numeric contract, not a tuning knob: it selects between one block and
+/// many, and partials are combined in block order, so it changes the answer. Pinned in
+/// `test-data/mat-parity/` and mirrored by `Mat.StridedSumParallelThreshold`. Higher
+/// than [`PARALLEL_THRESHOLD`] because a strided block has more per-element overhead to
+/// amortise.
+pub const STRIDED_SUM_PARALLEL_THRESHOLD: usize = 1 << 16;
+
+/// Element count above which the order statistics split across threads, mirroring
+/// `Mat.ScanParallelThreshold`.
+///
+/// Unlike the sum thresholds this is pure tuning, not contract: an extremum is
+/// associative and commutative under a total order, so the chunk count cannot move the
+/// answer. Higher than [`PARALLEL_THRESHOLD`] because one comparison per element does
+/// not amortise fork/join at 4096.
+pub(crate) const SCAN_PARALLEL_THRESHOLD: usize = 1 << 16;
+
+/// Element count above which the AXIS sums split across lanes, mirroring
+/// `Mat.LaneParallelThreshold`. Also pure tuning: splitting by lane leaves every lane's
+/// accumulation order intact.
+pub(crate) const LANE_PARALLEL_THRESHOLD: usize = 1 << 19;
+
 /// Element count above which elementwise work is spread across rows, mirroring
 /// `Mat.BcastParallelThreshold`.
 ///
@@ -863,15 +886,79 @@ impl MatD {
         }
     }
 
-    /// Plain row-major fold through the stride equation — Scala's general `sum` path.
+    /// Sum of a strided view, in the same shape as [`sum_d`] but over the logical
+    /// row-major sequence: 8 unrolled accumulators, then `min(MAX_SUM_CHUNKS, rows / 8)`
+    /// row blocks whose partials are combined sequentially in block order.
+    ///
+    /// CHANGED in 0.16.1, in lockstep with `Mat.sumStrided` on the Scala side, and the
+    /// fixture regenerated. It was a single sequential accumulator, which no amount of
+    /// tuning could improve without moving its last ulp. The contiguous path is
+    /// untouched.
+    ///
+    /// One rule now covers every layout: **8 unrolled accumulators over the logical
+    /// row-major sequence, chunked, partials combined in order.** What differs between a
+    /// matrix and its transpose is the sequence, not the algorithm.
+    ///
+    /// Accumulators carry across row boundaries within a block, and each row's sub-8
+    /// tail goes to its own carried accumulator — that is what makes the result a
+    /// function of shape and strides alone, not of how rows divided into blocks.
     fn strided_sum(&self) -> f64 {
+        let n = self.rows * self.cols;
+        if n < STRIDED_SUM_PARALLEL_THRESHOLD || self.rows < 8 {
+            return self.sum_row_block(0, self.rows);
+        }
+        let chunks = MAX_SUM_CHUNKS.min((self.rows / 8).max(1));
+        let step = self.rows.div_ceil(chunks);
+        let partials: Vec<f64> = (0..chunks)
+            .into_par_iter()
+            .map(|c| {
+                let from = c * step;
+                let until = (from + step).min(self.rows);
+                if from < until {
+                    self.sum_row_block(from, until)
+                } else {
+                    0.0
+                }
+            })
+            .collect();
         let mut total = 0.0f64;
-        for i in 0..self.rows {
-            for j in 0..self.cols {
-                total += self.at(i, j);
-            }
+        for p in partials {
+            total += p;
         }
         total
+    }
+
+    /// Rows `[r0, r1)`, 8 unrolled accumulators carried across rows. Mirrors Scala's
+    /// `sumRowBlock` exactly; the association order here is the contract.
+    fn sum_row_block(&self, r0: usize, r1: usize) -> f64 {
+        let (mut s0, mut s1, mut s2, mut s3) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
+        let (mut s4, mut s5, mut s6, mut s7) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
+        let mut tail = 0.0f64;
+        let a = &self.data;
+        let (off, rs, cs, cols) = (self.offset, self.rs, self.cs, self.cols);
+        // Scala computes `cols - 7` in Int arithmetic, where a short row yields a
+        // negative limit and the unrolled loop does not run.
+        let limit = cols.saturating_sub(7);
+        for r in r0..r1 {
+            let base = off + r * rs;
+            let mut j = 0;
+            while j < limit {
+                s0 += a[base + j * cs];
+                s1 += a[base + (j + 1) * cs];
+                s2 += a[base + (j + 2) * cs];
+                s3 += a[base + (j + 3) * cs];
+                s4 += a[base + (j + 4) * cs];
+                s5 += a[base + (j + 5) * cs];
+                s6 += a[base + (j + 6) * cs];
+                s7 += a[base + (j + 7) * cs];
+                j += 8;
+            }
+            while j < cols {
+                tail += a[base + j * cs];
+                j += 1;
+            }
+        }
+        (((s0 + s1) + (s2 + s3)) + ((s4 + s5) + (s6 + s7))) + tail
     }
 
     /// Arithmetic mean — Scala's `mean`: the matrix sum over the element count, one
@@ -972,10 +1059,50 @@ impl MatD {
     /// Row-major scan seeded from (0,0), replacing the accumulator whenever `better`
     /// holds. The single shape behind `min`/`max`/`argmin`/`argmax`, all four of which
     /// Scala writes as this same loop.
-    fn scan(&self, better: impl Fn(f64, f64) -> bool) -> ((usize, usize), f64) {
-        let mut best = self.at(0, 0);
-        let mut at = (0usize, 0usize);
-        for i in 0..self.rows {
+    fn scan(&self, better: impl Fn(f64, f64) -> bool + Sync + Send) -> ((usize, usize), f64) {
+        if self.rows * self.cols < SCAN_PARALLEL_THRESHOLD || self.rows < 8 {
+            return self.scan_rows(0, self.rows, &better);
+        }
+        // Split by row block. This cannot move the answer -- an extremum is associative
+        // and commutative under a total order -- and the combine below runs in block
+        // order replacing only on a strictly better value, so each block keeps its own
+        // first occurrence and the earliest block wins a tie, exactly as the sequential
+        // scan does.
+        let chunks = MAX_SUM_CHUNKS.min((self.rows / 8).max(1));
+        let step = self.rows.div_ceil(chunks);
+        let partials: Vec<Option<((usize, usize), f64)>> = (0..chunks)
+            .into_par_iter()
+            .map(|c| {
+                let from = c * step;
+                let until = (from + step).min(self.rows);
+                if from < until {
+                    Some(self.scan_rows(from, until, &better))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let mut acc: Option<((usize, usize), f64)> = None;
+        for p in partials.into_iter().flatten() {
+            match acc {
+                None => acc = Some(p),
+                Some((_, best)) if better(p.1, best) => acc = Some(p),
+                _ => {}
+            }
+        }
+        acc.unwrap_or(((0, 0), self.at(0, 0)))
+    }
+
+    /// Rows `[r0, r1)`, seeded from the first cell of `r0`.
+    fn scan_rows(
+        &self,
+        r0: usize,
+        r1: usize,
+        better: &(impl Fn(f64, f64) -> bool + Sync + Send),
+    ) -> ((usize, usize), f64) {
+        let mut best = self.at(r0, 0);
+        let mut at = (r0, 0usize);
+        for i in r0..r1 {
             for j in 0..self.cols {
                 let current = self.at(i, j);
                 if better(current, best) {

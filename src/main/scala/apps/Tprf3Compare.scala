@@ -24,14 +24,14 @@ object Tprf3Compare {
   private def check(label: String, got: MatD, ref: MatD, tol: Double = 1e-8): Unit =
     val diff = maxAbsDiff(got, ref)
     val status = if diff <= tol then "PASS" else "FAIL"
-    printf("%-22s  %s  max|Δ|=%.3e%n", label, status, diff)
+    printf("%-22s  %s  max|Δ|=%.3e\n", label, status, diff)
     if diff > tol then
       // Print first few differing rows for diagnosis
       var shown = 0
       for i <- 0 until got.rows if shown < 5 do
         val av = got(i, 0); val bv = ref(i, 0)
         if !av.isNaN && !bv.isNaN && math.abs(av - bv) > tol then
-          printf("  row %3d: scala=%.10f  python=%.10f  diff=%.3e%n", i, av, bv, math.abs(av - bv))
+          printf("  row %3d: scala=%.10f  python=%.10f  diff=%.3e\n", i, av, bv, math.abs(av - bv))
           shown += 1
 
   def main(args: Array[String]): Unit =
@@ -56,27 +56,27 @@ object Tprf3Compare {
     // ── IS Full (explicit Z) ─────────────────────────────────────────────────
     val r_is   = Tprf3.estimate3prf(y, X, Right(Z), procedure = "IS Full")
     val ref_is = load("fore_is.csv")
-    printf("IS Full        R²=%.6f  fore[0]=%.10f%n", r_is.rSquared, r_is.forecasts(0, 0))
+    printf("IS Full        R²=%.6f  fore[0]=%.10f\n", r_is.rSquared, r_is.forecasts(0, 0))
     check("IS Full", r_is.forecasts, ref_is)
 
     // ── IS Full (autoproxy L=2) ──────────────────────────────────────────────
     val r_ia   = Tprf3.estimate3prf(y, X, Left(2), procedure = "IS Full")
     val ref_ia = load("fore_is_auto.csv")
-    printf("IS Full auto   R²=%.6f  fore[0]=%.10f%n", r_ia.rSquared, r_ia.forecasts(0, 0))
+    printf("IS Full auto   R²=%.6f  fore[0]=%.10f\n", r_ia.rSquared, r_ia.forecasts(0, 0))
     check("IS Full auto", r_ia.forecasts, ref_ia)
 
     // ── OOS Recursive ────────────────────────────────────────────────────────
     val r_or   = Tprf3.estimate3prf(y, X, Right(Z), procedure = "OOS Recursive", mintrain = (50, 0))
     val ref_or = load("fore_oos_rec.csv")
     val n_or   = (0 until T).count(i => !r_or.forecasts(i, 0).isNaN)
-    printf("OOS Recursive  R²=%.6f  n_valid=%d%n", r_or.rSquared, n_or)
+    printf("OOS Recursive  R²=%.6f  n_valid=%d\n", r_or.rSquared, n_or)
     check("OOS Recursive", r_or.forecasts, ref_or)
 
     // ── OOS Cross Val ────────────────────────────────────────────────────────
     val r_cv   = Tprf3.estimate3prf(y, X, Right(Z), procedure = "OOS Cross Val")
     val ref_cv = load("fore_oos_cv.csv")
     val n_cv   = (0 until T).count(i => !r_cv.forecasts(i, 0).isNaN)
-    printf("OOS Cross Val  R²=%.6f  n_valid=%d%n", r_cv.rSquared, n_cv)
+    printf("OOS Cross Val  R²=%.6f  n_valid=%d\n", r_cv.rSquared, n_cv)
     check("OOS Cross Val", r_cv.forecasts, ref_cv)
 
     // ── Tprf3.t3prf ──────────────────────────────────────────────────────────
@@ -86,14 +86,14 @@ object Tprf3Compare {
     val rss = ((y - result.y_hat) ~^ 2.0).sum
     val ssy = ((y - y.mean) ~^ 2.0).sum
     val r2  = (ssy - rss) / ssy
-    printf("fast           R²=%.6f  yhat[0]=%.10f  adjR²=%.6f%n",
+    printf("fast           R²=%.6f  yhat[0]=%.10f  adjR²=%.6f\n",
       r2, result.y_hat(0, 0), result.adjRsq)
     check("fast vs Python ref", result.y_hat, ref_is)
 
     // ── Factor matrix ─────────────────────────────────────────────────────────
     println()
     val p1r2 = result.pass1columnsRsquared
-    printf("phi: %d×%d  sigma: %d×%d  pass1R²[0]=%.4f%n",
+    printf("phi: %d×%d  sigma: %d×%d  pass1R²[0]=%.4f\n",
       result.phi.rows, result.phi.cols, result.sigma.rows, result.sigma.cols,
       if p1r2.nonEmpty then p1r2(0) else Double.NaN)
 

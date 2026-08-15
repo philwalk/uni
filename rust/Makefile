@@ -18,8 +18,14 @@ fix:
 test:
 	cargo test --quiet
 
+# Builds the Rust columns of the cross-language tables. --release matters: the
+# binaries warn when run debug, and a debug number in a comparison table is noise.
+# `sbt "runMain uni.apps.BenchAll"` from the repo root drives these alongside
+# NumPy and Scala and emits the finished markdown.
 bench:
-	cargo run --bin bench_tprf3
+	cargo build --release --bin bench_mat --bin bench_tprf3
+	cargo run --release --bin bench_mat
+	cargo run --release --bin bench_tprf3
 
 tokens:
 	@git ls-files '*.rs' | xargs wc -c \

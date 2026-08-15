@@ -1,5 +1,167 @@
 ## Unreleased
 
+**CHANGED (output-visible) — LF is the default line terminator, and `uni.println` exists**
+
+`import uni.*` now brings in a package-level `println` that terminates with `\n` rather
+than the platform separator, alongside the `eprintln` that was already there. On Windows
+this changes the bytes a client's `println` emits.
+
+It shadows `scala.Predef.println` without ambiguity or call-site changes — the parameter
+is `Any` with a default, so `println("s")`, `println(42)`, `println()` and `println(a, b)`
+all still compile. A file that defines its own local `println` still wins over the import,
+so the ~38 scripts carrying that two-line shadow are unaffected until they drop it.
+
+Only the implicitly appended terminator changes. `print` is untouched: `print("a\r\n")`
+still emits CR LF, and a progress-bar `\r` still works.
+
+Two supporting changes, since `println` alone does not finish the job:
+
+- `%n` is gone from the sources (19 occurrences across six files, including
+  `uni.stats.Tprf3`, which is library code and so emitted CRLF for downstream users
+  whatever their own code did). `%n` *is* the platform separator, so only not using it
+  fixes it.
+- `build.sbt` passes `-Dline.separator=\n` to every forked JVM, converting `println`,
+  `%n`, `Console.println`, `PrintWriter.println` and `System.lineSeparator()` while
+  leaving an explicitly written `\r` verbatim.
+
+A scala-cli script launched from a `#!/usr/bin/env -S` shebang cannot receive that flag —
+there is no way to put a literal LF on that line — so scripts depend on `uni.println` and
+on not using `%n`.
+
+**CHANGED (numeric) — a strided `sum` is chunked; views' sums move in the last ulp**
+
+`sum` on a view — transpose, offset slice, stride-0 broadcast — was one sequential
+accumulator. It is now the same shape as the contiguous `sumD`: **8 unrolled accumulators
+over the logical row-major sequence, `min(MaxSumChunks, rows/8)` row blocks above 65536
+elements, partials combined in block order.** One rule now covers every layout; what
+differs between a matrix and its transpose is the sequence, not the algorithm.
+
+**A view's sum therefore differs from what earlier versions produced**, and `mean`/`std`
+on views inherit that. The contiguous path is untouched, so an ordinary matrix's sum is
+unchanged. Both languages changed together and `test-data/mat-parity/` was regenerated;
+21 rows moved, all `tsum`/`tmean`/`slicesum`, by 1-2 ulp.
+
+Deliberate, not incidental: the old order could not be improved without moving it, and it
+left `sum` on a view 2-3.3x behind NumPy. Now 1.8-6.1x ahead of it, and 10.8-25.8x faster
+than before at 2000x2000.
+
+Two thresholds are part of the numeric contract rather than tuning knobs, since each
+selects between one block and many: `ParallelThreshold` (4096) for the contiguous form
+and `StridedSumParallelThreshold` (65536) for the strided one.
+
+**PERFORMANCE — both languages now beat NumPy on every benchmarked `Mat` operation**
+
+Nothing in `docs/MatDCheatSheet.md` trails NumPy in either language except `matmul`,
+which is a BLAS question rather than a `Mat` one and has no Rust column yet. Nine rows
+did, by up to 23x.
+
+Four changes on the Scala side:
+
+- `sum`, `mean`, `std`, `variance`, `sum(axis)`, the order statistics and the elementwise
+  family (`abs` `sqrt` `exp` `log`) gained unboxed branches that read a `Mat[Double]` of
+  **any** layout through the stride equation. Previously only contiguous-at-offset-0
+  matrices avoided `Numeric`/`Ordering` dispatch on erased `T`; every view boxed per
+  element.
+- The elementwise maps went parallel. That was the larger half: `m + 1.0` was already 6x
+  faster than `m.abs` on identical data purely because one used `fillD` and the other did
+  not.
+- The order statistics went parallel, split by row block.
+- `sum(axis)` splits by LANE — columns for axis 0, rows for axis 1 — and column sums hold
+  eight accumulators in registers across the row sweep rather than doing a
+  read-modify-write per element.
+
+The last two are ported to Rust, whose `scan` and `sumAxis` were still sequential:
+`scan` splits by row block with the same order-preserving combine, `sumAxis` splits by
+lane, and `col_sums` blocks eight columns at a time.
+
+**All of these are bit-preserving**, so `test-data/mat-parity/` is unchanged by them —
+unlike the strided `sum` above, which is a genuine order change. Two properties do the
+work: an extremum is associative and commutative under a total order, so chunking cannot
+move it, and the block combine runs in block order replacing only on a strictly better
+value, which preserves first-occurrence tie-breaking for `argmin`/`argmax`. Splitting the
+axis sums by lane leaves each lane's accumulation order intact; splitting them the other
+way would not. Verified byte-identical over 1896 cells spanning four element types, five
+layouts, eight shapes, NaN/signed-zero/infinity values and empty shapes with their
+exception types.
+
+Two behavioural edges are preserved rather than optimized away: the fast path declines
+when the caller supplied an `Ordering` other than `TotalOrdering`, and empty matrices
+fall through to the general path so their asymmetric exception behaviour is unchanged.
+
+Against NumPy at 1000x1000, worst rows before and after:
+
+| row | Scala | Rust |
+| :--- | :--- | :--- |
+| `sum0@bcast` | 23.0x slower → 2.3x faster | 3.2x slower → 2.8x faster |
+| `sum0@transposed` | 18.7x slower → at parity | 4.1x slower → 4.4x faster |
+| `max` | 8.6x slower → 1.6x faster | 2.4x slower → 2.6x faster |
+| `argmax` | 3.4x slower → 2.0x faster | 2.0x slower → 2.8x faster |
+| `sqrt` | 2.4x slower → 3.8x faster | already ahead |
+
+Five thresholds now exist across the two languages and are not interchangeable. Two are
+NUMERIC CONTRACT, because each selects between one block and many and so changes the
+answer: `ParallelThreshold` (4096) for contiguous sums and `StridedSumParallelThreshold`
+(65536) for strided ones, both mirrored in the Rust port. Three are tuning and may be
+retuned per language: 65536 for elementwise maps and the order statistics, 524288 for the
+axis-sum lane split, where a thread gets a strided slice rather than a contiguous run and
+has to repay the lost locality in cores.
+
+**FIXED — the Rust port's order statistics follow `Ordering[Double]`**
+
+`min`/`max`/`argmin`/`argmax`/`cummax`/`cummin` in the Rust `MatD` compared with `<`/`>`.
+`Ordering[Double]` is `TotalOrdering`, i.e. `java.lang.Double.compare`: **NaN ranks above
+every number**, so `max` of a lane containing NaN is NaN rather than the largest ordinary
+value, and **`-0.0 < 0.0`**, so `min(0.0, -0.0)` is `-0.0` and argmin moves off index 0.
+
+`NumPyRNG.uniform(-1e6, 1e6)` produces neither value, so all 427 parity rows passed while
+this was wrong. The fixture gained 330 `adv/` rows over ten adversarial arrays in three
+orientations, and both suites assert that count separately.
+
+Use `udata::mat::java_double_compare`, not `f64::total_cmp`: the latter implements IEEE
+totalOrder and places **-NaN below -Infinity**, where `doubleToLongBits` canonicalises
+every NaN so the JVM ranks them all highest. The `negnan` rows separate the two.
+
+**ADDED — Tier 3 phases (a) and (b) of the Rust port: the `Mat` core**
+
+`udata::mat::MatD` gains the **strided view model** (`transpose`/`T`, `slice`,
+`broadcastTo`, and the fragmented-layout materialisation `Internal.create` performs),
+broadcasting arithmetic, the `apply*` gather family, `reshape`/`ravel`/`matCopy`; plus
+`udata::mataxis` (`sumAxis` `meanAxis` `minAxis` `maxAxis` `stdAxis` `cumsumAxis` `cummax`
+`cummin` and the four `rowSums`-style shorthands) and `udata::vecexts` (`CVecD`/`RVecD` as
+newtypes over `MatD` with `Deref`, standing in for Scala's `<: Mat[T]` opaque-type bound).
+
+`MatD` carries Scala's own `(transposed, offset, rs, cs)` descriptor rather than
+materialising views, because the layout selects the summation algorithm: a contiguous
+matrix gets the chunked `sumD`, a view gets a sequential fold, and the two differ in the
+last ulp. Materialising would silently pick the chunked order where Scala picks the
+sequential one. The parity fixture grew from 130 to 757 rows to pin this, in aspect-ratio
+pairs, since whether a slice is materialised flips with the parent's shape.
+
+**ADDED — one command regenerates every benchmark table**
+
+```bash
+cd rust && cargo build --release --bin bench_mat --bin bench_tprf3 && cd ..
+sbt "runMain uni.apps.BenchAll"
+```
+
+`uni.apps.BenchAll` runs `MatBench` and `Tprf3Bench` across NumPy, Scala and Rust and
+prints finished markdown for all four tables. New: `BenchRunner` (shared interpreter
+discovery, binary staleness checks, output parsing, table emission), `MatBench`,
+`BenchAll` and `rust/src/bin/bench_mat.rs`; `py/bench.py` rewritten to match; `make bench`
+gained `--release`.
+
+All three halves must keep the same row labels, sizes, warmup/iteration counts and input
+generator — the label is the join key. The previous two-script manual merge had them
+drawing inputs from different generators (`MatD.setSeed` is PCG64, `np.random.seed` is the
+legacy MT19937) with different iteration counts.
+
+Coverage grew past the original list — `log`, `sqrt`, `argmax`, the axis reductions — and
+gained a second table over **layouts**. NumPy's `M.T` and `M[1:]` are views exactly as
+`MatD`'s are, and NumPy's reductions are flat across them (`sum` 0.127 → 0.128 ms) where
+ours are not (0.040 → 0.422 Scala, 0.033 → 0.424 Rust); `sum(axis=0)` on a transposed view
+is 19× behind NumPy on the Scala side. Rows the Rust port lacks print "—", so the table
+doubles as a coverage report against `rust/PARITY.md`.
+
 **BREAKING — `posixAbs` and `posixRel` are `private[uni]`, the deprecation removed**
 
 v0.16.0 deprecated them with the note that `private[uni]` was the destination and removal

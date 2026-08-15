@@ -15,7 +15,27 @@ given ExecutionContext = ExecutionContext.global
 export scala.util.Properties.{isWin, isMac, isLinux}
 export Proc.{ProcResult, ProcBuilder, run, proc, execLines, bashExe, pythonExe, unameExe, uname, osType, where, whereInPath, isWsl, hostname}
 export System.err.print as eprint // returns Unit
-def eprintln(s: String): Unit = System.err.print(s"$s\n")
+
+/**
+ * `println` that terminates with LF rather than the platform separator.
+ *
+ * Shadows `scala.Predef.println` for anyone doing `import uni.*` — an explicit import
+ * outranks the automatic Predef one, so no ambiguity and no call-site changes: `println`,
+ * `println(42)`, `println()` and `println(a, b)` all still compile. That removes the
+ * two-line shadow this library's own scripts had been repeating in ~38 files.
+ *
+ * It changes only the terminator this appends. `print` is untouched, so an explicitly
+ * written `\r` — `print("a\r\n")`, a progress-bar `\r` — reaches the output verbatim.
+ *
+ * Not a complete answer on its own: `printf("%n")`, `Console.println` and anything a
+ * library prints still use the platform separator. The launch flag `-Dline.separator=\n`
+ * is the only mechanism that covers those (build.sbt sets it for every forked JVM), and
+ * it cannot reach a scala-cli shebang — so scripts should also avoid `%n`.
+ */
+def println(x: Any = ""): Unit = print(s"$x\n")
+
+/** `eprintln` with the same contract, on stderr. */
+def eprintln(s: Any = ""): Unit = System.err.print(s"$s\n")
 def withFileWriter(p: Path, charsetName: String = "UTF-8", append: Boolean = false)(func: java.io.PrintWriter => Any): Unit =
   uni.io.FileOps.withFileWriter(p, charsetName, append)(func)
 

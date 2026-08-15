@@ -218,7 +218,7 @@ object Tprf {
       try BigDecimal(d)
       catch
         case _: NumberFormatException =>
-          System.err.printf("NumberFormatException[%s]%n", d.toString)
+          System.err.printf("NumberFormatException[%s]\n", d.toString)
           BigDecimal(0)
 
   def tprf(X: MatD, y: MatD, Z: MatD, oos: MatD = MatD.zeros(0, 1)): (MatD, Double) =
@@ -333,11 +333,11 @@ object Tprf {
       if f.nonEmpty then
         val p = f.asPath
         if !p.exists then
-          System.err.printf("creating residuals file [%s]%n", p.posx)
+          System.err.printf("creating residuals file [%s]\n", p.posx)
           val w = new PrintWriter(p.toFile)
           try
             for i <- 0 until residuals.rows do
-              w.printf("%s%n", residuals(i, 0))
+              w.printf("%s\n", residuals(i, 0))
           finally w.close()
     }
     val rss  = (residuals ~^ 2.0).sum

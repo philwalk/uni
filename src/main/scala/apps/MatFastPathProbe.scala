@@ -248,9 +248,6 @@ object MatFastPathProbe:
     sb.toString
 
   // ── Timings ───────────────────────────────────────────────────────────────
-  /** Accumulator that keeps the benchmarked expression from being optimized away. */
-  private var sink: Long = 0L
-
   /**
    * Best per-call time in ms, with the inner iteration count AUTO-CALIBRATED so every
    * timed region is roughly 2ms of work.
@@ -263,6 +260,11 @@ object MatFastPathProbe:
    * happened to recompile, which is what makes a before/after comparison mean anything.
    */
   def bestMs(@annotation.unused reps: Int)(f: => Any): Double =
+    // Local, not an object field: the accumulator has to be READ for the accumulation to
+    // be live at all, and a write-only field is both a warning and a licence for the JIT
+    // to delete the work being timed. Scoped here it also stays out of global mutable
+    // state.
+    var sink = 0L
     var i = 0
     while i < 20 do { sink += f.hashCode; i += 1 }   // warm up + reach steady state
     val t0 = System.nanoTime()
@@ -278,6 +280,7 @@ object MatFastPathProbe:
       val ms = (System.nanoTime() - s0) / 1e6 / inner
       if ms < best then best = ms
       run += 1
+    if sink == Long.MinValue then println()   // the read that keeps `sink` alive
     best
 
   def perf(quick: Boolean): String =
@@ -297,6 +300,15 @@ object MatFastPathProbe:
         sb ++= f"Double\t$lname\t${r}x$c\tcummax0\t${bestMs(reps)(m.cummax(0))}%.4f\n"
         sb ++= f"Double\t$lname\t${r}x$c\tcummin1\t${bestMs(reps)(m.cummin(1))}%.4f\n"
         sb ++= f"Double\t$lname\t${r}x$c\tmean\t${bestMs(reps)(m.mean)}%.4f\n"
+        // The axis family and the elementwise maps: both trail NumPy badly on views,
+        // and neither was measurable here until now, so a change to them could not be
+        // told from noise.
+        sb ++= f"Double\t$lname\t${r}x$c\tsum0\t${bestMs(reps)(m.sum(0))}%.4f\n"
+        sb ++= f"Double\t$lname\t${r}x$c\tsum1\t${bestMs(reps)(m.sum(1))}%.4f\n"
+        sb ++= f"Double\t$lname\t${r}x$c\tmean0\t${bestMs(reps)(m.mean(0))}%.4f\n"
+        sb ++= f"Double\t$lname\t${r}x$c\tabs\t${bestMs(reps)(m.abs)}%.4f\n"
+        sb ++= f"Double\t$lname\t${r}x$c\tsqrt\t${bestMs(reps)(m.abs.sqrt)}%.4f\n"
+        sb ++= f"Double\t$lname\t${r}x$c\tcumsum\t${bestMs(reps)(m.cumsum)}%.4f\n"
       // Float must not regress: it keeps taking the general branch.
       sb ++= f"Float\tcontig\t${r}x$c\tsum\t${bestMs(reps)(mf.sum)}%.4f\n"
       sb ++= f"Float\tcontig\t${r}x$c\tmax\t${bestMs(reps)(mf.max)}%.4f\n"

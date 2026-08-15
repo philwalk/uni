@@ -292,6 +292,31 @@ object Mat {
   // SLOWER). Keep a dedicated, higher threshold so medium broadcasts stay serial.
   private final val BcastParallelThreshold = 1 << 16   // 65536
 
+  /** Element count above which the order statistics split across threads.
+   *
+   *  Higher than `ParallelThreshold` for the reason `mapD` documents: one comparison per
+   *  element does not amortise fork/join setup at 4096. `min`/`max` were the largest
+   *  remaining gap against NumPy (8.6x), because they stayed single-threaded scalar
+   *  scans while `sum` had been chunked and parallel since v0.14.1. */
+  private final val ScanParallelThreshold = 1 << 16   // 65536
+
+  /** Element count above which the AXIS sums split across lanes.
+   *
+   *  Much higher than the other two thresholds, and measured rather than guessed: a
+   *  lane split gives each thread a strided slice rather than a contiguous run, so the
+   *  locality it gives up has to be paid back by the cores it gains. At 120k elements
+   *  that trade loses (25-80% slower); at 4M it wins 3-13x. This sits between them. */
+  private final val LaneParallelThreshold = 1 << 19   // 524288
+
+  /** Element count above which a STRIDED sum splits into row blocks.
+   *
+   *  Part of the numeric contract, not a tuning knob: it selects between one block and
+   *  many, and the partials are combined in block order, so it changes the answer. It is
+   *  pinned in `test-data/mat-parity/` and mirrored by `strided_sum` in the Rust port.
+   *  Higher than `ParallelThreshold` because a strided block carries more per-element
+   *  overhead to amortise -- at 4096 the fork cost more than the sum. */
+  private final val StridedSumParallelThreshold = 1 << 16   // 65536
+
   /** The single guard for every Double fast path: a plain contiguous Mat[Double]
    *  with no view offset, whose backing array is exactly its logical data.
    *  One definition keeps per-site copies from drifting. */
@@ -321,10 +346,16 @@ object Mat {
    *  Ordering that agrees: a caller who explicitly supplies `Double.IeeeOrdering` gets
    *  the general path rather than a silently different answer.
    *
-   *  Keeping those semantics costs one extra predictable branch per element in the
-   *  ordinary case (`Double.compare` returns on its first comparison unless the values
-   *  are equal or unordered) against the boxing and virtual dispatch it removes —
-   *  measured as noise, see `MatFastPathProbe`. */
+   *  Measured cost of keeping those semantics, against a build using the primitive
+   *  `<`/`>` (300x400, `MatFastPathProbe`): `max` 1.15x, `min` 1.35x, `cummax` 1.08x —
+   *  and `argmax` **7x**. With `<` the position tracking in `scanPosD` is free (argmax
+   *  costs the same as max); with `Double.compare` the optimizer cannot fuse the
+   *  comparison chain with three stores, and the bookkeeping dominates. All four are
+   *  still far ahead of the boxed path they replaced, so none is a regression — but the
+   *  argmax gap is unrealized headroom, closable by scanning for the value first and
+   *  locating its first occurrence in a second pass. Note Rust measures the OPPOSITE
+   *  sign here (`java_double_compare` beats `<` by 2-3x there); do not assume either
+   *  runtime's answer carries to the other. */
   private inline def fastDOrd[T](m: Mat[T], ord: Ordering[T])(using ct: ClassTag[T]): Boolean =
     fastDL(m) && ord.isInstanceOf[Ordering.Double.TotalOrdering]
 
@@ -341,19 +372,7 @@ object Mat {
    *  row-major order as the general path and replaces on the same strict comparison, so
    *  ties keep their first occurrence exactly as before. */
   private inline def scanValueD[T](m: Mat[T], inline better: (Double, Double) => Boolean): Double =
-    val a   = m.tdata.asInstanceOf[Array[Double]]
-    val off = m.offset; val rs = m.rs; val cs = m.cs
-    var best = a(off)          // == at(0, 0)
-    var r = 0
-    while r < m.rows do
-      val base = off + r * rs
-      var c = 0
-      while c < m.cols do
-        val current = a(base + c * cs)
-        if better(current, best) then best = current
-        c += 1
-      r += 1
-    best
+    scanChunkedD(m, better, wantValue = true)
 
   /** Position of the winning element, packed as `(row << 32) | col`.
    *
@@ -361,26 +380,249 @@ object Mat {
    *  scan keeps no index bookkeeping, and this one allocates no `Tuple3[Int, Int,
    *  Double]` (which would also box its Double on every call).
    *
-   *  Stated honestly, the measured payoff is small — `argmin`/`argmax` already ran at
-   *  the same speed as `min`/`max` once both were unboxed, and both are bimodal enough
-   *  across runs that the split moved `max` by about 10% and `argmax` not at all. It is
-   *  kept because it is simpler to reason about, not because it bought a speedup. */
+   *  Measured cost of the correct comparator here is high -- with `<` the position
+   *  tracking is free, with `Double.compare` it costs 6x the scan, because the optimizer
+   *  cannot fuse the comparison chain with three stores. Parallelism below is what buys
+   *  that back. */
   private inline def scanPosD[T](m: Mat[T], inline better: (Double, Double) => Boolean): Long =
-    val a   = m.tdata.asInstanceOf[Array[Double]]
-    val off = m.offset; val rs = m.rs; val cs = m.cs
-    var best = a(off)
-    var bestPos = 0L
-    var r = 0
-    while r < m.rows do
+    java.lang.Double.doubleToRawLongBits(scanChunkedD(m, better, wantValue = false))
+
+  /** The one scan behind `min`/`max`/`argmin`/`argmax`: row-major, seeded from (0,0),
+   *  replacing only on a strictly better value, split across threads above
+   *  [[ScanParallelThreshold]].
+   *
+   *  Returns either the winning VALUE or its packed `(row << 32) | col` position
+   *  reinterpreted as a Double, selected by `wantValue`. That reinterpretation is ugly
+   *  and deliberate: it keeps ONE driver for both callers. Two drivers were tried and
+   *  the value-returning one measured 165x slower than its array-writing twin.
+   *
+   *  Parallelism cannot move the answer. An extremum is associative and commutative
+   *  under a total order, and chunks are combined in row order replacing only on a
+   *  strictly better value — so each chunk keeps its own first occurrence and the
+   *  earliest chunk wins a tie, exactly as the sequential scan does.
+   *
+   *  Only valid when `fastDOrd(m, ord)` already holds. */
+  private inline def scanChunkedD[T](m: Mat[T], inline better: (Double, Double) => Boolean,
+                                     inline wantValue: Boolean): Double =
+    val a    = m.tdata.asInstanceOf[Array[Double]]
+    val off  = m.offset; val rs = m.rs; val cs = m.cs
+    val rows = m.rows; val cols = m.cols
+    if rows.toLong * cols < ScanParallelThreshold then
+      // Below the threshold, scan straight into locals. Routing this through the chunk
+      // arrays cost three allocations per call, which dominates when the scan itself is
+      // microseconds -- measured 6x on a 64x64 max.
+      var best = a(off)
+      var pos  = 0L
+      var r = 0
+      while r < rows do
+        val base = off + r * rs
+        var c = 0
+        // `wantValue` is an inline parameter, so exactly one of these survives at each
+        // call site: min/max get a loop with no position bookkeeping at all. That is
+        // not cosmetic -- tracking the position costs 6x here, for the same reason it
+        // does under `Double.compare`: the optimizer cannot fuse the comparison chain
+        // with three stores.
+        if wantValue then
+          if cs == 1 then
+            while c < cols do
+              val cur = a(base + c)
+              if better(cur, best) then best = cur
+              c += 1
+          else
+            while c < cols do
+              val cur = a(base + c * cs)
+              if better(cur, best) then best = cur
+              c += 1
+        else if cs == 1 then
+          while c < cols do
+            val cur = a(base + c)
+            if better(cur, best) then { best = cur; pos = (r.toLong << 32) | c.toLong }
+            c += 1
+        else
+          while c < cols do
+            val cur = a(base + c * cs)
+            if better(cur, best) then { best = cur; pos = (r.toLong << 32) | c.toLong }
+            c += 1
+        r += 1
+      if wantValue then best else java.lang.Double.longBitsToDouble(pos)
+    else
+      val chunks = math.min(MaxSumChunks, math.max(rows / 8, 1))
+      val vs   = new Array[Double](chunks)
+      val ps   = new Array[Long](chunks)
+      val used = new Array[Boolean](chunks)
+      val step = (rows + chunks - 1) / chunks
+      java.util.stream.IntStream.range(0, chunks).parallel().forEach { c =>
+        val from  = c * step
+        val until = math.min(from + step, rows)
+        if from < until then
+          scanPosRowsD(a, off, rs, cs, from, until, cols, better, vs, ps, c)
+          used(c) = true
+      }
+      var best = 0.0
+      var pos  = 0L
+      var seen = false
+      var c = 0
+      while c < chunks do
+        if used(c) && (!seen || better(vs(c), best)) then { best = vs(c); pos = ps(c); seen = true }
+        c += 1
+      if wantValue then best else java.lang.Double.longBitsToDouble(pos)
+
+  /** Scans rows `[from, until)` and writes the winning value and its packed position
+   *  into slot `slot`. Writing through arrays rather than returning a pair keeps the
+   *  parallel path allocation-free per chunk. */
+  private inline def scanPosRowsD(a: Array[Double], off: Int, rs: Int, cs: Int,
+                                  from: Int, until: Int, cols: Int,
+                                  inline better: (Double, Double) => Boolean,
+                                  outV: Array[Double], outP: Array[Long], slot: Int): Unit =
+    var best    = a(off + from * rs)
+    var bestPos = from.toLong << 32
+    var r = from
+    while r < until do
       val base = off + r * rs
       var c = 0
-      while c < m.cols do
-        val current = a(base + c * cs)
-        if better(current, best) then
-          best = current; bestPos = (r.toLong << 32) | c.toLong
-        c += 1
+      if cs == 1 then
+        while c < cols do
+          val current = a(base + c)
+          if better(current, best) then { best = current; bestPos = (r.toLong << 32) | c.toLong }
+          c += 1
+      else
+        while c < cols do
+          val current = a(base + c * cs)
+          if better(current, best) then { best = current; bestPos = (r.toLong << 32) | c.toLong }
+          c += 1
       r += 1
-    bestPos
+    outV(slot) = best
+    outP(slot) = bestPos
+
+  /** Column sums over the column range `[c0, c1)`, accumulating into `result`.
+   *
+   *  Splitting by COLUMN is what makes this safe to parallelise: every column still
+   *  accumulates in increasing row order, so no lane's association order changes and the
+   *  result is bit-identical to the sequential sweep. Splitting by ROW would not be —
+   *  it would combine partial sums, which moves the last ulp.
+   *
+   *  `off`/`rs`/`cs` describe any layout; the `cs == 1` split exists because `j * cs`
+   *  with a variable `cs` costs a multiply the JIT cannot strength-reduce. */
+  private def colSumsD(a: Array[Double], off: Int, rs: Int, cs: Int,
+                       rows: Int, c0: Int, c1: Int, result: Array[Double]): Unit =
+    if cs == 1 then
+      // Eight columns at a time, with the eight accumulators held in locals for the
+      // whole row sweep.
+      //
+      // The naive form is `result(j) += a(base + j)`: a load, a load and a store per
+      // element, three times the memory traffic of a whole-matrix `sum` whose
+      // accumulator lives in a register -- and it measured almost exactly 3.5x slower.
+      // Blocking touches `result` once per column per BLOCK instead of once per row,
+      // so the traffic collapses to one load per element.
+      //
+      // Each column still accumulates in increasing row order, so this is bit-identical
+      // to the scalar sweep. Eight because that is the register budget C2 will use for
+      // independent FP accumulators without spilling; the same count `sumRange` picked.
+      var jb = c0
+      while jb + 8 <= c1 do
+        var s0 = result(jb);     var s1 = result(jb + 1)
+        var s2 = result(jb + 2); var s3 = result(jb + 3)
+        var s4 = result(jb + 4); var s5 = result(jb + 5)
+        var s6 = result(jb + 6); var s7 = result(jb + 7)
+        var i = 0
+        while i < rows do
+          val base = off + i * rs + jb
+          s0 += a(base);     s1 += a(base + 1)
+          s2 += a(base + 2); s3 += a(base + 3)
+          s4 += a(base + 4); s5 += a(base + 5)
+          s6 += a(base + 6); s7 += a(base + 7)
+          i += 1
+        result(jb) = s0;     result(jb + 1) = s1
+        result(jb + 2) = s2; result(jb + 3) = s3
+        result(jb + 4) = s4; result(jb + 5) = s5
+        result(jb + 6) = s6; result(jb + 7) = s7
+        jb += 8
+      // Tail columns, one accumulator each.
+      while jb < c1 do
+        var s = result(jb)
+        var i = 0
+        while i < rows do { s += a(off + i * rs + jb); i += 1 }
+        result(jb) = s
+        jb += 1
+    else
+      var i = 0
+      while i < rows do
+        val base = off + i * rs
+        var j = c0
+        while j < c1 do { result(j) += a(base + j * cs); j += 1 }
+        i += 1
+
+  /** Row sums over the row range `[r0, r1)`. Rows are independent sequential folds, so
+   *  splitting by row is bit-identical by construction. */
+  private def rowSumsD(a: Array[Double], off: Int, rs: Int, cs: Int,
+                       cols: Int, r0: Int, r1: Int, result: Array[Double]): Unit =
+    var i = r0
+    while i < r1 do
+      val base = off + i * rs
+      var s = 0.0
+      var j = 0
+      if cs == 1 then while j < cols do { s += a(base + j); j += 1 }
+      else            while j < cols do { s += a(base + j * cs); j += 1 }
+      result(i) = s
+      i += 1
+
+  /** Runs `body(from, until)` over `lanes` split into chunks, in parallel above
+   *  [[BcastParallelThreshold]] total elements. Chunk count is pinned, as elsewhere, so
+   *  a failure reproduces. */
+  private inline def overLanes(lanes: Int, totalElems: Long)(inline body: (Int, Int) => Unit): Unit =
+    if totalElems < LaneParallelThreshold || lanes < 8 then body(0, lanes)
+    else
+      val chunks = math.min(MaxSumChunks, math.max(lanes / 8, 1))
+      val step   = (lanes + chunks - 1) / chunks
+      java.util.stream.IntStream.range(0, chunks).parallel().forEach { c =>
+        val from  = c * step
+        val until = math.min(from + step, lanes)
+        if from < until then body(from, until)
+      }
+
+  /** Unboxed elementwise map over a Mat[Double] of ANY layout, producing a fresh
+   *  contiguous matrix. Only valid when `fastDL(m)` holds.
+   *
+   *  `map` already has a Double→Double fast path, but it only pays off when the caller's
+   *  lambda is monomorphic `Double => Double`. The elementwise family is written against
+   *  `Fractional[T]`/`MatElem[T]`, so its lambdas are `T => T` with `T` erased and every
+   *  element boxes twice. `inline` on both the method and the function parameter beta-
+   *  reduces the lambda away entirely.
+   *
+   *  Reads via the stride equation, which degenerates to linear indexing for a
+   *  contiguous matrix at offset 0 — so the contiguous case is bit-identical to what
+   *  `map` produced, and views stop boxing. */
+  private inline def mapD[T](m: Mat[T], inline f: Double => Double): Mat[Double] =
+    val a    = m.tdata.asInstanceOf[Array[Double]]
+    val off  = m.offset; val rs = m.rs; val cs = m.cs
+    val rows = m.rows; val cols = m.cols
+    val out  = new Array[Double](rows * cols)
+    if off == 0 && rs == cols && cs == 1 && a.length == rows * cols then
+      // Contiguous: linear indexing, and PARALLEL once it pays. That is the larger of
+      // the two effects here -- `m + 1.0` ran 6x faster than `m.abs` on identical data
+      // purely because one used fillD and the other did not.
+      //
+      // Gated at BcastParallelThreshold (65536), not fillD's own ParallelThreshold
+      // (4096): these maps are one cheap operation per element, so at 4096 the fork/join
+      // setup costs more than the work -- measured 3.5x SLOWER on a 64x64 abs. The
+      // scalar operators keep the lower gate; they were tuned for it.
+      if rows * cols >= BcastParallelThreshold then fillD(out)(i => f(a(i)))
+      else
+        var i = 0
+        while i < out.length do { out(i) = f(a(i)); i += 1 }
+    else
+      // Strided: parallel by row above BcastParallelThreshold. Rows write disjoint
+      // slices with no reduction, so the result is identical however it is scheduled.
+      bcastRows(rows, cols) { (i, obase) =>
+        val base = off + i * rs
+        var j = 0
+        // `j * cs` with cs a variable costs a multiply the JIT cannot strength-reduce.
+        if cs == 1 then
+          while j < cols do { out(obase + j) = f(a(base + j)); j += 1 }
+        else
+          while j < cols do { out(obase + j) = f(a(base + j * cs)); j += 1 }
+      }
+    Mat.create(out, rows, cols)
 
   /** `Ordering.Double.TotalOrdering.lt`, unboxed. */
   private inline def ltD(x: Double, y: Double): Boolean = java.lang.Double.compare(x, y) < 0
@@ -574,6 +816,75 @@ object Mat {
       s
 
   /** Returns m if already BLAS-safe (offset=0, standard strides), else a fresh contiguous copy. */
+  /**
+   * Sum of a STRIDED view, in the same shape as [[sumD]] but over the logical row-major
+   * sequence: 8 unrolled accumulators, then `min(MaxSumChunks, rows/8)` row blocks whose
+   * partials are combined sequentially in block order.
+   *
+   * CHANGED in 0.16.1, deliberately. This was a single sequential accumulator, which
+   * made `m.T.sum` 3.3x slower than NumPy and could not be improved without moving its
+   * last ulp. Both languages changed together and `test-data/mat-parity/` was regenerated
+   * -- so a view's sum now differs from what pre-0.16.1 produced. The contiguous path is
+   * untouched: `sumD` still owns it, and an ordinary matrix's sum is unchanged.
+   *
+   * The rule is now one sentence for every layout: **8 unrolled accumulators over the
+   * logical row-major sequence, chunked, partials combined in order.** What still differs
+   * between a matrix and its transpose is the SEQUENCE, not the algorithm.
+   *
+   * The accumulators carry across row boundaries within a block; the sub-8 tail of each
+   * row goes to its own accumulator, also carried. That is what makes the answer a
+   * function of (shape, strides) alone rather than of how the rows happened to divide.
+   */
+  private def sumStrided(a: Array[Double], off: Int, rs: Int, cs: Int,
+                         rows: Int, cols: Int): Double =
+    if rows.toLong * cols < StridedSumParallelThreshold || rows < 8 then
+      sumRowBlock(a, off, rs, cs, 0, rows, cols)
+    else
+      val chunks   = math.min(MaxSumChunks, math.max(rows / 8, 1))
+      val step     = (rows + chunks - 1) / chunks
+      val partials = new Array[Double](chunks)
+      java.util.stream.IntStream.range(0, chunks).parallel().forEach { c =>
+        val from  = c * step
+        val until = math.min(from + step, rows)
+        if from < until then partials(c) = sumRowBlock(a, off, rs, cs, from, until, cols)
+      }
+      var total = 0.0
+      var c = 0
+      while c < chunks do
+        total += partials(c)
+        c += 1
+      total
+
+  /** Rows `[r0, r1)` of a strided view, 8 unrolled accumulators carried across rows. */
+  private def sumRowBlock(a: Array[Double], off: Int, rs: Int, cs: Int,
+                          r0: Int, r1: Int, cols: Int): Double =
+    var s0 = 0.0; var s1 = 0.0; var s2 = 0.0; var s3 = 0.0
+    var s4 = 0.0; var s5 = 0.0; var s6 = 0.0; var s7 = 0.0
+    var tail = 0.0
+    val limit = cols - 7
+    var r = r0
+    while r < r1 do
+      val base = off + r * rs
+      var j = 0
+      if cs == 1 then
+        while j < limit do
+          s0 += a(base + j);     s1 += a(base + j + 1)
+          s2 += a(base + j + 2); s3 += a(base + j + 3)
+          s4 += a(base + j + 4); s5 += a(base + j + 5)
+          s6 += a(base + j + 6); s7 += a(base + j + 7)
+          j += 8
+        while j < cols do { tail += a(base + j); j += 1 }
+      else
+        while j < limit do
+          s0 += a(base + j * cs);       s1 += a(base + (j + 1) * cs)
+          s2 += a(base + (j + 2) * cs); s3 += a(base + (j + 3) * cs)
+          s4 += a(base + (j + 4) * cs); s5 += a(base + (j + 5) * cs)
+          s6 += a(base + (j + 6) * cs); s7 += a(base + (j + 7) * cs)
+          j += 8
+        while j < cols do { tail += a(base + j * cs); j += 1 }
+      r += 1
+    (((s0 + s1) + (s2 + s3)) + ((s4 + s5) + (s6 + s7))) + tail
+
   private def blasReady(m: Mat[Double]): Mat[Double] =
     if m.isStandardContiguous && m.offset == 0 then m
     else
@@ -1657,17 +1968,7 @@ object Mat {
         if m.isContiguous && m.offset == 0 && a.length == m.rows * m.cols then
           sumD(a).asInstanceOf[T]
         else
-          val off = m.offset; val rs = m.rs; val cs = m.cs
-          var total = 0.0
-          var i = 0
-          while i < m.rows do
-            val base = off + i * rs
-            var j = 0
-            while j < m.cols do
-              total += a(base + j * cs)
-              j += 1
-            i += 1
-          total.asInstanceOf[T]
+          sumStrided(a, m.offset, m.rs, m.cs, m.rows, m.cols).asInstanceOf[T]
       else
         // General path: non-Double element types.
         var total = num.zero
@@ -2761,26 +3062,36 @@ object Mat {
      *         np.sum(m, axis=1) → column vector of row sums */
     def sum(axis: Int)(using num: Numeric[T]): Mat[T] = {
       require(axis == 0 || axis == 1, s"axis must be 0 or 1, got $axis")
-      // Fast path: contiguous Double array — no boxing, no Numeric dispatch
+      // Two Double branches, then the boxed general one. Both Double branches split the
+      // work by LANE -- columns for axis 0, rows for axis 1 -- which is the only split
+      // that leaves every lane's accumulation order intact. Splitting by the other axis
+      // would combine partial sums and move the last ulp.
       if fastD(m)
       then
         val a = m.tdata.asInstanceOf[Array[Double]]
         val rows = m.rows; val cols = m.cols
+        val total = rows.toLong * cols
         if axis == 0 then
           val result = Array.ofDim[Double](cols)
-          var i = 0
-          while i < rows do
-            val base = i * cols; var j = 0
-            while j < cols do { result(j) += a(base + j); j += 1 }
-            i += 1
+          overLanes(cols, total)((c0, c1) => colSumsD(a, 0, cols, 1, rows, c0, c1, result))
           Mat.create(result, 1, cols).asInstanceOf[Mat[T]]
         else
           val result = Array.ofDim[Double](rows)
-          var i = 0
-          while i < rows do
-            val base = i * cols; var s = 0.0; var j = 0
-            while j < cols do { s += a(base + j); j += 1 }
-            result(i) = s; i += 1
+          overLanes(rows, total)((r0, r1) => rowSumsD(a, 0, cols, 1, cols, r0, r1, result))
+          Mat.create(result, rows, 1).asInstanceOf[Mat[T]]
+      else if fastDL(m)
+      then
+        val a = m.tdata.asInstanceOf[Array[Double]]
+        val off = m.offset; val rs = m.rs; val cs = m.cs
+        val rows = m.rows; val cols = m.cols
+        val total = rows.toLong * cols
+        if axis == 0 then
+          val result = Array.ofDim[Double](cols)
+          overLanes(cols, total)((c0, c1) => colSumsD(a, off, rs, cs, rows, c0, c1, result))
+          Mat.create(result, 1, cols).asInstanceOf[Mat[T]]
+        else
+          val result = Array.ofDim[Double](rows)
+          overLanes(rows, total)((r0, r1) => rowSumsD(a, off, rs, cs, cols, r0, r1, result))
           Mat.create(result, rows, 1).asInstanceOf[Mat[T]]
       else if axis == 0 then
         val result = Array.fill(m.cols)(num.zero)
@@ -2889,15 +3200,23 @@ object Mat {
     }
 
     def abs(using frac: Fractional[T]): Mat[T] =
-      m.map((x: T) => if frac.lt(x, frac.zero) then frac.negate(x) else x)
+      // `if x < zero then -x else x`, not `math.abs`: that maps -0.0 to +0.0 where this
+      // leaves it alone, and the parity fixture pins the difference.
+      if fastDL(m) then mapD(m, x => if x < 0.0 then -x else x).asInstanceOf[Mat[T]]
+      else m.map((x: T) => if frac.lt(x, frac.zero) then frac.negate(x) else x)
 
-    def sqrt(using elem: MatElem[T]): Mat[T] = m.map(elem.sqrtT)
+    def sqrt(using elem: MatElem[T]): Mat[T] =
+      // MatElem's Double instance is exactly `math.sqrt`, so the fast path is the same
+      // function without the per-element boxing.
+      if fastDL(m) then mapD(m, math.sqrt).asInstanceOf[Mat[T]] else m.map(elem.sqrtT)
 
     def exp(using frac: Fractional[T]): Mat[T] =
-      m.map((x: T) => math.exp(frac.toDouble(x)).asInstanceOf[T])
+      if fastDL(m) then mapD(m, math.exp).asInstanceOf[Mat[T]]
+      else m.map((x: T) => math.exp(frac.toDouble(x)).asInstanceOf[T])
 
     def log(using frac: Fractional[T]): Mat[T] =
-      m.map((x: T) => math.log(frac.toDouble(x)).asInstanceOf[T])
+      if fastDL(m) then mapD(m, math.log).asInstanceOf[Mat[T]]
+      else m.map((x: T) => math.log(frac.toDouble(x)).asInstanceOf[T])
 
     def clip(lower: T, upper: T)(using ord: Ordering[T]): Mat[T] =
       m.map((x: T) => if ord.lt(x, lower) then lower else if ord.gt(x, upper) then upper else x)

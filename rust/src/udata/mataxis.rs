@@ -28,12 +28,18 @@
     reason = "public items mirror the Scala API name-for-name; see the note in mat.rs"
 )]
 
+use rayon::prelude::*;
+
+use crate::udata::mat::LANE_PARALLEL_THRESHOLD;
 use crate::udata::mat::MatD;
 use crate::udata::mat::gt_total;
 use crate::udata::mat::lt_total;
 use crate::udata::mat::sum_d;
 use crate::udata::vecexts::CVecD;
 use crate::udata::vecexts::RVecD;
+
+/// Chunk cap for the lane split, mirroring `Mat.MaxSumChunks`.
+const MAX_LANE_CHUNKS: usize = 16;
 
 /// Panics unless `axis` is 0 or 1, mirroring Scala's `require`.
 fn check(axis: usize) {
@@ -51,6 +57,65 @@ fn shaped(out: Vec<f64>, axis: usize) -> MatD {
 }
 
 impl MatD {
+    /// Column sums for the columns starting at `c0`, accumulating into `slot`.
+    ///
+    /// Eight columns at a time with the accumulators in locals for the whole row sweep.
+    /// The naive `slot[j] += at(i, j)` is a load, a load and a store per element --
+    /// three times the traffic of a whole-matrix sum whose accumulator lives in a
+    /// register, and it measured ~3.5x slower on the Scala side for exactly that reason.
+    /// Each column still accumulates in increasing row order, so this is bit-identical.
+    fn col_sums(&self, c0: usize, slot: &mut [f64]) {
+        let n = slot.len();
+        let mut jb = 0usize;
+        while jb + 8 <= n {
+            let (mut s0, mut s1, mut s2, mut s3) =
+                (slot[jb], slot[jb + 1], slot[jb + 2], slot[jb + 3]);
+            let (mut s4, mut s5, mut s6, mut s7) =
+                (slot[jb + 4], slot[jb + 5], slot[jb + 6], slot[jb + 7]);
+            for i in 0..self.rows() {
+                let c = c0 + jb;
+                s0 += self.at(i, c);
+                s1 += self.at(i, c + 1);
+                s2 += self.at(i, c + 2);
+                s3 += self.at(i, c + 3);
+                s4 += self.at(i, c + 4);
+                s5 += self.at(i, c + 5);
+                s6 += self.at(i, c + 6);
+                s7 += self.at(i, c + 7);
+            }
+            slot[jb] = s0;
+            slot[jb + 1] = s1;
+            slot[jb + 2] = s2;
+            slot[jb + 3] = s3;
+            slot[jb + 4] = s4;
+            slot[jb + 5] = s5;
+            slot[jb + 6] = s6;
+            slot[jb + 7] = s7;
+            jb += 8;
+        }
+        while jb < n {
+            let mut s = slot[jb];
+            for i in 0..self.rows() {
+                s += self.at(i, c0 + jb);
+            }
+            slot[jb] = s;
+            jb += 1;
+        }
+    }
+
+    /// Row sums for the rows starting at `r0`. Rows are independent sequential folds, so
+    /// splitting by row is bit-identical by construction.
+    fn row_sums(&self, r0: usize, slot: &mut [f64]) {
+        for (k, out) in slot.iter_mut().enumerate() {
+            let i = r0 + k;
+            let mut acc = 0.0f64;
+            for j in 0..self.cols() {
+                acc += self.at(i, j);
+            }
+            *out = acc;
+        }
+    }
+
     /// The `(lane_count, lane_len)` pair for an axis: axis 0 has one lane per column,
     /// each as long as there are rows.
     fn lanes(&self, axis: usize) -> (usize, usize) {
@@ -92,24 +157,32 @@ impl MatD {
         // costs about 2x; carrying one accumulator per column instead visits memory in
         // order. Each lane still accumulates in increasing index order either way, so
         // this is a locality change and not an association-order change.
+        let parallel = rows * cols >= LANE_PARALLEL_THRESHOLD;
+        // Split by LANE -- columns for axis 0, rows for axis 1. That is the only split
+        // that leaves every lane's accumulation order intact, so it is bit-preserving;
+        // splitting the other way would combine partial sums and move the last ulp.
         let out = if axis == 0 {
             let mut acc = vec![0.0f64; cols];
-            for i in 0..rows {
-                for (j, slot) in acc.iter_mut().enumerate() {
-                    *slot += self.at(i, j);
-                }
+            if parallel && cols >= 8 {
+                let step = cols.div_ceil(MAX_LANE_CHUNKS.min((cols / 8).max(1)));
+                acc.par_chunks_mut(step).enumerate().for_each(|(k, slot)| {
+                    self.col_sums(k * step, slot);
+                });
+            } else {
+                self.col_sums(0, &mut acc);
             }
             acc
         } else {
-            (0..rows)
-                .map(|i| {
-                    let mut acc = 0.0f64;
-                    for j in 0..cols {
-                        acc += self.at(i, j);
-                    }
-                    acc
-                })
-                .collect()
+            let mut out = vec![0.0f64; rows];
+            if parallel && rows >= 8 {
+                let step = rows.div_ceil(MAX_LANE_CHUNKS.min((rows / 8).max(1)));
+                out.par_chunks_mut(step).enumerate().for_each(|(k, slot)| {
+                    self.row_sums(k * step, slot);
+                });
+            } else {
+                self.row_sums(0, &mut out);
+            }
+            out
         };
         shaped(out, axis)
     }

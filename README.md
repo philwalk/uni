@@ -117,8 +117,20 @@ answer `BigNaN` in both languages (Scala used to throw), and those rows are pinn
 
 ```bash
 cd rust && make all          # test, fmt, clippy, file-size check
-cargo run --release --bin bench_tprf3
 ```
+
+Every benchmark table in the docs — MatD and 3PRF, NumPy vs Scala vs Rust — regenerates
+from one command, which prints finished markdown:
+
+```bash
+cd rust && cargo build --release --bin bench_mat --bin bench_tprf3 && cd ..
+sbt "runMain uni.apps.BenchAll"
+```
+
+The Rust build stays separate because `--features blas` changes which language wins on
+several rows; each binary reports the configuration it measured, and both runners warn if
+a binary predates `rust/src`. See the regeneration note in
+[docs/MatDCheatSheet.md](docs/MatDCheatSheet.md).
 
 ## Visualization (`uni.plot`)
 

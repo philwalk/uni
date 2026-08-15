@@ -11,7 +11,37 @@ Side-by-side reference for **uni.MatD**, NumPy, Breeze, R, and MATLAB.
 Measured on the same machine: NumPy 2.4.6 / Python 3.14.6 vs uni.MatD 0.14.1 / Scala 3.8.2 / JVM 21; min times.
 NumPy uses native OpenBLAS; on this machine netlib's JNIBLAS could not load `libopenblas.dll`,
 so MatD's `matmul` ran on the pure-JVM fallback (see the matmul row).
-See [`jsrc/bench.sc`](../jsrc/bench.sc) and [`py/bench.py`](../py/bench.py) to reproduce.
+### Regenerating every table in this document
+
+One command, all three languages, finished markdown on stdout:
+
+```bash
+cd rust && cargo build --release --bin bench_mat --bin bench_tprf3 && cd ..
+sbt "runMain uni.apps.BenchAll"
+```
+
+The Rust build is separate on purpose: `--features blas` changes which language wins on
+several rows, so the harness measures the build you chose rather than picking one, and
+each binary reports its own configuration. A missing Rust binary is not fatal — the
+column is dropped and the table shape follows whatever ran. Flags: `-nopython`,
+`-norust`, `-python <exe>`.
+
+`uni.apps.BenchAll` runs [`MatBench`](../src/main/scala/apps/MatBench.scala) (the two
+MatD tables) and [`Tprf3Bench`](../src/main/scala/apps/Tprf3Bench.scala) (the 3PRF
+tables). The individual halves — [`py/bench.py`](../py/bench.py),
+[`rust/src/bin/bench_mat.rs`](../rust/src/bin/bench_mat.rs) — can be run alone for one
+column, but all three must keep the same row labels, sizes, warmup/iteration counts and
+input generator, or the tables compare harnesses rather than implementations. They drew
+inputs from *different* generators until this was unified (`MatD.setSeed` is PCG64,
+`np.random.seed` is the legacy MT19937), so the columns were measured on different
+matrices.
+
+**Keep the config lines when pasting a table in.** JVM version, NumPy version and its
+BLAS, and the Rust build. Without them a reader cannot tell whether a row is a property
+of the implementation or of the machine.
+
+`jsrc/bench.sc` is the older Scala-only script this replaced; it is superseded by
+`MatBench` and kept only so existing links resolve.
 
 | Operation | NumPy | MatD | Ratio | Notes |
 |---|---:|---:|---|---|

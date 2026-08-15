@@ -71,8 +71,13 @@ Details, the determinism techniques, and how to add a pair: `../docs/DemoPairs.m
 ```bash
 make all                       # test, fmt, clippy, file-size check
 cargo test
-cargo run --release --bin bench_tprf3
+cargo build --release --bin bench_mat --bin bench_tprf3
 ```
+
+The two `bench_*` binaries are the Rust columns of the cross-language tables in the Scala
+docs. They print one `[Rust] <label>  <ms> ms/call` line per row and a `config:` line;
+`sbt "runMain uni.apps.BenchAll"` (run from the repo root) drives them alongside NumPy and
+Scala and emits the finished markdown. Running one alone gives just that column.
 
 Details and per-method tables live with the Scala docs: `../docs/PathIOReference.md`,
 `../docs/DateTimeParser.md`, `../docs/BigTypeGuide.md`.
