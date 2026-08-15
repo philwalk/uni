@@ -197,11 +197,17 @@ object MatBench:
     val hasPy   = py.exists(_.ms.nonEmpty)
     val hasRust = rust.exists(_.ms.nonEmpty)
     println(s"\n## $title — ms/call (lower is better)\n")
+    // Each ratio column reads "<subject> vs <baseline>", and describes the SUBJECT: the
+    // cell says how much faster or slower the first-named language is than the second.
     val headers = Vector("Operation") ++
       (if hasPy then Vector("NumPy") else Vector.empty) ++ Vector("Scala") ++
       (if hasRust then Vector("Rust") else Vector.empty) ++
       (if hasPy then Vector("Scala vs NumPy") else Vector.empty) ++
-      (if hasRust then Vector("Rust vs NumPy") else Vector.empty)
+      (if hasRust then Vector("Rust vs NumPy") else Vector.empty) ++
+      // The two ports against each other. Rust trailing Scala is a signal that the Rust
+      // side is doing more work rather than that the language is slower, so it is worth
+      // a standing column rather than an occasional hand comparison.
+      (if hasRust then Vector("Rust vs Scala") else Vector.empty)
     val rows = for label <- labels yield
       val s = scala.get(label)
       val p = py.flatMap(_.ms.get(label))
@@ -211,5 +217,6 @@ object MatBench:
         Vector(BenchRunner.cell(s)) ++
         (if hasRust then Vector(BenchRunner.cell(r)) else Vector.empty) ++
         (if hasPy then Vector((for pv <- p; sv <- s yield BenchRunner.ratioCell(pv, sv)).getOrElse("—")) else Vector.empty) ++
-        (if hasRust then Vector((for pv <- p; rv <- r yield BenchRunner.ratioCell(pv, rv)).getOrElse("—")) else Vector.empty)
+        (if hasRust then Vector((for pv <- p; rv <- r yield BenchRunner.ratioCell(pv, rv)).getOrElse("—")) else Vector.empty) ++
+        (if hasRust then Vector((for sv <- s; rv <- r yield BenchRunner.ratioCell(sv, rv)).getOrElse("—")) else Vector.empty)
     BenchRunner.table(headers, rows)

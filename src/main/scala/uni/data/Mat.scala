@@ -572,7 +572,8 @@ object Mat {
    *  accumulates in increasing row order, which is the order `std(axis = 0)` already
    *  used -- what changes is only that the sweep is row-major instead of walking one
    *  column at a time through row-major storage. */
-  private def colSqDevD(a: Array[Double], cols: Int, rows: Int, c0: Int, c1: Int,
+  private def colSqDevD(a: Array[Double], off: Int, rs: Int, cs: Int,
+                        rows: Int, c0: Int, c1: Int,
                         mu: Array[Double], ss: Array[Double]): Unit =
     var jb = c0
     while jb + 8 <= c1 do
@@ -582,15 +583,15 @@ object Mat {
       val m4 = mu(jb + 4); val m5 = mu(jb + 5); val m6 = mu(jb + 6); val m7 = mu(jb + 7)
       var i = 0
       while i < rows do
-        val base = i * cols + jb
-        val d0 = a(base) - m0;         s0 += d0 * d0
-        val d1 = a(base + 1) - m1;     s1 += d1 * d1
-        val d2 = a(base + 2) - m2;     s2 += d2 * d2
-        val d3 = a(base + 3) - m3;     s3 += d3 * d3
-        val d4 = a(base + 4) - m4;     s4 += d4 * d4
-        val d5 = a(base + 5) - m5;     s5 += d5 * d5
-        val d6 = a(base + 6) - m6;     s6 += d6 * d6
-        val d7 = a(base + 7) - m7;     s7 += d7 * d7
+        val base = off + i * rs + jb * cs
+        val d0 = a(base) - m0;            s0 += d0 * d0
+        val d1 = a(base + cs) - m1;       s1 += d1 * d1
+        val d2 = a(base + 2 * cs) - m2;   s2 += d2 * d2
+        val d3 = a(base + 3 * cs) - m3;   s3 += d3 * d3
+        val d4 = a(base + 4 * cs) - m4;   s4 += d4 * d4
+        val d5 = a(base + 5 * cs) - m5;   s5 += d5 * d5
+        val d6 = a(base + 6 * cs) - m6;   s6 += d6 * d6
+        val d7 = a(base + 7 * cs) - m7;   s7 += d7 * d7
         i += 1
       ss(jb) = s0;     ss(jb + 1) = s1; ss(jb + 2) = s2; ss(jb + 3) = s3
       ss(jb + 4) = s4; ss(jb + 5) = s5; ss(jb + 6) = s6; ss(jb + 7) = s7
@@ -599,24 +600,63 @@ object Mat {
       var s = 0.0
       val mj = mu(jb)
       var i = 0
-      while i < rows do { val d = a(i * cols + jb) - mj; s += d * d; i += 1 }
+      while i < rows do { val d = a(off + i * rs + jb * cs) - mj; s += d * d; i += 1 }
       ss(jb) = s
       jb += 1
 
   /** Per-row standard deviation for the rows `[r0, r1)`; already row-major, so this
    *  only gains the lane split. */
-  private def rowStdD(a: Array[Double], cols: Int, r0: Int, r1: Int,
-                      result: Array[Double]): Unit =
+  private def rowStdD(a: Array[Double], off: Int, rs: Int, cs: Int,
+                      cols: Int, r0: Int, r1: Int, result: Array[Double]): Unit =
     var i = r0
     while i < r1 do
-      val base = i * cols
+      val base = off + i * rs
       var mu = 0.0; var j = 0
-      while j < cols do { mu += a(base + j); j += 1 }
+      if cs == 1 then while j < cols do { mu += a(base + j); j += 1 }
+      else            while j < cols do { mu += a(base + j * cs); j += 1 }
       mu /= cols
       var ss = 0.0; j = 0
-      while j < cols do { val d = a(base + j) - mu; ss += d * d; j += 1 }
+      if cs == 1 then
+        while j < cols do { val d = a(base + j) - mu; ss += d * d; j += 1 }
+      else
+        while j < cols do { val d = a(base + j * cs) - mu; ss += d * d; j += 1 }
       result(i) = math.sqrt(ss / cols)
       i += 1
+
+  /**
+   * `std(axis)` for a Mat[Double] of ANY layout.
+   *
+   * The per-lane mean is the one `mean(axis)` returns — a single accumulator folded in
+   * increasing index order, exactly what `sum(axis)` produces. That is the whole point of
+   * this method existing: before 0.16.1 the family had THREE mean algorithms (whole-matrix
+   * `std` took its mean from `sum`, contiguous `std(axis)` used a per-lane fold, and a
+   * strided `std(axis)` materialised each lane and routed through `sumD`), so the same
+   * data gave three answers depending on shape and layout. One rule now: **the mean
+   * `std(axis)` uses is the mean `mean(axis)` returns.**
+   *
+   * Only valid when `fastDL(m)` holds and `m` is non-empty.
+   */
+  private def stdAxisD[T](m: Mat[T], axis: Int): Mat[Double] =
+    val a    = m.tdata.asInstanceOf[Array[Double]]
+    val off  = m.offset; val rs = m.rs; val cs = m.cs
+    val rows = m.rows; val cols = m.cols
+    val total = rows.toLong * cols
+    if axis == 0 then
+      // Two row-major sweeps, means then squared deviations, rather than one
+      // column-at-a-time double sweep through row-major storage.
+      val mu = Array.ofDim[Double](cols)
+      overLanes(cols, total)((c0, c1) => colSumsD(a, off, rs, cs, rows, c0, c1, mu))
+      var j = 0
+      while j < cols do { mu(j) = mu(j) / rows; j += 1 }
+      val ss = Array.ofDim[Double](cols)
+      overLanes(cols, total)((c0, c1) => colSqDevD(a, off, rs, cs, rows, c0, c1, mu, ss))
+      var k = 0
+      while k < cols do { ss(k) = math.sqrt(ss(k) / rows); k += 1 }
+      Mat.create(ss, 1, cols)
+    else
+      val result = Array.ofDim[Double](rows)
+      overLanes(rows, total)((r0, r1) => rowStdD(a, off, rs, cs, cols, r0, r1, result))
+      Mat.create(result, rows, 1)
 
   /** Running extremum down the columns `[c0, c1)`, seeded by the caller from row 0.
    *
@@ -4488,29 +4528,10 @@ object Mat {
     /** NumPy: np.std(m, axis=0/1) - std along axis */
     def std(axis: Int)(using frac: Fractional[T], elem: MatElem[T]): Mat[T] =
       require(axis == 0 || axis == 1, s"axis must be 0 or 1, got $axis")
-      if fastD(m)
-      then
-        val a = m.tdata.asInstanceOf[Array[Double]]
-        val rows = m.rows; val cols = m.cols
-        val total = rows.toLong * cols
-        if axis == 0 then
-          // Two row-major sweeps -- means, then squared deviations -- instead of one
-          // column-at-a-time double sweep. Each column still accumulates in increasing
-          // row order in both passes, so the result is bit-identical; only the traversal
-          // and the lane split are new.
-          val mu = Array.ofDim[Double](cols)
-          overLanes(cols, total)((c0, c1) => colSumsD(a, 0, cols, 1, rows, c0, c1, mu))
-          var j = 0
-          while j < cols do { mu(j) = mu(j) / rows; j += 1 }
-          val ss = Array.ofDim[Double](cols)
-          overLanes(cols, total)((c0, c1) => colSqDevD(a, cols, rows, c0, c1, mu, ss))
-          var k = 0
-          while k < cols do { ss(k) = math.sqrt(ss(k) / rows); k += 1 }
-          Mat.create(ss, 1, cols).asInstanceOf[Mat[T]]
-        else
-          val result = Array.ofDim[Double](rows)
-          overLanes(rows, total)((r0, r1) => rowStdD(a, cols, r0, r1, result))
-          Mat.create(result, rows, 1).asInstanceOf[Mat[T]]
+      // One rule for every layout: the per-lane mean is the one `mean(axis)` returns.
+      // The strided case used to materialise each lane and route through `sumD`, giving
+      // a different answer from the contiguous case on the same data.
+      if !m.isEmpty && fastDL(m) then stdAxisD(m, axis).asInstanceOf[Mat[T]]
       else if axis == 0 then
         val result = Array.ofDim[T](m.cols)
         var j = 0

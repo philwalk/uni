@@ -782,16 +782,37 @@ impl MatD {
     /// The shape change is Scala's, not an accident: `cumsum` there ends with
     /// `Mat.create(result, 1, a.length)` whatever the input shape was.
     pub fn cumsum(&self) -> Self {
-        let mut out = Vec::with_capacity(self.size());
-        let mut acc = 0.0f64;
-        // `flatten()` would copy the whole buffer first; a running total needs only one
-        // pass. Scala reads its raw array directly here for the same reason.
+        // A prefix scan is a serial dependency chain, so the arithmetic floor is one
+        // FP-add latency per element and neither language beats it — Scala sits on that
+        // floor at 0.77ms, so C2 is not vectorising the scan either. What separates the
+        // two is the OUTPUT BUFFER. Five safe spellings, measured at 1000x1000:
+        //
+        //   with_capacity + extend(scan)   1.50 ms   <- this one
+        //   with_capacity + push           1.53 ms
+        //   vec![0.0; n] + indexed         2.19 ms   allocator reuses the block, so the
+        //                                            zero-fill is a real memset
+        //   to_vec + prefix in place       2.48 ms   32MB of traffic instead of 16
+        //   scan().collect()               3.47 ms   `Scan` is NOT TrustedLen: its
+        //                                            size_hint lower bound is 0, so
+        //                                            collect starts at capacity 0 and
+        //                                            grows by doubling
+        //
+        // The last two lines are the useful pair: the same iterator into a pre-reserved
+        // Vec costs 1.50, so the 3.47 was reallocation growth, not the iterator.
+        //
+        // The JVM hands out array storage from an already-zeroed heap region and writes
+        // by index with no per-element bookkeeping; Rust pays either a memset or a
+        // capacity check. Closing the rest needs `spare_capacity_mut` + `set_len`, and
+        // this crate keeps `unsafe` for FFI only.
+        let n = self.size();
+        let mut out: Vec<f64> = Vec::with_capacity(n);
         if self.fast_d() {
-            for &x in self.data.iter() {
-                acc += x;
-                out.push(acc);
-            }
+            out.extend(self.data.iter().scan(0.0f64, |acc, &x| {
+                *acc += x;
+                Some(*acc)
+            }));
         } else {
+            let mut acc = 0.0f64;
             for i in 0..self.rows {
                 for j in 0..self.cols {
                     acc += self.at(i, j);
@@ -799,7 +820,6 @@ impl MatD {
                 }
             }
         }
-        let n = out.len();
         Self::create(out, 1, n)
     }
 
@@ -809,6 +829,19 @@ impl MatD {
     /// through the stride equation, as Scala's Double fast path does, so it is correct
     /// for views.
     pub(crate) fn map_elems(&self, f: impl Fn(f64) -> f64 + Sync + Send) -> Self {
+        if self.fast_d() {
+            // Contiguous: read the source slice linearly and collect. Two costs go away.
+            // `at(r, c)` carries a multiply the compiler cannot strength-reduce, because
+            // the strides are runtime values; and collecting allocates without the
+            // zero-fill that `vec![0.0; n]` does before being fully overwritten.
+            let src: &[f64] = &self.data;
+            let out: Vec<f64> = if src.len() >= BCAST_PARALLEL_THRESHOLD {
+                src.par_iter().map(|&x| f(x)).collect()
+            } else {
+                src.iter().map(|&x| f(x)).collect()
+            };
+            return Self::create(out, self.rows, self.cols);
+        }
         self.fill_rows(|r, row| {
             for (c, slot) in row.iter_mut().enumerate() {
                 *slot = f(self.at(r, c));
@@ -830,6 +863,19 @@ impl MatD {
         let target_cols = self.cols.max(other.cols);
         let a = self.broadcastTo(target_rows, target_cols);
         let b = other.broadcastTo(target_rows, target_cols);
+        if a.fast_d() && b.fast_d() {
+            // Both contiguous and the same shape: zip the two slices. See `map_elems`.
+            let (sa, sb): (&[f64], &[f64]) = (&a.data, &b.data);
+            let out: Vec<f64> = if sa.len() >= BCAST_PARALLEL_THRESHOLD {
+                sa.par_iter()
+                    .zip(sb.par_iter())
+                    .map(|(&x, &y)| op(x, y))
+                    .collect()
+            } else {
+                sa.iter().zip(sb.iter()).map(|(&x, &y)| op(x, y)).collect()
+            };
+            return Self::create(out, target_rows, target_cols);
+        }
         a.fill_rows(|r, row| {
             for (c, slot) in row.iter_mut().enumerate() {
                 *slot = op(a.at(r, c), b.at(r, c));

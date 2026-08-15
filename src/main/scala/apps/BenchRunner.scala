@@ -138,7 +138,8 @@ object BenchRunner:
   /** Emits a markdown table. `rows` supplies already-rendered cells per row. */
   def table(headers: Seq[String], rows: Seq[Seq[String]]): Unit =
     println(headers.mkString("| ", " | ", " |"))
-    // Left-align the label and ratio columns, right-align the numeric ones.
-    println(headers.map(h => if h == headers.head || h.contains("/") then "---" else "---:")
+    // Left-align the label and ratio columns, right-align the numeric ones. Ratio headers
+    // are spelled either "A vs B" or "A/B" depending on the runner, so both count.
+    println(headers.map(h => if h == headers.head || h.contains("/") || h.contains(" vs ") then "---" else "---:")
       .mkString("|", "|", "|"))
     for r <- rows do println(r.mkString("| ", " | ", " |"))

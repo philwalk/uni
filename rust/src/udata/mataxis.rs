@@ -18,10 +18,9 @@
 //!
 //! # Association order
 //!
-//! None of these use the chunked `sumD`. Scala accumulates each lane with a plain
-//! sequential fold, and its contiguous and strided branches visit elements in the same
-//! order, so one implementation covers both. `stdAxis` is the exception and is
-//! documented where it breaks the pattern.
+//! None of these use the chunked `sumD`: each lane is a plain sequential fold in
+//! increasing index order, whatever the layout. `stdAxis` follows the same rule -- its
+//! per-lane mean is the one `meanAxis` returns -- so there is no exception left.
 
 #![allow(
     non_snake_case,
@@ -34,12 +33,28 @@ use crate::udata::mat::LANE_PARALLEL_THRESHOLD;
 use crate::udata::mat::MatD;
 use crate::udata::mat::gt_total;
 use crate::udata::mat::lt_total;
-use crate::udata::mat::sum_d;
 use crate::udata::vecexts::CVecD;
 use crate::udata::vecexts::RVecD;
 
 /// Chunk cap for the lane split, mirroring `Mat.MaxSumChunks`.
 const MAX_LANE_CHUNKS: usize = 16;
+
+/// Runs `f(lane0, slot)` over `out` split into lane chunks, in parallel above
+/// [`LANE_PARALLEL_THRESHOLD`]. Mirrors Scala's `overLanes`.
+///
+/// Splitting by lane is what keeps every lane's accumulation order intact, so any
+/// reduction expressed through this is bit-identical to the sequential sweep.
+fn over_lanes(total: usize, out: &mut [f64], f: impl Fn(usize, &mut [f64]) + Sync + Send) {
+    let lanes = out.len();
+    if total < LANE_PARALLEL_THRESHOLD || lanes < 8 {
+        f(0, out);
+    } else {
+        let step = lanes.div_ceil(MAX_LANE_CHUNKS.min((lanes / 8).max(1)));
+        out.par_chunks_mut(step)
+            .enumerate()
+            .for_each(|(k, slot)| f(k * step, slot));
+    }
+}
 
 /// Panics unless `axis` is 0 or 1, mirroring Scala's `require`.
 fn check(axis: usize) {
@@ -123,15 +138,6 @@ impl MatD {
             (self.cols(), self.rows())
         } else {
             (self.rows(), self.cols())
-        }
-    }
-
-    /// Element `t` of lane `k` along `axis`.
-    fn lane_at(&self, axis: usize, k: usize, t: usize) -> f64 {
-        if axis == 0 {
-            self.at(t, k)
-        } else {
-            self.at(k, t)
         }
     }
 
@@ -365,36 +371,82 @@ impl MatD {
     /// If `axis` is not 0 or 1.
     pub fn stdAxis(&self, axis: usize) -> Self {
         check(axis);
-        let fast = self.fast_d();
-        let (count, len) = self.lanes(axis);
-        let n = len as f64;
-        let out = (0..count)
-            .map(|k| {
-                // Two passes over the lane READ IN PLACE. This used to materialise the
-                // lane into a Vec first, an allocation per lane on top of the work.
-                let mu = if fast {
-                    let mut acc = 0.0f64;
-                    for t in 0..len {
-                        acc += self.lane_at(axis, k, t);
-                    }
-                    acc / n
-                } else {
-                    // The strided path takes its mean through the chunked `sum_d`, which
-                    // is a DIFFERENT association order from the plain fold above. That
-                    // asymmetry is Scala's and is pinned by the `std0fnv`/`tstd1fnv`
-                    // fixture rows, so it is reproduced rather than unified.
-                    let lane: Vec<f64> = (0..len).map(|t| self.lane_at(axis, k, t)).collect();
-                    sum_d(&lane) / n
-                };
-                let mut sum_sq = 0.0f64;
-                for t in 0..len {
-                    let d = self.lane_at(axis, k, t) - mu;
-                    sum_sq += d * d;
+        let (rows, cols) = (self.rows(), self.cols());
+        let total = rows * cols;
+        // The per-lane mean is the one `meanAxis` returns: a single accumulator folded in
+        // increasing index order. Both passes read the lane in place and split by lane,
+        // so this is bit-identical to the scalar sweep it replaces.
+        if axis == 0 {
+            let n = rows as f64;
+            let mut mu = vec![0.0f64; cols];
+            over_lanes(total, &mut mu, |c0, slot| self.col_sums(c0, slot));
+            for m in mu.iter_mut() {
+                *m /= n;
+            }
+            let mut ss = vec![0.0f64; cols];
+            over_lanes(total, &mut ss, |c0, slot| self.col_sq_dev(c0, &mu, slot));
+            for s in ss.iter_mut() {
+                *s = (*s / n).sqrt();
+            }
+            shaped(ss, axis)
+        } else {
+            let mut out = vec![0.0f64; rows];
+            over_lanes(total, &mut out, |r0, slot| self.row_std(r0, slot));
+            shaped(out, axis)
+        }
+    }
+
+    /// Sum of squared deviations from `mu`, down the columns starting at `c0`.
+    ///
+    /// Eight columns at a time with the accumulators in locals, as `col_sums`: the naive
+    /// form is a load and a read-modify-write per element. Each column still accumulates
+    /// in increasing row order.
+    fn col_sq_dev(&self, c0: usize, mu: &[f64], slot: &mut [f64]) {
+        let n = slot.len();
+        let mut jb = 0usize;
+        while jb + 8 <= n {
+            let c = c0 + jb;
+            let mut s = [0.0f64; 8];
+            for i in 0..self.rows() {
+                for (k, acc) in s.iter_mut().enumerate() {
+                    let d = self.at(i, c + k) - mu[c + k];
+                    *acc += d * d;
                 }
-                (sum_sq / n).sqrt()
-            })
-            .collect();
-        shaped(out, axis)
+            }
+            slot[jb..jb + 8].copy_from_slice(&s);
+            jb += 8;
+        }
+        while jb < n {
+            let c = c0 + jb;
+            let mut acc = 0.0f64;
+            for i in 0..self.rows() {
+                let d = self.at(i, c) - mu[c];
+                acc += d * d;
+            }
+            slot[jb] = acc;
+            jb += 1;
+        }
+    }
+
+    /// Per-row standard deviation for the rows starting at `r0`; already row-major, so
+    /// this gains only the lane split.
+    fn row_std(&self, r0: usize, slot: &mut [f64]) {
+        let cols = self.cols();
+        let n = cols as f64;
+        for (k, out) in slot.iter_mut().enumerate() {
+            let i = r0 + k;
+            let mut acc = 0.0f64;
+            for j in 0..cols {
+                acc += self.at(i, j);
+            }
+            let mu = acc / n;
+            let mut ss = 0.0f64;
+            for j in 0..cols {
+                let d = self.at(i, j) - mu;
+                ss += d * d;
+            }
+            *out = (ss / n).sqrt();
+        }
     }
 
     /// Running totals along `axis` — Scala's `cumsum(axis)`. Shape is preserved, unlike
@@ -429,16 +481,33 @@ impl MatD {
     /// Shape-preserving scan seeded from `init` — the `cumsum(axis)` shape.
     fn scanAxis(&self, axis: usize, step: impl Fn(f64, f64) -> f64, init: f64) -> Self {
         check(axis);
-        let (count, len) = self.lanes(axis);
-        let mut out = vec![0.0f64; self.size()];
-        for k in 0..count {
-            let mut acc = init;
-            for t in 0..len {
-                acc = step(acc, self.lane_at(axis, k, t));
-                out[self.lane_index(axis, k, t)] = acc;
+        let (rows, cols) = (self.rows(), self.cols());
+        let mut out = vec![0.0f64; rows * cols];
+        // Explicit per-axis loops. Routing both through `lane_at`/`lane_index` put a
+        // branch on `axis` inside the inner loop, on every element.
+        if axis == 0 {
+            // One accumulator per column advanced row by row, so `out` is written in
+            // row-major order rather than jumping `cols` elements per store. Each column
+            // still accumulates in increasing row order.
+            let mut acc = vec![init; cols];
+            for i in 0..rows {
+                let obase = i * cols;
+                for (j, a) in acc.iter_mut().enumerate() {
+                    *a = step(*a, self.at(i, j));
+                    out[obase + j] = *a;
+                }
+            }
+        } else {
+            for i in 0..rows {
+                let obase = i * cols;
+                let mut acc = init;
+                for j in 0..cols {
+                    acc = step(acc, self.at(i, j));
+                    out[obase + j] = acc;
+                }
             }
         }
-        Self::create(out, self.rows(), self.cols())
+        Self::create(out, rows, cols)
     }
 
     /// Shape-preserving scan seeded from the lane's first element — the `cummax`/
@@ -475,15 +544,6 @@ impl MatD {
             }
         }
         Self::create(out, rows, cols)
-    }
-
-    /// Row-major position in the *result* of element `t` of lane `k`.
-    fn lane_index(&self, axis: usize, k: usize, t: usize) -> usize {
-        if axis == 0 {
-            t * self.cols() + k
-        } else {
-            k * self.cols() + t
-        }
     }
 
     /// Sum across columns → one sum per row — Scala's `rowSums`, i.e. `sum(1)`.

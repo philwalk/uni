@@ -490,9 +490,15 @@ fn the_corpus_is_sensitive_to_the_view_model() {
         m.T().sum().to_bits(),
         "a transposed view sums identically here; the tsum rows pin nothing"
     );
-    assert_ne!(
+    // The reverse of what this asserted before 0.16.1, deliberately. `m.stdAxis(0)` and
+    // `m.T().stdAxis(1)` reduce the SAME lanes -- row k of the transpose is column k of
+    // the original -- so once `std(axis)` takes its per-lane mean the one way, the two
+    // must agree bit for bit. They did not before: the strided path materialised each
+    // lane and routed through `sum_d`, so identical data gave different answers depending
+    // on layout. This guards the unification rather than the wart.
+    assert_eq!(
         fnv(&m.stdAxis(0).toArray()),
         fnv(&m.T().stdAxis(1).toArray()),
-        "std(axis) no longer distinguishes its two mean algorithms; std0fnv/tstd1fnv pin nothing"
+        "std(axis) disagrees between a matrix and its transpose; the per-lane mean must          be the one meanAxis returns, whatever the layout"
     );
 }

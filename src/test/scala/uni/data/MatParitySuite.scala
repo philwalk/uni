@@ -138,9 +138,14 @@ class MatParitySuite extends munit.FunSuite:
       bits(m.T.sum),
       "a transposed view sums identically here; the tsum rows pin nothing",
     )
-    assertNotEquals(
+    // The reverse of what this asserted before 0.16.1, deliberately. `m.std(0)` and
+    // `m.T.std(1)` reduce the SAME lanes — row k of the transpose is column k of the
+    // original — so once std(axis) takes its per-lane mean the one way, the two must
+    // agree bit for bit. They did not before: the strided path materialized each lane
+    // and routed through sumD. This guards the unification rather than the wart.
+    assertEquals(
       uni.apps.MatParityGen.fnv(m.std(0).toArray),
       uni.apps.MatParityGen.fnv(m.T.std(1).toArray),
-      "std(axis) no longer distinguishes its two mean algorithms",
+      "std(axis) disagrees between a matrix and its transpose",
     )
   }

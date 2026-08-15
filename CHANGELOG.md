@@ -49,6 +49,24 @@ Two thresholds are part of the numeric contract rather than tuning knobs, since 
 selects between one block and many: `ParallelThreshold` (4096) for the contiguous form
 and `StridedSumParallelThreshold` (65536) for the strided one.
 
+**CHANGED (numeric) — `std(axis)` takes its per-lane mean the way `mean(axis)` does**
+
+The `std` family carried three mean algorithms: whole-matrix `std` took its mean from
+`sum`, a contiguous `std(axis)` used a per-lane fold, and a strided `std(axis)`
+materialised each lane and routed through `sumD`. The same data gave three answers
+depending on shape and layout. One rule now: **the mean `std(axis)` uses is the mean
+`mean(axis)` returns.**
+
+A strided `std(axis)` therefore differs from what earlier versions produced; contiguous is
+unchanged. Six fixture rows moved, all `tstd1fnv`. No performance cost — the strided path
+also stopped materialising a lane per column, so it got faster.
+
+The `std0fnv`/`tstd1fnv` rows existed to pin that difference, which meant both sensitivity
+guards were asserting the wart still existed and failed the moment it was fixed. They now
+assert the opposite and stronger property: `m.std(0)` and `m.T.std(1)` reduce the SAME
+lanes — row k of the transpose is column k of the original — so they must agree bit for
+bit whatever the layout.
+
 **PERFORMANCE — both languages now beat NumPy on every benchmarked `Mat` operation**
 
 Nothing in `docs/MatDCheatSheet.md` trails NumPy in either language except `matmul`,
@@ -74,6 +92,12 @@ On the Scala side:
   one column-at-a-time double sweep through row-major storage. 8.3x, the largest single
   win here.
 
+A `Rust vs Scala` column was added to the benchmark output for this, because a gap
+between the two ports is a signal that one is doing more work rather than that a language
+is slower — and the NumPy baseline hides it. `stdAxis` read 2.8x faster than NumPy while
+being 6.6x behind its own sibling port; blocking and the lane split closed that to
+parity (0.79 -> 0.095 ms).
+
 Ported to Rust, whose `scan`, `sumAxis`, `minAxis`/`maxAxis`, `cummax`/`cummin` and
 `stdAxis` were all still sequential or allocating: `scan` splits by row block with the
 same order-preserving combine, the axis family splits by lane with the same eight-wide
@@ -82,7 +106,7 @@ row-major order instead of jumping `cols` elements per store, and `stdAxis` read
 lane in place rather than materialising it into a `Vec` first.
 
 **All of these are bit-preserving**, so `test-data/mat-parity/` is unchanged by them —
-unlike the strided `sum` above, which is a genuine order change. Two properties do the
+unlike the two numeric changes above, which move values on purpose. Two properties do the
 work: an extremum is associative and commutative under a total order, so chunking cannot
 move it, and the block combine runs in block order replacing only on a strictly better
 value, which preserves first-occurrence tie-breaking for `argmin`/`argmax`. Splitting the
