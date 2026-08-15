@@ -480,7 +480,6 @@ fn ampm_of(tokens: &[Token]) -> Option<bool> {
 
 #[expect(
     clippy::cognitive_complexity,
-    clippy::too_many_lines,
     reason = "a direct port of the Scala decision ladder;
                                                 splitting it would hide the correspondence"
 )]
@@ -673,7 +672,6 @@ fn looks_like_iso8601_raw(s: &str) -> bool {
 /// language -- but ported so the dead arm it serves reads the same as the Scala's.
 #[expect(
     clippy::cognitive_complexity,
-    clippy::too_many_lines,
     reason = "one grammar, one function: field-by-field
                                                 ISO reading does not decompose usefully"
 )]

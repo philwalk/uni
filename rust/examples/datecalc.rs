@@ -47,10 +47,6 @@ fn num(d: f64) -> String {
     numStr(&Big::from_f64(d), &fmt).trim().to_owned()
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "one linear report, mirroring the Scala twin's main statement for statement"
-)]
 fn main() {
     let d1 = parseDateSmart("2024-05-12 14:30:45");
     let d2 = parseDateSmart("2026-08-11");

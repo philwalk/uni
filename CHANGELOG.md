@@ -1,5 +1,42 @@
 ## Unreleased
 
+**CHANGED (behaviour) — the mask family is IEEE, matching NumPy**
+
+`gt` `lt` `gte` `lte` `:==` `:!=` on `Mat[Double]` now compare with the primitive
+operators instead of `Ordering[Double]`. Two results change:
+
+- **Every comparison involving NaN is false.** `MatD.row(1.0, Double.NaN).gt(0.0)` was
+  `[true, true]` and is now `[true, false]`; `m :== Double.NaN` is false everywhere.
+- **`-0.0 == 0.0`.** `MatD.row(-0.0) :== 0.0` was false and is now true, and `lt(0.0)`
+  on `-0.0` was true and is now false.
+
+Both were artifacts of the default `Ordering[Double]` being `TotalOrdering`, which ranks
+NaN above every number and `-0.0` below `0.0`. That is the right contract for
+`min`/`max`/`sort`/`argmin`/`argmax` — unchanged — and the wrong one for a mask, which
+mirrors NumPy's operators; `jsrc/numpy2mat.sc` already translates Python's `>` straight
+to `gt`. Element type decides, so `Mat[T]` for other `T` still uses its `Ordering`.
+
+Masks built from finite values are unaffected, which is every use in the test corpus.
+
+**ADDED — Rust: the `MatDOps` indexing surface (Tier 3 phase (c))**
+
+Mask indexing, the `apply` gather family and the `update` write family are ported.
+
+- `MatB` mirrors `Mat[Boolean]`: `gt`/`lt`/`gte`/`lte`/`eqTo`/`neTo` and
+  `isnan`/`isinf`/`isfinite` produce one; `&`/`|`/`!` combine them (Rust cannot overload
+  `&&`); `all`/`any` reduce, with `allAxis`/`anyAxis` keeping the numeric axis
+  orientation; `whereMat`/`whereScalar` are `Mat.where`, which is a Rust keyword.
+- `m.applyMask(&mask)` reads the true cells as a `1×k` row, as Scala's `m(mask)` does.
+- `MatD::intoMut()` returns a writable `MatMut` and **panics if the buffer is shared**,
+  which includes any live view. `MatMut::freeze()` returns. `updateAt`, `updateRowAll`,
+  `updateRowsCols`, `updateMask`, the `*From` matrix-source writes and `applyRowsIdx`/
+  `applyIdxCols`/`applyIdxIdx` complete the surface.
+
+Writing through a view to mutate its parent — legal in Scala and NumPy — is not
+reproducible in safe Rust and is recorded in `PARITY.md` as an intentional divergence.
+The conversion panics rather than returning a `Result` so that a ported function keeps
+the signature its Scala original has.
+
 **CHANGED (output-visible) — LF is the default line terminator, and `uni.println` exists**
 
 `import uni.*` now brings in a package-level `println` that terminates with `\n` rather

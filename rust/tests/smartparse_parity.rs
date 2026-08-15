@@ -69,11 +69,6 @@ fn render(d: UniDateTime) -> String {
 }
 
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one row loop, one match; splitting the row
-                                                   kinds apart would hide their symmetry"
-)]
 fn every_fixture_row_reproduces() {
     let text =
         std::fs::read_to_string(fixture_path()).expect("missing fixture; run SmartParseParityGen");

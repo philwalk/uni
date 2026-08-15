@@ -618,7 +618,6 @@ impl Big {
     /// toward the preferred scale (`self.scale - other.scale`) when the division was exact.
     #[expect(
         clippy::cognitive_complexity,
-        clippy::too_many_lines,
         reason = "one division algorithm, one function: the rounding ladder mirrors Java's"
     )]
     fn div_impl(&self, other: &Self) -> Option<Self> {
@@ -895,11 +894,6 @@ impl Big {
     /// `sqrt(MathContext.DECIMAL128)`: 34 significant digits, exact results stripped to the
     /// preferred scale `self.scale / 2`. **BigNaN for a negative** — as in Scala since
     /// 0.16.0, which adopted this answer in place of throwing.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one Newton iteration with its scale bookkeeping, a direct port of the \
-                  BigDecimal algorithm; splitting it would hide the correspondence"
-    )]
     #[must_use]
     pub fn sqrt(&self) -> Self {
         if self.isNaN() || self.neg {

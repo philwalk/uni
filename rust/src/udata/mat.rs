@@ -281,6 +281,18 @@ pub struct MatD {
     cs: usize,
 }
 
+/// A matrix taken apart: the buffer plus its descriptor. Moves between [`MatD`] and
+/// `MatMut` when ownership changes hands, and exists so neither side needs a six-argument
+/// constructor or a six-element tuple.
+pub(crate) struct MatParts {
+    pub data: Vec<f64>,
+    pub rows: usize,
+    pub cols: usize,
+    pub offset: usize,
+    pub rs: usize,
+    pub cs: usize,
+}
+
 /// The layout half of a view — Scala's `(transposed, offset, rs, cs)` arguments to
 /// `Internal.create`. Grouped so the gatekeeper takes four parameters rather than seven;
 /// `None` for a stride means "derive the standard one", which is Scala's `-1` sentinel.
@@ -677,6 +689,116 @@ impl MatD {
     /// Last `min(n, rows)` rows, all columns — Scala's `tail(n)`.
     pub fn tail(&self, n: usize) -> Self {
         self.applyRowsAll(self.rows.saturating_sub(n)..self.rows)
+    }
+
+    /// Rows selected by index — Scala's `m(rowIndices, ::)`. Gathers a fresh matrix.
+    ///
+    /// # Panics
+    /// If any index is out of bounds.
+    pub fn applyRowsIdx(&self, rowIndices: &[usize]) -> Self {
+        let mut out = Vec::with_capacity(rowIndices.len() * self.cols);
+        for &r in rowIndices {
+            assert!(
+                r < self.rows,
+                "row index {r} out of bounds for {} rows",
+                self.rows
+            );
+            for c in 0..self.cols {
+                out.push(self.at(r, c));
+            }
+        }
+        Self::create(out, rowIndices.len(), self.cols)
+    }
+
+    /// Columns selected by index — Scala's `m(::, colIndices)`.
+    ///
+    /// # Panics
+    /// If any index is out of bounds.
+    pub fn applyIdxCols(&self, colIndices: &[usize]) -> Self {
+        let mut out = Vec::with_capacity(self.rows * colIndices.len());
+        for r in 0..self.rows {
+            for &c in colIndices {
+                assert!(
+                    c < self.cols,
+                    "column index {c} out of bounds for {} cols",
+                    self.cols
+                );
+                out.push(self.at(r, c));
+            }
+        }
+        Self::create(out, self.rows, colIndices.len())
+    }
+
+    /// The rectangle of both index lists — Scala's `m(rowIndices, colIndices)`.
+    ///
+    /// Note this is NumPy's `ix_` behaviour, not NumPy's bare fancy indexing: it selects
+    /// the cross product, not the zipped diagonal. Scala's overload does the same.
+    ///
+    /// # Panics
+    /// If any index is out of bounds.
+    pub fn applyIdxIdx(&self, rowIndices: &[usize], colIndices: &[usize]) -> Self {
+        let mut out = Vec::with_capacity(rowIndices.len() * colIndices.len());
+        for &r in rowIndices {
+            assert!(
+                r < self.rows,
+                "row index {r} out of bounds for {} rows",
+                self.rows
+            );
+            for &c in colIndices {
+                assert!(
+                    c < self.cols,
+                    "column index {c} out of bounds for {} cols",
+                    self.cols
+                );
+                out.push(self.at(r, c));
+            }
+        }
+        Self::create(out, rowIndices.len(), colIndices.len())
+    }
+
+    /// Hands the buffer over when nothing else holds it — the engine behind
+    /// [`MatD::intoMut`]. Strides come along, so a view whose parent has been dropped
+    /// still works.
+    ///
+    /// # Panics
+    /// If the buffer is shared. See [`MatD::intoMut`] for why this panics rather than
+    /// returning a `Result`.
+    #[expect(
+        clippy::panic,
+        reason = "the panic IS the design: a Result here would propagate into every \
+                  caller of every ported function that mutates, changing the shape of \
+                  the port relative to the Scala it mirrors"
+    )]
+    pub(crate) fn intoOwnedParts(self) -> MatParts {
+        let (rows, cols, offset, rs, cs) = (self.rows, self.cols, self.offset, self.rs, self.cs);
+        match Arc::try_unwrap(self.data) {
+            Ok(data) => MatParts {
+                data,
+                rows,
+                cols,
+                offset,
+                rs,
+                cs,
+            },
+            Err(_) => panic!(
+                "matrix buffer is shared, so it cannot be made mutable; \
+                 a view or clone taken from it is still alive"
+            ),
+        }
+    }
+
+    /// Rebuilds from parts a `MatMut` hands back. Not public: the only caller is
+    /// `MatMut::freeze`, and the parts are its own.
+    pub(crate) fn fromOwnedParts(p: MatParts) -> Self {
+        Self {
+            data: Arc::new(p.data),
+            rows: p.rows,
+            cols: p.cols,
+            transposed: false,
+            offset: p.offset,
+            rs: p.rs,
+            cs: p.cs,
+        }
     }
 
     /// Same elements in logical order, re-laid out — Scala's `reshape`.

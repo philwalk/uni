@@ -7,6 +7,45 @@ import uni.data.Big.*
 class MatNaNSuite extends FunSuite:
 
   // ============================================================================
+  // The mask family is IEEE, not the Ordering
+  // ============================================================================
+  //
+  // `Ordering[Double]` is TotalOrdering here, under which NaN outranks every number and
+  // -0.0 < 0.0. That is the contract for min/max/sort/argmax and NOT for a mask: these
+  // mirror NumPy's operators. Each expectation below is what NumPy prints.
+
+  test("gt/lt/gte/lte are false for NaN, as in NumPy") {
+    val m = MatD.row(1.0, Double.NaN, -1.0)
+    // np.array([1.0, np.nan, -1.0]) > 0.0  ->  [True, False, False]
+    assertEquals(m.gt(0.0).toArray.toSeq, Seq(true, false, false))
+    assertEquals(m.lt(0.0).toArray.toSeq, Seq(false, false, true))
+    assertEquals(m.gte(0.0).toArray.toSeq, Seq(true, false, false))
+    assertEquals(m.lte(0.0).toArray.toSeq, Seq(false, false, true))
+  }
+
+  test(":== and :!= treat NaN as unequal to itself, as in NumPy") {
+    val m = MatD.row(Double.NaN, 2.0)
+    assertEquals(m.:==(Double.NaN).toArray.toSeq, Seq(false, false))
+    assertEquals(m.:!=(Double.NaN).toArray.toSeq, Seq(true, true))
+  }
+
+  test("signed zeros compare equal, as in NumPy") {
+    // The divergence that is NOT about NaN: TotalOrdering ranks -0.0 below 0.0.
+    val m = MatD.row(-0.0, 0.0)
+    assertEquals(m.:==(0.0).toArray.toSeq, Seq(true, true))
+    assertEquals(m.gte(0.0).toArray.toSeq, Seq(true, true))
+    assertEquals(m.lt(0.0).toArray.toSeq, Seq(false, false))
+  }
+
+  test("the mask family disagrees with the Ordering it no longer uses") {
+    // A test that cannot fail proves nothing: assert the total order really would give
+    // a different answer here, so this suite keeps catching a regression to it.
+    val ord = summon[Ordering[Double]]
+    assert(ord.gt(Double.NaN, 0.0), "TotalOrdering must still rank NaN above 0.0")
+    assertEquals(MatD.row(Double.NaN).gt(0.0).toArray.toSeq, Seq(false))
+  }
+
+  // ============================================================================
   // containsNaN — Double matrix
   // ============================================================================
 

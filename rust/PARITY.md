@@ -341,10 +341,8 @@ that the loaders return. Realistic phasing:
   matmul and the BLAS crossover arrive;
 - (b) ~~the reduction/stat family (in `Mat` itself, not `MatDOps`): `sum mean std
   variance min max argmin argmax cumsum abs power norm` + `axis` variants~~ **done**;
-- (c) the `MatDOps` indexing surface and `MatMathOps` elementwise math — **next**. Note
-  `update` is the first thing in the port that mutates: Scala writes *through* a view to
-  the parent's array, where `Arc::make_mut` would give copy-on-write. That needs an
-  explicit decision, not a default;
+- (c) ~~the `MatDOps` indexing surface: the `apply` gather family, mask indexing, and the
+  `update` write family~~ **done** (`MatMathOps` elementwise math still outstanding);
 - (d) pandas ops;
 - (e) `leastSquares` + `BlasCrossover` routing (the `blas` feature already exists);
 - (f) `matResultOps` join/groupBy last.
@@ -382,6 +380,33 @@ accessor names — in Scala they are the varargs *constructors* `Mat.row(1,2,3)`
   contiguous *copy*. They differ in more than allocation — the copy lands on the fast
   summation path and the view does not — so the port keeps both, and `head`/`tail` build
   on the copying one exactly as Scala's do.
+
+**As applied in (c).** Three decisions the contract did not anticipate:
+
+- **Mutation is a separate type reached by a panicking conversion.** `MatD::intoMut()`
+  consumes the matrix and returns a `MatMut`, panicking if anything else holds the
+  buffer. Scala and NumPy each have one always-mutable type, and writing through a view
+  mutates the parent; no safe Rust design reproduces that, so the divergence is made
+  loud rather than silent. It panics rather than returning a `Result` because a `Result`
+  propagates — a ported function that mutates a matrix it received would return
+  `Result<…>` where its Scala original returns a plain value, and every caller up the
+  chain would inherit it, changing the shape of the port rather than one call site.
+  Copy-on-write was the third candidate and is the worst: it reads exactly like Scala
+  while inverting the semantics, since the view would stop tracking its parent.
+  `MatD::zeros(r, c).intoMut()` is the one construction route, mirroring Scala's single
+  `MatD.zeros`; `examples/tprf_runner.rs` is the reference call site.
+- **`MatB` is a real type, not `&[bool]`.** Scala's `Mat[Boolean]` supports `&&`/`||`/`!`,
+  `all`/`any` with axis forms, and `where`; every one needs the shape. Rust cannot
+  overload `&&`, so those are `BitAnd`/`BitOr`/`Not`, and `where` is a keyword, so
+  `Mat.where(cond, x, y)` becomes `cond.whereMat(x, y)` / `cond.whereScalar(x, y)`.
+  `:==`/`:!=` are not Rust identifiers either and become `eqTo`/`neTo`.
+- **The mask family is IEEE in both languages, as of 0.16.1.** `gt`/`lt`/`gte`/`lte`/
+  `eqTo`/`neTo` are false at every NaN and treat `-0.0 == 0.0`. Scala previously routed
+  them through `Ordering[Double]` — `TotalOrdering`, which ranks NaN above every number
+  and `-0.0` below `0.0` — and so disagreed with NumPy; the Scala side moved to match.
+  `TotalOrdering` remains correct for `min`/`max`/`sort`/`argmax`, which are order
+  statistics; a mask is not one. Note this is the *opposite* direction from the ordering
+  rule the reductions follow, and the two are easy to conflate.
 
 `slice` also takes `Range<i64>` rather than `Range<usize>`, because Scala reads a
 negative *start* as an offset from the end (`-2 until 0`). Only the start is adjusted
@@ -440,5 +465,8 @@ hours, not days.
    byte-identical demo pair and pins `sumD` bit-exactness against a live workload.~~
    **Done.** The consumer-first scoping worked: `marketSim` drove milestone 1, and the
    view model that followed was verified by re-running that same pair (still byte-
-   identical across twelve configurations) alongside a 297-row 2-D fixture. Next is
-   `MatDOps` indexing — starting with the aliasing decision `update` forces.
+   identical across twelve configurations) alongside a 297-row 2-D fixture. Phase (c)
+   followed: the aliasing decision `update` forces is settled (`MatMut`, reached by a
+   panicking conversion), and mask indexing brought `MatB`. Next is `MatMathOps`
+   elementwise math, then matmul — which is what `examples/tprf_runner.rs` waits on to
+   become a demo pair.

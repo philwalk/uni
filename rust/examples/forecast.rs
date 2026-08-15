@@ -43,10 +43,6 @@ fn num(d: f64) -> String {
     numStr(&Big::from_f64(d), &fmt).trim().to_owned()
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "one linear report, mirroring the Scala twin's main statement for statement"
-)]
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let csvPath = args
