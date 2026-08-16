@@ -320,6 +320,60 @@ object MatParityGen:
     "colT" -> Mat.create(arr.clone(), arr.length, 1).T,
   )
 
+  /** A mask as an FNV digest, true as 1 and false as 0. */
+  def fnvMask(mask: Mat[Boolean]): Long =
+    fnvWords(mask.toArray.map(b => if b then 1L else 0L))
+
+  /**
+   * The mask family, over the same adversarial arrays.
+   *
+   * These pin the OPPOSITE ordering rule from the rest of this file. `min`/`max`/`argmax`
+   * above use `Ordering[Double]` — `TotalOrdering`, NaN above every number, `-0.0` below
+   * `0.0`. The mask family is IEEE, as NumPy's operators are: every comparison involving
+   * NaN is false and `-0.0 == 0.0`. A port that routes masks through its ordering
+   * comparator passes the rows above and fails these, which is the point of recording
+   * both against the same inputs.
+   *
+   * The `colT` orientation matters as much as the values: a transposed view must compare
+   * its own elements through the stride equation, not its parent's buffer in parent order.
+   */
+  def maskCases(m: Mat[Double]): Vector[(String, Long)] =
+    val pos    = m.gt(0.0)
+    val finite = m.isfinite
+    val sel    = m(pos)
+    Vector(
+      "mask.gt0"       -> fnvMask(pos),
+      "mask.lt0"       -> fnvMask(m.lt(0.0)),
+      "mask.gte0"      -> fnvMask(m.gte(0.0)),
+      "mask.lte0"      -> fnvMask(m.lte(0.0)),
+      "mask.eq0"       -> fnvMask(m :== 0.0),
+      "mask.ne0"       -> fnvMask(m :!= 0.0),
+      // Every element compares false against NaN, and unequal to it.
+      "mask.eqnan"     -> fnvMask(m :== Double.NaN),
+      "mask.nenan"     -> fnvMask(m :!= Double.NaN),
+      "mask.gtinf"     -> fnvMask(m.gt(Double.PositiveInfinity)),
+      "mask.gteinf"    -> fnvMask(m.gte(Double.PositiveInfinity)),
+      "mask.ltninf"    -> fnvMask(m.lt(Double.NegativeInfinity)),
+      "mask.isnan"     -> fnvMask(m.isnan),
+      "mask.isinf"     -> fnvMask(m.isinf),
+      "mask.isfinite"  -> fnvMask(finite),
+      "mask.and"       -> fnvMask(pos && finite),
+      "mask.or"        -> fnvMask(pos || finite),
+      "mask.not"       -> fnvMask(!pos),
+      "mask.all"       -> (if pos.all then 1L else 0L),
+      "mask.any"       -> (if pos.any then 1L else 0L),
+      "mask.all0"      -> fnvMask(pos.all(0)),
+      "mask.any0"      -> fnvMask(pos.any(0)),
+      "mask.all1"      -> fnvMask(pos.all(1)),
+      "mask.any1"      -> fnvMask(pos.any(1)),
+      // The selection's SHAPE is recorded alongside its contents: an implementation that
+      // returned n×1 instead of 1×n would otherwise pass on the digest alone.
+      "mask.selfnv"    -> fnvCanon(sel.toArray),
+      "mask.selshape"  -> (sel.rows.toLong * 1000 + sel.cols),
+      "mask.wherefnv"  -> fnvCanon(Mat.where(pos, m, m * -1.0).toArray),
+      "mask.wheresfnv" -> fnvCanon(Mat.where(pos, 1.0, -1.0).toArray),
+    )
+
   def advCases(m: Mat[Double]): Vector[(String, Long)] =
     val an = m.argmin
     val ax = m.argmax
@@ -335,7 +389,7 @@ object MatParityGen:
       "cmin1fnv" -> fnvCanon(m.cummin(1).toArray),
       "min0fnv"  -> fnvCanon(m.min(0).toArray),
       "max1fnv"  -> fnvCanon(m.max(1).toArray),
-    )
+    ) ++ maskCases(m)
 
   val header: String =
     """|# uni.data.Mat reduction parity reference (Scala <-> Rust).

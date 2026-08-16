@@ -18,6 +18,13 @@ to `gt`. Element type decides, so `Mat[T]` for other `T` still uses its `Orderin
 
 Masks built from finite values are unaffected, which is every use in the test corpus.
 
+`test-data/mat-parity/` grew 810 mask rows — 27 cases over the ten adversarial arrays
+(NaN, −NaN, ±0.0, ±inf, ties) in three orientations including a transposed view — so the
+two implementations are now pinned to each other and not only to NumPy independently. No
+existing row moved. The rows sit beside ordering rows built from the same inputs, and the
+two record opposite rules deliberately: a port that routes masks through its ordering
+comparator passes every ordering row and fails every mask row.
+
 **ADDED — Rust: the `MatDOps` indexing surface (Tier 3 phase (c))**
 
 Mask indexing, the `apply` gather family and the `update` write family are ported.

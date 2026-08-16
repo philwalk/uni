@@ -108,10 +108,12 @@ class MatParitySuite extends munit.FunSuite:
 
     // Each group is counted separately: they pin different things, and losing one would
     // leave the others looking healthy.
-    assert(rows.length >= 750, s"only ${rows.length} rows; expected 13 sizes + 11 shapes + 10 adversarial")
+    assert(rows.length >= 1550, s"only ${rows.length} rows; expected 13 sizes + 11 shapes + 10 adversarial")
     val twoD = rows.count((shape, _, _) => is2d(shape))
     assert(twoD >= 250, s"only $twoD 2-D rows; the view model would go unchecked")
-    val adv = rows.count((shape, _, _) => isAdv(shape))
+    val masks = rows.count((_, label, _) => label.startsWith("mask."))
+    assert(masks >= 800, s"only $masks mask rows; IEEE comparison semantics would go unchecked")
+    val adv = rows.count((shape, label, _) => isAdv(shape) && !label.startsWith("mask."))
     assert(adv >= 300, s"only $adv adversarial rows; NaN/signed-zero ordering would go unchecked")
   }
 
@@ -126,6 +128,25 @@ class MatParitySuite extends munit.FunSuite:
       bits(naive),
       "corpus no longer distinguishes a naive fold from sumD",
     )
+  }
+
+  test("the mask rows record IEEE, not the ordering they sit beside") {
+    // The adversarial corpus carries both rules at once: `min`/`max`/`argmax` rows use
+    // TotalOrdering, the `mask.` rows use IEEE. If the two ever agreed on this corpus the
+    // mask rows would be pinning nothing, so assert they still disagree — on NaN, which
+    // TotalOrdering ranks above every number, and on -0.0, which it ranks below 0.0.
+    val ord  = summon[Ordering[Double]]
+    val advs = uni.apps.MatParityGen.adversarial.toMap
+    val m    = MatD(advs("nanmid").clone())
+    assert(ord.gt(Double.NaN, 0.0), "TotalOrdering must still rank NaN above 0.0")
+    assertEquals(
+      m.gt(0.0).toArray.toSeq,
+      Seq(true, false, false, true),
+      "gt must be false at NaN; a port using its ordering comparator would say true",
+    )
+    val z = MatD(advs("zeros").clone())
+    assert(ord.lt(-0.0, 0.0), "TotalOrdering must still rank -0.0 below 0.0")
+    assertEquals(z.lt(0.0).toArray.toSeq, Seq(false, false), "-0.0 < 0.0 must be false")
   }
 
   test("the corpus is sensitive to the view model") {

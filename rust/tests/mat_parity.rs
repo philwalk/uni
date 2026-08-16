@@ -46,6 +46,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use uni::NumPyRng;
+use uni::udata::MatB;
 use uni::udata::MatD;
 
 /// A fixture row's first field: a 1-D prefix length, a 2-D `<rows>x<cols>`, or an
@@ -128,6 +129,55 @@ fn case_word_adv(m: &MatD, label: &str) -> u64 {
         "cmin1fnv" => fnv_canon(&m.cummin(1).toArray()),
         "min0fnv" => fnv_canon(&m.minAxis(0).toArray()),
         "max1fnv" => fnv_canon(&m.maxAxis(1).toArray()),
+        other => case_word_mask(m, other),
+    }
+}
+
+/// A mask as an FNV digest, true as 1 — `MatParityGen.fnvMask`.
+fn fnv_mask(mask: &MatB) -> u64 {
+    fnv_words(mask.toArray().into_iter().map(u64::from))
+}
+
+/// The mask family, over the same adversarial arrays as the ordering cases above.
+///
+/// These pin the OPPOSITE rule: the ordering cases use `java_double_compare`, where NaN
+/// outranks every number and `-0.0 < 0.0`; masks are IEEE, so every comparison involving
+/// NaN is false and `-0.0 == 0.0`. Routing masks through the ordering comparator passes
+/// every row above and fails every row here.
+fn case_word_mask(m: &MatD, label: &str) -> u64 {
+    let pos = m.gt(0.0);
+    let finite = m.isfinite();
+    match label {
+        "mask.gt0" => fnv_mask(&pos),
+        "mask.lt0" => fnv_mask(&m.lt(0.0)),
+        "mask.gte0" => fnv_mask(&m.gte(0.0)),
+        "mask.lte0" => fnv_mask(&m.lte(0.0)),
+        "mask.eq0" => fnv_mask(&m.eqTo(0.0)),
+        "mask.ne0" => fnv_mask(&m.neTo(0.0)),
+        "mask.eqnan" => fnv_mask(&m.eqTo(f64::NAN)),
+        "mask.nenan" => fnv_mask(&m.neTo(f64::NAN)),
+        "mask.gtinf" => fnv_mask(&m.gt(f64::INFINITY)),
+        "mask.gteinf" => fnv_mask(&m.gte(f64::INFINITY)),
+        "mask.ltninf" => fnv_mask(&m.lt(f64::NEG_INFINITY)),
+        "mask.isnan" => fnv_mask(&m.isnan()),
+        "mask.isinf" => fnv_mask(&m.isinf()),
+        "mask.isfinite" => fnv_mask(&finite),
+        "mask.and" => fnv_mask(&(&pos & &finite)),
+        "mask.or" => fnv_mask(&(&pos | &finite)),
+        "mask.not" => fnv_mask(&!&pos),
+        "mask.all" => u64::from(pos.all()),
+        "mask.any" => u64::from(pos.any()),
+        "mask.all0" => fnv_mask(&pos.allAxis(0)),
+        "mask.any0" => fnv_mask(&pos.anyAxis(0)),
+        "mask.all1" => fnv_mask(&pos.allAxis(1)),
+        "mask.any1" => fnv_mask(&pos.anyAxis(1)),
+        "mask.selfnv" => fnv_canon(&m.applyMask(&pos).toArray()),
+        "mask.selshape" => {
+            let sel = m.applyMask(&pos);
+            sel.rows() as u64 * 1000 + sel.cols() as u64
+        }
+        "mask.wherefnv" => fnv_canon(&pos.whereMat(m, &(m * -1.0)).toArray()),
+        "mask.wheresfnv" => fnv_canon(&pos.whereScalar(1.0, -1.0).toArray()),
         other => panic!("unknown adversarial case {other} in fixture"),
     }
 }
@@ -375,7 +425,11 @@ fn mat_reductions_match_the_scala_reference_bit_for_bit() {
     let mut checked = 0usize;
     let mut two_d = 0usize;
     let mut adv = 0usize;
+    let mut masks = 0usize;
     for (shape, label, want) in &rows {
+        if label.starts_with("mask.") {
+            masks += 1;
+        }
         let got = match parse_shape(shape) {
             Shape::Column(n) => {
                 let m = MatD::apply(&all[..n]);
@@ -387,7 +441,9 @@ fn mat_reductions_match_the_scala_reference_bit_for_bit() {
                 case_word_2d(&MatD::create(all[..r * c].to_vec(), r, c), label)
             }
             Shape::Adversarial(name, orient) => {
-                adv += 1;
+                if !label.starts_with("mask.") {
+                    adv += 1;
+                }
                 case_word_adv(&adv_matrix(&orient, adversarial_array(&name)), label)
             }
         };
@@ -404,8 +460,13 @@ fn mat_reductions_match_the_scala_reference_bit_for_bit() {
     // asserted separately because the three groups pin different things, and losing any
     // one of them would leave the others looking healthy.
     assert!(
-        checked >= 750,
-        "only {checked} rows checked; expected 13 sizes x 10 + 11 shapes x 27 + 10 adversarial x 33"
+        checked >= 1550,
+        "only {checked} rows checked; expected 13 sizes x 10 + 11 shapes x 27 + 10 adversarial x 60"
+    );
+    assert!(
+        masks >= 800,
+        "only {masks} mask rows; IEEE comparison semantics would go unchecked — a port \
+         using its ordering comparator would pass everything else"
     );
     assert!(
         two_d >= 250,
@@ -431,6 +492,41 @@ fn the_corpus_is_sensitive_to_association_order() {
         chunked.to_bits(),
         naive.to_bits(),
         "corpus no longer distinguishes a naive fold from sumD — the parity fixture would pass even for a wrong implementation"
+    );
+}
+
+#[test]
+fn the_mask_rows_record_ieee_not_the_ordering_beside_them() {
+    // The adversarial corpus carries both rules at once: the ordering rows use
+    // `java_double_compare`, the `mask.` rows use IEEE. If the two agreed here the mask
+    // rows would pin nothing, so assert they still disagree — on NaN, which the total
+    // order ranks above every number, and on -0.0, which it ranks below 0.0.
+    use std::cmp::Ordering;
+
+    use uni::udata::mat::java_double_compare;
+
+    let m = adv_matrix("col", adversarial_array("nanmid"));
+    assert_eq!(
+        java_double_compare(f64::NAN, 0.0),
+        Ordering::Greater,
+        "the total order must still rank NaN above 0.0"
+    );
+    assert_eq!(
+        m.gt(0.0).toArray(),
+        vec![true, false, false, true],
+        "gt must be false at NaN; a port using its ordering comparator would say true"
+    );
+
+    let z = adv_matrix("col", adversarial_array("zeros"));
+    assert_eq!(
+        java_double_compare(-0.0, 0.0),
+        Ordering::Less,
+        "the total order must still rank -0.0 below 0.0"
+    );
+    assert_eq!(
+        z.lt(0.0).toArray(),
+        vec![false, false],
+        "-0.0 < 0.0 must be false for a mask"
     );
 }
 
