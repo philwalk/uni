@@ -11,4 +11,3 @@
 # under test, and no rule at all let autocrlf=true CI runners mangle them (the
 # Windows-CI CsvParitySuite failures).
 test-data/** -text
-build.sbt binary
