@@ -46,7 +46,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use uni::NumPyRng;
-use uni::udata::MatB;
+use uni::udata::MatBool;
 use uni::udata::MatD;
 
 /// A fixture row's first field: a 1-D prefix length, a 2-D `<rows>x<cols>`, or an
@@ -134,7 +134,7 @@ fn case_word_adv(m: &MatD, label: &str) -> u64 {
 }
 
 /// A mask as an FNV digest, true as 1 — `MatParityGen.fnvMask`.
-fn fnv_mask(mask: &MatB) -> u64 {
+fn fnv_mask(mask: &MatBool) -> u64 {
     fnv_words(mask.toArray().into_iter().map(u64::from))
 }
 

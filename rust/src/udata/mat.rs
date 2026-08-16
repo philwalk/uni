@@ -288,6 +288,11 @@ pub(crate) struct MatParts {
     pub data: Vec<f64>,
     pub rows: usize,
     pub cols: usize,
+    /// Carried, not dropped: the flag is part of how a layout is CLASSIFIED
+    /// (`isStandardContiguous`, `is_weird_layout`), and classification selects the
+    /// summation algorithm. Losing it on a `MatMut` round trip left values intact but
+    /// changed which path a transposed view took after `freeze`.
+    pub transposed: bool,
     pub offset: usize,
     pub rs: usize,
     pub cs: usize,
@@ -770,12 +775,20 @@ impl MatD {
                   the port relative to the Scala it mirrors"
     )]
     pub(crate) fn intoOwnedParts(self) -> MatParts {
-        let (rows, cols, offset, rs, cs) = (self.rows, self.cols, self.offset, self.rs, self.cs);
+        let (rows, cols, transposed, offset, rs, cs) = (
+            self.rows,
+            self.cols,
+            self.transposed,
+            self.offset,
+            self.rs,
+            self.cs,
+        );
         match Arc::try_unwrap(self.data) {
             Ok(data) => MatParts {
                 data,
                 rows,
                 cols,
+                transposed,
                 offset,
                 rs,
                 cs,
@@ -794,7 +807,7 @@ impl MatD {
             data: Arc::new(p.data),
             rows: p.rows,
             cols: p.cols,
-            transposed: false,
+            transposed: p.transposed,
             offset: p.offset,
             rs: p.rs,
             cs: p.cs,

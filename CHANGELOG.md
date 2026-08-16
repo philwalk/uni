@@ -2,19 +2,20 @@
 
 **CHANGED (behaviour) — the mask family is IEEE, matching NumPy**
 
-`gt` `lt` `gte` `lte` `:==` `:!=` on `Mat[Double]` now compare with the primitive
-operators instead of `Ordering[Double]`. Two results change:
+`gt` `lt` `gte` `lte` `:==` `:!=` on `Mat[Double]` and `Mat[Float]` now compare with the
+primitive operators instead of `Ordering`. Two results change:
 
 - **Every comparison involving NaN is false.** `MatD.row(1.0, Double.NaN).gt(0.0)` was
   `[true, true]` and is now `[true, false]`; `m :== Double.NaN` is false everywhere.
 - **`-0.0 == 0.0`.** `MatD.row(-0.0) :== 0.0` was false and is now true, and `lt(0.0)`
   on `-0.0` was true and is now false.
 
-Both were artifacts of the default `Ordering[Double]` being `TotalOrdering`, which ranks
-NaN above every number and `-0.0` below `0.0`. That is the right contract for
-`min`/`max`/`sort`/`argmin`/`argmax` — unchanged — and the wrong one for a mask, which
-mirrors NumPy's operators; `jsrc/numpy2mat.sc` already translates Python's `>` straight
-to `gt`. Element type decides, so `Mat[T]` for other `T` still uses its `Ordering`.
+Both were artifacts of the default `Ordering[Double]`/`Ordering[Float]` being the
+`TotalOrdering`, which ranks NaN above every number and `-0.0` below `0.0`. That is the
+right contract for `min`/`max`/`sort`/`argmin`/`argmax` — unchanged — and the wrong one
+for a mask, which mirrors NumPy's operators; `jsrc/numpy2mat.sc` already translates
+Python's `>` straight to `gt`. Element type decides: `Mat[T]` for other `T` still uses
+its `Ordering`.
 
 Masks built from finite values are unaffected, which is every use in the test corpus.
 
@@ -29,13 +30,14 @@ comparator passes every ordering row and fails every mask row.
 
 Mask indexing, the `apply` gather family and the `update` write family are ported.
 
-- `MatB` mirrors `Mat[Boolean]`: `gt`/`lt`/`gte`/`lte`/`eqTo`/`neTo` and
+- `MatBool` mirrors `Mat[Boolean]` (not `MatB`, which in Scala is `Mat[Big]`):
+  `gt`/`lt`/`gte`/`lte`/`eqTo`/`neTo` and
   `isnan`/`isinf`/`isfinite` produce one; `&`/`|`/`!` combine them (Rust cannot overload
   `&&`); `all`/`any` reduce, with `allAxis`/`anyAxis` keeping the numeric axis
   orientation; `whereMat`/`whereScalar` are `Mat.where`, which is a Rust keyword.
 - `m.applyMask(&mask)` reads the true cells as a `1×k` row, as Scala's `m(mask)` does.
 - `MatD::intoMut()` returns a writable `MatMut` and **panics if the buffer is shared**,
-  which includes any live view. `MatMut::freeze()` returns. `updateAt`, `updateRowAll`,
+  which includes any live view; `MatMut::freeze()` returns the `MatD`. `updateAt`, `updateRowAll`,
   `updateRowsCols`, `updateMask`, the `*From` matrix-source writes and `applyRowsIdx`/
   `applyIdxCols`/`applyIdxIdx` complete the surface.
 

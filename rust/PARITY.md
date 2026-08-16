@@ -17,7 +17,7 @@ snake_case marks an internal helper or a `try_*` Result variant.
 | `UniDateTime` (57 methods), `DateFormat`, `SmartParse`, `TimeUtils` | `utime` (67 pub fns) | field arithmetic, plus/minus/with families, epoch-day, pattern formatting, smart parsing incl. `parseDateSmartWith(config)`; the clock (local wall time via `localOffsetMinutes`, no tzdb), the zone-free between/duration family, `getMillis`, `endOfMonth`, `quik*`, `whenModified`/`ageIn*` |
 | `Big`, `BigUtils` + the CSV loaders | `udata` (43 pub fns) | full arithmetic incl. `round(precision, mode)`, HALF_EVEN contexts, `loadMatBig`/`loadSmartBig`; `numStr`/`NumFormat` (Java `%f` fidelity), `str2num`, `isNumeric`, `isBad`/`orBad` |
 | `NumPyRNG` | `numpy_rng` (7 fns) | bit-identical `uniform`/`randn`/`next_*` |
-| `Mat[Double]` core — Tier 3 phases (a) + (b) | `udata::mat::MatD`, `udata::mataxis`, `udata::vecexts::{CVecD, RVecD}` | **the strided view model** (`transpose`/`T`, `slice`, `broadcastTo`, and the fragmented-layout materialisation `Internal.create` performs), broadcasting `+ - * /`, `Neg`, the `apply*` gather family, `reshape` `ravel` `matCopy` `copy` `item` `flatten`; reductions `sum` `mean` `min` `max` `argmin` `argmax` `std` `variance` `norm`; axis family `sumAxis` `meanAxis` `minAxis` `maxAxis` `stdAxis` `cumsumAxis` `cummax` `cummin` + `rowSums`/`colSums`/`rowMeans`/`colMeans`; elementwise `abs` `power` `exp` `log` `sqrt` `clip` `cumsum`. **Bit-identical except `exp`/`log`** (see below): `sumD`'s 8-way unrolled combine tree and its pinned 16-chunk decomposition are reproduced exactly, `abs` keeps `-0.0` where `f64::abs` would not, `power` is repeated multiplication rather than `powi`, `cumsum` returns `1×n` whatever the input shape — and, critically, **which summation algorithm a matrix gets is a function of its layout in both languages alike** (see the view-model note below). Still to come: `MatDOps` indexing/`update`, `MatMathOps`, pandas ops, matmul/BLAS, `Mat[Big]` |
+| `Mat[Double]` core — Tier 3 phases (a) + (b) | `udata::mat::MatD`, `udata::mataxis`, `udata::vecexts::{CVecD, RVecD}` | **the strided view model** (`transpose`/`T`, `slice`, `broadcastTo`, and the fragmented-layout materialisation `Internal.create` performs), broadcasting `+ - * /`, `Neg`, the `apply*` gather family, `reshape` `ravel` `matCopy` `copy` `item` `flatten`; reductions `sum` `mean` `min` `max` `argmin` `argmax` `std` `variance` `norm`; axis family `sumAxis` `meanAxis` `minAxis` `maxAxis` `stdAxis` `cumsumAxis` `cummax` `cummin` + `rowSums`/`colSums`/`rowMeans`/`colMeans`; elementwise `abs` `power` `exp` `log` `sqrt` `clip` `cumsum`. **Bit-identical except `exp`/`log`** (see below): `sumD`'s 8-way unrolled combine tree and its pinned 16-chunk decomposition are reproduced exactly, `abs` keeps `-0.0` where `f64::abs` would not, `power` is repeated multiplication rather than `powi`, `cumsum` returns `1×n` whatever the input shape — and, critically, **which summation algorithm a matrix gets is a function of its layout in both languages alike** (see the view-model note below). Phase (c) — `MatMut` writes, `MatBool` masks, fancy indexing — is in (see below). Still to come: `MatMathOps`, pandas ops, matmul/BLAS, `Mat[Big]` |
 | `Tprf3`, complete | `t3prf` (13 pub fns) | `t3prf_core`, `estimate_3prf_is_full`/`oos_cv`/`oos_rec`, `ols_solve`, `standardize_columns`, and the closed forms: `tprfClosedForm`, `plsClosedForm`, `pls1Fit`, `forecast3prf` |
 | `StringExts` (partial) | `StrExts`/`StrPathExts` | `lc uc posx dropSuffix startsWithIgnoreCase stripPrefix asPath absPath posix` |
 | `uni.cli.ArgsParser` | `cli` | `eachArg`/`showUsage` + cursor helpers (`thisArg consumeNext peekNext nextInt nextLong nextDouble`); prog name from the caller's source file (`#[track_caller]` mirroring the Scala macro) |
@@ -38,9 +38,9 @@ reductions, drawdown episodes, exposure rules and four report modes. It is the
 consumer that drove Tier 3 milestone 1, and the pair that proved the transcendental
 question above is closable).
 
-Ten committed fixtures under `../test-data/*-parity/` pin these — roughly 20,557 rows
+Ten committed fixtures under `../test-data/*-parity/` pin these — roughly 21,367 rows
 (path 10,537 — incl. 38 `badpath`/`badpayload` rows · date 4,173 · tprf3 3,039 · big 629 · smartparse 539 · csv 458 ·
-mat 757 · numpy-rng 378 · walk 30 · hash 23) — plus the byte-identical pair probe
+mat 1,567 · numpy-rng 378 · walk 30 · hash 23) — plus the byte-identical pair probe
 (`jsrc/pairProbe.sc` / `examples/pair_probe.rs`). See `README.md`.
 
 **`exp` is the one operation in the port that is not bit-identical, and every claim below
@@ -395,7 +395,8 @@ accessor names — in Scala they are the varargs *constructors* `Mat.row(1,2,3)`
   while inverting the semantics, since the view would stop tracking its parent.
   `MatD::zeros(r, c).intoMut()` is the one construction route, mirroring Scala's single
   `MatD.zeros`; `examples/tprf_runner.rs` is the reference call site.
-- **`MatB` is a real type, not `&[bool]`.** Scala's `Mat[Boolean]` supports `&&`/`||`/`!`,
+- **`MatBool` is a real type, not `&[bool]`** — and not `MatB`, which is Scala's alias
+  for `Mat[Big]` and stays reserved for that port. Scala's `Mat[Boolean]` supports `&&`/`||`/`!`,
   `all`/`any` with axis forms, and `where`; every one needs the shape. Rust cannot
   overload `&&`, so those are `BitAnd`/`BitOr`/`Not`, and `where` is a keyword, so
   `Mat.where(cond, x, y)` becomes `cond.whereMat(x, y)` / `cond.whereScalar(x, y)`.
@@ -467,6 +468,6 @@ hours, not days.
    view model that followed was verified by re-running that same pair (still byte-
    identical across twelve configurations) alongside a 297-row 2-D fixture. Phase (c)
    followed: the aliasing decision `update` forces is settled (`MatMut`, reached by a
-   panicking conversion), and mask indexing brought `MatB`. Next is `MatMathOps`
+   panicking conversion), and mask indexing brought `MatBool`. Next is `MatMathOps`
    elementwise math, then matmul — which is what `examples/tprf_runner.rs` waits on to
    become a demo pair.

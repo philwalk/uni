@@ -37,6 +37,17 @@ class MatNaNSuite extends FunSuite:
     assertEquals(m.lt(0.0).toArray.toSeq, Seq(false, false))
   }
 
+  test("Mat[Float] takes the same IEEE path as Mat[Double]") {
+    // Ordering[Float] is TotalOrdering too; the rule is per element type, not per Double.
+    val m = MatF.row(1.0f, Float.NaN, -1.0f)
+    assertEquals(m.gt(0.0f).toArray.toSeq, Seq(true, false, false))
+    assertEquals(m.lte(0.0f).toArray.toSeq, Seq(false, false, true))
+    assertEquals(m.:==(Float.NaN).toArray.toSeq, Seq(false, false, false))
+    val z = MatF.row(-0.0f, 0.0f)
+    assertEquals(z.:==(0.0f).toArray.toSeq, Seq(true, true))
+    assertEquals(z.lt(0.0f).toArray.toSeq, Seq(false, false))
+  }
+
   test("the mask family disagrees with the Ordering it no longer uses") {
     // A test that cannot fail proves nothing: assert the total order really would give
     // a different answer here, so this suite keeps catching a regression to it.

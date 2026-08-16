@@ -27,7 +27,7 @@ pub mod big;
 pub mod bigutils;
 pub mod mat;
 pub mod mataxis;
-pub mod matb;
+pub mod matbool;
 pub mod matmut;
 pub mod vecexts;
 
@@ -43,7 +43,7 @@ pub use bigutils::numStrPct;
 pub use bigutils::orBad;
 pub use bigutils::str2num;
 pub use mat::MatD;
-pub use matb::MatB;
+pub use matbool::MatBool;
 pub use matmut::MatMut;
 pub use vecexts::CVecD;
 pub use vecexts::RVecD;

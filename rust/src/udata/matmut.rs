@@ -62,7 +62,7 @@ use std::ops::Range;
 
 use crate::udata::mat::MatD;
 use crate::udata::mat::MatParts;
-use crate::udata::matb::MatB;
+use crate::udata::matbool::MatBool;
 
 /// A uniquely-owned matrix that can be written to. Obtain with [`MatD::intoMut`] and
 /// return to the immutable form with [`MatMut::freeze`].
@@ -74,6 +74,7 @@ pub struct MatMut {
     data: Vec<f64>,
     rows: usize,
     cols: usize,
+    transposed: bool,
     offset: usize,
     rs: usize,
     cs: usize,
@@ -86,6 +87,7 @@ impl MatMut {
             data: p.data,
             rows: p.rows,
             cols: p.cols,
+            transposed: p.transposed,
             offset: p.offset,
             rs: p.rs,
             cs: p.cs,
@@ -124,6 +126,7 @@ impl MatMut {
             data: self.data,
             rows: self.rows,
             cols: self.cols,
+            transposed: self.transposed,
             offset: self.offset,
             rs: self.rs,
             cs: self.cs,
@@ -218,7 +221,7 @@ impl MatMut {
     ///
     /// # Panics
     /// If the mask shape does not match.
-    pub fn updateMask(&mut self, mask: &MatB, value: f64) {
+    pub fn updateMask(&mut self, mask: &MatBool, value: f64) {
         assert!(
             mask.shape() == (self.rows, self.cols),
             "mask shape {:?} must match matrix shape {:?}",
@@ -237,16 +240,16 @@ impl MatMut {
 
     // ── writes from another matrix ──────────────────────────────────────────
 
-    /// `m(row, ::) = other`, where `other` supplies `cols` values in row-major order.
+    /// `m(row, ::) = other`, where `other` is a `1×cols` row or a `cols×1` column — the
+    /// two shapes Scala's `require` admits, and no other.
     ///
     /// # Panics
-    /// If `other` does not hold exactly `cols` elements.
+    /// If `other` is neither shape.
     pub fn updateRowAllFrom(&mut self, row: usize, other: &MatD) {
-        assert_eq!(
-            other.size(),
-            self.cols,
-            "row source has {} elements, need {}",
-            other.size(),
+        let (or, oc) = other.shape();
+        assert!(
+            (or == 1 && oc == self.cols) || (or == self.cols && oc == 1),
+            "shape mismatch: row has {} cols, source is {or}x{oc}",
             self.cols
         );
         let src = other.toArray();
@@ -256,16 +259,16 @@ impl MatMut {
         }
     }
 
-    /// `m(::, col) = other`, where `other` supplies `rows` values.
+    /// `m(::, col) = other`, where `other` is a `rows×1` column or a `1×rows` row, as
+    /// Scala's `require` admits.
     ///
     /// # Panics
-    /// If `other` does not hold exactly `rows` elements.
+    /// If `other` is neither shape.
     pub fn updateAllColFrom(&mut self, col: usize, other: &MatD) {
-        assert_eq!(
-            other.size(),
-            self.rows,
-            "column source has {} elements, need {}",
-            other.size(),
+        let (or, oc) = other.shape();
+        assert!(
+            (or == self.rows && oc == 1) || (or == 1 && oc == self.rows),
+            "shape mismatch: column has {} rows, source is {or}x{oc}",
             self.rows
         );
         let src = other.toArray();
@@ -403,6 +406,32 @@ mod tests {
         assert_eq!(g.applyAllCol(1).toArray(), vec![9.0, 8.0, 7.0, 6.0]);
         assert_eq!(g.at(2, 0), -1.0);
         assert_eq!(g.at(0, 0), 0.0);
+    }
+
+    #[test]
+    fn a_transposed_view_keeps_its_layout_through_the_round_trip() {
+        // A transposed view whose parent is gone can be made mutable. It must come back
+        // classified the same way, since classification picks the summation path — and
+        // its transpose must be recognised as the plain contiguous matrix it is.
+        let t = MatD::zeros(2, 3).T();
+        assert!(t.transposed() && t.isStandardContiguous());
+        let back = t.intoMut().freeze();
+        assert_eq!(back.shape(), (3, 2));
+        assert!(back.transposed(), "transposed flag lost in the round trip");
+        assert!(back.isStandardContiguous(), "layout classification changed");
+        assert!(
+            back.T().isContiguous(),
+            "T of the round-tripped view is contiguous"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "shape mismatch")]
+    fn a_row_write_rejects_a_source_that_is_neither_row_nor_column() {
+        // Six elements is the right COUNT for a 6-wide row, but Scala's require only
+        // admits 1x6 or 6x1; a 2x3 is refused there and must be refused here.
+        let mut m = MatD::zeros(2, 6).intoMut();
+        m.updateRowAllFrom(0, &MatD::zeros(2, 3));
     }
 
     #[test]

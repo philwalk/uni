@@ -1,4 +1,4 @@
-//! `MatB` — Scala's `Mat[Boolean]`, and the mask family that produces and consumes it.
+//! `MatBool` — Scala's `Mat[Boolean]`, and the mask family that produces and consumes it.
 //!
 //! # Why a whole type rather than `&[bool]`
 //!
@@ -35,13 +35,13 @@ use crate::udata::mat::MatD;
 
 /// A `rows`×`cols` matrix of booleans — Scala's `Mat[Boolean]`.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MatB {
+pub struct MatBool {
     data: Vec<bool>,
     rows: usize,
     cols: usize,
 }
 
-impl MatB {
+impl MatBool {
     /// Wrap row-major `data`.
     ///
     /// # Panics
@@ -131,7 +131,7 @@ impl MatB {
         self.reduceAxis(axis, true)
     }
 
-    /// `np.any(axis=…)`. See [`MatB::allAxis`] for the orientation.
+    /// `np.any(axis=…)`. See [`MatBool::allAxis`] for the orientation.
     ///
     /// # Panics
     /// If `axis` is not 0 or 1.
@@ -226,26 +226,26 @@ impl MatB {
 }
 
 /// Scala's `&&`. Rust cannot overload `&&`, which is short-circuiting and boolean-only.
-impl BitAnd<&MatB> for &MatB {
-    type Output = MatB;
-    fn bitand(self, rhs: &MatB) -> MatB {
+impl BitAnd<&MatBool> for &MatBool {
+    type Output = MatBool;
+    fn bitand(self, rhs: &MatBool) -> MatBool {
         self.zipWith(rhs, |a, b| a && b)
     }
 }
 
 /// Scala's `||`.
-impl BitOr<&MatB> for &MatB {
-    type Output = MatB;
-    fn bitor(self, rhs: &MatB) -> MatB {
+impl BitOr<&MatBool> for &MatBool {
+    type Output = MatBool;
+    fn bitor(self, rhs: &MatBool) -> MatBool {
         self.zipWith(rhs, |a, b| a || b)
     }
 }
 
 /// Scala's `unary_!`.
-impl Not for &MatB {
-    type Output = MatB;
-    fn not(self) -> MatB {
-        MatB {
+impl Not for &MatBool {
+    type Output = MatBool;
+    fn not(self) -> MatBool {
+        MatBool {
             data: self.data.iter().map(|&b| !b).collect(),
             rows: self.rows,
             cols: self.cols,
@@ -256,68 +256,68 @@ impl Not for &MatB {
 impl MatD {
     /// Element-wise comparison producing a mask, reading through the stride equation so a
     /// view compares its own elements rather than its parent's.
-    fn cmp(&self, op: impl Fn(f64) -> bool) -> MatB {
+    fn cmp(&self, op: impl Fn(f64) -> bool) -> MatBool {
         let mut out = Vec::with_capacity(self.size());
         for r in 0..self.rows() {
             for c in 0..self.cols() {
                 out.push(op(self.at(r, c)));
             }
         }
-        MatB::create(out, self.rows(), self.cols())
+        MatBool::create(out, self.rows(), self.cols())
     }
 
     /// `m > other` — IEEE, so false at every NaN. Scala's `gt`.
     #[must_use]
-    pub fn gt(&self, other: f64) -> MatB {
+    pub fn gt(&self, other: f64) -> MatBool {
         self.cmp(|x| x > other)
     }
 
     /// `m < other`. Scala's `lt`.
     #[must_use]
-    pub fn lt(&self, other: f64) -> MatB {
+    pub fn lt(&self, other: f64) -> MatBool {
         self.cmp(|x| x < other)
     }
 
     /// `m >= other`. Scala's `gte`.
     #[must_use]
-    pub fn gte(&self, other: f64) -> MatB {
+    pub fn gte(&self, other: f64) -> MatBool {
         self.cmp(|x| x >= other)
     }
 
     /// `m <= other`. Scala's `lte`.
     #[must_use]
-    pub fn lte(&self, other: f64) -> MatB {
+    pub fn lte(&self, other: f64) -> MatBool {
         self.cmp(|x| x <= other)
     }
 
     /// `m == other` — false everywhere when `other` is NaN, and true for `-0.0 == 0.0`.
     /// Scala's `:==`, spelled out because `:==` is not a Rust identifier.
     #[must_use]
-    pub fn eqTo(&self, other: f64) -> MatB {
+    pub fn eqTo(&self, other: f64) -> MatBool {
         self.cmp(|x| x == other)
     }
 
     /// `m != other`. Scala's `:!=`.
     #[must_use]
-    pub fn neTo(&self, other: f64) -> MatB {
+    pub fn neTo(&self, other: f64) -> MatBool {
         self.cmp(|x| x != other)
     }
 
     /// `np.isnan`. Scala's `isnan`.
     #[must_use]
-    pub fn isnan(&self) -> MatB {
+    pub fn isnan(&self) -> MatBool {
         self.cmp(f64::is_nan)
     }
 
     /// `np.isinf`. Scala's `isinf`.
     #[must_use]
-    pub fn isinf(&self) -> MatB {
+    pub fn isinf(&self) -> MatBool {
         self.cmp(f64::is_infinite)
     }
 
     /// `np.isfinite`. Scala's `isfinite`.
     #[must_use]
-    pub fn isfinite(&self) -> MatB {
+    pub fn isfinite(&self) -> MatBool {
         self.cmp(f64::is_finite)
     }
 
@@ -330,7 +330,7 @@ impl MatD {
     /// # Panics
     /// If the mask shape does not match.
     #[must_use]
-    pub fn applyMask(&self, mask: &MatB) -> MatD {
+    pub fn applyMask(&self, mask: &MatBool) -> MatD {
         assert!(
             mask.shape() == self.shape(),
             "mask shape {:?} must match matrix shape {:?}",
@@ -400,7 +400,7 @@ mod tests {
     #[test]
     fn axis_reductions_keep_the_numeric_orientation() {
         // [[T, F], [T, T]]
-        let b = MatB::create(vec![true, false, true, true], 2, 2);
+        let b = MatBool::create(vec![true, false, true, true], 2, 2);
         assert_eq!(b.allAxis(0).toArray(), vec![true, false]);
         assert_eq!(b.allAxis(0).shape(), (1, 2));
         assert_eq!(b.anyAxis(0).toArray(), vec![true, true]);
@@ -438,8 +438,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "must match")]
     fn combining_different_shapes_is_an_error() {
-        let a = MatB::filled(2, 2, true);
-        let b = MatB::filled(2, 3, true);
+        let a = MatBool::filled(2, 2, true);
+        let b = MatBool::filled(2, 3, true);
         let _ = &a & &b;
     }
 }

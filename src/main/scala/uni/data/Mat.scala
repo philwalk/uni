@@ -2427,19 +2427,33 @@ object Mat {
   private inline def isDoubleCt[T](using ct: ClassTag[T]): Boolean =
     ct.runtimeClass == classOf[Double]
 
-  /** Element-wise IEEE comparison for `Mat[Double]` — the semantics the mask family
-   *  (`gt`/`lt`/`gte`/`lte`/`:==`/`:!=`) mirrors, and the reason it does not go through
-   *  `Ordering`.
+  private inline def isFloatCt[T](using ct: ClassTag[T]): Boolean =
+    ct.runtimeClass == classOf[Float]
+
+  /** True for the two element types whose default `Ordering` is a TOTAL order rather than
+   *  the IEEE one — see [[cmpIeee]]. */
+  private inline def isIeeeCt[T](using ct: ClassTag[T]): Boolean =
+    isDoubleCt[T] || isFloatCt[T]
+
+  /** Element-wise IEEE comparison for `Mat[Double]` and `Mat[Float]` — the semantics the
+   *  mask family (`gt`/`lt`/`gte`/`lte`/`:==`/`:!=`) mirrors, and the reason it does not go
+   *  through `Ordering`.
    *
-   *  `Ordering[Double]` defaults to `TotalOrdering`, under which NaN outranks every number
-   *  and `-0.0 < 0.0`. That is correct for min/max/sort/argmax and wrong for a mask:
-   *  NumPy's `>` is IEEE-754, so every comparison involving NaN is false and `-0.0 == 0.0`.
-   *  `jsrc/numpy2mat.sc` translates Python's `>` straight to `gt`, so the family is NumPy's
-   *  operator by intent. The ELEMENT TYPE decides, not whichever Ordering the caller
-   *  happened to summon; other element types still use theirs. */
+   *  `Ordering[Double]` and `Ordering[Float]` default to their `TotalOrdering`, under which
+   *  NaN outranks every number and `-0.0 < 0.0`. That is correct for min/max/sort/argmax
+   *  and wrong for a mask: NumPy's `>` is IEEE-754, so every comparison involving NaN is
+   *  false and `-0.0 == 0.0`. `jsrc/numpy2mat.sc` translates Python's `>` straight to `gt`,
+   *  so the family is NumPy's operator by intent. The ELEMENT TYPE decides, not whichever
+   *  Ordering the caller happened to summon; other element types still use theirs.
+   *
+   *  Float widens to Double for the comparison, which is exact. */
   private def cmpIeee[T: ClassTag](m: Mat[T], other: T, op: (Double, Double) => Boolean): Mat[Boolean] =
-    val o = other.asInstanceOf[Double]
-    m.map(x => op(x.asInstanceOf[Double], o))
+    if isFloatCt[T] then
+      val o = other.asInstanceOf[Float].toDouble
+      m.map(x => op(x.asInstanceOf[Float].toDouble, o))
+    else
+      val o = other.asInstanceOf[Double]
+      m.map(x => op(x.asInstanceOf[Double], o))
 
   def zeros[T: ClassTag](rows: Int, cols: Int)(using frac: Fractional[T]): Mat[T] =
     if isDoubleCt[T] then Mat.create(new Array[Double](rows * cols), rows, cols).asInstanceOf[Mat[T]]
@@ -3784,24 +3798,24 @@ object Mat {
     // ---- Element-wise comparison → Mat[Boolean] ----------------------------
     // m.map is stride/offset-aware; mapping m.tdata directly would read the
     // parent array of a view (wrong elements, wrong length).
-    // Double takes the IEEE path, matching NumPy; see `Mat.cmpIeee`.
+    // Double and Float take the IEEE path, matching NumPy; see `Mat.cmpIeee`.
     def gt(other: T)(using ord: Ordering[T]): Mat[Boolean] =
-      if isDoubleCt[T] then cmpIeee(m, other, _ > _) else m.map(ord.gt(_, other))
+      if isIeeeCt[T] then cmpIeee(m, other, _ > _) else m.map(ord.gt(_, other))
 
     def lt(other: T)(using ord: Ordering[T]): Mat[Boolean] =
-      if isDoubleCt[T] then cmpIeee(m, other, _ < _) else m.map(ord.lt(_, other))
+      if isIeeeCt[T] then cmpIeee(m, other, _ < _) else m.map(ord.lt(_, other))
 
     def gte(other: T)(using ord: Ordering[T]): Mat[Boolean] =
-      if isDoubleCt[T] then cmpIeee(m, other, _ >= _) else m.map(ord.gteq(_, other))
+      if isIeeeCt[T] then cmpIeee(m, other, _ >= _) else m.map(ord.gteq(_, other))
 
     def lte(other: T)(using ord: Ordering[T]): Mat[Boolean] =
-      if isDoubleCt[T] then cmpIeee(m, other, _ <= _) else m.map(ord.lteq(_, other))
+      if isIeeeCt[T] then cmpIeee(m, other, _ <= _) else m.map(ord.lteq(_, other))
 
     def :==(other: T)(using ord: Ordering[T]): Mat[Boolean] =
-      if isDoubleCt[T] then cmpIeee(m, other, _ == _) else m.map(ord.equiv(_, other))
+      if isIeeeCt[T] then cmpIeee(m, other, _ == _) else m.map(ord.equiv(_, other))
 
     def :!=(other: T)(using ord: Ordering[T]): Mat[Boolean] =
-      if isDoubleCt[T] then cmpIeee(m, other, _ != _) else m.map(!ord.equiv(_, other))
+      if isIeeeCt[T] then cmpIeee(m, other, _ != _) else m.map(!ord.equiv(_, other))
 
     // Int overloads for natural NumPy-style usage e.g. m.gt(0)
     def gt(other: Int)(using ord: Ordering[T], frac: Fractional[T]): Mat[Boolean] =
