@@ -10,17 +10,22 @@ import uni.*
  * Ubuntu's packaged `libopenblas.so.0` is built without LAPACKE. If netlib's JNIBLAS
  * maps it, that SONAME is pinned for the process and bytedeco's later
  * `libjniopenblas.so` (eig/svd/cholesky) dies with `undefined symbol: LAPACKE_dgeev` — a
- * hard JVM kill, not an exception. `uni` no longer loads netlib on Linux at all: BLAS
- * mode there is bytedeco's bundled, LAPACKE-complete OpenBLAS, the same library every
- * LAPACK path uses. Nothing needs to be purged from the OS.
+ * hard JVM kill, not an exception. `Mat.netlib` now loads bytedeco's bundled,
+ * LAPACKE-complete OpenBLAS *before* netlib, so bytedeco's JNI library is bound to it
+ * before the system copy is mapped for netlib's own use; the two coexist in their own JNI
+ * scopes. On Linux BLAS mode then uses whichever is faster (a probe: system OpenBLAS via
+ * netlib where the alternatives point at one, the bundled copy otherwise). Nothing needs
+ * to be purged from the OS.
  *
  * The first test runs exactly the sequence that used to kill the JVM — a BLAS-mode
- * matmul, then a LAPACKE call. Surviving it is the assertion.
+ * matmul (which loads netlib, and with it the system BLAS), then a LAPACKE call.
+ * Surviving it is the assertion.
  */
 class BlasDiagSuite extends FunSuite:
 
   test("BLAS mode then LAPACKE in one JVM: the sequence that used to crash survives") {
-    // 1. A BLAS-mode matmul: on Linux this is bytedeco's OpenBLAS, elsewhere netlib.
+    // 1. A BLAS-mode matmul: resolves `Mat.netlib` (bytedeco first, then netlib and, on
+    //    Linux, the system BLAS it links) and multiplies through whichever won the probe.
     val a = MatD.randn(16, 16)
     val b = MatD.randn(16, 16)
     val c = a.matmulBlas(b)
@@ -48,7 +53,7 @@ class BlasDiagSuite extends FunSuite:
         if !syms.contains("LAPACKE_dgeev") then
           // Informational: this is precisely the configuration the load order guards
           // against, and the test above has just proved the guard holds here.
-          println(s"  [BlasDiagSuite] system $lib lacks LAPACKE; uni does not load it (bundled OpenBLAS only on Linux), so this is fine")
+          println(s"  [BlasDiagSuite] system $lib lacks LAPACKE; uni binds LAPACKE to its bundled OpenBLAS before netlib maps this one, so this is fine")
   }
 
   private def shellOut(cmd: List[String]): Option[String] =

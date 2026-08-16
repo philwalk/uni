@@ -420,18 +420,17 @@ is BLAS. In BLAS mode the native backend is:
 
 | Platform | Backend | User action |
 |----------|---------|-------------|
-| Linux | bytedeco's bundled OpenBLAS (LAPACKE-complete) | None. System BLAS packages are neither used nor required; install or remove `libopenblas0` freely for other consumers |
+| Linux | the system BLAS via netlib when it is an optimised one (`sudo apt install libopenblas0`), else bytedeco's bundled OpenBLAS — decided by a probe | Install `libopenblas0` for speed (4.5× over the bundled build at 512³); LAPACK routines always use the bundled, LAPACKE-complete copy |
 | macOS | netlib → Accelerate framework | None |
 | Windows | netlib VectorBLAS (Java Vector API), or the bundled OpenBLAS | None |
 
-`uni` never loads netlib on Linux, deliberately: its JNIBLAS resolves the system
-`libblas.so.3`, which on Ubuntu is either the slow reference BLAS or an OpenBLAS built
-without LAPACKE that shares the bundled library's SONAME — and once that is mapped, the
-first `eig`/`svd`/`cholesky` call ends the process with `undefined symbol: LAPACKE_dgeev`.
-Using only the bundled copy on Linux removes the whole class of failure; nothing needs to
-be purged from the OS to run `uni`'s tests. (The LAPACK routines — `eig`, `svd`,
-`cholesky` — go through the bundled OpenBLAS on every platform, whatever the matmul mode;
-`inverse` is a pure-JVM LU.)
+On Linux, netlib's JNIBLAS resolves the system `libblas.so.3`, which on Ubuntu is an
+OpenBLAS built without LAPACKE that shares the bundled library's SONAME. `uni` therefore
+loads bytedeco's bundled, LAPACKE-complete OpenBLAS *before* netlib, so the LAPACK routines
+(`eig`, `svd`, `cholesky`) are bound to it before the system copy is mapped for netlib's
+own use — the two coexist. Earlier releases could die on the first LAPACK call with
+`undefined symbol: LAPACKE_dgeev`; the remedy then was to purge `libopenblas0`, which is
+withdrawn — install it. (`inverse` is a pure-JVM LU.)
 
 ## Advanced Usage
 

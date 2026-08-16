@@ -15,22 +15,24 @@ started with `-Duni.mat.blas=true`.
 
 Found by its first runs: `MatD::matmulBlas` copied both operands into owned `Array2`s and
 spent more time copying than multiplying (1.9 vs 0.9 ms at 512³) — it now lends views;
-and on Linux `Scala·BLAS` (the bundled OpenBLAS `uni` now uses there) read 3.7× behind
-the system OpenBLAS NumPy uses on the same box, consistent with one thread — the bundled
-build is now told to use every core (`blas_set_num_threads`) and reports its thread count
-under `-Duni.blas.verbose=true`.
+and on Linux `Scala·BLAS` read 3.7× behind the system OpenBLAS NumPy uses on the same
+box: bytedeco's bundled build is simply slow at that size (7.3 ms at 512³ with four
+threads confirmed), which is why Linux now prefers the system OpenBLAS when it is there.
 
-**FIXED (Linux) — `uni` no longer loads netlib on Linux; system BLAS packages are safe**
+**FIXED (Linux) — the OpenBLAS/LAPACKE crash, at the root; system BLAS packages are safe**
 
-BLAS mode on Linux now uses bytedeco's bundled OpenBLAS directly, the same
-LAPACKE-complete library `eig`/`svd`/`cholesky` already load. Previously `uni` consulted
-netlib's JNIBLAS, which resolves the system `libblas.so.3` — on Ubuntu an OpenBLAS built
-without LAPACKE that shares the bundled library's SONAME — and once that was mapped the
-first LAPACK call killed the JVM with `undefined symbol: LAPACKE_dgeev`. The remedy in
-force until now was to purge `libopenblas0` from the OS; that is withdrawn, and
-`BlasDiagSuite` now runs the formerly fatal sequence as a positive test instead of
-demanding the purge. Reinstalling `libopenblas0` also restores an optimised BLAS to any
-apt-installed NumPy on the same box, which had silently fallen back to the reference BLAS.
+netlib's JNIBLAS resolves the system `libblas.so.3` — on Ubuntu an OpenBLAS built without
+LAPACKE that shares bytedeco's SONAME — and once that was mapped first, the first LAPACK
+call killed the JVM with `undefined symbol: LAPACKE_dgeev`. `Mat.netlib` now loads
+bytedeco's bundled, LAPACKE-complete OpenBLAS *before* netlib, so `eig`/`svd`/`cholesky`
+are bound to it and the system copy, mapped afterwards for netlib's use, coexists in its
+own scope. On Linux BLAS mode then uses whichever is faster by a 64×64 probe: the system
+OpenBLAS via netlib where the alternatives point at one (4.5× faster than the bundled
+build at 512³ on a 4-core box), the bundled copy otherwise. The remedy in force until now
+was to purge `libopenblas0`; that is withdrawn — install it — and `BlasDiagSuite` runs the
+formerly fatal sequence as a positive test instead of demanding the purge. Reinstalling it
+also restores an optimised BLAS to an apt-installed NumPy on the same box, which had
+silently fallen back to the reference BLAS.
 
 **ADDED — Rust: `MatMathOps` (Tier 3 phase (c) complete)**
 

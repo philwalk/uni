@@ -1140,31 +1140,46 @@ object Mat {
     // than an accident of declaration order -- and is why it is no longer "unused", though its
     // job was always to exist (JUL holds loggers weakly; see the note above).
     val _ = netlibLogger
-    // Not reached on Linux — see `netlibIsFast`. Load bytedeco's bundled OpenBLAS first
-    // regardless, so that if netlib ever is forced there its `libopenblas.so.0` need
-    // resolves to the bundled, LAPACKE-complete copy already resident rather than mapping
-    // Ubuntu's LAPACKE-less one; harmless on Windows/macOS.
+    // Load bytedeco's bundled, LAPACKE-complete OpenBLAS BEFORE netlib can map a system
+    // one. On Ubuntu the system OpenBLAS is built without LAPACKE and shares this SONAME;
+    // with the bundled copy resident first, bytedeco's JNI library is already bound to it
+    // when netlib brings the system copy in for its own use — see `netlibIsFast`. Harmless
+    // on Windows/macOS.
     org.bytedeco.javacpp.Loader.load(classOf[org.bytedeco.openblas.global.openblas])
     dev.ludovic.netlib.blas.BLAS.getInstance()
   /** Whether BLAS mode routes through netlib (`multiplyDoubleNetlib`) or through bytedeco's
    *  bundled OpenBLAS (`multiplyDoubleOB`).
    *
-   *  **Never netlib on Linux.** Its JNIBLAS resolves `libblas.so.3` through the system
-   *  linker: reference BLAS if that is what the alternatives point at (slower than the pure
-   *  loop), or Ubuntu's `libopenblas.so.0` — built without LAPACKE and sharing bytedeco's
-   *  SONAME, so once it is mapped the later LAPACKE call for eig/svd/cholesky dies with an
-   *  undefined symbol. Merely *deciding* by netlib's class name would map it. bytedeco's
-   *  bundled OpenBLAS is the same library, LAPACKE-complete, and is what every LAPACK path
-   *  loads anyway, so on Linux it is the only native BLAS `uni` touches, and system BLAS
-   *  packages can be installed or not without affecting `uni`.
+   *  **Linux: whichever is faster, decided by a probe — and only after bytedeco is loaded.**
+   *  netlib's JNIBLAS resolves the system `libblas.so.3`: an optimised OpenBLAS where the
+   *  alternatives point at one (4.5× faster than the bundled build at 512³ on quadd), the
+   *  reference BLAS elsewhere (far slower than even the pure loop). Ubuntu's OpenBLAS is
+   *  built without LAPACKE and shares bytedeco's SONAME, so if netlib mapped it FIRST the
+   *  later LAPACKE call for eig/svd/cholesky would die with an undefined symbol; that is why
+   *  `netlib` loads bytedeco's LAPACKE-complete copy before `getInstance()`, so bytedeco's
+   *  JNI library is bound to it before the system one is mapped. The two then coexist in
+   *  their own JNI scopes — unlike the old LD_PRELOAD workaround, which interposed one over
+   *  the other globally. `BlasDiagSuite` runs the sequence (BLAS-mode matmul, then LAPACKE)
+   *  as a positive test. The 64×64 probe tells reference BLAS (~1 ms) from OpenBLAS (~10 µs).
    *
    *  Elsewhere: F2JBLAS / Java11BLAS are always slow; VectorBLAS, and JNIBLAS on macOS
    *  (Accelerate), are fast. */
   private lazy val netlibIsFast: Boolean =
-    if isLinux then false
-    else
-      val name = netlib.getClass.getName
-      !(name.endsWith("F2JBLAS") || name.endsWith("Java11BLAS"))
+    val name = netlib.getClass.getName
+    if name.endsWith("F2JBLAS") || name.endsWith("Java11BLAS") then false
+    else if name.endsWith("JNIBLAS") && isLinux then
+      val n = 64
+      val a = new Array[Double](n * n)
+      val b = new Array[Double](n * n)
+      val c = new Array[Double](n * n)
+      netlib.dgemm("N", "N", n, n, n, 1.0, b, 0, n, a, 0, n, 0.0, c, 0, n) // warmup
+      val t0 = System.nanoTime()
+      netlib.dgemm("N", "N", n, n, n, 1.0, b, 0, n, a, 0, n, 0.0, c, 0, n)
+      val fast = (System.nanoTime() - t0) < 500_000L // < 0.5ms → OpenBLAS; ≥ 0.5ms → reference BLAS
+      if sys.props.get("uni.blas.verbose").exists(_.equalsIgnoreCase("true")) || uni.verboseUni then
+        System.err.print(s"[uni] netlib $name on Linux: 64x64 dgemm ${(System.nanoTime() - t0) / 1000} us -> ${if fast then "using system BLAS via netlib" else "slow (reference BLAS?); using bundled OpenBLAS"}\n")
+      fast
+    else true
 
   private lazy val isLinux = System.getProperty("os.name", "").toLowerCase.contains("linux")
 

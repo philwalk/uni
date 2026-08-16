@@ -82,10 +82,10 @@ Reading them together:
   microkernel fully; on x86-64 the crate targets SSE2). The opt-in closes the gap on
   Windows and macOS in both languages, and for Rust on Linux — but **Scala·BLAS on Linux
   reads 6.2 ms against NumPy's 1.6**: since 0.16.1 `uni` uses bytedeco's bundled OpenBLAS
-  there (never netlib, to stay clear of the LAPACKE-less system copy), and setting its
-  thread count explicitly changed nothing (6.15 ms on the re-run) — so it is the bundled
-  build itself, not a mis-set count. Open item; the likely fix is to let Linux use a
-  system OpenBLAS again, loading bytedeco's copy first so the LAPACKE gap cannot recur.
+  there, and that build is slow at this size (7.3 ms with four threads confirmed on the
+  box). Fixed after these runs: Linux now prefers the system OpenBLAS via netlib when the
+  probe finds one, with bytedeco's copy loaded first so the LAPACKE gap cannot recur; the
+  next quadd run should show `Scala·BLAS` near NumPy's 1.6 ms.
 - **Reductions and the axis family beat NumPy everywhere**, 2–3× on the few-core boxes and
   more here; the elementwise maps beat it only on the 24-thread box — on four cores or a
   few big cores NumPy's SIMD wins 2–4×.
