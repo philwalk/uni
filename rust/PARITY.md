@@ -442,8 +442,30 @@ links OpenBLAS. Both sides also expose `matmulPure` (pinned, whatever the mode) 
 `matmulBlas` (BLAS, whatever the mode; Rust: only under the feature, so a call in a
 non-BLAS build is a compile error). `blasThreshold` is demoted from contract to tuning:
 it has no effect in the default mode, and in BLAS mode it decides which algorithm runs,
-so it moves last ulps and is documented as such. Scala's `Tprf3` gemms are pure by
-default now; its parity fixture is tolerance-based (`rtol 1e-9`) and unmoved.
+so it moves last ulps and is documented as such.
+
+**`Tprf3` stays on the default.** Its gemms are pure by default and the cost turned out
+to be larger than the skinny-shape row above suggested — IS Full 0.25 → 0.67 ms at first
+— because `Tprf3` multiplies narrow outputs (`*@ y`, `*@ β`: one to three columns) and
+transposed-view left operands (`X'`), neither of which the square benchmarks exercise.
+The answer was to make the pure loop fast on *those* shapes rather than to exempt one
+consumer from the contract: `MatmulPure` is now a 4×4 register-accumulator microkernel
+over packed panels (`B` 4-wide, `A` k-major when its k-stride is not 1), with a streaming
+saxpy path for short K and narrow outputs, and a 2-D parallel split so few-row products
+still fill the pool. Bit-identical throughout — every candidate was checked against the
+fixture. Result on the large `Tprf3` rows: within ~1.2–1.9× of BLAS (launch variance on
+these sub-ms rows is ±30%), pure ahead on the small rows; 512³ 6.5 → 1.4 ms. The Rust
+kernel took the same microkernel (8-wide panels, since LLVM vectorises the lane loop):
+512³ 2.4 → 1.7 ms, the skinny `512×512×8` 0.10 → 0.03, the middle sizes a wash — LLVM
+was already vectorising the old loop, so the JVM's 4× is not repeatable there. What
+remains between it and `matrixmultiply` single-threaded (14 vs 4.3 ms) is ISA: the crate
+targets baseline x86-64 while `matrixmultiply` dispatches AVX2 at runtime, and closing
+that needs `#[target_feature]` behind an `unsafe` call, which this crate reserves for FFI.
+
+The Vector API was ruled out for this: `jdk.incubator.vector` must be added to the
+module graph by every JVM that runs the library, and most scala-cli scripts do not, so a
+hard dependency in `Mat` would break them at class-load time. A reflective kernel behind
+a fallback is the next step if the remaining gap ever matters.
 
 `slice` also takes `Range<i64>` rather than `Range<usize>`, because Scala reads a
 negative *start* as an offset from the end (`-2 until 0`). Only the start is adjusted

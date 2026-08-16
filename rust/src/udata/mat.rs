@@ -461,6 +461,13 @@ impl MatD {
             std::borrow::Cow::Owned(self.flatten())
         }
     }
+
+    /// The buffer and the stride equation's three terms — `(data, offset, rs, cs)`, so
+    /// that `data[offset + r*rs + c*cs]` is `at(r, c)`. For kernels that read a view in
+    /// place, as Scala's `multiplyDouble` does, rather than through a copy.
+    pub(crate) fn strided(&self) -> (&[f64], usize, usize, usize) {
+        (&self.data, self.offset, self.rs, self.cs)
+    }
 }
 
 // ── Element access and materialisation ──────────────────────────────────────────

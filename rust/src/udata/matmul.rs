@@ -23,12 +23,21 @@
 //!
 //! # The loop
 //!
-//! `TILE = 32`, parallel over row tiles above [`MATMUL_PAR_ROWS`] rows, then `tileK`,
-//! `tileJ`, `i`, `k`, `j` — Scala's `multiplyDouble` exactly. Row-tile parallelism is
-//! order-preserving because each tile owns disjoint output rows and the k-loop inside a
-//! cell is untouched; the threshold is therefore tuning, not contract. Strided operands
-//! are read in logical order via [`MatD::row_major`], which is what Scala's stride
-//! accessors read, so a view multiplies to the same bits as its copy.
+//! The same register-blocked microkernel as Scala's `MatmulPure`, so the two ports are
+//! fast for the same reasons: a 4×8 block of cells is accumulated in locals over the whole
+//! k range and stored once — `C` is never read-modify-written inside the k loop — over
+//! `B` packed 8-wide panel-major (last panel zero-padded, partial store) and `A` packed
+//! k-major per 4-row group when its k-stride is not 1. Short K and outputs narrower than
+//! [`MIN_COLS_FOR_MICRO`] take a streaming saxpy over whole rows instead. Work is split
+//! in two dimensions (row blocks × panel ranges) on rayon above [`PAR_OPS`] multiply-adds,
+//! with no item smaller than [`MIN_ITEM_OPS`].
+//!
+//! None of that touches the contract: every cell is still one sequential k-sum from 0.0
+//! — panel width, packing, blocking and the parallel split only decide which cells share a
+//! loaded value and which thread owns them. The Scala kernel uses 4-wide panels because
+//! HotSpot will not vectorise the lane loop; LLVM does, so 8 lanes cost nothing here.
+//! Views are read in place through [`MatD::strided`], as Scala reads them, so a view
+//! multiplies to the same bits as its copy without a copy.
 
 #![allow(
     non_snake_case,
@@ -39,56 +48,413 @@ use rayon::prelude::*;
 
 use crate::udata::mat::MatD;
 
-/// Scala's `TILE`. Contract only insofar as it does not change the k-order — it does
-/// not, in either language — so it is free to move for speed; it is kept equal for the
-/// cache behaviour to match.
-const TILE: usize = 32;
+/// Row-block height for the parallel split.
+const BLOCK_ROWS: usize = 16;
 
-/// Below this many output rows the tiled loop runs on the calling thread: a 32-row
-/// product is two tiles, not worth a fork. Tuning; order-preserving either way.
-pub const MATMUL_PAR_ROWS: usize = 64;
+/// Below this many multiply-adds the whole product runs on the calling thread, and no
+/// work item is made smaller than [`MIN_ITEM_OPS`]: a fork costs more than that.
+pub const PAR_OPS: usize = 262_144;
+pub const MIN_ITEM_OPS: usize = 131_072;
+
+/// K below which the streaming path beats the microkernel — with a handful of k steps
+/// the accumulators cannot be amortised.
+pub const MIN_K_FOR_MICRO: usize = 16;
+
+/// Outputs narrower than this take the streaming path too: a one-column product through
+/// a padded panel does eight times the multiplies.
+pub const MIN_COLS_FOR_MICRO: usize = 4;
+
+/// Panel width. Eight lanes are two AVX2 registers per row of the block.
+const W: usize = 8;
 
 /// In BLAS mode, products below this many multiply-adds still take the pure loop — the
 /// call overhead exceeds the work. Scala's `blasThreshold` on this platform. Tuning.
 #[cfg(feature = "blas")]
 const BLAS_MIN_OPS: usize = 216;
 
-/// The tiled loop over contiguous row-major slices — see the module note.
-fn pure_tiled(a: &[f64], b: &[f64], rows_a: usize, cols_a: usize, cols_b: usize) -> Vec<f64> {
-    let mut out = vec![0.0f64; rows_a * cols_b];
-    if rows_a == 0 || cols_b == 0 {
-        return out;
+/// A strided operand: `data[off + r*rs + c*cs]`.
+#[derive(Clone, Copy)]
+struct Strided<'a> {
+    d: &'a [f64],
+    off: usize,
+    rs: usize,
+    cs: usize,
+}
+
+impl Strided<'_> {
+    #[inline]
+    fn at(self, r: usize, c: usize) -> f64 {
+        self.d[self.off + r * self.rs + c * self.cs]
     }
-    let tile = |tile_i: usize, out_rows: &mut [f64]| {
-        let i_start = tile_i * TILE;
-        let i_end = (i_start + TILE).min(rows_a);
-        for tile_k in 0..cols_a.div_ceil(TILE) {
-            let (k_start, k_end) = (tile_k * TILE, ((tile_k + 1) * TILE).min(cols_a));
-            for tile_j in 0..cols_b.div_ceil(TILE) {
-                let (j_start, j_end) = (tile_j * TILE, ((tile_j + 1) * TILE).min(cols_b));
-                for i in i_start..i_end {
-                    let orow = &mut out_rows[(i - i_start) * cols_b..(i - i_start + 1) * cols_b];
-                    for k in k_start..k_end {
-                        let a_val = a[i * cols_a + k];
-                        let brow = &b[k * cols_b..(k + 1) * cols_b];
-                        for j in j_start..j_end {
-                            orow[j] += a_val * brow[j];
-                        }
-                    }
-                }
+    fn is_row_major(self, rows: usize, cols: usize) -> bool {
+        self.off == 0 && self.rs == cols && self.cs == 1 && self.d.len() == rows * cols
+    }
+    fn copy_row_major(self, rows: usize, cols: usize) -> Vec<f64> {
+        let mut v = Vec::with_capacity(rows * cols);
+        for r in 0..rows {
+            for c in 0..cols {
+                v.push(self.at(r, c));
             }
         }
-    };
-    if rows_a >= MATMUL_PAR_ROWS {
-        out.par_chunks_mut(TILE * cols_b)
-            .enumerate()
-            .for_each(|(t, chunk)| tile(t, chunk));
+        v
+    }
+}
+
+/// `A` (ra×ca) times `B` (ca×cb) — see the module note.
+fn pure_matmul(a: Strided<'_>, b: Strided<'_>, ra: usize, ca: usize, cb: usize) -> Vec<f64> {
+    let mut out = vec![0.0f64; ra * cb];
+    if ra == 0 || cb == 0 || ca == 0 {
+        return out;
+    }
+    let ops = ra * ca * cb;
+    let pool = rayon::current_num_threads();
+    // Row blocks are the unit of parallelism (each is a disjoint slice of C). Their
+    // height is chosen so there are about twice as many as threads — but never so many
+    // that one falls under MIN_ITEM_OPS: on a 128³ product, 32 items of 8 µs each spend
+    // more time waking rayon workers than multiplying, and the timing swings 5× call to
+    // call. Never fewer than four rows, the microkernel's own group.
+    let block_rows = if ops < PAR_OPS {
+        BLOCK_ROWS
     } else {
-        for (t, chunk) in out.chunks_mut(TILE * cols_b).enumerate() {
-            tile(t, chunk);
-        }
+        let items = (2 * pool).min(ops / MIN_ITEM_OPS).max(1);
+        ra.div_ceil(items).div_ceil(4) * 4
+    }
+    .clamp(4, BLOCK_ROWS);
+    let row_blocks = ra.div_ceil(block_rows);
+    if ca < MIN_K_FOR_MICRO || cb < MIN_COLS_FOR_MICRO {
+        // Streaming path over row-major B; a view is copied, values unchanged.
+        let b_owned;
+        let b_rm: &[f64] = if b.is_row_major(ca, cb) {
+            b.d
+        } else {
+            b_owned = b.copy_row_major(ca, cb);
+            &b_owned
+        };
+        let c_split = col_split(ops, row_blocks, (cb / 4).max(1), pool);
+        let chunk = cb.div_ceil(c_split).div_ceil(4) * 4;
+        // Each item owns a rectangle of C; the row block is `out[iS*cb .. iE*cb]`, and
+        // the column range inside it is disjoint from the other items', so the items are
+        // independent. Split the buffer by row block first, then hand each item its
+        // column range within it.
+        run(ops, block_rows, &mut out, cb, |rb, rows_out| {
+            let i_s = rb * block_rows;
+            let i_e = (i_s + block_rows).min(ra);
+            for cc in 0..c_split {
+                let j_s = cc * chunk;
+                let j_e = (j_s + chunk).min(cb);
+                if j_s < j_e {
+                    saxpy_rows(a, b_rm, rows_out, i_s, i_e, ca, cb, j_s, j_e);
+                }
+            }
+        });
+    } else {
+        let n_jb = cb.div_ceil(W);
+        let bp = pack_b(b, ca, cb, n_jb);
+        let c_split = col_split(ops, row_blocks, n_jb, pool);
+        let panels_per = n_jb.div_ceil(c_split);
+        run(ops, block_rows, &mut out, cb, |rb, rows_out| {
+            let i_s = rb * block_rows;
+            let i_e = (i_s + block_rows).min(ra);
+            for cc in 0..c_split {
+                let jb_s = cc * panels_per;
+                let jb_e = (jb_s + panels_per).min(n_jb);
+                if jb_s < jb_e {
+                    micro_rows(a, &bp, rows_out, i_s, i_e, ca, cb, jb_s, jb_e);
+                }
+            }
+        });
     }
     out
+}
+
+/// How many column chunks per row block: enough to cover the pool about twice, never so
+/// many that an item falls under [`MIN_ITEM_OPS`], never more than `max_chunks`.
+fn col_split(ops: usize, row_blocks: usize, max_chunks: usize, pool: usize) -> usize {
+    if ops < PAR_OPS {
+        1
+    } else {
+        let want = (2 * pool).div_ceil(row_blocks);
+        let by_work = ops / (row_blocks * MIN_ITEM_OPS);
+        max_chunks.min(want).min(by_work).max(1)
+    }
+}
+
+/// Run `item(rb, rows_of_C)` for every row block of `block_rows` rows, on the calling
+/// thread below [`PAR_OPS`] and on rayon otherwise. Row blocks are disjoint slices of
+/// `out`, so the borrow checker sees the independence the contract relies on; column
+/// chunks run inside the item.
+fn run(
+    ops: usize,
+    block_rows: usize,
+    out: &mut [f64],
+    cb: usize,
+    item: impl Fn(usize, &mut [f64]) + Sync,
+) {
+    if ops < PAR_OPS {
+        for (rb, rows_out) in out.chunks_mut(block_rows * cb).enumerate() {
+            item(rb, rows_out);
+        }
+    } else {
+        out.par_chunks_mut(block_rows * cb)
+            .enumerate()
+            .for_each(|(rb, rows_out)| item(rb, rows_out));
+    }
+}
+
+/// `B` as `W`-wide column panels, panel-major: `bp[jb*ca*W + k*W + x] = b(k, jb*W + x)`;
+/// lanes past `cb` in the last panel stay 0.0 and are never stored.
+fn pack_b(b: Strided<'_>, ca: usize, cb: usize, n_jb: usize) -> Vec<f64> {
+    let mut bp = vec![0.0f64; n_jb * ca * W];
+    for jb in 0..n_jb {
+        let base = jb * ca * W;
+        let j0 = jb * W;
+        let w = W.min(cb - j0);
+        for k in 0..ca {
+            let p = base + k * W;
+            for x in 0..w {
+                bp[p + x] = b.at(k, j0 + x);
+            }
+        }
+    }
+    bp
+}
+
+/// Rows `i_s..i_e` of `C` (given as the slice for that row block), panels `jb_s..jb_e`.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "kernel plumbing; every argument is a dimension or a buffer"
+)]
+fn micro_rows(
+    a: Strided<'_>,
+    bp: &[f64],
+    rows_out: &mut [f64],
+    i_s: usize,
+    i_e: usize,
+    ca: usize,
+    cb: usize,
+    jb_s: usize,
+    jb_e: usize,
+) {
+    let direct = a.cs == 1;
+    let mut ap = if direct {
+        Vec::new()
+    } else {
+        vec![0.0f64; 4 * ca]
+    };
+    let mut i = i_s;
+    while i + 3 < i_e {
+        if !direct {
+            pack_a(a, i, 4, ca, &mut ap);
+        }
+        for jb in jb_s..jb_e {
+            let j = jb * W;
+            let w = W.min(cb - j);
+            let o0 = (i - i_s) * cb;
+            let acc = if direct {
+                micro_direct(a, i, &bp[jb * ca * W..(jb + 1) * ca * W], ca)
+            } else {
+                micro_packed(&ap, &bp[jb * ca * W..(jb + 1) * ca * W], ca)
+            };
+            store(rows_out, o0, cb, j, w, &acc);
+        }
+        i += 4;
+    }
+    if i < i_e {
+        let rows = i_e - i;
+        for jb in jb_s..jb_e {
+            let j = jb * W;
+            let w = W.min(cb - j);
+            panel_rows(
+                a,
+                rows,
+                &bp[jb * ca * W..(jb + 1) * ca * W],
+                rows_out,
+                i - i_s,
+                i,
+                ca,
+                cb,
+                j,
+                w,
+            );
+        }
+    }
+}
+
+/// `rows` (≤ 4) rows of `A` from `i0`, packed k-major: `ap[k*4 + r] = a(i0+r, k)`.
+fn pack_a(a: Strided<'_>, i0: usize, rows: usize, ca: usize, ap: &mut [f64]) {
+    for r in 0..rows {
+        for k in 0..ca {
+            ap[k * 4 + r] = a.at(i0 + r, k);
+        }
+    }
+}
+
+/// A 4×W block, rows contiguous along k in `a` starting at row `i0`, against one packed
+/// panel: accumulated over the whole k range from 0.0. Each lane is its own cell with
+/// its own sequential k-sum — the contract, thirty-two cells at a time.
+///
+/// Written the way LLVM vectorises reliably: four named `[f64; W]` accumulators (two
+/// AVX2 registers each), `chunks_exact` so no bounds check survives into the loop, and
+/// the panel row copied into a fixed array before the lane loop.
+#[inline]
+fn micro_direct(a: Strided<'_>, i0: usize, panel: &[f64], ca: usize) -> [[f64; W]; 4] {
+    let b0 = a.off + i0 * a.rs;
+    let (r0, r1, r2, r3) = (
+        &a.d[b0..b0 + ca],
+        &a.d[b0 + a.rs..b0 + a.rs + ca],
+        &a.d[b0 + 2 * a.rs..b0 + 2 * a.rs + ca],
+        &a.d[b0 + 3 * a.rs..b0 + 3 * a.rs + ca],
+    );
+    let (mut c0, mut c1, mut c2, mut c3) = ([0.0f64; W], [0.0f64; W], [0.0f64; W], [0.0f64; W]);
+    for (k, bk) in panel.chunks_exact(W).take(ca).enumerate() {
+        let mut b = [0.0f64; W];
+        b.copy_from_slice(bk);
+        let (v0, v1, v2, v3) = (r0[k], r1[k], r2[k], r3[k]);
+        for x in 0..W {
+            c0[x] += v0 * b[x];
+        }
+        for x in 0..W {
+            c1[x] += v1 * b[x];
+        }
+        for x in 0..W {
+            c2[x] += v2 * b[x];
+        }
+        for x in 0..W {
+            c3[x] += v3 * b[x];
+        }
+    }
+    [c0, c1, c2, c3]
+}
+
+/// As [`micro_direct`], reading the four rows from the k-major pack.
+#[inline]
+fn micro_packed(ap: &[f64], panel: &[f64], ca: usize) -> [[f64; W]; 4] {
+    let (mut c0, mut c1, mut c2, mut c3) = ([0.0f64; W], [0.0f64; W], [0.0f64; W], [0.0f64; W]);
+    for (ak, bk) in ap.chunks_exact(4).zip(panel.chunks_exact(W)).take(ca) {
+        let mut b = [0.0f64; W];
+        b.copy_from_slice(bk);
+        let (v0, v1, v2, v3) = (ak[0], ak[1], ak[2], ak[3]);
+        for x in 0..W {
+            c0[x] += v0 * b[x];
+        }
+        for x in 0..W {
+            c1[x] += v1 * b[x];
+        }
+        for x in 0..W {
+            c2[x] += v2 * b[x];
+        }
+        for x in 0..W {
+            c3[x] += v3 * b[x];
+        }
+    }
+    [c0, c1, c2, c3]
+}
+
+/// Store a block's first `w` lanes into rows starting at offset `o0` of the row block.
+fn store(rows_out: &mut [f64], o0: usize, cb: usize, j: usize, w: usize, acc: &[[f64; W]; 4]) {
+    for (r, acc_r) in acc.iter().enumerate() {
+        let o = o0 + r * cb + j;
+        rows_out[o..o + w].copy_from_slice(&acc_r[..w]);
+    }
+}
+
+/// `rows` (fewer than four) rows of `A` from `i0` against one packed panel: `W`
+/// accumulators per row over the whole k range, first `w` stored.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "kernel plumbing; every argument is a dimension or a buffer"
+)]
+fn panel_rows(
+    a: Strided<'_>,
+    rows: usize,
+    panel: &[f64],
+    rows_out: &mut [f64],
+    o_row0: usize,
+    i0: usize,
+    ca: usize,
+    cb: usize,
+    j: usize,
+    w: usize,
+) {
+    for r in 0..rows {
+        let mut acc = [0.0f64; W];
+        for k in 0..ca {
+            let v = a.at(i0 + r, k);
+            let bk = &panel[k * W..(k + 1) * W];
+            for x in 0..W {
+                acc[x] += v * bk[x];
+            }
+        }
+        let o = (o_row0 + r) * cb + j;
+        rows_out[o..o + w].copy_from_slice(&acc[..w]);
+    }
+}
+
+/// Rows `i_s..i_e` (as the row block's slice), columns `j_s..j_e`, by streaming saxpy
+/// over row-major `b`: for each k, `C(i, j_s..j_e) += a(i,k) · B(k, j_s..j_e)`, four rows
+/// sharing each loaded `B` value. Per cell the k-order is unchanged; the k tile only keeps
+/// the `C` rows warm between passes.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "kernel plumbing; every argument is a dimension or a buffer"
+)]
+fn saxpy_rows(
+    a: Strided<'_>,
+    b: &[f64],
+    rows_out: &mut [f64],
+    i_s: usize,
+    i_e: usize,
+    ca: usize,
+    cb: usize,
+    j_s: usize,
+    j_e: usize,
+) {
+    const TK: usize = 16;
+    let mut k_s = 0;
+    while k_s < ca {
+        let k_e = (k_s + TK).min(ca);
+        let mut i = i_s;
+        while i + 3 < i_e {
+            let (o0, o1, o2, o3) = (
+                (i - i_s) * cb,
+                (i - i_s + 1) * cb,
+                (i - i_s + 2) * cb,
+                (i - i_s + 3) * cb,
+            );
+            for k in k_s..k_e {
+                let (v0, v1, v2, v3) = (a.at(i, k), a.at(i + 1, k), a.at(i + 2, k), a.at(i + 3, k));
+                let bk = &b[k * cb + j_s..k * cb + j_e];
+                let (r0, rest) = rows_out.split_at_mut(o1);
+                let (r1, rest) = rest.split_at_mut(o2 - o1);
+                let (r2, r3) = rest.split_at_mut(o3 - o2);
+                let r0 = &mut r0[o0 + j_s..o0 + j_e];
+                let r1 = &mut r1[j_s..j_e];
+                let r2 = &mut r2[j_s..j_e];
+                let r3 = &mut r3[j_s..j_e];
+                for x in 0..(j_e - j_s) {
+                    let bv = bk[x];
+                    r0[x] += v0 * bv;
+                    r1[x] += v1 * bv;
+                    r2[x] += v2 * bv;
+                    r3[x] += v3 * bv;
+                }
+            }
+            i += 4;
+        }
+        while i < i_e {
+            let o = (i - i_s) * cb;
+            for k in k_s..k_e {
+                let v = a.at(i, k);
+                let bk = &b[k * cb + j_s..k * cb + j_e];
+                let row = &mut rows_out[o + j_s..o + j_e];
+                for x in 0..(j_e - j_s) {
+                    row[x] += v * bk[x];
+                }
+            }
+            i += 1;
+        }
+        k_s = k_e;
+    }
 }
 
 impl MatD {
@@ -112,9 +478,21 @@ impl MatD {
     pub fn matmulPure(&self, other: &Self) -> Self {
         self.check_mm(other);
         let (ra, ca, cb) = (self.rows(), self.cols(), other.cols());
-        let a = self.row_major();
-        let b = other.row_major();
-        Self::create(pure_tiled(&a, &b, ra, ca, cb), ra, cb)
+        let (ad, ao, ars, acs) = self.strided();
+        let (bd, bo, brs, bcs) = other.strided();
+        let a = Strided {
+            d: ad,
+            off: ao,
+            rs: ars,
+            cs: acs,
+        };
+        let b = Strided {
+            d: bd,
+            off: bo,
+            rs: brs,
+            cs: bcs,
+        };
+        Self::create(pure_matmul(a, b, ra, ca, cb), ra, cb)
     }
 
     /// BLAS matmul, whatever the mode — faster on large dense products, and not pinned:

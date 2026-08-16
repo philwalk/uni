@@ -43,29 +43,79 @@ of the implementation or of the machine.
 `jsrc/bench.sc` is the older Scala-only script this replaced; it is superseded by
 `MatBench` and kept only so existing links resolve.
 
-| Operation | NumPy | MatD | Ratio | Notes |
-|---|---:|---:|---|---|
-| `randn(1000×1000)` | 8.5 ms | 6.8 ms | **1.3× faster** | PCG64 with Long arithmetic; primitive fill (no `Double` boxing) |
-| `matmul 512×512` | 0.79 ms | 3.2 ms | **4× slower** | NumPy: native OpenBLAS; MatD: pure-JVM fallback (JNIBLAS unavailable on this machine — level when it loads) |
-| `sigmoid(1000×1000)` | 9.0 ms | 0.73 ms | **12× faster** | Parallel fork/join beats single-core SIMD |
-| `relu(1000×1000)` | 1.3 ms | 0.51 ms | **2.5× faster** | Parallel fork/join beats single-core SIMD |
-| `add(1000×1000)` | 1.7 ms | 0.58 ms | **3.0× faster** | Parallel fork/join beats single-core SIMD |
-| `sum(1000×1000)` | 0.13 ms | 0.03 ms | **4.3× faster** | v0.14.1 chunked multi-accumulator parallel reduction |
-| `mean(1000×1000)` | 0.14 ms | 0.03 ms | **4.7× faster** | Routes through the same reduction as `sum` |
-| `std(1000×1000)` | 2.4 ms | 0.43 ms | **5.6× faster** | Two-pass; mean pass uses the v0.14.1 reduction |
-| `transpose(1000×1000)` | ≈0 ms | ≈0 ms | **tied** | O(1) stride-flip in both — no data copy |
-| `mapParallel` custom fn | 64 ms | 0.53 ms | **~120× faster** | `np.vectorize` is a Python loop; JVM is compiled |
-| `3PRF IS Full (T=650, N=40, L=2)` | 0.31 ms | 0.36 ms | **≈ tied** | both sides reduce to the same two batch solves; 0.25 ms measured in isolation |
-| `3PRF OOS Recursive (T=650, N=40, L=2)` | 31.8 ms | 1.8 ms | **17.7× faster** | Scala: parallel windows, scaling folded onto an (L+1)-column operand, pass-1 cross products downdated from full-sample ones; Python: vectorized per-window |
-| `3PRF OOS Cross Val (T=650, N=40, L=2)` | 88.9 ms | 7.1 ms | **12.6× faster** | Scala: incremental per-window std and cross-product downdates; Python: vectorized per-window |
+`config: jvm=23 N=1000 MM=512 warmup=16 iters=60` · `config: numpy=2.4.6 (openblas) N=1000
+MM=512 warmup=16 iters=60` · `config: rust blas=off threads=1 N=1000 warmup=16 iters=60` —
+Windows 11, 24 threads. Both `MatD` columns are the **default** build of each language.
 
-**Practical guidance:**
-- MatD wins 8/9 scored matrix operations vs NumPy on Windows (JVM 21); matmul is the exception on this machine — see below.
-- Element-wise ops (`relu`, `sigmoid`, `add`) run faster than NumPy — parallel JVM cores beat single-core C SIMD.
-- Reductions (`sum`, `mean`, `std`): NumPy 2.4.x's SIMD pairwise summation had briefly overtaken MatD here; the v0.14.1 chunked multi-accumulator parallel reduction reclaims all three (4.3–5.6×) by aggregating multi-core memory bandwidth.
-- Custom scalar functions: `mapParallel` vs `np.vectorize` shows a ~120× JVM advantage; the Python interpreter overhead dominates.
-- Matmul: on this machine netlib's JNIBLAS could not load `libopenblas.dll`, so MatD ran the pure-JVM fallback and lost ~4× to NumPy's native OpenBLAS. Where JNIBLAS loads (see the Linux/macOS tables in the README) both call OpenBLAS and matmul is level.
-- 3PRF: through v0.14.1 both implementations were kept equivalently optimized, so the comparison stayed between equivalent algorithms. v0.14.0 rewrote the K&P `J(k)` centering products as O(T·N) centering on **both** sides (previously each built a dense T×T matrix, and the comparison mostly measured that shared waste) and freed the Scala OOS hot path of `Double` autoboxing. v0.14.1 tuned both sides again: Python's three `lstsq` passes became normal-equations solves with NaN-gated std/mean paths, and Scala's OOS windows gained fused, copy-free standardization. v0.15.1 tuned the Scala side only, briefly making the OOS figures a comparison between differently-optimized algorithms; **those techniques have since been ported to NumPy too** (see the three-way section below), so the OOS rows are like-for-like again. Both sides push the column scaling onto an (L+1)-column operand rather than materializing `X·D⁻¹`, run pass 2 in natural order, and derive each window's pass-1 cross products and column std by downdating full-sample ones. Note the 3PRF rows in the table above were measured before that port and understate NumPy. IS Full remains a tie — both sides reduce to the same two batch solves. 3PRF timings: Python 3.13.13 / NumPy on scipy-openblas, medians of 25 timed calls after warm-up, themselves medians of 3 runs (`jsrc/tprf3Bench.sc`).
+### MatD operations — ms/call (lower is better)
+| Operation | NumPy | Scala | Rust | Scala vs NumPy | Rust vs NumPy | Rust vs Scala |
+|---|---:|---:|---:|---|---|---|
+| `randn` | 7.2701 ms | 6.8221 ms | 4.7678 ms | **1.1× faster** | **1.5× faster** | **1.4× faster** |
+| `matmul` | 0.8234 ms | 1.4303 ms | 2.2504 ms | **1.7× slower** | **2.7× slower** | **1.6× slower** |
+| `sigmoid` | 8.7348 ms | 0.9979 ms | — | **8.8× faster** | — | — |
+| `relu` | 1.2355 ms | 0.5936 ms | — | **2.1× faster** | — | — |
+| `vectorize` | 66.4590 ms | 0.5126 ms | — | **129.7× faster** | — | — |
+| `add` | 1.7120 ms | 0.6311 ms | 1.0356 ms | **2.7× faster** | **1.7× faster** | **1.6× slower** |
+| `mul` | 1.7030 ms | 0.6312 ms | 1.1464 ms | **2.7× faster** | **1.5× faster** | **1.8× slower** |
+| `abs` | 2.1731 ms | 0.8854 ms | 1.1470 ms | **2.5× faster** | **1.9× faster** | **1.3× slower** |
+| `exp` | 2.6419 ms | 0.6911 ms | 1.1585 ms | **3.8× faster** | **2.3× faster** | **1.7× slower** |
+| `log` | 3.0293 ms | 0.6961 ms | 1.1512 ms | **4.4× faster** | **2.6× faster** | **1.7× slower** |
+| `sqrt` | 2.2102 ms | 0.5784 ms | 1.0892 ms | **3.8× faster** | **2.0× faster** | **1.9× slower** |
+| `sum` | 0.1388 ms | 0.0336 ms | 0.0228 ms | **4.1× faster** | **6.1× faster** | **1.5× faster** |
+| `mean` | 0.1383 ms | 0.0338 ms | 0.0229 ms | **4.1× faster** | **6.0× faster** | **1.5× faster** |
+| `std` | 2.3645 ms | 0.4099 ms | 0.4333 ms | **5.8× faster** | **5.5× faster** | **1.1× slower** |
+| `min` | 0.1078 ms | 0.0583 ms | 0.0507 ms | **1.8× faster** | **2.1× faster** | **1.1× faster** |
+| `max` | 0.1080 ms | 0.0688 ms | 0.0405 ms | **1.6× faster** | **2.7× faster** | **1.7× faster** |
+| `argmax` | 0.1277 ms | 0.0623 ms | 0.0388 ms | **2.0× faster** | **3.3× faster** | **1.6× faster** |
+| `sum0` | 0.1072 ms | 0.0481 ms | 0.0447 ms | **2.2× faster** | **2.4× faster** | **1.1× faster** |
+| `sum1` | 0.1356 ms | 0.0638 ms | 0.0607 ms | **2.1× faster** | **2.2× faster** | **1.1× faster** |
+| `mean0` | 0.1092 ms | 0.0509 ms | 0.0349 ms | **2.1× faster** | **3.1× faster** | **1.5× faster** |
+| `min0` | 0.1462 ms | 0.0862 ms | 0.0714 ms | **1.7× faster** | **2.0× faster** | **1.2× faster** |
+| `max1` | 0.1342 ms | 0.0775 ms | 0.0475 ms | **1.7× faster** | **2.8× faster** | **1.6× faster** |
+| `std0` | 2.1905 ms | 0.1230 ms | 0.1105 ms | **17.8× faster** | **19.8× faster** | **1.1× faster** |
+| `cumsum` | 3.6857 ms | 0.7701 ms | 1.6444 ms | **4.8× faster** | **2.2× faster** | **2.1× slower** |
+| `cumsum1` | 3.5797 ms | 0.7667 ms | 1.3871 ms | **4.7× faster** | **2.6× faster** | **1.8× slower** |
+| `cummax0` | 4.9577 ms | 0.9391 ms | 1.5203 ms | **5.3× faster** | **3.3× faster** | **1.6× slower** |
+| `cummin1` | 3.9363 ms | 1.0007 ms | 1.3274 ms | **3.9× faster** | **3.0× faster** | **1.3× slower** |
+| `transpose` | 0.0000 ms | 0.0001 ms | 0.0000 ms | — | — | — |
+### MatD by layout — ms/call (lower is better)
+| Operation | NumPy | Scala | Rust | Scala vs NumPy | Rust vs NumPy | Rust vs Scala |
+|---|---:|---:|---:|---|---|---|
+| `sum@contig` | 0.1267 ms | 0.0346 ms | 0.0303 ms | **3.7× faster** | **4.2× faster** | **1.1× faster** |
+| `max@contig` | 0.1027 ms | 0.0679 ms | 0.0421 ms | **1.5× faster** | **2.4× faster** | **1.6× faster** |
+| `std@contig` | 2.3673 ms | 0.4090 ms | 0.4293 ms | **5.8× faster** | **5.5× faster** | **1.0× slower** |
+| `sum0@contig` | 0.1010 ms | 0.0417 ms | 0.0460 ms | **2.4× faster** | **2.2× faster** | **1.1× slower** |
+| `sum@transposed` | 0.1255 ms | 0.0682 ms | 0.0596 ms | **1.8× faster** | **2.1× faster** | **1.1× faster** |
+| `max@transposed` | 0.1029 ms | 0.0878 ms | 0.0631 ms | **1.2× faster** | **1.6× faster** | **1.4× faster** |
+| `std@transposed` | 2.3734 ms | 0.5041 ms | 0.5541 ms | **4.7× faster** | **4.3× faster** | **1.1× slower** |
+| `sum0@transposed` | 0.1341 ms | 0.1228 ms | 0.0313 ms | **1.1× faster** | **4.3× faster** | **3.9× faster** |
+| `sum@rowslice` | 0.1244 ms | 0.0352 ms | 0.0257 ms | **3.5× faster** | **4.8× faster** | **1.4× faster** |
+| `max@rowslice` | 0.1024 ms | 0.0642 ms | 0.0418 ms | **1.6× faster** | **2.4× faster** | **1.5× faster** |
+| `std@rowslice` | 1.8962 ms | 0.4115 ms | 0.4337 ms | **4.6× faster** | **4.4× faster** | **1.1× slower** |
+| `sum0@rowslice` | 0.1011 ms | 0.0473 ms | 0.0417 ms | **2.1× faster** | **2.4× faster** | **1.1× faster** |
+| `sum@bcast` | 0.1863 ms | 0.0287 ms | 0.0231 ms | **6.5× faster** | **8.1× faster** | **1.2× faster** |
+| `max@bcast` | 0.1744 ms | 0.0636 ms | 0.0431 ms | **2.7× faster** | **4.0× faster** | **1.5× faster** |
+| `std@bcast` | 2.4024 ms | 0.4031 ms | 0.4251 ms | **6.0× faster** | **5.7× faster** | **1.1× slower** |
+| `sum0@bcast` | 0.0505 ms | 0.0341 ms | 0.0287 ms | **1.5× faster** | **1.8× faster** | **1.2× faster** |
+
+**Reading them:**
+- Both languages beat NumPy on every `Mat` operation with a Rust column except `matmul`.
+- `matmul` is the one row where the DEFAULT is deliberately not the fastest path. Since
+  0.16.1 the default `*@` in both languages is the pure loop — a sequential k-sum per
+  cell, bit-identical across the two ports and across machines — and BLAS is an opt-in
+  (`-Duni.mat.blas=true` / `--features blas`). NumPy's `@` is OpenBLAS. Scala's pure
+  loop is a register-blocked microkernel (`MatmulPure`) and lands within 1.7× of
+  OpenBLAS at 512³; with the opt-in Scala reads ~0.9 ms here and is level with NumPy.
+  See "matmul" in `rust/PARITY.md` for the measurement behind the decision.
+- `sigmoid`, `relu` and `vectorize` have no Rust column yet (`MatMathOps` is the next
+  port); `vectorize` is `np.vectorize`, a Python loop, against a compiled parallel map.
+- The layout table is the more interesting one: NumPy's `M.T` and `M[1:]` are views
+  exactly as `MatD`'s are, and NumPy's reductions are flat across layouts where both
+  ports take a different path per layout — which is why the same operation appears
+  four times.
+- Rust trails Scala by 1.3–2.2× on the elementwise maps and `cumsum`. That residue is
+  allocator and cache-residency behaviour on a 1000×1000 output buffer, not algorithm —
+  both languages already run the same order — and no safe lever moved it.
 
 ---
 
@@ -75,20 +125,27 @@ The `rust/` companion crate implements the same three procedures, so 3PRF has a
 third column. Separate from the table above because it is a different run with a
 different methodology: medians of 25 timed calls rather than min times. Python and
 Scala are measured in one pass of `uni.apps.Tprf3Bench`, so Py/Scala is internally
-consistent; the Rust column is a `--features blas` build measured separately, whose
-own pure-Rust baseline lands within 5% of the pure-Rust column this run produced.
+consistent; the Rust column is a `--features blas` build measured separately.
 
-| Operation (T=650, N=40, L=2) | Python | Scala | Rust | Py/Scala | Scala/Rust |
+### Python vs Scala vs Rust — ms/call
+| Operation | Python | Scala | Rust | Py/Scala | Scala/Rust |
 |---|---:|---:|---:|---|---|
-| `3PRF IS Full` | 0.27 ms | 0.202 ms | 0.051 ms | **1.3× faster** | **4.0× faster** |
-| `3PRF OOS Recursive` | 21.7 ms | 1.646 ms | 1.42 ms | **13.2× faster** | **1.2× faster** |
-| `3PRF OOS Cross Val` | 38.6 ms | 5.735 ms | 2.06 ms | **6.7× faster** | **2.8× faster** |
+| 3PRF IS Full (Small: T=200, N=30, L=2) | 0.120 ms | 0.101 ms | 0.014 ms | **1.2× faster** | **7.2× faster** |
+| 3PRF OOS Rec (Small: T=200, N=30, L=2) | 4.710 ms | 1.248 ms | 0.220 ms | **3.8× faster** | **5.7× faster** |
+| 3PRF OOS CV (Small: T=200, N=30, L=2) | 8.470 ms | 0.803 ms | 0.230 ms | **10.5× faster** | **3.5× faster** |
+| 3PRF IS Full (Large: T=650, N=40, L=2) | 0.290 ms | 0.506 ms | 0.048 ms | **1.7× slower** | **10.5× faster** |
+| 3PRF OOS Rec (Large: T=650, N=40, L=2) | 21.650 ms | 2.294 ms | 0.790 ms | **9.4× faster** | **2.9× faster** |
+| 3PRF OOS CV (Large: T=650, N=40, L=2) | 38.720 ms | 6.319 ms | 1.030 ms | **6.1× faster** | **6.1× faster** |
 
-| Operation (T=200, N=30, L=2) | Python | Scala | Rust | Py/Scala | Scala/Rust |
-|---|---:|---:|---:|---|---|
-| `3PRF IS Full` | 0.12 ms | 0.072 ms | 0.015 ms | **1.7× faster** | **4.8× faster** |
-| `3PRF OOS Recursive` | 4.72 ms | 1.317 ms | 0.51 ms | **3.6× faster** | **2.6× faster** |
-| `3PRF OOS Cross Val` | 8.51 ms | 1.115 ms | 0.80 ms | **7.6× faster** | **1.4× faster** |
+`config: rust blas=on threads=1` — the Rust column is the `--features blas` build;
+Scala is the default build, whose `*@` is now the pure loop.
+
+**The Scala column is the pure default; with BLAS opted in it reads about
+0.25 / 1.6 / 6.4 ms on the large rows.** The pure loop was rebuilt around what `Tprf3`
+actually multiplies — many narrow and transposed-view products — and the large rows now
+sit within roughly 1.2–1.9× of BLAS (launch-to-launch variance on these sub-millisecond
+rows is itself ±30%), while the small rows are faster pure: BLAS call overhead exceeded
+the work there. `Tprf3`'s outputs are tolerance-compared (`rtol 1e-9`) and unmoved.
 
 **All three run on bit-identical inputs.** Each seeds a NumPy-compatible PCG64
 with 0 and draws X, y, Z in that order, so these measure implementations rather

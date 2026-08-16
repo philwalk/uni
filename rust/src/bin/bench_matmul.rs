@@ -3,12 +3,11 @@
 //!
 //! Times every candidate for the Rust `matmul` default, per shape:
 //!
-//! - `pure`: a faithful port of Scala's `multiplyDouble` — TILE=32, parallel over row
-//!   tiles, sequential k-sum from 0.0 per cell. This is the path that CAN be pinned
-//!   bit-for-bit, so its cost is what pinning would cost if it were also the default.
-//! - `pureST`: the same loop single-threaded, to separate the algorithm from rayon.
-//! - `mm`: ndarray `dot`, i.e. the pure-Rust `matrixmultiply` kernels — what the crate
-//!   runs today without `--features blas`.
+//! - `pure`: `MatD::matmulPure`, the pinned default — a sequential k-sum from 0.0 per
+//!   cell, bit-identical to Scala's, through the register-blocked microkernel.
+//! - `pureT`: the same with a transposed-view left operand, the layout `Tprf3` feeds it.
+//! - `mm`: ndarray `dot`, i.e. the pure-Rust `matrixmultiply` kernels — the dependency-
+//!   free alternative the default was measured against.
 //! - `blas`: ndarray `dot` routed to OpenBLAS; only present under `--features blas`.
 //!
 //! Labels are `matmul@<path>/<shape>` in the harness format so the three halves join.
@@ -27,8 +26,8 @@ use std::hint::black_box;
 use std::time::Instant;
 
 use ndarray::Array2;
-use rayon::prelude::*;
 use uni::NumPyRng;
+use uni::udata::MatD;
 
 /// `(label, rowsA, colsA, colsB)` — must match `MatmulProbe.shapes`.
 const SHAPES: &[(&str, usize, usize, usize)] = &[
@@ -42,56 +41,6 @@ const SHAPES: &[(&str, usize, usize, usize)] = &[
     ("512x8x512", 512, 8, 512),
     ("512x512x8", 512, 512, 8),
 ];
-
-const TILE: usize = 32;
-
-/// Scala's `multiplyDouble`, contiguous operands: `tileI` parallel, then `tileK`,
-/// `tileJ`, `i`, `k`, `j`, accumulating into `result[i*colsB + j]`. For every cell that
-/// is k ascending from 0.0, which is the whole association-order contract.
-fn pure_tiled(
-    a: &[f64],
-    b: &[f64],
-    rows_a: usize,
-    cols_a: usize,
-    cols_b: usize,
-    parallel: bool,
-) -> Vec<f64> {
-    let mut out = vec![0.0f64; rows_a * cols_b];
-    let tiles_i = rows_a.div_ceil(TILE);
-    let body = |tile_i: usize, out_rows: &mut [f64]| {
-        let i_start = tile_i * TILE;
-        let i_end = (i_start + TILE).min(rows_a);
-        for tile_k in 0..cols_a.div_ceil(TILE) {
-            let k_start = tile_k * TILE;
-            let k_end = (k_start + TILE).min(cols_a);
-            for tile_j in 0..cols_b.div_ceil(TILE) {
-                let j_start = tile_j * TILE;
-                let j_end = (j_start + TILE).min(cols_b);
-                for i in i_start..i_end {
-                    let orow = &mut out_rows[(i - i_start) * cols_b..(i - i_start + 1) * cols_b];
-                    for k in k_start..k_end {
-                        let a_val = a[i * cols_a + k];
-                        let brow = &b[k * cols_b..(k + 1) * cols_b];
-                        for j in j_start..j_end {
-                            orow[j] += a_val * brow[j];
-                        }
-                    }
-                }
-            }
-        }
-    };
-    if parallel {
-        out.par_chunks_mut(TILE * cols_b)
-            .enumerate()
-            .for_each(|(tile_i, chunk)| body(tile_i, chunk));
-    } else {
-        for (tile_i, chunk) in out.chunks_mut(TILE * cols_b).enumerate() {
-            body(tile_i, chunk);
-        }
-    }
-    debug_assert_eq!(tiles_i, rows_a.div_ceil(TILE));
-    out
-}
 
 /// Minimum ms per call over `runs`, each repeating the op to fill ~`target_ms`.
 fn min_ms<F: FnMut() -> f64>(mut op: F, runs: usize, target_ms: f64) -> f64 {
@@ -127,7 +76,7 @@ fn main() {
         "none"
     };
     println!(
-        "config: rustc={} threads={} blas={} tile={TILE}",
+        "config: rustc={} threads={} blas={}",
         env!("CARGO_PKG_RUST_VERSION"),
         rayon::current_num_threads(),
         blas
@@ -138,12 +87,20 @@ fn main() {
         let b: Vec<f64> = (0..ca * cb).map(|_| rng.randn()).collect();
         let am = Array2::from_shape_vec((ra, ca), a.clone()).expect("shape");
         let bm = Array2::from_shape_vec((ca, cb), b.clone()).expect("shape");
+        let ma = MatD::create(a.clone(), ra, ca);
+        let mb = MatD::create(b.clone(), ca, cb);
+        // A transposed view with the same logical values: build (ca×ra) row-major from
+        // A's transpose, then view it back — what a `X.T *@ Y` call site hands the kernel.
+        let mat_t = MatD::create(ma.T().toArray(), ca, ra).T();
 
-        let pure = min_ms(|| pure_tiled(&a, &b, ra, ca, cb, true)[0], 7, 2.0);
-        let pure_st = min_ms(|| pure_tiled(&a, &b, ra, ca, cb, false)[0], 7, 2.0);
+        // The first timed series after the operands are built pays for the allocator
+        // growing into the new size class; take that hit on an unrecorded series.
+        black_box(min_ms(|| ma.matmulPure(&mb).at(0, 0), 3, 2.0));
+        let pure = min_ms(|| ma.matmulPure(&mb).at(0, 0), 7, 2.0);
+        let pure_t = min_ms(|| mat_t.matmulPure(&mb).at(0, 0), 7, 2.0);
         let mm = min_ms(|| am.dot(&bm)[(0, 0)], 7, 2.0);
         row(&format!("matmul@pure/{label}"), pure);
-        row(&format!("matmul@pureST/{label}"), pure_st);
+        row(&format!("matmul@pureT/{label}"), pure_t);
         // Under `--features blas` ndarray's dot IS the blas row; the label says which.
         row(
             &format!(

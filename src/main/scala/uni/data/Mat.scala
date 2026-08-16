@@ -3111,47 +3111,18 @@ object Mat {
       wr
     }
 
-    // ---- Pure-JVM multiply (parallel tiled) ----------------------------
+    // ---- Pure-JVM multiply: the pinned default -----------------------------
+    /** The pinned matmul: every cell a sequential k-sum from 0.0, bit-identical to the
+     *  Rust port and to itself on any machine. The kernel lives in [[MatmulPure]] and
+     *  reads both operands through their strides, so a view costs no copy. */
     private[data] def multiplyDouble(other: Mat[Double]): Mat[Double] = {
-      //val a = m.tdata.asInstanceOf[Array[Double]]
-      //val b = other.data.asInstanceOf[Array[Double]]
-      val rowsA = m.rows; val colsA = m.cols; val colsB = other.cols
-      val result = Array.ofDim[Double](rowsA * colsB)
-      val TILE = 32
-
-      val dataA = m.tdata.asInstanceOf[Array[Double]]
-      val dataB = other.data.asInstanceOf[Array[Double]]
-      // Extract strides and offsets once to keep the inner loop fast
-      val (rsA, csA, offA) = (m.rs, m.cs, m.offset)
-      val (rsB, csB, offB) = (other.rs, other.cs, other.offset)
-
-      // Stride-aware manual accessor
-      inline def getA(r: Int, c: Int): Double = dataA(offA + r * rsA + c * csA)
-      inline def getB(r: Int, c: Int): Double = dataB(offB + r * rsB + c * csB)
-
-// Then use getA(i, k) inside the loops
-
-      java.util.stream.IntStream.range(0, (rowsA + TILE - 1) / TILE).parallel().forEach { tileI =>
-        val iStart = tileI * TILE; val iEnd = math.min(iStart + TILE, rowsA)
-        var tileK = 0
-        while tileK < (colsA + TILE - 1) / TILE do
-          val kStart = tileK * TILE; val kEnd = math.min(kStart + TILE, colsA)
-          var tileJ = 0
-          while tileJ < (colsB + TILE - 1) / TILE do
-            val jStart = tileJ * TILE; val jEnd = math.min(jStart + TILE, colsB)
-            var i = iStart
-            while i < iEnd do
-              var k = kStart
-              while k < kEnd do
-                val aVal = getA(i, k)
-                var j = jStart
-                while j < jEnd do { result(i * colsB + j) += aVal * getB(k, j); j += 1 }
-                k += 1
-              i += 1
-            tileJ += 1
-          tileK += 1
-      }
-      Mat.create(result, rowsA, colsB)
+      val a = m.asInstanceOf[Mat[Double]]
+      Mat.create(
+        MatmulPure.multiply(
+          a.tdata.asInstanceOf[Array[Double]], a.offset, a.rs, a.cs,
+          other.tdata.asInstanceOf[Array[Double]], other.offset, other.rs, other.cs,
+          a.rows, a.cols, other.cols),
+        a.rows, other.cols)
     }
 
     private[data] def multiplyFloat(other: Mat[Float]): Mat[Float] = {

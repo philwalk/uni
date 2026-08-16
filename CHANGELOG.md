@@ -6,9 +6,9 @@
 `ops >= 216`. The default is the tiled pure loop everywhere, whose per-cell association
 order is a sequential k-sum from 0.0. Every product of 6×6×6 or larger therefore
 **changes in its last ulps** relative to earlier versions, and large dense products get
-slower — measured on a 24-thread machine, 2× at 128³ and 4× at 512³ against OpenBLAS,
-~1× on the skinny shapes the 3PRF paths use. Nothing that compares with a tolerance
-notices; `Tprf3`'s own fixture (`rtol 1e-9`) is unmoved.
+slower — measured on a 24-thread machine, ~1.4× at 128–256³ and ~1.7× at 512³ against
+OpenBLAS, and 1.2–1.9× on the large 3PRF rows (faster on the small ones). Nothing that
+compares with a tolerance notices; `Tprf3`'s own fixture (`rtol 1e-9`) is unmoved.
 
 What is bought: the default result is now **bit-identical to the Rust port and
 independent of the machine** — neither runtime fuses `x*y + z`, and the fixture pins 22
@@ -27,8 +27,18 @@ in BLAS mode, where they decide which algorithm runs — so they move last ulps,
 tuning, not contract. Native BLAS is now loaded lazily, on the first BLAS call, rather
 than at `Mat` initialisation.
 
+The pure loop is not the old one. It is a register-blocked microkernel (`MatmulPure`:
+4×4 accumulator blocks over packed panels, a streaming path for short K and narrow
+outputs, a 2-D parallel split), tuned on the shapes `Tprf3` actually multiplies rather
+than on square benchmarks, and bit-identical to the loop it replaced — the same
+sequential k-sum per cell, verified against the fixture at every step. 512³ went
+6.5 → 1.4 ms, and the `Tprf3` large rows sit within ~1.2–1.9× of BLAS instead of 2–3×.
+Views cost no copy: both operands are read through their strides.
+
 Rust: `MatD::matmul` / `dot` (pure by default), `matmulPure`, `matmulBlas` (only under
-`--features blas`, which is the opt-in there), plus `hstack`/`vstack`. The `matmul` row
+`--features blas`, which is the opt-in there), plus `hstack`/`vstack`. Its kernel is the
+same microkernel with 8-wide panels — 512³ 2.4 → 1.7 ms, `512×512×8` 0.10 → 0.03 — and
+reads views in place through their strides, as the Scala does. The `matmul` row
 in the benchmark tables now has a Rust column, and shows the pinned default in both
 languages against NumPy's BLAS.
 
