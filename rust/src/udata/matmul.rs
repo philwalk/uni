@@ -7,7 +7,7 @@
 //! `((0 + a[i,0]*b[0,j]) + a[i,1]*b[1,j]) + …` — and neither this crate nor the JVM
 //! contracts `x*y + z` into a fused multiply-add, so the result is bit-identical to
 //! Scala's `multiplyDouble` **and independent of the machine**. Nothing else in the
-//! matmul space offers that: every BLAS, and `matrixmultiply`, select kernels by CPU
+//! matmul space offers that: an optimised BLAS, and `matrixmultiply`, select kernels by CPU
 //! feature and thread count and land on different last ulps.
 //!
 //! **BLAS is an opt-in that trades the pin for speed**, 2–4× on large dense products and

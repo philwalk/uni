@@ -142,6 +142,20 @@ object MatParityGen:
    */
   def quantize(d: Double): Long = Math.floor(d * QuantumScale + 0.5).toLong
 
+  /** A coarser grid, 2^-32, for the `MatMathOps` rows. The 2^-40 grid assumes O(1)
+   *  outputs: at |sinh(-5)| ≈ 74 it is only ~64 ulps wide, so a 1-ulp libm disagreement
+   *  crosses a grid line with probability ~1/64 per differing element — and 4096 elements
+   *  is enough. 32 significant bits still expose any wrong FORMULA, which is what those
+   *  rows exist to pin; only a last-ulp libm difference is absorbed. */
+  private val QuantumScale32 = 4294967296.0
+  def quantize32(d: Double): Long = Math.floor(d * QuantumScale32 + 0.5).toLong
+
+  /** 2^-24, for `softmax`/`logSoftmax` only: every element of a lane inherits the drift
+   *  of a 400-term sum of `exp`s, so those rows carry several ulps of expected
+   *  disagreement per element rather than one in a few hundred. */
+  private val QuantumScale24 = 16777216.0
+  def quantize24(d: Double): Long = Math.floor(d * QuantumScale24 + 0.5).toLong
+
   /**
    * The shared corpus: alternating large and tiny magnitudes so association order is
    * observable. Both languages build this from the same seed and take prefixes of it,
@@ -273,6 +287,62 @@ object MatParityGen:
       "mmfnv"     -> fnv(m.matmulPure(t).toArray),
       "tmmfnv"    -> fnv(t.matmulPure(m).toArray),
     )
+
+  /**
+   * The `MatMathOps` family on a 2-D matrix over the bounded corpus (`corpusExp`, values
+   * in [-5, 0.5]). Every one is a per-element formula, so what is pinned is the FORMULA
+   * as the Scala spells it — `relu` as `Math.max` (NaN survives, -0.0 → +0.0), `log2` as
+   * `ln x / ln 2`, `gelu`'s association, softmax's plain-fold sum after max-subtraction.
+   *
+   * Two encodings. The exact functions (`floor ceil trunc relu leakyRelu dropout`) go in
+   * as raw bits and must agree bit for bit. The transcendental ones — everything routed
+   * through `Math.sin`, `exp`, `tanh`, `log` — inherit the `exp` situation: HotSpot's
+   * intrinsics and Rust's libm are each within an ulp and are not required to agree, so
+   * those are pinned on a 2^-32 grid ([[quantize32]]; `softmax`/`logSoftmax` on 2^-24,
+   * [[quantize24]]). Measured on this corpus, JVM vs Rust: `sin cos tan asin acos atan
+   * atan2 log10 exp` differ on 0.1–21% of inputs by 1 ulp; `sinh cosh tanh log2 sigmoid`
+   * by up to 2; `elu` by up to 64 and `gelu` by up to 3e5 ulps — the last two are the
+   * FORMULA's conditioning (`1 + tanh(x)` near -1, `exp(x) - 1` near 0), and their
+   * absolute error stays ~1e-16, which is why the grid is absolute. Domains keep every
+   * output O(1) so no grid line is within an ulp: `tan` on `m/4` (no pole in
+   * [-1.25, 0.125]), `arcsin`/`arccos`/`sinh`/`cosh` on `m/5`, the logs on `|m|+1`.
+   */
+  def mathCases(me: Mat[Double]): Vector[(String, Long)] =
+    if me.isEmpty then Vector.empty
+    else
+      val pos   = me.abs + 1.0
+      val small = me / 5.0
+      val q     = (m: Mat[Double]) => fnvWords(m.toArray.map(quantize32))
+      val q24   = (m: Mat[Double]) => fnvWords(m.toArray.map(quantize24))
+      Vector(
+        // exact
+        "math.floor"      -> fnv(me.floor.toArray),
+        "math.ceil"       -> fnv(me.ceil.toArray),
+        "math.trunc"      -> fnv(me.trunc.toArray),
+        "math.relu"       -> fnv(me.relu.toArray),
+        "math.leakyRelu"  -> fnv(me.leakyRelu(0.01).toArray),
+        "math.dropout"    -> fnv(me.dropout(0.3, training = true, seed = 20260816L).toArray),
+        // quantized
+        "math.sinq"       -> q(me.sin),
+        "math.cosq"       -> q(me.cos),
+        "math.tanq"       -> q((me / 4.0).tan),
+        "math.arcsinq"    -> q(small.arcsin),
+        "math.arccosq"    -> q(small.arccos),
+        "math.arctanq"    -> q(me.arctan),
+        "math.arctan2q"   -> q(me.arctan2(pos)),
+        "math.sinhq"      -> q(small.sinh),
+        "math.coshq"      -> q(small.cosh),
+        "math.tanhq"      -> q(me.tanh),
+        "math.log10q"     -> q(pos.log10),
+        "math.log2q"      -> q(pos.log2),
+        "math.sigmoidq"   -> q(me.sigmoid),
+        "math.eluq"       -> q(me.elu(1.0)),
+        "math.geluq"      -> q(me.gelu),
+        "math.softmax0q"  -> q24(me.softmax(0)),
+        "math.softmax1q"  -> q24(me.softmax(1)),
+        "math.lsoftmax0q" -> q24(me.logSoftmax(0)),
+        "math.lsoftmax1q" -> q24(me.logSoftmax(1)),
+      )
 
   /**
    * Values the random corpus cannot reach, and which decide the ORDERING semantics of
@@ -511,12 +581,15 @@ object MatParityGen:
       println(s"  n=$n: ${cases(m).length + expCases(me).length} cases")
 
     for (rows, cols) <- shapes do
-      val m = mat2d(all, rows, cols)
+      val m  = mat2d(all, rows, cols)
+      val me = mat2d(allExp, rows, cols)
       for (label, value) <- cases2d(m) do
         sb ++= s"${rows}x$cols $label ${hex(value)}\n"
       for (label, word) <- wordCases2d(m) do
         sb ++= f"${rows}x$cols $label $word%016x\n"
-      println(s"  ${rows}x$cols: ${cases2d(m).length + wordCases2d(m).length} cases")
+      for (label, word) <- mathCases(me) do
+        sb ++= f"${rows}x$cols $label $word%016x\n"
+      println(s"  ${rows}x$cols: ${cases2d(m).length + wordCases2d(m).length + mathCases(me).length} cases")
 
     for (name, arr) <- adversarial do
       for (orient, m) <- advShapes(arr) do

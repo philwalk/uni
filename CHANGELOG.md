@@ -1,5 +1,18 @@
 ## Unreleased
 
+**ADDED — Rust: `MatMathOps` (Tier 3 phase (c) complete)**
+
+`sin cos tan arcsin arccos arctan arctan2 sinh cosh tanh floor ceil trunc log10 log2
+sigmoid relu leakyRelu elu gelu softmax logSoftmax dropout` on `MatD`, each spelled as
+the Scala spells it — `relu` with `Math.max` semantics (NaN survives, `-0.0` → `+0.0`),
+`log2` as `ln x / ln 2`, `softmax` summing with a plain fold after max-subtraction.
+`dropout` takes the generator explicitly (`dropout(&mut rng, p)`); the crate has no
+global RNG. The exact members are pinned bit for bit in `test-data/mat-parity/` (275
+`math.*` rows added, none moved); the transcendental ones on an absolute grid, since the
+JVM's intrinsics and Rust's libm differ by 1–2 ulps on up to a quarter of inputs — the
+measured table is in `rust/PARITY.md`. The `sigmoid` and `relu` benchmark rows now have a
+Rust column.
+
 **CHANGED (numeric, and speed) — `matmul` defaults to the pure loop; BLAS is an opt-in**
 
 `*@` / `matmul` / `dot` on `Mat[Double]` and `Mat[Float]` no longer route to BLAS at

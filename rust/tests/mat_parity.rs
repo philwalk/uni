@@ -247,6 +247,25 @@ fn quantize(d: f64) -> u64 {
     (d * QUANTUM_SCALE + 0.5).floor() as i64 as u64
 }
 
+/// The 2^-32 grid the `MatMathOps` rows use — `MatParityGen.quantize32`. Coarser than
+/// `exp`'s because those outputs reach |x| ≈ 74, where 2^-40 is only ~64 ulps wide.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "mirroring the Scala fixture's .toLong on an already-floored value"
+)]
+fn quantize32(d: f64) -> u64 {
+    (d * 4_294_967_296.0 + 0.5).floor() as i64 as u64
+}
+
+/// 2^-24, for `softmax`/`logSoftmax` — `MatParityGen.quantize24`.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "mirroring the Scala fixture's .toLong on an already-floored value"
+)]
+fn quantize24(d: f64) -> u64 {
+    (d * 16_777_216.0 + 0.5).floor() as i64 as u64
+}
+
 /// Every recorded case, as the raw 64-bit word the fixture carries. Reductions go in as
 /// their IEEE bits; the `*fnv` cases are already digests.
 fn case_word(m: &MatD, me: &MatD, label: &str) -> u64 {
@@ -313,6 +332,47 @@ fn case_word(m: &MatD, me: &MatD, label: &str) -> u64 {
 /// `std0fnv` and `tstd1fnv` reduce the SAME lanes by the same formula and are expected
 /// to differ above a lane length of 8: Scala's `std(axis)` takes each lane's mean by a
 /// plain fold when contiguous and via `sumD` when not.
+/// The `MatMathOps` family on the bounded-corpus matrix — `MatParityGen.mathCases`. Exact
+/// functions as raw-bit digests; transcendental ones on the 2^-32 grid, since HotSpot's
+/// intrinsics and this platform's libm are each within an ulp and need not agree.
+fn case_word_math(me: &MatD, label: &str) -> u64 {
+    let q = |m: MatD| fnv_words(m.toArray().into_iter().map(quantize32));
+    let q24 = |m: MatD| fnv_words(m.toArray().into_iter().map(quantize24));
+    let pos = &me.abs() + 1.0;
+    let small = me / 5.0;
+    match label {
+        "math.floor" => fnv(&me.floor().toArray()),
+        "math.ceil" => fnv(&me.ceil().toArray()),
+        "math.trunc" => fnv(&me.trunc().toArray()),
+        "math.relu" => fnv(&me.relu().toArray()),
+        "math.leakyRelu" => fnv(&me.leakyRelu(0.01).toArray()),
+        "math.dropout" => {
+            let mut rng = NumPyRng::new(20_260_816);
+            fnv(&me.dropout(&mut rng, 0.3).toArray())
+        }
+        "math.sinq" => q(me.sin()),
+        "math.cosq" => q(me.cos()),
+        "math.tanq" => q((me / 4.0).tan()),
+        "math.arcsinq" => q(small.arcsin()),
+        "math.arccosq" => q(small.arccos()),
+        "math.arctanq" => q(me.arctan()),
+        "math.arctan2q" => q(me.arctan2(&pos)),
+        "math.sinhq" => q(small.sinh()),
+        "math.coshq" => q(small.cosh()),
+        "math.tanhq" => q(me.tanh()),
+        "math.log10q" => q(pos.log10()),
+        "math.log2q" => q(pos.log2()),
+        "math.sigmoidq" => q(me.sigmoid()),
+        "math.eluq" => q(me.elu(1.0)),
+        "math.geluq" => q(me.gelu()),
+        "math.softmax0q" => q24(me.softmax(0)),
+        "math.softmax1q" => q24(me.softmax(1)),
+        "math.lsoftmax0q" => q24(me.logSoftmax(0)),
+        "math.lsoftmax1q" => q24(me.logSoftmax(1)),
+        other => panic!("unknown math case {other} in fixture — port it or regenerate"),
+    }
+}
+
 fn case_word_2d(m: &MatD, label: &str) -> u64 {
     let (rows, cols) = (m.rows() as i64, m.cols() as i64);
     let sliced = || m.slice(0..rows, 1..cols);
@@ -430,6 +490,7 @@ fn mat_reductions_match_the_scala_reference_bit_for_bit() {
     let mut adv = 0usize;
     let mut masks = 0usize;
     let mut matmuls = 0usize;
+    let mut maths = 0usize;
     for (shape, label, want) in &rows {
         if label.starts_with("mask.") {
             masks += 1;
@@ -445,7 +506,12 @@ fn mat_reductions_match_the_scala_reference_bit_for_bit() {
             }
             Shape::Matrix(r, c) => {
                 two_d += 1;
-                case_word_2d(&MatD::create(all[..r * c].to_vec(), r, c), label)
+                if label.starts_with("math.") {
+                    maths += 1;
+                    case_word_math(&MatD::create(all_exp[..r * c].to_vec(), r, c), label)
+                } else {
+                    case_word_2d(&MatD::create(all[..r * c].to_vec(), r, c), label)
+                }
             }
             Shape::Adversarial(name, orient) => {
                 if !label.starts_with("mask.") {
@@ -487,6 +553,10 @@ fn mat_reductions_match_the_scala_reference_bit_for_bit() {
     assert!(
         matmuls >= 22,
         "only {matmuls} matmul rows; the pinned matmul path would go unchecked"
+    );
+    assert!(
+        maths >= 250,
+        "only {maths} MatMathOps rows; the elementwise math formulas would go unchecked"
     );
 }
 

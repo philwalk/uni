@@ -28,6 +28,7 @@ pub mod bigutils;
 pub mod mat;
 pub mod mataxis;
 pub mod matbool;
+pub mod matmath;
 pub mod matmul;
 pub mod matmut;
 pub mod vecexts;

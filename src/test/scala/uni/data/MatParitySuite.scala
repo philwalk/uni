@@ -41,11 +41,16 @@ class MatParitySuite extends munit.FunSuite:
       uni.apps.MatParityGen.expCases(me).toMap.get(label)
     ).getOrElse(fail(s"unknown case [$label] in fixture — port it or regenerate"))
 
-  /** The 2-D half, likewise delegated to the generator. */
-  def word2d(m: Mat[Double], label: String): Long =
-    uni.apps.MatParityGen.cases2d(m).toMap.get(label).map(bits).orElse(
-      uni.apps.MatParityGen.wordCases2d(m).toMap.get(label)
-    ).getOrElse(fail(s"unknown 2-D case [$label] in fixture — port it or regenerate"))
+  /** The 2-D half, likewise delegated to the generator. `math.*` rows are computed on
+   *  the bounded-corpus matrix `me`; everything else on `m`. */
+  def word2d(m: Mat[Double], me: Mat[Double], label: String): Long =
+    if label.startsWith("math.") then
+      uni.apps.MatParityGen.mathCases(me).toMap
+        .getOrElse(label, fail(s"unknown math case [$label] in fixture — port it or regenerate"))
+    else
+      uni.apps.MatParityGen.cases2d(m).toMap.get(label).map(bits).orElse(
+        uni.apps.MatParityGen.wordCases2d(m).toMap.get(label)
+      ).getOrElse(fail(s"unknown 2-D case [$label] in fixture — port it or regenerate"))
 
   /** The ordering cases over NaN / signed zeros / infinities. */
   def wordAdv(m: Mat[Double], label: String): Long =
@@ -94,7 +99,7 @@ class MatParitySuite extends munit.FunSuite:
         if isAdv(shape) then wordAdv(advMat(shape), label)
         else if is2d(shape) then
           val (r, c) = shapeOf(shape)
-          word2d(uni.apps.MatParityGen.mat2d(all, r, c), label)
+          word2d(uni.apps.MatParityGen.mat2d(all, r, c), uni.apps.MatParityGen.mat2d(allExp, r, c), label)
         else
           val n  = shape.toInt
           val m  = MatD(java.util.Arrays.copyOfRange(all, 0, n))
@@ -117,16 +122,32 @@ class MatParitySuite extends munit.FunSuite:
     assert(adv >= 300, s"only $adv adversarial rows; NaN/signed-zero ordering would go unchecked")
     val matmuls = rows.count((_, label, _) => label.endsWith("mmfnv"))
     assert(matmuls >= 22, s"only $matmuls matmul rows; the pinned matmul path would go unchecked")
+    val maths = rows.count((_, label, _) => label.startsWith("math."))
+    assert(maths >= 250, s"only $maths MatMathOps rows; the elementwise math formulas would go unchecked")
   }
 
   test("the matmul rows would catch a reassociated kernel") {
-    // The pinned path is a sequential k-sum from 0.0 per cell; a BLAS reassociates. If
-    // BLAS ever agreed bit for bit on this corpus the matmul rows would pin nothing.
+    // The pinned path is a sequential k-sum from 0.0 per cell. Any kernel that
+    // reassociates lands on other bits on this corpus; demonstrate with the mildest
+    // reassociation there is, two half-sums combined. (Not "BLAS differs": the reference
+    // BLAS dgemm IS a sequential k-loop per cell and legitimately reproduces the pinned
+    // order bit for bit — as it does on the Linux CI box.)
     val m = uni.apps.MatParityGen.mat2d(uni.apps.MatParityGen.corpus(120000), 300, 400)
+    val t = m.T
+    val pinned = m.matmulPure(t).toArray
+    val k = m.cols
+    val split = Array.tabulate(m.rows * t.cols) { i =>
+      val r = i / t.cols; val c = i % t.cols
+      var lo = 0.0; var hi = 0.0
+      var kk = 0
+      while kk < k / 2 do { lo += m(r, kk) * t(kk, c); kk += 1 }
+      while kk < k do { hi += m(r, kk) * t(kk, c); kk += 1 }
+      lo + hi
+    }
     assertNotEquals(
-      uni.apps.MatParityGen.fnv(m.matmulPure(m.T).toArray),
-      uni.apps.MatParityGen.fnv(m.matmulBlas(m.T).toArray),
-      "BLAS agrees with the pinned matmul here; the mmfnv rows pin nothing",
+      uni.apps.MatParityGen.fnv(pinned),
+      uni.apps.MatParityGen.fnv(split),
+      "a k-split kernel agrees with the pinned path here; the mmfnv rows pin nothing",
     )
   }
 

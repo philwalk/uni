@@ -133,7 +133,7 @@ val vectorApiOpts = Seq("--add-modules=jdk.incubator.vector")
  * way to put a literal LF in a `#!/usr/bin/env -S` line — so those rely on `uni.println`
  * and on sources not using `%n`.
  */
-val lfSeparatorOpt = Seq("-Dline.separator=\n")
+val lfSeparatorOpt = Seq("-Dline.separator=\\n")
 
 Test / javaOptions ++= vectorApiOpts ++ lfSeparatorOpt ++ Seq("-Xss8m")
 javaOptions ++= vectorApiOpts ++ lfSeparatorOpt

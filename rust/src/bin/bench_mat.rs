@@ -18,10 +18,9 @@
 //!
 //! # What is missing, and why that is worth printing
 //!
-//! Two rows have no Rust column yet: `sigmoid`/`relu` (`MatMathOps`) and the
-//! `mapParallel`/`np.vectorize` row. Those are absent from the port, not slow in it. The
-//! orchestrator prints "—", which makes the table double as a coverage report against
-//! `PARITY.md`.
+//! One row has no Rust column: `mapParallel`/`np.vectorize`, a user-supplied closure
+//! mapped in parallel — absent from the port, not slow in it. The orchestrator prints
+//! "—", which makes the table double as a coverage report against `PARITY.md`.
 //!
 //! The `matmul` row is the DEFAULT path in each language — the pinned pure loop unless
 //! that side has opted into BLAS — which is why it trails NumPy: NumPy's `@` is always
@@ -98,6 +97,8 @@ fn operation_table(m: &MatD, m2: &MatD, pos: &MatD, a: &MatD, b: &MatD) {
         }),
     );
     row("matmul", min_ms(|| a.matmul(b).at(0, 0)));
+    row("sigmoid", min_ms(|| m.sigmoid().at(0, 0)));
+    row("relu", min_ms(|| m.relu().at(0, 0)));
     row("add", min_ms(|| (m + m2).at(0, 0)));
     row("mul", min_ms(|| (m * m2).at(0, 0)));
     row("abs", min_ms(|| m.abs().at(0, 0)));

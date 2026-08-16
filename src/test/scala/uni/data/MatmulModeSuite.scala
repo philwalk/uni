@@ -54,10 +54,12 @@ class MatmulModeSuite extends munit.FunSuite:
       )
   }
 
-  test("matmulBlas is a different algorithm, and says so") {
-    // The reason BLAS is opt-in. A tolerance-based comparison passes; a bit comparison
-    // does not, on any threaded or blocked BLAS. If a BLAS ever agreed bit for bit here
-    // the mode switch would be moot -- flag it rather than let it pass silently.
+  test("matmulBlas agrees with the pure loop to tolerance, and is reachable in any mode") {
+    // BLAS is opt-in because it is not PINNED -- its bits depend on the library, its
+    // threading and the CPU -- not because it always differs: the reference BLAS dgemm
+    // is a sequential k-loop per cell and reproduces the pure loop bit for bit (it does
+    // on the Linux CI box). So this asserts agreement to tolerance and nothing about
+    // bits; the pin itself is asserted against a reassociated kernel in MatParitySuite.
     val a    = mat(300, 400, 5)
     val b    = mat(400, 300, 6)
     val pure = a.matmulPure(b)
@@ -69,7 +71,6 @@ class MatmulModeSuite extends munit.FunSuite:
       math.abs(p - q) / (1e-12 + 1e-9 * math.max(math.abs(p), math.abs(q)))
     }.max
     assert(worst < 1.0, s"BLAS and pure disagree beyond atol=1e-12/rtol=1e-9: ${worst}x")
-    assertNotEquals(bits(pure), bits(blas), "BLAS agrees with the pure loop bit for bit here; the opt-in pins nothing")
   }
 
   test("views multiply through the stride equation, same bits as their copies") {
