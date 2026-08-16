@@ -11,8 +11,8 @@
 #
 # Output goes to the terminal AND to a log named for the box, so captures from several
 # machines can sit in one directory without colliding:
-#     benchAll-<os>-<host>-<yyyymmdd-HHMM>.out        e.g. benchAll-linux-quadd-20260816-1425.out
-# Pass -o <file> to choose the name, or -o - for terminal only.
+#     bench-logs/benchAll-<os>-<host>-<yyyymmdd-HHMM>.out   e.g. …/benchAll-linux-quadd-20260816-1425.out
+# (`bench-logs/` is git-ignored.) Pass -o <file> to choose the name, or -o - for terminal only.
 set -u
 cd "$(dirname "$0")" || exit 1
 
@@ -23,7 +23,8 @@ case "$(uname -s)" in
   Darwin*)              os="macos" ;;
 esac
 host="$(hostname -s 2>/dev/null || hostname 2>/dev/null || echo unknown)"
-log="benchAll-${os}-${host}-$(date +%Y%m%d-%H%M).out"
+mkdir -p bench-logs
+log="bench-logs/benchAll-${os}-${host}-$(date +%Y%m%d-%H%M).out"
 if [ "${1:-}" = "-o" ]; then log="$2"; shift 2; fi
 rel=rust/target/release
 
