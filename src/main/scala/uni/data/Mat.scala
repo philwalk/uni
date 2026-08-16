@@ -1086,6 +1086,23 @@ object Mat {
       r += 1
     (((s0 + s1) + (s2 + s3)) + ((s4 + s5) + (s6 + s7))) + tail
 
+  /** Bytedeco's bundled OpenBLAS, ready to call: loaded, and told to use every core.
+   *
+   *  OpenBLAS defaults to all cores, but a bundled build has no way to know it is not the
+   *  system's, and on Linux `uni` measured it at 3.7× behind the system OpenBLAS NumPy
+   *  uses on the same box (6.2 vs 1.6 ms at 512³) — consistent with one thread. Setting the
+   *  count explicitly is idempotent and free where it was already right. Under
+   *  `-Duni.blas.verbose=true` the build reports its own configuration, which is how to
+   *  tell a single-threaded build (nothing here can fix that) from a mis-set count. */
+  private lazy val bundledOpenBlasReady: Unit =
+    import org.bytedeco.openblas.presets.openblas_nolapack.{blas_set_num_threads, blas_get_num_threads, blas_get_vendor}
+    org.bytedeco.javacpp.Loader.load(classOf[org.bytedeco.openblas.global.openblas])
+    val cores  = Runtime.getRuntime.availableProcessors
+    val before = blas_get_num_threads()
+    blas_set_num_threads(cores)
+    if sys.props.get("uni.blas.verbose").exists(_.equalsIgnoreCase("true")) || uni.verboseUni then
+      System.err.print(s"[uni] bundled OpenBLAS: vendor=${blas_get_vendor()} threads=$before -> ${blas_get_num_threads()} (asked $cores)\n")
+
   private def blasReady(m: Mat[Double]): Mat[Double] =
     if m.isStandardContiguous && m.offset == 0 then m
     else
@@ -3220,6 +3237,7 @@ object Mat {
 
     private def multiplyDoubleOB(other: Mat[Double]): Mat[Double] = {
       import org.bytedeco.openblas.global.openblas._
+      Mat.bundledOpenBlasReady
       val am = Mat.blasReady(m.asInstanceOf[Mat[Double]])
       val bm = Mat.blasReady(other)
       val a = am.tdata.asInstanceOf[Array[Double]]
@@ -3257,6 +3275,7 @@ object Mat {
 
     private def multiplyFloatOB(other: Mat[Float]): Mat[Float] = {
       import org.bytedeco.openblas.global.openblas._
+      Mat.bundledOpenBlasReady
       val am = Mat.blasReadyF(m.asInstanceOf[Mat[Float]])
       val bm = Mat.blasReadyF(other)
       val a = am.tdata.asInstanceOf[Array[Float]]

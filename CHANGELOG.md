@@ -13,8 +13,12 @@ rows BLAS can change and `·` elsewhere. `runBenchAll.sh` builds both Rust flavo
 side (`*_pure`, `*_blas`) and runs it; the Scala BLAS 3PRF cells come from a child JVM
 started with `-Duni.mat.blas=true`.
 
-Found by its first run: `MatD::matmulBlas` copied both operands into owned `Array2`s and
-spent more time copying than multiplying (1.9 vs 0.9 ms at 512³). It now lends views.
+Found by its first runs: `MatD::matmulBlas` copied both operands into owned `Array2`s and
+spent more time copying than multiplying (1.9 vs 0.9 ms at 512³) — it now lends views;
+and on Linux `Scala·BLAS` (the bundled OpenBLAS `uni` now uses there) read 3.7× behind
+the system OpenBLAS NumPy uses on the same box, consistent with one thread — the bundled
+build is now told to use every core (`blas_set_num_threads`) and reports its thread count
+under `-Duni.blas.verbose=true`.
 
 **FIXED (Linux) — `uni` no longer loads netlib on Linux; system BLAS packages are safe**
 
