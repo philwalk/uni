@@ -17,7 +17,7 @@ snake_case marks an internal helper or a `try_*` Result variant.
 | `UniDateTime` (57 methods), `DateFormat`, `SmartParse`, `TimeUtils` | `utime` (67 pub fns) | field arithmetic, plus/minus/with families, epoch-day, pattern formatting, smart parsing incl. `parseDateSmartWith(config)`; the clock (local wall time via `localOffsetMinutes`, no tzdb), the zone-free between/duration family, `getMillis`, `endOfMonth`, `quik*`, `whenModified`/`ageIn*` |
 | `Big`, `BigUtils` + the CSV loaders | `udata` (43 pub fns) | full arithmetic incl. `round(precision, mode)`, HALF_EVEN contexts, `loadMatBig`/`loadSmartBig`; `numStr`/`NumFormat` (Java `%f` fidelity), `str2num`, `isNumeric`, `isBad`/`orBad` |
 | `NumPyRNG` | `numpy_rng` (7 fns) | bit-identical `uniform`/`randn`/`next_*` |
-| `Mat[Double]` core — Tier 3 phases (a) + (b) | `udata::mat::MatD`, `udata::mataxis`, `udata::vecexts::{CVecD, RVecD}` | **the strided view model** (`transpose`/`T`, `slice`, `broadcastTo`, and the fragmented-layout materialisation `Internal.create` performs), broadcasting `+ - * /`, `Neg`, the `apply*` gather family, `reshape` `ravel` `matCopy` `copy` `item` `flatten`; reductions `sum` `mean` `min` `max` `argmin` `argmax` `std` `variance` `norm`; axis family `sumAxis` `meanAxis` `minAxis` `maxAxis` `stdAxis` `cumsumAxis` `cummax` `cummin` + `rowSums`/`colSums`/`rowMeans`/`colMeans`; elementwise `abs` `power` `exp` `log` `sqrt` `clip` `cumsum`. **Bit-identical except `exp`/`log`** (see below): `sumD`'s 8-way unrolled combine tree and its pinned 16-chunk decomposition are reproduced exactly, `abs` keeps `-0.0` where `f64::abs` would not, `power` is repeated multiplication rather than `powi`, `cumsum` returns `1×n` whatever the input shape — and, critically, **which summation algorithm a matrix gets is a function of its layout in both languages alike** (see the view-model note below). Phase (c) — `MatMut` writes, `MatBool` masks, fancy indexing — is in (see below). Still to come: `MatMathOps`, pandas ops, matmul/BLAS, `Mat[Big]` |
+| `Mat[Double]` core — Tier 3 phases (a) + (b) | `udata::mat::MatD`, `udata::mataxis`, `udata::vecexts::{CVecD, RVecD}` | **the strided view model** (`transpose`/`T`, `slice`, `broadcastTo`, and the fragmented-layout materialisation `Internal.create` performs), broadcasting `+ - * /`, `Neg`, the `apply*` gather family, `reshape` `ravel` `matCopy` `copy` `item` `flatten`; reductions `sum` `mean` `min` `max` `argmin` `argmax` `std` `variance` `norm`; axis family `sumAxis` `meanAxis` `minAxis` `maxAxis` `stdAxis` `cumsumAxis` `cummax` `cummin` + `rowSums`/`colSums`/`rowMeans`/`colMeans`; elementwise `abs` `power` `exp` `log` `sqrt` `clip` `cumsum`. **Bit-identical except `exp`/`log`** (see below): `sumD`'s 8-way unrolled combine tree and its pinned 16-chunk decomposition are reproduced exactly, `abs` keeps `-0.0` where `f64::abs` would not, `power` is repeated multiplication rather than `powi`, `cumsum` returns `1×n` whatever the input shape — and, critically, **which summation algorithm a matrix gets is a function of its layout in both languages alike** (see the view-model note below). Phase (c) — `MatMut` writes, `MatBool` masks, fancy indexing — and phase (e)'s `matmul` (`hstack`/`vstack` with it) are in (see below). Still to come: `MatMathOps`, pandas ops, `leastSquares`, `Mat[Big]` |
 | `Tprf3`, complete | `t3prf` (13 pub fns) | `t3prf_core`, `estimate_3prf_is_full`/`oos_cv`/`oos_rec`, `ols_solve`, `standardize_columns`, and the closed forms: `tprfClosedForm`, `plsClosedForm`, `pls1Fit`, `forecast3prf` |
 | `StringExts` (partial) | `StrExts`/`StrPathExts` | `lc uc posx dropSuffix startsWithIgnoreCase stripPrefix asPath absPath posix` |
 | `uni.cli.ArgsParser` | `cli` | `eachArg`/`showUsage` + cursor helpers (`thisArg consumeNext peekNext nextInt nextLong nextDouble`); prog name from the caller's source file (`#[track_caller]` mirroring the Scala macro) |
@@ -36,11 +36,13 @@ as an exact-decimal invoice; fixed inputs, portable output), `marketSim` /
 200 paths × 100 years of price formation on a seeded `NumPyRng`, then `MatD`
 reductions, drawdown episodes, exposure rules and four report modes. It is the
 consumer that drove Tier 3 milestone 1, and the pair that proved the transcendental
-question above is closable).
+question above is closable), `tprfRunner` / `tprf_runner` (`TprfRunner.data_generator`:
+the `update` recurrences via `MatMut`, `hstack`, the pinned matmul, the noise blend —
+every cell of `X` printed, so the matmul is on the record).
 
-Ten committed fixtures under `../test-data/*-parity/` pin these — roughly 21,367 rows
+Ten committed fixtures under `../test-data/*-parity/` pin these — roughly 21,389 rows
 (path 10,537 — incl. 38 `badpath`/`badpayload` rows · date 4,173 · tprf3 3,039 · big 629 · smartparse 539 · csv 458 ·
-mat 1,567 · numpy-rng 378 · walk 30 · hash 23) — plus the byte-identical pair probe
+mat 1,589 · numpy-rng 378 · walk 30 · hash 23) — plus the byte-identical pair probe
 (`jsrc/pairProbe.sc` / `examples/pair_probe.rs`). See `README.md`.
 
 **`exp` is the one operation in the port that is not bit-identical, and every claim below
@@ -344,7 +346,7 @@ that the loaders return. Realistic phasing:
 - (c) ~~the `MatDOps` indexing surface: the `apply` gather family, mask indexing, and the
   `update` write family~~ **done** (`MatMathOps` elementwise math still outstanding);
 - (d) pandas ops;
-- (e) `leastSquares` + `BlasCrossover` routing (the `blas` feature already exists);
+- (e) ~~`matmul` and the BLAS question~~ **done** — see "matmul" below; `leastSquares` still outstanding;
 - (f) `matResultOps` join/groupBy last.
 
 Two constraints that shape (a)/(b), recorded so they are not rediscovered late:
@@ -409,6 +411,40 @@ accessor names — in Scala they are the varargs *constructors* `Mat.row(1,2,3)`
   statistics; a mask is not one. Note this is the *opposite* direction from the ordering
   rule the reductions follow, and the two are easy to conflate.
 
+**matmul: the default is the pure loop, pinned; BLAS is an opt-in on both sides.**
+Decided on measurement (this machine, 24 threads, all BLAS columns OpenBLAS; ms/call,
+best of runs; re-measure with `sbt "runMain uni.apps.MatmulProbe"`,
+`cargo run --release --bin bench_matmul`, `python py/bench_matmul.py`):
+
+| shape | Scala pure | Scala BLAS | Rust pure | Rust `matrixmultiply` | Rust OpenBLAS | NumPy |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 64³ | 0.056 | 0.010 | 0.028 | 0.030 | 0.0084 | 0.0090 |
+| 128³ | 0.18 | 0.089 | 0.12 | 0.15 | 0.094 | 0.083 |
+| 256³ | 0.77 | 0.20 | 0.44 | 0.72 | 0.35 | 0.32 |
+| 512³ | 4.7 | 0.7–1.25 | 2.4 | 4.3 | 1.08 | 0.91 |
+| 512×8×512 | 0.23 | 0.21 | 0.47 | 0.41 | 0.36 | 0.36 |
+| 512×512×8 | 0.16 | 0.085 | 0.10 | 0.16 | 0.094 | 0.085 |
+
+Three facts decided it. The pure tiled loop — `TILE = 32`, parallel over row tiles, a
+**sequential k-sum from 0.0 per cell** — is reproduced bit for bit by the port (22
+fixture rows, `mmfnv`/`tmmfnv`, second operand a transposed view) and, since neither
+runtime fuses `x*y + z`, is **independent of the machine**; nothing else in the table
+is — every BLAS and `matrixmultiply` pick kernels by CPU feature and thread count. For
+Rust, pure-parallel already beats `matrixmultiply` above 128³, so the pin costs nothing
+against the dependency-free alternative; OpenBLAS is 1.3–2.2× faster and needs the system
+library. For Scala the pin costs 2–4× against its own BLAS on large dense products and
+~1× on the skinny 3PRF shapes. NumPy is OpenBLAS and so not reproducible either, so the
+match-NumPy rule does not pick a side here; reproducibility does.
+
+The opt-in: Scala `-Duni.mat.blas=true` or env `UNI_MAT_BLAS=true` (property wins, read
+once; no programmatic setter); Rust `--features blas`, which is already the act that
+links OpenBLAS. Both sides also expose `matmulPure` (pinned, whatever the mode) and
+`matmulBlas` (BLAS, whatever the mode; Rust: only under the feature, so a call in a
+non-BLAS build is a compile error). `blasThreshold` is demoted from contract to tuning:
+it has no effect in the default mode, and in BLAS mode it decides which algorithm runs,
+so it moves last ulps and is documented as such. Scala's `Tprf3` gemms are pure by
+default now; its parity fixture is tolerance-based (`rtol 1e-9`) and unmoved.
+
 `slice` also takes `Range<i64>` rather than `Range<usize>`, because Scala reads a
 negative *start* as an offset from the end (`-2 until 0`). Only the start is adjusted
 there, and the length stays the range's own; that asymmetry is mirrored, not corrected.
@@ -468,6 +504,6 @@ hours, not days.
    view model that followed was verified by re-running that same pair (still byte-
    identical across twelve configurations) alongside a 297-row 2-D fixture. Phase (c)
    followed: the aliasing decision `update` forces is settled (`MatMut`, reached by a
-   panicking conversion), and mask indexing brought `MatBool`. Next is `MatMathOps`
-   elementwise math, then matmul — which is what `examples/tprf_runner.rs` waits on to
-   become a demo pair.
+   panicking conversion), and mask indexing brought `MatBool`. Then matmul, which made
+   `tprfRunner` / `tprf_runner` the eighth demo pair. Next is `MatMathOps` elementwise
+   math, then `leastSquares`.

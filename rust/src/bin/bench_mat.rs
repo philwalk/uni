@@ -18,10 +18,15 @@
 //!
 //! # What is missing, and why that is worth printing
 //!
-//! Several rows have no Rust column yet: `matmul` (Tier 3 phase (e)), `sigmoid`/`relu`
-//! (`MatMathOps`, phase (c)) and the `mapParallel`/`np.vectorize` row. Those are absent
-//! from the port, not slow in it. The orchestrator prints "—", which makes the table
-//! double as a coverage report against `PARITY.md`.
+//! Two rows have no Rust column yet: `sigmoid`/`relu` (`MatMathOps`) and the
+//! `mapParallel`/`np.vectorize` row. Those are absent from the port, not slow in it. The
+//! orchestrator prints "—", which makes the table double as a coverage report against
+//! `PARITY.md`.
+//!
+//! The `matmul` row is the DEFAULT path in each language — the pinned pure loop unless
+//! that side has opted into BLAS — which is why it trails NumPy: NumPy's `@` is always
+//! OpenBLAS. That gap is the price of a machine-independent result, and is the number
+//! the contract note in `PARITY.md` quotes.
 
 #![allow(
     clippy::print_stdout,
@@ -36,6 +41,8 @@ use uni::udata::MatD;
 
 /// Square side for the elementwise and reduction rows — 1M elements.
 const N: usize = 1000;
+/// Square side for the matmul row — 512³ ≈ 134M multiply-adds. Must match `MatBench.MM`.
+const MM: usize = 512;
 
 /// Warmup and timed iteration counts. These must match the Scala and Python halves or
 /// the tables compare harnesses rather than implementations.
@@ -82,7 +89,7 @@ fn row(label: &str, ms: f64) {
 }
 
 /// Elementwise and whole-matrix work on a contiguous matrix.
-fn operation_table(m: &MatD, m2: &MatD, pos: &MatD) {
+fn operation_table(m: &MatD, m2: &MatD, pos: &MatD, a: &MatD, b: &MatD) {
     row(
         "randn",
         min_ms(|| {
@@ -90,6 +97,7 @@ fn operation_table(m: &MatD, m2: &MatD, pos: &MatD) {
             normal_matrix(&mut r, N, N).at(0, 0)
         }),
     );
+    row("matmul", min_ms(|| a.matmul(b).at(0, 0)));
     row("add", min_ms(|| (m + m2).at(0, 0)));
     row("mul", min_ms(|| (m * m2).at(0, 0)));
     row("abs", min_ms(|| m.abs().at(0, 0)));
@@ -156,10 +164,13 @@ fn main() {
     );
 
     let mut rng = NumPyRng::new(42);
+    // Draw order matches `MatBench.scalaRows`: the two MM×MM matmul operands first.
+    let a = normal_matrix(&mut rng, MM, MM);
+    let b = normal_matrix(&mut rng, MM, MM);
     let m = normal_matrix(&mut rng, N, N);
     let m2 = normal_matrix(&mut rng, N, N);
     let pos = &m.abs() + 1.0;
 
-    operation_table(&m, &m2, &pos);
+    operation_table(&m, &m2, &pos, &a, &b);
     layout_table(&m);
 }

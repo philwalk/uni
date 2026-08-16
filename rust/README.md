@@ -56,6 +56,7 @@ and the two print byte-identical output:
 | `bigcalc` | the `udata` surface as an exact-money invoice — output is identical on any machine |
 | `forecast` | seeded `randn` → byte-identical CSV → `loadMatBig` → the 3PRF closed forms and `forecast3prf` |
 | `market_sim` | not a tour of an API but a 1,300-line workload: seeded price formation over 200 paths × 100 years, `MatD` reductions, drawdown episodes, exposure rules, and five report modes — the consumer that drove the `MatD` port |
+| `tprf_runner` | `TprfRunner.data_generator`: the `MatMut` recurrences, `hstack`, the pinned default `matmul`, the noise blend — every cell of `X` printed, identical on any machine |
 
 ```bash
 cargo build --example bigcalc

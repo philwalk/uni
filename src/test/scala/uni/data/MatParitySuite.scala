@@ -115,6 +115,19 @@ class MatParitySuite extends munit.FunSuite:
     assert(masks >= 800, s"only $masks mask rows; IEEE comparison semantics would go unchecked")
     val adv = rows.count((shape, label, _) => isAdv(shape) && !label.startsWith("mask."))
     assert(adv >= 300, s"only $adv adversarial rows; NaN/signed-zero ordering would go unchecked")
+    val matmuls = rows.count((_, label, _) => label.endsWith("mmfnv"))
+    assert(matmuls >= 22, s"only $matmuls matmul rows; the pinned matmul path would go unchecked")
+  }
+
+  test("the matmul rows would catch a reassociated kernel") {
+    // The pinned path is a sequential k-sum from 0.0 per cell; a BLAS reassociates. If
+    // BLAS ever agreed bit for bit on this corpus the matmul rows would pin nothing.
+    val m = uni.apps.MatParityGen.mat2d(uni.apps.MatParityGen.corpus(120000), 300, 400)
+    assertNotEquals(
+      uni.apps.MatParityGen.fnv(m.matmulPure(m.T).toArray),
+      uni.apps.MatParityGen.fnv(m.matmulBlas(m.T).toArray),
+      "BLAS agrees with the pinned matmul here; the mmfnv rows pin nothing",
+    )
   }
 
   test("the corpus is sensitive to association order") {

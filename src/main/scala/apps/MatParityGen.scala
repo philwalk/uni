@@ -265,6 +265,13 @@ object MatParityGen:
       "negfnv"    -> fnv((-m).toArray),
       "argmax"    -> (am._1.toLong * m.cols + am._2),
       "argmin"    -> (an._1.toLong * m.cols + an._2),
+      // The pinned matmul: `m *@ m.T` (rows x rows) and `m.T *@ m` (cols x cols), through
+      // `matmulPure` so the row does not depend on the JVM's BLAS mode. The second
+      // operand is a transposed VIEW in both, so the strided read path is on the record.
+      // Every cell is a sequential k-sum from 0.0; a BLAS or a blocked kernel lands
+      // elsewhere in the last ulps at every size here except 1x1.
+      "mmfnv"     -> fnv(m.matmulPure(t).toArray),
+      "tmmfnv"    -> fnv(t.matmulPure(m).toArray),
     )
 
   /**

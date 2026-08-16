@@ -450,6 +450,17 @@ impl MatD {
     pub(crate) fn fast_d(&self) -> bool {
         self.isContiguous() && self.offset == 0 && self.data.len() == self.rows * self.cols
     }
+
+    /// The elements in logical row-major order without copying when the layout already
+    /// is that (`fast_d`), and as a fresh `Vec` otherwise. For sibling modules that want
+    /// a plain slice to index — the matmul kernels — without reaching into the buffer.
+    pub(crate) fn row_major(&self) -> std::borrow::Cow<'_, [f64]> {
+        if self.fast_d() {
+            std::borrow::Cow::Borrowed(&self.data)
+        } else {
+            std::borrow::Cow::Owned(self.flatten())
+        }
+    }
 }
 
 // ── Element access and materialisation ──────────────────────────────────────────
@@ -555,6 +566,52 @@ impl MatD {
     /// Scala's `m.T` — alias for [`MatD::transpose`].
     pub fn T(&self) -> Self {
         self.transpose()
+    }
+
+    /// Side-by-side concatenation — Scala's `MatD.hstack(a, b, …)`. Reads each operand
+    /// through its strides, so views need no copy first; the result is fresh and
+    /// contiguous.
+    ///
+    /// # Panics
+    /// If given no matrices, or their row counts differ.
+    #[must_use]
+    pub fn hstack(mats: &[&Self]) -> Self {
+        assert!(!mats.is_empty(), "hstack requires at least one matrix");
+        let rows = mats[0].rows();
+        assert!(
+            mats.iter().all(|m| m.rows() == rows),
+            "hstack requires equal row counts"
+        );
+        let cols: usize = mats.iter().map(|m| m.cols()).sum();
+        let mut out = Vec::with_capacity(rows * cols);
+        for r in 0..rows {
+            for m in mats {
+                for c in 0..m.cols() {
+                    out.push(m.at(r, c));
+                }
+            }
+        }
+        Self::create(out, rows, cols)
+    }
+
+    /// Stacked concatenation — Scala's `MatD.vstack(a, b, …)`.
+    ///
+    /// # Panics
+    /// If given no matrices, or their column counts differ.
+    #[must_use]
+    pub fn vstack(mats: &[&Self]) -> Self {
+        assert!(!mats.is_empty(), "vstack requires at least one matrix");
+        let cols = mats[0].cols();
+        assert!(
+            mats.iter().all(|m| m.cols() == cols),
+            "vstack requires equal column counts"
+        );
+        let rows: usize = mats.iter().map(|m| m.rows()).sum();
+        let mut out = Vec::with_capacity(rows * cols);
+        for m in mats {
+            out.extend(m.row_major().iter());
+        }
+        Self::create(out, rows, cols)
     }
 
     /// Zero-copy sub-matrix view — Scala's `slice(rowRange, colRange)`.

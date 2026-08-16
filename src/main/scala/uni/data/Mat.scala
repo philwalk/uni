@@ -265,8 +265,25 @@ object Mat {
         f(Mat.create(row, 1, m._cols))
         i += 1
 
-  // Crossover is higher on macOS/Accelerate (JNI overhead amortises later) than on Windows/Linux+OpenBLAS.
+  /** Whether `matmul` / `*@` may route to BLAS. **Off by default**: the default matmul is
+   *  the pure tiled loop, whose association order (a sequential k-sum from 0.0 per cell)
+   *  is reproduced bit for bit by the Rust port and does not depend on the machine.
+   *  BLAS is 2-4x faster on large dense products and does not offer that: its result
+   *  varies with the library, its threading and the CPU's kernel selection.
+   *
+   *  Opt in with `-Duni.mat.blas=true` or the env var `UNI_MAT_BLAS=true` (the property
+   *  wins), read once. There is deliberately no programmatic setter; a caller who wants
+   *  BLAS for one product regardless of mode calls `matmulBlas`, and one who wants the
+   *  pinned result regardless of mode calls `matmulPure`. */
+  private lazy val blasMode: Boolean =
+    val v = Option(System.getProperty("uni.mat.blas")).orElse(sys.env.get("UNI_MAT_BLAS"))
+    v.exists(x => x.trim.equalsIgnoreCase("true") || x.trim == "1")
+
+  // Within BLAS mode, tiny products still run the pure loop: below these op counts the
+  // JNI call costs more than the multiply. Crossover is higher on macOS/Accelerate.
   // Mac measured: square Double=1728, thin=768. Windows/Linux: square=216, thin=384.
+  // Tuning, not contract -- but note it decides WHICH algorithm runs, so in BLAS mode it
+  // moves last ulps. It has no effect at all in the default (pure) mode.
   private lazy val isMacOS = System.getProperty("os.name", "").toLowerCase.startsWith("mac")
   private lazy val blasThreshold:     Long = System.getProperty("uni.mat.blasThreshold",     if isMacOS then "1728" else "216").toLong
   private lazy val blasThinThreshold: Long = System.getProperty("uni.mat.blasThinThreshold", if isMacOS then "768"  else "384").toLong
@@ -1091,14 +1108,16 @@ object Mat {
   // -Duni.verbose=true or env VERBOSE_UNI). The val holds a strong reference — JUL
   // loggers are weakly referenced and the level would silently revert if this were a
   // local.
-  private val netlibLogger =
+  private lazy val netlibLogger =
     val lg = java.util.logging.Logger.getLogger("dev.ludovic.netlib")
     val verbose = sys.props.get("uni.blas.verbose").exists(_.equalsIgnoreCase("true"))
       || uni.verboseUni
     if !verbose then lg.setLevel(java.util.logging.Level.WARNING)
     lg
 
-  private val netlib =
+  // Lazy, as is everything BLAS: the default matmul is the pure loop, so a JVM that never
+  // opts in never loads a native BLAS.
+  private lazy val netlib =
     // Name netlibLogger FIRST: getInstance() below is what emits the INFO line, so the level
     // has to be set before it runs. Referencing it here makes that a real dependency rather
     // than an accident of declaration order -- and is why it is no longer "unused", though its
@@ -1108,7 +1127,7 @@ object Mat {
   // JNIBLAS on Linux may be backed by the slow reference Fortran BLAS (libblas3) when system
   // OpenBLAS is absent. A 64×64 timing probe distinguishes it: OpenBLAS ~0.01ms, reference ~1ms.
   // F2JBLAS / Java11BLAS are always slow. VectorBLAS and JNIBLAS+OpenBLAS are fast.
-  private val netlibIsFast: Boolean =
+  private lazy val netlibIsFast: Boolean =
     val name = netlib.getClass.getName
     if name.endsWith("F2JBLAS") || name.endsWith("Java11BLAS") then false
     else if name.endsWith("JNIBLAS") && sys.props("os.name").toLowerCase.contains("linux") then
@@ -2724,6 +2743,36 @@ object Mat {
           m.asInstanceOf[Mat[Big]].multiplyBig(other.asInstanceOf[Mat[Big]]).asInstanceOf[Mat[T]]
     }
 
+    /** The pinned matmul, whatever the mode: the tiled pure loop, whose per-cell
+     *  association order is a sequential k-sum from 0.0. Bit-identical to the Rust port
+     *  and machine-independent. This is what fixture generators and demo pairs call. */
+    def matmulPure(other: Mat[T]): Mat[T] = {
+      if m.cols != other.rows then
+        throw IllegalArgumentException(s"m.cols[${m.cols}] != other.rows[${other.rows}]")
+      ct.runtimeClass match
+        case c if c == classOf[Double] =>
+          m.asInstanceOf[Mat[Double]].multiplyDouble(other.asInstanceOf[Mat[Double]]).asInstanceOf[Mat[T]]
+        case c if c == classOf[Float] =>
+          m.asInstanceOf[Mat[Float]].multiplyFloat(other.asInstanceOf[Mat[Float]]).asInstanceOf[Mat[T]]
+        case _ =>
+          m.asInstanceOf[Mat[Big]].multiplyBig(other.asInstanceOf[Mat[Big]]).asInstanceOf[Mat[T]]
+    }
+
+    /** BLAS matmul, whatever the mode. Faster on large dense products; the result is not
+     *  pinned -- it varies with the BLAS library, its threading and the CPU. `Mat[Big]`
+     *  has no BLAS and takes its exact path. */
+    def matmulBlas(other: Mat[T]): Mat[T] = {
+      if m.cols != other.rows then
+        throw IllegalArgumentException(s"m.cols[${m.cols}] != other.rows[${other.rows}]")
+      ct.runtimeClass match
+        case c if c == classOf[Double] =>
+          m.asInstanceOf[Mat[Double]].multiplyDoubleBLAS(other.asInstanceOf[Mat[Double]]).asInstanceOf[Mat[T]]
+        case c if c == classOf[Float] =>
+          m.asInstanceOf[Mat[Float]].multiplyFloatBLAS(other.asInstanceOf[Mat[Float]]).asInstanceOf[Mat[T]]
+        case _ =>
+          m.asInstanceOf[Mat[Big]].multiplyBig(other.asInstanceOf[Mat[Big]]).asInstanceOf[Mat[T]]
+    }
+
     // ---- Diagonal ------------------------------------------------------
     def diagonal: Array[T] = {
       val n = math.min(m.rows, m.cols)
@@ -3162,9 +3211,11 @@ object Mat {
     }
 
     private inline def shouldUseBLAS[A](a: Mat[A], b: Mat[A]): Boolean =
-      val minDim = a.rows min b.cols
-      val ops    = a.rows.toLong * a.cols * b.cols
-      ops >= (if minDim >= 6 then blasThreshold else blasThinThreshold)
+      blasMode && {
+        val minDim = a.rows min b.cols
+        val ops    = a.rows.toLong * a.cols * b.cols
+        ops >= (if minDim >= 6 then blasThreshold else blasThinThreshold)
+      }
 
     private[data] def multiplyDoubleBLAS(other: Mat[Double]): Mat[Double] =
       if Mat.netlibIsFast then multiplyDoubleNetlib(other) else multiplyDoubleOB(other)

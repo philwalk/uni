@@ -344,6 +344,9 @@ fn case_word_2d(m: &MatD, label: &str) -> u64 {
         "negfnv" => fnv(&(-m).toArray()),
         "argmax" => flat_index(m.argmax(), m.cols()),
         "argmin" => flat_index(m.argmin(), m.cols()),
+        // The pinned matmul, with a transposed VIEW as the second operand in both.
+        "mmfnv" => fnv(&m.matmulPure(&m.T()).toArray()),
+        "tmmfnv" => fnv(&m.T().matmulPure(m).toArray()),
         other => panic!("unknown 2-D case {other} in fixture — port it or regenerate"),
     }
 }
@@ -426,9 +429,13 @@ fn mat_reductions_match_the_scala_reference_bit_for_bit() {
     let mut two_d = 0usize;
     let mut adv = 0usize;
     let mut masks = 0usize;
+    let mut matmuls = 0usize;
     for (shape, label, want) in &rows {
         if label.starts_with("mask.") {
             masks += 1;
+        }
+        if label.ends_with("mmfnv") {
+            matmuls += 1;
         }
         let got = match parse_shape(shape) {
             Shape::Column(n) => {
@@ -476,6 +483,39 @@ fn mat_reductions_match_the_scala_reference_bit_for_bit() {
         adv >= 300,
         "only {adv} adversarial rows; NaN and signed-zero ordering would go unchecked — \
          which is exactly how they were wrong before"
+    );
+    assert!(
+        matmuls >= 22,
+        "only {matmuls} matmul rows; the pinned matmul path would go unchecked"
+    );
+}
+
+#[test]
+fn the_matmul_rows_would_catch_a_reassociated_kernel() {
+    // The pinned path is a sequential k-sum from 0.0 per cell. Any blocked kernel — a
+    // BLAS, `matrixmultiply`, or a k-split — reassociates, and on this corpus that moves
+    // bits. Demonstrate with the mildest possible reassociation: two half-sums combined.
+    let m = MatD::create(corpus(300 * 400), 300, 400);
+    let t = m.T();
+    let pinned = m.matmulPure(&t);
+    let (rows, k, cols) = (m.rows(), m.cols(), t.cols());
+    let mut split = Vec::with_capacity(rows * cols);
+    for i in 0..rows {
+        for j in 0..cols {
+            let (mut lo, mut hi) = (0.0f64, 0.0f64);
+            for kk in 0..k / 2 {
+                lo += m.at(i, kk) * t.at(kk, j);
+            }
+            for kk in k / 2..k {
+                hi += m.at(i, kk) * t.at(kk, j);
+            }
+            split.push(lo + hi);
+        }
+    }
+    assert_ne!(
+        fnv(&pinned.toArray()),
+        fnv(&split),
+        "a k-split kernel agrees with the pinned path here; the matmul rows pin nothing"
     );
 }
 

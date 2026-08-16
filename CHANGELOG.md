@@ -1,5 +1,37 @@
 ## Unreleased
 
+**CHANGED (numeric, and speed) — `matmul` defaults to the pure loop; BLAS is an opt-in**
+
+`*@` / `matmul` / `dot` on `Mat[Double]` and `Mat[Float]` no longer route to BLAS at
+`ops >= 216`. The default is the tiled pure loop everywhere, whose per-cell association
+order is a sequential k-sum from 0.0. Every product of 6×6×6 or larger therefore
+**changes in its last ulps** relative to earlier versions, and large dense products get
+slower — measured on a 24-thread machine, 2× at 128³ and 4× at 512³ against OpenBLAS,
+~1× on the skinny shapes the 3PRF paths use. Nothing that compares with a tolerance
+notices; `Tprf3`'s own fixture (`rtol 1e-9`) is unmoved.
+
+What is bought: the default result is now **bit-identical to the Rust port and
+independent of the machine** — neither runtime fuses `x*y + z`, and the fixture pins 22
+matmul rows including transposed-view operands. No BLAS offers that; every one selects
+kernels by CPU feature and thread count, and Scala's two paths already disagreed with
+each other on 76% of cells at 128³. Note NumPy's `@` is OpenBLAS, so it is not
+reproducible either — the match-NumPy rule does not apply to matmul; reproducibility
+does. `jsrc/tprfRunner.sc` ↔ `rust/examples/tprf_runner.rs` is the demo pair that
+depends on it.
+
+Opting back in, for speed on large dense products: `-Duni.mat.blas=true` or the env
+var `UNI_MAT_BLAS=true` (the property wins; read once per JVM; no programmatic setter).
+Per call, whatever the mode: `a.matmulPure(b)` is the pinned path and `a.matmulBlas(b)`
+is BLAS. `uni.mat.blasThreshold` / `blasThinThreshold` still exist but only take effect
+in BLAS mode, where they decide which algorithm runs — so they move last ulps, and are
+tuning, not contract. Native BLAS is now loaded lazily, on the first BLAS call, rather
+than at `Mat` initialisation.
+
+Rust: `MatD::matmul` / `dot` (pure by default), `matmulPure`, `matmulBlas` (only under
+`--features blas`, which is the opt-in there), plus `hstack`/`vstack`. The `matmul` row
+in the benchmark tables now has a Rust column, and shows the pinned default in both
+languages against NumPy's BLAS.
+
 **CHANGED (behaviour) — the mask family is IEEE, matching NumPy**
 
 `gt` `lt` `gte` `lte` `:==` `:!=` on `Mat[Double]` and `Mat[Float]` now compare with the

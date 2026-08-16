@@ -84,13 +84,19 @@ calls are pinned by nothing either. So each demo below exists twice — `jsrc/<n
 | `bigcalc` | the decimal surface as an exact-money invoice: `str2num`/`isNumeric`, arithmetic, every rounding mode, `numStr`/`numStrPct`, the BigNaN sentinel | identical **everywhere** |
 | `forecast` | seeded `randn` → byte-identical CSV → `loadMatBig` → the 3PRF closed forms and `forecast3prf` (in-sample and both OOS procedures) | identical per machine |
 | `marketSim` | the odd one out: a 1,300-line workload rather than an API tour. Seeded price formation over 200 paths × 100 years, `MatD` reductions, drawdown episodes, exposure rules with a two-heap running median, and five report modes (`-emit`/`-validate`/`-strategies`/`-power`/`-buffer`) plus `-calibrate` | identical **everywhere** |
+| `tprfRunner` | `TprfRunner.data_generator`: four `update` recurrences (the mutation idiom `MatMut` exists for), `hstack`, `factors *@ factor_loadings` — the **default matmul**, which is the pinned pure loop on both sides — and the noise blend; every cell of `X` printed | identical **everywhere** |
 
-Three of the pairs are machine-independent by construction (fixed inputs, no filesystem, no
+Four of the pairs are machine-independent by construction (fixed inputs, no filesystem, no
 clock), so they double as portable acceptance tests; the rest agree on any one machine
 because they read the same tree. `marketSim` is machine-independent only because the
 matrix reductions it leans on are: `Mat.sumD` splits large sums into a chunk count fixed
 by *length*, never by `availableProcessors`, so the association order — and with it the
-last bit of every sum — cannot vary with the host.
+last bit of every sum — cannot vary with the host. `tprfRunner` adds the matmul to that
+list: the default `*@` is a tiled loop whose per-cell association order is a sequential
+k-sum, and neither runtime fuses multiply-adds, so it is machine-independent too — which
+is precisely why BLAS (2–4× faster on large dense products, but kernel- and
+thread-dependent in the last ulps) is an opt-in, `-Duni.mat.blas=true` here and
+`--features blas` there.
 
 Float rendering is pinned rather than inherited: the earlier pairs print through
 `Big` + `numStr`, and `marketSim` through `java_format_f`, which reproduces Java's

@@ -17,13 +17,12 @@
 //! returns a plain tuple here exactly as the Scala method does — a `Result` would
 //! propagate into every caller and change the shape of the port.
 //!
-//! # Scope, and what it is not yet
+//! # Scope
 //!
-//! This stops where `generate` stops being portable: its last lines are
-//! `factors *@ factor_loadings`, and matmul is Tier 3 phase (e). Everything before that —
-//! `f`, `g`, `y`, `eta` — is here. It is therefore NOT yet a byte-identical demo pair;
-//! it becomes the Rust half of one once matmul lands and a `jsrc/tprfRunner.sc` twin
-//! prints the same panel.
+//! Everything `data_generator` does: the four recurrences, `hstack`, the matmul with the
+//! factor loadings — `factors *@ factor_loadings`, which is the pinned pure path on both
+//! sides, so it needs no flag — and the noise blend. It is the Rust half of a demo pair
+//! with `jsrc/tprfRunner.sc`, byte-identical output.
 //!
 //! The `non_pervasive` branch is deliberately omitted: it uses `scala.util.Random.shuffle`
 //! to zero half the loadings, and that shuffle has no portable counterpart.
@@ -38,6 +37,7 @@
 
 use uni::NumPyRng;
 use uni::udata::MatD;
+use uni::udata::java_format_f;
 
 /// `MatD.randn(rows, cols)` — row-major fill from the shared generator, so the draw
 /// ORDER matches the Scala side call for call, not just the distribution.
@@ -46,9 +46,14 @@ fn randn(rng: &mut NumPyRng, rows: usize, cols: usize) -> MatD {
     MatD::create(data, rows, cols)
 }
 
-/// Population standard deviation — Scala's `popStd`, i.e. `MatD.std` with ddof 0.
+/// `TprfRunner.popStd`, formula for formula: `sqrt(sum((m - mu)^2) / n)` with `mu = sum/n`.
+/// The square is `x * x` rather than `power(2.0)`, so both twins compute `fl(x*x)`
+/// by definition instead of relying on their `pow` agreeing at exponent 2.
 fn popStd(m: &MatD) -> f64 {
-    m.std()
+    let n = (m.rows() * m.cols()) as f64;
+    let mu = m.sum() / n;
+    let d = m - mu;
+    ((&d * &d).sum() / n).sqrt()
 }
 
 /// Everything in `TprfRunner.generate` up to the matmul, in one piece as the Scala is.
@@ -58,8 +63,8 @@ fn generate(
     n: usize,
     relevant: usize,
     irr: usize,
-) -> (MatD, MatD, MatD, MatD) {
-    let (pf, pg, a, d) = (0.9_f64, 0.9_f64, 0.9_f64, 0.0_f64);
+) -> (MatD, MatD, MatD, MatD, MatD, MatD) {
+    let (pf, pg, a, d, strength) = (0.9_f64, 0.9_f64, 0.9_f64, 0.0_f64, 1.0_f64);
     // The cyclic neighbour blend below is only skippable because d is 0; asserting it
     // keeps the omission visible without inventing an error path for a fixed constant.
     assert!(d == 0.0, "d != 0 needs the cyclic neighbour blend");
@@ -67,7 +72,7 @@ fn generate(
     // Draw order is load-bearing: the Scala draws v, then the loadings, then f's seed
     // row, then the noise batches, in exactly this sequence.
     let v = randn(rng, t, n);
-    let _factor_loadings = randn(rng, relevant + irr, n);
+    let factor_loadings = randn(rng, relevant + irr, n);
 
     // f: the recurrence MatMut exists for.
     let mut f = MatD::zeros(t, relevant).intoMut();
@@ -121,26 +126,66 @@ fn generate(
     }
     let eta = eta.freeze();
 
-    (f, g, y, eta)
+    // The tail of `data_generator`: stack the factors, load them onto N predictors —
+    // `factors *@ factor_loadings`, the pinned matmul — and blend in the scaled errors.
+    let factors = MatD::hstack(&[&f, &g]);
+    let x1 = factors.matmul(&factor_loadings);
+    let eta_norm = &eta / popStd(&eta);
+    let constant = popStd(&x1) * strength.sqrt();
+    let x = &x1 + &(&eta_norm * constant);
+    let y_tail = y.applyRowsAll(1..t + 1);
+
+    (f, g, eta, x1, x, y_tail)
+}
+
+/// The JVM's `%+.10f`: half-up on the exact decimal expansion, where Rust's `{:+.10}`
+/// is half-even. They differ only on exact ties, but a demo pair cannot afford "only".
+fn f10(v: f64) -> String {
+    let s = java_format_f(v, 0, 10);
+    if v.is_sign_negative() || s.starts_with('-') {
+        s
+    } else {
+        format!("+{s}")
+    }
 }
 
 fn main() {
     let (t, n, relevant, irr) = (12usize, 6usize, 3usize, 4usize);
     let mut rng = NumPyRng::new(0);
-    let (f, g, y, eta) = generate(&mut rng, t, n, relevant, irr);
+    let (f, g, eta, x1, x, y) = generate(&mut rng, t, n, relevant, irr);
 
-    println!("── TprfRunner factor generation (Rust) ────────────────────────────────");
-    println!("T={t} N={n} relevant={relevant} irrelevant={irr}  seed=0");
+    println!("── TprfRunner data_generator ──────────────────────────────────────────");
+    println!("T={t} N={n} relevant={relevant} irrelevant={irr} strength=1.0  seed=0");
     println!();
-    for (name, m) in [("f", &f), ("g", &g), ("y", &y), ("eta", &eta)] {
+    for (name, m) in [
+        ("f", &f),
+        ("g", &g),
+        ("eta", &eta),
+        ("X1", &x1),
+        ("X", &x),
+        ("y", &y),
+    ] {
         println!(
-            "{name:<3} {:>2}x{:<2}  first={:+.10}  last={:+.10}  mean={:+.10}  std={:+.10}",
+            "{name:<3} {:>2}x{:<2}  first={}  last={}  mean={}  std={}",
             m.rows(),
             m.cols(),
-            m.at(0, 0),
-            m.at(m.rows() - 1, m.cols() - 1),
-            m.mean(),
-            m.std()
+            f10(m.at(0, 0)),
+            f10(m.at(m.rows() - 1, m.cols() - 1)),
+            f10(m.mean()),
+            f10(popStd(m))
         );
     }
+    println!();
+    println!("X, every row:");
+    for r in 0..x.rows() {
+        let cells: Vec<String> = (0..x.cols()).map(|c| f10(x.at(r, c))).collect();
+        println!("  {}", cells.join(" "));
+    }
+    println!(
+        "y: {}",
+        (0..y.rows())
+            .map(|r| f10(y.at(r, 0)))
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
 }
