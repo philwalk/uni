@@ -403,29 +403,33 @@ libraryDependencies += "org.vastblue" %% "uni" +%+ +"0.16.0"
 
 ### Native BLAS backend
 
-`uni` uses [netlib-java](https://github.com/lucidfrontier45/netlib-java) for matrix multiply. The native backend is selected automatically:
+Matrix multiply does **not** use BLAS by default. Since 0.16.1 the default `*@` is `uni`'s
+own pinned loop — bit-identical between the Scala and Rust ports and independent of the
+machine — and BLAS is an opt-in that trades that reproducibility for speed on large dense
+products (2–4× at 512³ on a many-core box, more on a few-core one; see
+[`docs/MatDCheatSheet.md`](docs/MatDCheatSheet.md)):
+
+```bash
+-Duni.mat.blas=true      # or the env var UNI_MAT_BLAS=true; read once per JVM
+```
+
+Per call, whatever the mode: `a.matmulPure(b)` is the pinned loop and `a.matmulBlas(b)`
+is BLAS. In BLAS mode the native backend is:
 
 | Platform | Backend | User action |
 |----------|---------|-------------|
-| macOS | Accelerate framework (always present) | None |
-| Windows | VectorBLAS (Java Vector API SIMD) | None — see note below |
-| Linux | `libblas.so.3` resolved by the system linker | See below |
+| Linux | bytedeco's bundled OpenBLAS (LAPACKE-complete) | None. System BLAS packages are neither used nor required; install or remove `libopenblas0` freely for other consumers |
+| macOS | netlib → Accelerate framework | None |
+| Windows | netlib VectorBLAS (Java Vector API), or the bundled OpenBLAS | None |
 
-**Linux:** `libblas.so.3` is a system symlink managed by `update-alternatives`. For maximum performance install an optimized BLAS and let the alternatives system point the symlink at it:
-
-```bash
-# Ubuntu / Debian — installs OpenBLAS and sets libblas.so.3 → libopenblas.so.3
-sudo apt-get install libopenblas0
-```
-
-Without this, `libblas.so.3` may resolve to the slow single-threaded reference BLAS. If `libblas.so.3` is missing entirely, `uni` falls back to a pure-JVM BLAS (correct but slower).
-
-> **Windows note (0.11.0):** Native OpenBLAS support for Windows has merged in the
-> netlib upstream but is pending publication (expected as 3.1.2). In the meantime,
-> `uni 0.11.0` uses `VectorBLAS` (Java Vector API SIMD, JDK 21+) for matrix multiply —
-> correct and faster than scalar Java, but slower than native OpenBLAS for large matrices.
-> A `uni` patch will update to 3.1.2 once it is published. Prior to 0.11.0, `uni` used
-> `bytedeco/openblas-platform` which bundled native OpenBLAS for Windows automatically.
+`uni` never loads netlib on Linux, deliberately: its JNIBLAS resolves the system
+`libblas.so.3`, which on Ubuntu is either the slow reference BLAS or an OpenBLAS built
+without LAPACKE that shares the bundled library's SONAME — and once that is mapped, the
+first `eig`/`svd`/`cholesky` call ends the process with `undefined symbol: LAPACKE_dgeev`.
+Using only the bundled copy on Linux removes the whole class of failure; nothing needs to
+be purged from the OS to run `uni`'s tests. (The LAPACK routines — `eig`, `svd`,
+`cholesky` — go through the bundled OpenBLAS on every platform, whatever the matmul mode;
+`inverse` is a pure-JVM LU.)
 
 ## Advanced Usage
 

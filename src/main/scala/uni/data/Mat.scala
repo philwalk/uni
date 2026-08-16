@@ -1123,23 +1123,33 @@ object Mat {
     // than an accident of declaration order -- and is why it is no longer "unused", though its
     // job was always to exist (JUL holds loggers weakly; see the note above).
     val _ = netlibLogger
+    // Not reached on Linux — see `netlibIsFast`. Load bytedeco's bundled OpenBLAS first
+    // regardless, so that if netlib ever is forced there its `libopenblas.so.0` need
+    // resolves to the bundled, LAPACKE-complete copy already resident rather than mapping
+    // Ubuntu's LAPACKE-less one; harmless on Windows/macOS.
+    org.bytedeco.javacpp.Loader.load(classOf[org.bytedeco.openblas.global.openblas])
     dev.ludovic.netlib.blas.BLAS.getInstance()
-  // JNIBLAS on Linux may be backed by the slow reference Fortran BLAS (libblas3) when system
-  // OpenBLAS is absent. A 64×64 timing probe distinguishes it: OpenBLAS ~0.01ms, reference ~1ms.
-  // F2JBLAS / Java11BLAS are always slow. VectorBLAS and JNIBLAS+OpenBLAS are fast.
+  /** Whether BLAS mode routes through netlib (`multiplyDoubleNetlib`) or through bytedeco's
+   *  bundled OpenBLAS (`multiplyDoubleOB`).
+   *
+   *  **Never netlib on Linux.** Its JNIBLAS resolves `libblas.so.3` through the system
+   *  linker: reference BLAS if that is what the alternatives point at (slower than the pure
+   *  loop), or Ubuntu's `libopenblas.so.0` — built without LAPACKE and sharing bytedeco's
+   *  SONAME, so once it is mapped the later LAPACKE call for eig/svd/cholesky dies with an
+   *  undefined symbol. Merely *deciding* by netlib's class name would map it. bytedeco's
+   *  bundled OpenBLAS is the same library, LAPACKE-complete, and is what every LAPACK path
+   *  loads anyway, so on Linux it is the only native BLAS `uni` touches, and system BLAS
+   *  packages can be installed or not without affecting `uni`.
+   *
+   *  Elsewhere: F2JBLAS / Java11BLAS are always slow; VectorBLAS, and JNIBLAS on macOS
+   *  (Accelerate), are fast. */
   private lazy val netlibIsFast: Boolean =
-    val name = netlib.getClass.getName
-    if name.endsWith("F2JBLAS") || name.endsWith("Java11BLAS") then false
-    else if name.endsWith("JNIBLAS") && sys.props("os.name").toLowerCase.contains("linux") then
-      val n = 64
-      val a = new Array[Double](n * n)
-      val b = new Array[Double](n * n)
-      val c = new Array[Double](n * n)
-      netlib.dgemm("N", "N", n, n, n, 1.0, b, 0, n, a, 0, n, 0.0, c, 0, n) // warmup
-      val t0 = System.nanoTime()
-      netlib.dgemm("N", "N", n, n, n, 1.0, b, 0, n, a, 0, n, 0.0, c, 0, n)
-      (System.nanoTime() - t0) < 500_000L // < 0.5ms → OpenBLAS; ≥ 0.5ms → reference BLAS
-    else true
+    if isLinux then false
+    else
+      val name = netlib.getClass.getName
+      !(name.endsWith("F2JBLAS") || name.endsWith("Java11BLAS"))
+
+  private lazy val isLinux = System.getProperty("os.name", "").toLowerCase.contains("linux")
 
   def vstack[U: ClassTag](matrices: Mat[U]*): Mat[U] = {
     require(matrices.nonEmpty, "vstack requires at least one matrix")

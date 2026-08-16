@@ -1,5 +1,17 @@
 ## Unreleased
 
+**FIXED (Linux) — `uni` no longer loads netlib on Linux; system BLAS packages are safe**
+
+BLAS mode on Linux now uses bytedeco's bundled OpenBLAS directly, the same
+LAPACKE-complete library `eig`/`svd`/`cholesky` already load. Previously `uni` consulted
+netlib's JNIBLAS, which resolves the system `libblas.so.3` — on Ubuntu an OpenBLAS built
+without LAPACKE that shares the bundled library's SONAME — and once that was mapped the
+first LAPACK call killed the JVM with `undefined symbol: LAPACKE_dgeev`. The remedy in
+force until now was to purge `libopenblas0` from the OS; that is withdrawn, and
+`BlasDiagSuite` now runs the formerly fatal sequence as a positive test instead of
+demanding the purge. Reinstalling `libopenblas0` also restores an optimised BLAS to any
+apt-installed NumPy on the same box, which had silently fallen back to the reference BLAS.
+
 **ADDED — Rust: `MatMathOps` (Tier 3 phase (c) complete)**
 
 `sin cos tan arcsin arccos arctan arctan2 sinh cosh tanh floor ceil trunc log10 log2

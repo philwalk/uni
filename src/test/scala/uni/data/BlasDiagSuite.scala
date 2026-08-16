@@ -2,38 +2,53 @@ package uni.data
 
 import munit.FunSuite
 import scala.sys.process.*
+import uni.*
 
-// Detects the known Linux SONAME conflict: system libopenblas.so.0 (BLAS-only, no LAPACKE)
-// shadows bytedeco's bundled OpenBLAS, causing a fatal 'undefined symbol: LAPACKE_dgeev'
-// crash when eig/svd/cholesky first load the native library.
+/**
+ * The Linux OpenBLAS load-order hazard, and the proof it is handled.
+ *
+ * Ubuntu's packaged `libopenblas.so.0` is built without LAPACKE. If netlib's JNIBLAS
+ * maps it, that SONAME is pinned for the process and bytedeco's later
+ * `libjniopenblas.so` (eig/svd/cholesky) dies with `undefined symbol: LAPACKE_dgeev` — a
+ * hard JVM kill, not an exception. `uni` no longer loads netlib on Linux at all: BLAS
+ * mode there is bytedeco's bundled, LAPACKE-complete OpenBLAS, the same library every
+ * LAPACK path uses. Nothing needs to be purged from the OS.
+ *
+ * The first test runs exactly the sequence that used to kill the JVM — a BLAS-mode
+ * matmul, then a LAPACKE call. Surviving it is the assertion.
+ */
 class BlasDiagSuite extends FunSuite:
 
-  test("system libopenblas does not shadow LAPACKE symbols") {
-    assume(sys.props("os.name").toLowerCase.contains("linux"), "Linux only")
+  test("BLAS mode then LAPACKE in one JVM: the sequence that used to crash survives") {
+    // 1. A BLAS-mode matmul: on Linux this is bytedeco's OpenBLAS, elsewhere netlib.
+    val a = MatD.randn(16, 16)
+    val b = MatD.randn(16, 16)
+    val c = a.matmulBlas(b)
+    assertEquals(c.shape, (16, 16))
+    // 2. Now a LAPACKE entry point through bytedeco. Before the load-order fix, on a
+    //    Linux box with the packaged OpenBLAS, this line ended the process.
+    val ev = MatD((2.0, 1.0), (1.0, 2.0)).eigenvalues()
+    assertEquals(ev.length, 2)
+    assertEqualsDouble(ev.max, 3.0, 1e-9)
+    assertEqualsDouble(ev.min, 1.0, 1e-9)
+  }
 
+  test("system libopenblas without LAPACKE is reported, not required absent") {
+    assume(sys.props("os.name").toLowerCase.contains("linux"), "Linux only")
     val ldOut   = shellOut("ldconfig" :: "-p" :: Nil).getOrElse("")
     val libPath = ldOut.linesIterator
       .find(l => l.contains("libopenblas.so.0") && l.contains("=>"))
       .flatMap(_.split("=>").lift(1).map(_.trim))
-
     libPath match
-      case None => () // no system libopenblas — safe
+      case None => ()
       case Some(lib) =>
         val syms = shellOut("nm" :: "-D" :: lib :: Nil)
           .orElse(shellOut("readelf" :: "--syms" :: lib :: Nil))
           .getOrElse("")
-        assert(syms.contains("LAPACKE_dgeev"),
-          s"""System libopenblas ($lib) lacks LAPACKE_dgeev.
-             |
-             |The dynamic linker loads this library (SONAME: libopenblas.so.0) ahead of
-             |bytedeco's bundled OpenBLAS, causing a fatal 'undefined symbol' crash
-             |when eig, svd, cholesky, or any other LAPACK method is first called.
-             |This is a system configuration issue, not a bug in uni.
-             |
-             |Fix:
-             |  sudo apt-get remove --purge libopenblas0-pthread libopenblas0 \\
-             |    libopenblas-dev libopenblas-pthread-dev
-             |  sudo apt-get autoremove --purge && sudo ldconfig""".stripMargin)
+        if !syms.contains("LAPACKE_dgeev") then
+          // Informational: this is precisely the configuration the load order guards
+          // against, and the test above has just proved the guard holds here.
+          println(s"  [BlasDiagSuite] system $lib lacks LAPACKE; uni does not load it (bundled OpenBLAS only on Linux), so this is fine")
   }
 
   private def shellOut(cmd: List[String]): Option[String] =
