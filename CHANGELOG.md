@@ -1,5 +1,21 @@
 ## Unreleased
 
+**CHANGED — one apples-to-apples benchmark table per platform; `runBenchAll.sh`**
+
+`uni.apps.BenchAll` now prints a single table with five numeric columns — `NumPy | Scala
+| Rust | Scala·BLAS | Rust·BLAS` — over every MatD row, every layout row and the six 3PRF
+rows, followed by a geometric-mean/median summary of each pair (Scala vs NumPy, Rust vs
+NumPy, Rust vs Scala, and each BLAS column against NumPy and against its own default).
+Previously the tables compared NumPy-with-OpenBLAS against the two ports' pinned default
+on the rows where it mattered and nowhere said so; and the 3PRF section was measured with a
+different Rust build than the MatD tables. The BLAS columns carry a number only on the
+rows BLAS can change and `·` elsewhere. `runBenchAll.sh` builds both Rust flavours side by
+side (`*_pure`, `*_blas`) and runs it; the Scala BLAS 3PRF cells come from a child JVM
+started with `-Duni.mat.blas=true`.
+
+Found by its first run: `MatD::matmulBlas` copied both operands into owned `Array2`s and
+spent more time copying than multiplying (1.9 vs 0.9 ms at 512³). It now lends views.
+
 **FIXED (Linux) — `uni` no longer loads netlib on Linux; system BLAS packages are safe**
 
 BLAS mode on Linux now uses bytedeco's bundled OpenBLAS directly, the same

@@ -511,9 +511,14 @@ impl MatD {
     pub fn matmulBlas(&self, other: &Self) -> Self {
         self.check_mm(other);
         let (ra, ca, cb) = (self.rows(), self.cols(), other.cols());
-        let a = ndarray::Array2::from_shape_vec((ra, ca), self.row_major().into_owned())
+        // Views over the operands, not copies: a contiguous MatD lends its buffer as is
+        // (`row_major` borrows), and only a strided one is materialised. Copying both into
+        // owned `Array2`s cost more than the multiply itself at 512³ (1.9 vs 0.9 ms).
+        let a_rm = self.row_major();
+        let b_rm = other.row_major();
+        let a = ndarray::ArrayView2::from_shape((ra, ca), a_rm.as_ref())
             .unwrap_or_else(|e| panic!("shape {ra}x{ca}: {e}"));
-        let b = ndarray::Array2::from_shape_vec((ca, cb), other.row_major().into_owned())
+        let b = ndarray::ArrayView2::from_shape((ca, cb), b_rm.as_ref())
             .unwrap_or_else(|e| panic!("shape {ca}x{cb}: {e}"));
         let c = a.dot(&b);
         let (data, _) = c.into_raw_vec_and_offset();

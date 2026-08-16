@@ -31,8 +31,9 @@ object BenchRunner:
   def println(s: String = ""): Unit = print(s"$s\n")
   def eprintln(s: String = ""): Unit = System.err.print(s"$s\n")
 
-  /** `[Lang] label   1.234 ms/call` — the one line format all three halves emit. */
-  private val Timing = """^\s*\[\w+\]\s+(\S+)\s+([0-9.eE+-]+)\s+ms/call\s*$""".r
+  /** `[Lang] label   1.234 ms/call` — the one line format all three halves emit. The
+   *  tag may carry a space or a middle dot (`[Python Fast]`, `[Scala·BLAS]`). */
+  private val Timing = """^\s*\[[^\]]+\]\s+(\S+)\s+([0-9.eE+-]+)\s+ms/call\s*$""".r
   private val Config = """^\s*config:\s*(.*)$""".r
 
   /** Timings by label, plus whatever the process said about its own configuration. */
@@ -57,6 +58,15 @@ object BenchRunner:
       case e: Exception =>
         eprintln(s"  (failed: ${e.getMessage})")
         Nil
+
+  /** Runs `mainClass` in a child JVM on this JVM's classpath and `java`, with extra
+   *  system properties, echoing and returning its stdout. For the settings a JVM reads
+   *  once at startup — `uni.mat.blas` — which cannot be flipped in-process. */
+  def captureJvm(mainClass: String, args: Seq[String], sysProps: Seq[String]): Seq[String] =
+    val java = Paths.get(System.getProperty("java.home")).posx + "/bin/java"
+    val cp   = System.getProperty("java.class.path")
+    val cmd  = Seq(java) ++ sysProps ++ Seq("--add-modules=jdk.incubator.vector", "-cp", cp, mainClass) ++ args
+    capture(cmd)
 
   // ── Python ──────────────────────────────────────────────────────────────────
 
