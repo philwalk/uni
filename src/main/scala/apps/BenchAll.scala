@@ -43,11 +43,16 @@ import uni.data.*
  *
  * # The summary
  *
- * Geometric mean of the per-row speedups, with the median beside it. Geometric mean is
- * the fair aggregate for ratios — an arithmetic mean is dragged by one 125× row
- * (`vectorize`, a Python loop) and a median ignores magnitude entirely; the two together
- * say whether the mean is carried by a few rows. Each summary line states how many rows
- * it covers, and the BLAS lines cover only the rows BLAS touches.
+ * Three blocks, in this order because the first is the only fair LANGUAGE comparison:
+ * NumPy cannot be run without BLAS, so the like-for-like number is BLAS on all three —
+ * each port's BLAS figure on the 7 rows BLAS affects, its default figure elsewhere. Then
+ * the as-shipped comparison, labelled as a comparison of CONFIGURATIONS (uni's pinned
+ * matmul against NumPy's BLAS): what a user gets without flags, and the price of the
+ * default, not a statement about the languages. Then what the opt-in buys each port over
+ * those 7 rows. Every line is a geometric mean of per-row speedups with the median beside
+ * it — an arithmetic mean is dragged by one 125× row (`vectorize`, a Python loop) and a
+ * median ignores magnitude; together they say whether the mean is carried by a few rows —
+ * and says how many rows it covers.
  */
 object BenchAll:
   def println(s: String = ""): Unit = print(s"$s\n")
@@ -182,24 +187,60 @@ object BenchAll:
     println("- BLAS columns carry a number only on the rows BLAS can change (`matmul`, 3PRF); `·` elsewhere.")
 
     // ── Summary ──────────────────────────────────────────────────────────────────
-    println("\n## Summary — speedup of the first-named over the second (geometric mean; median; rows)\n")
-    val pairs: Vector[(String, Option[Column], Option[Column], Set[String])] = Vector(
-      ("Scala vs NumPy",      Some(scala), py,        allLabels.toSet),
-      ("Rust vs NumPy",       rust,        py,        allLabels.toSet),
-      ("Rust vs Scala",       rust,        Some(scala), allLabels.toSet),
-      ("Scala·BLAS vs NumPy", scalaBlas,   py,        blasRows),
-      ("Rust·BLAS vs NumPy",  rustBlas,    py,        blasRows),
-      ("Scala·BLAS vs Scala", scalaBlas,   Some(scala), blasRows),
-      ("Rust·BLAS vs Rust",   rustBlas,    rust,      blasRows),
-    )
-    val srows = for (name, subj, base, on) <- pairs; s <- subj; b <- base yield
-      val speedups = allLabels.filter(on).flatMap(l => for x <- s.ms.get(l); y <- b.ms.get(l) if x > 0 && y > 0 yield y / x)
-      if speedups.isEmpty then Vector(name, "—", "—", "0")
-      else Vector(name, f"${geomean(speedups)}%.2f×", f"${median(speedups)}%.2f×", speedups.length.toString)
-    BenchRunner.table(Vector("pair", "geomean", "median", "rows"), srows)
-    println("\nA speedup above 1× means the first-named is faster. Geometric mean is the fair aggregate for")
-    println("ratios; the median beside it shows whether one row is carrying the mean. BLAS lines cover")
-    println("only the rows BLAS touches.")
+    // NumPy multiplies through OpenBLAS and cannot be run without it, so the only fair
+    // LANGUAGE comparison is BLAS on all three: each port's BLAS number on the rows BLAS
+    // affects, its (identical) default number elsewhere. That is the headline. The
+    // as-shipped comparison — uni's pinned matmul against NumPy's BLAS — is a comparison of
+    // CONFIGURATIONS, and is labelled as such rather than mixed in.
+    def withBlas(dflt: Column, blas: Option[Column]): Map[String, Double] =
+      dflt.ms ++ blas.map(_.ms.filter((k, _) => blasRows(k))).getOrElse(Map.empty)
+    val scalaB = scalaBlas.map(b => withBlas(scala, Some(b)))
+    val rustB  = for r <- rust; b <- rustBlas yield withBlas(r, Some(b))
+    def speedups(subj: Map[String, Double], base: Map[String, Double], on: Set[String]): Seq[Double] =
+      allLabels.filter(on).flatMap(l => for x <- subj.get(l); y <- base.get(l) if x > 0 && y > 0 yield y / x)
+    def line(name: String, subj: Option[Map[String, Double]], base: Option[Map[String, Double]], on: Set[String]): Option[Vector[String]] =
+      for s <- subj; b <- base yield
+        val sp = speedups(s, b, on)
+        if sp.isEmpty then Vector(name, "—", "—", "0")
+        else Vector(name, f"${geomean(sp)}%.2f×", f"${median(sp)}%.2f×", sp.length.toString)
+    val all = allLabels.toSet
+    val pyMs = py.map(_.ms); val scMs = Some(scala.ms); val ruMs = rust.map(_.ms)
+    val hdr = Vector("comparison", "geomean", "median", "rows")
+
+    println()
+    println("## Summary")
+    println()
+    println("Speedup = (second-named ms) ÷ (first-named ms), geometric mean over the rows named, with the")
+    println("median beside it; above 1× means the first-named is faster.")
+    println()
+    println("### Languages, BLAS on all three — the like-for-like comparison")
+    println()
+    println("NumPy is always OpenBLAS; here Scala and Rust use theirs too (on the 7 rows BLAS affects; every")
+    println("other row is the same code in both modes).")
+    println()
+    BenchRunner.table(hdr, Vector(
+      line("Scala vs NumPy", scalaB, pyMs, all),
+      line("Rust vs NumPy",  rustB,  pyMs, all),
+      line("Rust vs Scala",  rustB,  scalaB, all),
+    ).flatten)
+    println()
+    println("### Configurations, as shipped — uni's pinned matmul against NumPy's BLAS")
+    println()
+    println("What a user gets without flags. On `matmul` and the 3PRF rows this compares a reproducible loop")
+    println("with a BLAS, so it is not a statement about the languages; it is the price of the default.")
+    println()
+    BenchRunner.table(hdr, Vector(
+      line("Scala (default) vs NumPy", scMs, pyMs, all),
+      line("Rust (default) vs NumPy",  ruMs, pyMs, all),
+      line("Rust (default) vs Scala (default)", ruMs, scMs, all),
+    ).flatten)
+    println()
+    println("### What the opt-in buys, over the 7 rows BLAS affects")
+    println()
+    BenchRunner.table(hdr, Vector(
+      line("Scala·BLAS vs Scala", scalaBlas.map(_.ms), scMs, blasRows),
+      line("Rust·BLAS vs Rust",   rustBlas.map(_.ms),  ruMs, blasRows),
+    ).flatten)
 
   // ── helpers ────────────────────────────────────────────────────────────────────
 
