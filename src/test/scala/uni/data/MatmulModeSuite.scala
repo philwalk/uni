@@ -3,12 +3,13 @@ package uni.data
 import uni.*
 
 /**
- * The matmul contract: the default `*@` is the pure tiled loop, pinned bit for bit;
- * BLAS is an opt-in that trades that for speed.
+ * The matmul contract: `matmulPure` is the pure tiled loop, pinned bit for bit, on every
+ * machine and in every mode; `*@` follows `-Duni.mat.blas` — `os-best` by default, so
+ * large products go to a native BLAS like NumPy's do, and `pure` opts back into the pin.
  *
  * `-Duni.mat.blas` is read once per JVM, so this suite can only observe the mode the
- * test JVM was started in — the default — and pins that. What it CAN exercise regardless
- * of mode are the two named escape hatches.
+ * test JVM was started in, and asserts what `*@` must equal in that mode. What it CAN
+ * exercise regardless of mode are the two named escape hatches.
  */
 class MatmulModeSuite extends munit.FunSuite:
 
@@ -18,14 +19,22 @@ class MatmulModeSuite extends munit.FunSuite:
     val rng = NumPyRNG(seed)
     MatD(rows, cols, Array.fill(rows * cols)(rng.randn()))
 
-  test("the default *@ is the pure path, bit for bit") {
-    // 128x128 is well past the old BLAS crossover (216 ops), so this is a real assertion
-    // about the default rather than about tiny products.
+  test("*@, matmul and dot follow the JVM's mode: BLAS bits under os-best, pure bits under pure") {
+    // 128x128 is well past the BLAS threshold, so this is a real assertion about the mode
+    // rather than about tiny products (which take the pure loop in every mode).
+    val mode = sys.props.get("uni.mat.blas").orElse(sys.env.get("UNI_MAT_BLAS")).map(_.trim.toLowerCase).getOrElse("")
     val a = mat(128, 128, 1)
     val b = mat(128, 128, 2)
+    val expected = if Set("pure", "false", "0", "none")(mode) then a.matmulPure(b) else a.matmulBlas(b)
+    assertEquals(bits(a *@ b), bits(expected))
+    assertEquals(bits(a.matmul(b)), bits(expected))
+    assertEquals(bits(a.dot(b)), bits(expected))
+  }
+
+  test("below the BLAS threshold *@ is the pure loop in every mode") {
+    val a = mat(4, 4, 11)   // 64 ops: under every threshold on every platform
+    val b = mat(4, 4, 12)
     assertEquals(bits(a *@ b), bits(a.matmulPure(b)))
-    assertEquals(bits(a.matmul(b)), bits(a.matmulPure(b)))
-    assertEquals(bits(a.dot(b)), bits(a.matmulPure(b)))
   }
 
   test("the pure path is deterministic across runs") {

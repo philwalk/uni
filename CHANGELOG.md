@@ -2,37 +2,41 @@
 
 **CHANGED — one apples-to-apples benchmark table per platform; `runBenchAll.sh`**
 
-`uni.apps.BenchAll` now prints a single table with five numeric columns — `NumPy | Scala
-| Rust | Scala·BLAS | Rust·BLAS` — over every MatD row, every layout row and the six 3PRF
-rows, followed by a geometric-mean/median summary of each pair (Scala vs NumPy, Rust vs
-NumPy, Rust vs Scala, and each BLAS column against NumPy and against its own default).
-Previously the tables compared NumPy-with-OpenBLAS against the two ports' pinned default
-on the rows where it mattered and nowhere said so; and the 3PRF section was measured with a
-different Rust build than the MatD tables. The BLAS columns carry a number only on the
-rows BLAS can change and `·` elsewhere. `runBenchAll.sh` builds both Rust flavours side by
-side (`*_pure`, `*_blas`) and runs it; the Scala BLAS 3PRF cells come from a child JVM
-started with `-Duni.mat.blas=true`.
+`uni.apps.BenchAll` prints an executive summary and then a single table with five numeric
+columns — `NumPy | Scala·pure | Rust·pure | Scala·BLAS | Rust·BLAS` — over every MatD
+row, every layout row and the six 3PRF rows. Each column is a named configuration: the
+pinned loop on each side, and each side's BLAS. The summary compares the languages like
+for like (BLAS on all three where BLAS applies, since NumPy has no other mode; and the
+pinned loop in both ports), then the as-shipped defaults, labelled as a comparison of
+configurations — Rust's default build is the pure loop because its BLAS is a build-time
+feature, which is a packaging constraint and never the number that represents Rust.
+Every line is a geometric mean of per-row speedups with the median beside it. The BLAS
+columns carry a number only on the rows BLAS can change and `·` elsewhere. `runBenchAll.sh`
+builds both Rust flavours (the BLAS one in its own target dir), runs everything, and
+writes `bench-logs/benchAll-<os>-<host>-<stamp>.out`; `-blas <mode>` picks the Scala
+BLAS mode measured. Found by its first runs: `MatD::matmulBlas` copied both operands
+into owned `Array2`s and spent more time copying than multiplying (1.9 vs 0.9 ms at 512³)
+— it now lends views.
 
-Found by its first runs: `MatD::matmulBlas` copied both operands into owned `Array2`s and
-spent more time copying than multiplying (1.9 vs 0.9 ms at 512³) — it now lends views;
-and on Linux `Scala·BLAS` read 3.7× behind the system OpenBLAS NumPy uses on the same
-box: bytedeco's bundled build is simply slow at that size (7.3 ms at 512³ with four
-threads confirmed), which is why Linux now prefers the system OpenBLAS when it is there.
+**FIXED (Linux) — the OpenBLAS/LAPACKE crash; `-Duni.mat.blas=os-best|bundled|system|pure`**
 
-**FIXED (Linux) — the OpenBLAS/LAPACKE crash, at the root; system BLAS packages are safe**
+Ubuntu's `libopenblas0` is built without LAPACKE and shares bytedeco's bundled OpenBLAS's
+SONAME; two OpenBLAS instances in one JVM interpose on each other and kill the process
+(`undefined symbol: LAPACKE_dgeev`, or `SIGSEGV` in `dgemm_oncopy`, by load order). One
+BLAS per process is now the rule, and the flag says which:
 
-netlib's JNIBLAS resolves the system `libblas.so.3` — on Ubuntu an OpenBLAS built without
-LAPACKE that shares bytedeco's SONAME — and once that was mapped first, the first LAPACK
-call killed the JVM with `undefined symbol: LAPACKE_dgeev`. `Mat.netlib` now loads
-bytedeco's bundled, LAPACKE-complete OpenBLAS *before* netlib, so `eig`/`svd`/`cholesky`
-are bound to it and the system copy, mapped afterwards for netlib's use, coexists in its
-own scope. On Linux BLAS mode then uses whichever is faster by a 64×64 probe: the system
-OpenBLAS via netlib where the alternatives point at one (4.5× faster than the bundled
-build at 512³ on a 4-core box), the bundled copy otherwise. The remedy in force until now
-was to purge `libopenblas0`; that is withdrawn — install it — and `BlasDiagSuite` runs the
-formerly fatal sequence as a positive test instead of demanding the purge. Reinstalling it
-also restores an optimised BLAS to an apt-installed NumPy on the same box, which had
-silently fallen back to the reference BLAS.
+| `-Duni.mat.blas=` (or `UNI_MAT_BLAS`) | meaning |
+|---|---|
+| unset, `os-best`, `true`, `1` | **default.** `system` wherever netlib binds a native BLAS — Accelerate on macOS, the OS OpenBLAS on Linux/Windows — else `bundled` |
+| `system` | netlib → the OS BLAS. On Linux `eig`/`eigenvalues`/`svd`/`cholesky` then go through netlib's LAPACK (the OS `liblapack.so.3`, or its pure-Java fallback) instead of bytedeco's LAPACKE, so the bundled copy is never mapped |
+| `bundled` | bytedeco's OpenBLAS for everything, no OS packages involved (1.8–3.4× slower than the system OpenBLAS at 512³) |
+| `pure`, `false`, `0` | no BLAS: every `*@` is the pinned pure loop |
+
+Read once per JVM; no programmatic setter; `matmulPure` / `matmulBlas` override per call.
+The remedy in force until now — purge `libopenblas0` — is withdrawn: install it, it also
+restores an optimised BLAS to an apt-installed NumPy on the same box. `BlasDiagSuite`
+covers both Linux modes and `LapackNetlibSuite` proves the netlib LAPACK path against
+bytedeco's on every platform. New dependency: `dev.ludovic.netlib:lapack`.
 
 **ADDED — Rust: `MatMathOps` (Tier 3 phase (c) complete)**
 
@@ -47,32 +51,22 @@ JVM's intrinsics and Rust's libm differ by 1–2 ulps on up to a quarter of inpu
 measured table is in `rust/PARITY.md`. The `sigmoid` and `relu` benchmark rows now have a
 Rust column.
 
-**CHANGED (numeric, and speed) — `matmul` defaults to the pure loop; BLAS is an opt-in**
+**CHANGED (numeric, and speed) — `matmulPure` is pinned across languages; `*@` is BLAS by default, like NumPy**
 
-`*@` / `matmul` / `dot` on `Mat[Double]` and `Mat[Float]` no longer route to BLAS at
-`ops >= 216`. The default is the tiled pure loop everywhere, whose per-cell association
-order is a sequential k-sum from 0.0. Every product of 6×6×6 or larger therefore
-**changes in its last ulps** relative to earlier versions, and large dense products get
-slower — measured on a 24-thread machine, ~1.4× at 128–256³ and ~1.7× at 512³ against
-OpenBLAS, and 1.2–1.9× on the large 3PRF rows (faster on the small ones). Nothing that
-compares with a tolerance notices; `Tprf3`'s own fixture (`rtol 1e-9`) is unmoved.
-
-What is bought: the default result is now **bit-identical to the Rust port and
+`a.matmulPure(b)` on `Mat[Double]` and `Mat[Float]` is the tiled pure loop whose per-cell
+association order is a sequential k-sum from 0.0: **bit-identical to the Rust port and
 independent of the machine** — neither runtime fuses `x*y + z`, and the fixture pins 22
 matmul rows including transposed-view operands. No BLAS offers that; every one selects
-kernels by CPU feature and thread count, and Scala's two paths already disagreed with
-each other on 76% of cells at 128³. Note NumPy's `@` is OpenBLAS, so it is not
-reproducible either — the match-NumPy rule does not apply to matmul; reproducibility
-does. `jsrc/tprfRunner.sc` ↔ `rust/examples/tprf_runner.rs` is the demo pair that
-depends on it.
+kernels by CPU feature and thread count. It is what fixture generators and the demo pairs
+(`jsrc/tprfRunner.sc` ↔ `rust/examples/tprf_runner.rs`) call.
 
-Opting back in, for speed on large dense products: `-Duni.mat.blas=true` or the env
-var `UNI_MAT_BLAS=true` (the property wins; read once per JVM; no programmatic setter).
-Per call, whatever the mode: `a.matmulPure(b)` is the pinned path and `a.matmulBlas(b)`
-is BLAS. `uni.mat.blasThreshold` / `blasThinThreshold` still exist but only take effect
-in BLAS mode, where they decide which algorithm runs — so they move last ulps, and are
-tuning, not contract. Native BLAS is now loaded lazily, on the first BLAS call, rather
-than at `Mat` initialisation.
+`*@` / `matmul` / `dot` follow `-Duni.mat.blas`, and the default is `os-best`: large
+products go to a native BLAS, as NumPy's do (the match-NumPy rule), so their last ulps
+depend on the library, its threading and the CPU. `-Duni.mat.blas=pure` makes every `*@`
+the pinned loop instead; per call, `matmulBlas` is BLAS whatever the mode. Products below
+`uni.mat.blasThreshold` / `blasThinThreshold` (216 / 384 ops; macOS 1728 / 768) take the
+pure loop in every mode — the thresholds decide which algorithm runs, so they move last
+ulps and are tuning, not contract. Native BLAS is loaded lazily, on the first BLAS call.
 
 The pure loop is not the old one. It is a register-blocked microkernel (`MatmulPure`:
 4×4 accumulator blocks over packed panels, a streaming path for short K and narrow
@@ -82,12 +76,11 @@ sequential k-sum per cell, verified against the fixture at every step. 512³ wen
 6.5 → 1.4 ms, and the `Tprf3` large rows sit within ~1.2–1.9× of BLAS instead of 2–3×.
 Views cost no copy: both operands are read through their strides.
 
-Rust: `MatD::matmul` / `dot` (pure by default), `matmulPure`, `matmulBlas` (only under
-`--features blas`, which is the opt-in there), plus `hstack`/`vstack`. Its kernel is the
-same microkernel with 8-wide panels — 512³ 2.4 → 1.7 ms, `512×512×8` 0.10 → 0.03 — and
-reads views in place through their strides, as the Scala does. The `matmul` row
-in the benchmark tables now has a Rust column, and shows the pinned default in both
-languages against NumPy's BLAS.
+Rust: `MatD::matmul` / `dot` are the pinned loop (BLAS is a build-time feature there,
+`--features blas`, which a library cannot switch on for its users), plus `matmulPure`,
+`matmulBlas` and `hstack`/`vstack`. Its kernel is the same microkernel with 8-wide panels
+— 512³ 2.4 → 1.7 ms, `512×512×8` 0.10 → 0.03 — and reads views in place through their
+strides, as the Scala does.
 
 **CHANGED (behaviour) — the mask family is IEEE, matching NumPy**
 

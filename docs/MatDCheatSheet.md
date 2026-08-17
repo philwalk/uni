@@ -10,15 +10,18 @@ Side-by-side reference for **uni.MatD**, NumPy, Breeze, R, and MATLAB.
 
 One table per platform, one column set, apples to apples:
 
-| NumPy | Scala | Rust | Scala·BLAS | Rust·BLAS |
+| NumPy | Scala·pure | Rust·pure | Scala·BLAS | Rust·BLAS |
 
-NumPy multiplies through OpenBLAS — it has no other mode. `Scala` and `Rust` are the
-default builds: the pinned pure matmul (bit-identical between the two ports and across
-machines) and `matrixmultiply` in `t3prf`. `Scala·BLAS` / `Rust·BLAS` are the opt-in on
-each side (`-Duni.mat.blas=true`; `--features blas`), and carry a number only on the rows
-BLAS can change — `matmul` and the 3PRF rows — with `·` elsewhere: every other row is
-identical code in both modes. MatD rows are min-of-60 single calls on a 1000×1000 (matmul
-512³); 3PRF rows are medians of 25 (IS Full 200) after warm-up.
+NumPy multiplies through OpenBLAS — it has no other mode. Each other column is a named
+configuration: `·pure` is the pinned matmul on each side (`matmulPure`; bit-identical
+between the two ports and across machines) with `matrixmultiply` in `t3prf`, and `·BLAS`
+is each side's BLAS (`-Duni.mat.blas=os-best`, the Scala default; `--features blas`, a
+build-time opt-in in Rust). The BLAS columns carry a number only on the rows BLAS can
+change — `matmul` and the 3PRF rows — with `·` elsewhere: every other row is identical
+code in both modes. MatD rows are min-of-60 single calls on a 1000×1000 (matmul 512³);
+3PRF rows are medians of 25 (IS Full 200) after warm-up. Each run opens with an executive
+summary: the languages like for like (BLAS on all three; the pinned loop in both ports),
+then the as-shipped defaults, labelled as a comparison of configurations.
 
 ### Regenerating every table
 
@@ -27,9 +30,10 @@ identical code in both modes. MatD rows are min-of-60 single calls on a 1000×10
 ```
 
 `runBenchAll.sh` builds `bench_mat`/`bench_tprf3` twice — default, then `--features blas`
-— keeps both as `*_pure` / `*_blas`, and runs [`BenchAll`](../src/main/scala/apps/BenchAll.scala),
-which measures Scala in this JVM (the BLAS 3PRF cells in a child JVM started with
-`-Duni.mat.blas=true`, since the mode is read once), runs [`py/bench.py`](../py/bench.py)
+in its own target dir — keeps both as `*_pure` / `*_blas`, and runs
+[`BenchAll`](../src/main/scala/apps/BenchAll.scala), which measures the Scala matmul cells
+and 3PRF rows in child JVMs pinned to `-Duni.mat.blas=pure` and to the BLAS mode
+(`-blas <mode>`, default `os-best`; the mode is read once per JVM), runs [`py/bench.py`](../py/bench.py)
 and [`py/bench_tprf3.py`](../py/bench_tprf3.py), and runs the four Rust binaries. A
 missing binary drops its column rather than the run. The BLAS build needs an OpenBLAS the
 `openblas-src` crate can find (`libopenblas-dev` / `brew install openblas` /
@@ -53,9 +57,10 @@ is faster.
 | Linux | 1.33× | 1.96× | 1.59× |
 | macOS | 1.33× | 2.05× | 1.67× |
 
-**Configurations, as shipped.** uni's default is the pinned pure matmul, so on `matmul` and
-the 3PRF rows this compares a reproducible loop with a BLAS — the price of the default, not
-a statement about the languages:
+**Configurations, as shipped.** Scala's default is BLAS (`os-best`); Rust's default build
+is the pinned loop, because its BLAS is a build-time feature a library cannot switch on for
+its users — so the Rust column here is the price of that packaging constraint, not a
+statement about the language:
 
 | box | Scala (default) vs NumPy | Rust (default) vs NumPy |
 |---|---:|---:|
@@ -63,29 +68,26 @@ a statement about the languages:
 | Linux | 1.26× | 1.93× |
 | macOS | 1.26× | 2.06× |
 
-**`matmul` 512³, ms/call** — the one row where the default is deliberately not the fastest
-path, and the number that decision hangs on:
+**`matmul` 512³, ms/call** — the row the BLAS choice hangs on:
 
-| box | NumPy | Scala | Rust | Scala·BLAS | Rust·BLAS |
+| box | NumPy | Scala·pure | Rust·pure | Scala·BLAS | Rust·BLAS |
 |---|---:|---:|---:|---:|---:|
 | Windows 11 | 0.79 | 1.45 | 1.70 | 0.91 | 0.87 |
-| Linux | 1.63 | 14.67 | 8.16 | 6.15 | 1.68 |
+| Linux | 1.63 | 14.67 | 8.16 | 1.80 | 1.68 |
 | macOS | 2.14 | 6.17 | 2.49 | 1.05 | 2.12 |
 
 Reading them together:
 
 - **Like for like, both ports are faster than NumPy on every box** — Scala 1.3–3.2×, Rust
   2.0–3.6× — and Rust is 1.2–1.7× ahead of Scala. The 3PRF rows drive much of that.
-- **The pure default's cost is a function of core count; BLAS's is not.** Scala's pinned
+- **The pinned loop's cost is a function of core count; BLAS's is not.** Scala's pinned
   matmul trails OpenBLAS by 1.8× on 24 threads, 2.9× on Apple Silicon and 8.8× on four
   cores; Rust's by 2.1× / 1.2× / 4.9× (on aarch64 NEON is baseline, so LLVM vectorises the
-  microkernel fully; on x86-64 the crate targets SSE2). The opt-in closes the gap on
-  Windows and macOS in both languages, and for Rust on Linux — but **Scala·BLAS on Linux
-  reads 6.2 ms against NumPy's 1.6**: since 0.16.1 `uni` uses bytedeco's bundled OpenBLAS
-  there, and that build is slow at this size (7.3 ms with four threads confirmed on the
-  box). Fixed after these runs: Linux now prefers the system OpenBLAS via netlib when the
-  probe finds one, with bytedeco's copy loaded first so the LAPACKE gap cannot recur; the
-  next quadd run should show `Scala·BLAS` near NumPy's 1.6 ms.
+  microkernel fully; on x86-64 the crate targets SSE2). BLAS puts both languages level with
+  NumPy on every box — Scala·BLAS 0.9 / 1.05 / 1.8 ms against NumPy's 0.8 / 2.1 / 1.6 —
+  which is why it is the Scala default. On Linux that number is the OS OpenBLAS via netlib
+  (`os-best` → `system` there when `libopenblas0` is installed); bytedeco's bundled build
+  reads 6.2 ms on the same box.
 - **Reductions and the axis family beat NumPy everywhere**, 2–3× on the few-core boxes and
   more here; the elementwise maps beat it only on the 24-thread box — on four cores or a
   few big cores NumPy's SIMD wins 2–4×.

@@ -10,11 +10,13 @@
 //! matmul space offers that: an optimised BLAS, and `matrixmultiply`, select kernels by CPU
 //! feature and thread count and land on different last ulps.
 //!
-//! **BLAS is an opt-in that trades the pin for speed**, 2–4× on large dense products and
-//! ~1× on skinny ones. Here the opt-in is the `blas` cargo feature — it is what links
-//! OpenBLAS, so it is already a deliberate act — and with it on, `matmul` dispatches
-//! there above a small crossover. Scala's opt-in is `-Duni.mat.blas=true` /
-//! `UNI_MAT_BLAS=true`. Both sides also expose the two escape hatches by name:
+//! **BLAS trades the pin for speed**, 2–4× on large dense products and ~1× on skinny
+//! ones. Here it is the `blas` cargo feature — a build-time choice a library cannot make
+//! for its users, so the crate's default `matmul` is the pinned loop; with the feature on,
+//! `matmul` dispatches to BLAS above a small crossover. Scala chooses at runtime and, like
+//! NumPy, is BLAS by default (`-Duni.mat.blas=os-best`; `pure` opts back into the pin), so
+//! a cross-language check must call the pinned path by name on the Scala side. Both sides
+//! expose the two escape hatches by name:
 //! [`MatD::matmulPure`] is the pinned path whatever the mode, and [`MatD::matmulBlas`]
 //! (only under the feature here) is BLAS whatever the mode.
 //!

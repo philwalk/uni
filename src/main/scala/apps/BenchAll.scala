@@ -13,46 +13,48 @@ import uni.data.*
  *
  * # Why one table, and why five numeric columns
  *
- * NumPy multiplies through OpenBLAS, always. Since 0.16.1 the Scala and Rust DEFAULT is
- * the pinned pure loop, with BLAS an opt-in. A table with one column per language
- * therefore compared NumPy-with-BLAS against uni-without, and only on the rows where it
- * matters — a mish-mash a reader could not untangle. So every platform gets one table
- * with the same five columns:
+ * NumPy multiplies through OpenBLAS, always. Scala's `*@` does too by default since
+ * 0.16.1 (`-Duni.mat.blas=os-best`); Rust's does not — its BLAS is a build-time feature
+ * (`--features blas`), which a library cannot switch on for its users, so the Rust
+ * default is the pinned pure loop. A table with one column per language would therefore
+ * mix BLAS and no-BLAS on the very rows where it matters. So every platform gets one
+ * table with the same five columns, each a named configuration:
  *
- * | NumPy | Scala | Rust | Scala·BLAS | Rust·BLAS |
+ * | NumPy | Scala·pure | Rust·pure | Scala·BLAS | Rust·BLAS |
  *
- * `Scala`/`Rust` are the default builds; the `·BLAS` columns are the opt-in on each side
- * (`-Duni.mat.blas=os-best`, or the mode `-blas` names; `--features blas`). A BLAS column carries a number only on the
- * rows BLAS can touch — `matmul` and the 3PRF rows — and `·` elsewhere: elementwise and
- * reduction code is identical in both modes, and printing a second noisy copy of the same
- * number would be exactly the mish-mash this replaces. MatD rows are min-of-60 single
- * calls; 3PRF rows are medians of 25 (IS Full: 200) after warm-up, as they always were.
+ * `·pure` is the pinned loop on each side (bit-identical across the two ports and every
+ * machine); `·BLAS` is each side's BLAS (`-Duni.mat.blas=<mode>`, `--features blas`). A
+ * BLAS column carries a number only on the rows BLAS can touch — `matmul` and the 3PRF
+ * rows — and `·` elsewhere: elementwise and reduction code is identical in both modes,
+ * and printing a second noisy copy of the same number would be exactly the mish-mash this
+ * replaces. MatD rows are min-of-60 single calls; 3PRF rows are medians of 25 (IS Full:
+ * 200) after warm-up.
  *
  * # How each column is produced
  *
- *  - Scala: `MatBench.scalaRows` and `Tprf3Bench.run` in this JVM (default), plus
- *    the whole `Scala·BLAS` column from child JVMs started with `-Duni.mat.blas=<mode>`
- *    (the mode is read once per JVM; `MatmulBlasCell` for the matmul cell, `Tprf3Bench`
- *    for the 3PRF cells, which multiply through `*@`).
+ *  - Scala·pure: `MatBench.scalaRows` in this JVM with the `matmul` cell re-measured
+ *    through `matmulPure`, and `Tprf3Bench` in a child JVM under `-Duni.mat.blas=pure`.
+ *  - Scala·BLAS: child JVMs under `-Duni.mat.blas=<mode>` (`MatmulBlasCell` for the
+ *    matmul cell, `Tprf3Bench` for the 3PRF cells, which multiply through `*@`). The mode
+ *    is read once per JVM, which is why neither Scala flavour trusts this JVM's `*@`.
  *  - NumPy: `py/bench.py` and `py/bench_tprf3.py`, first interpreter with a working numpy.
  *  - Rust: `rust/target/release/bench_mat_pure` / `bench_mat_blas` and
  *    `bench_tprf3_pure` / `bench_tprf3_blas` — the two builds `runBenchAll.sh` produces.
- *    A plain `bench_mat` / `bench_tprf3` counts as the default build. Any missing binary
+ *    A plain `bench_mat` / `bench_tprf3` counts as the pure build. Any missing binary
  *    drops its column rather than failing the run, so a box without OpenBLAS dev libs
  *    still gets a table.
  *
- * # The summary
+ * # The executive summary, and why it comes first
  *
- * Three blocks, in this order because the first is the only fair LANGUAGE comparison:
- * NumPy cannot be run without BLAS, so the like-for-like number is BLAS on all three —
- * each port's BLAS figure on the 7 rows BLAS affects, its default figure elsewhere. Then
- * the as-shipped comparison, labelled as a comparison of CONFIGURATIONS (uni's pinned
- * matmul against NumPy's BLAS): what a user gets without flags, and the price of the
- * default, not a statement about the languages. Then what the opt-in buys each port over
- * those 7 rows. Every line is a geometric mean of per-row speedups with the median beside
- * it — an arithmetic mean is dragged by one 125× row (`vectorize`, a Python loop) and a
- * median ignores magnitude; together they say whether the mean is carried by a few rows —
- * and says how many rows it covers.
+ * The languages are compared like for like: BLAS on all three (each port's BLAS figure on
+ * the 7 rows BLAS affects, its pure figure elsewhere — the same code in both modes) and,
+ * separately, the pinned loop in both ports. Rust's default being pure is a packaging
+ * constraint, not a language result, so it is never the number that represents Rust in a
+ * language comparison; the as-shipped block says what each default costs, labelled as a
+ * comparison of CONFIGURATIONS. Every line is a geometric mean of per-row speedups with
+ * the median beside it — an arithmetic mean is dragged by one 125× row (`vectorize`, a
+ * Python loop) and a median ignores magnitude; together they say whether the mean is
+ * carried by a few rows — and says how many rows it covers.
  */
 object BenchAll:
   def println(s: String = ""): Unit = print(s"$s\n")
@@ -67,8 +69,8 @@ object BenchAll:
     "Build the Rust halves first (runBenchAll.sh does all of this):",
     "  cd rust && cargo build --release --bin bench_mat --bin bench_tprf3",
     "  cp target/release/bench_mat target/release/bench_mat_pure   (and bench_tprf3)",
-    "  cargo build --release --features blas --bin bench_mat --bin bench_tprf3",
-    "  cp target/release/bench_mat target/release/bench_mat_blas   (and bench_tprf3)",
+    "  cargo build --release --features blas --target-dir target/blas --bin bench_mat --bin bench_tprf3",
+    "  cp target/blas/release/bench_mat target/release/bench_mat_blas   (and bench_tprf3)",
   )
 
   /** One measured column: its label→ms map and a provenance line. */
@@ -101,18 +103,24 @@ object BenchAll:
     }
     val root = sys.props.getOrElse("user.dir", ".")
 
-    // ── Scala, default build, this JVM ───────────────────────────────────────────
-    println("── Scala (default: pinned matmul) ────────────────────────────────────────")
+    // ── Scala·pure: elementwise rows in this JVM, matmul via matmulPure, 3PRF in a
+    //    child JVM pinned to `pure` (this JVM's mode is whatever sbt gave it) ────────
+    println("── Scala·pure (pinned matmul) ────────────────────────────────────────────")
     val jvm = s"jvm=${System.getProperty("java.version")}"
-    val scalaMat = MatBench.scalaRows.toMap
-    val scalaTprf = (for (size, t, n, l) <- Sizes yield
-      val r = Tprf3Bench.run(size, t, n, l, warmupMs = if size == "Small" then 2000 else 500, loops = if size == "Small" then 50 else 20)
-      Vector(s"3PRF IS Full ($size)" -> r.isFull, s"3PRF OOS Rec ($size)" -> r.oosRec, s"3PRF OOS CV ($size)" -> r.oosCv)
-    ).flatten.toMap
-    val scala = Column("Scala", scalaMat ++ scalaTprf,
-      s"$jvm N=${MatBench.N} MM=${MatBench.MM} warmup=${MatBench.Warmup} iters=${MatBench.Iters}; 3PRF medians of 25 (IS Full 200) after warm-up")
+    val scalaMat = MatBench.scalaRows.toMap ++ {
+      MatD.setSeed(42)
+      val a = MatD.randn(MatBench.MM, MatBench.MM)
+      val b = MatD.randn(MatBench.MM, MatBench.MM)
+      val mm = MatBench.minMs(a.matmulPure(b))
+      println(f"  [Scala·pure] matmul $mm%10.4f ms/call")
+      Map("matmul" -> mm)
+    }
+    val pureChild = BenchRunner.captureJvm("uni.apps.Tprf3Bench", Seq("-nopython", "-norust"), Seq("-Duni.mat.blas=pure"))
+    pureChild.filter(_.contains("estimate3prf")).foreach(println)
+    val scala = Column("Scala·pure", scalaMat ++ parseTprf(pureChild, "Scala"),
+      s"$jvm N=${MatBench.N} MM=${MatBench.MM} warmup=${MatBench.Warmup} iters=${MatBench.Iters}; matmul via matmulPure; 3PRF in a child JVM with -Duni.mat.blas=pure, medians of 25 (IS Full 200) after warm-up")
 
-    // ── Scala, BLAS mode ─────────────────────────────────────────────────────────
+    // ── Scala·BLAS: child JVMs in the requested mode ─────────────────────────────
     val scalaBlas: Option[Column] = if !runBlas then None else
       val prop = s"-Duni.mat.blas=$blasMode"
       println(s"\n── Scala·BLAS ($prop) ───────────────────────────────────────")
@@ -121,6 +129,7 @@ object BenchAll:
       val mmRow = """^\s*\[Scala\]\s+matmul\s+([0-9.eE+-]+)\s+ms/call\s*$""".r
       val mm = cell.collectFirst { case mmRow(ms) => ms.toDouble }
       val child = BenchRunner.captureJvm("uni.apps.Tprf3Bench", Seq("-nopython", "-norust"), Seq(prop))
+      child.filter(_.contains("estimate3prf")).foreach(println)
       val tprf = parseTprf(child, "Scala")
       Some(Column("Scala·BLAS", mm.map("matmul" -> _).toMap ++ tprf,
         s"$jvm, child JVMs with $prop (backend per platform and mode; see the [uni] line above)"))
@@ -160,12 +169,76 @@ object BenchAll:
         val cfg = mat.map(_.config).getOrElse("?")
         Some(Column(colName, mat.map(_.ms).getOrElse(Map.empty) ++ tprf.getOrElse(Map.empty),
           s"$cfg ($flavour build; 3PRF rows with OPENBLAS_NUM_THREADS=1, see BenchAll)"))
-    val rust     = if runRust then rustColumn("pure", "Rust") else None
+    val rust     = if runRust then rustColumn("pure", "Rust·pure") else None
     val rustBlas = if runRust && runBlas then rustColumn("blas", "Rust·BLAS") else None
+
+    // ── Like-for-like maps: each port's BLAS figure on the rows BLAS affects, its pure
+    //    figure elsewhere (identical code). Absent a BLAS column, the pure map stands in.
+    def withBlas(pure: Column, blas: Option[Column]): Map[String, Double] =
+      pure.ms ++ blas.map(_.ms.filter((k, _) => blasRows(k))).getOrElse(Map.empty)
+    val scalaLfl = withBlas(scala, scalaBlas)
+    val rustLfl  = rust.map(r => withBlas(r, rustBlas))
+    val all      = allLabels.toSet
+    val pyMs = py.map(_.ms); val scMs = Some(scala.ms); val ruMs = rust.map(_.ms)
+    def speedups(subj: Map[String, Double], base: Map[String, Double], on: Set[String]): Seq[Double] =
+      allLabels.filter(on).flatMap(l => for x <- subj.get(l); y <- base.get(l) if x > 0 && y > 0 yield y / x)
+    def line(name: String, subj: Option[Map[String, Double]], base: Option[Map[String, Double]], on: Set[String]): Option[Vector[String]] =
+      for s <- subj; b <- base yield
+        val sp = speedups(s, b, on)
+        if sp.isEmpty then Vector(name, "—", "—", "0")
+        else Vector(name, f"${geomean(sp)}%.2f×", f"${median(sp)}%.2f×", sp.length.toString)
+    val hdr = Vector("comparison", "geomean", "median", "rows")
+
+    // ── Executive summary ────────────────────────────────────────────────────────
+    println()
+    println("## Executive summary")
+    println()
+    println("Speedup = (second-named ms) ÷ (first-named ms), geometric mean over the rows named, with the")
+    println("median beside it; above 1× means the first-named is faster.")
+    println()
+    println("### Languages, BLAS on all three — the like-for-like comparison")
+    println()
+    println("NumPy is always OpenBLAS; here Scala and Rust use theirs too on the 7 rows BLAS affects (every")
+    println("other row is the same code in both modes). Rust's BLAS is a build-time feature, so its DEFAULT")
+    println("build is the pure loop — a packaging constraint, not a language result; this block is Rust's")
+    println("fair number.")
+    println()
+    BenchRunner.table(hdr, Vector(
+      line("Scala vs NumPy", Some(scalaLfl), pyMs, all),
+      line("Rust vs NumPy",  rustLfl,  pyMs, all),
+      line("Rust vs Scala",  rustLfl,  Some(scalaLfl), all),
+    ).flatten)
+    println()
+    println("### The pinned loop, both ports — bit-identical results, no BLAS anywhere")
+    println()
+    BenchRunner.table(hdr, Vector(
+      line("Rust·pure vs Scala·pure", ruMs, scMs, all),
+      line("Rust·pure vs Scala·pure (matmul + 3PRF only)", ruMs, scMs, blasRows),
+    ).flatten)
+    println()
+    println("### Configurations, as shipped — what a user gets without flags")
+    println()
+    println("Scala's default is BLAS (`os-best`); Rust's default build is the pure loop (`--features blas`")
+    println("opts in). Against NumPy's BLAS this is the price of each default, not a statement about the")
+    println("languages.")
+    println()
+    BenchRunner.table(hdr, Vector(
+      line("Scala (default: BLAS) vs NumPy", Some(scalaLfl), pyMs, all),
+      line("Rust (default: pure) vs NumPy",  ruMs, pyMs, all),
+      line("Rust (default: pure) vs Scala (default: BLAS)", ruMs, Some(scalaLfl), all),
+    ).flatten)
+    println()
+    println("### What BLAS buys each port, over the 7 rows it affects")
+    println()
+    BenchRunner.table(hdr, Vector(
+      line("Scala·BLAS vs Scala·pure", scalaBlas.map(_.ms), scMs, blasRows),
+      line("Rust·BLAS vs Rust·pure",   rustBlas.map(_.ms),  ruMs, blasRows),
+    ).flatten)
 
     // ── The table ────────────────────────────────────────────────────────────────
     val cols = Vector(py, Some(scala), rust, scalaBlas, rustBlas).flatten
-    println("\n## Every row, every language, both matmul modes — ms/call (lower is better)\n")
+    println("\n## Every row, every configuration — ms/call (lower is better)\n")
+    println("The three ratio columns are like for like: BLAS on all three where BLAS applies.\n")
     val headers = Vector("Operation") ++ cols.map(_.name) ++
       (if py.isDefined then Vector("Scala vs NumPy") else Vector.empty) ++
       (if py.isDefined && rust.isDefined then Vector("Rust vs NumPy") else Vector.empty) ++
@@ -175,7 +248,7 @@ object BenchAll:
         if c.name.endsWith("BLAS") && !blasRows(label) then "·"
         else BenchRunner.cell(c.ms.get(label))
       }
-      val p = py.flatMap(_.ms.get(label)); val s = scala.ms.get(label); val r = rust.flatMap(_.ms.get(label))
+      val p = py.flatMap(_.ms.get(label)); val s = scalaLfl.get(label); val r = rustLfl.flatMap(_.get(label))
       def ratio(x: Option[Double], y: Option[Double]) = (for a <- x; b <- y yield BenchRunner.ratioCell(a, b)).getOrElse("—")
       Vector(s"`$label`") ++ cells ++
         (if py.isDefined then Vector(ratio(p, s)) else Vector.empty) ++
@@ -187,62 +260,6 @@ object BenchAll:
     println()
     for c <- cols do println(s"- **${c.name}**: ${c.config}")
     println("- BLAS columns carry a number only on the rows BLAS can change (`matmul`, 3PRF); `·` elsewhere.")
-
-    // ── Summary ──────────────────────────────────────────────────────────────────
-    // NumPy multiplies through OpenBLAS and cannot be run without it, so the only fair
-    // LANGUAGE comparison is BLAS on all three: each port's BLAS number on the rows BLAS
-    // affects, its (identical) default number elsewhere. That is the headline. The
-    // as-shipped comparison — uni's pinned matmul against NumPy's BLAS — is a comparison of
-    // CONFIGURATIONS, and is labelled as such rather than mixed in.
-    def withBlas(dflt: Column, blas: Option[Column]): Map[String, Double] =
-      dflt.ms ++ blas.map(_.ms.filter((k, _) => blasRows(k))).getOrElse(Map.empty)
-    val scalaB = scalaBlas.map(b => withBlas(scala, Some(b)))
-    val rustB  = for r <- rust; b <- rustBlas yield withBlas(r, Some(b))
-    def speedups(subj: Map[String, Double], base: Map[String, Double], on: Set[String]): Seq[Double] =
-      allLabels.filter(on).flatMap(l => for x <- subj.get(l); y <- base.get(l) if x > 0 && y > 0 yield y / x)
-    def line(name: String, subj: Option[Map[String, Double]], base: Option[Map[String, Double]], on: Set[String]): Option[Vector[String]] =
-      for s <- subj; b <- base yield
-        val sp = speedups(s, b, on)
-        if sp.isEmpty then Vector(name, "—", "—", "0")
-        else Vector(name, f"${geomean(sp)}%.2f×", f"${median(sp)}%.2f×", sp.length.toString)
-    val all = allLabels.toSet
-    val pyMs = py.map(_.ms); val scMs = Some(scala.ms); val ruMs = rust.map(_.ms)
-    val hdr = Vector("comparison", "geomean", "median", "rows")
-
-    println()
-    println("## Summary")
-    println()
-    println("Speedup = (second-named ms) ÷ (first-named ms), geometric mean over the rows named, with the")
-    println("median beside it; above 1× means the first-named is faster.")
-    println()
-    println("### Languages, BLAS on all three — the like-for-like comparison")
-    println()
-    println("NumPy is always OpenBLAS; here Scala and Rust use theirs too (on the 7 rows BLAS affects; every")
-    println("other row is the same code in both modes).")
-    println()
-    BenchRunner.table(hdr, Vector(
-      line("Scala vs NumPy", scalaB, pyMs, all),
-      line("Rust vs NumPy",  rustB,  pyMs, all),
-      line("Rust vs Scala",  rustB,  scalaB, all),
-    ).flatten)
-    println()
-    println("### Configurations, as shipped — uni's pinned matmul against NumPy's BLAS")
-    println()
-    println("What a user gets without flags. On `matmul` and the 3PRF rows this compares a reproducible loop")
-    println("with a BLAS, so it is not a statement about the languages; it is the price of the default.")
-    println()
-    BenchRunner.table(hdr, Vector(
-      line("Scala (default) vs NumPy", scMs, pyMs, all),
-      line("Rust (default) vs NumPy",  ruMs, pyMs, all),
-      line("Rust (default) vs Scala (default)", ruMs, scMs, all),
-    ).flatten)
-    println()
-    println("### What the opt-in buys, over the 7 rows BLAS affects")
-    println()
-    BenchRunner.table(hdr, Vector(
-      line("Scala·BLAS vs Scala", scalaBlas.map(_.ms), scMs, blasRows),
-      line("Rust·BLAS vs Rust",   rustBlas.map(_.ms),  ruMs, blasRows),
-    ).flatten)
 
   // ── helpers ────────────────────────────────────────────────────────────────────
 

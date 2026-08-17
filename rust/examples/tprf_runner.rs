@@ -20,8 +20,8 @@
 //! # Scope
 //!
 //! Everything `data_generator` does: the four recurrences, `hstack`, the matmul with the
-//! factor loadings — `factors *@ factor_loadings`, which is the pinned pure path on both
-//! sides, so it needs no flag — and the noise blend. It is the Rust half of a demo pair
+//! factor loadings — `factors.matmulPure(factor_loadings)` there, `matmul` here: the
+//! pinned pure loop on both sides — and the noise blend. It is the Rust half of a demo pair
 //! with `jsrc/tprfRunner.sc`, byte-identical output.
 //!
 //! The `non_pervasive` branch is deliberately omitted: it uses `scala.util.Random.shuffle`
@@ -127,7 +127,7 @@ fn generate(
     let eta = eta.freeze();
 
     // The tail of `data_generator`: stack the factors, load them onto N predictors —
-    // `factors *@ factor_loadings`, the pinned matmul — and blend in the scaled errors.
+    // `factors.matmulPure(factor_loadings)`, the pinned matmul — and blend in the scaled errors.
     let factors = MatD::hstack(&[&f, &g]);
     let x1 = factors.matmul(&factor_loadings);
     let eta_norm = &eta / popStd(&eta);

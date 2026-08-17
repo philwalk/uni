@@ -270,12 +270,12 @@ object Mat {
    *
    *  | value       | meaning                                                                 |
    *  |-------------|-------------------------------------------------------------------------|
-   *  | unset       | none — the pinned pure loop, bit-identical to the Rust port, machine-independent |
-   *  | `os-best`   | the platform's best safe choice: Linux → `bundled`; macOS → `system` (Accelerate); Windows → whichever netlib serves, else `bundled` |
+   *  | unset       | `os-best` — the default, like NumPy: large products go to a native BLAS      |
+   *  | `os-best`   | the platform's best safe choice: macOS → `system` (Accelerate); Windows → `system` (netlib's native, else `bundled`); Linux → `system` when netlib finds a native BLAS (`JNIBLAS`: the OS `libblas.so.3`), else `bundled` |
    *  | `bundled`   | bytedeco's OpenBLAS, everywhere                                          |
    *  | `system`    | netlib → whatever the OS provides (OpenBLAS, Accelerate, VectorBLAS…)   |
    *  | `true`, `1` | alias for `os-best`                                                     |
-   *  | `false`, `pure`, `0` | none, even if the env var says otherwise                       |
+   *  | `pure`, `false`, `0` | no BLAS: every `*@` is the pinned pure loop, bit-identical to the Rust port and machine-independent |
    *
    *  **One BLAS per process on Linux.** The system OpenBLAS and bytedeco's bundled one share
    *  a SONAME and interpose on each other's internals; both resident in one JVM ends in
@@ -283,15 +283,19 @@ object Mat {
    *  So `system` on Linux never loads the bundled copy: `eig`, `eigenvalues`, `svd` and
    *  `cholesky` go through netlib's LAPACK instead ([[LapackNetlib]] — the system
    *  `liblapack.so.3`, which with `libopenblas0` is the very OpenBLAS already resident, or
-   *  netlib's pure-Java fallback). `os-best` on Linux is `bundled` (matmul 1.8–4.5× slower
-   *  than the system OpenBLAS at 512³, but no dependence on OS packages); `system` is the
-   *  opt-in for speed. macOS and Windows have no such collision: netlib's backend there is
-   *  not an OpenBLAS, so `system` there keeps bytedeco's LAPACKE for the LAPACK routines.
+   *  netlib's pure-Java fallback). `os-best` on Linux resolves to `system` when netlib
+   *  binds a native BLAS — asking netlib is what maps the OS library, so a native answer
+   *  commits the process to `system` (a pure-Java answer maps nothing, and `bundled` is
+   *  then safe); the system OpenBLAS is 1.8–3.4× faster than the bundled build at 512³.
+   *  macOS and Windows have no such collision: netlib's backend there is not an OpenBLAS,
+   *  so `system` there keeps bytedeco's LAPACKE for the LAPACK routines.
    *
    *  BLAS is 2–4× faster than the pure loop on large dense products (more on few-core
    *  boxes) and does not offer the pin: its result varies with the library, its threading
-   *  and the CPU. There is deliberately no programmatic setter; per call, `matmulBlas` and
-   *  `matmulPure` override the mode either way. */
+   *  and the CPU — as NumPy's does. Reproducibility across machines and against the Rust
+   *  port is the opt-in: `pure` mode, or `matmulPure` per call (what fixture generators
+   *  and demo pairs use). There is deliberately no programmatic setter; per call,
+   *  `matmulBlas` and `matmulPure` override the mode either way. */
   private enum BlasChoice:
     case None, Bundled, System
 
@@ -299,14 +303,27 @@ object Mat {
     val raw = Option(java.lang.System.getProperty("uni.mat.blas")).orElse(sys.env.get("UNI_MAT_BLAS"))
       .map(_.trim.toLowerCase).getOrElse("")
     raw match
-      case "" | "false" | "pure" | "0" | "none" => BlasChoice.None
+      case "pure" | "false" | "0" | "none"      => BlasChoice.None
       case "bundled"                            => BlasChoice.Bundled
       case "system"                             => BlasChoice.System
-      case "os-best" | "true" | "1"             =>
-        if isLinux then BlasChoice.Bundled else BlasChoice.System
+      case "" | "os-best" | "true" | "1"        => osBest
       case other =>
-        java.lang.System.err.print(s"[uni] uni.mat.blas=$other is not one of os-best|bundled|system|false; BLAS mode off\n")
-        BlasChoice.None
+        java.lang.System.err.print(s"[uni] uni.mat.blas=$other is not one of os-best|bundled|system|pure; using os-best\n")
+        osBest
+
+  /** `os-best`: `system` wherever netlib binds a native BLAS; on Linux a pure-Java netlib
+   *  (nothing native mapped) means `bundled` — see the collision note on [[blasChoice]]. */
+  private def osBest: BlasChoice =
+    if !isLinux then BlasChoice.System
+    else
+      val name   = netlib.getClass.getName
+      val native = name.endsWith("JNIBLAS")
+      if blasVerbose then
+        java.lang.System.err.print(s"[uni] os-best on Linux: netlib is $name -> ${if native then "system" else "bundled (no native libblas.so.3 for netlib; apt install libopenblas0)"}\n")
+      if native then BlasChoice.System else BlasChoice.Bundled
+
+  private lazy val blasVerbose: Boolean =
+    sys.props.get("uni.blas.verbose").exists(_.equalsIgnoreCase("true")) || uni.verboseUni
 
   /** BLAS mode is on in any form. */
   private lazy val blasMode: Boolean = blasChoice != BlasChoice.None
@@ -329,7 +346,7 @@ object Mat {
   // JNI call costs more than the multiply. Crossover is higher on macOS/Accelerate.
   // Mac measured: square Double=1728, thin=768. Windows/Linux: square=216, thin=384.
   // Tuning, not contract -- but note it decides WHICH algorithm runs, so in BLAS mode it
-  // moves last ulps. It has no effect at all in the default (pure) mode.
+  // moves last ulps. It has no effect at all in `pure` mode.
   private lazy val isMacOS = System.getProperty("os.name", "").toLowerCase.startsWith("mac")
   private lazy val blasThreshold:     Long = System.getProperty("uni.mat.blasThreshold",     if isMacOS then "1728" else "216").toLong
   private lazy val blasThinThreshold: Long = System.getProperty("uni.mat.blasThinThreshold", if isMacOS then "768"  else "384").toLong
@@ -1146,7 +1163,7 @@ object Mat {
     val cores  = Runtime.getRuntime.availableProcessors
     val before = blas_get_num_threads()
     blas_set_num_threads(cores)
-    if sys.props.get("uni.blas.verbose").exists(_.equalsIgnoreCase("true")) || uni.verboseUni then
+    if blasVerbose then
       System.err.print(s"[uni] bundled OpenBLAS: vendor=${blas_get_vendor()} threads=$before -> ${blas_get_num_threads()} (asked $cores)\n")
 
   private def blasReady(m: Mat[Double]): Mat[Double] =
@@ -1186,7 +1203,8 @@ object Mat {
     // than an accident of declaration order -- and is why it is no longer "unused", though its
     // job was always to exist (JUL holds loggers weakly; see the note above).
     val _ = netlibLogger
-    // Reached only under `system`. Deliberately does NOT preload bytedeco's copy first:
+    // Reached under `system`, and by `os-best` on Linux to see what the OS provides.
+    // Deliberately does NOT preload bytedeco's copy first:
     // that put both OpenBLAS instances in one process and segfaulted on Linux (see
     // `blasChoice`). Under `system` on Linux the bundled copy is forbidden outright.
     dev.ludovic.netlib.blas.BLAS.getInstance()
@@ -1203,7 +1221,7 @@ object Mat {
       case BlasChoice.System =>
         val name = netlib.getClass.getName
         val ok   = !(name.endsWith("F2JBLAS") || name.endsWith("Java11BLAS"))
-        if sys.props.get("uni.blas.verbose").exists(_.equalsIgnoreCase("true")) || uni.verboseUni then
+        if blasVerbose then
           val lapackNote = if lapackViaNetlib then s"; LAPACK via ${LapackNetlib.backendName}" else ""
           java.lang.System.err.print(s"[uni] BLAS via netlib: $name -> ${if ok then "using it" else "pure-Java netlib; too slow, matmul stays on the pure loop"}$lapackNote\n")
         ok

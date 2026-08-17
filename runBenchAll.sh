@@ -33,18 +33,18 @@ echo "── Rust: default build (pinned matmul, matrixmultiply in t3prf) ──
 cp -f "$rel/bench_mat$exe"   "$rel/bench_mat_pure$exe"
 cp -f "$rel/bench_tprf3$exe" "$rel/bench_tprf3_pure$exe"
 
+# The BLAS flavour builds in its own target dir. Building both feature sets into one dir
+# and copying binaries about leaves cargo's fingerprints for both "fresh", so a second
+# consecutive run relinks neither and whatever sits at target/release/bench_mat — the
+# other flavour — gets copied under the wrong name.
 echo "── Rust: --features blas build (OpenBLAS) ──"
-if ( cd rust && cargo build --release --features blas --bin bench_mat --bin bench_tprf3 ); then
-  cp -f "$rel/bench_mat$exe"   "$rel/bench_mat_blas$exe"
-  cp -f "$rel/bench_tprf3$exe" "$rel/bench_tprf3_blas$exe"
+if ( cd rust && cargo build --release --features blas --target-dir target/blas --bin bench_mat --bin bench_tprf3 ); then
+  cp -f "rust/target/blas/release/bench_mat$exe"   "$rel/bench_mat_blas$exe"
+  cp -f "rust/target/blas/release/bench_tprf3$exe" "$rel/bench_tprf3_blas$exe"
 else
   echo "   (BLAS build failed — no OpenBLAS for openblas-src? The Rust·BLAS column will be absent.)"
   rm -f "$rel/bench_mat_blas$exe" "$rel/bench_tprf3_blas$exe"
 fi
-# Leave the plain binaries as the default build, so `cargo run --bin bench_mat` and the
-# staleness check see what a plain `cargo build --release` would have produced.
-cp -f "$rel/bench_mat_pure$exe"   "$rel/bench_mat$exe"
-cp -f "$rel/bench_tprf3_pure$exe" "$rel/bench_tprf3$exe"
 
 if [ "$log" = "-" ]; then
   sbt "runMain uni.apps.BenchAll $*"

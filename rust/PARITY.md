@@ -437,8 +437,8 @@ corpus is bounded so every output is O(1) (`tan` on `m/4`, `arcsin arccos sinh c
 `m/5`, logs on `|m|+1`). `dropout` takes the generator explicitly — the crate has no
 global RNG — with Scala's draw order, so a seeded call agrees exactly.
 
-**matmul: the default is the pure loop, pinned; BLAS is an opt-in on both sides.**
-Decided on measurement (this machine, 24 threads, all BLAS columns OpenBLAS; ms/call,
+**matmul: `matmulPure` is the pinned loop on both sides; `*@` in Scala is BLAS by
+default (`os-best`), Rust's `matmul` is the pinned loop.** Decided on measurement (this machine, 24 threads, all BLAS columns OpenBLAS; ms/call,
 best of runs; re-measure with `sbt "runMain uni.apps.MatmulProbe"`,
 `cargo run --release --bin bench_matmul`, `python py/bench_matmul.py`):
 
@@ -462,19 +462,25 @@ CI box — which is why the sensitivity tests assert against a deliberately reas
 kernel rather than against "BLAS differs".) For
 Rust, pure-parallel already beats `matrixmultiply` above 128³, so the pin costs nothing
 against the dependency-free alternative; OpenBLAS is 1.3–2.2× faster and needs the system
-library. For Scala the pin costs 2–4× against its own BLAS on large dense products and
-~1× on the skinny 3PRF shapes. NumPy is OpenBLAS and so not reproducible either, so the
-match-NumPy rule does not pick a side here; reproducibility does.
+library — a build-time feature a library cannot switch on for its users, so the Rust
+default stays pinned. Scala can choose at runtime, and does what NumPy does: `*@` goes to
+a native BLAS by default (2–4× on large dense products, level with NumPy on every box),
+and reproducibility is the opt-in — `-Duni.mat.blas=pure` for a program, `matmulPure` per
+call. Every fixture generator and demo pair calls `matmulPure` explicitly, so the parity
+contract never depends on either language's default.
 
-The opt-in: Scala `-Duni.mat.blas=true` or env `UNI_MAT_BLAS=true` (property wins, read
-once; no programmatic setter); Rust `--features blas`, which is already the act that
-links OpenBLAS. Both sides also expose `matmulPure` (pinned, whatever the mode) and
-`matmulBlas` (BLAS, whatever the mode; Rust: only under the feature, so a call in a
-non-BLAS build is a compile error). `blasThreshold` is demoted from contract to tuning:
-it has no effect in the default mode, and in BLAS mode it decides which algorithm runs,
-so it moves last ulps and is documented as such.
+The flag: Scala `-Duni.mat.blas=os-best|bundled|system|pure` or env `UNI_MAT_BLAS`
+(property wins, read once; no programmatic setter; the Linux one-OpenBLAS-per-process
+rule and the netlib-LAPACK path under `system` are documented on `Mat.blasChoice`); Rust
+`--features blas`, which is already the act that links OpenBLAS. Both sides expose
+`matmulPure` (pinned, whatever the mode) and `matmulBlas` (BLAS, whatever the mode; Rust:
+only under the feature, so a call in a non-BLAS build is a compile error). `blasThreshold`
+is tuning, not contract: products under it take the pinned loop in every mode, so it
+decides which algorithm runs and moves last ulps.
 
-**`Tprf3` stays on the default.** Its gemms are pure by default and the cost turned out
+**`Tprf3` multiplies through `*@`** — BLAS under the Scala default, the pinned loop under
+`pure` and in Rust; its parity fixture compares to `rtol 1e-9`, so either mode passes.
+Under `pure` the cost turned out
 to be larger than the skinny-shape row above suggested — IS Full 0.25 → 0.67 ms at first
 — because `Tprf3` multiplies narrow outputs (`*@ y`, `*@ β`: one to three columns) and
 transposed-view left operands (`X'`), neither of which the square benchmarks exercise.

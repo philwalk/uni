@@ -1,7 +1,8 @@
 package uni.data
 
 /**
- * The pinned matmul kernel behind `Mat.multiplyDouble`, i.e. the default `*@`.
+ * The pinned matmul kernel behind `Mat.multiplyDouble`: `matmulPure`, `*@` under
+ * `-Duni.mat.blas=pure`, and every product below the BLAS threshold.
  *
  * # The contract it must keep
  *

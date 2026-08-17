@@ -15,8 +15,8 @@ import uni.data.*
  *             order per cell is a sequential k-sum from 0.0, which is why it is the
  *             default: pinned bit-for-bit across languages and machines.
  *  - `blas` — `matmulBlas`: whichever backend `Mat` selected. Not pinned.
- *  - `auto` — `*@`: what a user gets in the current mode (pure unless
- *             `-Duni.mat.blas=true` / `UNI_MAT_BLAS=true`).
+ *  - `auto` — `*@`: what a user gets in the current mode (`-Duni.mat.blas`, `os-best`
+ *             by default; `pure` pins it).
  *
  * The one measurement caveat that matters: BLAS's threads and the pure loop's ForkJoin
  * workers contend when measured back to back, so `pure` is measured last, and BLAS rows

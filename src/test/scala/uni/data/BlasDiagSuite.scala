@@ -12,8 +12,9 @@ import uni.*
  * (`undefined symbol: LAPACKE_dgeev` or `SIGSEGV dgemm_oncopy_HASWELL`, by load order) —
  * a hard JVM kill, not an exception. So `-Duni.mat.blas=system` on Linux never loads the
  * bundled copy: `eig`/`eigenvalues`/`svd`/`cholesky` go through netlib's LAPACK instead
- * (`LapackNetlib`), and `os-best`/`bundled` never load the system one. Nothing needs to
- * be purged from the OS.
+ * (`LapackNetlib`); `os-best` becomes `system` when netlib binds a native BLAS, else
+ * `bundled`; and `bundled` never maps the system one. Nothing needs to be purged from the
+ * OS.
  *
  * The mode is read once per JVM, so each test observes the mode this JVM was started
  * with (`sbt 'set javaOptions ++= Seq("-Duni.mat.blas=system")' test` for the Linux
@@ -28,8 +29,9 @@ class BlasDiagSuite extends FunSuite:
 
   test("bundled OpenBLAS: BLAS matmul then LAPACKE in one JVM survives") {
     assume(!systemOnLinux, "under -Duni.mat.blas=system on Linux the LAPACKE routines are forbidden")
-    // 1. A BLAS matmul (unset mode: matmulBlas goes to the bundled OpenBLAS; os-best on
-    //    Linux is bundled too; elsewhere netlib's backend, which coexists with bytedeco).
+    // 1. A BLAS matmul (unset mode: matmulBlas goes to the bundled OpenBLAS; under
+    //    os-best, netlib's backend where one is native — on Linux that also moves the
+    //    LAPACK routines to netlib, so bytedeco is never loaded there).
     val a = MatD.randn(16, 16)
     val b = MatD.randn(16, 16)
     val c = a.matmulBlas(b)

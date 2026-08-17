@@ -11,10 +11,11 @@
 //
 // Two things make it byte-identical rather than merely close. The recurrences write
 // through `update` here and through `MatMut` there, and every value they produce is a
-// pinned reduction. And `factors *@ factor_loadings` is the DEFAULT matmul on both
-// sides — the pure tiled loop, a sequential k-sum from 0.0 per cell — which is what lets
-// this pair exist without a flag. Under `-Duni.mat.blas=true` the last ulps of X1 and X
-// would move and the diff would not be empty; that is the trade the opt-in makes.
+// pinned reduction. And the factor product is `matmulPure` — the pure tiled loop, a
+// sequential k-sum from 0.0 per cell, the same on both sides and on every machine.
+// The default `*@` is BLAS (`-Duni.mat.blas=os-best`), whose last ulps depend on the
+// library and the CPU; through it the diff would not be empty. Rust's `matmul` is the
+// pinned loop by default, so the Rust half needs no such choice.
 //
 // Floats print through `%+.10f`, which the Rust side reproduces with `java_format_f`
 // (half-up on the exact decimal expansion, as the JVM does).
@@ -76,7 +77,7 @@ object TprfRunner {
       eta(t, ::) = eta(t - 1, ::) * a + eta_tilda(t, ::)
 
     val factors  = MatD.hstack(f, g)
-    val X1       = factors *@ factor_loadings
+    val X1       = factors.matmulPure(factor_loadings)
     val etaNorm  = eta / popStd(eta)
     val constant = popStd(X1) * math.sqrt(strength)
     val X        = X1 + etaNorm * constant
