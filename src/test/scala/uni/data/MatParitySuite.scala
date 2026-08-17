@@ -41,22 +41,25 @@ class MatParitySuite extends munit.FunSuite:
       uni.apps.MatParityGen.expCases(me).toMap.get(label)
     ).getOrElse(fail(s"unknown case [$label] in fixture — port it or regenerate"))
 
-  /** The 2-D half, likewise delegated to the generator. `math.*` and `la.*` rows are
-   *  computed on the bounded-corpus matrix `me`; everything else on `m`. */
-  def word2d(m: Mat[Double], me: Mat[Double], label: String): Long =
-    if label.startsWith("math.") then
-      uni.apps.MatParityGen.mathCases(me).toMap
-        .getOrElse(label, fail(s"unknown math case [$label] in fixture — port it or regenerate"))
-    else if label.startsWith("la.") then
-      uni.apps.MatParityGen.linalgCases(me).toMap
-        .getOrElse(label, fail(s"unknown linalg case [$label] in fixture — port it or regenerate"))
-    else if label.startsWith("ut.") then
-      uni.apps.MatParityGen.utilCases(m).toMap
-        .getOrElse(label, fail(s"unknown util case [$label] in fixture — port it or regenerate"))
-    else
-      uni.apps.MatParityGen.cases2d(m).toMap.get(label).map(bits).orElse(
-        uni.apps.MatParityGen.wordCases2d(m).toMap.get(label)
-      ).getOrElse(fail(s"unknown 2-D case [$label] in fixture — port it or regenerate"))
+  /** The 2-D half, likewise delegated to the generator. `math.*`, `la.*` and `sg.*` rows
+   *  are computed on the bounded-corpus matrix `me`; everything else on `m`. Each
+   *  family's map is computed once per shape and cached: the decomposition rows are
+   *  expensive (an SVD per lookup would put the suite past its timeout). */
+  private val cache2d = scala.collection.mutable.HashMap.empty[(String, String), Map[String, Long]]
+
+  def word2d(shape: String, m: Mat[Double], me: Mat[Double], label: String): Long =
+    val family = label.takeWhile(_ != '.')
+    val table = cache2d.getOrElseUpdate((shape, family), family match
+      case "math" => uni.apps.MatParityGen.mathCases(me).toMap
+      case "la"   => uni.apps.MatParityGen.linalgCases(me).toMap
+      case "ut"   => uni.apps.MatParityGen.utilCases(m).toMap
+      case "pd"   => uni.apps.MatParityGen.pandasCases(m).toMap
+      case "sg"   => uni.apps.MatParityGen.signalCases(me).toMap
+      case _      =>
+        uni.apps.MatParityGen.cases2d(m).toMap.map((k, v) => k -> bits(v)) ++
+          uni.apps.MatParityGen.wordCases2d(m).toMap
+    )
+    table.getOrElse(label, fail(s"unknown 2-D case [$label] in fixture — port it or regenerate"))
 
   /** The ordering cases over NaN / signed zeros / infinities. */
   def wordAdv(m: Mat[Double], label: String): Long =
@@ -105,7 +108,7 @@ class MatParitySuite extends munit.FunSuite:
         if isAdv(shape) then wordAdv(advMat(shape), label)
         else if is2d(shape) then
           val (r, c) = shapeOf(shape)
-          word2d(uni.apps.MatParityGen.mat2d(all, r, c), uni.apps.MatParityGen.mat2d(allExp, r, c), label)
+          word2d(shape, uni.apps.MatParityGen.mat2d(all, r, c), uni.apps.MatParityGen.mat2d(allExp, r, c), label)
         else
           val n  = shape.toInt
           val m  = MatD(java.util.Arrays.copyOfRange(all, 0, n))
@@ -132,6 +135,8 @@ class MatParitySuite extends munit.FunSuite:
     assert(linalg >= 180, s"only $linalg linalg rows; the decomposition family would go unchecked")
     val utils = rows.count((_, label, _) => label.startsWith("ut."))
     assert(utils >= 150, s"only $utils util rows; maximum/minimum ordering, round, scale and friends would go unchecked")
+    val pandas = rows.count((_, label, _) => label.startsWith("pd.") || label.startsWith("sg."))
+    assert(pandas >= 300, s"only $pandas pandas/signal rows; the ordering and statistics family would go unchecked")
     val maths = rows.count((_, label, _) => label.startsWith("math."))
     assert(maths >= 250, s"only $maths MatMathOps rows; the elementwise math formulas would go unchecked")
   }

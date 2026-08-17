@@ -50,6 +50,31 @@ ranks, sorted spectra — and the first group as raw bits: 236 `la.*` rows added
 `test-data/mat-parity/`, none moved. Singular matrices and non-positive-definite input
 are `Err(Error::SingularMatrix)` where Scala throws.
 
+**ADDED — Rust: `groupBy` / `merge` on named tables (Tier 3 phase (f) complete)**
+
+`upath::matresult`: `CsvTable<f64>::groupBy(key, op)`, `groupByOps(key, &[(col, op)])`
+and `merge(right, on, how)` with `AggOp` and `JoinType` — Scala's `matResultOps` on
+`MatResult`, same group order (first appearance), same join layout, same `_x`/`_y`
+suffixes and NaN gaps; aggregates go through `MatD` so they carry the JVM's association
+order. `MatResultOpsSuite` and the Rust tests run the same tables to the same layouts.
+
+**FIXED — `groupBy` with per-column ops emits the aggregated columns in header order**
+
+`MatResult.groupBy(keyCol, aggOps: Map[…])` used to lay the output out in the `Map`'s
+iteration order — insertion order up to four entries, hash order beyond — so a five-column
+aggregation's layout depended on the column names. It is now the header order, and an
+aggregated column that is not a header is rejected up front (`IllegalArgumentException`)
+instead of failing on lookup.
+
+**ADDED — Rust: pandas-style and signal ops (Tier 3 phase (d) complete)**
+
+`udata::pandas`: `idxmin idxmax sort argsort nlargest nsmallest between unique nunique
+valueCounts diff diffAxis shift pct_change percentile median percentileAxis medianAxis
+describe rolling(window).{mean sum min max std} histogram histogramEdges` — every
+ordering under `Ordering[Double]` semantics and every sort stable, as in Scala, so the
+results agree bit for bit. `udata::signal`: `polyval convolve correlate` (bit-identical)
+and `polyfit` (via `lstsq`). 469 `pd.*`/`sg.*` fixture rows added.
+
 **ADDED — Rust: the `Mat` utility remainder**
 
 `udata::matutil`: `maximum`/`minimum` (matrix and scalar; `Ordering[Double]` semantics, as

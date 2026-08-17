@@ -49,6 +49,11 @@ use uni::NumPyRng;
 use uni::udata::MatBool;
 use uni::udata::MatD;
 use uni::udata::linalg::NormOrd;
+use uni::udata::signal::ConvMode;
+use uni::udata::signal::convolve;
+use uni::udata::signal::correlate;
+use uni::udata::signal::polyfit;
+use uni::udata::signal::polyval;
 
 /// A fixture row's first field: a 1-D prefix length, a 2-D `<rows>x<cols>`, or an
 /// `adv/<name>/<orientation>` ordering case.
@@ -386,6 +391,83 @@ fn case_word_util(m: &MatD, label: &str) -> u64 {
     }
 }
 
+/// Exact non-negative integers carried as f64 (indices, counts) → the u64 words the
+/// Scala side hashes (`fnvWords(a.map(_.toLong))`).
+fn ints(xs: &[f64]) -> u64 {
+    #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "exact small integers")]
+    fnv_words(xs.iter().map(|&x| x as u64))
+}
+
+/// The pandas rows — `MatParityGen.pandasCases`, on the main corpus; raw bits and
+/// integer values.
+fn case_word_pandas(m: &MatD, label: &str) -> u64 {
+    let counts = |v: &[usize]| fnv_words(v.iter().map(|&c| c as u64));
+    match label {
+        "pd.sort" => fnv(&m.sort(None).toArray()),
+        "pd.sort0" => fnv(&m.sort(Some(0)).toArray()),
+        "pd.sort1" => fnv(&m.sort(Some(1)).toArray()),
+        "pd.argsort" => ints(&m.argsort(None).toArray()),
+        "pd.argsort0" => ints(&m.argsort(Some(0)).toArray()),
+        "pd.argsort1" => ints(&m.argsort(Some(1)).toArray()),
+        "pd.nlarge" => fnv(&m.nlargest(5).toArray()),
+        "pd.nsmall" => fnv(&m.nsmallest(5).toArray()),
+        "pd.between" => fnv_mask(&m.between(-1e5, 1e5)),
+        "pd.uniqv" => fnv(&m.unique().0),
+        "pd.uniqc" => counts(&m.unique().1),
+        "pd.nuniq" => m.nunique() as u64,
+        "pd.vcounts" => fnv_words(
+            m.valueCounts()
+                .into_iter()
+                .flat_map(|(v, c)| [v.to_bits(), c as u64]),
+        ),
+        "pd.idxmin0" => ints(&m.idxmin(0).toArray()),
+        "pd.idxmax1" => ints(&m.idxmax(1).toArray()),
+        "pd.shift0" => fnv(&m.shift(1, f64::NAN, 0).toArray()),
+        "pd.shift1" => fnv(&m.shift(-2, 0.0, 1).toArray()),
+        "pd.pct0" => fnv(&m.pct_change(0).toArray()),
+        "pd.pct1" => fnv(&m.pct_change(1).toArray()),
+        "pd.pctile" => m.percentile(37.5).to_bits(),
+        "pd.median" => m.median().to_bits(),
+        "pd.pctile1" => fnv(&m.percentileAxis(90.0, 1).toArray()),
+        "pd.median0" => fnv(&m.medianAxis(0).toArray()),
+        "pd.describe" => fnv(&m.describe().1.toArray()),
+        "pd.rmean" => fnv(&m.rolling(3).mean().toArray()),
+        "pd.rsum" => fnv(&m.rolling(3).sum().toArray()),
+        "pd.rmin" => fnv(&m.rolling(3).min().toArray()),
+        "pd.rmax" => fnv(&m.rolling(3).max().toArray()),
+        "pd.rstd" => fnv(&m.rolling(3).std().toArray()),
+        "pd.histc" => counts(&m.histogram(7, None).0),
+        "pd.histe" => fnv(&m.histogram(7, None).1),
+        "pd.histec" => counts(&m.histogramEdges(&[-1e6, -1.0, 0.0, 1.0, 1e6]).0),
+        "pd.diff" => fnv(&m.diff().toArray()),
+        "pd.diff0" => fnv(&m.diffAxis(0).toArray()),
+        "pd.diff1" => fnv(&m.diffAxis(1).toArray()),
+        other => panic!("unknown pandas case {other}"),
+    }
+}
+
+/// The signal rows — `MatParityGen.signalCases`, on the bounded corpus.
+fn case_word_signal(me: &MatD, label: &str) -> u64 {
+    let (rows, cols) = me.shape();
+    let ri = |n: usize| i64::try_from(n).expect("shape fits i64");
+    let a = me.slice(0..1, 0..ri(cols));
+    let b = me.slice(0..ri(rows), 0..1);
+    match label {
+        "sg.polyval" => fnv(&polyval(&a, &b).toArray()),
+        "sg.convf" => fnv(&convolve(&a, &b, ConvMode::Full).toArray()),
+        "sg.convs" => fnv(&convolve(&a, &b, ConvMode::Same).toArray()),
+        "sg.convv" => fnv(&convolve(&a, &b, ConvMode::Valid).toArray()),
+        "sg.corrf" => fnv(&correlate(&a, &b, ConvMode::Full).toArray()),
+        "sg.corrs" => fnv(&correlate(&a, &b, ConvMode::Same).toArray()),
+        "sg.corrv" => fnv(&correlate(&a, &b, ConvMode::Valid).toArray()),
+        "sg.polyfitq" => {
+            let last = me.slice(ri(rows - 1)..ri(rows), 0..ri(cols));
+            fnv_words(polyfit(&a, &last, 2).toArray().into_iter().map(quantize20))
+        }
+        other => panic!("unknown signal case {other}"),
+    }
+}
+
 /// Dispatch for a `<rows>x<cols>` row: `math.*` and `la.*` compute on the bounded corpus
 /// `me`, everything else on `m`.
 fn case_word_matrix(m: &MatD, me: &MatD, label: &str) -> u64 {
@@ -395,6 +477,10 @@ fn case_word_matrix(m: &MatD, me: &MatD, label: &str) -> u64 {
         case_word_linalg(me, label)
     } else if label.starts_with("ut.") {
         case_word_util(m, label)
+    } else if label.starts_with("pd.") {
+        case_word_pandas(m, label)
+    } else if label.starts_with("sg.") {
+        case_word_signal(me, label)
     } else {
         case_word_2d(m, label)
     }
@@ -657,6 +743,9 @@ fn mat_reductions_match_the_scala_reference_bit_for_bit() {
     let maths = count(&|s, l| matches!(s, Shape::Matrix(..)) && l.starts_with("math."));
     let linalg = count(&|s, l| matches!(s, Shape::Matrix(..)) && l.starts_with("la."));
     let utils = count(&|s, l| matches!(s, Shape::Matrix(..)) && l.starts_with("ut."));
+    let pandas = count(&|s, l| {
+        matches!(s, Shape::Matrix(..)) && (l.starts_with("pd.") || l.starts_with("sg."))
+    });
 
     // Guard against a fixture that silently shrinks to nothing meaningful. Each count is
     // asserted separately because the three groups pin different things, and losing any
@@ -694,6 +783,10 @@ fn mat_reductions_match_the_scala_reference_bit_for_bit() {
     assert!(
         utils >= 150,
         "only {utils} util rows; maximum/minimum ordering, round, scale and friends would go unchecked"
+    );
+    assert!(
+        pandas >= 300,
+        "only {pandas} pandas/signal rows; the ordering and statistics family would go unchecked"
     );
 }
 

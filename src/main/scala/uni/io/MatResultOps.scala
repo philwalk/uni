@@ -66,7 +66,12 @@ object matResultOps:
         groups.getOrElseUpdate(key, mutable.ArrayBuffer.empty) += r
         r += 1
 
-      val aggCols    = aggOps.keys.toVector
+      // Aggregated columns come out in HEADER order, not the Map's iteration order —
+      // which for more than four entries is hash order and would make the layout of
+      // the result depend on the column names.
+      aggOps.keys.foreach(c => require(mr.columnIndex.contains(c),
+        s"groupBy: aggregated column '$c' not found in ${mr.headers}"))
+      val aggCols    = mr.headers.filter(aggOps.contains)
       val outHeaders = keyCol +: aggCols.map(c => s"${c}_${aggOps(c).toString.toLowerCase}")
       val outWidth   = outHeaders.length
       val flatOut    = mutable.ArrayBuffer[Double]()

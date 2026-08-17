@@ -426,6 +426,82 @@ object MatParityGen:
       "ut.hsplit"  -> fnv(m.hsplit(Array(1))(1).toArray),
     ) else Vector.empty)
 
+  /**
+   * `MatPandasOps` on the main-corpus matrix `m`: ordering under `Ordering[Double]`
+   * (`sort argsort nlargest nsmallest unique valueCounts idxmin idxmax between`), the
+   * differences (`diff shift pct_change`), order statistics (`percentile median
+   * describe`), the rolling window and both `histogram` forms. Exact ports; raw bits.
+   * Integer results (indices, counts) go in as their values.
+   */
+  def pandasCases(m: Mat[Double]): Vector[(String, Long)] =
+    val (rows, cols) = (m.rows, m.cols)
+    val ints = (a: Array[Int]) => fnvWords(a.map(_.toLong))
+    val (uv, uc) = m.unique
+    val (hc, he) = m.histogram(7)
+    val edges = Seq(-1e6, -1.0, 0.0, 1.0, 1e6)
+    val (hce, _) = m.histogram(edges)
+    val r3 = m.rolling(3)
+    Vector(
+      "pd.sort"     -> fnv(m.sort().toArray),
+      "pd.sort0"    -> fnv(m.sort(0).toArray),
+      "pd.sort1"    -> fnv(m.sort(1).toArray),
+      "pd.argsort"  -> ints(m.argsort().toArray),
+      "pd.argsort0" -> ints(m.argsort(0).toArray),
+      "pd.argsort1" -> ints(m.argsort(1).toArray),
+      "pd.nlarge"   -> fnv(m.nlargest(5).toArray),
+      "pd.nsmall"   -> fnv(m.nsmallest(5).toArray),
+      "pd.between"  -> fnvMask(m.between(-1e5, 1e5)),
+      "pd.uniqv"    -> fnv(uv),
+      "pd.uniqc"    -> ints(uc),
+      "pd.nuniq"    -> m.nunique.toLong,
+      "pd.vcounts"  -> fnvWords(m.valueCounts.flatMap((v, c) => Array(bits(v), c.toLong))),
+      "pd.idxmin0"  -> ints(m.idxmin(0).toArray),
+      "pd.idxmax1"  -> ints(m.idxmax(1).toArray),
+      "pd.shift0"   -> fnv(m.shift(1, Double.NaN, 0).toArray),
+      "pd.shift1"   -> fnv(m.shift(-2, 0.0, 1).toArray),
+      "pd.pct0"     -> fnv(m.pct_change(0).toArray),
+      "pd.pct1"     -> fnv(m.pct_change(1).toArray),
+      "pd.pctile"   -> bits(m.percentile(37.5)),
+      "pd.median"   -> bits(m.median),
+      "pd.pctile1"  -> fnv(m.percentile(90.0, 1).toArray),
+      "pd.median0"  -> fnv(m.median(0).toArray),
+      "pd.describe" -> fnv(m.describe._2.toArray),
+      "pd.rmean"    -> fnv(r3.mean.toArray),
+      "pd.rsum"     -> fnv(r3.sum.toArray),
+      "pd.rmin"     -> fnv(r3.min.toArray),
+      "pd.rmax"     -> fnv(r3.max.toArray),
+      "pd.rstd"     -> fnv(r3.std.toArray),
+      "pd.histc"    -> ints(hc),
+      "pd.histe"    -> fnv(he),
+      "pd.histec"   -> ints(hce),
+    ) ++ (if m.size > 1 then Vector(
+      "pd.diff"     -> fnv(m.diff.toArray),
+    ) else Vector.empty) ++ (if rows > 1 then Vector(
+      "pd.diff0"    -> fnv(m.diff(0).toArray),
+    ) else Vector.empty) ++ (if cols > 1 then Vector(
+      "pd.diff1"    -> fnv(m.diff(1).toArray),
+    ) else Vector.empty)
+
+  /**
+   * `MatSignalOps` on the bounded corpus: `polyval`, `convolve`, `correlate` (all three
+   * modes) as raw bits; `polyfit` (through `lstsq`) on the 2^-20 grid.
+   */
+  def signalCases(me: Mat[Double]): Vector[(String, Long)] =
+    val (rows, cols) = (me.rows, me.cols)
+    val a = me.slice(0 until 1, 0 until cols)          // 1 x cols
+    val b = me.slice(0 until rows, 0 until 1)          // rows x 1
+    Vector(
+      "sg.polyval"  -> fnv(Mat.polyval(a, b).toArray),
+      "sg.convf"    -> fnv(Mat.convolve(a, b, "full").toArray),
+      "sg.convs"    -> fnv(Mat.convolve(a, b, "same").toArray),
+      "sg.convv"    -> fnv(Mat.convolve(a, b, "valid").toArray),
+      "sg.corrf"    -> fnv(Mat.correlate(a, b, "full").toArray),
+      "sg.corrs"    -> fnv(Mat.correlate(a, b, "same").toArray),
+      "sg.corrv"    -> fnv(Mat.correlate(a, b, "valid").toArray),
+    ) ++ (if cols > 2 then Vector(
+      "sg.polyfitq" -> fnvWords(Mat.polyfit(a, me.slice(rows - 1 until rows, 0 until cols), 2).toArray.map(quantize20)),
+    ) else Vector.empty)
+
   /** Whether a shape gets the tolerance-pinned decomposition rows: small, or so far from
    *  square that a uniform random matrix is well conditioned. Near-square matrices past
    *  64 have condition numbers that push a 1e-15 kernel difference across the 2^-20 grid
@@ -710,7 +786,11 @@ object MatParityGen:
         sb ++= f"${rows}x$cols $label $word%016x\n"
       for (label, word) <- utilCases(m) do
         sb ++= f"${rows}x$cols $label $word%016x\n"
-      println(s"  ${rows}x$cols: ${cases2d(m).length + wordCases2d(m).length + mathCases(me).length + linalgCases(me).length + utilCases(m).length} cases")
+      for (label, word) <- pandasCases(m) do
+        sb ++= f"${rows}x$cols $label $word%016x\n"
+      for (label, word) <- signalCases(me) do
+        sb ++= f"${rows}x$cols $label $word%016x\n"
+      println(s"  ${rows}x$cols: ${cases2d(m).length + wordCases2d(m).length + mathCases(me).length + linalgCases(me).length + utilCases(m).length + pandasCases(m).length + signalCases(me).length} cases")
 
     for (name, arr) <- adversarial do
       for (orient, m) <- advShapes(arr) do
