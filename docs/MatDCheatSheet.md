@@ -53,335 +53,384 @@ is faster.
 
 | box | Scala vs NumPy | Rust vs NumPy | Rust vs Scala |
 |---|---:|---:|---:|
-| Windows 11 | 3.15× | 3.55× | 1.21× |
-| Linux | 1.33× | 1.96× | 1.59× |
-| macOS | 1.33× | 2.05× | 1.67× |
+| Windows 11 | 3.15× | 3.79× | 1.30× |
+| Linux (WSL2, same box) | 1.80× | 1.66× | 0.99× |
+| macOS | 1.38× | 2.09× | 1.65× |
+
+**The pinned loop, both ports.** `matmulPure` on each side — bit-identical results, no BLAS:
+
+| box | Rust·pure vs Scala·pure (all rows) | … (matmul + 3PRF only) |
+|---|---:|---:|
+| Windows 11 | 1.15× | 1.84× |
+| Linux (WSL2, same box) | 1.02× | 3.00× |
+| macOS | 1.80× | 4.35× |
 
 **Configurations, as shipped.** Scala's default is BLAS (`os-best`); Rust's default build
 is the pinned loop, because its BLAS is a build-time feature a library cannot switch on for
 its users — so the Rust column here is the price of that packaging constraint, not a
 statement about the language:
 
-| box | Scala (default) vs NumPy | Rust (default) vs NumPy |
+| box | Scala (default: BLAS) vs NumPy | Rust (default: pure) vs NumPy |
 |---|---:|---:|
-| Windows 11 | 3.13× | 3.38× |
-| Linux | 1.26× | 1.93× |
-| macOS | 1.26× | 2.06× |
+| Windows 11 | 3.15× | 3.36× |
+| Linux (WSL2, same box) | 1.80× | 1.67× |
+| macOS | 1.38× | 2.10× |
 
 **`matmul` 512³, ms/call** — the row the BLAS choice hangs on:
 
 | box | NumPy | Scala·pure | Rust·pure | Scala·BLAS | Rust·BLAS |
 |---|---:|---:|---:|---:|---:|
-| Windows 11 | 0.79 | 1.45 | 1.70 | 0.91 | 0.87 |
-| Linux | 1.63 | 14.67 | 8.16 | 1.80 | 1.68 |
-| macOS | 2.14 | 6.17 | 2.49 | 1.05 | 2.12 |
+| Windows 11 | 0.78 | 1.42 | 1.68 | 0.67 | 0.81 |
+| Linux (WSL2, same box) | 0.48 | 1.59 | 1.43 | 0.66 | 0.49 |
+| macOS | 2.13 | 6.13 | 2.47 | 1.06 | 2.13 |
 
 Reading them together:
 
-- **Like for like, both ports are faster than NumPy on every box** — Scala 1.3–3.2×, Rust
-  2.0–3.6× — and Rust is 1.2–1.7× ahead of Scala. The 3PRF rows drive much of that.
-- **The pinned loop's cost is a function of core count; BLAS's is not.** Scala's pinned
-  matmul trails OpenBLAS by 1.8× on 24 threads, 2.9× on Apple Silicon and 8.8× on four
-  cores; Rust's by 2.1× / 1.2× / 4.9× (on aarch64 NEON is baseline, so LLVM vectorises the
-  microkernel fully; on x86-64 the crate targets SSE2). BLAS puts both languages level with
-  NumPy on every box — Scala·BLAS 0.9 / 1.05 / 1.8 ms against NumPy's 0.8 / 2.1 / 1.6 —
-  which is why it is the Scala default. On Linux that number is the OS OpenBLAS via netlib
-  (`os-best` → `system` there when `libopenblas0` is installed); bytedeco's bundled build
-  reads 6.2 ms on the same box.
-- **Reductions and the axis family beat NumPy everywhere**, 2–3× on the few-core boxes and
-  more here; the elementwise maps beat it only on the 24-thread box — on four cores or a
-  few big cores NumPy's SIMD wins 2–4×.
-- **Rust vs Scala inverts by platform on the elementwise maps**: Rust trails Scala 1.2–1.9×
-  on Windows (allocator and cache-residency behaviour on a 1000×1000 output) and leads it
-  2–5× on Linux and macOS.
+- **Like for like, both ports are faster than NumPy on every box** — Scala 1.4–3.2×, Rust
+  1.7–3.8× — and Rust and Scala are within 1.0–1.65× of each other. The 3PRF rows drive
+  much of that.
+- **The pinned loop trails OpenBLAS by 2–3× on this shape everywhere** (Scala·pure 1.8× /
+  3.3× / 2.9× behind NumPy; Rust·pure 2.1× / 3.0× / 1.2× — on aarch64 NEON is baseline, so
+  LLVM vectorises the microkernel fully; on x86-64 the crate targets SSE2). Scala·BLAS
+  closes it on every box — 0.67 / 0.66 / 1.06 ms against NumPy's 0.78 / 0.48 / 2.13 —
+  which is why BLAS is the Scala default. On Linux that number is the OS OpenBLAS via
+  netlib (`os-best` → `system` when `libopenblas0` is installed); bytedeco's bundled build
+  read 2.98 ms on the same box, *slower than the pinned loop* on 24 threads.
+- **BLAS buys Rust nothing on the 3PRF rows** (Rust·BLAS vs Rust·pure 0.92–0.99×): those
+  gemms are skinny and run one BLAS thread inside rayon-parallel windows, where the pinned
+  microkernel already wins. Scala·BLAS trails Scala·pure on the small 3PRF rows for the
+  same reason and wins on the large ones (1.2–1.8× over the 7 rows).
+- **NumPy's OpenBLAS is 1.6× faster on Linux than on Windows on the same silicon** (0.48 vs
+  0.78 ms), and Scala·pure / Rust·pure are within 10% across the two — the JVM and the
+  Rust binary carry their speed across the OS boundary; the BLAS build does not.
+- **Reductions beat NumPy everywhere** (2–3× on `sum`/`mean`, `argmax` 2–6×), Rust and Scala
+  alike; the elementwise maps are where the two ports diverge — Rust 3–6× ahead of Scala
+  on Linux and macOS, level or behind on Windows (allocator and cache-residency behaviour
+  on a 1000×1000 output).
 - `vectorize` is `np.vectorize`, a Python loop, against a compiled parallel map of a user
   closure; it has no Rust row and is the one row that would drag an arithmetic mean, which
   is why every summary is a geometric mean with the median beside it.
 
 ### Windows 11 (zx, 24 threads)
 
-#### Every row, every language, both matmul modes — ms/call (lower is better)
-| Operation | NumPy | Scala | Rust | Scala·BLAS | Rust·BLAS | Scala vs NumPy | Rust vs NumPy | Rust vs Scala |
+#### Executive summary
+Speedup = (second-named ms) ÷ (first-named ms), geometric mean over the rows named, with the
+median beside it; above 1× means the first-named is faster.
+
+**Languages, BLAS on all three — the like-for-like comparison.**
+NumPy is always OpenBLAS; here Scala and Rust use theirs too on the 7 rows BLAS affects (every
+other row is the same code in both modes). Rust's BLAS is a build-time feature, so its DEFAULT
+build is the pure loop — a packaging constraint, not a language result; this block is Rust's
+fair number.
+
+| comparison | geomean | median | rows |
+|---|---:|---:|---:|
+| Scala vs NumPy | 3.15× | 2.71× | 49 |
+| Rust vs NumPy | 3.79× | 2.75× | 48 |
+| Rust vs Scala | 1.30× | 1.21× | 48 |
+
+**The pinned loop, both ports — bit-identical results, no BLAS anywhere.**
+
+| comparison | geomean | median | rows |
+|---|---:|---:|---:|
+| Rust·pure vs Scala·pure | 1.15× | 1.13× | 48 |
+| Rust·pure vs Scala·pure (matmul + 3PRF only) | 1.84× | 1.33× | 7 |
+
+**Configurations, as shipped — what a user gets without flags.**
+Scala's default is BLAS (`os-best`); Rust's default build is the pure loop (`--features blas`
+opts in). Against NumPy's BLAS this is the price of each default, not a statement about the
+languages.
+
+| comparison | geomean | median | rows |
+|---|---:|---:|---:|
+| Scala (default: BLAS) vs NumPy | 3.15× | 2.71× | 49 |
+| Rust (default: pure) vs NumPy | 3.36× | 2.75× | 48 |
+| Rust (default: pure) vs Scala (default: BLAS) | 1.15× | 1.16× | 48 |
+
+**What BLAS buys each port, over the 7 rows it affects.**
+
+| comparison | geomean | median | rows |
+|---|---:|---:|---:|
+| Scala·BLAS vs Scala·pure | 0.99× | 1.17× | 7 |
+| Rust·BLAS vs Rust·pure | 2.28× | 2.06× | 7 |
+
+#### Every row, every configuration — ms/call (lower is better)
+The three ratio columns are like for like: BLAS on all three where BLAS applies.
+
+| Operation | NumPy | Scala·pure | Rust·pure | Scala·BLAS | Rust·BLAS | Scala vs NumPy | Rust vs NumPy | Rust vs Scala |
 |---|---:|---:|---:|---:|---:|---|---|---|
-| `randn` | 7.2599 ms | 6.7224 ms | 4.7556 ms | · | · | **1.1× faster** | **1.5× faster** | **1.4× faster** |
-| `matmul` | 0.7934 ms | 1.4540 ms | 1.7010 ms | 0.9093 ms | 0.8687 ms | **1.8× slower** | **2.1× slower** | **1.2× slower** |
-| `sigmoid` | 8.7257 ms | 1.0315 ms | 1.0895 ms | · | · | **8.5× faster** | **8.0× faster** | **1.1× slower** |
-| `relu` | 1.2247 ms | 0.5953 ms | 1.1183 ms | · | · | **2.1× faster** | **1.1× faster** | **1.9× slower** |
-| `vectorize` | 65.1074 ms | 0.5413 ms | — | · | · | **120.3× faster** | — | — |
-| `add` | 1.6954 ms | 0.6210 ms | 1.1362 ms | · | · | **2.7× faster** | **1.5× faster** | **1.8× slower** |
-| `mul` | 1.7007 ms | 0.6521 ms | 1.1357 ms | · | · | **2.6× faster** | **1.5× faster** | **1.7× slower** |
-| `abs` | 2.1698 ms | 0.9082 ms | 1.1104 ms | · | · | **2.4× faster** | **2.0× faster** | **1.2× slower** |
-| `exp` | 2.6553 ms | 0.6990 ms | 1.1570 ms | · | · | **3.8× faster** | **2.3× faster** | **1.7× slower** |
-| `log` | 3.0209 ms | 0.7143 ms | 1.1803 ms | · | · | **4.2× faster** | **2.6× faster** | **1.7× slower** |
-| `sqrt` | 2.2041 ms | 0.5910 ms | 1.0886 ms | · | · | **3.7× faster** | **2.0× faster** | **1.8× slower** |
-| `sum` | 0.1365 ms | 0.0322 ms | 0.0236 ms | · | · | **4.2× faster** | **5.8× faster** | **1.4× faster** |
-| `mean` | 0.1373 ms | 0.0314 ms | 0.0239 ms | · | · | **4.4× faster** | **5.7× faster** | **1.3× faster** |
-| `std` | 2.3917 ms | 0.4102 ms | 0.4307 ms | · | · | **5.8× faster** | **5.6× faster** | **1.0× slower** |
-| `min` | 0.1074 ms | 0.0570 ms | 0.0503 ms | · | · | **1.9× faster** | **2.1× faster** | **1.1× faster** |
-| `max` | 0.1074 ms | 0.0689 ms | 0.0427 ms | · | · | **1.6× faster** | **2.5× faster** | **1.6× faster** |
-| `argmax` | 0.1329 ms | 0.0702 ms | 0.0440 ms | · | · | **1.9× faster** | **3.0× faster** | **1.6× faster** |
-| `sum0` | 0.1081 ms | 0.0484 ms | 0.0370 ms | · | · | **2.2× faster** | **2.9× faster** | **1.3× faster** |
-| `sum1` | 0.1351 ms | 0.0626 ms | 0.0636 ms | · | · | **2.2× faster** | **2.1× faster** | **1.0× slower** |
-| `mean0` | 0.1105 ms | 0.0589 ms | 0.0425 ms | · | · | **1.9× faster** | **2.6× faster** | **1.4× faster** |
-| `min0` | 0.1386 ms | 0.0888 ms | 0.0682 ms | · | · | **1.6× faster** | **2.0× faster** | **1.3× faster** |
-| `max1` | 0.1285 ms | 0.0820 ms | 0.0441 ms | · | · | **1.6× faster** | **2.9× faster** | **1.9× faster** |
-| `std0` | 2.2429 ms | 0.1226 ms | 0.1067 ms | · | · | **18.3× faster** | **21.0× faster** | **1.1× faster** |
-| `cumsum` | 3.6831 ms | 0.7739 ms | 1.6406 ms | · | · | **4.8× faster** | **2.2× faster** | **2.1× slower** |
-| `cumsum1` | 3.6540 ms | 0.7752 ms | 1.3976 ms | · | · | **4.7× faster** | **2.6× faster** | **1.8× slower** |
-| `cummax0` | 4.9229 ms | 0.9386 ms | 1.5083 ms | · | · | **5.2× faster** | **3.3× faster** | **1.6× slower** |
-| `cummin1` | 3.9281 ms | 0.9980 ms | 1.3960 ms | · | · | **3.9× faster** | **2.8× faster** | **1.4× slower** |
+| `randn` | 7.2694 ms | 6.7274 ms | 4.7566 ms | · | · | **1.1× faster** | **1.5× faster** | **1.4× faster** |
+| `matmul` | 0.7797 ms | 1.4182 ms | 1.6769 ms | 0.6664 ms | 0.8122 ms | **1.2× faster** | **1.0× slower** | **1.2× slower** |
+| `sigmoid` | 8.7646 ms | 1.0545 ms | 1.1117 ms | · | · | **8.3× faster** | **7.9× faster** | **1.1× slower** |
+| `relu` | 1.2396 ms | 0.6166 ms | 1.1058 ms | · | · | **2.0× faster** | **1.1× faster** | **1.8× slower** |
+| `vectorize` | 65.1793 ms | 0.5438 ms | — | · | · | **119.9× faster** | — | — |
+| `add` | 1.7032 ms | 0.6213 ms | 1.1034 ms | · | · | **2.7× faster** | **1.5× faster** | **1.8× slower** |
+| `mul` | 1.7105 ms | 0.6329 ms | 1.0909 ms | · | · | **2.7× faster** | **1.6× faster** | **1.7× slower** |
+| `abs` | 2.1863 ms | 0.8902 ms | 0.9851 ms | · | · | **2.5× faster** | **2.2× faster** | **1.1× slower** |
+| `exp` | 2.6644 ms | 0.7008 ms | 1.0622 ms | · | · | **3.8× faster** | **2.5× faster** | **1.5× slower** |
+| `log` | 3.0246 ms | 0.7077 ms | 1.0769 ms | · | · | **4.3× faster** | **2.8× faster** | **1.5× slower** |
+| `sqrt` | 2.2079 ms | 0.5766 ms | 1.0901 ms | · | · | **3.8× faster** | **2.0× faster** | **1.9× slower** |
+| `sum` | 0.1379 ms | 0.0394 ms | 0.0254 ms | · | · | **3.5× faster** | **5.4× faster** | **1.6× faster** |
+| `mean` | 0.1401 ms | 0.0318 ms | 0.0214 ms | · | · | **4.4× faster** | **6.5× faster** | **1.5× faster** |
+| `std` | 2.3895 ms | 0.4093 ms | 0.4334 ms | · | · | **5.8× faster** | **5.5× faster** | **1.1× slower** |
+| `min` | 0.1030 ms | 0.0525 ms | 0.0515 ms | · | · | **2.0× faster** | **2.0× faster** | **1.0× faster** |
+| `max` | 0.1036 ms | 0.0690 ms | 0.0431 ms | · | · | **1.5× faster** | **2.4× faster** | **1.6× faster** |
+| `argmax` | 0.1336 ms | 0.0732 ms | 0.0373 ms | · | · | **1.8× faster** | **3.6× faster** | **2.0× faster** |
+| `sum0` | 0.1062 ms | 0.0495 ms | 0.0440 ms | · | · | **2.1× faster** | **2.4× faster** | **1.1× faster** |
+| `sum1` | 0.1366 ms | 0.0656 ms | 0.0693 ms | · | · | **2.1× faster** | **2.0× faster** | **1.1× slower** |
+| `mean0` | 0.1093 ms | 0.0576 ms | 0.0422 ms | · | · | **1.9× faster** | **2.6× faster** | **1.4× faster** |
+| `min0` | 0.1349 ms | 0.0837 ms | 0.0660 ms | · | · | **1.6× faster** | **2.0× faster** | **1.3× faster** |
+| `max1` | 0.1283 ms | 0.0704 ms | 0.0485 ms | · | · | **1.8× faster** | **2.6× faster** | **1.5× faster** |
+| `std0` | 2.2148 ms | 0.1263 ms | 0.1064 ms | · | · | **17.5× faster** | **20.8× faster** | **1.2× faster** |
+| `cumsum` | 3.6849 ms | 0.7812 ms | 1.4964 ms | · | · | **4.7× faster** | **2.5× faster** | **1.9× slower** |
+| `cumsum1` | 3.5789 ms | 0.7799 ms | 1.3604 ms | · | · | **4.6× faster** | **2.6× faster** | **1.7× slower** |
+| `cummax0` | 4.9481 ms | 0.9381 ms | 1.5113 ms | · | · | **5.3× faster** | **3.3× faster** | **1.6× slower** |
+| `cummin1` | 3.9267 ms | 0.9633 ms | 1.3928 ms | · | · | **4.1× faster** | **2.8× faster** | **1.4× slower** |
 | `transpose` | 0.0000 ms | 0.0001 ms | 0.0000 ms | · | · | — | — | — |
-| `sum@contig` | 0.1266 ms | 0.0440 ms | 0.0264 ms | · | · | **2.9× faster** | **4.8× faster** | **1.7× faster** |
-| `max@contig` | 0.1029 ms | 0.0675 ms | 0.0402 ms | · | · | **1.5× faster** | **2.6× faster** | **1.7× faster** |
-| `std@contig` | 2.3993 ms | 0.4107 ms | 0.4286 ms | · | · | **5.8× faster** | **5.6× faster** | **1.0× slower** |
-| `sum0@contig` | 0.1095 ms | 0.0468 ms | 0.0370 ms | · | · | **2.3× faster** | **3.0× faster** | **1.3× faster** |
-| `sum@transposed` | 0.1268 ms | 0.0631 ms | 0.0648 ms | · | · | **2.0× faster** | **2.0× faster** | **1.0× slower** |
-| `max@transposed` | 0.1080 ms | 0.0872 ms | 0.0741 ms | · | · | **1.2× faster** | **1.5× faster** | **1.2× faster** |
-| `std@transposed` | 2.3937 ms | 0.5038 ms | 0.5312 ms | · | · | **4.8× faster** | **4.5× faster** | **1.1× slower** |
-| `sum0@transposed` | 0.1350 ms | 0.1226 ms | 0.0321 ms | · | · | **1.1× faster** | **4.2× faster** | **3.8× faster** |
-| `sum@rowslice` | 0.1253 ms | 0.0347 ms | 0.0246 ms | · | · | **3.6× faster** | **5.1× faster** | **1.4× faster** |
-| `max@rowslice` | 0.1024 ms | 0.0746 ms | 0.0373 ms | · | · | **1.4× faster** | **2.7× faster** | **2.0× faster** |
-| `std@rowslice` | 1.9270 ms | 0.4129 ms | 0.4334 ms | · | · | **4.7× faster** | **4.4× faster** | **1.0× slower** |
-| `sum0@rowslice` | 0.1083 ms | 0.0492 ms | 0.0394 ms | · | · | **2.2× faster** | **2.7× faster** | **1.2× faster** |
-| `sum@bcast` | 0.1827 ms | 0.0299 ms | 0.0235 ms | · | · | **6.1× faster** | **7.8× faster** | **1.3× faster** |
-| `max@bcast` | 0.1734 ms | 0.0740 ms | 0.0408 ms | · | · | **2.3× faster** | **4.3× faster** | **1.8× faster** |
-| `std@bcast` | 2.4184 ms | 0.4033 ms | 0.4304 ms | · | · | **6.0× faster** | **5.6× faster** | **1.1× slower** |
-| `sum0@bcast` | 0.0793 ms | 0.0339 ms | 0.0295 ms | · | · | **2.3× faster** | **2.7× faster** | **1.1× faster** |
-| `3PRF IS Full (Small)` | 0.1200 ms | 0.0941 ms | 0.0140 ms | 0.0700 ms | 0.0140 ms | **1.3× faster** | **8.6× faster** | **6.7× faster** |
-| `3PRF OOS Rec (Small)` | 4.5000 ms | 1.3181 ms | 0.3900 ms | 1.1300 ms | 0.5300 ms | **3.4× faster** | **11.5× faster** | **3.4× faster** |
-| `3PRF OOS CV (Small)` | 8.2500 ms | 0.8497 ms | 1.0100 ms | 3.3700 ms | 0.8200 ms | **9.7× faster** | **8.2× faster** | **1.2× slower** |
-| `3PRF IS Full (Large)` | 0.3700 ms | 0.4816 ms | 0.0500 ms | 0.2900 ms | 0.0510 ms | **1.3× slower** | **7.4× faster** | **9.6× faster** |
-| `3PRF OOS Rec (Large)` | 21.3000 ms | 2.4303 ms | 3.9900 ms | 1.7100 ms | 1.4300 ms | **8.8× faster** | **5.3× faster** | **1.6× slower** |
-| `3PRF OOS CV (Large)` | 37.6000 ms | 6.1981 ms | 4.9500 ms | 6.5700 ms | 2.2200 ms | **6.1× faster** | **7.6× faster** | **1.3× faster** |
+| `sum@contig` | 0.1297 ms | 0.0316 ms | 0.0258 ms | · | · | **4.1× faster** | **5.0× faster** | **1.2× faster** |
+| `max@contig` | 0.1094 ms | 0.0674 ms | 0.0406 ms | · | · | **1.6× faster** | **2.7× faster** | **1.7× faster** |
+| `std@contig` | 2.3956 ms | 0.4132 ms | 0.4326 ms | · | · | **5.8× faster** | **5.5× faster** | **1.0× slower** |
+| `sum0@contig` | 0.1002 ms | 0.0450 ms | 0.0400 ms | · | · | **2.2× faster** | **2.5× faster** | **1.1× faster** |
+| `sum@transposed` | 0.1277 ms | 0.0665 ms | 0.0590 ms | · | · | **1.9× faster** | **2.2× faster** | **1.1× faster** |
+| `max@transposed` | 0.1034 ms | 0.0907 ms | 0.0739 ms | · | · | **1.1× faster** | **1.4× faster** | **1.2× faster** |
+| `std@transposed` | 2.3958 ms | 0.5080 ms | 0.5311 ms | · | · | **4.7× faster** | **4.5× faster** | **1.0× slower** |
+| `sum0@transposed` | 0.1375 ms | 0.1207 ms | 0.0312 ms | · | · | **1.1× faster** | **4.4× faster** | **3.9× faster** |
+| `sum@rowslice` | 0.1251 ms | 0.0376 ms | 0.0238 ms | · | · | **3.3× faster** | **5.3× faster** | **1.6× faster** |
+| `max@rowslice` | 0.1034 ms | 0.0695 ms | 0.0470 ms | · | · | **1.5× faster** | **2.2× faster** | **1.5× faster** |
+| `std@rowslice` | 1.9205 ms | 0.4127 ms | 0.4340 ms | · | · | **4.7× faster** | **4.4× faster** | **1.1× slower** |
+| `sum0@rowslice` | 0.0996 ms | 0.0483 ms | 0.0389 ms | · | · | **2.1× faster** | **2.6× faster** | **1.2× faster** |
+| `sum@bcast` | 0.1863 ms | 0.0286 ms | 0.0218 ms | · | · | **6.5× faster** | **8.5× faster** | **1.3× faster** |
+| `max@bcast` | 0.1738 ms | 0.0642 ms | 0.0400 ms | · | · | **2.7× faster** | **4.3× faster** | **1.6× faster** |
+| `std@bcast` | 2.3928 ms | 0.4016 ms | 0.4293 ms | · | · | **6.0× faster** | **5.6× faster** | **1.1× slower** |
+| `sum0@bcast` | 0.0512 ms | 0.0361 ms | 0.0293 ms | · | · | **1.4× faster** | **1.7× faster** | **1.2× faster** |
+| `3PRF IS Full (Small)` | 0.1200 ms | 0.1000 ms | 0.0140 ms | 0.0700 ms | 0.0140 ms | **1.7× faster** | **8.6× faster** | **5.0× faster** |
+| `3PRF OOS Rec (Small)` | 4.5700 ms | 0.8700 ms | 0.3900 ms | 1.1300 ms | 0.2500 ms | **4.0× faster** | **18.3× faster** | **4.5× faster** |
+| `3PRF OOS CV (Small)` | 8.2300 ms | 0.9800 ms | 0.9500 ms | 3.4000 ms | 0.2300 ms | **2.4× faster** | **35.8× faster** | **14.8× faster** |
+| `3PRF IS Full (Large)` | 0.3400 ms | 0.3100 ms | 0.0530 ms | 0.2500 ms | 0.0480 ms | **1.4× faster** | **7.1× faster** | **5.2× faster** |
+| `3PRF OOS Rec (Large)` | 22.0600 ms | 2.5200 ms | 3.7500 ms | 2.1600 ms | 0.7900 ms | **10.2× faster** | **27.9× faster** | **2.7× faster** |
+| `3PRF OOS CV (Large)` | 38.0300 ms | 6.3000 ms | 4.7500 ms | 6.4800 ms | 1.0400 ms | **5.9× faster** | **36.6× faster** | **6.2× faster** |
 
 - **NumPy**: Python 3.14.6 (openblas); OpenBLAS is NumPy's only mode
-- **Scala**: jvm=23 N=1000 MM=512 warmup=16 iters=60; 3PRF medians of 25 (IS Full 200) after warm-up
-- **Rust**: blas=off threads=unset N=1000 warmup=16 iters=60 (pure build; 3PRF rows with OPENBLAS_NUM_THREADS=1, see BenchAll)
-- **Scala·BLAS**: jvm=23, matmul via matmulBlas; 3PRF in a child JVM with -Duni.mat.blas=true (netlib/bundled OpenBLAS per platform)
+- **Scala·pure**: jvm=23 N=1000 MM=512 warmup=16 iters=60; matmul via matmulPure; 3PRF in a child JVM with -Duni.mat.blas=pure, medians of 25 (IS Full 200) after warm-up
+- **Rust·pure**: blas=off threads=unset N=1000 warmup=16 iters=60 (pure build; 3PRF rows with OPENBLAS_NUM_THREADS=1, see BenchAll)
+- **Scala·BLAS**: jvm=23, child JVMs with -Duni.mat.blas=os-best (backend per platform and mode; see the [uni] line above)
 - **Rust·BLAS**: blas=on threads=unset N=1000 warmup=16 iters=60 (blas build; 3PRF rows with OPENBLAS_NUM_THREADS=1, see BenchAll)
+- **BLAS backend** (`[uni]` lines from the run): BLAS via netlib: dev.ludovic.netlib.blas.JNIBLAS -> using it
 - BLAS columns carry a number only on the rows BLAS can change (`matmul`, 3PRF); `·` elsewhere.
 
-#### Summary
+### Linux (zx-wsl: WSL2 Ubuntu on the same 24-thread box)
 
+#### Executive summary
 Speedup = (second-named ms) ÷ (first-named ms), geometric mean over the rows named, with the
 median beside it; above 1× means the first-named is faster.
 
-**Languages, BLAS on all three — the like-for-like comparison.** NumPy is always OpenBLAS; here
-Scala and Rust use theirs too (on the 7 rows BLAS affects; every other row is the same code in
-both modes).
+**Languages, BLAS on all three — the like-for-like comparison.**
+NumPy is always OpenBLAS; here Scala and Rust use theirs too on the 7 rows BLAS affects (every
+other row is the same code in both modes). Rust's BLAS is a build-time feature, so its DEFAULT
+build is the pure loop — a packaging constraint, not a language result; this block is Rust's
+fair number.
 
 | comparison | geomean | median | rows |
 |---|---:|---:|---:|
-| Scala vs NumPy | 3.15× | 2.61× | 49 |
-| Rust vs NumPy | 3.55× | 2.92× | 48 |
-| Rust vs Scala | 1.21× | 1.19× | 48 |
+| Scala vs NumPy | 1.80× | 1.54× | 50 |
+| Rust vs NumPy | 1.66× | 1.13× | 48 |
+| Rust vs Scala | 0.99× | 0.70× | 48 |
 
-**Configurations, as shipped — uni's pinned matmul against NumPy's BLAS.** What a user gets
-without flags. On `matmul` and the 3PRF rows this compares a reproducible loop with a BLAS, so
-it is not a statement about the languages; it is the price of the default.
+**The pinned loop, both ports — bit-identical results, no BLAS anywhere.**
 
 | comparison | geomean | median | rows |
 |---|---:|---:|---:|
-| Scala (default) vs NumPy | 3.13× | 2.73× | 49 |
-| Rust (default) vs NumPy | 3.38× | 2.92× | 48 |
-| Rust (default) vs Scala (default) | 1.16× | 1.15× | 48 |
+| Rust·pure vs Scala·pure | 1.02× | 0.70× | 48 |
+| Rust·pure vs Scala·pure (matmul + 3PRF only) | 3.00× | 2.79× | 7 |
 
-**What the opt-in buys, over the 7 rows BLAS affects.**
+**Configurations, as shipped — what a user gets without flags.**
+Scala's default is BLAS (`os-best`); Rust's default build is the pure loop (`--features blas`
+opts in). Against NumPy's BLAS this is the price of each default, not a statement about the
+languages.
 
 | comparison | geomean | median | rows |
 |---|---:|---:|---:|
-| Scala·BLAS vs Scala | 1.05× | 1.34× | 7 |
-| Rust·BLAS vs Rust | 1.41× | 1.23× | 7 |
+| Scala (default: BLAS) vs NumPy | 1.80× | 1.54× | 50 |
+| Rust (default: pure) vs NumPy | 1.67× | 1.13× | 48 |
+| Rust (default: pure) vs Scala (default: BLAS) | 0.99× | 0.65× | 48 |
 
-### Linux (quadd, Ubuntu 24.04, i5-6500, 4 cores)
+**What BLAS buys each port, over the 7 rows it affects.**
 
-#### Every row, every language, both matmul modes — ms/call (lower is better)
-| Operation | NumPy | Scala | Rust | Scala·BLAS | Rust·BLAS | Scala vs NumPy | Rust vs NumPy | Rust vs Scala |
+| comparison | geomean | median | rows |
+|---|---:|---:|---:|
+| Scala·BLAS vs Scala·pure | 1.17× | 1.09× | 7 |
+| Rust·BLAS vs Rust·pure | 0.96× | 0.93× | 7 |
+
+#### Every row, every configuration — ms/call (lower is better)
+The three ratio columns are like for like: BLAS on all three where BLAS applies.
+
+| Operation | NumPy | Scala·pure | Rust·pure | Scala·BLAS | Rust·BLAS | Scala vs NumPy | Rust vs NumPy | Rust vs Scala |
 |---|---:|---:|---:|---:|---:|---|---|---|
-| `randn` | 12.2069 ms | 19.8068 ms | 6.6396 ms | · | · | **1.6× slower** | **1.8× faster** | **3.0× faster** |
-| `matmul` | 1.6341 ms | 14.6698 ms | 8.1587 ms | 6.1494 ms | 1.6796 ms | **9.0× slower** | **5.0× slower** | **1.8× faster** |
-| `sigmoid` | 10.6043 ms | 5.6994 ms | 3.3610 ms | · | · | **1.9× faster** | **3.2× faster** | **1.7× faster** |
-| `relu` | 0.7220 ms | 2.0867 ms | 0.6663 ms | · | · | **2.9× slower** | **1.1× faster** | **3.1× faster** |
-| `vectorize` | 197.0475 ms | 1.0879 ms | — | · | · | **181.1× faster** | — | — |
-| `add` | 0.9952 ms | 2.2373 ms | 1.0151 ms | · | · | **2.2× slower** | **1.0× slower** | **2.2× faster** |
-| `mul` | 0.9996 ms | 2.8676 ms | 0.9974 ms | · | · | **2.9× slower** | **1.0× faster** | **2.9× faster** |
-| `abs` | 0.7238 ms | 4.0930 ms | 0.6615 ms | · | · | **5.7× slower** | **1.1× faster** | **6.2× faster** |
-| `exp` | 6.2330 ms | 4.3121 ms | 1.5982 ms | · | · | **1.4× faster** | **3.9× faster** | **2.7× faster** |
-| `log` | 6.1155 ms | 4.5138 ms | 1.6845 ms | · | · | **1.4× faster** | **3.6× faster** | **2.7× faster** |
-| `sqrt` | 0.9172 ms | 2.2376 ms | 0.6646 ms | · | · | **2.4× slower** | **1.4× faster** | **3.4× faster** |
-| `sum` | 0.3494 ms | 0.1738 ms | 0.1530 ms | · | · | **2.0× faster** | **2.3× faster** | **1.1× faster** |
-| `mean` | 0.3527 ms | 0.1622 ms | 0.1500 ms | · | · | **2.2× faster** | **2.4× faster** | **1.1× faster** |
-| `std` | 1.8893 ms | 1.5485 ms | 1.5111 ms | · | · | **1.2× faster** | **1.3× faster** | **1.0× faster** |
-| `min` | 0.3124 ms | 0.2541 ms | 0.2773 ms | · | · | **1.2× faster** | **1.1× faster** | **1.1× slower** |
-| `max` | 0.3174 ms | 0.3965 ms | 0.2052 ms | · | · | **1.2× slower** | **1.5× faster** | **1.9× faster** |
-| `argmax` | 0.4484 ms | 0.3242 ms | 0.2033 ms | · | · | **1.4× faster** | **2.2× faster** | **1.6× faster** |
-| `sum0` | 0.3295 ms | 0.3221 ms | 0.3309 ms | · | · | **1.0× faster** | **1.0× slower** | **1.0× slower** |
-| `sum1` | 0.3648 ms | 0.3332 ms | 0.3252 ms | · | · | **1.1× faster** | **1.1× faster** | **1.0× faster** |
-| `mean0` | 0.3428 ms | 0.3879 ms | 0.3255 ms | · | · | **1.1× slower** | **1.1× faster** | **1.2× faster** |
-| `min0` | 0.4396 ms | 0.5915 ms | 0.4908 ms | · | · | **1.3× slower** | **1.1× slower** | **1.2× faster** |
-| `max1` | 0.3701 ms | 0.3014 ms | 0.2167 ms | · | · | **1.2× faster** | **1.7× faster** | **1.4× faster** |
-| `std0` | 2.0504 ms | 0.8375 ms | 0.7922 ms | · | · | **2.4× faster** | **2.6× faster** | **1.1× faster** |
-| `cumsum` | 2.5429 ms | 1.5377 ms | 2.5978 ms | · | · | **1.7× faster** | **1.0× slower** | **1.7× slower** |
-| `cumsum1` | 2.5484 ms | 1.5180 ms | 1.5127 ms | · | · | **1.7× faster** | **1.7× faster** | **1.0× faster** |
-| `cummax0` | 4.1188 ms | 1.7761 ms | 1.7833 ms | · | · | **2.3× faster** | **2.3× faster** | **1.0× slower** |
-| `cummin1` | 3.3724 ms | 1.8137 ms | 1.5993 ms | · | · | **1.9× faster** | **2.1× faster** | **1.1× faster** |
-| `transpose` | 0.0002 ms | 0.0005 ms | 0.0000 ms | · | · | **2.3× slower** | — | — |
-| `sum@contig` | 0.3483 ms | 0.1602 ms | 0.1523 ms | · | · | **2.2× faster** | **2.3× faster** | **1.1× faster** |
-| `max@contig` | 0.3101 ms | 0.3047 ms | 0.2057 ms | · | · | **1.0× faster** | **1.5× faster** | **1.5× faster** |
-| `std@contig` | 1.9018 ms | 1.5497 ms | 1.5098 ms | · | · | **1.2× faster** | **1.3× faster** | **1.0× faster** |
-| `sum0@contig` | 0.3308 ms | 0.3392 ms | 0.3384 ms | · | · | **1.0× slower** | **1.0× slower** | **1.0× faster** |
-| `sum@transposed` | 0.3491 ms | 0.4309 ms | 0.4050 ms | · | · | **1.2× slower** | **1.2× slower** | **1.1× faster** |
-| `max@transposed` | 0.3139 ms | 0.5211 ms | 0.4482 ms | · | · | **1.7× slower** | **1.4× slower** | **1.2× faster** |
-| `std@transposed` | 1.8866 ms | 2.2865 ms | 2.2249 ms | · | · | **1.2× slower** | **1.2× slower** | **1.0× faster** |
-| `sum0@transposed` | 0.3646 ms | 0.4312 ms | 0.1758 ms | · | · | **1.2× slower** | **2.1× faster** | **2.5× faster** |
-| `sum@rowslice` | 0.3451 ms | 0.1645 ms | 0.1787 ms | · | · | **2.1× faster** | **1.9× faster** | **1.1× slower** |
-| `max@rowslice` | 0.3151 ms | 0.2833 ms | 0.2071 ms | · | · | **1.1× faster** | **1.5× faster** | **1.4× faster** |
-| `std@rowslice` | 1.8727 ms | 1.5502 ms | 1.5129 ms | · | · | **1.2× faster** | **1.2× faster** | **1.0× faster** |
-| `sum0@rowslice` | 0.3292 ms | 0.3173 ms | 0.3290 ms | · | · | **1.0× faster** | **1.0× faster** | **1.0× slower** |
-| `sum@bcast` | 0.3770 ms | 0.0786 ms | 0.1339 ms | · | · | **4.8× faster** | **2.8× faster** | **1.7× slower** |
-| `max@bcast` | 0.2831 ms | 0.2182 ms | 0.1665 ms | · | · | **1.3× faster** | **1.7× faster** | **1.3× faster** |
-| `std@bcast` | 1.6272 ms | 1.3104 ms | 1.3643 ms | · | · | **1.2× faster** | **1.2× faster** | **1.0× slower** |
-| `sum0@bcast` | 0.1541 ms | 0.1137 ms | 0.1503 ms | · | · | **1.4× faster** | **1.0× faster** | **1.3× slower** |
-| `3PRF IS Full (Small)` | 0.4700 ms | 0.2239 ms | 0.0400 ms | 0.2100 ms | 0.0450 ms | **2.1× faster** | **11.7× faster** | **5.6× faster** |
-| `3PRF OOS Rec (Small)` | 15.9900 ms | 4.4414 ms | 0.5100 ms | 5.7300 ms | 0.6600 ms | **3.6× faster** | **31.4× faster** | **8.7× faster** |
-| `3PRF OOS CV (Small)` | 29.3400 ms | 8.4297 ms | 0.7800 ms | 5.4500 ms | 1.0600 ms | **3.5× faster** | **37.6× faster** | **10.8× faster** |
-| `3PRF IS Full (Large)` | 0.9800 ms | 1.4237 ms | 0.1350 ms | 0.5000 ms | 0.1520 ms | **1.5× slower** | **7.3× faster** | **10.5× faster** |
-| `3PRF OOS Rec (Large)` | 67.4000 ms | 16.1363 ms | 4.8200 ms | 10.6900 ms | 5.3300 ms | **4.2× faster** | **14.0× faster** | **3.3× faster** |
-| `3PRF OOS CV (Large)` | 120.6200 ms | 34.8462 ms | 7.4800 ms | 26.7400 ms | 8.4200 ms | **3.5× faster** | **16.1× faster** | **4.7× faster** |
+| `randn` | 6.3627 ms | 6.8589 ms | 4.1782 ms | · | · | **1.1× slower** | **1.5× faster** | **1.6× faster** |
+| `matmul` | 0.4798 ms | 1.5894 ms | 1.4314 ms | 0.6589 ms | 0.4882 ms | **1.4× slower** | **1.0× slower** | **1.3× faster** |
+| `sigmoid` | 3.4119 ms | 1.1066 ms | 0.3938 ms | · | · | **3.1× faster** | **8.7× faster** | **2.8× faster** |
+| `relu` | 0.3000 ms | 0.6796 ms | 0.0923 ms | · | · | **2.3× slower** | **3.3× faster** | **7.4× faster** |
+| `vectorize` | 68.0414 ms | 0.5580 ms | — | · | · | **121.9× faster** | — | — |
+| `add` | 0.4429 ms | 0.6690 ms | 0.1042 ms | · | · | **1.5× slower** | **4.3× faster** | **6.4× faster** |
+| `mul` | 0.4377 ms | 0.6904 ms | 0.1035 ms | · | · | **1.6× slower** | **4.2× faster** | **6.7× faster** |
+| `abs` | 0.2614 ms | 0.9744 ms | 0.0929 ms | · | · | **3.7× slower** | **2.8× faster** | **10.5× faster** |
+| `exp` | 1.6874 ms | 0.7499 ms | 0.2002 ms | · | · | **2.3× faster** | **8.4× faster** | **3.7× faster** |
+| `log` | 1.9246 ms | 0.7715 ms | 0.1981 ms | · | · | **2.5× faster** | **9.7× faster** | **3.9× faster** |
+| `sqrt` | 0.5576 ms | 0.6369 ms | 0.1129 ms | · | · | **1.1× slower** | **4.9× faster** | **5.6× faster** |
+| `sum` | 0.1360 ms | 0.0513 ms | 0.1217 ms | · | · | **2.6× faster** | **1.1× faster** | **2.4× slower** |
+| `mean` | 0.1371 ms | 0.0470 ms | 0.1030 ms | · | · | **2.9× faster** | **1.3× faster** | **2.2× slower** |
+| `std` | 0.7056 ms | 0.4325 ms | 0.5081 ms | · | · | **1.6× faster** | **1.4× faster** | **1.2× slower** |
+| `min` | 0.1094 ms | 0.0846 ms | 0.1350 ms | · | · | **1.3× faster** | **1.2× slower** | **1.6× slower** |
+| `max` | 0.1088 ms | 0.0630 ms | 0.1480 ms | · | · | **1.7× faster** | **1.4× slower** | **2.4× slower** |
+| `argmax` | 0.1368 ms | 0.0729 ms | 0.1611 ms | · | · | **1.9× faster** | **1.2× slower** | **2.2× slower** |
+| `sum0` | 0.1188 ms | 0.0799 ms | 0.1851 ms | · | · | **1.5× faster** | **1.6× slower** | **2.3× slower** |
+| `sum1` | 0.1312 ms | 0.0997 ms | 0.1798 ms | · | · | **1.3× faster** | **1.4× slower** | **1.8× slower** |
+| `mean0` | 0.1221 ms | 0.0904 ms | 0.1887 ms | · | · | **1.3× faster** | **1.5× slower** | **2.1× slower** |
+| `min0` | 0.1436 ms | 0.1491 ms | 0.2281 ms | · | · | **1.0× slower** | **1.6× slower** | **1.5× slower** |
+| `max1` | 0.1231 ms | 0.0952 ms | 0.1697 ms | · | · | **1.3× faster** | **1.4× slower** | **1.8× slower** |
+| `std0` | 0.9413 ms | 0.2068 ms | 0.4189 ms | · | · | **4.6× faster** | **2.2× faster** | **2.0× slower** |
+| `cumsum` | 1.8716 ms | 0.7825 ms | 1.8640 ms | · | · | **2.4× faster** | **1.0× faster** | **2.4× slower** |
+| `cumsum1` | 1.7924 ms | 0.7845 ms | 0.5650 ms | · | · | **2.3× faster** | **3.2× faster** | **1.4× faster** |
+| `cummax0` | 3.0926 ms | 0.9568 ms | 0.7823 ms | · | · | **3.2× faster** | **4.0× faster** | **1.2× faster** |
+| `cummin1` | 3.0221 ms | 1.0050 ms | 0.7184 ms | · | · | **3.0× faster** | **4.2× faster** | **1.4× faster** |
+| `transpose` | 0.0001 ms | 0.0001 ms | 0.0000 ms | · | · | **1.5× slower** | — | — |
+| `sum@contig` | 0.1258 ms | 0.0551 ms | 0.2323 ms | · | · | **2.3× faster** | **1.8× slower** | **4.2× slower** |
+| `max@contig` | 0.1074 ms | 0.0696 ms | 0.2356 ms | · | · | **1.5× faster** | **2.2× slower** | **3.4× slower** |
+| `std@contig` | 0.6691 ms | 0.4378 ms | 0.5874 ms | · | · | **1.5× faster** | **1.1× faster** | **1.3× slower** |
+| `sum0@contig` | 0.1171 ms | 0.0903 ms | 0.1756 ms | · | · | **1.3× faster** | **1.5× slower** | **1.9× slower** |
+| `sum@transposed` | 0.1255 ms | 0.1066 ms | 0.2352 ms | · | · | **1.2× faster** | **1.9× slower** | **2.2× slower** |
+| `max@transposed` | 0.1045 ms | 0.1458 ms | 0.2234 ms | · | · | **1.4× slower** | **2.1× slower** | **1.5× slower** |
+| `std@transposed` | 0.6700 ms | 0.5400 ms | 0.7313 ms | · | · | **1.2× faster** | **1.1× slower** | **1.4× slower** |
+| `sum0@transposed` | 0.1319 ms | 0.1119 ms | 0.1997 ms | · | · | **1.2× faster** | **1.5× slower** | **1.8× slower** |
+| `sum@rowslice` | 0.1262 ms | 0.0460 ms | 0.2026 ms | · | · | **2.7× faster** | **1.6× slower** | **4.4× slower** |
+| `max@rowslice` | 0.1078 ms | 0.0699 ms | 0.1991 ms | · | · | **1.5× faster** | **1.8× slower** | **2.8× slower** |
+| `std@rowslice` | 0.6703 ms | 0.4410 ms | 0.5685 ms | · | · | **1.5× faster** | **1.2× faster** | **1.3× slower** |
+| `sum0@rowslice` | 0.1193 ms | 0.0881 ms | 0.1535 ms | · | · | **1.4× faster** | **1.3× slower** | **1.7× slower** |
+| `sum@bcast` | 0.1814 ms | 0.0409 ms | 0.1736 ms | · | · | **4.4× faster** | **1.0× faster** | **4.2× slower** |
+| `max@bcast` | 0.1682 ms | 0.0660 ms | 0.2135 ms | · | · | **2.6× faster** | **1.3× slower** | **3.2× slower** |
+| `std@bcast` | 0.7389 ms | 0.4254 ms | 0.5449 ms | · | · | **1.7× faster** | **1.4× faster** | **1.3× slower** |
+| `sum0@bcast` | 0.0617 ms | 0.0465 ms | 0.1675 ms | · | · | **1.3× faster** | **2.7× slower** | **3.6× slower** |
+| `3PRF IS Full (Small)` | 0.1200 ms | 0.1600 ms | 0.0130 ms | 0.0800 ms | 0.0140 ms | **1.5× faster** | **8.6× faster** | **5.7× faster** |
+| `3PRF OOS Rec (Small)` | 4.6100 ms | 0.7800 ms | 0.6000 ms | 1.1200 ms | 0.6400 ms | **4.1× faster** | **7.2× faster** | **1.8× faster** |
+| `3PRF OOS CV (Small)` | 8.4200 ms | 0.9400 ms | 0.6000 ms | 1.5200 ms | 0.8700 ms | **5.5× faster** | **9.7× faster** | **1.7× faster** |
+| `3PRF IS Full (Large)` | 0.2500 ms | 0.3500 ms | 0.0510 ms | 0.3200 ms | 0.0510 ms | **1.3× slower** | **4.9× faster** | **6.3× faster** |
+| `3PRF OOS Rec (Large)` | 21.4700 ms | 2.9800 ms | 1.0700 ms | 2.1500 ms | 1.5100 ms | **10.0× faster** | **14.2× faster** | **1.4× faster** |
+| `3PRF OOS CV (Large)` | 37.0900 ms | 5.7000 ms | 1.3800 ms | 5.9900 ms | 2.2200 ms | **6.2× faster** | **16.7× faster** | **2.7× faster** |
 
-- **NumPy**: Python 3.12.3 (blas); OpenBLAS is NumPy's only mode
-- **Scala**: jvm=17.0.19 N=1000 MM=512 warmup=16 iters=60; 3PRF medians of 25 (IS Full 200) after warm-up
-- **Rust**: blas=off threads=unset N=1000 warmup=16 iters=60 (pure build; 3PRF rows with OPENBLAS_NUM_THREADS=1, see BenchAll)
-- **Scala·BLAS**: jvm=17.0.19, matmul via matmulBlas; 3PRF in a child JVM with -Duni.mat.blas=true (netlib/bundled OpenBLAS per platform)
+- **NumPy**: Python 3.14.4 (blas); OpenBLAS is NumPy's only mode
+- **Scala·pure**: jvm=21.0.11 N=1000 MM=512 warmup=16 iters=60; matmul via matmulPure; 3PRF in a child JVM with -Duni.mat.blas=pure, medians of 25 (IS Full 200) after warm-up
+- **Rust·pure**: blas=off threads=unset N=1000 warmup=16 iters=60 (pure build; 3PRF rows with OPENBLAS_NUM_THREADS=1, see BenchAll)
+- **Scala·BLAS**: jvm=21.0.11, child JVMs with -Duni.mat.blas=os-best (backend per platform and mode; see the [uni] line above)
 - **Rust·BLAS**: blas=on threads=unset N=1000 warmup=16 iters=60 (blas build; 3PRF rows with OPENBLAS_NUM_THREADS=1, see BenchAll)
+- **BLAS backend** (`[uni]` lines from the run): os-best on Linux: netlib is dev.ludovic.netlib.blas.JNIBLAS -> system; BLAS via netlib: dev.ludovic.netlib.blas.JNIBLAS -> using it; LAPACK via dev.ludovic.netlib.lapack.JNILAPACK
 - BLAS columns carry a number only on the rows BLAS can change (`matmul`, 3PRF); `·` elsewhere.
-
-#### Summary
-
-Speedup = (second-named ms) ÷ (first-named ms), geometric mean over the rows named, with the
-median beside it; above 1× means the first-named is faster.
-
-**Languages, BLAS on all three — the like-for-like comparison.** NumPy is always OpenBLAS; here
-Scala and Rust use theirs too (on the 7 rows BLAS affects; every other row is the same code in
-both modes).
-
-| comparison | geomean | median | rows |
-|---|---:|---:|---:|
-| Scala vs NumPy | 1.33× | 1.23× | 50 |
-| Rust vs NumPy | 1.96× | 1.53× | 48 |
-| Rust vs Scala | 1.59× | 1.20× | 48 |
-
-**Configurations, as shipped — uni's pinned matmul against NumPy's BLAS.** What a user gets
-without flags. On `matmul` and the 3PRF rows this compares a reproducible loop with a BLAS, so
-it is not a statement about the languages; it is the price of the default.
-
-| comparison | geomean | median | rows |
-|---|---:|---:|---:|
-| Scala (default) vs NumPy | 1.26× | 1.23× | 50 |
-| Rust (default) vs NumPy | 1.93× | 1.53× | 48 |
-| Rust (default) vs Scala (default) | 1.66× | 1.20× | 48 |
-
-**What the opt-in buys, over the 7 rows BLAS affects.**
-
-| comparison | geomean | median | rows |
-|---|---:|---:|---:|
-| Scala·BLAS vs Scala | 1.50× | 1.51× | 7 |
-| Rust·BLAS vs Rust | 1.08× | 0.89× | 7 |
 
 ### macOS (suemac, Apple Silicon)
 
-#### Every row, every language, both matmul modes — ms/call (lower is better)
-| Operation | NumPy | Scala | Rust | Scala·BLAS | Rust·BLAS | Scala vs NumPy | Rust vs NumPy | Rust vs Scala |
-|---|---:|---:|---:|---:|---:|---|---|---|
-| `randn` | 4.9320 ms | 3.4183 ms | 2.3916 ms | · | · | **1.4× faster** | **2.1× faster** | **1.4× faster** |
-| `matmul` | 2.1425 ms | 6.1667 ms | 2.4863 ms | 1.0511 ms | 2.1244 ms | **2.9× slower** | **1.2× slower** | **2.5× faster** |
-| `sigmoid` | 6.5291 ms | 4.0161 ms | 1.3132 ms | · | · | **1.6× faster** | **5.0× faster** | **3.1× faster** |
-| `relu` | 0.3747 ms | 0.8348 ms | 0.1758 ms | · | · | **2.2× slower** | **2.1× faster** | **4.7× faster** |
-| `vectorize` | 113.4128 ms | 0.4779 ms | — | · | · | **237.3× faster** | — | — |
-| `add` | 0.3320 ms | 1.2145 ms | 0.2747 ms | · | · | **3.7× slower** | **1.2× faster** | **4.4× faster** |
-| `mul` | 0.3299 ms | 0.9953 ms | 0.2847 ms | · | · | **3.0× slower** | **1.2× faster** | **3.5× faster** |
-| `abs` | 0.1812 ms | 1.0308 ms | 0.1718 ms | · | · | **5.7× slower** | **1.1× faster** | **6.0× faster** |
-| `exp` | 5.9350 ms | 3.2204 ms | 1.1240 ms | · | · | **1.8× faster** | **5.3× faster** | **2.9× faster** |
-| `log` | 5.2520 ms | 2.7173 ms | 1.0175 ms | · | · | **1.9× faster** | **5.2× faster** | **2.7× faster** |
-| `sqrt` | 0.3203 ms | 1.0996 ms | 0.1746 ms | · | · | **3.4× slower** | **1.8× faster** | **6.3× faster** |
-| `sum` | 0.1868 ms | 0.0764 ms | 0.0617 ms | · | · | **2.4× faster** | **3.0× faster** | **1.2× faster** |
-| `mean` | 0.1884 ms | 0.0676 ms | 0.0596 ms | · | · | **2.8× faster** | **3.2× faster** | **1.1× faster** |
-| `std` | 0.7145 ms | 1.0567 ms | 1.0682 ms | · | · | **1.5× slower** | **1.5× slower** | **1.0× slower** |
-| `min` | 0.1066 ms | 0.1754 ms | 0.1538 ms | · | · | **1.6× slower** | **1.4× slower** | **1.1× faster** |
-| `max` | 0.1067 ms | 0.2277 ms | 0.1101 ms | · | · | **2.1× slower** | **1.0× slower** | **2.1× faster** |
-| `argmax` | 0.6871 ms | 0.2330 ms | 0.1092 ms | · | · | **2.9× faster** | **6.3× faster** | **2.1× faster** |
-| `sum0` | 0.1690 ms | 0.1304 ms | 0.1197 ms | · | · | **1.3× faster** | **1.4× faster** | **1.1× faster** |
-| `sum1` | 0.1910 ms | 0.2076 ms | 0.1963 ms | · | · | **1.1× slower** | **1.0× slower** | **1.1× faster** |
-| `mean0` | 0.1705 ms | 0.1373 ms | 0.1242 ms | · | · | **1.2× faster** | **1.4× faster** | **1.1× faster** |
-| `min0` | 0.1815 ms | 0.2041 ms | 0.1885 ms | · | · | **1.1× slower** | **1.0× slower** | **1.1× faster** |
-| `max1` | 0.1179 ms | 0.2060 ms | 0.1352 ms | · | · | **1.7× slower** | **1.1× slower** | **1.5× faster** |
-| `std0` | 0.8460 ms | 0.3036 ms | 0.3118 ms | · | · | **2.8× faster** | **2.7× faster** | **1.0× slower** |
-| `cumsum` | 3.4520 ms | 1.0944 ms | 1.0050 ms | · | · | **3.2× faster** | **3.4× faster** | **1.1× faster** |
-| `cumsum1` | 3.4985 ms | 1.1719 ms | 0.9996 ms | · | · | **3.0× faster** | **3.5× faster** | **1.2× faster** |
-| `cummax0` | 3.5204 ms | 1.3195 ms | 0.8555 ms | · | · | **2.7× faster** | **4.1× faster** | **1.5× faster** |
-| `cummin1` | 3.4728 ms | 1.3759 ms | 1.0815 ms | · | · | **2.5× faster** | **3.2× faster** | **1.3× faster** |
-| `transpose` | 0.0001 ms | 0.0003 ms | 0.0000 ms | · | · | **2.9× slower** | — | — |
-| `sum@contig` | 0.1898 ms | 0.0652 ms | 0.0578 ms | · | · | **2.9× faster** | **3.3× faster** | **1.1× faster** |
-| `max@contig` | 0.1067 ms | 0.2245 ms | 0.1117 ms | · | · | **2.1× slower** | **1.0× slower** | **2.0× faster** |
-| `std@contig` | 0.7149 ms | 1.0593 ms | 1.0653 ms | · | · | **1.5× slower** | **1.5× slower** | **1.0× slower** |
-| `sum0@contig` | 0.1690 ms | 0.1292 ms | 0.1180 ms | · | · | **1.3× faster** | **1.4× faster** | **1.1× faster** |
-| `sum@transposed` | 0.1868 ms | 0.1310 ms | 0.0908 ms | · | · | **1.4× faster** | **2.1× faster** | **1.4× faster** |
-| `max@transposed` | 0.1066 ms | 0.2975 ms | 0.1227 ms | · | · | **2.8× slower** | **1.2× slower** | **2.4× faster** |
-| `std@transposed` | 0.7145 ms | 1.1203 ms | 1.1322 ms | · | · | **1.6× slower** | **1.6× slower** | **1.0× slower** |
-| `sum0@transposed` | 0.1910 ms | 0.1538 ms | 0.0848 ms | · | · | **1.2× faster** | **2.3× faster** | **1.8× faster** |
-| `sum@rowslice` | 0.1866 ms | 0.0656 ms | 0.0682 ms | · | · | **2.8× faster** | **2.7× faster** | **1.0× slower** |
-| `max@rowslice` | 0.1067 ms | 0.2181 ms | 0.1100 ms | · | · | **2.0× slower** | **1.0× slower** | **2.0× faster** |
-| `std@rowslice` | 0.7137 ms | 1.0469 ms | 1.0907 ms | · | · | **1.5× slower** | **1.5× slower** | **1.0× slower** |
-| `sum0@rowslice` | 0.1688 ms | 0.1160 ms | 0.0990 ms | · | · | **1.5× faster** | **1.7× faster** | **1.2× faster** |
-| `sum@bcast` | 0.2682 ms | 0.0453 ms | 0.0764 ms | · | · | **5.9× faster** | **3.5× faster** | **1.7× slower** |
-| `max@bcast` | 0.1622 ms | 0.2175 ms | 0.1089 ms | · | · | **1.3× slower** | **1.5× faster** | **2.0× faster** |
-| `std@bcast` | 0.8203 ms | 1.0337 ms | 1.0588 ms | · | · | **1.3× slower** | **1.3× slower** | **1.0× slower** |
-| `sum0@bcast` | 0.1363 ms | 0.1056 ms | 0.0776 ms | · | · | **1.3× faster** | **1.8× faster** | **1.4× faster** |
-| `3PRF IS Full (Small)` | 0.1500 ms | 0.2024 ms | 0.0750 ms | 0.1200 ms | 0.0640 ms | **1.3× slower** | **2.0× faster** | **2.7× faster** |
-| `3PRF OOS Rec (Small)` | 5.5100 ms | 1.3282 ms | 0.5800 ms | 3.3200 ms | 0.5500 ms | **4.1× faster** | **9.5× faster** | **2.3× faster** |
-| `3PRF OOS CV (Small)` | 10.1100 ms | 2.3355 ms | 0.6000 ms | 2.5200 ms | 0.6300 ms | **4.3× faster** | **16.9× faster** | **3.9× faster** |
-| `3PRF IS Full (Large)` | 0.3400 ms | 0.4530 ms | 0.0700 ms | 0.1800 ms | 0.0780 ms | **1.3× slower** | **4.9× faster** | **6.5× faster** |
-| `3PRF OOS Rec (Large)` | 26.7600 ms | 7.1217 ms | 2.1700 ms | 5.2200 ms | 2.3700 ms | **3.8× faster** | **12.3× faster** | **3.3× faster** |
-| `3PRF OOS CV (Large)` | 48.4200 ms | 15.2292 ms | 3.3300 ms | 10.9200 ms | 4.2800 ms | **3.2× faster** | **14.5× faster** | **4.6× faster** |
-
-- **NumPy**: Python 3.14.6 (openblas); OpenBLAS is NumPy's only mode
-- **Scala**: jvm=25.0.2 N=1000 MM=512 warmup=16 iters=60; 3PRF medians of 25 (IS Full 200) after warm-up
-- **Rust**: blas=off threads=unset N=1000 warmup=16 iters=60 (pure build; 3PRF rows with OPENBLAS_NUM_THREADS=1, see BenchAll)
-- **Scala·BLAS**: jvm=25.0.2, matmul via matmulBlas; 3PRF in a child JVM with -Duni.mat.blas=true (netlib/bundled OpenBLAS per platform)
-- **Rust·BLAS**: blas=on threads=unset N=1000 warmup=16 iters=60 (blas build; 3PRF rows with OPENBLAS_NUM_THREADS=1, see BenchAll)
-- BLAS columns carry a number only on the rows BLAS can change (`matmul`, 3PRF); `·` elsewhere.
-
-#### Summary
-
+#### Executive summary
 Speedup = (second-named ms) ÷ (first-named ms), geometric mean over the rows named, with the
 median beside it; above 1× means the first-named is faster.
 
-**Languages, BLAS on all three — the like-for-like comparison.** NumPy is always OpenBLAS; here
-Scala and Rust use theirs too (on the 7 rows BLAS affects; every other row is the same code in
-both modes).
+**Languages, BLAS on all three — the like-for-like comparison.**
+NumPy is always OpenBLAS; here Scala and Rust use theirs too on the 7 rows BLAS affects (every
+other row is the same code in both modes). Rust's BLAS is a build-time feature, so its DEFAULT
+build is the pure loop — a packaging constraint, not a language result; this block is Rust's
+fair number.
 
 | comparison | geomean | median | rows |
 |---|---:|---:|---:|
-| Scala vs NumPy | 1.33× | 1.30× | 50 |
-| Rust vs NumPy | 2.05× | 1.95× | 48 |
-| Rust vs Scala | 1.67× | 1.44× | 48 |
+| Scala vs NumPy | 1.38× | 1.44× | 50 |
+| Rust vs NumPy | 2.09× | 1.94× | 48 |
+| Rust vs Scala | 1.65× | 1.31× | 48 |
 
-**Configurations, as shipped — uni's pinned matmul against NumPy's BLAS.** What a user gets
-without flags. On `matmul` and the 3PRF rows this compares a reproducible loop with a BLAS, so
-it is not a statement about the languages; it is the price of the default.
+**The pinned loop, both ports — bit-identical results, no BLAS anywhere.**
 
 | comparison | geomean | median | rows |
 |---|---:|---:|---:|
-| Scala (default) vs NumPy | 1.26× | 1.27× | 50 |
-| Rust (default) vs NumPy | 2.06× | 1.92× | 48 |
-| Rust (default) vs Scala (default) | 1.78× | 1.48× | 48 |
+| Rust·pure vs Scala·pure | 1.80× | 1.35× | 48 |
+| Rust·pure vs Scala·pure (matmul + 3PRF only) | 4.35× | 4.06× | 7 |
 
-**What the opt-in buys, over the 7 rows BLAS affects.**
+**Configurations, as shipped — what a user gets without flags.**
+Scala's default is BLAS (`os-best`); Rust's default build is the pure loop (`--features blas`
+opts in). Against NumPy's BLAS this is the price of each default, not a statement about the
+languages.
 
 | comparison | geomean | median | rows |
 |---|---:|---:|---:|
-| Scala·BLAS vs Scala | 1.51× | 1.39× | 7 |
-| Rust·BLAS vs Rust | 0.98× | 0.95× | 7 |
+| Scala (default: BLAS) vs NumPy | 1.38× | 1.44× | 50 |
+| Rust (default: pure) vs NumPy | 2.10× | 1.94× | 48 |
+| Rust (default: pure) vs Scala (default: BLAS) | 1.65× | 1.31× | 48 |
+
+**What BLAS buys each port, over the 7 rows it affects.**
+
+| comparison | geomean | median | rows |
+|---|---:|---:|---:|
+| Scala·BLAS vs Scala·pure | 1.83× | 1.82× | 7 |
+| Rust·BLAS vs Rust·pure | 0.99× | 0.92× | 7 |
+
+#### Every row, every configuration — ms/call (lower is better)
+The three ratio columns are like for like: BLAS on all three where BLAS applies.
+
+| Operation | NumPy | Scala·pure | Rust·pure | Scala·BLAS | Rust·BLAS | Scala vs NumPy | Rust vs NumPy | Rust vs Scala |
+|---|---:|---:|---:|---:|---:|---|---|---|
+| `randn` | 4.9320 ms | 3.4136 ms | 2.3425 ms | · | · | **1.4× faster** | **2.1× faster** | **1.5× faster** |
+| `matmul` | 2.1323 ms | 6.1331 ms | 2.4746 ms | 1.0643 ms | 2.1273 ms | **2.0× faster** | **1.0× faster** | **2.0× slower** |
+| `sigmoid` | 6.5319 ms | 4.0686 ms | 1.3097 ms | · | · | **1.6× faster** | **5.0× faster** | **3.1× faster** |
+| `relu` | 0.3709 ms | 1.0849 ms | 0.1597 ms | · | · | **2.9× slower** | **2.3× faster** | **6.8× faster** |
+| `vectorize` | 115.2911 ms | 0.4463 ms | — | · | · | **258.3× faster** | — | — |
+| `add` | 0.3308 ms | 1.0509 ms | 0.2782 ms | · | · | **3.2× slower** | **1.2× faster** | **3.8× faster** |
+| `mul` | 0.3330 ms | 1.0575 ms | 0.2796 ms | · | · | **3.2× slower** | **1.2× faster** | **3.8× faster** |
+| `abs` | 0.1733 ms | 1.0918 ms | 0.1627 ms | · | · | **6.3× slower** | **1.1× faster** | **6.7× faster** |
+| `exp` | 5.9470 ms | 3.3990 ms | 1.1248 ms | · | · | **1.7× faster** | **5.3× faster** | **3.0× faster** |
+| `log` | 5.2505 ms | 2.8310 ms | 1.0202 ms | · | · | **1.9× faster** | **5.1× faster** | **2.8× faster** |
+| `sqrt` | 0.3204 ms | 1.0864 ms | 0.1629 ms | · | · | **3.4× slower** | **2.0× faster** | **6.7× faster** |
+| `sum` | 0.1857 ms | 0.0708 ms | 0.0610 ms | · | · | **2.6× faster** | **3.0× faster** | **1.2× faster** |
+| `mean` | 0.1876 ms | 0.0607 ms | 0.0603 ms | · | · | **3.1× faster** | **3.1× faster** | **1.0× faster** |
+| `std` | 0.7132 ms | 1.0506 ms | 1.0652 ms | · | · | **1.5× slower** | **1.5× slower** | **1.0× slower** |
+| `min` | 0.1043 ms | 0.1675 ms | 0.1533 ms | · | · | **1.6× slower** | **1.5× slower** | **1.1× faster** |
+| `max` | 0.1043 ms | 0.2321 ms | 0.1077 ms | · | · | **2.2× slower** | **1.0× slower** | **2.2× faster** |
+| `argmax` | 0.6839 ms | 0.2622 ms | 0.1200 ms | · | · | **2.6× faster** | **5.7× faster** | **2.2× faster** |
+| `sum0` | 0.1668 ms | 0.1145 ms | 0.1169 ms | · | · | **1.5× faster** | **1.4× faster** | **1.0× slower** |
+| `sum1` | 0.1895 ms | 0.2069 ms | 0.1979 ms | · | · | **1.1× slower** | **1.0× slower** | **1.0× faster** |
+| `mean0` | 0.1693 ms | 0.1292 ms | 0.1195 ms | · | · | **1.3× faster** | **1.4× faster** | **1.1× faster** |
+| `min0` | 0.1803 ms | 0.1937 ms | 0.1812 ms | · | · | **1.1× slower** | **1.0× slower** | **1.1× faster** |
+| `max1` | 0.1146 ms | 0.1714 ms | 0.1251 ms | · | · | **1.5× slower** | **1.1× slower** | **1.4× faster** |
+| `std0` | 0.8468 ms | 0.3048 ms | 0.2877 ms | · | · | **2.8× faster** | **2.9× faster** | **1.1× faster** |
+| `cumsum` | 3.4519 ms | 1.1002 ms | 0.9999 ms | · | · | **3.1× faster** | **3.5× faster** | **1.1× faster** |
+| `cumsum1` | 3.4800 ms | 1.1626 ms | 1.0057 ms | · | · | **3.0× faster** | **3.5× faster** | **1.2× faster** |
+| `cummax0` | 3.5360 ms | 1.3125 ms | 1.0156 ms | · | · | **2.7× faster** | **3.5× faster** | **1.3× faster** |
+| `cummin1` | 3.4699 ms | 1.3676 ms | 1.0913 ms | · | · | **2.5× faster** | **3.2× faster** | **1.3× faster** |
+| `transpose` | 0.0001 ms | 0.0003 ms | 0.0000 ms | · | · | **2.5× slower** | — | — |
+| `sum@contig` | 0.1837 ms | 0.0643 ms | 0.0530 ms | · | · | **2.9× faster** | **3.5× faster** | **1.2× faster** |
+| `max@contig` | 0.1042 ms | 0.2248 ms | 0.1201 ms | · | · | **2.2× slower** | **1.2× slower** | **1.9× faster** |
+| `std@contig` | 0.7161 ms | 1.0412 ms | 1.0588 ms | · | · | **1.5× slower** | **1.5× slower** | **1.0× slower** |
+| `sum0@contig` | 0.1666 ms | 0.1184 ms | 0.1193 ms | · | · | **1.4× faster** | **1.4× faster** | **1.0× slower** |
+| `sum@transposed` | 0.1856 ms | 0.1289 ms | 0.0966 ms | · | · | **1.4× faster** | **1.9× faster** | **1.3× faster** |
+| `max@transposed` | 0.1038 ms | 0.2816 ms | 0.1281 ms | · | · | **2.7× slower** | **1.2× slower** | **2.2× faster** |
+| `std@transposed` | 0.7125 ms | 1.1170 ms | 1.1364 ms | · | · | **1.6× slower** | **1.6× slower** | **1.0× slower** |
+| `sum0@transposed` | 0.1896 ms | 0.1449 ms | 0.0772 ms | · | · | **1.3× faster** | **2.5× faster** | **1.9× faster** |
+| `sum@rowslice` | 0.1854 ms | 0.0631 ms | 0.0703 ms | · | · | **2.9× faster** | **2.6× faster** | **1.1× slower** |
+| `max@rowslice` | 0.1042 ms | 0.2253 ms | 0.1107 ms | · | · | **2.2× slower** | **1.1× slower** | **2.0× faster** |
+| `std@rowslice` | 0.7145 ms | 1.0393 ms | 1.0828 ms | · | · | **1.5× slower** | **1.5× slower** | **1.0× slower** |
+| `sum0@rowslice` | 0.1665 ms | 0.0983 ms | 0.1174 ms | · | · | **1.7× faster** | **1.4× faster** | **1.2× slower** |
+| `sum@bcast` | 0.2684 ms | 0.0427 ms | 0.0660 ms | · | · | **6.3× faster** | **4.1× faster** | **1.5× slower** |
+| `max@bcast` | 0.1623 ms | 0.2211 ms | 0.1181 ms | · | · | **1.4× slower** | **1.4× faster** | **1.9× faster** |
+| `std@bcast` | 0.8237 ms | 1.0215 ms | 1.0463 ms | · | · | **1.2× slower** | **1.3× slower** | **1.0× slower** |
+| `sum0@bcast` | 0.1363 ms | 0.0713 ms | 0.0804 ms | · | · | **1.9× faster** | **1.7× faster** | **1.1× slower** |
+| `3PRF IS Full (Small)` | 0.1500 ms | 0.2000 ms | 0.0410 ms | 0.1100 ms | 0.0350 ms | **1.4× faster** | **4.3× faster** | **3.1× faster** |
+| `3PRF OOS Rec (Small)` | 5.4800 ms | 3.2600 ms | 0.4400 ms | 1.6500 ms | 0.3900 ms | **3.3× faster** | **14.1× faster** | **4.2× faster** |
+| `3PRF OOS CV (Small)` | 10.0600 ms | 1.9000 ms | 0.5000 ms | 2.1500 ms | 0.5500 ms | **4.7× faster** | **18.3× faster** | **3.9× faster** |
+| `3PRF IS Full (Large)` | 0.3500 ms | 0.4500 ms | 0.0700 ms | 0.2300 ms | 0.0780 ms | **1.5× faster** | **4.5× faster** | **2.9× faster** |
+| `3PRF OOS Rec (Large)` | 26.7500 ms | 7.2500 ms | 2.1700 ms | 4.8900 ms | 2.3500 ms | **5.5× faster** | **11.4× faster** | **2.1× faster** |
+| `3PRF OOS CV (Large)` | 48.3800 ms | 13.4500 ms | 3.3100 ms | 10.5300 ms | 4.2500 ms | **4.6× faster** | **11.4× faster** | **2.5× faster** |
+
+- **NumPy**: Python 3.14.6 (openblas); OpenBLAS is NumPy's only mode
+- **Scala·pure**: jvm=25.0.2 N=1000 MM=512 warmup=16 iters=60; matmul via matmulPure; 3PRF in a child JVM with -Duni.mat.blas=pure, medians of 25 (IS Full 200) after warm-up
+- **Rust·pure**: blas=off threads=unset N=1000 warmup=16 iters=60 (pure build; 3PRF rows with OPENBLAS_NUM_THREADS=1, see BenchAll)
+- **Scala·BLAS**: jvm=25.0.2, child JVMs with -Duni.mat.blas=os-best (backend per platform and mode; see the [uni] line above)
+- **Rust·BLAS**: blas=on threads=unset N=1000 warmup=16 iters=60 (blas build; 3PRF rows with OPENBLAS_NUM_THREADS=1, see BenchAll)
+- **BLAS backend** (`[uni]` lines from the run): BLAS via netlib: dev.ludovic.netlib.blas.JNIBLAS -> using it
+- BLAS columns carry a number only on the rows BLAS can change (`matmul`, 3PRF); `·` elsewhere.
 
 ## Performance vs Breeze
 

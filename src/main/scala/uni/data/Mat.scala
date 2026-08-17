@@ -286,7 +286,7 @@ object Mat {
    *  netlib's pure-Java fallback). `os-best` on Linux resolves to `system` when netlib
    *  binds a native BLAS — asking netlib is what maps the OS library, so a native answer
    *  commits the process to `system` (a pure-Java answer maps nothing, and `bundled` is
-   *  then safe); the system OpenBLAS is 1.8–3.4× faster than the bundled build at 512³.
+   *  then safe); the system OpenBLAS is 2–4.5× faster than the bundled build at 512³.
    *  macOS and Windows have no such collision: netlib's backend there is not an OpenBLAS,
    *  so `system` there keeps bytedeco's LAPACKE for the LAPACK routines.
    *

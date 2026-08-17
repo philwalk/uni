@@ -411,7 +411,7 @@ no programmatic setter) picks which:
 |-------|---------|
 | unset, `os-best`, `true` | **default.** `system` wherever netlib binds a native BLAS — Accelerate on macOS, the OS OpenBLAS on Linux (`sudo apt install libopenblas0`) and Windows — else `bundled` |
 | `system` | netlib → the OS BLAS. On Linux the LAPACK routines (`eig`, `eigenvalues`, `svd`, `cholesky`) then go through netlib's LAPACK too — the OS `liblapack.so.3`, or its pure-Java fallback |
-| `bundled` | bytedeco's OpenBLAS for everything; needs no OS packages, 1.8–3.4× slower than the system OpenBLAS at 512³ |
+| `bundled` | bytedeco's OpenBLAS for everything; needs no OS packages, 2–4.5× slower than the system OpenBLAS at 512³ |
 | `pure`, `false` | no BLAS: every `*@` is `uni`'s pinned loop — bit-identical between the Scala and Rust ports and independent of the machine |
 
 Per call, whatever the mode: `a.matmulPure(b)` is the pinned loop and `a.matmulBlas(b)`

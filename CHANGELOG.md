@@ -29,7 +29,7 @@ BLAS per process is now the rule, and the flag says which:
 |---|---|
 | unset, `os-best`, `true`, `1` | **default.** `system` wherever netlib binds a native BLAS — Accelerate on macOS, the OS OpenBLAS on Linux/Windows — else `bundled` |
 | `system` | netlib → the OS BLAS. On Linux `eig`/`eigenvalues`/`svd`/`cholesky` then go through netlib's LAPACK (the OS `liblapack.so.3`, or its pure-Java fallback) instead of bytedeco's LAPACKE, so the bundled copy is never mapped |
-| `bundled` | bytedeco's OpenBLAS for everything, no OS packages involved (1.8–3.4× slower than the system OpenBLAS at 512³) |
+| `bundled` | bytedeco's OpenBLAS for everything, no OS packages involved (2–4.5× slower than the system OpenBLAS at 512³) |
 | `pure`, `false`, `0` | no BLAS: every `*@` is the pinned pure loop |
 
 Read once per JVM; no programmatic setter; `matmulPure` / `matmulBlas` override per call.
