@@ -1,3 +1,22 @@
+## Unreleased
+
+**CHANGED — `BigNaN` orders above every number, as `Double.NaN` does**
+
+`Big.compare` and `Fractional[Big].compare` used to return 0 whenever either operand was
+the sentinel — a non-transitive comparator: `MatB.min`/`max` depended on where the NaN
+sat, `sort` left it in place, and Java's TimSort is entitled to reject such a comparator.
+`BigNaN` now ranks highest and equal to itself, which is exactly `Double.compare`'s rule,
+so `MatB` sorts, `min`s and `max`es as `MatD` does (NaN last; `min` skips it, `max`
+returns it). Scalar `Big.max`/`min` still propagate the sentinel; `<`/`>` are still false
+against it. Both languages; two `cmp` rows of the `big-parity` fixture moved.
+
+**FIXED — `exp` and `log` on `MatF` and `MatB`**
+
+Their generic branch cast a `Double` to `T`, which compiles under erasure and then dies at
+the first store: `ClassCastException` on `MatF`, `ArrayStoreException` on `MatB`. They go
+back through `MatElem.fromDouble` now (so on `MatB` a non-finite result is `BigNaN`), and
+`MatActivationSuite`'s two "documented limitation" tests became value tests.
+
 ## v0.17.0 — 2026-08-17
 
 The Rust port of `Mat[Double]` is complete: every phase of the Tier 3 checklist in

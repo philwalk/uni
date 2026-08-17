@@ -227,8 +227,17 @@ object Big:
     inline def -(that: Double): Big = badGuard(that)(n - BigDecimal(that))
 
     // --- comparisons ----------------------------------------------------------
+    // BigNaN ranks above every number and equal to itself -- what `Double.compare` does
+    // for NaN, so `MatB` sorts, `min`s and `max`es exactly as `MatD` does (NaN last; `min`
+    // skips it, `max` returns it). Returning 0 against everything, as this once did, made
+    // the comparator non-transitive: `min`/`max` depended on the sentinel's position and
+    // TimSort may reject such a comparator outright.
     def compare(that: Big): Int =
-      if isBad(n) || isBad(that) then 0 else n.bigDecimal.compareTo(that.bigDecimal)
+      (isBad(n), isBad(that)) match
+        case (true, true)   => 0
+        case (true, false)  => 1
+        case (false, true)  => -1
+        case (false, false) => n.bigDecimal.compareTo(that.bigDecimal)
     inline def <(that: Big): Boolean    = !isBad(n) && !isBad(that) && n < that
     inline def <=(that: Big): Boolean   = !isBad(n) && !isBad(that) && n <= that
     inline def >(that: Big): Boolean    = !isBad(n) && !isBad(that) && n > that
@@ -349,5 +358,11 @@ object Big:
     def toLong(x: Big): Long         = x.value.toLong
     def toFloat(x: Big): Float       = if x.isNaN then Float.NaN else x.value.toFloat
     def toDouble(x: Big): Double     = if x.isNaN then Double.NaN else x.value.toDouble
+    // Spelled out rather than delegated: inside `object Big` the opaque type is transparent,
+    // so `x.compare(y)` would bind to BigDecimal's member and see the sentinel's digits.
     def compare(x: Big, y: Big): Int =
-      if x.isNaN || y.isNaN then 0 else x.value.compare(y.value)
+      (x.isNaN, y.isNaN) match
+        case (true, true)   => 0
+        case (true, false)  => 1    // BigNaN highest, as Double.compare ranks NaN
+        case (false, true)  => -1
+        case (false, false) => x.value.compare(y.value)

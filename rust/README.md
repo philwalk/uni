@@ -25,7 +25,8 @@ both (as of 0.16.0), with fixture rows pinning them.
 | :--- | :--- | :--- |
 | `upath` | all 92 `uni.ext.PathExts` Path extensions | paths, metadata, traversal, mutation, line I/O, CSV, hashes |
 | `utime` | `UniDateTime`, `DateFormat`, `SmartParse` | field arithmetic, pattern formatting, format-autodetecting parsing |
-| `udata` | `Big` and its CSV loaders; `Mat[Double]` as `MatD`/`CVecD`/`RVecD` | `java.math.BigDecimal` semantics on base-10⁹ limbs; matrices carry Scala's own stride descriptor, so `transpose`/`slice`/`broadcastTo` stay zero-copy views — which is what keeps the reductions bit-identical |
+| `udata` | `Big` and its CSV loaders; all of `Mat[Double]` as `MatD`/`CVecD`/`RVecD` — `mat`/`mataxis` (view model, reductions), `matmut`/`matbool` (writes, masks, fancy indexing), `matmath`, `matmul`, `linalg`/`eig` (decompositions), `matutil`, `pandas`, `signal` | `java.math.BigDecimal` semantics on base-10⁹ limbs; matrices carry Scala's own stride descriptor, so `transpose`/`slice`/`broadcastTo` stay zero-copy views — which is what keeps the reductions bit-identical. `Mat[Big]` is the one part of `Mat` not yet ported |
+| `upath::matresult` | `matResultOps.groupBy` / `merge` on `CsvTable<f64>` | group and join layouts identical to the Scala |
 | `numpy_rng` | `uni.data.NumPyRNG` | bit-identical to `np.random.default_rng` |
 | `t3prf` | `uni.stats.Tprf3` | the crate's original content, and its former name |
 
@@ -56,7 +57,7 @@ and the two print byte-identical output:
 | `bigcalc` | the `udata` surface as an exact-money invoice — output is identical on any machine |
 | `forecast` | seeded `randn` → byte-identical CSV → `loadMatBig` → the 3PRF closed forms and `forecast3prf` |
 | `market_sim` | not a tour of an API but a 1,300-line workload: seeded price formation over 200 paths × 100 years, `MatD` reductions, drawdown episodes, exposure rules, and five report modes — the consumer that drove the `MatD` port |
-| `tprf_runner` | `TprfRunner.data_generator`: the `MatMut` recurrences, `hstack`, the pinned default `matmul`, the noise blend — every cell of `X` printed, identical on any machine |
+| `tprf_runner` | `TprfRunner.data_generator`: the `MatMut` recurrences, `hstack`, the pinned matmul (`matmulPure` on the Scala side, `matmul` here), the noise blend — every cell of `X` printed, identical on any machine |
 
 ```bash
 cargo build --example bigcalc

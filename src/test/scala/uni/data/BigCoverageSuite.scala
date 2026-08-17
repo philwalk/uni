@@ -763,10 +763,16 @@ class BigCoverageSuite extends FunSuite {
     assertEquals(frac.negate(BigNaN), BigNaN)
   }
 
-  test("Fractional[Big].compare returns 0 when either operand is BigNaN") {
+  test("Fractional[Big].compare ranks BigNaN above every number, like Double.compare") {
     val frac = summon[Fractional[Big]]
-    assertEquals(frac.compare(BigNaN, Big(1)), 0)
-    assertEquals(frac.compare(Big(1), BigNaN), 0)
+    assertEquals(frac.compare(BigNaN, Big(1)), 1)
+    assertEquals(frac.compare(Big(1), BigNaN), -1)
+    assertEquals(frac.compare(BigNaN, BigNaN), 0)
+    // and so a MatB orders as a MatD does: NaN last, min skips it, max returns it
+    val v = MatB((Big(3), BigNaN, Big(1)))
+    assertEquals(v.sort().toArray.toList.map(_ == BigNaN), List(false, false, true))
+    assertEquals(v.min, Big(1))
+    assertEquals(v.max, BigNaN)
     assert(frac.compare(Big(3), Big(1)) > 0)
     assert(frac.compare(Big(1), Big(3)) < 0)
     assertEquals(frac.compare(Big(2), Big(2)), 0)

@@ -1033,11 +1033,16 @@ impl Big {
         }
     }
 
-    /// `compare`, with the Scala's NaN rule: any NaN operand compares equal.
+    /// `compare`, with the Scala's NaN rule: BigNaN ranks above every number and equal to
+    /// itself — as `Double.compare` treats NaN — so sorting, `min` and `max` over a `MatB`
+    /// behave exactly as over a `MatD` (NaN last; `min` skips it, `max` returns it).
     #[must_use]
     pub fn compare(&self, other: &Self) -> i32 {
-        if self.isNaN() || other.isNaN() {
-            return 0;
+        match (self.isNaN(), other.isNaN()) {
+            (true, true) => return 0,
+            (true, false) => return 1,
+            (false, true) => return -1,
+            (false, false) => {}
         }
         match self.numeric_cmp(other) {
             Ordering::Less => -1,

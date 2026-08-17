@@ -280,7 +280,9 @@ The semantics worth knowing, identical in both languages and pinned by
 - `+`, `-`, `*` are exact up to that context; `/` and `sqrt` round, with Java's
   preferred-scale and trailing-zero rules (`2.50 / 0.25` is `10`).
 - The BigNaN sentinel is recognised by numeric equality and survives every operation by
-  short-circuit; it is also the missing-cell value for the `Big` CSV loaders (`loadMatBig`,
+  short-circuit; it orders above every number (`compare`, like `Double.compare` for NaN), so
+  a `MatB` sorts it last, `min` skips it and `max` returns it, while `<`/`>` against it are
+  false; it is also the missing-cell value for the `Big` CSV loaders (`loadMatBig`,
   `loadMatB`, `loadSmartBig`, `readCsvB`, all ported).
 - `toString` follows Java's notation rules, so scale is part of the rendering contract.
 

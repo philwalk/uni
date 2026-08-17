@@ -178,12 +178,12 @@ add	!nan	1	!nan
 sub	!nan	1	!nan
 mul	!nan	1	!nan
 div	!nan	1	!nan
-cmp	!nan	1	0
+cmp	!nan	1	1
 add	1	!nan	!nan
 sub	1	!nan	!nan
 mul	1	!nan	!nan
 div	1	!nan	!nan
-cmp	1	!nan	0
+cmp	1	!nan	-1
 add	!nan	!nan	!nan
 sub	!nan	!nan	!nan
 mul	!nan	!nan	!nan

@@ -3551,13 +3551,16 @@ object Mat {
       // function without the per-element boxing.
       if fastDL(m) then mapD(m, math.sqrt).asInstanceOf[Mat[T]] else m.map(elem.sqrtT)
 
-    def exp(using frac: Fractional[T]): Mat[T] =
+    // The generic branch goes back through `elem.fromDouble`, never a cast: a Double cast
+    // to `T` compiles (erasure) and then dies with `ArrayStoreException` at the first
+    // store into a `Mat[Big]` -- and for Big, `fromDouble` also routes NaN/∞ to BigNaN.
+    def exp(using frac: Fractional[T], elem: MatElem[T]): Mat[T] =
       if fastDL(m) then mapD(m, math.exp).asInstanceOf[Mat[T]]
-      else m.map((x: T) => math.exp(frac.toDouble(x)).asInstanceOf[T])
+      else m.map((x: T) => elem.fromDouble(math.exp(frac.toDouble(x))))
 
-    def log(using frac: Fractional[T]): Mat[T] =
+    def log(using frac: Fractional[T], elem: MatElem[T]): Mat[T] =
       if fastDL(m) then mapD(m, math.log).asInstanceOf[Mat[T]]
-      else m.map((x: T) => math.log(frac.toDouble(x)).asInstanceOf[T])
+      else m.map((x: T) => elem.fromDouble(math.log(frac.toDouble(x))))
 
     def clip(lower: T, upper: T)(using ord: Ordering[T]): Mat[T] =
       m.map((x: T) => if ord.lt(x, lower) then lower else if ord.gt(x, upper) then upper else x)

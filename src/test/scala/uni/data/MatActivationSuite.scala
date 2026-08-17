@@ -182,16 +182,24 @@ class MatActivationSuite extends FunSuite:
   }
 
   // ============================================================================
-  // exp and log — Float type: asInstanceOf[Float] on a Double fails at JVM boxing
+  // exp and log on non-Double element types go back through MatElem.fromDouble
   // ============================================================================
 
-  test("exp on MatF: ClassCastException (Double cannot be cast to Float via asInstanceOf)") {
-    val m = MatF.row(0.0f, 1.0f)
-    intercept[ClassCastException] { m.exp }
+  test("exp on MatF and MatB: through fromDouble, no cast") {
+    val f = MatF.row(0.0f, 1.0f).exp
+    assertEquals(f(0, 0), 1.0f)
+    assertEqualsFloat(f(0, 1), math.E.toFloat, 1e-6f)
+    val b = MatB((Big(0), Big(1))).exp
+    assertEquals(b(0, 0), Big(1))
+    assertEqualsDouble(b(0, 1).toDouble, math.E, 1e-15)
   }
 
-  test("log on MatF: ClassCastException (same asInstanceOf limitation)") {
-    val m = MatF.row(1.0f, math.E.toFloat)
-    intercept[ClassCastException] { m.log }
+  test("log on MatF and MatB: through fromDouble; log of a negative Big is BigNaN") {
+    val f = MatF.row(1.0f, math.E.toFloat).log
+    assertEquals(f(0, 0), 0.0f)
+    assertEqualsFloat(f(0, 1), 1.0f, 1e-6f)
+    val b = MatB((Big(1), Big(-1))).log
+    assertEquals(b(0, 0), Big(0))
+    assertEquals(b(0, 1), BigNaN)
   }
 
