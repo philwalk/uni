@@ -562,7 +562,6 @@ val identityB: MatB = MatB.eye(5)
 //> using dep org.vastblue:uni_3:0.17.0
 
 import uni.data.*
-import uni.data.MatD.*
 
 MatD.setSeed(95)
 val data = MatD.randn(100, 10)
@@ -605,7 +604,6 @@ val f = a.relu    // built-in activation function
 //> using dep org.vastblue:uni_3:0.17.0
 
 import uni.data.*
-import uni.data.MatD.*
 
 val m = MatD.ones(4, 4)
 m :+= 2.0    // add scalar in-place
@@ -625,7 +623,6 @@ m :+= n      // element-wise add matrix in-place
 //> using dep org.vastblue:uni_3:0.17.0
 
 import uni.data.*
-import uni.data.MatD.*
 
 val a    = MatD.randn(3, 3)
 val mask = (a :== 0) || (a :== 1)    // MatD[Boolean]
@@ -644,7 +641,6 @@ val allTrue  = mask.all
 //> using dep org.vastblue:uni_3:0.17.0
 
 import uni.data.*
-import uni.data.MatD.*
 
 val top    = MatD.ones(2, 4)
 val bottom = MatD.zeros(2, 4)
@@ -666,7 +662,6 @@ val cols  = wide.hsplit(2)               // Seq of two 4x2 Mats
 //> using dep org.vastblue:uni_3:0.17.0
 
 import uni.data.*
-import uni.data.MatD.*
 
 val m = MatD.randn(3, 3)
 
@@ -675,7 +670,7 @@ println(m.show)          // equivalent, explicit
 println(m.show("%.2f"))  // custom format string
 
 // Adjust truncation thresholds for large matrices
-MatD.setPrintOptions(maxRows = 20, maxCols = 20, edgeItems = 5)
+Mat.setPrintOptions(maxRows = 20, maxCols = 20, edgeItems = 5)
 ```
 
 ### Usage Example
@@ -690,12 +685,11 @@ The following example demonstrates a wide array of `uni.MatD` capabilities
 //> using dep org.vastblue:uni_3:0.17.0
 
 import uni.data.*
-import uni.data.MatD.*
 
 object MatDCheck {
   def main(args: Array[String]): Unit = {
     // 1. Creation and Basic Shapes
-    val m = MatD.zeros[Double](3, 4)
+    val m = MatD.zeros(3, 4)
     val v = MatD.row(1, 2, 3, 4)
     val eye = MatD.eye(2)
     val r = MatD.arange(0, 10, 2)
@@ -796,15 +790,14 @@ Raw financial and scientific datasets rarely arrive in clean form. `uni.data.Big
 //> using dep org.vastblue:uni_3:0.17.0
 
 import uni.data.*
-import uni.data.BigUtils.*
 
 val raw = Seq("$1,200", "(300)", "1.5K", "0.75%", "N/A", "2024-03-01")
-val typed = raw.map(getMostSpecificType)
+val typed = raw.map(getMostSpecificType)   // String | Big | DateTime per cell
 // => Seq(Big(1200), Big(-300), Big(1500), Big(0.0075), "N/A", DateTime(...))
 
 // Load numeric cells directly into a column vector
-val nums = typed.collect { case b: BigDecimal => Big(b) }
-val col  = MatB.col(nums*)
+val nums = typed.collect { case b: Big => b }
+val col  = MatB.fromSeq(nums)
 ```
 
 This eliminates the typical ETL step of writing format-specific regex cleaners before ingestion — particularly valuable when working with multi-source datasets where currency symbols, parenthesised negatives, and scale suffixes appear unpredictably across columns.

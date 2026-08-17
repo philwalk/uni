@@ -4,7 +4,6 @@
 //> using dep org.vastblue:uni_3:0.17.0
 
 import uni.data.*
-import uni.data.Mat.*
 import uni.*
 import java.io.PrintWriter
 

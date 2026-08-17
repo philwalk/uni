@@ -27,7 +27,7 @@ val v2 = MatD(1.0, 2.0, 3.0)  // 3x1 column vector (same as Mat(...))
 val r  = MatD.row(1, 2, 3)    // 1x3 row vector — the explicit row factory
 
 // Gotcha: Int arguments select the (rows, cols) zeros constructor, not varargs
-val z3x4 = MatD(3, 4)         // 3x4 matrix of zeros — NOT a 2-element vector
+val z3x4 = MatD.zeros(3, 4)   // 3x4 matrix of zeros; MatD(3, 4) is a compile error (ambiguous)
 val pair = MatD(3.0, 4.0)     // 2x1 column vector
 
 // Common constructors — MatD is an alias for Mat[Double]; the two forms are equivalent:
@@ -57,7 +57,6 @@ val randInt  = MatD.randint(0, 100, 5, 5)  // Random integers [0, 100)
 //> using dep org.vastblue:uni_3:0.17.0
 
 import uni.data.Mat
-import uni.data.Mat.*
 
 val m = Mat[Double]((1, 2, 3), (4, 5, 6))
 
@@ -89,7 +88,6 @@ m(mask) = 0.0                         // Set matching elements to 0
 //> using dep org.vastblue:uni_3:0.17.0
 
 import uni.data.Mat
-import uni.data.Mat.*
 
 val A = Mat[Double]((1, 2), (3, 4))
 val B = Mat[Double]((5, 6), (7, 8))
@@ -123,7 +121,6 @@ val result = A + rowVec               // Adds rowVec to each row
 //> using dep org.vastblue:uni_3:0.17.0
 
 import uni.data.Mat
-import uni.data.Mat.*
 
 val A = Mat[Double]((1, 2), (3, 4))
 val v = Mat.col[Double](1.0, 2.0, 3.0)
@@ -139,8 +136,8 @@ val b = Mat[Double](1.0, 2.0)         // 2x1 column vector
 val x = A.solve(b)                    // Returns solution x
 
 // Decompositions
-val (Q, R) = A.qrDecomposition        // QR decomposition
-val (U, s, Vt) = A.svd                // Singular Value Decomposition
+val (q, r) = A.qrDecomposition        // QR decomposition
+val (u, s, vt) = A.svd                // Singular Value Decomposition (lower-case: a capitalised name is a constant in a Scala pattern)
 val (vals, valsImag, vecs) = A.eig    // Eigenvalues and eigenvectors
 
 // Norms and distances
@@ -155,7 +152,6 @@ val frobNorm = A.norm("fro")          // Frobenius norm
 //> using dep org.vastblue:uni_3:0.17.0
 
 import uni.data.Mat
-import uni.data.Mat.*
 
 val m = Mat.randn(5, 4)
 
@@ -188,7 +184,6 @@ val p90 = m.percentile(90)            // 90th percentile
 //> using dep org.vastblue:uni_3:0.17.0
 
 import uni.data.Mat
-import uni.data.Mat.*
 
 val m  = Mat.randn(5, 4)
 val m1 = Mat.randn(5, 4)
@@ -225,7 +220,6 @@ val minElems = m1.minimum(m2)         // Element-wise min
 //> using dep org.vastblue:uni_3:0.17.0
 
 import uni.data.Mat
-import uni.data.Mat.*
 
 val m = Mat.randn(5, 4)
 
@@ -250,7 +244,6 @@ val custom = Mat.normal(mean = 5.0, std = 2.0, rows = 100, cols = 10)
 //> using dep org.vastblue:uni_3:0.17.0
 
 import uni.data.Mat
-import uni.data.Mat.*
 
 val m  = Mat.randn(9, 6)    // 9 rows, 6 cols (54 elements)
 val m1 = Mat.randn(3, 6)
@@ -283,7 +276,6 @@ val tiled = m.tile(2, 3)              // Tile 2 rows × 3 cols
 //> using dep org.vastblue:uni_3:0.17.0
 
 import uni.data.Mat
-import uni.data.Mat.*
 
 val m = Mat.randn(5, 4)
 
@@ -317,7 +309,6 @@ val cleaned = m.nanToNum(nan = 0.0)   // Replace NaN with 0
 //> using dep org.vastblue:uni_3:0.17.0
 
 import uni.data.Mat
-import uni.data.Mat.*
 
 val m = Mat.randn(5, 7)
 
@@ -448,7 +439,6 @@ pred = X @ weights
 //> using dep org.vastblue:uni_3:0.17.0
 
 import uni.data.Mat
-import uni.data.Mat.*
 
 Mat.setSeed(42)
 val X = Mat.randn(100, 10)

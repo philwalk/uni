@@ -762,7 +762,7 @@ val norm  = a.norm          // Euclidean norm
 import uni.data.*
 
 val a = MatD((3.0, 1.0), (1.0, 2.0))
-val s: Double = (a *@ a.T).diagonal.sum.item   // extract scalar from 1×1
+val s: Double = (a *@ a.T).diagonal.sum        // diagonal is an Array[Double]; sum is a scalar
 // throws IllegalArgumentException if not 1×1
 ```
 

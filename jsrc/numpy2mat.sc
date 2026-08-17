@@ -146,8 +146,7 @@ print(json.dumps(node_to_dict(tree), indent=2))
 
     val sb = new StringBuilder
     sb.append(scriptHeader+"\n")
-    sb.append("import uni.data.Mat\n")
-    sb.append("import uni.data.Mat.*\n")
+    sb.append("import uni.data.*\n")
     if ctx.imports.nonEmpty then
       ctx.imports.foreach(i => sb.append(s"import $i\n"))
     sb.append("\nobject Main:\n")

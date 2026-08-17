@@ -5,7 +5,6 @@ import uni.*
 import uni.time.*
 import uni.data.*
 import uni.data.Mat
-import uni.data.Mat.*
 
 object Show:
   def usage(m: String = ""): Nothing = {

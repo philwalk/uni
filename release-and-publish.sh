@@ -159,6 +159,18 @@ grep -q "## v$VERSION" CHANGELOG.md || { echo "ERROR: CHANGELOG.md missing '## v
   exit 1
 }
 
+# 5c. Every embedded script names THIS version. The doc harness (6c) compiles the
+#     README/docs examples against `//> using dep org.vastblue:uni_3:<version>`; a stale
+#     number there would quietly check them against an old published jar instead of the
+#     one about to ship — and readers copy that line verbatim.
+stale=$(grep -rn "using dep org.vastblue:uni_3:" README.md docs/*.md | grep -v "uni_3:$VERSION\b" || true)
+[ -z "$stale" ] || {
+  echo "ERROR: embedded scripts name a version other than $VERSION:"
+  echo "$stale" | head -20
+  echo "       jsrc/updateVersion.sc rewrites them (jsrc/ itself is not checked: some scripts pin an old version on purpose)"
+  exit 1
+}
+
 # 6. Clean build and all tests must pass
 echo "==> Running clean test..."
 sbt clean test
@@ -168,6 +180,15 @@ sbt clean test
 #     definition, in the Makefile.
 echo "==> Running Rust lint and tests..."
 (cd rust && make lint && make test)
+
+# 6c. The example code in README.md and docs/*.md must compile — every shebang-led
+#     script block, extracted and compiled with -Wunused:imports -Werror by
+#     checkDocScripts.sh, so a stale example (or a redundant import) cannot ship. The
+#     blocks resolve the dependency at $VERSION, which is not published yet, so the
+#     library is published to the local ivy repo first (cheap after `sbt test`).
+echo "==> Publishing $VERSION locally and compiling the doc scripts..."
+sbt publishLocal
+bash checkDocScripts.sh
 
 # 7. Commit if anything is staged
 if git diff --cached --quiet; then
