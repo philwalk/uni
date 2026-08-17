@@ -517,7 +517,10 @@ impl MatD {
             indices.iter().all(|&i| i > 0 && i < extent),
             "{what}: Split indices must be in range (0, {extent})"
         );
-        assert!(indices.windows(2).all(|w| w[0] <= w[1]), "{what}: Indices must be sorted");
+        assert!(
+            indices.windows(2).all(|w| w[0] <= w[1]),
+            "{what}: Indices must be sorted"
+        );
         let mut points = Vec::with_capacity(indices.len() + 2);
         points.push(0);
         for &i in indices {
@@ -599,7 +602,10 @@ impl MatD {
     /// If `axis` is not 0 or 1.
     #[must_use]
     pub fn split(&self, indices: &[usize], axis: usize) -> Vec<Self> {
-        assert!(axis == 0 || axis == 1, "axis must be 0 (rows) or 1 (columns)");
+        assert!(
+            axis == 0 || axis == 1,
+            "axis must be 0 (rows) or 1 (columns)"
+        );
         if axis == 0 {
             self.vsplit(indices)
         } else {
@@ -613,7 +619,10 @@ impl MatD {
     /// If `axis` is not 0 or 1.
     #[must_use]
     pub fn splitN(&self, n: usize, axis: usize) -> Vec<Self> {
-        assert!(axis == 0 || axis == 1, "axis must be 0 (rows) or 1 (columns)");
+        assert!(
+            axis == 0 || axis == 1,
+            "axis must be 0 (rows) or 1 (columns)"
+        );
         if axis == 0 {
             self.vsplitN(n)
         } else {
@@ -666,7 +675,10 @@ fn java_math_round(x: f64) -> f64 {
     if x.is_nan() {
         return 0.0;
     }
-    #[expect(clippy::cast_possible_truncation, reason = "Java's round saturates the same way")]
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "Java's round saturates the same way"
+    )]
     let r = (x + 0.5).floor() as i64;
     #[expect(clippy::cast_precision_loss, reason = "the value came from a double")]
     let f = r as f64;
@@ -692,8 +704,14 @@ mod tests {
         assert_eq!(mn[0], 1.0);
         assert_eq!(mn[1], 1.0);
         assert_eq!(mn[2].to_bits(), (-0.0f64).to_bits());
-        assert_eq!(m23().maximumScalar(0.0).flatten(), vec![1.0, 0.0, 3.0, 4.0, 5.0, 0.0]);
-        assert_eq!(m23().minimumScalar(0.0).flatten(), vec![0.0, -2.0, 0.0, 0.0, 0.0, -6.0]);
+        assert_eq!(
+            m23().maximumScalar(0.0).flatten(),
+            vec![1.0, 0.0, 3.0, 4.0, 5.0, 0.0]
+        );
+        assert_eq!(
+            m23().minimumScalar(0.0).flatten(),
+            vec![0.0, -2.0, 0.0, 0.0, 0.0, -6.0]
+        );
     }
 
     #[test]
@@ -703,7 +721,10 @@ mod tests {
         assert_eq!(r.round(0).flatten(), vec![1.0, -1.0, 3.0, 0.0]);
         assert_eq!(r.round(1).flatten(), vec![1.3, -1.5, 2.5, 0.1]);
         let bad = MatD::create(vec![f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 1.0], 2, 2);
-        assert_eq!(bad.nanToNum(0.0, 9.0, -9.0).flatten(), vec![0.0, 9.0, -9.0, 1.0]);
+        assert_eq!(
+            bad.nanToNum(0.0, 9.0, -9.0).flatten(),
+            vec![0.0, 9.0, -9.0, 1.0]
+        );
         assert!(bad.containsNaN() && !m23().containsNaN());
         assert!(m23().allclose(&(&m23() + 1e-9), 1e-5, 1e-8));
         assert!(!m23().allclose(&(&m23() + 1e-3), 1e-5, 1e-8));
@@ -715,10 +736,22 @@ mod tests {
         let m = m23();
         let row = MatD::create(vec![10.0, 20.0, 30.0], 1, 3);
         let col = MatD::create(vec![100.0, 200.0], 2, 1);
-        assert_eq!(m.addToEachRow(&row).flatten(), vec![11.0, 18.0, 33.0, 14.0, 25.0, 24.0]);
-        assert_eq!(m.addToEachCol(&col).flatten(), vec![101.0, 98.0, 103.0, 204.0, 205.0, 194.0]);
-        assert_eq!(m.mulEachRow(&row).flatten(), vec![10.0, -40.0, 90.0, 40.0, 100.0, -180.0]);
-        assert_eq!(m.divEachCol(&col).flatten(), vec![0.01, -0.02, 0.03, 0.02, 0.025, -0.03]);
+        assert_eq!(
+            m.addToEachRow(&row).flatten(),
+            vec![11.0, 18.0, 33.0, 14.0, 25.0, 24.0]
+        );
+        assert_eq!(
+            m.addToEachCol(&col).flatten(),
+            vec![101.0, 98.0, 103.0, 204.0, 205.0, 194.0]
+        );
+        assert_eq!(
+            m.mulEachRow(&row).flatten(),
+            vec![10.0, -40.0, 90.0, 40.0, 100.0, -180.0]
+        );
+        assert_eq!(
+            m.divEachCol(&col).flatten(),
+            vec![0.01, -0.02, 0.03, 0.02, 0.025, -0.03]
+        );
         assert_eq!(m.subFromEachRow(&row).flatten(), (&m - &row).flatten());
         assert_eq!(m.mulEachCol(&col).flatten(), (&m * &col).flatten());
         assert_eq!(m.divEachRow(&row).flatten(), (&m / &row).flatten());
@@ -729,7 +762,10 @@ mod tests {
         let means = s.meanAxis(0).flatten();
         assert!(means.iter().all(|v| v.abs() < 1e-15), "{means:?}");
         let sd = s.stdAxis(0).flatten(); // population std of a unit-sample-std column
-        assert!(sd.iter().all(|v| (v - (3f64 / 4.0).sqrt()).abs() < 1e-12), "{sd:?}");
+        assert!(
+            sd.iter().all(|v| (v - (3f64 / 4.0).sqrt()).abs() < 1e-12),
+            "{sd:?}"
+        );
         assert_eq!(x.scale(false, false), x);
     }
 
@@ -738,9 +774,24 @@ mod tests {
         let m = m23();
         assert_eq!(m.repeat(2).shape(), (1, 12));
         assert_eq!(m.repeat(2).flatten()[..4], [1.0, 1.0, -2.0, -2.0]);
-        assert_eq!(m.repeatAxis(2, 0).flatten(), vec![1.0, -2.0, 3.0, 1.0, -2.0, 3.0, 4.0, 5.0, -6.0, 4.0, 5.0, -6.0]);
-        assert_eq!(m.repeatAxis(2, 1).flatten(), vec![1.0, 1.0, -2.0, -2.0, 3.0, 3.0, 4.0, 4.0, 5.0, 5.0, -6.0, -6.0]);
-        assert_eq!(m.tile(2, 1).flatten(), vec![1.0, -2.0, 3.0, 4.0, 5.0, -6.0, 1.0, -2.0, 3.0, 4.0, 5.0, -6.0]);
+        assert_eq!(
+            m.repeatAxis(2, 0).flatten(),
+            vec![
+                1.0, -2.0, 3.0, 1.0, -2.0, 3.0, 4.0, 5.0, -6.0, 4.0, 5.0, -6.0
+            ]
+        );
+        assert_eq!(
+            m.repeatAxis(2, 1).flatten(),
+            vec![
+                1.0, 1.0, -2.0, -2.0, 3.0, 3.0, 4.0, 4.0, 5.0, 5.0, -6.0, -6.0
+            ]
+        );
+        assert_eq!(
+            m.tile(2, 1).flatten(),
+            vec![
+                1.0, -2.0, 3.0, 4.0, 5.0, -6.0, 1.0, -2.0, 3.0, 4.0, 5.0, -6.0
+            ]
+        );
         assert_eq!(m.tile(1, 2).shape(), (2, 6));
         let parts = m.hsplit(&[1]);
         assert_eq!(parts.len(), 2);
@@ -762,10 +813,16 @@ mod tests {
         // mapCols: each column divided by its max
         let c = m.mapCols(|col| col / col.max());
         assert_eq!(c.flatten(), vec![0.25, -0.4, 1.0, 1.0, 1.0, -2.0]);
-        assert_eq!(m.filterRows(|row| row.sum() > 0.0).flatten(), vec![1.0, -2.0, 3.0, 4.0, 5.0, -6.0]);
+        assert_eq!(
+            m.filterRows(|row| row.sum() > 0.0).flatten(),
+            vec![1.0, -2.0, 3.0, 4.0, 5.0, -6.0]
+        );
         assert_eq!(m.filterRows(|row| row.at(0, 0) > 2.0).shape(), (1, 3));
         assert_eq!(m.filterRows(|_| false).shape(), (0, 3));
-        assert_eq!(m.applyAlongAxis(MatD::sum, 0).flatten(), vec![5.0, 3.0, -3.0]);
+        assert_eq!(
+            m.applyAlongAxis(MatD::sum, 0).flatten(),
+            vec![5.0, 3.0, -3.0]
+        );
         assert_eq!(m.applyAlongAxis(MatD::max, 1).flatten(), vec![3.0, 5.0]);
         assert_eq!(m.zipMap(&m, |a, b| a * b).flatten(), (&m * &m).flatten());
         assert_eq!(m.wherePred(|x| x < 0.0), vec![(0, 1), (1, 2)]);

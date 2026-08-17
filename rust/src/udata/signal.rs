@@ -77,7 +77,11 @@ fn trim(full: Vec<f64>, na: usize, nb: usize, mode: ConvMode, valid_start: usize
         }
         ConvMode::Valid => {
             let n_valid = na.max(nb) - na.min(nb) + 1;
-            MatD::create(full[valid_start..valid_start + n_valid].to_vec(), 1, n_valid)
+            MatD::create(
+                full[valid_start..valid_start + n_valid].to_vec(),
+                1,
+                n_valid,
+            )
         }
     }
 }
@@ -143,12 +147,24 @@ mod tests {
     fn convolve_and_correlate_match_numpy() {
         let a = row(&[1.0, 2.0, 3.0]);
         let b = row(&[0.0, 1.0, 0.5]);
-        assert_eq!(convolve(&a, &b, ConvMode::Full).flatten(), vec![0.0, 1.0, 2.5, 4.0, 1.5]);
-        assert_eq!(convolve(&a, &b, ConvMode::Same).flatten(), vec![1.0, 2.5, 4.0]);
+        assert_eq!(
+            convolve(&a, &b, ConvMode::Full).flatten(),
+            vec![0.0, 1.0, 2.5, 4.0, 1.5]
+        );
+        assert_eq!(
+            convolve(&a, &b, ConvMode::Same).flatten(),
+            vec![1.0, 2.5, 4.0]
+        );
         assert_eq!(convolve(&a, &b, ConvMode::Valid).flatten(), vec![2.5]);
         assert_eq!(correlate(&a, &b, ConvMode::Valid).flatten(), vec![3.5]);
-        assert_eq!(correlate(&a, &b, ConvMode::Full).flatten(), vec![0.5, 2.0, 3.5, 3.0, 0.0]);
-        assert_eq!(correlate(&a, &b, ConvMode::Same).flatten(), vec![2.0, 3.5, 3.0]);
+        assert_eq!(
+            correlate(&a, &b, ConvMode::Full).flatten(),
+            vec![0.5, 2.0, 3.5, 3.0, 0.0]
+        );
+        assert_eq!(
+            correlate(&a, &b, ConvMode::Same).flatten(),
+            vec![2.0, 3.5, 3.0]
+        );
     }
 
     #[test]
@@ -156,7 +172,10 @@ mod tests {
         let x = row(&[0.0, 1.0, 2.0, 3.0, 4.0]);
         let y = row(&[1.0, 3.0, 9.0, 19.0, 33.0]); // 2x² + 1
         let c = polyfit(&x, &y, 2).flatten();
-        assert!((c[0] - 2.0).abs() < 1e-9 && c[1].abs() < 1e-9 && (c[2] - 1.0).abs() < 1e-9, "{c:?}");
+        assert!(
+            (c[0] - 2.0).abs() < 1e-9 && c[1].abs() < 1e-9 && (c[2] - 1.0).abs() < 1e-9,
+            "{c:?}"
+        );
         let v = polyval(&row(&[2.0, 0.0, 1.0]), &row(&[3.0, -1.0])).flatten();
         assert_eq!(v, vec![19.0, 3.0]);
     }

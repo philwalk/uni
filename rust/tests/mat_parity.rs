@@ -308,15 +308,13 @@ fn case_word_linalg(me: &MatD, label: &str) -> u64 {
         "la.n1" => me.normOrd(NormOrd::One).to_bits(),
         "la.qrq" => fnv(&me.qrDecomposition().0.toArray()),
         "la.qrr" => fnv(&me.qrDecomposition().1.toArray()),
-        "la.outer" => fnv(
-            &me.slice(0..1, 0..ri(cols))
-                .outer(&me.slice(0..ri(rows), 0..1))
-                .toArray(),
-        ),
-        "la.kron" => fnv(
-            &me.kron(&me.slice(0..ri(rows.min(2)), 0..ri(cols.min(2))))
-                .toArray(),
-        ),
+        "la.outer" => fnv(&me
+            .slice(0..1, 0..ri(cols))
+            .outer(&me.slice(0..ri(rows), 0..1))
+            .toArray()),
+        "la.kron" => fnv(&me
+            .kron(&me.slice(0..ri(rows.min(2)), 0..ri(cols.min(2))))
+            .toArray()),
         "la.tril1" => fnv(&me.tril(1).toArray()),
         "la.triun1" => fnv(&me.triu(-1).toArray()),
         "la.fillna" => {
@@ -325,18 +323,19 @@ fn case_word_linalg(me: &MatD, label: &str) -> u64 {
         }
         "la.cov" => fnv(&me.cov().toArray()),
         "la.corr" => fnv(&me.corrcoef().toArray()),
-        "la.cross" => fnv(
-            &me.slice(0..1, 0..3)
-                .cross(&me.slice(0..3, 0..1))
-                .toArray(),
-        ),
-        "la.inv" => fnv(&me.inverse().expect("fixture matrix is invertible").toArray()),
-        "la.solve" => fnv(
-            &me.solve(&me.T())
-                .expect("fixture matrix is invertible")
-                .toArray(),
-        ),
-        "la.det" => me.determinant().expect("fixture matrix is invertible").to_bits(),
+        "la.cross" => fnv(&me.slice(0..1, 0..3).cross(&me.slice(0..3, 0..1)).toArray()),
+        "la.inv" => fnv(&me
+            .inverse()
+            .expect("fixture matrix is invertible")
+            .toArray()),
+        "la.solve" => fnv(&me
+            .solve(&me.T())
+            .expect("fixture matrix is invertible")
+            .toArray()),
+        "la.det" => me
+            .determinant()
+            .expect("fixture matrix is invertible")
+            .to_bits(),
         "la.svq" => q20(me.svd().1),
         "la.lstsqq" => q20(me.lstsq(&me.abs().sumAxis(1)).0.toArray()),
         "la.resq" => q20(me.lstsq(&me.abs().sumAxis(1)).1.toArray()),
@@ -374,7 +373,11 @@ fn case_word_util(m: &MatD, label: &str) -> u64 {
         "ut.roundn3" => fnv(&m.round(-3).toArray()),
         "ut.nan2num" => {
             let nan_mat = MatD::create(vec![f64::NAN; rows * cols], rows, cols);
-            fnv(&m.lt(0.0).whereMat(&nan_mat, m).nanToNum(-1.0, 0.0, 0.0).toArray())
+            fnv(&m
+                .lt(0.0)
+                .whereMat(&nan_mat, m)
+                .nanToNum(-1.0, 0.0, 0.0)
+                .toArray())
         }
         "ut.tile" => fnv(&m.tile(2, 3).toArray()),
         "ut.rep1" => fnv(&m.repeatAxis(2, 1).toArray()),
@@ -394,7 +397,11 @@ fn case_word_util(m: &MatD, label: &str) -> u64 {
 /// Exact non-negative integers carried as f64 (indices, counts) → the u64 words the
 /// Scala side hashes (`fnvWords(a.map(_.toLong))`).
 fn ints(xs: &[f64]) -> u64 {
-    #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "exact small integers")]
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "exact small integers"
+    )]
     fnv_words(xs.iter().map(|&x| x as u64))
 }
 

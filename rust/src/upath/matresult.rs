@@ -146,7 +146,11 @@ impl CsvTable<f64> {
             .filter_map(|(i, h)| ops.get(h.as_str()).map(|&op| (i, h.as_str(), op)))
             .collect();
         let mut out_headers = vec![key_col.to_owned()];
-        out_headers.extend(agg_cols.iter().map(|(_, c, op)| format!("{c}_{}", op.suffix())));
+        out_headers.extend(
+            agg_cols
+                .iter()
+                .map(|(_, c, op)| format!("{c}_{}", op.suffix())),
+        );
         let width = out_headers.len();
         let mut flat = Vec::new();
         for (key, rows) in group_rows(&self.mat, key_idx) {
@@ -180,7 +184,10 @@ impl CsvTable<f64> {
         let r_key = right.index_of("merge", on);
         let mut build: HashMap<u64, Vec<usize>> = HashMap::new();
         for r in 0..right.mat.nrows() {
-            build.entry(key_bits(right.mat[(r, r_key)])).or_default().push(r);
+            build
+                .entry(key_bits(right.mat[(r, r_key)]))
+                .or_default()
+                .push(r);
         }
         let l_cols: Vec<(&str, usize)> = self
             .headers
@@ -200,10 +207,18 @@ impl CsvTable<f64> {
         let r_names: Vec<&str> = r_cols.iter().map(|c| c.0).collect();
         let mut out_headers = vec![on.to_owned()];
         out_headers.extend(l_cols.iter().map(|(n, _)| {
-            if r_names.contains(n) { format!("{n}_x") } else { (*n).to_owned() }
+            if r_names.contains(n) {
+                format!("{n}_x")
+            } else {
+                (*n).to_owned()
+            }
         }));
         out_headers.extend(r_cols.iter().map(|(n, _)| {
-            if l_names.contains(n) { format!("{n}_y") } else { (*n).to_owned() }
+            if l_names.contains(n) {
+                format!("{n}_y")
+            } else {
+                (*n).to_owned()
+            }
         }));
         let width = out_headers.len();
         let mut flat = Vec::new();
@@ -261,7 +276,12 @@ mod tests {
     fn group_by_means_in_first_appearance_order() {
         let x = t(
             &["sector", "price", "vol"],
-            &[&[2.0, 10.0, 1.0], &[1.0, 20.0, 2.0], &[2.0, 30.0, 3.0], &[1.0, 40.0, 4.0]],
+            &[
+                &[2.0, 10.0, 1.0],
+                &[1.0, 20.0, 2.0],
+                &[2.0, 30.0, 3.0],
+                &[1.0, 40.0, 4.0],
+            ],
         );
         let g = x.groupBy("sector", AggOp::Mean);
         assert_eq!(g.headers, vec!["sector", "price_mean", "vol_mean"]);
@@ -277,7 +297,10 @@ mod tests {
     #[test]
     fn merge_inner_left_right() {
         let a = t(&["id", "p"], &[&[1.0, 10.0], &[2.0, 20.0], &[3.0, 30.0]]);
-        let b = t(&["id", "p", "q"], &[&[2.0, 200.0, 2.5], &[4.0, 400.0, 4.5], &[2.0, 201.0, 2.6]]);
+        let b = t(
+            &["id", "p", "q"],
+            &[&[2.0, 200.0, 2.5], &[4.0, 400.0, 4.5], &[2.0, 201.0, 2.6]],
+        );
         let inner = a.merge(&b, "id", JoinType::Inner);
         assert_eq!(inner.headers, vec!["id", "p_x", "p_y", "q"]);
         assert_eq!(inner.rows(), 2);

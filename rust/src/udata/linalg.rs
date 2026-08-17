@@ -340,7 +340,10 @@ impl MatD {
             }
         }
         let r_out = r[..p * n_cols].to_vec();
-        (Self::create(q_out, n_rows, p), Self::create(r_out, p, n_cols))
+        (
+            Self::create(q_out, n_rows, p),
+            Self::create(r_out, p, n_cols),
+        )
     }
 
     /// `np.outer`: the |a|×|b| product of two vectors' flattened elements.
@@ -453,7 +456,11 @@ impl MatD {
         // Scala centres a contiguous matrix with a sequential row mean and a view with
         // `mean(1)`; the two can differ in the last ulp, so both are reproduced.
         let fast = self.fast_d();
-        let means = if fast { Self::zeros(0, 0) } else { self.meanAxis(1) };
+        let means = if fast {
+            Self::zeros(0, 0)
+        } else {
+            self.meanAxis(1)
+        };
         let a = self.flatten();
         let mut centered = vec![0.0; p * n];
         for i in 0..p {
@@ -711,8 +718,9 @@ impl MatD {
         let (u_mat, s, vt_mat) = self.svd();
         let u = u_mat.flatten();
         let vt = vt_mat.flatten();
-        let threshold = tol
-            .unwrap_or_else(|| 1e-10 * n_rows.max(n_cols) as f64 * s.first().copied().unwrap_or(0.0));
+        let threshold = tol.unwrap_or_else(|| {
+            1e-10 * n_rows.max(n_cols) as f64 * s.first().copied().unwrap_or(0.0)
+        });
         let s_inv: Vec<f64> = s
             .iter()
             .map(|&sv| if sv > threshold { 1.0 / sv } else { 0.0 })
@@ -825,7 +833,10 @@ mod tests {
             let (q, rr) = a.qrDecomposition();
             assert!(max_abs_diff(&q.matmulPure(&rr), &a) < 1e-12, "{r}x{c}");
             let p = r.min(c);
-            assert!(max_abs_diff(&q.T().matmulPure(&q), &eye(p)) < 1e-12, "{r}x{c} Q");
+            assert!(
+                max_abs_diff(&q.T().matmulPure(&q), &eye(p)) < 1e-12,
+                "{r}x{c} Q"
+            );
         }
     }
 
@@ -845,8 +856,14 @@ mod tests {
             }
             let rec = u.matmulPure(&MatD::create(sd, p, p)).matmulPure(&vt);
             assert!(max_abs_diff(&rec, &a) < 1e-12, "{r}x{c} reconstruction");
-            assert!(max_abs_diff(&u.T().matmulPure(&u), &eye(p)) < 1e-12, "{r}x{c} U");
-            assert!(max_abs_diff(&vt.matmulPure(&vt.T()), &eye(p)) < 1e-12, "{r}x{c} Vt");
+            assert!(
+                max_abs_diff(&u.T().matmulPure(&u), &eye(p)) < 1e-12,
+                "{r}x{c} U"
+            );
+            assert!(
+                max_abs_diff(&vt.matmulPure(&vt.T()), &eye(p)) < 1e-12,
+                "{r}x{c} Vt"
+            );
         }
     }
 

@@ -39,7 +39,10 @@ fn argsort_java(v: &[f64]) -> Vec<f64> {
 
 /// `MatPandasOps.percentileOf`: linear interpolation between order statistics.
 fn percentile_of(arr: &[f64], p: f64) -> f64 {
-    assert!((0.0..=100.0).contains(&p), "percentile must be in [0,100], got {p}");
+    assert!(
+        (0.0..=100.0).contains(&p),
+        "percentile must be in [0,100], got {p}"
+    );
     let sorted = sorted_java(arr.to_vec());
     let n = sorted.len();
     if n == 1 {
@@ -47,7 +50,11 @@ fn percentile_of(arr: &[f64], p: f64) -> f64 {
     }
     #[expect(clippy::cast_precision_loss, reason = "a length")]
     let idx = (p / 100.0) * (n - 1) as f64;
-    #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "idx ≥ 0, floored")]
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "idx ≥ 0, floored"
+    )]
     let lo = idx as usize;
     let hi = (lo + 1).min(n - 1);
     #[expect(clippy::cast_precision_loss, reason = "an index")]
@@ -66,7 +73,10 @@ impl MatD {
     /// Row-major result from a per-column function (`axis 0`, result rows×cols filled
     /// column by column) or per-row function (`axis 1`).
     fn per_lane_full(&self, axis: usize, f: impl Fn(&[f64]) -> Vec<f64>) -> Self {
-        assert!(axis == 0 || axis == 1, "axis must be -1, 0 or 1, got {axis}");
+        assert!(
+            axis == 0 || axis == 1,
+            "axis must be -1, 0 or 1, got {axis}"
+        );
         let (rows, cols) = self.shape();
         let mut result = vec![0.0; rows * cols];
         if axis == 0 {
@@ -412,7 +422,13 @@ impl MatD {
         let bin_width = (max_val - min_val) / bins as f64;
         #[expect(clippy::cast_precision_loss, reason = "bin indices")]
         let edges: Vec<f64> = (0..=bins)
-            .map(|i| if i == bins { max_val } else { min_val + i as f64 * bin_width })
+            .map(|i| {
+                if i == bins {
+                    max_val
+                } else {
+                    min_val + i as f64 * bin_width
+                }
+            })
             .collect();
         let mut counts = vec![0; bins];
         for &value in &data {
@@ -420,7 +436,10 @@ impl MatD {
                 if value == max_val {
                     counts[bins - 1] += 1;
                 } else {
-                    #[expect(clippy::cast_possible_truncation, reason = "a bin index, clamped below")]
+                    #[expect(
+                        clippy::cast_possible_truncation,
+                        reason = "a bin index, clamped below"
+                    )]
                     let idx = ((value - min_val) / bin_width) as i64;
                     let clamped = idx.clamp(0, i64::try_from(bins - 1).unwrap_or(i64::MAX));
                     counts[usize::try_from(clamped).unwrap_or(0)] += 1;
@@ -566,11 +585,26 @@ mod tests {
 
     #[test]
     fn sort_argsort_unique() {
-        assert_eq!(m().sort(None).flatten(), vec![0.0, 1.0, 1.0, 2.0, 3.0, 3.0, 3.0, 4.0, 5.0]);
-        assert_eq!(m().sort(Some(0)).flatten(), vec![1.0, 1.0, 0.0, 3.0, 3.0, 2.0, 3.0, 5.0, 4.0]);
-        assert_eq!(m().sort(Some(1)).flatten(), vec![1.0, 2.0, 3.0, 1.0, 4.0, 5.0, 0.0, 3.0, 3.0]);
-        assert_eq!(m().argsort(None).flatten(), vec![8.0, 1.0, 3.0, 2.0, 0.0, 6.0, 7.0, 5.0, 4.0]);
-        assert_eq!(m().argsort(Some(1)).flatten(), vec![1.0, 2.0, 0.0, 0.0, 2.0, 1.0, 2.0, 0.0, 1.0]);
+        assert_eq!(
+            m().sort(None).flatten(),
+            vec![0.0, 1.0, 1.0, 2.0, 3.0, 3.0, 3.0, 4.0, 5.0]
+        );
+        assert_eq!(
+            m().sort(Some(0)).flatten(),
+            vec![1.0, 1.0, 0.0, 3.0, 3.0, 2.0, 3.0, 5.0, 4.0]
+        );
+        assert_eq!(
+            m().sort(Some(1)).flatten(),
+            vec![1.0, 2.0, 3.0, 1.0, 4.0, 5.0, 0.0, 3.0, 3.0]
+        );
+        assert_eq!(
+            m().argsort(None).flatten(),
+            vec![8.0, 1.0, 3.0, 2.0, 0.0, 6.0, 7.0, 5.0, 4.0]
+        );
+        assert_eq!(
+            m().argsort(Some(1)).flatten(),
+            vec![1.0, 2.0, 0.0, 0.0, 2.0, 1.0, 2.0, 0.0, 1.0]
+        );
         let (vals, counts) = m().unique();
         assert_eq!(vals, vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0]);
         assert_eq!(counts, vec![1, 2, 1, 3, 1, 1]);
@@ -594,14 +628,32 @@ mod tests {
     fn idx_between_diff_shift_pct() {
         assert_eq!(m().idxmin(0).flatten(), vec![1.0, 0.0, 2.0]);
         assert_eq!(m().idxmax(1).flatten(), vec![0.0, 1.0, 0.0]);
-        assert_eq!(m().between(1.0, 3.0).toArray(), vec![true, true, true, true, false, false, true, true, false]);
-        assert_eq!(m().diff().flatten(), vec![-2.0, 1.0, -1.0, 4.0, -1.0, -1.0, 0.0, -3.0]);
-        assert_eq!(m().diffAxis(0).flatten(), vec![-2.0, 4.0, 2.0, 2.0, -2.0, -4.0]);
-        assert_eq!(m().diffAxis(1).flatten(), vec![-2.0, 1.0, 4.0, -1.0, 0.0, -3.0]);
+        assert_eq!(
+            m().between(1.0, 3.0).toArray(),
+            vec![true, true, true, true, false, false, true, true, false]
+        );
+        assert_eq!(
+            m().diff().flatten(),
+            vec![-2.0, 1.0, -1.0, 4.0, -1.0, -1.0, 0.0, -3.0]
+        );
+        assert_eq!(
+            m().diffAxis(0).flatten(),
+            vec![-2.0, 4.0, 2.0, 2.0, -2.0, -4.0]
+        );
+        assert_eq!(
+            m().diffAxis(1).flatten(),
+            vec![-2.0, 1.0, 4.0, -1.0, 0.0, -3.0]
+        );
         let sh = m().shift(1, -9.0, 0);
-        assert_eq!(sh.flatten(), vec![-9.0, -9.0, -9.0, 3.0, 1.0, 2.0, 1.0, 5.0, 4.0]);
+        assert_eq!(
+            sh.flatten(),
+            vec![-9.0, -9.0, -9.0, 3.0, 1.0, 2.0, 1.0, 5.0, 4.0]
+        );
         let sh = m().shift(-1, -9.0, 1);
-        assert_eq!(sh.flatten(), vec![1.0, 2.0, -9.0, 5.0, 4.0, -9.0, 3.0, 0.0, -9.0]);
+        assert_eq!(
+            sh.flatten(),
+            vec![1.0, 2.0, -9.0, 5.0, 4.0, -9.0, 3.0, 0.0, -9.0]
+        );
         let pc = m().pct_change(0).flatten();
         assert!(pc[..3].iter().all(|v| v.is_nan()));
         assert_eq!(pc[3], (1.0 - 3.0) / 3.0);

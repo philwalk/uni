@@ -47,8 +47,14 @@ impl EigWork {
     }
 
     /// Reduce to Hessenberg form by orthogonal similarity (JAMA `orthes`).
-    #[expect(clippy::cognitive_complexity, reason = "the EISPACK reduction is one algorithm")]
-    #[expect(clippy::needless_range_loop, reason = "index arithmetic mirrors the reference")]
+    #[expect(
+        clippy::cognitive_complexity,
+        reason = "the EISPACK reduction is one algorithm"
+    )]
+    #[expect(
+        clippy::needless_range_loop,
+        reason = "index arithmetic mirrors the reference"
+    )]
     fn orthes(&mut self) {
         let n = self.n;
         if n == 0 {
@@ -151,8 +157,14 @@ impl EigWork {
 
     /// The QR iteration: deflates one or two eigenvalues at a time from the bottom of the
     /// active window until it is empty. Returns the matrix norm used as the zero test.
-    #[expect(clippy::too_many_lines, reason = "the EISPACK iteration is one algorithm")]
-    #[expect(clippy::cognitive_complexity, reason = "the EISPACK iteration is one algorithm")]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the EISPACK iteration is one algorithm"
+    )]
+    #[expect(
+        clippy::cognitive_complexity,
+        reason = "the EISPACK iteration is one algorithm"
+    )]
     fn hqr2_iterate(&mut self) -> f64 {
         let nn = self.n;
         if nn == 0 {
@@ -401,8 +413,14 @@ impl EigWork {
 
     /// Back-substitute the eigenvectors of the quasi-triangular Schur form and
     /// transform them back (the second half of JAMA `hqr2`).
-    #[expect(clippy::too_many_lines, reason = "the EISPACK back-substitution is one algorithm")]
-    #[expect(clippy::cognitive_complexity, reason = "the EISPACK back-substitution is one algorithm")]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the EISPACK back-substitution is one algorithm"
+    )]
+    #[expect(
+        clippy::cognitive_complexity,
+        reason = "the EISPACK back-substitution is one algorithm"
+    )]
     fn hqr2_backsubstitute(&mut self, norm: f64) {
         let nn = self.n;
         if nn == 0 || norm == 0.0 {
@@ -492,19 +510,30 @@ impl EigWork {
                             // Solve complex equations.
                             x = self.at(i, i + 1);
                             y = self.at(i + 1, i);
-                            let mut vr = (self.d[i] - p) * (self.d[i] - p) + self.e[i] * self.e[i] - q * q;
+                            let mut vr =
+                                (self.d[i] - p) * (self.d[i] - p) + self.e[i] * self.e[i] - q * q;
                             let vi = (self.d[i] - p) * 2.0 * q;
                             if vr == 0.0 && vi == 0.0 {
                                 vr = eps * norm * (w.abs() + q.abs() + x.abs() + y.abs() + z.abs());
                             }
-                            let (cr, ci) = cdiv(x * r - z * ra + q * sa, x * s - z * sa - q * ra, vr, vi);
+                            let (cr, ci) =
+                                cdiv(x * r - z * ra + q * sa, x * s - z * sa - q * ra, vr, vi);
                             self.set(i, n - 1, cr);
                             self.set(i, n, ci);
                             if x.abs() > (z.abs() + q.abs()) {
-                                self.set(i + 1, n - 1, (-ra - w * self.at(i, n - 1) + q * self.at(i, n)) / x);
-                                self.set(i + 1, n, (-sa - w * self.at(i, n) - q * self.at(i, n - 1)) / x);
+                                self.set(
+                                    i + 1,
+                                    n - 1,
+                                    (-ra - w * self.at(i, n - 1) + q * self.at(i, n)) / x,
+                                );
+                                self.set(
+                                    i + 1,
+                                    n,
+                                    (-sa - w * self.at(i, n) - q * self.at(i, n - 1)) / x,
+                                );
                             } else {
-                                let (cr, ci) = cdiv(-r - y * self.at(i, n - 1), -s - y * self.at(i, n), z, q);
+                                let (cr, ci) =
+                                    cdiv(-r - y * self.at(i, n - 1), -s - y * self.at(i, n), z, q);
                                 self.set(i + 1, n - 1, cr);
                                 self.set(i + 1, n, ci);
                             }
@@ -569,7 +598,11 @@ impl EigWork {
                     // Rotate so component k is real and positive, then scale.
                     let (re, im) = (self.vat(k, j), self.vat(k, j + 1));
                     let mag = (re * re + im * im).sqrt();
-                    let (cr, ci) = if mag > 0.0 { (re / mag, -im / mag) } else { (1.0, 0.0) };
+                    let (cr, ci) = if mag > 0.0 {
+                        (re / mag, -im / mag)
+                    } else {
+                        (1.0, 0.0)
+                    };
                     for i in 0..n {
                         let (a, b) = (self.vat(i, j), self.vat(i, j + 1));
                         self.vset(i, j, (a * cr - b * ci) / nrm);
@@ -698,7 +731,11 @@ mod tests {
             check_eigenpairs(&a);
             let ev = a.eigenvalues();
             let tr: f64 = ev.iter().sum();
-            assert!((tr - a.trace()).abs() < 1e-8, "n={n} trace {tr} vs {}", a.trace());
+            assert!(
+                (tr - a.trace()).abs() < 1e-8,
+                "n={n} trace {tr} vs {}",
+                a.trace()
+            );
         }
     }
 
