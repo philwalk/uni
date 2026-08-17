@@ -1150,36 +1150,43 @@ object Mat {
   /** Whether BLAS mode routes through netlib (`multiplyDoubleNetlib`) or through bytedeco's
    *  bundled OpenBLAS (`multiplyDoubleOB`).
    *
-   *  **Linux: whichever is faster, decided by a probe — and only after bytedeco is loaded.**
-   *  netlib's JNIBLAS resolves the system `libblas.so.3`: an optimised OpenBLAS where the
-   *  alternatives point at one (4.5× faster than the bundled build at 512³ on quadd), the
-   *  reference BLAS elsewhere (far slower than even the pure loop). Ubuntu's OpenBLAS is
-   *  built without LAPACKE and shares bytedeco's SONAME, so if netlib mapped it FIRST the
-   *  later LAPACKE call for eig/svd/cholesky would die with an undefined symbol; that is why
-   *  `netlib` loads bytedeco's LAPACKE-complete copy before `getInstance()`, so bytedeco's
-   *  JNI library is bound to it before the system one is mapped. The two then coexist in
-   *  their own JNI scopes — unlike the old LD_PRELOAD workaround, which interposed one over
-   *  the other globally. `BlasDiagSuite` runs the sequence (BLAS-mode matmul, then LAPACKE)
-   *  as a positive test. The 64×64 probe tells reference BLAS (~1 ms) from OpenBLAS (~10 µs).
+   *  **Linux: never netlib, unless `-Duni.mat.linuxNetlib=true` asks for it.** netlib's
+   *  JNIBLAS resolves the system `libblas.so.3`; with `libopenblas0` installed that is
+   *  Ubuntu's OpenBLAS, which shares bytedeco's SONAME. Two OpenBLAS instances in one JVM
+   *  interpose on each other's internals even from separate JNI scopes: with bytedeco's copy
+   *  loaded first, netlib's dgemm died on quadd with `SIGSEGV in
+   *  libopenblas_nolapack.so.0 dgemm_oncopy_HASWELL` (2026-08-16) — the same signature the
+   *  earlier LD_PRELOAD workaround produced. And with the system copy loaded first, the
+   *  LAPACKE call for eig/svd/cholesky dies instead (that copy is built without LAPACKE).
+   *  There is no order in which both can be resident, so on Linux `uni` uses only bytedeco's
+   *  bundled, LAPACKE-complete OpenBLAS — 4.5× slower than the system one at 512³ on a
+   *  4-core box, which is the open cost of the safe rule. Merely *deciding* by netlib's
+   *  class name would map the system copy, hence the flag is checked first.
+   *
+   *  The property exists for investigation on boxes whose `libblas.so.3` is NOT an OpenBLAS
+   *  (reference BLAS, or a build with a distinct SONAME), where the probe below can be
+   *  exercised: `[uni] netlib …` on stderr under `-Duni.blas.verbose=true` says what it saw.
    *
    *  Elsewhere: F2JBLAS / Java11BLAS are always slow; VectorBLAS, and JNIBLAS on macOS
    *  (Accelerate), are fast. */
   private lazy val netlibIsFast: Boolean =
-    val name = netlib.getClass.getName
-    if name.endsWith("F2JBLAS") || name.endsWith("Java11BLAS") then false
-    else if name.endsWith("JNIBLAS") && isLinux then
-      val n = 64
-      val a = new Array[Double](n * n)
-      val b = new Array[Double](n * n)
-      val c = new Array[Double](n * n)
-      netlib.dgemm("N", "N", n, n, n, 1.0, b, 0, n, a, 0, n, 0.0, c, 0, n) // warmup
-      val t0 = System.nanoTime()
-      netlib.dgemm("N", "N", n, n, n, 1.0, b, 0, n, a, 0, n, 0.0, c, 0, n)
-      val fast = (System.nanoTime() - t0) < 500_000L // < 0.5ms → OpenBLAS; ≥ 0.5ms → reference BLAS
-      if sys.props.get("uni.blas.verbose").exists(_.equalsIgnoreCase("true")) || uni.verboseUni then
-        System.err.print(s"[uni] netlib $name on Linux: 64x64 dgemm ${(System.nanoTime() - t0) / 1000} us -> ${if fast then "using system BLAS via netlib" else "slow (reference BLAS?); using bundled OpenBLAS"}\n")
-      fast
-    else true
+    if isLinux && !sys.props.get("uni.mat.linuxNetlib").exists(_.equalsIgnoreCase("true")) then false
+    else
+      val name = netlib.getClass.getName
+      if name.endsWith("F2JBLAS") || name.endsWith("Java11BLAS") then false
+      else if name.endsWith("JNIBLAS") && isLinux then
+        val n = 64
+        val a = new Array[Double](n * n)
+        val b = new Array[Double](n * n)
+        val c = new Array[Double](n * n)
+        netlib.dgemm("N", "N", n, n, n, 1.0, b, 0, n, a, 0, n, 0.0, c, 0, n) // warmup
+        val t0 = System.nanoTime()
+        netlib.dgemm("N", "N", n, n, n, 1.0, b, 0, n, a, 0, n, 0.0, c, 0, n)
+        val fast = (System.nanoTime() - t0) < 500_000L // < 0.5ms → OpenBLAS; ≥ 0.5ms → reference BLAS
+        if sys.props.get("uni.blas.verbose").exists(_.equalsIgnoreCase("true")) || uni.verboseUni then
+          System.err.print(s"[uni] netlib $name on Linux (uni.mat.linuxNetlib=true): 64x64 dgemm ${(System.nanoTime() - t0) / 1000} us -> ${if fast then "using system BLAS via netlib" else "slow (reference BLAS?); using bundled OpenBLAS"}\n")
+        fast
+      else true
 
   private lazy val isLinux = System.getProperty("os.name", "").toLowerCase.contains("linux")
 
