@@ -265,19 +265,65 @@ object Mat {
         f(Mat.create(row, 1, m._cols))
         i += 1
 
-  /** Whether `matmul` / `*@` may route to BLAS. **Off by default**: the default matmul is
-   *  the pure tiled loop, whose association order (a sequential k-sum from 0.0 per cell)
-   *  is reproduced bit for bit by the Rust port and does not depend on the machine.
-   *  BLAS is 2-4x faster on large dense products and does not offer that: its result
-   *  varies with the library, its threading and the CPU's kernel selection.
+  /** Which native BLAS, if any, `matmul` / `*@` may route to — `-Duni.mat.blas=…` or the
+   *  env var `UNI_MAT_BLAS` (the property wins), read once per JVM:
    *
-   *  Opt in with `-Duni.mat.blas=true` or the env var `UNI_MAT_BLAS=true` (the property
-   *  wins), read once. There is deliberately no programmatic setter; a caller who wants
-   *  BLAS for one product regardless of mode calls `matmulBlas`, and one who wants the
-   *  pinned result regardless of mode calls `matmulPure`. */
-  private lazy val blasMode: Boolean =
-    val v = Option(System.getProperty("uni.mat.blas")).orElse(sys.env.get("UNI_MAT_BLAS"))
-    v.exists(x => x.trim.equalsIgnoreCase("true") || x.trim == "1")
+   *  | value       | meaning                                                                 |
+   *  |-------------|-------------------------------------------------------------------------|
+   *  | unset       | none — the pinned pure loop, bit-identical to the Rust port, machine-independent |
+   *  | `os-best`   | the platform's best safe choice: Linux → `bundled`; macOS → `system` (Accelerate); Windows → whichever netlib serves, else `bundled` |
+   *  | `bundled`   | bytedeco's OpenBLAS, everywhere                                          |
+   *  | `system`    | netlib → whatever the OS provides (OpenBLAS, Accelerate, VectorBLAS…)   |
+   *  | `true`, `1` | alias for `os-best`                                                     |
+   *  | `false`, `pure`, `0` | none, even if the env var says otherwise                       |
+   *
+   *  **One BLAS per process on Linux.** The system OpenBLAS and bytedeco's bundled one share
+   *  a SONAME and interpose on each other's internals; both resident in one JVM ends in
+   *  `SIGSEGV dgemm_oncopy_HASWELL` (quadd and WSL, 2026-08-16/17), whichever loads first.
+   *  So `system` on Linux never loads the bundled copy: `eig`, `eigenvalues`, `svd` and
+   *  `cholesky` go through netlib's LAPACK instead ([[LapackNetlib]] — the system
+   *  `liblapack.so.3`, which with `libopenblas0` is the very OpenBLAS already resident, or
+   *  netlib's pure-Java fallback). `os-best` on Linux is `bundled` (matmul 1.8–4.5× slower
+   *  than the system OpenBLAS at 512³, but no dependence on OS packages); `system` is the
+   *  opt-in for speed. macOS and Windows have no such collision: netlib's backend there is
+   *  not an OpenBLAS, so `system` there keeps bytedeco's LAPACKE for the LAPACK routines.
+   *
+   *  BLAS is 2–4× faster than the pure loop on large dense products (more on few-core
+   *  boxes) and does not offer the pin: its result varies with the library, its threading
+   *  and the CPU. There is deliberately no programmatic setter; per call, `matmulBlas` and
+   *  `matmulPure` override the mode either way. */
+  private enum BlasChoice:
+    case None, Bundled, System
+
+  private lazy val blasChoice: BlasChoice =
+    val raw = Option(java.lang.System.getProperty("uni.mat.blas")).orElse(sys.env.get("UNI_MAT_BLAS"))
+      .map(_.trim.toLowerCase).getOrElse("")
+    raw match
+      case "" | "false" | "pure" | "0" | "none" => BlasChoice.None
+      case "bundled"                            => BlasChoice.Bundled
+      case "system"                             => BlasChoice.System
+      case "os-best" | "true" | "1"             =>
+        if isLinux then BlasChoice.Bundled else BlasChoice.System
+      case other =>
+        java.lang.System.err.print(s"[uni] uni.mat.blas=$other is not one of os-best|bundled|system|false; BLAS mode off\n")
+        BlasChoice.None
+
+  /** BLAS mode is on in any form. */
+  private lazy val blasMode: Boolean = blasChoice != BlasChoice.None
+
+  /** True when the bundled OpenBLAS must not be loaded: Linux with `system` chosen. The
+   *  LAPACK routines (`eig`, `eigenvalues`, `svd`, `cholesky`) then go through netlib's
+   *  LAPACK ([[LapackNetlib]]: the system `liblapack.so.3`, or its pure-Java fallback)
+   *  instead of bytedeco's LAPACKE, and the bundled matmul paths are unreachable. */
+  private[data] lazy val lapackViaNetlib: Boolean = isLinux && blasChoice == BlasChoice.System
+
+  /** Internal invariant: the bundled OpenBLAS is never entered under Linux `system`. */
+  class BlasModeException(routine: String) extends IllegalStateException(
+    s"$routine reached the bundled OpenBLAS under -Duni.mat.blas=system on Linux, where " +
+    s"it cannot coexist with the system OpenBLAS; this is a uni bug — please report it")
+
+  private def requireBundled(routine: String): Unit =
+    if lapackViaNetlib then throw BlasModeException(routine)
 
   // Within BLAS mode, tiny products still run the pure loop: below these op counts the
   // JNI call costs more than the multiply. Crossover is higher on macOS/Accelerate.
@@ -1140,53 +1186,34 @@ object Mat {
     // than an accident of declaration order -- and is why it is no longer "unused", though its
     // job was always to exist (JUL holds loggers weakly; see the note above).
     val _ = netlibLogger
-    // Load bytedeco's bundled, LAPACKE-complete OpenBLAS BEFORE netlib can map a system
-    // one. On Ubuntu the system OpenBLAS is built without LAPACKE and shares this SONAME;
-    // with the bundled copy resident first, bytedeco's JNI library is already bound to it
-    // when netlib brings the system copy in for its own use — see `netlibIsFast`. Harmless
-    // on Windows/macOS.
-    org.bytedeco.javacpp.Loader.load(classOf[org.bytedeco.openblas.global.openblas])
+    // Reached only under `system`. Deliberately does NOT preload bytedeco's copy first:
+    // that put both OpenBLAS instances in one process and segfaulted on Linux (see
+    // `blasChoice`). Under `system` on Linux the bundled copy is forbidden outright.
     dev.ludovic.netlib.blas.BLAS.getInstance()
   /** Whether BLAS mode routes through netlib (`multiplyDoubleNetlib`) or through bytedeco's
-   *  bundled OpenBLAS (`multiplyDoubleOB`).
+   *  bundled OpenBLAS (`multiplyDoubleOB`) — decided by [[blasChoice]].
    *
-   *  **Linux: never netlib, unless `-Duni.mat.linuxNetlib=true` asks for it.** netlib's
-   *  JNIBLAS resolves the system `libblas.so.3`; with `libopenblas0` installed that is
-   *  Ubuntu's OpenBLAS, which shares bytedeco's SONAME. Two OpenBLAS instances in one JVM
-   *  interpose on each other's internals even from separate JNI scopes: with bytedeco's copy
-   *  loaded first, netlib's dgemm died on quadd with `SIGSEGV in
-   *  libopenblas_nolapack.so.0 dgemm_oncopy_HASWELL` (2026-08-16) — the same signature the
-   *  earlier LD_PRELOAD workaround produced. And with the system copy loaded first, the
-   *  LAPACKE call for eig/svd/cholesky dies instead (that copy is built without LAPACKE).
-   *  There is no order in which both can be resident, so on Linux `uni` uses only bytedeco's
-   *  bundled, LAPACKE-complete OpenBLAS — 4.5× slower than the system one at 512³ on a
-   *  4-core box, which is the open cost of the safe rule. Merely *deciding* by netlib's
-   *  class name would map the system copy, hence the flag is checked first.
-   *
-   *  The property exists for investigation on boxes whose `libblas.so.3` is NOT an OpenBLAS
-   *  (reference BLAS, or a build with a distinct SONAME), where the probe below can be
-   *  exercised: `[uni] netlib …` on stderr under `-Duni.blas.verbose=true` says what it saw.
-   *
-   *  Elsewhere: F2JBLAS / Java11BLAS are always slow; VectorBLAS, and JNIBLAS on macOS
-   *  (Accelerate), are fast. */
+   *  `Bundled` never touches netlib: merely reading its class name would map the system
+   *  BLAS, and on Linux that is the copy that collides with the bundled one. `System` goes
+   *  to netlib and, on Linux, still refuses a netlib that turned out to be the pure-Java
+   *  F2JBLAS/Java11BLAS (slower than the pure loop) — but does NOT fall back to the bundled
+   *  copy there, since the system BLAS is by then resident; the pure loop runs instead. */
   private lazy val netlibIsFast: Boolean =
-    if isLinux && !sys.props.get("uni.mat.linuxNetlib").exists(_.equalsIgnoreCase("true")) then false
-    else
-      val name = netlib.getClass.getName
-      if name.endsWith("F2JBLAS") || name.endsWith("Java11BLAS") then false
-      else if name.endsWith("JNIBLAS") && isLinux then
-        val n = 64
-        val a = new Array[Double](n * n)
-        val b = new Array[Double](n * n)
-        val c = new Array[Double](n * n)
-        netlib.dgemm("N", "N", n, n, n, 1.0, b, 0, n, a, 0, n, 0.0, c, 0, n) // warmup
-        val t0 = System.nanoTime()
-        netlib.dgemm("N", "N", n, n, n, 1.0, b, 0, n, a, 0, n, 0.0, c, 0, n)
-        val fast = (System.nanoTime() - t0) < 500_000L // < 0.5ms → OpenBLAS; ≥ 0.5ms → reference BLAS
+    blasChoice match
+      case BlasChoice.System =>
+        val name = netlib.getClass.getName
+        val ok   = !(name.endsWith("F2JBLAS") || name.endsWith("Java11BLAS"))
         if sys.props.get("uni.blas.verbose").exists(_.equalsIgnoreCase("true")) || uni.verboseUni then
-          System.err.print(s"[uni] netlib $name on Linux (uni.mat.linuxNetlib=true): 64x64 dgemm ${(System.nanoTime() - t0) / 1000} us -> ${if fast then "using system BLAS via netlib" else "slow (reference BLAS?); using bundled OpenBLAS"}\n")
-        fast
-      else true
+          val lapackNote = if lapackViaNetlib then s"; LAPACK via ${LapackNetlib.backendName}" else ""
+          java.lang.System.err.print(s"[uni] BLAS via netlib: $name -> ${if ok then "using it" else "pure-Java netlib; too slow, matmul stays on the pure loop"}$lapackNote\n")
+        ok
+      case _ => false
+
+  /** In `System` mode with a slow (pure-Java) netlib, BLAS-mode matmul runs the pure loop
+   *  on Linux (the bundled copy is forbidden there — see [[netlibIsFast]]); elsewhere it
+   *  falls through to the bundled copy, which coexists with netlib's backend. */
+  private lazy val blasFallsBackToPure: Boolean =
+    isLinux && blasChoice == BlasChoice.System && !netlibIsFast
 
   private lazy val isLinux = System.getProperty("os.name", "").toLowerCase.contains("linux")
 
@@ -3147,6 +3174,7 @@ object Mat {
       val md    = m.asInstanceOf[Mat[Double]]
       val n     = md.rows
       val aCopy = md.flatten  // row-major copy
+      if Mat.lapackViaNetlib then return LapackNetlib.dgeev(n, aCopy, wantVectors = false)._1
       val wr  = Array.ofDim[Double](n)
       val wi  = Array.ofDim[Double](n)
       val vl  = Array.ofDim[Double](n * n)  // dummy buffers — system LAPACKE requires
@@ -3238,7 +3266,9 @@ object Mat {
       }
 
     private[data] def multiplyDoubleBLAS(other: Mat[Double]): Mat[Double] =
-      if Mat.netlibIsFast then multiplyDoubleNetlib(other) else multiplyDoubleOB(other)
+      if Mat.netlibIsFast then multiplyDoubleNetlib(other)
+      else if Mat.blasFallsBackToPure then multiplyDouble(other)
+      else multiplyDoubleOB(other)
 
     private def multiplyDoubleNetlib(other: Mat[Double]): Mat[Double] = {
       val am = Mat.blasReady(m.asInstanceOf[Mat[Double]])
@@ -3259,6 +3289,7 @@ object Mat {
 
     private def multiplyDoubleOB(other: Mat[Double]): Mat[Double] = {
       import org.bytedeco.openblas.global.openblas._
+      Mat.requireBundled("matmul (bundled OpenBLAS)")
       Mat.bundledOpenBlasReady
       val am = Mat.blasReady(m.asInstanceOf[Mat[Double]])
       val bm = Mat.blasReady(other)
@@ -3276,7 +3307,9 @@ object Mat {
     }
 
     private[data] def multiplyFloatBLAS(other: Mat[Float]): Mat[Float] =
-      if Mat.netlibIsFast then multiplyFloatNetlib(other) else multiplyFloatOB(other)
+      if Mat.netlibIsFast then multiplyFloatNetlib(other)
+      else if Mat.blasFallsBackToPure then multiplyFloat(other)
+      else multiplyFloatOB(other)
 
     private def multiplyFloatNetlib(other: Mat[Float]): Mat[Float] = {
       val am = Mat.blasReadyF(m.asInstanceOf[Mat[Float]])
@@ -3297,6 +3330,7 @@ object Mat {
 
     private def multiplyFloatOB(other: Mat[Float]): Mat[Float] = {
       import org.bytedeco.openblas.global.openblas._
+      Mat.requireBundled("matmul (bundled OpenBLAS)")
       Mat.bundledOpenBlasReady
       val am = Mat.blasReadyF(m.asInstanceOf[Mat[Float]])
       val bm = Mat.blasReadyF(other)
@@ -3758,6 +3792,9 @@ object Mat {
       val nCols = md.cols
       val p     = math.min(nRows, nCols)
       val aCopy = md.flatten  // row-major, respects transposed flag
+      if Mat.lapackViaNetlib then
+        val (u, s, vt) = LapackNetlib.dgesddEconomy(nRows, nCols, aCopy)
+        return (Mat.create(u, nRows, p), s, Mat.create(vt, p, nCols))
       val s     = Array.ofDim[Double](p)
       val u     = Array.ofDim[Double](nRows * p)
       val vt    = Array.ofDim[Double](p * nCols)
@@ -4295,6 +4332,9 @@ object Mat {
       val n     = md.rows
       require(n == md.cols, s"eig requires square matrix, got ${md.shape}")
       val aCopy = md.flatten  // row-major copy
+      if Mat.lapackViaNetlib then
+        val (wr, wi, vr) = LapackNetlib.dgeev(n, aCopy, wantVectors = true)
+        return (wr, wi, Mat.create(vr, n, n))
 
       val wr  = Array.ofDim[Double](n)
       val wi  = Array.ofDim[Double](n)
@@ -4555,10 +4595,9 @@ object Mat {
           val n  = md.rows
           require(n == md.cols, s"cholesky requires square matrix, got ${md.shape}")
           val aCopy = md.flatten
-          val info = LAPACKE_dpotrf(
-            LAPACK_ROW_MAJOR, 'L'.toByte,
-            n, aCopy, n
-          )
+          val info =
+            if Mat.lapackViaNetlib then LapackNetlib.dpotrfLower(n, aCopy)
+            else LAPACKE_dpotrf(LAPACK_ROW_MAJOR, 'L'.toByte, n, aCopy, n)
           if info > 0 then
             throw ArithmeticException(s"Matrix is not positive definite (info=$info)")
           if info < 0 then

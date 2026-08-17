@@ -22,7 +22,7 @@ import uni.data.*
  * | NumPy | Scala | Rust | Scala·BLAS | Rust·BLAS |
  *
  * `Scala`/`Rust` are the default builds; the `·BLAS` columns are the opt-in on each side
- * (`-Duni.mat.blas=true`; `--features blas`). A BLAS column carries a number only on the
+ * (`-Duni.mat.blas=os-best`, or the mode `-blas` names; `--features blas`). A BLAS column carries a number only on the
  * rows BLAS can touch — `matmul` and the 3PRF rows — and `·` elsewhere: elementwise and
  * reduction code is identical in both modes, and printing a second noisy copy of the same
  * number would be exactly the mish-mash this replaces. MatD rows are min-of-60 single
@@ -31,9 +31,9 @@ import uni.data.*
  * # How each column is produced
  *
  *  - Scala: `MatBench.scalaRows` and `Tprf3Bench.run` in this JVM (default), plus
- *    `matmulBlas` per call for the BLAS `matmul` cell; the BLAS 3PRF cells come from a
- *    child JVM started with `-Duni.mat.blas=true` (the mode is read once per JVM, and
- *    `Tprf3` multiplies through `*@`).
+ *    the whole `Scala·BLAS` column from child JVMs started with `-Duni.mat.blas=<mode>`
+ *    (the mode is read once per JVM; `MatmulBlasCell` for the matmul cell, `Tprf3Bench`
+ *    for the 3PRF cells, which multiply through `*@`).
  *  - NumPy: `py/bench.py` and `py/bench_tprf3.py`, first interpreter with a working numpy.
  *  - Rust: `rust/target/release/bench_mat_pure` / `bench_mat_blas` and
  *    `bench_tprf3_pure` / `bench_tprf3_blas` — the two builds `runBenchAll.sh` produces.
@@ -61,6 +61,7 @@ object BenchAll:
     "-nopython      ; skip the NumPy column",
     "-norust        ; skip the Rust columns",
     "-noblas        ; skip the two BLAS columns (no child JVM, no *_blas binaries)",
+    "-blas <mode>   ; uni.mat.blas value for the Scala·BLAS column: os-best (default) | bundled | system",
     "-python <exe>  ; interpreter to use (default: first on PATH with a working numpy)",
     "",
     "Build the Rust halves first (runBenchAll.sh does all of this):",
@@ -88,11 +89,13 @@ object BenchAll:
     var runPython = true
     var runRust   = true
     var runBlas   = true
+    var blasMode  = "os-best"
     var pyOverride: Option[String] = None
     eachArg(args.toSeq, usage) {
       case "-nopython" => runPython = false
       case "-norust"   => runRust = false
       case "-noblas"   => runBlas = false
+      case "-blas"     => blasMode = consumeNext
       case "-python"   => pyOverride = Some(consumeNext)
       case a           => usage(s"unrecognized arg [$a]")
     }
@@ -111,17 +114,16 @@ object BenchAll:
 
     // ── Scala, BLAS mode ─────────────────────────────────────────────────────────
     val scalaBlas: Option[Column] = if !runBlas then None else
-      println("\n── Scala·BLAS (-Duni.mat.blas=true) ───────────────────────────────────────")
-      MatD.setSeed(42)
-      val a = MatD.randn(MatBench.MM, MatBench.MM)
-      val b = MatD.randn(MatBench.MM, MatBench.MM)
-      val mm = MatBench.minMs(a.matmulBlas(b))
-      println(f"  [Scala·BLAS] matmul $mm%10.4f ms/call")
-      val child = BenchRunner.captureJvm("uni.apps.Tprf3Bench", Seq("-nopython", "-norust"),
-        Seq("-Duni.mat.blas=true"))
+      val prop = s"-Duni.mat.blas=$blasMode"
+      println(s"\n── Scala·BLAS ($prop) ───────────────────────────────────────")
+      val cell = BenchRunner.captureJvm("uni.apps.MatmulBlasCell", Seq(), Seq(prop, "-Duni.blas.verbose=true"))
+      cell.foreach(println)
+      val mmRow = """^\s*\[Scala\]\s+matmul\s+([0-9.eE+-]+)\s+ms/call\s*$""".r
+      val mm = cell.collectFirst { case mmRow(ms) => ms.toDouble }
+      val child = BenchRunner.captureJvm("uni.apps.Tprf3Bench", Seq("-nopython", "-norust"), Seq(prop))
       val tprf = parseTprf(child, "Scala")
-      Some(Column("Scala·BLAS", Map("matmul" -> mm) ++ tprf,
-        s"$jvm, matmul via matmulBlas; 3PRF in a child JVM with -Duni.mat.blas=true (netlib/bundled OpenBLAS per platform)"))
+      Some(Column("Scala·BLAS", mm.map("matmul" -> _).toMap ++ tprf,
+        s"$jvm, child JVMs with $prop (backend per platform and mode; see the [uni] line above)"))
 
     // ── NumPy ────────────────────────────────────────────────────────────────────
     val py: Option[Column] = if !runPython then None else
@@ -265,3 +267,13 @@ object BenchAll:
   def median(xs: Seq[Double]): Double =
     val s = xs.sorted; val n = s.length
     if n % 2 == 1 then s(n / 2) else (s(n / 2 - 1) + s(n / 2)) / 2
+
+/** The `Scala·BLAS` matmul cell, run in a child JVM so `-Duni.mat.blas=<mode>` applies:
+ *  one `[Scala] matmul` row in the harness format, same shape and timing as `MatBench`. */
+object MatmulBlasCell:
+  def main(args: Array[String]): Unit =
+    MatD.setSeed(42)
+    val a = MatD.randn(MatBench.MM, MatBench.MM)
+    val b = MatD.randn(MatBench.MM, MatBench.MM)
+    val mm = MatBench.minMs(a *@ b)
+    print(f"  [Scala] matmul $mm%10.4f ms/call\n")

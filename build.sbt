@@ -163,6 +163,7 @@ Test / testOptions += Tests.Argument(TestFrameworks.MUnit, "-q")
 
 libraryDependencies ++= Seq(
   "dev.ludovic.netlib"       % "blas"                       % "3.2.0",
+  "dev.ludovic.netlib"       % "lapack"                     % "3.2.0",
   "org.bytedeco"             % "openblas-platform"          % "0.3.31-1.5.13",
   "org.scala-lang.modules"  %% "scala-parallel-collections" % "1.2.0",
   "org.knowm.xchart"         % "xchart"                     % "4.0.1",
