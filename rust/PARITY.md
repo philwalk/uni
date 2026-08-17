@@ -17,7 +17,7 @@ snake_case marks an internal helper or a `try_*` Result variant.
 | `UniDateTime` (57 methods), `DateFormat`, `SmartParse`, `TimeUtils` | `utime` (67 pub fns) | field arithmetic, plus/minus/with families, epoch-day, pattern formatting, smart parsing incl. `parseDateSmartWith(config)`; the clock (local wall time via `localOffsetMinutes`, no tzdb), the zone-free between/duration family, `getMillis`, `endOfMonth`, `quik*`, `whenModified`/`ageIn*` |
 | `Big`, `BigUtils` + the CSV loaders | `udata` (43 pub fns) | full arithmetic incl. `round(precision, mode)`, HALF_EVEN contexts, `loadMatBig`/`loadSmartBig`; `numStr`/`NumFormat` (Java `%f` fidelity), `str2num`, `isNumeric`, `isBad`/`orBad` |
 | `NumPyRNG` | `numpy_rng` (7 fns) | bit-identical `uniform`/`randn`/`next_*` |
-| `Mat[Double]` core — Tier 3 phases (a) + (b) | `udata::mat::MatD`, `udata::mataxis`, `udata::vecexts::{CVecD, RVecD}` | **the strided view model** (`transpose`/`T`, `slice`, `broadcastTo`, and the fragmented-layout materialisation `Internal.create` performs), broadcasting `+ - * /`, `Neg`, the `apply*` gather family, `reshape` `ravel` `matCopy` `copy` `item` `flatten`; reductions `sum` `mean` `min` `max` `argmin` `argmax` `std` `variance` `norm`; axis family `sumAxis` `meanAxis` `minAxis` `maxAxis` `stdAxis` `cumsumAxis` `cummax` `cummin` + `rowSums`/`colSums`/`rowMeans`/`colMeans`; elementwise `abs` `power` `exp` `log` `sqrt` `clip` `cumsum`. **Bit-identical except `exp`/`log`** (see below): `sumD`'s 8-way unrolled combine tree and its pinned 16-chunk decomposition are reproduced exactly, `abs` keeps `-0.0` where `f64::abs` would not, `power` is repeated multiplication rather than `powi`, `cumsum` returns `1×n` whatever the input shape — and, critically, **which summation algorithm a matrix gets is a function of its layout in both languages alike** (see the view-model note below). Phase (c) — `MatMut` writes, `MatBool` masks, fancy indexing, `MatMathOps` (`sin`…`tanh`, `floor`/`ceil`/`trunc`, `log10`/`log2`, `sigmoid`/`relu`/`leakyRelu`/`elu`/`gelu`, `softmax`/`logSoftmax`, `dropout`) — and phase (e)'s `matmul` (`hstack`/`vstack` with it) are in (see below). Still to come: pandas ops, `leastSquares`, `Mat[Big]` |
+| `Mat[Double]` core — Tier 3 phases (a) + (b) | `udata::mat::MatD`, `udata::mataxis`, `udata::vecexts::{CVecD, RVecD}` | **the strided view model** (`transpose`/`T`, `slice`, `broadcastTo`, and the fragmented-layout materialisation `Internal.create` performs), broadcasting `+ - * /`, `Neg`, the `apply*` gather family, `reshape` `ravel` `matCopy` `copy` `item` `flatten`; reductions `sum` `mean` `min` `max` `argmin` `argmax` `std` `variance` `norm`; axis family `sumAxis` `meanAxis` `minAxis` `maxAxis` `stdAxis` `cumsumAxis` `cummax` `cummin` + `rowSums`/`colSums`/`rowMeans`/`colMeans`; elementwise `abs` `power` `exp` `log` `sqrt` `clip` `cumsum`. **Bit-identical except `exp`/`log`** (see below): `sumD`'s 8-way unrolled combine tree and its pinned 16-chunk decomposition are reproduced exactly, `abs` keeps `-0.0` where `f64::abs` would not, `power` is repeated multiplication rather than `powi`, `cumsum` returns `1×n` whatever the input shape — and, critically, **which summation algorithm a matrix gets is a function of its layout in both languages alike** (see the view-model note below). Phase (c) — `MatMut` writes, `MatBool` masks, fancy indexing, `MatMathOps` (`sin`…`tanh`, `floor`/`ceil`/`trunc`, `log10`/`log2`, `sigmoid`/`relu`/`leakyRelu`/`elu`/`gelu`, `softmax`/`logSoftmax`, `dropout`) — and phase (e)'s `matmul` (`hstack`/`vstack` with it) are in (see below). Phase (e)'s linear algebra is in too — `udata::linalg` (`diagonal` `trace` `normOrd` `determinant` `inverse` `solve` `qrDecomposition` `outer` `cross` `kron` `tril` `triu` `fillna` `cov` `corrcoef`, all bit-identical ports of the Scala loops; `svd` `lstsq`/`leastSquares` `matrixRank` `pinv` `cholesky` as the crate's own Jacobi SVD / Cholesky, pinned to the JVM's LAPACK on a 2^-20 grid) and `udata::eig` (`eig`/`eigenvalues`: EISPACK `orthes`+`hqr2` as JAMA spells it, spectra pinned sorted on the same grid; eigenvectors are a basis, `A·v = λ·v` the only contract). The utility remainder is `udata::matutil`: `maximum`/`minimum` (+`Scalar`; `Ordering[Double]`, i.e. `java_double_compare`, so `minimum(NaN, 1) = 1` as in Scala, not NumPy), `sign` `round` `powerF` `hadamard` `allclose` `containsNaN` `exists` `wherePred` `nanToNum` `ndim` `toContiguous` `zipMap`, `mapRows` `mapCols` `filterRows` `applyAlongAxis` (closures over 1×n / n×1 views), the named broadcast helpers `addToEachRow`… `divEachCol`, `scale`, `repeat`/`repeatAxis`/`tile`, `vsplit`/`hsplit`/`split` (+`N`), `csvText`/`saveCSV`/`writeCsv` (Java `Double.toString` cells). Deliberately not ported: the print configuration (`show`, `precision`, `edgeItems`, `suppressScientific`, `snapshot`, `threshold`, `maxRows`/`maxCols`) — `Debug` prints; `iterator`/`foreach`/`eachRow`/`eachCol`/`typeName`/`shapes`/`isWeirdLayout` — Rust idiom or aliases. Still to come: pandas ops, `Mat[Big]` |
 | `Tprf3`, complete | `t3prf` (13 pub fns) | `t3prf_core`, `estimate_3prf_is_full`/`oos_cv`/`oos_rec`, `ols_solve`, `standardize_columns`, and the closed forms: `tprfClosedForm`, `plsClosedForm`, `pls1Fit`, `forecast3prf` |
 | `StringExts` (partial) | `StrExts`/`StrPathExts` | `lc uc posx dropSuffix startsWithIgnoreCase stripPrefix asPath absPath posix` |
 | `uni.cli.ArgsParser` | `cli` | `eachArg`/`showUsage` + cursor helpers (`thisArg consumeNext peekNext nextInt nextLong nextDouble`); prog name from the caller's source file (`#[track_caller]` mirroring the Scala macro) |
@@ -346,7 +346,7 @@ that the loaders return. Realistic phasing:
 - (c) ~~the `MatDOps` indexing surface: the `apply` gather family, mask indexing, and the
   `update` write family; `MatMathOps` elementwise math~~ **done**;
 - (d) pandas ops;
-- (e) ~~`matmul` and the BLAS question~~ **done** — see "matmul" below; `leastSquares` still outstanding;
+- (e) ~~`matmul` and the BLAS question; `leastSquares` and the decomposition family~~ **done** — see "matmul" and "linear algebra" below;
 - (f) `matResultOps` join/groupBy last.
 
 Two constraints that shape (a)/(b), recorded so they are not rediscovered late:
@@ -498,6 +498,27 @@ remains between it and `matrixmultiply` single-threaded (14 vs 4.3 ms) is ISA: t
 targets baseline x86-64 while `matrixmultiply` dispatches AVX2 at runtime, and closing
 that needs `#[target_feature]` behind an `unsafe` call, which this crate reserves for FFI.
 
+**Linear algebra: two contracts, stated per method.** The pure-JVM methods (`diagonal`
+`trace` `norm(ord)` `determinant` `inverse` `solve` `qrDecomposition` `outer` `cross`
+`kron` `tril` `triu` `fillna` `cov` `corrcoef`) are loops with a fixed association order,
+so the port reproduces them operation for operation and the fixture pins their bits
+(`la.*` rows, raw). The LAPACK-backed ones cannot be pinned that way: LAPACK's blocked
+kernels reassociate, and the bundled and system OpenBLAS differ from each other in the
+last ulps. The crate computes them itself — one-sided Jacobi (Hestenes) SVD behind
+`svd`/`lstsq`/`pinv`/`matrixRank`, Cholesky–Banachiewicz behind `cholesky`, EISPACK
+`orthes` + `hqr2` (the JAMA spelling) behind `eig`/`eigenvalues` — and the fixture pins
+singular values, solutions, ranks and sorted spectra on a 2^-20 grid, on the shapes whose
+conditioning keeps a 1e-13 kernel difference inside a grid cell (`MatParityGen.laTol`:
+small, or far from square; the symmetric spectrum is scaled by its trace first).
+Eigenvectors and singular vectors are a basis, not a canonical one — LAPACK's
+normalisation is reproduced (unit norm, largest component real for complex pairs), signs
+are not a contract, and only `A·v = λ·v` / `U·S·Vᵀ = A` are asserted. `dgesdd`'s
+argument checker in netlib sizes `u` as m×m whatever `jobz` says, which is why the JVM's
+`system`-mode path uses `dgesvd`; the Rust side has no such constraint. Two things Scala
+throws for come back as `Err(Error::SingularMatrix)`: an exactly-zero LU pivot
+(`determinant`/`inverse`/`solve`; NumPy's `det` would return 0) and a non-positive-definite
+`cholesky`.
+
 The Vector API was ruled out for this: `jdk.incubator.vector` must be added to the
 module graph by every JVM that runs the library, and most scala-cli scripts do not, so a
 hard dependency in `Mat` would break them at class-load time. A reflective kernel behind
@@ -564,4 +585,5 @@ hours, not days.
    followed: the aliasing decision `update` forces is settled (`MatMut`, reached by a
    panicking conversion), and mask indexing brought `MatBool`. Then matmul, which made
    `tprfRunner` / `tprf_runner` the eighth demo pair, and `MatMathOps`, which closed
-   phase (c). Next is `leastSquares` (phase (e)'s remainder), then pandas ops.
+   phase (c); the decomposition family closed phase (e). Next is pandas ops, then
+   `MatResult` join/groupBy.

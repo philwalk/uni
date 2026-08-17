@@ -48,6 +48,7 @@ use std::path::PathBuf;
 use uni::NumPyRng;
 use uni::udata::MatBool;
 use uni::udata::MatD;
+use uni::udata::linalg::NormOrd;
 
 /// A fixture row's first field: a 1-D prefix length, a 2-D `<rows>x<cols>`, or an
 /// `adv/<name>/<orientation>` ordering case.
@@ -264,6 +265,139 @@ fn quantize32(d: f64) -> u64 {
 )]
 fn quantize24(d: f64) -> u64 {
     (d * 16_777_216.0 + 0.5).floor() as i64 as u64
+}
+
+/// 2^-20, for the LAPACK-backed decompositions — `MatParityGen.quantize20`.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "mirroring the Scala fixture's .toLong on an already-floored value"
+)]
+fn quantize20(d: f64) -> u64 {
+    (d * 1_048_576.0 + 0.5).floor() as i64 as u64
+}
+
+/// `me·meᵀ + rows·I` — the SPD matrix the cholesky and symmetric-eig rows use.
+fn spd(me: &MatD) -> MatD {
+    let rows = me.rows();
+    let mut eye = vec![0.0; rows * rows];
+    for i in 0..rows {
+        eye[i * rows + i] = 1.0;
+    }
+    #[expect(clippy::cast_precision_loss, reason = "a matrix dimension")]
+    let scaled = &MatD::create(eye, rows, rows) * rows as f64;
+    &me.matmulPure(&me.T()) + &scaled
+}
+
+/// The linear-algebra rows — `MatParityGen.linalgCases`, on the bounded corpus. The
+/// pure-loop methods go in as raw bits; `svd`/`lstsq`/`pinv`/`cholesky`, which Scala
+/// takes from LAPACK and this crate computes itself, on the 2^-20 grid.
+fn case_word_linalg(me: &MatD, label: &str) -> u64 {
+    let (rows, cols) = me.shape();
+    let q20 = |xs: Vec<f64>| fnv_words(xs.into_iter().map(quantize20));
+    let ri = |n: usize| i64::try_from(n).expect("shape fits i64");
+    match label {
+        "la.diag" => fnv(&me.diagonal()),
+        "la.trace" => me.trace().to_bits(),
+        "la.nfro" => me.normOrd(NormOrd::Fro).to_bits(),
+        "la.ninf" => me.normOrd(NormOrd::Inf).to_bits(),
+        "la.n1" => me.normOrd(NormOrd::One).to_bits(),
+        "la.qrq" => fnv(&me.qrDecomposition().0.toArray()),
+        "la.qrr" => fnv(&me.qrDecomposition().1.toArray()),
+        "la.outer" => fnv(
+            &me.slice(0..1, 0..ri(cols))
+                .outer(&me.slice(0..ri(rows), 0..1))
+                .toArray(),
+        ),
+        "la.kron" => fnv(
+            &me.kron(&me.slice(0..ri(rows.min(2)), 0..ri(cols.min(2))))
+                .toArray(),
+        ),
+        "la.tril1" => fnv(&me.tril(1).toArray()),
+        "la.triun1" => fnv(&me.triu(-1).toArray()),
+        "la.fillna" => {
+            let nan_mat = MatD::create(vec![f64::NAN; rows * cols], rows, cols);
+            fnv(&me.lt(-1.0).whereMat(&nan_mat, me).fillna(7.0).toArray())
+        }
+        "la.cov" => fnv(&me.cov().toArray()),
+        "la.corr" => fnv(&me.corrcoef().toArray()),
+        "la.cross" => fnv(
+            &me.slice(0..1, 0..3)
+                .cross(&me.slice(0..3, 0..1))
+                .toArray(),
+        ),
+        "la.inv" => fnv(&me.inverse().expect("fixture matrix is invertible").toArray()),
+        "la.solve" => fnv(
+            &me.solve(&me.T())
+                .expect("fixture matrix is invertible")
+                .toArray(),
+        ),
+        "la.det" => me.determinant().expect("fixture matrix is invertible").to_bits(),
+        "la.svq" => q20(me.svd().1),
+        "la.lstsqq" => q20(me.lstsq(&me.abs().sumAxis(1)).0.toArray()),
+        "la.resq" => q20(me.lstsq(&me.abs().sumAxis(1)).1.toArray()),
+        "la.rank" => me.lstsq(&me.abs().sumAxis(1)).2 as u64,
+        "la.rank2" => me.matrixRank(None) as u64,
+        "la.pinvq" => q20(me.pinv(None).toArray()),
+        "la.cholq" => q20(spd(me).cholesky().expect("SPD by construction").toArray()),
+        "la.symeigq" => {
+            let s = spd(me);
+            let mut ev = (&s / s.trace()).eigenvalues();
+            ev.sort_by(f64::total_cmp);
+            q20(ev)
+        }
+        "la.eigq" | "la.eigiq" => {
+            let (wr, wi, _) = me.eig();
+            let mut order: Vec<usize> = (0..wr.len()).collect();
+            order.sort_by(|&a, &b| wr[a].total_cmp(&wr[b]).then(wi[a].total_cmp(&wi[b])));
+            let src = if label == "la.eigq" { &wr } else { &wi };
+            q20(order.iter().map(|&i| src[i]).collect())
+        }
+        other => panic!("unknown linalg case {other}"),
+    }
+}
+
+/// The utility rows — `MatParityGen.utilCases`, on the main corpus; raw bits throughout.
+fn case_word_util(m: &MatD, label: &str) -> u64 {
+    let (rows, cols) = m.shape();
+    match label {
+        "ut.maxneg" => fnv(&m.maximum(&-m).toArray()),
+        "ut.minneg" => fnv(&m.minimum(&-m).toArray()),
+        "ut.maxs" => fnv(&m.maximumScalar(0.0).toArray()),
+        "ut.mins" => fnv(&m.minimumScalar(1e-6).toArray()),
+        "ut.sign" => fnv(&m.sign().toArray()),
+        "ut.round2" => fnv(&m.round(2).toArray()),
+        "ut.roundn3" => fnv(&m.round(-3).toArray()),
+        "ut.nan2num" => {
+            let nan_mat = MatD::create(vec![f64::NAN; rows * cols], rows, cols);
+            fnv(&m.lt(0.0).whereMat(&nan_mat, m).nanToNum(-1.0, 0.0, 0.0).toArray())
+        }
+        "ut.tile" => fnv(&m.tile(2, 3).toArray()),
+        "ut.rep1" => fnv(&m.repeatAxis(2, 1).toArray()),
+        "ut.rep0" => fnv(&m.repeatAxis(3, 0).toArray()),
+        "ut.repflat" => fnv(&m.repeat(2).toArray()),
+        "ut.addrow" => fnv(&m.addToEachRow(&m.meanAxis(0)).toArray()),
+        "ut.divcol" => fnv(&m.divEachCol(&(&m.abs().sumAxis(1) + 1.0)).toArray()),
+        "ut.maprows" => fnv(&m.mapRows(|r| r - r.mean()).toArray()),
+        "ut.mapcols" => fnv(&m.mapCols(|c| c * 2.0).toArray()),
+        "ut.scale" => fnv(&m.scale(true, true).toArray()),
+        "ut.scalenc" => fnv(&m.scale(false, true).toArray()),
+        "ut.hsplit" => fnv(&m.hsplit(&[1])[1].toArray()),
+        other => panic!("unknown util case {other}"),
+    }
+}
+
+/// Dispatch for a `<rows>x<cols>` row: `math.*` and `la.*` compute on the bounded corpus
+/// `me`, everything else on `m`.
+fn case_word_matrix(m: &MatD, me: &MatD, label: &str) -> u64 {
+    if label.starts_with("math.") {
+        case_word_math(me, label)
+    } else if label.starts_with("la.") {
+        case_word_linalg(me, label)
+    } else if label.starts_with("ut.") {
+        case_word_util(m, label)
+    } else {
+        case_word_2d(m, label)
+    }
 }
 
 /// Every recorded case, as the raw 64-bit word the fixture carries. Reductions go in as
@@ -485,19 +619,7 @@ fn mat_reductions_match_the_scala_reference_bit_for_bit() {
     let all = corpus(max_n);
     let all_exp = corpus_exp(max_n);
 
-    let mut checked = 0usize;
-    let mut two_d = 0usize;
-    let mut adv = 0usize;
-    let mut masks = 0usize;
-    let mut matmuls = 0usize;
-    let mut maths = 0usize;
     for (shape, label, want) in &rows {
-        if label.starts_with("mask.") {
-            masks += 1;
-        }
-        if label.ends_with("mmfnv") {
-            matmuls += 1;
-        }
         let got = match parse_shape(shape) {
             Shape::Column(n) => {
                 let m = MatD::apply(&all[..n]);
@@ -505,18 +627,11 @@ fn mat_reductions_match_the_scala_reference_bit_for_bit() {
                 case_word(&m, &me, label)
             }
             Shape::Matrix(r, c) => {
-                two_d += 1;
-                if label.starts_with("math.") {
-                    maths += 1;
-                    case_word_math(&MatD::create(all_exp[..r * c].to_vec(), r, c), label)
-                } else {
-                    case_word_2d(&MatD::create(all[..r * c].to_vec(), r, c), label)
-                }
+                let m = MatD::create(all[..r * c].to_vec(), r, c);
+                let me = MatD::create(all_exp[..r * c].to_vec(), r, c);
+                case_word_matrix(&m, &me, label)
             }
             Shape::Adversarial(name, orient) => {
-                if !label.starts_with("mask.") {
-                    adv += 1;
-                }
                 case_word_adv(&adv_matrix(&orient, adversarial_array(&name)), label)
             }
         };
@@ -526,8 +641,22 @@ fn mat_reductions_match_the_scala_reference_bit_for_bit() {
             "shape={shape} case={label}: got {got:016x}, want {want:016x} — {}",
             failure_hint(shape, label)
         );
-        checked += 1;
     }
+
+    // Coverage counts, by the same predicates the dispatch uses.
+    let checked = rows.len();
+    let count = |pred: &dyn Fn(&Shape, &str) -> bool| {
+        rows.iter()
+            .filter(|(shape, label, _)| pred(&parse_shape(shape), label))
+            .count()
+    };
+    let masks = count(&|_, l| l.starts_with("mask."));
+    let matmuls = count(&|_, l| l.ends_with("mmfnv"));
+    let two_d = count(&|s, _| matches!(s, Shape::Matrix(..)));
+    let adv = count(&|s, l| matches!(s, Shape::Adversarial(..)) && !l.starts_with("mask."));
+    let maths = count(&|s, l| matches!(s, Shape::Matrix(..)) && l.starts_with("math."));
+    let linalg = count(&|s, l| matches!(s, Shape::Matrix(..)) && l.starts_with("la."));
+    let utils = count(&|s, l| matches!(s, Shape::Matrix(..)) && l.starts_with("ut."));
 
     // Guard against a fixture that silently shrinks to nothing meaningful. Each count is
     // asserted separately because the three groups pin different things, and losing any
@@ -557,6 +686,14 @@ fn mat_reductions_match_the_scala_reference_bit_for_bit() {
     assert!(
         maths >= 250,
         "only {maths} MatMathOps rows; the elementwise math formulas would go unchecked"
+    );
+    assert!(
+        linalg >= 180,
+        "only {linalg} linalg rows; the decomposition family would go unchecked"
+    );
+    assert!(
+        utils >= 150,
+        "only {utils} util rows; maximum/minimum ordering, round, scale and friends would go unchecked"
     );
 }
 

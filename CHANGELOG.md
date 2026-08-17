@@ -38,6 +38,27 @@ restores an optimised BLAS to an apt-installed NumPy on the same box. `BlasDiagS
 covers both Linux modes and `LapackNetlibSuite` proves the netlib LAPACK path against
 bytedeco's on every platform. New dependency: `dev.ludovic.netlib:lapack`.
 
+**ADDED — Rust: the linear-algebra family (Tier 3 phase (e) complete)**
+
+`udata::linalg`: `diagonal trace normOrd determinant inverse solve qrDecomposition outer
+cross kron tril triu fillna cov corrcoef` as bit-identical ports of the Scala loops, and
+`svd lstsq leastSquares matrixRank pinv cholesky` computed by the crate itself (one-sided
+Jacobi SVD, Cholesky–Banachiewicz); `udata::eig`: `eig` / `eigenvalues` (EISPACK
+`orthes` + `hqr2`). Scala takes the second group from LAPACK, whose bits no pure loop
+reproduces, so the fixture pins those on a 2^-20 grid — singular values, solutions,
+ranks, sorted spectra — and the first group as raw bits: 236 `la.*` rows added to
+`test-data/mat-parity/`, none moved. Singular matrices and non-positive-definite input
+are `Err(Error::SingularMatrix)` where Scala throws.
+
+**ADDED — Rust: the `Mat` utility remainder**
+
+`udata::matutil`: `maximum`/`minimum` (matrix and scalar; `Ordering[Double]` semantics, as
+in Scala), `sign round powerF hadamard allclose containsNaN exists wherePred nanToNum
+ndim toContiguous zipMap`, `mapRows`/`mapCols`/`filterRows`/`applyAlongAxis` over row and
+column views, `addToEachRow` … `divEachCol`, `scale`, `repeat`/`repeatAxis`/`tile`,
+`vsplit`/`hsplit`/`split` (index and count forms), and `saveCSV`/`writeCsv` through
+Java's `Double.toString`. Exact ports; 206 `ut.*` fixture rows pin them bit for bit.
+
 **ADDED — Rust: `MatMathOps` (Tier 3 phase (c) complete)**
 
 `sin cos tan arcsin arccos arctan arctan2 sinh cosh tanh floor ceil trunc log10 log2

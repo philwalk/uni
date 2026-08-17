@@ -156,6 +156,14 @@ object MatParityGen:
   private val QuantumScale24 = 16777216.0
   def quantize24(d: Double): Long = Math.floor(d * QuantumScale24 + 0.5).toLong
 
+  /** 2^-20, for the decompositions Scala takes from LAPACK (`svd`, `lstsq`, `pinv`,
+   *  `cholesky`): the Rust side computes them with its own kernels (Jacobi SVD,
+   *  Cholesky–Banachiewicz), so agreement is to the conditioning of the problem —
+   *  ~1e-13 relative on these inputs — not to the ulp. 20 bits still expose a wrong
+   *  formula, a wrong sign convention in `lstsq`, or a wrong rank threshold. */
+  private val QuantumScale20 = 1048576.0
+  def quantize20(d: Double): Long = Math.floor(d * QuantumScale20 + 0.5).toLong
+
   /**
    * The shared corpus: alternating large and tiny magnitudes so association order is
    * observable. Both languages build this from the same seed and take prefixes of it,
@@ -385,6 +393,115 @@ object MatParityGen:
    * is the contract that actually holds. It is also exactly what
    * `Double.doubleToLongBits` does, so it matches the comparison being tested.
    */
+  /**
+   * The utility family on the main-corpus matrix `m`: `maximum`/`minimum` (which compare
+   * with `Ordering[Double]`, not IEEE), `sign`, `round`, `nanToNum`, `tile`, `repeat`,
+   * `scale`, the named broadcast helpers, `mapRows`, `hsplit`. All exact ports; raw bits.
+   */
+  def utilCases(m: Mat[Double]): Vector[(String, Long)] =
+    val (rows, cols) = (m.rows, m.cols)
+    val nanMat  = Mat.create(Array.fill(rows * cols)(Double.NaN), rows, cols)
+    val withNaN = Mat.where(m.lt(0.0), nanMat, m)
+    Vector(
+      "ut.maxneg"  -> fnv(m.maximum(-m).toArray),
+      "ut.minneg"  -> fnv(m.minimum(-m).toArray),
+      "ut.maxs"    -> fnv(m.maximum(0.0).toArray),
+      "ut.mins"    -> fnv(m.minimum(1e-6).toArray),
+      "ut.sign"    -> fnv(m.sign.toArray),
+      "ut.round2"  -> fnv(m.round(2).toArray),
+      "ut.roundn3" -> fnv(m.round(-3).toArray),
+      "ut.nan2num" -> fnv(withNaN.nanToNum(nan = -1.0).toArray),
+      "ut.tile"    -> fnv(m.tile(2, 3).toArray),
+      "ut.rep1"    -> fnv(m.repeat(2, axis = 1).toArray),
+      "ut.rep0"    -> fnv(m.repeat(3, axis = 0).toArray),
+      "ut.repflat" -> fnv(m.repeat(2).toArray),
+      "ut.addrow"  -> fnv(m.addToEachRow(m.mean(0)).toArray),
+      "ut.divcol"  -> fnv(m.divEachCol(m.abs.sum(1) + 1.0).toArray),
+      "ut.maprows" -> fnv(m.mapRows(r => r - r.mean).toArray),
+      "ut.mapcols" -> fnv(m.mapCols(c => c * 2.0).toArray),
+    ) ++ (if rows >= 2 then Vector(
+      "ut.scale"   -> fnv(m.scale().toArray),
+      "ut.scalenc" -> fnv(m.scale(center = false).toArray),
+    ) else Vector.empty) ++ (if cols >= 2 then Vector(
+      "ut.hsplit"  -> fnv(m.hsplit(Array(1))(1).toArray),
+    ) else Vector.empty)
+
+  /** Whether a shape gets the tolerance-pinned decomposition rows: small, or so far from
+   *  square that a uniform random matrix is well conditioned. Near-square matrices past
+   *  64 have condition numbers that push a 1e-15 kernel difference across the 2^-20 grid
+   *  in a few of their thousands of cells; the pinned rows do not care. */
+  def laTol(rows: Int, cols: Int): Boolean =
+    rows.max(cols) <= 64 || (rows - cols).abs >= 100
+
+  /**
+   * The linear-algebra family on the bounded corpus (`corpusExp`, values in [-5, 0.5]);
+   * the main corpus alternates 1e6 and 1e-6 magnitudes, which makes every matrix
+   * hopelessly conditioned and every determinant overflow.
+   *
+   * Two encodings, as `mathCases`. The pure-JVM methods — `diagonal trace norm(ord)
+   * determinant inverse solve qrDecomposition outer cross kron tril triu fillna cov
+   * corrcoef` — are loops the Rust port reproduces operation for operation, so their
+   * bits are pinned raw. The LAPACK-backed ones — `svd` (singular values), `lstsq`,
+   * `matrixRank`, `pinv`, `cholesky`, `eig`/`eigenvalues` (sorted spectra) — are pinned
+   * on the 2^-20 grid ([[quantize20]]) and only on the shapes [[laTol]] admits.
+   */
+  def linalgCases(me: Mat[Double]): Vector[(String, Long)] =
+    val (rows, cols) = (me.rows, me.cols)
+    val square = rows == cols
+    val q20    = (xs: Array[Double]) => fnvWords(xs.map(quantize20))
+    val nanMat = Mat.create(Array.fill(rows * cols)(Double.NaN), rows, cols)
+    val withNaN = Mat.where(me.lt(-1.0), nanMat, me)
+    val b      = me.abs.sum(1)                          // rows x 1
+    val spd    = me.matmulPure(me.T) + MatD.eye(rows) * rows.toDouble
+    val (qm, rm) = me.qrDecomposition
+    val pinned = Vector(
+      "la.diag"   -> fnv(me.diagonal),
+      "la.trace"  -> bits(me.trace),
+      "la.nfro"   -> bits(me.norm("fro")),
+      "la.ninf"   -> bits(me.norm("inf")),
+      "la.n1"     -> bits(me.norm("1")),
+      "la.qrq"    -> fnv(qm.toArray),
+      "la.qrr"    -> fnv(rm.toArray),
+      "la.outer"  -> fnv(me.slice(0 until 1, 0 until cols).outer(me.slice(0 until rows, 0 until 1)).toArray),
+      "la.kron"   -> fnv(me.kron(me.slice(0 until rows.min(2), 0 until cols.min(2))).toArray),
+      "la.tril1"  -> fnv(me.tril(1).toArray),
+      "la.triun1" -> fnv(me.triu(-1).toArray),
+      "la.fillna" -> fnv(withNaN.fillna(7.0).toArray),
+    ) ++ (if cols > 1 then Vector(
+      "la.cov"    -> fnv(me.cov.toArray),
+      "la.corr"   -> fnv(me.corrcoef.toArray),
+    ) else Vector.empty) ++ (if rows >= 3 && cols >= 3 then Vector(
+      "la.cross"  -> fnv(me.slice(0 until 1, 0 until 3).cross(me.slice(0 until 3, 0 until 1)).toArray),
+    ) else Vector.empty) ++ (if square then Vector(
+      "la.inv"    -> fnv(me.inverse.toArray),
+      "la.solve"  -> fnv(me.solve(me.T).toArray),
+    ) else Vector.empty) ++ (if square && rows <= 64 then Vector(
+      "la.det"    -> bits(me.determinant),
+    ) else Vector.empty)
+    val tol = if !laTol(rows, cols) then Vector.empty else
+      val (x, res, rank, sv) = me.lstsq(b)
+      Vector(
+        "la.svq"    -> q20(me.svd._2),
+        "la.lstsqq" -> q20(x.toArray),
+        "la.resq"   -> q20(res.toArray),
+        "la.rank"   -> rank.toLong,
+        "la.rank2"  -> me.matrixRank().toLong,
+        "la.pinvq"  -> q20(me.pinv().toArray),
+        "la.cholq"  -> q20(spd.cholesky.toArray),
+      ) ++ (if rows <= 64 then Vector(
+        // Symmetric spectrum, scaled by the trace so every eigenvalue is in (0, 1] and a
+        // 1e-13 kernel difference cannot cross the grid.
+        "la.symeigq" -> q20((spd / spd.trace).eigenvalues().sorted),
+      ) else Vector.empty) ++ (if square then
+        val (wr, wi, _) = me.eig
+        val order = wr.indices.sortBy(i => (wr(i), wi(i)))
+        Vector(
+          "la.eigq"  -> q20(order.map(wr).toArray),
+          "la.eigiq" -> q20(order.map(wi).toArray),
+        )
+      else Vector.empty)
+    pinned ++ tol
+
   def canon(d: Double): Long =
     if d.isNaN then 0x7ff8000000000000L else bits(d)
 
@@ -589,7 +706,11 @@ object MatParityGen:
         sb ++= f"${rows}x$cols $label $word%016x\n"
       for (label, word) <- mathCases(me) do
         sb ++= f"${rows}x$cols $label $word%016x\n"
-      println(s"  ${rows}x$cols: ${cases2d(m).length + wordCases2d(m).length + mathCases(me).length} cases")
+      for (label, word) <- linalgCases(me) do
+        sb ++= f"${rows}x$cols $label $word%016x\n"
+      for (label, word) <- utilCases(m) do
+        sb ++= f"${rows}x$cols $label $word%016x\n"
+      println(s"  ${rows}x$cols: ${cases2d(m).length + wordCases2d(m).length + mathCases(me).length + linalgCases(me).length + utilCases(m).length} cases")
 
     for (name, arr) <- adversarial do
       for (orient, m) <- advShapes(arr) do

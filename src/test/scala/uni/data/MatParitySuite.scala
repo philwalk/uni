@@ -41,12 +41,18 @@ class MatParitySuite extends munit.FunSuite:
       uni.apps.MatParityGen.expCases(me).toMap.get(label)
     ).getOrElse(fail(s"unknown case [$label] in fixture — port it or regenerate"))
 
-  /** The 2-D half, likewise delegated to the generator. `math.*` rows are computed on
-   *  the bounded-corpus matrix `me`; everything else on `m`. */
+  /** The 2-D half, likewise delegated to the generator. `math.*` and `la.*` rows are
+   *  computed on the bounded-corpus matrix `me`; everything else on `m`. */
   def word2d(m: Mat[Double], me: Mat[Double], label: String): Long =
     if label.startsWith("math.") then
       uni.apps.MatParityGen.mathCases(me).toMap
         .getOrElse(label, fail(s"unknown math case [$label] in fixture — port it or regenerate"))
+    else if label.startsWith("la.") then
+      uni.apps.MatParityGen.linalgCases(me).toMap
+        .getOrElse(label, fail(s"unknown linalg case [$label] in fixture — port it or regenerate"))
+    else if label.startsWith("ut.") then
+      uni.apps.MatParityGen.utilCases(m).toMap
+        .getOrElse(label, fail(s"unknown util case [$label] in fixture — port it or regenerate"))
     else
       uni.apps.MatParityGen.cases2d(m).toMap.get(label).map(bits).orElse(
         uni.apps.MatParityGen.wordCases2d(m).toMap.get(label)
@@ -122,6 +128,10 @@ class MatParitySuite extends munit.FunSuite:
     assert(adv >= 300, s"only $adv adversarial rows; NaN/signed-zero ordering would go unchecked")
     val matmuls = rows.count((_, label, _) => label.endsWith("mmfnv"))
     assert(matmuls >= 22, s"only $matmuls matmul rows; the pinned matmul path would go unchecked")
+    val linalg = rows.count((_, label, _) => label.startsWith("la."))
+    assert(linalg >= 180, s"only $linalg linalg rows; the decomposition family would go unchecked")
+    val utils = rows.count((_, label, _) => label.startsWith("ut."))
+    assert(utils >= 150, s"only $utils util rows; maximum/minimum ordering, round, scale and friends would go unchecked")
     val maths = rows.count((_, label, _) => label.startsWith("math."))
     assert(maths >= 250, s"only $maths MatMathOps rows; the elementwise math formulas would go unchecked")
   }

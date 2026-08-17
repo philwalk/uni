@@ -25,15 +25,20 @@
 
 pub mod big;
 pub mod bigutils;
+pub mod eig;
+pub mod linalg;
 pub mod mat;
 pub mod mataxis;
 pub mod matbool;
 pub mod matmath;
 pub mod matmul;
 pub mod matmut;
+pub mod matutil;
 pub mod vecexts;
 
 pub use big::Big;
+pub use linalg::LeastSquaresResult;
+pub use linalg::NormOrd;
 pub use bigutils::NumFormat;
 pub use bigutils::big2double;
 pub use bigutils::isBad;

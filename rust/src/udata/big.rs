@@ -1288,7 +1288,7 @@ impl std::ops::Neg for &Big {
 ///
 /// Rust's `{:e}` supplies the same shortest digit sequence; only the layout differs, and
 /// the layout is what decides the resulting `BigDecimal` scale.
-fn java_double_to_string(d: f64) -> String {
+pub(crate) fn java_double_to_string(d: f64) -> String {
     if d == 0.0 {
         return if d.is_sign_negative() {
             "-0.0".to_owned()
