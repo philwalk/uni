@@ -47,10 +47,10 @@ cp -f "$rel/bench_mat_pure$exe"   "$rel/bench_mat$exe"
 cp -f "$rel/bench_tprf3_pure$exe" "$rel/bench_tprf3$exe"
 
 if [ "$log" = "-" ]; then
-  sbt "runMain uni.apps.BenchAll" "$@"
+  sbt "runMain uni.apps.BenchAll $*"
 else
   echo "── logging to $log ──"
   # Strip sbt's "[info] " prefix in the log so the tables paste into markdown as they are.
-  sbt "runMain uni.apps.BenchAll" "$@" 2>&1 | tee >(sed 's/^\[info\] //' > "$log")
+  sbt "runMain uni.apps.BenchAll $*" 2>&1 | tee >(sed 's/^\[info\] //' > "$log")
   echo "── wrote $log ──"
 fi
