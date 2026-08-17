@@ -19,7 +19,7 @@ This is the reference for `uni.time` in client projects. For paths, subprocesses
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.16.1
+//> using dep org.vastblue:uni_3:0.17.0
 
 import uni.time.*
 
@@ -138,7 +138,7 @@ You can override this behavior using scoped configuration blocks:
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.16.1
+//> using dep org.vastblue:uni_3:0.17.0
 
 import uni.time.*
 
@@ -187,7 +187,7 @@ The date parser is integrated into `uni.data.BigUtils.getMostSpecificType`. This
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.16.1
+//> using dep org.vastblue:uni_3:0.17.0
 
 import uni.data.*   // exports BigUtils; importing both makes the names ambiguous
 

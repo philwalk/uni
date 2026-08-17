@@ -1,5 +1,5 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
-//> using dep org.vastblue:uni_3:0.16.1
+//> using dep org.vastblue:uni_3:0.17.0
 
 // One half of the cross-language demo pair; `rust/examples/tprf_runner.rs` is the other.
 // Both run `TprfRunner.data_generator` — the four recurrences, `hstack`, the matmul with

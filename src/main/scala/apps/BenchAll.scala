@@ -14,7 +14,7 @@ import uni.data.*
  * # Why one table, and why five numeric columns
  *
  * NumPy multiplies through OpenBLAS, always. Scala's `*@` does too by default since
- * 0.16.1 (`-Duni.mat.blas=os-best`); Rust's does not — its BLAS is a build-time feature
+ * 0.17.0 (`-Duni.mat.blas=os-best`); Rust's does not — its BLAS is a build-time feature
  * (`--features blas`), which a library cannot switch on for its users, so the Rust
  * default is the pinned pure loop. A table with one column per language would therefore
  * mix BLAS and no-BLAS on the very rows where it matters. So every platform gets one

@@ -1,4 +1,13 @@
-## Unreleased
+## v0.17.0 — 2026-08-17
+
+The Rust port of `Mat[Double]` is complete: every phase of the Tier 3 checklist in
+`rust/PARITY.md` — the view model, reductions, indexing and masks, `MatMathOps`, matmul,
+the linear-algebra and decomposition family, pandas-style and signal ops, `groupBy`/`merge`
+— is in, pinned to the JVM by a 3,371-row fixture. `Mat[Big]` is the remaining item.
+Matrix products go to a native BLAS by default, as NumPy's do (`-Duni.mat.blas=os-best`),
+with `matmulPure` and `-Duni.mat.blas=pure` as the reproducibility opt-in; the mask family is IEEE like NumPy's; the Linux OpenBLAS/LAPACKE
+crash is fixed at the root. Breaking in the 0.x sense: `posixAbs`/`posixRel` are
+`private[uni]`, and the Rust `MatB` is now `MatBool`.
 
 **CHANGED — one apples-to-apples benchmark table per platform; `runBenchAll.sh`**
 

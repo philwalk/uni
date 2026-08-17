@@ -22,8 +22,11 @@ For high-accuracy scientific modeling or other applications requiring extreme pr
 The `rust/` directory holds **`uni` for Rust**: a standalone crate (no JNI — nothing in the
 Scala library calls into it) that ports the library's scripting surface and its numerics, so
 the same script logic can run outside the JVM and each implementation serves as the other's
-independent second opinion. New in 0.16.0: what began as a port of the numerically heavy
-parts now covers the whole path/time/decimal API.
+independent second opinion. Since 0.16.0 it covers the whole path/time/decimal API; as of
+0.17.0 the `Mat[Double]` port is complete as well — the view model, reductions, masks and
+indexing, elementwise math, matmul, the linear-algebra and decomposition family, pandas-style
+and signal ops, `groupBy`/`merge` — pinned to the JVM by a 3,371-row fixture. `Mat[Big]` is
+the remaining item.
 
 **Method names match the Scala spelling** — `baseName`, `lastModifiedTime`, `parseDateSmart` —
 so a line written against the Scala ports unchanged. CamelCase means "this mirrors uni's
@@ -148,7 +151,7 @@ Pass a `PlotStyle` to control dimensions, colours, and export consistency.
 
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
-//> using dep org.vastblue:uni_3:0.16.1
+//> using dep org.vastblue:uni_3:0.17.0
 import uni.data.*
 import uni.plot.*
 
@@ -398,7 +401,7 @@ Note: inline annotations were removed before running JaCoCo to prevent Scala 3's
 Add the following to your `build.sbt`:
 
 ```scala
-libraryDependencies += "org.vastblue" %% "uni" +%+ +"0.16.0"
+libraryDependencies += "org.vastblue" %% "uni" % "0.17.0"
 ```
 
 ### Native BLAS backend
@@ -458,7 +461,7 @@ libraries, `bundled` only bytedeco's — and nothing needs to be purged from the
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.16.1
+//> using dep org.vastblue:uni_3:0.17.0
 
 import uni.data.*
 
@@ -536,7 +539,7 @@ Each alias has a matching factory object mirroring the `MatD` API:
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.16.1
+//> using dep org.vastblue:uni_3:0.17.0
 
 import uni.data.*
 
@@ -556,7 +559,7 @@ val identityB: MatB = MatB.eye(5)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.16.1
+//> using dep org.vastblue:uni_3:0.17.0
 
 import uni.data.*
 import uni.data.MatD.*
@@ -581,7 +584,7 @@ println(s"rotated: ${rotated.show("%7.2f")}")
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.16.1
+//> using dep org.vastblue:uni_3:0.17.0
 
 import uni.data.*
 
@@ -599,7 +602,7 @@ val f = a.relu    // built-in activation function
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.16.1
+//> using dep org.vastblue:uni_3:0.17.0
 
 import uni.data.*
 import uni.data.MatD.*
@@ -619,7 +622,7 @@ m :+= n      // element-wise add matrix in-place
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.16.1
+//> using dep org.vastblue:uni_3:0.17.0
 
 import uni.data.*
 import uni.data.MatD.*
@@ -638,7 +641,7 @@ val allTrue  = mask.all
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.16.1
+//> using dep org.vastblue:uni_3:0.17.0
 
 import uni.data.*
 import uni.data.MatD.*
@@ -660,7 +663,7 @@ val cols  = wide.hsplit(2)               // Seq of two 4x2 Mats
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.16.1
+//> using dep org.vastblue:uni_3:0.17.0
 
 import uni.data.*
 import uni.data.MatD.*
@@ -684,7 +687,7 @@ The following example demonstrates a wide array of `uni.MatD` capabilities
 
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
-//> using dep org.vastblue:uni_3:0.16.1
+//> using dep org.vastblue:uni_3:0.17.0
 
 import uni.data.*
 import uni.data.MatD.*
@@ -754,7 +757,7 @@ Because activation functions are members of the `MatD` type, building layers is 
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.16.1
+//> using dep org.vastblue:uni_3:0.17.0
 
 import uni.data.*
 
@@ -790,7 +793,7 @@ Raw financial and scientific datasets rarely arrive in clean form. `uni.data.Big
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.16.1
+//> using dep org.vastblue:uni_3:0.17.0
 
 import uni.data.*
 import uni.data.BigUtils.*

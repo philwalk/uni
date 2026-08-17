@@ -7,11 +7,9 @@ javacOptions ++= Seq("-source", "17", "-target", "17")
 
 maxErrors := 10
 
-// TODO before the next publish: Maven Central has no keyword field, so this description
-// carries all of the discoverability -- and it currently sells only the Mat half, saying
-// nothing about the path/date/decimal scripting surface that is now the larger story.
+// Maven Central has no keyword field, so this description carries the discoverability.
 // Set in TWO places (here and the project's own `description` below); keep them in sync.
-description := "high-performance, NumPy-like linear algebra for the JVM"
+description := "NumPy- and pandas-style matrices and linear algebra for Scala 3 and big-data scripting, with MSYS2/Cygwin-aware paths, date-time parsing, BigDecimal-compatible decimals, and a Rust port pinned to the same results"
 
 // these 2 prevent everything in vast.apps from being recompiled if only 1 vast.apps source changed:
 ThisBuild / incOptions := incOptions.value.withRecompileOnMacroDef(false)
@@ -23,7 +21,7 @@ ThisBuild / watchTriggeredMessage := Watch.clearScreenOnTrigger
 ThisBuild / scalaVersion  := scalaVer
 
 lazy val projectName = "uni"
-ThisBuild / version       := "0.16.1"
+ThisBuild / version       := "0.17.0"
 ThisBuild / versionScheme := Some("semver-spec")
 
 ThisBuild / organization         := "org.vastblue"
@@ -146,7 +144,7 @@ lazy val root = (project in file(".")).
 //  parallelExecution  := false,
     crossScalaVersions := supportedScalaVersions,
     name               := projectName,
-    description        := "high-performance, NumPy-like linear algebra for the JVM",
+    description        := "NumPy- and pandas-style matrices and linear algebra for Scala 3 and big-data scripting, with MSYS2/Cygwin-aware paths, date-time parsing, BigDecimal-compatible decimals, and a Rust port pinned to the same results",
  // mainClass          := Some("vast.apps.ShowSysProps"),
     buildInfoKeys      := Seq[BuildInfoKey](name, version, scalaVersion, sbtVersion),
     buildInfoPackage   := "uni", // available as "import uni.BuildInfo"

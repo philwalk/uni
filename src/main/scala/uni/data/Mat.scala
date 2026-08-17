@@ -708,7 +708,7 @@ object Mat {
    *
    * The per-lane mean is the one `mean(axis)` returns — a single accumulator folded in
    * increasing index order, exactly what `sum(axis)` produces. That is the whole point of
-   * this method existing: before 0.16.1 the family had THREE mean algorithms (whole-matrix
+   * this method existing: before 0.17.0 the family had THREE mean algorithms (whole-matrix
    * `std` took its mean from `sum`, contiguous `std(axis)` used a per-lane fold, and a
    * strided `std(axis)` materialised each lane and routed through `sumD`), so the same
    * data gave three answers depending on shape and layout. One rule now: **the mean
@@ -1085,10 +1085,10 @@ object Mat {
    * sequence: 8 unrolled accumulators, then `min(MaxSumChunks, rows/8)` row blocks whose
    * partials are combined sequentially in block order.
    *
-   * CHANGED in 0.16.1, deliberately. This was a single sequential accumulator, which
+   * CHANGED in 0.17.0, deliberately. This was a single sequential accumulator, which
    * made `m.T.sum` 3.3x slower than NumPy and could not be improved without moving its
    * last ulp. Both languages changed together and `test-data/mat-parity/` was regenerated
-   * -- so a view's sum now differs from what pre-0.16.1 produced. The contiguous path is
+   * -- so a view's sum now differs from what pre-0.17.0 produced. The contiguous path is
    * untouched: `sumD` still owns it, and an ordinary matrix's sum is unchanged.
    *
    * The rule is now one sentence for every layout: **8 unrolled accumulators over the

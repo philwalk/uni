@@ -1,5 +1,5 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
-//> using dep org.vastblue:uni_3:0.16.1
+//> using dep org.vastblue:uni_3:0.17.0
 
 // Compile-checks the example code in docs/ReferenceGuide.md and docs/QuickStartGuide.md.
 // Each block below mirrors a documented snippet; if this script compiles and runs,

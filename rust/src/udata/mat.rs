@@ -1135,7 +1135,7 @@ impl MatD {
     /// row-major sequence: 8 unrolled accumulators, then `min(MAX_SUM_CHUNKS, rows / 8)`
     /// row blocks whose partials are combined sequentially in block order.
     ///
-    /// CHANGED in 0.16.1, in lockstep with `Mat.sumStrided` on the Scala side, and the
+    /// CHANGED in 0.17.0, in lockstep with `Mat.sumStrided` on the Scala side, and the
     /// fixture regenerated. It was a single sequential accumulator, which no amount of
     /// tuning could improve without moving its last ulp. The contiguous path is
     /// untouched.

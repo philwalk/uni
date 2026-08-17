@@ -10,7 +10,7 @@
 //! # IEEE, not the Ordering
 //!
 //! `gt`/`lt`/`gte`/`lte`/`eqTo`/`neTo` are IEEE-754 comparisons: **every comparison
-//! involving NaN is false**, and `-0.0 == 0.0`. That is NumPy's `>` and, since 0.16.1,
+//! involving NaN is false**, and `-0.0 == 0.0`. That is NumPy's `>` and, since 0.17.0,
 //! Scala's — the Scala family previously went through `Ordering[Double]`, which is
 //! `TotalOrdering`, ranking NaN above every number and `-0.0` below `0.0`. Those remain
 //! the semantics of `min`/`max`/`sort`/`argmax`, which are order statistics; a mask is

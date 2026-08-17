@@ -201,16 +201,16 @@ have been easiest to "simplify" away, and the most expensive. `sumD` — the chu
 unrolled sum — is only ever reached with a **contiguous array whose length is exactly
 `rows * cols`**: four call sites (`sum`, `mean`, `std`, `variance`), each guarded that
 way. `transpose`/`slice`/`broadcastTo` return zero-copy strided views that fail the guard
-and are summed by the SAME algorithm over a different sequence. As of 0.16.1 one rule
+and are summed by the SAME algorithm over a different sequence. As of 0.17.0 one rule
 covers every layout: **8 unrolled accumulators over the logical row-major sequence,
 `min(MaxSumChunks, rows/8)` row blocks above 65536 elements, partials combined in block
 order.** What differs between a matrix and its transpose is the sequence, not the
 algorithm — so `m.sum` ≠ `m.T.sum` in the last ulp, and both are chunked.
 
-Before 0.16.1 a strided view was one sequential accumulator, which made `m.T.sum` 3.3x
+Before 0.17.0 a strided view was one sequential accumulator, which made `m.T.sum` 3.3x
 slower than NumPy with no way to improve it that did not move the last ulp. Both
 languages changed together and the fixture was regenerated; `sum` on a view therefore
-differs from what pre-0.16.1 produced. The contiguous path was not touched.
+differs from what pre-0.17.0 produced. The contiguous path was not touched.
 
 Two thresholds are part of that contract rather than tuning knobs, because each selects
 between one block and many: `ParallelThreshold` (4096) for the contiguous `sumD` and
@@ -404,7 +404,7 @@ accessor names — in Scala they are the varargs *constructors* `Mat.row(1,2,3)`
   overload `&&`, so those are `BitAnd`/`BitOr`/`Not`, and `where` is a keyword, so
   `Mat.where(cond, x, y)` becomes `cond.whereMat(x, y)` / `cond.whereScalar(x, y)`.
   `:==`/`:!=` are not Rust identifiers either and become `eqTo`/`neTo`.
-- **The mask family is IEEE in both languages, as of 0.16.1.** `gt`/`lt`/`gte`/`lte`/
+- **The mask family is IEEE in both languages, as of 0.17.0.** `gt`/`lt`/`gte`/`lte`/
   `eqTo`/`neTo` are false at every NaN and treat `-0.0 == 0.0`. Scala previously routed
   them through `Ordering[Double]` — `TotalOrdering`, which ranks NaN above every number
   and `-0.0` below `0.0` — and so disagreed with NumPy; the Scala side moved to match.
