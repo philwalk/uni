@@ -50,6 +50,7 @@ use uni::udata::Big;
 use uni::udata::MatB;
 use uni::udata::MatBool;
 use uni::udata::MatD;
+use uni::udata::MatF;
 use uni::udata::linalg::NormOrd;
 use uni::udata::signal::ConvMode;
 use uni::udata::signal::convolve;
@@ -564,6 +565,86 @@ fn case_word_big(me: &MatD, label: &str) -> u64 {
     }
 }
 
+/// `Float.floatToIntBits` (all NaNs one pattern) — `MatParityGen.fbits`.
+fn fbits(f: f32) -> u64 {
+    if f.is_nan() {
+        0x7fc0_0000
+    } else {
+        u64::from(f.to_bits())
+    }
+}
+fn fnv_f(xs: &[f32]) -> u64 {
+    fnv_words(xs.iter().map(|&f| fbits(f)))
+}
+
+/// The `Mat[Float]` rows — `MatParityGen.floatCases`.
+fn case_word_float(me: &MatD, label: &str) -> u64 {
+    let (rows, cols) = me.shape();
+    let mf = MatF::fromMatD(me);
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "the narrowing is the fixture's"
+    )]
+    let mfn = MatF::create(
+        me.flatten()
+            .into_iter()
+            .map(|d| if d < -4.0 { f32::NAN } else { d as f32 })
+            .collect(),
+        rows,
+        cols,
+    );
+    let fx = |m: &MatF| fnv_f(&m.toArray());
+    let ri = |n: usize| i64::try_from(n).expect("shape fits i64");
+    let row0 = mf.slice(0..1, 0..ri(cols));
+    let flat_idx = |(r, c): (usize, usize)| (r * cols + c) as u64;
+    match label {
+        "mf.sum" => fbits(mf.sum()),
+        "mf.mean" => fbits(mf.mean()),
+        "mf.std" => fbits(mf.std()),
+        "mf.var" => fbits(mf.variance()),
+        "mf.min" => fbits(mf.min()),
+        "mf.max" => fbits(mf.max()),
+        "mf.argmin" => flat_idx(mf.argmin()),
+        "mf.argmax" => flat_idx(mf.argmax()),
+        "mf.sum0" => fx(&mf.sumAxis(0)),
+        "mf.mean1" => fx(&mf.meanAxis(1)),
+        "mf.std0" => fx(&mf.stdAxis(0)),
+        "mf.min0" => fx(&mf.minAxis(0)),
+        "mf.max1" => fx(&mf.maxAxis(1)),
+        "mf.cumsum" => fx(&mf.cumsum()),
+        "mf.cumsum1" => fx(&mf.cumsumAxis(1)),
+        "mf.addrow" => fx(&mf.add(&row0)),
+        "mf.subs" => fx(&mf.subScalar(0.5)),
+        "mf.mul" => fx(&mf.mul(&mf)),
+        "mf.div" => fx(&mf.div(&mf.addScalar(10.0))),
+        "mf.neg" => fx(&mf.neg()),
+        "mf.abs" => fx(&mf.abs()),
+        "mf.pow2" => fx(&mf.power(2)),
+        "mf.sqrt" => fx(&mf.abs().sqrt()),
+        "mf.mm" => fx(&mf.matmul(&mf.T())),
+        "mf.gt" => fnv_mask(&mf.gt(-1.0)),
+        "mf.lte" => fnv_mask(&mfn.lte(0.0)),
+        "mf.eqz" => fnv_mask(&mfn.eqTo(0.0)),
+        "mf.isnan" => fnv_mask(&mfn.isnan()),
+        "mf.nsum" => fbits(mfn.sum()),
+        "mf.nmin" => fbits(mfn.min()),
+        "mf.nmax" => fbits(mfn.max()),
+        "mf.nargmax" => flat_idx(mfn.argmax()),
+        "mf.nsort" => fx(&mfn.sort()),
+        "mf.nmm" => fx(&mfn.matmul(&mfn.T())),
+        "mf.sort" => fx(&mf.sort()),
+        "mf.argsort" => ints(&mf.argsort().toArray()),
+        "mf.trace" => fbits(mf.trace()),
+        "mf.diag" => fnv_f(&mf.diagonal()),
+        "mf.tod" => fnv(&mf.toMatD().toArray()),
+        "mf.norm" => fbits(row0.norm()),
+        "mf.inv" => fx(&mf.inverse().expect("fixture matrix is invertible")),
+        "mf.det" => fbits(mf.determinant().expect("fixture matrix is invertible")),
+        "mf.solve" => fx(&mf.solve(&mf.T()).expect("fixture matrix is invertible")),
+        other => panic!("unknown Mat[Float] case {other}"),
+    }
+}
+
 /// Dispatch for a `<rows>x<cols>` row: `math.*` and `la.*` compute on the bounded corpus
 /// `me`, everything else on `m`.
 fn case_word_matrix(m: &MatD, me: &MatD, label: &str) -> u64 {
@@ -579,6 +660,8 @@ fn case_word_matrix(m: &MatD, me: &MatD, label: &str) -> u64 {
         case_word_signal(me, label)
     } else if label.starts_with("bm.") {
         case_word_big(me, label)
+    } else if label.starts_with("mf.") {
+        case_word_float(me, label)
     } else {
         case_word_2d(m, label)
     }
@@ -827,70 +910,7 @@ fn mat_reductions_match_the_scala_reference_bit_for_bit() {
         );
     }
 
-    // Coverage counts, by the same predicates the dispatch uses.
-    let checked = rows.len();
-    let count = |pred: &dyn Fn(&Shape, &str) -> bool| {
-        rows.iter()
-            .filter(|(shape, label, _)| pred(&parse_shape(shape), label))
-            .count()
-    };
-    let masks = count(&|_, l| l.starts_with("mask."));
-    let matmuls = count(&|_, l| l.ends_with("mmfnv"));
-    let two_d = count(&|s, _| matches!(s, Shape::Matrix(..)));
-    let adv = count(&|s, l| matches!(s, Shape::Adversarial(..)) && !l.starts_with("mask."));
-    let maths = count(&|s, l| matches!(s, Shape::Matrix(..)) && l.starts_with("math."));
-    let linalg = count(&|s, l| matches!(s, Shape::Matrix(..)) && l.starts_with("la."));
-    let utils = count(&|s, l| matches!(s, Shape::Matrix(..)) && l.starts_with("ut."));
-    let pandas = count(&|s, l| {
-        matches!(s, Shape::Matrix(..)) && (l.starts_with("pd.") || l.starts_with("sg."))
-    });
-    let bigs = count(&|s, l| matches!(s, Shape::Matrix(..)) && l.starts_with("bm."));
-
-    // Guard against a fixture that silently shrinks to nothing meaningful. Each count is
-    // asserted separately because the three groups pin different things, and losing any
-    // one of them would leave the others looking healthy.
-    assert!(
-        checked >= 1550,
-        "only {checked} rows checked; expected 13 sizes x 10 + 11 shapes x 27 + 10 adversarial x 60"
-    );
-    assert!(
-        masks >= 800,
-        "only {masks} mask rows; IEEE comparison semantics would go unchecked — a port \
-         using its ordering comparator would pass everything else"
-    );
-    assert!(
-        two_d >= 250,
-        "only {two_d} 2-D rows; the view model would go unchecked"
-    );
-    assert!(
-        adv >= 300,
-        "only {adv} adversarial rows; NaN and signed-zero ordering would go unchecked — \
-         which is exactly how they were wrong before"
-    );
-    assert!(
-        matmuls >= 22,
-        "only {matmuls} matmul rows; the pinned matmul path would go unchecked"
-    );
-    assert!(
-        maths >= 250,
-        "only {maths} MatMathOps rows; the elementwise math formulas would go unchecked"
-    );
-    assert!(
-        linalg >= 180,
-        "only {linalg} linalg rows; the decomposition family would go unchecked"
-    );
-    assert!(
-        utils >= 150,
-        "only {utils} util rows; maximum/minimum ordering, round, scale and friends would go unchecked"
-    );
-    assert!(
-        pandas >= 300,
-        "only {pandas} pandas/signal rows; the ordering and statistics family would go unchecked"
-    );
-    assert!(
-        bigs >= 250,
-        "only {bigs} Mat[Big] rows; the exact-decimal matrix would go unchecked"
-    );
+    assert_coverage(&rows);
 }
 
 #[test]
@@ -1039,5 +1059,79 @@ fn the_corpus_is_sensitive_to_the_view_model() {
         fnv(&m.stdAxis(0).toArray()),
         fnv(&m.T().stdAxis(1).toArray()),
         "std(axis) disagrees between a matrix and its transpose; the per-lane mean must          be the one meanAxis returns, whatever the layout"
+    );
+}
+
+/// Guards against a fixture that silently shrinks: each family is counted by the same
+/// predicate the dispatch uses, and asserted separately because losing any one of them
+/// would leave the others looking healthy.
+fn assert_coverage(rows: &[(String, String, u64)]) {
+    let checked = rows.len();
+    let count = |pred: &dyn Fn(&Shape, &str) -> bool| {
+        rows.iter()
+            .filter(|(shape, label, _)| pred(&parse_shape(shape), label))
+            .count()
+    };
+    let masks = count(&|_, l| l.starts_with("mask."));
+    let matmuls = count(&|_, l| l.ends_with("mmfnv"));
+    let two_d = count(&|s, _| matches!(s, Shape::Matrix(..)));
+    let adv = count(&|s, l| matches!(s, Shape::Adversarial(..)) && !l.starts_with("mask."));
+    let maths = count(&|s, l| matches!(s, Shape::Matrix(..)) && l.starts_with("math."));
+    let linalg = count(&|s, l| matches!(s, Shape::Matrix(..)) && l.starts_with("la."));
+    let utils = count(&|s, l| matches!(s, Shape::Matrix(..)) && l.starts_with("ut."));
+    let pandas = count(&|s, l| {
+        matches!(s, Shape::Matrix(..)) && (l.starts_with("pd.") || l.starts_with("sg."))
+    });
+    let bigs = count(&|s, l| matches!(s, Shape::Matrix(..)) && l.starts_with("bm."));
+    let floats = count(&|s, l| matches!(s, Shape::Matrix(..)) && l.starts_with("mf."));
+
+    // Guard against a fixture that silently shrinks to nothing meaningful. Each count is
+    // asserted separately because the three groups pin different things, and losing any
+    // one of them would leave the others looking healthy.
+    assert!(
+        checked >= 1550,
+        "only {checked} rows checked; expected 13 sizes x 10 + 11 shapes x 27 + 10 adversarial x 60"
+    );
+    assert!(
+        masks >= 800,
+        "only {masks} mask rows; IEEE comparison semantics would go unchecked — a port \
+         using its ordering comparator would pass everything else"
+    );
+    assert!(
+        two_d >= 250,
+        "only {two_d} 2-D rows; the view model would go unchecked"
+    );
+    assert!(
+        adv >= 300,
+        "only {adv} adversarial rows; NaN and signed-zero ordering would go unchecked — \
+         which is exactly how they were wrong before"
+    );
+    assert!(
+        matmuls >= 22,
+        "only {matmuls} matmul rows; the pinned matmul path would go unchecked"
+    );
+    assert!(
+        maths >= 250,
+        "only {maths} MatMathOps rows; the elementwise math formulas would go unchecked"
+    );
+    assert!(
+        linalg >= 180,
+        "only {linalg} linalg rows; the decomposition family would go unchecked"
+    );
+    assert!(
+        utils >= 150,
+        "only {utils} util rows; maximum/minimum ordering, round, scale and friends would go unchecked"
+    );
+    assert!(
+        pandas >= 300,
+        "only {pandas} pandas/signal rows; the ordering and statistics family would go unchecked"
+    );
+    assert!(
+        bigs >= 250,
+        "only {bigs} Mat[Big] rows; the exact-decimal matrix would go unchecked"
+    );
+    assert!(
+        floats >= 250,
+        "only {floats} Mat[Float] rows; single precision would go unchecked"
     );
 }

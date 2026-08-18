@@ -13,6 +13,17 @@ the masks (`gt lt gte lte eqTo neTo hasNaN`, `applyMask`), `matmul`, LU
 `Big` arithmetic, so results agree to the last decimal digit and scale; 293 `bm.*` fixture
 rows pin them as `BigDecimal.toString` text, a NaN-injected variant alongside.
 
+**ADDED — Rust: `MatF` (`Mat[Float]`); the facade trio `MatD`/`MatF`/`MatB` is complete in both languages**
+
+`udata::matf`: `MatF = Mat<f32>` on the generic core, with the numerics as Scala's
+`Mat[Float]` runs them — sequential single-precision folds (`sum mean std variance norm
+cumsum` and the axis family), `Float.compare` ordering for `min max argmin argmax sort
+argsort` (`java_float_compare`: NaN highest, `-0.0 < 0.0`), IEEE masks widened through
+`f64`, `sqrt` through `f64` (`MatElem[Float].sqrtT`), `matmul` as the sequential k-sum
+`multiplyFloat` produces, LU `inverse`/`determinant`/`solve`, `toMatD`/`fromMatD`. 286
+`mf.*` fixture rows pin them as `floatToIntBits`, NaN-injected variant included; every
+one agreed on the first run.
+
 **CHANGED (speed) — Rust elementwise maps stop oversubscribing the memory bus**
 
 `map_elems`/`bin_op` let rayon split a 1M-element map into small pieces across every

@@ -576,6 +576,72 @@ object MatParityGen:
       "bm.solve"   -> txt(mb.solve(mb.T)),
     ) else Vector.empty)
 
+  /** `Float.floatToIntBits` (all NaNs one pattern) as an unsigned word. */
+  def fbits(f: Float): Long = java.lang.Float.floatToIntBits(f).toLong & 0xffffffffL
+  def fnvF(xs: Array[Float]): Long = fnvWords(xs.map(fbits))
+
+  /**
+   * `Mat[Float]` on the bounded corpus, each double narrowed with `toFloat`, plus a
+   * NaN-injected variant. Single-precision folds are deterministic, so these are raw
+   * `floatToIntBits` — with the same exclusions as the Big family (`exp`/`log` go through
+   * `Math.exp`) and the same shapes ([[bigShape]]).
+   */
+  def floatCases(me: Mat[Double]): Vector[(String, Long)] =
+    val (rows, cols) = (me.rows, me.cols)
+    val mf: Mat[Float]  = me.map(_.toFloat)
+    val mfn: Mat[Float] = me.map(d => if d < -4.0 then Float.NaN else d.toFloat)
+    val fx = (m: Mat[Float]) => fnvF(m.toArray)
+    val row0 = mf.slice(0 until 1, 0 until cols)
+    val ints = (a: Array[Int]) => fnvWords(a.map(_.toLong))
+    val (amr, amc) = mf.argmin; val (axr, axc) = mf.argmax
+    val (nmr, nmc) = mfn.argmax
+    Vector(
+      "mf.sum"     -> fbits(mf.sum),
+      "mf.mean"    -> fbits(mf.mean),
+      "mf.std"     -> fbits(mf.std),
+      "mf.var"     -> fbits(mf.variance),
+      "mf.min"     -> fbits(mf.min),
+      "mf.max"     -> fbits(mf.max),
+      "mf.argmin"  -> (amr.toLong * cols + amc),
+      "mf.argmax"  -> (axr.toLong * cols + axc),
+      "mf.sum0"    -> fx(mf.sum(0)),
+      "mf.mean1"   -> fx(mf.mean(1)),
+      "mf.std0"    -> fx(mf.std(0)),
+      "mf.min0"    -> fx(mf.min(0)),
+      "mf.max1"    -> fx(mf.max(1)),
+      "mf.cumsum"  -> fx(mf.cumsum),
+      "mf.cumsum1" -> fx(mf.cumsum(1)),
+      "mf.addrow"  -> fx(mf + row0),
+      "mf.subs"    -> fx(mf - 0.5f),
+      "mf.mul"     -> fx(mf * mf),
+      "mf.div"     -> fx(mf / (mf + 10.0f)),
+      "mf.neg"     -> fx(-mf),
+      "mf.abs"     -> fx(mf.abs),
+      "mf.pow2"    -> fx(mf.power(2)),
+      "mf.sqrt"    -> fx(mf.abs.sqrt),
+      "mf.mm"      -> fx(mf.matmulPure(mf.T)),
+      "mf.gt"      -> fnvMask(mf.gt(-1.0f)),
+      "mf.lte"     -> fnvMask(mfn.lte(0.0f)),
+      "mf.eqz"     -> fnvMask(mfn :== 0.0f),
+      "mf.isnan"   -> fnvMask(mfn.isnan),
+      "mf.nsum"    -> fbits(mfn.sum),
+      "mf.nmin"    -> fbits(mfn.min),
+      "mf.nmax"    -> fbits(mfn.max),
+      "mf.nargmax" -> (nmr.toLong * cols + nmc),
+      "mf.nsort"   -> fx(mfn.sort()),
+      "mf.nmm"     -> fx(mfn.matmulPure(mfn.T)),
+      "mf.sort"    -> fx(mf.sort()),
+      "mf.argsort" -> ints(mf.argsort().toArray),
+      "mf.trace"   -> fbits(mf.trace),
+      "mf.diag"    -> fnvF(mf.diagonal),
+      "mf.tod"     -> fnv(mf.map(_.toDouble).toArray),
+      "mf.norm"    -> fbits(row0.norm),
+    ) ++ (if rows == cols then Vector(
+      "mf.inv"     -> fx(mf.inverse),
+      "mf.det"     -> fbits(mf.determinant),
+      "mf.solve"   -> fx(mf.solve(mf.T)),
+    ) else Vector.empty)
+
   /** Whether a shape gets the tolerance-pinned decomposition rows: small, or so far from
    *  square that a uniform random matrix is well conditioned. Near-square matrices past
    *  64 have condition numbers that push a 1e-15 kernel difference across the 2^-20 grid
@@ -867,7 +933,9 @@ object MatParityGen:
       if bigShape(rows, cols) then
         for (label, word) <- bigCases(me) do
           sb ++= f"${rows}x$cols $label $word%016x\n"
-      println(s"  ${rows}x$cols: ${cases2d(m).length + wordCases2d(m).length + mathCases(me).length + linalgCases(me).length + utilCases(m).length + pandasCases(m).length + signalCases(me).length + (if bigShape(rows, cols) then bigCases(me).length else 0)} cases")
+        for (label, word) <- floatCases(me) do
+          sb ++= f"${rows}x$cols $label $word%016x\n"
+      println(s"  ${rows}x$cols: ${cases2d(m).length + wordCases2d(m).length + mathCases(me).length + linalgCases(me).length + utilCases(m).length + pandasCases(m).length + signalCases(me).length + (if bigShape(rows, cols) then bigCases(me).length + floatCases(me).length else 0)} cases")
 
     for (name, arr) <- adversarial do
       for (orient, m) <- advShapes(arr) do

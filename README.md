@@ -25,8 +25,9 @@ the same script logic can run outside the JVM and each implementation serves as 
 independent second opinion. Since 0.16.0 it covers the whole path/time/decimal API; as of
 0.17.0 the `Mat[Double]` port is complete as well — the view model, reductions, masks and
 indexing, elementwise math, matmul, the linear-algebra and decomposition family, pandas-style
-and signal ops, `groupBy`/`merge` — and `Mat[Big]` (`MatB`, the exact-decimal matrix)
-followed, all pinned to the JVM by a 3,068-row fixture.
+and signal ops, `groupBy`/`merge` — and `MatB` (`Mat[Big]`, exact decimals) and `MatF`
+(`Mat[Float]`) followed on the same generic core, all pinned to the JVM by a fixture of
+3,354 rows.
 
 **Method names match the Scala spelling** — `baseName`, `lastModifiedTime`, `parseDateSmart` —
 so a line written against the Scala ports unchanged. CamelCase means "this mirrors uni's
