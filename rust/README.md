@@ -75,6 +75,7 @@ and the two print byte-identical output:
 | `bigcalc` | the `udata` surface as an exact-money invoice, scalar `Big` and then the same invoice as a `MatB` (elementwise, `matmul`, folds, masks, exact-decimal LU) — output is identical on any machine |
 | `forecast` | seeded `randn` → byte-identical CSV → `loadMatBig` → the 3PRF closed forms and `forecast3prf` |
 | `market_sim` | not a tour of an API but a 1,300-line workload: seeded price formation over 200 paths × 100 years, `MatD` reductions, drawdown episodes, exposure rules, and five report modes — the consumer that drove the `MatD` port |
+| `matdcalc` | the `MatD` core on one seeded matrix — views, broadcasting, reductions, the pinned `matmul`, masks, exact linalg, pandas-style ops, stacking, CSV — output identical on any machine, and the two files read line for line alike |
 | `tprf_runner` | `TprfRunner.data_generator`: the `MatMut` recurrences, `hstack`, the pinned matmul (`matmulPure` on the Scala side, `matmul` here), the noise blend — every cell of `X` printed, identical on any machine |
 
 ```bash

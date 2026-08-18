@@ -1,5 +1,8 @@
 # uni
 
+[![Maven Central](https://img.shields.io/maven-central/v/org.vastblue/uni_3?label=Maven%20Central%20%28Scala%29)](https://central.sonatype.com/artifact/org.vastblue/uni_3)
+[![crates.io](https://img.shields.io/crates/v/vastblue-uni?label=crates.io%20%28Rust%29)](https://crates.io/crates/vastblue-uni)
+
 **uni** is a Scala 3 library and a Rust crate that give the same answers, for numerical
 work and the scripting around it:
 
@@ -158,9 +161,10 @@ calls are pinned by nothing either. So each demo below exists twice — `jsrc/<n
 | `bigcalc` | the decimal surface as an exact-money invoice: `str2num`/`isNumeric`, arithmetic, every rounding mode, `numStr`/`numStrPct`, the BigNaN sentinel; then the same invoice as a `MatB` — elementwise ops, `matmul`, folds, masks, exact-decimal LU | identical **everywhere** |
 | `forecast` | seeded `randn` → byte-identical CSV → `loadMatBig` → the 3PRF closed forms and `forecast3prf` (in-sample and both OOS procedures) | identical per machine |
 | `marketSim` | the odd one out: a 1,300-line workload rather than an API tour. Seeded price formation over 200 paths × 100 years, `MatD` reductions, drawdown episodes, exposure rules with a two-heap running median, and five report modes (`-emit`/`-validate`/`-strategies`/`-power`/`-buffer`) plus `-calibrate` | identical **everywhere** |
+| `matdcalc` | the `MatD` core on one seeded matrix — views, broadcasting, reductions, the pinned matmul, masks, exact linalg, pandas-style ops, stacking, CSV — `jsrc/matdcalc.sc` ↔ `rust/examples/matdcalc.rs`, written to read line for line alike | identical **everywhere** |
 | `tprfRunner` | `TprfRunner.data_generator`: four `update` recurrences (the mutation idiom `MatMut` exists for), `hstack`, `factors.matmulPure(factor_loadings)` — the **pinned matmul**, the same loop on both sides — and the noise blend; every cell of `X` printed | identical **everywhere** |
 
-Four of the pairs are machine-independent by construction (fixed inputs, no filesystem, no
+Five of the pairs are machine-independent by construction (fixed inputs, no filesystem, no
 clock), so they double as portable acceptance tests; the rest agree on any one machine
 because they read the same tree. `marketSim` is machine-independent only because the
 matrix reductions it leans on are: `Mat.sumD` splits large sums into a chunk count fixed

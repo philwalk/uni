@@ -1,3 +1,19 @@
+## Unreleased
+
+**ADDED — a ninth demo pair, `matdcalc`: the `MatD` core in both languages, byte-identical**
+
+`jsrc/matdcalc.sc` ↔ `rust/examples/matdcalc.rs`, written to read line for line alike: one
+seeded 4×3 matrix through creation, views and gathers, broadcasting, reductions, the pinned
+matmul, masks and `where`, exact `inverse`/`determinant`/`solve`, `svd`,
+`sort`/`argsort`/`percentile`/`rolling`/`diff`/`nlargest`, stacking, CSV — the same output on
+any machine (`diff` is the test; see `docs/DemoPairs.md`).
+
+**ADDED — README version badges**
+
+Maven Central (`org.vastblue:uni_3`) and crates.io (`vastblue-uni`) badges under the title,
+served by shields.io from the repositories themselves — so they show the released version
+even while Scaladex's index lags (its listing stopped at 0.14.1; scalacenter/scaladex#1769).
+
 ## v0.18.0 — 2026-08-18
 
 **ADDED — Rust: `Mat[Big]` (`MatB`), and `Mat<T>` — the port of `Mat` is complete**

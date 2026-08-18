@@ -41,7 +41,9 @@ reductions, drawdown episodes, exposure rules and four report modes. It is the
 consumer that drove Tier 3 milestone 1, and the pair that proved the transcendental
 question above is closable), `tprfRunner` / `tprf_runner` (`TprfRunner.data_generator`:
 the `update` recurrences via `MatMut`, `hstack`, the pinned matmul, the noise blend —
-every cell of `X` printed, so the matmul is on the record).
+every cell of `X` printed, so the matmul is on the record), `matdcalc` (the `MatD` core on
+one seeded matrix — views, broadcasting, reductions, the pinned matmul, masks, exact
+linalg, pandas-style ops, stacking, CSV — machine-independent).
 
 Ten committed fixtures under `../test-data/*-parity/` pin these — roughly 21,664 rows
 (path 10,537 — incl. 38 `badpath`/`badpayload` rows · date 4,173 · tprf3 3,039 · big 629 · smartparse 539 · csv 458 ·
