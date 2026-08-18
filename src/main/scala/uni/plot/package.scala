@@ -46,18 +46,18 @@ object PlotStyle:
  *
  *   - `saveTo` non-empty: written to `saveTo` when that ends in `.svg` or `.html`,
  *     otherwise to `saveTo + ".svg"`; directories are created.
- *   - `saveTo` empty: an HTML page around the SVG is written to a temp file and opened
- *     in the default browser (`rundll32 url.dll,FileProtocolHandler` on Windows, `open`
- *     on macOS, `xdg-open` elsewhere). With `UNI_PLOT_NO_OPEN` set, or when no opener
- *     can be started, the path is printed instead — so a headless run never fails.
+ *   - `saveTo` empty: an HTML page around the SVG is written to a temp file and shown in
+ *     a standalone window of the default browser — see [[Browser]] for the rules and the
+ *     `UNI_PLOT_WINDOW`/`UNI_PLOT_BROWSER` overrides. With `UNI_PLOT_NO_OPEN` set, or when
+ *     nothing can be started, the path is printed instead — so a headless run never fails.
  */
 private[plot] object Deliver:
-  def apply(svg: String, title: String, saveTo: String): Unit =
+  def apply(svg: String, title: String, saveTo: String, style: PlotStyle): Unit =
     if saveTo.nonEmpty then { save(svg, title, saveTo); () }
     else
       val tmp = Files.createTempFile("uni-plot-", ".html")
       Files.writeString(tmp, Svg.html(svg, title))
-      if sys.env.contains("UNI_PLOT_NO_OPEN") || !openInBrowser(tmp) then
+      if sys.env.contains("UNI_PLOT_NO_OPEN") || !Browser.show(tmp, style.width, style.height) then
         print(s"uni.plot: $tmp\n")
 
   /** The file actually written (`saveTo` with the extension rule applied). */
@@ -70,19 +70,6 @@ private[plot] object Deliver:
     Files.writeString(path, body)
     path
 
-  def openInBrowser(path: Path): Boolean =
-    val p  = path.toAbsolutePath.toString
-    val os = sys.props.getOrElse("os.name", "").toLowerCase
-    val cmd =
-      if os.contains("win") then Seq("rundll32", "url.dll,FileProtocolHandler", p)
-      else if os.contains("mac") then Seq("open", p)
-      else Seq("xdg-open", p)
-    try
-      new ProcessBuilder(cmd*).redirectErrorStream(true)
-        .redirectOutput(ProcessBuilder.Redirect.DISCARD).start()
-      true
-    catch case scala.util.control.NonFatal(_) => false
-
 // ── extension methods ─────────────────────────────────────────────────────────
 
 extension (m: MatD)
@@ -93,7 +80,7 @@ extension (m: MatD)
       labels: Seq[String] = Nil,
       saveTo: String = "",
       style: PlotStyle = PlotStyle(width = 900, height = 600)
-  ): Unit = Deliver(plotSvg(title, labels, style), title, saveTo)
+  ): Unit = Deliver(plotSvg(title, labels, style), title, saveTo, style)
 
   /** The SVG text [[plot]] renders. */
   def plotSvg(
@@ -108,7 +95,7 @@ extension (m: MatD)
   def scatter(xCol: Int = 0, yCol: Int = 1, title: String = "", saveTo: String = "",
               groupCol: Int = -1,
               style: PlotStyle = PlotStyle(width = 700, height = 700)): Unit =
-    Deliver(scatterSvg(xCol, yCol, title, groupCol, style), title, saveTo)
+    Deliver(scatterSvg(xCol, yCol, title, groupCol, style), title, saveTo, style)
 
   /** The SVG text [[scatter]] renders. */
   def scatterSvg(xCol: Int = 0, yCol: Int = 1, title: String = "", groupCol: Int = -1,
@@ -118,7 +105,7 @@ extension (m: MatD)
   /** Histogram of all values in the matrix. */
   def hist(bins: Int = 20, title: String = "", saveTo: String = "",
            style: PlotStyle = PlotStyle(width = 800, height = 500)): Unit =
-    Deliver(histSvg(bins, title, style), title, saveTo)
+    Deliver(histSvg(bins, title, style), title, saveTo, style)
 
   /** The SVG text [[hist]] renders. */
   def histSvg(bins: Int = 20, title: String = "",
@@ -129,7 +116,7 @@ extension (m: MatD)
    *  X-axis labels come from `labelCol` if given, otherwise row indices are used. */
   def bar(col: Int = 0, labelCol: Int = -1, title: String = "", saveTo: String = "",
           style: PlotStyle = PlotStyle(width = 800, height = 500)): Unit =
-    Deliver(barSvg(col, labelCol, title, style), title, saveTo)
+    Deliver(barSvg(col, labelCol, title, style), title, saveTo, style)
 
   /** The SVG text [[bar]] renders. */
   def barSvg(col: Int = 0, labelCol: Int = -1, title: String = "",
@@ -142,7 +129,7 @@ extension (m: MatD)
   def heatmap(title: String = "", rowLabels: Seq[String] = Nil, colLabels: Seq[String] = Nil,
               saveTo: String = "",
               style: PlotStyle = PlotStyle(width = 800, height = 700)): Unit =
-    Deliver(heatmapSvg(title, rowLabels, colLabels, style), title, saveTo)
+    Deliver(heatmapSvg(title, rowLabels, colLabels, style), title, saveTo, style)
 
   /** The SVG text [[heatmap]] renders. */
   def heatmapSvg(title: String = "", rowLabels: Seq[String] = Nil, colLabels: Seq[String] = Nil,
@@ -153,7 +140,7 @@ extension (m: MatD)
    *  `labels` names the boxes; defaults to `"col0"`, `"col1"`, … */
   def boxPlot(title: String = "", labels: Seq[String] = Nil, saveTo: String = "",
               style: PlotStyle = PlotStyle(width = 800, height = 600)): Unit =
-    Deliver(boxPlotSvg(title, labels, style), title, saveTo)
+    Deliver(boxPlotSvg(title, labels, style), title, saveTo, style)
 
   /** The SVG text [[boxPlot]] renders. */
   def boxPlotSvg(title: String = "", labels: Seq[String] = Nil,
@@ -179,7 +166,7 @@ extension (m: MatD)
       labelStyle: Int = Font.BOLD,
       saveTo: String = "",
       style: PlotStyle = PlotStyle(width = 1400, height = 600)
-  ): Unit = Deliver(pairsSvg(title, labels, bins, dotSize, color, scatterAlpha, labelStyle, style), title, saveTo)
+  ): Unit = Deliver(pairsSvg(title, labels, bins, dotSize, color, scatterAlpha, labelStyle, style), title, saveTo, style)
 
   /** The SVG text [[pairs]] renders. */
   def pairsSvg(

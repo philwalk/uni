@@ -35,7 +35,7 @@ On Linux and macOS, `uni.Paths` delegates to `java.nio.file.Paths` unchanged. On
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.17.0
+//> using dep org.vastblue:uni_3:0.18.0
 
 import uni.*
 
@@ -107,7 +107,7 @@ The following script hashes all files under a directory and demonstrates argumen
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.17.0
+//> using dep org.vastblue:uni_3:0.18.0
 
 import uni.*
 // doc: args .
@@ -184,7 +184,7 @@ See [DateTimeParser.md](DateTimeParser.md) for the full `uni.time` reference: th
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.17.0
+//> using dep org.vastblue:uni_3:0.18.0
 
 import uni.time.*
 
@@ -206,7 +206,7 @@ A source file can include a block of raw data after the code, enclosed in a `/* 
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.17.0
+//> using dep org.vastblue:uni_3:0.18.0
 
 import uni.data.HereDoc
 

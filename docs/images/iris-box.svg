@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="600" viewBox="0 0 900 600" font-family="sans-serif">
+<rect x="0" y="0" width="900" height="600" fill="#ffffff"/>
+<text x="450" y="28" font-size="16" text-anchor="middle" fill="#333333">Iris: feature distributions</text>
+<rect x="64" y="44" width="816" height="514" fill="#ebebeb"/>
+<line x1="64" y1="540.63" x2="880" y2="540.63" stroke="#ffffff" stroke-width="1"/>
+<line x1="60" y1="540.63" x2="64" y2="540.63" stroke="#999999" stroke-width="1"/>
+<text x="57" y="544.63" font-size="11" text-anchor="end" fill="#333333">0</text>
+<line x1="64" y1="420.81" x2="880" y2="420.81" stroke="#ffffff" stroke-width="1"/>
+<line x1="60" y1="420.81" x2="64" y2="420.81" stroke="#999999" stroke-width="1"/>
+<text x="57" y="424.81" font-size="11" text-anchor="end" fill="#333333">2</text>
+<line x1="64" y1="301" x2="880" y2="301" stroke="#ffffff" stroke-width="1"/>
+<line x1="60" y1="301" x2="64" y2="301" stroke="#999999" stroke-width="1"/>
+<text x="57" y="305" font-size="11" text-anchor="end" fill="#333333">4</text>
+<line x1="64" y1="181.19" x2="880" y2="181.19" stroke="#ffffff" stroke-width="1"/>
+<line x1="60" y1="181.19" x2="64" y2="181.19" stroke="#999999" stroke-width="1"/>
+<text x="57" y="185.19" font-size="11" text-anchor="end" fill="#333333">6</text>
+<line x1="64" y1="61.37" x2="880" y2="61.37" stroke="#ffffff" stroke-width="1"/>
+<line x1="60" y1="61.37" x2="64" y2="61.37" stroke="#999999" stroke-width="1"/>
+<text x="57" y="65.37" font-size="11" text-anchor="end" fill="#333333">8</text>
+<line x1="166" y1="283.03" x2="166" y2="235.1" stroke="#333333" stroke-width="1"/>
+<line x1="166" y1="157.22" x2="166" y2="67.36" stroke="#333333" stroke-width="1"/>
+<line x1="140.5" y1="283.03" x2="191.5" y2="283.03" stroke="#333333" stroke-width="1"/>
+<line x1="140.5" y1="67.36" x2="191.5" y2="67.36" stroke="#333333" stroke-width="1"/>
+<rect x="115" y="157.22" width="102" height="77.88" fill="#1f77b4" fill-opacity="0.6" stroke="#333333" stroke-width="1"/>
+<line x1="115" y1="193.17" x2="217" y2="193.17" stroke="#333333" stroke-width="2"/>
+<text x="166" y="574" font-size="11" text-anchor="middle" fill="#333333">sepal_l</text>
+<line x1="370" y1="408.83" x2="370" y2="372.89" stroke="#333333" stroke-width="1"/>
+<line x1="370" y1="342.93" x2="370" y2="301" stroke="#333333" stroke-width="1"/>
+<line x1="344.5" y1="408.83" x2="395.5" y2="408.83" stroke="#333333" stroke-width="1"/>
+<line x1="344.5" y1="301" x2="395.5" y2="301" stroke="#333333" stroke-width="1"/>
+<rect x="319" y="342.93" width="102" height="29.95" fill="#ff7f0e" fill-opacity="0.6" stroke="#333333" stroke-width="1"/>
+<line x1="319" y1="360.91" x2="421" y2="360.91" stroke="#333333" stroke-width="2"/>
+<circle cx="370" cy="420.81" r="3" fill="none" stroke="#333333" stroke-width="1"/>
+<circle cx="370" cy="295.01" r="3" fill="none" stroke="#333333" stroke-width="1"/>
+<circle cx="370" cy="289.02" r="3" fill="none" stroke="#333333" stroke-width="1"/>
+<circle cx="370" cy="277.04" r="3" fill="none" stroke="#333333" stroke-width="1"/>
+<text x="370" y="574" font-size="11" text-anchor="middle" fill="#333333">sepal_w</text>
+<line x1="574" y1="480.72" x2="574" y2="444.78" stroke="#333333" stroke-width="1"/>
+<line x1="574" y1="235.1" x2="574" y2="127.27" stroke="#333333" stroke-width="1"/>
+<line x1="548.5" y1="480.72" x2="599.5" y2="480.72" stroke="#333333" stroke-width="1"/>
+<line x1="548.5" y1="127.27" x2="599.5" y2="127.27" stroke="#333333" stroke-width="1"/>
+<rect x="523" y="235.1" width="102" height="209.67" fill="#2ca02c" fill-opacity="0.6" stroke="#333333" stroke-width="1"/>
+<line x1="523" y1="280.03" x2="625" y2="280.03" stroke="#333333" stroke-width="2"/>
+<text x="574" y="574" font-size="11" text-anchor="middle" fill="#333333">petal_l</text>
+<line x1="778" y1="534.64" x2="778" y2="522.66" stroke="#333333" stroke-width="1"/>
+<line x1="778" y1="432.79" x2="778" y2="390.86" stroke="#333333" stroke-width="1"/>
+<line x1="752.5" y1="534.64" x2="803.5" y2="534.64" stroke="#333333" stroke-width="1"/>
+<line x1="752.5" y1="390.86" x2="803.5" y2="390.86" stroke="#333333" stroke-width="1"/>
+<rect x="727" y="432.79" width="102" height="89.86" fill="#d62728" fill-opacity="0.6" stroke="#333333" stroke-width="1"/>
+<line x1="727" y1="462.75" x2="829" y2="462.75" stroke="#333333" stroke-width="2"/>
+<text x="778" y="574" font-size="11" text-anchor="middle" fill="#333333">petal_w</text>
+<text x="16" y="301" font-size="13" text-anchor="middle" fill="#333333" transform="rotate(-90 16 301)">cm</text>
+</svg>

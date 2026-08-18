@@ -56,7 +56,7 @@ val r = run("tools/analyse.py", "--verbose")
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.17.0
+//> using dep org.vastblue:uni_3:0.18.0
 
 import uni.*
 
@@ -88,7 +88,7 @@ with a fluent chain before calling `.run()` or `.stream()`:
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.17.0
+//> using dep org.vastblue:uni_3:0.18.0
 
 import uni.*
 // doc: compile-only
@@ -152,7 +152,7 @@ the rest in a background daemon thread — preventing reader threads from blocki
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.17.0
+//> using dep org.vastblue:uni_3:0.18.0
 
 import uni.*
 
@@ -166,7 +166,7 @@ println(s"$branch ${top3.size}")
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.17.0
+//> using dep org.vastblue:uni_3:0.18.0
 
 import uni.*
 
@@ -201,7 +201,7 @@ returning the failing exit status:
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.17.0
+//> using dep org.vastblue:uni_3:0.18.0
 
 import uni.*
 // doc: compile-only
@@ -251,7 +251,7 @@ sent to the OS, making routing observable for debugging:
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.17.0
+//> using dep org.vastblue:uni_3:0.18.0
 
 import uni.*
 // doc: compile-only
@@ -268,7 +268,7 @@ it explicitly when needed:
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.17.0
+//> using dep org.vastblue:uni_3:0.18.0
 
 import uni.*
 // doc: compile-only
@@ -282,7 +282,7 @@ explicitly to make the intent visible:
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.17.0
+//> using dep org.vastblue:uni_3:0.18.0
 
 import uni.*
 
@@ -298,7 +298,7 @@ run(bashExe, "-c", "git log --oneline | head -20").lines.foreach(println)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.17.0
+//> using dep org.vastblue:uni_3:0.18.0
 
 import uni.*
 // doc: compile-only
@@ -315,7 +315,7 @@ run("git", "ls-files") { pathstr =>
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.17.0
+//> using dep org.vastblue:uni_3:0.18.0
 
 import uni.*
 // doc: compile-only
@@ -334,7 +334,7 @@ failFast {
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.17.0
+//> using dep org.vastblue:uni_3:0.18.0
 
 import uni.*
 
@@ -347,7 +347,7 @@ result.lines.take(5).foreach(println)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.17.0
+//> using dep org.vastblue:uni_3:0.18.0
 
 import uni.*
 
@@ -362,7 +362,7 @@ routing issues (e.g. confirming that `.sh` routing prepended `bashExe`):
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.17.0
+//> using dep org.vastblue:uni_3:0.18.0
 
 import uni.*
 
@@ -375,7 +375,7 @@ printf("ran: %s  →  %s\n", r.cmd.mkString(" "), r.text.trim)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.17.0
+//> using dep org.vastblue:uni_3:0.18.0
 
 import uni.*
 
@@ -396,7 +396,7 @@ logging to a file, accumulating for a summary report, or suppressing:
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.17.0
+//> using dep org.vastblue:uni_3:0.18.0
 
 import uni.*
 // doc: compile-only
@@ -417,7 +417,7 @@ if failures.nonEmpty then
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.17.0
+//> using dep org.vastblue:uni_3:0.18.0
 
 import uni.*
 
@@ -433,7 +433,7 @@ val prevMsg = run("git", "log", "--format=%s", "-2", "--skip=1")
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.17.0
+//> using dep org.vastblue:uni_3:0.18.0
 
 import uni.*
 
@@ -464,7 +464,7 @@ Use them when you need to pass the interpreter explicitly rather than relying on
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.17.0
+//> using dep org.vastblue:uni_3:0.18.0
 
 import uni.*
 // doc: compile-only
@@ -487,7 +487,7 @@ for existence checks without spawning a subprocess:
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.17.0
+//> using dep org.vastblue:uni_3:0.18.0
 
 import uni.*
 
@@ -503,6 +503,58 @@ uname(arg: String = "-a"): String   // runs uname, returns stdout or "" on failu
 isWsl: Boolean                      // true when running inside WSL
 osType: String                      // "windows" | "linux" | "darwin"
 hostname: String                    // java.net.InetAddress.getLocalHost.getHostName
+```
+
+---
+
+## The same API in Rust: `uni::uproc`
+
+Every call above has a Rust spelling with the same routing table (`route_cmd` takes the
+platform as a parameter, so both tables are tested on every OS) and the same result shape.
+Scala's named/overloaded forms become explicit names; `failFast`/`orFail` becomes `?`.
+
+| Scala | Rust |
+|---|---|
+| `run("git", "log")` → `ProcResult` | `run(&["git", "log"])` → `ProcResult` |
+| `.text` `.lines` `.ok` `.toOption` `.headOnly` `.takeOnly(n)` `.cmd` | the same names (`lines()` borrows) |
+| `.orElse("unknown")` | `.orElse("unknown")` |
+| `run(...) !! "msg"` | `run(...).orLog("msg")` |
+| `run("git", "ls-files") { line => … }` → `Int` | `runLines(&["git", "ls-files"], \|line\| …)` → `i32` |
+| `run(cmd*)(out, err)` | `runStream(&cmd, out, err)` |
+| `status !! "msg"` / `status orElse { m => … }` | `status.orLog("msg")` / `status.orElse(\|m\| …)` (`use uni::uproc::StatusExt`) |
+| `failFast { a orFail "x"; b orFail "y"; 0 }` | `fn step() -> Result<i32, i32> { a.orFail("x")?; b.orFail("y")?; Ok(0) }` |
+| `proc(...).cwd(p).env(m).stdin(s).timeout(ms).run()` | `proc(&[...]).cwd(p).env(&[("K", "v")]).stdin(s).timeout(ms).run()` |
+| `proc(...).stream(out, err)` | `proc(&[...]).stream(out, err)` |
+| `execLines(cmd*)` → `LazyList[String]` | `execLines(&cmd)` → lazy `Iterator<Item = String>` |
+| `bashExe` `pythonExe` `unameExe` | `bashExe()` `pythonExe()` `unameExe()` (resolved once) |
+| `where(prog)` (throws when absent) | `whereExe(prog)` → `Option<String>` |
+| `whereInPath(prog)` `uname(arg)` `isWsl` `osType` `hostname` | the same names, as functions |
+
+```rust
+use uni::uproc::{proc, run, runLines, StatusExt};
+
+fn main() {
+    // one script line, every OS: cmd /c on Windows, sh -c elsewhere — the routing adds
+    // .exe on Windows, so "sh" would become "sh.exe" and "cmd" "cmd.exe"
+    let shell = |script: &str| -> Vec<String> {
+        if cfg!(windows) { vec!["cmd".into(), "/c".into(), script.into()] } else { vec!["sh".into(), "-c".into(), script.into()] }
+    };
+    let cmd = shell("echo hello");
+    let args: Vec<&str> = cmd.iter().map(String::as_str).collect();
+    let r = run(&args);                                   // ProcResult
+    println!("{} {} {:?}", r.ok(), r.headOnly(), r.cmd.first()); // true hello Some("cmd.exe" | "sh")
+
+    let mut n = 0;
+    let status = runLines(&args, |_line| n += 1).orLog("echo failed");
+    println!("{status} {n}");                             // 0 1
+
+    let cmd = shell("exit 3");
+    let args: Vec<&str> = cmd.iter().map(String::as_str).collect();
+    let r = proc(&args).timeout(5_000).run();
+    println!("{} {}", r.status, r.orElse("no output"));    // 3 no output
+    let missing = run(&["no-such-program-xyz"]);
+    println!("{} {}", missing.status, missing.stderr.len()); // -1 1
+}
 ```
 
 ---

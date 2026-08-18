@@ -76,7 +76,7 @@ class PlotSvgSuite extends FunSuite:
   }
 
   private def balanced(svg: String): Unit =
-    val opens  = "<(svg|text|rect|line|circle|polyline)\\b".r.findAllIn(svg).size
+    val opens  = "<(svg|text|rect|line|circle|polyline|polygon)\\b".r.findAllIn(svg).size
     val closes = "(</svg>|</text>|/>)".r.findAllIn(svg).size
     assertEquals(opens, closes, "every element closes")
     assert(svg.startsWith("<svg xmlns=") && svg.trim.endsWith("</svg>"))
@@ -98,10 +98,12 @@ class PlotSvgSuite extends FunSuite:
     assertEquals("<circle".r.findAllIn(svg).size, 12 + 3, "12 points and 3 legend dots")
   }
 
-  test("hist bars sum to the count") {
+  test("hist is an area series through the bin centres") {
     val svg = m.histSvg(bins = 6)
     balanced(svg)
-    assertEquals("<rect".r.findAllIn(svg).size, 2 + 6, "chart bg, plot bg, six bins")
+    assertEquals("<polygon".r.findAllIn(svg).size, 1)
+    assertEquals("<polyline".r.findAllIn(svg).size, 1)
+    assertEquals("<rect".r.findAllIn(svg).size, 2, "chart bg, plot bg")
   }
 
   test("bar draws one bar per row and a baseline") {

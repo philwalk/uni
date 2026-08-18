@@ -268,6 +268,40 @@ fn main() {
 
 ---
 
+## Subprocesses: `run` and `proc`
+
+`uni::uproc` is `uni.Proc` — a buffered `run` returning a `ProcResult`, a streaming
+`runLines`/`runStream`, and a `proc(...)` builder with `cwd`, `env`, `stdin`, `timeout`.
+The point of the API is the routing: `.sh` goes through `bashExe()` on every OS; on
+Windows `.py`, `.sc`, `.bat`/`.cmd`, `.ps1` get their interpreters and any other program
+name gets `.exe`, so a line written for Linux runs unchanged. A program that cannot start
+is a result (status −1, message on `stderr`), never a panic; `orLog` is Scala's `!!`, and
+`orFail` returns `Result<_, i32>` for `?` where Scala uses `failFast`.
+
+```rust
+use uni::uproc::{proc, run, whereInPath, StatusExt};
+
+fn main() {
+    let shell = |script: &str| -> Vec<String> {
+        if cfg!(windows) { vec!["cmd".into(), "/c".into(), script.into()] } else { vec!["sh".into(), "-c".into(), script.into()] }
+    };
+    let cmd = shell("echo one& echo two");
+    let args: Vec<&str> = cmd.iter().map(String::as_str).collect();
+    let r = run(&args);
+    println!("{} {}", r.ok(), r.lines().len());               // true 2
+
+    let cmd = shell(if cfg!(windows) { "echo %GREETING%" } else { "echo $GREETING" });
+    let args: Vec<&str> = cmd.iter().map(String::as_str).collect();
+    let r = proc(&args).env(&[("GREETING", "hi")]).timeout(5_000).run();
+    println!("{}", r.headOnly());                              // hi
+
+    let status = run(&args).status.orLog("greeting failed");   // logs only on failure
+    println!("{status} {}", whereInPath("no-such-tool-xyz").is_none()); // 0 true
+}
+```
+
+---
+
 ## Where things live
 
 | Area | Scala | Rust |
@@ -279,3 +313,5 @@ fn main() {
 | Exact decimals | `uni.data.Big`, `BigUtils` | `uni::udata::{Big, bigutils}` |
 | Matrices | `uni.data.Mat*` | `uni::udata::{MatD, MatF, MatB, MatBool}` — see the cheat sheet |
 | Argument parsing | `ArgsParser` | `uni::cli` |
+| Subprocesses | `run`, `proc`, `ProcResult` (`uni.Proc`) | `uni::uproc` — `run`, `runLines`, `proc`, `ProcResult`, `StatusExt` |
+| Charts | `uni.plot` | `uni::uplot` — see the cheat sheet |

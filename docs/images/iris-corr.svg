@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="680" viewBox="0 0 720 680" font-family="sans-serif">
+<rect x="0" y="0" width="720" height="680" fill="#ffffff"/>
+<text x="360" y="28" font-size="16" text-anchor="middle" fill="#333333">Iris: feature correlation matrix</text>
+<rect x="64" y="44" width="144" height="148.5" fill="#b2182b" stroke="#ffffff" stroke-width="1"/>
+<text x="136" y="122.25" font-size="11" text-anchor="middle" fill="#ffffff">1</text>
+<rect x="208" y="44" width="144" height="148.5" fill="#7ea5cd" stroke="#ffffff" stroke-width="1"/>
+<text x="280" y="122.25" font-size="11" text-anchor="middle" fill="#ffffff">-0.118</text>
+<rect x="352" y="44" width="144" height="148.5" fill="#be4050" stroke="#ffffff" stroke-width="1"/>
+<text x="424" y="122.25" font-size="11" text-anchor="middle" fill="#ffffff">0.872</text>
+<rect x="496" y="44" width="144" height="148.5" fill="#c4515f" stroke="#ffffff" stroke-width="1"/>
+<text x="568" y="122.25" font-size="11" text-anchor="middle" fill="#ffffff">0.818</text>
+<rect x="64" y="192.5" width="144" height="148.5" fill="#7ea5cd" stroke="#ffffff" stroke-width="1"/>
+<text x="136" y="270.75" font-size="11" text-anchor="middle" fill="#ffffff">-0.118</text>
+<rect x="208" y="192.5" width="144" height="148.5" fill="#b2182b" stroke="#ffffff" stroke-width="1"/>
+<text x="280" y="270.75" font-size="11" text-anchor="middle" fill="#ffffff">1</text>
+<rect x="352" y="192.5" width="144" height="148.5" fill="#2166ac" stroke="#ffffff" stroke-width="1"/>
+<text x="424" y="270.75" font-size="11" text-anchor="middle" fill="#ffffff">-0.428</text>
+<rect x="496" y="192.5" width="144" height="148.5" fill="#3473b3" stroke="#ffffff" stroke-width="1"/>
+<text x="568" y="270.75" font-size="11" text-anchor="middle" fill="#ffffff">-0.366</text>
+<rect x="64" y="341" width="144" height="148.5" fill="#be4050" stroke="#ffffff" stroke-width="1"/>
+<text x="136" y="419.25" font-size="11" text-anchor="middle" fill="#ffffff">0.872</text>
+<rect x="208" y="341" width="144" height="148.5" fill="#2166ac" stroke="#ffffff" stroke-width="1"/>
+<text x="280" y="419.25" font-size="11" text-anchor="middle" fill="#ffffff">-0.428</text>
+<rect x="352" y="341" width="144" height="148.5" fill="#b2182b" stroke="#ffffff" stroke-width="1"/>
+<text x="424" y="419.25" font-size="11" text-anchor="middle" fill="#ffffff">1</text>
+<rect x="496" y="341" width="144" height="148.5" fill="#b62436" stroke="#ffffff" stroke-width="1"/>
+<text x="568" y="419.25" font-size="11" text-anchor="middle" fill="#ffffff">0.963</text>
+<rect x="64" y="489.5" width="144" height="148.5" fill="#c4515f" stroke="#ffffff" stroke-width="1"/>
+<text x="136" y="567.75" font-size="11" text-anchor="middle" fill="#ffffff">0.818</text>
+<rect x="208" y="489.5" width="144" height="148.5" fill="#3473b3" stroke="#ffffff" stroke-width="1"/>
+<text x="280" y="567.75" font-size="11" text-anchor="middle" fill="#ffffff">-0.366</text>
+<rect x="352" y="489.5" width="144" height="148.5" fill="#b62436" stroke="#ffffff" stroke-width="1"/>
+<text x="424" y="567.75" font-size="11" text-anchor="middle" fill="#ffffff">0.963</text>
+<rect x="496" y="489.5" width="144" height="148.5" fill="#b2182b" stroke="#ffffff" stroke-width="1"/>
+<text x="568" y="567.75" font-size="11" text-anchor="middle" fill="#ffffff">1</text>
+<text x="136" y="654" font-size="11" text-anchor="middle" fill="#333333">sepal_l</text>
+<text x="280" y="654" font-size="11" text-anchor="middle" fill="#333333">sepal_w</text>
+<text x="424" y="654" font-size="11" text-anchor="middle" fill="#333333">petal_l</text>
+<text x="568" y="654" font-size="11" text-anchor="middle" fill="#333333">petal_w</text>
+<text x="57" y="122.25" font-size="11" text-anchor="end" fill="#333333">sepal_l</text>
+<text x="57" y="270.75" font-size="11" text-anchor="end" fill="#333333">sepal_w</text>
+<text x="57" y="419.25" font-size="11" text-anchor="end" fill="#333333">petal_l</text>
+<text x="57" y="567.75" font-size="11" text-anchor="end" fill="#333333">petal_w</text>
+<rect x="656" y="44" width="14" height="29.7" fill="#b52335"/>
+<rect x="656" y="73.7" width="14" height="29.7" fill="#bc394a"/>
+<rect x="656" y="103.4" width="14" height="29.7" fill="#c3505e"/>
+<rect x="656" y="133.1" width="14" height="29.7" fill="#ca6672"/>
+<rect x="656" y="162.8" width="14" height="29.7" fill="#d17c87"/>
+<rect x="656" y="192.5" width="14" height="29.7" fill="#d8939b"/>
+<rect x="656" y="222.2" width="14" height="29.7" fill="#dfa9b0"/>
+<rect x="656" y="251.9" width="14" height="29.7" fill="#e6bfc4"/>
+<rect x="656" y="281.6" width="14" height="29.7" fill="#edd6d8"/>
+<rect x="656" y="311.3" width="14" height="29.7" fill="#f4eced"/>
+<rect x="656" y="341" width="14" height="29.7" fill="#ecf0f3"/>
+<rect x="656" y="370.7" width="14" height="29.7" fill="#d7e1ec"/>
+<rect x="656" y="400.4" width="14" height="29.7" fill="#c2d3e4"/>
+<rect x="656" y="430.1" width="14" height="29.7" fill="#acc4dd"/>
+<rect x="656" y="459.8" width="14" height="29.7" fill="#97b6d5"/>
+<rect x="656" y="489.5" width="14" height="29.7" fill="#81a7ce"/>
+<rect x="656" y="519.2" width="14" height="29.7" fill="#6c99c6"/>
+<rect x="656" y="548.9" width="14" height="29.7" fill="#578abf"/>
+<rect x="656" y="578.6" width="14" height="29.7" fill="#417cb7"/>
+<rect x="656" y="608.3" width="14" height="29.7" fill="#2c6db0"/>
+<text x="674" y="54" font-size="11" text-anchor="start" fill="#333333">1</text>
+<text x="674" y="638" font-size="11" text-anchor="start" fill="#333333">-0.428</text>
+</svg>

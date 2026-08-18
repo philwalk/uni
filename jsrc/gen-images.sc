@@ -1,9 +1,9 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-// Generates docs/images/iris-*.png for the README.
+// Generates docs/images/iris-*.svg for the README and docs/PlotGuide.md.
 // Run from project root: scala-cli jsrc/gen-images.sc
 
-//> using dep org.vastblue:uni_3:0.17.0
+//> using dep org.vastblue:uni_3:0.18.0
 import uni.data.*
 import uni.plot.*
 import java.awt.Color
@@ -111,4 +111,4 @@ println("Saved docs/images/:")
 for name <- Seq("iris-lines", "iris-scatter-grouped", "iris-scatter",
                 "iris-hist",  "iris-bar",              "iris-corr", "iris-box",
                 "iris-pairs") do
-  println(s"  $name.png")
+  println(s"  $name.svg")

@@ -22,7 +22,9 @@ work and the scripting around it:
   same bytes from both languages, pinned like everything else.
 * **3PRF forecasting** — the three-pass regression filter, iterative and closed-form, in
   both languages; a `forecast` demo pair runs the same panel through each.
-* **Scala only** — the `run`/`proc` subprocess API.
+* **Subprocesses** — `run`/`proc` with the same routing by file extension (`.sh` through
+  bash everywhere; `.py`, `.sc`, `.bat`, `.ps1` through their interpreters on Windows), so
+  a script line runs unchanged on every OS — in both languages.
 
 Scala 3.7.0+ on the JVM; the Rust crate is `vastblue-uni` (`use uni::…`), no JNI in either
 direction.
@@ -110,6 +112,12 @@ What is covered, with **no dependency** taken for any of it:
   (exact `+`/`-`/`*` under each value's MathContext, DECIMAL128-rounded `/` and `sqrt`, the
   equality-recognised BigNaN sentinel), backing the `Big` CSV loaders. See
   `docs/BigTypeGuide.md`.
+* **`uplot`** — the seven chart types, rendered to SVG by the crate itself; the same bytes
+  as `uni.plot` (98 fixture rows). See `docs/PlotGuide.md`.
+* **`uproc`** — `run`/`proc`/`ProcResult`/`ProcBuilder` and the `bashExe`/`pythonExe`/
+  `whereInPath`/`uname` family with Scala's routing table; `where` is `whereExe` (a Rust
+  keyword) and `failFast`/`orFail` is `?` on `orFail`'s `Result`. See
+  `docs/SubprocessAPI.md`.
 * **Bit-identical NumPy random numbers.** `NumPyRng` reproduces
   `np.random.default_rng(seed)` — PCG64 XSL RR 128 behind NumPy's SeedSequence expansion —
   and therefore also reproduces `uni.data.NumPyRNG` draw for draw. `randn` too, via the same
@@ -210,14 +218,15 @@ See the regeneration note in [docs/MatDBenchmarks.md](docs/MatDBenchmarks.md).
 
 `import uni.plot.*` adds `.plot()`, `.scatter()`, `.hist()`, `.bar()`, `.heatmap()`,
 `.boxPlot()` and `.pairs()` directly on `MatD`. Each renders to SVG — drawn by the library,
-no charting dependency — and opens it in the default browser, or saves it when `saveTo` is
-supplied (`<name>.svg`, or `.html`). Pass a `PlotStyle` to control dimensions, colours,
+no charting dependency — and shows it in a standalone window of your default browser
+(`UNI_PLOT_WINDOW=tab` for a tab), or saves it when `saveTo` is supplied (`<name>.svg`,
+or `.html`). Pass a `PlotStyle` to control dimensions, colours,
 labels and log axes. The Rust crate's `uni::uplot` produces the same SVG bytes; see
 [docs/PlotGuide.md](docs/PlotGuide.md).
 
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
-//> using dep org.vastblue:uni_3:0.17.0
+//> using dep org.vastblue:uni_3:0.18.0
 import uni.data.*
 import uni.plot.*
 // doc: compile-only  (opens the browser; run from the repo root for datasets/)
@@ -241,11 +250,8 @@ iris.hist(bins = 20, saveTo = "docs/images/iris-hist",  style = PlotStyle.unifor
 ```
 
 <table><tr>
-<!--
-<td align="center"><img src="docs/images/iris-scatter.png" width="450"/><br>Petal length vs petal width <em>Iris</em> clusters</td>
--->
-<td align="center"><img src="docs/images/iris-lines.png" width="450"/><br>Petal length vs petal width <em>Iris</em> clusters</td>
-<td align="center"><img src="docs/images/iris-hist.png"  width="450"/><br>Sepal length distribution across 150 samples</td>
+<td align="center"><img src="docs/images/iris-lines.svg" width="450"/><br>All four <em>Iris</em> features over the 150 samples</td>
+<td align="center"><img src="docs/images/iris-hist.svg"  width="450"/><br>Sepal length distribution across 150 samples</td>
 </tr></table>
 
 See [`jsrc/iris.sc`](jsrc/iris.sc) and [`jsrc/anscombe.sc`](jsrc/anscombe.sc) for runnable demos,
@@ -384,7 +390,7 @@ So ordinary client code written the obvious way is already allocation-free for t
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.17.0
+//> using dep org.vastblue:uni_3:0.18.0
 
 import uni.data.*
 
@@ -418,7 +424,7 @@ Note: inline annotations were removed before running JaCoCo to prevent Scala 3's
 Add the following to your `build.sbt`:
 
 ```scala
-libraryDependencies += "org.vastblue" %% "uni" % "0.17.0"
+libraryDependencies += "org.vastblue" %% "uni" +%+ +"0.18.0"
 ```
 
 ### Native BLAS backend
@@ -479,7 +485,7 @@ libraries, `bundled` only bytedeco's — and nothing needs to be purged from the
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.17.0
+//> using dep org.vastblue:uni_3:0.18.0
 
 import uni.data.*
 
@@ -502,7 +508,7 @@ They add type-safe BLAS-style vector dispatch on top of `Mat`.
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.17.0
+//> using dep org.vastblue:uni_3:0.18.0
 
 import uni.data.*
 
@@ -564,7 +570,7 @@ Each alias has a matching factory object mirroring the `MatD` API:
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.17.0
+//> using dep org.vastblue:uni_3:0.18.0
 
 import uni.data.*
 
@@ -584,7 +590,7 @@ val identityB: MatB = MatB.eye(5)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.17.0
+//> using dep org.vastblue:uni_3:0.18.0
 
 import uni.data.*
 
@@ -608,7 +614,7 @@ println(s"rotated: ${rotated.show("%7.2f")}")
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.17.0
+//> using dep org.vastblue:uni_3:0.18.0
 
 import uni.data.*
 
@@ -626,7 +632,7 @@ val f = a.relu    // built-in activation function
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.17.0
+//> using dep org.vastblue:uni_3:0.18.0
 
 import uni.data.*
 
@@ -645,7 +651,7 @@ m :+= n      // element-wise add matrix in-place
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.17.0
+//> using dep org.vastblue:uni_3:0.18.0
 
 import uni.data.*
 
@@ -663,7 +669,7 @@ val allTrue  = mask.all
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.17.0
+//> using dep org.vastblue:uni_3:0.18.0
 
 import uni.data.*
 
@@ -684,7 +690,7 @@ val cols  = wide.hsplit(2)               // Seq of two 4x2 Mats
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.17.0
+//> using dep org.vastblue:uni_3:0.18.0
 
 import uni.data.*
 
@@ -707,7 +713,7 @@ The following example demonstrates a wide array of `uni.MatD` capabilities
 
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
-//> using dep org.vastblue:uni_3:0.17.0
+//> using dep org.vastblue:uni_3:0.18.0
 
 import uni.data.*
 
@@ -776,7 +782,7 @@ Because activation functions are members of the `MatD` type, building layers is 
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.17.0
+//> using dep org.vastblue:uni_3:0.18.0
 
 import uni.data.*
 
@@ -812,7 +818,7 @@ Raw financial and scientific datasets rarely arrive in clean form. `uni.data.Big
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.17.0
+//> using dep org.vastblue:uni_3:0.18.0
 
 import uni.data.*
 

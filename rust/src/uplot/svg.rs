@@ -834,7 +834,8 @@ pub fn scatter(
     out.finish()
 }
 
-/// Histogram of every finite value, `bins` equal-width bins over [min, max].
+/// Histogram of every finite value, `bins` equal-width bins over [min, max], drawn as an
+/// area series through the bin centres.
 #[must_use]
 pub fn hist(m: &MatD, bins: i32, title_s: &str, style: &PlotStyle) -> String {
     let th = theme(style);
@@ -879,22 +880,32 @@ pub fn hist(m: &MatD, bins: i32, title_s: &str, style: &PlotStyle) -> String {
     x_axis(&mut out, &f, &ax, &th);
     y_axis(&mut out, &f, &ay, &th);
     let y0 = ay.pos(0.0);
+    // An area series, as XChart drew it: the count at each bin centre, the region under
+    // the line filled, the line drawn over it.
+    let mut pts = String::new();
     for (b, &c) in counts.iter().enumerate() {
+        if b > 0 {
+            pts.push(' ');
+        }
         #[expect(clippy::cast_precision_loss, reason = "bin index")]
         let bf = b as f64;
-        let x0 = ax.pos(mn + bf * bin_size);
-        let x1 = ax.pos(mn + (bf + 1.0) * bin_size);
+        pts.push_str(&num(ax.pos(mn + (bf + 0.5) * bin_size)));
+        pts.push(',');
         #[expect(clippy::cast_precision_loss, reason = "counts")]
-        let yt = ay.pos(c as f64);
-        out.line(&format!(
-            "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"{}\" stroke=\"{GRID_LINE}\" stroke-width=\"1\"/>",
-            num(x0),
-            num(yt),
-            num(x1 - x0),
-            num(y0 - yt),
-            th.color(0)
-        ));
+        pts.push_str(&num(ay.pos(c as f64)));
     }
+    let x_first = num(ax.pos(mn + 0.5 * bin_size));
+    let x_last = num(ax.pos(mn + (f64::from(nb) - 0.5) * bin_size));
+    out.line(&format!(
+        "<polygon points=\"{x_first},{} {pts} {x_last},{}\" fill=\"{}\" fill-opacity=\"0.35\" stroke=\"none\"/>",
+        num(y0),
+        num(y0),
+        th.color(0)
+    ));
+    out.line(&format!(
+        "<polyline points=\"{pts}\" fill=\"none\" stroke=\"{}\" stroke-width=\"1.5\"/>",
+        th.color(0)
+    ));
     axis_labels(&mut out, &f, style, &th);
     close(&mut out);
     out.finish()

@@ -2,7 +2,7 @@
 //package uni.apps
 
 //> using jvm 17
-//> using dep org.vastblue:uni_3:0.17.0
+//> using dep org.vastblue:uni_3:0.18.0
 //> using dep com.github.darrenjw::scala-glm:0.9
 
 import uni.data.*

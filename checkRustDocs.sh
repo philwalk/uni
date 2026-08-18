@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Compile-checks every complete Rust example embedded in rust/docs/*.md — the Rust twin of
+# Compile-checks every complete Rust example embedded in rust/docs/*.md (and the Rust
+# blocks the Scala guides under docs/ carry) — the Rust twin of
 # checkDocScripts.sh.
 #
 # A "complete example" is a fenced ```rust block that contains `fn main`. Each is written
@@ -13,11 +14,11 @@
 #
 # Runs in CI (rust.yml) and as release gate 6d.
 #
-# Usage:  ./checkRustDocs.sh [file.md ...]     (default: rust/docs/*.md rust/README.md)
+# Usage:  ./checkRustDocs.sh [file.md ...]     (default: rust/docs/*.md rust/README.md docs/*.md)
 set -u
 cd "$(dirname "$0")"
 files=("$@")
-[ ${#files[@]} -eq 0 ] && files=(rust/docs/*.md rust/README.md)
+[ ${#files[@]} -eq 0 ] && files=(rust/docs/*.md rust/README.md docs/*.md)   # docs/ holds the Rust columns of the Scala guides
 out=rust/doc-examples/examples
 rm -rf "$out"; mkdir -p "$out"
 

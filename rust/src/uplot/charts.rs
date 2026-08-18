@@ -15,7 +15,13 @@ use crate::udata::MatD;
 impl MatD {
     /// Line plot — one series per column, x-axis = row indices; saved or shown per `saveTo`.
     pub fn plot(&self, o: &PlotOpts) {
-        deliver::deliver(&self.plotSvg(o), &o.title, &o.saveTo);
+        deliver::deliver(
+            &self.plotSvg(o),
+            &o.title,
+            &o.saveTo,
+            o.style.width,
+            o.style.height,
+        );
     }
 
     /// The SVG text [`MatD::plot`] renders.
@@ -26,7 +32,13 @@ impl MatD {
 
     /// Scatter of two columns; `groupCol >= 0` colours by that column's distinct values.
     pub fn scatter(&self, o: &ScatterOpts) {
-        deliver::deliver(&self.scatterSvg(o), &o.title, &o.saveTo);
+        deliver::deliver(
+            &self.scatterSvg(o),
+            &o.title,
+            &o.saveTo,
+            o.style.width,
+            o.style.height,
+        );
     }
 
     /// The SVG text [`MatD::scatter`] renders.
@@ -37,7 +49,13 @@ impl MatD {
 
     /// Histogram of all values in the matrix.
     pub fn hist(&self, o: &HistOpts) {
-        deliver::deliver(&self.histSvg(o), &o.title, &o.saveTo);
+        deliver::deliver(
+            &self.histSvg(o),
+            &o.title,
+            &o.saveTo,
+            o.style.width,
+            o.style.height,
+        );
     }
 
     /// The SVG text [`MatD::hist`] renders.
@@ -48,7 +66,13 @@ impl MatD {
 
     /// Bar chart — one bar per row in `col`, labels from `labelCol` or the row index.
     pub fn bar(&self, o: &BarOpts) {
-        deliver::deliver(&self.barSvg(o), &o.title, &o.saveTo);
+        deliver::deliver(
+            &self.barSvg(o),
+            &o.title,
+            &o.saveTo,
+            o.style.width,
+            o.style.height,
+        );
     }
 
     /// The SVG text [`MatD::bar`] renders.
@@ -59,7 +83,13 @@ impl MatD {
 
     /// Heatmap — the matrix as a colour grid with a colour bar.
     pub fn heatmap(&self, o: &HeatmapOpts) {
-        deliver::deliver(&self.heatmapSvg(o), &o.title, &o.saveTo);
+        deliver::deliver(
+            &self.heatmapSvg(o),
+            &o.title,
+            &o.saveTo,
+            o.style.width,
+            o.style.height,
+        );
     }
 
     /// The SVG text [`MatD::heatmap`] renders.
@@ -70,7 +100,13 @@ impl MatD {
 
     /// Box plot — one box per column: median, quartiles, whiskers, outliers.
     pub fn boxPlot(&self, o: &BoxPlotOpts) {
-        deliver::deliver(&self.boxPlotSvg(o), &o.title, &o.saveTo);
+        deliver::deliver(
+            &self.boxPlotSvg(o),
+            &o.title,
+            &o.saveTo,
+            o.style.width,
+            o.style.height,
+        );
     }
 
     /// The SVG text [`MatD::boxPlot`] renders.
@@ -81,7 +117,13 @@ impl MatD {
 
     /// Scatterplot matrix — histograms on the diagonal, scatters off it.
     pub fn pairs(&self, o: &PairsOpts) {
-        deliver::deliver(&self.pairsSvg(o), &o.title, &o.saveTo);
+        deliver::deliver(
+            &self.pairsSvg(o),
+            &o.title,
+            &o.saveTo,
+            o.style.width,
+            o.style.height,
+        );
     }
 
     /// The SVG text [`MatD::pairs`] renders.

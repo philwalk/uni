@@ -444,8 +444,8 @@
 1x1 pl.plotbig 9bebc1649c5a6360
 1x1 pl.scatter 8b71e204d16dab41
 1x1 pl.scatterg 1d9d26724dcc2344
-1x1 pl.hist 1181c8f9f5d53f3e
-1x1 pl.histbig b79fab45bb89f6e6
+1x1 pl.hist 088c92e5e7aea466
+1x1 pl.histbig 224c3a14c2ae66b9
 1x1 pl.bar b298040b27409a3f
 1x1 pl.heatmap c61e21a517d87a0f
 1x1 pl.heatstops ae3e515532fd6e54
@@ -678,8 +678,8 @@
 3x5 pl.plotbig 067d1f2a538adc6c
 3x5 pl.scatter ddd22392d0ee2add
 3x5 pl.scatterg 64a7549127eb2f68
-3x5 pl.hist 41b00086dd7679a0
-3x5 pl.histbig d37b2883111f613c
+3x5 pl.hist d711b0abc457571e
+3x5 pl.histbig 1142b86fe7aaee73
 3x5 pl.bar 2f2fa831301c71b6
 3x5 pl.heatmap 547ca9345dca13c9
 3x5 pl.heatstops c4461e86ed1585ee
@@ -912,8 +912,8 @@
 5x3 pl.plotbig 33d9d9f6dc65db83
 5x3 pl.scatter ee8f0ef80d14545c
 5x3 pl.scatterg 33e8148445c12d4d
-5x3 pl.hist 41b00086dd7679a0
-5x3 pl.histbig d37b2883111f613c
+5x3 pl.hist d711b0abc457571e
+5x3 pl.histbig 1142b86fe7aaee73
 5x3 pl.bar 6aa83342c6f18058
 5x3 pl.heatmap ce0a0341b3614561
 5x3 pl.heatstops ffd36f7271a48e76
@@ -1146,8 +1146,8 @@
 8x9 pl.plotbig b253c57403b4d8e7
 8x9 pl.scatter 787c1937e1bbf979
 8x9 pl.scatterg e3fa9810aedbf472
-8x9 pl.hist cb1d9e925ecb3d3a
-8x9 pl.histbig a815163f2237667b
+8x9 pl.hist 1a225a2d32715512
+8x9 pl.histbig a8afdfc925bcde11
 8x9 pl.bar 2db0e297114f4537
 8x9 pl.heatmap 282cbd8e81220e96
 8x9 pl.heatstops 37cee1f3f6d95ce2
@@ -1380,8 +1380,8 @@
 9x8 pl.plotbig 066a6b7089f07d91
 9x8 pl.scatter 73dcea41bb133b35
 9x8 pl.scatterg c3f4a288fe419013
-9x8 pl.hist cb1d9e925ecb3d3a
-9x8 pl.histbig a815163f2237667b
+9x8 pl.hist 1a225a2d32715512
+9x8 pl.histbig a8afdfc925bcde11
 9x8 pl.bar 5d16b1679e2c929a
 9x8 pl.heatmap 9999a15604d1f743
 9x8 pl.heatstops ec46e7429e23fb7c
@@ -1625,8 +1625,8 @@
 64x64 pl.plotbig a7fb1ef573090fbe
 64x64 pl.scatter 5d1258d981c89328
 64x64 pl.scatterg 69ac61a12202d1fb
-64x64 pl.hist 7f08247170efc801
-64x64 pl.histbig 03047e701ec7b0ef
+64x64 pl.hist 769e229e6c010abb
+64x64 pl.histbig d3582ff0f249c342
 64x64 pl.bar 7289505baf41cbc3
 64x64 pl.heatmap 63b0dbb883157177
 64x64 pl.heatstops 1faada118eaddc16
@@ -1851,8 +1851,8 @@
 65x63 pl.plotbig 2ab556181d2806f7
 65x63 pl.scatter fe8ef8e0fe2a0658
 65x63 pl.scatterg 1fc284bfc80645b1
-65x63 pl.hist 0441583e00d770e4
-65x63 pl.histbig 1c595062e95566ab
+65x63 pl.hist 074224ba8fcaa2cb
+65x63 pl.histbig 268dc4e052cf1775
 65x63 pl.bar 2bbb3649d0f673a5
 65x63 pl.heatmap f90e2858964a8407
 65x63 pl.heatstops ba502409cbb320f0

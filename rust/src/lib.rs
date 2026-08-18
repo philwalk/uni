@@ -10,6 +10,7 @@ pub mod t3prf;
 pub mod udata;
 pub mod upath;
 pub mod uplot;
+pub mod uproc;
 pub mod utime;
 
 pub use error::Error;

@@ -9,7 +9,7 @@ compiled by `checkRustDocs.sh` in CI and before every release.
 ## Installation
 ```toml
 [dependencies]
-uni = { package = "vastblue-uni", version = "0.17" }
+uni = { package = "vastblue-uni", version = "0.18" }
 ```
 The crate is `vastblue-uni` on crates.io; its library name is `uni`, so the paths below read
 `use uni::…`.

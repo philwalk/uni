@@ -1,5 +1,5 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
-//> using dep org.vastblue:uni_3:0.17.0
+//> using dep org.vastblue:uni_3:0.18.0
 
 // One half of the cross-language demo pair; `rust/examples/treestat.rs` is the other.
 // Both scan the same directory tree and print byte-identical reports, so the pair

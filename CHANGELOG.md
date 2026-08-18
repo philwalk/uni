@@ -1,4 +1,4 @@
-## Unreleased
+## v0.18.0 — 2026-08-18
 
 **ADDED — Rust: `Mat[Big]` (`MatB`), and `Mat<T>` — the port of `Mat` is complete**
 
@@ -13,14 +13,34 @@ the masks (`gt lt gte lte eqTo neTo hasNaN`, `applyMask`), `matmul`, LU
 `Big` arithmetic, so results agree to the last decimal digit and scale; 293 `bm.*` fixture
 rows pin them as `BigDecimal.toString` text, a NaN-injected variant alongside.
 
+**ADDED — Rust: `uni::uproc`, the subprocess API — nothing is Scala-only any more**
+
+`run(&cmd) → ProcResult` (`text lines ok toOption orElse headOnly takeOnly cmd`, `orLog`
+for Scala's `!!`, `orFail → Result<_, i32>` for `failFast`), `runLines`/`runStream`
+(callbacks on the caller's thread), `proc(&cmd).cwd().env().stdin().timeout().run()/stream()`,
+`execLines` as a lazy iterator, and the tool family `bashExe pythonExe unameExe uname isWsl
+osType hostname whereInPath` — with the routing table that is the API's reason to exist:
+`.sh` through bash on every OS, `.py`/`.sc`/`.bat`/`.ps1` through their interpreters and
+`.exe` appended on Windows (`route_cmd(cmd, is_windows)`, both platforms unit-tested
+anywhere). A program that cannot start is status −1 with the message on `stderr`; a
+timeout is −1. Scala's `where` is `whereExe` (a Rust keyword) returning `Option`.
+`SubprocessAPI.md` gains the Scala → Rust table and a compiled example; the Rust scripting
+guide a Subprocesses section; `checkRustDocs.sh` now also builds and runs the Rust blocks
+the Scala guides under `docs/` carry.
+
 **CHANGED — `uni.plot` renders SVG itself and opens the browser; the Rust crate has the same charts, byte for byte**
 
 `plot`, `scatter`, `hist`, `bar`, `heatmap`, `boxPlot` and `pairs` keep their names and
 parameters but no longer go through XChart or AWT: the library draws the SVG (axes, 1/2/5
 ticks, bins, quartiles, layout) and either writes it — `saveTo` now yields `<name>.svg`, or
-a page when it ends in `.html` — or writes a temp page and opens the default browser. Each
-method has a `*Svg` twin returning the text (`plotSvg`, `histSvg`, …). Headless runs never
-fail: with no opener, or `UNI_PLOT_NO_OPEN` set, the page's path is printed. `PlotStyle` is
+a page when it ends in `.html` — or writes a temp page and shows it in a **standalone
+window** of the default browser: the OS's registered HTML handler (Windows URL association,
+macOS LaunchServices, `xdg-settings`), launched in app mode for the Chromium family or with
+`-new-window` for Firefox; the PATH is probed, Edge last, when the default cannot be read.
+`UNI_PLOT_WINDOW=tab` gives a browser tab, `UNI_PLOT_BROWSER=<name-or-path>` picks the
+browser. Each method has a `*Svg` twin returning the text (`plotSvg`, `histSvg`, …).
+Headless runs never fail: with no opener, or `UNI_PLOT_NO_OPEN` set, the page's path is
+printed. `PlotStyle` is
 unchanged (`seriesColors` on a heatmap become the gradient stops); log axes apply to `plot`
 and `scatter`. The XChart renderer remains for one release as `uni.plot.xchart` (PNG,
 Swing windows) and will be removed with its dependency.

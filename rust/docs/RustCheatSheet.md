@@ -28,7 +28,7 @@ the JVM and in Rust. See `rust/PARITY.md` for what each family pins.
 
 ```toml
 [dependencies]
-uni = { package = "vastblue-uni", version = "0.17" }
+uni = { package = "vastblue-uni", version = "0.18" }
 ```
 
 The crate publishes as `vastblue-uni` (the name `uni` is taken on crates.io) but its

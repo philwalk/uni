@@ -379,7 +379,8 @@ private[plot] object Svg:
     close(out)
     out.toString
 
-  /** Histogram of every finite value in the matrix, `bins` equal-width bins over [min, max]. */
+  /** Histogram of every finite value in the matrix, `bins` equal-width bins over [min, max],
+   *  drawn as an area series through the bin centres. */
   def hist(m: MatD, bins: Int, title: String, style: PlotStyle): String =
     val th  = theme(style)
     val f   = frame(style, title)
@@ -403,10 +404,15 @@ private[plot] object Svg:
     val ay = Axis(domain(Array(0.0, counts.max.toDouble)), false, f.py0, f.ph, flip = true)
     xAxis(out, f, ax, th); yAxis(out, f, ay, th)
     val y0 = ay.pos(0.0)
+    // An area series, as XChart drew it: the count at each bin centre, the region under
+    // the line filled, the line drawn over it.
+    val pts = StringBuilder()
     for b <- 0 until nb do
-      val x0 = ax.pos(mn + b * binSize); val x1 = ax.pos(mn + (b + 1) * binSize)
-      val yt = ay.pos(counts(b).toDouble)
-      out.line(s"""<rect x="${num(x0)}" y="${num(yt)}" width="${num(x1 - x0)}" height="${num(y0 - yt)}" fill="${th.color(0)}" stroke="$GridLine" stroke-width="1"/>""")
+      if b > 0 then pts += ' '
+      pts ++= num(ax.pos(mn + (b + 0.5) * binSize)); pts += ','; pts ++= num(ay.pos(counts(b).toDouble))
+    val xFirst = num(ax.pos(mn + 0.5 * binSize)); val xLast = num(ax.pos(mn + (nb - 0.5) * binSize))
+    out.line(s"""<polygon points="$xFirst,${num(y0)} $pts $xLast,${num(y0)}" fill="${th.color(0)}" fill-opacity="0.35" stroke="none"/>""")
+    out.line(s"""<polyline points="$pts" fill="none" stroke="${th.color(0)}" stroke-width="1.5"/>""")
     axisLabels(out, f, style, th)
     close(out)
     out.toString
