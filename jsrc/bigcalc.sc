@@ -14,8 +14,9 @@
 // Exercised, both sides: parse/toPlainString, str2num on messy real-world
 // strings, isNumeric, add/sub/mul/div/neg/abs/compare, sqrt, integer and
 // fractional pow, setScale across the rounding modes, round(MathContext),
-// numStr (Default, Abbrev, custom factor/suffix), numStrPct, and the BigNaN
-// sentinel: absorption through arithmetic, isBad, orBad.
+// numStr (Default, Abbrev, custom factor/suffix), numStrPct, the BigNaN
+// sentinel (absorption through arithmetic, isBad, orBad), and the same invoice as
+// a `MatB`: elementwise ops, matmul, folds, masks, and exact-decimal LU.
 object Bigcalc {
   def println(s: String = ""): Unit = print(s"$s\n")
 
@@ -77,5 +78,28 @@ object Bigcalc {
       val line = price * Big(qty)
       println(s"  ${name.padTo(10, ' ')} ${qty} x ${numStr(price)} =${numStr(line)}   (${numStrPct(line / subtotal)} of subtotal)")
     println(s"  subtotal ${numStr(subtotal)}   tax(7.5%) ${numStr(tax)}   total ${numStr(total)}")
+    println()
+
+    // the same invoice as a Mat[Big]: every cell an exact decimal, every fold sequential
+    println("invoice as a MatB (Mat[Big]):")
+    def cells(m: MatB): String = m.toArray.map(_.toString).mkString(", ")
+    val prices = MatB.col(Big("19.99"), Big("4.15"), Big("102.50"))
+    val qtys   = MatB.col(Big(3), Big(7), Big(1))
+    val lines  = prices * qtys
+    println(s"  lines      [${cells(lines)}]")
+    println(s"  qtys.T *@ prices = [${cells(qtys.T *@ prices)}]   lines.sum = ${lines.sum}")
+    println(s"  shares     [${cells(lines / lines.sum)}]")
+    println(s"  taxed      [${cells((lines * taxRate).map(_.setScale(2, RM.HALF_EVEN)))}]")
+    println(s"  mean ${lines.mean}   max ${lines.max} at ${lines.argmax}   std ${lines.std}")
+    val ledger = Mat.hstack(prices, qtys, lines)
+    println(s"  ledger 3x3 sum(0) [${cells(ledger.sum(0))}]   sum(1) [${cells(ledger.sum(1))}]")
+    // BigNaN travels through the matrix as it does through the scalar
+    val withNaN = MatB.col(Big("1.50"), BigNaN, Big("3"))
+    println(s"  withNaN sum ${withNaN.sum == BigNaN}   min ${withNaN.min}   max isBad ${isBad(withNaN.max)}   hasNaN [${withNaN.hasNaN.toArray.mkString(", ")}]")
+    println(s"  gt(1) [${withNaN.gt(Big(1)).toArray.mkString(", ")}]   sorted [${cells(withNaN.sort()).replace(nan.toString, "NaN")}]")
+    println(s"  csv: ${withNaN.T.toArray.map(x => if x == BigNaN then "N/A" else x.toString).mkString(",")}")
+    // exact-decimal linear algebra: LU with no float anywhere
+    val A = MatB((Big(2), Big(1)), (Big(1), Big(3)))
+    println(s"  A.inverse [${cells(A.inverse)}]   det ${A.determinant}   solve [${cells(A.solve(MatB.col(Big(3), Big(4))))}]")
   }
 }

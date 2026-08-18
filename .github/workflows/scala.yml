@@ -42,3 +42,27 @@ jobs:
     # Run tests
     - name: Run tests
       run: sbt test
+
+  # The example code in README.md and docs/*.md must compile: every shebang-led script
+  # block, extracted and compiled with -Wunused:imports -Werror by checkDocScripts.sh
+  # (the same gate release-and-publish.sh runs, step 6c). publishLocal first, so the
+  # blocks' `//> using dep org.vastblue:uni_3:<version>` resolves for an unreleased
+  # version too — a stale example fails here on the commit that broke it, not at release.
+  doc-scripts:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: 17
+        distribution: temurin
+        cache: sbt
+    - name: Set up sbt
+      uses: sbt/setup-sbt@v1
+    - name: Set up scala-cli
+      uses: VirtusLab/scala-cli-setup@main
+    - name: Publish the library locally
+      run: sbt publishLocal
+    - name: Compile every doc script
+      run: bash checkDocScripts.sh

@@ -16,6 +16,7 @@
 )]
 
 use uni::udata::Big;
+use uni::udata::MatB;
 use uni::udata::NumFormat;
 use uni::udata::big::RoundingMode;
 use uni::udata::isBad;
@@ -174,5 +175,83 @@ fn main() {
         ns(&subtotal),
         ns(&tax),
         ns(&total)
+    );
+    println!();
+
+    // the same invoice as a Mat[Big]: every cell an exact decimal, every fold sequential
+    println!("invoice as a MatB (Mat[Big]):");
+    let cells = |m: &MatB| {
+        m.toArray()
+            .iter()
+            .map(Big::toString)
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let prices = MatB::col(&[
+        Big::parse("19.99"),
+        Big::parse("4.15"),
+        Big::parse("102.50"),
+    ]);
+    let qtys = MatB::col(&[Big::from_i64(3), Big::from_i64(7), Big::from_i64(1)]);
+    let lines = prices.mul(&qtys);
+    println!("  lines      [{}]", cells(&lines));
+    println!(
+        "  qtys.T *@ prices = [{}]   lines.sum = {}",
+        cells(&qtys.T().matmul(&prices)),
+        lines.sum().toString()
+    );
+    println!("  shares     [{}]", cells(&lines.divScalar(&lines.sum())));
+    println!(
+        "  taxed      [{}]",
+        cells(
+            &lines
+                .mulScalar(&taxRate)
+                .map(|x| x.setScale(2, RoundingMode::HalfEven))
+        )
+    );
+    let (ar, ac) = lines.argmax();
+    println!(
+        "  mean {}   max {} at ({ar},{ac})   std {}",
+        lines.mean().toString(),
+        lines.max().toString(),
+        lines.std().toString()
+    );
+    let ledger = MatB::hstack(&[&prices, &qtys, &lines]);
+    println!(
+        "  ledger 3x3 sum(0) [{}]   sum(1) [{}]",
+        cells(&ledger.sumAxis(0)),
+        cells(&ledger.sumAxis(1))
+    );
+    // BigNaN travels through the matrix as it does through the scalar
+    let withNaN = MatB::col(&[Big::parse("1.50"), Big::nan(), Big::from_i64(3)]);
+    let bools = |v: Vec<bool>| {
+        v.iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    println!(
+        "  withNaN sum {}   min {}   max isBad {}   hasNaN [{}]",
+        withNaN.sum().isNaN(),
+        withNaN.min().toString(),
+        isBad(&withNaN.max()),
+        bools(withNaN.hasNaN().toArray())
+    );
+    println!(
+        "  gt(1) [{}]   sorted [{}]",
+        bools(withNaN.gt(&Big::from_i64(1)).toArray()),
+        cells(&withNaN.sort()).replace(&nan.toString(), "NaN")
+    );
+    println!("  csv: {}", withNaN.T().csvText(",", "N/A").trim_end());
+    // exact-decimal linear algebra: LU with no float anywhere
+    let A = MatB::parseRows(&[&["2", "1"], &["1", "3"]]);
+    println!(
+        "  A.inverse [{}]   det {}   solve [{}]",
+        cells(&A.inverse().unwrap()),
+        A.determinant().unwrap().toString(),
+        cells(
+            &A.solve(&MatB::col(&[Big::from_i64(3), Big::from_i64(4)]))
+                .unwrap()
+        )
     );
 }

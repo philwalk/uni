@@ -13,6 +13,14 @@ the masks (`gt lt gte lte eqTo neTo hasNaN`, `applyMask`), `matmul`, LU
 `Big` arithmetic, so results agree to the last decimal digit and scale; 293 `bm.*` fixture
 rows pin them as `BigDecimal.toString` text, a NaN-injected variant alongside.
 
+**ADDED — `MatB.col(Big*)` / `MatB.row(Big*)`; the `bigcalc` demo pair covers `MatB`**
+
+The facade's `col`/`row` take Doubles, so `MatB.col(Big("1.5"), …)` — the form
+`BigTypeGuide.md` showed — did not compile; `object MatB` now takes `Big` values directly.
+`jsrc/bigcalc.sc` ↔ `rust/examples/bigcalc.rs` gained the same invoice as a `MatB`
+(elementwise ops, `matmul`, folds, masks, `csvText`, exact-decimal `inverse`/`solve`),
+still byte-identical.
+
 **FIXED — Rust `Big::sqrt`: trailing zeros and single rounding, as `BigDecimal.sqrt(mc)`**
 
 Found by the `Mat[Big]` fixture, never by the scalar one: the result now strips trailing

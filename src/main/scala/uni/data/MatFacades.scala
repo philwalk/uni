@@ -178,6 +178,13 @@ object MatD extends MatFacade[Double] {
 /** Convenience facade for Mat[Big]. */
 object MatB extends MatFacade[Big]:
   protected def fromBig(b: Big): Big = b
+  // The facade's `col`/`row` take Doubles (through `MatElem.fromDouble`); an exact
+  // decimal must not go through a Double, so `MatB` also takes `Big` values directly.
+  // Distinct target names: `Seq[Big]` and `Seq[Double]` erase to the same signature.
+  @annotation.targetName("colBig")
+  def col(values: Big*): Mat[Big] = Mat.create(values.toArray, values.length, 1)
+  @annotation.targetName("rowBig")
+  def row(values: Big*): Mat[Big] = Mat.create(values.toArray, 1, values.length)
 
 /** Convenience facade for Mat[Float]. */
 object MatF extends MatFacade[Float]:

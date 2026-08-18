@@ -8,6 +8,8 @@
 # terminal. Fragments (blocks without the shebang) are not checked; jsrc/docCheck.sc
 # mirrors those by hand.
 #
+# Runs in CI (scala.yml `doc-scripts`, after publishLocal) and as release gate 6c.
+#
 # Usage:  ./checkDocScripts.sh [file.md ...]     (default: README.md docs/*.md)
 # Needs the version named in the blocks' `//> using dep` to be resolvable — publishLocal
 # first when checking an unreleased version.

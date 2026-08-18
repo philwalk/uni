@@ -54,7 +54,7 @@ and the two print byte-identical output:
 | `treestat` | traversal, listings, size and age statistics, the hash family, seeded sampling, CSV, the full `cli` cursor API |
 | `pathshow` | every path rendering, mount resolution, drive-relative forms, the BadPath family, `String` extensions |
 | `datecalc` | the `utime` surface on fixed inputs — output is identical on any machine, any day |
-| `bigcalc` | the `udata` surface as an exact-money invoice — output is identical on any machine |
+| `bigcalc` | the `udata` surface as an exact-money invoice, scalar `Big` and then the same invoice as a `MatB` (elementwise, `matmul`, folds, masks, exact-decimal LU) — output is identical on any machine |
 | `forecast` | seeded `randn` → byte-identical CSV → `loadMatBig` → the 3PRF closed forms and `forecast3prf` |
 | `market_sim` | not a tour of an API but a 1,300-line workload: seeded price formation over 200 paths × 100 years, `MatD` reductions, drawdown episodes, exposure rules, and five report modes — the consumer that drove the `MatD` port |
 | `tprf_runner` | `TprfRunner.data_generator`: the `MatMut` recurrences, `hstack`, the pinned matmul (`matmulPure` on the Scala side, `matmul` here), the noise blend — every cell of `X` printed, identical on any machine |
