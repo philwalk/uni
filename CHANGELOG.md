@@ -13,6 +13,18 @@ the masks (`gt lt gte lte eqTo neTo hasNaN`, `applyMask`), `matmul`, LU
 `Big` arithmetic, so results agree to the last decimal digit and scale; 293 `bm.*` fixture
 rows pin them as `BigDecimal.toString` text, a NaN-injected variant alongside.
 
+**CHANGED (speed) — Rust elementwise maps stop oversubscribing the memory bus**
+
+`map_elems`/`bin_op` let rayon split a 1M-element map into small pieces across every
+thread; a memory-bound streaming pass wants long contiguous runs instead — on the 24-core
+Windows box `add`/`abs`/`exp` read 1.05–1.14 ms that way. A parallel task now takes at
+least 64K elements (`ELEMENTWISE_MIN_LEN`), so a 1M map is 16 contiguous chunks: `add`
+1.05 → 0.53 ms, `abs` 1.07 → 0.54, `exp` 1.14 → 0.62, `relu` 1.10 → 0.55 — ahead of the
+JVM on those rows now. Above ~4M elements the pass is at memory bandwidth and the
+granularity no longer matters (2000², 4000² unchanged), so this needs no core count and
+is neutral on few-core boxes. Bits are unchanged (elementwise). The allocator was tried
+and ruled out (mimalloc: ~5%).
+
 **ADDED — `MatB` and `MatD` as each other's second opinion: `MatBigVsDoubleSuite` / `matb_vs_matd`**
 
 Every fixture pins each element type against its own Scala reference; nothing had ever

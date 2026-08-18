@@ -137,6 +137,16 @@ pub(crate) const LANE_PARALLEL_THRESHOLD: usize = 1 << 19;
 /// in a reduction, and no reduction happens here.
 pub const BCAST_PARALLEL_THRESHOLD: usize = 1 << 16;
 
+/// Smallest slice a parallel elementwise task takes: 64K elements (512 KB of f64).
+///
+/// Elementwise maps are memory-bound, and rayon's default splitting hands a 1M-element
+/// map to every thread in small pieces; on a 24-core box that read 1.05 ms where 16
+/// contiguous 64K chunks read 0.53 — the streaming pass wants long runs, not many hands.
+/// Above ~4M elements the pass sits at memory bandwidth and the granularity stops
+/// mattering (2000² and 4000² are unchanged by it), so this is a floor, not a thread
+/// count: it needs no knowledge of the core count and is neutral on few-core boxes.
+pub const ELEMENTWISE_MIN_LEN: usize = 1 << 16;
+
 /// Sum of `a[from..until]`, 8-way unrolled with Scala's exact combine tree.
 ///
 /// The association order here is load-bearing: it is what makes the Rust and Scala sums
@@ -1047,7 +1057,10 @@ impl MatD {
             // zero-fill that `vec![0.0; n]` does before being fully overwritten.
             let src: &[f64] = &self.data;
             let out: Vec<f64> = if src.len() >= BCAST_PARALLEL_THRESHOLD {
-                src.par_iter().map(|&x| f(x)).collect()
+                src.par_iter()
+                    .with_min_len(ELEMENTWISE_MIN_LEN)
+                    .map(|&x| f(x))
+                    .collect()
             } else {
                 src.iter().map(|&x| f(x)).collect()
             };
@@ -1079,6 +1092,7 @@ impl MatD {
             let (sa, sb): (&[f64], &[f64]) = (&a.data, &b.data);
             let out: Vec<f64> = if sa.len() >= BCAST_PARALLEL_THRESHOLD {
                 sa.par_iter()
+                    .with_min_len(ELEMENTWISE_MIN_LEN)
                     .zip(sb.par_iter())
                     .map(|(&x, &y)| op(x, y))
                     .collect()
