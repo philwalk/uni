@@ -347,6 +347,13 @@ impl MatD {
         Self::create(vec![1.0; rows * cols], rows, cols)
     }
 
+    /// From the loaders' `Array2<f64>` (`path.loadMatD()`, `readCsv`): a row-major copy.
+    #[must_use]
+    pub fn fromArray2(a: &ndarray::Array2<f64>) -> Self {
+        let (r, c) = a.dim();
+        Self::create(a.iter().copied().collect(), r, c)
+    }
+
     /// `Mat.full(rows, cols, value)`.
     #[must_use]
     pub fn full(rows: usize, cols: usize, value: f64) -> Self {

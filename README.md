@@ -29,6 +29,11 @@ and signal ops, `groupBy`/`merge` — and `MatB` (`Mat[Big]`, exact decimals) an
 (`Mat[Float]`) followed on the same generic core, all pinned to the JVM by a fixture of
 3,354 rows.
 
+The crate has its own guides, parallel to the ones below section for section and with every
+example compiled: [`rust/docs/RustQuickStart.md`](rust/docs/RustQuickStart.md),
+[`rust/docs/RustCheatSheet.md`](rust/docs/RustCheatSheet.md) (uni Scala | uni Rust | NumPy),
+[`rust/docs/RustScriptingGuide.md`](rust/docs/RustScriptingGuide.md).
+
 **Method names match the Scala spelling** — `baseName`, `lastModifiedTime`, `parseDateSmart` —
 so a line written against the Scala ports unchanged. CamelCase means "this mirrors uni's
 API"; snake_case means an internal helper or a `try_*` Result variant, so the case tells you

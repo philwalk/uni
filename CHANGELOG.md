@@ -13,20 +13,22 @@ the masks (`gt lt gte lte eqTo neTo hasNaN`, `applyMask`), `matmul`, LU
 `Big` arithmetic, so results agree to the last decimal digit and scale; 293 `bm.*` fixture
 rows pin them as `BigDecimal.toString` text, a NaN-injected variant alongside.
 
-**ADDED — Rust documentation: `rust/docs/RustCheatSheet.md`, and its examples are a gate**
+**ADDED — Rust documentation: quick start, cheat sheet, scripting guide — every example compiled**
 
-The crate had 85 lines of README against the Scala library's 4,600 lines of guides. The
-first of the parallel set: a cheat sheet with three columns — uni Scala | uni Rust | NumPy
-— section for section with `docs/MatDCheatSheet.md` (creation, random, shape, indexing
-and views, `MatMut`, arithmetic, matmul, reductions, elementwise math, activations, masks,
-stacking, linear algebra, pandas-style, signal, display/CSV, `MatF`/`MatB`, vectors, a
-quick-reference card, a type summary), ending in one compiled program that calls every
-table row. `checkRustDocs.sh` extracts every ```rust block with a `fn main` from
+The crate had 85 lines of README against the Scala library's 4,600 lines of guides. Three
+guides now parallel the Scala set section for section: `rust/docs/RustQuickStart.md`
+(the twenty sections of `QuickStartGuide.md`, every block a complete program),
+`rust/docs/RustCheatSheet.md` (three columns — uni Scala | uni Rust | NumPy — section for
+section with `MatDCheatSheet.md`, ending in one compiled program that calls every table
+row) and `rust/docs/RustScriptingGuide.md` (paths, files, CSV at three levels, argument
+parsing, `UniDateTime`, `Big` — parallel to `UniScriptingTools`, `PathIOReference`,
+`DateTimeParser`, `BigTypeGuide`). `checkRustDocs.sh` extracts every ```rust block with a `fn main` from
 `rust/docs/*.md` and `rust/README.md` into the `uni-doc-examples` crate and builds them
 with warnings denied — in CI (`rust.yml`) and as release gate 6d — the Rust twin of
-`checkDocScripts.sh`. `MatD` gained the constructors the sheet needed to say the same
+`checkDocScripts.sh`. `MatD` gained the constructors the guides needed to say the same
 things as the Scala's: `full eye eyeK diag arange linspace tabulate zerosLike onesLike
-fullLike randn rand normal uniform` (the random ones take the `NumPyRng` explicitly).
+fullLike randn rand normal uniform` (the random ones take the `NumPyRng` explicitly) and
+`fromArray2` (`MatF` too), the bridge from the CSV loaders' `Array2`.
 
 **ADDED — Rust: `MatF` (`Mat[Float]`); the facade trio `MatD`/`MatF`/`MatB` is complete in both languages**
 

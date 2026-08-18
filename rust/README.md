@@ -21,12 +21,16 @@ both (as of 0.16.0), with fixture rows pinning them.
 
 ## Documentation
 
-- [`docs/RustCheatSheet.md`](docs/RustCheatSheet.md) — every operation side by side: uni
-  Scala | uni Rust | NumPy, section for section with the Scala cheat sheet; ends in a
-  compiled tour of every table row.
-- Scala-side guides the crate parallels: [`../docs/QuickStartGuide.md`](../docs/QuickStartGuide.md),
-  [`../docs/BigTypeGuide.md`](../docs/BigTypeGuide.md), [`../docs/UniScriptingTools.md`](../docs/UniScriptingTools.md).
-- API reference: `cargo doc --open`.
+Three guides, each paralleling its Scala counterpart section for section so the two can be
+read side by side, every example compiled:
+
+- [`docs/RustQuickStart.md`](docs/RustQuickStart.md) — the matrix library from creation to
+  `lstsq`, with the Scala `QuickStartGuide.md`'s sections.
+- [`docs/RustCheatSheet.md`](docs/RustCheatSheet.md) — every operation in three columns: uni
+  Scala | uni Rust | NumPy; ends in one program that calls every table row.
+- [`docs/RustScriptingGuide.md`](docs/RustScriptingGuide.md) — paths, files, CSV tables,
+  command-line arguments, dates and exact decimals.
+- API reference: `cargo doc --open`; what is pinned to the JVM and how: [`PARITY.md`](PARITY.md).
 
 Every ```rust block with a `fn main` in this file and `docs/` is compiled by
 `checkRustDocs.sh` (CI, and release gate 6d), so the examples cannot rot.

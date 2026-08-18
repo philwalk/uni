@@ -112,6 +112,12 @@ impl MatF {
         }
         Self::create(d, n, n)
     }
+    /// From the loaders' `Array2<f32>` (`path.loadMatF()`, `readCsvF`): a row-major copy.
+    #[must_use]
+    pub fn fromArray2(a: &ndarray::Array2<f32>) -> Self {
+        let (r, c) = a.dim();
+        Self::create(a.iter().copied().collect(), r, c)
+    }
     /// `m.map(_.toFloat)`: every element narrowed (round-to-nearest-even, as the JVM).
     #[must_use]
     pub fn fromMatD(m: &MatD) -> Self {
