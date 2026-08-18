@@ -549,6 +549,17 @@ throws for come back as `Err(Error::SingularMatrix)`: an exactly-zero LU pivot
 (`determinant`/`inverse`/`solve`; NumPy's `det` would return 0) and a non-positive-definite
 `cholesky`.
 
+**Where the two pure kernels stand (zx, 2026-08-18, `MatmulProbe` / `bench_matmul`, 512³).**
+Single-threaded the Rust kernel is ~1.2× faster (14.1 vs 16.9 ms — LLVM vectorises the
+8-wide panels even at SSE2 baseline; C2 keeps the 4×4 register block scalar), and both
+parallel splits scale near-linearly from there (Scala 8.85 → 6.87 → 4.92 → 3.38 → 2.89 → 1.90
+ms at 2/3/5/7/9/24 threads; Rust 7.37 → 5.19 → 3.96 → 3.19 → 2.76 → 1.74 at 2/3/4/6/8/24), so
+the few-core gap seen on the 4-core Linux box is the kernel difference magnified by JVM 17
+on Skylake, not a split inefficiency. The microkernel is the right choice on the JVM: forcing
+the streaming saxpy path (`-Duni.mat.pure.minKMicro=100000`) is 1.55× slower at 512³.
+Closing the remaining kernel gap needs SIMD, which is the Vector API question below;
+since `*@` is BLAS by default it matters only under `-Duni.mat.blas=pure`.
+
 The Vector API was ruled out for this: `jdk.incubator.vector` must be added to the
 module graph by every JVM that runs the library, and most scala-cli scripts do not, so a
 hard dependency in `Mat` would break them at class-load time. A reflective kernel behind

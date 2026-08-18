@@ -54,12 +54,15 @@ private[data] object MatmulPure:
   private val BlockRows = 16
 
   /** Below this many multiply-adds the whole product runs on the calling thread, and no
-   *  work item is made smaller than this: a fork costs more than ~50k multiply-adds. */
-  private val ParOps     = 262144L
+   *  work item is made smaller than this: a fork costs more than ~50k multiply-adds.
+   *  `-Duni.mat.pure.parOps=<n>` overrides it (`Long.MaxValue` forces the sequential
+   *  path) and `-Duni.mat.pure.minKMicro=<k>` the streaming/microkernel switch — both are
+   *  measurement knobs for `MatmulProbe`, read once, bits unaffected. */
+  private val ParOps     = sys.props.get("uni.mat.pure.parOps").map(_.toLong).getOrElse(262144L)
   private val MinItemOps = 131072L
 
   /** K below which the streaming path beats the register microkernel. */
-  private val MinKForMicro = 16
+  private val MinKForMicro = sys.props.get("uni.mat.pure.minKMicro").map(_.toInt).getOrElse(16)
 
   /** Outputs narrower than this take the streaming path too. A one-column product
    *  through a zero-padded panel does 4× the multiplies and packs `A` for them; on

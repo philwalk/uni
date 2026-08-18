@@ -5,8 +5,10 @@
 # (`#!/usr/bin/env -S scala-cli shebang …`). Each is extracted to target/doc-scripts/ and
 # compiled with `-Wunused:imports -Werror`, so a documented example that no longer
 # compiles, or carries an import it does not need, fails here instead of in a reader's
-# terminal. Fragments (blocks without the shebang) are not checked; jsrc/docCheck.sc
-# mirrors those by hand.
+# terminal. Fragments (blocks without the shebang) are prose — they refer to values set up
+# in the surrounding text — and are not compiled; jsrc/docCheck.sc mirrors the ones from
+# ReferenceGuide.md and QuickStartGuide.md by hand, with assertions on the values, and is
+# compiled AND run as the last step here, so this script is the one doc harness.
 #
 # Runs in CI (scala.yml `doc-scripts`, after publishLocal) and as release gate 6c.
 #
@@ -44,4 +46,15 @@ for sc in "$out"/*.sc; do
   fi
 done
 echo "checked $total doc scripts, $failed failed"
+
+# The hand-mirrored fragments, with their value assertions: compile and run.
+if [ "$*" = "" ] || echo "$*" | grep -q "ReferenceGuide\|QuickStartGuide"; then
+  if scala-cli run -Wunused:imports -Wunused:locals -deprecation -Werror jsrc/docCheck.sc >target/doc-scripts/docCheck.log 2>&1; then
+    echo "docCheck.sc (fragment mirror) compiled and ran clean"
+  else
+    failed=$((failed+1))
+    echo "FAIL jsrc/docCheck.sc"
+    grep -E "error|warn|Exception|assert" target/doc-scripts/docCheck.log | head -8 | sed 's/^/    /'
+  fi
+fi
 [ "$failed" -eq 0 ]

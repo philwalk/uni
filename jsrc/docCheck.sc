@@ -1,11 +1,13 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 //> using dep org.vastblue:uni_3:0.17.0
 
-// Compile-checks the example FRAGMENTS in docs/ReferenceGuide.md and docs/QuickStartGuide.md.
-// Each block below mirrors a documented snippet; if this script compiles and runs,
-// the documented API calls are real. The COMPLETE scripts embedded in README.md and
-// docs/*.md (shebang-led fenced blocks) are extracted and compiled by
-// ./checkDocScripts.sh, with -Wunused:imports -Werror.
+// Compile-checks the example FRAGMENTS in docs/ReferenceGuide.md and docs/QuickStartGuide.md
+// — the blocks that refer to values set up in the surrounding prose and so cannot be
+// extracted on their own. Each block below mirrors one, with assertions on the values.
+// ./checkDocScripts.sh compiles the COMPLETE scripts embedded in README.md and docs/*.md
+// (shebang-led fenced blocks) and then compiles and RUNS this file, so that script is the
+// one doc harness (CI and release gate 6c). When a documented fragment changes, change its
+// mirror here.
 
 import uni.data.*
 
