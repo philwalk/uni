@@ -13,6 +13,17 @@ the masks (`gt lt gte lte eqTo neTo hasNaN`, `applyMask`), `matmul`, LU
 `Big` arithmetic, so results agree to the last decimal digit and scale; 293 `bm.*` fixture
 rows pin them as `BigDecimal.toString` text, a NaN-injected variant alongside.
 
+**ADDED — `MatB` and `MatD` as each other's second opinion: `MatBigVsDoubleSuite` / `matb_vs_matd`**
+
+Every fixture pins each element type against its own Scala reference; nothing had ever
+asserted that `Mat[Big]` and `Mat[Double]` agree with each other. Now, in both languages,
+every benchmarked operation — elementwise, reductions, the axis family, `matmul`, LU,
+`sort`/`argsort`, the masks — runs on the same seeded 60×60 input in both types and must
+agree to `rtol 1e-9` (Double's own precision), land on the same `argmin`/`argmax` cell,
+and place NaN identically (`Double.NaN` vs `BigNaN`: folds, `min`/`max`, `sort`, masks,
+`isnan`/`hasNaN`). The one intended difference is recorded in the suite: `Big` has no
+signed zero. Both suites passed on their first run.
+
 **ADDED — `MatB.col(Big*)` / `MatB.row(Big*)`; the `bigcalc` demo pair covers `MatB`**
 
 The facade's `col`/`row` take Doubles, so `MatB.col(Big("1.5"), …)` — the form
