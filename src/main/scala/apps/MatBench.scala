@@ -4,7 +4,7 @@ import uni.*
 import uni.data.*
 
 /**
- * The MatD benchmark tables in `docs/MatDCheatSheet.md`, all three languages, one
+ * The MatD benchmark tables in `docs/MatDBenchmarks.md`, all three languages, one
  * command:
  *
  * {{{

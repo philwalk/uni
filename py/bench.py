@@ -1,6 +1,6 @@
 #!/usr/bin/env -S python3
 """
-NumPy half of the MatD benchmark tables in docs/MatDCheatSheet.md.
+NumPy half of the MatD benchmark tables in docs/MatDBenchmarks.md.
 
 Counterpart to jsrc/bench.sc (Scala/MatD) and rust/src/bin/bench_mat.rs (Rust/MatD).
 All three run the same operations at the same sizes on inputs drawn from the same

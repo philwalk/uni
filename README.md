@@ -1,8 +1,65 @@
-# uni.data
+# uni
 
-**uni.Mat** is a high-performance, NumPy-compatible matrix library for **Scala 3.7.0+**.
+**uni** is a Scala 3 library and a Rust crate that give the same answers, for numerical
+work and the scripting around it:
 
-It provides a zero-overhead, type-safe interface for scientific computing by leveraging Scala 3 **Opaque Types**. Designed for developers who need the ergonomics and reproducibility of the Python/NumPy ecosystem within the JVM, `uni.Mat` features 100% faithful implementations of NumPy's random generation and strided array logic.
+* **NumPy- and pandas-style matrices** — `MatD` (`Mat[Double]`), with `MatF` and `MatB`
+  (`Mat[Float]`, exact-decimal `Mat[Big]`) on the same core: strided views and zero-copy
+  slicing, broadcasting, masks, in-place ops, reductions, the linear-algebra and
+  decomposition family, `groupBy`/`merge`/`rolling`, and NumPy's random streams draw for
+  draw. Zero-overhead: `opaque type Mat[T]` is a raw array at runtime. Same API in Rust.
+* **Same results in both languages, pinned not promised** — 3,354 fixture rows generated on
+  the JVM and checked by both test suites, so every reduction, view, mask, decomposition
+  and pandas-style op answers the same bits in Scala and in Rust.
+* **Big-data CSV and scripting tools** — MSYS2/Cygwin-aware paths (92 `Path` extension
+  methods, same names in Rust), lenient date-time parsing and arithmetic (`UniDateTime`),
+  BigDecimal-compatible `Big` with the `BigNaN` sentinel, tolerant numeric parsing,
+  argument handling. Ported in full.
+* **Performance** — BLAS-backed or pure-JVM/pure-Rust `matmul`, parallel elementwise ops;
+  the benchmark tables below put NumPy, Scala and Rust side by side on the same machines.
+* **Charts** — `plot`, `scatter`, `hist`, `bar`, `heatmap`, `boxPlot`, `pairs` on any
+  matrix, rendered to SVG by the library itself and opened in the browser or saved; the
+  same bytes from both languages, pinned like everything else.
+* **3PRF forecasting** — the three-pass regression filter, iterative and closed-form, in
+  both languages; a `forecast` demo pair runs the same panel through each.
+* **Scala only** — the `run`/`proc` subprocess API.
+
+Scala 3.7.0+ on the JVM; the Rust crate is `vastblue-uni` (`use uni::…`), no JNI in either
+direction.
+
+## The same line in three languages
+
+| | uni Scala | uni Rust | NumPy |
+|---|---|---|---|
+| Random matrix | `MatD.randn(r, c)` | `MatD::randn(&mut rng, r, c)` | `rng.standard_normal((r, c))` |
+| Sub-block | `m(r0 until r1, c0 until c1)` | `m.applyRowsCols(r0..r1, c0..c1)` | `m[r0:r1, c0:c1]` |
+| Mask | `m(m > 0.5)` | `m.applyMask(&m.gt(0.5))` | `m[m > 0.5]` |
+| Product | `a *@ b` | `a.matmul(&b)` | `a @ b` |
+| Broadcast | `m - m.mean(0)` | `&m - &m.meanAxis(0)` | `m - m.mean(0)` |
+| SVD | `m.svd` | `m.svd()` | `np.linalg.svd(m, full_matrices=False)` |
+| Rolling window | `m.rolling(3).mean` | `m.rolling(3).mean()` | `df.rolling(3).mean()` |
+| CSV in | `path.loadMatD` | `path.loadMatD()` | `np.loadtxt(path)` |
+
+The full table — every operation, section for section, with every example compiled and
+run — is the **[Scala | Rust | NumPy Cheat Sheet](rust/docs/RustCheatSheet.md)**. The
+Rust and Scala columns answer the same bits: 3,354 fixture rows pin them to each other.
+
+## Documentation
+
+| Guide | What it answers |
+|---|---|
+| **[Scala \| Rust \| NumPy Cheat Sheet](rust/docs/RustCheatSheet.md)** | "how do I write X" — one row per operation, three languages |
+| [MatD Cheat Sheet](docs/MatDCheatSheet.md) | the Scala API against NumPy, R and MATLAB |
+| [MatD Benchmarks](docs/MatDBenchmarks.md) | NumPy vs Scala vs Rust on three operating systems, and how to regenerate the tables |
+| [Breeze Comparison](docs/BreezeComparison.md) | coming from Breeze: the migration table, every operation side by side, benchmarks |
+| [Quick Start Guide](docs/QuickStartGuide.md) · [Rust Quick Start](rust/docs/RustQuickStart.md) | first program to `groupBy` in twenty short sections |
+| [Reference Guide](docs/ReferenceGuide.md) | the Scala matrix API, section by section |
+| [Big Type Guide](docs/BigTypeGuide.md) | exact decimals: `Big`, `BigNaN`, `MatB` |
+| [Scripting Tools](docs/UniScriptingTools.md) · [Rust Scripting Guide](rust/docs/RustScriptingGuide.md) | paths, CSV, dates, arguments — for scripts |
+| [Date-Time Parser](docs/DateTimeParser.md) · [Path I/O Reference](docs/PathIOReference.md) · [Plot Guide](docs/PlotGuide.md) · [Subprocess API](docs/SubprocessAPI.md) | one topic each |
+
+Every ```scala block in these pages is a complete script that the CI compiles and runs;
+every ```rust block likewise.
 
 ## Key Features
 
@@ -147,19 +204,23 @@ It builds both Rust flavours (default and `--features blas`) side by side and ru
 Rust·BLAS` — so NumPy (always OpenBLAS) is compared with each port in *both* of its
 modes, and finishes with a geometric-mean/median summary of every pair. Each column
 carries a provenance line, and a missing binary drops its column rather than the run.
-See the regeneration note in [docs/MatDCheatSheet.md](docs/MatDCheatSheet.md).
+See the regeneration note in [docs/MatDBenchmarks.md](docs/MatDBenchmarks.md).
 
 ## Visualization (`uni.plot`)
 
-`import uni.plot.*` adds `.scatter()`, `.hist()`, and `.plot()` directly on `MatD`.
-Each method opens an interactive Swing window, or saves a PNG when `saveTo` is supplied.
-Pass a `PlotStyle` to control dimensions, colours, and export consistency.
+`import uni.plot.*` adds `.plot()`, `.scatter()`, `.hist()`, `.bar()`, `.heatmap()`,
+`.boxPlot()` and `.pairs()` directly on `MatD`. Each renders to SVG — drawn by the library,
+no charting dependency — and opens it in the default browser, or saves it when `saveTo` is
+supplied (`<name>.svg`, or `.html`). Pass a `PlotStyle` to control dimensions, colours,
+labels and log axes. The Rust crate's `uni::uplot` produces the same SVG bytes; see
+[docs/PlotGuide.md](docs/PlotGuide.md).
 
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 //> using dep org.vastblue:uni_3:0.17.0
 import uni.data.*
 import uni.plot.*
+// doc: compile-only  (opens the browser; run from the repo root for datasets/)
 
 val iris = MatD.readCsv("datasets/iris.csv")
 // columns: sepal_length(0), sepal_width(1), petal_length(2), petal_width(3)
@@ -169,7 +230,7 @@ iris.hist(bins = 20, title = "Iris: sepal length distribution")
 iris.plot(title = "Iris: all 4 features",
           labels = Seq("sepal length", "sepal width", "petal length", "petal width"))
 
-// PlotStyle — override only what you need; everything else defers to the GGPlot2 theme
+// PlotStyle — override only what you need; everything else defers to the theme
 iris.scatter(2, 3, style = PlotStyle(width = 1200, height = 800))
 iris.hist(bins = 20, style = PlotStyle(background = Some(java.awt.Color.BLACK),
                                        foreground = Some(java.awt.Color.WHITE)))
@@ -194,75 +255,20 @@ and [Plot Guide](docs/PlotGuide.md) for the full `PlotStyle` API.
 
 ### Core matrix operations
 
-NumPy: Python 3.14.6 / NumPy 2.4.6 (see [`py/bench.py`](py/bench.py)).
-Breeze/MatD: uni 0.14.1 / Scala 3.8.2 / JVM 21 (see [`jsrc/bench.sc`](jsrc/bench.sc), [`jsrc/benchBreeze.sc`](jsrc/benchBreeze.sc)); min times.
-Note on `matmul`: `*@` goes to a native BLAS by default (`-Duni.mat.blas=os-best`), as
-NumPy's `@` does, so this row is BLAS against BLAS; `matmulPure` — bit-identical across
-the Scala and Rust ports and across machines — is the reproducible alternative, and
-`-Duni.mat.blas=pure` makes it the default for a whole program. The current
-three-language tables, regenerated by one command, are in
-[`docs/MatDCheatSheet.md`](docs/MatDCheatSheet.md).
+Geometric-mean speedup over the benchmark rows, BLAS on all three (NumPy is always
+OpenBLAS; Scala and Rust use theirs on the rows BLAS affects). Above 1× means the
+first-named is faster.
 
-| Operation | NumPy | Breeze | MatD |
-| :--- | ---: | ---: | ---: |
-| `randn(1000×1000)` | 8.5 ms | 21.6 ms | 6.8 ms |
-| `matmul 512×512` | 0.79 ms | 5.3 ms | 3.2 ms |
-| `sigmoid(1000×1000)` | 9.0 ms | 4.2 ms | 0.73 ms |
-| `relu(1000×1000)` | 1.3 ms | 2.9 ms | 0.51 ms |
-| `add(1000×1000)` | 1.7 ms | 1.2 ms | 0.58 ms |
-| `sum(1000×1000)` | 0.13 ms | 0.37 ms | 0.03 ms |
-| `mean(1000×1000)` | 0.14 ms | 3.6 ms | 0.03 ms |
-| `std(1000×1000)` | 2.4 ms | 5.4 ms | 0.43 ms |
-| `transpose(1000×1000)` | ≈0 ms | ≈0 ms | ≈0 ms |
-| custom fn (`mapParallel` / `map` / `np.vectorize`) | 64 ms | 5.9 ms | 0.53 ms |
+| OS | Scala vs NumPy | Rust vs NumPy | Rust vs Scala |
+|---|---:|---:|---:|
+| Windows 11 | 3.15× | 3.79× | 1.30× |
+| Linux (WSL2, same machine) | 1.80× | 1.66× | 0.99× |
+| macOS | 1.38× | 2.09× | 1.65× |
 
-MatD wins 8/9 scored operations vs NumPy — matmul is the exception, the reproducible
-default loop losing to NumPy's native OpenBLAS unless BLAS is opted in — and wins or ties
-all scored operations vs Breeze (benchBreeze geometric mean **~4.3×** over its 7 scored ops).
-The v0.14.1 chunked multi-accumulator parallel reduction keeps `sum`/`mean`/`std`
-4–6× ahead of NumPy 2.4.x's SIMD reductions.
-`matmul` vs Breeze is tied here — both ran a pure-JVM loop; with BLAS opted in on
-MatD's side both call OpenBLAS at the same latency.
-
-### Linux (Intel Core i5-6500, Ubuntu 24.04, OpenBLAS)
-
-Breeze/MatD: uni 0.14.1 / Scala 3.8.2 / JVM 21, both using native OpenBLAS via netlib JNIBLAS.
-
-| Operation | Breeze | MatD | Bz/MD |
-| :--- | ---: | ---: | ---: |
-| `randn(1000×1000)` | 57.7 ms | 15.6 ms | 3.7× |
-| `matmul 512×512` | 1.83 ms | 1.82 ms | 1.00× |
-| `sigmoid(1000×1000)` | 9.52 ms | 3.66 ms | 2.6× |
-| `relu(1000×1000)` | 3.87 ms | 1.06 ms | 3.7× |
-| `add(1000×1000)` | 1.85 ms | 2.34 ms | 0.79× |
-| `sum(1000×1000)` | 1.17 ms | 0.18 ms | 6.7× |
-| `mean(1000×1000)` | 7.33 ms | 0.27 ms | 27× |
-| `std(1000×1000)` | 8.97 ms | 1.55 ms | 5.8× |
-| `transpose(1000×1000)` | ≈0 ms | ≈0 ms | — |
-| custom fn (`mapParallel` / `map`) | 10.68 ms | 1.08 ms | 9.9× |
-
-MatD faster 8/9 scored, geometric mean **4.03× faster** than Breeze.
-`matmul` is tied (both use OpenBLAS via JNIBLAS); `add` is the lone Breeze win (0.79×). `sum` flipped to a 6.7× MatD win after the v0.14.1 chunked parallel-reduction rewrite.
-
-### macOS (Apple Silicon)
-
-Breeze/MatD: uni 0.14.1 / Scala 3.8.2 / JVM 21, both using native OpenBLAS via netlib JNIBLAS.
-
-| Operation | Breeze | MatD | Bz/MD |
-| :--- | ---: | ---: | ---: |
-| `randn(1000×1000)` | 40.0 ms | 3.93 ms | 10.2× |
-| `matmul 512×512` | 1.06 ms | 1.05 ms | 1.01× |
-| `sigmoid(1000×1000)` | 12.5 ms | 2.64 ms | 4.7× |
-| `relu(1000×1000)` | 1.66 ms | 0.37 ms | 4.5× |
-| `add(1000×1000)` | 0.78 ms | 1.04 ms | 0.75× |
-| `sum(1000×1000)` | 0.97 ms | 0.10 ms | 9.3× |
-| `mean(1000×1000)` | 5.45 ms | 0.08 ms | 72× |
-| `std(1000×1000)` | 8.06 ms | 1.03 ms | 7.8× |
-| `transpose(1000×1000)` | ≈0 ms | ≈0 ms | — |
-| custom fn (`mapParallel` / `map`) | 5.99 ms | 0.42 ms | 14.2× |
-
-MatD faster 8/9 scored, geometric mean **6.11× faster** than Breeze.
-`matmul` is tied (both use OpenBLAS via JNIBLAS); `add` is the lone Breeze win (0.75×).
+The per-operation tables — NumPy | Scala·pure | Rust·pure | Scala·BLAS | Rust·BLAS on all
+three operating systems, regenerated by one command — are in
+[`docs/MatDBenchmarks.md`](docs/MatDBenchmarks.md); the Breeze
+comparison is in [`docs/BreezeComparison.md`](docs/BreezeComparison.md).
 
 ### 3PRF (Three-Pass Regression Filter)
 
@@ -363,7 +369,7 @@ macOS (Apple Silicon, vs Python 3.14.6):
   | OOS Recursive | Expanding-window out-of-sample; re-estimates at each step |
   | OOS Cross Val | Leave-one-out cross-validation across all T windows |
 
-Full results and methodology: [MatD Cheat Sheet — Performance](docs/MatDCheatSheet.md).
+Full results and methodology: [MatD Benchmarks](docs/MatDBenchmarks.md).
 
 ## Design Philosophy
 
@@ -376,12 +382,17 @@ A generic JVM matrix `Mat[T]` stores its data in an `Array[T]` that erases to `O
 So ordinary client code written the obvious way is already allocation-free for the element value:
 
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.17.0
+
 import uni.data.*
 
 val m = MatD((1.0, 2.0, 3.0), (4.0, 5.0, 6.0))
 val x = m(0, 1)        // primitive double load — no java.lang.Double allocated
 m(1, 2) = 99.0         // primitive double store
 m(0, ::) = 0.0         // slice assignment, also unboxed
+println(s"$x ${m(1, 2)} ${m(0, ::).sum}")   // 2.0 99.0 0.0
 ```
 
 This is verified at the bytecode level (primitive `daload`/`dastore`, no `Double.valueOf`) and confirmed end-to-end by JFR allocation profiling, which shows zero boxed-scalar allocations on the element path. The `MatF` specialization is generated from the `MatD` source by the build, so the two never drift.
@@ -437,7 +448,8 @@ libraries, `bundled` only bytedeco's — and nothing needs to be purged from the
 * **Quick Start:** [Mat Quick Start Guide](docs/QuickStartGuide.md) — Fast track to NumPy-compatible matrix operations in Scala.
 * **Visualization:** [Plot Guide](docs/PlotGuide.md) — `uni.plot` methods, `PlotStyle` configuration, and demo scripts.
 * **API Reference:** [Mat Reference Guide](docs/ReferenceGuide.md) — Comprehensive API documentation with validated examples.
-* **Cheat Sheet:** [MatD Cheat Sheet](docs/MatDCheatSheet.md) — Side-by-side comparison of MatD vs NumPy, Breeze, R, and MATLAB.
+* **Cheat Sheet:** [MatD Cheat Sheet](docs/MatDCheatSheet.md) — Side-by-side comparison of MatD vs NumPy, R, and MATLAB.
+* **Breeze:** [Breeze Comparison](docs/BreezeComparison.md) — migration table, operation-by-operation cheat sheet, and benchmarks against Breeze.
 * **High Precision:** [Big Type Guide](docs/BigTypeGuide.md) — High-precision matrices using `MatB` (`Mat[Big]`).
 * **Path & I/O Reference:** [Path/String/File Extensions](docs/PathIOReference.md) — Complete extension method reference for `Path`, `JFile`, and `String`.
 
@@ -488,10 +500,15 @@ println(normal)
 They add type-safe BLAS-style vector dispatch on top of `Mat`.
 
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.17.0
+
 import uni.data.*
 
 val y: CVecD = CVec(1.0, 2.0, 3.0)   // column vector
 val r: RVecD = RVec(4.0, 5.0, 6.0)   // row vector
+val X: MatD  = MatD.eye(3)
 
 // Transpose flips column ↔ row
 val rt: CVecD = r.T
@@ -516,6 +533,8 @@ val sl   = 2L  * y                    // Long   * CVec
 // Norm, show
 val n: Double = y.norm
 println(y.show)   // "3x1 CVec[Double]: ..."
+println(s"$dot $dot2 $dot3 ${outer.shape} ${Xy.shape} ${yTX.shape} ${rt.shape} ${yt.shape}")
+println(s"${sum.sum} ${yp1.sum} ${ym1.sum} ${s2.sum} ${si.sum} ${sl.sum} $n")
 ```
 
 | CVec factory | |

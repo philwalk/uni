@@ -8,7 +8,7 @@ The `uni` package provides practical tools for Scala scripts and applications: p
 
 A single import makes all of them available:
 
-```scala
+```text
 import uni.*
 ```
 
@@ -83,7 +83,7 @@ For a complete list of all `Path`, `JFile`, and `String` extension methods added
 
 `import uni.*` exports several values useful for platform-aware code:
 
-```scala
+```text
 isWin     // Boolean: true on a Windows JVM
 shellRoot // String:  e.g. "/", "C:/msys64", "C:/cygwin64"
 ```
@@ -110,6 +110,7 @@ The following script hashes all files under a directory and demonstrates argumen
 //> using dep org.vastblue:uni_3:0.17.0
 
 import uni.*
+// doc: args .
 
 def usage(m: String = ""): Nothing = {
   showUsage(m, "",

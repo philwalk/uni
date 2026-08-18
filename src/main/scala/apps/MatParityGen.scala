@@ -586,6 +586,57 @@ object MatParityGen:
    * `floatToIntBits` — with the same exclusions as the Big family (`exp`/`log` go through
    * `Math.exp`) and the same shapes ([[bigShape]]).
    */
+  /**
+   * `uni.plot` on the bounded corpus: every chart type rendered to SVG text and digested
+   * as UTF-8 (`fnvStr`), so the Rust `uplot` must produce the same bytes — coordinates,
+   * tick labels, colours, element order. `pl.plotbig`/`pl.histbig` take the mixed-magnitude
+   * corpus `m` to reach the scientific tick format; `pairs` is limited to the first five
+   * columns (a 64×64 grid of cells is not a chart). Set `-Duni.plot.dump=<dir>` to write
+   * every SVG for inspection.
+   */
+  def plotCases(m: Mat[Double], me: Mat[Double]): Vector[(String, Long)] =
+    import uni.plot.*
+    val cols = me.cols
+    val yc   = if cols > 1 then 1 else 0
+    val grouped =
+      val g = me.copy
+      g(::, cols - 1) = me(::, cols - 1).map(v => math.floor(v))
+      g
+    val dark = PlotStyle(width = 640, height = 400,
+      background = Some(java.awt.Color.BLACK), plotBackground = Some(java.awt.Color(30, 30, 30)),
+      foreground = Some(java.awt.Color.WHITE),
+      seriesColors = Seq(java.awt.Color.RED, java.awt.Color(0, 200, 0)),
+      xLabel = "row", yLabel = "value")
+    val logs  = PlotStyle(width = 700, height = 450, xLog = true, yLog = true, xLabel = "log x", yLabel = "log y")
+    val few   = me.slice(0 until me.rows, 0 until math.min(cols, 5))
+    val svgs = Vector(
+      "pl.plot"      -> me.plotSvg(title = "plot", labels = Seq("a", "b")),
+      "pl.plotdark"  -> me.plotSvg(style = dark),
+      "pl.plotlog"   -> me.abs.plotSvg(title = "log-log", style = logs),
+      "pl.plotbig"   -> m.plotSvg(title = "mixed magnitudes"),
+      "pl.scatter"   -> me.scatterSvg(0, yc, title = "scatter"),
+      "pl.scatterg"  -> grouped.scatterSvg(0, yc, groupCol = cols - 1, title = "grouped",
+                          style = PlotStyle(width = 600, height = 600, xLabel = "x", yLabel = "y")),
+      "pl.hist"      -> me.histSvg(bins = 7, title = "hist"),
+      "pl.histbig"   -> m.histSvg(bins = 5),
+      "pl.bar"       -> me.barSvg(col = 0, labelCol = if cols > 1 then 1 else -1, title = "bar"),
+      "pl.heatmap"   -> me.heatmapSvg(title = "heat", rowLabels = Seq("r0", "r1"), colLabels = Seq("c0")),
+      "pl.heatstops" -> me.heatmapSvg(style = PlotStyle(width = 500, height = 400,
+                          seriesColors = Seq(java.awt.Color(8, 48, 107), java.awt.Color(247, 251, 255)))),
+      "pl.box"       -> me.boxPlotSvg(title = "box", labels = Seq("a")),
+      "pl.pairs"     -> few.pairsSvg(labels = Seq("a", "b", "c"), bins = 6, dotSize = 2, scatterAlpha = 120,
+                          style = PlotStyle(width = 900, height = 900)),
+      "pl.pairsflat" -> few.pairsSvg(bins = 4, dotSize = 4, color = java.awt.Color(200, 30, 30),
+                          scatterAlpha = 255, labelStyle = java.awt.Font.ITALIC,
+                          style = PlotStyle(width = 640, height = 480)),
+    )
+    sys.props.get("uni.plot.dump").foreach { dir =>
+      java.nio.file.Files.createDirectories(dir.asPath)
+      for (label, svg) <- svgs do
+        java.nio.file.Files.writeString(s"$dir/${me.rows}x${me.cols}_$label.svg".asPath, svg)
+    }
+    svgs.map((label, svg) => label -> fnvStr(svg))
+
   def floatCases(me: Mat[Double]): Vector[(String, Long)] =
     val (rows, cols) = (me.rows, me.cols)
     val mf: Mat[Float]  = me.map(_.toFloat)
@@ -935,7 +986,9 @@ object MatParityGen:
           sb ++= f"${rows}x$cols $label $word%016x\n"
         for (label, word) <- floatCases(me) do
           sb ++= f"${rows}x$cols $label $word%016x\n"
-      println(s"  ${rows}x$cols: ${cases2d(m).length + wordCases2d(m).length + mathCases(me).length + linalgCases(me).length + utilCases(m).length + pandasCases(m).length + signalCases(me).length + (if bigShape(rows, cols) then bigCases(me).length + floatCases(me).length else 0)} cases")
+        for (label, word) <- plotCases(m, me) do
+          sb ++= f"${rows}x$cols $label $word%016x\n"
+      println(s"  ${rows}x$cols: ${cases2d(m).length + wordCases2d(m).length + mathCases(me).length + linalgCases(me).length + utilCases(m).length + pandasCases(m).length + signalCases(me).length + (if bigShape(rows, cols) then bigCases(me).length + floatCases(me).length + plotCases(m, me).length else 0)} cases")
 
     for (name, arr) <- adversarial do
       for (orient, m) <- advShapes(arr) do

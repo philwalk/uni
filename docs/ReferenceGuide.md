@@ -671,17 +671,32 @@ val w: RVecD = RVec(arr)             // 1×3
 
 **Factory methods**
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.17.0
+
+import uni.data.*
+
+val someMatD = MatD.of(1.0, 2.0, 3.0)   // 1×3
 val z = CVec.zeros[Double](5)        // 5-element column of zeros
 val o = CVec.ones[Double](5)         // 5-element column of ones
 val v = CVec.fromArray(Array(1.0, 2.0, 3.0))
 val c = CVec.fromMat(someMatD)       // n×1 or 1×n Mat → CVec
+println(s"${z.shape} ${o.sum} ${v.sum} ${c.shape}")   // (5,1) 5.0 6.0 (3,1)
 ```
 
 **Extension methods on arrays** *(since v0.15.0)*
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.17.0
+
+import uni.data.*
+
 val a = Array(1.0, 2.0, 3.0)
 val c: CVecD = a.toCVec              // 3×1
 val r: RVecD = a.toRVec              // 1×3
+println(s"${c.shape} ${r.shape}")    // (3,1) (1,3)
 ```
 
 All of these **copy** — the vector shares no storage with the source array. See
@@ -1058,14 +1073,19 @@ import uni.*
 import uni.data.*
 import uni.io.FileOps.*
 
-val result = loadSmart(Paths.get("data.csv"))          // MatResult[Big]
+val csv = "data.csv".asPath                             // any CSV with a header row
+csv.write("Price,Qty\n19.99,3\n5.25,10\n")
+
+val result = loadSmart(csv)                             // MatResult[Big]
 val col    = result("Price")                            // ColVec[Big] — throws if not found
-val maybeQ = result.col("Qty")                         // Option[ColVec[Big]]
+val maybeQ = result.col("Qty")                          // Option[ColVec[Big]]
 val idx    = result.columnIndex                         // Map[String, Int]
 
 // Convert to Double
-val dbl = loadSmart(Paths.get("data.csv"), _.toDouble) // MatResult[Double]
+val dbl = loadSmart(csv, _.toDouble)                    // MatResult[Double]
 val prices: ColVec[Double] = dbl("Price")
+println(s"${col.sum} ${maybeQ.isDefined} $idx ${prices.sum}")  // 25.24 true Map(Price -> 0, Qty -> 1) 25.24
+csv.delete()
 ```
 
 ---

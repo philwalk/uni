@@ -43,9 +43,9 @@ jobs:
     - name: Run tests
       run: sbt test
 
-  # The example code in README.md and docs/*.md must compile: every shebang-led script
-  # block, extracted and compiled with -Wunused:imports -Werror by checkDocScripts.sh
-  # (the same gate release-and-publish.sh runs, step 6c). publishLocal first, so the
+  # The example code in README.md and docs/*.md must compile AND run: every ```scala
+  # block is a shebang-led script, extracted, compiled with -Wunused:imports -Werror and
+  # run by checkDocScripts.sh (the same gate release-and-publish.sh runs, step 6c). publishLocal first, so the
   # blocks' `//> using dep org.vastblue:uni_3:<version>` resolves for an unreleased
   # version too — a stale example fails here on the commit that broke it, not at release.
   doc-scripts:
@@ -64,5 +64,5 @@ jobs:
       uses: VirtusLab/scala-cli-setup@main
     - name: Publish the library locally
       run: sbt publishLocal
-    - name: Compile every doc script
+    - name: Compile and run every doc script
       run: bash checkDocScripts.sh

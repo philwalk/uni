@@ -43,6 +43,7 @@ Every ```rust block with a `fn main` in this file and `docs/` is compiled by
 | `utime` | `UniDateTime`, `DateFormat`, `SmartParse` | field arithmetic, pattern formatting, format-autodetecting parsing |
 | `udata` | `Big` and its CSV loaders; all of `Mat[Double]` as `MatD`/`CVecD`/`RVecD` — `mat`/`mataxis` (view model, reductions), `matmut`/`matbool` (writes, masks, fancy indexing), `matmath`, `matmul`, `linalg`/`eig` (decompositions), `matutil`, `pandas`, `signal`; `Mat[Big]` as `MatB` (`matbig`) and `Mat[Float]` as `MatF` (`matf`) on the same generic `Mat<T>` core | `java.math.BigDecimal` semantics on base-10⁹ limbs; matrices carry Scala's own stride descriptor, so `transpose`/`slice`/`broadcastTo` stay zero-copy views — which is what keeps the reductions bit-identical; `MatB` reproduces the JVM's exact decimals to the last digit and scale |
 | `upath::matresult` | `matResultOps.groupBy` / `merge` on `CsvTable<f64>` | group and join layouts identical to the Scala |
+| `uplot` | `uni.plot` — `plot`, `scatter`, `hist`, `bar`, `heatmap`, `boxPlot`, `pairs`, `PlotStyle` | charts rendered to SVG by the crate itself and saved or opened in the browser; byte-identical to the Scala output (98 fixture rows) |
 | `numpy_rng` | `uni.data.NumPyRNG` | bit-identical to `np.random.default_rng` |
 | `t3prf` | `uni.stats.Tprf3` | the crate's original content, and its former name |
 

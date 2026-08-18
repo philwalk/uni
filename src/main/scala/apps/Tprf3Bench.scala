@@ -14,7 +14,7 @@ import scala.sys.process.*
  * Benchmarks Tprf3.t3prf and Tprf3.estimate3prf across two data sizes,
  * then invokes py/bench_tprf3.py and prints a side-by-side comparison table
  * (Python vs Scala, with the ratio) in the same markdown style as
- * docs/MatDCheatSheet.md.
+ * docs/MatDBenchmarks.md.
  *
  * All three columns now run on bit-identical input matrices: each side seeds its
  * NumPy-compatible PCG64 with 0 and draws X, y, Z in that order, so the table
@@ -405,7 +405,7 @@ object Tprf3Bench {
     else f"**${1.0 / r}%.1f× slower**"
 
   /** Prints the side-by-side markdown table, in the same style as
-   *  docs/MatDCheatSheet.md. Columns appear only for the languages that
+   *  docs/MatDBenchmarks.md. Columns appear only for the languages that
    *  actually produced timings, so the shape follows what was run. */
   private def printComparison(scala: List[ScalaRes], py: Map[(String, String), Double],
                               rust: Option[RustRes]): Unit =

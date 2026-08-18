@@ -8,203 +8,13 @@ import uni.data.*
 
 import java.time.LocalDateTime
 import scala.util.Try
+import DataFrame.*
 
-object CSV {
-  
-  enum ColType:
-    case DateType, IntType, LongType, BigType, BooleanType, StringType, UnknownType
-  
-  sealed trait TypedValue
-  case class DateVal(dt: LocalDateTime) extends TypedValue
-  case class IntVal(n: Int) extends TypedValue
-  case class LongVal(n: Long) extends TypedValue
-  case class BigVal(n: Big) extends TypedValue
-  case class BoolVal(b: Boolean) extends TypedValue
-  case class StrVal(s: String) extends TypedValue
-  case object BadDate extends TypedValue
-  case object BigNaN extends TypedValue
-  case object BadInt extends TypedValue
-  case object BadLong extends TypedValue
-  case object BadBool extends TypedValue
-  case object EmptyVal extends TypedValue
-  
-  /** DataFrame-like structure - Pandas-inspired with sentinel values */
-  case class DataFrame(
-    private val data: Map[String, Seq[TypedValue]],
-    private val colTypes: Map[String, ColType],
-    private val originalNames: Map[String, String]
-  ) {
-    def columns: Seq[String] = data.keys.toSeq
-    def size: Int = data.headOption.map(_._2.length).getOrElse(0)
-    
-    /** Access column by name (camelCase or original) */
-    def apply(colName: String): Seq[TypedValue] = {
-      data.getOrElse(colName, 
-        data.getOrElse(originalNames.getOrElse(colName, ""), Seq.empty))
-    }
-    
-    /** Access row by index as named tuple (Map) */
-    def row(idx: Int): Map[String, TypedValue] = 
-      data.map { case (name, values) => name -> values(idx) }
-    
-    /** Access specific cell */
-    def at(row: Int, col: String): TypedValue = 
-      apply(col).lift(row).getOrElse(EmptyVal)
-    
-    /** Filter rows based on predicate */
-    def filter(pred: Map[String, TypedValue] => Boolean): DataFrame = {
-      val indices = (0 until size).filter(i => pred(row(i)))
-      val newData = data.map { case (name, values) =>
-        name -> indices.map(values(_))
-      }
-      DataFrame(newData, colTypes, originalNames)
-    }
-    
-    /** Select subset of columns */
-    def select(colNames: String*): DataFrame = {
-      val newData = colNames.flatMap(name => data.get(name).map(name -> _)).toMap
-      val newTypes = colNames.flatMap(name => colTypes.get(name).map(name -> _)).toMap
-      val newOriginal = colNames.flatMap(name => originalNames.get(name).map(name -> _)).toMap
-      DataFrame(newData, newTypes, newOriginal)
-    }
-    
-    /** Get column type */
-    def colType(name: String): ColType = 
-      colTypes.getOrElse(name, ColType.UnknownType)
-    
-    /** Convert to sequence of named tuples (Maps) */
-    def toRows: Seq[Map[String, TypedValue]] = 
-      (0 until size).map(row)
-    
-    /** Convert column to Int with BadInt sentinel */
-    def getInts(colName: String): Seq[Int] = 
-      apply(colName).map {
-        case IntVal(n) => n
-        case LongVal(n) if n >= Int.MinValue && n <= Int.MaxValue => n.toInt
-        case BigVal(b) if b.isValidInt => b.toInt
-        case _ => BadInt.asInstanceOf[Int]  // Sentinel value
-      }
-    
-    /** Convert column to Long with BadLong sentinel */
-    def getLongs(colName: String): Seq[Long] = 
-      apply(colName).map {
-        case IntVal(n) => n.toLong
-        case LongVal(n) => n
-        case BigVal(b) if b.isValidLong => b.toLong
-        case _ => BadLong.asInstanceOf[Long]  // Sentinel value
-      }
-    
-    /** Convert column to Big with BigNaN sentinel */
-    def getBigs(colName: String): Seq[Big] = 
-      apply(colName).map {
-        case BigVal(b) => b
-        case IntVal(n) => Big(n)
-        case LongVal(n) => Big(n)
-        case _ => BigNaN.asInstanceOf[Big]  // Sentinel value
-      }
-    
-    /** Convert column to LocalDateTime with BadDate sentinel */
-    def getDates(colName: String): Seq[LocalDateTime] = 
-      apply(colName).map {
-        case DateVal(dt) => dt
-        case _ => BadDate.asInstanceOf[LocalDateTime]  // Sentinel value
-      }
-    
-    /** Convert column to Boolean with BadBool sentinel */
-    def getBools(colName: String): Seq[Boolean] = 
-      apply(colName).map {
-        case BoolVal(b) => b
-        case _ => BadBool.asInstanceOf[Boolean]  // Sentinel value
-      }
-    
-    /** Convert column to String (never fails) */
-    def getStrings(colName: String): Seq[String] = 
-      apply(colName).map {
-        case StrVal(s) => s
-        case IntVal(n) => n.toString
-        case LongVal(n) => n.toString
-        case BigVal(b) => b.toString
-        case BoolVal(b) => b.toString
-        case DateVal(dt) => dt.toString
-        case BadDate => "BadDate"
-        case BigNaN => "BigNaN"
-        case BadInt => "BadInt"
-        case BadLong => "BadLong"
-        case BadBool => "BadBool"
-        case EmptyVal => ""
-      }
-    
-    /** Check if value is a sentinel/error */
-    def isBad(value: TypedValue): Boolean = value match {
-      case BadDate | BigNaN | BadInt | BadLong | BadBool | EmptyVal => true
-      case _ => false
-    }
-    
-    /** Count bad values in column */
-    def countBad(colName: String): Int = 
-      apply(colName).count(isBad)
-    
-    /** Pandas-like head/tail */
-    def head(n: Int = 5): DataFrame = {
-      val indices = 0 until Math.min(n, size)
-      val newData = data.map { case (name, values) =>
-        name -> indices.map(values(_))
-      }
-      DataFrame(newData, colTypes, originalNames)
-    }
-    
-    def tail(n: Int = 5): DataFrame = {
-      val start = Math.max(0, size - n)
-      val indices = start until size
-      val newData = data.map { case (name, values) =>
-        name -> indices.map(values(_))
-      }
-      DataFrame(newData, colTypes, originalNames)
-    }
-    
-    /** Pandas-like describe for numeric columns */
-    def describe(): Map[String, Map[String, Double]] = {
-      data.flatMap { case (name, values) =>
-        colTypes.get(name) match {
-          case Some(ColType.IntType | ColType.LongType | ColType.BigType) =>
-            val nums = values.collect {
-              case IntVal(n) => n.toDouble
-              case LongVal(n) => n.toDouble
-              case BigVal(b) => b.toDouble
-            }
-            if (nums.nonEmpty) {
-              Some(name -> Map(
-                "count" -> nums.length.toDouble,
-                "mean" -> nums.sum / nums.length,
-                "min" -> nums.min,
-                "max" -> nums.max,
-                "std" -> {
-                  val mean = nums.sum / nums.length
-                  val variance = nums.map(x => Math.pow(x - mean, 2)).sum / nums.length
-                  Math.sqrt(variance)
-                }
-              ))
-            } else None
-          case _ => None
-        }
-      }
-    }
-    
-    /** Show summary with bad value counts */
-    def info(): String = {
-      val sb = new StringBuilder
-      sb.append(s"DataFrame with ${size} rows and ${columns.length} columns\n")
-      sb.append("Columns:\n")
-      columns.foreach { col =>
-        val typ = colTypes.getOrElse(col, ColType.UnknownType)
-        val orig = originalNames.getOrElse(col, col)
-        val badCount = countBad(col)
-        sb.append(s"  $col ($orig): $typ, bad values: $badCount\n")
-      }
-      sb.toString
-    }
+object DataFrame {
+  def main(args: Array[String]): Unit = {
   }
   
+  /** DataFrame-like structure - Pandas-inspired with sentinel values */
   /** Convert column name to camelCase legal Scala identifier */
   def toCamelCase(name: String): String = {
     val words = name
@@ -269,10 +79,10 @@ object CSV {
             val longCount = nonEmpty.count(s => tryParseLong(s).isDefined)
             if (longCount >= threshold) ColType.LongType
             else {
-              val bigCount = nonEmpty.count(s => Big(s) != BigNaN)
+              val bigCount = nonEmpty.count(s => Big(s) != NonBig)
               if (bigCount >= threshold) ColType.BigType
               else {
-                val dateCount = nonEmpty.count(s => parseDate(s) != BadDate)
+                val dateCount = nonEmpty.count(s => parseDate(s) != NonDate)
                 if (dateCount >= threshold) ColType.DateType
                 else ColType.StringType
               }
@@ -297,11 +107,11 @@ object CSV {
         
       case ColType.BigType =>
         val b = Big(s)
-        if (b == BigNaN) BigNaN else BigVal(b)
+        if (b == NonBig) NonBig else BigVal(b)
         
       case ColType.DateType =>
         val d = parseDate(s)
-        if (d == BadDate) BadDate else DateVal(d)
+        if (d == NonDate) NonDate else DateVal(d)
         
       case ColType.StringType | ColType.UnknownType =>
         StrVal(s)
@@ -348,10 +158,29 @@ object CSV {
   }
 }
 
+enum ColType:
+  case DateType, IntType, LongType, BigType, BooleanType, StringType, UnknownType
+
+sealed trait TypedValue
+case class DateVal(dt: LocalDateTime) extends TypedValue
+case class IntVal(n: Int) extends TypedValue
+case class LongVal(n: Long) extends TypedValue
+case class BigVal(n: Big) extends TypedValue
+case class BoolVal(b: Boolean) extends TypedValue
+case class StrVal(s: String) extends TypedValue
+case object NonDate extends TypedValue
+case object NonBig extends TypedValue
+case object BadInt extends TypedValue
+case object BadLong extends TypedValue
+case object BadBool extends TypedValue
+case object EmptyVal extends TypedValue
+
+
 // Usage examples with sentinels
-object DataFrameExamples {
+object Examples {
+
   def example(p: Path): Unit = {
-    val df = CSV.readDataFrame(p, pct = 15)
+    val df = readDataFrame(p, pct = 15)
     
     println(df.info())  // Shows bad value counts
     
@@ -362,20 +191,23 @@ object DataFrameExamples {
     // Filter using sentinels
     val valid = df.filter { row =>
       row("amount") match {
-        case CSV.BigVal(b) if b != BigNaN => b > Big(100)
+        case BigVal(b) if b != NonBig => b > Big(100)
         case _ => false
       }
     }
     
     // Work with sentinels like NaN
     val processed = amounts.map { amt =>
-      if (amt == BigNaN) Big(0)  // Replace bad values
+      if (amt == NonBig) Big(0)  // Replace bad values
       else amt * 1.1
     }
+    printf("dates[%s]\n", dates)
+    printf("valid[%s]\n", valid)
+    printf("processed[%s]\n", processed)
   }
   
   // Extract to typed tuples with sentinels
-  def toTypedRows(df: CSV.DataFrame): Seq[(String, Int, LocalDateTime, Big)] = {
+  def toTypedRows(df: DataFrame): Seq[(String, Int, LocalDateTime, Big)] = {
     val names = df.getStrings("name")
     val ids = df.getInts("id")
     val dates = df.getDates("createdAt")
@@ -383,7 +215,183 @@ object DataFrameExamples {
     
     (0 until df.size).map { i =>
       (names(i), ids(i), dates(i), amounts(i))
-      // BadDate, BadInt, BigNaN are sentinels in the tuple
+      // NonDate, BadInt, NonBig are sentinels in the tuple
     }
   }
 }
+case class DataFrame(
+  private val data: Map[String, Seq[TypedValue]],
+  private val colTypes: Map[String, ColType],
+  private val originalNames: Map[String, String]
+) {
+  def columns: Seq[String] = data.keys.toSeq
+  def size: Int = data.headOption.map(_._2.length).getOrElse(0)
+  
+  /** Access column by name (camelCase or original) */
+  def apply(colName: String): Seq[TypedValue] = {
+    data.getOrElse(colName, 
+      data.getOrElse(originalNames.getOrElse(colName, ""), Seq.empty))
+  }
+  
+  /** Access row by index as named tuple (Map) */
+  def row(idx: Int): Map[String, TypedValue] = 
+    data.map { case (name, values) => name -> values(idx) }
+  
+  /** Access specific cell */
+  def at(row: Int, col: String): TypedValue = 
+    apply(col).lift(row).getOrElse(EmptyVal)
+  
+  /** Filter rows based on predicate */
+  def filter(pred: Map[String, TypedValue] => Boolean): DataFrame = {
+    val indices = (0 until size).filter(i => pred(row(i)))
+    val newData = data.map { case (name, values) =>
+      name -> indices.map(values(_))
+    }
+    DataFrame(newData, colTypes, originalNames)
+  }
+  
+  /** Select subset of columns */
+  def select(colNames: String*): DataFrame = {
+    val newData = colNames.flatMap(name => data.get(name).map(name -> _)).toMap
+    val newTypes = colNames.flatMap(name => colTypes.get(name).map(name -> _)).toMap
+    val newOriginal = colNames.flatMap(name => originalNames.get(name).map(name -> _)).toMap
+    DataFrame(newData, newTypes, newOriginal)
+  }
+  
+  /** Get column type */
+  def colType(name: String): ColType = 
+    colTypes.getOrElse(name, ColType.UnknownType)
+  
+  /** Convert to sequence of named tuples (Maps) */
+  def toRows: Seq[Map[String, TypedValue]] = 
+    (0 until size).map(row)
+  
+  /** Convert column to Int with BadInt sentinel */
+  def getInts(colName: String): Seq[Int] = 
+    apply(colName).map {
+      case IntVal(n) => n
+      case LongVal(n) if n >= Int.MinValue && n <= Int.MaxValue => n.toInt
+      case BigVal(b) if b.isValidInt => b.toInt
+      case _ => BadInt.asInstanceOf[Int]  // Sentinel value
+    }
+  
+  /** Convert column to Long with BadLong sentinel */
+  def getLongs(colName: String): Seq[Long] = 
+    apply(colName).map {
+      case IntVal(n) => n.toLong
+      case LongVal(n) => n
+      case BigVal(b) if b.isValidLong => b.toLong
+      case _ => BadLong.asInstanceOf[Long]  // Sentinel value
+    }
+  
+  /** Convert column to Big with NonBig sentinel */
+  def getBigs(colName: String): Seq[Big] = 
+    apply(colName).map {
+      case BigVal(b) => b
+      case IntVal(n) => Big(n)
+      case LongVal(n) => Big(n)
+      case _ => NonBig.asInstanceOf[Big]  // Sentinel value
+    }
+  
+  /** Convert column to LocalDateTime with NonDate sentinel */
+  def getDates(colName: String): Seq[LocalDateTime] = 
+    apply(colName).map {
+      case DateVal(dt) => dt
+      case _ => NonDate.asInstanceOf[LocalDateTime]  // Sentinel value
+    }
+  
+  /** Convert column to Boolean with BadBool sentinel */
+  def getBools(colName: String): Seq[Boolean] = 
+    apply(colName).map {
+      case BoolVal(b) => b
+      case _ => BadBool.asInstanceOf[Boolean]  // Sentinel value
+    }
+  
+  /** Convert column to String (never fails) */
+  def getStrings(colName: String): Seq[String] = 
+    apply(colName).map {
+      case StrVal(s) => s
+      case IntVal(n) => n.toString
+      case LongVal(n) => n.toString
+      case BigVal(b) => b.toString
+      case BoolVal(b) => b.toString
+      case DateVal(dt) => dt.toString
+      case NonDate => "NonDate"
+      case NonBig => "NonBig"
+      case BadInt => "BadInt"
+      case BadLong => "BadLong"
+      case BadBool => "BadBool"
+      case EmptyVal => ""
+    }
+  
+  /** Check if value is a sentinel/error */
+  def isBad(value: TypedValue): Boolean = value match {
+    case NonDate | NonBig | BadInt | BadLong | BadBool | EmptyVal => true
+    case _ => false
+  }
+  
+  /** Count bad values in column */
+  def countBad(colName: String): Int = 
+    apply(colName).count(isBad)
+  
+  /** Pandas-like head/tail */
+  def head(n: Int = 5): DataFrame = {
+    val indices = 0 until Math.min(n, size)
+    val newData = data.map { case (name, values) =>
+      name -> indices.map(values(_))
+    }
+    DataFrame(newData, colTypes, originalNames)
+  }
+  
+  def tail(n: Int = 5): DataFrame = {
+    val start = Math.max(0, size - n)
+    val indices = start until size
+    val newData = data.map { case (name, values) =>
+      name -> indices.map(values(_))
+    }
+    DataFrame(newData, colTypes, originalNames)
+  }
+  
+  /** Pandas-like describe for numeric columns */
+  def describe(): Map[String, Map[String, Double]] = {
+    data.flatMap { case (name, values) =>
+      colTypes.get(name) match {
+        case Some(ColType.IntType | ColType.LongType | ColType.BigType) =>
+          val nums = values.collect {
+            case IntVal(n) => n.toDouble
+            case LongVal(n) => n.toDouble
+            case BigVal(b) => b.toDouble
+          }
+          if (nums.nonEmpty) {
+            Some(name -> Map(
+              "count" -> nums.length.toDouble,
+              "mean" -> nums.sum / nums.length,
+              "min" -> nums.min,
+              "max" -> nums.max,
+              "std" -> {
+                val mean = nums.sum / nums.length
+                val variance = nums.map(x => Math.pow(x - mean, 2)).sum / nums.length
+                Math.sqrt(variance)
+              }
+            ))
+          } else None
+        case _ => None
+      }
+    }
+  }
+  
+  /** Show summary with bad value counts */
+  def info(): String = {
+    val sb = new StringBuilder
+    sb.append(s"DataFrame with ${size} rows and ${columns.length} columns\n")
+    sb.append("Columns:\n")
+    columns.foreach { col =>
+      val typ = colTypes.getOrElse(col, ColType.UnknownType)
+      val orig = originalNames.getOrElse(col, col)
+      val badCount = countBad(col)
+      sb.append(s"  $col ($orig): $typ, bad values: $badCount\n")
+    }
+    sb.toString
+  }
+}
+

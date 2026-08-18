@@ -463,7 +463,7 @@ fn main() {
 | Factory | Description |
 | :--- | :--- |
 | `CVecD::apply(&[1.0, 2.0, 3.0])` | from a slice |
-| `CVecD::zeros(n)` / `CVecD::ones(n)` | n zeros / ones |
+| `CVecD::zeros(n)`<br>`CVecD::ones(n)` | n zeros, n ones |
 | `CVecD::fromArray(&arr)` | from a slice (alias) |
 | `CVecD::fromMat(m)` | from an n×1 (or 1×n) `MatD` |
 
@@ -479,6 +479,32 @@ fn main() {
     let one_by_one = MatD::create(vec![1.0], 1, 1).matmul(&MatD::create(vec![5.0], 1, 1));
     let s: f64 = one_by_one.item();                             // panics if not 1×1
     println!("{t} {s}");
+}
+```
+
+### Charts
+
+`uni::uplot` draws charts from any `MatD` — the crate renders SVG itself and opens it in
+the browser, or writes it when `saveTo` is set. The `*Svg` twins return the text. Scala's
+named parameters are option structs with `Default`; the SVG is byte-identical to the Scala
+side's for the same matrix.
+
+```rust
+use uni::NumPyRng;
+use uni::udata::MatD;
+use uni::uplot::{HeatmapOpts, HistOpts, PlotOpts, ScatterOpts};
+
+fn main() {
+    let mut rng = NumPyRng::new(7);
+    let m = MatD::randn(&mut rng, 200, 3);
+    let dir = std::env::temp_dir().join("uni-quickstart");
+    let names = vec!["a".to_owned(), "b".to_owned(), "c".to_owned()];
+    let at = |name: &str| dir.join(name).to_string_lossy().into_owned();
+    m.plot(&PlotOpts { title: "three series".into(), labels: names.clone(), saveTo: at("lines"), ..Default::default() }); // lines.svg
+    m.hist(&HistOpts { bins: 25, saveTo: at("hist.html"), ..Default::default() });                                          // a page
+    m.T().corrcoef().heatmap(&HeatmapOpts { rowLabels: names.clone(), colLabels: names, saveTo: at("corr"), ..Default::default() });
+    let svg = m.scatterSvg(&ScatterOpts { xCol: 0, yCol: 1, title: "a vs b".into(), ..Default::default() }); // the text
+    println!("{} {}", svg.len() > 1000, svg.starts_with("<svg"));   // true true
 }
 ```
 

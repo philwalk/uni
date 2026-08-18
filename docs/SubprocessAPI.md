@@ -18,7 +18,7 @@ Windows JVM users often avoid calling `.sh`, `.py`, and `.sc` scripts directly b
 Windows kernel does not understand shebangs. The typical workaround is to hardcode the
 interpreter path for the local environment:
 
-```scala
+```text
 // Common Windows workaround — fragile and platform-specific:
 run("C:/path/to/bash.exe", "tools/setup.sh")
 run("C:/path/to/python3.exe", "tools/analyse.py")
@@ -27,7 +27,7 @@ run("C:/path/to/python3.exe", "tools/analyse.py")
 With `uni`, this is unnecessary. `run` applies implicit routing based on the file extension,
 so the same call works on Linux, macOS, and any Windows POSIX environment:
 
-```scala
+```text
 run("tools/setup.sh")        // works on all platforms
 run("tools/analyse.py")      // works on all platforms
 run("tools/transform.sc")    // works on all platforms
@@ -41,7 +41,7 @@ On Linux and macOS, the OS kernel handles shebangs directly and no prepending is
 The `cmd` field in the returned `ProcResult` shows exactly what was sent to the OS, so there
 is no mystery about what happened:
 
-```scala
+```text
 val r = run("tools/analyse.py", "--verbose")
 // On Windows:  r.cmd == Seq("/resolved/path/to/python3.exe", "tools/analyse.py", "--verbose")
 // On Linux:    r.cmd == Seq("tools/analyse.py", "--verbose")
@@ -54,6 +54,12 @@ val r = run("tools/analyse.py", "--verbose")
 ### Buffered — captures stdout and stderr, returns `ProcResult`
 
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.17.0
+
+import uni.*
+
 run("git", "log", "--oneline")           // ProcResult
 run("git", "log").text                   // String  (all stdout lines joined by "\n")
 run("git", "log").lines                  // Seq[String]
@@ -61,11 +67,12 @@ run("git", "log").stderr                 // Seq[String]
 run("git", "log").toOption               // Option[String]  (None if failed or empty)
 run("git", "log").ok                     // Boolean  (true iff exit status == 0)
 run("git", "log").cmd                    // Seq[String]  (post-routing command sent to OS)
+println(run("git", "log", "--oneline", "-1").ok)   // true inside any git repository
 ```
 
 ### Streaming — calls a callback per stdout line, returns exit status `Int`
 
-```scala
+```text
 run("git", "ls-files") { line => println(line) }            // Int
 run("git", "ls-files") { line => ... } { err => ... }       // Int  (explicit stderr callback)
 ```
@@ -79,6 +86,13 @@ timeout, use `proc(cmd*)` instead of `run(cmd*)`. It returns a `ProcBuilder` tha
 with a fluent chain before calling `.run()` or `.stream()`:
 
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.17.0
+
+import uni.*
+// doc: compile-only
+
 proc("mvn", "package").cwd("/home/user/myproject").run()
 
 proc("sh", "-c", "echo $SECRET").env(Map("SECRET" -> "s3cr3t")).run()
@@ -90,7 +104,7 @@ proc(bashExe, "-c", "sleep 10").timeout(500L).run().ok  // false — timed out �
 
 ### `ProcBuilder` API
 
-```scala
+```text
 proc(cmd: String*): ProcBuilder          // factory
 
 // configuration (chainable):
@@ -113,7 +127,7 @@ top-level `run` overloads (`!!`, `orFail`, `orElse`).
 
 ## `ProcResult`
 
-```scala
+```text
 case class ProcResult(status: Int, stdout: Seq[String], stderr: Seq[String], cmd: Seq[String])
     extends IndexedSeq[String]:
   def text: String                         // stdout lines joined by "\n"
@@ -136,14 +150,28 @@ potentially long output. They consume the requested lines eagerly, then drain an
 the rest in a background daemon thread — preventing reader threads from blocking:
 
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.17.0
+
+import uni.*
+
 val branch = run("git", "rev-parse", "--abbrev-ref", "HEAD").headOnly
 val top3   = run("git", "log", "--oneline").takeOnly(3)
+println(s"$branch ${top3.size}")
 ```
 
 `orElse` provides a default without the intermediate `Option`:
 
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.17.0
+
+import uni.*
+
 val version = run("git", "describe", "--tags").orElse("unknown")
+println(version)
 ```
 
 ---
@@ -152,14 +180,14 @@ val version = run("git", "describe", "--tags").orElse("unknown")
 
 ### On `ProcResult`
 
-```scala
+```text
 run("git", "log") !! "git log failed"           // ProcResult; logs to stderr on failure
 run("git", "log") orFail "git log failed"        // ProcResult; breaks out of failFast on failure
 ```
 
 ### On `Int` (streaming run exit status)
 
-```scala
+```text
 run("git", "ls-files") { ... } !! "ls-files failed"         // Int; logs on failure
 run("git", "ls-files") { ... } orElse { msg => ... }        // Int; custom handler on failure
 run("git", "ls-files") { ... } orFail "ls-files failed"     // Int; breaks out of failFast
@@ -171,6 +199,13 @@ Wraps a block so that any `.orFail` call inside short-circuits execution on the 
 returning the failing exit status:
 
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.17.0
+
+import uni.*
+// doc: compile-only
+
 failFast {
   run("git", "fetch")                    orFail "fetch failed"
   run("git", "rebase", "origin/main")    orFail "rebase failed"
@@ -202,7 +237,7 @@ the interpreter explicitly.
 
 All three script types work with the same call on both platforms:
 
-```scala
+```text
 run("tools/setup.sh")       // → [bashExe, tools/setup.sh]
 run("tools/analyse.py")     // → [pythonExe, analyse.py]  on Windows
                               // → [tools/analyse.py]        on Linux/macOS
@@ -214,6 +249,13 @@ The `cmd` field in `ProcResult` always shows the post-routing command that was a
 sent to the OS, making routing observable for debugging:
 
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.17.0
+
+import uni.*
+// doc: compile-only
+
 val r = run("tools/analyse.py", "--verbose")
 printf("routing: %s\n", r.cmd.mkString(" "))
 // Linux/macOS: tools/analyse.py --verbose
@@ -224,14 +266,27 @@ printf("routing: %s\n", r.cmd.mkString(" "))
 it explicitly when needed:
 
 ```scala
-run(pythonExe, "-c", "import sys; print(sys.version)")
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.17.0
+
+import uni.*
+// doc: compile-only
+
+run(pythonExe, "-c", "import sys; print(sys.version)").lines.foreach(println)
 ```
 
 When shell features (pipes, globbing, redirects) are genuinely needed, pass `-c`
 explicitly to make the intent visible:
 
 ```scala
-run(bashExe, "-c", "git log --oneline | head -20").lines
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.17.0
+
+import uni.*
+
+run(bashExe, "-c", "git log --oneline | head -20").lines.foreach(println)
 ```
 
 ---
@@ -241,6 +296,13 @@ run(bashExe, "-c", "git log --oneline | head -20").lines
 ### Pattern 1 — streaming, log errors and continue
 
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.17.0
+
+import uni.*
+// doc: compile-only
+
 run("git", "ls-files") { pathstr =>
   run("stat", "-c", "%y", pathstr) { ts =>
     printf("%s : %s\n", ts.take(16), pathstr)
@@ -251,6 +313,13 @@ run("git", "ls-files") { pathstr =>
 ### Pattern 2 — streaming, abort on first error
 
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.17.0
+
+import uni.*
+// doc: compile-only
+
 failFast {
   run("git", "ls-files") { pathstr =>
     run("stat", "-c", "%y", pathstr) { ts =>
@@ -263,6 +332,12 @@ failFast {
 ### Pattern 3 — buffered capture
 
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.17.0
+
+import uni.*
+
 val result = run("git", "log", "--oneline") !! "git log failed"
 result.lines.take(5).foreach(println)
 ```
@@ -270,6 +345,12 @@ result.lines.take(5).foreach(println)
 ### Pattern 4 — happy path only
 
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.17.0
+
+import uni.*
+
 run("git", "rev-parse", "HEAD").toOption.foreach(println)
 ```
 
@@ -279,6 +360,12 @@ run("git", "rev-parse", "HEAD").toOption.foreach(println)
 routing issues (e.g. confirming that `.sh` routing prepended `bashExe`):
 
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.17.0
+
+import uni.*
+
 val r = run("git", "rev-parse", "--abbrev-ref", "HEAD")
 printf("ran: %s  →  %s\n", r.cmd.mkString(" "), r.text.trim)
 ```
@@ -286,6 +373,12 @@ printf("ran: %s  →  %s\n", r.cmd.mkString(" "), r.text.trim)
 ### Pattern 5 — explicit stderr separation
 
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.17.0
+
+import uni.*
+
 val stdoutLines = collection.mutable.ListBuffer.empty[String]
 val stderrLines = collection.mutable.ListBuffer.empty[String]
 run("git", "log", "--oneline", "-5")(
@@ -301,6 +394,13 @@ Unlike `!!` (fixed stderr log) and `orFail` (abort), `orElse` lets the caller su
 logging to a file, accumulating for a summary report, or suppressing:
 
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.17.0
+
+import uni.*
+// doc: compile-only
+
 val failures = collection.mutable.ListBuffer.empty[String]
 run("git", "ls-files") { pathstr =>
   run("stat", pathstr) { _ => () } orElse { msg =>
@@ -315,6 +415,12 @@ if failures.nonEmpty then
 ### Pattern 7 — compose two buffered results
 
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.17.0
+
+import uni.*
+
 val headMsg = run("git", "log", "--format=%s", "-1")
 val prevMsg = run("git", "log", "--format=%s", "-2", "--skip=1")
 (headMsg.toOption, prevMsg.toOption) match
@@ -325,6 +431,12 @@ val prevMsg = run("git", "log", "--format=%s", "-2", "--skip=1")
 ### Pattern 8 — `failFast` across composed dependent steps
 
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.17.0
+
+import uni.*
+
 failFast {
   val branch = run("git", "rev-parse", "--abbrev-ref", "HEAD") orFail "no branch"
   val sha    = run("git", "rev-parse", "--short", "HEAD")      orFail "no sha"
@@ -341,7 +453,7 @@ These values and functions are exported by `import uni.*` alongside `run` and `p
 
 ### Interpreter paths
 
-```scala
+```text
 bashExe: String      // absolute path to bash — resolved once at startup via `where.exe`/`which`
 pythonExe: String    // absolute path to python3 (or python) — resolved at startup
 unameExe: String     // absolute path to uname
@@ -350,14 +462,21 @@ unameExe: String     // absolute path to uname
 Use them when you need to pass the interpreter explicitly rather than relying on implicit routing:
 
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.17.0
+
+import uni.*
+// doc: compile-only
+
 run(bashExe, "-c", "git log --oneline | head -20").lines
 run(pythonExe, "-c", "import sys; print(sys.version)").headOnly
 ```
 
 ### `where` / `whereInPath`
 
-```scala
-where(prog: String): String              // resolves full path via where.exe / which; returns prog unchanged on failure
+```text
+where(prog: String): String              // resolves full path via where.exe / which; throws when prog is not on the PATH
 whereInPath(prog: String): Option[String]  // searches PATH entries directly; None if not found
 ```
 
@@ -366,13 +485,20 @@ that the OS would actually use. `whereInPath` does an in-process `PATH` scan and
 for existence checks without spawning a subprocess:
 
 ```scala
-val bash = where("bash")                          // "/usr/bin/bash" or "C:/msys64/usr/bin/bash.exe"
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.17.0
+
+import uni.*
+
+val bash = where("bash")                          // "/usr/bin/bash", or where.exe's answer on Windows
 val hasPython = Proc.whereInPath("python3").isDefined
+println(s"$bash $hasPython")
 ```
 
 ### Other exported utilities
 
-```scala
+```text
 uname(arg: String = "-a"): String   // runs uname, returns stdout or "" on failure
 isWsl: Boolean                      // true when running inside WSL
 osType: String                      // "windows" | "linux" | "darwin"

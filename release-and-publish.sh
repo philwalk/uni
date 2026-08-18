@@ -181,12 +181,12 @@ sbt clean test
 echo "==> Running Rust lint and tests..."
 (cd rust && make lint && make test)
 
-# 6c. The example code in README.md and docs/*.md must compile — every shebang-led
-#     script block, extracted and compiled with -Wunused:imports -Werror by
-#     checkDocScripts.sh, so a stale example (or a redundant import) cannot ship. The
+# 6c. The example code in README.md and docs/*.md must compile AND run — every ```scala
+#     block is a shebang-led script, extracted, compiled with -Wunused:imports -Werror and
+#     run by checkDocScripts.sh, so a stale example (or a redundant import) cannot ship. The
 #     blocks resolve the dependency at $VERSION, which is not published yet, so the
 #     library is published to the local ivy repo first (cheap after `sbt test`).
-echo "==> Publishing $VERSION locally and compiling the doc scripts..."
+echo "==> Publishing $VERSION locally and compiling+running the doc scripts..."
 sbt publishLocal
 bash checkDocScripts.sh
 

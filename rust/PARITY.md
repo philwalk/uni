@@ -19,6 +19,7 @@ snake_case marks an internal helper or a `try_*` Result variant.
 | `NumPyRNG` | `numpy_rng` (7 fns) | bit-identical `uniform`/`randn`/`next_*` |
 | `Mat[Double]` core — Tier 3 phases (a) + (b) | `udata::mat::MatD`, `udata::mataxis`, `udata::vecexts::{CVecD, RVecD}` | **the strided view model** (`transpose`/`T`, `slice`, `broadcastTo`, and the fragmented-layout materialisation `Internal.create` performs), broadcasting `+ - * /`, `Neg`, the `apply*` gather family, `reshape` `ravel` `matCopy` `copy` `item` `flatten`; reductions `sum` `mean` `min` `max` `argmin` `argmax` `std` `variance` `norm`; axis family `sumAxis` `meanAxis` `minAxis` `maxAxis` `stdAxis` `cumsumAxis` `cummax` `cummin` + `rowSums`/`colSums`/`rowMeans`/`colMeans`; elementwise `abs` `power` `exp` `log` `sqrt` `clip` `cumsum`. **Bit-identical except `exp`/`log`** (see below): `sumD`'s 8-way unrolled combine tree and its pinned 16-chunk decomposition are reproduced exactly, `abs` keeps `-0.0` where `f64::abs` would not, `power` is repeated multiplication rather than `powi`, `cumsum` returns `1×n` whatever the input shape — and, critically, **which summation algorithm a matrix gets is a function of its layout in both languages alike** (see the view-model note below). Phase (c) — `MatMut` writes, `MatBool` masks, fancy indexing, `MatMathOps` (`sin`…`tanh`, `floor`/`ceil`/`trunc`, `log10`/`log2`, `sigmoid`/`relu`/`leakyRelu`/`elu`/`gelu`, `softmax`/`logSoftmax`, `dropout`) — and phase (e)'s `matmul` (`hstack`/`vstack` with it) are in (see below). Phase (e)'s linear algebra is in too — `udata::linalg` (`diagonal` `trace` `normOrd` `determinant` `inverse` `solve` `qrDecomposition` `outer` `cross` `kron` `tril` `triu` `fillna` `cov` `corrcoef`, all bit-identical ports of the Scala loops; `svd` `lstsq`/`leastSquares` `matrixRank` `pinv` `cholesky` as the crate's own Jacobi SVD / Cholesky, pinned to the JVM's LAPACK on a 2^-20 grid) and `udata::eig` (`eig`/`eigenvalues`: EISPACK `orthes`+`hqr2` as JAMA spells it, spectra pinned sorted on the same grid; eigenvectors are a basis, `A·v = λ·v` the only contract). The utility remainder is `udata::matutil`: `maximum`/`minimum` (+`Scalar`; `Ordering[Double]`, i.e. `java_double_compare`, so `minimum(NaN, 1) = 1` as in Scala, not NumPy), `sign` `round` `powerF` `hadamard` `allclose` `containsNaN` `exists` `wherePred` `nanToNum` `ndim` `toContiguous` `zipMap`, `mapRows` `mapCols` `filterRows` `applyAlongAxis` (closures over 1×n / n×1 views), the named broadcast helpers `addToEachRow`… `divEachCol`, `scale`, `repeat`/`repeatAxis`/`tile`, `vsplit`/`hsplit`/`split` (+`N`), `csvText`/`saveCSV`/`writeCsv` (Java `Double.toString` cells). Deliberately not ported: the print configuration (`show`, `precision`, `edgeItems`, `suppressScientific`, `snapshot`, `threshold`, `maxRows`/`maxCols`) — `Debug` prints; `iterator`/`foreach`/`eachRow`/`eachCol`/`typeName`/`shapes`/`isWeirdLayout` — Rust idiom or aliases. Phase (d) is `udata::pandas` — `idxmin idxmax sort argsort nlargest nsmallest between unique nunique valueCounts diff diffAxis shift pct_change percentile median (+Axis) describe rolling(window).{mean sum min max std} histogram histogramEdges`, every ordering under `java_double_compare` and every sort stable, so bits agree — and `udata::signal` — `polyval convolve correlate` (bit-identical), `polyfit` (through `lstsq`, 2^-20 grid). **`Mat` is generic in Rust too now** — `Mat<T>` carries the descriptor, views, slicing, transpose, stacking and gathers; `MatD = Mat<f64>` keeps every numeric method as before (the fixture did not move a bit across the split), and `MatB = Mat<Big>` (`udata::matbig`) adds the exact-decimal numerics and `MatF = Mat<f32>` (`udata::matf`) the single-precision ones — see "Mat[Float]" and "Mat[Big]" below |
 | `MatResult` `groupBy` / `merge` | `upath::matresult` on `CsvTable<f64>` | group keys by `doubleToLongBits` in first-appearance order, aggregates through `MatD` (`sum mean min max std`), joins emit left rows in order then per-row right matches; `_x`/`_y` suffixes and NaN gaps as Scala. Aggregated columns come out in header order on both sides |
+| `uni.plot` (`plot scatter hist bar heatmap boxPlot pairs`, `PlotStyle`) | `uplot` (`MatD::{plot,scatter,hist,bar,heatmap,boxPlot,pairs}` + `*Svg`, `PlotStyle`, option structs) | **byte-identical SVG**: both sides draw the chart themselves — axes, 1/2/5 ticks, bins, quartiles, layout — from constants and `floor(x·100+0.5)` coordinates, no charting library, no font metrics, no `pow`, and its own bit-identical `log10` for the log axis (no libm call at all); 98 `pl.` fixture rows (14 charts × 7 shapes) digest the SVG text. `saveTo` writes `<name>.svg`/`.html`; showing writes a temp page and starts the platform opener, printing the path when it cannot (or `UNI_PLOT_NO_OPEN`). Scala's named parameters are option structs (`PlotOpts` …) here |
 | `Tprf3`, complete | `t3prf` (13 pub fns) | `t3prf_core`, `estimate_3prf_is_full`/`oos_cv`/`oos_rec`, `ols_solve`, `standardize_columns`, and the closed forms: `tprfClosedForm`, `plsClosedForm`, `pls1Fit`, `forecast3prf` |
 | `StringExts` (partial) | `StrExts`/`StrPathExts` | `lc uc posx dropSuffix startsWithIgnoreCase stripPrefix asPath absPath posix` |
 | `uni.cli.ArgsParser` | `cli` | `eachArg`/`showUsage` + cursor helpers (`thisArg consumeNext peekNext nextInt nextLong nextDouble`); prog name from the caller's source file (`#[track_caller]` mirroring the Scala macro) |
@@ -459,13 +460,13 @@ runtime fuses `x*y + z`, is **independent of the machine**; nothing else in the 
 is — an optimised BLAS and `matrixmultiply` pick kernels by CPU feature and thread
 count. (The *reference* BLAS is the exception that proves the rule: its `dgemm` is a
 sequential k-loop per cell and reproduces the pinned bits exactly, as it does on the Linux
-CI box — which is why the sensitivity tests assert against a deliberately reassociated
+CI runner — which is why the sensitivity tests assert against a deliberately reassociated
 kernel rather than against "BLAS differs".) For
 Rust, pure-parallel already beats `matrixmultiply` above 128³, so the pin costs nothing
 against the dependency-free alternative; OpenBLAS is 1.3–2.2× faster and needs the system
 library — a build-time feature a library cannot switch on for its users, so the Rust
 default stays pinned. Scala can choose at runtime, and does what NumPy does: `*@` goes to
-a native BLAS by default (2–4× on large dense products, level with NumPy on every box),
+a native BLAS by default (2–4× on large dense products, level with NumPy on every OS),
 and reproducibility is the opt-in — `-Duni.mat.blas=pure` for a program, `matmulPure` per
 call. Every fixture generator and demo pair calls `matmulPure` explicitly, so the parity
 contract never depends on either language's default.
@@ -554,7 +555,7 @@ Single-threaded the Rust kernel is ~1.2× faster (14.1 vs 16.9 ms — LLVM vecto
 8-wide panels even at SSE2 baseline; C2 keeps the 4×4 register block scalar), and both
 parallel splits scale near-linearly from there (Scala 8.85 → 6.87 → 4.92 → 3.38 → 2.89 → 1.90
 ms at 2/3/5/7/9/24 threads; Rust 7.37 → 5.19 → 3.96 → 3.19 → 2.76 → 1.74 at 2/3/4/6/8/24), so
-the few-core gap seen on the 4-core Linux box is the kernel difference magnified by JVM 17
+the few-core gap seen on the 4-core Linux machine is the kernel difference magnified by JVM 17
 on Skylake, not a split inefficiency. The microkernel is the right choice on the JVM: forcing
 the streaming saxpy path (`-Duni.mat.pure.minKMicro=100000`) is 1.55× slower at 512³.
 Closing the remaining kernel gap needs SIMD, which is the Vector API question below;
@@ -587,7 +588,6 @@ hours, not days.
 
 ## Intentionally no Rust analog (documented, not forgotten)
 
-- `plot` — JVM graphics backend.
 - `cli.Caller` macros — `file!()`/`line!()`/`column!()` are native.
 - `showLimitedStack`/`getLimitedStackTrace` — Rust errors are `Result`; backtraces
   are a different mechanism.

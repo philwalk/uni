@@ -1,7 +1,7 @@
-# uni for Rust — Cheat Sheet
+# uni — Scala | Rust | NumPy Cheat Sheet
 
-Side-by-side reference for the Rust crate (`vastblue-uni`, `use uni::…`) against the Scala
-library it ports and NumPy. It parallels [`docs/MatDCheatSheet.md`](../../docs/MatDCheatSheet.md)
+One row per operation, three columns: the Scala library, the Rust crate that ports it
+(`vastblue-uni`, `use uni::…`), and NumPy. It parallels [`docs/MatDCheatSheet.md`](../../docs/MatDCheatSheet.md)
 section for section, so the two can be read together; every complete example below is
 compiled by `checkRustDocs.sh` (CI and release gate), so what is shown is what builds.
 
@@ -89,8 +89,8 @@ seeded draw is the same number in all three languages.
 | Layout | `m.isContiguous`, `m.transposed` | `m.isContiguous()`, `m.transposed()` | `m.flags` |
 | Reshape | `m.reshape(r, c)` | `m.reshape(r, c)` | `m.reshape(r, c)` |
 | Flatten to a row | `m.ravel` | `m.ravel()` | `m.ravel()` |
-| To a `Vec`/array (row-major) | `m.toArray` / `m.flatten` | `m.toArray()` / `m.flatten()` | `m.ravel().tolist()` |
-| Contiguous copy | `m.copy` / `m.matCopy` | `m.copy()` / `m.matCopy()` | `m.copy()` |
+| To a `Vec`/array (row-major) | `m.toArray`<br>`m.flatten` | `m.toArray()`<br>`m.flatten()` | `m.ravel().tolist()` |
+| Contiguous copy | `m.copy`<br>`m.matCopy` | `m.copy()`<br>`m.matCopy()` | `m.copy()` |
 | 1×1 to scalar | `m.item` | `m.item()` | `m.item()` |
 
 ---
@@ -109,7 +109,7 @@ seeded draw is the same number in all three languages.
 | Both | `m(rows, cols)` | `m.applyIdxIdx(&rows, &cols)` | `m[np.ix_(rows, cols)]` |
 | First / last n rows | `m.head(n)`, `m.tail(n)` | `m.head(n)`, `m.tail(n)` | `m[:n]`, `m[-n:]` |
 | Zero-copy view | `m.slice(rows, cols)` | `m.slice(r0..r1, c0..c1)` (`i64` ranges; a negative start counts from the end) | `m[r0:r1, c0:c1]` |
-| Transpose (O(1) view) | `m.T` | `m.T()` / `m.transpose()` | `m.T` |
+| Transpose (O(1) view) | `m.T` | `m.T()`<br>`m.transpose()` | `m.T` |
 | Broadcast view | `m.broadcastTo(r, c)` | `m.broadcastTo(r, c)` | `np.broadcast_to(m, (r, c))` |
 | Masked elements (1×k row) | `m(mask)` | `m.applyMask(&mask)` | `m[mask]` |
 
@@ -153,7 +153,7 @@ operand stretches to the other's shape.
 | Broadcast a row / column | `m - m.mean(0)` | `&m - &m.meanAxis(0)` | `m - m.mean(0)` |
 | Named broadcast helpers | `m.addToEachRow(v)` … | `m.addToEachRow(&v)`, `subFromEachCol`, `mulEachRow`, `divEachCol` … | — |
 | Hadamard, spelled | `a.hadamard(b)` | `a.hadamard(&b)` | `a * b` |
-| Power | `m ~^ 2` / `m.power(2)` | `m.power(2)` (integer, repeated multiply) / `m.powerF(2.5)` | `m ** 2` |
+| Power | `m ~^ 2`<br>`m.power(2)` | `m.power(2)` (integer, repeated multiply)<br>`m.powerF(2.5)` | `m ** 2` |
 | Combine two matrices with a closure | `a.zipMap(b)(f)` | `a.zipMap(&b, \|x, y\| …)` | `np.vectorize(f)(a, b)` |
 | Clip | `m.clip(lo, hi)` | `m.clip(lo, hi)` | `np.clip(m, lo, hi)` |
 | Round | `m.round(2)` | `m.round(2)` | `np.round(m, 2)` |
@@ -168,7 +168,7 @@ operand stretches to the other's shape.
 
 | Operation | uni Scala | uni Rust | NumPy |
 |---|---|---|---|
-| Product | `a *@ b` / `a.matmul(b)` | `a.matmul(&b)` / `a.dot(&b)` | `a @ b` |
+| Product | `a *@ b`<br>`a.matmul(b)` | `a.matmul(&b)`<br>`a.dot(&b)` | `a @ b` |
 | The pinned loop, whatever the mode | `a.matmulPure(b)` | `a.matmulPure(&b)` | — |
 | BLAS, whatever the mode | `a.matmulBlas(b)` | `a.matmulBlas(&b)` (feature `blas`) | `a @ b` |
 | Outer / Kronecker / cross | `u.outer(v)`, `a.kron(b)`, `u.cross(v)` | `u.outer(&v)`, `a.kron(&b)`, `u.cross(&v)` | `np.outer`, `np.kron`, `np.cross` |
@@ -334,6 +334,28 @@ Scala print configuration (`Mat.setPrintOptions`) has no Rust counterpart.
 
 ---
 
+## Charts (`uni.plot` / `uni::uplot`)
+
+Both sides draw the chart themselves — no charting library — and produce the same SVG
+bytes for the same matrix; `saveTo` writes `<name>.svg` (or `.html`), empty opens the
+default browser. Scala's named parameters are option structs with `Default` in Rust.
+
+| Operation | uni Scala | uni Rust | matplotlib |
+|---|---|---|---|
+| Import | `import uni.plot.*` | `use uni::uplot::{PlotOpts, PlotStyle, …};` | `import matplotlib.pyplot as plt` |
+| Line plot | `m.plot(title = "t", labels = Seq("a", "b"))` | `m.plot(&PlotOpts { title: "t".into(), labels: vec!["a".into(), "b".into()], ..Default::default() })` | `plt.plot(m)` |
+| Scatter, grouped | `m.scatter(0, 1, groupCol = 2)` | `m.scatter(&ScatterOpts { xCol: 0, yCol: 1, groupCol: 2, ..Default::default() })` | `plt.scatter(m[:,0], m[:,1], c=m[:,2])` |
+| Histogram | `m.hist(bins = 20)` | `m.hist(&HistOpts { bins: 20, ..Default::default() })` | `plt.hist(m.ravel(), bins=20)` |
+| Bar | `m.bar(col = 1, labelCol = 0)` | `m.bar(&BarOpts { col: 1, labelCol: 0, ..Default::default() })` | `plt.bar(m[:,0], m[:,1])` |
+| Heatmap | `m.heatmap(rowLabels = names, colLabels = names)` | `m.heatmap(&HeatmapOpts { rowLabels: names.clone(), colLabels: names, ..Default::default() })` | `plt.imshow(m)` |
+| Box plot | `m.boxPlot(labels = names)` | `m.boxPlot(&BoxPlotOpts { labels: names, ..Default::default() })` | `plt.boxplot(m)` |
+| Scatterplot matrix | `m.pairs(labels = names)` | `m.pairs(&PairsOpts { labels: names, ..Default::default() })` | `pd.plotting.scatter_matrix(df)` |
+| Save instead of show | `saveTo = "out/chart"` (→ `out/chart.svg`) | `saveTo: "out/chart".into()` | `plt.savefig("chart.svg")` |
+| The SVG text | `m.plotSvg(...)`, `m.histSvg(...)`, … | `m.plotSvg(&opts)`, `m.histSvg(&opts)`, … | — |
+| Style | `PlotStyle(width = 900, height = 600, xLabel = "x", yLog = true, seriesColors = Seq(Color.RED))` | `PlotStyle { width: 900, height: 600, xLabel: "x".into(), yLog: true, seriesColors: vec![Color::RED], ..Default::default() }` | `plt.figure(figsize=…)`, `plt.yscale("log")` |
+
+---
+
 ## `MatF` and `MatB`
 
 The three element types share one generic core (`Mat<T>`): the same views, slicing,
@@ -346,11 +368,11 @@ transpose, stacking and gathers, with type-specific numerics.
 | Arithmetic | operators | `add`, `sub`, `mul`, `div`, `addScalar`… (methods) | `add`, `sub`, `mul`, `div`, `mulScalar(&Big)`… |
 | Reductions / axis | `sum` … `stdAxis` | same names, single precision | same names, exact decimals |
 | Ordering | `java_double_compare` | `java_float_compare` | `Big::compare` (BigNaN highest) |
-| Masks | IEEE | IEEE (widened through `f64`) | ordering masks false against `BigNaN`; `eqTo`/`hasNaN` recognise it |
+| Masks | IEEE | IEEE (widened through `f64`) | ordering masks false against `BigNaN`; `eqTo` and `hasNaN` recognise it |
 | Matmul | pinned loop / BLAS | pinned loop | sequential exact k-sum |
 | LU | `inverse` `determinant` `solve` | same | same, exact |
 | Convert | — | `toMatD()` | `toMatD()` |
-| Missing | — | decompositions (Double-only in Scala too) | decompositions; `exp`/`log` go through `f64` |
+| Missing | — | decompositions (Double-only in Scala too) | decompositions; `exp` and `log` go through `f64` |
 
 `Big` itself: `Big::parse("12.34")`, `Big::from_i64`, `Big::from_f64` (Java's
 `Double.toString` digits), `add/sub/mul/div/neg/abs/sqrt/pow`, `setScale(2, RoundingMode::HalfEven)`,
@@ -440,11 +462,11 @@ fn main() {
 | `MatF` = `Mat<f32>` | `MatF` = `Mat[Float]` | single precision, `Float.compare` ordering |
 | `MatB` = `Mat<Big>` | `MatB` = `Mat[Big]` | exact decimals, `BigNaN` sentinel |
 | `MatBool` | `Mat[Boolean]` | masks; `&`, `\|`, `!` |
-| `MatMut` | (a mutable `Mat`) | the write phase; `intoMut` / `freeze` |
+| `MatMut` | (a mutable `Mat`) | the write phase: enter with `intoMut`, leave with `freeze` |
 | `CVecD`, `RVecD` | `CVecD`, `RVecD` | column / row vectors, deref to `MatD` |
 | `Big` | `Big` | `java.math.BigDecimal` semantics |
 | `NumPyRng` | `NumPyRNG` | `np.random.default_rng`-identical PCG64 |
-| `CsvTable<T>` | `MatResult[T]` | a matrix with headers; `groupBy`/`merge` on `CsvTable<f64>` |
+| `CsvTable<T>` | `MatResult[T]` | a matrix with headers; `groupBy` and `merge` on `CsvTable<f64>` |
 | `Error` | exceptions | `SingularMatrix`, `DimensionMismatch`, `InvalidInput` for the fallible calls; shape violations panic, as Scala's `require` throws |
 
 ---
@@ -464,6 +486,7 @@ use uni::udata::signal::{convolve, correlate, polyfit, polyval, ConvMode};
 use uni::udata::{Big, CVecD, MatB, MatBool, MatD, MatF, RVecD};
 use uni::udata::big::RoundingMode;
 use uni::upath::{AggOp, CsvTable, JoinType};
+use uni::uplot::{BarOpts, BoxPlotOpts, Color, HeatmapOpts, HistOpts, PairsOpts, PlotOpts, PlotStyle, ScatterOpts};
 
 fn main() {
     let mut rng = NumPyRng::new(7);
@@ -596,6 +619,18 @@ fn main() {
     let sig = (polyval(&coeffs, &ar), convolve(&row, &row, ConvMode::Same), correlate(&row, &row, ConvMode::Full));
     // display and CSV
     let text = (format!("{m:?}"), m.csvText(",", "NaN"));
+    // charts: the *Svg twins render without touching a file or a browser
+    let names = vec!["a".to_owned(), "b".to_owned(), "c".to_owned()];
+    let style = PlotStyle { width: 600, height: 400, xLabel: "x".into(), seriesColors: vec![Color::RED], ..Default::default() };
+    let charts = (
+        m.plotSvg(&PlotOpts { title: "t".into(), labels: names.clone(), style, ..Default::default() }).len(),
+        m.scatterSvg(&ScatterOpts { xCol: 0, yCol: 1, groupCol: 2, ..Default::default() }).len(),
+        m.histSvg(&HistOpts { bins: 5, ..Default::default() }).len(),
+        m.barSvg(&BarOpts { col: 1, labelCol: 0, ..Default::default() }).len(),
+        m.heatmapSvg(&HeatmapOpts { rowLabels: names.clone(), colLabels: names.clone(), ..Default::default() }).len(),
+        m.boxPlotSvg(&BoxPlotOpts { labels: names.clone(), ..Default::default() }).len(),
+        m.pairsSvg(&PairsOpts { labels: names, ..Default::default() }).len(),
+    );
     // MatF and MatB
     let mf = MatF::fromMatD(&m);
     let mff = (mf.sum(), mf.meanAxis(0), mf.matmul(&mf.T()), mf.gt(2.0), mf.sort(), mf.toMatD(), MatF::eye(2), MatF::row(&[1.0, 2.0]));
@@ -622,6 +657,6 @@ fn main() {
     println!("{:?}", (lsq.rank, pr.1, wr.len(), wi.len(), v.shape(), ev.len(), ch.shape(), cc.0.shape()));
     println!("{:?}", (pd.0.shape(), un.1, df.0.shape(), pc.0, labels.len(), desc.shape(), ix.0.shape(), roll.0.shape()));
     println!("{:?}", (hg.0 .0.len(), grouped.0.headers.len(), coeffs.shape(), sig.0.shape(), text.1.len()));
-    println!("{:?}", (mff.0, mbb.0, big, back.shape(), el));
+    println!("{:?}", (mff.0, mbb.0, big, back.shape(), el, charts.0 > 0));
 }
 ```

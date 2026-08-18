@@ -13,6 +13,60 @@ the masks (`gt lt gte lte eqTo neTo hasNaN`, `applyMask`), `matmul`, LU
 `Big` arithmetic, so results agree to the last decimal digit and scale; 293 `bm.*` fixture
 rows pin them as `BigDecimal.toString` text, a NaN-injected variant alongside.
 
+**CHANGED — `uni.plot` renders SVG itself and opens the browser; the Rust crate has the same charts, byte for byte**
+
+`plot`, `scatter`, `hist`, `bar`, `heatmap`, `boxPlot` and `pairs` keep their names and
+parameters but no longer go through XChart or AWT: the library draws the SVG (axes, 1/2/5
+ticks, bins, quartiles, layout) and either writes it — `saveTo` now yields `<name>.svg`, or
+a page when it ends in `.html` — or writes a temp page and opens the default browser. Each
+method has a `*Svg` twin returning the text (`plotSvg`, `histSvg`, …). Headless runs never
+fail: with no opener, or `UNI_PLOT_NO_OPEN` set, the page's path is printed. `PlotStyle` is
+unchanged (`seriesColors` on a heatmap become the gradient stops); log axes apply to `plot`
+and `scatter`. The XChart renderer remains for one release as `uni.plot.xchart` (PNG,
+Swing windows) and will be removed with its dependency.
+
+The Rust crate gains `uni::uplot` — `MatD::{plot, scatter, hist, bar, heatmap, boxPlot,
+pairs}` and the `*Svg` twins, `PlotStyle`, `Color`, `Font`, and one option struct per chart
+(`PlotOpts` … with `Default`) in place of Scala's named parameters — producing the **same
+SVG bytes** for the same matrix: coordinates through `floor(x·100+0.5)`, tick labels
+through integer arithmetic, decades by repeated ×10, no font metrics, no `pow`, and the
+log axis through the renderer's own `log10` (bit-exact exponent split, odd-power series,
+Cody–Waite ln 2), so no libm call is made on either side. 98 new
+`pl.` fixture rows (14 charts × 7 shapes, FNV of the SVG text) pin it in
+`MatParitySuite`/`mat_parity`; `-Duni.plot.dump=<dir>` (Scala) and `UNI_PLOT_DUMP=<dir>`
+(Rust) write every SVG for a diff. `PlotSvgSuite` and the Rust unit tests pin the primitives
+by value. Docs: `PlotGuide.md` rewritten for the new delivery, Charts sections in both quick
+starts and the cheat sheet, `PARITY.md` row; `plot` leaves the "no Rust analog" list.
+
+**CHANGED — docs split: `docs/MatDBenchmarks.md` and `docs/BreezeComparison.md`**
+
+The migration table, the MatD | Breeze column pair for every cheat-sheet section (97 rows),
+and the three benchmark tables against Breeze now live in one page for readers coming
+from Breeze. The NumPy | Scala | Rust tables and the regeneration recipe move to
+`docs/MatDBenchmarks.md`, so `MatDCheatSheet.md` is the cheat sheet from its first line —
+MatD | NumPy | R | MATLAB; the README's core-operations section carries the current
+three-language geometric means and points at all three pages.
+
+**CHANGED — Scala docs: every ```scala block is a complete script, and the doc gate runs them**
+
+README.md and docs/*.md carried 74 code fragments — snippets that named values set up in
+the prose and could not be pasted into a terminal. Every one is now a complete
+scala-cli script (134 in total; the two `using dep`/`libraryDependencies` lines are the
+only ```scala blocks that are not), or a ```text block where it was a signature listing or
+a deliberately non-compiling snippet. `checkDocScripts.sh` now RUNS each script after
+compiling it (125 of the 134; `// doc: compile-only` marks the nine that need a display,
+python, or would mutate a repository, `// doc: args` feeds CLI-style examples), in CI and
+as release gate 6c. Running found what compiling could not: `QuickStartGuide` fancy-indexed
+row 2 of a 2-row matrix; its "extract a scalar" example called `.item` on a `Double`
+(`diagonal.sum` returns a scalar); `BigTypeGuide` said `compare` returns 0 against `BigNaN`
+(it ranks the sentinel highest); the `loadSmart` examples read a `data.csv` that did not
+exist (they now write it first) — the harness verified every `// expected` comment against
+the actual output. The plot examples save PNGs instead of opening windows, so they run
+headless. The README opens with an eight-row Scala | Rust | NumPy excerpt and a Documentation
+table, cheat sheet first (`rust/docs/RustCheatSheet.md`, retitled as the three-language
+sheet; `docs/CheatSheet.md` points at it); cheat-sheet cells that showed two equivalent
+expressions joined by ` / ` now stack them, so the slash is never read as division.
+
 **ADDED — Rust documentation: quick start, cheat sheet, scripting guide — every example compiled**
 
 The crate had 85 lines of README against the Scala library's 4,600 lines of guides. Three
@@ -45,12 +99,12 @@ one agreed on the first run.
 
 `map_elems`/`bin_op` let rayon split a 1M-element map into small pieces across every
 thread; a memory-bound streaming pass wants long contiguous runs instead — on the 24-core
-Windows box `add`/`abs`/`exp` read 1.05–1.14 ms that way. A parallel task now takes at
+Windows machine `add`/`abs`/`exp` read 1.05–1.14 ms that way. A parallel task now takes at
 least 64K elements (`ELEMENTWISE_MIN_LEN`), so a 1M map is 16 contiguous chunks: `add`
 1.05 → 0.53 ms, `abs` 1.07 → 0.54, `exp` 1.14 → 0.62, `relu` 1.10 → 0.55 — ahead of the
 JVM on those rows now. Above ~4M elements the pass is at memory bandwidth and the
 granularity no longer matters (2000², 4000² unchanged), so this needs no core count and
-is neutral on few-core boxes. Bits are unchanged (elementwise). The allocator was tried
+is neutral on few-core machines. Bits are unchanged (elementwise). The allocator was tried
 and ruled out (mimalloc: ~5%).
 
 **ADDED — `MatB` and `MatD` as each other's second opinion: `MatBigVsDoubleSuite` / `matb_vs_matd`**

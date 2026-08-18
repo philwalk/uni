@@ -41,8 +41,15 @@ val d4 = parseDate("Thu, 14 Mar 2024 15:30:00 -0700")
 **Interop with `java.time` is implicit.** A `UniDateTime` converts to a `LocalDateTime` wherever one is expected, and back again, so passing a parsed date to a `java.time` API needs no ceremony:
 
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.17.0
+
+import uni.time.*
+
 val ldt: java.time.LocalDateTime = parseDate("2024-03-14")   // conversion applies
 val back: DateTime = java.time.LocalDateTime.now()           // and in reverse
+println(s"$ldt ${back.isValid}")   // 2024-03-14T00:00 true
 ```
 
 Applying the conversion emits a *feature warning* under `-feature`, never an error. To avoid it, prefer uni's own constructors — `DateTime.of(y, m, d)` rather than `java.time.LocalDateTime.of(y, m, d, 0, 0, 0)`.
@@ -52,11 +59,21 @@ Applying the conversion emits a *feature warning* under `-feature`, never an err
 The alias carries a matching object, so the familiar static calls work:
 
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.17.0
+
+import uni.time.*
+
+val instant = java.time.Instant.parse("2024-03-14T15:30:00Z")
+val zone    = java.time.ZoneId.of("UTC")
 DateTime.now()                       // current moment
 DateTime.of(2024, 3, 14)             // time fields default to zero
 DateTime.of(2024, 3, 14, 15, 30, 0)
 DateTime.ofInstant(instant, zone)
 DateTime.parse("Aug 18 22:29:47 2018")   // uni's lenient parser, not ISO-only
+println(s"${DateTime.of(2024, 3, 14)} ${DateTime.of(2024, 3, 14, 15, 30, 0)} ${DateTime.ofInstant(instant, zone)} ${DateTime.parse("Aug 18 22:29:47 2018")}")
+// 2024-03-14T00:00 2024-03-14T15:30 2024-03-14T15:30 2018-08-18T22:29:47
 ```
 
 `DateTime.of` yields `BadDate` where `java.time.LocalDateTime.of` would throw. `TimeUtils.now` is also available unqualified as `now` (no parens — that spelling is historical).
@@ -66,10 +83,20 @@ DateTime.parse("Aug 18 22:29:47 2018")   // uni's lenient parser, not ISO-only
 `parseDate` is total. Unparseable input yields `BadDate`; empty input yields `EmptyDate`. That is what makes it usable across a CSV column without wrapping every cell in a `Try`.
 
 ```scala
-val d = parseDate(cell)
-if d == BadDate then handleBadRow() else use(d)
-// or
-if !d.isValid then handleBadRow()
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.17.0
+
+import uni.time.*
+
+def handleBadRow(): Unit = println("bad row")
+def use(d: DateTime): Unit = println(s"using $d")
+
+for cell <- Seq("2024-03-14", "not a date") do
+  val d = parseDate(cell)
+  if d == BadDate then handleBadRow() else use(d)
+  // or
+  if !d.isValid then handleBadRow()
 ```
 
 Three properties worth knowing:
@@ -85,12 +112,18 @@ Three properties worth knowing:
 ## Formatting
 
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.17.0
+
+import uni.time.*
+
 val d = parseDate("2024-03-14 15:30:45")
-d.ymd                      // 2024-03-14
-d.ymdhms                   // 2024-03-14 15:30:45
-d.fmt("yyyyMMdd")          // 20240314
-d.toString("MMM d, yyyy")  // Mar 14, 2024
-d.toString                 // 2024-03-14T15:30:45   (ISO, seconds omitted when zero)
+println(d.ymd)                      // 2024-03-14
+println(d.ymdhms)                   // 2024-03-14 15:30:45
+println(d.fmt("yyyyMMdd"))          // 20240314
+println(d.toString("MMM d, yyyy"))  // Mar 14, 2024
+println(d.toString)                 // 2024-03-14T15:30:45   (ISO, seconds omitted when zero)
 ```
 
 Pattern letters: `y` year, `M` month, `d` day, `H` hour (0-23), `h` hour (1-12), `m` minute, `s` second, `S` fraction, `a` AM/PM, `E` day of week. Repeat count sets width as in Java (`M`=3, `MM`=03, `MMM`=Mar, `MMMM`=March). Text in single quotes is literal.
@@ -105,16 +138,26 @@ Two deliberate differences from `DateTimeFormatter.ofPattern`:
 The usual shifts are available and return a `DateTime`, so results compose:
 
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.17.0
+
+import uni.time.*
+
+val d    = parseDate("2024-03-14 15:30:45")   // a Thursday
+val inst = java.time.Instant.parse("2024-03-14T15:30:00Z")
 d.plusDays(7); d.minusWeeks(2); d.plusMonths(1); d.plusYears(1)
 d.withDayOfMonth(1); d.withHour(0)
 d.atStartOfDay(); d.lastDayOfMonth
 d.withDayOfWeek(java.time.DayOfWeek.FRIDAY)   // the NEXT such day
 d.dayOfWeekNum                                 // 1 = Monday .. 7 = Sunday
-d.dayOfWeekName                                // "Sun"    (three-letter, always English)
-d.dayOfWeekFull                                // "Sunday"
+d.dayOfWeekName                                // "Thu"    (three-letter, always English)
+d.dayOfWeekFull                                // "Thursday"
 d.toEpochDay                                   // days since 1970-01-01
 DateTime.ofInstant(inst)
 UniDateTime.ofEpochDay(19800)
+println(s"${d.plusDays(7).ymd} ${d.lastDayOfMonth.ymd} ${d.withDayOfWeek(java.time.DayOfWeek.FRIDAY).ymd} ${d.dayOfWeekNum} ${d.dayOfWeekName} ${d.dayOfWeekFull} ${d.toEpochDay} ${UniDateTime.ofEpochDay(19800).ymd}")
+// 2024-03-21 2024-03-31 2024-03-15 4 Thu Thursday 19796 2024-03-18
 ```
 
 Month arithmetic clamps to the shorter month, as `java.time` does: January 31st plus one month is February 28th or 29th. An impossible result yields `BadDate` rather than throwing.
@@ -168,9 +211,15 @@ Because these scopes use `scala.util.DynamicVariable`, they are **thread-safe**.
 `withDateOrder` holds to one convention instead:
 
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.17.0
+
+import uni.time.*
+
 withDateOrder(DateOrder.DayFirst) {
-  parseDate("04/12/1992")   // => 1992-12-04, day-first even though unambiguous
-  parseDate("12/04/1992")   // => 1992-04-12
+  println(parseDate("04/12/1992").ymd)   // 1992-12-04, day-first even though unambiguous
+  println(parseDate("12/04/1992").ymd)   // 1992-04-12
 }
 ```
 
@@ -220,7 +269,7 @@ A stated UTC offset (`-0700`, or a trailing `Z`) is captured in `offsetMinutes` 
 
 **`==` across the two date types is silently `false`.** `==` takes `Any`, so no conversion applies and the compiler says nothing:
 
-```scala
+```text
 val d: DateTime = parseDate(s)
 if d == java.time.LocalDateTime.of(1900, 1, 2, 3, 4, 5) then ...   // always false
 ```
@@ -229,7 +278,7 @@ Keep both sides on `DateTime`. Comparing against `BadDate`/`EmptyDate` is safe b
 
 **A `java.time.LocalDateTime` written in a generic position will not convert.** A conversion applies to a value, never through a type constructor:
 
-```scala
+```text
 val ok: Seq[java.time.LocalDateTime] = lines.map(parseDate)   // fine: inference pushes inward
 val xs = lines.map(parseDate)
 val no: Seq[java.time.LocalDateTime] = xs                     // error: Seq[UniDateTime]

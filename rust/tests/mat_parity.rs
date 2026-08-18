@@ -57,6 +57,16 @@ use uni::udata::signal::convolve;
 use uni::udata::signal::correlate;
 use uni::udata::signal::polyfit;
 use uni::udata::signal::polyval;
+use uni::uplot::BarOpts;
+use uni::uplot::BoxPlotOpts;
+use uni::uplot::Color;
+use uni::uplot::Font;
+use uni::uplot::HeatmapOpts;
+use uni::uplot::HistOpts;
+use uni::uplot::PairsOpts;
+use uni::uplot::PlotOpts;
+use uni::uplot::PlotStyle;
+use uni::uplot::ScatterOpts;
 
 /// A fixture row's first field: a 1-D prefix length, a 2-D `<rows>x<cols>`, or an
 /// `adv/<name>/<orientation>` ordering case.
@@ -577,6 +587,151 @@ fn fnv_f(xs: &[f32]) -> u64 {
     fnv_words(xs.iter().map(|&f| fbits(f)))
 }
 
+/// The `uni.plot` rows — `MatParityGen.plotCases`: each chart's SVG text, digested as
+/// UTF-8. `UNI_PLOT_DUMP=<dir>` writes every SVG for a diff against the Scala side's
+/// `-Duni.plot.dump`.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one match arm per fixture row, each spelling the Scala call in full"
+)]
+fn case_word_plot(m: &MatD, me: &MatD, label: &str) -> u64 {
+    let cols = me.cols();
+    let yc = if cols > 1 { 1 } else { 0 };
+    let ri = |n: usize| i64::try_from(n).expect("shape fits i64");
+    let strs = |xs: &[&str]| xs.iter().map(|s| (*s).to_owned()).collect::<Vec<String>>();
+    let grouped = {
+        let mut w = me.copy().intoMut();
+        for i in 0..me.rows() {
+            w.updateAt(i, cols - 1, me.at(i, cols - 1).floor());
+        }
+        w.freeze()
+    };
+    let dark = PlotStyle {
+        width: 640,
+        height: 400,
+        background: Some(Color::BLACK),
+        plotBackground: Some(Color::rgb(30, 30, 30)),
+        foreground: Some(Color::WHITE),
+        seriesColors: vec![Color::RED, Color::rgb(0, 200, 0)],
+        xLabel: "row".to_owned(),
+        yLabel: "value".to_owned(),
+        ..PlotStyle::default()
+    };
+    let logs = PlotStyle {
+        width: 700,
+        height: 450,
+        xLog: true,
+        yLog: true,
+        xLabel: "log x".to_owned(),
+        yLabel: "log y".to_owned(),
+        ..PlotStyle::default()
+    };
+    let few = me.slice(0..ri(me.rows()), 0..ri(cols.min(5)));
+    let svg = match label {
+        "pl.plot" => me.plotSvg(&PlotOpts {
+            title: "plot".to_owned(),
+            labels: strs(&["a", "b"]),
+            ..PlotOpts::default()
+        }),
+        "pl.plotdark" => me.plotSvg(&PlotOpts {
+            style: dark,
+            ..PlotOpts::default()
+        }),
+        "pl.plotlog" => me.abs().plotSvg(&PlotOpts {
+            title: "log-log".to_owned(),
+            style: logs,
+            ..PlotOpts::default()
+        }),
+        "pl.plotbig" => m.plotSvg(&PlotOpts {
+            title: "mixed magnitudes".to_owned(),
+            ..PlotOpts::default()
+        }),
+        "pl.scatter" => me.scatterSvg(&ScatterOpts {
+            xCol: 0,
+            yCol: yc,
+            title: "scatter".to_owned(),
+            ..ScatterOpts::default()
+        }),
+        "pl.scatterg" => grouped.scatterSvg(&ScatterOpts {
+            xCol: 0,
+            yCol: yc,
+            groupCol: ri(cols - 1),
+            title: "grouped".to_owned(),
+            style: PlotStyle {
+                width: 600,
+                height: 600,
+                xLabel: "x".to_owned(),
+                yLabel: "y".to_owned(),
+                ..PlotStyle::default()
+            },
+            ..ScatterOpts::default()
+        }),
+        "pl.hist" => me.histSvg(&HistOpts {
+            bins: 7,
+            title: "hist".to_owned(),
+            ..HistOpts::default()
+        }),
+        "pl.histbig" => m.histSvg(&HistOpts {
+            bins: 5,
+            ..HistOpts::default()
+        }),
+        "pl.bar" => me.barSvg(&BarOpts {
+            col: 0,
+            labelCol: if cols > 1 { 1 } else { -1 },
+            title: "bar".to_owned(),
+            ..BarOpts::default()
+        }),
+        "pl.heatmap" => me.heatmapSvg(&HeatmapOpts {
+            title: "heat".to_owned(),
+            rowLabels: strs(&["r0", "r1"]),
+            colLabels: strs(&["c0"]),
+            ..HeatmapOpts::default()
+        }),
+        "pl.heatstops" => me.heatmapSvg(&HeatmapOpts {
+            style: PlotStyle {
+                width: 500,
+                height: 400,
+                seriesColors: vec![Color::rgb(8, 48, 107), Color::rgb(247, 251, 255)],
+                ..PlotStyle::default()
+            },
+            ..HeatmapOpts::default()
+        }),
+        "pl.box" => me.boxPlotSvg(&BoxPlotOpts {
+            title: "box".to_owned(),
+            labels: strs(&["a"]),
+            ..BoxPlotOpts::default()
+        }),
+        "pl.pairs" => few.pairsSvg(&PairsOpts {
+            labels: strs(&["a", "b", "c"]),
+            bins: 6,
+            dotSize: 2,
+            scatterAlpha: 120,
+            style: PlotStyle::sized(900, 900),
+            ..PairsOpts::default()
+        }),
+        "pl.pairsflat" => few.pairsSvg(&PairsOpts {
+            bins: 4,
+            dotSize: 4,
+            color: Color::rgb(200, 30, 30),
+            scatterAlpha: 255,
+            labelStyle: Font::ITALIC,
+            style: PlotStyle::sized(640, 480),
+            ..PairsOpts::default()
+        }),
+        other => panic!("unknown uni.plot case {other}"),
+    };
+    if let Some(dir) = std::env::var_os("UNI_PLOT_DUMP") {
+        let dir = PathBuf::from(dir);
+        fs::create_dir_all(&dir).expect("dump dir");
+        fs::write(
+            dir.join(format!("{}x{}_{label}.svg", me.rows(), me.cols())),
+            &svg,
+        )
+        .expect("dump write");
+    }
+    fnv_str(&svg)
+}
+
 /// The `Mat[Float]` rows — `MatParityGen.floatCases`.
 fn case_word_float(me: &MatD, label: &str) -> u64 {
     let (rows, cols) = me.shape();
@@ -662,6 +817,8 @@ fn case_word_matrix(m: &MatD, me: &MatD, label: &str) -> u64 {
         case_word_big(me, label)
     } else if label.starts_with("mf.") {
         case_word_float(me, label)
+    } else if label.starts_with("pl.") {
+        case_word_plot(m, me, label)
     } else {
         case_word_2d(m, label)
     }
@@ -1084,6 +1241,7 @@ fn assert_coverage(rows: &[(String, String, u64)]) {
     });
     let bigs = count(&|s, l| matches!(s, Shape::Matrix(..)) && l.starts_with("bm."));
     let floats = count(&|s, l| matches!(s, Shape::Matrix(..)) && l.starts_with("mf."));
+    let plots = count(&|s, l| matches!(s, Shape::Matrix(..)) && l.starts_with("pl."));
 
     // Guard against a fixture that silently shrinks to nothing meaningful. Each count is
     // asserted separately because the three groups pin different things, and losing any
@@ -1133,5 +1291,9 @@ fn assert_coverage(rows: &[(String, String, u64)]) {
     assert!(
         floats >= 250,
         "only {floats} Mat[Float] rows; single precision would go unchecked"
+    );
+    assert!(
+        plots >= 90,
+        "only {plots} uni.plot rows; the SVG renderer would go unchecked"
     );
 }

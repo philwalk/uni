@@ -1,4 +1,4 @@
-//! Rust half of the MatD benchmark tables in `docs/MatDCheatSheet.md`.
+//! Rust half of the MatD benchmark tables in `docs/MatDBenchmarks.md`.
 //!
 //! Counterpart to `jsrc/bench.sc` (Scala) and `py/bench.py` (NumPy). All three run the
 //! same operations at the same sizes on inputs drawn from the same PCG64 sequence, and

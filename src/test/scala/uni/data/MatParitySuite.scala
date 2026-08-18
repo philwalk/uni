@@ -57,6 +57,7 @@ class MatParitySuite extends munit.FunSuite:
       case "sg"   => uni.apps.MatParityGen.signalCases(me).toMap
       case "bm"   => uni.apps.MatParityGen.bigCases(me).toMap
       case "mf"   => uni.apps.MatParityGen.floatCases(me).toMap
+      case "pl"   => uni.apps.MatParityGen.plotCases(m, me).toMap
       case _      =>
         uni.apps.MatParityGen.cases2d(m).toMap.map((k, v) => k -> bits(v)) ++
           uni.apps.MatParityGen.wordCases2d(m).toMap
@@ -143,6 +144,8 @@ class MatParitySuite extends munit.FunSuite:
     assert(bigs >= 250, s"only $bigs Mat[Big] rows; the exact-decimal matrix would go unchecked")
     val floats = rows.count((_, label, _) => label.startsWith("mf."))
     assert(floats >= 250, s"only $floats Mat[Float] rows; single precision would go unchecked")
+    val plots = rows.count((_, label, _) => label.startsWith("pl."))
+    assert(plots >= 90, s"only $plots uni.plot rows; the SVG renderer would go unchecked")
     val maths = rows.count((_, label, _) => label.startsWith("math."))
     assert(maths >= 250, s"only $maths MatMathOps rows; the elementwise math formulas would go unchecked")
   }

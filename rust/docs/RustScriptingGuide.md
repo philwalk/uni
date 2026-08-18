@@ -50,7 +50,7 @@ travels rather than an exception, and `badPathString()` recovers the original te
 
 ### Tested environments
 Windows 11 (MSYS2 UCRT64, Git Bash), WSL2 Ubuntu, Ubuntu 24.04, macOS (Apple Silicon) — the
-same boxes the Scala side runs on; `jsrc/pairProbe.sc` ↔ `rust/examples/pair_probe.rs` runs
+same operating systems the Scala side runs on; `jsrc/pairProbe.sc` ↔ `rust/examples/pair_probe.rs` runs
 ~50 path operations on a fixed tree in both languages and diffs the output.
 
 ---
@@ -105,7 +105,7 @@ fn main() {
 | `p.lastModifiedTime`, `p.lastModDaysAgo`, `p.ago` | same names (UTC) |
 | `p.paths`, `p.files`, `p.subdirs`, `p.pathsTree`, `p.walkIter` | same names |
 | `p.mkdirs`, `p.delete`, `p.copyTo(dest)`, `p.renameTo(dest)` | `mkdirs()`, `delete()`, `copyTo(&dest, overwrite, copyAttributes)` → `Option`, `renameTo(&dest, overwrite)` |
-| exception on failure | `bool` / `Option`; the `try_*` forms return `io::Result` |
+| exception on failure | `bool` or `Option`; the `try_*` forms return `io::Result` |
 
 ---
 
@@ -274,7 +274,7 @@ fn main() {
 |---|---|---|
 | Paths | `uni.*` (`Paths.get`, `asPath`, `Path` extensions) | `uni::upath` — `UPath`, `StrPathExts` |
 | Line / text I/O, CSV rows | `uni.io`, `Path` extensions | `uni::upath::{io, csv}` on `UPath` |
-| Matrices from CSV, named tables | `loadMatD`, `loadSmartD`, `MatResult` | `uni::upath::matcsv` — `loadMatD`, `loadSmartD`, `CsvTable`; `matresult` — `groupBy`/`merge` |
+| Matrices from CSV, named tables | `loadMatD`, `loadSmartD`, `MatResult` | `uni::upath::matcsv` — `loadMatD`, `loadSmartD`, `CsvTable`; `matresult` — `groupBy`, `merge` |
 | Dates | `uni.time` | `uni::utime` — `UniDateTime`, `smartparse`, `timeutils` |
 | Exact decimals | `uni.data.Big`, `BigUtils` | `uni::udata::{Big, bigutils}` |
 | Matrices | `uni.data.Mat*` | `uni::udata::{MatD, MatF, MatB, MatBool}` — see the cheat sheet |

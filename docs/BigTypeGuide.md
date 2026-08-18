@@ -6,7 +6,17 @@ It provides `BigDecimal`-level precision with two practical additions: a `BigNaN
 At runtime there is no wrapping — a `Big` value *is* a `BigDecimal`.
 
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.17.0
+
 import uni.data.*   // brings in Big, big, BigNaN, MatB, and all conversions
+
+val price: Big  = Big("19.99")
+val qty         = big(3)              // `big` builds from Int/Long/Double/String too
+val nan         = BigNaN
+val m: MatB     = MatB.zeros(2, 2)
+println(s"${price * qty} ${nan == BigNaN} ${m.shape}")
 ```
 
 ---
@@ -21,10 +31,17 @@ Standard `BigDecimal` has no NaN — dividing by zero or parsing a bad string th
 - `toDouble` / `toFloat` return `Double.NaN` / `Float.NaN` for `BigNaN`.
 
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.17.0
+
+import uni.data.*
+
 val bad = BigNaN
 val x   = bad + 1.0    // BigNaN
 val y   = x > 0        // false
 val d   = bad.toDouble // Double.NaN
+println(s"${x == BigNaN} $y ${d.isNaN}")
 ```
 
 ---
@@ -69,15 +86,28 @@ All constants are available after `import uni.data.*`:
 ## Pattern Matching
 
 ```scala
-// Value extractor — does NOT match BigNaN (unapply returns None)
-n match
-  case Big(v) => println(s"valid: $v")
-  case _      => println("was BigNaN")
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-// Type pattern — matches any Big, including BigNaN
-(x: Any) match
-  case b: Big => println(s"some Big: $b")
-  case _      => println("not a Big")
+//> using dep org.vastblue:uni_3:0.17.0
+
+import uni.data.*
+
+def describe(n: Big): String =
+  // Value extractor — does NOT match BigNaN (unapply returns None)
+  n match
+    case Big(v) => s"valid: $v"
+    case _      => "was BigNaN"
+
+def kind(x: Any): String =
+  // Type pattern — matches any Big, including BigNaN
+  x match
+    case b: Big => s"some Big: $b"
+    case _      => "not a Big"
+
+println(describe(Big("2.5")))   // valid: 2.5
+println(describe(BigNaN))       // was BigNaN
+println(kind(BigNaN))           // some Big: …
+println(kind("text"))           // not a Big
 ```
 
 The `TypeTest[Any, Big]` given instance makes the type pattern work at runtime
@@ -100,18 +130,33 @@ Every binary operator accepts `Big`, `Int`, `Long`, and `Double` on the right-ha
 `+ Big`, `- Big`, and `/ Big` without relying on implicit conversions:
 
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.17.0
+
+import uni.data.*
+
 val x = big("10.0")
 val a = 3     * x    // Int    * Big
 val b = 2.0   * x    // Double * Big
 val c = 100L  / x    // Long   / Big
+println(s"$a $b $c")   // 30.0 20.00 1E+1  (BigDecimal keeps the quotient's scale)
 ```
 
 **Power and roots:**
 
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.17.0
+
+import uni.data.*
+
+val b = Big("2.5")
 val squared   = b ~^ 2        // integer exponent — full BigDecimal precision
 val cubeRoot  = b ~^ (1.0/3)  // fractional exponent — Double precision fallback
 val sqrtExact = b.sqrt         // square root via DECIMAL128; BigNaN for a negative
+println(s"$squared $cubeRoot $sqrtExact ${Big(-1).sqrt == BigNaN}")
 ```
 
 **Other numeric methods:**
@@ -127,14 +172,25 @@ val sqrtExact = b.sqrt         // square root via DECIMAL128; BigNaN for a negat
 
 ## Comparisons
 
-All comparisons return `false` if either operand is `BigNaN`.
+The ordering operators (`<`, `<=`, `>`, `>=`) return `false` if either operand is `BigNaN`;
+`compare` ranks the sentinel above every number and equal to itself, as `Double.compare`
+does for NaN, so sorting, `min` and `max` behave as for doubles.
 The right-hand side can be `Big`, `Double`, `Long`, or `Int`.
 
 ```scala
-b1 < b2         // Big vs Big
-b1 >= 100.0     // Big vs Double
-b1 > 0          // Big vs Int
-b1.compare(b2)  // Int: negative/0/positive; 0 if either is BigNaN
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.17.0
+
+import uni.data.*
+
+val b1 = Big("12.5"); val b2 = Big("100")
+println(b1 < b2)         // Big vs Big
+println(b1 >= 100.0)     // Big vs Double
+println(b1 > 0)          // Big vs Int
+println(b1.compare(b2))  // Int: negative/0/positive; BigNaN ranks above every number
+println(BigNaN > b1)     // false: ordering operators are false against the sentinel
+println(BigNaN.compare(b1) > 0 && BigNaN.compare(BigNaN) == 0)   // …but compare orders it last
 ```
 
 ---
@@ -187,8 +243,14 @@ b1.compare(b2)  // Int: negative/0/positive; 0 if either is BigNaN
 Custom `NumFormat`:
 
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.17.0
+
+import uni.data.*
+
 val fmt = NumFormat(colWidth = 12, dec = 4, factor = 100.0, suffix = "%")
-println(BigUtils.numStr(big("0.1234"), fmt))  // "      12.3400%"
+println(numStr(big("0.1234"), fmt))  // "     12.3400%"
 ```
 
 ---
@@ -199,14 +261,18 @@ println(BigUtils.numStr(big("0.1234"), fmt))  // "      12.3400%"
 for messy CSV/spreadsheet data.
 
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.17.0
+
 import uni.data.*
 
-getMostSpecificType("$1,234.56")  // Big(1234.56)
-getMostSpecificType("(500.00)")   // Big(-500.00)   ← accounting negative
-getMostSpecificType("7.5K")       // Big(7500)
-getMostSpecificType("12.5%")      // Big(0.125)
-getMostSpecificType("2024-01-15") // DateTime(...)
-getMostSpecificType("foo")        // "foo"           ← String passthrough
+println(getMostSpecificType("$1,234.56"))  // 1234.56  (Big)
+println(getMostSpecificType("(500.00)"))   // -500.00  (Big) ← accounting negative
+println(getMostSpecificType("7.5K"))       // 7500.0   (Big)
+println(getMostSpecificType("12.5%"))      // 0.125    (Big)
+println(getMostSpecificType("2024-01-15")) // 2024-01-15T00:00 (DateTime)
+println(getMostSpecificType("foo"))        // foo      (String passthrough)
 ```
 
 | Function | Signature | Description |
@@ -228,15 +294,22 @@ available on `MatB`. Element display uses `toPlainString`; CSV output maps
 `BigNaN` to `"N/A"`.
 
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.17.0
+
+import uni.*
 import uni.data.*
 
 val m: MatB = MatB.zeros(3, 3)
 val v: MatB = MatB.col(Big("1.5"), Big("2.5"), Big("3.5"))
 
 // CSV round-trip
-val p = "/tmp/precision.csv".asPath
-p.writeCsv(m)
+val p = (sys.props("java.io.tmpdir") + "/precision.csv").asPath
+p.writeCsv(v)
 val m2: MatB = p.readCsvB
+println(s"${m.shape} ${m2.toArray.toList == v.toArray.toList}")
+p.delete()
 ```
 
 ---

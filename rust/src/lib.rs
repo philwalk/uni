@@ -9,6 +9,7 @@ pub mod numpy_rng;
 pub mod t3prf;
 pub mod udata;
 pub mod upath;
+pub mod uplot;
 pub mod utime;
 
 pub use error::Error;

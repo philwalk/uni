@@ -31,7 +31,7 @@ problem 1 with an input-preserving sentinel. `pathsGetWindows` classified via
 an ADT — `PathAbs | PathDrv | PathRel | PathPsx | PathBad` — and the bad arm
 returned an *ordinary* `Path` carrying the original input:
 
-```scala
+```text
 def BadPath(psxStr: String) = JPaths.get(s"BadPath-$psxStr")
 ```
 

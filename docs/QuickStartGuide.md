@@ -58,7 +58,7 @@ val randInt  = MatD.randint(0, 100, 5, 5)  // Random integers [0, 100)
 
 import uni.data.Mat
 
-val m = Mat[Double]((1, 2, 3), (4, 5, 6))
+val m = Mat[Double]((1, 2, 3), (4, 5, 6), (7, 8, 9))
 
 // Basic indexing
 val value = m(0, 1)                   // Element at row 0, col 1
@@ -418,9 +418,43 @@ println(y.show)                      // "3x1 CVec[Double]: ..."
 ### Extracting a Scalar from a 1×1 Matrix
 
 ```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.17.0
+
+import uni.data.*
+
 val a = MatD((3.0, 1.0), (1.0, 2.0))
-val trace = a.diagonal.sum         // 1×1 MatD
-val t: Double = trace.item         // extract the scalar (throws if not 1×1)
+val yTy = a.T *@ a                 // matrix products stay matrices: here 2×2
+val one = a(0 until 1, 0 until 1)  // a 1×1 MatD
+val t: Double = one.item           // extract the scalar (throws if not 1×1)
+val trace: Double = a.diagonal.sum // reductions already return scalars
+println(s"$t $trace ${yTy.shape}") // 3.0 5.0 (2,2)
+```
+
+### Charts
+
+`import uni.plot.*` draws charts from any `MatD` — the library renders SVG itself and opens
+it in the browser, or writes it when `saveTo` is given. The `*Svg` twins return the text.
+See [PlotGuide.md](PlotGuide.md) for every method and `PlotStyle`.
+
+```scala
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+
+//> using dep org.vastblue:uni_3:0.17.0
+
+import uni.data.*
+import uni.plot.*
+
+Mat.setSeed(7)
+val m   = MatD.randn(200, 3)
+val dir = sys.props("java.io.tmpdir") + "/uni-quickstart"
+m.plot(title = "three series", labels = Seq("a", "b", "c"), saveTo = s"$dir/lines")   // lines.svg
+m.hist(bins = 25, saveTo = s"$dir/hist.html")                                          // a page
+m.T.corrcoef.heatmap(rowLabels = Seq("a", "b", "c"), colLabels = Seq("a", "b", "c"),
+                     saveTo = s"$dir/corr")
+val svg = m.scatterSvg(0, 1, title = "a vs b")            // the text, for embedding
+println(s"${svg.length > 1000} ${svg.startsWith("<svg")}")   // true true
 ```
 
 ### NumPy Translation Examples

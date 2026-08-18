@@ -9,7 +9,7 @@
 #   MSYS2:   pacman -S mingw-w64-ucrt-x86_64-openblas ; export OPENBLAS_LIB_DIR=/ucrt64/lib
 # If it cannot be built the BLAS columns are simply absent; the rest of the table stands.
 #
-# Output goes to the terminal AND to a log named for the box, so captures from several
+# Output goes to the terminal AND to a log named for the machine, so captures from several
 # machines can sit in one directory without colliding:
 #     bench-logs/benchAll-<os>-<host>-<yyyymmdd-HHMM>.out   e.g. …/benchAll-linux-quadd-20260816-1425.out
 # (`bench-logs/` is git-ignored.) Pass -o <file> to choose the name, or -o - for terminal only.
