@@ -271,8 +271,8 @@ pub(crate) fn gt_total(a: f64, b: f64) -> bool {
 /// and about half the runtime of the operation. `Arc::new(vec)` moves. The extra pointer
 /// hop on read is hoisted out of any loop that matters.
 #[derive(Clone)]
-pub struct MatD {
-    data: Arc<Vec<f64>>,
+pub struct Mat<T> {
+    data: Arc<Vec<T>>,
     rows: usize,
     cols: usize,
     transposed: bool,
@@ -281,11 +281,16 @@ pub struct MatD {
     cs: usize,
 }
 
+/// Scala's `MatD` — `Mat[Double]`. Every numeric method in this crate's `MatD` modules is
+/// an inherent impl on this alias; the layout and view machinery is generic in `T` and
+/// shared with `MatB` (`Mat<Big>`).
+pub type MatD = Mat<f64>;
+
 /// A matrix taken apart: the buffer plus its descriptor. Moves between [`MatD`] and
 /// `MatMut` when ownership changes hands, and exists so neither side needs a six-argument
 /// constructor or a six-element tuple.
-pub(crate) struct MatParts {
-    pub data: Vec<f64>,
+pub(crate) struct MatParts<T> {
+    pub data: Vec<T>,
     pub rows: usize,
     pub cols: usize,
     /// Carried, not dropped: the flag is part of how a layout is CLASSIFIED
@@ -320,11 +325,23 @@ impl MatD {
         Self::create(arr.to_vec(), arr.len(), 1)
     }
 
+    /// An `rows`×`cols` matrix of zeros.
+    pub fn zeros(rows: usize, cols: usize) -> Self {
+        Self::create(vec![0.0; rows * cols], rows, cols)
+    }
+
+    /// An `rows`×`cols` matrix of ones.
+    pub fn ones(rows: usize, cols: usize) -> Self {
+        Self::create(vec![1.0; rows * cols], rows, cols)
+    }
+}
+
+impl<T: Clone> Mat<T> {
     /// Scala's `Mat.create(data, rows, cols)` — takes ownership, row-major, contiguous.
     ///
     /// # Panics
     /// If `data.len() != rows * cols`.
-    pub fn create(data: Vec<f64>, rows: usize, cols: usize) -> Self {
+    pub fn create(data: Vec<T>, rows: usize, cols: usize) -> Self {
         assert_eq!(
             data.len(),
             rows * cols,
@@ -351,7 +368,7 @@ impl MatD {
     /// so the rest of the library only ever sees standard or simple-offset strides —
     /// and, crucially, so a materialised view lands back on the fast summation path in
     /// both languages together.
-    fn createView(data: &Arc<Vec<f64>>, rows: usize, cols: usize, lay: Layout) -> Self {
+    fn createView(data: &Arc<Vec<T>>, rows: usize, cols: usize, lay: Layout) -> Self {
         let transposed = lay.transposed;
         let rs = lay.rs.unwrap_or(if transposed { 1 } else { cols });
         let cs = lay.cs.unwrap_or(if transposed { rows } else { 1 });
@@ -367,14 +384,9 @@ impl MatD {
         if m.is_weird_layout() { m.matCopy() } else { m }
     }
 
-    /// An `rows`×`cols` matrix of zeros.
-    pub fn zeros(rows: usize, cols: usize) -> Self {
-        Self::create(vec![0.0; rows * cols], rows, cols)
-    }
-
-    /// An `rows`×`cols` matrix of ones.
-    pub fn ones(rows: usize, cols: usize) -> Self {
-        Self::create(vec![1.0; rows * cols], rows, cols)
+    /// An `rows`×`cols` matrix filled with `value` — Scala's `Mat.full`.
+    pub fn filled(rows: usize, cols: usize, value: T) -> Self {
+        Self::create(vec![value; rows * cols], rows, cols)
     }
 
     pub fn rows(&self) -> usize {
@@ -454,7 +466,7 @@ impl MatD {
     /// The elements in logical row-major order without copying when the layout already
     /// is that (`fast_d`), and as a fresh `Vec` otherwise. For sibling modules that want
     /// a plain slice to index — the matmul kernels — without reaching into the buffer.
-    pub(crate) fn row_major(&self) -> std::borrow::Cow<'_, [f64]> {
+    pub(crate) fn row_major(&self) -> std::borrow::Cow<'_, [T]> {
         if self.fast_d() {
             std::borrow::Cow::Borrowed(&self.data)
         } else {
@@ -465,35 +477,35 @@ impl MatD {
     /// The buffer and the stride equation's three terms — `(data, offset, rs, cs)`, so
     /// that `data[offset + r*rs + c*cs]` is `at(r, c)`. For kernels that read a view in
     /// place, as Scala's `multiplyDouble` does, rather than through a copy.
-    pub(crate) fn strided(&self) -> (&[f64], usize, usize, usize) {
+    pub(crate) fn strided(&self) -> (&[T], usize, usize, usize) {
         (&self.data, self.offset, self.rs, self.cs)
     }
 }
 
 // ── Element access and materialisation ──────────────────────────────────────────
 
-impl MatD {
+impl<T: Clone> Mat<T> {
     /// Element at `(r, c)` through the stride equation — Scala's `at`. Also reachable as
     /// `m[(r, c)]`.
-    pub fn at(&self, r: usize, c: usize) -> f64 {
-        self.data[self.offset + r * self.rs + c * self.cs]
+    pub fn at(&self, r: usize, c: usize) -> T {
+        self.data[self.offset + r * self.rs + c * self.cs].clone()
     }
 
     /// Flat access in logical row-major order — Scala's `at(i: Int)`.
     ///
     /// # Panics
     /// On an empty matrix, where the row/column decomposition would divide by zero.
-    pub fn atFlat(&self, i: usize) -> f64 {
+    pub fn atFlat(&self, i: usize) -> T {
         assert!(!self.isEmpty(), "atFlat on an empty matrix");
         if self.isContiguous() {
-            self.data[self.offset + i]
+            self.data[self.offset + i].clone()
         } else {
             self.at(i / self.cols, i % self.cols)
         }
     }
 
     /// Fresh row-major `Vec` in logical order — Scala's `flatten`.
-    pub fn flatten(&self) -> Vec<f64> {
+    pub fn flatten(&self) -> Vec<T> {
         if self.fast_d() {
             return self.data.to_vec();
         }
@@ -507,7 +519,7 @@ impl MatD {
     }
 
     /// Alias for [`MatD::flatten`] — Scala's `toArray`.
-    pub fn toArray(&self) -> Vec<f64> {
+    pub fn toArray(&self) -> Vec<T> {
         self.flatten()
     }
 
@@ -542,7 +554,7 @@ impl MatD {
     ///
     /// # Panics
     /// If the matrix is not 1×1, mirroring Scala's `require`.
-    pub fn item(&self) -> f64 {
+    pub fn item(&self) -> T {
         assert!(
             self.rows == 1 && self.cols == 1,
             "item requires a 1x1 matrix, got {:?}",
@@ -554,7 +566,7 @@ impl MatD {
 
 // ── Shape manipulation ──────────────────────────────────────────────────────────
 
-impl MatD {
+impl<T: Clone> Mat<T> {
     /// O(1) transpose — Scala's `transpose`: swap dims and strides, flip the flag, move
     /// no data. Note this deliberately bypasses the [`MatD::createView`] gatekeeper,
     /// exactly as Scala's `Internal.transposeView` constructs `MatData` directly.
@@ -616,7 +628,7 @@ impl MatD {
         let rows: usize = mats.iter().map(|m| m.rows()).sum();
         let mut out = Vec::with_capacity(rows * cols);
         for m in mats {
-            out.extend(m.row_major().iter());
+            out.extend(m.row_major().iter().cloned());
         }
         Self::create(out, rows, cols)
     }
@@ -838,7 +850,7 @@ impl MatD {
                   caller of every ported function that mutates, changing the shape of \
                   the port relative to the Scala it mirrors"
     )]
-    pub(crate) fn intoOwnedParts(self) -> MatParts {
+    pub(crate) fn intoOwnedParts(self) -> MatParts<T> {
         let (rows, cols, transposed, offset, rs, cs) = (
             self.rows,
             self.cols,
@@ -866,7 +878,7 @@ impl MatD {
 
     /// Rebuilds from parts a `MatMut` hands back. Not public: the only caller is
     /// `MatMut::freeze`, and the parts are its own.
-    pub(crate) fn fromOwnedParts(p: MatParts) -> Self {
+    pub(crate) fn fromOwnedParts(p: MatParts<T>) -> Self {
         Self {
             data: Arc::new(p.data),
             rows: p.rows,
@@ -1390,10 +1402,10 @@ impl fmt::Debug for MatD {
 
 /// `m[(r, c)]` as Rust sugar over [`MatD::at`]. Only scalar reads can use bracket
 /// syntax — `Index` must return a reference, so slicing stays method-shaped.
-impl Index<(usize, usize)> for MatD {
-    type Output = f64;
+impl<T> Index<(usize, usize)> for Mat<T> {
+    type Output = T;
 
-    fn index(&self, (r, c): (usize, usize)) -> &f64 {
+    fn index(&self, (r, c): (usize, usize)) -> &T {
         &self.data[self.offset + r * self.rs + c * self.cs]
     }
 }

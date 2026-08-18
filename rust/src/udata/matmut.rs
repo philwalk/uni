@@ -82,7 +82,7 @@ pub struct MatMut {
 
 impl MatMut {
     /// Internal constructor; `MatD::intoMut` is the public route.
-    pub(crate) fn fromParts(p: MatParts) -> Self {
+    pub(crate) fn fromParts(p: MatParts<f64>) -> Self {
         Self {
             data: p.data,
             rows: p.rows,

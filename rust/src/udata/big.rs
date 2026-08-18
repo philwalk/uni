@@ -920,40 +920,39 @@ impl Big {
         let exact = s.mul_mag(&s) == n;
         let mut scale = (i64::from(self.scale) + k as i64) / 2;
         let mut q = s;
-        if exact {
-            let preferred = i64::from(self.scale) / 2;
-            while scale > preferred {
-                let (q2, rem) = q.divrem_small(10);
-                if rem != 0 {
-                    break;
-                }
+        let preferred = i64::from(self.scale) / 2;
+        if !exact {
+            // Round ONCE to 34 significant digits. The true root is irrational here, so
+            // it lies strictly above the floor `q`: the dropped tail decides by its most
+            // significant digit alone (≥ 5 → the value is past the half-way point → up;
+            // there is no exact tie to break). Rounding digit by digit instead would
+            // double-round: a tail of `49` would first become `5` and then round up.
+            let mut msd = 0u64;
+            while q.digits() > MC_PRECISION {
+                let (q2, dropped) = q.divrem_small(10);
+                msd = dropped;
                 q = q2;
                 scale -= 1;
             }
-            // An exact root can still carry more than 34 digits of trailing zeros already
-            // stripped; what remains is exact and short.
-        } else {
-            // Round to 34 significant digits, HALF_EVEN. The remainder direction: q is the
-            // floor, so compare the fraction against one half via (2s+1)² vs 4n.
-            while q.digits() > MC_PRECISION {
-                let (q2, dropped) = q.divrem_small(10);
-                let round_up = match dropped.cmp(&5) {
-                    Ordering::Greater => true,
-                    Ordering::Less => false,
-                    // The true value is irrational here, so it cannot sit exactly on the
-                    // tie; the floor said 5, meaning the fraction pushes it above half.
-                    Ordering::Equal => true,
-                };
-                q = if round_up {
-                    q2.add_mag(&Mag::from_u64(1))
-                } else {
-                    q2
-                };
-                scale -= 1;
+            if msd >= 5 {
+                q = q.add_mag(&Mag::from_u64(1));
                 if q.digits() > MC_PRECISION {
-                    continue;
+                    let (q2, _) = q.divrem_small(10);
+                    q = q2;
+                    scale -= 1;
                 }
             }
+        }
+        // Java strips the result's trailing zeros, but never below the preferred scale
+        // (`this.scale() / 2`) — exact and rounded roots alike: `sqrt` of a 34-digit
+        // variance whose root happens to end in 0 comes back with 33 digits.
+        while scale > preferred {
+            let (q2, rem) = q.divrem_small(10);
+            if rem != 0 {
+                break;
+            }
+            q = q2;
+            scale -= 1;
         }
         let Ok(scale) = i32::try_from(scale) else {
             return Self::nan();

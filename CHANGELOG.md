@@ -1,5 +1,34 @@
 ## Unreleased
 
+**ADDED — Rust: `Mat[Big]` (`MatB`), and `Mat<T>` — the port of `Mat` is complete**
+
+`rust/src/udata/mat.rs` is generic now: `Mat<T>` carries the descriptor, views, slicing,
+transpose, stacking and gathers, `MatD = Mat<f64>` keeps every numeric method exactly as
+it was (the fixture did not move a bit), and `MatB = Mat<Big>` (`udata::matbig`) adds
+the exact-decimal numerics: `+ − × ÷` (matrix, scalar, broadcasting), `neg abs power sqrt
+exp log`, `sum mean std variance norm cumsum min max argmin argmax` and the axis family,
+the masks (`gt lt gte lte eqTo neTo hasNaN`, `applyMask`), `matmul`, LU
+`inverse`/`determinant`/`solve`, `trace`/`diagonal`, `sort`/`argsort`, `toMatD`/`fromMatD`,
+`fromArray2` (from the loaders), `csvText`. Every one is the JVM's sequential fold in
+`Big` arithmetic, so results agree to the last decimal digit and scale; 293 `bm.*` fixture
+rows pin them as `BigDecimal.toString` text, a NaN-injected variant alongside.
+
+**FIXED — Rust `Big::sqrt`: trailing zeros and single rounding, as `BigDecimal.sqrt(mc)`**
+
+Found by the `Mat[Big]` fixture, never by the scalar one: the result now strips trailing
+zeros down to the preferred scale (`this.scale()/2`) as Java does, and an inexact root is
+rounded once on the most significant dropped digit — it used to round digit by digit,
+which turned a `…49` tail into `…5` and then up.
+
+**FIXED — `Mat[Big]`: `matmul` through the stride equation and the guarded arithmetic; masks false against `BigNaN`**
+
+`multiplyBig` read its operands' raw buffers with only the transposed flag, so a sliced or
+offset `Mat[Big]` view multiplied wrong, and it summed raw `BigDecimal`s, so a `BigNaN`
+cell leaked the sentinel's digits into the product; it now reads through `m(i, k)` and
+`Fractional[Big]`, and a NaN operand makes its cell `BigNaN`. The ordering masks
+`gt`/`lt`/`gte`/`lte` on `Mat[Big]` are false against `BigNaN` (the guarded operators, as
+the IEEE masks are for `Double` NaN); `:==` still recognises the sentinel.
+
 **CHANGED — `BigNaN` orders above every number, as `Double.NaN` does**
 
 `Big.compare` and `Fractional[Big].compare` used to return 0 whenever either operand was

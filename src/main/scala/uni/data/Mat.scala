@@ -2543,6 +2543,19 @@ object Mat {
   private inline def isFloatCt[T](using ct: ClassTag[T]): Boolean =
     ct.runtimeClass == classOf[Float]
 
+  /** `Mat[Big]` — the opaque type erases to `scala.math.BigDecimal`. */
+  private inline def isBigCt[T](using ct: ClassTag[T]): Boolean =
+    ct.runtimeClass == classOf[scala.math.BigDecimal]
+
+  /** The ordering masks on `Mat[Big]`: false whenever either side is `BigNaN`, as the IEEE
+   *  masks are for `Double` NaN — through the guarded `Big` operators rather than the
+   *  `Ordering`, which (deliberately) ranks the sentinel highest so that `sort`/`min`/`max`
+   *  behave as `MatD`'s. `:==`/`:!=` are not routed here: equality RECOGNISES the sentinel
+   *  (`m :== BigNaN` finds the NaNs, as `hasNaN` does). */
+  private def cmpBig[T: ClassTag](m: Mat[T], other: T, op: (Big, Big) => Boolean): Mat[Boolean] =
+    val o = other.asInstanceOf[Big]
+    m.map(x => op(x.asInstanceOf[Big], o))
+
   /** True for the two element types whose default `Ordering` is a TOTAL order rather than
    *  the IEEE one — see [[cmpIeee]]. */
   private inline def isIeeeCt[T](using ct: ClassTag[T]): Boolean =
@@ -3254,26 +3267,27 @@ object Mat {
       Mat.create(result, rowsA, colsB)
     }
 
+    /** `Mat[Big]` product: every cell a sequential k-sum from `Big(0)` through the
+     *  guarded `Fractional[Big]` (so a `BigNaN` operand makes its cell `BigNaN` rather
+     *  than leaking the sentinel's digits into the sum), reading both operands through
+     *  the stride equation, so offset views multiply correctly. Rounding is that of the
+     *  accumulator's `MathContext` (34 digits, HALF_EVEN), applied at every addition. */
     private[data] def multiplyBig(other: Mat[Big]): Mat[Big] = {
-      val a = m.tdata.asInstanceOf[Array[BigDecimal]]
-      val b = other.data.asInstanceOf[Array[BigDecimal]]
-      val rowsA = m.rows; val colsA = m.cols; val colsB = other.cols
-      val result = Array.ofDim[BigDecimal](rowsA * colsB)
-      val aAt = if !m.transposed then (i: Int, k: Int) => a(i * colsA + k)
-                else (i: Int, k: Int) => a(k * rowsA + i)
-      val bAt = if !other.transposed then (k: Int, j: Int) => b(k * colsB + j)
-                else (k: Int, j: Int) => b(j * other.rows + k)
+      val frac  = summon[Fractional[Big]]
+      val a     = m.asInstanceOf[Mat[Big]]
+      val rowsA = a.rows; val colsA = a.cols; val colsB = other.cols
+      val result = Array.ofDim[Big](rowsA * colsB)
       var i = 0
       while i < rowsA do
         var j = 0
         while j < colsB do
-          var sum = BigDecimal(0)
+          var sum = Big(0)
           var k = 0
-          while k < colsA do { sum = sum + (aAt(i, k) * bAt(k, j)); k += 1 }
+          while k < colsA do { sum = frac.plus(sum, frac.times(a(i, k), other(k, j))); k += 1 }
           result(i * colsB + j) = sum
           j += 1
         i += 1
-      Mat.create(result.asInstanceOf[Array[Big]], rowsA, colsB)
+      Mat.create(result, rowsA, colsB)
     }
 
     private inline def shouldUseBLAS[A](a: Mat[A], b: Mat[A]): Boolean =
@@ -3930,17 +3944,26 @@ object Mat {
     // m.map is stride/offset-aware; mapping m.tdata directly would read the
     // parent array of a view (wrong elements, wrong length).
     // Double and Float take the IEEE path, matching NumPy; see `Mat.cmpIeee`.
+    // Big takes the guarded operators (false against BigNaN); see `Mat.cmpBig`.
     def gt(other: T)(using ord: Ordering[T]): Mat[Boolean] =
-      if isIeeeCt[T] then cmpIeee(m, other, _ > _) else m.map(ord.gt(_, other))
+      if isIeeeCt[T] then cmpIeee(m, other, _ > _)
+      else if isBigCt[T] then cmpBig(m, other, _ > _)
+      else m.map(ord.gt(_, other))
 
     def lt(other: T)(using ord: Ordering[T]): Mat[Boolean] =
-      if isIeeeCt[T] then cmpIeee(m, other, _ < _) else m.map(ord.lt(_, other))
+      if isIeeeCt[T] then cmpIeee(m, other, _ < _)
+      else if isBigCt[T] then cmpBig(m, other, _ < _)
+      else m.map(ord.lt(_, other))
 
     def gte(other: T)(using ord: Ordering[T]): Mat[Boolean] =
-      if isIeeeCt[T] then cmpIeee(m, other, _ >= _) else m.map(ord.gteq(_, other))
+      if isIeeeCt[T] then cmpIeee(m, other, _ >= _)
+      else if isBigCt[T] then cmpBig(m, other, _ >= _)
+      else m.map(ord.gteq(_, other))
 
     def lte(other: T)(using ord: Ordering[T]): Mat[Boolean] =
-      if isIeeeCt[T] then cmpIeee(m, other, _ <= _) else m.map(ord.lteq(_, other))
+      if isIeeeCt[T] then cmpIeee(m, other, _ <= _)
+      else if isBigCt[T] then cmpBig(m, other, _ <= _)
+      else m.map(ord.lteq(_, other))
 
     def :==(other: T)(using ord: Ordering[T]): Mat[Boolean] =
       if isIeeeCt[T] then cmpIeee(m, other, _ == _) else m.map(ord.equiv(_, other))

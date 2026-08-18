@@ -502,6 +502,80 @@ object MatParityGen:
       "sg.polyfitq" -> fnvWords(Mat.polyfit(a, me.slice(rows - 1 until rows, 0 until cols), 2).toArray.map(quantize20)),
     ) else Vector.empty)
 
+  /** FNV over a string's UTF-8 bytes — the digest for exact-decimal results, which are
+   *  compared as Java's `BigDecimal.toString` (scale included). */
+  def fnvStr(s: String): Long = fnvWords(s.getBytes("UTF-8").map(b => (b.toLong & 0xff)))
+
+  /** Whether a shape gets the `Mat[Big]` rows: everything is a sequential fold in exact
+   *  decimals, so cost is the only limit — 64×64 keeps a Big matmul under a second. */
+  def bigShape(rows: Int, cols: Int): Boolean = rows * cols <= 4096
+
+  /**
+   * `Mat[Big]` on the bounded corpus, each double taken through `Big(d)` (Java's
+   * `Double.toString` digits, so both languages build the same decimals), plus a variant
+   * `mbn` with `BigNaN` where the value is below −4. Results are digested as
+   * `BigDecimal.toString` text — scale and all — because that IS the contract of an exact
+   * decimal: `1.50 · 2` is `3.00`, and a port that answered `3` would be wrong.
+   * `exp`/`log` are excluded (they go through `Math.exp`, which is the libm situation).
+   */
+  def bigCases(me: Mat[Double]): Vector[(String, Long)] =
+    val (rows, cols) = (me.rows, me.cols)
+    val mb  = me.map(Big(_))
+    val mbn = me.map(d => if d < -4.0 then BigNaN else Big(d))
+    val txt = (m: Mat[Big]) => fnvStr(m.toArray.map(_.toString).mkString(","))
+    val one = (b: Big) => fnvStr(b.toString)
+    val row0 = mb.slice(0 until 1, 0 until cols)
+    val ints = (a: Array[Int]) => fnvWords(a.map(_.toLong))
+    val (amr, amc) = mb.argmin; val (axr, axc) = mb.argmax
+    val (nmr, nmc) = mbn.argmax
+    Vector(
+      "bm.sum"     -> one(mb.sum),
+      "bm.mean"    -> one(mb.mean),
+      "bm.std"     -> one(mb.std),
+      "bm.var"     -> one(mb.variance),
+      "bm.min"     -> one(mb.min),
+      "bm.max"     -> one(mb.max),
+      "bm.argmin"  -> (amr.toLong * cols + amc),
+      "bm.argmax"  -> (axr.toLong * cols + axc),
+      "bm.sum0"    -> txt(mb.sum(0)),
+      "bm.mean1"   -> txt(mb.mean(1)),
+      "bm.std0"    -> txt(mb.std(0)),
+      "bm.min0"    -> txt(mb.min(0)),
+      "bm.max1"    -> txt(mb.max(1)),
+      "bm.cumsum"  -> txt(mb.cumsum),
+      "bm.cumsum1" -> txt(mb.cumsum(1)),
+      "bm.addrow"  -> txt(mb + row0),
+      "bm.subs"    -> txt(mb - Big("0.5")),
+      "bm.mul"     -> txt(mb * mb),
+      "bm.div"     -> txt(mb / (mb + Big(10))),
+      "bm.neg"     -> txt(-mb),
+      "bm.abs"     -> txt(mb.abs),
+      "bm.pow2"    -> txt(mb.power(2)),
+      "bm.sqrt"    -> txt(mb.abs.sqrt),
+      "bm.mm"      -> txt(mb *@ mb.T),
+      "bm.gt"      -> fnvMask(mb.gt(Big(-1))),
+      "bm.lte"     -> fnvMask(mbn.lte(Big(0))),
+      "bm.eqnan"   -> fnvMask(mbn :== BigNaN),
+      "bm.hasnan"  -> fnvMask(mbn.hasNaN),
+      "bm.nsum"    -> one(mbn.sum),
+      "bm.nmin"    -> one(mbn.min),
+      "bm.nmax"    -> one(mbn.max),
+      "bm.nargmax" -> (nmr.toLong * cols + nmc),
+      "bm.nsort"   -> txt(mbn.sort()),
+      "bm.nmm"     -> txt(mbn *@ mbn.T),
+      "bm.sort"    -> txt(mb.sort()),
+      "bm.argsort" -> ints(mb.argsort().toArray),
+      "bm.trace"   -> one(mb.trace),
+      "bm.diag"    -> txt(Mat.create(mb.diagonal, 1, mb.diagonal.length)),
+      "bm.tod"     -> fnv(mb.map(_.toDouble).toArray),
+      "bm.ntod"    -> fnvCanon(mbn.map(_.toDouble).toArray),
+      "bm.csv"     -> fnvStr((0 until rows).map(i => (0 until cols).map(j => { val x = mbn(i, j); if x == BigNaN then "N/A" else x.toString }).mkString(",")).mkString("\n")),
+    ) ++ (if rows == cols then Vector(
+      "bm.inv"     -> txt(mb.inverse),
+      "bm.det"     -> one(mb.determinant),
+      "bm.solve"   -> txt(mb.solve(mb.T)),
+    ) else Vector.empty)
+
   /** Whether a shape gets the tolerance-pinned decomposition rows: small, or so far from
    *  square that a uniform random matrix is well conditioned. Near-square matrices past
    *  64 have condition numbers that push a 1e-15 kernel difference across the 2^-20 grid
@@ -790,7 +864,10 @@ object MatParityGen:
         sb ++= f"${rows}x$cols $label $word%016x\n"
       for (label, word) <- signalCases(me) do
         sb ++= f"${rows}x$cols $label $word%016x\n"
-      println(s"  ${rows}x$cols: ${cases2d(m).length + wordCases2d(m).length + mathCases(me).length + linalgCases(me).length + utilCases(m).length + pandasCases(m).length + signalCases(me).length} cases")
+      if bigShape(rows, cols) then
+        for (label, word) <- bigCases(me) do
+          sb ++= f"${rows}x$cols $label $word%016x\n"
+      println(s"  ${rows}x$cols: ${cases2d(m).length + wordCases2d(m).length + mathCases(me).length + linalgCases(me).length + utilCases(m).length + pandasCases(m).length + signalCases(me).length + (if bigShape(rows, cols) then bigCases(me).length else 0)} cases")
 
     for (name, arr) <- adversarial do
       for (orient, m) <- advShapes(arr) do

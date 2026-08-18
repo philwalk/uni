@@ -46,6 +46,8 @@ use std::fs;
 use std::path::PathBuf;
 
 use uni::NumPyRng;
+use uni::udata::Big;
+use uni::udata::MatB;
 use uni::udata::MatBool;
 use uni::udata::MatD;
 use uni::udata::linalg::NormOrd;
@@ -475,6 +477,93 @@ fn case_word_signal(me: &MatD, label: &str) -> u64 {
     }
 }
 
+/// FNV over a string's UTF-8 bytes — `MatParityGen.fnvStr`.
+fn fnv_str(s: &str) -> u64 {
+    fnv_words(s.bytes().map(u64::from))
+}
+
+/// The `Mat[Big]` rows — `MatParityGen.bigCases`: the bounded corpus through
+/// `Big::from_f64` (Java's `Double.toString` digits), a NaN-injected variant, results
+/// digested as `BigDecimal.toString` text.
+fn case_word_big(me: &MatD, label: &str) -> u64 {
+    let (rows, cols) = me.shape();
+    let mb = MatB::fromMatD(me);
+    let mbn = MatB::create(
+        me.flatten()
+            .into_iter()
+            .map(|d| {
+                if d < -4.0 {
+                    Big::nan()
+                } else {
+                    Big::from_f64(d)
+                }
+            })
+            .collect(),
+        rows,
+        cols,
+    );
+    let txt = |m: &MatB| {
+        fnv_str(
+            &m.flatten()
+                .iter()
+                .map(Big::toString)
+                .collect::<Vec<_>>()
+                .join(","),
+        )
+    };
+    let one = |b: &Big| fnv_str(&b.toString());
+    let ri = |n: usize| i64::try_from(n).expect("shape fits i64");
+    let row0 = mb.slice(0..1, 0..ri(cols));
+    let flat_idx = |(r, c): (usize, usize)| (r * cols + c) as u64;
+    match label {
+        "bm.sum" => one(&mb.sum()),
+        "bm.mean" => one(&mb.mean()),
+        "bm.std" => one(&mb.std()),
+        "bm.var" => one(&mb.variance()),
+        "bm.min" => one(&mb.min()),
+        "bm.max" => one(&mb.max()),
+        "bm.argmin" => flat_idx(mb.argmin()),
+        "bm.argmax" => flat_idx(mb.argmax()),
+        "bm.sum0" => txt(&mb.sumAxis(0)),
+        "bm.mean1" => txt(&mb.meanAxis(1)),
+        "bm.std0" => txt(&mb.stdAxis(0)),
+        "bm.min0" => txt(&mb.minAxis(0)),
+        "bm.max1" => txt(&mb.maxAxis(1)),
+        "bm.cumsum" => txt(&mb.cumsum()),
+        "bm.cumsum1" => txt(&mb.cumsumAxis(1)),
+        "bm.addrow" => txt(&mb.add(&row0)),
+        "bm.subs" => txt(&mb.subScalar(&Big::parse("0.5"))),
+        "bm.mul" => txt(&mb.mul(&mb)),
+        "bm.div" => txt(&mb.div(&mb.addScalar(&Big::from_i64(10)))),
+        "bm.neg" => txt(&mb.neg()),
+        "bm.abs" => txt(&mb.abs()),
+        "bm.pow2" => txt(&mb.power(2)),
+        "bm.sqrt" => txt(&mb.abs().sqrt()),
+        "bm.mm" => txt(&mb.matmul(&mb.T())),
+        "bm.gt" => fnv_mask(&mb.gt(&Big::from_i64(-1))),
+        "bm.lte" => fnv_mask(&mbn.lte(&Big::zero())),
+        "bm.eqnan" => fnv_mask(&mbn.eqTo(&Big::nan())),
+        "bm.hasnan" => fnv_mask(&mbn.hasNaN()),
+        "bm.nsum" => one(&mbn.sum()),
+        "bm.nmin" => one(&mbn.min()),
+        "bm.nmax" => one(&mbn.max()),
+        "bm.nargmax" => flat_idx(mbn.argmax()),
+        "bm.nsort" => txt(&mbn.sort()),
+        "bm.nmm" => txt(&mbn.matmul(&mbn.T())),
+        "bm.sort" => txt(&mb.sort()),
+        "bm.argsort" => ints(&mb.argsort().toArray()),
+        "bm.trace" => one(&mb.trace()),
+        "bm.diag" => txt(&MatB::row(&mb.diagonal())),
+        "bm.tod" => fnv(&mb.toMatD().toArray()),
+        "bm.ntod" => fnv_canon(&mbn.toMatD().toArray()),
+        "bm.csv" => fnv_str(mbn.csvText(",", "N/A").trim_end_matches('\n')),
+        "bm.inv" => txt(&mb.inverse().expect("fixture matrix is invertible")),
+        "bm.det" => one(&mb.determinant().expect("fixture matrix is invertible")),
+        "bm.solve" => txt(&mb.solve(&mb.T()).expect("fixture matrix is invertible")),
+        other => panic!("unknown Mat[Big] case {other}"),
+    }
+}
+
 /// Dispatch for a `<rows>x<cols>` row: `math.*` and `la.*` compute on the bounded corpus
 /// `me`, everything else on `m`.
 fn case_word_matrix(m: &MatD, me: &MatD, label: &str) -> u64 {
@@ -488,6 +577,8 @@ fn case_word_matrix(m: &MatD, me: &MatD, label: &str) -> u64 {
         case_word_pandas(m, label)
     } else if label.starts_with("sg.") {
         case_word_signal(me, label)
+    } else if label.starts_with("bm.") {
+        case_word_big(me, label)
     } else {
         case_word_2d(m, label)
     }
@@ -753,6 +844,7 @@ fn mat_reductions_match_the_scala_reference_bit_for_bit() {
     let pandas = count(&|s, l| {
         matches!(s, Shape::Matrix(..)) && (l.starts_with("pd.") || l.starts_with("sg."))
     });
+    let bigs = count(&|s, l| matches!(s, Shape::Matrix(..)) && l.starts_with("bm."));
 
     // Guard against a fixture that silently shrinks to nothing meaningful. Each count is
     // asserted separately because the three groups pin different things, and losing any
@@ -794,6 +886,10 @@ fn mat_reductions_match_the_scala_reference_bit_for_bit() {
     assert!(
         pandas >= 300,
         "only {pandas} pandas/signal rows; the ordering and statistics family would go unchecked"
+    );
+    assert!(
+        bigs >= 250,
+        "only {bigs} Mat[Big] rows; the exact-decimal matrix would go unchecked"
     );
 }
 

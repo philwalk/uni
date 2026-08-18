@@ -286,11 +286,17 @@ The semantics worth knowing, identical in both languages and pinned by
   `loadMatB`, `loadSmartBig`, `readCsvB`, all ported).
 - `toString` follows Java's notation rules, so scale is part of the rendering contract.
 
+On `MatB` (and `MatD` alike) the ordering masks `gt`/`lt`/`gte`/`lte` are **false against
+the sentinel**, while `:==`/`hasNaN` recognise it — so `m.gt(Big(0))` never selects a NaN
+cell and `m :== BigNaN` finds them; `matmul` and every reduction propagate it.
+
 `sqrt` of a negative and a negative `pow` exponent answer **BigNaN in both languages** as of
 0.16.0 — Scala used to throw and adopted the port's answer, since a sentinel travelling as
 data is the house style (compare BadDate, BadPath, `str2num`), and the fixture now pins those
-rows. The wider `Mat[Big]` arithmetic surface is not ported -- this is the type and the
-loaders.
+rows. `Mat[Big]` is ported as well (`MatB` in the crate, on the same generic `Mat<T>` core
+as `MatD`): the arithmetic, reductions, axis family, masks, `matmul`, LU `inverse`/
+`determinant`/`solve`, `sort`, CSV text — pinned digit-for-digit (`toString`, scale
+included) by 293 fixture rows.
 
 Regenerate the fixture with `sbt "runMain uni.apps.BigParityGen"`, only when the change in
 answers is intended.
