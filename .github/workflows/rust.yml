@@ -55,3 +55,11 @@ jobs:
 
       - name: Test
         run: make test
+
+      # The Rust examples embedded in rust/docs/*.md and rust/README.md must compile:
+      # checkRustDocs.sh extracts every ```rust block with a `fn main` into the
+      # uni-doc-examples crate and builds them with warnings denied — the Rust twin of
+      # scala.yml's doc-scripts job, and release gate 6d.
+      - name: Compile the doc examples
+        run: bash checkRustDocs.sh
+        working-directory: .

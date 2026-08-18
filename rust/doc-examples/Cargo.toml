@@ -1,0 +1,15 @@
+# The compile target for the examples embedded in rust/docs/*.md. checkRustDocs.sh
+# extracts every ```rust block that has a `fn main` into examples/ (regenerated on each
+# run, git-ignored) and builds them all here, warnings denied — so a documented Rust
+# example that no longer compiles fails the release, as the Scala doc scripts do.
+[package]
+name = "uni-doc-examples"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+uni = { package = "vastblue-uni", path = ".." }
+ndarray = "0.17.2"
+
+[workspace]

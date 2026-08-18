@@ -96,6 +96,8 @@ use std::sync::Arc;
 
 use rayon::prelude::*;
 
+use crate::NumPyRng;
+
 /// Fork/join overhead dominates below this size; sum sequentially. Mirrors
 /// `Mat.ParallelThreshold`.
 pub const PARALLEL_THRESHOLD: usize = 4096;
@@ -343,6 +345,141 @@ impl MatD {
     /// An `rows`×`cols` matrix of ones.
     pub fn ones(rows: usize, cols: usize) -> Self {
         Self::create(vec![1.0; rows * cols], rows, cols)
+    }
+
+    /// `Mat.full(rows, cols, value)`.
+    #[must_use]
+    pub fn full(rows: usize, cols: usize, value: f64) -> Self {
+        Self::filled(rows, cols, value)
+    }
+
+    /// `np.eye(n)`.
+    #[must_use]
+    pub fn eye(n: usize) -> Self {
+        Self::eyeK(n, 0)
+    }
+
+    /// `np.eye(n, k)`: ones on the `k`-th diagonal (positive `k` above the main one).
+    #[must_use]
+    pub fn eyeK(n: usize, k: i64) -> Self {
+        let mut a = vec![0.0; n * n];
+        for i in 0..n {
+            let j = i64::try_from(i).unwrap_or(i64::MAX) + k;
+            if j >= 0 && j < i64::try_from(n).unwrap_or(i64::MAX) {
+                #[expect(clippy::cast_sign_loss, reason = "checked non-negative")]
+                let jj = j as usize;
+                a[i * n + jj] = 1.0;
+            }
+        }
+        Self::create(a, n, n)
+    }
+
+    /// `np.diag(v)`: the square matrix with `values` on its diagonal.
+    #[must_use]
+    pub fn diag(values: &[f64]) -> Self {
+        let n = values.len();
+        let mut a = vec![0.0; n * n];
+        for (i, &v) in values.iter().enumerate() {
+            a[i * n + i] = v;
+        }
+        Self::create(a, n, n)
+    }
+
+    /// `np.arange(start, stop, step)` as an n×1 column, `n = max(0, ceil((stop−start)/step))`,
+    /// element `i` = `start + i·step` — Scala's `Mat.arange` (Double form).
+    ///
+    /// # Panics
+    /// If `step` is zero.
+    #[must_use]
+    pub fn arange(start: f64, stop: f64, step: f64) -> Self {
+        assert!(step != 0.0, "step cannot be zero");
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "a count, clamped at 0"
+        )]
+        let n = ((stop - start) / step).ceil().max(0.0) as usize;
+        #[expect(clippy::cast_precision_loss, reason = "an index")]
+        Self::create((0..n).map(|i| start + i as f64 * step).collect(), n, 1)
+    }
+
+    /// `np.linspace(start, stop, num)` as an n×1 column: `start + i·(stop−start)/(num−1)`.
+    ///
+    /// # Panics
+    /// If `num` is zero.
+    #[must_use]
+    pub fn linspace(start: f64, stop: f64, num: usize) -> Self {
+        assert!(num > 0, "num must be positive");
+        if num == 1 {
+            return Self::create(vec![start], 1, 1);
+        }
+        #[expect(clippy::cast_precision_loss, reason = "a count")]
+        let step = (stop - start) / (num - 1) as f64;
+        #[expect(clippy::cast_precision_loss, reason = "an index")]
+        Self::create((0..num).map(|i| start + i as f64 * step).collect(), num, 1)
+    }
+
+    /// `Mat.tabulate(rows, cols)((i, j) => f(i, j))`.
+    #[must_use]
+    pub fn tabulate(rows: usize, cols: usize, f: impl Fn(usize, usize) -> f64) -> Self {
+        let mut data = Vec::with_capacity(rows * cols);
+        for i in 0..rows {
+            for j in 0..cols {
+                data.push(f(i, j));
+            }
+        }
+        Self::create(data, rows, cols)
+    }
+
+    /// `np.zeros_like`.
+    #[must_use]
+    pub fn zerosLike(m: &Self) -> Self {
+        Self::zeros(m.rows, m.cols)
+    }
+    /// `np.ones_like`.
+    #[must_use]
+    pub fn onesLike(m: &Self) -> Self {
+        Self::ones(m.rows, m.cols)
+    }
+    /// `np.full_like`.
+    #[must_use]
+    pub fn fullLike(m: &Self, value: f64) -> Self {
+        Self::filled(m.rows, m.cols, value)
+    }
+
+    /// `MatD.randn(rows, cols)`: standard normals drawn from `rng` in row-major order —
+    /// the same draw order as Scala's, so a seeded call agrees exactly. The generator is
+    /// explicit because the crate has no global RNG.
+    #[must_use]
+    pub fn randn(rng: &mut NumPyRng, rows: usize, cols: usize) -> Self {
+        Self::create((0..rows * cols).map(|_| rng.randn()).collect(), rows, cols)
+    }
+    /// `MatD.rand(rows, cols)`: uniform `[0, 1)`.
+    #[must_use]
+    pub fn rand(rng: &mut NumPyRng, rows: usize, cols: usize) -> Self {
+        Self::create(
+            (0..rows * cols).map(|_| rng.next_f64()).collect(),
+            rows,
+            cols,
+        )
+    }
+    /// `MatD.normal(mean, std, rows, cols)`: `mean + std·randn()` per cell.
+    #[must_use]
+    pub fn normal(rng: &mut NumPyRng, mean: f64, std: f64, rows: usize, cols: usize) -> Self {
+        Self::create(
+            (0..rows * cols).map(|_| mean + std * rng.randn()).collect(),
+            rows,
+            cols,
+        )
+    }
+    /// `MatD.uniform(low, high, rows, cols)`.
+    #[must_use]
+    pub fn uniform(rng: &mut NumPyRng, low: f64, high: f64, rows: usize, cols: usize) -> Self {
+        Self::create(
+            (0..rows * cols).map(|_| rng.uniform(low, high)).collect(),
+            rows,
+            cols,
+        )
     }
 }
 

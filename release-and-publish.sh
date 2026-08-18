@@ -190,6 +190,12 @@ echo "==> Publishing $VERSION locally and compiling the doc scripts..."
 sbt publishLocal
 bash checkDocScripts.sh
 
+# 6d. The Rust examples embedded in rust/docs/*.md and rust/README.md must compile too:
+#     checkRustDocs.sh builds every ```rust block with a `fn main` in the
+#     uni-doc-examples crate, warnings denied.
+echo "==> Compiling the Rust doc examples..."
+bash checkRustDocs.sh
+
 # 7. Commit if anything is staged
 if git diff --cached --quiet; then
   echo "==> Nothing staged — skipping commit"

@@ -19,6 +19,18 @@ Scala's favour of this port's answer rather than papered over: a refused `copyTo
 in both languages, and `sqrt` of a negative and a negative `pow` exponent are `BigNaN` in
 both (as of 0.16.0), with fixture rows pinning them.
 
+## Documentation
+
+- [`docs/RustCheatSheet.md`](docs/RustCheatSheet.md) — every operation side by side: uni
+  Scala | uni Rust | NumPy, section for section with the Scala cheat sheet; ends in a
+  compiled tour of every table row.
+- Scala-side guides the crate parallels: [`../docs/QuickStartGuide.md`](../docs/QuickStartGuide.md),
+  [`../docs/BigTypeGuide.md`](../docs/BigTypeGuide.md), [`../docs/UniScriptingTools.md`](../docs/UniScriptingTools.md).
+- API reference: `cargo doc --open`.
+
+Every ```rust block with a `fn main` in this file and `docs/` is compiled by
+`checkRustDocs.sh` (CI, and release gate 6d), so the examples cannot rot.
+
 ## Modules
 
 | module | ports | notes |

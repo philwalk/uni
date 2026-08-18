@@ -21,7 +21,7 @@ categories = ["filesystem", "date-and-time", "mathematics", "parser-implementati
 # the package root and cannot ship in the crate -- exclude them so the tarball
 # is lean and carries no tests that cannot run. rust-toolchain.toml is excluded
 # so the repo's pinned toolchain is not forced onto consumers.
-exclude = ["tests/", "examples/", "src/bin/", "Makefile", "rustfmt.toml", "rust-toolchain.toml"]
+exclude = ["tests/", "examples/", "src/bin/", "doc-examples/", "docs/", "Makefile", "rustfmt.toml", "rust-toolchain.toml"]
 
 [lib]
 name = "uni"
