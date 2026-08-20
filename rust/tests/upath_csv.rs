@@ -16,6 +16,7 @@ use uni::upath::CsvConfig;
 use uni::upath::PathContext;
 use uni::upath::UPath;
 use uni::upath::UserInfo;
+use uni::upath::csv::rectangular;
 
 fn ctx(dir: &std::path::Path) -> Arc<PathContext> {
     let dir = dir.to_string_lossy().replace('\\', "/");
@@ -150,4 +151,24 @@ fn writing_zero_rows_produces_an_empty_file() {
     assert!(p.writeCsv::<String>(&[]));
     assert_eq!(p.byteArray().len(), 0);
     assert_eq!(p.csvRows(), Vec::<Vec<String>>::new());
+}
+
+#[test]
+fn ragged_rows_come_back_as_parsed_and_csv_schema_reports_them() {
+    let dir = temp_dir();
+    let c = ctx(dir.path());
+    let p = at(&c, "ragged.csv");
+    p.write("a,b,c\nsolo\nd,e,f\n");
+
+    assert_eq!(
+        p.csvRows(),
+        rows(&[&["a", "b", "c"], &["solo"], &["d", "e", "f"]])
+    );
+    let s = p.csvSchema();
+    assert_eq!(s.arity, 3);
+    assert_eq!(s.widths.get(&3), Some(&2));
+    assert_eq!(s.widths.get(&1), Some(&1));
+
+    // Padding is one call away for a caller that wants a rectangle.
+    assert_eq!(rectangular(p.csvRows())[1], vec!["solo", "", ""]);
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
 //> using scala 3.7.2
-//> using dep org.vastblue:uni_3:0.18.0
+//> using dep org.vastblue:uni_3:0.19.0
 
 // MARKET SIMULATOR — a testbed for COMPARING exposure strategies over long horizons.
 //
@@ -78,7 +78,15 @@ object MarketSim:
     "-paths N      ; independent price paths (default 200)",
     "-years Y      ; years per path (default 100)",
     "-seed S       ; base random seed (default 20260813)",
-    "-emit F       ; write path 0 as date/price/bond TSV",
+    "-emit F       ; write one path as a full-state TSV, plus a provenance sidecar F.json",
+    "-emitpath N   ; which path index -emit writes (default 0); path k uses seed + k*7919",
+    "-emitall      ; -emit every path of the run to F-000.tsv, F-001.tsv, ... with sidecars",
+    "-emitstart D  ; date the emitted path starts on, YYYY-MM-DD, stepping by WEEKDAYS so the",
+    "              ;   file joins a real dated series (default: 1900-01-02 by 365/252 days)",
+    "-emitgate P   ; paths in the ensemble that decides the emitted path's gate verdict",
+    "              ;   (default 200; 0 = judge the world by the emitted sample itself)",
+    "-gate C       ; realism = only realism-band failures make a world inadmissible;",
+    "              ;   full (default) = mechanism-engagement failures do too",
     "-validate     ; stylised-fact gate + fidelity report; exit non-zero on gate failure",
     "-fitness      ; print the scalar calibration loss and its components, then exit",
     "-calibrate N  ; random-search N parameter samples against the fitness loss; scores the",
@@ -134,6 +142,9 @@ object MarketSim:
 
   final case class Path(price: Array[Double], rate: Array[Double], fundamental: Array[Double],
                         liq: Array[Double],      // per-session slippage multiplier (equity market)
+                        bliq: Array[Double],     // the same, for the BOND market: an arm that trades
+                                                 // the bond is charged its own market's slippage,
+                                                 // not the equity book's
                         bond: Array[Double],     // flight-to-safety asset price (its own Market)
                         inflPress: Array[Double],// inflation pressure, for regime classification
                         cpi: Array[Double],      // realized price level, deterministic from pressure
@@ -195,6 +206,7 @@ object MarketSim:
     val fv   = new Array[Double](tot)
     val rt   = new Array[Double](tot)
     val lq   = new Array[Double](tot)
+    val bq   = new Array[Double](tot)
     val bp   = new Array[Double](tot)
     val ip   = new Array[Double](tot)
     val cp   = new Array[Double](tot)
@@ -302,6 +314,7 @@ object MarketSim:
       fv(i) = math.exp(logVbase - markdown)
       rt(i) = rate
       lq(i) = eqM.lastLiq
+      bq(i) = bdM.lastLiq
       bp(i) = math.exp(bdM.logP)
       ip(i) = inflPress
       logCpi += (piBase + inflPress) * dt
@@ -328,7 +341,7 @@ object MarketSim:
       if i == BurnIn then clampsAtBurn = eqM.clamps + bdM.clamps
       i += 1
 
-    Path(px.drop(BurnIn), rt.drop(BurnIn), fv.drop(BurnIn), lq.drop(BurnIn),
+    Path(px.drop(BurnIn), rt.drop(BurnIn), fv.drop(BurnIn), lq.drop(BurnIn), bq.drop(BurnIn),
          bp.drop(BurnIn), ip.drop(BurnIn), cp.drop(BurnIn),
          wTrendSum / n, pinnedCnt.toDouble / n, satCnt.toDouble / n,
          eqM.clamps + bdM.clamps - clampsAtBurn,
@@ -438,26 +451,52 @@ object MarketSim:
     * passed a 35%-volatility world (the one reversing the ranking); a "bonds fail" check written
     * as bondInfl < bondGrowth passed while bonds still RALLIED +2.8; crash frequency shipped
     * without an upper bound WHILE the one-sided lesson was being applied elsewhere in this file. */
-  def gateChecks(st: WorldStats): Vector[(String, Boolean)] = Vector(
-    ("equity vol 8-25%",          st.vol > 0.08 && st.vol < 0.25),
-    ("kurtosis 4-30",             st.kurt > 4.0 && st.kurt < 30.0),
-    ("clustering 0.10-0.40",      st.ac1 > 0.10 && st.ac1 < 0.40 && st.ac20 > 0.03),
-    ("crash rate 8-45/century",   st.epPerPath >= 1.0 && {
-        val pc = st.epPerPath * 100.0 / st.yearsPerPath; pc >= 8.0 && pc <= 45.0 }),
-    ("both recovery shapes",      st.nShapes > 0 && st.vCount >= st.nShapes / 10 && st.uCount >= st.nShapes / 10),
-    ("no runaway drift",          st.annRet.abs < 30.0),
-    // 0.02% ~ one clamped session per 20 path-years.  The old bound (0.5%) would have passed a
-    // world where the clamp was already reshaping kurtosis by a third.
-    ("clamp rarely binds",        st.clampPct < 0.02),
-    ("bond vol 7-20%",            st.bondVol > 0.07 && st.bondVol < 0.20),
-    ("bonds rally in growth shocks",    st.bondGrowth > 3.0),
-    ("bonds LOSE in inflation regimes", st.bondInfl < -3.0),
-    ("corr flips positive under inflation",
-        !st.corrInfl.isNaN && !st.corrCalm.isNaN &&
-        st.corrInfl > st.corrCalm + 0.15 && st.corrInfl > 0.0 && st.corrCalm < 0.35),
-    ("bond spiral engages, not always", st.pctBondStress > 0.002 && st.pctBondStress < 0.5),
-    ("inflation 1-6%/yr",         st.inflAnn > 1.0 && st.inflAnn < 6.0),
-  )
+  /** The gate answers two different questions and used to report one verdict.
+    *
+    * REALISM asks "is this world a market at all".  Its checks are unconditional distributional
+    * properties of the whole sample, and a failure invalidates every conclusion drawn here.
+    *
+    * MECHANISM asks "is this mechanism engaged in this world".  Its checks are all conditional on
+    * crash or inflation EPISODES, and a failure invalidates only conclusions that lean on the named
+    * mechanism.  A world can be a perfectly good market with an inert bond spiral — the duration-6y
+    * world is exactly that, and a single verdict discarded it from every pooled panel.
+    *
+    * The split also explains the export-time false alarm: the four conditional statistics cannot be
+    * measured from one short path, so `-emit` takes its verdict from an ensemble (`-emitgate`). */
+  enum GateClass:
+    case Realism, Mechanism
+
+  def gateChecks(st: WorldStats): Vector[(String, Boolean, GateClass)] =
+    import GateClass.*
+    Vector(
+      ("equity vol 8-25%",          st.vol > 0.08 && st.vol < 0.25, Realism),
+      ("kurtosis 4-30",             st.kurt > 4.0 && st.kurt < 30.0, Realism),
+      ("clustering 0.10-0.40",      st.ac1 > 0.10 && st.ac1 < 0.40 && st.ac20 > 0.03, Realism),
+      ("crash rate 8-45/century",   st.epPerPath >= 1.0 && {
+          val pc = st.epPerPath * 100.0 / st.yearsPerPath; pc >= 8.0 && pc <= 45.0 }, Realism),
+      ("both recovery shapes",      st.nShapes > 0 && st.vCount >= st.nShapes / 10 && st.uCount >= st.nShapes / 10, Realism),
+      ("no runaway drift",          st.annRet.abs < 30.0, Realism),
+      // 0.02% ~ one clamped session per 20 path-years.  The old bound (0.5%) would have passed a
+      // world where the clamp was already reshaping kurtosis by a third.
+      ("clamp rarely binds",        st.clampPct < 0.02, Realism),
+      ("bond vol 7-20%",            st.bondVol > 0.07 && st.bondVol < 0.20, Realism),
+      ("bonds rally in growth shocks",    st.bondGrowth > 3.0, Mechanism),
+      ("bonds LOSE in inflation regimes", st.bondInfl < -3.0, Mechanism),
+      ("corr flips positive under inflation",
+          !st.corrInfl.isNaN && !st.corrCalm.isNaN &&
+          st.corrInfl > st.corrCalm + 0.15 && st.corrInfl > 0.0 && st.corrCalm < 0.35, Mechanism),
+      ("bond spiral engages, not always", st.pctBondStress > 0.002 && st.pctBondStress < 0.5, Mechanism),
+      ("inflation 1-6%/yr",         st.inflAnn > 1.0 && st.inflAnn < 6.0, Realism),
+    )
+
+  def failedIn(st: WorldStats, cls: GateClass): Vector[String] =
+    gateChecks(st).collect { case (n, false, c) if c == cls => n }
+
+  /** Admissibility under the class a report has declared it requires.  `realismOnly` keeps a world
+    * whose only failures are inert mechanisms; the default keeps the historical binary verdict. */
+  def gateOk(st: WorldStats, realismOnly: Boolean): Boolean =
+    if realismOnly then failedIn(st, GateClass.Realism).isEmpty
+    else gateChecks(st).forall(_._2)
 
   /** Scalar calibration loss: weighted |log(model/target)| over the fidelity targets, a penalty of
     * 2 for a wrong sign, and 0.5 per failed gate check.  Exists so calibration is a SEARCH against
@@ -862,13 +901,13 @@ object MarketSim:
       )
 
   def runStrategySweep(paths: Int, years: Int, seed: Long, cost: Double, single: Boolean,
-                       base: World): Unit =
+                       base: World, realismOnly: Boolean): Unit =
     val worlds = sweepWorlds(base, single)
     eprintln(s"${worlds.size} worlds x $paths paths x $years years, ${Rules.size} rules x {cash,bond}")
     val results = worlds.map { (wname, w) =>
       val sims = simPaths(w, paths, years, seed)
       val st = measure(sims, years)
-      val ok = gateChecks(st).forall(_._2)
+      val ok = gateOk(st, realismOnly)
       val evald = java.util.stream.IntStream.range(0, sims.size).parallel().mapToObj { k =>
         val s   = sims(k)
         val ind = new Indicators(s.price)
@@ -956,7 +995,7 @@ object MarketSim:
       val st = measure(sims, years)
       // gated AT USE TIME, like every other conclusion path: a retrospective "the gate passed for
       // the worlds used so far" protects nothing about the next world someone dials up
-      val okSev = gateChecks(st).forall(_._2)
+      val okSev = gateOk(st, realismOnly)
       val ev = java.util.stream.IntStream.range(0, sims.size).parallel().mapToObj { k =>
         val s = sims(k); val ind = new Indicators(s.price)
         val eps = episodes(s.price, 15.0); val fl = eps.map(ep => fundamentalLed(s, ep))
@@ -1026,7 +1065,8 @@ object MarketSim:
     * TWO-SIDED CONTROL: the last contrast pairs an arm with ITSELF measured on an independent path,
     * so the true difference is zero by construction.  Every statistic must land near 50% there with
     * n* blowing up; one that looks decisive on the null is reading an artifact, not a difference. */
-  def runPowerReport(paths: Int, seed: Long, cost: Double, single: Boolean, base: World): Unit =
+  def runPowerReport(paths: Int, seed: Long, cost: Double, single: Boolean, base: World,
+                     realismOnly: Boolean): Unit =
     // 21 = the traded book's span; 72 = the S&P record used for calibration; the ends bracket them
     val horizons = Vector(21, 40, 72, 100)
     val focus = Vector("volatility-scaled, floor 40%", "trend 200d, floor 0%",
@@ -1044,7 +1084,7 @@ object MarketSim:
     /** per contrast, per statistic: (hit rate, n*).  Gate verdict travels with the numbers. */
     def power(w: World, L: Int, sd: Long): (Boolean, Vector[Vector[(Double, Double)]]) =
       val sims  = simPaths(w, paths, L, sd)
-      val ok    = gateChecks(measure(sims, L)).forall(_._2)
+      val ok    = gateOk(measure(sims, L), realismOnly)
       val stats = java.util.stream.IntStream.range(0, sims.size).parallel().mapToObj { k =>
         val p   = sims(k)
         val ind = new Indicators(p.price)
@@ -1123,7 +1163,7 @@ object MarketSim:
     * sale and cost nothing, so entering them as zeros would flatter the average with episodes that
     * never happened. */
   def runBufferReport(paths: Int, years: Int, seed: Long, cost: Double, single: Boolean,
-                      base: World): Unit =
+                      base: World, realismOnly: Boolean): Unit =
     // 15% is the repo's existing episode threshold (episodes(px, 15.0)); reusing it keeps this
     // report from introducing a new arbitrary constant.  Without it the distribution is drowned:
     // every one-session dip is a stretch, so the median stretch is 0.0 years and says nothing.
@@ -1146,7 +1186,7 @@ object MarketSim:
       * chosen before knowing which stretch you land in. */
     def bufferStats(w: World): (Boolean, Vector[(Vector[Double], Vector[Double], Vector[Vector[Double]])]) =
       val sims = simPaths(w, paths, years, seed)
-      val ok   = gateChecks(measure(sims, years)).forall(_._2)
+      val ok   = gateOk(measure(sims, years), realismOnly)
       val per  = java.util.stream.IntStream.range(0, sims.size).parallel().mapToObj { k =>
         val p   = sims(k)
         val ind = new Indicators(p.price)
@@ -1208,10 +1248,170 @@ object MarketSim:
         println(f"  ${arms(j)._1}%-28s ${q.head}%10.1f ${pctile(q, 0.5)}%10.1f ${q.last}%10.1f   " +
                 f"${t.head}%8.1f%% ${pctile(t, 0.5)}%8.1f%% ${t.last}%8.1f%%")
 
+  // ---- export: the full state, named, dated and provenanced -----------------------------------
+  //
+  // An emitted path is the whole external interface: a consumer grades its own rules on it without
+  // importing either twin.  Three properties make that work, and all three were missing.
+  //   1. EVERY series the model knows, not just price and bond.  A rule that de-risks to cash is
+  //      mis-scored without `rate`; a real-terms question is unanswerable without `cpi`; slippage
+  //      cannot be charged the way armPath charges it without `liq`/`bliq`; and `fundamental` is an
+  //      oracle label (fundamental-led vs liquidity-led decline) that no real series can supply.
+  //   2. A NAMED path.  `seed + k*7919` makes the family reproducible, but nothing in the output
+  //      said which (world, seed, k) produced a file, so an ensemble could not be inventoried and
+  //      the same paths could be re-drawn and counted twice as independent evidence.
+  //   3. A verdict measured on the WORLD, not on the sample.  The four mechanism checks are
+  //      conditional on crash episodes, so one short path cannot measure them and every export
+  //      carried a false alarm -- worse than no warning.  See `-emitgate`.
+
+  val EmitColumns = Vector("date", "price", "bond", "rate", "cpi", "liq", "bliq",
+                           "fundamental", "inflPress")
+
+  /** `%.6f`, with negative zero folded to positive.  Emitted columns are levels rather than
+    * differences, so the signed-zero trap PARITY.md documents is remote here -- but `rate` is
+    * floored at zero and `inflPress` starts there, and IEEE-754 guarantees (-0.0) + 0.0 = +0.0 in
+    * both languages, so the fold costs nothing and removes the last way the two writers could
+    * disagree on a byte. */
+  def ef(x: Double): String = f"${if x == 0.0 then 0.0 else x}%.6f"
+
+  def jsonStr(s: String): String =
+    val esc = s.flatMap {
+      case '"'  => "\\\""
+      case '\\' => "\\\\"
+      case c    => c.toString
+    }
+    "\"" + esc + "\""
+
+  def crowdName(c: Crowd): String = c match
+    case Crowd.Momentum  => "momentum"
+    case Crowd.Trend(d)  => s"trend$d"
+    case Crowd.VolScaled => "volscaled"
+
+  /** Session dates.  Empty `startYmd` keeps the historical synthetic calendar: 1900-01-02 stepping
+    * 365/252 days, which lands on weekends and so can never be joined to a real dated series.  A
+    * date instead steps by WEEKDAYS (no holiday calendar -- recorded, not hidden), which is what
+    * lets an emitted path through a normal dated loader untouched. */
+  def sessionDates(n: Int, startYmd: String): Vector[String] =
+    if startYmd.isEmpty then
+      val start = UniDateTime.of(1900, 1, 2)
+      // .ymd, never bare interpolation: UniDateTime.toString is isoString and would render
+      // 1900-01-02T00:00.  The old spelling got the date-only form only because sb.append(anyRef)
+      // reached LocalDate.toString -- a JDK shape nothing here pinned.
+      Vector.tabulate(n)(i => start.plusDays((i * 365L) / DaysPerYear).ymd)
+    else
+      val f = startYmd.split("-")
+      if f.length != 3 then usage(s"-emitstart wants YYYY-MM-DD, got [$startYmd]")
+      def nextWeekday(d: UniDateTime): UniDateTime =
+        if d.dayOfWeekNum <= 5 then d else nextWeekday(d.plusDays(1))
+      // a stateful recurrence written as one, like simulate(): each session is the next weekday
+      // strictly after the previous one
+      val out = Vector.newBuilder[String]
+      var d = nextWeekday(UniDateTime.of(f(0).toInt, f(1).toInt, f(2).toInt))
+      var i = 0
+      while i < n do
+        out += d.ymd
+        d = nextWeekday(d.plusDays(1))
+        i += 1
+      out.result()
+
+  /** `foo.tsv` -> `foo.json`; a name with no extension just gains one. */
+  def sidecarName(file: String): String =
+    val cut = file.lastIndexOf('.')
+    val sep = math.max(file.lastIndexOf('/'), file.lastIndexOf('\\'))
+    if cut > sep then file.substring(0, cut) + ".json" else file + ".json"
+
+  /** `foo.tsv` -> `foo-007.tsv`, so an ensemble sorts in path order. */
+  def indexedName(file: String, k: Int): String =
+    val cut = file.lastIndexOf('.')
+    val sep = math.max(file.lastIndexOf('/'), file.lastIndexOf('\\'))
+    val tag = f"-$k%03d"
+    if cut > sep then file.substring(0, cut) + tag + file.substring(cut) else file + tag
+
+  /** The TSV and its sidecar.  `gateSt` is measured on the gate ensemble, which is a different and
+    * usually much larger sample than the one path being written. */
+  def writeEmitted(file: String, p: Path, k: Int, w: World, years: Int, seed: Long,
+                   startYmd: String, gateSt: WorldStats, gatePaths: Int): Unit =
+    val dates = sessionDates(p.price.length, startYmd)
+    writeEmitTsv(file, p, dates)
+    writeEmitSidecar(file, p, k, w, years, seed, startYmd, dates, gateSt, gatePaths)
+
+  def writeEmitTsv(file: String, p: Path, dates: Vector[String]): Unit =
+    val rows = EmitColumns.mkString("\t") +: Vector.tabulate(dates.length) { i =>
+      s"${dates(i)}\t${ef(p.price(i))}\t${ef(p.bond(i))}\t${ef(p.rate(i))}\t${ef(p.cpi(i))}\t" +
+      s"${ef(p.liq(i))}\t${ef(p.bliq(i))}\t${ef(p.fundamental(i))}\t${ef(p.inflPress(i))}"
+    }
+    file.asPath.writeLines(rows)
+
+  /** Everything that licenses the TSV: which (world, seed, path) produced it, on what calendar,
+    * and what the world's two gate verdicts and fidelity ratios were.  A warning printed to stderr
+    * at export time does not survive the file being moved; this does. */
+  def writeEmitSidecar(file: String, p: Path, k: Int, w: World, years: Int, seed: Long,
+                       startYmd: String, dates: Vector[String], gateSt: WorldStats,
+                       gatePaths: Int): Unit =
+    val n            = p.price.length
+    val realismBad   = failedIn(gateSt, GateClass.Realism)
+    val mechanismBad = failedIn(gateSt, GateClass.Mechanism)
+    def strList(v: Vector[String]): String = v.map(jsonStr).mkString("[", ", ", "]")
+    val worldFields = Vector(
+      ("trendShare", ef(w.trendShare)), ("depth", ef(w.depth)), ("stress", ef(w.stress)),
+      ("beta", ef(w.beta)), ("drift", ef(w.drift)), ("fundVol", ef(w.fundVol)),
+      ("rateMean", ef(w.rateMean)), ("volPersist", ef(w.volPersist)),
+      ("volOfVol", ef(w.volOfVol)), ("valuePull", ef(w.valuePull)),
+      ("crowd", jsonStr(crowdName(w.crowd))), ("crowdImpact", ef(w.crowdImpact)),
+      ("panic", ef(w.panic)), ("duration", ef(w.duration)), ("flight", ef(w.flight)),
+      ("inflProb", ef(w.inflProb)), ("inflSize", ef(w.inflSize)),
+      ("inflSpeed", ef(w.inflSpeed)), ("rateSpeed", ef(w.rateSpeed)),
+      ("discount", ef(w.discount)), ("margin", ef(w.margin)))
+    def num(x: Double): String = if x.isNaN then "null" else ef(x)
+    val fidelity = FitTargets.map { (nm, get, want, _) =>
+      val got   = get(gateSt)
+      val ratio = if want != 0.0 then got / want else Double.NaN
+      val miss  = ratio > 1.5 || ratio < 0.667
+      s"""    { "name": ${jsonStr(nm)}, "model": ${num(got)}, "real": ${num(want)}, """ +
+      s""""ratio": ${num(ratio)}, "miss": $miss }"""
+    }
+    val json = Vector(
+      "{",
+      """  "generator": "market_sim",""",
+      """  "schema": 1,""",
+      s"""  "file": ${jsonStr(file)},""",
+      s"""  "columns": ${strList(EmitColumns)},""",
+      """  "header": true,""",
+      """  "path": {""",
+      s"""    "index": $k,""",
+      s"""    "baseSeed": $seed,""",
+      """    "seedStride": 7919,""",
+      s"""    "pathSeed": ${seed + k.toLong * 7919L},""",
+      s"""    "years": $years,""",
+      s"""    "sessions": $n,""",
+      s"""    "burnIn": $BurnIn,""",
+      s"""    "sessionsPerYear": $DaysPerYear,""",
+      s"""    "calendar": ${jsonStr(if startYmd.isEmpty then "synthetic-365-252" else "weekday")},""",
+      s"""    "startDate": ${jsonStr(dates.head)},""",
+      s"""    "endDate": ${jsonStr(dates.last)}""",
+      "  },",
+      """  "world": {""",
+      worldFields.map((nm, v) => s"""    ${jsonStr(nm)}: $v""").mkString(",\n"),
+      "  },",
+      """  "gate": {""",
+      s"""    "ensemblePaths": $gatePaths,""",
+      s"""    "ensembleYears": $years,""",
+      s"""    "realism": ${jsonStr(if realismBad.isEmpty then "PASS" else "FAIL")},""",
+      s"""    "mechanism": ${jsonStr(if mechanismBad.isEmpty then "PASS" else "FAIL")},""",
+      s"""    "realismFailed": ${strList(realismBad)},""",
+      s"""    "mechanismFailed": ${strList(mechanismBad)}""",
+      "  },",
+      """  "fidelity": [""",
+      fidelity.mkString(",\n"),
+      "  ]",
+      "}")
+    sidecarName(file).asPath.writeLines(json)
+
   // ---- entry point ---------------------------------------------------------------------------
   def main(args: Array[String]): Unit =
     var paths = 200; var years = 100; var seed = 20260813L
     var emit = ""; var validate = false; var strategies = false; var single = false
+    var emitPath = 0; var emitAll = false; var emitStart = ""; var emitGate = 200
+    var realismOnly = false
     var fitnessOnly = false; var calibrateN = 0
     var powerReport = false; var bufferReport = false
     var cost = 0.0010
@@ -1227,6 +1427,14 @@ object MarketSim:
       case "-years"      => years = consumeNext.toInt
       case "-seed"       => seed = consumeNext.toLong
       case "-emit"       => emit = consumeNext
+      case "-emitpath"   => emitPath = consumeNext.toInt
+      case "-emitall"    => emitAll = true
+      case "-emitstart"  => emitStart = consumeNext
+      case "-emitgate"   => emitGate = consumeNext.toInt
+      case "-gate"       => realismOnly = consumeNext.toLowerCase match
+                              case "realism" => true
+                              case "full"    => false
+                              case other     => usage(s"unknown -gate [$other]; use realism or full")
       case "-validate"   => validate = true
       case "-fitness"    => fitnessOnly = true
       case "-calibrate"  => calibrateN = consumeNext.toInt
@@ -1274,16 +1482,16 @@ object MarketSim:
       val (loss, rows) = fitness(st)
       println(f"fitness loss $loss%.3f  (lower is better; includes 0.5 per failed gate check)")
       rows.foreach((n, m, t, term) => println(f"  $n%-22s model $m%8.2f   target $t%8.2f   term $term%6.3f"))
-      gateChecks(st).filter(!_._2).foreach((n, _) => println(f"  FAILED GATE: $n%s  (+0.500)"))
+      gateChecks(st).filter(!_._2).foreach((n, _, _) => println(f"  FAILED GATE: $n%s  (+0.500)"))
       return
     if strategies then
-      runStrategySweep(paths, years, seed, cost, single, w)
+      runStrategySweep(paths, years, seed, cost, single, w, realismOnly)
       return
     if powerReport then
-      runPowerReport(paths, seed, cost, single, w)
+      runPowerReport(paths, seed, cost, single, w, realismOnly)
       return
     if bufferReport then
-      runBufferReport(paths, years, seed, cost, single, w)
+      runBufferReport(paths, years, seed, cost, single, w, realismOnly)
       return
 
     eprintln(s"simulating $paths paths x $years years")
@@ -1291,23 +1499,39 @@ object MarketSim:
     val st = measure(sims, years)
 
     if emit.nonEmpty then
-      // an exported path can end up inside the real-data harnesses with no memory of where it came
-      // from, so the gate verdict travels with the export — loudly, at export time
-      if !gateChecks(st).forall(_._2) then
-        eprintln("WARNING: this world FAILS the acceptance gate " +
-                 gateChecks(st).filter(!_._2).map(_._1).mkString("[", ", ", "]") +
+      // The verdict is a property of the WORLD, so it is measured on an ensemble large enough for
+      // the conditional mechanism statistics to exist.  Judging the world by the one path being
+      // written made every short export raise all four mechanism failures — a guaranteed false
+      // alarm, which trains a consumer to ignore the warning entirely.
+      val (gateSt, gatePaths) =
+        if emitGate > paths then (measure(simPaths(w, emitGate, years, seed), years), emitGate)
+        else (st, paths)
+      val realismBad   = failedIn(gateSt, GateClass.Realism)
+      val mechanismBad = failedIn(gateSt, GateClass.Mechanism)
+      if realismBad.nonEmpty then
+        eprintln("WARNING: this world FAILS the realism bands " + realismBad.mkString("[", ", ", "]") +
                  " — the emitted path is not market-like")
-      val p = sims.head
-      val start = UniDateTime.of(1900, 1, 2)
-      // .ymd, never bare interpolation: UniDateTime.toString is isoString and would render
-      // 1900-01-02T00:00.  The old spelling got the date-only form only because sb.append(anyRef)
-      // reached LocalDate.toString -- a JDK shape nothing here pinned.
-      val rows = Vector.tabulate(p.price.length) { i =>
-        val d = start.plusDays((i * 365L) / DaysPerYear).ymd
-        f"${d}\t${p.price(i)}%.6f\t${p.bond(i)}%.6f"
-      }
-      emit.asPath.writeLines(rows)
-      eprintln(s"wrote path 0 (price, bond) to $emit (${p.price.length} sessions)")
+      if mechanismBad.nonEmpty then
+        eprintln("NOTE: mechanisms inert in this world " + mechanismBad.mkString("[", ", ", "]") +
+                 " — conclusions that lean on them are not supported here")
+      // path k is a function of (world, years, seed, k) alone, so an index past the report
+      // ensemble is simulated directly rather than forcing a larger run
+      def pathAt(k: Int): Path =
+        if k < sims.length then sims(k) else simulate(w, years, seed + k.toLong * 7919L)
+      val written =
+        if emitAll then
+          for k <- 0 until paths yield
+            val f = indexedName(emit, k)
+            writeEmitted(f, sims(k), k, w, years, seed, emitStart, gateSt, gatePaths)
+            f
+        else
+          val p = pathAt(emitPath)
+          writeEmitted(emit, p, emitPath, w, years, seed, emitStart, gateSt, gatePaths)
+          Vector(emit)
+      val sessions = pathAt(if emitAll then 0 else emitPath).price.length
+      eprintln(s"wrote ${written.size} path(s), ${EmitColumns.size} columns x $sessions sessions, " +
+               s"to ${written.head}${if written.size > 1 then s" .. ${written.last}" else ""} " +
+               s"(+ sidecar ${sidecarName(written.head)})")
 
     val allRets = sims.map(s => dailyReturns(s.price))
     val annVol  = allRets.map(r => math.sqrt(r.map(x => x * x).sum / r.length * DaysPerYear))
@@ -1340,10 +1564,25 @@ object MarketSim:
     }
 
     if validate then
-      val checks = gateChecks(st)
+      val checks       = gateChecks(st)
+      val realismBad   = failedIn(st, GateClass.Realism)
+      val mechanismBad = failedIn(st, GateClass.Mechanism)
       println()
       println("  acceptance gate:")
-      checks.foreach((n, ok) => println(f"     ${if ok then "PASS" else "FAIL"}%-5s $n%s"))
-      if checks.exists(!_._2) then
-        eprintln("acceptance gate FAILED — this world is not fit to compare strategies in")
+      println("    realism bands — a failure here means this world is not a market:")
+      checks.filter(_._3 == GateClass.Realism).foreach((n, ok, _) =>
+        println(f"     ${if ok then "PASS" else "FAIL"}%-5s $n%s"))
+      println("    mechanism engagement — a failure here means only that mechanism is inert:")
+      checks.filter(_._3 == GateClass.Mechanism).foreach((n, ok, _) =>
+        println(f"     ${if ok then "PASS" else "FAIL"}%-5s $n%s"))
+      println(f"    verdict: realism ${if realismBad.isEmpty then "PASS" else "FAIL"}%s   " +
+              f"mechanism ${if mechanismBad.isEmpty then "PASS" else "FAIL"}%s" +
+              (if mechanismBad.isEmpty then "" else mechanismBad.mkString("   inert: ", ", ", "")))
+      if realismBad.nonEmpty then
+        eprintln("realism bands FAILED — this world is not fit to compare strategies in")
+        System.exit(1)
+      if mechanismBad.nonEmpty && !realismOnly then
+        eprintln("mechanism checks FAILED " + mechanismBad.mkString("[", ", ", "]") +
+                 " — rerun with -gate realism to admit this world for conclusions that do not " +
+                 "depend on them")
         System.exit(1)

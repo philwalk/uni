@@ -45,7 +45,8 @@ class CsvParitySuite extends FunSuite:
     file.lines
       .filterNot(l => l.isEmpty || l.startsWith("#"))
       .foldLeft(Map.empty[(String, String), Vector[Vector[String]]]): (acc, line) =>
-        // -1 keeps trailing empty fields, which are exactly the padding being pinned.
+        // -1 keeps trailing empty fields; a row ending in a delimiter really does
+        // have an empty last cell, and dropping it would rewrite the arity pinned here.
         val parts = line.split("\t", -1)
         assert(parts.length >= 3, s"malformed fixture line: $line")
         val key  = (parts(0), parts(1))
@@ -84,29 +85,36 @@ class CsvParitySuite extends FunSuite:
       assertEquals(collected.result(), reference(("stream", name)), s"eachRow differs for [$name]")
   }
 
-  test("the two readings agree on which rows exist") {
-    // They may disagree about *width* -- the stream only pads to its window -- but
-    // never about how many rows a file has, or about any field's content.
+  test("the two readings are identical, case for case") {
+    // Neither reader reshapes a row, so how a caller asked cannot change the answer.
     for name <- cases("rows") do
-      val full   = reference(("rows", name))
-      val stream = reference(("stream", name))
-      assertEquals(full.length, stream.length, s"row count differs for [$name]")
-      for (wide, narrow) <- full.zip(stream) do
-        assert(wide.length >= narrow.length, s"[$name]: stream wider than the full read")
-        assertEquals(wide.take(narrow.length), narrow, s"[$name]: field content")
-        assert(wide.drop(narrow.length).forall(_.isEmpty), s"[$name]: full read added content")
+      assertEquals(reference(("stream", name)), reference(("rows", name)),
+                   s"readings differ for [$name]")
   }
 
-  test("the streaming window leaves a later, wider row jagged") {
-    // The one case where the two readings are *meant* to differ, called out so a
-    // change to the window is a deliberate act rather than a quiet fixture diff.
+  test("a row's position in the file does not change how it is reported") {
+    // A wide row 101 rows in, past any window a reader might be tempted to keep.
     val p      = input("past-window")
     val stream = p.csvRowsStream.toVector
     val all    = p.csvRows.toVector
-    assertEquals(stream.head.length, 2, "window saw only 2-wide rows")
-    assertEquals(stream(100).length, 4, "the wide row must not be truncated")
-    assertEquals(all.head.length, 4, "the full read knows the true width")
-    assertEquals(all.length, stream.length)
+    assertEquals(stream, all)
+    assertEquals(all.head.length, 2, "the narrow rows stay narrow")
+    assertEquals(all(100).length, 4, "the wide row keeps every field")
+  }
+
+  test("csvSchema matches the committed reference") {
+    // The expectation is decoded from the fixture, never recomputed with schema()
+    // itself — recomputing would follow a changed tie-break and assert nothing.
+    val names = cases("schema")
+    assert(names.length >= 20, s"only ${names.length} schema cases in fixture")
+    for name <- names do
+      val fields = reference(("schema", name)).head
+      val widths = fields.tail.map { f =>
+        val parts = f.split(":")
+        parts(0).toInt -> parts(1).toInt
+      }.toMap
+      val expected = uni.io.FastCsv.CsvSchema(widths, fields.head.toInt)
+      assertEquals(input(name).csvSchema, expected, s"csvSchema differs for case [$name]")
   }
 
   test("unescape reverses the generator's escaping") {

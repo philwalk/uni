@@ -1,5 +1,82 @@
 ## Unreleased
 
+**ADDED — `marketSim`/`market_sim`: `-emit` exports the full model state, named and provenanced**
+
+An emitted path is the whole external interface — a consumer grades its own rules on it without
+importing either twin — and it carried three columns. It now carries nine: `date price bond rate
+cpi liq bliq fundamental inflPress`, with a header row. Without `rate` a rule that de-risks to cash
+is mis-scored; without `cpi` a real-terms question is unanswerable; `bliq` is the bond market's own
+slippage multiplier, computed since the two-market rewrite and discarded until now; `fundamental` is
+an oracle label (fundamental-led versus liquidity-led decline) that no real series can supply.
+
+```
+-emitpath N     which path index (default 0); path k is seed + k*7919 and needs no larger run
+-emitall        every path to F-000.tsv, F-001.tsv, ... each with its sidecar
+-emitstart D    YYYY-MM-DD, stepping by WEEKDAYS so the file joins a real dated series
+-emitgate P     paths in the ensemble that decides the verdict (default 200; 0 = the sample)
+```
+
+`-emit F` also writes `F.json`: the world's every field, the base seed and stride, the path index
+and its derived seed, the calendar, both gate verdicts with their named failures, and the fidelity
+ratios. A warning printed to stderr does not survive the file being moved, and an ensemble that
+cannot be named cannot be inventoried.
+
+Default dates step `365/252` days from 1900-01-02 and land on weekends, so an emitted path could
+never be joined to a real dated series. `-emitstart` steps weekdays instead — no holiday calendar.
+
+**FIXED — every short `-emit` warned that the world had failed the gate**
+
+`-paths 1 -years 20 -emit` reported all four mechanism checks failed for a world that passes every
+check at 200 paths: they are conditional on crash episodes, which one short path cannot measure.
+Every export carried a false alarm, which is worse than no warning. The verdict now comes from an
+ensemble of the same world (`-emitgate`, default 200 paths); `-emitgate 0` judges by the sample.
+
+**CHANGED — the acceptance gate reports two verdicts, realism and mechanism**
+
+"bond vol 7-20%" says *this world is not a market*; "bond spiral engages, not always" says *a
+mechanism is inert here*. The first invalidates every conclusion, the second only conclusions that
+lean on the named mechanism — and under one verdict the duration-6y world, which passes every
+realism band, was excluded from every pooled panel.
+
+`-validate` now prints the nine realism bands and the four mechanism checks separately, then a
+`verdict:` line naming any inert mechanism. `-gate realism|full` sets admissibility for both the
+`-validate` exit code and the world sweeps behind `-strategies`, `-power` and `-buffer`. The default
+is `full`, so every existing report keeps its output and its exit code.
+
+**CHANGED — `csvRows` and the streaming readers return rows as parsed; padding removed**
+
+0.16.0–0.18.x padded every short row to a common width. A padded cell is `""`, which no
+caller can tell from a genuinely empty one, and the padding erased per-row arity — the
+channel that distinguishes header, data and footer rows in a ragged file (a Fidelity
+export: header 16 cells, data 17 via a trailing comma, quoted disclaimers at 1). All four
+readers — `csvRows`, `csvRowsStream`, `csvRowsAsync`, `csvRows(onRow)` — now report rows
+exactly as parsed, and agree row for row. Blank-row dropping is unchanged.
+
+Rectangular output is opt-in: `FastCsv.rectangular(p.csvRows)` reproduces the old output.
+The matrix loaders are unchanged and still rectangular — `loadSmart` already padded for
+itself, and `loadCSV` now does too (to the file's widest, where it previously took a width
+from the first 100 rows and truncated anything wider that came later).
+
+Same change in Rust (`upath::csv`): `csvRows` no longer wraps `rectangular`, the streaming
+width window is gone, and `matcsv` pads for itself.
+
+**ADDED — `p.csvSchema` / `FastCsv.schema`: what shape is this file?**
+
+An arity histogram plus the modal arity (`CsvSchema(widths, arity)`; ties resolve wider, so
+no field is voted away). A report, never a transformation: when the modal call is wrong, the
+outvoted widths are there in `widths` and no row was altered. `p.csvSchema` streams — one
+pass, constant memory, safe on files too large for `csvRows` — and `schema` takes any
+`IterableOnce`. `UPath::csvSchema` in Rust. Both languages' modal call is pinned by a
+committed `schema` reading in the parity fixture.
+
+**FIXED — a mid-read I/O failure no longer masquerades as end-of-file**
+
+`csvRowsAsync` swallowed a producer-thread exception and delivered a clean but truncated
+stream; it now rethrows on the consumer, agreeing with `csvRowsStream`. Rust's streaming
+reader flushed the parser's partial row on a read *error* as though the file ended there,
+fabricating a torn half-row; it now ends the stream without it (`try_csv_rows` still
+reports the error).
+
 **ADDED — a ninth demo pair, `matdcalc`: the `MatD` core in both languages, byte-identical**
 
 `jsrc/matdcalc.sc` ↔ `rust/examples/matdcalc.rs`, written to read line for line alike: one

@@ -19,10 +19,16 @@ import java.nio.charset.StandardCharsets.UTF_8
  * are part of the *input* rather than the environment, which is why the CRLF and
  * lone-CR cases are written as explicit bytes.
  *
- * Two readings are recorded per case, because they are allowed to differ:
- *   - `rows`   -- `csvRows`, which reads the whole file and is rectangular
- *   - `stream` -- `csvRowsStream`, which pads only to its 100-row window and so may
- *                 emit a later, wider row jagged
+ * Five readings are recorded per case:
+ *   - `rows`   -- `csvRows`, rows exactly as parsed
+ *   - `stream` -- `csvRowsStream`, also exactly as parsed. The two coincide today;
+ *                 both are still recorded, so a reader that starts reshaping rows
+ *                 shows up as a diff rather than as nothing.
+ *   - `schema` -- `csvSchema`: the modal arity, then the histogram as `width:count`
+ *                 pairs sorted by width. Committed so the two languages' tie-break
+ *                 and empty-input conventions are pinned against each other —
+ *                 recomputing the expectation in the test under check would make
+ *                 the assertion tautological.
  *   - `hdr`    -- `loadSmart` header detection, including `colN` names for blanks
  *   - `mat`    -- `loadSmart` cell values, as raw IEEE bits so the comparison is
  *                 exact and does not go through either language's float printer
@@ -61,11 +67,9 @@ object CsvParityGen:
     "ragged-long"      -> "a,b\nw,x,y,z\nc,d\n",
     "short-first-row"  -> "9\n1,2\n3,4\n",
     "empty-fields"     -> "a,,c\n,,\n1,2,3\n",
-    // Rows well over the sniffer's 100-character check interval: the case that
-    // exposed the padding being a no-op when its width came from the sniffer.
+    // Rows well over the sniffer's 100-character check interval, where a width
+    // taken from the sniffer used to go wrong.
     "wide-rows"        -> Seq(wideRow(12), wideRow(9), wideRow(12)).mkString("", "\n", "\n"),
-    // A row wider than the 100-row streaming window: `rows` pads it, `stream`
-    // cannot and must emit it jagged rather than truncated.
     // Numeric cell parsing, i.e. `Big.big(String)`. Currency values are quoted
     // because their thousands separator is also the delimiter.
     "numeric-cells"    -> Seq(
@@ -73,6 +77,8 @@ object CsvParityGen:
       "1,2.5,-3.25,1e3,\"$1,234.56\",12%,,abc,4.,inf,NaN,+5,.5",
       "0,0.1,-0.035,2.5e-3,\"$0.99\",-3.5%, ,1.2.3,.,Infinity,nan,-0,5.0",
     ).mkString("", "\n", "\n"),
+    // A wide row 101 rows in: nothing about a row's position may change how it is
+    // reported, in either language.
     "past-window"      -> (Seq.fill(100)("a,b") :+ "w,x,y,z").mkString("", "\n", "\n"),
   )
 
@@ -104,9 +110,13 @@ object CsvParityGen:
     val lines = cases.flatMap: (name, content) =>
       val file = Paths.get(s"test-data/csv-parity/inputs/$name.csv")
       java.nio.file.Files.write(file, content.getBytes(UTF_8))
-      val smart = file.loadSmartD
+      val smart  = file.loadSmartD
+      val schema = file.csvSchema
+      val schemaFields =
+        schema.arity.toString +: schema.widths.toSeq.sorted.map((w, n) => s"$w:$n")
       encode("rows", name, file.csvRows) ++
         encode("stream", name, file.csvRowsStream.toSeq) ++
+        encode("schema", name, Seq(schemaFields)) ++
         Seq(s"hdr\t$name\t0\t${smart.headers.map(esc).mkString("\t")}") ++
         encode("mat", name, matRows(smart.mat))
 

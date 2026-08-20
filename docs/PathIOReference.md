@@ -143,7 +143,28 @@ Complete reference for all non-deprecated extension methods added to `java.nio.f
 | `.csvRowsStream` | `Iterator[Seq[String]]` | streaming CSV rows; suitable for large files |
 | `.csvRowsAsync` | `Iterator[Seq[String]]` | async streaming variant |
 | `.csvRows(onRow)` | `Unit` | callback-per-row variant |
+| `.csvSchema` | `FastCsv.CsvSchema` | arity histogram (`widths`) and modal arity (`arity`) |
 | `.delim` | `String` | auto-detect column separator (comma, tab, semicolon, pipe); empty if undetected |
+
+> **Rows come back exactly as parsed.** Blank rows are dropped; nothing is padded,
+> trimmed to a common width, or rejected for being ragged. Per-row arity is
+> information — in a brokerage export it is what separates a 16-cell header from
+> 17-cell data rows and a one-cell quoted disclaimer — so the reader reports it
+> rather than erasing it with `""` cells that no caller can tell from genuinely
+> empty ones. All four readers agree, row for row.
+>
+> `.csvSchema` shows the shape. Then, per *your* judgment:
+>
+> | goal | call |
+> | :--- | :--- |
+> | pad all rows to the widest | `FastCsv.rectangular(p.csvRows)` |
+> | keep only data rows | `rows.filter(_.size >= n)` |
+> | drop a trailing-comma cell | `rows.map(_.take(n))` |
+> | extend a short header | `header.padTo(width, "")` |
+> | index safely | `row.lift(i).getOrElse("")` |
+> | enforce a shape | `require(rows.forall(_.size == n))` |
+>
+> The matrix loaders below need rectangular data and pad for themselves.
 
 ### Matrix loading and saving
 
@@ -168,6 +189,14 @@ Requires `import uni.data.*` for the return types (`MatD`, `MatB`, `MatF`).
 >
 > Use `loadSmartD` (or `loadSmartBig`) when the column names are wanted as well — it returns a
 > `MatResult` carrying `headers` alongside `mat`.
+>
+> **Two judgments are made for you, and both can be wrong.** `loadSmart` calls row 0 a header
+> iff every cell of it is non-numeric *and* row 1 has a numeric cell — so a text-only table's
+> header is read as data, and a header whose labels look numeric is eaten as data. It then pads
+> every row to the file's widest, so ragged input comes back rectangular with `""` (NaN once
+> converted) in the fabricated cells. `loadCSV(skipHeader = ...)` is the judgment-free
+> alternative: you say whether row 0 is a header. `.csvRows` reports rows as parsed and
+> `.csvSchema` reports the shape.
 >
 > Note `MatB` is `Mat[Big]`, **not** `Mat[Boolean]`, so `readCsvB`/`loadMatB` are the arbitrary-
 > precision loaders. See `docs/BigTypeGuide.md`.

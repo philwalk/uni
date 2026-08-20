@@ -50,6 +50,7 @@ pub use context::DriveCwdSource;
 pub use context::PathContext;
 pub use context::UserInfo;
 pub use csv::CsvConfig;
+pub use csv::CsvSchema;
 pub use csv::CsvWriter;
 pub use csv::RowParser;
 pub use delim::DelimState;

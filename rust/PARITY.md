@@ -122,9 +122,19 @@ underlying value is a tiny non-zero (~1e-14) that merely rounds to `-0.0`, so no
 signed zeros at the value level would miss it.
 
 With that in place, marketSim is byte-identical across `-emit`, `-validate`, `-buffer`,
-`-power` and `-strategies` at every size tried. So the practical rule for a new script is:
-transcendental noise is only a parity risk in identically-zero columns, and blanking the
-sign there removes it.
+`-power`, `-strategies`, `-fitness` and `-calibrate` at every size tried — including
+`-emit`'s JSON sidecar, whose every number is rendered through the same `%.6f`. So the
+practical rule for a new script is: transcendental noise is only a parity risk in
+identically-zero columns, and blanking the sign there removes it.
+
+`-emit`'s own columns are levels rather than differences, so that trap is remote there —
+but `rate` is floored at zero and `inflPress` starts there, and a column that can be
+*identically* zero is exactly the case. They are folded through `(-0.0) + 0.0 = +0.0`,
+which IEEE-754 guarantees in both languages, before formatting.
+
+`jsrc/marketSim.sc` is the canonical Scala copy. A consumer fork (`/opt/ue/jsrc`) must
+pull from it and never the reverse; it is currently 383 lines behind and will disagree with
+the Rust twin.
 
 `mat-parity` is small by row count and unusually load-bearing: 13 sizes × 10 reductions,
 compared as raw IEEE-754 bit patterns rather than decimal text, over a corpus of
@@ -246,6 +256,17 @@ all reproduced in `mat.rs` rather than tidied up:
 The `<rows>x<cols>` half of `test-data/mat-parity/` exists for exactly this, and both
 suites assert the corpus actually distinguishes the two paths, so the rows cannot pass
 vacuously.
+
+**10. CSV I/O *failure* signaling differs by design; row content never does.** On any
+file read to the end, every reader pair agrees row for row (480 fixture rows pin it,
+`schema` included). On a file that cannot be opened or fails mid-read, the signal
+diverges: Scala's `csvRows`/`csvRowsStream`/`csvRowsAsync`/`csvSchema` throw (empty only
+for a missing file or directory), while Rust's lenient layer is total — `csvRows` returns
+`[]`, the streams end early, `csvSchema` reports what was read — and `try_csv_rows` is
+the throwing twin. Shared guarantee on a mid-read error, and the part to preserve: **no
+reader fabricates rows** — Scala propagates the exception past the rows already yielded;
+Rust ends the stream without flushing the parser's partial row. A fixture cannot pin any
+of this (it would need a file that fails on demand), so it lives here.
 
 The method that catches all of these is the same: a demo pair whose two halves print
 byte-identical output, diffed at more than one size. Single-size agreement is weak evidence

@@ -5,10 +5,11 @@
 //! years), and it is the consumer that drove Tier 3 milestone 1. `-emit` and `-validate`
 //! are byte-identical between the two languages.
 //!
-//! Ported so far: the price-formation core (`World`, `Market`, `simulate`, `-emit`) and
-//! the measurement layer — stylised-fact statistics, drawdown episodes, the acceptance
-//! gate and the calibration loss, which is what `-validate` reports. Still to come: the
-//! exposure rules, grading statistics, and the `-strategies`/`-power`/`-buffer` reports.
+//! Every mode is ported: the price-formation core (`World`, `Market`, `simulate`), the
+//! measurement layer — stylised-fact statistics, drawdown episodes, the two-class
+//! acceptance gate and the calibration loss — the exposure rules and grading statistics,
+//! and the `-emit`/`-validate`/`-strategies`/`-power`/`-buffer`/`-fitness`/`-calibrate`
+//! reports. `-emit` writes a TSV and a JSON sidecar, and both are byte-identical too.
 //!
 //! Run: `cargo run --release --example market_sim -- -validate`
 //!
@@ -110,6 +111,9 @@ struct Path {
     fundamental: Vec<f64>,
     /// per-session slippage multiplier (equity market)
     liq: Vec<f64>,
+    /// the same, for the BOND market: an arm that trades the bond is charged its own
+    /// market's slippage, not the equity book's
+    bliq: Vec<f64>,
     /// flight-to-safety asset price (its own Market)
     bond: Vec<f64>,
     /// inflation pressure, for regime classification
@@ -206,6 +210,7 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
     let mut fv = vec![0.0f64; tot];
     let mut rt = vec![0.0f64; tot];
     let mut lq = vec![0.0f64; tot];
+    let mut bq = vec![0.0f64; tot];
     let mut bp = vec![0.0f64; tot];
     let mut ip = vec![0.0f64; tot];
     let mut cp = vec![0.0f64; tot];
@@ -351,6 +356,7 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
         fv[i] = (log_vbase - markdown).exp();
         rt[i] = rate;
         lq[i] = eq_m.last_liq;
+        bq[i] = bd_m.last_liq;
         bp[i] = bd_m.log_p.exp();
         ip[i] = infl_press;
         log_cpi += (pi_base + infl_press) * dt;
@@ -396,6 +402,7 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
         rate: rt[BURN_IN..].to_vec(),
         fundamental: fv[BURN_IN..].to_vec(),
         liq: lq[BURN_IN..].to_vec(),
+        bliq: bq[BURN_IN..].to_vec(),
         bond: bp[BURN_IN..].to_vec(),
         infl_press: ip[BURN_IN..].to_vec(),
         cpi: cp[BURN_IN..].to_vec(),
@@ -717,6 +724,27 @@ fn measure(sims: &[Path], years: usize) -> WorldStats {
     }
 }
 
+/// The gate answers two different questions and used to report one verdict.
+///
+/// [`GateClass::Realism`] asks "is this world a market at all". Its checks are unconditional
+/// distributional properties of the whole sample, and a failure invalidates every conclusion
+/// drawn here.
+///
+/// [`GateClass::Mechanism`] asks "is this mechanism engaged in this world". Its checks are all
+/// conditional on crash or inflation EPISODES, and a failure invalidates only conclusions that
+/// lean on the named mechanism. A world can be a perfectly good market with an inert bond
+/// spiral — the duration-6y world is exactly that, and a single verdict discarded it from every
+/// pooled panel.
+///
+/// The split also explains the export-time false alarm: the four conditional statistics cannot
+/// be measured from one short path, so `-emit` takes its verdict from an ensemble
+/// (`-emitgate`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum GateClass {
+    Realism,
+    Mechanism,
+}
+
 /// TWO-SIDED wherever a plausible range exists. History of this gate: a one-sided version
 /// passed a 35%-volatility world (the one reversing the ranking); a "bonds fail" check
 /// written as bondInfl < bondGrowth passed while bonds still RALLIED +2.8; crash frequency
@@ -725,30 +753,47 @@ fn measure(sims: &[Path], years: usize) -> WorldStats {
     clippy::manual_range_contains,
     reason = "kept in the Scala's spelling so the gate reads as the bounds it documents"
 )]
-fn gate_checks(st: &WorldStats) -> Vec<(&'static str, bool)> {
+fn gate_checks(st: &WorldStats) -> Vec<(&'static str, bool, GateClass)> {
+    use GateClass::Mechanism;
+    use GateClass::Realism;
     let pc = st.ep_per_path * 100.0 / st.years_per_path;
     vec![
-        ("equity vol 8-25%", st.vol > 0.08 && st.vol < 0.25),
-        ("kurtosis 4-30", st.kurt > 4.0 && st.kurt < 30.0),
+        ("equity vol 8-25%", st.vol > 0.08 && st.vol < 0.25, Realism),
+        ("kurtosis 4-30", st.kurt > 4.0 && st.kurt < 30.0, Realism),
         (
             "clustering 0.10-0.40",
             st.ac1 > 0.10 && st.ac1 < 0.40 && st.ac20 > 0.03,
+            Realism,
         ),
         (
             "crash rate 8-45/century",
             st.ep_per_path >= 1.0 && pc >= 8.0 && pc <= 45.0,
+            Realism,
         ),
         (
             "both recovery shapes",
             st.n_shapes > 0 && st.v_count >= st.n_shapes / 10 && st.u_count >= st.n_shapes / 10,
+            Realism,
         ),
-        ("no runaway drift", st.ann_ret.abs() < 30.0),
+        ("no runaway drift", st.ann_ret.abs() < 30.0, Realism),
         // 0.02% ~ one clamped session per 20 path-years. The old bound (0.5%) would have
         // passed a world where the clamp was already reshaping kurtosis by a third.
-        ("clamp rarely binds", st.clamp_pct < 0.02),
-        ("bond vol 7-20%", st.bond_vol > 0.07 && st.bond_vol < 0.20),
-        ("bonds rally in growth shocks", st.bond_growth > 3.0),
-        ("bonds LOSE in inflation regimes", st.bond_infl < -3.0),
+        ("clamp rarely binds", st.clamp_pct < 0.02, Realism),
+        (
+            "bond vol 7-20%",
+            st.bond_vol > 0.07 && st.bond_vol < 0.20,
+            Realism,
+        ),
+        (
+            "bonds rally in growth shocks",
+            st.bond_growth > 3.0,
+            Mechanism,
+        ),
+        (
+            "bonds LOSE in inflation regimes",
+            st.bond_infl < -3.0,
+            Mechanism,
+        ),
         (
             "corr flips positive under inflation",
             !st.corr_infl.is_nan()
@@ -756,13 +801,38 @@ fn gate_checks(st: &WorldStats) -> Vec<(&'static str, bool)> {
                 && st.corr_infl > st.corr_calm + 0.15
                 && st.corr_infl > 0.0
                 && st.corr_calm < 0.35,
+            Mechanism,
         ),
         (
             "bond spiral engages, not always",
             st.pct_bond_stress > 0.002 && st.pct_bond_stress < 0.5,
+            Mechanism,
         ),
-        ("inflation 1-6%/yr", st.infl_ann > 1.0 && st.infl_ann < 6.0),
+        (
+            "inflation 1-6%/yr",
+            st.infl_ann > 1.0 && st.infl_ann < 6.0,
+            Realism,
+        ),
     ]
+}
+
+fn failed_in(st: &WorldStats, cls: GateClass) -> Vec<&'static str> {
+    gate_checks(st)
+        .into_iter()
+        .filter(|(_, ok, c)| !ok && *c == cls)
+        .map(|(n, _, _)| n)
+        .collect()
+}
+
+/// Admissibility under the class a report has declared it requires. `realism_only` keeps a
+/// world whose only failures are inert mechanisms; the default keeps the historical binary
+/// verdict.
+fn gate_ok(st: &WorldStats, realism_only: bool) -> bool {
+    if realism_only {
+        failed_in(st, GateClass::Realism).is_empty()
+    } else {
+        gate_checks(st).iter().all(|(_, ok, _)| *ok)
+    }
 }
 
 type StatFn = fn(&WorldStats) -> f64;
@@ -829,7 +899,7 @@ fn fitness(st: &WorldStats) -> (f64, Vec<(&'static str, f64, f64, f64)>) {
             (name, m, target, term)
         })
         .collect();
-    let gate_penalty = gate_checks(st).iter().filter(|(_, ok)| !ok).count() as f64 * 0.5;
+    let gate_penalty = gate_checks(st).iter().filter(|(_, ok, _)| !ok).count() as f64 * 0.5;
     let total: f64 = scala_sum(rows.iter().map(|r| r.3)) + gate_penalty;
     (total, rows)
 }
@@ -1604,6 +1674,10 @@ fn eval_world(sims: &[Path], cost: f64, years: usize) -> Evald {
     clippy::too_many_lines,
     reason = "one linear report, mirroring the Scala twin statement for statement"
 )]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the parameter list mirrors the Scala twin's, and the twins are diffed"
+)]
 fn run_strategy_sweep(
     paths: usize,
     years: usize,
@@ -1611,6 +1685,7 @@ fn run_strategy_sweep(
     cost: f64,
     single: bool,
     base: &World,
+    realism_only: bool,
 ) {
     let rs = rules();
     let nr = rs.len();
@@ -1624,7 +1699,7 @@ fn run_strategy_sweep(
         .map(|(wname, w)| {
             let sims = sim_paths(w, paths, years, seed);
             let st = measure(&sims, years);
-            let ok = gate_checks(&st).iter().all(|(_, o)| *o);
+            let ok = gate_ok(&st, realism_only);
             (*wname, ok, st, eval_world(&sims, cost, years))
         })
         .collect();
@@ -1882,7 +1957,7 @@ fn run_strategy_sweep(
         let sims = sim_paths(&w, paths.min(120), years, seed);
         let st = measure(&sims, years);
         // gated AT USE TIME, like every other conclusion path
-        let ok_sev = gate_checks(&st).iter().all(|(_, o)| *o);
+        let ok_sev = gate_ok(&st, realism_only);
         let ev: Vec<Vec<Outcome>> = (0..sims.len())
             .into_par_iter()
             .map(|k| {
@@ -2005,7 +2080,14 @@ type PowerTable = Vec<Vec<(f64, f64)>>;
     clippy::too_many_lines,
     reason = "one linear report, mirroring the Scala twin statement for statement"
 )]
-fn run_power_report(paths: usize, seed: u64, cost: f64, single: bool, base: &World) {
+fn run_power_report(
+    paths: usize,
+    seed: u64,
+    cost: f64,
+    single: bool,
+    base: &World,
+    realism_only: bool,
+) {
     // 21 = the traded book's span; 72 = the S&P record used for calibration
     let horizons = [21usize, 40, 72, 100];
     let focus: Vec<Rule> = [
@@ -2052,7 +2134,7 @@ fn run_power_report(paths: usize, seed: u64, cost: f64, single: bool, base: &Wor
     // per contrast, per statistic: (hit rate, n*). Gate verdict travels with the numbers.
     let power = |w: &World, l: usize, sd: u64| -> (bool, PowerTable) {
         let sims = sim_paths(w, paths, l, sd);
-        let ok = gate_checks(&measure(&sims, l)).iter().all(|(_, o)| *o);
+        let ok = gate_ok(&measure(&sims, l), realism_only);
         let stats: Vec<Vec<Vec<f64>>> = (0..sims.len())
             .into_par_iter()
             .map(|k| {
@@ -2238,7 +2320,19 @@ type BufferArm = (Vec<f64>, Vec<f64>, Vec<Vec<f64>>);
     clippy::too_many_lines,
     reason = "one linear report, mirroring the Scala twin statement for statement"
 )]
-fn run_buffer_report(paths: usize, years: usize, seed: u64, cost: f64, single: bool, base: &World) {
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the parameter list mirrors the Scala twin's, and the twins are diffed"
+)]
+fn run_buffer_report(
+    paths: usize,
+    years: usize,
+    seed: u64,
+    cost: f64,
+    single: bool,
+    base: &World,
+    realism_only: bool,
+) {
     // 15% is the repo's existing episode threshold; reusing it keeps this report from
     // introducing a new arbitrary constant. Without it the distribution is drowned.
     const MATERIAL_DEPTH: f64 = 0.15;
@@ -2268,7 +2362,7 @@ fn run_buffer_report(paths: usize, years: usize, seed: u64, cost: f64, single: b
     // is chosen before knowing which stretch you land in.
     let buffer_stats = |w: &World| -> (bool, Vec<BufferArm>) {
         let sims = sim_paths(w, paths, years, seed);
-        let ok = gate_checks(&measure(&sims, years)).iter().all(|(_, o)| *o);
+        let ok = gate_ok(&measure(&sims, years), realism_only);
         let per: Vec<Vec<BufferArm>> = (0..sims.len())
             .into_par_iter()
             .map(|k| {
@@ -2543,6 +2637,311 @@ fn jfl(v: f64, width: i32, dec: i32) -> String {
     }
 }
 
+// ---- export: the full state, named, dated and provenanced -------------------------------
+//
+// An emitted path is the whole external interface: a consumer grades its own rules on it
+// without importing either twin. Three properties make that work, and all three were missing.
+//   1. EVERY series the model knows, not just price and bond. A rule that de-risks to cash is
+//      mis-scored without `rate`; a real-terms question is unanswerable without `cpi`; slippage
+//      cannot be charged the way `arm_path` charges it without `liq`/`bliq`; and `fundamental`
+//      is an oracle label (fundamental-led vs liquidity-led decline) that no real series can
+//      supply.
+//   2. A NAMED path. `seed + k*7919` makes the family reproducible, but nothing in the output
+//      said which (world, seed, k) produced a file, so an ensemble could not be inventoried and
+//      the same paths could be re-drawn and counted twice as independent evidence.
+//   3. A verdict measured on the WORLD, not on the sample. The four mechanism checks are
+//      conditional on crash episodes, so one short path cannot measure them and every export
+//      carried a false alarm — worse than no warning. See `-emitgate`.
+
+const EMIT_COLUMNS: [&str; 9] = [
+    "date",
+    "price",
+    "bond",
+    "rate",
+    "cpi",
+    "liq",
+    "bliq",
+    "fundamental",
+    "inflPress",
+];
+
+/// `%.6f`, with negative zero folded to positive. Emitted columns are levels rather than
+/// differences, so the signed-zero trap PARITY.md documents is remote here — but `rate` is
+/// floored at zero and `inflPress` starts there, and IEEE-754 guarantees (-0.0) + 0.0 = +0.0 in
+/// both languages, so the fold costs nothing and removes the last way the two writers could
+/// disagree on a byte.
+fn ef(x: f64) -> String {
+    jf(if x == 0.0 { 0.0 } else { x }, 0, 6)
+}
+
+fn json_str(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            _ => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+fn crowd_name(c: Crowd) -> String {
+    match c {
+        Crowd::Momentum => "momentum".to_string(),
+        Crowd::Trend(d) => format!("trend{d}"),
+        Crowd::VolScaled => "volscaled".to_string(),
+    }
+}
+
+/// Session dates. An empty `start_ymd` keeps the historical synthetic calendar: 1900-01-02
+/// stepping 365/252 days, which lands on weekends and so can never be joined to a real dated
+/// series. A date instead steps by WEEKDAYS (no holiday calendar — recorded, not hidden), which
+/// is what lets an emitted path through a normal dated loader untouched.
+fn session_dates(n: usize, start_ymd: &str) -> Vec<String> {
+    if start_ymd.is_empty() {
+        let start = UniDateTime::ofYmd(1900, 1, 2);
+        return (0..n)
+            .map(|i| {
+                start
+                    .plusDays((i as i64 * 365) / DAYS_PER_YEAR as i64)
+                    .ymd()
+            })
+            .collect();
+    }
+    let f: Vec<&str> = start_ymd.split('-').collect();
+    if f.len() != 3 {
+        eprintln!("-emitstart wants YYYY-MM-DD, got [{start_ymd}]");
+        std::process::exit(2);
+    }
+    let parse = |s: &str| -> i32 {
+        s.parse().unwrap_or_else(|_| {
+            eprintln!("-emitstart wants YYYY-MM-DD, got [{start_ymd}]");
+            std::process::exit(2);
+        })
+    };
+    fn next_weekday(d: UniDateTime) -> UniDateTime {
+        let mut d = d;
+        while d.dayOfWeekNum() > 5 {
+            d = d.plusDays(1);
+        }
+        d
+    }
+    // a stateful recurrence written as one, like simulate(): each session is the next weekday
+    // strictly after the previous one
+    let mut out = Vec::with_capacity(n);
+    let mut d = next_weekday(UniDateTime::ofYmd(parse(f[0]), parse(f[1]), parse(f[2])));
+    for _ in 0..n {
+        out.push(d.ymd());
+        d = next_weekday(d.plusDays(1));
+    }
+    out
+}
+
+/// `foo.tsv` -> `foo.json`; a name with no extension just gains one.
+fn sidecar_name(file: &str) -> String {
+    let cut = file.rfind('.');
+    let sep = file.rfind(['/', '\\']);
+    match cut {
+        Some(c) if sep.is_none_or(|s| c > s) => format!("{}.json", &file[..c]),
+        _ => format!("{file}.json"),
+    }
+}
+
+/// `foo.tsv` -> `foo-007.tsv`, so an ensemble sorts in path order.
+fn indexed_name(file: &str, k: usize) -> String {
+    let cut = file.rfind('.');
+    let sep = file.rfind(['/', '\\']);
+    let tag = format!("-{k:03}");
+    match cut {
+        Some(c) if sep.is_none_or(|s| c > s) => format!("{}{tag}{}", &file[..c], &file[c..]),
+        _ => format!("{file}{tag}"),
+    }
+}
+
+fn write_or_die(file: &str, body: &str) {
+    std::fs::write(file, body).unwrap_or_else(|e| {
+        eprintln!("cannot write {file}: {e}");
+        std::process::exit(1);
+    });
+}
+
+/// The TSV and its sidecar. `gate_st` is measured on the gate ensemble, which is a different
+/// and usually much larger sample than the one path being written.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the sidecar records the whole provenance tuple; grouping it would only move the list"
+)]
+fn write_emitted(
+    file: &str,
+    p: &Path,
+    k: usize,
+    w: &World,
+    years: usize,
+    seed: u64,
+    start_ymd: &str,
+    gate_st: &WorldStats,
+    gate_paths: usize,
+) {
+    let dates = session_dates(p.price.len(), start_ymd);
+    write_emit_tsv(file, p, &dates);
+    write_emit_sidecar(
+        file, p, k, w, years, seed, start_ymd, &dates, gate_st, gate_paths,
+    );
+}
+
+fn write_emit_tsv(file: &str, p: &Path, dates: &[String]) {
+    let mut tsv = String::new();
+    tsv.push_str(&EMIT_COLUMNS.join("\t"));
+    tsv.push('\n');
+    for (i, d) in dates.iter().enumerate() {
+        tsv.push_str(d);
+        for v in [
+            p.price[i],
+            p.bond[i],
+            p.rate[i],
+            p.cpi[i],
+            p.liq[i],
+            p.bliq[i],
+            p.fundamental[i],
+            p.infl_press[i],
+        ] {
+            tsv.push('\t');
+            tsv.push_str(&ef(v));
+        }
+        tsv.push('\n');
+    }
+    write_or_die(file, &tsv);
+}
+
+/// Everything that licenses the TSV: which (world, seed, path) produced it, on what calendar,
+/// and what the world's two gate verdicts and fidelity ratios were. A warning printed to stderr
+/// at export time does not survive the file being moved; this does.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the sidecar records the whole provenance tuple; grouping it would only move the list"
+)]
+#[expect(
+    clippy::manual_range_contains,
+    reason = "the MISS flag must leave a NaN ratio UNflagged, as `ratio > 1.5 || ratio < 0.667` \
+              does; `!(0.667..=1.5).contains(&ratio)` would flag it"
+)]
+fn write_emit_sidecar(
+    file: &str,
+    p: &Path,
+    k: usize,
+    w: &World,
+    years: usize,
+    seed: u64,
+    start_ymd: &str,
+    dates: &[String],
+    gate_st: &WorldStats,
+    gate_paths: usize,
+) {
+    let n = p.price.len();
+    let realism_bad = failed_in(gate_st, GateClass::Realism);
+    let mechanism_bad = failed_in(gate_st, GateClass::Mechanism);
+    let str_list = |v: &[&str]| -> String {
+        let items: Vec<String> = v.iter().map(|s| json_str(s)).collect();
+        format!("[{}]", items.join(", "))
+    };
+    let world_fields: Vec<(&str, String)> = vec![
+        ("trendShare", ef(w.trend_share)),
+        ("depth", ef(w.depth)),
+        ("stress", ef(w.stress)),
+        ("beta", ef(w.beta)),
+        ("drift", ef(w.drift)),
+        ("fundVol", ef(w.fund_vol)),
+        ("rateMean", ef(w.rate_mean)),
+        ("volPersist", ef(w.vol_persist)),
+        ("volOfVol", ef(w.vol_of_vol)),
+        ("valuePull", ef(w.value_pull)),
+        ("crowd", json_str(&crowd_name(w.crowd))),
+        ("crowdImpact", ef(w.crowd_impact)),
+        ("panic", ef(w.panic)),
+        ("duration", ef(w.duration)),
+        ("flight", ef(w.flight)),
+        ("inflProb", ef(w.infl_prob)),
+        ("inflSize", ef(w.infl_size)),
+        ("inflSpeed", ef(w.infl_speed)),
+        ("rateSpeed", ef(w.rate_speed)),
+        ("discount", ef(w.discount)),
+        ("margin", ef(w.margin)),
+    ];
+    let num = |x: f64| -> String {
+        if x.is_nan() {
+            "null".to_string()
+        } else {
+            ef(x)
+        }
+    };
+    let fidelity: Vec<String> = fit_targets()
+        .into_iter()
+        .map(|(nm, get, want, _)| {
+            let got = get(gate_st);
+            let ratio = if want == 0.0 { f64::NAN } else { got / want };
+            let miss = ratio > 1.5 || ratio < 0.667;
+            format!(
+                "    {{ \"name\": {}, \"model\": {}, \"real\": {}, \"ratio\": {}, \"miss\": {} }}",
+                json_str(nm),
+                num(got),
+                num(want),
+                num(ratio),
+                miss
+            )
+        })
+        .collect();
+    let world_body: Vec<String> = world_fields
+        .iter()
+        .map(|(nm, v)| format!("    {}: {v}", json_str(nm)))
+        .collect();
+    let verdict = |bad: &[&str]| if bad.is_empty() { "PASS" } else { "FAIL" };
+    let calendar = if start_ymd.is_empty() {
+        "synthetic-365-252"
+    } else {
+        "weekday"
+    };
+    let json = [
+        "{".to_string(),
+        "  \"generator\": \"market_sim\",".to_string(),
+        "  \"schema\": 1,".to_string(),
+        format!("  \"file\": {},", json_str(file)),
+        format!("  \"columns\": {},", str_list(&EMIT_COLUMNS)),
+        "  \"header\": true,".to_string(),
+        "  \"path\": {".to_string(),
+        format!("    \"index\": {k},"),
+        format!("    \"baseSeed\": {seed},"),
+        "    \"seedStride\": 7919,".to_string(),
+        format!("    \"pathSeed\": {},", seed + k as u64 * 7919),
+        format!("    \"years\": {years},"),
+        format!("    \"sessions\": {n},"),
+        format!("    \"burnIn\": {BURN_IN},"),
+        format!("    \"sessionsPerYear\": {DAYS_PER_YEAR},"),
+        format!("    \"calendar\": {},", json_str(calendar)),
+        format!("    \"startDate\": {},", json_str(&dates[0])),
+        format!("    \"endDate\": {}", json_str(&dates[n - 1])),
+        "  },".to_string(),
+        "  \"world\": {".to_string(),
+        world_body.join(",\n"),
+        "  },".to_string(),
+        "  \"gate\": {".to_string(),
+        format!("    \"ensemblePaths\": {gate_paths},"),
+        format!("    \"ensembleYears\": {years},"),
+        format!("    \"realism\": {},", json_str(verdict(&realism_bad))),
+        format!("    \"mechanism\": {},", json_str(verdict(&mechanism_bad))),
+        format!("    \"realismFailed\": {},", str_list(&realism_bad)),
+        format!("    \"mechanismFailed\": {}", str_list(&mechanism_bad)),
+        "  },".to_string(),
+        "  \"fidelity\": [".to_string(),
+        fidelity.join(",\n"),
+        "  ]".to_string(),
+        "}".to_string(),
+    ];
+    write_or_die(&sidecar_name(file), &format!("{}\n", json.join("\n")));
+}
+
 #[expect(
     clippy::too_many_lines,
     reason = "one linear report, mirroring the Scala twin's main statement for statement"
@@ -2563,6 +2962,11 @@ fn main() {
     let mut years = 100usize;
     let mut seed = 20_260_813u64;
     let mut emit = String::new();
+    let mut emit_path = 0usize;
+    let mut emit_all = false;
+    let mut emit_start = String::new();
+    let mut emit_gate = 200usize;
+    let mut realism_only = false;
     let mut validate = false;
     let mut buffer_report = false;
     let mut power_report = false;
@@ -2598,6 +3002,25 @@ fn main() {
             "-years" => years = it.next().and_then(|v| v.parse().ok()).unwrap_or(years),
             "-seed" => seed = it.next().and_then(|v| v.parse().ok()).unwrap_or(seed),
             "-emit" => emit = it.next().cloned().unwrap_or_default(),
+            "-emitpath" => emit_path = it.next().and_then(|v| v.parse().ok()).unwrap_or(emit_path),
+            "-emitall" => emit_all = true,
+            "-emitstart" => emit_start = it.next().cloned().unwrap_or_default(),
+            "-emitgate" => emit_gate = it.next().and_then(|v| v.parse().ok()).unwrap_or(emit_gate),
+            "-gate" => {
+                realism_only = match it
+                    .next()
+                    .map(|v| v.to_lowercase())
+                    .unwrap_or_default()
+                    .as_str()
+                {
+                    "realism" => true,
+                    "full" => false,
+                    other => {
+                        eprintln!("unknown -gate [{other}]; use realism or full");
+                        std::process::exit(2);
+                    }
+                }
+            }
             "-validate" => validate = true,
             "-buffer" => buffer_report = true,
             "-power" => power_report = true,
@@ -2693,7 +3116,7 @@ fn main() {
                 jf(term, 6, 3)
             );
         }
-        for (n, ok) in gate_checks(&st) {
+        for (n, ok, _) in gate_checks(&st) {
             if !ok {
                 println!("  FAILED GATE: {n}  (+0.500)");
             }
@@ -2701,15 +3124,15 @@ fn main() {
         return;
     }
     if strategies {
-        run_strategy_sweep(paths, years, seed, cost, single, &w);
+        run_strategy_sweep(paths, years, seed, cost, single, &w, realism_only);
         return;
     }
     if power_report {
-        run_power_report(paths, seed, cost, single, &w);
+        run_power_report(paths, seed, cost, single, &w, realism_only);
         return;
     }
     if buffer_report {
-        run_buffer_report(paths, years, seed, cost, single, &w);
+        run_buffer_report(paths, years, seed, cost, single, &w, realism_only);
         return;
     }
 
@@ -2718,41 +3141,86 @@ fn main() {
     let st = measure(&sims, years);
 
     if !emit.is_empty() {
-        // an exported path can end up inside the real-data harnesses with no memory of where
-        // it came from, so the gate verdict travels with the export — loudly, at export time
-        let checks = gate_checks(&st);
-        if !checks.iter().all(|(_, ok)| *ok) {
-            let failed: Vec<&str> = checks
-                .iter()
-                .filter(|(_, ok)| !ok)
-                .map(|(n, _)| *n)
-                .collect();
+        // The verdict is a property of the WORLD, so it is measured on an ensemble large enough
+        // for the conditional mechanism statistics to exist. Judging the world by the one path
+        // being written made every short export raise all four mechanism failures — a
+        // guaranteed false alarm, which trains a consumer to ignore the warning entirely.
+        let (gate_st, gate_paths) = if emit_gate > paths {
+            (
+                measure(&sim_paths(&w, emit_gate, years, seed), years),
+                emit_gate,
+            )
+        } else {
+            (st, paths)
+        };
+        let realism_bad = failed_in(&gate_st, GateClass::Realism);
+        let mechanism_bad = failed_in(&gate_st, GateClass::Mechanism);
+        if !realism_bad.is_empty() {
             eprintln!(
-                "WARNING: this world FAILS the acceptance gate [{}] — the emitted path is not market-like",
-                failed.join(", ")
+                "WARNING: this world FAILS the realism bands [{}] — the emitted path is not market-like",
+                realism_bad.join(", ")
             );
         }
-        let p = &sims[0];
-        let start = UniDateTime::ofYmd(1900, 1, 2);
-        let mut out = String::new();
-        for i in 0..p.price.len() {
-            let d = start
-                .plusDays((i as i64 * 365) / DAYS_PER_YEAR as i64)
-                .ymd();
-            out.push_str(&d);
-            out.push('\t');
-            out.push_str(&jf(p.price[i], 0, 6));
-            out.push('\t');
-            out.push_str(&jf(p.bond[i], 0, 6));
-            out.push('\n');
+        if !mechanism_bad.is_empty() {
+            eprintln!(
+                "NOTE: mechanisms inert in this world [{}] — conclusions that lean on them are not supported here",
+                mechanism_bad.join(", ")
+            );
         }
-        std::fs::write(&emit, out).unwrap_or_else(|e| {
-            eprintln!("cannot write {emit}: {e}");
-            std::process::exit(1);
-        });
+        // path k is a function of (world, years, seed, k) alone, so an index past the report
+        // ensemble is simulated directly rather than forcing a larger run
+        let path_at = |k: usize| -> Path {
+            if k < sims.len() {
+                sims[k].clone()
+            } else {
+                simulate(&w, years, seed + k as u64 * 7919)
+            }
+        };
+        let written: Vec<String> = if emit_all {
+            (0..paths)
+                .map(|k| {
+                    let f = indexed_name(&emit, k);
+                    write_emitted(
+                        &f,
+                        &sims[k],
+                        k,
+                        &w,
+                        years,
+                        seed,
+                        &emit_start,
+                        &gate_st,
+                        gate_paths,
+                    );
+                    f
+                })
+                .collect()
+        } else {
+            let p = path_at(emit_path);
+            write_emitted(
+                &emit,
+                &p,
+                emit_path,
+                &w,
+                years,
+                seed,
+                &emit_start,
+                &gate_st,
+                gate_paths,
+            );
+            vec![emit.clone()]
+        };
+        let sessions = path_at(if emit_all { 0 } else { emit_path }).price.len();
+        let span = if written.len() > 1 {
+            format!(" .. {}", written[written.len() - 1])
+        } else {
+            String::new()
+        };
         eprintln!(
-            "wrote path 0 (price, bond) to {emit} ({} sessions)",
-            p.price.len()
+            "wrote {} path(s), {} columns x {sessions} sessions, to {}{span} (+ sidecar {})",
+            written.len(),
+            EMIT_COLUMNS.len(),
+            written[0],
+            sidecar_name(&written[0])
         );
     }
 
@@ -2853,16 +3321,39 @@ fn main() {
 
     if validate {
         let checks = gate_checks(&st);
+        let realism_bad = failed_in(&st, GateClass::Realism);
+        let mechanism_bad = failed_in(&st, GateClass::Mechanism);
+        let verdict = |bad: &[&str]| if bad.is_empty() { "PASS" } else { "FAIL" };
         println!();
         println!("  acceptance gate:");
-        for (n, ok) in &checks {
+        println!("    realism bands — a failure here means this world is not a market:");
+        for (n, ok, _) in checks.iter().filter(|(_, _, c)| *c == GateClass::Realism) {
             println!("     {:<5} {}", if *ok { "PASS" } else { "FAIL" }, n);
         }
-        if checks.iter().any(|(_, ok)| !ok) {
-            eprintln!("acceptance gate FAILED — this world is not fit to compare strategies in");
+        println!("    mechanism engagement — a failure here means only that mechanism is inert:");
+        for (n, ok, _) in checks.iter().filter(|(_, _, c)| *c == GateClass::Mechanism) {
+            println!("     {:<5} {}", if *ok { "PASS" } else { "FAIL" }, n);
+        }
+        let inert = if mechanism_bad.is_empty() {
+            String::new()
+        } else {
+            format!("   inert: {}", mechanism_bad.join(", "))
+        };
+        println!(
+            "    verdict: realism {}   mechanism {}{inert}",
+            verdict(&realism_bad),
+            verdict(&mechanism_bad)
+        );
+        if !realism_bad.is_empty() {
+            eprintln!("realism bands FAILED — this world is not fit to compare strategies in");
+            std::process::exit(1);
+        }
+        if !mechanism_bad.is_empty() && !realism_only {
+            eprintln!(
+                "mechanism checks FAILED [{}] — rerun with -gate realism to admit this world for conclusions that do not depend on them",
+                mechanism_bad.join(", ")
+            );
             std::process::exit(1);
         }
     }
-
-    let _ = fitness(&st); // -fitness flag lands in a later milestone
 }

@@ -36,18 +36,23 @@ object FileOps {
       writer.flush()
       if lcname != "stdout" then writer.close()
 
-  /** * Loads a CSV into a Mat[T]. 
+  /** * Loads a CSV into a Mat[T].
+   *
+   * Rows are padded to the widest row in the FILE, because the reification below
+   * indexes every row blindly. Padded cells arrive at `map` as "", so a strict
+   * conversion such as `_.toDouble` throws on ragged input; `big(_)` yields NaN.
+   *
    * @param path The file path
    * @param skipHeader Whether to skip the first row
    * @param map Function to convert String columns to T (e.g., _.toDouble or Big(_))
    */
   def loadCSV[T: ClassTag](
-    pathString: String, 
-    skipHeader: Boolean = true, 
+    pathString: String,
+    skipHeader: Boolean = true,
     map: String => T
   ): Mat[T] = {
     val path: Path = uni.Paths.get(pathString)
-    val rows = path.csvRowsStream.toVector
+    val rows = uni.io.FastCsv.rectangular(path.csvRowsStream.toSeq).toVector
     val dataRows = if (skipHeader && rows.nonEmpty) rows.tail else rows
     
     if dataRows.isEmpty then
@@ -97,9 +102,6 @@ object FileOps {
   def loadSmart(p: Path): MatResult[Big] = 
     loadSmart(p, identity)
 
-  /** * The generic version: returns MatResult[T]
-   * Used when you want to transform to Double, Int, etc.
-   */
   /** Header labels, with any blank replaced by a canonical `colN`.
    *
    *  Numbered by position and 1-based, so `col3` is always the third column —
@@ -120,6 +122,20 @@ object FileOps {
       if trimmed.nonEmpty then trimmed else s"col${i + 1}"
     }.toVector
 
+  /** Header-detecting CSV load, with cells mapped from `Big` to T.
+   *
+   *  Two judgments are made for you, and both can be wrong:
+   *
+   *  1. Row 0 is a header iff every cell of it is non-numeric AND row 1 has a
+   *     numeric cell. So a text-only table's header goes unrecognised (it becomes
+   *     data), and a header whose labels read as numbers is eaten as data.
+   *  2. Rows are padded to the widest row in the FILE. Ragged input therefore comes
+   *     back rectangular, with "" — NaN once converted — in the fabricated cells.
+   *
+   *  `loadCSV(skipHeader = ...)` is the judgment-free alternative: the caller says
+   *  whether row 0 is a header. `p.csvRows` reports rows exactly as parsed, and
+   *  `p.csvSchema` reports the shape.
+   */
   def loadSmart[T: ClassTag](p: Path, map: Big => T): MatResult[T] = {
     // 1. Get ALL rows from the CSV
     val allRows = p.csvRowsStream.toVector

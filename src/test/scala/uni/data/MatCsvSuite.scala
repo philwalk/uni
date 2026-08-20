@@ -128,8 +128,8 @@ class MatCsvSuite extends FunSuite {
   }
 
   test("csvRows and readCsv agree on how many rows a file has") {
-    // They must not disagree about which rows exist; both go through
-    // FastCsv.rectangular.
+    // They must not disagree about which rows exist. The loader reshapes rows;
+    // neither drops one.
     for content <- Seq("1,2\n3,4\n", "1,2\n9\n5,6\n", "9\n1,2\n3,4\n", "1,2\n7,8,9\n") do
       withCsv(content) { p =>
         assertEquals(p.csvRows.length, p.readCsv.rows, s"row count differs for [$content]")
@@ -140,6 +140,29 @@ class MatCsvSuite extends FunSuite {
     withCsv("1,2,3\n4,5\n") { p =>
       val m = p.readCsv
       assert(m(1, 2).isNaN, s"padded cell should be NaN, got ${m(1, 2)}")
+    }
+  }
+
+  test("loadCSV pads ragged rows rather than throwing on them") {
+    // The readers report rows as parsed, so this loader -- which indexes every row
+    // blindly -- has to pad for itself. `big` is the total conversion: a fabricated
+    // cell is "" and reads back as NaN, where a strict `_.toDouble` would throw.
+    withCsv("1,2,3\n9\n4,5,6\n") { p =>
+      val m = uni.io.FileOps.loadCSV(p.toString, skipHeader = false, s => big(s).toDouble)
+      assertEquals((m.rows, m.cols), (3, 3))
+      assertEquals(m(1, 0), 9.0)
+      assert(m(1, 2).isNaN, s"the fabricated cell should be NaN, got ${m(1, 2)}")
+    }
+  }
+
+  test("loadCSV takes its width from the whole file, not from a sample") {
+    // A row wider than everything before it used to be truncated, because the width
+    // came from the reader's 100-row window.
+    val body = (1 to 120).map(_ => "1,2").mkString("", "\n", "\n")
+    withCsv(body + "1,2,3,4\n") { p =>
+      val m = uni.io.FileOps.loadCSV(p.toString, skipHeader = false, s => big(s).toDouble)
+      assertEquals((m.rows, m.cols), (121, 4))
+      assertEquals(m(120, 3), 4.0)
     }
   }
 

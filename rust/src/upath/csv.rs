@@ -19,8 +19,10 @@
 //!   a row. A row with a *single* non-blank field is kept — one column is a
 //!   legitimate CSV, and losing it silently is worse than keeping a delimiter-less
 //!   line.
-//! - **Short rows are padded**, not dropped, so callers can index by column. See
-//!   [`Rows`] for how the width is chosen and why it can still come out jagged.
+//! - **Short rows are reported as parsed.** Ragged is normal, and per-row arity is
+//!   information — it is what separates a header from data rows in a brokerage
+//!   export. Padding is opt-in: [`rectangular`]. [`UPath::csvSchema`] reports the
+//!   shape.
 //! - **A quote that does not close a field is literal.** `a"b` is three characters,
 //!   not a parse error.
 
@@ -55,7 +57,7 @@ pub struct CsvConfig {
     pub charset: Charset,
     /// Read buffer size.
     pub buffer_size: usize,
-    /// Rows buffered to measure a width, and rows sampled to sniff a delimiter.
+    /// Rows sampled to sniff a delimiter.
     pub sample_rows: usize,
 }
 
@@ -88,11 +90,17 @@ pub fn is_content_row(row: &[String]) -> bool {
     row.iter().any(|f| !f.trim().is_empty())
 }
 
-/// Pads every row out to the widest, so the result is rectangular.
+/// Pads every row out to the widest, so the result is rectangular. Opt-in.
 ///
-/// For callers that hold all rows at once. The streaming reader cannot do this — it
-/// has not seen the end of the file — which is why the two can disagree about the
-/// final width even though they never disagree about which rows exist.
+/// The readers report rows as parsed; this is what a caller applies when it wants a
+/// rectangle. `rectangular(p.csvRows())` reproduces 0.18 output. The matrix bridge
+/// in [`crate::upath::matcsv`] calls it itself, because indexing by column requires
+/// it.
+///
+/// Widest rather than first-row width on purpose: keying off the first row means
+/// truncating any row longer than it, which is data loss. The failure mode of the
+/// choice made here is the mirror image — one spuriously wide row inflates every
+/// other row to the outlier's width. [`schema`] shows which case a file is in.
 #[must_use]
 pub fn rectangular(mut rows: Vec<Vec<String>>) -> Vec<Vec<String>> {
     let width = rows.iter().map(Vec::len).max().unwrap_or(0);
@@ -100,6 +108,41 @@ pub fn rectangular(mut rows: Vec<Vec<String>>) -> Vec<Vec<String>> {
         row.resize(width, String::new());
     }
     rows
+}
+
+/// Shape report for parsed rows: arity histogram and modal arity.
+///
+/// A report, never a transformation — when the modal call is wrong, the outvoted
+/// widths are visible in `widths` and no row was altered.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CsvSchema {
+    /// How many rows had each arity, keyed by field count.
+    pub widths: std::collections::BTreeMap<usize, usize>,
+    /// The most common arity; ties resolve wider, never losing fields. 0 when empty.
+    pub arity: usize,
+}
+
+/// Arity histogram and modal arity for parsed rows.
+///
+/// Folds width counts in constant memory, so an iterator is as good as a slice —
+/// `schema(p.csvRowsStream())` never holds the file. Rows already in hand pass as
+/// `schema(&rows)`.
+#[must_use]
+pub fn schema<I>(rows: I) -> CsvSchema
+where
+    I: IntoIterator,
+    I::Item: AsRef<[String]>,
+{
+    let mut widths: std::collections::BTreeMap<usize, usize> = std::collections::BTreeMap::new();
+    for row in rows {
+        *widths.entry(row.as_ref().len()).or_insert(0) += 1;
+    }
+    // Most rows wins; a tie goes to the wider arity, so a tie never loses fields.
+    let arity = widths
+        .iter()
+        .max_by_key(|(w, n)| (**n, **w))
+        .map_or(0, |(w, _)| *w);
+    CsvSchema { widths, arity }
 }
 
 /// Byte-at-a-time CSV state machine, shared by every reader.
@@ -247,19 +290,7 @@ impl RowParser {
     }
 }
 
-/// Streaming rows, padded to a width learned from the first `sample_rows` rows.
-///
-/// # Why a window
-///
-/// A stream cannot know the true maximum width — only the last row settles that — so
-/// it buffers a window, takes the widest row in it, and pads everything to that. A
-/// later row wider than the window is emitted **at its own width rather than
-/// truncated**: a jagged row beats a lost field.
-///
-/// The window is measured from rows this parser produced. Reusing the widths
-/// [`delim::detect_lines`] already tallies looks free and does not work — it stops as
-/// soon as a candidate dominates, which for rows over its check interval happens
-/// partway through the first row, leaving no complete row measured at all.
+/// Streaming rows, exactly as parsed. Blank rows are dropped; nothing else changes.
 pub struct Rows<R: Read> {
     reader: R,
     parser: RowParser,
@@ -268,10 +299,6 @@ pub struct Rows<R: Read> {
     pos: usize,
     filled: usize,
     exhausted: bool,
-    window: std::collections::VecDeque<Vec<String>>,
-    width: usize,
-    sample_rows: usize,
-    primed: bool,
 }
 
 impl<R: Read> Rows<R> {
@@ -284,14 +311,10 @@ impl<R: Read> Rows<R> {
             pos: 0,
             filled: 0,
             exhausted: false,
-            window: std::collections::VecDeque::new(),
-            width: 0,
-            sample_rows: cfg.sample_rows,
-            primed: false,
         }
     }
 
-    /// The next row straight from the parser, before windowing.
+    /// The next content row straight from the parser.
     fn raw_next(&mut self) -> Option<Vec<String>> {
         loop {
             while self.pos < self.filled {
@@ -308,9 +331,7 @@ impl<R: Read> Rows<R> {
                 return None;
             }
             match self.reader.read(&mut self.buf) {
-                Ok(0) | Err(_) => {
-                    // A mid-stream read error ends the stream, as the lenient layer
-                    // ends everything else. `try_csv_rows` reports it instead.
+                Ok(0) => {
                     self.exhausted = true;
                     let row = self.parser.eof().map(|r| decode_row(r, self.charset));
                     match row {
@@ -318,26 +339,19 @@ impl<R: Read> Rows<R> {
                         _ => return None,
                     }
                 }
+                Err(_) => {
+                    // A mid-stream read error ends the stream, as the lenient layer
+                    // ends everything else — but it must not fabricate data: the
+                    // parser may hold a partial row, and flushing it here would
+                    // emit a torn half-row as if the file ended there. Callers who
+                    // need the error use `try_csv_rows`, which reports it.
+                    self.exhausted = true;
+                    return None;
+                }
                 Ok(n) => {
                     self.pos = 0;
                     self.filled = n;
                 }
-            }
-        }
-    }
-
-    fn prime(&mut self) {
-        if self.primed {
-            return;
-        }
-        self.primed = true;
-        while self.window.len() < self.sample_rows {
-            match self.raw_next() {
-                Some(row) => {
-                    self.width = self.width.max(row.len());
-                    self.window.push_back(row);
-                }
-                None => break,
             }
         }
     }
@@ -347,15 +361,7 @@ impl<R: Read> Iterator for Rows<R> {
     type Item = Vec<String>;
 
     fn next(&mut self) -> Option<Vec<String>> {
-        self.prime();
-        let mut row = match self.window.pop_front() {
-            Some(r) => r,
-            None => self.raw_next()?,
-        };
-        if row.len() < self.width {
-            row.resize(self.width, String::new());
-        }
-        Some(row)
+        self.raw_next()
     }
 }
 
@@ -479,7 +485,9 @@ impl UPath {
         })
     }
 
-    /// Streams rows, padded to the width of the reader's sampling window.
+    /// Streams rows exactly as parsed. Row for row, this agrees with
+    /// [`Self::csvRows`] on any file it reads to the end; a mid-stream read error
+    /// ends the stream early without fabricating rows (`try_csv_rows` reports it).
     ///
     /// # Errors
     /// Any failure opening the file.
@@ -492,7 +500,7 @@ impl UPath {
         Ok(Rows::new(io::BufReader::new(file), delimiter, cfg))
     }
 
-    /// All rows, padded to a common width so the result is rectangular.
+    /// All rows exactly as parsed.
     ///
     /// # Errors
     /// Any failure opening or reading the file.
@@ -516,16 +524,25 @@ impl UPath {
                 rows.push(decoded);
             }
         }
-        Ok(rectangular(rows))
+        Ok(rows)
     }
 
-    /// All rows, rectangular; empty when unreadable.
+    /// All rows exactly as parsed: no padding, no trimming, no error on ragged input.
     ///
-    /// This is the one form guaranteed rectangular — it reads the whole file, so it
-    /// knows the true width. [`UPath::csvRowsStream`] only knows its window.
+    /// Empty when unreadable. Ragged is normal — per-row arity is what separates a
+    /// header from data rows in a brokerage export, and padding would erase it.
+    /// Rectangularity is the matrix bridge's business; when a caller wants it,
+    /// [`rectangular`] is the one call. [`Self::csvSchema`] reports the shape.
     #[must_use]
     pub fn csvRows(&self) -> Vec<Vec<String>> {
         self.try_csv_rows().unwrap_or_default()
+    }
+
+    /// Arity histogram and modal arity for this file's parsed rows.
+    /// Streams: one pass, constant memory — safe on files too large for `csvRows`.
+    #[must_use]
+    pub fn csvSchema(&self) -> CsvSchema {
+        schema(self.csvRowsStream())
     }
 
     /// Streams rows, yielding nothing when unreadable.
@@ -697,6 +714,37 @@ mod tests {
         assert_eq!(out[0], vec!["a", "", ""]);
         assert_eq!(out[1], vec!["b", "c", "d"]);
         assert_eq!(rectangular(Vec::new()), Vec::<Vec<String>>::new());
+    }
+
+    /// Builds rows of the given arities; the cell values do not matter to `schema`.
+    fn of_widths(widths: &[usize]) -> Vec<Vec<String>> {
+        widths
+            .iter()
+            .map(|w| (0..*w).map(|i| i.to_string()).collect())
+            .collect()
+    }
+
+    #[test]
+    fn schema_reports_the_histogram_and_the_modal_arity() {
+        // The shape of a brokerage export: a short header, data rows one wider from
+        // a trailing comma, and a quoted disclaimer row of one cell.
+        let s = schema(of_widths(&[3, 4, 4, 1]));
+        assert_eq!(s.widths.get(&3), Some(&1));
+        assert_eq!(s.widths.get(&4), Some(&2));
+        assert_eq!(s.widths.get(&1), Some(&1));
+        assert_eq!(s.arity, 4);
+    }
+
+    #[test]
+    fn schema_resolves_an_arity_tie_wider_so_no_field_is_voted_away() {
+        assert_eq!(schema(of_widths(&[2, 3])).arity, 3);
+    }
+
+    #[test]
+    fn schema_of_no_rows_is_empty_not_an_error() {
+        let s = schema(std::iter::empty::<Vec<String>>());
+        assert!(s.widths.is_empty());
+        assert_eq!(s.arity, 0);
     }
 
     #[test]

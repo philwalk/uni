@@ -6,46 +6,54 @@ rows	plain	0	a	b	c
 rows	plain	1	1	2	3
 stream	plain	0	a	b	c
 stream	plain	1	1	2	3
+schema	plain	0	3	3:2
 hdr	plain	0	a	b	c
 mat	plain	0	3ff0000000000000	4000000000000000	4008000000000000
 rows	crlf	0	a	b
 rows	crlf	1	1	2
 stream	crlf	0	a	b
 stream	crlf	1	1	2
+schema	crlf	0	2	2:2
 hdr	crlf	0	a	b
 mat	crlf	0	3ff0000000000000	4000000000000000
 rows	lone-cr	0	a	b
 rows	lone-cr	1	1	2
 stream	lone-cr	0	a	b
 stream	lone-cr	1	1	2
+schema	lone-cr	0	2	2:2
 hdr	lone-cr	0	a	b
 mat	lone-cr	0	3ff0000000000000	4000000000000000
 rows	no-final-newline	0	a	b	c
 stream	no-final-newline	0	a	b	c
+schema	no-final-newline	0	3	3:1
 hdr	no-final-newline	0	
 mat	no-final-newline	0	NaN	NaN	NaN
 rows	semicolon	0	a	b	c
 rows	semicolon	1	1	2	3
 stream	semicolon	0	a	b	c
 stream	semicolon	1	1	2	3
+schema	semicolon	0	3	3:2
 hdr	semicolon	0	a	b	c
 mat	semicolon	0	3ff0000000000000	4000000000000000	4008000000000000
 rows	tab	0	a	b	c
 rows	tab	1	1	2	3
 stream	tab	0	a	b	c
 stream	tab	1	1	2	3
+schema	tab	0	3	3:2
 hdr	tab	0	a	b	c
 mat	tab	0	3ff0000000000000	4000000000000000	4008000000000000
 rows	pipe	0	a	b	c
 rows	pipe	1	1	2	3
 stream	pipe	0	a	b	c
 stream	pipe	1	1	2	3
+schema	pipe	0	3	3:2
 hdr	pipe	0	a	b	c
 mat	pipe	0	3ff0000000000000	4000000000000000	4008000000000000
 rows	untrimmed	0	1	2
 rows	untrimmed	1	3	4
 stream	untrimmed	0	1	2
 stream	untrimmed	1	3	4
+schema	untrimmed	0	2	2:2
 hdr	untrimmed	0	
 mat	untrimmed	0	3ff0000000000000	4000000000000000
 mat	untrimmed	1	4008000000000000	4010000000000000
@@ -53,6 +61,7 @@ rows	quoted-spaces	0	 x 	 y
 rows	quoted-spaces	1	a	b
 stream	quoted-spaces	0	 x 	 y 
 stream	quoted-spaces	1	a	b
+schema	quoted-spaces	0	2	2:2
 hdr	quoted-spaces	0	
 mat	quoted-spaces	0	NaN	NaN
 mat	quoted-spaces	1	NaN	NaN
@@ -60,6 +69,7 @@ rows	quoted-delimiter	0	a,b	c
 rows	quoted-delimiter	1	d,e	f
 stream	quoted-delimiter	0	a,b	c
 stream	quoted-delimiter	1	d,e	f
+schema	quoted-delimiter	0	2	2:2
 hdr	quoted-delimiter	0	
 mat	quoted-delimiter	0	NaN	NaN
 mat	quoted-delimiter	1	NaN	NaN
@@ -67,6 +77,7 @@ rows	quoted-newline	0	one\ntwo	c
 rows	quoted-newline	1	x	y
 stream	quoted-newline	0	one\ntwo	c
 stream	quoted-newline	1	x	y
+schema	quoted-newline	0	2	2:2
 hdr	quoted-newline	0	
 mat	quoted-newline	0	NaN	NaN
 mat	quoted-newline	1	NaN	NaN
@@ -74,6 +85,7 @@ rows	doubled-quote	0	say "hi"	b
 rows	doubled-quote	1	q	r
 stream	doubled-quote	0	say "hi"	b
 stream	doubled-quote	1	q	r
+schema	doubled-quote	0	2	2:2
 hdr	doubled-quote	0	
 mat	doubled-quote	0	NaN	NaN
 mat	doubled-quote	1	NaN	NaN
@@ -81,6 +93,7 @@ rows	stray-quote	0	a"b	c
 rows	stray-quote	1	d	e
 stream	stray-quote	0	a"b	c
 stream	stray-quote	1	d	e
+schema	stray-quote	0	2	2:2
 hdr	stray-quote	0	
 mat	stray-quote	0	NaN	NaN
 mat	stray-quote	1	NaN	NaN
@@ -88,6 +101,7 @@ rows	blank-rows	0	a	b
 rows	blank-rows	1	c	d
 stream	blank-rows	0	a	b
 stream	blank-rows	1	c	d
+schema	blank-rows	0	2	2:2
 hdr	blank-rows	0	
 mat	blank-rows	0	NaN	NaN
 mat	blank-rows	1	NaN	NaN
@@ -97,36 +111,40 @@ rows	single-column	2	gamma
 stream	single-column	0	alpha
 stream	single-column	1	beta
 stream	single-column	2	gamma
+schema	single-column	0	1	1:3
 hdr	single-column	0	
 mat	single-column	0	NaN
 mat	single-column	1	NaN
 mat	single-column	2	NaN
 rows	ragged-short	0	a	b	c
-rows	ragged-short	1	solo		
+rows	ragged-short	1	solo
 rows	ragged-short	2	d	e	f
 stream	ragged-short	0	a	b	c
-stream	ragged-short	1	solo		
+stream	ragged-short	1	solo
 stream	ragged-short	2	d	e	f
+schema	ragged-short	0	3	1:1	3:2
 hdr	ragged-short	0	
 mat	ragged-short	0	NaN	NaN	NaN
 mat	ragged-short	1	NaN	NaN	NaN
 mat	ragged-short	2	NaN	NaN	NaN
-rows	ragged-long	0	a	b		
+rows	ragged-long	0	a	b
 rows	ragged-long	1	w	x	y	z
-rows	ragged-long	2	c	d		
-stream	ragged-long	0	a	b		
+rows	ragged-long	2	c	d
+stream	ragged-long	0	a	b
 stream	ragged-long	1	w	x	y	z
-stream	ragged-long	2	c	d		
+stream	ragged-long	2	c	d
+schema	ragged-long	0	2	2:2	4:1
 hdr	ragged-long	0	
 mat	ragged-long	0	NaN	NaN	NaN	NaN
 mat	ragged-long	1	NaN	NaN	NaN	NaN
 mat	ragged-long	2	NaN	NaN	NaN	NaN
-rows	short-first-row	0	9	
+rows	short-first-row	0	9
 rows	short-first-row	1	1	2
 rows	short-first-row	2	3	4
-stream	short-first-row	0	9	
+stream	short-first-row	0	9
 stream	short-first-row	1	1	2
 stream	short-first-row	2	3	4
+schema	short-first-row	0	2	1:1	2:2
 hdr	short-first-row	0	
 mat	short-first-row	0	4022000000000000	NaN
 mat	short-first-row	1	3ff0000000000000	4000000000000000
@@ -135,14 +153,16 @@ rows	empty-fields	0	a		c
 rows	empty-fields	1	1	2	3
 stream	empty-fields	0	a		c
 stream	empty-fields	1	1	2	3
+schema	empty-fields	0	3	3:2
 hdr	empty-fields	0	a	col2	c
 mat	empty-fields	0	3ff0000000000000	4000000000000000	4008000000000000
 rows	wide-rows	0	value_00001	value_00002	value_00003	value_00004	value_00005	value_00006	value_00007	value_00008	value_00009	value_00010	value_00011	value_00012
-rows	wide-rows	1	value_00001	value_00002	value_00003	value_00004	value_00005	value_00006	value_00007	value_00008	value_00009			
+rows	wide-rows	1	value_00001	value_00002	value_00003	value_00004	value_00005	value_00006	value_00007	value_00008	value_00009
 rows	wide-rows	2	value_00001	value_00002	value_00003	value_00004	value_00005	value_00006	value_00007	value_00008	value_00009	value_00010	value_00011	value_00012
 stream	wide-rows	0	value_00001	value_00002	value_00003	value_00004	value_00005	value_00006	value_00007	value_00008	value_00009	value_00010	value_00011	value_00012
-stream	wide-rows	1	value_00001	value_00002	value_00003	value_00004	value_00005	value_00006	value_00007	value_00008	value_00009			
+stream	wide-rows	1	value_00001	value_00002	value_00003	value_00004	value_00005	value_00006	value_00007	value_00008	value_00009
 stream	wide-rows	2	value_00001	value_00002	value_00003	value_00004	value_00005	value_00006	value_00007	value_00008	value_00009	value_00010	value_00011	value_00012
+schema	wide-rows	0	12	9:1	12:2
 hdr	wide-rows	0	
 mat	wide-rows	0	NaN	NaN	NaN	NaN	NaN	NaN	NaN	NaN	NaN	NaN	NaN	NaN
 mat	wide-rows	1	NaN	NaN	NaN	NaN	NaN	NaN	NaN	NaN	NaN	NaN	NaN	NaN
@@ -153,109 +173,110 @@ rows	numeric-cells	2	0	0.1	-0.035	2.5e-3	$0.99	-3.5%		1.2.3	.	Infinity	nan	-0	5.
 stream	numeric-cells	0	plain	decimal	negative	scientific	currency	percent	blank	junk	trailing-dot	infinite	notanumber	plus	leading-dot
 stream	numeric-cells	1	1	2.5	-3.25	1e3	$1,234.56	12%		abc	4.	inf	NaN	+5	.5
 stream	numeric-cells	2	0	0.1	-0.035	2.5e-3	$0.99	-3.5%		1.2.3	.	Infinity	nan	-0	5.0
+schema	numeric-cells	0	13	13:3
 hdr	numeric-cells	0	plain	decimal	negative	scientific	currency	percent	blank	junk	trailing-dot	infinite	notanumber	plus	leading-dot
 mat	numeric-cells	0	3ff0000000000000	4004000000000000	c00a000000000000	408f400000000000	40934a3d70a3d70a	3fbeb851eb851eb8	NaN	NaN	4010000000000000	NaN	NaN	4014000000000000	3fe0000000000000
 mat	numeric-cells	1	0000000000000000	3fb999999999999a	bfa1eb851eb851ec	3f647ae147ae147b	3fefae147ae147ae	bfa1eb851eb851ec	NaN	NaN	NaN	NaN	NaN	0000000000000000	4014000000000000
-rows	past-window	0	a	b		
-rows	past-window	1	a	b		
-rows	past-window	2	a	b		
-rows	past-window	3	a	b		
-rows	past-window	4	a	b		
-rows	past-window	5	a	b		
-rows	past-window	6	a	b		
-rows	past-window	7	a	b		
-rows	past-window	8	a	b		
-rows	past-window	9	a	b		
-rows	past-window	10	a	b		
-rows	past-window	11	a	b		
-rows	past-window	12	a	b		
-rows	past-window	13	a	b		
-rows	past-window	14	a	b		
-rows	past-window	15	a	b		
-rows	past-window	16	a	b		
-rows	past-window	17	a	b		
-rows	past-window	18	a	b		
-rows	past-window	19	a	b		
-rows	past-window	20	a	b		
-rows	past-window	21	a	b		
-rows	past-window	22	a	b		
-rows	past-window	23	a	b		
-rows	past-window	24	a	b		
-rows	past-window	25	a	b		
-rows	past-window	26	a	b		
-rows	past-window	27	a	b		
-rows	past-window	28	a	b		
-rows	past-window	29	a	b		
-rows	past-window	30	a	b		
-rows	past-window	31	a	b		
-rows	past-window	32	a	b		
-rows	past-window	33	a	b		
-rows	past-window	34	a	b		
-rows	past-window	35	a	b		
-rows	past-window	36	a	b		
-rows	past-window	37	a	b		
-rows	past-window	38	a	b		
-rows	past-window	39	a	b		
-rows	past-window	40	a	b		
-rows	past-window	41	a	b		
-rows	past-window	42	a	b		
-rows	past-window	43	a	b		
-rows	past-window	44	a	b		
-rows	past-window	45	a	b		
-rows	past-window	46	a	b		
-rows	past-window	47	a	b		
-rows	past-window	48	a	b		
-rows	past-window	49	a	b		
-rows	past-window	50	a	b		
-rows	past-window	51	a	b		
-rows	past-window	52	a	b		
-rows	past-window	53	a	b		
-rows	past-window	54	a	b		
-rows	past-window	55	a	b		
-rows	past-window	56	a	b		
-rows	past-window	57	a	b		
-rows	past-window	58	a	b		
-rows	past-window	59	a	b		
-rows	past-window	60	a	b		
-rows	past-window	61	a	b		
-rows	past-window	62	a	b		
-rows	past-window	63	a	b		
-rows	past-window	64	a	b		
-rows	past-window	65	a	b		
-rows	past-window	66	a	b		
-rows	past-window	67	a	b		
-rows	past-window	68	a	b		
-rows	past-window	69	a	b		
-rows	past-window	70	a	b		
-rows	past-window	71	a	b		
-rows	past-window	72	a	b		
-rows	past-window	73	a	b		
-rows	past-window	74	a	b		
-rows	past-window	75	a	b		
-rows	past-window	76	a	b		
-rows	past-window	77	a	b		
-rows	past-window	78	a	b		
-rows	past-window	79	a	b		
-rows	past-window	80	a	b		
-rows	past-window	81	a	b		
-rows	past-window	82	a	b		
-rows	past-window	83	a	b		
-rows	past-window	84	a	b		
-rows	past-window	85	a	b		
-rows	past-window	86	a	b		
-rows	past-window	87	a	b		
-rows	past-window	88	a	b		
-rows	past-window	89	a	b		
-rows	past-window	90	a	b		
-rows	past-window	91	a	b		
-rows	past-window	92	a	b		
-rows	past-window	93	a	b		
-rows	past-window	94	a	b		
-rows	past-window	95	a	b		
-rows	past-window	96	a	b		
-rows	past-window	97	a	b		
-rows	past-window	98	a	b		
-rows	past-window	99	a	b		
+rows	past-window	0	a	b
+rows	past-window	1	a	b
+rows	past-window	2	a	b
+rows	past-window	3	a	b
+rows	past-window	4	a	b
+rows	past-window	5	a	b
+rows	past-window	6	a	b
+rows	past-window	7	a	b
+rows	past-window	8	a	b
+rows	past-window	9	a	b
+rows	past-window	10	a	b
+rows	past-window	11	a	b
+rows	past-window	12	a	b
+rows	past-window	13	a	b
+rows	past-window	14	a	b
+rows	past-window	15	a	b
+rows	past-window	16	a	b
+rows	past-window	17	a	b
+rows	past-window	18	a	b
+rows	past-window	19	a	b
+rows	past-window	20	a	b
+rows	past-window	21	a	b
+rows	past-window	22	a	b
+rows	past-window	23	a	b
+rows	past-window	24	a	b
+rows	past-window	25	a	b
+rows	past-window	26	a	b
+rows	past-window	27	a	b
+rows	past-window	28	a	b
+rows	past-window	29	a	b
+rows	past-window	30	a	b
+rows	past-window	31	a	b
+rows	past-window	32	a	b
+rows	past-window	33	a	b
+rows	past-window	34	a	b
+rows	past-window	35	a	b
+rows	past-window	36	a	b
+rows	past-window	37	a	b
+rows	past-window	38	a	b
+rows	past-window	39	a	b
+rows	past-window	40	a	b
+rows	past-window	41	a	b
+rows	past-window	42	a	b
+rows	past-window	43	a	b
+rows	past-window	44	a	b
+rows	past-window	45	a	b
+rows	past-window	46	a	b
+rows	past-window	47	a	b
+rows	past-window	48	a	b
+rows	past-window	49	a	b
+rows	past-window	50	a	b
+rows	past-window	51	a	b
+rows	past-window	52	a	b
+rows	past-window	53	a	b
+rows	past-window	54	a	b
+rows	past-window	55	a	b
+rows	past-window	56	a	b
+rows	past-window	57	a	b
+rows	past-window	58	a	b
+rows	past-window	59	a	b
+rows	past-window	60	a	b
+rows	past-window	61	a	b
+rows	past-window	62	a	b
+rows	past-window	63	a	b
+rows	past-window	64	a	b
+rows	past-window	65	a	b
+rows	past-window	66	a	b
+rows	past-window	67	a	b
+rows	past-window	68	a	b
+rows	past-window	69	a	b
+rows	past-window	70	a	b
+rows	past-window	71	a	b
+rows	past-window	72	a	b
+rows	past-window	73	a	b
+rows	past-window	74	a	b
+rows	past-window	75	a	b
+rows	past-window	76	a	b
+rows	past-window	77	a	b
+rows	past-window	78	a	b
+rows	past-window	79	a	b
+rows	past-window	80	a	b
+rows	past-window	81	a	b
+rows	past-window	82	a	b
+rows	past-window	83	a	b
+rows	past-window	84	a	b
+rows	past-window	85	a	b
+rows	past-window	86	a	b
+rows	past-window	87	a	b
+rows	past-window	88	a	b
+rows	past-window	89	a	b
+rows	past-window	90	a	b
+rows	past-window	91	a	b
+rows	past-window	92	a	b
+rows	past-window	93	a	b
+rows	past-window	94	a	b
+rows	past-window	95	a	b
+rows	past-window	96	a	b
+rows	past-window	97	a	b
+rows	past-window	98	a	b
+rows	past-window	99	a	b
 rows	past-window	100	w	x	y	z
 stream	past-window	0	a	b
 stream	past-window	1	a	b
@@ -358,6 +379,7 @@ stream	past-window	97	a	b
 stream	past-window	98	a	b
 stream	past-window	99	a	b
 stream	past-window	100	w	x	y	z
+schema	past-window	0	2	2:100	4:1
 hdr	past-window	0	
 mat	past-window	0	NaN	NaN	NaN	NaN
 mat	past-window	1	NaN	NaN	NaN	NaN

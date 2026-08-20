@@ -1,9 +1,10 @@
 //! CSV → matrix bridge — a port of `uni.io.FileOps.loadSmart` and friends.
 //!
-//! [`UPath::csvRows`](crate::upath::UPath::csvRows) already returns rectangular
-//! rows, so this layer only has to choose a shape, decide whether row 0 is a header,
-//! and parse cells. The result is an [`Array2`], which is what `t3prf` already speaks
-//! — so a matrix read here feeds the 3PRF port with no conversion at the seam.
+//! [`UPath::csvRows`](crate::upath::UPath::csvRows) reports rows as parsed, so this
+//! layer pads them itself ([`crate::upath::csv::rectangular`]), chooses a shape,
+//! decides whether row 0 is a header, and parses cells. The result is an [`Array2`],
+//! which is what `t3prf` already speaks — so a matrix read here feeds the 3PRF port
+//! with no conversion at the seam.
 //!
 //! # Unparseable cells are missing, not errors
 //!
@@ -27,6 +28,7 @@ use ndarray::ArrayView1;
 use ndarray::Axis;
 
 use crate::udata::Big;
+use crate::upath::csv::rectangular;
 use crate::upath::ext::UPath;
 
 /// A cell type a CSV can be read into.
@@ -234,8 +236,13 @@ fn named_headers(row: &[String]) -> Vec<String> {
         .collect()
 }
 
-/// Splits rectangular rows into headers and data. Shared by both smart readers.
+/// Splits rows into headers and data. Shared by both smart readers.
+///
+/// Pads first: the reader reports rows as parsed, and the width here is row 0's, so
+/// ragged input would otherwise truncate every wider row. Scala's `loadSmart` calls
+/// `rectangular` in the same place and for the same reason.
 fn table_of<T: CsvCell>(rows: Vec<Vec<String>>) -> CsvTable<T> {
+    let rows = rectangular(rows);
     let Some(first) = rows.first() else {
         return CsvTable {
             headers: Vec::new(),

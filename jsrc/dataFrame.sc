@@ -1,6 +1,6 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.18.0
+//> using dep org.vastblue:uni_3:0.19.0
 
 import uni.*
 import uni.time.*
@@ -129,9 +129,12 @@ object DataFrame {
       val originalColNames = header.take(colCount)
       val camelColNames = originalColNames.map(toCamelCase)
       
+      // csvRows returns rows as parsed; the header decides this frame's width, so
+      // short rows are padded here (a padded cell is "" and types as missing) and
+      // long ones lose their overflow — dropping a short row would silently change
+      // the row count.
       val dataRows = allRows.tail
-        .filter(_.size >= colCount)
-        .map(_.take(colCount))
+        .map(r => if r.size >= colCount then r.take(colCount) else r.padTo(colCount, ""))
         .filterNot(_ == originalColNames)
       
       if (dataRows.isEmpty) {

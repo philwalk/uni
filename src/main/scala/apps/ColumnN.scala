@@ -1,7 +1,7 @@
 //#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 package uni.apps
 
-//> using dep org.vastblue:uni_3:0.18.0
+//> using dep org.vastblue:uni_3:0.19.0
 
 import uni.*
 import uni.io.*
@@ -44,13 +44,13 @@ object ColumnN {
       if (colnum < 0) {
         usage()
       }
-      val rows = FastCsv.rowsAsync(inputFile.get).dropWhile(_.size < 2).toSeq
+      val rows = FastCsv.rowsAsync(inputFile.get).toSeq
       if (verbose) {
-        eprintf("%s x %s\n", rows.size, rows.head.size)
+        eprintf("%s x %s\n", rows.size, rows.map(_.size).maxOption.getOrElse(0))
       }
-      val columnN: Seq[String] = rows.filter { _.size > colnum }.map { row =>
-        row(colnum)
-      }
+      // One output line per content row, "" where the row has no such cell, so the
+      // output stays positionally aligned with the input on ragged files.
+      val columnN: Seq[String] = rows.map(_.lift(colnum).getOrElse(""))
       printf("%s\n", columnN.mkString("\n"))
     } catch {
     case e: Exception =>

@@ -22,6 +22,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use uni::upath::CsvSchema;
 use uni::upath::CsvTable;
 use uni::upath::PathContext;
 use uni::upath::UPath;
@@ -133,9 +134,8 @@ fn csv_rows_stream_matches_the_scala_reference() {
 }
 
 #[test]
-fn the_two_readings_agree_on_which_rows_exist() {
-    // They may disagree about *width* — the stream only pads to its window — but
-    // never about how many rows a file has, or about any field's content.
+fn the_two_readings_are_identical_case_for_case() {
+    // Neither reader reshapes a row, so how a caller asked cannot change the answer.
     let reference = load_reference();
     for ((kind, case), rows) in &reference {
         if kind != "rows" {
@@ -144,37 +144,49 @@ fn the_two_readings_agree_on_which_rows_exist() {
         let stream = reference
             .get(&("stream".to_owned(), case.clone()))
             .unwrap_or_else(|| panic!("no stream reading for [{case}]"));
-        assert_eq!(rows.len(), stream.len(), "row count differs for [{case}]");
-        for (r, (wide, narrow)) in rows.iter().zip(stream).enumerate() {
-            assert!(
-                wide.len() >= narrow.len(),
-                "[{case}] row {r}: stream is wider than the full read"
-            );
-            assert_eq!(
-                &wide[..narrow.len()],
-                &narrow[..],
-                "[{case}] row {r} content"
-            );
-            assert!(
-                wide[narrow.len()..].iter().all(String::is_empty),
-                "[{case}] row {r}: full read added a non-empty field"
-            );
-        }
+        assert_eq!(rows, stream, "readings differ for [{case}]");
     }
 }
 
 #[test]
-fn the_streaming_window_leaves_a_later_wider_row_jagged() {
-    // The one case where the two readings are *meant* to differ, called out so a
-    // change to the window is a deliberate act rather than a quiet fixture diff.
+fn a_rows_position_in_the_file_does_not_change_how_it_is_reported() {
+    // A wide row 101 rows in, past any window a reader might be tempted to keep.
     let p = input("past-window");
     let stream: Vec<Vec<String>> = p.csvRowsStream().collect();
     let all = p.csvRows();
 
-    assert_eq!(stream[0].len(), 2, "window saw only 2-wide rows");
-    assert_eq!(stream[100].len(), 4, "the wide row must not be truncated");
-    assert_eq!(all[0].len(), 4, "the full read knows the true width");
-    assert_eq!(all.len(), stream.len());
+    assert_eq!(stream, all);
+    assert_eq!(all[0].len(), 2, "the narrow rows stay narrow");
+    assert_eq!(all[100].len(), 4, "the wide row keeps every field");
+}
+
+#[test]
+fn csv_schema_matches_the_scala_reference() {
+    // The expectation is decoded from the fixture, never recomputed with schema()
+    // itself — recomputing would follow a changed tie-break and assert nothing.
+    let reference = load_reference();
+    let mut checked = 0;
+    for ((kind, case), rows) in &reference {
+        if kind != "schema" {
+            continue;
+        }
+        let fields = &rows[0];
+        let arity: usize = fields[0].parse().expect("arity");
+        let widths = fields[1..]
+            .iter()
+            .map(|f| {
+                let (w, n) = f.split_once(':').expect("width:count");
+                (w.parse().expect("width"), n.parse().expect("count"))
+            })
+            .collect();
+        assert_eq!(
+            input(case).csvSchema(),
+            CsvSchema { widths, arity },
+            "csvSchema differs for [{case}]"
+        );
+        checked += 1;
+    }
+    assert!(checked >= 20, "only {checked} schema cases checked");
 }
 
 #[test]

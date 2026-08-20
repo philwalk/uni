@@ -267,14 +267,22 @@ class FastCsvSuite extends FunSuite:
   }
 
   // ---------------------------------------------------------------------------
-  // Streaming padding: the sniffing sample also decides a width
+  // Ragged input: the readers report arity, they do not impose one
   // ---------------------------------------------------------------------------
 
-  test("a short row is padded to the sampled width rather than left ragged") {
-    // `solo` used to come back as a one-element row, so a caller indexing (1)
-    // got an IndexOutOfBounds on a file that looked rectangular.
+  test("a short row is reported as parsed, not padded") {
+    // Per-row arity is information -- in a brokerage export it is what separates
+    // a header from data rows -- and a padded "" is indistinguishable from a
+    // genuinely empty cell, so padding would erase it. Callers that want a
+    // rectangle ask for one: FastCsv.rectangular.
     val p = writeTempCsv("a,b\nsolo\nc,d\n")
     assertEquals(uni.io.FastCsv.rowsPulled(p).toList.map(_.toList),
+                 List(List("a", "b"), List("solo"), List("c", "d")))
+  }
+
+  test("rectangular pads the widest, on demand") {
+    val p = writeTempCsv("a,b\nsolo\nc,d\n")
+    assertEquals(uni.io.FastCsv.rectangular(uni.io.FastCsv.rowsPulled(p).toSeq).map(_.toList).toList,
                  List(List("a", "b"), List("solo", ""), List("c", "d")))
   }
 
@@ -297,10 +305,9 @@ class FastCsvSuite extends FunSuite:
       assertEquals(each.result(), pulled, s"eachRow differs for [$label]")
   }
 
-  test("a row wider than the sample is emitted jagged, never truncated") {
-    // The sample only sees the first `sampleRows` rows, so a later, wider row
-    // cannot be padded for -- but losing its extra fields would be worse than
-    // returning it at its own width.
+  test("a row wider than the rest keeps every field") {
+    // Nothing about a row's position in the file changes how it is reported;
+    // the readers hold no window and take no width from one.
     val narrow = List.fill(100)("a,b").mkString("", "\n", "\n")
     val p = writeTempCsv(narrow + "v,w,x,y,z\n")
     val rows = uni.io.FastCsv.rowsPulled(p).toList
@@ -308,24 +315,52 @@ class FastCsvSuite extends FunSuite:
     assertEquals(rows.last.toList, List("v", "w", "x", "y", "z"))
   }
 
-  test("padding does not depend on how the delimiter was chosen") {
-    // The width comes from the reader's own window, not from the sniffer, so
-    // supplying the delimiter -- which skips sniffing entirely -- pads the same.
+  test("output does not depend on how the delimiter was chosen") {
+    // Supplying the delimiter skips sniffing entirely; the rows must be the same.
     val p = writeTempCsv("a,b\nsolo\nc,d\n")
     val cfg = FastCsv.Config(delimiterChar = Some(','))
     assertEquals(uni.io.FastCsv.rowsPulled(p, cfg).toList.map(_.toList),
                  uni.io.FastCsv.rowsPulled(p).toList.map(_.toList))
   }
 
-  test("a wide row past the sniffer's check interval is still padded for") {
-    // Regression: the width used to be taken from `Delimiter.detect`, which
-    // declares a winner partway through the first row whenever that row is over
-    // ~100 chars, and then records every row as truncated. `rowCounts` came back
-    // empty and nothing was padded at all -- on most real files.
+  test("rows over the sniffer's check interval keep their own arity") {
+    // Long rows are where a sniffer-derived width used to go wrong; there is no
+    // derived width now, so each row's own field count is what comes back.
     val wide  = (1 to 12).map(i => f"value_$i%05d").mkString(",")
     val short = (1 to  9).map(i => f"v_$i%05d").mkString(",")
     val p = writeTempCsv(Seq(wide, short, wide).mkString("", "\n", "\n"))
-    assertEquals(uni.io.FastCsv.rowsPulled(p).toList.map(_.length), List(12, 12, 12))
+    assertEquals(uni.io.FastCsv.rowsPulled(p).toList.map(_.length), List(12, 9, 12))
+  }
+
+  // ---------------------------------------------------------------------------
+  // schema: a report, never a transformation
+  // ---------------------------------------------------------------------------
+
+  test("schema reports the arity histogram and the modal arity") {
+    // The shape of a brokerage export: a short header, data rows one wider from a
+    // trailing comma, and a quoted disclaimer row of one cell.
+    val p = writeTempCsv("a,b,c\n1,2,3,\n4,5,6,\n\"note\"\n")
+    val s = uni.io.FastCsv.schema(uni.io.FastCsv.rowsPulled(p).toSeq)
+    assertEquals(s.widths, Map(3 -> 1, 4 -> 2, 1 -> 1))
+    assertEquals(s.arity, 4)
+  }
+
+  test("schema resolves an arity tie wider, so no field is voted away") {
+    val rows = Seq(Seq("a", "b"), Seq("c", "d", "e"))
+    assertEquals(uni.io.FastCsv.schema(rows).arity, 3)
+  }
+
+  test("schema of no rows is empty, not an error") {
+    val s = uni.io.FastCsv.schema(Seq.empty)
+    assertEquals(s.widths, Map.empty[Int, Int])
+    assertEquals(s.arity, 0)
+  }
+
+  test("csvRows returns as-parsed widths, and csvSchema reports them") {
+    import uni.*
+    val p = writeTempCsv("a,b,c\nsolo\nd,e,f\n")
+    assertEquals(p.csvRows.map(_.size).toList, List(3, 1, 3))
+    assertEquals(p.csvSchema, uni.io.FastCsv.CsvSchema(Map(3 -> 2, 1 -> 1), 3))
   }
 
   test("csvRows agrees with its own callback overload") {

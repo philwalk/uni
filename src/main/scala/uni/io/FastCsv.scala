@@ -20,73 +20,18 @@ object FastCsv {
    */
   private def isContentRow(row: Seq[String]): Boolean = row.exists(_.trim.nonEmpty)
 
-  /** Pads every row out to the widest, so the result is rectangular.
+  /** Pads every row out to the widest, so the result is rectangular. Opt-in.
    *
-   *  Callers that materialise rows share this, because `csvRows` and `loadSmart`
-   *  must not disagree about which rows exist: `loadSmart` used to keep only rows
-   *  matching the *first* row's width and silently drop the rest, so a file whose
-   *  first line was short collapsed to a single cell while `csvRows` returned every
-   *  row. Padding loses nothing, and a padded cell is "" — already what a genuine
-   *  empty cell yields, and already NaN once converted.
+   *  The readers report rows as parsed; this is what a caller applies when it wants
+   *  a rectangle. `FastCsv.rectangular(p.csvRows)` reproduces 0.16.0–0.18.x output.
+   *  The matrix loaders (`loadSmart`, `loadCSV`) call it themselves, because blind
+   *  `row(c)` indexing requires it.
    *
    *  Widest rather than first-row width on purpose: keying off the first row means
-   *  truncating any row longer than it, which is the data loss this replaces.
-   *
-   *  Not available to the streaming readers, and cannot be: the width is not known
-   *  until the last row has been seen. `csvRowsStream` and `csvRowsAsync` therefore
-   *  yield rows as parsed.
+   *  truncating any row longer than it, which is data loss. The failure mode of the
+   *  choice made here is the mirror image — one spuriously wide row inflates every
+   *  other row to the outlier's width. `schema` shows which case a file is in.
    */
-  /** Buffers the first `sampleRows` rows to learn a width, then streams the rest.
-   *
-   *  The obvious cheap trick -- reuse the widths `Delimiter.detect` already tallies
-   *  -- does not work. `detect` stops as soon as one candidate dominates, which for
-   *  a row wider than its 100-character check interval happens partway through the
-   *  *first* row; every row is then recorded as truncated and `rowCounts` comes back
-   *  empty. Reusing it padded nothing at all on any file with rows over ~100 chars,
-   *  which is most of them.
-   *
-   *  So the width is measured here, from rows the real parser produced, and it is
-   *  exact for the window rather than an undercount. The cost is holding the window
-   *  before the first row is emitted; no extra pass over the file.
-   */
-  private final class WidthAligned(source: Iterator[Seq[String]], sampleRows: Int)
-      extends Iterator[Seq[String]]:
-    private var pending: Vector[Seq[String]] = Vector.empty
-    private var width = 0
-    private var primed = false
-
-    private def prime(): Unit =
-      if !primed then
-        primed = true
-        while pending.length < sampleRows && source.hasNext do
-          val row = source.next()
-          pending = pending :+ row
-          if row.length > width then width = row.length
-
-    def hasNext: Boolean =
-      prime()
-      pending.nonEmpty || source.hasNext
-
-    def next(): Seq[String] =
-      prime()
-      val row =
-        if pending.nonEmpty then
-          val h = pending.head
-          pending = pending.tail
-          h
-        else source.next()
-      widenTo(width)(row)
-
-  /** Pads a row out to `width`. Never truncates.
-   *
-   *  A streaming reader cannot know the true maximum — that is only settled by the
-   *  last row — so it pads to the widest row in the sample. A later row wider than
-   *  that is emitted at its own width rather than cut down: a jagged row beats a
-   *  lost field, and it is the same call that made padding better than dropping.
-   */
-  private def widenTo(width: Int)(row: Seq[String]): Seq[String] =
-    if width <= row.length then row else row.padTo(width, "")
-
   def rectangular(rows: Seq[Seq[String]]): Seq[Seq[String]] =
     if rows.isEmpty then rows
     else
@@ -94,6 +39,21 @@ object FastCsv {
       if rows.forall(_.length == width) then rows
       else rows.map(r => if r.length == width then r else r.padTo(width, ""))
 
+  /** Shape report for parsed rows: arity histogram and modal arity (ties resolve
+   *  wider, never losing fields). A report, never a transformation — when the modal
+   *  call is wrong, the outvoted widths are visible in `widths` and no row was
+   *  altered. */
+  final case class CsvSchema(widths: Map[Int, Int], arity: Int)
+
+  /** Folds width counts in constant memory, so an iterator is as good as a Seq —
+   *  `schema(p.csvRowsStream)` never holds the file. It consumes what it is given:
+   *  an iterator is spent afterwards, so read rows from a fresh one. */
+  def schema(rows: IterableOnce[Seq[String]]): CsvSchema =
+    val widths = rows.iterator.foldLeft(Map.empty[Int, Int]): (acc, row) =>
+      acc.updatedWith(row.size)(n => Some(n.getOrElse(0) + 1))
+    // Most rows wins; a tie goes to the wider arity, so a tie never loses fields.
+    val arity = widths.maxByOption((w, n) => (n, w)).fold(0)(_._1)
+    CsvSchema(widths, arity)
 
   final case class Config(
     delimiterChar: Option[Char] = None,
@@ -117,7 +77,7 @@ object FastCsv {
     cfg: Config = Config(),
     sampleRows: Int = 100
   ): Iterator[Seq[String]] = {
-    val raw = new Iterator[Seq[String]] {
+    new Iterator[Seq[String]] {
       private val delimiter: Byte = cfg.delimiter.getOrElse {
         val res = Delimiter.detect(path, sampleRows)
         res.delimiterChar.toByte
@@ -161,7 +121,6 @@ object FastCsv {
         else throw new NoSuchElementException("No more rows")
       }
     }.filter(isContentRow)
-    new WidthAligned(raw, sampleRows)
   }
 
   /** Queue filled by background thread: return Iterator[Seq[String]] */
@@ -171,77 +130,86 @@ object FastCsv {
     sampleRows: Int = 100,
     queueCapacity: Int = 1024
   ): Iterator[Seq[String]] = {
-    val raw = {
-      import java.util.concurrent.LinkedBlockingQueue
+    import java.util.concurrent.LinkedBlockingQueue
 
-      val delimiterChar: Char = cfg.delimiterChar.getOrElse {
-        val res = Delimiter.detect(path, sampleRows)
-        res.delimiterChar
-      }
-      val parser = new RowParser(cfg, delimiterChar.toByte)
-      val ch = Files.newByteChannel(path, READ).asInstanceOf[FileChannel]
-      val buf = ByteBuffer.allocateDirect(cfg.bufferSize)
-
-      // Bounded queue for back-pressure
-      val queue = new LinkedBlockingQueue[Option[Seq[String]]](queueCapacity)
-
-      // Background thread fills the queue
-      val producer = new Thread(() => {
-        try {
-          while (ch.read(buf) > 0) {
-            buf.flip()
-            while (buf.hasRemaining) {
-              parser.feed(buf.get()) match {
-                case Some(row) =>
-                  val decoded = decodeFields(row, cfg.charset).toSeq
-                  queue.put(Some(decoded)) // blocks if full
-                case None =>
-              }
-            }
-            buf.clear()
-          }
-          parser.eof().foreach { row =>
-            val decoded = decodeFields(row, cfg.charset).toSeq
-            queue.put(Some(decoded))
-          }
-        } finally {
-          ch.close()
-          queue.put(None) // end-of-stream marker
-        }
-      })
-      producer.setDaemon(true)
-      producer.start()
-
-      // Foreground iterator consumes from queue
-      new Iterator[Seq[String]] {
-        private var nextRow: Option[Seq[String]] = None
-        // The producer puts exactly one end-of-stream marker. Without this flag a
-        // second `hasNext` after exhaustion takes from a queue nobody will ever
-        // fill again and blocks forever -- `hasNext` must be idempotent.
-        private var drained = false
-
-        private def advance(): Unit = {
-          if (nextRow.isEmpty && !drained) {
-            nextRow = queue.take() // blocks until row or None
-            if (nextRow.isEmpty) drained = true
-          }
-        }
-
-        override def hasNext: Boolean = {
-          advance()
-          nextRow.nonEmpty
-        }
-
-        override def next(): Seq[String] = {
-          if (hasNext) {
-            val r = nextRow.get
-            nextRow = None
-            r
-          } else throw new NoSuchElementException("No more rows")
-        }
-      }.filter(isContentRow)
+    val delimiterChar: Char = cfg.delimiterChar.getOrElse {
+      val res = Delimiter.detect(path, sampleRows)
+      res.delimiterChar
     }
-    new WidthAligned(raw, sampleRows)
+    val parser = new RowParser(cfg, delimiterChar.toByte)
+    val ch = Files.newByteChannel(path, READ).asInstanceOf[FileChannel]
+    val buf = ByteBuffer.allocateDirect(cfg.bufferSize)
+
+    // Bounded queue for back-pressure
+    val queue = new LinkedBlockingQueue[Option[Seq[String]]](queueCapacity)
+
+    // A mid-read failure must not masquerade as end-of-stream: `rowsPulled` throws
+    // in the same situation, and the readers must agree. The throwable is carried
+    // across the thread boundary here and rethrown once the queue drains — the
+    // volatile write happens before the end-of-stream marker is enqueued, so the
+    // consumer that sees the marker sees the failure too.
+    @volatile var failure: Throwable = null
+
+    // Background thread fills the queue
+    val producer = new Thread(() => {
+      try {
+        while (ch.read(buf) > 0) {
+          buf.flip()
+          while (buf.hasRemaining) {
+            parser.feed(buf.get()) match {
+              case Some(row) =>
+                val decoded = decodeFields(row, cfg.charset).toSeq
+                queue.put(Some(decoded)) // blocks if full
+              case None =>
+            }
+          }
+          buf.clear()
+        }
+        parser.eof().foreach { row =>
+          val decoded = decodeFields(row, cfg.charset).toSeq
+          queue.put(Some(decoded))
+        }
+      } catch {
+        case e: Throwable => failure = e
+      } finally {
+        ch.close()
+        queue.put(None) // end-of-stream marker
+      }
+    })
+    producer.setDaemon(true)
+    producer.start()
+
+    // Foreground iterator consumes from queue
+    new Iterator[Seq[String]] {
+      private var nextRow: Option[Seq[String]] = None
+      // The producer puts exactly one end-of-stream marker. Without this flag a
+      // second `hasNext` after exhaustion takes from a queue nobody will ever
+      // fill again and blocks forever -- `hasNext` must be idempotent.
+      private var drained = false
+
+      private def advance(): Unit = {
+        if (nextRow.isEmpty && !drained) {
+          nextRow = queue.take() // blocks until row or None
+          if (nextRow.isEmpty) {
+            drained = true
+            if (failure != null) throw failure
+          }
+        }
+      }
+
+      override def hasNext: Boolean = {
+        advance()
+        nextRow.nonEmpty
+      }
+
+      override def next(): Seq[String] = {
+        if (hasNext) {
+          val r = nextRow.get
+          nextRow = None
+          r
+        } else throw new NoSuchElementException("No more rows")
+      }
+    }.filter(isContentRow)
   }
 
   /** Synchronous blocking API -- parse and send rows to sink */
@@ -261,28 +229,8 @@ object FastCsv {
     // Same row rules as the iterator readers: `PathExts.csvRows` has a callback
     // overload backed by this method, and the two must not disagree about which
     // rows a file contains just because of how the caller asked for them.
-    // `WidthAligned` is an Iterator, so its buffer-then-stream window is inlined.
-    var window: Vector[Seq[String]] = Vector.empty
-    var width = 0
-    var streaming = false
-
     val emit: Seq[String] => Unit = row =>
-      if isContentRow(row) then
-        if streaming then onRow(widenTo(width)(row))
-        else
-          window = window :+ row
-          if row.length > width then width = row.length
-          if window.length >= sampleRows then
-            window.foreach(r => onRow(widenTo(width)(r)))
-            window = Vector.empty
-            streaming = true
-
-    // Files shorter than the window emit nothing during the read loop.
-    def drain(): Unit =
-      if !streaming then
-        window.foreach(r => onRow(widenTo(width)(r)))
-        window = Vector.empty
-        streaming = true
+      if isContentRow(row) then onRow(row)
 
     while (ch.read(buf) > 0) {
       buf.flip()
@@ -296,7 +244,6 @@ object FastCsv {
       buf.clear()
     }
     parser.eof().foreach(r => emit(decodeFields(r, cfg.charset).toSeq))
-    drain()
     ch.close()
   }
 

@@ -1,0 +1,501 @@
+# marketSim upgrade plan
+
+Every item below was written after a real consumer study hit the limitation it describes: the
+designated-sleeve trend gate in the `ue` pipeline (hold a sleeve only while its own trailing
+12-month total return is positive) was evaluated for its lookback, its form and its cadence, using
+`market_sim.exe` as a path generator. Nothing here is speculative ergonomics. Each item names the
+evidence, the change, the parity consequence, and a falsifiable acceptance test.
+
+The study is also the model for how the simulator gets *used* from outside: `-emit` with the seed
+sequence `seed + k*7919` reproduces the model's own path family, so a consumer can grade arbitrary
+rules on marketSim paths without importing or modifying either twin. Several items below simply make
+that pattern complete instead of accidental.
+
+## Constraints any change must respect
+
+- **Two twins, byte-identical.** `jsrc/marketSim.sc` and `rust/examples/market_sim.rs` agree exactly
+  across `-emit`, `-validate`, `-buffer`, `-power` and `-strategies`. Every item lands in both, in
+  one change, and the output diff is the test.
+- **Signed zeros.** Any printed column whose true value can be identically zero must render through
+  `pm`, which blanks the sign when every digit is zero. Without it the JVM/libm 1-ulp `log` gap makes
+  the printed sign a coin flip. This is the only class of parity failure marketSim has produced.
+- **Frozen constants stay frozen unless promoted deliberately.** The header lists them. Promoting one
+  to a `World` field is a legitimate change (item W7 proposes exactly that) but it must be recorded
+  there, not done silently.
+- **The recorded scope exclusions stand.** Daily kurtosis (~8 against ~28 real) and crash arrival
+  spacing trace to the absent slow valuation cycle and are deliberately not fixed. Nothing here
+  reopens that.
+- **Widening an acceptance band to admit a world you want is not on the table.** Item W2 exists
+  precisely because the alternative — relaxing the bond-volatility band so calm bonds pass — would
+  make the gate stop meaning anything.
+
+## Two consumers, one plan
+
+A second consumer — folio, a levered-ETF book whose core strategy family reads distance from a
+running peak — grades these items differently, and its ordering governs where a shared item lands.
+It holds **no bond ticker of any kind**, so W2 and W7 buy it nothing; it uses the Rust binary only,
+so W0 does not apply; and it will not add rules to `rules()`, so W4 is evidence rather than code.
+Against that, it needs W1 for a reason this plan did not name: every folio exposure rule de-risks to
+*cash*, and its backtest engine credits idle cash at a dated rate, so an emitted path without `rate`
+silently understates the de-risked leg of every timing rule.
+
+folio's order is **W1 → W3 → W5 → W9 → W8**, and it reverses this plan's W8-before-W9 because W9 is
+measured to fail on the equity leg too (see W9), not merely anticipated. W7 stays last for both.
+
+## Status
+
+| item | state |
+|---|---|
+| W0 | recorded: `uni/jsrc/marketSim.sc` is canonical (see below) |
+| W1, W2, W3 | **landed**, both twins, byte-identical across every mode |
+| W4–W9 | open |
+
+## W0 — Re-sync the stale consumer copy (housekeeping, do first)
+
+`/opt/ue/jsrc/marketSim.sc` is 14 lines behind `uni/jsrc/marketSim.sc`: it predates the `pm` helper
+and still prints seven signed columns through `%+.Nf`. The difference is rendering-only — no
+numeric path differs — but a consumer running the stale Scala copy will disagree with the Rust twin
+in exactly the columns PARITY.md documents as the known failure mode, and will conclude the twins
+have drifted numerically. Copy the uni version over, or record which copy is canonical.
+
+**Acceptance**: `diff` of the two files is empty, or a note in PARITY.md names the canonical copy and
+the consumer's obligation to pull from it.
+
+**Resolved by the second route.** `uni/jsrc/marketSim.sc` is canonical; `/opt/ue/jsrc/marketSim.sc`
+is a consumer fork that must pull from it and never the reverse. It is now 383 lines behind, so a
+consumer running it disagrees with the Rust twin in the seven `pm` columns and in every item below.
+
+---
+
+# Tier 1 — cheap, and they unblock external use immediately
+
+## W1 — Widen `-emit` to the full state, and to any path — **LANDED**
+
+**Problem.** `-emit` writes date, price and bond, for path 0 only. Everything else the model knows —
+the short rate, the CPI level, both markets' liquidity multipliers, the equity fundamental, the
+inflation-pressure state — stays inside. A consumer grading rules on emitted paths is therefore
+forced into metrics that are invariant to the missing series.
+
+**Evidence.** The sleeve study had to restrict itself to `vsFlat` (advantage over a constant position
+at the arm's own average exposure), which is exactly cash-rate-invariant, and to report nominal
+drawdowns with a flat trading cost. Those were the right choices given what was available, but they
+cost the study its ability to compare a gated arm against a fully-invested one on total return, and
+its ability to charge liquidity-scaled slippage the way `armPath` does internally.
+
+**Change.** Emit `rate`, `cpi`, `liq`, `bliq` (see W2 — the bond market's `lastLiq` is currently
+computed and discarded), `fundamental` and `inflPress` alongside price and bond. Add `-emitpath N`,
+or a prefix form that writes every path.
+
+**Parity.** Additive columns in one text writer; both twins must produce identical text. Low risk —
+no new arithmetic.
+
+**Acceptance.** An external consumer, given only the emitted file, reproduces marketSim's own
+`-strategies` row for one rule to the last printed digit. Today the closest achievable is the gross
+`vsFlat` column, which matched at +4.26 against the simulator's +4.24 — close enough to validate a
+harness, not close enough to be a parity test.
+
+**Effort.** Small.
+
+### As shipped
+
+```
+-emit F         one path as a full-state TSV, plus the sidecar F.json
+-emitpath N     which path index (default 0); path k is seed + k*7919 and needs no larger run
+-emitall        every path of the run to F-000.tsv, F-001.tsv, ... each with its sidecar
+-emitstart D    YYYY-MM-DD, stepping by WEEKDAYS, so the file joins a real dated series
+-emitgate P     paths in the ensemble that decides the verdict (default 200; 0 = the sample)
+```
+
+Columns: `date price bond rate cpi liq bliq fundamental inflPress`, with a header row.
+
+Three properties beyond the item as written, each closing a gap a consumer hit:
+
+- **Provenance is a sidecar, not a stderr line.** `F.json` carries the world's every field, the base
+  seed, the stride, the path index and its derived seed, the calendar, both W3 verdicts with the
+  named failures, and the fidelity ratios including the known misses. A warning printed at export
+  does not survive the file being moved; an ensemble that cannot be named cannot be inventoried, and
+  re-drawing the same paths in two campaign rounds would otherwise count as independent evidence.
+- **Dates can be real and weekday-aligned.** The default calendar steps `365/252` days from
+  1900-01-02 and lands on weekends, so an emitted path could never be joined to a real dated series
+  (FRED rates, `^VIX`, a credit-spread brake) and always needed a special case. `-emitstart` steps
+  weekdays instead. No holiday calendar — recorded, not hidden.
+- **The verdict is measured on the world, not on the emitted sample.** `-paths 1 -years 20 -emit`
+  used to print all four mechanism failures for a world that passes every check at 200 paths: they
+  are conditional-on-episode statistics one short path cannot measure. Every export therefore
+  carried a false alarm, which is worse than no warning. The verdict now comes from a `-emitgate`
+  ensemble of the same world; `-emitgate 0` restores judging by the sample.
+
+Signed zeros: `rate` is floored at zero and `inflPress` starts there, so every emitted column is
+folded through `(-0.0) + 0.0 = +0.0` before formatting.
+
+## W2 — Expose the bond market's liquidity series — **LANDED**
+
+**Problem.** `Path.liq` is the equity market's slippage multiplier. The bond market computes its own
+`lastLiq` in `Market.step` and throws it away, so any arm that trades the bond is either charged
+equity slippage or a flat cost.
+
+**Change.** Carry `bliq` on `Path`, filled the same way `lq` is.
+
+**Parity.** Additive; changes `-emit` only if W1 lands with it, which it should.
+
+**Acceptance.** A bond-side arm's `slip x` multiplier differs from the equity-side one in a world
+where the bond spiral engages, and equals it in a world where `-stress 0`.
+
+**Effort.** Trivial. Bundle with W1.
+
+## W3 — Split the acceptance gate into realism bands and mechanism-engagement checks — **LANDED**
+
+**Problem.** `gateChecks` mixes two kinds of statement and reports one verdict. "bond vol 7–20%" says
+*this world is not a market*. "bond spiral engages, not always" says *a mechanism is inert here*. The
+first invalidates every conclusion; the second invalidates only conclusions that depend on that
+mechanism.
+
+**Evidence.** The duration-6y world — the closest admissible analogue of an aggregate bond fund, and
+the single most decision-relevant world in the whole sleeve study — passes every realism band (bond
+vol 7.8%, inside 7–20) and fails only "bond spiral engages, not always". Under the current binary
+verdict it was excluded from every pooled panel, and the study lost its most relevant frame.
+
+**Change.** Tag each check with its class. Print two verdicts. Let a report declare which class it
+requires; keep `-validate`'s exit code driven by realism failures, with a flag deciding whether
+mechanism failures are also fatal.
+
+**Parity.** Output text changes in `-validate` and `-strategies` headers. Expected diff; regenerate.
+
+**Acceptance.** The duration-6y world reports `realism PASS / mechanism FAIL` and names the mechanism.
+No world that currently passes changes verdict.
+
+**Effort.** Small.
+
+### As shipped
+
+The split falls on a real seam: the nine **realism** checks are unconditional distributional
+properties of the whole sample; the four **mechanism** checks — bonds rally in growth shocks, bonds
+lose in inflation regimes, corr flips positive under inflation, bond spiral engages — are every one
+of them conditional on a crash or inflation episode. That is the same four `-emit` used to
+false-alarm on, which is corroboration that the seam is the model's and not an editorial choice.
+
+`-validate` prints both lists and a `verdict:` line naming any inert mechanism. `-gate realism|full`
+decides admissibility, and it governs both the `-validate` exit code and which worlds enter the
+pooled panels of `-strategies`, `-power` and `-buffer`.
+
+**The default is `full`**, which departs from the item's "keep `-validate`'s exit code driven by
+realism failures". Every existing report therefore keeps its exact output and exit code, and the
+widening is opt-in; flipping the default is a one-line change if a consumer would rather have it.
+
+Measured, 19 worlds at 12 paths x 30 years: 18 worlds out of range under `full`, **2** under
+`-gate realism`. The duration-6y world reports `realism PASS   mechanism FAIL   inert: bond spiral
+engages, not always` and exits 0 under `-gate realism`.
+
+---
+
+# Tier 2 — make the consumer pipeline's actual rules native
+
+## W4 — Add the three rule shapes the consumer had to build outside
+
+**Problem.** The `Rules` library is equity-shaped: moving-average, volatility-scaled and drawdown
+rules, all applied to `p.price`, all re-decided daily. The production rules being studied are
+*return-sign* rules applied to *diversifier* sleeves at *quarterly* cadence.
+
+**Evidence.** All three gaps had to be reimplemented in an external harness:
+
+1. **Return-sign form.** `trendRule` compares price to the *mean* of the window. The rule under test
+   compares the window's two *endpoints*. These are different rules, and in the study they differed
+   by ~1 pp/yr and ~6 points of maximum drawdown at the same window length, at n\* = 4 — i.e. the
+   distinction is resolvable, not cosmetic.
+2. **A cadence combinator.** Holding a decision between decision dates. Production can only act at a
+   quarterly rebalance. In the study, cadence turned out to interact with lookback so strongly that
+   neither is interpretable alone: at a 364-day window, daily-versus-annual re-decision is worth ~0;
+   at a 60-day window it is worth +9 pp/yr.
+3. **A risky-asset selector.** So an arm can trade the bond with cash as the safe leg. Every ticker
+   the consumer's gate governs is a diversifier, not the equity book.
+
+**Change.** A `signGate` alongside `trendRule`; a `sampled(e, every)` combinator; a `Risky` selector
+threaded through `armPath`. Roughly 30 lines each side.
+
+**Parity.** Adding rows to `Rules` changes every `-strategies` line. Expected diff; regenerate
+fixtures. The combinator introduces no new arithmetic.
+
+**Acceptance.** `-strategies` gains a return-sign row at quarterly cadence on the bond, and its
+numbers match the external harness that produced the sleeve study to the last printed digit. That
+is a real cross-implementation check, not a self-consistency check.
+
+**Effort.** Moderate.
+
+## W5 — Parameterized power, with a hit-rate column
+
+**Problem.** `-power` answers one fixed question: how much history do these four preset arms need,
+against these preset contrasts, at these four horizons. The question a consumer actually has is *for
+these two specific arms, at the length of history I actually possess, what fraction of single
+histories shows the right sign?*
+
+**Evidence.** That question arose three times in the sleeve study and had to be added externally as
+a `hit%` column. It was decisive: at 100-year histories the contrast of interest was resolvable from
+one history, and at 19 years — the real sample length — the same contrast was resolvable only in the
+high-volatility worlds. Without that number the real-data result looks like a contradiction of the
+simulated one. With it, the two agree.
+
+**Change.** Let `-power` take arm selectors and a horizon list. Expose `hit%` per contrast. The
+machinery already computes the hit rate; it is the arm selection that is hard-coded.
+
+**Parity.** Output format changes; arithmetic unchanged.
+
+**Acceptance.** Given its current arms and horizons, the new `-power` reproduces the current table
+byte-for-byte. Given a new pair, it answers without a code change.
+
+**Effort.** Small-to-moderate.
+
+## W6 — Make the crowd-window control usable
+
+**Problem.** The non-value crowd extrapolates on a momentum window frozen at 60 sessions. That
+constant is simultaneously a plausible *answer* to any question of the form "which lookback wins",
+so every trend-rule conclusion has to prove it is not an echo of it. `-crowd trendNNN` exists for
+exactly that, and **every `trendNNN` world tested fails the acceptance gate** at the default
+`crowdimpact` (they break "bonds rally in growth shocks").
+
+**Evidence.** The sleeve study's artifact control therefore rested on a single admissible world
+(`-crowd volscaled`), with the `trendNNN` worlds reported only as out-of-gate corroboration. The
+control worked — the winning lookback did not move with the crowd's window — but it was one world
+where it should have been six.
+
+**Change.** Either find the `crowdimpact` range at which `trendNNN` worlds are market-like and
+document it, or promote the momentum window to a `World` field so it sweeps with everything else.
+The repo's own "sweep the reference too" lesson applies: a constant inside the control family is the
+last place anyone looks.
+
+**Acceptance.** At least one `-crowd trendNNN` world passes the full acceptance gate, so the
+artifact control can be run in more than one admissible world.
+
+**Effort.** Small if it is a `crowdimpact` calibration; moderate if the window is promoted.
+
+---
+
+# Tier 3 — structural, and they change what the model is allowed to claim
+
+## W7 — Give the bond a composition, so an aggregate bond fund is representable
+
+**Problem.** The admissible bond-volatility band is 7–20%. Measured annualized volatility of the
+sleeves the consumer's gate actually governs:
+
+| sleeve | ann. vol | inside the band |
+|---|---|---|
+| BNDX | 3.9% | no |
+| BND | 5.2% | no |
+| SCHP | 5.6% | no |
+| DBMF | 12.4% | yes |
+| FNV | 40.1% | no — above the model's *equity*, 16.6% |
+
+Duration is the only knob, and dialing it to 4 years yields a 6.3%-volatility bond that already
+**fails** the gate for being too calm — still more volatile than any bond sleeve in the book.
+
+**Consequence, stated plainly: the simulator has nothing admissible to say about aggregate bond
+funds**, which are most of what the consumer's designated-sleeve machinery holds. The sleeve study
+found a large, well-controlled effect on the lookback axis and could not apply it, because the
+model's own duration trend extrapolates that effect toward zero at the volatilities in question and
+no admissible world sits there.
+
+**What is NOT wrong with the bond model.** Graded at a *matched horizon* — 24-year paths against 24
+years of a clean iShares TLT total-return series, built from NAV plus reinvested distributions — the
+default 13.5-year world reproduces a real long Treasury closely: 3.46%/yr against 3.46%, maximum
+drawdown 47.1% against 49.5%, underwater fraction 0.97 against 0.97, volatility ~14.5% against
+14.1%. Compare 100-year simulated paths against 24 years of history instead and the same model looks
+badly wrong (maximum drawdown 78%), because maximum drawdown is a max order statistic and grows with
+sample length. **Match the horizon before judging any path statistic against a real series.**
+
+The defect is therefore localized: the bond is sound where it is calibrated and has no
+representation at all below ~7% volatility. This item is an extension, not a repair.
+
+**Change.** Give the bond a composition rather than a single duration: a blend of two durations plus
+a credit-spread component that widens with equity stress. That is also the mechanism most likely to
+narrow the standing `bond growth-crash` MISS (+8.2 modelled against +20 real), since an aggregate
+fund's crisis behaviour is the sum of a duration rally and a spread widening that partly cancels it.
+
+**Parity.** New state in `simulate()`, new `World` fields, changed `-emit` columns. The largest
+regeneration in this plan.
+
+**Acceptance.**
+- A world whose bond volatility is 4–6% passes every realism band.
+- The `bond growth-crash` ratio improves toward 1.0 without any other fidelity term degrading.
+- The default 13.5-year world's statistics are unchanged, or the change is recorded and explained.
+
+**Effort.** Large.
+
+## W8 — Calibrate against the term structure of return autocorrelation
+
+**Problem.** This is the deepest item and the reason the sleeve study's central finding is careful
+rather than conclusive. `FitTargets` constrains volatility, kurtosis, return clustering at lags 1
+and 20, crash frequency and depth, and four bond behaviours. **None of them constrains the horizon
+at which trends persist.** So when the model produces a monotone lookback curve — shorter windows
+better, monotonically, across every admissible world — that shape is a free consequence of mechanism
+design (a 60-session crowd momentum window, a value anchor with a ~67-day pull) rather than something
+disciplined by data.
+
+**Evidence.** The finding survived every control available: a circular-shift placebo (real spread ~7×
+the placebo's, in all 13 admissible worlds), the crowd-window sweep, the weak-value-anchor world, and
+a duration sweep from 4 to 20 years. "Robust to every knob I could turn" is genuinely stronger than
+nothing. It is still weaker than "matched to a measured statistic", and no statistic in the gate
+pins it.
+
+**Change.** Add variance-ratio targets — VR(k) for k ≈ 1, 3, 6, 12, 24 months on both the equity and
+bond series — to `FitTargets`, with real targets measured from the historical record used for the
+rest of the calibration, and corresponding bands in `gateChecks`.
+
+**Parity.** Additive reductions. If a new summation shape is introduced, it needs its own fixture
+rows under `test-data/*-parity` per the standing rule that a new numeric surface gets pinned.
+
+**Acceptance.**
+- The current default world's VR profile is reported in the fidelity table, whatever it turns out
+  to be.
+- **At least one world in the existing sweep fails the new check** — a check that passes everywhere
+  on the first run is not yet known to bind, and this repo has been bitten by that before.
+- `-calibrate` can move the defaults toward the VR targets without pushing any existing fidelity
+  term out of band, or the trade-off is recorded.
+
+**Effort.** Large. But this is the item that converts every trend-rule conclusion the simulator will
+ever produce from suggestive into load-bearing, and trend rules are what its consumers keep asking
+it about.
+
+## W9 — Calibrate against the drawdown-depth distribution
+
+**Problem.** Volatility, maximum drawdown and underwater fraction can all match a real series while
+the *depth* distribution of drawdowns does not, and nothing in the gate notices. At the matched
+24-year horizon above, the default bond world and clean TLT agree on all four headline statistics —
+and the model's bond spends **81%** of its sessions more than 10% below its running peak where TLT
+spends **51%**. The model's bond drifts far below its peak and stays there; the real one hugs its
+peak and makes new highs far more often. Same volatility, same worst case, same time-under-water in
+the any-depth sense, different shape.
+
+**Consequence.** Any rule that reads distance from a running peak is degenerate in the model and
+functional in reality. In the sleeve study a 10%-drawdown gate sat out 81% of sessions and scored
+−2.02 in the model, against 51% and +1.81 on the real series — a sign reversal, on the arm that was
+serving as the *mechanism control*. Conclusions of the form "the gain comes from the trend signal,
+not from de-risking speed" therefore cannot currently be drawn here on the bond side, and one that
+was drawn had to be withdrawn.
+
+**It is not a bond-only defect.** The equity leg fails the same way, at nearly the same magnitude —
+measured by the second consumer, matched on horizon (33 years against SPY 1993-01-29 to 2026-08-20,
+8447 sessions) *and* on volatility. Volatility is matched at the **world** level with `-depth 10.5`,
+which yields 18.7% median realized volatility against SPY's 18.6% and still passes all 13 checks;
+selecting the sim's own high-volatility paths instead would select on the outcome being measured.
+60 independent paths:
+
+| below peak | REAL SPY | sim default | sim vol-matched | ratio | real's percentile in the ensemble |
+|---|---|---|---|---|---|
+| >2% | 0.607 | 0.778 | 0.804 | 1.33x | 0th |
+| >5% | 0.447 | 0.635 | 0.666 | 1.49x | 0th |
+| >7.5% | 0.373 | 0.528 | 0.580 | 1.55x | 0th |
+| >10% | 0.315 | 0.451 | 0.493 | 1.56x | 1.7th |
+| >15% | 0.240 | 0.335 | 0.374 | 1.56x | 11.7th |
+| >20% | 0.169 | 0.203 | 0.239 | 1.42x | 28.3th |
+
+Not sampling noise: real SPY sits below the 2nd percentile of the ensemble at every depth the
+consumer's rules key on. Not a volatility artifact either: the *default* world is already too deep
+at 16.5% volatility, below SPY's 18.6%, and a more volatile series should spend *more* time below
+peak, not less — matching volatility only widens the gap. Worst exactly in the shallow region, 2% to
+15%, where peak-relative rules live; deep-drawdown rules are the least affected.
+
+This is the item's own acceptance test run in advance, on the equity leg: a 10% drawdown gate sits
+out **49%** of sessions in the vol-matched world against **32%** on real SPY.
+
+Reproduce, now a single command (before W1 it was a 60-iteration shell loop over `-seed`):
+
+```
+market_sim.exe -paths 60 -years 33 -depth 10.5 -emitall -emitstart 1993-01-29 -emit spy.tsv
+# per series: dd = price / price.cummax() - 1; (dd < -X).mean() for X in .02 .05 .075 .10 .15 .20
+```
+
+**Change.** Add fidelity targets for the share of sessions spent more than X% below the running
+peak, X = 5, 10, 20, on both markets, with real targets measured from the same historical record as
+the rest of the calibration, and corresponding bands in `gateChecks`.
+
+**Parity.** Additive reductions over a series `drawdownSeries` already produces on both sides. Low
+risk, no new numeric surface.
+
+**Acceptance.**
+- Both default markets report their depth profiles in the fidelity table.
+- **At least one world in the existing sweep fails the new check** — same standing requirement as
+  W8; a check that passes everywhere on its first run is not yet known to bind.
+- A drawdown-rule arm's `%out` in a gate-passing world lands within a few points of the same rule's
+  `%out` on a real series of matching volatility. That is the falsifiable form of "peak-relative
+  rules can be graded here now".
+
+**Effort.** Moderate — materially smaller than W7 or W8, and it unblocks a whole class of
+conclusions the same way they do. If only one Tier 3 item gets done, this is the cheapest one that
+changes what the model may claim.
+
+---
+
+# Sequencing
+
+| order | items | why here |
+|---|---|---|
+| ~~1~~ | ~~W0~~ | Done: `uni/jsrc/marketSim.sc` recorded as canonical |
+| ~~2~~ | ~~W1 + W2~~ | Done: a consumer can now reproduce internal numbers exactly |
+| ~~3~~ | ~~W3~~ | Done: worlds that were being discarded are admissible under `-gate realism` |
+| 4 | **W9** | Blocking for the peak-relative consumer, and measured to fail on *both* legs. Cheapest of the three claim-widening items |
+| 5 | W5 | Both consumers' actual question: is this contrast resolvable from the history I possess |
+| 6 | W4, W6 | Make one consumer's rules native, and make its artifact control admissible |
+| 7 | W8 | Extends what the model is allowed to claim about horizons |
+| 8 | W7 | Extends the model to an asset class only one consumer holds |
+
+W9 moved ahead of W5 and W8 because it is the only open item with a *measured* failure rather than
+an anticipated one, and it mis-states the level of every peak-relative quantity rather than biasing
+a choice between windows. W7 moved last because the consumer that needs it is the one already
+served, and the other holds no bond ticker at all.
+
+W7, W8 and W9 are independent of each other and of everything above, so any of them can start early
+if someone wants the hard problem first; W9 is the one with the best ratio of unblocked conclusions
+to effort. W4's acceptance test is much stronger once W1 has landed, because the external harness
+can then be compared digit-for-digit rather than approximately.
+
+# Not in this plan, and a second consumer needs them
+
+Three gaps sit outside the ten items and stop most of one consumer's book from being evaluated here
+at all. They are recorded rather than scheduled.
+
+- **There is no cross-section.** market_sim has exactly two assets, so cross-sectional dispersion,
+  rank stability and any correlation-regime component cannot be evaluated on an emitted path at all
+  — and 45 of the consumer's sleeves rank a basket of individual names. The minimal fix is N equity
+  names sharing the market factor plus idiosyncratic fundamental and liquidity, so correlation rises
+  endogenously in crashes. `Market` is already generic and `simulate` already runs two instances, so
+  this is nearer W4 in cost than W7, and it unlocks that consumer's largest strategy class. **This
+  is its W7.**
+- **Bars are close-only.** Rules that read dollar turnover or intra-bar range have nothing to read.
+  The model is well placed to fix this honestly rather than by a fudge: `stressIdx`/`liq` is a
+  natural volume driver, and the within-step flow-versus-noise split is a natural intra-bar range
+  driver, so H/L would come from the mechanism. Scaling a whole bar by one factor leaves `ln(H/L)`
+  invariant, so a range-reading detector silently passes any robustness test built without it.
+- **Rebalance cadence is untested downstream.** Not a change here — a claim to carry over. W4's
+  finding that cadence and lookback interact so strongly that neither is interpretable alone (worth
+  ~0 at a 364-day window, +9 pp/yr at a 60-day one) is a direct warning to any consumer that holds
+  its rebalance cadence fixed across every sweep.
+
+# How to know the upgrade worked
+
+The falsifiable end state: **re-run the sleeve-gate study natively** — `-strategies` with return-sign
+rules at quarterly cadence on a composition bond calibrated to a 4–6% volatility, in a world whose
+autocorrelation term structure is pinned — and see whether the lookback conclusion survives. Three
+outcomes, all informative:
+
+- The monotone curve persists at aggregate-bond volatility → the consumer has an actionable finding
+  it currently cannot act on.
+- The curve flattens → the current configuration is confirmed optimal-by-indifference, and a
+  standing question closes.
+- The curve inverts → the original finding was a volatility artifact, and the model has just earned
+  its keep by catching one.
+
+A second, cheaper end state for W9 alone, now measurable on **both** legs: the drawdown-gate arm
+sits out 81% of sessions on the bond against a real 51%, and 49% on the equity leg against a real
+32%, and must land within a few points of the real posture. Until it does, the model cannot referee
+trend-versus-de-risking-speed on the
+bond side, and a study that asks it to will get a confident wrong answer rather than a null one.
+
+# What not to do
+
+- Do not widen the bond-volatility band to admit calm bonds. That converts a realism check into a
+  formality. W7 is the honest version of the same wish.
+- Do not add knobs whose only justification is that a conclusion comes out differently.
+- Do not treat "more paths" or "more worlds" as an upgrade. The sleeve study's binding constraint was
+  never simulation budget; it was that the admissible worlds did not contain the consumer's assets.
+- Do not reopen the recorded scope exclusions (daily kurtosis, crash arrival spacing). They trace to
+  an absent slow valuation cycle, they are disclosed in every fidelity report, and the conclusions
+  that depend on them are already ruled out by the header.

@@ -324,15 +324,32 @@ object pathExts {
     // ---- CSV ----
     def csvRowsAsync:  Iterator[Seq[String]] = if isFile then uni.io.FastCsv.rowsAsync(p) else Iterator.empty
     def csvRowsStream: Iterator[Seq[String]] = if isFile then uni.io.FastCsv.rowsPulled(p) else Iterator.empty
-    /** All rows, padded to a common width so the result is rectangular.
+    /** All rows exactly as parsed: no padding, no trimming, no throwing on
+     *  ragged input.
      *
-     *  Matches `loadSmart`, which needs rectangular data and now pads for it too —
-     *  the two must not disagree about which rows a file contains.
+     *  Ragged input is normal, and per-row arity is information — in a brokerage
+     *  export it is what separates a 16-cell header from 17-cell data rows and a
+     *  one-cell quoted disclaimer. Padding would fabricate cells indistinguishable
+     *  from genuinely empty ones and erase that channel, so the reader reports what
+     *  the file says. The streaming forms above agree, row for row.
      *
-     *  The streaming forms above pad too, but only to the widest row in the
-     *  delimiter-sniffing sample -- they cannot see the whole file. This one reads
-     *  it all, so it is the only form guaranteed rectangular. */
-    def csvRows:       Seq[Seq[String]]      = uni.io.FastCsv.rectangular(csvRowsStream.toSeq)
+     *  Rectangularity is the matrix loaders' business: `loadSmart`, `loadCSV` and
+     *  `readCsv` require it and pad for themselves.
+     *
+     *  {{{
+     *  Ragged file? csvSchema shows the shape. Then, per YOUR judgment:
+     *    pad all rows (0.18 behavior)  FastCsv.rectangular(p.csvRows)
+     *    keep only data rows           rows.filter(_.size >= n)
+     *    drop a trailing-comma cell    rows.map(_.take(n))
+     *    extend a short header         header.padTo(width, "")
+     *    index safely                  row.lift(i).getOrElse("")
+     *    enforce a shape               require(rows.forall(_.size == n))
+     *  }}} */
+    def csvRows:       Seq[Seq[String]]      = csvRowsStream.toSeq
+
+    /** Arity histogram and modal arity for this file's parsed rows.
+     *  Streams: one pass, constant memory — safe on files too large for csvRows. */
+    def csvSchema: uni.io.FastCsv.CsvSchema = uni.io.FastCsv.schema(csvRowsStream)
     def csvRows(onRow: Seq[String] => Unit): Unit =
       if isFile then
         uni.io.FastCsv.eachRow(p) { (row: IterableOnce[String]) =>
@@ -673,6 +690,7 @@ object pathExts {
     def csvRowsStream: Iterator[Seq[String]]       = f.toPath.csvRowsStream
     def csvRows:      Seq[Seq[String]]            = f.toPath.csvRows
     def csvRows(onRow: Seq[String] => Unit): Unit = f.toPath.csvRows(onRow)
+    def csvSchema: uni.io.FastCsv.CsvSchema       = f.toPath.csvSchema
 
     // ---- timestamps ----
     def lastModMillisAgo: Long    = f.toPath.lastModMillisAgo
