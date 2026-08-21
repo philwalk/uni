@@ -42,14 +42,14 @@ that pattern complete instead of accidental.
   precisely because the alternative — relaxing the bond-volatility band so calm bonds pass — would
   make the gate stop meaning anything.
 
-## How the simulator ships (0.19.0)
+## How the simulator ships (0.19.1)
 
 The simulator is public API in both published artifacts, not a repo-only tool:
 
 - **Rust**: the crate packages `examples/market_sim.rs` (with the other eight demo pairs), so
   `cargo install vastblue-uni --example market_sim` builds the binary from crates.io.
 - **Scala**: `uni.apps.MarketSim` is compiled into the jar —
-  `scala-cli run --jar uni_3-0.19.0.jar --main-class uni.apps.MarketSim -- -validate`.
+  `scala-cli run --jar uni_3-0.19.1.jar --main-class uni.apps.MarketSim -- -validate`.
 - `jsrc/marketSim.sc` remains the canonical Scala source; the packaged object is its header-twin
   (shebang commented, `package uni.apps` uncommented) and `ScriptTwinSuite` fails the build if the
   two differ anywhere below that header. Both shipped forms are byte-identical to each other and to

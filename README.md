@@ -428,7 +428,7 @@ Note: inline annotations were removed before running JaCoCo to prevent Scala 3's
 Add the following to your `build.sbt`:
 
 ```scala
-libraryDependencies += "org.vastblue" %% "uni" +%+ +"0.19.0"
+libraryDependencies += "org.vastblue" %% "uni" % "0.19.1"
 ```
 
 ### Native BLAS backend
