@@ -1,4 +1,4 @@
-## Unreleased
+## v0.19.0 — 2026-08-21
 
 **ADDED — `marketSim`/`market_sim`: `-emit` exports the full model state, named and provenanced**
 
@@ -12,17 +12,74 @@ an oracle label (fundamental-led versus liquidity-led decline) that no real seri
 ```
 -emitpath N     which path index (default 0); path k is seed + k*7919 and needs no larger run
 -emitall        every path to F-000.tsv, F-001.tsv, ... each with its sidecar
--emitstart D    YYYY-MM-DD, stepping by WEEKDAYS so the file joins a real dated series
+-emitstart D    YYYY-MM-DD (validated as a real calendar date), stepping by WEEKDAYS so the
+                file joins a real dated series
 -emitgate P     paths in the ensemble that decides the verdict (default 200; 0 = the sample)
 ```
 
 `-emit F` also writes `F.json`: the world's every field, the base seed and stride, the path index
-and its derived seed, the calendar, both gate verdicts with their named failures, and the fidelity
+and its derived seed, the calendar, the gate verdicts with their named failures, and the fidelity
 ratios. A warning printed to stderr does not survive the file being moved, and an ensemble that
 cannot be named cannot be inventoried.
 
 Default dates step `365/252` days from 1900-01-02 and land on weekends, so an emitted path could
 never be joined to a real dated series. `-emitstart` steps weekdays instead — no holiday calendar.
+
+**ADDED — the simulator ships in both published artifacts**
+
+`uni.apps.MarketSim` is compiled into the jar — run it from the published library with
+`scala-cli run --jar uni_3-0.19.0.jar --main-class uni.apps.MarketSim -- -validate`. The crate now
+packages `examples/` (the nine cross-language demo pairs; they were excluded), so
+`cargo install vastblue-uni --example market_sim` builds the simulator from crates.io. The two
+shipped forms are byte-identical in output, and a test (`ScriptTwinSuite`) pins the packaged Scala
+object to `jsrc/marketSim.sc` — they may differ only in the two-line shebang/package header.
+
+**CHANGED — the acceptance gate reports three verdicts, and `-gate` takes a set of classes**
+
+"bond vol 7-20%" says *this world is not a market*; "bond spiral engages, not always" says *a
+mechanism is inert here*; "equity >10% below peak 0.215-0.415" says *this quantity's level cannot be
+read here*. The first invalidates every conclusion, the second only conclusions that lean on the
+named mechanism, the third only conclusions that read a level — a time-out-of-market, a percentile
+threshold, a drawdown-conditioned hazard. Under one verdict the duration-6y world, which passes
+every realism band, was excluded from every pooled panel.
+
+`-validate` prints the three groups separately, then a `verdict:` line naming any inert mechanism
+and any unreadable level. `-gate` takes the set of classes a report requires and sets admissibility
+for both the `-validate` exit code and the world sweeps behind `-strategies`, `-power` and
+`-buffer`:
+
+```
+-gate realism             is this a market
+-gate realism,mechanism   ...with its mechanisms live      (the default; unchanged admissibility)
+-gate realism,fidelity    ...and this quantity's LEVEL readable
+-gate all                 everything
+```
+
+Realism is always implied — `-gate fidelity` means `realism,fidelity` — so no configuration admits
+a non-market. The default is `realism,mechanism`, the historical verdict, so every existing report
+keeps its output and its exit code.
+
+**ADDED — the drawdown-depth profile is measured, targeted and gated**
+
+The share of sessions spent more than 5%, 10% and 20% below the running peak, on both markets.
+Volatility, maximum drawdown and underwater fraction can all match a real series while this does
+not, and nothing noticed: one series drifts far below its peak and stays, the other hugs it and
+makes new highs. Every rule that reads distance from a running peak is a different rule on the two.
+
+Four of the six rungs carry a measured real anchor and enter the fidelity targets and the gate —
+three equity rungs from SPY 1993-2026, the bond's 10% rung from a clean TLT total-return series. The
+bond's 5% and 20% rungs are reported but not targeted; interpolating them would manufacture an
+anchor. The four targets also enter the `-fitness`/`-calibrate` objective (weighted log-ratio terms
+plus 0.5 per failed gate check, like every other target), so a `-calibrate` re-run now searches
+toward the depth profile. `-drift` and `-ratemean` join the CLI, so every `World` field the sweep
+moves is now dialable.
+
+Measured, 19 worlds × 60 paths × 33 years: every world is too deep at the rungs peak-relative rules
+use, and **no world passes `-gate realism,fidelity`**. `drawdownRule(10, 0.0)` cuts exposure exactly
+when depth exceeds 10%, so its share of sessions out of the market IS the gated quantity: 0.454
+against a real 0.315. The liquidity spiral is the mechanism — `-stress 0` puts the bond at 0.546
+against a real 0.510 — but turning it down drops volatility to 12.3% and kurtosis to 3.39, failing
+the `kurtosis 4-30` band. Depth trades directly against the tail calibration.
 
 **FIXED — every short `-emit` warned that the world had failed the gate**
 
@@ -31,17 +88,20 @@ check at 200 paths: they are conditional on crash episodes, which one short path
 Every export carried a false alarm, which is worse than no warning. The verdict now comes from an
 ensemble of the same world (`-emitgate`, default 200 paths); `-emitgate 0` judges by the sample.
 
-**CHANGED — the acceptance gate reports two verdicts, realism and mechanism**
+**FIXED — malformed CLI input crashed, or silently substituted a default**
 
-"bond vol 7-20%" says *this world is not a market*; "bond spiral engages, not always" says *a
-mechanism is inert here*. The first invalidates every conclusion, the second only conclusions that
-lean on the named mechanism — and under one verdict the duration-6y world, which passes every
-realism band, was excluded from every pooled panel.
+Rust's parse-or-default argument handling silently substituted the default for any unparseable
+number — `-paths 1O0` ran 200 paths with exit 0 — and Scala died on the same inputs with raw
+exceptions. Both twins now reject every malformed numeric argument with a named error, and bound
+`-paths`/`-years` at 1 (0 crashed both), `-seed`/`-emitpath`/`-emitgate` at 0, `-crowd trendN` at
+N > 0. Error exit codes keep each twin's convention (Rust 2, Scala 1); success outputs are the
+byte-parity surface.
 
-`-validate` now prints the nine realism bands and the four mechanism checks separately, then a
-`verdict:` line naming any inert mechanism. `-gate realism|full` sets admissibility for both the
-`-validate` exit code and the world sweeps behind `-strategies`, `-power` and `-buffer`. The default
-is `full`, so every existing report keeps its output and its exit code.
+**FIXED — a sweep with no admissible world threw in Scala and printed zeros in Rust**
+
+`-strategies` with zero worlds past the gate raised `empty.min` on one side and an all-zeros rank
+table on the other, which reads as "every rule tied". Both now say no world qualified and skip the
+ranks. Reachable before (`-strategies -single -crowd trend200`), routine with `-gate ...,fidelity`.
 
 **CHANGED — `csvRows` and the streaming readers return rows as parsed; padding removed**
 

@@ -29,6 +29,19 @@ that pattern complete instead of accidental.
   precisely because the alternative — relaxing the bond-volatility band so calm bonds pass — would
   make the gate stop meaning anything.
 
+## How the simulator ships (0.19.0)
+
+The simulator is public API in both published artifacts, not a repo-only tool:
+
+- **Rust**: the crate packages `examples/market_sim.rs` (with the other eight demo pairs), so
+  `cargo install vastblue-uni --example market_sim` builds the binary from crates.io.
+- **Scala**: `uni.apps.MarketSim` is compiled into the jar —
+  `scala-cli run --jar uni_3-0.19.0.jar --main-class uni.apps.MarketSim -- -validate`.
+- `jsrc/marketSim.sc` remains the canonical Scala source; the packaged object is its header-twin
+  (shebang commented, `package uni.apps` uncommented) and `ScriptTwinSuite` fails the build if the
+  two differ anywhere below that header. Both shipped forms are byte-identical to each other and to
+  the Rust binary across every mode.
+
 ## Two consumers, one plan
 
 A second consumer — folio, a levered-ETF book whose core strategy family reads distance from a
@@ -47,8 +60,8 @@ measured to fail on the equity leg too (see W9), not merely anticipated. W7 stay
 | item | state |
 |---|---|
 | W0 | recorded: `uni/jsrc/marketSim.sc` is canonical (see below) |
-| W1, W2, W3 | **landed**, both twins, byte-identical across every mode |
-| W4–W9 | open |
+| W1, W2, W3, W9 | **landed**, both twins, byte-identical across every mode |
+| W4, W5, W6, W7, W8 | open |
 
 ## W0 — Re-sync the stale consumer copy (housekeeping, do first)
 
@@ -354,7 +367,7 @@ rows under `test-data/*-parity` per the standing rule that a new numeric surface
 ever produce from suggestive into load-bearing, and trend rules are what its consumers keep asking
 it about.
 
-## W9 — Calibrate against the drawdown-depth distribution
+## W9 — Calibrate against the drawdown-depth distribution — **LANDED**
 
 **Problem.** Volatility, maximum drawdown and underwater fraction can all match a real series while
 the *depth* distribution of drawdowns does not, and nothing in the gate notices. At the matched
@@ -422,6 +435,93 @@ risk, no new numeric surface.
 conclusions the same way they do. If only one Tier 3 item gets done, this is the cheapest one that
 changes what the model may claim.
 
+### As shipped
+
+Every report and every `-emit` sidecar now carries the depth profile — the share of sessions more
+than 5%, 10% and 20% below the running peak, median path, on **both** legs:
+
+```
+  depth profile          share of sessions below the running peak, median path
+    equity               >5% 0.636   >10% 0.454   >20% 0.206      real SPY 0.447 / 0.315 / 0.169
+    bond                 >5% 0.902   >10% 0.843   >20% 0.650      real TLT   -   / 0.510 /   -
+```
+
+Four of the six rungs carry a real anchor and enter `FitTargets` and the gate: the three equity
+rungs from SPY 1993-01-29..2026-08-20, and the bond's 10% rung from a clean TLT total-return series.
+The bond's 5% and 20% rungs are **reported but not targeted** — interpolating them would manufacture
+a calibration anchor out of nothing. The equity anchors come from a different window than the
+1954-2026 record behind the other fidelity rows; that is sound *for this statistic only*, because a
+time share is horizon-stable where a max order statistic is not.
+
+**A third gate class, `fidelity`.** The check could not go in `realism` without claiming that a world
+whose depth profile is off is not a market at all, which would invalidate cost breakevens, ruin
+rates and refuge mechanics along with it. So the gate now answers three questions, and `-gate` takes
+the set of classes a report requires:
+
+```
+-gate realism             is this a market
+-gate realism,mechanism   ...with its mechanisms live      (the default; unchanged admissibility)
+-gate realism,fidelity    ...and this quantity's LEVEL readable
+-gate all                 everything
+```
+
+Realism is always implied: `-gate fidelity` means `realism,fidelity`, because a report cannot
+declare itself indifferent to whether the world is a market at all.
+
+A fidelity failure invalidates only conclusions that read a **level** off the named quantity — a
+time-out-of-market, a percentile threshold, a drawdown-conditioned hazard. Rank comparisons survive.
+
+The fidelity rows also appear in the fidelity table with the ratio-based `<-- MISS` flag every row
+carries. The two bands are deliberately different: MISS is the report convention (ratio outside
+0.667–1.5x), the gate is the plan's own acceptance criterion (±10 points absolute), and a rung can
+fail the gate while escaping the MISS flag — equity >10% at 0.454/0.315 is ratio 1.44. The gate
+line is the authority on admissibility.
+
+**The band is the acceptance test.** `drawdownRule(10, 0.0)` sets exposure to its floor exactly when
+depth exceeds 10%, so its `%out` **is** `ddEq10`. The check `equity >10% below peak 0.215-0.415` is
+therefore a restatement of this item's own acceptance criterion — "within a few points of the same
+rule's `%out` on a real series" — made two-sided and enforced. `DepthTol = 0.10` is that "few
+points", absolute rather than relative because the quantity compared is itself a share.
+
+### Measured, and the trade-off this item asked to have recorded
+
+19 worlds x 60 paths x 33 years. **Every world is too deep at the rungs peak-relative rules use.**
+Equity `>10%` spans 0.335 (`high growth`) to 0.593 (`low growth`) against a real 0.315; `>5%` spans
+0.518 to 0.742 against 0.447. Bond `>10%` spans 0.304 (`no flight bid`) to 0.861 (`severe liquidity
+spiral`) against 0.510, straddling it. **0 of 19 worlds pass `realism,fidelity`** — the check binds
+about as hard as a check can, and it binds two-sided: `no flight bid` fails the bond band from
+*below*.
+
+It is not a check that can never pass. `-stress 0` puts the bond at 0.546 (real 0.510) and equity
+`>10%` at 0.383, passing three of the four rungs.
+
+**The mechanism is the liquidity spiral**, which answers the standing question of what makes the
+model sit below its peak half again as long as reality:
+
+| `-stress` | eq >5/10/20 | bond >5/10/20 | vol | kurtosis |
+|---|---|---|---|---|
+| 0.0 | 0.582 0.383 0.137 | 0.780 **0.546** 0.185 | 12.3% | 3.39 |
+| 1.7 | 0.604 0.413 0.160 | 0.860 0.738 0.387 | 13.8% | 4.00 |
+| 3.4 (default) | 0.636 0.454 0.206 | 0.902 0.843 0.650 | 16.5% | 7.39 |
+| real | 0.447 0.315 0.169 | — 0.510 — | 16.0% (S&P) | 28.0 |
+
+**And it cannot be calibrated away.** Turning `stress` down to reach the real depth profile drops
+volatility to 12.3% (target 16.0) and kurtosis to 3.39, which fails the `kurtosis 4-30` realism band
+— a band already passing only because the model's tails are a quarter of reality's. Depth trades
+directly against the two terms the tail calibration is holding up.
+
+The other apparent route is worse. `-drift 0.140` passes all three equity rungs (0.515 / 0.313 /
+0.112) but buys them with a return/volatility ratio of 0.82 against the default's 0.57 — a world
+that earns far more per unit of risk than the one being modelled. **Do not read that world's passing
+fidelity verdict as a fix.** The realism gate does not currently notice, because its only drift
+constraint is `no runaway drift` (|annRet| < 30%); a two-sided band on return-per-unit-volatility is
+the obvious follow-up, and is not in this plan.
+
+**Fixed alongside**: with no admissible world, `-strategies` threw `empty.min` in Scala and printed
+an all-zeros rank table in Rust — a divergence, and in Rust a table that reads as "every rule tied",
+which is a claim. Both now say so and skip the ranks. Reachable before W9 (`-strategies -single
+-crowd trend200`), unavoidable after it.
+
 ---
 
 # Sequencing
@@ -431,16 +531,23 @@ changes what the model may claim.
 | ~~1~~ | ~~W0~~ | Done: `uni/jsrc/marketSim.sc` recorded as canonical |
 | ~~2~~ | ~~W1 + W2~~ | Done: a consumer can now reproduce internal numbers exactly |
 | ~~3~~ | ~~W3~~ | Done: worlds that were being discarded are admissible under `-gate realism` |
-| 4 | **W9** | Blocking for the peak-relative consumer, and measured to fail on *both* legs. Cheapest of the three claim-widening items |
+| ~~4~~ | ~~W9~~ | Done: the depth profile is measured, targeted and gated; 0 of 19 worlds pass it |
 | 5 | W5 | Both consumers' actual question: is this contrast resolvable from the history I possess |
 | 6 | W4, W6 | Make one consumer's rules native, and make its artifact control admissible |
 | 7 | W8 | Extends what the model is allowed to claim about horizons |
 | 8 | W7 | Extends the model to an asset class only one consumer holds |
 
-W9 moved ahead of W5 and W8 because it is the only open item with a *measured* failure rather than
+W9 moved ahead of W5 and W8 because it was the only open item with a *measured* failure rather than
 an anticipated one, and it mis-states the level of every peak-relative quantity rather than biasing
 a choice between windows. W7 moved last because the consumer that needs it is the one already
 served, and the other holds no bond ticker at all.
+
+**What W9 landing does NOT do is fix the model.** It makes the defect measured, named, gated and
+carried in every export. Closing it needs a mechanism that lets the market make new highs as often
+as the real one does without giving up the tails, and the two candidates the measurement leaves
+standing are the value anchor's pull and the absent slow valuation cycle — the scope exclusion this
+plan declines to reopen. Until then, `-gate realism,fidelity` returns no worlds, and that is the
+correct answer to "can I read a level off a peak-relative quantity here".
 
 W7, W8 and W9 are independent of each other and of everything above, so any of them can start early
 if someone wants the hard problem first; W9 is the one with the best ratio of unblocked conclusions
@@ -483,9 +590,10 @@ outcomes, all informative:
 - The curve inverts → the original finding was a volatility artifact, and the model has just earned
   its keep by catching one.
 
-A second, cheaper end state for W9 alone, now measurable on **both** legs: the drawdown-gate arm
-sits out 81% of sessions on the bond against a real 51%, and 49% on the equity leg against a real
-32%, and must land within a few points of the real posture. Until it does, the model cannot referee
+The second end state, for W9 alone, is now a gate check rather than a manual comparison: the
+drawdown-gate arm's `%out` **is** the `equity >10% below peak` rung, and the band is "within ten
+points of the real posture". It reads FAIL today — 0.454 against a real 0.315 in the default world,
+0.493 against 0.315 vol-matched. Until it reads PASS, the model cannot referee
 trend-versus-de-risking-speed on the
 bond side, and a study that asks it to will get a confident wrong answer rather than a null one.
 

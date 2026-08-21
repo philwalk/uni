@@ -17,11 +17,13 @@ readme = "README.md"
 # keywords carry the numerics search terms; the path/date/decimal terms ride on the description.
 keywords = ["linear-algebra", "numpy", "pandas", "scala", "big-data"]
 categories = ["filesystem", "date-and-time", "mathematics", "parser-implementations", "science"]
-# The tests, examples and bench bins all read ../test-data, which lives outside
-# the package root and cannot ship in the crate -- exclude them so the tarball
-# is lean and carries no tests that cannot run. rust-toolchain.toml is excluded
-# so the repo's pinned toolchain is not forced onto consumers.
-exclude = ["tests/", "examples/", "src/bin/", "doc-examples/", "docs/", "Makefile", "rustfmt.toml", "rust-toolchain.toml"]
+# The tests and bench bins read ../test-data, which lives outside the package root and
+# cannot ship in the crate -- exclude them so the tarball carries no tests that cannot run.
+# The examples DO ship: they are the cross-language demo pairs the README documents, they
+# are self-contained (no fixtures), and market_sim is consumed as a product --
+# `cargo install vastblue-uni --example market_sim` builds the simulator from the crate.
+# rust-toolchain.toml is excluded so the repo's pinned toolchain is not forced onto consumers.
+exclude = ["tests/", "src/bin/", "doc-examples/", "docs/", "Makefile", "rustfmt.toml", "rust-toolchain.toml"]
 
 [lib]
 name = "uni"

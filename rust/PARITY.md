@@ -132,9 +132,12 @@ but `rate` is floored at zero and `inflPress` starts there, and a column that ca
 *identically* zero is exactly the case. They are folded through `(-0.0) + 0.0 = +0.0`,
 which IEEE-754 guarantees in both languages, before formatting.
 
-`jsrc/marketSim.sc` is the canonical Scala copy. A consumer fork (`/opt/ue/jsrc`) must
-pull from it and never the reverse; it is currently 383 lines behind and will disagree with
-the Rust twin.
+`jsrc/marketSim.sc` is the canonical Scala copy. Two derived copies exist and both are
+pinned to it: `src/main/scala/apps/MarketSim.scala` is its header-twin in the published jar
+(`ScriptTwinSuite` fails the build on any drift below the two-line shebang/package toggle),
+and a consumer fork (`/opt/ue/jsrc`) must pull from it and never the reverse — that fork is
+currently 383 lines behind and will disagree with the Rust twin. The Rust side ships in the
+crate itself: `cargo install vastblue-uni --example market_sim`.
 
 `mat-parity` is small by row count and unusually load-bearing: 13 sizes × 10 reductions,
 compared as raw IEEE-754 bit patterns rather than decimal text, over a corpus of

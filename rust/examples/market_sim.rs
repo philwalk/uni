@@ -536,6 +536,38 @@ fn episodes(px: &[f64], min_dec_pct: f64) -> Vec<Episode> {
     out
 }
 
+/// Share of sessions spent more than 5%, 10% and 20% below the running peak — the DEPTH
+/// DISTRIBUTION, which volatility, maximum drawdown and underwater fraction between them do
+/// not pin. Two series can agree on all three of those and still differ here: one drifts far
+/// below its peak and stays, the other hugs it and makes new highs. Every rule that reads
+/// distance from a running peak is a different rule on the two.
+///
+/// Computed on prices directly rather than through [`drawdown_series`]' log/exp round trip.
+/// The ratio is exact in both languages, so a threshold comparison cannot land on opposite
+/// sides of a 1-ulp `log` gap; a count is the one reduction where that would show up as a
+/// whole session. One pass for all three depths.
+fn depth_shares(px: &[f64]) -> (f64, f64, f64) {
+    let mut pk = px[0];
+    let (mut n5, mut n10, mut n20) = (0usize, 0usize, 0usize);
+    for &p in px {
+        if p > pk {
+            pk = p;
+        }
+        let d = 1.0 - p / pk;
+        if d > 0.05 {
+            n5 += 1;
+        }
+        if d > 0.10 {
+            n10 += 1;
+        }
+        if d > 0.20 {
+            n20 += 1;
+        }
+    }
+    let n = px.len() as f64;
+    (n5 as f64 / n, n10 as f64 / n, n20 as f64 / n)
+}
+
 // ---- world statistics and the ONE acceptance predicate ----------------------------------
 
 #[derive(Clone, Copy, Debug)]
@@ -571,6 +603,14 @@ struct WorldStats {
     mean_bond_stress: f64,
     pct_bond_stress: f64,
     infl_ann: f64,
+    /// depth profile: median share of sessions more than 5/10/20% below the running peak,
+    /// equity leg then bond leg
+    dd_eq5: f64,
+    dd_eq10: f64,
+    dd_eq20: f64,
+    dd_bd5: f64,
+    dd_bd10: f64,
+    dd_bd20: f64,
 }
 
 /// Scala's `.sum` on a `Seq[Double]`, which folds from `Numeric[Double].zero` — **+0.0**.
@@ -618,6 +658,8 @@ fn measure(sims: &[Path], years: usize) -> WorldStats {
     // once per path (was recomputed 3x)
     let eps_by: Vec<(&Path, Vec<Episode>)> =
         sims.iter().map(|s| (s, episodes(&s.price, 15.0))).collect();
+    let dd_eq: Vec<(f64, f64, f64)> = sims.iter().map(|s| depth_shares(&s.price)).collect();
+    let dd_bd: Vec<(f64, f64, f64)> = sims.iter().map(|s| depth_shares(&s.bond)).collect();
     let eps: Vec<Episode> = eps_by.iter().flat_map(|(_, e)| e.iter().copied()).collect();
     let shapes: Vec<f64> = eps
         .iter()
@@ -721,10 +763,17 @@ fn measure(sims: &[Path], years: usize) -> WorldStats {
             .iter()
             .map(|s| (s.cpi[s.cpi.len() - 1] / s.cpi[0]).ln() / years as f64 * 100.0)
             .collect::<Vec<f64>>()),
+        dd_eq5: med(&dd_eq.iter().map(|d| d.0).collect::<Vec<f64>>()),
+        dd_eq10: med(&dd_eq.iter().map(|d| d.1).collect::<Vec<f64>>()),
+        dd_eq20: med(&dd_eq.iter().map(|d| d.2).collect::<Vec<f64>>()),
+        dd_bd5: med(&dd_bd.iter().map(|d| d.0).collect::<Vec<f64>>()),
+        dd_bd10: med(&dd_bd.iter().map(|d| d.1).collect::<Vec<f64>>()),
+        dd_bd20: med(&dd_bd.iter().map(|d| d.2).collect::<Vec<f64>>()),
     }
 }
 
-/// The gate answers two different questions and used to report one verdict.
+/// The gate answers three different questions and used to report one verdict. Each class names
+/// what a failure costs, and a report declares which classes it requires (`-gate`).
 ///
 /// [`GateClass::Realism`] asks "is this world a market at all". Its checks are unconditional
 /// distributional properties of the whole sample, and a failure invalidates every conclusion
@@ -736,13 +785,74 @@ fn measure(sims: &[Path], years: usize) -> WorldStats {
 /// spiral — the duration-6y world is exactly that, and a single verdict discarded it from every
 /// pooled panel.
 ///
-/// The split also explains the export-time false alarm: the four conditional statistics cannot
-/// be measured from one short path, so `-emit` takes its verdict from an ensemble
-/// (`-emitgate`).
+/// [`GateClass::Fidelity`] asks "can this quantity's LEVEL be read here". A failure invalidates
+/// only conclusions that read a level off the named quantity — a time-out-of-market, a
+/// percentile threshold, a drawdown-conditioned hazard — and leaves rank comparisons, cost
+/// breakevens, ruin rates and refuge mechanics untouched. It exists because a world can pass
+/// every realism band and every mechanism check while a statistic those bands do not pin sits
+/// far from reality: the default world's bond spends 84% of sessions more than 10% below its
+/// running peak where a real long Treasury spends 51%, and a 10%-drawdown gate REVERSES SIGN
+/// between them.
+///
+/// The realism/mechanism split also explains the export-time false alarm: the four conditional
+/// statistics cannot be measured from one short path, so `-emit` takes its verdict from an
+/// ensemble (`-emitgate`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum GateClass {
     Realism,
     Mechanism,
+    Fidelity,
+}
+
+impl GateClass {
+    /// Printed order, and the order every verdict list follows.
+    const ALL: [Self; 3] = [Self::Realism, Self::Mechanism, Self::Fidelity];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Realism => "realism",
+            Self::Mechanism => "mechanism",
+            Self::Fidelity => "fidelity",
+        }
+    }
+
+    /// Heading and what a failure costs. Kept beside the enum so a new class cannot be added
+    /// without saying out loud which conclusions it kills.
+    fn section(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Realism => (
+                "realism bands",
+                "a failure here means this world is not a market",
+            ),
+            Self::Mechanism => (
+                "mechanism engagement",
+                "a failure here means only that mechanism is inert",
+            ),
+            Self::Fidelity => (
+                "level fidelity",
+                "a failure here means only that quantity's LEVEL cannot be read",
+            ),
+        }
+    }
+}
+
+/// How far a depth share may sit from the real one and still have a readable level. The plan's
+/// acceptance for W9 is that "a drawdown-rule arm's %out lands within a few points of the same
+/// rule's %out on a real series"; ten percentage points is that, made two-sided and concrete.
+/// ABSOLUTE, not relative: the quantity being compared — a rule's share of sessions out of the
+/// market — is itself a share, so a point is the same size at every rung.
+const DEPTH_TOL: f64 = 0.10;
+
+/// The band is derived from the real anchor here, so the printed name and the predicate cannot
+/// drift apart — the failure mode where a gate reads as bounds it does not enforce.
+fn depth_check(name: &str, got: f64, real: f64) -> (String, bool, GateClass) {
+    let lo = real - DEPTH_TOL;
+    let hi = real + DEPTH_TOL;
+    (
+        format!("{name} {}-{}", jf(lo, 0, 3), jf(hi, 0, 3)),
+        got > lo && got < hi,
+        GateClass::Fidelity,
+    )
 }
 
 /// TWO-SIDED wherever a plausible range exists. History of this gate: a one-sided version
@@ -753,49 +863,54 @@ enum GateClass {
     clippy::manual_range_contains,
     reason = "kept in the Scala's spelling so the gate reads as the bounds it documents"
 )]
-fn gate_checks(st: &WorldStats) -> Vec<(&'static str, bool, GateClass)> {
+fn gate_checks(st: &WorldStats) -> Vec<(String, bool, GateClass)> {
     use GateClass::Mechanism;
     use GateClass::Realism;
     let pc = st.ep_per_path * 100.0 / st.years_per_path;
+    let n = |s: &str| s.to_string();
     vec![
-        ("equity vol 8-25%", st.vol > 0.08 && st.vol < 0.25, Realism),
-        ("kurtosis 4-30", st.kurt > 4.0 && st.kurt < 30.0, Realism),
         (
-            "clustering 0.10-0.40",
+            n("equity vol 8-25%"),
+            st.vol > 0.08 && st.vol < 0.25,
+            Realism,
+        ),
+        (n("kurtosis 4-30"), st.kurt > 4.0 && st.kurt < 30.0, Realism),
+        (
+            n("clustering 0.10-0.40"),
             st.ac1 > 0.10 && st.ac1 < 0.40 && st.ac20 > 0.03,
             Realism,
         ),
         (
-            "crash rate 8-45/century",
+            n("crash rate 8-45/century"),
             st.ep_per_path >= 1.0 && pc >= 8.0 && pc <= 45.0,
             Realism,
         ),
         (
-            "both recovery shapes",
+            n("both recovery shapes"),
             st.n_shapes > 0 && st.v_count >= st.n_shapes / 10 && st.u_count >= st.n_shapes / 10,
             Realism,
         ),
-        ("no runaway drift", st.ann_ret.abs() < 30.0, Realism),
+        (n("no runaway drift"), st.ann_ret.abs() < 30.0, Realism),
         // 0.02% ~ one clamped session per 20 path-years. The old bound (0.5%) would have
         // passed a world where the clamp was already reshaping kurtosis by a third.
-        ("clamp rarely binds", st.clamp_pct < 0.02, Realism),
+        (n("clamp rarely binds"), st.clamp_pct < 0.02, Realism),
         (
-            "bond vol 7-20%",
+            n("bond vol 7-20%"),
             st.bond_vol > 0.07 && st.bond_vol < 0.20,
             Realism,
         ),
         (
-            "bonds rally in growth shocks",
+            n("bonds rally in growth shocks"),
             st.bond_growth > 3.0,
             Mechanism,
         ),
         (
-            "bonds LOSE in inflation regimes",
+            n("bonds LOSE in inflation regimes"),
             st.bond_infl < -3.0,
             Mechanism,
         ),
         (
-            "corr flips positive under inflation",
+            n("corr flips positive under inflation"),
             !st.corr_infl.is_nan()
                 && !st.corr_calm.is_nan()
                 && st.corr_infl > st.corr_calm + 0.15
@@ -804,19 +919,26 @@ fn gate_checks(st: &WorldStats) -> Vec<(&'static str, bool, GateClass)> {
             Mechanism,
         ),
         (
-            "bond spiral engages, not always",
+            n("bond spiral engages, not always"),
             st.pct_bond_stress > 0.002 && st.pct_bond_stress < 0.5,
             Mechanism,
         ),
         (
-            "inflation 1-6%/yr",
+            n("inflation 1-6%/yr"),
             st.infl_ann > 1.0 && st.infl_ann < 6.0,
             Realism,
         ),
+        // Only the rungs with a measured real anchor are gated. The bond's >5% and >20% shares
+        // are reported everywhere but targeted nowhere: interpolating them would manufacture an
+        // anchor.
+        depth_check("equity >5% below peak", st.dd_eq5, 0.447),
+        depth_check("equity >10% below peak", st.dd_eq10, 0.315),
+        depth_check("equity >20% below peak", st.dd_eq20, 0.169),
+        depth_check("bond >10% below peak", st.dd_bd10, 0.510),
     ]
 }
 
-fn failed_in(st: &WorldStats, cls: GateClass) -> Vec<&'static str> {
+fn failed_in(st: &WorldStats, cls: GateClass) -> Vec<String> {
     gate_checks(st)
         .into_iter()
         .filter(|(_, ok, c)| !ok && *c == cls)
@@ -824,15 +946,53 @@ fn failed_in(st: &WorldStats, cls: GateClass) -> Vec<&'static str> {
         .collect()
 }
 
-/// Admissibility under the class a report has declared it requires. `realism_only` keeps a
-/// world whose only failures are inert mechanisms; the default keeps the historical binary
-/// verdict.
-fn gate_ok(st: &WorldStats, realism_only: bool) -> bool {
-    if realism_only {
-        failed_in(st, GateClass::Realism).is_empty()
-    } else {
-        gate_checks(st).iter().all(|(_, ok, _)| *ok)
+/// Admissibility under the classes a report has declared it requires. A class not required is
+/// a class whose failures are disclosed and tolerated, which is the whole point of the split.
+fn gate_ok(st: &WorldStats, required: &[GateClass]) -> bool {
+    gate_checks(st)
+        .iter()
+        .all(|(_, ok, c)| *ok || !required.contains(c))
+}
+
+/// The historical binary verdict: a market with its mechanisms live. Level fidelity is NOT in
+/// it, so every report keeps the admissibility it had before the depth profile was measured —
+/// a consumer that reads levels asks for `fidelity` explicitly.
+fn gate_default() -> Vec<GateClass> {
+    vec![GateClass::Realism, GateClass::Mechanism]
+}
+
+/// Realism is ALWAYS in the result: its failure means the world is not a market, which no
+/// report can declare itself indifferent to. Without this, `-gate fidelity` on a
+/// realism-failing world exits 0 — an admissibility check that can be configured into
+/// admitting non-markets.
+fn parse_gate(spec: &str) -> Vec<GateClass> {
+    let mut out: Vec<GateClass> = Vec::new();
+    for tok in spec.to_lowercase().split(',') {
+        let add: &[GateClass] = match tok.trim() {
+            "" => &[],
+            "realism" => &[GateClass::Realism],
+            "mechanism" => &[GateClass::Mechanism],
+            "fidelity" => &[GateClass::Fidelity],
+            "all" | "full" => &GateClass::ALL,
+            other => cli_die(&format!(
+                "unknown -gate class [{other}]; use realism, mechanism, fidelity or all"
+            )),
+        };
+        for c in add {
+            if !out.contains(c) {
+                out.push(*c);
+            }
+        }
     }
+    if out.is_empty() {
+        cli_die(&format!(
+            "-gate got no classes in [{spec}]; use realism, mechanism, fidelity or all"
+        ));
+    }
+    if !out.contains(&GateClass::Realism) {
+        out.push(GateClass::Realism);
+    }
+    out
 }
 
 type StatFn = fn(&WorldStats) -> f64;
@@ -865,6 +1025,34 @@ fn fit_targets() -> Vec<(&'static str, StatFn, f64, f64)> {
             1.0,
         ),
         ("bond infl-crash", (|st| st.bond_infl) as StatFn, -25.0, 1.5),
+        // DEPTH PROFILE. Real equity anchors are SPY 1993-01-29..2026-08-20 (8447 sessions) — a
+        // different window from the 1954-2026 record behind the rows above, and named as such in
+        // the report, because this is a TIME SHARE rather than a max order statistic: it is
+        // horizon-stable where maximum drawdown is not (measured: the model's >10% share is 0.464
+        // at both 20 and 100 years), so the two windows are comparable in a way maxDD's would not
+        // be. The bond anchor is a clean iShares TLT total-return series over 24 years, and only
+        // the 10% rung of it has been measured. The other two bond rungs are REPORTED, not
+        // targeted: filling them in by interpolation would manufacture a calibration anchor out
+        // of nothing.
+        (
+            "equity >5% below pk",
+            (|st| st.dd_eq5) as StatFn,
+            0.447,
+            0.5,
+        ),
+        (
+            "equity >10% below pk",
+            (|st| st.dd_eq10) as StatFn,
+            0.315,
+            1.0,
+        ),
+        (
+            "equity >20% below pk",
+            (|st| st.dd_eq20) as StatFn,
+            0.169,
+            0.5,
+        ),
+        ("bond >10% below pk", (|st| st.dd_bd10) as StatFn, 0.51, 0.5),
     ]
 }
 
@@ -1678,6 +1866,10 @@ fn eval_world(sims: &[Path], cost: f64, years: usize) -> Evald {
     clippy::too_many_arguments,
     reason = "the parameter list mirrors the Scala twin's, and the twins are diffed"
 )]
+#[expect(
+    clippy::cognitive_complexity,
+    reason = "one linear report, mirroring the Scala twin section for section"
+)]
 fn run_strategy_sweep(
     paths: usize,
     years: usize,
@@ -1685,7 +1877,7 @@ fn run_strategy_sweep(
     cost: f64,
     single: bool,
     base: &World,
-    realism_only: bool,
+    gate_req: &[GateClass],
 ) {
     let rs = rules();
     let nr = rs.len();
@@ -1699,7 +1891,7 @@ fn run_strategy_sweep(
         .map(|(wname, w)| {
             let sims = sim_paths(w, paths, years, seed);
             let st = measure(&sims, years);
-            let ok = gate_ok(&st, realism_only);
+            let ok = gate_ok(&st, gate_req);
             (*wname, ok, st, eval_world(&sims, cost, years))
         })
         .collect();
@@ -1831,6 +2023,15 @@ fn run_strategy_sweep(
         results.len()
     );
     println!("Rank stability is the WEAK form of robustness: magnitudes vary far more than ranks.");
+    // An empty admissible set is a RESULT, not a table to print anyway: a rank over no worlds has
+    // no best and no worst. Printing it as zeros reads as "every rule tied", which is a claim.
+    if valid.is_empty() {
+        println!("\n  no world in this sweep passes the required gate classes — nothing to rank.");
+        println!(
+            "  Widen the requirement with -gate, or fix the world; do not read the tables below"
+        );
+        println!("  as pooled over market-like worlds, because there are none.");
+    }
     type OutcomeMetric = (&'static str, fn(&Outcome) -> f64);
     let metrics: Vec<OutcomeMetric> = vec![
         ("median net return", |o: &Outcome| o.ann),
@@ -1839,6 +2040,9 @@ fn run_strategy_sweep(
         }),
     ];
     for (metric_name, get) in metrics {
+        if valid.is_empty() {
+            break;
+        }
         println!("\n  ranked by {metric_name}   (1 = best)");
         // `j` indexes both `rs` and each path's outcome vector, so it stays an index
         #[expect(
@@ -1957,7 +2161,7 @@ fn run_strategy_sweep(
         let sims = sim_paths(&w, paths.min(120), years, seed);
         let st = measure(&sims, years);
         // gated AT USE TIME, like every other conclusion path
-        let ok_sev = gate_ok(&st, realism_only);
+        let ok_sev = gate_ok(&st, gate_req);
         let ev: Vec<Vec<Outcome>> = (0..sims.len())
             .into_par_iter()
             .map(|k| {
@@ -2086,7 +2290,7 @@ fn run_power_report(
     cost: f64,
     single: bool,
     base: &World,
-    realism_only: bool,
+    gate_req: &[GateClass],
 ) {
     // 21 = the traded book's span; 72 = the S&P record used for calibration
     let horizons = [21usize, 40, 72, 100];
@@ -2134,7 +2338,7 @@ fn run_power_report(
     // per contrast, per statistic: (hit rate, n*). Gate verdict travels with the numbers.
     let power = |w: &World, l: usize, sd: u64| -> (bool, PowerTable) {
         let sims = sim_paths(w, paths, l, sd);
-        let ok = gate_ok(&measure(&sims, l), realism_only);
+        let ok = gate_ok(&measure(&sims, l), gate_req);
         let stats: Vec<Vec<Vec<f64>>> = (0..sims.len())
             .into_par_iter()
             .map(|k| {
@@ -2331,7 +2535,7 @@ fn run_buffer_report(
     cost: f64,
     single: bool,
     base: &World,
-    realism_only: bool,
+    gate_req: &[GateClass],
 ) {
     // 15% is the repo's existing episode threshold; reusing it keeps this report from
     // introducing a new arbitrary constant. Without it the distribution is drowned.
@@ -2362,7 +2566,7 @@ fn run_buffer_report(
     // is chosen before knowing which stretch you land in.
     let buffer_stats = |w: &World| -> (bool, Vec<BufferArm>) {
         let sims = sim_paths(w, paths, years, seed);
-        let ok = gate_ok(&measure(&sims, years), realism_only);
+        let ok = gate_ok(&measure(&sims, years), gate_req);
         let per: Vec<Vec<BufferArm>> = (0..sims.len())
             .into_par_iter()
             .map(|k| {
@@ -2570,8 +2774,35 @@ fn run_buffer_report(
 }
 
 /// Consume the next argument as an `f64`, keeping the default if it is missing or unparseable.
-fn next_f64<'a>(it: &mut impl Iterator<Item = &'a String>, dflt: f64) -> f64 {
-    it.next().and_then(|v| v.parse().ok()).unwrap_or(dflt)
+// Numeric arguments fail LOUDLY. The old parse-or-default silently substituted the default —
+// `-emitpath -1` emitted path 0 with exit 0, a plausible file for an index nobody asked for —
+// and the Scala twin died on the same input with a raw NumberFormatException. Both now reject.
+fn cli_die(msg: &str) -> ! {
+    eprintln!("{msg}");
+    std::process::exit(2);
+}
+
+fn req_arg<'a>(it: &mut impl Iterator<Item = &'a String>, flag: &str) -> &'a String {
+    it.next()
+        .unwrap_or_else(|| cli_die(&format!("{flag} wants a value")))
+}
+
+fn req_f64<'a>(it: &mut impl Iterator<Item = &'a String>, flag: &str) -> f64 {
+    let v = req_arg(it, flag);
+    v.parse()
+        .unwrap_or_else(|_| cli_die(&format!("{flag} wants a number, got [{v}]")))
+}
+
+fn req_usize<'a>(it: &mut impl Iterator<Item = &'a String>, flag: &str) -> usize {
+    let v = req_arg(it, flag);
+    v.parse()
+        .unwrap_or_else(|_| cli_die(&format!("{flag} wants a non-negative integer, got [{v}]")))
+}
+
+fn req_u64<'a>(it: &mut impl Iterator<Item = &'a String>, flag: &str) -> u64 {
+    let v = req_arg(it, flag);
+    v.parse()
+        .unwrap_or_else(|_| cli_die(&format!("{flag} wants a non-negative integer, got [{v}]")))
 }
 
 // ---- Java-compatible formatting ---------------------------------------------------------
@@ -2711,17 +2942,37 @@ fn session_dates(n: usize, start_ymd: &str) -> Vec<String> {
             })
             .collect();
     }
+    // Validate BEFORE building the date. uni's sentinel invariant is that an invalid
+    // UniDateTime propagates itself — plusDays returns the same date — so feeding one into the
+    // weekday recurrence below is an infinite loop, not an error. The guard lives here, with
+    // the consumer, exactly as the sentinel contract requires.
     let f: Vec<&str> = start_ymd.split('-').collect();
     if f.len() != 3 {
-        eprintln!("-emitstart wants YYYY-MM-DD, got [{start_ymd}]");
-        std::process::exit(2);
+        cli_die(&format!("-emitstart wants YYYY-MM-DD, got [{start_ymd}]"));
     }
     let parse = |s: &str| -> i32 {
-        s.parse().unwrap_or_else(|_| {
-            eprintln!("-emitstart wants YYYY-MM-DD, got [{start_ymd}]");
-            std::process::exit(2);
-        })
+        s.parse()
+            .unwrap_or_else(|_| cli_die(&format!("-emitstart wants YYYY-MM-DD, got [{start_ymd}]")))
     };
+    let (y, m, dd) = (parse(f[0]), parse(f[1]), parse(f[2]));
+    let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+    if !(1..=9999).contains(&y) || !(1..=12).contains(&m) {
+        cli_die(&format!("-emitstart [{start_ymd}] is not a calendar date"));
+    }
+    let dim = match m {
+        2 => {
+            if leap {
+                29
+            } else {
+                28
+            }
+        }
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    };
+    if !(1..=dim).contains(&dd) {
+        cli_die(&format!("-emitstart [{start_ymd}] is not a calendar date"));
+    }
     fn next_weekday(d: UniDateTime) -> UniDateTime {
         let mut d = d;
         while d.dayOfWeekNum() > 5 {
@@ -2732,7 +2983,7 @@ fn session_dates(n: usize, start_ymd: &str) -> Vec<String> {
     // a stateful recurrence written as one, like simulate(): each session is the next weekday
     // strictly after the previous one
     let mut out = Vec::with_capacity(n);
-    let mut d = next_weekday(UniDateTime::ofYmd(parse(f[0]), parse(f[1]), parse(f[2])));
+    let mut d = next_weekday(UniDateTime::ofYmd(y, m, dd));
     for _ in 0..n {
         out.push(d.ymd());
         d = next_weekday(d.plusDays(1));
@@ -2816,6 +3067,38 @@ fn write_emit_tsv(file: &str, p: &Path, dates: &[String]) {
     write_or_die(file, &tsv);
 }
 
+/// Every `World` field, in declaration order, as the indented body of a JSON object. A world
+/// that reaches a consumer without its parameters cannot be re-simulated.
+fn world_json_body(w: &World) -> Vec<String> {
+    let fields: Vec<(&str, String)> = vec![
+        ("trendShare", ef(w.trend_share)),
+        ("depth", ef(w.depth)),
+        ("stress", ef(w.stress)),
+        ("beta", ef(w.beta)),
+        ("drift", ef(w.drift)),
+        ("fundVol", ef(w.fund_vol)),
+        ("rateMean", ef(w.rate_mean)),
+        ("volPersist", ef(w.vol_persist)),
+        ("volOfVol", ef(w.vol_of_vol)),
+        ("valuePull", ef(w.value_pull)),
+        ("crowd", json_str(&crowd_name(w.crowd))),
+        ("crowdImpact", ef(w.crowd_impact)),
+        ("panic", ef(w.panic)),
+        ("duration", ef(w.duration)),
+        ("flight", ef(w.flight)),
+        ("inflProb", ef(w.infl_prob)),
+        ("inflSize", ef(w.infl_size)),
+        ("inflSpeed", ef(w.infl_speed)),
+        ("rateSpeed", ef(w.rate_speed)),
+        ("discount", ef(w.discount)),
+        ("margin", ef(w.margin)),
+    ];
+    fields
+        .iter()
+        .map(|(nm, v)| format!("    {}: {v}", json_str(nm)))
+        .collect()
+}
+
 /// Everything that licenses the TSV: which (world, seed, path) produced it, on what calendar,
 /// and what the world's two gate verdicts and fidelity ratios were. A warning printed to stderr
 /// at export time does not survive the file being moved; this does.
@@ -2843,33 +3126,11 @@ fn write_emit_sidecar(
     let n = p.price.len();
     let realism_bad = failed_in(gate_st, GateClass::Realism);
     let mechanism_bad = failed_in(gate_st, GateClass::Mechanism);
-    let str_list = |v: &[&str]| -> String {
-        let items: Vec<String> = v.iter().map(|s| json_str(s)).collect();
+    let fidelity_bad = failed_in(gate_st, GateClass::Fidelity);
+    fn str_list<S: AsRef<str>>(v: &[S]) -> String {
+        let items: Vec<String> = v.iter().map(|s| json_str(s.as_ref())).collect();
         format!("[{}]", items.join(", "))
-    };
-    let world_fields: Vec<(&str, String)> = vec![
-        ("trendShare", ef(w.trend_share)),
-        ("depth", ef(w.depth)),
-        ("stress", ef(w.stress)),
-        ("beta", ef(w.beta)),
-        ("drift", ef(w.drift)),
-        ("fundVol", ef(w.fund_vol)),
-        ("rateMean", ef(w.rate_mean)),
-        ("volPersist", ef(w.vol_persist)),
-        ("volOfVol", ef(w.vol_of_vol)),
-        ("valuePull", ef(w.value_pull)),
-        ("crowd", json_str(&crowd_name(w.crowd))),
-        ("crowdImpact", ef(w.crowd_impact)),
-        ("panic", ef(w.panic)),
-        ("duration", ef(w.duration)),
-        ("flight", ef(w.flight)),
-        ("inflProb", ef(w.infl_prob)),
-        ("inflSize", ef(w.infl_size)),
-        ("inflSpeed", ef(w.infl_speed)),
-        ("rateSpeed", ef(w.rate_speed)),
-        ("discount", ef(w.discount)),
-        ("margin", ef(w.margin)),
-    ];
+    }
     let num = |x: f64| -> String {
         if x.is_nan() {
             "null".to_string()
@@ -2893,11 +3154,8 @@ fn write_emit_sidecar(
             )
         })
         .collect();
-    let world_body: Vec<String> = world_fields
-        .iter()
-        .map(|(nm, v)| format!("    {}: {v}", json_str(nm)))
-        .collect();
-    let verdict = |bad: &[&str]| if bad.is_empty() { "PASS" } else { "FAIL" };
+    let world_body = world_json_body(w);
+    let verdict = |bad: &[String]| if bad.is_empty() { "PASS" } else { "FAIL" };
     let calendar = if start_ymd.is_empty() {
         "synthetic-365-252"
     } else {
@@ -2931,8 +3189,10 @@ fn write_emit_sidecar(
         format!("    \"ensembleYears\": {years},"),
         format!("    \"realism\": {},", json_str(verdict(&realism_bad))),
         format!("    \"mechanism\": {},", json_str(verdict(&mechanism_bad))),
+        format!("    \"fidelity\": {},", json_str(verdict(&fidelity_bad))),
         format!("    \"realismFailed\": {},", str_list(&realism_bad)),
-        format!("    \"mechanismFailed\": {}", str_list(&mechanism_bad)),
+        format!("    \"mechanismFailed\": {},", str_list(&mechanism_bad)),
+        format!("    \"fidelityFailed\": {}", str_list(&fidelity_bad)),
         "  },".to_string(),
         "  \"fidelity\": [".to_string(),
         fidelity.join(",\n"),
@@ -2966,7 +3226,7 @@ fn main() {
     let mut emit_all = false;
     let mut emit_start = String::new();
     let mut emit_gate = 200usize;
-    let mut realism_only = false;
+    let mut gate_req = gate_default();
     let mut validate = false;
     let mut buffer_report = false;
     let mut power_report = false;
@@ -2987,6 +3247,8 @@ fn main() {
     let mut crowd_name = "momentum".to_string();
     let mut crowd_impact = 0.06f64;
     let mut panic_k = 0.0f64;
+    let mut drift = 0.100f64;
+    let mut rate_mean = 0.042f64;
     let mut duration = 13.5f64;
     let mut flight = 0.38f64;
     let mut infl_prob = 0.20f64;
@@ -2998,62 +3260,53 @@ fn main() {
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
-            "-paths" => paths = it.next().and_then(|v| v.parse().ok()).unwrap_or(paths),
-            "-years" => years = it.next().and_then(|v| v.parse().ok()).unwrap_or(years),
-            "-seed" => seed = it.next().and_then(|v| v.parse().ok()).unwrap_or(seed),
-            "-emit" => emit = it.next().cloned().unwrap_or_default(),
-            "-emitpath" => emit_path = it.next().and_then(|v| v.parse().ok()).unwrap_or(emit_path),
+            "-paths" => paths = req_usize(&mut it, "-paths"),
+            "-years" => years = req_usize(&mut it, "-years"),
+            "-seed" => seed = req_u64(&mut it, "-seed"),
+            "-emit" => emit = req_arg(&mut it, "-emit").clone(),
+            "-emitpath" => emit_path = req_usize(&mut it, "-emitpath"),
             "-emitall" => emit_all = true,
-            "-emitstart" => emit_start = it.next().cloned().unwrap_or_default(),
-            "-emitgate" => emit_gate = it.next().and_then(|v| v.parse().ok()).unwrap_or(emit_gate),
-            "-gate" => {
-                realism_only = match it
-                    .next()
-                    .map(|v| v.to_lowercase())
-                    .unwrap_or_default()
-                    .as_str()
-                {
-                    "realism" => true,
-                    "full" => false,
-                    other => {
-                        eprintln!("unknown -gate [{other}]; use realism or full");
-                        std::process::exit(2);
-                    }
-                }
-            }
+            "-emitstart" => emit_start = req_arg(&mut it, "-emitstart").clone(),
+            "-emitgate" => emit_gate = req_usize(&mut it, "-emitgate"),
+            "-gate" => gate_req = parse_gate(req_arg(&mut it, "-gate")),
             "-validate" => validate = true,
             "-buffer" => buffer_report = true,
             "-power" => power_report = true,
             "-strategies" => strategies = true,
             "-single" => single = true,
-            "-cost" => cost = it.next().and_then(|v| v.parse().ok()).unwrap_or(cost),
+            "-cost" => cost = req_f64(&mut it, "-cost"),
             "-fitness" => fitness_only = true,
-            "-calibrate" => {
-                calibrate_n = it.next().and_then(|v| v.parse().ok()).unwrap_or(0);
-            }
-            "-crowd" => crowd_name = it.next().cloned().unwrap_or_default(),
-            "-trendshare" => trend_share = next_f64(&mut it, trend_share),
-            "-depth" => depth = next_f64(&mut it, depth),
-            "-stress" => stress = next_f64(&mut it, stress),
-            "-beta" => beta = next_f64(&mut it, beta),
-            "-volpersist" => vol_persist = next_f64(&mut it, vol_persist),
-            "-volofvol" => vol_of_vol = next_f64(&mut it, vol_of_vol),
-            "-value" => value_pull = next_f64(&mut it, value_pull),
-            "-crowdimpact" => crowd_impact = next_f64(&mut it, crowd_impact),
-            "-panic" => panic_k = next_f64(&mut it, panic_k),
-            "-duration" => duration = next_f64(&mut it, duration),
-            "-flight" => flight = next_f64(&mut it, flight),
-            "-inflprob" => infl_prob = next_f64(&mut it, infl_prob),
-            "-inflsize" => infl_size = next_f64(&mut it, infl_size),
-            "-inflspeed" => infl_speed = next_f64(&mut it, infl_speed),
-            "-ratespeed" => rate_speed = next_f64(&mut it, rate_speed),
-            "-discount" => discount = next_f64(&mut it, discount),
-            "-margin" => margin = next_f64(&mut it, margin),
-            other => {
-                eprintln!("unrecognized arg [{other}]");
-                std::process::exit(2);
-            }
+            "-calibrate" => calibrate_n = req_usize(&mut it, "-calibrate"),
+            "-crowd" => crowd_name = req_arg(&mut it, "-crowd").clone(),
+            "-trendshare" => trend_share = req_f64(&mut it, "-trendshare"),
+            "-depth" => depth = req_f64(&mut it, "-depth"),
+            "-stress" => stress = req_f64(&mut it, "-stress"),
+            "-beta" => beta = req_f64(&mut it, "-beta"),
+            "-volpersist" => vol_persist = req_f64(&mut it, "-volpersist"),
+            "-volofvol" => vol_of_vol = req_f64(&mut it, "-volofvol"),
+            "-value" => value_pull = req_f64(&mut it, "-value"),
+            "-crowdimpact" => crowd_impact = req_f64(&mut it, "-crowdimpact"),
+            "-panic" => panic_k = req_f64(&mut it, "-panic"),
+            "-drift" => drift = req_f64(&mut it, "-drift"),
+            "-ratemean" => rate_mean = req_f64(&mut it, "-ratemean"),
+            "-duration" => duration = req_f64(&mut it, "-duration"),
+            "-flight" => flight = req_f64(&mut it, "-flight"),
+            "-inflprob" => infl_prob = req_f64(&mut it, "-inflprob"),
+            "-inflsize" => infl_size = req_f64(&mut it, "-inflsize"),
+            "-inflspeed" => infl_speed = req_f64(&mut it, "-inflspeed"),
+            "-ratespeed" => rate_speed = req_f64(&mut it, "-ratespeed"),
+            "-discount" => discount = req_f64(&mut it, "-discount"),
+            "-margin" => margin = req_f64(&mut it, "-margin"),
+            other => cli_die(&format!("unrecognized arg [{other}]")),
         }
+    }
+    // Bounds that make the run meaningful. -paths 0 -emitall crashed on `written[0]`;
+    // -years 0 crashed in measure. (usize already rules out the negatives Scala must check.)
+    if paths < 1 {
+        cli_die(&format!("-paths must be at least 1, got {paths}"));
+    }
+    if years < 1 {
+        cli_die(&format!("-years must be at least 1, got {years}"));
     }
 
     // defaults = best of a 50-sample random search against the fitness loss, scored at
@@ -3062,25 +3315,23 @@ fn main() {
         "momentum" => Crowd::Momentum,
         "volscaled" => Crowd::VolScaled,
         t if t.starts_with("trend") => match t[5..].parse::<i32>() {
-            Ok(d) => Crowd::Trend(d),
-            Err(_) => {
-                eprintln!("unknown -crowd [{crowd_name}]; use momentum, trendNNN, or volscaled");
-                std::process::exit(2);
-            }
+            Ok(d) if d > 0 => Crowd::Trend(d),
+            _ => cli_die(&format!(
+                "unknown -crowd [{crowd_name}]; use momentum, trendNNN, or volscaled"
+            )),
         },
-        _ => {
-            eprintln!("unknown -crowd [{crowd_name}]; use momentum, trendNNN, or volscaled");
-            std::process::exit(2);
-        }
+        _ => cli_die(&format!(
+            "unknown -crowd [{crowd_name}]; use momentum, trendNNN, or volscaled"
+        )),
     };
     let w = World {
         trend_share,
         depth,
         stress,
         beta,
-        drift: 0.100,
+        drift,
         fund_vol: 0.13,
-        rate_mean: 0.042,
+        rate_mean,
         vol_persist,
         vol_of_vol,
         value_pull,
@@ -3124,15 +3375,15 @@ fn main() {
         return;
     }
     if strategies {
-        run_strategy_sweep(paths, years, seed, cost, single, &w, realism_only);
+        run_strategy_sweep(paths, years, seed, cost, single, &w, &gate_req);
         return;
     }
     if power_report {
-        run_power_report(paths, seed, cost, single, &w, realism_only);
+        run_power_report(paths, seed, cost, single, &w, &gate_req);
         return;
     }
     if buffer_report {
-        run_buffer_report(paths, years, seed, cost, single, &w, realism_only);
+        run_buffer_report(paths, years, seed, cost, single, &w, &gate_req);
         return;
     }
 
@@ -3165,6 +3416,13 @@ fn main() {
             eprintln!(
                 "NOTE: mechanisms inert in this world [{}] — conclusions that lean on them are not supported here",
                 mechanism_bad.join(", ")
+            );
+        }
+        let fidelity_bad = failed_in(&gate_st, GateClass::Fidelity);
+        if !fidelity_bad.is_empty() {
+            eprintln!(
+                "NOTE: levels not readable in this world [{}] — rank comparisons survive, anything reading a level off these does not",
+                fidelity_bad.join(", ")
             );
         }
         // path k is a function of (world, years, seed, k) alone, so an index past the report
@@ -3290,6 +3548,19 @@ fn main() {
         "  realized inflation     {}%/yr median (deterministic from regime pressure; no draws consumed)",
         jf(st.infl_ann, 0, 2)
     );
+    println!("  depth profile          share of sessions below the running peak, median path");
+    println!(
+        "    equity               >5% {}   >10% {}   >20% {}      real SPY 0.447 / 0.315 / 0.169",
+        jf(st.dd_eq5, 0, 3),
+        jf(st.dd_eq10, 0, 3),
+        jf(st.dd_eq20, 0, 3)
+    );
+    println!(
+        "    bond                 >5% {}   >10% {}   >20% {}      real TLT   -   / 0.510 /   -",
+        jf(st.dd_bd5, 0, 3),
+        jf(st.dd_bd10, 0, 3),
+        jf(st.dd_bd20, 0, 3)
+    );
     println!(
         "  binding diagnostics    trend share {} (pinned {}%, target saturated {}%)   bond spiral {}% of sessions   clamped {}%",
         jf(st.trend_share, 0, 2),
@@ -3321,37 +3592,53 @@ fn main() {
 
     if validate {
         let checks = gate_checks(&st);
-        let realism_bad = failed_in(&st, GateClass::Realism);
-        let mechanism_bad = failed_in(&st, GateClass::Mechanism);
-        let verdict = |bad: &[&str]| if bad.is_empty() { "PASS" } else { "FAIL" };
+        let bad: Vec<Vec<String>> = GateClass::ALL.iter().map(|c| failed_in(&st, *c)).collect();
+        let verdict = |i: usize| {
+            if bad[i].is_empty() { "PASS" } else { "FAIL" }
+        };
         println!();
         println!("  acceptance gate:");
-        println!("    realism bands — a failure here means this world is not a market:");
-        for (n, ok, _) in checks.iter().filter(|(_, _, c)| *c == GateClass::Realism) {
-            println!("     {:<5} {}", if *ok { "PASS" } else { "FAIL" }, n);
+        for cls in GateClass::ALL {
+            let (banner, cost) = cls.section();
+            println!("    {banner} — {cost}:");
+            for (n, ok, _) in checks.iter().filter(|(_, _, c)| *c == cls) {
+                println!("     {:<5} {}", if *ok { "PASS" } else { "FAIL" }, n);
+            }
         }
-        println!("    mechanism engagement — a failure here means only that mechanism is inert:");
-        for (n, ok, _) in checks.iter().filter(|(_, _, c)| *c == GateClass::Mechanism) {
-            println!("     {:<5} {}", if *ok { "PASS" } else { "FAIL" }, n);
-        }
-        let inert = if mechanism_bad.is_empty() {
-            String::new()
-        } else {
-            format!("   inert: {}", mechanism_bad.join(", "))
-        };
         println!(
-            "    verdict: realism {}   mechanism {}{inert}",
-            verdict(&realism_bad),
-            verdict(&mechanism_bad)
+            "    verdict: realism {}   mechanism {}   fidelity {}",
+            verdict(0),
+            verdict(1),
+            verdict(2)
         );
-        if !realism_bad.is_empty() {
-            eprintln!("realism bands FAILED — this world is not fit to compare strategies in");
-            std::process::exit(1);
+        if !bad[1].is_empty() {
+            println!("      inert: {}", bad[1].join(", "));
         }
-        if !mechanism_bad.is_empty() && !realism_only {
+        if !bad[2].is_empty() {
+            println!("      levels not readable: {}", bad[2].join(", "));
+        }
+        // exit code follows the classes this run declared it requires, nothing more
+        let blocking: Vec<GateClass> = GateClass::ALL
+            .into_iter()
+            .enumerate()
+            .filter(|(i, c)| gate_req.contains(c) && !bad[*i].is_empty())
+            .map(|(_, c)| c)
+            .collect();
+        if !blocking.is_empty() {
+            let names: Vec<&str> = blocking.iter().map(|c| c.label()).collect();
+            let failures: Vec<String> = GateClass::ALL
+                .into_iter()
+                .enumerate()
+                .filter(|(_, c)| blocking.contains(c))
+                .flat_map(|(i, _)| bad[i].clone())
+                .collect();
+            let mut req: Vec<&str> = gate_req.iter().map(|c| c.label()).collect();
+            req.sort_unstable();
             eprintln!(
-                "mechanism checks FAILED [{}] — rerun with -gate realism to admit this world for conclusions that do not depend on them",
-                mechanism_bad.join(", ")
+                "acceptance gate FAILED for required {} [{}] — required classes are {}; change them with -gate",
+                names.join(", "),
+                failures.join(", "),
+                req.join(",")
             );
             std::process::exit(1);
         }
