@@ -39,12 +39,33 @@ for md in "${files[@]}"; do
   ' "$md"
 done
 
+# Progress, because this gate is otherwise silent for minutes at a time: 135 scripts at ~1.7s
+# each is four or five minutes of nothing, which is indistinguishable from a wedge -- and one
+# release run DID wedge, on script 123 of 135, leaving the culprit to be reconstructed from
+# file mtimes afterwards.  The phase matters as much as the name: that stall was in `run`, not
+# `compile`, and the counter says which.
+#
+# \r only when stdout is a terminal.  CI logs render a carriage return as one unreadable line,
+# so there each script gets its own line instead -- which also means a CI timeout names the
+# script it died on rather than just stopping.
+scripts=("$out"/*.sc)
+nscripts=0; [ -e "${scripts[0]}" ] && nscripts=${#scripts[@]}
+if [ -t 1 ]; then
+  progress()     { printf "\r  [%3d/%3d] %-34s %-7s" "$1" "$nscripts" "$2" "$3"; }
+  progress_end() { printf "\r%*s\r" 60 ""; }
+else
+  progress()     { printf "  [%3d/%3d] %-34s %s\n" "$1" "$nscripts" "$2" "$3"; }
+  progress_end() { :; }
+fi
+
 total=0; failed=0; ran=0
 for sc in "$out"/*.sc; do
   [ -e "$sc" ] || continue
   total=$((total+1))
+  progress "$total" "$(basename "$sc")" compile
   if ! scala-cli compile -Wunused:imports -Wunused:locals -deprecation -Werror "$sc" >"$sc.log" 2>&1; then
     failed=$((failed+1))
+    progress_end
     echo "FAIL $sc"
     grep -E "error|warn" "$sc.log" | grep -v "^\[warn\] \[warn\]" | head -8 | sed 's/^/    /'
     continue
@@ -55,13 +76,16 @@ for sc in "$out"/*.sc; do
   ran=$((ran+1))
   # `// doc: args a b c` supplies command-line arguments for CLI-style examples.
   docargs=$(sed -n 's|^// doc: args ||p' "$sc" | head -1)
+  progress "$total" "$(basename "$sc")" run
   log="$PWD/$sc.out"
   if ! (cd "$out" && scala-cli run "$(basename "$sc")" -- $docargs >"$log" 2>&1); then
     failed=$((failed+1))
+    progress_end
     echo "FAIL (run) $sc"
     grep -vE "^\[.*Compil|Compiled project|WARNING: Using incubator" "$sc.out" | tail -8 | sed 's/^/    /'
   fi
 done
+progress_end
 echo "checked $total doc scripts ($ran run), $failed failed"
 
 # The hand-mirrored fragments, with their value assertions: compile and run.

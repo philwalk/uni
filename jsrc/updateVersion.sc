@@ -129,7 +129,11 @@ object UpdateVersion {
     val target1 = s"//> using dep org.vastblue:uni_3:$newVersion"
 
     val regex2 = """"org.vastblue" %% "uni" +%+ +"[0-9]+[.][0-9]+[.][0-9]+""""
-    val target2 = s""""org.vastblue" %% "uni" +%+ +"$newVersion""""
+    // The PATTERN's " +%+ +" is quantifiers (spaces, one-or-more %, spaces); in a replacement
+    // string those same characters are literal.  Copying the one into the other rewrote the
+    // README's sbt line to `%% "uni" +%+ +"x.y.z"` -- invalid sbt, and thereafter unmatchable
+    // by regex2, so it corrupted once and then went silent at a stale version.
+    val target2 = s""""org.vastblue" %% "uni" % "$newVersion""""
 
     val updated = lines.map( s =>
       if s.contains("// pinned") then s
