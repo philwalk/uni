@@ -1,6 +1,7 @@
 package uni.data
 
 import uni.*
+import scala.concurrent.duration.*
 
 /**
  * Checks Scala's [[uni.data.Mat]] reductions against the committed reference in
@@ -24,6 +25,13 @@ import uni.*
  * meant to move.
  */
 class MatParitySuite extends munit.FunSuite:
+
+  // This is a bit-for-bit fixture comparison: if parity breaks it fails on assertEquals,
+  // never on the clock, so wall-time here carries no diagnostic value and a tight bound can
+  // only produce false failures.  It ran ~11 s warm locally and 32.9 s on a GitHub macOS
+  // runner, crossing munit's 30 s default; the same commit passes on a local Mac.  The
+  // margin, not the duration, was the defect.  Performance belongs to the benchmarks.
+  override val munitTimeout: Duration = 120.seconds
 
   val fixture: java.nio.file.Path =
     val root = sys.props.getOrElse("user.dir", ".")

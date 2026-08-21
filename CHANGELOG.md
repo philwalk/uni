@@ -1,3 +1,180 @@
+## v0.19.1 — 2026-08-21
+
+**CHANGED — `marketSim`/`market_sim`: new default world; every published number moves**
+
+The calibration search sampled eight parameters and could not vary `depth`, `trendShare`, `drift` or
+`crowdImpact` — the four strongest levers on the defects the other eight cannot reach. The defaults
+inherited a blind spot rather than a frontier. With all four in the search:
+
+```
+                                    old default        new default        real
+  crashes/century                 35.30 (1.71 MISS)  26.10 (1.26)        20.70
+  equity >5 / >10 / >20 below pk  0.640 0.460 0.220  0.510 0.360 0.170   0.447 0.315 0.169
+  return per vol                   0.59 (0.86)        0.74 (1.08)         0.69
+  kurtosis                         7.71 (0.28)       16.16 (0.58)        28.00
+  median depth %                 -24.83 (0.92)      -26.21 (0.97)       -27.10
+  bond growth-crash                7.81 (0.39 MISS)  14.00 (0.70)        20.00
+  bond infl-crash                -16.44 (0.66 MISS) -28.51 (1.14)       -25.00
+  equity vol %                    16.62 (1.04)       15.66 (0.98)        16.00
+  clustering lag 1 / lag 20        0.24 / 0.18        0.36 / 0.27         0.27 / 0.20
+  worst crash %                  -79.26 (1.40)      -87.31 (1.54 MISS)  -56.80
+```
+
+The equity leg passes every fidelity band it has, and the verdict's only failure is the bond's 10%
+depth rung. Three MISS flags remain and the set changed composition rather than shrinking: `bond
+growth-crash` left it, `worst crash` entered it.
+
+**This world was chosen at equal loss, not because the objective preferred it.** A second world ties
+it across five scoring seeds — mean 3.354 against 3.355 — and differs in *error profile*: it is
+better on the 10% depth rung (1.05 against 1.13), worst crash (1.36 against 1.54) and clustering
+(1.19 against 1.33), and worse on equity volatility (0.93 against 0.98), kurtosis (0.45 against
+0.58), the 20% rung (0.79 against 1.02) and median depth (0.88 against 0.97). The shipped choice
+favours a levered consumer, where an error in the volatility *level* and an understated tail both
+enter quadratically. Its parameters are recorded beside the defaults so the alternative is not lost.
+
+**Two known bias directions, recorded because nothing else nets them away, and they point opposite
+ways.** Volatility clustering at 1.20 makes volatility more predictable here than in the record,
+which flatters any rule that forecasts it. Against that, worst crash at 1.49 puts index paths near
+−84% where the real worst is −56.8%, and no levered fund survives those: ruin rates for levered
+sleeves read off this model are **upper bounds, not estimates** — usable and conservative, but not
+quotable as levels.
+
+The previous world is reproducible in full: `-depth 12 -trendshare 0.30 -drift 0.100 -stress 3.4
+-value 0.015 -volofvol 0.028 -flight 0.38 -duration 13.5 -inflsize 0.07 -discount 4.0
+-margin 0.0008 -crowdimpact 0.06`.
+
+**ADDED — return per unit volatility, as a fidelity target and a two-sided band**
+
+Volatility was gated at 8-25% — half to 1.5x the real value, a band that never bound inside the
+search space — and return per unit volatility was not measured at all. Between them they left the
+depth profile buyable: `drift` is the only knob that moves it at constant volatility, so a search
+free to raise drift buys the depth rungs with a Sharpe no 20-year stretch of the real record
+produced, and no check notices, because `no runaway drift` only asks `|annRet| < 30%`.
+
+`return per vol` targets 0.69 — Ken French US total market, 1954-2026, restated into this report's
+own units (annualised LOG return over the no-mean-subtraction volatility, on daily data; a CAGR read
+as a simple rate and a monthly-derived volatility each inflate the ratio). The band is 0.50-0.85:
+below the 1926-2026 reading of 0.55, above the anchor, and below the most favourable non-overlapping
+20-year block the record produced. Volatility gains a second band at 14-18%.
+
+Both are `fidelity`, not `realism`. Realism is unconditionally required, so a band there would make
+the model's own OFF-worlds inadmissible in every report — `low growth` runs at 0.35 and
+`shallow market` at 19.6% volatility, both deliberate. Class costs nothing as a search constraint:
+the calibration loss counts 0.5 per failed check whatever the class. The band is not decorative — a
+world at 0.92 placed third on the held-out seed in the search that produced these defaults, and is
+refused.
+
+**ADDED — `depth`, `trendShare`, `drift` and `crowdImpact` in the `-calibrate` search**
+
+Twelve parameters, not eight. `depth` carries crash frequency (at fixed stress, 12 to 24 takes it
+from 35 to 13 per century) but moves volatility in lockstep; `drift` moves the depth profile at
+constant volatility, which is why it could not be searched before the band above existed; and
+`crowdImpact` could not usefully be searched at all until it stopped being inert in the default
+world — it is the parameter that opens the corner the shipped defaults sit in.
+
+**FIXED — three sweep arms had stopped bracketing their own baseline**
+
+The world sweep's job is to turn every conclusion into a curve over a parameter, which requires the
+two arms to straddle the baseline. Moving the defaults silently broke that for three pairs, and
+nothing in the output said so: `few trend followers` (0.15 against a baseline of 0.06) had **2.5x the
+baseline's trend followers**, `deep market` (15.0 against 16.3) was **shallower** than the baseline,
+and `calm volatility` (0.010 against 0.011) had become a near-copy of it.
+
+Those three pairs are now relative — `trendShare` /3 and x3, `depth` x0.8 and x1.25, `volOfVol` x0.5
+and x2 — joining `stress`, `valuePull` and `inflSize`, which already were. A multiplier below 1 and
+one above cannot stop straddling the base, so bracketing is structural rather than a thing to
+re-check after every recalibration. `beta`, `drift` and `rateMean` keep absolute points: they name
+economic conditions rather than perturbation sizes, and all three still bracket.
+
+Worth knowing when reading the trend arms: the mandate is a spring, so the **realized** share moves
+far less than the mandate. The new arms span 0.19-0.30 realized against the baseline's 0.22.
+
+**ADDED — reflexive worlds in the `-strategies` sweep, ranked in their own panel**
+
+`sweepWorlds` varied nineteen parameters and not one of them was the crowd, so every rank-stability
+result ever produced was really "ranks are stable across market character, *holding the crowd fixed
+and non-reactive*" — with the second half invisible. That qualifier matters here rather than being
+pedantry: the existing crowd evidence says a vol-scaling crowd turns every trend rule's edge
+negative, which is a rank inversion, and it is the one axis the sweep never varied.
+
+Two worlds, varying **different axes** — a separation only possible now that the momentum crowd has
+a strength dial, since a mode entry that states no strength silently picks one:
+
+```
+reflexive: crowd runs a vol rule   mode      -crowd volscaled at the default strength
+reflexive: crowd pressed hard      strength  -crowdimpact 0.12 under momentum (0.25 fails the gate)
+```
+
+**They are ranked separately and never pooled.** A character world varies what the market is like;
+a reflexive world changes who is trading. One "stable across 21 worlds" that concealed an inversion
+in the two worlds most able to produce one would be worse than not running them, so the split is
+structural: `RANK STABILITY` counts character worlds only, `REFLEXIVITY` reports the reflexive ranks
+beside the character range and flags any rule that moves outside it, and the flight-to-safety and
+refuge tables stay on character worlds. Per-world detail marks reflexive worlds `[REFLEXIVE]`.
+
+Scoped to `-strategies`. `-power` and `-buffer` pass `withReflexive = false` and are unchanged —
+reflexivity is the point in the rank table and a second-order effect on dispersion elsewhere.
+
+**FIXED — the momentum crowd had no strength dial (`-crowdimpact` was inert)**
+
+`Crowd::Momentum` — the default — never read `crowdImpact`. `-crowdimpact 0.01` and `-crowdimpact
+0.50` produced byte-identical output, so the one experiment this simulator offers that resampling a
+real series cannot ("what happens when the crowd runs my rule") had no strength control in the world
+every report defaults to. The momentum flow now scales by `crowdImpact / 0.06`; the ratio is what
+enters, so the default divides to a bit-exact 1.0 and no shipped number moves.
+
+It survived four releases because the crowd had no binding diagnostic, which the header requires of
+every mechanism — a dead knob is indistinguishable from a live one with a small effect. `-validate`
+now prints crowd flow in bp/session and as a share of the noise term: 0.60 bp (0.9%) at
+`-crowdimpact 0.01`, 4.09 bp (5.8%) at the default, 42.18 bp (60.3%) at 0.25.
+
+Related, and measured rather than assumed: on the new default world **all seven crowd modes pass
+realism and mechanism** — `momentum`, `trend60/100/200/300/500` and `volscaled` — where the plan
+recorded every `trendNNN` world as gate-failing. The crowding result is quotable in seven admissible
+worlds instead of one.
+
+**FIXED — the fidelity table named one window for anchors drawn from four**
+
+The header read `S&P 1954-2026 equity; long-Treasury refuge`. The three equity depth rungs are SPY
+1993-2026, and `return per vol` is CRSP 1954-2026. Measured over the *stated* window the depth rungs
+read 0.436 / 0.269 / 0.126 against the 0.447 / 0.315 / 0.169 targeted — so anyone re-deriving the
+anchors from the label would get materially different numbers at the 10% and 20% rungs and conclude
+the model had drifted. The anchors are defensible; the label was not. Each anchor group is now named.
+
+Recorded beside the targets while fixing it: the real depth profile is strongly window-dependent —
+the 10% rung reads 0.269 over 1954-2026, 0.315 over 1993-2026 and 0.386 over 1926-2026. The ±0.10
+gate bands span that spread, which is part of why they pass, so a passing depth rung is not
+agreement with any particular window.
+
+**ADDED — the depth profile validated against a series the calibration never saw**
+
+The SPY rungs are fit targets, so agreement with SPY is a calibration check, not evidence. Against
+CRSP value-weighted, 33-year windows inside 1954-2026: model 0.49 / 0.33 / 0.13 against a real
+median of 0.451 / 0.291 / 0.151 and real ranges of 0.405-0.507 / 0.219-0.346 / 0.084-0.184. **All
+three rungs land inside the range of real 33-year windows** — the shallow ones about 10% above the
+median, the deep one about 14% below. A level bias in both directions, surviving the gate, inherited
+by any rule scored on a distance-from-peak threshold.
+
+The check is not fully independent: `return per vol` is anchored on CRSP 1954-2026, and
+return-per-unit-volatility is the strongest single driver of the depth profile. It is independent in
+the *shape* of the drawdown distribution, not in the level of the quantity that most determines it.
+SPY cannot serve at all — its rungs are the targets.
+
+**FIXED — help text is generated from the defaults, and every flag now states one**
+
+Three `-help` defaults were stale on arrival (`-inflsize` read 0.06 against 0.07, `-discount` 6
+against 4, `-duration` 15 against 13.5) and six flags stated none at all. Hand-maintained help that
+restates a default is a second copy of a constant — the same failure class PARITY.md documents — so
+adding six more copies would have enlarged the surface rather than fixing it. There is now one
+source, `Defaults`, a `World` value that `main` seeds its CLI variables from and that `usage`
+interpolates. Every flag states its default and none can drift.
+
+The cross-twin half of that check already existed and is worth naming: bare `-emit` writes the
+**default** world, and its sidecar lists every `World` field. A constant updated in one twin and not
+the other shows up there as `"flight": 0.480000` against `"flight": 0.380000` — named, not inferred
+from the fourth decimal of a statistic. Byte-diff `-emit` first; the statistical modes show the
+consequence, the sidecar shows the cause.
+
 ## v0.19.0 — 2026-08-21
 
 **ADDED — `marketSim`/`market_sim`: `-emit` exports the full model state, named and provenanced**

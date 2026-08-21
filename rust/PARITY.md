@@ -276,6 +276,53 @@ byte-identical output, diffed at more than one size. Single-size agreement is we
 — several of the above appeared only at small sample counts, where an empty collection or
 an identically-zero column becomes reachable.
 
+### The second divergence class: the same constant, two files
+
+Items 1-10 are places the two *languages* disagree. There is a second class that no amount
+of care about semantics prevents, and it is the one a downstream consumer is most exposed
+to: a value edited in one twin and not the other. It has no language tell, no clever
+near-miss, and it will not show up in a code review of either file alone, because each file
+is internally consistent.
+
+**Worked example, `marketSim` 0.19.1.** Eleven default parameters moved at once. In Scala
+they are one statement block; in Rust they are eleven separate `let mut` bindings a hundred
+lines from the parsing code. Ten were updated in both. `flight` went 0.38 → 0.30 in Scala
+and stayed 0.38 in Rust. (The defaults moved again before 0.19.1 shipped, so the figures
+below reproduce nothing you can run today — they are the incident, not a current reading.)
+
+What that produced:
+
+```
+  annualised volatility   Rust 14.77%   Scala 14.80%
+  daily return kurtosis   Rust 12.47    Scala 12.57
+  drawdowns of 15%+       Rust 24.8/path  Scala 25.3/path
+```
+
+Every acceptance-gate verdict still agreed — all nine realism bands, all four mechanism
+checks, all six fidelity bands, on both sides. A reviewer reading either report would have
+seen a healthy world. The divergence lived in the fourth significant digit of a calibration
+statistic, which is exactly where a consumer's threshold rule reads.
+
+Two consequences worth stating plainly:
+
+- **The gate cannot catch this and is not meant to.** A band asks "is this value plausible";
+  both values were. Only the byte-diff asks "are these the same program".
+- **A consumer that runs only one twin has no local signal at all.** `folio` runs the Rust
+  binary exclusively; had this shipped, it would have silently inherited a different
+  calibration from the one every published number in the CHANGELOG describes, with nothing
+  on its side to notice.
+
+**The rule that follows:** when a change touches values that live in two files, the
+byte-diff is not a final check, it is the *only* check. Run it before believing any other
+evidence — including a full green gate on both sides.
+
+**Diff the mode that names the constant first.** For `marketSim` that is `-emit`: bare
+`-emit` writes the *default* world and its sidecar lists every `World` field, so the same
+divergence reads `"flight": 0.480000` against `"flight": 0.380000` instead of a 0.03
+difference in annualised volatility. The statistical modes tell you *that* two programs
+differ; a mode that prints the inputs tells you *which input*. Any demo pair with
+configuration worth diffing should have one.
+
 ## Gaps inside already-ported modules (Tier 1 — cheapest wins, fixtures exist)
 
 1. **`t3prf`: the closed-form entry points.** ~~Scala added `tprfClosedForm`,

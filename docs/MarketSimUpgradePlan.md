@@ -22,9 +22,22 @@ that pattern complete instead of accidental.
 - **Frozen constants stay frozen unless promoted deliberately.** The header lists them. Promoting one
   to a `World` field is a legitimate change (item W7 proposes exactly that) but it must be recorded
   there, not done silently.
-- **The recorded scope exclusions stand.** Daily kurtosis (~8 against ~28 real) and crash arrival
-  spacing trace to the absent slow valuation cycle and are deliberately not fixed. Nothing here
-  reopens that.
+- **The recorded scope exclusion stands.** Daily kurtosis (~13 against ~28 real) traces to the
+  absent slow valuation cycle and is deliberately not fixed. Nothing here reopens that.
+  **Crash frequency left this bucket in 0.19.1** and the attribution it carried was wrong: it is
+  driven by market depth, not by the valuation cycle, and at 1.22x real it now sits about 0.8
+  sigma inside the sampling error of its own anchor (15 episodes in 72 years).
+- **A sweep arm must bracket its baseline, and nothing checks that it still does.** The sweep
+  exists to make conclusions curves rather than points, which requires the two arms to straddle the
+  base. Moving the defaults in 0.19.1 silently broke three pairs — one arm named "few trend
+  followers" carried 2.5x the baseline's, and "deep market" was shallower than baseline. Perturbation
+  points are therefore RELATIVE wherever they are perturbation sizes rather than named economic
+  conditions, so the property holds by construction.
+- **A series adopted as a fit target is spent as a validation series, permanently.** W9 adopted a
+  consumer's SPY 1993-2026 depth measurement as three fidelity targets; comparing the model to SPY
+  on those rungs is now a calibration check and cannot be evidence again. Before adopting any
+  measurement as a target, name what will validate the result afterwards — and record it, because
+  the disqualification is invisible in the output and the comparison keeps looking meaningful.
 - **Widening an acceptance band to admit a world you want is not on the table.** Item W2 exists
   precisely because the alternative — relaxing the bond-volatility band so calm bonds pass — would
   make the gate stop meaning anything.
@@ -60,8 +73,11 @@ measured to fail on the equity leg too (see W9), not merely anticipated. W7 stay
 | item | state |
 |---|---|
 | W0 | recorded: `uni/jsrc/marketSim.sc` is canonical (see below) |
-| W1, W2, W3, W9 | **landed**, both twins, byte-identical across every mode |
-| W4, W5, W6, W7, W8 | open |
+| W1, W2, W3, W9, W6a, W6b | **landed**, both twins, byte-identical across every mode |
+| W4, W5, W7, W8 | open |
+
+W6 was split in 0.19.1; its original framing — "make the crowd *window* usable" — was retired by
+measurement, see below.
 
 ## W0 — Re-sync the stale consumer copy (housekeeping, do first)
 
@@ -257,30 +273,96 @@ byte-for-byte. Given a new pair, it answers without a code change.
 
 **Effort.** Small-to-moderate.
 
-## W6 — Make the crowd-window control usable
+## W6a — Give the reflexive channel a strength dial — **LANDED (0.19.1)**
 
-**Problem.** The non-value crowd extrapolates on a momentum window frozen at 60 sessions. That
-constant is simultaneously a plausible *answer* to any question of the form "which lookback wins",
-so every trend-rule conclusion has to prove it is not an echo of it. `-crowd trendNNN` exists for
-exactly that, and **every `trendNNN` world tested fails the acceptance gate** at the default
-`crowdimpact` (they break "bonds rally in growth shocks").
+**Problem.** `Crowd::Momentum`, the default, never read `crowdImpact`: its flow was
+`kTrend * wTrend * trendPos` with `kTrend` frozen at 0.0045. `-crowdimpact 0.01` and `-crowdimpact
+0.50` produced **bit-identical** output. The one experiment this simulator offers that no
+resampling of a real series can — "what happens when the crowd runs my rule" — had no strength
+control in the world every report defaults to.
 
-**Evidence.** The sleeve study's artifact control therefore rested on a single admissible world
-(`-crowd volscaled`), with the `trendNNN` worlds reported only as out-of-gate corroboration. The
-control worked — the winning lookback did not move with the crowd's window — but it was one world
-where it should have been six.
+**Root cause, and the reason it survived four releases.** No binding diagnostic. The header requires
+one for every mechanism ("a BINDING diagnostic printed in the output"); the crowd had none, so a
+dead knob looked exactly like a live one with a small effect.
 
-**Change.** Either find the `crowdimpact` range at which `trendNNN` worlds are market-like and
-document it, or promote the momentum window to a `World` field so it sweeps with everything else.
-The repo's own "sweep the reference too" lesson applies: a constant inside the control family is the
-last place anyone looks.
+**Change (landed).** `kTrend * (w.crowdImpact / CrowdImpactRef) * wTrend * trendPos`, with
+`CrowdImpactRef = 0.06`. The *ratio* enters the flow, so the default divides to a bit-exact `1.0`
+and the shipped world is unchanged — verified by diffing the patched Scala twin against the
+unpatched Rust one, which differed only by the new diagnostic line. The report now prints crowd
+flow in bp/session and as a share of the noise term.
 
-**Acceptance.** At least one `-crowd trendNNN` world passes the full acceptance gate, so the
-artifact control can be run in more than one admissible world.
+**Acceptance (met).** Default output byte-identical before and after, both twins. The dial moves
+monotonically and binds:
 
-**Effort.** Small if it is a `crowdimpact` calibration; moderate if the window is promoted.
+| `-crowdimpact` | 0.01 | 0.03 | 0.06 (default) | 0.12 | 0.25 |
+|---|---|---|---|---|---|
+| crowd flow, bp/session | 0.60 | 1.89 | 4.09 | 10.40 | 42.18 |
+| share of the noise term | 0.9% | 2.7% | 5.8% | 14.9% | 60.3% |
+| equity vol | 14.23% | 14.41% | 14.80% | 16.48% | 25.73% |
 
----
+**Retired by measurement.** The original item was titled "make the crowd-*window* control usable"
+and proposed promoting the 60-session momentum window to a `World` field. Both halves are wrong:
+
+- *The window is not the sensitive parameter.* `trend60` through `trend500` differ by 1.5
+  crashes/century and 0.01 on the 10% rung. Strength is what matters; the window is nearly inert.
+- *`trendNNN` worlds are no longer inadmissible.* The claim was "every `trendNNN` world tested fails
+  the acceptance gate (they break bonds rally in growth shocks)". On the 0.19.1 default, **all seven
+  crowd modes pass realism and mechanism** — `momentum`, `trend60/100/200/300/500`, `volscaled` —
+  with the bond depth rung the only failure in every one. It was already partly stale before the
+  default moved: `trend300` passed on the old default. Nobody noticed because the claim carried no
+  date.
+
+The artifact control the original item wanted is therefore available now, in seven admissible
+worlds instead of one. What it still cannot answer is whether the *rule ranking* moves with the
+crowd's window — aggregate statistics being insensitive does not settle that — and that is a study,
+not a code change.
+
+## W6b — Put reflexive worlds in the sweep — **LANDED (0.19.1)**
+
+**Problem.** `sweepWorlds` varies nineteen parameters and **not one of them is the crowd**. Every
+`-strategies`, `-power` and `-buffer` report has therefore been produced with the crowd held fixed
+and non-reactive. The rank-stability table's real claim is "ranks are stable across market
+character, *holding the crowd fixed and non-reactive*", and that qualifier is invisible in the
+output.
+
+**Why it is not pedantry.** The existing crowd evidence says a vol-scaling crowd turns every trend
+rule's edge negative. That is a rank inversion, not a perturbation — the axis most likely to break
+rank stability is the one axis the sweep has never varied.
+
+**Change.** Add two worlds, and **scope the first pass to `-strategies` only**. Reflexivity is the
+point in the rank-stability table, which is where the invisible qualifier lives; in `-power` and
+`-buffer` it is a second-order effect on dispersion and crash dynamics. Doing all three at once
+reflows every pooled panel for a benefit concentrated in one of them. Extend if the `-strategies`
+result warrants it.
+
+The two entries vary **different axes**, which W6a made possible and which the item must not
+conflate:
+
+| entry | varies | why this one |
+|---|---|---|
+| `reflexive: crowd runs a vol rule` | *mode* — `-crowd volscaled` at the default strength | the mode that turned every trend rule's edge negative; the consumer most exposed to it holds 13 volatility-keyed sleeves against a smaller trend family |
+| `reflexive: crowd pressed hard` | *strength* — `-crowdimpact 0.12` under `momentum` | same mechanism, no mode change, so the two entries are separable. 0.12 is the stress case: admissible, while 0.25 fails the gate |
+
+Before W6a there was only one dimension to vary, so "which crowd" was the whole question. Now
+`crowdImpact` is a `World` field in the calibrate ranges, and a mode entry that does not state a
+strength silently picks one — the default 0.088, which is not obviously the interesting value.
+
+**Design constraint, and the way this item can go wrong.** Do **not** pool the new worlds into the
+same average as the nineteen. The existing worlds are one-knob sensitivity on market *character*; a
+reflexive world changes *who is trading*. A pooled "stable across 21 worlds" that conceals "unstable
+across the 2 that matter" is strictly worse than not adding them at all. Report them as their own
+panel, or tag them, so the qualifier survives the change.
+
+**Acceptance.** The `-strategies` rank-stability output states which worlds are reflexive, and a
+reader can see the reflexive result separately from the character result. If the pooled panels
+reflow, **the reflow is the finding**: it shows rank stability held only because reflexivity was
+absent.
+
+**Parity.** No new state; two more worlds in one `Vector`/`vec!`. Cheap in code, and it changes
+every `-strategies` report in both twins at once.
+
+**Effort.** Small in code, moderate in output review — every pooled `-strategies` panel moves.
+`-power` and `-buffer` are untouched by the first pass.
 
 # Tier 3 — structural, and they change what the model is allowed to claim
 
@@ -295,7 +377,7 @@ sleeves the consumer's gate actually governs:
 | BND | 5.2% | no |
 | SCHP | 5.6% | no |
 | DBMF | 12.4% | yes |
-| FNV | 40.1% | no — above the model's *equity*, 16.6% |
+| FNV | 40.1% | no — above the model's *equity*, 14.7% |
 
 Duration is the only knob, and dialing it to 4 years yields a 6.3%-volatility bond that already
 **fails** the gate for being too calm — still more volatile than any bond sleeve in the book.
@@ -319,7 +401,8 @@ representation at all below ~7% volatility. This item is an extension, not a rep
 
 **Change.** Give the bond a composition rather than a single duration: a blend of two durations plus
 a credit-spread component that widens with equity stress. That is also the mechanism most likely to
-narrow the standing `bond growth-crash` MISS (+8.2 modelled against +20 real), since an aggregate
+narrow the standing `bond growth-crash` MISS (+13.3 modelled against +20 real, restated against the
+0.19.1 default; it was +8.2 before), since an aggregate
 fund's crisis behaviour is the sum of a duration rally and a spread widening that partly cancels it.
 
 **Parity.** New state in `simulate()`, new `World` fields, changed `-emit` columns. The largest
@@ -369,6 +452,11 @@ it about.
 
 ## W9 — Calibrate against the drawdown-depth distribution — **LANDED**
 
+> Every figure in this section was **measured against the pre-0.19.1 default world** and is kept as
+> the record of why the item was raised, not as a current reading. Against the 0.19.1 default the
+> three equity rungs read 0.500 / 0.335 / 0.156 and all three PASS. Do not quote these numbers as
+> the model's behaviour today.
+
 **Problem.** Volatility, maximum drawdown and underwater fraction can all match a real series while
 the *depth* distribution of drawdowns does not, and nothing in the gate notices. At the matched
 24-year horizon above, the default bond world and clean TLT agree on all four headline statistics —
@@ -386,10 +474,14 @@ was drawn had to be withdrawn.
 
 **It is not a bond-only defect.** The equity leg fails the same way, at nearly the same magnitude —
 measured by the second consumer, matched on horizon (33 years against SPY 1993-01-29 to 2026-08-20,
-8447 sessions) *and* on volatility. Volatility is matched at the **world** level with `-depth 10.5`,
-which yields 18.7% median realized volatility against SPY's 18.6% and still passes all 13 checks;
-selecting the sim's own high-volatility paths instead would select on the outcome being measured.
-60 independent paths:
+8447 sessions) *and* on volatility. Volatility was matched at the **world** level with
+`-depth 10.5`, which yielded 18.7% median realized volatility against SPY's 18.6%; selecting the
+sim's own high-volatility paths instead would select on the outcome being measured. 60 independent
+paths:
+
+> **The `-depth 10.5` hook is dead and must not be re-derived.** Against the 0.19.1 default it
+> produces 24.3% volatility, not 18.6%. Recomputing the depth that matches SPY today would fix the
+> arithmetic and still be the wrong test, for the reason in the box below the table.
 
 | below peak | REAL SPY | sim default | sim vol-matched | ratio | real's percentile in the ensemble |
 |---|---|---|---|---|---|
@@ -409,12 +501,29 @@ peak, not less — matching volatility only widens the gap. Worst exactly in the
 This is the item's own acceptance test run in advance, on the equity leg: a 10% drawdown gate sits
 out **49%** of sessions in the vol-matched world against **32%** on real SPY.
 
-Reproduce, now a single command (before W1 it was a 60-iteration shell loop over `-seed`):
+Reproduce (historical; `-depth 10.5` no longer matches SPY's volatility — see the note above):
 
 ```
 market_sim.exe -paths 60 -years 33 -depth 10.5 -emitall -emitstart 1993-01-29 -emit spy.tsv
 # per series: dd = price / price.cummax() - 1; (dd < -X).mean() for X in .02 .05 .075 .10 .15 .20
 ```
+
+> **SPY is spent, permanently.** Its 5/10/20% rungs became fit targets in W9, so any later
+> comparison of this model's depth profile against SPY 1993-2026 is a calibration check, not
+> evidence — however the volatility is matched, and no matter who runs it. This is a standing
+> consequence of adopting the measurement, not a one-off to be tidied up.
+>
+> Validation of the depth profile goes through a series the calibration never saw. Currently that
+> is CRSP value-weighted (33-year windows inside 1954-2026: real median 0.451 / 0.291 / 0.151
+> against the model's 0.49 / 0.33 / 0.13, all three inside the real range).
+>
+> **CRSP is only partly independent, and the caveat matters.** `return per vol` is anchored on CRSP
+> 1954-2026, and return-per-unit-volatility is the strongest single driver of the depth profile
+> (measured: d(10% rung)/d(vol) is 0.71 for `drift` against 0.024 for `depth`). So the model's r/v
+> was fit to CRSP's r/v, and the depth profile it produces inherits that. The CRSP check is
+> independent in the *shape* of the drawdown distribution but not in the level of the quantity that
+> most determines it. A fully independent check needs a series that anchors nothing here — a
+> non-US market, or a held-out period.
 
 **Change.** Add fidelity targets for the share of sessions spent more than X% below the running
 peak, X = 5, 10, 20, on both markets, with real targets measured from the same historical record as
@@ -531,11 +640,13 @@ which is a claim. Both now say so and skip the ranks. Reachable before W9 (`-str
 | ~~1~~ | ~~W0~~ | Done: `uni/jsrc/marketSim.sc` recorded as canonical |
 | ~~2~~ | ~~W1 + W2~~ | Done: a consumer can now reproduce internal numbers exactly |
 | ~~3~~ | ~~W3~~ | Done: worlds that were being discarded are admissible under `-gate realism` |
-| ~~4~~ | ~~W9~~ | Done: the depth profile is measured, targeted and gated; 0 of 19 worlds pass it |
-| 5 | W5 | Both consumers' actual question: is this contrast resolvable from the history I possess |
-| 6 | W4, W6 | Make one consumer's rules native, and make its artifact control admissible |
-| 7 | W8 | Extends what the model is allowed to claim about horizons |
-| 8 | W7 | Extends the model to an asset class only one consumer holds |
+| ~~4~~ | ~~W9~~ | Done: the depth profile is measured, targeted and gated |
+| ~~4b~~ | ~~W6a~~ | Done: the reflexive channel has a dial and a binding diagnostic |
+| ~~5~~ | ~~W6b~~ | Done: reflexive worlds are in the `-strategies` sweep, ranked in their own panel |
+| 6 | W5 | Both consumers' actual question: is this contrast resolvable from the history I possess |
+| 7 | W4 | Make one consumer's rules native |
+| 8 | W8 | Extends what the model is allowed to claim about horizons |
+| 9 | W7 | Extends the model to an asset class only one consumer holds |
 
 W9 moved ahead of W5 and W8 because it was the only open item with a *measured* failure rather than
 an anticipated one, and it mis-states the level of every peak-relative quantity rather than biasing
@@ -592,10 +703,23 @@ outcomes, all informative:
 
 The second end state, for W9 alone, is now a gate check rather than a manual comparison: the
 drawdown-gate arm's `%out` **is** the `equity >10% below peak` rung, and the band is "within ten
-points of the real posture". It reads FAIL today — 0.454 against a real 0.315 in the default world,
-0.493 against 0.315 vol-matched. Until it reads PASS, the model cannot referee
-trend-versus-de-risking-speed on the
-bond side, and a study that asks it to will get a confident wrong answer rather than a null one.
+points of the real posture".
+
+**This condition flipped in 0.19.1 and the blocker it described is gone on the equity leg.** It read
+FAIL at 0.454 against a real 0.315; on the 0.19.1 default it reads **PASS at 0.335**, and all three
+equity rungs are in band. What remains is the bond rung, at 0.87 against 0.510 — so the restriction
+narrows from "cannot referee trend-versus-de-risking-speed" to "cannot referee it **on the bond
+side**". A consumer holding no bond ticker is no longer blocked here at all.
+
+**Scope the claim carefully, because the equity rungs are fit targets.** Agreement with SPY
+1993-2026 is a calibration check, not validation. Against CRSP value-weighted — a series the
+calibration never saw for this statistic — 33-year windows inside 1954-2026 give a real median of
+0.451 / 0.291 / 0.151, ranges 0.405-0.507 / 0.219-0.346 / 0.084-0.184, against the model's
+0.49 / 0.33 / 0.13. **All three rungs land inside the range of real 33-year windows**, the shallow
+ones ~10% above the median and the deep one ~14% below. The honest statement is therefore
+**gradeable with a known level bias of about 10% in each direction**, not "gradeable" flat. It is a
+level claim, not a rank one, so it has to travel with any rule scored on a distance-from-peak
+threshold.
 
 # What not to do
 

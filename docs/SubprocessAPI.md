@@ -56,7 +56,7 @@ val r = run("tools/analyse.py", "--verbose")
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.19.0
+//> using dep org.vastblue:uni_3:0.19.1
 
 import uni.*
 
@@ -88,7 +88,7 @@ with a fluent chain before calling `.run()` or `.stream()`:
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.19.0
+//> using dep org.vastblue:uni_3:0.19.1
 
 import uni.*
 // doc: compile-only
@@ -152,7 +152,7 @@ the rest in a background daemon thread — preventing reader threads from blocki
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.19.0
+//> using dep org.vastblue:uni_3:0.19.1
 
 import uni.*
 
@@ -166,7 +166,7 @@ println(s"$branch ${top3.size}")
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.19.0
+//> using dep org.vastblue:uni_3:0.19.1
 
 import uni.*
 
@@ -201,7 +201,7 @@ returning the failing exit status:
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.19.0
+//> using dep org.vastblue:uni_3:0.19.1
 
 import uni.*
 // doc: compile-only
@@ -251,7 +251,7 @@ sent to the OS, making routing observable for debugging:
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.19.0
+//> using dep org.vastblue:uni_3:0.19.1
 
 import uni.*
 // doc: compile-only
@@ -268,7 +268,7 @@ it explicitly when needed:
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.19.0
+//> using dep org.vastblue:uni_3:0.19.1
 
 import uni.*
 // doc: compile-only
@@ -282,7 +282,7 @@ explicitly to make the intent visible:
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.19.0
+//> using dep org.vastblue:uni_3:0.19.1
 
 import uni.*
 
@@ -298,7 +298,7 @@ run(bashExe, "-c", "git log --oneline | head -20").lines.foreach(println)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.19.0
+//> using dep org.vastblue:uni_3:0.19.1
 
 import uni.*
 // doc: compile-only
@@ -315,7 +315,7 @@ run("git", "ls-files") { pathstr =>
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.19.0
+//> using dep org.vastblue:uni_3:0.19.1
 
 import uni.*
 // doc: compile-only
@@ -334,7 +334,7 @@ failFast {
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.19.0
+//> using dep org.vastblue:uni_3:0.19.1
 
 import uni.*
 
@@ -347,7 +347,7 @@ result.lines.take(5).foreach(println)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.19.0
+//> using dep org.vastblue:uni_3:0.19.1
 
 import uni.*
 
@@ -362,7 +362,7 @@ routing issues (e.g. confirming that `.sh` routing prepended `bashExe`):
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.19.0
+//> using dep org.vastblue:uni_3:0.19.1
 
 import uni.*
 
@@ -375,7 +375,7 @@ printf("ran: %s  →  %s\n", r.cmd.mkString(" "), r.text.trim)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.19.0
+//> using dep org.vastblue:uni_3:0.19.1
 
 import uni.*
 
@@ -396,7 +396,7 @@ logging to a file, accumulating for a summary report, or suppressing:
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.19.0
+//> using dep org.vastblue:uni_3:0.19.1
 
 import uni.*
 // doc: compile-only
@@ -417,7 +417,7 @@ if failures.nonEmpty then
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.19.0
+//> using dep org.vastblue:uni_3:0.19.1
 
 import uni.*
 
@@ -433,7 +433,7 @@ val prevMsg = run("git", "log", "--format=%s", "-2", "--skip=1")
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.19.0
+//> using dep org.vastblue:uni_3:0.19.1
 
 import uni.*
 
@@ -464,7 +464,7 @@ Use them when you need to pass the interpreter explicitly rather than relying on
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.19.0
+//> using dep org.vastblue:uni_3:0.19.1
 
 import uni.*
 // doc: compile-only
@@ -487,7 +487,7 @@ for existence checks without spawning a subprocess:
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.19.0
+//> using dep org.vastblue:uni_3:0.19.1
 
 import uni.*
 

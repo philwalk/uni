@@ -61,6 +61,13 @@ const BURN_IN: usize = 756;
 /// acting as short-lived deviations on top, which is what bond-market dysfunction is.
 const K_VALUE_BOND: f64 = 0.7;
 const SIGMA_N_BOND: f64 = 0.002;
+/// Equity idiosyncratic noise, ~11% annualised alone. Top-level beside its bond counterpart so
+/// the crowd-flow diagnostic can state the reflexive channel as a share of it.
+const SIGMA_N: f64 = 0.007;
+/// `crowdImpact` at which the momentum crowd reproduces the frozen `k_trend` exactly. The ratio
+/// is what enters the flow, so the default divides to a bit-exact 1.0 and the shipped world is
+/// unchanged; every other setting scales the reflexive channel that used to have no dial at all.
+const CROWD_IMPACT_REF: f64 = 0.06;
 
 /// No-trade band on the crowd's exposure target.
 const BAND: f64 = 0.05;
@@ -132,6 +139,9 @@ struct Path {
     mean_bond_stress: f64,
     /// share of sessions bond stress index > 0.5
     pct_bond_stress: f64,
+    /// BINDING diagnostic for the reflexive channel: mean |crowd flow| per session, post burn-in.
+    /// Its ABSENCE is why -crowdimpact sat dead in the default world across four releases.
+    mean_crowd_flow: f64,
 }
 
 /// ONE price-formation mechanism for every traded asset: value demand toward `fair`, plus
@@ -239,7 +249,6 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
     let mut perf_v = 0.0f64;
     let mut perf_t = 0.0f64;
     let k_trend = 0.0045f64;
-    let sigma_n = 0.007f64;
     let k_adapt = 0.010f64;
     let k_home = 0.020f64;
     let mut log_vol = 0.0f64;
@@ -255,6 +264,7 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
     let mut crowd_anchor = 0.0f64;
     let mut bond_stress_sum = 0.0f64;
     let mut bond_stress_hi = 0usize;
+    let mut crowd_flow_sum = 0.0f64;
     let mut clamps_at_burn = 0usize;
 
     let mut i = 0usize;
@@ -339,12 +349,12 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
         let momentum = log_pobs - past;
         let trend_pos = (momentum / 0.12).tanh();
         let eq_flow = match w.crowd {
-            Crowd::Momentum => k_trend * w_trend * trend_pos,
+            Crowd::Momentum => k_trend * (w.crowd_impact / CROWD_IMPACT_REF) * w_trend * trend_pos,
             _ => w.crowd_impact * w_trend * (crowd_e - crowd_prev),
         };
         crowd_prev = crowd_e;
         log_vol = w.vol_persist * log_vol + w.vol_of_vol * rng.randn();
-        let d_noise = sigma_n * (log_vol - vol_norm).exp() * rng.randn();
+        let d_noise = SIGMA_N * (log_vol - vol_norm).exp() * rng.randn();
 
         // ---- both markets step through the SAME mechanism ---------------------------------
         let ret_e = eq_m.step(log_vbase, eq_flow + d_noise);
@@ -386,6 +396,7 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
                 sat_cnt += 1;
             }
             bond_stress_sum += bd_m.stress_idx;
+            crowd_flow_sum += eq_flow.abs();
             if bd_m.stress_idx > 0.5 {
                 bond_stress_hi += 1;
             }
@@ -412,6 +423,7 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
         clamped_days: eq_m.clamps + bd_m.clamps - clamps_at_burn,
         mean_bond_stress: bond_stress_sum / nf,
         pct_bond_stress: bond_stress_hi as f64 / nf,
+        mean_crowd_flow: crowd_flow_sum / nf,
     }
 }
 
@@ -602,6 +614,7 @@ struct WorldStats {
     )]
     mean_bond_stress: f64,
     pct_bond_stress: f64,
+    crowd_flow: f64,
     infl_ann: f64,
     /// depth profile: median share of sessions more than 5/10/20% below the running peak,
     /// equity leg then bond leg
@@ -611,6 +624,19 @@ struct WorldStats {
     dd_bd5: f64,
     dd_bd10: f64,
     dd_bd20: f64,
+}
+
+impl WorldStats {
+    /// Return per unit volatility, in the units this report already prints: `ann_ret` is a LOG
+    /// return in %/yr and `vol` is a fraction. An arithmetic-mean anchor is higher by about
+    /// sigma/2 (0.08 at 16% vol) and has to be restated before it can be compared with this.
+    fn ret_vol(&self) -> f64 {
+        if self.vol <= 0.0 {
+            f64::NAN
+        } else {
+            self.ann_ret / (self.vol * 100.0)
+        }
+    }
 }
 
 /// Scala's `.sum` on a `Seq[Double]`, which folds from `Numeric[Double].zero` — **+0.0**.
@@ -759,6 +785,7 @@ fn measure(sims: &[Path], years: usize) -> WorldStats {
         corr_infl: corr_in(true),
         mean_bond_stress: scala_sum(sims.iter().map(|s| s.mean_bond_stress)) / n_sims,
         pct_bond_stress: scala_sum(sims.iter().map(|s| s.pct_bond_stress)) / n_sims,
+        crowd_flow: scala_sum(sims.iter().map(|s| s.mean_crowd_flow)) / n_sims,
         infl_ann: med(&sims
             .iter()
             .map(|s| (s.cpi[s.cpi.len() - 1] / s.cpi[0]).ln() / years as f64 * 100.0)
@@ -928,6 +955,28 @@ fn gate_checks(st: &WorldStats) -> Vec<(String, bool, GateClass)> {
             st.infl_ann > 1.0 && st.infl_ann < 6.0,
             Realism,
         ),
+        // LEVEL bands, not realism. A 12%-volatility market is still a market, and realism is
+        // ALWAYS required — either band placed there would make the sweep's own OFF-worlds
+        // inadmissible in every report ("no liquidity spiral" runs at 12.6% vol, "low growth" at
+        // 0.34). Class does not weaken them as a search constraint: the calibration loss counts
+        // 0.5 per failed check whatever the class. Volatility keeps its realism band as well —
+        // 8-25% answers "is this a market", 14-18% answers "can its level be read".
+        (
+            n("equity vol 14-18%"),
+            st.vol > 0.14 && st.vol < 0.18,
+            GateClass::Fidelity,
+        ),
+        // 0.50 clears the 1926-2026 reading (0.55) downward; 0.85 sits above the 1954-2026 anchor
+        // (0.69) and below the most favourable non-overlapping 20-year block the record produced
+        // (0.93). A world may be as favourable as a long-horizon market, not as favourable as its
+        // luckiest two decades. The 20-year block SPREAD (0.47-0.93) is deliberately NOT the band:
+        // that is sampling variation in a 20-year window, and this statistic is a population value
+        // over 20,000 path-years — a band drawn from it would readmit worlds at 0.91.
+        (
+            n("return per vol 0.50-0.85"),
+            st.ret_vol() > 0.50 && st.ret_vol() < 0.85,
+            GateClass::Fidelity,
+        ),
         // Only the rungs with a measured real anchor are gated. The bond's >5% and >20% shares
         // are reported everywhere but targeted nowhere: interpolating them would manufacture an
         // anchor.
@@ -1001,6 +1050,21 @@ type StatFn = fn(&WorldStats) -> f64;
 fn fit_targets() -> Vec<(&'static str, StatFn, f64, f64)> {
     vec![
         ("equity vol %", (|st| st.vol * 100.0) as StatFn, 16.0, 1.0),
+        // Ken French F-F_Research_Data_Factors, US total market (Mkt-RF + RF), measured in the
+        // units this row is compared in: annualised LOG return over sqrt(mean(r^2) * 252) on
+        // DAILY data. Both conversions matter — a CAGR read as a simple rate and a monthly-derived
+        // volatility each inflate the ratio, and together they turned a 0.69 anchor into 0.76.
+        //   1954-2026 (the window of the rows around this one)  10.82%/yr over 15.68%  =  0.69
+        //   1926-2026 (the only 100-year sample there is)        9.38%/yr over 17.14%  =  0.55
+        // The target stays on the anchor window so the target set is internally consistent, NOT
+        // because 0.55 is the wrong reading for a generator scored on 100-year paths; the gate
+        // band admits it rather than legislating it away.
+        (
+            "return per vol",
+            (|st: &WorldStats| st.ret_vol()) as StatFn,
+            0.69,
+            1.0,
+        ),
         ("kurtosis", (|st| st.kurt) as StatFn, 28.0, 0.5),
         ("clustering lag 1", (|st| st.ac1) as StatFn, 0.27, 1.0),
         ("clustering lag 20", (|st| st.ac20) as StatFn, 0.20, 0.5),
@@ -1030,7 +1094,20 @@ fn fit_targets() -> Vec<(&'static str, StatFn, f64, f64)> {
         // the report, because this is a TIME SHARE rather than a max order statistic: it is
         // horizon-stable where maximum drawdown is not (measured: the model's >10% share is 0.464
         // at both 20 and 100 years), so the two windows are comparable in a way maxDD's would not
-        // be. The bond anchor is a clean iShares TLT total-return series over 24 years, and only
+        // be.
+        //
+        // HORIZON-stable is not WINDOW-stable, and the difference is large enough to matter. The
+        // real 10% rung reads 0.269 over 1954-2026, 0.315 over 1993-2026 and 0.386 over 1926-2026.
+        // The +-0.10 gate bands span that spread, which is part of why they pass; do not read a
+        // passing depth rung as agreement with a particular window.
+        //
+        // Validated once against a series the calibration never saw (CRSP value-weighted, 33-year
+        // windows inside 1954-2026): the model's 0.500 / 0.350 / 0.150 against a real median of
+        // 0.451 / 0.291 / 0.151. The 20% rung is essentially exact; the 5% and 10% rungs sit at or
+        // just above the top of the real range, i.e. this model still spends 10-30% too long in
+        // SHALLOW drawdowns. That is a LEVEL bias and it survives the gate.
+        //
+        // The bond anchor is a clean iShares TLT total-return series over 24 years, and only
         // the 10% rung of it has been measured. The other two bond rungs are REPORTED, not
         // targeted: filling them in by interpolation would manufacture a calibration anchor out
         // of nothing.
@@ -1612,41 +1689,90 @@ fn evaluate(
     )
 }
 
-fn sweep_worlds(base: &World, single: bool) -> Vec<(&'static str, World)> {
+/// Every world is tagged CHARACTER (false) or REFLEXIVE (true). A character world varies what
+/// the market is like; a reflexive world changes WHO IS TRADING, by handing the crowd a rule to
+/// run. They answer different questions and must never be averaged together — see
+/// `run_strategy_sweep`, where the ranks are computed over each set separately.
+///
+/// `with_reflexive` is false for `-power` and `-buffer`: reflexivity is the point in the
+/// rank-stability table, and a second-order effect on dispersion and crash dynamics elsewhere.
+fn sweep_worlds(
+    base: &World,
+    single: bool,
+    with_reflexive: bool,
+) -> Vec<(&'static str, World, bool)> {
     if single {
-        return vec![("baseline", *base)];
+        return vec![("baseline", *base, false)];
     }
     let with = |f: fn(&mut World)| -> World {
         let mut w = *base;
         f(&mut w);
         w
     };
-    vec![
-        ("baseline", *base),
-        ("few trend followers", with(|w| w.trend_share = 0.15)),
-        ("many trend followers", with(|w| w.trend_share = 0.50)),
-        ("no liquidity spiral", with(|w| w.stress = 0.0)),
-        ("severe liquidity spiral", with(|w| w.stress *= 1.5)),
-        ("weak value anchor", with(|w| w.value_pull *= 0.6)),
-        ("calm volatility", with(|w| w.vol_of_vol = 0.010)),
-        ("turbulent volatility", with(|w| w.vol_of_vol = 0.030)),
-        ("sticky capital", with(|w| w.beta = 1.0)),
-        ("fickle capital", with(|w| w.beta = 6.0)),
-        ("low growth", with(|w| w.drift = 0.060)),
-        ("high growth", with(|w| w.drift = 0.140)),
-        ("shallow market", with(|w| w.depth = 10.0)),
-        ("deep market", with(|w| w.depth = 15.0)),
+    let mut out = vec![
+        ("baseline", *base, false),
+        // RELATIVE, not absolute. Absolute perturbation points are silently invalidated by a
+        // change of defaults: at 0.19.1 the old pairs stopped bracketing the baseline entirely —
+        // "few trend followers" (0.15) had 2.5x the baseline's trend followers and "deep market"
+        // (15.0) was shallower than it. A multiplier below 1 and one above cannot stop straddling
+        // the base, so the property is structural instead of a thing to remember to re-check.
+        // (A base of exactly 0 collapses both arms onto it; that is true of the existing relative
+        // arms too, and `-stress 0` already has it.)
+        // The mandate is a spring, so the REALIZED share moves far less than the mandate: these
+        // arms span 0.19-0.30 realized against the baseline's 0.22.
+        ("few trend followers", with(|w| w.trend_share /= 3.0), false),
+        (
+            "many trend followers",
+            with(|w| w.trend_share *= 3.0),
+            false,
+        ),
+        ("no liquidity spiral", with(|w| w.stress = 0.0), false),
+        ("severe liquidity spiral", with(|w| w.stress *= 1.5), false),
+        ("weak value anchor", with(|w| w.value_pull *= 0.6), false),
+        ("calm volatility", with(|w| w.vol_of_vol *= 0.5), false),
+        ("turbulent volatility", with(|w| w.vol_of_vol *= 2.0), false),
+        ("sticky capital", with(|w| w.beta = 1.0), false),
+        ("fickle capital", with(|w| w.beta = 6.0), false),
+        ("low growth", with(|w| w.drift = 0.060), false),
+        ("high growth", with(|w| w.drift = 0.140), false),
+        ("shallow market", with(|w| w.depth *= 0.8), false),
+        ("deep market", with(|w| w.depth *= 1.25), false),
         // NOT "cash leg only" any more: the rate level sets bond carry, and the zero floor
         // binds at low rates (an emergent zero-lower-bound). These double as carry-level
         // probes (low ~ 2022, high ~ 1970s).
-        ("low rates / low carry", with(|w| w.rate_mean = 0.01)),
-        ("high rates / high carry", with(|w| w.rate_mean = 0.07)),
+        ("low rates / low carry", with(|w| w.rate_mean = 0.01), false),
+        (
+            "high rates / high carry",
+            with(|w| w.rate_mean = 0.07),
+            false,
+        ),
         // OFF-world: refuge
-        ("no flight bid", with(|w| w.flight = 0.0)),
+        ("no flight bid", with(|w| w.flight = 0.0), false),
         // OFF-world: margin
-        ("no margin coupling", with(|w| w.margin = 0.0)),
-        ("double inflation severity", with(|w| w.infl_size *= 2.0)),
-    ]
+        ("no margin coupling", with(|w| w.margin = 0.0), false),
+        (
+            "double inflation severity",
+            with(|w| w.infl_size *= 2.0),
+            false,
+        ),
+    ];
+    if with_reflexive {
+        // TWO AXES, not two modes. Before the momentum crowd got a strength dial there was only
+        // one dimension here, so "which crowd" was the whole question; now a mode entry that does
+        // not state a strength silently picks the default, which is not the interesting value.
+        out.push((
+            "reflexive: crowd runs a vol rule",
+            with(|w| w.crowd = Crowd::VolScaled),
+            true,
+        ));
+        // 0.12 is the stress case: admissible, where 0.25 fails the gate.
+        out.push((
+            "reflexive: crowd pressed hard",
+            with(|w| w.crowd_impact = 0.12),
+            true,
+        ));
+    }
+    out
 }
 
 // ---- grading statistics -----------------------------------------------------------------
@@ -1771,7 +1897,19 @@ fn n_star_str(x: f64) -> String {
 
 fn calibrate(n_samples: usize, base: &World, seed: u64) {
     type Setter = fn(&mut World, f64);
+    // depth, trendShare, drift and crowdImpact are in the search because they are the strongest
+    // levers on the
+    // two defects the eight below cannot reach. depth carries crash frequency (at fixed stress,
+    // 12 -> 24 takes it from 35 to 13 per century) but moves volatility in lockstep with it.
+    // drift is the ONLY knob that moves the depth profile at constant volatility — which is why
+    // it cannot be searched without the return-per-vol band above, or the search buys the depth
+    // rungs with a Sharpe no 20-year stretch of the real record produced. Their CLI flags are
+    // inert under -calibrate, exactly like the eight below.
     let ranges: Vec<(&str, f64, f64, Setter)> = vec![
+        ("depth", 10.0, 26.0, |w, x| w.depth = x),
+        ("trendShare", 0.05, 0.70, |w, x| w.trend_share = x),
+        ("drift", 0.06, 0.16, |w, x| w.drift = x),
+        ("crowdImpact", 0.01, 0.20, |w, x| w.crowd_impact = x),
         ("stress", 2.0, 6.0, |w, x| w.stress = x),
         ("valuePull", 0.010, 0.035, |w, x| w.value_pull = x),
         ("volOfVol", 0.012, 0.030, |w, x| w.vol_of_vol = x),
@@ -1881,18 +2019,18 @@ fn run_strategy_sweep(
 ) {
     let rs = rules();
     let nr = rs.len();
-    let worlds = sweep_worlds(base, single);
+    let worlds = sweep_worlds(base, single, true);
     eprintln!(
         "{} worlds x {paths} paths x {years} years, {nr} rules x {{cash,bond}}",
         worlds.len()
     );
-    let results: Vec<(&str, bool, WorldStats, Evald)> = worlds
+    let results: Vec<(&str, bool, WorldStats, Evald, bool)> = worlds
         .iter()
-        .map(|(wname, w)| {
+        .map(|(wname, w, reflexive)| {
             let sims = sim_paths(w, paths, years, seed);
             let st = measure(&sims, years);
             let ok = gate_ok(&st, gate_req);
-            (*wname, ok, st, eval_world(&sims, cost, years))
+            (*wname, ok, st, eval_world(&sims, cost, years), *reflexive)
         })
         .collect();
 
@@ -1904,10 +2042,11 @@ fn run_strategy_sweep(
     );
     println!("portfolio at the rule's own average exposure IN THE SAME ASSETS; g/n = gross/net of");
     println!("liquidity-scaled trading costs.  ruin = share of paths with a loss worse than 50%.");
-    for (wname, ok, st, evald) in &results {
+    for (wname, ok, st, evald, reflexive) in &results {
         println!(
-            "\nWORLD: {:<28} {}",
+            "\nWORLD: {:<34} {}{}",
             wname,
+            if *reflexive { "[REFLEXIVE] " } else { "" },
             if *ok {
                 ""
             } else {
@@ -2015,14 +2154,32 @@ fn run_strategy_sweep(
         }
     }
 
-    let valid: Vec<&(&str, bool, WorldStats, Evald)> =
-        results.iter().filter(|(_, ok, _, _)| *ok).collect();
+    // Character and reflexive worlds are ranked SEPARATELY and never pooled. A character world
+    // varies what the market is like; a reflexive world changes who is trading. One pooled
+    // "stable across 21 worlds" that concealed an inversion in the two worlds most able to
+    // produce one would be worse than not running them: the split is structural, not cosmetic.
+    type Row<'a> = &'a (&'a str, bool, WorldStats, Evald, bool);
+    let valid: Vec<Row> = results
+        .iter()
+        .filter(|(_, ok, _, _, refl)| *ok && !*refl)
+        .collect();
+    let reflexive: Vec<Row> = results
+        .iter()
+        .filter(|(_, ok, _, _, refl)| *ok && *refl)
+        .collect();
+    let n_char = results.iter().filter(|t| !t.4).count();
+    let n_refl = results.len() - n_char;
     println!(
-        "\n\nRANK STABILITY — {} of {} worlds pass the gate; ranks use only those.",
+        "\n\nRANK STABILITY — {} of {} CHARACTER worlds pass the gate; ranks use only those.",
         valid.len(),
-        results.len()
+        n_char
     );
     println!("Rank stability is the WEAK form of robustness: magnitudes vary far more than ranks.");
+    if !single {
+        println!(
+            "These ranks hold the crowd FIXED AND NON-REACTIVE; the reflexive panel below varies it."
+        );
+    }
     // An empty admissible set is a RESULT, not a table to print anyway: a rank over no worlds has
     // no best and no worst. Printing it as zeros reads as "every rule tied", which is a claim.
     if valid.is_empty() {
@@ -2052,7 +2209,7 @@ fn run_strategy_sweep(
         for j in 0..nr {
             let ranks: Vec<usize> = valid
                 .iter()
-                .map(|(_, _, _, evald)| {
+                .map(|(_, _, _, evald, _)| {
                     let mut med: Vec<(usize, f64)> = (0..nr)
                         .map(|k| {
                             (
@@ -2080,12 +2237,95 @@ fn run_strategy_sweep(
         }
     }
 
+    // ---- reflexivity: the qualifier the character ranks carry, made visible ---------------
+    if !single {
+        println!(
+            "\n\nREFLEXIVITY: {} of {} reflexive worlds pass the gate.",
+            reflexive.len(),
+            n_refl
+        );
+        println!(
+            "The ranks above hold the crowd fixed and non-reactive.  These worlds hand the crowd a"
+        );
+        println!(
+            "rule to run, so its de-risking moves the price it reacts to: they change WHO IS TRADING"
+        );
+        println!(
+            "rather than the market's character.  They are NOT pooled with the ranks above, and the"
+        );
+        println!("flight-to-safety and refuge tables below exclude them for the same reason.");
+        if reflexive.is_empty() {
+            println!(
+                "\n  no reflexive world passes the required gate classes; the qualifier stands untested."
+            );
+        } else {
+            let metrics2: Vec<OutcomeMetric> = vec![
+                ("median net return", |o: &Outcome| o.ann),
+                ("median GROSS edge vs the fixed twin", |o: &Outcome| {
+                    o.vs_flat_g
+                }),
+            ];
+            let rank_in = |set: &[Row], j: usize, get: fn(&Outcome) -> f64| -> Vec<usize> {
+                set.iter()
+                    .map(|(_, _, _, evald, _)| {
+                        let mut med: Vec<(usize, f64)> = (0..nr)
+                            .map(|k| {
+                                (
+                                    k,
+                                    pctile(
+                                        &evald.iter().map(|v| get(&v[k].0)).collect::<Vec<f64>>(),
+                                        0.5,
+                                    ),
+                                )
+                            })
+                            .collect();
+                        med.sort_by(|a, b| (-a.1).total_cmp(&(-b.1)));
+                        med.iter().position(|(k, _)| *k == j).unwrap_or(0) + 1
+                    })
+                    .collect()
+            };
+            for (metric_name, get) in metrics2 {
+                let names: Vec<&str> = reflexive.iter().map(|t| t.0).collect();
+                println!(
+                    "\n  ranked by {metric_name}   (1 = best)   {}",
+                    names.join(" | ")
+                );
+                #[expect(
+                    clippy::needless_range_loop,
+                    reason = "j indexes two parallel collections"
+                )]
+                for j in 0..nr {
+                    let ranks = rank_in(&reflexive, j, get);
+                    let chr = rank_in(&valid, j, get);
+                    let cmin = chr.iter().min().copied().unwrap_or(0);
+                    let cmax = chr.iter().max().copied().unwrap_or(0);
+                    let inverts = !chr.is_empty()
+                        && (ranks.iter().min().copied().unwrap_or(0) > cmax
+                            || ranks.iter().max().copied().unwrap_or(0) < cmin);
+                    let cells: Vec<String> = ranks.iter().map(|r| format!("{r:>2}")).collect();
+                    println!(
+                        "  {:<34} {}   character {}-{}{}",
+                        rs[j].name,
+                        cells.join(" "),
+                        cmin,
+                        cmax,
+                        if inverts {
+                            "   <-- MOVES OUTSIDE THE CHARACTER RANGE"
+                        } else {
+                            ""
+                        }
+                    );
+                }
+            }
+        }
+    }
+
     // ---- flight to safety, DECOMPOSED so carry cannot masquerade as timing ----------------
     //   total  = bond-refuge net return minus cash-refuge net return
     //   static = what a CONSTANT mix at the same average exposure gains just from holding bonds
     //   timing = the change in the rule's edge over its own constant twin when the twin also
     //            holds bonds — the only part attributable to timed flight
-    let pooled: Vec<&PathOutcomes> = valid.iter().flat_map(|(_, _, _, e)| e.iter()).collect();
+    let pooled: Vec<&PathOutcomes> = valid.iter().flat_map(|(_, _, _, e, _)| e.iter()).collect();
     println!(
         "\nFLIGHT TO SAFETY — de-risking into BONDS instead of cash, pooled over the market-like"
     );
@@ -2466,9 +2706,9 @@ fn run_power_report(
         println!(
             "  to hold in every world the gate admits, or it is a property of one parameter setting."
         );
-        let per_world: Vec<(bool, PowerTable)> = sweep_worlds(base, false)
+        let per_world: Vec<(bool, PowerTable)> = sweep_worlds(base, false, false)
             .iter()
-            .map(|(_, w)| power(w, l, seed + 31))
+            .map(|(_, w, _)| power(w, l, seed + 31))
             .collect();
         let passing: Vec<&PowerTable> = per_world
             .iter()
@@ -2721,9 +2961,9 @@ fn run_buffer_report(
         println!(
             "  the world parameters is a property of one parameter setting, not a planning figure."
         );
-        let per_world: Vec<(bool, Vec<BufferArm>)> = sweep_worlds(base, false)
+        let per_world: Vec<(bool, Vec<BufferArm>)> = sweep_worlds(base, false, false)
             .iter()
-            .map(|(_, w)| buffer_stats(w))
+            .map(|(_, w, _)| buffer_stats(w))
             .collect();
         let passing: Vec<&Vec<BufferArm>> = per_world
             .iter()
@@ -3235,28 +3475,51 @@ fn main() {
     let mut cost = 0.0010f64;
     let mut fitness_only = false;
     let mut calibrate_n = 0usize;
-    // defaults = best of a 50-sample random search against the fitness loss, scored at
-    // 100-year paths (train 3.43, holdout 3.44 — indistinguishable, so not seed-fit)
-    let mut trend_share = 0.30f64;
-    let mut depth = 12.0f64;
-    let mut stress = 3.4f64;
+    // defaults = a random search against the fitness loss, scored at 100-year paths, lightly
+    // rounded. Reachable ONLY because depth, trendShare, drift and crowdImpact are in the search;
+    // held fixed, as all four were until 0.19.1, no sample gets here. Loss 3.13-3.57 across five
+    // scoring seeds against the pre-0.19.1 defaults' 5.77-6.11.
+    //
+    // `stress` IS NOT AT THE OBJECTIVE'S MINIMUM, deliberately. The loss minimises at stress 5.9
+    // (3.128 against 3.280 here, ~0.13 across five seeds); 5.4 was chosen to cut a REGRESSION the
+    // objective does not weigh heavily enough to see. The liquidity spiral is a single amplifier
+    // producing volatility, fat tails AND volatility clustering together — `stress` alone moves
+    // ac1 from 0.160 at 3.4 to 0.420 at 7.0 — so raising it to fix kurtosis (0.28 -> 0.58) drove
+    // clustering from an almost-exact 0.90 to 1.33. At 5.4 the split is: clustering 1.20 (from
+    // 1.33), the 10% depth rung 1.06 (from 1.13), crash rate 1.20 (from 1.26), worst crash 1.49
+    // (from 1.54, back under the MISS threshold); paid for with kurtosis 0.46 (from 0.58), equity
+    // vol 0.92 (from 0.98), return per vol 1.14 (from 1.08), median depth 0.93 (from 0.97) and the
+    // 20% rung 0.92 (from 1.02). Do not "optimise" this back to 5.9 without re-reading that trade.
+    //
+    // KURTOSIS AND CLUSTERING CANNOT BOTH BE RIGHT. stress 7.5 reaches kurtosis 26.4 against a real
+    // 28 — and clustering 1.67, failing the realism band. That is the measured reason the kurtosis
+    // MISS stands, more precise than "no slow valuation cycle": the cycle is why there is no SECOND
+    // channel for tails, not why this one cannot reach them.
+    //
+    // TWO KNOWN BIAS DIRECTIONS, netted away nowhere else, pointing opposite ways: clustering at
+    // 1.20 makes volatility more predictable here than in the record, which flatters any rule that
+    // forecasts it; worst crash at 1.49 puts index paths near -84% against a real -56.8%, which no
+    // levered fund survives, so ruin rates for levered sleeves are UPPER BOUNDS, not estimates.
+    let mut trend_share = 0.06f64;
+    let mut depth = 16.3f64;
+    let mut stress = 5.4f64;
     let mut beta = 3.0f64;
     let mut vol_persist = 0.99f64;
-    let mut vol_of_vol = 0.028f64;
-    let mut value_pull = 0.015f64;
+    let mut vol_of_vol = 0.011f64;
+    let mut value_pull = 0.013f64;
     let mut crowd_name = "momentum".to_string();
-    let mut crowd_impact = 0.06f64;
+    let mut crowd_impact = 0.088f64;
     let mut panic_k = 0.0f64;
-    let mut drift = 0.100f64;
+    let mut drift = 0.117f64;
     let mut rate_mean = 0.042f64;
     let mut duration = 13.5f64;
-    let mut flight = 0.38f64;
+    let mut flight = 0.48f64;
     let mut infl_prob = 0.20f64;
-    let mut infl_size = 0.07f64;
+    let mut infl_size = 0.10f64;
     let mut infl_speed = 0.010f64;
     let mut rate_speed = 3.0f64;
-    let mut discount = 4.0f64;
-    let mut margin = 0.0008f64;
+    let mut discount = 3.35f64;
+    let mut margin = 0.006f64;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -3309,8 +3572,6 @@ fn main() {
         cli_die(&format!("-years must be at least 1, got {years}"));
     }
 
-    // defaults = best of a 50-sample random search against the fitness loss, scored at
-    // 100-year paths (train 3.43, holdout 3.44 — indistinguishable, so not seed-fit)
     let crowd = match crowd_name.to_lowercase().as_str() {
         "momentum" => Crowd::Momentum,
         "volscaled" => Crowd::VolScaled,
@@ -3569,9 +3830,23 @@ fn main() {
         jf(st.pct_bond_stress * 100.0, 0, 1),
         jf(st.clamp_pct, 0, 3)
     );
+    println!(
+        "                         crowd flow {} bp/session ({}% of the noise term) — the reflexive channel",
+        jf(st.crowd_flow * 1e4, 0, 2),
+        jf(st.crowd_flow / SIGMA_N * 100.0, 0, 1)
+    );
 
     println!();
-    println!("  fidelity against targets (S&P 1954-2026 equity; long-Treasury refuge):");
+    // The anchors do NOT share one window, and a single-window label invites a reader to re-derive
+    // them from it and conclude the model has drifted. Measured over 1954-2026, the equity depth
+    // rungs read 0.436 / 0.269 / 0.126 against the 0.447 / 0.315 / 0.169 targeted here.
+    println!(
+        "  fidelity against targets, by anchor (each row is against the window named for it):"
+    );
+    println!(
+        "    equity S&P 1954-2026   |   depth rungs SPY 1993-2026   |   return per vol CRSP 1954-2026"
+    );
+    println!("    refuge long Treasury   |   bond depth rung clean TLT, 24y");
     for (n, get, want, _) in fit_targets() {
         let got = get(&st);
         let ratio = if want != 0.0 { got / want } else { f64::NAN };
