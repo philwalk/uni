@@ -2,7 +2,7 @@
 //package uni.apps
 
 //> using scala 3.7.2
-//> using dep org.vastblue:uni_3:0.19.1
+//> using dep org.vastblue:uni_3:0.19.2
 
 // MARKET SIMULATOR — a testbed for COMPARING exposure strategies over long horizons.
 //
@@ -228,10 +228,6 @@ object MarketSim:
   val DefaultSeed = 20260813L
   val DefaultEmitGate = 200
   val DefaultCost = 0.0010
-  /** `-power`'s default contrast arms, as 1-based indices into `Rules`, and its default history
-    * lengths.  Named here rather than inside the report so `usage` states them and `main` seeds
-    * from them — the same one-source rule the world's defaults follow.
-    * 21 = the traded book's span; 72 = the S&P record used for calibration; the ends bracket them. */
   /** The default world as it shipped at each published release, so a candidate can be compared
     * against EVERY shipped version rather than only its immediate predecessor -- the reading under
     * which five individually-acceptable trades accumulate invisibly.
@@ -254,6 +250,10 @@ object MarketSim:
     ("0.17.0", PreV1901), ("0.18.0", PreV1901), ("0.19.0", PreV1901),
     ("0.19.1", PreV1902), ("0.19.2", Defaults))
 
+  /** `-power`'s default contrast arms, as 1-based indices into `Rules`, and its default history
+    * lengths.  Named here rather than inside the report so `usage` states them and `main` seeds
+    * from them — the same one-source rule the world's defaults follow.
+    * 21 = the traded book's span; 72 = the S&P record used for calibration; the ends bracket them. */
   val PowerArmsDefault  = Vector(2, 6, 9, 8)
   val PowerYearsDefault = Vector(21, 40, 72, 100)
 
@@ -702,8 +702,8 @@ object MarketSim:
   def gateChecks(st: WorldStats): Vector[(String, Boolean, GateClass)] =
     import GateClass.*
     Vector(
-      ("equity vol 8-25%",          st.vol > 0.08 && st.vol < 0.25, Realism),
-      ("kurtosis 4-30",             st.kurt > 4.0 && st.kurt < 30.0, Realism),
+      bandCheck("equity vol",       st.vol * 100.0, 8.0, 25.0, Realism, dp = 0, unit = "%"),
+      bandCheck("kurtosis",         st.kurt, 4.0, 30.0, Realism, dp = 0),
       ("clustering 0.10-0.40",      st.ac1 > 0.10 && st.ac1 < 0.40 && st.ac20 > 0.03, Realism),
       ("crash rate 8-45/century",   st.epPerPath >= 1.0 && {
           val pc = st.epPerPath * 100.0 / st.yearsPerPath; pc >= 8.0 && pc <= 45.0 }, Realism),
@@ -725,50 +725,65 @@ object MarketSim:
       // admitted one, and asserted of the US Aggregate (4.24%) that it is not a market.  0.5-2.5
       // per year of duration admits every fund measured, high yield at 2.001 included, and still
       // catches a bond whose volatility bears no relation to what it is.
-      ("bond vol 0.5-2.5x duration", st.bondVolPerYear > 0.5 && st.bondVolPerYear < 2.5, Realism),
+      bandCheck("bond vol", st.bondVolPerYear, 0.5, 2.5, Realism, dp = 1, unit = "x duration"),
       ("bonds rally in growth shocks",    st.bondGrowth > 3.0, Mechanism),
       ("bonds LOSE in inflation regimes", st.bondInfl < -3.0, Mechanism),
       ("corr flips positive under inflation",
           !st.corrInfl.isNaN && !st.corrCalm.isNaN &&
           st.corrInfl > st.corrCalm + 0.15 && st.corrInfl > 0.0 && st.corrCalm < 0.35, Mechanism),
       ("bond spiral engages, not always", st.pctBondStress > 0.002 && st.pctBondStress < 0.5, Mechanism),
-      ("inflation 1-6%/yr",         st.inflAnn > 1.0 && st.inflAnn < 6.0, Realism),
+      bandCheck("inflation",        st.inflAnn, 1.0, 6.0, Realism, dp = 0, unit = "%/yr"),
       // LEVEL bands, not realism.  A 12%-volatility market is still a market, and realism is
       // ALWAYS required — either band placed there would make the sweep's own OFF-worlds
       // inadmissible in every report ("no liquidity spiral" runs at 12.6% vol, "low growth" at
       // 0.34).  Class does not weaken them as a search constraint: the calibration loss counts
       // 0.5 per failed check whatever the class.  Volatility keeps its realism band as well —
       // 8-25% answers "is this a market", 14-18% answers "can its level be read".
-      ("equity vol 14-18%",         st.vol > 0.14 && st.vol < 0.18, Fidelity),
+      bandCheck("equity vol",       st.vol * 100.0, 14.0, 18.0, Fidelity, dp = 0, unit = "%"),
       // 0.50 clears the 1926-2026 reading (0.55) downward; 0.85 sits above the 1954-2026 anchor
       // (0.69) and below the most favourable non-overlapping 20-year block the record produced
       // (0.93).  A world may be as favourable as a long-horizon market, not as favourable as its
       // luckiest two decades.  The 20-year block SPREAD (0.47-0.93) is deliberately NOT the band:
       // that is sampling variation in a 20-year window, and this statistic is a population value
       // over 20,000 path-years -- a band drawn from it would readmit worlds at 0.91.
-      ("return per vol 0.50-0.85",  st.retVol > 0.50 && st.retVol < 0.85, Fidelity),
+      bandCheck("return per vol",   st.retVol, 0.50, 0.85, Fidelity),
       // Only the rungs with a measured real anchor are gated.  The bond's >5% and >20% shares are
       // reported everywhere but targeted nowhere: interpolating them would manufacture an anchor.
       depthCheck("equity >5% below peak",  st.ddEq5,  0.447),
       depthCheck("equity >10% below peak", st.ddEq10, 0.315),
       depthCheck("equity >20% below peak", st.ddEq20, 0.169),
       // Against what this bond's OWN volatility implies, not against TLT's 0.510 -- see
-      // `bondDepthVsVol`.  The band is +-0.35 because the real fit has real scatter (credit funds
-      // sit below the Treasury line), not because the model needs the room: it reads 1.9.
-      ("bond depth vs its vol 0.65-1.35",
-          st.bondDepthVsVol > 0.65 && st.bondDepthVsVol < 1.35, Fidelity),
+      // `bondDepthVsVol`.  The +-0.35 is the real fit's own scatter (credit funds sit below the
+      // Treasury line); the default reads 1.24, so it uses about two thirds of it.
+      bandCheck("bond depth vs its vol", st.bondDepthVsVol, 0.65, 1.35, Fidelity),
       // Treasuries run 0.798-0.973 and investment grade 0.745-0.824; high yield (2.001) is out of
       // scope until there is a credit channel, so the upper bound deliberately excludes it.
-      ("bond vol 0.70-1.10x duration",
-          st.bondVolPerYear > 0.70 && st.bondVolPerYear < 1.10, Fidelity),
+      bandCheck("bond vol", st.bondVolPerYear, 0.70, 1.10, Fidelity, unit = "x duration"),
     )
 
-  /** The band is derived from the real anchor here, so the printed name and the predicate cannot
-    * drift apart — the failure mode where a gate reads as bounds it does not enforce. */
+  /** A gate whose printed name is DERIVED from the bounds its predicate tests, so the two cannot
+    * drift apart — the failure mode where a gate reads as bounds it does not enforce.  Every
+    * two-sided band that can go through here does: a hand-written "0.65-1.35" inside a name is
+    * the same defect this helper exists to prevent, wherever it is written.
+    *
+    * `dp` is printed PRECISION, not tolerance: the depth rungs read 0.215-0.415 and are quoted at
+    * that precision in the CHANGELOG and the upgrade plan, while the duration ratios read
+    * 0.70-1.10.  `unit` is whatever follows the band in the name.  A caller whose printed units
+    * differ from the statistic's passes the CONVERTED value (`st.vol * 100` against 8-25), so the
+    * band and the value compared against it are in the same units by construction.
+    *
+    * Two bands stay hand-written, because the name would stop describing the predicate if they
+    * came through here: `clustering` also enforces an ac20 floor and `crash rate` also requires at
+    * least one episode.  Both are two-sided with visible bounds; what they are not is one clause. */
+  def bandCheck(name: String, got: Double, lo: Double, hi: Double, cls: GateClass,
+                dp: Int = 2, unit: String = ""): (String, Boolean, GateClass) =
+    val fmt = s"%.${dp}f"
+    (s"$name ${fmt.format(lo)}-${fmt.format(hi)}$unit", got > lo && got < hi, cls)
+
+  /** A depth rung's band is the real anchor plus or minus `DepthTol`, so only the anchor is
+    * written down and the two bounds cannot be given independently. */
   def depthCheck(name: String, got: Double, real: Double): (String, Boolean, GateClass) =
-    val lo = real - DepthTol
-    val hi = real + DepthTol
-    (f"$name%s ${lo}%.3f-${hi}%.3f", got > lo && got < hi, GateClass.Fidelity)
+    bandCheck(name, got, real - DepthTol, real + DepthTol, GateClass.Fidelity, dp = 3)
 
   def failedIn(st: WorldStats, cls: GateClass): Vector[String] =
     gateChecks(st).collect { case (n, false, c) if c == cls => n }
@@ -1535,14 +1550,12 @@ object MarketSim:
     println()
     println(f"  ${"target"}%-22s" + cols.map((v, _) => f"$v%8s").mkString +
             f"   ${"best"}%7s   worse than best")
-    var curTotal = 0.0
     var bestTotal = 0.0
     for (name, get, want, _) <- FitTargets do
       val rs = stats.map((_, st) => get(st) / want)
       val errs = rs.map(r => math.abs(r - 1.0))
       val cur = errs.last
       val bestIdx = errs.indices.minBy(errs)
-      curTotal += cur
       bestTotal += errs(bestIdx)
       val flag = if bestIdx != errs.size - 1 && errs(bestIdx) < cur - 0.005 then
                    f"<-- ${cols(bestIdx)._1}%s was ${rs(bestIdx)}%.2f" else ""

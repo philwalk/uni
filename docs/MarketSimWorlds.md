@@ -112,8 +112,18 @@ A non-zero exit means at least one quantity's *level* cannot be read in that wor
 
 `-easing` is a cap, not a speed. The flag it replaced, `-flight`, was a cut *rate* per year, so it
 is rejected rather than reinterpreted: no `-flight` value carries over. Together these two are what
-makes the bond a refuge, and each is load-bearing on its own — at `-refuge 0` the bond stops
-rallying in crashes at all, and at `-easing 0` it rallies but its drawdown profile goes shallow.
+makes the bond a refuge, but they are not load-bearing in the same way, and the difference is worth
+knowing before turning either off.
+
+**`-refuge` is necessary.** At `-refuge 0` the bond stops rallying in crashes at all (growth-crash
+0.03x real) and the mechanism check "bonds rally in growth shocks" FAILS.
+
+**`-easing` is not.** At `-easing 0` the world still passes realism, mechanism *and* fidelity, and
+the bond depth row is *better* — 0.93 against the default's 1.24, where 1.00 is the target. Easing
+earns its place on the objective rather than on the gate: it buys the two bond crash responses
+(growth-crash 0.34 → 0.42, inflation-crash 0.87 → 0.96) for a fitness loss of 3.27 → 2.76, and pays
+with the depth row and a little crash rate. If the question is bond drawdown specifically,
+`-easing 0` is the better world and the default is not.
 
 ## Every dial moves several things at once
 

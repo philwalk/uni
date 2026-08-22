@@ -139,7 +139,9 @@ class MatParitySuite extends munit.FunSuite:
     // a regeneration that silently dropped more than half the corpus (3452 rows became "fine"
     // anywhere above 1550).  A count that cannot fail is not coverage.  Raising one of these is
     // a deliberate act; a regeneration that lowers a count should fail here and be explained.
-    assert(rows.length >= 3400, s"only ${rows.length} rows; the corpus has shrunk — regenerate or explain")
+    assert(rows.length >= 3400,
+      s"only ${rows.length} rows, against 13 sizes + 11 shapes + 10 adversarial and the " +
+      s"per-family minima below; the corpus has shrunk — regenerate or explain")
     val twoD = rows.count((shape, _, _) => is2d(shape))
     assert(twoD >= 2150, s"only $twoD 2-D rows; the view model would go under-checked")
     val masks = rows.count((_, label, _) => label.startsWith("mask."))

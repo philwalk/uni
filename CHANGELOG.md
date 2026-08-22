@@ -1,4 +1,4 @@
-## v0.19.2 — unreleased
+## v0.19.2 — 2026-08-22
 
 **CHANGED — `marketSim`/`market_sim`: the bond's refuge mechanism is rebuilt; every published number
 moves. `-flight` is removed and is rejected, not reinterpreted.**
@@ -13,8 +13,13 @@ the normal level that then took a decade of carry to regain.
 
 The rate cut is now a capped accommodation *stock* — `-easing` (cap, in rate points), eased in over
 ~2 months, withdrawn at `-unwind` — and the bond gains `-refuge`, a duration-scaled flight-to-quality
-bid. Both are needed: capping the cut alone fixes the drawdown profile and removes the crash rally
-entirely, because the rally *was* the spike.
+bid. Capping the cut alone fixes the drawdown profile and removes the crash rally entirely, because
+the rally *was* the spike — hence refuge, without which the mechanism check "bonds rally in growth
+shocks" fails. The two are not symmetric, and the gate says so: `-refuge 0` FAILS mechanism, while
+`-easing 0` passes all three classes and reads *closer* to real on bond depth (0.93 against the
+default's 1.24, target 1.00). Easing is kept for the objective — growth-crash 0.34 → 0.42,
+inflation-crash 0.87 → 0.96, loss 3.27 → 2.76 — and the depth row is the price. Read bond drawdown
+off `-easing 0`.
 
 ```
                                     0.19.1 + W7a       0.19.2             real
@@ -75,6 +80,62 @@ constrains the policy rate's own distribution. A one-line variant reached the bo
 while putting the rate below 1% for half the century, against a real ~19%, and reported PASS. The
 fix shipped here does not do that — the rate's median is 3.3% and it is below 1% on 1.5% of
 sessions — but the gate would not have caught it either way.
+
+**CHANGED — the volatility-clustering anchors are re-derived on a century; every clustering ratio
+moves**
+
+`clustering lag 1` 0.27 → **0.299** and `lag 20` 0.20 → **0.225**. Source: Ken French / CRSP
+value-weighted US market, daily, 1926-07-01..2026-06-30. The retired pair had no recorded source,
+window or convention — the only two of fifteen fidelity anchors that did not.
+
+The window is the century deliberately, not the 1954-2026 one the equity rows use. This statistic is
+horizon-DEPENDENT in the record (0.271 over 72 years, 0.299 over 100, 0.175-0.311 across
+non-overlapping 20-year blocks) and horizon-INDEPENDENT in the model (0.320 at 20 years, 0.330 at
+150), and the model is scored on 100-year paths. A 72-year anchor was therefore comparing a
+100-year model reading against a 72-year real one.
+
+The convention is stated because its absence is what blocked this: autocorrelation of `|r|` about
+its mean, normalised by the full-series sum of squares — `autocorrAbs`, the function the model
+grades itself with. On this data `autocorr(r²)` reads 0.108 at lag 20 against 0.208 for `|r|`, 92%
+apart; a re-derivation using the wrong one would have concluded the model is 2.2x too high.
+
+*Improves* — anyone reading whether the model's clustering is defensible. The default's readings are
+unchanged (0.316 and 0.243); scored against the retired anchors they were 1.17x and 1.21x, and
+against these they are **1.06x and 1.08x**. The 1.2x gap was the anchor's horizon, not the model.
+*Degrades* — nothing measured. *Unchanged* — every other target, and every rank comparison.
+
+`jsrc/clusteringAnchor.sc` re-measures the anchor from any daily series and calls `autocorrAbs`
+rather than restating the formula, so the two cannot drift. `docs/MarketSimWorlds.md` is new: what
+each dial costs, as a table of ratios.
+
+**FIXED — three checks that could not fail**
+
+- **"both recovery shapes"** read `vCount >= nShapes / 10` with INTEGER division, so below ten
+  shapes both clauses were `>= 0` and the check passed with NEITHER shape present. Measured at
+  `-drift 0.9`: V=0, balanced=1, U=0 — and PASS. It degenerated where episodes are scarce, which
+  is where shape evidence is weakest. Now `max(1, …)`: a run that has not demonstrated both shapes
+  FAILS. Worlds with fewer than ten crash episodes that used to pass realism may now fail it.
+- **The reflexive rank-inversion panel** required the whole reflexive SPAN to clear the character
+  range. The two reflexive worlds vary different axes and routinely disagree, so the test flagged
+  nothing in the case worth flagging. Any reflexive world outside the range is now the finding.
+- **`MatParitySuite` / `mat_parity.rs` corpus minima** were 1550 rows and 250 2-D rows against
+  per-family minima summing to 2592 — neither could fire before a family assertion did, and between
+  them they would have admitted a regeneration that dropped more than half the corpus. Now 3400 and
+  2150.
+
+**ADDED — `-releases`, `-powerarms`, `-poweryears`**
+
+`-releases` prints every fidelity ratio at every published default plus the world the invocation
+describes, and flags each row where some earlier default read closer to real than the current one.
+It exists because the natural comparison — candidate against its immediate predecessor — is exactly
+the reading under which a sequence of individually-acceptable trades accumulates with nothing
+showing it. The worlds are historical, the measurement is current: the row answers "how has the
+default moved", not "what did that version report".
+
+`-powerarms N,N` and `-poweryears L,L` make `-power`'s contrast arms and history lengths arguments
+rather than constants, so "these two rules, at the length of history I have" is answerable without a
+code change. The defaults reproduce the previous report. A bad `-powerarms` index prints the
+numbered rule list.
 
 ## v0.19.1 — 2026-08-21
 

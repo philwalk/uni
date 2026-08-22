@@ -510,8 +510,15 @@ at `easing` rate points, eased in at a frozen 6.0/yr (~2 months), withdrawn at `
 ~2-year half-life), and suppressed by inflation exactly as before. Capping it alone fixes the depth
 profile and **removes the crash rally outright** — the rally WAS the spike that set the peak — so
 the bond also gains `refuge`, a flight-to-quality bid that scales with duration and bids for a bond
-whose own market is still orderly. Each is separately necessary: at `-refuge 0` the mechanism check
-"bonds rally in growth shocks" fails; at `-easing 0` the depth profile goes shallow (0.93).
+whose own market is still orderly.
+
+They are not separately necessary, and the asymmetry is recorded rather than smoothed over: at
+`-refuge 0` the mechanism check "bonds rally in growth shocks" FAILS (growth-crash 0.03x), so refuge
+is load-bearing for the gate. `-easing 0` passes all three classes and reads 0.93 on the depth row
+against the default's 1.24 — *better*, the target being 1.00. Easing is kept on the objective, not
+the gate: it moves growth-crash 0.34 → 0.42 and inflation-crash 0.87 → 0.96 for a loss of
+3.27 → 2.76, and the depth row is what pays. A consumer whose question is bond drawdown should run
+`-easing 0`.
 
 | duration | 0.19.1 + W7a | 0.19.2 |
 |---|---|---|

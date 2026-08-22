@@ -48,11 +48,15 @@ done
 # \r only when stdout is a terminal.  CI logs render a carriage return as one unreadable line,
 # so there each script gets its own line instead -- which also means a CI timeout names the
 # script it died on rather than just stopping.
+#
+# The line is erased with \033[K rather than a fixed run of spaces: %-34s is a MINIMUM, so a
+# basename longer than that leaves a tail of the previous script name sitting after the
+# next one -- which reads as the harness having printed something it did not.
 scripts=("$out"/*.sc)
 nscripts=0; [ -e "${scripts[0]}" ] && nscripts=${#scripts[@]}
 if [ -t 1 ]; then
-  progress()     { printf "\r  [%3d/%3d] %-34s %-7s" "$1" "$nscripts" "$2" "$3"; }
-  progress_end() { printf "\r%*s\r" 60 ""; }
+  progress()     { printf "\r\033[K  [%3d/%3d] %-34s %-7s" "$1" "$nscripts" "$2" "$3"; }
+  progress_end() { printf "\r\033[K"; }
 else
   progress()     { printf "  [%3d/%3d] %-34s %s\n" "$1" "$nscripts" "$2" "$3"; }
   progress_end() { :; }

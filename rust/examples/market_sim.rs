@@ -99,11 +99,9 @@ const SIGMA_N: f64 = 0.007;
 /// is what enters the flow, so the default divides to a bit-exact 1.0 and the shipped world is
 /// unchanged; every other setting scales the reflexive channel that used to have no dial at all.
 const CROWD_IMPACT_REF: f64 = 0.06;
-/// `-power`'s default contrast arms, as 1-based indices into `rules()`, and its default history
-/// lengths. Named here rather than inside the report so `main` seeds from them.
-/// 21 = the traded book's span; 72 = the S&P record used for calibration; the ends bracket them.
-/// THE shipped world. `main` seeds its mutable CLI variables from this, so every default is
-/// written once — the same one-source rule the Scala twin's `Defaults` follows.
+/// THE shipped world. `main` seeds its mutable CLI variables from this and the release table
+/// derives its rows from it, so every default is written once — the same one-source rule the Scala
+/// twin's `Defaults` follows.
 fn default_world() -> World {
     World {
         trend_share: 0.06,
@@ -170,6 +168,9 @@ fn releases() -> Vec<(&'static str, World)> {
     ]
 }
 
+/// `-power`'s default contrast arms, as 1-based indices into `rules()`, and its default history
+/// lengths. Named here rather than inside the report so `main` seeds from them.
+/// 21 = the traded book's span; 72 = the S&P record used for calibration; the ends bracket them.
 const POWER_ARMS_DEFAULT: [usize; 4] = [2, 6, 9, 8];
 const POWER_YEARS_DEFAULT: [usize; 4] = [21, 40, 72, 100];
 
@@ -1047,15 +1048,51 @@ impl GateClass {
 /// market — is itself a share, so a point is the same size at every rung.
 const DEPTH_TOL: f64 = 0.10;
 
-/// The band is derived from the real anchor here, so the printed name and the predicate cannot
-/// drift apart — the failure mode where a gate reads as bounds it does not enforce.
-fn depth_check(name: &str, got: f64, real: f64) -> (String, bool, GateClass) {
-    let lo = real - DEPTH_TOL;
-    let hi = real + DEPTH_TOL;
+/// A gate whose printed name is DERIVED from the bounds its predicate tests, so the two cannot
+/// drift apart — the failure mode where a gate reads as bounds it does not enforce. Every
+/// two-sided band that can go through here does: a hand-written "0.65-1.35" inside a name is the
+/// same defect this helper exists to prevent, wherever it is written.
+///
+/// `dp` is printed PRECISION, not tolerance: the depth rungs read 0.215-0.415 and are quoted at
+/// that precision in the CHANGELOG and the upgrade plan, while the duration ratios read
+/// 0.70-1.10. `unit` is whatever follows the band in the name. A caller whose printed units differ
+/// from the statistic's passes the CONVERTED value (`st.vol * 100.0` against 8-25), so the band
+/// and the value compared against it are in the same units by construction.
+///
+/// Two bands stay hand-written, because the name would stop describing the predicate if they came
+/// through here: `clustering` also enforces an ac20 floor and `crash rate` also requires at least
+/// one episode. Both are two-sided with visible bounds; what they are not is one clause.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the Scala twin's parameter list, which uses named arguments for the same seven;               collapsing any pair here would make the two signatures stop reading alike"
+)]
+fn band_check(
+    name: &str,
+    got: f64,
+    lo: f64,
+    hi: f64,
+    cls: GateClass,
+    dp: i32,
+    unit: &str,
+) -> (String, bool, GateClass) {
     (
-        format!("{name} {}-{}", jf(lo, 0, 3), jf(hi, 0, 3)),
+        format!("{name} {}-{}{unit}", jf(lo, 0, dp), jf(hi, 0, dp)),
         got > lo && got < hi,
+        cls,
+    )
+}
+
+/// A depth rung's band is the real anchor plus or minus `DEPTH_TOL`, so only the anchor is written
+/// down and the two bounds cannot be given independently.
+fn depth_check(name: &str, got: f64, real: f64) -> (String, bool, GateClass) {
+    band_check(
+        name,
+        got,
+        real - DEPTH_TOL,
+        real + DEPTH_TOL,
         GateClass::Fidelity,
+        3,
+        "",
     )
 }
 
@@ -1073,12 +1110,8 @@ fn gate_checks(st: &WorldStats) -> Vec<(String, bool, GateClass)> {
     let pc = st.ep_per_path * 100.0 / st.years_per_path;
     let n = |s: &str| s.to_string();
     vec![
-        (
-            n("equity vol 8-25%"),
-            st.vol > 0.08 && st.vol < 0.25,
-            Realism,
-        ),
-        (n("kurtosis 4-30"), st.kurt > 4.0 && st.kurt < 30.0, Realism),
+        band_check("equity vol", st.vol * 100.0, 8.0, 25.0, Realism, 0, "%"),
+        band_check("kurtosis", st.kurt, 4.0, 30.0, Realism, 0, ""),
         (
             n("clustering 0.10-0.40"),
             st.ac1 > 0.10 && st.ac1 < 0.40 && st.ac20 > 0.03,
@@ -1107,14 +1140,18 @@ fn gate_checks(st: &WorldStats) -> Vec<(String, bool, GateClass)> {
         // 0.02% ~ one clamped session per 20 path-years. The old bound (0.5%) would have
         // passed a world where the clamp was already reshaping kurtosis by a third.
         (n("clamp rarely binds"), st.clamp_pct < 0.02, Realism),
-        (
-            // RELATIVE to duration, not absolute. The old 7-20% band was TLT's: of eight real
-            // funds it admitted one, and asserted of the US Aggregate (4.24%) that it is not a
-            // market. 0.5-2.5 per year of duration admits every fund measured, high yield at 2.001
-            // included, and still catches a bond whose volatility bears no relation to what it is.
-            n("bond vol 0.5-2.5x duration"),
-            st.bond_vol_per_year() > 0.5 && st.bond_vol_per_year() < 2.5,
+        // RELATIVE to duration, not absolute. The old 7-20% band was TLT's: of eight real funds
+        // it admitted one, and asserted of the US Aggregate (4.24%) that it is not a market.
+        // 0.5-2.5 per year of duration admits every fund measured, high yield at 2.001 included,
+        // and still catches a bond whose volatility bears no relation to what it is.
+        band_check(
+            "bond vol",
+            st.bond_vol_per_year(),
+            0.5,
+            2.5,
             Realism,
+            1,
+            "x duration",
         ),
         (
             n("bonds rally in growth shocks"),
@@ -1140,21 +1177,21 @@ fn gate_checks(st: &WorldStats) -> Vec<(String, bool, GateClass)> {
             st.pct_bond_stress > 0.002 && st.pct_bond_stress < 0.5,
             Mechanism,
         ),
-        (
-            n("inflation 1-6%/yr"),
-            st.infl_ann > 1.0 && st.infl_ann < 6.0,
-            Realism,
-        ),
+        band_check("inflation", st.infl_ann, 1.0, 6.0, Realism, 0, "%/yr"),
         // LEVEL bands, not realism. A 12%-volatility market is still a market, and realism is
         // ALWAYS required — either band placed there would make the sweep's own OFF-worlds
         // inadmissible in every report ("no liquidity spiral" runs at 12.6% vol, "low growth" at
         // 0.34). Class does not weaken them as a search constraint: the calibration loss counts
         // 0.5 per failed check whatever the class. Volatility keeps its realism band as well —
         // 8-25% answers "is this a market", 14-18% answers "can its level be read".
-        (
-            n("equity vol 14-18%"),
-            st.vol > 0.14 && st.vol < 0.18,
+        band_check(
+            "equity vol",
+            st.vol * 100.0,
+            14.0,
+            18.0,
             GateClass::Fidelity,
+            0,
+            "%",
         ),
         // 0.50 clears the 1926-2026 reading (0.55) downward; 0.85 sits above the 1954-2026 anchor
         // (0.69) and below the most favourable non-overlapping 20-year block the record produced
@@ -1162,10 +1199,14 @@ fn gate_checks(st: &WorldStats) -> Vec<(String, bool, GateClass)> {
         // luckiest two decades. The 20-year block SPREAD (0.47-0.93) is deliberately NOT the band:
         // that is sampling variation in a 20-year window, and this statistic is a population value
         // over 20,000 path-years — a band drawn from it would readmit worlds at 0.91.
-        (
-            n("return per vol 0.50-0.85"),
-            st.ret_vol() > 0.50 && st.ret_vol() < 0.85,
+        band_check(
+            "return per vol",
+            st.ret_vol(),
+            0.50,
+            0.85,
             GateClass::Fidelity,
+            2,
+            "",
         ),
         // Only the rungs with a measured real anchor are gated. The bond's >5% and >20% shares
         // are reported everywhere but targeted nowhere: interpolating them would manufacture an
@@ -1174,19 +1215,27 @@ fn gate_checks(st: &WorldStats) -> Vec<(String, bool, GateClass)> {
         depth_check("equity >10% below peak", st.dd_eq10, 0.315),
         depth_check("equity >20% below peak", st.dd_eq20, 0.169),
         // Against what this bond's OWN volatility implies, not against TLT's 0.510 — see
-        // `bond_depth_vs_vol`. The band is +-0.35 because the real fit has real scatter (credit
-        // funds sit below the Treasury line), not because the model needs the room: it reads 1.9.
-        (
-            n("bond depth vs its vol 0.65-1.35"),
-            st.bond_depth_vs_vol() > 0.65 && st.bond_depth_vs_vol() < 1.35,
+        // `bond_depth_vs_vol`. The +-0.35 is the real fit's own scatter (credit funds sit below
+        // the Treasury line); the default reads 1.24, so it uses about two thirds of it.
+        band_check(
+            "bond depth vs its vol",
+            st.bond_depth_vs_vol(),
+            0.65,
+            1.35,
             GateClass::Fidelity,
+            2,
+            "",
         ),
         // Treasuries run 0.798-0.973 and investment grade 0.745-0.824; high yield (2.001) is out
         // of scope until there is a credit channel, so the upper bound deliberately excludes it.
-        (
-            n("bond vol 0.70-1.10x duration"),
-            st.bond_vol_per_year() > 0.70 && st.bond_vol_per_year() < 1.10,
+        band_check(
+            "bond vol",
+            st.bond_vol_per_year(),
+            0.70,
+            1.10,
             GateClass::Fidelity,
+            2,
+            "x duration",
         ),
     ]
 }
@@ -3856,28 +3905,33 @@ fn main() {
     // crash at 1.44 puts index paths near -82% against a real -56.8%, which no levered fund
     // survives, so ruin rates for levered sleeves are UPPER BOUNDS, not estimates; and crashes
     // arrive 1.32x too often, so any per-crash hazard read off this model is over-sampled.
-    let mut trend_share = 0.06f64;
-    let mut depth = 16.6f64;
-    let mut stress = 5.1f64;
-    let mut beta = 3.0f64;
-    let mut vol_persist = 0.99f64;
-    let mut vol_of_vol = 0.011f64;
-    let mut value_pull = 0.013f64;
-    let mut crowd_name = "momentum".to_string();
-    let mut crowd_impact = 0.088f64;
-    let mut panic_k = 0.0f64;
-    let mut drift = 0.117f64;
-    let mut rate_mean = 0.042f64;
-    let mut duration = 13.5f64;
-    let mut easing = 0.045f64;
-    let mut unwind = 0.35f64;
-    let mut refuge = 0.08f64;
-    let mut infl_prob = 0.20f64;
-    let mut infl_size = 0.10f64;
-    let mut infl_speed = 0.010f64;
-    let mut rate_speed = 3.0f64;
-    let mut discount = 3.35f64;
-    let mut margin = 0.006f64;
+    // Seeded from `default_world()`, never restated. A second copy of the shipped world here is
+    // the failure that function's own docstring claims not to have: it would drift silently,
+    // because the only thing comparing the two is a `-releases` run noticing that its 0.19.2 row
+    // and its `current` row disagree.
+    let dw = default_world();
+    let mut trend_share = dw.trend_share;
+    let mut depth = dw.depth;
+    let mut stress = dw.stress;
+    let mut beta = dw.beta;
+    let mut vol_persist = dw.vol_persist;
+    let mut vol_of_vol = dw.vol_of_vol;
+    let mut value_pull = dw.value_pull;
+    let mut crowd_name = crowd_name(dw.crowd);
+    let mut crowd_impact = dw.crowd_impact;
+    let mut panic_k = dw.panic;
+    let mut drift = dw.drift;
+    let mut rate_mean = dw.rate_mean;
+    let mut duration = dw.duration;
+    let mut easing = dw.easing;
+    let mut unwind = dw.unwind;
+    let mut refuge = dw.refuge;
+    let mut infl_prob = dw.infl_prob;
+    let mut infl_size = dw.infl_size;
+    let mut infl_speed = dw.infl_speed;
+    let mut rate_speed = dw.rate_speed;
+    let mut discount = dw.discount;
+    let mut margin = dw.margin;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -3990,7 +4044,7 @@ fn main() {
         stress,
         beta,
         drift,
-        fund_vol: 0.13,
+        fund_vol: dw.fund_vol,
         rate_mean,
         vol_persist,
         vol_of_vol,

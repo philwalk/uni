@@ -1253,7 +1253,7 @@ fn assert_coverage(rows: &[(String, String, u64)]) {
     // is not coverage.
     assert!(
         checked >= 3400,
-        "only {checked} rows checked; the corpus has shrunk — regenerate or explain"
+        "only {checked} rows checked, against 13 sizes x 10 + 11 shapes x 27 + 10 adversarial          x 60 and the per-family minima below; the corpus has shrunk — regenerate or explain"
     );
     assert!(
         masks >= 800,
