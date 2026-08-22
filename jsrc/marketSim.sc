@@ -85,6 +85,10 @@ object MarketSim:
     v.toLongOption.getOrElse(usage(s"$flag wants an integer, got [$v]"))
   def numOr(flag: String, v: String): Double =
     v.toDoubleOption.getOrElse(usage(s"$flag wants a number, got [$v]"))
+  def intListOr(flag: String, v: String): Vector[Int] =
+    val parts = v.split(",").map(_.trim).filter(_.nonEmpty).toVector
+    if parts.isEmpty then usage(s"$flag wants a comma-separated list of integers, got [$v]")
+    parts.map(p => p.toIntOption.getOrElse(usage(s"$flag wants integers, got [$p]")))
 
   def usage(m: String = ""): Nothing = showUsage(m, "",
     s"-paths N      ; independent price paths (default ${DefaultPaths})",
@@ -102,11 +106,18 @@ object MarketSim:
     "              ;   quantity's LEVEL be read), or all.  Default realism,mechanism; realism is",
     "              ;   always required — a non-market cannot be admitted by configuration",
     "-validate     ; stylised-fact gate + fidelity report; exit non-zero on gate failure",
+    "-releases     ; every fidelity ratio at every published default, plus the world this",
+    "              ;   invocation describes — what a candidate costs against the whole history,",
+    "              ;   not just the previous release",
     "-fitness      ; print the scalar calibration loss and its components, then exit",
     "-calibrate N  ; random-search N parameter samples against the fitness loss; scores the",
     "              ;   best few again on a HELD-OUT seed; prints, does not modify defaults",
     "-power        ; estimator power: how much history each grading statistic needs before its",
     "              ;   own answer stops being noise (hit rate and n* per statistic per horizon)",
+    s"-powerarms N,N; with -power, which rules to contrast, as 1-based indices into the rule list",
+    s"              ;   the report's legend names (default ${PowerArmsDefault.mkString(",")})",
+    s"-poweryears L ; with -power, history lengths in years, comma-separated (default",
+    s"              ;   ${PowerYearsDefault.mkString(",")})",
     "-buffer       ; distribution of REAL underwater-stretch length and depth at exhaustion —",
     "              ;   the cash-buffer question, as a distribution instead of one episode",
     "-strategies   ; exposure rules across a world sweep: stability, paired stats, breakevens,",
@@ -196,6 +207,29 @@ object MarketSim:
   val DefaultSeed = 20260813L
   val DefaultEmitGate = 200
   val DefaultCost = 0.0010
+  /** `-power`'s default contrast arms, as 1-based indices into `Rules`, and its default history
+    * lengths.  Named here rather than inside the report so `usage` states them and `main` seeds
+    * from them — the same one-source rule the world's defaults follow.
+    * 21 = the traded book's span; 72 = the S&P record used for calibration; the ends bracket them. */
+  /** The default world as it shipped at each published release, so a candidate can be compared
+    * against EVERY shipped version rather than only its immediate predecessor -- the reading under
+    * which five individually-acceptable trades accumulate invisibly.
+    *
+    * The worlds are historical; the MEASUREMENT is current.  This therefore answers "how has the
+    * default moved", NOT "what did that version report" -- the mechanism moved too, and conflating
+    * those would be its own error.  A `World` field added after a release takes today's value in
+    * that release's row, because an older world genuinely has no value for it.
+    *
+    * 0.17.0 through 0.19.0 share one world: the default did not move for three releases. */
+  private val PreV1901 = Defaults.copy(
+    trendShare = 0.30, depth = 12.0, stress = 3.4, volOfVol = 0.028, valuePull = 0.015,
+    crowdImpact = 0.06, drift = 0.100, duration = 13.5, flight = 0.38, inflSize = 0.07,
+    discount = 4.0, margin = 0.0008)
+  val Releases: Vector[(String, World)] = Vector(
+    ("0.17.0", PreV1901), ("0.18.0", PreV1901), ("0.19.0", PreV1901), ("0.19.1", Defaults))
+
+  val PowerArmsDefault  = Vector(2, 6, 9, 8)
+  val PowerYearsDefault = Vector(21, 40, 72, 100)
 
   val DaysPerYear = 252
   /** Sessions discarded so paths start from the stationary distribution (slowest state ~600). */
@@ -577,7 +611,16 @@ object MarketSim:
       ("clustering 0.10-0.40",      st.ac1 > 0.10 && st.ac1 < 0.40 && st.ac20 > 0.03, Realism),
       ("crash rate 8-45/century",   st.epPerPath >= 1.0 && {
           val pc = st.epPerPath * 100.0 / st.yearsPerPath; pc >= 8.0 && pc <= 45.0 }, Realism),
-      ("both recovery shapes",      st.nShapes > 0 && st.vCount >= st.nShapes / 10 && st.uCount >= st.nShapes / 10, Realism),
+      // max(1, _) is load-bearing.  nShapes / 10 is INTEGER division, so below ten shapes both
+      // clauses read ">= 0" and the check passes with NEITHER shape present -- measured at
+      // -drift 0.9, which produced V=0, balanced=1, U=0 and passed a check named "both
+      // recovery shapes".  It degenerated exactly where episodes are scarce, which is where
+      // shape evidence is weakest and the check matters most.  Requiring at least one of each
+      // makes too-few-shapes FAIL: a run that has not demonstrated both shapes has not
+      // demonstrated both shapes, and a gate that passes on no evidence reads as verification.
+      ("both recovery shapes",      st.nShapes > 0
+                                     && st.vCount >= math.max(1, st.nShapes / 10)
+                                     && st.uCount >= math.max(1, st.nShapes / 10), Realism),
       ("no runaway drift",          st.annRet.abs < 30.0, Realism),
       // 0.02% ~ one clamped session per 20 path-years.  The old bound (0.5%) would have passed a
       // world where the clamp was already reshaping kurtosis by a third.
@@ -671,8 +714,26 @@ object MarketSim:
     // below admits it rather than legislating it away.
     ("return per vol",     st => st.retVol,                                  0.69, 1.0),
     ("kurtosis",           st => st.kurt,                                   28.0,  0.5),
-    ("clustering lag 1",   st => st.ac1,                                     0.27, 1.0),
-    ("clustering lag 20",  st => st.ac20,                                    0.20, 0.5),
+    // Ken French / CRSP value-weighted US market, daily, 1926-07-01..2026-06-30 -- the FULL
+    // century, and deliberately NOT the 1954-2026 window the rows above use.  The model's
+    // clustering is horizon-INDEPENDENT (0.320 at 20 years, 0.330 at 150) while the real statistic
+    // is not (0.271 over 72 years, 0.299 over 100, and 0.175-0.311 across non-overlapping 20-year
+    // blocks), because a longer window spans more regimes.  The model is scored on 100-year paths,
+    // so a 72-year anchor compares a 100-year model reading against a 72-year real one and reports
+    // 1.22 where the horizon-matched answer is 1.07.
+    //
+    // CONVENTION, stated because its absence is what blocked this for a release: autocorrelation of
+    // |r| about its mean, normalised by the FULL-series sum of squares -- `autocorrAbs` itself.
+    // `jsrc/clusteringAnchor.sc` calls that same function to measure the anchor, so the two cannot
+    // drift.  On this data autocorr(r^2) reads 0.108 at lag 20 against 0.208 for |r|, 92% apart: a
+    // re-derivation using the wrong one would conclude the model is 2.2x too high rather than 1.07.
+    //
+    // The 20-year block spread is wide enough that an honestly derived BAND (about 0.16-0.33 at
+    // lag 1) would not exclude the model.  Real clustering varies by nearly two-to-one between
+    // eras; a band tight enough to fail this world would have to exclude two of the five real
+    // 20-year eras, which is a band chosen to produce a verdict rather than derived from a record.
+    ("clustering lag 1",   st => st.ac1,                                    0.299, 1.0),
+    ("clustering lag 20",  st => st.ac20,                                   0.225, 0.5),
     ("crashes/century",    st => st.epPerPath * 100.0 / st.yearsPerPath,    20.7,  1.0),
     ("median depth %",     st => st.depthMed,                              -27.1,  1.0),
     ("worst crash %",      st => st.worstDepth,                            -56.8,  1.0),
@@ -1229,7 +1290,12 @@ object MarketSim:
               }
             val rs  = rankIn(reflexive)
             val chr = rankIn(valid)
-            val inverts = chr.nonEmpty && (rs.min > chr.max || rs.max < chr.min)
+            // ANY reflexive world outside the character range is the finding, not all of them.
+            // The two reflexive worlds vary different axes and routinely disagree -- a vol-scaling
+            // crowd ranks trend rules last where a pressed momentum crowd ranks them first -- so a
+            // test requiring the whole reflexive SPAN to clear the range flagged nothing in exactly
+            // the case worth flagging.
+            val inverts = chr.nonEmpty && rs.exists(r => r < chr.min || r > chr.max)
             println(f"  ${Rules(j).name}%-34s ${rs.map(r => f"$r%2d").mkString(" ")}%s" +
                     f"   character ${if chr.isEmpty then 0 else chr.min}%d-${if chr.isEmpty then 0 else chr.max}%d" +
                     f"${if inverts then "   <-- MOVES OUTSIDE THE CHARACTER RANGE" else ""}%s")
@@ -1339,12 +1405,50 @@ object MarketSim:
     * TWO-SIDED CONTROL: the last contrast pairs an arm with ITSELF measured on an independent path,
     * so the true difference is zero by construction.  Every statistic must land near 50% there with
     * n* blowing up; one that looks decisive on the null is reading an artifact, not a difference. */
+  /** Every fidelity ratio at every published default, plus the world this invocation describes.
+    * Exists because the natural comparison -- candidate against its immediate predecessor -- is
+    * exactly the reading under which a sequence of individually-acceptable trades accumulates with
+    * nothing ever showing it.  The `worse than best` column is the accumulation detector: it names
+    * the release whose default read closer to real than the current one does. */
+  def runReleaseReport(paths: Int, years: Int, seed: Long, base: World): Unit =
+    val cols = Releases :+ ("current", base)
+    eprintln(s"${cols.size} worlds x $paths paths x $years years")
+    val stats = cols.map((v, w) => (v, measure(simPaths(w, paths, years, seed), years)))
+    println("CROSS-RELEASE FIDELITY — every target at every published default, and at the world this")
+    println("invocation describes.  The WORLDS are historical; the MEASUREMENT is current, so this shows")
+    println("how the DEFAULT has moved, not what each version reported — the mechanism moved too.  A")
+    println("World field added after a release takes today's value in that release's row.")
+    println()
+    println(f"  ${"target"}%-22s" + cols.map((v, _) => f"$v%8s").mkString +
+            f"   ${"best"}%7s   worse than best")
+    var curTotal = 0.0
+    var bestTotal = 0.0
+    for (name, get, want, _) <- FitTargets do
+      val rs = stats.map((_, st) => get(st) / want)
+      val errs = rs.map(r => math.abs(r - 1.0))
+      val cur = errs.last
+      val bestIdx = errs.indices.minBy(errs)
+      curTotal += cur
+      bestTotal += errs(bestIdx)
+      val flag = if bestIdx != errs.size - 1 && errs(bestIdx) < cur - 0.005 then
+                   f"<-- ${cols(bestIdx)._1}%s was ${rs(bestIdx)}%.2f" else ""
+      println(f"  $name%-22s" + rs.map(r => f"$r%8.2f").mkString + f"   ${rs(bestIdx)}%7.2f   $flag%s")
+    println()
+    println(f"  ${"AGGREGATE |ratio-1|"}%-22s" +
+            stats.map((_, st) => FitTargets.map((_, get, want, _) => math.abs(get(st) / want - 1.0)).sum)
+                 .map(t => f"$t%8.2f").mkString +
+            f"   ${bestTotal}%7.2f   best achievable per row, across all releases")
+    println()
+    println("  A flagged row is one where some published default read CLOSER to real than the current")
+    println("  world does.  That is not automatically wrong — a trade may have been worth making — but")
+    println("  it is the thing no predecessor-only comparison can show.")
+
   def runPowerReport(paths: Int, seed: Long, cost: Double, single: Boolean, base: World,
-                     gateReq: Set[GateClass]): Unit =
-    // 21 = the traded book's span; 72 = the S&P record used for calibration; the ends bracket them
-    val horizons = Vector(21, 40, 72, 100)
-    val focus = Vector("volatility-scaled, floor 40%", "trend 200d, floor 0%",
-                       "volatility + trend 200d, floor 0%", "cut below -10%, floor 0%").map(ruleNamed)
+                     gateReq: Set[GateClass], armIdx: Vector[Int], horizons: Vector[Int]): Unit =
+    // Arms and horizons are the CALLER's, so the consumer's own question — these two arms, at the
+    // length of history I possess — is answerable without a code change.  The defaults reproduce
+    // the report this had before it took either.
+    val focus = armIdx.map(i => Rules(i - 1))
     val alwaysFn: Indicators => Array[Double] = ind => Array.fill(ind.px.length)(1.0)
     val arms: Vector[Indicators => Array[Double]] =
       focus.flatMap(r => Vector(r.expose, (i: Indicators) => matchedConstant(r.expose(i)))) :+ alwaysFn
@@ -1708,7 +1812,8 @@ object MarketSim:
     var emitPath = 0; var emitAll = false; var emitStart = ""; var emitGate = DefaultEmitGate
     var gateReq = GateDefault
     var fitnessOnly = false; var calibrateN = 0
-    var powerReport = false; var bufferReport = false
+    var powerReport = false; var bufferReport = false; var releaseReport = false
+    var powerArms = PowerArmsDefault; var powerYears = PowerYearsDefault
     var cost = DefaultCost
     // defaults = a random search against the fitness loss, scored at 100-year paths, lightly
     // rounded.  Reachable ONLY because depth, trendShare, drift and crowdImpact are in the search;
@@ -1716,15 +1821,18 @@ object MarketSim:
     // scoring seeds against the pre-0.19.1 defaults' 5.77-6.11.
     //
     // `stress` IS NOT AT THE OBJECTIVE'S MINIMUM, deliberately.  The loss minimises at stress 5.9
-    // (3.128 against 3.280 here, ~0.13 across five seeds); 5.4 was chosen to cut a REGRESSION the
-    // objective does not weigh heavily enough to see.  The liquidity spiral is a single amplifier
-    // producing volatility, fat tails AND volatility clustering together -- `stress` alone moves
-    // ac1 from 0.160 at 3.4 to 0.420 at 7.0 -- so raising it to fix kurtosis (0.28 -> 0.58) drove
-    // clustering from an almost-exact 0.90 to 1.33.  At 5.4 the split is: clustering 1.20 (from
-    // 1.33), the 10% depth rung 1.06 (from 1.13), crash rate 1.20 (from 1.26), worst crash 1.49
-    // (from 1.54, back under the MISS threshold); paid for with kurtosis 0.46 (from 0.58), equity
-    // vol 0.92 (from 0.98), return per vol 1.14 (from 1.08), median depth 0.93 (from 0.97) and the
-    // 20% rung 0.92 (from 1.02).  Do not "optimise" this back to 5.9 without re-reading that trade.
+    // (2.967 against 3.119 here, ~0.15); 5.4 was chosen to cut a REGRESSION the objective does not
+    // weigh heavily enough to see.  The liquidity spiral is a single amplifier producing volatility,
+    // fat tails AND volatility clustering together -- `stress` alone moves ac1 from 0.160 at 3.4 to
+    // 0.420 at 7.0 -- so raising it to fix kurtosis (0.28 -> 0.58) drove clustering from 0.81 to
+    // 1.20.  At 5.4 the split is: clustering 1.08 (from 1.20), the 10% depth rung 1.06 (from 1.13),
+    // crash rate 1.20 (from 1.26), worst crash 1.49 (from 1.54, back under the MISS threshold);
+    // paid for with kurtosis 0.46 (from 0.58), equity vol 0.92 (from 0.98), return per vol 1.14
+    // (from 1.08), median depth 0.93 (from 0.97) and the 20% rung 0.92 (from 1.02).  Do not
+    // "optimise" this back to 5.9 without re-reading that trade.
+    //   The clustering figures here are against the CENTURY anchor.  Measured against the 72-year
+    //   one this shipped with, the same worlds read 0.90 / 1.20 / 1.33 -- the horizon mismatch, not
+    //   a change in the model.
     //
     // KURTOSIS AND CLUSTERING CANNOT BOTH BE RIGHT.  stress 7.5 reaches kurtosis 26.4 against a real
     // 28 -- and clustering 1.67, failing the realism band.  That is the measured reason the kurtosis
@@ -1732,7 +1840,7 @@ object MarketSim:
     // channel for tails, not why this one cannot reach them.
     //
     // TWO KNOWN BIAS DIRECTIONS, netted away nowhere else, pointing opposite ways: clustering at
-    // 1.20 makes volatility more predictable here than in the record, which flatters any rule that
+    // 1.08 makes volatility more predictable here than in the record, which flatters any rule that
     // forecasts it; worst crash at 1.49 puts index paths near -84% against a real -56.8%, which no
     // levered fund survives, so ruin rates for levered sleeves are UPPER BOUNDS, not estimates.
     var trendShare = Defaults.trendShare; var depth = Defaults.depth
@@ -1760,6 +1868,9 @@ object MarketSim:
       case "-calibrate"  => calibrateN = intOr("-calibrate", consumeNext)
       case "-strategies" => strategies = true
       case "-power"      => powerReport = true
+      case "-releases"   => releaseReport = true
+      case "-powerarms"  => powerArms = intListOr("-powerarms", consumeNext)
+      case "-poweryears" => powerYears = intListOr("-poweryears", consumeNext)
       case "-buffer"     => bufferReport = true
       case "-single"     => single = true
       case "-cost"       => cost = numOr("-cost", consumeNext)
@@ -1792,6 +1903,13 @@ object MarketSim:
     if seed < 0 then usage(s"-seed must be non-negative, got $seed")
     if emitPath < 0 then usage(s"-emitpath must be non-negative, got $emitPath")
     if emitGate < 0 then usage(s"-emitgate must be non-negative, got $emitGate")
+    // A bad index here is the one place the rule list has to be discoverable: the report names
+    // the rules but not their numbers, and the numbers are what the flag takes.
+    if powerArms.exists(i => i < 1 || i > Rules.size) then
+      usage(s"-powerarms indices must be 1-${Rules.size}; the rules are:\n" +
+            Rules.zipWithIndex.map((r, i) => f"  ${i + 1}%d  ${r.name}%s").mkString("\n"))
+    if powerYears.exists(_ < 1) then
+      usage(s"-poweryears wants year counts of at least 1, got [${powerYears.mkString(",")}]")
     val crowd = crowdName.toLowerCase match
       case "momentum"  => Crowd.Momentum
       case "volscaled" => Crowd.VolScaled
@@ -1816,11 +1934,14 @@ object MarketSim:
       rows.foreach((n, m, t, term) => println(f"  $n%-22s model $m%8.2f   target $t%8.2f   term $term%6.3f"))
       gateChecks(st).filter(!_._2).foreach((n, _, _) => println(f"  FAILED GATE: $n%s  (+0.500)"))
       return
+    if releaseReport then
+      runReleaseReport(paths, years, seed, w)
+      return
     if strategies then
       runStrategySweep(paths, years, seed, cost, single, w, gateReq)
       return
     if powerReport then
-      runPowerReport(paths, seed, cost, single, w, gateReq)
+      runPowerReport(paths, seed, cost, single, w, gateReq, powerArms, powerYears)
       return
     if bufferReport then
       runBufferReport(paths, years, seed, cost, single, w, gateReq)
@@ -1903,7 +2024,9 @@ object MarketSim:
     // rungs read 0.436 / 0.269 / 0.126 against the 0.447 / 0.315 / 0.169 targeted here.
     println("  fidelity against targets, by anchor (each row is against the window named for it):")
     println("    equity S&P 1954-2026   |   depth rungs SPY 1993-2026   |   return per vol CRSP 1954-2026")
-    println("    refuge long Treasury   |   bond depth rung clean TLT, 24y")
+    println("    clustering CRSP 1926-2026 (a CENTURY: the statistic is horizon-dependent and the")
+    println("      model is scored on 100-year paths)   |   refuge long Treasury   |   bond depth")
+    println("      rung clean TLT, 24y")
     FitTargets.foreach { (n, get, want, _) =>
       val got = get(st)
       val ratio = if want != 0 then got / want else Double.NaN

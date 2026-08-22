@@ -27,6 +27,13 @@ that pattern complete instead of accidental.
   **Crash frequency left this bucket in 0.19.1** and the attribution it carried was wrong: it is
   driven by market depth, not by the valuation cycle, and at 1.22x real it now sits about 0.8
   sigma inside the sampling error of its own anchor (15 episodes in 72 years).
+- **A default move states who it affects, in the CHANGELOG, in three parts.** *Improves* — which
+  consumer questions become answerable or better-founded. *Degrades* — which become worse, with the
+  DIRECTION of the error, because "volatility now reads 8% low" and "8% high" have opposite
+  consequences for a threshold rule. *Unchanged* — usually the rank comparisons, and saying so stops
+  a reader assuming the move touched everything. An aggregate loss that improved is not this: five
+  individually-acceptable trades can accumulate underneath one, and only the per-consumer reading
+  shows it. `-releases` produces the raw material.
 - **A sweep arm must bracket its baseline, and nothing checks that it still does.** The sweep
   exists to make conclusions curves rather than points, which requires the two arms to straddle the
   base. Moving the defaults in 0.19.1 silently broke three pairs — one arm named "few trend
