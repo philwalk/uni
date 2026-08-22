@@ -1,5 +1,5 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
-//> using dep org.vastblue:uni_3:0.19.1
+//> using dep org.vastblue:uni_3:0.19.2
 
 // One half of the cross-language demo pair; `rust/examples/datecalc.rs` is the other.
 // Both run the same date calculations on FIXED inputs, so the outputs are
