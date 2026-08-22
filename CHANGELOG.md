@@ -1,3 +1,81 @@
+## v0.19.2 — unreleased
+
+**CHANGED — `marketSim`/`market_sim`: the bond's refuge mechanism is rebuilt; every published number
+moves. `-flight` is removed and is rejected, not reinterpreted.**
+
+The bond spent 87% of sessions more than 10% below its running peak where a real bond of the same
+volatility spends 45%. Measured cause: **75% of that time was spent recovering from a spike**, in
+episodes where inflation pressure never rose and the rate never left 4.6-4.8%. The policy rate ran
+4.2% → 0% → 4.2% inside a quarter, 23 times a century (real holds: 7.0 years in 2008-15, 2.0 in
+2020-22, ~15 in 1932-47). `flight` was a cut *speed* with no bound, so a stress episode drove the
+rate to the floor and the same `rateSpeed` pulled it straight back, marking a bond peak ~65% above
+the normal level that then took a decade of carry to regain.
+
+The rate cut is now a capped accommodation *stock* — `-easing` (cap, in rate points), eased in over
+~2 months, withdrawn at `-unwind` — and the bond gains `-refuge`, a duration-scaled flight-to-quality
+bid. Both are needed: capping the cut alone fixes the drawdown profile and removes the crash rally
+entirely, because the rally *was* the spike.
+
+```
+                                    0.19.1 + W7a       0.19.2             real
+  bond >10% below pk               0.868 (1.91 FAIL)  0.553 (1.24)        0.510 (TLT)
+  bond infl-crash                -29.47 (1.18)      -23.95 (0.96)       -25.00
+  bond growth-crash               13.32 (0.67 MISS)   8.41 (0.42 MISS)   20.00
+  crashes/century                 24.85 (1.20)       27.40 (1.32)        20.70
+  clustering lag 1 / lag 20         1.08 / 1.07 x      1.06 / 1.08 x      0.299 / 0.225
+  equity >5 / >10 / >20 below pk   0.50  0.34  0.16   0.48  0.32  0.15   0.447 0.315 0.169
+  worst crash %                  -84.43 (1.49)      -81.61 (1.44)       -56.80
+  equity vol %                    14.73 (0.92)       14.39 (0.90)        16.00
+  kurtosis                        12.78 (0.46 MISS)  11.84 (0.42 MISS)   28.00
+```
+
+**The world clears all three gate classes — realism, mechanism and fidelity — the first default to
+do so.** It does at duration 5.7 and 25.0 as well, so an Aggregate-like bond is representable, which
+is what this line of work was opened for.
+
+**Default dials moved with the mechanism, not for their own sake.** Capping the cut removed a
+discount-channel cushion the equity leg was getting in crashes; at unchanged dials the crash rate
+went 1.20 → 1.38 and clustering 1.08 → 1.13. `depth` 16.3 → 16.6 buys back a third of the crash
+rate; `stress` 5.4 → 5.1 returns clustering to 1.06 — the same trade 0.19.1 made against the same
+dial — at a cost of kurtosis 0.46 → 0.42, a recorded scope exclusion either way. The remaining crash
+regression is the mechanism's price and is not tuned away.
+
+The default is not the calibration search's optimum and does not need to be: across 8,000 samples
+the best training loss re-scored at 3.120 on the held-out seed, against the default's **2.588**, the
+best holdout figure in the run.
+
+**Who this affects.**
+
+*Improves* — anything that reads a bond's distance from its running peak, which was unreadable
+before (the gate said so) and is now in band at every duration tested; bond behaviour conditional on
+inflation regimes (1.18 → 0.96); studies of aggregate or intermediate bond funds, which had no
+admissible world at all; the two shallow equity depth rungs and the worst-crash overstatement, all
+slightly closer.
+
+*Degrades* — crash-frequency and crash-conditioned work: crashes arrive 1.32x too often against
+1.20x, so any per-crash hazard is **over-sampled**. Refuge sizing: the bond's growth-shock rally
+falls 13.3% → 8.4% against a 20.0 anchor, so a refuge sleeve modelled on this will look **weaker**
+than a long Treasury did in 2008 — though 8.4% sits nearer TLT's six-episode median of 9.65% than
+the old 13.3% did. Absolute volatility thresholds: the equity level errs 10% **low** against 8%
+before, so such a threshold is crossed even less often than it should be. Tail-day magnitudes:
+kurtosis 0.46 → 0.42, already excluded from scope.
+
+*Unchanged* — rank comparisons between rules, which the world sweep governs rather than the default.
+A ranking that survives `-strategies` did not depend on this move. `-power` and `-buffer` read the
+same world but ask questions the move does not bear on directly.
+
+**Migration.** `-flight X` now exits with an error naming its replacements. It is not silently
+reinterpreted: it was a cut speed per year and `-easing` is a cut cap in rate points, so every
+recorded `-flight` value is wrong by two orders of magnitude under the new mechanism and would still
+have produced a plausible-looking run. `-emit` sidecars gain `easing`, `unwind` and `refuge` and
+lose `flight`; `-calibrate` now searches thirteen parameters. `-releases` gains a 0.19.2 row.
+
+**A gate gap this found, recorded because it is not fixed.** Nothing in the acceptance gate
+constrains the policy rate's own distribution. A one-line variant reached the bond-depth band exactly
+while putting the rate below 1% for half the century, against a real ~19%, and reported PASS. The
+fix shipped here does not do that — the rate's median is 3.3% and it is below 1% on 1.5% of
+sessions — but the gate would not have caught it either way.
+
 ## v0.19.1 — 2026-08-21
 
 **CHANGED — `marketSim`/`market_sim`: new default world; every published number moves**
@@ -8,29 +86,53 @@ inherited a blind spot rather than a frontier. With all four in the search:
 
 ```
                                     old default        new default        real
-  crashes/century                 35.30 (1.71 MISS)  26.10 (1.26)        20.70
-  equity >5 / >10 / >20 below pk  0.640 0.460 0.220  0.510 0.360 0.170   0.447 0.315 0.169
-  return per vol                   0.59 (0.86)        0.74 (1.08)         0.69
-  kurtosis                         7.71 (0.28)       16.16 (0.58)        28.00
-  median depth %                 -24.83 (0.92)      -26.21 (0.97)       -27.10
-  bond growth-crash                7.81 (0.39 MISS)  14.00 (0.70)        20.00
-  bond infl-crash                -16.44 (0.66 MISS) -28.51 (1.14)       -25.00
-  equity vol %                    16.62 (1.04)       15.66 (0.98)        16.00
-  clustering lag 1 / lag 20        0.24 / 0.18        0.36 / 0.27         0.27 / 0.20
-  worst crash %                  -79.26 (1.40)      -87.31 (1.54 MISS)  -56.80
+  crashes/century                 35.30 (1.71 MISS)  24.85 (1.20)        20.70
+  equity >5 / >10 / >20 below pk   0.64  0.46  0.22   0.50  0.34  0.16   0.447 0.315 0.169
+  return per vol                   0.59 (0.86)        0.79 (1.14)         0.69
+  kurtosis                         7.71 (0.28 MISS)  12.78 (0.46 MISS)   28.00
+  median depth %                 -24.83 (0.92)      -25.16 (0.93)       -27.10
+  bond growth-crash                7.81 (0.39 MISS)  13.32 (0.67 MISS)   20.00
+  bond infl-crash                -16.44 (0.66 MISS) -29.47 (1.18)       -25.00
+  equity vol %                    16.62 (1.04)       14.73 (0.92)        16.00
+  clustering lag 1 / lag 20        0.24 / 0.18        0.32 / 0.24         0.27 / 0.20
+  worst crash %                  -79.26 (1.40)      -84.43 (1.49)       -56.80
+  bond vol %                      14.78 (1.14)       17.12 (1.32)        13.00
+  bond >10% below pk               0.83 (1.63 MISS)   0.87 (1.70 MISS)    0.510
 ```
 
-The equity leg passes every fidelity band it has, and the verdict's only failure is the bond's 10%
-depth rung. Three MISS flags remain and the set changed composition rather than shrinking: `bond
-growth-crash` left it, `worst crash` entered it.
+Eight of fifteen rows read closer to real, six further, one unchanged; aggregate |ratio−1| 5.17 →
+3.68. The equity leg passes every fidelity band it has, and the verdict's only failure is the bond's
+10% depth rung. Three MISS flags remain — kurtosis, `bond growth-crash` and the bond depth rung —
+and `bond infl-crash` left the set.
 
-**This world was chosen at equal loss, not because the objective preferred it.** A second world ties
-it across five scoring seeds — mean 3.354 against 3.355 — and differs in *error profile*: it is
-better on the 10% depth rung (1.05 against 1.13), worst crash (1.36 against 1.54) and clustering
-(1.19 against 1.33), and worse on equity volatility (0.93 against 0.98), kurtosis (0.45 against
-0.58), the 20% rung (0.79 against 1.02) and median depth (0.88 against 0.97). The shipped choice
-favours a levered consumer, where an error in the volatility *level* and an understated tail both
-enter quadratically. Its parameters are recorded beside the defaults so the alternative is not lost.
+**`stress` is deliberately off the objective's minimum.** The loss minimises at `-stress 5.9`
+(3.128 against 3.280, about 0.13 across five scoring seeds). The shipped 5.4 buys back a regression
+the objective does not weigh heavily enough to see: the liquidity spiral is one amplifier producing
+volatility, fat tails *and* volatility clustering together — `stress` alone moves lag-1 clustering
+from 0.160 at 3.4 to 0.420 at 7.0 — so raising it to fix kurtosis drove clustering from an
+almost-exact 0.90 to 1.33. At 5.4 the split is: clustering 1.20, the 10% rung 1.06, crash rate 1.20,
+worst crash 1.49 (back under the MISS threshold); paid for with kurtosis 0.46, equity volatility
+0.92, return per vol 1.14, median depth 0.93 and the 20% rung 0.92.
+
+**Kurtosis and clustering cannot both be right.** `-stress 7.5` reaches kurtosis 26.4 against a real
+28 — and clustering 1.65, failing the realism band. That is the measured reason the kurtosis MISS
+stands, and it is more precise than the header's old "no slow valuation cycle": the missing cycle is
+why there is no *second* channel for tails, not why this one cannot reach them.
+
+**Who this affects.**
+
+*Improves* — rules keyed to a shallow distance from a running peak (the three equity depth rungs
+move into band, so the level is readable for the first time); crash-frequency and crash-conditioned
+work (1.71 → 1.20); levered tail estimates, which were flattered by kurtosis at 0.28; and bond
+behaviour conditional on inflation regimes (0.66 → 1.18).
+
+*Degrades* — anything that forecasts volatility, because clustering at 1.20 makes volatility more
+predictable here than in the record; rules keyed to an absolute volatility threshold, because the
+level now errs 8% **low** and such a threshold is crossed less often than it should be; and any
+reading of bond volatility (1.14 → 1.32) or the bond depth rung (1.63 → 1.70).
+
+*Unchanged* — rank comparisons between rules, which the world sweep governs rather than the default.
+A ranking that survives `-strategies` did not depend on this move.
 
 **Two known bias directions, recorded because nothing else nets them away, and they point opposite
 ways.** Volatility clustering at 1.20 makes volatility more predictable here than in the record,

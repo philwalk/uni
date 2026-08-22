@@ -133,9 +133,15 @@ class MatParitySuite extends munit.FunSuite:
 
     // Each group is counted separately: they pin different things, and losing one would
     // leave the others looking healthy.
-    assert(rows.length >= 1550, s"only ${rows.length} rows; expected 13 sizes + 11 shapes + 10 adversarial")
+    // These two minima track the actual counts with a few percent of slack, deliberately.  At
+    // 1550 and 250 they were DOMINATED: the per-family minima below sum to 2592, so neither
+    // could fire before a family assertion did, and between them they would have waved through
+    // a regeneration that silently dropped more than half the corpus (3452 rows became "fine"
+    // anywhere above 1550).  A count that cannot fail is not coverage.  Raising one of these is
+    // a deliberate act; a regeneration that lowers a count should fail here and be explained.
+    assert(rows.length >= 3400, s"only ${rows.length} rows; the corpus has shrunk — regenerate or explain")
     val twoD = rows.count((shape, _, _) => is2d(shape))
-    assert(twoD >= 250, s"only $twoD 2-D rows; the view model would go unchecked")
+    assert(twoD >= 2150, s"only $twoD 2-D rows; the view model would go under-checked")
     val masks = rows.count((_, label, _) => label.startsWith("mask."))
     assert(masks >= 800, s"only $masks mask rows; IEEE comparison semantics would go unchecked")
     val adv = rows.count((shape, label, _) => isAdv(shape) && !label.startsWith("mask."))

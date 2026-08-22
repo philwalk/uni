@@ -25,8 +25,9 @@ that pattern complete instead of accidental.
 - **The recorded scope exclusion stands.** Daily kurtosis (~13 against ~28 real) traces to the
   absent slow valuation cycle and is deliberately not fixed. Nothing here reopens that.
   **Crash frequency left this bucket in 0.19.1** and the attribution it carried was wrong: it is
-  driven by market depth, not by the valuation cycle, and at 1.22x real it now sits about 0.8
-  sigma inside the sampling error of its own anchor (15 episodes in 72 years).
+  driven by market depth, not by the valuation cycle. It reads 1.32x real in 0.19.2, about 1.2 sigma
+  against the sampling error of its own anchor (15 episodes in 72 years) — up from 1.20x, the price
+  of W7d's rate-cut cap, and partly bought back with `depth`.
 - **A default move states who it affects, in the CHANGELOG, in three parts.** *Improves* — which
   consumer questions become answerable or better-founded. *Degrades* — which become worse, with the
   DIRECTION of the error, because "volatility now reads 8% low" and "8% high" have opposite
@@ -45,18 +46,24 @@ that pattern complete instead of accidental.
   on those rungs is now a calibration check and cannot be evidence again. Before adopting any
   measurement as a target, name what will validate the result afterwards — and record it, because
   the disqualification is invisible in the output and the comparison keeps looking meaningful.
+- **A fix that passes a gate by wrecking an unmeasured quantity has not passed anything.** W7d
+  found a one-line change reaching the bond-depth band exactly — while putting the policy rate below
+  1% for **half the century** against a real ~19%, at a 1.0% median against ~3.4%. Nothing in the
+  gate looks at the rate's own distribution, so the run reported PASS. Before accepting any fix,
+  measure the quantity it works THROUGH, not only the quantity it was aimed at; if the gate does not
+  already constrain that quantity, say so.
 - **Widening an acceptance band to admit a world you want is not on the table.** Item W2 exists
   precisely because the alternative — relaxing the bond-volatility band so calm bonds pass — would
   make the gate stop meaning anything.
 
-## How the simulator ships (0.19.1)
+## How the simulator ships (0.19.2)
 
 The simulator is public API in both published artifacts, not a repo-only tool:
 
 - **Rust**: the crate packages `examples/market_sim.rs` (with the other eight demo pairs), so
   `cargo install vastblue-uni --example market_sim` builds the binary from crates.io.
 - **Scala**: `uni.apps.MarketSim` is compiled into the jar —
-  `scala-cli run --jar uni_3-0.19.1.jar --main-class uni.apps.MarketSim -- -validate`.
+  `scala-cli run --jar uni_3-0.19.2.jar --main-class uni.apps.MarketSim -- -validate`.
 - `jsrc/marketSim.sc` remains the canonical Scala source; the packaged object is its header-twin
   (shebang commented, `package uni.apps` uncommented) and `ScriptTwinSuite` fails the build if the
   two differ anywhere below that header. Both shipped forms are byte-identical to each other and to
@@ -81,7 +88,8 @@ measured to fail on the equity leg too (see W9), not merely anticipated. W7 stay
 |---|---|
 | W0 | recorded: `uni/jsrc/marketSim.sc` is canonical (see below) |
 | W1, W2, W3, W9, W6a, W6b | **landed**, both twins, byte-identical across every mode |
-| W4, W5, W7, W8 | open |
+| W5, W7a, W7b, W7d | **landed (0.19.2)**, both twins |
+| W4, W7c, W8 | open |
 
 W6 was split in 0.19.1; its original framing — "make the crowd *window* usable" — was retired by
 measurement, see below.
@@ -373,7 +381,7 @@ every `-strategies` report in both twins at once.
 
 # Tier 3 — structural, and they change what the model is allowed to claim
 
-## W7 — Give the bond a composition, so an aggregate bond fund is representable
+## W7 — Make an aggregate bond fund representable (W7a, W7b, W7d landed; W7c open)
 
 **Problem.** The admissible bond-volatility band is 7–20%. Measured annualized volatility of the
 sleeves the consumer's gate actually governs:
@@ -406,21 +414,135 @@ sample length. **Match the horizon before judging any path statistic against a r
 The defect is therefore localized: the bond is sound where it is calibrated and has no
 representation at all below ~7% volatility. This item is an extension, not a repair.
 
-**Change.** Give the bond a composition rather than a single duration: a blend of two durations plus
-a credit-spread component that widens with equity stress. That is also the mechanism most likely to
-narrow the standing `bond growth-crash` MISS (+13.3 modelled against +20 real, restated against the
-0.19.1 default; it was +8.2 before), since an aggregate
-fund's crisis behaviour is the sum of a duration rally and a spread widening that partly cancels it.
+**Measured, 2026-08-22.** Eight iShares funds, 19-24 years each, total returns from NAV plus
+distributions (the same source and method as the TLT anchor, which this pipeline reproduces to
+14.12% against the recorded 14.1%):
 
-**Parity.** New state in `simulate()`, new `World` fields, changed `-emit` columns. The largest
-regeneration in this plan.
+| fund | kind | duration | ann vol | >5% | >10% | >20% |
+|---|---|---|---|---|---|---|
+| SHY | Treasury | 1.80 | 1.44 | 0.007 | 0.000 | 0.000 |
+| IEI | Treasury | 4.22 | 4.02 | 0.152 | 0.064 | 0.000 |
+| IEF | Treasury | 6.84 | 6.65 | 0.387 | 0.181 | 0.019 |
+| TLH | Treasury | 11.60 | 10.27 | 0.566 | 0.314 | 0.223 |
+| TLT | Treasury | 14.89 | 14.12 | 0.709 | 0.499 | 0.226 |
+| AGG | blend | 5.70 | 4.24 | 0.152 | 0.095 | 0.000 |
+| LQD | IG credit | 7.72 | 6.36 | 0.221 | 0.123 | 0.011 |
+| HYG | HY credit | 3.02 | 6.04 | 0.199 | 0.080 | 0.027 |
 
-**Acceptance.**
-- A world whose bond volatility is 4–6% passes every realism band.
-- The `bond growth-crash` ratio improves toward 1.0 without any other fidelity term degrading.
-- The default 13.5-year world's statistics are unchanged, or the change is recorded and explained.
+The five Treasuries fit `vol = -0.07 + 0.937 x duration`: **an intercept of zero**, as it must be,
+since a zero-duration bond is cash.
 
-**Effort.** Large.
+**W7b — the volatility floor — LANDED (0.19.2).** `SigmaNBond` was duration-INDEPENDENT, so the
+model read `vol = 5.11 + 0.696 x duration`. The two errors cancelled at TLT's duration, where the
+bond was calibrated (1.10x real), and compounded as duration fell (4.01x at SHY's). The short half
+of the bond universe was unreachable *by construction*: nothing below 5.11% volatility existed at
+any parameter setting. The noise now scales as `duration / 13.5`, giving `vol = +0.12 + 1.044 x
+duration`; 13.5 is the shipped default, so the ratio is a bit-exact 1.0 there and the default world
+is byte-identical. At AGG's 5.70-year duration the model now produces 5.99% volatility and the ONLY
+remaining gate failure is `bond vol 7-20%`.
+
+The residual is a uniform 11% slope overstatement (1.044 against 0.937). Left alone deliberately:
+correcting it means retuning rate volatility, which reaches the equity leg through the discount
+channel and would forfeit the default's invariance. A uniform scale error is also a far better
+failure mode than an additive floor.
+
+**W7a — the anchors and checks hardcoded long Treasury — LANDED (0.19.2).** Three separate faults,
+all of which made the gate false for every bond except the one it was built from:
+
+- *A horizon mismatch.* `bond vol` is the one bond statistic that is strongly horizon-dependent
+  (12.57% over 24 years against 17.12% over 100, as a longer window samples more rate-regime
+  variation), and it was scored on 100-year paths against a 24-year fund anchor. It now measures
+  over non-overlapping 24-year windows. The ratio was 1.32; horizon-matched it is **1.03**. Measured:
+  the other three bond statistics move 1.02x, 1.12x and 0.90x across that range, so the split is
+  confined to one row — and because a differing protocol is easy to misread, the horizon travels in
+  the row's own label (`bond vol % (24y)`), the gate check's name, the summary line and the report's
+  anchor header.
+- *An absolute volatility band.* `bond vol 7-20%` admitted one of the eight real funds and asserted
+  of the US Aggregate that it is not a market. Now `0.5-2.5x duration` (realism) and `0.70-1.10x
+  duration` (fidelity): Treasuries measure 0.798-0.973, the Aggregate 0.745, investment grade 0.824.
+  High yield at 2.001 is admitted as a market but excluded from the fidelity band, since credit is
+  out of scope until W7c.
+- *A TLT depth anchor.* 0.510 was TLT's, against a real range of 0.000-0.499 across eight funds. The
+  row is now `bond depth vs vol`, measured against what the bond's own volatility implies
+  (`d10 = 0.0397 * vol - 0.0785`, fitted on the five Treasuries over a 1.44-14.12% range).
+
+`WorldStats` gains `duration` for this, carried through `Path`, so the gate can judge a bond
+relative to what it is.
+
+**What this exposed, which the hardcoding had been hiding.** With the anchors correct the bond spent
+**1.7x to 6x** longer below its running peak than a real bond of the same volatility (1.7x at TLT's
+volatility, 4.1x at IEI's, 6.0x at HYG's) — the same "sits below its peak too long" defect the
+equity leg carried before 0.19.1. The reading was 1.91 at the default duration, 3.31 at 5.7 years,
+and 1.02 at 25 years: worst at the SHORT end, not uniform. Nobody had to notice it; the gate stated
+it. Fixed in W7d.
+
+**Still hardcoded, on thin evidence: `bond growth-crash 20.0`.** That is close to TLT's single 2008
+episode (+22.3). Across the six real 15%+ equity drawdowns since 2002 TLT's median is +9.65, and the
+model reads 13.32. Six episodes is too few to re-anchor on, and comparing a six-sample median to the
+model's many-sample one is its own error. Left as a recorded MISS rather than replaced with a number
+that is thin in a different way.
+
+**W7d — the bond's drawdown profile — LANDED (0.19.2).** The defect W7a exposed, traced and fixed.
+
+*Diagnosis.* **75% of the bond's time below its running peak was spent in episodes where inflation
+pressure never rose at all and the rate never left 4.6-4.8%.** Inflation regimes accounted for 25%.
+Every one of those episodes began at a peak set when the policy rate touched zero, and the rate did
+that in 23 episodes per century of **median length 0.14 years, maximum 0.45** — against real holds
+of 7.0 years (2008-15), 2.0 years (2020-22) and ~15 years (1932-47). A 4.8pp round trip against 13.5
+years of duration is a 65% log spike; at 5.5%/yr carry it takes twelve years to earn back. The bond
+made new highs on 2.5% of sessions, in 172 runs of median 2 days. It was not too deep; it was
+permanently recovering from a spike.
+
+The cause was `flight`: an uncapped rate cut SPEED (0.48/yr at full stress, ~11x the fastest real
+easing cycle) integrated into the rate and then pulled back by the same fast `rateSpeed`.
+
+*Ruled out by measurement, so that nobody repeats them.* Horizon: 24-year windows read 0.857 against
+0.860 whole-path, so unlike bond volatility this statistic is horizon-free. Inflation severity: a
+minority contributor. Four candidate fixes, none of which reach the band — a symmetric slowdown
+(`-ratespeed 0.5`, 1.45, and it over-deepens the inflation crash to 1.41x); a slow near-unit-root
+second rate factor (1.66 at best, and it raises bond volatility); a refuge flow on top of the
+uncapped cut (1.82, **worse** — a flow-driven rally is also a spike); and an asymmetric hold below
+the mean, which reaches 1.27 but only by wrecking the rate distribution (see the standing constraint
+above), and stops at 1.59 once the rate is defensible again.
+
+*The fix, in two parts, both load-bearing.* `flight` is replaced by an accommodation STOCK: capped
+at `easing` rate points, eased in at a frozen 6.0/yr (~2 months), withdrawn at `unwind` (0.35/yr, a
+~2-year half-life), and suppressed by inflation exactly as before. Capping it alone fixes the depth
+profile and **removes the crash rally outright** — the rally WAS the spike that set the peak — so
+the bond also gains `refuge`, a flight-to-quality bid that scales with duration and bids for a bond
+whose own market is still orderly. Each is separately necessary: at `-refuge 0` the mechanism check
+"bonds rally in growth shocks" fails; at `-easing 0` the depth profile goes shallow (0.93).
+
+| duration | 0.19.1 + W7a | 0.19.2 |
+|---|---|---|
+| 5.7 (Aggregate-like) | 3.31 | 0.66 |
+| 13.5 (default) | 1.91 **FAIL** | 1.24 |
+| 25.0 | 1.02 | 0.93 |
+
+All three now clear realism, mechanism AND fidelity — including the Aggregate-like 5.7-year world,
+which is what W7 was opened for.
+
+*The price, stated rather than tuned away.* Capping the cut also removed a discount-channel cushion
+the equity leg was getting in crashes, so at unchanged dials the crash rate went 1.20 -> 1.38 and
+clustering 1.08 -> 1.13. The default absorbs part of that — `depth` 16.3 -> 16.6 (crash 1.32) and
+`stress` 5.4 -> 5.1 (clustering 1.06, the same trade 0.19.1 made against the same dial) — at a cost
+of kurtosis 0.46 -> 0.42, which is a recorded scope exclusion either way. `bond growth-crash` falls
+0.67 -> 0.42 against its thin 20.0 anchor, though it moves TOWARD TLT's six-episode median of 9.65.
+The world clears **all three gate classes**, the first default to do so, and holds the best
+held-out fitness score in an 8,000-sample search (2.588 against the best sample's 3.120).
+
+**W7c — the credit channel — OPEN, lower value.** HYG at 3.02 years carries 6.04% volatility where
+its duration implies ~2.8, and in 2020 LQD returned -16.0 where IEF returned +6.2. So credit is a
+real second dimension, but it is a small correction for investment grade and does not block
+anything; it is a fidelity improvement, not an unlock.
+
+**Not pursued: a blend of two durations.** The fair-value update is linear in duration, so a blend
+is arithmetically a single duration at the weighted average. It is a reparameterisation, not a
+mechanism.
+
+**Parity.** W7b: one expression, no new state, no `-emit` change. W7a: band and target edits only.
+
+**Effort.** W7b was small. W7a is small. W7c is moderate.
 
 ## W8 — Calibrate against the term structure of return autocorrelation
 

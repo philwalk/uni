@@ -1246,9 +1246,14 @@ fn assert_coverage(rows: &[(String, String, u64)]) {
     // Guard against a fixture that silently shrinks to nothing meaningful. Each count is
     // asserted separately because the three groups pin different things, and losing any
     // one of them would leave the others looking healthy.
+    // These two minima track the actual counts with a few percent of slack, deliberately. At
+    // 1550 and 250 they were DOMINATED: the per-family minima below sum to 2592, so neither
+    // could fire before a family assertion did, and between them they would have waved through
+    // a regeneration that silently dropped more than half the corpus. A count that cannot fail
+    // is not coverage.
     assert!(
-        checked >= 1550,
-        "only {checked} rows checked; expected 13 sizes x 10 + 11 shapes x 27 + 10 adversarial x 60"
+        checked >= 3400,
+        "only {checked} rows checked; the corpus has shrunk — regenerate or explain"
     );
     assert!(
         masks >= 800,
@@ -1256,8 +1261,8 @@ fn assert_coverage(rows: &[(String, String, u64)]) {
          using its ordering comparator would pass everything else"
     );
     assert!(
-        two_d >= 250,
-        "only {two_d} 2-D rows; the view model would go unchecked"
+        two_d >= 2150,
+        "only {two_d} 2-D rows; the view model would go under-checked"
     );
     assert!(
         adv >= 300,

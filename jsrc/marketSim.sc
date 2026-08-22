@@ -26,8 +26,17 @@
 //   equity fair value = base fundamental marked down by the rate (discount channel: a rate rise
 //     hits equities and bonds at the same time — the whole of 2022).
 //   bond fair value   = rate-implied: accrues carry, loses duration times the rate move.
-//   the RATE carries policy: it chases rateMean + inflation pressure, and is cut when equity
-//     stress is high (flight/policy response) UNLESS inflation pressure ties its hands.
+//   the RATE carries policy: it chases rateMean + inflation pressure MINUS an ACCOMMODATION
+//     STOCK -- eased in fast under equity stress, capped at `easing` rate points, suppressed by
+//     inflation, and withdrawn slowly at `unwind`.  The cap and the slow exit are both
+//     load-bearing.  v3 cut the rate at an uncapped SPEED, which drove it 4.2% -> 0% -> 4.2%
+//     inside a quarter, thirteen times a century (real holds: 7 years 2008-15, 2 years 2020-22).
+//     Each round trip marked a bond peak ~65% above the normal level that then took a decade of
+//     carry to regain: 75% of the bond's time below its running peak was spent recovering from
+//     one, with no inflation involved at all.
+//   refuge bid: flight-to-quality demand into a bond that is itself still orderly.  The bond needs
+//     a NON-RATE source of crash performance -- capping the cut fixes the depth profile and, on
+//     its own, removes the crash rally entirely (the rally WAS the spike that set the peak).
 //   margin coupling: when BOTH markets are stressed, forced selling hits the bond too.
 //
 // SCOPE DECISION (recorded, not hidden): daily kurtosis (~16 vs real 28) stays a MISS and is
@@ -42,7 +51,7 @@
 //   1. a BINDING diagnostic printed in the output (realized trend share, bond-spiral engagement,
 //      clamp counts, pinned share),
 //   2. a TWO-SIDED acceptance bound where a plausible range exists,
-//   3. an OFF-world in the sweep (no spiral, no flight, no margin coupling).
+//   3. an OFF-world in the sweep (no spiral, no refuge channel, no margin coupling).
 //
 // FROZEN CONSTANTS (deliberately not swept; every other number is a World field or CLI flag):
 //   equity noise sigmaN 0.007 (~11% annualised alone) | momentum lookback 60 sessions,
@@ -54,7 +63,9 @@
 //   fair arbitraged over ~20 sessions), bond idiosyncratic noise sigmaNB 0.002 | daily return
 //   clamp +-50%, pure numerical guard (counted; gate <0.02%) | no-trade band 0.05 | burn-in 756 sessions (slowest state ~600) |
 //   regime spacing 250 + U(0,2500) sessions, drift shock sd 0.04/yr | rate noise 0.01/yr |
-//   inflation flight-suppression scale 0.005 | rate-news multiplier 1+25*inflPress (rate
+//   inflation accommodation-suppression scale 0.005 | accommodation ease-in 6.0/yr (~2 months
+//   to the cap; only the CAP and the WITHDRAWAL are worlds -- how fast a central bank can cut in
+//   a panic is not the uncertain quantity) | rate-news multiplier 1+25*inflPress (rate
 //   uncertainty rises with inflation pressure; source of the correlation flip).
 //
 // CONVENTIONS: trend windows are CALENDAR days (converted to sessions, 200d ~ 138).  Exposure
@@ -143,8 +154,12 @@ object MarketSim:
     s"              ;   ${Defaults.drift})",
     s"-ratemean X   ; long-run mean of the short rate (default ${Defaults.rateMean})",
     s"-duration X   ; bond duration in years (default ${Defaults.duration}, a long-Treasury refuge)",
-    s"-flight X     ; policy/flight rate cut under equity stress, suppressed by inflation (default",
-    s"              ;   ${Defaults.flight})",
+    s"-easing X     ; CAP on policy accommodation under equity stress, in rate points, suppressed",
+    s"              ;   by inflation (default ${Defaults.easing} = one full real easing cycle)",
+    s"-unwind X     ; how fast accommodation is withdrawn, per year (default ${Defaults.unwind}, a",
+    s"              ;   ~2-year half-life)",
+    s"-refuge X     ; flight-to-quality bid into the bond when equities are stressed and the bond",
+    s"              ;   is not; scales with duration (default ${Defaults.refuge})",
     s"-inflprob X   ; chance a regime shift starts an inflation regime (default ${Defaults.inflProb})",
     s"-inflsize X   ; rate pressure target in one, per year (default ${Defaults.inflSize})",
     s"-inflspeed X  ; how fast pressure ramps, per session (default ${Defaults.inflSpeed})",
@@ -166,7 +181,9 @@ object MarketSim:
     fundVol: Double, rateMean: Double, volPersist: Double, volOfVol: Double, valuePull: Double,
     crowd: Crowd, crowdImpact: Double, panic: Double,
     duration: Double,   // bond duration: sensitivity of its fair value to the rate
-    flight: Double,     // policy/flight rate response to equity stress (inflation-suppressed)
+    easing: Double,     // CAP on policy accommodation under equity stress, in rate points
+    unwind: Double,     // how fast that accommodation is withdrawn, per year
+    refuge: Double,     // flight-to-quality bid into the bond, per unit of equity stress
     inflProb: Double, inflSize: Double, inflSpeed: Double, rateSpeed: Double,
     discount: Double,   // equity fair-value markdown per pp of rate above its long-run mean
     margin: Double,     // joint-stress forced selling pressure on the bond
@@ -186,6 +203,9 @@ object MarketSim:
                         clampedDays: Int,        // both markets, post-burn-in
                         meanBondStress: Double,  // BINDING diagnostic for the bond spiral
                         pctBondStress: Double,   // share of sessions bond stress index > 0.5
+                        duration: Double,        // the world's bond duration, carried so the gate can
+                                                 // judge bond volatility RELATIVE to it; a fixed
+                                                 // absolute band can only ever fit one bond
                         meanCrowdFlow: Double)   // BINDING diagnostic for the reflexive channel:
                                                  // mean |crowd flow| per session, post burn-in.
                                                  // Its ABSENCE is why -crowdimpact sat dead in the
@@ -197,9 +217,10 @@ object MarketSim:
     * wrong three times before it was centralised.  A mismatch between the twins is caught directly
     * by the `-emit` sidecar, which names every field: bare `-emit` writes THIS world. */
   val Defaults = World(
-    trendShare = 0.06, depth = 16.3, stress = 5.4, beta = 3.0, drift = 0.117, fundVol = 0.13,
+    trendShare = 0.06, depth = 16.6, stress = 5.1, beta = 3.0, drift = 0.117, fundVol = 0.13,
     rateMean = 0.042, volPersist = 0.99, volOfVol = 0.011, valuePull = 0.013,
-    crowd = Crowd.Momentum, crowdImpact = 0.088, panic = 0.0, duration = 13.5, flight = 0.48,
+    crowd = Crowd.Momentum, crowdImpact = 0.088, panic = 0.0, duration = 13.5,
+    easing = 0.045, unwind = 0.35, refuge = 0.08,
     inflProb = 0.20, inflSize = 0.10, inflSpeed = 0.010, rateSpeed = 3.0, discount = 3.35,
     margin = 0.006)
   val DefaultPaths = 200
@@ -218,15 +239,20 @@ object MarketSim:
     * The worlds are historical; the MEASUREMENT is current.  This therefore answers "how has the
     * default moved", NOT "what did that version report" -- the mechanism moved too, and conflating
     * those would be its own error.  A `World` field added after a release takes today's value in
-    * that release's row, because an older world genuinely has no value for it.
+    * that release's row, because an older world genuinely has no value for it.  A field REMOVED
+    * by a mechanism change is the same case read backwards: 0.17.0-0.19.0 shipped `flight = 0.38`,
+    * an uncapped cut speed for which the capped accommodation has no equivalent value, so those
+    * rows carry today's `easing`/`unwind`.  The row still answers the question the report asks.
     *
     * 0.17.0 through 0.19.0 share one world: the default did not move for three releases. */
   private val PreV1901 = Defaults.copy(
     trendShare = 0.30, depth = 12.0, stress = 3.4, volOfVol = 0.028, valuePull = 0.015,
-    crowdImpact = 0.06, drift = 0.100, duration = 13.5, flight = 0.38, inflSize = 0.07,
+    crowdImpact = 0.06, drift = 0.100, duration = 13.5, inflSize = 0.07,
     discount = 4.0, margin = 0.0008)
+  private val PreV1902 = Defaults.copy(depth = 16.3, stress = 5.4)
   val Releases: Vector[(String, World)] = Vector(
-    ("0.17.0", PreV1901), ("0.18.0", PreV1901), ("0.19.0", PreV1901), ("0.19.1", Defaults))
+    ("0.17.0", PreV1901), ("0.18.0", PreV1901), ("0.19.0", PreV1901),
+    ("0.19.1", PreV1902), ("0.19.2", Defaults))
 
   val PowerArmsDefault  = Vector(2, 6, 9, 8)
   val PowerYearsDefault = Vector(21, 40, 72, 100)
@@ -239,7 +265,38 @@ object MarketSim:
   // halved every crash-window bond response.  0.7 = near-immediate tracking, with flows and the
   // spiral acting as short-lived deviations on top, which is what bond-market dysfunction is.
   val KValueBond = 0.7
+  /** Bond idiosyncratic noise AT THE REFERENCE DURATION.  It scales with duration in `simulate`,
+    * and must: a zero-duration bond is cash.  Five real iShares Treasury funds spanning 1.80 to
+    * 14.89 years of duration (SHY, IEI, IEF, TLH, TLT, 20-24 years each) fit
+    *     vol = -0.07 + 0.937 * duration
+    * -- an intercept of zero to within a rounding error.  Held FIXED, this term was a 5.11%
+    * volatility floor: the model read 1.10x real at TLT's duration, where it was calibrated, and
+    * 4.01x at SHY's, so the whole short half of the bond universe was unreachable by construction
+    * rather than by parameter choice.  `DurationRef` is the shipped default, so the ratio is a
+    * bit-exact 1.0 there and the default world is unchanged. */
   val SigmaNBond = 0.002
+  /** How fast policy reaches the accommodation the stress level calls for, per year: ~2 months to
+    * the cap, which is what an easing cycle takes.  Frozen, not a World field: the uncertain
+    * quantities are HOW FAR policy can go (`easing`) and HOW LONG it stays (`unwind`), not how
+    * quickly a central bank can cut in a panic -- that one the record answers the same way every
+    * time. */
+  val EaseInSpeed = 6.0
+  val DurationRef = 13.5
+  /** Bond volatility is measured over NON-OVERLAPPING windows of this many years, even when the
+    * paths are longer.  Every other statistic is measured over the whole path.
+    *
+    * The asymmetry is deliberate and it is not free, so it is stated here, in the row's own label
+    * (`bond vol % (24y)`) and in the report's anchor header.  Bond volatility is the one statistic
+    * that is strongly horizon-DEPENDENT in this model -- 12.57% over 24 years against 17.12% over
+    * 100, because a longer window samples more rate-regime variation -- while its anchor can only
+    * come from fund data, and the longest clean bond-fund series run 24 years.  Scoring a 100-year
+    * reading against a 24-year anchor reported a ratio of 1.32 where the horizon-matched answer is
+    * 0.89, which is the same mistake the clustering anchor carried before it was re-measured.
+    *
+    * Measured, for the record: the other three bond statistics do NOT need this.  Over 24 against
+    * 100 years the depth rung moves 1.02x, growth-crash 1.12x and inflation-crash 0.90x, so they
+    * stay on the whole-path protocol and the split is confined to one row. */
+  val BondVolYears = 24
   /** Equity idiosyncratic noise, ~11% annualised alone.  Top-level beside its bond counterpart so
     * the crowd-flow diagnostic can state the reflexive channel as a share of it. */
   val SigmaN = 0.007
@@ -302,6 +359,7 @@ object MarketSim:
     var logVbase = 0.0
     var rate = w.rateMean
     var inflPress = 0.0; var inflTarget = 0.0
+    var acc = 0.0                              // policy accommodation in force, in rate points
     var driftNow = w.drift
     var regimeCountdown = 250 + rng.nextBoundedInt(2500)
     var fairB = 0.0
@@ -337,15 +395,21 @@ object MarketSim:
         regimeCountdown = 250 + rng.nextBoundedInt(2500)
       logVbase += driftNow * dt + w.fundVol * sqdt * rng.randn()
       inflPress += w.inflSpeed * (inflTarget - inflPress)
-      // policy: chase rateMean+pressure; cut on equity stress UNLESS inflation ties its hands
-      val flightCut = w.flight * eqM.stressIdx * math.exp(-inflPress / 0.005)
+      // policy: chase rateMean + pressure MINUS accommodation, and accommodation is a CAPPED
+      // STOCK rather than a cut speed -- eased in within ~2 months, withdrawn over years.  As a
+      // speed it was unbounded, so a stress episode took the rate to the floor and the same
+      // `rateSpeed` pulled it straight back; the bond's peak was set by that spike.  Inflation
+      // suppresses the easing, which is what ties policy's hands in 2022-like regimes.
+      val accWant = w.easing * eqM.stressIdx * math.exp(-inflPress / 0.005)
+      acc = if accWant > acc then acc + EaseInSpeed * (accWant - acc) * dt
+            else math.max(0.0, acc - w.unwind * acc * dt)
       val rOld = rate
       // rate UNCERTAINTY rises with inflation pressure (2022: MOVE elevated all year).  This is what
       // makes stocks and bonds co-move in an inflation regime: both are priced off the same rate,
       // so more rate news = more shared-factor variance = the correlation flip.  A constant rate
       // noise produced a flip of only +0.05 — present but too weak to pass its own gate.
-      rate = math.max(0.0, rate + w.rateSpeed * ((w.rateMean + inflPress) - rate) * dt
-                              - flightCut * dt + 0.01 * (1.0 + 25.0 * inflPress) * sqdt * rng.randn())
+      rate = math.max(0.0, rate + w.rateSpeed * ((w.rateMean + inflPress - acc) - rate) * dt
+                              + 0.01 * (1.0 + 25.0 * inflPress) * sqdt * rng.randn())
       // bond fair value: carry minus duration times the realised rate move
       fairB += rate * dt - w.duration * (rate - rOld)
       // The discount markdown applies to the OBSERVED equity price directly — same-day, like the
@@ -389,9 +453,14 @@ object MarketSim:
 
       // ---- both markets step through the SAME mechanism --------------------------------------
       val retE = eqM.step(logVbase, eqFlow + dNoise)
-      // joint-stress margin selling: when both markets are stressed, the bond gets dumped too
-      val bondFlow = -w.margin * eqM.stressIdx * bdM.stressIdx
-      val retB = bdM.step(fairB, bondFlow + SigmaNBond * rng.randn())
+      // joint-stress margin selling: when both markets are stressed, the bond gets dumped too --
+      // and against it the refuge bid, flight-to-quality into a bond that is itself still orderly.
+      // DURATION-SCALED, like the bond's own noise: an absolute bid gave a 5-year bond the same
+      // crash rally as a 20-year one, which no duration-relative band can then fit.
+      val bondFlow = -w.margin * eqM.stressIdx * bdM.stressIdx +
+                     w.refuge * (w.duration / DurationRef) * eqM.stressIdx *
+                       math.max(0.0, 1.0 - bdM.stressIdx)
+      val retB = bdM.step(fairB, bondFlow + SigmaNBond * (w.duration / DurationRef) * rng.randn())
       val _ = retB
 
       px(i) = math.exp(eqM.logP - markdown)
@@ -430,7 +499,7 @@ object MarketSim:
          bp.drop(BurnIn), ip.drop(BurnIn), cp.drop(BurnIn),
          wTrendSum / n, pinnedCnt.toDouble / n, satCnt.toDouble / n,
          eqM.clamps + bdM.clamps - clampsAtBurn,
-         bondStressSum / n, bondStressHi.toDouble / n, crowdFlowSum / n)
+         bondStressSum / n, bondStressHi.toDouble / n, w.duration, crowdFlowSum / n)
 
   // ---- stylised-fact measurements ------------------------------------------------------------
   def dailyReturns(px: Array[Double]): Array[Double] =
@@ -513,6 +582,7 @@ object MarketSim:
                               bondVol: Double, bondGrowth: Double, bondInfl: Double,
                               corrCalm: Double, corrInfl: Double,
                               meanBondStress: Double, pctBondStress: Double, crowdFlow: Double,
+                              duration: Double,
                               inflAnn: Double,
                               // depth profile: median share of sessions more than 5/10/20% below
                               // the running peak, equity leg then bond leg
@@ -522,6 +592,22 @@ object MarketSim:
       * return in %/yr and `vol` is a fraction.  An arithmetic-mean anchor is higher by about
       * sigma/2 (0.08 at 16% vol) and has to be restated before it can be compared with this. */
     def retVol: Double = if vol <= 0.0 then Double.NaN else annRet / (vol * 100.0)
+
+    /** Bond volatility per year of duration.  Real funds, 19-24 years each: Treasuries 0.798 (SHY)
+      * to 0.973 (IEF), the US Aggregate 0.745, investment-grade credit 0.824, high yield 2.001 --
+      * credit is the only thing that breaks the relationship, and this model has no credit channel.
+      * Judging bond volatility on this ratio rather than an absolute band is what lets one gate
+      * cover every duration instead of only the one the anchor was built from. */
+    def bondVolPerYear: Double = if duration <= 0.0 then Double.NaN else bondVol * 100.0 / duration
+
+    /** Time spent >10% below the running peak, RELATIVE to what this bond's own volatility implies.
+      * The five real Treasury funds fit `d10 = 0.0397 * vol - 0.0785` (floored at zero) across a
+      * 1.44-14.12% volatility range; 1.0 means the bond is under water as long as a real bond of
+      * the same volatility.  Replaces a fixed 0.510, which was TLT's number and false for every
+      * other bond -- the real range across eight funds is 0.000 to 0.499. */
+    def bondDepthVsVol: Double =
+      val expected = math.max(0.0, 0.0397 * (bondVol * 100.0) - 0.0785)
+      if expected <= 0.0 then Double.NaN else ddBd10 / expected
 
   def measure(sims: Vector[Path], years: Int): WorldStats =
     val rets = sims.map(s => dailyReturns(s.price))
@@ -557,12 +643,22 @@ object MarketSim:
       trendShare = sims.map(_.meanTrendShare).sum / sims.size, yearsPerPath = years.toDouble,
       trendPinned = sims.map(_.trendPinned).sum / sims.size,
       targetSat = sims.map(_.targetSat).sum / sims.size,
-      bondVol = med(sims.map(s => math.sqrt(MatD(dailyReturns(s.bond)).power(2).mean * DaysPerYear))),
+      // Median over non-overlapping BondVolYears windows, pooled across paths -- see BondVolYears
+      // for why this row alone is windowed.  A path shorter than one window contributes itself, so
+      // a short run still reports something rather than nothing.
+      bondVol = med(sims.flatMap { s =>
+        val r = dailyReturns(s.bond)
+        val w = BondVolYears * DaysPerYear
+        val nw = r.length / w
+        val segs = if nw < 1 then Vector(r) else (0 until nw).toVector.map(k => r.slice(k * w, (k + 1) * w))
+        segs.map(seg => math.sqrt(MatD(seg).power(2).mean * DaysPerYear))
+      }),
       bondGrowth = bondInWindows(false), bondInfl = bondInWindows(true),
       corrCalm = corrIn(false), corrInfl = corrIn(true),
       meanBondStress = sims.map(_.meanBondStress).sum / sims.size,
       pctBondStress = sims.map(_.pctBondStress).sum / sims.size,
       crowdFlow = sims.map(_.meanCrowdFlow).sum / sims.size,
+      duration = sims.head.duration,
       inflAnn = med(sims.map(s => math.log(s.cpi.last / s.cpi.head) / years * 100.0)),
       ddEq5  = med(ddEq.map(_._1)), ddEq10 = med(ddEq.map(_._2)), ddEq20 = med(ddEq.map(_._3)),
       ddBd5  = med(ddBd.map(_._1)), ddBd10 = med(ddBd.map(_._2)), ddBd20 = med(ddBd.map(_._3)))
@@ -625,7 +721,11 @@ object MarketSim:
       // 0.02% ~ one clamped session per 20 path-years.  The old bound (0.5%) would have passed a
       // world where the clamp was already reshaping kurtosis by a third.
       ("clamp rarely binds",        st.clampPct < 0.02, Realism),
-      ("bond vol 7-20%",            st.bondVol > 0.07 && st.bondVol < 0.20, Realism),
+      // RELATIVE to duration, not absolute.  The old 7-20% band was TLT's: of eight real funds it
+      // admitted one, and asserted of the US Aggregate (4.24%) that it is not a market.  0.5-2.5
+      // per year of duration admits every fund measured, high yield at 2.001 included, and still
+      // catches a bond whose volatility bears no relation to what it is.
+      ("bond vol 0.5-2.5x duration", st.bondVolPerYear > 0.5 && st.bondVolPerYear < 2.5, Realism),
       ("bonds rally in growth shocks",    st.bondGrowth > 3.0, Mechanism),
       ("bonds LOSE in inflation regimes", st.bondInfl < -3.0, Mechanism),
       ("corr flips positive under inflation",
@@ -652,7 +752,15 @@ object MarketSim:
       depthCheck("equity >5% below peak",  st.ddEq5,  0.447),
       depthCheck("equity >10% below peak", st.ddEq10, 0.315),
       depthCheck("equity >20% below peak", st.ddEq20, 0.169),
-      depthCheck("bond >10% below peak",   st.ddBd10, 0.510),
+      // Against what this bond's OWN volatility implies, not against TLT's 0.510 -- see
+      // `bondDepthVsVol`.  The band is +-0.35 because the real fit has real scatter (credit funds
+      // sit below the Treasury line), not because the model needs the room: it reads 1.9.
+      ("bond depth vs its vol 0.65-1.35",
+          st.bondDepthVsVol > 0.65 && st.bondDepthVsVol < 1.35, Fidelity),
+      // Treasuries run 0.798-0.973 and investment grade 0.745-0.824; high yield (2.001) is out of
+      // scope until there is a credit channel, so the upper bound deliberately excludes it.
+      ("bond vol 0.70-1.10x duration",
+          st.bondVolPerYear > 0.70 && st.bondVolPerYear < 1.10, Fidelity),
     )
 
   /** The band is derived from the real anchor here, so the printed name and the predicate cannot
@@ -737,7 +845,9 @@ object MarketSim:
     ("crashes/century",    st => st.epPerPath * 100.0 / st.yearsPerPath,    20.7,  1.0),
     ("median depth %",     st => st.depthMed,                              -27.1,  1.0),
     ("worst crash %",      st => st.worstDepth,                            -56.8,  1.0),
-    ("bond vol %",         st => st.bondVol * 100,                          13.0,  1.0),
+    // The "(24y)" is load-bearing, not decoration: this row is measured on a different horizon
+    // from every other, and the label is the only part that travels when the number is quoted.
+    ("bond vol % (24y)",   st => st.bondVol * 100,                          13.0,  1.0),
     ("bond growth-crash",  st => st.bondGrowth,                             20.0,  1.0),
     ("bond infl-crash",    st => st.bondInfl,                              -25.0,  1.5),
     // DEPTH PROFILE.  Real equity anchors are SPY 1993-01-29..2026-08-20 (8447 sessions) — a
@@ -766,7 +876,7 @@ object MarketSim:
     ("equity >5% below pk", st => st.ddEq5,                                  0.447, 0.5),
     ("equity >10% below pk",st => st.ddEq10,                                 0.315, 1.0),
     ("equity >20% below pk",st => st.ddEq20,                                 0.169, 0.5),
-    ("bond >10% below pk",  st => st.ddBd10,                                 0.51,  0.5),
+    ("bond depth vs vol",   st => st.bondDepthVsVol,                          1.00, 0.5),
   )
   def fitness(st: WorldStats): (Double, Vector[(String, Double, Double, Double)]) =
     val rows = FitTargets.map { (name, get, target, weight) =>
@@ -1100,7 +1210,8 @@ object MarketSim:
       ("stress",       2.0,   6.0, (w, x) => w.copy(stress = x)),
       ("valuePull",  0.010, 0.035, (w, x) => w.copy(valuePull = x)),
       ("volOfVol",   0.012, 0.030, (w, x) => w.copy(volOfVol = x)),
-      ("flight",       0.2,   1.6, (w, x) => w.copy(flight = x)),
+      ("easing",       0.0,  0.09, (w, x) => w.copy(easing = x)),
+      ("refuge",       0.0,  0.20, (w, x) => w.copy(refuge = x)),
       ("duration",     8.0,  18.0, (w, x) => w.copy(duration = x)),
       ("inflSize",    0.03,  0.12, (w, x) => w.copy(inflSize = x)),
       ("discount",     3.0,  10.0, (w, x) => w.copy(discount = x)),
@@ -1177,7 +1288,9 @@ object MarketSim:
         // that falsified it.  These now double as carry-level probes (low ~ 2022, high ~ 1970s).
         ("low rates / low carry",      base.copy(rateMean = 0.01), false),
         ("high rates / high carry",    base.copy(rateMean = 0.07), false),
-        ("no flight bid",              base.copy(flight = 0.0), false),          // OFF-world: refuge
+        // OFF-world: refuge.  BOTH channels, because either alone leaves the bond a refuge by the
+        // other route and the world stops being the off-switch it is labelled as.
+        ("no refuge channel",          base.copy(easing = 0.0, refuge = 0.0), false),
         ("no margin coupling",         base.copy(margin = 0.0), false),          // OFF-world: margin
         ("double inflation severity",  base.copy(inflSize = base.inflSize * 2.0), false),
       ) ++ (if !withReflexive then Vector.empty else Vector(
@@ -1417,7 +1530,8 @@ object MarketSim:
     println("CROSS-RELEASE FIDELITY — every target at every published default, and at the world this")
     println("invocation describes.  The WORLDS are historical; the MEASUREMENT is current, so this shows")
     println("how the DEFAULT has moved, not what each version reported — the mechanism moved too.  A")
-    println("World field added after a release takes today's value in that release's row.")
+    println("World field added after a release -- or REMOVED by a mechanism change, as 0.19.2's")
+    println("rate cut was -- takes today's value in that release's row.")
     println()
     println(f"  ${"target"}%-22s" + cols.map((v, _) => f"$v%8s").mkString +
             f"   ${"best"}%7s   worse than best")
@@ -1741,7 +1855,8 @@ object MarketSim:
       ("rateMean", ef(w.rateMean)), ("volPersist", ef(w.volPersist)),
       ("volOfVol", ef(w.volOfVol)), ("valuePull", ef(w.valuePull)),
       ("crowd", jsonStr(crowdName(w.crowd))), ("crowdImpact", ef(w.crowdImpact)),
-      ("panic", ef(w.panic)), ("duration", ef(w.duration)), ("flight", ef(w.flight)),
+      ("panic", ef(w.panic)), ("duration", ef(w.duration)),
+      ("easing", ef(w.easing)), ("unwind", ef(w.unwind)), ("refuge", ef(w.refuge)),
       ("inflProb", ef(w.inflProb)), ("inflSize", ef(w.inflSize)),
       ("inflSpeed", ef(w.inflSpeed)), ("rateSpeed", ef(w.rateSpeed)),
       ("discount", ef(w.discount)), ("margin", ef(w.margin)),
@@ -1820,16 +1935,21 @@ object MarketSim:
     // held fixed, as all four were until 0.19.1, no sample gets here.  Loss 3.13-3.57 across five
     // scoring seeds against the pre-0.19.1 defaults' 5.77-6.11.
     //
-    // `stress` IS NOT AT THE OBJECTIVE'S MINIMUM, deliberately.  The loss minimises at stress 5.9
-    // (2.967 against 3.119 here, ~0.15); 5.4 was chosen to cut a REGRESSION the objective does not
-    // weigh heavily enough to see.  The liquidity spiral is a single amplifier producing volatility,
-    // fat tails AND volatility clustering together -- `stress` alone moves ac1 from 0.160 at 3.4 to
-    // 0.420 at 7.0 -- so raising it to fix kurtosis (0.28 -> 0.58) drove clustering from 0.81 to
-    // 1.20.  At 5.4 the split is: clustering 1.08 (from 1.20), the 10% depth rung 1.06 (from 1.13),
-    // crash rate 1.20 (from 1.26), worst crash 1.49 (from 1.54, back under the MISS threshold);
-    // paid for with kurtosis 0.46 (from 0.58), equity vol 0.92 (from 0.98), return per vol 1.14
-    // (from 1.08), median depth 0.93 (from 0.97) and the 20% rung 0.92 (from 1.02).  Do not
-    // "optimise" this back to 5.9 without re-reading that trade.
+    // `stress` IS NOT AT THE OBJECTIVE'S MINIMUM, deliberately, and has now been moved DOWN twice
+    // for the same reason.  The liquidity spiral is a single amplifier producing volatility, fat
+    // tails AND volatility clustering together -- `stress` alone moves ac1 from 0.160 at 3.4 to
+    // 0.420 at 7.0 -- so buying tails always buys clustering with them, and clustering above 1.0
+    // means volatility is more forecastable here than in the record, which flatters every rule
+    // that forecasts it.  0.19.1 chose 5.4 over the then-minimum 5.9 on that trade; 0.19.2 chose
+    // 5.1 over 5.4 on the same one, because capping the rate cut (see `easing`) removed a discount-
+    // channel cushion in crashes and pushed clustering from 1.08 to 1.13 at unchanged `stress`.
+    // 5.1 with depth 16.6 returns clustering to 1.06 and costs kurtosis 0.46 -> 0.42, which is a
+    // recorded scope exclusion either way.  Do not "optimise" `stress` upward without re-reading
+    // this: the objective does not weigh the clustering regression heavily enough to see it.
+    //   `depth` moved 16.3 -> 16.6 in the same step and for a different reason: the same lost
+    //   cushion raised the crash rate from 1.20 to 1.38, and depth is the dial that carries crash
+    //   frequency.  It buys back a third of it (1.32).  The rest is the mechanism's price, stated
+    //   in the CHANGELOG rather than tuned away.
     //   The clustering figures here are against the CENTURY anchor.  Measured against the 72-year
     //   one this shipped with, the same worlds read 0.90 / 1.20 / 1.33 -- the horizon mismatch, not
     //   a change in the model.
@@ -1839,17 +1959,19 @@ object MarketSim:
     // MISS stands, more precise than "no slow valuation cycle": the cycle is why there is no SECOND
     // channel for tails, not why this one cannot reach them.
     //
-    // TWO KNOWN BIAS DIRECTIONS, netted away nowhere else, pointing opposite ways: clustering at
-    // 1.08 makes volatility more predictable here than in the record, which flatters any rule that
-    // forecasts it; worst crash at 1.49 puts index paths near -84% against a real -56.8%, which no
-    // levered fund survives, so ruin rates for levered sleeves are UPPER BOUNDS, not estimates.
+    // THREE KNOWN BIAS DIRECTIONS, netted away nowhere else: clustering at 1.06 makes volatility
+    // more predictable here than in the record, which flatters any rule that forecasts it; worst
+    // crash at 1.44 puts index paths near -82% against a real -56.8%, which no levered fund
+    // survives, so ruin rates for levered sleeves are UPPER BOUNDS, not estimates; and crashes
+    // arrive 1.32x too often, so any per-crash hazard read off this model is over-sampled.
     var trendShare = Defaults.trendShare; var depth = Defaults.depth
     var stress = Defaults.stress; var beta = Defaults.beta
     var volPersist = Defaults.volPersist; var volOfVol = Defaults.volOfVol
     var valuePull = Defaults.valuePull
     var crowdName = "momentum"; var crowdImpact = Defaults.crowdImpact; var panic = Defaults.panic
     var drift = Defaults.drift; var rateMean = Defaults.rateMean
-    var duration = Defaults.duration; var flight = Defaults.flight
+    var duration = Defaults.duration
+    var easing = Defaults.easing; var unwind = Defaults.unwind; var refuge = Defaults.refuge
     var inflProb = Defaults.inflProb; var inflSize = Defaults.inflSize
     var inflSpeed = Defaults.inflSpeed; var rateSpeed = Defaults.rateSpeed
     var discount = Defaults.discount; var margin = Defaults.margin
@@ -1887,7 +2009,15 @@ object MarketSim:
       case "-drift"      => drift = numOr("-drift", consumeNext)
       case "-ratemean"   => rateMean = numOr("-ratemean", consumeNext)
       case "-duration"   => duration = numOr("-duration", consumeNext)
-      case "-flight"     => flight = numOr("-flight", consumeNext)
+      case "-easing"     => easing = numOr("-easing", consumeNext)
+      case "-unwind"     => unwind = numOr("-unwind", consumeNext)
+      case "-refuge"     => refuge = numOr("-refuge", consumeNext)
+      // Rejected, not silently reinterpreted: -flight was a rate cut SPEED per year and -easing is
+      // a cut CAP in rate points, so every recorded -flight value is wrong by two orders of
+      // magnitude under the new mechanism and would still have produced a plausible-looking run.
+      case "-flight"     => usage("-flight is gone: the rate cut is now a CAPPED, slowly unwound " +
+                                  "accommodation. Use -easing (cap, rate points) and -unwind " +
+                                  "(withdrawal per year). No -flight value carries over.")
       case "-inflprob"   => inflProb = numOr("-inflprob", consumeNext)
       case "-inflsize"   => inflSize = numOr("-inflsize", consumeNext)
       case "-inflspeed"  => inflSpeed = numOr("-inflspeed", consumeNext)
@@ -1921,7 +2051,8 @@ object MarketSim:
                   rateMean = rateMean,
                   volPersist = volPersist, volOfVol = volOfVol, valuePull = valuePull,
                   crowd = crowd, crowdImpact = crowdImpact, panic = panic,
-                  duration = duration, flight = flight, inflProb = inflProb, inflSize = inflSize,
+                  duration = duration, easing = easing, unwind = unwind, refuge = refuge,
+                  inflProb = inflProb, inflSize = inflSize,
                   inflSpeed = inflSpeed, rateSpeed = rateSpeed, discount = discount, margin = margin)
 
     if calibrateN > 0 then
@@ -2004,7 +2135,7 @@ object MarketSim:
     println(f"  drawdowns of 15%%+      ${st.nEpisodes}%d, ${st.epPerPath}%.1f per path; ${st.censored}%d unrecovered at path end (included in depth)")
     println(f"  their depth            median ${st.depthMed}%6.1f%%   worst ${st.worstDepth}%6.1f%%")
     println(f"  recovery shape         V ${st.vCount}%d   balanced ${st.midCount}%d   U ${st.uCount}%d")
-    println(f"  bond refuge            vol ${st.bondVol * 100}%.1f%%   growth-crash ${pm(st.bondGrowth, 0, 1)}%s   infl-crash ${pm(st.bondInfl, 0, 1)}%s")
+    println(f"  bond refuge            vol ${st.bondVol * 100}%.1f%% (24y windows)   growth-crash ${pm(st.bondGrowth, 0, 1)}%s   infl-crash ${pm(st.bondInfl, 0, 1)}%s")
     println(f"  stock-bond correlation calm ${pm(st.corrCalm, 0, 2)}%s   inflation regime ${pm(st.corrInfl, 0, 2)}%s")
     println(f"  realized inflation     ${st.inflAnn}%.2f%%/yr median (deterministic from regime pressure; no draws consumed)")
     println(f"  depth profile          share of sessions below the running peak, median path")
@@ -2027,6 +2158,9 @@ object MarketSim:
     println("    clustering CRSP 1926-2026 (a CENTURY: the statistic is horizon-dependent and the")
     println("      model is scored on 100-year paths)   |   refuge long Treasury   |   bond depth")
     println("      rung clean TLT, 24y")
+    println("    NOTE: bond volatility alone is measured over 24-YEAR windows, not the whole path —")
+    println("      it is the one horizon-dependent statistic whose anchor can only come from fund")
+    println("      data, and no clean bond-fund series runs longer.  Every other row is whole-path.")
     FitTargets.foreach { (n, get, want, _) =>
       val got = get(st)
       val ratio = if want != 0 then got / want else Double.NaN

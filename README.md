@@ -61,6 +61,7 @@ Rust and Scala columns answer the same bits: 3,354 fixture rows pin them to each
 | [Reference Guide](docs/ReferenceGuide.md) | the Scala matrix API, section by section |
 | [Big Type Guide](docs/BigTypeGuide.md) | exact decimals: `Big`, `BigNaN`, `MatB` |
 | [Scripting Tools](docs/UniScriptingTools.md) · [Rust Scripting Guide](rust/docs/RustScriptingGuide.md) | paths, CSV, dates, arguments — for scripts |
+| [Choosing your own world](docs/MarketSimWorlds.md) | `marketSim`: which dials exist, what each one actually moves, and when the world matters |
 | [Date-Time Parser](docs/DateTimeParser.md) · [Path I/O Reference](docs/PathIOReference.md) · [Plot Guide](docs/PlotGuide.md) · [Subprocess API](docs/SubprocessAPI.md) | one topic each |
 
 Every ```scala block in these pages is a complete script that the CI compiles and runs;

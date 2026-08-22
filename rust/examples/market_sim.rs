@@ -60,7 +60,38 @@ const BURN_IN: usize = 756;
 /// crash-window bond response. 0.7 = near-immediate tracking, with flows and the spiral
 /// acting as short-lived deviations on top, which is what bond-market dysfunction is.
 const K_VALUE_BOND: f64 = 0.7;
+/// Bond idiosyncratic noise AT THE REFERENCE DURATION. It scales with duration in `simulate`,
+/// and must: a zero-duration bond is cash. Five real iShares Treasury funds spanning 1.80 to
+/// 14.89 years of duration (SHY, IEI, IEF, TLH, TLT, 20-24 years each) fit
+///     vol = -0.07 + 0.937 * duration
+/// — an intercept of zero to within a rounding error. Held FIXED, this term was a 5.11% volatility
+/// floor: the model read 1.10x real at TLT's duration, where it was calibrated, and 4.01x at SHY's,
+/// so the whole short half of the bond universe was unreachable by construction rather than by
+/// parameter choice. `DURATION_REF` is the shipped default, so the ratio is a bit-exact 1.0 there
+/// and the default world is unchanged.
 const SIGMA_N_BOND: f64 = 0.002;
+const DURATION_REF: f64 = 13.5;
+/// How fast policy reaches the accommodation the stress level calls for, per year: ~2 months to
+/// the cap, which is what an easing cycle takes. Frozen, not a World field: the uncertain
+/// quantities are HOW FAR policy can go (`easing`) and HOW LONG it stays (`unwind`), not how
+/// quickly a central bank can cut in a panic — that one the record answers the same way every
+/// time.
+const EASE_IN_SPEED: f64 = 6.0;
+/// Bond volatility is measured over NON-OVERLAPPING windows of this many years, even when the
+/// paths are longer. Every other statistic is measured over the whole path.
+///
+/// The asymmetry is deliberate and it is not free, so it is stated here, in the row's own label
+/// (`bond vol % (24y)`) and in the report's anchor header. Bond volatility is the one statistic
+/// that is strongly horizon-DEPENDENT in this model — 12.57% over 24 years against 17.12% over
+/// 100, because a longer window samples more rate-regime variation — while its anchor can only
+/// come from fund data, and the longest clean bond-fund series run 24 years. Scoring a 100-year
+/// reading against a 24-year anchor reported a ratio of 1.32 where the horizon-matched answer is
+/// 0.89, the same mistake the clustering anchor carried before it was re-measured.
+///
+/// Measured, for the record: the other three bond statistics do NOT need this. Over 24 against 100
+/// years the depth rung moves 1.02x, growth-crash 1.12x and inflation-crash 0.90x, so they stay on
+/// the whole-path protocol and the split is confined to one row.
+const BOND_VOL_YEARS: usize = 24;
 /// Equity idiosyncratic noise, ~11% annualised alone. Top-level beside its bond counterpart so
 /// the crowd-flow diagnostic can state the reflexive channel as a share of it.
 const SIGMA_N: f64 = 0.007;
@@ -68,6 +99,79 @@ const SIGMA_N: f64 = 0.007;
 /// is what enters the flow, so the default divides to a bit-exact 1.0 and the shipped world is
 /// unchanged; every other setting scales the reflexive channel that used to have no dial at all.
 const CROWD_IMPACT_REF: f64 = 0.06;
+/// `-power`'s default contrast arms, as 1-based indices into `rules()`, and its default history
+/// lengths. Named here rather than inside the report so `main` seeds from them.
+/// 21 = the traded book's span; 72 = the S&P record used for calibration; the ends bracket them.
+/// THE shipped world. `main` seeds its mutable CLI variables from this, so every default is
+/// written once — the same one-source rule the Scala twin's `Defaults` follows.
+fn default_world() -> World {
+    World {
+        trend_share: 0.06,
+        depth: 16.6,
+        stress: 5.1,
+        beta: 3.0,
+        drift: 0.117,
+        fund_vol: 0.13,
+        rate_mean: 0.042,
+        vol_persist: 0.99,
+        vol_of_vol: 0.011,
+        value_pull: 0.013,
+        crowd: Crowd::Momentum,
+        crowd_impact: 0.088,
+        panic: 0.0,
+        duration: 13.5,
+        easing: 0.045,
+        unwind: 0.35,
+        refuge: 0.08,
+        infl_prob: 0.20,
+        infl_size: 0.10,
+        infl_speed: 0.010,
+        rate_speed: 3.0,
+        discount: 3.35,
+        margin: 0.006,
+    }
+}
+
+/// The default world as it shipped at each published release, so a candidate can be compared
+/// against EVERY shipped version rather than only its immediate predecessor — the reading under
+/// which five individually-acceptable trades accumulate invisibly.
+///
+/// The worlds are historical; the MEASUREMENT is current. This answers "how has the default
+/// moved", NOT "what did that version report" — the mechanism moved too, and conflating those
+/// would be its own error. A `World` field added after a release takes today's value in that
+/// release's row, because an older world genuinely has no value for it. A field REMOVED by a
+/// mechanism change is the same case read backwards: 0.17.0-0.19.0 shipped `flight = 0.38`, an
+/// uncapped cut speed for which the capped accommodation has no equivalent value, so those rows
+/// carry today's `easing`/`unwind`. The row still answers the question the report asks.
+///
+/// 0.17.0 through 0.19.0 share one world: the default did not move for three releases.
+fn releases() -> Vec<(&'static str, World)> {
+    let mut pre = default_world();
+    pre.trend_share = 0.30;
+    pre.depth = 12.0;
+    pre.stress = 3.4;
+    pre.vol_of_vol = 0.028;
+    pre.value_pull = 0.015;
+    pre.crowd_impact = 0.06;
+    pre.drift = 0.100;
+    pre.duration = 13.5;
+    pre.infl_size = 0.07;
+    pre.discount = 4.0;
+    pre.margin = 0.0008;
+    let mut pre_v1902 = default_world();
+    pre_v1902.depth = 16.3;
+    pre_v1902.stress = 5.4;
+    vec![
+        ("0.17.0", pre),
+        ("0.18.0", pre),
+        ("0.19.0", pre),
+        ("0.19.1", pre_v1902),
+        ("0.19.2", default_world()),
+    ]
+}
+
+const POWER_ARMS_DEFAULT: [usize; 4] = [2, 6, 9, 8];
+const POWER_YEARS_DEFAULT: [usize; 4] = [21, 40, 72, 100];
 
 /// No-trade band on the crowd's exposure target.
 const BAND: f64 = 0.05;
@@ -99,8 +203,12 @@ struct World {
     panic: f64,
     /// bond duration: sensitivity of its fair value to the rate
     duration: f64,
-    /// policy/flight rate response to equity stress (inflation-suppressed)
-    flight: f64,
+    /// CAP on policy accommodation under equity stress, in rate points
+    easing: f64,
+    /// how fast that accommodation is withdrawn, per year
+    unwind: f64,
+    /// flight-to-quality bid into the bond, per unit of equity stress
+    refuge: f64,
     infl_prob: f64,
     infl_size: f64,
     infl_speed: f64,
@@ -141,6 +249,9 @@ struct Path {
     pct_bond_stress: f64,
     /// BINDING diagnostic for the reflexive channel: mean |crowd flow| per session, post burn-in.
     /// Its ABSENCE is why -crowdimpact sat dead in the default world across four releases.
+    /// the world's bond duration, carried so the gate can judge bond volatility RELATIVE to it;
+    /// a fixed absolute band can only ever fit one bond
+    duration: f64,
     mean_crowd_flow: f64,
 }
 
@@ -233,6 +344,8 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
     let mut log_vbase = 0.0f64;
     let mut rate = w.rate_mean;
     let mut infl_press = 0.0f64;
+    // policy accommodation in force, in rate points
+    let mut acc = 0.0f64;
     let mut infl_target = 0.0f64;
     let mut drift_now = w.drift;
     let mut regime_countdown: i64 = 250 + i64::from(rng.next_bounded_u32(2500));
@@ -282,14 +395,23 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
         }
         log_vbase += drift_now * dt + w.fund_vol * sqdt * rng.randn();
         infl_press += w.infl_speed * (infl_target - infl_press);
-        // policy: chase rateMean+pressure; cut on equity stress UNLESS inflation ties its hands
-        let flight_cut = w.flight * eq_m.stress_idx * (-infl_press / 0.005).exp();
+        // policy: chase rateMean + pressure MINUS accommodation, and accommodation is a CAPPED
+        // STOCK rather than a cut speed — eased in within ~2 months, withdrawn over years. As a
+        // speed it was unbounded, so a stress episode took the rate to the floor and the same
+        // `rate_speed` pulled it straight back; the bond's peak was set by that spike. Inflation
+        // suppresses the easing, which is what ties policy's hands in 2022-like regimes.
+        let acc_want = w.easing * eq_m.stress_idx * (-infl_press / 0.005).exp();
+        acc = if acc_want > acc {
+            acc + EASE_IN_SPEED * (acc_want - acc) * dt
+        } else {
+            0.0f64.max(acc - w.unwind * acc * dt)
+        };
         let r_old = rate;
         // rate UNCERTAINTY rises with inflation pressure (2022: MOVE elevated all year). This
         // is what makes stocks and bonds co-move in an inflation regime: both are priced off
         // the same rate, so more rate news = more shared-factor variance = the correlation flip.
         rate = 0.0f64.max(
-            rate + w.rate_speed * ((w.rate_mean + infl_press) - rate) * dt - flight_cut * dt
+            rate + w.rate_speed * ((w.rate_mean + infl_press - acc) - rate) * dt
                 + 0.01 * (1.0 + 25.0 * infl_press) * sqdt * rng.randn(),
         );
         // bond fair value: carry minus duration times the realised rate move
@@ -358,9 +480,19 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
 
         // ---- both markets step through the SAME mechanism ---------------------------------
         let ret_e = eq_m.step(log_vbase, eq_flow + d_noise);
-        // joint-stress margin selling: when both markets are stressed, the bond gets dumped too
-        let bond_flow = -w.margin * eq_m.stress_idx * bd_m.stress_idx;
-        let _ret_b = bd_m.step(fair_b, bond_flow + SIGMA_N_BOND * rng.randn());
+        // joint-stress margin selling: when both markets are stressed, the bond gets dumped too —
+        // and against it the refuge bid, flight-to-quality into a bond that is itself still
+        // orderly. DURATION-SCALED, like the bond's own noise: an absolute bid gave a 5-year bond
+        // the same crash rally as a 20-year one, which no duration-relative band can then fit.
+        let bond_flow = -w.margin * eq_m.stress_idx * bd_m.stress_idx
+            + w.refuge
+                * (w.duration / DURATION_REF)
+                * eq_m.stress_idx
+                * 0.0f64.max(1.0 - bd_m.stress_idx);
+        let _ret_b = bd_m.step(
+            fair_b,
+            bond_flow + SIGMA_N_BOND * (w.duration / DURATION_REF) * rng.randn(),
+        );
 
         px[i] = (eq_m.log_p - markdown).exp();
         fv[i] = (log_vbase - markdown).exp();
@@ -423,6 +555,7 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
         clamped_days: eq_m.clamps + bd_m.clamps - clamps_at_burn,
         mean_bond_stress: bond_stress_sum / nf,
         pct_bond_stress: bond_stress_hi as f64 / nf,
+        duration: w.duration,
         mean_crowd_flow: crowd_flow_sum / nf,
     }
 }
@@ -615,6 +748,7 @@ struct WorldStats {
     mean_bond_stress: f64,
     pct_bond_stress: f64,
     crowd_flow: f64,
+    duration: f64,
     infl_ann: f64,
     /// depth profile: median share of sessions more than 5/10/20% below the running peak,
     /// equity leg then bond leg
@@ -630,6 +764,33 @@ impl WorldStats {
     /// Return per unit volatility, in the units this report already prints: `ann_ret` is a LOG
     /// return in %/yr and `vol` is a fraction. An arithmetic-mean anchor is higher by about
     /// sigma/2 (0.08 at 16% vol) and has to be restated before it can be compared with this.
+    /// Bond volatility per year of duration. Real funds, 19-24 years each: Treasuries 0.798 (SHY)
+    /// to 0.973 (IEF), the US Aggregate 0.745, investment-grade credit 0.824, high yield 2.001 —
+    /// credit is the only thing that breaks the relationship, and this model has no credit channel.
+    /// Judging bond volatility on this ratio rather than an absolute band is what lets one gate
+    /// cover every duration instead of only the one the anchor was built from.
+    fn bond_vol_per_year(&self) -> f64 {
+        if self.duration <= 0.0 {
+            f64::NAN
+        } else {
+            self.bond_vol * 100.0 / self.duration
+        }
+    }
+
+    /// Time spent >10% below the running peak, RELATIVE to what this bond's own volatility implies.
+    /// The five real Treasury funds fit `d10 = 0.0397 * vol - 0.0785` (floored at zero) across a
+    /// 1.44-14.12% volatility range; 1.0 means the bond is under water as long as a real bond of the
+    /// same volatility. Replaces a fixed 0.510, which was TLT's number and false for every other
+    /// bond — the real range across eight funds is 0.000 to 0.499.
+    fn bond_depth_vs_vol(&self) -> f64 {
+        let expected = (0.0397 * (self.bond_vol * 100.0) - 0.0785).max(0.0);
+        if expected <= 0.0 {
+            f64::NAN
+        } else {
+            self.dd_bd10 / expected
+        }
+    }
+
     fn ret_vol(&self) -> f64 {
         if self.vol <= 0.0 {
             f64::NAN
@@ -775,9 +936,24 @@ fn measure(sims: &[Path], years: usize) -> WorldStats {
         years_per_path: years as f64,
         trend_pinned: scala_sum(sims.iter().map(|s| s.trend_pinned)) / n_sims,
         target_sat: scala_sum(sims.iter().map(|s| s.target_sat)) / n_sims,
+        // Median over non-overlapping BOND_VOL_YEARS windows, pooled across paths — see
+        // BOND_VOL_YEARS for why this row alone is windowed. A path shorter than one window
+        // contributes itself, so a short run still reports something rather than nothing.
         bond_vol: med(&sims
             .iter()
-            .map(|s| (MatD::apply(&daily_returns(&s.bond)).power(2).mean() * dpy).sqrt())
+            .flat_map(|s| {
+                let r = daily_returns(&s.bond);
+                let w = BOND_VOL_YEARS * DAYS_PER_YEAR;
+                let nw = r.len() / w;
+                let segs: Vec<Vec<f64>> = if nw < 1 {
+                    vec![r.clone()]
+                } else {
+                    (0..nw).map(|k| r[k * w..(k + 1) * w].to_vec()).collect()
+                };
+                segs.into_iter()
+                    .map(|seg| (MatD::apply(&seg).power(2).mean() * dpy).sqrt())
+                    .collect::<Vec<f64>>()
+            })
             .collect::<Vec<f64>>()),
         bond_growth: bond_in_windows(false),
         bond_infl: bond_in_windows(true),
@@ -786,6 +962,7 @@ fn measure(sims: &[Path], years: usize) -> WorldStats {
         mean_bond_stress: scala_sum(sims.iter().map(|s| s.mean_bond_stress)) / n_sims,
         pct_bond_stress: scala_sum(sims.iter().map(|s| s.pct_bond_stress)) / n_sims,
         crowd_flow: scala_sum(sims.iter().map(|s| s.mean_crowd_flow)) / n_sims,
+        duration: sims[0].duration,
         infl_ann: med(&sims
             .iter()
             .map(|s| (s.cpi[s.cpi.len() - 1] / s.cpi[0]).ln() / years as f64 * 100.0)
@@ -914,7 +1091,16 @@ fn gate_checks(st: &WorldStats) -> Vec<(String, bool, GateClass)> {
         ),
         (
             n("both recovery shapes"),
-            st.n_shapes > 0 && st.v_count >= st.n_shapes / 10 && st.u_count >= st.n_shapes / 10,
+            // max(1, _) is load-bearing. n_shapes / 10 is INTEGER division, so below ten shapes
+            // both clauses read ">= 0" and the check passes with NEITHER shape present —
+            // measured at -drift 0.9, which produced V=0, balanced=1, U=0 and passed a check
+            // named "both recovery shapes". It degenerated exactly where episodes are scarce,
+            // which is where shape evidence is weakest and the check matters most. Requiring at
+            // least one of each makes too-few-shapes FAIL: a gate that passes on no evidence
+            // reads as verification.
+            st.n_shapes > 0
+                && st.v_count >= 1.max(st.n_shapes / 10)
+                && st.u_count >= 1.max(st.n_shapes / 10),
             Realism,
         ),
         (n("no runaway drift"), st.ann_ret.abs() < 30.0, Realism),
@@ -922,8 +1108,12 @@ fn gate_checks(st: &WorldStats) -> Vec<(String, bool, GateClass)> {
         // passed a world where the clamp was already reshaping kurtosis by a third.
         (n("clamp rarely binds"), st.clamp_pct < 0.02, Realism),
         (
-            n("bond vol 7-20%"),
-            st.bond_vol > 0.07 && st.bond_vol < 0.20,
+            // RELATIVE to duration, not absolute. The old 7-20% band was TLT's: of eight real
+            // funds it admitted one, and asserted of the US Aggregate (4.24%) that it is not a
+            // market. 0.5-2.5 per year of duration admits every fund measured, high yield at 2.001
+            // included, and still catches a bond whose volatility bears no relation to what it is.
+            n("bond vol 0.5-2.5x duration"),
+            st.bond_vol_per_year() > 0.5 && st.bond_vol_per_year() < 2.5,
             Realism,
         ),
         (
@@ -983,7 +1173,21 @@ fn gate_checks(st: &WorldStats) -> Vec<(String, bool, GateClass)> {
         depth_check("equity >5% below peak", st.dd_eq5, 0.447),
         depth_check("equity >10% below peak", st.dd_eq10, 0.315),
         depth_check("equity >20% below peak", st.dd_eq20, 0.169),
-        depth_check("bond >10% below peak", st.dd_bd10, 0.510),
+        // Against what this bond's OWN volatility implies, not against TLT's 0.510 — see
+        // `bond_depth_vs_vol`. The band is +-0.35 because the real fit has real scatter (credit
+        // funds sit below the Treasury line), not because the model needs the room: it reads 1.9.
+        (
+            n("bond depth vs its vol 0.65-1.35"),
+            st.bond_depth_vs_vol() > 0.65 && st.bond_depth_vs_vol() < 1.35,
+            GateClass::Fidelity,
+        ),
+        // Treasuries run 0.798-0.973 and investment grade 0.745-0.824; high yield (2.001) is out
+        // of scope until there is a credit channel, so the upper bound deliberately excludes it.
+        (
+            n("bond vol 0.70-1.10x duration"),
+            st.bond_vol_per_year() > 0.70 && st.bond_vol_per_year() < 1.10,
+            GateClass::Fidelity,
+        ),
     ]
 }
 
@@ -1066,8 +1270,28 @@ fn fit_targets() -> Vec<(&'static str, StatFn, f64, f64)> {
             1.0,
         ),
         ("kurtosis", (|st| st.kurt) as StatFn, 28.0, 0.5),
-        ("clustering lag 1", (|st| st.ac1) as StatFn, 0.27, 1.0),
-        ("clustering lag 20", (|st| st.ac20) as StatFn, 0.20, 0.5),
+        // Ken French / CRSP value-weighted US market, daily, 1926-07-01..2026-06-30 — the FULL
+        // century, and deliberately NOT the 1954-2026 window the rows above use. The model's
+        // clustering is horizon-INDEPENDENT (0.320 at 20 years, 0.330 at 150) while the real
+        // statistic is not (0.271 over 72 years, 0.299 over 100, 0.175-0.311 across non-overlapping
+        // 20-year blocks), because a longer window spans more regimes. The model is scored on
+        // 100-year paths, so a 72-year anchor compares a 100-year model reading against a 72-year
+        // real one and reports 1.22 where the horizon-matched answer is 1.07.
+        //
+        // CONVENTION, stated because its absence is what blocked this for a release: autocorrelation
+        // of |r| about its mean, normalised by the FULL-series sum of squares — `autocorr_abs`
+        // itself. `jsrc/clusteringAnchor.sc` calls the Scala twin of that function to measure the
+        // anchor, so the two cannot drift. On this data autocorr(r^2) reads 0.108 at lag 20 against
+        // 0.208 for |r|, 92% apart: a re-derivation using the wrong one would conclude the model is
+        // 2.2x too high rather than 1.07.
+        //
+        // The 20-year block spread is wide enough that an honestly derived BAND (about 0.16-0.33 at
+        // lag 1) would not exclude the model. Real clustering varies by nearly two-to-one between
+        // eras; a band tight enough to fail this world would have to exclude two of the five real
+        // 20-year eras, which is a band chosen to produce a verdict rather than derived from a
+        // record.
+        ("clustering lag 1", (|st| st.ac1) as StatFn, 0.299, 1.0),
+        ("clustering lag 20", (|st| st.ac20) as StatFn, 0.225, 0.5),
         (
             "crashes/century",
             (|st: &WorldStats| st.ep_per_path * 100.0 / st.years_per_path) as StatFn,
@@ -1076,8 +1300,11 @@ fn fit_targets() -> Vec<(&'static str, StatFn, f64, f64)> {
         ),
         ("median depth %", (|st| st.depth_med) as StatFn, -27.1, 1.0),
         ("worst crash %", (|st| st.worst_depth) as StatFn, -56.8, 1.0),
+        // The "(24y)" is load-bearing, not decoration: this row is measured on a different
+        // horizon from every other, and the label is the only part that travels when the number
+        // is quoted.
         (
-            "bond vol %",
+            "bond vol % (24y)",
             (|st| st.bond_vol * 100.0) as StatFn,
             13.0,
             1.0,
@@ -1129,7 +1356,12 @@ fn fit_targets() -> Vec<(&'static str, StatFn, f64, f64)> {
             0.169,
             0.5,
         ),
-        ("bond >10% below pk", (|st| st.dd_bd10) as StatFn, 0.51, 0.5),
+        (
+            "bond depth vs vol",
+            (|st: &WorldStats| st.bond_depth_vs_vol()) as StatFn,
+            1.00,
+            0.5,
+        ),
     ]
 }
 
@@ -1309,6 +1541,7 @@ impl Indicators {
 /// function, and so the rules survive being shared across rayon threads.
 type ExposeFn = Arc<dyn Fn(&Indicators) -> Vec<f64> + Send + Sync>;
 
+#[derive(Clone)]
 struct Rule {
     name: String,
     expose: ExposeFn,
@@ -1747,7 +1980,16 @@ fn sweep_worlds(
             false,
         ),
         // OFF-world: refuge
-        ("no flight bid", with(|w| w.flight = 0.0), false),
+        // OFF-world: refuge. BOTH channels, because either alone leaves the bond a refuge by the
+        // other route and the world stops being the off-switch it is labelled as.
+        (
+            "no refuge channel",
+            with(|w| {
+                w.easing = 0.0;
+                w.refuge = 0.0;
+            }),
+            false,
+        ),
         // OFF-world: margin
         ("no margin coupling", with(|w| w.margin = 0.0), false),
         (
@@ -1913,7 +2155,8 @@ fn calibrate(n_samples: usize, base: &World, seed: u64) {
         ("stress", 2.0, 6.0, |w, x| w.stress = x),
         ("valuePull", 0.010, 0.035, |w, x| w.value_pull = x),
         ("volOfVol", 0.012, 0.030, |w, x| w.vol_of_vol = x),
-        ("flight", 0.2, 1.6, |w, x| w.flight = x),
+        ("easing", 0.0, 0.09, |w, x| w.easing = x),
+        ("refuge", 0.0, 0.20, |w, x| w.refuge = x),
         ("duration", 8.0, 18.0, |w, x| w.duration = x),
         ("inflSize", 0.03, 0.12, |w, x| w.infl_size = x),
         ("discount", 3.0, 10.0, |w, x| w.discount = x),
@@ -2299,9 +2542,12 @@ fn run_strategy_sweep(
                     let chr = rank_in(&valid, j, get);
                     let cmin = chr.iter().min().copied().unwrap_or(0);
                     let cmax = chr.iter().max().copied().unwrap_or(0);
-                    let inverts = !chr.is_empty()
-                        && (ranks.iter().min().copied().unwrap_or(0) > cmax
-                            || ranks.iter().max().copied().unwrap_or(0) < cmin);
+                    // ANY reflexive world outside the character range is the finding, not all of
+                    // them. The two reflexive worlds vary different axes and routinely disagree — a
+                    // vol-scaling crowd ranks trend rules last where a pressed momentum crowd ranks
+                    // them first — so a test requiring the whole reflexive SPAN to clear the range
+                    // flagged nothing in exactly the case worth flagging.
+                    let inverts = !chr.is_empty() && ranks.iter().any(|&r| r < cmin || r > cmax);
                     let cells: Vec<String> = ranks.iter().map(|r| format!("{r:>2}")).collect();
                     println!(
                         "  {:<34} {}   character {}-{}{}",
@@ -2520,9 +2766,88 @@ type PowerTable = Vec<Vec<(f64, f64)>>;
 
 // ---- the power report -------------------------------------------------------------------
 
+/// Every fidelity ratio at every published default, plus the world this invocation describes.
+/// Exists because the natural comparison — candidate against its immediate predecessor — is
+/// exactly the reading under which a sequence of individually-acceptable trades accumulates with
+/// nothing ever showing it. The `worse than best` column is the accumulation detector.
+fn run_release_report(paths: usize, years: usize, seed: u64, base: &World) {
+    let mut cols: Vec<(&str, World)> = releases();
+    cols.push(("current", *base));
+    eprintln!("{} worlds x {paths} paths x {years} years", cols.len());
+    let stats: Vec<(&str, WorldStats)> = cols
+        .iter()
+        .map(|(v, w)| (*v, measure(&sim_paths(w, paths, years, seed), years)))
+        .collect();
+    println!(
+        "CROSS-RELEASE FIDELITY — every target at every published default, and at the world this"
+    );
+    println!(
+        "invocation describes.  The WORLDS are historical; the MEASUREMENT is current, so this shows"
+    );
+    println!(
+        "how the DEFAULT has moved, not what each version reported — the mechanism moved too.  A"
+    );
+    println!("World field added after a release -- or REMOVED by a mechanism change, as 0.19.2's");
+    println!("rate cut was -- takes today's value in that release's row.");
+    println!();
+    let mut hdr = format!("  {:<22}", "target");
+    for (v, _) in &cols {
+        hdr.push_str(&format!("{v:>8}"));
+    }
+    println!("{hdr}   {:>7}   worse than best", "best");
+    let mut best_total = 0.0f64;
+    for (name, get, want, _) in fit_targets() {
+        let rs: Vec<f64> = stats.iter().map(|(_, st)| get(st) / want).collect();
+        let errs: Vec<f64> = rs.iter().map(|r| (r - 1.0).abs()).collect();
+        let cur = errs[errs.len() - 1];
+        let mut best_idx = 0usize;
+        for i in 1..errs.len() {
+            if errs[i] < errs[best_idx] {
+                best_idx = i;
+            }
+        }
+        best_total += errs[best_idx];
+        let flag = if best_idx != errs.len() - 1 && errs[best_idx] < cur - 0.005 {
+            format!("<-- {} was {}", cols[best_idx].0, jf(rs[best_idx], 0, 2))
+        } else {
+            String::new()
+        };
+        let mut line = format!("  {name:<22}");
+        for r in &rs {
+            line.push_str(&format!("{:>8}", jf(*r, 0, 2)));
+        }
+        println!("{line}   {:>7}   {flag}", jf(rs[best_idx], 0, 2));
+    }
+    println!();
+    let mut agg = format!("  {:<22}", "AGGREGATE |ratio-1|");
+    for (_, st) in &stats {
+        let t: f64 = fit_targets()
+            .iter()
+            .map(|(_, get, want, _)| (get(st) / want - 1.0).abs())
+            .sum();
+        agg.push_str(&format!("{:>8}", jf(t, 0, 2)));
+    }
+    println!(
+        "{agg}   {:>7}   best achievable per row, across all releases",
+        jf(best_total, 0, 2)
+    );
+    println!();
+    println!(
+        "  A flagged row is one where some published default read CLOSER to real than the current"
+    );
+    println!(
+        "  world does.  That is not automatically wrong — a trade may have been worth making — but"
+    );
+    println!("  it is the thing no predecessor-only comparison can show.");
+}
+
 #[expect(
     clippy::too_many_lines,
     reason = "one linear report, mirroring the Scala twin statement for statement"
+)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the parameter list mirrors the Scala twin's, and the twins are diffed"
 )]
 fn run_power_report(
     paths: usize,
@@ -2531,18 +2856,14 @@ fn run_power_report(
     single: bool,
     base: &World,
     gate_req: &[GateClass],
+    arm_idx: &[usize],
+    horizons: &[usize],
 ) {
-    // 21 = the traded book's span; 72 = the S&P record used for calibration
-    let horizons = [21usize, 40, 72, 100];
-    let focus: Vec<Rule> = [
-        "volatility-scaled, floor 40%",
-        "trend 200d, floor 0%",
-        "volatility + trend 200d, floor 0%",
-        "cut below -10%, floor 0%",
-    ]
-    .iter()
-    .map(|n| rule_named(n))
-    .collect();
+    // Arms and horizons are the CALLER's, so the consumer's own question — these two arms, at the
+    // length of history I possess — is answerable without a code change. The defaults reproduce
+    // the report this had before it took either.
+    let rs_all = rules();
+    let focus: Vec<Rule> = arm_idx.iter().map(|i| rs_all[i - 1].clone()).collect();
     let mut arms: Vec<ExposeFn> = Vec::new();
     for r in &focus {
         arms.push(Arc::clone(&r.expose));
@@ -2668,7 +2989,7 @@ fn run_power_report(
         // `C` outside it — not to the whole "C1" token.
         println!("  C{:<3} {}", j + 1, lbl);
     }
-    for l in horizons {
+    for &l in horizons {
         let (ok, res) = power(base, l, seed.wrapping_add(l as u64 * 1_000_003));
         let verdict = if ok {
             "gate PASS"
@@ -3027,6 +3348,27 @@ fn req_arg<'a>(it: &mut impl Iterator<Item = &'a String>, flag: &str) -> &'a Str
         .unwrap_or_else(|| cli_die(&format!("{flag} wants a value")))
 }
 
+fn req_usize_list<'a>(it: &mut impl Iterator<Item = &'a String>, flag: &str) -> Vec<usize> {
+    let v = req_arg(it, flag);
+    let parts: Vec<&str> = v
+        .split(',')
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .collect();
+    if parts.is_empty() {
+        cli_die(&format!(
+            "{flag} wants a comma-separated list of integers, got [{v}]"
+        ));
+    }
+    parts
+        .iter()
+        .map(|p| {
+            p.parse()
+                .unwrap_or_else(|_| cli_die(&format!("{flag} wants integers, got [{p}]")))
+        })
+        .collect()
+}
+
 fn req_f64<'a>(it: &mut impl Iterator<Item = &'a String>, flag: &str) -> f64 {
     let v = req_arg(it, flag);
     v.parse()
@@ -3325,7 +3667,9 @@ fn world_json_body(w: &World) -> Vec<String> {
         ("crowdImpact", ef(w.crowd_impact)),
         ("panic", ef(w.panic)),
         ("duration", ef(w.duration)),
-        ("flight", ef(w.flight)),
+        ("easing", ef(w.easing)),
+        ("unwind", ef(w.unwind)),
+        ("refuge", ef(w.refuge)),
         ("inflProb", ef(w.infl_prob)),
         ("inflSize", ef(w.infl_size)),
         ("inflSpeed", ef(w.infl_speed)),
@@ -3470,6 +3814,9 @@ fn main() {
     let mut validate = false;
     let mut buffer_report = false;
     let mut power_report = false;
+    let mut release_report = false;
+    let mut power_arms: Vec<usize> = POWER_ARMS_DEFAULT.to_vec();
+    let mut power_years: Vec<usize> = POWER_YEARS_DEFAULT.to_vec();
     let mut strategies = false;
     let mut single = false;
     let mut cost = 0.0010f64;
@@ -3480,29 +3827,38 @@ fn main() {
     // held fixed, as all four were until 0.19.1, no sample gets here. Loss 3.13-3.57 across five
     // scoring seeds against the pre-0.19.1 defaults' 5.77-6.11.
     //
-    // `stress` IS NOT AT THE OBJECTIVE'S MINIMUM, deliberately. The loss minimises at stress 5.9
-    // (3.128 against 3.280 here, ~0.13 across five seeds); 5.4 was chosen to cut a REGRESSION the
-    // objective does not weigh heavily enough to see. The liquidity spiral is a single amplifier
-    // producing volatility, fat tails AND volatility clustering together — `stress` alone moves
-    // ac1 from 0.160 at 3.4 to 0.420 at 7.0 — so raising it to fix kurtosis (0.28 -> 0.58) drove
-    // clustering from an almost-exact 0.90 to 1.33. At 5.4 the split is: clustering 1.20 (from
-    // 1.33), the 10% depth rung 1.06 (from 1.13), crash rate 1.20 (from 1.26), worst crash 1.49
-    // (from 1.54, back under the MISS threshold); paid for with kurtosis 0.46 (from 0.58), equity
-    // vol 0.92 (from 0.98), return per vol 1.14 (from 1.08), median depth 0.93 (from 0.97) and the
-    // 20% rung 0.92 (from 1.02). Do not "optimise" this back to 5.9 without re-reading that trade.
+    // `stress` IS NOT AT THE OBJECTIVE'S MINIMUM, deliberately, and has now been moved DOWN twice
+    // for the same reason. The liquidity spiral is a single amplifier producing volatility, fat
+    // tails AND volatility clustering together — `stress` alone moves ac1 from 0.160 at 3.4 to
+    // 0.420 at 7.0 — so buying tails always buys clustering with them, and clustering above 1.0
+    // means volatility is more forecastable here than in the record, which flatters every rule
+    // that forecasts it. 0.19.1 chose 5.4 over the then-minimum 5.9 on that trade; 0.19.2 chose
+    // 5.1 over 5.4 on the same one, because capping the rate cut (see `easing`) removed a
+    // discount-channel cushion in crashes and pushed clustering from 1.08 to 1.13 at unchanged
+    // `stress`. 5.1 with depth 16.6 returns clustering to 1.06 and costs kurtosis 0.46 -> 0.42,
+    // which is a recorded scope exclusion either way. Do not "optimise" `stress` upward without
+    // re-reading this: the objective does not weigh the clustering regression heavily enough.
+    //   `depth` moved 16.3 -> 16.6 in the same step and for a different reason: the same lost
+    //   cushion raised the crash rate from 1.20 to 1.38, and depth is the dial that carries crash
+    //   frequency. It buys back a third of it (1.32). The rest is the mechanism's price, stated
+    //   in the CHANGELOG rather than tuned away.
+    //   The clustering figures here are against the CENTURY anchor. Measured against the 72-year
+    //   one this shipped with, the same worlds read 0.90 / 1.20 / 1.33 — the horizon mismatch, not
+    //   a change in the model.
     //
     // KURTOSIS AND CLUSTERING CANNOT BOTH BE RIGHT. stress 7.5 reaches kurtosis 26.4 against a real
     // 28 — and clustering 1.67, failing the realism band. That is the measured reason the kurtosis
     // MISS stands, more precise than "no slow valuation cycle": the cycle is why there is no SECOND
     // channel for tails, not why this one cannot reach them.
     //
-    // TWO KNOWN BIAS DIRECTIONS, netted away nowhere else, pointing opposite ways: clustering at
-    // 1.20 makes volatility more predictable here than in the record, which flatters any rule that
-    // forecasts it; worst crash at 1.49 puts index paths near -84% against a real -56.8%, which no
-    // levered fund survives, so ruin rates for levered sleeves are UPPER BOUNDS, not estimates.
+    // THREE KNOWN BIAS DIRECTIONS, netted away nowhere else: clustering at 1.06 makes volatility
+    // more predictable here than in the record, which flatters any rule that forecasts it; worst
+    // crash at 1.44 puts index paths near -82% against a real -56.8%, which no levered fund
+    // survives, so ruin rates for levered sleeves are UPPER BOUNDS, not estimates; and crashes
+    // arrive 1.32x too often, so any per-crash hazard read off this model is over-sampled.
     let mut trend_share = 0.06f64;
-    let mut depth = 16.3f64;
-    let mut stress = 5.4f64;
+    let mut depth = 16.6f64;
+    let mut stress = 5.1f64;
     let mut beta = 3.0f64;
     let mut vol_persist = 0.99f64;
     let mut vol_of_vol = 0.011f64;
@@ -3513,7 +3869,9 @@ fn main() {
     let mut drift = 0.117f64;
     let mut rate_mean = 0.042f64;
     let mut duration = 13.5f64;
-    let mut flight = 0.48f64;
+    let mut easing = 0.045f64;
+    let mut unwind = 0.35f64;
+    let mut refuge = 0.08f64;
     let mut infl_prob = 0.20f64;
     let mut infl_size = 0.10f64;
     let mut infl_speed = 0.010f64;
@@ -3535,6 +3893,9 @@ fn main() {
             "-validate" => validate = true,
             "-buffer" => buffer_report = true,
             "-power" => power_report = true,
+            "-releases" => release_report = true,
+            "-powerarms" => power_arms = req_usize_list(&mut it, "-powerarms"),
+            "-poweryears" => power_years = req_usize_list(&mut it, "-poweryears"),
             "-strategies" => strategies = true,
             "-single" => single = true,
             "-cost" => cost = req_f64(&mut it, "-cost"),
@@ -3553,7 +3914,17 @@ fn main() {
             "-drift" => drift = req_f64(&mut it, "-drift"),
             "-ratemean" => rate_mean = req_f64(&mut it, "-ratemean"),
             "-duration" => duration = req_f64(&mut it, "-duration"),
-            "-flight" => flight = req_f64(&mut it, "-flight"),
+            "-easing" => easing = req_f64(&mut it, "-easing"),
+            "-unwind" => unwind = req_f64(&mut it, "-unwind"),
+            "-refuge" => refuge = req_f64(&mut it, "-refuge"),
+            // Rejected, not silently reinterpreted: -flight was a rate cut SPEED per year and
+            // -easing is a cut CAP in rate points, so every recorded -flight value is wrong by two
+            // orders of magnitude under the new mechanism and would still have run plausibly.
+            "-flight" => cli_die(
+                "-flight is gone: the rate cut is now a CAPPED, slowly unwound \
+                 accommodation. Use -easing (cap, rate points) and -unwind (withdrawal \
+                 per year). No -flight value carries over.",
+            ),
             "-inflprob" => infl_prob = req_f64(&mut it, "-inflprob"),
             "-inflsize" => infl_size = req_f64(&mut it, "-inflsize"),
             "-inflspeed" => infl_speed = req_f64(&mut it, "-inflspeed"),
@@ -3570,6 +3941,34 @@ fn main() {
     }
     if years < 1 {
         cli_die(&format!("-years must be at least 1, got {years}"));
+    }
+    // A bad index here is the one place the rule list has to be discoverable: the report names
+    // the rules but not their numbers, and the numbers are what the flag takes. Without this,
+    // `-powerarms 99` panicked on an out-of-bounds index and `-powerarms 0` underflowed usize.
+    {
+        let n_rules = rules().len();
+        if power_arms.iter().any(|&i| i < 1 || i > n_rules) {
+            let list: Vec<String> = rules()
+                .iter()
+                .enumerate()
+                .map(|(i, r)| format!("  {}  {}", i + 1, r.name))
+                .collect();
+            cli_die(&format!(
+                "-powerarms indices must be 1-{n_rules}; the rules are:
+{}",
+                list.join(
+                    "
+"
+                )
+            ));
+        }
+        if power_years.iter().any(|&l| l < 1) {
+            let got: Vec<String> = power_years.iter().map(usize::to_string).collect();
+            cli_die(&format!(
+                "-poweryears wants year counts of at least 1, got [{}]",
+                got.join(",")
+            ));
+        }
     }
 
     let crowd = match crowd_name.to_lowercase().as_str() {
@@ -3600,7 +3999,9 @@ fn main() {
         crowd_impact,
         panic: panic_k,
         duration,
-        flight,
+        easing,
+        unwind,
+        refuge,
         infl_prob,
         infl_size,
         infl_speed,
@@ -3635,12 +4036,25 @@ fn main() {
         }
         return;
     }
+    if release_report {
+        run_release_report(paths, years, seed, &w);
+        return;
+    }
     if strategies {
         run_strategy_sweep(paths, years, seed, cost, single, &w, &gate_req);
         return;
     }
     if power_report {
-        run_power_report(paths, seed, cost, single, &w, &gate_req);
+        run_power_report(
+            paths,
+            seed,
+            cost,
+            single,
+            &w,
+            &gate_req,
+            &power_arms,
+            &power_years,
+        );
         return;
     }
     if buffer_report {
@@ -3795,7 +4209,7 @@ fn main() {
         st.v_count, st.mid_count, st.u_count
     );
     println!(
-        "  bond refuge            vol {}%   growth-crash {}   infl-crash {}",
+        "  bond refuge            vol {}% (24y windows)   growth-crash {}   infl-crash {}",
         jf(st.bond_vol * 100.0, 0, 1),
         jfs(st.bond_growth, 1),
         jfs(st.bond_infl, 1)
@@ -3846,7 +4260,22 @@ fn main() {
     println!(
         "    equity S&P 1954-2026   |   depth rungs SPY 1993-2026   |   return per vol CRSP 1954-2026"
     );
-    println!("    refuge long Treasury   |   bond depth rung clean TLT, 24y");
+    println!(
+        "    clustering CRSP 1926-2026 (a CENTURY: the statistic is horizon-dependent and the"
+    );
+    println!(
+        "      model is scored on 100-year paths)   |   refuge long Treasury   |   bond depth"
+    );
+    println!("      rung clean TLT, 24y");
+    println!(
+        "    NOTE: bond volatility alone is measured over 24-YEAR windows, not the whole path —"
+    );
+    println!(
+        "      it is the one horizon-dependent statistic whose anchor can only come from fund"
+    );
+    println!(
+        "      data, and no clean bond-fund series runs longer.  Every other row is whole-path."
+    );
     for (n, get, want, _) in fit_targets() {
         let got = get(&st);
         let ratio = if want != 0.0 { got / want } else { f64::NAN };
