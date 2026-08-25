@@ -3,7 +3,7 @@
 // Generates docs/images/iris-*.svg for the README and docs/PlotGuide.md.
 // Run from project root: scala-cli jsrc/gen-images.sc
 
-//> using dep org.vastblue:uni_3:0.19.2
+//> using dep org.vastblue:uni_3:0.19.3
 import uni.data.*
 import uni.plot.*
 import java.awt.Color

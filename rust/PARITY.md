@@ -104,7 +104,7 @@ libm's on **0.235%** of a 200,000-value corpus, never by more than 1 ulp. Treat 
 transcendental as agreeing to ~1 ulp rather than exactly, and assume nothing about any one
 of them without measuring it.
 
-Consequence for consumers, and how it actually plays out — `jsrc/marketSim.sc` and
+Consequence for consumers, and how it actually plays out — `uni.apps.MarketSim` and
 `examples/market_sim.rs` are the worked example. A 1-ulp difference is invisible at any
 normal print precision, so it can only surface where a printed column's true value is
 **identically zero** and the rounding noise is the only thing left in it. In marketSim
@@ -132,12 +132,17 @@ but `rate` is floored at zero and `inflPress` starts there, and a column that ca
 *identically* zero is exactly the case. They are folded through `(-0.0) + 0.0 = +0.0`,
 which IEEE-754 guarantees in both languages, before formatting.
 
-`jsrc/marketSim.sc` is the canonical Scala copy. Two derived copies exist and both are
-pinned to it: `src/main/scala/apps/MarketSim.scala` is its header-twin in the published jar
-(`ScriptTwinSuite` fails the build on any drift below the two-line shebang/package toggle),
-and a consumer fork (`/opt/ue/jsrc`) must pull from it and never the reverse — that fork is
-currently 383 lines behind and will disagree with the Rust twin. The Rust side ships in the
-crate itself: `cargo install vastblue-uni --example market_sim`.
+`src/main/scala/apps/MarketSim.scala`, in the published jar, is the only Scala copy of the
+model. `jsrc/marketSim.sc` is a launcher that dispatches into it — one copy cannot drift,
+and the version the sidecar stamps (`uni.BuildInfo.version`) and the code that runs come
+from the same artifact. `ScriptTwinSuite` fails the build if the launcher stops dispatching
+or is overwritten with a copy of the model. A consumer fork (`/opt/ue/jsrc`) should adopt
+the launcher rather than track the old full-source copy, which no longer exists upstream.
+The Rust side ships in the crate itself: `cargo install vastblue-uni --example market_sim`.
+The sidecar's shape is itself under contract: `EMIT_SCHEMA`/`EMIT_SIDECAR_KEYS` here and
+`EmitSchema`/`EmitSidecarKeys` in the Scala twin, cross-checked by tests on both sides
+(`emit_sidecar_tests`, `EmitSidecarSuite`), so a key added to one twin's sidecar fails the
+build rather than the byte-diff.
 
 `mat-parity` is small by row count and unusually load-bearing: 13 sizes × 10 reductions,
 compared as raw IEEE-754 bit patterns rather than decimal text, over a corpus of

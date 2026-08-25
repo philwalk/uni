@@ -13,6 +13,10 @@
 //!
 //! Run: `cargo run --release --example market_sim -- -validate`
 //!
+//! `-version` prints the crate version and exits, and the `-emit` sidecar records it. The
+//! default world moved at 0.19.1 and 0.19.2, so a consumer holding an emitted path needs to
+//! know which release wrote it; a stale binary on `PATH` is otherwise silent.
+//!
 //! # Fidelity
 //!
 //! The whole simulation is deterministic given a seed, and `NumPyRng` is bit-identical
@@ -49,6 +53,48 @@ use uni::NumPyRng;
 use uni::udata::MatD;
 use uni::udata::java_format_f;
 use uni::utime::UniDateTime;
+
+/// Which release this binary is, from `Cargo.toml` at compile time. Never a literal: a copied
+/// or stale `market_sim` cannot report a version it was not built from, which is the whole
+/// point of the `-version` flag and of the sidecar's `version` field. The Scala twin reads
+/// `uni.BuildInfo.version`, generated from `build.sbt` the same way, and the two agree because
+/// `release-and-publish.sh` refuses to publish unless the two build files carry one version.
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// The sidecar format this build writes. Bump it whenever the sidecar's SHAPE changes — a key
+/// added, removed or renamed, or a value's meaning changed — so a reader can tell "I cannot parse
+/// this" from "I parsed it and the world differs". Deliberately NOT derived from `VERSION`: most
+/// releases move the world and leave the format alone, and a schema that tracked the release would
+/// tell a reader nothing.
+///
+/// `EMIT_SIDECAR_KEYS` is the contract that goes with it, and the writer does NOT read it — that is
+/// the point. The test below compares the keys actually emitted against this list, so adding a key
+/// without touching this line fails the build at the moment the discrepancy is created, next to the
+/// schema number that then has to be decided about. A test cannot force the bump; it can force the
+/// decision to be conscious, which is what this pair is for.
+const EMIT_SCHEMA: u32 = 2;
+
+// Referenced only from the test module below; in a normal build of the example it is
+// deliberately unread — the writer must not consult its own contract.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the contract is read by the tests, never by the writer"
+    )
+)]
+const EMIT_SIDECAR_KEYS: [&str; 10] = [
+    "generator",
+    "version",
+    "schema",
+    "file",
+    "columns",
+    "header",
+    "path",
+    "world",
+    "gate",
+    "fidelity",
+];
 
 const DAYS_PER_YEAR: usize = 252;
 
@@ -3735,6 +3781,14 @@ fn world_json_body(w: &World) -> Vec<String> {
 /// Everything that licenses the TSV: which (world, seed, path) produced it, on what calendar,
 /// and what the world's two gate verdicts and fidelity ratios were. A warning printed to stderr
 /// at export time does not survive the file being moved; this does.
+///
+/// `schema` and `version` answer different questions and neither substitutes for the other:
+/// `schema` says whether a reader can parse the file, `version` says which release's simulator
+/// wrote it. The default world moved at 0.19.1 and again at 0.19.2, so two files with identical
+/// columns and identical schema can still be incomparable — a consumer that pins its calibration
+/// to a release checks `version`, and one that needs the exact parameters reads `world` below.
+/// `schema` went 1 -> 2 when `version` was added, so its absence is detectable rather than
+/// ambiguous.
 #[expect(
     clippy::too_many_arguments,
     reason = "the sidecar records the whole provenance tuple; grouping it would only move the list"
@@ -3797,7 +3851,8 @@ fn write_emit_sidecar(
     let json = [
         "{".to_string(),
         "  \"generator\": \"market_sim\",".to_string(),
-        "  \"schema\": 1,".to_string(),
+        format!("  \"version\": {},", json_str(VERSION)),
+        format!("  \"schema\": {EMIT_SCHEMA},"),
         format!("  \"file\": {},", json_str(file)),
         format!("  \"columns\": {},", str_list(&EMIT_COLUMNS)),
         "  \"header\": true,".to_string(),
@@ -3935,6 +3990,13 @@ fn main() {
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
+            // Bare version on stdout and nothing else, so a caller can gate on it without
+            // parsing: `[ "$(market_sim -version)" = "$want" ] || exit 1`. Handled where it is
+            // seen, so it answers before any other flag is validated.
+            "-version" => {
+                println!("{VERSION}");
+                std::process::exit(0)
+            }
             "-paths" => paths = req_usize(&mut it, "-paths"),
             "-years" => years = req_usize(&mut it, "-years"),
             "-seed" => seed = req_u64(&mut it, "-seed"),
@@ -4400,5 +4462,117 @@ fn main() {
             );
             std::process::exit(1);
         }
+    }
+}
+
+/// The sidecar declares a schema number, and a consumer is told to read it first — a missing
+/// `version` means schema 1, not a malformed file (`docs/MarketSimWorlds.md`). That instruction is
+/// only safe while the declared number and the emitted shape agree.
+///
+/// Nothing in the writer keeps them in step: the schema is one integer and the shape is a
+/// hand-built list of lines. These tests compare what is actually emitted against
+/// `EMIT_SIDECAR_KEYS`, which the writer never reads, so adding, removing or renaming a key fails
+/// HERE — beside the schema number that then has to be decided about — instead of in a consumer
+/// that trusted the declaration. The Scala twin carries the same checks in `EmitSidecarSuite`.
+///
+/// They cannot force a bump, and do not pretend to: a shape change with the contract updated and
+/// the number left alone still passes. What they remove is the silent case.
+#[cfg(test)]
+mod emit_sidecar_tests {
+    use super::*;
+
+    /// Emit one real path and return the sidecar's lines, then clean up. The smallest run that
+    /// still produces a real sidecar: two years, with the gate verdict measured on the single path
+    /// simulated (the `-emitgate 0` reading), so this costs one short simulation rather than a
+    /// 200-path ensemble.
+    ///
+    /// `tag` keeps concurrent callers apart: the harness runs tests in parallel, and a shared
+    /// directory name lets one test delete the sidecar another is writing — `write_or_die` then
+    /// `process::exit`s and takes the whole harness down, not just the raced test. Each test
+    /// passes its own tag; the pid separates simultaneous harness invocations.
+    fn sidecar_lines(tag: &str) -> Vec<String> {
+        let years = 2usize;
+        let seed = 20260825u64;
+        let w = default_world();
+        let p = simulate(&w, years, seed);
+        let st = measure(std::slice::from_ref(&p), years);
+        let dir = std::env::temp_dir().join(format!("emit_sidecar_{tag}_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let tsv = dir.join("emit_sidecar_tests.tsv");
+        // Native separators are fine: sidecar_name splits on both / and backslash.
+        let tsv = tsv.to_string_lossy().into_owned();
+        write_emitted(&tsv, &p, 0, &w, years, seed, "", &st, 1);
+        let json = sidecar_name(&tsv);
+        let text = std::fs::read_to_string(&json).expect("sidecar written");
+        std::fs::remove_file(&tsv).ok();
+        std::fs::remove_file(&json).ok();
+        std::fs::remove_dir(&dir).ok();
+        text.lines().map(str::to_string).collect()
+    }
+
+    /// A top-level key of the sidecar object: exactly two spaces of indent, then a quoted name.
+    /// Nested blocks (`path`, `world`, `gate`) indent by four, so this cannot reach into them.
+    fn top_level_keys(lines: &[String]) -> Vec<String> {
+        lines
+            .iter()
+            .filter_map(|l| {
+                let rest = l.strip_prefix("  \"")?;
+                let name = rest.split('"').next()?;
+                if l.starts_with("   ") {
+                    None
+                } else {
+                    Some(name.to_string())
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn emitted_sidecar_declares_emit_schema() {
+        let lines = sidecar_lines("schema");
+        let declared = lines.iter().find_map(|l| {
+            l.strip_prefix("  \"schema\": ")
+                .and_then(|v| v.trim_end_matches(',').parse::<u32>().ok())
+        });
+        assert_eq!(
+            declared,
+            Some(EMIT_SCHEMA),
+            "the sidecar declares a schema that is not EMIT_SCHEMA — the writer and the constant \
+             have come apart"
+        );
+    }
+
+    #[test]
+    fn emitted_sidecar_carries_the_promised_keys() {
+        let got = top_level_keys(&sidecar_lines("keys"));
+        let want: Vec<String> = EMIT_SIDECAR_KEYS.iter().map(|k| k.to_string()).collect();
+        assert_eq!(
+            got, want,
+            "the sidecar's top-level keys differ from EMIT_SIDECAR_KEYS. Its SHAPE changed: \
+             update the contract, and decide in the same edit whether EMIT_SCHEMA (now {}) must \
+             be bumped — a reader that pins the schema is relying on that number to mean this \
+             shape.",
+            EMIT_SCHEMA
+        );
+    }
+
+    /// The two twins write the same sidecar, so a consumer reading the schema must get the same
+    /// answer whichever produced the file. Skipped where the Scala half is absent (source tarball).
+    #[test]
+    fn scala_twin_declares_the_same_schema() {
+        let scala = std::path::Path::new("../src/main/scala/apps/MarketSim.scala");
+        let Ok(text) = std::fs::read_to_string(scala) else {
+            return;
+        };
+        let declared = text.lines().find_map(|l| {
+            l.trim()
+                .strip_prefix("val EmitSchema: Int = ")
+                .and_then(|v| v.trim().parse::<u32>().ok())
+        });
+        assert_eq!(
+            declared,
+            Some(EMIT_SCHEMA),
+            "EmitSchema in the Scala twin differs from EMIT_SCHEMA"
+        );
     }
 }

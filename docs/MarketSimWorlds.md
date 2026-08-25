@@ -23,10 +23,66 @@ market_sim.exe -strategies -depth 14 -drift 0.13
 lose track of which world it used:
 
 ```
+"version": "<the release that wrote this file>",
 "world": { "trendShare": 0.060000, "depth": 16.600000, "stress": 5.100000, ... }
 ```
 
+The `version` beside it says which release wrote the file, because the defaults themselves move
+between releases. `market_sim.exe -version` answers the same question about a binary before it is
+run.
+
 Run `market_sim.exe -badflag` for the full flag list with each default.
+
+## Verifying what produced your data
+
+Two checks, with different jobs and different lifetimes. Use both.
+
+**Before invoking — `-version`.** Prints the release the binary was built from, alone on stdout,
+exit 0. Nothing to parse, so a caller can assert on it without depending on any other output:
+
+```
+[ "$(market_sim.exe -version)" = "0.19.3" ] || { echo "wrong simulator" >&2; exit 1; }
+```
+
+This catches the wrong binary, and it is the only check available *before* you spend the run. It
+stops working the moment you are handed a file instead of a command.
+
+**After the fact — the sidecar.** `-emit F` writes `F.json` beside the TSV, and that is the only
+provenance that survives the file being moved. Four fields answer four different questions:
+
+| field | question |
+|---|---|
+| `schema` | can I parse this file? |
+| `version` | which release's simulator wrote it? |
+| `world` | with which parameters? |
+| `gate` | was that world even admissible? |
+
+**`schema` and `version` do not substitute for each other.** The default world moved at 0.19.1 and
+again at 0.19.2, so two files with identical columns and identical `schema` can still be
+incomparable. `schema` went 1 → 2 when `version` was added, which makes the absence of `version`
+detectable rather than ambiguous — **schema-1 files exist**, so read `schema` first and treat a
+missing `version` as "schema 1", not as a malformed file.
+
+**A version check alone does not pin behaviour.** A run made with `-depth 0.5` or a non-default
+`-crowd` looks like a default run to any version check. A consumer that calibrated against the
+default world should compare the sidecar's `world` block field-by-field against what it calibrated
+on; that catches both a moved default and a deliberate flag, which no label can. And a file whose
+`gate` records a failure is not evidence about a market — read the verdicts rather than assuming
+them, remembering they come from an `-emitgate` ensemble (default 200 paths), not from the single
+emitted sample.
+
+**Do not let `PATH` choose the binary for a pinned consumer.** `~/.cargo/bin/market_sim.exe` is
+whichever version was installed last, and on Windows a running executable cannot be replaced in
+place, so a failed reinstall silently leaves the previous one there. Install to a versioned root and
+invoke the absolute path, so the path itself carries the assertion:
+
+```
+cargo install vastblue-uni@0.19.2 --example market_sim --root ~/.local/uni-0.19.2
+~/.local/uni-0.19.2/bin/market_sim.exe -version
+```
+
+Exe-versus-library mismatch is not a risk — the example links the library from the same crate. The
+only mismatch is the exe against what the consumer expected.
 
 ## When the choice matters, and when it does not
 

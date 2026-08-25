@@ -1,3 +1,44 @@
+## Unreleased
+
+**ADDED — `marketSim`/`market_sim`: the simulator names its own release, and so does every emitted
+path**
+
+A consumer holding an emitted path had no way to tell which simulator wrote it, and the default
+world moved at 0.19.1 and again at 0.19.2. A stale `market_sim` on `PATH`, or a script pinned by an
+old `//> using dep`, produced plausible files that were silently incomparable with current ones.
+
+- `-version` prints the version alone on stdout and exits 0, so a caller can gate on it without
+  parsing: `[ "$(market_sim -version)" = "$want" ] || exit 1`.
+- The `-emit` sidecar gains `"version"`, beside `"generator"`. Provenance travels with the file; a
+  check made at generation time does not.
+- Both twins read the version from the build — `env!("CARGO_PKG_VERSION")` and
+  `uni.BuildInfo.version` — so neither can report a version it was not built from.
+
+The sidecar's `"schema"` goes `1` → `2`, which makes the absence of `"version"` itself a version.
+`schema` says whether a reader can parse the file; `version` says which release's world it
+describes. For the exact parameters the `world` block is still authoritative — it also catches a run
+made with overridden flags, which no version string can.
+
+`cargo install` writes one `market_sim` per `--root`, so a consumer pinned to a release should
+install into a versioned root and invoke the absolute path rather than resolve the name on `PATH`.
+
+**CHANGED — `jsrc/marketSim.sc` is now a launcher; the model's one Scala copy lives in the jar**
+
+The script no longer contains the model: it dispatches into `uni.apps.MarketSim` from the `uni`
+version its `//> using dep` pins. While the model also existed as a loose script, an edited copy
+produced sidecars stamping a version its code was not built from; with one copy, the stamp and the
+code come from the same artifact. `ScriptTwinSuite` now guards the launcher (it must dispatch, and
+must stay small) instead of byte-comparing two copies.
+
+Consequences: read or modify the model in `src/main/scala/apps/MarketSim.scala`; the script runs
+the last *published* `uni`, so during development `sbt publishLocal` is what moves it forward. The
+Rust twin is unchanged — `examples/market_sim.rs` was already the crate's single copy.
+
+The sidecar's shape is under test on both sides: its top-level keys are declared next to the schema
+constant (`EmitSidecarKeys`/`EMIT_SIDECAR_KEYS`), and a key added, removed or renamed fails the
+build beside the schema number that then has to be reconsidered, instead of surfacing in a consumer
+that trusted the declared schema.
+
 ## v0.19.2 — 2026-08-22
 
 **CHANGED — `marketSim`/`market_sim`: the bond's refuge mechanism is rebuilt; every published number

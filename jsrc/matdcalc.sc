@@ -1,5 +1,5 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
-//> using dep org.vastblue:uni_3:0.19.2
+//> using dep org.vastblue:uni_3:0.19.3
 
 // One half of the cross-language demo pair; `rust/examples/matdcalc.rs` is the other.
 // Both run the same MatD program on the same seeded matrix and print byte-identical

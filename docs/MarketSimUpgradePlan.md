@@ -56,18 +56,21 @@ that pattern complete instead of accidental.
   precisely because the alternative — relaxing the bond-volatility band so calm bonds pass — would
   make the gate stop meaning anything.
 
-## How the simulator ships (0.19.2)
+## How the simulator ships (0.19.3)
 
 The simulator is public API in both published artifacts, not a repo-only tool:
 
 - **Rust**: the crate packages `examples/market_sim.rs` (with the other eight demo pairs), so
   `cargo install vastblue-uni --example market_sim` builds the binary from crates.io.
 - **Scala**: `uni.apps.MarketSim` is compiled into the jar —
-  `scala-cli run --jar uni_3-0.19.2.jar --main-class uni.apps.MarketSim -- -validate`.
-- `jsrc/marketSim.sc` remains the canonical Scala source; the packaged object is its header-twin
-  (shebang commented, `package uni.apps` uncommented) and `ScriptTwinSuite` fails the build if the
-  two differ anywhere below that header. Both shipped forms are byte-identical to each other and to
-  the Rust binary across every mode.
+  `scala-cli run --jar uni_3-0.19.3.jar --main-class uni.apps.MarketSim -- -validate`.
+- `src/main/scala/apps/MarketSim.scala` is the only Scala copy of the model; `jsrc/marketSim.sc` is
+  a thin launcher that dispatches into it, so the version its sidecar stamps
+  (`uni.BuildInfo.version`) and the code that runs come from one artifact. `ScriptTwinSuite` fails
+  the build if the launcher stops dispatching or is overwritten with a copy. Between releases the
+  launcher runs the last *published* jar, not the working tree — `sbt publishLocal` (from a fresh
+  sbt, not a stale `--client` server) is what moves it forward. Both shipped forms are
+  byte-identical to the Rust binary across every mode.
 
 ## Two consumers, one plan
 
@@ -86,7 +89,7 @@ measured to fail on the equity leg too (see W9), not merely anticipated. W7 stay
 
 | item | state |
 |---|---|
-| W0 | recorded: `uni/jsrc/marketSim.sc` is canonical (see below) |
+| W0 | superseded: the model's one Scala copy is `src/main/scala/apps/MarketSim.scala` (see below) |
 | W1, W2, W3, W9, W6a, W6b | **landed**, both twins, byte-identical across every mode |
 | W5, W7a, W7b, W7d | **landed (0.19.2)**, both twins |
 | W4, W7c, W8 | open |
@@ -105,9 +108,12 @@ have drifted numerically. Copy the uni version over, or record which copy is can
 **Acceptance**: `diff` of the two files is empty, or a note in PARITY.md names the canonical copy and
 the consumer's obligation to pull from it.
 
-**Resolved by the second route.** `uni/jsrc/marketSim.sc` is canonical; `/opt/ue/jsrc/marketSim.sc`
-is a consumer fork that must pull from it and never the reverse. It is now 383 lines behind, so a
-consumer running it disagrees with the Rust twin in the seven `pm` columns and in every item below.
+**Resolved by the second route, then superseded.** The interim resolution named
+`uni/jsrc/marketSim.sc` canonical with the fork obliged to pull from it. The stronger arrangement
+replaced it: the model has ONE Scala copy, `src/main/scala/apps/MarketSim.scala` in the published
+jar, and `uni/jsrc/marketSim.sc` is a launcher that dispatches into it. A consumer fork should
+adopt the launcher — there is no full-source script left to pull, and a fork that keeps its old
+copy disagrees with both twins in every item below.
 
 ---
 
@@ -143,6 +149,7 @@ harness, not close enough to be a parity test.
 ### As shipped
 
 ```
+-version        the release this binary was built from, alone on stdout; exit 0
 -emit F         one path as a full-state TSV, plus the sidecar F.json
 -emitpath N     which path index (default 0); path k is seed + k*7919 and needs no larger run
 -emitall        every path of the run to F-000.tsv, F-001.tsv, ... each with its sidecar
@@ -154,9 +161,9 @@ Columns: `date price bond rate cpi liq bliq fundamental inflPress`, with a heade
 
 Three properties beyond the item as written, each closing a gap a consumer hit:
 
-- **Provenance is a sidecar, not a stderr line.** `F.json` carries the world's every field, the base
-  seed, the stride, the path index and its derived seed, the calendar, both W3 verdicts with the
-  named failures, and the fidelity ratios including the known misses. A warning printed at export
+- **Provenance is a sidecar, not a stderr line.** `F.json` carries the generator's `version`, the
+  world's every field, the base seed, the stride, the path index and its derived seed, the calendar,
+  both W3 verdicts with the named failures, and the fidelity ratios including the known misses. A warning printed at export
   does not survive the file being moved; an ensemble that cannot be named cannot be inventoried, and
   re-drawing the same paths in two campaign rounds would otherwise count as independent evidence.
 - **Dates can be real and weekday-aligned.** The default calendar steps `365/252` days from
@@ -773,7 +780,7 @@ which is a claim. Both now say so and skip the ranks. Reachable before W9 (`-str
 
 | order | items | why here |
 |---|---|---|
-| ~~1~~ | ~~W0~~ | Done: `uni/jsrc/marketSim.sc` recorded as canonical |
+| ~~1~~ | ~~W0~~ | Done: canonical copy recorded (since superseded — the script is now a launcher into the jar's `MarketSim`) |
 | ~~2~~ | ~~W1 + W2~~ | Done: a consumer can now reproduce internal numbers exactly |
 | ~~3~~ | ~~W3~~ | Done: worlds that were being discarded are admissible under `-gate realism` |
 | ~~4~~ | ~~W9~~ | Done: the depth profile is measured, targeted and gated |

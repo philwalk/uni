@@ -2,7 +2,7 @@
 package uni.apps
 
 //> using scala 3.7.2
-//> using dep org.vastblue:uni_3:0.19.2
+//> using dep org.vastblue:uni_3:0.19.3
 
 // MARKET SIMULATOR — a testbed for COMPARING exposure strategies over long horizons.
 //
@@ -87,6 +87,31 @@ object MarketSim:
   def println(s: String = ""): Unit = print(s"$s\n")
   def eprintln(s: String = ""): Unit = System.err.print(s"$s\n")
 
+  /** Which release this run is, from build.sbt at compile time.  Never a literal: a stale jar or
+    * a script pinned to an old `//> using dep` cannot report a version it was not built from,
+    * which is the whole point of the `-version` flag and of the sidecar's `version` field.  The
+    * Rust twin reads `env!("CARGO_PKG_VERSION")`, which cargo fills the same way, and the two
+    * agree because `release-and-publish.sh` refuses to publish unless the two build files carry
+    * one version. */
+  val Version: String = BuildInfo.version
+
+  /** The sidecar format this build writes.  Bump it whenever the sidecar's SHAPE changes — a key
+    * added, removed or renamed, or a value's meaning changed — so a reader can tell "I cannot parse
+    * this" from "I parsed it and the world differs".  Deliberately NOT derived from `Version`: most
+    * releases move the world and leave the format alone, and a schema that tracked the release
+    * would tell a reader nothing.
+    *
+    * `EmitSidecarKeys` is the contract that goes with it, and the writer does NOT read it — that is
+    * the point.  `EmitSidecarSuite` compares the keys actually emitted against this list, so adding
+    * a key without touching this line fails the build at the moment the discrepancy is created,
+    * next to the schema number that then has to be decided about.  A test cannot force the bump; it
+    * can force the decision to be conscious, which is what this pair is for. */
+  val EmitSchema: Int = 2
+
+  val EmitSidecarKeys: Vector[String] =
+    Vector("generator", "version", "schema", "file", "columns", "header", "path", "world",
+           "gate", "fidelity")
+
   // Numeric arguments fail LOUDLY.  `toInt` alone dies with a raw NumberFormatException, and the
   // Rust twin's old parse-or-default silently substituted the default — `-emitpath -1` emitted
   // path 0 with exit 0, a plausible file for an index nobody asked for.
@@ -102,6 +127,7 @@ object MarketSim:
     parts.map(p => p.toIntOption.getOrElse(usage(s"$flag wants integers, got [$p]")))
 
   def usage(m: String = ""): Nothing = showUsage(m, "",
+    "-version      ; print the version this simulator was built from, and exit",
     s"-paths N      ; independent price paths (default ${DefaultPaths})",
     s"-years Y      ; years per path (default ${DefaultYears})",
     s"-seed S       ; base random seed (default ${DefaultSeed})",
@@ -1877,7 +1903,15 @@ object MarketSim:
 
   /** Everything that licenses the TSV: which (world, seed, path) produced it, on what calendar,
     * and what the world's two gate verdicts and fidelity ratios were.  A warning printed to stderr
-    * at export time does not survive the file being moved; this does. */
+    * at export time does not survive the file being moved; this does.
+    *
+    * `schema` and `version` answer different questions and neither substitutes for the other:
+    * `schema` says whether a reader can parse the file, `version` says which release's simulator
+    * wrote it.  The default world moved at 0.19.1 and again at 0.19.2, so two files with identical
+    * columns and identical schema can still be incomparable — a consumer that pins its calibration
+    * to a release checks `version`, and one that needs the exact parameters reads `world` below.
+    * `schema` went 1 -> 2 when `version` was added, so its absence is detectable rather than
+    * ambiguous. */
   def writeEmitSidecar(file: String, p: Path, k: Int, w: World, years: Int, seed: Long,
                        startYmd: String, dates: Vector[String], gateSt: WorldStats,
                        gatePaths: Int): Unit =
@@ -1897,7 +1931,8 @@ object MarketSim:
     val json = Vector(
       "{",
       """  "generator": "market_sim",""",
-      """  "schema": 1,""",
+      s"""  "version": ${jsonStr(Version)},""",
+      s"""  "schema": $EmitSchema,""",
       s"""  "file": ${jsonStr(file)},""",
       s"""  "columns": ${strList(EmitColumns)},""",
       """  "header": true,""",
@@ -1989,6 +2024,10 @@ object MarketSim:
     var inflSpeed = Defaults.inflSpeed; var rateSpeed = Defaults.rateSpeed
     var discount = Defaults.discount; var margin = Defaults.margin
     eachArg(args.toSeq, usage) {
+      // Bare version on stdout and nothing else, so a caller can gate on it without parsing:
+      // `[ "$(marketSim.sc -version)" = "$want" ] || exit 1`.  Handled where it is seen, so it
+      // answers before any other flag is validated.
+      case "-version"    => println(Version); System.exit(0)
       case "-paths"      => paths = intOr("-paths", consumeNext)
       case "-years"      => years = intOr("-years", consumeNext)
       case "-seed"       => seed = longOr("-seed", consumeNext)
