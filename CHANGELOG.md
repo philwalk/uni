@@ -1,4 +1,4 @@
-## Unreleased
+## v0.19.3 — 2026-08-25
 
 **ADDED — `marketSim`/`market_sim`: the simulator names its own release, and so does every emitted
 path**
