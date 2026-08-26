@@ -1,0 +1,36 @@
+# Real bond-fund anchors: the measurements the model's two bond relations are fitted FROM.
+#
+# Measured 2026-08-22: eight iShares funds, 19-24 years of history each, total returns from NAV
+# plus reinvested distributions -- the same source and method as the TLT anchor, which that
+# pipeline reproduces to 14.12% against the recorded 14.1%. The measurement window is part of the
+# data: re-measuring over a different span, or with a different total-return convention, moves the
+# fitted lines for reasons that are not errors.
+#
+# Checked by uni.apps.BondAnchorSuite and the `bond_anchor_tests` module in
+# rust/examples/market_sim.rs. Both re-fit the lines below and assert they reproduce the constants
+# their own twin carries; neither needs the other language installed.
+#
+#   duration    effective duration in years, as published by the fund -- MEASURED, never fitted
+#   annVol      annualised standard deviation of daily total returns, %
+#   d5 d10 d20  share of sessions more than 5/10/20% below the running peak
+#
+# The two fitted lines, and where each one is used:
+#
+#   d10    = 0.0397 * annVol - 0.0785  (floored at zero)   BondD10Slope / BondD10Intercept
+#                                                          BOND_D10_SLOPE / BOND_D10_INTERCEPT
+#   annVol = -0.07 + 0.937 * duration                      the duration scaling of SigmaNBond
+#
+# BOTH are fitted on the five TREASURIES only. The three credit rows are not inputs to either fit:
+# they are the SCOPE of the +-0.35 band, which admits AGG (1.06) and LQD (0.71) and excludes HYG
+# (0.50) because this model has no credit channel. That band is therefore a scope decision as much
+# as a tolerance, and it is wider than the Treasuries' own scatter (0.79-1.04) for that reason.
+#
+fund	kind	duration	annVol	d5	d10	d20
+SHY	treasury	1.80	1.44	0.007	0.000	0.000
+IEI	treasury	4.22	4.02	0.152	0.064	0.000
+IEF	treasury	6.84	6.65	0.387	0.181	0.019
+TLH	treasury	11.60	10.27	0.566	0.314	0.223
+TLT	treasury	14.89	14.12	0.709	0.499	0.226
+AGG	blend	5.70	4.24	0.152	0.095	0.000
+LQD	credit-ig	7.72	6.36	0.221	0.123	0.011
+HYG	credit-hy	3.02	6.04	0.199	0.080	0.027

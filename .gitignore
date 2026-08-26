@@ -101,6 +101,10 @@ slice.sc
 # which prints nothing when the file will be committed.
 test-data/*
 !test-data/*-parity/
+# Not named `*-parity` because it is not a parity reference: it is the real-world MEASUREMENT
+# both twins fit their bond relations from. Read by a Scala suite and a Rust test all the same,
+# so it has to be tracked. Verified with `git check-ignore -v`, which prints nothing for it.
+!test-data/bond-anchors/
 # Anchored: an unanchored `bin/` also swallows rust/src/bin/, whose contents are
 # real source.
 /bin/

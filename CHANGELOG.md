@@ -1,3 +1,221 @@
+## v0.20.0 — 2026-08-26
+
+**CHANGED — the default world is recalibrated under the measured-precision objective; every
+published number moves**
+
+Two 2000-sample searches under the reweighted loss, five-seed verification, and one repair found
+by `-crossasset`. Ten parameters move; `duration` is pinned by principle (it is a MEASURED identity
+parameter, a real fund's number — the search wanted 11.1 and was refused), and `inflSize` and
+`margin` end where they started: the search's `inflSize` cut broke the duration ladder's 5.7-year
+depth rung and was reverted, and its `margin` cut bought 0.002 of loss while weakening the
+joint-stress mechanism by 78% — a freebie the objective cannot see, declined on judgment.
+
+```
+              old      new                     old      new
+trendShare    0.06     0.07      volOfVol     0.011    0.014
+depth         16.6     16.1      valuePull    0.013    0.0145
+stress        5.1      5.6       easing       0.045    0.046
+drift         0.117    0.123     refuge       0.08     0.11
+crowdImpact   0.088    0.07      discount     3.35     5.0
+```
+
+What it buys and what it pays, at 200 paths x 100 years (the `-releases` measurement):
+
+```
+                     0.19.2   0.20.0
+  equity vol %         0.90     1.03    <- ON the anchor; the miss 2a diagnosed, closed
+  return per vol       1.17     1.07
+  median depth %       1.03     0.98
+  bond growth-crash    0.42     0.47
+  crashes/century      1.32     1.43    <- the stated price
+  clustering lag 1     1.06     1.08
+  worst crash %        1.44     1.52    <- horizon artifact; grows with vol, judgment already 0.5
+  bond infl-crash      0.96     1.18
+```
+
+The crash-rate ratio needs its confound stated: at MATCHED volatility the old world already read
+~1.50 (`-crossasset`'s equity section) — the 1.32 was partly the crash bias hiding inside a
+volatility 10% below its anchor. The new world displays the same mechanism honestly. For a
+consumer building no-edge nulls from emitted paths this is the correct direction twice over: the
+old vol miss made null bands ~10% too NARROW, the one direction that can flatter a record into a
+promotion; the residual crash excess only raises the null bar, which hides skill and never
+manufactures it.
+
+**The equal-weight aggregate reads WORSE (2.87 -> 3.10), and that is expected.** `-releases`'
+`AGGREGATE |ratio-1|` row weighs every target as equally measurable — the assumption the
+reweighting removed. Under the measured-precision loss the new world wins on 7 of 8 verification
+seeds (the eighth is a small-ensemble gate flip at `-fitness`'s 60x80 configuration; at the
+canonical 200x100 all three gate classes PASS on every seed tried). Read the aggregate row as the
+old objective's opinion, kept visible on purpose.
+
+`stress` moves UP for the first time since the guard against it was written. That guard existed
+because the objective was blind to the clustering regression; the reweighted objective prices
+clustering at 2.2x and still prefers 5.6 — the trade is now bought with open eyes, and clustering
+1.08 (lag 20: 1.12) is the recorded price.
+
+The 0.19.2 row in `-releases` is frozen as a full literal (`v0_19_2`), and the historical worlds
+chain from it rather than from the live default — derived from the default, every field a past
+release shipped unchanged would have silently taken the new value.
+
+**ADDED — `marketSim`/`market_sim`: `-crossasset` grades one mechanism across the bond duration
+ladder**
+
+Every fidelity target but two is a level calibrated to a single fund, so agreement with it says
+nothing about whether the mechanism generalises. The exceptions are `bond vol x duration` and
+`bond depth vs vol`, whose bands were fitted across five real Treasury funds. `-crossasset` runs
+both at duration 1.80, 5.70, 13.50 and 25.00 with every other parameter frozen: one identity
+parameter moves, and only to durations real funds have — 0 fitted, 1 measured.
+
+A cell outside the range its band was fitted across reads `EXTRAP` and is excluded from the
+verdict, because a line evaluated past its data can neither pass nor fail honestly. Exit is
+non-zero on an in-support miss, when a relation graded zero cells (`INCONCLUSIVE` — "the test did
+not run" must not print as the test passing), or when any cell is `EDGE`.
+
+A cell within one estimated sampling sd of a band edge — on either side — reads `EDGE` (marked
+`~` in the table): the verdict cannot resolve it at that ensemble size, and a hard PASS or FAIL
+there would be a seed draw wearing a verdict's clothes. The sd is estimated in-run from
+quarter-ensemble spread, costing four extra measurements and no extra simulation. The case that
+forced this: the d=5.70 depth cell reads 0.64-0.65 against a 0.65 floor across seeds at 200 paths
+— under the 0.19.2 AND 0.20.0 defaults alike — flipping PASS/FAIL on seed alone. The model
+genuinely sits at the band floor there: real funds of comparable volatility read 0.98-1.06, so the
+mid-duration synthetic bond recovers from drawdowns faster than any real fund of its volatility.
+Recorded as a known miss; no nearby parameter moves the cell more than +-0.02.
+
+At the adopted 0.20.0 defaults (200 paths x 100 years): `bond vol x duration` holds at 1.00-1.02
+across the three in-support rungs; `bond depth vs vol` reads 0.65~ (EDGE) at d=5.70 and 1.24 at
+d=13.50; verdict EDGE.
+
+`n/a` is a third state, and a finding about the relation rather than the ladder: the depth line
+predicts non-positive time-under-water below 1.98% volatility, so its usable range is narrower than
+the 1.44–14.12% range it was fitted across. Real funds there read `d10 = 0.000`, and 0/0 is not
+agreement.
+
+Scope, printed in the report itself: the bands came from Treasury funds and the ladder walks
+Treasury durations, so this is a consistency check. It cannot detect a mechanism wrong in a way
+every Treasury shares — that needs an asset class the bands did not come from.
+
+**ADDED — `-crossasset` re-reads every equity target with volatility on its anchor, and four grades
+get worse**
+
+`depth` moves volatility and drawdown together, so a drawdown statistic graded while the model sits
+10% below its own volatility anchor mixes two errors and reports one. The equity section solves
+`depth` so volatility lands on the anchor — 1 identity parameter, set from 1 measured statistic,
+nothing else touched — and re-reads the rest (40 paths × 100 years):
+
+```
+  statistic                default  at anchor      real  ratio def  ratio anc
+  crashes/century            27.95      31.10     20.70       1.35       1.50
+  equity >5% below pk         0.49       0.52      0.45       1.09       1.17
+  equity >10% below pk        0.32       0.36      0.32       1.03       1.14
+  equity >20% below pk        0.14       0.16      0.17       0.83       0.97
+  return per vol              0.80       0.72      0.69       1.16       1.04
+```
+
+The recorded "crashes arrive 1.32x too often" was partly an artifact of the model running below the
+real volatility; on the anchor it is 1.50. The shallow-drawdown bias is likewise larger than its
+default grade, the deep rung is nearly exact rather than 17% short, and `return per vol` is better
+than it looked. None of these are new defects — they are the same ones, read without the volatility
+miss folded in.
+
+Diagnostic: it does not affect the exit code, because the equity leg has no cross-index bands yet.
+And it does not fix the anchors coming from different windows (`equity vol %` S&P 1954-2026, the
+depth rungs SPY 1993-2026, `return per vol` CRSP 1954-2026) — a ratio there is conditional on
+hitting the volatility anchor, not window-matched. Both limits print in the report.
+
+**ADDED — `-noise`: what one history can pin down, per fidelity target**
+
+Every fidelity target is a point read from one historical record, graded as if exact. `-noise` asks
+the model what spread of readings independent histories of each anchor's OWN length would produce
+(72y for the S&P/CRSP rows, the century for clustering, 33y for the SPY depth rungs, 24y for the
+bond), where the real record falls in that spread, and — in a second section — the seed-to-seed
+noise of the scoring ensemble itself. Model-implied, and the report says so: where the model is
+known biased the spread is biased with it; there is no other estimate, the record is one draw.
+
+What it measures at the adopted 0.20.0 defaults (200 paths; the values frozen into `wgt` carry
+this measurement):
+
+- **`bond infl-crash` is close to unmeasurable from its own anchor.** One 24-year history reads
+  p5-p95 of −194 to +16 around the −25 target (sd/real 2.89), and only 95 of 200 histories produce
+  a reading at all — yet it carried the largest weight in the loss. Fixed by the reweighting below.
+- **The `worst crash %` miss is mostly a horizon artifact.** Graded at 100 years it reads 1.52x
+  real; at its anchor's own 72 years the model's median is −61.3 against the real −56.8, with the
+  record at the 64th percentile of model histories. The fitness ratio folds a max-order-statistic
+  horizon mismatch into a number that reads as a defect.
+- **The crash-rate excess is genuine, not sampling.** Only 1% of model 72-year histories read at or
+  below the record's 20.7/century. Kurtosis likewise (real at the 98th percentile — the model
+  cannot reach 28, the recorded scope exclusion).
+- **The depth-rung anchors are consistent with the model** at their own 33-year horizon (record at
+  the 34th/55th/72nd percentile) — the ensemble-mean bias 2a shows is real but small against what
+  one 33-year history can pin down.
+- **`bond growth-crash`'s anchor is itself one draw of a wide spread**: 13% of model 24-year
+  histories read at or above the +20 target, so the 0.47 ratio overstates how certainly the model
+  is wrong there.
+
+The seed-noise section licenses the other reports' flags: at 200 paths x 100 years most targets'
+ensemble ratios carry 2 sd of 0.01-0.05, so `-crossasset`'s equity moves of 0.08-0.15 are real —
+while `worst crash %` and `bond infl-crash` (2 sd 0.1-0.2) can swing a `-releases` row by a tenth
+on seed alone.
+
+**CHANGED — the calibration loss weights are judgment × measured precision**
+
+The old weights graded every target as equally measurable: `median depth %` (single-history sd/real
+0.15) and `bond growth-crash` (0.39) carried the same 1.0, and the least measurable target in the
+set carried the largest weight. Each weight is now `wgt(judgment, sdRel) = judgment × (0.20 /
+sdRel)`, where `sdRel` is the single-history sd over the anchor measured by `-noise` at the
+anchor's own horizon (2026-08-25, 200 paths, at the adopted defaults) and **frozen as a literal**,
+exactly as the anchors are — computed live, a candidate world under `-calibrate` that widened its
+own spread would down-weight its own misses.
+
+`judgment` keeps carrying what a number cannot — redundancy, scope, importance — and every judgment
+is unchanged except one: `worst crash %` drops 1.0 → 0.5, because `-noise` showed its ratio is
+mostly a horizon artifact, and weighting it fully would push `-calibrate` to close an artifact.
+`bond infl-crash`'s judgment *stays* at 1.5 (inflation-crash behaviour is why the refuge exists);
+the measured precision crushes its weight to 0.13 on its own.
+
+The largest moves, old → new: `clustering lag 1` 1.0 → 2.22, `equity vol %` 1.0 → 2.0 (the
+best-pinned targets in the set), `bond infl-crash` 1.5 → 0.10, `equity >20% below pk` 0.5 → 0.18,
+`bond vol` 1.0 → 0.39. The 0.20 reference keeps the weight sum near the old objective's (12.2 vs
+12.5), so the 0.5-per-failed-gate penalty keeps its established bite. (`-fitness` measures at its
+own fixed 60 paths x 80 years; quote its losses with that provenance, not the invocation's.)
+
+The defaults were then re-searched under this objective — the recalibration entry above.
+
+**CHANGED — the fidelity gate refuses, and discloses, bands its anchors cannot grade**
+
+The two anchor-fitted fidelity bands — `bond depth vs its vol` and `bond vol x duration` — printed
+FAIL in any world their anchors cannot reach: a 1.8-year-duration world made the depth relation
+undefined (NaN failed the band), and a duration past the funds' 1.80–14.89-year span was graded
+against an extrapolated line. Meanwhile `-crossasset` refused both cases as `n/a`/`EXTRAP` — the
+same statistic, opposite verdicts on two surfaces of one binary.
+
+Both graders now share the refusal. `-validate` prints such a band as `n/a` with the reason, in
+place, plus a `no anchor:` summary; the sidecar's `gate` block gains `fidelityUnanchored` so an
+emitted path cannot show fidelity PASS while a level was never graded at all. Unanchored bands do
+not fail the gate, count toward the fitness penalty, or block admission: "no anchor to compare
+against" and "the level is wrong" are different findings, and only one is about the model. The
+default world grades both bands, so its output is unchanged.
+
+**ADDED — the bond anchors are checked in, and both twins re-derive the coefficients from them**
+
+`0.0397` and `−0.0785` were fitted numbers that nothing in the repo could reproduce: the
+coefficients were written down and the eight-fund measurement they came from lived in a prose
+table. `test-data/bond-anchors/ishares-2026-08-22.tsv` now carries the rows, and `BondAnchorSuite`
+and `bond_anchor_tests` re-fit them and assert the result rounds to the constants each twin carries.
+A re-measurement that moves a line now fails the build instead of silently disagreeing with code
+still holding the old one. Both read the same file; neither needs the other language.
+
+Two claims that previously existed only as prose are now assertions: the `vol = -0.07 + 0.937 x
+duration` line whose near-zero intercept is why `SigmaNBond` scales with duration at all, and the
+`±0.35` band's scope — it admits the Aggregate (1.06) and investment grade (0.71) and excludes high
+yield (0.50), which is a decision about what this model has no channel for, not a tolerance.
+
+Both bands are now single constants (`BondD10Band`, `BondVolPerYearBand`) shared by the acceptance
+gate and `-crossasset`, which had been carrying their own copies of the same four numbers.
+
+The fixture directory does not match `.gitignore`'s `test-data/*-parity/` negation and is tracked
+by a rule of its own — the residual that file documents. `FixtureGuardSuite` now names it, since a
+fixture present locally and ignored everywhere else passes every test for whoever generated it.
+
 ## v0.19.3 — 2026-08-25
 
 **ADDED — `marketSim`/`market_sim`: the simulator names its own release, and so does every emitted

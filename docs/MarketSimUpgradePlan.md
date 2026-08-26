@@ -56,14 +56,14 @@ that pattern complete instead of accidental.
   precisely because the alternative — relaxing the bond-volatility band so calm bonds pass — would
   make the gate stop meaning anything.
 
-## How the simulator ships (0.19.3)
+## How the simulator ships (0.20.0)
 
 The simulator is public API in both published artifacts, not a repo-only tool:
 
 - **Rust**: the crate packages `examples/market_sim.rs` (with the other eight demo pairs), so
   `cargo install vastblue-uni --example market_sim` builds the binary from crates.io.
 - **Scala**: `uni.apps.MarketSim` is compiled into the jar —
-  `scala-cli run --jar uni_3-0.19.3.jar --main-class uni.apps.MarketSim -- -validate`.
+  `scala-cli run --jar uni_3-0.20.0.jar --main-class uni.apps.MarketSim -- -validate`.
 - `src/main/scala/apps/MarketSim.scala` is the only Scala copy of the model; `jsrc/marketSim.sc` is
   a thin launcher that dispatches into it, so the version its sidecar stamps
   (`uni.BuildInfo.version`) and the code that runs come from one artifact. `ScriptTwinSuite` fails
@@ -438,6 +438,12 @@ distributions (the same source and method as the TLT anchor, which this pipeline
 
 The five Treasuries fit `vol = -0.07 + 0.937 x duration`: **an intercept of zero**, as it must be,
 since a zero-duration bond is cash.
+
+These rows are checked in at `test-data/bond-anchors/ishares-2026-08-22.tsv`, and both twins re-fit
+them (`BondAnchorSuite`, `bond_anchor_tests`) and assert the result reproduces the constants each
+carries. The coefficients are therefore derivable rather than asserted: a re-measurement that moves
+a line fails the build instead of silently disagreeing with code still carrying the old one. The
+table above is the dated measurement record; the fixture is what the tests read.
 
 **W7b — the volatility floor — LANDED (0.19.2).** `SigmaNBond` was duration-INDEPENDENT, so the
 model read `vol = 5.11 + 0.696 x duration`. The two errors cancelled at TLT's duration, where the
