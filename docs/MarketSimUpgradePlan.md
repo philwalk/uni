@@ -56,14 +56,14 @@ that pattern complete instead of accidental.
   precisely because the alternative — relaxing the bond-volatility band so calm bonds pass — would
   make the gate stop meaning anything.
 
-## How the simulator ships (0.20.0)
+## How the simulator ships (0.21.0)
 
 The simulator is public API in both published artifacts, not a repo-only tool:
 
 - **Rust**: the crate packages `examples/market_sim.rs` (with the other eight demo pairs), so
   `cargo install vastblue-uni --example market_sim` builds the binary from crates.io.
 - **Scala**: `uni.apps.MarketSim` is compiled into the jar —
-  `scala-cli run --jar uni_3-0.20.0.jar --main-class uni.apps.MarketSim -- -validate`.
+  `scala-cli run --jar uni_3-0.21.0.jar --main-class uni.apps.MarketSim -- -validate`.
 - `src/main/scala/apps/MarketSim.scala` is the only Scala copy of the model; `jsrc/marketSim.sc` is
   a thin launcher that dispatches into it, so the version its sidecar stamps
   (`uni.BuildInfo.version`) and the code that runs come from one artifact. `ScriptTwinSuite` fails
@@ -711,6 +711,12 @@ a calibration anchor out of nothing. The equity anchors come from a different wi
 1954-2026 record behind the other fidelity rows; that is sound *for this statistic only*, because a
 time share is horizon-stable where a max order statistic is not.
 
+> The measurements behind a future cross-index equity leg are checked in at
+> `test-data/equity-anchors/yahoo-2026-08-24.tsv` — 88 instrument-window rows, with the SPY row
+> above reproduced from uni's own definitions as the methodology check. Nothing is fitted from
+> them yet. Their finding, in one line: depth is set by volatility AND return per unit of
+> volatility, so an equity rung needs two identity parameters where the bond ladder needs one.
+
 **A third gate class, `fidelity`.** The check could not go in `realism` without claiming that a world
 whose depth profile is off is not a market at all, which would invalidate cost breakevens, ruin
 rates and refuge mechanics along with it. So the gate now answers three questions, and `-gate` takes
@@ -730,16 +736,21 @@ A fidelity failure invalidates only conclusions that read a **level** off the na
 time-out-of-market, a percentile threshold, a drawdown-conditioned hazard. Rank comparisons survive.
 
 The fidelity rows also appear in the fidelity table with the ratio-based `<-- MISS` flag every row
-carries. The two bands are deliberately different: MISS is the report convention (ratio outside
-0.667–1.5x), the gate is the plan's own acceptance criterion (±10 points absolute), and a rung can
-fail the gate while escaping the MISS flag — equity >10% at 0.454/0.315 is ratio 1.44. The gate
-line is the authority on admissibility.
+carries. MISS is the report convention (ratio outside 0.667–1.5x) and the gate band is the
+admissibility test; where they disagree, the gate line is the authority.
 
 **The band is the acceptance test.** `drawdownRule(10, 0.0)` sets exposure to its floor exactly when
-depth exceeds 10%, so its `%out` **is** `ddEq10`. The check `equity >10% below peak 0.215-0.415` is
+depth exceeds 10%, so its `%out` **is** `ddEq10`. The check `equity d10 vs real 0.70-1.55` is
 therefore a restatement of this item's own acceptance criterion — "within a few points of the same
-rule's `%out` on a real series" — made two-sided and enforced. `DepthTol = 0.10` is that "few
-points", absolute rather than relative because the quantity compared is itself a share.
+rule's `%out` on a real series" — made two-sided and enforced.
+
+Since 0.21 that comparison is made against a **relation** rather than a level: what a real equity
+fund of this world's own volatility and return spends more than 10% below its peak, from 35
+instruments over 2001-2026. The absolute rungs it replaced were SPY's, and SPY produced them at
+18.6% volatility and 0.554 return per vol while the target set asks this model to run at 16.0 and
+0.69 — an operating point where real funds spend a third less time under water. "Within a few
+points of a real series" now names a real series at the same operating point, which is the only
+version of that sentence that can be satisfied without a defect elsewhere.
 
 ### Measured, and the trade-off this item asked to have recorded
 
@@ -851,8 +862,8 @@ outcomes, all informative:
   its keep by catching one.
 
 The second end state, for W9 alone, is now a gate check rather than a manual comparison: the
-drawdown-gate arm's `%out` **is** the `equity >10% below peak` rung, and the band is "within ten
-points of the real posture".
+drawdown-gate arm's `%out` **is** the `equity d10 vs real` rung, and the band is "inside what real
+equity funds of the same volatility and return show".
 
 **This condition flipped in 0.19.1 and the blocker it described is gone on the equity leg.** It read
 FAIL at 0.454 against a real 0.315; on the 0.19.1 default it reads **PASS at 0.335**, and all three
@@ -860,9 +871,11 @@ equity rungs are in band. What remains is the bond rung, at 0.87 against 0.510 �
 narrows from "cannot referee trend-versus-de-risking-speed" to "cannot referee it **on the bond
 side**". A consumer holding no bond ticker is no longer blocked here at all.
 
-**Scope the claim carefully, because the equity rungs are fit targets.** Agreement with SPY
-1993-2026 is a calibration check, not validation. Against CRSP value-weighted — a series the
-calibration never saw for this statistic — 33-year windows inside 1954-2026 give a real median of
+**Scope the claim carefully, because the equity rungs are fit targets.** Since 0.21 the rungs are
+fitted to a RELATION across 35 equity funds rather than to SPY's levels, so SPY is one row of the
+anchor set rather than the whole of it — but agreement with the relation is still a calibration
+check, not validation. Against CRSP value-weighted — a series the calibration never saw for this
+statistic — 33-year windows inside 1954-2026 give a real median of
 0.451 / 0.291 / 0.151, ranges 0.405-0.507 / 0.219-0.346 / 0.084-0.184, against the model's
 0.49 / 0.33 / 0.13. **All three rungs land inside the range of real 33-year windows**, the shallow
 ones ~10% above the median and the deep one ~14% below. The honest statement is therefore

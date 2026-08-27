@@ -1,0 +1,141 @@
+# Real equity cross-index anchors: per-instrument depth-vs-volatility measurements. Since 0.21.0
+# these are LIVE CALIBRATION INPUTS, not a pending fixture: the w2001w block is what
+# EquityD5Corr/EquityD10Corr/EquityD20Corr, EquityVolSupport and the two gate bands are fitted
+# from, and EquityAnchorSuite / equity_anchor_tests re-derive every one of them from this file.
+# Editing a row moves the shipped model. Nothing is fitted from any other block.
+#
+# The relation those constants define is
+#   expected_d = (a + b*annVol) * exp(-2*(annRet/annVol)*ln(1/(1-d)) / (annVol/100))
+# i.e. the random walk's own closed form for time under water, times a correction fitted linear in
+# volatility. The correction reaches 1.00 at the top of the volatility range below, for all three
+# rungs independently: the most volatile equity markets spend random-walk time under water, and a
+# market at 14% volatility spends about half of it. Fitted by least squares on the LOG ratio --
+# raw-ratio OLS leaves the 20% rung's median instrument at 0.91 of its own line.
+#
+# Measured 2026-08-26 from daily Yahoo total-return series (adj_close), data through 2026-08-24.
+# Definitions are uni.apps.MarketSim's own, verified by reproduction: the w1993 row below is SPY
+# over the committed anchor window and reads exactly the three depth fit targets (0.447 / 0.315 /
+# 0.169) and the 18.6% volatility the docs quote.
+#
+#   annVol   sqrt(mean(logret^2) * 252) * 100 -- uncentered, like the model's `vol`
+#   d5..d20  share of sessions strictly more than 5/10/20% below the running peak (depthShares)
+#   annRet   log(last/first) / (sessions/252) * 100
+#
+#   w1993    1993-01-29..2026-08-20  SPY only -- the committed-anchor validation row
+#   w1996    1996-03-18..2026-08-20  17 instruments, 30.4y; opens mid-bull, so its peak seed is
+#            clean by construction (warm re-measurement changes no row)
+#   w2001    2001-08-27..2026-08-20  35 instruments, 24.9y; peak seeded at the window's first
+#            session, the depthShares convention -- which TRUNCATES drawdowns inherited from
+#            before a window that opens mid-bear, and this one does
+#   w2001w   the same window and instruments with the peak seeded from each instrument's FULL
+#            prior history, so the inherited hole is measured rather than truncated
+#
+# The w2001/w2001w pair MEASURES that truncation: fitting on w2001 and predicting w1996 reads
+# R2 0.47 with median ratio 1.08; fitting on w2001w reads R2 0.66, median 0.96. The two clean
+# measurements agree, the truncated one does not -- fit bands from w2001w (widest support,
+# n=35), use w1996 as the independent check, and never grade a model ensemble against the
+# truncated block.
+#
+# Depth is NOT a function of volatility alone: return-per-unit-volatility carries the rest, the
+# same quantity that sets the model's own depth profile. On w2001w,
+#   d10 = 0.1618 + 0.02156*annVol - 0.4149*(annRet/annVol)   R2 = 0.67   (d5 0.69, d20 0.58)
+# Fit on ALL 35 rows: the internationals span the rv range that identifies the rv coefficient
+# (a US-only refit flips its sign -- collinearity, not information). Residual ratios run
+# 0.69-1.48; the deep tail is QQQ (1.37) and XLK (1.48), whose restored dot-com hole is a
+# regime the sample holds exactly once, with Japan (EWJ 1.29) the same story older. That scatter
+# is what one 25-year history can pin down, and a band fitted from these rows cannot honestly be
+# narrower than it.
+#
+# Scope: broad, sector and country equity funds only. Leveraged funds and single stocks are
+# excluded -- a different mechanism and idiosyncratic risk, the same decision that keeps HYG
+# outside the bond fits.
+#
+window	ticker	kind	annVol	d5	d10	d20	annRet
+w1993	SPY	us-broad	18.6	0.447	0.315	0.169	10.30
+w1996	VGTSX	intl-broad	18.5	0.671	0.507	0.253	5.85
+w1996	VFINX	us-broad	19.1	0.485	0.346	0.186	9.80
+w1996	SPY	us-broad	19.2	0.486	0.348	0.187	9.80
+w1996	EWL	country-dev	20.9	0.612	0.427	0.139	7.47
+w1996	EWC	country-dev	22.1	0.665	0.497	0.230	8.73
+w1996	EWU	country-dev	22.4	0.669	0.501	0.290	5.97
+w1996	EWJ	country-dev	22.6	0.845	0.690	0.441	2.95
+w1996	EWN	country-dev	24.4	0.711	0.522	0.339	7.48
+w1996	EWQ	country-dev	24.6	0.676	0.517	0.310	7.20
+w1996	EWG	country-dev	25.3	0.758	0.636	0.401	6.25
+w1996	EWA	country-dev	26.2	0.663	0.455	0.151	7.59
+w1996	EWP	country-dev	26.5	0.789	0.701	0.544	8.69
+w1996	EWS	country-dev	26.9	0.804	0.658	0.404	4.42
+w1996	EWI	country-dev	26.9	0.799	0.703	0.598	6.87
+w1996	EWH	country-dev	27.1	0.781	0.647	0.423	4.97
+w1996	EWW	country-em	29.5	0.774	0.653	0.445	8.73
+w1996	EWD	country-dev	29.7	0.725	0.578	0.358	8.27
+w2001	XLP	us-sector	14.3	0.379	0.162	0.058	7.25
+w2001	XLV	us-sector	17.2	0.470	0.200	0.040	8.82
+w2001	DIA	us-broad	18.2	0.386	0.214	0.092	8.69
+w2001	SPY	us-broad	19.0	0.401	0.263	0.121	9.29
+w2001	XLU	us-sector	19.0	0.588	0.355	0.153	7.72
+w2001	VFINX	us-broad	19.1	0.401	0.264	0.121	9.24
+w2001	VGTSX	intl-broad	19.1	0.663	0.474	0.211	6.79
+w2001	EWL	country-dev	20.0	0.560	0.339	0.088	8.04
+w2001	EFA	intl-broad	20.8	0.634	0.423	0.220	6.38
+w2001	EWJ	country-dev	21.0	0.775	0.572	0.284	5.09
+w2001	XLI	us-sector	21.0	0.444	0.266	0.131	9.16
+w2001	EWC	country-dev	21.8	0.638	0.458	0.157	8.68
+w2001	XLY	us-sector	22.2	0.481	0.312	0.165	9.78
+w2001	EWU	country-dev	22.2	0.644	0.464	0.256	5.51
+w2001	XLB	us-sector	23.2	0.588	0.347	0.124	8.38
+w2001	QQQ	us-broad	23.3	0.503	0.348	0.163	12.30
+w2001	EWS	country-dev	23.7	0.665	0.466	0.183	8.42
+w2001	IWM	us-small	23.8	0.575	0.392	0.184	8.63
+w2001	XLK	us-sector	23.9	0.552	0.405	0.229	11.97
+w2001	EWH	country-dev	24.1	0.704	0.533	0.294	6.79
+w2001	EWN	country-dev	24.8	0.692	0.485	0.305	7.48
+w2001	EWQ	country-dev	24.9	0.680	0.527	0.300	5.89
+w2001	EWG	country-dev	25.4	0.730	0.564	0.311	6.25
+w2001	EWA	country-dev	26.3	0.625	0.428	0.162	8.80
+w2001	EWP	country-dev	26.8	0.780	0.686	0.536	7.58
+w2001	EWI	country-dev	27.1	0.801	0.714	0.634	5.34
+w2001	EWW	country-em	27.2	0.753	0.636	0.432	8.42
+w2001	EWT	country-em	27.6	0.690	0.486	0.235	10.43
+w2001	XLF	us-sector	28.1	0.675	0.529	0.405	5.82
+w2001	XLE	us-sector	29.0	0.761	0.605	0.402	8.57
+w2001	EWD	country-dev	29.5	0.683	0.495	0.255	8.34
+w2001	EWY	country-em	32.5	0.830	0.702	0.436	11.52
+w2001	SMH	us-industry	32.6	0.750	0.635	0.496	13.40
+w2001	SOXX	us-industry	33.5	0.753	0.632	0.411	13.00
+w2001	EWZ	country-em	37.4	0.894	0.844	0.727	8.05
+w2001w	XLP	us-sector	14.3	0.428	0.242	0.083	7.25
+w2001w	XLV	us-sector	17.2	0.500	0.250	0.056	8.82
+w2001w	DIA	us-broad	18.2	0.418	0.247	0.113	8.69
+w2001w	SPY	us-broad	19.0	0.516	0.385	0.219	9.29
+w2001w	XLU	us-sector	19.0	0.603	0.385	0.181	7.72
+w2001w	VFINX	us-broad	19.1	0.516	0.384	0.219	9.24
+w2001w	VGTSX	intl-broad	19.1	0.718	0.554	0.285	6.79
+w2001w	EWL	country-dev	20.0	0.593	0.414	0.155	8.04
+w2001w	EFA	intl-broad	20.8	0.634	0.423	0.220	6.38
+w2001w	EWJ	country-dev	21.0	0.827	0.662	0.411	5.09
+w2001w	XLI	us-sector	21.0	0.480	0.311	0.164	9.16
+w2001w	EWC	country-dev	21.8	0.700	0.539	0.240	8.68
+w2001w	XLY	us-sector	22.2	0.491	0.319	0.168	9.78
+w2001w	EWU	country-dev	22.2	0.701	0.542	0.333	5.51
+w2001w	XLB	us-sector	23.2	0.618	0.380	0.149	8.38
+w2001w	QQQ	us-broad	23.3	0.698	0.609	0.542	12.30
+w2001w	EWS	country-dev	23.7	0.772	0.608	0.330	8.42
+w2001w	IWM	us-small	23.8	0.591	0.408	0.191	8.63
+w2001w	XLK	us-sector	23.9	0.770	0.695	0.611	11.97
+w2001w	EWH	country-dev	24.1	0.776	0.623	0.384	6.79
+w2001w	EWN	country-dev	24.8	0.731	0.556	0.396	7.48
+w2001w	EWQ	country-dev	24.9	0.715	0.581	0.364	5.89
+w2001w	EWG	country-dev	25.4	0.794	0.668	0.439	6.25
+w2001w	EWA	country-dev	26.3	0.649	0.450	0.165	8.80
+w2001w	EWP	country-dev	26.8	0.815	0.735	0.612	7.58
+w2001w	EWI	country-dev	27.1	0.820	0.748	0.702	5.34
+w2001w	EWW	country-em	27.2	0.772	0.660	0.459	8.42
+w2001w	EWT	country-em	27.6	0.744	0.584	0.398	10.43
+w2001w	XLF	us-sector	28.1	0.708	0.566	0.423	5.82
+w2001w	XLE	us-sector	29.0	0.788	0.636	0.448	8.57
+w2001w	EWD	country-dev	29.5	0.757	0.606	0.381	8.34
+w2001w	EWY	country-em	32.5	0.839	0.715	0.447	11.52
+w2001w	SMH	us-industry	32.6	0.844	0.768	0.677	13.40
+w2001w	SOXX	us-industry	33.5	0.761	0.648	0.461	13.00
+w2001w	EWZ	country-em	37.4	0.918	0.875	0.771	8.05

@@ -2,7 +2,7 @@
 package uni.apps
 
 //> using scala 3.7.2
-//> using dep org.vastblue:uni_3:0.20.0
+//> using dep org.vastblue:uni_3:0.21.0
 
 // MARKET SIMULATOR — a testbed for COMPARING exposure strategies over long horizons.
 //
@@ -134,6 +134,10 @@ object MarketSim:
     "-emit F       ; write one path as a full-state TSV, plus a provenance sidecar F.json",
     "-emitpath N   ; which path index -emit writes (default 0); path k uses seed + k*7919",
     "-emitall      ; -emit every path of the run to F-000.tsv, F-001.tsv, ... with sidecars",
+    "-emitfrom K   ; with -emitall, write indices K..K+paths-1 rather than 0..paths-1, so one",
+    "              ;   batch can be split across invocations without repeating a path.  Padding",
+    "              ;   follows the highest index written, so chunks either side of 1000 differ in",
+    "              ;   width -- sort numerically, or emit the batch in one invocation",
     "-emitstart D  ; date the emitted path starts on, YYYY-MM-DD, stepping by WEEKDAYS so the",
     "              ;   file joins a real dated series (default: 1900-01-02 by 365/252 days)",
     "-emitgate P   ; paths in the ensemble that decides the emitted path's gate verdict",
@@ -184,6 +188,10 @@ object MarketSim:
     s"-panic X      ; stress-accelerated capital reallocation (default ${Defaults.panic} = symmetric flows)",
     s"-drift X      ; fundamental drift per year; no dividend, so this IS total return (default",
     s"              ;   ${Defaults.drift})",
+    s"-fundvol X    ; fundamental volatility per year (default ${Defaults.fundVol}).  Sets time under",
+    "              ;   water almost independently of measured volatility — the value channel",
+    "              ;   passes only a few percent of a fundamental move into any one session, so",
+    "              ;   this accumulates into drawdown depth without moving daily return scale",
     s"-ratemean X   ; long-run mean of the short rate (default ${Defaults.rateMean})",
     s"-duration X   ; bond duration in years (default ${Defaults.duration}, a long-Treasury refuge)",
     s"-easing X     ; CAP on policy accommodation under equity stress, in rate points, suppressed",
@@ -249,11 +257,11 @@ object MarketSim:
     * wrong three times before it was centralised.  A mismatch between the twins is caught directly
     * by the `-emit` sidecar, which names every field: bare `-emit` writes THIS world. */
   val Defaults = World(
-    trendShare = 0.07, depth = 16.1, stress = 5.6, beta = 3.0, drift = 0.123, fundVol = 0.13,
-    rateMean = 0.042, volPersist = 0.99, volOfVol = 0.014, valuePull = 0.0145,
+    trendShare = 0.055, depth = 16.94, stress = 5.37, beta = 3.0, drift = 0.113, fundVol = 0.041,
+    rateMean = 0.042, volPersist = 0.99, volOfVol = 0.027, valuePull = 0.017,
     crowd = Crowd.Momentum, crowdImpact = 0.07, panic = 0.0, duration = 13.5,
-    easing = 0.046, unwind = 0.35, refuge = 0.11,
-    inflProb = 0.20, inflSize = 0.10, inflSpeed = 0.010, rateSpeed = 3.0, discount = 5.0,
+    easing = 0.037, unwind = 0.35, refuge = 0.11,
+    inflProb = 0.20, inflSize = 0.084, inflSpeed = 0.010, rateSpeed = 3.0, discount = 5.73,
     margin = 0.006)
   val DefaultPaths = 200
   val DefaultYears = 100
@@ -291,9 +299,19 @@ object MarketSim:
     crowdImpact = 0.06, drift = 0.100, duration = 13.5, inflSize = 0.07,
     discount = 4.0, margin = 0.0008)
   private val PreV1902 = V0_19_2.copy(depth = 16.3, stress = 5.4)
+  /** 0.20.0's world, frozen for the same reason `V0_19_2` is: 0.21.0 moved the default off it, and
+    * a row that read `Defaults` would restate today's world under yesterday's version number. */
+  private val V0_20_0 = World(
+    trendShare = 0.07, depth = 16.1, stress = 5.6, beta = 3.0, drift = 0.123, fundVol = 0.13,
+    rateMean = 0.042, volPersist = 0.99, volOfVol = 0.014, valuePull = 0.0145,
+    crowd = Crowd.Momentum, crowdImpact = 0.07, panic = 0.0, duration = 13.5,
+    easing = 0.046, unwind = 0.35, refuge = 0.11,
+    inflProb = 0.20, inflSize = 0.10, inflSpeed = 0.010, rateSpeed = 3.0, discount = 5.0,
+    margin = 0.006)
   val Releases: Vector[(String, World)] = Vector(
     ("0.17.0", PreV1901), ("0.18.0", PreV1901), ("0.19.0", PreV1901),
-    ("0.19.1", PreV1902), ("0.19.2", V0_19_2), ("0.19.3", V0_19_2), ("0.20.0", Defaults))
+    ("0.19.1", PreV1902), ("0.19.2", V0_19_2), ("0.19.3", V0_19_2), ("0.20.0", V0_20_0),
+    ("0.21.0", Defaults))
 
   /** `-power`'s default contrast arms, as 1-based indices into `Rules`, and its default history
     * lengths.  Named here rather than inside the report so `usage` states them and `main` seeds
@@ -618,6 +636,66 @@ object MarketSim:
     val n = px.length.toDouble
     (n5 / n, n10 / n, n20 / n)
 
+  /** Real equity funds' time under water, stated against the part a random walk already explains.
+    *
+    * For a geometric random walk the share of sessions more than `rung` below the running peak has
+    * a closed form: `exp(-2 * (mu/sigma^2) * ln(1/(1-rung)))`, which in the units this report
+    * already carries is `exp(-2 * retVol * ln(1/(1-rung)) / vol)`.  It is EXACT, not fitted, and
+    * that is what makes it the right carrier for the return dependence.  The model runs at a return
+    * per unit volatility near 0.8 while the anchor funds span 0.20-0.53, so a fitted `rv`
+    * coefficient evaluated at the model's own operating point is arithmetic with nothing behind it.
+    * A closed form is not.
+    *
+    * What real markets add is that they make new highs SOONER than chance, and increasingly so the
+    * calmer they are.  That correction is the fitted part: linear in volatility, one pair per rung,
+    * from `test-data/equity-anchors` (35 instruments, 2001-2026, peaks seeded from full prior
+    * history).  The reason to believe the FORM rather than just the fit: all three rungs
+    * independently reach 1.00 at the top of the real volatility range.  The most volatile equity
+    * markets spend random-walk time under water; a market at 14% volatility spends about half of it.
+    *
+    * Fitted by least squares on the LOG ratio, because the quantity is graded AS a ratio.  On OLS
+    * over the raw ratio the deep rung's line is pulled up by a two-instrument dot-com tail (XLK,
+    * QQQ) until the median real instrument sits at 0.91 of it -- and a target of 1.00 against that
+    * line would once again ask the model to be deeper than a typical real fund, which is the defect
+    * this relation exists to remove.  On the log fit every rung's median real row is 1.00. */
+  val EquityD5Corr  = (0.4003, 0.01628)
+  val EquityD10Corr = (0.1861, 0.02196)
+  val EquityD20Corr = (-0.0544, 0.02759)
+
+  /** Share of sessions more than `rung` below the running peak for a geometric random walk with
+    * this volatility and return per unit volatility.  Closed form; nothing here is fitted. */
+  def gbmDepthShare(rung: Double, volPct: Double, retVol: Double): Double =
+    if volPct <= 0.0 then Double.NaN
+    else math.exp(-2.0 * retVol * math.log(1.0 / (1.0 - rung)) / (volPct / 100.0))
+
+  /** What a real equity fund of this volatility and return spends more than `rung` below its peak.
+    * NaN where the correction is non-positive -- below ~2% volatility for the deep rung, far under
+    * any equity this relation was fitted from, but a ratio against a non-positive prediction is not
+    * a finding and must not print as one. */
+  def equityDepthExpected(rung: Double, corr: (Double, Double), volPct: Double,
+                          retVol: Double): Double =
+    val c = corr._1 + corr._2 * volPct
+    if c <= 0.0 then Double.NaN else c * gbmDepthShare(rung, volPct, retVol)
+
+  /** The volatility range the anchor instruments covered, in %.  Outside it the correction is a
+    * line extended past its evidence, so both graders refuse rather than manufacture a verdict --
+    * the same refusal the bond relations already make.  `EquityAnchorSuite` pins this to the
+    * fixture's own min and max. */
+  val EquityVolSupport = (14.3, 37.4)
+
+  /** Bands for the two graded rungs, shared by the acceptance gate and `-crossasset`.  Each is the
+    * observed residual-ratio range over BOTH windows, rounded outward to the nearest 0.05 -- 0.785
+    * (DIA) to 1.254 (EWJ) at the 5% rung, 0.719 (XLY) to 1.520 (XLK) at the 10% -- because these
+    * funds ARE the scope, unlike the bond bands where the range is a scope decision that excludes
+    * high yield.  A band that excluded one of them would be calling a real equity fund unrealistic.
+    *
+    * The 20% rung is deliberately NOT gated.  Its relation does not transport (R^2 0.25-0.41 to the
+    * independent window, against 0.66-0.73 for the other two) and a band admitting every real
+    * instrument would have to span 0.35-2.60, which cannot fail: that is a check that reads as
+    * verification while testing nothing.  It stays a fit target and a reported number. */
+  val EquityD5Band  = (0.75, 1.30)
+  val EquityD10Band = (0.70, 1.55)
+
   /** The five real Treasury funds' fit of time-spent-more-than-10%-under-water against volatility:
     * `d10 = BondD10Slope * vol% + BondD10Intercept`, floored at zero.  Named rather than written
     * inline because `-crossasset` needs the line's zero crossing, and a second literal for it would
@@ -686,6 +764,22 @@ object MarketSim:
     def bondDepthVsVol: Double =
       val expected = math.max(0.0, BondD10Slope * (bondVol * 100.0) + BondD10Intercept)
       if expected <= 0.0 then Double.NaN else ddBd10 / expected
+
+    /** Time spent more than a rung below the running peak, RELATIVE to what a real equity fund of
+      * this world's OWN volatility and return per unit volatility spends -- see `EquityD10Corr`.
+      * 1.0 means the market is under water as long as a real one it could be mistaken for.
+      *
+      * Replaces three absolute levels that were SPY's, measured at SPY's operating point (18.6%
+      * volatility, 0.55 return per vol) while the same target set asks this model to run at 16% and
+      * 0.69.  Real funds at THAT point spend 1.11x / 1.33x / 1.64x less time under water than
+      * SPY's levels demanded, so the old targets could only be met by a market too deep for its own
+      * volatility -- and were. */
+    def eqDepthVsReal(rung: Double, corr: (Double, Double), got: Double): Double =
+      val expected = equityDepthExpected(rung, corr, vol * 100.0, retVol)
+      if expected.isNaN || expected <= 0.0 then Double.NaN else got / expected
+    def eqD5VsReal: Double  = eqDepthVsReal(0.05, EquityD5Corr, ddEq5)
+    def eqD10VsReal: Double = eqDepthVsReal(0.10, EquityD10Corr, ddEq10)
+    def eqD20VsReal: Double = eqDepthVsReal(0.20, EquityD20Corr, ddEq20)
 
   def measure(sims: Vector[Path], years: Int): WorldStats =
     val rets = sims.map(s => dailyReturns(s.price))
@@ -766,13 +860,6 @@ object MarketSim:
   enum GateClass:
     case Realism, Mechanism, Fidelity
 
-  /** How far a depth share may sit from the real one and still have a readable level.  The plan's
-    * acceptance for W9 is that "a drawdown-rule arm's %out lands within a few points of the same
-    * rule's %out on a real series"; ten percentage points is that, made two-sided and concrete.
-    * ABSOLUTE, not relative: the quantity being compared — a rule's share of sessions out of the
-    * market — is itself a share, so a point is the same size at every rung. */
-  val DepthTol = 0.10
-
   /** TWO-SIDED wherever a plausible range exists.  History of this gate: a one-sided version
     * passed a 35%-volatility world (the one reversing the ranking); a "bonds fail" check written
     * as bondInfl < bondGrowth passed while bonds still RALLIED +2.8; crash frequency shipped
@@ -825,11 +912,6 @@ object MarketSim:
       // that is sampling variation in a 20-year window, and this statistic is a population value
       // over 20,000 path-years -- a band drawn from it would readmit worlds at 0.91.
       bandCheck("return per vol",   st.retVol, 0.50, 0.85, Fidelity),
-      // Only the rungs with a measured real anchor are gated.  The bond's >5% and >20% shares are
-      // reported everywhere but targeted nowhere: interpolating them would manufacture an anchor.
-      depthCheck("equity >5% below peak",  st.ddEq5,  0.447),
-      depthCheck("equity >10% below peak", st.ddEq10, 0.315),
-      depthCheck("equity >20% below peak", st.ddEq20, 0.169),
     )
     // The two anchor-fitted bands are graded ONLY where their anchors have data -- the same
     // refusal `-crossasset` applies, because these ARE its relations.  A world outside the funds'
@@ -850,7 +932,16 @@ object MarketSim:
         // of scope until there is a credit channel, so the upper bound deliberately excludes it.
         Vector(bandCheck("bond vol", st.bondVolPerYear, BondVolPerYearBand._1, BondVolPerYearBand._2, Fidelity, unit = "x duration"))
       else Vector.empty
-    base ++ depthBand ++ volBand
+    // The equity depth relation is anchor-fitted too, so it refuses outside its anchors' volatility
+    // range for the same reason the two above do.  That range starts at 14.3%, so the sweep's own
+    // calm off-worlds are disclosed rather than failed -- "no fund this quiet was measured" is not
+    // the same finding as "this market's drawdowns are wrong".
+    val eqDepthBands =
+      if anchored(st.vol * 100.0, EquityVolSupport, st.eqD10VsReal) then
+        Vector(bandCheck("equity d5 vs real",  st.eqD5VsReal,  EquityD5Band._1,  EquityD5Band._2,  Fidelity),
+               bandCheck("equity d10 vs real", st.eqD10VsReal, EquityD10Band._1, EquityD10Band._2, Fidelity))
+      else Vector.empty
+    base ++ eqDepthBands ++ depthBand ++ volBand
 
   /** Whether an anchor-fitted band can be graded here: its driving variable inside the range the
     * anchor funds covered, and the statistic defined.  Mirrors `Relation.grade`'s refusal. */
@@ -863,6 +954,13 @@ object MarketSim:
     * than failed, because "no anchor to compare against" and "the level is wrong" are different
     * findings and only one of them is about the model. */
   def unanchoredIn(st: WorldStats): Vector[String] =
+    val eqVol = st.vol * 100.0
+    val eqDepth =
+      if anchored(eqVol, EquityVolSupport, st.eqD10VsReal) then Vector.empty
+      else if eqVol < EquityVolSupport._1 || eqVol > EquityVolSupport._2 then
+        Vector(f"equity d5 and d10 vs real (equity vol $eqVol%.2f%% outside the anchors' " +
+               f"${EquityVolSupport._1}%.1f-${EquityVolSupport._2}%.1f%%)")
+      else Vector("equity d5 and d10 vs real (no fitted value at this volatility)")
     val vol = st.bondVol * 100.0
     val depth =
       if anchored(vol, BondVolSupport, st.bondDepthVsVol) then Vector.empty
@@ -874,7 +972,7 @@ object MarketSim:
     val volPer =
       if anchored(st.duration, BondDurSupport, st.bondVolPerYear) then Vector.empty
       else Vector(f"bond vol x duration (duration ${st.duration}%.2fy outside the anchors' ${BondDurSupport._1}%.2f-${BondDurSupport._2}%.2fy)")
-    depth ++ volPer
+    eqDepth ++ depth ++ volPer
 
   /** A gate whose printed name is DERIVED from the bounds its predicate tests, so the two cannot
     * drift apart — the failure mode where a gate reads as bounds it does not enforce.  Every
@@ -894,11 +992,6 @@ object MarketSim:
                 dp: Int = 2, unit: String = ""): (String, Boolean, GateClass) =
     val fmt = s"%.${dp}f"
     (s"$name ${fmt.format(lo)}-${fmt.format(hi)}$unit", got > lo && got < hi, cls)
-
-  /** A depth rung's band is the real anchor plus or minus `DepthTol`, so only the anchor is
-    * written down and the two bounds cannot be given independently. */
-  def depthCheck(name: String, got: Double, real: Double): (String, Boolean, GateClass) =
-    bandCheck(name, got, real - DepthTol, real + DepthTol, GateClass.Fidelity, dp = 3)
 
   def failedIn(st: WorldStats, cls: GateClass): Vector[String] =
     gateChecks(st).collect { case (n, false, c) if c == cls => n }
@@ -1010,32 +1103,49 @@ object MarketSim:
     // 95 of 200 24-year histories produce a reading at all.  The old 1.5 was the largest
     // weight in the loss on the least measurable target in the set.
     ("bond infl-crash",    st => st.bondInfl,                              -25.0,  wgt(1.5, 2.89)),
-    // DEPTH PROFILE.  Real equity anchors are SPY 1993-01-29..2026-08-20 (8447 sessions) — a
-    // different window from the 1954-2026 record behind the rows above, and named as such in the
-    // report, because this is a TIME SHARE rather than a max order statistic: it is horizon-stable
-    // where maximum drawdown is not (measured: the model's >10% share is 0.464 at both 20 and 100
-    // years), so the two windows are comparable in a way maxDD's would not be.
+    // DEPTH PROFILE, stated RELATIVE to what a real fund of the same volatility and return spends
+    // under water rather than as three absolute levels -- see `EquityD10Corr` for the relation and
+    // `eqDepthVsReal` for what the ratio means.  A level target is a statement about one fund; a
+    // ratio is a statement about the mechanism, which is the same reason `bond depth vs vol` is
+    // written this way.
     //
-    // HORIZON-stable is not WINDOW-stable, and the difference is large enough to matter.  The real
-    // 10% rung reads 0.269 over 1954-2026, 0.315 over 1993-2026 and 0.386 over 1926-2026.  The
-    // +-0.10 gate bands span that spread, which is part of why they pass; do not read a passing
-    // depth rung as agreement with a particular window.
+    // The absolute levels this replaces were SPY's over 1993-2026 (0.447 / 0.315 / 0.169), and they
+    // were internally inconsistent with the two rows at the top of this table.  SPY produced them at
+    // 18.6% volatility and 0.554 return per vol; `equity vol %` and `return per vol` ask this model
+    // to run at 16.0 and 0.69, and 35 real instruments at THAT operating point spend 1.11x / 1.33x /
+    // 1.64x less time under water than SPY's numbers demanded.  The target set was asking for a
+    // market that is calmer than SPY and better-returning than SPY and yet under water as long as
+    // SPY, which no real fund is.  The only way to satisfy it was an over-hot fundamental, and the
+    // search duly bought one -- see the `fundVol` range below.
     //
-    // Validated against CRSP value-weighted, 33-year windows inside 1954-2026 — a series the
-    // calibration never used FOR THIS STATISTIC.  Model 0.49 / 0.33 / 0.13 against a real median of
-    // 0.451 / 0.291 / 0.151, ranges 0.405-0.507 / 0.219-0.346 / 0.084-0.184: all three rungs land
-    // inside the observed real range, shallow ones ~10% high, the deep one ~14% low.  A LEVEL bias
-    // in both directions, and it survives the gate.
-    //   NOT fully independent: `return per vol` is anchored on CRSP 1954-2026, and r/v is the
-    //   strongest single driver of the depth profile (d(10% rung)/d(vol) = 0.71 for `drift` against
-    //   0.024 for `depth`).  Independent in drawdown SHAPE, not in the level of the quantity that
-    //   most determines it.  SPY cannot serve at all: its rungs ARE the targets.
+    // Anchor provenance is unchanged in kind and wider in coverage: 35 broad, sector and country
+    // equity funds over 2001-2026 (`test-data/equity-anchors`, peaks seeded from full prior history),
+    // with a 17-instrument 1996-2026 block as the independent transport check.  SPY is one row of it
+    // and no longer sets the level, which also retires the old caveat that SPY could never serve as
+    // validation because its rungs WERE the targets.
+    //
+    // Only two of the three rungs are gated; the 20% rung's relation does not transport well enough
+    // for a band that could fail anything.  It stays a fit target -- the loss is a continuous
+    // quantity, not a verdict, and its weight already carries the redundancy discount.
     // The bond anchor is a clean iShares TLT total-return series over 24 years, and only the 10%
     // rung of it has been measured.  The other two bond rungs are REPORTED, not targeted: filling
     // them in by interpolation would manufacture a calibration anchor out of nothing.
-    ("equity >5% below pk", st => st.ddEq5,                                  0.447, wgt(0.5, 0.22)),
-    ("equity >10% below pk",st => st.ddEq10,                                 0.315, wgt(1.0, 0.34)),
-    ("equity >20% below pk",st => st.ddEq20,                                 0.169, wgt(0.5, 0.55)),
+    // Re-measured by `-noise` when the rungs became ratios, and again at the 0.21.0 defaults these
+    // are frozen from: a ratio compounds the depth share's own sampling error with the volatility
+    // and return sampling that enters its denominator, so these are NOT the absolute rungs'
+    // 0.22 / 0.34 / 0.55.  The deep rung's 0.99 still holds its weight near 0.10 -- the measurement
+    // saying one 25-year record barely pins the 20% rung's ratio, which is also why it carries no
+    // gate band.
+    //
+    // The same run is the fix's own evidence.  At the 0.20.0 world the real value sat at the 14th,
+    // 7th and 4th percentile of the model-implied spread -- the record was in the model's tail, on
+    // all three rungs at once.  At this world it sits at the 63rd, 65th and 55th: the anchors can
+    // no longer tell this model from the cross-section they were measured from, which is a stronger
+    // statement than any ratio near 1.00, because it is made against the spread rather than the
+    // point.
+    ("equity d5 vs real",   st => st.eqD5VsReal,                             1.00,  wgt(0.5, 0.13)),
+    ("equity d10 vs real",  st => st.eqD10VsReal,                            1.00,  wgt(1.0, 0.25)),
+    ("equity d20 vs real",  st => st.eqD20VsReal,                            1.00,  wgt(0.5, 0.99)),
     ("bond depth vs vol",   st => st.bondDepthVsVol,                          1.00, wgt(0.5, 0.33)),
   )
   def fitness(st: WorldStats): (Double, Vector[(String, Double, Double, Double)]) =
@@ -1348,11 +1458,54 @@ object MarketSim:
     if v.isEmpty then Double.NaN else v.sorted.apply(math.min((v.size * q).toInt, v.size - 1))
 
   def simPaths(w: World, paths: Int, years: Int, seed: Long): Vector[Path] =
-    java.util.stream.IntStream.range(0, paths).parallel()
+    simPathRange(w, 0, paths, years, seed)
+
+  /** Paths `from until from + count`.  Path k is a function of (world, years, seed, k) alone, so a
+    * range taken from the middle is byte-identical to the same indices of a run that started at
+    * zero -- which is what lets `-emitfrom` split one batch across invocations. */
+  def simPathRange(w: World, from: Int, count: Int, years: Int, seed: Long): Vector[Path] =
+    java.util.stream.IntStream.range(from, from + count).parallel()
       .mapToObj(k => simulate(w, years, seed + k.toLong * 7919L)).toArray()
       .toVector.map(_.asInstanceOf[Path])
 
   // ---- calibration search --------------------------------------------------------------------
+  /** Parameters that say WHICH ASSET is being simulated, not how a market behaves.  Each is a real
+    * fund's published number: MEASURED once and then held, never fitted.  `-calibrate` must not
+    * search one, for two reasons that are separate.  A duration chosen to reduce loss describes no
+    * bond anyone can buy, so the fitted world stops being a claim about a real asset.  And
+    * `-crossasset` grades the bond relations by MOVING duration across the values real funds have
+    * -- if the shipped duration were itself fitted, that grader would be scoring the search's
+    * choice against bands the same search was free to accommodate, which is circular.
+    *
+    * Enforced by `MarketSimContractSuite` against `CalibrateRanges`, not by this comment: the
+    * 0.20.0 re-search proposed `duration = 11.1` and was refused by hand, and a rule that lives in
+    * someone's memory of that refusal is one range row away from being lost. */
+  val IdentityParams: Vector[String] = Vector("duration")
+
+  /** What `-calibrate` samples, and the ONLY place a searchable parameter is declared.  Named
+    * rather than inline so the identity-parameter rule above can be tested against it. */
+  val CalibrateRanges: Vector[(String, Double, Double, (World, Double) => World)] = Vector(
+    ("depth",       10.0,  26.0, (w, x) => w.copy(depth = x)),
+    ("trendShare",  0.05,  0.70, (w, x) => w.copy(trendShare = x)),
+    ("drift",       0.06,  0.16, (w, x) => w.copy(drift = x)),
+    // The depth profile's second axis, and the one no sweep could reach before 0.21: the value
+    // channel passes only a few percent of a fundamental move into any one session, so fundamental
+    // variance accumulates into time under water without moving daily return scale.  It is in the
+    // search only now that the depth targets are stated against a real relation -- against SPY's
+    // absolute levels a search free to raise it would have closed them by making the fundamental
+    // hotter still, which is how the world it replaces was reached.
+    ("fundVol",     0.03,  0.16, (w, x) => w.copy(fundVol = x)),
+    ("crowdImpact", 0.01,  0.20, (w, x) => w.copy(crowdImpact = x)),
+    ("stress",       2.0,   6.0, (w, x) => w.copy(stress = x)),
+    ("valuePull",  0.010, 0.035, (w, x) => w.copy(valuePull = x)),
+    ("volOfVol",   0.012, 0.030, (w, x) => w.copy(volOfVol = x)),
+    ("easing",       0.0,  0.09, (w, x) => w.copy(easing = x)),
+    ("refuge",       0.0,  0.20, (w, x) => w.copy(refuge = x)),
+    ("inflSize",    0.03,  0.12, (w, x) => w.copy(inflSize = x)),
+    ("discount",     3.0,  10.0, (w, x) => w.copy(discount = x)),
+    ("margin",       0.0, 0.004, (w, x) => w.copy(margin = x)),
+  )
+
   def calibrate(nSamples: Int, base: World, seed: Long): Unit =
     // depth, trendShare, drift and crowdImpact are in the search because they are the strongest
     // levers on the
@@ -1362,21 +1515,7 @@ object MarketSim:
     // it cannot be searched without the return-per-vol band above, or the search buys the depth
     // rungs with a Sharpe no 20-year stretch of the real record produced.  Their CLI flags are
     // inert under -calibrate, exactly like the eight below.
-    val ranges: Vector[(String, Double, Double, (World, Double) => World)] = Vector(
-      ("depth",       10.0,  26.0, (w, x) => w.copy(depth = x)),
-      ("trendShare",  0.05,  0.70, (w, x) => w.copy(trendShare = x)),
-      ("drift",       0.06,  0.16, (w, x) => w.copy(drift = x)),
-      ("crowdImpact", 0.01,  0.20, (w, x) => w.copy(crowdImpact = x)),
-      ("stress",       2.0,   6.0, (w, x) => w.copy(stress = x)),
-      ("valuePull",  0.010, 0.035, (w, x) => w.copy(valuePull = x)),
-      ("volOfVol",   0.012, 0.030, (w, x) => w.copy(volOfVol = x)),
-      ("easing",       0.0,  0.09, (w, x) => w.copy(easing = x)),
-      ("refuge",       0.0,  0.20, (w, x) => w.copy(refuge = x)),
-      ("duration",     8.0,  18.0, (w, x) => w.copy(duration = x)),
-      ("inflSize",    0.03,  0.12, (w, x) => w.copy(inflSize = x)),
-      ("discount",     3.0,  10.0, (w, x) => w.copy(discount = x)),
-      ("margin",       0.0, 0.004, (w, x) => w.copy(margin = x)),
-    )
+    val ranges = CalibrateRanges
     // the only RNG in the program that was not already NumPyRNG.  uniform(lo, hi) IS
     // lo + nextDouble() * (hi - lo), the expression written inline below, so the swap is 1:1 --
     // but the STREAM differs, so a previously recorded "best world" from -calibrate will not
@@ -1799,7 +1938,7 @@ object MarketSim:
   val EquityTargets = Vector(
     "equity vol %", "return per vol", "kurtosis", "clustering lag 1", "clustering lag 20",
     "crashes/century", "median depth %", "worst crash %",
-    "equity >5% below pk", "equity >10% below pk", "equity >20% below pk")
+    "equity d5 vs real", "equity d10 vs real", "equity d20 vs real")
 
   /** The other half of the partition.  Read only by the partition test -- the report has no bond
     * section to drive; the list exists so a new fidelity target cannot land unclassified. */
@@ -1832,14 +1971,18 @@ object MarketSim:
 
   /** Every equity target re-read with volatility put ON its anchor.
     *
-    * `depth` moves volatility and drawdown together, so grading a drawdown statistic while the
-    * model sits 10% below its own volatility anchor mixes two errors and reports one.  This section
-    * removes the volatility miss and shows what the others then read: one identity parameter, set
-    * from one measured statistic, nothing else touched.
+    * The confound this removes is now narrower than it was.  The three depth rungs are graded
+    * against a relation evaluated at each world's OWN volatility and return, so a volatility miss
+    * no longer distorts them -- moving depth moves the prediction with the measurement, and their
+    * two columns should read alike.  What the section still isolates is the ABSOLUTE targets:
+    * kurtosis, clustering, crash rate, median and worst crash depth are levels, and reading a level
+    * while the model sits below its own volatility anchor mixes two errors and reports one.
     *
-    * DIAGNOSTIC ONLY -- it does not touch the exit code.  The equity leg has no cross-index bands
-    * yet (rung 2b), so there is nothing here to pass or fail against; what it has is a pair of
-    * ratios and the difference between them. */
+    * A depth rung that DOES move here is worth reading: it says the relation and the model
+    * disagree about how time under water responds to volatility, which is exactly the defect the
+    * relation was introduced to expose.
+    *
+    * DIAGNOSTIC ONLY -- it does not touch the exit code. */
   def runEquityAtAnchor(paths: Int, years: Int, seed: Long, base: World): Unit =
     val target = FitTargets.find(_._1 == "equity vol %").map(_._3)
       .getOrElse(usage("no `equity vol %` fidelity target to anchor volatility on"))
@@ -1847,14 +1990,15 @@ object MarketSim:
     println("EQUITY — every equity target re-read with volatility ON ITS ANCHOR.  Diagnostic: this")
     println("section does not affect the exit code.")
     println()
-    println("`depth` moves volatility and drawdown TOGETHER, so a drawdown statistic graded while the")
-    println("model sits below its own volatility anchor mixes two errors and reports one.  Here depth is")
-    println("solved so volatility sits on the anchor and every other target is re-read: 1 identity")
-    println("parameter, set from 1 measured statistic, nothing else touched.")
+    println("A LEVEL read while the model sits below its own volatility anchor mixes two errors and")
+    println("reports one.  Here depth is solved so volatility sits on the anchor and every equity target")
+    println("is re-read: 1 identity parameter, set from 1 measured statistic, nothing else touched.")
     println()
-    println("The anchors come from DIFFERENT WINDOWS, and this does not fix that -- it removes the")
-    println("model's own volatility miss, which was compounding with it.  Read a ratio here as")
-    println("\"conditional on hitting the volatility anchor\", not as \"window-matched\".")
+    println("The three depth rungs are graded against a relation evaluated at each world's OWN")
+    println("volatility and return, so they should read ALIKE in both columns -- solving depth moves")
+    println("their prediction with their measurement.  A rung that moves anyway is reporting that the")
+    println("model and the real cross-section disagree about how time under water responds to")
+    println("volatility, which is the one thing this pair of columns can still show about them.")
     println()
     depthForVol(base, target, paths, years, seed) match
       case None =>
@@ -1989,8 +2133,10 @@ object MarketSim:
             "median depth %", "worst crash %")),
     ("CRSP 1926-2026, the century", 100,
      Vector("clustering lag 1", "clustering lag 20")),
-    ("SPY 1993-2026", 33,
-     Vector("equity >5% below pk", "equity >10% below pk", "equity >20% below pk")),
+    // 35 equity funds over 2001-2026; the horizon is one instrument's record, because that is what
+    // each residual ratio in the fit was measured from.
+    ("equity funds, 25y", 25,
+     Vector("equity d5 vs real", "equity d10 vs real", "equity d20 vs real")),
     ("clean TLT, 24y", 24,
      Vector("bond vol % (24y)", "bond growth-crash", "bond infl-crash", "bond depth vs vol")))
 
@@ -2332,11 +2478,16 @@ object MarketSim:
     val sep = math.max(file.lastIndexOf('/'), file.lastIndexOf('\\'))
     if cut > sep then file.substring(0, cut) + ".json" else file + ".json"
 
+  /** Zero-padding width for `indexedName`, from the highest index a batch writes.  Floored at 3 so
+    * every ensemble of 1000 or fewer keeps the names it has always had; a larger one widens rather
+    * than losing the sort order the padding exists to give. */
+  def indexWidth(lastIndex: Int): Int = math.max(3, lastIndex.toString.length)
+
   /** `foo.tsv` -> `foo-007.tsv`, so an ensemble sorts in path order. */
-  def indexedName(file: String, k: Int): String =
+  def indexedName(file: String, k: Int, width: Int): String =
     val cut = file.lastIndexOf('.')
     val sep = math.max(file.lastIndexOf('/'), file.lastIndexOf('\\'))
-    val tag = f"-$k%03d"
+    val tag = s"-${k.toString.reverse.padTo(width, '0').reverse}"
     if cut > sep then file.substring(0, cut) + tag + file.substring(cut) else file + tag
 
   /** The TSV and its sidecar.  `gateSt` is measured on the gate ensemble, which is a different and
@@ -2446,6 +2597,7 @@ object MarketSim:
     var paths = DefaultPaths; var years = DefaultYears; var seed = DefaultSeed
     var emit = ""; var validate = false; var strategies = false; var single = false
     var emitPath = 0; var emitAll = false; var emitStart = ""; var emitGate = DefaultEmitGate
+    var emitFrom = 0
     var gateReq = GateDefault
     var fitnessOnly = false; var calibrateN = 0
     var powerReport = false; var bufferReport = false; var releaseReport = false
@@ -2461,6 +2613,19 @@ object MarketSim:
     // now prices clustering at 2.2x, which is why `stress` could move UP to 5.6 with the
     // clustering regression bought knowingly (1.08) instead of blindly — the guard below is
     // HISTORY explaining the 0.19.1/0.19.2 choices, not a description of the current trade.
+    //
+    // 0.21.0 re-searched again with `fundVol` in the ranges for the first time and the depth rungs
+    // stated against a real relation (see `EquityD10Corr`).  Two search results were declined by
+    // hand, both for reasons the loss cannot see.  `crowdImpact` was pushed to its 0.01 range
+    // floor, which reads 0.9% of the noise term on `meanCrowdFlow` — the reflexive channel
+    // switched off, which is the defect that diagnostic exists to catch; pinned back at 0.07 it
+    // reads 6.7%, and the pin also BOUGHT volatility (16.03 against 15.38) and crash depth.
+    // `refuge` was raised 0.11 -> 0.159, which took bond volatility to 1.12x duration, outside its
+    // band; returned to 0.11 it reads 1.03 and the equity side does not move at all.
+    //
+    // Scored on the MEDIAN of three seeds, not one: a single-seed refinement here found a 1.687
+    // that was a 2.15 median over five seeds.  Depth-rung agreement is cheap to overfit because
+    // the relation's denominator moves with the sample.
     //
     // `stress` IS NOT AT THE OBJECTIVE'S MINIMUM, deliberately, and has now been moved DOWN twice
     // for the same reason.  The liquidity spiral is a single amplifier producing volatility, fat
@@ -2486,17 +2651,26 @@ object MarketSim:
     // MISS stands, more precise than "no slow valuation cycle": the cycle is why there is no SECOND
     // channel for tails, not why this one cannot reach them.
     //
-    // THREE KNOWN BIAS DIRECTIONS, netted away nowhere else: clustering at 1.06 makes volatility
+    // FOUR KNOWN BIAS DIRECTIONS, netted away nowhere else: clustering at 1.10 makes volatility
     // more predictable here than in the record, which flatters any rule that forecasts it; worst
     // crash at 1.44 puts index paths near -82% against a real -56.8%, which no levered fund
-    // survives, so ruin rates for levered sleeves are UPPER BOUNDS, not estimates; and crashes
-    // arrive 1.32x too often, so any per-crash hazard read off this model is over-sampled.
+    // survives, so ruin rates for levered sleeves are UPPER BOUNDS, not estimates; crashes arrive
+    // 1.38x too often, so any per-crash hazard read off this model is over-sampled; and since
+    // 0.21.0 the median crash is SHALLOW, 0.85 of the real -27.1.
+    //
+    // That last one is the price of the depth rungs and it is structural, not a tuning miss:
+    // every world that puts time under water near the real relation lands median crash depth at
+    // 0.78-0.85, because cooling the fundamental makes drawdowns shorter AND shallower together.
+    // Measured across the global search's winner, the local optimum and six hand variants
+    // including `stress` at its range ceiling; nothing available separates them.  Closing it needs
+    // a channel that deepens a crash without adding low-frequency variance — the same absent
+    // valuation cycle the kurtosis note below blames for there being no second tail channel.
     var trendShare = Defaults.trendShare; var depth = Defaults.depth
     var stress = Defaults.stress; var beta = Defaults.beta
     var volPersist = Defaults.volPersist; var volOfVol = Defaults.volOfVol
     var valuePull = Defaults.valuePull
     var crowdName = "momentum"; var crowdImpact = Defaults.crowdImpact; var panic = Defaults.panic
-    var drift = Defaults.drift; var rateMean = Defaults.rateMean
+    var drift = Defaults.drift; var fundVol = Defaults.fundVol; var rateMean = Defaults.rateMean
     var duration = Defaults.duration
     var easing = Defaults.easing; var unwind = Defaults.unwind; var refuge = Defaults.refuge
     var inflProb = Defaults.inflProb; var inflSize = Defaults.inflSize
@@ -2513,6 +2687,7 @@ object MarketSim:
       case "-emit"       => emit = consumeNext
       case "-emitpath"   => emitPath = intOr("-emitpath", consumeNext)
       case "-emitall"    => emitAll = true
+      case "-emitfrom"   => emitFrom = intOr("-emitfrom", consumeNext)
       case "-emitstart"  => emitStart = consumeNext
       case "-emitgate"   => emitGate = intOr("-emitgate", consumeNext)
       case "-gate"       => gateReq = parseGate(consumeNext)
@@ -2540,6 +2715,7 @@ object MarketSim:
       case "-crowdimpact"=> crowdImpact = numOr("-crowdimpact", consumeNext)
       case "-panic"      => panic = numOr("-panic", consumeNext)
       case "-drift"      => drift = numOr("-drift", consumeNext)
+      case "-fundvol"    => fundVol = numOr("-fundvol", consumeNext)
       case "-ratemean"   => rateMean = numOr("-ratemean", consumeNext)
       case "-duration"   => duration = numOr("-duration", consumeNext)
       case "-easing"     => easing = numOr("-easing", consumeNext)
@@ -2566,6 +2742,10 @@ object MarketSim:
     if seed < 0 then usage(s"-seed must be non-negative, got $seed")
     if emitPath < 0 then usage(s"-emitpath must be non-negative, got $emitPath")
     if emitGate < 0 then usage(s"-emitgate must be non-negative, got $emitGate")
+    if emitFrom < 0 then usage(s"-emitfrom must be non-negative, got $emitFrom")
+    // Refused rather than ignored: silently writing 0..paths-1 under a flag that asked for a
+    // different range is how a chunked batch ends up with every chunk holding path 0.
+    if emitFrom > 0 && !emitAll then usage("-emitfrom applies to -emitall; use -emitpath for one path")
     // A bad index here is the one place the rule list has to be discoverable: the report names
     // the rules but not their numbers, and the numbers are what the flag takes.
     if powerArms.exists(i => i < 1 || i > Rules.size) then
@@ -2580,7 +2760,7 @@ object MarketSim:
         Crowd.Trend(t.drop(5).toIntOption.filter(_ > 0).getOrElse(
           usage(s"unknown -crowd [$crowdName]; use momentum, trendNNN, or volscaled")))
       case other => usage(s"unknown -crowd [$other]; use momentum, trendNNN, or volscaled")
-    val w = World(trendShare, depth, stress, beta, drift = drift, fundVol = Defaults.fundVol,
+    val w = World(trendShare, depth, stress, beta, drift = drift, fundVol = fundVol,
                   rateMean = rateMean,
                   volPersist = volPersist, volOfVol = volOfVol, valuePull = valuePull,
                   crowd = crowd, crowdImpact = crowdImpact, panic = panic,
@@ -2651,15 +2831,20 @@ object MarketSim:
         if k < sims.length then sims(k) else simulate(w, years, seed + k.toLong * 7919L)
       val written =
         if emitAll then
-          for k <- 0 until paths yield
-            val f = indexedName(emit, k)
-            writeEmitted(f, sims(k), k, w, years, seed, emitStart, gateSt, gatePaths)
+          // At the default offset this IS the report ensemble; shifted, the range is re-simulated
+          // (in parallel, not one at a time through `pathAt`) because the report and the gate stay
+          // measured on 0 until paths -- the verdict describes the WORLD, not the chunk.
+          val batch = if emitFrom == 0 then sims else simPathRange(w, emitFrom, paths, years, seed)
+          val width = indexWidth(emitFrom + paths - 1)
+          for k <- emitFrom until emitFrom + paths yield
+            val f = indexedName(emit, k, width)
+            writeEmitted(f, batch(k - emitFrom), k, w, years, seed, emitStart, gateSt, gatePaths)
             f
         else
           val p = pathAt(emitPath)
           writeEmitted(emit, p, emitPath, w, years, seed, emitStart, gateSt, gatePaths)
           Vector(emit)
-      val sessions = pathAt(if emitAll then 0 else emitPath).price.length
+      val sessions = pathAt(if emitAll then emitFrom else emitPath).price.length
       eprintln(s"wrote ${written.size} path(s), ${EmitColumns.size} columns x $sessions sessions, " +
                s"to ${written.head}${if written.size > 1 then s" .. ${written.last}" else ""} " +
                s"(+ sidecar ${sidecarName(written.head)})")
@@ -2682,8 +2867,16 @@ object MarketSim:
     println(f"  stock-bond correlation calm ${pm(st.corrCalm, 0, 2)}%s   inflation regime ${pm(st.corrInfl, 0, 2)}%s")
     println(f"  realized inflation     ${st.inflAnn}%.2f%%/yr median (deterministic from regime pressure; no draws consumed)")
     println(f"  depth profile          share of sessions below the running peak, median path")
+    // Against the relation at THIS world's own volatility and return, not against SPY's levels:
+    // SPY produced 0.447 / 0.315 / 0.169 at 18.6% volatility and 0.554 return per vol, so printing
+    // them beside a world at a different operating point invites exactly the comparison the rungs
+    // were restated to stop -- and would show a correct world as a large miss.
+    val eqVolPct = st.vol * 100.0
     println(f"    equity               >5%% ${st.ddEq5}%.3f   >10%% ${st.ddEq10}%.3f   >20%% ${st.ddEq20}%.3f" +
-            f"      real SPY 0.447 / 0.315 / 0.169")
+            f"      real funds at this vol/return " +
+            f"${equityDepthExpected(0.05, EquityD5Corr, eqVolPct, st.retVol)}%.3f / " +
+            f"${equityDepthExpected(0.10, EquityD10Corr, eqVolPct, st.retVol)}%.3f / " +
+            f"${equityDepthExpected(0.20, EquityD20Corr, eqVolPct, st.retVol)}%.3f")
     println(f"    bond                 >5%% ${st.ddBd5}%.3f   >10%% ${st.ddBd10}%.3f   >20%% ${st.ddBd20}%.3f" +
             f"      real TLT   -   / 0.510 /   -")
     println(f"  binding diagnostics    trend share ${st.trendShare}%.2f (pinned ${st.trendPinned * 100}%.1f%%, " +
@@ -2694,10 +2887,12 @@ object MarketSim:
 
     println()
     // The anchors do NOT share one window, and a single-window label invites a reader to re-derive
-    // them from it and conclude the model has drifted.  Measured over 1954-2026, the equity depth
-    // rungs read 0.436 / 0.269 / 0.126 against the 0.447 / 0.315 / 0.169 targeted here.
+    // them from it and conclude the model has drifted.  The depth rungs are the exception by
+    // construction: they are graded against a RELATION evaluated at this world's own volatility and
+    // return, so they carry no window of their own to be compared at.
     println("  fidelity against targets, by anchor (each row is against the window named for it):")
-    println("    equity S&P 1954-2026   |   depth rungs SPY 1993-2026   |   return per vol CRSP 1954-2026")
+    println("    equity S&P 1954-2026   |   depth rungs 35 equity funds 2001-2026, vs each world's")
+    println("      OWN volatility and return   |   return per vol CRSP 1954-2026")
     println("    clustering CRSP 1926-2026 (a CENTURY: the statistic is horizon-dependent and the")
     println("      model is scored on 100-year paths)   |   refuge long Treasury   |   bond depth")
     println("      rung clean TLT, 24y")

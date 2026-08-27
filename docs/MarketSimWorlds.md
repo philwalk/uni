@@ -84,6 +84,39 @@ cargo install vastblue-uni@0.20.0 --example market_sim --root ~/.local/uni-0.20.
 Exe-versus-library mismatch is not a risk — the example links the library from the same crate. The
 only mismatch is the exe against what the consumer expected.
 
+## Generating an ensemble
+
+`-emitall` writes every path of the run from one invocation, to `F-000.tsv`, `F-001.tsv`, … each
+with its sidecar. Prefer it to a per-path invocation loop: it pays the process start, the report
+ensemble and the 200-path gate ensemble once rather than per path, which is worth about 5x
+(~47 ms/path against ~245 ms at 33 years). The remainder is the cost of formatting a path's eight
+columns, which no batching removes.
+
+```
+market_sim.exe -paths 2000 -years 33 -emitall -emit rung.tsv     # rung-0000.tsv .. rung-1999.tsv
+```
+
+The index is zero-padded to the width of the highest index in the batch, floored at three — so a
+2000-path batch pads to four and a 200-path batch reads exactly as it always has.
+
+To size a job: a consumer generating 16,000 paths this way, across parallel invocations, measured
+12 minutes end to end — about 45 ms per path, which is the formatting cost and not something more
+batching removes.
+
+`-emitfrom K` writes indices `K..K+paths-1`, so a batch can be split across invocations for a
+resume or across machines. A chunk is byte-identical to the same indices of the whole run, sidecar
+included, because path k depends only on (world, years, seed, k):
+
+```
+market_sim.exe -paths 500 -years 33 -emitall -emitfrom 500 -emit rung.tsv   # rung-500 .. rung-999
+```
+
+Two things to know when chunking. The report and the gate are always measured on `0..paths`, so
+each chunk's sidecar carries the same verdict — except under `-emitgate 0`, which asks for the run's
+own sample to be the judge and therefore gives each chunk its own, smaller, noisier verdict. And the
+padding follows the highest index of that invocation, so chunks either side of 1000 differ in width:
+sort numerically, or emit the batch in one invocation.
+
 ## When the choice matters, and when it does not
 
 | your claim | example | does the world matter? |
@@ -221,12 +254,17 @@ showed the 0.19.2 default's crash excess was really ~1.50 at matched volatility,
 printed — the diagnosis behind the 0.20.0 recalibration. At the 0.20.0 defaults volatility is on
 the anchor, so the two columns nearly coincide and the section mostly guards non-default worlds.
 
-Two limits, stated in the report itself. It is **diagnostic and does not affect the exit code** —
-the equity leg has no cross-index bands yet, so there is nothing to pass or fail against. And the
-anchors come from different windows (`equity vol %` from S&P 1954–2026, the depth rungs from SPY
-1993–2026, `return per vol` from CRSP 1954–2026); this does not fix that, it removes the model's own
-volatility miss which was compounding with it. A ratio here is *conditional on hitting the
-volatility anchor*, not window-matched.
+Since 0.21.0 the three depth rungs are graded against a **relation** — what a real equity fund of
+this world's own volatility and return spends below its peak, fitted across 35 funds — rather than
+against SPY's levels. So solving depth moves their prediction along with their measurement and the
+two columns should agree for them; a rung that moves anyway is saying the model and the real
+cross-section disagree about how time under water responds to volatility. The absolute targets
+(kurtosis, clustering, crash rate, crash depth) are what the section still isolates.
+
+It remains **diagnostic and does not affect the exit code**. The remaining window mismatch is among
+the absolute anchors (`equity vol %` from S&P 1954–2026, `return per vol` from CRSP 1954–2026);
+this section does not fix that, it removes the model's own volatility miss which was compounding
+with it.
 
 ## The dials worth your attention
 

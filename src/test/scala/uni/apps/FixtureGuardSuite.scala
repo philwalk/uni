@@ -23,11 +23,11 @@ class FixtureGuardSuite extends FunSuite:
 
   test("a committed parity fixture is reported as NOT ignored") {
     assume(gitAvailable, "git unavailable or not a repository — the guard stays silent there")
-    // `bond-anchors` is the one entry that does NOT match the `*-parity` negation and is tracked
-    // by a rule of its own, which is exactly the case the pattern convention cannot cover — so it
-    // is the one most worth naming here.
+    // The anchors directories do NOT match the `*-parity` negation and are tracked by rules of
+    // their own, which is exactly the case the pattern convention cannot cover — so they are the
+    // entries most worth naming here.
     for dir <- Seq("csv-parity", "hash-parity", "date-parity", "path-parity", "tprf3-parity",
-                   "bond-anchors") do
+                   "bond-anchors", "equity-anchors") do
       val p = Paths.get(s"test-data/$dir")
       assume(p.exists, s"$dir not generated in this tree")
       assertEquals(FixtureGuard.isIgnored(p), Some(false),

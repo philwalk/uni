@@ -150,28 +150,28 @@ const CROWD_IMPACT_REF: f64 = 0.06;
 /// twin's `Defaults` follows.
 fn default_world() -> World {
     World {
-        trend_share: 0.07,
-        depth: 16.1,
-        stress: 5.6,
+        trend_share: 0.055,
+        depth: 16.94,
+        stress: 5.37,
         beta: 3.0,
-        drift: 0.123,
-        fund_vol: 0.13,
+        drift: 0.113,
+        fund_vol: 0.041,
         rate_mean: 0.042,
         vol_persist: 0.99,
-        vol_of_vol: 0.014,
-        value_pull: 0.0145,
+        vol_of_vol: 0.027,
+        value_pull: 0.017,
         crowd: Crowd::Momentum,
         crowd_impact: 0.07,
         panic: 0.0,
         duration: 13.5,
-        easing: 0.046,
+        easing: 0.037,
         unwind: 0.35,
         refuge: 0.11,
         infl_prob: 0.20,
-        infl_size: 0.10,
+        infl_size: 0.084,
         infl_speed: 0.010,
         rate_speed: 3.0,
-        discount: 5.0,
+        discount: 5.73,
         margin: 0.006,
     }
 }
@@ -246,8 +246,39 @@ fn releases() -> Vec<(&'static str, World)> {
         ("0.19.1", pre_v1902),
         ("0.19.2", v0_19_2()),
         ("0.19.3", v0_19_2()),
-        ("0.20.0", default_world()),
+        ("0.20.0", v0_20_0()),
+        ("0.21.0", default_world()),
     ]
+}
+
+/// 0.20.0's world, frozen for the same reason `v0_19_2` is: 0.21.0 moved the default off it, and a
+/// row that read `default_world()` would restate today's world under yesterday's version number.
+fn v0_20_0() -> World {
+    World {
+        trend_share: 0.07,
+        depth: 16.1,
+        stress: 5.6,
+        beta: 3.0,
+        drift: 0.123,
+        fund_vol: 0.13,
+        rate_mean: 0.042,
+        vol_persist: 0.99,
+        vol_of_vol: 0.014,
+        value_pull: 0.0145,
+        crowd: Crowd::Momentum,
+        crowd_impact: 0.07,
+        panic: 0.0,
+        duration: 13.5,
+        easing: 0.046,
+        unwind: 0.35,
+        refuge: 0.11,
+        infl_prob: 0.20,
+        infl_size: 0.10,
+        infl_speed: 0.010,
+        rate_speed: 3.0,
+        discount: 5.0,
+        margin: 0.006,
+    }
 }
 
 /// `-power`'s default contrast arms, as 1-based indices into `rules()`, and its default history
@@ -843,6 +874,74 @@ struct WorldStats {
     dd_bd20: f64,
 }
 
+/// Real equity funds' time under water, stated against the part a random walk already explains.
+///
+/// For a geometric random walk the share of sessions more than `rung` below the running peak has a
+/// closed form: `exp(-2 * (mu/sigma^2) * ln(1/(1-rung)))`, which in the units this report already
+/// carries is `exp(-2 * ret_vol * ln(1/(1-rung)) / vol)`. It is EXACT, not fitted, and that is what
+/// makes it the right carrier for the return dependence. The model runs at a return per unit
+/// volatility near 0.8 while the anchor funds span 0.20-0.53, so a fitted `rv` coefficient
+/// evaluated at the model's own operating point is arithmetic with nothing behind it. A closed form
+/// is not.
+///
+/// What real markets add is that they make new highs SOONER than chance, and increasingly so the
+/// calmer they are. That correction is the fitted part: linear in volatility, one pair per rung,
+/// from `test-data/equity-anchors` (35 instruments, 2001-2026, peaks seeded from full prior
+/// history). The reason to believe the FORM rather than just the fit: all three rungs independently
+/// reach 1.00 at the top of the real volatility range. The most volatile equity markets spend
+/// random-walk time under water; a market at 14% volatility spends about half of it.
+///
+/// Fitted by least squares on the LOG ratio, because the quantity is graded AS a ratio. On OLS over
+/// the raw ratio the deep rung's line is pulled up by a two-instrument dot-com tail (XLK, QQQ)
+/// until the median real instrument sits at 0.91 of it — and a target of 1.00 against that line
+/// would once again ask the model to be deeper than a typical real fund, which is the defect this
+/// relation exists to remove. On the log fit every rung's median real row is 1.00.
+const EQUITY_D5_CORR: (f64, f64) = (0.4003, 0.01628);
+const EQUITY_D10_CORR: (f64, f64) = (0.1861, 0.02196);
+const EQUITY_D20_CORR: (f64, f64) = (-0.0544, 0.02759);
+
+/// Share of sessions more than `rung` below the running peak for a geometric random walk with this
+/// volatility and return per unit volatility. Closed form; nothing here is fitted.
+fn gbm_depth_share(rung: f64, vol_pct: f64, ret_vol: f64) -> f64 {
+    if vol_pct <= 0.0 {
+        f64::NAN
+    } else {
+        (-2.0 * ret_vol * (1.0 / (1.0 - rung)).ln() / (vol_pct / 100.0)).exp()
+    }
+}
+
+/// What a real equity fund of this volatility and return spends more than `rung` below its peak.
+/// NaN where the correction is non-positive — below ~2% volatility for the deep rung, far under any
+/// equity this relation was fitted from, but a ratio against a non-positive prediction is not a
+/// finding and must not print as one.
+fn equity_depth_expected(rung: f64, corr: (f64, f64), vol_pct: f64, ret_vol: f64) -> f64 {
+    let c = corr.0 + corr.1 * vol_pct;
+    if c <= 0.0 {
+        f64::NAN
+    } else {
+        c * gbm_depth_share(rung, vol_pct, ret_vol)
+    }
+}
+
+/// The volatility range the anchor instruments covered, in %. Outside it the correction is a line
+/// extended past its evidence, so both graders refuse rather than manufacture a verdict — the same
+/// refusal the bond relations already make. `equity_anchor_tests` pins this to the fixture's own
+/// min and max.
+const EQUITY_VOL_SUPPORT: (f64, f64) = (14.3, 37.4);
+
+/// Bands for the two graded rungs, shared by the acceptance gate and `-crossasset`. Each is the
+/// observed residual-ratio range over BOTH windows, rounded outward to the nearest 0.05 — 0.785
+/// (DIA) to 1.254 (EWJ) at the 5% rung, 0.719 (XLY) to 1.520 (XLK) at the 10% — because these funds
+/// ARE the scope, unlike the bond bands where the range is a scope decision that excludes high
+/// yield. A band that excluded one of them would be calling a real equity fund unrealistic.
+///
+/// The 20% rung is deliberately NOT gated. Its relation does not transport (R^2 0.25-0.41 to the
+/// independent window, against 0.66-0.73 for the other two) and a band admitting every real
+/// instrument would have to span 0.35-2.60, which cannot fail: that is a check that reads as
+/// verification while testing nothing. It stays a fit target and a reported number.
+const EQUITY_D5_BAND: (f64, f64) = (0.75, 1.30);
+const EQUITY_D10_BAND: (f64, f64) = (0.70, 1.55);
+
 /// The five real Treasury funds' fit of time-spent-more-than-10%-under-water against volatility:
 /// `d10 = BOND_D10_SLOPE * vol% + BOND_D10_INTERCEPT`, floored at zero. Named rather than written
 /// inline because `-crossasset` needs the line's zero crossing, and a second literal for it would
@@ -905,6 +1004,36 @@ impl WorldStats {
         } else {
             self.dd_bd10 / expected
         }
+    }
+
+    /// Time spent more than a rung below the running peak, RELATIVE to what a real equity fund of
+    /// this world's OWN volatility and return per unit volatility spends — see `EQUITY_D10_CORR`.
+    /// 1.0 means the market is under water as long as a real one it could be mistaken for.
+    ///
+    /// Replaces three absolute levels that were SPY's, measured at SPY's operating point (18.6%
+    /// volatility, 0.55 return per vol) while the same target set asks this model to run at 16% and
+    /// 0.69. Real funds at THAT point spend 1.11x / 1.33x / 1.64x less time under water than SPY's
+    /// levels demanded, so the old targets could only be met by a market too deep for its own
+    /// volatility — and were.
+    fn eq_depth_vs_real(&self, rung: f64, corr: (f64, f64), got: f64) -> f64 {
+        let expected = equity_depth_expected(rung, corr, self.vol * 100.0, self.ret_vol());
+        if expected.is_nan() || expected <= 0.0 {
+            f64::NAN
+        } else {
+            got / expected
+        }
+    }
+
+    fn eq_d5_vs_real(&self) -> f64 {
+        self.eq_depth_vs_real(0.05, EQUITY_D5_CORR, self.dd_eq5)
+    }
+
+    fn eq_d10_vs_real(&self) -> f64 {
+        self.eq_depth_vs_real(0.10, EQUITY_D10_CORR, self.dd_eq10)
+    }
+
+    fn eq_d20_vs_real(&self) -> f64 {
+        self.eq_depth_vs_real(0.20, EQUITY_D20_CORR, self.dd_eq20)
     }
 
     fn ret_vol(&self) -> f64 {
@@ -1156,13 +1285,6 @@ impl GateClass {
     }
 }
 
-/// How far a depth share may sit from the real one and still have a readable level. The plan's
-/// acceptance for W9 is that "a drawdown-rule arm's %out lands within a few points of the same
-/// rule's %out on a real series"; ten percentage points is that, made two-sided and concrete.
-/// ABSOLUTE, not relative: the quantity being compared — a rule's share of sessions out of the
-/// market — is itself a share, so a point is the same size at every rung.
-const DEPTH_TOL: f64 = 0.10;
-
 /// A gate whose printed name is DERIVED from the bounds its predicate tests, so the two cannot
 /// drift apart — the failure mode where a gate reads as bounds it does not enforce. Every
 /// two-sided band that can go through here does: a hand-written "0.65-1.35" inside a name is the
@@ -1194,20 +1316,6 @@ fn band_check(
         format!("{name} {}-{}{unit}", jf(lo, 0, dp), jf(hi, 0, dp)),
         got > lo && got < hi,
         cls,
-    )
-}
-
-/// A depth rung's band is the real anchor plus or minus `DEPTH_TOL`, so only the anchor is written
-/// down and the two bounds cannot be given independently.
-fn depth_check(name: &str, got: f64, real: f64) -> (String, bool, GateClass) {
-    band_check(
-        name,
-        got,
-        real - DEPTH_TOL,
-        real + DEPTH_TOL,
-        GateClass::Fidelity,
-        3,
-        "",
     )
 }
 
@@ -1327,13 +1435,31 @@ fn gate_checks(st: &WorldStats) -> Vec<(String, bool, GateClass)> {
             2,
             "",
         ),
-        // Only the rungs with a measured real anchor are gated. The bond's >5% and >20% shares
-        // are reported everywhere but targeted nowhere: interpolating them would manufacture an
-        // anchor.
-        depth_check("equity >5% below peak", st.dd_eq5, 0.447),
-        depth_check("equity >10% below peak", st.dd_eq10, 0.315),
-        depth_check("equity >20% below peak", st.dd_eq20, 0.169),
     ];
+    // The equity depth relation is anchor-fitted too, so it refuses outside its anchors' volatility
+    // range for the same reason the two below do. That range starts at 14.3%, so the sweep's own
+    // calm off-worlds are disclosed rather than failed — "no fund this quiet was measured" is not
+    // the same finding as "this market's drawdowns are wrong".
+    if anchored(st.vol * 100.0, EQUITY_VOL_SUPPORT, st.eq_d10_vs_real()) {
+        v.push(band_check(
+            "equity d5 vs real",
+            st.eq_d5_vs_real(),
+            EQUITY_D5_BAND.0,
+            EQUITY_D5_BAND.1,
+            GateClass::Fidelity,
+            2,
+            "",
+        ));
+        v.push(band_check(
+            "equity d10 vs real",
+            st.eq_d10_vs_real(),
+            EQUITY_D10_BAND.0,
+            EQUITY_D10_BAND.1,
+            GateClass::Fidelity,
+            2,
+            "",
+        ));
+    }
     // The two anchor-fitted bands are graded ONLY where their anchors have data — the same
     // refusal `-crossasset` applies, because these ARE its relations. A world outside the funds'
     // range used to print FAIL here while the ladder printed n/a for the same statistic,
@@ -1387,6 +1513,19 @@ fn anchored(driver: f64, support: (f64, f64), got: f64) -> bool {
 /// findings and only one of them is about the model.
 fn unanchored_in(st: &WorldStats) -> Vec<String> {
     let mut out = Vec::new();
+    let eq_vol = st.vol * 100.0;
+    if !anchored(eq_vol, EQUITY_VOL_SUPPORT, st.eq_d10_vs_real()) {
+        if eq_vol < EQUITY_VOL_SUPPORT.0 || eq_vol > EQUITY_VOL_SUPPORT.1 {
+            out.push(format!(
+                "equity d5 and d10 vs real (equity vol {}% outside the anchors' {}-{}%)",
+                jf(eq_vol, 0, 2),
+                jf(EQUITY_VOL_SUPPORT.0, 0, 1),
+                jf(EQUITY_VOL_SUPPORT.1, 0, 1)
+            ));
+        } else {
+            out.push("equity d5 and d10 vs real (no fitted value at this volatility)".to_string());
+        }
+    }
     let vol = st.bond_vol * 100.0;
     if !anchored(vol, BOND_VOL_SUPPORT, st.bond_depth_vs_vol()) {
         let why = if vol < BOND_VOL_SUPPORT.0 || vol > BOND_VOL_SUPPORT.1 {
@@ -1601,45 +1740,66 @@ fn fit_targets() -> Vec<(&'static str, StatFn, f64, f64)> {
             -25.0,
             wgt(1.5, 2.89),
         ),
-        // DEPTH PROFILE. Real equity anchors are SPY 1993-01-29..2026-08-20 (8447 sessions) — a
-        // different window from the 1954-2026 record behind the rows above, and named as such in
-        // the report, because this is a TIME SHARE rather than a max order statistic: it is
-        // horizon-stable where maximum drawdown is not (measured: the model's >10% share is 0.464
-        // at both 20 and 100 years), so the two windows are comparable in a way maxDD's would not
-        // be.
+        // DEPTH PROFILE, stated RELATIVE to what a real fund of the same volatility and return
+        // spends under water rather than as three absolute levels — see `EQUITY_D10_CORR` for the
+        // relation and `eq_depth_vs_real` for what the ratio means. A level target is a statement
+        // about one fund; a ratio is a statement about the mechanism, which is the same reason
+        // `bond depth vs vol` is written this way.
         //
-        // HORIZON-stable is not WINDOW-stable, and the difference is large enough to matter. The
-        // real 10% rung reads 0.269 over 1954-2026, 0.315 over 1993-2026 and 0.386 over 1926-2026.
-        // The +-0.10 gate bands span that spread, which is part of why they pass; do not read a
-        // passing depth rung as agreement with a particular window.
+        // The absolute levels this replaces were SPY's over 1993-2026 (0.447 / 0.315 / 0.169), and
+        // they were internally inconsistent with the two rows at the top of this table. SPY
+        // produced them at 18.6% volatility and 0.554 return per vol; `equity vol %` and `return
+        // per vol` ask this model to run at 16.0 and 0.69, and 35 real instruments at THAT
+        // operating point spend 1.11x / 1.33x / 1.64x less time under water than SPY's numbers
+        // demanded. The target set was asking for a market that is calmer than SPY and
+        // better-returning than SPY and yet under water as long as SPY, which no real fund is. The
+        // only way to satisfy it was an over-hot fundamental, and the search duly bought one — see
+        // the `fundVol` range in `calibrate_ranges`.
         //
-        // Validated once against a series the calibration never saw (CRSP value-weighted, 33-year
-        // windows inside 1954-2026): the model's 0.500 / 0.350 / 0.150 against a real median of
-        // 0.451 / 0.291 / 0.151. The 20% rung is essentially exact; the 5% and 10% rungs sit at or
-        // just above the top of the real range, i.e. this model still spends 10-30% too long in
-        // SHALLOW drawdowns. That is a LEVEL bias and it survives the gate.
+        // Anchor provenance is unchanged in kind and wider in coverage: 35 broad, sector and
+        // country equity funds over 2001-2026 (`test-data/equity-anchors`, peaks seeded from full
+        // prior history), with a 17-instrument 1996-2026 block as the independent transport check.
+        // SPY is one row of it and no longer sets the level, which also retires the old caveat that
+        // SPY could never serve as validation because its rungs WERE the targets.
         //
+        // Only two of the three rungs are gated; the 20% rung's relation does not transport well
+        // enough for a band that could fail anything. It stays a fit target — the loss is a
+        // continuous quantity, not a verdict, and its weight already carries the redundancy
+        // discount.
         // The bond anchor is a clean iShares TLT total-return series over 24 years, and only
         // the 10% rung of it has been measured. The other two bond rungs are REPORTED, not
         // targeted: filling them in by interpolation would manufacture a calibration anchor out
         // of nothing.
+        // Re-measured by `-noise` when the rungs became ratios, and again at the 0.21.0 defaults
+        // these are frozen from: a ratio compounds the depth share's own sampling error with the
+        // volatility and return sampling that enters its denominator, so these are NOT the absolute
+        // rungs' 0.22 / 0.34 / 0.55. The deep rung's 0.99 still holds its weight near 0.10 — the
+        // measurement saying one 25-year record barely pins the 20% rung's ratio, which is also why
+        // it carries no gate band.
+        //
+        // The same run is the fix's own evidence. At the 0.20.0 world the real value sat at the
+        // 14th, 7th and 4th percentile of the model-implied spread — the record was in the model's
+        // tail, on all three rungs at once. At this world it sits at the 63rd, 65th and 55th: the
+        // anchors can no longer tell this model from the cross-section they were measured from,
+        // which is a stronger statement than any ratio near 1.00, because it is made against the
+        // spread rather than the point.
         (
-            "equity >5% below pk",
-            (|st| st.dd_eq5) as StatFn,
-            0.447,
-            wgt(0.5, 0.22),
+            "equity d5 vs real",
+            (|st: &WorldStats| st.eq_d5_vs_real()) as StatFn,
+            1.00,
+            wgt(0.5, 0.13),
         ),
         (
-            "equity >10% below pk",
-            (|st| st.dd_eq10) as StatFn,
-            0.315,
-            wgt(1.0, 0.34),
+            "equity d10 vs real",
+            (|st: &WorldStats| st.eq_d10_vs_real()) as StatFn,
+            1.00,
+            wgt(1.0, 0.25),
         ),
         (
-            "equity >20% below pk",
-            (|st| st.dd_eq20) as StatFn,
-            0.169,
-            wgt(0.5, 0.55),
+            "equity d20 vs real",
+            (|st: &WorldStats| st.eq_d20_vs_real()) as StatFn,
+            1.00,
+            wgt(0.5, 0.99),
         ),
         (
             "bond depth vs vol",
@@ -1687,7 +1847,14 @@ fn fitness(st: &WorldStats) -> (f64, Vec<(&'static str, f64, f64, f64)>) {
 }
 
 fn sim_paths(w: &World, paths: usize, years: usize, seed: u64) -> Vec<Path> {
-    (0..paths)
+    sim_path_range(w, 0, paths, years, seed)
+}
+
+/// Paths `from..from + count`. Path k is a function of (world, years, seed, k) alone, so a range
+/// taken from the middle is byte-identical to the same indices of a run that started at zero —
+/// which is what lets `-emitfrom` split one batch across invocations.
+fn sim_path_range(w: &World, from: usize, count: usize, years: usize, seed: u64) -> Vec<Path> {
+    (from..from + count)
         .into_par_iter()
         .map(|k| simulate(w, years, seed.wrapping_add(k as u64 * 7919)))
         .collect()
@@ -2422,8 +2589,56 @@ fn n_star_str(x: f64) -> String {
 
 // ---- calibration search -----------------------------------------------------------------
 
+type Setter = fn(&mut World, f64);
+
+/// Parameters that say WHICH ASSET is being simulated, not how a market behaves. Each is a real
+/// fund's published number: MEASURED once and then held, never fitted. `-calibrate` must not
+/// search one, for two reasons that are separate. A duration chosen to reduce loss describes no
+/// bond anyone can buy, so the fitted world stops being a claim about a real asset. And
+/// `-crossasset` grades the bond relations by MOVING duration across the values real funds have —
+/// if the shipped duration were itself fitted, that grader would be scoring the search's choice
+/// against bands the same search was free to accommodate, which is circular.
+///
+/// Enforced by `contract_tests` against `calibrate_ranges`, not by this comment: the 0.20.0
+/// re-search proposed `duration = 11.1` and was refused by hand, and a rule that lives in someone's
+/// memory of that refusal is one range row away from being lost.
+// Referenced only from the test module below; the search reads its own ranges, never this list.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the rule is read by the tests, never by the search"
+    )
+)]
+const IDENTITY_PARAMS: &[&str] = &["duration"];
+
+/// What `-calibrate` samples, and the ONLY place a searchable parameter is declared. A function
+/// rather than an inline `vec!` so the identity-parameter rule above can be tested against it.
+fn calibrate_ranges() -> Vec<(&'static str, f64, f64, Setter)> {
+    vec![
+        ("depth", 10.0, 26.0, |w, x| w.depth = x),
+        ("trendShare", 0.05, 0.70, |w, x| w.trend_share = x),
+        ("drift", 0.06, 0.16, |w, x| w.drift = x),
+        // The depth profile's second axis, and the one no sweep could reach before 0.21: the value
+        // channel passes only a few percent of a fundamental move into any one session, so
+        // fundamental variance accumulates into time under water without moving daily return scale.
+        // It is in the search only now that the depth targets are stated against a real relation —
+        // against SPY's absolute levels a search free to raise it would have closed them by making
+        // the fundamental hotter still, which is how the world it replaces was reached.
+        ("fundVol", 0.03, 0.16, |w, x| w.fund_vol = x),
+        ("crowdImpact", 0.01, 0.20, |w, x| w.crowd_impact = x),
+        ("stress", 2.0, 6.0, |w, x| w.stress = x),
+        ("valuePull", 0.010, 0.035, |w, x| w.value_pull = x),
+        ("volOfVol", 0.012, 0.030, |w, x| w.vol_of_vol = x),
+        ("easing", 0.0, 0.09, |w, x| w.easing = x),
+        ("refuge", 0.0, 0.20, |w, x| w.refuge = x),
+        ("inflSize", 0.03, 0.12, |w, x| w.infl_size = x),
+        ("discount", 3.0, 10.0, |w, x| w.discount = x),
+        ("margin", 0.0, 0.004, |w, x| w.margin = x),
+    ]
+}
+
 fn calibrate(n_samples: usize, base: &World, seed: u64) {
-    type Setter = fn(&mut World, f64);
     // depth, trendShare, drift and crowdImpact are in the search because they are the strongest
     // levers on the
     // two defects the eight below cannot reach. depth carries crash frequency (at fixed stress,
@@ -2432,21 +2647,7 @@ fn calibrate(n_samples: usize, base: &World, seed: u64) {
     // it cannot be searched without the return-per-vol band above, or the search buys the depth
     // rungs with a Sharpe no 20-year stretch of the real record produced. Their CLI flags are
     // inert under -calibrate, exactly like the eight below.
-    let ranges: Vec<(&str, f64, f64, Setter)> = vec![
-        ("depth", 10.0, 26.0, |w, x| w.depth = x),
-        ("trendShare", 0.05, 0.70, |w, x| w.trend_share = x),
-        ("drift", 0.06, 0.16, |w, x| w.drift = x),
-        ("crowdImpact", 0.01, 0.20, |w, x| w.crowd_impact = x),
-        ("stress", 2.0, 6.0, |w, x| w.stress = x),
-        ("valuePull", 0.010, 0.035, |w, x| w.value_pull = x),
-        ("volOfVol", 0.012, 0.030, |w, x| w.vol_of_vol = x),
-        ("easing", 0.0, 0.09, |w, x| w.easing = x),
-        ("refuge", 0.0, 0.20, |w, x| w.refuge = x),
-        ("duration", 8.0, 18.0, |w, x| w.duration = x),
-        ("inflSize", 0.03, 0.12, |w, x| w.infl_size = x),
-        ("discount", 3.0, 10.0, |w, x| w.discount = x),
-        ("margin", 0.0, 0.004, |w, x| w.margin = x),
-    ];
+    let ranges = calibrate_ranges();
     // the only RNG in the program that was not already NumPyRng
     let mut sr = NumPyRng::new(seed ^ 0x5ca1_ab1e);
     let train_seed = seed;
@@ -3259,9 +3460,9 @@ const EQUITY_TARGETS: [&str; 11] = [
     "crashes/century",
     "median depth %",
     "worst crash %",
-    "equity >5% below pk",
-    "equity >10% below pk",
-    "equity >20% below pk",
+    "equity d5 vs real",
+    "equity d10 vs real",
+    "equity d20 vs real",
 ];
 
 /// The other half of the partition. Read only by the partition test — the report has no bond
@@ -3339,21 +3540,24 @@ fn run_equity_at_anchor(paths: usize, years: usize, seed: u64, base: &World) {
     println!("section does not affect the exit code.");
     println!();
     println!(
-        "`depth` moves volatility and drawdown TOGETHER, so a drawdown statistic graded while the"
+        "A LEVEL read while the model sits below its own volatility anchor mixes two errors and"
     );
     println!(
-        "model sits below its own volatility anchor mixes two errors and reports one.  Here depth is"
+        "reports one.  Here depth is solved so volatility sits on the anchor and every equity target"
     );
     println!(
-        "solved so volatility sits on the anchor and every other target is re-read: 1 identity"
+        "is re-read: 1 identity parameter, set from 1 measured statistic, nothing else touched."
     );
-    println!("parameter, set from 1 measured statistic, nothing else touched.");
     println!();
+    println!("The three depth rungs are graded against a relation evaluated at each world's OWN");
     println!(
-        "The anchors come from DIFFERENT WINDOWS, and this does not fix that -- it removes the"
+        "volatility and return, so they should read ALIKE in both columns -- solving depth moves"
     );
-    println!("model's own volatility miss, which was compounding with it.  Read a ratio here as");
-    println!("\"conditional on hitting the volatility anchor\", not as \"window-matched\".");
+    println!(
+        "their prediction with their measurement.  A rung that moves anyway is reporting that the"
+    );
+    println!("model and the real cross-section disagree about how time under water responds to");
+    println!("volatility, which is the one thing this pair of columns can still show about them.");
     println!();
     let Some(solved) = depth_for_vol(base, target, paths, years, seed) else {
         println!(
@@ -3608,7 +3812,7 @@ fn run_cross_asset_report(paths: usize, years: usize, seed: u64, base: &World) -
 
 /// Each fidelity anchor's own measurement horizon, in years, and the targets read over it. The
 /// windows are the ones the fidelity header names — S&P/CRSP 1954-2026, the CRSP century for
-/// clustering, SPY 1993-2026 for the depth rungs, the clean 24-year TLT series for the bond —
+/// clustering, the equity funds for the depth rungs, the clean 24-year TLT series for the bond —
 /// because sampling error depends on the length of the record actually behind each number, not
 /// on the horizon the model is scored at. The contract test pins this to `fit_targets` as a
 /// partition, so a new target cannot land without a declared horizon.
@@ -3631,13 +3835,15 @@ fn anchor_groups() -> [(&'static str, usize, &'static [&'static str]); 4] {
             100,
             &["clustering lag 1", "clustering lag 20"],
         ),
+        // 35 equity funds over 2001-2026; the horizon is one instrument's record, because that is
+        // what each residual ratio in the fit was measured from.
         (
-            "SPY 1993-2026",
-            33,
+            "equity funds, 25y",
+            25,
             &[
-                "equity >5% below pk",
-                "equity >10% below pk",
-                "equity >20% below pk",
+                "equity d5 vs real",
+                "equity d10 vs real",
+                "equity d20 vs real",
             ],
         ),
         (
@@ -4548,11 +4754,18 @@ fn sidecar_name(file: &str) -> String {
     }
 }
 
+/// Zero-padding width for `indexed_name`, from the highest index a batch writes. Floored at 3 so
+/// every ensemble of 1000 or fewer keeps the names it has always had; a larger one widens rather
+/// than losing the sort order the padding exists to give.
+fn index_width(last_index: usize) -> usize {
+    3.max(last_index.to_string().len())
+}
+
 /// `foo.tsv` -> `foo-007.tsv`, so an ensemble sorts in path order.
-fn indexed_name(file: &str, k: usize) -> String {
+fn indexed_name(file: &str, k: usize, width: usize) -> String {
     let cut = file.rfind('.');
     let sep = file.rfind(['/', '\\']);
-    let tag = format!("-{k:03}");
+    let tag = format!("-{k:0width$}");
     match cut {
         Some(c) if sep.is_none_or(|s| c > s) => format!("{}{tag}{}", &file[..c], &file[c..]),
         _ => format!("{file}{tag}"),
@@ -4789,6 +5002,7 @@ fn main() {
     let mut emit = String::new();
     let mut emit_path = 0usize;
     let mut emit_all = false;
+    let mut emit_from = 0usize;
     let mut emit_start = String::new();
     let mut emit_gate = 200usize;
     let mut gate_req = gate_default();
@@ -4815,6 +5029,19 @@ fn main() {
     // clustering regression bought knowingly (1.08) instead of blindly — the guard below is
     // HISTORY explaining the 0.19.1/0.19.2 choices, not a description of the current trade.
     //
+    // 0.21.0 re-searched again with `fundVol` in the ranges for the first time and the depth rungs
+    // stated against a real relation (see `EQUITY_D10_CORR`). Two search results were declined by
+    // hand, both for reasons the loss cannot see. `crowdImpact` was pushed to its 0.01 range
+    // floor, which reads 0.9% of the noise term on `mean_crowd_flow` — the reflexive channel
+    // switched off, which is the defect that diagnostic exists to catch; pinned back at 0.07 it
+    // reads 6.7%, and the pin also BOUGHT volatility (16.03 against 15.38) and crash depth.
+    // `refuge` was raised 0.11 -> 0.159, which took bond volatility to 1.12x duration, outside its
+    // band; returned to 0.11 it reads 1.03 and the equity side does not move at all.
+    //
+    // Scored on the MEDIAN of three seeds, not one: a single-seed refinement here found a 1.687
+    // that was a 2.15 median over five seeds. Depth-rung agreement is cheap to overfit because
+    // the relation's denominator moves with the sample.
+    //
     // `stress` IS NOT AT THE OBJECTIVE'S MINIMUM, deliberately, and has now been moved DOWN twice
     // for the same reason. The liquidity spiral is a single amplifier producing volatility, fat
     // tails AND volatility clustering together — `stress` alone moves ac1 from 0.160 at 3.4 to
@@ -4839,11 +5066,20 @@ fn main() {
     // MISS stands, more precise than "no slow valuation cycle": the cycle is why there is no SECOND
     // channel for tails, not why this one cannot reach them.
     //
-    // THREE KNOWN BIAS DIRECTIONS, netted away nowhere else: clustering at 1.06 makes volatility
+    // FOUR KNOWN BIAS DIRECTIONS, netted away nowhere else: clustering at 1.10 makes volatility
     // more predictable here than in the record, which flatters any rule that forecasts it; worst
     // crash at 1.44 puts index paths near -82% against a real -56.8%, which no levered fund
-    // survives, so ruin rates for levered sleeves are UPPER BOUNDS, not estimates; and crashes
-    // arrive 1.32x too often, so any per-crash hazard read off this model is over-sampled.
+    // survives, so ruin rates for levered sleeves are UPPER BOUNDS, not estimates; crashes arrive
+    // 1.38x too often, so any per-crash hazard read off this model is over-sampled; and since
+    // 0.21.0 the median crash is SHALLOW, 0.85 of the real -27.1.
+    //
+    // That last one is the price of the depth rungs and it is structural, not a tuning miss:
+    // every world that puts time under water near the real relation lands median crash depth at
+    // 0.78-0.85, because cooling the fundamental makes drawdowns shorter AND shallower together.
+    // Measured across the global search's winner, the local optimum and six hand variants
+    // including `stress` at its range ceiling; nothing available separates them. Closing it needs
+    // a channel that deepens a crash without adding low-frequency variance — the same absent
+    // valuation cycle the kurtosis note above blames for there being no second tail channel.
     // Seeded from `default_world()`, never restated. A second copy of the shipped world here is
     // the failure that function's own docstring claims not to have: it would drift silently,
     // because the only thing comparing the two is a `-releases` run noticing that its 0.19.2 row
@@ -4860,6 +5096,7 @@ fn main() {
     let mut crowd_impact = dw.crowd_impact;
     let mut panic_k = dw.panic;
     let mut drift = dw.drift;
+    let mut fund_vol = dw.fund_vol;
     let mut rate_mean = dw.rate_mean;
     let mut duration = dw.duration;
     let mut easing = dw.easing;
@@ -4887,6 +5124,7 @@ fn main() {
             "-emit" => emit = req_arg(&mut it, "-emit").clone(),
             "-emitpath" => emit_path = req_usize(&mut it, "-emitpath"),
             "-emitall" => emit_all = true,
+            "-emitfrom" => emit_from = req_usize(&mut it, "-emitfrom"),
             "-emitstart" => emit_start = req_arg(&mut it, "-emitstart").clone(),
             "-emitgate" => emit_gate = req_usize(&mut it, "-emitgate"),
             "-gate" => gate_req = parse_gate(req_arg(&mut it, "-gate")),
@@ -4914,6 +5152,7 @@ fn main() {
             "-crowdimpact" => crowd_impact = req_f64(&mut it, "-crowdimpact"),
             "-panic" => panic_k = req_f64(&mut it, "-panic"),
             "-drift" => drift = req_f64(&mut it, "-drift"),
+            "-fundvol" => fund_vol = req_f64(&mut it, "-fundvol"),
             "-ratemean" => rate_mean = req_f64(&mut it, "-ratemean"),
             "-duration" => duration = req_f64(&mut it, "-duration"),
             "-easing" => easing = req_f64(&mut it, "-easing"),
@@ -4943,6 +5182,11 @@ fn main() {
     }
     if years < 1 {
         cli_die(&format!("-years must be at least 1, got {years}"));
+    }
+    // Refused rather than ignored: silently writing 0..paths-1 under a flag that asked for a
+    // different range is how a chunked batch ends up with every chunk holding path 0.
+    if emit_from > 0 && !emit_all {
+        cli_die("-emitfrom applies to -emitall; use -emitpath for one path");
     }
     // A bad index here is the one place the rule list has to be discoverable: the report names
     // the rules but not their numbers, and the numbers are what the flag takes. Without this,
@@ -4992,7 +5236,7 @@ fn main() {
         stress,
         beta,
         drift,
-        fund_vol: dw.fund_vol,
+        fund_vol,
         rate_mean,
         vol_persist,
         vol_of_vol,
@@ -5126,12 +5370,21 @@ fn main() {
             }
         };
         let written: Vec<String> = if emit_all {
-            (0..paths)
+            // At the default offset this IS the report ensemble; shifted, the range is re-simulated
+            // (in parallel, not one at a time through `path_at`) because the report and the gate
+            // stay measured on 0..paths — the verdict describes the WORLD, not the chunk.
+            let batch: Vec<Path> = if emit_from == 0 {
+                sims.clone()
+            } else {
+                sim_path_range(&w, emit_from, paths, years, seed)
+            };
+            let width = index_width(emit_from + paths - 1);
+            (emit_from..emit_from + paths)
                 .map(|k| {
-                    let f = indexed_name(&emit, k);
+                    let f = indexed_name(&emit, k, width);
                     write_emitted(
                         &f,
-                        &sims[k],
+                        &batch[k - emit_from],
                         k,
                         &w,
                         years,
@@ -5158,7 +5411,9 @@ fn main() {
             );
             vec![emit.clone()]
         };
-        let sessions = path_at(if emit_all { 0 } else { emit_path }).price.len();
+        let sessions = path_at(if emit_all { emit_from } else { emit_path })
+            .price
+            .len();
         let span = if written.len() > 1 {
             format!(" .. {}", written[written.len() - 1])
         } else {
@@ -5240,11 +5495,31 @@ fn main() {
         jf(st.infl_ann, 0, 2)
     );
     println!("  depth profile          share of sessions below the running peak, median path");
+    // Against the relation at THIS world's own volatility and return, not against SPY's levels:
+    // SPY produced 0.447 / 0.315 / 0.169 at 18.6% volatility and 0.554 return per vol, so printing
+    // them beside a world at a different operating point invites exactly the comparison the rungs
+    // were restated to stop — and would show a correct world as a large miss.
+    let eq_vol_pct = st.vol * 100.0;
     println!(
-        "    equity               >5% {}   >10% {}   >20% {}      real SPY 0.447 / 0.315 / 0.169",
+        "    equity               >5% {}   >10% {}   >20% {}      real funds at this vol/return {} / {} / {}",
         jf(st.dd_eq5, 0, 3),
         jf(st.dd_eq10, 0, 3),
-        jf(st.dd_eq20, 0, 3)
+        jf(st.dd_eq20, 0, 3),
+        jf(
+            equity_depth_expected(0.05, EQUITY_D5_CORR, eq_vol_pct, st.ret_vol()),
+            0,
+            3
+        ),
+        jf(
+            equity_depth_expected(0.10, EQUITY_D10_CORR, eq_vol_pct, st.ret_vol()),
+            0,
+            3
+        ),
+        jf(
+            equity_depth_expected(0.20, EQUITY_D20_CORR, eq_vol_pct, st.ret_vol()),
+            0,
+            3
+        )
     );
     println!(
         "    bond                 >5% {}   >10% {}   >20% {}      real TLT   -   / 0.510 /   -",
@@ -5268,14 +5543,16 @@ fn main() {
 
     println!();
     // The anchors do NOT share one window, and a single-window label invites a reader to re-derive
-    // them from it and conclude the model has drifted. Measured over 1954-2026, the equity depth
-    // rungs read 0.436 / 0.269 / 0.126 against the 0.447 / 0.315 / 0.169 targeted here.
+    // them from it and conclude the model has drifted. The depth rungs are the exception by
+    // construction: they are graded against a RELATION evaluated at this world's own volatility and
+    // return, so they carry no window of their own to be compared at.
     println!(
         "  fidelity against targets, by anchor (each row is against the window named for it):"
     );
     println!(
-        "    equity S&P 1954-2026   |   depth rungs SPY 1993-2026   |   return per vol CRSP 1954-2026"
+        "    equity S&P 1954-2026   |   depth rungs 35 equity funds 2001-2026, vs each world's"
     );
+    println!("      OWN volatility and return   |   return per vol CRSP 1954-2026");
     println!(
         "    clustering CRSP 1926-2026 (a CENTURY: the statistic is horizon-dependent and the"
     );
@@ -5680,6 +5957,49 @@ mod bond_anchor_tests {
 mod contract_tests {
     use super::*;
 
+    /// The padding is a promise about SORT ORDER, and it is only kept if every name a batch writes
+    /// is the same width. The floor at 3 is the other half of the contract: it is what keeps every
+    /// ensemble of 1000 or fewer reading exactly as it did before the width became variable.
+    #[test]
+    fn index_names_keep_their_width_and_their_history() {
+        assert_eq!(indexed_name("f.tsv", 7, index_width(99)), "f-007.tsv");
+        assert_eq!(indexed_name("f.tsv", 7, index_width(999)), "f-007.tsv");
+        assert_eq!(indexed_name("f.tsv", 7, index_width(1999)), "f-0007.tsv");
+        // one batch, one width, whatever the index inside it
+        let w = index_width(1999);
+        for k in [0usize, 999, 1000, 1999] {
+            assert_eq!(indexed_name("f.tsv", k, w).len(), "f-0000.tsv".len());
+        }
+    }
+
+    /// An identity parameter describes WHICH ASSET this is, and `-crossasset` grades the bond
+    /// relations by moving one. Letting the search fit it makes that grader circular — and the
+    /// range row that would do it is one line, added in a moment when the loss looks improvable.
+    #[test]
+    fn the_search_never_fits_an_identity_parameter() {
+        let searched: Vec<&str> = calibrate_ranges().iter().map(|r| r.0).collect();
+        for p in IDENTITY_PARAMS {
+            assert!(
+                !searched.contains(p),
+                "`{p}` is an identity parameter (a real fund's measured number) and must not be in \
+                 -calibrate's ranges: a value chosen to reduce loss describes no asset anyone can \
+                 buy, and -crossasset would then grade the search's own choice"
+            );
+        }
+    }
+
+    /// `-emitfrom` is only safe to chunk with because a shifted range reproduces the paths the
+    /// unshifted run would have written at those indices. If this drifts, two chunks of one job
+    /// silently stop being one ensemble.
+    #[test]
+    fn a_shifted_range_is_the_same_ensemble() {
+        let w = default_world();
+        let all = sim_paths(&w, 6, 2, 12345);
+        let tail = sim_path_range(&w, 4, 2, 2, 12345);
+        assert_eq!(tail[0].price, all[4].price);
+        assert_eq!(tail[1].price, all[5].price);
+    }
+
     /// Every fidelity target must be classified as equity or bond, exactly once. The subset check
     /// this replaces caught renames but not ADDITIONS: a new equity target would simply never
     /// appear in the equity section, and a shorter table reads as a shorter list of concerns.
@@ -5748,6 +6068,243 @@ mod contract_tests {
             cross_asset_verdict(1, 1, &[("a", 3), ("b", 1)]),
             ("FAIL", false),
             "a resolved miss outranks an unresolved edge"
+        );
+    }
+}
+
+/// The equity depth relation's constants are FITTED NUMBERS. These re-derive every one of them from
+/// the checked-in anchors, so `EQUITY_D5_CORR`/`EQUITY_D10_CORR`/`EQUITY_D20_CORR`,
+/// `EQUITY_VOL_SUPPORT` and the two gate bands are derivable rather than asserted, and a
+/// re-measurement that moves the data fails here instead of silently disagreeing with the code that
+/// still carries the old fit.
+///
+/// The Scala twin carries the same checks in `EquityAnchorSuite`, against the same file.
+///
+/// The two claims that are ABOUT THE FORM rather than the fit are pinned here too, because they are
+/// the reason to believe a relation stated this way at all: that the correction reaches 1.00 at the
+/// top of the real volatility range (the most volatile equity markets spend random-walk time under
+/// water), and that the deep rung's relation is the one that does not transport, which is why it is
+/// a fit target but not a gate band.
+#[cfg(test)]
+mod equity_anchor_tests {
+    use super::*;
+
+    const ANCHORS: &str = "../test-data/equity-anchors/yahoo-2026-08-24.tsv";
+
+    struct Row {
+        window: String,
+        vol: f64,
+        rv: f64,
+        d: [f64; 3],
+    }
+
+    /// The rungs in report order, with the constant each one pins.
+    const RUNGS: [(f64, &str); 3] = [
+        (0.05, "EQUITY_D5_CORR"),
+        (0.10, "EQUITY_D10_CORR"),
+        (0.20, "EQUITY_D20_CORR"),
+    ];
+
+    fn corr_of(i: usize) -> (f64, f64) {
+        [EQUITY_D5_CORR, EQUITY_D10_CORR, EQUITY_D20_CORR][i]
+    }
+
+    /// `None` where the fixture is absent, which is a skip and not a failure: the crate ships
+    /// without `test-data/`, so a source-tarball build must not fail here.
+    fn anchors() -> Option<Vec<Row>> {
+        let text = std::fs::read_to_string(ANCHORS).ok()?;
+        Some(
+            text.lines()
+                .filter(|l| {
+                    !l.starts_with('#') && !l.starts_with("window\t") && !l.trim().is_empty()
+                })
+                .map(|l| {
+                    let f: Vec<&str> = l.split('\t').collect();
+                    let vol: f64 = f[3].parse().expect("annVol");
+                    let ann: f64 = f[7].parse().expect("annRet");
+                    Row {
+                        window: f[0].to_string(),
+                        vol,
+                        rv: ann / vol,
+                        d: [
+                            f[4].parse().expect("d5"),
+                            f[5].parse().expect("d10"),
+                            f[6].parse().expect("d20"),
+                        ],
+                    }
+                })
+                .collect(),
+        )
+    }
+
+    /// The block the relation is fitted from is `w2001w`, the warm-peak re-measurement whose peaks
+    /// are seeded from each instrument's full prior history. The cold `w2001` block is retained in
+    /// the fixture as the measurement of what truncation costs, and must never be fitted from.
+    fn block<'a>(rows: &'a [Row], window: &str) -> Vec<&'a Row> {
+        rows.iter().filter(|r| r.window == window).collect()
+    }
+
+    /// Least squares on the LOG ratio, by Gauss-Newton — the estimator the constants were fitted
+    /// with, and the reason is in `EQUITY_D10_CORR`: the quantity is graded as a ratio, and OLS on
+    /// the raw ratio leaves the deep rung's median real instrument at 0.91 of its own line.
+    fn log_fit(rows: &[&Row], i: usize, rung: f64) -> (f64, f64) {
+        let (mut a, mut b) = (0.4f64, 0.02f64);
+        for _ in 0..200 {
+            let (mut j00, mut j01, mut j11, mut g0, mut g1) = (0.0, 0.0, 0.0, 0.0, 0.0);
+            for r in rows {
+                let c = (a + b * r.vol).max(1e-6);
+                let resid = (r.d[i] / (c * gbm_depth_share(rung, r.vol, r.rv))).ln();
+                let (da, db) = (-1.0 / c, -r.vol / c);
+                j00 += da * da;
+                j01 += da * db;
+                j11 += db * db;
+                g0 += da * resid;
+                g1 += db * resid;
+            }
+            let det = j00 * j11 - j01 * j01;
+            if det.abs() > 1e-18 {
+                a -= (j11 * g0 - j01 * g1) / det;
+                b -= (j00 * g1 - j01 * g0) / det;
+            }
+        }
+        (a, b)
+    }
+
+    /// A constant written at `dp` decimals IS the fit, rounded to the precision it is written at.
+    fn rounds_to(fit: f64, dp: i32, constant: f64) -> bool {
+        let scale = 10f64.powi(dp);
+        ((fit * scale).round() / scale - constant).abs() < 1e-12
+    }
+
+    fn ratios(rows: &[&Row], i: usize, rung: f64) -> Vec<f64> {
+        let mut v: Vec<f64> = rows
+            .iter()
+            .map(|r| r.d[i] / equity_depth_expected(rung, corr_of(i), r.vol, r.rv))
+            .collect();
+        v.sort_by(f64::total_cmp);
+        v
+    }
+
+    #[test]
+    fn every_rung_refits_to_the_shipped_constants() {
+        let Some(rows) = anchors() else { return };
+        let fit = block(&rows, "w2001w");
+        assert_eq!(
+            fit.len(),
+            35,
+            "the relation is fitted on the 35 warm-peak instruments"
+        );
+        for (i, (rung, name)) in RUNGS.iter().enumerate() {
+            let (a, b) = log_fit(&fit, i, *rung);
+            let c = corr_of(i);
+            assert!(
+                rounds_to(a, 4, c.0),
+                "re-fitting the {rung} rung on {ANCHORS} gives intercept {a}, which does not \
+                 round to {name}.0 ({}). Either the anchors were re-measured and the constant was \
+                 not updated, or the constant was changed without the data.",
+                c.0
+            );
+            assert!(
+                rounds_to(b, 5, c.1),
+                "re-fitting the {rung} rung gives slope {b}, which does not round to {name}.1 ({})",
+                c.1
+            );
+        }
+    }
+
+    #[test]
+    fn the_median_real_instrument_sits_at_one() {
+        let Some(rows) = anchors() else { return };
+        let fit = block(&rows, "w2001w");
+        // This is what the log-ratio estimator buys, and it is the property that keeps the target
+        // of 1.00 honest: a median away from 1.00 would mean a target of 1.00 asks the model to
+        // differ from a typical real fund, which is the defect the relation replaced.
+        for (i, (rung, name)) in RUNGS.iter().enumerate() {
+            let r = ratios(&fit, i, *rung);
+            let med = r[r.len() / 2];
+            assert!(
+                (med - 1.0).abs() < 0.02,
+                "the median real ratio at the {rung} rung is {med}, not 1.00, so {name} is no \
+                 longer centred on the instruments it was fitted from"
+            );
+        }
+    }
+
+    #[test]
+    fn the_correction_reaches_random_walk_time_at_the_top_of_the_range() {
+        // The reason to believe the FORM. All three rungs land here independently; if a
+        // re-measurement breaks it, the relation is no longer "real markets recover faster than
+        // chance, and the fastest markets are the calmest" and the comment saying so must change.
+        let top = EQUITY_VOL_SUPPORT.1;
+        for (i, (_, name)) in RUNGS.iter().enumerate() {
+            let c = corr_of(i);
+            let v = c.0 + c.1 * top;
+            assert!(
+                (v - 1.0).abs() < 0.05,
+                "{name}'s correction reads {v} at the top of the real volatility range ({top}%), \
+                 not ~1.00: the most volatile real equity markets no longer spend random-walk time \
+                 under water"
+            );
+        }
+    }
+
+    #[test]
+    fn the_support_is_the_anchors_own_volatility_range() {
+        let Some(rows) = anchors() else { return };
+        let fit = block(&rows, "w2001w");
+        let lo = fit.iter().map(|r| r.vol).fold(f64::INFINITY, f64::min);
+        let hi = fit.iter().map(|r| r.vol).fold(f64::NEG_INFINITY, f64::max);
+        assert!(
+            (lo - EQUITY_VOL_SUPPORT.0).abs() < 1e-9,
+            "EQUITY_VOL_SUPPORT's floor is not the fitted instruments' lowest volatility ({lo})"
+        );
+        assert!(
+            (hi - EQUITY_VOL_SUPPORT.1).abs() < 1e-9,
+            "EQUITY_VOL_SUPPORT's ceiling is not the fitted instruments' highest volatility ({hi})"
+        );
+    }
+
+    #[test]
+    fn the_graded_bands_admit_every_real_instrument() {
+        let Some(rows) = anchors() else { return };
+        // The bands are a SCOPE statement: these funds are what the relation is about, so a band
+        // that excluded one of them would be calling a real equity fund unrealistic.
+        for (i, band, name) in [
+            (0usize, EQUITY_D5_BAND, "EQUITY_D5_BAND"),
+            (1usize, EQUITY_D10_BAND, "EQUITY_D10_BAND"),
+        ] {
+            let rung = RUNGS[i].0;
+            let mut all = ratios(&block(&rows, "w2001w"), i, rung);
+            all.extend(ratios(&block(&rows, "w1996"), i, rung));
+            let lo = all.iter().copied().fold(f64::INFINITY, f64::min);
+            let hi = all.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            assert!(
+                lo > band.0 && hi < band.1,
+                "{name} {band:?} does not admit every real instrument: the ratios run \
+                 {lo:.3}..{hi:.3}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_deep_rung_is_not_gated_because_no_band_could_fail() {
+        let Some(rows) = anchors() else { return };
+        // Recorded as a test so the omission reads as a decision rather than an oversight, and so
+        // that a re-measurement which TIGHTENS the deep rung tells someone it can now be graded.
+        let mut all = ratios(&block(&rows, "w2001w"), 2, 0.20);
+        all.extend(ratios(&block(&rows, "w1996"), 2, 0.20));
+        let lo = all.iter().copied().fold(f64::INFINITY, f64::min);
+        let hi = all.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        assert!(
+            hi / lo > 3.0,
+            "the 20% rung's real ratios now span only {lo:.2}..{hi:.2}; a band there could \
+             discriminate, so it should be gated like the other two"
+        );
+        let st = measure(&sim_paths(&default_world(), 4, 20, 1), 20);
+        let gated: Vec<String> = gate_checks(&st).into_iter().map(|(n, _, _)| n).collect();
+        assert!(
+            !gated.iter().any(|n| n.contains("d20")),
+            "a d20 gate band has appeared in {gated:?}"
         );
     }
 }

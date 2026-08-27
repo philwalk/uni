@@ -1,3 +1,190 @@
+## v0.21.0 — 2026-08-27
+
+**CHANGED — the equity depth rungs are graded against a real relation, not against SPY's levels**
+
+The three depth targets were SPY's time-under-water shares over 1993-2026 — 0.447 / 0.315 / 0.169 —
+and they contradicted the two rows above them in the same table. SPY produced those shares at 18.6%
+volatility and 0.554 return per unit volatility, while `equity vol %` and `return per vol` ask this
+model to run at 16.0 and 0.69. Thirty-five real equity funds at that operating point spend
+1.11x / 1.33x / 1.64x less time under water than SPY's levels demanded. The target set was asking
+for a market calmer than SPY, better-returning than SPY, and yet under water as long as SPY, which
+no real fund is; the only way to satisfy it was a market too deep for its own volatility.
+
+Each rung is now a ratio against what a real equity fund of the SAME volatility and return spends
+below its peak, targeted at 1.00 — the form `bond depth vs vol` already used. The relation is the
+random walk's own closed form for time under water, `exp(-2*rv*ln(1/(1-d))/vol)`, times a
+correction fitted linear in volatility across the 35 instruments in `test-data/equity-anchors`. The
+closed form carries the return dependence because the model runs at a return per unit volatility
+near 0.8 while the anchor funds span 0.20-0.53, and a fitted coefficient extrapolated that far is
+arithmetic; a closed form is not.
+
+The correction says real markets make new highs sooner than chance, and increasingly so the calmer
+they are. All three rungs independently reach 1.00 at the top of the real volatility range: the most
+volatile equity markets spend random-walk time under water, and one at 14% volatility spends about
+half of it. `EquityAnchorSuite` and `equity_anchor_tests` re-derive every constant from the fixture,
+so a re-measurement moves them or fails the build.
+
+Two rungs are gated, at bands admitting every real instrument in both windows — `equity d5 vs real
+0.75-1.30` and `equity d10 vs real 0.70-1.55`. The 20% rung is a fit target and a reported number
+but carries no band: its relation does not transport (R^2 0.25-0.41 to the independent window
+against 0.66-0.73 for the other two) and an honest band there would span 0.35-2.60, which cannot
+fail. A check that reads as verification while testing nothing is worse than no check.
+
+The rungs' weights were re-measured by `-noise`, because a ratio compounds the depth share's own
+sampling error with the volatility and return sampling in its denominator: 0.15 / 0.45 / 2.51
+against the absolute rungs' 0.22 / 0.34 / 0.55. The deep rung's 2.51 crushes its weight to ~0.04,
+which is the measurement saying that over one 25-year record its ratio cannot be read.
+
+**ADDED — `marketSim`/`market_sim`: `-fundvol X` exposes the fundamental's volatility**
+
+`fundVol` was the one `World` field with neither a CLI flag nor a `-calibrate` range, so no sweep
+and no search could reach it. It is the second axis of the depth profile: raising it 0.06 to 0.24
+moves time spent more than 10% below the running peak from 0.225 to 0.472 while measured volatility
+stays near 16%. The value channel passes only a few percent of any fundamental move into a single
+session, so fundamental variance accumulates into drawdown depth without showing up in daily return
+scale — which is why `drift` had been recorded as the only lever on the depth profile at constant
+volatility. It is now searched as well as flagged; against SPY's absolute levels a search free to
+raise it would have closed them by making the fundamental hotter still.
+
+**CHANGED — defaults recalibrated against the corrected targets**
+
+`fundVol` 0.13 → 0.041 is the substantive move; `depth` 16.1 → 16.94, `drift` 0.123 → 0.113,
+`volOfVol` 0.014 → 0.027, `valuePull` 0.0145 → 0.017, `stress` 5.6 → 5.37, `trendShare` 0.07 →
+0.055, `easing` 0.046 → 0.037, `inflSize` 0.10 → 0.084 and `discount` 5.0 → 5.73 follow it.
+`crowdImpact`, `refuge`, `margin` and every identity parameter are unchanged.
+
+Measured over eight seeds x 60 paths x 100 years, ratios against each target's anchor:
+
+| | 0.20.0 | 0.21.0 |
+|---|---|---|
+| equity d5 vs real | 1.19 | **0.98** |
+| equity d10 vs real | 1.55 | **1.03** |
+| equity d20 vs real | 2.98 | **1.49** |
+| equity vol % | 1.02 | 1.00 |
+| return per vol | 1.09 | 1.02 |
+| kurtosis | 0.42 | 0.49 |
+| crashes/century | 1.42 | 1.38 |
+| worst crash % | 1.51 | 1.44 |
+| median depth % | 0.97 | 0.85 |
+| clustering lag 1 | 1.06 | 1.10 |
+
+The gate goes from failing `equity d10 vs real` to **no failures on any seed**, and the 10% rung
+reads 0.93-1.06 across those eight seeds, so the agreement is not a seed draw.
+
+Two of the search's proposals were declined by hand, for reasons the loss cannot see. It pushed
+`crowdImpact` to its 0.01 range floor, where `meanCrowdFlow` reads 0.9% of the noise term — the
+reflexive channel switched off, which is the defect that diagnostic exists to catch. Pinned back at
+0.07 it reads 6.7%, and the pin also bought volatility (16.03 against 15.38) and crash depth. It
+also raised `refuge` to 0.159, taking bond volatility to 1.12x duration and outside its band; at
+the unchanged 0.11 it reads 1.03 and the equity side does not move at all.
+
+Candidates are scored on the median of three seeds. A single-seed refinement here found a 1.687
+that was a 2.15 median over five — depth-rung agreement is cheap to overfit, because the relation's
+denominator moves with the sample.
+
+**KNOWN — time under water and crash depth cannot both be right**
+
+Every world that puts the depth rungs near 1.00 lands `median depth %` at 0.78-0.81 of its -27.1
+anchor; the world this replaces held 0.97 there only while its 10% rung sat at 1.6. Measured across
+the global search's winner, the local optimum and six hand variants including `stress` at its range
+ceiling — nothing separates them, because cooling the fundamental makes drawdowns shorter AND
+shallower and no present lever deepens a crash without re-lengthening it. Read median crash depth
+as a level this model now understates; ranking and timing conclusions are unaffected. Closing it
+needs a channel that deepens crashes without adding low-frequency variance.
+
+**ADDED — `marketSim`/`market_sim`: `-emitall` batches survive past 1000 paths, and can be split
+across invocations**
+
+A consumer generating a null distribution writes thousands of paths, and paid a process start,
+a report ensemble and a 200-path gate ensemble for each one when it ran the simulator per path.
+`-emitall` already amortised all three — one invocation writes every path of the run — but two
+things stood between it and an ensemble of thousands.
+
+- The index was zero-padded to a fixed three digits, so a batch crossing 1000 wrote `f-999.tsv`
+  beside `f-1000.tsv` and lost the path-order sort the padding exists to give. The width now comes
+  from the highest index the batch writes, floored at 3: every ensemble of 1000 or fewer keeps the
+  names it has always had, and a larger one widens uniformly.
+- `-emitfrom K` writes indices `K..K+paths-1` instead of `0..paths-1`, so one batch can be split
+  across invocations — for a resume, or across machines — without repeating a path or an index.
+  Path k is a function of (world, years, seed, k) alone, so a chunk is byte-identical to the same
+  indices of the whole run: verified TSV and sidecar. Used without `-emitall` it is refused rather
+  than ignored, because silently writing `0..paths-1` under it is how every chunk of a job ends up
+  holding path 0.
+
+Two properties of a chunked batch, both deliberate. The report and the gate stay measured on
+`0..paths` — the verdict describes the WORLD, not the chunk — so at the default `-emitgate` every
+chunk's sidecar carries the same verdict; under `-emitgate 0`, which asks to be judged by the run's
+own sample, each chunk is judged by its own and they will differ. And the padding follows the
+highest index of THIS invocation, so chunks either side of 1000 differ in width: sort numerically,
+or emit the batch in one invocation.
+
+What this does not change is the cost of writing a path: at 33 years it is ~45 ms, nearly all of it
+formatting the eight columns, and it is per path rather than per invocation. `-emitall` is worth
+roughly 5x against a per-path invocation loop (~47 ms/path against ~245 ms), and a consumer
+generating 16,000 paths across parallel invocations measured 12 minutes end to end — the same
+45 ms/path. A faster emit formatter is the only thing that moves the remainder, and it is a
+byte-parity risk of the `mul_add` class.
+
+**ADDED — `marketSim`/`market_sim`: `-fundvol X` exposes the fundamental's volatility**
+
+`fundVol` was the one `World` field with neither a CLI flag nor a `-calibrate` range, so no sweep
+and no search could reach it. It is the second axis of the depth profile: raising it 0.06 to 0.24
+moves time spent more than 10% below the running peak from 0.225 to 0.472 while measured
+volatility stays near 16%. The value channel passes only a few percent of any fundamental move
+into a single session, so fundamental variance accumulates into drawdown depth without showing up
+in daily return scale — which is why `drift` had been recorded as the only lever on the depth
+profile at constant volatility.
+
+The default is unchanged and the shipped world is bit-identical; this adds reach, not a new
+calibration. `-calibrate` still does not search it: with the depth-rung targets stated as SPY's
+levels, a search free to raise `fundVol` would close them by making the fundamental hotter still.
+
+**CHANGED — `-calibrate` no longer searches `duration`, and cannot be made to again**
+
+`duration` is an identity parameter: it says which asset is being simulated, not how a market
+behaves, and its value is a real fund's published number. A duration chosen to reduce loss
+describes no bond anyone can buy. Worse, `-crossasset` grades the two bond relations by MOVING
+duration across the values real funds have — so a fitted duration would have that grader scoring
+the search's own choice against bands the same search was free to accommodate.
+
+The rule is now enforced rather than remembered: `IdentityParams`/`IDENTITY_PARAMS` names the
+class, the ranges are a named table beside it, and a contract test in each twin fails if one
+appears in the other. The 0.20.0 re-search proposed `duration = 11.1` and was refused by hand;
+that refusal is what this makes structural.
+
+`-duration` on the command line is unaffected, and `-crossasset` still walks the ladder. Only the
+random search is narrowed, from thirteen parameters to twelve. A `-calibrate` run at a given seed
+now explores different worlds, because each sample draws one fewer number — the same
+already-documented reason a recorded "best world" from an older release does not reproduce.
+
+**ADDED — the equity cross-index anchors are checked in**
+
+`test-data/equity-anchors/yahoo-2026-08-24.tsv` carries per-instrument volatility and depth-rung
+measurements for the future `-crossasset` equity leg: 88 rows over four window blocks, from daily
+total-return series. It is a MEASUREMENT fixture only — no constant in either twin is fitted from
+it yet, so nothing re-derives it and `FixtureGuardSuite` asserts trackedness rather than agreement.
+
+The methodology is validated by reproduction rather than asserted: the `w1993` row is SPY over the
+committed anchor window and reads the three depth fit targets (0.447 / 0.315 / 0.169) and the 18.6%
+volatility exactly, from uni's own definitions.
+
+The rows say something the single-index anchors cannot: depth is not a function of volatility
+alone. Return per unit of volatility carries what volatility does not — the same quantity that
+sets the model's own depth profile. On the band-fit block,
+`d10 = 0.1618 + 0.02156 x annVol - 0.4149 x (annRet/annVol)`, R2 0.67, fitted on all 35 rows
+because the internationals span the rv range that identifies its coefficient (a US-only refit
+flips the sign — collinearity, not information).
+
+The peak seed is part of the measurement, and the fixture measures its own bias rather than
+footnoting it. `depthShares` seeds the running peak at the first session, which truncates a
+drawdown inherited from before a window that opens mid-bear — and the 2001 window does. The
+`w2001w` block re-measures the same instruments with the peak seeded from full prior history:
+fitted on the truncated block, the 1996 window reads back at R2 0.47 with median ratio 1.08;
+fitted on `w2001w`, R2 0.66 and median 0.96. Bands come from `w2001w`; the truncated block stays
+as the measured warning. One more constraint for whoever fits: an equity rung needs TWO identity
+parameters set from the rung's own measurements (`depth` for its volatility, `drift` for its
+return), where the bond ladder moves one.
+
 ## v0.20.0 — 2026-08-26
 
 **CHANGED — the default world is recalibrated under the measured-precision objective; every
