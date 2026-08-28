@@ -273,6 +273,35 @@ themselves in their worst session; at 20% they are 0.34× as long and recover 0.
 barely moved. Read the worst-day column beside the decline column: a decline that grinds twice as
 long dilutes its worst session by construction. The finding is about duration, not tails.
 
+## The worst session — `-haltlimit`
+
+The largest one-session decline the market will print, as a simple fraction, with the pressure it
+could not fill **deferred to the next session**. Default 0.25.
+
+Before this existed, the worst session a world could produce was set by the `+/-0.50` numerical
+guard on log returns — `exp(-0.50) - 1 = -39.35%` — and the worst sessions piled against that wall
+instead of tailing off. If you read worst-case behaviour off an emitted path, you were reading the
+guard.
+
+A halt is not a wider guard. A guard truncates and throws away the remainder; a halt defers it, so a
+decline that cannot be filled in one session arrives as a **multi-session cascade**. That is what a
+real market does — US market-wide breakers close the day at −20%. It is decline-only, because that
+is the real asymmetry.
+
+**What to set it to.** Leave it at 0.25 unless you have a reason. It admits the worst session in the
+record — the S&P's −20.5% on 1987-10-19, a day that pre-dates the breaker system that would have
+stopped it — and these worlds span a century, most of it without any market-wide breaker.
+
+- `-haltlimit 0.20` — the strict post-1988 breaker world. Costs kurtosis: 0.98 → 0.86, because at
+  that level the halt starts removing the sessions the kurtosis anchor is made of.
+- `-haltlimit 0` — no halt, the pre-0.21.0 behaviour bit for bit. It fails `clamp shapes no tail`,
+  which is the point: at the default world the guard bound on 10.9% of deep-tail sessions and
+  produced every one of the ten worst.
+
+**If you are reading tails, read the two clamp diagnostics together.** `clamped X% of all sessions`
+says the guard is not distorting the body; `Y% of tail sessions` says it is not authoring the tail.
+The first passed at 0.000% in a world where the second read 10.9%.
+
 ## How tight are the anchors? — `-noise`
 
 Every fidelity target is a point read from one historical record. `-noise` reports, per target, the
@@ -535,10 +564,14 @@ These are properties of the model, not of the default, and they do not go away b
   before the recovery drag). Any hazard rate conditioned on "a crash happened" is mildly
   over-sampled. `-noise` now puts the real anchor at the 33rd percentile of model histories, where
   it sat at the 4th.
-- **The worst crash is overstated** (1.61; index paths near −92% against a real −56.8%, and
+- **The worst crash is overstated** (1.62; index paths near −92% against a real −56.8%, and
   mostly a horizon artifact — at the anchor's own 72 years the record sits mid-distribution, per
   `-noise`). No levered fund survives those, so ruin rates for levered sleeves are **upper bounds,
-  not estimates**.
+  not estimates**. This is a DRAWDOWN, accumulated over sessions; the worst single SESSION is a
+  separate question and is now set by `-haltlimit` rather than by a numerical constant.
+- **Every session past −18% comes from the liquidity spiral**, in every world measured. The jump
+  channel sets how OFTEN those sessions arrive; it does not set how large they are. If you are
+  studying tail magnitude, `-stress` and `-depth` are the dials, not `-jumpvar`.
 - **The median crash is now close** (0.94; −25.6% against a real −27.1%, up from 0.84). The
   recovery drag fixed this and the crash rate together — they were one defect, deep drawdowns
   recovering too fast, not two.

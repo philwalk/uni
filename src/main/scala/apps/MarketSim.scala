@@ -109,7 +109,7 @@ object MarketSim:
     * a key without touching this line fails the build at the moment the discrepancy is created,
     * next to the schema number that then has to be decided about.  A test cannot force the bump; it
     * can force the decision to be conscious, which is what this pair is for. */
-  val EmitSchema: Int = 3
+  val EmitSchema: Int = 4
 
   val EmitSidecarKeys: Vector[String] =
     Vector("generator", "version", "schema", "file", "columns", "header", "path", "world",
@@ -198,6 +198,10 @@ object MarketSim:
     s"              ;   (default ${Defaults.recoveryDrag}; 0 restores the symmetric pull of 0.20.0)",
     s"-recoveryfloor X ; weakest that pull may become, as a share of full strength",
     s"              ;   (default ${Defaults.recoveryFloor}; 1.0 with -recoverydrag 0 is 0.20.0)",
+    s"-haltlimit X  ; equity trading halt: largest ONE-session decline the market prints, as a",
+    s"              ;   simple fraction, with the unfilled pressure DEFERRED to the next session.",
+    s"              ;   0.20 is the US Level 3 breaker, which closes the day at -20%.  0 disables",
+    s"              ;   the mechanism and leaves the bare numerical guard (default ${Defaults.haltLimit})",
     "-crowd K      ; momentum (default), trendNNN, or volscaled — the last two make the crowd",
     "              ;   run the RULE UNDER TEST, closing the reflexive loop",
     s"-crowdimpact X; price pressure per unit of exposure the crowd trades (default ${Defaults.crowdImpact});",
@@ -249,6 +253,12 @@ object MarketSim:
     recoveryFloor: Double, // the residual arbitrage that never goes away, as a share of full
                            // strength.  1.0 with drag 0 is the old behaviour exactly.
     crowd: Crowd, crowdImpact: Double, panic: Double,
+    haltLimit: Double = 0.0,  // equity trading halt: the largest ONE-session decline the market
+                              // will print, as a simple fraction, with the unfilled pressure
+                              // deferred to the next session.  0 disables it, which is what the
+                              // frozen release rows below inherit -- correctly, since no release
+                              // before this one had the mechanism.
+
     duration: Double,   // bond duration: sensitivity of its fair value to the rate
     easing: Double,     // CAP on policy accommodation under equity stress, in rate points
     unwind: Double,     // how fast that accommodation is withdrawn, per year
@@ -270,6 +280,12 @@ object MarketSim:
                         trendPinned: Double,     // share of sessions on the numerical guard rails
                         targetSat: Double,       // share of sessions the choice target saturated
                         clampedDays: Int,        // both markets, post-burn-in
+                        eqFloorDays: Int,        // EQUITY sessions held off the downward guard,
+                                                 // post-burn-in; the equity leg alone because that
+                                                 // is the series a tail consumer reads
+                        eqTailDays: Int,         // equity sessions past `TailRef`, the denominator
+                        eqHaltDays: Int,         // equity sessions the trading halt bound, the
+                                                 // BINDING diagnostic for that mechanism
                         meanBondStress: Double,  // BINDING diagnostic for the bond spiral
                         pctBondStress: Double,   // share of sessions bond stress index > 0.5
                         duration: Double,        // the world's bond duration, carried so the gate can
@@ -289,7 +305,7 @@ object MarketSim:
     trendShare = 0.055, depth = 16.94, stress = 5.37, beta = 3.0, drift = 0.113, fundVol = 0.041,
     rateMean = 0.042, volPersist = 0.99, volOfVol = 0.027,
     jumpVar = 0.10, jumpRate = 0.0010, valuePull = 0.045,
-    recoveryDrag = 10.0, recoveryFloor = 0.10,
+    recoveryDrag = 10.0, recoveryFloor = 0.10, haltLimit = 0.25,
     crowd = Crowd.Momentum, crowdImpact = 0.07, panic = 0.0, duration = 13.5,
     easing = 0.052, unwind = 0.35, refuge = 0.11,
     inflProb = 0.20, inflSize = 0.10, inflSpeed = 0.010, rateSpeed = 3.0, discount = 5.73,
@@ -481,13 +497,60 @@ object MarketSim:
     * sessions, so it shapes recoveries from real drawdowns and nothing else. */
   val DrawdownRef = 0.10
 
+  /** What counts as the DEEP tail for the guard's own accounting: a session losing more than 0.20
+    * in log terms, about -18% simple.  The real record holds roughly one such session per century,
+    * so this is the region where a consumer reading worst-case behaviour is reading a handful of
+    * events -- and where a guard that binds at all determines what the worst one WAS.
+    *
+    * Cut at 0.10 first and the statistic read 1.1-1.4% in every world tried, against a guard that
+    * was authoring every one of the ten worst sessions: the shallower threshold buries the signal
+    * in two orders of magnitude of ordinary bad days, and a band drawn there cannot fail. */
+  val TailRef = 0.20
+
+  /** TRADING HALT -- a market-structure floor on one session's decline, with the unfilled pressure
+    * DEFERRED to the next session rather than discarded.
+    *
+    * Why a mechanism and not a wider guard.  The numerical guard truncates; whatever wanted to
+    * happen past it is thrown away, so the worst session a world can produce is the guard's own
+    * value and the sessions just past it pile against that wall.  A halt is what a real market does
+    * instead: US market-wide breakers close the day at a 20% decline, and the selling that could not
+    * be filled arrives the NEXT session.  That is the whole difference -- a halt defers, it does not
+    * cancel -- and it is why the tail comes out as a multi-session cascade rather than one
+    * impossible day.  The worst real S&P session is -20.5%, in 1987, before breakers existed.
+    *
+    * `haltLimit` is a SIMPLE decline fraction so it can be read against the breaker level directly:
+    * 0.20 is the Level 3 close.  DECLINE-ONLY, because that is the real asymmetry; large advances
+    * keep the numerical guard, which is the job that guard was written for.
+    *
+    * WHY THE DEFAULT IS 0.25 AND NOT THE BREAKER'S OWN 0.20.  A floor must admit the record it is
+    * calibrated against, and the worst real S&P session is -20.5% (1987-10-19) -- a day that
+    * PRE-DATES the breaker system it would be excluded by.  These worlds span a century, most of
+    * which had no market-wide breaker at all, so 0.25 sits above the empirical worst and below the
+    * no-structure-at-all of a bare guard.  It also costs nothing: the guard's grip on the tail goes
+    * 10.9% -> 0.0% while kurtosis holds at 27.50 and every other calibrated statistic moves in the
+    * third decimal.  `-haltlimit 0.20` gives the strict post-1988 world for anyone who wants it, at
+    * a stated price -- kurtosis 0.98 -> 0.86, because at that level the halt starts removing the
+    * sessions the kurtosis anchor is made of.
+    *
+    * At 0.0 the mechanism is absent and `carry` never leaves zero, so every earlier world is
+    * reproduced BIT-IDENTICALLY -- the halt consumes no random draws. */
   final class Market(kValue: Double, stressK: Double, impact: Double,
-                     recoveryDrag: Double = 0.0, recoveryFloor: Double = 1.0):
+                     recoveryDrag: Double = 0.0, recoveryFloor: Double = 1.0,
+                     haltLimit: Double = 0.0):
+    private val floorLog = if haltLimit <= 0.0 then Double.NegativeInfinity
+                           else math.log(1.0 - haltLimit)
+    private var carry = 0.0
+    var haltDays = 0
     var logP = 0.0
     var peak = 0.0
     var stressIdx = 0.0
     var lastLiq = impact
     var clamps = 0
+    /** Sessions on the DOWNWARD guard, and sessions in the tail at all.  Counted separately from
+      * `clamps` because the question the gate has to answer is not how often the guard binds --
+      * it binds on almost nothing -- but what share of the extreme tail it SHAPES. */
+    var floorDays = 0
+    var tailDays = 0
     private var scaleVar = 0.01 * 0.01
     def step(fair: Double, flowPlusNoise: Double): Double =
       val scale = math.sqrt(scaleVar)
@@ -527,8 +590,15 @@ object MarketSim:
       // was silently shaping the tail — kurtosis 26.8 at ±0.25 vs 35.8 at ±0.50 — so it sits at
       // ±0.50, far from any plausible daily move (worst real S&P day ~ -23% log), and the gate
       // below rejects any world where it engages enough to matter.
-      val ret   = math.max(-0.50, math.min(0.50, raw))
-      if ret != raw then clamps += 1
+      // Deferred pressure from a halted session arrives here, ahead of this session's own bound.
+      val rawC  = raw + carry
+      val halted = rawC < floorLog
+      if halted then { haltDays += 1; carry = rawC - floorLog } else carry = 0.0
+      val bound = if halted then floorLog else rawC
+      val ret   = math.max(-0.50, math.min(0.50, bound))
+      if ret != bound then clamps += 1
+      if ret != bound && bound < 0.0 then floorDays += 1
+      if ret < -TailRef then tailDays += 1
       logP += ret
       if logP > peak then peak = logP
       scaleVar  = 0.995 * scaleVar + 0.005 * ret * ret
@@ -557,7 +627,11 @@ object MarketSim:
     val dt   = 1.0 / DaysPerYear
     val sqdt = math.sqrt(dt)
 
-    val eqM = new Market(w.valuePull, w.stress, 12.0 / w.depth, w.recoveryDrag, w.recoveryFloor)
+    // The halt is an EQUITY market-structure rule.  The bond leg keeps the bare guard: there is no
+    // market-wide breaker on Treasuries, and inventing one would be a fudge wearing a mechanism's
+    // name.
+    val eqM = new Market(w.valuePull, w.stress, 12.0 / w.depth, w.recoveryDrag, w.recoveryFloor,
+                         w.haltLimit)
     val bdM = new Market(KValueBond, w.stress, 1.0)
 
     var logVbase = 0.0
@@ -588,6 +662,7 @@ object MarketSim:
     var bondStressSum = 0.0; var bondStressHi = 0
     var crowdFlowSum = 0.0
     var clampsAtBurn = 0
+    var eqFloorAtBurn = 0; var eqTailAtBurn = 0; var eqHaltAtBurn = 0
 
     var i = 0
     while i < tot do
@@ -729,13 +804,18 @@ object MarketSim:
         bondStressSum += bdM.stressIdx
         crowdFlowSum += math.abs(eqFlow)
         if bdM.stressIdx > 0.5 then bondStressHi += 1
-      if i == BurnIn then clampsAtBurn = eqM.clamps + bdM.clamps
+      if i == BurnIn then
+        clampsAtBurn = eqM.clamps + bdM.clamps
+        eqFloorAtBurn = eqM.floorDays; eqTailAtBurn = eqM.tailDays
+        eqHaltAtBurn = eqM.haltDays
       i += 1
 
     Path(px.drop(BurnIn), rt.drop(BurnIn), fv.drop(BurnIn), lq.drop(BurnIn), bq.drop(BurnIn),
          bp.drop(BurnIn), ip.drop(BurnIn), cp.drop(BurnIn),
          wTrendSum / n, pinnedCnt.toDouble / n, satCnt.toDouble / n,
          eqM.clamps + bdM.clamps - clampsAtBurn,
+         eqM.floorDays - eqFloorAtBurn, eqM.tailDays - eqTailAtBurn,
+         eqM.haltDays - eqHaltAtBurn,
          bondStressSum / n, bondStressHi.toDouble / n, w.duration, crowdFlowSum / n)
 
   // ---- stylised-fact measurements ------------------------------------------------------------
@@ -907,7 +987,12 @@ object MarketSim:
   final case class WorldStats(vol: Double, kurt: Double, ac1: Double, ac20: Double, annRet: Double,
                               nEpisodes: Int, epPerPath: Double, depthMed: Double, worstDepth: Double,
                               vCount: Int, midCount: Int, uCount: Int, nShapes: Int, censored: Int,
-                              clampPct: Double, trendShare: Double, yearsPerPath: Double,
+                              clampPct: Double,
+                              haltPct: Double,       // share of equity sessions the halt bound
+                              tailFloorPct: Double,  // share of EQUITY tail sessions sitting ON the
+                                                     // downward guard: the guard's grip on the tail,
+                                                     // which `clampPct` cannot see
+                              trendShare: Double, yearsPerPath: Double,
                               trendPinned: Double, targetSat: Double,
                               bondVol: Double, bondGrowth: Double, bondInfl: Double,
                               corrCalm: Double, corrInfl: Double,
@@ -975,6 +1060,13 @@ object MarketSim:
       pearson(idx.map(i => math.log(sp.price(i) / sp.price(i - 1))),
               idx.map(i => math.log(sp.bond(i) / sp.bond(i - 1))))
     })
+    // POOLED, not a median of per-path shares: most paths hold no tail session at all, so a median
+    // would read 0 forever and the check built on it could not fail.
+    val tailSessions = sims.map(_.eqTailDays.toLong).sum
+    val tailFloorShare =
+      if tailSessions <= 0L then 0.0
+      else sims.map(_.eqFloorDays.toLong).sum * 100.0 / tailSessions
+
     WorldStats(
       vol  = med(rets.map(r => math.sqrt(MatD(r).power(2).mean * DaysPerYear))),
       kurt = med(rets.map(kurtosis)),
@@ -986,6 +1078,8 @@ object MarketSim:
       vCount = shapes.count(_ > 1.5), midCount = shapes.count(x => x >= 0.67 && x <= 1.5),
       uCount = shapes.count(_ < 0.67), nShapes = shapes.size, censored = eps.count(_.censored),
       clampPct = sims.map(_.clampedDays.toLong).sum / days * 100.0,
+      haltPct = sims.map(_.eqHaltDays.toLong).sum / days * 100.0,
+      tailFloorPct = tailFloorShare,
       trendShare = sims.map(_.meanTrendShare).sum / sims.size, yearsPerPath = years.toDouble,
       trendPinned = sims.map(_.trendPinned).sum / sims.size,
       targetSat = sims.map(_.targetSat).sum / sims.size,
@@ -1072,6 +1166,11 @@ object MarketSim:
       // 0.02% ~ one clamped session per 20 path-years.  The old bound (0.5%) would have passed a
       // world where the clamp was already reshaping kurtosis by a third.
       ("clamp rarely binds",        st.clampPct < 0.02, Realism),
+      // THE DENOMINATOR IS THE POINT.  `clampPct` measures the guard against ALL sessions, where it
+      // is negligible by construction and passes in worlds whose worst sessions are ENTIRELY its
+      // doing.  This measures it against the tail it actually touches.  Both are kept: one says the
+      // guard is not distorting the body, the other that it is not authoring the tail.
+      ("clamp shapes no tail",      st.tailFloorPct < 2.0, Realism),
       // RELATIVE to duration, not absolute.  The old 7-20% band was TLT's: of eight real funds it
       // admitted one, and asserted of the US Aggregate (4.24%) that it is not a market.  0.5-2.5
       // per year of duration admits every fund measured, high yield at 2.001 included, and still
@@ -1284,7 +1383,7 @@ object MarketSim:
     clusterWindow = "CRSP 1926-2026, the century", clusterYears = 100,
     vol = 16.0,          volSd = 0.10,
     retVol = 0.69,       retVolSd = 0.20,
-    kurt = 28.0,         kurtSd = 2.65,
+    kurt = 28.0,         kurtSd = 1.68,
     ac1 = 0.299,         ac1Sd = 0.09,
     ac20 = 0.225,        ac20Sd = 0.11,
     crashes = 20.7,      crashesSd = 0.22,
@@ -1326,7 +1425,7 @@ object MarketSim:
     clusterWindow = "QQQ 1999-2026", clusterYears = 27,
     vol = 26.90,         volSd = 0.10,
     retVol = 0.38,       retVolSd = 0.20,
-    kurt = 9.55,         kurtSd = 2.65,
+    kurt = 9.55,         kurtSd = 1.38,
     ac1 = 0.293,         ac1Sd = 0.09,
     ac20 = 0.249,        ac20Sd = 0.11,
     crashes = 25.6,      crashesSd = 0.22,
@@ -1946,7 +2045,8 @@ object MarketSim:
       println(f"\nWORLD: $wname%-34s ${if reflexive then "[REFLEXIVE] " else ""}%s${if ok then "" else "*** OUT OF RANGE — excluded from ranks ***"}%s")
       println(f"  inflation ${st.inflAnn}%.1f%%/yr   eq vol ${st.vol * 100}%.1f%%  kurt ${st.kurt}%.1f  clus ${st.ac1}%.2f/${st.ac20}%.2f  " +
               f"crashes/path ${st.epPerPath}%.1f  depth ${st.depthMed}%.1f%%  censored ${st.censored}%d  " +
-              f"trend share ${st.trendShare}%.2f  clamp ${st.clampPct}%.3f%%")
+              f"trend share ${st.trendShare}%.2f  clamp ${st.clampPct}%.3f%% " +
+              f"(tail ${st.tailFloorPct}%.1f%%)")
       println(f"  bond vol ${st.bondVol * 100}%.1f%%  growth-crash ${pm(st.bondGrowth, 0, 1)}%s  infl-crash ${pm(st.bondInfl, 0, 1)}%s  " +
               f"corr ${pm(st.corrCalm, 0, 2)}%s/${pm(st.corrInfl, 0, 2)}%s  bond spiral ${st.pctBondStress * 100}%.1f%% of sessions")
       println(f"  ${"rule"}%-34s ${"ret/yr"}%8s ${"worst5%"}%8s ${"maxDD"}%7s ${"realDD"}%7s ${"ruin"}%5s " +
@@ -2926,6 +3026,7 @@ object MarketSim:
       ("volOfVol", ef(w.volOfVol)), ("jumpVar", ef(w.jumpVar)),
       ("jumpRate", ef(w.jumpRate)), ("valuePull", ef(w.valuePull)),
       ("recoveryDrag", ef(w.recoveryDrag)), ("recoveryFloor", ef(w.recoveryFloor)),
+      ("haltLimit", ef(w.haltLimit)),
       ("crowd", jsonStr(crowdName(w.crowd))), ("crowdImpact", ef(w.crowdImpact)),
       ("panic", ef(w.panic)), ("duration", ef(w.duration)),
       ("easing", ef(w.easing)), ("unwind", ef(w.unwind)), ("refuge", ef(w.refuge)),
@@ -3118,6 +3219,7 @@ object MarketSim:
     var volPersist = Defaults.volPersist; var volOfVol = Defaults.volOfVol
     var jumpVar = Defaults.jumpVar; var jumpRate = Defaults.jumpRate
     var recoveryDrag = Defaults.recoveryDrag; var recoveryFloor = Defaults.recoveryFloor
+    var haltLimit = Defaults.haltLimit
     var valuePull = Defaults.valuePull
     var crowdName = "momentum"; var crowdImpact = Defaults.crowdImpact; var panic = Defaults.panic
     var drift = Defaults.drift; var fundVol = Defaults.fundVol; var rateMean = Defaults.rateMean
@@ -3167,6 +3269,7 @@ object MarketSim:
       case "-anchors"    => anchorSpec = consumeNext
       case "-recoverydrag"  => recoveryDrag = numOr("-recoverydrag", consumeNext)
       case "-recoveryfloor" => recoveryFloor = numOr("-recoveryfloor", consumeNext)
+      case "-haltlimit"  => haltLimit = numOr("-haltlimit", consumeNext)
       case "-crowd"      => crowdName = consumeNext
       case "-crowdimpact"=> crowdImpact = numOr("-crowdimpact", consumeNext)
       case "-panic"      => panic = numOr("-panic", consumeNext)
@@ -3222,6 +3325,7 @@ object MarketSim:
                   volPersist = volPersist, volOfVol = volOfVol,
                   jumpVar = jumpVar, jumpRate = jumpRate, valuePull = valuePull,
                   recoveryDrag = recoveryDrag, recoveryFloor = recoveryFloor,
+                  haltLimit = haltLimit,
                   crowd = crowd, crowdImpact = crowdImpact, panic = panic,
                   duration = duration, easing = easing, unwind = unwind, refuge = refuge,
                   inflProb = inflProb, inflSize = inflSize,
@@ -3343,7 +3447,9 @@ object MarketSim:
             f"      real TLT   -   / 0.510 /   -")
     println(f"  binding diagnostics    trend share ${st.trendShare}%.2f (pinned ${st.trendPinned * 100}%.1f%%, " +
             f"target saturated ${st.targetSat * 100}%.1f%%)   bond spiral ${st.pctBondStress * 100}%.1f%% of sessions   " +
-            f"clamped ${st.clampPct}%.3f%%")
+            f"clamped ${st.clampPct}%.3f%% of all sessions, " +
+            f"${st.tailFloorPct}%.1f%% of tail sessions   " +
+            f"halts ${st.haltPct}%.3f%%")
     println(f"                         crowd flow ${st.crowdFlow * 1e4}%.2f bp/session " +
             f"(${st.crowdFlow / SigmaN * 100}%.1f%% of the noise term) — the reflexive channel")
 

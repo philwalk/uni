@@ -160,3 +160,57 @@ class MarketSimContractSuite extends FunSuite:
     assertEquals(MarketSim.crossAssetVerdict(1, 1, Vector(("a", 3), ("b", 1))), ("FAIL", false),
       "a resolved miss outranks an unresolved edge")
   }
+
+  test("the trading halt is absent at zero, and the frozen release rows inherit that") {
+    // The halt consumes no random draws, so `haltLimit = 0` has to reproduce every earlier world
+    // BIT-IDENTICALLY -- that is what makes it addable without re-searching the calibration. The
+    // release rows must carry 0 for the same reason the jump channel's fields do: no release
+    // before this one had the mechanism, and a row claiming otherwise would restate today's model
+    // under yesterday's version number.
+    MarketSim.Releases.filter(_._1 < "0.21.0").foreach: (name, w) =>
+      assertEquals(w.haltLimit, 0.0, s"release row $name must carry no halt")
+    assert(MarketSim.Defaults.haltLimit > 0.0, "the shipped world runs WITH the halt")
+  }
+
+  test("a halted session prints the floor exactly, and defers the rest to the next one") {
+    // The whole difference from the numerical guard: a halt DEFERS, it does not cancel. Drive one
+    // market far past its floor with a single enormous sell order and nothing else, and the
+    // shortfall has to reappear.
+    val floor = math.log(1.0 - 0.25)
+    val m = new MarketSim.Market(0.0, 0.0, 1.0, 0.0, 1.0, 0.25)
+    val first = m.step(0.0, -1.0)
+    assertEqualsDouble(first, floor, 1e-12, "the halted session prints the floor, not the order")
+    assertEquals(m.haltDays, 1)
+    // Second session: the deferred remainder (-1.0 - floor) is still below the floor, so it halts
+    // again rather than arriving all at once. The cascade IS the mechanism.
+    val second = m.step(0.0, 0.0)
+    assertEqualsDouble(second, floor, 1e-12, "the deferred pressure halts the next session too")
+    assertEquals(m.haltDays, 2)
+  }
+
+  test("the halt is decline-only, and leaves an ordinary session untouched") {
+    // Large advances keep the bare numerical guard: the real asymmetry is one-sided, and inventing
+    // an upside halt would be a fudge wearing a mechanism's name.
+    val m = new MarketSim.Market(0.0, 0.0, 1.0, 0.0, 1.0, 0.25)
+    assertEqualsDouble(m.step(0.0, 0.01), 0.01, 1e-12, "an ordinary session is not touched")
+    assertEquals(m.haltDays, 0)
+    assertEqualsDouble(m.step(0.0, 0.40), 0.40, 1e-12, "an advance past the floor's size is not halted")
+    assertEquals(m.haltDays, 0)
+  }
+
+  test("the tail-floor check is not vacuous: the 0.21.0 world fails it") {
+    // The reason this check exists. `clampPct` measures the guard against ALL sessions, where it is
+    // negligible by construction -- 0.000% in the world below -- while the guard was authoring one
+    // in ten of that world's deep-tail sessions. A gate row that passes everywhere is not a test,
+    // so this pins that the row DISCRIMINATES: off, it fails; on, it passes.
+    val off = MarketSim.measure(MarketSim.simPaths(
+      MarketSim.Defaults.copy(haltLimit = 0.0), 60, 100, MarketSim.DefaultSeed), 100)
+    val on  = MarketSim.measure(MarketSim.simPaths(
+      MarketSim.Defaults, 60, 100, MarketSim.DefaultSeed), 100)
+    assert(off.tailFloorPct > 2.0,
+      s"without the halt the guard must still shape the tail, read ${off.tailFloorPct}%")
+    assertEqualsDouble(on.tailFloorPct, 0.0, 1e-12,
+      "with the halt the guard must not touch the tail at all")
+    assert(off.clampPct < 0.02,
+      "and the OLD check must pass in that same world -- which is why it missed this")
+  }

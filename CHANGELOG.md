@@ -1,5 +1,47 @@
 ## v0.21.0 — 2026-08-27
 
+**FIXED — the numerical guard was authoring the extreme tail, and the check that watched it could
+not see that**
+
+The `+/-0.50` guard on a session's log return is documented as protecting arithmetic, and
+`clamp rarely binds` graded it against ALL sessions: 0.000% at the shipped world, a comfortable
+PASS. Measured against the sessions it actually touches, it bound on **10.9%** of the world's
+deep-tail sessions and produced every one of the ten worst. `exp(-0.50) - 1 = -39.35%`, and the
+worst sessions piled against that wall rather than tailing off. A consumer reading worst-case
+behaviour off an emitted path was reading the guard, not the model.
+
+Two changes, and the first is the one that generalises.
+
+**`clamp shapes no tail`** — a second gate row measuring the guard against sessions past 0.20 in log
+terms, where the real record holds about one event per century. Both rows are kept: one says the
+guard is not distorting the body, the other that it is not authoring the tail. Cut at 0.10 first and
+the statistic read 1.1-1.4% everywhere against a guard that was shaping every worst session — the
+shallower threshold buries the signal in ordinary bad days and the band could not fail.
+
+**`-haltlimit` — a trading halt, replacing truncation with market structure.** A guard discards
+whatever wanted to happen past it; a halt DEFERS it to the next session, which is what a real market
+does. US market-wide breakers close the day at a 20% decline. The unfilled pressure carries, so the
+tail arrives as a multi-session cascade rather than one impossible day. Decline-only, because that
+is the real asymmetry; advances keep the guard, which is the job it was written for.
+
+**Default 0.25, not the breaker's own 0.20.** A floor must admit the record it is calibrated
+against, and the worst real S&P session is -20.5% (1987-10-19) — a day that pre-dates the breaker
+system that would exclude it. These worlds span a century, most of it without any market-wide
+breaker. `-haltlimit 0.20` gives the strict post-1988 world at a stated price: kurtosis 0.98 -> 0.86,
+because at that level the halt starts removing the sessions the kurtosis anchor is made of.
+
+At 0.25 the guard's grip on the tail goes **10.9% -> 0.0%** while the calibration holds: kurtosis
+stays at 27.50, and equity volatility, clustering, crash rate and median depth all move in the third
+decimal. The halt binds on 0.002% of sessions. `-haltlimit 0` reproduces the pre-halt world bit for
+bit — the mechanism consumes no random draws — and every frozen release row carries 0, correctly,
+since no earlier release had it.
+
+**Kurtosis spread re-frozen: `kurtSd` 2.65 -> 1.68 (S&P), 2.65 -> 1.38 (Nasdaq).** A re-measurement,
+not a correction: truncating the tail at an arbitrary constant was itself a large source of
+kurtosis variation across histories, and removing it nearly halves the spread. No other weight moved.
+
+`EmitSchema` 3 -> 4: the sidecar's world block gains `haltLimit`.
+
 **ADDED — `-ddshape`: how a decline is delivered, not how deep it gets**
 
 Median decline duration, recovery duration, time underwater and **worst-day share** — the fraction

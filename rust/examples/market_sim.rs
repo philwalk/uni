@@ -77,7 +77,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// without touching this line fails the build at the moment the discrepancy is created, next to the
 /// schema number that then has to be decided about. A test cannot force the bump; it can force the
 /// decision to be conscious, which is what this pair is for.
-const EMIT_SCHEMA: u32 = 3;
+const EMIT_SCHEMA: u32 = 4;
 
 // Referenced only from the test module below; in a normal build of the example it is
 // deliberately unread — the writer must not consult its own contract.
@@ -235,6 +235,7 @@ fn default_world() -> World {
         vol_of_vol: 0.027,
         recovery_drag: 10.0,
         recovery_floor: 0.10,
+        halt_limit: 0.25,
         jump_var: 0.10,
         jump_rate: 0.0010,
         value_pull: 0.045,
@@ -286,6 +287,7 @@ fn v0_19_2() -> World {
         vol_of_vol: 0.011,
         recovery_drag: 0.0,
         recovery_floor: 1.0,
+        halt_limit: 0.0,
         jump_var: 0.0,
         jump_rate: 0.0,
         value_pull: 0.013,
@@ -348,6 +350,7 @@ fn v0_20_0() -> World {
         vol_of_vol: 0.014,
         recovery_drag: 0.0,
         recovery_floor: 1.0,
+        halt_limit: 0.0,
         jump_var: 0.0,
         jump_rate: 0.0,
         value_pull: 0.0145,
@@ -403,6 +406,11 @@ struct World {
     /// the residual arbitrage that never goes away, as a share of full strength. 1.0 with drag 0
     /// is the old behaviour exactly.
     recovery_floor: f64,
+    /// Equity trading halt: the largest ONE-session decline the market prints, as a simple
+    /// fraction, with the unfilled pressure deferred to the next session. 0 disables it, which is
+    /// what the frozen release rows inherit -- correctly, since no release before this one had the
+    /// mechanism.
+    halt_limit: f64,
     /// share of the equity flow's VARIANCE carried by jumps rather than diffusion. 0 disables the
     /// channel and reproduces pre-0.21 behaviour byte for byte — the draws come from their own
     /// stream, so nothing else in the path shifts.
@@ -456,6 +464,12 @@ struct Path {
     target_sat: f64,
     /// both markets, post-burn-in
     clamped_days: usize,
+    /// EQUITY sessions held off the downward guard, post-burn-in, and the sessions past `TAIL_REF`
+    /// that are their denominator. The equity leg alone because that is the series a tail consumer
+    /// reads. `eq_halt_days` is the BINDING diagnostic for the trading halt.
+    eq_floor_days: usize,
+    eq_tail_days: usize,
+    eq_halt_days: usize,
     /// BINDING diagnostic for the bond spiral
     mean_bond_stress: f64,
     /// share of sessions bond stress index > 0.5
@@ -476,23 +490,46 @@ struct Path {
 /// sessions, so it shapes recoveries from real drawdowns and nothing else.
 const DRAWDOWN_REF: f64 = 0.10;
 
+/// What counts as the DEEP tail for the guard's own accounting: a session losing more than 0.20 in
+/// log terms, about -18% simple. The real record holds roughly one such session per century, so
+/// this is the region where a consumer reading worst-case behaviour is reading a handful of events
+/// -- and where a guard that binds at all determines what the worst one WAS.
+///
+/// Cut at 0.10 first and the statistic read 1.1-1.4% in every world tried, against a guard that was
+/// authoring every one of the ten worst sessions: the shallower threshold buries the signal in two
+/// orders of magnitude of ordinary bad days, and a band drawn there cannot fail.
+const TAIL_REF: f64 = 0.20;
+
 struct Market {
     k_value: f64,
     stress_k: f64,
     impact: f64,
     recovery_drag: f64,
     recovery_floor: f64,
+    /// Trading halt: the largest ONE-session decline this market prints, as a simple fraction,
+    /// pre-converted to the log floor it implies. `NEG_INFINITY` disables the mechanism.
+    floor_log: f64,
+    /// Pressure a halted session could not fill, deferred to the next one. A halt DEFERS, it does
+    /// not cancel -- that is the whole difference from the numerical guard, and it is why the tail
+    /// comes out as a multi-session cascade rather than one impossible day.
+    carry: f64,
+    halt_days: usize,
     log_p: f64,
     peak: f64,
     stress_idx: f64,
     last_liq: f64,
     clamps: usize,
+    /// Sessions on the DOWNWARD guard, and sessions in the tail at all. Counted separately from
+    /// `clamps` because the question the gate has to answer is not how often the guard binds -- it
+    /// binds on almost nothing -- but what share of the extreme tail it SHAPES.
+    floor_days: usize,
+    tail_days: usize,
     scale_var: f64,
 }
 
 impl Market {
     fn new(k_value: f64, stress_k: f64, impact: f64) -> Self {
-        Self::with_recovery(k_value, stress_k, impact, 0.0, 1.0)
+        Self::with_recovery(k_value, stress_k, impact, 0.0, 1.0, 0.0)
     }
 
     fn with_recovery(
@@ -501,6 +538,7 @@ impl Market {
         impact: f64,
         recovery_drag: f64,
         recovery_floor: f64,
+        halt_limit: f64,
     ) -> Self {
         Self {
             k_value,
@@ -508,11 +546,20 @@ impl Market {
             impact,
             recovery_drag,
             recovery_floor,
+            floor_log: if halt_limit <= 0.0 {
+                f64::NEG_INFINITY
+            } else {
+                (1.0 - halt_limit).ln()
+            },
+            carry: 0.0,
+            halt_days: 0,
             log_p: 0.0,
             peak: 0.0,
             stress_idx: 0.0,
             last_liq: impact,
             clamps: 0,
+            floor_days: 0,
+            tail_days: 0,
             scale_var: 0.01 * 0.01,
         }
     }
@@ -553,9 +600,25 @@ impl Market {
         // statistic in every gate-passing world is BIT-IDENTICAL (the clamp consumes no
         // draws and never binds there). It sits at ±0.50, far from any plausible daily move
         // (worst real S&P day ~ -23% log), and the gate rejects any world where it engages.
-        let ret = (-0.50f64).max(0.50f64.min(raw));
-        if ret != raw {
+        // Deferred pressure from a halted session arrives here, ahead of this session's own bound.
+        let raw_c = raw + self.carry;
+        let halted = raw_c < self.floor_log;
+        if halted {
+            self.halt_days += 1;
+            self.carry = raw_c - self.floor_log;
+        } else {
+            self.carry = 0.0;
+        }
+        let bound = if halted { self.floor_log } else { raw_c };
+        let ret = (-0.50f64).max(0.50f64.min(bound));
+        if ret != bound {
             self.clamps += 1;
+            if bound < 0.0 {
+                self.floor_days += 1;
+            }
+        }
+        if ret < -TAIL_REF {
+            self.tail_days += 1;
         }
         self.log_p += ret;
         if self.log_p > self.peak {
@@ -608,6 +671,7 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
         12.0 / w.depth,
         w.recovery_drag,
         w.recovery_floor,
+        w.halt_limit,
     );
     let mut bd_m = Market::new(K_VALUE_BOND, w.stress, 1.0);
 
@@ -649,6 +713,9 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
     let mut bond_stress_hi = 0usize;
     let mut crowd_flow_sum = 0.0f64;
     let mut clamps_at_burn = 0usize;
+    let mut eq_floor_at_burn = 0usize;
+    let mut eq_tail_at_burn = 0usize;
+    let mut eq_halt_at_burn = 0usize;
 
     let mut i = 0usize;
     while i < tot {
@@ -840,6 +907,9 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
         }
         if i == BURN_IN {
             clamps_at_burn = eq_m.clamps + bd_m.clamps;
+            eq_floor_at_burn = eq_m.floor_days;
+            eq_tail_at_burn = eq_m.tail_days;
+            eq_halt_at_burn = eq_m.halt_days;
         }
         i += 1;
     }
@@ -858,6 +928,9 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
         trend_pinned: pinned_cnt as f64 / nf,
         target_sat: sat_cnt as f64 / nf,
         clamped_days: eq_m.clamps + bd_m.clamps - clamps_at_burn,
+        eq_floor_days: eq_m.floor_days - eq_floor_at_burn,
+        eq_tail_days: eq_m.tail_days - eq_tail_at_burn,
+        eq_halt_days: eq_m.halt_days - eq_halt_at_burn,
         mean_bond_stress: bond_stress_sum / nf,
         pct_bond_stress: bond_stress_hi as f64 / nf,
         duration: w.duration,
@@ -1037,6 +1110,11 @@ struct WorldStats {
     n_shapes: usize,
     censored: usize,
     clamp_pct: f64,
+    /// Share of equity sessions the halt bound.
+    halt_pct: f64,
+    /// Share of EQUITY tail sessions sitting ON the downward guard: the guard's grip on the tail,
+    /// which `clamp_pct` cannot see.
+    tail_floor_pct: f64,
     trend_share: f64,
     years_per_path: f64,
     trend_pinned: f64,
@@ -1331,6 +1409,14 @@ fn measure(sims: &[Path], years: usize) -> WorldStats {
 
     let dpy = DAYS_PER_YEAR as f64;
     let n_sims = sims.len() as f64;
+    // POOLED, not a median of per-path shares: most paths hold no tail session at all, so a median
+    // would read 0 forever and the check built on it could not fail.
+    let tail_sessions: usize = sims.iter().map(|s| s.eq_tail_days).sum();
+    let tail_floor_share = if tail_sessions == 0 {
+        0.0
+    } else {
+        scala_sum(sims.iter().map(|s| s.eq_floor_days as f64)) * 100.0 / tail_sessions as f64
+    };
     let depths: Vec<f64> = eps.iter().map(|e| e.depth_pct).collect();
 
     WorldStats {
@@ -1368,6 +1454,8 @@ fn measure(sims: &[Path], years: usize) -> WorldStats {
         n_shapes: shapes.len(),
         censored: eps.iter().filter(|e| e.censored()).count(),
         clamp_pct: scala_sum(sims.iter().map(|s| s.clamped_days as f64)) / days * 100.0,
+        halt_pct: scala_sum(sims.iter().map(|s| s.eq_halt_days as f64)) / days * 100.0,
+        tail_floor_pct: tail_floor_share,
         trend_share: scala_sum(sims.iter().map(|s| s.mean_trend_share)) / n_sims,
         years_per_path: years as f64,
         trend_pinned: scala_sum(sims.iter().map(|s| s.trend_pinned)) / n_sims,
@@ -1570,6 +1658,11 @@ fn gate_checks(a: Anchors, st: &WorldStats) -> Vec<(String, bool, GateClass)> {
         // 0.02% ~ one clamped session per 20 path-years. The old bound (0.5%) would have
         // passed a world where the clamp was already reshaping kurtosis by a third.
         (n("clamp rarely binds"), st.clamp_pct < 0.02, Realism),
+        // THE DENOMINATOR IS THE POINT. `clamp_pct` measures the guard against ALL sessions, where
+        // it is negligible by construction and passes in worlds whose worst sessions are ENTIRELY
+        // its doing. This measures it against the tail it actually touches. Both are kept: one says
+        // the guard is not distorting the body, the other that it is not authoring the tail.
+        (n("clamp shapes no tail"), st.tail_floor_pct < 2.0, Realism),
         // RELATIVE to duration, not absolute. The old 7-20% band was TLT's: of eight real funds
         // it admitted one, and asserted of the US Aggregate (4.24%) that it is not a market.
         // 0.5-2.5 per year of duration admits every fund measured, high yield at 2.001 included,
@@ -1897,7 +1990,7 @@ const SP500_ANCHORS: Anchors = Anchors {
     ret_vol: 0.69,
     ret_vol_sd: 0.20,
     kurt: 28.0,
-    kurt_sd: 2.65,
+    kurt_sd: 1.68,
     ac1: 0.299,
     ac1_sd: 0.09,
     ac20: 0.225,
@@ -1942,7 +2035,7 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     ret_vol: 0.38,
     ret_vol_sd: 0.20,
     kurt: 9.55,
-    kurt_sd: 2.65,
+    kurt_sd: 1.38,
     ac1: 0.293,
     ac1_sd: 0.09,
     ac20: 0.249,
@@ -3150,7 +3243,7 @@ fn run_strategy_sweep(
             }
         );
         println!(
-            "  inflation {}%/yr   eq vol {}%  kurt {}  clus {}/{}  crashes/path {}  depth {}%  censored {}  trend share {}  clamp {}%",
+            "  inflation {}%/yr   eq vol {}%  kurt {}  clus {}/{}  crashes/path {}  depth {}%  censored {}  trend share {}  clamp {}% (tail {}%)",
             jf(st.infl_ann, 0, 1),
             jf(st.vol * 100.0, 0, 1),
             jf(st.kurt, 0, 1),
@@ -3160,7 +3253,8 @@ fn run_strategy_sweep(
             jf(st.depth_med, 0, 1),
             st.censored,
             jf(st.trend_share, 0, 2),
-            jf(st.clamp_pct, 0, 3)
+            jf(st.clamp_pct, 0, 3),
+            jf(st.tail_floor_pct, 0, 1)
         );
         println!(
             "  bond vol {}%  growth-crash {}  infl-crash {}  corr {}/{}  bond spiral {}% of sessions",
@@ -5414,6 +5508,7 @@ fn world_json_body(w: &World) -> Vec<String> {
         ("valuePull", ef(w.value_pull)),
         ("recoveryDrag", ef(w.recovery_drag)),
         ("recoveryFloor", ef(w.recovery_floor)),
+        ("haltLimit", ef(w.halt_limit)),
         ("crowd", json_str(&crowd_name(w.crowd))),
         ("crowdImpact", ef(w.crowd_impact)),
         ("panic", ef(w.panic)),
@@ -5702,6 +5797,7 @@ fn main() {
     let mut anchor_spec = "sp500".to_string();
     let mut recovery_drag = dw.recovery_drag;
     let mut recovery_floor = dw.recovery_floor;
+    let mut halt_limit = dw.halt_limit;
     let mut jump_var = dw.jump_var;
     let mut jump_rate = dw.jump_rate;
     let mut value_pull = dw.value_pull;
@@ -5765,6 +5861,7 @@ fn main() {
             "-anchors" => anchor_spec = req_arg(&mut it, "-anchors").clone(),
             "-recoverydrag" => recovery_drag = req_f64(&mut it, "-recoverydrag"),
             "-recoveryfloor" => recovery_floor = req_f64(&mut it, "-recoveryfloor"),
+            "-haltlimit" => halt_limit = req_f64(&mut it, "-haltlimit"),
             "-jumpvar" => jump_var = req_f64(&mut it, "-jumpvar"),
             "-jumprate" => jump_rate = req_f64(&mut it, "-jumprate"),
             "-value" => value_pull = req_f64(&mut it, "-value"),
@@ -5862,6 +5959,7 @@ fn main() {
         vol_of_vol,
         recovery_drag,
         recovery_floor,
+        halt_limit,
         jump_var,
         jump_rate,
         value_pull,
@@ -6159,12 +6257,14 @@ fn main() {
         jf(st.dd_bd20, 0, 3)
     );
     println!(
-        "  binding diagnostics    trend share {} (pinned {}%, target saturated {}%)   bond spiral {}% of sessions   clamped {}%",
+        "  binding diagnostics    trend share {} (pinned {}%, target saturated {}%)   bond spiral {}% of sessions   clamped {}% of all sessions, {}% of tail sessions   halts {}%",
         jf(st.trend_share, 0, 2),
         jf(st.trend_pinned * 100.0, 0, 1),
         jf(st.target_sat * 100.0, 0, 1),
         jf(st.pct_bond_stress * 100.0, 0, 1),
-        jf(st.clamp_pct, 0, 3)
+        jf(st.clamp_pct, 0, 3),
+        jf(st.tail_floor_pct, 0, 1),
+        jf(st.halt_pct, 0, 3)
     );
     println!(
         "                         crowd flow {} bp/session ({}% of the noise term) — the reflexive channel",
