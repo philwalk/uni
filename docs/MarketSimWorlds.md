@@ -386,51 +386,55 @@ This is the part to read before changing anything. Columns are **ratios to the r
 ```
 setting                      vol  kurt  clus crash   d10  bdep   r/v tshare  cflow  gate
 -----------------------------------------------------------------------------------------
-DEFAULT                    1.04  0.99  1.06  1.13  1.03  1.21  0.97   0.21   4.74  P/P/P
+DEFAULT                     1.04  0.99  1.08  1.13  1.02  1.27  0.97   0.21   4.74  P/P/P
 
--stress 2.0                0.80  0.45  0.56  0.55  1.19  0.93  1.25   0.21   3.96  P/F/F
--stress 5.37 *             1.04  0.99  1.06  1.13  1.03  1.21  0.97   0.21   4.74  P/P/P
--stress 8.0                1.38  2.06  1.45  1.46  0.86  1.41  0.73   0.21   5.46  F/P/F
+-stress 2.0                 0.80  0.45  0.56  0.54  1.19  0.96  1.25   0.21   3.96  P/F/F
+-stress 5.37 *              1.04  0.99  1.08  1.13  1.02  1.27  0.97   0.21   4.74  P/P/P
+-stress 8.0                 1.37  1.62  1.50  1.46  0.86  1.42  0.73   0.21   5.46  F/P/F
 
--depth 12                  1.38  1.55  1.16  1.74  0.78  1.27  0.73   0.21   5.56  F/P/F
--depth 16.94 *             1.04  0.99  1.06  1.13  1.03  1.21  0.97   0.21   4.74  P/P/P
--depth 22                  0.88  0.70  1.00  0.81  1.25  1.20  1.14   0.21   4.25  P/P/P
+-depth 12                   1.38  1.08  1.20  1.75  0.78  1.31  0.73   0.21   5.56  F/P/F
+-depth 16.94 *              1.04  0.99  1.08  1.13  1.02  1.27  0.97   0.21   4.74  P/P/P
+-depth 22                   0.87  0.70  1.02  0.81  1.30  1.24  1.16   0.21   4.25  P/P/F
 
--drift 0.08                1.06  0.98  1.06  1.18  1.05  1.23  0.67   0.21   4.69  P/P/F
--drift 0.113 *             1.04  0.99  1.06  1.13  1.03  1.21  0.97   0.21   4.74  P/P/P
--drift 0.15                1.03  0.91  1.06  1.04  1.11  1.20  1.31   0.21   4.88  P/P/F
+-drift 0.08                 1.04  0.98  1.11  1.17  1.09  1.28  0.68   0.21   4.69  P/P/F
+-drift 0.113 *              1.04  0.99  1.08  1.13  1.02  1.27  0.97   0.21   4.74  P/P/P
+-drift 0.15                 1.03  0.91  1.07  1.04  1.09  1.25  1.31   0.21   4.88  P/P/F
 
--fundvol 0.02              1.03  0.93  1.05  1.08  0.95  1.20  0.98   0.21   4.62  P/P/P
--fundvol 0.041 *           1.04  0.99  1.06  1.13  1.03  1.21  0.97   0.21   4.74  P/P/P
--fundvol 0.10              1.06  0.96  1.07  1.33  1.50  1.26  0.95   0.21   5.36  P/P/P
+-fundvol 0.02               1.03  0.93  1.10  1.07  0.94  1.26  0.98   0.21   4.62  P/P/P
+-fundvol 0.041 *            1.04  0.99  1.08  1.13  1.02  1.27  0.97   0.21   4.74  P/P/P
+-fundvol 0.10               1.06  0.96  1.10  1.33  1.49  1.31  0.95   0.21   5.36  P/P/P
 
--jumpvar 0                 1.05  0.52  1.13  1.16  1.00  1.23  0.96   0.21   4.78  P/P/P
--jumpvar 0.10 *            1.04  0.99  1.06  1.13  1.03  1.21  0.97   0.21   4.74  P/P/P
--jumpvar 0.16              1.02  1.71  1.02  1.11  1.06  1.21  0.98   0.21   4.72  F/P/P
+-jumpvar 0                  1.05  0.52  1.13  1.16  1.00  1.29  0.96   0.21   4.77  P/P/P
+-jumpvar 0.10 *             1.04  0.99  1.08  1.13  1.02  1.27  0.97   0.21   4.74  P/P/P
+-jumpvar 0.16               1.02  1.35  1.06  1.11  1.06  1.28  0.99   0.21   4.72  F/P/P
 
--jumprate 0.0004           1.04  0.91  1.08  1.12  1.00  1.23  0.97   0.21   4.72  P/P/P
--jumprate 0.0010 *         1.04  0.99  1.06  1.13  1.03  1.21  0.97   0.21   4.74  P/P/P
--jumprate 0.004            1.04  0.96  1.07  1.14  1.02  1.18  0.96   0.21   4.75  P/P/P
+-jumprate 0.0004            1.04  0.88  1.10  1.12  0.99  1.28  0.97   0.21   4.72  P/P/P
+-jumprate 0.0010 *          1.04  0.99  1.08  1.13  1.02  1.27  0.97   0.21   4.74  P/P/P
+-jumprate 0.004             1.04  0.96  1.07  1.14  1.02  1.26  0.96   0.21   4.74  P/P/P
 
--trendshare 0.02           1.03  0.97  1.06  1.12  1.03  1.19  0.98   0.18   4.11  P/P/P
--trendshare 0.055 *        1.04  0.99  1.06  1.13  1.03  1.21  0.97   0.21   4.74  P/P/P
--trendshare 0.30           1.13  1.09  1.19  1.33  1.18  1.38  0.90   0.38  10.36  F/P/F
+-haltlimit 0                1.04  0.99  1.06  1.13  1.02  1.27  0.97   0.21   4.73  F/P/P
+-haltlimit 0.25 *           1.04  0.99  1.08  1.13  1.02  1.27  0.97   0.21   4.74  P/P/P
+-haltlimit 0.40             1.04  0.99  1.07  1.13  1.02  1.27  0.97   0.21   4.74  F/P/P
 
--crowdimpact 0.01          1.00  0.78  0.99  0.98  0.86  1.13  1.01   0.20   0.58  P/P/P
--crowdimpact 0.07 *        1.04  0.99  1.06  1.13  1.03  1.21  0.97   0.21   4.74  P/P/P
--crowdimpact 0.15          1.22  1.42  1.27  1.36  1.20  1.45  0.83   0.23  15.44  F/P/F
+-trendshare 0.02            1.03  0.97  1.08  1.11  1.03  1.25  0.98   0.18   4.11  P/P/P
+-trendshare 0.055 *         1.04  0.99  1.08  1.13  1.02  1.27  0.97   0.21   4.74  P/P/P
+-trendshare 0.30            1.13  1.09  1.20  1.32  1.18  1.42  0.90   0.38  10.35  F/P/F
 
--value 0.020               1.06  1.11  1.10  1.20  1.53  1.27  0.95   0.21   5.21  F/P/P
--value 0.045 *             1.04  0.99  1.06  1.13  1.03  1.21  0.97   0.21   4.74  P/P/P
--value 0.070               1.02  1.07  1.01  1.01  0.85  1.18  0.98   0.21   4.35  P/P/P
+-crowdimpact 0.01           1.00  0.78  1.02  0.97  0.85  1.18  1.01   0.20   0.58  P/P/P
+-crowdimpact 0.07 *         1.04  0.99  1.08  1.13  1.02  1.27  0.97   0.21   4.74  P/P/P
+-crowdimpact 0.15           1.22  1.28  1.30  1.36  1.19  1.48  0.83   0.23  15.43  F/P/F
 
--recoverydrag 0            0.99  0.81  0.97  1.10  0.76  1.09  1.01   0.20   4.11  P/P/P
--recoverydrag 10.0 *       1.04  0.99  1.06  1.13  1.03  1.21  0.97   0.21   4.74  P/P/P
--recoverydrag 20           1.04  1.01  1.06  1.16  1.08  1.21  0.97   0.21   4.78  P/P/P
+-value 0.020                1.06  1.11  1.14  1.21  1.54  1.32  0.95   0.21   5.21  F/P/P
+-value 0.045 *              1.04  0.99  1.08  1.13  1.02  1.27  0.97   0.21   4.74  P/P/P
+-value 0.070                1.02  1.06  1.04  1.01  0.85  1.22  0.99   0.21   4.35  P/P/P
 
--recoveryfloor 0.05        1.05  1.05  1.08  1.07  1.22  1.22  0.97   0.21   4.79  P/P/P
--recoveryfloor 0.10 *      1.04  0.99  1.06  1.13  1.03  1.21  0.97   0.21   4.74  P/P/P
--recoveryfloor 0.50        1.01  0.96  1.02  1.16  0.81  1.14  1.00   0.21   4.30  P/P/P
+-recoverydrag 0             0.99  0.81  1.00  1.10  0.78  1.14  1.02   0.20   4.11  P/P/P
+-recoverydrag 10.0 *        1.04  0.99  1.08  1.13  1.02  1.27  0.97   0.21   4.74  P/P/P
+-recoverydrag 20            1.04  1.01  1.09  1.17  1.07  1.29  0.97   0.21   4.78  P/P/P
+
+-recoveryfloor 0.05         1.04  1.05  1.10  1.08  1.20  1.29  0.97   0.21   4.79  P/P/P
+-recoveryfloor 0.10 *       1.04  0.99  1.08  1.13  1.02  1.27  0.97   0.21   4.74  P/P/P
+-recoveryfloor 0.50         1.01  0.96  1.04  1.15  0.81  1.20  1.00   0.21   4.30  P/P/P
 ```
 
 60 paths x 100 years, seed 20260813. `vol` equity volatility · `kurt` daily kurtosis ·
@@ -554,13 +558,13 @@ nasdaq` at a Nasdaq-calibrated world, which does not exist yet) and the two fide
 
 These are properties of the model, not of the default, and they do not go away by changing dials:
 
-- **Volatility clustering runs slightly high** (1.05 at the default, down from 1.11 before the
+- **Volatility clustering runs slightly high** (1.08 at the default, down from 1.11 before the
   jump channel). Volatility is more predictable here than in the record, so volatility-forecasting
   rules are flattered — but only mildly now, and the
   anchor is horizon-sensitive: the real statistic reads 0.271 over 72 years and 0.299 over a
   century, so the target is the century figure to match the 100-year paths the model is scored on.
   Against the 72-year reading the same world would show higher still.
-- **Crashes arrive a little too often** (1.08; 22 per century against a real 20.7, down from 1.32
+- **Crashes arrive a little too often** (1.09; 22 per century against a real 20.7, down from 1.32
   before the recovery drag). Any hazard rate conditioned on "a crash happened" is mildly
   over-sampled. `-noise` now puts the real anchor at the 33rd percentile of model histories, where
   it sat at the 4th.
@@ -572,10 +576,10 @@ These are properties of the model, not of the default, and they do not go away b
 - **Every session past −18% comes from the liquidity spiral**, in every world measured. The jump
   channel sets how OFTEN those sessions arrive; it does not set how large they are. If you are
   studying tail magnitude, `-stress` and `-depth` are the dials, not `-jumpvar`.
-- **The median crash is now close** (0.94; −25.6% against a real −27.1%, up from 0.84). The
+- **The median crash is now close** (0.93; −25.3% against a real −27.1%, up from 0.84). The
   recovery drag fixed this and the crash rate together — they were one defect, deep drawdowns
   recovering too fast, not two.
-- **The deep drawdown rung runs long, and got longer** (1.96 against the relation, from 1.38,
+- **The deep drawdown rung runs long, and got longer** (1.91 against the relation, from 1.38,
   where the 5% and 10% rungs sit at 0.92 and 1.02). This is what the recovery drag costs: slowing
   the climb out of a deep hole means more time deep. Rules keyed to a *deep* distance from peak
   inherit it; the shallow ones are accurate. Its band is deliberately absent and its weight is 0.06

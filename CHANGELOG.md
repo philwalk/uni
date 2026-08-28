@@ -36,7 +36,7 @@ decimal. The halt binds on 0.002% of sessions. `-haltlimit 0` reproduces the pre
 bit — the mechanism consumes no random draws — and every frozen release row carries 0, correctly,
 since no earlier release had it.
 
-**Kurtosis spread re-frozen: `kurtSd` 2.65 -> 1.68 (S&P), 2.65 -> 1.38 (Nasdaq).** A re-measurement,
+**Kurtosis spread re-frozen: `kurtSd` 2.65 -> 1.51 (S&P), 2.65 -> 1.23 (Nasdaq).** A re-measurement,
 not a correction: truncating the tail at an arbitrary constant was itself a large source of
 kurtosis variation across histories, and removing it nearly halves the spread. No other weight moved.
 
@@ -252,7 +252,7 @@ The trade-off it was supposed to face did not appear. Against their anchors: kur
 clustering 1.11 -> 1.03 and 1.15 -> 1.05, crashes/century 1.36 -> 1.32, equity vol 1.03 -> 1.02,
 return per vol 0.98 -> 0.99. Calibration loss 1.947 -> 1.575 with no other parameter touched. The
 decisive reading is `-noise`: the real kurtosis anchor sat at the 97th percentile of the
-model-implied spread of 72-year histories and now sits at the 54th, so the anchor can no longer
+model-implied spread of 72-year histories and now sits at the 57th, so the anchor can no longer
 distinguish this model from the record it came from.
 
 Two shape constants are fixed rather than dialled, and both for reasons that bind. A Student-t with
@@ -268,9 +268,9 @@ is not a fix.
 
 **CHANGED — `kurtosis`'s calibration weight, from a re-measured sampling spread**
 
-Its `sdRel` moves 0.14 -> 2.65, dropping its weight from 0.71 to 0.04. This is not a correction of a
+Its `sdRel` moves 0.14 -> 1.51, dropping its weight from 0.71 to 0.07. This is not a correction of a
 mis-measurement: the channel makes single-history kurtosis as variable as it really is, so one
-72-year window now reads 8.8 at the 5th percentile and 205 at the 95th, exactly as a real window
+72-year window now reads 9.2 at the 5th percentile and 95 at the 95th, exactly as a real window
 either contains its 1987 or does not — SPY 1993-2026 reads 14.4 where the CRSP century reads 28.
 Weighting by measurability therefore has to drop it. What pins `jumpVar` instead is clustering, at a
 combined weight of 3.1 and a tenth of the sampling spread: turning the channel off moves clustering
