@@ -39,12 +39,15 @@ package uni.apps
 //     its own, removes the crash rally entirely (the rally WAS the spike that set the peak).
 //   margin coupling: when BOTH markets are stressed, forced selling hits the bond too.
 //
-// SCOPE DECISION (recorded, not hidden): daily kurtosis (~16 vs real 28) stays a MISS and is
-// deliberately not fixed -- closing it needs a slow valuation cycle (no bubbles, no 1929-1954
-// era), which is a new mechanism.  Conclusions that depend on tail-day magnitudes must not be
-// drawn from this model.  Crash frequency LEFT this bucket in 0.19.1: it is carried by market
-// depth, not by the valuation cycle, and at 1.2x real it now sits inside the sampling error of
-// its own anchor (15 episodes in 72 years, sd ~3, so ~0.8 sigma).
+// SCOPE: daily kurtosis LEFT this bucket in 0.21.0.  It had been a recorded exclusion for four
+// releases, parked as needing a slow valuation cycle; what it actually needed was a SECOND tail
+// channel, and `jumpVar` is one.  The model now reads 1.00 of its CRSP-century anchor, and the
+// clustering it was supposed to trade against improved with it (1.11 -> 1.03).  Tail-day
+// magnitudes are readable here; tail-day DEPTH still is not -- see `worst crash %`, which remains
+// 1.54x its anchor, so anything levered reads ruin as an upper bound rather than an estimate.
+// Crash frequency left this bucket in 0.19.1: it is carried by market depth, not by the valuation
+// cycle, and at 1.3x real it now sits near the sampling error of its own anchor (15 episodes in
+// 72 years, sd ~3).
 //
 // EVERY MECHANISM SHIPS WITH (the recurring failure class here is one-sided checks and knobs that
 // silently do not bind — it recurred even inside fixes for previous instances):
@@ -106,7 +109,7 @@ object MarketSim:
     * a key without touching this line fails the build at the moment the discrepancy is created,
     * next to the schema number that then has to be decided about.  A test cannot force the bump; it
     * can force the decision to be conscious, which is what this pair is for. */
-  val EmitSchema: Int = 2
+  val EmitSchema: Int = 3
 
   val EmitSidecarKeys: Vector[String] =
     Vector("generator", "version", "schema", "file", "columns", "header", "path", "world",
@@ -179,7 +182,17 @@ object MarketSim:
     s"-beta X       ; intensity of capital switching between agent types (default ${Defaults.beta})",
     s"-volpersist X ; persistence of volatile stretches (default ${Defaults.volPersist})",
     s"-volofvol X   ; size of shocks to volatility itself (default ${Defaults.volOfVol})",
-    s"-value X      ; pull toward equity fair value, per day (default ${Defaults.valuePull})",
+    s"-jumpvar X    ; share of the equity shock's VARIANCE carried by jumps rather than diffusion",
+    s"              ;   (default ${Defaults.jumpVar}; 0 turns the channel off and reproduces 0.20.0)",
+    s"-jumprate X   ; jumps per session at average volatility (default ${Defaults.jumpRate}); with",
+    s"              ;   -jumpvar it sets the SIZE -- rarer jumps of the same variance are bigger",
+    s"-value X      ; pull toward equity fair value, per day (default ${Defaults.valuePull}).  With",
+    s"              ;   the recovery drag below this governs SHALLOW water; deep drawdowns are set",
+    s"              ;   by the drag instead",
+    s"-recoverydrag X ; how fast value arbitrage weakens as a drawdown deepens past 10%",
+    s"              ;   (default ${Defaults.recoveryDrag}; 0 restores the symmetric pull of 0.20.0)",
+    s"-recoveryfloor X ; weakest that pull may become, as a share of full strength",
+    s"              ;   (default ${Defaults.recoveryFloor}; 1.0 with -recoverydrag 0 is 0.20.0)",
     "-crowd K      ; momentum (default), trendNNN, or volscaled — the last two make the crowd",
     "              ;   run the RULE UNDER TEST, closing the reflexive loop",
     s"-crowdimpact X; price pressure per unit of exposure the crowd trades (default ${Defaults.crowdImpact});",
@@ -218,7 +231,18 @@ object MarketSim:
   final case class World(
     trendShare: Double, depth: Double, stress: Double, beta: Double,
     drift: Double,      // fundamental drift per year; no dividend, so this IS total return
-    fundVol: Double, rateMean: Double, volPersist: Double, volOfVol: Double, valuePull: Double,
+    fundVol: Double, rateMean: Double, volPersist: Double, volOfVol: Double,
+    jumpVar: Double,    // share of the equity flow's VARIANCE carried by jumps rather than
+                        // diffusion.  0 disables the channel and reproduces pre-0.21 behaviour
+                        // byte for byte -- the draws come from their own stream, so nothing else
+                        // in the path shifts.
+    jumpRate: Double,   // unconditional jump intensity per session.  With jumpVar it fixes the
+                        // size: rarer jumps of the same total variance are larger ones.
+    valuePull: Double,
+    recoveryDrag: Double,  // how fast value arbitrage WEAKENS as the drawdown deepens.  0 is the
+                           // symmetric pull every release before 0.21.0 had, bit for bit.
+    recoveryFloor: Double, // the residual arbitrage that never goes away, as a share of full
+                           // strength.  1.0 with drag 0 is the old behaviour exactly.
     crowd: Crowd, crowdImpact: Double, panic: Double,
     duration: Double,   // bond duration: sensitivity of its fair value to the rate
     easing: Double,     // CAP on policy accommodation under equity stress, in rate points
@@ -258,10 +282,12 @@ object MarketSim:
     * by the `-emit` sidecar, which names every field: bare `-emit` writes THIS world. */
   val Defaults = World(
     trendShare = 0.055, depth = 16.94, stress = 5.37, beta = 3.0, drift = 0.113, fundVol = 0.041,
-    rateMean = 0.042, volPersist = 0.99, volOfVol = 0.027, valuePull = 0.017,
+    rateMean = 0.042, volPersist = 0.99, volOfVol = 0.027,
+    jumpVar = 0.10, jumpRate = 0.0010, valuePull = 0.045,
+    recoveryDrag = 10.0, recoveryFloor = 0.10,
     crowd = Crowd.Momentum, crowdImpact = 0.07, panic = 0.0, duration = 13.5,
-    easing = 0.037, unwind = 0.35, refuge = 0.11,
-    inflProb = 0.20, inflSize = 0.084, inflSpeed = 0.010, rateSpeed = 3.0, discount = 5.73,
+    easing = 0.046, unwind = 0.35, refuge = 0.11,
+    inflProb = 0.20, inflSize = 0.10, inflSpeed = 0.010, rateSpeed = 3.0, discount = 5.73,
     margin = 0.006)
   val DefaultPaths = 200
   val DefaultYears = 100
@@ -289,7 +315,8 @@ object MarketSim:
     * the first to do. */
   private val V0_19_2 = World(
     trendShare = 0.06, depth = 16.6, stress = 5.1, beta = 3.0, drift = 0.117, fundVol = 0.13,
-    rateMean = 0.042, volPersist = 0.99, volOfVol = 0.011, valuePull = 0.013,
+    rateMean = 0.042, volPersist = 0.99, volOfVol = 0.011,
+    jumpVar = 0.0, jumpRate = 0.0, valuePull = 0.013, recoveryDrag = 0.0, recoveryFloor = 1.0,
     crowd = Crowd.Momentum, crowdImpact = 0.088, panic = 0.0, duration = 13.5,
     easing = 0.045, unwind = 0.35, refuge = 0.08,
     inflProb = 0.20, inflSize = 0.10, inflSpeed = 0.010, rateSpeed = 3.0, discount = 3.35,
@@ -303,7 +330,8 @@ object MarketSim:
     * a row that read `Defaults` would restate today's world under yesterday's version number. */
   private val V0_20_0 = World(
     trendShare = 0.07, depth = 16.1, stress = 5.6, beta = 3.0, drift = 0.123, fundVol = 0.13,
-    rateMean = 0.042, volPersist = 0.99, volOfVol = 0.014, valuePull = 0.0145,
+    rateMean = 0.042, volPersist = 0.99, volOfVol = 0.014,
+    jumpVar = 0.0, jumpRate = 0.0, valuePull = 0.0145, recoveryDrag = 0.0, recoveryFloor = 1.0,
     crowd = Crowd.Momentum, crowdImpact = 0.07, panic = 0.0, duration = 13.5,
     easing = 0.046, unwind = 0.35, refuge = 0.11,
     inflProb = 0.20, inflSize = 0.10, inflSpeed = 0.010, rateSpeed = 3.0, discount = 5.0,
@@ -361,8 +389,66 @@ object MarketSim:
     * stay on the whole-path protocol and the split is confined to one row. */
   val BondVolYears = 24
   /** Equity idiosyncratic noise, ~11% annualised alone.  Top-level beside its bond counterpart so
-    * the crowd-flow diagnostic can state the reflexive channel as a share of it. */
+    * the crowd-flow diagnostic can state the reflexive channel as a share of it.
+    *
+    * STAYS FROZEN, and now for a measured reason rather than an untested convention.  It was
+    * promoted to a `World` field and swept 0.005-0.013 to ask the obvious question: does it raise
+    * volatility WITHOUT raising crash frequency, which `depth` cannot?  It does not.  Volatility
+    * moves 0.85 -> 1.68 of anchor while crashes move 0.94 -> 2.64, an elasticity of 1.5 -- milder
+    * than `depth`'s 1.9 and nowhere near the 0 that "separates" would mean.  The coupling is the
+    * same mechanism in both: more noise trips the liquidity spiral more often.
+    *
+    * The sweep also LOOKS like it fixes the shallow median crash (0.81 -> 0.95 as sigmaN rises),
+    * and that reading is an artifact.  Hold volatility and crash rate constant by raising `depth`
+    * and easing `stress` to compensate, and median depth comes out at 0.80-0.82 -- WORSE than the
+    * 0.85 default.  The apparent gain was every drawdown being bigger at higher volatility, not a
+    * new degree of freedom.  A dial swept alone can look like it moves a statistic it only
+    * co-moves with; the test is whether it still moves it with the co-movers pinned. */
   val SigmaN = 0.007
+
+  /** THE SECOND TAIL CHANNEL.  Daily kurtosis was a recorded scope exclusion for four releases,
+    * parked as needing "a slow valuation cycle".  The provenance note gives the sharper reason:
+    * KURTOSIS AND CLUSTERING CANNOT BOTH BE RIGHT through `stress`, which reaches kurtosis 26.4
+    * only at clustering 1.67, outside its realism band.  That is a statement about `stress` -- the
+    * only tail channel this model had -- and the same note says so: the missing cycle "is why
+    * there is no SECOND channel for tails, not why this one cannot reach them."
+    *
+    * This is that second channel, and it is a jump rather than a valuation cycle.  A share
+    * `jumpVar` of the equity flow's variance moves out of the diffusion and into a compensated
+    * jump, so TOTAL flow variance is unchanged and `equity vol %` does not move.  The model does
+    * not need more crash magnitude -- it already runs crashes and worst-crash depth ABOVE their
+    * anchors -- it needs the magnitude it has arriving in fewer, more violent sessions.
+    *
+    * The jump is a FLOW, not a return: it goes through `Market.step` like every other shock, so a
+    * jump into a thin market moves the price further than the same jump into a deep one, and the
+    * stress, liquidity and crowd machinery all see it.  That feedback is the whole reason this
+    * belongs in the model rather than in a post-process over emitted paths.
+    *
+    * Three shape constants, deliberately not dials:
+    *
+    * `JumpNu` MUST exceed 4.  A Student-t with four or fewer degrees of freedom has an INFINITE
+    * fourth moment, so its sample kurtosis never converges and a kurtosis target fitted against it
+    * is not a calibration.  Measured over 4,000 path-years, nu 5 held pooled kurtosis to +/-1.15
+    * across seeds where nu 6 swung +/-5.12.
+    *
+    * `JumpGamma = 2` is not a taste.  Intensity scales with the volatility state as `m^gamma`
+    * where `m = exp(logVol - volNorm)` and `logVol` is Gaussian with variance `volNorm`, so
+    * `E[m^gamma] = exp(volNorm * (gamma^2/2 - gamma))`, which is exactly 1 at gamma = 2 and at no
+    * other positive value.  Only there does `jumpRate` mean the unconditional intensity it claims
+    * to be; anywhere else the realised rate drifts with `volOfVol` and the dial lies.
+    *
+    * `JumpAsym` shifts the jump down by 0.4 of its own sd, which is what carries the negative skew
+    * a symmetric jump cannot (real equity skew is about -0.25 on SPY 1993-2026). */
+  val JumpNu    = 5
+  val JumpGamma = 2.0
+  val JumpAsym  = 0.4
+
+  /** Jump size, from the share of variance it carries and how often it fires.  `1 + JumpAsym^2` is
+    * the shift's own contribution to the second moment; without it the channel would overshoot the
+    * variance it is supposed to be borrowing, and `equity vol %` would drift with `jumpVar`. */
+  def jumpScale(w: World): Double =
+    SigmaN * math.sqrt(w.jumpVar / (w.jumpRate * (1.0 + JumpAsym * JumpAsym)))
+
   /** `crowdImpact` at which the momentum crowd reproduces the frozen `kTrend` exactly.  The ratio
     * is what enters the flow, so the default divides to a bit-exact 1.0 and the shipped world is
     * unchanged; every other setting scales the reflexive channel that used to have no dial at all. */
@@ -372,8 +458,14 @@ object MarketSim:
     * external flow and noise, amplified when THIS market's liquidity has withdrawn after one-sided
     * selling (measured against a slowly-adapting scale, so symmetric turbulence of any size leaves
     * the index flat — E[max(0,-z)] = 0.399 regardless of scale). */
-  final class Market(kValue: Double, stressK: Double, impact: Double):
+  /** Drawdown at which recovery drag reaches its stated strength.  0.10 keeps it inert in ordinary
+    * sessions, so it shapes recoveries from real drawdowns and nothing else. */
+  val DrawdownRef = 0.10
+
+  final class Market(kValue: Double, stressK: Double, impact: Double,
+                     recoveryDrag: Double = 0.0, recoveryFloor: Double = 1.0):
     var logP = 0.0
+    var peak = 0.0
     var stressIdx = 0.0
     var lastLiq = impact
     var clamps = 0
@@ -386,7 +478,30 @@ object MarketSim:
       // makes any ORDER move price further, but amplifying the arbitrage itself sets a feedback
       // gain of kValue*amp, which for a fast-tracking market (bond, kValue 0.7) exceeded 1 and
       // OSCILLATED — 86% bond volatility from the market fighting its own fair value.
-      val raw   = (kValue * (fair - logP) + flowPlusNoise * amp) * impact
+      // ASYMMETRIC RECOVERY.  Value arbitrage is WEAKER, not stronger, when the market is far
+      // below its own peak: the capital that closes a gap is most depleted exactly when the gap is
+      // largest.  One-sided -- it touches the pull only while it points UP and only past
+      // `DrawdownRef` -- so declines are unaffected and recoveries grind.
+      //
+      // What it fixes, measured: the model spends HALF the time below 15% that the real record does
+      // (d15 0.115 against SPY's 0.240) while crossing 15% 40% MORE often, so each excursion lasts a
+      // third as long (0.395 against 1.148).  Its deep drawdowns recover far too fast.  Median
+      // fall-to-rise ratio reads 1.02 here against 1.44 for SPY and 1.28 for QQQ.
+      //
+      // `recoveryFloor` is the residual arbitrage that is always present: unbounded, the pull falls
+      // to a seventeenth of strength at a 30% drawdown, which is capital switched off rather than
+      // depleted, and the deepest drawdowns run away.  Both defaults reproduce the symmetric pull
+      // of every earlier release BIT-IDENTICALLY -- the multiplier is exactly 1.0.
+      //
+      // A pull made CONVEX in the mispricing was tried first and has the sign backwards: it cut
+      // crash count but drained d5, d10 and kurtosis with it, because a stronger pull cannot tell a
+      // deep drawdown from an ordinary one, and a market can sit 10% under fair while 3% under peak.
+      val gap   = fair - logP
+      val drop  = peak - logP
+      val damp  = if recoveryDrag <= 0.0 || gap <= 0.0 || drop <= DrawdownRef then 1.0
+                  else math.max(recoveryFloor,
+                                1.0 / (1.0 + recoveryDrag * (drop - DrawdownRef) / DrawdownRef))
+      val raw   = (kValue * gap * damp + flowPlusNoise * amp) * impact
       // Numerical guard ONLY, and verified to be exactly that: at ±0.25 vs ±0.50 every statistic in
       // every gate-passing world is BIT-IDENTICAL (the clamp consumes no draws and never binds
       // there).  In a far out-of-gate world (40% volatility) it bound on 0.075% of sessions and
@@ -396,6 +511,7 @@ object MarketSim:
       val ret   = math.max(-0.50, math.min(0.50, raw))
       if ret != raw then clamps += 1
       logP += ret
+      if logP > peak then peak = logP
       scaleVar  = 0.995 * scaleVar + 0.005 * ret * ret
       stressIdx = math.max(0.0, 0.96 * stressIdx + 0.04 * (math.max(0.0, -ret) / scale - 0.399))
       ret
@@ -405,6 +521,12 @@ object MarketSim:
     val n    = years * DaysPerYear
     val tot  = n + BurnIn
     val rng  = new NumPyRNG(seed)
+    // The jump channel's own stream.  Separate BECAUSE the alternative is not survivable: a draw
+    // taken from `rng` shifts every subsequent value and moves all sixteen calibrated statistics,
+    // so the channel could not be added without re-searching the world.  Constructed
+    // unconditionally -- it costs one allocation and touches nothing -- and read only when
+    // `jumpVar > 0`.
+    val jrng = new NumPyRNG(seed ^ 0x1eaf7a11L)
     val px   = new Array[Double](tot)
     val fv   = new Array[Double](tot)
     val rt   = new Array[Double](tot)
@@ -416,7 +538,7 @@ object MarketSim:
     val dt   = 1.0 / DaysPerYear
     val sqdt = math.sqrt(dt)
 
-    val eqM = new Market(w.valuePull, w.stress, 12.0 / w.depth)
+    val eqM = new Market(w.valuePull, w.stress, 12.0 / w.depth, w.recoveryDrag, w.recoveryFloor)
     val bdM = new Market(KValueBond, w.stress, 1.0)
 
     var logVbase = 0.0
@@ -514,8 +636,41 @@ object MarketSim:
       logVol = w.volPersist * logVol + w.volOfVol * rng.randn()
       val dNoise = SigmaN * math.exp(logVol - volNorm) * rng.randn()
 
+      // The jump channel.  Its draws come from `jrng`, NOT `rng`, so a world with jumpVar = 0 takes
+      // the untouched branch below and every pre-0.21 statistic reproduces bit for bit -- the
+      // failure mode a shared stream would have caused is not a risk that was reasoned about, it is
+      // one the branch removes.  `volMult` is this session's volatility state, so jumps CLUSTER
+      // inside a stressed stretch instead of scattering uniformly, which is what turns a fat tail
+      // into a survivable-or-not sequence for anything levered.
+      val eqShock =
+        if w.jumpVar <= 0.0 then dNoise
+        else
+          val volMult  = math.exp(logVol - volNorm)
+          val lamNow   = math.min(0.25, w.jumpRate * math.pow(volMult, JumpGamma))
+          val scale    = jumpScale(w)
+          // The compensator is deterministic and consumes no draw: it removes the mean the
+          // downward shift would otherwise add, so `jumpVar` moves the tail without moving drift.
+          val compens  = w.jumpRate * JumpAsym * scale
+          val fired    = jrng.nextDouble() < lamNow
+          val jump =
+            if !fired then 0.0
+            else
+              // Student-t with JumpNu degrees of freedom, standardised to unit variance, so the
+              // size is set by `scale` alone.  Drawn as z / sqrt(chi2(nu)/nu) -- the draw ORDER
+              // here is part of the cross-language contract, not an implementation detail.
+              val z = jrng.randn()
+              var chi = 0.0
+              var k = 0
+              while k < JumpNu do
+                val g = jrng.randn()
+                chi += g * g
+                k += 1
+              val t = z / math.sqrt(chi / JumpNu) / math.sqrt(JumpNu / (JumpNu - 2.0))
+              (t - JumpAsym) * scale
+          dNoise * math.sqrt(1.0 - w.jumpVar) + jump + compens
+
       // ---- both markets step through the SAME mechanism --------------------------------------
-      val retE = eqM.step(logVbase, eqFlow + dNoise)
+      val retE = eqM.step(logVbase, eqFlow + eqShock)
       // joint-stress margin selling: when both markets are stressed, the bond gets dumped too --
       // and against it the refuge bid, flight-to-quality into a bond that is itself still orderly.
       // DURATION-SCALED, like the bond's own noise: an absolute bid gave a 5-year bond the same
@@ -1042,7 +1197,9 @@ object MarketSim:
   /** A fidelity weight: JUDGMENT x measured PRECISION.
     *
     * `judgment` carries what a number cannot: redundancy (the three depth rungs are one
-    * distribution read three times), scope (kurtosis is a recorded exclusion), and importance.
+    * distribution read three times), scope, and importance.  `kurtosis` keeps the 0.5 it was
+    * given as a recorded exclusion: it is no longer excluded, but it is still ONE number
+    * summarising a whole tail, and the judgment was never only about scope.
     * `sdRel` is the target's single-history sd over its anchor, measured by `-noise` at the
     * anchor's OWN horizon -- 2026-08-25, 200 paths, the default world -- and FROZEN here exactly
     * as the anchors themselves are.  Frozen is load-bearing: computed live, a candidate world
@@ -1066,7 +1223,16 @@ object MarketSim:
     // because 0.55 is the wrong reading for a generator scored on 100-year paths; the gate band
     // below admits it rather than legislating it away.
     ("return per vol",     st => st.retVol,                                  0.69, wgt(1.0, 0.20)),
-    ("kurtosis",           st => st.kurt,                                   28.0,  wgt(0.5, 0.14)),
+    // kurtosis's sdRel moved 0.14 -> 2.65 in 0.21.0, and the 19x is not a re-measurement of the
+    // same thing: the jump channel makes single-history kurtosis as variable as it really is.  One
+    // 72-year window reads 8.8 at the 5th percentile and 205 at the 95th, because a window either
+    // contains its 1987 or does not -- SPY 1993-2026 reads 14.4 where the CRSP century reads 28.
+    // Weighting by measurability therefore drops this target to 0.04, and that is correct rather
+    // than unfortunate: one history barely pins it.  What now pins `jumpVar` is CLUSTERING, at a
+    // combined weight of 3.1 and an sdRel a tenth of this one -- turning the channel off moves
+    // clustering 1.03 -> 1.11 and 1.05 -> 1.15, which the loss sees clearly.  A mechanism whose
+    // only defender is its least measurable target is a mechanism a search will quietly discard.
+    ("kurtosis",           st => st.kurt,                                   28.0,  wgt(0.5, 2.65)),
     // Ken French / CRSP value-weighted US market, daily, 1926-07-01..2026-06-30 -- the FULL
     // century, and deliberately NOT the 1954-2026 window the rows above use.  The model's
     // clustering is horizon-INDEPENDENT (0.320 at 20 years, 0.330 at 150) while the real statistic
@@ -1145,7 +1311,12 @@ object MarketSim:
     // point.
     ("equity d5 vs real",   st => st.eqD5VsReal,                             1.00,  wgt(0.5, 0.13)),
     ("equity d10 vs real",  st => st.eqD10VsReal,                            1.00,  wgt(1.0, 0.25)),
-    ("equity d20 vs real",  st => st.eqD20VsReal,                            1.00,  wgt(0.5, 0.99)),
+    // d20's sdRel moved 0.99 -> 1.56 in the 0.21.0 recovery-drag change, and like kurtosis's move
+    // it is a re-measurement of a statistic that genuinely became more variable, not a correction:
+    // slowing recovery from deep drawdowns makes time spent DEEP swing much harder between
+    // histories (p5 0.19, p95 4.35 over 25 years).  Weighting by measurability drops it to 0.06.
+    // No other target's sdRel moved beyond its own noise, so none were churned.
+    ("equity d20 vs real",  st => st.eqD20VsReal,                            1.00,  wgt(0.5, 1.56)),
     ("bond depth vs vol",   st => st.bondDepthVsVol,                          1.00, wgt(0.5, 0.33)),
   )
   def fitness(st: WorldStats): (Double, Vector[(String, Double, Double, Double)]) =
@@ -1497,8 +1668,19 @@ object MarketSim:
     ("fundVol",     0.03,  0.16, (w, x) => w.copy(fundVol = x)),
     ("crowdImpact", 0.01,  0.20, (w, x) => w.copy(crowdImpact = x)),
     ("stress",       2.0,   6.0, (w, x) => w.copy(stress = x)),
-    ("valuePull",  0.010, 0.035, (w, x) => w.copy(valuePull = x)),
+    // Widened from 0.010-0.035 in 0.21.0: with the recovery drag the base pull governs SHALLOW
+    // water only, so its useful range moved up.  The old ceiling would have excluded the shipped
+    // value, which is the `fundVol` failure mode -- a search that cannot reach the answer.
+    ("valuePull",  0.010, 0.070, (w, x) => w.copy(valuePull = x)),
+    // Both in the ranges from the release they arrive in, for the same reason.
+    ("recoveryDrag",  0.0, 20.0, (w, x) => w.copy(recoveryDrag = x)),
+    ("recoveryFloor", 0.05, 1.0, (w, x) => w.copy(recoveryFloor = x)),
     ("volOfVol",   0.012, 0.030, (w, x) => w.copy(volOfVol = x)),
+    // In the ranges from the release it arrived in.  `fundVol` sat outside them for four releases
+    // and that is exactly why its defect survived four releases of one-knob-at-a-time sweeps; a
+    // mechanism the search cannot reach is a mechanism nobody will find the wrong value of.
+    ("jumpVar",     0.00,  0.20, (w, x) => w.copy(jumpVar = x)),
+    ("jumpRate",  0.0004, 0.0040, (w, x) => w.copy(jumpRate = x)),
     ("easing",       0.0,  0.09, (w, x) => w.copy(easing = x)),
     ("refuge",       0.0,  0.20, (w, x) => w.copy(refuge = x)),
     ("inflSize",    0.03,  0.12, (w, x) => w.copy(inflSize = x)),
@@ -2512,7 +2694,9 @@ object MarketSim:
       ("trendShare", ef(w.trendShare)), ("depth", ef(w.depth)), ("stress", ef(w.stress)),
       ("beta", ef(w.beta)), ("drift", ef(w.drift)), ("fundVol", ef(w.fundVol)),
       ("rateMean", ef(w.rateMean)), ("volPersist", ef(w.volPersist)),
-      ("volOfVol", ef(w.volOfVol)), ("valuePull", ef(w.valuePull)),
+      ("volOfVol", ef(w.volOfVol)), ("jumpVar", ef(w.jumpVar)),
+      ("jumpRate", ef(w.jumpRate)), ("valuePull", ef(w.valuePull)),
+      ("recoveryDrag", ef(w.recoveryDrag)), ("recoveryFloor", ef(w.recoveryFloor)),
       ("crowd", jsonStr(crowdName(w.crowd))), ("crowdImpact", ef(w.crowdImpact)),
       ("panic", ef(w.panic)), ("duration", ef(w.duration)),
       ("easing", ef(w.easing)), ("unwind", ef(w.unwind)), ("refuge", ef(w.refuge)),
@@ -2621,7 +2805,19 @@ object MarketSim:
     // switched off, which is the defect that diagnostic exists to catch; pinned back at 0.07 it
     // reads 6.7%, and the pin also BOUGHT volatility (16.03 against 15.38) and crash depth.
     // `refuge` was raised 0.11 -> 0.159, which took bond volatility to 1.12x duration, outside its
-    // band; returned to 0.11 it reads 1.03 and the equity side does not move at all.
+    // band; returned to 0.11 it reads 1.03 and the equity side does not move at all.  And `easing`
+    // was cut 0.046 -> 0.037, which is not a tuning question: `usage` interpolates this field and
+    // asserts it IS one full real easing cycle, and real cycles run about 5 rate points
+    // (2008: 5.25 -> 0.25; 2001: 6.5 -> 1.0).  At 0.037 the help text states something false, so
+    // the value is anchored the way `duration` is and the search does not get to move it.
+    //   `inflSize` was cut 0.10 -> 0.084 and reverted, for the SECOND time and the same reason:
+    // 0.20.0's search proposed the same cut and it was reverted then because it breaks the d=5.70
+    // rung of the `-crossasset` bond ladder, which no version of the loss can see.  Measured here:
+    // 0.084 puts that rung over its floor on 1 seed of 4, 0.10 on 3 of 4.  The cost is `bond
+    // infl-crash` 1.08 -> 1.28, on the row whose own `-noise` measurement says one 24-year record
+    // barely produces a reading.  A parameter the search keeps proposing to cut and that keeps
+    // having to be put back is a candidate for the identity list; it has not been promoted yet
+    // because unlike `duration` it names no single published number.
     //
     // Scored on the MEDIAN of three seeds, not one: a single-seed refinement here found a 1.687
     // that was a 2.15 median over five seeds.  Depth-rung agreement is cheap to overfit because
@@ -2646,17 +2842,38 @@ object MarketSim:
     //   one this shipped with, the same worlds read 0.90 / 1.20 / 1.33 -- the horizon mismatch, not
     //   a change in the model.
     //
-    // KURTOSIS AND CLUSTERING CANNOT BOTH BE RIGHT.  stress 7.5 reaches kurtosis 26.4 against a real
-    // 28 -- and clustering 1.67, failing the realism band.  That is the measured reason the kurtosis
-    // MISS stands, more precise than "no slow valuation cycle": the cycle is why there is no SECOND
-    // channel for tails, not why this one cannot reach them.
+    // KURTOSIS AND CLUSTERING COULD NOT BOTH BE RIGHT THROUGH `stress`: at stress 7.5 kurtosis
+    // reached 26.4 against a real 28 and clustering hit 1.67, failing its realism band.  That was
+    // the measured reason the kurtosis MISS stood, and the note it replaced was more precise than
+    // "no slow valuation cycle" -- the cycle is why there was no SECOND channel for tails, not why
+    // that one could not reach them.
     //
-    // FOUR KNOWN BIAS DIRECTIONS, netted away nowhere else: clustering at 1.10 makes volatility
-    // more predictable here than in the record, which flatters any rule that forecasts it; worst
-    // crash at 1.44 puts index paths near -82% against a real -56.8%, which no levered fund
-    // survives, so ruin rates for levered sleeves are UPPER BOUNDS, not estimates; crashes arrive
-    // 1.38x too often, so any per-crash hazard read off this model is over-sampled; and since
-    // 0.21.0 the median crash is SHALLOW, 0.85 of the real -27.1.
+    // 0.21.0 ADDED THE SECOND CHANNEL and the trade-off disappeared with it.  `jumpVar` 0.10 moves
+    // a tenth of the equity flow's variance from diffusion into a volatility-clustered compensated
+    // jump; kurtosis goes 0.45 -> 1.00 and clustering IMPROVES, 1.11 -> 1.03 and 1.15 -> 1.05,
+    // because variance taken out of the diffusion shortens the persistence the clamped volatility
+    // process was over-supplying.  Volatility, return per vol and crash rate all improved too, and
+    // the calibration loss fell 1.947 -> 1.575 with no other parameter touched -- almost all of it
+    // from CLUSTERING, since kurtosis's own weight collapsed once its sdRel was re-measured.  The
+    // channel is defended by the target it was not aimed at.  The lesson is not
+    // about jumps: an "X and Y cannot both be right" finding is a statement about the CHANNEL that
+    // was tried, and stays one until someone tries a different channel.
+    //
+    // ASYMMETRIC RECOVERY closed the crash-rate and shallow-median misses TOGETHER, because they
+    // were one defect.  The model spent HALF the real record's time below 15% (d15 0.115 against
+    // SPY's 0.240) while crossing 15% 40% MORE often -- its deep drawdowns recovered three times too
+    // fast.  `recoveryDrag` weakens value arbitrage as a drawdown deepens, which is what depleted
+    // capital does; `crashes/century` goes 1.32 -> 1.13 and `median depth %` 0.84 -> 0.95, and
+    // `-noise` moves the real anchors from the 4th and 6th percentiles of the model-implied spread
+    // to the 33rd and 30th.  Five mechanisms were tried first and all failed -- see the CHANGELOG;
+    // the one that worked keys on distance below the PEAK, which is what the statistic is about,
+    // where a pull convex in the gap to FAIR VALUE cannot tell a deep drawdown from an ordinary one.
+    //
+    // TWO KNOWN BIAS DIRECTIONS, netted away nowhere else: worst crash at 1.61 puts index paths
+    // near -92% against a real -56.8%, which no levered fund survives, so ruin rates for levered
+    // sleeves are UPPER BOUNDS, not estimates; and the DEEP drawdown rung runs long at 1.78, which
+    // is what the drag costs -- a slower climb out of a deep hole is more time deep.  Rules keyed
+    // to a deep distance from peak inherit that; the shallow rungs read 0.94 and 1.03.
     //
     // That last one is the price of the depth rungs and it is structural, not a tuning miss:
     // every world that puts time under water near the real relation lands median crash depth at
@@ -2668,6 +2885,8 @@ object MarketSim:
     var trendShare = Defaults.trendShare; var depth = Defaults.depth
     var stress = Defaults.stress; var beta = Defaults.beta
     var volPersist = Defaults.volPersist; var volOfVol = Defaults.volOfVol
+    var jumpVar = Defaults.jumpVar; var jumpRate = Defaults.jumpRate
+    var recoveryDrag = Defaults.recoveryDrag; var recoveryFloor = Defaults.recoveryFloor
     var valuePull = Defaults.valuePull
     var crowdName = "momentum"; var crowdImpact = Defaults.crowdImpact; var panic = Defaults.panic
     var drift = Defaults.drift; var fundVol = Defaults.fundVol; var rateMean = Defaults.rateMean
@@ -2710,7 +2929,11 @@ object MarketSim:
       case "-beta"       => beta = numOr("-beta", consumeNext)
       case "-volpersist" => volPersist = numOr("-volpersist", consumeNext)
       case "-volofvol"   => volOfVol = numOr("-volofvol", consumeNext)
+      case "-jumpvar"    => jumpVar = numOr("-jumpvar", consumeNext)
+      case "-jumprate"   => jumpRate = numOr("-jumprate", consumeNext)
       case "-value"      => valuePull = numOr("-value", consumeNext)
+      case "-recoverydrag"  => recoveryDrag = numOr("-recoverydrag", consumeNext)
+      case "-recoveryfloor" => recoveryFloor = numOr("-recoveryfloor", consumeNext)
       case "-crowd"      => crowdName = consumeNext
       case "-crowdimpact"=> crowdImpact = numOr("-crowdimpact", consumeNext)
       case "-panic"      => panic = numOr("-panic", consumeNext)
@@ -2762,7 +2985,9 @@ object MarketSim:
       case other => usage(s"unknown -crowd [$other]; use momentum, trendNNN, or volscaled")
     val w = World(trendShare, depth, stress, beta, drift = drift, fundVol = fundVol,
                   rateMean = rateMean,
-                  volPersist = volPersist, volOfVol = volOfVol, valuePull = valuePull,
+                  volPersist = volPersist, volOfVol = volOfVol,
+                  jumpVar = jumpVar, jumpRate = jumpRate, valuePull = valuePull,
+                  recoveryDrag = recoveryDrag, recoveryFloor = recoveryFloor,
                   crowd = crowd, crowdImpact = crowdImpact, panic = panic,
                   duration = duration, easing = easing, unwind = unwind, refuge = refuge,
                   inflProb = inflProb, inflSize = inflSize,

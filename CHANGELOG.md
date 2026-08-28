@@ -1,5 +1,122 @@
 ## v0.21.0 — 2026-08-27
 
+**FIXED — crash frequency and the shallow median crash, which were one defect**
+
+`crashes/century` read 1.32 and `median depth %` 0.84, and both had stood for releases. They are the
+same defect seen twice. Measured against the real record: the model spends HALF the time below 15%
+that SPY does (d15 0.115 against 0.240) while crossing 15% 40% MORE often, so each excursion lasts a
+third as long — 0.395 years against 1.148. Its deep drawdowns recover far too fast. The median
+fall-to-rise ratio reads 1.02 here against 1.44 for SPY and 1.28 for QQQ.
+
+The diagnosis that mattered came from a random-walk reference: under the model's own episode
+definition a pure random walk produces 35.3 crashes/century at SPY's drift and volatility and 48.8
+at QQQ's, where both real series produce 24.1. Real markets are far quieter than chance and this
+model was not — it sat at 0.92 of the random-walk rate. That is the same asymmetry the 0.21.0 depth
+relation already encodes as a grading rule; the model had the rule without the mechanism.
+
+`recoveryDrag` is the mechanism. Value arbitrage is WEAKER, not stronger, when the market is far
+below its own peak — the capital that closes a gap is most depleted exactly when the gap is largest.
+It is one-sided, touching the pull only while it points up and only past a 10% drawdown, so declines
+are unaffected and recoveries grind. `recoveryFloor` is the residual arbitrage that never vanishes;
+unbounded, the pull falls to a seventeenth of strength at a 30% drawdown, which is capital switched
+off rather than depleted, and the deepest drawdowns run away.
+
+Against their anchors: crashes/century 1.32 -> 1.13, median depth 0.84 -> 0.95, bond growth-crash
+0.40 -> 0.53, kurtosis 1.00 -> 0.99, d10 0.96 -> 1.03. The decisive reading is `-noise`: the real
+crash-rate and median-depth anchors sat at the 4th and 6th percentiles of the model-implied spread
+and now sit at the 33rd and 30th. Calibration loss falls 1.515 -> 1.292 as a median over four seeds,
+scored multi-seed because single-seed refinement has produced a false optimum here before.
+
+The cost is the deep rung: `equity d20 vs real` 1.38 -> 1.78, and `worst crash %` 1.54 -> 1.61.
+Slowing the climb out of a deep hole is more time deep; that is the mechanism working, not a side
+effect of it. Rules keyed to a deep distance from peak inherit it. `bond infl-crash` also drifts
+1.40 -> 1.61 through the stress coupling — both it and d20 are the two least measurable targets in
+the set, with sampling spreads of 2.78 and 1.56 against a median 0.16.
+
+FIVE MECHANISMS WERE TRIED AND REJECTED FIRST, each for a measured reason, and all are recorded so
+none is re-attempted: promoting the frozen `SigmaN` (raises crashes faster than volatility, the same
+spiral coupling as `depth`); `fundVol` (flat at the shipped operating point); a value pull convex in
+the MISPRICING (cuts crash count but drains d5, d10 and kurtosis with it, because a market can sit
+10% under fair while 3% under its peak); dip-buying flow keyed to drawdown depth (cuts depth, not
+count); and reverting the fundamental to a trend line — the "slow valuation cycle" this miss had been
+attributed to for four releases, which turns out to be inert.
+
+**CHANGED — `valuePull` 0.017 -> 0.045, and its search range 0.010-0.035 -> 0.010-0.070**
+
+With the drag, the base pull governs SHALLOW water only and its useful range moved up. The two are
+one pair: turn the drag off at the shipped pull and `d10` collapses to 0.76; weaken the pull instead
+and it runs to 1.53. The old ceiling would have excluded the shipped value, which is the `fundVol`
+failure mode — a search that cannot reach the answer.
+
+**CHANGED — `equity d20 vs real`'s calibration weight, from a re-measured sampling spread**
+
+Its `sdRel` moves 0.99 -> 1.56, dropping its weight to 0.06. Like kurtosis's move earlier in this
+release this is a re-measurement rather than a correction: slowing recovery from deep drawdowns makes
+time spent deep swing much harder between histories (p5 0.19, p95 4.35 over 25 years). No other
+target's `sdRel` moved beyond its own noise.
+
+**ADDED — `-recoverydrag X` and `-recoveryfloor X`, both searchable**
+
+`-recoverydrag 0 -recoveryfloor 1.0 -value 0.017` reproduces 0.20.0's statistics. Both are in
+`-calibrate`'s ranges from the release they arrive in.
+
+**FIXED — daily kurtosis, a recorded scope exclusion since 0.17.0, via a second tail channel**
+
+`kurtosis` read 0.45 of its CRSP-century anchor and was parked as needing a slow valuation cycle.
+The sharper reason on record was that kurtosis and clustering could not both be right: driving
+`stress` to 7.5 reached kurtosis 26.4 against a real 28 and pushed clustering to 1.67, outside its
+realism band. That was true of `stress`, which was the only tail channel this model had. It was
+never a statement about tails in general, and the same note said so.
+
+`jumpVar` is a second channel. A share of the equity flow's variance moves out of the diffusion and
+into a compensated jump, so total flow variance is unchanged and `equity vol %` does not move. The
+model never needed more crash magnitude — crashes and worst-crash depth both run ABOVE their
+anchors — it needed the magnitude it already had arriving in fewer, more violent sessions. The jump
+is a flow rather than a return, so it passes through `Market.step` like any other shock and the
+stress, liquidity and crowd machinery all see it; intensity scales with the volatility state, so
+extreme sessions cluster inside a crisis instead of scattering.
+
+The trade-off it was supposed to face did not appear. Against their anchors: kurtosis 0.45 -> 1.00,
+clustering 1.11 -> 1.03 and 1.15 -> 1.05, crashes/century 1.36 -> 1.32, equity vol 1.03 -> 1.02,
+return per vol 0.98 -> 0.99. Calibration loss 1.947 -> 1.575 with no other parameter touched. The
+decisive reading is `-noise`: the real kurtosis anchor sat at the 97th percentile of the
+model-implied spread of 72-year histories and now sits at the 54th, so the anchor can no longer
+distinguish this model from the record it came from.
+
+Two shape constants are fixed rather than dialled, and both for reasons that bind. A Student-t with
+four or fewer degrees of freedom has an infinite fourth moment, so a kurtosis target fitted against
+one is not a calibration — `JumpNu` is 5. And intensity scales as `m^gamma` in the volatility state,
+whose expectation is `exp(volNorm*(gamma^2/2 - gamma))`, exactly 1 at `gamma = 2` and at no other
+positive value; anywhere else `jumpRate` would not mean the unconditional rate it claims to be.
+
+`jumpVar` is set by the realism band, not by the target. At 0.10 the ratio averages 0.87 over eight
+replicates with a 2 sd spread of 0.16, which keeps every seed inside `kurtosis 4-30`. Tuning the
+mean onto 28.0 would put some seeds through the ceiling, and widening a band to admit your own model
+is not a fix.
+
+**CHANGED — `kurtosis`'s calibration weight, from a re-measured sampling spread**
+
+Its `sdRel` moves 0.14 -> 2.65, dropping its weight from 0.71 to 0.04. This is not a correction of a
+mis-measurement: the channel makes single-history kurtosis as variable as it really is, so one
+72-year window now reads 8.8 at the 5th percentile and 205 at the 95th, exactly as a real window
+either contains its 1987 or does not — SPY 1993-2026 reads 14.4 where the CRSP century reads 28.
+Weighting by measurability therefore has to drop it. What pins `jumpVar` instead is clustering, at a
+combined weight of 3.1 and a tenth of the sampling spread: turning the channel off moves clustering
+to 1.11 and 1.15, which the loss sees clearly. No other target's `sdRel` moved beyond its own
+measurement noise.
+
+**ADDED — `marketSim`/`market_sim`: `-jumpvar X` and `-jumprate X`**
+
+`-jumpvar 0` disables the channel and reproduces 0.20.0's statistics bit for bit: the jump draws
+come from their own RNG stream, so nothing else in a path shifts. Both are in `-calibrate`'s ranges
+from the release they arrive in — `fundVol` sat outside them for four releases and that is exactly
+why its defect survived four releases of one-knob-at-a-time sweeps.
+
+**CHANGED — `-emit` sidecar schema 2 -> 3**
+
+The `world` block carries `jumpVar` and `jumpRate`. A schema-2 reader reconstructing a `World` from
+a schema-3 sidecar would silently get one with no tail channel.
+
 **CHANGED — the equity depth rungs are graded against a real relation, not against SPY's levels**
 
 The three depth targets were SPY's time-under-water shares over 1993-2026 — 0.447 / 0.315 / 0.169 —
@@ -30,10 +147,10 @@ but carries no band: its relation does not transport (R^2 0.25-0.41 to the indep
 against 0.66-0.73 for the other two) and an honest band there would span 0.35-2.60, which cannot
 fail. A check that reads as verification while testing nothing is worse than no check.
 
-The rungs' weights were re-measured by `-noise`, because a ratio compounds the depth share's own
-sampling error with the volatility and return sampling in its denominator: 0.15 / 0.45 / 2.51
-against the absolute rungs' 0.22 / 0.34 / 0.55. The deep rung's 2.51 crushes its weight to ~0.04,
-which is the measurement saying that over one 25-year record its ratio cannot be read.
+The rungs' weights were re-measured by `-noise` at the adopted defaults, because a ratio compounds
+the depth share's own sampling error with the volatility and return sampling in its denominator:
+0.13 / 0.25 / 0.99 against the absolute rungs' 0.22 / 0.34 / 0.55. The deep rung's 0.99 holds its
+weight near 0.10, which is the measurement saying that one 25-year record barely pins its ratio.
 
 **ADDED — `marketSim`/`market_sim`: `-fundvol X` exposes the fundamental's volatility**
 
@@ -50,37 +167,63 @@ raise it would have closed them by making the fundamental hotter still.
 
 `fundVol` 0.13 → 0.041 is the substantive move; `depth` 16.1 → 16.94, `drift` 0.123 → 0.113,
 `volOfVol` 0.014 → 0.027, `valuePull` 0.0145 → 0.017, `stress` 5.6 → 5.37, `trendShare` 0.07 →
-0.055, `easing` 0.046 → 0.037, `inflSize` 0.10 → 0.084 and `discount` 5.0 → 5.73 follow it.
-`crowdImpact`, `refuge`, `margin` and every identity parameter are unchanged.
+0.055 and `discount` 5.0 → 5.73 follow it. `crowdImpact`, `easing`, `refuge`, `inflSize`, `margin`
+and every identity parameter are unchanged.
 
-Measured over eight seeds x 60 paths x 100 years, ratios against each target's anchor:
+Measured over six seeds x 60 paths x 100 years, ratios against each target's anchor:
 
 | | 0.20.0 | 0.21.0 |
 |---|---|---|
-| equity d5 vs real | 1.19 | **0.98** |
-| equity d10 vs real | 1.55 | **1.03** |
-| equity d20 vs real | 2.98 | **1.49** |
-| equity vol % | 1.02 | 1.00 |
-| return per vol | 1.09 | 1.02 |
-| kurtosis | 0.42 | 0.49 |
-| crashes/century | 1.42 | 1.38 |
-| worst crash % | 1.51 | 1.44 |
+| equity d5 vs real | 1.19 | **0.99** |
+| equity d10 vs real | 1.55 | **1.00** |
+| equity d20 vs real | 2.98 | **1.57** |
+| equity vol % | 1.02 | 1.03 |
+| return per vol | 1.09 | 1.00 |
+| kurtosis | 0.42 | 0.47 |
+| crashes/century | 1.42 | 1.40 |
+| worst crash % | 1.51 | 1.50 |
 | median depth % | 0.97 | 0.85 |
 | clustering lag 1 | 1.06 | 1.10 |
 
-The gate goes from failing `equity d10 vs real` to **no failures on any seed**, and the 10% rung
-reads 0.93-1.06 across those eight seeds, so the agreement is not a seed draw.
+The acceptance gate goes from failing `equity d10 vs real` to **no failures on any seed**.
 
-Two of the search's proposals were declined by hand, for reasons the loss cannot see. It pushed
+Three of the search's proposals were declined by hand, for reasons the loss cannot see. It pushed
 `crowdImpact` to its 0.01 range floor, where `meanCrowdFlow` reads 0.9% of the noise term — the
 reflexive channel switched off, which is the defect that diagnostic exists to catch. Pinned back at
 0.07 it reads 6.7%, and the pin also bought volatility (16.03 against 15.38) and crash depth. It
-also raised `refuge` to 0.159, taking bond volatility to 1.12x duration and outside its band; at
-the unchanged 0.11 it reads 1.03 and the equity side does not move at all.
+raised `refuge` to 0.159, taking bond volatility to 1.12x duration and outside its band; at the
+unchanged 0.11 it reads 1.03 and the equity side does not move at all. It cut `easing` to 0.037,
+which is not a tuning question: the help text interpolates that field and asserts it IS one full
+real easing cycle, and real cycles run about 5 rate points. At 0.037 the help text states something
+false, so the value is anchored the way `duration` is.
+
+And it cut `inflSize` 0.10 → 0.084, which was reverted for the **second** time and the same reason:
+0.20.0's search proposed the same cut and it was put back then because it breaks the d=5.70 rung of
+the `-crossasset` bond ladder, which no version of the loss can see. Measured: 0.084 puts that rung
+over its floor on one seed of four, 0.10 on three of four. The cost falls on `worst crash %` and
+`bond infl-crash`, a documented horizon artifact and the least measurable row in the set
+respectively. A parameter the search keeps proposing to cut, and that keeps having to be put back,
+is a candidate for the identity list; it has not been promoted because unlike `duration` it names
+no single published number.
 
 Candidates are scored on the median of three seeds. A single-seed refinement here found a 1.687
 that was a 2.15 median over five — depth-rung agreement is cheap to overfit, because the relation's
 denominator moves with the sample.
+
+**KNOWN — the calibration loss cannot see the `-crossasset` ladder**
+
+`fitness` scores a single `WorldStats`; the ladder re-simulates at other durations. So the only
+bond-depth reading a search can see is the one at the shipped duration — where it reads 1.24, in
+band — and every off-duration rung is free to be spent. This release's search duly proposed an
+`inflSize` cut that pushed `bond depth vs vol` at d=5.70 from its band floor to 0.55-0.62, the same
+cut 0.20.0's search proposed and that was reverted then for the same reason. Reverted again; the
+rung is back on its floor, where it has sat since 0.19.2, and the ladder verdict flips between
+`PASS`, `EDGE` and `FAIL` on the seed. **Run `-crossasset` after any recalibration.**
+
+The residual is not tuned away. Every dial that lifts d=5.70 further also pushes d=13.50 toward its
+1.35 ceiling — the ladder is rotated rather than shifted, so buying margin on one rung spends the
+other. This release does grade one more cell than 0.20.0, because the new world's bond volatility at
+d=13.50 falls inside the anchor funds' support.
 
 **KNOWN — time under water and crash depth cannot both be right**
 

@@ -1,3 +1,4 @@
+tmp/
 bench-logs/
 resume-claude.sh
 py/heatmap.py

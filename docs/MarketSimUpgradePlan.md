@@ -22,8 +22,11 @@ that pattern complete instead of accidental.
 - **Frozen constants stay frozen unless promoted deliberately.** The header lists them. Promoting one
   to a `World` field is a legitimate change (item W7 proposes exactly that) but it must be recorded
   there, not done silently.
-- **The recorded scope exclusion stands.** Daily kurtosis (~13 against ~28 real) traces to the
-  absent slow valuation cycle and is deliberately not fixed. Nothing here reopens that.
+- **The kurtosis scope exclusion was CLOSED in 0.21.0**, by `jumpVar` rather than by the valuation
+  cycle it had been attributed to. The attribution was wrong in the same way crash frequency's was:
+  the missing cycle explained why there was no SECOND tail channel, not why tails were unreachable.
+  Any remaining "traces to the absent valuation cycle" claim below should be read with that in
+  mind — median crash DEPTH is the one that still holds.
   **Crash frequency left this bucket in 0.19.1** and the attribution it carried was wrong: it is
   driven by market depth, not by the valuation cycle. It reads 1.32x real in 0.19.2, about 1.2 sigma
   against the sampling error of its own anchor (15 episodes in 72 years) — up from 1.20x, the price
@@ -890,6 +893,6 @@ threshold.
 - Do not add knobs whose only justification is that a conclusion comes out differently.
 - Do not treat "more paths" or "more worlds" as an upgrade. The sleeve study's binding constraint was
   never simulation budget; it was that the admissible worlds did not contain the consumer's assets.
-- Do not reopen the recorded scope exclusions (daily kurtosis, crash arrival spacing). They trace to
-  an absent slow valuation cycle, they are disclosed in every fidelity report, and the conclusions
-  that depend on them are already ruled out by the header.
+- The recorded scope exclusions are now one, not two: crash arrival spacing. Daily kurtosis was
+  closed in 0.21.0 by adding a tail channel rather than the valuation cycle it was attributed to.
+  Treat "X and Y cannot both be right" findings as statements about the CHANNEL that was tried.
