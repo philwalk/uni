@@ -289,7 +289,7 @@ object MarketSim:
     jumpVar = 0.10, jumpRate = 0.0010, valuePull = 0.045,
     recoveryDrag = 10.0, recoveryFloor = 0.10,
     crowd = Crowd.Momentum, crowdImpact = 0.07, panic = 0.0, duration = 13.5,
-    easing = 0.046, unwind = 0.35, refuge = 0.11,
+    easing = 0.052, unwind = 0.35, refuge = 0.11,
     inflProb = 0.20, inflSize = 0.10, inflSpeed = 0.010, rateSpeed = 3.0, discount = 5.73,
     margin = 0.006)
   val DefaultPaths = 200
@@ -374,6 +374,20 @@ object MarketSim:
     * quantities are HOW FAR policy can go (`easing`) and HOW LONG it stays (`unwind`), not how
     * quickly a central bank can cut in a panic -- that one the record answers the same way every
     * time. */
+  /** POLICY ACCOMMODATION's cap is an ANCHOR, not a fitted number.  `usage` interpolates
+    * `Defaults.easing` and asserts it IS one full real easing cycle, which makes the value a claim
+    * the program makes about itself.  Real full cycles: 2007-08 took the target 5.25 -> 0.125 (5.1
+    * points), 2001-03 took 6.50 -> 1.00 (5.5), 1989-92 took 9.81 -> 3.00 (6.8).  The 0.046 shipped
+    * through 0.20.0 was 4.6 points -- BELOW every one of them, so the help text was slightly false.
+    * 0.052 is 5.2 points: inside the range and below its median.
+    *
+    * It is also the only setting that clears `-crossasset`, and the two facts are independent -- the
+    * anchor argument stands whether or not the ladder exists.  The ladder ROTATES on this dial: at
+    * 0.046 the d=5.70 depth rung falls through its 0.65 floor (0.66 at the default seed, and
+    * outright FAIL on 2 of 5 seeds -- the EDGE that stood since 0.19.2 was the favourable draw), and
+    * at 0.058 the d=13.50 rung reaches its 1.35 ceiling (1.34).  The admissible window is roughly
+    * 0.050-0.056 and the shipped value sat under it.  Cost: fitness loss 1.375 -> 1.385, every
+    * equity statistic unchanged. */
   val EaseInSpeed = 6.0
   val DurationRef = 13.5
   /** Bond volatility is measured over NON-OVERLAPPING windows of this many years, even when the

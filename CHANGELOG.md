@@ -1,5 +1,37 @@
 ## v0.21.0 — 2026-08-27
 
+**FIXED — `-crossasset` clears, and the EDGE it clears was hiding a FAIL**
+
+`easing` shipped at 0.046, and `usage` interpolates it while asserting it IS one full real easing
+cycle — which makes the value a claim the program makes about itself. Real full cycles: 2007-08 took
+the target 5.25 -> 0.125 (5.1 rate points), 2001-03 took 6.50 -> 1.00 (5.5), 1989-92 took
+9.81 -> 3.00 (6.8). At 4.6 points the shipped value was below every one of them and the help text was
+slightly false. It is now 0.052 — 5.2 points, inside the range and below its median.
+
+The cross-asset ladder ROTATES on this dial, and the admissible window is narrow. Below about 0.050
+the `bond depth vs vol` rung at d=5.70 falls through its 0.65 floor; above about 0.056 the d=13.50
+rung reaches its 1.35 ceiling. 0.046 sat under the window: at the default seed the cell read 0.66 and
+the ladder reported EDGE, but across five seeds it read 0.62-0.66 and reported **FAIL on two of
+them**. The standing EDGE was the favourable draw, not the finding.
+
+It was also not resolvable by ensemble size, which is what an EDGE verdict invites you to try. Run
+at 400, 800, 1600 and 3200 paths the cell converges to 0.64-0.65 while its sampling spread shrinks
+from 0.04 to 0.01 — the value sits ON the floor, so more paths sharpen the failure rather than
+clearing it.
+
+At 0.052 the ladder reads PASS on five of six seeds and EDGE on the sixth, with d=5.70 at 0.71 and
+d=13.50 at 1.29. Cost: calibration loss 1.375 -> 1.385, `bond depth vs vol` on the acceptance gate
+1.23 -> 1.29 (inside its band), and **every equity statistic unchanged**. No `sdRel` moved beyond its
+own measurement noise, so the calibration weights are unchanged.
+
+The anchor argument and the ladder argument are independent: the help text was false at 0.046
+whether or not `-crossasset` exists.
+
+KNOWN — on two of the six seeds the d=13.50 rung reads EXTRAP rather than being graded, because the
+model's bond volatility there (13.9%) sits just under the anchors' 14.12% support ceiling. The
+ladder loses a graded cell exactly where the model is most volatile, which is a fragility in the
+support, not in the world.
+
 **FIXED — two realism bands were the S&P's shape and called real markets unreal**
 
 `equity vol 8-25%` excluded **17 of the 35 real equity instruments** in `test-data/equity-anchors`:

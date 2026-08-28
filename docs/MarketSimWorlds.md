@@ -219,11 +219,20 @@ zero cells (`INCONCLUSIVE` — a test that never ran did not pass), or when any 
 per-cell sd is estimated in-run from quarter-ensemble spread; a hard PASS/FAIL within it would be
 a seed draw wearing a verdict's clothes.
 
-**The default world sits ON the floor of one cell and flips across seeds**: `bond depth vs vol` at
-d=5.70 reads about 0.69 against a 0.65 floor, where real funds of comparable volatility read
-0.98–1.06. That has been true since 0.19.2, and the verdict comes back `PASS`, `EDGE` or `FAIL`
-depending on the seed. It is a recorded miss, not a resolvable one at any ensemble size you would
-run.
+**Cleared in 0.21.0, and what it was hiding is worth knowing.** `bond depth vs vol` at d=5.70 sat on
+its 0.65 floor from 0.19.2, reporting `EDGE` at the default seed — but across five seeds it read
+0.62–0.66 and reported **`FAIL` on two of them**. The standing EDGE was the favourable draw.
+
+It was also not resolvable by ensemble size, which is what an `EDGE` verdict invites you to try. At
+400, 800, 1600 and 3200 paths the cell converges to 0.64–0.65 while its sampling spread falls from
+0.04 to 0.01: the value sits *on* the floor, so more paths sharpen the failure rather than clearing
+it. **If a cell reads EDGE, check where the point estimate converges before spending an afternoon on
+paths.**
+
+The fix was `easing` 0.046 → 0.052, which is an anchor correction rather than a tune: `usage`
+asserts the value IS one full real easing cycle, and real cycles run 5.1 to 6.8 rate points
+(2007-08, 2001-03, 1989-92) where 0.046 is 4.6. The ladder now reads `PASS` on five of six seeds,
+with d=5.70 at 0.71 and d=13.50 at 1.29.
 
 **The calibration loss cannot see this rung.** `fitness` scores a single `WorldStats` and the ladder
 re-simulates at other durations, so a re-search optimises the bond depth relation at the *shipped*
@@ -232,9 +241,11 @@ duration — where it reads 1.24, comfortably in band — and is free to spend e
 0.20.0's search proposed and that was reverted then for the same reason. **Run `-crossasset` after
 any recalibration; the loss will not warn you.**
 
-Nor is the residual tuned away. Every dial that lifts d=5.70 further also pushes d=13.50 toward its
-1.35 ceiling: the ladder is **rotated**, not shifted, so buying more margin on one rung spends the
-other rather than fixing the mechanism.
+**The ladder is rotated, not shifted, and that is now measured rather than asserted.** Every dial
+that lifts d=5.70 also pushes d=13.50 toward its 1.35 ceiling. On `easing` the admissible window is
+roughly 0.050–0.056: at 0.046 the short rung reads 0.66 and edges on its floor, at 0.058 the long
+rung reads 1.34 and edges on its ceiling. There is a middle, but it is narrow — do not expect margin
+on both ends, and re-check both rungs after moving any bond dial.
 
 The acceptance gate applies the same refusal: `-validate` prints an anchor-fitted band it cannot
 grade as `n/a` with the reason (and the sidecar records it under `gate.fidelityUnanchored`),
@@ -299,7 +310,7 @@ with it.
 | `-recoverydrag` | how fast value arbitrage weakens as a drawdown deepens past 10%; 0 restores 0.20.0's symmetric pull | 10.0 |
 | `-recoveryfloor` | weakest that pull may become, as a share of full strength | 0.10 |
 | `-anchors` | which real index the **equity** fidelity targets describe: `sp500` or `nasdaq` | sp500 |
-| `-easing` | **cap** on the policy rate cut under equity stress, in rate points | 0.046 |
+| `-easing` | **cap** on the policy rate cut under equity stress, in rate points — an anchor, not a fitted number: one full real easing cycle | 0.052 |
 | `-unwind` | how fast that cut is withdrawn, per year (0.35 is a ~2-year half-life) | 0.35 |
 | `-refuge` | flight-to-quality bid into the bond, scaled by its duration | 0.11 |
 | `-inflsize` | size of an inflation regime's rate-pressure target | 0.10 |
