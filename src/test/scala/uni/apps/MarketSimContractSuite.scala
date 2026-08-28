@@ -117,6 +117,36 @@ class MarketSimContractSuite extends FunSuite:
       "QQQ's 27-year kurtosis is BELOW the CRSP century's -- a shorter window holds fewer 1987s")
   }
 
+  test("the drawdown-shape episode definition is the one folio-pmw measures with") {
+    // A hand-built path with ONE episode, so the definition is pinned rather than described.
+    // Peak at index 2, one -20% session, a grind to the trough at 5, recovery to a new high at 8.
+    // This exists because the definition now lives in two repos: the consumer measures the same
+    // statistic, and a second copy of a definition is a copy free to drift.
+    val px = Array(100.0, 105.0, 110.0, 88.0, 86.0, 84.0, 95.0, 105.0, 112.0)
+    val eps = MarketSim.ddEpisodes(px, 0.10)
+    assertEquals(eps.size, 1, s"expected one episode, got ${eps.map(_.depth)}")
+    val e = eps.head
+    // trough is index 5 (84 against a running peak of 110): 84/110 - 1
+    assertEqualsDouble(e.depth, 84.0 / 110.0 - 1.0, 1e-12)
+    // underwater runs 3..7 inclusive — index 8 is the first bar back at a new high
+    assertEquals(e.decline, 3, "decline is first-underwater to trough, inclusive")
+    assertEquals(e.recovery, Some(3), "recovery is trough to last-underwater, inclusive")
+    assertEquals(e.underwater, 5)
+    // the worst session is 110 -> 88, and the leg runs from the bar BEFORE the first underwater
+    // one, so the total is log(84/110) and the share is log(88/110) / log(84/110).
+    assertEqualsDouble(e.worstDayShare, math.log(88.0 / 110.0) / math.log(84.0 / 110.0), 1e-12)
+  }
+
+  test("a drawdown-shape episode still underwater at the end is censored, not dropped") {
+    // Its depth and decline count; its recovery does not. Dropping it would bias every duration
+    // downward by discarding exactly the longest episodes.
+    val px = Array(100.0, 120.0, 90.0, 85.0, 88.0)
+    val eps = MarketSim.ddEpisodes(px, 0.10)
+    assertEquals(eps.size, 1)
+    assertEquals(eps.head.recovery, None, "an unrecovered episode must report no recovery")
+    assert(eps.head.depth < -0.10, "its depth still counts")
+  }
+
   test("the cross-asset verdict requires coverage") {
     // The three-way branch behind the ladder's verdict line. INCONCLUSIVE exists because a
     // relation that graded nothing was not tested, and an in-support miss outranks it.

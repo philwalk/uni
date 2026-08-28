@@ -6,10 +6,15 @@
 //! are byte-identical between the two languages.
 //!
 //! Every mode is ported: the price-formation core (`World`, `Market`, `simulate`), the
-//! measurement layer — stylised-fact statistics, drawdown episodes, the two-class
+//! measurement layer — stylised-fact statistics, drawdown episodes, the three-class
 //! acceptance gate and the calibration loss — the exposure rules and grading statistics,
 //! and the `-emit`/`-validate`/`-strategies`/`-power`/`-buffer`/`-fitness`/`-calibrate`/
-//! `-crossasset`/`-noise` reports. `-emit` writes a TSV and a JSON sidecar, and both are byte-identical too.
+//! `-crossasset`/`-noise`/`-releases`/`-ddshape` reports, at both `-anchors` sets. `-emit` writes a
+//! TSV and a JSON sidecar, and both are byte-identical too.
+//!
+//! ONE surface is deliberately not ported: the usage text. The Scala twin's comes from `uni`'s own
+//! `showUsage`, which has no counterpart here, so a bad argument prints the same message on both but
+//! only the Scala side follows it with the flag list. Consult that side for the flags.
 //!
 //! Run: `cargo run --release --example market_sim -- -validate`
 //!
@@ -4615,6 +4620,205 @@ fn run_power_report(
 
 type BufferArm = (Vec<f64>, Vec<f64>, Vec<Vec<f64>>);
 
+// ---- drawdown SHAPE: how a decline is delivered, not how deep it gets -------------------------
+//
+// A SECOND episode definition, and the difference from the model's own is the whole point.
+// `measure` counts a crash as a 15%-below-peak excursion that re-arms once price is back within 2%
+// — a definition built for COUNTING crashes. This one is peak-to-trough-to-FULL-recovery, built for
+// SHAPE: how long a decline takes and how much of it arrives in one session. The two answer
+// different questions and must not be mixed.
+//
+// Reported here rather than left in a consumer's own script because a second copy of a definition
+// is a copy free to drift from this one.
+//
+// NOTHING HERE IS GATED. The real reference is ONE history: 12 episodes at the 10% threshold and 4
+// at the 20%. A band drawn off four episodes could not fail.
+struct DdEpisode {
+    depth: f64,
+    decline: usize,
+    recovery: Option<usize>,
+    underwater: usize,
+    worst_day_share: f64,
+}
+
+/// Peak-to-trough-to-recovery episodes deeper than `threshold`. An episode still underwater at the
+/// end is CENSORED: its depth and decline count, its recovery does not.
+///
+/// `worst_day_share` is the fraction of the peak-to-trough LOG decline delivered by its single
+/// worst session — low means the decline ground down, high means it gapped. The leg starts at the
+/// session BEFORE the first underwater bar, because that is the session the fall began on.
+fn dd_episodes(px: &[f64], threshold: f64) -> Vec<DdEpisode> {
+    let n = px.len();
+    let mut peak = f64::NEG_INFINITY;
+    let under: Vec<f64> = px
+        .iter()
+        .map(|&p| {
+            peak = peak.max(p);
+            p / peak - 1.0
+        })
+        .collect();
+    let mut spans: Vec<(usize, usize, bool)> = Vec::new();
+    let mut start: Option<usize> = None;
+    for (i, &u) in under.iter().enumerate() {
+        let below = u < -1e-12;
+        match (below, start) {
+            (true, None) => start = Some(i),
+            (false, Some(lo)) => {
+                spans.push((lo, i - 1, false));
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    if let Some(lo) = start {
+        spans.push((lo, n - 1, true));
+    }
+    let mut out = Vec::new();
+    for (lo, hi, censored) in spans {
+        let depth = under[lo..=hi].iter().copied().fold(f64::INFINITY, f64::min);
+        if depth > -threshold {
+            continue;
+        }
+        let mut trough = lo;
+        for k in lo..=hi {
+            if under[k] < under[trough] {
+                trough = k;
+            }
+        }
+        let base = lo.saturating_sub(1);
+        let total = (px[trough] / px[base]).ln();
+        let worst = (lo.max(1)..=trough)
+            .map(|k| (px[k] / px[k - 1]).ln())
+            .fold(f64::INFINITY, f64::min);
+        let worst = if worst.is_finite() { worst } else { 0.0 };
+        out.push(DdEpisode {
+            depth,
+            decline: trough - lo + 1,
+            recovery: if censored {
+                None
+            } else {
+                Some(hi - trough + 1)
+            },
+            underwater: hi - lo + 1,
+            worst_day_share: if total < 0.0 { worst / total } else { f64::NAN },
+        });
+    }
+    out
+}
+
+/// One real drawdown reference row:
+/// (threshold, episodes, per year, depth %, decline, recovery, underwater, worst-day share)
+type DdRefRow = (f64, usize, f64, f64, usize, usize, usize, f64);
+
+/// SPY total return, 1993-01-29..2026-08-26, measured with `dd_episodes` above. ONE history, and
+/// the episode counts are printed so nobody reads a median of four as a population value.
+const DD_REAL_SPY: [DdRefRow; 2] = [
+    (0.10, 12, 0.36, -18.9, 50, 67, 125, 0.286),
+    (0.20, 4, 0.12, -40.6, 275, 582, 856, 0.144),
+];
+
+fn run_drawdown_shape(paths: usize, years: usize, seed: u64, base: &World) {
+    eprintln!("{paths} paths x {years} years");
+    let sims = sim_paths(base, paths, years, seed);
+    let p_yrs = sims.len() as f64 * years as f64;
+    println!("DRAWDOWN SHAPE — how a decline is DELIVERED: how long it takes, and how much of it");
+    println!(
+        "arrives in its single worst session.  This is a SECOND episode definition on purpose:"
+    );
+    println!(
+        "the model's own crash count is a 15%-below-peak excursion re-arming at 2%, built for"
+    );
+    println!(
+        "counting; these are peak-to-trough-to-FULL-recovery, built for shape.  Do not mix them."
+    );
+    println!();
+    println!(
+        "Reference: SPY total return 1993-01-29..2026-08-26, ONE history — 12 episodes at the"
+    );
+    println!(
+        "10% threshold, 4 at the 20%.  NOTHING HERE IS GATED; a band off four episodes could not"
+    );
+    println!("fail.  The ratios are for reading, not for passing.");
+    println!();
+    println!(
+        "  {:<10} {:>4} {:>5} {:>7} {:>8} {:>8} {:>9} {:>9} {:>10}",
+        "series", "thr", "eps", "eps/yr", "depth", "decline", "recovery", "underwtr", "worst-day"
+    );
+    for (thr, r_eps, r_yr, r_depth, r_decl, r_recov, r_undw, r_wds) in DD_REAL_SPY {
+        let eps: Vec<DdEpisode> = sims
+            .iter()
+            .flat_map(|p| dd_episodes(&p.price, thr))
+            .collect();
+        let med = |f: &dyn Fn(&DdEpisode) -> f64| {
+            let v: Vec<f64> = eps.iter().map(f).collect();
+            pctile(&v, 0.5)
+        };
+        let recov: Vec<f64> = eps
+            .iter()
+            .filter_map(|e| e.recovery.map(|r| r as f64))
+            .collect();
+        let pct = (thr * 100.0) as usize;
+        let m_depth = med(&|e| e.depth) * 100.0;
+        let m_decl = med(&|e| e.decline as f64);
+        let m_recov = pctile(&recov, 0.5);
+        let m_undw = med(&|e| e.underwater as f64);
+        let m_wds = med(&|e| e.worst_day_share);
+        println!(
+            "  {:<10} {:>3}% {:>5} {} {}% {:>8} {:>9} {:>9} {}%",
+            "real SPY",
+            pct,
+            r_eps,
+            jf(r_yr, 7, 2),
+            jf(r_depth, 7, 1),
+            r_decl,
+            r_recov,
+            r_undw,
+            jf(r_wds * 100.0, 9, 1)
+        );
+        println!(
+            "  {:<10} {:>3}% {:>5} {} {}% {} {} {} {}%",
+            "model",
+            pct,
+            eps.len(),
+            jf(eps.len() as f64 / p_yrs, 7, 2),
+            jf(m_depth, 7, 1),
+            jf(m_decl, 8, 0),
+            jf(m_recov, 9, 0),
+            jf(m_undw, 9, 0),
+            jf(m_wds * 100.0, 9, 1)
+        );
+        println!(
+            "  {:<10} {:>3}% {:>5} {} {} {} {} {} {}",
+            "ratio",
+            pct,
+            "",
+            jf(eps.len() as f64 / p_yrs / r_yr, 7, 2),
+            jf(m_depth / r_depth, 8, 2),
+            jf(m_decl / r_decl as f64, 8, 2),
+            jf(m_recov / r_recov as f64, 9, 2),
+            jf(m_undw / r_undw as f64, 9, 2),
+            jf(m_wds / r_wds, 10, 2)
+        );
+        println!();
+    }
+    println!("  A LOW worst-day ratio means the model's declines GRIND where the real one GAPPED.");
+    println!(
+        "  Read it beside the decline column: a decline taking twice as long dilutes its worst"
+    );
+    println!("  session by construction, so the two move together.  Daily KURTOSIS is not the");
+    println!(
+        "  explanation -- it has sat on its anchor since 0.21.0 while this ratio barely moved."
+    );
+    println!();
+    println!(
+        "  Medians here are `pctile(.., 0.5)`: the lower of the two middle elements on an even"
+    );
+    println!(
+        "  count, where NumPy averages them.  A consumer reproducing this can land one element"
+    );
+    println!("  away on a duration and be right.");
+}
+
 #[expect(
     clippy::too_many_lines,
     reason = "one linear report, mirroring the Scala twin statement for statement"
@@ -5378,6 +5582,7 @@ fn main() {
     let mut gate_req = gate_default();
     let mut validate = false;
     let mut buffer_report = false;
+    let mut dd_shape = false;
     let mut power_report = false;
     let mut release_report = false;
     let mut cross_asset = false;
@@ -5538,6 +5743,7 @@ fn main() {
             "-gate" => gate_req = parse_gate(req_arg(&mut it, "-gate")),
             "-validate" => validate = true,
             "-buffer" => buffer_report = true,
+            "-ddshape" => dd_shape = true,
             "-power" => power_report = true,
             "-releases" => release_report = true,
             "-crossasset" => cross_asset = true,
@@ -5734,6 +5940,10 @@ fn main() {
             &power_arms,
             &power_years,
         );
+        return;
+    }
+    if dd_shape {
+        run_drawdown_shape(paths, years, seed, &w);
         return;
     }
     if buffer_report {

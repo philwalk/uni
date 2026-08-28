@@ -1,5 +1,30 @@
 ## v0.21.0 — 2026-08-27
 
+**ADDED — `-ddshape`: how a decline is delivered, not how deep it gets**
+
+Median decline duration, recovery duration, time underwater and **worst-day share** — the fraction
+of a peak-to-trough log decline delivered by its single worst session — at the 10% and 20%
+thresholds, against SPY 1993-2026.
+
+This is a SECOND episode definition and the difference is the point. The model's own crash count is
+a 15%-below-peak excursion re-arming at 2%, built for counting; these are
+peak-to-trough-to-full-recovery episodes, built for shape. They must not be mixed. The definition
+matches the one `folio-pmw` measures with, and lives here so a consumer is not maintaining a second
+copy free to drift from ours.
+
+NOTHING IN IT IS GATED. The reference is one history — 12 episodes at the 10% threshold, 4 at the
+20% — and a band off four episodes could not fail. The ratios are for reading.
+
+What it shows at the shipped world: declines at the 10% threshold take 1.42x as long as SPY's and
+deliver 0.61x as much of themselves in their worst session, while at 20% they are 0.34x as long and
+0.34x as slow to recover. **Daily kurtosis is not the explanation** — it has sat on its anchor since
+this release while the worst-day ratio moved only 0.57 -> 0.61. A decline taking twice as long
+dilutes its worst session by construction, so shape here is a duration finding, not a tail one.
+
+Medians are `pctile(.., 0.5)` — the lower of two middle elements on an even count, where NumPy
+averages them — so a consumer reproducing the table can land one element away on a duration and be
+right. The report says so.
+
 **FIXED — `-crossasset` clears, and the EDGE it clears was hiding a FAIL**
 
 `easing` shipped at 0.046, and `usage` interpolates it while asserting it IS one full real easing

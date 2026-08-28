@@ -170,6 +170,8 @@ object MarketSim:
     s"              ;   ${PowerYearsDefault.mkString(",")})",
     "-buffer       ; distribution of REAL underwater-stretch length and depth at exhaustion —",
     "              ;   the cash-buffer question, as a distribution instead of one episode",
+    "-ddshape      ; drawdown SHAPE against SPY: decline and recovery duration, and how much of",
+    "              ;   a decline arrives in its single worst session.  Diagnostic, never gated",
     "-strategies   ; exposure rules across a world sweep: stability, paired stats, breakevens,",
     "              ;   flight-to-safety decomposition, refuge-severity curve, crash types",
     "-single       ; with -strategies/-power/-buffer, baseline world only (skip the world sweep)",
@@ -2619,6 +2621,104 @@ object MarketSim:
     * from.  Depth AT EXHAUSTION excludes stretches that never outlast the buffer: those force no
     * sale and cost nothing, so entering them as zeros would flatter the average with episodes that
     * never happened. */
+  // ---- drawdown SHAPE: how a decline is delivered, not how deep it gets -----------------------
+  //
+  // A SECOND episode definition, and the difference from the model's own is the whole point.
+  // `measure` counts a crash as a 15%-below-peak excursion that re-arms once price is back within
+  // 2% -- a definition built for COUNTING crashes.  This one is peak-to-trough-to-FULL-recovery,
+  // built for SHAPE: how long a decline takes and how much of it arrives in one session.  The two
+  // answer different questions and must not be mixed.
+  //
+  // It is reported here rather than left in a consumer's own script because a second copy of a
+  // definition is a copy free to drift from this one -- the failure class this file already guards
+  // against for constants.
+  //
+  // NOTHING HERE IS GATED.  The real reference is ONE history: 12 episodes at the 10% threshold and
+  // 4 at the 20%.  A band drawn off four episodes could not fail, so these are disclosed
+  // diagnostics and the ratios are for reading.
+  final case class DdEpisode(depth: Double, decline: Int, recovery: Option[Int], underwater: Int,
+                             worstDayShare: Double)
+
+  /** Peak-to-trough-to-recovery episodes deeper than `threshold`.  An episode still underwater at
+    * the end is CENSORED: its depth and decline count, its recovery does not.
+    *
+    * `worstDayShare` is the fraction of the peak-to-trough LOG decline delivered by its single
+    * worst session -- low means the decline ground down, high means it gapped.  The leg starts at
+    * the session BEFORE the first underwater bar, because that is the session the fall began on. */
+  def ddEpisodes(px: Array[Double], threshold: Double): Vector[DdEpisode] =
+    val n     = px.length
+    val peak  = px.scanLeft(Double.NegativeInfinity)(math.max).tail
+    val under = Array.tabulate(n)(i => px(i) / peak(i) - 1.0)
+    val spans = Vector.newBuilder[(Int, Int, Boolean)]
+    var start = -1
+    var i = 0
+    while i < n do
+      val below = under(i) < -1e-12
+      if below && start < 0 then start = i
+      else if !below && start >= 0 then
+        spans += ((start, i - 1, false)); start = -1
+      i += 1
+    if start >= 0 then spans += ((start, n - 1, true))
+    spans.result().flatMap { (lo, hi, censored) =>
+      val depth = (lo to hi).map(under).min
+      if depth > -threshold then None
+      else
+        val trough = (lo to hi).minBy(under)
+        val base   = math.max(lo - 1, 0)
+        val total  = math.log(px(trough) / px(base))
+        val legs   = (math.max(lo, 1) to trough).map(k => math.log(px(k) / px(k - 1)))
+        val worst  = if legs.isEmpty then 0.0 else legs.min
+        Some(DdEpisode(depth, trough - lo + 1, if censored then None else Some(hi - trough + 1),
+                       hi - lo + 1, if total < 0.0 then worst / total else Double.NaN))
+    }
+
+  /** SPY total return, 1993-01-29..2026-08-26, measured with `ddEpisodes` above.  ONE history, and
+    * the episode counts are printed so nobody reads a median of four as a population value. */
+  val DdRealSpy: Vector[(Double, Int, Double, Double, Int, Int, Int, Double)] = Vector(
+    //  thr   eps   /yr   depth%  decl recov undw  worst-day share
+    (0.10, 12, 0.36, -18.9,  50,  67, 125, 0.286),
+    (0.20,  4, 0.12, -40.6, 275, 582, 856, 0.144))
+
+  def runDrawdownShape(paths: Int, years: Int, seed: Long, base: World): Unit =
+    eprintln(s"$paths paths x $years years")
+    val sims = simPaths(base, paths, years, seed)
+    val pYrs = sims.size.toDouble * years
+    println("DRAWDOWN SHAPE — how a decline is DELIVERED: how long it takes, and how much of it")
+    println("arrives in its single worst session.  This is a SECOND episode definition on purpose:")
+    println("the model's own crash count is a 15%-below-peak excursion re-arming at 2%, built for")
+    println("counting; these are peak-to-trough-to-FULL-recovery, built for shape.  Do not mix them.")
+    println()
+    println("Reference: SPY total return 1993-01-29..2026-08-26, ONE history — 12 episodes at the")
+    println("10% threshold, 4 at the 20%.  NOTHING HERE IS GATED; a band off four episodes could not")
+    println("fail.  The ratios are for reading, not for passing.")
+    println()
+    println(f"  ${"series"}%-10s ${"thr"}%4s ${"eps"}%5s ${"eps/yr"}%7s ${"depth"}%8s ${"decline"}%8s " +
+            f"${"recovery"}%9s ${"underwtr"}%9s ${"worst-day"}%10s")
+    DdRealSpy.foreach { (thr, rEps, rYr, rDepth, rDecl, rRecov, rUndw, rWds) =>
+      val eps   = sims.flatMap(p => ddEpisodes(p.price, thr))
+      val recov = eps.flatMap(_.recovery).map(_.toDouble)
+      def m(f: DdEpisode => Double) = pctile(eps.map(f), 0.5)
+      val pct = (thr * 100).toInt
+      println(f"  ${"real SPY"}%-10s $pct%3d%% $rEps%5d $rYr%7.2f $rDepth%7.1f%% $rDecl%8d " +
+              f"$rRecov%9d $rUndw%9d ${rWds * 100}%9.1f%%")
+      println(f"  ${"model"}%-10s $pct%3d%% ${eps.size}%5d ${eps.size / pYrs}%7.2f " +
+              f"${m(_.depth) * 100}%7.1f%% ${m(_.decline.toDouble)}%8.0f ${pctile(recov, 0.5)}%9.0f " +
+              f"${m(_.underwater.toDouble)}%9.0f ${m(_.worstDayShare) * 100}%9.1f%%")
+      println(f"  ${"ratio"}%-10s $pct%3d%% ${""}%5s ${eps.size / pYrs / rYr}%7.2f " +
+              f"${m(_.depth) * 100 / rDepth}%8.2f ${m(_.decline.toDouble) / rDecl}%8.2f " +
+              f"${pctile(recov, 0.5) / rRecov}%9.2f ${m(_.underwater.toDouble) / rUndw}%9.2f " +
+              f"${m(_.worstDayShare) / rWds}%10.2f")
+      println()
+    }
+    println("  A LOW worst-day ratio means the model's declines GRIND where the real one GAPPED.")
+    println("  Read it beside the decline column: a decline taking twice as long dilutes its worst")
+    println("  session by construction, so the two move together.  Daily KURTOSIS is not the")
+    println("  explanation -- it has sat on its anchor since 0.21.0 while this ratio barely moved.")
+    println()
+    println("  Medians here are `pctile(.., 0.5)`: the lower of the two middle elements on an even")
+    println("  count, where NumPy averages them.  A consumer reproducing this can land one element")
+    println("  away on a duration and be right.")
+
   def runBufferReport(a: Anchors, paths: Int, years: Int, seed: Long, cost: Double, single: Boolean,
                       base: World, gateReq: Set[GateClass]): Unit =
     // 15% is the repo's existing episode threshold (episodes(px, 15.0)); reusing it keeps this
@@ -2909,6 +3009,7 @@ object MarketSim:
   def main(args: Array[String]): Unit =
     var paths = DefaultPaths; var years = DefaultYears; var seed = DefaultSeed
     var anchorSpec = "sp500"
+    var ddShape = false
     var emit = ""; var validate = false; var strategies = false; var single = false
     var emitPath = 0; var emitAll = false; var emitStart = ""; var emitGate = DefaultEmitGate
     var emitFrom = 0
@@ -3051,6 +3152,7 @@ object MarketSim:
       case "-powerarms"  => powerArms = intListOr("-powerarms", consumeNext)
       case "-poweryears" => powerYears = intListOr("-poweryears", consumeNext)
       case "-buffer"     => bufferReport = true
+      case "-ddshape"    => ddShape = true
       case "-single"     => single = true
       case "-cost"       => cost = numOr("-cost", consumeNext)
       case "-trendshare" => trendShare = numOr("-trendshare", consumeNext)
@@ -3153,6 +3255,9 @@ object MarketSim:
       return
     if powerReport then
       runPowerReport(anchors, paths, seed, cost, single, w, gateReq, powerArms, powerYears)
+      return
+    if ddShape then
+      runDrawdownShape(paths, years, seed, w)
       return
     if bufferReport then
       runBufferReport(anchors, paths, years, seed, cost, single, w, gateReq)

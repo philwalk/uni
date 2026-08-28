@@ -254,6 +254,25 @@ instead of failing a world for sitting where the anchor funds have no data.
 Cost: the full report runs ~18 ensembles at the invocation's `-paths`/`-years` — four ladder rungs
 plus a bisection solve for the equity section — so scale `-paths` down for a quick look.
 
+## How a decline is delivered — `-ddshape`
+
+Depth is not shape. `-ddshape` reports median decline duration, recovery duration, time underwater
+and **worst-day share** — how much of a peak-to-trough decline arrives in its single worst session —
+at the 10% and 20% thresholds, against SPY 1993–2026.
+
+It uses a **second episode definition on purpose**: the model's own crash count is a 15%-below-peak
+excursion that re-arms at 2%, built for counting; these are peak-to-trough-to-full-recovery
+episodes, built for shape. Do not mix the two.
+
+Nothing in it is gated. The reference is one history — 12 episodes at 10%, four at 20% — and a band
+off four episodes could not fail.
+
+At the shipped world, 10% declines take 1.42× as long as SPY's and deliver 0.61× as much of
+themselves in their worst session; at 20% they are 0.34× as long and recover 0.34× as fast.
+**Kurtosis is not the explanation** — it has sat on its anchor since 0.21.0 while the worst-day ratio
+barely moved. Read the worst-day column beside the decline column: a decline that grinds twice as
+long dilutes its worst session by construction. The finding is about duration, not tails.
+
 ## How tight are the anchors? — `-noise`
 
 Every fidelity target is a point read from one historical record. `-noise` reports, per target, the
