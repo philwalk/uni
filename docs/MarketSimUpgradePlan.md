@@ -818,10 +818,16 @@ served, and the other holds no bond ticker at all.
 
 **What W9 landing does NOT do is fix the model.** It makes the defect measured, named, gated and
 carried in every export. Closing it needs a mechanism that lets the market make new highs as often
-as the real one does without giving up the tails, and the two candidates the measurement leaves
-standing are the value anchor's pull and the absent slow valuation cycle — the scope exclusion this
-plan declines to reopen. Until then, `-gate realism,fidelity` returns no worlds, and that is the
-correct answer to "can I read a level off a peak-relative quantity here".
+as the real one does without giving up the tails.
+
+**Resolved in 0.21.0, and one of the two candidates named here was wrong.** The mechanism was the
+value anchor's pull — but ASYMMETRICALLY, weaker as a drawdown deepens rather than stronger, which
+is `recoveryDrag`. The other candidate, the absent slow valuation cycle, was tested directly
+(reverting the fundamental to a trend line) and is **inert**: crash count moved 28.2 to 28.1. The
+value channel's half-life is about 60 days and the fundamental's wander over a crash timescale is
+small next to the price's, so crashes are driven by the market mechanism, not by the fundamental.
+Do not reopen the valuation cycle for this; it was the wrong attribution, the same way it was the
+wrong attribution for kurtosis.
 
 W7, W8 and W9 are independent of each other and of everything above, so any of them can start early
 if someone wants the hard problem first; W9 is the one with the best ratio of unblocked conclusions

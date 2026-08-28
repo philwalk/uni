@@ -1,5 +1,78 @@
 ## v0.21.0 — 2026-08-27
 
+**FIXED — two realism bands were the S&P's shape and called real markets unreal**
+
+`equity vol 8-25%` excluded **17 of the 35 real equity instruments** in `test-data/equity-anchors`:
+QQQ at 26.9%, Taiwan, Brazil, semiconductors, energy and most of Europe. `crash rate 8-45/century`
+excluded two more. A REALISM band answers "is this a market at all", so a band that rejects markets
+people can buy is measuring the wrong thing — the same failure the bond volatility band already
+records ("of eight real funds it admitted one, and asserted of the US Aggregate that it is not a
+market").
+
+Both are now set from the cross-section: over the clean w1996 window the 35 instruments span
+15.2-37.4% volatility and 13.2-49.4 crashes per century, so the bands are 8-40% and 8-55/century,
+rounded outward. The FIDELITY bands are what answer "is this THIS market", and they stayed narrow —
+14-18% volatility for the S&P, 24-30% for the Nasdaq, from `Anchors.volBand`.
+
+This changes no shipped verdict: the default world reads 16.6% volatility and 23.4 crashes per
+century, far inside either band.
+
+**A Nasdaq world now passes the gate.**
+
+    market_sim -anchors nasdaq -depth 10 -drift 0.105 -jumpvar 0.02 -fundvol 0.06
+
+Realism PASS, mechanism PASS, fidelity PASS, on all six seeds tried, with margin rather than on a
+band edge (`equity d10 vs real` reads 0.76-0.78 against a 0.70 floor, seed spread +/-0.01). Against
+the QQQ anchors: volatility 0.98, return per volatility 1.04, median depth 1.28, worst crash 1.16,
+depth rungs 0.88 / 0.77 / 0.71.
+
+KNOWN — it passes with two large fidelity misses the gate does not band: kurtosis 1.98 and
+crashes/century 1.78. Those are the vol-to-crash elasticity gap (the model's 1.44 against a real
+0.50) showing up at Nasdaq volatility, and they are disclosed in the fidelity table rather than
+gated. A world that passes here is admissible for RELATIVE work at Nasdaq-like volatility; it is not
+a calibrated Nasdaq. Clustering also sits at 0.378 against its 0.40 ceiling.
+
+**ADDED — `-anchors sp500|nasdaq`: which real index the fidelity targets describe**
+
+Every equity fidelity target was the S&P's, hard-coded, so a world calibrated to any other index
+failed the target set for BEING that other index. It could be run but not graded, and `-calibrate`
+could not search for one at all. The asset is now a parameter.
+
+Only the equity rows move. The bond targets stay literal — the refuge asset is the same Treasury
+whatever the equity index is — and the three depth rungs are already ratios against a relation
+evaluated at each world's own volatility and return, so they read 1.00 for any asset by
+construction. The realism bands do not move with the anchor either — they ask "is this a market at
+all", and a Nasdaq is still a market. (Two of them were separately found to be the S&P's shape and
+widened; see the entry above.) The two FIDELITY bands do move with the anchor, because they ask "is
+this THIS market".
+
+The Nasdaq set is QQQ measured over its own full history, 1999-03-10 to 2026-08-20: volatility
+26.90%, return per volatility 0.38, kurtosis 9.55, clustering 0.293 and 0.249, 25.6 crashes per
+century, median depth -22.8%, worst -83.0%.
+
+THAT WINDOW IS A DECISION. Drawdown-episode counts swing 1.7x on the measurement convention alone:
+the same QQQ data reads 24.1 per century with the running peak seeded from prior history, 40.1 with
+a fresh start on a window opening 2001-08-27 — mid dot-com bear, which resets the peak about 60%
+down and manufactures episodes on the recovery — and 25.6 fresh-start from QQQ's own inception. The
+model measures each path fresh from its own start, so fresh start is the matching convention, but
+only on a window that opens near a high. The equity-anchor fixture already states this rule for
+`w1996` and warns against grading a model ensemble on the mid-bear `w2001` block. Control: the same
+pipeline on SPY 1993-01-29 reproduces the committed w1993 fixture row exactly.
+
+KNOWN — the Nasdaq set's sampling spreads are the S&P's, carried over. An `sdRel` is model-implied,
+so an honest set needs `-noise -anchors nasdaq` run at a Nasdaq-calibrated world, which does not
+exist yet. The two fidelity bands are likewise the S&P bands' proportional widths. Neither is
+asserted to be measured.
+
+KNOWN — a Nasdaq world does not pass. At QQQ's volatility the model produces roughly 45 crashes per
+century against 25.6, because its volatility-to-crash elasticity is 1.44 where the real
+cross-section reads about 0.50. The anchor set buys honest measurement of that gap, not a passing
+gate. The closest world found, `-depth 11.5 -drift 0.126 -jumpvar 0.02`, reads volatility 0.85 and
+return per volatility 1.43 of the Nasdaq anchors with crashes at 1.52 and kurtosis at 1.90.
+
+`-validate` and `-noise` now name the anchor set and its windows, because the same world graded
+against a different index is a different verdict.
+
 **FIXED — crash frequency and the shallow median crash, which were one defect**
 
 `crashes/century` read 1.32 and `median depth %` 0.84, and both had stood for releases. They are the

@@ -298,6 +298,7 @@ with it.
 | `-value` | pull toward fair value per day. With the drag below, this governs **shallow** water only | 0.045 |
 | `-recoverydrag` | how fast value arbitrage weakens as a drawdown deepens past 10%; 0 restores 0.20.0's symmetric pull | 10.0 |
 | `-recoveryfloor` | weakest that pull may become, as a share of full strength | 0.10 |
+| `-anchors` | which real index the **equity** fidelity targets describe: `sp500` or `nasdaq` | sp500 |
 | `-easing` | **cap** on the policy rate cut under equity stress, in rate points | 0.046 |
 | `-unwind` | how fast that cut is withdrawn, per year (0.35 is a ~2-year half-life) | 0.35 |
 | `-refuge` | flight-to-quality bid into the bond, scaled by its duration | 0.11 |
@@ -419,7 +420,10 @@ Five things that table is trying to tell you:
   duration; what these dials do across the duration ladder is a different question, and
   `-crossasset` is the only thing that answers it.
 - **Some settings leave the admissible region.** `-stress 8.0`, `-depth 12`, `-jumpvar 0.16` and
-  `-crowdimpact 0.15` fail realism (clustering, crash rate, kurtosis and clustering respectively); `-stress 2.0` and `-refuge 0.0` fail mechanism
+  `-crowdimpact 0.15` fail realism (clustering, crash rate, kurtosis and clustering respectively).
+  The volatility and crash-rate realism bands were widened in 0.21.0 to 8–40% and 8–55/century,
+  because at 8–25% and 8–45 they excluded 17 and 2 of the 35 real equity instruments respectively —
+  a realism band that rejects markets you can buy is measuring the wrong thing; `-stress 2.0` and `-refuge 0.0` fail mechanism
   (the spiral never engages; the bond stops rallying in crashes). Most of the rest fail only
   fidelity — the level of one quantity stops being readable. Always re-run `-validate` after
   changing a dial.
@@ -443,17 +447,61 @@ DEFAULT (0.21.0)      1.00  0.85   1.40  0.47   PASS
 the 0.20.0 world      1.55  0.97   1.42  0.42   PASS
 ```
 
+## Grading against a different index — `-anchors`
+
+Every equity fidelity target used to be the S&P's, so a world calibrated to any other index failed
+the target set for *being* that other index. `-anchors nasdaq` swaps in a QQQ vector measured over
+1999-03-10 to 2026-08-20: volatility 26.90%, return per volatility 0.38, kurtosis 9.55, 25.6 crashes
+per century, median depth −22.8%, worst −83.0%.
+
+Only the equity rows move. The bond targets are the same Treasury whatever the equity index is, and
+the three depth rungs are already ratios against a relation evaluated at each world's own volatility
+and return, so they read 1.00 for any asset. The realism bands do not move *with the anchor* — they
+ask whether this is a market at all, and a Nasdaq is one. (Two of them were separately found to be
+the S&P's shape and widened; see below.) The two *fidelity* bands do move with it.
+
+**The window is a decision, and it is the part to read before trusting the numbers.** Drawdown
+episode counts swing 1.7× on convention alone. The same QQQ data reads 24.1 per century with the
+running peak seeded from prior history, **40.1** with a fresh start on a window opening 2001-08-27 —
+mid dot-com bear, which resets the peak about 60% down and manufactures episodes on the way back up
+— and **25.6** fresh-start from QQQ's own inception. The model measures each path fresh from its own
+start, so fresh start is the matching convention, but only on a window that opens near a high. That
+is the same rule the equity-anchor fixture states for `w1996`, and the reason it warns against
+grading a model ensemble on the mid-bear `w2001` block.
+
+**A Nasdaq world that passes the gate:**
+
+```
+market_sim -anchors nasdaq -depth 10 -drift 0.105 -jumpvar 0.02 -fundvol 0.06
+```
+
+Realism PASS, mechanism PASS, fidelity PASS on every seed tried, with margin rather than on a band
+edge — `equity d10 vs real` reads 0.76–0.78 against a 0.70 floor and the seed spread is ±0.01.
+Against the QQQ anchors: volatility 0.98, return per volatility 1.04, median depth 1.28, worst crash
+1.16, depth rungs 0.88 / 0.77 / 0.71.
+
+**Read what it passes with.** Two large fidelity misses are disclosed rather than gated: kurtosis
+1.98 and crashes per century 1.78. Both are the volatility-to-crash elasticity gap — the model's
+1.44 against a real cross-section of about 0.50 — surfacing at Nasdaq volatility. Clustering also
+sits at 0.378 against its 0.40 realism ceiling. This world is admissible for **relative** work at
+Nasdaq-like volatility; it is not a calibrated Nasdaq, and a per-crash hazard read off it is
+over-sampled by nearly a factor of two.
+
+Two things about the Nasdaq set are carried over rather than measured, and are marked as such in the
+code: its sampling spreads (an `sdRel` is model-implied, so an honest set needs `-noise -anchors
+nasdaq` at a Nasdaq-calibrated world, which does not exist yet) and the two fidelity bands.
+
 ## Biases you inherit whatever you choose
 
 These are properties of the model, not of the default, and they do not go away by changing dials:
 
-- **Volatility clustering runs slightly high** (1.03 at the default, down from 1.11 before the
+- **Volatility clustering runs slightly high** (1.05 at the default, down from 1.11 before the
   jump channel). Volatility is more predictable here than in the record, so volatility-forecasting
   rules are flattered — but only mildly now, and the
   anchor is horizon-sensitive: the real statistic reads 0.271 over 72 years and 0.299 over a
   century, so the target is the century figure to match the 100-year paths the model is scored on.
   Against the 72-year reading the same world would show higher still.
-- **Crashes arrive a little too often** (1.13; 23 per century against a real 20.7, down from 1.32
+- **Crashes arrive a little too often** (1.08; 22 per century against a real 20.7, down from 1.32
   before the recovery drag). Any hazard rate conditioned on "a crash happened" is mildly
   over-sampled. `-noise` now puts the real anchor at the 33rd percentile of model histories, where
   it sat at the 4th.
@@ -461,15 +509,15 @@ These are properties of the model, not of the default, and they do not go away b
   mostly a horizon artifact — at the anchor's own 72 years the record sits mid-distribution, per
   `-noise`). No levered fund survives those, so ruin rates for levered sleeves are **upper bounds,
   not estimates**.
-- **The median crash is now close** (0.95; −25.8% against a real −27.1%, up from 0.84). The
+- **The median crash is now close** (0.94; −25.6% against a real −27.1%, up from 0.84). The
   recovery drag fixed this and the crash rate together — they were one defect, deep drawdowns
   recovering too fast, not two.
-- **The deep drawdown rung runs long, and got longer** (1.78 against the relation, from 1.38,
-  where the 5% and 10% rungs sit at 0.94 and 1.03). This is what the recovery drag costs: slowing
+- **The deep drawdown rung runs long, and got longer** (1.96 against the relation, from 1.38,
+  where the 5% and 10% rungs sit at 0.92 and 1.02). This is what the recovery drag costs: slowing
   the climb out of a deep hole means more time deep. Rules keyed to a *deep* distance from peak
   inherit it; the shallow ones are accurate. Its band is deliberately absent and its weight is 0.06
   — one 25-year record barely pins it, and the drag made it more variable still (p5 0.19, p95 4.35).
-- **Kurtosis is no longer a scope exclusion** (1.00 as of 0.21.0, from 0.45). Tail-day magnitudes
+- **Kurtosis is no longer a scope exclusion** (0.97 as of 0.21.0, from 0.45). Tail-day magnitudes
   are readable. It had been reachable only through `-stress`, which bought it at clustering 1.53 and
   failed realism; `jumpVar` reaches it through a second channel that costs nothing — clustering
   *improved* alongside it. Tail-day DEPTH is a separate matter and still overstated: see the worst
@@ -477,8 +525,12 @@ These are properties of the model, not of the default, and they do not go away b
   here — a 72-year window reads 8.8 at the 5th percentile and 205 at the 95th — because a window
   either contains its 1987 or does not, exactly as SPY 1993-2026 reads 14.4 where the CRSP century
   reads 28. Do not read kurtosis off one path.
-- **The bond's crash rally is understated** (0.39 against long-Treasury 2008). The model's bond
-  gains ~7.8% in an equity growth shock where TLT gained 22.3% in 2008 — though TLT's median across
+- **The bond's loss in inflation regimes is overstated** (1.57; −39% against a real −25%). Read this
+  one with `-noise` beside it: over 24-year histories the model produces readings from −181% to
+  +14%, and the real −25% sits at the 60th percentile of that spread. The point ratio carries almost
+  no information, which is why the target's weight is 0.1.
+- **The bond's crash rally is understated** (0.50 against long-Treasury 2008). The model's bond
+  gains ~10.1% in an equity growth shock where TLT gained 22.3% in 2008 — though TLT's median across
   its six real drawdowns is 9.65%, so the anchor is the outlier and the model is nearer the median
   than the ratio suggests. Do not size a refuge sleeve on this row.
 

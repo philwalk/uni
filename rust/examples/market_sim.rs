@@ -1465,7 +1465,7 @@ impl GateClass {
 /// `dp` is printed PRECISION, not tolerance: the depth rungs read 0.215-0.415 and are quoted at
 /// that precision in the CHANGELOG and the upgrade plan, while the duration ratios read
 /// 0.70-1.10. `unit` is whatever follows the band in the name. A caller whose printed units differ
-/// from the statistic's passes the CONVERTED value (`st.vol * 100.0` against 8-25), so the band
+/// from the statistic's passes the CONVERTED value (`st.vol * 100.0` against 8-40), so the band
 /// and the value compared against it are in the same units by construction.
 ///
 /// Two bands stay hand-written, because the name would stop describing the predicate if they came
@@ -1503,22 +1503,34 @@ fn band_check(
     clippy::too_many_lines,
     reason = "one table of bands, mirroring the Scala twin's gateChecks row for row"
 )]
-fn gate_checks(st: &WorldStats) -> Vec<(String, bool, GateClass)> {
+fn gate_checks(a: Anchors, st: &WorldStats) -> Vec<(String, bool, GateClass)> {
     use GateClass::Mechanism;
     use GateClass::Realism;
     let pc = st.ep_per_path * 100.0 / st.years_per_path;
     let n = |s: &str| s.to_string();
     let mut v = vec![
-        band_check("equity vol", st.vol * 100.0, 8.0, 25.0, Realism, 0, "%"),
+        // MEASURED, not assumed. 8-25% was the S&P's shape and it asserted of 17 of the 35 real
+        // equity instruments in `test-data/equity-anchors` that they are not markets — QQQ (26.9%),
+        // Taiwan, Brazil, semiconductors, energy and most of Europe. That is the same failure the
+        // bond band below already records ("of eight real funds it admitted one"). A REALISM band
+        // answers "is this a market at all", so it must admit every market anyone has measured: the
+        // 35 instruments span 15.2-37.4% over the clean w1996 window, and 8-40 rounds outward from
+        // that. The FIDELITY band — now `Anchors::vol_band`, 14-18% for the S&P and 24-30% for the
+        // Nasdaq — is what answers "is this THIS market", and it stayed narrow.
+        band_check("equity vol", st.vol * 100.0, 8.0, 40.0, Realism, 0, "%"),
         band_check("kurtosis", st.kurt, 4.0, 30.0, Realism, 0, ""),
         (
             n("clustering 0.10-0.40"),
             st.ac1 > 0.10 && st.ac1 < 0.40 && st.ac20 > 0.03,
             Realism,
         ),
+        // Widened from 8-45 for the same reason as the volatility band above: 45 excluded two of
+        // the 35 real instruments (EWA, EWW), which read 49.4 and 46.6 over the clean w1996 window
+        // against a cross-section range of 13.2-49.4. A band that calls a real market unreal is not
+        // a realism check.
         (
-            n("crash rate 8-45/century"),
-            st.ep_per_path >= 1.0 && pc >= 8.0 && pc <= 45.0,
+            n("crash rate 8-55/century"),
+            st.ep_per_path >= 1.0 && pc >= 8.0 && pc <= 55.0,
             Realism,
         ),
         (
@@ -1582,12 +1594,12 @@ fn gate_checks(st: &WorldStats) -> Vec<(String, bool, GateClass)> {
         // inadmissible in every report ("no liquidity spiral" runs at 12.6% vol, "low growth" at
         // 0.34). Class does not weaken them as a search constraint: the calibration loss counts
         // 0.5 per failed check whatever the class. Volatility keeps its realism band as well —
-        // 8-25% answers "is this a market", 14-18% answers "can its level be read".
+        // 8-40% answers "is this a market", the anchor's own band "can its level be read".
         band_check(
             "equity vol",
             st.vol * 100.0,
-            14.0,
-            18.0,
+            a.vol_band.0,
+            a.vol_band.1,
             GateClass::Fidelity,
             0,
             "%",
@@ -1601,8 +1613,8 @@ fn gate_checks(st: &WorldStats) -> Vec<(String, bool, GateClass)> {
         band_check(
             "return per vol",
             st.ret_vol(),
-            0.50,
-            0.85,
+            a.ret_vol_band.0,
+            a.ret_vol_band.1,
             GateClass::Fidelity,
             2,
             "",
@@ -1726,8 +1738,8 @@ fn unanchored_in(st: &WorldStats) -> Vec<String> {
     out
 }
 
-fn failed_in(st: &WorldStats, cls: GateClass) -> Vec<String> {
-    gate_checks(st)
+fn failed_in(a: Anchors, st: &WorldStats, cls: GateClass) -> Vec<String> {
+    gate_checks(a, st)
         .into_iter()
         .filter(|(_, ok, c)| !ok && *c == cls)
         .map(|(n, _, _)| n)
@@ -1736,8 +1748,8 @@ fn failed_in(st: &WorldStats, cls: GateClass) -> Vec<String> {
 
 /// Admissibility under the classes a report has declared it requires. A class not required is
 /// a class whose failures are disclosed and tolerated, which is the whole point of the split.
-fn gate_ok(st: &WorldStats, required: &[GateClass]) -> bool {
-    gate_checks(st)
+fn gate_ok(a: Anchors, st: &WorldStats, required: &[GateClass]) -> bool {
+    gate_checks(a, st)
         .iter()
         .all(|(_, ok, c)| *ok || !required.contains(c))
 }
@@ -1807,17 +1819,144 @@ const SD_REL_REF: f64 = 0.20;
 /// No cap on the precision factor: the measurement says equity vol is the best-pinned target in
 /// the set (sd/real 0.10), and capping its weight would re-smuggle the equal-measurability
 /// assumption this function exists to remove.
+/// WHICH REAL ASSET a world is being graded against.
+///
+/// Every equity fidelity target was the S&P's, hard-coded, so a world calibrated to any other index
+/// failed the target set for BEING that other index — it could be run but not graded, and
+/// `-calibrate` could not search for one at all. This makes the asset a parameter.
+///
+/// Only the EQUITY rows vary. The bond targets stay literal in `fit_targets`: the refuge asset is
+/// the same Treasury whatever the equity index is. The three depth rungs are already RATIOS against
+/// a relation evaluated at the world's own volatility and return, so they read 1.00 for any asset by
+/// construction — which is exactly why 0.21.0 restated them that way.
+///
+/// `judgment` is NOT here. It says what a target is worth given redundancy and importance, which is
+/// a property of the statistic, not of the index; only the measured level and its sampling spread
+/// are asset-specific.
+///
+/// The realism bands are not here either. `equity vol 8-40%` and `kurtosis 4-30` say "is this a
+/// market at all", and a Nasdaq is still a market. The two FIDELITY bands are, because they say "is
+/// this THIS market".
+#[derive(Clone, Copy)]
+struct Anchors {
+    name: &'static str,
+    equity_window: &'static str,
+    equity_years: usize,
+    cluster_window: &'static str,
+    cluster_years: usize,
+    vol: f64,
+    vol_sd: f64,
+    ret_vol: f64,
+    ret_vol_sd: f64,
+    kurt: f64,
+    kurt_sd: f64,
+    ac1: f64,
+    ac1_sd: f64,
+    ac20: f64,
+    ac20_sd: f64,
+    crashes: f64,
+    crashes_sd: f64,
+    med_depth: f64,
+    med_depth_sd: f64,
+    worst_depth: f64,
+    worst_depth_sd: f64,
+    vol_band: (f64, f64),
+    ret_vol_band: (f64, f64),
+}
+
+/// The S&P/CRSP set, unchanged from every release before 0.21.0 — the values and sampling spreads
+/// are the ones that were already here, moved rather than re-measured, so the default reproduces
+/// earlier output byte for byte.
+const SP500_ANCHORS: Anchors = Anchors {
+    name: "S&P 500 / CRSP",
+    equity_window: "S&P / CRSP 1954-2026",
+    equity_years: 72,
+    cluster_window: "CRSP 1926-2026, the century",
+    cluster_years: 100,
+    vol: 16.0,
+    vol_sd: 0.10,
+    ret_vol: 0.69,
+    ret_vol_sd: 0.20,
+    kurt: 28.0,
+    kurt_sd: 2.65,
+    ac1: 0.299,
+    ac1_sd: 0.09,
+    ac20: 0.225,
+    ac20_sd: 0.11,
+    crashes: 20.7,
+    crashes_sd: 0.22,
+    med_depth: -27.1,
+    med_depth_sd: 0.15,
+    worst_depth: -56.8,
+    worst_depth_sd: 0.17,
+    vol_band: (14.0, 18.0),
+    ret_vol_band: (0.50, 0.85),
+};
+
+/// The Nasdaq-100 set, measured 2026-08-28 from QQQ daily adjusted closes over its own full history,
+/// 1999-03-10 to 2026-08-20 (27.4 years).
+///
+/// THAT WINDOW IS A DECISION, not a default. Drawdown-episode counts swing 1.7x on the measurement
+/// convention alone: the same QQQ data reads 24.1 episodes per century with the running peak seeded
+/// from prior history, 40.1 with a fresh start on a window opening 2001-08-27 (mid dot-com bear,
+/// which resets the peak ~60% down and MANUFACTURES episodes on the recovery), and 25.6 fresh-start
+/// from QQQ's own inception. The model measures each path fresh from its own start, so a fresh start
+/// is the matching convention — but only on a window that OPENS near a high, or the reset does the
+/// manufacturing. QQQ's inception in March 1999 is such a window. The equity-anchor fixture already
+/// states this rule for `w1996` and warns against grading a model ensemble on the mid-bear `w2001`
+/// block.
+///
+/// Control: the same pipeline on SPY 1993-01-29 reproduces the committed w1993 fixture row exactly.
+///
+/// THE SAMPLING SPREADS ARE THE S&P'S, CARRIED OVER, and that is the one soft number here. An sdRel
+/// is model-implied, so an honest Nasdaq set needs `-noise -anchors nasdaq` run at a Nasdaq-
+/// calibrated world, which does not exist yet. Re-freeze them when one is. The two fidelity bands
+/// are likewise the S&P bands' proportional widths around the Nasdaq levels.
+const NASDAQ_ANCHORS: Anchors = Anchors {
+    name: "Nasdaq-100 / QQQ",
+    equity_window: "QQQ 1999-2026",
+    equity_years: 27,
+    cluster_window: "QQQ 1999-2026",
+    cluster_years: 27,
+    vol: 26.90,
+    vol_sd: 0.10,
+    ret_vol: 0.38,
+    ret_vol_sd: 0.20,
+    kurt: 9.55,
+    kurt_sd: 2.65,
+    ac1: 0.293,
+    ac1_sd: 0.09,
+    ac20: 0.249,
+    ac20_sd: 0.11,
+    crashes: 25.6,
+    crashes_sd: 0.22,
+    med_depth: -22.8,
+    med_depth_sd: 0.15,
+    worst_depth: -83.0,
+    worst_depth_sd: 0.17,
+    vol_band: (23.5, 30.3),
+    ret_vol_band: (0.27, 0.47),
+};
+
+fn anchors_named(spec: &str) -> Anchors {
+    match spec {
+        "sp500" | "sp" | "spx" => SP500_ANCHORS,
+        "nasdaq" | "ndx" | "qqq" => NASDAQ_ANCHORS,
+        other => cli_die(&format!("unknown -anchors [{other}]; use sp500 or nasdaq")),
+    }
+}
+
 fn wgt(judgment: f64, sd_rel: f64) -> f64 {
     judgment * (SD_REL_REF / sd_rel)
 }
 
-fn fit_targets() -> Vec<(&'static str, StatFn, f64, f64)> {
+fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
     vec![
         (
             "equity vol %",
             (|st| st.vol * 100.0) as StatFn,
-            16.0,
-            wgt(1.0, 0.10),
+            a.vol,
+            wgt(1.0, a.vol_sd),
         ),
         // Ken French F-F_Research_Data_Factors, US total market (Mkt-RF + RF), measured in the
         // units this row is compared in: annualised LOG return over sqrt(mean(r^2) * 252) on
@@ -1831,8 +1970,8 @@ fn fit_targets() -> Vec<(&'static str, StatFn, f64, f64)> {
         (
             "return per vol",
             (|st: &WorldStats| st.ret_vol()) as StatFn,
-            0.69,
-            wgt(1.0, 0.20),
+            a.ret_vol,
+            wgt(1.0, a.ret_vol_sd),
         ),
         // kurtosis's sdRel moved 0.14 -> 2.65 in 0.21.0, and the 19x is not a re-measurement of
         // the same thing: the jump channel makes single-history kurtosis as variable as it really
@@ -1844,7 +1983,12 @@ fn fit_targets() -> Vec<(&'static str, StatFn, f64, f64)> {
         // turning the channel off moves clustering 1.03 -> 1.11 and 1.05 -> 1.15, which the loss
         // sees clearly. A mechanism whose only defender is its least measurable target is a
         // mechanism a search will quietly discard.
-        ("kurtosis", (|st| st.kurt) as StatFn, 28.0, wgt(0.5, 2.65)),
+        (
+            "kurtosis",
+            (|st| st.kurt) as StatFn,
+            a.kurt,
+            wgt(0.5, a.kurt_sd),
+        ),
         // Ken French / CRSP value-weighted US market, daily, 1926-07-01..2026-06-30 — the FULL
         // century, and deliberately NOT the 1954-2026 window the rows above use. The model's
         // clustering is horizon-INDEPENDENT (0.320 at 20 years, 0.330 at 150) while the real
@@ -1868,26 +2012,26 @@ fn fit_targets() -> Vec<(&'static str, StatFn, f64, f64)> {
         (
             "clustering lag 1",
             (|st| st.ac1) as StatFn,
-            0.299,
-            wgt(1.0, 0.09),
+            a.ac1,
+            wgt(1.0, a.ac1_sd),
         ),
         (
             "clustering lag 20",
             (|st| st.ac20) as StatFn,
-            0.225,
-            wgt(0.5, 0.11),
+            a.ac20,
+            wgt(0.5, a.ac20_sd),
         ),
         (
             "crashes/century",
             (|st: &WorldStats| st.ep_per_path * 100.0 / st.years_per_path) as StatFn,
-            20.7,
-            wgt(1.0, 0.22),
+            a.crashes,
+            wgt(1.0, a.crashes_sd),
         ),
         (
             "median depth %",
             (|st| st.depth_med) as StatFn,
-            -27.1,
-            wgt(1.0, 0.15),
+            a.med_depth,
+            wgt(1.0, a.med_depth_sd),
         ),
         // Judgment 0.5, DOWN from 1.0, on `-noise`'s finding: graded at 100 years against a
         // 72-year anchor this ratio is mostly a max-order-statistic horizon artifact (at the
@@ -1896,8 +2040,8 @@ fn fit_targets() -> Vec<(&'static str, StatFn, f64, f64)> {
         (
             "worst crash %",
             (|st| st.worst_depth) as StatFn,
-            -56.8,
-            wgt(0.5, 0.17),
+            a.worst_depth,
+            wgt(0.5, a.worst_depth_sd),
         ),
         // The "(24y)" is load-bearing, not decoration: this row is measured on a different
         // horizon from every other, and the label is the only part that travels when the number
@@ -2015,8 +2159,8 @@ fn scala_sign(x: f64) -> f64 {
 
 /// Scalar calibration loss: weighted |log(model/target)| over the fidelity targets, a
 /// penalty of 2 for a wrong sign, and 0.5 per failed gate check.
-fn fitness(st: &WorldStats) -> (f64, Vec<(&'static str, f64, f64, f64)>) {
-    let rows: Vec<(&'static str, f64, f64, f64)> = fit_targets()
+fn fitness(a: Anchors, st: &WorldStats) -> (f64, Vec<(&'static str, f64, f64, f64)>) {
+    let rows: Vec<(&'static str, f64, f64, f64)> = fit_targets(a)
         .into_iter()
         .map(|(name, get, target, weight)| {
             let m = get(st);
@@ -2030,7 +2174,7 @@ fn fitness(st: &WorldStats) -> (f64, Vec<(&'static str, f64, f64, f64)>) {
             (name, m, target, term)
         })
         .collect();
-    let gate_penalty = gate_checks(st).iter().filter(|(_, ok, _)| !ok).count() as f64 * 0.5;
+    let gate_penalty = gate_checks(a, st).iter().filter(|(_, ok, _)| !ok).count() as f64 * 0.5;
     let total: f64 = scala_sum(rows.iter().map(|r| r.3)) + gate_penalty;
     (total, rows)
 }
@@ -2840,7 +2984,7 @@ fn calibrate_ranges() -> Vec<(&'static str, f64, f64, Setter)> {
     ]
 }
 
-fn calibrate(n_samples: usize, base: &World, seed: u64) {
+fn calibrate(a: Anchors, n_samples: usize, base: &World, seed: u64) {
     // depth, trendShare, drift and crowdImpact are in the search because they are the strongest
     // levers on the
     // two defects the eight below cannot reach. depth carries crash frequency (at fixed stress,
@@ -2856,7 +3000,8 @@ fn calibrate(n_samples: usize, base: &World, seed: u64) {
     let hold_seed = seed + 7_777_777;
     // scored at 100-year paths: an 80-year protocol missed a worst-crash blowup that only
     // appears at the horizon actually used — tune at the scale you evaluate at
-    let score = |w: &World, s: u64| -> f64 { fitness(&measure(&sim_paths(w, 50, 100, s), 100)).0 };
+    let score =
+        |w: &World, s: u64| -> f64 { fitness(a, &measure(&sim_paths(w, 50, 100, s), 100)).0 };
     eprintln!(
         "calibrate: {n_samples} samples, 50 paths x 100 years each; holdout re-score of top 5"
     );
@@ -2940,6 +3085,7 @@ fn eval_world(sims: &[Path], cost: f64, years: usize) -> Evald {
     reason = "one linear report, mirroring the Scala twin section for section"
 )]
 fn run_strategy_sweep(
+    a: Anchors,
     paths: usize,
     years: usize,
     seed: u64,
@@ -2960,7 +3106,7 @@ fn run_strategy_sweep(
         .map(|(wname, w, reflexive)| {
             let sims = sim_paths(w, paths, years, seed);
             let st = measure(&sims, years);
-            let ok = gate_ok(&st, gate_req);
+            let ok = gate_ok(a, &st, gate_req);
             (*wname, ok, st, eval_world(&sims, cost, years), *reflexive)
         })
         .collect();
@@ -3335,7 +3481,7 @@ fn run_strategy_sweep(
         let sims = sim_paths(&w, paths.min(120), years, seed);
         let st = measure(&sims, years);
         // gated AT USE TIME, like every other conclusion path
-        let ok_sev = gate_ok(&st, gate_req);
+        let ok_sev = gate_ok(a, &st, gate_req);
         let ev: Vec<Vec<Outcome>> = (0..sims.len())
             .into_par_iter()
             .map(|k| {
@@ -3458,7 +3604,7 @@ type PowerTable = Vec<Vec<(f64, f64)>>;
 /// Exists because the natural comparison — candidate against its immediate predecessor — is
 /// exactly the reading under which a sequence of individually-acceptable trades accumulates with
 /// nothing ever showing it. The `worse than best` column is the accumulation detector.
-fn run_release_report(paths: usize, years: usize, seed: u64, base: &World) {
+fn run_release_report(a: Anchors, paths: usize, years: usize, seed: u64, base: &World) {
     let mut cols: Vec<(&str, World)> = releases();
     cols.push(("current", *base));
     eprintln!("{} worlds x {paths} paths x {years} years", cols.len());
@@ -3484,7 +3630,7 @@ fn run_release_report(paths: usize, years: usize, seed: u64, base: &World) {
     }
     println!("{hdr}   {:>7}   worse than best", "best");
     let mut best_total = 0.0f64;
-    for (name, get, want, _) in fit_targets() {
+    for (name, get, want, _) in fit_targets(a) {
         let rs: Vec<f64> = stats.iter().map(|(_, st)| get(st) / want).collect();
         let errs: Vec<f64> = rs.iter().map(|r| (r - 1.0).abs()).collect();
         let cur = errs[errs.len() - 1];
@@ -3509,7 +3655,7 @@ fn run_release_report(paths: usize, years: usize, seed: u64, base: &World) {
     println!();
     let mut agg = format!("  {:<22}", "AGGREGATE |ratio-1|");
     for (_, st) in &stats {
-        let t: f64 = fit_targets()
+        let t: f64 = fit_targets(a)
             .iter()
             .map(|(_, get, want, _)| (get(st) / want - 1.0).abs())
             .sum();
@@ -3727,8 +3873,8 @@ fn depth_for_vol(base: &World, target: f64, paths: usize, years: usize, seed: u6
 /// DIAGNOSTIC ONLY — it does not touch the exit code. The equity leg has no cross-index bands yet
 /// (rung 2b), so there is nothing here to pass or fail against; what it has is a pair of ratios and
 /// the difference between them.
-fn run_equity_at_anchor(paths: usize, years: usize, seed: u64, base: &World) {
-    let target = fit_targets()
+fn run_equity_at_anchor(a: Anchors, paths: usize, years: usize, seed: u64, base: &World) {
+    let target = fit_targets(a)
         .into_iter()
         .find(|(n, _, _, _)| *n == "equity vol %")
         .map_or_else(
@@ -3789,7 +3935,7 @@ fn run_equity_at_anchor(paths: usize, years: usize, seed: u64, base: &World) {
         "statistic", "default", "at anchor", "real", "ratio def", "ratio anc"
     );
     for name in EQUITY_TARGETS {
-        let Some((_, get, want, _)) = fit_targets().into_iter().find(|(n, _, _, _)| *n == name)
+        let Some((_, get, want, _)) = fit_targets(a).into_iter().find(|(n, _, _, _)| *n == name)
         else {
             cli_die(&format!(
                 "EQUITY_TARGETS names [{name}], which is not a fidelity target"
@@ -3855,7 +4001,7 @@ fn cross_asset_preamble() {
     clippy::too_many_lines,
     reason = "one linear report, mirroring the Scala twin statement for statement"
 )]
-fn run_cross_asset_report(paths: usize, years: usize, seed: u64, base: &World) -> bool {
+fn run_cross_asset_report(a: Anchors, paths: usize, years: usize, seed: u64, base: &World) -> bool {
     eprintln!(
         "{} durations x {paths} paths x {years} years",
         DURATION_LADDER.len()
@@ -4006,7 +4152,7 @@ fn run_cross_asset_report(paths: usize, years: usize, seed: u64, base: &World) -
         );
         println!("    of this ladder — widening the ladder cannot reach those rungs.");
     }
-    run_equity_at_anchor(paths, years, seed, base);
+    run_equity_at_anchor(a, paths, years, seed, base);
     ok
 }
 
@@ -4018,11 +4164,11 @@ fn run_cross_asset_report(paths: usize, years: usize, seed: u64, base: &World) -
 /// because sampling error depends on the length of the record actually behind each number, not
 /// on the horizon the model is scored at. The contract test pins this to `fit_targets` as a
 /// partition, so a new target cannot land without a declared horizon.
-fn anchor_groups() -> [(&'static str, usize, &'static [&'static str]); 4] {
+fn anchor_groups(a: Anchors) -> [(&'static str, usize, &'static [&'static str]); 4] {
     [
         (
-            "S&P / CRSP 1954-2026",
-            72,
+            a.equity_window,
+            a.equity_years,
             &[
                 "equity vol %",
                 "return per vol",
@@ -4033,8 +4179,8 @@ fn anchor_groups() -> [(&'static str, usize, &'static [&'static str]); 4] {
             ],
         ),
         (
-            "CRSP 1926-2026, the century",
-            100,
+            a.cluster_window,
+            a.cluster_years,
             &["clustering lag 1", "clustering lag 20"],
         ),
         // 35 equity funds over 2001-2026; the horizon is one instrument's record, because that is
@@ -4082,7 +4228,7 @@ const NOISE_SEED_STRIDE: u64 = 1_000_003;
     clippy::too_many_lines,
     reason = "one linear report, mirroring the Scala twin statement for statement"
 )]
-fn run_noise_report(paths: usize, seed: u64, base: &World) {
+fn run_noise_report(a: Anchors, paths: usize, seed: u64, base: &World) {
     println!(
         "ANCHOR NOISE — what one history can pin down.  Every fidelity target is a POINT read from"
     );
@@ -4116,7 +4262,7 @@ fn run_noise_report(paths: usize, seed: u64, base: &World) {
         "100-year model reading against these mixed-horizon anchors, so its ratios fold a horizon"
     );
     println!("artifact into targets like worst crash %.");
-    for (label, years, targets) in anchor_groups() {
+    for (label, years, targets) in anchor_groups(a) {
         eprintln!("{paths} paths x {years}y — {label}");
         let sims = sim_paths(base, paths, years, seed);
         let sts: Vec<WorldStats> = sims
@@ -4131,7 +4277,7 @@ fn run_noise_report(paths: usize, seed: u64, base: &World) {
         );
         for name in targets {
             let Some((_, get, want, weight)) =
-                fit_targets().into_iter().find(|(n, _, _, _)| n == name)
+                fit_targets(a).into_iter().find(|(n, _, _, _)| n == name)
             else {
                 cli_die(&format!(
                     "anchor group names [{name}], not a fidelity target"
@@ -4200,7 +4346,7 @@ fn run_noise_report(paths: usize, seed: u64, base: &World) {
         "  {:<22}{:>11}{:>11}{:>11}",
         "target", "ratio mean", "ratio sd", "2 sd"
     );
-    for (name, get, want, _) in fit_targets() {
+    for (name, get, want, _) in fit_targets(a) {
         let rs: Vec<f64> = reps.iter().map(|st| get(st) / want).collect();
         let mean = scala_sum(rs.iter().copied()) / rs.len() as f64;
         let sd =
@@ -4223,6 +4369,7 @@ fn run_noise_report(paths: usize, seed: u64, base: &World) {
     reason = "the parameter list mirrors the Scala twin's, and the twins are diffed"
 )]
 fn run_power_report(
+    a: Anchors,
     paths: usize,
     seed: u64,
     cost: f64,
@@ -4272,7 +4419,7 @@ fn run_power_report(
     // per contrast, per statistic: (hit rate, n*). Gate verdict travels with the numbers.
     let power = |w: &World, l: usize, sd: u64| -> (bool, PowerTable) {
         let sims = sim_paths(w, paths, l, sd);
-        let ok = gate_ok(&measure(&sims, l), gate_req);
+        let ok = gate_ok(a, &measure(&sims, l), gate_req);
         let stats: Vec<Vec<Vec<f64>>> = (0..sims.len())
             .into_par_iter()
             .map(|k| {
@@ -4463,6 +4610,7 @@ type BufferArm = (Vec<f64>, Vec<f64>, Vec<Vec<f64>>);
     reason = "the parameter list mirrors the Scala twin's, and the twins are diffed"
 )]
 fn run_buffer_report(
+    a: Anchors,
     paths: usize,
     years: usize,
     seed: u64,
@@ -4500,7 +4648,7 @@ fn run_buffer_report(
     // is chosen before knowing which stretch you land in.
     let buffer_stats = |w: &World| -> (bool, Vec<BufferArm>) {
         let sims = sim_paths(w, paths, years, seed);
-        let ok = gate_ok(&measure(&sims, years), gate_req);
+        let ok = gate_ok(a, &measure(&sims, years), gate_req);
         let per: Vec<Vec<BufferArm>> = (0..sims.len())
             .into_par_iter()
             .map(|k| {
@@ -4988,6 +5136,7 @@ fn write_or_die(file: &str, body: &str) {
     reason = "the sidecar records the whole provenance tuple; grouping it would only move the list"
 )]
 fn write_emitted(
+    a: Anchors,
     file: &str,
     p: &Path,
     k: usize,
@@ -5001,7 +5150,7 @@ fn write_emitted(
     let dates = session_dates(p.price.len(), start_ymd);
     write_emit_tsv(file, p, &dates);
     write_emit_sidecar(
-        file, p, k, w, years, seed, start_ymd, &dates, gate_st, gate_paths,
+        a, file, p, k, w, years, seed, start_ymd, &dates, gate_st, gate_paths,
     );
 }
 
@@ -5088,6 +5237,7 @@ fn world_json_body(w: &World) -> Vec<String> {
               does; `!(0.667..=1.5).contains(&ratio)` would flag it"
 )]
 fn write_emit_sidecar(
+    a: Anchors,
     file: &str,
     p: &Path,
     k: usize,
@@ -5100,9 +5250,9 @@ fn write_emit_sidecar(
     gate_paths: usize,
 ) {
     let n = p.price.len();
-    let realism_bad = failed_in(gate_st, GateClass::Realism);
-    let mechanism_bad = failed_in(gate_st, GateClass::Mechanism);
-    let fidelity_bad = failed_in(gate_st, GateClass::Fidelity);
+    let realism_bad = failed_in(a, gate_st, GateClass::Realism);
+    let mechanism_bad = failed_in(a, gate_st, GateClass::Mechanism);
+    let fidelity_bad = failed_in(a, gate_st, GateClass::Fidelity);
     fn str_list<S: AsRef<str>>(v: &[S]) -> String {
         let items: Vec<String> = v.iter().map(|s| json_str(s.as_ref())).collect();
         format!("[{}]", items.join(", "))
@@ -5114,7 +5264,7 @@ fn write_emit_sidecar(
             ef(x)
         }
     };
-    let fidelity: Vec<String> = fit_targets()
+    let fidelity: Vec<String> = fit_targets(a)
         .into_iter()
         .map(|(nm, get, want, _)| {
             let got = get(gate_st);
@@ -5330,6 +5480,7 @@ fn main() {
     let mut beta = dw.beta;
     let mut vol_persist = dw.vol_persist;
     let mut vol_of_vol = dw.vol_of_vol;
+    let mut anchor_spec = "sp500".to_string();
     let mut recovery_drag = dw.recovery_drag;
     let mut recovery_floor = dw.recovery_floor;
     let mut jump_var = dw.jump_var;
@@ -5391,6 +5542,7 @@ fn main() {
             "-beta" => beta = req_f64(&mut it, "-beta"),
             "-volpersist" => vol_persist = req_f64(&mut it, "-volpersist"),
             "-volofvol" => vol_of_vol = req_f64(&mut it, "-volofvol"),
+            "-anchors" => anchor_spec = req_arg(&mut it, "-anchors").clone(),
             "-recoverydrag" => recovery_drag = req_f64(&mut it, "-recoverydrag"),
             "-recoveryfloor" => recovery_floor = req_f64(&mut it, "-recoveryfloor"),
             "-jumpvar" => jump_var = req_f64(&mut it, "-jumpvar"),
@@ -5477,6 +5629,7 @@ fn main() {
             "unknown -crowd [{crowd_name}]; use momentum, trendNNN, or volscaled"
         )),
     };
+    let anchors = anchors_named(&anchor_spec);
     let w = World {
         trend_share,
         depth,
@@ -5508,12 +5661,12 @@ fn main() {
     };
 
     if calibrate_n > 0 {
-        calibrate(calibrate_n, &w, seed);
+        calibrate(anchors, calibrate_n, &w, seed);
         return;
     }
     if fitness_only {
         let st = measure(&sim_paths(&w, 60, 80, seed), 80);
-        let (loss, rows) = fitness(&st);
+        let (loss, rows) = fitness(anchors, &st);
         println!(
             "fitness loss {}  (lower is better; includes 0.5 per failed gate check)",
             jf(loss, 0, 3)
@@ -5526,7 +5679,7 @@ fn main() {
                 jf(term, 6, 3)
             );
         }
-        for (n, ok, _) in gate_checks(&st) {
+        for (n, ok, _) in gate_checks(anchors, &st) {
             if !ok {
                 println!("  FAILED GATE: {n}  (+0.500)");
             }
@@ -5534,13 +5687,13 @@ fn main() {
         return;
     }
     if release_report {
-        run_release_report(paths, years, seed, &w);
+        run_release_report(anchors, paths, years, seed, &w);
         return;
     }
     if cross_asset {
         // Exits non-zero on an in-support miss, or when a relation graded nothing
         // (INCONCLUSIVE) — an EXTRAP cell alone is disclosed, not fatal.
-        if !run_cross_asset_report(paths, years, seed, &w) {
+        if !run_cross_asset_report(anchors, paths, years, seed, &w) {
             std::process::exit(1);
         }
         return;
@@ -5548,15 +5701,16 @@ fn main() {
     if noise_report {
         // -years is ignored deliberately: the horizons come from the anchors themselves, and the
         // seed-noise section from the scoring configuration.
-        run_noise_report(paths, seed, &w);
+        run_noise_report(anchors, paths, seed, &w);
         return;
     }
     if strategies {
-        run_strategy_sweep(paths, years, seed, cost, single, &w, &gate_req);
+        run_strategy_sweep(anchors, paths, years, seed, cost, single, &w, &gate_req);
         return;
     }
     if power_report {
         run_power_report(
+            anchors,
             paths,
             seed,
             cost,
@@ -5569,7 +5723,7 @@ fn main() {
         return;
     }
     if buffer_report {
-        run_buffer_report(paths, years, seed, cost, single, &w, &gate_req);
+        run_buffer_report(anchors, paths, years, seed, cost, single, &w, &gate_req);
         return;
     }
 
@@ -5590,8 +5744,8 @@ fn main() {
         } else {
             (st, paths)
         };
-        let realism_bad = failed_in(&gate_st, GateClass::Realism);
-        let mechanism_bad = failed_in(&gate_st, GateClass::Mechanism);
+        let realism_bad = failed_in(anchors, &gate_st, GateClass::Realism);
+        let mechanism_bad = failed_in(anchors, &gate_st, GateClass::Mechanism);
         if !realism_bad.is_empty() {
             eprintln!(
                 "WARNING: this world FAILS the realism bands [{}] — the emitted path is not market-like",
@@ -5604,7 +5758,7 @@ fn main() {
                 mechanism_bad.join(", ")
             );
         }
-        let fidelity_bad = failed_in(&gate_st, GateClass::Fidelity);
+        let fidelity_bad = failed_in(anchors, &gate_st, GateClass::Fidelity);
         if !fidelity_bad.is_empty() {
             eprintln!(
                 "NOTE: levels not readable in this world [{}] — rank comparisons survive, anything reading a level off these does not",
@@ -5634,6 +5788,7 @@ fn main() {
                 .map(|k| {
                     let f = indexed_name(&emit, k, width);
                     write_emitted(
+                        anchors,
                         &f,
                         &batch[k - emit_from],
                         k,
@@ -5650,6 +5805,7 @@ fn main() {
         } else {
             let p = path_at(emit_path);
             write_emitted(
+                anchors,
                 &emit,
                 &p,
                 emit_path,
@@ -5798,14 +5954,20 @@ fn main() {
     // construction: they are graded against a RELATION evaluated at this world's own volatility and
     // return, so they carry no window of their own to be compared at.
     println!(
-        "  fidelity against targets, by anchor (each row is against the window named for it):"
+        // The anchor SET is named because the equity rows are asset-specific: the same world
+        // graded against a different index is a different verdict, and a report that does not say
+        // which index it used cannot be read six months later.
+        "  fidelity against {} targets, by anchor (each row is against the window named for it):",
+        anchors.name
     );
     println!(
-        "    equity S&P 1954-2026   |   depth rungs 35 equity funds 2001-2026, vs each world's"
+        "    equity {}   |   depth rungs 35 equity funds 2001-2026, vs each world's",
+        anchors.equity_window
     );
     println!("      OWN volatility and return   |   return per vol CRSP 1954-2026");
     println!(
-        "    clustering CRSP 1926-2026 (a CENTURY: the statistic is horizon-dependent and the"
+        "    clustering {} (horizon-dependent: the statistic moves with the",
+        anchors.cluster_window
     );
     println!(
         "      model is scored on 100-year paths)   |   refuge long Treasury   |   bond depth"
@@ -5820,7 +5982,7 @@ fn main() {
     println!(
         "      data, and no clean bond-fund series runs longer.  Every other row is whole-path."
     );
-    for (n, get, want, _) in fit_targets() {
+    for (n, get, want, _) in fit_targets(anchors) {
         let got = get(&st);
         let ratio = if want != 0.0 { got / want } else { f64::NAN };
         let flag = if ratio > 1.5 || ratio < 0.667 {
@@ -5839,8 +6001,11 @@ fn main() {
     }
 
     if validate {
-        let checks = gate_checks(&st);
-        let bad: Vec<Vec<String>> = GateClass::ALL.iter().map(|c| failed_in(&st, *c)).collect();
+        let checks = gate_checks(anchors, &st);
+        let bad: Vec<Vec<String>> = GateClass::ALL
+            .iter()
+            .map(|c| failed_in(anchors, &st, *c))
+            .collect();
         let verdict = |i: usize| {
             if bad[i].is_empty() { "PASS" } else { "FAIL" }
         };
@@ -5940,7 +6105,7 @@ mod emit_sidecar_tests {
         let tsv = dir.join("emit_sidecar_tests.tsv");
         // Native separators are fine: sidecar_name splits on both / and backslash.
         let tsv = tsv.to_string_lossy().into_owned();
-        write_emitted(&tsv, &p, 0, &w, years, seed, "", &st, 1);
+        write_emitted(SP500_ANCHORS, &tsv, &p, 0, &w, years, seed, "", &st, 1);
         let json = sidecar_name(&tsv);
         let text = std::fs::read_to_string(&json).expect("sidecar written");
         std::fs::remove_file(&tsv).ok();
@@ -6261,7 +6426,10 @@ mod contract_tests {
             .chain(BOND_TARGETS.iter())
             .copied()
             .collect();
-        let mut actual: Vec<&str> = fit_targets().into_iter().map(|(n, _, _, _)| n).collect();
+        let mut actual: Vec<&str> = fit_targets(SP500_ANCHORS)
+            .into_iter()
+            .map(|(n, _, _, _)| n)
+            .collect();
         expected.sort_unstable();
         actual.sort_unstable();
         assert_eq!(
@@ -6276,12 +6444,75 @@ mod contract_tests {
     /// it — the same silent-shrinkage failure the equity/bond partition guards against, on the
     /// horizon axis.
     #[test]
+    fn every_anchor_set_grades_exactly_the_same_targets() {
+        // An anchor set that omits a target would silently drop it from the loss and from
+        // `-noise`, and one that names a target that does not exist would fail only when that row
+        // was reached. Both are the silent-shrinkage failure the partition tests guard against, on
+        // the ASSET axis — which only exists because 0.21.0 made the asset a parameter.
+        let reference: Vec<&str> = fit_targets(SP500_ANCHORS)
+            .into_iter()
+            .map(|(n, _, _, _)| n)
+            .collect();
+        for a in [SP500_ANCHORS, NASDAQ_ANCHORS] {
+            let got: Vec<&str> = fit_targets(a).into_iter().map(|(n, _, _, _)| n).collect();
+            assert_eq!(
+                got, reference,
+                "anchor set [{}] grades a different set of targets than SP500_ANCHORS does",
+                a.name
+            );
+        }
+    }
+
+    #[test]
+    fn the_sp500_set_holds_the_values_hard_coded_before_0_21_0() {
+        // The refactor that made the asset a parameter must not have moved the default world's
+        // targets. If one changes, `-validate` changes for every consumer who never asked for a
+        // different index.
+        let a = SP500_ANCHORS;
+        assert_eq!(a.vol, 16.0);
+        assert_eq!(a.ret_vol, 0.69);
+        assert_eq!(a.kurt, 28.0);
+        assert_eq!(a.ac1, 0.299);
+        assert_eq!(a.ac20, 0.225);
+        assert_eq!(a.crashes, 20.7);
+        assert_eq!(a.med_depth, -27.1);
+        assert_eq!(a.worst_depth, -56.8);
+        assert_eq!(a.vol_band, (14.0, 18.0));
+        assert_eq!(a.ret_vol_band, (0.50, 0.85));
+    }
+
+    #[test]
+    fn the_nasdaq_set_is_the_measured_qqq_vector() {
+        // Guards the transcription. Every value is QQQ 1999-03-10..2026-08-20 on the fixture's own
+        // definitions, fresh-start peak seeding — see the constant's note for why that window and
+        // not `w2001`, whose mid-bear opening reads 40.1 crashes/century against this 25.6.
+        let a = NASDAQ_ANCHORS;
+        assert_eq!(a.vol, 26.90);
+        assert_eq!(a.ret_vol, 0.38);
+        assert_eq!(a.kurt, 9.55);
+        assert_eq!(a.crashes, 25.6);
+        assert_eq!(a.med_depth, -22.8);
+        assert_eq!(a.worst_depth, -83.0);
+        assert!(
+            a.vol > SP500_ANCHORS.vol,
+            "the Nasdaq is more volatile than the S&P; if this fails the sets have been swapped"
+        );
+        assert!(
+            a.kurt < SP500_ANCHORS.kurt,
+            "QQQ's 27-year kurtosis is BELOW the CRSP century's — a shorter window holds fewer 1987s"
+        );
+    }
+
+    #[test]
     fn anchor_groups_partition_the_fit_targets() {
-        let mut expected: Vec<&str> = anchor_groups()
+        let mut expected: Vec<&str> = anchor_groups(SP500_ANCHORS)
             .into_iter()
             .flat_map(|(_, _, ts)| ts.iter().copied())
             .collect();
-        let mut actual: Vec<&str> = fit_targets().into_iter().map(|(n, _, _, _)| n).collect();
+        let mut actual: Vec<&str> = fit_targets(SP500_ANCHORS)
+            .into_iter()
+            .map(|(n, _, _, _)| n)
+            .collect();
         expected.sort_unstable();
         actual.sort_unstable();
         assert_eq!(
@@ -6552,7 +6783,10 @@ mod equity_anchor_tests {
              discriminate, so it should be gated like the other two"
         );
         let st = measure(&sim_paths(&default_world(), 4, 20, 1), 20);
-        let gated: Vec<String> = gate_checks(&st).into_iter().map(|(n, _, _)| n).collect();
+        let gated: Vec<String> = gate_checks(SP500_ANCHORS, &st)
+            .into_iter()
+            .map(|(n, _, _)| n)
+            .collect();
         assert!(
             !gated.iter().any(|n| n.contains("d20")),
             "a d20 gate band has appeared in {gated:?}"

@@ -189,6 +189,9 @@ object MarketSim:
     s"-value X      ; pull toward equity fair value, per day (default ${Defaults.valuePull}).  With",
     s"              ;   the recovery drag below this governs SHALLOW water; deep drawdowns are set",
     s"              ;   by the drag instead",
+    s"-anchors A    ; which real index the fidelity targets describe: sp500 or nasdaq",
+    s"              ;   (default sp500).  Only the EQUITY rows move; the bond targets and the",
+    s"              ;   depth rungs are asset-independent",
     s"-recoverydrag X ; how fast value arbitrage weakens as a drawdown deepens past 10%",
     s"              ;   (default ${Defaults.recoveryDrag}; 0 restores the symmetric pull of 0.20.0)",
     s"-recoveryfloor X ; weakest that pull may become, as a share of full strength",
@@ -1019,14 +1022,26 @@ object MarketSim:
     * passed a 35%-volatility world (the one reversing the ranking); a "bonds fail" check written
     * as bondInfl < bondGrowth passed while bonds still RALLIED +2.8; crash frequency shipped
     * without an upper bound WHILE the one-sided lesson was being applied elsewhere in this file. */
-  def gateChecks(st: WorldStats): Vector[(String, Boolean, GateClass)] =
+  def gateChecks(a: Anchors, st: WorldStats): Vector[(String, Boolean, GateClass)] =
     import GateClass.*
     val base = Vector(
-      bandCheck("equity vol",       st.vol * 100.0, 8.0, 25.0, Realism, dp = 0, unit = "%"),
+      // MEASURED, not assumed.  8-25% was the S&P's shape and it asserted of 17 of the 35 real
+      // equity instruments in `test-data/equity-anchors` that they are not markets -- QQQ (26.9%),
+      // Taiwan, Brazil, semiconductors, energy and most of Europe.  That is the same failure the
+      // bond band below already records ("of eight real funds it admitted one").  A REALISM band
+      // answers "is this a market at all", so it must admit every market anyone has measured: the
+      // 35 instruments span 15.2-37.4% over the clean w1996 window, and 8-40 rounds outward from
+      // that.  The FIDELITY band -- now `Anchors.volBand`, 14-18% for the S&P and 24-30% for the
+      // Nasdaq -- is what answers "is this THIS market", and it stayed narrow.
+      bandCheck("equity vol",       st.vol * 100.0, 8.0, 40.0, Realism, dp = 0, unit = "%"),
       bandCheck("kurtosis",         st.kurt, 4.0, 30.0, Realism, dp = 0),
       ("clustering 0.10-0.40",      st.ac1 > 0.10 && st.ac1 < 0.40 && st.ac20 > 0.03, Realism),
-      ("crash rate 8-45/century",   st.epPerPath >= 1.0 && {
-          val pc = st.epPerPath * 100.0 / st.yearsPerPath; pc >= 8.0 && pc <= 45.0 }, Realism),
+      // Widened from 8-45 for the same reason as the volatility band above: 45 excluded two of
+      // the 35 real instruments (EWA, EWW), which read 49.4 and 46.6 over the clean w1996 window
+      // against a cross-section range of 13.2-49.4.  A band that calls a real market unreal is
+      // not a realism check.
+      ("crash rate 8-55/century",   st.epPerPath >= 1.0 && {
+          val pc = st.epPerPath * 100.0 / st.yearsPerPath; pc >= 8.0 && pc <= 55.0 }, Realism),
       // max(1, _) is load-bearing.  nShapes / 10 is INTEGER division, so below ten shapes both
       // clauses read ">= 0" and the check passes with NEITHER shape present -- measured at
       // -drift 0.9, which produced V=0, balanced=1, U=0 and passed a check named "both
@@ -1058,15 +1073,15 @@ object MarketSim:
       // inadmissible in every report ("no liquidity spiral" runs at 12.6% vol, "low growth" at
       // 0.34).  Class does not weaken them as a search constraint: the calibration loss counts
       // 0.5 per failed check whatever the class.  Volatility keeps its realism band as well —
-      // 8-25% answers "is this a market", 14-18% answers "can its level be read".
-      bandCheck("equity vol",       st.vol * 100.0, 14.0, 18.0, Fidelity, dp = 0, unit = "%"),
+      // 8-40% answers "is this a market", the anchor's own band "can its level be read".
+      bandCheck("equity vol", st.vol * 100.0, a.volBand._1, a.volBand._2, Fidelity, dp = 0, unit = "%"),
       // 0.50 clears the 1926-2026 reading (0.55) downward; 0.85 sits above the 1954-2026 anchor
       // (0.69) and below the most favourable non-overlapping 20-year block the record produced
       // (0.93).  A world may be as favourable as a long-horizon market, not as favourable as its
       // luckiest two decades.  The 20-year block SPREAD (0.47-0.93) is deliberately NOT the band:
       // that is sampling variation in a 20-year window, and this statistic is a population value
       // over 20,000 path-years -- a band drawn from it would readmit worlds at 0.91.
-      bandCheck("return per vol",   st.retVol, 0.50, 0.85, Fidelity),
+      bandCheck("return per vol",   st.retVol, a.retVolBand._1, a.retVolBand._2, Fidelity),
     )
     // The two anchor-fitted bands are graded ONLY where their anchors have data -- the same
     // refusal `-crossasset` applies, because these ARE its relations.  A world outside the funds'
@@ -1137,7 +1152,7 @@ object MarketSim:
     * `dp` is printed PRECISION, not tolerance: the depth rungs read 0.215-0.415 and are quoted at
     * that precision in the CHANGELOG and the upgrade plan, while the duration ratios read
     * 0.70-1.10.  `unit` is whatever follows the band in the name.  A caller whose printed units
-    * differ from the statistic's passes the CONVERTED value (`st.vol * 100` against 8-25), so the
+    * differ from the statistic's passes the CONVERTED value (`st.vol * 100` against 8-40), so the
     * band and the value compared against it are in the same units by construction.
     *
     * Two bands stay hand-written, because the name would stop describing the predicate if they
@@ -1148,8 +1163,8 @@ object MarketSim:
     val fmt = s"%.${dp}f"
     (s"$name ${fmt.format(lo)}-${fmt.format(hi)}$unit", got > lo && got < hi, cls)
 
-  def failedIn(st: WorldStats, cls: GateClass): Vector[String] =
-    gateChecks(st).collect { case (n, false, c) if c == cls => n }
+  def failedIn(a: Anchors, st: WorldStats, cls: GateClass): Vector[String] =
+    gateChecks(a, st).collect { case (n, false, c) if c == cls => n }
 
   /** Heading and what a failure costs, printed in this order.  Kept beside the enum so a new class
     * cannot be added without saying out loud which conclusions it kills. */
@@ -1161,8 +1176,8 @@ object MarketSim:
 
   /** Admissibility under the classes a report has declared it requires.  A class not required is a
     * class whose failures are disclosed and tolerated, which is the whole point of the split. */
-  def gateOk(st: WorldStats, required: Set[GateClass]): Boolean =
-    gateChecks(st).forall((_, ok, c) => ok || !required.contains(c))
+  def gateOk(a: Anchors, st: WorldStats, required: Set[GateClass]): Boolean =
+    gateChecks(a, st).forall((_, ok, c) => ok || !required.contains(c))
 
   /** The historical binary verdict: a market with its mechanisms live.  Level fidelity is NOT in
     * it, so every report keeps the admissibility it had before the depth profile was measured —
@@ -1211,8 +1226,108 @@ object MarketSim:
     * assumption this function exists to remove. */
   def wgt(judgment: Double, sdRel: Double): Double = judgment * (SdRelRef / sdRel)
 
-  val FitTargets: Vector[(String, WorldStats => Double, Double, Double)] = Vector(
-    ("equity vol %",       st => st.vol * 100,                              16.0,  wgt(1.0, 0.10)),
+  /** WHICH REAL ASSET a world is being graded against.
+    *
+    * Every equity fidelity target was the S&P's, hard-coded, so a world calibrated to any other
+    * index failed the target set for BEING that other index — it could be run but not graded, and
+    * `-calibrate` could not search for one at all.  This makes the asset a parameter.
+    *
+    * Only the EQUITY rows vary.  The bond targets stay literal in `fitTargets`: the refuge asset is
+    * the same Treasury whatever the equity index is.  The three depth rungs are already RATIOS
+    * against a relation evaluated at the world's own volatility and return, so they read 1.00 for
+    * any asset by construction — which is exactly why 0.21.0 restated them that way.
+    *
+    * `judgment` is NOT here.  It says what a target is worth given redundancy and importance, which
+    * is a property of the statistic, not of the index; only the measured level and its sampling
+    * spread are asset-specific.
+    *
+    * The realism bands are not here either.  `equity vol 8-40%` and `kurtosis 4-30` say "is this a
+    * market at all", and a Nasdaq is still a market.  The two FIDELITY bands are, because they say
+    * "is this THIS market". */
+  final case class Anchors(
+    name: String,
+    equityWindow: String, equityYears: Int,      // the window the level rows below were read from
+    clusterWindow: String, clusterYears: Int,    // clustering is horizon-sensitive and reads its own
+    vol: Double,        volSd: Double,
+    retVol: Double,     retVolSd: Double,
+    kurt: Double,       kurtSd: Double,
+    ac1: Double,        ac1Sd: Double,
+    ac20: Double,       ac20Sd: Double,
+    crashes: Double,    crashesSd: Double,
+    medDepth: Double,   medDepthSd: Double,
+    worstDepth: Double, worstDepthSd: Double,
+    volBand: (Double, Double),                   // the two asset-specific FIDELITY bands
+    retVolBand: (Double, Double))
+
+  /** The S&P/CRSP set, unchanged from every release before 0.21.0 — the values and sampling spreads
+    * are the ones that were already here, moved rather than re-measured, so the default reproduces
+    * earlier output byte for byte. */
+  val SP500Anchors = Anchors(
+    name = "S&P 500 / CRSP",
+    equityWindow = "S&P / CRSP 1954-2026", equityYears = 72,
+    clusterWindow = "CRSP 1926-2026, the century", clusterYears = 100,
+    vol = 16.0,          volSd = 0.10,
+    retVol = 0.69,       retVolSd = 0.20,
+    kurt = 28.0,         kurtSd = 2.65,
+    ac1 = 0.299,         ac1Sd = 0.09,
+    ac20 = 0.225,        ac20Sd = 0.11,
+    crashes = 20.7,      crashesSd = 0.22,
+    medDepth = -27.1,    medDepthSd = 0.15,
+    worstDepth = -56.8,  worstDepthSd = 0.17,
+    volBand = (14.0, 18.0),
+    retVolBand = (0.50, 0.85))
+
+  /** The Nasdaq-100 set, measured 2026-08-28 from QQQ daily adjusted closes over its own full
+    * history, 1999-03-10 to 2026-08-20 (27.4 years).
+    *
+    * THAT WINDOW IS A DECISION, not a default.  Drawdown-episode counts swing 1.7x on the
+    * measurement convention alone: the same QQQ data reads 24.1 episodes per century with the
+    * running peak seeded from prior history, 40.1 with a fresh start on a window opening
+    * 2001-08-27 (mid dot-com bear, which resets the peak ~60% down and MANUFACTURES episodes on
+    * the recovery), and 25.6 fresh-start from QQQ's own inception.  The model measures each path
+    * fresh from its own start, so a fresh start is the matching convention -- but only on a window
+    * that OPENS near a high, or the reset does the manufacturing.  QQQ's inception in March 1999
+    * is such a window.  The equity-anchor fixture already states this rule for `w1996` ("opens
+    * mid-bull, so its peak seed is clean by construction") and warns against grading a model
+    * ensemble on the mid-bear `w2001` block.
+    *
+    * Control: the same pipeline on SPY 1993-01-29 reproduces the committed w1993 fixture row
+    * exactly (18.57 / 10.31 / 0.447 / 0.315 / 0.169 against 18.6 / 10.30 / 0.447 / 0.315 / 0.169),
+    * so these readings are on the fixture's own definitions.
+    *
+    * THE SAMPLING SPREADS ARE THE S&P'S, CARRIED OVER, and that is the one soft number here.  An
+    * sdRel is model-implied -- `-noise` measures the spread of readings the model produces over
+    * histories of the anchor's length -- so an honest Nasdaq set needs `-noise -anchors nasdaq` run
+    * at a Nasdaq-calibrated world, which does not exist yet.  Carried over they are approximately
+    * right (both assets' statistics have similar relative spreads) and they are not asserted to be
+    * measured.  Re-freeze them when a Nasdaq world is calibrated.
+    *
+    * The two fidelity bands are the S&P bands' proportional widths around the Nasdaq levels
+    * (+/-12.5% on volatility, -28%/+23% on return per volatility), for the same reason. */
+  val NasdaqAnchors = Anchors(
+    name = "Nasdaq-100 / QQQ",
+    equityWindow = "QQQ 1999-2026", equityYears = 27,
+    clusterWindow = "QQQ 1999-2026", clusterYears = 27,
+    vol = 26.90,         volSd = 0.10,
+    retVol = 0.38,       retVolSd = 0.20,
+    kurt = 9.55,         kurtSd = 2.65,
+    ac1 = 0.293,         ac1Sd = 0.09,
+    ac20 = 0.249,        ac20Sd = 0.11,
+    crashes = 25.6,      crashesSd = 0.22,
+    medDepth = -22.8,    medDepthSd = 0.15,
+    worstDepth = -83.0,  worstDepthSd = 0.17,
+    volBand = (23.5, 30.3),
+    retVolBand = (0.27, 0.47))
+
+  val AnchorSets: Vector[Anchors] = Vector(SP500Anchors, NasdaqAnchors)
+
+  def anchorsNamed(spec: String): Anchors = spec match
+    case "sp500" | "sp" | "spx" => SP500Anchors
+    case "nasdaq" | "ndx" | "qqq" => NasdaqAnchors
+    case other => usage(s"unknown -anchors [$other]; use sp500 or nasdaq")
+
+  def fitTargets(a: Anchors): Vector[(String, WorldStats => Double, Double, Double)] = Vector(
+    ("equity vol %",       st => st.vol * 100,                              a.vol,  wgt(1.0, a.volSd)),
     // Ken French F-F_Research_Data_Factors, US total market (Mkt-RF + RF), measured in the units
     // this row is compared in: annualised LOG return over sqrt(mean(r^2) * 252) on DAILY data.
     // Both conversions matter -- a CAGR read as a simple rate and a monthly-derived volatility
@@ -1222,7 +1337,7 @@ object MarketSim:
     // The target stays on the anchor window so the target set is internally consistent, NOT
     // because 0.55 is the wrong reading for a generator scored on 100-year paths; the gate band
     // below admits it rather than legislating it away.
-    ("return per vol",     st => st.retVol,                                  0.69, wgt(1.0, 0.20)),
+    ("return per vol",     st => st.retVol,                                  a.retVol, wgt(1.0, a.retVolSd)),
     // kurtosis's sdRel moved 0.14 -> 2.65 in 0.21.0, and the 19x is not a re-measurement of the
     // same thing: the jump channel makes single-history kurtosis as variable as it really is.  One
     // 72-year window reads 8.8 at the 5th percentile and 205 at the 95th, because a window either
@@ -1232,7 +1347,7 @@ object MarketSim:
     // combined weight of 3.1 and an sdRel a tenth of this one -- turning the channel off moves
     // clustering 1.03 -> 1.11 and 1.05 -> 1.15, which the loss sees clearly.  A mechanism whose
     // only defender is its least measurable target is a mechanism a search will quietly discard.
-    ("kurtosis",           st => st.kurt,                                   28.0,  wgt(0.5, 2.65)),
+    ("kurtosis",           st => st.kurt,                                   a.kurt,  wgt(0.5, a.kurtSd)),
     // Ken French / CRSP value-weighted US market, daily, 1926-07-01..2026-06-30 -- the FULL
     // century, and deliberately NOT the 1954-2026 window the rows above use.  The model's
     // clustering is horizon-INDEPENDENT (0.320 at 20 years, 0.330 at 150) while the real statistic
@@ -1251,15 +1366,15 @@ object MarketSim:
     // lag 1) would not exclude the model.  Real clustering varies by nearly two-to-one between
     // eras; a band tight enough to fail this world would have to exclude two of the five real
     // 20-year eras, which is a band chosen to produce a verdict rather than derived from a record.
-    ("clustering lag 1",   st => st.ac1,                                    0.299, wgt(1.0, 0.09)),
-    ("clustering lag 20",  st => st.ac20,                                   0.225, wgt(0.5, 0.11)),
-    ("crashes/century",    st => st.epPerPath * 100.0 / st.yearsPerPath,    20.7,  wgt(1.0, 0.22)),
-    ("median depth %",     st => st.depthMed,                              -27.1,  wgt(1.0, 0.15)),
+    ("clustering lag 1",   st => st.ac1,                                    a.ac1, wgt(1.0, a.ac1Sd)),
+    ("clustering lag 20",  st => st.ac20,                                   a.ac20, wgt(0.5, a.ac20Sd)),
+    ("crashes/century",    st => st.epPerPath * 100.0 / st.yearsPerPath,    a.crashes,  wgt(1.0, a.crashesSd)),
+    ("median depth %",     st => st.depthMed,                              a.medDepth,  wgt(1.0, a.medDepthSd)),
     // Judgment 0.5, DOWN from 1.0, on `-noise`'s finding: graded at 100 years against a
     // 72-year anchor this ratio is mostly a max-order-statistic horizon artifact (at the
     // anchor's own horizon the record sits at the model's 61st percentile).  Until the target
     // is horizon-matched, weighting it fully would push `-calibrate` to close an artifact.
-    ("worst crash %",      st => st.worstDepth,                            -56.8,  wgt(0.5, 0.17)),
+    ("worst crash %",      st => st.worstDepth,                            a.worstDepth,  wgt(0.5, a.worstDepthSd)),
     // The "(24y)" is load-bearing, not decoration: this row is measured on a different horizon
     // from every other, and the label is the only part that travels when the number is quoted.
     ("bond vol % (24y)",   st => st.bondVol * 100,                          13.0,  wgt(1.0, 0.51)),
@@ -1319,8 +1434,8 @@ object MarketSim:
     ("equity d20 vs real",  st => st.eqD20VsReal,                            1.00,  wgt(0.5, 1.56)),
     ("bond depth vs vol",   st => st.bondDepthVsVol,                          1.00, wgt(0.5, 0.33)),
   )
-  def fitness(st: WorldStats): (Double, Vector[(String, Double, Double, Double)]) =
-    val rows = FitTargets.map { (name, get, target, weight) =>
+  def fitness(a: Anchors, st: WorldStats): (Double, Vector[(String, Double, Double, Double)]) =
+    val rows = fitTargets(a).map { (name, get, target, weight) =>
       val m = get(st)
       val term =
         if m.isNaN then weight * 4.0
@@ -1329,7 +1444,7 @@ object MarketSim:
         else weight * math.abs(math.log(math.abs(m).max(1e-6) / math.abs(target)))
       (name, m, target, term)
     }
-    val gatePenalty = gateChecks(st).count(!_._2) * 0.5
+    val gatePenalty = gateChecks(a, st).count(!_._2) * 0.5
     (rows.map(_._4).sum + gatePenalty, rows)
 
   // ---- exposure rules ------------------------------------------------------------------------
@@ -1688,7 +1803,7 @@ object MarketSim:
     ("margin",       0.0, 0.004, (w, x) => w.copy(margin = x)),
   )
 
-  def calibrate(nSamples: Int, base: World, seed: Long): Unit =
+  def calibrate(a: Anchors, nSamples: Int, base: World, seed: Long): Unit =
     // depth, trendShare, drift and crowdImpact are in the search because they are the strongest
     // levers on the
     // two defects the eight below cannot reach.  depth carries crash frequency (at fixed stress,
@@ -1707,7 +1822,7 @@ object MarketSim:
     def score(w: World, s: Long): Double =
       // scored at 100-year paths: an 80-year protocol missed a worst-crash blowup that only
       // appears at the horizon actually used — tune at the scale you evaluate at
-      fitness(measure(simPaths(w, 50, 100, s), 100))._1
+      fitness(a, measure(simPaths(w, 50, 100, s), 100))._1
     eprintln(s"calibrate: $nSamples samples, 50 paths x 100 years each; holdout re-score of top 5")
     val scored = (0 until nSamples).map { k =>
       val (w, desc) = ranges.foldLeft((base, List.empty[String])) { case ((wAcc, d), (nm, lo, hi, set)) =>
@@ -1788,14 +1903,14 @@ object MarketSim:
     * Mirrors the Rust twin's `Evald`. */
   type Evald = Vector[Vector[(Outcome, Vector[(Boolean, Double, Double)])]]
 
-  def runStrategySweep(paths: Int, years: Int, seed: Long, cost: Double, single: Boolean,
+  def runStrategySweep(a: Anchors, paths: Int, years: Int, seed: Long, cost: Double, single: Boolean,
                        base: World, gateReq: Set[GateClass]): Unit =
     val worlds = sweepWorlds(base, single, withReflexive = true)
     eprintln(s"${worlds.size} worlds x $paths paths x $years years, ${Rules.size} rules x {cash,bond}")
     val results = worlds.map { (wname, w, reflexive) =>
       val sims = simPaths(w, paths, years, seed)
       val st = measure(sims, years)
-      val ok = gateOk(st, gateReq)
+      val ok = gateOk(a, st, gateReq)
       val evald = java.util.stream.IntStream.range(0, sims.size).parallel().mapToObj { k =>
         val s   = sims(k)
         val ind = new Indicators(s.price)
@@ -1929,7 +2044,7 @@ object MarketSim:
       val st = measure(sims, years)
       // gated AT USE TIME, like every other conclusion path: a retrospective "the gate passed for
       // the worlds used so far" protects nothing about the next world someone dials up
-      val okSev = gateOk(st, gateReq)
+      val okSev = gateOk(a, st, gateReq)
       val ev = java.util.stream.IntStream.range(0, sims.size).parallel().mapToObj { k =>
         val s = sims(k); val ind = new Indicators(s.price)
         val eps = episodes(s.price, 15.0); val fl = eps.map(ep => fundamentalLed(s, ep))
@@ -2004,7 +2119,7 @@ object MarketSim:
     * exactly the reading under which a sequence of individually-acceptable trades accumulates with
     * nothing ever showing it.  The `worse than best` column is the accumulation detector: it names
     * the release whose default read closer to real than the current one does. */
-  def runReleaseReport(paths: Int, years: Int, seed: Long, base: World): Unit =
+  def runReleaseReport(a: Anchors, paths: Int, years: Int, seed: Long, base: World): Unit =
     val cols = Releases :+ ("current", base)
     eprintln(s"${cols.size} worlds x $paths paths x $years years")
     val stats = cols.map((v, w) => (v, measure(simPaths(w, paths, years, seed), years)))
@@ -2017,7 +2132,7 @@ object MarketSim:
     println(f"  ${"target"}%-22s" + cols.map((v, _) => f"$v%8s").mkString +
             f"   ${"best"}%7s   worse than best")
     var bestTotal = 0.0
-    for (name, get, want, _) <- FitTargets do
+    for (name, get, want, _) <- fitTargets(a) do
       val rs = stats.map((_, st) => get(st) / want)
       val errs = rs.map(r => math.abs(r - 1.0))
       val cur = errs.last
@@ -2028,7 +2143,7 @@ object MarketSim:
       println(f"  $name%-22s" + rs.map(r => f"$r%8.2f").mkString + f"   ${rs(bestIdx)}%7.2f   $flag%s")
     println()
     println(f"  ${"AGGREGATE |ratio-1|"}%-22s" +
-            stats.map((_, st) => FitTargets.map((_, get, want, _) => math.abs(get(st) / want - 1.0)).sum)
+            stats.map((_, st) => fitTargets(a).map((_, get, want, _) => math.abs(get(st) / want - 1.0)).sum)
                  .map(t => f"$t%8.2f").mkString +
             f"   ${bestTotal}%7.2f   best achievable per row, across all releases")
     println()
@@ -2165,8 +2280,8 @@ object MarketSim:
     * relation was introduced to expose.
     *
     * DIAGNOSTIC ONLY -- it does not touch the exit code. */
-  def runEquityAtAnchor(paths: Int, years: Int, seed: Long, base: World): Unit =
-    val target = FitTargets.find(_._1 == "equity vol %").map(_._3)
+  def runEquityAtAnchor(a: Anchors, paths: Int, years: Int, seed: Long, base: World): Unit =
+    val target = fitTargets(a).find(_._1 == "equity vol %").map(_._3)
       .getOrElse(usage("no `equity vol %` fidelity target to anchor volatility on"))
     println()
     println("EQUITY — every equity target re-read with volatility ON ITS ANCHOR.  Diagnostic: this")
@@ -2193,16 +2308,16 @@ object MarketSim:
         println()
         println(f"  ${"statistic"}%-22s${"default"}%10s${"at anchor"}%11s${"real"}%10s${"ratio def"}%11s${"ratio anc"}%11s")
         for name <- EquityTargets do
-          val (_, get, want, _) = FitTargets.find(_._1 == name)
+          val (_, get, want, _) = fitTargets(a).find(_._1 == name)
             .getOrElse(usage(s"EquityTargets names [$name], which is not a fidelity target"))
-          val (d, a)   = (get(stDef), get(stAnc))
-          val (rd, ra) = (d / want, a / want)
+          val (d, at)  = (get(stDef), get(stAnc))
+          val (rd, ra) = (d / want, at / want)
           // The point of the section: the rows where putting volatility on its anchor CHANGES the
           // verdict.  A row that reads the same either way was never distorted by the miss.  Judge
           // a flagged move against `-noise`'s seed-noise section before reading it as real; the
           // two columns share one seed, so 2 sd there is the conservative bound on this difference.
           val flag = if math.abs(ra - rd) > 0.05 then f"<-- moves ${ra - rd}%.2f" else ""
-          println(f"  $name%-22s$d%10.2f$a%11.2f$want%10.2f$rd%11.2f$ra%11.2f   $flag%s")
+          println(f"  $name%-22s$d%10.2f$at%11.2f$want%10.2f$rd%11.2f$ra%11.2f   $flag%s")
 
   def crossAssetPreamble(): Unit =
     println("CROSS-ASSET — ONE mechanism across the duration ladder.  1 identity parameter: 0 FITTED,")
@@ -2221,7 +2336,7 @@ object MarketSim:
     println()
 
   /** One mechanism, every rung of the duration ladder, graded only where the bands have data. */
-  def runCrossAssetReport(paths: Int, years: Int, seed: Long, base: World): Boolean =
+  def runCrossAssetReport(a: Anchors, paths: Int, years: Int, seed: Long, base: World): Boolean =
     eprintln(s"${DurationLadder.size} durations x $paths paths x $years years")
     // Per rung: the full-ensemble reading, plus four quarter-ensemble readings for the in-run
     // noise estimate.  The quarters reuse the SAME simulated paths -- the estimate costs four
@@ -2298,7 +2413,7 @@ object MarketSim:
       println(f"    predicts non-positive time-under-water below $BondD10Zero%.2f %% volatility, so its usable range")
       println("    is narrower than the range it was fitted across.  A property of the relation, not")
       println("    of this ladder — widening the ladder cannot reach those rungs.")
-    runEquityAtAnchor(paths, years, seed, base)
+    runEquityAtAnchor(a, paths, years, seed, base)
     ok
 
   // ---- the anchor-noise report ---------------------------------------------------------------
@@ -2309,11 +2424,11 @@ object MarketSim:
     * because sampling error depends on the length of the record actually behind each number, not
     * on the horizon the model is scored at.  The contract test pins this to `FitTargets` as a
     * partition, so a new target cannot land without a declared horizon. */
-  val AnchorGroups: Vector[(String, Int, Vector[String])] = Vector(
-    ("S&P / CRSP 1954-2026", 72,
+  def anchorGroups(a: Anchors): Vector[(String, Int, Vector[String])] = Vector(
+    (a.equityWindow, a.equityYears,
      Vector("equity vol %", "return per vol", "kurtosis", "crashes/century",
             "median depth %", "worst crash %")),
-    ("CRSP 1926-2026, the century", 100,
+    (a.clusterWindow, a.clusterYears,
      Vector("clustering lag 1", "clustering lag 20")),
     // 35 equity funds over 2001-2026; the horizon is one instrument's record, because that is what
     // each residual ratio in the fit was measured from.
@@ -2339,7 +2454,7 @@ object MarketSim:
     * MODEL-IMPLIED, and the circularity is stated in the report: the spreads come from this
     * model's own dynamics, so where the model is known biased the spread is too.  There is no
     * other estimate -- the record is one draw. */
-  def runNoiseReport(paths: Int, seed: Long, base: World): Unit =
+  def runNoiseReport(a: Anchors, paths: Int, seed: Long, base: World): Unit =
     println("ANCHOR NOISE — what one history can pin down.  Every fidelity target is a POINT read from")
     println("one historical record; this report asks the model what spread of readings independent")
     println("histories of that anchor's OWN length would produce, and where the real record falls.")
@@ -2355,7 +2470,7 @@ object MarketSim:
     println("they are not.  `p50` vs `real` is the HORIZON-MATCHED reading; -fitness grades a")
     println("100-year model reading against these mixed-horizon anchors, so its ratios fold a horizon")
     println("artifact into targets like worst crash %.")
-    for (label, years, targets) <- AnchorGroups do
+    for (label, years, targets) <- anchorGroups(a) do
       eprintln(s"$paths paths x ${years}y — $label")
       val sims = simPaths(base, paths, years, seed)
       val sts  = sims.map(p => measure(Vector(p), years))
@@ -2363,7 +2478,7 @@ object MarketSim:
       println(s"  $label — $years-year single histories:")
       println(f"  ${"target"}%-22s${"real"}%8s${"p5"}%8s${"p50"}%8s${"p95"}%8s${"real@"}%7s${"n"}%5s${"sd/real"}%8s${"wt"}%5s")
       for name <- targets do
-        val (_, get, want, weight) = FitTargets.find(_._1 == name)
+        val (_, get, want, weight) = fitTargets(a).find(_._1 == name)
           .getOrElse(usage(s"anchor group names [$name], not a fidelity target"))
         val xs = sts.map(get).filter(x => !x.isNaN).sorted
         val n  = xs.size
@@ -2387,13 +2502,13 @@ object MarketSim:
     println("  than two independent readings; 2 sd is the conservative bound.)")
     println()
     println(f"  ${"target"}%-22s${"ratio mean"}%11s${"ratio sd"}%11s${"2 sd"}%11s")
-    for (name, get, want, _) <- FitTargets do
+    for (name, get, want, _) <- fitTargets(a) do
       val rs   = reps.map(st => get(st) / want)
       val mean = rs.sum / rs.size
       val sd   = math.sqrt(rs.map(x => (x - mean) * (x - mean)).sum / (rs.size - 1))
       println(f"  $name%-22s$mean%11.3f$sd%11.3f${2.0 * sd}%11.3f")
 
-  def runPowerReport(paths: Int, seed: Long, cost: Double, single: Boolean, base: World,
+  def runPowerReport(a: Anchors, paths: Int, seed: Long, cost: Double, single: Boolean, base: World,
                      gateReq: Set[GateClass], armIdx: Vector[Int], horizons: Vector[Int]): Unit =
     // Arms and horizons are the CALLER's, so the consumer's own question — these two arms, at the
     // length of history I possess — is answerable without a code change.  The defaults reproduce
@@ -2412,7 +2527,7 @@ object MarketSim:
     /** per contrast, per statistic: (hit rate, n*).  Gate verdict travels with the numbers. */
     def power(w: World, L: Int, sd: Long): (Boolean, Vector[Vector[(Double, Double)]]) =
       val sims  = simPaths(w, paths, L, sd)
-      val ok    = gateOk(measure(sims, L), gateReq)
+      val ok    = gateOk(a, measure(sims, L), gateReq)
       val stats = java.util.stream.IntStream.range(0, sims.size).parallel().mapToObj { k =>
         val p   = sims(k)
         val ind = new Indicators(p.price)
@@ -2490,7 +2605,7 @@ object MarketSim:
     * from.  Depth AT EXHAUSTION excludes stretches that never outlast the buffer: those force no
     * sale and cost nothing, so entering them as zeros would flatter the average with episodes that
     * never happened. */
-  def runBufferReport(paths: Int, years: Int, seed: Long, cost: Double, single: Boolean,
+  def runBufferReport(a: Anchors, paths: Int, years: Int, seed: Long, cost: Double, single: Boolean,
                       base: World, gateReq: Set[GateClass]): Unit =
     // 15% is the repo's existing episode threshold (episodes(px, 15.0)); reusing it keeps this
     // report from introducing a new arbitrary constant.  Without it the distribution is drowned:
@@ -2514,7 +2629,7 @@ object MarketSim:
       * chosen before knowing which stretch you land in. */
     def bufferStats(w: World): (Boolean, Vector[(Vector[Double], Vector[Double], Vector[Vector[Double]])]) =
       val sims = simPaths(w, paths, years, seed)
-      val ok   = gateOk(measure(sims, years), gateReq)
+      val ok   = gateOk(a, measure(sims, years), gateReq)
       val per  = java.util.stream.IntStream.range(0, sims.size).parallel().mapToObj { k =>
         val p   = sims(k)
         val ind = new Indicators(p.price)
@@ -2674,11 +2789,11 @@ object MarketSim:
 
   /** The TSV and its sidecar.  `gateSt` is measured on the gate ensemble, which is a different and
     * usually much larger sample than the one path being written. */
-  def writeEmitted(file: String, p: Path, k: Int, w: World, years: Int, seed: Long,
+  def writeEmitted(a: Anchors, file: String, p: Path, k: Int, w: World, years: Int, seed: Long,
                    startYmd: String, gateSt: WorldStats, gatePaths: Int): Unit =
     val dates = sessionDates(p.price.length, startYmd)
     writeEmitTsv(file, p, dates)
-    writeEmitSidecar(file, p, k, w, years, seed, startYmd, dates, gateSt, gatePaths)
+    writeEmitSidecar(a, file, p, k, w, years, seed, startYmd, dates, gateSt, gatePaths)
 
   def writeEmitTsv(file: String, p: Path, dates: Vector[String]): Unit =
     val rows = EmitColumns.mkString("\t") +: Vector.tabulate(dates.length) { i =>
@@ -2716,16 +2831,16 @@ object MarketSim:
     * to a release checks `version`, and one that needs the exact parameters reads `world` below.
     * `schema` went 1 -> 2 when `version` was added, so its absence is detectable rather than
     * ambiguous. */
-  def writeEmitSidecar(file: String, p: Path, k: Int, w: World, years: Int, seed: Long,
+  def writeEmitSidecar(a: Anchors, file: String, p: Path, k: Int, w: World, years: Int, seed: Long,
                        startYmd: String, dates: Vector[String], gateSt: WorldStats,
                        gatePaths: Int): Unit =
     val n            = p.price.length
-    val realismBad   = failedIn(gateSt, GateClass.Realism)
-    val mechanismBad = failedIn(gateSt, GateClass.Mechanism)
-    val fidelityBad  = failedIn(gateSt, GateClass.Fidelity)
+    val realismBad   = failedIn(a, gateSt, GateClass.Realism)
+    val mechanismBad = failedIn(a, gateSt, GateClass.Mechanism)
+    val fidelityBad  = failedIn(a, gateSt, GateClass.Fidelity)
     def strList(v: Vector[String]): String = v.map(jsonStr).mkString("[", ", ", "]")
     def num(x: Double): String = if x.isNaN then "null" else ef(x)
-    val fidelity = FitTargets.map { (nm, get, want, _) =>
+    val fidelity = fitTargets(a).map { (nm, get, want, _) =>
       val got   = get(gateSt)
       val ratio = if want != 0.0 then got / want else Double.NaN
       val miss  = ratio > 1.5 || ratio < 0.667
@@ -2779,6 +2894,7 @@ object MarketSim:
   // ---- entry point ---------------------------------------------------------------------------
   def main(args: Array[String]): Unit =
     var paths = DefaultPaths; var years = DefaultYears; var seed = DefaultSeed
+    var anchorSpec = "sp500"
     var emit = ""; var validate = false; var strategies = false; var single = false
     var emitPath = 0; var emitAll = false; var emitStart = ""; var emitGate = DefaultEmitGate
     var emitFrom = 0
@@ -2932,6 +3048,7 @@ object MarketSim:
       case "-jumpvar"    => jumpVar = numOr("-jumpvar", consumeNext)
       case "-jumprate"   => jumpRate = numOr("-jumprate", consumeNext)
       case "-value"      => valuePull = numOr("-value", consumeNext)
+      case "-anchors"    => anchorSpec = consumeNext
       case "-recoverydrag"  => recoveryDrag = numOr("-recoverydrag", consumeNext)
       case "-recoveryfloor" => recoveryFloor = numOr("-recoveryfloor", consumeNext)
       case "-crowd"      => crowdName = consumeNext
@@ -2983,6 +3100,7 @@ object MarketSim:
         Crowd.Trend(t.drop(5).toIntOption.filter(_ > 0).getOrElse(
           usage(s"unknown -crowd [$crowdName]; use momentum, trendNNN, or volscaled")))
       case other => usage(s"unknown -crowd [$other]; use momentum, trendNNN, or volscaled")
+    val anchors = anchorsNamed(anchorSpec)
     val w = World(trendShare, depth, stress, beta, drift = drift, fundVol = fundVol,
                   rateMean = rateMean,
                   volPersist = volPersist, volOfVol = volOfVol,
@@ -2994,36 +3112,36 @@ object MarketSim:
                   inflSpeed = inflSpeed, rateSpeed = rateSpeed, discount = discount, margin = margin)
 
     if calibrateN > 0 then
-      calibrate(calibrateN, w, seed)
+      calibrate(anchors, calibrateN, w, seed)
       return
     if fitnessOnly then
       val st = measure(simPaths(w, 60, 80, seed), 80)
-      val (loss, rows) = fitness(st)
+      val (loss, rows) = fitness(anchors, st)
       println(f"fitness loss $loss%.3f  (lower is better; includes 0.5 per failed gate check)")
       rows.foreach((n, m, t, term) => println(f"  $n%-22s model $m%8.2f   target $t%8.2f   term $term%6.3f"))
-      gateChecks(st).filter(!_._2).foreach((n, _, _) => println(f"  FAILED GATE: $n%s  (+0.500)"))
+      gateChecks(anchors, st).filter(!_._2).foreach((n, _, _) => println(f"  FAILED GATE: $n%s  (+0.500)"))
       return
     if releaseReport then
-      runReleaseReport(paths, years, seed, w)
+      runReleaseReport(anchors, paths, years, seed, w)
       return
     if crossAsset then
       // Exits non-zero on an in-support miss, or when a relation graded nothing (INCONCLUSIVE)
       // — an EXTRAP cell alone is disclosed, not fatal.
-      if !runCrossAssetReport(paths, years, seed, w) then System.exit(1)
+      if !runCrossAssetReport(anchors, paths, years, seed, w) then System.exit(1)
       return
     if noiseReport then
       // -years is ignored deliberately: the horizons come from the anchors themselves, and the
       // seed-noise section from the scoring configuration.
-      runNoiseReport(paths, seed, w)
+      runNoiseReport(anchors, paths, seed, w)
       return
     if strategies then
-      runStrategySweep(paths, years, seed, cost, single, w, gateReq)
+      runStrategySweep(anchors, paths, years, seed, cost, single, w, gateReq)
       return
     if powerReport then
-      runPowerReport(paths, seed, cost, single, w, gateReq, powerArms, powerYears)
+      runPowerReport(anchors, paths, seed, cost, single, w, gateReq, powerArms, powerYears)
       return
     if bufferReport then
-      runBufferReport(paths, years, seed, cost, single, w, gateReq)
+      runBufferReport(anchors, paths, years, seed, cost, single, w, gateReq)
       return
 
     eprintln(s"simulating $paths paths x $years years")
@@ -3038,9 +3156,9 @@ object MarketSim:
       val (gateSt, gatePaths) =
         if emitGate > paths then (measure(simPaths(w, emitGate, years, seed), years), emitGate)
         else (st, paths)
-      val realismBad   = failedIn(gateSt, GateClass.Realism)
-      val mechanismBad = failedIn(gateSt, GateClass.Mechanism)
-      val fidelityBad  = failedIn(gateSt, GateClass.Fidelity)
+      val realismBad   = failedIn(anchors, gateSt, GateClass.Realism)
+      val mechanismBad = failedIn(anchors, gateSt, GateClass.Mechanism)
+      val fidelityBad  = failedIn(anchors, gateSt, GateClass.Fidelity)
       if realismBad.nonEmpty then
         eprintln("WARNING: this world FAILS the realism bands " + realismBad.mkString("[", ", ", "]") +
                  " — the emitted path is not market-like")
@@ -3063,11 +3181,11 @@ object MarketSim:
           val width = indexWidth(emitFrom + paths - 1)
           for k <- emitFrom until emitFrom + paths yield
             val f = indexedName(emit, k, width)
-            writeEmitted(f, batch(k - emitFrom), k, w, years, seed, emitStart, gateSt, gatePaths)
+            writeEmitted(anchors, f, batch(k - emitFrom), k, w, years, seed, emitStart, gateSt, gatePaths)
             f
         else
           val p = pathAt(emitPath)
-          writeEmitted(emit, p, emitPath, w, years, seed, emitStart, gateSt, gatePaths)
+          writeEmitted(anchors, emit, p, emitPath, w, years, seed, emitStart, gateSt, gatePaths)
           Vector(emit)
       val sessions = pathAt(if emitAll then emitFrom else emitPath).price.length
       eprintln(s"wrote ${written.size} path(s), ${EmitColumns.size} columns x $sessions sessions, " +
@@ -3115,16 +3233,20 @@ object MarketSim:
     // them from it and conclude the model has drifted.  The depth rungs are the exception by
     // construction: they are graded against a RELATION evaluated at this world's own volatility and
     // return, so they carry no window of their own to be compared at.
-    println("  fidelity against targets, by anchor (each row is against the window named for it):")
-    println("    equity S&P 1954-2026   |   depth rungs 35 equity funds 2001-2026, vs each world's")
+    // The anchor SET is named because the equity rows are asset-specific: the same world graded
+    // against a different index is a different verdict, and a report that does not say which index
+    // it used cannot be read six months later.
+    println(s"  fidelity against ${anchors.name} targets, by anchor (each row is against the " +
+            "window named for it):")
+    println(s"    equity ${anchors.equityWindow}   |   depth rungs 35 equity funds 2001-2026, vs each world's")
     println("      OWN volatility and return   |   return per vol CRSP 1954-2026")
-    println("    clustering CRSP 1926-2026 (a CENTURY: the statistic is horizon-dependent and the")
+    println(s"    clustering ${anchors.clusterWindow} (horizon-dependent: the statistic moves with the")
     println("      model is scored on 100-year paths)   |   refuge long Treasury   |   bond depth")
     println("      rung clean TLT, 24y")
     println("    NOTE: bond volatility alone is measured over 24-YEAR windows, not the whole path —")
     println("      it is the one horizon-dependent statistic whose anchor can only come from fund")
     println("      data, and no clean bond-fund series runs longer.  Every other row is whole-path.")
-    FitTargets.foreach { (n, get, want, _) =>
+    fitTargets(anchors).foreach { (n, get, want, _) =>
       val got = get(st)
       val ratio = if want != 0 then got / want else Double.NaN
       val flag  = if ratio > 1.5 || ratio < 0.667 then "  <-- MISS" else ""
@@ -3132,8 +3254,8 @@ object MarketSim:
     }
 
     if validate then
-      val checks = gateChecks(st)
-      val bad    = GateClass.values.map(c => c -> failedIn(st, c)).toMap
+      val checks = gateChecks(anchors, st)
+      val bad    = GateClass.values.map(c => c -> failedIn(anchors, st, c)).toMap
       def verdict(c: GateClass) = if bad(c).isEmpty then "PASS" else "FAIL"
       println()
       println("  acceptance gate:")

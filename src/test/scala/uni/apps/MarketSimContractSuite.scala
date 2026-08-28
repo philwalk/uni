@@ -49,7 +49,7 @@ class MarketSimContractSuite extends FunSuite:
     // this replaces caught renames but not ADDITIONS: a new equity target would simply never
     // appear in the equity section, and a shorter table reads as a shorter list of concerns.
     val expected = (MarketSim.EquityTargets ++ MarketSim.BondTargets).sorted
-    val actual   = MarketSim.FitTargets.map(_._1).sorted
+    val actual   = MarketSim.fitTargets(MarketSim.SP500Anchors).map(_._1).sorted
     assertEquals(actual, expected,
       "the fidelity targets and EquityTargets + BondTargets are no longer the same set. A target " +
       "was added, removed or renamed: classify it in one list (and only one) so the equity " +
@@ -60,12 +60,61 @@ class MarketSimContractSuite extends FunSuite:
     // Every fidelity target must carry exactly one anchor horizon, or `-noise` silently skips
     // it -- the same silent-shrinkage failure the equity/bond partition guards against, on the
     // horizon axis.
-    val expected = MarketSim.AnchorGroups.flatMap(_._3).sorted
-    val actual   = MarketSim.FitTargets.map(_._1).sorted
+    val expected = MarketSim.anchorGroups(MarketSim.SP500Anchors).flatMap(_._3).sorted
+    val actual   = MarketSim.fitTargets(MarketSim.SP500Anchors).map(_._1).sorted
     assertEquals(actual, expected,
       "the fidelity targets and the anchor groups are no longer the same set. A target was " +
       "added, removed or renamed: give it a horizon in exactly one anchor group, so the noise " +
       "report cannot silently skip it.")
+  }
+
+  test("every anchor set grades exactly the same targets") {
+    // An anchor set that omits a target would silently drop it from the loss and from `-noise`,
+    // and a set that names one that does not exist would fail only when that row was reached.
+    // Both are the silent-shrinkage failure the partition tests above guard against, on the ASSET
+    // axis -- which only exists because 0.21.0 made the asset a parameter.
+    val reference = MarketSim.fitTargets(MarketSim.SP500Anchors).map(_._1)
+    for a <- MarketSim.AnchorSets do
+      assertEquals(MarketSim.fitTargets(a).map(_._1), reference,
+        s"anchor set [${a.name}] grades a different set of targets than SP500Anchors does. " +
+        "Every set must cover the same rows, or the loss means something different depending " +
+        "on which index you passed.")
+      assertEquals(MarketSim.anchorGroups(a).flatMap(_._3).sorted, reference.sorted,
+        s"anchor set [${a.name}]'s groups do not cover its targets.")
+  }
+
+  test("the S&P anchor set still holds the values every release before 0.21.0 hard-coded") {
+    // The refactor that made the asset a parameter must not have moved the default world's
+    // targets. These are the literals that were in `FitTargets` before it took an argument; if
+    // one changes, `-validate` changes for every consumer who never asked for a different index.
+    val a = MarketSim.SP500Anchors
+    assertEquals(a.vol, 16.0)
+    assertEquals(a.retVol, 0.69)
+    assertEquals(a.kurt, 28.0)
+    assertEquals(a.ac1, 0.299)
+    assertEquals(a.ac20, 0.225)
+    assertEquals(a.crashes, 20.7)
+    assertEquals(a.medDepth, -27.1)
+    assertEquals(a.worstDepth, -56.8)
+    assertEquals(a.volBand, (14.0, 18.0))
+    assertEquals(a.retVolBand, (0.50, 0.85))
+  }
+
+  test("the Nasdaq anchor set is the measured QQQ vector, not the S&P's") {
+    // Guards the transcription. Every value is QQQ 1999-03-10..2026-08-20 on the fixture's own
+    // definitions, fresh-start peak seeding -- see the constant's own note for why that window
+    // and not `w2001`, whose mid-bear opening reads 40.1 crashes/century against this 25.6.
+    val a = MarketSim.NasdaqAnchors
+    assertEquals(a.vol, 26.90)
+    assertEquals(a.retVol, 0.38)
+    assertEquals(a.kurt, 9.55)
+    assertEquals(a.crashes, 25.6)
+    assertEquals(a.medDepth, -22.8)
+    assertEquals(a.worstDepth, -83.0)
+    assert(a.vol > MarketSim.SP500Anchors.vol,
+      "the Nasdaq is more volatile than the S&P; if this fails the two sets have been swapped")
+    assert(a.kurt < MarketSim.SP500Anchors.kurt,
+      "QQQ's 27-year kurtosis is BELOW the CRSP century's -- a shorter window holds fewer 1987s")
   }
 
   test("the cross-asset verdict requires coverage") {

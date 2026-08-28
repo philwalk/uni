@@ -153,7 +153,7 @@ class EquityAnchorSuite extends FunSuite:
     assert(all.max / all.min > 3.0,
       f"the 20%% rung's real ratios now span only ${all.min}%.2f..${all.max}%.2f; a band there " +
       "could discriminate, so it should be gated like the other two")
-    val gated = MarketSim.gateChecks(
+    val gated = MarketSim.gateChecks(MarketSim.SP500Anchors,
       MarketSim.measure(MarketSim.simPaths(MarketSim.Defaults, 4, 20, 1L), 20)).map(_._1)
     assert(!gated.exists(_.contains("d20")),
       s"a d20 gate band has appeared in ${gated.filter(_.contains("d20"))}")
