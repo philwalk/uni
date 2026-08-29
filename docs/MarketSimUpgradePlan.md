@@ -95,7 +95,9 @@ measured to fail on the equity leg too (see W9), not merely anticipated. W7 stay
 | W0 | superseded: the model's one Scala copy is `src/main/scala/apps/MarketSim.scala` (see below) |
 | W1, W2, W3, W9, W6a, W6b | **landed**, both twins, byte-identical across every mode |
 | W5, W7a, W7b, W7d | **landed (0.19.2)**, both twins |
-| W4, W7c, W8 | open |
+| W8a | **landed (0.22.0)**, both twins — the equity variance ratio at one horizon |
+| W10 | **landed (0.22.0)**, both twins — price impact from exposure TRADED, not exposure held |
+| W4, W7c, W8b | open |
 
 W6 was split in 0.19.1; its original framing — "make the crowd *window* usable" — was retired by
 measurement, see below.
@@ -299,6 +301,11 @@ byte-for-byte. Given a new pair, it answers without a code change.
 **Effort.** Small-to-moderate.
 
 ## W6a — Give the reflexive channel a strength dial — **LANDED (0.19.1)**
+
+> **The flow expression below was replaced in 0.22.0** — see W10. The dial survives and the
+> diagnostic that made it visible survives; what changed is what the dial multiplies. The history
+> here is kept because the failure it records (a dead knob that looked like a live one with a small
+> effect) is the reason the diagnostic exists at all.
 
 **Problem.** `Crowd::Momentum`, the default, never read `crowdImpact`: its flow was
 `kTrend * wTrend * trendPos` with `kTrend` frozen at 0.0045. `-crowdimpact 0.01` and `-crowdimpact
@@ -569,6 +576,10 @@ mechanism.
 
 ## W8 — Calibrate against the term structure of return autocorrelation
 
+> **W8a landed in 0.22.0**: one horizon on the equity leg. The figures in the Problem section below
+> are the pre-0.22.0 reading and are kept as the record of why the item was raised. W8b — the rest
+> of the term structure, and the bond leg — is open.
+
 **Problem.** This is the deepest item and the reason the sleeve study's central finding is careful
 rather than conclusive. `FitTargets` constrains volatility, kurtosis, return clustering at lags 1
 and 20, crash frequency and depth, and four bond behaviours. **None of them constrains the horizon
@@ -583,24 +594,46 @@ a duration sweep from 4 to 20 years. "Robust to every knob I could turn" is genu
 nothing. It is still weaker than "matched to a measured statistic", and no statistic in the gate
 pins it.
 
-**Change.** Add variance-ratio targets — VR(k) for k ≈ 1, 3, 6, 12, 24 months on both the equity and
-bond series — to `FitTargets`, with real targets measured from the historical record used for the
-rest of the calibration, and corresponding bands in `gateChecks`.
+### W8a — the equity variance ratio at one horizon — **LANDED (0.22.0)**
+
+`variance ratio 60d` is a fidelity target (theory value 1.00) and a fidelity gate band
+(`VarRatioBand`, 0.50–1.15), measured by `varianceRatio` / `variance_ratio` on NON-OVERLAPPING
+60-session blocks. The band is derived from
+`test-data/equity-anchors/persistence-2026-08-29.tsv` — 18 real equity funds over two windows plus
+the CRSP market over three — and re-derived from that file by `PersistenceAnchorSuite` /
+`persistence_anchor_tests`, so it cannot be widened without a real market moving first.
+
+Acceptance, against the criteria this item set:
+
+- **Reported whatever it turns out to be.** It was 1.52 at the 0.21.0 default and 1.72 to 2.22 at
+  every earlier published default — the whole release history had a trend in it, visible in
+  `-releases`.
+- **At least one world in the existing sweep fails it.** `reflexive: crowd pressed hard`
+  (`-crowdimpact 0.12`) reads 2.96 and fails. `-fundvol 0.10` and `-value 0.020` fail it too, which
+  is the more useful finding: time under water and the value anchor are persistence dials, and
+  nothing said so before.
+- **The trade-off is recorded.** `-calibrate` did not have to move anything: `crowdimpact`
+  0.07 → 0.030 under the new impact law brings the row to 1.02. It is paid for in median crash depth
+  (0.93 → 0.81); the shallow rungs came back with `fundVol`, which the freed persistence budget made
+  affordable. `docs/MarketSimWorlds.md`'s worked example says which world answers which question.
+
+### W8b — the rest of the term structure — open
+
+**Change.** VR(k) for k ≈ 1, 3, 6, 12, 24 months, on the bond series as well as the equity one, with
+real targets measured the same way and bands from the same cross-section.
+
+**What W8a's measurement says about the shape of W8b.** The horizons are not independent: over the
+`crowdimpact` sweep VR(20) and VR(60) move together, and VR(252) has a real spread (0.27–1.45 across
+the 18 funds) too wide to band at all. A five-horizon profile is therefore unlikely to be five
+constraints; expect two — a short one and a long one — and check that the long one can discriminate
+before adding it. The |r| term structure is a separate and still-unconstrained axis: the model's
+clustering is right out to lag 60 and decays too fast past three months (lag 120 reads 0.04 against a
+real 0.09, lag 250 0.02 against 0.06).
 
 **Parity.** Additive reductions. If a new summation shape is introduced, it needs its own fixture
 rows under `test-data/*-parity` per the standing rule that a new numeric surface gets pinned.
 
-**Acceptance.**
-- The current default world's VR profile is reported in the fidelity table, whatever it turns out
-  to be.
-- **At least one world in the existing sweep fails the new check** — a check that passes everywhere
-  on the first run is not yet known to bind, and this repo has been bitten by that before.
-- `-calibrate` can move the defaults toward the VR targets without pushing any existing fidelity
-  term out of band, or the trade-off is recorded.
-
-**Effort.** Large. But this is the item that converts every trend-rule conclusion the simulator will
-ever produce from suggestive into load-bearing, and trend rules are what its consumers keep asking
-it about.
+**Effort.** Moderate, now that the statistic, the fixture and the band-derivation test exist.
 
 ## W9 — Calibrate against the drawdown-depth distribution — **LANDED**
 
@@ -795,6 +828,86 @@ which is a claim. Both now say so and skip the ranks. Reachable before W9 (`-str
 -crowd trend200`), unavoidable after it.
 
 ---
+
+## W10 — Price impact from exposure TRADED, not exposure held — **LANDED (0.22.0)**
+
+**Problem.** The momentum crowd's price pressure was proportional to the LEVEL of its position:
+`kTrend * (crowdImpact / CrowdImpactRef) * wTrend * tanh(momentum / 0.12)`. A crowd that had been
+long for a month and was still long went on pushing the price up every session it stayed long. The
+other two crowds already pressed on the CHANGE in position — `crowdImpact * wTrend * (crowdE -
+crowdPrev)` — so the model carried two different price-impact laws and the odd one out was the
+default.
+
+That is what manufactured the trend W8a measures. The crowd's own footprint accumulated into a
+three-month drift: variance ratio 1.52 at the 0.21.0 default against a real 0.55–1.15. It also made
+the two laws' dials incomparable — the same `crowdImpact` meant a 13x smaller coefficient under
+`momentum` than under `trendNNN`.
+
+**Change (landed).** One law for every crowd:
+
+```
+crowdE  = trendPos                     // momentum's target, continuous where the others' are banded
+eqFlow  = crowdImpact * wTrend * (crowdE - crowdPrev)
+```
+
+`kTrend` and `CrowdImpactRef` are gone; `crowdImpact` now means price pressure per unit of exposure
+traded in a session, whichever crowd is running. `EmitSchema` 4 → 5, because a field's meaning
+changed and a reader reconstructing a `World` from a schema-4 sidecar would otherwise get a
+different market with no error.
+
+The performance channel still reads the position HELD (`crowdPos`), and that is not an
+inconsistency: a crowd earns on what it holds and moves the price by what it trades. Conflating the
+two is precisely the defect.
+
+**What it bought.**
+
+- **Trend is gone at every strength the model can run.** Variance ratio stays inside its band up to
+  11 bp/session of crowd flow, where the old law was already at 1.52 by 4.7 bp.
+- **The reflexive experiment is available again at full strength.** `reflexive: crowd pressed hard`
+  (`-crowdimpact 0.12`, 4x the default, 20.8% of the noise term) passes realism and mechanism; under
+  the old law the equivalent world sat at a variance ratio of 2.96.
+- **The persistence budget freed up pays for the drawdown rungs.** `fundVol` could rise 0.041 →
+  0.070, which is what a warmer fundamental costs in trend and the old law had already spent:
+  `equity d5 vs real` 0.86 → 0.94 and `d10` 0.89 → 1.04.
+- **One dial, one meaning.** The `crowdImpact / 0.06` special case in the help text is gone.
+
+**What it cost, and it is a trade rather than an oversight.** Median crash depth 0.93 → 0.81: the
+median 15%-or-worse decline is −22% where the record's is −27%, and `-noise` puts the record at the
+5th percentile of model histories. Part of the old depth WAS the trend — a decline that persists goes
+further — so the same law produced both the defect and the depth.
+
+**It was searched for before it was accepted.** Every dial the model has, singly and in compensating
+pairs: `stress`, `depth`, `fundvol`, `value`, `recoverydrag`, `recoveryfloor`, `crowdimpact`,
+`trendshare`, `panic`, `margin`, `beta`, `volofvol`, `volpersist`, `jumpvar`, `jumprate`, `discount`,
+`unwind`, `inflsize`, `inflprob`. **Median crash depth reads 0.81-0.86 in every admissible world.**
+The settings that reach 0.86 (`-recoverydrag 40 -recoveryfloor 0.02`, `-stress 7.5` with volatility
+compensated) cost the variance ratio (1.27) or the deep rung (3.22) several times over. Daily skew is
+already at the record's level, so there is no room to buy depth by making down-days worse either.
+`panic`, `margin` and `beta` are inert on it to three decimals — worth knowing, since two of them
+sound like crash dials.
+
+The deep rung is the other row that moved (`equity d20 vs real` about 1.8, from 1.36 at the
+pre-recalibration candidate), because the warmer fundamental that fixed the shallow rungs lengthens
+deep water. The recovery pair moves the two rungs TOGETHER, so no setting fixes one without giving
+back the other, and the shallow ones were chosen because they are the measurable ones: `d10`'s
+sampling spread is 0.35 against `d20`'s 1.76.
+
+**Daily kurtosis was NOT accepted as a cost.** The first recalibration left it at 0.75 and
+`-jumpvar` alone could not lift it — at the shipped rate, 0.12 read 35.2 on one seed of five against
+a realism ceiling of 30. `jumpRate` 0.0010 → 0.0030 with `jumpVar` 0.10 → 0.13 delivers the same jump
+variance as more, smaller jumps: median kurtosis 0.86 on the scoring ensemble and 0.99 at the default
+seed, with the five seeds reading 19.5 to 27.6 and none near the ceiling. **Rarer jumps are not
+fatter tails; they are noisier ones** — the dial pair moves the median and the extremes in different
+directions, which is why one handle could not do it.
+
+**Also measured, so the sweep does not go quiet.** With one impact law the vol-scaling crowd needed
+its own strength: at the default 0.030 it reaches 1.2% of the noise term, effectively inert. Its
+sweep world now sets `crowdImpact = 0.20`, the largest value that stays a market — 0.30 fails the
+kurtosis realism band — and even there it reaches only 2.3% against the momentum crowd's 5.2%. **A
+crowd selling into volatility destabilises the market faster than a crowd buying trends, so it
+cannot be run as hard.** That is a finding about the two rules, not a calibration.
+
+**Parity.** Both twins, byte-identical across every report and the emitted TSV and sidecar.
 
 # Sequencing
 

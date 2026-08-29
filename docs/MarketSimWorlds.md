@@ -24,7 +24,7 @@ lose track of which world it used:
 
 ```
 "version": "<the release that wrote this file>",
-"world": { "trendShare": 0.055000, "depth": 16.940000, "stress": 5.370000, ... }
+"world": { "trendShare": 0.055000, "depth": 17.400000, "stress": 5.370000, ... }
 ```
 
 The `version` beside it says which release wrote the file, because the defaults themselves move
@@ -231,21 +231,31 @@ paths.**
 
 The fix was `easing` 0.046 → 0.052, which is an anchor correction rather than a tune: `usage`
 asserts the value IS one full real easing cycle, and real cycles run 5.1 to 6.8 rate points
-(2007-08, 2001-03, 1989-92) where 0.046 is 4.6. The ladder now reads `PASS` on five of six seeds,
-with d=5.70 at 0.71 and d=13.50 at 1.29.
+(2007-08, 2001-03, 1989-92) where 0.046 is 4.6.
+
+**And the window moves with the EQUITY world, which is the part to carry forward.** 0.22.0 moved
+the equity side four times and the ladder followed every time — the price-impact change, the
+recalibration, the jump channel and the anchor corrections each shifted it, in both directions. The
+equity crowd reaches the bond leg through the correlation channel, so a bond dial settled once is not
+settled. The shipped 0.060 — 6.0 rate points, the middle of the three real cycles — reads d=5.70 at
+0.68–0.73 and d=13.50 at 1.28–1.29 across five seeds, four PASS and one EDGE on the floor.
+**Re-run `-crossasset` after any world change, not only after a bond one.**
 
 **The calibration loss cannot see this rung.** `fitness` scores a single `WorldStats` and the ladder
 re-simulates at other durations, so a re-search optimises the bond depth relation at the *shipped*
-duration — where it reads 1.24, comfortably in band — and is free to spend every other rung. The
+duration — where it reads 1.22, comfortably in band — and is free to spend every other rung. The
 0.21.0 search duly proposed an `inflSize` cut that pushed d=5.70 clear of the line, the same cut
 0.20.0's search proposed and that was reverted then for the same reason. **Run `-crossasset` after
-any recalibration; the loss will not warn you.**
+any recalibration — and after any world change at all, equity-side included; the loss will
+not warn you.**
 
 **The ladder is rotated, not shifted, and that is now measured rather than asserted.** Every dial
-that lifts d=5.70 also pushes d=13.50 toward its 1.35 ceiling. On `easing` the admissible window is
-roughly 0.050–0.056: at 0.046 the short rung reads 0.66 and edges on its floor, at 0.058 the long
-rung reads 1.34 and edges on its ceiling. There is a middle, but it is narrow — do not expect margin
-on both ends, and re-check both rungs after moving any bond dial.
+that lifts d=5.70 also pushes d=13.50 toward its 1.35 ceiling. At the 0.21.0 world the admissible
+`easing` window was roughly 0.050–0.056: 0.046 put the short rung on its floor, 0.058 put the long
+rung on its ceiling. At 0.22.0's world it sits near 0.058–0.064, and it is narrow enough that no
+single value clears all five seeds with margin — the two rungs' seed spreads are each about
+±0.05 and they move in opposite directions. Re-derive it rather than assuming it, and expect one
+seed to sit on an edge.
 
 The acceptance gate applies the same refusal: `-validate` prints an anchor-fitted band it cannot
 grade as `n/a` with the reason (and the sidecar records it under `gate.fidelityUnanchored`),
@@ -347,18 +357,18 @@ with it.
 | flag | what it is | default |
 |---|---|---|
 | `-stress` | liquidity-spiral gain: how much a run of down days amplifies later moves | 5.37 |
-| `-depth` | market depth; price impact scales as `12/depth`, so higher = calmer | 16.94 |
+| `-depth` | market depth; price impact scales as `12/depth`, so higher = calmer | 17.4 |
 | `-drift` | fundamental drift per year; no dividend, so this IS total return | 0.113 |
-| `-fundvol` | fundamental volatility per year — sets time under water, not daily return scale | 0.041 |
-| `-jumpvar` | share of the equity shock's **variance** carried by jumps rather than diffusion; 0 turns the tail channel off | 0.10 |
-| `-jumprate` | jumps per session at average volatility; with `-jumpvar` it sets the **size** | 0.0010 |
+| `-fundvol` | fundamental volatility per year — sets time under water, not daily return scale | 0.070 |
+| `-jumpvar` | share of the equity shock's **variance** carried by jumps rather than diffusion; 0 turns the tail channel off | 0.17 |
+| `-jumprate` | jumps per session at average volatility; with `-jumpvar` it sets the **size** | 0.0050 |
 | `-trendshare` | mandate level for trend-following capital (a spring, not a wall) | 0.055 |
-| `-crowdimpact` | how hard the crowd's trading pushes price — the reflexive channel's strength | 0.07 |
+| `-crowdimpact` | price pressure per unit of exposure the crowd **trades** in a session — one rule for every crowd | 0.030 |
 | `-value` | pull toward fair value per day. With the drag below, this governs **shallow** water only | 0.045 |
 | `-recoverydrag` | how fast value arbitrage weakens as a drawdown deepens past 10%; 0 restores 0.20.0's symmetric pull | 10.0 |
 | `-recoveryfloor` | weakest that pull may become, as a share of full strength | 0.10 |
 | `-anchors` | which real index the **equity** fidelity targets describe: `sp500` or `nasdaq` | sp500 |
-| `-easing` | **cap** on the policy rate cut under equity stress, in rate points — an anchor, not a fitted number: one full real easing cycle | 0.052 |
+| `-easing` | **cap** on the policy rate cut under equity stress, in rate points — an anchor, not a fitted number: one full real easing cycle | 0.060 |
 | `-unwind` | how fast that cut is withdrawn, per year (0.35 is a ~2-year half-life) | 0.35 |
 | `-refuge` | flight-to-quality bid into the bond, scaled by its duration | 0.11 |
 | `-inflsize` | size of an inflation regime's rate-pressure target | 0.10 |
@@ -369,14 +379,15 @@ makes the bond a refuge, but they are not load-bearing in the same way, and the 
 knowing before turning either off.
 
 **`-refuge` is necessary.** At `-refuge 0` the bond stops rallying in crashes at all (growth-crash
-0.03x real) and the mechanism check "bonds rally in growth shocks" FAILS.
+−0.04x real) and the mechanism check "bonds rally in growth shocks" FAILS.
 
-**`-easing` is not.** At `-easing 0` the world still passes realism, mechanism *and* fidelity, and
-the bond depth row is *better* — 0.93 against the default's 1.24, where 1.00 is the target. Easing
-earns its place on the objective rather than on the gate: it buys the two bond crash responses
-(growth-crash 0.34 → 0.42, inflation-crash 0.87 → 0.96) for a fitness loss of 3.27 → 2.76, and pays
-with the depth row and a little crash rate. If the question is bond drawdown specifically,
-`-easing 0` is the better world and the default is not.
+**`-easing` is not, and it no longer earns its place on the objective either.** At `-easing 0` the
+world still passes realism, mechanism *and* fidelity; the bond depth row is *better* (1.00 against
+the default's 1.25, where 1.00 is the target) and the fitness loss is *lower*, 1.302 against 1.334.
+What easing buys is the crash rally (growth-crash 0.42 → 0.50) and the `-crossasset` ladder, which
+no version of the loss can see: easing is the dial that lifts the short-duration depth rung off its
+floor. If the question is bond drawdown at the shipped duration specifically, `-easing 0` is the
+better world and the default is not.
 
 ## Every dial moves several things at once
 
@@ -384,131 +395,151 @@ This is the part to read before changing anything. Columns are **ratios to the r
 1.00 is on target. Starred rows are the defaults.
 
 ```
-setting                      vol  kurt  clus crash   d10  bdep   r/v tshare  cflow  gate
------------------------------------------------------------------------------------------
-DEFAULT                     1.04  0.99  1.08  1.13  1.02  1.27  0.97   0.21   4.74  P/P/P
+setting                      vol  kurt  clus    vr crash   d10  bdep   r/v  tshare  cflow  gate
+---------------------------------------------------------------------------------------------
+DEFAULT                     1.00  0.99  0.99  1.00  1.13  1.02  1.26  1.00   0.20   3.59  P/P/P
 
--stress 2.0                 0.80  0.45  0.56  0.54  1.19  0.96  1.25   0.21   3.96  P/F/F
--stress 5.37 *              1.04  0.99  1.08  1.13  1.02  1.27  0.97   0.21   4.74  P/P/P
--stress 8.0                 1.37  1.62  1.50  1.46  0.86  1.42  0.73   0.21   5.46  F/P/F
+-stress 2.0                 0.81  0.44  0.58  0.97  0.55  1.33  1.00  1.24   0.20   3.35  P/P/F
+-stress 5.37 *              1.00  0.99  0.99  1.00  1.13  1.02  1.26  1.00   0.20   3.59  P/P/P
+-stress 8.0                 1.26  1.75  1.39  1.02  1.61  0.89  1.36  0.80   0.20   3.70  F/P/F
 
--depth 12                   1.38  1.08  1.20  1.75  0.78  1.31  0.73   0.21   5.56  F/P/F
--depth 16.94 *              1.04  0.99  1.08  1.13  1.02  1.27  0.97   0.21   4.74  P/P/P
--depth 22                   0.87  0.70  1.02  0.81  1.30  1.24  1.16   0.21   4.25  P/P/F
+-depth 12                   1.33  1.24  1.08  0.94  1.86  0.81  1.28  0.75   0.20   4.22  F/P/F
+-depth 17.4 *               1.00  0.99  0.99  1.00  1.13  1.02  1.26  1.00   0.20   3.59  P/P/P
+-depth 22                   0.86  0.73  0.94  1.05  0.82  1.30  1.25  1.17   0.21   3.27  P/P/F
 
--drift 0.08                 1.04  0.98  1.11  1.17  1.09  1.28  0.68   0.21   4.69  P/P/F
--drift 0.113 *              1.04  0.99  1.08  1.13  1.02  1.27  0.97   0.21   4.74  P/P/P
--drift 0.15                 1.03  0.91  1.07  1.04  1.09  1.25  1.31   0.21   4.88  P/P/F
+-drift 0.08                 1.01  0.99  0.99  0.99  1.15  1.13  1.28  0.69   0.20   3.64  P/P/F
+-drift 0.113 *              1.00  0.99  0.99  1.00  1.13  1.02  1.26  1.00   0.20   3.59  P/P/P
+-drift 0.15                 0.99  0.96  0.99  1.01  1.06  1.02  1.25  1.36   0.21   3.52  P/P/F
 
--fundvol 0.02               1.03  0.93  1.10  1.07  0.94  1.26  0.98   0.21   4.62  P/P/P
--fundvol 0.041 *            1.04  0.99  1.08  1.13  1.02  1.27  0.97   0.21   4.74  P/P/P
--fundvol 0.10               1.06  0.96  1.10  1.33  1.49  1.31  0.95   0.21   5.36  P/P/P
+-fundvol 0.041              0.99  0.95  0.98  0.94  1.03  0.84  1.26  1.01   0.20   3.63  P/P/P
+-fundvol 0.070 *            1.00  0.99  0.99  1.00  1.13  1.02  1.26  1.00   0.20   3.59  P/P/P
+-fundvol 0.10               1.01  1.00  0.99  1.11  1.23  1.34  1.26  0.99   0.21   3.55  P/P/P
 
--jumpvar 0                  1.05  0.52  1.13  1.16  1.00  1.29  0.96   0.21   4.77  P/P/P
--jumpvar 0.10 *             1.04  0.99  1.08  1.13  1.02  1.27  0.97   0.21   4.74  P/P/P
--jumpvar 0.16               1.02  1.35  1.06  1.11  1.06  1.28  0.99   0.21   4.72  F/P/P
+-jumpvar 0                  1.01  0.42  1.07  0.98  1.17  1.05  1.28  0.99   0.20   3.74  P/P/P
+-jumpvar 0.17 *             1.00  0.99  0.99  1.00  1.13  1.02  1.26  1.00   0.20   3.59  P/P/P
+-jumpvar 0.23               1.00  1.37  0.96  1.01  1.10  1.05  1.26  1.01   0.20   3.53  F/P/P
 
--jumprate 0.0004            1.04  0.88  1.10  1.12  0.99  1.28  0.97   0.21   4.72  P/P/P
--jumprate 0.0010 *          1.04  0.99  1.08  1.13  1.02  1.27  0.97   0.21   4.74  P/P/P
--jumprate 0.004             1.04  0.96  1.07  1.14  1.02  1.26  0.96   0.21   4.74  P/P/P
+-jumprate 0.002             0.99  1.39  0.96  1.02  1.09  1.03  1.26  1.01   0.20   3.58  F/P/P
+-jumprate 0.0050 *          1.00  0.99  0.99  1.00  1.13  1.02  1.26  1.00   0.20   3.59  P/P/P
+-jumprate 0.012             1.01  0.80  0.97  1.00  1.12  1.00  1.24  1.00   0.20   3.62  P/P/P
 
--haltlimit 0                1.04  0.99  1.06  1.13  1.02  1.27  0.97   0.21   4.73  F/P/P
--haltlimit 0.25 *           1.04  0.99  1.08  1.13  1.02  1.27  0.97   0.21   4.74  P/P/P
--haltlimit 0.40             1.04  0.99  1.07  1.13  1.02  1.27  0.97   0.21   4.74  F/P/P
+-haltlimit 0                1.00  1.00  0.99  0.99  1.13  1.02  1.27  1.00   0.20   3.59  F/P/P
+-haltlimit 0.25 *           1.00  0.99  0.99  1.00  1.13  1.02  1.26  1.00   0.20   3.59  P/P/P
+-haltlimit 0.40             1.00  1.00  0.99  0.99  1.13  1.02  1.27  1.00   0.20   3.59  F/P/P
 
--trendshare 0.02            1.03  0.97  1.08  1.11  1.03  1.25  0.98   0.18   4.11  P/P/P
--trendshare 0.055 *         1.04  0.99  1.08  1.13  1.02  1.27  0.97   0.21   4.74  P/P/P
--trendshare 0.30            1.13  1.09  1.20  1.32  1.18  1.42  0.90   0.38  10.35  F/P/F
+-trendshare 0.02            1.00  0.98  0.98  0.99  1.12  1.02  1.26  1.01   0.18   3.18  P/P/P
+-trendshare 0.055 *         1.00  0.99  0.99  1.00  1.13  1.02  1.26  1.00   0.20   3.59  P/P/P
+-trendshare 0.30            1.02  0.99  1.03  1.05  1.23  1.03  1.29  0.98   0.37   6.47  P/P/P
 
--crowdimpact 0.01           1.00  0.78  1.02  0.97  0.85  1.18  1.01   0.20   0.58  P/P/P
--crowdimpact 0.07 *         1.04  0.99  1.08  1.13  1.02  1.27  0.97   0.21   4.74  P/P/P
--crowdimpact 0.15           1.22  1.28  1.30  1.36  1.19  1.48  0.83   0.23  15.43  F/P/F
+-crowdimpact 0.010          0.99  0.96  0.96  0.96  1.06  1.03  1.24  1.02   0.20   1.20  P/P/P
+-crowdimpact 0.030 *        1.00  0.99  0.99  1.00  1.13  1.02  1.26  1.00   0.20   3.59  P/P/P
+-crowdimpact 0.12           1.10  1.10  1.19  1.18  1.59  1.03  1.36  0.91   0.21  14.38  F/P/F
 
--value 0.020                1.06  1.11  1.14  1.21  1.54  1.32  0.95   0.21   5.21  F/P/P
--value 0.045 *              1.04  0.99  1.08  1.13  1.02  1.27  0.97   0.21   4.74  P/P/P
--value 0.070                1.02  1.06  1.04  1.01  0.85  1.22  0.99   0.21   4.35  P/P/P
+-value 0.020                1.01  1.00  1.01  1.10  1.15  1.26  1.30  1.00   0.20   3.54  P/P/P
+-value 0.045 *              1.00  0.99  0.99  1.00  1.13  1.02  1.26  1.00   0.20   3.59  P/P/P
+-value 0.070                1.00  0.92  0.96  0.95  1.08  0.94  1.24  1.01   0.20   3.63  P/P/P
 
--recoverydrag 0             0.99  0.81  1.00  1.10  0.78  1.14  1.02   0.20   4.11  P/P/P
--recoverydrag 10.0 *        1.04  0.99  1.08  1.13  1.02  1.27  0.97   0.21   4.74  P/P/P
--recoverydrag 20            1.04  1.01  1.09  1.17  1.07  1.29  0.97   0.21   4.78  P/P/P
+-recoverydrag 0             0.98  0.91  0.93  0.82  1.08  0.87  1.19  1.03   0.20   3.65  P/P/P
+-recoverydrag 10.0 *        1.00  0.99  0.99  1.00  1.13  1.02  1.26  1.00   0.20   3.59  P/P/P
+-recoverydrag 20            1.00  1.00  0.99  1.01  1.14  1.05  1.27  1.00   0.20   3.59  P/P/P
 
--recoveryfloor 0.05         1.04  1.05  1.10  1.08  1.20  1.29  0.97   0.21   4.79  P/P/P
--recoveryfloor 0.10 *       1.04  0.99  1.08  1.13  1.02  1.27  0.97   0.21   4.74  P/P/P
--recoveryfloor 0.50         1.01  0.96  1.04  1.15  0.81  1.20  1.00   0.21   4.30  P/P/P
+-recoveryfloor 0.05         1.00  0.98  0.99  1.03  1.11  1.10  1.27  1.00   0.20   3.59  P/P/P
+-recoveryfloor 0.10 *       1.00  0.99  0.99  1.00  1.13  1.02  1.26  1.00   0.20   3.59  P/P/P
+-recoveryfloor 0.50         0.99  0.94  0.95  0.91  1.12  0.86  1.23  1.02   0.20   3.62  P/P/P
 ```
 
 60 paths x 100 years, seed 20260813. `vol` equity volatility · `kurt` daily kurtosis ·
-`clus` volatility clustering (lag 1) · `crash` crashes per century · `d10` time spent >10% below
+`clus` volatility clustering (lag 1) · `vr` the 60-session variance ratio, where 1.00 is no signed
+serial dependence and the band is 0.50–1.15 · `crash` crashes per century · `d10` time spent >10% below
 peak, against what real equity funds of the same volatility and return spend · `bdep` the bond's
 equivalent, against what its own volatility implies · `r/v` return per unit volatility ·
 `tshare` **realized** trend-follower share · `cflow` crowd flow, bp/session ·
 `gate` realism/mechanism/fidelity.
 
-Five things that table is trying to tell you:
+Six things that table is trying to tell you:
 
+- **`crowdimpact` is a mechanism dial again, not a trend dial.** Since 0.22.0 the crowd's price
+  pressure comes from the exposure it TRADES in a session rather than the exposure it holds, so
+  running it harder no longer manufactures drift. `-crowdimpact 0.12` is four times the default and
+  reaches 14.6 bp/session of crowd flow — 21% of the noise term — while `vr` only reaches 1.19. Under
+  the old law the shipped default was already at 1.52 on 4.7 bp. What running it hard DOES buy is
+  crash frequency (1.60) and clustering (1.19), which is why the default is not there.
 - **`stress` is not a volatility dial.** It is one amplifier producing volatility, fat tails *and*
-  volatility clustering together. Raising it 5.37 → 8.0 takes volatility from 1.04 to 1.38 and
-  clustering from 1.06 to 1.45 — and fails the realism gate. You cannot buy tails *here* without
+  volatility clustering together. Raising it 5.37 → 8.0 takes volatility from 1.00 to 1.27 and
+  clustering from 1.03 to 1.43 — and fails the realism gate. You cannot buy tails *here* without
   buying clustering.
 - **`recoverydrag` and `value` are one pair, and neither reads correctly alone.** The base pull
-  governs shallow water; the drag governs deep drawdowns. Turn the drag off and leave the pull at
-  its shipped 0.045 and `d10` collapses to 0.76 — the market climbs out of everything too fast.
-  Weaken the pull instead and `d10` runs to 1.53. The shipped pair sits at 1.03 because the two
-  halves cover different depths. If you move one, move the other.
-- **`jumpvar` is the tail dial that `stress` never was, and the two rows prove it.** `-jumpvar 0` is
-  the pre-0.21 world exactly — 1.04 / 0.47 / 1.13 / 1.41, the old default row, because the jump
-  draws come from their own RNG stream and nothing else in a path shifts. Turning it on moves
-  `kurt` 0.47 → 1.04 and moves clustering the *right* way, 1.13 → 1.04, because variance taken out
-  of the diffusion shortens the persistence the clamped volatility process was over-supplying. The
-  ceiling is the realism band, not the target: `-jumpvar 0.16` reaches `kurt` 1.67 and fails
-  realism. Set it by the band.
-- **`jumprate` shapes the tail at fixed total variance, and both directions cost you.** Rarer jumps
-  of the same variance are bigger ones. At 0.0004 they are too rare for a 100-year path to sample
-  (`kurt` 0.80); at 0.004 they are too small to be tails (0.82). The default sits at the maximum
-  and the curve is flat near it, which is what a dial should look like.
-- **`fundvol` is the clean dial for time under water, and `drift` is the clean dial for return.**
-  Raising `-fundvol` 0.02 → 0.10 moves `d10` from 0.89 to 1.29 while volatility and
-  return-per-volatility sit still — the fundamental accumulates into drawdown depth without
-  reaching daily return scale. `-drift` is its complement: across 0.08 → 0.15 it moves `r/v` from
-  0.68 to 1.31 and leaves `d10` alone. Before 0.21 these looked like one dial, because `d10` was
-  graded against a fixed level and drift moved the market past it; graded against a relation that
-  moves with return, drift moves the prediction and the measurement together and cancels.
-- **`crowdimpact` and `trendshare` do nearly the same thing.** Both scale the crowd's price
-  pressure; watch `cflow` rather than the flag — `-trendshare 0.30` and `-crowdimpact 0.15` push
-  the same statistics in the same direction, and differ mainly in how much `cflow` they buy.
-- **The two bond dials are almost orthogonal to the equity leg.** `-easing` and `-refuge` move
-  `bdep` from 1.07 to 1.44 and leave volatility, kurtosis and clustering essentially untouched.
-  Nothing else in the table is that clean — which is the point of having them as separate dials
-  rather than as one "refuge strength". Note that `bdep` here is the bond at the *shipped*
-  duration; what these dials do across the duration ladder is a different question, and
-  `-crossasset` is the only thing that answers it.
-- **Some settings leave the admissible region.** `-stress 8.0`, `-depth 12`, `-jumpvar 0.16` and
-  `-crowdimpact 0.15` fail realism (clustering, crash rate, kurtosis and clustering respectively).
-  The volatility and crash-rate realism bands were widened in 0.21.0 to 8–40% and 8–55/century,
-  because at 8–25% and 8–45 they excluded 17 and 2 of the 35 real equity instruments respectively —
-  a realism band that rejects markets you can buy is measuring the wrong thing; `-stress 2.0` and `-refuge 0.0` fail mechanism
-  (the spiral never engages; the bond stops rallying in crashes). Most of the rest fail only
-  fidelity — the level of one quantity stops being readable. Always re-run `-validate` after
-  changing a dial.
+  governs shallow water; the drag governs deep drawdowns. Turn the drag off and leave the pull at its
+  shipped 0.045 and `d10` collapses to 0.83. Weaken the pull instead and `d10` runs to 1.31. Both
+  also move `vr` — the drag off reads 0.81, the weak pull 1.11 — so a world tuned for time under
+  water on this pair alone lands its serial persistence somewhere it did not choose.
+- **`jumpvar` and `jumprate` are ONE dial with two handles, and that is what makes the tail
+  reachable.** `-jumpvar 0` is this world with the tail channel off and nothing else moved: the jump
+  draws come from their own RNG stream, so no other statistic shifts by construction. Turning it on
+  moves `kurt` 0.42 → 0.99 at the shipped pair. **The ceiling is the realism band, not the target**,
+  and the band is what `jumprate` buys headroom against: at the old rate of 0.0010, `-jumpvar 0.12`
+  passed at the default seed and read kurtosis 35.2 on another, against a ceiling of 30. Raising the
+  rate to 0.0030 means the same jump variance arrives as more, smaller jumps, so no seed runs away —
+  the five tried read 19.5 to 27.6 — and the *median* kurtosis rises rather than the extremes.
+  Rarer jumps are not fatter tails; they are noisier ones. Set the pair by the band, on more than one
+  seed.
+- **`fundvol` is the dial for time under water, and it is not free.** Raising `-fundvol` 0.041 →
+  0.10 moves `d10` from 0.87 to 1.34 while volatility and return-per-volatility sit still — the
+  fundamental accumulates into drawdown depth without reaching daily return scale. It pays in trend:
+  `vr` goes 0.94 → 1.11. The shipped 0.070 is where the two meet, and it is the dial that carries the
+  drawdown rungs now that the crowd no longer does.
+- **The two bond dials are almost orthogonal to the equity leg, but the reverse is not true.**
+  `-easing` and `-refuge` move `bdep` and leave volatility, kurtosis and clustering untouched. The
+  equity world nonetheless moves the bond ladder through the correlation channel — 0.22.0 had to
+  re-solve `easing` twice while the equity side settled. `-crossasset` is the only thing that shows
+  this; run it after any change, not only a bond one.
+- **Some settings leave the admissible region.** `-stress 8.0` and `-jumpvar 0.16` fail realism
+  (clustering and kurtosis); `-depth 12`, `-depth 22`, `-drift` at either end and `-crowdimpact 0.12`
+  fail only fidelity — the level of one quantity stops being readable. Always re-run `-validate`
+  after changing a dial.
 
-## A worked example
+## A worked example — when the target is not the statistic
 
-The 0.21.0 recalibration took the drawdown trade. Cooling the fundamental (`-fundvol` 0.13 → 0.041)
-put time under water onto what real funds of the same volatility and return actually show, and paid
-for it in crash *depth*: the median crash is now 0.85 of the real −27.1% where the 0.20.0 world held
-0.97. The two cannot both be right — every world that fixes the rungs lands crash depth at 0.78-0.85,
-because cooling the fundamental makes drawdowns shorter *and* shallower together.
+The most useful thing 0.22.0 found was not a model defect. It was that **three of the sixteen
+fidelity targets were not the statistics the model computes**, and every conclusion drawn from those
+rows had the wrong sign.
 
-A book that would rather have the old balance — realistic crash depth, but a third too long
-underwater — can run the 0.20.0 world explicitly; its every field is in `-releases` and in any
-0.20.0 sidecar. There is no free version. Pick deliberately, record the choice in the sidecar, and
-state the direction of the bias you accepted.
+`median depth %` is the median of every peak-to-trough decline of 15% or worse. The anchor it was
+graded against, −27.1%, is the record's median at a **20%** threshold. `bond growth-crash` is the
+median bond return across growth-shock drawdowns; its anchor, +20.0%, is **2008 alone** — the largest
+of the five such episodes in the record, whose median is +6.6%. `bond infl-crash` was the one
+inflation-regime drawdown, rounded 28% toward zero.
 
 ```
-                       d10  dMed  crash  kurt   realism
-DEFAULT (0.21.0)      1.00  0.85   1.40  0.47   PASS
-the 0.20.0 world      1.55  0.97   1.42  0.42   PASS
+target               was       measured the way the model measures it      what the old value was
+median depth %     -27.1       -21.4% (1954-2026), -23.7% (century)        the median at a 20% threshold
+bond growth-crash  +20.0       +6.6% (median of +6.6/+22.4/+4.4/+13.3/+0.8) 2008 alone, the largest
+bond infl-crash    -25.0       -34.7% (the one inflation drawdown)          that episode, rounded
 ```
+
+**What it cost while it stood.** The model was pushed toward crashes deeper than the record's for
+its own definition — 0.21.0's crash depth reads 18% too deep on the corrected anchor where it read
+7% too shallow on the old one. This page told you for four releases that the bond's crash rally is
+understated and not to size a refuge sleeve on it; the model's bond in fact rallies about 45% MORE
+than the record's median. And during this release a `refuge` increase aimed at the phantom shortfall
+broke the bond-volatility band on one seed before the measurement caught it. **Tuning against a
+mis-specified target makes the model worse while every report says it is getting better.**
+
+**The check, which you can run on any target here.** Take the model's own statistic function, apply
+it to the control series, and see whether the anchor comes out of it. It discriminates rather than
+re-anchoring everything to taste: `crashes/century` 20.7 sits between the record's 19.2 (century) and
+24.9 (1954-2026) and was left alone; `worst crash %` −56.8 is the same 2007-09 episode the control
+reads at −54.6%. Two of the five episode-family anchors survived; three did not.
+
+Both corrections are backed by committed measurements — `test-data/equity-anchors/episodes-2026-08-29.tsv`
+and `test-data/bond-anchors/crash-response-2026-08-29.tsv` — which the test suites re-derive the
+shipped targets from, and which also record what the old anchors were, so the account above is
+checkable rather than asserted.
+
+**An anchor with no recorded convention is the failure mode.** Every one of the three had a window
+named and no statement of what statistic it was, and that is exactly what let a 20%-threshold median
+and a single 2008 print sit in a target set for four releases. When you add a target, record the
+function, the window and the convention, and commit the measurement it came from.
 
 ## Grading against a different index — `-anchors`
 
@@ -556,50 +587,48 @@ nasdaq` at a Nasdaq-calibrated world, which does not exist yet) and the two fide
 
 ## Biases you inherit whatever you choose
 
-These are properties of the model, not of the default, and they do not go away by changing dials:
+These are properties of the model, not of the default, and they do not go away by changing dials.
+The ratios are the scoring ensemble's, 200 paths x 100 years averaged over 8 seeds, and `real@` is
+from `-noise`: where the real record falls among model histories of that anchor's own length. **The
+list is shorter than it was**, because three of the targets it used to describe were not the
+statistics the model computes — see the worked example above.
 
-- **Volatility clustering runs slightly high** (1.08 at the default, down from 1.11 before the
-  jump channel). Volatility is more predictable here than in the record, so volatility-forecasting
-  rules are flattered — but only mildly now, and the
-  anchor is horizon-sensitive: the real statistic reads 0.271 over 72 years and 0.299 over a
-  century, so the target is the century figure to match the 100-year paths the model is scored on.
-  Against the 72-year reading the same world would show higher still.
-- **Crashes arrive a little too often** (1.09; 22 per century against a real 20.7, down from 1.32
-  before the recovery drag). Any hazard rate conditioned on "a crash happened" is mildly
-  over-sampled. `-noise` now puts the real anchor at the 33rd percentile of model histories, where
-  it sat at the 4th.
-- **The worst crash is overstated** (1.62; index paths near −92% against a real −56.8%, and
-  mostly a horizon artifact — at the anchor's own 72 years the record sits mid-distribution, per
-  `-noise`). No levered fund survives those, so ruin rates for levered sleeves are **upper bounds,
-  not estimates**. This is a DRAWDOWN, accumulated over sessions; the worst single SESSION is a
-  separate question and is now set by `-haltlimit` rather than by a numerical constant.
+- **The deep drawdown rung runs long** (1.89 against the relation, where the 5% and 10% rungs sit at
+  0.97 and 1.06). Rules keyed to a *deep* distance from peak inherit it; the shallow ones are
+  accurate. Its band is deliberately absent and its weight is 0.1, because one 25-year record barely
+  pins it — `-noise` puts the record's own reading anywhere between 0.06 and 3.79 — and no setting
+  fixes it without giving back the shallow rungs: `-recoveryfloor 0.40` takes it down and `d10` to
+  0.89 with it.
+- **The worst crash is overstated** (1.60; index paths near −91% against a real −56.8%, and mostly a
+  horizon artifact — at the anchor's own 72 years the record sits mid-distribution, per `-noise`). No
+  levered fund survives those, so ruin rates for levered sleeves are **upper bounds, not estimates**.
+  This is a DRAWDOWN, accumulated over sessions; the worst single SESSION is a separate question and
+  is set by `-haltlimit` rather than by a numerical constant.
+- **The bond's crash rally is overstated** (1.39 against the record's median across its growth-shock
+  drawdowns). This reversed in 0.22.0 and the reversal is a correction, not a change in the model:
+  the old target was 2008 alone, the best of five, so the same behaviour was reported as a shortfall.
+  The model's bond gains about 9% where the record's median is 6.6% and its best was 22.4%. Size a
+  refuge sleeve on the distribution rather than on this row, which `-noise` puts the record at the
+  22nd percentile of.
+- **The bond spends longer below its peak than its own volatility implies** (1.21). This is the one
+  bond row with a band fitted across eight real funds rather than one, so it is the most transportable
+  of them — and it is also the one the `-crossasset` ladder grades at four durations.
 - **Every session past −18% comes from the liquidity spiral**, in every world measured. The jump
   channel sets how OFTEN those sessions arrive; it does not set how large they are. If you are
   studying tail magnitude, `-stress` and `-depth` are the dials, not `-jumpvar`.
-- **The median crash is now close** (0.93; −25.3% against a real −27.1%, up from 0.84). The
-  recovery drag fixed this and the crash rate together — they were one defect, deep drawdowns
-  recovering too fast, not two.
-- **The deep drawdown rung runs long, and got longer** (1.91 against the relation, from 1.38,
-  where the 5% and 10% rungs sit at 0.92 and 1.02). This is what the recovery drag costs: slowing
-  the climb out of a deep hole means more time deep. Rules keyed to a *deep* distance from peak
-  inherit it; the shallow ones are accurate. Its band is deliberately absent and its weight is 0.06
-  — one 25-year record barely pins it, and the drag made it more variable still (p5 0.19, p95 4.35).
-- **Kurtosis is no longer a scope exclusion** (0.97 as of 0.21.0, from 0.45). Tail-day magnitudes
-  are readable. It had been reachable only through `-stress`, which bought it at clustering 1.53 and
-  failed realism; `jumpVar` reaches it through a second channel that costs nothing — clustering
-  *improved* alongside it. Tail-day DEPTH is a separate matter and still overstated: see the worst
-  crash row above. One caveat that is not a defect: single-history kurtosis is now genuinely wild
-  here — a 72-year window reads 8.8 at the 5th percentile and 205 at the 95th — because a window
-  either contains its 1987 or does not, exactly as SPY 1993-2026 reads 14.4 where the CRSP century
-  reads 28. Do not read kurtosis off one path.
-- **The bond's loss in inflation regimes is overstated** (1.57; −39% against a real −25%). Read this
-  one with `-noise` beside it: over 24-year histories the model produces readings from −181% to
-  +14%, and the real −25% sits at the 60th percentile of that spread. The point ratio carries almost
-  no information, which is why the target's weight is 0.1.
-- **The bond's crash rally is understated** (0.50 against long-Treasury 2008). The model's bond
-  gains ~10.1% in an equity growth shock where TLT gained 22.3% in 2008 — though TLT's median across
-  its six real drawdowns is 9.65%, so the anchor is the outlier and the model is nearer the median
-  than the ratio suggests. Do not size a refuge sleeve on this row.
+- **Crashes arrive slightly too often** (1.07; 22 per century against a real 20.7). The record sits
+  at the 35th percentile of model histories, which is inside what the anchor can distinguish from a
+  draw.
+- **Single-history kurtosis is wild here and the median is on anchor** (0.94 on the scoring ensemble,
+  0.99 at the default seed). A 72-year window reads 9.8 at the 5th percentile and 121 at the 95th,
+  because a window either contains its 1987 or does not. Do not read kurtosis off one path. Note also
+  that a world sitting on the 28.0 anchor is close to the 30 realism ceiling by construction, so the
+  band is what binds when you reach for tails, not the target.
+- **Time under water, crash depth, crash frequency and serial persistence are all on anchor**
+  (`d5` 0.97, `d10` 1.06, median depth 1.03, crashes 1.07, variance ratio 1.02, clustering 0.96/0.95),
+  and `-noise` puts the real record between the 35th and 70th percentile of model histories on every
+  one of them. That is the stronger statement: the anchors can no longer tell this model from the
+  record they were measured from.
 
 ## If you are calibrating rather than choosing
 

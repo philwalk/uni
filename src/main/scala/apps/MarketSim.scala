@@ -58,7 +58,7 @@ package uni.apps
 //
 // FROZEN CONSTANTS (deliberately not swept; every other number is a World field or CLI flag):
 //   equity noise sigmaN 0.007 (~11% annualised alone) | momentum lookback 60 sessions,
-//   saturation tanh(m/0.12), momentum-crowd strength kTrend 0.0045 | reallocation kAdapt 0.010,
+//   saturation tanh(m/0.12), crowd impact per unit of exposure TRADED | reallocation kAdapt 0.010,
 //   kHome 0.020, perf decay 0.99, choice-intensity cap +-50 | stress index decay 0.96 gain 0.04,
 //   E[max(0,-z)] = 0.399, slow scale EWMA 0.995/0.005 (~140-session half-life) | stochastic-vol
 //   normalisation volNorm = stationary VARIANCE (level-preserving; s2/2 preserved only the mean
@@ -109,7 +109,12 @@ object MarketSim:
     * a key without touching this line fails the build at the moment the discrepancy is created,
     * next to the schema number that then has to be decided about.  A test cannot force the bump; it
     * can force the decision to be conscious, which is what this pair is for. */
-  val EmitSchema: Int = 4
+  // 4 -> 5: `world.crowdImpact` is a different quantity.  It was price pressure per unit of exposure
+  // HELD by the momentum crowd (and per unit TRADED by the other two, on a scale 13x larger); it is
+  // now per unit TRADED, one rule for every crowd.  A reader that reconstructs a `World` from a
+  // schema-4 sidecar and runs it here gets a different market with no error -- exactly what the
+  // schema number exists to prevent.
+  val EmitSchema: Int = 5
 
   val EmitSidecarKeys: Vector[String] =
     Vector("generator", "version", "schema", "file", "columns", "header", "path", "world",
@@ -185,7 +190,8 @@ object MarketSim:
     s"-volpersist X ; persistence of volatile stretches (default ${Defaults.volPersist})",
     s"-volofvol X   ; size of shocks to volatility itself (default ${Defaults.volOfVol})",
     s"-jumpvar X    ; share of the equity shock's VARIANCE carried by jumps rather than diffusion",
-    s"              ;   (default ${Defaults.jumpVar}; 0 turns the channel off and reproduces 0.20.0)",
+    s"              ;   (default ${Defaults.jumpVar}; 0 turns the channel off, consuming no draws, so",
+    "              ;   nothing else in the path moves)",
     s"-jumprate X   ; jumps per session at average volatility (default ${Defaults.jumpRate}); with",
     s"              ;   -jumpvar it sets the SIZE -- rarer jumps of the same variance are bigger",
     s"-value X      ; pull toward equity fair value, per day (default ${Defaults.valuePull}).  With",
@@ -195,18 +201,19 @@ object MarketSim:
     s"              ;   (default sp500).  Only the EQUITY rows move; the bond targets and the",
     s"              ;   depth rungs are asset-independent",
     s"-recoverydrag X ; how fast value arbitrage weakens as a drawdown deepens past 10%",
-    s"              ;   (default ${Defaults.recoveryDrag}; 0 restores the symmetric pull of 0.20.0)",
+    s"              ;   (default ${Defaults.recoveryDrag}; 0 restores the symmetric pull 0.20.0 had)",
     s"-recoveryfloor X ; weakest that pull may become, as a share of full strength",
-    s"              ;   (default ${Defaults.recoveryFloor}; 1.0 with -recoverydrag 0 is 0.20.0)",
+    s"              ;   (default ${Defaults.recoveryFloor}; 1.0 with -recoverydrag 0 is the",
+    "              ;   symmetric pull, not the 0.20.0 world -- price formation moved in 0.22.0)",
     s"-haltlimit X  ; equity trading halt: largest ONE-session decline the market prints, as a",
     s"              ;   simple fraction, with the unfilled pressure DEFERRED to the next session.",
     s"              ;   0.20 is the US Level 3 breaker, which closes the day at -20%.  0 disables",
     s"              ;   the mechanism and leaves the bare numerical guard (default ${Defaults.haltLimit})",
     "-crowd K      ; momentum (default), trendNNN, or volscaled — the last two make the crowd",
     "              ;   run the RULE UNDER TEST, closing the reflexive loop",
-    s"-crowdimpact X; price pressure per unit of exposure the crowd trades (default ${Defaults.crowdImpact});",
-    "              ;   scales the momentum crowd too via crowdImpact/0.06; before 0.19.1 it",
-    "              ;   scaled only the trendNNN and volscaled crowds",
+    s"-crowdimpact X; price pressure per unit of exposure the crowd TRADES in a session (default",
+    s"              ;   ${Defaults.crowdImpact}); one rule for every crowd, so the number means the same",
+    "              ;   thing whichever -crowd is running",
     s"-panic X      ; stress-accelerated capital reallocation (default ${Defaults.panic} = symmetric flows)",
     s"-drift X      ; fundamental drift per year; no dividend, so this IS total return (default",
     s"              ;   ${Defaults.drift})",
@@ -302,12 +309,12 @@ object MarketSim:
     * wrong three times before it was centralised.  A mismatch between the twins is caught directly
     * by the `-emit` sidecar, which names every field: bare `-emit` writes THIS world. */
   val Defaults = World(
-    trendShare = 0.055, depth = 16.94, stress = 5.37, beta = 3.0, drift = 0.113, fundVol = 0.041,
+    trendShare = 0.055, depth = 17.4, stress = 5.37, beta = 3.0, drift = 0.113, fundVol = 0.070,
     rateMean = 0.042, volPersist = 0.99, volOfVol = 0.027,
-    jumpVar = 0.10, jumpRate = 0.0010, valuePull = 0.045,
+    jumpVar = 0.17, jumpRate = 0.0050, valuePull = 0.045,
     recoveryDrag = 10.0, recoveryFloor = 0.10, haltLimit = 0.25,
-    crowd = Crowd.Momentum, crowdImpact = 0.07, panic = 0.0, duration = 13.5,
-    easing = 0.052, unwind = 0.35, refuge = 0.11,
+    crowd = Crowd.Momentum, crowdImpact = 0.030, panic = 0.0, duration = 13.5,
+    easing = 0.060, unwind = 0.35, refuge = 0.11,
     inflProb = 0.20, inflSize = 0.10, inflSpeed = 0.010, rateSpeed = 3.0, discount = 5.73,
     margin = 0.006)
   val DefaultPaths = 200
@@ -357,10 +364,21 @@ object MarketSim:
     easing = 0.046, unwind = 0.35, refuge = 0.11,
     inflProb = 0.20, inflSize = 0.10, inflSpeed = 0.010, rateSpeed = 3.0, discount = 5.0,
     margin = 0.006)
+  /** 0.21.0's world, frozen for the same reason `V0_20_0` is: the variance-ratio row moved the
+    * default off it. */
+  private val V0_21_0 = World(
+    trendShare = 0.055, depth = 16.94, stress = 5.37, beta = 3.0, drift = 0.113, fundVol = 0.041,
+    rateMean = 0.042, volPersist = 0.99, volOfVol = 0.027,
+    jumpVar = 0.10, jumpRate = 0.0010, valuePull = 0.045,
+    recoveryDrag = 10.0, recoveryFloor = 0.10, haltLimit = 0.25,
+    crowd = Crowd.Momentum, crowdImpact = 0.07, panic = 0.0, duration = 13.5,
+    easing = 0.052, unwind = 0.35, refuge = 0.11,
+    inflProb = 0.20, inflSize = 0.10, inflSpeed = 0.010, rateSpeed = 3.0, discount = 5.73,
+    margin = 0.006)
   val Releases: Vector[(String, World)] = Vector(
     ("0.17.0", PreV1901), ("0.18.0", PreV1901), ("0.19.0", PreV1901),
     ("0.19.1", PreV1902), ("0.19.2", V0_19_2), ("0.19.3", V0_19_2), ("0.20.0", V0_20_0),
-    ("0.21.0", Defaults))
+    ("0.21.0", V0_21_0), ("0.22.0", Defaults))
 
   /** `-power`'s default contrast arms, as 1-based indices into `Rules`, and its default history
     * lengths.  Named here rather than inside the report so `usage` states them and `main` seeds
@@ -397,15 +415,17 @@ object MarketSim:
     * the program makes about itself.  Real full cycles: 2007-08 took the target 5.25 -> 0.125 (5.1
     * points), 2001-03 took 6.50 -> 1.00 (5.5), 1989-92 took 9.81 -> 3.00 (6.8).  The 0.046 shipped
     * through 0.20.0 was 4.6 points -- BELOW every one of them, so the help text was slightly false.
-    * 0.052 is 5.2 points: inside the range and below its median.
+    * 0.060 is 6.0 points: the middle of the three, and the anchor is a RANGE, so where in it the
+    * value sits is the ladder's to choose.
     *
-    * It is also the only setting that clears `-crossasset`, and the two facts are independent -- the
-    * anchor argument stands whether or not the ladder exists.  The ladder ROTATES on this dial: at
-    * 0.046 the d=5.70 depth rung falls through its 0.65 floor (0.66 at the default seed, and
-    * outright FAIL on 2 of 5 seeds -- the EDGE that stood since 0.19.2 was the favourable draw), and
-    * at 0.058 the d=13.50 rung reaches its 1.35 ceiling (1.34).  The admissible window is roughly
-    * 0.050-0.056 and the shipped value sat under it.  Cost: fitness loss 1.375 -> 1.385, every
-    * equity statistic unchanged. */
+    * The ladder ROTATES on this dial, and the window MOVES WITH THE EQUITY WORLD -- which is the
+    * part worth carrying forward.  At the 0.21.0 world the window was 0.050-0.056: 0.046 dropped the
+    * d=5.70 rung through its 0.65 floor (FAIL on 2 of 5 seeds -- the EDGE that stood since 0.19.2
+    * was the favourable draw) and 0.058 put the d=13.50 rung on its 1.35 ceiling.  Cutting
+    * `crowdImpact` in 0.22.0 shifted the whole window up: 0.052 now reads 0.65 at the short rung
+    * (EDGE again) and 0.060 reads 0.72 / 1.29, clear at both ends.  A bond dial cannot be settled
+    * once and left; re-run `-crossasset` after any equity-side change.  Cost: fitness loss
+    * 1.360 -> 1.382, every equity statistic unchanged. */
   val EaseInSpeed = 6.0
   val DurationRef = 13.5
   /** Bond volatility is measured over NON-OVERLAPPING windows of this many years, even when the
@@ -483,11 +503,6 @@ object MarketSim:
     * variance it is supposed to be borrowing, and `equity vol %` would drift with `jumpVar`. */
   def jumpScale(w: World): Double =
     SigmaN * math.sqrt(w.jumpVar / (w.jumpRate * (1.0 + JumpAsym * JumpAsym)))
-
-  /** `crowdImpact` at which the momentum crowd reproduces the frozen `kTrend` exactly.  The ratio
-    * is what enters the flow, so the default divides to a bit-exact 1.0 and the shipped world is
-    * unchanged; every other setting scales the reflexive channel that used to have no dial at all. */
-  val CrowdImpactRef = 0.06
 
   /** ONE price-formation mechanism for every traded asset: value demand toward `fair`, plus
     * external flow and noise, amplified when THIS market's liquidity has withdrawn after one-sided
@@ -650,14 +665,19 @@ object MarketSim:
     var wTrend = w.trendShare; var wTrendSum = 0.0
     var pinnedCnt = 0; var satCnt = 0
     var perfV = 0.0; var perfT = 0.0
-    val kTrend = 0.0045
     val kAdapt = 0.010; val kHome = 0.020
     var logVol = 0.0
     val volNorm = (w.volOfVol * w.volOfVol) / math.max(1e-9, 1.0 - w.volPersist * w.volPersist)
     val crowdWin = w.crowd match
       case Crowd.Trend(d) => math.max(2, math.round(d * 252.0 / 365.25).toInt)
       case _              => 0
-    var crowdE = 1.0; var crowdPrev = 1.0; var maSum = 0.0
+    // The crowd starts where its own target starts, so the first session is not a trade it never
+    // made.  The banded crowds begin fully invested (1.0); the momentum crowd's target IS
+    // `trendPos`, which is 0 while there is no history to measure momentum over.
+    val crowdInit = w.crowd match
+      case Crowd.Momentum => 0.0
+      case _              => 1.0
+    var crowdE = crowdInit; var crowdPrev = crowdInit; var maSum = 0.0
     var crowdRv = 0.01 * 0.01; var crowdAnchor = 0.0
     var bondStressSum = 0.0; var bondStressHi = 0
     var crowdFlowSum = 0.0
@@ -723,17 +743,28 @@ object MarketSim:
       val past = if i >= lookback then math.log(px(i - lookback)) else logPobs
       val momentum = logPobs - past
       val trendPos = math.tanh(momentum / 0.12)
-      val eqFlow = w.crowd match
-        case Crowd.Momentum => kTrend * (w.crowdImpact / CrowdImpactRef) * wTrend * trendPos
-        case _              => w.crowdImpact * wTrend * (crowdE - crowdPrev)
+      // The momentum crowd's desired exposure, set here rather than in the block above only because
+      // `trendPos` needs this session's `logPobs`; the information behind it is still strictly
+      // prior.  It is continuous where the other crowds' targets are banded, and deliberately
+      // unbanded: the 0.05 band exists to stop a BINARY target flip-flopping across a moving
+      // average, and a continuous target has nothing to flip-flop about.
+      w.crowd match
+        case Crowd.Momentum => crowdE = trendPos
+        case _              => ()
+      // ONE price-impact rule for every crowd: pressure comes from the exposure TRADED this
+      // session, never from the exposure held.  A crowd that has been long for a month and is still
+      // long is not buying, and a market it is not buying does not rise because of it.
+      val eqFlow = w.crowdImpact * wTrend * (crowdE - crowdPrev)
       crowdPrev = crowdE
       logVol = w.volPersist * logVol + w.volOfVol * rng.randn()
       val dNoise = SigmaN * math.exp(logVol - volNorm) * rng.randn()
 
-      // The jump channel.  Its draws come from `jrng`, NOT `rng`, so a world with jumpVar = 0 takes
-      // the untouched branch below and every pre-0.21 statistic reproduces bit for bit -- the
-      // failure mode a shared stream would have caused is not a risk that was reasoned about, it is
-      // one the branch removes.  `volMult` is this session's volatility state, so jumps CLUSTER
+      // The jump channel.  Its draws come from `jrng`, NOT `rng`, so `jumpVar = 0` takes the
+      // untouched branch below and moves NOTHING ELSE in the path -- the failure mode a shared
+      // stream would have caused is not a risk that was reasoned about, it is one the branch
+      // removes.  (Through 0.21.0 that also made `-jumpvar 0` reproduce the pre-jump world bit for
+      // bit; 0.22.0 changed the price-impact law, so the isolation claim now holds only WITHIN a
+      // release.)  `volMult` is this session's volatility state, so jumps CLUSTER
       // inside a stressed stretch instead of scattering uniformly, which is what turns a fat tail
       // into a survivable-or-not sequence for anything levered.
       val eqShock =
@@ -787,6 +818,10 @@ object MarketSim:
 
       // ---- capital reallocation: spring, scored on positions actually held -------------------
       perfV = 0.99 * perfV + 0.01 * (mispricingPre * retE) * 100.0
+      // POSITION HELD, where the price impact above is position TRADED -- both are correct and
+      // they are different questions.  A crowd earns or loses on what it is holding; it moves the
+      // price by what it is buying or selling.  Conflating the two is the defect that shipped
+      // through 0.21.0.
       val crowdPos = w.crowd match
         case Crowd.Momentum => trendPos
         case _              => crowdE - 1.0
@@ -835,6 +870,36 @@ object MarketSim:
     val den = z.power(2).sum
     if den <= 0 || r.length <= lag then Double.NaN
     else (z(0 until r.length - lag, 0) * z(lag until r.length, 0)).sum / den
+
+  /** Var(sum of q consecutive returns) / (q * Var(r)) on SIGNED returns: 1.0 under no serial
+    * dependence at that horizon, above 1 for trend, below for mean reversion.  The two `clustering`
+    * rows measure |r| and are blind to this — a world can cluster its volatility exactly right
+    * while manufacturing a trend no market has, and one did for four releases.
+    *
+    * WHY A VARIANCE RATIO AND NOT AN AUTOCORRELATION.  A signed autocorrelation at any single lag
+    * cannot see this defect: the shipped-0.21.0 world reads about +0.01 at every lag out to 60,
+    * which is inside the sampling noise of a 100-year path and would pass a per-lag check at every
+    * lag separately.  They are all the SAME SIGN, so they accumulate — the 60-session variance is
+    * 52% above iid while no single lag looks unusual.  A crowd trading a 60-session signal is
+    * visible here and nowhere else.
+    *
+    * CONVENTION, stated for the same reason `clustering lag 1` states one, because "variance ratio"
+    * names several estimators that disagree in small samples: NON-OVERLAPPING q-blocks, sample
+    * variances (n-1), the series truncated to a whole number of blocks.  Overlapping blocks
+    * estimate the same population quantity with lower variance and a different finite-sample value;
+    * `jsrc/clusteringAnchor.sc` calls THIS function to measure the anchor, so the two cannot drift.
+    */
+  def varianceRatio(r: Array[Double], q: Int): Double =
+    val n = r.length / q * q
+    if q < 2 || n < 2 * q then Double.NaN
+    else
+      def sampleVar(x: Array[Double]): Double =
+        val z = MatD(x) - MatD(x).mean
+        z.power(2).sum / (x.length - 1)
+      val daily  = r.take(n)
+      val blocks = Array.tabulate(n / q)(k => daily.slice(k * q, (k + 1) * q).sum)
+      val vDaily = sampleVar(daily)
+      if vDaily <= 0.0 then Double.NaN else sampleVar(blocks) / (q * vDaily)
 
   /** cov(a,b) / (sigma_a * sigma_b), in unnormalised sums -- written as the formula. */
   def pearson(a: Array[Double], b: Array[Double]): Double =
@@ -983,8 +1048,34 @@ object MarketSim:
   val BondDurSupport = (1.80, 14.89)
   val BondVolSupport = (1.44, 14.12)
 
+  /** The horizon the variance ratio is graded at, in sessions — three months.  The choice is not
+    * free and it is not the flattering one: q = 20 would let this world through (its reading
+    * overlaps the CRSP century's 1.166), and q = 252 is too noisy to band (real readings run
+    * 0.27-1.45).  At 60 the real record is tight and this model is outside all of it.
+    *
+    * It is also the momentum crowd's own lookback, which is the mechanism the row exists to hold
+    * accountable.  That is the direction that matters: a horizon chosen to spare the mechanism
+    * would be a longer or shorter one, and both were available. */
+  val VarRatioQ = 60
+
+  /** The `variance ratio 60d` band, from `test-data/equity-anchors/persistence-2026-08-29.tsv`:
+    * 18 real equity funds over their full histories and over the depth cross-section's own
+    * 2001-2026 window, plus the CRSP value-weighted market opening in 1926, 1954 and 1990.  The 39
+    * readings span 0.547 (XLV, 2001-2026) to 1.146 (the CRSP century), and the band is that range
+    * rounded outward to the nearest 0.05.  `PersistenceAnchorSuite` re-derives both bounds from
+    * the file by that rule, so the band cannot be widened to admit a world without a real market
+    * moving first.
+    *
+    * SHARED across anchor sets rather than carried per asset, unlike the two bands in `Anchors`.
+    * What separates these readings is the ERA, not the index: QQQ reads 0.720 against SPY's 0.705
+    * over their full histories, while the same market reads 1.14 over the century and 0.82 since
+    * 1990.  A per-asset band would encode a difference the record does not show. */
+  val VarRatioBand = (0.50, 1.15)
+
   // ---- world statistics and the ONE acceptance predicate -------------------------------------
-  final case class WorldStats(vol: Double, kurt: Double, ac1: Double, ac20: Double, annRet: Double,
+  final case class WorldStats(vol: Double, kurt: Double, ac1: Double, ac20: Double,
+                              vr60: Double,          // SIGNED-return persistence -- `varianceRatio`
+                              annRet: Double,
                               nEpisodes: Int, epPerPath: Double, depthMed: Double, worstDepth: Double,
                               vCount: Int, midCount: Int, uCount: Int, nShapes: Int, censored: Int,
                               clampPct: Double,
@@ -1072,6 +1163,7 @@ object MarketSim:
       kurt = med(rets.map(kurtosis)),
       ac1  = med(rets.map(r => autocorrAbs(r, 1))),
       ac20 = med(rets.map(r => autocorrAbs(r, 20))),
+      vr60 = med(rets.map(r => varianceRatio(r, VarRatioQ))),
       annRet = med(sims.map(s => math.log(s.price.last / s.price.head) / years * 100.0)),
       nEpisodes = eps.size, epPerPath = eps.size.toDouble / sims.size,
       depthMed = med(eps.map(_.depthPct)), worstDepth = eps.map(_.depthPct).minOption.getOrElse(Double.NaN),
@@ -1197,6 +1289,15 @@ object MarketSim:
       // that is sampling variation in a 20-year window, and this statistic is a population value
       // over 20,000 path-years -- a band drawn from it would readmit worlds at 0.91.
       bandCheck("return per vol",   st.retVol, a.retVolBand._1, a.retVolBand._2, Fidelity),
+      // SIGNED persistence at three months.  FIDELITY and not realism, for the reason stated
+      // above: `-crowdimpact 0.12` is one of the sweep's own OFF-worlds — pressing the reflexive
+      // channel hard is what it is FOR — and a realism band would make it inadmissible in every
+      // report rather than describing it.  What a failure here costs is specific and large: every
+      // trailing-window statistic read off this world is read against the wrong null.  A momentum
+      // rule's information coefficient, a p-value calibrated on synthetic paths, a
+      // drawdown-conditioned hazard — all of them inherit the trend this row measures, and none of
+      // the other fifteen targets can see it.
+      bandCheck("variance ratio 60d", st.vr60, VarRatioBand._1, VarRatioBand._2, Fidelity),
     )
     // The two anchor-fitted bands are graded ONLY where their anchors have data -- the same
     // refusal `-crossasset` applies, because these ARE its relations.  A world outside the funds'
@@ -1374,21 +1475,24 @@ object MarketSim:
     volBand: (Double, Double),                   // the two asset-specific FIDELITY bands
     retVolBand: (Double, Double))
 
-  /** The S&P/CRSP set, unchanged from every release before 0.21.0 — the values and sampling spreads
-    * are the ones that were already here, moved rather than re-measured, so the default reproduces
-    * earlier output byte for byte. */
+  /** The S&P/CRSP set.  The LEVELS are the ones every release before 0.21.0 hard-coded, moved
+    * rather than re-measured.  The SPREADS were re-frozen in 0.22.0 from `-noise -paths 200` at the
+    * adopted world -- the first time all of them came from one ensemble at one size, which is why
+    * several moved by more than the world change explains: only `kurtSd` had been re-frozen at 200
+    * paths, and the rest still carried a 120-path run's readings.  `-noise`'s `sd/real` column now
+    * agrees with the `wt` beside it, which is the whole point of printing them together. */
   val SP500Anchors = Anchors(
     name = "S&P 500 / CRSP",
     equityWindow = "S&P / CRSP 1954-2026", equityYears = 72,
     clusterWindow = "CRSP 1926-2026, the century", clusterYears = 100,
-    vol = 16.0,          volSd = 0.10,
-    retVol = 0.69,       retVolSd = 0.20,
-    kurt = 28.0,         kurtSd = 1.51,
-    ac1 = 0.299,         ac1Sd = 0.09,
-    ac20 = 0.225,        ac20Sd = 0.11,
-    crashes = 20.7,      crashesSd = 0.22,
-    medDepth = -27.1,    medDepthSd = 0.15,
-    worstDepth = -56.8,  worstDepthSd = 0.17,
+    vol = 16.0,          volSd = 0.14,
+    retVol = 0.69,       retVolSd = 0.18,
+    kurt = 28.0,         kurtSd = 2.25,
+    ac1 = 0.299,         ac1Sd = 0.12,
+    ac20 = 0.225,        ac20Sd = 0.19,
+    crashes = 20.7,      crashesSd = 0.24,
+    medDepth = -21.4,    medDepthSd = 0.13,
+    worstDepth = -56.8,  worstDepthSd = 0.24,
     volBand = (14.0, 18.0),
     retVolBand = (0.50, 0.85))
 
@@ -1423,14 +1527,14 @@ object MarketSim:
     name = "Nasdaq-100 / QQQ",
     equityWindow = "QQQ 1999-2026", equityYears = 27,
     clusterWindow = "QQQ 1999-2026", clusterYears = 27,
-    vol = 26.90,         volSd = 0.10,
-    retVol = 0.38,       retVolSd = 0.20,
+    vol = 26.90,         volSd = 0.14,
+    retVol = 0.38,       retVolSd = 0.18,
     kurt = 9.55,         kurtSd = 1.23,
-    ac1 = 0.293,         ac1Sd = 0.09,
-    ac20 = 0.249,        ac20Sd = 0.11,
-    crashes = 25.6,      crashesSd = 0.22,
-    medDepth = -22.8,    medDepthSd = 0.15,
-    worstDepth = -83.0,  worstDepthSd = 0.17,
+    ac1 = 0.293,         ac1Sd = 0.12,
+    ac20 = 0.249,        ac20Sd = 0.19,
+    crashes = 25.6,      crashesSd = 0.24,
+    medDepth = -22.8,    medDepthSd = 0.10,
+    worstDepth = -83.0,  worstDepthSd = 0.24,
     volBand = (23.5, 30.3),
     retVolBand = (0.27, 0.47))
 
@@ -1483,7 +1587,40 @@ object MarketSim:
     // 20-year eras, which is a band chosen to produce a verdict rather than derived from a record.
     ("clustering lag 1",   st => st.ac1,                                    a.ac1, wgt(1.0, a.ac1Sd)),
     ("clustering lag 20",  st => st.ac20,                                   a.ac20, wgt(0.5, a.ac20Sd)),
+    // SIGNED persistence, the axis the two rows above cannot see -- they are |r|, and a world can
+    // cluster its volatility exactly right while its price trends.  See `varianceRatio` for why
+    // this is not a per-lag autocorrelation and `VarRatioBand` for the cross-section behind it.
+    //
+    // 1.00 IS A THEORY VALUE, DELIBERATELY, and it is the one row in this table that is not a
+    // reading off a record.  The real cross-section sits BELOW it -- 0.74 median at 2001-2026 --
+    // because modern equity indices mean-revert mildly at three months, and this model has no
+    // mean-reversion channel to reproduce that with.  Targeting 0.74 would ask a search to close a
+    // gap with the only dials it has, which are the trend dials, and it would close it by removing
+    // the reflexive channel entirely.  The target says "do not manufacture a trend"; the BAND is
+    // where the record's own spread lives, and it admits every reading in the fixture.
+    //
+    // NOT redundant with `crashes/century` or the depth rungs even though the same dial moves all
+    // four: across the crowdImpact sweep corr(vr60, equity d20 vs real) is 0.98, which is the
+    // finding, not an argument for dropping a row.  The depth rungs said the world was too deep
+    // and named no cause; this row names it.
+    ("variance ratio 60d", st => st.vr60,                                    1.00,  wgt(1.0, 0.32)),
     ("crashes/century",    st => st.epPerPath * 100.0 / st.yearsPerPath,    a.crashes,  wgt(1.0, a.crashesSd)),
+    // RE-MEASURED in 0.22.0, and the old value was not this statistic.  `-27.1` shipped through
+    // 0.21.0 with no recorded convention; the model measures every peak-to-trough decline of 15% or
+    // worse, and NO window of the record produces -27.1% at that threshold.  A 20% threshold does
+    // (-26.6% over 1954-2026, -28.0% over the century), so the model was graded against a statistic
+    // it does not compute and pushed toward crashes deeper than the record's for its own definition.
+    //
+    // Measured with `episodes` itself on the same CRSP total-return control the two rows above use:
+    // -21.4% over 1954-2026, -23.7% over the century, -21.9% since 1990.  The anchor set's own
+    // window wins, as it does for `equity vol %` and `crashes/century`.  The century reading is
+    // deeper because it contains 1929-32 and 1937, and it is recorded in
+    // `test-data/equity-anchors/episodes-2026-08-29.tsv` beside this one; `EpisodeAnchorSuite`
+    // re-derives the shipped value from that file.
+    //
+    // The two sibling anchors survive the same check, which is why only this one moved:
+    // `crashes/century` 20.7 sits between the record's 19.2 (century) and 24.9 (1954-2026), and
+    // `worst crash %` -56.8 is the same 2007-09 episode the control reads at -54.6%.
     ("median depth %",     st => st.depthMed,                              a.medDepth,  wgt(1.0, a.medDepthSd)),
     // Judgment 0.5, DOWN from 1.0, on `-noise`'s finding: graded at 100 years against a
     // 72-year anchor this ratio is mostly a max-order-statistic horizon artifact (at the
@@ -1493,12 +1630,23 @@ object MarketSim:
     // The "(24y)" is load-bearing, not decoration: this row is measured on a different horizon
     // from every other, and the label is the only part that travels when the number is quoted.
     ("bond vol % (24y)",   st => st.bondVol * 100,                          13.0,  wgt(1.0, 0.51)),
-    ("bond growth-crash",  st => st.bondGrowth,                             20.0,  wgt(1.0, 0.39)),
+    // RE-MEASURED in 0.22.0, same error class as `median depth %` above: `20.0` is 2008 ALONE, the
+    // largest of the five growth-shock episodes in the record, and this row is a MEDIAN across
+    // episodes.  Measured the way `measure` measures it -- SPY drawdowns of 15%+, TLT's log return
+    // over the same peak-to-trough span -- the record reads +6.6%, from episodes of
+    // +6.6 / +22.4 / +4.4 / +13.3 / +0.8.  The model was therefore read as UNDERSTATING a bond
+    // rally it in fact overstates.  Six episodes is the honest limit here and `-noise` prices it in.
+    // `test-data/bond-anchors/crash-response-2026-08-29.tsv`; `BondCrashSuite` re-derives both rows.
+    ("bond growth-crash",  st => st.bondGrowth,                              6.6,  wgt(1.0, 1.18)),
     // The judgment stays at 1.5 -- inflation-crash behaviour is why the bond refuge exists --
     // and the measured precision crushes the weight to ~0.13 anyway: sd/real 2.89, and only
     // 95 of 200 24-year histories produce a reading at all.  The old 1.5 was the largest
     // weight in the loss on the least measurable target in the set.
-    ("bond infl-crash",    st => st.bondInfl,                              -25.0,  wgt(1.5, 2.89)),
+    // RE-MEASURED with it: `-25.0` was a rounding of the ONE inflation-regime drawdown the record
+    // has, which reads -34.7% (SPY 2022-01-03..2022-10-12, TLT over the same span).  A median of one
+    // is that one, so the anchor is the episode -- but rounded 28% toward zero, which is not a
+    // convention, it is an error.
+    ("bond infl-crash",    st => st.bondInfl,                              -34.7,  wgt(1.5, 1.95)),
     // DEPTH PROFILE, stated RELATIVE to what a real fund of the same volatility and return spends
     // under water rather than as three absolute levels -- see `EquityD10Corr` for the relation and
     // `eqDepthVsReal` for what the ratio means.  A level target is a statement about one fund; a
@@ -1539,15 +1687,15 @@ object MarketSim:
     // no longer tell this model from the cross-section they were measured from, which is a stronger
     // statement than any ratio near 1.00, because it is made against the spread rather than the
     // point.
-    ("equity d5 vs real",   st => st.eqD5VsReal,                             1.00,  wgt(0.5, 0.13)),
-    ("equity d10 vs real",  st => st.eqD10VsReal,                            1.00,  wgt(1.0, 0.25)),
+    ("equity d5 vs real",   st => st.eqD5VsReal,                             1.00,  wgt(0.5, 0.15)),
+    ("equity d10 vs real",  st => st.eqD10VsReal,                            1.00,  wgt(1.0, 0.34)),
     // d20's sdRel moved 0.99 -> 1.56 in the 0.21.0 recovery-drag change, and like kurtosis's move
     // it is a re-measurement of a statistic that genuinely became more variable, not a correction:
     // slowing recovery from deep drawdowns makes time spent DEEP swing much harder between
     // histories (p5 0.19, p95 4.35 over 25 years).  Weighting by measurability drops it to 0.06.
     // No other target's sdRel moved beyond its own noise, so none were churned.
-    ("equity d20 vs real",  st => st.eqD20VsReal,                            1.00,  wgt(0.5, 1.56)),
-    ("bond depth vs vol",   st => st.bondDepthVsVol,                          1.00, wgt(0.5, 0.33)),
+    ("equity d20 vs real",  st => st.eqD20VsReal,                            1.00,  wgt(0.5, 1.62)),
+    ("bond depth vs vol",   st => st.bondDepthVsVol,                          1.00, wgt(0.5, 0.34)),
   )
   def fitness(a: Anchors, st: WorldStats): (Double, Vector[(String, Double, Double, Double)]) =
     val rows = fitTargets(a).map { (name, get, target, weight) =>
@@ -2008,8 +2156,18 @@ object MarketSim:
         // TWO AXES, not two modes.  Before the momentum crowd got a strength dial there was only
         // one dimension here, so "which crowd" was the whole question; now a mode entry that does
         // not state a strength silently picks the default, which is not the interesting value.
-        ("reflexive: crowd runs a vol rule",  base.copy(crowd = Crowd.VolScaled), true),
-        // 0.12 is the stress case: admissible, where 0.25 fails the gate.
+        // 0.20 rather than the default 0.030, and the two numbers are NOT comparable as strengths:
+        // since 0.22.0 one impact law covers every crowd, and this crowd's target moves in small
+        // continuous steps where the momentum crowd's swings across a saturating tanh.  0.20 is the
+        // largest setting that stays a market -- 0.30 fails the kurtosis realism band -- and it
+        // still only reaches 2.3% of the noise term against the default crowd's 5.2%.  THAT IS THE
+        // FINDING: a crowd selling into volatility destabilises the market faster than a crowd
+        // buying trends, so it cannot be run as hard.  Left at the default it would be inert
+        // (1.2%), which is the dead-knob defect this entry exists to avoid.
+        ("reflexive: crowd runs a vol rule",  base.copy(crowd = Crowd.VolScaled, crowdImpact = 0.20), true),
+        // 0.12 is the stress case: 4x the default, admissible on realism and mechanism, and outside
+        // the persistence band -- which is what pressing a trend crowd hard is SUPPOSED to look
+        // like, and is disclosed rather than hidden.
         ("reflexive: crowd pressed hard",     base.copy(crowdImpact = 0.12), true),
       ))
 
@@ -2350,7 +2508,7 @@ object MarketSim:
     * a shorter table reads as a shorter list of concerns, not as a bug. */
   val EquityTargets = Vector(
     "equity vol %", "return per vol", "kurtosis", "clustering lag 1", "clustering lag 20",
-    "crashes/century", "median depth %", "worst crash %",
+    "variance ratio 60d", "crashes/century", "median depth %", "worst crash %",
     "equity d5 vs real", "equity d10 vs real", "equity d20 vs real")
 
   /** The other half of the partition.  Read only by the partition test -- the report has no bond
@@ -2546,6 +2704,11 @@ object MarketSim:
             "median depth %", "worst crash %")),
     (a.clusterWindow, a.clusterYears,
      Vector("clustering lag 1", "clustering lag 20")),
+    // 18 equity funds and three CRSP windows, the shortest of them 24.9 years -- see
+    // `VarRatioBand`.  The horizon is one instrument's record, as it is for the depth rungs, and
+    // the target this group carries is a theory value rather than a reading, so `real@` here says
+    // where 1.00 falls in the model's own spread of 25-year readings, not where a record does.
+    ("equity funds + CRSP, 25y", 25, Vector("variance ratio 60d")),
     // 35 equity funds over 2001-2026; the horizon is one instrument's record, because that is what
     // each residual ratio in the fit was measured from.
     ("equity funds, 25y", 25,
@@ -2576,7 +2739,7 @@ object MarketSim:
     println("histories of that anchor's OWN length would produce, and where the real record falls.")
     println()
     println("MODEL-IMPLIED, circularity stated: the spreads come from this model's own dynamics, so")
-    println("where the model is known biased (clustering 1.06x real) the spread is biased with it.")
+    println("where the model is known biased (the deep drawdown rung, 1.7x real) the spread is too.")
     println("There is no other estimate — the record is one draw.")
     println()
     println("Read `real@` as the share of model histories at or below the real anchor: near 50% the")
@@ -3425,6 +3588,10 @@ object MarketSim:
     println(f"  annualised volatility  median ${st.vol * 100}%6.2f%%   5th ${pctile(annVol, 0.05) * 100}%6.2f%%   95th ${pctile(annVol, 0.95) * 100}%6.2f%%")
     println(f"  daily return kurtosis  median ${st.kurt}%6.2f")
     println(f"  volatility clustering  lag  1 ${st.ac1}%6.3f   lag 20 ${st.ac20}%6.3f")
+    // The line above is |r| and the line below is r, which is the whole reason both are printed:
+    // they are different axes and a world can be right on one and wrong on the other.
+    println(f"  trend persistence      ${VarRatioQ}%dd variance ratio ${st.vr60}%6.3f   " +
+            f"(1.0 = no serial dependence; band ${VarRatioBand._1}%.2f-${VarRatioBand._2}%.2f)")
     println()
     println(f"  drawdowns of 15%%+      ${st.nEpisodes}%d, ${st.epPerPath}%.1f per path; ${st.censored}%d unrecovered at path end (included in depth)")
     println(f"  their depth            median ${st.depthMed}%6.1f%%   worst ${st.worstDepth}%6.1f%%")

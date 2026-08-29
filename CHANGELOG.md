@@ -1,3 +1,133 @@
+## v0.22.0 — unreleased
+
+**FIXED — price impact came from the exposure the crowd HELD, not the exposure it TRADED, and that
+manufactured a three-month trend no equity market has**
+
+The momentum crowd's pressure was proportional to the LEVEL of its position: a crowd that had been
+long for a month and was still long went on pushing the price up every session it stayed long. The
+other two crowds already pressed on the CHANGE in position, so the model carried two price-impact
+laws and the odd one out was the default. One law now covers every crowd: `crowdImpact * wTrend *
+(crowdE - crowdPrev)`.
+
+**FIXED — three fidelity targets were not the statistics the model computes.** Chasing what looked
+like a crash-depth cost of the change turned up the real defect: three targets were single named
+episodes, or a different threshold, used where `measure` computes a MEDIAN over a distribution.
+
+```
+target               shipped    the record, measured the way the model measures    what it was
+median depth %         -27.1    -21.4% (1954-2026), -23.7% (century)               the median at a 20%
+                                                                                   threshold; the model
+                                                                                   uses 15%
+bond growth-crash      +20.0    +6.6% — median of +6.6/+22.4/+4.4/+13.3/+0.8       2008 ALONE, the
+                                                                                   largest of the five
+bond infl-crash        -25.0    -34.7% — the one inflation-regime drawdown         2022, rounded 28%
+                                                                                   toward zero
+```
+
+Every conclusion these rows supported was the wrong sign. The model was being pushed toward crashes
+**deeper** than the record for its own definition. `docs/MarketSimWorlds.md` has said for releases
+that the bond's crash rally is understated and not to size a refuge sleeve on it; the model's bond
+in fact rallies about 45% MORE than the record's median. And a `refuge` increase made against the
+phantom shortfall broke the bond-volatility band on one seed before the measurement caught it —
+tuning against a mis-specified anchor makes the model worse while every report says otherwise.
+
+**The check that found it, which is the part worth keeping.** Take the model's own statistic
+function, apply it to the control series, and see whether the anchor comes out. It discriminates
+rather than re-anchoring everything: `crashes/century` 20.7 sits between the record's 19.2 and 24.9
+and was left alone, and `worst crash %` −56.8 is the same 2007-09 episode the control reads at
+−54.6%. Two of five survived; three did not.
+
+Both corrected targets are now backed by committed measurements —
+`test-data/equity-anchors/episodes-2026-08-29.tsv` and
+`test-data/bond-anchors/crash-response-2026-08-29.tsv` — which `EpisodeAnchorSuite`, `BondCrashSuite`
+and their Rust twins re-derive the shipped values from, and which also pin the evidence for what the
+old anchors were.
+
+**NO FIDELITY ROW GOES BACKWARDS.** Every one of the sixteen, each world measured under its own code
+and both scored on the corrected anchors, as |ratio − 1|:
+
+```
+target                 0.21.0  0.22.0        target                 0.21.0  0.22.0
+equity vol %             0.03    0.00        bond vol % (24y)         0.06    0.06
+return per vol           0.02    0.01        bond growth-crash        0.55    0.44
+kurtosis                 0.02    0.01        bond infl-crash          0.14    0.12
+clustering lag 1         0.08    0.03        equity d5 vs real        0.08    0.06
+clustering lag 20        0.10    0.04        equity d10 vs real       0.03    0.01
+variance ratio 60d       0.52    0.00        equity d20 vs real       0.91    0.73
+crashes/century          0.09    0.07        bond depth vs vol        0.29    0.27
+median depth %           0.18    0.04
+```
+
+**How the trend defect was found: `variance ratio 60d`, a new fidelity target and gate band.**
+Nothing in the target set measured SIGNED serial dependence — the two `clustering` rows are
+autocorrelations of |r| — so the crowd's own footprint was ungated for four releases. Measured over
+non-overlapping 60-session blocks, where 1.00 is no serial dependence, the 0.21.0 default read 1.52
+and every earlier published default 1.72 to 2.22, against a real range of 0.55–1.15.
+
+A per-lag check would not have caught it: the signed autocorrelation is about +0.01 at every lag out
+to 60, inside the sampling noise of a 100-year path. They are all the same sign, so they accumulate,
+and only a horizon-scale statistic sees the sum.
+
+The target is **1.00**, a theory value and the only row in the table that is not a reading off a
+record: the real cross-section sits *below* it (0.74 median over 2001–2026, because modern equity
+indices mean-revert mildly at three months) and this model has no mean-reversion channel to reproduce
+that with. The target says "do not manufacture a trend"; the band is where the record's own spread
+lives.
+
+The band is **0.50–1.15**, the observed range rounded outward to the nearest 0.05, from
+`test-data/equity-anchors/persistence-2026-08-29.tsv`: 18 real equity funds over their full histories
+and over the depth cross-section's 2001–2026 window, plus the CRSP value-weighted market opening in
+1926, 1954 and 1990. `PersistenceAnchorSuite` and `persistence_anchor_tests` re-derive both bounds
+from that file, so the band cannot be widened to admit a world without a real market moving first.
+It is shared across anchor sets rather than carried per asset because what separates these readings
+is the ERA, not the index: QQQ reads 0.720 against SPY's 0.705 over their full histories, while the
+same market reads 1.14 over the century and 0.82 since 1990.
+
+**FIDELITY class, not realism.** `-crowdimpact 0.12` is one of the world sweep's own off-worlds —
+pressing the reflexive channel hard is what it is for — and a realism band would make it inadmissible
+in every report rather than describing it.
+
+**`EmitSchema` 4 → 5.** `world.crowdImpact` is a different quantity: price pressure per unit of
+exposure TRADED, one rule for every crowd, where it was per unit HELD under `momentum` and per unit
+traded on a 13x larger scale under the other two. A reader reconstructing a `World` from a schema-4
+sidecar would otherwise get a different market with no error.
+
+**Recalibrated onto the new mechanism.** `depth` 16.94 → 17.4 puts volatility back on its anchor.
+`fundVol` 0.041 → 0.070 is what the freed persistence budget paid for: a warmer fundamental buys time
+under water and costs trend, and under the old law the crowd had already spent that budget — it is
+what carries `d5` and `d10` to 0.95 and 0.99. `crowdImpact` 0.07 → 0.030, which is not a comparable
+number: under the new law the loss is flat across 0.002–0.014 and rises above it, so the value was
+chosen to hold the reflexive channel at roughly its historical size (5.2% of the noise term against
+6.8%) rather than by the loss. `easing` 0.052 → 0.060 keeps the `-crossasset` ladder graded, at 4 PASS and 1 EDGE across five
+seeds — the standard 0.21.0 shipped at; the equity side moved that window four times.
+
+**`jumpVar` 0.10 → 0.17 with `jumpRate` 0.0010 → 0.0050, and the pair is the point.** Raising
+`jumpVar` alone cannot reach the kurtosis anchor: at the old rate, 0.12 read 35.2 on one seed of five
+against a realism ceiling of 30. The same jump variance arriving as more, smaller jumps raises the
+MEDIAN without the extremes running away — the five seeds now read 25.9 to 28.7. **Rarer jumps are
+not fatter tails; they are noisier ones**, and one handle moves the median and the extremes in the
+same direction where two can separate them. Note that a world sitting ON its kurtosis anchor of 28 is
+by construction close to the 30 realism ceiling; that tightness is a property of the band, not of
+this world.
+
+**Every `sdRel` re-frozen** from `-noise -paths 200` at the adopted world — the first time all of
+them came from one ensemble at one size. 0.21.0 had re-frozen only `kurtSd` at 200 paths and the rest
+still carried a 120-path run's readings, so several moved by more than the world change explains.
+
+**The reflexive sweep world needed its own strength.** With one impact law the vol-scaling crowd
+reaches 1.2% of the noise term at the default and is effectively inert, so its sweep entry now sets
+`crowdImpact = 0.20` — the largest value that stays a market, since 0.30 fails the kurtosis realism
+band. Even there it reaches only 2.3% against the momentum crowd's 5.2%: **a crowd selling into
+volatility destabilises the market faster than a crowd buying trends, so it cannot be run as hard.**
+
+**Also worth knowing.** `-fundvol` and `-value` are persistence dials and nothing said so before:
+`-fundvol 0.10` reads 1.11 and `-value 0.020` reads 1.09, and time under water bought on either is
+bought against the null a trailing-window statistic is scored against. The dial-sensitivity table in
+`docs/MarketSimWorlds.md` carries a `vr` column now. `-jumpvar 0` still isolates the tail channel
+exactly — it consumes no draws — but it no longer reproduces a pre-0.21 world, because price
+formation moved. Median-depth and bond crash-response figures quoted in CHANGELOG entries below are
+against the pre-0.22.0 anchors and do not compare with the ones above.
+
 ## v0.21.0 — 2026-08-27
 
 **FIXED — the numerical guard was authoring the extreme tail, and the check that watched it could

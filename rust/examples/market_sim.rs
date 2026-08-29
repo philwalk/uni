@@ -77,7 +77,12 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// without touching this line fails the build at the moment the discrepancy is created, next to the
 /// schema number that then has to be decided about. A test cannot force the bump; it can force the
 /// decision to be conscious, which is what this pair is for.
-const EMIT_SCHEMA: u32 = 4;
+// 4 -> 5: `world.crowdImpact` is a different quantity. It was price pressure per unit of exposure
+// HELD by the momentum crowd (and per unit TRADED by the other two, on a scale 13x larger); it is
+// now per unit TRADED, one rule for every crowd. A reader that reconstructs a `World` from a
+// schema-4 sidecar and runs it here gets a different market with no error — exactly what the schema
+// number exists to prevent.
+const EMIT_SCHEMA: u32 = 5;
 
 // Referenced only from the test module below; in a normal build of the example it is
 // deliberately unread — the writer must not consult its own contract.
@@ -215,35 +220,31 @@ const JUMP_ASYM: f64 = 0.4;
 fn jump_scale(w: &World) -> f64 {
     SIGMA_N * (w.jump_var / (w.jump_rate * (1.0 + JUMP_ASYM * JUMP_ASYM))).sqrt()
 }
-/// `crowdImpact` at which the momentum crowd reproduces the frozen `k_trend` exactly. The ratio
-/// is what enters the flow, so the default divides to a bit-exact 1.0 and the shipped world is
-/// unchanged; every other setting scales the reflexive channel that used to have no dial at all.
-const CROWD_IMPACT_REF: f64 = 0.06;
-/// THE shipped world. `main` seeds its mutable CLI variables from this and the release table
+// THE shipped world. `main` seeds its mutable CLI variables from this and the release table
 /// derives its rows from it, so every default is written once — the same one-source rule the Scala
 /// twin's `Defaults` follows.
 fn default_world() -> World {
     World {
         trend_share: 0.055,
-        depth: 16.94,
+        depth: 17.4,
         stress: 5.37,
         beta: 3.0,
         drift: 0.113,
-        fund_vol: 0.041,
+        fund_vol: 0.070,
         rate_mean: 0.042,
         vol_persist: 0.99,
         vol_of_vol: 0.027,
         recovery_drag: 10.0,
         recovery_floor: 0.10,
         halt_limit: 0.25,
-        jump_var: 0.10,
-        jump_rate: 0.0010,
+        jump_var: 0.17,
+        jump_rate: 0.0050,
         value_pull: 0.045,
         crowd: Crowd::Momentum,
-        crowd_impact: 0.07,
+        crowd_impact: 0.030,
         panic: 0.0,
         duration: 13.5,
-        easing: 0.052,
+        easing: 0.060,
         unwind: 0.35,
         refuge: 0.11,
         infl_prob: 0.20,
@@ -331,8 +332,44 @@ fn releases() -> Vec<(&'static str, World)> {
         ("0.19.2", v0_19_2()),
         ("0.19.3", v0_19_2()),
         ("0.20.0", v0_20_0()),
-        ("0.21.0", default_world()),
+        ("0.21.0", v0_21_0()),
+        ("0.22.0", default_world()),
     ]
+}
+
+/// 0.21.0's world, frozen for the same reason `v0_20_0` is: the variance-ratio row moved the default
+/// off it.
+fn v0_21_0() -> World {
+    World {
+        trend_share: 0.055,
+        depth: 16.94,
+        stress: 5.37,
+        beta: 3.0,
+        drift: 0.113,
+        fund_vol: 0.041,
+        rate_mean: 0.042,
+        vol_persist: 0.99,
+        vol_of_vol: 0.027,
+        recovery_drag: 10.0,
+        recovery_floor: 0.10,
+        halt_limit: 0.25,
+        jump_var: 0.10,
+        jump_rate: 0.0010,
+        value_pull: 0.045,
+        crowd: Crowd::Momentum,
+        crowd_impact: 0.07,
+        panic: 0.0,
+        duration: 13.5,
+        easing: 0.052,
+        unwind: 0.35,
+        refuge: 0.11,
+        infl_prob: 0.20,
+        infl_size: 0.10,
+        infl_speed: 0.010,
+        rate_speed: 3.0,
+        discount: 5.73,
+        margin: 0.006,
+    }
 }
 
 /// 0.20.0's world, frozen for the same reason `v0_19_2` is: 0.21.0 moved the default off it, and a
@@ -695,7 +732,6 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
     let mut sat_cnt = 0usize;
     let mut perf_v = 0.0f64;
     let mut perf_t = 0.0f64;
-    let k_trend = 0.0045f64;
     let k_adapt = 0.010f64;
     let k_home = 0.020f64;
     let mut log_vol = 0.0f64;
@@ -704,8 +740,16 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
         Crowd::Trend(d) => 2.max((f64::from(d) * 252.0 / 365.25).round() as usize),
         _ => 0,
     };
-    let mut crowd_e = 1.0f64;
-    let mut crowd_prev = 1.0f64;
+    // The crowd starts where its own target starts, so the first session is not a trade it never
+    // made. The banded crowds begin fully invested (1.0); the momentum crowd's target IS
+    // `trend_pos`, which is 0 while there is no history to measure momentum over.
+    let crowd_init = if matches!(w.crowd, Crowd::Momentum) {
+        0.0f64
+    } else {
+        1.0f64
+    };
+    let mut crowd_e = crowd_init;
+    let mut crowd_prev = crowd_init;
     let mut ma_sum = 0.0f64;
     let mut crowd_rv = 0.01 * 0.01f64;
     let mut crowd_anchor = 0.0f64;
@@ -807,18 +851,28 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
         };
         let momentum = log_pobs - past;
         let trend_pos = (momentum / 0.12).tanh();
-        let eq_flow = match w.crowd {
-            Crowd::Momentum => k_trend * (w.crowd_impact / CROWD_IMPACT_REF) * w_trend * trend_pos,
-            _ => w.crowd_impact * w_trend * (crowd_e - crowd_prev),
-        };
+        // The momentum crowd's desired exposure, set here rather than in the block above only
+        // because `trend_pos` needs this session's `log_pobs`; the information behind it is still
+        // strictly prior. It is continuous where the other crowds' targets are banded, and
+        // deliberately unbanded: the 0.05 band exists to stop a BINARY target flip-flopping across a
+        // moving average, and a continuous target has nothing to flip-flop about.
+        if matches!(w.crowd, Crowd::Momentum) {
+            crowd_e = trend_pos;
+        }
+        // ONE price-impact rule for every crowd: pressure comes from the exposure TRADED this
+        // session, never from the exposure held. A crowd that has been long for a month and is still
+        // long is not buying, and a market it is not buying does not rise because of it.
+        let eq_flow = w.crowd_impact * w_trend * (crowd_e - crowd_prev);
         crowd_prev = crowd_e;
         log_vol = w.vol_persist * log_vol + w.vol_of_vol * rng.randn();
         let d_noise = SIGMA_N * (log_vol - vol_norm).exp() * rng.randn();
 
-        // The jump channel. Its draws come from `jrng`, NOT `rng`, so a world with jump_var = 0
-        // takes the untouched branch below and every pre-0.21 statistic reproduces bit for bit —
-        // the failure mode a shared stream would have caused is not a risk that was reasoned about,
-        // it is one the branch removes. `vol_mult` is this session's volatility state, so jumps
+        // The jump channel. Its draws come from `jrng`, NOT `rng`, so `jump_var = 0` takes the
+        // untouched branch below and moves NOTHING ELSE in the path — the failure mode a shared
+        // stream would have caused is not a risk that was reasoned about, it is one the branch
+        // removes. (Through 0.21.0 that also made `-jumpvar 0` reproduce the pre-jump world bit for
+        // bit; 0.22.0 changed the price-impact law, so the isolation claim now holds only WITHIN a
+        // release.) `vol_mult` is this session's volatility state, so jumps
         // CLUSTER inside a stressed stretch instead of scattering uniformly, which is what turns a
         // fat tail into a survivable-or-not sequence for anything levered.
         let eq_shock = if w.jump_var <= 0.0 {
@@ -878,6 +932,10 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
 
         // ---- capital reallocation: spring, scored on positions actually held ---------------
         perf_v = 0.99 * perf_v + 0.01 * (mispricing_pre * ret_e) * 100.0;
+        // POSITION HELD, where the price impact above is position TRADED — both are correct and
+        // they are different questions. A crowd earns or loses on what it is holding; it moves the
+        // price by what it is buying or selling. Conflating the two is the defect that shipped
+        // through 0.21.0.
         let crowd_pos = match w.crowd {
             Crowd::Momentum => trend_pos,
             _ => crowd_e - 1.0,
@@ -970,6 +1028,42 @@ fn autocorr_abs(r: &[f64], lag: usize) -> f64 {
         // Scala writes these as z(0 until n-lag, 0) and z(lag until n, 0); on an n x 1
         // column those are exactly row slices.
         (&z.applyRowsAll(0..n - lag) * &z.applyRowsAll(lag..n)).sum() / den
+    }
+}
+
+/// Var(sum of q consecutive returns) / (q * Var(r)) on SIGNED returns: 1.0 under no serial
+/// dependence at that horizon, above 1 for trend, below for mean reversion. The two `clustering`
+/// rows measure |r| and are blind to this — a world can cluster its volatility exactly right while
+/// manufacturing a trend no market has, and one did for four releases.
+///
+/// WHY A VARIANCE RATIO AND NOT AN AUTOCORRELATION. A signed autocorrelation at any single lag
+/// cannot see this defect: the shipped-0.21.0 world reads about +0.01 at every lag out to 60, which
+/// is inside the sampling noise of a 100-year path and would pass a per-lag check at every lag
+/// separately. They are all the SAME SIGN, so they accumulate — the 60-session variance is 52%
+/// above iid while no single lag looks unusual.
+///
+/// CONVENTION, stated for the same reason `clustering lag 1` states one, because "variance ratio"
+/// names several estimators that disagree in small samples: NON-OVERLAPPING q-blocks, sample
+/// variances (n-1), the series truncated to a whole number of blocks.
+fn variance_ratio(r: &[f64], q: usize) -> f64 {
+    let n = r.len() / q * q;
+    if q < 2 || n < 2 * q {
+        return f64::NAN;
+    }
+    fn sample_var(x: &[f64]) -> f64 {
+        let m = MatD::apply(x);
+        let z = &m - m.mean();
+        z.power(2).sum() / (x.len() - 1) as f64
+    }
+    let daily = &r[..n];
+    let blocks: Vec<f64> = (0..n / q)
+        .map(|k| daily[k * q..(k + 1) * q].iter().sum())
+        .collect();
+    let v_daily = sample_var(daily);
+    if v_daily <= 0.0 {
+        f64::NAN
+    } else {
+        sample_var(&blocks) / (q as f64 * v_daily)
     }
 }
 
@@ -1099,6 +1193,8 @@ struct WorldStats {
     kurt: f64,
     ac1: f64,
     ac20: f64,
+    /// SIGNED-return persistence — `variance_ratio`.
+    vr60: f64,
     ann_ret: f64,
     n_episodes: usize,
     ep_per_path: f64,
@@ -1241,6 +1337,28 @@ const BOND_VOL_PER_YEAR_BAND: (f64, f64) = (0.70, 1.10);
 /// min/max of the fixture's Treasury rows, so a re-measured fund moves them or fails the build.
 const BOND_DUR_SUPPORT: (f64, f64) = (1.80, 14.89);
 const BOND_VOL_SUPPORT: (f64, f64) = (1.44, 14.12);
+
+/// The horizon the variance ratio is graded at, in sessions — three months. The choice is not free
+/// and it is not the flattering one: q = 20 would let the 0.21.0 world through (its reading overlaps
+/// the CRSP century's 1.166), and q = 252 is too noisy to band (real readings run 0.27-1.45). At 60
+/// the real record is tight and that world is outside all of it.
+///
+/// It is also the momentum crowd's own lookback, which is the mechanism the row exists to hold
+/// accountable. That is the direction that matters: a horizon chosen to spare the mechanism would be
+/// a longer or shorter one, and both were available.
+const VAR_RATIO_Q: usize = 60;
+
+/// The `variance ratio 60d` band, from `test-data/equity-anchors/persistence-2026-08-29.tsv`: 18 real
+/// equity funds over their full histories and over the depth cross-section's own 2001-2026 window,
+/// plus the CRSP value-weighted market opening in 1926, 1954 and 1990. The 39 readings span 0.547
+/// (XLV, 2001-2026) to 1.146 (the CRSP century), and the band is that range rounded outward to the
+/// nearest 0.05. The persistence-anchor tests re-derive both bounds from the file by that rule, so
+/// the band cannot be widened to admit a world without a real market moving first.
+///
+/// SHARED across anchor sets rather than carried per asset, unlike the two bands in `Anchors`. What
+/// separates these readings is the ERA, not the index: QQQ reads 0.720 against SPY's 0.705 over
+/// their full histories, while the same market reads 1.14 over the century and 0.82 since 1990.
+const VAR_RATIO_BAND: (f64, f64) = (0.50, 1.15);
 
 impl WorldStats {
     /// Return per unit volatility, in the units this report already prints: `ann_ret` is a LOG
@@ -1432,6 +1550,10 @@ fn measure(sims: &[Path], years: usize) -> WorldStats {
         ac20: med(&rets
             .iter()
             .map(|r| autocorr_abs(r, 20))
+            .collect::<Vec<f64>>()),
+        vr60: med(&rets
+            .iter()
+            .map(|r| variance_ratio(r, VAR_RATIO_Q))
             .collect::<Vec<f64>>()),
         ann_ret: med(&sims
             .iter()
@@ -1731,6 +1853,23 @@ fn gate_checks(a: Anchors, st: &WorldStats) -> Vec<(String, bool, GateClass)> {
             2,
             "",
         ),
+        // SIGNED persistence at three months. FIDELITY and not realism, for the reason stated above:
+        // `-crowdimpact 0.12` is one of the sweep's own OFF-worlds — pressing the reflexive channel
+        // hard is what it is FOR — and a realism band would make it inadmissible in every report
+        // rather than describing it. What a failure here costs is specific and large: every
+        // trailing-window statistic read off this world is read against the wrong null. A momentum
+        // rule's information coefficient, a p-value calibrated on synthetic paths, a
+        // drawdown-conditioned hazard — all of them inherit the trend this row measures, and none of
+        // the other fifteen targets can see it.
+        band_check(
+            "variance ratio 60d",
+            st.vr60,
+            VAR_RATIO_BAND.0,
+            VAR_RATIO_BAND.1,
+            GateClass::Fidelity,
+            2,
+            "",
+        ),
     ];
     // The equity depth relation is anchor-fitted too, so it refuses outside its anchors' volatility
     // range for the same reason the two below do. That range starts at 14.3%, so the sweep's own
@@ -1976,9 +2115,12 @@ struct Anchors {
     ret_vol_band: (f64, f64),
 }
 
-/// The S&P/CRSP set, unchanged from every release before 0.21.0 — the values and sampling spreads
-/// are the ones that were already here, moved rather than re-measured, so the default reproduces
-/// earlier output byte for byte.
+/// The S&P/CRSP set. The LEVELS are the ones every release before 0.21.0 hard-coded, moved rather
+/// than re-measured. The SPREADS were re-frozen in 0.22.0 from `-noise -paths 200` at the adopted
+/// world — the first time all of them came from one ensemble at one size, which is why several moved
+/// by more than the world change explains: only `kurt_sd` had been re-frozen at 200 paths, and the
+/// rest still carried a 120-path run's readings. `-noise`'s `sd/real` column now agrees with the
+/// `wt` beside it, which is the whole point of printing them together.
 const SP500_ANCHORS: Anchors = Anchors {
     name: "S&P 500 / CRSP",
     equity_window: "S&P / CRSP 1954-2026",
@@ -1986,21 +2128,21 @@ const SP500_ANCHORS: Anchors = Anchors {
     cluster_window: "CRSP 1926-2026, the century",
     cluster_years: 100,
     vol: 16.0,
-    vol_sd: 0.10,
+    vol_sd: 0.14,
     ret_vol: 0.69,
-    ret_vol_sd: 0.20,
+    ret_vol_sd: 0.18,
     kurt: 28.0,
-    kurt_sd: 1.51,
+    kurt_sd: 2.25,
     ac1: 0.299,
-    ac1_sd: 0.09,
+    ac1_sd: 0.12,
     ac20: 0.225,
-    ac20_sd: 0.11,
+    ac20_sd: 0.19,
     crashes: 20.7,
-    crashes_sd: 0.22,
-    med_depth: -27.1,
-    med_depth_sd: 0.15,
+    crashes_sd: 0.24,
+    med_depth: -21.4,
+    med_depth_sd: 0.13,
     worst_depth: -56.8,
-    worst_depth_sd: 0.17,
+    worst_depth_sd: 0.24,
     vol_band: (14.0, 18.0),
     ret_vol_band: (0.50, 0.85),
 };
@@ -2031,21 +2173,21 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     cluster_window: "QQQ 1999-2026",
     cluster_years: 27,
     vol: 26.90,
-    vol_sd: 0.10,
+    vol_sd: 0.14,
     ret_vol: 0.38,
-    ret_vol_sd: 0.20,
+    ret_vol_sd: 0.18,
     kurt: 9.55,
     kurt_sd: 1.23,
     ac1: 0.293,
-    ac1_sd: 0.09,
+    ac1_sd: 0.12,
     ac20: 0.249,
-    ac20_sd: 0.11,
+    ac20_sd: 0.19,
     crashes: 25.6,
-    crashes_sd: 0.22,
+    crashes_sd: 0.24,
     med_depth: -22.8,
-    med_depth_sd: 0.15,
+    med_depth_sd: 0.10,
     worst_depth: -83.0,
-    worst_depth_sd: 0.17,
+    worst_depth_sd: 0.24,
     vol_band: (23.5, 30.3),
     ret_vol_band: (0.27, 0.47),
 };
@@ -2133,12 +2275,49 @@ fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             a.ac20,
             wgt(0.5, a.ac20_sd),
         ),
+        // SIGNED persistence, the axis the two rows above cannot see — they are |r|, and a world can
+        // cluster its volatility exactly right while its price trends. See `variance_ratio` for why
+        // this is not a per-lag autocorrelation and `VAR_RATIO_BAND` for the cross-section behind it.
+        //
+        // 1.00 IS A THEORY VALUE, DELIBERATELY, and it is the one row in this table that is not a
+        // reading off a record. The real cross-section sits BELOW it — 0.74 median at 2001-2026 —
+        // because modern equity indices mean-revert mildly at three months, and this model has no
+        // mean-reversion channel to reproduce that with. Targeting 0.74 would ask a search to close a
+        // gap with the only dials it has, which are the trend dials, and it would close it by
+        // removing the reflexive channel entirely. The target says "do not manufacture a trend"; the
+        // BAND is where the record's own spread lives, and it admits every reading in the fixture.
+        //
+        // NOT redundant with `crashes/century` or the depth rungs even though the same dial moves all
+        // four: across the crowdImpact sweep corr(vr60, equity d20 vs real) is 0.98, which is the
+        // finding, not an argument for dropping a row. The depth rungs said the world was too deep
+        // and named no cause; this row names it.
+        (
+            "variance ratio 60d",
+            (|st: &WorldStats| st.vr60) as StatFn,
+            1.00,
+            wgt(1.0, 0.32),
+        ),
         (
             "crashes/century",
             (|st: &WorldStats| st.ep_per_path * 100.0 / st.years_per_path) as StatFn,
             a.crashes,
             wgt(1.0, a.crashes_sd),
         ),
+        // RE-MEASURED in 0.22.0, and the old value was not this statistic. `-27.1` shipped through
+        // 0.21.0 with no recorded convention; the model measures every peak-to-trough decline of 15%
+        // or worse, and NO window of the record produces -27.1% at that threshold. A 20% threshold
+        // does (-26.6% over 1954-2026, -28.0% over the century), so the model was graded against a
+        // statistic it does not compute and pushed toward crashes deeper than the record's for its
+        // own definition.
+        //
+        // Measured with `episodes` itself on the same CRSP total-return control the two rows above
+        // use: -21.4% over 1954-2026, -23.7% over the century, -21.9% since 1990. The anchor set's
+        // own window wins. Recorded in `test-data/equity-anchors/episodes-2026-08-29.tsv`, from which
+        // `episode_anchor_tests` re-derives the shipped value.
+        //
+        // The two sibling anchors survive the same check, which is why only this one moved:
+        // `crashes/century` 20.7 sits between the record's 19.2 and 24.9, and `worst crash %` -56.8
+        // is the same 2007-09 episode the control reads at -54.6%.
         (
             "median depth %",
             (|st| st.depth_med) as StatFn,
@@ -2164,21 +2343,32 @@ fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             13.0,
             wgt(1.0, 0.51),
         ),
+        // RE-MEASURED in 0.22.0, same error class as `median depth %` above: `20.0` is 2008 ALONE,
+        // the largest of the five growth-shock episodes in the record, and this row is a MEDIAN
+        // across episodes. Measured the way `measure` measures it — SPY drawdowns of 15%+, TLT's log
+        // return over the same peak-to-trough span — the record reads +6.6%, from episodes of
+        // +6.6 / +22.4 / +4.4 / +13.3 / +0.8. The model was therefore read as UNDERSTATING a bond
+        // rally it in fact overstates. Six episodes is the honest limit and `-noise` prices it in.
+        // `test-data/bond-anchors/crash-response-2026-08-29.tsv`; `bond_crash_tests` re-derives both.
         (
             "bond growth-crash",
             (|st| st.bond_growth) as StatFn,
-            20.0,
-            wgt(1.0, 0.39),
+            6.6,
+            wgt(1.0, 1.18),
         ),
         // The judgment stays at 1.5 — inflation-crash behaviour is why the bond refuge exists —
         // and the measured precision crushes the weight to ~0.13 anyway: sd/real 2.89, and only
         // 95 of 200 24-year histories produce a reading at all. The old 1.5 was the largest
         // weight in the loss on the least measurable target in the set.
+        // RE-MEASURED with it: `-25.0` was a rounding of the ONE inflation-regime drawdown the
+        // record has, which reads -34.7% (SPY 2022-01-03..2022-10-12, TLT over the same span). A
+        // median of one is that one, so the anchor is the episode — but rounded 28% toward zero,
+        // which is not a convention, it is an error.
         (
             "bond infl-crash",
             (|st| st.bond_infl) as StatFn,
-            -25.0,
-            wgt(1.5, 2.89),
+            -34.7,
+            wgt(1.5, 1.95),
         ),
         // DEPTH PROFILE, stated RELATIVE to what a real fund of the same volatility and return
         // spends under water rather than as three absolute levels — see `EQUITY_D10_CORR` for the
@@ -2227,13 +2417,13 @@ fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             "equity d5 vs real",
             (|st: &WorldStats| st.eq_d5_vs_real()) as StatFn,
             1.00,
-            wgt(0.5, 0.13),
+            wgt(0.5, 0.15),
         ),
         (
             "equity d10 vs real",
             (|st: &WorldStats| st.eq_d10_vs_real()) as StatFn,
             1.00,
-            wgt(1.0, 0.25),
+            wgt(1.0, 0.34),
         ),
         // d20's sdRel moved 0.99 -> 1.56 in the 0.21.0 recovery-drag change, and like kurtosis's
         // move it is a re-measurement of a statistic that genuinely became more variable, not a
@@ -2244,13 +2434,13 @@ fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             "equity d20 vs real",
             (|st: &WorldStats| st.eq_d20_vs_real()) as StatFn,
             1.00,
-            wgt(0.5, 1.56),
+            wgt(0.5, 1.62),
         ),
         (
             "bond depth vs vol",
             (|st: &WorldStats| st.bond_depth_vs_vol()) as StatFn,
             1.00,
-            wgt(0.5, 0.33),
+            wgt(0.5, 0.34),
         ),
     ]
 }
@@ -2899,12 +3089,25 @@ fn sweep_worlds(
         // TWO AXES, not two modes. Before the momentum crowd got a strength dial there was only
         // one dimension here, so "which crowd" was the whole question; now a mode entry that does
         // not state a strength silently picks the default, which is not the interesting value.
+        // 0.20 rather than the default 0.030, and the two numbers are NOT comparable as strengths:
+        // since 0.22.0 one impact law covers every crowd, and this crowd's target moves in small
+        // continuous steps where the momentum crowd's swings across a saturating tanh. 0.20 is the
+        // largest setting that stays a market — 0.30 fails the kurtosis realism band — and it still
+        // only reaches 2.3% of the noise term against the default crowd's 5.2%. THAT IS THE
+        // FINDING: a crowd selling into volatility destabilises the market faster than a crowd
+        // buying trends, so it cannot be run as hard. Left at the default it would be inert (1.2%),
+        // which is the dead-knob defect this entry exists to avoid.
         out.push((
             "reflexive: crowd runs a vol rule",
-            with(|w| w.crowd = Crowd::VolScaled),
+            with(|w| {
+                w.crowd = Crowd::VolScaled;
+                w.crowd_impact = 0.20;
+            }),
             true,
         ));
-        // 0.12 is the stress case: admissible, where 0.25 fails the gate.
+        // 0.12 is the stress case: 4x the default, admissible on realism and mechanism, and outside
+        // the persistence band — which is what pressing a trend crowd hard is SUPPOSED to look like,
+        // and is disclosed rather than hidden.
         out.push((
             "reflexive: crowd pressed hard",
             with(|w| w.crowd_impact = 0.12),
@@ -3912,12 +4115,13 @@ fn bond_relations() -> [Relation; 2] {
 /// target added or renamed fails the build until someone places it. The failure being prevented is
 /// a target silently absent from the equity section — a shorter table reads as a shorter list of
 /// concerns, not as a bug.
-const EQUITY_TARGETS: [&str; 11] = [
+const EQUITY_TARGETS: [&str; 12] = [
     "equity vol %",
     "return per vol",
     "kurtosis",
     "clustering lag 1",
     "clustering lag 20",
+    "variance ratio 60d",
     "crashes/century",
     "median depth %",
     "worst crash %",
@@ -4277,7 +4481,7 @@ fn run_cross_asset_report(a: Anchors, paths: usize, years: usize, seed: u64, bas
 /// because sampling error depends on the length of the record actually behind each number, not
 /// on the horizon the model is scored at. The contract test pins this to `fit_targets` as a
 /// partition, so a new target cannot land without a declared horizon.
-fn anchor_groups(a: Anchors) -> [(&'static str, usize, &'static [&'static str]); 4] {
+fn anchor_groups(a: Anchors) -> [(&'static str, usize, &'static [&'static str]); 5] {
     [
         (
             a.equity_window,
@@ -4296,6 +4500,11 @@ fn anchor_groups(a: Anchors) -> [(&'static str, usize, &'static [&'static str]);
             a.cluster_years,
             &["clustering lag 1", "clustering lag 20"],
         ),
+        // 18 equity funds and three CRSP windows, the shortest of them 24.9 years — see
+        // `VAR_RATIO_BAND`. The horizon is one instrument's record, as it is for the depth rungs, and
+        // the target this group carries is a theory value rather than a reading, so `real@` here says
+        // where 1.00 falls in the model's own spread of 25-year readings, not where a record does.
+        ("equity funds + CRSP, 25y", 25, &["variance ratio 60d"]),
         // 35 equity funds over 2001-2026; the horizon is one instrument's record, because that is
         // what each residual ratio in the fit was measured from.
         (
@@ -4356,7 +4565,7 @@ fn run_noise_report(a: Anchors, paths: usize, seed: u64, base: &World) {
         "MODEL-IMPLIED, circularity stated: the spreads come from this model's own dynamics, so"
     );
     println!(
-        "where the model is known biased (clustering 1.06x real) the spread is biased with it."
+        "where the model is known biased (the deep drawdown rung, 1.7x real) the spread is too."
     );
     println!("There is no other estimate — the record is one draw.");
     println!();
@@ -6192,6 +6401,15 @@ fn main() {
         jf(st.ac1, 6, 3),
         jf(st.ac20, 6, 3)
     );
+    // The line above is |r| and the line below is r, which is the whole reason both are printed:
+    // they are different axes and a world can be right on one and wrong on the other.
+    println!(
+        "  trend persistence      {}d variance ratio {}   (1.0 = no serial dependence; band {}-{})",
+        VAR_RATIO_Q,
+        jf(st.vr60, 6, 3),
+        jf(VAR_RATIO_BAND.0, 0, 2),
+        jf(VAR_RATIO_BAND.1, 0, 2)
+    );
     println!();
     println!(
         "  drawdowns of 15%+      {}, {} per path; {} unrecovered at path end (included in depth)",
@@ -6792,6 +7010,12 @@ mod contract_tests {
         // The refactor that made the asset a parameter must not have moved the default world's
         // targets. If one changes, `-validate` changes for every consumer who never asked for a
         // different index.
+        //
+        // ONE has moved since, deliberately: `med_depth` -27.1 -> -21.4 in 0.22.0, because -27.1 was
+        // not the statistic the model computes — it is the record's median at a 20% threshold where
+        // the model measures 15%+ episodes. `episode_anchor_tests` re-derives the new value and pins
+        // the evidence for the old one. A future move of any value here needs the same treatment:
+        // measured, recorded, re-derivable.
         let a = SP500_ANCHORS;
         assert_eq!(a.vol, 16.0);
         assert_eq!(a.ret_vol, 0.69);
@@ -6799,7 +7023,7 @@ mod contract_tests {
         assert_eq!(a.ac1, 0.299);
         assert_eq!(a.ac20, 0.225);
         assert_eq!(a.crashes, 20.7);
-        assert_eq!(a.med_depth, -27.1);
+        assert_eq!(a.med_depth, -21.4); // re-measured in 0.22.0; see episode_anchor_tests
         assert_eq!(a.worst_depth, -56.8);
         assert_eq!(a.vol_band, (14.0, 18.0));
         assert_eq!(a.ret_vol_band, (0.50, 0.85));
@@ -7114,6 +7338,399 @@ mod equity_anchor_tests {
         assert!(
             !gated.iter().any(|n| n.contains("d20")),
             "a d20 gate band has appeared in {gated:?}"
+        );
+    }
+}
+
+/// `VAR_RATIO_BAND` is a FITTED NUMBER in the same sense the depth relation's constants are: it is
+/// the real cross-section's own range, rounded outward. This re-derives both bounds from the
+/// checked-in readings, so the band is derivable rather than asserted, and a band widened to admit a
+/// world fails here instead of quietly becoming a band that grades nothing.
+///
+/// The Scala twin carries the same checks in `PersistenceAnchorSuite`, against the same file.
+#[cfg(test)]
+mod persistence_anchor_tests {
+    use super::*;
+
+    const FIXTURE: &str = "../test-data/equity-anchors/persistence-2026-08-29.tsv";
+
+    struct Row {
+        window: String,
+        ticker: String,
+        kind: String,
+        years: f64,
+        vr60: f64,
+    }
+
+    /// The rounding step the band is stated at. Outward from the observed range, never inward: a
+    /// bound that excluded a real reading would be a band asserting that a real market is not one.
+    const STEP: f64 = 0.05;
+
+    fn outward(x: f64, up: bool) -> f64 {
+        let n = if up {
+            (x / STEP).ceil()
+        } else {
+            (x / STEP).floor()
+        };
+        (n * STEP * 1e6).round() / 1e6
+    }
+
+    /// `None` where the fixture is absent, which is a skip and not a failure: the crate ships
+    /// without `test-data/`, so a source-tarball build must not fail here.
+    fn rows() -> Option<Vec<Row>> {
+        let text = std::fs::read_to_string(FIXTURE).ok()?;
+        Some(
+            text.lines()
+                .filter(|l| {
+                    !l.starts_with('#') && !l.starts_with("window\t") && !l.trim().is_empty()
+                })
+                .map(|l| {
+                    let f: Vec<&str> = l.split('\t').collect();
+                    Row {
+                        window: f[0].to_string(),
+                        ticker: f[1].to_string(),
+                        kind: f[2].to_string(),
+                        years: f[4].parse().expect("years"),
+                        vr60: f[6].parse().expect("vr60"),
+                    }
+                })
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn band_is_the_real_range_rounded_outward() {
+        let Some(rows) = rows() else { return };
+        let lo = rows.iter().map(|r| r.vr60).fold(f64::INFINITY, f64::min);
+        let hi = rows
+            .iter()
+            .map(|r| r.vr60)
+            .fold(f64::NEG_INFINITY, f64::max);
+        assert!(
+            (VAR_RATIO_BAND.0 - outward(lo, false)).abs() < 1e-9,
+            "the low bound no longer follows from the fixture: readings start at {lo:.3}, which \
+             rounds outward to {:.3}",
+            outward(lo, false)
+        );
+        assert!(
+            (VAR_RATIO_BAND.1 - outward(hi, true)).abs() < 1e-9,
+            "the high bound no longer follows from the fixture: readings reach {hi:.3}, which \
+             rounds outward to {:.3}",
+            outward(hi, true)
+        );
+    }
+
+    #[test]
+    fn the_band_admits_every_real_reading() {
+        // Implied by the rule above and asserted anyway, because this is the property that matters:
+        // the gate uses STRICT inequalities, so a bound landing exactly on a real reading would fail
+        // the market that produced it.
+        let Some(rows) = rows() else { return };
+        for r in &rows {
+            assert!(
+                r.vr60 > VAR_RATIO_BAND.0 && r.vr60 < VAR_RATIO_BAND.1,
+                "{} over {} reads {:.3}, outside the band the gate enforces",
+                r.ticker,
+                r.window,
+                r.vr60
+            );
+        }
+    }
+
+    #[test]
+    fn the_era_separates_these_readings_and_the_index_does_not() {
+        // Why the band is shared rather than carried per asset. Two indices as different as the
+        // Nasdaq-100 and the S&P over the same era agree far more closely than one index does with
+        // itself across eras — so a per-asset band would encode a difference the record does not
+        // show, and would have to be invented for every new anchor set.
+        let Some(rows) = rows() else { return };
+        let at = |w: &str, t: &str| {
+            rows.iter()
+                .find(|r| r.window == w && r.ticker == t)
+                .map(|r| r.vr60)
+        };
+        let (Some(qqq), Some(spy), Some(century), Some(modern)) = (
+            at("wfull", "QQQ"),
+            at("wfull", "SPY"),
+            at("c1926", "CRSP-VW"),
+            at("c1990", "CRSP-VW"),
+        ) else {
+            panic!("the fixture no longer carries the QQQ/SPY/CRSP rows this claim rests on")
+        };
+        let across_index = (qqq - spy).abs();
+        let across_era = (century - modern).abs();
+        assert!(
+            across_index < across_era / 2.0,
+            "QQQ and SPY now differ by {across_index:.3} against {across_era:.3} between the CRSP \
+             century and 1990-2026. If the index has become the larger axis, the band belongs in \
+             `Anchors` per asset, not shared."
+        );
+    }
+
+    #[test]
+    fn the_fixture_covers_a_cross_section() {
+        let Some(rows) = rows() else { return };
+        let full = rows.iter().filter(|r| r.window == "wfull").count();
+        assert!(
+            full >= 15,
+            "only {full} instruments in the full-history block"
+        );
+        let mut kinds: Vec<&str> = rows.iter().map(|r| r.kind.as_str()).collect();
+        kinds.sort_unstable();
+        kinds.dedup();
+        assert!(kinds.len() >= 3, "the readings now span only {kinds:?}");
+        assert!(
+            rows.iter().all(|r| r.years >= 20.0),
+            "a window shorter than 20 years has appeared; the 60-session ratio needs blocks to \
+             average"
+        );
+    }
+}
+
+/// `med_depth` is a MEASURED number and it was measured wrong once. Through 0.21.0 it shipped as
+/// -27.1% with no recorded convention, while the model measures every peak-to-trough decline of 15%
+/// or worse; no window of the record produces -27.1% at that threshold and a 20% threshold does.
+/// This re-derives the shipped value from the checked-in readings so the anchor and the statistic it
+/// is compared against cannot drift apart again.
+///
+/// The Scala twin carries the same checks in `EpisodeAnchorSuite`, against the same file.
+#[cfg(test)]
+mod episode_anchor_tests {
+    use super::*;
+
+    const FIXTURE: &str = "../test-data/equity-anchors/episodes-2026-08-29.tsv";
+
+    /// The threshold `episodes` is called with in `measure`. If this moves, the anchor moves with
+    /// it — which is the whole failure this module exists to prevent.
+    const MODEL_THRESHOLD: u32 = 15;
+
+    struct Row {
+        window: String,
+        thr: u32,
+        per_century: f64,
+        median: f64,
+        worst: f64,
+    }
+
+    /// `None` where the fixture is absent, which is a skip and not a failure: the crate ships
+    /// without `test-data/`.
+    fn rows() -> Option<Vec<Row>> {
+        let text = std::fs::read_to_string(FIXTURE).ok()?;
+        Some(
+            text.lines()
+                .filter(|l| {
+                    !l.starts_with('#') && !l.starts_with("window\t") && !l.trim().is_empty()
+                })
+                .map(|l| {
+                    let f: Vec<&str> = l.split('\t').collect();
+                    Row {
+                        window: f[0].to_string(),
+                        thr: f[1].parse().expect("thr"),
+                        per_century: f[3].parse().expect("perCentury"),
+                        median: f[4].parse().expect("median"),
+                        worst: f[5].parse().expect("worst"),
+                    }
+                })
+                .collect(),
+        )
+    }
+
+    fn at<'a>(rows: &'a [Row], window: &str, thr: u32) -> Option<&'a Row> {
+        rows.iter().find(|r| r.window == window && r.thr == thr)
+    }
+
+    #[test]
+    fn med_depth_is_the_record_at_the_models_own_threshold() {
+        let Some(rows) = rows() else { return };
+        let row = at(&rows, "w1954", MODEL_THRESHOLD).expect("no w1954 row at the model threshold");
+        assert!(
+            (SP500_ANCHORS.med_depth - row.median).abs() < 0.05,
+            "the anchor no longer matches the record measured the way the model measures: the \
+             fixture reads {:.1}% over 1954-2026 at a {}% threshold",
+            row.median,
+            MODEL_THRESHOLD
+        );
+    }
+
+    #[test]
+    fn no_window_reproduces_the_pre_0_22_anchor_at_the_models_threshold() {
+        let Some(rows) = rows() else { return };
+        let at_model: Vec<f64> = rows
+            .iter()
+            .filter(|r| r.thr == MODEL_THRESHOLD)
+            .map(|r| r.median)
+            .collect();
+        assert!(
+            at_model.iter().all(|m| (m + 27.1).abs() > 2.0),
+            "a window now reads near -27.1% at the model's own threshold ({at_model:?}); the 0.22.0 \
+             re-measurement rested on no window doing so, so re-read it"
+        );
+        let at_20: Vec<f64> = rows
+            .iter()
+            .filter(|r| r.thr == 20)
+            .map(|r| r.median)
+            .collect();
+        assert!(
+            at_20.iter().any(|m| (m + 27.1).abs() < 1.5),
+            "no window reads near -27.1% at a 20% threshold either ({at_20:?}); the explanation for \
+             where the old anchor came from no longer holds"
+        );
+    }
+
+    #[test]
+    fn the_sibling_episode_anchors_still_reconcile() {
+        let Some(rows) = rows() else { return };
+        let century = at(&rows, "w1926", MODEL_THRESHOLD).expect("no w1926 row");
+        let modern = at(&rows, "w1954", MODEL_THRESHOLD).expect("no w1954 row");
+        let crashes = SP500_ANCHORS.crashes;
+        assert!(
+            crashes >= century.per_century && crashes <= modern.per_century,
+            "crashes/century {crashes:.1} no longer sits between the record's {:.1} and {:.1}",
+            century.per_century,
+            modern.per_century
+        );
+        assert!(
+            (SP500_ANCHORS.worst_depth - modern.worst).abs() < 5.0,
+            "worst crash {:.1}% is no longer the same episode as the record's {:.1}%",
+            SP500_ANCHORS.worst_depth,
+            modern.worst
+        );
+    }
+
+    #[test]
+    fn deeper_thresholds_give_deeper_medians() {
+        let Some(rows) = rows() else { return };
+        let mut windows: Vec<&str> = rows.iter().map(|r| r.window.as_str()).collect();
+        windows.sort_unstable();
+        windows.dedup();
+        for w in windows {
+            let mut by_thr: Vec<&Row> = rows.iter().filter(|r| r.window == w).collect();
+            by_thr.sort_by_key(|r| r.thr);
+            for pair in by_thr.windows(2) {
+                assert!(
+                    pair[1].median <= pair[0].median + 1e-9,
+                    "[{w}] median depth does not decrease with the threshold"
+                );
+            }
+        }
+    }
+}
+
+/// The two bond crash-response targets are MEDIANS across drawdown episodes, and through 0.21.0 both
+/// shipped as single episodes: `+20.0` is 2008 alone, the largest of five, and `-25.0` is a rounding
+/// of the one inflation-regime drawdown. This re-derives both from the checked-in episodes so the
+/// targets and the statistic they are compared against cannot drift apart again.
+///
+/// The Scala twin carries the same checks in `BondCrashSuite`, against the same file.
+#[cfg(test)]
+mod bond_crash_tests {
+    use super::*;
+
+    const FIXTURE: &str = "../test-data/bond-anchors/crash-response-2026-08-29.tsv";
+
+    struct Row {
+        equity_pct: f64,
+        bond_pct: f64,
+        regime: String,
+    }
+
+    /// `None` where the fixture is absent, which is a skip and not a failure.
+    fn rows() -> Option<Vec<Row>> {
+        let text = std::fs::read_to_string(FIXTURE).ok()?;
+        Some(
+            text.lines()
+                .filter(|l| !l.starts_with('#') && !l.starts_with("peak\t") && !l.trim().is_empty())
+                .map(|l| {
+                    let f: Vec<&str> = l.split('\t').collect();
+                    Row {
+                        equity_pct: f[2].parse().expect("equityPct"),
+                        bond_pct: f[3].parse().expect("bondPct"),
+                        regime: f[4].to_string(),
+                    }
+                })
+                .collect(),
+        )
+    }
+
+    fn median_of(rows: &[Row], regime: &str) -> f64 {
+        let mut v: Vec<f64> = rows
+            .iter()
+            .filter(|r| r.regime == regime)
+            .map(|r| r.bond_pct)
+            .collect();
+        v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        if v.is_empty() {
+            f64::NAN
+        } else if v.len() % 2 == 1 {
+            v[v.len() / 2]
+        } else {
+            (v[v.len() / 2 - 1] + v[v.len() / 2]) / 2.0
+        }
+    }
+
+    fn target(name: &str) -> f64 {
+        fit_targets(SP500_ANCHORS)
+            .into_iter()
+            .find(|(n, _, _, _)| *n == name)
+            .map(|(_, _, t, _)| t)
+            .unwrap_or_else(|| panic!("no target [{name}]"))
+    }
+
+    #[test]
+    fn both_bond_crash_targets_are_the_records_medians() {
+        let Some(rows) = rows() else { return };
+        assert!(
+            (target("bond growth-crash") - median_of(&rows, "growth")).abs() < 0.05,
+            "the growth-crash target no longer matches the record's median across its growth-shock \
+             drawdowns ({:.1}%)",
+            median_of(&rows, "growth")
+        );
+        assert!(
+            (target("bond infl-crash") - median_of(&rows, "inflation")).abs() < 0.05,
+            "the inflation-crash target no longer matches the record's inflation-regime drawdown \
+             ({:.1}%)",
+            median_of(&rows, "inflation")
+        );
+    }
+
+    #[test]
+    fn the_pre_0_22_targets_were_the_extremes() {
+        let Some(rows) = rows() else { return };
+        let growth: Vec<f64> = rows
+            .iter()
+            .filter(|r| r.regime == "growth")
+            .map(|r| r.bond_pct)
+            .collect();
+        let mx = growth.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        assert!(
+            (mx - 22.4).abs() < 0.05,
+            "the largest growth-shock bond rally is no longer 2008's; the account of where +20.0 \
+             came from rests on it"
+        );
+        assert!(
+            mx > median_of(&rows, "growth") * 2.0,
+            "the growth episodes no longer have a max ({mx:.1}) far above their median; if the \
+             spread has closed, re-read the anchor's provenance"
+        );
+    }
+
+    #[test]
+    fn the_episode_set_is_what_the_model_would_count() {
+        let Some(rows) = rows() else { return };
+        assert!(
+            rows.iter().all(|r| r.equity_pct <= -15.0),
+            "an episode shallower than the model's 15% threshold is in the fixture"
+        );
+        assert_eq!(
+            rows.iter().filter(|r| r.regime == "inflation").count(),
+            1,
+            "the record's inflation-regime drawdown count has changed; the -34.7% target is a \
+             median of one, so a second episode changes the target"
+        );
+        assert!(
+            rows.len() >= 5,
+            "only {} episodes; the medians below that are not worth the name",
+            rows.len()
         );
     }
 }

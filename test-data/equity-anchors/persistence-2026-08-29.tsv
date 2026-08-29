@@ -1,0 +1,65 @@
+# Real SIGNED-return persistence: the variance-ratio cross-section `MarketSim.VarRatioBand` is
+# derived from, and `PersistenceAnchorSuite` / `persistence_anchor_tests` re-derive it from.
+# Editing a row moves the shipped band. Nothing else is fitted from this file.
+#
+# vr(q) = Var(non-overlapping q-session sums) / (q * Var(daily)), sample variances (n-1), the
+# series truncated to a whole number of blocks -- `uni.apps.MarketSim.varianceRatio` exactly.
+# 1.0 is no serial dependence at that horizon; above 1 is trend, below is mean reversion.
+#
+# WHAT THIS FILE SETTLES. Volatility clustering is measured on |r| and is blind to signed
+# persistence, so nothing in the target set stopped the model from manufacturing a trend. The
+# question a band needs answered is how much signed persistence REAL equity markets carry, and
+# the answer is: less than none at three months, consistently, with the ERA separating the
+# readings and the index not. Modern series are mildly mean-reverting at q=60 (0.55-1.15 across
+# 18 instruments and two windows); the pre-war century is mildly trending (1.14). QQQ 0.720 and
+# SPY 0.705 over their full histories are indistinguishable, which is why the band is shared
+# across anchor sets rather than carried per asset.
+#
+# Measured 2026-08-29.
+#   wfull  each instrument's full history through 2026-08-03
+#   w2001  2001-08-27.. -- the window the depth cross-section in yahoo-2026-08-24.tsv uses
+#   c1926/c1954/c1990  CRSP value-weighted US market total return (Mkt-RF + RF), daily, from
+#          Ken French's F-F_Research_Data_Factors_daily, window opening in that year
+#
+# Fund series are daily Yahoo adjusted closes -- the same source and definition as the depth
+# cross-section, from a local cache holding 18 of that file's 35 instruments.
+window	ticker	kind	source	years	vr20	vr60
+wfull	DIA	us-broad	yahoo-adj-close	28.5	0.755	0.672
+wfull	EFA	intl-broad	yahoo-adj-close	24.9	0.843	0.894
+wfull	IWM	us-broad	yahoo-adj-close	26.1	0.889	0.842
+wfull	QQQ	us-growth	yahoo-adj-close	27.3	0.815	0.720
+wfull	SMH	sector	yahoo-adj-close	26.1	0.754	0.788
+wfull	SOXX	sector	yahoo-adj-close	25.0	0.758	0.772
+wfull	SPY	us-broad	yahoo-adj-close	33.5	0.674	0.705
+wfull	VFINX	us-broad	yahoo-adj-close	36.6	0.757	0.740
+wfull	VGTSX	intl-broad	yahoo-adj-close	30.2	0.868	0.935
+wfull	XLB	sector	yahoo-adj-close	27.6	0.831	0.764
+wfull	XLE	sector	yahoo-adj-close	27.6	0.946	0.917
+wfull	XLF	sector	yahoo-adj-close	27.6	0.747	0.659
+wfull	XLI	sector	yahoo-adj-close	27.6	0.933	0.790
+wfull	XLK	sector	yahoo-adj-close	27.6	0.822	0.808
+wfull	XLP	sector	yahoo-adj-close	27.6	0.765	0.674
+wfull	XLU	sector	yahoo-adj-close	27.6	0.855	0.770
+wfull	XLV	sector	yahoo-adj-close	27.6	0.787	0.636
+wfull	XLY	sector	yahoo-adj-close	27.6	0.860	0.740
+w2001	DIA	us-broad	yahoo-adj-close	24.9	0.752	0.613
+w2001	EFA	intl-broad	yahoo-adj-close	24.9	0.843	0.894
+w2001	IWM	us-broad	yahoo-adj-close	24.9	0.911	0.823
+w2001	QQQ	us-growth	yahoo-adj-close	24.9	0.826	0.728
+w2001	SMH	sector	yahoo-adj-close	24.9	0.824	0.797
+w2001	SOXX	sector	yahoo-adj-close	24.9	0.859	0.861
+w2001	SPY	us-broad	yahoo-adj-close	24.9	0.759	0.682
+w2001	VFINX	us-broad	yahoo-adj-close	24.9	0.743	0.669
+w2001	VGTSX	intl-broad	yahoo-adj-close	24.9	1.048	1.146
+w2001	XLB	sector	yahoo-adj-close	24.9	0.880	0.752
+w2001	XLE	sector	yahoo-adj-close	24.9	0.838	0.930
+w2001	XLF	sector	yahoo-adj-close	24.9	0.775	0.658
+w2001	XLI	sector	yahoo-adj-close	24.9	0.923	0.767
+w2001	XLK	sector	yahoo-adj-close	24.9	0.775	0.757
+w2001	XLP	sector	yahoo-adj-close	24.9	0.719	0.555
+w2001	XLU	sector	yahoo-adj-close	24.9	0.742	0.619
+w2001	XLV	sector	yahoo-adj-close	24.9	0.784	0.547
+w2001	XLY	sector	yahoo-adj-close	24.9	0.880	0.715
+c1926	CRSP-VW	us-broad	ken-french-daily	104.3	1.166	1.143
+c1954	CRSP-VW	us-broad	ken-french-daily	72.4	1.050	1.002
+c1990	CRSP-VW	us-broad	ken-french-daily	36.5	0.770	0.815

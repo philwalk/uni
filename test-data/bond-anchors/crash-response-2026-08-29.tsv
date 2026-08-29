@@ -1,0 +1,30 @@
+# What a long Treasury DID across the equity drawdowns of the last 24 years, measured the way
+# `uni.apps.MarketSim.measure` measures it: for every equity peak-to-trough decline of 15% or worse,
+# the bond's LOG return over the same peak-to-trough span, in percent. The model's targets are the
+# MEDIAN over these episodes, split by regime. `BondCrashSuite` / `bond_crash_tests` re-derive
+# `bond growth-crash` and `bond infl-crash` from the rows below.
+#
+# WHY THIS FILE EXISTS. Both targets shipped through 0.21.0 as single-episode numbers -- +20.0%,
+# which is 2008 alone and the LARGEST of the five growth-shock episodes here, and -25.0%, a rounding
+# of the one inflation episode. The model computes a MEDIAN across episodes, so it was graded
+# against a best case and read as understating a bond rally it in fact overstates. Same error class
+# as `median depth %`: a named-episode statistic used where the model computes a distribution.
+#
+# THE SAMPLE IS SIX EPISODES and that is the honest limit of this anchor -- the growth median is a
+# median of five. `-noise` prices that in: over 24-year histories the model produces growth-crash
+# readings from about +2% to +28%, so one record barely pins it, and the target's weight is small
+# for that reason rather than by choice.
+#
+# Equity SPY, bond TLT, daily Yahoo adjusted closes over their overlap, 2002-07-30..2026-08-03.
+# TLT's effective duration is about 16-17 years against the model bond's 13.5, so a like-for-like
+# 13.5-year anchor would be SMALLER still; the direction of the correction is not in doubt.
+#
+# regime: growth or inflation, by whether the decline is the 2022 inflation shock -- the model
+#   splits on its own `inflPress` and this is the record's only inflation-regime drawdown.
+peak	trough	equityPct	bondPct	regime
+2002-08-22	2002-10-09	-18.9	6.6	growth
+2007-10-09	2009-03-09	-55.2	22.4	growth
+2018-09-20	2018-12-24	-19.3	4.4	growth
+2020-02-19	2020-03-23	-33.7	13.3	growth
+2022-01-03	2022-10-12	-24.5	-34.7	inflation
+2025-02-19	2025-04-08	-18.8	0.8	growth

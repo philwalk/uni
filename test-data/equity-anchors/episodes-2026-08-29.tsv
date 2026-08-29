@@ -1,0 +1,33 @@
+# The record's own drawdown-EPISODE statistics, on `uni.apps.MarketSim.episodes`' definition:
+# every peak-to-trough decline of at least `threshold` percent in a daily series, with the running
+# peak seeded at the window's first session. `EpisodeAnchorSuite` / `episode_anchor_tests` re-derive
+# `medDepth` from the thr=15 row of the window each anchor set names. Editing a row moves the
+# shipped target.
+#
+# WHY THIS FILE EXISTS. `medDepth` shipped as -27.1% through 0.21.0 with no recorded convention, and
+# the model measures 15%+ episodes. No window of the record produces -27.1% at that threshold; a 20%
+# threshold does (-26.6% over 1954-2026, -28.0% over the century). The model was therefore graded
+# against a statistic it does not compute, and pushed toward crashes deeper than the record's for its
+# own definition. The two sibling anchors reconcile: `crashes/century` 20.7 sits between the 19.2 and
+# 24.9 measured here, and `worst crash %` -56.8 is the same 2007-09 episode as the -54.6% below.
+#
+# Source: Ken French's F-F_Research_Data_Factors_daily, CRSP value-weighted US market TOTAL return
+# (Mkt-RF + RF) compounded to a level series -- the same control the `return per vol` and
+# `clustering` anchors use. Measured 2026-08-29, data through 2026-06.
+#
+# thr        the decline threshold in percent, the model's own is 15
+# n          episodes in the window        perCentury  n scaled to 100 years
+# median     median episode depth, percent (negative)  worst  the deepest
+window	thr	n	perCentury	median	worst
+w1926	10	31	29.7	-20.2	-84.1
+w1926	15	20	19.2	-23.7	-84.1
+w1926	20	16	15.3	-28.0	-84.1
+w1926	25	10	9.6	-35.5	-84.1
+w1954	10	26	35.9	-20.2	-54.6
+w1954	15	18	24.9	-21.4	-54.6
+w1954	20	14	19.3	-26.6	-54.6
+w1954	25	8	11.0	-35.5	-54.6
+w1990	10	12	32.9	-20.6	-54.6
+w1990	15	9	24.7	-21.9	-54.6
+w1990	20	7	19.2	-25.6	-54.6
+w1990	25	4	11.0	-41.7	-54.6

@@ -87,6 +87,12 @@ class MarketSimContractSuite extends FunSuite:
     // The refactor that made the asset a parameter must not have moved the default world's
     // targets. These are the literals that were in `FitTargets` before it took an argument; if
     // one changes, `-validate` changes for every consumer who never asked for a different index.
+    //
+    // ONE has moved since, deliberately: `medDepth` -27.1 -> -21.4 in 0.22.0, because -27.1 was not
+    // the statistic the model computes -- it is the record's median at a 20% threshold where the
+    // model measures 15%+ episodes. `EpisodeAnchorSuite` re-derives the new value from
+    // `test-data/equity-anchors/episodes-2026-08-29.tsv` and pins the evidence for the old one.
+    // A future move of any value here needs the same treatment: measured, recorded, re-derivable.
     val a = MarketSim.SP500Anchors
     assertEquals(a.vol, 16.0)
     assertEquals(a.retVol, 0.69)
@@ -94,7 +100,7 @@ class MarketSimContractSuite extends FunSuite:
     assertEquals(a.ac1, 0.299)
     assertEquals(a.ac20, 0.225)
     assertEquals(a.crashes, 20.7)
-    assertEquals(a.medDepth, -27.1)
+    assertEquals(a.medDepth, -21.4)   // re-measured in 0.22.0; see above
     assertEquals(a.worstDepth, -56.8)
     assertEquals(a.volBand, (14.0, 18.0))
     assertEquals(a.retVolBand, (0.50, 0.85))
