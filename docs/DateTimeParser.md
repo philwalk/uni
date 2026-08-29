@@ -19,7 +19,7 @@ This is the reference for `uni.time` in client projects. For paths, subprocesses
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.21.0
+//> using dep org.vastblue:uni_3:0.22.0
 
 import uni.time.*
 
@@ -43,7 +43,7 @@ val d4 = parseDate("Thu, 14 Mar 2024 15:30:00 -0700")
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.21.0
+//> using dep org.vastblue:uni_3:0.22.0
 
 import uni.time.*
 
@@ -61,7 +61,7 @@ The alias carries a matching object, so the familiar static calls work:
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.21.0
+//> using dep org.vastblue:uni_3:0.22.0
 
 import uni.time.*
 
@@ -85,7 +85,7 @@ println(s"${DateTime.of(2024, 3, 14)} ${DateTime.of(2024, 3, 14, 15, 30, 0)} ${D
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.21.0
+//> using dep org.vastblue:uni_3:0.22.0
 
 import uni.time.*
 
@@ -114,7 +114,7 @@ Three properties worth knowing:
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.21.0
+//> using dep org.vastblue:uni_3:0.22.0
 
 import uni.time.*
 
@@ -140,7 +140,7 @@ The usual shifts are available and return a `DateTime`, so results compose:
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.21.0
+//> using dep org.vastblue:uni_3:0.22.0
 
 import uni.time.*
 
@@ -181,7 +181,7 @@ You can override this behavior using scoped configuration blocks:
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.21.0
+//> using dep org.vastblue:uni_3:0.22.0
 
 import uni.time.*
 
@@ -213,7 +213,7 @@ Because these scopes use `scala.util.DynamicVariable`, they are **thread-safe**.
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.21.0
+//> using dep org.vastblue:uni_3:0.22.0
 
 import uni.time.*
 
@@ -236,7 +236,7 @@ The date parser is integrated into `uni.data.BigUtils.getMostSpecificType`. This
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.21.0
+//> using dep org.vastblue:uni_3:0.22.0
 
 import uni.data.*   // exports BigUtils; importing both makes the names ambiguous
 
