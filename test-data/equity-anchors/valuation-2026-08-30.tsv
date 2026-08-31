@@ -1,0 +1,44 @@
+# The record's VALUATION trajectory, from Robert Shiller's ie_data.xls (econ.yale.edu/~shiller/data,
+# file last saved 2023-09-17; monthly, CAPE defined 1881.01-2023.09). Measured 2026-08-30. This is
+# the evidence base for the slow-valuation-cycle mechanism: what the model's log(price/fair) should
+# look like if CAPE is accepted as the record's fair-value proxy.
+#
+# THE COMMENSURABILITY JUDGMENT, stated once: the model's fair value is its own state variable;
+# the record has no observable fair value, and CAPE (real price over 10y-smoothed real earnings) is
+# a PROXY whose level drifts across eras (mean 16.0 over 1881-2023, 25.8 over 1990-2023). Anything
+# derived from this file therefore ships as a BAND with judgment-set width, or as a diagnostic —
+# never as a point-fidelity ratio. Dispersion is measured on log CAPE about the full-period mean.
+#
+# sd_logcape rows: the dispersion the model's sd log(p/f) is compared against (model at 0.22.1
+# defaults: 0.102, median century — a 4x gap even against the calmest modern window).
+#
+# episode rows: the six deepest real-price declines, endpoints at monthly resolution, classified by
+# the MODEL'S OWN rule (fundamentalLed: fundamental fell at least half the price fall), with REAL
+# EARNINGS standing in for the fundamental. peak_rel = CAPE at the pre-decline peak over the
+# 1881-2023 mean (16.0). What it shows: deep declines START ELEVATED — median peak_rel ~1.5x,
+# 2.0-2.7x for 1929 and 2000 — where every deep model crash starts at 1.0x fair; and the led-MIX
+# (3 fundamental / 3 valuation here vs the model's 40/60 at >35%) is closer than the peak
+# valuations are, so the mechanism gap is the MANIA, not the mix. Note 2000-03 classifies
+# FUNDAMENTAL under this rule — reported real earnings halved in 2001-02 — although its peak is the
+# most valuation-extreme on record; the classifier and the peak column answer different questions.
+#
+# type	name	value
+sd_logcape	1881-2023	0.415
+sd_logcape	1926-2023	0.413
+sd_logcape	1954-2023	0.410
+sd_logcape	1990-2023	0.241
+cape_mean	1881-2023	16.0
+cape_peak	1929-09	32.6
+cape_peak	1999-12	44.2
+cape_peak	2021-11	38.6
+cape_trough	1932-06	5.6
+cape_trough	1982-08	6.6
+cape_trough	2009-03	13.3
+#
+# episode	peak_ym	trough_ym	real_price_pct	real_earn_pct	peak_cape	peak_rel	led
+episode	1929-09	1932-06	-80.6	-58.2	32.6	2.0	fundamental
+episode	1973-01	1974-12	-53.5	11.5	18.7	1.2	valuation
+episode	2000-08	2003-02	-46.8	-47.7	42.9	2.7	fundamental
+episode	2007-10	2009-03	-51.7	-91.0	27.3	1.7	fundamental
+episode	1968-12	1970-07	-35.3	-13.6	22.3	1.4	valuation
+episode	1946-05	1949-06	-42.2	116.0	16.0	1.0	valuation

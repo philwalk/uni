@@ -88,7 +88,10 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 // the whole reason the field is null and not a number. `world` also gained the five disaster
 // dials; a reader that reconstructs a `World` from a schema-5 sidecar and runs it here gets a
 // market without the century-tail channel.
-const EMIT_SCHEMA: u32 = 6;
+// 6 -> 7: `world` gained the valuation cycle's four dials (`beliefShare`, `beliefYears`,
+// `capYears`, `capWindow`). A reader that reconstructs a `World` from a schema-6 sidecar and runs
+// it here gets a market whose perceived fair value never leaves the fundamental.
+const EMIT_SCHEMA: u32 = 7;
 
 /// The base random seed `-seed` defaults to, named so `main` and the tests that reproduce a
 /// default-world ensemble cannot drift apart. Mirrors the Scala twin's `DefaultSeed`.
@@ -239,7 +242,7 @@ fn default_world() -> World {
         depth: 17.4,
         stress: 5.37,
         beta: 3.0,
-        drift: 0.118,
+        drift: 0.120,
         fund_vol: 0.070,
         rate_mean: 0.042,
         vol_persist: 0.99,
@@ -258,6 +261,13 @@ fn default_world() -> World {
         disaster_len: 2.5,
         disaster_recover: 0.5,
         disaster_rec_len: 4.0,
+        // The slow valuation cycle, ADOPTED 0.23.0: gap-beliefs at share 0.9 (2.5y half-life)
+        // carry the dispersion, growth-capitalization at 1.5 years read through a 6-year window
+        // carries the upper wing, and `drift` 0.118 -> 0.120 compensates the cycle's return cost.
+        belief_share: 0.9,
+        belief_years: 2.5,
+        cap_years: 1.5,
+        cap_window: 6.0,
         jump_var: 0.17,
         jump_rate: 0.0050,
         value_pull: 0.045,
@@ -313,6 +323,10 @@ fn v0_19_2() -> World {
         jump_var: 0.0,
         jump_rate: 0.0,
         value_pull: 0.013,
+        belief_share: 0.0,
+        belief_years: 2.5,
+        cap_years: 0.0,
+        cap_window: 6.0,
         disaster_rate: 0.0,
         disaster_size: 2.0,
         disaster_len: 2.5,
@@ -360,7 +374,52 @@ fn releases() -> Vec<(&'static str, World)> {
         ("0.20.0", v0_20_0()),
         ("0.21.0", v0_21_0()),
         ("0.22.0", v0_22_0()),
+        ("0.22.1", v0_22_1()),
     ]
+}
+
+/// 0.22.1's world, frozen for the same reason `v0_20_0` is: the valuation cycle moved the
+/// default off it.
+fn v0_22_1() -> World {
+    World {
+        trend_share: 0.055,
+        depth: 17.4,
+        stress: 5.37,
+        beta: 3.0,
+        drift: 0.118,
+        fund_vol: 0.070,
+        rate_mean: 0.042,
+        vol_persist: 0.99,
+        vol_of_vol: 0.027,
+        recovery_drag: 10.0,
+        recovery_floor: 0.10,
+        halt_limit: 0.25,
+        disaster_rate: 0.6,
+        disaster_size: 2.0,
+        disaster_len: 2.5,
+        disaster_recover: 0.5,
+        disaster_rec_len: 4.0,
+        belief_share: 0.0,
+        belief_years: 2.5,
+        cap_years: 0.0,
+        cap_window: 6.0,
+        jump_var: 0.17,
+        jump_rate: 0.0050,
+        value_pull: 0.045,
+        crowd: Crowd::Momentum,
+        crowd_impact: 0.030,
+        panic: 0.0,
+        duration: 13.5,
+        easing: 0.060,
+        unwind: 0.35,
+        refuge: 0.11,
+        infl_prob: 0.20,
+        infl_size: 0.10,
+        infl_speed: 0.010,
+        rate_speed: 3.0,
+        discount: 5.73,
+        margin: 0.006,
+    }
 }
 
 /// 0.22.0's world, frozen for the same reason `v0_20_0` is: the disaster channel moved the
@@ -384,6 +443,10 @@ fn v0_22_0() -> World {
         disaster_len: 2.5,
         disaster_recover: 0.5,
         disaster_rec_len: 4.0,
+        belief_share: 0.0,
+        belief_years: 2.5,
+        cap_years: 0.0,
+        cap_window: 6.0,
         jump_var: 0.17,
         jump_rate: 0.0050,
         value_pull: 0.045,
@@ -424,6 +487,10 @@ fn v0_21_0() -> World {
         disaster_len: 2.5,
         disaster_recover: 0.5,
         disaster_rec_len: 4.0,
+        belief_share: 0.0,
+        belief_years: 2.5,
+        cap_years: 0.0,
+        cap_window: 6.0,
         jump_var: 0.10,
         jump_rate: 0.0010,
         value_pull: 0.045,
@@ -462,6 +529,10 @@ fn v0_20_0() -> World {
         jump_var: 0.0,
         jump_rate: 0.0,
         value_pull: 0.0145,
+        belief_share: 0.0,
+        belief_years: 2.5,
+        cap_years: 0.0,
+        cap_window: 6.0,
         disaster_rate: 0.0,
         disaster_size: 2.0,
         disaster_len: 2.5,
@@ -547,6 +618,27 @@ struct World {
     disaster_recover: f64,
     /// years the recovery is spread over
     disaster_rec_len: f64,
+    /// THE SLOW VALUATION CYCLE: how far the market's PERCEIVED fair value drifts toward realized
+    /// prices. Value capital arbs the gap to what it BELIEVES fair is, and after years of elevated
+    /// prices it believes them ("this time is different"); after years depressed, the pessimism is
+    /// as sticky. Splits reversion by FREQUENCY: daily pull unchanged (beliefs barely move in 60
+    /// sessions, so the variance-ratio band is untouched), multi-year reversion weakened to
+    /// (1 - belief_share) of the pull — which is where CAPE-scale valuation swings live. Consumes
+    /// no draws; 0 is bit-identical off.
+    belief_share: f64,
+    /// half-life of belief adaptation, in years
+    belief_years: f64,
+    /// THE MANIA HALF of the cycle: how many years of the fundamental's RECENT excess growth
+    /// beliefs capitalize into perceived fair value — "this growth is the new normal", priced.
+    /// The fundamental's drift regime (`drift_now`, redrawn every 1-11 years) is what beliefs
+    /// extrapolate, so booms carry perceived fair — and the price that arbs toward it — above the
+    /// true fundamental, and a regime ending on a re-draw is a valuation crash with the
+    /// fundamental FINE: the 2000 shape. 0 is off, bit for bit, no draws consumed.
+    cap_years: f64,
+    /// years of EWMA through which beliefs read that growth: the narrative horizon. Short windows
+    /// pass fundVol noise into the term capYears-fold (at 1y, vr60 read 2.3-5.2, measured) — the
+    /// window must sit between the noise and the ~6-year regime.
+    cap_window: f64,
     /// share of the equity flow's VARIANCE carried by jumps rather than diffusion. 0 disables the
     /// channel and reproduces pre-0.21 behaviour byte for byte — the draws come from their own
     /// stream, so nothing else in the path shifts.
@@ -627,6 +719,62 @@ struct Path {
 /// Drawdown at which recovery drag reaches its stated strength. 0.10 keeps it inert in ordinary
 /// sessions, so it shapes recoveries from real drawdowns and nothing else.
 const DRAWDOWN_REF: f64 = 0.10;
+/// Bound on the growth-capitalization term, in log units: perceived fair may ride at most this
+/// far from the fundamental on extrapolated growth alone (tanh-squashed). 0.80 log is a 2.2x
+/// valuation, past the record's worst manias. FROZEN: a guard on the term's DOMAIN, not a tuning
+/// surface.
+const CAP_SPAN: f64 = 0.80;
+
+/// DETERMINISTIC exp: Cody-Waite range reduction with fdlibm's split ln2, a fixed Horner Taylor
+/// to r^12 on the reduced argument, and 2^k built from raw exponent bits. Every operation is
+/// IEEE-exact-or-fixed, so the twins agree TO THE BIT by construction — which no native libm call
+/// guarantees: the momentum crowd's tanh diverged from the JVM's by one ulp on a cycle-world
+/// input after four releases of input luck, and rebuilding tanh from the NATIVE exp only moved
+/// the divergence into exp's own wide-argument ulps (both measured 2026-08-30, the PARITY.md
+/// `log` class). Accuracy ~2 ulp, which a behavioural squash cannot see; |y| is bounded by
+/// `tanh_p`'s cutoff so the 2^k construction stays in range. Use it for any future transcendental
+/// that must match across the twins.
+fn exp_det(y: f64) -> f64 {
+    // fdlibm's split ln2, as BIT PATTERNS so the twins' constants are identical by inspection.
+    const LN2_HI: f64 = f64::from_bits(0x3FE6_2E42_FEE0_0000);
+    const LN2_LO: f64 = f64::from_bits(0x3DEA_39EF_3579_3C76);
+    // floor(x + 0.5), written out: Java's round and Rust's differ on negative halves.
+    let k = (y * std::f64::consts::LOG2_E + 0.5).floor() as i64;
+    let r = (y - k as f64 * LN2_HI) - k as f64 * LN2_LO;
+    // Taylor e^r to r^12 in fixed Horner order; |r| <= 0.3466 puts truncation near 3e-15.
+    let mut p = 1.0 / 479_001_600.0;
+    p = p * r + 1.0 / 39_916_800.0;
+    p = p * r + 1.0 / 3_628_800.0;
+    p = p * r + 1.0 / 362_880.0;
+    p = p * r + 1.0 / 40_320.0;
+    p = p * r + 1.0 / 5_040.0;
+    p = p * r + 1.0 / 720.0;
+    p = p * r + 1.0 / 120.0;
+    p = p * r + 1.0 / 24.0;
+    p = p * r + 1.0 / 6.0;
+    p = p * r + 0.5;
+    p = p * r + 1.0;
+    p = p * r + 1.0;
+    p * f64::from_bits(((k + 1023) as u64) << 52)
+}
+
+/// tanh from `exp_det` via (e^2x - 1)/(e^2x + 1), so the twins agree to the bit; past +-20 the
+/// guard returns the sign exactly (1 - tanh(20) ~ 8e-18, below one ulp of 1.0). Both squash sites
+/// use it — the cap term and the momentum crowd's `trend_pos`.
+fn tanh_p(x: f64) -> f64 {
+    if x > 20.0 {
+        1.0
+    } else if x < -20.0 {
+        -1.0
+    } else {
+        let e2 = exp_det(2.0 * x);
+        (e2 - 1.0) / (e2 + 1.0)
+    }
+}
+/// Admissible sd of log(price/fair): the record's CAPE-proxy windows read 0.24-0.41, the floor
+/// carries the stated proxy haircut, and the ceiling is past the century with room. See the
+/// `valuation dispersion` gate row and valuation-2026-08-30.tsv.
+const VAL_DISP_BAND: (f64, f64) = (0.15, 0.55);
 
 /// What counts as the DEEP tail for the guard's own accounting: a session losing more than 0.20 in
 /// log terms, about -18% simple. The real record holds roughly one such session per century, so
@@ -854,6 +1002,23 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
     };
     let mut crowd_e = crowd_init;
     let mut crowd_prev = crowd_init;
+    // BELIEF state for the slow valuation cycle: the EWMA of the price/fair gap that perceived
+    // fair value has absorbed. Updated from information strictly before this session.
+    let mut belief = 0.0f64;
+    let belief_mu = if w.belief_years <= 0.0 {
+        0.0
+    } else {
+        1.0 - (-(2.0f64.ln()) / (w.belief_years * DAYS_PER_YEAR as f64)).exp()
+    };
+    // Growth-extrapolation state: EWMA of the fundamental's per-session log change, annualized in
+    // the perceived-fair term. Seeded at the unconditional drift so burn-in starts neutral.
+    let mut g_ewma = w.drift * dt;
+    let g_mu = if w.cap_window <= 0.0 {
+        0.0
+    } else {
+        1.0 - (-(2.0f64.ln()) / (w.cap_window * DAYS_PER_YEAR as f64)).exp()
+    };
+    let mut v_prev = 0.0f64;
     let mut ma_sum = 0.0f64;
     let mut crowd_rv = 0.01 * 0.01f64;
     let mut crowd_anchor = 0.0f64;
@@ -991,7 +1156,9 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
             log_pobs
         };
         let momentum = log_pobs - past;
-        let trend_pos = (momentum / 0.12).tanh();
+        // `tanh_p`, not the native tanh, since 0.23.0 — see `tanh_p`: the native form diverged
+        // from the JVM's by one ulp on a cycle-world input after four releases of input luck.
+        let trend_pos = tanh_p(momentum / 0.12);
         // The momentum crowd's desired exposure, set here rather than in the block above because
         // `trend_pos` needs this session's `log_pobs` -- and `log_pobs` carries this session's
         // `markdown`, so this crowd reacts to the rate move being priced in the SAME session, where
@@ -1054,7 +1221,36 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
         };
 
         // ---- both markets step through the SAME mechanism ---------------------------------
-        let ret_e = eq_m.step(log_vbase, eq_flow + eq_shock);
+        // THE SLOW VALUATION CYCLE: value capital arbs the gap to PERCEIVED fair, and perception
+        // drifts toward realized prices with a `belief_years` half-life; the mania term
+        // capitalizes `cap_years` of the fundamental's recent excess growth (read through a
+        // `cap_window`-year EWMA, tanh-squashed at CAP_SPAN). At 60 sessions the belief has moved
+        // ~5% of a gap, so daily reversion — and the variance-ratio band — are untouched; over
+        // years the effective pull on a PERSISTENT gap falls to (1 - belief_share) of full
+        // strength, which is what lets CAPE-scale swings build. A collapsing fundamental still
+        // transmits at full strength — the belief lags it by years. Consumes no draws; at share 0
+        // and cap 0 the perceived fair IS the fundamental, bit for bit.
+        if w.cap_years > 0.0 {
+            if i > 0 {
+                g_ewma += g_mu * ((log_vbase - v_prev) - g_ewma);
+            }
+            v_prev = log_vbase;
+        }
+        let perceived_fair = if w.belief_share <= 0.0 && w.cap_years <= 0.0 {
+            log_vbase
+        } else {
+            let mut pf = log_vbase;
+            if w.belief_share > 0.0 {
+                belief += belief_mu * ((eq_m.log_p - log_vbase) - belief);
+                pf += w.belief_share * belief;
+            }
+            if w.cap_years > 0.0 {
+                pf += CAP_SPAN
+                    * tanh_p(w.cap_years * (g_ewma * DAYS_PER_YEAR as f64 - w.drift) / CAP_SPAN);
+            }
+            pf
+        };
+        let ret_e = eq_m.step(perceived_fair, eq_flow + eq_shock);
         // joint-stress margin selling: when both markets are stressed, the bond gets dumped too —
         // and against it the refuge bid, flight-to-quality into a bond that is itself still
         // orderly. DURATION-SCALED, like the bond's own noise: an absolute bid gave a 5-year bond
@@ -1378,6 +1574,11 @@ struct WorldStats {
     pct_bond_stress: f64,
     crowd_flow: f64,
     dis_per_century: f64,
+    /// median per-path sd of log(price/fundamental): the valuation-gap dispersion the record
+    /// proxies with CAPE (valuation-2026-08-30.tsv)
+    val_disp: f64,
+    /// median per-path MAX log overvaluation — the mania a century produces
+    max_over: f64,
     duration: f64,
     infl_ann: f64,
     /// depth profile: median share of sessions more than 5/10/20% below the running peak,
@@ -1769,6 +1970,29 @@ fn measure(sims: &[Path], years: usize) -> WorldStats {
         crowd_flow: scala_sum(sims.iter().map(|s| s.mean_crowd_flow)) / n_sims,
         dis_per_century: scala_sum(sims.iter().map(|s| s.disasters as f64)) / n_sims / years as f64
             * 100.0,
+        val_disp: med(&sims
+            .iter()
+            .map(|sp| {
+                let g: Vec<f64> = sp
+                    .price
+                    .iter()
+                    .zip(sp.fundamental.iter())
+                    .map(|(p, f)| (p / f).ln())
+                    .collect();
+                let m = scala_sum(g.iter().copied()) / g.len() as f64;
+                (scala_sum(g.iter().map(|x| (x - m) * (x - m))) / (g.len() - 1) as f64).sqrt()
+            })
+            .collect::<Vec<f64>>()),
+        max_over: med(&sims
+            .iter()
+            .map(|sp| {
+                sp.price
+                    .iter()
+                    .zip(sp.fundamental.iter())
+                    .map(|(p, f)| (p / f).ln())
+                    .fold(f64::MIN, f64::max)
+            })
+            .collect::<Vec<f64>>()),
         duration: sims[0].duration,
         infl_ann: med(&sims
             .iter()
@@ -1992,6 +2216,14 @@ fn gate_checks(a: Anchors, st: &WorldStats) -> Vec<(String, bool, GateClass)> {
             st.dis_per_century > 0.05 && st.dis_per_century < 4.0,
             Mechanism,
         ),
+        // The valuation cycle's engagement row. The floor fails a world without the mechanism
+        // (the disaster-only default read 0.095); the ceiling is the unmoored guard — a
+        // dispersion past 0.70 means perceived fair has lost the fundamental.
+        (
+            n("valuation cycle engages, not unmoored"),
+            st.val_disp > 0.13 && st.val_disp < 0.70,
+            Mechanism,
+        ),
         band_check("inflation", st.infl_ann, 1.0, 6.0, Realism, 0, "%/yr"),
         // LEVEL bands, not realism. A 12%-volatility market is still a market, and realism is
         // ALWAYS required — either band placed there would make the sweep's own OFF-worlds
@@ -2036,6 +2268,18 @@ fn gate_checks(a: Anchors, st: &WorldStats) -> Vec<(String, bool, GateClass)> {
             st.vr60,
             VAR_RATIO_BAND.0,
             VAR_RATIO_BAND.1,
+            GateClass::Fidelity,
+            2,
+            "",
+        ),
+        // Anchored on the record's CAPE dispersion (valuation-2026-08-30.tsv: 0.24-0.41 across
+        // windows). A BAND, never a point ratio: the record has no observable fair value and
+        // CAPE is a proxy, so the floor sits a stated haircut below the calmest window.
+        band_check(
+            "valuation dispersion",
+            st.val_disp,
+            VAL_DISP_BAND.0,
+            VAL_DISP_BAND.1,
             GateClass::Fidelity,
             2,
             "",
@@ -2312,17 +2556,17 @@ const SP500_ANCHORS: Anchors = Anchors {
     vol: 16.0,
     vol_sd: 0.14,
     ret_vol: 0.69,
-    ret_vol_sd: 0.21,
+    ret_vol_sd: 0.24,
     kurt: 28.0,
-    kurt_sd: 2.37,
+    kurt_sd: 2.35,
     ac1: 0.299,
     ac1_sd: 0.12,
     ac20: 0.225,
     ac20_sd: 0.19,
     crashes: 20.7,
-    crashes_sd: 0.24,
+    crashes_sd: 0.26,
     med_depth: -21.4,
-    med_depth_sd: 0.16,
+    med_depth_sd: 0.17,
     // RE-ANCHORED in 0.22.1, same error class as `med_depth` in 0.22.0: -56.8 was the 2007-09
     // episode, the worst of the 1954-2026 window, used where the model computes the worst over a
     // whole history. 1954 opens AFTER the crash that set the record's worst, so the anchor graded
@@ -2334,7 +2578,7 @@ const SP500_ANCHORS: Anchors = Anchors {
     // sd RE-MEASURED with the window: 0.24 was the spread of 72-year readings, 0.18 the spread
     // of 100-year readings at the adopted disaster world (`-noise -paths 200`, 2026-08-30).
     worst_depth: -84.1,
-    worst_depth_sd: 0.18,
+    worst_depth_sd: 0.19,
     vol_band: (14.0, 18.0),
     ret_vol_band: (0.50, 0.85),
 };
@@ -2398,6 +2642,10 @@ fn wgt(judgment: f64, sd_rel: f64) -> f64 {
     judgment * (SD_REL_REF / sd_rel)
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "one row per fidelity target, and the target list is the contract"
+)]
 fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
     vec![
         (
@@ -2489,7 +2737,17 @@ fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             "variance ratio 60d",
             (|st: &WorldStats| st.vr60) as StatFn,
             1.00,
-            wgt(1.0, 0.36),
+            wgt(1.0, 0.37),
+        ),
+        // The record proxy (sd log CAPE) reads 0.24-0.41 across windows; 0.30 is the judgment
+        // centre and the LITERAL is shared by both anchor sets — one Shiller record, no QQQ
+        // equivalent. Judgment 0.5 for the proxy commensurability stated in
+        // valuation-2026-08-30.tsv.
+        (
+            "valuation dispersion",
+            (|st: &WorldStats| st.val_disp) as StatFn,
+            0.30,
+            wgt(0.5, 0.38),
         ),
         (
             "crashes/century",
@@ -2553,7 +2811,7 @@ fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             "bond growth-crash",
             (|st| st.bond_growth) as StatFn,
             6.6,
-            wgt(1.0, 1.48),
+            wgt(1.0, 1.62),
         ),
         // The judgment stays at 1.5 — inflation-crash behaviour is why the bond refuge exists —
         // and the measured precision crushes the weight to ~0.13 anyway: sd/real 2.89, and only
@@ -2567,7 +2825,7 @@ fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             "bond infl-crash",
             (|st| st.bond_infl) as StatFn,
             -34.7,
-            wgt(1.5, 1.97),
+            wgt(1.5, 2.05),
         ),
         // DEPTH PROFILE, stated RELATIVE to what a real fund of the same volatility and return
         // spends under water rather than as three absolute levels — see `EQUITY_D10_CORR` for the
@@ -2616,13 +2874,13 @@ fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             "equity d5 vs real",
             (|st: &WorldStats| st.eq_d5_vs_real()) as StatFn,
             1.00,
-            wgt(0.5, 0.17),
+            wgt(0.5, 0.19),
         ),
         (
             "equity d10 vs real",
             (|st: &WorldStats| st.eq_d10_vs_real()) as StatFn,
             1.00,
-            wgt(1.0, 0.38),
+            wgt(1.0, 0.45),
         ),
         // d20's sdRel moved 0.99 -> 1.56 in the 0.21.0 recovery-drag change, and like kurtosis's
         // move it is a re-measurement of a statistic that genuinely became more variable, not a
@@ -2633,7 +2891,7 @@ fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             "equity d20 vs real",
             (|st: &WorldStats| st.eq_d20_vs_real()) as StatFn,
             1.00,
-            wgt(0.5, 1.89),
+            wgt(0.5, 2.29),
         ),
         (
             "bond depth vs vol",
@@ -3491,6 +3749,15 @@ fn sweep_worlds(
         ("no margin coupling", with(|w| w.margin = 0.0), false),
         // OFF-world: disasters
         ("no macro disasters", with(|w| w.disaster_rate = 0.0), false),
+        // OFF-world: the valuation cycle
+        (
+            "no valuation cycle",
+            with(|w| {
+                w.belief_share = 0.0;
+                w.cap_years = 0.0;
+            }),
+            false,
+        ),
         (
             "double inflation severity",
             with(|w| w.infl_size *= 2.0),
@@ -3699,6 +3966,8 @@ fn calibrate_ranges() -> Vec<(&'static str, f64, f64, Setter)> {
         ("disasterRate", 0.0, 1.5, |w, x| w.disaster_rate = x),
         ("disasterSize", 0.5, 2.5, |w, x| w.disaster_size = x),
         ("disasterRecover", 0.0, 0.9, |w, x| w.disaster_recover = x),
+        ("beliefShare", 0.0, 0.97, |w, x| w.belief_share = x),
+        ("capYears", 0.0, 4.0, |w, x| w.cap_years = x),
         ("volOfVol", 0.012, 0.030, |w, x| w.vol_of_vol = x),
         // In the ranges from the release it arrived in. `fund_vol` sat outside them for four
         // releases and that is exactly why its defect survived four releases of one-knob-at-a-time
@@ -4557,13 +4826,14 @@ fn bond_relations() -> [Relation; 2] {
 /// target added or renamed fails the build until someone places it. The failure being prevented is
 /// a target silently absent from the equity section — a shorter table reads as a shorter list of
 /// concerns, not as a bug.
-const EQUITY_TARGETS: [&str; 12] = [
+const EQUITY_TARGETS: [&str; 13] = [
     "equity vol %",
     "return per vol",
     "kurtosis",
     "clustering lag 1",
     "clustering lag 20",
     "variance ratio 60d",
+    "valuation dispersion",
     "crashes/century",
     "median depth %",
     "worst crash %",
@@ -4940,7 +5210,7 @@ fn run_cross_asset_report(a: Anchors, paths: usize, years: usize, seed: u64, bas
 /// because sampling error depends on the length of the record actually behind each number, not
 /// on the horizon the model is scored at. The contract test pins this to `fit_targets` as a
 /// partition, so a new target cannot land without a declared horizon.
-fn anchor_groups(a: Anchors) -> [(&'static str, usize, &'static [&'static str]); 6] {
+fn anchor_groups(a: Anchors) -> [(&'static str, usize, &'static [&'static str]); 7] {
     [
         (
             a.equity_window,
@@ -4962,6 +5232,8 @@ fn anchor_groups(a: Anchors) -> [(&'static str, usize, &'static [&'static str]);
         // this is the instrument's whole history, which is the only window that cannot have deleted
         // the deepest episode.
         (a.tail_window, a.tail_years, &["worst crash %"]),
+        // The Shiller record is one series shared by every anchor set, at its own century horizon.
+        ("Shiller CAPE 1881-2023", 100, &["valuation dispersion"]),
         // 18 equity funds and three CRSP windows, the shortest of them 24.9 years — see
         // `VAR_RATIO_BAND`. The horizon is one instrument's record, as it is for the depth rungs, and
         // the target this group carries is a theory value rather than a reading, so `real@` here says
@@ -6219,6 +6491,10 @@ fn world_json_body(w: &World) -> Vec<String> {
         ("disasterLen", ef(w.disaster_len)),
         ("disasterRecover", ef(w.disaster_recover)),
         ("disasterRecLen", ef(w.disaster_rec_len)),
+        ("beliefShare", ef(w.belief_share)),
+        ("beliefYears", ef(w.belief_years)),
+        ("capYears", ef(w.cap_years)),
+        ("capWindow", ef(w.cap_window)),
         ("crowd", json_str(&crowd_name(w.crowd))),
         ("crowdImpact", ef(w.crowd_impact)),
         ("panic", ef(w.panic)),
@@ -6524,6 +6800,10 @@ fn main() {
     let mut disaster_len = dw.disaster_len;
     let mut disaster_recover = dw.disaster_recover;
     let mut disaster_rec_len = dw.disaster_rec_len;
+    let mut belief_share = dw.belief_share;
+    let mut belief_years = dw.belief_years;
+    let mut cap_years = dw.cap_years;
+    let mut cap_window = dw.cap_window;
     let mut jump_var = dw.jump_var;
     let mut jump_rate = dw.jump_rate;
     let mut value_pull = dw.value_pull;
@@ -6598,6 +6878,10 @@ fn main() {
             "-disasterlen" => disaster_len = req_f64(&mut it, "-disasterlen"),
             "-disasterrecover" => disaster_recover = req_f64(&mut it, "-disasterrecover"),
             "-disasterreclen" => disaster_rec_len = req_f64(&mut it, "-disasterreclen"),
+            "-beliefshare" => belief_share = req_f64(&mut it, "-beliefshare"),
+            "-beliefyears" => belief_years = req_f64(&mut it, "-beliefyears"),
+            "-capyears" => cap_years = req_f64(&mut it, "-capyears"),
+            "-capwindow" => cap_window = req_f64(&mut it, "-capwindow"),
             "-haltlimit" => halt_limit = req_f64(&mut it, "-haltlimit"),
             "-jumpvar" => jump_var = req_f64(&mut it, "-jumpvar"),
             "-jumprate" => jump_rate = req_f64(&mut it, "-jumprate"),
@@ -6739,6 +7023,22 @@ fn main() {
                 "-disasterrecover {disaster_recover} needs -disasterreclen above 0"
             ));
         }
+        // beliefShare 1.0 would unmoor perceived fair from the fundamental entirely — the pull
+        // chases its own shadow and nothing anchors the price level. Strictly below 1.
+        if !(0.0..1.0).contains(&belief_share) {
+            cli_die(&format!(
+                "-beliefshare {belief_share} out of range; needs 0 <= share < 1"
+            ));
+        }
+        if belief_share > 0.0 && belief_years <= 0.0 {
+            cli_die(&format!(
+                "-beliefshare {belief_share} needs -beliefyears above 0"
+            ));
+        }
+        non_neg("-capyears", cap_years);
+        if cap_years > 0.0 && cap_window <= 0.0 {
+            cli_die(&format!("-capyears {cap_years} needs -capwindow above 0"));
+        }
         non_neg("-recoverydrag", recovery_drag);
         non_neg("-crowdimpact", crowd_impact);
         non_neg("-panic", panic_k);
@@ -6801,6 +7101,10 @@ fn main() {
         disaster_len,
         disaster_recover,
         disaster_rec_len,
+        belief_share,
+        belief_years,
+        cap_years,
+        cap_window,
         jump_var,
         jump_rate,
         value_pull,
@@ -7167,6 +7471,11 @@ fn main() {
         jf(st.crowd_flow * 1e4, 0, 2),
         jf(st.crowd_flow / SIGMA_N * 100.0, 0, 1),
         jf(st.dis_per_century, 0, 2)
+    );
+    println!(
+        "  valuation gap          sd log(p/fair) {}   century max +{}% over fair   (record proxy: sd log CAPE 0.24-0.41, peaks +70-100%)",
+        jf(st.val_disp, 0, 3),
+        jf(st.max_over * 100.0, 0, 0)
     );
 
     println!();
@@ -8030,11 +8339,14 @@ mod contract_tests {
             on.iter().map(|p| p.disasters).sum::<usize>() > 0,
             "the adopted default must actually strike within four centuries at this seed"
         );
+        // The channel shipped in 0.22.1, so only the releases BEFORE it must inherit rate 0.
         for (v, w) in releases() {
-            assert!(
-                w.disaster_rate.abs() < 1e-12,
-                "release {v} predates the disaster channel and must inherit rate 0"
-            );
+            if v < "0.22.1" {
+                assert!(
+                    w.disaster_rate.abs() < 1e-12,
+                    "release {v} predates the disaster channel and must inherit rate 0"
+                );
+            }
         }
     }
 
@@ -8054,6 +8366,59 @@ mod contract_tests {
         assert!(
             m_on < m_off - 8.0,
             "the adopted channel must deepen the median century-worst materially: on {m_on:.1}%              vs off {m_off:.1}%"
+        );
+    }
+
+    /// The cycle consumes no draws, so share 0 + cap 0 must reproduce the pre-cycle path
+    /// BIT-IDENTICALLY whatever the other cycle dials say, and every release before 0.23.0 must
+    /// carry both at 0.
+    #[test]
+    fn the_valuation_cycle_is_absent_at_zero_and_releases_inherit_that() {
+        let mut off = default_world();
+        off.belief_share = 0.0;
+        off.cap_years = 0.0;
+        let mut off2 = off;
+        off2.belief_years = 0.3;
+        off2.cap_window = 0.5;
+        let a = simulate(&off, 4, DEFAULT_SEED);
+        let b = simulate(&off2, 4, DEFAULT_SEED);
+        assert_eq!(
+            a.price, b.price,
+            "at share 0 and cap 0 every other cycle dial must be inert, bit for bit"
+        );
+        for (v, w) in releases() {
+            assert!(
+                w.belief_share.abs() < 1e-12 && w.cap_years.abs() < 1e-12,
+                "release {v} predates the valuation cycle and must inherit share 0 and cap 0"
+            );
+        }
+    }
+
+    /// Dispersion is why the channel exists: every dial sweep at the 0.22.1 world left
+    /// sd log(p/fair) at 0.095-0.11 against the record proxy's 0.24-0.41. Pinned so the channel
+    /// cannot regress to inert.
+    #[test]
+    fn the_valuation_cycle_discriminates_on_the_statistic_it_was_added_for() {
+        let on = measure(&sim_paths(&default_world(), 40, 100, DEFAULT_SEED), 100);
+        let mut off_w = default_world();
+        off_w.belief_share = 0.0;
+        off_w.cap_years = 0.0;
+        let off = measure(&sim_paths(&off_w, 40, 100, DEFAULT_SEED), 100);
+        assert!(
+            on.val_disp > off.val_disp + 0.08,
+            "the cycle must move dispersion materially: on {:.3} vs off {:.3}",
+            on.val_disp,
+            off.val_disp
+        );
+        assert!(
+            on.val_disp > VAL_DISP_BAND.0 && on.val_disp < VAL_DISP_BAND.1,
+            "the adopted default must sit inside its own band, read {:.3}",
+            on.val_disp
+        );
+        assert!(
+            off.val_disp < VAL_DISP_BAND.0,
+            "the cycle-off world must FAIL the band, or the row does not discriminate: {:.3}",
+            off.val_disp
         );
     }
 }

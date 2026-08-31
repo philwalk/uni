@@ -5,7 +5,7 @@ name = "vastblue-uni"
 # Lockstep with the Scala library's version in build.sbt: both publish together
 # from release-and-publish.sh, which asserts the two agree. The number says
 # which uni release this port mirrors; PARITY.md says how much of it.
-version = "0.22.1"
+version = "0.23.0"
 edition = "2024"
 rust-version = "1.87"
 description = "Rust port of the uni Scala library: NumPy/pandas-style matrices and linear algebra (MatD) pinned bit-for-bit to the JVM, big-data CSV tooling, MSYS2/Cygwin-aware path resolution, date-time parsing and arithmetic, BigDecimal-compatible decimals, and 3PRF forecasting"

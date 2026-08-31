@@ -1,0 +1,18 @@
+# The CRSP US-market index's OWN time under water, on the model's definition: share of sessions
+# more than 5/10/20 percent below the running peak, fresh-start seeding, from the 202606-vintage
+# F-F_Research_Data_Factors_daily total return (Mkt-RF + RF) -- the same series and windows as
+# longhorizon-2026-08-30.tsv, measured 2026-08-30.
+#
+# WHY THIS FILE EXISTS. The depth rungs are graded against a relation fitted on 35 FUNDS over
+# 2001-2026, and the 0.23.0 valuation cycle pushed the model's d10/d20 readings up (1.28 / 2.74 at
+# the shipped default).  Whether that is a regression depends on the ruler: against the modern-fund
+# relation's ~0.21 / 0.055 at ~16% volatility, the INDEX ITSELF reads 0.269 / 0.126 post-1954 and
+# 0.386 / 0.255 over the century -- ratios of roughly 1.3 / 2.3 (post-war) and 1.8 / 4.6 (century).
+# The model's shipped shares (0.24 / 0.126, median path) sit between the fund cross-section and the
+# post-war index, and below both index windows on d20.  The fund relation stays the graded anchor
+# (it is the only cross-sectional one); this file is the disclosure that the relation's window has
+# no depression in it and the index runs deeper.  Nothing is fitted from this file.
+window	sessions	d5	d10	d20	vol_pct	ret_pct
+c1926	26274	0.521	0.386	0.255	17.1	9.4
+c1954	18245	0.436	0.269	0.126	15.7	10.8
+c1990	9190	0.439	0.301	0.161	18.1	10.5

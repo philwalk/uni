@@ -1,0 +1,22 @@
+# Long-horizon variance ratios of the CRSP US market total return, on `uni.apps.MarketSim.varianceRatio`'s
+# definition: vr(q) = Var(non-overlapping q-session sums) / (q * Var(daily)), sample variances (n-1),
+# LOG daily returns, series truncated to a whole number of blocks. The vr20/vr60 columns REPRODUCE
+# persistence-2026-08-29.tsv's c-rows to the third decimal, which is this file's control: the same
+# pipeline, re-run 2026-08-30 from the 202606-vintage F-F_Research_Data_Factors_daily (Mkt-RF + RF).
+#
+# WHY THIS FILE SETTLES A NEGATIVE. The 60d variance-ratio row is blind past its own horizon, and the
+# 0.22.1 disaster channel moved the model's century-path vr(5y) from 0.89 to 1.15 unwatched. These
+# columns were measured to anchor that horizon and CANNOT: the record's long-horizon readings are
+# era-split with the sign flipping between windows (vr1260: 0.730 for the century, 1.152 post-1954)
+# and a window of n non-overlapping blocks carries relative noise ~ sqrt(2/(n-1)) — 32% for the
+# century's 20 five-year blocks, 39% for c1954's 14 — so no window pins a value the model's own
+# per-century spread (p5-p95 roughly 0.45-2.9) does not already contain. The model's 1.15 sits
+# INSIDE the record on both horizons. NO GATED ROW is derived from this file; it exists so the next
+# person who reaches for "the record mean-reverts at five years" (Poterba-Summers, measured here as
+# the c1926 row only) finds the era-split and the block noise beside the number.
+#
+# nblocks(q) = sessions div q for the vr1260 column, stated because it IS the precision.
+window	years	vr20	vr60	vr252	vr1260	blocks1260
+c1926	104.3	1.166	1.143	1.454	0.730	20
+c1954	72.4	1.050	1.002	1.001	1.152	14
+c1990	36.5	0.770	0.815	0.926	1.068	7

@@ -214,10 +214,16 @@ class MarketSimContractSuite extends FunSuite:
     // negligible by construction -- 0.000% in the world below -- while the guard was authoring one
     // in ten of that world's deep-tail sessions. A gate row that passes everywhere is not a test,
     // so this pins that the row DISCRIMINATES: off, it fails; on, it passes.
+    // At the world the defect was FOUND in -- pinned via the release table, because the live
+    // `Defaults` kept moving (the valuation cycle softened single-session extremes enough that
+    // the un-halted guard stopped binding there, which is a property of that world, not a loss
+    // of the row's discrimination).
+    val base = MarketSim.Releases.find(_._1 == "0.22.1").map(_._2)
+      .getOrElse(fail("no 0.22.1 release row"))
     val off = MarketSim.measure(MarketSim.simPaths(
-      MarketSim.Defaults.copy(haltLimit = 0.0), 60, 100, MarketSim.DefaultSeed), 100)
+      base.copy(haltLimit = 0.0), 60, 100, MarketSim.DefaultSeed), 100)
     val on  = MarketSim.measure(MarketSim.simPaths(
-      MarketSim.Defaults, 60, 100, MarketSim.DefaultSeed), 100)
+      base, 60, 100, MarketSim.DefaultSeed), 100)
     assert(off.tailFloorPct > 2.0,
       s"without the halt the guard must still shape the tail, read ${off.tailFloorPct}%")
     assertEqualsDouble(on.tailFloorPct, 0.0, 1e-12,
@@ -364,7 +370,8 @@ class MarketSimContractSuite extends FunSuite:
     val on = MarketSim.simPaths(MarketSim.Defaults, 4, 100, MarketSim.DefaultSeed)
     assert(on.map(_.disasters).sum > 0,
       "the adopted default must actually strike within four centuries at this seed")
-    for (v, w) <- MarketSim.Releases do
+    // The channel shipped in 0.22.1, so only the releases BEFORE it must inherit rate 0.
+    for (v, w) <- MarketSim.Releases if v < "0.22.1" do
       assertEqualsDouble(w.disasterRate, 0.0, 1e-12,
         s"release $v predates the disaster channel and must inherit rate 0")
   }
@@ -383,4 +390,37 @@ class MarketSimContractSuite extends FunSuite:
     assert(mOn < mOff - 8.0,
       f"the adopted channel must deepen the median century-worst materially: on $mOn%.1f%% " +
       f"vs off $mOff%.1f%%")
+  }
+
+  test("the valuation cycle is absent at zero, and the frozen release rows inherit that") {
+    // The cycle consumes no draws, so share 0 + cap 0 must reproduce the pre-cycle path
+    // BIT-IDENTICALLY whatever the other cycle dials say, and every release before 0.23.0 must
+    // carry both at 0.
+    val off  = MarketSim.Defaults.copy(beliefShare = 0.0, capYears = 0.0)
+    val off2 = off.copy(beliefYears = 0.3, capWindow = 0.5)
+    val a = MarketSim.simulate(off, 4, MarketSim.DefaultSeed)
+    val b = MarketSim.simulate(off2, 4, MarketSim.DefaultSeed)
+    assert(a.price.sameElements(b.price),
+      "at share 0 and cap 0 every other cycle dial must be inert, bit for bit")
+    for (v, w) <- MarketSim.Releases do
+      assert(w.beliefShare == 0.0 && w.capYears == 0.0,
+        s"release $v predates the valuation cycle and must inherit share 0 and cap 0")
+  }
+
+  test("the valuation cycle discriminates on the statistic it was added for") {
+    // Dispersion is why the channel exists: every dial sweep at the 0.22.1 world left
+    // sd log(p/fair) at 0.095-0.11 against the record proxy's 0.24-0.41.  Pinned so the channel
+    // cannot regress to inert: the adopted default must read at least 0.08 above the cycle-off
+    // world on the same seed, and must sit inside its own gate band.
+    val on  = MarketSim.measure(MarketSim.simPaths(MarketSim.Defaults, 40, 100,
+                MarketSim.DefaultSeed), 100)
+    val off = MarketSim.measure(MarketSim.simPaths(
+                MarketSim.Defaults.copy(beliefShare = 0.0, capYears = 0.0), 40, 100,
+                MarketSim.DefaultSeed), 100)
+    assert(on.valDisp > off.valDisp + 0.08,
+      f"the cycle must move dispersion materially: on ${on.valDisp}%.3f vs off ${off.valDisp}%.3f")
+    assert(on.valDisp > MarketSim.ValDispBand._1 && on.valDisp < MarketSim.ValDispBand._2,
+      f"the adopted default must sit inside its own band, read ${on.valDisp}%.3f")
+    assert(off.valDisp < MarketSim.ValDispBand._1,
+      f"the cycle-off world must FAIL the band, or the row does not discriminate: ${off.valDisp}%.3f")
   }

@@ -319,6 +319,33 @@ stopped it — and these worlds span a century, most of it without any market-wi
 says the guard is not distorting the body; `Y% of tail sessions` says it is not authoring the tail.
 The first passed at 0.000% in a world where the second read 10.9%.
 
+## The slow valuation cycle — `-beliefshare` / `-capyears`
+
+Value capital in this model arbs the gap to what it *believes* fair value is, and beliefs move.
+Two draw-free channels, adopted 0.23.0, both bit-identical off at 0:
+
+- **`-beliefshare`** (0.9): perceived fair drifts toward realized prices with a `-beliefyears`
+  half-life (2.5). It splits reversion by *frequency* — daily pull untouched (beliefs barely move
+  in 60 sessions), multi-year reversion weakened to `1 − share` of the pull — which is where
+  CAPE-scale valuation swings live, and why no ordinary dial could buy dispersion: every
+  continuous channel paid the 60-day variance-ratio band first (the full sweep bought +0.01 of sd
+  for the whole vr60 budget).
+- **`-capyears`** (1.5): the mania half — beliefs capitalize the fundamental's recent excess
+  growth (read through a `-capwindow` 6-year EWMA, bounded by a frozen 0.80-log tanh span), so a
+  growth regime carries perceived fair above the true fundamental and a regime ending on its
+  re-draw is a valuation decline with the fundamental fine.
+
+What it is graded on: the `valuation dispersion` fidelity band (0.15–0.55, from the Shiller CAPE
+proxy in `valuation-2026-08-30.tsv` — a *band*, never a point ratio, because the record has no
+observable fair value) and the `valuation cycle engages, not unmoored` mechanism row. The shipped
+world reads sd log(p/fair) 0.207–0.220 across seeds with the century max at +11% over fair —
+the record's lower half, honest about which half: sticky post-crash pessimism more than manias.
+A collapsing fundamental still transmits at full strength — beliefs lag it by years — which is
+why the disaster channel's tail *deepened* under the cycle (record@ 18% → 35%).
+
+`-beliefshare` must stay below 1: at 1 the pull chases its own shadow and nothing anchors the
+price level (the CLI refuses it; the mechanism row's 0.70 ceiling is the same guard one level up).
+
 ## How tight are the anchors? — `-noise`
 
 Every fidelity target is a point read from one historical record. `-noise` reports, per target, the
@@ -343,13 +370,13 @@ roughly 20 in one history. That quotient grades the sample size, and it never co
 
 ```
    paths   market-years   worst crash %   record@
-      20           2000         -89.81       10%
-     200          20000         -99.06       18%
-     400          40000         -99.06       19%
-     800          80000         -99.06       20%
+      20           2000         -92.47       30%
+     200          20000         -99.52       35%
+     400          40000         -99.52       37%
+     800          80000         -99.52       40%
 ```
 
-Same world, same seed, every dial fixed: the level falls 9 points and then saturates only because
+Same world, same seed, every dial fixed: the level falls 7 points and then saturates only because
 the price itself runs out of room near −99%, while the published reading moves within its own
 sampling noise (±4 points at n=200). At the pre-disaster 0.22.0 world, where nothing capped it, the
 level ran −80 → −94 over the same range and its old ratio's MISS verdict flipped between 20 paths
@@ -357,7 +384,7 @@ and 200. So `-validate` and the `-emit` sidecar report these rows as the record'
 among single histories of the anchor's own length**, and carry no ratio at all:
 
 ```
- worst crash %   model   -99.06   real   -84.10   record@  18% of 100y histories (n=200)
+ worst crash %   model   -99.52   real   -84.10   record@  35% of 100y histories (n=200)
 ```
 
 Read it as `-noise`'s `real@`, because it is the same measurement: near 50% the record is a typical
@@ -416,7 +443,7 @@ with it.
 |---|---|---|
 | `-stress` | liquidity-spiral gain: how much a run of down days amplifies later moves | 5.37 |
 | `-depth` | market depth; price impact scales as `12/depth`, so higher = calmer | 17.4 |
-| `-drift` | fundamental drift per year; no dividend, so this IS total return | 0.118 |
+| `-drift` | fundamental drift per year; no dividend, so this IS total return | 0.120 |
 | `-fundvol` | fundamental volatility per year — sets time under water, not daily return scale | 0.070 |
 | `-jumpvar` | share of the equity shock's **variance** carried by jumps rather than diffusion; 0 turns the tail channel off | 0.17 |
 | `-jumprate` | jumps per session at average volatility; with `-jumpvar` it sets the **size** | 0.0050 |
@@ -430,6 +457,10 @@ with it.
 | `-disasterlen` | years from onset to trough | 2.5 |
 | `-disasterrecover` | share of the decline that reverses after the trough; the rest is permanent | 0.5 |
 | `-disasterreclen` | years that recovery is spread over | 4.0 |
+| `-beliefshare` | the slow valuation cycle: how far PERCEIVED fair value drifts toward realized prices; 0 pins perception to the fundamental, bit for bit, and must stay below 1 | 0.9 |
+| `-beliefyears` | half-life of that belief adaptation | 2.5 |
+| `-capyears` | years of the fundamental's recent excess growth beliefs capitalize into perceived fair — the mania half; 0 off | 1.5 |
+| `-capwindow` | years of EWMA that growth is read through | 6.0 |
 | `-anchors` | which real index the **equity** fidelity targets describe: `sp500` or `nasdaq` | sp500 |
 | `-easing` | **cap** on the policy rate cut under equity stress, in rate points — an anchor, not a fitted number: one full real easing cycle | 0.060 |
 | `-unwind` | how fast that cut is withdrawn, per year (0.35 is a ~2-year half-life) | 0.35 |
@@ -460,59 +491,67 @@ This is the part to read before changing anything. Columns are **ratios to the r
 ```
 setting                      vol  kurt  clus    vr crash   d10  bdep   r/v  tshare  cflow  gate
 ---------------------------------------------------------------------------------------------
-DEFAULT                     1.00  0.96  0.99  1.08  1.09  1.13  1.26  1.01   0.21   3.56  P/P/P
+DEFAULT                     1.01  0.97  0.99  1.09  1.05  1.29  1.27  0.99   0.20   3.49  P/P/P
 
--stress 2.0                 0.81  0.44  0.58  1.08  0.53  1.46  1.02  1.25   0.21   3.32  P/P/F
--stress 5.37 *              1.00  0.96  0.99  1.08  1.09  1.13  1.26  1.01   0.21   3.56  P/P/P
--stress 8.0                 1.26  1.71  1.39  1.07  1.53  0.92  1.36  0.80   0.20   3.66  F/P/F
+-stress 2.0                 0.81  0.44  0.58  1.12  0.55  1.84  1.03  1.23   0.20   3.26  P/P/F
+-stress 5.37 *              1.01  0.97  0.99  1.09  1.05  1.29  1.27  0.99   0.20   3.49  P/P/P
+-stress 8.0                 1.27  1.79  1.39  1.06  1.44  1.02  1.35  0.78   0.20   3.57  F/P/F
 
--depth 12                   1.33  1.20  1.07  0.96  1.80  0.83  1.27  0.77   0.20   4.19  F/P/F
--depth 17.4 *               1.00  0.96  0.99  1.08  1.09  1.13  1.26  1.01   0.21   3.56  P/P/P
--depth 22                   0.86  0.73  0.94  1.15  0.78  1.42  1.25  1.17   0.21   3.23  P/P/F
+-depth 12                   1.32  1.15  1.06  0.96  1.68  0.95  1.28  0.75   0.20   4.09  F/P/F
+-depth 17.4 *               1.01  0.97  0.99  1.09  1.05  1.29  1.27  0.99   0.20   3.49  P/P/P
+-depth 22                   0.86  0.72  0.94  1.16  0.77  1.58  1.26  1.15   0.20   3.17  P/P/F
 
--drift 0.08                 1.01  0.98  0.99  1.05  1.09  1.17  1.28  0.66   0.20   3.61  P/P/F
--drift 0.118 *              1.00  0.96  0.99  1.08  1.09  1.13  1.26  1.01   0.21   3.56  P/P/P
--drift 0.15                 0.99  0.94  0.98  1.09  1.04  1.08  1.25  1.31   0.21   3.50  P/P/F
+-drift 0.08                 1.02  0.94  0.99  1.08  0.96  1.38  1.28  0.61   0.20   3.56  P/P/F
+-drift 0.120 *              1.01  0.97  0.99  1.09  1.05  1.29  1.27  0.99   0.20   3.49  P/P/P
+-drift 0.15                 1.01  0.95  0.98  1.13  1.03  1.23  1.26  1.25   0.20   3.42  P/P/F
 
--fundvol 0.041              1.00  0.93  0.98  1.00  0.99  0.90  1.24  1.01   0.20   3.59  P/P/P
--fundvol 0.070 *            1.00  0.96  0.99  1.08  1.09  1.13  1.26  1.01   0.21   3.56  P/P/P
--fundvol 0.10               1.02  1.00  0.99  1.22  1.20  1.37  1.26  0.99   0.21   3.51  P/P/F
+-fundvol 0.041              1.00  0.91  0.98  1.00  0.95  0.96  1.25  0.99   0.20   3.53  P/P/P
+-fundvol 0.070 *            1.01  0.97  0.99  1.09  1.05  1.29  1.27  0.99   0.20   3.49  P/P/P
+-fundvol 0.10               1.02  0.99  0.99  1.23  1.10  1.56  1.28  0.96   0.20   3.43  P/P/F
 
--jumpvar 0                  1.01  0.43  1.07  1.07  1.13  1.11  1.29  1.00   0.20   3.70  P/P/P
--jumpvar 0.17 *             1.00  0.96  0.99  1.08  1.09  1.13  1.26  1.01   0.21   3.56  P/P/P
--jumpvar 0.23               1.00  1.33  0.96  1.11  1.05  1.11  1.26  1.01   0.21   3.49  F/P/P
+-jumpvar 0                  1.01  0.43  1.08  1.07  1.08  1.24  1.29  0.97   0.20   3.63  P/P/P
+-jumpvar 0.17 *             1.01  0.97  0.99  1.09  1.05  1.29  1.27  0.99   0.20   3.49  P/P/P
+-jumpvar 0.23               1.01  1.33  0.96  1.12  1.02  1.28  1.27  0.99   0.20   3.43  F/P/P
 
--jumprate 0.002             0.99  1.36  0.96  1.09  1.05  1.12  1.26  1.01   0.20   3.55  F/P/P
--jumprate 0.0050 *          1.00  0.96  0.99  1.08  1.09  1.13  1.26  1.01   0.21   3.56  P/P/P
--jumprate 0.012             1.01  0.80  0.97  1.10  1.08  1.11  1.24  1.00   0.21   3.59  P/P/P
+-jumprate 0.002             0.99  1.42  0.97  1.09  1.02  1.31  1.27  1.00   0.20   3.47  F/P/P
+-jumprate 0.0050 *          1.01  0.97  0.99  1.09  1.05  1.29  1.27  0.99   0.20   3.49  P/P/P
+-jumprate 0.012             1.01  0.80  0.97  1.10  1.03  1.24  1.25  0.98   0.20   3.51  P/P/P
 
--haltlimit 0                1.01  0.99  0.99  1.08  1.08  1.10  1.27  1.00   0.21   3.56  F/P/P
--haltlimit 0.25 *           1.00  0.96  0.99  1.08  1.09  1.13  1.26  1.01   0.21   3.56  P/P/P
--haltlimit 0.40             1.01  0.99  0.99  1.08  1.08  1.10  1.27  1.00   0.21   3.56  F/P/P
+-haltlimit 0                1.01  0.97  0.98  1.09  1.05  1.26  1.27  0.98   0.20   3.49  P/P/P
+-haltlimit 0.25 *           1.01  0.97  0.99  1.09  1.05  1.29  1.27  0.99   0.20   3.49  P/P/P
+-haltlimit 0.40             1.01  0.97  0.98  1.09  1.05  1.26  1.27  0.98   0.20   3.49  P/P/P
 
--disasterrate 0             1.00  0.99  0.99  0.99  1.12  1.01  1.26  1.05   0.20   3.58  P/F/P
--disasterrate 0.6 *         1.00  0.96  0.99  1.08  1.09  1.13  1.26  1.01   0.21   3.56  P/P/P
--disasterrate 1.2           1.00  0.98  0.98  1.14  1.06  1.20  1.28  0.97   0.21   3.53  P/P/P
+-disasterrate 0             1.00  0.97  0.99  1.00  1.11  1.22  1.27  1.03   0.20   3.53  P/F/P
+-disasterrate 0.6 *         1.01  0.97  0.99  1.09  1.05  1.29  1.27  0.99   0.20   3.49  P/P/P
+-disasterrate 1.2           1.01  0.99  0.97  1.17  1.00  1.48  1.28  0.93   0.20   3.45  P/P/F
 
--trendshare 0.02            1.00  0.96  0.98  1.09  1.07  1.12  1.26  1.01   0.18   3.15  P/P/P
--trendshare 0.055 *         1.00  0.96  0.99  1.08  1.09  1.13  1.26  1.01   0.21   3.56  P/P/P
--trendshare 0.30            1.02  0.97  1.03  1.13  1.18  1.13  1.28  0.99   0.37   6.40  P/P/P
+-beliefshare 0              1.00  0.96  0.98  1.16  1.13  1.30  1.26  1.03   0.21   3.53  P/F/F
+-beliefshare 0.9 *          1.01  0.97  0.99  1.09  1.05  1.29  1.27  0.99   0.20   3.49  P/P/P
+-beliefshare 0.95           1.01  0.97  0.99  1.10  1.05  1.27  1.27  0.96   0.20   3.47  P/P/P
 
--crowdimpact 0.010          0.99  0.95  0.96  1.07  1.01  1.11  1.24  1.02   0.20   1.19  P/P/P
--crowdimpact 0.030 *        1.00  0.96  0.99  1.08  1.09  1.13  1.26  1.01   0.21   3.56  P/P/P
--crowdimpact 0.12           1.10  1.06  1.19  1.28  1.55  1.08  1.35  0.92   0.21  14.26  P/P/F
+-capyears 0                 1.00  0.97  0.98  1.01  1.04  1.12  1.26  1.00   0.20   3.52  P/P/P
+-capyears 1.5 *             1.01  0.97  0.99  1.09  1.05  1.29  1.27  0.99   0.20   3.49  P/P/P
+-capyears 3                 1.02  1.00  0.99  1.15  1.04  1.41  1.28  0.97   0.20   3.45  P/P/F
 
--value 0.020                1.01  1.02  1.01  1.14  1.10  1.35  1.30  1.01   0.21   3.51  P/P/P
--value 0.045 *              1.00  0.96  0.99  1.08  1.09  1.13  1.26  1.01   0.21   3.56  P/P/P
--value 0.070                1.00  0.90  0.96  1.00  1.02  1.02  1.23  1.01   0.20   3.60  P/P/P
+-trendshare 0.02            1.00  0.96  0.98  1.09  1.04  1.28  1.27  0.99   0.18   3.08  P/P/P
+-trendshare 0.055 *         1.01  0.97  0.99  1.09  1.05  1.29  1.27  0.99   0.20   3.49  P/P/P
+-trendshare 0.30            1.02  0.98  1.03  1.14  1.14  1.29  1.27  0.97   0.37   6.31  P/P/P
 
--recoverydrag 0             0.99  0.91  0.94  0.90  1.04  0.91  1.19  1.02   0.20   3.61  P/P/P
--recoverydrag 10.0 *        1.00  0.96  0.99  1.08  1.09  1.13  1.26  1.01   0.21   3.56  P/P/P
--recoverydrag 20            1.00  0.99  0.99  1.10  1.10  1.17  1.26  1.01   0.21   3.55  P/P/P
+-crowdimpact 0.010          1.00  0.93  0.96  1.08  0.98  1.25  1.25  0.99   0.20   1.17  P/P/P
+-crowdimpact 0.030 *        1.01  0.97  0.99  1.09  1.05  1.29  1.27  0.99   0.20   3.49  P/P/P
+-crowdimpact 0.12           1.09  1.06  1.19  1.27  1.46  1.24  1.33  0.90   0.20  13.91  P/P/F
 
--recoveryfloor 0.05         1.00  0.97  0.99  1.12  1.07  1.22  1.26  1.01   0.21   3.56  P/P/P
--recoveryfloor 0.10 *       1.00  0.96  0.99  1.08  1.09  1.13  1.26  1.01   0.21   3.56  P/P/P
--recoveryfloor 0.50         0.99  0.91  0.96  0.96  1.08  0.96  1.23  1.01   0.20   3.58  P/P/P
+-value 0.020                1.01  0.95  1.00  1.11  1.02  1.42  1.29  0.95   0.20   3.41  P/P/P
+-value 0.045 *              1.01  0.97  0.99  1.09  1.05  1.29  1.27  0.99   0.20   3.49  P/P/P
+-value 0.070                1.01  0.90  0.97  1.10  1.02  1.14  1.25  0.99   0.20   3.53  P/P/P
+
+-recoverydrag 0             0.99  0.92  0.95  0.93  1.05  1.02  1.19  1.02   0.20   3.56  P/F/F
+-recoverydrag 10.0 *        1.01  0.97  0.99  1.09  1.05  1.29  1.27  0.99   0.20   3.49  P/P/P
+-recoverydrag 20            1.01  0.96  0.99  1.09  1.05  1.31  1.27  0.98   0.20   3.48  P/P/P
+
+-recoveryfloor 0.05         1.01  0.95  0.99  1.09  1.01  1.34  1.28  0.98   0.20   3.47  P/P/P
+-recoveryfloor 0.10 *       1.01  0.97  0.99  1.09  1.05  1.29  1.27  0.99   0.20   3.49  P/P/P
+-recoveryfloor 0.50         1.00  0.91  0.96  0.99  1.09  1.06  1.23  1.01   0.20   3.53  P/P/F
 ```
 
 60 paths x 100 years, seed 20260813. `vol` equity volatility · `kurt` daily kurtosis ·
@@ -523,8 +562,14 @@ equivalent, against what its own volatility implies · `r/v` return per unit vol
 `tshare` **realized** trend-follower share · `cflow` crowd flow, bp/session ·
 `gate` realism/mechanism/fidelity.
 
-Seven things that table is trying to tell you:
+Eight things that table is trying to tell you:
 
+- **The valuation cycle is a PAIR, and each half alone fails a different gate.** `-beliefshare 0`
+  (cap term alone) fails the variance-ratio band at 1.16 — re-climbs toward extrapolated fair are
+  60-day trends — and the cycle's own mechanism row with it; `-capyears 0` (beliefs alone) passes
+  but reads all lower wing (max overvaluation +7%). The belief half REFUNDS variance ratio (its
+  perceived-fair tracking cuts medium-horizon drift-chasing), which is exactly the budget the cap
+  half spends: together at the defaults they read vr 1.11, dispersion 0.21.
 - **`disasterrate` is the century-tail dial and almost nothing else.** Off, the world fails the
   mechanism gate (the channel is inert) and the record's century-worst returns to the far tail of
   what the model can produce; at 1.2 the variance ratio reaches 1.14 against a 1.15 realism
@@ -656,10 +701,11 @@ Against the QQQ anchors: volatility 0.98, return per volatility 1.04, median dep
 0.88 / 0.77 / 0.71.
 
 **Read what it passes with.** Three large fidelity misses are disclosed rather than gated: kurtosis
-1.98, crashes per century 1.78, and `worst crash %`, where the record sits at the **9th percentile**
-of 27-year model histories — improved from the 2nd by the disaster channel this recipe now inherits,
-but QQQ's −83.0% is still deeper than 91% of them, so this world remains on the shallow side of the
-Nasdaq tail at the record's own horizon. The first two are the volatility-to-crash elasticity gap —
+1.98, crashes per century 1.78, and `worst crash %`, where the record sits at the **11th
+percentile** of 27-year model histories — improved from the 2nd by the disaster channel and the
+valuation cycle this recipe now inherits (its dispersion reads 0.23, in band), but QQQ's −83.0% is
+still deeper than 89% of them, so this world remains on the shallow side of the Nasdaq tail at the
+record's own horizon. The first two are the volatility-to-crash elasticity gap —
 the model's 1.44 against a real cross-section of about 0.50 — surfacing at Nasdaq volatility.
 Clustering also sits at 0.378 against its 0.40 realism ceiling. This world is admissible for
 **relative** work at Nasdaq-like volatility; it is not a calibrated Nasdaq, and a per-crash hazard
@@ -677,37 +723,43 @@ from `-noise`: where the real record falls among model histories of that anchor'
 list is shorter than it was**, because three of the targets it used to describe were not the
 statistics the model computes — see the worked example above.
 
-- **The deep drawdown rung reads 2.36 against a relation fitted on a window with no depression in
-  it.** The relation comes from 35 funds over 2001-2026; a century that contains a 1929 spends more
-  time >20% underwater than any modern window predicts, and the model's own share (0.126 of
-  sessions, median path) sits *below* a rough reading of the real century's (~0.15-0.20:
-  1929-1945, the 1970s, 2008-12). Read the shallow rungs (0.98 / 1.13) as calibrated; read this one
-  against the century, not the modern-fund ruler — one 25-year record cannot pin it anyway
-  (`-noise` puts the record's own reading anywhere between 0.06 and 4.73). Its band is
-  deliberately absent and its weight is 0.05.
-- **The model has no mania channel: every deep crash starts from a peak AT fair value** (p/f
-  0.96-1.19, measured at the pre-crash peaks of the deepest declines). The 1929/2000 *shape* — a
-  collapse from a peak far above fair value, multiples doing the falling — cannot occur; the
-  disaster channel deepens crashes by collapsing the fundamental instead, which shifts deep
-  (>35%) crashes from 31% to 40% fundamental-led on `-strategies`' classifier. Price-path
-  statistics cannot tell the difference; anything reading the emitted `fundamental` column or the
-  crash-type conditioning can, and should not treat the model's led-mix as a calibrated quantity.
+- **The depth rungs read 1.05 / 1.28 / 2.74 against a relation fitted on a window with no
+  depression in it — and the index itself sides with the model.** The relation comes from 35 funds
+  over 2001-2026; the CRSP index's own shares, measured with the model's definition
+  (`depth-shares-2026-08-30.tsv`), run **1.3 / 2.3** times that relation post-1954 and **1.8 /
+  4.6** over the century at d10/d20. The model's shipped shares (0.24 / 0.126 of sessions, median
+  path) sit between the fund cross-section and the post-war index, below both index windows on
+  d20. d10's band (0.70-1.55) accommodates the reading with margin; d20's band is deliberately
+  absent and its weight is 0.04 — one 25-year record cannot pin it (`-noise`: 0.12 to 4.64).
+- **Valuation dispersion sits in the record's lower half, and the mania wing is still thin.** The
+  cycle puts sd log(p/fair) at 0.21 against the record proxy's 0.24-0.41 (band floor 0.15), but the
+  median century's MAX overvaluation is +11% — the record's manias peaked at 2.0-2.7x the mean
+  valuation (Sep-1929 CAPE 32.6, Dec-1999 44.2). Pushing the mania half harder is fenced by the
+  variance-ratio ceiling and the depth rungs (`-capyears 3` reads vr 1.15 and d10 1.41): a
+  collapse from a 2x-fair peak remains out of reach, so deep declines still start near fair value
+  and the led-mix is not a calibrated quantity. The dispersion's shape is honest about which half
+  it has: sticky post-crash pessimism (the 1930s-50s, CAPE below mean for two decades) more than
+  manias.
 - **The century-scale tail is carried by the macro-disaster channel, and its anchor is one draw.**
   `-disasterrate 0.6` per century, each a 2.0-log fundamental collapse over 2.5 years with half
   reversing over 4 — the Barro-Rietz channel, adopted 0.22.1 after every dial sweep left the median
-  century-worst at −58..−61 against the record's −84.1. At the shipped world the record sits at the
-  **18th percentile** of model centuries (it was the 1st). The remaining stance is a judgment call
-  the dials expose: the record is one draw, other national markets' centuries ran deeper, and
-  `-disasterrate 0` removes the channel bit-for-bit if you want the disaster-free counterfactual.
+  century-worst at −58..−61 against the record's −84.1. With the valuation cycle on top the record
+  sits at the **35th percentile** of model centuries (it was the 1st before 0.22.1, the 18th
+  before the cycle): sticky post-crash pessimism deepens the declines the disasters start. The
+  remaining stance is a judgment call the dials expose: the record is one draw, other national
+  markets' centuries ran deeper, and `-disasterrate 0` removes the channel bit-for-bit if you want
+  the disaster-free counterfactual.
   Ruin rates for levered sleeves computed off an ensemble minimum remain **upper bounds, not
   estimates**: that minimum is drawn from 20,000 market-years and no fund lives that long.
   This is a DRAWDOWN, accumulated over sessions; the worst single SESSION is a separate question and
   is set by `-haltlimit` rather than by a numerical constant.
-- **A century path is mildly trending (vr60 1.10), because its disasters are.** The variance-ratio
-  anchor (1.00, band 0.50-1.15) was measured on modern, disaster-free windows; the CRSP century
-  itself — the window with 1929-32 in it — reads **1.143** in the committed persistence fixture. A
-  multi-year collapse IS signed serial dependence; the model without the channel read 1.00 on
-  century paths, which real disaster-bearing centuries do not.
+- **A century path is mildly trending (vr60 1.11), because its disasters and its valuation epochs
+  are.** The variance-ratio anchor (1.00, band 0.50-1.15) was measured on modern, disaster-free
+  windows; the CRSP century itself — the window with 1929-32 in it — reads **1.143** in the
+  committed persistence fixture, and its five-year VR is era-split beyond use as an anchor
+  (`longhorizon-2026-08-30.tsv`: 0.730 for the century, 1.152 post-1954, ±30-40% block noise on
+  both). A multi-year collapse IS signed serial dependence; the model without these channels read
+  1.00 on century paths, which real disaster-bearing centuries do not.
 - **The bond's crash rally is overstated** (1.39 against the record's median across its growth-shock
   drawdowns). This reversed in 0.22.0 and the reversal is a correction, not a change in the model:
   the old target was 2008 alone, the best of five, so the same behaviour was reported as a shortfall.
@@ -720,9 +772,9 @@ statistics the model computes — see the worked example above.
 - **Every session past −18% comes from the liquidity spiral**, in every world measured. The jump
   channel sets how OFTEN those sessions arrive; it does not set how large they are. If you are
   studying tail magnitude, `-stress` and `-depth` are the dials, not `-jumpvar`.
-- **Crash frequency is on its anchor** (1.03; 21.2 per century against a real 20.7, improved from
-  1.07 by the disaster channel — each disaster consolidates declines that the disaster-free world
-  delivered as separate episodes). The record sits at the 42nd percentile of model histories.
+- **Crash frequency is on its anchor** (0.99; 20.5 per century against a real 20.7 — the disaster
+  channel consolidated episodes and the valuation cycle's slow epochs finished the job). The
+  record sits at the 47th percentile of model histories.
 - **Single-history kurtosis is wild here and the median is on anchor** (0.94 on the scoring ensemble,
   0.99 at the default seed). A 72-year window reads 9.8 at the 5th percentile and 121 at the 95th,
   because a window either contains its 1987 or does not. Do not read kurtosis off one path. Note also

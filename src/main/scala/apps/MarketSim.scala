@@ -123,7 +123,10 @@ object MarketSim:
   // which is the whole reason the field is null and not a number.  `world` also gained the five
   // disaster dials; a reader that reconstructs a `World` from a schema-5 sidecar and runs it here
   // gets a market without the century-tail channel.
-  val EmitSchema: Int = 6
+  // 6 -> 7: `world` gained the valuation cycle's four dials (`beliefShare`, `beliefYears`,
+  // `capYears`, `capWindow`).  A reader that reconstructs a `World` from a schema-6 sidecar and
+  // runs it here gets a market whose perceived fair value never leaves the fundamental.
+  val EmitSchema: Int = 7
 
   val EmitSidecarKeys: Vector[String] =
     Vector("generator", "version", "schema", "file", "columns", "header", "path", "world",
@@ -224,6 +227,13 @@ object MarketSim:
     s"-disasterrecover X ; share of the decline that reverses after the trough (default",
     s"              ;   ${Defaults.disasterRecover}; the rest is permanent)",
     s"-disasterreclen Y ; years that recovery is spread over (default ${Defaults.disasterRecLen})",
+    s"-beliefshare X ; the slow valuation cycle: how far PERCEIVED fair value drifts toward",
+    s"              ;   realized prices (default ${Defaults.beliefShare}; 0 pins perception to the",
+    s"              ;   fundamental, bit for bit; must stay below 1 or nothing anchors the price)",
+    s"-beliefyears Y ; half-life of that belief adaptation (default ${Defaults.beliefYears})",
+    s"-capyears X   ; years of the fundamental's recent EXCESS growth beliefs capitalize into",
+    s"              ;   perceived fair -- the mania half of the cycle (default ${Defaults.capYears}; 0 off)",
+    s"-capwindow Y  ; years of EWMA that growth is read through (default ${Defaults.capWindow})",
     s"-haltlimit X  ; equity trading halt: largest ONE-session decline the market prints, as a",
     s"              ;   simple fraction, with the unfilled pressure DEFERRED to the next session.",
     s"              ;   0.20 is the US Level 3 breaker, which closes the day at -20%.  0 disables",
@@ -278,6 +288,31 @@ object MarketSim:
                            // symmetric pull every release before 0.21.0 had, bit for bit.
     recoveryFloor: Double, // the residual arbitrage that never goes away, as a share of full
                            // strength.  1.0 with drag 0 is the old behaviour exactly.
+    beliefShare: Double = 0.0,   // THE SLOW VALUATION CYCLE: how far the market's PERCEIVED fair
+                                 // value drifts toward realized prices.  Value capital arbs the
+                                 // gap to what it BELIEVES fair is, and after years of elevated
+                                 // prices it believes them ("this time is different"); after years
+                                 // depressed, the pessimism is as sticky.  Splits reversion by
+                                 // FREQUENCY: daily pull unchanged (beliefs barely move in 60
+                                 // sessions, so the variance-ratio band is untouched), multi-year
+                                 // reversion weakened to (1 - beliefShare) of the pull -- which is
+                                 // where CAPE-scale valuation swings live.  Consumes no draws;
+                                 // 0 is bit-identical off.
+    beliefYears: Double = 2.5,   // half-life of belief adaptation, in years
+    capWindow: Double = 4.0,     // years of EWMA through which beliefs read that growth: the
+                                 // narrative horizon.  Short windows pass fundVol noise into the
+                                 // term capYears-fold (at 1y, vr60 read 2.3-5.2, measured) --
+                                 // the window must sit between the noise and the ~6-year regime.
+    capYears: Double = 0.0,      // THE MANIA HALF of the cycle: how many years of the fundamental's
+                                 // RECENT excess growth beliefs capitalize into perceived fair
+                                 // value -- "this growth is the new normal", priced.  The
+                                 // fundamental's drift regime (`driftNow`, redrawn every 1-11
+                                 // years) is what beliefs extrapolate, so booms carry perceived
+                                 // fair -- and the price that arbs toward it -- above the true
+                                 // fundamental, and a regime ending on a re-draw is a valuation
+                                 // crash with the fundamental FINE: the 2000 shape.  Growth is
+                                 // read through a one-year EWMA (`CapEwmaYears`); 0 is off, bit
+                                 // for bit, no draws consumed.
     crowd: Crowd, crowdImpact: Double, panic: Double,
     haltLimit: Double = 0.0,  // equity trading halt: the largest ONE-session decline the market
                               // will print, as a simple fraction, with the unfilled pressure
@@ -353,7 +388,7 @@ object MarketSim:
     * wrong three times before it was centralised.  A mismatch between the twins is caught directly
     * by the `-emit` sidecar, which names every field: bare `-emit` writes THIS world. */
   val Defaults = World(
-    trendShare = 0.055, depth = 17.4, stress = 5.37, beta = 3.0, drift = 0.118, fundVol = 0.070,
+    trendShare = 0.055, depth = 17.4, stress = 5.37, beta = 3.0, drift = 0.120, fundVol = 0.070,
     rateMean = 0.042, volPersist = 0.99, volOfVol = 0.027,
     jumpVar = 0.17, jumpRate = 0.0050, valuePull = 0.045,
     recoveryDrag = 10.0, recoveryFloor = 0.10, haltLimit = 0.25,
@@ -365,6 +400,13 @@ object MarketSim:
     // its anchor (0.71 vs 0.69).
     disasterRate = 0.6, disasterSize = 2.0, disasterLen = 2.5,
     disasterRecover = 0.5, disasterRecLen = 4.0,
+    // The slow valuation cycle, ADOPTED 0.23.0: gap-beliefs at share 0.9 (2.5y half-life) carry
+    // the dispersion, growth-capitalization at 1.5 years read through a 6-year window carries the
+    // upper wing, and `drift` 0.118 -> 0.120 compensates the cycle's return cost.  Verified at
+    // 200x100 on four seeds: dispersion 0.21-0.22 against a 0.095 disaster-only reading, all
+    // three gate classes PASS, and the horizon-matched real@ table moves toward 50 on the tail,
+    // r/v, crash-rate and shallow-rung rows with nothing leaving its band.
+    beliefShare = 0.9, beliefYears = 2.5, capYears = 1.5, capWindow = 6.0,
     crowd = Crowd.Momentum, crowdImpact = 0.030, panic = 0.0, duration = 13.5,
     easing = 0.060, unwind = 0.35, refuge = 0.11,
     inflProb = 0.20, inflSize = 0.10, inflSpeed = 0.010, rateSpeed = 3.0, discount = 5.73,
@@ -416,6 +458,19 @@ object MarketSim:
     easing = 0.046, unwind = 0.35, refuge = 0.11,
     inflProb = 0.20, inflSize = 0.10, inflSpeed = 0.010, rateSpeed = 3.0, discount = 5.0,
     margin = 0.006)
+  /** 0.22.1's world, frozen for the same reason `V0_20_0` is: the valuation cycle moved the
+    * default off it. */
+  private val V0_22_1 = World(
+    trendShare = 0.055, depth = 17.4, stress = 5.37, beta = 3.0, drift = 0.118, fundVol = 0.070,
+    rateMean = 0.042, volPersist = 0.99, volOfVol = 0.027,
+    jumpVar = 0.17, jumpRate = 0.0050, valuePull = 0.045,
+    recoveryDrag = 10.0, recoveryFloor = 0.10, haltLimit = 0.25,
+    disasterRate = 0.6, disasterSize = 2.0, disasterLen = 2.5,
+    disasterRecover = 0.5, disasterRecLen = 4.0,
+    crowd = Crowd.Momentum, crowdImpact = 0.030, panic = 0.0, duration = 13.5,
+    easing = 0.060, unwind = 0.35, refuge = 0.11,
+    inflProb = 0.20, inflSize = 0.10, inflSpeed = 0.010, rateSpeed = 3.0, discount = 5.73,
+    margin = 0.006)
   /** 0.22.0's world, frozen for the same reason `V0_20_0` is: the disaster channel moved the
     * default off it. */
   private val V0_22_0 = World(
@@ -441,7 +496,7 @@ object MarketSim:
   val Releases: Vector[(String, World)] = Vector(
     ("0.17.0", PreV1901), ("0.18.0", PreV1901), ("0.19.0", PreV1901),
     ("0.19.1", PreV1902), ("0.19.2", V0_19_2), ("0.19.3", V0_19_2), ("0.20.0", V0_20_0),
-    ("0.21.0", V0_21_0), ("0.22.0", V0_22_0))
+    ("0.21.0", V0_21_0), ("0.22.0", V0_22_0), ("0.22.1", V0_22_1))
 
   /** `-power`'s default contrast arms, as 1-based indices into `Rules`, and its default history
     * lengths.  Named here rather than inside the report so `usage` states them and `main` seeds
@@ -574,6 +629,54 @@ object MarketSim:
   /** Drawdown at which recovery drag reaches its stated strength.  0.10 keeps it inert in ordinary
     * sessions, so it shapes recoveries from real drawdowns and nothing else. */
   val DrawdownRef = 0.10
+  /** Bound on the growth-capitalization term, in log units: perceived fair may ride at most
+    * this far from the fundamental on extrapolated growth alone (tanh-squashed).  0.80 log is
+    * a 2.2x valuation, past the record's worst manias (CAPE 44 = 2.7x its mean including the
+    * gap channel's share).  FROZEN: it is a guard on the term's DOMAIN, not a tuning surface. */
+  val CapSpan = 0.80
+
+  /** DETERMINISTIC exp: Cody-Waite range reduction with fdlibm's split ln2, a fixed Horner
+    * Taylor to r^12 on the reduced argument, and 2^k built from raw exponent bits.  Every
+    * operation is IEEE-exact-or-fixed, so the twins agree TO THE BIT by construction -- which no
+    * native libm call guarantees: the momentum crowd's tanh diverged from Rust's by one ulp on a
+    * cycle-world input after four releases of input luck, and rebuilding tanh from the NATIVE exp
+    * only moved the divergence into exp's own wide-argument ulps (both measured 2026-08-30, the
+    * PARITY.md `log` class).  Accuracy ~2 ulp, which a behavioural squash cannot see; |y| is
+    * bounded by `tanhP`'s cutoff so the 2^k construction stays in range.  Use it for any future
+    * transcendental that must match across the twins. */
+  def expDet(y: Double): Double =
+    // fdlibm's split ln2, as BIT PATTERNS so the twins' constants are identical by inspection.
+    val Ln2Hi = java.lang.Double.longBitsToDouble(0x3FE62E42FEE00000L)
+    val Ln2Lo = java.lang.Double.longBitsToDouble(0x3DEA39EF35793C76L)
+    // floor(x + 0.5), written out: Java's round and Rust's differ on negative halves.  The
+    // multiplier is log2(e), the same double Rust's f64::consts::LOG2_E holds.
+    val k     = math.floor(y * 1.4426950408889634 + 0.5).toInt
+    val r     = (y - k * Ln2Hi) - k * Ln2Lo
+    // Taylor e^r to r^12 in fixed Horner order; |r| <= 0.3466 puts truncation near 3e-15.
+    var p = 1.0 / 479001600.0                              // 1/12!
+    p = p * r + 1.0 / 39916800.0
+    p = p * r + 1.0 / 3628800.0
+    p = p * r + 1.0 / 362880.0
+    p = p * r + 1.0 / 40320.0
+    p = p * r + 1.0 / 5040.0
+    p = p * r + 1.0 / 720.0
+    p = p * r + 1.0 / 120.0
+    p = p * r + 1.0 / 24.0
+    p = p * r + 1.0 / 6.0
+    p = p * r + 0.5
+    p = p * r + 1.0
+    p = p * r + 1.0
+    p * java.lang.Double.longBitsToDouble((k.toLong + 1023L) << 52)
+
+  /** tanh from `expDet` via (e^2x - 1)/(e^2x + 1), so the twins agree to the bit; past +-20 the
+    * guard returns the sign exactly (1 - tanh(20) ~ 8e-18, below one ulp of 1.0).  Both squash
+    * sites use it -- the cap term and the momentum crowd's `trendPos`. */
+  def tanhP(x: Double): Double =
+    if x > 20.0 then 1.0
+    else if x < -20.0 then -1.0
+    else
+      val e2 = expDet(2.0 * x)
+      (e2 - 1.0) / (e2 + 1.0)
 
   /** What counts as the DEEP tail for the guard's own accounting: a session losing more than 0.20
     * in log terms, about -18% simple.  The real record holds roughly one such session per century,
@@ -744,6 +847,17 @@ object MarketSim:
       case Crowd.Momentum => 0.0
       case _              => 1.0
     var crowdE = crowdInit; var crowdPrev = crowdInit; var maSum = 0.0
+    // BELIEF state for the slow valuation cycle: the EWMA of the price/fair gap that perceived
+    // fair value has absorbed.  Updated from information strictly before this session.
+    var belief = 0.0
+    val beliefMu = if w.beliefYears <= 0.0 then 0.0
+                   else 1.0 - math.exp(-math.log(2.0) / (w.beliefYears * DaysPerYear))
+    // Growth-extrapolation state: EWMA of the fundamental's per-session log change, annualized in
+    // the perceived-fair term.  Seeded at the unconditional drift so burn-in starts neutral.
+    var gEwma = w.drift * dt
+    val gMu   = if w.capWindow <= 0.0 then 0.0
+                else 1.0 - math.exp(-math.log(2.0) / (w.capWindow * DaysPerYear))
+    var vPrev = 0.0
     var crowdRv = 0.01 * 0.01; var crowdAnchor = 0.0
     var bondStressSum = 0.0; var bondStressHi = 0
     // MACRO DISASTER state: sessions left in the current collapse, its per-session decrement, and
@@ -832,7 +946,11 @@ object MarketSim:
       val lookback = 60
       val past = if i >= lookback then math.log(px(i - lookback)) else logPobs
       val momentum = logPobs - past
-      val trendPos = math.tanh(momentum / 0.12)
+      // `tanhP`, not `math.tanh`, since 0.23.0: the native tanh survived four releases on input
+      // luck and then disagreed with Rust's by one ulp at a session the valuation cycle's path
+      // reaches (see `tanhP`).  Pre-0.23.0 paths therefore reproduce STATISTICALLY, not bit for
+      // bit, at any dial setting -- the one cross-release compatibility this swap spends.
+      val trendPos = tanhP(momentum / 0.12)
       // The momentum crowd's desired exposure, set here rather than in the block above because
       // `trendPos` needs this session's `logPobs` -- and `logPobs` carries this session's
       // `markdown`, so this crowd reacts to the rate move being priced in the SAME session, where
@@ -893,7 +1011,35 @@ object MarketSim:
           dNoise * math.sqrt(1.0 - w.jumpVar) + jump + compens
 
       // ---- both markets step through the SAME mechanism --------------------------------------
-      val retE = eqM.step(logVbase, eqFlow + eqShock)
+      // THE SLOW VALUATION CYCLE: value capital arbs the gap to PERCEIVED fair, and perception
+      // drifts toward realized prices with a `beliefYears` half-life.  At 60 sessions the belief
+      // has moved ~5% of a gap, so daily reversion -- and the variance-ratio band -- are
+      // untouched; over years the effective pull on a PERSISTENT gap falls to (1 - beliefShare)
+      // of full strength, which is what lets CAPE-scale swings build and is why no dial could buy
+      // dispersion without breaking the 60d band (measured 2026-08-30: the whole vr60 budget
+      // bought +0.01 of sd).  A collapsing fundamental still transmits at full strength -- the
+      // belief lags it by years.  Updated from the PREVIOUS session's gap, consumes no draws,
+      // and at beliefShare 0 the perceived fair IS the fundamental, bit for bit.
+      // The mania term: beliefs capitalize `capYears` of the fundamental's recent EXCESS growth
+      // (read through a one-year EWMA) into the fair value the pull aims at.  During a high-drift
+      // regime perceived fair rides above the fundamental and the price follows; the regime
+      // ending on its re-draw is a valuation decline with the fundamental untouched.
+      if w.capYears > 0.0 then
+        if i > 0 then gEwma += gMu * ((logVbase - vPrev) - gEwma)
+        vPrev = logVbase
+      val perceivedFair =
+        if w.beliefShare <= 0.0 && w.capYears <= 0.0 then logVbase
+        else
+          var pf = logVbase
+          if w.beliefShare > 0.0 then
+            belief += beliefMu * ((eqM.logP - logVbase) - belief)
+            pf += w.beliefShare * belief
+          if w.capYears > 0.0 then
+            // tanh-squashed at CapSpan: extrapolated growth prices a mania, never an infinity --
+            // a lucky regime draw must not walk perceived fair past anything the record holds.
+            pf += CapSpan * tanhP(w.capYears * (gEwma * DaysPerYear - w.drift) / CapSpan)
+          pf
+      val retE = eqM.step(perceivedFair, eqFlow + eqShock)
       // joint-stress margin selling: when both markets are stressed, the bond gets dumped too --
       // and against it the refuge bid, flight-to-quality into a bond that is itself still orderly.
       // DURATION-SCALED, like the bond's own noise: an absolute bid gave a 5-year bond the same
@@ -1170,6 +1316,10 @@ object MarketSim:
     * over their full histories, while the same market reads 1.14 over the century and 0.82 since
     * 1990.  A per-asset band would encode a difference the record does not show. */
   val VarRatioBand = (0.50, 1.15)
+  /** Admissible sd of log(price/fair): the record's CAPE-proxy windows read 0.24-0.41, the floor
+    * carries the stated proxy haircut, and the ceiling is past the century with room.  See the
+    * `valuation dispersion` gate row and valuation-2026-08-30.tsv. */
+  val ValDispBand = (0.15, 0.55)
 
   // ---- world statistics and the ONE acceptance predicate -------------------------------------
   final case class WorldStats(vol: Double, kurt: Double, ac1: Double, ac20: Double,
@@ -1188,6 +1338,11 @@ object MarketSim:
                               corrCalm: Double, corrInfl: Double,
                               meanBondStress: Double, pctBondStress: Double, crowdFlow: Double,
                               disPerCentury: Double,
+                              valDisp: Double,    // median per-path sd of log(price/fundamental):
+                                                  // the valuation-gap dispersion the record proxies
+                                                  // with CAPE (valuation-2026-08-30.tsv)
+                              maxOver: Double,    // median per-path MAX log overvaluation -- the
+                                                  // mania a century produces
                               duration: Double,
                               inflAnn: Double,
                               // depth profile: median share of sessions more than 5/10/20% below
@@ -1293,6 +1448,17 @@ object MarketSim:
       pctBondStress = sims.map(_.pctBondStress).sum / sims.size,
       crowdFlow = sims.map(_.meanCrowdFlow).sum / sims.size,
       disPerCentury = sims.map(_.disasters.toDouble).sum / sims.size / years * 100.0,
+      valDisp = med(sims.map { sp =>
+        val g = Array.tabulate(sp.price.length)(i => math.log(sp.price(i) / sp.fundamental(i)))
+        val m = g.sum / g.length
+        math.sqrt(g.map(x => (x - m) * (x - m)).sum / (g.length - 1))
+      }),
+      maxOver = med(sims.map { sp =>
+        var mx = Double.MinValue; var i = 0
+        while i < sp.price.length do
+          val v = math.log(sp.price(i) / sp.fundamental(i)); if v > mx then mx = v; i += 1
+        mx
+      }),
       duration = sims.head.duration,
       inflAnn = med(sims.map(s => math.log(s.cpi.last / s.cpi.head) / years * 100.0)),
       ddEq5  = med(ddEq.map(_._1)), ddEq10 = med(ddEq.map(_._2)), ddEq20 = med(ddEq.map(_._3)),
@@ -1382,6 +1548,12 @@ object MarketSim:
       // name.  An off-world (rate 0) fails this row, which is what a mechanism row MEANS.
       ("macro disasters strike, not every decade",
         st.disPerCentury > 0.05 && st.disPerCentury < 4.0, Mechanism),
+      // The valuation cycle's engagement row.  The floor fails a world without the mechanism (the
+      // disaster-only default read 0.095); the ceiling is the unmoored guard -- a dispersion past
+      // 0.70 means perceived fair has lost the fundamental (the -beliefshare domain refuses >= 1
+      // for the same reason at the CLI).
+      ("valuation cycle engages, not unmoored",
+        st.valDisp > 0.13 && st.valDisp < 0.70, Mechanism),
       bandCheck("inflation",        st.inflAnn, 1.0, 6.0, Realism, dp = 0, unit = "%/yr"),
       // LEVEL bands, not realism.  A 12%-volatility market is still a market, and realism is
       // ALWAYS required — either band placed there would make the sweep's own OFF-worlds
@@ -1406,6 +1578,12 @@ object MarketSim:
       // drawdown-conditioned hazard — all of them inherit the trend this row measures, and none of
       // the other fifteen targets can see it.
       bandCheck("variance ratio 60d", st.vr60, VarRatioBand._1, VarRatioBand._2, Fidelity),
+      // Anchored on the record's CAPE dispersion (valuation-2026-08-30.tsv: 0.24-0.41 across
+      // windows).  A BAND, never a point ratio: the record has no observable fair value and CAPE
+      // is a proxy, so the floor sits a stated haircut below the calmest window -- far enough
+      // that only the mechanism's absence fails it, close enough that it discriminates (the
+      // 0.22.1 world reads 0.095-0.102 and FAILS).
+      bandCheck("valuation dispersion", st.valDisp, ValDispBand._1, ValDispBand._2, Fidelity),
     )
     // The two anchor-fitted bands are graded ONLY where their anchors have data -- the same
     // refusal `-crossasset` applies, because these ARE its relations.  A world outside the funds'
@@ -1594,7 +1772,7 @@ object MarketSim:
   /** The S&P/CRSP set.  The LEVELS are the ones every release before 0.21.0 hard-coded, moved
     * rather than re-measured (except the two the 0.22 releases re-anchored -- `medDepth` and
     * `worstDepth` -- each re-derived from a committed fixture).  The SPREADS were re-frozen from
-    * `-noise -paths 200` at the adopted 0.22.1 disaster world, 2026-08-30, as the
+    * `-noise -paths 200` at the adopted 0.23.0 valuation-cycle world, 2026-08-30, as the
     * defaults-change rule requires; `-noise`'s `sd/real` column agrees with the `wt` beside it,
     * which is the whole point of printing them together. */
   val SP500Anchors = Anchors(
@@ -1603,12 +1781,12 @@ object MarketSim:
     clusterWindow = "CRSP 1926-2026, the century", clusterYears = 100,
     tailWindow = "CRSP 1926-2026, the century", tailYears = 100,
     vol = 16.0,          volSd = 0.14,
-    retVol = 0.69,       retVolSd = 0.21,
-    kurt = 28.0,         kurtSd = 2.37,
+    retVol = 0.69,       retVolSd = 0.24,
+    kurt = 28.0,         kurtSd = 2.35,
     ac1 = 0.299,         ac1Sd = 0.12,
     ac20 = 0.225,        ac20Sd = 0.19,
-    crashes = 20.7,      crashesSd = 0.24,
-    medDepth = -21.4,    medDepthSd = 0.16,
+    crashes = 20.7,      crashesSd = 0.26,
+    medDepth = -21.4,    medDepthSd = 0.17,
     // RE-ANCHORED in 0.22.1, same error class as `median depth %` in 0.22.0: -56.8 was the
     // 2007-09 episode, the worst of the 1954-2026 window, used where the model computes the worst
     // over a whole history.  1954 opens AFTER the crash that set the record's worst, so the anchor
@@ -1616,9 +1794,9 @@ object MarketSim:
     // 15% threshold, the record reads -84.1% (`episodes-2026-08-29.tsv`, w1926) -- the 1929-32
     // decline, which every threshold in that window agrees on because it is one episode.
     // `tailYears` moves to 100 with it, so the percentile is read at the window's own length.
-    // sd RE-MEASURED with the window: 0.24 was the spread of 72-year readings, 0.18 the spread
-    // of 100-year readings at the adopted disaster world (`-noise -paths 200`, 2026-08-30).
-    worstDepth = -84.1,  worstDepthSd = 0.18,
+    // sd RE-MEASURED with the window: 0.24 was the spread of 72-year readings, 0.19 the spread
+    // of 100-year readings at the adopted 0.23.0 world (`-noise -paths 200`, 2026-08-30).
+    worstDepth = -84.1,  worstDepthSd = 0.19,
     volBand = (14.0, 18.0),
     retVolBand = (0.50, 0.85))
 
@@ -1730,7 +1908,11 @@ object MarketSim:
     // four: across the crowdImpact sweep corr(vr60, equity d20 vs real) is 0.98, which is the
     // finding, not an argument for dropping a row.  The depth rungs said the world was too deep
     // and named no cause; this row names it.
-    ("variance ratio 60d", st => st.vr60,                                    1.00,  wgt(1.0, 0.36)),
+    ("variance ratio 60d", st => st.vr60,                                    1.00,  wgt(1.0, 0.37)),
+    // The record proxy (sd log CAPE) reads 0.24-0.41 across windows; 0.30 is the judgment centre
+    // and the LITERAL is shared by both anchor sets -- one Shiller record, no QQQ equivalent.
+    // Judgment 0.5 for the proxy commensurability stated in valuation-2026-08-30.tsv.
+    ("valuation dispersion", st => st.valDisp,                               0.30,  wgt(0.5, 0.38)),
     ("crashes/century",    st => st.epPerPath * 100.0 / st.yearsPerPath,    a.crashes,  wgt(1.0, a.crashesSd)),
     // RE-MEASURED in 0.22.0, and the old value was not this statistic.  `-27.1` shipped through
     // 0.21.0 with no recorded convention; the model measures every peak-to-trough decline of 15% or
@@ -1770,7 +1952,7 @@ object MarketSim:
     // +6.6 / +22.4 / +4.4 / +13.3 / +0.8.  The model was therefore read as UNDERSTATING a bond
     // rally it in fact overstates.  Six episodes is the honest limit here and `-noise` prices it in.
     // `test-data/bond-anchors/crash-response-2026-08-29.tsv`; `BondCrashSuite` re-derives both rows.
-    ("bond growth-crash",  st => st.bondGrowth,                              6.6,  wgt(1.0, 1.48)),
+    ("bond growth-crash",  st => st.bondGrowth,                              6.6,  wgt(1.0, 1.62)),
     // The judgment stays at 1.5 -- inflation-crash behaviour is why the bond refuge exists --
     // and the measured precision crushes the weight to ~0.13 anyway: sd/real 2.89, and only
     // 95 of 200 24-year histories produce a reading at all.  The old 1.5 was the largest
@@ -1779,7 +1961,7 @@ object MarketSim:
     // has, which reads -34.7% (SPY 2022-01-03..2022-10-12, TLT over the same span).  A median of one
     // is that one, so the anchor is the episode -- but rounded 28% toward zero, which is not a
     // convention, it is an error.
-    ("bond infl-crash",    st => st.bondInfl,                              -34.7,  wgt(1.5, 1.97)),
+    ("bond infl-crash",    st => st.bondInfl,                              -34.7,  wgt(1.5, 2.05)),
     // DEPTH PROFILE, stated RELATIVE to what a real fund of the same volatility and return spends
     // under water rather than as three absolute levels -- see `EquityD10Corr` for the relation and
     // `eqDepthVsReal` for what the ratio means.  A level target is a statement about one fund; a
@@ -1820,14 +2002,14 @@ object MarketSim:
     // no longer tell this model from the cross-section they were measured from, which is a stronger
     // statement than any ratio near 1.00, because it is made against the spread rather than the
     // point.
-    ("equity d5 vs real",   st => st.eqD5VsReal,                             1.00,  wgt(0.5, 0.17)),
-    ("equity d10 vs real",  st => st.eqD10VsReal,                            1.00,  wgt(1.0, 0.38)),
+    ("equity d5 vs real",   st => st.eqD5VsReal,                             1.00,  wgt(0.5, 0.19)),
+    ("equity d10 vs real",  st => st.eqD10VsReal,                            1.00,  wgt(1.0, 0.45)),
     // d20's sdRel moved 0.99 -> 1.56 in the 0.21.0 recovery-drag change, and like kurtosis's move
     // it is a re-measurement of a statistic that genuinely became more variable, not a correction:
     // slowing recovery from deep drawdowns makes time spent DEEP swing much harder between
     // histories (p5 0.19, p95 4.35 over 25 years).  Weighting by measurability drops it to 0.06.
     // No other target's sdRel moved beyond its own noise, so none were churned.
-    ("equity d20 vs real",  st => st.eqD20VsReal,                            1.00,  wgt(0.5, 1.89)),
+    ("equity d20 vs real",  st => st.eqD20VsReal,                            1.00,  wgt(0.5, 2.29)),
     ("bond depth vs vol",   st => st.bondDepthVsVol,                          1.00, wgt(0.5, 0.36)),
   )
 
@@ -2233,6 +2415,8 @@ object MarketSim:
     ("disasterRate",  0.0, 1.5, (w, x) => w.copy(disasterRate = x)),
     ("disasterSize",  0.5, 2.5, (w, x) => w.copy(disasterSize = x)),
     ("disasterRecover", 0.0, 0.9, (w, x) => w.copy(disasterRecover = x)),
+    ("beliefShare",   0.0, 0.97, (w, x) => w.copy(beliefShare = x)),
+    ("capYears",      0.0, 4.0, (w, x) => w.copy(capYears = x)),
     ("volOfVol",   0.012, 0.030, (w, x) => w.copy(volOfVol = x)),
     // In the ranges from the release it arrived in.  `fundVol` sat outside them for four releases
     // and that is exactly why its defect survived four releases of one-knob-at-a-time sweeps; a
@@ -2334,6 +2518,7 @@ object MarketSim:
         ("no refuge channel",          base.copy(easing = 0.0, refuge = 0.0), false),
         ("no margin coupling",         base.copy(margin = 0.0), false),          // OFF-world: margin
         ("no macro disasters",         base.copy(disasterRate = 0.0), false),    // OFF-world: disasters
+        ("no valuation cycle",         base.copy(beliefShare = 0.0, capYears = 0.0), false),
         ("double inflation severity",  base.copy(inflSize = base.inflSize * 2.0), false),
       ) ++ (if !withReflexive then Vector.empty else Vector(
         // TWO AXES, not two modes.  Before the momentum crowd got a strength dial there was only
@@ -2701,8 +2886,8 @@ object MarketSim:
     * a shorter table reads as a shorter list of concerns, not as a bug. */
   val EquityTargets = Vector(
     "equity vol %", "return per vol", "kurtosis", "clustering lag 1", "clustering lag 20",
-    "variance ratio 60d", "crashes/century", "median depth %", "worst crash %",
-    "equity d5 vs real", "equity d10 vs real", "equity d20 vs real")
+    "variance ratio 60d", "valuation dispersion", "crashes/century", "median depth %",
+    "worst crash %", "equity d5 vs real", "equity d10 vs real", "equity d20 vs real")
 
   /** The other half of the partition.  Read only by the partition test -- the report has no bond
     * section to drive; the list exists so a new fidelity target cannot land unclassified. */
@@ -2909,6 +3094,8 @@ object MarketSim:
     // is the instrument's whole history, which is the only window that cannot have deleted the
     // deepest episode.
     (a.tailWindow, a.tailYears, Vector("worst crash %")),
+    // The Shiller record is one series shared by every anchor set, at its own century horizon.
+    ("Shiller CAPE 1881-2023", 100, Vector("valuation dispersion")),
     // 18 equity funds and three CRSP windows, the shortest of them 24.9 years -- see
     // `VarRatioBand`.  The horizon is one instrument's record, as it is for the depth rungs, and
     // the target this group carries is a theory value rather than a reading, so `real@` here says
@@ -3487,6 +3674,8 @@ object MarketSim:
       ("disasterRate", ef(w.disasterRate)), ("disasterSize", ef(w.disasterSize)),
       ("disasterLen", ef(w.disasterLen)), ("disasterRecover", ef(w.disasterRecover)),
       ("disasterRecLen", ef(w.disasterRecLen)),
+      ("beliefShare", ef(w.beliefShare)), ("beliefYears", ef(w.beliefYears)),
+      ("capYears", ef(w.capYears)), ("capWindow", ef(w.capWindow)),
       ("crowd", jsonStr(crowdName(w.crowd))), ("crowdImpact", ef(w.crowdImpact)),
       ("panic", ef(w.panic)), ("duration", ef(w.duration)),
       ("easing", ef(w.easing)), ("unwind", ef(w.unwind)), ("refuge", ef(w.refuge)),
@@ -3698,6 +3887,8 @@ object MarketSim:
     var disasterRate = Defaults.disasterRate; var disasterSize = Defaults.disasterSize
     var disasterLen = Defaults.disasterLen
     var disasterRecover = Defaults.disasterRecover; var disasterRecLen = Defaults.disasterRecLen
+    var beliefShare = Defaults.beliefShare; var beliefYears = Defaults.beliefYears
+    var capYears = Defaults.capYears; var capWindow = Defaults.capWindow
     var haltLimit = Defaults.haltLimit
     var valuePull = Defaults.valuePull
     var crowdName = "momentum"; var crowdImpact = Defaults.crowdImpact; var panic = Defaults.panic
@@ -3753,6 +3944,10 @@ object MarketSim:
       case "-disasterlen"   => disasterLen = numOr("-disasterlen", consumeNext)
       case "-disasterrecover" => disasterRecover = numOr("-disasterrecover", consumeNext)
       case "-disasterreclen"  => disasterRecLen = numOr("-disasterreclen", consumeNext)
+      case "-beliefshare"     => beliefShare = numOr("-beliefshare", consumeNext)
+      case "-beliefyears"     => beliefYears = numOr("-beliefyears", consumeNext)
+      case "-capyears"        => capYears = numOr("-capyears", consumeNext)
+      case "-capwindow"       => capWindow = numOr("-capwindow", consumeNext)
       case "-haltlimit"  => haltLimit = numOr("-haltlimit", consumeNext)
       case "-crowd"      => crowdName = consumeNext
       case "-crowdimpact"=> crowdImpact = numOr("-crowdimpact", consumeNext)
@@ -3825,6 +4020,15 @@ object MarketSim:
     nonNeg("-value", valuePull); nonNeg("-recoverydrag", recoveryDrag)
     nonNeg("-disasterrate", disasterRate); nonNeg("-disastersize", disasterSize)
     share("-disasterrecover", disasterRecover)
+    // beliefShare 1.0 would unmoor perceived fair from the fundamental entirely -- the pull
+    // chases its own shadow and nothing anchors the price level.  Strictly below 1.
+    if beliefShare < 0.0 || beliefShare >= 1.0 then
+      usage(s"-beliefshare $beliefShare out of range; needs 0 <= share < 1")
+    if beliefShare > 0.0 && beliefYears <= 0.0 then
+      usage(s"-beliefshare $beliefShare needs -beliefyears above 0")
+    nonNeg("-capyears", capYears)
+    if capYears > 0.0 && capWindow <= 0.0 then
+      usage(s"-capyears $capYears needs -capwindow above 0")
     if disasterRate > 0.0 && (disasterSize <= 0.0 || disasterLen <= 0.0) then
       usage(s"-disasterrate $disasterRate needs -disastersize and -disasterlen above 0")
     if disasterRecover > 0.0 && disasterRecLen <= 0.0 then
@@ -3859,6 +4063,8 @@ object MarketSim:
                   disasterRate = disasterRate, disasterSize = disasterSize,
                   disasterLen = disasterLen,
                   disasterRecover = disasterRecover, disasterRecLen = disasterRecLen,
+                  beliefShare = beliefShare, beliefYears = beliefYears,
+                  capYears = capYears, capWindow = capWindow,
                   crowd = crowd, crowdImpact = crowdImpact, panic = panic,
                   duration = duration, easing = easing, unwind = unwind, refuge = refuge,
                   inflProb = inflProb, inflSize = inflSize,
@@ -4014,6 +4220,8 @@ object MarketSim:
     println(f"                         crowd flow ${st.crowdFlow * 1e4}%.2f bp/session " +
             f"(${st.crowdFlow / SigmaN * 100}%.1f%% of the noise term) — the reflexive channel   " +
             f"macro disasters ${st.disPerCentury}%.2f/century")
+    println(f"  valuation gap          sd log(p/fair) ${st.valDisp}%.3f   century max +${st.maxOver * 100}%.0f%% over fair" +
+            f"   (record proxy: sd log CAPE 0.24-0.41, peaks +70-100%%)")
 
     println()
     // The anchors do NOT share one window, and a single-window label invites a reader to re-derive

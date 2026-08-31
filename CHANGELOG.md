@@ -1,4 +1,93 @@
-## v0.22.1 — unreleased
+## v0.23.0 — unreleased
+
+**NEW MECHANISM, and a defaults change — the slow valuation cycle**
+
+The model's valuation gap was 4x too tight and all lower wing: sd log(price/fair) read 0.095-0.102
+against the record's CAPE-proxy dispersion of 0.24-0.41 (`valuation-2026-08-30.tsv`, from Shiller's
+series: century sd 0.41, the calm 1990-2023 window 0.24, manias at 2.0-2.7x the mean valuation),
+and no gate-passing setting of any existing dial moved it — every continuous channel paid the
+60-day variance-ratio band first (the full sweep bought +0.01 of sd for the whole vr60 budget).
+
+Two draw-free belief channels close it, both bit-identical off at 0:
+
+- **`-beliefshare`** (default 0.9, `-beliefyears` 2.5): perceived fair value drifts toward
+  realized prices, splitting reversion by FREQUENCY — the daily pull is untouched (beliefs barely
+  move in 60 sessions), multi-year reversion falls to `1 - share` of the pull, which is where
+  CAPE-scale swings live. Strictly below 1, or nothing anchors the price level (refused at the
+  CLI, guarded again by the mechanism row's ceiling).
+- **`-capyears`** (default 1.5, `-capwindow` 6): beliefs capitalize the fundamental's recent
+  excess growth into perceived fair — a growth regime priced as permanent — so a regime ending on
+  its re-draw is a valuation decline with the fundamental fine. Bounded by a frozen 0.80-log span;
+  the 6-year reading window is load-bearing (at 1 year the term passes `fundVol` noise into vr60
+  capYears-fold: 2.3-5.2, measured).
+
+The two halves are a PAIR: alone, the cap term fails the variance-ratio band (1.16) and beliefs
+alone read all lower wing; the belief half REFUNDS the vr60 the cap half spends. `drift` 0.118 ->
+0.120 compensates the cycle's return cost; the 0.22.1 world is frozen as `V0_22_1` in the release
+table.
+
+Graded on a new fidelity row, `valuation dispersion` (band 0.15-0.55, loss target 0.30 at
+judgment 0.5) — a BAND, never a point ratio, because the record has no observable fair value and
+CAPE is a proxy, with the haircut stated in the fixture — plus a two-sided mechanism row
+(`valuation cycle engages, not unmoored`), an off-world in the sweep, the binding diagnostic
+printed in every report (`valuation gap sd log(p/fair) ... century max ... over fair`), and
+contract tests in both twins pinning bit-identity at zero, release inheritance, and
+discrimination. `EmitSchema` 6 -> 7: `world` gained the four cycle dials.
+
+What the shipped world reads, 200x100 on four seeds (all three gate classes PASS on every one):
+dispersion 0.207-0.220 with the century max at +11% over fair — the record's lower half, honest
+about which half it has: sticky post-crash pessimism (the 1930s-50s, CAPE below its mean for two
+decades) more than manias. A 2x-fair mania peak remains out of reach — `-capyears 3` pays vr60
+1.15 and d10 1.41 — and is disclosed beside the dispersion bullet in `docs/MarketSimWorlds.md`.
+
+**What it moves, and the two rulers that read part of it as regression:**
+
+```
+                          0.22.1   0.23.0
+  worst crash %, record@     18%      35%   <-- pessimism deepens what disasters start
+  crashes/century           1.03     0.99
+  return per vol            1.03     1.01
+  variance ratio 60d        1.10     1.11
+  equity d5 vs real         0.98     1.05
+  equity d10 vs real        1.13     1.28
+  equity d20 vs real        2.36     2.74   <-- see below
+  median depth %            1.04     1.06
+```
+
+The depth rungs are graded against a relation fitted on 35 funds over 2001-2026 — a window with no
+depression in it — and the CRSP index's own shares, measured with the model's definition and
+committed as `depth-shares-2026-08-30.tsv`, run 1.3/2.3x that relation post-1954 and 1.8/4.6x over
+the century at d10/d20. The model's shipped shares sit between the fund cross-section and the
+post-war index. On the horizon-matched `-noise` reading nothing left its band on any seed tried,
+and the tail improved materially; d10 stays inside its 0.70-1.55 gate with margin.
+
+**Long-horizon variance ratios were measured and CANNOT anchor** — the negative result is
+committed so it stays settled (`longhorizon-2026-08-30.tsv`, control columns reproduce the
+persistence fixture to the third decimal): the record's vr(5y) is era-split with the sign flipping
+between windows (0.730 for the century, 1.152 post-1954) under 30-40% block noise, and the model
+sits inside the record on both horizons.
+
+**FIXED — the twins' paths could diverge by one ulp through native libm calls.** The momentum
+crowd's `tanh` disagreed between the JVM and Rust on a cycle-world input after four releases of
+input luck, and rebuilding tanh from the NATIVE `exp` only moved the divergence into exp's own
+wide-argument ulps — the PARITY.md `log` class, twice. `expDet`/`exp_det` is the fix: Cody-Waite
+reduction with fdlibm's split ln2 as bit patterns, a fixed Horner Taylor, and 2^k from raw
+exponent bits — every operation IEEE-exact-or-fixed, so the twins agree to the bit BY CONSTRUCTION
+(~2 ulp accuracy, invisible to a behavioural squash). Both squash sites use it. The cost is one
+cross-release compatibility: pre-0.23.0 paths reproduce STATISTICALLY but not bit-for-bit at any
+dial setting, because `trendPos` moved off the native tanh. Use it for any future transcendental
+that must match across the twins.
+
+Per the defaults-change rule, every `-noise`-frozen spread was re-measured at the adopted world
+(`retVolSd` 0.24, `kurtSd` 2.35, `crashesSd` 0.26, `medDepthSd` 0.17, `worstDepthSd` 0.19, `vr`
+0.37, `valuation dispersion` 0.38, `d5` 0.19, `d10` 0.45, `d20` 2.29, bond growth-crash 1.62,
+infl-crash 2.05), the measured tables in `docs/MarketSimWorlds.md` were regenerated at it, and the
+calibration loss on the frozen ensemble reads **0.731** (not comparable to 0.22.1's 0.579: the
+target set gained a row and the weights re-froze). `beliefShare` and `capYears` joined
+`-calibrate`'s ranges. The Nasdaq recipe inherits the cycle and improves the same way: QQQ's tail
+record@ 9% -> 11%, dispersion 0.23 in band.
+
+## v0.22.1 — 2026-08-30
 
 The release where the century-scale tail became measurable, turned out to be the OPPOSITE of what
 four releases of documentation claimed, and got its mechanism. Three strands: how an extreme is
