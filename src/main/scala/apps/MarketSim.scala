@@ -1359,6 +1359,17 @@ object MarketSim:
                                                   // with CAPE (valuation-2026-08-30.tsv)
                               maxOver: Double,    // median per-path MAX log overvaluation -- the
                                                   // mania a century produces
+                              semiExcess: Double, // median per-path 100*(sqrt(sum r^2|r<0 / sum
+                                                  // r^2|r>0) - 1), tau = 0: how much more the
+                                                  // downside disperses (asymmetry-2026-08-31.tsv)
+                              levCorr: Double,    // median per-path corr(r_t, r^2_{t+1}) -- the
+                                                  // leverage effect at daily lag; the sharper
+                                                  // signed-half regression CANNOT anchor on
+                                                  // close-only data (era-split, same fixture)
+                              tailHedge: Double,  // median per-path stock-bond corr on CALM
+                                                  // sessions with r_eq below its calm q10 --
+                                                  // calm-conditioned because the record window
+                                                  // (TLT's history) is one disinflation era
                               duration: Double,
                               inflAnn: Double,
                               // depth profile: median share of sessions more than 5/10/20% below
@@ -1474,6 +1485,26 @@ object MarketSim:
         while i < sp.price.length do
           val v = math.log(sp.price(i) / sp.fundamental(i)); if v > mx then mx = v; i += 1
         mx
+      }),
+      semiExcess = med(sims.map { sp =>
+        val r = dailyReturns(sp.price)
+        val d = r.filter(_ < 0.0).map(x => x * x).sum
+        val u = r.filter(_ > 0.0).map(x => x * x).sum
+        if u > 0.0 then (math.sqrt(d / u) - 1.0) * 100.0 else Double.NaN
+      }),
+      levCorr = med(sims.map { sp =>
+        val r = dailyReturns(sp.price)
+        pearson(r.dropRight(1), r.drop(1).map(x => x * x))
+      }),
+      tailHedge = med(sims.map { sp =>
+        val idx = (1 until sp.price.length).filter(i => sp.inflPress(i) <= 0.005)
+        val re  = idx.map(i => math.log(sp.price(i) / sp.price(i - 1))).toArray
+        val rb  = idx.map(i => math.log(sp.bond(i) / sp.bond(i - 1))).toArray
+        val q   = pctile(re.toIndexedSeq, 0.10)
+        val ta  = re.zip(rb).filter(_._1 < q)
+        // A tail too small to correlate is unmeasurable, not zero -- the same rule the 24-year
+        // bond windows apply.
+        if ta.length < 30 then Double.NaN else pearson(ta.map(_._1), ta.map(_._2))
       }),
       duration = sims.head.duration,
       inflAnn = med(sims.map(s => math.log(s.cpi.last / s.cpi.head) / years * 100.0)),
@@ -1802,7 +1833,17 @@ object MarketSim:
     medDepth: Double,   medDepthSd: Double,
     worstDepth: Double, worstDepthSd: Double,
     volBand: (Double, Double),                   // the two asset-specific FIDELITY bands
-    retVolBand: (Double, Double))
+    retVolBand: (Double, Double),
+    // 100*(sdRatio - 1) from `asymmetry-2026-08-31.tsv` -- the raw model/real quotient of sdRatio
+    // itself sits so near 1 by construction that no miss could ever fire; the EXCESS is the
+    // phenomenon (positive everywhere the record was measured).
+    semiExcess: Double, semiExcessSd: Double,
+    // corr(r_t, r^2_{t+1}) from the same fixture -- the one leverage statistic that is stable
+    // across every CRSP era and all 18 funds on close-only data.
+    levCorr: Double, levCorrSd: Double,
+    // Left-tail stock-bond correlation from `tailcorr-2026-08-31.tsv` (the equity leg's own pair
+    // against TLT).
+    tailHedge: Double, tailHedgeSd: Double)
 
   /** The S&P/CRSP set.  The LEVELS are the ones every release before 0.21.0 hard-coded, moved
     * rather than re-measured (except the two the 0.22 releases re-anchored -- `medDepth` and
@@ -1833,7 +1874,16 @@ object MarketSim:
     // of 100-year readings at the adopted 0.23.0 world (`-noise -paths 200`, 2026-08-30).
     worstDepth = -84.1,  worstDepthSd = 0.19,
     volBand = (14.0, 18.0),
-    retVolBand = (0.50, 0.85))
+    retVolBand = (0.50, 0.85),
+    // CRSP c1954 rows of asymmetry-2026-08-31.tsv; the tail hedge is SPY/TLT.  Spreads frozen
+    // from `-noise -paths 200` at the 0.23.0 world, 2026-08-31: a single 72-year history barely
+    // pins the semivariance excess (one crash day swings it; the record sits at the 84th
+    // percentile of model histories), measures the leverage corr adequately (the record sits at
+    // the 6th -- 94% of model histories carry weaker leverage than the record), and measures the
+    // tail hedge well (the record sits above ALL 200 -- every model history overshoots).
+    semiExcess = 3.06, semiExcessSd = 1.52,
+    levCorr = -0.0926, levCorrSd = 0.37,
+    tailHedge = -0.273, tailHedgeSd = 0.29)
 
   /** The Nasdaq-100 set, measured 2026-08-28 from QQQ daily adjusted closes over its own full
     * history, 1999-03-10 to 2026-08-20 (27.4 years).
@@ -1876,7 +1926,12 @@ object MarketSim:
     medDepth = -22.8,    medDepthSd = 0.10,
     worstDepth = -83.0,  worstDepthSd = 0.24,
     volBand = (23.5, 30.3),
-    retVolBand = (0.27, 0.47))
+    retVolBand = (0.27, 0.47),
+    // QQQ wfull row of asymmetry-2026-08-31.tsv; the tail hedge is QQQ/TLT.  Spreads are the
+    // S&P's carried over, like every spread in this set.
+    semiExcess = 1.13, semiExcessSd = 1.52,
+    levCorr = -0.1073, levCorrSd = 0.37,
+    tailHedge = -0.236, tailHedgeSd = 0.29)
 
   val AnchorSets: Vector[Anchors] = Vector(SP500Anchors, NasdaqAnchors)
 
@@ -1944,6 +1999,20 @@ object MarketSim:
     // finding, not an argument for dropping a row.  The depth rungs said the world was too deep
     // and named no cause; this row names it.
     ("variance ratio 60d", st => st.vr60,                                    1.00,  wgt(1.0, 0.37)),
+    // THE THIRD ASYMMETRY AXIS the rows above cannot see: clustering is |r| (sign-blind), vr60 is
+    // the signed MEAN's persistence -- this pair is the signed SECOND moment.  Graded as the
+    // EXCESS because the raw down/up ratio sits so near 1 that its model/real quotient could
+    // never miss.  Anchored on CRSP 1954-2026 (the equity window); the record reads +2.8 to +3.1
+    // on every CRSP era and positive on 15 of 18 funds (asymmetry-2026-08-31.tsv).  NO GATE BAND
+    // yet -- first-cycle rows, disclosure before enforcement, the d20 precedent.
+    ("downside vol excess %", st => st.semiExcess,                     a.semiExcess,  wgt(0.5, a.semiExcessSd)),
+    // The leverage effect, graded by the one statistic that survives close-only data:
+    // corr(r_t, r^2_{t+1}) reads -0.09 on every CRSP era and negative on all 18 funds.  The
+    // sharper Patton-Sheppard signed-half regression was measured and CANNOT anchor here --
+    // era-split with the sign flipping (c1926 -0.20, c1990 +0.34), the same negative result
+    // longhorizon-2026-08-30.tsv records for long variance ratios -- and the fixture keeps its
+    // columns so it stays settled.
+    ("leverage corr",      st => st.levCorr,                              a.levCorr,  wgt(0.5, a.levCorrSd)),
     // The record proxy (sd log CAPE) reads 0.24-0.41 across windows; 0.30 is the judgment centre
     // and the LITERAL is shared by both anchor sets -- one Shiller record, no QQQ equivalent.
     // Judgment 0.5 for the proxy commensurability stated in valuation-2026-08-30.tsv.
@@ -1997,6 +2066,14 @@ object MarketSim:
     // is that one, so the anchor is the episode -- but rounded 28% toward zero, which is not a
     // convention, it is an error.
     ("bond infl-crash",    st => st.bondInfl,                              -34.7,  wgt(1.5, 2.05)),
+    // Does the refuge hold exactly where it is needed -- stock-bond correlation on calm sessions
+    // with the equity return below its own calm q10, against the pair's own record
+    // (tailcorr-2026-08-31.tsv).  Calm-conditioned on BOTH sides by construction: the TLT window
+    // is a disinflation era throughout, and the model's calm mask is the same one `corrCalm`
+    // uses.  What it currently discloses: the model's refuge is about twice too good in the left
+    // tail (-0.56 against -0.27) while its full-sample calm correlation sits 0.35 too high --
+    // day-frequency dependence is concentrated in the tail rather than spread across the sample.
+    ("tail hedge corr",    st => st.tailHedge,                        a.tailHedge,  wgt(0.5, a.tailHedgeSd)),
     // DEPTH PROFILE, stated RELATIVE to what a real fund of the same volatility and return spends
     // under water rather than as three absolute levels -- see `EquityD10Corr` for the relation and
     // `eqDepthVsReal` for what the ratio means.  A level target is a statement about one fund; a
@@ -2921,13 +2998,15 @@ object MarketSim:
     * a shorter table reads as a shorter list of concerns, not as a bug. */
   val EquityTargets = Vector(
     "equity vol %", "return per vol", "kurtosis", "clustering lag 1", "clustering lag 20",
-    "variance ratio 60d", "valuation dispersion", "crashes/century", "median depth %",
+    "variance ratio 60d", "downside vol excess %", "leverage corr", "valuation dispersion",
+    "crashes/century", "median depth %",
     "worst crash %", "equity d5 vs real", "equity d10 vs real", "equity d20 vs real")
 
   /** The other half of the partition.  Read only by the partition test -- the report has no bond
     * section to drive; the list exists so a new fidelity target cannot land unclassified. */
   val BondTargets = Vector(
-    "bond vol % (24y)", "bond growth-crash", "bond infl-crash", "bond depth vs vol")
+    "bond vol % (24y)", "bond growth-crash", "bond infl-crash", "bond depth vs vol",
+    "tail hedge corr")
 
   /** Bisection bracket for the depth solve, and how many halvings.  Ten steps over this bracket
     * leaves the depth uncertain by 16/1024 ~ 0.016, worth about 0.02 points of volatility -- far
@@ -3122,7 +3201,7 @@ object MarketSim:
   def anchorGroups(a: Anchors): Vector[(String, Int, Vector[String])] = Vector(
     (a.equityWindow, a.equityYears,
      Vector("equity vol %", "return per vol", "kurtosis", "crashes/century",
-            "median depth %")),
+            "median depth %", "downside vol excess %", "leverage corr")),
     (a.clusterWindow, a.clusterYears,
      Vector("clustering lag 1", "clustering lag 20")),
     // Its own group because its own window -- see `Anchors.tailWindow`.  For both shipped sets this
@@ -3141,7 +3220,8 @@ object MarketSim:
     ("equity funds, 25y", 25,
      Vector("equity d5 vs real", "equity d10 vs real", "equity d20 vs real")),
     ("clean TLT, 24y", 24,
-     Vector("bond vol % (24y)", "bond growth-crash", "bond infl-crash", "bond depth vs vol")))
+     Vector("bond vol % (24y)", "bond growth-crash", "bond infl-crash", "bond depth vs vol",
+            "tail hedge corr")))
 
   /** One fidelity row AS REPORTED.  A per-path target carries a ratio; an `ExtremeTargets` row
     * carries the anchor's percentile among single histories instead, and no ratio.  The two are

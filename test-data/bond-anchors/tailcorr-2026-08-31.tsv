@@ -1,0 +1,27 @@
+# Real stock-bond DEPENDENCE ASYMMETRY: the exceedance correlations behind the `tail hedge
+# corr` fidelity row, which AsymmetryAnchorSuite / asymmetry_anchor_tests re-derive from this
+# file. Editing a row moves the shipped anchor. Nothing else is fitted from this file.
+#
+# Convention is uni.apps.MarketSim's own (close-only daily log returns, shared dates only):
+#   corrFull  corr(r_eq, r_bond) over the window
+#   corrL     the same, on sessions with r_eq STRICTLY below its own q10 (index floor(0.10*n)
+#             of the ascending sort)
+#   corrR     the same, above q90
+#
+# WHAT THIS FILE SETTLES. The flight-to-quality hedge HOLDS in the left tail: corrL reads
+# -0.24..-0.27 against corrFull -0.26..-0.31 on every pair, where tail-conditioning a bivariate
+# normal at that full-sample correlation would decay it toward zero (Longin-Solnik 2001 /
+# Ang-Chen 2002, read on the one pair this two-asset model can represent). The asymmetry is
+# against that normal baseline, NOT against corrFull: corrL sits 0.03-0.06 above corrFull
+# (slightly LESS negative), corrR likewise, so a row built on corrL - corrFull would grade
+# noise. corrL itself is the anchor. The window is TLT's own history -- a disinflation era
+# throughout, which is why the model-side statistic is measured on its CALM-REGIME sessions
+# (the same conditioning `corr_calm` already uses); a century pooling inflation regimes is not
+# comparable on any column.
+#
+# Measured 2026-08-31, data through 2026-08-20; TLT limits every pair to 2002-07-30..
+pair	source	years	corrFull	corrL	corrR
+SPY/TLT	yahoo-adj-close	24.0	-0.302	-0.273	-0.239
+QQQ/TLT	yahoo-adj-close	24.0	-0.255	-0.236	-0.249
+DIA/TLT	yahoo-adj-close	24.0	-0.310	-0.268	-0.256
+IWM/TLT	yahoo-adj-close	24.0	-0.282	-0.242	-0.200

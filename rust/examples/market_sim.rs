@@ -1595,6 +1595,19 @@ struct WorldStats {
     val_disp: f64,
     /// median per-path MAX log overvaluation — the mania a century produces
     max_over: f64,
+    /// median per-path 100*(sqrt(sum r^2 | r<0 / sum r^2 | r>0) - 1), tau = 0: how much more the
+    /// downside disperses than the upside (Roy 1952 / Markowitz 1959; asymmetry-2026-08-31.tsv)
+    semi_excess: f64,
+    /// median per-path corr(r_t, r^2_{t+1}) — the leverage effect at daily lag. The sharper
+    /// signed-half block regression (Patton-Sheppard) was measured and CANNOT anchor on
+    /// close-only data: era-split with the sign flipping (asymmetry-2026-08-31.tsv), the
+    /// longhorizon-2026-08-30 lesson again. This correlation reads -0.09 on every CRSP era.
+    lev_corr: f64,
+    /// median per-path stock-bond corr on CALM sessions with the equity return below its own
+    /// calm q10 — does the refuge hold exactly where it is needed (tailcorr-2026-08-31.tsv).
+    /// Calm-conditioned because the record window (TLT's history) is a disinflation era
+    /// throughout; a century pooling inflation regimes is not comparable on any column.
+    tail_hedge: f64,
     duration: f64,
     infl_ann: f64,
     /// depth profile: median share of sessions more than 5/10/20% below the running peak,
@@ -2007,6 +2020,59 @@ fn measure(sims: &[Path], years: usize) -> WorldStats {
                     .zip(sp.fundamental.iter())
                     .map(|(p, f)| (p / f).ln())
                     .fold(f64::MIN, f64::max)
+            })
+            .collect::<Vec<f64>>()),
+        semi_excess: med(&sims
+            .iter()
+            .map(|sp| {
+                let r = daily_returns(&sp.price);
+                let d = scala_sum(r.iter().filter(|x| **x < 0.0).map(|x| x * x));
+                let u = scala_sum(r.iter().filter(|x| **x > 0.0).map(|x| x * x));
+                if u > 0.0 {
+                    ((d / u).sqrt() - 1.0) * 100.0
+                } else {
+                    f64::NAN
+                }
+            })
+            .collect::<Vec<f64>>()),
+        lev_corr: med(&sims
+            .iter()
+            .map(|sp| {
+                let r = daily_returns(&sp.price);
+                let a: Vec<f64> = r[..r.len() - 1].to_vec();
+                let b: Vec<f64> = r[1..].iter().map(|x| x * x).collect();
+                pearson(&a, &b)
+            })
+            .collect::<Vec<f64>>()),
+        tail_hedge: med(&sims
+            .iter()
+            .map(|sp| {
+                let idx: Vec<usize> = (1..sp.price.len())
+                    .filter(|&i| sp.infl_press[i] <= 0.005)
+                    .collect();
+                let re: Vec<f64> = idx
+                    .iter()
+                    .map(|&i| (sp.price[i] / sp.price[i - 1]).ln())
+                    .collect();
+                let rb: Vec<f64> = idx
+                    .iter()
+                    .map(|&i| (sp.bond[i] / sp.bond[i - 1]).ln())
+                    .collect();
+                let q = pctile(&re, 0.10);
+                let ta: Vec<f64> = re.iter().copied().filter(|x| *x < q).collect();
+                let tb: Vec<f64> = re
+                    .iter()
+                    .zip(rb.iter())
+                    .filter(|(x, _)| **x < q)
+                    .map(|(_, y)| *y)
+                    .collect();
+                // A tail too small to correlate is unmeasurable, not zero — the same rule the
+                // 24-year bond windows apply.
+                if ta.len() < 30 {
+                    f64::NAN
+                } else {
+                    pearson(&ta, &tb)
+                }
             })
             .collect::<Vec<f64>>()),
         duration: sims[0].duration,
@@ -2577,6 +2643,19 @@ struct Anchors {
     worst_depth_sd: f64,
     vol_band: (f64, f64),
     ret_vol_band: (f64, f64),
+    /// 100*(sdRatio - 1) from `asymmetry-2026-08-31.tsv` — the raw model/real quotient of
+    /// sdRatio itself sits so near 1 by construction that no miss could ever fire; the EXCESS is
+    /// the phenomenon (positive everywhere the record was measured).
+    semi_excess: f64,
+    semi_excess_sd: f64,
+    /// corr(r_t, r^2_{t+1}) from the same fixture — the one leverage statistic that is stable
+    /// across every CRSP era and all 18 funds on close-only data.
+    lev_corr: f64,
+    lev_corr_sd: f64,
+    /// Left-tail stock-bond correlation from `tailcorr-2026-08-31.tsv` (the equity leg's own
+    /// pair against TLT).
+    tail_hedge: f64,
+    tail_hedge_sd: f64,
 }
 
 /// The S&P/CRSP set. The LEVELS are the ones every release before 0.21.0 hard-coded, moved rather
@@ -2621,6 +2700,18 @@ const SP500_ANCHORS: Anchors = Anchors {
     worst_depth_sd: 0.19,
     vol_band: (14.0, 18.0),
     ret_vol_band: (0.50, 0.85),
+    // CRSP c1954 rows of asymmetry-2026-08-31.tsv; the tail hedge is SPY/TLT. Spreads frozen
+    // from `-noise -paths 200` at the 0.23.0 world, 2026-08-31: a single 72-year history barely
+    // pins the semivariance excess (one crash day swings it; the record sits at the 84th
+    // percentile of model histories), measures the leverage corr adequately (the record sits at
+    // the 6th — 94% of model histories carry weaker leverage than the record), and measures the
+    // tail hedge well (the record sits above ALL 200 — every model history overshoots).
+    semi_excess: 3.06,
+    semi_excess_sd: 1.52,
+    lev_corr: -0.0926,
+    lev_corr_sd: 0.37,
+    tail_hedge: -0.273,
+    tail_hedge_sd: 0.29,
 };
 
 /// The Nasdaq-100 set, measured 2026-08-28 from QQQ daily adjusted closes over its own full history,
@@ -2668,6 +2759,14 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     worst_depth_sd: 0.24,
     vol_band: (23.5, 30.3),
     ret_vol_band: (0.27, 0.47),
+    // QQQ wfull row of asymmetry-2026-08-31.tsv; the tail hedge is QQQ/TLT. Spreads are the
+    // S&P's carried over, like every spread in this set.
+    semi_excess: 1.13,
+    semi_excess_sd: 1.52,
+    lev_corr: -0.1073,
+    lev_corr_sd: 0.37,
+    tail_hedge: -0.236,
+    tail_hedge_sd: 0.29,
 };
 
 fn anchors_named(spec: &str) -> Anchors {
@@ -2779,6 +2878,31 @@ fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             1.00,
             wgt(1.0, 0.37),
         ),
+        // THE THIRD ASYMMETRY AXIS the rows above cannot see: clustering is |r| (sign-blind),
+        // vr60 is the signed MEAN's persistence — this pair is the signed SECOND moment. Graded
+        // as the EXCESS because the raw down/up ratio sits so near 1 that its model/real
+        // quotient could never miss. Anchored on CRSP 1954-2026 (the equity window); the record
+        // reads +2.8 to +3.1 on every CRSP era and positive on 15 of 18 funds
+        // (asymmetry-2026-08-31.tsv). NO GATE BAND yet — first-cycle rows, disclosure before
+        // enforcement, the d20 precedent.
+        (
+            "downside vol excess %",
+            (|st: &WorldStats| st.semi_excess) as StatFn,
+            a.semi_excess,
+            wgt(0.5, a.semi_excess_sd),
+        ),
+        // The leverage effect, graded by the one statistic that survives close-only data:
+        // corr(r_t, r^2_{t+1}) reads -0.09 on every CRSP era and negative on all 18 funds. The
+        // sharper Patton-Sheppard signed-half regression was measured and CANNOT anchor here —
+        // era-split with the sign flipping (c1926 -0.20, c1990 +0.34), the same negative result
+        // longhorizon-2026-08-30.tsv records for long variance ratios — and the fixture keeps
+        // its columns so it stays settled.
+        (
+            "leverage corr",
+            (|st: &WorldStats| st.lev_corr) as StatFn,
+            a.lev_corr,
+            wgt(0.5, a.lev_corr_sd),
+        ),
         // The record proxy (sd log CAPE) reads 0.24-0.41 across windows; 0.30 is the judgment
         // centre and the LITERAL is shared by both anchor sets — one Shiller record, no QQQ
         // equivalent. Judgment 0.5 for the proxy commensurability stated in
@@ -2866,6 +2990,20 @@ fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             (|st| st.bond_infl) as StatFn,
             -34.7,
             wgt(1.5, 2.05),
+        ),
+        // Does the refuge hold exactly where it is needed — stock-bond correlation on calm
+        // sessions with the equity return below its own calm q10, against the pair's own record
+        // (tailcorr-2026-08-31.tsv). Calm-conditioned on BOTH sides by construction: the TLT
+        // window is a disinflation era throughout, and the model's calm mask is the same one
+        // `corr_calm` uses. What it currently discloses: the model's refuge is about twice too
+        // good in the left tail (-0.56 against -0.27) while its full-sample calm correlation
+        // sits 0.35 too high — day-frequency dependence is concentrated in the tail rather than
+        // spread across the sample.
+        (
+            "tail hedge corr",
+            (|st| st.tail_hedge) as StatFn,
+            a.tail_hedge,
+            wgt(0.5, a.tail_hedge_sd),
         ),
         // DEPTH PROFILE, stated RELATIVE to what a real fund of the same volatility and return
         // spends under water rather than as three absolute levels — see `EQUITY_D10_CORR` for the
@@ -4866,13 +5004,15 @@ fn bond_relations() -> [Relation; 2] {
 /// target added or renamed fails the build until someone places it. The failure being prevented is
 /// a target silently absent from the equity section — a shorter table reads as a shorter list of
 /// concerns, not as a bug.
-const EQUITY_TARGETS: [&str; 13] = [
+const EQUITY_TARGETS: [&str; 15] = [
     "equity vol %",
     "return per vol",
     "kurtosis",
     "clustering lag 1",
     "clustering lag 20",
     "variance ratio 60d",
+    "downside vol excess %",
+    "leverage corr",
     "valuation dispersion",
     "crashes/century",
     "median depth %",
@@ -4891,11 +5031,12 @@ const EQUITY_TARGETS: [&str; 13] = [
         reason = "the partition contract is read by the tests, never by a report"
     )
 )]
-const BOND_TARGETS: [&str; 4] = [
+const BOND_TARGETS: [&str; 5] = [
     "bond vol % (24y)",
     "bond growth-crash",
     "bond infl-crash",
     "bond depth vs vol",
+    "tail hedge corr",
 ];
 
 /// Bisection bracket for the depth solve, and how many halvings. Ten steps over this bracket
@@ -5261,6 +5402,8 @@ fn anchor_groups(a: Anchors) -> [(&'static str, usize, &'static [&'static str]);
                 "kurtosis",
                 "crashes/century",
                 "median depth %",
+                "downside vol excess %",
+                "leverage corr",
             ],
         ),
         (
@@ -5298,6 +5441,7 @@ fn anchor_groups(a: Anchors) -> [(&'static str, usize, &'static [&'static str]);
                 "bond growth-crash",
                 "bond infl-crash",
                 "bond depth vs vol",
+                "tail hedge corr",
             ],
         ),
     ]
@@ -8960,6 +9104,112 @@ mod persistence_anchor_tests {
             "a window shorter than 20 years has appeared; the 60-session ratio needs blocks to \
              average"
         );
+    }
+}
+
+/// The six asymmetry anchors are MEASURED numbers; these re-derive every one from the checked-in
+/// fixtures so the shipped literal and the record reading cannot drift apart. The fixtures also
+/// hold a committed NEGATIVE result — the Patton-Sheppard signed-half regression's era-split
+/// columns — which these tests pin so nobody re-fights that measurement.
+///
+/// The Scala twin carries the same checks in `AsymmetryAnchorSuite`, against the same files.
+#[cfg(test)]
+mod asymmetry_anchor_tests {
+    use super::*;
+
+    const ASYM: &str = "../test-data/equity-anchors/asymmetry-2026-08-31.tsv";
+    const TAIL: &str = "../test-data/bond-anchors/tailcorr-2026-08-31.tsv";
+
+    /// `None` where a fixture is absent — the crate ships without `test-data/`, so a
+    /// source-tarball build must not fail here.
+    fn rows(path: &str) -> Option<Vec<Vec<String>>> {
+        let text = std::fs::read_to_string(path).ok()?;
+        Some(
+            text.lines()
+                .filter(|l| {
+                    !l.starts_with('#')
+                        && !l.starts_with("window\t")
+                        && !l.starts_with("pair\t")
+                        && !l.trim().is_empty()
+                })
+                .map(|l| l.split('\t').map(str::to_string).collect())
+                .collect(),
+        )
+    }
+
+    fn field(rows: &[Vec<String>], key0: &str, key1: &str, col: usize) -> f64 {
+        rows.iter()
+            .find(|r| r[0] == key0 && r[1] == key1)
+            .unwrap_or_else(|| panic!("fixture row [{key0} {key1}] missing"))[col]
+            .parse()
+            .expect("numeric fixture field")
+    }
+
+    #[test]
+    fn the_shipped_asymmetry_anchors_are_the_fixture_rows() {
+        let Some(a) = rows(ASYM) else { return };
+        // sdRatio column 5, levCorr column 9; the shipped excess is 100*(sdRatio - 1).
+        let sp_excess = (field(&a, "c1954", "CRSP-VW", 5) - 1.0) * 100.0;
+        let qq_excess = (field(&a, "wfull", "QQQ", 5) - 1.0) * 100.0;
+        assert!(
+            (SP500_ANCHORS.semi_excess - sp_excess).abs() < 0.005,
+            "S&P downside vol excess: shipped {} vs fixture {sp_excess}",
+            SP500_ANCHORS.semi_excess
+        );
+        assert!(
+            (NASDAQ_ANCHORS.semi_excess - qq_excess).abs() < 0.005,
+            "QQQ downside vol excess: shipped {} vs fixture {qq_excess}",
+            NASDAQ_ANCHORS.semi_excess
+        );
+        assert!(
+            (SP500_ANCHORS.lev_corr - field(&a, "c1954", "CRSP-VW", 9)).abs() < 5e-5,
+            "S&P leverage corr drifted from the fixture"
+        );
+        assert!(
+            (NASDAQ_ANCHORS.lev_corr - field(&a, "wfull", "QQQ", 9)).abs() < 5e-5,
+            "QQQ leverage corr drifted from the fixture"
+        );
+    }
+
+    #[test]
+    fn the_shipped_tail_hedge_anchors_are_the_fixture_rows() {
+        let Some(t) = rows(TAIL) else { return };
+        let sp = t.iter().find(|r| r[0] == "SPY/TLT").expect("SPY/TLT row")[4]
+            .parse::<f64>()
+            .expect("corrL");
+        let qq = t.iter().find(|r| r[0] == "QQQ/TLT").expect("QQQ/TLT row")[4]
+            .parse::<f64>()
+            .expect("corrL");
+        assert!(
+            (SP500_ANCHORS.tail_hedge - sp).abs() < 5e-4,
+            "S&P tail hedge drifted from the fixture"
+        );
+        assert!(
+            (NASDAQ_ANCHORS.tail_hedge - qq).abs() < 5e-4,
+            "QQQ tail hedge drifted from the fixture"
+        );
+    }
+
+    /// The committed negative result: on close-only daily data the signed-half block regression
+    /// flips sign between CRSP eras, so it cannot anchor a row — the daily leverage correlation,
+    /// which does not flip, is what the shipped row grades. Pinned so the settled measurement is
+    /// not re-fought each cycle (the `longhorizon-2026-08-30.tsv` pattern).
+    #[test]
+    fn the_signed_half_regression_is_era_split_and_the_leverage_corr_is_not() {
+        let Some(a) = rows(ASYM) else { return };
+        let lev_asym_1926 = field(&a, "c1926", "CRSP-VW", 8);
+        let lev_asym_1990 = field(&a, "c1990", "CRSP-VW", 8);
+        assert!(
+            lev_asym_1926 < 0.0 && lev_asym_1990 > 0.0,
+            "the era split this fixture exists to record has changed: c1926 {lev_asym_1926} c1990 {lev_asym_1990}"
+        );
+        for w in ["c1926", "c1954", "c1990"] {
+            let lc = field(&a, w, "CRSP-VW", 9);
+            assert!(
+                (-0.11..=-0.08).contains(&lc),
+                "CRSP {w} leverage corr {lc} left the stable range the anchor relies on"
+            );
+        }
     }
 }
 

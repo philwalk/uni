@@ -1,0 +1,72 @@
+# Real return ASYMMETRY: the three statistics behind the `downside/upside vol` and `leverage
+# asymmetry` fidelity rows, which AsymmetryAnchorSuite / asymmetry_anchor_tests re-derive from
+# this file. Editing a row moves the shipped anchors. Nothing else is fitted from this file.
+#
+# All three are uni.apps.MarketSim's own definitions, close-only daily log returns:
+#   sdRatio  sqrt(sum(r^2 | r<0) / sum(r^2 | r>0)), tau = 0 (Roy 1952 / Markowitz 1959 ch.9)
+#   betaN/betaP  OLS of next-block realized variance on this block's SIGNED halves
+#            (Patton & Sheppard 2015, close-only version): 22-session non-overlapping blocks,
+#            RS- = sum(r^2 | r<0), RS+ = sum(r^2 | r>0), RV_{t+1} ~ RS-_t + RS+_t, demeaned
+#   levAsym  (betaN - betaP) / (betaN + betaP): 0 = sign-blind clustering, 1 = downside does
+#            all the forecasting (betaP = 0), above 1 = betaP negative
+#   levCorr  corr(r_t, r^2_{t+1}), the classic daily leverage correlation (supporting column)
+#
+# WHAT THIS FILE SETTLES. Volatility clustering (|r|) and the variance-ratio row are both blind
+# to WHICH SIGN carries the dispersion and the persistence. Three findings, two usable:
+#   - sdRatio: downside exceeds upside on every CRSP era (1.028-1.031, stable to the third
+#     digit) and on 15 of 18 full-history funds (0.986-1.061). The EXCESS is what a row can
+#     grade -- the ratio itself sits so near 1 that a model/real quotient could never miss.
+#   - levCorr: negative on all 18 funds (-0.17..-0.03) and stable on every CRSP era
+#     (-0.092/-0.093/-0.100). This is the anchorable leverage statistic.
+#   - betaN/betaP CANNOT ANCHOR, and the columns are committed so that stays settled: the
+#     century flips the sign (levAsym c1926 -0.20, c1954 -0.15, c1990 +0.34 -- the 1930s' giant
+#     up-days sit inside the same high-volatility stretches as the down-days), and the modern
+#     cross-section spans -0.64..+1.82. The close-only 22-session block regression is not the
+#     intraday statistic Patton & Sheppard read, and it does not inherit their conclusion.
+#
+# Measured 2026-08-31, fund data through 2026-08-20, CRSP through 2026-06-30.
+#   wfull  each instrument's full history
+#   w2001  2001-08-27.. -- the depth cross-section's window (opens mid-bear; fine here, these
+#          statistics carry no running peak)
+#   c1926/c1954/c1990  CRSP value-weighted US market total return (Mkt-RF + RF), daily, from
+#          Ken French's F-F_Research_Data_Factors_daily, window opening in that year
+window	ticker	kind	source	years	sdRatio	betaN	betaP	levAsym	levCorr
+wfull	DIA	us-broad	yahoo-adj-close	28.5	1.0124	0.172	0.792	-0.643	-0.0926
+wfull	EFA	intl-broad	yahoo-adj-close	24.9	1.0488	1.376	-0.258	1.461	-0.1135
+wfull	IWM	us-broad	yahoo-adj-close	26.1	1.0337	0.580	0.498	0.077	-0.0811
+wfull	QQQ	us-growth	yahoo-adj-close	27.3	1.0113	1.297	-0.155	1.271	-0.1073
+wfull	SMH	sector	yahoo-adj-close	26.1	0.9858	1.574	-0.233	1.347	-0.0315
+wfull	SOXX	sector	yahoo-adj-close	25.0	0.9969	0.957	0.115	0.786	-0.0387
+wfull	SPY	us-broad	yahoo-adj-close	33.5	1.0202	0.804	0.080	0.819	-0.1078
+wfull	VFINX	us-broad	yahoo-adj-close	36.6	1.0197	0.928	0.080	0.841	-0.1004
+wfull	VGTSX	intl-broad	yahoo-adj-close	30.2	1.0613	1.032	-0.062	1.128	-0.1025
+wfull	XLB	sector	yahoo-adj-close	27.6	1.0130	0.946	-0.042	1.093	-0.0878
+wfull	XLE	sector	yahoo-adj-close	27.6	1.0575	0.464	0.517	-0.055	-0.1064
+wfull	XLF	sector	yahoo-adj-close	27.6	1.0078	0.487	0.852	-0.272	-0.0652
+wfull	XLI	sector	yahoo-adj-close	27.6	1.0291	0.586	0.179	0.532	-0.0680
+wfull	XLK	sector	yahoo-adj-close	27.6	0.9973	1.216	-0.159	1.302	-0.0729
+wfull	XLP	sector	yahoo-adj-close	27.6	1.0086	0.422	0.164	0.440	-0.1310
+wfull	XLU	sector	yahoo-adj-close	27.6	1.0205	0.913	-0.094	1.229	-0.1678
+wfull	XLV	sector	yahoo-adj-close	27.6	1.0052	0.917	-0.265	1.815	-0.0998
+wfull	XLY	sector	yahoo-adj-close	27.6	1.0250	0.821	0.109	0.766	-0.0481
+w2001	DIA	us-broad	yahoo-adj-close	24.9	1.0178	1.526	-0.541	2.098	-0.0929
+w2001	EFA	intl-broad	yahoo-adj-close	24.9	1.0488	1.376	-0.258	1.461	-0.1135
+w2001	IWM	us-broad	yahoo-adj-close	24.9	1.0392	1.154	-0.143	1.284	-0.0836
+w2001	QQQ	us-growth	yahoo-adj-close	24.9	1.0131	1.485	-0.379	1.686	-0.0722
+w2001	SMH	sector	yahoo-adj-close	24.9	0.9952	1.262	0.016	0.975	-0.0288
+w2001	SOXX	sector	yahoo-adj-close	24.9	0.9990	1.177	0.073	0.883	-0.0374
+w2001	SPY	us-broad	yahoo-adj-close	24.9	1.0334	1.413	-0.360	1.684	-0.1064
+w2001	VFINX	us-broad	yahoo-adj-close	24.9	1.0377	1.590	-0.601	2.214	-0.0996
+w2001	VGTSX	intl-broad	yahoo-adj-close	24.9	1.0657	1.440	-0.480	2.001	-0.1060
+w2001	XLB	sector	yahoo-adj-close	24.9	1.0364	1.522	-0.717	2.780	-0.0993
+w2001	XLE	sector	yahoo-adj-close	24.9	1.0703	1.229	-0.269	1.559	-0.1107
+w2001	XLF	sector	yahoo-adj-close	24.9	1.0178	0.859	0.662	0.130	-0.0691
+w2001	XLI	sector	yahoo-adj-close	24.9	1.0333	1.477	-0.682	2.716	-0.0704
+w2001	XLK	sector	yahoo-adj-close	24.9	1.0022	1.424	-0.276	1.481	-0.0639
+w2001	XLP	sector	yahoo-adj-close	24.9	1.0166	1.379	-0.467	2.025	-0.1504
+w2001	XLU	sector	yahoo-adj-close	24.9	1.0271	2.851	-1.790	4.374	-0.1798
+w2001	XLV	sector	yahoo-adj-close	24.9	1.0216	1.139	-0.423	2.181	-0.1097
+w2001	XLY	sector	yahoo-adj-close	24.9	1.0350	1.347	-0.439	1.965	-0.0514
+c1926	CRSP-VW	us-broad	ken-french-daily	104.3	1.0281	0.372	0.559	-0.201	-0.0920
+c1954	CRSP-VW	us-broad	ken-french-daily	72.4	1.0306	0.349	0.476	-0.153	-0.0926
+c1990	CRSP-VW	us-broad	ken-french-daily	36.5	1.0294	0.719	0.351	0.344	-0.1005

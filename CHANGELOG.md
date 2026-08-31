@@ -82,10 +82,11 @@ Per the defaults-change rule, every `-noise`-frozen spread was re-measured at th
 (`retVolSd` 0.24, `kurtSd` 2.35, `crashesSd` 0.26, `medDepthSd` 0.17, `worstDepthSd` 0.19, `vr`
 0.37, `valuation dispersion` 0.38, `d5` 0.19, `d10` 0.45, `d20` 2.29, bond growth-crash 1.62,
 infl-crash 2.05), the measured tables in `docs/MarketSimWorlds.md` were regenerated at it, and the
-calibration loss on the frozen ensemble reads **0.731** (not comparable to 0.22.1's 0.579: the
-target set gained a row and the weights re-froze). `beliefShare` and `capYears` joined
-`-calibrate`'s ranges. The Nasdaq recipe inherits the cycle and improves the same way: QQQ's tail
-record@ 9% -> 11%, dispersion 0.23 in band.
+calibration loss on the frozen ensemble reads **1.515** (not comparable to 0.22.1's 0.579: the
+target set gained the valuation row and the three asymmetry rows below, and the weights
+re-froze; 0.785 of it is the asymmetry misses those rows now price). `beliefShare` and
+`capYears` joined `-calibrate`'s ranges. The Nasdaq recipe inherits the cycle and improves the
+same way: QQQ's tail record@ 9% -> 11%, dispersion 0.23 in band.
 
 **The verdict is graded at the calibration horizon.** Every band and anchor weight is calibrated
 on 100-year ensembles, and several graded statistics grow with the measurement window — sd
@@ -106,6 +107,38 @@ extreme-percentile rows landed in 0.22.1. The rows are now built once per invoca
 by the printed table and every sidecar (which also removes the one way the two could disagree): a
 40-path × 33-year `-emitall` drops from 22.2 s to 2.9 s, and the marginal cost per path returns
 to the ~45 ms formatting floor `docs/MarketSimWorlds.md` states.
+
+**Three return asymmetries measured, anchored, and DISCLOSED — none yet enforced.** Equity
+records are asymmetric three ways the target set could not see: the downside disperses more
+than the upside (Roy 1952 / Markowitz 1959 ch. 9), a decline raises future volatility where an
+equal rally does not (the leverage effect), and dependence differs in the tails (Longin-Solnik
+2001 / Ang-Chen 2002). Three per-path fidelity rows now grade them, each against a committed
+fixture measured with the model's own close-only conventions
+(`test-data/equity-anchors/asymmetry-2026-08-31.tsv` — the CRSP daily control plus 18 fund
+histories; `test-data/bond-anchors/tailcorr-2026-08-31.tsv` — the SPY/TLT and QQQ/TLT pairs;
+`AsymmetryAnchorSuite` / `asymmetry_anchor_tests` re-derive every shipped literal):
+
+- **`downside vol excess %`** — `100*(sd_down/sd_up - 1)` at tau 0, graded as the excess
+  because the raw ratio sits too near 1 for a model/real quotient to ever miss. Record +3.1 on
+  every CRSP era, positive on 15 of 18 funds; the model reads **-1.4**.
+- **`leverage corr`** — `corr(r_t, r^2_{t+1})`. Record -0.09 on every CRSP era, negative on
+  all 18 funds; the model reads **-0.03**, and the record sits at the 6th percentile of model
+  histories. The sharper Patton-Sheppard signed-half regression was measured and CANNOT anchor
+  on close-only data — era-split with the sign flipping (c1926 -0.20, c1990 +0.34; the 1930s'
+  giant up-days live inside the same high-volatility stretches as the down-days) — and the
+  fixture commits those columns so the negative result stays settled.
+- **`tail hedge corr`** — stock-bond correlation on calm sessions with the equity return below
+  its own calm q10, against the pair's own record (-0.27; the TLT window is one disinflation
+  era, matched by the model's calm mask). The model reads **-0.55**: the refuge is about twice
+  too good exactly in the left tail while the full-sample calm correlation sits 0.35 too high —
+  day-frequency dependence concentrated in the tail rather than spread across the sample. The
+  record sits above all 200 model histories.
+
+All three carry judgment 0.5 with `-noise`-frozen spreads and NO gate bands — first-cycle
+disclosure, the `d20` pattern; bands belong to the mechanism work. Where the model's leverage
+effect currently comes from is the liquidity spiral alone (`-stress 0` zeroes `leverage corr`,
+`-crowdimpact 0` barely moves it) and the sign-blind exogenous volatility process dilutes it —
+the mechanism gap these rows keep visible.
 
 **NEW — `-atrelease V` runs a past release's world under the current binary.** Seeds every dial
 from the frozen world of release `V` (any `-releases` row, or the current version), so a consumer
