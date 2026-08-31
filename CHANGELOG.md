@@ -87,6 +87,34 @@ target set gained a row and the weights re-froze). `beliefShare` and `capYears` 
 `-calibrate`'s ranges. The Nasdaq recipe inherits the cycle and improves the same way: QQQ's tail
 record@ 9% -> 11%, dispersion 0.23 in band.
 
+**The verdict is graded at the calibration horizon.** Every band and anchor weight is calibrated
+on 100-year ensembles, and several graded statistics grow with the measurement window — sd
+log(p/fair) reads 0.11 at `-years 30` against a mechanism floor of 0.13 set from the century
+record, so a 30-year `-validate` failed the gate on horizon, not on substance, and every short
+export's sidecar stamped `mechanism: FAIL`. `-validate` and `-emit` now measure their verdict
+ensemble — gate classes, fidelity table, sidecar rows — at 100 years whatever `-years` is passed;
+`-emitgate 0` still grades the emitted ensemble itself, caller's horizon and all. The report
+section keeps describing the ensemble you asked for, and names the split when the two differ
+(`graded on 200 paths x 100 years — the calibration horizon; …`). `gate.ensembleYears` records
+the verdict ensemble's horizon. At `-years 100` nothing moves: same seed, same draws,
+byte-identical output.
+
+**FIXED — `-emitall` re-simulated the extreme rows' century ensemble once per emitted path.** The
+sidecar's fidelity rows are constant across a batch, but every write rebuilt them, and building
+them simulates a fresh 200-path × 100-year ensemble — in every release since the
+extreme-percentile rows landed in 0.22.1. The rows are now built once per invocation and shared
+by the printed table and every sidecar (which also removes the one way the two could disagree): a
+40-path × 33-year `-emitall` drops from 22.2 s to 2.9 s, and the marginal cost per path returns
+to the ~45 ms formatting floor `docs/MarketSimWorlds.md` states.
+
+**NEW — `-atrelease V` runs a past release's world under the current binary.** Seeds every dial
+from the frozen world of release `V` (any `-releases` row, or the current version), so a consumer
+pinned to a past calibration takes binary fixes without taking a recalibration; explicit dial
+flags override the base wherever they appear. Paths reproduce statistically, bit-for-bit only
+back to 0.23.0 (`expDet`), and the gate grades with the current rulers — a world predating a
+mechanism fails that mechanism's rows honestly; pair with `-gate realism` to require only what it
+claims. See "A pinned world without a pinned binary" in `docs/MarketSimWorlds.md`.
+
 ## v0.22.1 — 2026-08-30
 
 The release where the century-scale tail became measurable, turned out to be the OPPOSITE of what

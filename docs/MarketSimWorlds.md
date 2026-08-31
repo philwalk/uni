@@ -31,7 +31,10 @@ The `version` beside it says which release wrote the file, because the defaults 
 between releases. `market_sim.exe -version` answers the same question about a binary before it is
 run.
 
-Run `market_sim.exe -badflag` for the full flag list with each default.
+The full flag list with each default is the Scala twin's usage text: `marketSim -badflag` prints
+it (any unrecognized flag does). The Rust binary deliberately carries no usage text — it prints
+`unrecognized arg` and exits 2 — and its dial defaults are all recorded in any sidecar's `world`
+block.
 
 ## Verifying what produced your data
 
@@ -47,8 +50,10 @@ exit 0. Nothing to parse, so a caller can assert on it without depending on any 
 This catches the wrong binary, and it is the only check available *before* you spend the run. It
 stops working the moment you are handed a file instead of a command.
 
-**After the fact — the sidecar.** `-emit F` writes `F.json` beside the TSV, and that is the only
-provenance that survives the file being moved. Four fields answer four different questions:
+**After the fact — the sidecar.** `-emit F` writes a sidecar beside the TSV — `F` with its
+extension replaced by `.json`, so `paths.tsv` → `paths.json` (a bare name gets `.json` appended) —
+and that is the only provenance that survives the file being moved. Four fields answer four
+different questions:
 
 | field | question |
 |---|---|
@@ -77,8 +82,12 @@ gained the five `disaster*` dials — the same no-tail-channel trap as schema 3,
 default world should compare the sidecar's `world` block field-by-field against what it calibrated
 on; that catches both a moved default and a deliberate flag, which no label can. And a file whose
 `gate` records a failure is not evidence about a market — read the verdicts rather than assuming
-them, remembering they come from an `-emitgate` ensemble (default 200 paths), not from the single
-emitted sample.
+them, remembering they come from an `-emitgate` ensemble, not from the single emitted sample. That
+ensemble is graded at the calibration horizon — `gate.ensembleYears` reads 100 whatever `-years`
+the emitted paths carry, because several graded statistics grow with the measurement window and
+the bands were set from century records — so a short export is not judged against bands its
+horizon could never satisfy. `-emitgate 0` opts out and grades the emitted ensemble itself,
+caller's horizon and all.
 
 **Do not let `PATH` choose the binary for a pinned consumer.** `~/.cargo/bin/market_sim.exe` is
 whichever version was installed last, and on Windows a running executable cannot be replaced in
@@ -93,13 +102,28 @@ cargo install vastblue-uni@0.21.0 --example market_sim --root ~/.local/uni-0.21.
 Exe-versus-library mismatch is not a risk — the example links the library from the same crate. The
 only mismatch is the exe against what the consumer expected.
 
+**A pinned world without a pinned binary — `-atrelease`.** A consumer calibrated against a past
+release's world does not have to hold the old binary to keep it: `-atrelease 0.22.0` seeds every
+dial from that release's frozen world (any `-releases` row, or the current version), so binary
+fixes arrive without a recalibration. Explicit dial flags override the base wherever they appear
+on the command line. Two things it deliberately does not do: paths reproduce *statistically*, not
+bit-for-bit, across 0.23.0 (`expDet` moved the twins off the native tanh); and the gate still
+grades with the *current* rulers, so a world predating a mechanism fails that mechanism's rows
+honestly — pair with `-gate realism` to require only what such a world claims, and read the rest
+as disclosure. The sidecar's `world` block records the frozen dials and `version` records the
+binary that wrote the file, which together are the whole provenance:
+
+```
+market_sim.exe -atrelease 0.22.0 -gate realism -paths 2000 -years 33 -emitall -emit rung.tsv
+```
+
 ## Generating an ensemble
 
 `-emitall` writes every path of the run from one invocation, to `F-000.tsv`, `F-001.tsv`, … each
 with its sidecar. Prefer it to a per-path invocation loop: it pays the process start, the report
-ensemble and the 200-path gate ensemble once rather than per path, which is worth about 5x
-(~47 ms/path against ~245 ms at 33 years). The remainder is the cost of formatting a path's eight
-columns, which no batching removes.
+ensemble and the verdict ensembles once rather than per path — ~45 ms marginal per path at 33
+years against ~1.3 s for a whole single-path invocation, so a 40-path batch runs in under 3 s.
+The marginal cost is formatting a path's eight columns, which no batching removes.
 
 ```
 market_sim.exe -paths 2000 -years 33 -emitall -emit rung.tsv     # rung-0000.tsv .. rung-1999.tsv
@@ -122,7 +146,8 @@ market_sim.exe -paths 500 -years 33 -emitall -emitfrom 500 -emit rung.tsv   # ru
 
 Two things to know when chunking. The report and the gate are always measured on `0..paths`, so
 each chunk's sidecar carries the same verdict — except under `-emitgate 0`, which asks for the run's
-own sample to be the judge and therefore gives each chunk its own, smaller, noisier verdict. And the
+own sample to be the judge and therefore gives each chunk its own, smaller, noisier verdict,
+measured at the caller's `-years` rather than the calibration horizon. And the
 padding follows the highest index of that invocation, so chunks either side of 1000 differ in width:
 sort numerically, or emit the batch in one invocation.
 

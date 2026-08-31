@@ -176,6 +176,12 @@ object MarketSim:
     "-releases     ; every fidelity ratio at every published default, plus the world this",
     "              ;   invocation describes — what a candidate costs against the whole history,",
     "              ;   not just the previous release",
+    "-atrelease V  ; seed every dial from release V's frozen world (the -releases rows, or the",
+    "              ;   current version) so a pinned consumer takes binary fixes without taking a",
+    "              ;   recalibration; explicit dial flags override it wherever they appear.  The",
+    "              ;   gate still grades with the CURRENT rulers — a world predating a mechanism",
+    "              ;   fails that mechanism's rows honestly; pair with -gate realism to require",
+    "              ;   only what it claims, and read the rest as disclosure",
     "-fitness      ; print the scalar calibration loss and its components, then exit",
     "              ;   (scores the frozen 60x80 ensemble, plus 60 single histories at each",
     "              ;   extreme anchor's own horizon; refuses -paths/-years)",
@@ -299,7 +305,7 @@ object MarketSim:
                                  // where CAPE-scale valuation swings live.  Consumes no draws;
                                  // 0 is bit-identical off.
     beliefYears: Double = 2.5,   // half-life of belief adaptation, in years
-    capWindow: Double = 4.0,     // years of EWMA through which beliefs read that growth: the
+    capWindow: Double = 6.0,     // years of EWMA through which beliefs read that growth: the
                                  // narrative horizon.  Short windows pass fundVol noise into the
                                  // term capYears-fold (at 1y, vr60 read 2.3-5.2, measured) --
                                  // the window must sit between the noise and the ~6-year regime.
@@ -497,6 +503,16 @@ object MarketSim:
     ("0.17.0", PreV1901), ("0.18.0", PreV1901), ("0.19.0", PreV1901),
     ("0.19.1", PreV1902), ("0.19.2", V0_19_2), ("0.19.3", V0_19_2), ("0.20.0", V0_20_0),
     ("0.21.0", V0_21_0), ("0.22.0", V0_22_0), ("0.22.1", V0_22_1))
+
+  /** The world a release shipped, for `-atrelease`: the current version's default, or a frozen row
+    * of the `-releases` table.  `None` for anything else -- the CLI dies naming what exists.  The
+    * frozen rows reproduce their release's world under the current binary because every mechanism
+    * added since is dial-gated to bit-inertness at zero (the contract tests pin that); paths
+    * reproduce statistically, and bit-for-bit only back to 0.23.0 (`expDet` moved `trendPos` off
+    * the native tanh). */
+  def releaseWorld(version: String): Option[World] =
+    if version == Version then Some(Defaults)
+    else Releases.find(_._1 == version).map(_._2)
 
   /** `-power`'s default contrast arms, as 1-based indices into `Rules`, and its default history
     * lengths.  Named here rather than inside the report so `usage` states them and `main` seeds
@@ -1488,6 +1504,25 @@ object MarketSim:
     * ensemble (`-emitgate`). */
   enum GateClass:
     case Realism, Mechanism, Fidelity
+
+  /** The horizon the verdict ensemble runs at: every band and anchor weight was calibrated on
+    * 100-year ensembles, and several graded statistics move with the measurement window -- the
+    * valuation gap's dispersion is the sample sd of a near-integrated process (0.11 at 30 years,
+    * 0.21 at 100, against floors set from the 100-year record), and the depth shares and
+    * clustering carry the century's regime mix.  A fixed band read at the caller's `-years`
+    * grades the horizon, not the world.  The report section still describes the caller's
+    * ensemble; only the verdict is pinned. */
+  val GateYears = 100
+
+  /** The (paths, years) the verdict -- gate classes, fidelity table, every emitted sidecar -- is
+    * measured on: `GateYears` always, on the larger of the report and `-emitgate` ensembles.
+    * `-emitgate 0` is the caller's explicit request to grade the emitted ensemble itself,
+    * caller's horizon and all.  Equal to (paths, years) exactly when the report ensemble already
+    * is the verdict ensemble -- which at the defaults it is: same seed, same draws. */
+  def verdictSpec(emitting: Boolean, emitGate: Int, paths: Int, years: Int): (Int, Int) =
+    if emitting && emitGate == 0 then (paths, years)
+    else if emitting && emitGate > paths then (emitGate, GateYears)
+    else (paths, GateYears)
 
   /** TWO-SIDED wherever a plausible range exists.  History of this gate: a one-sided version
     * passed a 35%-volatility world (the one reversing the ranking); a "bonds fail" check written
@@ -3640,10 +3675,13 @@ object MarketSim:
     val tag = s"-${k.toString.reverse.padTo(width, '0').reverse}"
     if cut > sep then file.substring(0, cut) + tag + file.substring(cut) else file + tag
 
-  /** The TSV and its sidecar.  `gateSt` is measured on the gate ensemble, which is a different and
-    * usually much larger sample than the one path being written. */
+  /** The TSV and its sidecar.  `gateSt` is measured on the gate ensemble -- a different, usually
+    * much larger and (per `GateYears`) usually longer sample than the one path being written --
+    * and `gateRows` are built from it once per batch, because building them simulates the extreme
+    * rows' own-horizon ensemble. */
   def writeEmitted(a: Anchors, file: String, p: Path, k: Int, w: World, years: Int, seed: Long,
-                   startYmd: String, gateSt: WorldStats, gatePaths: Int): Unit =
+                   startYmd: String, gateSt: WorldStats, gatePaths: Int, gateYears: Int,
+                   gateRows: Vector[FidelityRow]): Unit =
     // A non-finite path is refused, not written -- a file whose every row reads NaN is not data.
     // The CLI's clean refusal (message + exit 2) lives at the emit sites in `main`, which pre-check
     // before calling; here it THROWS, because this is also API and a `System.exit` in a library
@@ -3651,7 +3689,8 @@ object MarketSim:
     require(p.price.forall(_.isFinite), s"path $k holds a non-finite price; refusing $file")
     val dates = sessionDates(p.price.length, startYmd)
     writeEmitTsv(file, p, dates)
-    writeEmitSidecar(a, file, p, k, w, years, seed, startYmd, dates, gateSt, gatePaths)
+    writeEmitSidecar(a, file, p, k, w, years, seed, startYmd, dates, gateSt, gatePaths, gateYears,
+                     gateRows)
 
   def writeEmitTsv(file: String, p: Path, dates: Vector[String]): Unit =
     val rows = EmitColumns.mkString("\t") +: Vector.tabulate(dates.length) { i =>
@@ -3697,7 +3736,7 @@ object MarketSim:
     * ambiguous. */
   def writeEmitSidecar(a: Anchors, file: String, p: Path, k: Int, w: World, years: Int, seed: Long,
                        startYmd: String, dates: Vector[String], gateSt: WorldStats,
-                       gatePaths: Int): Unit =
+                       gatePaths: Int, gateYears: Int, gateRows: Vector[FidelityRow]): Unit =
     val n            = p.price.length
     val realismBad   = failedIn(a, gateSt, GateClass.Realism)
     val mechanismBad = failedIn(a, gateSt, GateClass.Mechanism)
@@ -3711,7 +3750,7 @@ object MarketSim:
     // record falls among single histories of its own length -- so the division cannot be made by
     // accident.  `miss` is the admissible interval NEGATED for both kinds, so a row that could not
     // be measured reports a miss rather than a clean bill of health.
-    val fidelity = fidelityRows(a, gateSt, gatePaths, seed, w).map { r =>
+    val fidelity = gateRows.map { r =>
       s"""    { "name": ${jsonStr(r.name)}, "model": ${num(r.model)}, "real": ${num(r.real)}, """ +
       s""""aggregation": ${jsonStr(r.aggregation)}, "horizonYears": ${r.horizonYears}, """ +
       s""""ratio": ${r.ratio.fold("null")(num)}, """ +
@@ -3743,7 +3782,7 @@ object MarketSim:
       "  },",
       """  "gate": {""",
       s"""    "ensemblePaths": $gatePaths,""",
-      s"""    "ensembleYears": $years,""",
+      s"""    "ensembleYears": $gateYears,""",
       s"""    "realism": ${jsonStr(if realismBad.isEmpty then "PASS" else "FAIL")},""",
       s"""    "mechanism": ${jsonStr(if mechanismBad.isEmpty then "PASS" else "FAIL")},""",
       s"""    "fidelity": ${jsonStr(if fidelityBad.isEmpty then "PASS" else "FAIL")},""",
@@ -3879,25 +3918,41 @@ object MarketSim:
     // distance from peak inherit the model number; the shallow rungs read 0.98 and 1.13.
     // Ruin rates for levered sleeves read off the ensemble MINIMUM remain UPPER BOUNDS, not
     // estimates -- 20,000 market-years of worst case, and no fund lives that long.
-    var trendShare = Defaults.trendShare; var depth = Defaults.depth
-    var stress = Defaults.stress; var beta = Defaults.beta
-    var volPersist = Defaults.volPersist; var volOfVol = Defaults.volOfVol
-    var jumpVar = Defaults.jumpVar; var jumpRate = Defaults.jumpRate
-    var recoveryDrag = Defaults.recoveryDrag; var recoveryFloor = Defaults.recoveryFloor
-    var disasterRate = Defaults.disasterRate; var disasterSize = Defaults.disasterSize
-    var disasterLen = Defaults.disasterLen
-    var disasterRecover = Defaults.disasterRecover; var disasterRecLen = Defaults.disasterRecLen
-    var beliefShare = Defaults.beliefShare; var beliefYears = Defaults.beliefYears
-    var capYears = Defaults.capYears; var capWindow = Defaults.capWindow
-    var haltLimit = Defaults.haltLimit
-    var valuePull = Defaults.valuePull
-    var crowdName = "momentum"; var crowdImpact = Defaults.crowdImpact; var panic = Defaults.panic
-    var drift = Defaults.drift; var fundVol = Defaults.fundVol; var rateMean = Defaults.rateMean
-    var duration = Defaults.duration
-    var easing = Defaults.easing; var unwind = Defaults.unwind; var refuge = Defaults.refuge
-    var inflProb = Defaults.inflProb; var inflSize = Defaults.inflSize
-    var inflSpeed = Defaults.inflSpeed; var rateSpeed = Defaults.rateSpeed
-    var discount = Defaults.discount; var margin = Defaults.margin
+    // `-atrelease` swaps the BASE the dials seed from -- the frozen world of a past release, so a
+    // pinned consumer can take binary fixes without taking a recalibration.  Resolved before the
+    // flag loop on purpose: explicit dial flags override the base wherever they sit on the
+    // command line, where a base applied mid-loop would clobber the flags before it.  The gate
+    // still grades with the CURRENT rulers -- a pre-0.23.0 world has no valuation cycle and
+    // honestly fails the valuation mechanism row AND the valuation dispersion band; pair with
+    // `-gate realism` to require only what such a world claims, and read the rest as disclosure.
+    val dw =
+      args.indexOf("-atrelease") match
+        case -1 => Defaults
+        case i  =>
+          if args.indexOf("-atrelease", i + 1) >= 0 then usage("-atrelease given twice")
+          if i + 1 >= args.length then usage("-atrelease wants a version")
+          releaseWorld(args(i + 1)).getOrElse(usage(
+            s"-atrelease ${args(i + 1)} names no release this binary can reproduce; " +
+            s"it has ${Releases.map(_._1).mkString("[", ", ", "]")} and $Version"))
+    var trendShare = dw.trendShare; var depth = dw.depth
+    var stress = dw.stress; var beta = dw.beta
+    var volPersist = dw.volPersist; var volOfVol = dw.volOfVol
+    var jumpVar = dw.jumpVar; var jumpRate = dw.jumpRate
+    var recoveryDrag = dw.recoveryDrag; var recoveryFloor = dw.recoveryFloor
+    var disasterRate = dw.disasterRate; var disasterSize = dw.disasterSize
+    var disasterLen = dw.disasterLen
+    var disasterRecover = dw.disasterRecover; var disasterRecLen = dw.disasterRecLen
+    var beliefShare = dw.beliefShare; var beliefYears = dw.beliefYears
+    var capYears = dw.capYears; var capWindow = dw.capWindow
+    var haltLimit = dw.haltLimit
+    var valuePull = dw.valuePull
+    var crowdName = "momentum"; var crowdImpact = dw.crowdImpact; var panic = dw.panic
+    var drift = dw.drift; var fundVol = dw.fundVol; var rateMean = dw.rateMean
+    var duration = dw.duration
+    var easing = dw.easing; var unwind = dw.unwind; var refuge = dw.refuge
+    var inflProb = dw.inflProb; var inflSize = dw.inflSize
+    var inflSpeed = dw.inflSpeed; var rateSpeed = dw.rateSpeed
+    var discount = dw.discount; var margin = dw.margin
     eachArg(args.toSeq, usage) {
       // Bare version on stdout and nothing else, so a caller can gate on it without parsing:
       // `[ "$(marketSim.sc -version)" = "$want" ] || exit 1`.  Handled where it is seen, so it
@@ -3937,6 +3992,9 @@ object MarketSim:
       case "-jumprate"   => jumpRate = numOr("-jumprate", consumeNext)
       case "-value"      => valuePull = numOr("-value", consumeNext)
       case "-anchors"    => anchorSpec = consumeNext
+      // Applied in the pre-scan that seeded `dw`; consumed here so the loop does not reject it
+      // as unknown.
+      case "-atrelease"  => val _ = consumeNext
       case "-recoverydrag"  => recoveryDrag = numOr("-recoverydrag", consumeNext)
       case "-recoveryfloor" => recoveryFloor = numOr("-recoveryfloor", consumeNext)
       case "-disasterrate"  => disasterRate = numOr("-disasterrate", consumeNext)
@@ -4118,17 +4176,23 @@ object MarketSim:
     val sims = simPaths(w, paths, years, seed)
     val st = measure(sims, years)
 
+    // The verdict is a property of the WORLD, so it is measured on an ensemble large enough for
+    // the conditional mechanism statistics to exist AND at the horizon the bands were calibrated
+    // at.  Judging the world by the one path being written made every short export raise all four
+    // mechanism failures; judging it at a short `-years` failed fixed bands on horizon-growing
+    // statistics the same way (`GateYears`).  The rows are built ONCE: the printed table and
+    // every sidecar render these same rows, so the extreme rows' own-horizon ensemble -- the
+    // expensive part -- runs once per invocation, not once per emitted path.
+    val (verdictPaths, verdictYears) = verdictSpec(emit.nonEmpty, emitGate, paths, years)
+    val verdictSt =
+      if (verdictPaths, verdictYears) == (paths, years) then st
+      else measure(simPaths(w, verdictPaths, verdictYears, seed), verdictYears)
+    val verdictRows = fidelityRows(anchors, verdictSt, verdictPaths, seed, w)
+
     if emit.nonEmpty then
-      // The verdict is a property of the WORLD, so it is measured on an ensemble large enough for
-      // the conditional mechanism statistics to exist.  Judging the world by the one path being
-      // written made every short export raise all four mechanism failures — a guaranteed false
-      // alarm, which trains a consumer to ignore the warning entirely.
-      val (gateSt, gatePaths) =
-        if emitGate > paths then (measure(simPaths(w, emitGate, years, seed), years), emitGate)
-        else (st, paths)
-      val realismBad   = failedIn(anchors, gateSt, GateClass.Realism)
-      val mechanismBad = failedIn(anchors, gateSt, GateClass.Mechanism)
-      val fidelityBad  = failedIn(anchors, gateSt, GateClass.Fidelity)
+      val realismBad   = failedIn(anchors, verdictSt, GateClass.Realism)
+      val mechanismBad = failedIn(anchors, verdictSt, GateClass.Mechanism)
+      val fidelityBad  = failedIn(anchors, verdictSt, GateClass.Fidelity)
       if realismBad.nonEmpty then
         eprintln("WARNING: this world FAILS the realism bands " + realismBad.mkString("[", ", ", "]") +
                  " — the emitted path is not market-like")
@@ -4159,12 +4223,14 @@ object MarketSim:
           for k <- emitFrom until emitFrom + paths yield
             val f = indexedName(emit, k, width)
             refuseNonFinite(batch(k - emitFrom), k, f)
-            writeEmitted(anchors, f, batch(k - emitFrom), k, w, years, seed, emitStart, gateSt, gatePaths)
+            writeEmitted(anchors, f, batch(k - emitFrom), k, w, years, seed, emitStart, verdictSt,
+                         verdictPaths, verdictYears, verdictRows)
             f
         else
           val p = pathAt(emitPath)
           refuseNonFinite(p, emitPath, emit)
-          writeEmitted(anchors, emit, p, emitPath, w, years, seed, emitStart, gateSt, gatePaths)
+          writeEmitted(anchors, emit, p, emitPath, w, years, seed, emitStart, verdictSt,
+                       verdictPaths, verdictYears, verdictRows)
           Vector(emit)
       val sessions = pathAt(if emitAll then emitFrom else emitPath).price.length
       eprintln(s"wrote ${written.size} path(s), ${EmitColumns.size} columns x $sessions sessions, " +
@@ -4233,6 +4299,11 @@ object MarketSim:
     // it used cannot be read six months later.
     println(s"  fidelity against ${anchors.name} targets, by anchor (each row is against the " +
             "window named for it):")
+    // Named whenever the two differ, so a reader cannot take the verdict for a reading of the
+    // ensemble described above it.
+    if (verdictPaths, verdictYears) != (paths, years) then
+      println(s"    graded on $verdictPaths paths x $verdictYears years — the calibration horizon; " +
+              s"the report above describes $paths x $years")
     println(s"    equity ${anchors.equityWindow}   |   depth rungs 35 equity funds 2001-2026, vs each world's")
     println("      OWN volatility and return   |   return per vol CRSP 1954-2026")
     println(s"    clustering ${anchors.clusterWindow} (horizon-dependent: the statistic moves with the")
@@ -4246,7 +4317,7 @@ object MarketSim:
     println("      sample size, not the model, and deepens without bound as -paths grows.  Those rows")
     println("      report where the record falls among single histories of its own length instead;")
     println("      near 50% the record is a typical history of this model.  Same reading as -noise.")
-    fidelityRows(anchors, st, paths, seed, w).foreach { r =>
+    verdictRows.foreach { r =>
       val flag = if r.miss then "  <-- MISS" else ""
       val judgement = (r.ratio, r.pctile) match
         case (Some(x), _)    => f"ratio $x%5.2f"
@@ -4256,12 +4327,12 @@ object MarketSim:
     }
 
     if validate then
-      val checks = gateChecks(anchors, st)
-      val bad    = GateClass.values.map(c => c -> failedIn(anchors, st, c)).toMap
+      val checks = gateChecks(anchors, verdictSt)
+      val bad    = GateClass.values.map(c => c -> failedIn(anchors, verdictSt, c)).toMap
       def verdict(c: GateClass) = if bad(c).isEmpty then "PASS" else "FAIL"
       println()
       println("  acceptance gate:")
-      val una = unanchoredIn(st)
+      val una = unanchoredIn(verdictSt)
       for (cls, banner, cost) <- GateSections do
         println(f"    $banner%s — $cost%s:")
         checks.filter(_._3 == cls).foreach((n, ok, _) =>

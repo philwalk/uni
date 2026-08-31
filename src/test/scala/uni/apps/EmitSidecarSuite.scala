@@ -38,7 +38,9 @@ class EmitSidecarSuite extends FunSuite:
       val w     = MarketSim.Defaults
       val p     = MarketSim.simulate(w, years, seed)
       val st    = MarketSim.measure(Vector(p), years)
-      MarketSim.writeEmitted(MarketSim.SP500Anchors, tsv, p, 0, w, years, seed, "", st, 1)
+      val rows  = MarketSim.fidelityRows(MarketSim.SP500Anchors, st, 1, seed, w)
+      MarketSim.writeEmitted(MarketSim.SP500Anchors, tsv, p, 0, w, years, seed, "", st, 1, years,
+        rows)
       body(json.asPath.lines.toVector, json)
     finally
       tsv.asPath.delete()

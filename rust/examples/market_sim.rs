@@ -378,6 +378,22 @@ fn releases() -> Vec<(&'static str, World)> {
     ]
 }
 
+/// The world a release shipped, for `-atrelease`: the current version's default, or a frozen row
+/// of the `-releases` table. `None` for anything else — the CLI dies naming what exists. The
+/// frozen rows reproduce their release's world under the current binary because every mechanism
+/// added since is dial-gated to bit-inertness at zero (the contract tests pin that); paths
+/// reproduce statistically, and bit-for-bit only back to 0.23.0 (`exp_det` moved `trendPos` off
+/// the native tanh).
+fn release_world(version: &str) -> Option<World> {
+    if version == VERSION {
+        return Some(default_world());
+    }
+    releases()
+        .into_iter()
+        .find(|(v, _)| *v == version)
+        .map(|(_, w)| w)
+}
+
 /// 0.22.1's world, frozen for the same reason `v0_20_0` is: the valuation cycle moved the
 /// default off it.
 fn v0_22_1() -> World {
@@ -572,7 +588,7 @@ enum Crowd {
     VolScaled,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct World {
     trend_share: f64,
     depth: f64,
@@ -2103,6 +2119,30 @@ fn band_check(
         got > lo && got < hi,
         cls,
     )
+}
+
+/// The horizon the verdict ensemble runs at: every band and anchor weight was calibrated on
+/// 100-year ensembles, and several graded statistics move with the measurement window — the
+/// valuation gap's dispersion is the sample sd of a near-integrated process (0.11 at 30 years,
+/// 0.21 at 100, against floors set from the 100-year record), and the depth shares and
+/// clustering carry the century's regime mix. A fixed band read at the caller's `-years`
+/// grades the horizon, not the world. The report section still describes the caller's
+/// ensemble; only the verdict is pinned.
+const GATE_YEARS: usize = 100;
+
+/// The (paths, years) the verdict — gate classes, fidelity table, every emitted sidecar — is
+/// measured on: `GATE_YEARS` always, on the larger of the report and `-emitgate` ensembles.
+/// `-emitgate 0` is the caller's explicit request to grade the emitted ensemble itself,
+/// caller's horizon and all. Equal to (paths, years) exactly when the report ensemble already
+/// is the verdict ensemble — which at the defaults it is: same seed, same draws.
+fn verdict_spec(emitting: bool, emit_gate: usize, paths: usize, years: usize) -> (usize, usize) {
+    if emitting && emit_gate == 0 {
+        (paths, years)
+    } else if emitting && emit_gate > paths {
+        (emit_gate, GATE_YEARS)
+    } else {
+        (paths, GATE_YEARS)
+    }
 }
 
 /// TWO-SIDED wherever a plausible range exists. History of this gate: a one-sided version
@@ -6410,8 +6450,10 @@ fn write_or_die(file: &str, body: &str) {
     });
 }
 
-/// The TSV and its sidecar. `gate_st` is measured on the gate ensemble, which is a different
-/// and usually much larger sample than the one path being written.
+/// The TSV and its sidecar. `gate_st` is measured on the gate ensemble — a different, usually
+/// much larger and (per `GATE_YEARS`) usually longer sample than the one path being written —
+/// and `gate_rows` are built from it once per batch, because building them simulates the
+/// extreme rows' own-horizon ensemble.
 #[expect(
     clippy::too_many_arguments,
     reason = "the sidecar records the whole provenance tuple; grouping it would only move the list"
@@ -6427,6 +6469,8 @@ fn write_emitted(
     start_ymd: &str,
     gate_st: &WorldStats,
     gate_paths: usize,
+    gate_years: usize,
+    gate_rows: &[FidelityRow],
 ) {
     // A non-finite path is refused, not written -- a file whose every row reads NaN is not data.
     // The CLI's clean refusal (message + exit 2) lives at the emit sites in `main`, which pre-check
@@ -6439,7 +6483,8 @@ fn write_emitted(
     let dates = session_dates(p.price.len(), start_ymd);
     write_emit_tsv(file, p, &dates);
     write_emit_sidecar(
-        a, file, p, k, w, years, seed, start_ymd, &dates, gate_st, gate_paths,
+        a, file, p, k, w, years, seed, start_ymd, &dates, gate_st, gate_paths, gate_years,
+        gate_rows,
     );
 }
 
@@ -6542,6 +6587,8 @@ fn write_emit_sidecar(
     dates: &[String],
     gate_st: &WorldStats,
     gate_paths: usize,
+    gate_years: usize,
+    gate_rows: &[FidelityRow],
 ) {
     let n = p.price.len();
     let realism_bad = failed_in(a, gate_st, GateClass::Realism);
@@ -6565,8 +6612,8 @@ fn write_emit_sidecar(
     // falls among single histories of its own length — so the division cannot be made by accident.
     // `miss` is the admissible interval NEGATED for both kinds, so a row that could not be measured
     // reports a miss rather than a clean bill of health.
-    let fidelity: Vec<String> = fidelity_rows(a, gate_st, gate_paths, seed, w)
-        .into_iter()
+    let fidelity: Vec<String> = gate_rows
+        .iter()
         .map(|r| {
             // Two pieces, not one line-continued literal: `\<newline>` keeps the source
             // indentation inside the string, and the twins must emit byte-identical JSON.
@@ -6621,7 +6668,7 @@ fn write_emit_sidecar(
         "  },".to_string(),
         "  \"gate\": {".to_string(),
         format!("    \"ensemblePaths\": {gate_paths},"),
-        format!("    \"ensembleYears\": {years},"),
+        format!("    \"ensembleYears\": {gate_years},"),
         format!("    \"realism\": {},", json_str(verdict(&realism_bad))),
         format!("    \"mechanism\": {},", json_str(verdict(&mechanism_bad))),
         format!("    \"fidelity\": {},", json_str(verdict(&fidelity_bad))),
@@ -6784,7 +6831,31 @@ fn main() {
     // the failure that function's own docstring claims not to have: it would drift silently,
     // because the only thing comparing the two is a `-releases` run noticing that its 0.19.2 row
     // and its `current` row disagree.
-    let dw = default_world();
+    //
+    // `-atrelease` swaps the BASE the dials seed from — the frozen world of a past release, so a
+    // pinned consumer can take binary fixes without taking a recalibration. Resolved before the
+    // flag loop on purpose: explicit dial flags override the base wherever they sit on the
+    // command line, where a base applied mid-loop would clobber the flags before it. The gate
+    // still grades with the CURRENT rulers — a pre-0.23.0 world has no valuation cycle and
+    // honestly fails the valuation mechanism row AND the valuation dispersion band; pair with
+    // `-gate realism` to require only what such a world claims, and read the rest as disclosure.
+    let dw = match args.iter().position(|a| a == "-atrelease") {
+        None => default_world(),
+        Some(i) => {
+            if args[i + 1..].iter().any(|a| a == "-atrelease") {
+                cli_die("-atrelease given twice");
+            }
+            let v = args
+                .get(i + 1)
+                .unwrap_or_else(|| cli_die("-atrelease wants a version"));
+            release_world(v).unwrap_or_else(|| {
+                cli_die(&format!(
+                    "-atrelease {v} names no release this binary can reproduce; it has [{}] and {VERSION}",
+                    releases().iter().map(|(v, _)| *v).collect::<Vec<_>>().join(", ")
+                ))
+            })
+        }
+    };
     let mut trend_share = dw.trend_share;
     let mut depth = dw.depth;
     let mut stress = dw.stress;
@@ -6871,6 +6942,11 @@ fn main() {
             "-volpersist" => vol_persist = req_f64(&mut it, "-volpersist"),
             "-volofvol" => vol_of_vol = req_f64(&mut it, "-volofvol"),
             "-anchors" => anchor_spec = req_arg(&mut it, "-anchors").clone(),
+            // Applied in the pre-scan that seeded `dw`; consumed here so the loop does not
+            // reject it as unknown.
+            "-atrelease" => {
+                req_arg(&mut it, "-atrelease");
+            }
             "-recoverydrag" => recovery_drag = req_f64(&mut it, "-recoverydrag"),
             "-recoveryfloor" => recovery_floor = req_f64(&mut it, "-recoveryfloor"),
             "-disasterrate" => disaster_rate = req_f64(&mut it, "-disasterrate"),
@@ -7217,21 +7293,27 @@ fn main() {
     let sims = sim_paths(&w, paths, years, seed);
     let st = measure(&sims, years);
 
+    // The verdict is a property of the WORLD, so it is measured on an ensemble large enough for
+    // the conditional mechanism statistics to exist AND at the horizon the bands were calibrated
+    // at. Judging the world by the one path being written made every short export raise all four
+    // mechanism failures; judging it at a short `-years` failed fixed bands on horizon-growing
+    // statistics the same way (`GATE_YEARS`). The rows are built ONCE: the printed table and
+    // every sidecar render these same rows, so the extreme rows' own-horizon ensemble — the
+    // expensive part — runs once per invocation, not once per emitted path.
+    let (verdict_paths, verdict_years) = verdict_spec(!emit.is_empty(), emit_gate, paths, years);
+    let verdict_st = if (verdict_paths, verdict_years) == (paths, years) {
+        st
+    } else {
+        measure(
+            &sim_paths(&w, verdict_paths, verdict_years, seed),
+            verdict_years,
+        )
+    };
+    let verdict_rows = fidelity_rows(anchors, &verdict_st, verdict_paths, seed, &w);
+
     if !emit.is_empty() {
-        // The verdict is a property of the WORLD, so it is measured on an ensemble large enough
-        // for the conditional mechanism statistics to exist. Judging the world by the one path
-        // being written made every short export raise all four mechanism failures — a
-        // guaranteed false alarm, which trains a consumer to ignore the warning entirely.
-        let (gate_st, gate_paths) = if emit_gate > paths {
-            (
-                measure(&sim_paths(&w, emit_gate, years, seed), years),
-                emit_gate,
-            )
-        } else {
-            (st, paths)
-        };
-        let realism_bad = failed_in(anchors, &gate_st, GateClass::Realism);
-        let mechanism_bad = failed_in(anchors, &gate_st, GateClass::Mechanism);
+        let realism_bad = failed_in(anchors, &verdict_st, GateClass::Realism);
+        let mechanism_bad = failed_in(anchors, &verdict_st, GateClass::Mechanism);
         if !realism_bad.is_empty() {
             eprintln!(
                 "WARNING: this world FAILS the realism bands [{}] — the emitted path is not market-like",
@@ -7244,7 +7326,7 @@ fn main() {
                 mechanism_bad.join(", ")
             );
         }
-        let fidelity_bad = failed_in(anchors, &gate_st, GateClass::Fidelity);
+        let fidelity_bad = failed_in(anchors, &verdict_st, GateClass::Fidelity);
         if !fidelity_bad.is_empty() {
             eprintln!(
                 "NOTE: levels not readable in this world [{}] — rank comparisons survive, anything reading a level off these does not",
@@ -7292,8 +7374,10 @@ fn main() {
                         years,
                         seed,
                         &emit_start,
-                        &gate_st,
-                        gate_paths,
+                        &verdict_st,
+                        verdict_paths,
+                        verdict_years,
+                        &verdict_rows,
                     );
                     f
                 })
@@ -7310,8 +7394,10 @@ fn main() {
                 years,
                 seed,
                 &emit_start,
-                &gate_st,
-                gate_paths,
+                &verdict_st,
+                verdict_paths,
+                verdict_years,
+                &verdict_rows,
             );
             vec![emit.clone()]
         };
@@ -7490,6 +7576,13 @@ fn main() {
         "  fidelity against {} targets, by anchor (each row is against the window named for it):",
         anchors.name
     );
+    // Named whenever the two differ, so a reader cannot take the verdict for a reading of the
+    // ensemble described above it.
+    if (verdict_paths, verdict_years) != (paths, years) {
+        println!(
+            "    graded on {verdict_paths} paths x {verdict_years} years — the calibration horizon; the report above describes {paths} x {years}"
+        );
+    }
     println!(
         "    equity {}   |   depth rungs 35 equity funds 2001-2026, vs each world's",
         anchors.equity_window
@@ -7527,7 +7620,7 @@ fn main() {
     println!(
         "      near 50% the record is a typical history of this model.  Same reading as -noise."
     );
-    for r in fidelity_rows(anchors, &st, paths, seed, &w) {
+    for r in &verdict_rows {
         let flag = if r.miss() { "  <-- MISS" } else { "" };
         let judgement = match (r.ratio, r.pctile) {
             (Some(x), _) => format!("ratio {}", jf(x, 5, 2)),
@@ -7551,17 +7644,17 @@ fn main() {
     }
 
     if validate {
-        let checks = gate_checks(anchors, &st);
+        let checks = gate_checks(anchors, &verdict_st);
         let bad: Vec<Vec<String>> = GateClass::ALL
             .iter()
-            .map(|c| failed_in(anchors, &st, *c))
+            .map(|c| failed_in(anchors, &verdict_st, *c))
             .collect();
         let verdict = |i: usize| {
             if bad[i].is_empty() { "PASS" } else { "FAIL" }
         };
         println!();
         println!("  acceptance gate:");
-        let una = unanchored_in(&st);
+        let una = unanchored_in(&verdict_st);
         for cls in GateClass::ALL {
             let (banner, cost) = cls.section();
             println!("    {banner} — {cost}:");
@@ -7655,7 +7748,21 @@ mod emit_sidecar_tests {
         let tsv = dir.join("emit_sidecar_tests.tsv");
         // Native separators are fine: sidecar_name splits on both / and backslash.
         let tsv = tsv.to_string_lossy().into_owned();
-        write_emitted(SP500_ANCHORS, &tsv, &p, 0, &w, years, seed, "", &st, 1);
+        let rows = fidelity_rows(SP500_ANCHORS, &st, 1, seed, &w);
+        write_emitted(
+            SP500_ANCHORS,
+            &tsv,
+            &p,
+            0,
+            &w,
+            years,
+            seed,
+            "",
+            &st,
+            1,
+            years,
+            &rows,
+        );
         let json = sidecar_name(&tsv);
         let text = std::fs::read_to_string(&json).expect("sidecar written");
         std::fs::remove_file(&tsv).ok();
@@ -8420,6 +8527,54 @@ mod contract_tests {
             "the cycle-off world must FAIL the band, or the row does not discriminate: {:.3}",
             off.val_disp
         );
+    }
+
+    /// The defect `GATE_YEARS` closes: sd log(p/fair) is the sample sd of a near-integrated
+    /// gap, so it GROWS with the measurement window — 0.11 at 30 years against 0.21 at 100 on
+    /// the shipped world — and a fixed floor read at the caller's `-years` graded the horizon,
+    /// not the world. The ordering is far outside seed noise at 24 paths.
+    #[test]
+    fn valuation_dispersion_grows_with_the_horizon_so_the_verdict_is_pinned() {
+        let w = default_world();
+        let short = measure(&sim_paths(&w, 24, 30, DEFAULT_SEED), 30).val_disp;
+        let long = measure(&sim_paths(&w, 24, GATE_YEARS, DEFAULT_SEED), GATE_YEARS).val_disp;
+        assert!(
+            short < long * 0.8,
+            "short-horizon dispersion should read well below the century's: 30y {short:.3} vs 100y {long:.3}"
+        );
+    }
+
+    /// `-atrelease` resolves exactly the rows `-releases` grades, plus the current default —
+    /// and nothing else.
+    #[test]
+    fn atrelease_resolves_every_frozen_release_and_the_current_default() {
+        for (v, w) in releases() {
+            assert!(
+                release_world(v) == Some(w),
+                "release {v} must resolve to its frozen world"
+            );
+        }
+        assert!(
+            release_world(VERSION) == Some(default_world()),
+            "the current version must resolve to the shipped default"
+        );
+        assert!(
+            release_world("0.0.0").is_none(),
+            "an unknown version must not resolve"
+        );
+    }
+
+    /// Every verdict surface — gate classes, fidelity table, sidecars — grades at the
+    /// calibration horizon whatever `-years` the caller simulates; `-emitgate 0` is the one
+    /// explicit opt-out. At the defaults the verdict ensemble IS the report ensemble.
+    #[test]
+    fn the_verdict_ensemble_is_pinned_to_the_calibration_horizon() {
+        assert_eq!(verdict_spec(false, 200, 200, 100), (200, 100));
+        assert_eq!(verdict_spec(false, 200, 200, 30), (200, GATE_YEARS));
+        assert_eq!(verdict_spec(true, 200, 40, 33), (200, GATE_YEARS));
+        assert_eq!(verdict_spec(true, 50, 300, 33), (300, GATE_YEARS));
+        assert_eq!(verdict_spec(true, 200, 300, 100), (300, GATE_YEARS));
+        assert_eq!(verdict_spec(true, 0, 40, 33), (40, 33));
     }
 }
 

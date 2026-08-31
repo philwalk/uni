@@ -424,3 +424,36 @@ class MarketSimContractSuite extends FunSuite:
     assert(off.valDisp < MarketSim.ValDispBand._1,
       f"the cycle-off world must FAIL the band, or the row does not discriminate: ${off.valDisp}%.3f")
   }
+
+  test("-atrelease resolves every frozen release and the current default, and nothing else") {
+    for (v, w) <- MarketSim.Releases do
+      assertEquals(MarketSim.releaseWorld(v), Some(w), s"release $v must resolve to its frozen world")
+    assertEquals(MarketSim.releaseWorld(MarketSim.Version), Some(MarketSim.Defaults),
+      "the current version must resolve to the shipped default")
+    assertEquals(MarketSim.releaseWorld("0.0.0"), None, "an unknown version must not resolve")
+  }
+
+  test("valuation dispersion grows with the horizon, which is why the verdict is pinned") {
+    // The defect `GateYears` closes: sd log(p/fair) is the sample sd of a near-integrated gap,
+    // so it GROWS with the measurement window -- 0.11 at 30 years against 0.21 at 100 on the
+    // shipped world -- and a fixed floor read at the caller's -years graded the horizon, not
+    // the world.  The ordering is far outside seed noise at 24 paths.
+    val w     = MarketSim.Defaults
+    val short = MarketSim.measure(MarketSim.simPaths(w, 24, 30, MarketSim.DefaultSeed), 30).valDisp
+    val long  = MarketSim.measure(MarketSim.simPaths(w, 24, MarketSim.GateYears,
+                  MarketSim.DefaultSeed), MarketSim.GateYears).valDisp
+    assert(short < long * 0.8,
+      f"short-horizon dispersion should read well below the century's: 30y $short%.3f vs 100y $long%.3f")
+  }
+
+  test("the verdict ensemble is pinned to the calibration horizon") {
+    // Every verdict surface -- gate classes, fidelity table, sidecars -- grades at the
+    // calibration horizon whatever -years the caller simulates; -emitgate 0 is the one explicit
+    // opt-out.  At the defaults the verdict ensemble IS the report ensemble.
+    assertEquals(MarketSim.verdictSpec(false, 200, 200, 100), (200, 100))
+    assertEquals(MarketSim.verdictSpec(false, 200, 200, 30), (200, MarketSim.GateYears))
+    assertEquals(MarketSim.verdictSpec(true, 200, 40, 33), (200, MarketSim.GateYears))
+    assertEquals(MarketSim.verdictSpec(true, 50, 300, 33), (300, MarketSim.GateYears))
+    assertEquals(MarketSim.verdictSpec(true, 200, 300, 100), (300, MarketSim.GateYears))
+    assertEquals(MarketSim.verdictSpec(true, 0, 40, 33), (40, 33))
+  }
