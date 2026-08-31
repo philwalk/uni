@@ -2,7 +2,7 @@
 package uni.apps
 
 //> using scala 3.7.2
-//> using dep org.vastblue:uni_3:0.22.1
+//> using dep org.vastblue:uni_3:0.23.0
 
 // MARKET SIMULATOR — a testbed for COMPARING exposure strategies over long horizons.
 //

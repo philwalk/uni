@@ -1,5 +1,5 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
-//> using dep org.vastblue:uni_3:0.22.1
+//> using dep org.vastblue:uni_3:0.23.0
 
 // One half of the cross-language pair probe; `rust/examples/pair_probe.rs` is the other.
 // Both build the same tree with the same fixed mtimes, run the same ops, and print

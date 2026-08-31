@@ -68,7 +68,7 @@ Every conversion below **copies**, so the result shares no storage with the sour
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.22.1
+//> using dep org.vastblue:uni_3:0.23.0
 
 import uni.data.*
 
@@ -170,7 +170,7 @@ Ragged input raises `IllegalArgumentException` naming the offending row; empty i
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.22.1
+//> using dep org.vastblue:uni_3:0.23.0
 
 import uni.data.*
 
@@ -379,7 +379,7 @@ Vector idioms for two NumPy 1-D forms:
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.22.1
+//> using dep org.vastblue:uni_3:0.23.0
 
 import uni.data.*
 
@@ -394,7 +394,7 @@ val (labels, stats) = m.describe
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.22.1
+//> using dep org.vastblue:uni_3:0.23.0
 
 import uni.*
 import uni.io.FileOps.*
@@ -419,7 +419,7 @@ csv.delete()
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.22.1
+//> using dep org.vastblue:uni_3:0.23.0
 
 import uni.data.*
 
@@ -489,7 +489,7 @@ Mat.setPrintOptions(maxRows = 20, maxCols = 20, edgeItems = 5)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.22.1
+//> using dep org.vastblue:uni_3:0.23.0
 
 import uni.data.*
 

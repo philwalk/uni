@@ -38,7 +38,7 @@ Equivalent to R `pairs()` / seaborn `pairplot`.
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.22.1
+//> using dep org.vastblue:uni_3:0.23.0
 
 import uni.data.*
 import uni.plot.*
@@ -72,7 +72,7 @@ One series per column; x-axis = row indices.
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.22.1
+//> using dep org.vastblue:uni_3:0.23.0
 
 import uni.data.*
 import uni.plot.*
@@ -93,7 +93,7 @@ Two columns plotted against each other; optional group colouring.
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.22.1
+//> using dep org.vastblue:uni_3:0.23.0
 
 import uni.data.*
 import uni.plot.*
@@ -117,7 +117,7 @@ All values in the matrix binned and plotted as an area chart.
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.22.1
+//> using dep org.vastblue:uni_3:0.23.0
 
 import uni.data.*
 import uni.plot.*
@@ -138,7 +138,7 @@ One bar per row; labels come from a column or default to row indices.
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.22.1
+//> using dep org.vastblue:uni_3:0.23.0
 
 import uni.data.*
 import uni.plot.*
@@ -160,7 +160,7 @@ Renders the matrix as a colour grid. Useful for correlation and confusion matric
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.22.1
+//> using dep org.vastblue:uni_3:0.23.0
 
 import uni.data.*
 import uni.plot.*
@@ -184,7 +184,7 @@ One box per column showing median, quartiles, and outliers.
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.22.1
+//> using dep org.vastblue:uni_3:0.23.0
 
 import uni.data.*
 import uni.plot.*
@@ -229,7 +229,7 @@ All fields are optional — omit any field to keep the GGPlot2 theme default.
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.22.1
+//> using dep org.vastblue:uni_3:0.23.0
 
 import uni.data.*
 import uni.plot.*
@@ -242,7 +242,7 @@ m.scatter(saveTo = "pca", style = PlotStyle(xLabel = "principal component 1", yL
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.22.1
+//> using dep org.vastblue:uni_3:0.23.0
 
 import uni.data.*
 import uni.plot.*
@@ -255,7 +255,7 @@ m.plot(saveTo = "loss", style = PlotStyle(yLog = true, yLabel = "loss (log scale
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.22.1
+//> using dep org.vastblue:uni_3:0.23.0
 
 import uni.data.*
 import uni.plot.*
@@ -273,7 +273,7 @@ m.hist(saveTo = "dark-hist", style = PlotStyle(
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.22.1
+//> using dep org.vastblue:uni_3:0.23.0
 
 import uni.data.*
 import uni.plot.*
@@ -289,7 +289,7 @@ m.plot(saveTo = "rgb", style = PlotStyle(
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.22.1
+//> using dep org.vastblue:uni_3:0.23.0
 
 import uni.data.*
 import uni.plot.*
