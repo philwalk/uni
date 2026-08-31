@@ -124,8 +124,10 @@ object MarketSim:
   // disaster dials; a reader that reconstructs a `World` from a schema-5 sidecar and runs it here
   // gets a market without the century-tail channel.
   // 6 -> 7: `world` gained the valuation cycle's four dials (`beliefShare`, `beliefYears`,
-  // `capYears`, `capWindow`).  A reader that reconstructs a `World` from a schema-6 sidecar and
-  // runs it here gets a market whose perceived fair value never leaves the fundamental.
+  // `capYears`, `capWindow`) and the asymmetry three (`leverage`, `downShock`, `jumpSkew` -- the
+  // last a dialised constant, 0.4 in every prior release).  A reader that reconstructs a `World`
+  // from a schema-6 sidecar and runs it here gets a market whose perceived fair value never
+  // leaves the fundamental.
   val EmitSchema: Int = 7
 
   val EmitSidecarKeys: Vector[String] =
@@ -213,7 +215,26 @@ object MarketSim:
     s"              ;   (default ${Defaults.jumpVar}; 0 turns the channel off, consuming no draws, so",
     "              ;   nothing else in the path moves)",
     s"-jumprate X   ; jumps per session at average volatility (default ${Defaults.jumpRate}); with",
+    s"-leverage X   ; the leverage effect: a decline raises the NEXT session's diffusive",
+    s"              ;   volatility by exp(X * declines-in-sds), saturated at 4 sds; an equal rally",
+    s"              ;   raises nothing (default ${Defaults.leverage}; 0 off, consuming no draws)",
+    s"-downshock X  ; sign-dependent news response: a negative equity shock is scaled by (1+X),",
+    s"              ;   a positive one by 1/(1+X) -- contemporaneous downside dispersion.  Costs",
+    s"              ;   vr60 about +0.02 per 0.01 (default ${Defaults.downShock}; 0 off)",
+    s"-jumpskew X   ; how far each jump is shifted down, in units of its own sd; variance-",
+    s"              ;   normalised, so deeper skew means smaller jumps, not fatter tails",
+    s"              ;   (default ${Defaults.jumpSkew}, the constant every release before this compiled in)",
     s"              ;   -jumpvar it sets the SIZE -- rarer jumps of the same variance are bigger",
+    s"-newsrate X   ; fair-value news jumps per year: permanent down-jumps the price reprices the",
+    s"              ;   SAME session, gap-invariant -- the downside-asymmetry channel, whose",
+    s"              ;   variance DISPLACES diffusive noise rather than stacking on it",
+    s"              ;   (default ${Defaults.newsRate}; 0 off, consuming no draws)",
+    s"-newssize X   ; log decline per news event (default ${Defaults.newsSize}; 0.033 = a -3.3% day).",
+    "              ;   Rarer-larger events buy more asymmetry and kurtosis per unit of variance",
+    s"-refugedays X ; half-life in sessions of the settled stress the refuge bid reads, which",
+    s"              ;   excludes the current session -- kills the same-day stock-bond coupling the",
+    s"              ;   tail hedge corr row grades while the crisis rally keeps the stress LEVEL",
+    s"              ;   (default ${Defaults.refugeDays}; 0 reads live stress; the rally dies near 10)",
     s"-value X      ; pull toward equity fair value, per day (default ${Defaults.valuePull}).  With",
     s"              ;   the recovery drag below this governs SHALLOW water; deep drawdowns are set",
     s"              ;   by the drag instead",
@@ -289,6 +310,44 @@ object MarketSim:
                         // in the path shifts.
     jumpRate: Double,   // unconditional jump intensity per session.  With jumpVar it fixes the
                         // size: rarer jumps of the same total variance are larger ones.
+    leverage: Double = 0.0,   // THE LEVERAGE EFFECT: how hard a decline raises the NEXT session's
+                              // diffusive volatility, where an equal rally raises nothing --
+                              // EGARCH's signed term, fed by the same decline signal the spiral's
+                              // stressIdx reads (max(-ret,0)/scale, centred at 0.399, SATURATED
+                              // at 4 realized sds), applied as a transient one-session multiplier
+                              // on the noise, never into the persistent logVol (fed there it
+                              // self-excites: vol 16% -> 45% at the first anchor-reaching
+                              // setting, measured).  Consumes no draws; 0 is bit-identical off.
+    downShock: Double = 0.0,  // SIGN-DEPENDENT NEWS RESPONSE, the contemporaneous half of the
+                              // asymmetry pair: the equity news term is scaled by (1 + downShock)
+                              // when negative, its reciprocal when positive.  Applied to the
+                              // SHOCK only, never the crowd's flows.  Pays vr60 ~+0.02 per 0.01
+                              // -- an amplified TRANSITORY down-shock must be arbitraged back and
+                              // the recovery IS trend -- which is what bounds it near 0.03.
+                              // Consumes no draws; 0 is bit-identical off.
+    newsRate: Double = 0.0,   // FAIR-VALUE NEWS JUMPS, events per YEAR (contrast disasterRate,
+                              // per century): rare permanent DOWN-jumps of the fundamental that
+                              // the price reprices the SAME session, gap-invariant -- logVbase
+                              // and logP drop together, so the value channel, the belief EWMA and
+                              // the mispricing all see nothing and there is no rebound to
+                              // arbitrage back: a pure random-walk step, which is what lets this
+                              // channel move DOWNSIDE variance without the vr60 tax that bounds
+                              // `downShock` (measured leak ~+0.02 at full effect vs ~+0.10 by the
+                              // transitory route).  Its variance DISPLACES diffusive noise
+                              // (see `newsDamp`) instead of stacking on top, the jumpVar budget
+                              // rule.  Draws from a dedicated stream; 0 is bit-identical off.
+    newsSize: Double = 0.0,   // log decline per news event (positive; 0.033 = a -3.3% day).
+                              // Deterministic size -- rarer-larger events buy more asymmetry and
+                              // more kurtosis per unit of variance than frequent-small ones
+                              // (measured 1.5x0.04 vs 6x0.02: dx 3.4 vs 1.3 at equal variance).
+                              // The drift cost newsRate*newsSize is returned deterministically on
+                              // BOTH legs, so the dial does not move expected return.
+    jumpSkew: Double = 0.4,   // how far each jump is shifted DOWN, in units of its own sd -- a
+                              // dialised constant (0.4 in every release since jumps arrived), so
+                              // 0.4 is this dial's off-position, not 0.  Variance-normalised in
+                              // `jumpScale`, so a deeper skew makes each jump smaller rather than
+                              // the tail heavier -- which is also why it is a WEAK skew lever
+                              // (0.4 -> 1.4 moved the downside excess by +1.5, measured).
     valuePull: Double,
     recoveryDrag: Double,  // how fast value arbitrage WEAKENS as the drawdown deepens.  0 is the
                            // symmetric pull every release before 0.21.0 had, bit for bit.
@@ -353,6 +412,18 @@ object MarketSim:
     easing: Double,     // CAP on policy accommodation under equity stress, in rate points
     unwind: Double,     // how fast that accommodation is withdrawn, per year
     refuge: Double,     // flight-to-quality bid into the bond, per unit of equity stress
+    refugeDays: Double = 0.0, // BOND DECOUPLING: half-life in SESSIONS of the settled-stress EWMA
+                              // the refuge bid reads, which EXCLUDES the current session --
+                              // flight-to-quality follows the stress investors went home with,
+                              // not the move printing right now.  The calm-day stock-bond
+                              // correlation the `tail hedge corr` row grades is carried almost
+                              // entirely by the SAME-session stress delta, while the anchored
+                              // crisis behaviour (growth-crash rally) rides the stress LEVEL,
+                              // which a short lag keeps: at 1 the calm-day corr falls -0.50 ->
+                              // -0.23 with the rally intact, and by 10 the rally dies (measured;
+                              // the mechanism gate fails there).  `margin` keeps reading live
+                              // stress: a margin call does not wait overnight.  Draw-free;
+                              // 0 reads live stress, bit-identical off.
     inflProb: Double, inflSize: Double, inflSpeed: Double, rateSpeed: Double,
     discount: Double,   // equity fair-value markdown per pp of rate above its long-run mean
     margin: Double,     // joint-stress forced selling pressure on the bond
@@ -394,10 +465,24 @@ object MarketSim:
     * wrong three times before it was centralised.  A mismatch between the twins is caught directly
     * by the `-emit` sidecar, which names every field: bare `-emit` writes THIS world. */
   val Defaults = World(
-    trendShare = 0.055, depth = 17.4, stress = 5.37, beta = 3.0, drift = 0.120, fundVol = 0.070,
-    rateMean = 0.042, volPersist = 0.99, volOfVol = 0.027,
-    jumpVar = 0.17, jumpRate = 0.0050, valuePull = 0.045,
-    recoveryDrag = 10.0, recoveryFloor = 0.10, haltLimit = 0.25,
+    trendShare = 0.055, depth = 17.4, stress = 5.15, beta = 3.0, drift = 0.122, fundVol = 0.070,
+    rateMean = 0.042, volPersist = 0.992, volOfVol = 0.022,
+    jumpVar = 0.14, jumpRate = 0.0035, leverage = 0.12, downShock = 0.0, jumpSkew = 0.7,
+    // The asymmetry adoption, 0.23.0: the leverage kick (0.12, news-coupled), fair-value news
+    // jumps (1.3/yr x -3.3%, variance-displacing) with the transitory downShock retired at 0,
+    // jumpSkew 0.7 with the jump channel rarer-larger (0.14 var at 0.0035), and the refuge bid
+    // reading settled stress (refugeDays 1, refuge 0.115; easing re-solved to 0.052, the BOTTOM
+    // of the real easing-cycle range, so its anchor holds — and the -crossasset short-duration
+    // rung sits back above its floor).  Verified at 200x100 on
+    // four seeds: downside vol excess +3.05 vs the record's +3.06, leverage corr -0.089 vs
+    // -0.0926, calm-day tail hedge -0.24 vs -0.273, bond growth-crash 6.9 vs 6.6, with the
+    // seed-7 vr60 failure unchanged from the prior world.  stress/volOfVol/volPersist/valuePull/
+    // recoveryDrag/drift re-tuned to hold the rest; the two rows that give ground are clustering
+    // lag 20 (0.214 -> 0.197 vs anchor 0.225) and valuation dispersion (0.230 -> 0.215 vs target
+    // 0.30), disclosed in the CHANGELOG.
+    newsRate = 1.3, newsSize = 0.033, refugeDays = 1.0,
+    valuePull = 0.056,
+    recoveryDrag = 8.5, recoveryFloor = 0.10, haltLimit = 0.25,
     // The disaster channel, ADOPTED 0.22.1: rate 0.6/century, total log decline 2.0 over 2.5
     // years, half reversing over 4.  Chosen on the tail loss term at 60 histories and verified at
     // 200x100 on four seeds (all three gate classes PASS; the record's century-worst moves from
@@ -414,7 +499,7 @@ object MarketSim:
     // r/v, crash-rate and shallow-rung rows with nothing leaving its band.
     beliefShare = 0.9, beliefYears = 2.5, capYears = 1.5, capWindow = 6.0,
     crowd = Crowd.Momentum, crowdImpact = 0.030, panic = 0.0, duration = 13.5,
-    easing = 0.060, unwind = 0.35, refuge = 0.11,
+    easing = 0.052, unwind = 0.35, refuge = 0.115,
     inflProb = 0.20, inflSize = 0.10, inflSpeed = 0.010, rateSpeed = 3.0, discount = 5.73,
     margin = 0.006)
   val DefaultPaths = 200
@@ -549,17 +634,16 @@ object MarketSim:
     * the program makes about itself.  Real full cycles: 2007-08 took the target 5.25 -> 0.125 (5.1
     * points), 2001-03 took 6.50 -> 1.00 (5.5), 1989-92 took 9.81 -> 3.00 (6.8).  The 0.046 shipped
     * through 0.20.0 was 4.6 points -- BELOW every one of them, so the help text was slightly false.
-    * 0.060 is 6.0 points: the middle of the three, and the anchor is a RANGE, so where in it the
-    * value sits is the ladder's to choose.
+    * 0.052 is 5.2 points: the BOTTOM of the range (2007-08's cycle), and the anchor is a RANGE, so
+    * where in it the value sits is the ladder's to choose.
     *
     * The ladder ROTATES on this dial, and the window MOVES WITH THE EQUITY WORLD -- which is the
-    * part worth carrying forward.  At the 0.21.0 world the window was 0.050-0.056: 0.046 dropped the
-    * d=5.70 rung through its 0.65 floor (FAIL on 2 of 5 seeds -- the EDGE that stood since 0.19.2
-    * was the favourable draw) and 0.058 put the d=13.50 rung on its 1.35 ceiling.  Cutting
-    * `crowdImpact` in 0.22.0 shifted the whole window up: 0.052 now reads 0.65 at the short rung
-    * (EDGE again) and 0.060 reads 0.72 / 1.29, clear at both ends.  A bond dial cannot be settled
-    * once and left; re-run `-crossasset` after any equity-side change.  Cost: fitness loss
-    * 1.360 -> 1.382, every equity statistic unchanged. */
+    * part worth carrying forward.  At the 0.21.0 world the window was 0.050-0.056; cutting
+    * `crowdImpact` in 0.22.0 shifted it up to 0.060; the settled-stress refuge (`refugeDays`,
+    * 0.23.0) shifted it back DOWN: at this world 0.060 fails the shipped duration's own depth band
+    * outright (1.37 on the gate seed), 0.045 converges the d=5.70 rung below its 0.65 floor (0.64
+    * at 400 paths), and 0.052 passes both ends (0.70 / 1.30, `-crossasset` verdict PASS).  A bond
+    * dial cannot be settled once and left; re-run `-crossasset` after any equity-side change. */
   val EaseInSpeed = 6.0
   val DurationRef = 13.5
   /** Bond volatility is measured over NON-OVERLAPPING windows of this many years, even when the
@@ -626,17 +710,19 @@ object MarketSim:
     * other positive value.  Only there does `jumpRate` mean the unconditional intensity it claims
     * to be; anywhere else the realised rate drifts with `volOfVol` and the dial lies.
     *
-    * `JumpAsym` shifts the jump down by 0.4 of its own sd, which is what carries the negative skew
-    * a symmetric jump cannot (real equity skew is about -0.25 on SPY 1993-2026). */
+    * `jumpSkew` (a World dial since the leverage change; 0.4 through 0.22.1) shifts the jump down
+    * by that many of its own sd, which is what carries the negative skew a symmetric jump cannot
+    * (real equity skew is about -0.25 on SPY 1993-2026). */
   val JumpNu    = 5
   val JumpGamma = 2.0
-  val JumpAsym  = 0.4
 
-  /** Jump size, from the share of variance it carries and how often it fires.  `1 + JumpAsym^2` is
+  /** Jump size, from the share of variance it carries and how often it fires.  `1 + jumpSkew^2` is
     * the shift's own contribution to the second moment; without it the channel would overshoot the
-    * variance it is supposed to be borrowing, and `equity vol %` would drift with `jumpVar`. */
+    * variance it is supposed to be borrowing, and `equity vol %` would drift with `jumpVar` -- and
+    * it is why a deeper skew at fixed `jumpVar` makes each jump smaller rather than the tail
+    * heavier. */
   def jumpScale(w: World): Double =
-    SigmaN * math.sqrt(w.jumpVar / (w.jumpRate * (1.0 + JumpAsym * JumpAsym)))
+    SigmaN * math.sqrt(w.jumpVar / (w.jumpRate * (1.0 + w.jumpSkew * w.jumpSkew)))
 
   /** ONE price-formation mechanism for every traded asset: value demand toward `fair`, plus
     * external flow and noise, amplified when THIS market's liquidity has withdrawn after one-sided
@@ -748,7 +834,7 @@ object MarketSim:
       * it binds on almost nothing -- but what share of the extreme tail it SHAPES. */
     var floorDays = 0
     var tailDays = 0
-    private var scaleVar = 0.01 * 0.01
+    private[apps] var scaleVar = 0.01 * 0.01
     def step(fair: Double, flowPlusNoise: Double): Double =
       val scale = math.sqrt(scaleVar)
       val amp   = 1.0 + stressK * stressIdx
@@ -816,6 +902,9 @@ object MarketSim:
     // The disaster channel's own stream, for the same survivability reason as `jrng` above:
     // constructed unconditionally, read only when `disasterRate > 0`, so rate 0 is bit-identical.
     val drng = new NumPyRNG(seed ^ 0xd15a57e5L)
+    // The news channel's own stream, same survivability contract as `jrng`/`drng`:
+    // constructed unconditionally, read only when `newsRate > 0`, so rate 0 is bit-identical.
+    val nrng = new NumPyRNG(seed ^ 0x0bad2e15L)
     val px   = new Array[Double](tot)
     val fv   = new Array[Double](tot)
     val rt   = new Array[Double](tot)
@@ -852,7 +941,28 @@ object MarketSim:
     var perfV = 0.0; var perfT = 0.0
     val kAdapt = 0.010; val kHome = 0.020
     var logVol = 0.0
+    // The leverage term's signal from the PREVIOUS session: max(-ret,0)/scale - 0.399, the same
+    // decline reading `stressIdx` consumes, centred so the vol level does not drift with the
+    // dial.  Draw-free; both its update and its use sit behind `leverage > 0`, so 0 is
+    // bit-identical off.
+    var levSig = 0.0
+    // Settled equity stress for the refuge bid (see `refugeDays`); draw-free, and both its use
+    // and its update sit behind `refugeDays > 0`, so 0 is bit-identical off.
+    var settledStress = 0.0
+    val settleMu = if w.refugeDays > 0.0 then 1.0 - math.exp(-math.log(2.0) / w.refugeDays) else 0.0
     val volNorm = (w.volOfVol * w.volOfVol) / math.max(1e-9, 1.0 - w.volPersist * w.volPersist)
+    // News variance DISPLACES diffusive noise instead of stacking on top of it, the same budget
+    // rule `jumpVar` enforces with its (1 - jumpVar) factor: the record's 16% already contains
+    // its bad-news days, so a world calibrated without them must yield generic variance when the
+    // channel turns on -- added instead, the channel taxed equity vol and the crash rate ~5
+    // seed-sd and no amplifier dial could pay it back.  Sized against SigmaN's own per-session
+    // variance; the vol-state factor is centred at 1 by `volNorm`, so the unconditional budget is
+    // the right ruler.  1.0 when the channel is off.
+    val newsDamp =
+      if w.newsRate > 0.0 then
+        math.sqrt(math.max(1.0 - (w.newsRate / DaysPerYear) * w.newsSize * w.newsSize /
+          (SigmaN * SigmaN), 0.0))
+      else 1.0
     val crowdWin = w.crowd match
       case Crowd.Trend(d) => math.max(2, math.round(d * 252.0 / 365.25).toInt)
       case _              => 0
@@ -913,6 +1023,21 @@ object MarketSim:
             disStep = w.disasterSize / disLeft
             if i >= BurnIn then disasterCount += 1
       logVbase += driftNow * dt + w.fundVol * sqdt * rng.randn()
+      // FAIR-VALUE NEWS JUMP: a permanent markdown repriced the SAME session -- the fundamental
+      // and the price take the full drop together, so the price/fair gap, and with it the value
+      // channel, the belief EWMA and the mispricing, are untouched: a pure random-walk step with
+      // nothing for value capital to buy back.  Morning news, placed before the demand-flows read
+      // of logP, so the momentum crowd trades on it this session the way it trades on `markdown`.
+      // The compensator is deterministic and returns the expected drift cost on BOTH legs.
+      var newsJ = 0.0
+      if w.newsRate > 0.0 then
+        val comp = w.newsRate * w.newsSize / DaysPerYear
+        logVbase += comp
+        eqM.logP += comp
+        if nrng.nextDouble() < w.newsRate / DaysPerYear then
+          logVbase -= w.newsSize
+          eqM.logP -= w.newsSize
+          newsJ = w.newsSize
       inflPress += w.inflSpeed * (inflTarget - inflPress)
       // policy: chase rateMean + pressure MINUS accommodation, and accommodation is a CAPPED
       // STOCK rather than a cut speed -- eased in within ~2 months, withdrawn over years.  As a
@@ -989,7 +1114,15 @@ object MarketSim:
       val eqFlow = w.crowdImpact * wTrend * (crowdE - crowdPrev)
       crowdPrev = crowdE
       logVol = w.volPersist * logVol + w.volOfVol * rng.randn()
-      val dNoise = SigmaN * math.exp(logVol - volNorm) * rng.randn()
+      // TRANSIENT, deliberately: the kick multiplies THIS session's diffusive noise and never
+      // enters `logVol` -- fed into the 0.99-persistent state it self-excites (log-vol responds
+      // per session while the normalising `scale` EWMA lags ~140, so every expansion reads as
+      // fresh declines and pumps itself; measured: vol 16% -> 45% at the setting that first
+      // reaches the anchor).  The lag-1 form is also the statistic the `leverage corr` row
+      // grades; the multi-session persistence of real post-decline volatility is the spiral's
+      // job, and the clustering rows hold the total.
+      val dNoise0 = newsDamp * SigmaN * math.exp(logVol - volNorm) * rng.randn()
+      val dNoise  = if w.leverage > 0.0 then dNoise0 * math.exp(w.leverage * levSig) else dNoise0
 
       // The jump channel.  Its draws come from `jrng`, NOT `rng`, so `jumpVar = 0` takes the
       // untouched branch below and moves NOTHING ELSE in the path -- the failure mode a shared
@@ -1007,7 +1140,7 @@ object MarketSim:
           val scale    = jumpScale(w)
           // The compensator is deterministic and consumes no draw: it removes the mean the
           // downward shift would otherwise add, so `jumpVar` moves the tail without moving drift.
-          val compens  = w.jumpRate * JumpAsym * scale
+          val compens  = w.jumpRate * w.jumpSkew * scale
           val fired    = jrng.nextDouble() < lamNow
           val jump =
             if !fired then 0.0
@@ -1023,8 +1156,13 @@ object MarketSim:
                 chi += g * g
                 k += 1
               val t = z / math.sqrt(chi / JumpNu) / math.sqrt(JumpNu / (JumpNu - 2.0))
-              (t - JumpAsym) * scale
+              (t - w.jumpSkew) * scale
           dNoise * math.sqrt(1.0 - w.jumpVar) + jump + compens
+      // The shock, not the crowd's flows -- see the `downShock` field for the measured reason.
+      val eqShockA =
+        if w.downShock > 0.0 then
+          if eqShock < 0.0 then eqShock * (1.0 + w.downShock) else eqShock / (1.0 + w.downShock)
+        else eqShock
 
       // ---- both markets step through the SAME mechanism --------------------------------------
       // THE SLOW VALUATION CYCLE: value capital arbs the gap to PERCEIVED fair, and perception
@@ -1055,14 +1193,33 @@ object MarketSim:
             // a lucky regime draw must not walk perceived fair past anything the record holds.
             pf += CapSpan * tanhP(w.capYears * (gEwma * DaysPerYear - w.drift) / CapSpan)
           pf
-      val retE = eqM.step(perceivedFair, eqFlow + eqShock)
+      val sPre = if w.leverage > 0.0 then math.sqrt(eqM.scaleVar) else 0.0
+      val retE = eqM.step(perceivedFair, eqFlow + eqShockA)
+      if w.leverage > 0.0 then
+        // SATURATED at four realized sds, and the cap is a priced trade, not a free guard:
+        // uncapped, a jump day mints a 2.6x next-session multiplier and the kurtosis ceiling
+        // flips on seed draws; capped, roughly a third of the graded correlation goes with those
+        // co-extreme pairs (-0.09 -> -0.06 at leverage 0.05, measured) and the dial is sized
+        // about 2x larger to buy it back.  Real vol responses saturate; uncapped ones let one
+        // draw author the tail.
+        // The decline the signal reads INCLUDES this session's news jump: a bad-news day is
+        // exactly the day real volatility responds to, and the external repricing bypasses
+        // `retE` (it never passes through `step`).  `newsJ` is 0 whenever the channel is off,
+        // so the pre-news leverage behaviour is untouched bit for bit.
+        levSig = math.min(math.max(newsJ - retE, 0.0) / sPre, 4.0) - 0.399
       // joint-stress margin selling: when both markets are stressed, the bond gets dumped too --
       // and against it the refuge bid, flight-to-quality into a bond that is itself still orderly.
       // DURATION-SCALED, like the bond's own noise: an absolute bid gave a 5-year bond the same
       // crash rally as a 20-year one, which no duration-relative band can then fit.
+      // The stress the REFUGE bid reads: settled (through yesterday) when `refugeDays` is on,
+      // live otherwise -- see the `refugeDays` field for why the same-session delta is the whole
+      // calm-day correlation and the level is the whole crisis behaviour.  The EWMA is updated
+      // AFTER this use, so today's equity move never reaches today's bond bid.
+      val eqStressForRefuge = if w.refugeDays > 0.0 then settledStress else eqM.stressIdx
       val bondFlow = -w.margin * eqM.stressIdx * bdM.stressIdx +
-                     w.refuge * (w.duration / DurationRef) * eqM.stressIdx *
+                     w.refuge * (w.duration / DurationRef) * eqStressForRefuge *
                        math.max(0.0, 1.0 - bdM.stressIdx)
+      if w.refugeDays > 0.0 then settledStress += settleMu * (eqM.stressIdx - settledStress)
       val retB = bdM.step(fairB, bondFlow + SigmaNBond * (w.duration / DurationRef) * rng.randn())
       val _ = retB
 
@@ -1856,12 +2013,12 @@ object MarketSim:
     equityWindow = "S&P / CRSP 1954-2026", equityYears = 72,
     clusterWindow = "CRSP 1926-2026, the century", clusterYears = 100,
     tailWindow = "CRSP 1926-2026, the century", tailYears = 100,
-    vol = 16.0,          volSd = 0.14,
-    retVol = 0.69,       retVolSd = 0.24,
-    kurt = 28.0,         kurtSd = 2.35,
-    ac1 = 0.299,         ac1Sd = 0.12,
+    vol = 16.0,          volSd = 0.13,
+    retVol = 0.69,       retVolSd = 0.25,
+    kurt = 28.0,         kurtSd = 1.15,
+    ac1 = 0.299,         ac1Sd = 0.11,
     ac20 = 0.225,        ac20Sd = 0.19,
-    crashes = 20.7,      crashesSd = 0.26,
+    crashes = 20.7,      crashesSd = 0.24,
     medDepth = -21.4,    medDepthSd = 0.17,
     // RE-ANCHORED in 0.22.1, same error class as `median depth %` in 0.22.0: -56.8 was the
     // 2007-09 episode, the worst of the 1954-2026 window, used where the model computes the worst
@@ -1876,14 +2033,13 @@ object MarketSim:
     volBand = (14.0, 18.0),
     retVolBand = (0.50, 0.85),
     // CRSP c1954 rows of asymmetry-2026-08-31.tsv; the tail hedge is SPY/TLT.  Spreads frozen
-    // from `-noise -paths 200` at the 0.23.0 world, 2026-08-31: a single 72-year history barely
-    // pins the semivariance excess (one crash day swings it; the record sits at the 84th
-    // percentile of model histories), measures the leverage corr adequately (the record sits at
-    // the 6th -- 94% of model histories carry weaker leverage than the record), and measures the
-    // tail hedge well (the record sits above ALL 200 -- every model history overshoots).
-    semiExcess = 3.06, semiExcessSd = 1.52,
-    levCorr = -0.0926, levCorrSd = 0.37,
-    tailHedge = -0.273, tailHedgeSd = 0.29)
+    // from `-noise -paths 200` at the adopted 0.23.0 asymmetry world, 2026-08-31: a single
+    // 72-year history barely pins the semivariance excess (one crash day swings it), and the
+    // record now reads as a TYPICAL history of this model on all three rows -- 43rd percentile
+    // (semivariance), 47th (leverage corr), 22nd (tail hedge).
+    semiExcess = 3.06, semiExcessSd = 1.48,
+    levCorr = -0.0926, levCorrSd = 0.44,
+    tailHedge = -0.273, tailHedgeSd = 0.24)
 
   /** The Nasdaq-100 set, measured 2026-08-28 from QQQ daily adjusted closes over its own full
     * history, 1999-03-10 to 2026-08-20 (27.4 years).
@@ -1917,10 +2073,10 @@ object MarketSim:
     equityWindow = "QQQ 1999-2026", equityYears = 27,
     clusterWindow = "QQQ 1999-2026", clusterYears = 27,
     tailWindow = "QQQ 1999-2026", tailYears = 27,
-    vol = 26.90,         volSd = 0.14,
+    vol = 26.90,         volSd = 0.13,
     retVol = 0.38,       retVolSd = 0.18,
     kurt = 9.55,         kurtSd = 1.23,
-    ac1 = 0.293,         ac1Sd = 0.12,
+    ac1 = 0.293,         ac1Sd = 0.11,
     ac20 = 0.249,        ac20Sd = 0.19,
     crashes = 25.6,      crashesSd = 0.24,
     medDepth = -22.8,    medDepthSd = 0.10,
@@ -1929,9 +2085,9 @@ object MarketSim:
     retVolBand = (0.27, 0.47),
     // QQQ wfull row of asymmetry-2026-08-31.tsv; the tail hedge is QQQ/TLT.  Spreads are the
     // S&P's carried over, like every spread in this set.
-    semiExcess = 1.13, semiExcessSd = 1.52,
-    levCorr = -0.1073, levCorrSd = 0.37,
-    tailHedge = -0.236, tailHedgeSd = 0.29)
+    semiExcess = 1.13, semiExcessSd = 1.48,
+    levCorr = -0.1073, levCorrSd = 0.44,
+    tailHedge = -0.236, tailHedgeSd = 0.24)
 
   val AnchorSets: Vector[Anchors] = Vector(SP500Anchors, NasdaqAnchors)
 
@@ -1998,7 +2154,7 @@ object MarketSim:
     // four: across the crowdImpact sweep corr(vr60, equity d20 vs real) is 0.98, which is the
     // finding, not an argument for dropping a row.  The depth rungs said the world was too deep
     // and named no cause; this row names it.
-    ("variance ratio 60d", st => st.vr60,                                    1.00,  wgt(1.0, 0.37)),
+    ("variance ratio 60d", st => st.vr60,                                    1.00,  wgt(1.0, 0.36)),
     // THE THIRD ASYMMETRY AXIS the rows above cannot see: clustering is |r| (sign-blind), vr60 is
     // the signed MEAN's persistence -- this pair is the signed SECOND moment.  Graded as the
     // EXCESS because the raw down/up ratio sits so near 1 that its model/real quotient could
@@ -2016,7 +2172,7 @@ object MarketSim:
     // The record proxy (sd log CAPE) reads 0.24-0.41 across windows; 0.30 is the judgment centre
     // and the LITERAL is shared by both anchor sets -- one Shiller record, no QQQ equivalent.
     // Judgment 0.5 for the proxy commensurability stated in valuation-2026-08-30.tsv.
-    ("valuation dispersion", st => st.valDisp,                               0.30,  wgt(0.5, 0.38)),
+    ("valuation dispersion", st => st.valDisp,                               0.30,  wgt(0.5, 0.35)),
     ("crashes/century",    st => st.epPerPath * 100.0 / st.yearsPerPath,    a.crashes,  wgt(1.0, a.crashesSd)),
     // RE-MEASURED in 0.22.0, and the old value was not this statistic.  `-27.1` shipped through
     // 0.21.0 with no recorded convention; the model measures every peak-to-trough decline of 15% or
@@ -2048,7 +2204,7 @@ object MarketSim:
     ("worst crash %",      st => st.worstDepth,                            a.worstDepth,  wgt(0.5, a.worstDepthSd)),
     // The "(24y)" is load-bearing, not decoration: this row is measured on a different horizon
     // from every other, and the label is the only part that travels when the number is quoted.
-    ("bond vol % (24y)",   st => st.bondVol * 100,                          13.0,  wgt(1.0, 0.51)),
+    ("bond vol % (24y)",   st => st.bondVol * 100,                          13.0,  wgt(1.0, 0.52)),
     // RE-MEASURED in 0.22.0, same error class as `median depth %` above: `20.0` is 2008 ALONE, the
     // largest of the five growth-shock episodes in the record, and this row is a MEDIAN across
     // episodes.  Measured the way `measure` measures it -- SPY drawdowns of 15%+, TLT's log return
@@ -2056,7 +2212,7 @@ object MarketSim:
     // +6.6 / +22.4 / +4.4 / +13.3 / +0.8.  The model was therefore read as UNDERSTATING a bond
     // rally it in fact overstates.  Six episodes is the honest limit here and `-noise` prices it in.
     // `test-data/bond-anchors/crash-response-2026-08-29.tsv`; `BondCrashSuite` re-derives both rows.
-    ("bond growth-crash",  st => st.bondGrowth,                              6.6,  wgt(1.0, 1.62)),
+    ("bond growth-crash",  st => st.bondGrowth,                              6.6,  wgt(1.0, 1.33)),
     // The judgment stays at 1.5 -- inflation-crash behaviour is why the bond refuge exists --
     // and the measured precision crushes the weight to ~0.13 anyway: sd/real 2.89, and only
     // 95 of 200 24-year histories produce a reading at all.  The old 1.5 was the largest
@@ -2065,7 +2221,7 @@ object MarketSim:
     // has, which reads -34.7% (SPY 2022-01-03..2022-10-12, TLT over the same span).  A median of one
     // is that one, so the anchor is the episode -- but rounded 28% toward zero, which is not a
     // convention, it is an error.
-    ("bond infl-crash",    st => st.bondInfl,                              -34.7,  wgt(1.5, 2.05)),
+    ("bond infl-crash",    st => st.bondInfl,                              -34.7,  wgt(1.5, 1.90)),
     // Does the refuge hold exactly where it is needed -- stock-bond correlation on calm sessions
     // with the equity return below its own calm q10, against the pair's own record
     // (tailcorr-2026-08-31.tsv).  Calm-conditioned on BOTH sides by construction: the TLT window
@@ -2114,14 +2270,14 @@ object MarketSim:
     // no longer tell this model from the cross-section they were measured from, which is a stronger
     // statement than any ratio near 1.00, because it is made against the spread rather than the
     // point.
-    ("equity d5 vs real",   st => st.eqD5VsReal,                             1.00,  wgt(0.5, 0.19)),
-    ("equity d10 vs real",  st => st.eqD10VsReal,                            1.00,  wgt(1.0, 0.45)),
+    ("equity d5 vs real",   st => st.eqD5VsReal,                             1.00,  wgt(0.5, 0.18)),
+    ("equity d10 vs real",  st => st.eqD10VsReal,                            1.00,  wgt(1.0, 0.42)),
     // d20's sdRel moved 0.99 -> 1.56 in the 0.21.0 recovery-drag change, and like kurtosis's move
     // it is a re-measurement of a statistic that genuinely became more variable, not a correction:
     // slowing recovery from deep drawdowns makes time spent DEEP swing much harder between
     // histories (p5 0.19, p95 4.35 over 25 years).  Weighting by measurability drops it to 0.06.
     // No other target's sdRel moved beyond its own noise, so none were churned.
-    ("equity d20 vs real",  st => st.eqD20VsReal,                            1.00,  wgt(0.5, 2.29)),
+    ("equity d20 vs real",  st => st.eqD20VsReal,                            1.00,  wgt(0.5, 2.06)),
     ("bond depth vs vol",   st => st.bondDepthVsVol,                          1.00, wgt(0.5, 0.36)),
   )
 
@@ -2535,6 +2691,18 @@ object MarketSim:
     // mechanism the search cannot reach is a mechanism nobody will find the wrong value of.
     ("jumpVar",     0.00,  0.20, (w, x) => w.copy(jumpVar = x)),
     ("jumpRate",  0.0004, 0.0040, (w, x) => w.copy(jumpRate = x)),
+    // The asymmetry pair and the jump shift, in the ranges the hand sweeps mapped: leverage
+    // reaches the `leverage corr` anchor near 0.10 under the saturation cap, downShock pays vr60
+    // ~+0.02 per 0.01 so the band bounds it near 0.03, and the best hand candidate
+    // (0.10 / 0.015 / jumpVar 0.12 / drift 0.124) missed a four-seed gate PASS only on
+    // `bond depth vs vol` -- the search has the bond dials in its hands where a hand sweep does
+    // not.
+    ("leverage",    0.00,  0.15, (w, x) => w.copy(leverage = x)),
+    ("downShock",   0.00,  0.05, (w, x) => w.copy(downShock = x)),
+    ("jumpSkew",    0.00,  1.40, (w, x) => w.copy(jumpSkew = x)),
+    ("newsRate",    0.00,  3.00, (w, x) => w.copy(newsRate = x)),
+    ("newsSize",    0.00,  0.05, (w, x) => w.copy(newsSize = x)),
+    ("refugeDays",  0.00,  3.00, (w, x) => w.copy(refugeDays = x)),
     ("easing",       0.0,  0.09, (w, x) => w.copy(easing = x)),
     ("refuge",       0.0,  0.20, (w, x) => w.copy(refuge = x)),
     ("inflSize",    0.03,  0.12, (w, x) => w.copy(inflSize = x)),
@@ -3786,8 +3954,10 @@ object MarketSim:
       ("trendShare", ef(w.trendShare)), ("depth", ef(w.depth)), ("stress", ef(w.stress)),
       ("beta", ef(w.beta)), ("drift", ef(w.drift)), ("fundVol", ef(w.fundVol)),
       ("rateMean", ef(w.rateMean)), ("volPersist", ef(w.volPersist)),
-      ("volOfVol", ef(w.volOfVol)), ("jumpVar", ef(w.jumpVar)),
-      ("jumpRate", ef(w.jumpRate)), ("valuePull", ef(w.valuePull)),
+      ("volOfVol", ef(w.volOfVol)), ("leverage", ef(w.leverage)),
+      ("downShock", ef(w.downShock)), ("jumpSkew", ef(w.jumpSkew)), ("jumpVar", ef(w.jumpVar)),
+      ("jumpRate", ef(w.jumpRate)), ("newsRate", ef(w.newsRate)), ("newsSize", ef(w.newsSize)),
+      ("valuePull", ef(w.valuePull)),
       ("recoveryDrag", ef(w.recoveryDrag)), ("recoveryFloor", ef(w.recoveryFloor)),
       ("haltLimit", ef(w.haltLimit)),
       ("disasterRate", ef(w.disasterRate)), ("disasterSize", ef(w.disasterSize)),
@@ -3798,6 +3968,7 @@ object MarketSim:
       ("crowd", jsonStr(crowdName(w.crowd))), ("crowdImpact", ef(w.crowdImpact)),
       ("panic", ef(w.panic)), ("duration", ef(w.duration)),
       ("easing", ef(w.easing)), ("unwind", ef(w.unwind)), ("refuge", ef(w.refuge)),
+      ("refugeDays", ef(w.refugeDays)),
       ("inflProb", ef(w.inflProb)), ("inflSize", ef(w.inflSize)),
       ("inflSpeed", ef(w.inflSpeed)), ("rateSpeed", ef(w.rateSpeed)),
       ("discount", ef(w.discount)), ("margin", ef(w.margin)),
@@ -4018,6 +4189,8 @@ object MarketSim:
     var stress = dw.stress; var beta = dw.beta
     var volPersist = dw.volPersist; var volOfVol = dw.volOfVol
     var jumpVar = dw.jumpVar; var jumpRate = dw.jumpRate
+    var leverage = dw.leverage; var downShock = dw.downShock; var jumpSkew = dw.jumpSkew
+    var newsRate = dw.newsRate; var newsSize = dw.newsSize
     var recoveryDrag = dw.recoveryDrag; var recoveryFloor = dw.recoveryFloor
     var disasterRate = dw.disasterRate; var disasterSize = dw.disasterSize
     var disasterLen = dw.disasterLen
@@ -4030,6 +4203,7 @@ object MarketSim:
     var drift = dw.drift; var fundVol = dw.fundVol; var rateMean = dw.rateMean
     var duration = dw.duration
     var easing = dw.easing; var unwind = dw.unwind; var refuge = dw.refuge
+    var refugeDays = dw.refugeDays
     var inflProb = dw.inflProb; var inflSize = dw.inflSize
     var inflSpeed = dw.inflSpeed; var rateSpeed = dw.rateSpeed
     var discount = dw.discount; var margin = dw.margin
@@ -4070,6 +4244,11 @@ object MarketSim:
       case "-volofvol"   => volOfVol = numOr("-volofvol", consumeNext)
       case "-jumpvar"    => jumpVar = numOr("-jumpvar", consumeNext)
       case "-jumprate"   => jumpRate = numOr("-jumprate", consumeNext)
+      case "-leverage"   => leverage = numOr("-leverage", consumeNext)
+      case "-downshock"  => downShock = numOr("-downshock", consumeNext)
+      case "-jumpskew"   => jumpSkew = numOr("-jumpskew", consumeNext)
+      case "-newsrate"   => newsRate = numOr("-newsrate", consumeNext)
+      case "-newssize"   => newsSize = numOr("-newssize", consumeNext)
       case "-value"      => valuePull = numOr("-value", consumeNext)
       case "-anchors"    => anchorSpec = consumeNext
       // Applied in the pre-scan that seeded `dw`; consumed here so the loop does not reject it
@@ -4097,6 +4276,7 @@ object MarketSim:
       case "-easing"     => easing = numOr("-easing", consumeNext)
       case "-unwind"     => unwind = numOr("-unwind", consumeNext)
       case "-refuge"     => refuge = numOr("-refuge", consumeNext)
+      case "-refugedays" => refugeDays = numOr("-refugedays", consumeNext)
       // Rejected, not silently reinterpreted: -flight was a rate cut SPEED per year and -easing is
       // a cut CAP in rate points, so every recorded -flight value is wrong by two orders of
       // magnitude under the new mechanism and would still have produced a plausible-looking run.
@@ -4150,12 +4330,17 @@ object MarketSim:
     def positive(flag: String, x: Double): Unit =
       if !(x > 0.0) then usage(s"$flag wants a positive number, got $x")
     share("-trendshare", trendShare); share("-jumpvar", jumpVar); share("-jumprate", jumpRate)
+    share("-leverage", leverage); share("-downshock", downShock)
+    // A 2-sd shift is already past every fitted setting; negative would skew jumps UP.
+    if jumpSkew < 0.0 || jumpSkew > 2.0 then
+      usage(s"-jumpskew $jumpSkew out of range; needs 0 <= skew <= 2")
     share("-recoveryfloor", recoveryFloor); share("-inflprob", inflProb)
     share("-inflspeed", inflSpeed)
     belowOne("-volpersist", volPersist); belowOne("-haltlimit", haltLimit)
     positive("-depth", depth); positive("-duration", duration)
     nonNeg("-stress", stress); nonNeg("-beta", beta); nonNeg("-volofvol", volOfVol)
     nonNeg("-value", valuePull); nonNeg("-recoverydrag", recoveryDrag)
+    nonNeg("-newsrate", newsRate); nonNeg("-newssize", newsSize); nonNeg("-refugedays", refugeDays)
     nonNeg("-disasterrate", disasterRate); nonNeg("-disastersize", disasterSize)
     share("-disasterrecover", disasterRecover)
     // beliefShare 1.0 would unmoor perceived fair from the fundamental entirely -- the pull
@@ -4195,7 +4380,9 @@ object MarketSim:
     val w = World(trendShare, depth, stress, beta, drift = drift, fundVol = fundVol,
                   rateMean = rateMean,
                   volPersist = volPersist, volOfVol = volOfVol,
-                  jumpVar = jumpVar, jumpRate = jumpRate, valuePull = valuePull,
+                  jumpVar = jumpVar, jumpRate = jumpRate, leverage = leverage,
+                  downShock = downShock, jumpSkew = jumpSkew,
+                  newsRate = newsRate, newsSize = newsSize, valuePull = valuePull,
                   recoveryDrag = recoveryDrag, recoveryFloor = recoveryFloor,
                   haltLimit = haltLimit,
                   disasterRate = disasterRate, disasterSize = disasterSize,
@@ -4205,6 +4392,7 @@ object MarketSim:
                   capYears = capYears, capWindow = capWindow,
                   crowd = crowd, crowdImpact = crowdImpact, panic = panic,
                   duration = duration, easing = easing, unwind = unwind, refuge = refuge,
+                  refugeDays = refugeDays,
                   inflProb = inflProb, inflSize = inflSize,
                   inflSpeed = inflSpeed, rateSpeed = rateSpeed, discount = discount, margin = margin)
 

@@ -32,25 +32,26 @@ CAPE is a proxy, with the haircut stated in the fixture — plus a two-sided mec
 (`valuation cycle engages, not unmoored`), an off-world in the sweep, the binding diagnostic
 printed in every report (`valuation gap sd log(p/fair) ... century max ... over fair`), and
 contract tests in both twins pinning bit-identity at zero, release inheritance, and
-discrimination. `EmitSchema` 6 -> 7: `world` gained the four cycle dials.
+discrimination. `EmitSchema` 6 -> 7: `world` gained the four cycle dials and the six asymmetry
+dials below (`leverage`, `downShock`, `jumpSkew`, `newsRate`, `newsSize`, `refugeDays`).
 
-What the shipped world reads, 200x100 on four seeds (all three gate classes PASS on every one):
-dispersion 0.207-0.220 with the century max at +11% over fair — the record's lower half, honest
-about which half it has: sticky post-crash pessimism (the 1930s-50s, CAPE below its mean for two
-decades) more than manias. A 2x-fair mania peak remains out of reach — `-capyears 3` pays vr60
-1.15 and d10 1.41 — and is disclosed beside the dispersion bullet in `docs/MarketSimWorlds.md`.
+What the shipped world reads, 200x100 on four seeds: dispersion 0.199-0.23 with the century max
+near +12% over fair — the record's lower half, honest about which half it has: sticky post-crash
+pessimism (the 1930s-50s, CAPE below its mean for two decades) more than manias. A 2x-fair mania
+peak remains out of reach — `-capyears 3` pays vr60 1.22 and d10 1.57 at the final world — and
+is disclosed beside the dispersion bullet in `docs/MarketSimWorlds.md`.
 
 **What it moves, and the two rulers that read part of it as regression:**
 
 ```
                           0.22.1   0.23.0
-  worst crash %, record@     18%      35%   <-- pessimism deepens what disasters start
-  crashes/century           1.03     0.99
+  worst crash %, record@     18%      37%   <-- pessimism deepens what disasters start
+  crashes/century           1.03     1.03
   return per vol            1.03     1.01
-  variance ratio 60d        1.10     1.11
-  equity d5 vs real         0.98     1.05
-  equity d10 vs real        1.13     1.28
-  equity d20 vs real        2.36     2.74   <-- see below
+  variance ratio 60d        1.10     1.13
+  equity d5 vs real         0.98     1.08
+  equity d10 vs real        1.13     1.34
+  equity d20 vs real        2.36     2.79   <-- see below
   median depth %            1.04     1.06
 ```
 
@@ -78,15 +79,18 @@ cross-release compatibility: pre-0.23.0 paths reproduce STATISTICALLY but not bi
 dial setting, because `trendPos` moved off the native tanh. Use it for any future transcendental
 that must match across the twins.
 
-Per the defaults-change rule, every `-noise`-frozen spread was re-measured at the adopted world
-(`retVolSd` 0.24, `kurtSd` 2.35, `crashesSd` 0.26, `medDepthSd` 0.17, `worstDepthSd` 0.19, `vr`
-0.37, `valuation dispersion` 0.38, `d5` 0.19, `d10` 0.45, `d20` 2.29, bond growth-crash 1.62,
-infl-crash 2.05), the measured tables in `docs/MarketSimWorlds.md` were regenerated at it, and the
-calibration loss on the frozen ensemble reads **1.515** (not comparable to 0.22.1's 0.579: the
-target set gained the valuation row and the three asymmetry rows below, and the weights
-re-froze; 0.785 of it is the asymmetry misses those rows now price). `beliefShare` and
-`capYears` joined `-calibrate`'s ranges. The Nasdaq recipe inherits the cycle and improves the
-same way: QQQ's tail record@ 9% -> 11%, dispersion 0.23 in band.
+Per the defaults-change rule, every `-noise`-frozen spread was re-measured at this release's
+final world — the asymmetry adoption below (`volSd` 0.13, `retVolSd` 0.25, `kurtSd` 1.15,
+`ac1Sd` 0.11, `crashesSd` 0.24, `medDepthSd` 0.17, `worstDepthSd` 0.19, `semiExcessSd` 1.48,
+`levCorrSd` 0.44, `tailHedgeSd` 0.24, `vr` 0.36, `valuation dispersion` 0.35, `d5` 0.18, `d10`
+0.42, `d20` 2.06, bond vol 0.52, bond growth-crash 1.33, infl-crash 1.90, bond depth 0.36;
+kurtosis is now pinned twice as tightly because the rarer-larger jump pair narrows
+single-history spread) — and the measured tables in `docs/MarketSimWorlds.md` were regenerated
+at it. The calibration loss on the frozen ensemble reads **0.955** (not comparable to 0.22.1's
+0.579: the target set gained the
+valuation row and the three asymmetry rows below, and the weights re-froze). `beliefShare` and
+`capYears` joined `-calibrate`'s ranges. The Nasdaq recipe inherits both defaults changes and
+still passes all three gate classes unchanged.
 
 **The verdict is graded at the calibration horizon.** Every band and anchor weight is calibrated
 on 100-year ensembles, and several graded statistics grow with the measurement window — sd
@@ -108,37 +112,98 @@ by the printed table and every sidecar (which also removes the one way the two c
 40-path × 33-year `-emitall` drops from 22.2 s to 2.9 s, and the marginal cost per path returns
 to the ~45 ms formatting floor `docs/MarketSimWorlds.md` states.
 
-**Three return asymmetries measured, anchored, and DISCLOSED — none yet enforced.** Equity
+**Three return asymmetries measured, anchored — and CLOSED by the mechanisms below.** Equity
 records are asymmetric three ways the target set could not see: the downside disperses more
 than the upside (Roy 1952 / Markowitz 1959 ch. 9), a decline raises future volatility where an
-equal rally does not (the leverage effect), and dependence differs in the tails (Longin-Solnik
-2001 / Ang-Chen 2002). Three per-path fidelity rows now grade them, each against a committed
-fixture measured with the model's own close-only conventions
+equal rally does not (the leverage effect), and stock-bond dependence differs between calm days
+and crisis (Longin-Solnik 2001 / Ang-Chen 2002). Three per-path fidelity rows grade them, each
+against a committed fixture measured with the model's own close-only conventions
 (`test-data/equity-anchors/asymmetry-2026-08-31.tsv` — the CRSP daily control plus 18 fund
 histories; `test-data/bond-anchors/tailcorr-2026-08-31.tsv` — the SPY/TLT and QQQ/TLT pairs;
 `AsymmetryAnchorSuite` / `asymmetry_anchor_tests` re-derive every shipped literal):
 
 - **`downside vol excess %`** — `100*(sd_down/sd_up - 1)` at tau 0, graded as the excess
   because the raw ratio sits too near 1 for a model/real quotient to ever miss. Record +3.1 on
-  every CRSP era, positive on 15 of 18 funds; the model reads **-1.4**.
+  every CRSP era, positive on 15 of 18 funds; the shipped world reads **+3.05** (-1.4 without
+  the news channel).
 - **`leverage corr`** — `corr(r_t, r^2_{t+1})`. Record -0.09 on every CRSP era, negative on
-  all 18 funds; the model reads **-0.03**, and the record sits at the 6th percentile of model
-  histories. The sharper Patton-Sheppard signed-half regression was measured and CANNOT anchor
-  on close-only data — era-split with the sign flipping (c1926 -0.20, c1990 +0.34; the 1930s'
+  all 18 funds; the shipped world reads **-0.089** (-0.03 from the liquidity spiral alone).
+  The sharper Patton-Sheppard signed-half regression was measured and CANNOT anchor on
+  close-only data — era-split with the sign flipping (c1926 -0.20, c1990 +0.34; the 1930s'
   giant up-days live inside the same high-volatility stretches as the down-days) — and the
   fixture commits those columns so the negative result stays settled.
 - **`tail hedge corr`** — stock-bond correlation on calm sessions with the equity return below
   its own calm q10, against the pair's own record (-0.27; the TLT window is one disinflation
-  era, matched by the model's calm mask). The model reads **-0.55**: the refuge is about twice
-  too good exactly in the left tail while the full-sample calm correlation sits 0.35 too high —
-  day-frequency dependence concentrated in the tail rather than spread across the sample. The
-  record sits above all 200 model histories.
+  era, matched by the model's calm mask). The shipped world reads **-0.24** (-0.55 with the
+  refuge reading live stress: day-frequency flight-to-quality twice too reliable exactly in
+  the left tail).
 
 All three carry judgment 0.5 with `-noise`-frozen spreads and NO gate bands — first-cycle
-disclosure, the `d20` pattern; bands belong to the mechanism work. Where the model's leverage
-effect currently comes from is the liquidity spiral alone (`-stress 0` zeroes `leverage corr`,
-`-crowdimpact 0` barely moves it) and the sign-blind exogenous volatility process dilutes it —
-the mechanism gap these rows keep visible.
+disclosure, the `d20` pattern; bands wait for a release of margin data. On all three the record
+now reads as a TYPICAL single history of this model (43rd / 47th / 22nd percentile, from
+84th / 6th / above-all-200).
+
+**NEW MECHANISMS, and a defaults change — the asymmetry adoption.** Three channels close the
+rows above; each consumes no draws when off, is bit-identical off, and is pinned inert in every
+frozen release by contract tests in both twins:
+
+- **`-leverage`** (adopted 0.12) — EGARCH's signed term: a decline raises the NEXT session's
+  diffusive volatility by `exp(leverage * decline-in-realized-sds)`, saturated at 4 sds; an
+  equal rally raises nothing. Two constraints set the form. Fed into the 0.99-persistent
+  log-vol state the kick self-excites — log-vol responds per session while the normalising
+  scale EWMA lags ~140, so every expansion reads as fresh declines (vol 16% -> 45% at the
+  first anchor-reaching setting) — so it is a transient one-session multiplier, which is also
+  the lag-1 statistic the row grades. The saturation is a priced trade: uncapped, one jump day
+  mints a 2.6x next-session multiplier and the kurtosis ceiling flips on seed draws; capped,
+  roughly a third of the graded correlation goes with those co-extreme pairs and the dial
+  sizes ~2x larger. The decline it reads INCLUDES the same session's news jump.
+- **`-newsrate` / `-newssize`** (adopted 1.3/yr x -3.3%) — fair-value news jumps, the
+  PERMANENT repricing channel: the fundamental and the price take the full drop in the SAME
+  session, gap-invariant, so the value channel, the belief EWMA and the mispricing see nothing
+  and there is no rebound to arbitrage back. That is the channel a transitory dial cannot be:
+  an amplified transitory down-shock must be arbitraged back and the recovery IS trend (vr60
+  pays ~+0.02 per 0.01 whether the asymmetry rides the noise or the flow-and-noise — both
+  measured), where the permanent step leaks ~+0.02 of vr60 at FULL effect (four-seed mean;
+  neither the momentum crowd nor the recovery drag carries it — both measured). Its variance
+  DISPLACES diffusive noise, the `jumpVar` budget rule: added on top instead, equity vol and
+  the crash rate pay ~5 seed-sd and no amplifier dial buys them back. Rarer-larger events buy
+  more asymmetry and more kurtosis per unit of variance (at equal variance, 1.5/yr x -4% buys
+  +3.4 of excess where 6/yr x -2% buys +1.3). Draws come from a dedicated stream; a
+  deterministic compensator returns the drift cost on both legs. `-downshock` ships at 0 —
+  retired as a default by this channel, kept as a dial with its structural bound documented.
+- **`-refugedays`** (adopted 1) — the refuge bid reads SETTLED stress, an EWMA that EXCLUDES
+  the current session: flight-to-quality follows the stress investors went home with, not the
+  move printing right now. The calm-day stock-bond correlation is carried almost entirely by
+  the same-session stress delta (cov(r_eq, stress_t) is cov(r_eq, delta-stress_t), and
+  delta-stress is r_eq's mirror), while the crisis rally rides the stress LEVEL, which a
+  one-session lag keeps: calm-day corr -0.50 -> -0.23 with the growth-crash rally intact, and
+  by 10 sessions the rally dies (the mechanism gate fails there). `margin` keeps reading live
+  stress — a margin call does not wait overnight.
+
+`-jumpskew` moves 0.4 -> 0.7 (a deeper down-shift, variance-normalised), the jump channel goes
+rarer-larger (`-jumpvar` 0.14 at `-jumprate` 0.0035), and stress 5.15 / volOfVol 0.022 /
+volPersist 0.992 / valuePull 0.056 / recoveryDrag 8.5 / drift 0.122 / refuge 0.115 hold the rest
+of the world on its anchors. All three mechanisms joined `-calibrate`'s ranges.
+
+Verified at 200x100 as 8-replicate means against the pre-adoption world: the three asymmetry
+rows read **0.97 / 0.95 / 0.88** of their records (from -0.66 / 0.30 / 2.02), `bond
+growth-crash` 1.44 -> 1.04, clustering lag 1 lands ON the century anchor (0.96 -> 1.02), `bond
+depth vs vol` holds at 1.24 (the easing re-solve below spends its head-room on the
+`-crossasset` ladder), d20 3.13 -> 3.00, d5/d10/bond vol/bond infl-crash inside 2 seed-sd, and
+the seed-7 vr60 failure is unchanged from the prior world (1.17-1.18 on that seed both ways;
+the other three gate seeds PASS all three classes). **Two rows give ground beyond seed noise and
+are this adoption's priced costs: clustering lag 20, 0.214 -> 0.197 against the 0.225 anchor —
+serially-independent news days dilute long-lag |r| correlation — and valuation dispersion,
+0.230 -> 0.215 against the 0.30 target, compressed by the stronger valuePull the vr60 band
+demands.** Neither yields to any in-band dial; both were already misses. `easing` re-solves 0.060 ->
+0.052 — the settled-stress refuge moved the `-crossasset` window again, its third move with the
+equity world — and 5.2 rate points is the BOTTOM of the real easing-cycle range (2007-08 ran
+5.1), so the "one full real easing cycle" anchor holds: at 0.060 the shipped duration's bond
+depth fails its band outright (1.37 on the gate seed), at 0.045 the d=5.70 ladder rung converges
+below its floor (0.64 at 400 paths), and 0.052 passes both (`-crossasset` verdict PASS, 0.70 /
+1.30). `-releases` aggregate |ratio-1|: this world reads 3.89 against 6.09 for the best
+published release (0.22.0) — the first 0.23.0 world to beat every predecessor on the
+cross-release ruler.
 
 **NEW — `-atrelease V` runs a past release's world under the current binary.** Seeds every dial
 from the frozen world of release `V` (any `-releases` row, or the current version), so a consumer

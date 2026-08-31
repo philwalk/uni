@@ -425,6 +425,39 @@ class MarketSimContractSuite extends FunSuite:
       f"the cycle-off world must FAIL the band, or the row does not discriminate: ${off.valDisp}%.3f")
   }
 
+  test("the asymmetry dials are inert in every frozen release") {
+    // Every release predates them, so the frozen rows carry leverage 0 and downShock 0 -- and
+    // jumpSkew 0.4, the CONSTANT those releases compiled in, which is that dial's off-position
+    // rather than 0.
+    for (v, w) <- MarketSim.Releases do
+      assert(w.leverage == 0.0 && w.downShock == 0.0 && w.jumpSkew == 0.4 &&
+             w.newsRate == 0.0 && w.newsSize == 0.0 && w.refugeDays == 0.0,
+        s"release $v predates the asymmetry mechanisms and must carry 0 / 0 / 0.4 / 0 / 0 / 0")
+  }
+
+  test("the asymmetry dials discriminate on their own statistics") {
+    // Each mechanism moves the statistic it was added for, materially, on the same seed --
+    // measured as the ADOPTED default against the same world with that one mechanism off.
+    val dw = MarketSim.Defaults
+    val on = MarketSim.measure(MarketSim.simPaths(dw, 40, 100, MarketSim.DefaultSeed), 100)
+    val loff = MarketSim.measure(MarketSim.simPaths(dw.copy(leverage = 0.0),
+                 40, 100, MarketSim.DefaultSeed), 100)
+    assert(on.levCorr < loff.levCorr - 0.03,
+      f"leverage 0.12 must deepen the leverage corr materially: ${on.levCorr}%.3f vs ${loff.levCorr}%.3f")
+    val noff = MarketSim.measure(MarketSim.simPaths(dw.copy(newsRate = 0.0),
+                 40, 100, MarketSim.DefaultSeed), 100)
+    assert(on.semiExcess > noff.semiExcess + 1.5,
+      f"the news channel must raise the downside excess materially: ${on.semiExcess}%.2f vs ${noff.semiExcess}%.2f")
+    val roff = MarketSim.measure(MarketSim.simPaths(dw.copy(refugeDays = 0.0),
+                 40, 100, MarketSim.DefaultSeed), 100)
+    assert(on.tailHedge > roff.tailHedge + 0.10,
+      f"refugeDays 1 must weaken the calm-day stock-bond coupling materially: ${on.tailHedge}%.2f vs ${roff.tailHedge}%.2f")
+    val ds = MarketSim.measure(MarketSim.simPaths(dw.copy(downShock = 0.05),
+               40, 100, MarketSim.DefaultSeed), 100)
+    assert(ds.semiExcess > on.semiExcess + 1.0,
+      f"downShock 0.05 must raise the downside excess materially: ${ds.semiExcess}%.2f vs ${on.semiExcess}%.2f")
+  }
+
   test("-atrelease resolves every frozen release and the current default, and nothing else") {
     for (v, w) <- MarketSim.Releases do
       assertEquals(MarketSim.releaseWorld(v), Some(w), s"release $v must resolve to its frozen world")

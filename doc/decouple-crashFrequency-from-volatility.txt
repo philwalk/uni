@@ -1,0 +1,52 @@
+Decouple crash frequency from volatility. It's one mechanism, it's measurable, and it's the specific thing that made this sweep level-blind.
+
+  The evidence
+
+  Only -depth varied, Nasdaq anchors, 120 paths × 100y per row:
+
+  ┌─────────────────┬───────┬─────────────────┬──────────┬──────────────────┐
+  │      depth      │ vol % │ crashes/century │ kurtosis │ clustering lag 1 │
+  ├─────────────────┼───────┼─────────────────┼──────────┼──────────────────┤
+  │ 8               │ 30.83 │ 56.05           │ 16.50    │ 0.37             │
+  ├─────────────────┼───────┼─────────────────┼──────────┼──────────────────┤
+  │ 10 (the recipe) │ 25.05 │ 43.63           │ 15.85    │ 0.36             │
+  ├─────────────────┼───────┼─────────────────┼──────────┼──────────────────┤
+  │ 12              │ 21.44 │ 34.94           │ 14.81    │ 0.35             │
+  ├─────────────────┼───────┼─────────────────┼──────────┼──────────────────┤
+  │ 14              │ 18.96 │ 28.70           │ 13.90    │ 0.33             │
+  ├─────────────────┼───────┼─────────────────┼──────────┼──────────────────┤
+  │ 16              │ 17.20 │ 24.14           │ 12.68    │ 0.32             │
+  ├─────────────────┼───────┼─────────────────┼──────────┼──────────────────┤
+  │ 18              │ 15.76 │ 19.95           │ 11.62    │ 0.32             │
+  ├─────────────────┼───────┼─────────────────┼──────────┼──────────────────┤
+  │ 22              │ 13.85 │ 14.98           │ 10.39    │ 0.30             │
+  ├─────────────────┼───────┼─────────────────┼──────────┼──────────────────┤
+  │ real QQQ        │ 26.90 │ 25.6            │ 9.55     │ 0.29             │
+  └─────────────────┴───────┴─────────────────┴──────────┴──────────────────┘
+
+  Model elasticity of crash count to volatility: ln(43.63/19.95) / ln(25.05/15.76) = 1.69. Real, from QQQ against the S&P (26.9%/25.6 vs 16.0%/20.7): 0.41, consistent with the ~0.50 cross-section the uni docs cite. A 4× gap.
+
+  Read the consequence straight off the table: QQQ's crash rate wants depth ≈ 16, which gives a 17.2% market — an S&P, not a Nasdaq. QQQ's volatility wants depth ≈ 8–9, which gives 50+ crashes per century, double the real rate. The pair (26.9% vol, 25.6 crashes/century) is unreachable at any depth. That's why
+  the recipe ships with crashes/century 1.69× disclosed as a miss rather than tuned away — it's structural, not a parameter someone left wrong.
+
+  Why it's the binding one for this sweep
+
+  The jump model's bear state is a cluster in (downside deviation, fast Sortino, slow Sortino) space, so bear share is essentially crash frequency × crash duration. The 1.7× crash-rate miss maps almost one-for-one onto the 2–4× bear-share inflation, which is exactly what makes λ's level untransferable. None of
+  the other recorded gaps touch it — the model is single-asset and close-only, so the missing cross-section and the missing intraday bars are irrelevant here.
+
+  It's also not one row. The same column drags kurtosis (1.62× at depth 10 → 1.33× at depth 16) and clustering (0.36 → 0.32, against a 0.40 realism ceiling). One mechanism change closes three of the four disclosed misses at Nasdaq volatility.
+
+  What the change would be
+
+  Volatility in this model is bought almost entirely through depth — depth sets price impact, impact drives the liquidity-withdrawal cascade, and the cascade is the crash. The Nasdaq recipe makes this vivid: it reaches 25% volatility by cutting depth 17.4 → 10 while lowering jumpvar 0.17 → 0.02 and fundvol
+  0.07 → 0.06. Every point of extra volatility comes from more spirals.
+
+  The missing piece is a volatility channel that adds no cascades. The natural candidate is the frozen equity noise constant sigmaN (0.007, ~11% annualised on its own), promoted from a frozen constant to a World field — a purely diffusive dial, so a high-volatility world can be built from noise instead of from
+  more frequent spirals. Promoting a frozen constant is a move the upgrade plan already treats as legitimate (W7 does exactly that), and it defaults to bit-identical behaviour at today's value.
+
+  The falsifiable test: at depth ≈ 16 (crash rate matched) with sigmaN raised to reach 26.9%, does the world pass the gate with crashes ≈ 25.6 and kurtosis nearer 9.55? If volatility from noise doesn't inflate the crash count, the elasticity is fixed and λ becomes readable in levels.
+
+  Meanwhile, a workaround you can use today
+
+  Score on a crash-rate-matched world instead of a volatility-matched one — depth 16, accepting 17.2% volatility. For a detector that clusters on downside deviation, crash frequency is what sets bear share, so matching crashes and missing volatility is likely the better of the two available misspecifications.
+  I've emitted that ensemble (tmp/nasdaq-lowcrash/, 40 paths) and the bear-share comparison against the depth-10 world is running now; it'll say directly whether the bear share falls toward the real 10–21%. The main 500-path sweep is at 175/500.

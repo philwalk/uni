@@ -89,8 +89,10 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 // dials; a reader that reconstructs a `World` from a schema-5 sidecar and runs it here gets a
 // market without the century-tail channel.
 // 6 -> 7: `world` gained the valuation cycle's four dials (`beliefShare`, `beliefYears`,
-// `capYears`, `capWindow`). A reader that reconstructs a `World` from a schema-6 sidecar and runs
-// it here gets a market whose perceived fair value never leaves the fundamental.
+// `capYears`, `capWindow`) and the asymmetry three (`leverage`, `downShock`, `jumpSkew` — the
+// last a dialised constant, 0.4 in every prior release). A reader that reconstructs a `World`
+// from a schema-6 sidecar and runs it here gets a market whose perceived fair value never leaves
+// the fundamental.
 const EMIT_SCHEMA: u32 = 7;
 
 /// The base random seed `-seed` defaults to, named so `main` and the tests that reproduce a
@@ -221,17 +223,17 @@ const SIGMA_N: f64 = 0.007;
 /// `E[m^gamma] = exp(vol_norm * (gamma^2/2 - gamma))`, which is exactly 1 at gamma = 2 and at no
 /// other positive value. Only there does `jump_rate` mean the unconditional intensity it claims.
 ///
-/// `JUMP_ASYM` shifts the jump down by 0.4 of its own sd, carrying the negative skew a symmetric
-/// jump cannot.
+/// `jump_skew` (a World dial since the leverage change; 0.4 through 0.22.1) shifts the jump down
+/// by that many of its own sd, carrying the negative skew a symmetric jump cannot.
 const JUMP_NU: usize = 5;
 const JUMP_GAMMA: f64 = 2.0;
-const JUMP_ASYM: f64 = 0.4;
 
-/// Jump size, from the share of variance it carries and how often it fires. `1 + JUMP_ASYM^2` is
+/// Jump size, from the share of variance it carries and how often it fires. `1 + jump_skew^2` is
 /// the shift's own contribution to the second moment; without it the channel would overshoot the
-/// variance it is borrowing and `equity vol %` would drift with `jump_var`.
+/// variance it is borrowing and `equity vol %` would drift with `jump_var` — and it is why a
+/// deeper skew at fixed `jump_var` makes each jump smaller rather than the tail heavier.
 fn jump_scale(w: &World) -> f64 {
-    SIGMA_N * (w.jump_var / (w.jump_rate * (1.0 + JUMP_ASYM * JUMP_ASYM))).sqrt()
+    SIGMA_N * (w.jump_var / (w.jump_rate * (1.0 + w.jump_skew * w.jump_skew))).sqrt()
 }
 // THE shipped world. `main` seeds its mutable CLI variables from this and the release table
 /// derives its rows from it, so every default is written once — the same one-source rule the Scala
@@ -240,14 +242,14 @@ fn default_world() -> World {
     World {
         trend_share: 0.055,
         depth: 17.4,
-        stress: 5.37,
+        stress: 5.15,
         beta: 3.0,
-        drift: 0.120,
+        drift: 0.122,
         fund_vol: 0.070,
         rate_mean: 0.042,
-        vol_persist: 0.99,
-        vol_of_vol: 0.027,
-        recovery_drag: 10.0,
+        vol_persist: 0.992,
+        vol_of_vol: 0.022,
+        recovery_drag: 8.5,
         recovery_floor: 0.10,
         halt_limit: 0.25,
         // The disaster channel, ADOPTED 0.22.1: rate 0.6/century, total log decline 2.0 over 2.5
@@ -268,16 +270,34 @@ fn default_world() -> World {
         belief_years: 2.5,
         cap_years: 1.5,
         cap_window: 6.0,
-        jump_var: 0.17,
-        jump_rate: 0.0050,
-        value_pull: 0.045,
+        leverage: 0.12,
+        down_shock: 0.0,
+        jump_var: 0.14,
+        jump_rate: 0.0035,
+        jump_skew: 0.7,
+        // The asymmetry adoption, 0.23.0: the leverage kick (0.12, news-coupled), fair-value
+        // news jumps (1.3/yr x -3.3%, variance-displacing) with the transitory `down_shock`
+        // retired at 0, jump_skew 0.7 with the jump channel rarer-larger (0.14 var at 0.0035),
+        // and the refuge bid reading settled stress (refuge_days 1, refuge 0.115; easing
+        // re-solved to 0.052 — the BOTTOM of the real easing-cycle range, so its anchor holds —
+        // which also puts the -crossasset short-duration rung back above its floor).
+        // Verified at 200x100 on four seeds: downside vol excess +3.05 vs the record's +3.06,
+        // leverage corr -0.089 vs -0.0926, calm-day tail hedge -0.24 vs -0.273, bond
+        // growth-crash 6.9 vs 6.6, with the seed-7 vr60 failure unchanged from the prior world.
+        // stress/vol_of_vol/vol_persist/value_pull/recovery_drag/drift re-tuned to hold the rest;
+        // the two rows that give ground are clustering lag 20 (0.214 -> 0.197 vs anchor 0.225)
+        // and valuation dispersion (0.230 -> 0.215 vs target 0.30), disclosed in the CHANGELOG.
+        news_rate: 1.3,
+        news_size: 0.033,
+        refuge_days: 1.0,
+        value_pull: 0.056,
         crowd: Crowd::Momentum,
         crowd_impact: 0.030,
         panic: 0.0,
         duration: 13.5,
-        easing: 0.060,
+        easing: 0.052,
         unwind: 0.35,
-        refuge: 0.11,
+        refuge: 0.115,
         infl_prob: 0.20,
         infl_size: 0.10,
         infl_speed: 0.010,
@@ -320,8 +340,14 @@ fn v0_19_2() -> World {
         recovery_drag: 0.0,
         recovery_floor: 1.0,
         halt_limit: 0.0,
+        leverage: 0.0,
+        down_shock: 0.0,
         jump_var: 0.0,
         jump_rate: 0.0,
+        jump_skew: 0.4,
+        news_rate: 0.0,
+        news_size: 0.0,
+        refuge_days: 0.0,
         value_pull: 0.013,
         belief_share: 0.0,
         belief_years: 2.5,
@@ -419,8 +445,14 @@ fn v0_22_1() -> World {
         belief_years: 2.5,
         cap_years: 0.0,
         cap_window: 6.0,
+        leverage: 0.0,
+        down_shock: 0.0,
         jump_var: 0.17,
         jump_rate: 0.0050,
+        jump_skew: 0.4,
+        news_rate: 0.0,
+        news_size: 0.0,
+        refuge_days: 0.0,
         value_pull: 0.045,
         crowd: Crowd::Momentum,
         crowd_impact: 0.030,
@@ -463,8 +495,14 @@ fn v0_22_0() -> World {
         belief_years: 2.5,
         cap_years: 0.0,
         cap_window: 6.0,
+        leverage: 0.0,
+        down_shock: 0.0,
         jump_var: 0.17,
         jump_rate: 0.0050,
+        jump_skew: 0.4,
+        news_rate: 0.0,
+        news_size: 0.0,
+        refuge_days: 0.0,
         value_pull: 0.045,
         crowd: Crowd::Momentum,
         crowd_impact: 0.030,
@@ -507,8 +545,14 @@ fn v0_21_0() -> World {
         belief_years: 2.5,
         cap_years: 0.0,
         cap_window: 6.0,
+        leverage: 0.0,
+        down_shock: 0.0,
         jump_var: 0.10,
         jump_rate: 0.0010,
+        jump_skew: 0.4,
+        news_rate: 0.0,
+        news_size: 0.0,
+        refuge_days: 0.0,
         value_pull: 0.045,
         crowd: Crowd::Momentum,
         crowd_impact: 0.07,
@@ -542,8 +586,14 @@ fn v0_20_0() -> World {
         recovery_drag: 0.0,
         recovery_floor: 1.0,
         halt_limit: 0.0,
+        leverage: 0.0,
+        down_shock: 0.0,
         jump_var: 0.0,
         jump_rate: 0.0,
+        jump_skew: 0.4,
+        news_rate: 0.0,
+        news_size: 0.0,
+        refuge_days: 0.0,
         value_pull: 0.0145,
         belief_share: 0.0,
         belief_years: 2.5,
@@ -655,6 +705,25 @@ struct World {
     /// pass fundVol noise into the term capYears-fold (at 1y, vr60 read 2.3-5.2, measured) — the
     /// window must sit between the noise and the ~6-year regime.
     cap_window: f64,
+    /// THE LEVERAGE EFFECT: how hard a decline raises the NEXT session's diffusive volatility,
+    /// where an equal rally raises nothing — EGARCH's signed term, fed by the same decline
+    /// signal the spiral's `stress_idx` reads (max(-ret,0)/scale, centred at 0.399 so the vol
+    /// LEVEL does not drift with the dial). The spiral is episodic — thresholded and floored,
+    /// it engages in crash dynamics — while the record's leverage correlation (-0.09 on every
+    /// CRSP era, `asymmetry-2026-08-31.tsv`) is an everyday property; this is the everyday
+    /// channel. In log-vol units against `vol_of_vol` 0.027, so 0.01 is a material setting.
+    /// Consumes no draws; 0 is bit-identical off.
+    leverage: f64,
+    /// SIGN-DEPENDENT NEWS RESPONSE, the contemporaneous half of the asymmetry pair: a bad shock
+    /// moves a levered market further than an equal good one, so the equity news term is scaled
+    /// by (1 + down_shock) when negative and its reciprocal when positive — down sessions
+    /// disperse more than up sessions AT THE SAME TIME, which no next-session vol response can
+    /// produce (`downside vol excess %` reads the record at +3.1 while every leverage/jumpVar
+    /// setting alone leaves it negative). Applied to the SHOCK only, never to the crowd's flows:
+    /// amplifying a persistent signed flow manufactures signed persistence — measured, the
+    /// flow-and-noise form paid vr60 1.11 -> 1.25 for the same skew, and this form pays a
+    /// fraction of that. Consumes no draws; 0 is bit-identical off.
+    down_shock: f64,
     /// share of the equity flow's VARIANCE carried by jumps rather than diffusion. 0 disables the
     /// channel and reproduces pre-0.21 behaviour byte for byte — the draws come from their own
     /// stream, so nothing else in the path shifts.
@@ -662,6 +731,36 @@ struct World {
     /// unconditional jump intensity per session. With `jump_var` it fixes the size: rarer jumps of
     /// the same total variance are larger ones.
     jump_rate: f64,
+    /// how far each jump is shifted DOWN, in units of its own sd — the contemporaneous-skew half
+    /// of the asymmetry pair (`leverage` is the conditional half, and cutting `jump_var` to pay
+    /// for it robs this channel; the two move together). Variance-normalised in `jump_scale`, so
+    /// the skew deepens the down-jumps without fattening the tail. 0.4 reproduces every release
+    /// back to 0.21.0 bit for bit.
+    jump_skew: f64,
+    /// FAIR-VALUE NEWS JUMPS, the downside-asymmetry channel: rare permanent DOWN-jumps of the
+    /// fundamental that the
+    /// price reprices the SAME session, gap-invariant — `log_vbase` and `log_p` drop together, so
+    /// the value channel, the belief EWMA and `mispricing_pre` see nothing and there is no rebound
+    /// to arbitrage back. Events per YEAR (contrast `disaster_rate`, per century); 0 disables, and
+    /// draws come from a dedicated stream, so 0 is bit-identical off. The hypothesis under test:
+    /// a permanent same-session repricing moves DOWNSIDE variance without moving the 60d variance
+    /// ratio — the channel the transitory `down_shock` cannot be (its rebound IS trend).
+    news_rate: f64,
+    /// log decline per news event (positive; 0.02 = a -2% day). Deterministic size, so the sizing
+    /// arithmetic p*J^2 stays exact; the drift cost `news_rate*news_size` is returned
+    /// deterministically on BOTH legs each session, keeping return per vol comparable across
+    /// sweep points without retuning `drift`.
+    news_size: f64,
+    /// BOND DECOUPLING: half-life in SESSIONS of the settled-stress EWMA the refuge
+    /// bid reads, which EXCLUDES the current session — flight-to-quality follows the stress
+    /// investors went home with, not the move printing right now. The calm-day stock-bond
+    /// correlation the `tail hedge corr` row grades is carried almost entirely by the SAME-session
+    /// stress delta (cov(r_eq, stress_t) ≈ cov(r_eq, Δstress_t), and Δstress is r_eq's mirror),
+    /// while the anchored crisis behaviour — growth-crash rally, refuge episodes — rides the
+    /// stress LEVEL, which a short lag leaves intact. The `margin` term keeps reading live
+    /// stress: joint-stress selling is a margin call, and margin calls do not wait overnight.
+    /// 0 reads live stress, bit-identical to every frozen release.
+    refuge_days: f64,
     value_pull: f64,
     crowd: Crowd,
     crowd_impact: f64,
@@ -959,6 +1058,9 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
     // The disaster channel's own stream, for the same survivability reason as `jrng` above:
     // constructed unconditionally, read only when `disaster_rate > 0`, so rate 0 is bit-identical.
     let mut drng = NumPyRng::new(seed ^ 0xd15a_57e5u64);
+    // The news channel's own stream (prototype), same survivability contract as `jrng`/`drng`:
+    // constructed unconditionally, read only when `news_rate > 0`, so rate 0 is bit-identical.
+    let mut nrng = NumPyRng::new(seed ^ 0x0bad_2e15u64);
     let mut px = vec![0.0f64; tot];
     let mut fv = vec![0.0f64; tot];
     let mut rt = vec![0.0f64; tot];
@@ -1003,7 +1105,35 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
     let k_adapt = 0.010f64;
     let k_home = 0.020f64;
     let mut log_vol = 0.0f64;
+    // The leverage term's signal from the PREVIOUS session: max(-ret,0)/scale - 0.399, the same
+    // decline reading `stress_idx` consumes, centred so the vol level does not drift with the
+    // dial. Draw-free; both its update and its use sit behind `leverage > 0`, so 0 is
+    // bit-identical off.
+    let mut lev_sig = 0.0f64;
+    // Settled equity stress for the refuge bid (see `refuge_days`); draw-free, and both its use
+    // and its update sit behind `refuge_days > 0`, so 0 is bit-identical off.
+    let mut settled_stress = 0.0f64;
+    let settle_mu = if w.refuge_days > 0.0 {
+        1.0 - (-(2.0f64.ln()) / w.refuge_days).exp()
+    } else {
+        0.0
+    };
     let vol_norm = (w.vol_of_vol * w.vol_of_vol) / 1e-9f64.max(1.0 - w.vol_persist * w.vol_persist);
+    // News variance DISPLACES diffusive noise instead of stacking on top of it, the same
+    // budget rule `jump_var` enforces with its (1 - jump_var) factor: the record's 16% already
+    // contains its bad-news days, so a world calibrated without them must yield generic variance
+    // when the channel turns on — added instead, the channel taxed equity vol and the crash rate
+    // ~5 seed-sd and no amplifier dial could pay it back. Sized against SIGMA_N's own per-session
+    // variance; the vol-state factor is centred at 1 by `vol_norm`, so the unconditional budget is
+    // the right ruler. 1.0 when the channel is off.
+    let news_damp = if w.news_rate > 0.0 {
+        (1.0 - (w.news_rate / DAYS_PER_YEAR as f64) * w.news_size * w.news_size
+            / (SIGMA_N * SIGMA_N))
+            .max(0.0)
+            .sqrt()
+    } else {
+        1.0
+    };
     let crowd_win: usize = match w.crowd {
         Crowd::Trend(d) => 2.max((f64::from(d) * 252.0 / 365.25).round() as usize),
         _ => 0,
@@ -1097,6 +1227,24 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
             }
         }
         log_vbase += drift_now * dt + w.fund_vol * sqdt * rng.randn();
+        // FAIR-VALUE NEWS JUMP (prototype): a permanent markdown repriced the SAME session — the
+        // fundamental and the price take the full drop together, so the price/fair gap, and with
+        // it the value channel, the belief EWMA and `mispricing_pre`, are untouched: a pure
+        // random-walk step with nothing for value capital to buy back. Morning news, placed
+        // before the demand-flows read of `log_p`, so the momentum crowd trades on it this
+        // session the way it trades on `markdown`. The compensator is deterministic and returns
+        // the expected drift cost on BOTH legs.
+        let mut news_j = 0.0f64;
+        if w.news_rate > 0.0 {
+            let comp = w.news_rate * w.news_size / DAYS_PER_YEAR as f64;
+            log_vbase += comp;
+            eq_m.log_p += comp;
+            if nrng.next_f64() < w.news_rate / DAYS_PER_YEAR as f64 {
+                log_vbase -= w.news_size;
+                eq_m.log_p -= w.news_size;
+                news_j = w.news_size;
+            }
+        }
         infl_press += w.infl_speed * (infl_target - infl_press);
         // policy: chase rateMean + pressure MINUS accommodation, and accommodation is a CAPPED
         // STOCK rather than a cut speed — eased in within ~2 months, withdrawn over years. As a
@@ -1197,7 +1345,19 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
         let eq_flow = w.crowd_impact * w_trend * (crowd_e - crowd_prev);
         crowd_prev = crowd_e;
         log_vol = w.vol_persist * log_vol + w.vol_of_vol * rng.randn();
-        let d_noise = SIGMA_N * (log_vol - vol_norm).exp() * rng.randn();
+        // TRANSIENT, deliberately: the kick multiplies THIS session's diffusive noise and never
+        // enters `log_vol` — fed into the 0.99-persistent state it self-excites (log-vol responds
+        // per session while the normalising `scale` EWMA lags ~140, so every expansion reads as
+        // fresh declines and pumps itself; measured: vol 16% -> 45% at the setting that first
+        // reaches the anchor). The lag-1 form is also the statistic the `leverage corr` row
+        // grades; the multi-session persistence of real post-decline volatility is the spiral's
+        // job, and the clustering rows hold the total.
+        let d_noise = news_damp * SIGMA_N * (log_vol - vol_norm).exp() * rng.randn();
+        let d_noise = if w.leverage > 0.0 {
+            d_noise * (w.leverage * lev_sig).exp()
+        } else {
+            d_noise
+        };
 
         // The jump channel. Its draws come from `jrng`, NOT `rng`, so `jump_var = 0` takes the
         // untouched branch below and moves NOTHING ELSE in the path — the failure mode a shared
@@ -1215,7 +1375,7 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
             let scale = jump_scale(w);
             // The compensator is deterministic and consumes no draw: it removes the mean the
             // downward shift would otherwise add, so `jump_var` moves the tail without moving drift.
-            let compens = w.jump_rate * JUMP_ASYM * scale;
+            let compens = w.jump_rate * w.jump_skew * scale;
             let fired = jrng.next_f64() < lam_now;
             let jump = if !fired {
                 0.0
@@ -1231,9 +1391,19 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
                 }
                 let nu = JUMP_NU as f64;
                 let t = z / (chi / nu).sqrt() / (nu / (nu - 2.0)).sqrt();
-                (t - JUMP_ASYM) * scale
+                (t - w.jump_skew) * scale
             };
             d_noise * (1.0 - w.jump_var).sqrt() + jump + compens
+        };
+        // The shock, not the crowd's flows — see the `down_shock` field for the measured reason.
+        let eq_shock = if w.down_shock > 0.0 {
+            if eq_shock < 0.0 {
+                eq_shock * (1.0 + w.down_shock)
+            } else {
+                eq_shock / (1.0 + w.down_shock)
+            }
+        } else {
+            eq_shock
         };
 
         // ---- both markets step through the SAME mechanism ---------------------------------
@@ -1266,16 +1436,46 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
             }
             pf
         };
+        let s_pre = if w.leverage > 0.0 {
+            eq_m.scale_var.sqrt()
+        } else {
+            0.0
+        };
         let ret_e = eq_m.step(perceived_fair, eq_flow + eq_shock);
+        if w.leverage > 0.0 {
+            // SATURATED at four realized sds, and the cap is a priced trade, not a free guard:
+            // uncapped, a jump day mints a 2.6x next-session multiplier and the kurtosis
+            // ceiling flips on seed draws; capped, roughly a third of the graded correlation
+            // goes with those co-extreme pairs (-0.09 -> -0.06 at leverage 0.05, measured) and
+            // the dial is sized about 2x larger to buy it back. Real vol responses saturate;
+            // uncapped ones let one draw author the tail.
+            // The decline the signal reads INCLUDES this session's news jump: a bad-news day is
+            // exactly the day real volatility responds to, and the external repricing bypasses
+            // `ret_e` (it never passes through `step`). `news_j` is 0 whenever the channel is off,
+            // so the pre-news leverage behaviour is untouched bit for bit.
+            lev_sig = ((news_j - ret_e).max(0.0) / s_pre).min(4.0) - 0.399;
+        }
         // joint-stress margin selling: when both markets are stressed, the bond gets dumped too —
         // and against it the refuge bid, flight-to-quality into a bond that is itself still
         // orderly. DURATION-SCALED, like the bond's own noise: an absolute bid gave a 5-year bond
         // the same crash rally as a 20-year one, which no duration-relative band can then fit.
+        // The stress the REFUGE bid reads: settled (through yesterday) when `refuge_days` is on,
+        // live otherwise — see the `refuge_days` field for why the same-session delta is the
+        // whole calm-day correlation and the level is the whole crisis behaviour. The EWMA is
+        // updated AFTER this use, so today's equity move never reaches today's bond bid.
+        let eq_stress_for_refuge = if w.refuge_days > 0.0 {
+            settled_stress
+        } else {
+            eq_m.stress_idx
+        };
         let bond_flow = -w.margin * eq_m.stress_idx * bd_m.stress_idx
             + w.refuge
                 * (w.duration / DURATION_REF)
-                * eq_m.stress_idx
+                * eq_stress_for_refuge
                 * 0.0f64.max(1.0 - bd_m.stress_idx);
+        if w.refuge_days > 0.0 {
+            settled_stress += settle_mu * (eq_m.stress_idx - settled_stress);
+        }
         let _ret_b = bd_m.step(
             fair_b,
             bond_flow + SIGMA_N_BOND * (w.duration / DURATION_REF) * rng.randn(),
@@ -2673,17 +2873,17 @@ const SP500_ANCHORS: Anchors = Anchors {
     tail_window: "CRSP 1926-2026, the century",
     tail_years: 100,
     vol: 16.0,
-    vol_sd: 0.14,
+    vol_sd: 0.13,
     ret_vol: 0.69,
-    ret_vol_sd: 0.24,
+    ret_vol_sd: 0.25,
     kurt: 28.0,
-    kurt_sd: 2.35,
+    kurt_sd: 1.15,
     ac1: 0.299,
-    ac1_sd: 0.12,
+    ac1_sd: 0.11,
     ac20: 0.225,
     ac20_sd: 0.19,
     crashes: 20.7,
-    crashes_sd: 0.26,
+    crashes_sd: 0.24,
     med_depth: -21.4,
     med_depth_sd: 0.17,
     // RE-ANCHORED in 0.22.1, same error class as `med_depth` in 0.22.0: -56.8 was the 2007-09
@@ -2701,17 +2901,16 @@ const SP500_ANCHORS: Anchors = Anchors {
     vol_band: (14.0, 18.0),
     ret_vol_band: (0.50, 0.85),
     // CRSP c1954 rows of asymmetry-2026-08-31.tsv; the tail hedge is SPY/TLT. Spreads frozen
-    // from `-noise -paths 200` at the 0.23.0 world, 2026-08-31: a single 72-year history barely
-    // pins the semivariance excess (one crash day swings it; the record sits at the 84th
-    // percentile of model histories), measures the leverage corr adequately (the record sits at
-    // the 6th — 94% of model histories carry weaker leverage than the record), and measures the
-    // tail hedge well (the record sits above ALL 200 — every model history overshoots).
+    // from `-noise -paths 200` at the adopted 0.23.0 asymmetry world, 2026-08-31: a single
+    // 72-year history barely pins the semivariance excess (one crash day swings it), and the
+    // record now reads as a TYPICAL history of this model on all three rows — 43rd percentile
+    // (semivariance), 47th (leverage corr), 22nd (tail hedge).
     semi_excess: 3.06,
-    semi_excess_sd: 1.52,
+    semi_excess_sd: 1.48,
     lev_corr: -0.0926,
-    lev_corr_sd: 0.37,
+    lev_corr_sd: 0.44,
     tail_hedge: -0.273,
-    tail_hedge_sd: 0.29,
+    tail_hedge_sd: 0.24,
 };
 
 /// The Nasdaq-100 set, measured 2026-08-28 from QQQ daily adjusted closes over its own full history,
@@ -2742,13 +2941,13 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     tail_window: "QQQ 1999-2026",
     tail_years: 27,
     vol: 26.90,
-    vol_sd: 0.14,
+    vol_sd: 0.13,
     ret_vol: 0.38,
     ret_vol_sd: 0.18,
     kurt: 9.55,
     kurt_sd: 1.23,
     ac1: 0.293,
-    ac1_sd: 0.12,
+    ac1_sd: 0.11,
     ac20: 0.249,
     ac20_sd: 0.19,
     crashes: 25.6,
@@ -2762,11 +2961,11 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     // QQQ wfull row of asymmetry-2026-08-31.tsv; the tail hedge is QQQ/TLT. Spreads are the
     // S&P's carried over, like every spread in this set.
     semi_excess: 1.13,
-    semi_excess_sd: 1.52,
+    semi_excess_sd: 1.48,
     lev_corr: -0.1073,
-    lev_corr_sd: 0.37,
+    lev_corr_sd: 0.44,
     tail_hedge: -0.236,
-    tail_hedge_sd: 0.29,
+    tail_hedge_sd: 0.24,
 };
 
 fn anchors_named(spec: &str) -> Anchors {
@@ -2876,7 +3075,7 @@ fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             "variance ratio 60d",
             (|st: &WorldStats| st.vr60) as StatFn,
             1.00,
-            wgt(1.0, 0.37),
+            wgt(1.0, 0.36),
         ),
         // THE THIRD ASYMMETRY AXIS the rows above cannot see: clustering is |r| (sign-blind),
         // vr60 is the signed MEAN's persistence — this pair is the signed SECOND moment. Graded
@@ -2911,7 +3110,7 @@ fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             "valuation dispersion",
             (|st: &WorldStats| st.val_disp) as StatFn,
             0.30,
-            wgt(0.5, 0.38),
+            wgt(0.5, 0.35),
         ),
         (
             "crashes/century",
@@ -2962,7 +3161,7 @@ fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             "bond vol % (24y)",
             (|st| st.bond_vol * 100.0) as StatFn,
             13.0,
-            wgt(1.0, 0.51),
+            wgt(1.0, 0.52),
         ),
         // RE-MEASURED in 0.22.0, same error class as `median depth %` above: `20.0` is 2008 ALONE,
         // the largest of the five growth-shock episodes in the record, and this row is a MEDIAN
@@ -2975,7 +3174,7 @@ fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             "bond growth-crash",
             (|st| st.bond_growth) as StatFn,
             6.6,
-            wgt(1.0, 1.62),
+            wgt(1.0, 1.33),
         ),
         // The judgment stays at 1.5 — inflation-crash behaviour is why the bond refuge exists —
         // and the measured precision crushes the weight to ~0.13 anyway: sd/real 2.89, and only
@@ -2989,7 +3188,7 @@ fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             "bond infl-crash",
             (|st| st.bond_infl) as StatFn,
             -34.7,
-            wgt(1.5, 2.05),
+            wgt(1.5, 1.90),
         ),
         // Does the refuge hold exactly where it is needed — stock-bond correlation on calm
         // sessions with the equity return below its own calm q10, against the pair's own record
@@ -3052,13 +3251,13 @@ fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             "equity d5 vs real",
             (|st: &WorldStats| st.eq_d5_vs_real()) as StatFn,
             1.00,
-            wgt(0.5, 0.19),
+            wgt(0.5, 0.18),
         ),
         (
             "equity d10 vs real",
             (|st: &WorldStats| st.eq_d10_vs_real()) as StatFn,
             1.00,
-            wgt(1.0, 0.45),
+            wgt(1.0, 0.42),
         ),
         // d20's sdRel moved 0.99 -> 1.56 in the 0.21.0 recovery-drag change, and like kurtosis's
         // move it is a re-measurement of a statistic that genuinely became more variable, not a
@@ -3069,7 +3268,7 @@ fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             "equity d20 vs real",
             (|st: &WorldStats| st.eq_d20_vs_real()) as StatFn,
             1.00,
-            wgt(0.5, 2.29),
+            wgt(0.5, 2.06),
         ),
         (
             "bond depth vs vol",
@@ -4146,6 +4345,18 @@ fn calibrate_ranges() -> Vec<(&'static str, f64, f64, Setter)> {
         ("disasterRecover", 0.0, 0.9, |w, x| w.disaster_recover = x),
         ("beliefShare", 0.0, 0.97, |w, x| w.belief_share = x),
         ("capYears", 0.0, 4.0, |w, x| w.cap_years = x),
+        // The asymmetry pair and the jump shift, in the ranges the hand sweeps mapped: leverage
+        // reaches the `leverage corr` anchor near 0.10 under the saturation cap, downShock pays
+        // vr60 ~+0.02 per 0.01 so the band bounds it near 0.03, and the best hand candidate
+        // (0.10 / 0.015 / jumpVar 0.12 / drift 0.124) missed a four-seed gate PASS only on
+        // `bond depth vs vol` — the search has the bond dials in its hands where a hand sweep
+        // does not.
+        ("leverage", 0.0, 0.15, |w, x| w.leverage = x),
+        ("downShock", 0.0, 0.05, |w, x| w.down_shock = x),
+        ("jumpSkew", 0.0, 1.4, |w, x| w.jump_skew = x),
+        ("newsRate", 0.0, 3.0, |w, x| w.news_rate = x),
+        ("newsSize", 0.0, 0.05, |w, x| w.news_size = x),
+        ("refugeDays", 0.0, 3.0, |w, x| w.refuge_days = x),
         ("volOfVol", 0.012, 0.030, |w, x| w.vol_of_vol = x),
         // In the ranges from the release it arrived in. `fund_vol` sat outside them for four
         // releases and that is exactly why its defect survived four releases of one-knob-at-a-time
@@ -6669,8 +6880,13 @@ fn world_json_body(w: &World) -> Vec<String> {
         ("rateMean", ef(w.rate_mean)),
         ("volPersist", ef(w.vol_persist)),
         ("volOfVol", ef(w.vol_of_vol)),
+        ("leverage", ef(w.leverage)),
+        ("downShock", ef(w.down_shock)),
+        ("jumpSkew", ef(w.jump_skew)),
         ("jumpVar", ef(w.jump_var)),
         ("jumpRate", ef(w.jump_rate)),
+        ("newsRate", ef(w.news_rate)),
+        ("newsSize", ef(w.news_size)),
         ("valuePull", ef(w.value_pull)),
         ("recoveryDrag", ef(w.recovery_drag)),
         ("recoveryFloor", ef(w.recovery_floor)),
@@ -6691,6 +6907,7 @@ fn world_json_body(w: &World) -> Vec<String> {
         ("easing", ef(w.easing)),
         ("unwind", ef(w.unwind)),
         ("refuge", ef(w.refuge)),
+        ("refugeDays", ef(w.refuge_days)),
         ("inflProb", ef(w.infl_prob)),
         ("inflSize", ef(w.infl_size)),
         ("inflSpeed", ef(w.infl_speed)),
@@ -7019,7 +7236,13 @@ fn main() {
     let mut belief_years = dw.belief_years;
     let mut cap_years = dw.cap_years;
     let mut cap_window = dw.cap_window;
+    let mut leverage = dw.leverage;
+    let mut down_shock = dw.down_shock;
     let mut jump_var = dw.jump_var;
+    let mut jump_skew = dw.jump_skew;
+    let mut news_rate = dw.news_rate;
+    let mut news_size = dw.news_size;
+    let mut refuge_days = dw.refuge_days;
     let mut jump_rate = dw.jump_rate;
     let mut value_pull = dw.value_pull;
     let mut crowd_name = crowd_name(dw.crowd);
@@ -7103,7 +7326,13 @@ fn main() {
             "-capyears" => cap_years = req_f64(&mut it, "-capyears"),
             "-capwindow" => cap_window = req_f64(&mut it, "-capwindow"),
             "-haltlimit" => halt_limit = req_f64(&mut it, "-haltlimit"),
+            "-leverage" => leverage = req_f64(&mut it, "-leverage"),
+            "-downshock" => down_shock = req_f64(&mut it, "-downshock"),
             "-jumpvar" => jump_var = req_f64(&mut it, "-jumpvar"),
+            "-jumpskew" => jump_skew = req_f64(&mut it, "-jumpskew"),
+            "-newsrate" => news_rate = req_f64(&mut it, "-newsrate"),
+            "-newssize" => news_size = req_f64(&mut it, "-newssize"),
+            "-refugedays" => refuge_days = req_f64(&mut it, "-refugedays"),
             "-jumprate" => jump_rate = req_f64(&mut it, "-jumprate"),
             "-value" => value_pull = req_f64(&mut it, "-value"),
             "-crowdimpact" => crowd_impact = req_f64(&mut it, "-crowdimpact"),
@@ -7217,6 +7446,8 @@ fn main() {
             }
         };
         share("-trendshare", trend_share);
+        share("-leverage", leverage);
+        share("-downshock", down_shock);
         share("-jumpvar", jump_var);
         share("-jumprate", jump_rate);
         share("-recoveryfloor", recovery_floor);
@@ -7231,6 +7462,9 @@ fn main() {
         non_neg("-beta", beta);
         non_neg("-volofvol", vol_of_vol);
         non_neg("-value", value_pull);
+        non_neg("-newsrate", news_rate);
+        non_neg("-newssize", news_size);
+        non_neg("-refugedays", refuge_days);
         non_neg("-disasterrate", disaster_rate);
         non_neg("-disastersize", disaster_size);
         if disaster_rate > 0.0 && (disaster_size <= 0.0 || disaster_len <= 0.0) {
@@ -7244,6 +7478,12 @@ fn main() {
             ));
         }
         // beliefShare 1.0 would unmoor perceived fair from the fundamental entirely — the pull
+        // A 2-sd shift is already past every fitted setting; negative would skew jumps UP.
+        if !(0.0..=2.0).contains(&jump_skew) {
+            cli_die(&format!(
+                "-jumpskew {jump_skew} out of range; needs 0 <= skew <= 2"
+            ));
+        }
         // chases its own shadow and nothing anchors the price level. Strictly below 1.
         if !(0.0..1.0).contains(&belief_share) {
             cli_die(&format!(
@@ -7325,8 +7565,14 @@ fn main() {
         belief_years,
         cap_years,
         cap_window,
+        leverage,
+        down_shock,
         jump_var,
         jump_rate,
+        jump_skew,
+        news_rate,
+        news_size,
+        refuge_days,
         value_pull,
         crowd,
         crowd_impact,
@@ -8685,6 +8931,72 @@ mod contract_tests {
         assert!(
             short < long * 0.8,
             "short-horizon dispersion should read well below the century's: 30y {short:.3} vs 100y {long:.3}"
+        );
+    }
+
+    /// Every release predates the asymmetry dials, so the frozen rows carry leverage 0 and
+    /// downShock 0 — and jumpSkew 0.4, the CONSTANT those releases compiled in, which is that
+    /// dial's off-position rather than 0.
+    #[test]
+    fn the_asymmetry_dials_are_inert_in_every_frozen_release() {
+        for (v, w) in releases() {
+            assert!(
+                w.leverage == 0.0
+                    && w.down_shock == 0.0
+                    && w.jump_skew == 0.4
+                    && w.news_rate == 0.0
+                    && w.news_size == 0.0
+                    && w.refuge_days == 0.0,
+                "release {v} predates the asymmetry mechanisms and must carry 0 / 0 / 0.4 / 0 / 0 / 0"
+            );
+        }
+    }
+
+    /// Each dial moves the statistic it was added for, materially, on the same seed — the same
+    /// discrimination bar the valuation cycle's dial met.
+    #[test]
+    fn the_asymmetry_dials_discriminate_on_their_own_statistics() {
+        let dw = default_world();
+        let on = measure(&sim_paths(&dw, 40, 100, DEFAULT_SEED), 100);
+        // leverage: the adopted 0.12 vs off, on the row it was added for
+        let mut lw = dw;
+        lw.leverage = 0.0;
+        let loff = measure(&sim_paths(&lw, 40, 100, DEFAULT_SEED), 100);
+        assert!(
+            on.lev_corr < loff.lev_corr - 0.03,
+            "leverage 0.12 must deepen the leverage corr materially: {:.3} vs {:.3}",
+            on.lev_corr,
+            loff.lev_corr
+        );
+        // the news channel: the adopted 1.3 x 0.033 vs off, on the downside excess
+        let mut nw = dw;
+        nw.news_rate = 0.0;
+        let noff = measure(&sim_paths(&nw, 40, 100, DEFAULT_SEED), 100);
+        assert!(
+            on.semi_excess > noff.semi_excess + 1.5,
+            "the news channel must raise the downside excess materially: {:.2} vs {:.2}",
+            on.semi_excess,
+            noff.semi_excess
+        );
+        // the settled-stress refuge: the adopted lag vs live stress, on the calm-day hedge
+        let mut rw = dw;
+        rw.refuge_days = 0.0;
+        let roff = measure(&sim_paths(&rw, 40, 100, DEFAULT_SEED), 100);
+        assert!(
+            on.tail_hedge > roff.tail_hedge + 0.10,
+            "refugeDays 1 must weaken the calm-day stock-bond coupling materially: {:.2} vs {:.2}",
+            on.tail_hedge,
+            roff.tail_hedge
+        );
+        // downShock ships at 0 but must still discriminate when engaged
+        let mut dsw = dw;
+        dsw.down_shock = 0.05;
+        let ds = measure(&sim_paths(&dsw, 40, 100, DEFAULT_SEED), 100);
+        assert!(
+            ds.semi_excess > on.semi_excess + 1.0,
+            "downShock 0.05 must raise the downside excess materially: {:.2} vs {:.2}",
+            ds.semi_excess,
+            on.semi_excess
         );
     }
 
