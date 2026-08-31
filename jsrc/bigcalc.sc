@@ -1,5 +1,5 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
-//> using dep org.vastblue:uni_3:0.22.0
+//> using dep org.vastblue:uni_3:0.22.1
 
 // One half of the cross-language demo pair; `rust/examples/bigcalc.rs` is the other.
 // Fixed inputs, so the outputs are byte-identical on every machine — a portable

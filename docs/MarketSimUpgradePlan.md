@@ -26,7 +26,12 @@ that pattern complete instead of accidental.
   cycle it had been attributed to. The attribution was wrong in the same way crash frequency's was:
   the missing cycle explained why there was no SECOND tail channel, not why tails were unreachable.
   Any remaining "traces to the absent valuation cycle" claim below should be read with that in
-  mind — median crash DEPTH is the one that still holds.
+  mind. The CENTURY-SCALE TAIL left the bucket in 0.22.1, closed by the macro-disaster channel —
+  rarity, not a cycle, is what deepens a crash without adding low-frequency variance. What only a
+  valuation cycle can still supply: valuation-LED deep crashes (2000-02) and peaks that sit far
+  above fair value before they fall; every deep crash the model produces starts from a peak at
+  fair value (deep crashes split ~40% fundamental-led / 60% spiral with the channel, from 31/69
+  without).
   **Crash frequency left this bucket in 0.19.1** and the attribution it carried was wrong: it is
   driven by market depth, not by the valuation cycle. It reads 1.32x real in 0.19.2, about 1.2 sigma
   against the sampling error of its own anchor (15 episodes in 72 years) — up from 1.20x, the price
@@ -59,14 +64,14 @@ that pattern complete instead of accidental.
   precisely because the alternative — relaxing the bond-volatility band so calm bonds pass — would
   make the gate stop meaning anything.
 
-## How the simulator ships (0.22.0)
+## How the simulator ships (0.22.1)
 
 The simulator is public API in both published artifacts, not a repo-only tool:
 
 - **Rust**: the crate packages `examples/market_sim.rs` (with the other eight demo pairs), so
   `cargo install vastblue-uni --example market_sim` builds the binary from crates.io.
 - **Scala**: `uni.apps.MarketSim` is compiled into the jar —
-  `scala-cli run --jar uni_3-0.22.0.jar --main-class uni.apps.MarketSim -- -validate`.
+  `scala-cli run --jar uni_3-0.22.1.jar --main-class uni.apps.MarketSim -- -validate`.
 - `src/main/scala/apps/MarketSim.scala` is the only Scala copy of the model; `jsrc/marketSim.sc` is
   a thin launcher that dispatches into it, so the version its sidecar stamps
   (`uni.BuildInfo.version`) and the code that runs come from one artifact. `ScriptTwinSuite` fails

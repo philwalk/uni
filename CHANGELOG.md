@@ -1,4 +1,191 @@
-## v0.22.0 — unreleased
+## v0.22.1 — unreleased
+
+The release where the century-scale tail became measurable, turned out to be the OPPOSITE of what
+four releases of documentation claimed, and got its mechanism. Three strands: how an extreme is
+reported (a percentile, never a ratio), what it is anchored to (the century, not a window that
+opens after 1929), and the macro-disaster channel plus defaults change that closes the miss the
+first two exposed. Below them, five defects in how the simulator reports on itself. Any world
+carrying `-disasterrate 0` reproduces its pre-0.22.1 paths bit for bit.
+
+**FIXED — `worst crash %` was graded as a ratio, and that ratio measured the ensemble size**
+
+Every other fidelity row compares a per-path central value against the record. This one is the
+deepest episode in the *whole pooled ensemble* — ~4,400 episodes at 200 x 100 — divided by the
+deepest of roughly 18 in one 72-year history. It never converges. Same world, same seed, every dial
+fixed:
+
+```
+   paths   market-years   worst crash %   old ratio (vs the old -56.8 anchor)
+       1            100         -72.92        1.28
+      20           2000         -80.40        1.42
+     200          20000         -85.33        1.50   <-- old report said MISS
+     400          40000         -89.71        1.58
+```
+
+The old MISS verdict flips between 20 paths and 200. A median survives pooling; a minimum does not.
+
+`-validate` and the `-emit` sidecar now report such a row as the record's **percentile among single
+histories of the anchor's own length** — `-noise`'s `real@`, computed from the same call so the two
+reports cannot disagree — and carry **no ratio at all**:
+
+```
+ worst crash %   model   -85.33   real   -84.10   record@   1% of 100y histories (n=200)
+```
+
+Below 20 histories the row reads `n/a` and a MISS: one history reads 0% or 100% and neither is a
+measurement. `ExtremeTargets` / `EXTREME_TARGETS` classifies the rows, and contract tests in each
+twin pin the split, the no-ratio invariant, the unmeasurable case, and that the pooled minimum still
+runs away across the range the percentile holds steady over — so the fix cannot be undone as
+cosmetic.
+
+**RE-ANCHORED with it — `worst crash %` −56.8 -> −84.1, and its own window**
+
+−56.8 was the worst of 1954-2026, and **1954 opens after the 1929-32 decline that sets the record's
+worst**. The anchor graded the tail against a window with the tail removed. Over the century, on the
+model's own 15% threshold, the record reads −84.1% (`episodes-2026-08-29.tsv`, `w1926`).
+
+The deepest episode is the one statistic a window can delete, so `Anchors` now carries
+`tailWindow` / `tailYears` separately: across the fixture, median depth swings 11% between windows
+and the crash rate 30%, while the worst swings **54%**. `tailYears` is 100 for the S&P set, 27 for
+the Nasdaq set, and `EpisodeAnchorSuite` re-derives the value from the fixture and pins what the old
+one was. The test that used to assert `worstDepth` matched `w1954.worst` is gone — **it certified
+the truncation**, which is what a test does when it pins an anchor without asking whether the window
+can host the statistic.
+
+**The miss runs the OTHER WAY from what this project reported for four releases.** Against the
+century the record sits at the **1st percentile**: the model's median century reaches −60.1% where
+the record reached −84.1%, so its century-scale tail is too *shallow*. The claim that the worst
+crash was "overstated 1.60x" is withdrawn — it was an ensemble minimum over a truncated window.
+It is one episode and so one draw; p≈0.01 under this model is suggestive, not proof. Ruin rates for
+levered sleeves read off the ensemble minimum remain **upper bounds, not estimates** — that minimum
+is drawn from 20,000 market-years and no fund lives that long.
+
+**It also surfaced a Nasdaq miss the ratio was hiding.** That world reads `record@ 2%`: QQQ's −83.0%
+is deeper than 98% of 27-year model histories. The old ratio read 1.16 and looked fine. Disclosed,
+not gated; the gate verdict is unchanged.
+
+**The calibration loss now grades the tail by a statistic that converges.** `-fitness` and
+`-calibrate` score `worst crash %` as the **median of single-history worsts at the anchor's own
+horizon** — the converging centre of the distribution the percentile is read from, in the standard
+loss form — never as the pooled ensemble minimum, whose distance from a one-history anchor tracks
+the ensemble size. Judgment stays 0.5 — one draw of a max, partially redundant with the crash-rate
+and depth rows. Each scoring evaluation pays one extra single-history ensemble per extreme anchor
+(60 at the frozen configuration; `-calibrate` roughly doubles per candidate).
+
+Scope: `-releases` and `-crossasset` keep the ratio, because every column there shares one ensemble
+size, so the movement between worlds is real even where the level is not; both mark the row.
+`EmitSchema` 5 -> 6: each fidelity row gained `aggregation` and `horizonYears`, `ratio` became
+nullable, `percentile` is new — and `world` gained the five `disaster*` dials below.
+
+**NEW MECHANISM, and a defaults change — macro disasters carry the century-scale tail**
+
+With the tail honestly anchored, the model could not reach it: across every gate-passing setting of
+every dial (recovery pair, stress, depth, value, jumpvar, haltlimit, volofvol, volpersist, fundvol —
+measured 2026-08-30) the median century-worst sat at −58..−61 against the record's −84.1, because
+the calibrated bands fence off every CONTINUOUS extra-variance channel: `-fundvol` breaks the 60d
+variance ratio, `-stress` breaks kurtosis, `-depth` breaks volatility. Decomposing the model's
+deepest crashes showed why: **every one starts from a peak at fair value** (p/f 0.96-1.19) — a
+fundamental collapse plus undershoot, with no 1929-style mania to unwind and no depression channel.
+A limits-to-arbitrage drag on overvaluation was tried and moved nothing: with `valuePull` closing
+gaps in ~15 sessions, nothing ever gets 10% above fair value, so there is no brake to release.
+
+`-disasterrate` (default **0.6**/century) starts a rare multi-year collapse of the real
+fundamental — the Barro-Rietz channel: `-disastersize` 2.0 log over `-disasterlen` 2.5 years, with
+`-disasterrecover` 0.5 of it reversing over `-disasterreclen` 4 years and the rest permanent.
+RARITY is what buys admission: a once-per-century-scale event barely touches daily volatility,
+kurtosis or clustering. Draws come from their own stream, so `-disasterrate 0` reproduces the
+pre-disaster world **bit for bit** and every frozen release row inherits it. Ships with the house
+mechanism rules: a binding diagnostic (`macro disasters N/century` in every report), a two-sided
+mechanism gate row (`macro disasters strike, not every decade` — an off-world fails it, which is
+what a mechanism row means), an off-world in the sweep, and contract tests in both twins pinning
+bit-identity at zero, release inheritance, and that the channel moves the statistic it was added
+for.
+
+`Defaults` moves: the five disaster dials plus `drift` 0.113 -> 0.118, compensating the expected-
+return cost of the unreversed half (~0.6%/yr); the 0.22.0 world is frozen as `V0_22_0` in the
+release table. What it buys, at 200x100 on four seeds (all three gate classes PASS on every one):
+
+```
+                        0.22.0   0.22.1           the record's century-worst among
+  worst crash %, record@    1%      18%       <-- model centuries; the headline
+  crashes/century         1.07     1.03
+  equity d5 vs real       0.95     0.98
+  kurtosis                1.01     0.98
+  median depth %          1.04     1.04
+  equity vol %            1.00     1.00
+  variance ratio 60d      1.00     1.10       <-- the stated price, see below
+  equity d10 vs real      0.99     1.13
+  equity d20 vs real      1.73     2.36       <-- see below
+  bond growth-crash       1.44     1.48
+```
+
+The Nasdaq recipe inherits the channel and improves the same way: QQQ's −83.0% moves from the 2nd
+percentile of 27-year model histories to the 9th.
+
+**The two rows that move against their targets are measured against disaster-free windows, and the
+committed fixtures say so.** The variance-ratio target (1.00) comes from modern windows; the CRSP
+**century** — the window with 1929-32 in it — reads **1.143** in `persistence-2026-08-29.tsv`, and
+a multi-year decline IS signed serial dependence, so a disaster-bearing century at 1.10 is more
+century-like than the 1.00 the old world read. The d20 relation is fitted on 35 funds over
+2001-2026; the model's time >20% under water (0.126 of sessions, median path) sits *below* a rough
+reading of the real century's own share (~0.15-0.20). Both are disclosed beside their rows in
+`docs/MarketSimWorlds.md`; neither band moved.
+
+Per the defaults-change rule, every `-noise`-frozen spread was re-measured at the adopted world
+(`retVolSd` 0.18→0.21, `kurtSd` 2.25→2.37, `medDepthSd` 0.13→0.16, `worstDepthSd` 0.24→0.18 at the
+new 100-year horizon, `vr` 0.32→0.36, `d5` 0.15→0.17, `d10` 0.34→0.38, `d20` 1.62→1.89, bond
+growth-crash 1.18→1.48, infl-crash 1.95→1.97, bond depth 0.34→0.36), the measured tables in
+`docs/MarketSimWorlds.md` were regenerated at it, and the calibration loss on the frozen ensemble
+reads **0.579** against the 0.22.0 world's 1.149 under the same weights (0.649 of that is fidelity;
+0.5 is its now-failing disaster mechanism row). The three disaster dials joined `-calibrate`'s
+search ranges.
+
+**FIXED — the printed MISS flag and the sidecar's `miss` disagreed on a NaN ratio.** The report used
+`ratio > 1.5 || ratio < 0.667`, which a NaN fails both halves of, so the table showed no flag where
+the sidecar recorded `miss: true`. Both now read one admissible interval, negated.
+
+The four below fired only where a run was already off the calibrated path and the tool said
+otherwise.
+
+**FIXED — a dial outside its domain produced a certified world rather than an error**
+
+Structural arguments were bounds-checked; not one physical dial was. `-jumprate 0` with the default
+`-jumpvar` divided by zero in the jump size and wrote a full TSV of `NaN` prices at exit 0.
+`-recoveryfloor 3` pinned the recovery damper at 3.0, running asymmetric recovery backwards —
+arbitrage STRONGER in a deep drawdown, not weaker — in a world that then PASSED the acceptance gate.
+`-haltlimit 1.5` took `log` of a negative and silently disabled the halt. Every dial now states its
+domain: shares in 0..1, `-volpersist` and `-haltlimit` below 1, `-depth` and `-duration` positive,
+the rest non-negative, and `-jumpvar > 0` requires `-jumprate > 0` because the jump size is their
+ratio. `-drift` is deliberately unconstrained. Every value recorded in this repo is admitted,
+`-jumpvar 0` and `-haltlimit 0` included.
+
+**FIXED — `miss` in the `-emit` sidecar could not fire on an unmeasurable statistic.** Written as
+`ratio > 1.5 || ratio < 0.667`, a `NaN` ratio failed both comparisons and recorded `"miss": false` —
+a clean bill of health in the one field a consumer reads to decide whether to trust the file. It is
+now the admissible interval negated. Finite rows are unaffected. `EmitSchema` is unchanged: the
+shape is the same and `version` separates the two behaviours.
+
+**`-emit` now REFUSES a path holding a non-finite price**, exit 2, nothing written. Every other gate
+verdict stays advisory, because an unrealistic world is still a world; a file whose every row reads
+`NaN` is not data.
+
+**FIXED — percentiles were biased downward by a contaminated ensemble.** `Ordering[Double]` and
+`total_cmp` both rank `NaN` above every number, so an unfiltered sort parked them in the top slots:
+one world reported a 6.17% median volatility against a 15.7% baseline. `pctile` now drops non-finite
+entries, as `med` already did, and both drop the same set. The reports state how many paths they
+excluded rather than summarising the survivors in silence. No gate-passing world contains a
+non-finite value, so no measured figure in this file or in `docs/` moves.
+
+**Usage errors exit 2 in BOTH twins.** The Scala side exited 1, the same code as a gate-failure
+verdict; the Rust side already used 2. One convention now: 0 clean, 1 a verdict (`-validate` gate
+failure, a `-crossasset` miss), 2 CLI misuse — including the new dial-domain rejections and the
+`-emit` refusal.
+
+**`-fitness` refuses `-paths`/`-years`** instead of accepting and silently ignoring them. The loss
+is only comparable on the frozen 60x80 scoring ensemble the `-noise` weights were frozen from; a
+loss measured anywhere else is not comparable to any recorded value.
+
+## v0.22.0 — 2026-08-29
 
 **FIXED — price impact came from the exposure the crowd HELD, not the exposure it TRADED, and that
 manufactured a three-month trend no equity market has**

@@ -3,7 +3,7 @@ package uni.apps
 
 //> using jvm 22
 //> using scala 3.8.4
-//> using dep org.vastblue:uni_3:0.22.0
+//> using dep org.vastblue:uni_3:0.22.1
 
 import uni.*
 import uni.data.*

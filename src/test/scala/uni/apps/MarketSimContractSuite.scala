@@ -88,11 +88,16 @@ class MarketSimContractSuite extends FunSuite:
     // targets. These are the literals that were in `FitTargets` before it took an argument; if
     // one changes, `-validate` changes for every consumer who never asked for a different index.
     //
-    // ONE has moved since, deliberately: `medDepth` -27.1 -> -21.4 in 0.22.0, because -27.1 was not
-    // the statistic the model computes -- it is the record's median at a 20% threshold where the
-    // model measures 15%+ episodes. `EpisodeAnchorSuite` re-derives the new value from
-    // `test-data/equity-anchors/episodes-2026-08-29.tsv` and pins the evidence for the old one.
-    // A future move of any value here needs the same treatment: measured, recorded, re-derivable.
+    // TWO have moved since, deliberately, and both for the same reason -- the anchor was not the
+    // statistic the model computes:
+    //   `medDepth`   -27.1 -> -21.4 (0.22.0), the record's median at a 20% threshold where the
+    //                model measures 15%+ episodes;
+    //   `worstDepth` -56.8 -> -84.1 (0.22.1), the worst of 1954-2026, a window that opens AFTER
+    //                the 1929-32 decline setting the record's worst, where the model computes the
+    //                worst over a whole history.
+    // `EpisodeAnchorSuite` re-derives both from `test-data/equity-anchors/episodes-2026-08-29.tsv`
+    // and pins the evidence for what each one used to be. A future move of any value here needs the
+    // same treatment: measured, recorded, re-derivable.
     val a = MarketSim.SP500Anchors
     assertEquals(a.vol, 16.0)
     assertEquals(a.retVol, 0.69)
@@ -101,7 +106,7 @@ class MarketSimContractSuite extends FunSuite:
     assertEquals(a.ac20, 0.225)
     assertEquals(a.crashes, 20.7)
     assertEquals(a.medDepth, -21.4)   // re-measured in 0.22.0; see above
-    assertEquals(a.worstDepth, -56.8)
+    assertEquals(a.worstDepth, -84.1) // re-anchored in 0.22.1; see above
     assertEquals(a.volBand, (14.0, 18.0))
     assertEquals(a.retVolBand, (0.50, 0.85))
   }
@@ -219,4 +224,163 @@ class MarketSimContractSuite extends FunSuite:
       "with the halt the guard must not touch the tail at all")
     assert(off.clampPct < 0.02,
       "and the OLD check must pass in that same world -- which is why it missed this")
+  }
+
+  test("ExtremeTargets names fidelity targets that exist") {
+    // A name that matches nothing classifies no row, so the target it was meant to protect goes
+    // back to being reported as a ratio -- silently, and only where someone reads the table.
+    val names = MarketSim.fitTargets(MarketSim.SP500Anchors).map(_._1).toSet
+    for n <- MarketSim.ExtremeTargets do
+      assert(names.contains(n),
+        s"ExtremeTargets names [$n], which is not a fidelity target. Rename it with the target, " +
+        "or the row is graded as a per-path value again.")
+  }
+
+  test("an extreme row carries a percentile and no ratio; a per-path row the reverse") {
+    // The invariant the sidecar rests on. A consumer must be able to tell the two apart from the
+    // DATA -- `ratio: null` is what stops the division being made by accident, and a row that
+    // carried both would let it be made anyway.
+    val w    = MarketSim.Defaults
+    val a    = MarketSim.SP500Anchors
+    val st   = MarketSim.measure(MarketSim.simPaths(w, 60, 100, MarketSim.DefaultSeed), 100)
+    val rows = MarketSim.fidelityRows(a, st, 60, MarketSim.DefaultSeed, w)
+    assertEquals(rows.map(_.name), MarketSim.fitTargets(a).map(_._1),
+      "every fidelity target must produce exactly one row, in report order")
+    for r <- rows do
+      if MarketSim.ExtremeTargets.contains(r.name) then
+        assert(r.ratio.isEmpty,
+          s"[${r.name}] is an ensemble extreme and must carry no ratio: model/real grades the " +
+          "ensemble size, not the model")
+        assert(r.pctile.isDefined, s"[${r.name}] must carry a percentile in the ratio's place")
+        assertEquals(r.aggregation, "ensemble-extreme")
+        assertEquals(r.horizonYears, a.tailYears,
+          s"[${r.name}]'s percentile must be read at its own anchor's horizon, which for the " +
+          "tail is its own window and NOT the equity window")
+      else
+        assert(r.ratio.isDefined, s"[${r.name}] is a per-path value and must carry its ratio")
+        assert(r.pctile.isEmpty, s"[${r.name}] is not an extreme and must not claim a percentile")
+        assertEquals(r.aggregation, "per-path")
+  }
+
+  test("the worst-crash LEVEL runs away with the ensemble; the published percentile does not") {
+    // WHY the row carries no ratio, pinned so the fix cannot be undone as cosmetic. `worstDepth`
+    // is a minimum over every episode in the POOLED ensemble while the anchor is the deepest
+    // episode of ONE history, so it deepens without bound as paths grow. The percentile is an
+    // estimate of a fixed quantity and is stable over the same range. Both halves are asserted:
+    // a test that only checked the percentile was stable would also pass if it were constant
+    // because nothing was being measured.
+    val w    = MarketSim.Defaults
+    val a    = MarketSim.SP500Anchors
+    val name = "worst crash %"
+    def at(paths: Int): (Double, MarketSim.FidelityRow) =
+      val st = MarketSim.measure(MarketSim.simPaths(w, paths, 100, MarketSim.DefaultSeed), 100)
+      val r  = MarketSim.fidelityRows(a, st, paths, MarketSim.DefaultSeed, w)
+        .find(_.name == name).getOrElse(fail(s"no [$name] row"))
+      (st.worstDepth, r)
+    val (lvlSmall, small) = at(100)
+    val (lvlLarge, large) = at(400)
+    assert(lvlLarge < lvlSmall - 3.0,
+      f"the pooled minimum must still run away with the ensemble or this test asserts nothing: " +
+      f"$lvlSmall%.2f%% at 100 paths, $lvlLarge%.2f%% at 400")
+    val (pSmall, pLarge) = (small.pctile.getOrElse(fail("no percentile at 100 paths")),
+                            large.pctile.getOrElse(fail("no percentile at 400 paths")))
+    // The tolerance is the estimator's own noise, not drift: an INTERIOR percentile estimated
+    // from n histories carries binomial sd ~ sqrt(p(1-p)/n) -- about 4 points at n=100 -- where
+    // the pooled minimum's movement is unbounded in n.
+    assert(math.abs(pLarge - pSmall) <= 10,
+      s"the published percentile must be stable over the range the level runs away across: " +
+      s"$pSmall% at 100 paths, $pLarge% at 400")
+    assertEquals(small.miss, large.miss,
+      s"and its verdict must not depend on the ensemble size: $pSmall% at 100 paths, $pLarge% at 400")
+  }
+
+  test("an extreme row with too few histories reports n/a and a MISS, never a clean bill") {
+    // One history reads 0% or 100% and neither is a measurement. The failure being prevented is
+    // the 0.22.1 one on a new axis: `miss: false` on a statistic that could not be measured, in
+    // the one field a consumer reads to decide whether to trust the file.
+    val w    = MarketSim.Defaults
+    val a    = MarketSim.SP500Anchors
+    val st   = MarketSim.measure(MarketSim.simPaths(w, 1, 100, MarketSim.DefaultSeed), 100)
+    val r    = MarketSim.fidelityRows(a, st, 1, MarketSim.DefaultSeed, w)
+      .find(_.name == "worst crash %").getOrElse(fail("no worst crash % row"))
+    assert(r.pctile.isEmpty, s"one history cannot place a record, read ${r.pctile}")
+    assert(r.miss, "an unplaceable record must report a miss, not a pass")
+  }
+
+  test("the loss grades an extreme row by the median single-history reading, and it binds") {
+    // `fitness` must price the converging statistic the caller supplies -- never `worstDepth`,
+    // the pooled minimum, whose distance from a one-history anchor tracks the ensemble size.
+    // Three pins: the two statistics actually differ here (or the test cannot tell them apart),
+    // the loss row carries the supplied median, and the term is nonzero at the shipped defaults
+    // -- a term that cannot bind is the recurring failure class in this file.
+    val w   = MarketSim.Defaults
+    val a   = MarketSim.SP500Anchors
+    val st  = MarketSim.measure(MarketSim.simPaths(w, 20, 100, MarketSim.DefaultSeed), 100)
+    val ext = MarketSim.extremeScoreStats(a, 20, MarketSim.DefaultSeed, w)
+    val med = ext.getOrElse("worst crash %", fail("no scored median for worst crash %"))
+    assert(math.abs(med - st.worstDepth) > 3.0,
+      f"median $med%.2f%% and pooled minimum ${st.worstDepth}%.2f%% must differ at this size, " +
+      "or this test cannot tell which one the loss priced")
+    val row = MarketSim.fitness(a, st, ext)._2.find(_._1 == "worst crash %")
+      .getOrElse(fail("no worst crash % loss row"))
+    assertEqualsDouble(row._2, med, 1e-12, "the loss row must carry the median, not the minimum")
+    // The term DISCRIMINATES: with the disaster channel off the century tail is far too shallow
+    // and the term prices it; at the adopted defaults it is much smaller.  This is what makes the
+    // tail term the thing that FOUND the adopted world, and what a cosmetic revert would undo.
+    val offW  = w.copy(disasterRate = 0.0)
+    val offSt = MarketSim.measure(MarketSim.simPaths(offW, 20, 100, MarketSim.DefaultSeed), 100)
+    val offRow = MarketSim.fitness(a, offSt,
+        MarketSim.extremeScoreStats(a, 20, MarketSim.DefaultSeed, offW))._2
+      .find(_._1 == "worst crash %").getOrElse(fail("no worst crash % loss row"))
+    assert(offRow._4 > row._4 + 0.05,
+      f"the tail term must price the disaster-off world's shallow century tail well above the " +
+      f"adopted world's: off ${offRow._4}%.4f vs on ${row._4}%.4f")
+    // supplied exactly at the anchor the term is zero -- pins that the supplied value is priced
+    val zeroed = MarketSim.fitness(a, st, Map("worst crash %" -> a.worstDepth))._2
+      .find(_._1 == "worst crash %").getOrElse(fail("no worst crash % loss row"))
+    assertEqualsDouble(zeroed._4, 0.0, 1e-12)
+    // and a missing entry prices as unmeasurable, never as agreement
+    val missing = MarketSim.fitness(a, st, Map.empty)._2
+      .find(_._1 == "worst crash %").getOrElse(fail("no worst crash % loss row"))
+    assert(missing._4 > 1.0,
+      f"an unsupplied extreme stat must price as unmeasurable (weight x 4), read ${missing._4}%.4f")
+  }
+
+  test("the disaster channel is absent at zero, and the frozen release rows inherit that") {
+    // Mirrors the trading-halt test: the channel's draws come from their own stream, so rate 0
+    // must reproduce the pre-disaster path BIT-IDENTICALLY whatever the other disaster dials say,
+    // and every frozen release row must carry rate 0 -- no release before 0.22.1 had the
+    // mechanism.
+    val off  = MarketSim.Defaults.copy(disasterRate = 0.0)
+    val off2 = off.copy(disasterSize = 9.9, disasterLen = 0.1, disasterRecover = 0.9,
+                        disasterRecLen = 0.1)
+    val a = MarketSim.simulate(off, 4, MarketSim.DefaultSeed)
+    val b = MarketSim.simulate(off2, 4, MarketSim.DefaultSeed)
+    assert(a.price.sameElements(b.price),
+      "at rate 0 every other disaster dial must be inert, bit for bit")
+    // Engagement is checked on the DIAGNOSTIC over a real horizon, not on a short path's bytes:
+    // at 0.6/century a 4-year path usually holds no disaster, and the channel leaving such a path
+    // untouched is the design, not a defect.
+    val on = MarketSim.simPaths(MarketSim.Defaults, 4, 100, MarketSim.DefaultSeed)
+    assert(on.map(_.disasters).sum > 0,
+      "the adopted default must actually strike within four centuries at this seed")
+    for (v, w) <- MarketSim.Releases do
+      assertEqualsDouble(w.disasterRate, 0.0, 1e-12,
+        s"release $v predates the disaster channel and must inherit rate 0")
+  }
+
+  test("the disaster channel discriminates on the statistic it was added for") {
+    // The channel exists to move the CENTURY-WORST distribution, which no gate-passing dial
+    // setting could reach (the sweep of 2026-08-30: recovery, bubble-drag, stress, depth, value,
+    // jumpvar, haltlimit, volofvol, volpersist and fundvol all left the median at -58..-61).
+    // Pinned so it cannot regress to inert: at the adopted defaults the median single-century
+    // worst must be at least 8 points deeper than with the channel off, on the same seed.
+    val a   = MarketSim.SP500Anchors
+    val on  = MarketSim.extremeScoreStats(a, 40, MarketSim.DefaultSeed, MarketSim.Defaults)
+    val off = MarketSim.extremeScoreStats(a, 40, MarketSim.DefaultSeed,
+                MarketSim.Defaults.copy(disasterRate = 0.0))
+    val (mOn, mOff) = (on("worst crash %"), off("worst crash %"))
+    assert(mOn < mOff - 8.0,
+      f"the adopted channel must deepen the median century-worst materially: on $mOn%.1f%% " +
+      f"vs off $mOff%.1f%%")
   }

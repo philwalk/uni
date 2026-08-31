@@ -59,9 +59,9 @@ class EpisodeAnchorSuite extends FunSuite:
         "explanation for where the old anchor came from no longer holds")
   }
 
-  test("the sibling episode anchors still reconcile, which is why only one moved") {
-    // `crashes/century` and `worst crash %` were checked the same way and left alone. If either
-    // stops reconciling, it needs the same treatment `medDepth` got.
+  test("crashes/century still reconciles across the record's windows") {
+    // Checked the same way `medDepth` was and left alone: a rate that sits between the century's
+    // and the modern window's is consistent with the record on the model's own definition.
     if rows.nonEmpty then
       val century = at("w1926", ModelThreshold).getOrElse(fail("no w1926 row"))
       val modern  = at("w1954", ModelThreshold).getOrElse(fail("no w1954 row"))
@@ -69,9 +69,41 @@ class EpisodeAnchorSuite extends FunSuite:
       assert(crashes >= century.perCentury && crashes <= modern.perCentury,
         f"crashes/century $crashes%.1f no longer sits between the record's ${century.perCentury}%.1f " +
         f"and ${modern.perCentury}%.1f; it can no longer be called consistent with this measurement")
-      assert(math.abs(MarketSim.SP500Anchors.worstDepth - modern.worst) < 5.0,
-        f"worst crash ${MarketSim.SP500Anchors.worstDepth}%.1f%% is no longer the same episode as the " +
-        f"record's ${modern.worst}%.1f%%")
+  }
+
+  test("worstDepth is the record's deepest episode over the WHOLE record, not a sub-window") {
+    // This test replaces one that asserted the opposite. It pinned `worstDepth` to `w1954.worst`,
+    // and 1954 opens AFTER the 1929-32 decline that sets the record's worst -- so the check
+    // certified an anchor that had the tail removed, on the one row a window can delete outright.
+    // A test can hold a mis-specified anchor in place as firmly as it holds a correct one.
+    if rows.nonEmpty then
+      val century = at("w1926", ModelThreshold).getOrElse(fail("no w1926 row"))
+      assertEqualsDouble(MarketSim.SP500Anchors.worstDepth, century.worst, 0.05,
+        f"worstDepth must be the deepest episode of the LONGEST window in the fixture, which " +
+        f"reads ${century.worst}%.1f%% over 1926-2026 at a ${ModelThreshold}%d%% threshold")
+      assertEquals(MarketSim.SP500Anchors.tailYears, 100,
+        "the tail's horizon must be the window its anchor was read over, or the percentile in " +
+        "-validate is read at a length the anchor never described")
+  }
+
+  test("no shorter window could have produced the tail anchor, and one of them shipped") {
+    // The DISCRIMINATING half: without this, re-anchoring reads as a taste change. The record's
+    // worst is the single most window-sensitive statistic in the fixture -- 54% between windows,
+    // against 11% for median depth and 30% for the crash rate -- and the shipped value was the
+    // shallow end of that range.
+    if rows.nonEmpty then
+      val byWindow = rows.filter(_.thr == ModelThreshold).map(w => w.window -> w.worst).toMap
+      val deepest  = byWindow.values.min
+      val shallowest = byWindow.values.max
+      assert(math.abs(deepest - shallowest) / math.abs(shallowest) > 0.4,
+        s"the fixture no longer shows the worst episode as strongly window-dependent " +
+        s"($byWindow); the reason this anchor needs its own window would no longer hold")
+      assertEqualsDouble(byWindow("w1954"), -54.6, 0.05,
+        "w1954's worst is the value that shipped as -56.8 through 0.22.0 -- pinned so the account " +
+        "of what was wrong stays checkable rather than asserted")
+      assert(MarketSim.SP500Anchors.worstDepth < byWindow("w1954") - 20.0,
+        f"the shipped anchor ${MarketSim.SP500Anchors.worstDepth}%.1f%% is no deeper than the " +
+        f"truncated window's ${byWindow("w1954")}%.1f%%; the re-anchoring has been undone")
   }
 
   test("deeper thresholds give deeper medians, or the fixture is not what it claims") {

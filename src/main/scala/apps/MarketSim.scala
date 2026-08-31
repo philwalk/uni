@@ -2,7 +2,7 @@
 package uni.apps
 
 //> using scala 3.7.2
-//> using dep org.vastblue:uni_3:0.22.0
+//> using dep org.vastblue:uni_3:0.22.1
 
 // MARKET SIMULATOR — a testbed for COMPARING exposure strategies over long horizons.
 //
@@ -43,8 +43,11 @@ package uni.apps
 // releases, parked as needing a slow valuation cycle; what it actually needed was a SECOND tail
 // channel, and `jumpVar` is one.  The model now reads 1.00 of its CRSP-century anchor, and the
 // clustering it was supposed to trade against improved with it (1.11 -> 1.03).  Tail-day
-// magnitudes are readable here; tail-day DEPTH still is not -- see `worst crash %`, which remains
-// 1.54x its anchor, so anything levered reads ruin as an upper bound rather than an estimate.
+// magnitudes are readable here; tail-day DEPTH is a separate question, reported as a PERCENTILE
+// rather than a ratio -- see `ExtremeTargets` -- and it is a MISS: over the century the record's
+// worst decline is -84.1% and only ~1% of model centuries reach it, so the model's century-scale
+// tail is too SHALLOW.  Meanwhile the ensemble MINIMUM is deeper than the record, because it is
+// drawn from 20,000 market-years; a levered consumer must not read that as a worst case.
 // Crash frequency left this bucket in 0.19.1: it is carried by market depth, not by the valuation
 // cycle, and at 1.3x real it now sits near the sampling error of its own anchor (15 episodes in
 // 72 years, sd ~3).
@@ -114,7 +117,13 @@ object MarketSim:
   // now per unit TRADED, one rule for every crowd.  A reader that reconstructs a `World` from a
   // schema-4 sidecar and runs it here gets a different market with no error -- exactly what the
   // schema number exists to prevent.
-  val EmitSchema: Int = 5
+  // 5 -> 6: each `fidelity` row gained `aggregation` and `horizonYears`, and `ratio` became
+  // nullable, paired with a new `percentile`.  A schema-5 reader that treats `ratio` as always
+  // present breaks loudly on the null rather than dividing two incomparable statistics in silence,
+  // which is the whole reason the field is null and not a number.  `world` also gained the five
+  // disaster dials; a reader that reconstructs a `World` from a schema-5 sidecar and runs it here
+  // gets a market without the century-tail channel.
+  val EmitSchema: Int = 6
 
   val EmitSidecarKeys: Vector[String] =
     Vector("generator", "version", "schema", "file", "columns", "header", "path", "world",
@@ -165,6 +174,8 @@ object MarketSim:
     "              ;   invocation describes — what a candidate costs against the whole history,",
     "              ;   not just the previous release",
     "-fitness      ; print the scalar calibration loss and its components, then exit",
+    "              ;   (scores the frozen 60x80 ensemble, plus 60 single histories at each",
+    "              ;   extreme anchor's own horizon; refuses -paths/-years)",
     "-calibrate N  ; random-search N parameter samples against the fitness loss; scores the",
     "              ;   best few again on a HELD-OUT seed; prints, does not modify defaults",
     "-power        ; estimator power: how much history each grading statistic needs before its",
@@ -205,6 +216,14 @@ object MarketSim:
     s"-recoveryfloor X ; weakest that pull may become, as a share of full strength",
     s"              ;   (default ${Defaults.recoveryFloor}; 1.0 with -recoverydrag 0 is the",
     "              ;   symmetric pull, not the 0.20.0 world -- price formation moved in 0.22.0)",
+    s"-disasterrate X ; macro disasters per century: rare multi-year collapses of the real",
+    s"              ;   fundamental, the channel that carries the century-scale tail (default",
+    s"              ;   ${Defaults.disasterRate}; 0 turns it off, consuming no draws, so nothing else moves)",
+    s"-disastersize X ; total log decline of the fundamental per disaster (default ${Defaults.disasterSize})",
+    s"-disasterlen Y ; years from onset to trough (default ${Defaults.disasterLen})",
+    s"-disasterrecover X ; share of the decline that reverses after the trough (default",
+    s"              ;   ${Defaults.disasterRecover}; the rest is permanent)",
+    s"-disasterreclen Y ; years that recovery is spread over (default ${Defaults.disasterRecLen})",
     s"-haltlimit X  ; equity trading halt: largest ONE-session decline the market prints, as a",
     s"              ;   simple fraction, with the unfilled pressure DEFERRED to the next session.",
     s"              ;   0.20 is the US Level 3 breaker, which closes the day at -20%.  0 disables",
@@ -265,6 +284,29 @@ object MarketSim:
                               // deferred to the next session.  0 disables it, which is what the
                               // frozen release rows below inherit -- correctly, since no release
                               // before this one had the mechanism.
+    disasterRate: Double = 0.0,  // macro disasters per CENTURY: rare multi-year collapses of the
+                                 // real fundamental (1929-32, not 1987) -- the Barro-Rietz
+                                 // channel.  Rare is what lets it deepen the century-scale tail
+                                 // without touching daily volatility or the 60d variance ratio,
+                                 // which fence off every CONTINUOUS extra-variance channel.
+                                 // 0 disables it; draws come from their own stream, so the frozen
+                                 // release rows inherit pre-disaster behaviour bit for bit.
+                                 // SCOPE: it shifts deep crashes toward FUNDAMENTAL-led (>35%
+                                 // crashes: 31% -> 40% on the -strategies classifier; the rest
+                                 // stay spiral dislocations), and every deep crash still starts
+                                 // from a peak AT fair value (p/f 0.96-1.19 measured).  The model
+                                 // has no mania channel, so the 1929/2000 shape -- a collapse
+                                 // from a peak far ABOVE fair value, multiples doing the falling
+                                 // -- cannot occur.  Price-path statistics cannot tell; anything
+                                 // reading the emitted `fundamental` column or `-strategies`'
+                                 // crash-type conditioning can.
+    disasterSize: Double = 2.0,  // total log decline of the fundamental per disaster
+    disasterLen: Double = 2.5,   // years from onset to trough; the decline is spread evenly
+    disasterRecover: Double = 0.5, // share of the decline that REVERSES after the trough --
+                                   // Barro's cross-country estimate is about half.  Without it a
+                                   // disaster century spends decades >20% underwater and the deep
+                                   // depth rung runs far past even the real 1929 century's share.
+    disasterRecLen: Double = 4.0,  // years the recovery is spread over
 
     duration: Double,   // bond duration: sensitivity of its fair value to the rate
     easing: Double,     // CAP on policy accommodation under equity stress, in rate points
@@ -298,10 +340,12 @@ object MarketSim:
                         duration: Double,        // the world's bond duration, carried so the gate can
                                                  // judge bond volatility RELATIVE to it; a fixed
                                                  // absolute band can only ever fit one bond
-                        meanCrowdFlow: Double)   // BINDING diagnostic for the reflexive channel:
+                        meanCrowdFlow: Double,   // BINDING diagnostic for the reflexive channel:
                                                  // mean |crowd flow| per session, post burn-in.
                                                  // Its ABSENCE is why -crowdimpact sat dead in the
                                                  // default world across four releases.
+                        disasters: Int)          // BINDING diagnostic for the disaster channel:
+                                                 // collapses begun post burn-in on this path.
 
   /** THE shipped world.  `main` seeds its mutable CLI vars from this and `usage` interpolates its
     * numbers, so every default is written in exactly one place.  Help text that restates a constant
@@ -309,10 +353,18 @@ object MarketSim:
     * wrong three times before it was centralised.  A mismatch between the twins is caught directly
     * by the `-emit` sidecar, which names every field: bare `-emit` writes THIS world. */
   val Defaults = World(
-    trendShare = 0.055, depth = 17.4, stress = 5.37, beta = 3.0, drift = 0.113, fundVol = 0.070,
+    trendShare = 0.055, depth = 17.4, stress = 5.37, beta = 3.0, drift = 0.118, fundVol = 0.070,
     rateMean = 0.042, volPersist = 0.99, volOfVol = 0.027,
     jumpVar = 0.17, jumpRate = 0.0050, valuePull = 0.045,
     recoveryDrag = 10.0, recoveryFloor = 0.10, haltLimit = 0.25,
+    // The disaster channel, ADOPTED 0.22.1: rate 0.6/century, total log decline 2.0 over 2.5
+    // years, half reversing over 4.  Chosen on the tail loss term at 60 histories and verified at
+    // 200x100 on four seeds (all three gate classes PASS; the record's century-worst moves from
+    // the 1st percentile of model centuries to the 16-23rd).  `drift` 0.113 -> 0.118 compensates
+    // the expected-return cost of the unreversed half (~0.6%/yr), putting return per vol back on
+    // its anchor (0.71 vs 0.69).
+    disasterRate = 0.6, disasterSize = 2.0, disasterLen = 2.5,
+    disasterRecover = 0.5, disasterRecLen = 4.0,
     crowd = Crowd.Momentum, crowdImpact = 0.030, panic = 0.0, duration = 13.5,
     easing = 0.060, unwind = 0.35, refuge = 0.11,
     inflProb = 0.20, inflSize = 0.10, inflSpeed = 0.010, rateSpeed = 3.0, discount = 5.73,
@@ -364,6 +416,17 @@ object MarketSim:
     easing = 0.046, unwind = 0.35, refuge = 0.11,
     inflProb = 0.20, inflSize = 0.10, inflSpeed = 0.010, rateSpeed = 3.0, discount = 5.0,
     margin = 0.006)
+  /** 0.22.0's world, frozen for the same reason `V0_20_0` is: the disaster channel moved the
+    * default off it. */
+  private val V0_22_0 = World(
+    trendShare = 0.055, depth = 17.4, stress = 5.37, beta = 3.0, drift = 0.113, fundVol = 0.070,
+    rateMean = 0.042, volPersist = 0.99, volOfVol = 0.027,
+    jumpVar = 0.17, jumpRate = 0.0050, valuePull = 0.045,
+    recoveryDrag = 10.0, recoveryFloor = 0.10, haltLimit = 0.25,
+    crowd = Crowd.Momentum, crowdImpact = 0.030, panic = 0.0, duration = 13.5,
+    easing = 0.060, unwind = 0.35, refuge = 0.11,
+    inflProb = 0.20, inflSize = 0.10, inflSpeed = 0.010, rateSpeed = 3.0, discount = 5.73,
+    margin = 0.006)
   /** 0.21.0's world, frozen for the same reason `V0_20_0` is: the variance-ratio row moved the
     * default off it. */
   private val V0_21_0 = World(
@@ -378,7 +441,7 @@ object MarketSim:
   val Releases: Vector[(String, World)] = Vector(
     ("0.17.0", PreV1901), ("0.18.0", PreV1901), ("0.19.0", PreV1901),
     ("0.19.1", PreV1902), ("0.19.2", V0_19_2), ("0.19.3", V0_19_2), ("0.20.0", V0_20_0),
-    ("0.21.0", V0_21_0), ("0.22.0", Defaults))
+    ("0.21.0", V0_21_0), ("0.22.0", V0_22_0))
 
   /** `-power`'s default contrast arms, as 1-based indices into `Rules`, and its default history
     * lengths.  Named here rather than inside the report so `usage` states them and `main` seeds
@@ -631,6 +694,9 @@ object MarketSim:
     // unconditionally -- it costs one allocation and touches nothing -- and read only when
     // `jumpVar > 0`.
     val jrng = new NumPyRNG(seed ^ 0x1eaf7a11L)
+    // The disaster channel's own stream, for the same survivability reason as `jrng` above:
+    // constructed unconditionally, read only when `disasterRate > 0`, so rate 0 is bit-identical.
+    val drng = new NumPyRNG(seed ^ 0xd15a57e5L)
     val px   = new Array[Double](tot)
     val fv   = new Array[Double](tot)
     val rt   = new Array[Double](tot)
@@ -680,6 +746,11 @@ object MarketSim:
     var crowdE = crowdInit; var crowdPrev = crowdInit; var maSum = 0.0
     var crowdRv = 0.01 * 0.01; var crowdAnchor = 0.0
     var bondStressSum = 0.0; var bondStressHi = 0
+    // MACRO DISASTER state: sessions left in the current collapse, its per-session decrement, and
+    // the post-burn-in onset count -- the channel's BINDING diagnostic.
+    var disLeft = 0; var disStep = 0.0; var disasterCount = 0
+    var recLeft = 0; var recStep = 0.0
+    val disProb = w.disasterRate / (100.0 * DaysPerYear)
     var crowdFlowSum = 0.0
     var clampsAtBurn = 0
     var eqFloorAtBurn = 0; var eqTailAtBurn = 0; var eqHaltAtBurn = 0
@@ -692,6 +763,25 @@ object MarketSim:
         inflTarget = if rng.nextDouble() < w.inflProb then math.abs(rng.randn()) * w.inflSize else 0.0
         driftNow = w.drift + rng.randn() * 0.04
         regimeCountdown = 250 + rng.nextBoundedInt(2500)
+      // MACRO DISASTER: a rare multi-year collapse of the real fundamental.  One uniform draw
+      // per session from the channel's own stream while armed; onset starts a decline of
+      // `disasterSize` log spread evenly over `disasterLen` years, which the price then tracks
+      // through the ordinary value channel -- the crash is fundamental-led, like 1929-32, and the
+      // spiral and recovery drag shape it downstream.  No new disaster starts while one runs.
+      if disProb > 0.0 then
+        if disLeft > 0 then
+          logVbase -= disStep; disLeft -= 1
+          // trough reached: the RECOVERY leg arms, spreading `disasterRecover` of the decline
+          // back over `disasterRecLen` years.  What does NOT reverse is permanent.
+          if disLeft == 0 && w.disasterRecover > 0.0 then
+            recLeft = math.max(1, (w.disasterRecLen * DaysPerYear).toInt)
+            recStep = w.disasterRecover * w.disasterSize / recLeft
+        else
+          if recLeft > 0 then { logVbase += recStep; recLeft -= 1 }
+          if drng.nextDouble() < disProb then
+            disLeft = math.max(1, (w.disasterLen * DaysPerYear).toInt)
+            disStep = w.disasterSize / disLeft
+            if i >= BurnIn then disasterCount += 1
       logVbase += driftNow * dt + w.fundVol * sqdt * rng.randn()
       inflPress += w.inflSpeed * (inflTarget - inflPress)
       // policy: chase rateMean + pressure MINUS accommodation, and accommodation is a CAPPED
@@ -743,9 +833,17 @@ object MarketSim:
       val past = if i >= lookback then math.log(px(i - lookback)) else logPobs
       val momentum = logPobs - past
       val trendPos = math.tanh(momentum / 0.12)
-      // The momentum crowd's desired exposure, set here rather than in the block above only because
-      // `trendPos` needs this session's `logPobs`; the information behind it is still strictly
-      // prior.  It is continuous where the other crowds' targets are banded, and deliberately
+      // The momentum crowd's desired exposure, set here rather than in the block above because
+      // `trendPos` needs this session's `logPobs` -- and `logPobs` carries this session's
+      // `markdown`, so this crowd reacts to the rate move being priced in the SAME session, where
+      // `Crowd.Trend` and `Crowd.VolScaled` read `px(i-1)` alone.  Two live consequences: `-crowd`
+      // varies information timing along with crowd type, and `perfT` below pairs a position
+      // holding -discount*dRate with a return holding the same term, a product that is
+      // structurally positive and tilts the capital spring toward the trend crowd by arithmetic
+      // rather than trading.  `trendShare` is calibrated, so the calibration has absorbed it;
+      // whether the crowd should act one session later instead is a MECHANISM question, and
+      // changing it moves every calibrated statistic.  It is continuous where the other crowds'
+      // targets are banded, and deliberately
       // unbanded: the 0.05 band exists to stop a BINARY target flip-flopping across a moving
       // average, and a continuous target has nothing to flip-flop about.
       w.crowd match
@@ -851,7 +949,8 @@ object MarketSim:
          eqM.clamps + bdM.clamps - clampsAtBurn,
          eqM.floorDays - eqFloorAtBurn, eqM.tailDays - eqTailAtBurn,
          eqM.haltDays - eqHaltAtBurn,
-         bondStressSum / n, bondStressHi.toDouble / n, w.duration, crowdFlowSum / n)
+         bondStressSum / n, bondStressHi.toDouble / n, w.duration, crowdFlowSum / n,
+         disasterCount)
 
   // ---- stylised-fact measurements ------------------------------------------------------------
   def dailyReturns(px: Array[Double]): Array[Double] =
@@ -1088,6 +1187,7 @@ object MarketSim:
                               bondVol: Double, bondGrowth: Double, bondInfl: Double,
                               corrCalm: Double, corrInfl: Double,
                               meanBondStress: Double, pctBondStress: Double, crowdFlow: Double,
+                              disPerCentury: Double,
                               duration: Double,
                               inflAnn: Double,
                               // depth profile: median share of sessions more than 5/10/20% below
@@ -1133,7 +1233,9 @@ object MarketSim:
 
   def measure(sims: Vector[Path], years: Int): WorldStats =
     val rets = sims.map(s => dailyReturns(s.price))
-    def med(v: Seq[Double]) = { val f = v.filter(x => !x.isNaN); if f.isEmpty then Double.NaN else f.sorted.apply(f.size / 2) }
+    // `isFinite`, not `!isNaN`: an infinite path is no more a datum than a NaN one, and `pctile`
+    // drops the same set, so a median and the percentiles printed beside it describe the same paths.
+    def med(v: Seq[Double]) = { val f = v.filter(_.isFinite); if f.isEmpty then Double.NaN else f.sorted.apply(f.size / 2) }
     val epsBy  = sims.map(s => s -> episodes(s.price, 15.0))   // once per path (was recomputed 3x)
     val ddEq   = sims.map(s => depthShares(s.price))
     val ddBd   = sims.map(s => depthShares(s.bond))
@@ -1190,6 +1292,7 @@ object MarketSim:
       meanBondStress = sims.map(_.meanBondStress).sum / sims.size,
       pctBondStress = sims.map(_.pctBondStress).sum / sims.size,
       crowdFlow = sims.map(_.meanCrowdFlow).sum / sims.size,
+      disPerCentury = sims.map(_.disasters.toDouble).sum / sims.size / years * 100.0,
       duration = sims.head.duration,
       inflAnn = med(sims.map(s => math.log(s.cpi.last / s.cpi.head) / years * 100.0)),
       ddEq5  = med(ddEq.map(_._1)), ddEq10 = med(ddEq.map(_._2)), ddEq20 = med(ddEq.map(_._3)),
@@ -1274,6 +1377,11 @@ object MarketSim:
           !st.corrInfl.isNaN && !st.corrCalm.isNaN &&
           st.corrInfl > st.corrCalm + 0.15 && st.corrInfl > 0.0 && st.corrCalm < 0.35, Mechanism),
       ("bond spiral engages, not always", st.pctBondStress > 0.002 && st.pctBondStress < 0.5, Mechanism),
+      // Two-sided like the spiral's: the channel must strike, and disasters that arrive more than
+      // a few times a century are not disasters -- they are a second volatility regime wearing the
+      // name.  An off-world (rate 0) fails this row, which is what a mechanism row MEANS.
+      ("macro disasters strike, not every decade",
+        st.disPerCentury > 0.05 && st.disPerCentury < 4.0, Mechanism),
       bandCheck("inflation",        st.inflAnn, 1.0, 6.0, Realism, dp = 0, unit = "%/yr"),
       // LEVEL bands, not realism.  A 12%-volatility market is still a market, and realism is
       // ALWAYS required — either band placed there would make the sweep's own OFF-worlds
@@ -1464,6 +1572,14 @@ object MarketSim:
     name: String,
     equityWindow: String, equityYears: Int,      // the window the level rows below were read from
     clusterWindow: String, clusterYears: Int,    // clustering is horizon-sensitive and reads its own
+    // The TAIL reads its own window too, and for a sharper reason than horizon-sensitivity: the
+    // deepest episode is the one statistic a window can DELETE.  Across the committed fixture the
+    // median depth swings 11% between windows and the crash rate 30%, while the worst swings 54% --
+    // -84.1% over the century against -54.6% from 1954, because 1954 opens after the crash that set
+    // it.  A tail graded on a window chosen to exclude the record's worst extreme cannot fail on
+    // the thing it exists to test.  Never fold this back into `equityWindow`: the two coincide in
+    // neither shipped set for the same reason, and coinciding today is not a reason to share a field.
+    tailWindow: String, tailYears: Int,
     vol: Double,        volSd: Double,
     retVol: Double,     retVolSd: Double,
     kurt: Double,       kurtSd: Double,
@@ -1476,23 +1592,33 @@ object MarketSim:
     retVolBand: (Double, Double))
 
   /** The S&P/CRSP set.  The LEVELS are the ones every release before 0.21.0 hard-coded, moved
-    * rather than re-measured.  The SPREADS were re-frozen in 0.22.0 from `-noise -paths 200` at the
-    * adopted world -- the first time all of them came from one ensemble at one size, which is why
-    * several moved by more than the world change explains: only `kurtSd` had been re-frozen at 200
-    * paths, and the rest still carried a 120-path run's readings.  `-noise`'s `sd/real` column now
-    * agrees with the `wt` beside it, which is the whole point of printing them together. */
+    * rather than re-measured (except the two the 0.22 releases re-anchored -- `medDepth` and
+    * `worstDepth` -- each re-derived from a committed fixture).  The SPREADS were re-frozen from
+    * `-noise -paths 200` at the adopted 0.22.1 disaster world, 2026-08-30, as the
+    * defaults-change rule requires; `-noise`'s `sd/real` column agrees with the `wt` beside it,
+    * which is the whole point of printing them together. */
   val SP500Anchors = Anchors(
     name = "S&P 500 / CRSP",
     equityWindow = "S&P / CRSP 1954-2026", equityYears = 72,
     clusterWindow = "CRSP 1926-2026, the century", clusterYears = 100,
+    tailWindow = "CRSP 1926-2026, the century", tailYears = 100,
     vol = 16.0,          volSd = 0.14,
-    retVol = 0.69,       retVolSd = 0.18,
-    kurt = 28.0,         kurtSd = 2.25,
+    retVol = 0.69,       retVolSd = 0.21,
+    kurt = 28.0,         kurtSd = 2.37,
     ac1 = 0.299,         ac1Sd = 0.12,
     ac20 = 0.225,        ac20Sd = 0.19,
     crashes = 20.7,      crashesSd = 0.24,
-    medDepth = -21.4,    medDepthSd = 0.13,
-    worstDepth = -56.8,  worstDepthSd = 0.24,
+    medDepth = -21.4,    medDepthSd = 0.16,
+    // RE-ANCHORED in 0.22.1, same error class as `median depth %` in 0.22.0: -56.8 was the
+    // 2007-09 episode, the worst of the 1954-2026 window, used where the model computes the worst
+    // over a whole history.  1954 opens AFTER the crash that set the record's worst, so the anchor
+    // graded the tail against a window with the tail removed.  Over the century, on the model's own
+    // 15% threshold, the record reads -84.1% (`episodes-2026-08-29.tsv`, w1926) -- the 1929-32
+    // decline, which every threshold in that window agrees on because it is one episode.
+    // `tailYears` moves to 100 with it, so the percentile is read at the window's own length.
+    // sd RE-MEASURED with the window: 0.24 was the spread of 72-year readings, 0.18 the spread
+    // of 100-year readings at the adopted disaster world (`-noise -paths 200`, 2026-08-30).
+    worstDepth = -84.1,  worstDepthSd = 0.18,
     volBand = (14.0, 18.0),
     retVolBand = (0.50, 0.85))
 
@@ -1527,6 +1653,7 @@ object MarketSim:
     name = "Nasdaq-100 / QQQ",
     equityWindow = "QQQ 1999-2026", equityYears = 27,
     clusterWindow = "QQQ 1999-2026", clusterYears = 27,
+    tailWindow = "QQQ 1999-2026", tailYears = 27,
     vol = 26.90,         volSd = 0.14,
     retVol = 0.38,       retVolSd = 0.18,
     kurt = 9.55,         kurtSd = 1.23,
@@ -1603,7 +1730,7 @@ object MarketSim:
     // four: across the crowdImpact sweep corr(vr60, equity d20 vs real) is 0.98, which is the
     // finding, not an argument for dropping a row.  The depth rungs said the world was too deep
     // and named no cause; this row names it.
-    ("variance ratio 60d", st => st.vr60,                                    1.00,  wgt(1.0, 0.32)),
+    ("variance ratio 60d", st => st.vr60,                                    1.00,  wgt(1.0, 0.36)),
     ("crashes/century",    st => st.epPerPath * 100.0 / st.yearsPerPath,    a.crashes,  wgt(1.0, a.crashesSd)),
     // RE-MEASURED in 0.22.0, and the old value was not this statistic.  `-27.1` shipped through
     // 0.21.0 with no recorded convention; the model measures every peak-to-trough decline of 15% or
@@ -1620,12 +1747,18 @@ object MarketSim:
     //
     // The two sibling anchors survive the same check, which is why only this one moved:
     // `crashes/century` 20.7 sits between the record's 19.2 (century) and 24.9 (1954-2026), and
-    // `worst crash %` -56.8 is the same 2007-09 episode the control reads at -54.6%.
+    // `worst crash %` did NOT survive it and was re-anchored in 0.22.1 -- see its own entry.
     ("median depth %",     st => st.depthMed,                              a.medDepth,  wgt(1.0, a.medDepthSd)),
-    // Judgment 0.5, DOWN from 1.0, on `-noise`'s finding: graded at 100 years against a
-    // 72-year anchor this ratio is mostly a max-order-statistic horizon artifact (at the
-    // anchor's own horizon the record sits at the model's 61st percentile).  Until the target
-    // is horizon-matched, weighting it fully would push `-calibrate` to close an artifact.
+    // Scored by the MEDIAN of single-history worsts at the anchor's own horizon -- `fitness`
+    // swaps the statistic in by name, supplied from `extremeScoreStats` -- never by the pooled
+    // ensemble minimum this statFn computes.  The minimum's distance from a one-history anchor
+    // tracks the ensemble size (the frozen scoring ensemble's happens to sit 0.004 from the
+    // anchor, a "perfect" reading for a tail `-validate` puts at the record's 1st percentile);
+    // the median converges, is the centre of the distribution the report's percentile is read
+    // from, and pulling it toward the anchor and pulling the percentile toward 50 are the same
+    // act.  The statFn stays the pooled minimum because the REPORTS read it as a level.
+    // Judgment 0.5: one draw of a max, partially redundant with the crash-rate and depth rows.
+    // sdRel 0.15 measured at the 100-year horizon (2026-08-30).
     ("worst crash %",      st => st.worstDepth,                            a.worstDepth,  wgt(0.5, a.worstDepthSd)),
     // The "(24y)" is load-bearing, not decoration: this row is measured on a different horizon
     // from every other, and the label is the only part that travels when the number is quoted.
@@ -1637,7 +1770,7 @@ object MarketSim:
     // +6.6 / +22.4 / +4.4 / +13.3 / +0.8.  The model was therefore read as UNDERSTATING a bond
     // rally it in fact overstates.  Six episodes is the honest limit here and `-noise` prices it in.
     // `test-data/bond-anchors/crash-response-2026-08-29.tsv`; `BondCrashSuite` re-derives both rows.
-    ("bond growth-crash",  st => st.bondGrowth,                              6.6,  wgt(1.0, 1.18)),
+    ("bond growth-crash",  st => st.bondGrowth,                              6.6,  wgt(1.0, 1.48)),
     // The judgment stays at 1.5 -- inflation-crash behaviour is why the bond refuge exists --
     // and the measured precision crushes the weight to ~0.13 anyway: sd/real 2.89, and only
     // 95 of 200 24-year histories produce a reading at all.  The old 1.5 was the largest
@@ -1646,7 +1779,7 @@ object MarketSim:
     // has, which reads -34.7% (SPY 2022-01-03..2022-10-12, TLT over the same span).  A median of one
     // is that one, so the anchor is the episode -- but rounded 28% toward zero, which is not a
     // convention, it is an error.
-    ("bond infl-crash",    st => st.bondInfl,                              -34.7,  wgt(1.5, 1.95)),
+    ("bond infl-crash",    st => st.bondInfl,                              -34.7,  wgt(1.5, 1.97)),
     // DEPTH PROFILE, stated RELATIVE to what a real fund of the same volatility and return spends
     // under water rather than as three absolute levels -- see `EquityD10Corr` for the relation and
     // `eqDepthVsReal` for what the ratio means.  A level target is a statement about one fund; a
@@ -1687,19 +1820,57 @@ object MarketSim:
     // no longer tell this model from the cross-section they were measured from, which is a stronger
     // statement than any ratio near 1.00, because it is made against the spread rather than the
     // point.
-    ("equity d5 vs real",   st => st.eqD5VsReal,                             1.00,  wgt(0.5, 0.15)),
-    ("equity d10 vs real",  st => st.eqD10VsReal,                            1.00,  wgt(1.0, 0.34)),
+    ("equity d5 vs real",   st => st.eqD5VsReal,                             1.00,  wgt(0.5, 0.17)),
+    ("equity d10 vs real",  st => st.eqD10VsReal,                            1.00,  wgt(1.0, 0.38)),
     // d20's sdRel moved 0.99 -> 1.56 in the 0.21.0 recovery-drag change, and like kurtosis's move
     // it is a re-measurement of a statistic that genuinely became more variable, not a correction:
     // slowing recovery from deep drawdowns makes time spent DEEP swing much harder between
     // histories (p5 0.19, p95 4.35 over 25 years).  Weighting by measurability drops it to 0.06.
     // No other target's sdRel moved beyond its own noise, so none were churned.
-    ("equity d20 vs real",  st => st.eqD20VsReal,                            1.00,  wgt(0.5, 1.62)),
-    ("bond depth vs vol",   st => st.bondDepthVsVol,                          1.00, wgt(0.5, 0.34)),
+    ("equity d20 vs real",  st => st.eqD20VsReal,                            1.00,  wgt(0.5, 1.89)),
+    ("bond depth vs vol",   st => st.bondDepthVsVol,                          1.00, wgt(0.5, 0.36)),
   )
-  def fitness(a: Anchors, st: WorldStats): (Double, Vector[(String, Double, Double, Double)]) =
+
+  /** Targets whose model statistic is an EXTREME order statistic over the pooled ensemble rather
+    * than a per-path central value.  `worstDepth` is the minimum over every episode in the run, so
+    * it deepens without bound as the ensemble grows: on one world with every dial fixed it reads
+    * 1.28x its anchor at 1 path and 1.58x at 400.  A ratio that moves with `-paths` grades the
+    * SAMPLE SIZE, not the model, and the anchor it is divided by is the deepest episode of ONE
+    * 72-year history against the deepest of ~4,400.
+    *
+    * These rows are reported as the anchor's PERCENTILE among single histories of the anchor's own
+    * length -- `-noise`'s `real@`, which converges -- and carry no ratio at all.  A median survives
+    * pooling and a minimum does not; that is the whole distinction.  `MarketSimContractSuite`
+    * requires every name here to be a fidelity target. */
+  val ExtremeTargets: Set[String] = Set("worst crash %")
+
+  /** The admissible interval for a per-path fidelity ratio, and the admissible percentile band for
+    * an `ExtremeTargets` row.  Stated ONCE: the report, the sidecar and the tests read the same
+    * pair, so a consumer's `miss` and a reader's `<-- MISS` cannot drift apart.
+    *
+    * Outside 5-95 is the condition `-noise`'s header already names -- the model cannot produce
+    * record-like histories on that statistic -- and it is the honest analogue of a ratio miss:
+    * both say "this level cannot be read off this world", neither says how far off it is. */
+  val FidelityRatioBand: (Double, Double) = (0.667, 1.5)
+  val ExtremePctBand: (Int, Int) = (5, 95)
+
+  /** Fewest single histories that can place a record within `ExtremePctBand`.  One history reads
+    * 0% or 100% and neither is a measurement; in general the resolution is `100/n` percentile
+    * points, so resolving a 5-point band edge needs 20.  Below this the row reports `n/a` and a
+    * MISS -- "too few histories to place the record" and "the model cannot produce record-like
+    * histories" are different findings, and only the second is about the model, but neither is a
+    * clean bill of health in the one field a consumer reads to decide whether to trust the file. */
+  val ExtremeMinHistories: Int = 100 / ExtremePctBand._1
+
+  /** `extremeStats`: the median single-history reading per `ExtremeTargets` row, from
+    * `extremeScoreStats` -- the loss must never price the pooled minimum those rows' statFn
+    * computes, so the caller supplies the converging statistic explicitly and a missing entry
+    * prices as unmeasurable rather than silently falling back. */
+  def fitness(a: Anchors, st: WorldStats,
+              extremeStats: Map[String, Double]): (Double, Vector[(String, Double, Double, Double)]) =
     val rows = fitTargets(a).map { (name, get, target, weight) =>
-      val m = get(st)
+      val m = if ExtremeTargets.contains(name) then extremeStats.getOrElse(name, Double.NaN)
+              else get(st)
       val term =
         if m.isNaN then weight * 4.0
         else if m.sign != target.sign && target != 0.0 then
@@ -2003,8 +2174,14 @@ object MarketSim:
     then s.map(c => if c == '+' || c == '-' then ' ' else c)
     else s
 
+  /** NON-FINITE ENTRIES ARE DROPPED, the same rule `measure`'s `med` applies, because
+    * `Ordering[Double]` ranks NaN ABOVE every number: an unfiltered sort parks them in the top
+    * slots and biases every quantile DOWNWARD rather than propagating the NaN.  A contaminated
+    * ensemble read a 6.17% median volatility against a 15.7% baseline that way.  A quantile is the
+    * wrong place to LEARN that an ensemble was contaminated -- the reports count that directly. */
   def pctile(v: Seq[Double], q: Double): Double =
-    if v.isEmpty then Double.NaN else v.sorted.apply(math.min((v.size * q).toInt, v.size - 1))
+    val f = v.filter(_.isFinite)
+    if f.isEmpty then Double.NaN else f.sorted.apply(math.min((f.size * q).toInt, f.size - 1))
 
   def simPaths(w: World, paths: Int, years: Int, seed: Long): Vector[Path] =
     simPathRange(w, 0, paths, years, seed)
@@ -2053,6 +2230,9 @@ object MarketSim:
     // Both in the ranges from the release they arrive in, for the same reason.
     ("recoveryDrag",  0.0, 20.0, (w, x) => w.copy(recoveryDrag = x)),
     ("recoveryFloor", 0.05, 1.0, (w, x) => w.copy(recoveryFloor = x)),
+    ("disasterRate",  0.0, 1.5, (w, x) => w.copy(disasterRate = x)),
+    ("disasterSize",  0.5, 2.5, (w, x) => w.copy(disasterSize = x)),
+    ("disasterRecover", 0.0, 0.9, (w, x) => w.copy(disasterRecover = x)),
     ("volOfVol",   0.012, 0.030, (w, x) => w.copy(volOfVol = x)),
     // In the ranges from the release it arrived in.  `fundVol` sat outside them for four releases
     // and that is exactly why its defect survived four releases of one-knob-at-a-time sweeps; a
@@ -2084,8 +2264,10 @@ object MarketSim:
     val trainSeed = seed; val holdSeed = seed + 7777777L
     def score(w: World, s: Long): Double =
       // scored at 100-year paths: an 80-year protocol missed a worst-crash blowup that only
-      // appears at the horizon actually used — tune at the scale you evaluate at
-      fitness(a, measure(simPaths(w, 50, 100, s), 100))._1
+      // appears at the horizon actually used — tune at the scale you evaluate at.  The extreme
+      // rows' median ensemble rides along at the same 50 histories, so a candidate is priced on
+      // the same statistic every report reads.
+      fitness(a, measure(simPaths(w, 50, 100, s), 100), extremeScoreStats(a, 50, s, w))._1
     eprintln(s"calibrate: $nSamples samples, 50 paths x 100 years each; holdout re-score of top 5")
     val scored = (0 until nSamples).map { k =>
       val (w, desc) = ranges.foldLeft((base, List.empty[String])) { case ((wAcc, d), (nm, lo, hi, set)) =>
@@ -2151,6 +2333,7 @@ object MarketSim:
         // other route and the world stops being the off-switch it is labelled as.
         ("no refuge channel",          base.copy(easing = 0.0, refuge = 0.0), false),
         ("no margin coupling",         base.copy(margin = 0.0), false),          // OFF-world: margin
+        ("no macro disasters",         base.copy(disasterRate = 0.0), false),    // OFF-world: disasters
         ("double inflation severity",  base.copy(inflSize = base.inflSize * 2.0), false),
       ) ++ (if !withReflexive then Vector.empty else Vector(
         // TWO AXES, not two modes.  Before the momentum crowd got a strength dial there was only
@@ -2424,6 +2607,16 @@ object MarketSim:
     println("  A flagged row is one where some published default read CLOSER to real than the current")
     println("  world does.  That is not automatically wrong — a trade may have been worth making — but")
     println("  it is the thing no predecessor-only comparison can show.")
+    // Kept as a ratio here, and ONLY here, because every column shares one ensemble size: the
+    // divergence that makes the level meaningless cancels in a world-to-world comparison, so the
+    // MOVEMENT across columns is real even though no column's value is a fidelity judgement.
+    // `-validate` reports these rows as a percentile; a reader who carries a level across from
+    // this table to that one is comparing two different things.
+    println()
+    println(s"  ROWS THAT ARE NOT FIDELITY RATIOS: ${ExtremeTargets.toVector.sorted.mkString(", ")}.")
+    println("  These are extremes over the pooled ensemble, so the LEVEL grades the ensemble size —")
+    println("  read them across columns (which world is deeper), never against 1.00.  The AGGREGATE")
+    println("  row includes them, and is the old equal-measurability objective's opinion regardless.")
 
   // ---- the cross-asset report -----------------------------------------------------------------
 
@@ -2591,7 +2784,15 @@ object MarketSim:
           // a flagged move against `-noise`'s seed-noise section before reading it as real; the
           // two columns share one seed, so 2 sd there is the conservative bound on this difference.
           val flag = if math.abs(ra - rd) > 0.05 then f"<-- moves ${ra - rd}%.2f" else ""
-          println(f"  $name%-22s$d%10.2f$at%11.2f$want%10.2f$rd%11.2f$ra%11.2f   $flag%s")
+          // Both columns share one ensemble size, so the MOVE is readable on every row; the LEVEL
+          // is not, on the extremes -- see the note below and `-validate`'s percentile.
+          val kind = if ExtremeTargets.contains(name) then " *" else ""
+          println(f"  $name%-22s$d%10.2f$at%11.2f$want%10.2f$rd%11.2f$ra%11.2f   $flag%s$kind%s")
+        if EquityTargets.exists(ExtremeTargets.contains) then
+          println()
+          println("  * an extreme over the pooled ensemble, not a per-path value: the MOVE between the two")
+          println("    columns is real, the LEVEL grades the ensemble size.  -validate reports it as a")
+          println("    percentile among single histories instead; do not carry a level across.")
 
   def crossAssetPreamble(): Unit =
     println("CROSS-ASSET — ONE mechanism across the duration ladder.  1 identity parameter: 0 FITTED,")
@@ -2701,9 +2902,13 @@ object MarketSim:
   def anchorGroups(a: Anchors): Vector[(String, Int, Vector[String])] = Vector(
     (a.equityWindow, a.equityYears,
      Vector("equity vol %", "return per vol", "kurtosis", "crashes/century",
-            "median depth %", "worst crash %")),
+            "median depth %")),
     (a.clusterWindow, a.clusterYears,
      Vector("clustering lag 1", "clustering lag 20")),
+    // Its own group because its own window -- see `Anchors.tailWindow`.  For both shipped sets this
+    // is the instrument's whole history, which is the only window that cannot have deleted the
+    // deepest episode.
+    (a.tailWindow, a.tailYears, Vector("worst crash %")),
     // 18 equity funds and three CRSP windows, the shortest of them 24.9 years -- see
     // `VarRatioBand`.  The horizon is one instrument's record, as it is for the depth rungs, and
     // the target this group carries is a theory value rather than a reading, so `real@` here says
@@ -2715,6 +2920,81 @@ object MarketSim:
      Vector("equity d5 vs real", "equity d10 vs real", "equity d20 vs real")),
     ("clean TLT, 24y", 24,
      Vector("bond vol % (24y)", "bond growth-crash", "bond infl-crash", "bond depth vs vol")))
+
+  /** One fidelity row AS REPORTED.  A per-path target carries a ratio; an `ExtremeTargets` row
+    * carries the anchor's percentile among single histories instead, and no ratio.  The two are
+    * different judgements and a consumer must be able to tell them apart from the data alone --
+    * the whole defect this type exists to prevent is a reader dividing two numbers that are not
+    * the same statistic and reading the quotient as a bias.
+    *
+    * `horizonYears` is the length of the record the anchor was read over, from `anchorGroups`; it
+    * is carried on EVERY row, not just the extreme ones, because a per-path ratio still folds a
+    * horizon mismatch a reader cannot otherwise see. */
+  final case class FidelityRow(name: String, model: Double, real: Double, ratio: Option[Double],
+                               pctile: Option[Int], horizonYears: Int, nHistories: Int):
+    /** Stated as the admissible interval and NEGATED, so an unmeasurable row reports a miss rather
+      * than a clean bill of health -- a `NaN` ratio fails both outward comparisons, and an extreme
+      * row whose ensemble produced no reading has nothing to stand on either. */
+    def miss: Boolean = ratio match
+      case Some(r) => !(r >= FidelityRatioBand._1 && r <= FidelityRatioBand._2)
+      case None    => !pctile.exists(p => p >= ExtremePctBand._1 && p <= ExtremePctBand._2)
+    def aggregation: String = if ExtremeTargets.contains(name) then "ensemble-extreme" else "per-path"
+
+  /** The horizon each target's anchor was read over, inverted from `anchorGroups` -- which the
+    * contract test already pins as a partition of the fidelity targets, so every target has one. */
+  def anchorHorizons(a: Anchors): Map[String, Int] =
+    anchorGroups(a).flatMap((_, yrs, names) => names.map(_ -> yrs)).toMap
+
+  /** Where an anchor falls among model readings, as a percentage.  `-noise`'s `real@` column and
+    * the extreme rows' `record@` are the SAME number and are computed here so they stay so: two
+    * reports disagreeing about one world would replace the confusion being fixed with a new one. */
+  def anchorPctile(xs: Vector[Double], want: Double): Int = 100 * xs.count(_ <= want) / xs.size
+
+  /** Each extreme target's per-single-history readings at its OWN horizon, from one ensemble.
+    * This is the distribution behind BOTH the report's percentile and the loss's median -- one
+    * function, so the two judgements cannot be read off different ensembles, and the same
+    * measurement `-noise` prints as `real@`.  One extra ensemble per distinct horizon, and only
+    * `ExtremeTargets` need it, so at the shipped anchor sets that is exactly one. */
+  def extremeReadings(a: Anchors, paths: Int, seed: Long, w: World): Map[String, Vector[Double]] =
+    anchorGroups(a)
+      .map((_, yrs, names) => (yrs, names.filter(ExtremeTargets.contains)))
+      .filter(_._2.nonEmpty)
+      .flatMap { (yrs, names) =>
+        val sts = simPaths(w, paths, yrs, seed).map(p => measure(Vector(p), yrs))
+        names.map { nm =>
+          val (_, get, _, _) = fitTargets(a).find(_._1 == nm)
+            .getOrElse(usage(s"ExtremeTargets names [$nm], which is not a fidelity target"))
+          nm -> sts.map(get).filter(x => !x.isNaN)
+        }
+      }.toMap
+
+  /** What the LOSS grades an extreme row by: the median of the single-history readings.  A median
+    * of extremes converges as histories are added, where the pooled minimum deepens without
+    * bound.  NaN where the ensemble produced no finite reading, which `fitness` prices as
+    * unmeasurable rather than as agreement. */
+  def extremeScoreStats(a: Anchors, histories: Int, seed: Long, w: World): Map[String, Double] =
+    // the same median rule `measure`'s local `med` applies: non-finite dropped, NaN on empty
+    extremeReadings(a, histories, seed, w).map { (nm, xs) =>
+      val f = xs.filter(_.isFinite)
+      nm -> (if f.isEmpty then Double.NaN else f.sorted.apply(f.size / 2))
+    }
+
+  /** Every fidelity row as the report and the sidecar both read it.  Built ONCE per invocation so
+    * the printed table and the emitted JSON cannot describe the same world differently. */
+  def fidelityRows(a: Anchors, st: WorldStats, paths: Int, seed: Long, w: World): Vector[FidelityRow] =
+    val pcts = if fitTargets(a).exists((n, _, _, _) => ExtremeTargets.contains(n))
+               then extremeReadings(a, paths, seed, w) else Map.empty
+    val hz   = anchorHorizons(a)
+    fitTargets(a).map { (name, get, want, _) =>
+      val got = get(st)
+      if ExtremeTargets.contains(name) then
+        val xs = pcts.getOrElse(name, Vector.empty)
+        val p  = if xs.size < ExtremeMinHistories then None else Some(anchorPctile(xs, want))
+        FidelityRow(name, got, want, None, p, hz.getOrElse(name, 0), xs.size)
+      else
+        FidelityRow(name, got, want, Some(if want != 0.0 then got / want else Double.NaN),
+                    None, hz.getOrElse(name, 0), 1)
+    }
 
   /** Replicates for the seed-noise section, and the seed stride between them.  1_000_003 is not a
     * multiple of the 7919 path stride (1_000_003 mod 7919 = 2209), so within the replicate count
@@ -2746,10 +3026,20 @@ object MarketSim:
     println("record is a typical history of this model, near 0/100% the model cannot produce")
     println("record-like histories on that statistic.  `sd/real` beside `wt` is the mis-weighting")
     println("check: equal weight with unequal sd/real grades two targets as equally measurable, and")
-    println("they are not.  `p50` vs `real` is the HORIZON-MATCHED reading; -fitness grades a")
-    println("100-year model reading against these mixed-horizon anchors, so its ratios fold a horizon")
-    println("artifact into targets like worst crash %.")
-    for (label, years, targets) <- anchorGroups(a) do
+    println("they are not.  `p50` vs `real` is the HORIZON-MATCHED reading; -fitness grades the")
+    println("extreme rows on it (the median of these single histories), and the per-path rows on the")
+    println("100-year scoring ensemble against these mixed-horizon anchors.")
+    // Merged for the REPORT only, in first-appearance order: `anchorGroups` keeps one entry per
+    // anchor because the windows are separate DECISIONS that happen to coincide in both shipped
+    // sets, and printing one header and running one ensemble per distinct (window, horizon) is what
+    // a reader wants from that.  Merging the field would be the coupling; merging the display is not.
+    val noiseGroups = anchorGroups(a).foldLeft(Vector.empty[(String, Int, Vector[String])]) {
+      case (acc, (label, years, names)) =>
+        acc.indexWhere((l, y, _) => l == label && y == years) match
+          case -1 => acc :+ (label, years, names)
+          case i  => acc.updated(i, (label, years, acc(i)._3 ++ names))
+    }
+    for (label, years, targets) <- noiseGroups do
       eprintln(s"$paths paths x ${years}y — $label")
       val sims = simPaths(base, paths, years, seed)
       val sts  = sims.map(p => measure(Vector(p), years))
@@ -2767,8 +3057,7 @@ object MarketSim:
           def p(q: Int) = xs((n - 1) * q / 100)
           val mean  = xs.sum / n
           val sd    = if n > 1 then math.sqrt(xs.map(x => (x - mean) * (x - mean)).sum / (n - 1)) else Double.NaN
-          val below = xs.count(_ <= want)
-          val ps    = s"${100 * below / n}%"
+          val ps    = s"${anchorPctile(xs, want)}%"
           println(f"  $name%-22s${want}%8.2f${p(5)}%8.2f${p(50)}%8.2f${p(95)}%8.2f$ps%7s$n%5d${sd / math.abs(want)}%8.2f${weight}%5.1f")
     eprintln(s"$NoiseReplicates replicates x $paths paths x 100y — seed noise")
     val reps = (0 until NoiseReplicates).toVector
@@ -3168,6 +3457,11 @@ object MarketSim:
     * usually much larger sample than the one path being written. */
   def writeEmitted(a: Anchors, file: String, p: Path, k: Int, w: World, years: Int, seed: Long,
                    startYmd: String, gateSt: WorldStats, gatePaths: Int): Unit =
+    // A non-finite path is refused, not written -- a file whose every row reads NaN is not data.
+    // The CLI's clean refusal (message + exit 2) lives at the emit sites in `main`, which pre-check
+    // before calling; here it THROWS, because this is also API and a `System.exit` in a library
+    // method takes a test harness down whole rather than failing one test.
+    require(p.price.forall(_.isFinite), s"path $k holds a non-finite price; refusing $file")
     val dates = sessionDates(p.price.length, startYmd)
     writeEmitTsv(file, p, dates)
     writeEmitSidecar(a, file, p, k, w, years, seed, startYmd, dates, gateSt, gatePaths)
@@ -3190,6 +3484,9 @@ object MarketSim:
       ("jumpRate", ef(w.jumpRate)), ("valuePull", ef(w.valuePull)),
       ("recoveryDrag", ef(w.recoveryDrag)), ("recoveryFloor", ef(w.recoveryFloor)),
       ("haltLimit", ef(w.haltLimit)),
+      ("disasterRate", ef(w.disasterRate)), ("disasterSize", ef(w.disasterSize)),
+      ("disasterLen", ef(w.disasterLen)), ("disasterRecover", ef(w.disasterRecover)),
+      ("disasterRecLen", ef(w.disasterRecLen)),
       ("crowd", jsonStr(crowdName(w.crowd))), ("crowdImpact", ef(w.crowdImpact)),
       ("panic", ef(w.panic)), ("duration", ef(w.duration)),
       ("easing", ef(w.easing)), ("unwind", ef(w.unwind)), ("refuge", ef(w.refuge)),
@@ -3218,12 +3515,18 @@ object MarketSim:
     val fidelityBad  = failedIn(a, gateSt, GateClass.Fidelity)
     def strList(v: Vector[String]): String = v.map(jsonStr).mkString("[", ", ", "]")
     def num(x: Double): String = if x.isNaN then "null" else ef(x)
-    val fidelity = fitTargets(a).map { (nm, get, want, _) =>
-      val got   = get(gateSt)
-      val ratio = if want != 0.0 then got / want else Double.NaN
-      val miss  = ratio > 1.5 || ratio < 0.667
-      s"""    { "name": ${jsonStr(nm)}, "model": ${num(got)}, "real": ${num(want)}, """ +
-      s""""ratio": ${num(ratio)}, "miss": $miss }"""
+    // `aggregation` and `horizonYears` are the terms of the comparison, and they are in the DATA
+    // because prose does not travel: a consumer holding this file has no access to the report's
+    // note, and an `ensemble-extreme` row divided by its anchor gives a quotient that grades the
+    // ensemble size.  Such a row carries `ratio: null` and a `percentile` instead -- where the
+    // record falls among single histories of its own length -- so the division cannot be made by
+    // accident.  `miss` is the admissible interval NEGATED for both kinds, so a row that could not
+    // be measured reports a miss rather than a clean bill of health.
+    val fidelity = fidelityRows(a, gateSt, gatePaths, seed, w).map { r =>
+      s"""    { "name": ${jsonStr(r.name)}, "model": ${num(r.model)}, "real": ${num(r.real)}, """ +
+      s""""aggregation": ${jsonStr(r.aggregation)}, "horizonYears": ${r.horizonYears}, """ +
+      s""""ratio": ${r.ratio.fold("null")(num)}, """ +
+      s""""percentile": ${r.pctile.fold("null")(_.toString)}, "miss": ${r.miss} }"""
     }
     val json = Vector(
       "{",
@@ -3271,7 +3574,12 @@ object MarketSim:
 
   // ---- entry point ---------------------------------------------------------------------------
   def main(args: Array[String]): Unit =
+    // Usage errors exit 2 on BOTH twins -- the Rust side's `cli_die` convention, distinct from the
+    // verdict exits' 1 (gate failure, a -crossasset miss).  `showUsage` exits 1 for every uni app;
+    // this seam redirects only this process, not the library.
+    uni.cli.ArgsParser.exitFn = _ => sys.exit(2)
     var paths = DefaultPaths; var years = DefaultYears; var seed = DefaultSeed
+    var pathsGiven = false; var yearsGiven = false
     var anchorSpec = "sp500"
     var ddShape = false
     var emit = ""; var validate = false; var strategies = false; var single = false
@@ -3364,24 +3672,32 @@ object MarketSim:
     // the one that worked keys on distance below the PEAK, which is what the statistic is about,
     // where a pull convex in the gap to FAIR VALUE cannot tell a deep drawdown from an ordinary one.
     //
-    // TWO KNOWN BIAS DIRECTIONS, netted away nowhere else: worst crash at 1.61 puts index paths
-    // near -92% against a real -56.8%, which no levered fund survives, so ruin rates for levered
-    // sleeves are UPPER BOUNDS, not estimates; and the DEEP drawdown rung runs long at 1.78, which
-    // is what the drag costs -- a slower climb out of a deep hole is more time deep.  Rules keyed
-    // to a deep distance from peak inherit that; the shallow rungs read 0.94 and 1.03.
+    // THE MACRO-DISASTER CHANNEL (0.22.1) is the "channel that deepens a crash without adding
+    // low-frequency variance" this note used to call for and attribute to the absent valuation
+    // cycle -- it buys the exemption through RARITY, not through a cycle, and it carried the
+    // CENTURY tail: the record's -84.1% moved from the 1st percentile of model centuries to the
+    // 18th.  What a valuation cycle alone could still add is documented at `disasterRate`'s
+    // World field and in docs/MarketSimWorlds.md: valuation-LED deep crashes (2000-02: multiples
+    // collapse, earnings fine) and peaks that sit far above fair value before they fall.  Every
+    // deep crash here starts from a peak AT fair value, and a consumer reading the emitted
+    // `fundamental` column or `-strategies`' crash-type conditioning sees the shifted mix.
     //
-    // That last one is the price of the depth rungs and it is structural, not a tuning miss:
-    // every world that puts time under water near the real relation lands median crash depth at
-    // 0.78-0.85, because cooling the fundamental makes drawdowns shorter AND shallower together.
-    // Measured across the global search's winner, the local optimum and six hand variants
-    // including `stress` at its range ceiling; nothing available separates them.  Closing it needs
-    // a channel that deepens a crash without adding low-frequency variance — the same absent
-    // valuation cycle the kurtosis note below blames for there being no second tail channel.
+    // ONE KNOWN BIAS DIRECTION, netted away nowhere else: the DEEP drawdown rung reads 2.36 (d20),
+    // partly the drag's cost -- a slower climb out of a deep hole is more time deep -- and, since
+    // 0.22.1, partly the RULER's: the relation is fitted on 2001-2026 funds, a window with no
+    // depression in it, while the model's own share of sessions >20% under water (0.126, median
+    // path) sits BELOW a rough reading of the real century's (~0.15-0.20).  Rules keyed to a deep
+    // distance from peak inherit the model number; the shallow rungs read 0.98 and 1.13.
+    // Ruin rates for levered sleeves read off the ensemble MINIMUM remain UPPER BOUNDS, not
+    // estimates -- 20,000 market-years of worst case, and no fund lives that long.
     var trendShare = Defaults.trendShare; var depth = Defaults.depth
     var stress = Defaults.stress; var beta = Defaults.beta
     var volPersist = Defaults.volPersist; var volOfVol = Defaults.volOfVol
     var jumpVar = Defaults.jumpVar; var jumpRate = Defaults.jumpRate
     var recoveryDrag = Defaults.recoveryDrag; var recoveryFloor = Defaults.recoveryFloor
+    var disasterRate = Defaults.disasterRate; var disasterSize = Defaults.disasterSize
+    var disasterLen = Defaults.disasterLen
+    var disasterRecover = Defaults.disasterRecover; var disasterRecLen = Defaults.disasterRecLen
     var haltLimit = Defaults.haltLimit
     var valuePull = Defaults.valuePull
     var crowdName = "momentum"; var crowdImpact = Defaults.crowdImpact; var panic = Defaults.panic
@@ -3396,8 +3712,8 @@ object MarketSim:
       // `[ "$(marketSim.sc -version)" = "$want" ] || exit 1`.  Handled where it is seen, so it
       // answers before any other flag is validated.
       case "-version"    => println(Version); System.exit(0)
-      case "-paths"      => paths = intOr("-paths", consumeNext)
-      case "-years"      => years = intOr("-years", consumeNext)
+      case "-paths"      => paths = intOr("-paths", consumeNext); pathsGiven = true
+      case "-years"      => years = intOr("-years", consumeNext); yearsGiven = true
       case "-seed"       => seed = longOr("-seed", consumeNext)
       case "-emit"       => emit = consumeNext
       case "-emitpath"   => emitPath = intOr("-emitpath", consumeNext)
@@ -3432,6 +3748,11 @@ object MarketSim:
       case "-anchors"    => anchorSpec = consumeNext
       case "-recoverydrag"  => recoveryDrag = numOr("-recoverydrag", consumeNext)
       case "-recoveryfloor" => recoveryFloor = numOr("-recoveryfloor", consumeNext)
+      case "-disasterrate"  => disasterRate = numOr("-disasterrate", consumeNext)
+      case "-disastersize"  => disasterSize = numOr("-disastersize", consumeNext)
+      case "-disasterlen"   => disasterLen = numOr("-disasterlen", consumeNext)
+      case "-disasterrecover" => disasterRecover = numOr("-disasterrecover", consumeNext)
+      case "-disasterreclen"  => disasterRecLen = numOr("-disasterreclen", consumeNext)
       case "-haltlimit"  => haltLimit = numOr("-haltlimit", consumeNext)
       case "-crowd"      => crowdName = consumeNext
       case "-crowdimpact"=> crowdImpact = numOr("-crowdimpact", consumeNext)
@@ -3475,6 +3796,52 @@ object MarketSim:
             Rules.zipWithIndex.map((r, i) => f"  ${i + 1}%d  ${r.name}%s").mkString("\n"))
     if powerYears.exists(_ < 1) then
       usage(s"-poweryears wants year counts of at least 1, got [${powerYears.mkString(",")}]")
+    // DOMAINS for the world dials.  Out of domain they do not fail on their own: `-jumprate 0` with
+    // a positive `-jumpvar` divides by zero in `jumpScale` and emitted a file of NaN at exit 0, and
+    // `-recoveryfloor 3` inverts asymmetric recovery -- arbitrage STRONGER in a deep drawdown, the
+    // documented mechanism run backwards -- into a world that then PASSES the acceptance gate.  A
+    // clamp that cannot throw is worse than one that can: what you get is a certified world, not a
+    // stack trace.
+    //
+    // Reject what the mechanism cannot express, never what merely looks unusual -- an over-tight
+    // bound breaks a sweep script for no defect.  Every value recorded anywhere in this repo is
+    // admitted, `-jumpvar 0` and `-haltlimit 0` (the documented disable values) included, as is
+    // every range `calibrate` sweeps.  Written as `!(x >= lo ...)` so a NaN literal -- `toDouble`
+    // accepts "nan" -- is refused here rather than reaching the model.
+    def share(flag: String, x: Double): Unit =
+      if !(x >= 0.0 && x <= 1.0) then usage(s"$flag wants a share in 0..1, got $x")
+    def belowOne(flag: String, x: Double): Unit =
+      if !(x >= 0.0 && x < 1.0) then usage(s"$flag wants at least 0 and below 1, got $x")
+    def nonNeg(flag: String, x: Double): Unit =
+      if !(x >= 0.0) then usage(s"$flag wants a non-negative number, got $x")
+    def positive(flag: String, x: Double): Unit =
+      if !(x > 0.0) then usage(s"$flag wants a positive number, got $x")
+    share("-trendshare", trendShare); share("-jumpvar", jumpVar); share("-jumprate", jumpRate)
+    share("-recoveryfloor", recoveryFloor); share("-inflprob", inflProb)
+    share("-inflspeed", inflSpeed)
+    belowOne("-volpersist", volPersist); belowOne("-haltlimit", haltLimit)
+    positive("-depth", depth); positive("-duration", duration)
+    nonNeg("-stress", stress); nonNeg("-beta", beta); nonNeg("-volofvol", volOfVol)
+    nonNeg("-value", valuePull); nonNeg("-recoverydrag", recoveryDrag)
+    nonNeg("-disasterrate", disasterRate); nonNeg("-disastersize", disasterSize)
+    share("-disasterrecover", disasterRecover)
+    if disasterRate > 0.0 && (disasterSize <= 0.0 || disasterLen <= 0.0) then
+      usage(s"-disasterrate $disasterRate needs -disastersize and -disasterlen above 0")
+    if disasterRecover > 0.0 && disasterRecLen <= 0.0 then
+      usage(s"-disasterrecover $disasterRecover needs -disasterreclen above 0")
+    nonNeg("-crowdimpact", crowdImpact); nonNeg("-panic", panic); nonNeg("-fundvol", fundVol)
+    nonNeg("-ratemean", rateMean); nonNeg("-easing", easing); nonNeg("-unwind", unwind)
+    nonNeg("-refuge", refuge); nonNeg("-inflsize", inflSize); nonNeg("-ratespeed", rateSpeed)
+    nonNeg("-discount", discount); nonNeg("-margin", margin); nonNeg("-cost", cost)
+    // `-drift` carries no domain: a negative fundamental drift is a world, not an error.
+    // The PAIR is what no per-dial check can see -- `jumpScale` divides by `jumpRate`.
+    if jumpVar > 0.0 && jumpRate <= 0.0 then
+      usage(s"-jumpvar $jumpVar needs -jumprate above 0: the jump size is set by jumpVar/jumpRate")
+    // The loss is only comparable on the ensemble the -noise weights were frozen from, so -fitness
+    // pins 60x80 -- and REFUSES rather than ignores an explicit override, the same rule -emitfrom
+    // follows.  Accepted-then-ignored is how "the loss improved" gets read off a different sample.
+    if fitnessOnly && (pathsGiven || yearsGiven) then
+      usage("-fitness scores the frozen 60x80 ensemble; -paths/-years do not apply")
     val crowd = crowdName.toLowerCase match
       case "momentum"  => Crowd.Momentum
       case "volscaled" => Crowd.VolScaled
@@ -3489,6 +3856,9 @@ object MarketSim:
                   jumpVar = jumpVar, jumpRate = jumpRate, valuePull = valuePull,
                   recoveryDrag = recoveryDrag, recoveryFloor = recoveryFloor,
                   haltLimit = haltLimit,
+                  disasterRate = disasterRate, disasterSize = disasterSize,
+                  disasterLen = disasterLen,
+                  disasterRecover = disasterRecover, disasterRecLen = disasterRecLen,
                   crowd = crowd, crowdImpact = crowdImpact, panic = panic,
                   duration = duration, easing = easing, unwind = unwind, refuge = refuge,
                   inflProb = inflProb, inflSize = inflSize,
@@ -3499,10 +3869,18 @@ object MarketSim:
       return
     if fitnessOnly then
       val st = measure(simPaths(w, 60, 80, seed), 80)
-      val (loss, rows) = fitness(anchors, st)
+      val (loss, rows) = fitness(anchors, st, extremeScoreStats(anchors, 60, seed, w))
       println(f"fitness loss $loss%.3f  (lower is better; includes 0.5 per failed gate check)")
       rows.foreach((n, m, t, term) => println(f"  $n%-22s model $m%8.2f   target $t%8.2f   term $term%6.3f"))
       gateChecks(anchors, st).filter(!_._2).foreach((n, _, _) => println(f"  FAILED GATE: $n%s  (+0.500)"))
+      // The model column for these rows is a DIFFERENT statistic from -validate's: said here
+      // because a reader comparing the two tables would otherwise take the disagreement for a bug.
+      if rows.exists((n, _, _, _) => ExtremeTargets.contains(n)) then
+        println(s"  NOTE: ${ExtremeTargets.toVector.sorted.mkString(", ")} — the model value scored (and shown")
+        println("    above) is the MEDIAN of single histories at the anchor's own horizon, the")
+        println("    converging centre of the distribution -validate's percentile reads.  The pooled")
+        println("    ensemble minimum is never scored: its distance from a one-history anchor")
+        println("    tracks the ensemble size.")
       return
     if releaseReport then
       runReleaseReport(anchors, paths, years, seed, w)
@@ -3558,6 +3936,13 @@ object MarketSim:
       // ensemble is simulated directly rather than forcing a larger run
       def pathAt(k: Int): Path =
         if k < sims.length then sims(k) else simulate(w, years, seed + k.toLong * 7919L)
+      // REFUSED, not warned about.  Every other gate verdict is advisory because an unrealistic
+      // world is still a world; a path holding a non-finite price is not data at all.  The dial
+      // domains close the routes reachable from the command line; this closes the file.
+      def refuseNonFinite(p: Path, k: Int, f: String): Unit =
+        if !p.price.forall(_.isFinite) then
+          eprintln(s"REFUSED: path $k holds a non-finite price; nothing written to $f")
+          System.exit(2)
       val written =
         if emitAll then
           // At the default offset this IS the report ensemble; shifted, the range is re-simulated
@@ -3567,10 +3952,12 @@ object MarketSim:
           val width = indexWidth(emitFrom + paths - 1)
           for k <- emitFrom until emitFrom + paths yield
             val f = indexedName(emit, k, width)
+            refuseNonFinite(batch(k - emitFrom), k, f)
             writeEmitted(anchors, f, batch(k - emitFrom), k, w, years, seed, emitStart, gateSt, gatePaths)
             f
         else
           val p = pathAt(emitPath)
+          refuseNonFinite(p, emitPath, emit)
           writeEmitted(anchors, emit, p, emitPath, w, years, seed, emitStart, gateSt, gatePaths)
           Vector(emit)
       val sessions = pathAt(if emitAll then emitFrom else emitPath).price.length
@@ -3583,6 +3970,13 @@ object MarketSim:
     val annRet  = sims.map(s => math.log(s.price.last / s.price.head) / years * 100.0)
 
     println(f"paths $paths%d x $years%d years   ${paths * years}%d simulated years")
+    // `med` and `pctile` both drop non-finite paths, so summarising the survivors in silence is how
+    // a contaminated ensemble reads as an ordinary world.  The count is stated where the medians it
+    // excludes are read.
+    val nonFinitePaths = sims.count(s => !s.price.forall(_.isFinite))
+    if nonFinitePaths > 0 then
+      println(f"  WARNING: $nonFinitePaths%d of ${sims.size}%d paths hold a non-finite price and are EXCLUDED from")
+      println("           every median and percentile below -- this world is not simulable as dialled")
     println()
     println(f"  annualised return      median ${st.annRet}%6.2f%%   5th ${pctile(annRet, 0.05)}%6.2f%%   95th ${pctile(annRet, 0.95)}%6.2f%%")
     println(f"  annualised volatility  median ${st.vol * 100}%6.2f%%   5th ${pctile(annVol, 0.05) * 100}%6.2f%%   95th ${pctile(annVol, 0.95) * 100}%6.2f%%")
@@ -3618,7 +4012,8 @@ object MarketSim:
             f"${st.tailFloorPct}%.1f%% of tail sessions   " +
             f"halts ${st.haltPct}%.3f%%")
     println(f"                         crowd flow ${st.crowdFlow * 1e4}%.2f bp/session " +
-            f"(${st.crowdFlow / SigmaN * 100}%.1f%% of the noise term) — the reflexive channel")
+            f"(${st.crowdFlow / SigmaN * 100}%.1f%% of the noise term) — the reflexive channel   " +
+            f"macro disasters ${st.disPerCentury}%.2f/century")
 
     println()
     // The anchors do NOT share one window, and a single-window label invites a reader to re-derive
@@ -3638,11 +4033,18 @@ object MarketSim:
     println("    NOTE: bond volatility alone is measured over 24-YEAR windows, not the whole path —")
     println("      it is the one horizon-dependent statistic whose anchor can only come from fund")
     println("      data, and no clean bond-fund series runs longer.  Every other row is whole-path.")
-    fitTargets(anchors).foreach { (n, get, want, _) =>
-      val got = get(st)
-      val ratio = if want != 0 then got / want else Double.NaN
-      val flag  = if ratio > 1.5 || ratio < 0.667 then "  <-- MISS" else ""
-      println(f"     $n%-22s model ${got}%8.2f   real ${want}%8.2f   ratio ${ratio}%5.2f$flag%s")
+    println("    NOTE: a row whose model statistic is an EXTREME over the ensemble carries no ratio —")
+    println("      the deepest of ~4,400 pooled episodes over the deepest of ONE history grades the")
+    println("      sample size, not the model, and deepens without bound as -paths grows.  Those rows")
+    println("      report where the record falls among single histories of its own length instead;")
+    println("      near 50% the record is a typical history of this model.  Same reading as -noise.")
+    fidelityRows(anchors, st, paths, seed, w).foreach { r =>
+      val flag = if r.miss then "  <-- MISS" else ""
+      val judgement = (r.ratio, r.pctile) match
+        case (Some(x), _)    => f"ratio $x%5.2f"
+        case (None, Some(p)) => f"record@ $p%3d%% of ${r.horizonYears}%dy histories (n=${r.nHistories}%d)"
+        case (None, None)    => f"record@  n/a — ${r.nHistories}%d histories, needs $ExtremeMinHistories%d"
+      println(f"     ${r.name}%-22s model ${r.model}%8.2f   real ${r.real}%8.2f   $judgement%s$flag%s")
     }
 
     if validate then

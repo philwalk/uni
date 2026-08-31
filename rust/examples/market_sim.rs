@@ -82,7 +82,17 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 // now per unit TRADED, one rule for every crowd. A reader that reconstructs a `World` from a
 // schema-4 sidecar and runs it here gets a different market with no error — exactly what the schema
 // number exists to prevent.
-const EMIT_SCHEMA: u32 = 5;
+// 5 -> 6: each `fidelity` row gained `aggregation` and `horizonYears`, and `ratio` became
+// nullable, paired with a new `percentile`. A schema-5 reader that treats `ratio` as always present
+// breaks loudly on the null rather than dividing two incomparable statistics in silence, which is
+// the whole reason the field is null and not a number. `world` also gained the five disaster
+// dials; a reader that reconstructs a `World` from a schema-5 sidecar and runs it here gets a
+// market without the century-tail channel.
+const EMIT_SCHEMA: u32 = 6;
+
+/// The base random seed `-seed` defaults to, named so `main` and the tests that reproduce a
+/// default-world ensemble cannot drift apart. Mirrors the Scala twin's `DefaultSeed`.
+const DEFAULT_SEED: u64 = 20_260_813;
 
 // Referenced only from the test module below; in a normal build of the example it is
 // deliberately unread — the writer must not consult its own contract.
@@ -229,7 +239,7 @@ fn default_world() -> World {
         depth: 17.4,
         stress: 5.37,
         beta: 3.0,
-        drift: 0.113,
+        drift: 0.118,
         fund_vol: 0.070,
         rate_mean: 0.042,
         vol_persist: 0.99,
@@ -237,6 +247,17 @@ fn default_world() -> World {
         recovery_drag: 10.0,
         recovery_floor: 0.10,
         halt_limit: 0.25,
+        // The disaster channel, ADOPTED 0.22.1: rate 0.6/century, total log decline 2.0 over 2.5
+        // years, half reversing over 4. Chosen on the tail loss term at 60 histories and verified
+        // at 200x100 on four seeds (all three gate classes PASS; the record's century-worst moves
+        // from the 1st percentile of model centuries to the 16-23rd). `drift` 0.113 -> 0.118
+        // compensates the expected-return cost of the unreversed half (~0.6%/yr), putting return
+        // per vol back on its anchor (0.71 vs 0.69).
+        disaster_rate: 0.6,
+        disaster_size: 2.0,
+        disaster_len: 2.5,
+        disaster_recover: 0.5,
+        disaster_rec_len: 4.0,
         jump_var: 0.17,
         jump_rate: 0.0050,
         value_pull: 0.045,
@@ -292,6 +313,11 @@ fn v0_19_2() -> World {
         jump_var: 0.0,
         jump_rate: 0.0,
         value_pull: 0.013,
+        disaster_rate: 0.0,
+        disaster_size: 2.0,
+        disaster_len: 2.5,
+        disaster_recover: 0.5,
+        disaster_rec_len: 4.0,
         crowd: Crowd::Momentum,
         crowd_impact: 0.088,
         panic: 0.0,
@@ -333,8 +359,48 @@ fn releases() -> Vec<(&'static str, World)> {
         ("0.19.3", v0_19_2()),
         ("0.20.0", v0_20_0()),
         ("0.21.0", v0_21_0()),
-        ("0.22.0", default_world()),
+        ("0.22.0", v0_22_0()),
     ]
+}
+
+/// 0.22.0's world, frozen for the same reason `v0_20_0` is: the disaster channel moved the
+/// default off it.
+fn v0_22_0() -> World {
+    World {
+        trend_share: 0.055,
+        depth: 17.4,
+        stress: 5.37,
+        beta: 3.0,
+        drift: 0.113,
+        fund_vol: 0.070,
+        rate_mean: 0.042,
+        vol_persist: 0.99,
+        vol_of_vol: 0.027,
+        recovery_drag: 10.0,
+        recovery_floor: 0.10,
+        halt_limit: 0.25,
+        disaster_rate: 0.0,
+        disaster_size: 2.0,
+        disaster_len: 2.5,
+        disaster_recover: 0.5,
+        disaster_rec_len: 4.0,
+        jump_var: 0.17,
+        jump_rate: 0.0050,
+        value_pull: 0.045,
+        crowd: Crowd::Momentum,
+        crowd_impact: 0.030,
+        panic: 0.0,
+        duration: 13.5,
+        easing: 0.060,
+        unwind: 0.35,
+        refuge: 0.11,
+        infl_prob: 0.20,
+        infl_size: 0.10,
+        infl_speed: 0.010,
+        rate_speed: 3.0,
+        discount: 5.73,
+        margin: 0.006,
+    }
 }
 
 /// 0.21.0's world, frozen for the same reason `v0_20_0` is: the variance-ratio row moved the default
@@ -353,6 +419,11 @@ fn v0_21_0() -> World {
         recovery_drag: 10.0,
         recovery_floor: 0.10,
         halt_limit: 0.25,
+        disaster_rate: 0.0,
+        disaster_size: 2.0,
+        disaster_len: 2.5,
+        disaster_recover: 0.5,
+        disaster_rec_len: 4.0,
         jump_var: 0.10,
         jump_rate: 0.0010,
         value_pull: 0.045,
@@ -391,6 +462,11 @@ fn v0_20_0() -> World {
         jump_var: 0.0,
         jump_rate: 0.0,
         value_pull: 0.0145,
+        disaster_rate: 0.0,
+        disaster_size: 2.0,
+        disaster_len: 2.5,
+        disaster_recover: 0.5,
+        disaster_rec_len: 4.0,
         crowd: Crowd::Momentum,
         crowd_impact: 0.07,
         panic: 0.0,
@@ -448,6 +524,29 @@ struct World {
     /// what the frozen release rows inherit -- correctly, since no release before this one had the
     /// mechanism.
     halt_limit: f64,
+    /// Macro disasters per CENTURY: rare multi-year collapses of the real fundamental (1929-32,
+    /// not 1987) — the Barro-Rietz channel. Rare is what lets it deepen the century-scale tail
+    /// without touching daily volatility or the 60d variance ratio, which fence off every
+    /// CONTINUOUS extra-variance channel. 0 disables it; draws come from their own stream, so the
+    /// frozen release rows inherit pre-disaster behaviour bit for bit.
+    ///
+    /// SCOPE: it shifts deep crashes toward FUNDAMENTAL-led (>35% crashes: 31% -> 40% on the
+    /// -strategies classifier; the rest stay spiral dislocations), and every deep crash still
+    /// starts from a peak AT fair value (p/f 0.96-1.19 measured). The model has no mania channel,
+    /// so the 1929/2000 shape — a collapse from a peak far ABOVE fair value, multiples doing the
+    /// falling — cannot occur. Price-path statistics cannot tell; anything reading the emitted
+    /// `fundamental` column or `-strategies`' crash-type conditioning can.
+    disaster_rate: f64,
+    /// total log decline of the fundamental per disaster
+    disaster_size: f64,
+    /// years from onset to trough; the decline is spread evenly
+    disaster_len: f64,
+    /// share of the decline that REVERSES after the trough — Barro's cross-country estimate is
+    /// about half. Without it a disaster century spends decades >20% underwater and the deep depth
+    /// rung runs far past even the real 1929 century's share.
+    disaster_recover: f64,
+    /// years the recovery is spread over
+    disaster_rec_len: f64,
     /// share of the equity flow's VARIANCE carried by jumps rather than diffusion. 0 disables the
     /// channel and reproduces pre-0.21 behaviour byte for byte — the draws come from their own
     /// stream, so nothing else in the path shifts.
@@ -517,6 +616,8 @@ struct Path {
     /// a fixed absolute band can only ever fit one bond
     duration: f64,
     mean_crowd_flow: f64,
+    /// BINDING diagnostic for the disaster channel: collapses begun post burn-in on this path.
+    disasters: usize,
 }
 
 /// ONE price-formation mechanism for every traded asset: value demand toward `fair`, plus
@@ -691,6 +792,9 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
     // unconditionally — it costs one allocation and touches nothing — and read only when
     // `jump_var > 0`.
     let mut jrng = NumPyRng::new(seed ^ 0x1eaf_7a11u64);
+    // The disaster channel's own stream, for the same survivability reason as `jrng` above:
+    // constructed unconditionally, read only when `disaster_rate > 0`, so rate 0 is bit-identical.
+    let mut drng = NumPyRng::new(seed ^ 0xd15a_57e5u64);
     let mut px = vec![0.0f64; tot];
     let mut fv = vec![0.0f64; tot];
     let mut rt = vec![0.0f64; tot];
@@ -760,6 +864,14 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
     let mut eq_floor_at_burn = 0usize;
     let mut eq_tail_at_burn = 0usize;
     let mut eq_halt_at_burn = 0usize;
+    // MACRO DISASTER state: sessions left in the current collapse, its per-session decrement, the
+    // recovery leg, and the post-burn-in onset count — the channel's BINDING diagnostic.
+    let mut dis_left = 0usize;
+    let mut dis_step = 0.0f64;
+    let mut rec_left = 0usize;
+    let mut rec_step = 0.0f64;
+    let mut disaster_count = 0usize;
+    let dis_prob = w.disaster_rate / (100.0 * DAYS_PER_YEAR as f64);
 
     let mut i = 0usize;
     while i < tot {
@@ -773,6 +885,35 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
             };
             drift_now = w.drift + rng.randn() * 0.04;
             regime_countdown = 250 + i64::from(rng.next_bounded_u32(2500));
+        }
+        // MACRO DISASTER: a rare multi-year collapse of the real fundamental. One uniform draw
+        // per session from the channel's own stream while armed; onset starts a decline of
+        // `disaster_size` log spread evenly over `disaster_len` years, which the price then tracks
+        // through the ordinary value channel — the crash is fundamental-led, like 1929-32, and the
+        // spiral and recovery drag shape it downstream. No new disaster starts while one runs.
+        if dis_prob > 0.0 {
+            if dis_left > 0 {
+                log_vbase -= dis_step;
+                dis_left -= 1;
+                // trough reached: the RECOVERY leg arms, spreading `disaster_recover` of the
+                // decline back over `disaster_rec_len` years. What does NOT reverse is permanent.
+                if dis_left == 0 && w.disaster_recover > 0.0 {
+                    rec_left = ((w.disaster_rec_len * DAYS_PER_YEAR as f64) as usize).max(1);
+                    rec_step = w.disaster_recover * w.disaster_size / rec_left as f64;
+                }
+            } else {
+                if rec_left > 0 {
+                    log_vbase += rec_step;
+                    rec_left -= 1;
+                }
+                if drng.next_f64() < dis_prob {
+                    dis_left = ((w.disaster_len * DAYS_PER_YEAR as f64) as usize).max(1);
+                    dis_step = w.disaster_size / dis_left as f64;
+                    if i >= BURN_IN {
+                        disaster_count += 1;
+                    }
+                }
+            }
         }
         log_vbase += drift_now * dt + w.fund_vol * sqdt * rng.randn();
         infl_press += w.infl_speed * (infl_target - infl_press);
@@ -851,11 +992,19 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
         };
         let momentum = log_pobs - past;
         let trend_pos = (momentum / 0.12).tanh();
-        // The momentum crowd's desired exposure, set here rather than in the block above only
-        // because `trend_pos` needs this session's `log_pobs`; the information behind it is still
-        // strictly prior. It is continuous where the other crowds' targets are banded, and
-        // deliberately unbanded: the 0.05 band exists to stop a BINARY target flip-flopping across a
-        // moving average, and a continuous target has nothing to flip-flop about.
+        // The momentum crowd's desired exposure, set here rather than in the block above because
+        // `trend_pos` needs this session's `log_pobs` -- and `log_pobs` carries this session's
+        // `markdown`, so this crowd reacts to the rate move being priced in the SAME session, where
+        // `Crowd::Trend` and `Crowd::VolScaled` read `px[i - 1]` alone. Two live consequences:
+        // `-crowd` varies information timing along with crowd type, and `perf_t` below pairs a
+        // position holding -discount*d_rate with a return holding the same term, a product that is
+        // structurally positive and tilts the capital spring toward the trend crowd by arithmetic
+        // rather than trading. `trend_share` is calibrated, so the calibration has absorbed it;
+        // whether the crowd should act one session later instead is a MECHANISM question, and
+        // changing it moves every calibrated statistic. It is continuous where the other crowds'
+        // targets are banded, and deliberately unbanded: the 0.05 band exists to stop a BINARY
+        // target flip-flopping across a moving average, and a continuous target has nothing to
+        // flip-flop about.
         if matches!(w.crowd, Crowd::Momentum) {
             crowd_e = trend_pos;
         }
@@ -993,6 +1142,7 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
         pct_bond_stress: bond_stress_hi as f64 / nf,
         duration: w.duration,
         mean_crowd_flow: crowd_flow_sum / nf,
+        disasters: disaster_count,
     }
 }
 
@@ -1227,6 +1377,7 @@ struct WorldStats {
     mean_bond_stress: f64,
     pct_bond_stress: f64,
     crowd_flow: f64,
+    dis_per_century: f64,
     duration: f64,
     infl_ann: f64,
     /// depth profile: median share of sessions more than 5/10/20% below the running peak,
@@ -1451,8 +1602,10 @@ fn sorted_total(v: &[f64]) -> Vec<f64> {
     s
 }
 
+/// `is_finite`, not `!is_nan`: an infinite path is no more a datum than a NaN one, and `pctile`
+/// drops the same set, so a median and the percentiles printed beside it describe the same paths.
 fn med(v: &[f64]) -> f64 {
-    let f: Vec<f64> = v.iter().copied().filter(|x| !x.is_nan()).collect();
+    let f: Vec<f64> = v.iter().copied().filter(|x| x.is_finite()).collect();
     if f.is_empty() {
         return f64::NAN;
     }
@@ -1460,12 +1613,18 @@ fn med(v: &[f64]) -> f64 {
     s[s.len() / 2]
 }
 
+/// NON-FINITE ENTRIES ARE DROPPED, the same rule `med` applies, because `total_cmp` -- like Scala's
+/// `Ordering[Double]` -- ranks NaN ABOVE every number: an unfiltered sort parks them in the top
+/// slots and biases every quantile DOWNWARD rather than propagating the NaN. A contaminated ensemble
+/// read a 6.17% median volatility against a 15.7% baseline that way. A quantile is the wrong place
+/// to LEARN that an ensemble was contaminated -- the reports count that directly.
 fn pctile(v: &[f64], q: f64) -> f64 {
-    if v.is_empty() {
+    let f: Vec<f64> = v.iter().copied().filter(|x| x.is_finite()).collect();
+    if f.is_empty() {
         return f64::NAN;
     }
-    let s = sorted_total(v);
-    s[((v.len() as f64 * q) as usize).min(v.len() - 1)]
+    let s = sorted_total(&f);
+    s[((f.len() as f64 * q) as usize).min(f.len() - 1)]
 }
 
 #[expect(
@@ -1608,6 +1767,8 @@ fn measure(sims: &[Path], years: usize) -> WorldStats {
         mean_bond_stress: scala_sum(sims.iter().map(|s| s.mean_bond_stress)) / n_sims,
         pct_bond_stress: scala_sum(sims.iter().map(|s| s.pct_bond_stress)) / n_sims,
         crowd_flow: scala_sum(sims.iter().map(|s| s.mean_crowd_flow)) / n_sims,
+        dis_per_century: scala_sum(sims.iter().map(|s| s.disasters as f64)) / n_sims / years as f64
+            * 100.0,
         duration: sims[0].duration,
         infl_ann: med(&sims
             .iter()
@@ -1820,6 +1981,15 @@ fn gate_checks(a: Anchors, st: &WorldStats) -> Vec<(String, bool, GateClass)> {
         (
             n("bond spiral engages, not always"),
             st.pct_bond_stress > 0.002 && st.pct_bond_stress < 0.5,
+            Mechanism,
+        ),
+        // Two-sided like the spiral's: the channel must strike, and disasters that arrive more
+        // than a few times a century are not disasters — they are a second volatility regime
+        // wearing the name. An off-world (rate 0) fails this row, which is what a mechanism row
+        // MEANS.
+        (
+            n("macro disasters strike, not every decade"),
+            st.dis_per_century > 0.05 && st.dis_per_century < 4.0,
             Mechanism,
         ),
         band_check("inflation", st.infl_ann, 1.0, 6.0, Realism, 0, "%/yr"),
@@ -2095,6 +2265,16 @@ struct Anchors {
     equity_years: usize,
     cluster_window: &'static str,
     cluster_years: usize,
+    /// The TAIL reads its own window, and for a sharper reason than horizon-sensitivity: the
+    /// deepest episode is the one statistic a window can DELETE. Across the committed fixture the
+    /// median depth swings 11% between windows and the crash rate 30%, while the worst swings 54%
+    /// — -84.1% over the century against -54.6% from 1954, because 1954 opens after the crash that
+    /// set it. A tail graded on a window chosen to exclude the record's worst extreme cannot fail
+    /// on the thing it exists to test. Never fold this back into `equity_window`: the two coincide
+    /// in neither shipped set for the same reason, and coinciding today is not a reason to share a
+    /// field.
+    tail_window: &'static str,
+    tail_years: usize,
     vol: f64,
     vol_sd: f64,
     ret_vol: f64,
@@ -2127,12 +2307,14 @@ const SP500_ANCHORS: Anchors = Anchors {
     equity_years: 72,
     cluster_window: "CRSP 1926-2026, the century",
     cluster_years: 100,
+    tail_window: "CRSP 1926-2026, the century",
+    tail_years: 100,
     vol: 16.0,
     vol_sd: 0.14,
     ret_vol: 0.69,
-    ret_vol_sd: 0.18,
+    ret_vol_sd: 0.21,
     kurt: 28.0,
-    kurt_sd: 2.25,
+    kurt_sd: 2.37,
     ac1: 0.299,
     ac1_sd: 0.12,
     ac20: 0.225,
@@ -2140,9 +2322,19 @@ const SP500_ANCHORS: Anchors = Anchors {
     crashes: 20.7,
     crashes_sd: 0.24,
     med_depth: -21.4,
-    med_depth_sd: 0.13,
-    worst_depth: -56.8,
-    worst_depth_sd: 0.24,
+    med_depth_sd: 0.16,
+    // RE-ANCHORED in 0.22.1, same error class as `med_depth` in 0.22.0: -56.8 was the 2007-09
+    // episode, the worst of the 1954-2026 window, used where the model computes the worst over a
+    // whole history. 1954 opens AFTER the crash that set the record's worst, so the anchor graded
+    // the tail against a window with the tail removed. Over the century, on the model's own 15%
+    // threshold, the record reads -84.1% (`episodes-2026-08-29.tsv`, w1926) — the 1929-32 decline,
+    // which every threshold in that window agrees on because it is one episode. `tail_years` moves
+    // to 100 with it, so the percentile is read at the window's own length.
+    //
+    // sd RE-MEASURED with the window: 0.24 was the spread of 72-year readings, 0.18 the spread
+    // of 100-year readings at the adopted disaster world (`-noise -paths 200`, 2026-08-30).
+    worst_depth: -84.1,
+    worst_depth_sd: 0.18,
     vol_band: (14.0, 18.0),
     ret_vol_band: (0.50, 0.85),
 };
@@ -2172,6 +2364,8 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     equity_years: 27,
     cluster_window: "QQQ 1999-2026",
     cluster_years: 27,
+    tail_window: "QQQ 1999-2026",
+    tail_years: 27,
     vol: 26.90,
     vol_sd: 0.14,
     ret_vol: 0.38,
@@ -2295,7 +2489,7 @@ fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             "variance ratio 60d",
             (|st: &WorldStats| st.vr60) as StatFn,
             1.00,
-            wgt(1.0, 0.32),
+            wgt(1.0, 0.36),
         ),
         (
             "crashes/century",
@@ -2315,19 +2509,24 @@ fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
         // own window wins. Recorded in `test-data/equity-anchors/episodes-2026-08-29.tsv`, from which
         // `episode_anchor_tests` re-derives the shipped value.
         //
-        // The two sibling anchors survive the same check, which is why only this one moved:
-        // `crashes/century` 20.7 sits between the record's 19.2 and 24.9, and `worst crash %` -56.8
-        // is the same 2007-09 episode the control reads at -54.6%.
+        // `crashes/century` 20.7 survives the same check — it sits between the record's 19.2 and
+        // 24.9 — and was left alone. `worst crash %` did NOT: see its own entry below.
         (
             "median depth %",
             (|st| st.depth_med) as StatFn,
             a.med_depth,
             wgt(1.0, a.med_depth_sd),
         ),
-        // Judgment 0.5, DOWN from 1.0, on `-noise`'s finding: graded at 100 years against a
-        // 72-year anchor this ratio is mostly a max-order-statistic horizon artifact (at the
-        // anchor's own horizon the record sits at the model's 61st percentile). Until the target
-        // is horizon-matched, weighting it fully would push `-calibrate` to close an artifact.
+        // Scored by the MEDIAN of single-history worsts at the anchor's own horizon — `fitness`
+        // swaps the statistic in by name, supplied from `extreme_score_stats` — never by the
+        // pooled ensemble minimum this StatFn computes. The minimum's distance from a one-history
+        // anchor tracks the ensemble size (the frozen scoring ensemble's happens to sit 0.004 from
+        // the anchor, a "perfect" reading for a tail `-validate` puts at the record's 1st
+        // percentile); the median converges, is the centre of the distribution the report's
+        // percentile is read from, and pulling it toward the anchor and pulling the percentile
+        // toward 50 are the same act. The StatFn stays the pooled minimum because the REPORTS
+        // read it as a level. Judgment 0.5: one draw of a max, partially redundant with the
+        // crash-rate and depth rows. sdRel 0.15 measured at the 100-year horizon (2026-08-30).
         (
             "worst crash %",
             (|st| st.worst_depth) as StatFn,
@@ -2354,7 +2553,7 @@ fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             "bond growth-crash",
             (|st| st.bond_growth) as StatFn,
             6.6,
-            wgt(1.0, 1.18),
+            wgt(1.0, 1.48),
         ),
         // The judgment stays at 1.5 — inflation-crash behaviour is why the bond refuge exists —
         // and the measured precision crushes the weight to ~0.13 anyway: sd/real 2.89, and only
@@ -2368,7 +2567,7 @@ fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             "bond infl-crash",
             (|st| st.bond_infl) as StatFn,
             -34.7,
-            wgt(1.5, 1.95),
+            wgt(1.5, 1.97),
         ),
         // DEPTH PROFILE, stated RELATIVE to what a real fund of the same volatility and return
         // spends under water rather than as three absolute levels — see `EQUITY_D10_CORR` for the
@@ -2417,13 +2616,13 @@ fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             "equity d5 vs real",
             (|st: &WorldStats| st.eq_d5_vs_real()) as StatFn,
             1.00,
-            wgt(0.5, 0.15),
+            wgt(0.5, 0.17),
         ),
         (
             "equity d10 vs real",
             (|st: &WorldStats| st.eq_d10_vs_real()) as StatFn,
             1.00,
-            wgt(1.0, 0.34),
+            wgt(1.0, 0.38),
         ),
         // d20's sdRel moved 0.99 -> 1.56 in the 0.21.0 recovery-drag change, and like kurtosis's
         // move it is a re-measurement of a statistic that genuinely became more variable, not a
@@ -2434,15 +2633,213 @@ fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             "equity d20 vs real",
             (|st: &WorldStats| st.eq_d20_vs_real()) as StatFn,
             1.00,
-            wgt(0.5, 1.62),
+            wgt(0.5, 1.89),
         ),
         (
             "bond depth vs vol",
             (|st: &WorldStats| st.bond_depth_vs_vol()) as StatFn,
             1.00,
-            wgt(0.5, 0.34),
+            wgt(0.5, 0.36),
         ),
     ]
+}
+
+/// Targets whose model statistic is an EXTREME order statistic over the pooled ensemble rather
+/// than a per-path central value. `worst_depth` is the minimum over every episode in the run, so it
+/// deepens without bound as the ensemble grows: on one world with every dial fixed it reads 1.28x
+/// its anchor at 1 path and 1.58x at 400. A ratio that moves with `-paths` grades the SAMPLE SIZE,
+/// not the model, and the anchor it is divided by is the deepest episode of ONE 72-year history
+/// against the deepest of ~4,400.
+///
+/// These rows are reported as the anchor's PERCENTILE among single histories of the anchor's own
+/// length — `-noise`'s `real@`, which converges — and carry no ratio at all. A median survives
+/// pooling and a minimum does not; that is the whole distinction. The contract test requires every
+/// name here to be a fidelity target.
+const EXTREME_TARGETS: &[&str] = &["worst crash %"];
+
+/// The admissible interval for a per-path fidelity ratio, and the admissible percentile band for an
+/// `EXTREME_TARGETS` row. Stated ONCE: the report, the sidecar and the tests read the same pair, so
+/// a consumer's `miss` and a reader's `<-- MISS` cannot drift apart.
+///
+/// Outside 5-95 is the condition `-noise`'s header already names — the model cannot produce
+/// record-like histories on that statistic — and it is the honest analogue of a ratio miss: both
+/// say "this level cannot be read off this world", neither says how far off it is.
+const FIDELITY_RATIO_BAND: (f64, f64) = (0.667, 1.5);
+const EXTREME_PCT_BAND: (usize, usize) = (5, 95);
+
+/// Fewest single histories that can place a record within `EXTREME_PCT_BAND`. One history reads 0%
+/// or 100% and neither is a measurement; in general the resolution is `100/n` percentile points, so
+/// resolving a 5-point band edge needs 20. Below this the row reports `n/a` and a MISS — "too few
+/// histories to place the record" and "the model cannot produce record-like histories" are
+/// different findings, and only the second is about the model, but neither is a clean bill of
+/// health in the one field a consumer reads to decide whether to trust the file.
+const EXTREME_MIN_HISTORIES: usize = 100 / EXTREME_PCT_BAND.0;
+
+/// One fidelity row AS REPORTED. A per-path target carries a ratio; an `EXTREME_TARGETS` row
+/// carries the anchor's percentile among single histories instead, and no ratio. The two are
+/// different judgements and a consumer must be able to tell them apart from the data alone — the
+/// whole defect this type exists to prevent is a reader dividing two numbers that are not the same
+/// statistic and reading the quotient as a bias.
+///
+/// `horizon_years` is the length of the record the anchor was read over, from `anchor_groups`; it
+/// is carried on EVERY row, not just the extreme ones, because a per-path ratio still folds a
+/// horizon mismatch a reader cannot otherwise see.
+#[derive(Debug, Clone)]
+struct FidelityRow {
+    name: &'static str,
+    model: f64,
+    real: f64,
+    ratio: Option<f64>,
+    pctile: Option<usize>,
+    horizon_years: usize,
+    n_histories: usize,
+}
+
+impl FidelityRow {
+    /// Stated as the admissible interval and NEGATED, so an unmeasurable row reports a miss rather
+    /// than a clean bill of health — a `NaN` ratio fails both outward comparisons, and an extreme
+    /// row whose ensemble produced no reading has nothing to stand on either.
+    fn miss(&self) -> bool {
+        match self.ratio {
+            Some(r) => !(FIDELITY_RATIO_BAND.0..=FIDELITY_RATIO_BAND.1).contains(&r),
+            None => !self
+                .pctile
+                .is_some_and(|p| (EXTREME_PCT_BAND.0..=EXTREME_PCT_BAND.1).contains(&p)),
+        }
+    }
+
+    fn aggregation(&self) -> &'static str {
+        if EXTREME_TARGETS.contains(&self.name) {
+            "ensemble-extreme"
+        } else {
+            "per-path"
+        }
+    }
+}
+
+/// Where an anchor falls among model readings, as a percentage. `-noise`'s `real@` column and the
+/// extreme rows' `record@` are the SAME number and are computed here so they stay so: two reports
+/// disagreeing about one world would replace the confusion being fixed with a new one.
+fn anchor_pctile(xs: &[f64], want: f64) -> usize {
+    100 * xs.iter().filter(|x| **x <= want).count() / xs.len()
+}
+
+/// The horizon each target's anchor was read over, inverted from `anchor_groups` — which the
+/// contract test already pins as a partition of the fidelity targets, so every target has one.
+fn anchor_horizon(a: Anchors, name: &str) -> usize {
+    anchor_groups(a)
+        .iter()
+        .find(|(_, _, names)| names.contains(&name))
+        .map_or(0, |(_, yrs, _)| *yrs)
+}
+
+/// Each extreme target's per-single-history readings at its OWN horizon, from one ensemble. This
+/// is the distribution behind BOTH the report's percentile and the loss's median — one function,
+/// so the two judgements cannot be read off different ensembles, and the same measurement
+/// `-noise` prints as `real@`. One extra ensemble per distinct horizon, and only
+/// `EXTREME_TARGETS` need it, so at the shipped anchor sets that is exactly one.
+fn extreme_readings(
+    a: Anchors,
+    paths: usize,
+    seed: u64,
+    w: &World,
+) -> std::collections::HashMap<&'static str, Vec<f64>> {
+    let mut out: std::collections::HashMap<&'static str, Vec<f64>> =
+        std::collections::HashMap::new();
+    for (_, yrs, names) in anchor_groups(a) {
+        let extreme: Vec<&'static str> = names
+            .iter()
+            .copied()
+            .filter(|n| EXTREME_TARGETS.contains(n))
+            .collect();
+        if extreme.is_empty() {
+            continue;
+        }
+        let sts: Vec<WorldStats> = sim_paths(w, paths, yrs, seed)
+            .into_iter()
+            .map(|p| measure(std::slice::from_ref(&p), yrs))
+            .collect();
+        for nm in extreme {
+            let Some((_, get, _, _)) = fit_targets(a).into_iter().find(|(n, _, _, _)| *n == nm)
+            else {
+                cli_die(&format!(
+                    "EXTREME_TARGETS names [{nm}], which is not a fidelity target"
+                ));
+            };
+            out.insert(nm, sts.iter().map(get).filter(|x| !x.is_nan()).collect());
+        }
+    }
+    out
+}
+
+/// What the LOSS grades an extreme row by: the median of the single-history readings. A median of
+/// extremes converges as histories are added, where the pooled minimum deepens without bound. NaN
+/// where the ensemble produced no finite reading, which `fitness` prices as unmeasurable rather
+/// than as agreement.
+fn extreme_score_stats(
+    a: Anchors,
+    histories: usize,
+    seed: u64,
+    w: &World,
+) -> std::collections::HashMap<&'static str, f64> {
+    extreme_readings(a, histories, seed, w)
+        .into_iter()
+        .map(|(nm, xs)| (nm, med(&xs)))
+        .collect()
+}
+
+/// Every fidelity row as the report and the sidecar both read it. Built ONCE per invocation so the
+/// printed table and the emitted JSON cannot describe the same world differently.
+fn fidelity_rows(
+    a: Anchors,
+    st: &WorldStats,
+    paths: usize,
+    seed: u64,
+    w: &World,
+) -> Vec<FidelityRow> {
+    let readings = if fit_targets(a)
+        .iter()
+        .any(|(n, _, _, _)| EXTREME_TARGETS.contains(n))
+    {
+        extreme_readings(a, paths, seed, w)
+    } else {
+        std::collections::HashMap::new()
+    };
+    fit_targets(a)
+        .into_iter()
+        .map(|(name, get, want, _)| {
+            let model = get(st);
+            let horizon_years = anchor_horizon(a, name);
+            if EXTREME_TARGETS.contains(&name) {
+                let empty: Vec<f64> = Vec::new();
+                let xs = readings.get(name).unwrap_or(&empty);
+                let pctile = if xs.len() < EXTREME_MIN_HISTORIES {
+                    None
+                } else {
+                    Some(anchor_pctile(xs, want))
+                };
+                FidelityRow {
+                    name,
+                    model,
+                    real: want,
+                    ratio: None,
+                    pctile,
+                    horizon_years,
+                    n_histories: xs.len(),
+                }
+            } else {
+                FidelityRow {
+                    name,
+                    model,
+                    real: want,
+                    ratio: Some(if want == 0.0 { f64::NAN } else { model / want }),
+                    pctile: None,
+                    horizon_years,
+                    n_histories: 1,
+                }
+            }
+        })
+        .collect()
 }
 
 /// Scala's `Double.sign`, which returns 0.0 (preserving the zero's sign) at zero.
@@ -2461,11 +2858,24 @@ fn scala_sign(x: f64) -> f64 {
 
 /// Scalar calibration loss: weighted |log(model/target)| over the fidelity targets, a
 /// penalty of 2 for a wrong sign, and 0.5 per failed gate check.
-fn fitness(a: Anchors, st: &WorldStats) -> (f64, Vec<(&'static str, f64, f64, f64)>) {
+///
+/// `extreme_stats`: the median single-history reading per `EXTREME_TARGETS` row, from
+/// `extreme_score_stats` — the loss must never price the pooled minimum those rows' StatFn
+/// computes, so the caller supplies the converging statistic explicitly and a missing entry
+/// prices as unmeasurable rather than silently falling back.
+fn fitness(
+    a: Anchors,
+    st: &WorldStats,
+    extreme_stats: &std::collections::HashMap<&'static str, f64>,
+) -> (f64, Vec<(&'static str, f64, f64, f64)>) {
     let rows: Vec<(&'static str, f64, f64, f64)> = fit_targets(a)
         .into_iter()
         .map(|(name, get, target, weight)| {
-            let m = get(st);
+            let m = if EXTREME_TARGETS.contains(&name) {
+                extreme_stats.get(name).copied().unwrap_or(f64::NAN)
+            } else {
+                get(st)
+            };
             let term = if m.is_nan() {
                 weight * 4.0
             } else if scala_sign(m) != scala_sign(target) && target != 0.0 {
@@ -3079,6 +3489,8 @@ fn sweep_worlds(
         ),
         // OFF-world: margin
         ("no margin coupling", with(|w| w.margin = 0.0), false),
+        // OFF-world: disasters
+        ("no macro disasters", with(|w| w.disaster_rate = 0.0), false),
         (
             "double inflation severity",
             with(|w| w.infl_size *= 2.0),
@@ -3284,6 +3696,9 @@ fn calibrate_ranges() -> Vec<(&'static str, f64, f64, Setter)> {
         // Both in the ranges from the release they arrive in, for the same reason.
         ("recoveryDrag", 0.0, 20.0, |w, x| w.recovery_drag = x),
         ("recoveryFloor", 0.05, 1.0, |w, x| w.recovery_floor = x),
+        ("disasterRate", 0.0, 1.5, |w, x| w.disaster_rate = x),
+        ("disasterSize", 0.5, 2.5, |w, x| w.disaster_size = x),
+        ("disasterRecover", 0.0, 0.9, |w, x| w.disaster_recover = x),
         ("volOfVol", 0.012, 0.030, |w, x| w.vol_of_vol = x),
         // In the ranges from the release it arrived in. `fund_vol` sat outside them for four
         // releases and that is exactly why its defect survived four releases of one-knob-at-a-time
@@ -3315,8 +3730,16 @@ fn calibrate(a: Anchors, n_samples: usize, base: &World, seed: u64) {
     let hold_seed = seed + 7_777_777;
     // scored at 100-year paths: an 80-year protocol missed a worst-crash blowup that only
     // appears at the horizon actually used — tune at the scale you evaluate at
-    let score =
-        |w: &World, s: u64| -> f64 { fitness(a, &measure(&sim_paths(w, 50, 100, s), 100)).0 };
+    let score = |w: &World, s: u64| -> f64 {
+        // The extreme rows' median ensemble rides along at the same 50 histories, so a
+        // candidate is priced on the same statistic every report reads.
+        fitness(
+            a,
+            &measure(&sim_paths(w, 50, 100, s), 100),
+            &extreme_score_stats(a, 50, s, w),
+        )
+        .0
+    };
     eprintln!(
         "calibrate: {n_samples} samples, 50 paths x 100 years each; holdout re-score of top 5"
     );
@@ -3989,6 +4412,25 @@ fn run_release_report(a: Anchors, paths: usize, years: usize, seed: u64, base: &
         "  world does.  That is not automatically wrong — a trade may have been worth making — but"
     );
     println!("  it is the thing no predecessor-only comparison can show.");
+    // Kept as a ratio here, and ONLY here, because every column shares one ensemble size: the
+    // divergence that makes the level meaningless cancels in a world-to-world comparison, so the
+    // MOVEMENT across columns is real even though no column's value is a fidelity judgement.
+    // `-validate` reports these rows as a percentile; a reader who carries a level across from this
+    // table to that one is comparing two different things.
+    println!();
+    println!(
+        "  ROWS THAT ARE NOT FIDELITY RATIOS: {}.",
+        EXTREME_TARGETS.join(", ")
+    );
+    println!(
+        "  These are extremes over the pooled ensemble, so the LEVEL grades the ensemble size —"
+    );
+    println!(
+        "  read them across columns (which world is deeper), never against 1.00.  The AGGREGATE"
+    );
+    println!(
+        "  row includes them, and is the old equal-measurability objective's opinion regardless."
+    );
 }
 
 // ---- the cross-asset report -------------------------------------------------------------
@@ -4269,14 +4711,31 @@ fn run_equity_at_anchor(a: Anchors, paths: usize, years: usize, seed: u64, base:
         } else {
             String::new()
         };
+        // Both columns share one ensemble size, so the MOVE is readable on every row; the LEVEL is
+        // not, on the extremes — see the note below and `-validate`'s percentile.
+        let kind = if EXTREME_TARGETS.contains(&name) {
+            " *"
+        } else {
+            ""
+        };
         println!(
-            "  {name:<22}{:>10}{:>11}{:>10}{:>11}{:>11}   {flag}",
+            "  {name:<22}{:>10}{:>11}{:>10}{:>11}{:>11}   {flag}{kind}",
             jf(d, 0, 2),
             jf(a, 0, 2),
             jf(want, 0, 2),
             jf(rd, 0, 2),
             jf(ra, 0, 2)
         );
+    }
+    if EQUITY_TARGETS.iter().any(|n| EXTREME_TARGETS.contains(n)) {
+        println!();
+        println!(
+            "  * an extreme over the pooled ensemble, not a per-path value: the MOVE between the two"
+        );
+        println!(
+            "    columns is real, the LEVEL grades the ensemble size.  -validate reports it as a"
+        );
+        println!("    percentile among single histories instead; do not carry a level across.");
     }
 }
 
@@ -4481,7 +4940,7 @@ fn run_cross_asset_report(a: Anchors, paths: usize, years: usize, seed: u64, bas
 /// because sampling error depends on the length of the record actually behind each number, not
 /// on the horizon the model is scored at. The contract test pins this to `fit_targets` as a
 /// partition, so a new target cannot land without a declared horizon.
-fn anchor_groups(a: Anchors) -> [(&'static str, usize, &'static [&'static str]); 5] {
+fn anchor_groups(a: Anchors) -> [(&'static str, usize, &'static [&'static str]); 6] {
     [
         (
             a.equity_window,
@@ -4492,7 +4951,6 @@ fn anchor_groups(a: Anchors) -> [(&'static str, usize, &'static [&'static str]);
                 "kurtosis",
                 "crashes/century",
                 "median depth %",
-                "worst crash %",
             ],
         ),
         (
@@ -4500,6 +4958,10 @@ fn anchor_groups(a: Anchors) -> [(&'static str, usize, &'static [&'static str]);
             a.cluster_years,
             &["clustering lag 1", "clustering lag 20"],
         ),
+        // Its own group because its own window — see `Anchors::tail_window`. For both shipped sets
+        // this is the instrument's whole history, which is the only window that cannot have deleted
+        // the deepest episode.
+        (a.tail_window, a.tail_years, &["worst crash %"]),
         // 18 equity funds and three CRSP windows, the shortest of them 24.9 years — see
         // `VAR_RATIO_BAND`. The horizon is one instrument's record, as it is for the depth rungs, and
         // the target this group carries is a theory value rather than a reading, so `real@` here says
@@ -4579,12 +5041,26 @@ fn run_noise_report(a: Anchors, paths: usize, seed: u64, base: &World) {
     println!(
         "check: equal weight with unequal sd/real grades two targets as equally measurable, and"
     );
-    println!("they are not.  `p50` vs `real` is the HORIZON-MATCHED reading; -fitness grades a");
+    println!("they are not.  `p50` vs `real` is the HORIZON-MATCHED reading; -fitness grades the");
     println!(
-        "100-year model reading against these mixed-horizon anchors, so its ratios fold a horizon"
+        "extreme rows on it (the median of these single histories), and the per-path rows on the"
     );
-    println!("artifact into targets like worst crash %.");
-    for (label, years, targets) in anchor_groups(a) {
+    println!("100-year scoring ensemble against these mixed-horizon anchors.");
+    // Merged for the REPORT only, in first-appearance order: `anchor_groups` keeps one entry per
+    // anchor because the windows are separate DECISIONS that happen to coincide in both shipped
+    // sets, and printing one header and running one ensemble per distinct (window, horizon) is what
+    // a reader wants from that. Merging the field would be the coupling; merging the display is not.
+    let mut noise_groups: Vec<(&'static str, usize, Vec<&'static str>)> = Vec::new();
+    for (label, years, names) in anchor_groups(a) {
+        match noise_groups
+            .iter_mut()
+            .find(|(l, y, _)| *l == label && *y == years)
+        {
+            Some((_, _, acc)) => acc.extend_from_slice(names),
+            None => noise_groups.push((label, years, names.to_vec())),
+        }
+    }
+    for (label, years, targets) in noise_groups {
         eprintln!("{paths} paths x {years}y — {label}");
         let sims = sim_paths(base, paths, years, seed);
         let sts: Vec<WorldStats> = sims
@@ -4599,7 +5075,7 @@ fn run_noise_report(a: Anchors, paths: usize, seed: u64, base: &World) {
         );
         for name in targets {
             let Some((_, get, want, weight)) =
-                fit_targets(a).into_iter().find(|(n, _, _, _)| n == name)
+                fit_targets(a).into_iter().find(|(n, _, _, _)| *n == name)
             else {
                 cli_die(&format!(
                     "anchor group names [{name}], not a fidelity target"
@@ -4628,8 +5104,7 @@ fn run_noise_report(a: Anchors, paths: usize, seed: u64, base: &World) {
             } else {
                 f64::NAN
             };
-            let below = xs.iter().filter(|x| **x <= want).count();
-            let ps = format!("{}%", 100 * below / n);
+            let ps = format!("{}%", anchor_pctile(&xs, want));
             println!(
                 "  {name:<22}{:>8}{:>8}{:>8}{:>8}{ps:>7}{n:>5}{:>8}{:>5}",
                 jf(want, 8, 2),
@@ -5529,6 +6004,19 @@ fn ef(x: f64) -> String {
     jf(if x == 0.0 { 0.0 } else { x }, 0, 6)
 }
 
+/// Scala's `Double.toString` for the range a DIAL is typed in: Rust's `Display` prints `3` where
+/// Scala prints `3.0`, and the domain messages below are the twins' only user-visible text carrying
+/// a raw f64. NOT general `Double.toString` parity -- the exponent forms and the shortest-repr
+/// corners are out of scope, and nothing echoes a dial from there.
+fn scala_dbl(x: f64) -> String {
+    let t = format!("{x}");
+    if x.is_finite() && !t.contains(['.', 'e', 'E']) {
+        format!("{t}.0")
+    } else {
+        t
+    }
+}
+
 fn json_str(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
@@ -5668,6 +6156,14 @@ fn write_emitted(
     gate_st: &WorldStats,
     gate_paths: usize,
 ) {
+    // A non-finite path is refused, not written -- a file whose every row reads NaN is not data.
+    // The CLI's clean refusal (message + exit 2) lives at the emit sites in `main`, which pre-check
+    // before calling; here it PANICS, because this is also API and a `process::exit` in a library
+    // function takes a test harness down whole rather than failing one test.
+    assert!(
+        p.price.iter().all(|x| x.is_finite()),
+        "path {k} holds a non-finite price; refusing {file}"
+    );
     let dates = session_dates(p.price.len(), start_ymd);
     write_emit_tsv(file, p, &dates);
     write_emit_sidecar(
@@ -5718,6 +6214,11 @@ fn world_json_body(w: &World) -> Vec<String> {
         ("recoveryDrag", ef(w.recovery_drag)),
         ("recoveryFloor", ef(w.recovery_floor)),
         ("haltLimit", ef(w.halt_limit)),
+        ("disasterRate", ef(w.disaster_rate)),
+        ("disasterSize", ef(w.disaster_size)),
+        ("disasterLen", ef(w.disaster_len)),
+        ("disasterRecover", ef(w.disaster_recover)),
+        ("disasterRecLen", ef(w.disaster_rec_len)),
         ("crowd", json_str(&crowd_name(w.crowd))),
         ("crowdImpact", ef(w.crowd_impact)),
         ("panic", ef(w.panic)),
@@ -5753,11 +6254,6 @@ fn world_json_body(w: &World) -> Vec<String> {
     clippy::too_many_arguments,
     reason = "the sidecar records the whole provenance tuple; grouping it would only move the list"
 )]
-#[expect(
-    clippy::manual_range_contains,
-    reason = "the MISS flag must leave a NaN ratio UNflagged, as `ratio > 1.5 || ratio < 0.667` \
-              does; `!(0.667..=1.5).contains(&ratio)` would flag it"
-)]
 fn write_emit_sidecar(
     a: Anchors,
     file: &str,
@@ -5786,20 +6282,34 @@ fn write_emit_sidecar(
             ef(x)
         }
     };
-    let fidelity: Vec<String> = fit_targets(a)
+    // `aggregation` and `horizonYears` are the terms of the comparison, and they are in the DATA
+    // because prose does not travel: a consumer holding this file has no access to the report's
+    // note, and an `ensemble-extreme` row divided by its anchor gives a quotient that grades the
+    // ensemble size. Such a row carries `ratio: null` and a `percentile` instead — where the record
+    // falls among single histories of its own length — so the division cannot be made by accident.
+    // `miss` is the admissible interval NEGATED for both kinds, so a row that could not be measured
+    // reports a miss rather than a clean bill of health.
+    let fidelity: Vec<String> = fidelity_rows(a, gate_st, gate_paths, seed, w)
         .into_iter()
-        .map(|(nm, get, want, _)| {
-            let got = get(gate_st);
-            let ratio = if want == 0.0 { f64::NAN } else { got / want };
-            let miss = ratio > 1.5 || ratio < 0.667;
-            format!(
-                "    {{ \"name\": {}, \"model\": {}, \"real\": {}, \"ratio\": {}, \"miss\": {} }}",
-                json_str(nm),
-                num(got),
-                num(want),
-                num(ratio),
-                miss
-            )
+        .map(|r| {
+            // Two pieces, not one line-continued literal: `\<newline>` keeps the source
+            // indentation inside the string, and the twins must emit byte-identical JSON.
+            let head = format!(
+                "    {{ \"name\": {}, \"model\": {}, \"real\": {}, ",
+                json_str(r.name),
+                num(r.model),
+                num(r.real)
+            );
+            let tail = format!(
+                "\"aggregation\": {}, \"horizonYears\": {}, \"ratio\": {}, \"percentile\": {}, \"miss\": {} }}",
+                json_str(r.aggregation()),
+                r.horizon_years,
+                r.ratio.map_or_else(|| "null".to_string(), num),
+                r.pctile
+                    .map_or_else(|| "null".to_string(), |x| x.to_string()),
+                r.miss()
+            );
+            head + &tail
         })
         .collect();
     let world_body = world_json_body(w);
@@ -5863,11 +6373,6 @@ fn write_emit_sidecar(
     reason = "one linear report, mirroring the Scala twin's main statement for statement"
 )]
 #[expect(
-    clippy::manual_range_contains,
-    reason = "the MISS flag must leave a NaN ratio UNflagged, as `ratio > 1.5 || ratio < 0.667` \
-              does; `!(0.667..=1.5).contains(&ratio)` would flag it"
-)]
-#[expect(
     clippy::cognitive_complexity,
     reason = "one linear dispatch over the CLI, as in the Scala twin"
 )]
@@ -5876,7 +6381,7 @@ fn main() {
 
     let mut paths = 200usize;
     let mut years = 100usize;
-    let mut seed = 20_260_813u64;
+    let mut seed = DEFAULT_SEED;
     let mut emit = String::new();
     let mut emit_path = 0usize;
     let mut emit_all = false;
@@ -5897,6 +6402,8 @@ fn main() {
     let mut single = false;
     let mut cost = 0.0010f64;
     let mut fitness_only = false;
+    let mut paths_given = false;
+    let mut years_given = false;
     let mut calibrate_n = 0usize;
     // defaults = a random search against the fitness loss, scored at 100-year paths, lightly
     // rounded. Reachable ONLY because depth, trendShare, drift and crowdImpact are in the search;
@@ -5979,19 +6486,24 @@ fn main() {
     // the one that worked keys on distance below the PEAK, which is what the statistic is about,
     // where a pull convex in the gap to FAIR VALUE cannot tell a deep drawdown from an ordinary one.
     //
-    // TWO KNOWN BIAS DIRECTIONS, netted away nowhere else: worst crash at 1.61 puts index paths
-    // near -92% against a real -56.8%, which no levered fund survives, so ruin rates for levered
-    // sleeves are UPPER BOUNDS, not estimates; and the DEEP drawdown rung runs long at 1.78, which
-    // is what the drag costs -- a slower climb out of a deep hole is more time deep.  Rules keyed
-    // to a deep distance from peak inherit that; the shallow rungs read 0.94 and 1.03.
+    // THE MACRO-DISASTER CHANNEL (0.22.1) is the "channel that deepens a crash without adding
+    // low-frequency variance" this note used to call for and attribute to the absent valuation
+    // cycle — it buys the exemption through RARITY, not through a cycle, and it carried the
+    // CENTURY tail: the record's -84.1% moved from the 1st percentile of model centuries to the
+    // 18th. What a valuation cycle alone could still add is documented at `disaster_rate`'s World
+    // field and in docs/MarketSimWorlds.md: valuation-LED deep crashes (2000-02: multiples
+    // collapse, earnings fine) and peaks that sit far above fair value before they fall. Every
+    // deep crash here starts from a peak AT fair value, and a consumer reading the emitted
+    // `fundamental` column or `-strategies`' crash-type conditioning sees the shifted mix.
     //
-    // That last one is the price of the depth rungs and it is structural, not a tuning miss:
-    // every world that puts time under water near the real relation lands median crash depth at
-    // 0.78-0.85, because cooling the fundamental makes drawdowns shorter AND shallower together.
-    // Measured across the global search's winner, the local optimum and six hand variants
-    // including `stress` at its range ceiling; nothing available separates them. Closing it needs
-    // a channel that deepens a crash without adding low-frequency variance — the same absent
-    // valuation cycle the kurtosis note above blames for there being no second tail channel.
+    // ONE KNOWN BIAS DIRECTION, netted away nowhere else: the DEEP drawdown rung reads 2.36 (d20),
+    // partly the drag's cost — a slower climb out of a deep hole is more time deep — and, since
+    // 0.22.1, partly the RULER's: the relation is fitted on 2001-2026 funds, a window with no
+    // depression in it, while the model's own share of sessions >20% under water (0.126, median
+    // path) sits BELOW a rough reading of the real century's (~0.15-0.20). Rules keyed to a deep
+    // distance from peak inherit the model number; the shallow rungs read 0.98 and 1.13.
+    // Ruin rates for levered sleeves read off the ensemble MINIMUM remain UPPER BOUNDS, not
+    // estimates -- 20,000 market-years of worst case, and no fund lives that long.
     // Seeded from `default_world()`, never restated. A second copy of the shipped world here is
     // the failure that function's own docstring claims not to have: it would drift silently,
     // because the only thing comparing the two is a `-releases` run noticing that its 0.19.2 row
@@ -6007,6 +6519,11 @@ fn main() {
     let mut recovery_drag = dw.recovery_drag;
     let mut recovery_floor = dw.recovery_floor;
     let mut halt_limit = dw.halt_limit;
+    let mut disaster_rate = dw.disaster_rate;
+    let mut disaster_size = dw.disaster_size;
+    let mut disaster_len = dw.disaster_len;
+    let mut disaster_recover = dw.disaster_recover;
+    let mut disaster_rec_len = dw.disaster_rec_len;
     let mut jump_var = dw.jump_var;
     let mut jump_rate = dw.jump_rate;
     let mut value_pull = dw.value_pull;
@@ -6036,8 +6553,14 @@ fn main() {
                 println!("{VERSION}");
                 std::process::exit(0)
             }
-            "-paths" => paths = req_usize(&mut it, "-paths"),
-            "-years" => years = req_usize(&mut it, "-years"),
+            "-paths" => {
+                paths = req_usize(&mut it, "-paths");
+                paths_given = true;
+            }
+            "-years" => {
+                years = req_usize(&mut it, "-years");
+                years_given = true;
+            }
             "-seed" => seed = req_u64(&mut it, "-seed"),
             "-emit" => emit = req_arg(&mut it, "-emit").clone(),
             "-emitpath" => emit_path = req_usize(&mut it, "-emitpath"),
@@ -6070,6 +6593,11 @@ fn main() {
             "-anchors" => anchor_spec = req_arg(&mut it, "-anchors").clone(),
             "-recoverydrag" => recovery_drag = req_f64(&mut it, "-recoverydrag"),
             "-recoveryfloor" => recovery_floor = req_f64(&mut it, "-recoveryfloor"),
+            "-disasterrate" => disaster_rate = req_f64(&mut it, "-disasterrate"),
+            "-disastersize" => disaster_size = req_f64(&mut it, "-disastersize"),
+            "-disasterlen" => disaster_len = req_f64(&mut it, "-disasterlen"),
+            "-disasterrecover" => disaster_recover = req_f64(&mut it, "-disasterrecover"),
+            "-disasterreclen" => disaster_rec_len = req_f64(&mut it, "-disasterreclen"),
             "-haltlimit" => halt_limit = req_f64(&mut it, "-haltlimit"),
             "-jumpvar" => jump_var = req_f64(&mut it, "-jumpvar"),
             "-jumprate" => jump_rate = req_f64(&mut it, "-jumprate"),
@@ -6141,6 +6669,105 @@ fn main() {
             ));
         }
     }
+    // DOMAINS for the world dials. Out of domain they do not fail on their own: `-jumprate 0` with a
+    // positive `-jumpvar` divides by zero in `jump_scale` and emitted a file of NaN at exit 0, and
+    // `-recoveryfloor 3` inverts asymmetric recovery -- arbitrage STRONGER in a deep drawdown, the
+    // documented mechanism run backwards -- into a world that then PASSES the acceptance gate.
+    //
+    // Reject what the mechanism cannot express, never what merely looks unusual -- an over-tight
+    // bound breaks a sweep script for no defect. Every value recorded anywhere in this repo is
+    // admitted, `-jumpvar 0` and `-haltlimit 0` (the documented disable values) included, as is
+    // every range `calibrate` sweeps. A `contains` test is false for NaN, so a NaN literal is
+    // refused here rather than reaching the model.
+    {
+        let share = |flag: &str, x: f64| {
+            if !(0.0..=1.0).contains(&x) {
+                cli_die(&format!(
+                    "{flag} wants a share in 0..1, got {}",
+                    scala_dbl(x)
+                ));
+            }
+        };
+        let below_one = |flag: &str, x: f64| {
+            if !(0.0..1.0).contains(&x) {
+                cli_die(&format!(
+                    "{flag} wants at least 0 and below 1, got {}",
+                    scala_dbl(x)
+                ));
+            }
+        };
+        let non_neg = |flag: &str, x: f64| {
+            if x.is_nan() || x < 0.0 {
+                cli_die(&format!(
+                    "{flag} wants a non-negative number, got {}",
+                    scala_dbl(x)
+                ));
+            }
+        };
+        let positive = |flag: &str, x: f64| {
+            if x.is_nan() || x <= 0.0 {
+                cli_die(&format!(
+                    "{flag} wants a positive number, got {}",
+                    scala_dbl(x)
+                ));
+            }
+        };
+        share("-trendshare", trend_share);
+        share("-jumpvar", jump_var);
+        share("-jumprate", jump_rate);
+        share("-recoveryfloor", recovery_floor);
+        share("-disasterrecover", disaster_recover);
+        share("-inflprob", infl_prob);
+        share("-inflspeed", infl_speed);
+        below_one("-volpersist", vol_persist);
+        below_one("-haltlimit", halt_limit);
+        positive("-depth", depth);
+        positive("-duration", duration);
+        non_neg("-stress", stress);
+        non_neg("-beta", beta);
+        non_neg("-volofvol", vol_of_vol);
+        non_neg("-value", value_pull);
+        non_neg("-disasterrate", disaster_rate);
+        non_neg("-disastersize", disaster_size);
+        if disaster_rate > 0.0 && (disaster_size <= 0.0 || disaster_len <= 0.0) {
+            cli_die(&format!(
+                "-disasterrate {disaster_rate} needs -disastersize and -disasterlen above 0"
+            ));
+        }
+        if disaster_recover > 0.0 && disaster_rec_len <= 0.0 {
+            cli_die(&format!(
+                "-disasterrecover {disaster_recover} needs -disasterreclen above 0"
+            ));
+        }
+        non_neg("-recoverydrag", recovery_drag);
+        non_neg("-crowdimpact", crowd_impact);
+        non_neg("-panic", panic_k);
+        non_neg("-fundvol", fund_vol);
+        non_neg("-ratemean", rate_mean);
+        non_neg("-easing", easing);
+        non_neg("-unwind", unwind);
+        non_neg("-refuge", refuge);
+        non_neg("-inflsize", infl_size);
+        non_neg("-ratespeed", rate_speed);
+        non_neg("-discount", discount);
+        non_neg("-margin", margin);
+        non_neg("-cost", cost);
+        // `-drift` carries no domain: a negative fundamental drift is a world, not an error.
+        // The PAIR is what no per-dial check can see -- `jump_scale` divides by `jump_rate`.
+        if jump_var > 0.0 && jump_rate <= 0.0 {
+            cli_die(&format!(
+                "-jumpvar {} needs -jumprate above 0: the jump size is set by jumpVar/jumpRate",
+                scala_dbl(jump_var)
+            ));
+        }
+        // The loss is only comparable on the ensemble the -noise weights were frozen from, so
+        // -fitness pins 60x80 -- and REFUSES rather than ignores an explicit override, the same
+        // rule -emitfrom follows. Accepted-then-ignored is how "the loss improved" gets read off a
+        // different sample.
+        if fitness_only && (paths_given || years_given) {
+            cli_die("-fitness scores the frozen 60x80 ensemble; -paths/-years do not apply");
+        }
+    }
 
     let crowd = match crowd_name.to_lowercase().as_str() {
         "momentum" => Crowd::Momentum,
@@ -6169,6 +6796,11 @@ fn main() {
         recovery_drag,
         recovery_floor,
         halt_limit,
+        disaster_rate,
+        disaster_size,
+        disaster_len,
+        disaster_recover,
+        disaster_rec_len,
         jump_var,
         jump_rate,
         value_pull,
@@ -6193,23 +6825,42 @@ fn main() {
     }
     if fitness_only {
         let st = measure(&sim_paths(&w, 60, 80, seed), 80);
-        let (loss, rows) = fitness(anchors, &st);
+        let (loss, rows) = fitness(anchors, &st, &extreme_score_stats(anchors, 60, seed, &w));
         println!(
             "fitness loss {}  (lower is better; includes 0.5 per failed gate check)",
             jf(loss, 0, 3)
         );
-        for (n, m, t, term) in rows {
+        for (n, m, t, term) in &rows {
             println!(
                 "  {n:<22} model {}   target {}   term {}",
-                jf(m, 8, 2),
-                jf(t, 8, 2),
-                jf(term, 6, 3)
+                jf(*m, 8, 2),
+                jf(*t, 8, 2),
+                jf(*term, 6, 3)
             );
         }
         for (n, ok, _) in gate_checks(anchors, &st) {
             if !ok {
                 println!("  FAILED GATE: {n}  (+0.500)");
             }
+        }
+        // The model column for these rows is a DIFFERENT statistic from -validate's: said here
+        // because a reader comparing the two tables would otherwise take the disagreement for a
+        // bug.
+        if rows.iter().any(|(n, _, _, _)| EXTREME_TARGETS.contains(n)) {
+            println!(
+                "  NOTE: {} — the model value scored (and shown",
+                EXTREME_TARGETS.join(", ")
+            );
+            println!(
+                "    above) is the MEDIAN of single histories at the anchor's own horizon, the"
+            );
+            println!(
+                "    converging centre of the distribution -validate's percentile reads.  The pooled"
+            );
+            println!(
+                "    ensemble minimum is never scored: its distance from a one-history anchor"
+            );
+            println!("    tracks the ensemble size.");
         }
         return;
     }
@@ -6305,6 +6956,15 @@ fn main() {
                 simulate(&w, years, seed + k as u64 * 7919)
             }
         };
+        // REFUSED, not warned about. Every other gate verdict is advisory because an unrealistic
+        // world is still a world; a path holding a non-finite price is not data at all. The dial
+        // domains close the routes reachable from the command line; this closes the file.
+        let refuse_non_finite = |p: &Path, k: usize, f: &str| {
+            if !p.price.iter().all(|x| x.is_finite()) {
+                eprintln!("REFUSED: path {k} holds a non-finite price; nothing written to {f}");
+                std::process::exit(2);
+            }
+        };
         let written: Vec<String> = if emit_all {
             // At the default offset this IS the report ensemble; shifted, the range is re-simulated
             // (in parallel, not one at a time through `path_at`) because the report and the gate
@@ -6318,6 +6978,7 @@ fn main() {
             (emit_from..emit_from + paths)
                 .map(|k| {
                     let f = indexed_name(&emit, k, width);
+                    refuse_non_finite(&batch[k - emit_from], k, &f);
                     write_emitted(
                         anchors,
                         &f,
@@ -6335,6 +6996,7 @@ fn main() {
                 .collect()
         } else {
             let p = path_at(emit_path);
+            refuse_non_finite(&p, emit_path, &emit);
             write_emitted(
                 anchors,
                 &emit,
@@ -6382,6 +7044,22 @@ fn main() {
         "paths {paths} x {years} years   {} simulated years",
         paths * years
     );
+    // `med` and `pctile` both drop non-finite paths, so summarising the survivors in silence is how
+    // a contaminated ensemble reads as an ordinary world. The count is stated where the medians it
+    // excludes are read.
+    let non_finite_paths = sims
+        .iter()
+        .filter(|s| !s.price.iter().all(|x| x.is_finite()))
+        .count();
+    if non_finite_paths > 0 {
+        println!(
+            "  WARNING: {non_finite_paths} of {} paths hold a non-finite price and are EXCLUDED from",
+            sims.len()
+        );
+        println!(
+            "           every median and percentile below -- this world is not simulable as dialled"
+        );
+    }
     println!();
     println!(
         "  annualised return      median {}%   5th {}%   95th {}%",
@@ -6485,9 +7163,10 @@ fn main() {
         jf(st.halt_pct, 0, 3)
     );
     println!(
-        "                         crowd flow {} bp/session ({}% of the noise term) — the reflexive channel",
+        "                         crowd flow {} bp/session ({}% of the noise term) — the reflexive channel   macro disasters {}/century",
         jf(st.crowd_flow * 1e4, 0, 2),
-        jf(st.crowd_flow / SIGMA_N * 100.0, 0, 1)
+        jf(st.crowd_flow / SIGMA_N * 100.0, 0, 1),
+        jf(st.dis_per_century, 0, 2)
     );
 
     println!();
@@ -6524,20 +7203,40 @@ fn main() {
     println!(
         "      data, and no clean bond-fund series runs longer.  Every other row is whole-path."
     );
-    for (n, get, want, _) in fit_targets(anchors) {
-        let got = get(&st);
-        let ratio = if want != 0.0 { got / want } else { f64::NAN };
-        let flag = if ratio > 1.5 || ratio < 0.667 {
-            "  <-- MISS"
-        } else {
-            ""
+    println!(
+        "    NOTE: a row whose model statistic is an EXTREME over the ensemble carries no ratio —"
+    );
+    println!(
+        "      the deepest of ~4,400 pooled episodes over the deepest of ONE history grades the"
+    );
+    println!(
+        "      sample size, not the model, and deepens without bound as -paths grows.  Those rows"
+    );
+    println!(
+        "      report where the record falls among single histories of its own length instead;"
+    );
+    println!(
+        "      near 50% the record is a typical history of this model.  Same reading as -noise."
+    );
+    for r in fidelity_rows(anchors, &st, paths, seed, &w) {
+        let flag = if r.miss() { "  <-- MISS" } else { "" };
+        let judgement = match (r.ratio, r.pctile) {
+            (Some(x), _) => format!("ratio {}", jf(x, 5, 2)),
+            (None, Some(pc)) => format!(
+                "record@ {pc:>3}% of {}y histories (n={})",
+                r.horizon_years, r.n_histories
+            ),
+            (None, None) => format!(
+                "record@  n/a — {} histories, needs {EXTREME_MIN_HISTORIES}",
+                r.n_histories
+            ),
         };
         println!(
-            "     {:<22} model {}   real {}   ratio {}{}",
-            n,
-            jf(got, 8, 2),
-            jf(want, 8, 2),
-            jf(ratio, 5, 2),
+            "     {:<22} model {}   real {}   {}{}",
+            r.name,
+            jf(r.model, 8, 2),
+            jf(r.real, 8, 2),
+            judgement,
             flag
         );
     }
@@ -7011,11 +7710,16 @@ mod contract_tests {
         // targets. If one changes, `-validate` changes for every consumer who never asked for a
         // different index.
         //
-        // ONE has moved since, deliberately: `med_depth` -27.1 -> -21.4 in 0.22.0, because -27.1 was
-        // not the statistic the model computes — it is the record's median at a 20% threshold where
-        // the model measures 15%+ episodes. `episode_anchor_tests` re-derives the new value and pins
-        // the evidence for the old one. A future move of any value here needs the same treatment:
-        // measured, recorded, re-derivable.
+        // TWO have moved since, deliberately, and both for the same reason — the anchor was not the
+        // statistic the model computes:
+        //   `med_depth`   -27.1 -> -21.4 (0.22.0), the record's median at a 20% threshold where the
+        //                 model measures 15%+ episodes;
+        //   `worst_depth` -56.8 -> -84.1 (0.22.1), the worst of 1954-2026, a window that opens AFTER
+        //                 the 1929-32 decline setting the record's worst, where the model computes
+        //                 the worst over a whole history.
+        // `episode_anchor_tests` re-derives both and pins the evidence for what each one used to be.
+        // A future move of any value here needs the same treatment: measured, recorded,
+        // re-derivable.
         let a = SP500_ANCHORS;
         assert_eq!(a.vol, 16.0);
         assert_eq!(a.ret_vol, 0.69);
@@ -7024,7 +7728,7 @@ mod contract_tests {
         assert_eq!(a.ac20, 0.225);
         assert_eq!(a.crashes, 20.7);
         assert_eq!(a.med_depth, -21.4); // re-measured in 0.22.0; see episode_anchor_tests
-        assert_eq!(a.worst_depth, -56.8);
+        assert_eq!(a.worst_depth, -84.1); // re-anchored in 0.22.1; see episode_anchor_tests
         assert_eq!(a.vol_band, (14.0, 18.0));
         assert_eq!(a.ret_vol_band, (0.50, 0.85));
     }
@@ -7098,6 +7802,258 @@ mod contract_tests {
             cross_asset_verdict(1, 1, &[("a", 3), ("b", 1)]),
             ("FAIL", false),
             "a resolved miss outranks an unresolved edge"
+        );
+    }
+
+    /// A name that matches nothing classifies no row, so the target it was meant to protect goes
+    /// back to being reported as a ratio — silently, and only where someone reads the table.
+    #[test]
+    fn extreme_targets_name_fidelity_targets_that_exist() {
+        let names: Vec<&str> = fit_targets(SP500_ANCHORS)
+            .into_iter()
+            .map(|(n, _, _, _)| n)
+            .collect();
+        for n in EXTREME_TARGETS {
+            assert!(
+                names.contains(n),
+                "EXTREME_TARGETS names [{n}], which is not a fidelity target. Rename it with the                  target, or the row is graded as a per-path value again."
+            );
+        }
+    }
+
+    /// The invariant the sidecar rests on. A consumer must be able to tell the two apart from the
+    /// DATA — `ratio: null` is what stops the division being made by accident, and a row that
+    /// carried both would let it be made anyway.
+    #[test]
+    fn an_extreme_row_carries_a_percentile_and_no_ratio() {
+        let w = default_world();
+        let a = SP500_ANCHORS;
+        let st = measure(&sim_paths(&w, 60, 100, DEFAULT_SEED), 100);
+        let rows = fidelity_rows(a, &st, 60, DEFAULT_SEED, &w);
+        let names: Vec<&str> = fit_targets(a).into_iter().map(|(n, _, _, _)| n).collect();
+        assert_eq!(
+            rows.iter().map(|r| r.name).collect::<Vec<_>>(),
+            names,
+            "every fidelity target must produce exactly one row, in report order"
+        );
+        for r in &rows {
+            if EXTREME_TARGETS.contains(&r.name) {
+                assert!(
+                    r.ratio.is_none(),
+                    "[{}] is an ensemble extreme and must carry no ratio: model/real grades the                      ensemble size, not the model",
+                    r.name
+                );
+                assert!(
+                    r.pctile.is_some(),
+                    "[{}] must carry a percentile in the ratio's place",
+                    r.name
+                );
+                assert_eq!(r.aggregation(), "ensemble-extreme");
+                assert_eq!(
+                    r.horizon_years, a.tail_years,
+                    "[{}]'s percentile must be read at its own anchor's horizon, which for the                      tail is its own window and NOT the equity window",
+                    r.name
+                );
+            } else {
+                assert!(
+                    r.ratio.is_some(),
+                    "[{}] is a per-path value and must carry its ratio",
+                    r.name
+                );
+                assert!(
+                    r.pctile.is_none(),
+                    "[{}] is not an extreme and must not claim a percentile",
+                    r.name
+                );
+                assert_eq!(r.aggregation(), "per-path");
+            }
+        }
+    }
+
+    /// WHY the row carries no ratio, pinned so the fix cannot be undone as cosmetic. `worst_depth`
+    /// is a minimum over every episode in the POOLED ensemble while the anchor is the deepest
+    /// episode of ONE history, so it deepens without bound as paths grow. The percentile is an
+    /// estimate of a fixed quantity and is stable over the same range. Both halves are asserted: a
+    /// test that only checked the percentile was stable would also pass if it were constant because
+    /// nothing was being measured.
+    #[test]
+    fn the_worst_crash_level_runs_away_with_the_ensemble_but_the_percentile_does_not() {
+        let w = default_world();
+        let a = SP500_ANCHORS;
+        let at = |paths: usize| -> (f64, FidelityRow) {
+            let st = measure(&sim_paths(&w, paths, 100, DEFAULT_SEED), 100);
+            let row = fidelity_rows(a, &st, paths, DEFAULT_SEED, &w)
+                .into_iter()
+                .find(|r| r.name == "worst crash %")
+                .expect("no [worst crash %] row");
+            (st.worst_depth, row)
+        };
+        let (lvl_small, small) = at(100);
+        let (lvl_large, large) = at(400);
+        assert!(
+            lvl_large < lvl_small - 3.0,
+            "the pooled minimum must still run away with the ensemble or this test asserts              nothing: {lvl_small:.2}% at 100 paths, {lvl_large:.2}% at 400"
+        );
+        let p_small = small.pctile.expect("no percentile at 100 paths");
+        let p_large = large.pctile.expect("no percentile at 400 paths");
+        // The tolerance is the estimator's own noise, not drift: an INTERIOR percentile estimated
+        // from n histories carries binomial sd ~ sqrt(p(1-p)/n) — about 4 points at n=100 — where
+        // the pooled minimum's movement is unbounded in n.
+        assert!(
+            p_large.abs_diff(p_small) <= 10,
+            "the published percentile must be stable over the range the level runs away across:              {p_small}% at 100 paths, {p_large}% at 400"
+        );
+        assert_eq!(
+            small.miss(),
+            large.miss(),
+            "and its verdict must not depend on the ensemble size: {p_small}% at 100 paths,              {p_large}% at 400"
+        );
+    }
+
+    /// `fitness` must price the converging statistic the caller supplies — never `worst_depth`,
+    /// the pooled minimum, whose distance from a one-history anchor tracks the ensemble size.
+    /// Three pins: the two statistics actually differ here (or the test cannot tell them apart),
+    /// the loss row carries the supplied median, and the term is nonzero at the shipped defaults
+    /// — a term that cannot bind is the recurring failure class in this file.
+    #[test]
+    fn the_loss_grades_an_extreme_row_by_the_median_and_it_binds() {
+        let w = default_world();
+        let a = SP500_ANCHORS;
+        let st = measure(&sim_paths(&w, 20, 100, DEFAULT_SEED), 100);
+        let ext = extreme_score_stats(a, 20, DEFAULT_SEED, &w);
+        let med = *ext
+            .get("worst crash %")
+            .expect("no scored median for worst crash %");
+        assert!(
+            (med - st.worst_depth).abs() > 3.0,
+            "median {med:.2}% and pooled minimum {:.2}% must differ at this size, or this test              cannot tell which one the loss priced",
+            st.worst_depth
+        );
+        let rows = fitness(a, &st, &ext).1;
+        let row = rows
+            .iter()
+            .find(|(n, _, _, _)| *n == "worst crash %")
+            .expect("no worst crash % loss row");
+        assert!(
+            (row.1 - med).abs() < 1e-12,
+            "the loss row must carry the median, not the minimum"
+        );
+        // The term DISCRIMINATES: with the disaster channel off the century tail is far too
+        // shallow and the term prices it; at the adopted defaults it is much smaller. This is what
+        // makes the tail term the thing that FOUND the adopted world, and what a cosmetic revert
+        // would undo.
+        let mut off_w = default_world();
+        off_w.disaster_rate = 0.0;
+        let off_st = measure(&sim_paths(&off_w, 20, 100, DEFAULT_SEED), 100);
+        let off_ext = extreme_score_stats(a, 20, DEFAULT_SEED, &off_w);
+        let off_rows = fitness(a, &off_st, &off_ext).1;
+        let off_row = off_rows
+            .iter()
+            .find(|(n, _, _, _)| *n == "worst crash %")
+            .expect("no worst crash % loss row");
+        assert!(
+            off_row.3 > row.3 + 0.05,
+            "the tail term must price the disaster-off world's shallow century tail well above              the adopted world's: off {:.4} vs on {:.4}",
+            off_row.3,
+            row.3
+        );
+        // supplied exactly at the anchor the term is zero — pins that the supplied value is priced
+        let at_anchor: std::collections::HashMap<&'static str, f64> =
+            [("worst crash %", a.worst_depth)].into_iter().collect();
+        let zeroed = fitness(a, &st, &at_anchor).1;
+        let z = zeroed
+            .iter()
+            .find(|(n, _, _, _)| *n == "worst crash %")
+            .expect("no worst crash % loss row");
+        assert!(z.3.abs() < 1e-12);
+        // and a missing entry prices as unmeasurable, never as agreement
+        let none: std::collections::HashMap<&'static str, f64> = std::collections::HashMap::new();
+        let missing = fitness(a, &st, &none).1;
+        let m = missing
+            .iter()
+            .find(|(n, _, _, _)| *n == "worst crash %")
+            .expect("no worst crash % loss row");
+        assert!(
+            m.3 > 1.0,
+            "an unsupplied extreme stat must price as unmeasurable (weight x 4), read {:.4}",
+            m.3
+        );
+    }
+
+    /// One history reads 0% or 100% and neither is a measurement. The failure being prevented is
+    /// the 0.22.1 one on a new axis: `miss: false` on a statistic that could not be measured, in
+    /// the one field a consumer reads to decide whether to trust the file.
+    #[test]
+    fn an_extreme_row_with_too_few_histories_reports_a_miss() {
+        let w = default_world();
+        let a = SP500_ANCHORS;
+        let st = measure(&sim_paths(&w, 1, 100, DEFAULT_SEED), 100);
+        let r = fidelity_rows(a, &st, 1, DEFAULT_SEED, &w)
+            .into_iter()
+            .find(|r| r.name == "worst crash %")
+            .expect("no [worst crash %] row");
+        assert!(
+            r.pctile.is_none(),
+            "one history cannot place a record, read {:?}",
+            r.pctile
+        );
+        assert!(
+            r.miss(),
+            "an unplaceable record must report a miss, not a pass"
+        );
+    }
+
+    /// Mirrors the trading-halt test: the channel's draws come from their own stream, so rate 0
+    /// must reproduce the pre-disaster path BIT-IDENTICALLY whatever the other disaster dials say,
+    /// and every frozen release row must carry rate 0 — no release before 0.22.1 had the
+    /// mechanism.
+    #[test]
+    fn the_disaster_channel_is_absent_at_zero_and_releases_inherit_that() {
+        let mut off = default_world();
+        off.disaster_rate = 0.0;
+        let mut off2 = off;
+        off2.disaster_size = 9.9;
+        off2.disaster_len = 0.1;
+        off2.disaster_recover = 0.9;
+        off2.disaster_rec_len = 0.1;
+        let a = simulate(&off, 4, DEFAULT_SEED);
+        let b = simulate(&off2, 4, DEFAULT_SEED);
+        assert_eq!(
+            a.price, b.price,
+            "at rate 0 every other disaster dial must be inert, bit for bit"
+        );
+        // Engagement is checked on the DIAGNOSTIC over a real horizon, not on a short path's
+        // bytes: at 0.6/century a 4-year path usually holds no disaster, and the channel leaving
+        // such a path untouched is the design, not a defect.
+        let on = sim_paths(&default_world(), 4, 100, DEFAULT_SEED);
+        assert!(
+            on.iter().map(|p| p.disasters).sum::<usize>() > 0,
+            "the adopted default must actually strike within four centuries at this seed"
+        );
+        for (v, w) in releases() {
+            assert!(
+                w.disaster_rate.abs() < 1e-12,
+                "release {v} predates the disaster channel and must inherit rate 0"
+            );
+        }
+    }
+
+    /// The channel exists to move the CENTURY-WORST distribution, which no gate-passing dial
+    /// setting could reach (the sweep of 2026-08-30: recovery, bubble-drag, stress, depth, value,
+    /// jumpvar, haltlimit, volofvol, volpersist and fundvol all left the median at -58..-61).
+    /// Pinned so it cannot regress to inert: at the adopted defaults the median single-century
+    /// worst must be at least 8 points deeper than with the channel off, on the same seed.
+    #[test]
+    fn the_disaster_channel_discriminates_on_the_statistic_it_was_added_for() {
+        let a = SP500_ANCHORS;
+        let on = extreme_score_stats(a, 40, DEFAULT_SEED, &default_world());
+        let mut off_w = default_world();
+        off_w.disaster_rate = 0.0;
+        let off = extreme_score_stats(a, 40, DEFAULT_SEED, &off_w);
+        let (m_on, m_off) = (on["worst crash %"], off["worst crash %"]);
+        assert!(
+            m_on < m_off - 8.0,
+            "the adopted channel must deepen the median century-worst materially: on {m_on:.1}%              vs off {m_off:.1}%"
         );
     }
 }
@@ -7578,7 +8534,7 @@ mod episode_anchor_tests {
     }
 
     #[test]
-    fn the_sibling_episode_anchors_still_reconcile() {
+    fn crashes_per_century_still_reconciles_across_windows() {
         let Some(rows) = rows() else { return };
         let century = at(&rows, "w1926", MODEL_THRESHOLD).expect("no w1926 row");
         let modern = at(&rows, "w1954", MODEL_THRESHOLD).expect("no w1954 row");
@@ -7589,9 +8545,53 @@ mod episode_anchor_tests {
             century.per_century,
             modern.per_century
         );
+    }
+
+    /// This replaces a test that asserted the opposite. It pinned `worst_depth` to `w1954.worst`,
+    /// and 1954 opens AFTER the 1929-32 decline that sets the record's worst — so the check
+    /// certified an anchor that had the tail removed, on the one row a window can delete outright.
+    /// A test can hold a mis-specified anchor in place as firmly as it holds a correct one.
+    #[test]
+    fn worst_depth_is_the_deepest_episode_of_the_whole_record() {
+        let Some(rows) = rows() else { return };
+        let century = at(&rows, "w1926", MODEL_THRESHOLD).expect("no w1926 row");
         assert!(
-            (SP500_ANCHORS.worst_depth - modern.worst).abs() < 5.0,
-            "worst crash {:.1}% is no longer the same episode as the record's {:.1}%",
+            (SP500_ANCHORS.worst_depth - century.worst).abs() < 0.05,
+            "worst_depth must be the deepest episode of the LONGEST window in the fixture, which              reads {:.1}% over 1926-2026 at a {MODEL_THRESHOLD}% threshold",
+            century.worst
+        );
+        assert_eq!(
+            SP500_ANCHORS.tail_years, 100,
+            "the tail's horizon must be the window its anchor was read over, or the percentile in              -validate is read at a length the anchor never described"
+        );
+    }
+
+    /// The DISCRIMINATING half: without this, re-anchoring reads as a taste change. The record's
+    /// worst is the single most window-sensitive statistic in the fixture — 54% between windows,
+    /// against 11% for median depth and 30% for the crash rate — and the shipped value was the
+    /// shallow end of that range.
+    #[test]
+    fn no_shorter_window_could_have_produced_the_tail_anchor() {
+        let Some(rows) = rows() else { return };
+        let worsts: Vec<f64> = rows
+            .iter()
+            .filter(|r| r.thr == MODEL_THRESHOLD)
+            .map(|r| r.worst)
+            .collect();
+        let deepest = worsts.iter().copied().fold(f64::INFINITY, f64::min);
+        let shallowest = worsts.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        assert!(
+            (deepest - shallowest).abs() / shallowest.abs() > 0.4,
+            "the fixture no longer shows the worst episode as strongly window-dependent              ({worsts:?}); the reason this anchor needs its own window would no longer hold"
+        );
+        let modern = at(&rows, "w1954", MODEL_THRESHOLD).expect("no w1954 row");
+        assert!(
+            (modern.worst - -54.6).abs() < 0.05,
+            "w1954's worst is the value that shipped as -56.8 through 0.22.0 — pinned so the              account of what was wrong stays checkable rather than asserted"
+        );
+        assert!(
+            SP500_ANCHORS.worst_depth < modern.worst - 20.0,
+            "the shipped anchor {:.1}% is no deeper than the truncated window's {:.1}%; the              re-anchoring has been undone",
             SP500_ANCHORS.worst_depth,
             modern.worst
         );
