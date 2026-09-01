@@ -213,6 +213,37 @@ back to 0.23.0 (`expDet`), and the gate grades with the current rulers — a wor
 mechanism fails that mechanism's rows honestly; pair with `-gate realism` to require only what it
 claims. See "A pinned world without a pinned binary" in `docs/MarketSimWorlds.md`.
 
+**NEW MECHANISM — the satellite equity leg (`-satbeta`, `-satidio`), off by default.** A second,
+higher-beta equity market — the Nasdaq to the default world's S&P — derived from the primary leg:
+`satBeta` times the primary's observed return plus idiosyncratic noise riding the primary's FULL
+vol state, log-vol and spiral amplification both. The state-sharing is the anchored constraint,
+not a convenience: SPY–QQQ correlation is state-flat (0.853 calm, 0.852 stressed) BECAUSE
+idiosyncratic vol triples with the shared state; constant idio noise manufactures a
+stress-correlation kick the record does not have (+0.30, measured on the first cut). At the
+anchored `-satbeta 1.2 -satidio 0.074` the leg reads corr 0.850 / vol ratio 1.41 / beta 1.20
+against anchors 0.853 / 1.40 / 1.195 (`joint-coupling-2026-08-31.tsv`, SPY–QQQ 1999–2026;
+re-derived by contract tests in both twins). The residual-vol target follows the MODEL's own
+primary volatility — `beta·sigma1·sqrt(1/corr^2 − 1)`, the depth rungs' own-vol philosophy —
+and the dials are anchored, not searchable, like `-duration`. Disclosed misses, one family:
+rolling-correlation and rolling-beta distributions run narrower than the record's (the missing
+corr-regime and mania structure), idio clustering light (0.25 vs 0.35). Draws come from a
+dedicated stream; 0 is bit-identical off. `EmitSchema` 7 -> 8: the `world` block gains both
+dials, and the TSV a `logSat` column present ONLY when the leg is on — the NATURAL LOG of the
+satellite price, because a level near 1e6 at six decimals sits within reach of a cross-language
+rounding tie (PARITY.md §6, measured); a satellite-off file stays byte-identical to schema 7's
+apart from the schema number and the two zero fields.
+
+**NEW — `-crowd drawdownNN`: the drawdown family as a crowd.** Exposure 1 within NN% of the
+running peak, 0 past it, same banded structure and information set as the trend crowds;
+draw-free, default world untouched. What it answers: a crowd running the drawdown rule's own
+family at the rule's own threshold is SYMBIOTIC, not destructive — `cut below -10%` reads vsFlat
+net +1.29 pp/yr under `-crowd drawdown10` against +0.25/+0.43/+0.29 under the
+momentum/trend200/volscaled crowds, with 0% ruin: the crowd's de-risking deepens declines the
+rule has already left and its re-entry powers the recovery the rule buys back into. The boost is
+threshold-specific — the drawdown-20 crowd's world fails the acceptance gate, and inside it the
+-10% rule reads +0.36 — and the pressed-hard REACTIVE world remains the case where the family's
+rank collapses.
+
 ## v0.22.1 — 2026-08-30
 
 The release where the century-scale tail became measurable, turned out to be the OPPOSITE of what

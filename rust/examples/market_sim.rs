@@ -93,7 +93,14 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 // last a dialised constant, 0.4 in every prior release). A reader that reconstructs a `World`
 // from a schema-6 sidecar and runs it here gets a market whose perceived fair value never leaves
 // the fundamental.
-const EMIT_SCHEMA: u32 = 7;
+// 7 -> 8: `world` gained the satellite leg's two dials (`satBeta`, `satIdio`), and the TSV a
+// `logSat` column — present ONLY when `satBeta > 0`, the NATURAL LOG of the satellite price.
+// Log, not a level, deliberately: a level near 1e6 rendered at %.6f puts the twins' 1-ulp
+// transcendental latitude (PARITY.md §6) within reach of a rounding tie — measured at ~100
+// cross-language print flips per 40 century paths — where the log sits nine orders under the
+// printed digit. A reader that reconstructs a `World` from a schema-7 sidecar loses nothing:
+// the dials were 0 in every world such a sidecar could describe.
+const EMIT_SCHEMA: u32 = 8;
 
 /// The base random seed `-seed` defaults to, named so `main` and the tests that reproduce a
 /// default-world ensemble cannot drift apart. Mirrors the Scala twin's `DefaultSeed`.
@@ -290,6 +297,8 @@ fn default_world() -> World {
         news_rate: 1.3,
         news_size: 0.033,
         refuge_days: 1.0,
+        sat_beta: 0.0,
+        sat_idio: 0.0,
         value_pull: 0.056,
         crowd: Crowd::Momentum,
         crowd_impact: 0.030,
@@ -348,6 +357,8 @@ fn v0_19_2() -> World {
         news_rate: 0.0,
         news_size: 0.0,
         refuge_days: 0.0,
+        sat_beta: 0.0,
+        sat_idio: 0.0,
         value_pull: 0.013,
         belief_share: 0.0,
         belief_years: 2.5,
@@ -453,6 +464,8 @@ fn v0_22_1() -> World {
         news_rate: 0.0,
         news_size: 0.0,
         refuge_days: 0.0,
+        sat_beta: 0.0,
+        sat_idio: 0.0,
         value_pull: 0.045,
         crowd: Crowd::Momentum,
         crowd_impact: 0.030,
@@ -503,6 +516,8 @@ fn v0_22_0() -> World {
         news_rate: 0.0,
         news_size: 0.0,
         refuge_days: 0.0,
+        sat_beta: 0.0,
+        sat_idio: 0.0,
         value_pull: 0.045,
         crowd: Crowd::Momentum,
         crowd_impact: 0.030,
@@ -553,6 +568,8 @@ fn v0_21_0() -> World {
         news_rate: 0.0,
         news_size: 0.0,
         refuge_days: 0.0,
+        sat_beta: 0.0,
+        sat_idio: 0.0,
         value_pull: 0.045,
         crowd: Crowd::Momentum,
         crowd_impact: 0.07,
@@ -594,6 +611,8 @@ fn v0_20_0() -> World {
         news_rate: 0.0,
         news_size: 0.0,
         refuge_days: 0.0,
+        sat_beta: 0.0,
+        sat_idio: 0.0,
         value_pull: 0.0145,
         belief_share: 0.0,
         belief_years: 2.5,
@@ -636,6 +655,11 @@ enum Crowd {
     Momentum,
     Trend(i32),
     VolScaled,
+    /// exposure keyed to distance from the running peak — folio's CDAP family as a crowd, so
+    /// "does a drawdown rule survive a crowd running a drawdown rule" is finally posable. The
+    /// parameter is the cut threshold in PERCENT below the peak (drawdown10 = de-risk past
+    /// -10%), reading `px[i-1]` alone like the other banded crowds.
+    Drawdown(i32),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -761,6 +785,21 @@ struct World {
     /// stress: joint-stress selling is a margin call, and margin calls do not wait overnight.
     /// 0 reads live stress, bit-identical to every frozen release.
     refuge_days: f64,
+    /// SATELLITE EQUITY LEG (prototype): a second, higher-beta equity market — the Nasdaq to the
+    /// default world's S&P — derived from the primary leg rather than agent-simulated. Its session
+    /// return is `sat_beta` times the primary's OBSERVED log return (markdown and news included —
+    /// they are shared factors) plus an idiosyncratic term whose volatility rides the SAME vol
+    /// state as the primary's diffusion. That state-sharing is the measured constraint, not a
+    /// convenience: SPY-QQQ correlation is state-FLAT (0.853 calm vs 0.852 stressed) BECAUSE
+    /// idiosyncratic vol triples with the shared state (7.7 -> 23.7%/yr); constant idio noise
+    /// would manufacture a stress-correlation kick the record does not have. Draws come from a
+    /// dedicated stream, read only when `sat_beta > 0`, so 0 is bit-identical off. Anchors
+    /// (SPY/QQQ 1999-2026): beta 1.20, corr 0.853, resid vol 14.1%/yr, rolling-252d beta
+    /// p5/med/p95 0.90/1.18/1.92.
+    sat_beta: f64,
+    /// idiosyncratic volatility of the satellite leg, per year at UNIT vol-state; the realized
+    /// residual vol adds the state variation on top
+    sat_idio: f64,
     value_pull: f64,
     crowd: Crowd,
     crowd_impact: f64,
@@ -825,6 +864,8 @@ struct Path {
     mean_crowd_flow: f64,
     /// BINDING diagnostic for the disaster channel: collapses begun post burn-in on this path.
     disasters: usize,
+    /// satellite equity leg price (empty when `sat_beta` is 0)
+    sat: Vec<f64>,
 }
 
 /// ONE price-formation mechanism for every traded asset: value demand toward `fair`, plus
@@ -1061,6 +1102,9 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
     // The news channel's own stream (prototype), same survivability contract as `jrng`/`drng`:
     // constructed unconditionally, read only when `news_rate > 0`, so rate 0 is bit-identical.
     let mut nrng = NumPyRng::new(seed ^ 0x0bad_2e15u64);
+    // The satellite leg's own stream (prototype), same survivability contract: constructed
+    // unconditionally, read only when `sat_beta > 0`, so 0 is bit-identical off.
+    let mut srng = NumPyRng::new(seed ^ 0x5a7e_1117u64);
     let mut px = vec![0.0f64; tot];
     let mut fv = vec![0.0f64; tot];
     let mut rt = vec![0.0f64; tot];
@@ -1168,6 +1212,8 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
     let mut ma_sum = 0.0f64;
     let mut crowd_rv = 0.01 * 0.01f64;
     let mut crowd_anchor = 0.0f64;
+    // The drawdown crowd's running peak of the prior session's emitted price; draw-free.
+    let mut crowd_peak = 0.0f64;
     let mut bond_stress_sum = 0.0f64;
     let mut bond_stress_hi = 0usize;
     let mut crowd_flow_sum = 0.0f64;
@@ -1183,6 +1229,15 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
     let mut rec_step = 0.0f64;
     let mut disaster_count = 0usize;
     let dis_prob = w.disaster_rate / (100.0 * DAYS_PER_YEAR as f64);
+    // SATELLITE LEG state: its log price, and the primary's observed log price last session (so
+    // the leg loads on the OBSERVED return — markdown and news included). Draw-free when off.
+    let mut sat_log_p = 0.0f64;
+    let mut sat_prev_px = 0.0f64;
+    let mut sp = if w.sat_beta > 0.0 {
+        vec![0.0f64; tot]
+    } else {
+        Vec::new()
+    };
 
     let mut i = 0usize;
     while i < tot {
@@ -1302,6 +1357,19 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
                         0.999 * crowd_anchor + 0.001 * v
                     };
                     let tgt = 0.0f64.max(1.0f64.min(if v > 0.0 { crowd_anchor / v } else { 1.0 }));
+                    if (tgt - crowd_e).abs() > BAND {
+                        crowd_e = tgt;
+                    }
+                }
+                Crowd::Drawdown(d) => {
+                    if p_prev > crowd_peak {
+                        crowd_peak = p_prev;
+                    }
+                    let tgt = if p_prev >= crowd_peak * (1.0 - f64::from(d) / 100.0) {
+                        1.0
+                    } else {
+                        0.0
+                    };
                     if (tgt - crowd_e).abs() > BAND {
                         crowd_e = tgt;
                     }
@@ -1490,6 +1558,24 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
         ip[i] = infl_press;
         log_cpi += (pi_base + infl_press) * dt;
         cp[i] = log_cpi.exp();
+        // SATELLITE LEG: beta times the primary's observed log return, plus idio noise riding the
+        // SAME vol state as the primary's diffusion (see the `sat_beta` field for the measured
+        // constraint this encodes). Reads `srng` only, so 0 is bit-identical off. The first
+        // session's return-from-zero is absorbed by burn-in.
+        if w.sat_beta > 0.0 {
+            let log_px = eq_m.log_p - markdown;
+            // The idio noise rides the primary's FULL per-session vol state: the log-vol factor
+            // AND the spiral's liquidity amplification, recovered exactly as this session's
+            // `last_liq` over the base impact. The spiral's share is load-bearing — on log-vol
+            // alone the residual's stress/calm vol ratio read 1.13 against the anchored 3.1,
+            // and the missing state manufactured a +0.30 stress-correlation kick the record
+            // does not have.
+            let amp_e = eq_m.last_liq * w.depth / 12.0;
+            let idio = w.sat_idio * sqdt * (log_vol - vol_norm).exp() * amp_e * srng.randn();
+            sat_log_p += w.sat_beta * (log_px - sat_prev_px) + idio;
+            sat_prev_px = log_px;
+            sp[i] = sat_log_p.exp();
+        }
 
         // ---- capital reallocation: spring, scored on positions actually held ---------------
         perf_v = 0.99 * perf_v + 0.01 * (mispricing_pre * ret_e) * 100.0;
@@ -1555,6 +1641,11 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
         duration: w.duration,
         mean_crowd_flow: crowd_flow_sum / nf,
         disasters: disaster_count,
+        sat: if w.sat_beta > 0.0 {
+            sp[BURN_IN..].to_vec()
+        } else {
+            Vec::new()
+        },
     }
 }
 
@@ -6703,6 +6794,7 @@ fn crowd_name(c: Crowd) -> String {
         Crowd::Momentum => "momentum".to_string(),
         Crowd::Trend(d) => format!("trend{d}"),
         Crowd::VolScaled => "volscaled".to_string(),
+        Crowd::Drawdown(d) => format!("drawdown{d}"),
     }
 }
 
@@ -6832,8 +6924,8 @@ fn write_emitted(
     // before calling; here it PANICS, because this is also API and a `process::exit` in a library
     // function takes a test harness down whole rather than failing one test.
     assert!(
-        p.price.iter().all(|x| x.is_finite()),
-        "path {k} holds a non-finite price; refusing {file}"
+        p.price.iter().all(|x| x.is_finite()) && p.sat.iter().all(|x| x.is_finite()),
+        "path {k} holds a non-finite value; refusing {file}"
     );
     let dates = session_dates(p.price.len(), start_ymd);
     write_emit_tsv(file, p, &dates);
@@ -6846,6 +6938,11 @@ fn write_emitted(
 fn write_emit_tsv(file: &str, p: &Path, dates: &[String]) {
     let mut tsv = String::new();
     tsv.push_str(&EMIT_COLUMNS.join("\t"));
+    // The satellite column, present only when the leg ran — a satellite-off file is
+    // byte-identical to schema 7's. LOG, not a level: see the 7 -> 8 note at `EMIT_SCHEMA`.
+    if !p.sat.is_empty() {
+        tsv.push_str("\tlogSat");
+    }
     tsv.push('\n');
     for (i, d) in dates.iter().enumerate() {
         tsv.push_str(d);
@@ -6861,6 +6958,10 @@ fn write_emit_tsv(file: &str, p: &Path, dates: &[String]) {
         ] {
             tsv.push('\t');
             tsv.push_str(&ef(v));
+        }
+        if !p.sat.is_empty() {
+            tsv.push('\t');
+            tsv.push_str(&ef(p.sat[i].ln()));
         }
         tsv.push('\n');
     }
@@ -6908,6 +7009,8 @@ fn world_json_body(w: &World) -> Vec<String> {
         ("unwind", ef(w.unwind)),
         ("refuge", ef(w.refuge)),
         ("refugeDays", ef(w.refuge_days)),
+        ("satBeta", ef(w.sat_beta)),
+        ("satIdio", ef(w.sat_idio)),
         ("inflProb", ef(w.infl_prob)),
         ("inflSize", ef(w.infl_size)),
         ("inflSpeed", ef(w.infl_speed)),
@@ -7009,7 +7112,13 @@ fn write_emit_sidecar(
         format!("  \"version\": {},", json_str(VERSION)),
         format!("  \"schema\": {EMIT_SCHEMA},"),
         format!("  \"file\": {},", json_str(file)),
-        format!("  \"columns\": {},", str_list(&EMIT_COLUMNS)),
+        format!("  \"columns\": {},", {
+            let mut cols: Vec<&str> = EMIT_COLUMNS.to_vec();
+            if !p.sat.is_empty() {
+                cols.push("logSat");
+            }
+            str_list(&cols)
+        }),
         "  \"header\": true,".to_string(),
         "  \"path\": {".to_string(),
         format!("    \"index\": {k},"),
@@ -7243,6 +7352,9 @@ fn main() {
     let mut news_rate = dw.news_rate;
     let mut news_size = dw.news_size;
     let mut refuge_days = dw.refuge_days;
+    let mut sat_beta = dw.sat_beta;
+    let mut sat_idio = dw.sat_idio;
+    let mut joint_emit = String::new();
     let mut jump_rate = dw.jump_rate;
     let mut value_pull = dw.value_pull;
     let mut crowd_name = crowd_name(dw.crowd);
@@ -7333,6 +7445,9 @@ fn main() {
             "-newsrate" => news_rate = req_f64(&mut it, "-newsrate"),
             "-newssize" => news_size = req_f64(&mut it, "-newssize"),
             "-refugedays" => refuge_days = req_f64(&mut it, "-refugedays"),
+            "-satbeta" => sat_beta = req_f64(&mut it, "-satbeta"),
+            "-satidio" => sat_idio = req_f64(&mut it, "-satidio"),
+            "-jointemit" => joint_emit = req_arg(&mut it, "-jointemit").clone(),
             "-jumprate" => jump_rate = req_f64(&mut it, "-jumprate"),
             "-value" => value_pull = req_f64(&mut it, "-value"),
             "-crowdimpact" => crowd_impact = req_f64(&mut it, "-crowdimpact"),
@@ -7465,6 +7580,8 @@ fn main() {
         non_neg("-newsrate", news_rate);
         non_neg("-newssize", news_size);
         non_neg("-refugedays", refuge_days);
+        non_neg("-satbeta", sat_beta);
+        non_neg("-satidio", sat_idio);
         non_neg("-disasterrate", disaster_rate);
         non_neg("-disastersize", disaster_size);
         if disaster_rate > 0.0 && (disaster_size <= 0.0 || disaster_len <= 0.0) {
@@ -7535,11 +7652,17 @@ fn main() {
         t if t.starts_with("trend") => match t[5..].parse::<i32>() {
             Ok(d) if d > 0 => Crowd::Trend(d),
             _ => cli_die(&format!(
-                "unknown -crowd [{crowd_name}]; use momentum, trendNNN, or volscaled"
+                "unknown -crowd [{crowd_name}]; use momentum, trendNNN, volscaled, or drawdownNN"
+            )),
+        },
+        t if t.starts_with("drawdown") => match t[8..].parse::<i32>() {
+            Ok(d) if d > 0 && d < 100 => Crowd::Drawdown(d),
+            _ => cli_die(&format!(
+                "unknown -crowd [{crowd_name}]; use momentum, trendNNN, volscaled, or drawdownNN"
             )),
         },
         _ => cli_die(&format!(
-            "unknown -crowd [{crowd_name}]; use momentum, trendNNN, or volscaled"
+            "unknown -crowd [{crowd_name}]; use momentum, trendNNN, volscaled, or drawdownNN"
         )),
     };
     let anchors = anchors_named(&anchor_spec);
@@ -7573,6 +7696,8 @@ fn main() {
         news_rate,
         news_size,
         refuge_days,
+        sat_beta,
+        sat_idio,
         value_pull,
         crowd,
         crowd_impact,
@@ -7589,6 +7714,31 @@ fn main() {
         margin,
     };
 
+    // SATELLITE PROTOTYPE: write per-path primary+satellite LOG prices for grading against the
+    // SPY-QQQ coupling anchors (the joint_anchor conventions, graded python-side). Deliberately
+    // OUTSIDE the -emit interface: no sidecar, no schema claim — a measurement tap, not a
+    // consumer surface. LOG prices, not levels: the twins' transcendentals carry a 1-ulp
+    // latitude (PARITY.md §6), and a level near 1e6 rendered at %.6f puts that latitude within
+    // ~1e-4 of a rounding tie — a handful of cross-language print flips per 40 paths, measured.
+    // A log near 13 puts the same latitude nine orders under the printed digit: a rendering
+    // rule, not a tolerance.
+    if !joint_emit.is_empty() {
+        if sat_beta <= 0.0 {
+            cli_die("-jointemit requires -satbeta > 0");
+        }
+        for k in 0..paths {
+            let p = simulate(&w, years, seed + k as u64 * 7919);
+            let mut tsv = String::from("logPrice\tlogSat\n");
+            for i in 0..p.price.len() {
+                tsv.push_str(&ef(p.price[i].ln()));
+                tsv.push('\t');
+                tsv.push_str(&ef(p.sat[i].ln()));
+                tsv.push('\n');
+            }
+            write_or_die(&format!("{joint_emit}-{k:03}.tsv"), &tsv);
+        }
+        return;
+    }
     if calibrate_n > 0 {
         calibrate(anchors, calibrate_n, &w, seed);
         return;
@@ -7736,8 +7886,8 @@ fn main() {
         // world is still a world; a path holding a non-finite price is not data at all. The dial
         // domains close the routes reachable from the command line; this closes the file.
         let refuse_non_finite = |p: &Path, k: usize, f: &str| {
-            if !p.price.iter().all(|x| x.is_finite()) {
-                eprintln!("REFUSED: path {k} holds a non-finite price; nothing written to {f}");
+            if !p.price.iter().all(|x| x.is_finite()) || !p.sat.iter().all(|x| x.is_finite()) {
+                eprintln!("REFUSED: path {k} holds a non-finite value; nothing written to {f}");
                 std::process::exit(2);
             }
         };
@@ -7802,7 +7952,7 @@ fn main() {
         eprintln!(
             "wrote {} path(s), {} columns x {sessions} sessions, to {}{span} (+ sidecar {})",
             written.len(),
-            EMIT_COLUMNS.len(),
+            EMIT_COLUMNS.len() + usize::from(w.sat_beta > 0.0),
             written[0],
             sidecar_name(&written[0])
         );
@@ -8952,6 +9102,23 @@ mod contract_tests {
         }
     }
 
+    #[test]
+    fn the_satellite_dials_are_inert_in_every_frozen_release() {
+        for (v, w) in releases() {
+            assert!(
+                w.sat_beta == 0.0 && w.sat_idio == 0.0,
+                "release {v} predates the satellite leg and must carry 0 / 0"
+            );
+        }
+        // The engagement contract's off half: no satellite series exists to consume, and no
+        // logSat column is written (schema 8 makes the column conditional on the dial).
+        let p = simulate(&default_world(), 2, DEFAULT_SEED);
+        assert!(
+            p.sat.is_empty(),
+            "satBeta 0 must produce no satellite series"
+        );
+    }
+
     /// Each dial moves the statistic it was added for, materially, on the same seed — the same
     /// discrimination bar the valuation cycle's dial met.
     #[test]
@@ -9814,5 +9981,126 @@ mod bond_crash_tests {
             "only {} episodes; the medians below that are not worth the name",
             rows.len()
         );
+    }
+}
+
+/// The satellite leg's coupling anchors are MEASURED numbers; this re-derives the graded
+/// bands from the checked-in fixture so the anchored dials and the record cannot drift apart.
+/// The Scala twin carries the same check in `JointCouplingSuite`, against the same file.
+/// The distribution and conditioning rows (`tol` = `-`) belong to the python grader over
+/// `-jointemit` output, not to these tests.
+#[cfg(test)]
+mod joint_coupling_tests {
+    use super::*;
+
+    const COUPLING: &str = "../test-data/equity-anchors/joint-coupling-2026-08-31.tsv";
+
+    /// `None` where the fixture is absent — the crate ships without `test-data/`, so a
+    /// source-tarball build must not fail here.
+    fn rows(path: &str) -> Option<Vec<Vec<String>>> {
+        let text = std::fs::read_to_string(path).ok()?;
+        Some(
+            text.lines()
+                .filter(|l| !l.starts_with('#') && !l.starts_with("pair\t") && !l.trim().is_empty())
+                .map(|l| l.split('\t').map(str::to_string).collect())
+                .collect(),
+        )
+    }
+
+    /// (value, tol) of a GRADED w1999 row; panics on a `-` tol, which marks a row these
+    /// tests must not consume.
+    fn band(rows: &[Vec<String>], stat: &str) -> (f64, f64) {
+        let r = rows
+            .iter()
+            .find(|r| r[0] == "w1999" && r[1] == stat)
+            .unwrap_or_else(|| panic!("fixture row [w1999 {stat}] missing"));
+        (
+            r[2].parse().expect("numeric fixture value"),
+            r[3].parse().expect("graded row wants a numeric tol"),
+        )
+    }
+
+    fn simple_rets(px: &[f64]) -> Vec<f64> {
+        (0..px.len() - 1).map(|i| px[i + 1] / px[i] - 1.0).collect()
+    }
+
+    fn mean(x: &[f64]) -> f64 {
+        x.iter().sum::<f64>() / x.len() as f64
+    }
+
+    fn corr_of(a: &[f64], b: &[f64]) -> f64 {
+        let (ma, mb) = (mean(a), mean(b));
+        let mut caa = 0.0;
+        let mut cbb = 0.0;
+        let mut cab = 0.0;
+        for i in 0..a.len() {
+            let (da, db) = (a[i] - ma, b[i] - mb);
+            caa += da * da;
+            cbb += db * db;
+            cab += da * db;
+        }
+        cab / (caa * cbb).sqrt()
+    }
+
+    fn beta_of(sat: &[f64], pri: &[f64]) -> f64 {
+        let (ms, mp) = (mean(sat), mean(pri));
+        let mut cpp = 0.0;
+        let mut csp = 0.0;
+        for i in 0..sat.len() {
+            cpp += (pri[i] - mp) * (pri[i] - mp);
+            csp += (sat[i] - ms) * (pri[i] - mp);
+        }
+        csp / cpp
+    }
+
+    fn sd(x: &[f64]) -> f64 {
+        let m = mean(x);
+        (x.iter().map(|v| (v - m) * (v - m)).sum::<f64>() / x.len() as f64).sqrt()
+    }
+
+    /// median of four: mean of the middle pair
+    fn med4(mut x: Vec<f64>) -> f64 {
+        x.sort_by(f64::total_cmp);
+        (x[1] + x[2]) / 2.0
+    }
+
+    #[test]
+    fn the_satellite_leg_discriminates_and_sits_on_its_coupling_anchors() {
+        let Some(a) = rows(COUPLING) else { return };
+        let mut w = default_world();
+        w.sat_beta = 1.2;
+        w.sat_idio = 0.074;
+        let sims = sim_paths(&w, 4, 100, DEFAULT_SEED);
+        let mut corrs = Vec::new();
+        let mut acorrs = Vec::new();
+        let mut ratios = Vec::new();
+        let mut betas = Vec::new();
+        for p in &sims {
+            assert_eq!(
+                p.sat.len(),
+                p.price.len(),
+                "satBeta on must fill the satellite"
+            );
+            let r1 = simple_rets(&p.price);
+            let r2 = simple_rets(&p.sat);
+            corrs.push(corr_of(&r1, &r2));
+            let abs1: Vec<f64> = r1.iter().map(|v| v.abs()).collect();
+            let abs2: Vec<f64> = r2.iter().map(|v| v.abs()).collect();
+            acorrs.push(corr_of(&abs1, &abs2));
+            ratios.push(sd(&r2) / sd(&r1));
+            betas.push(beta_of(&r2, &r1));
+        }
+        for (stat, got) in [
+            ("corr", med4(corrs)),
+            ("absCorr", med4(acorrs)),
+            ("volRatio", med4(ratios)),
+            ("beta", med4(betas)),
+        ] {
+            let (v, tol) = band(&a, stat);
+            assert!(
+                (got - v).abs() <= tol,
+                "{stat}: model median {got:.3} vs anchor {v:.3} +/- {tol:.2}"
+            );
+        }
     }
 }

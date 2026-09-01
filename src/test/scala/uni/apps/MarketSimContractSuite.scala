@@ -435,6 +435,16 @@ class MarketSimContractSuite extends FunSuite:
         s"release $v predates the asymmetry mechanisms and must carry 0 / 0 / 0.4 / 0 / 0 / 0")
   }
 
+  test("the satellite dials are inert in every frozen release") {
+    for (v, w) <- MarketSim.Releases do
+      assert(w.satBeta == 0.0 && w.satIdio == 0.0,
+        s"release $v predates the satellite leg and must carry 0 / 0")
+    // The engagement contract's off half: no satellite series exists to consume, and no
+    // logSat column is written (schema 8 makes the column conditional on the dial).
+    val p = MarketSim.simulate(MarketSim.Defaults, 2, MarketSim.DefaultSeed)
+    assert(p.sat.isEmpty, "satBeta 0 must produce no satellite series")
+  }
+
   test("the asymmetry dials discriminate on their own statistics") {
     // Each mechanism moves the statistic it was added for, materially, on the same seed --
     // measured as the ADOPTED default against the same world with that one mechanism off.

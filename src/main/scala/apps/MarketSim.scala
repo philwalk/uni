@@ -128,7 +128,14 @@ object MarketSim:
   // last a dialised constant, 0.4 in every prior release).  A reader that reconstructs a `World`
   // from a schema-6 sidecar and runs it here gets a market whose perceived fair value never
   // leaves the fundamental.
-  val EmitSchema: Int = 7
+  // 7 -> 8: `world` gained the satellite leg's two dials (`satBeta`, `satIdio`), and the TSV a
+  // `logSat` column -- present ONLY when `satBeta > 0`, the NATURAL LOG of the satellite price.
+  // Log, not a level, deliberately: a level near 1e6 rendered at %.6f puts the twins' 1-ulp
+  // transcendental latitude (PARITY.md §6) within reach of a rounding tie -- measured at ~100
+  // cross-language print flips per 40 century paths -- where the log sits nine orders under the
+  // printed digit.  A reader that reconstructs a `World` from a schema-7 sidecar loses nothing:
+  // the dials were 0 in every world such a sidecar could describe.
+  val EmitSchema: Int = 8
 
   val EmitSidecarKeys: Vector[String] =
     Vector("generator", "version", "schema", "file", "columns", "header", "path", "world",
@@ -231,6 +238,15 @@ object MarketSim:
     s"              ;   (default ${Defaults.newsRate}; 0 off, consuming no draws)",
     s"-newssize X   ; log decline per news event (default ${Defaults.newsSize}; 0.033 = a -3.3% day).",
     "              ;   Rarer-larger events buy more asymmetry and kurtosis per unit of variance",
+    "-satbeta X    ; SATELLITE EQUITY LEG: a second, higher-beta market (the Nasdaq to the",
+    "              ;   default world's S&P) whose return is X times the primary's observed",
+    "              ;   return plus idio noise on the primary's own vol state.  When on, -emit",
+    "              ;   adds a logSat column (NATURAL LOG of the leg's price).  Default 0 = off,",
+    "              ;   consuming no draws; anchored 1.2 on SPY-QQQ 1999-2026",
+    "-satidio X    ; the leg's idiosyncratic vol per year at unit vol-state (anchored 0.074 at",
+    "              ;   the default world's own volatility; the realized residual adds the state)",
+    "-jointemit P  ; dev tap: per-path logPrice/logSat TSVs (no sidecar) for grading the leg",
+    "              ;   against test-data/equity-anchors/joint-coupling-2026-08-31.tsv",
     s"-refugedays X ; half-life in sessions of the settled stress the refuge bid reads, which",
     s"              ;   excludes the current session -- kills the same-day stock-bond coupling the",
     s"              ;   tail hedge corr row grades while the crisis rally keeps the stress LEVEL",
@@ -265,7 +281,7 @@ object MarketSim:
     s"              ;   simple fraction, with the unfilled pressure DEFERRED to the next session.",
     s"              ;   0.20 is the US Level 3 breaker, which closes the day at -20%.  0 disables",
     s"              ;   the mechanism and leaves the bare numerical guard (default ${Defaults.haltLimit})",
-    "-crowd K      ; momentum (default), trendNNN, or volscaled — the last two make the crowd",
+    "-crowd K      ; momentum (default), trendNNN, volscaled, or drawdownNN — all but the first",
     "              ;   run the RULE UNDER TEST, closing the reflexive loop",
     s"-crowdimpact X; price pressure per unit of exposure the crowd TRADES in a session (default",
     s"              ;   ${Defaults.crowdImpact}); one rule for every crowd, so the number means the same",
@@ -299,6 +315,11 @@ object MarketSim:
     case Momentum
     case Trend(calDays: Int)
     case VolScaled
+    /** exposure keyed to distance from the running peak -- folio's CDAP family as a crowd, so
+      * "does a drawdown rule survive a crowd running a drawdown rule" is finally posable.  The
+      * parameter is the cut threshold in PERCENT below the peak (drawdown10 = de-risk past
+      * -10%), reading `px(i-1)` alone like the other banded crowds. */
+    case Drawdown(pct: Int)
 
   final case class World(
     trendShare: Double, depth: Double, stress: Double, beta: Double,
@@ -427,6 +448,22 @@ object MarketSim:
     inflProb: Double, inflSize: Double, inflSpeed: Double, rateSpeed: Double,
     discount: Double,   // equity fair-value markdown per pp of rate above its long-run mean
     margin: Double,     // joint-stress forced selling pressure on the bond
+    satBeta: Double = 0.0, // SATELLITE EQUITY LEG (prototype): a second, higher-beta equity market
+                           // -- the Nasdaq to the default world's S&P -- derived from the primary
+                           // leg rather than agent-simulated.  Its session return is `satBeta`
+                           // times the primary's OBSERVED log return (markdown and news included
+                           // -- they are shared factors) plus an idiosyncratic term whose
+                           // volatility rides the SAME vol state as the primary's diffusion.  That
+                           // state-sharing is the measured constraint, not a convenience: SPY-QQQ
+                           // correlation is state-FLAT (0.853 calm vs 0.852 stressed) BECAUSE
+                           // idiosyncratic vol triples with the shared state (7.7 -> 23.7%/yr);
+                           // constant idio noise would manufacture a stress-correlation kick the
+                           // record does not have.  Draws come from a dedicated stream, read only
+                           // when `satBeta > 0`, so 0 is bit-identical off.  Anchors (SPY/QQQ
+                           // 1999-2026): beta 1.20, corr 0.853, rolling-252d beta p5/med/p95
+                           // 0.90/1.18/1.92.
+    satIdio: Double = 0.0, // idiosyncratic volatility of the satellite leg, per year at UNIT
+                           // vol-state; the realized residual vol adds the state variation on top
   )
 
   final case class Path(price: Array[Double], rate: Array[Double], fundamental: Array[Double],
@@ -456,8 +493,10 @@ object MarketSim:
                                                  // mean |crowd flow| per session, post burn-in.
                                                  // Its ABSENCE is why -crowdimpact sat dead in the
                                                  // default world across four releases.
-                        disasters: Int)          // BINDING diagnostic for the disaster channel:
+                        disasters: Int,          // BINDING diagnostic for the disaster channel:
                                                  // collapses begun post burn-in on this path.
+                        sat: Array[Double])      // satellite equity leg price (empty when
+                                                 // `satBeta` is 0)
 
   /** THE shipped world.  `main` seeds its mutable CLI vars from this and `usage` interpolates its
     * numbers, so every default is written in exactly one place.  Help text that restates a constant
@@ -905,6 +944,9 @@ object MarketSim:
     // The news channel's own stream, same survivability contract as `jrng`/`drng`:
     // constructed unconditionally, read only when `newsRate > 0`, so rate 0 is bit-identical.
     val nrng = new NumPyRNG(seed ^ 0x0bad2e15L)
+    // The satellite leg's own stream (prototype), same survivability contract: constructed
+    // unconditionally, read only when `satBeta > 0`, so 0 is bit-identical off.
+    val srng = new NumPyRNG(seed ^ 0x5a7e1117L)
     val px   = new Array[Double](tot)
     val fv   = new Array[Double](tot)
     val rt   = new Array[Double](tot)
@@ -985,12 +1027,18 @@ object MarketSim:
                 else 1.0 - math.exp(-math.log(2.0) / (w.capWindow * DaysPerYear))
     var vPrev = 0.0
     var crowdRv = 0.01 * 0.01; var crowdAnchor = 0.0
+    // The drawdown crowd's running peak of the prior session's emitted price; draw-free.
+    var crowdPeak = 0.0
     var bondStressSum = 0.0; var bondStressHi = 0
     // MACRO DISASTER state: sessions left in the current collapse, its per-session decrement, and
     // the post-burn-in onset count -- the channel's BINDING diagnostic.
     var disLeft = 0; var disStep = 0.0; var disasterCount = 0
     var recLeft = 0; var recStep = 0.0
     val disProb = w.disasterRate / (100.0 * DaysPerYear)
+    // SATELLITE LEG state: its log price, and the primary's observed log price last session (so
+    // the leg loads on the OBSERVED return -- markdown and news included).  Draw-free when off.
+    var satLogP = 0.0; var satPrevPx = 0.0
+    val sp = if w.satBeta > 0.0 then new Array[Double](tot) else Array.emptyDoubleArray
     var crowdFlowSum = 0.0
     var clampsAtBurn = 0
     var eqFloorAtBurn = 0; var eqTailAtBurn = 0; var eqHaltAtBurn = 0
@@ -1078,6 +1126,10 @@ object MarketSim:
             val v = math.sqrt(crowdRv * DaysPerYear)
             crowdAnchor = if crowdAnchor == 0.0 then v else 0.999 * crowdAnchor + 0.001 * v
             val tgt = math.max(0.0, math.min(1.0, if v > 0 then crowdAnchor / v else 1.0))
+            if math.abs(tgt - crowdE) > Band then crowdE = tgt
+          case Crowd.Drawdown(d) =>
+            if pPrev > crowdPeak then crowdPeak = pPrev
+            val tgt = if pPrev >= crowdPeak * (1.0 - d.toDouble / 100.0) then 1.0 else 0.0
             if math.abs(tgt - crowdE) > Band then crowdE = tgt
           case Crowd.Momentum => ()
 
@@ -1232,6 +1284,20 @@ object MarketSim:
       ip(i) = inflPress
       logCpi += (piBase + inflPress) * dt
       cp(i) = math.exp(logCpi)
+      // SATELLITE LEG: beta times the primary's observed log return, plus idio noise riding the
+      // primary's FULL per-session vol state -- the log-vol factor AND the spiral's liquidity
+      // amplification, recovered exactly as this session's `lastLiq` over the base impact.  The
+      // spiral's share is load-bearing: on log-vol alone the residual's stress/calm vol ratio
+      // read 1.13 against the anchored 3.1, and the missing state manufactured a +0.30
+      // stress-correlation kick the record does not have.  Reads `srng` only, so 0 is
+      // bit-identical off.  The first session's return-from-zero is absorbed by burn-in.
+      if w.satBeta > 0.0 then
+        val logPx = eqM.logP - markdown
+        val ampE  = eqM.lastLiq * w.depth / 12.0
+        val idio  = w.satIdio * sqdt * math.exp(logVol - volNorm) * ampE * srng.randn()
+        satLogP += w.satBeta * (logPx - satPrevPx) + idio
+        satPrevPx = logPx
+        sp(i) = math.exp(satLogP)
 
       // ---- capital reallocation: spring, scored on positions actually held -------------------
       perfV = 0.99 * perfV + 0.01 * (mispricingPre * retE) * 100.0
@@ -1269,7 +1335,8 @@ object MarketSim:
          eqM.floorDays - eqFloorAtBurn, eqM.tailDays - eqTailAtBurn,
          eqM.haltDays - eqHaltAtBurn,
          bondStressSum / n, bondStressHi.toDouble / n, w.duration, crowdFlowSum / n,
-         disasterCount)
+         disasterCount,
+         if w.satBeta > 0.0 then sp.drop(BurnIn) else Array.emptyDoubleArray)
 
   // ---- stylised-fact measurements ------------------------------------------------------------
   def dailyReturns(px: Array[Double]): Array[Double] =
@@ -3861,9 +3928,10 @@ object MarketSim:
     "\"" + esc + "\""
 
   def crowdName(c: Crowd): String = c match
-    case Crowd.Momentum  => "momentum"
-    case Crowd.Trend(d)  => s"trend$d"
-    case Crowd.VolScaled => "volscaled"
+    case Crowd.Momentum    => "momentum"
+    case Crowd.Trend(d)    => s"trend$d"
+    case Crowd.VolScaled   => "volscaled"
+    case Crowd.Drawdown(d) => s"drawdown$d"
 
   /** Session dates.  Empty `startYmd` keeps the historical synthetic calendar: 1900-01-02 stepping
     * 365/252 days, which lands on weekends and so can never be joined to a real dated series.  A
@@ -3934,16 +4002,23 @@ object MarketSim:
     // The CLI's clean refusal (message + exit 2) lives at the emit sites in `main`, which pre-check
     // before calling; here it THROWS, because this is also API and a `System.exit` in a library
     // method takes a test harness down whole rather than failing one test.
-    require(p.price.forall(_.isFinite), s"path $k holds a non-finite price; refusing $file")
+    require(p.price.forall(_.isFinite) && p.sat.forall(_.isFinite),
+            s"path $k holds a non-finite value; refusing $file")
     val dates = sessionDates(p.price.length, startYmd)
     writeEmitTsv(file, p, dates)
     writeEmitSidecar(a, file, p, k, w, years, seed, startYmd, dates, gateSt, gatePaths, gateYears,
                      gateRows)
 
   def writeEmitTsv(file: String, p: Path, dates: Vector[String]): Unit =
-    val rows = EmitColumns.mkString("\t") +: Vector.tabulate(dates.length) { i =>
-      s"${dates(i)}\t${ef(p.price(i))}\t${ef(p.bond(i))}\t${ef(p.rate(i))}\t${ef(p.cpi(i))}\t" +
-      s"${ef(p.liq(i))}\t${ef(p.bliq(i))}\t${ef(p.fundamental(i))}\t${ef(p.inflPress(i))}"
+    // The satellite column, present only when the leg ran -- a satellite-off file is
+    // byte-identical to schema 7's.  LOG, not a level: see the 7 -> 8 note at `EmitSchema`.
+    val header = if p.sat.isEmpty then EmitColumns.mkString("\t")
+                 else (EmitColumns :+ "logSat").mkString("\t")
+    val rows = header +: Vector.tabulate(dates.length) { i =>
+      val base =
+        s"${dates(i)}\t${ef(p.price(i))}\t${ef(p.bond(i))}\t${ef(p.rate(i))}\t${ef(p.cpi(i))}\t" +
+        s"${ef(p.liq(i))}\t${ef(p.bliq(i))}\t${ef(p.fundamental(i))}\t${ef(p.inflPress(i))}"
+      if p.sat.isEmpty then base else s"$base\t${ef(math.log(p.sat(i)))}"
     }
     file.asPath.writeLines(rows)
 
@@ -3969,6 +4044,7 @@ object MarketSim:
       ("panic", ef(w.panic)), ("duration", ef(w.duration)),
       ("easing", ef(w.easing)), ("unwind", ef(w.unwind)), ("refuge", ef(w.refuge)),
       ("refugeDays", ef(w.refugeDays)),
+      ("satBeta", ef(w.satBeta)), ("satIdio", ef(w.satIdio)),
       ("inflProb", ef(w.inflProb)), ("inflSize", ef(w.inflSize)),
       ("inflSpeed", ef(w.inflSpeed)), ("rateSpeed", ef(w.rateSpeed)),
       ("discount", ef(w.discount)), ("margin", ef(w.margin)),
@@ -4013,7 +4089,7 @@ object MarketSim:
       s"""  "version": ${jsonStr(Version)},""",
       s"""  "schema": $EmitSchema,""",
       s"""  "file": ${jsonStr(file)},""",
-      s"""  "columns": ${strList(EmitColumns)},""",
+      s"""  "columns": ${strList(if p.sat.isEmpty then EmitColumns else EmitColumns :+ "logSat")},""",
       """  "header": true,""",
       """  "path": {""",
       s"""    "index": $k,""",
@@ -4204,6 +4280,9 @@ object MarketSim:
     var duration = dw.duration
     var easing = dw.easing; var unwind = dw.unwind; var refuge = dw.refuge
     var refugeDays = dw.refugeDays
+    var satBeta = dw.satBeta
+    var satIdio = dw.satIdio
+    var jointEmit = ""
     var inflProb = dw.inflProb; var inflSize = dw.inflSize
     var inflSpeed = dw.inflSpeed; var rateSpeed = dw.rateSpeed
     var discount = dw.discount; var margin = dw.margin
@@ -4277,6 +4356,9 @@ object MarketSim:
       case "-unwind"     => unwind = numOr("-unwind", consumeNext)
       case "-refuge"     => refuge = numOr("-refuge", consumeNext)
       case "-refugedays" => refugeDays = numOr("-refugedays", consumeNext)
+      case "-satbeta"    => satBeta = numOr("-satbeta", consumeNext)
+      case "-satidio"    => satIdio = numOr("-satidio", consumeNext)
+      case "-jointemit"  => jointEmit = consumeNext
       // Rejected, not silently reinterpreted: -flight was a rate cut SPEED per year and -easing is
       // a cut CAP in rate points, so every recorded -flight value is wrong by two orders of
       // magnitude under the new mechanism and would still have produced a plausible-looking run.
@@ -4341,6 +4423,7 @@ object MarketSim:
     nonNeg("-stress", stress); nonNeg("-beta", beta); nonNeg("-volofvol", volOfVol)
     nonNeg("-value", valuePull); nonNeg("-recoverydrag", recoveryDrag)
     nonNeg("-newsrate", newsRate); nonNeg("-newssize", newsSize); nonNeg("-refugedays", refugeDays)
+    nonNeg("-satbeta", satBeta); nonNeg("-satidio", satIdio)
     nonNeg("-disasterrate", disasterRate); nonNeg("-disastersize", disasterSize)
     share("-disasterrecover", disasterRecover)
     // beliefShare 1.0 would unmoor perceived fair from the fundamental entirely -- the pull
@@ -4374,8 +4457,11 @@ object MarketSim:
       case "volscaled" => Crowd.VolScaled
       case t if t.startsWith("trend") =>
         Crowd.Trend(t.drop(5).toIntOption.filter(_ > 0).getOrElse(
-          usage(s"unknown -crowd [$crowdName]; use momentum, trendNNN, or volscaled")))
-      case other => usage(s"unknown -crowd [$other]; use momentum, trendNNN, or volscaled")
+          usage(s"unknown -crowd [$crowdName]; use momentum, trendNNN, volscaled, or drawdownNN")))
+      case t if t.startsWith("drawdown") =>
+        Crowd.Drawdown(t.drop(8).toIntOption.filter(d => d > 0 && d < 100).getOrElse(
+          usage(s"unknown -crowd [$crowdName]; use momentum, trendNNN, volscaled, or drawdownNN")))
+      case other => usage(s"unknown -crowd [$other]; use momentum, trendNNN, volscaled, or drawdownNN")
     val anchors = anchorsNamed(anchorSpec)
     val w = World(trendShare, depth, stress, beta, drift = drift, fundVol = fundVol,
                   rateMean = rateMean,
@@ -4394,8 +4480,26 @@ object MarketSim:
                   duration = duration, easing = easing, unwind = unwind, refuge = refuge,
                   refugeDays = refugeDays,
                   inflProb = inflProb, inflSize = inflSize,
-                  inflSpeed = inflSpeed, rateSpeed = rateSpeed, discount = discount, margin = margin)
+                  inflSpeed = inflSpeed, rateSpeed = rateSpeed, discount = discount, margin = margin,
+                  satBeta = satBeta, satIdio = satIdio)
 
+    // SATELLITE PROTOTYPE: write per-path primary+satellite LOG prices for grading against the
+    // SPY-QQQ coupling anchors (the joint_anchor conventions, graded python-side).  Deliberately
+    // OUTSIDE the -emit interface: no sidecar, no schema claim -- a measurement tap, not a
+    // consumer surface.  LOG prices, not levels: the twins' transcendentals carry a 1-ulp
+    // latitude (PARITY.md §6), and a level near 1e6 rendered at %.6f puts that latitude within
+    // ~1e-4 of a rounding tie -- a handful of cross-language print flips per 40 paths, measured.
+    // A log near 13 puts the same latitude nine orders under the printed digit: a rendering
+    // rule, not a tolerance.
+    if jointEmit.nonEmpty then
+      if satBeta <= 0.0 then usage("-jointemit requires -satbeta > 0")
+      for k <- 0 until paths do
+        val p = simulate(w, years, seed + k.toLong * 7919L)
+        val rows = "logPrice\tlogSat" +: Vector.tabulate(p.price.length) { i =>
+          s"${ef(math.log(p.price(i)))}\t${ef(math.log(p.sat(i)))}"
+        }
+        f"$jointEmit-$k%03d.tsv".asPath.writeLines(rows)
+      return
     if calibrateN > 0 then
       calibrate(anchors, calibrateN, w, seed)
       return
@@ -4478,8 +4582,8 @@ object MarketSim:
       // world is still a world; a path holding a non-finite price is not data at all.  The dial
       // domains close the routes reachable from the command line; this closes the file.
       def refuseNonFinite(p: Path, k: Int, f: String): Unit =
-        if !p.price.forall(_.isFinite) then
-          eprintln(s"REFUSED: path $k holds a non-finite price; nothing written to $f")
+        if !p.price.forall(_.isFinite) || !p.sat.forall(_.isFinite) then
+          eprintln(s"REFUSED: path $k holds a non-finite value; nothing written to $f")
           System.exit(2)
       val written =
         if emitAll then
@@ -4501,7 +4605,7 @@ object MarketSim:
                        verdictPaths, verdictYears, verdictRows)
           Vector(emit)
       val sessions = pathAt(if emitAll then emitFrom else emitPath).price.length
-      eprintln(s"wrote ${written.size} path(s), ${EmitColumns.size} columns x $sessions sessions, " +
+      eprintln(s"wrote ${written.size} path(s), ${EmitColumns.size + (if w.satBeta > 0.0 then 1 else 0)} columns x $sessions sessions, " +
                s"to ${written.head}${if written.size > 1 then s" .. ${written.last}" else ""} " +
                s"(+ sidecar ${sidecarName(written.head)})")
 

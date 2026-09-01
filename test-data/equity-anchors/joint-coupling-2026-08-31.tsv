@@ -1,0 +1,54 @@
+# SPY-QQQ COUPLING: the anchor vector for the satellite equity leg (`satBeta`/`satIdio`),
+# which JointCouplingSuite / joint_coupling_tests re-derive from this file. Editing a graded
+# row moves the shipped test bands. Measured 2026-08-31 from folio's Yahoo cache (adj_close,
+# daily simple returns, inner-joined); the NDX rows are price-only, for the longer window.
+#
+# Conventions (one codebase measured both this record and the model's grading):
+#   corr        Pearson correlation of daily simple returns
+#   absCorr     the same on |r| -- co-clustering
+#   volRatio    annualized daily vol ratio, satellite / primary
+#   beta        OLS beta of satellite on primary daily returns
+#   residShare  1 - corr^2: share of satellite variance the primary does not carry
+#   residStressCalm  annualized residual vol, stress / calm, conditioned on the PRIMARY's
+#               trailing 21d vol (calm <= p50, stress >= p80 within the window)
+#   corrFlatVol / corrFlatDd  corr(stress) - corr(calm) under the vol conditioning above and
+#               under drawdown conditioning (primary <5% vs >10% below running peak). The
+#               NEGATIVE anchor: correlation is state-flat BECAUSE idio vol rides the shared
+#               state (7.7 -> 23.7%/yr calm to stress); a mechanism with constant idio noise
+#               manufactures a stress-correlation kick this pair does not have.
+#   roll60*/beta252*  rolling 60d correlation and 252d beta distribution percentiles
+#   residKurt/residA20  kurtosis and |resid| lag-20 autocorrelation of the OLS residual --
+#               the idio component is itself market-like, not gaussian-iid
+#
+# THE DIMENSIONLESS RULE. ratio = beta / corr identically, so (beta, corr) are the free
+# anchors and the satellite's absolute residual vol follows the MODEL's own primary vol:
+# resid = beta * sigma1 * sqrt(1/corr^2 - 1) -- 12.1%/yr at the model's 16.4, where this
+# window's 14.1 belongs to SPY at 19.2%. Same philosophy as the depth rungs: grade each
+# world at its own volatility.
+#
+# The `tol` column is the twins' test band half-width (median of 4 model paths, 100y, daily
+# simple returns, default seed family). Rows with `-` are documentation and grading-time
+# anchors (the python grader over -jointemit output owns the distribution and conditioning
+# rows); nothing else is fitted from this file.
+pair	stat	value	tol
+w1999	corr	0.853	0.10
+w1999	absCorr	0.773	0.12
+w1999	volRatio	1.400	0.15
+w1999	beta	1.195	0.10
+w1999	residShare	0.272	-
+w1999	residStressCalm	3.10	-
+w1999	corrFlatVol	-0.001	0.05
+w1999	corrFlatDd	0.022	0.05
+w1999	roll60p5	0.791	-
+w1999	roll60med	0.906	-
+w1999	roll60p95	0.970	-
+w1999	beta252p5	0.90	-
+w1999	beta252med	1.18	-
+w1999	beta252p95	1.92	-
+w1999	residKurt	16.9	-
+w1999	residA20	0.346	-
+w1999	perYearCorrSd	0.051	-
+w1999	idioOccupancy	0.179	-
+w1993	corr	0.839	-
+w1993	corrCalm	0.799	-
+w1993	corrStress	0.855	-
