@@ -360,12 +360,15 @@ The first passed at 0.000% in a world where the second read 10.9%.
 Value capital in this model arbs the gap to what it *believes* fair value is, and beliefs move.
 Two draw-free channels, adopted 0.23.0, both bit-identical off at 0:
 
-- **`-beliefshare`** (0.9): perceived fair drifts toward realized prices with a `-beliefyears`
-  half-life (2.5). It splits reversion by *frequency* — daily pull untouched (beliefs barely move
+- **`-beliefshare`** (0.95): perceived fair drifts toward realized prices with a `-beliefyears`
+  half-life (1.5). It splits reversion by *frequency* — daily pull untouched (beliefs barely move
   in 60 sessions), multi-year reversion weakened to `1 − share` of the pull — which is where
   CAPE-scale valuation swings live, and why no ordinary dial could buy dispersion: every
   continuous channel paid the 60-day variance-ratio band first (the full sweep bought +0.01 of sd
-  for the whole vr60 budget).
+  for the whole vr60 budget). SHORTER half-life and HIGHER share are the amplitude directions —
+  the naive long-memory intuition inverts, measured: 12 years reads dispersion 0.115 where 1.5
+  reads 0.26 at share 0.9 — and share is the cheap currency: the half-life is what pays the depth
+  rungs (0.5 years fails d10 outright).
 - **`-capyears`** (1.5): the mania half — beliefs capitalize the fundamental's recent excess
   growth (read through a `-capwindow` 6-year EWMA, bounded by a frozen 0.80-log tanh span), so a
   growth regime carries perceived fair above the true fundamental and a regime ending on its
@@ -374,10 +377,15 @@ Two draw-free channels, adopted 0.23.0, both bit-identical off at 0:
 What it is graded on: the `valuation dispersion` fidelity band (0.15–0.55, from the Shiller CAPE
 proxy in `valuation-2026-08-30.tsv` — a *band*, never a point ratio, because the record has no
 observable fair value) and the `valuation cycle engages, not unmoored` mechanism row. The shipped
-world reads sd log(p/fair) 0.207–0.220 across seeds with the century max at +11% over fair —
-the record's lower half, honest about which half: sticky post-crash pessimism more than manias.
-A collapsing fundamental still transmits at full strength — beliefs lag it by years — which is
-why the disaster channel's tail *deepened* under the cycle (record@ 18% → 35%).
+world reads sd log(p/fair) 0.33 — inside the proxy windows' own 0.24–0.41 — with a per-path cycle
+of half-life 7.9 years and both wings near 23% of months past ±0.25 log, against the record's
+11.5 years and ~27.5% (log CAPE about its mean, 1881–2023): roughly half the record's cycle on
+every axis, from a fifth of it before the retune. Two shapes remain disclosed: the ensemble
+century max stays near +11% over FAIR (the ensemble's mean gap sits below fair; the cycle is
+two-winged about its own mean, like the record's), and the model's cycle is more *regular* than
+the record's (5-year autocorrelation 0.84 against 0.55 — out of reach from above at every
+setting). A collapsing fundamental still transmits at full strength — beliefs lag it by years —
+which is why the disaster channel's tail *deepened* under the cycle.
 
 `-beliefshare` must stay below 1: at 1 the pull chases its own shadow and nothing anchors the
 price level (the CLI refuses it; the mechanism row's 0.70 ceiling is the same guard one level up).
@@ -498,8 +506,8 @@ with it.
 | `-disasterlen` | years from onset to trough | 2.5 |
 | `-disasterrecover` | share of the decline that reverses after the trough; the rest is permanent | 0.5 |
 | `-disasterreclen` | years that recovery is spread over | 4.0 |
-| `-beliefshare` | the slow valuation cycle: how far PERCEIVED fair value drifts toward realized prices; 0 pins perception to the fundamental, bit for bit, and must stay below 1 | 0.9 |
-| `-beliefyears` | half-life of that belief adaptation | 2.5 |
+| `-beliefshare` | the slow valuation cycle: how far PERCEIVED fair value drifts toward realized prices; 0 pins perception to the fundamental, bit for bit, and must stay below 1 | 0.95 |
+| `-beliefyears` | half-life of that belief adaptation — SHORTER is the amplitude direction, and it is the dial that pays the depth rungs | 1.5 |
 | `-capyears` | years of the fundamental's recent excess growth beliefs capitalize into perceived fair — the mania half; 0 off | 1.5 |
 | `-capwindow` | years of EWMA that growth is read through | 6.0 |
 | `-anchors` | which real index the **equity** fidelity targets describe: `sp500` or `nasdaq` | sp500 |
@@ -537,79 +545,83 @@ This is the part to read before changing anything. Columns are **ratios to the r
 ```
 setting                       vol  kurt  clus    vr crash   d10  bdep   r/v  tshare  cflow  gate
 ------------------------------------------------------------------------------------------------
-DEFAULT                      1.01  0.93  1.04  1.13  1.03  1.34  1.30  1.01   0.20   3.47  P/P/P
+DEFAULT                      1.01  0.93  1.04  1.12  0.97  1.39  1.29  0.98   0.20   3.43  P/P/P
 
--stress 2.0                  0.83  0.40  0.57  1.16  0.61  2.03  1.04  1.25   0.20   3.24  P/F/F
--stress 5.15 *               1.01  0.93  1.04  1.13  1.03  1.34  1.30  1.01   0.20   3.47  P/P/P
--stress 8.0                  1.32  1.83  1.50  1.03  1.47  0.97  1.44  0.76   0.20   3.56  F/P/F
+-stress 2.0                  0.83  0.39  0.57  1.16  0.59  2.12  1.04  1.22   0.20   3.22  P/F/F
+-stress 5.15 *               1.01  0.93  1.04  1.12  0.97  1.39  1.29  0.98   0.20   3.43  P/P/P
+-stress 8.0                  1.32  1.83  1.50  1.02  1.37  1.04  1.45  0.73   0.20   3.51  F/P/F
 
--depth 12                    1.32  1.16  1.17  1.01  1.62  0.92  1.31  0.78   0.20   4.06  F/P/F
--depth 17.4 *                1.01  0.93  1.04  1.13  1.03  1.34  1.30  1.01   0.20   3.47  P/P/P
--depth 22                    0.89  0.71  0.96  1.21  0.79  1.70  1.29  1.15   0.20   3.17  P/F/F
+-depth 12                    1.32  1.16  1.17  0.98  1.53  0.96  1.30  0.75   0.20   4.01  F/P/F
+-depth 17.4 *                1.01  0.93  1.04  1.12  0.97  1.39  1.29  0.98   0.20   3.43  P/P/P
+-depth 22                    0.89  0.72  0.96  1.19  0.74  1.74  1.30  1.12   0.20   3.14  P/F/F
 
--drift 0.08                  1.03  0.93  1.05  1.13  0.95  1.41  1.30  0.63   0.20   3.55  P/P/F
--drift 0.122 *               1.01  0.93  1.04  1.13  1.03  1.34  1.30  1.01   0.20   3.47  P/P/P
--drift 0.15                  1.00  0.91  1.02  1.13  1.02  1.32  1.29  1.28   0.20   3.40  P/P/F
+-drift 0.08                  1.03  0.98  1.05  1.10  0.85  1.48  1.30  0.59   0.20   3.53  P/P/F
+-drift 0.122 *               1.01  0.93  1.04  1.12  0.97  1.39  1.29  0.98   0.20   3.43  P/P/P
+-drift 0.15                  1.00  0.93  1.03  1.12  0.98  1.39  1.29  1.24   0.20   3.36  P/P/F
 
--fundvol 0.041               1.00  0.93  1.04  1.04  0.94  1.08  1.29  1.03   0.20   3.51  P/P/P
--fundvol 0.070 *             1.01  0.93  1.04  1.13  1.03  1.34  1.30  1.01   0.20   3.47  P/P/P
--fundvol 0.10                1.02  0.90  1.03  1.27  1.12  1.68  1.31  1.00   0.20   3.41  P/P/F
+-fundvol 0.041               1.00  0.94  1.04  1.02  0.89  1.13  1.29  1.00   0.20   3.47  P/P/P
+-fundvol 0.070 *             1.01  0.93  1.04  1.12  0.97  1.39  1.29  0.98   0.20   3.43  P/P/P
+-fundvol 0.10                1.02  0.92  1.04  1.24  1.05  1.74  1.31  0.97   0.20   3.38  P/P/F
 
--jumpvar 0                   1.02  0.53  1.10  1.11  1.07  1.33  1.30  1.01   0.20   3.57  P/P/P
--jumpvar 0.14 *              1.01  0.93  1.04  1.13  1.03  1.34  1.30  1.01   0.20   3.47  P/P/P
--jumpvar 0.23                1.01  1.47  1.00  1.15  1.02  1.33  1.32  1.02   0.20   3.38  F/P/P
+-jumpvar 0                   1.02  0.53  1.10  1.09  0.99  1.39  1.30  0.98   0.20   3.54  P/P/P
+-jumpvar 0.14 *              1.01  0.93  1.04  1.12  0.97  1.39  1.29  0.98   0.20   3.43  P/P/P
+-jumpvar 0.23                1.00  1.54  1.00  1.13  0.95  1.38  1.31  0.99   0.20   3.34  F/P/P
 
--jumprate 0.002              1.00  0.99  1.03  1.15  1.06  1.36  1.29  1.02   0.20   3.45  P/P/F
--jumprate 0.0035 *           1.01  0.93  1.04  1.13  1.03  1.34  1.30  1.01   0.20   3.47  P/P/P
--jumprate 0.012              1.01  0.72  1.04  1.14  1.04  1.37  1.29  1.01   0.20   3.50  P/P/P
+-jumprate 0.002              1.00  0.97  1.03  1.12  0.99  1.41  1.29  0.99   0.20   3.42  P/P/P
+-jumprate 0.0035 *           1.01  0.93  1.04  1.12  0.97  1.39  1.29  0.98   0.20   3.43  P/P/P
+-jumprate 0.012              1.01  0.71  1.04  1.13  0.97  1.41  1.29  0.98   0.20   3.46  P/P/P
 
--leverage 0                  0.97  0.73  0.82  1.14  0.94  1.46  1.24  1.07   0.20   3.46  P/P/P
--leverage 0.12 *             1.01  0.93  1.04  1.13  1.03  1.34  1.30  1.01   0.20   3.47  P/P/P
--leverage 0.20               1.06  1.32  1.21  1.11  1.11  1.23  1.34  0.97   0.20   3.47  F/P/P
+-leverage 0                  0.97  0.74  0.82  1.13  0.88  1.50  1.24  1.03   0.20   3.42  P/P/P
+-leverage 0.12 *             1.01  0.93  1.04  1.12  0.97  1.39  1.29  0.98   0.20   3.43  P/P/P
+-leverage 0.20               1.06  1.32  1.21  1.10  1.04  1.27  1.34  0.93   0.20   3.43  F/P/P
 
--newsrate 0                  1.02  1.00  1.14  1.10  1.01  1.17  1.31  1.01   0.20   3.51  P/P/P
--newsrate 1.3 *              1.01  0.93  1.04  1.13  1.03  1.34  1.30  1.01   0.20   3.47  P/P/P
--newsrate 2.5                1.01  0.87  0.95  1.17  1.06  1.42  1.30  1.01   0.20   3.43  P/P/F
+-newsrate 0                  1.01  1.00  1.14  1.08  0.95  1.21  1.30  0.97   0.20   3.47  P/P/P
+-newsrate 1.3 *              1.01  0.93  1.04  1.12  0.97  1.39  1.29  0.98   0.20   3.43  P/P/P
+-newsrate 2.5                1.01  0.87  0.95  1.15  1.00  1.47  1.30  0.98   0.20   3.39  P/P/F
 
--refugedays 0                1.01  0.93  1.04  1.13  1.03  1.34  1.25  1.01   0.20   3.47  P/P/P
--refugedays 1 *              1.01  0.93  1.04  1.13  1.03  1.34  1.30  1.01   0.20   3.47  P/P/P
--refugedays 5                1.01  0.93  1.04  1.13  1.03  1.34  1.32  1.01   0.20   3.47  P/P/P
+-refugedays 0                1.01  0.93  1.04  1.12  0.97  1.39  1.25  0.98   0.20   3.43  P/P/P
+-refugedays 1 *              1.01  0.93  1.04  1.12  0.97  1.39  1.29  0.98   0.20   3.43  P/P/P
+-refugedays 5                1.01  0.93  1.04  1.12  0.97  1.39  1.32  0.98   0.20   3.43  P/P/P
 
--haltlimit 0                 1.02  0.93  1.02  1.13  1.03  1.30  1.30  1.01   0.20   3.47  F/P/P
--haltlimit 0.25 *            1.01  0.93  1.04  1.13  1.03  1.34  1.30  1.01   0.20   3.47  P/P/P
--haltlimit 0.40              1.02  0.93  1.03  1.13  1.03  1.30  1.30  1.01   0.20   3.47  F/P/P
+-haltlimit 0                 1.02  0.93  1.03  1.11  0.97  1.37  1.30  0.97   0.20   3.43  F/P/P
+-haltlimit 0.25 *            1.01  0.93  1.04  1.12  0.97  1.39  1.29  0.98   0.20   3.43  P/P/P
+-haltlimit 0.40              1.02  0.93  1.03  1.11  0.97  1.37  1.30  0.97   0.20   3.43  F/P/P
 
--disasterrate 0              1.01  0.92  1.04  1.04  1.09  1.22  1.29  1.07   0.20   3.52  P/F/P
--disasterrate 0.6 *          1.01  0.93  1.04  1.13  1.03  1.34  1.30  1.01   0.20   3.47  P/P/P
--disasterrate 1.2            1.01  0.95  1.04  1.21  0.98  1.46  1.30  0.95   0.20   3.42  P/P/F
+-disasterrate 0              1.01  0.91  1.04  1.04  1.04  1.28  1.29  1.04   0.20   3.49  P/F/P
+-disasterrate 0.6 *          1.01  0.93  1.04  1.12  0.97  1.39  1.29  0.98   0.20   3.43  P/P/P
+-disasterrate 1.2            1.01  0.96  1.04  1.20  0.90  1.50  1.30  0.91   0.20   3.38  P/P/F
 
 -beliefshare 0               1.01  0.92  1.04  1.17  1.10  1.29  1.30  1.04   0.21   3.51  P/F/F
--beliefshare 0.9 *           1.01  0.93  1.04  1.13  1.03  1.34  1.30  1.01   0.20   3.47  P/P/P
--beliefshare 0.95            1.01  0.94  1.04  1.13  1.03  1.34  1.29  0.99   0.20   3.45  P/P/P
+-beliefshare 0.95 *          1.01  0.93  1.04  1.12  0.97  1.39  1.29  0.98   0.20   3.43  P/P/P
+-beliefshare 0.99            1.01  0.91  1.04  1.12  0.95  1.40  1.30  0.92   0.20   3.40  P/P/P
 
--capyears 0                  1.00  0.92  1.03  1.05  1.01  1.10  1.29  1.03   0.20   3.51  P/F/F
--capyears 1.5 *              1.01  0.93  1.04  1.13  1.03  1.34  1.30  1.01   0.20   3.47  P/P/P
--capyears 3                  1.01  0.91  1.04  1.22  1.04  1.57  1.30  1.00   0.20   3.43  P/P/F
+-beliefyears 0.75            1.01  0.91  1.03  1.10  0.86  1.59  1.29  0.98   0.20   3.40  P/P/F
+-beliefyears 1.5 *           1.01  0.93  1.04  1.12  0.97  1.39  1.29  0.98   0.20   3.43  P/P/P
+-beliefyears 5               1.01  0.92  1.04  1.14  1.06  1.32  1.30  1.01   0.20   3.47  P/P/P
 
--trendshare 0.02             1.01  0.93  1.03  1.13  1.02  1.34  1.30  1.02   0.18   3.07  P/P/P
--trendshare 0.055 *          1.01  0.93  1.04  1.13  1.03  1.34  1.30  1.01   0.20   3.47  P/P/P
--trendshare 0.30             1.03  0.96  1.07  1.16  1.12  1.30  1.32  0.99   0.37   6.27  P/P/F
+-capyears 0                  1.00  0.91  1.03  1.03  0.99  1.12  1.29  1.00   0.20   3.49  P/P/P
+-capyears 1.5 *              1.01  0.93  1.04  1.12  0.97  1.39  1.29  0.98   0.20   3.43  P/P/P
+-capyears 3                  1.01  0.93  1.04  1.20  0.94  1.69  1.30  0.97   0.20   3.38  P/P/F
 
--crowdimpact 0.010           1.00  0.91  1.02  1.11  0.97  1.36  1.29  1.03   0.20   1.16  P/P/P
--crowdimpact 0.030 *         1.01  0.93  1.04  1.13  1.03  1.34  1.30  1.01   0.20   3.47  P/P/P
--crowdimpact 0.12            1.11  1.01  1.22  1.25  1.43  1.22  1.38  0.92   0.20  13.92  P/P/F
+-trendshare 0.02             1.01  0.92  1.03  1.11  0.96  1.40  1.29  0.98   0.18   3.03  P/P/P
+-trendshare 0.055 *          1.01  0.93  1.04  1.12  0.97  1.39  1.29  0.98   0.20   3.43  P/P/P
+-trendshare 0.30             1.03  0.95  1.07  1.14  1.05  1.34  1.32  0.95   0.36   6.24  P/P/P
 
--value 0.020                 1.02  1.03  1.06  1.14  0.97  1.53  1.33  0.97   0.20   3.38  P/P/P
--value 0.056 *               1.01  0.93  1.04  1.13  1.03  1.34  1.30  1.01   0.20   3.47  P/P/P
--value 0.070                 1.01  0.90  1.02  1.11  1.03  1.32  1.29  1.02   0.20   3.49  P/P/P
+-crowdimpact 0.010           1.00  0.91  1.03  1.09  0.91  1.41  1.28  1.00   0.20   1.15  P/P/P
+-crowdimpact 0.030 *         1.01  0.93  1.04  1.12  0.97  1.39  1.29  0.98   0.20   3.43  P/P/P
+-crowdimpact 0.12            1.10  1.00  1.22  1.24  1.34  1.29  1.38  0.88   0.20  13.74  P/P/F
 
--recoverydrag 0              0.99  0.78  0.97  0.94  1.03  1.19  1.23  1.05   0.20   3.55  P/F/F
--recoverydrag 8.5 *          1.01  0.93  1.04  1.13  1.03  1.34  1.30  1.01   0.20   3.47  P/P/P
--recoverydrag 20             1.01  0.95  1.04  1.15  1.04  1.36  1.30  1.01   0.20   3.46  P/P/P
+-value 0.020                 1.02  1.03  1.06  1.12  0.89  1.57  1.33  0.90   0.19   3.33  P/P/F
+-value 0.056 *               1.01  0.93  1.04  1.12  0.97  1.39  1.29  0.98   0.20   3.43  P/P/P
+-value 0.070                 1.01  0.91  1.03  1.10  0.97  1.36  1.28  0.99   0.20   3.46  P/P/P
 
--recoveryfloor 0.05          1.01  0.95  1.04  1.16  1.00  1.41  1.30  1.00   0.20   3.45  P/P/F
--recoveryfloor 0.10 *        1.01  0.93  1.04  1.13  1.03  1.34  1.30  1.01   0.20   3.47  P/P/P
--recoveryfloor 0.50          1.00  0.86  1.01  1.02  1.07  1.22  1.26  1.04   0.20   3.51  P/P/F
+-recoverydrag 0              0.99  0.79  0.97  0.94  1.00  1.21  1.22  1.04   0.20   3.53  P/P/P
+-recoverydrag 8.5 *          1.01  0.93  1.04  1.12  0.97  1.39  1.29  0.98   0.20   3.43  P/P/P
+-recoverydrag 20             1.01  0.93  1.05  1.13  0.97  1.42  1.30  0.97   0.20   3.42  P/P/P
+
+-recoveryfloor 0.05          1.01  0.92  1.05  1.14  0.92  1.47  1.29  0.96   0.20   3.40  P/P/P
+-recoveryfloor 0.10 *        1.01  0.93  1.04  1.12  0.97  1.39  1.29  0.98   0.20   3.43  P/P/P
+-recoveryfloor 0.50          1.00  0.87  1.00  1.01  1.04  1.24  1.26  1.03   0.20   3.49  P/P/P
 ```
 
 200 paths x 100 years, seed 20260813 — the scoring ensemble. `vol` equity volatility · `kurt` daily kurtosis ·
@@ -627,7 +639,7 @@ Eight things that table is trying to tell you:
   60-day trends — and the cycle's own mechanism row with it; `-capyears 0` (beliefs alone) fails
   the same two and reads all lower wing. The belief half REFUNDS variance ratio (its
   perceived-fair tracking cuts medium-horizon drift-chasing), which is exactly the budget the cap
-  half spends: together at the defaults they read vr 1.13, dispersion 0.215.
+  half spends: together at the defaults they read vr 1.12, dispersion 0.33.
 - **`disasterrate` is the century-tail dial and almost nothing else.** Off, the world fails the
   mechanism gate (the channel is inert) and the record's century-worst returns to the far tail of
   what the model can produce; at 1.2 the variance ratio reads 1.21 and the fidelity band FAILS,
@@ -790,30 +802,31 @@ from `-noise`: where the real record falls among model histories of that anchor'
 list is shorter than it was**, because three of the targets it used to describe were not the
 statistics the model computes — see the worked example above.
 
-- **The depth rungs read 1.10 / 1.40 / 3.00 against a relation fitted on a window with no
+- **The depth rungs read 1.10 / 1.40 / 2.90 against a relation fitted on a window with no
   depression in it — and the index itself sides with the model.** The relation comes from 35 funds
   over 2001-2026; the CRSP index's own shares, measured with the model's definition
   (`depth-shares-2026-08-30.tsv`), run **1.3 / 2.3** times that relation post-1954 and **1.8 /
-  4.6** over the century at d10/d20. The model's shipped shares (0.24 / 0.126 of sessions, median
-  path) sit between the fund cross-section and the post-war index, below both index windows on
-  d20. d10's band (0.70-1.55) accommodates the reading with margin; d20's band is deliberately
-  absent and its weight is 0.04 — one 25-year record cannot pin it (`-noise`: 0.12 to 4.64).
-- **Valuation dispersion sits in the record's lower half, and the mania wing is still thin.** The
-  cycle puts sd log(p/fair) at 0.215 against the record proxy's 0.24-0.41 (band floor 0.15) — the
-  vr60-mandated valuePull of the asymmetry adoption compressed it from 0.23, one of the release's
-  two disclosed costs — and the median century's MAX overvaluation is +12%, where the record's
-  manias peaked at 2.0-2.7x the mean valuation (Sep-1929 CAPE 32.6, Dec-1999 44.2). Pushing the
-  mania half harder is fenced by the variance-ratio ceiling and the depth rungs (`-capyears 3`
-  reads vr 1.22 and d10 1.57): a
-  collapse from a 2x-fair peak remains out of reach, so deep declines still start near fair value
-  and the led-mix is not a calibrated quantity. The dispersion's shape is honest about which half
-  it has: sticky post-crash pessimism (the 1930s-50s, CAPE below mean for two decades) more than
-  manias.
+  4.6** over the century at d10/d20. The model's shipped shares (0.31 / 0.175 of sessions, median
+  path) sit between the post-war index and the century on both deep rungs — the persistence
+  retune's slow epochs bought underwater time on the way to the record's dispersion (d10 1.34 →
+  1.39, priced and disclosed). d10's band (0.70-1.55) accommodates the reading with margin;
+  d20's band is deliberately absent and its weight is 0.03 — one 25-year record cannot pin it
+  (`-noise`: 0.09 to 4.89).
+- **Valuation dispersion sits inside the record proxy's own windows since the persistence
+  retune** (0.33 against sd log CAPE 0.24-0.41), with a per-path cycle at half the record's
+  half-life and both wings symmetric — the record's own wings are (27.3% of months past +0.25
+  log, 27.9% past -0.25, 1881-2023), so a mania was never a missing upper-wing channel, just
+  amplitude this cycle lacked. What remains disclosed: the ensemble century MAX over FAIR stays
+  near +11% where the record's manias peaked at 2.0-2.7x the mean valuation (Sep-1929 CAPE
+  32.6, Dec-1999 44.2) — the ensemble's mean gap sits below fair, so a collapse from a 2x-fair
+  peak remains out of reach and the led-mix is not a calibrated quantity. Pushing harder is
+  fenced by the depth rungs and the variance-ratio ceiling (`-capyears 3` reads vr 1.20 and
+  d10 1.69; `-beliefyears 0.75` fails d10).
 - **The century-scale tail is carried by the macro-disaster channel, and its anchor is one draw.**
   `-disasterrate 0.6` per century, each a 2.0-log fundamental collapse over 2.5 years with half
   reversing over 4 — the Barro-Rietz channel, adopted 0.22.1 after every dial sweep left the median
   century-worst at −58..−61 against the record's −84.1. With the valuation cycle and the
-  asymmetry channels on top the record sits at the **37th percentile** of model centuries (it was
+  asymmetry channels on top the record sits at the **38th percentile** of model centuries (it was
   the 1st before 0.22.1, the 18th before the cycle): sticky post-crash pessimism deepens the
   declines the disasters start. The
   remaining stance is a judgment call the dials expose: the record is one draw, other national
@@ -823,41 +836,42 @@ statistics the model computes — see the worked example above.
   estimates**: that minimum is drawn from 20,000 market-years and no fund lives that long.
   This is a DRAWDOWN, accumulated over sessions; the worst single SESSION is a separate question and
   is set by `-haltlimit` rather than by a numerical constant.
-- **A century path is mildly trending (vr60 1.13), because its disasters and its valuation epochs
+- **A century path is mildly trending (vr60 1.12), because its disasters and its valuation epochs
   are.** The variance-ratio anchor (1.00, band 0.50-1.15) was measured on modern, disaster-free
   windows; the CRSP century itself — the window with 1929-32 in it — reads **1.143** in the
   committed persistence fixture, and its five-year VR is era-split beyond use as an anchor
   (`longhorizon-2026-08-30.tsv`: 0.730 for the century, 1.152 post-1954, ±30-40% block noise on
   both). A multi-year collapse IS signed serial dependence; the model without these channels read
   1.00 on century paths, which real disaster-bearing centuries do not.
-- **The bond's crash rally is on its anchor since the settled-stress refuge** (1.04 against the
+- **The bond's crash rally is on its anchor since the settled-stress refuge** (1.09 against the
   record's median across its growth-shock drawdowns; it read 1.39-1.48 through 0.23.0's own
   development). The model's bond gains about 7% where the record's median is 6.6% and its best was
   22.4%. Size a refuge sleeve on the distribution rather than on this row, which `-noise` puts the
-  record at the 35th percentile of.
-- **The bond spends longer below its peak than its own volatility implies** (1.24). This is the one
+  record at the 31st percentile of.
+- **The bond spends longer below its peak than its own volatility implies** (1.30). This is the one
   bond row with a band fitted across eight real funds rather than one, so it is the most transportable
   of them — and it is also the one the `-crossasset` ladder grades at four durations.
 - **Every session past −18% comes from the liquidity spiral**, in every world measured — a news
   jump is −3.3% and cannot reach that range alone. The jump channel sets how OFTEN those sessions
   arrive; it does not set how large they are. If you are studying tail magnitude, `-stress` and
   `-depth` are the dials, not `-jumpvar`.
-- **Crash frequency is on its anchor** (1.04; 21.6 per century against a real 20.7 — the disaster
+- **Crash frequency is on its anchor** (0.97; 20.1 per century against a real 20.7 — the disaster
   channel consolidated episodes and the valuation cycle's slow epochs finished the job; the news
   channel's episode inflation is displaced back out of the noise budget). The record sits at the
-  41st percentile of model histories.
-- **Single-history kurtosis is wild here and the median sits just under anchor** (0.89 on the
+  52nd percentile of model histories.
+- **Single-history kurtosis is wild here and the median sits just under anchor** (0.87 on the
   scoring ensemble, 0.93 at the default seed — the rarer-larger jump pair and the leverage kick
   split the tail budget that was all jumps before). A 72-year window reads 10.6 at the 5th
-  percentile and 80 at the 95th, because a window either contains its 1987 or does not. Do not
+  percentile and 93 at the 95th, because a window either contains its 1987 or does not. Do not
   read kurtosis off one path — and the 30 realism ceiling is still what binds when you reach for
   tails, not the target.
-- **The three asymmetries are on anchor since 0.23.0's adoption** (downside excess 0.97, leverage
-  corr 0.95, tail hedge 0.88 as replicate means), and `-noise` reads the record as a typical
-  single history of this model on most rows (vol 51st, crashes 41st, median depth 61st, variance
-  ratio 48th, the asymmetries 43rd/47th/22nd). The rows where it can still tell the difference
-  are the release's disclosed misses: valuation dispersion (78th), clustering lag 20 (73rd), the
-  depth rungs d10/d20 (33rd), and the tail hedge's remaining edge (22nd).
+- **The three asymmetries are on anchor since 0.23.0's adoption** (downside excess 1.06, leverage
+  corr 0.95, tail hedge 0.87 at the default seed), and `-noise` reads the record as a typical
+  single history of this model on most rows (vol 50th, crashes 52nd, median depth 63rd, variance
+  ratio 50th, valuation dispersion 39th — the persistence retune moved it from the 78th — and
+  the asymmetries 42nd/46th/26th). The rows where it can still tell the difference are the
+  release's disclosed misses: clustering lag 20 (72nd), the depth rungs d10/d20 (34th), and the
+  tail hedge's remaining edge (26th).
 
 ## If you are calibrating rather than choosing
 

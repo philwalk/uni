@@ -10,11 +10,14 @@ and no gate-passing setting of any existing dial moved it — every continuous c
 
 Two draw-free belief channels close it, both bit-identical off at 0:
 
-- **`-beliefshare`** (default 0.9, `-beliefyears` 2.5): perceived fair value drifts toward
+- **`-beliefshare`** (default 0.95, `-beliefyears` 1.5): perceived fair value drifts toward
   realized prices, splitting reversion by FREQUENCY — the daily pull is untouched (beliefs barely
   move in 60 sessions), multi-year reversion falls to `1 - share` of the pull, which is where
   CAPE-scale swings live. Strictly below 1, or nothing anchors the price level (refused at the
-  CLI, guarded again by the mechanism row's ceiling).
+  CLI, guarded again by the mechanism row's ceiling). SHORTER half-life and HIGHER share are the
+  amplitude directions — the naive long-memory intuition inverts, measured: 12 years reads
+  dispersion 0.115 where 1.5 reads 0.26 at share 0.9 — and share is the cheap currency: the
+  half-life is what pays the depth rungs (0.5 years fails d10 outright).
 - **`-capyears`** (default 1.5, `-capwindow` 6): beliefs capitalize the fundamental's recent
   excess growth into perceived fair — a growth regime priced as permanent — so a regime ending on
   its re-draw is a valuation decline with the fundamental fine. Bounded by a frozen 0.80-log span;
@@ -35,24 +38,34 @@ contract tests in both twins pinning bit-identity at zero, release inheritance, 
 discrimination. `EmitSchema` 6 -> 7: `world` gained the four cycle dials and the six asymmetry
 dials below (`leverage`, `downShock`, `jumpSkew`, `newsRate`, `newsSize`, `refugeDays`).
 
-What the shipped world reads, 200x100 on four seeds: dispersion 0.199-0.23 with the century max
-near +12% over fair — the record's lower half, honest about which half it has: sticky post-crash
-pessimism (the 1930s-50s, CAPE below its mean for two decades) more than manias. A 2x-fair mania
-peak remains out of reach — `-capyears 3` pays vr60 1.22 and d10 1.57 at the final world — and
-is disclosed beside the dispersion bullet in `docs/MarketSimWorlds.md`.
+The cycle was then RETUNED against a measured mania-anchor vector (Shiller 1881-2023, log CAPE
+about its mean: sd 0.415, monthly-AR1 half-life 11.5y, BOTH wings near 27.5% of months past
+±0.25 log — the record's valuation wings are SYMMETRIC, so a mania was never a missing
+upper-wing channel, just amplitude and persistence this cycle lacked; and at every major peak
+the 3-year resolution is price falling, never earnings catching up). What the shipped world
+reads at 1.5/0.95: dispersion 0.33 — inside the proxy windows' own 0.24-0.41 — with a per-path
+cycle of half-life 7.9y and both wings near 23%, roughly HALF the record's cycle from a fifth
+of it. Still disclosed: the ensemble century max stays near +11% over FAIR (the ensemble's
+mean gap sits below fair; a collapse from a 2x-fair peak remains out of reach — `-capyears 3`
+pays vr60 1.20 and d10 1.69 at the final world), and the model's cycle is more REGULAR than
+the record's (5y autocorrelation 0.84 vs 0.55, out of reach from above at every setting).
+Priced, beyond seed noise: d10 1.34 -> 1.39 and d20 2.79 -> 2.90 — the slow epochs buy
+underwater time on the way to the record's dispersion — against vr60 1.13 -> 1.12,
+crashes 1.03 -> 0.97, and the record moving to a TYPICAL history on the dispersion row
+(real@ 78% -> 39%).
 
 **What it moves, and the two rulers that read part of it as regression:**
 
 ```
                           0.22.1   0.23.0
-  worst crash %, record@     18%      37%   <-- pessimism deepens what disasters start
-  crashes/century           1.03     1.03
-  return per vol            1.03     1.01
-  variance ratio 60d        1.10     1.13
-  equity d5 vs real         0.98     1.08
-  equity d10 vs real        1.13     1.34
-  equity d20 vs real        2.36     2.79   <-- see below
-  median depth %            1.04     1.06
+  worst crash %, record@     18%      38%   <-- pessimism deepens what disasters start
+  crashes/century           1.03     0.97
+  return per vol            1.03     0.98
+  variance ratio 60d        1.10     1.12
+  equity d5 vs real         0.98     1.10
+  equity d10 vs real        1.13     1.39
+  equity d20 vs real        2.36     2.90   <-- see below
+  median depth %            1.04     1.07
 ```
 
 The depth rungs are graded against a relation fitted on 35 funds over 2001-2026 — a window with no
@@ -80,16 +93,18 @@ dial setting, because `trendPos` moved off the native tanh. Use it for any futur
 that must match across the twins.
 
 Per the defaults-change rule, every `-noise`-frozen spread was re-measured at this release's
-final world — the asymmetry adoption below (`volSd` 0.13, `retVolSd` 0.25, `kurtSd` 1.15,
-`ac1Sd` 0.11, `crashesSd` 0.24, `medDepthSd` 0.17, `worstDepthSd` 0.19, `semiExcessSd` 1.48,
-`levCorrSd` 0.44, `tailHedgeSd` 0.24, `vr` 0.36, `valuation dispersion` 0.35, `d5` 0.18, `d10`
-0.42, `d20` 2.06, bond vol 0.52, bond growth-crash 1.33, infl-crash 1.90, bond depth 0.36;
-kurtosis is now pinned twice as tightly because the rarer-larger jump pair narrows
-single-history spread) — and the measured tables in `docs/MarketSimWorlds.md` were regenerated
-at it. The calibration loss on the frozen ensemble reads **0.955** (not comparable to 0.22.1's
-0.579: the target set gained the
+final world — the persistence retune above, with the outgoing world run as the control
+(`volSd` 0.13, `retVolSd` 0.27, `kurtSd` 1.17, `ac1Sd` 0.11, `crashesSd` 0.26, `medDepthSd`
+0.17, `worstDepthSd` 0.19, `semiExcessSd` 1.54, `levCorrSd` 0.44, `tailHedgeSd` 0.24, `vr`
+0.35, `valuation dispersion` 0.64 — the wider cycle makes single-history dispersion twice as
+variable, which is exactly the record's own window-dependence — `d5` 0.19, `d10` 0.45, `d20`
+2.38, bond vol 0.52, bond growth-crash 1.48, infl-crash 1.99, bond depth 0.36; kurtosis stays
+pinned twice as tightly as pre-0.23 because the rarer-larger jump pair narrows single-history
+spread) — and the measured tables in `docs/MarketSimWorlds.md` were regenerated at it. The
+calibration loss on the frozen ensemble reads **0.796** against the outgoing world's 0.865
+under the same final weights (neither comparable to 0.22.1's 0.579: the target set gained the
 valuation row and the three asymmetry rows below, and the weights re-froze). `beliefShare` and
-`capYears` joined `-calibrate`'s ranges. The Nasdaq recipe inherits both defaults changes and
+`capYears` joined `-calibrate`'s ranges. The Nasdaq recipe inherits every defaults change and
 still passes all three gate classes unchanged.
 
 **The verdict is graded at the calibration horizon.** Every band and anchor weight is calibrated
@@ -186,16 +201,18 @@ volPersist 0.992 / valuePull 0.056 / recoveryDrag 8.5 / drift 0.122 / refuge 0.1
 of the world on its anchors. All three mechanisms joined `-calibrate`'s ranges.
 
 Verified at 200x100 as 8-replicate means against the pre-adoption world: the three asymmetry
-rows read **0.97 / 0.95 / 0.88** of their records (from -0.66 / 0.30 / 2.02), `bond
-growth-crash` 1.44 -> 1.04, clustering lag 1 lands ON the century anchor (0.96 -> 1.02), `bond
-depth vs vol` holds at 1.24 (the easing re-solve below spends its head-room on the
-`-crossasset` ladder), d20 3.13 -> 3.00, d5/d10/bond vol/bond infl-crash inside 2 seed-sd, and
-the seed-7 vr60 failure is unchanged from the prior world (1.17-1.18 on that seed both ways;
-the other three gate seeds PASS all three classes). **Two rows give ground beyond seed noise and
-are this adoption's priced costs: clustering lag 20, 0.214 -> 0.197 against the 0.225 anchor —
-serially-independent news days dilute long-lag |r| correlation — and valuation dispersion,
-0.230 -> 0.215 against the 0.30 target, compressed by the stronger valuePull the vr60 band
-demands.** Neither yields to any in-band dial; both were already misses. `easing` re-solves 0.060 ->
+rows read **1.06 / 0.95 / 0.87** of their records at the shipped world (from -0.66 / 0.30 /
+2.02), `bond growth-crash` 1.44 -> 1.09, clustering lag 1 lands ON the century anchor (0.96 ->
+1.04), `bond depth vs vol` reads 1.29 (the easing re-solve below spends its head-room on the
+`-crossasset` ladder), d20 3.13 -> 2.90, d5/d10/bond vol/bond infl-crash inside 2 seed-sd, and
+the seed-7 vr60 failure is unchanged from the prior world (1.15-1.18 on that seed both ways;
+the other three gate seeds PASS all three classes). **Two rows gave ground beyond seed noise as this adoption's priced costs: clustering lag 20,
+0.214 -> 0.197 against the 0.225 anchor — serially-independent news days dilute long-lag |r|
+correlation, and it does not yield to any in-band dial — and valuation dispersion, 0.230 ->
+0.215, compressed by the stronger valuePull the vr60 band demands. The dispersion cost was
+later RECOVERED, with interest, by the persistence retune above (0.33 at the final world);
+clustering lag 20 stands as the release's remaining disclosed cost, alongside the retune's
+own d10/d20 price.** `easing` re-solves 0.060 ->
 0.052 — the settled-stress refuge moved the `-crossasset` window again, its third move with the
 equity world — and 5.2 rate points is the BOTTOM of the real easing-cycle range (2007-08 ran
 5.1), so the "one full real easing cycle" anchor holds: at 0.060 the shipped duration's bond

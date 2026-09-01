@@ -530,13 +530,21 @@ object MarketSim:
     // its anchor (0.71 vs 0.69).
     disasterRate = 0.6, disasterSize = 2.0, disasterLen = 2.5,
     disasterRecover = 0.5, disasterRecLen = 4.0,
-    // The slow valuation cycle, ADOPTED 0.23.0: gap-beliefs at share 0.9 (2.5y half-life) carry
-    // the dispersion, growth-capitalization at 1.5 years read through a 6-year window carries the
-    // upper wing, and `drift` 0.118 -> 0.120 compensates the cycle's return cost.  Verified at
-    // 200x100 on four seeds: dispersion 0.21-0.22 against a 0.095 disaster-only reading, all
-    // three gate classes PASS, and the horizon-matched real@ table moves toward 50 on the tail,
-    // r/v, crash-rate and shallow-rung rows with nothing leaving its band.
-    beliefShare = 0.9, beliefYears = 2.5, capYears = 1.5, capWindow = 6.0,
+    // The slow valuation cycle, ADOPTED 0.23.0 and RETUNED against the mania anchors
+    // (`mania_anchor` conventions, Shiller 1881-2023): gap-beliefs at share 0.95 with a 1.5y
+    // half-life carry the dispersion, growth-capitalization at 1.5 years read through a 6-year
+    // window carries the upper wing, and `drift` 0.118 -> 0.120 compensates the cycle's return
+    // cost.  SHORTER belief half-life and HIGHER share are the amplitude dials — the sweep
+    // INVERTED the naive direction (12y reads dispersion 0.115; 1.5y reads 0.26 at share 0.9) —
+    // and share is the cheap currency: years is what pays the depth rungs (0.5y fails d10
+    // outright).  At 1.5/0.95 the per-path cycle reads sd 0.33, half-life 7.9y, both wings ~23%
+    // past 0.25 log (record: 0.415, 11.5y, ~27.5%) — roughly half the record's cycle, from a
+    // fifth of it — with dispersion 0.33, vr60 1.12, frozen loss 0.955 -> 0.820, four-seed
+    // pattern unchanged (seed-7 vr60-only, 1.15 from 1.17), and -crossasset PASS with no easing
+    // re-solve.  Priced: d10 1.34 -> 1.39, d20 2.79 -> 2.90.  The record's 5y autocorrelation
+    // (0.55) stays out of reach from ABOVE (model 0.84 at every setting): the model cycle is
+    // more regular than the record's — disclosed, not anchored.
+    beliefShare = 0.95, beliefYears = 1.5, capYears = 1.5, capWindow = 6.0,
     crowd = Crowd.Momentum, crowdImpact = 0.030, panic = 0.0, duration = 13.5,
     easing = 0.052, unwind = 0.35, refuge = 0.115,
     inflProb = 0.20, inflSize = 0.10, inflSpeed = 0.010, rateSpeed = 3.0, discount = 5.73,
@@ -2081,11 +2089,11 @@ object MarketSim:
     clusterWindow = "CRSP 1926-2026, the century", clusterYears = 100,
     tailWindow = "CRSP 1926-2026, the century", tailYears = 100,
     vol = 16.0,          volSd = 0.13,
-    retVol = 0.69,       retVolSd = 0.25,
-    kurt = 28.0,         kurtSd = 1.15,
+    retVol = 0.69,       retVolSd = 0.27,
+    kurt = 28.0,         kurtSd = 1.17,
     ac1 = 0.299,         ac1Sd = 0.11,
     ac20 = 0.225,        ac20Sd = 0.19,
-    crashes = 20.7,      crashesSd = 0.24,
+    crashes = 20.7,      crashesSd = 0.26,
     medDepth = -21.4,    medDepthSd = 0.17,
     // RE-ANCHORED in 0.22.1, same error class as `median depth %` in 0.22.0: -56.8 was the
     // 2007-09 episode, the worst of the 1954-2026 window, used where the model computes the worst
@@ -2102,9 +2110,9 @@ object MarketSim:
     // CRSP c1954 rows of asymmetry-2026-08-31.tsv; the tail hedge is SPY/TLT.  Spreads frozen
     // from `-noise -paths 200` at the adopted 0.23.0 asymmetry world, 2026-08-31: a single
     // 72-year history barely pins the semivariance excess (one crash day swings it), and the
-    // record now reads as a TYPICAL history of this model on all three rows -- 43rd percentile
-    // (semivariance), 47th (leverage corr), 22nd (tail hedge).
-    semiExcess = 3.06, semiExcessSd = 1.48,
+    // record now reads as a TYPICAL history of this model on all three rows -- 42nd percentile
+    // (semivariance), 46th (leverage corr), 26th (tail hedge).
+    semiExcess = 3.06, semiExcessSd = 1.54,
     levCorr = -0.0926, levCorrSd = 0.44,
     tailHedge = -0.273, tailHedgeSd = 0.24)
 
@@ -2145,14 +2153,14 @@ object MarketSim:
     kurt = 9.55,         kurtSd = 1.23,
     ac1 = 0.293,         ac1Sd = 0.11,
     ac20 = 0.249,        ac20Sd = 0.19,
-    crashes = 25.6,      crashesSd = 0.24,
+    crashes = 25.6,      crashesSd = 0.26,
     medDepth = -22.8,    medDepthSd = 0.10,
     worstDepth = -83.0,  worstDepthSd = 0.24,
     volBand = (23.5, 30.3),
     retVolBand = (0.27, 0.47),
     // QQQ wfull row of asymmetry-2026-08-31.tsv; the tail hedge is QQQ/TLT.  Spreads are the
     // S&P's carried over, like every spread in this set.
-    semiExcess = 1.13, semiExcessSd = 1.48,
+    semiExcess = 1.13, semiExcessSd = 1.54,
     levCorr = -0.1073, levCorrSd = 0.44,
     tailHedge = -0.236, tailHedgeSd = 0.24)
 
@@ -2221,7 +2229,7 @@ object MarketSim:
     // four: across the crowdImpact sweep corr(vr60, equity d20 vs real) is 0.98, which is the
     // finding, not an argument for dropping a row.  The depth rungs said the world was too deep
     // and named no cause; this row names it.
-    ("variance ratio 60d", st => st.vr60,                                    1.00,  wgt(1.0, 0.36)),
+    ("variance ratio 60d", st => st.vr60,                                    1.00,  wgt(1.0, 0.35)),
     // THE THIRD ASYMMETRY AXIS the rows above cannot see: clustering is |r| (sign-blind), vr60 is
     // the signed MEAN's persistence -- this pair is the signed SECOND moment.  Graded as the
     // EXCESS because the raw down/up ratio sits so near 1 that its model/real quotient could
@@ -2239,7 +2247,7 @@ object MarketSim:
     // The record proxy (sd log CAPE) reads 0.24-0.41 across windows; 0.30 is the judgment centre
     // and the LITERAL is shared by both anchor sets -- one Shiller record, no QQQ equivalent.
     // Judgment 0.5 for the proxy commensurability stated in valuation-2026-08-30.tsv.
-    ("valuation dispersion", st => st.valDisp,                               0.30,  wgt(0.5, 0.35)),
+    ("valuation dispersion", st => st.valDisp,                               0.30,  wgt(0.5, 0.64)),
     ("crashes/century",    st => st.epPerPath * 100.0 / st.yearsPerPath,    a.crashes,  wgt(1.0, a.crashesSd)),
     // RE-MEASURED in 0.22.0, and the old value was not this statistic.  `-27.1` shipped through
     // 0.21.0 with no recorded convention; the model measures every peak-to-trough decline of 15% or
@@ -2279,7 +2287,7 @@ object MarketSim:
     // +6.6 / +22.4 / +4.4 / +13.3 / +0.8.  The model was therefore read as UNDERSTATING a bond
     // rally it in fact overstates.  Six episodes is the honest limit here and `-noise` prices it in.
     // `test-data/bond-anchors/crash-response-2026-08-29.tsv`; `BondCrashSuite` re-derives both rows.
-    ("bond growth-crash",  st => st.bondGrowth,                              6.6,  wgt(1.0, 1.33)),
+    ("bond growth-crash",  st => st.bondGrowth,                              6.6,  wgt(1.0, 1.48)),
     // The judgment stays at 1.5 -- inflation-crash behaviour is why the bond refuge exists --
     // and the measured precision crushes the weight to ~0.13 anyway: sd/real 2.89, and only
     // 95 of 200 24-year histories produce a reading at all.  The old 1.5 was the largest
@@ -2288,7 +2296,7 @@ object MarketSim:
     // has, which reads -34.7% (SPY 2022-01-03..2022-10-12, TLT over the same span).  A median of one
     // is that one, so the anchor is the episode -- but rounded 28% toward zero, which is not a
     // convention, it is an error.
-    ("bond infl-crash",    st => st.bondInfl,                              -34.7,  wgt(1.5, 1.90)),
+    ("bond infl-crash",    st => st.bondInfl,                              -34.7,  wgt(1.5, 1.99)),
     // Does the refuge hold exactly where it is needed -- stock-bond correlation on calm sessions
     // with the equity return below its own calm q10, against the pair's own record
     // (tailcorr-2026-08-31.tsv).  Calm-conditioned on BOTH sides by construction: the TLT window
@@ -2337,14 +2345,14 @@ object MarketSim:
     // no longer tell this model from the cross-section they were measured from, which is a stronger
     // statement than any ratio near 1.00, because it is made against the spread rather than the
     // point.
-    ("equity d5 vs real",   st => st.eqD5VsReal,                             1.00,  wgt(0.5, 0.18)),
-    ("equity d10 vs real",  st => st.eqD10VsReal,                            1.00,  wgt(1.0, 0.42)),
+    ("equity d5 vs real",   st => st.eqD5VsReal,                             1.00,  wgt(0.5, 0.19)),
+    ("equity d10 vs real",  st => st.eqD10VsReal,                            1.00,  wgt(1.0, 0.45)),
     // d20's sdRel moved 0.99 -> 1.56 in the 0.21.0 recovery-drag change, and like kurtosis's move
     // it is a re-measurement of a statistic that genuinely became more variable, not a correction:
     // slowing recovery from deep drawdowns makes time spent DEEP swing much harder between
     // histories (p5 0.19, p95 4.35 over 25 years).  Weighting by measurability drops it to 0.06.
     // No other target's sdRel moved beyond its own noise, so none were churned.
-    ("equity d20 vs real",  st => st.eqD20VsReal,                            1.00,  wgt(0.5, 2.06)),
+    ("equity d20 vs real",  st => st.eqD20VsReal,                            1.00,  wgt(0.5, 2.38)),
     ("bond depth vs vol",   st => st.bondDepthVsVol,                          1.00, wgt(0.5, 0.36)),
   )
 

@@ -270,11 +270,23 @@ fn default_world() -> World {
         disaster_len: 2.5,
         disaster_recover: 0.5,
         disaster_rec_len: 4.0,
-        // The slow valuation cycle, ADOPTED 0.23.0: gap-beliefs at share 0.9 (2.5y half-life)
-        // carry the dispersion, growth-capitalization at 1.5 years read through a 6-year window
-        // carries the upper wing, and `drift` 0.118 -> 0.120 compensates the cycle's return cost.
-        belief_share: 0.9,
-        belief_years: 2.5,
+        // The slow valuation cycle, ADOPTED 0.23.0 and RETUNED against the mania anchors
+        // (`mania_anchor` conventions, Shiller 1881-2023): gap-beliefs at share 0.95 with a
+        // 1.5y half-life carry the dispersion, growth-capitalization at 1.5 years read through
+        // a 6-year window carries the upper wing, and `drift` 0.118 -> 0.120 compensates the
+        // cycle's return cost. SHORTER belief half-life and HIGHER share are the amplitude
+        // dials — the sweep INVERTED the naive direction (12y reads dispersion 0.115; 1.5y
+        // reads 0.26 at share 0.9) — and share is the cheap currency: years is what pays the
+        // depth rungs (0.5y fails d10 outright). At 1.5/0.95 the per-path cycle reads sd 0.33,
+        // half-life 7.9y, both wings ~23% past 0.25 log (record: 0.415, 11.5y, ~27.5%) —
+        // roughly half the record's cycle, from a fifth of it — with dispersion 0.33, vr60
+        // 1.12, frozen loss 0.955 -> 0.820, four-seed pattern unchanged (seed-7 vr60-only,
+        // 1.15 from 1.17), and -crossasset PASS with no easing re-solve. Priced: d10 1.34 ->
+        // 1.39, d20 2.79 -> 2.90. The record's 5y autocorrelation (0.55) stays out of reach
+        // from ABOVE (model 0.84 at every setting): the model cycle is more regular than the
+        // record's — disclosed, not anchored.
+        belief_share: 0.95,
+        belief_years: 1.5,
         cap_years: 1.5,
         cap_window: 6.0,
         leverage: 0.12,
@@ -2966,15 +2978,15 @@ const SP500_ANCHORS: Anchors = Anchors {
     vol: 16.0,
     vol_sd: 0.13,
     ret_vol: 0.69,
-    ret_vol_sd: 0.25,
+    ret_vol_sd: 0.27,
     kurt: 28.0,
-    kurt_sd: 1.15,
+    kurt_sd: 1.17,
     ac1: 0.299,
     ac1_sd: 0.11,
     ac20: 0.225,
     ac20_sd: 0.19,
     crashes: 20.7,
-    crashes_sd: 0.24,
+    crashes_sd: 0.26,
     med_depth: -21.4,
     med_depth_sd: 0.17,
     // RE-ANCHORED in 0.22.1, same error class as `med_depth` in 0.22.0: -56.8 was the 2007-09
@@ -2994,10 +3006,10 @@ const SP500_ANCHORS: Anchors = Anchors {
     // CRSP c1954 rows of asymmetry-2026-08-31.tsv; the tail hedge is SPY/TLT. Spreads frozen
     // from `-noise -paths 200` at the adopted 0.23.0 asymmetry world, 2026-08-31: a single
     // 72-year history barely pins the semivariance excess (one crash day swings it), and the
-    // record now reads as a TYPICAL history of this model on all three rows — 43rd percentile
-    // (semivariance), 47th (leverage corr), 22nd (tail hedge).
+    // record now reads as a TYPICAL history of this model on all three rows — 42nd percentile
+    // (semivariance), 46th (leverage corr), 26th (tail hedge).
     semi_excess: 3.06,
-    semi_excess_sd: 1.48,
+    semi_excess_sd: 1.54,
     lev_corr: -0.0926,
     lev_corr_sd: 0.44,
     tail_hedge: -0.273,
@@ -3042,7 +3054,7 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     ac20: 0.249,
     ac20_sd: 0.19,
     crashes: 25.6,
-    crashes_sd: 0.24,
+    crashes_sd: 0.26,
     med_depth: -22.8,
     med_depth_sd: 0.10,
     worst_depth: -83.0,
@@ -3052,7 +3064,7 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     // QQQ wfull row of asymmetry-2026-08-31.tsv; the tail hedge is QQQ/TLT. Spreads are the
     // S&P's carried over, like every spread in this set.
     semi_excess: 1.13,
-    semi_excess_sd: 1.48,
+    semi_excess_sd: 1.54,
     lev_corr: -0.1073,
     lev_corr_sd: 0.44,
     tail_hedge: -0.236,
@@ -3166,7 +3178,7 @@ fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             "variance ratio 60d",
             (|st: &WorldStats| st.vr60) as StatFn,
             1.00,
-            wgt(1.0, 0.36),
+            wgt(1.0, 0.35),
         ),
         // THE THIRD ASYMMETRY AXIS the rows above cannot see: clustering is |r| (sign-blind),
         // vr60 is the signed MEAN's persistence — this pair is the signed SECOND moment. Graded
@@ -3201,7 +3213,7 @@ fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             "valuation dispersion",
             (|st: &WorldStats| st.val_disp) as StatFn,
             0.30,
-            wgt(0.5, 0.35),
+            wgt(0.5, 0.64),
         ),
         (
             "crashes/century",
@@ -3265,7 +3277,7 @@ fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             "bond growth-crash",
             (|st| st.bond_growth) as StatFn,
             6.6,
-            wgt(1.0, 1.33),
+            wgt(1.0, 1.48),
         ),
         // The judgment stays at 1.5 — inflation-crash behaviour is why the bond refuge exists —
         // and the measured precision crushes the weight to ~0.13 anyway: sd/real 2.89, and only
@@ -3279,7 +3291,7 @@ fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             "bond infl-crash",
             (|st| st.bond_infl) as StatFn,
             -34.7,
-            wgt(1.5, 1.90),
+            wgt(1.5, 1.99),
         ),
         // Does the refuge hold exactly where it is needed — stock-bond correlation on calm
         // sessions with the equity return below its own calm q10, against the pair's own record
@@ -3342,13 +3354,13 @@ fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             "equity d5 vs real",
             (|st: &WorldStats| st.eq_d5_vs_real()) as StatFn,
             1.00,
-            wgt(0.5, 0.18),
+            wgt(0.5, 0.19),
         ),
         (
             "equity d10 vs real",
             (|st: &WorldStats| st.eq_d10_vs_real()) as StatFn,
             1.00,
-            wgt(1.0, 0.42),
+            wgt(1.0, 0.45),
         ),
         // d20's sdRel moved 0.99 -> 1.56 in the 0.21.0 recovery-drag change, and like kurtosis's
         // move it is a re-measurement of a statistic that genuinely became more variable, not a
@@ -3359,7 +3371,7 @@ fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             "equity d20 vs real",
             (|st: &WorldStats| st.eq_d20_vs_real()) as StatFn,
             1.00,
-            wgt(0.5, 2.06),
+            wgt(0.5, 2.38),
         ),
         (
             "bond depth vs vol",
