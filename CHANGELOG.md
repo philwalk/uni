@@ -261,6 +261,49 @@ threshold-specific — the drawdown-20 crowd's world fails the acceptance gate, 
 -10% rule reads +0.36 — and the pressed-hard REACTIVE world remains the case where the family's
 rank collapses.
 
+**EVERY EMITTED CHANNEL IS NOW GRADED — the gate covers what it ships beside.** An external
+consumer found the sharpest defect in this release: because a channel that is bit-identical off
+also cannot perturb the graded series, the gate could not see the satellite leg or the sampled
+bars at all — so a sidecar printed `"fidelity": "PASS"` beside a `logSat` column that verdict
+never examined, and `logSat` is exactly the column a reader would take as their second index.
+**Fifteen new gate rows close it.** The satellite leg is graded on ten — correlation, |r|
+correlation, beta, and volatility ratio, plus kurtosis, both clustering lags, the 5% and 10%
+depth shares and the crash rate — every one a RATIO to the primary leg rather than a level,
+anchored on what QQQ holds to SPY over their shared window. Ratios are the honest form: the
+satellite is a coupled second leg at this world's own scale and is not claimed to be any index,
+so what can be graded is the relation a higher-beta leg holds to its primary, exactly as the
+depth rungs grade each world at its own volatility. Levels would have asked the wrong question —
+against QQQ's absolutes the leg misses kurtosis in both directions. The bar channels take five
+more rows, the same readings the build-time suites already assert from `bars-2026-09-01.tsv`,
+carried into the runtime gate. The rows exist only when their channel ran, so a channels-off
+world's verdict is byte-identical to what it always was, and contract tests in both twins pin
+both halves: no channel rows when off, and a materially wrong leg or bar (2.6x beta, 3x range
+scale) must FAIL. `ungradedChannelSeries` is consequently empty in every world the model can
+currently emit; it stays in the schema because the next channel is ungraded until someone
+anchors it, and that has to be said beside the data.
+
+One row carries a disclosed tension rather than a clean pass: the model's leg opens ~1.6 crash
+episodes per primary episode against the record's 1.17. One history cannot resolve that ratio at
+all (SPY and QQQ show ~6 and ~7 episodes in 27 years; five-year blocks read 1.00-2.00), so the
+band admits the model and the central tendency is stated rather than buried. `docs/` also records
+that stacking the satellite on the `-anchors nasdaq` recipe yields a levered fund (~32%
+volatility at 0.93 correlation) rather than a second index.
+
+The same report exposed a real mis-weighting: the Nasdaq anchor set's sampling spreads were the
+S&P's, carried over with a comment promising to re-freeze them once a Nasdaq-calibrated world
+existed. One has existed since 0.22.x, so they are now measured at that recipe — and the
+assumption that carried values were "approximately right" was false where the worlds differ
+most: `medDepthSd` read 0.10 against a measured 0.37, a 3.7x OVERWEIGHT on the heaviest row in
+that set's loss, and `semiExcessSd` 1.54 against 3.57. The S&P world is untouched, and the
+Nasdaq recipe still passes all three classes on its corrected weights. Still shared and now
+disclosed in code: the sds passed inline to `wgt` are per-target rather than per-anchor, so they
+remain the S&P world's readings for both sets. Three smaller corrections travel with it: the
+fidelity header printed `return per vol CRSP 1954-2026` as a literal and so mislabelled every
+Nasdaq run (now a per-anchor field), the depth-solve bracket started at 10.0 and therefore
+refused the equity-at-anchor solve for every Nasdaq world (now 5.0, since volatility falls as
+depth rises), and `-releases` grades S&P-calibrated frozen worlds against whatever anchor set is
+active, which it now says out loud.
+
 **NEW MECHANISMS — the bar channels (`-rangescale`, `-volidio`), off by default.** Bars stop
 being close-only. The RANGE: high/low sampled per session from the EXACT Brownian-bridge extreme
 distributions, endpoints at the observed open (= prior close; the model has no overnight) and

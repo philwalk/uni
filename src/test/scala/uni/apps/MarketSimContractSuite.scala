@@ -445,6 +445,35 @@ class MarketSimContractSuite extends FunSuite:
     assert(p.sat.isEmpty, "satBeta 0 must produce no satellite series")
   }
 
+  test("the channel gate rows appear only when the channel runs, and can fail") {
+    // The channel rows are not decoration: a leg or a bar that is materially wrong must FAIL the
+    // gate, and a channels-off world must carry none of these rows at all.  Without the second
+    // half the first is cheap -- a row that never appears cannot be wrong.
+    val off = MarketSim.measure(MarketSim.simPaths(MarketSim.Defaults, 8, 40, MarketSim.DefaultSeed), 40)
+    assert(off.sat.isEmpty && off.bars.isEmpty)
+    val namesOff = MarketSim.gateChecks(MarketSim.SP500Anchors, off).map(_._1)
+    assert(!namesOff.exists(n => n.startsWith("satellite") || n.startsWith("bar ")),
+      "a channels-off world must carry no channel rows")
+
+    val on = MarketSim.Defaults.copy(satBeta = 1.2, satIdio = 0.074, rangeScale = 1.1,
+                                     rangeDown = 0.08, volIdio = 0.34)
+    val stOn = MarketSim.measure(MarketSim.simPaths(on, 8, 40, MarketSim.DefaultSeed), 40)
+    assert(stOn.sat.isDefined && stOn.bars.isDefined)
+    val rowsOn = MarketSim.gateChecks(MarketSim.SP500Anchors, stOn)
+    assert(rowsOn.count(_._1.startsWith("satellite")) >= 9,
+      "the satellite must be graded on its full relational vector")
+    assert(rowsOn.exists(_._1.startsWith("bar ")))
+
+    // A leg at more than twice its anchored beta is not a second index; the gate must say so.
+    val stB = MarketSim.measure(MarketSim.simPaths(on.copy(satBeta = 2.6), 8, 40, MarketSim.DefaultSeed), 40)
+    assert(MarketSim.gateChecks(MarketSim.SP500Anchors, stB).exists((n, ok, _) => n.startsWith("satellite") && !ok),
+      "a 2.6-beta leg must fail a satellite row")
+    // A bar sampled at a wildly wrong scale is not a bar.
+    val stW = MarketSim.measure(MarketSim.simPaths(on.copy(rangeScale = 3.0), 8, 40, MarketSim.DefaultSeed), 40)
+    assert(MarketSim.gateChecks(MarketSim.SP500Anchors, stW).exists((n, ok, _) => n.startsWith("bar ") && !ok),
+      "a 3x-scale bar must fail a bar row")
+  }
+
   test("the range channel is inert in every frozen release") {
     for (v, w) <- MarketSim.Releases do
       assert(w.rangeScale == 0.0 && w.rangeDown == 0.0,

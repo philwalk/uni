@@ -100,7 +100,11 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 // cross-language print flips per 40 century paths — where the log sits nine orders under the
 // printed digit. A reader that reconstructs a `World` from a schema-7 sidecar loses nothing:
 // the dials were 0 in every world such a sidecar could describe.
-// 8 -> 9: `world` gained the bar channels' dials (`rangeScale`, `rangeDown`, `volIdio`), and the TSV the
+// 8 -> 9: `gate` gained `anchors` (which ruler graded this world — a `-anchors nasdaq` run was
+// otherwise indistinguishable from an S&P one in its own provenance record) plus `gradedSeries`
+// and `ungradedChannelSeries`, which say in the artifact itself that the verdict is about `price` and
+// `bond` and NOT about any emitted channel column. `world` gained the bar channels' dials
+// (`rangeScale`, `rangeDown`, `volIdio`), and the TSV the
 // columns `logHigh`/`logLow` (present ONLY when `rangeScale > 0` — log prices of the sampled
 // intra-bar extremes; the bar's open is the prior close, the model has no overnight) and
 // `logVolume` (present ONLY when `volIdio > 0` — a mean-free log turnover index; apply your
@@ -2060,6 +2064,38 @@ fn depth_shares(px: &[f64]) -> (f64, f64, f64) {
 
 // ---- world statistics and the ONE acceptance predicate ----------------------------------
 
+/// The SATELLITE leg's own statistics, as RATIOS to the primary leg's — present only when the
+/// leg ran. Ratios, not levels, because the satellite is a coupled second leg at this world's
+/// own scale and is not claimed to BE any index: what a second, higher-beta leg must satisfy is
+/// a RELATION to its primary, the same doctrine the depth rungs use when they grade each world
+/// at its own volatility. The record's relation is QQQ against SPY over their shared window.
+#[derive(Clone, Copy, Debug)]
+struct SatStats {
+    corr: f64,
+    abs_corr: f64,
+    beta: f64,
+    vol_ratio: f64,
+    kurt_ratio: f64,
+    ac1_ratio: f64,
+    ac20_ratio: f64,
+    d5_ratio: f64,
+    d10_ratio: f64,
+    crash_ratio: f64,
+}
+
+/// The BAR channels' statistics — present only when the range channel ran. `vol_*` are NaN
+/// unless the volume channel ran too. Graded against `bars-2026-09-01.tsv`, whose rows the
+/// build-time suites already assert; these carry the same readings into the RUNTIME gate, so an
+/// emitted `logHigh`/`logLow`/`logVolume` is covered by the verdict travelling beside it.
+#[derive(Clone, Copy, Debug)]
+struct BarStats {
+    range_over_ccvol: f64,
+    range_acf1: f64,
+    range_downup: f64,
+    vol_sd: f64,
+    vol_corr_range: f64,
+}
+
 #[derive(Clone, Copy, Debug)]
 struct WorldStats {
     vol: f64,
@@ -2071,6 +2107,11 @@ struct WorldStats {
     ann_ret: f64,
     n_episodes: usize,
     ep_per_path: f64,
+    /// `None` when no satellite leg ran — the gate then carries no satellite rows at all,
+    /// which is what keeps a satellite-off world's verdict byte-identical.
+    sat: Option<SatStats>,
+    /// `None` when no range channel ran.
+    bars: Option<BarStats>,
     depth_med: f64,
     worst_depth: f64,
     v_count: usize,
@@ -2368,6 +2409,125 @@ fn pctile(v: &[f64], q: f64) -> f64 {
     s[((f.len() as f64 * q) as usize).min(f.len() - 1)]
 }
 
+/// The satellite leg's statistics as ratios to the primary's — `None` when no leg ran, so a
+/// satellite-off world produces exactly the rows it always did.
+///
+/// Every ratio is a MEDIAN over paths of that path's own ratio, not a ratio of pooled medians:
+/// the two differ when the legs' dispersions differ, and the per-path form is the one the
+/// record's single history is a draw from.
+fn sat_stats(sims: &[Path], years: usize) -> Option<SatStats> {
+    if sims.is_empty() || sims[0].sat.is_empty() {
+        return None;
+    }
+    let mut corr = Vec::new();
+    let mut abs_corr = Vec::new();
+    let mut beta = Vec::new();
+    let mut vol_r = Vec::new();
+    let mut kurt_r = Vec::new();
+    let mut ac1_r = Vec::new();
+    let mut ac20_r = Vec::new();
+    let mut d5_r = Vec::new();
+    let mut d10_r = Vec::new();
+    let mut crash_r = Vec::new();
+    for s in sims {
+        let rp = daily_returns(&s.price);
+        let rs = daily_returns(&s.sat);
+        let ap: Vec<f64> = rp.iter().map(|x| x.abs()).collect();
+        let a_s: Vec<f64> = rs.iter().map(|x| x.abs()).collect();
+        corr.push(pearson(&rp, &rs));
+        abs_corr.push(pearson(&ap, &a_s));
+        let mp = rp.iter().sum::<f64>() / rp.len() as f64;
+        let ms = rs.iter().sum::<f64>() / rs.len() as f64;
+        let cov: f64 = rp.iter().zip(&rs).map(|(x, y)| (x - mp) * (y - ms)).sum();
+        let var_p: f64 = rp.iter().map(|x| (x - mp) * (x - mp)).sum();
+        let var_s: f64 = rs.iter().map(|x| (x - ms) * (x - ms)).sum();
+        beta.push(cov / var_p);
+        vol_r.push((var_s / var_p).sqrt());
+        kurt_r.push(kurtosis(&rs) / kurtosis(&rp));
+        ac1_r.push(autocorr_abs(&rs, 1) / autocorr_abs(&rp, 1));
+        ac20_r.push(autocorr_abs(&rs, 20) / autocorr_abs(&rp, 20));
+        let (p5, p10, _) = depth_shares(&s.price);
+        let (s5, s10, _) = depth_shares(&s.sat);
+        d5_r.push(s5 / p5);
+        d10_r.push(s10 / p10);
+        let ep = episodes(&s.price, 15.0).len() as f64;
+        let es = episodes(&s.sat, 15.0).len() as f64;
+        if ep > 0.0 {
+            crash_r.push(es / ep);
+        }
+    }
+    let _ = years;
+    Some(SatStats {
+        corr: med(&corr),
+        abs_corr: med(&abs_corr),
+        beta: med(&beta),
+        vol_ratio: med(&vol_r),
+        kurt_ratio: med(&kurt_r),
+        ac1_ratio: med(&ac1_r),
+        ac20_ratio: med(&ac20_r),
+        d5_ratio: med(&d5_r),
+        d10_ratio: med(&d10_r),
+        crash_ratio: med(&crash_r),
+    })
+}
+
+/// The bar channels' statistics — `None` when no range channel ran.
+fn bar_stats(sims: &[Path]) -> Option<BarStats> {
+    if sims.is_empty() || sims[0].log_hi.is_empty() {
+        return None;
+    }
+    let mut roc = Vec::new();
+    let mut racf = Vec::new();
+    let mut rdu = Vec::new();
+    let mut vsd = Vec::new();
+    let mut vcx = Vec::new();
+    for s in sims {
+        let r = daily_returns(&s.price);
+        let x: Vec<f64> = (0..s.log_hi.len())
+            .map(|i| s.log_hi[i] - s.log_lo[i])
+            .collect();
+        let mx = x.iter().sum::<f64>() / x.len() as f64;
+        let mr = r.iter().sum::<f64>() / r.len() as f64;
+        let sr = (r.iter().map(|v| (v - mr) * (v - mr)).sum::<f64>() / r.len() as f64).sqrt();
+        roc.push(mx / sr);
+        racf.push(pearson(&x[..x.len() - 1], &x[1..]));
+        // The bar's return is measured over the SAME window the bar spans (open = prior close),
+        // so the sign that conditions the range is `r` shifted by one: bar i spans price i-1..i.
+        let dn: Vec<f64> = (1..x.len())
+            .filter(|&i| r[i - 1] < 0.0)
+            .map(|i| x[i])
+            .collect();
+        let up: Vec<f64> = (1..x.len())
+            .filter(|&i| r[i - 1] > 0.0)
+            .map(|i| x[i])
+            .collect();
+        if !dn.is_empty() && !up.is_empty() {
+            let md = dn.iter().sum::<f64>() / dn.len() as f64;
+            let mu = up.iter().sum::<f64>() / up.len() as f64;
+            rdu.push(md / mu);
+        }
+        if !s.log_volume.is_empty() {
+            let mv = s.log_volume.iter().sum::<f64>() / s.log_volume.len() as f64;
+            vsd.push(
+                (s.log_volume
+                    .iter()
+                    .map(|v| (v - mv) * (v - mv))
+                    .sum::<f64>()
+                    / s.log_volume.len() as f64)
+                    .sqrt(),
+            );
+            vcx.push(pearson(&s.log_volume, &x));
+        }
+    }
+    Some(BarStats {
+        range_over_ccvol: med(&roc),
+        range_acf1: med(&racf),
+        range_downup: med(&rdu),
+        vol_sd: med(&vsd),
+        vol_corr_range: med(&vcx),
+    })
+}
+
 #[expect(
     clippy::too_many_lines,
     reason = "one Scala method; the field-by-field construction is the readable form"
@@ -2461,6 +2621,8 @@ fn measure(sims: &[Path], years: usize) -> WorldStats {
             .collect::<Vec<f64>>()),
         n_episodes: eps.len(),
         ep_per_path: eps.len() as f64 / n_sims,
+        sat: sat_stats(sims, years),
+        bars: bar_stats(sims),
         depth_med: med(&depths),
         worst_depth: if depths.is_empty() {
             f64::NAN
@@ -2963,6 +3125,74 @@ fn gate_checks(a: Anchors, st: &WorldStats) -> Vec<(String, bool, GateClass)> {
             "x duration",
         ));
     }
+    // THE SATELLITE LEG, graded — present only when a leg ran, so a satellite-off world's gate is
+    // byte-identical to what it always was. Bit-identical-off is what makes a channel safe to
+    // add and is ALSO what makes it invisible to a verdict computed from the primary alone; these
+    // rows are the answer to that, so an emitted `logSat` is covered by the gate that travels
+    // beside it rather than merely disclosed as uncovered.
+    //
+    // RATIOS to the primary leg, never levels. The satellite is a coupled second leg at this
+    // world's own scale and is not claimed to be any index, so what can be graded is the RELATION
+    // a higher-beta second leg holds to its primary — the same doctrine the depth rungs use when
+    // they grade each world at its own volatility. Anchors are QQQ against SPY over their shared
+    // 1999-2026 window (`joint-coupling-2026-08-31.tsv`), and every band is that record reading
+    // widened to the spread its own 5-year blocks show, because one history pins a ratio far more
+    // loosely than it pins a level.
+    if let Some(sd) = st.sat {
+        for (name, got, lo, hi, dp) in [
+            ("satellite corr", sd.corr, 0.75, 0.95, 2),
+            ("satellite |r| corr", sd.abs_corr, 0.65, 0.90, 2),
+            ("satellite beta", sd.beta, 1.00, 1.45, 2),
+            ("satellite vol ratio", sd.vol_ratio, 1.20, 1.60, 2),
+            // The record's 5y blocks read 0.55-1.12 on this ratio and QQQ's kurtosis is LOWER
+            // than SPY's over the shared window (9.6 vs 14.3) — a wide band because the record
+            // is wide, not because the model needs room.
+            ("satellite kurtosis ratio", sd.kurt_ratio, 0.45, 1.20, 2),
+            ("satellite clustering-1 ratio", sd.ac1_ratio, 0.85, 1.20, 2),
+            (
+                "satellite clustering-20 ratio",
+                sd.ac20_ratio,
+                0.85,
+                1.40,
+                2,
+            ),
+            ("satellite d5 ratio", sd.d5_ratio, 1.00, 1.70, 2),
+            ("satellite d10 ratio", sd.d10_ratio, 0.70, 2.20, 2),
+            // DISCLOSED TENSION, not a pass by construction: the model's leg opens ~1.6 crash
+            // episodes per primary episode against the record's 1.17. One history cannot resolve
+            // this ratio at all — SPY and QQQ show ~6 and ~7 episodes in 27 years, and the 5-year
+            // blocks read 1.00-2.00 — so the band admits the model while the central tendency
+            // stays high. Read it as ungraded in practice; it is here to catch a leg that
+            // crashes several times as often as its primary, which would be a broken coupling.
+            ("satellite crash ratio", sd.crash_ratio, 0.80, 2.40, 2),
+        ] {
+            v.push(band_check(name, got, lo, hi, GateClass::Fidelity, dp, ""));
+        }
+    }
+    // THE BAR CHANNELS, graded — same reasoning as the satellite rows above, and the same bands
+    // the build-time suites already assert from `bars-2026-09-01.tsv`, carried into the RUNTIME
+    // gate so an emitted bar is covered by the verdict beside it. Range rows appear when the
+    // range channel ran; the volume rows only when the volume channel ran too.
+    if let Some(b) = st.bars {
+        for (name, got, lo, hi) in [
+            ("bar range vs cc vol", b.range_over_ccvol, 1.00, 1.20),
+            ("bar range clustering", b.range_acf1, 0.57, 0.77),
+            // Against the INTRADAY ruler (1.109-1.142): the model has no overnight, so the
+            // record's close-to-close down/up of 1.175-1.205 carries conditioning this bar
+            // cannot have.
+            ("bar range down/up", b.range_downup, 1.00, 1.30),
+        ] {
+            v.push(band_check(name, got, lo, hi, GateClass::Fidelity, 2, ""));
+        }
+        if b.vol_sd.is_finite() {
+            for (name, got, lo, hi) in [
+                ("bar volume sd", b.vol_sd, 0.40, 0.60),
+                ("bar volume vs range", b.vol_corr_range, 0.44, 0.64),
+            ] {
+                v.push(band_check(name, got, lo, hi, GateClass::Fidelity, 2, ""));
+            }
+        }
+    }
     v
 }
 
@@ -3125,6 +3355,11 @@ struct Anchors {
     equity_window: &'static str,
     equity_years: usize,
     cluster_window: &'static str,
+    /// Window for the return-per-volatility anchor. Its own field because it is NOT the equity
+    /// window: the S&P set takes r/v from CRSP 1954-2026 where its levels come from the S&P, and
+    /// the Nasdaq set takes it from QQQ. The report header printed "CRSP 1954-2026" as a literal
+    /// and so mislabelled every Nasdaq run.
+    ret_vol_window: &'static str,
     cluster_years: usize,
     /// The TAIL reads its own window, and for a sharper reason than horizon-sensitivity: the
     /// deepest episode is the one statistic a window can DELETE. Across the committed fixture the
@@ -3178,6 +3413,7 @@ struct Anchors {
 const SP500_ANCHORS: Anchors = Anchors {
     name: "S&P 500 / CRSP",
     equity_window: "S&P / CRSP 1954-2026",
+    ret_vol_window: "CRSP 1954-2026",
     equity_years: 72,
     cluster_window: "CRSP 1926-2026, the century",
     cluster_years: 100,
@@ -3239,42 +3475,53 @@ const SP500_ANCHORS: Anchors = Anchors {
 ///
 /// Control: the same pipeline on SPY 1993-01-29 reproduces the committed w1993 fixture row exactly.
 ///
-/// THE SAMPLING SPREADS ARE THE S&P'S, CARRIED OVER, and that is the one soft number here. An sdRel
-/// is model-implied, so an honest Nasdaq set needs `-noise -anchors nasdaq` run at a Nasdaq-
-/// calibrated world, which does not exist yet. Re-freeze them when one is. The two fidelity bands
-/// are likewise the S&P bands' proportional widths around the Nasdaq levels.
+/// THE SAMPLING SPREADS ARE NOW THE NASDAQ WORLD'S OWN, re-frozen 2026-09-01 from
+/// `-noise -anchors nasdaq -depth 10 -drift 0.105 -jumpvar 0.02 -fundvol 0.06 -paths 200` — the
+/// gate-passing recipe this set describes, which did not exist when they were first carried over
+/// from the S&P. The carried values were badly wrong where the two worlds differ most: `med_depth_sd`
+/// read 0.10 against a measured 0.37, a 3.7x OVERWEIGHT on the heaviest row in this set's loss
+/// (weight is `SD_REL_REF / sd_rel`), and `semi_excess_sd` 1.54 against 3.57. Re-measure these
+/// whenever the recipe moves; a spread is model-implied, so it belongs to the world, not the index.
+///
+/// STILL SHARED, and disclosed: the sds passed inline to `wgt` (variance ratio, valuation
+/// dispersion, the depth rungs, and every bond row) are per-TARGET constants rather than per-anchor
+/// fields, so they stay at the S&P world's readings for both anchor sets. Measured at this recipe
+/// they would be vr 0.33, valuation dispersion 0.53, d5/d10/d20 0.12/0.19/0.30 — the depth rungs
+/// differ most. Moving them into `Anchors` is the fix; it is a structural change, not a re-freeze.
+/// The two fidelity bands are likewise the S&P bands' proportional widths around the Nasdaq levels.
 const NASDAQ_ANCHORS: Anchors = Anchors {
     name: "Nasdaq-100 / QQQ",
     equity_window: "QQQ 1999-2026",
+    ret_vol_window: "QQQ 1999-2026",
     equity_years: 27,
     cluster_window: "QQQ 1999-2026",
     cluster_years: 27,
     tail_window: "QQQ 1999-2026",
     tail_years: 27,
     vol: 26.90,
-    vol_sd: 0.13,
+    vol_sd: 0.10,
     ret_vol: 0.38,
-    ret_vol_sd: 0.18,
+    ret_vol_sd: 0.49,
     kurt: 9.55,
-    kurt_sd: 1.23,
+    kurt_sd: 1.07,
     ac1: 0.293,
-    ac1_sd: 0.11,
+    ac1_sd: 0.17,
     ac20: 0.249,
-    ac20_sd: 0.19,
+    ac20_sd: 0.15,
     crashes: 25.6,
-    crashes_sd: 0.26,
+    crashes_sd: 0.49,
     med_depth: -22.8,
-    med_depth_sd: 0.10,
+    med_depth_sd: 0.37,
     worst_depth: -83.0,
-    worst_depth_sd: 0.24,
+    worst_depth_sd: 0.19,
     vol_band: (23.5, 30.3),
     ret_vol_band: (0.27, 0.47),
     // QQQ wfull row of asymmetry-2026-08-31.tsv; the tail hedge is QQQ/TLT. Spreads are the
     // S&P's carried over, like every spread in this set.
     semi_excess: 1.13,
-    semi_excess_sd: 1.54,
+    semi_excess_sd: 3.57,
     lev_corr: -0.1073,
-    lev_corr_sd: 0.44,
+    lev_corr_sd: 0.43,
     tail_hedge: -0.236,
     tail_hedge_sd: 0.24,
 };
@@ -5331,6 +5578,19 @@ fn run_release_report(a: Anchors, paths: usize, years: usize, seed: u64, base: &
     );
     println!("World field added after a release -- or REMOVED by a mechanism change, as 0.19.2's");
     println!("rate cut was -- takes today's value in that release's row.");
+    if !std::ptr::eq(a.name, SP500_ANCHORS.name) {
+        println!();
+        println!(
+            "  NOTE: every frozen release world was calibrated against the S&P set; this run grades"
+        );
+        println!(
+            "  them with {} anchors.  The columns are still comparable to EACH OTHER, but a row's",
+            a.name
+        );
+        println!(
+            "  distance from 1.00 is not a defect of that release -- it was never fitted here."
+        );
+    }
     println!();
     let mut hdr = format!("  {:<22}", "target");
     for (v, _) in &cols {
@@ -5562,10 +5822,15 @@ const BOND_TARGETS: [&str; 5] = [
 ];
 
 /// Bisection bracket for the depth solve, and how many halvings. Ten steps over this bracket
-/// leaves the depth uncertain by 16/1024 ~ 0.016, worth about 0.02 points of volatility — far
+/// leaves the depth uncertain by 21/1024 ~ 0.021, worth about 0.03 points of volatility — far
 /// inside the sampling noise of any ensemble that could be run here. Each step is a full ensemble,
 /// so this is the cost knob: twelve ensembles in total, including the two bracket probes.
-const DEPTH_BRACKET: (f64, f64) = (10.0, 26.0);
+///
+/// The low end reaches BELOW the Nasdaq recipe's own `depth 10`: volatility falls as depth rises,
+/// so a 26.9%-volatility anchor needs a thinner market than that recipe runs, and a bracket
+/// starting at 10.0 refused the solve outright — the equity-at-anchor section simply declined for
+/// every Nasdaq world.
+const DEPTH_BRACKET: (f64, f64) = (5.0, 26.0);
 const VOL_SOLVE_STEPS: usize = 10;
 
 /// Solve `depth` for a target equity volatility. Volatility DECREASES with depth (impact scales as
@@ -7278,10 +7543,44 @@ fn world_json_body(w: &World) -> Vec<String> {
 /// columns and identical schema can still be incomparable — a consumer that pins its calibration
 /// to a release checks `version`, and one that needs the exact parameters reads `world` below.
 /// `schema` went 1 -> 2 when `version` was added, so its absence is detectable rather than
+/// WHICH RULER, and WHICH SERIES — the gate block's scope, as three JSON lines.
+///
+/// Without the first, a `-anchors nasdaq` run's verdict is indistinguishable from an S&P one in
+/// its own provenance record. Without the rest, a PASS sits beside emitted columns it never
+/// examined: the gate measures `price` and `bond`, so a satellite leg or a sampled bar is outside
+/// its scope entirely, and `logSat` is exactly the column a consumer would take as their second
+/// index. Same doctrine as `fidelityUnanchored` — name what was not graded, in the artifact that
+/// carries the verdict.
+///
+/// `gradedSeries` is the authoritative half: the verdict is computed from THOSE series. The
+/// channel list is scoped to optional channels rather than to every other column, so it cannot be
+/// read as a claim that `rate`/`cpi`/`liq` are graded — they are context, and some feed a band
+/// only indirectly.
+fn gate_scope_lines(a: Anchors) -> String {
+    // EMPTY BY CONSTRUCTION today, and the field earns its place anyway: `logSat` is covered by
+    // the `satellite *` gate rows and the bar columns by the `bar *` rows, so there is nothing
+    // left to disclose — but the next channel to arrive is ungraded until someone anchors it,
+    // and this is the field that has to say so rather than a doc nobody reads beside the data.
+    let ungraded: Vec<&str> = Vec::new();
+    let items: Vec<String> = ungraded.iter().map(|s| json_str(s)).collect();
+    format!(
+        "    \"anchors\": {},\n    \"gradedSeries\": [\"price\", \"bond\"],\n    \
+         \"ungradedChannelSeries\": [{}],",
+        json_str(a.name),
+        items.join(", ")
+    )
+}
+
 /// ambiguous.
 #[expect(
     clippy::too_many_arguments,
     reason = "the sidecar records the whole provenance tuple; grouping it would only move the list"
+)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "a linear serializer whose length tracks the schema; the one cohesive block worth a \
+              name is extracted as `gate_scope_lines`, and splitting the rest would scatter the \
+              document across helpers where `EMIT_SIDECAR_KEYS` can no longer be read against it"
 )]
 fn write_emit_sidecar(
     a: Anchors,
@@ -7390,6 +7689,7 @@ fn write_emit_sidecar(
         "  \"gate\": {".to_string(),
         format!("    \"ensemblePaths\": {gate_paths},"),
         format!("    \"ensembleYears\": {gate_years},"),
+        gate_scope_lines(a),
         format!("    \"realism\": {},", json_str(verdict(&realism_bad))),
         format!("    \"mechanism\": {},", json_str(verdict(&mechanism_bad))),
         format!("    \"fidelity\": {},", json_str(verdict(&fidelity_bad))),
@@ -8436,7 +8736,10 @@ fn main() {
         "    equity {}   |   depth rungs 35 equity funds 2001-2026, vs each world's",
         anchors.equity_window
     );
-    println!("      OWN volatility and return   |   return per vol CRSP 1954-2026");
+    println!(
+        "      OWN volatility and return   |   return per vol {}",
+        anchors.ret_vol_window
+    );
     println!(
         "    clustering {} (horizon-dependent: the statistic moves with the",
         anchors.cluster_window
@@ -8618,6 +8921,94 @@ mod emit_sidecar_tests {
         std::fs::remove_file(&json).ok();
         std::fs::remove_dir(&dir).ok();
         text.lines().map(str::to_string).collect()
+    }
+
+    /// Every optional column the TSV carries is named in `ungradedChannelSeries`, and the base
+    /// columns in `gradedSeries` — so a consumer cannot read a verdict as covering a series it
+    /// never examined. The channels are ON here precisely because that is the trap: with them
+    /// off, the disclosure is vacuously right.
+    #[test]
+    fn the_gate_names_every_series_it_did_not_grade() {
+        let years = 2usize;
+        let seed = 20260825u64;
+        let mut w = default_world();
+        w.sat_beta = 1.2;
+        w.sat_idio = 0.074;
+        w.range_scale = 1.1;
+        w.vol_idio = 0.34;
+        let p = simulate(&w, years, seed);
+        let st = measure(std::slice::from_ref(&p), years);
+        let dir = std::env::temp_dir().join(format!("emit_scope_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let tsv = dir.join("scope.tsv").to_string_lossy().into_owned();
+        let rows = fidelity_rows(SP500_ANCHORS, &st, 1, seed, &w);
+        write_emitted(
+            SP500_ANCHORS,
+            &tsv,
+            &p,
+            0,
+            &w,
+            years,
+            seed,
+            "",
+            &st,
+            1,
+            years,
+            &rows,
+        );
+        let header = std::fs::read_to_string(&tsv)
+            .expect("tsv")
+            .lines()
+            .next()
+            .expect("header")
+            .to_string();
+        let json = sidecar_name(&tsv);
+        let side = std::fs::read_to_string(&json).expect("sidecar");
+        std::fs::remove_file(&tsv).ok();
+        std::fs::remove_file(&json).ok();
+        std::fs::remove_dir(&dir).ok();
+        let declared: Vec<&str> = side
+            .lines()
+            .filter(|l| {
+                l.trim_start().starts_with("\"gradedSeries\"")
+                    || l.trim_start().starts_with("\"ungradedChannelSeries\"")
+            })
+            .collect();
+        assert_eq!(declared.len(), 2, "both scope fields must be present");
+        let cols: Vec<&str> = header.split('\t').collect();
+        // The graded half must name series the file actually carries...
+        for col in ["price", "bond"] {
+            assert!(
+                cols.contains(&col),
+                "graded series {col} must be an emitted column"
+            );
+        }
+        // ...and every UNGRADED optional-channel column must be declared outside the verdict's
+        // scope. `logSat` is deliberately absent from that list: the satellite leg carries its
+        // own gate rows, so the verdict does cover it.
+        // COVERAGE, which is the invariant that matters: every emitted channel column must be
+        // either GRADED by a gate row or DECLARED ungraded. A column that is neither is exactly
+        // the trap this pair of fields exists to close — a verdict sitting beside a series it
+        // never examined and never admitted to.
+        let ungraded = declared[1];
+        let rows = gate_checks(SP500_ANCHORS, &st);
+        let graded_by = |prefix: &str| rows.iter().any(|(n, _, _)| n.starts_with(prefix));
+        for (col, prefix) in [
+            ("logSat", "satellite"),
+            ("logHigh", "bar range"),
+            ("logLow", "bar range"),
+            ("logVolume", "bar volume"),
+        ] {
+            assert!(
+                graded_by(prefix) || ungraded.contains(col),
+                "{col} is neither graded (no `{prefix} *` gate row) nor declared ungraded"
+            );
+        }
+        // and this world grades all four, so the declared list is empty
+        assert!(
+            !ungraded.contains("log"),
+            "every channel here is graded; nothing should be declared ungraded"
+        );
     }
 
     /// A top-level key of the sidecar object: exactly two spaces of indent, then a quoted name.
@@ -9425,6 +9816,65 @@ mod contract_tests {
         assert!(
             p.sat.is_empty(),
             "satBeta 0 must produce no satellite series"
+        );
+    }
+
+    /// The channel rows are not decoration: a leg or a bar that is materially wrong must FAIL
+    /// the gate, and a channels-off world must carry none of these rows at all. Without the
+    /// second half the first is cheap — a row that never appears cannot be wrong.
+    #[test]
+    fn the_channel_gate_rows_appear_only_when_the_channel_runs_and_can_fail() {
+        let off = measure(&sim_paths(&default_world(), 8, 40, DEFAULT_SEED), 40);
+        assert!(off.sat.is_none() && off.bars.is_none());
+        let names_off: Vec<String> = gate_checks(SP500_ANCHORS, &off)
+            .into_iter()
+            .map(|(n, _, _)| n)
+            .collect();
+        assert!(
+            !names_off
+                .iter()
+                .any(|n| n.starts_with("satellite") || n.starts_with("bar ")),
+            "a channels-off world must carry no channel rows"
+        );
+
+        let mut on = default_world();
+        on.sat_beta = 1.2;
+        on.sat_idio = 0.074;
+        on.range_scale = 1.1;
+        on.range_down = 0.08;
+        on.vol_idio = 0.34;
+        let st_on = measure(&sim_paths(&on, 8, 40, DEFAULT_SEED), 40);
+        assert!(st_on.sat.is_some() && st_on.bars.is_some());
+        let rows_on = gate_checks(SP500_ANCHORS, &st_on);
+        assert!(
+            rows_on
+                .iter()
+                .filter(|(n, _, _)| n.starts_with("satellite"))
+                .count()
+                >= 9,
+            "the satellite must be graded on its full relational vector"
+        );
+        assert!(rows_on.iter().any(|(n, _, _)| n.starts_with("bar ")));
+
+        // A leg at more than twice its anchored beta is not a second index; the gate must say so.
+        let mut broken = on;
+        broken.sat_beta = 2.6;
+        let st_b = measure(&sim_paths(&broken, 8, 40, DEFAULT_SEED), 40);
+        assert!(
+            gate_checks(SP500_ANCHORS, &st_b)
+                .iter()
+                .any(|(n, ok, _)| n.starts_with("satellite") && !ok),
+            "a 2.6-beta leg must fail a satellite row"
+        );
+        // A bar sampled at a wildly wrong scale is not a bar.
+        let mut wide = on;
+        wide.range_scale = 3.0;
+        let st_w = measure(&sim_paths(&wide, 8, 40, DEFAULT_SEED), 40);
+        assert!(
+            gate_checks(SP500_ANCHORS, &st_w)
+                .iter()
+                .any(|(n, ok, _)| n.starts_with("bar ") && !ok),
+            "a 3x-scale bar must fail a bar row"
         );
     }
 

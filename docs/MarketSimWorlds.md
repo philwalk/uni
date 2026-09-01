@@ -85,6 +85,20 @@ satellite-off schema-8 file is byte-identical to its schema-7 counterpart except
 number and the two new (zero) world fields, so a schema-7 reader that ignores unknown columns and
 fields keeps working; the log convention exists because a level near 10^6 rendered at six decimals
 sits within reach of a cross-language rounding tie the twins' byte-parity checks would trip on.
+**Every emitted channel is graded, and the verdict names its own scope.** Since schema 9 the
+`gate` block carries `anchors` (which ruler graded this world — a `-anchors nasdaq` run was
+otherwise indistinguishable from an S&P one in its own provenance record), `gradedSeries`, and
+`ungradedChannelSeries`. That last field is **empty in every world the model can currently emit**:
+the satellite leg is graded by the `satellite *` rows and the sampled bars by the `bar *` rows, so
+a `"fidelity": "PASS"` beside a `logSat` column is a verdict *about* that column too. It stays in
+the schema because the next channel to arrive is ungraded until someone anchors it, and that has
+to be said beside the data rather than in a document nobody opens.
+
+This was the trap worth closing: a channel that is bit-identical off cannot perturb the graded
+series, which is what makes it safe to add — and is exactly why a verdict computed from the
+primary leg alone could not see it. Disclosure would have been the cheap answer; grading is the
+right one.
+
 It went 8 → 9 when the `world` block gained the bar channels' `rangeScale` and `volIdio`, and the
 TSV the columns `logHigh`/`logLow` (present only when `rangeScale > 0` — log prices of the sampled
 intra-bar extremes; the bar's open is the prior close, the model has no overnight) and `logVolume`
@@ -361,6 +375,30 @@ stopped it — and these worlds span a century, most of it without any market-wi
 **If you are reading tails, read the two clamp diagnostics together.** `clamped X% of all sessions`
 says the guard is not distorting the body; `Y% of tail sessions` says it is not authoring the tail.
 The first passed at 0.000% in a world where the second read 10.9%.
+
+## The satellite leg is a coupled second leg, not a calibrated Nasdaq
+
+`-satbeta`/`-satidio` are anchored on the *coupling* — correlation, beta, volatility ratio, and
+the state-flatness that makes them hold in stress. Those four rows are graded against
+`joint-coupling-2026-08-31.tsv`. **Its marginals are graded too — as RATIOS to the primary leg**,
+not as levels: kurtosis, both clustering lags, the 5% and 10% depth shares, and the crash rate,
+each against what QQQ holds to SPY over their shared window. That is the same doctrine the depth
+rungs use when they grade each world at its own volatility, and it is the honest one here, because
+the satellite is a second leg at *this* world's scale and is not claimed to be any index. Measured
+against QQQ's absolute levels it would miss on kurtosis in both directions, which is why the level
+comparison is the wrong question to ask of it. Use the satellite when you need a *second correlated
+equity leg*; use the `-anchors nasdaq` recipe when you need a world graded against Nasdaq levels.
+
+One row carries a stated tension rather than a clean pass: the model's leg opens about 1.6 crash
+episodes per primary episode against the record's 1.17. One history cannot resolve that ratio —
+SPY and QQQ show roughly six and seven episodes in 27 years, and five-year blocks read 1.00 to
+2.00 — so the band is wide enough to admit the model, and the central tendency is disclosed here
+rather than hidden inside it.
+
+**Do not stack them.** Running the satellite on top of the Nasdaq recipe compounds two
+higher-beta constructions: the result measures ~32% volatility at correlation 0.93 with its
+primary, which is a levered fund on one index rather than a second index. If you want two
+indices, run the satellite on the default world.
 
 ## The slow valuation cycle — `-beliefshare` / `-capyears`
 

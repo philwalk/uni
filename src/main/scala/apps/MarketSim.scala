@@ -135,7 +135,11 @@ object MarketSim:
   // cross-language print flips per 40 century paths -- where the log sits nine orders under the
   // printed digit.  A reader that reconstructs a `World` from a schema-7 sidecar loses nothing:
   // the dials were 0 in every world such a sidecar could describe.
-  // 8 -> 9: `world` gained the bar channels' dials (`rangeScale`, `rangeDown`, `volIdio`), and the TSV the
+  // 8 -> 9: `gate` gained `anchors` (which ruler graded this world -- a `-anchors nasdaq` run
+  // was otherwise indistinguishable from an S&P one in its own provenance record) plus
+  // `gradedSeries` and `ungradedChannelSeries`, which say in the artifact itself that the verdict is
+  // about `price` and `bond` and NOT about any emitted channel column.  `world` gained the bar
+  // channels' dials (`rangeScale`, `rangeDown`, `volIdio`), and the TSV the
   // columns `logHigh`/`logLow` (present ONLY when `rangeScale > 0` -- log prices of the sampled
   // intra-bar extremes; the bar's open is the prior close, the model has no overnight) and
   // `logVolume` (present ONLY when `volIdio > 0` -- a mean-free log turnover index; apply your
@@ -1736,6 +1740,21 @@ object MarketSim:
   val ValDispBand = (0.15, 0.55)
 
   // ---- world statistics and the ONE acceptance predicate -------------------------------------
+  /** The SATELLITE leg's own statistics, as RATIOS to the primary leg's -- present only when the
+    * leg ran.  Ratios, not levels, because the satellite is a coupled second leg at this world's
+    * own scale and is not claimed to BE any index: what a second, higher-beta leg must satisfy is
+    * a RELATION to its primary, the same doctrine the depth rungs use when they grade each world
+    * at its own volatility.  The record's relation is QQQ against SPY over their shared window. */
+  final case class SatStats(corr: Double, absCorr: Double, beta: Double, volRatio: Double,
+                            kurtRatio: Double, ac1Ratio: Double, ac20Ratio: Double,
+                            d5Ratio: Double, d10Ratio: Double, crashRatio: Double)
+
+  /** The BAR channels' statistics -- present only when the range channel ran.  `vol*` are NaN
+    * unless the volume channel ran too.  Graded against `bars-2026-09-01.tsv`, whose rows the
+    * build-time suites already assert; these carry the same readings into the RUNTIME gate. */
+  final case class BarStats(rangeOverCcvol: Double, rangeAcf1: Double, rangeDownup: Double,
+                            volSd: Double, volCorrRange: Double)
+
   final case class WorldStats(vol: Double, kurt: Double, ac1: Double, ac20: Double,
                               vr60: Double,          // SIGNED-return persistence -- `varianceRatio`
                               annRet: Double,
@@ -1773,7 +1792,12 @@ object MarketSim:
                               // depth profile: median share of sessions more than 5/10/20% below
                               // the running peak, equity leg then bond leg
                               ddEq5: Double, ddEq10: Double, ddEq20: Double,
-                              ddBd5: Double, ddBd10: Double, ddBd20: Double):
+                              ddBd5: Double, ddBd10: Double, ddBd20: Double,
+                              // None when no satellite leg / no range channel ran -- the gate then
+                              // carries no such rows at all, which is what keeps a channels-off
+                              // world's verdict byte-identical.
+                              sat: Option[SatStats] = None,
+                              bars: Option[BarStats] = None):
     /** Return per unit volatility, in the units this report already prints: `annRet` is a LOG
       * return in %/yr and `vol` is a fraction.  An arithmetic-mean anchor is higher by about
       * sigma/2 (0.08 at 16% vol) and has to be restated before it can be compared with this. */
@@ -1811,6 +1835,71 @@ object MarketSim:
     def eqD10VsReal: Double = eqDepthVsReal(0.10, EquityD10Corr, ddEq10)
     def eqD20VsReal: Double = eqDepthVsReal(0.20, EquityD20Corr, ddEq20)
 
+  /** Median over paths, dropping non-finite -- the same rule `measure`'s local `med` applies. */
+  private def medOf(v: Seq[Double]): Double =
+    val f = v.filter(_.isFinite)
+    if f.isEmpty then Double.NaN else f.sorted.apply(f.size / 2)
+
+  /** The satellite leg's statistics as ratios to the primary's -- `None` when no leg ran, so a
+    * satellite-off world produces exactly the rows it always did.
+    *
+    * Every ratio is a MEDIAN over paths of that path's own ratio, not a ratio of pooled medians:
+    * the two differ when the legs' dispersions differ, and the per-path form is the one the
+    * record's single history is a draw from. */
+  def satStats(sims: Vector[Path]): Option[SatStats] =
+    if sims.isEmpty || sims.head.sat.isEmpty then None
+    else
+      val per = sims.map { s =>
+        val rp = dailyReturns(s.price); val rs = dailyReturns(s.sat)
+        val mp = rp.sum / rp.length; val ms = rs.sum / rs.length
+        var cov = 0.0; var varP = 0.0; var varS = 0.0
+        var i = 0
+        while i < rp.length do
+          cov += (rp(i) - mp) * (rs(i) - ms)
+          varP += (rp(i) - mp) * (rp(i) - mp)
+          varS += (rs(i) - ms) * (rs(i) - ms)
+          i += 1
+        val (p5, p10, _) = depthShares(s.price)
+        val (s5, s10, _) = depthShares(s.sat)
+        val ep = episodes(s.price, 15.0).size.toDouble
+        val es = episodes(s.sat, 15.0).size.toDouble
+        (pearson(rp, rs), pearson(rp.map(math.abs), rs.map(math.abs)), cov / varP,
+         math.sqrt(varS / varP), kurtosis(rs) / kurtosis(rp),
+         autocorrAbs(rs, 1) / autocorrAbs(rp, 1), autocorrAbs(rs, 20) / autocorrAbs(rp, 20),
+         s5 / p5, s10 / p10, if ep > 0.0 then es / ep else Double.NaN)
+      }
+      Some(SatStats(medOf(per.map(_._1)), medOf(per.map(_._2)), medOf(per.map(_._3)),
+                    medOf(per.map(_._4)), medOf(per.map(_._5)), medOf(per.map(_._6)),
+                    medOf(per.map(_._7)), medOf(per.map(_._8)), medOf(per.map(_._9)),
+                    medOf(per.map(_._10))))
+
+  /** The bar channels' statistics -- `None` when no range channel ran. */
+  def barStats(sims: Vector[Path]): Option[BarStats] =
+    if sims.isEmpty || sims.head.logHi.isEmpty then None
+    else
+      val per = sims.map { s =>
+        val r = dailyReturns(s.price)
+        val x = Array.tabulate(s.logHi.length)(i => s.logHi(i) - s.logLo(i))
+        val mx = x.sum / x.length
+        val mr = r.sum / r.length
+        val sr = math.sqrt(r.map(v => (v - mr) * (v - mr)).sum / r.length)
+        // The bar's return is measured over the SAME window the bar spans (open = prior close),
+        // so the sign that conditions the range is `r` shifted by one: bar i spans price i-1..i.
+        val dn = (1 until x.length).filter(i => r(i - 1) < 0.0).map(i => x(i))
+        val up = (1 until x.length).filter(i => r(i - 1) > 0.0).map(i => x(i))
+        val du = if dn.nonEmpty && up.nonEmpty then (dn.sum / dn.size) / (up.sum / up.size)
+                 else Double.NaN
+        val (vsd, vcx) =
+          if s.logVolume.isEmpty then (Double.NaN, Double.NaN)
+          else
+            val mv = s.logVolume.sum / s.logVolume.length
+            (math.sqrt(s.logVolume.map(v => (v - mv) * (v - mv)).sum / s.logVolume.length),
+             pearson(s.logVolume, x))
+        (mx / sr, pearson(x.dropRight(1), x.drop(1)), du, vsd, vcx)
+      }
+      Some(BarStats(medOf(per.map(_._1)), medOf(per.map(_._2)), medOf(per.map(_._3)),
+                    medOf(per.map(_._4)), medOf(per.map(_._5))))
+
   def measure(sims: Vector[Path], years: Int): WorldStats =
     val rets = sims.map(s => dailyReturns(s.price))
     // `isFinite`, not `!isNaN`: an infinite path is no more a datum than a NaN one, and `pctile`
@@ -1847,6 +1936,7 @@ object MarketSim:
       ac20 = med(rets.map(r => autocorrAbs(r, 20))),
       vr60 = med(rets.map(r => varianceRatio(r, VarRatioQ))),
       annRet = med(sims.map(s => math.log(s.price.last / s.price.head) / years * 100.0)),
+      sat = satStats(sims), bars = barStats(sims),
       nEpisodes = eps.size, epPerPath = eps.size.toDouble / sims.size,
       depthMed = med(eps.map(_.depthPct)), worstDepth = eps.map(_.depthPct).minOption.getOrElse(Double.NaN),
       vCount = shapes.count(_ > 1.5), midCount = shapes.count(x => x >= 0.67 && x <= 1.5),
@@ -2077,7 +2167,55 @@ object MarketSim:
         Vector(bandCheck("equity d5 vs real",  st.eqD5VsReal,  EquityD5Band._1,  EquityD5Band._2,  Fidelity),
                bandCheck("equity d10 vs real", st.eqD10VsReal, EquityD10Band._1, EquityD10Band._2, Fidelity))
       else Vector.empty
-    base ++ eqDepthBands ++ depthBand ++ volBand
+    // THE SATELLITE LEG, graded -- present only when a leg ran, so a satellite-off world's gate
+    // is byte-identical to what it always was.  Bit-identical-off is what makes a channel safe to
+    // add and is ALSO what makes it invisible to a verdict computed from the primary alone; these
+    // rows are the answer to that, so an emitted `logSat` is covered by the gate that travels
+    // beside it rather than merely disclosed as uncovered.
+    //
+    // RATIOS to the primary leg, never levels.  The satellite is a coupled second leg at this
+    // world's own scale and is not claimed to be any index, so what can be graded is the RELATION
+    // a higher-beta second leg holds to its primary -- the same doctrine the depth rungs use when
+    // they grade each world at its own volatility.  Anchors are QQQ against SPY over their shared
+    // 1999-2026 window, and every band is that record reading widened to the spread its own
+    // 5-year blocks show, because one history pins a ratio far more loosely than it pins a level.
+    val satBands = st.sat match
+      case None => Vector.empty
+      case Some(sd) => Vector(
+        bandCheck("satellite corr", sd.corr, 0.75, 0.95, Fidelity),
+        bandCheck("satellite |r| corr", sd.absCorr, 0.65, 0.90, Fidelity),
+        bandCheck("satellite beta", sd.beta, 1.00, 1.45, Fidelity),
+        bandCheck("satellite vol ratio", sd.volRatio, 1.20, 1.60, Fidelity),
+        // The record's 5y blocks read 0.55-1.12 on this ratio and QQQ's kurtosis is LOWER than
+        // SPY's over the shared window (9.6 vs 14.3) -- a wide band because the record is wide,
+        // not because the model needs room.
+        bandCheck("satellite kurtosis ratio", sd.kurtRatio, 0.45, 1.20, Fidelity),
+        bandCheck("satellite clustering-1 ratio", sd.ac1Ratio, 0.85, 1.20, Fidelity),
+        bandCheck("satellite clustering-20 ratio", sd.ac20Ratio, 0.85, 1.40, Fidelity),
+        bandCheck("satellite d5 ratio", sd.d5Ratio, 1.00, 1.70, Fidelity),
+        bandCheck("satellite d10 ratio", sd.d10Ratio, 0.70, 2.20, Fidelity),
+        // DISCLOSED TENSION, not a pass by construction: the model's leg opens ~1.6 crash
+        // episodes per primary episode against the record's 1.17.  One history cannot resolve
+        // this ratio at all -- SPY and QQQ show ~6 and ~7 episodes in 27 years, and the 5-year
+        // blocks read 1.00-2.00 -- so the band admits the model while the central tendency stays
+        // high.  It is here to catch a leg that crashes several times as often as its primary.
+        bandCheck("satellite crash ratio", sd.crashRatio, 0.80, 2.40, Fidelity))
+    // THE BAR CHANNELS, graded -- same reasoning, and the same bands the build-time suites
+    // already assert from `bars-2026-09-01.tsv`, carried into the RUNTIME gate.
+    val barBands = st.bars match
+      case None => Vector.empty
+      case Some(b) =>
+        Vector(bandCheck("bar range vs cc vol", b.rangeOverCcvol, 1.00, 1.20, Fidelity),
+               bandCheck("bar range clustering", b.rangeAcf1, 0.57, 0.77, Fidelity),
+               // Against the INTRADAY ruler (1.109-1.142): the model has no overnight, so the
+               // record's close-to-close down/up of 1.175-1.205 carries conditioning this bar
+               // cannot have.
+               bandCheck("bar range down/up", b.rangeDownup, 1.00, 1.30, Fidelity)) ++
+        (if b.volSd.isFinite then
+           Vector(bandCheck("bar volume sd", b.volSd, 0.40, 0.60, Fidelity),
+                  bandCheck("bar volume vs range", b.volCorrRange, 0.44, 0.64, Fidelity))
+         else Vector.empty)
+    base ++ eqDepthBands ++ depthBand ++ volBand ++ satBands ++ barBands
 
   /** Whether an anchor-fitted band can be graded here: its driving variable inside the range the
     * anchor funds covered, and the statistic defined.  Mirrors `Relation.grade`'s refusal. */
@@ -2213,6 +2351,13 @@ object MarketSim:
   final case class Anchors(
     name: String,
     equityWindow: String, equityYears: Int,      // the window the level rows below were read from
+    retVolWindow: String,                       // window for the return-per-volatility anchor.
+                                                // Its own field because it is NOT the equity
+                                                // window: the S&P set takes r/v from CRSP
+                                                // 1954-2026 where its levels come from the S&P,
+                                                // and the Nasdaq set takes it from QQQ.  The
+                                                // report header printed "CRSP 1954-2026" as a
+                                                // literal and so mislabelled every Nasdaq run.
     clusterWindow: String, clusterYears: Int,    // clustering is horizon-sensitive and reads its own
     // The TAIL reads its own window too, and for a sharper reason than horizon-sensitivity: the
     // deepest episode is the one statistic a window can DELETE.  Across the committed fixture the
@@ -2252,6 +2397,7 @@ object MarketSim:
   val SP500Anchors = Anchors(
     name = "S&P 500 / CRSP",
     equityWindow = "S&P / CRSP 1954-2026", equityYears = 72,
+    retVolWindow = "CRSP 1954-2026",
     clusterWindow = "CRSP 1926-2026, the century", clusterYears = 100,
     tailWindow = "CRSP 1926-2026, the century", tailYears = 100,
     vol = 16.0,          volSd = 0.13,
@@ -2300,34 +2446,45 @@ object MarketSim:
     * exactly (18.57 / 10.31 / 0.447 / 0.315 / 0.169 against 18.6 / 10.30 / 0.447 / 0.315 / 0.169),
     * so these readings are on the fixture's own definitions.
     *
-    * THE SAMPLING SPREADS ARE THE S&P'S, CARRIED OVER, and that is the one soft number here.  An
-    * sdRel is model-implied -- `-noise` measures the spread of readings the model produces over
-    * histories of the anchor's length -- so an honest Nasdaq set needs `-noise -anchors nasdaq` run
-    * at a Nasdaq-calibrated world, which does not exist yet.  Carried over they are approximately
-    * right (both assets' statistics have similar relative spreads) and they are not asserted to be
-    * measured.  Re-freeze them when a Nasdaq world is calibrated.
+    * THE SAMPLING SPREADS ARE NOW THE NASDAQ WORLD'S OWN, re-frozen 2026-09-01 from
+    * `-noise -anchors nasdaq -depth 10 -drift 0.105 -jumpvar 0.02 -fundvol 0.06 -paths 200` --
+    * the gate-passing recipe this set describes, which did not exist when they were first
+    * carried over from the S&P.  The assumption that carried values were "approximately right
+    * because both assets' statistics have similar relative spreads" was FALSE where the two
+    * worlds differ most: `medDepthSd` read 0.10 against a measured 0.37, a 3.7x OVERWEIGHT on
+    * the heaviest row in this set's loss (weight is `SdRelRef / sdRel`), and `semiExcessSd`
+    * 1.54 against 3.57.  Re-measure whenever the recipe moves; a spread is model-implied, so it
+    * belongs to the world, not the index.
+    *
+    * STILL SHARED, and disclosed: the sds passed inline to `wgt` (variance ratio, valuation
+    * dispersion, the depth rungs, and every bond row) are per-TARGET constants rather than
+    * per-anchor fields, so they stay at the S&P world's readings for both anchor sets.  Measured
+    * at this recipe they would be vr 0.33, valuation dispersion 0.53, d5/d10/d20 0.12/0.19/0.30
+    * -- the depth rungs differ most.  Moving them into `Anchors` is the fix; it is a structural
+    * change, not a re-freeze.
     *
     * The two fidelity bands are the S&P bands' proportional widths around the Nasdaq levels
     * (+/-12.5% on volatility, -28%/+23% on return per volatility), for the same reason. */
   val NasdaqAnchors = Anchors(
     name = "Nasdaq-100 / QQQ",
     equityWindow = "QQQ 1999-2026", equityYears = 27,
+    retVolWindow = "QQQ 1999-2026",
     clusterWindow = "QQQ 1999-2026", clusterYears = 27,
     tailWindow = "QQQ 1999-2026", tailYears = 27,
-    vol = 26.90,         volSd = 0.13,
-    retVol = 0.38,       retVolSd = 0.18,
-    kurt = 9.55,         kurtSd = 1.23,
-    ac1 = 0.293,         ac1Sd = 0.11,
-    ac20 = 0.249,        ac20Sd = 0.19,
-    crashes = 25.6,      crashesSd = 0.26,
-    medDepth = -22.8,    medDepthSd = 0.10,
-    worstDepth = -83.0,  worstDepthSd = 0.24,
+    vol = 26.90,         volSd = 0.10,
+    retVol = 0.38,       retVolSd = 0.49,
+    kurt = 9.55,         kurtSd = 1.07,
+    ac1 = 0.293,         ac1Sd = 0.17,
+    ac20 = 0.249,        ac20Sd = 0.15,
+    crashes = 25.6,      crashesSd = 0.49,
+    medDepth = -22.8,    medDepthSd = 0.37,
+    worstDepth = -83.0,  worstDepthSd = 0.19,
     volBand = (23.5, 30.3),
     retVolBand = (0.27, 0.47),
     // QQQ wfull row of asymmetry-2026-08-31.tsv; the tail hedge is QQQ/TLT.  Spreads are the
     // S&P's carried over, like every spread in this set.
-    semiExcess = 1.13, semiExcessSd = 1.54,
-    levCorr = -0.1073, levCorrSd = 0.44,
+    semiExcess = 1.13, semiExcessSd = 3.57,
+    levCorr = -0.1073, levCorrSd = 0.43,
     tailHedge = -0.236, tailHedgeSd = 0.24)
 
   val AnchorSets: Vector[Anchors] = Vector(SP500Anchors, NasdaqAnchors)
@@ -3291,6 +3448,11 @@ object MarketSim:
     println("how the DEFAULT has moved, not what each version reported — the mechanism moved too.  A")
     println("World field added after a release -- or REMOVED by a mechanism change, as 0.19.2's")
     println("rate cut was -- takes today's value in that release's row.")
+    if a.name != SP500Anchors.name then
+      println()
+      println("  NOTE: every frozen release world was calibrated against the S&P set; this run grades")
+      println(s"  them with ${a.name} anchors.  The columns are still comparable to EACH OTHER, but a row's")
+      println("  distance from 1.00 is not a defect of that release -- it was never fitted here.")
     println()
     println(f"  ${"target"}%-22s" + cols.map((v, _) => f"$v%8s").mkString +
             f"   ${"best"}%7s   worse than best")
@@ -3418,10 +3580,15 @@ object MarketSim:
     "tail hedge corr")
 
   /** Bisection bracket for the depth solve, and how many halvings.  Ten steps over this bracket
-    * leaves the depth uncertain by 16/1024 ~ 0.016, worth about 0.02 points of volatility -- far
+    * leaves the depth uncertain by 21/1024 ~ 0.021, worth about 0.03 points of volatility -- far
     * inside the sampling noise of any ensemble that could be run here.  Each step is a full
-    * ensemble, so this is the cost knob: twelve ensembles in total, including the bracket probes. */
-  val DepthBracket = (10.0, 26.0)
+    * ensemble, so this is the cost knob: twelve ensembles in total, including the bracket probes.
+    *
+    * The low end reaches BELOW the Nasdaq recipe's own `depth 10`: volatility falls as depth
+    * rises, so a 26.9%-volatility anchor needs a thinner market than that recipe runs, and a
+    * bracket starting at 10.0 refused the solve outright -- the equity-at-anchor section simply
+    * declined for every Nasdaq world. */
+  val DepthBracket = (5.0, 26.0)
   val VolSolveSteps = 10
 
   /** Solve `depth` for a target equity volatility.  Volatility DECREASES with depth (impact scales
@@ -4296,6 +4463,21 @@ object MarketSim:
       """  "gate": {""",
       s"""    "ensemblePaths": $gatePaths,""",
       s"""    "ensembleYears": $gateYears,""",
+      // WHICH RULER, and WHICH SERIES.  Without the first, a `-anchors nasdaq` run's verdict is
+      // indistinguishable from an S&P one in its own provenance record.  Without the second, a
+      // PASS sits beside emitted columns it never examined: the gate measures `price` and
+      // `bond`, so a satellite leg or a sampled bar is outside its scope entirely, and `logSat`
+      // is exactly the column a consumer would take as their second index.  Same doctrine as
+      // `fidelityUnanchored` below -- name what was not graded, in the artifact that carries
+      // the verdict.
+      s"""    "anchors": ${jsonStr(a.name)},""",
+      s"""    "gradedSeries": ${strList(Vector("price", "bond"))},""",
+      // EMPTY BY CONSTRUCTION today, and the field earns its place anyway: `logSat` is covered
+      // by the `satellite *` gate rows and the bar columns by the `bar *` rows, so there is
+      // nothing left to disclose -- but the next channel to arrive is ungraded until someone
+      // anchors it, and this is the field that has to say so rather than a doc nobody reads
+      // beside the data.
+      s"""    "ungradedChannelSeries": ${strList(Vector.empty)},""",
       s"""    "realism": ${jsonStr(if realismBad.isEmpty then "PASS" else "FAIL")},""",
       s"""    "mechanism": ${jsonStr(if mechanismBad.isEmpty then "PASS" else "FAIL")},""",
       s"""    "fidelity": ${jsonStr(if fidelityBad.isEmpty then "PASS" else "FAIL")},""",
@@ -4896,7 +5078,7 @@ object MarketSim:
       println(s"    graded on $verdictPaths paths x $verdictYears years — the calibration horizon; " +
               s"the report above describes $paths x $years")
     println(s"    equity ${anchors.equityWindow}   |   depth rungs 35 equity funds 2001-2026, vs each world's")
-    println("      OWN volatility and return   |   return per vol CRSP 1954-2026")
+    println(s"      OWN volatility and return   |   return per vol ${anchors.retVolWindow}")
     println(s"    clustering ${anchors.clusterWindow} (horizon-dependent: the statistic moves with the")
     println("      model is scored on 100-year paths)   |   refuge long Treasury   |   bond depth")
     println("      rung clean TLT, 24y")
