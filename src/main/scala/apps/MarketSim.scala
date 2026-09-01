@@ -135,7 +135,14 @@ object MarketSim:
   // cross-language print flips per 40 century paths -- where the log sits nine orders under the
   // printed digit.  A reader that reconstructs a `World` from a schema-7 sidecar loses nothing:
   // the dials were 0 in every world such a sidecar could describe.
-  val EmitSchema: Int = 8
+  // 8 -> 9: `world` gained the bar channels' dials (`rangeScale`, `volIdio`), and the TSV the
+  // columns `logHigh`/`logLow` (present ONLY when `rangeScale > 0` -- log prices of the sampled
+  // intra-bar extremes; the bar's open is the prior close, the model has no overnight) and
+  // `logVolume` (present ONLY when `volIdio > 0` -- a mean-free log turnover index; apply your
+  // own detrend convention as you would to a real series).  Log columns for the same tie reason
+  // as `logSat`.  A bars-off schema-9 file is byte-identical to its schema-8 counterpart except
+  // the schema number and the two new (zero) world fields.
+  val EmitSchema: Int = 9
 
   val EmitSidecarKeys: Vector[String] =
     Vector("generator", "version", "schema", "file", "columns", "header", "path", "world",
@@ -596,6 +603,17 @@ object MarketSim:
   val DefaultPaths = 200
   val DefaultYears = 100
   val DefaultSeed = 20260813L
+
+  /** Frozen structural constants of the volume channel -- see the `volIdio` field.  Measured
+    * from the SPY/QQQ volume-on-range regression (`bars-2026-09-01.tsv`, whose rows
+    * `BarsAnchorSuite` asserts these against): elasticity of detrended log volume to the
+    * range's log-deviation from its slow normal; the down-day loading calibrated to the
+    * RESIDUAL +0.036 down-up; the slow idio component's persistence and variance share
+    * (acf5/acf1 = 0.84 rules out a single AR(1)). */
+  val VolSlope = 0.59
+  val VolDown = 0.045
+  val VolPhi = 0.97
+  val VolSlowShare = 0.55
   val DefaultEmitGate = 200
   val DefaultCost = 0.0010
   /** The default world as it shipped at each published release, so a candidate can be compared
@@ -1110,10 +1128,6 @@ object MarketSim:
     var volSlow = 0.0; var volEwma = 0.0; var volEwmaSet = false
     val volEwmaMu = 1.0 - math.exp(-math.log(2.0) / 126.0)
     val vv = if w.volIdio > 0.0 then new Array[Double](tot) else Array.emptyDoubleArray
-    // Frozen structural constants of the volume channel -- see the `volIdio` field.  The slow
-    // component carries VolSlowShare of the idio variance at persistence VolPhi; its innovation
-    // sd follows from the stationary-variance identity.
-    val VolSlope = 0.59; val VolDown = 0.045; val VolPhi = 0.97; val VolSlowShare = 0.55
     val volSlowInnov = w.volIdio * math.sqrt(VolSlowShare) * math.sqrt(1.0 - VolPhi * VolPhi)
     val volWhiteSd   = w.volIdio * math.sqrt(1.0 - VolSlowShare)
     var crowdFlowSum = 0.0
@@ -4128,7 +4142,9 @@ object MarketSim:
     // The CLI's clean refusal (message + exit 2) lives at the emit sites in `main`, which pre-check
     // before calling; here it THROWS, because this is also API and a `System.exit` in a library
     // method takes a test harness down whole rather than failing one test.
-    require(p.price.forall(_.isFinite) && p.sat.forall(_.isFinite),
+    require(p.price.forall(_.isFinite) && p.sat.forall(_.isFinite) &&
+            p.logHi.forall(_.isFinite) && p.logLo.forall(_.isFinite) &&
+            p.logVolume.forall(_.isFinite),
             s"path $k holds a non-finite value; refusing $file")
     val dates = sessionDates(p.price.length, startYmd)
     writeEmitTsv(file, p, dates)
@@ -4136,15 +4152,20 @@ object MarketSim:
                      gateRows)
 
   def writeEmitTsv(file: String, p: Path, dates: Vector[String]): Unit =
-    // The satellite column, present only when the leg ran -- a satellite-off file is
-    // byte-identical to schema 7's.  LOG, not a level: see the 7 -> 8 note at `EmitSchema`.
-    val header = if p.sat.isEmpty then EmitColumns.mkString("\t")
-                 else (EmitColumns :+ "logSat").mkString("\t")
+    // The optional columns, present only when their channel ran -- a channels-off file is
+    // byte-identical to its predecessor schema's.  LOG columns throughout: see the 7 -> 8 and
+    // 8 -> 9 notes at `EmitSchema`.
+    val header = (EmitColumns
+      ++ (if p.sat.isEmpty then Vector() else Vector("logSat"))
+      ++ (if p.logHi.isEmpty then Vector() else Vector("logHigh", "logLow"))
+      ++ (if p.logVolume.isEmpty then Vector() else Vector("logVolume"))).mkString("\t")
     val rows = header +: Vector.tabulate(dates.length) { i =>
       val base =
         s"${dates(i)}\t${ef(p.price(i))}\t${ef(p.bond(i))}\t${ef(p.rate(i))}\t${ef(p.cpi(i))}\t" +
         s"${ef(p.liq(i))}\t${ef(p.bliq(i))}\t${ef(p.fundamental(i))}\t${ef(p.inflPress(i))}"
-      if p.sat.isEmpty then base else s"$base\t${ef(math.log(p.sat(i)))}"
+      val s1 = if p.sat.isEmpty then base else s"$base\t${ef(math.log(p.sat(i)))}"
+      val s2 = if p.logHi.isEmpty then s1 else s"$s1\t${ef(p.logHi(i))}\t${ef(p.logLo(i))}"
+      if p.logVolume.isEmpty then s2 else s"$s2\t${ef(p.logVolume(i))}"
     }
     file.asPath.writeLines(rows)
 
@@ -4171,6 +4192,7 @@ object MarketSim:
       ("easing", ef(w.easing)), ("unwind", ef(w.unwind)), ("refuge", ef(w.refuge)),
       ("refugeDays", ef(w.refugeDays)),
       ("satBeta", ef(w.satBeta)), ("satIdio", ef(w.satIdio)),
+      ("rangeScale", ef(w.rangeScale)), ("volIdio", ef(w.volIdio)),
       ("inflProb", ef(w.inflProb)), ("inflSize", ef(w.inflSize)),
       ("inflSpeed", ef(w.inflSpeed)), ("rateSpeed", ef(w.rateSpeed)),
       ("discount", ef(w.discount)), ("margin", ef(w.margin)),
@@ -4215,7 +4237,10 @@ object MarketSim:
       s"""  "version": ${jsonStr(Version)},""",
       s"""  "schema": $EmitSchema,""",
       s"""  "file": ${jsonStr(file)},""",
-      s"""  "columns": ${strList(if p.sat.isEmpty then EmitColumns else EmitColumns :+ "logSat")},""",
+      s"""  "columns": ${strList(EmitColumns
+        ++ (if p.sat.isEmpty then Vector() else Vector("logSat"))
+        ++ (if p.logHi.isEmpty then Vector() else Vector("logHigh", "logLow"))
+        ++ (if p.logVolume.isEmpty then Vector() else Vector("logVolume")))},""",
       """  "header": true,""",
       """  "path": {""",
       s"""    "index": $k,""",
@@ -4733,7 +4758,9 @@ object MarketSim:
       // world is still a world; a path holding a non-finite price is not data at all.  The dial
       // domains close the routes reachable from the command line; this closes the file.
       def refuseNonFinite(p: Path, k: Int, f: String): Unit =
-        if !p.price.forall(_.isFinite) || !p.sat.forall(_.isFinite) then
+        if !p.price.forall(_.isFinite) || !p.sat.forall(_.isFinite) ||
+           !p.logHi.forall(_.isFinite) || !p.logLo.forall(_.isFinite) ||
+           !p.logVolume.forall(_.isFinite) then
           eprintln(s"REFUSED: path $k holds a non-finite value; nothing written to $f")
           System.exit(2)
       val written =
@@ -4756,7 +4783,8 @@ object MarketSim:
                        verdictPaths, verdictYears, verdictRows)
           Vector(emit)
       val sessions = pathAt(if emitAll then emitFrom else emitPath).price.length
-      eprintln(s"wrote ${written.size} path(s), ${EmitColumns.size + (if w.satBeta > 0.0 then 1 else 0)} columns x $sessions sessions, " +
+      eprintln(s"wrote ${written.size} path(s), ${EmitColumns.size + (if w.satBeta > 0.0 then 1 else 0)
+        + (if w.rangeScale > 0.0 then 2 else 0) + (if w.volIdio > 0.0 then 1 else 0)} columns x $sessions sessions, " +
                s"to ${written.head}${if written.size > 1 then s" .. ${written.last}" else ""} " +
                s"(+ sidecar ${sidecarName(written.head)})")
 

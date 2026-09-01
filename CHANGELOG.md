@@ -261,6 +261,34 @@ threshold-specific — the drawdown-20 crowd's world fails the acceptance gate, 
 -10% rule reads +0.36 — and the pressed-hard REACTIVE world remains the case where the family's
 rank collapses.
 
+**NEW MECHANISMS — the bar channels (`-rangescale`, `-volidio`), off by default.** Bars stop
+being close-only. The RANGE: high/low sampled per session from the EXACT Brownian-bridge extreme
+distributions, endpoints at the observed open (= prior close; the model has no overnight) and
+close, diffusion scale the session's OWN noise sd as the price received it — news damp, vol
+state, leverage kick, jump mixing, spiral amplification — times the one disclosed identification
+dial (anchored 1.1). The range therefore scales with the session's noise, not with |return|,
+which is what a range-reading detector can test: the record's corr(lnH/L, |r|) is only
+0.70-0.72 (`bars-2026-09-01.tsv`, SPY/QQQ OHLCV), and the clustering that makes range a better
+vol proxy than |r| (acf20 0.42-0.54 vs ~0.20) EMERGES from the shared vol state — at the
+anchored dial the model reads mean-range/ccvol 1.107 vs 1.10-1.12, acf1/5/20 0.65/0.57/0.41 vs
+0.67/0.56/0.42, corr with trailing vol 0.69 vs 0.68. The VOLUME: a log turnover index riding
+the range — elasticity 0.59 to the range's deviation from its slow normal, a down-day term, and
+a two-component persistent idio, all structural constants FROZEN from the measured
+volume-on-range regression (the fixture's `const` rows, asserted by contract tests in both
+twins; the residual's acf5/acf1 of 0.84 is what rules out a single AR(1)) with one anchored
+dial (total idio sd 0.34): sd 0.490 vs 0.42-0.50, corr with range 0.530 vs 0.54-0.55.
+Disclosed residuals, two roots shared across both channels: the same-session sign<->vol
+coupling is absent (range down/up 1.03 vs the intraday ruler's 1.11-1.14; volume down-up gap
+0.04 vs 0.12 — the volume constant is honestly calibrated to the record's RESIDUAL +0.036, not
+patched to cover the range's sign-flatness), and the bridge draws' lag-0 noise makes the
+model's range composition noisier than real intraday travel (corr(range,|r|) 0.82 vs the
+intraday 0.79-0.80; volume acf1 0.49 vs 0.64). The overnight share (33%/28% of close-close
+variance) is the stated commensurability haircut, and Parkinson recovering real INTRADAY vol at
+1.00 exactly is what validates the ruler pair. Draws come from dedicated streams; 0 is
+bit-identical off, and volume leaves the sampled bars bit-identical (tested). `EmitSchema`
+8 -> 9: `world` gains both dials, the TSV gains `logHigh`/`logLow`/`logVolume` when their
+channels are on — log columns, the `logSat` tie rule.
+
 ## v0.22.1 — 2026-08-30
 
 The release where the century-scale tail became measurable, turned out to be the OPPOSITE of what

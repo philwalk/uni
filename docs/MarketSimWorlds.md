@@ -85,6 +85,13 @@ satellite-off schema-8 file is byte-identical to its schema-7 counterpart except
 number and the two new (zero) world fields, so a schema-7 reader that ignores unknown columns and
 fields keeps working; the log convention exists because a level near 10^6 rendered at six decimals
 sits within reach of a cross-language rounding tie the twins' byte-parity checks would trip on.
+It went 8 → 9 when the `world` block gained the bar channels' `rangeScale` and `volIdio`, and the
+TSV the columns `logHigh`/`logLow` (present only when `rangeScale > 0` — log prices of the sampled
+intra-bar extremes; the bar's open is the prior close, the model has no overnight) and `logVolume`
+(present only when `volIdio > 0` — a mean-free log turnover index; apply your own detrend
+convention as you would to a real series). Same log convention, same backward-compatibility shape:
+a bars-off schema-9 file differs from its schema-8 counterpart only in the schema number and the
+two new zero fields.
 
 **A version check alone does not pin behaviour.** A run made with `-depth 0.5` or a non-default
 `-crowd` looks like a default run to any version check. A consumer that calibrated against the
@@ -517,6 +524,8 @@ with it.
 | `-refugedays` | half-life in sessions of the settled stress the refuge bid reads — excludes the current session, which kills the same-day stock-bond coupling while the crisis rally keeps the level; 0 reads live stress | 1 |
 | `-satbeta` | the satellite equity leg (the Nasdaq to the default world's S&P): beta on the primary's OBSERVED return, plus idio noise riding the primary's full vol state — which is what keeps the pair's correlation state-flat, as the record's is. When on, `-emit` adds a `logSat` column. Anchored 1.2 on SPY–QQQ 1999–2026; NOT searchable, like `-duration` | 0 (off) |
 | `-satidio` | the leg's idiosyncratic vol per year at unit vol-state; the anchored 0.074 lands the measured correlation (0.850 vs 0.853) and vol ratio (1.41 vs 1.40) at the default world's own volatility | 0 |
+| `-rangescale` | intra-bar high/low, sampled per session from the exact Brownian-bridge extremes at the session's own diffusion scale times this dial — the range scales with the session's noise, not with \|return\|, which is what makes it detectably real (record corr(lnH/L, \|r\|) is only 0.70–0.72). Anchored 1.1 on SPY/QQQ OHLCV; adds `logHigh`/`logLow` to `-emit`. NOT searchable | 0 (off) |
+| `-volidio` | log turnover index riding the range: elasticity 0.59 to the range's deviation from its slow normal (frozen from the measured regression) plus a two-component persistent idio whose total sd is this dial (anchored 0.34). Requires `-rangescale`; adds `logVolume` to `-emit`. NOT searchable | 0 |
 | `-inflsize` | size of an inflation regime's rate-pressure target | 0.10 |
 
 `-easing` is a cap, not a speed. The flag it replaced, `-flight`, was a cut *rate* per year, so it

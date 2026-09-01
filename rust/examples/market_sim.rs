@@ -100,7 +100,26 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 // cross-language print flips per 40 century paths — where the log sits nine orders under the
 // printed digit. A reader that reconstructs a `World` from a schema-7 sidecar loses nothing:
 // the dials were 0 in every world such a sidecar could describe.
-const EMIT_SCHEMA: u32 = 8;
+// 8 -> 9: `world` gained the bar channels' dials (`rangeScale`, `volIdio`), and the TSV the
+// columns `logHigh`/`logLow` (present ONLY when `rangeScale > 0` — log prices of the sampled
+// intra-bar extremes; the bar's open is the prior close, the model has no overnight) and
+// `logVolume` (present ONLY when `volIdio > 0` — a mean-free log turnover index; apply your
+// own detrend convention as you would to a real series). Log columns for the same tie reason
+// as `logSat`. A bars-off schema-9 file is byte-identical to its schema-8 counterpart except
+// the schema number and the two new (zero) world fields.
+const EMIT_SCHEMA: u32 = 9;
+
+/// Frozen structural constants of the volume channel — see the `vol_idio` field. Measured
+/// from the SPY/QQQ volume-on-range regression (`bars-2026-09-01.tsv`, whose rows the
+/// contract tests assert these against): elasticity of detrended log volume to the range's
+/// log-deviation from its slow normal; the down-day loading calibrated to the RESIDUAL
+/// +0.036 down-up; the slow idio component's persistence and variance share (acf5/acf1 =
+/// 0.84 rules out a single AR(1)). The slow innovation sd follows from the
+/// stationary-variance identity.
+const VOL_SLOPE: f64 = 0.59;
+const VOL_DOWN: f64 = 0.045;
+const VOL_PHI: f64 = 0.97;
+const VOL_SLOW_SHARE: f64 = 0.55;
 
 /// The base random seed `-seed` defaults to, named so `main` and the tests that reproduce a
 /// default-world ensemble cannot drift apart. Mirrors the Scala twin's `DefaultSeed`.
@@ -1322,13 +1341,6 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
     } else {
         Vec::new()
     };
-    // Frozen structural constants of the volume channel — see the `vol_idio` field. The slow
-    // component carries SLOW_SHARE of the idio variance at persistence VOL_PHI; its innovation
-    // sd follows from the stationary-variance identity.
-    const VOL_SLOPE: f64 = 0.59;
-    const VOL_DOWN: f64 = 0.045;
-    const VOL_PHI: f64 = 0.97;
-    const VOL_SLOW_SHARE: f64 = 0.55;
     let vol_slow_innov = w.vol_idio * VOL_SLOW_SHARE.sqrt() * (1.0 - VOL_PHI * VOL_PHI).sqrt();
     let vol_white_sd = w.vol_idio * (1.0 - VOL_SLOW_SHARE).sqrt();
 
@@ -7090,7 +7102,11 @@ fn write_emitted(
     // before calling; here it PANICS, because this is also API and a `process::exit` in a library
     // function takes a test harness down whole rather than failing one test.
     assert!(
-        p.price.iter().all(|x| x.is_finite()) && p.sat.iter().all(|x| x.is_finite()),
+        p.price.iter().all(|x| x.is_finite())
+            && p.sat.iter().all(|x| x.is_finite())
+            && p.log_hi.iter().all(|x| x.is_finite())
+            && p.log_lo.iter().all(|x| x.is_finite())
+            && p.log_volume.iter().all(|x| x.is_finite()),
         "path {k} holds a non-finite value; refusing {file}"
     );
     let dates = session_dates(p.price.len(), start_ymd);
@@ -7104,10 +7120,17 @@ fn write_emitted(
 fn write_emit_tsv(file: &str, p: &Path, dates: &[String]) {
     let mut tsv = String::new();
     tsv.push_str(&EMIT_COLUMNS.join("\t"));
-    // The satellite column, present only when the leg ran — a satellite-off file is
-    // byte-identical to schema 7's. LOG, not a level: see the 7 -> 8 note at `EMIT_SCHEMA`.
+    // The optional columns, present only when their channel ran — a channels-off file is
+    // byte-identical to its predecessor schema's. LOG columns throughout: see the 7 -> 8 and
+    // 8 -> 9 notes at `EMIT_SCHEMA`.
     if !p.sat.is_empty() {
         tsv.push_str("\tlogSat");
+    }
+    if !p.log_hi.is_empty() {
+        tsv.push_str("\tlogHigh\tlogLow");
+    }
+    if !p.log_volume.is_empty() {
+        tsv.push_str("\tlogVolume");
     }
     tsv.push('\n');
     for (i, d) in dates.iter().enumerate() {
@@ -7128,6 +7151,16 @@ fn write_emit_tsv(file: &str, p: &Path, dates: &[String]) {
         if !p.sat.is_empty() {
             tsv.push('\t');
             tsv.push_str(&ef(p.sat[i].ln()));
+        }
+        if !p.log_hi.is_empty() {
+            tsv.push('\t');
+            tsv.push_str(&ef(p.log_hi[i]));
+            tsv.push('\t');
+            tsv.push_str(&ef(p.log_lo[i]));
+        }
+        if !p.log_volume.is_empty() {
+            tsv.push('\t');
+            tsv.push_str(&ef(p.log_volume[i]));
         }
         tsv.push('\n');
     }
@@ -7177,6 +7210,8 @@ fn world_json_body(w: &World) -> Vec<String> {
         ("refugeDays", ef(w.refuge_days)),
         ("satBeta", ef(w.sat_beta)),
         ("satIdio", ef(w.sat_idio)),
+        ("rangeScale", ef(w.range_scale)),
+        ("volIdio", ef(w.vol_idio)),
         ("inflProb", ef(w.infl_prob)),
         ("inflSize", ef(w.infl_size)),
         ("inflSpeed", ef(w.infl_speed)),
@@ -7282,6 +7317,13 @@ fn write_emit_sidecar(
             let mut cols: Vec<&str> = EMIT_COLUMNS.to_vec();
             if !p.sat.is_empty() {
                 cols.push("logSat");
+            }
+            if !p.log_hi.is_empty() {
+                cols.push("logHigh");
+                cols.push("logLow");
+            }
+            if !p.log_volume.is_empty() {
+                cols.push("logVolume");
             }
             str_list(&cols)
         }),
@@ -8095,7 +8137,12 @@ fn main() {
         // world is still a world; a path holding a non-finite price is not data at all. The dial
         // domains close the routes reachable from the command line; this closes the file.
         let refuse_non_finite = |p: &Path, k: usize, f: &str| {
-            if !p.price.iter().all(|x| x.is_finite()) || !p.sat.iter().all(|x| x.is_finite()) {
+            if !p.price.iter().all(|x| x.is_finite())
+                || !p.sat.iter().all(|x| x.is_finite())
+                || !p.log_hi.iter().all(|x| x.is_finite())
+                || !p.log_lo.iter().all(|x| x.is_finite())
+                || !p.log_volume.iter().all(|x| x.is_finite())
+            {
                 eprintln!("REFUSED: path {k} holds a non-finite value; nothing written to {f}");
                 std::process::exit(2);
             }
@@ -8161,7 +8208,10 @@ fn main() {
         eprintln!(
             "wrote {} path(s), {} columns x {sessions} sessions, to {}{span} (+ sidecar {})",
             written.len(),
-            EMIT_COLUMNS.len() + usize::from(w.sat_beta > 0.0),
+            EMIT_COLUMNS.len()
+                + usize::from(w.sat_beta > 0.0)
+                + 2 * usize::from(w.range_scale > 0.0)
+                + usize::from(w.vol_idio > 0.0),
             written[0],
             sidecar_name(&written[0])
         );
@@ -10358,6 +10408,129 @@ mod joint_coupling_tests {
             ("absCorr", med4(acorrs)),
             ("volRatio", med4(ratios)),
             ("beta", med4(betas)),
+        ] {
+            let (v, tol) = band(&a, stat);
+            assert!(
+                (got - v).abs() <= tol,
+                "{stat}: model median {got:.3} vs anchor {v:.3} +/- {tol:.2}"
+            );
+        }
+    }
+}
+
+/// The bar channels' anchors are MEASURED numbers; this re-derives the graded bands and the
+/// volume channel's frozen structural constants from the checked-in fixture so the code and
+/// the record cannot drift apart. The Scala twin carries the same checks in `BarsAnchorSuite`,
+/// against the same file. The `-` rows belong to the python graders over `-barsemit` output.
+#[cfg(test)]
+mod bars_anchor_tests {
+    use super::*;
+
+    const BARS: &str = "../test-data/equity-anchors/bars-2026-09-01.tsv";
+
+    /// `None` where the fixture is absent — the crate ships without `test-data/`, so a
+    /// source-tarball build must not fail here.
+    fn rows(path: &str) -> Option<Vec<Vec<String>>> {
+        let text = std::fs::read_to_string(path).ok()?;
+        Some(
+            text.lines()
+                .filter(|l| !l.starts_with('#') && !l.starts_with("pair\t") && !l.trim().is_empty())
+                .map(|l| l.split('\t').map(str::to_string).collect())
+                .collect(),
+        )
+    }
+
+    fn value(rows: &[Vec<String>], pair: &str, stat: &str) -> f64 {
+        rows.iter()
+            .find(|r| r[0] == pair && r[1] == stat)
+            .unwrap_or_else(|| panic!("fixture row [{pair} {stat}] missing"))[2]
+            .parse()
+            .expect("numeric fixture value")
+    }
+
+    fn band(rows: &[Vec<String>], stat: &str) -> (f64, f64) {
+        let r = rows
+            .iter()
+            .find(|r| r[0] == "w1993" && r[1] == stat)
+            .unwrap_or_else(|| panic!("fixture row [w1993 {stat}] missing"));
+        (
+            r[2].parse().expect("numeric fixture value"),
+            r[3].parse().expect("graded row wants a numeric tol"),
+        )
+    }
+
+    fn mean(x: &[f64]) -> f64 {
+        x.iter().sum::<f64>() / x.len() as f64
+    }
+
+    fn sd(x: &[f64]) -> f64 {
+        let m = mean(x);
+        (x.iter().map(|v| (v - m) * (v - m)).sum::<f64>() / x.len() as f64).sqrt()
+    }
+
+    fn corr_of(a: &[f64], b: &[f64]) -> f64 {
+        let (ma, mb) = (mean(a), mean(b));
+        let mut caa = 0.0;
+        let mut cbb = 0.0;
+        let mut cab = 0.0;
+        for i in 0..a.len() {
+            let (da, db) = (a[i] - ma, b[i] - mb);
+            caa += da * da;
+            cbb += db * db;
+            cab += da * db;
+        }
+        cab / (caa * cbb).sqrt()
+    }
+
+    fn acf1(x: &[f64]) -> f64 {
+        corr_of(&x[..x.len() - 1], &x[1..])
+    }
+
+    /// median of four: mean of the middle pair
+    fn med4(mut x: Vec<f64>) -> f64 {
+        x.sort_by(f64::total_cmp);
+        (x[1] + x[2]) / 2.0
+    }
+
+    #[test]
+    fn the_volume_constants_are_the_fixture_rows() {
+        let Some(a) = rows(BARS) else { return };
+        assert_eq!(VOL_SLOPE, value(&a, "const", "volSlope"));
+        assert_eq!(VOL_DOWN, value(&a, "const", "volDown"));
+        assert_eq!(VOL_PHI, value(&a, "const", "volPhi"));
+        assert_eq!(VOL_SLOW_SHARE, value(&a, "const", "volSlowShare"));
+    }
+
+    #[test]
+    fn the_bar_channels_sit_on_their_anchors() {
+        let Some(a) = rows(BARS) else { return };
+        let mut w = default_world();
+        w.range_scale = 1.1;
+        w.vol_idio = 0.34;
+        let sims = sim_paths(&w, 4, 100, DEFAULT_SEED);
+        let mut mroc = Vec::new();
+        let mut racf = Vec::new();
+        let mut vsd = Vec::new();
+        let mut vcx = Vec::new();
+        for p in &sims {
+            let r: Vec<f64> = (0..p.price.len() - 1)
+                .map(|i| (p.price[i + 1] / p.price[i]).ln())
+                .collect();
+            let x: Vec<f64> = (0..p.log_hi.len())
+                .map(|i| p.log_hi[i] - p.log_lo[i])
+                .collect();
+            mroc.push(mean(&x) / sd(&r));
+            racf.push(acf1(&x));
+            // The model's turnover index is trendless, so the record side's rolling-median
+            // detrend is a no-op up to noise here; the raw series is graded.
+            vsd.push(sd(&p.log_volume));
+            vcx.push(corr_of(&p.log_volume, &x));
+        }
+        for (stat, got) in [
+            ("rangeMeanOverCcvol", med4(mroc)),
+            ("rangeAcf1", med4(racf)),
+            ("volSd", med4(vsd)),
+            ("volCorrRange", med4(vcx)),
         ] {
             let (v, tol) = band(&a, stat);
             assert!(
