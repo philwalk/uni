@@ -447,7 +447,8 @@ class MarketSimContractSuite extends FunSuite:
 
   test("the range channel is inert in every frozen release") {
     for (v, w) <- MarketSim.Releases do
-      assert(w.rangeScale == 0.0, s"release $v predates the range channel and must carry 0")
+      assert(w.rangeScale == 0.0 && w.rangeDown == 0.0,
+        s"release $v predates the range channel and must carry 0 / 0")
     // Off half: no bars exist.  On half: the extremes bracket every bar -- the sidecar's
     // canary is blind to this dial until it joins the world block, so these are the guards.
     val off = MarketSim.simulate(MarketSim.Defaults, 2, MarketSim.DefaultSeed)

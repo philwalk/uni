@@ -135,7 +135,7 @@ object MarketSim:
   // cross-language print flips per 40 century paths -- where the log sits nine orders under the
   // printed digit.  A reader that reconstructs a `World` from a schema-7 sidecar loses nothing:
   // the dials were 0 in every world such a sidecar could describe.
-  // 8 -> 9: `world` gained the bar channels' dials (`rangeScale`, `volIdio`), and the TSV the
+  // 8 -> 9: `world` gained the bar channels' dials (`rangeScale`, `rangeDown`, `volIdio`), and the TSV the
   // columns `logHigh`/`logLow` (present ONLY when `rangeScale > 0` -- log prices of the sampled
   // intra-bar extremes; the bar's open is the prior close, the model has no overnight) and
   // `logVolume` (present ONLY when `volIdio > 0` -- a mean-free log turnover index; apply your
@@ -258,6 +258,9 @@ object MarketSim:
     "              ;   bridge extremes at the session's own diffusion scale, times X — the one",
     "              ;   disclosed identification dial (anchored 1.1 on SPY/QQQ OHLCV).  Default",
     "              ;   0 = off, consuming no draws",
+    "-rangedown X  ; same-session sign<->vol coupling on the bar: down sessions get (1+X) the",
+    "              ;   bridge sigma, up sessions 1/(1+X) — anchored 0.08, landing BOTH channels'",
+    "              ;   down/up asymmetry on the intraday rulers.  Requires -rangescale > 0",
     "-volidio X    ; VOLUME: log turnover index riding the range — elasticity 0.59 to the",
     "              ;   range's deviation from its slow normal plus a two-component persistent",
     "              ;   idio whose TOTAL sd is X (anchored 0.34).  Requires -rangescale > 0.",
@@ -494,6 +497,19 @@ object MarketSim:
                            // absorbing the real intraday's sub-BM compression plus the model's
                            // session/day identification.  Two draws per session from a dedicated
                            // stream, read only when > 0, so 0 is bit-identical off.
+    rangeDown: Double = 0.0, // SAME-SESSION SIGN<->VOL COUPLING for the bar: a down session
+                           // gets more intraday breadth per unit of net move -- the bridge
+                           // sigma is multiplied by (1 + rangeDown) when the session's return
+                           // is negative and divided by it otherwise, the `downShock` shape.
+                           // The record's down/up range ratio at the intraday-sign ruler is
+                           // 1.11-1.14 where the model's cross-session channels deliver only
+                           // 1.03; this is the conditional-distribution statement that closes
+                           // it (the realized sign informs the day's breadth -- no feedback
+                           // into the price).  ONE root serving two channels: volume's down-up
+                           // gap rides this through VolSlope with no volume-side change, and
+                           // at the anchored 0.08 BOTH land on the intraday rulers (range
+                           // 1.125 vs 1.109-1.142, volume gap 0.096 vs 0.094-0.098).
+                           // Draw-free; 0 is bit-identical off.
     volIdio: Double = 0.0, // VOLUME (prototype): a log turnover index riding the RANGE -- the
                            // record says volume follows the day's travel, not its net move
                            // (corr with lnH/L 0.54-0.55 vs 0.40-0.44 with |r|), with elasticity
@@ -610,7 +626,16 @@ object MarketSim:
     * range's log-deviation from its slow normal; the down-day loading calibrated to the
     * RESIDUAL +0.036 down-up; the slow idio component's persistence and variance share
     * (acf5/acf1 = 0.84 rules out a single AR(1)). */
-  val VolSlope = 0.59
+  val VolSlope = 0.51
+  /** Yesterday's range, still moving today's volume: participation decays over days rather than
+    * resetting with the bar.  Identified as the second term of a distributed lag (`v_t ~ rx_t +
+    * rx_{t-1}`, which drops the contemporaneous slope 0.59 -> 0.51 because the single-lag fit
+    * absorbed this through the range's own autocorrelation; lag 2 adds 0.04 and is dropped).
+    * WITHOUT it the volume residual is independent of the range by construction, the record's
+    * cross-term corr(rx_t, resid_{t+1}) = +0.14/+0.19 reads ~0 in the model, and total volume
+    * autocorrelation falls to the variance-share BLEND of its parts (0.48) where the record's
+    * exceeds it (0.64/0.70). */
+  val VolLag = 0.145
   val VolDown = 0.045
   val VolPhi = 0.97
   val VolSlowShare = 0.55
@@ -1125,7 +1150,7 @@ object MarketSim:
     // VOLUME channel state: the slow AR component, the EWMA of ln(range) that defines the
     // range's "normal" (half-life 126 sessions -- the grading convention's rolling-median
     // window, centred), and its first-session initialization flag.
-    var volSlow = 0.0; var volEwma = 0.0; var volEwmaSet = false
+    var volSlow = 0.0; var volRxPrev = 0.0; var volEwma = 0.0; var volEwmaSet = false
     val volEwmaMu = 1.0 - math.exp(-math.log(2.0) / 126.0)
     val vv = if w.volIdio > 0.0 then new Array[Double](tot) else Array.emptyDoubleArray
     val volSlowInnov = w.volIdio * math.sqrt(VolSlowShare) * math.sqrt(1.0 - VolPhi * VolPhi)
@@ -1411,8 +1436,15 @@ object MarketSim:
       if w.rangeScale > 0.0 then
         val logPx = eqM.logP - markdown
         val rS    = logPx - barPrevPx
-        val sig   = sessSigma * eqM.lastLiq * w.rangeScale
-        val sig2  = sig * sig
+        val sig0  = sessSigma * eqM.lastLiq * w.rangeScale
+        // The sign coupling -- see the `rangeDown` field.  Applied to the bridge sigma BEFORE
+        // the draws, consuming nothing; the near-reciprocal pair leaves the mean breadth at
+        // ~(1 + x^2/2), which `rangeScale` absorbs.
+        val sig =
+          if w.rangeDown > 0.0 then
+            if rS < 0.0 then sig0 * (1.0 + w.rangeDown) else sig0 / (1.0 + w.rangeDown)
+          else sig0
+        val sig2 = sig * sig
         val u1    = math.max(rrng.nextDouble(), 1e-300)
         val u2    = math.max(rrng.nextDouble(), 1e-300)
         hi(i) = barPrevPx + (rS + math.sqrt(rS * rS - 2.0 * sig2 * math.log(u1))) / 2.0
@@ -1434,7 +1466,9 @@ object MarketSim:
           volEwma += volEwmaMu * (lnx - volEwma)
           val down = math.max(0.0, -rS) / math.sqrt(eqM.scaleVar)
           volSlow = VolPhi * volSlow + volSlowInnov * vrng.randn()
-          vv(i) = VolSlope * rx + VolDown * down + volSlow + volWhiteSd * vrng.randn()
+          vv(i) = VolSlope * rx + VolLag * volRxPrev + VolDown * down + volSlow +
+                  volWhiteSd * vrng.randn()
+          volRxPrev = rx
 
       // ---- capital reallocation: spring, scored on positions actually held -------------------
       perfV = 0.99 * perfV + 0.01 * (mispricingPre * retE) * 100.0
@@ -4192,7 +4226,8 @@ object MarketSim:
       ("easing", ef(w.easing)), ("unwind", ef(w.unwind)), ("refuge", ef(w.refuge)),
       ("refugeDays", ef(w.refugeDays)),
       ("satBeta", ef(w.satBeta)), ("satIdio", ef(w.satIdio)),
-      ("rangeScale", ef(w.rangeScale)), ("volIdio", ef(w.volIdio)),
+      ("rangeScale", ef(w.rangeScale)), ("rangeDown", ef(w.rangeDown)),
+      ("volIdio", ef(w.volIdio)),
       ("inflProb", ef(w.inflProb)), ("inflSize", ef(w.inflSize)),
       ("inflSpeed", ef(w.inflSpeed)), ("rateSpeed", ef(w.rateSpeed)),
       ("discount", ef(w.discount)), ("margin", ef(w.margin)),
@@ -4434,6 +4469,7 @@ object MarketSim:
     var satBeta = dw.satBeta
     var satIdio = dw.satIdio
     var rangeScale = dw.rangeScale
+    var rangeDown = dw.rangeDown
     var volIdio = dw.volIdio
     var jointEmit = ""
     var barsEmit = ""
@@ -4513,6 +4549,7 @@ object MarketSim:
       case "-satbeta"    => satBeta = numOr("-satbeta", consumeNext)
       case "-satidio"    => satIdio = numOr("-satidio", consumeNext)
       case "-rangescale" => rangeScale = numOr("-rangescale", consumeNext)
+      case "-rangedown"  => rangeDown = numOr("-rangedown", consumeNext)
       case "-volidio"    => volIdio = numOr("-volidio", consumeNext)
       case "-jointemit"  => jointEmit = consumeNext
       case "-barsemit"   => barsEmit = consumeNext
@@ -4581,6 +4618,9 @@ object MarketSim:
     nonNeg("-value", valuePull); nonNeg("-recoverydrag", recoveryDrag)
     nonNeg("-newsrate", newsRate); nonNeg("-newssize", newsSize); nonNeg("-refugedays", refugeDays)
     nonNeg("-satbeta", satBeta); nonNeg("-satidio", satIdio); nonNeg("-rangescale", rangeScale)
+    nonNeg("-rangedown", rangeDown)
+    if rangeDown > 0.0 && rangeScale <= 0.0 then
+      usage("-rangedown requires -rangescale > 0: it shapes the sampled bar")
     nonNeg("-volidio", volIdio)
     if volIdio > 0.0 && rangeScale <= 0.0 then
       usage("-volidio requires -rangescale > 0: volume rides the range")
@@ -4642,7 +4682,7 @@ object MarketSim:
                   inflProb = inflProb, inflSize = inflSize,
                   inflSpeed = inflSpeed, rateSpeed = rateSpeed, discount = discount, margin = margin,
                   satBeta = satBeta, satIdio = satIdio, rangeScale = rangeScale,
-                  volIdio = volIdio)
+                  rangeDown = rangeDown, volIdio = volIdio)
 
     // SATELLITE PROTOTYPE: write per-path primary+satellite LOG prices for grading against the
     // SPY-QQQ coupling anchors (the joint_anchor conventions, graded python-side).  Deliberately

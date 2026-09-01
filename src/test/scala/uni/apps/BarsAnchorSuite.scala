@@ -60,6 +60,7 @@ class BarsAnchorSuite extends FunSuite:
     val a = rows(Bars)
     assume(a.nonEmpty, "fixture not present in this tree (source tarball?)")
     assertEquals(MarketSim.VolSlope, value(a, "const", "volSlope"))
+    assertEquals(MarketSim.VolLag, value(a, "const", "volLag"))
     assertEquals(MarketSim.VolDown, value(a, "const", "volDown"))
     assertEquals(MarketSim.VolPhi, value(a, "const", "volPhi"))
     assertEquals(MarketSim.VolSlowShare, value(a, "const", "volSlowShare"))

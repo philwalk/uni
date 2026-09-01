@@ -277,12 +277,23 @@ a two-component persistent idio, all structural constants FROZEN from the measur
 volume-on-range regression (the fixture's `const` rows, asserted by contract tests in both
 twins; the residual's acf5/acf1 of 0.84 is what rules out a single AR(1)) with one anchored
 dial (total idio sd 0.34): sd 0.490 vs 0.42-0.50, corr with range 0.530 vs 0.54-0.55.
-Disclosed residuals, two roots shared across both channels: the same-session sign<->vol
-coupling is absent (range down/up 1.03 vs the intraday ruler's 1.11-1.14; volume down-up gap
-0.04 vs 0.12 — the volume constant is honestly calibrated to the record's RESIDUAL +0.036, not
-patched to cover the range's sign-flatness), and the bridge draws' lag-0 noise makes the
-model's range composition noisier than real intraday travel (corr(range,|r|) 0.82 vs the
-intraday 0.79-0.80; volume acf1 0.49 vs 0.64). The overnight share (33%/28% of close-close
+Two further measured findings closed most of what the first cut disclosed. `-rangedown`
+(anchored 0.08) is the SAME-SESSION sign<->vol coupling — the bridge sigma takes (1 + x) on a
+down session and its reciprocal on an up one — and ONE dial moved BOTH channels onto the
+intraday rulers: range down/up 1.03 -> 1.125 against 1.109-1.142, and volume's down-up gap
+0.04 -> 0.096 against a newly measured intraday-sign 0.094-0.098, with no volume-side change
+at all (it rides through the elasticity). `VOL_LAG` (0.145) is yesterday's range still moving
+today's volume: identified as the second term of a distributed lag `v_t ~ rx_t + rx_{t-1}`,
+which drops the contemporaneous slope 0.59 -> 0.51 because a single-lag fit absorbs it through
+the range's own autocorrelation. It exists because the record's volume autocorrelation EXCEEDS
+the variance-share blend of its parts (0.64 vs 0.52) — only a cross-term can do that, and the
+model's independent idio had corr(rx_t, resid_{t+1}) at ~0 where the record reads +0.14/+0.19.
+With it: that cross-term reads +0.140, volume acf1 0.48 -> 0.59, acf5 0.47 and acf20 0.32 both
+on anchor. What remains disclosed: the bridge draws' lag-0 noise leaves corr(range,|r|) at
+0.82 against the intraday 0.79-0.80 and volume acf1 short of 0.64-0.70. A JOINT (H,L) sampler
+was measured against discretized-bridge ground truth and REJECTED: it raises that correlation
+further (+0.045 to +0.089 across sigma regimes, the wrong direction from an already-high
+reading) and cuts relative range noise only 4-6%. The overnight share (33%/28% of close-close
 variance) is the stated commensurability haircut, and Parkinson recovering real INTRADAY vol at
 1.00 exactly is what validates the ruler pair. Draws come from dedicated streams; 0 is
 bit-identical off, and volume leaves the sampled bars bit-identical (tested). `EmitSchema`

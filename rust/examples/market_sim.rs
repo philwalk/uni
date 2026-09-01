@@ -100,7 +100,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 // cross-language print flips per 40 century paths — where the log sits nine orders under the
 // printed digit. A reader that reconstructs a `World` from a schema-7 sidecar loses nothing:
 // the dials were 0 in every world such a sidecar could describe.
-// 8 -> 9: `world` gained the bar channels' dials (`rangeScale`, `volIdio`), and the TSV the
+// 8 -> 9: `world` gained the bar channels' dials (`rangeScale`, `rangeDown`, `volIdio`), and the TSV the
 // columns `logHigh`/`logLow` (present ONLY when `rangeScale > 0` — log prices of the sampled
 // intra-bar extremes; the bar's open is the prior close, the model has no overnight) and
 // `logVolume` (present ONLY when `volIdio > 0` — a mean-free log turnover index; apply your
@@ -116,7 +116,16 @@ const EMIT_SCHEMA: u32 = 9;
 /// +0.036 down-up; the slow idio component's persistence and variance share (acf5/acf1 =
 /// 0.84 rules out a single AR(1)). The slow innovation sd follows from the
 /// stationary-variance identity.
-const VOL_SLOPE: f64 = 0.59;
+const VOL_SLOPE: f64 = 0.51;
+/// Yesterday's range, still moving today's volume: participation decays over days rather than
+/// resetting with the bar. Identified as the second term of a distributed lag (`v_t ~ rx_t +
+/// rx_{t-1}`, which drops the contemporaneous slope 0.59 -> 0.51 because the single-lag fit
+/// absorbed this through the range's own autocorrelation; lag 2 adds 0.04 and is dropped).
+/// WITHOUT it the volume residual is independent of the range by construction, the record's
+/// cross-term corr(rx_t, resid_{t+1}) = +0.14/+0.19 reads ~0 in the model, and total volume
+/// autocorrelation falls to the variance-share BLEND of its parts (0.48) where the record's
+/// exceeds it (0.64/0.70).
+const VOL_LAG: f64 = 0.145;
 const VOL_DOWN: f64 = 0.045;
 const VOL_PHI: f64 = 0.97;
 const VOL_SLOW_SHARE: f64 = 0.55;
@@ -331,6 +340,7 @@ fn default_world() -> World {
         sat_beta: 0.0,
         sat_idio: 0.0,
         range_scale: 0.0,
+        range_down: 0.0,
         vol_idio: 0.0,
         value_pull: 0.056,
         crowd: Crowd::Momentum,
@@ -393,6 +403,7 @@ fn v0_19_2() -> World {
         sat_beta: 0.0,
         sat_idio: 0.0,
         range_scale: 0.0,
+        range_down: 0.0,
         vol_idio: 0.0,
         value_pull: 0.013,
         belief_share: 0.0,
@@ -502,6 +513,7 @@ fn v0_22_1() -> World {
         sat_beta: 0.0,
         sat_idio: 0.0,
         range_scale: 0.0,
+        range_down: 0.0,
         vol_idio: 0.0,
         value_pull: 0.045,
         crowd: Crowd::Momentum,
@@ -556,6 +568,7 @@ fn v0_22_0() -> World {
         sat_beta: 0.0,
         sat_idio: 0.0,
         range_scale: 0.0,
+        range_down: 0.0,
         vol_idio: 0.0,
         value_pull: 0.045,
         crowd: Crowd::Momentum,
@@ -610,6 +623,7 @@ fn v0_21_0() -> World {
         sat_beta: 0.0,
         sat_idio: 0.0,
         range_scale: 0.0,
+        range_down: 0.0,
         vol_idio: 0.0,
         value_pull: 0.045,
         crowd: Crowd::Momentum,
@@ -655,6 +669,7 @@ fn v0_20_0() -> World {
         sat_beta: 0.0,
         sat_idio: 0.0,
         range_scale: 0.0,
+        range_down: 0.0,
         vol_idio: 0.0,
         value_pull: 0.0145,
         belief_share: 0.0,
@@ -855,6 +870,15 @@ struct World {
     /// model's session/day identification. Draws (two per session) come from a dedicated
     /// stream, read only when > 0, so 0 is bit-identical off.
     range_scale: f64,
+    /// SAME-SESSION SIGN<->VOL COUPLING for the bar: a down session gets more intraday breadth
+    /// per unit of net move — the bridge sigma is multiplied by (1 + rangeDown) when the
+    /// session's return is negative and divided by it otherwise, the `downShock` shape. The
+    /// record's down/up range ratio at the intraday-sign ruler is 1.11-1.14 where the model's
+    /// cross-session channels deliver only 1.03; this is the conditional-distribution statement
+    /// that closes it (the realized sign informs the day's breadth — no feedback into the
+    /// price). ONE root serving two channels: volume's down-up gap rides this through
+    /// `VOL_SLOPE` with no volume-side change. Draw-free; 0 is bit-identical off.
+    range_down: f64,
     /// VOLUME (prototype): a log turnover index riding the RANGE — the record says volume
     /// follows the day's travel, not its net move (corr with lnH/L 0.54-0.55 vs 0.40-0.44
     /// with |r|), with elasticity ~0.6 to the range's deviation from its slow normal and a
@@ -1333,6 +1357,7 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
     // range's "normal" (half-life 126 sessions — the grading convention's rolling-median
     // window, centred), and its first-session initialization flag.
     let mut vol_slow = 0.0f64;
+    let mut vol_rx_prev = 0.0f64;
     let mut vol_ewma = 0.0f64;
     let mut vol_ewma_set = false;
     let vol_ewma_mu = 1.0 - (-(2.0f64.ln()) / 126.0).exp();
@@ -1713,6 +1738,18 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
             let log_px = eq_m.log_p - markdown;
             let r_s = log_px - bar_prev_px;
             let sig = sess_sigma * eq_m.last_liq * w.range_scale;
+            // The sign coupling — see the `range_down` field. Applied to the bridge sigma
+            // BEFORE the draws, consuming nothing; the near-reciprocal pair leaves the mean
+            // breadth at ~(1 + x^2/2), which `range_scale` absorbs.
+            let sig = if w.range_down > 0.0 {
+                if r_s < 0.0 {
+                    sig * (1.0 + w.range_down)
+                } else {
+                    sig / (1.0 + w.range_down)
+                }
+            } else {
+                sig
+            };
             let sig2 = sig * sig;
             let u1 = rrng.next_f64().max(1e-300);
             let u2 = rrng.next_f64().max(1e-300);
@@ -1736,7 +1773,12 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
                 vol_ewma += vol_ewma_mu * (lnx - vol_ewma);
                 let down = 0.0f64.max(-r_s) / eq_m.scale_var.sqrt();
                 vol_slow = VOL_PHI * vol_slow + vol_slow_innov * vrng.randn();
-                vv[i] = VOL_SLOPE * rx + VOL_DOWN * down + vol_slow + vol_white_sd * vrng.randn();
+                vv[i] = VOL_SLOPE * rx
+                    + VOL_LAG * vol_rx_prev
+                    + VOL_DOWN * down
+                    + vol_slow
+                    + vol_white_sd * vrng.randn();
+                vol_rx_prev = rx;
             }
         }
 
@@ -7211,6 +7253,7 @@ fn world_json_body(w: &World) -> Vec<String> {
         ("satBeta", ef(w.sat_beta)),
         ("satIdio", ef(w.sat_idio)),
         ("rangeScale", ef(w.range_scale)),
+        ("rangeDown", ef(w.range_down)),
         ("volIdio", ef(w.vol_idio)),
         ("inflProb", ef(w.infl_prob)),
         ("inflSize", ef(w.infl_size)),
@@ -7563,6 +7606,7 @@ fn main() {
     let mut sat_beta = dw.sat_beta;
     let mut sat_idio = dw.sat_idio;
     let mut range_scale = dw.range_scale;
+    let mut range_down = dw.range_down;
     let mut vol_idio = dw.vol_idio;
     let mut joint_emit = String::new();
     let mut bars_emit = String::new();
@@ -7659,6 +7703,7 @@ fn main() {
             "-satbeta" => sat_beta = req_f64(&mut it, "-satbeta"),
             "-satidio" => sat_idio = req_f64(&mut it, "-satidio"),
             "-rangescale" => range_scale = req_f64(&mut it, "-rangescale"),
+            "-rangedown" => range_down = req_f64(&mut it, "-rangedown"),
             "-volidio" => vol_idio = req_f64(&mut it, "-volidio"),
             "-jointemit" => joint_emit = req_arg(&mut it, "-jointemit").clone(),
             "-barsemit" => bars_emit = req_arg(&mut it, "-barsemit").clone(),
@@ -7797,6 +7842,10 @@ fn main() {
         non_neg("-satbeta", sat_beta);
         non_neg("-satidio", sat_idio);
         non_neg("-rangescale", range_scale);
+        non_neg("-rangedown", range_down);
+        if range_down > 0.0 && range_scale <= 0.0 {
+            cli_die("-rangedown requires -rangescale > 0: it shapes the sampled bar");
+        }
         non_neg("-volidio", vol_idio);
         if vol_idio > 0.0 && range_scale <= 0.0 {
             cli_die("-volidio requires -rangescale > 0: volume rides the range");
@@ -7918,6 +7967,7 @@ fn main() {
         sat_beta,
         sat_idio,
         range_scale,
+        range_down,
         vol_idio,
         value_pull,
         crowd,
@@ -9382,8 +9432,8 @@ mod contract_tests {
     fn the_range_channel_is_inert_in_every_frozen_release() {
         for (v, w) in releases() {
             assert!(
-                w.range_scale == 0.0,
-                "release {v} predates the range channel and must carry 0"
+                w.range_scale == 0.0 && w.range_down == 0.0,
+                "release {v} predates the range channel and must carry 0 / 0"
             );
         }
         // Off half: no bars exist. On half: the extremes bracket every bar — the sidecar's
@@ -10496,6 +10546,7 @@ mod bars_anchor_tests {
     fn the_volume_constants_are_the_fixture_rows() {
         let Some(a) = rows(BARS) else { return };
         assert_eq!(VOL_SLOPE, value(&a, "const", "volSlope"));
+        assert_eq!(VOL_LAG, value(&a, "const", "volLag"));
         assert_eq!(VOL_DOWN, value(&a, "const", "volDown"));
         assert_eq!(VOL_PHI, value(&a, "const", "volPhi"));
         assert_eq!(VOL_SLOW_SHARE, value(&a, "const", "volSlowShare"));
