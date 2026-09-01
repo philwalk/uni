@@ -445,6 +445,40 @@ class MarketSimContractSuite extends FunSuite:
     assert(p.sat.isEmpty, "satBeta 0 must produce no satellite series")
   }
 
+  test("the range channel is inert in every frozen release") {
+    for (v, w) <- MarketSim.Releases do
+      assert(w.rangeScale == 0.0, s"release $v predates the range channel and must carry 0")
+    // Off half: no bars exist.  On half: the extremes bracket every bar -- the sidecar's
+    // canary is blind to this dial until it joins the world block, so these are the guards.
+    val off = MarketSim.simulate(MarketSim.Defaults, 2, MarketSim.DefaultSeed)
+    assert(off.logHi.isEmpty && off.logLo.isEmpty)
+    val on = MarketSim.simulate(MarketSim.Defaults.copy(rangeScale = 1.1), 2, MarketSim.DefaultSeed)
+    assertEquals(on.logHi.length, on.price.length)
+    var prev = math.log(on.price(0))
+    for i <- on.price.indices do
+      val c = math.log(on.price(i))
+      assert(on.logHi(i) >= math.max(prev, c) - 1e-9 && on.logLo(i) <= math.min(prev, c) + 1e-9,
+        s"bar $i extremes must bracket open and close")
+      prev = c
+  }
+
+  test("the volume channel is inert in every frozen release") {
+    for (v, w) <- MarketSim.Releases do
+      assert(w.volIdio == 0.0, s"release $v predates the volume channel and must carry 0")
+    // Off half: no series.  On half: filled, finite, and volume leaves the RANGE series
+    // bit-identical -- the channels share nothing but the sampled bar itself.
+    val off = MarketSim.simulate(MarketSim.Defaults, 2, MarketSim.DefaultSeed)
+    assert(off.logVolume.isEmpty)
+    val barsOnly = MarketSim.simulate(MarketSim.Defaults.copy(rangeScale = 1.1), 2,
+                                      MarketSim.DefaultSeed)
+    val on = MarketSim.simulate(MarketSim.Defaults.copy(rangeScale = 1.1, volIdio = 0.34), 2,
+                                MarketSim.DefaultSeed)
+    assertEquals(on.logVolume.length, on.price.length)
+    assert(on.logVolume.forall(_.isFinite))
+    assert(on.logHi.sameElements(barsOnly.logHi), "volume must not move the sampled bars")
+    assert(on.logLo.sameElements(barsOnly.logLo))
+  }
+
   test("the asymmetry dials discriminate on their own statistics") {
     // Each mechanism moves the statistic it was added for, materially, on the same seed --
     // measured as the ADOPTED default against the same world with that one mechanism off.

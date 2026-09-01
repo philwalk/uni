@@ -311,6 +311,8 @@ fn default_world() -> World {
         refuge_days: 1.0,
         sat_beta: 0.0,
         sat_idio: 0.0,
+        range_scale: 0.0,
+        vol_idio: 0.0,
         value_pull: 0.056,
         crowd: Crowd::Momentum,
         crowd_impact: 0.030,
@@ -371,6 +373,8 @@ fn v0_19_2() -> World {
         refuge_days: 0.0,
         sat_beta: 0.0,
         sat_idio: 0.0,
+        range_scale: 0.0,
+        vol_idio: 0.0,
         value_pull: 0.013,
         belief_share: 0.0,
         belief_years: 2.5,
@@ -478,6 +482,8 @@ fn v0_22_1() -> World {
         refuge_days: 0.0,
         sat_beta: 0.0,
         sat_idio: 0.0,
+        range_scale: 0.0,
+        vol_idio: 0.0,
         value_pull: 0.045,
         crowd: Crowd::Momentum,
         crowd_impact: 0.030,
@@ -530,6 +536,8 @@ fn v0_22_0() -> World {
         refuge_days: 0.0,
         sat_beta: 0.0,
         sat_idio: 0.0,
+        range_scale: 0.0,
+        vol_idio: 0.0,
         value_pull: 0.045,
         crowd: Crowd::Momentum,
         crowd_impact: 0.030,
@@ -582,6 +590,8 @@ fn v0_21_0() -> World {
         refuge_days: 0.0,
         sat_beta: 0.0,
         sat_idio: 0.0,
+        range_scale: 0.0,
+        vol_idio: 0.0,
         value_pull: 0.045,
         crowd: Crowd::Momentum,
         crowd_impact: 0.07,
@@ -625,6 +635,8 @@ fn v0_20_0() -> World {
         refuge_days: 0.0,
         sat_beta: 0.0,
         sat_idio: 0.0,
+        range_scale: 0.0,
+        vol_idio: 0.0,
         value_pull: 0.0145,
         belief_share: 0.0,
         belief_years: 2.5,
@@ -812,6 +824,30 @@ struct World {
     /// idiosyncratic volatility of the satellite leg, per year at UNIT vol-state; the realized
     /// residual vol adds the state variation on top
     sat_idio: f64,
+    /// INTRA-BAR RANGE (prototype): high/low sampled per session from the EXACT Brownian-bridge
+    /// extreme distributions, with endpoints at the observed open (= prior close; the model has
+    /// no overnight) and close, and diffusion scale the session's OWN noise sd — news-damped,
+    /// vol-state, leverage kick, jump mixing, spiral amplification, all as the price itself
+    /// received them. The range therefore scales with the session's noise, NOT with |return|:
+    /// the record's corr(lnH/L, |r|) is only 0.70-0.72, and a bar derived as a multiple of |r|
+    /// is detectably fake (`bars_anchor` conventions, SPY/QQQ OHLCV). This dial is the one
+    /// disclosed free parameter: a multiplier on that diffusion scale, absorbing the real
+    /// intraday's sub-BM compression (~0.84 measured net of the overnight share) plus the
+    /// model's session/day identification. Draws (two per session) come from a dedicated
+    /// stream, read only when > 0, so 0 is bit-identical off.
+    range_scale: f64,
+    /// VOLUME (prototype): a log turnover index riding the RANGE — the record says volume
+    /// follows the day's travel, not its net move (corr with lnH/L 0.54-0.55 vs 0.40-0.44
+    /// with |r|), with elasticity ~0.6 to the range's deviation from its slow normal and a
+    /// PERSISTENT residual (acf5/acf1 = 0.84: a slow component near AR-0.97 carrying ~55% of
+    /// residual variance, plus white noise — an AR(1) alone cannot hold acf5 at 0.43). The
+    /// structural constants are frozen from the SPY/QQQ regression (`VOL_SLOPE` 0.59,
+    /// `VOL_DOWN` 0.045 from the residual's +0.036 down-up, `VOL_PHI` 0.97, slow share 0.55);
+    /// this dial is the TOTAL idiosyncratic sd, the one anchored free parameter (record
+    /// residual sd 0.29-0.38). Requires the range channel — volume without a range to ride is
+    /// refused at the CLI. Two draws per session from a dedicated stream, read only when > 0,
+    /// so 0 is bit-identical off.
+    vol_idio: f64,
     value_pull: f64,
     crowd: Crowd,
     crowd_impact: f64,
@@ -878,6 +914,14 @@ struct Path {
     disasters: usize,
     /// satellite equity leg price (empty when `sat_beta` is 0)
     sat: Vec<f64>,
+    /// intra-bar LOG high/low (empty when `range_scale` is 0). Log, not a level, unlike
+    /// `price`/`sat`: these are born in log space and emitted in log space, and the level
+    /// round-trip would only add transcendental noise (PARITY.md §6).
+    log_hi: Vec<f64>,
+    log_lo: Vec<f64>,
+    /// log turnover index (empty when `vol_idio` is 0); mean-free by construction, the
+    /// consumer's detrend convention applies unchanged
+    log_volume: Vec<f64>,
 }
 
 /// ONE price-formation mechanism for every traded asset: value demand toward `fair`, plus
@@ -1117,6 +1161,13 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
     // The satellite leg's own stream (prototype), same survivability contract: constructed
     // unconditionally, read only when `sat_beta > 0`, so 0 is bit-identical off.
     let mut srng = NumPyRng::new(seed ^ 0x5a7e_1117u64);
+    // The range channel's own stream (prototype), same survivability contract: constructed
+    // unconditionally, read only when `range_scale > 0` — two uniforms per session, max then
+    // min, and that draw ORDER is part of the cross-language contract.
+    let mut rrng = NumPyRng::new(seed ^ 0xca9d_1e00u64);
+    // The volume channel's own stream (prototype), same survivability contract: two normals
+    // per session, slow innovation then white, and that ORDER is part of the contract.
+    let mut vrng = NumPyRng::new(seed ^ 0xd011_a5e5u64);
     let mut px = vec![0.0f64; tot];
     let mut fv = vec![0.0f64; tot];
     let mut rt = vec![0.0f64; tot];
@@ -1250,6 +1301,36 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
     } else {
         Vec::new()
     };
+    // RANGE channel state: the observed log price last session (the bar's open — no overnight),
+    // and the sampled log high/low. Independent of the satellite's tracker on purpose: the
+    // channels must not couple through bookkeeping.
+    let mut bar_prev_px = 0.0f64;
+    let (mut hi, mut lo) = if w.range_scale > 0.0 {
+        (vec![0.0f64; tot], vec![0.0f64; tot])
+    } else {
+        (Vec::new(), Vec::new())
+    };
+    // VOLUME channel state: the slow AR component, the EWMA of ln(range) that defines the
+    // range's "normal" (half-life 126 sessions — the grading convention's rolling-median
+    // window, centred), and its first-session initialization flag.
+    let mut vol_slow = 0.0f64;
+    let mut vol_ewma = 0.0f64;
+    let mut vol_ewma_set = false;
+    let vol_ewma_mu = 1.0 - (-(2.0f64.ln()) / 126.0).exp();
+    let mut vv = if w.vol_idio > 0.0 {
+        vec![0.0f64; tot]
+    } else {
+        Vec::new()
+    };
+    // Frozen structural constants of the volume channel — see the `vol_idio` field. The slow
+    // component carries SLOW_SHARE of the idio variance at persistence VOL_PHI; its innovation
+    // sd follows from the stationary-variance identity.
+    const VOL_SLOPE: f64 = 0.59;
+    const VOL_DOWN: f64 = 0.045;
+    const VOL_PHI: f64 = 0.97;
+    const VOL_SLOW_SHARE: f64 = 0.55;
+    let vol_slow_innov = w.vol_idio * VOL_SLOW_SHARE.sqrt() * (1.0 - VOL_PHI * VOL_PHI).sqrt();
+    let vol_white_sd = w.vol_idio * (1.0 - VOL_SLOW_SHARE).sqrt();
 
     let mut i = 0usize;
     while i < tot {
@@ -1438,6 +1519,25 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
         } else {
             d_noise
         };
+        // The session's DIFFUSION SCALE, captured for the range channel below exactly as the
+        // noise term above is built — news damp, vol state, leverage kick (read BEFORE this
+        // session's update, like `d_noise` itself) — plus the jump branch's sqrt(1 - jumpVar)
+        // mixing. Draw-free; 0.0 when the channel is off.
+        let sess_sigma = if w.range_scale > 0.0 {
+            let lev_mult = if w.leverage > 0.0 {
+                (w.leverage * lev_sig).exp()
+            } else {
+                1.0
+            };
+            let jv_mult = if w.jump_var > 0.0 {
+                (1.0 - w.jump_var).sqrt()
+            } else {
+                1.0
+            };
+            news_damp * SIGMA_N * (log_vol - vol_norm).exp() * lev_mult * jv_mult
+        } else {
+            0.0
+        };
 
         // The jump channel. Its draws come from `jrng`, NOT `rng`, so `jump_var = 0` takes the
         // untouched branch below and moves NOTHING ELSE in the path — the failure mode a shared
@@ -1588,6 +1688,45 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
             sat_prev_px = log_px;
             sp[i] = sat_log_p.exp();
         }
+        // RANGE CHANNEL: high/low of a Brownian bridge from the bar's open (prior close) to its
+        // close, at the session's own diffusion scale as the price received it — `sess_sigma`
+        // times this session's spiral amplification (`last_liq` = amp x impact), times the
+        // disclosed compression dial. Exact inverse transforms for the one-sided extremes,
+        // max drawn first then min; sampling the pair independently is the prototype's stated
+        // approximation (their joint law is not independent). A jump day's range is >= |ret|
+        // by construction — the extremes bracket both endpoints. The uniforms are floored at
+        // 1e-300 so a zero draw cannot mint an infinite bar; the floor is part of the
+        // cross-language contract. Reads `rrng` only, so 0 is bit-identical off.
+        if w.range_scale > 0.0 {
+            let log_px = eq_m.log_p - markdown;
+            let r_s = log_px - bar_prev_px;
+            let sig = sess_sigma * eq_m.last_liq * w.range_scale;
+            let sig2 = sig * sig;
+            let u1 = rrng.next_f64().max(1e-300);
+            let u2 = rrng.next_f64().max(1e-300);
+            hi[i] = bar_prev_px + (r_s + (r_s * r_s - 2.0 * sig2 * u1.ln()).sqrt()) / 2.0;
+            lo[i] = bar_prev_px + (r_s - (r_s * r_s - 2.0 * sig2 * u2.ln()).sqrt()) / 2.0;
+            bar_prev_px = log_px;
+            // VOLUME: elasticity VOL_SLOPE to the range's log-deviation from its slow normal,
+            // a down-day term shaped like the stress innovation (VOL_DOWN calibrated to the
+            // record's RESIDUAL +0.036 — most of the raw +0.12 flows THROUGH the range, and
+            // the model's range is nearly sign-flat, so total down-up reads low: the same
+            // disclosed same-session sign gap the range carries), plus the two-component idio.
+            // The realized-vol scale is read POST-step, one session fresher than the leverage
+            // signal's — stated, and mirrored. Reads `vrng` only; requires the range block.
+            if w.vol_idio > 0.0 {
+                let lnx = (hi[i] - lo[i]).max(1e-300).ln();
+                if !vol_ewma_set {
+                    vol_ewma = lnx;
+                    vol_ewma_set = true;
+                }
+                let rx = lnx - vol_ewma;
+                vol_ewma += vol_ewma_mu * (lnx - vol_ewma);
+                let down = 0.0f64.max(-r_s) / eq_m.scale_var.sqrt();
+                vol_slow = VOL_PHI * vol_slow + vol_slow_innov * vrng.randn();
+                vv[i] = VOL_SLOPE * rx + VOL_DOWN * down + vol_slow + vol_white_sd * vrng.randn();
+            }
+        }
 
         // ---- capital reallocation: spring, scored on positions actually held ---------------
         perf_v = 0.99 * perf_v + 0.01 * (mispricing_pre * ret_e) * 100.0;
@@ -1655,6 +1794,21 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
         disasters: disaster_count,
         sat: if w.sat_beta > 0.0 {
             sp[BURN_IN..].to_vec()
+        } else {
+            Vec::new()
+        },
+        log_hi: if w.range_scale > 0.0 {
+            hi[BURN_IN..].to_vec()
+        } else {
+            Vec::new()
+        },
+        log_lo: if w.range_scale > 0.0 {
+            lo[BURN_IN..].to_vec()
+        } else {
+            Vec::new()
+        },
+        log_volume: if w.vol_idio > 0.0 {
+            vv[BURN_IN..].to_vec()
         } else {
             Vec::new()
         },
@@ -7366,7 +7520,10 @@ fn main() {
     let mut refuge_days = dw.refuge_days;
     let mut sat_beta = dw.sat_beta;
     let mut sat_idio = dw.sat_idio;
+    let mut range_scale = dw.range_scale;
+    let mut vol_idio = dw.vol_idio;
     let mut joint_emit = String::new();
+    let mut bars_emit = String::new();
     let mut jump_rate = dw.jump_rate;
     let mut value_pull = dw.value_pull;
     let mut crowd_name = crowd_name(dw.crowd);
@@ -7459,7 +7616,10 @@ fn main() {
             "-refugedays" => refuge_days = req_f64(&mut it, "-refugedays"),
             "-satbeta" => sat_beta = req_f64(&mut it, "-satbeta"),
             "-satidio" => sat_idio = req_f64(&mut it, "-satidio"),
+            "-rangescale" => range_scale = req_f64(&mut it, "-rangescale"),
+            "-volidio" => vol_idio = req_f64(&mut it, "-volidio"),
             "-jointemit" => joint_emit = req_arg(&mut it, "-jointemit").clone(),
+            "-barsemit" => bars_emit = req_arg(&mut it, "-barsemit").clone(),
             "-jumprate" => jump_rate = req_f64(&mut it, "-jumprate"),
             "-value" => value_pull = req_f64(&mut it, "-value"),
             "-crowdimpact" => crowd_impact = req_f64(&mut it, "-crowdimpact"),
@@ -7594,6 +7754,11 @@ fn main() {
         non_neg("-refugedays", refuge_days);
         non_neg("-satbeta", sat_beta);
         non_neg("-satidio", sat_idio);
+        non_neg("-rangescale", range_scale);
+        non_neg("-volidio", vol_idio);
+        if vol_idio > 0.0 && range_scale <= 0.0 {
+            cli_die("-volidio requires -rangescale > 0: volume rides the range");
+        }
         non_neg("-disasterrate", disaster_rate);
         non_neg("-disastersize", disaster_size);
         if disaster_rate > 0.0 && (disaster_size <= 0.0 || disaster_len <= 0.0) {
@@ -7710,6 +7875,8 @@ fn main() {
         refuge_days,
         sat_beta,
         sat_idio,
+        range_scale,
+        vol_idio,
         value_pull,
         crowd,
         crowd_impact,
@@ -7748,6 +7915,36 @@ fn main() {
                 tsv.push('\n');
             }
             write_or_die(&format!("{joint_emit}-{k:03}.tsv"), &tsv);
+        }
+        return;
+    }
+    // RANGE PROTOTYPE: per-path log price/high/low for grading against the bars anchors
+    // (the bars_anchor conventions, graded python-side). Same contract as -jointemit: a
+    // measurement tap outside the -emit interface, LOG columns per the parity lesson.
+    if !bars_emit.is_empty() {
+        if range_scale <= 0.0 {
+            cli_die("-barsemit requires -rangescale > 0");
+        }
+        for k in 0..paths {
+            let p = simulate(&w, years, seed + k as u64 * 7919);
+            let mut tsv = String::from("logPrice\tlogHigh\tlogLow");
+            if vol_idio > 0.0 {
+                tsv.push_str("\tlogVolume");
+            }
+            tsv.push('\n');
+            for i in 0..p.price.len() {
+                tsv.push_str(&ef(p.price[i].ln()));
+                tsv.push('\t');
+                tsv.push_str(&ef(p.log_hi[i]));
+                tsv.push('\t');
+                tsv.push_str(&ef(p.log_lo[i]));
+                if vol_idio > 0.0 {
+                    tsv.push('\t');
+                    tsv.push_str(&ef(p.log_volume[i]));
+                }
+                tsv.push('\n');
+            }
+            write_or_die(&format!("{bars_emit}-{k:03}.tsv"), &tsv);
         }
         return;
     }
@@ -9129,6 +9326,60 @@ mod contract_tests {
             p.sat.is_empty(),
             "satBeta 0 must produce no satellite series"
         );
+    }
+
+    #[test]
+    fn the_range_channel_is_inert_in_every_frozen_release() {
+        for (v, w) in releases() {
+            assert!(
+                w.range_scale == 0.0,
+                "release {v} predates the range channel and must carry 0"
+            );
+        }
+        // Off half: no bars exist. On half: the extremes bracket every bar — the sidecar's
+        // canary is blind to this dial until it joins the world block, so these are the guards.
+        let off = simulate(&default_world(), 2, DEFAULT_SEED);
+        assert!(off.log_hi.is_empty() && off.log_lo.is_empty());
+        let mut w = default_world();
+        w.range_scale = 1.1;
+        let on = simulate(&w, 2, DEFAULT_SEED);
+        assert_eq!(on.log_hi.len(), on.price.len());
+        let mut prev = on.price[0].ln();
+        for i in 0..on.price.len() {
+            let c = on.price[i].ln();
+            assert!(
+                on.log_hi[i] >= prev.max(c) - 1e-9 && on.log_lo[i] <= prev.min(c) + 1e-9,
+                "bar {i} extremes must bracket open and close"
+            );
+            prev = c;
+        }
+    }
+
+    #[test]
+    fn the_volume_channel_is_inert_in_every_frozen_release() {
+        for (v, w) in releases() {
+            assert!(
+                w.vol_idio == 0.0,
+                "release {v} predates the volume channel and must carry 0"
+            );
+        }
+        // Off half: no series. On half: filled, finite, and volume leaves the RANGE series
+        // bit-identical — the channels share nothing but the sampled bar itself.
+        let off = simulate(&default_world(), 2, DEFAULT_SEED);
+        assert!(off.log_volume.is_empty());
+        let mut rw = default_world();
+        rw.range_scale = 1.1;
+        let bars_only = simulate(&rw, 2, DEFAULT_SEED);
+        let mut w = rw;
+        w.vol_idio = 0.34;
+        let on = simulate(&w, 2, DEFAULT_SEED);
+        assert_eq!(on.log_volume.len(), on.price.len());
+        assert!(on.log_volume.iter().all(|x| x.is_finite()));
+        assert_eq!(
+            on.log_hi, bars_only.log_hi,
+            "volume must not move the sampled bars"
+        );
+        assert_eq!(on.log_lo, bars_only.log_lo);
     }
 
     /// Each dial moves the statistic it was added for, materially, on the same seed — the same

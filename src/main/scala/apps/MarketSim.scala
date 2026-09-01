@@ -247,6 +247,16 @@ object MarketSim:
     "              ;   the default world's own volatility; the realized residual adds the state)",
     "-jointemit P  ; dev tap: per-path logPrice/logSat TSVs (no sidecar) for grading the leg",
     "              ;   against test-data/equity-anchors/joint-coupling-2026-08-31.tsv",
+    "-rangescale X ; INTRA-BAR RANGE: high/low sampled per session from the exact Brownian-",
+    "              ;   bridge extremes at the session's own diffusion scale, times X — the one",
+    "              ;   disclosed identification dial (anchored 1.1 on SPY/QQQ OHLCV).  Default",
+    "              ;   0 = off, consuming no draws",
+    "-volidio X    ; VOLUME: log turnover index riding the range — elasticity 0.59 to the",
+    "              ;   range's deviation from its slow normal plus a two-component persistent",
+    "              ;   idio whose TOTAL sd is X (anchored 0.34).  Requires -rangescale > 0.",
+    "              ;   Default 0 = off, consuming no draws",
+    "-barsemit P   ; dev tap: per-path logPrice/logHigh/logLow[/logVolume] TSVs for grading",
+    "              ;   the bar channels against the bars anchors",
     s"-refugedays X ; half-life in sessions of the settled stress the refuge bid reads, which",
     s"              ;   excludes the current session -- kills the same-day stock-bond coupling the",
     s"              ;   tail hedge corr row grades while the crisis rally keeps the stress LEVEL",
@@ -464,6 +474,32 @@ object MarketSim:
                            // 0.90/1.18/1.92.
     satIdio: Double = 0.0, // idiosyncratic volatility of the satellite leg, per year at UNIT
                            // vol-state; the realized residual vol adds the state variation on top
+    rangeScale: Double = 0.0, // INTRA-BAR RANGE (prototype): high/low sampled per session from
+                           // the EXACT Brownian-bridge extreme distributions, endpoints at the
+                           // observed open (= prior close; no overnight) and close, diffusion
+                           // scale the session's OWN noise sd -- news damp, vol state, leverage
+                           // kick, jump mixing, spiral amplification, all as the price itself
+                           // received them.  The range therefore scales with the session's
+                           // noise, NOT with |return|: the record's corr(lnH/L, |r|) is only
+                           // 0.70-0.72, and a bar derived as a multiple of |r| is detectably
+                           // fake (`bars_anchor` conventions, SPY/QQQ OHLCV).  This dial is the
+                           // one disclosed free parameter: a multiplier on that diffusion scale,
+                           // absorbing the real intraday's sub-BM compression plus the model's
+                           // session/day identification.  Two draws per session from a dedicated
+                           // stream, read only when > 0, so 0 is bit-identical off.
+    volIdio: Double = 0.0, // VOLUME (prototype): a log turnover index riding the RANGE -- the
+                           // record says volume follows the day's travel, not its net move
+                           // (corr with lnH/L 0.54-0.55 vs 0.40-0.44 with |r|), with elasticity
+                           // ~0.6 to the range's deviation from its slow normal and a PERSISTENT
+                           // residual (acf5/acf1 = 0.84: a slow component near AR-0.97 carrying
+                           // ~55% of residual variance, plus white noise).  Structural constants
+                           // frozen from the SPY/QQQ regression (VolSlope 0.59, VolDown 0.045
+                           // from the residual's +0.036 down-up, VolPhi 0.97, slow share 0.55);
+                           // this dial is the TOTAL idiosyncratic sd, the one anchored free
+                           // parameter (record residual sd 0.29-0.38).  Requires the range
+                           // channel -- volume without a range to ride is refused at the CLI.
+                           // Two draws per session from a dedicated stream, read only when > 0,
+                           // so 0 is bit-identical off.
   )
 
   final case class Path(price: Array[Double], rate: Array[Double], fundamental: Array[Double],
@@ -495,8 +531,16 @@ object MarketSim:
                                                  // default world across four releases.
                         disasters: Int,          // BINDING diagnostic for the disaster channel:
                                                  // collapses begun post burn-in on this path.
-                        sat: Array[Double])      // satellite equity leg price (empty when
+                        sat: Array[Double],      // satellite equity leg price (empty when
                                                  // `satBeta` is 0)
+                        logHi: Array[Double],    // intra-bar LOG high/low (empty when
+                        logLo: Array[Double],    // `rangeScale` is 0).  Log, not a level,
+                                                 // unlike price/sat: born in log space and
+                                                 // emitted in log space; a level round-trip
+                                                 // would only add transcendental noise
+                        logVolume: Array[Double])// log turnover index (empty when `volIdio`
+                                                 // is 0); mean-free by construction, the
+                                                 // consumer's detrend convention applies
 
   /** THE shipped world.  `main` seeds its mutable CLI vars from this and `usage` interpolates its
     * numbers, so every default is written in exactly one place.  Help text that restates a constant
@@ -955,6 +999,13 @@ object MarketSim:
     // The satellite leg's own stream (prototype), same survivability contract: constructed
     // unconditionally, read only when `satBeta > 0`, so 0 is bit-identical off.
     val srng = new NumPyRNG(seed ^ 0x5a7e1117L)
+    // The range channel's own stream (prototype), same survivability contract: constructed
+    // unconditionally, read only when `rangeScale > 0` -- two uniforms per session, max then
+    // min, and that draw ORDER is part of the cross-language contract.
+    val rrng = new NumPyRNG(seed ^ 0xca9d1e00L)
+    // The volume channel's own stream (prototype), same survivability contract: two normals
+    // per session, slow innovation then white, and that ORDER is part of the contract.
+    val vrng = new NumPyRNG(seed ^ 0xd011a5e5L)
     val px   = new Array[Double](tot)
     val fv   = new Array[Double](tot)
     val rt   = new Array[Double](tot)
@@ -1047,6 +1098,24 @@ object MarketSim:
     // the leg loads on the OBSERVED return -- markdown and news included).  Draw-free when off.
     var satLogP = 0.0; var satPrevPx = 0.0
     val sp = if w.satBeta > 0.0 then new Array[Double](tot) else Array.emptyDoubleArray
+    // RANGE channel state: the observed log price last session (the bar's open -- no overnight),
+    // and the sampled log high/low.  Independent of the satellite's tracker on purpose: the
+    // channels must not couple through bookkeeping.
+    var barPrevPx = 0.0
+    val hi = if w.rangeScale > 0.0 then new Array[Double](tot) else Array.emptyDoubleArray
+    val lo = if w.rangeScale > 0.0 then new Array[Double](tot) else Array.emptyDoubleArray
+    // VOLUME channel state: the slow AR component, the EWMA of ln(range) that defines the
+    // range's "normal" (half-life 126 sessions -- the grading convention's rolling-median
+    // window, centred), and its first-session initialization flag.
+    var volSlow = 0.0; var volEwma = 0.0; var volEwmaSet = false
+    val volEwmaMu = 1.0 - math.exp(-math.log(2.0) / 126.0)
+    val vv = if w.volIdio > 0.0 then new Array[Double](tot) else Array.emptyDoubleArray
+    // Frozen structural constants of the volume channel -- see the `volIdio` field.  The slow
+    // component carries VolSlowShare of the idio variance at persistence VolPhi; its innovation
+    // sd follows from the stationary-variance identity.
+    val VolSlope = 0.59; val VolDown = 0.045; val VolPhi = 0.97; val VolSlowShare = 0.55
+    val volSlowInnov = w.volIdio * math.sqrt(VolSlowShare) * math.sqrt(1.0 - VolPhi * VolPhi)
+    val volWhiteSd   = w.volIdio * math.sqrt(1.0 - VolSlowShare)
     var crowdFlowSum = 0.0
     var clampsAtBurn = 0
     var eqFloorAtBurn = 0; var eqTailAtBurn = 0; var eqHaltAtBurn = 0
@@ -1183,6 +1252,16 @@ object MarketSim:
       // job, and the clustering rows hold the total.
       val dNoise0 = newsDamp * SigmaN * math.exp(logVol - volNorm) * rng.randn()
       val dNoise  = if w.leverage > 0.0 then dNoise0 * math.exp(w.leverage * levSig) else dNoise0
+      // The session's DIFFUSION SCALE, captured for the range channel below exactly as the
+      // noise term above is built -- news damp, vol state, leverage kick (read BEFORE this
+      // session's update, like `dNoise` itself) -- plus the jump branch's sqrt(1 - jumpVar)
+      // mixing.  Draw-free; 0.0 when the channel is off.
+      val sessSigma =
+        if w.rangeScale > 0.0 then
+          val levMult = if w.leverage > 0.0 then math.exp(w.leverage * levSig) else 1.0
+          val jvMult  = if w.jumpVar > 0.0 then math.sqrt(1.0 - w.jumpVar) else 1.0
+          newsDamp * SigmaN * math.exp(logVol - volNorm) * levMult * jvMult
+        else 0.0
 
       // The jump channel.  Its draws come from `jrng`, NOT `rng`, so `jumpVar = 0` takes the
       // untouched branch below and moves NOTHING ELSE in the path -- the failure mode a shared
@@ -1306,6 +1385,42 @@ object MarketSim:
         satLogP += w.satBeta * (logPx - satPrevPx) + idio
         satPrevPx = logPx
         sp(i) = math.exp(satLogP)
+      // RANGE CHANNEL: high/low of a Brownian bridge from the bar's open (prior close) to its
+      // close, at the session's own diffusion scale as the price received it -- `sessSigma`
+      // times this session's spiral amplification (`lastLiq` = amp x impact), times the
+      // disclosed compression dial.  Exact inverse transforms for the one-sided extremes, max
+      // drawn first then min; sampling the pair independently is the prototype's stated
+      // approximation (their joint law is not independent).  A jump day's range is >= |ret| by
+      // construction -- the extremes bracket both endpoints.  The uniforms are floored at
+      // 1e-300 so a zero draw cannot mint an infinite bar; the floor is part of the
+      // cross-language contract.  Reads `rrng` only, so 0 is bit-identical off.
+      if w.rangeScale > 0.0 then
+        val logPx = eqM.logP - markdown
+        val rS    = logPx - barPrevPx
+        val sig   = sessSigma * eqM.lastLiq * w.rangeScale
+        val sig2  = sig * sig
+        val u1    = math.max(rrng.nextDouble(), 1e-300)
+        val u2    = math.max(rrng.nextDouble(), 1e-300)
+        hi(i) = barPrevPx + (rS + math.sqrt(rS * rS - 2.0 * sig2 * math.log(u1))) / 2.0
+        lo(i) = barPrevPx + (rS - math.sqrt(rS * rS - 2.0 * sig2 * math.log(u2))) / 2.0
+        barPrevPx = logPx
+        // VOLUME: elasticity VolSlope to the range's log-deviation from its slow normal, a
+        // down-day term shaped like the stress innovation (VolDown calibrated to the record's
+        // RESIDUAL +0.036 -- most of the raw +0.12 flows THROUGH the range, and the model's
+        // range is nearly sign-flat, so total down-up reads low: the same disclosed
+        // same-session sign gap the range carries), plus the two-component idio.  The
+        // realized-vol scale is read POST-step, one session fresher than the leverage
+        // signal's -- stated, and mirrored.  Reads `vrng` only; requires the range block.
+        if w.volIdio > 0.0 then
+          val lnx = math.log(math.max(hi(i) - lo(i), 1e-300))
+          if !volEwmaSet then
+            volEwma = lnx
+            volEwmaSet = true
+          val rx = lnx - volEwma
+          volEwma += volEwmaMu * (lnx - volEwma)
+          val down = math.max(0.0, -rS) / math.sqrt(eqM.scaleVar)
+          volSlow = VolPhi * volSlow + volSlowInnov * vrng.randn()
+          vv(i) = VolSlope * rx + VolDown * down + volSlow + volWhiteSd * vrng.randn()
 
       // ---- capital reallocation: spring, scored on positions actually held -------------------
       perfV = 0.99 * perfV + 0.01 * (mispricingPre * retE) * 100.0
@@ -1344,7 +1459,10 @@ object MarketSim:
          eqM.haltDays - eqHaltAtBurn,
          bondStressSum / n, bondStressHi.toDouble / n, w.duration, crowdFlowSum / n,
          disasterCount,
-         if w.satBeta > 0.0 then sp.drop(BurnIn) else Array.emptyDoubleArray)
+         if w.satBeta > 0.0 then sp.drop(BurnIn) else Array.emptyDoubleArray,
+         if w.rangeScale > 0.0 then hi.drop(BurnIn) else Array.emptyDoubleArray,
+         if w.rangeScale > 0.0 then lo.drop(BurnIn) else Array.emptyDoubleArray,
+         if w.volIdio > 0.0 then vv.drop(BurnIn) else Array.emptyDoubleArray)
 
   // ---- stylised-fact measurements ------------------------------------------------------------
   def dailyReturns(px: Array[Double]): Array[Double] =
@@ -4290,7 +4408,10 @@ object MarketSim:
     var refugeDays = dw.refugeDays
     var satBeta = dw.satBeta
     var satIdio = dw.satIdio
+    var rangeScale = dw.rangeScale
+    var volIdio = dw.volIdio
     var jointEmit = ""
+    var barsEmit = ""
     var inflProb = dw.inflProb; var inflSize = dw.inflSize
     var inflSpeed = dw.inflSpeed; var rateSpeed = dw.rateSpeed
     var discount = dw.discount; var margin = dw.margin
@@ -4366,7 +4487,10 @@ object MarketSim:
       case "-refugedays" => refugeDays = numOr("-refugedays", consumeNext)
       case "-satbeta"    => satBeta = numOr("-satbeta", consumeNext)
       case "-satidio"    => satIdio = numOr("-satidio", consumeNext)
+      case "-rangescale" => rangeScale = numOr("-rangescale", consumeNext)
+      case "-volidio"    => volIdio = numOr("-volidio", consumeNext)
       case "-jointemit"  => jointEmit = consumeNext
+      case "-barsemit"   => barsEmit = consumeNext
       // Rejected, not silently reinterpreted: -flight was a rate cut SPEED per year and -easing is
       // a cut CAP in rate points, so every recorded -flight value is wrong by two orders of
       // magnitude under the new mechanism and would still have produced a plausible-looking run.
@@ -4431,7 +4555,10 @@ object MarketSim:
     nonNeg("-stress", stress); nonNeg("-beta", beta); nonNeg("-volofvol", volOfVol)
     nonNeg("-value", valuePull); nonNeg("-recoverydrag", recoveryDrag)
     nonNeg("-newsrate", newsRate); nonNeg("-newssize", newsSize); nonNeg("-refugedays", refugeDays)
-    nonNeg("-satbeta", satBeta); nonNeg("-satidio", satIdio)
+    nonNeg("-satbeta", satBeta); nonNeg("-satidio", satIdio); nonNeg("-rangescale", rangeScale)
+    nonNeg("-volidio", volIdio)
+    if volIdio > 0.0 && rangeScale <= 0.0 then
+      usage("-volidio requires -rangescale > 0: volume rides the range")
     nonNeg("-disasterrate", disasterRate); nonNeg("-disastersize", disasterSize)
     share("-disasterrecover", disasterRecover)
     // beliefShare 1.0 would unmoor perceived fair from the fundamental entirely -- the pull
@@ -4489,7 +4616,8 @@ object MarketSim:
                   refugeDays = refugeDays,
                   inflProb = inflProb, inflSize = inflSize,
                   inflSpeed = inflSpeed, rateSpeed = rateSpeed, discount = discount, margin = margin,
-                  satBeta = satBeta, satIdio = satIdio)
+                  satBeta = satBeta, satIdio = satIdio, rangeScale = rangeScale,
+                  volIdio = volIdio)
 
     // SATELLITE PROTOTYPE: write per-path primary+satellite LOG prices for grading against the
     // SPY-QQQ coupling anchors (the joint_anchor conventions, graded python-side).  Deliberately
@@ -4507,6 +4635,21 @@ object MarketSim:
           s"${ef(math.log(p.price(i)))}\t${ef(math.log(p.sat(i)))}"
         }
         f"$jointEmit-$k%03d.tsv".asPath.writeLines(rows)
+      return
+    // RANGE PROTOTYPE: per-path log price/high/low for grading against the bars anchors
+    // (the bars_anchor conventions, graded python-side).  Same contract as -jointemit: a
+    // measurement tap outside the -emit interface, LOG columns per the parity lesson.
+    if barsEmit.nonEmpty then
+      if rangeScale <= 0.0 then usage("-barsemit requires -rangescale > 0")
+      for k <- 0 until paths do
+        val p = simulate(w, years, seed + k.toLong * 7919L)
+        val header = if volIdio > 0.0 then "logPrice\tlogHigh\tlogLow\tlogVolume"
+                     else "logPrice\tlogHigh\tlogLow"
+        val rows = header +: Vector.tabulate(p.price.length) { i =>
+          val base = s"${ef(math.log(p.price(i)))}\t${ef(p.logHi(i))}\t${ef(p.logLo(i))}"
+          if volIdio > 0.0 then s"$base\t${ef(p.logVolume(i))}" else base
+        }
+        f"$barsEmit-$k%03d.tsv".asPath.writeLines(rows)
       return
     if calibrateN > 0 then
       calibrate(anchors, calibrateN, w, seed)
