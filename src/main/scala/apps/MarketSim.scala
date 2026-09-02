@@ -263,6 +263,8 @@ object MarketSim:
     s"              ;   (default ${Defaults.newsRate}; 0 off, consuming no draws)",
     s"-newssize X   ; log decline per news event (default ${Defaults.newsSize}; 0.033 = a -3.3% day).",
     "              ;   Rarer-larger events buy more asymmetry and kurtosis per unit of variance",
+    "              ;   With -newsrate R, needs R*X^2 < 0.0123 (X below 0.097 at the default rate):",
+    "              ;   past it there is no diffusion left to displace, and the run is refused",
     "-satbeta X    ; SATELLITE EQUITY LEG: a second, higher-beta market (the Nasdaq to the",
     "              ;   default world's S&P) whose return is X times the primary's observed",
     "              ;   return plus idio noise on the primary's own vol state.  When on, -emit",
@@ -400,6 +402,9 @@ object MarketSim:
                               // Deterministic size -- rarer-larger events buy more asymmetry and
                               // more kurtosis per unit of variance than frequent-small ones
                               // (measured 1.5x0.04 vs 6x0.02: dx 3.4 vs 1.3 at equal variance).
+                              // Bounded with newsRate by the diffusion budget it displaces --
+                              // newsRate*newsSize^2 < 252*SigmaN^2 (0.0123; size below 0.097 at
+                              // the default rate) -- and refused at the CLI past it.
                               // The drift cost newsRate*newsSize is returned deterministically on
                               // BOTH legs, so the dial does not move expected return.
     jumpSkew: Double = 0.4,   // how far each jump is shifted DOWN, in units of its own sd -- a
@@ -890,6 +895,33 @@ object MarketSim:
   def jumpScale(w: World): Double =
     SigmaN * math.sqrt(w.jumpVar / (w.jumpRate * (1.0 + w.jumpSkew * w.jumpSkew)))
 
+  /** The diffusion damp the news channel applies.  News variance DISPLACES diffusive noise instead
+    * of stacking on top of it, the same budget rule `jumpVar` enforces with its (1 - jumpVar)
+    * factor: the record's 16% already contains its bad-news days, so a world calibrated without
+    * them must yield generic variance when the channel turns on -- added instead, the channel
+    * taxed equity vol and the crash rate ~5 seed-sd and no amplifier dial could pay it back.  Sized
+    * against SigmaN's own per-session variance; the vol-state factor is centred at 1 by `volNorm`,
+    * so the unconditional budget is the right ruler.  1.0 when the channel is off.  0 once the news
+    * variance has consumed the whole budget -- a price running on jumps alone, whose bar channels
+    * have no diffusion sd to level on (`worldLevel` divides by the MEAN diffusion sd);
+    * `newsBudgetRefusal` turns that world away at the CLI rather than letting it reach a NaN bar. */
+  def newsDampAt(newsRate: Double, newsSize: Double): Double =
+    if newsRate > 0.0 then
+      math.sqrt(math.max(1.0 - (newsRate / DaysPerYear) * newsSize * newsSize / (SigmaN * SigmaN), 0.0))
+    else 1.0
+
+  /** The CLI's refusal text for a news channel past the diffusion budget -- `newsRate * newsSize^2`
+    * must stay below `252 * SigmaN^2` -- stated at the caller's rate as the largest admissible
+    * size; `None` inside the budget or with the channel off. */
+  def newsBudgetRefusal(newsRate: Double, newsSize: Double): Option[String] =
+    if newsRate > 0.0 && newsDampAt(newsRate, newsSize) <= 0.0 then
+      val budget  = DaysPerYear * SigmaN * SigmaN
+      val maxSize = math.sqrt(budget / newsRate)
+      Some(f"-newsrate $newsRate -newssize $newsSize leave no diffusion to displace: " +
+        f"newsRate*newsSize^2 must stay below 252*SigmaN^2 = $budget%.5f " +
+        f"(at -newsrate $newsRate, -newssize below $maxSize%.4f)")
+    else None
+
   /** ONE price-formation mechanism for every traded asset: value demand toward `fair`, plus
     * external flow and noise, amplified when THIS market's liquidity has withdrawn after one-sided
     * selling (measured against a slowly-adapting scale, so symmetric turbulence of any size leaves
@@ -1311,18 +1343,8 @@ object MarketSim:
     var settledStress = 0.0
     val settleMu = if w.refugeDays > 0.0 then 1.0 - math.exp(-math.log(2.0) / w.refugeDays) else 0.0
     val volNorm = (w.volOfVol * w.volOfVol) / math.max(1e-9, 1.0 - w.volPersist * w.volPersist)
-    // News variance DISPLACES diffusive noise instead of stacking on top of it, the same budget
-    // rule `jumpVar` enforces with its (1 - jumpVar) factor: the record's 16% already contains
-    // its bad-news days, so a world calibrated without them must yield generic variance when the
-    // channel turns on -- added instead, the channel taxed equity vol and the crash rate ~5
-    // seed-sd and no amplifier dial could pay it back.  Sized against SigmaN's own per-session
-    // variance; the vol-state factor is centred at 1 by `volNorm`, so the unconditional budget is
-    // the right ruler.  1.0 when the channel is off.
-    val newsDamp =
-      if w.newsRate > 0.0 then
-        math.sqrt(math.max(1.0 - (w.newsRate / DaysPerYear) * w.newsSize * w.newsSize /
-          (SigmaN * SigmaN), 0.0))
-      else 1.0
+    // News variance DISPLACES diffusive noise (see `newsDampAt`); 1.0 when the channel is off.
+    val newsDamp = newsDampAt(w.newsRate, w.newsSize)
     val crowdWin = w.crowd match
       case Crowd.Trend(d) => math.max(2, math.round(d * 252.0 / 365.25).toInt)
       case _              => 0
@@ -4984,6 +5006,7 @@ object MarketSim:
     nonNeg("-stress", stress); nonNeg("-beta", beta); nonNeg("-volofvol", volOfVol)
     nonNeg("-value", valuePull); nonNeg("-recoverydrag", recoveryDrag)
     nonNeg("-newsrate", newsRate); nonNeg("-newssize", newsSize); nonNeg("-refugedays", refugeDays)
+    newsBudgetRefusal(newsRate, newsSize).foreach(why => usage(why))
     nonNeg("-satbeta", satBeta); nonNeg("-satidio", satIdio); nonNeg("-rangescale", rangeScale)
     nonNeg("-rangedown", rangeDown)
     if rangeDown > 0.0 && rangeScale <= 0.0 then

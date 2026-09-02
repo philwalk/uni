@@ -44,7 +44,7 @@ Two checks, with different jobs and different lifetimes. Use both.
 exit 0. Nothing to parse, so a caller can assert on it without depending on any other output:
 
 ```
-[ "$(market_sim.exe -version)" = "0.21.0" ] || { echo "wrong simulator" >&2; exit 1; }
+[ "$(market_sim.exe -version)" = "0.23.0" ] || { echo "wrong simulator" >&2; exit 1; }
 ```
 
 This catches the wrong binary, and it is the only check available *before* you spend the run. It
@@ -76,41 +76,34 @@ sidecar using schema-2 field names gets one with no tail channel and no error. I
 0.22.1, when each `fidelity` row gained `aggregation` and `horizonYears`, `ratio` became nullable
 beside a new `percentile` (see [Reading an extreme](#reading-an-extreme)), and the `world` block
 gained the five `disaster*` dials — the same no-tail-channel trap as schema 3, one level deeper.
-It went 6 → 7 at 0.23.0: the `world` block gained the four valuation-cycle dials and the six
-asymmetry dials (`leverage`, `downShock`, `jumpSkew`, `newsRate`, `newsSize`, `refugeDays`), and
-`gate.ensembleYears` records the verdict horizon. It went 7 → 8 when the `world` block gained the
-satellite leg's `satBeta` and `satIdio`, and the TSV a `logSat` column — present ONLY when
-`satBeta > 0`, and carrying the NATURAL LOG of the satellite price rather than a level. A
-satellite-off schema-8 file is byte-identical to its schema-7 counterpart except for the schema
-number and the two new (zero) world fields, so a schema-7 reader that ignores unknown columns and
-fields keeps working; the log convention exists because a level near 10^6 rendered at six decimals
-sits within reach of a cross-language rounding tie the twins' byte-parity checks would trip on.
-**Every emitted channel is graded, and the verdict names its own scope.** Since schema 9 the
-`gate` block carries `anchors` (which ruler graded this world — a `-anchors nasdaq` run was
-otherwise indistinguishable from an S&P one in its own provenance record); since schema 10
-`gradedSeries` lists every series the verdict was computed from — `price` and `bond`, plus
-`logSat`, `logHigh`/`logLow` and `logVolume` exactly when their channel ran — beside
-`ungradedChannelSeries`. That last field is **empty in every world the model can currently emit**:
-the satellite leg is graded by the `satellite *` rows and the sampled bars by the `bar *` rows, so
-a `"fidelity": "PASS"` beside a `logSat` column is a verdict *about* that column too. It stays in
-the schema because the next channel to arrive is ungraded until someone anchors it, and that has
-to be said beside the data rather than in a document nobody opens. Since schema 10 a top-level
-`channels` block also carries the readings those rows grade, led by the world level the channels
-were sampled at, so a channel FAIL can be sized from the file alone — `fidelityFailed` names a band,
-not a value.
+It went 6 → 10 at 0.23.0 (7 through 9 were never in a release). The `world` block gained the four
+valuation-cycle dials, the six asymmetry dials (`leverage`, `downShock`, `jumpSkew`, `newsRate`,
+`newsSize`, `refugeDays`), the satellite leg's `satBeta`/`satIdio` and the bar channels'
+`rangeScale`/`rangeDown`/`volIdio`. `gate` gained `ensembleYears` (the verdict horizon), `anchors`
+(which ruler graded this world — a `-anchors nasdaq` run was otherwise indistinguishable from an
+S&P one in its own provenance record), and `gradedSeries`, which lists every series the verdict was
+computed from — `price` and `bond`, plus `logSat`, `logHigh`/`logLow` and `logVolume` exactly when
+their channel ran — beside `ungradedChannelSeries`. A top-level `channels` block carries the
+readings the channel rows grade, led by the world level the channels were sampled at, so a channel
+FAIL can be sized from the file alone — `fidelityFailed` names a band, not a value. The TSV gained
+columns that exist only when their channel is on: `logSat` (`satBeta > 0`), `logHigh`/`logLow`
+(`rangeScale > 0` — the sampled intra-bar extremes; the bar's open is the prior close, the model
+has no overnight) and `logVolume` (`volIdio > 0` — a mean-free log turnover index; apply your own
+detrend convention as you would to a real series). Every one carries a NATURAL LOG rather than a
+level, because a level near 10^6 rendered at six decimals sits within reach of a cross-language
+rounding tie the twins' byte-parity checks would trip on. A channels-off schema-10 file differs
+from its schema-6 counterpart in the schema number, the new zero-valued world fields and the new
+`gate` fields, so a schema-6 reader that ignores unknown columns and fields keeps working.
 
-This was the trap worth closing: a channel that is bit-identical off cannot perturb the graded
-series, which is what makes it safe to add — and is exactly why a verdict computed from the
-primary leg alone could not see it. Disclosure would have been the cheap answer; grading is the
+**Every emitted channel is graded, and the verdict names its own scope.** `ungradedChannelSeries`
+is **empty in every world the model can currently emit**: the satellite leg is graded by the
+`satellite *` rows and the sampled bars by the `bar *` rows, so a `"fidelity": "PASS"` beside a
+`logSat` column is a verdict *about* that column too. It stays in the schema because the next
+channel to arrive is ungraded until someone anchors it, and that has to be said beside the data
+rather than in a document nobody opens. A channel that is bit-identical off cannot perturb the
+graded price series, which is what makes it safe to add — and is exactly why a verdict computed
+from the primary leg alone could not see it. Disclosure would be the cheap answer; grading is the
 right one.
-
-It went 8 → 9 when the `world` block gained the bar channels' `rangeScale` and `volIdio`, and the
-TSV the columns `logHigh`/`logLow` (present only when `rangeScale > 0` — log prices of the sampled
-intra-bar extremes; the bar's open is the prior close, the model has no overnight) and `logVolume`
-(present only when `volIdio > 0` — a mean-free log turnover index; apply your own detrend
-convention as you would to a real series). Same log convention, same backward-compatibility shape:
-a bars-off schema-9 file differs from its schema-8 counterpart only in the schema number and the
-two new zero fields.
 
 **A version check alone does not pin behaviour.** A run made with `-depth 0.5` or a non-default
 `-crowd` looks like a default run to any version check. A consumer that calibrated against the
@@ -130,8 +123,8 @@ place, so a failed reinstall silently leaves the previous one there. Install to 
 invoke the absolute path, so the path itself carries the assertion:
 
 ```
-cargo install vastblue-uni@0.21.0 --example market_sim --root ~/.local/uni-0.21.0
-~/.local/uni-0.21.0/bin/market_sim.exe -version
+cargo install vastblue-uni@0.23.0 --example market_sim --root ~/.local/uni-0.23.0
+~/.local/uni-0.23.0/bin/market_sim.exe -version
 ```
 
 Exe-versus-library mismatch is not a risk — the example links the library from the same crate. The
@@ -404,8 +397,7 @@ rather than hidden inside it.
 volatility and `-rangescale` a multiple of the session's vol state re-levelled onto it — the level
 is solved once per WORLD from a fixed ensemble, never read off the path being emitted, because a
 path's own whole-path variance leaks its future into every window (years 1–10 of a bar series
-predicted the log volatility of years 11–100 at +0.81 against +0.06 in a channel-free control, an
-external consumer's measurement) — so the same values read the same coupling at any admissible
+predicted the log volatility of years 11–100 at +0.81 against +0.06 in a channel-free control) — so the same values read the same coupling at any admissible
 world: on the `-anchors nasdaq` recipe the leg measures correlation 0.85 and volatility ratio 1.41,
 as on the default world. Whether a
 second leg at 1.4x a 25%-volatility primary is the pair you want is a modelling choice, not a
@@ -551,7 +543,7 @@ with it.
 | `-jumpskew` | how far each jump is shifted down, in its own sds; variance-normalised, so deeper skew means smaller jumps, not fatter tails | 0.7 |
 | `-leverage` | the leverage effect: a decline raises the NEXT session's diffusive volatility by `exp(leverage * decline-in-sds)`, saturated at 4 sds; a rally raises nothing. Reads the same session's news jump | 0.12 |
 | `-newsrate` | fair-value news jumps per year — permanent down-jumps the price reprices the same session, gap-invariant; the downside-asymmetry channel, variance-DISPLACING | 1.3 |
-| `-newssize` | log decline per news event (0.033 = a −3.3% day); rarer-larger buys more asymmetry and kurtosis per unit of variance | 0.033 |
+| `-newssize` | log decline per news event (0.033 = a −3.3% day); rarer-larger buys more asymmetry and kurtosis per unit of variance. Bounded with `-newsrate`: rate × size² must stay below 0.0123 (size below 0.097 at the default rate) — past it there is no diffusion left to displace, and the CLI refuses the world | 0.033 |
 | `-downshock` | transitory sign asymmetry on the equity shock; retired as a default by the news channel — pays vr60 ~+0.02 per 0.01, its recovery IS trend | 0 |
 | `-trendshare` | mandate level for trend-following capital (a spring, not a wall) | 0.055 |
 | `-crowdimpact` | price pressure per unit of exposure the crowd **trades** in a session — one rule for every crowd | 0.030 |

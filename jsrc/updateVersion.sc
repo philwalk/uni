@@ -171,12 +171,26 @@ object UpdateVersion {
     val regex4 = """How the simulator ships \([0-9]+\.[0-9]+\.[0-9]+\)"""
     val target4 = s"How the simulator ships ($newVersion)"
 
+    // Version-shaped sites in docs/MarketSimWorlds.md that a reader copies verbatim: the
+    // `cargo install` pin, the versioned install root beside it, and the `-version` assertion.
+    // release-and-publish.sh's stale-pin check sees only `using dep` lines, so this sweep is
+    // the one thing that moves them.
+    val regex5 = """vastblue-uni@[0-9]+\.[0-9]+\.[0-9]+"""
+    val target5 = s"vastblue-uni@$newVersion"
+    val regex6 = """\.local/uni-[0-9]+\.[0-9]+\.[0-9]+"""
+    val target6 = s".local/uni-$newVersion"
+    val regex7 = """-version\)" = "[0-9]+\.[0-9]+\.[0-9]+""""
+    val target7 = s"""-version)" = "$newVersion""""
+
     val updated = if isHistory(p) then lines else lines.map( s =>
       if s.contains("// pinned") then s
       else s.replaceAll(regex1, target1)
             .replaceAll(regex2, target2)
             .replaceAll(regex3, target3)
             .replaceAll(regex4, target4)
+            .replaceAll(regex5, target5)
+            .replaceAll(regex6, target6)
+            .replaceAll(regex7, target7)
     )
     writeIfChanged(p, lines, updated)
   }
@@ -252,6 +266,9 @@ object UpdateVersion {
     """"org\.vastblue"\s*%%\s*"uni"\s*%\s*"([0-9]+\.[0-9]+\.[0-9]+)"""".r,
     """uni_3-([0-9]+\.[0-9]+\.[0-9]+)\.jar""".r,
     """How the simulator ships \(([0-9]+\.[0-9]+\.[0-9]+)\)""".r,
+    """vastblue-uni@([0-9]+\.[0-9]+\.[0-9]+)""".r,
+    """\.local/uni-([0-9]+\.[0-9]+\.[0-9]+)""".r,
+    """-version\)" = "([0-9]+\.[0-9]+\.[0-9]+)"""".r,
   )
 
   /** Re-reads what was just written and reports every version site that does not read `version`.

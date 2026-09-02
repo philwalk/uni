@@ -564,3 +564,20 @@ class MarketSimContractSuite extends FunSuite:
     assertEquals(MarketSim.verdictSpec(true, 200, 300, 100), (300, MarketSim.GateYears))
     assertEquals(MarketSim.verdictSpec(true, 0, 40, 33), (40, 33))
   }
+
+  test("a news channel past the diffusion budget is refused") {
+    // The news channel displaces diffusive variance, so past newsRate * newsSize^2 =
+    // 252 * SigmaN^2 there is none left: the price runs on jumps alone and the bar channels'
+    // world level (realized sd over the MEAN diffusion sd) has no denominator.  Such a world is
+    // refused at the CLI, not clamped into a NaN bar -- and -calibrate's ranges cannot reach it.
+    val dw = MarketSim.Defaults
+    assert(MarketSim.newsBudgetRefusal(dw.newsRate, dw.newsSize).isEmpty)
+    assert(MarketSim.newsBudgetRefusal(0.0, 1.0).isEmpty, "rate 0 is the channel off")
+    assert(MarketSim.newsBudgetRefusal(1.3, 0.097).isEmpty, "just inside the budget")
+    assert(MarketSim.newsDampAt(1.3, 0.10) <= 0.0, "past it the damp clamps to nothing")
+    val why = MarketSim.newsBudgetRefusal(1.3, 0.10).getOrElse(fail("past the budget is refused"))
+    assert(why.contains("0.0975"), why)
+    def hi(name: String): Double =
+      MarketSim.CalibrateRanges.find(_._1 == name).map(_._3).getOrElse(fail(s"no range for $name"))
+    assert(MarketSim.newsBudgetRefusal(hi("newsRate"), hi("newsSize")).isEmpty)
+  }

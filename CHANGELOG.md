@@ -25,9 +25,8 @@ Two draw-free belief channels close it, both bit-identical off at 0:
   capYears-fold: 2.3-5.2, measured).
 
 The two halves are a PAIR: alone, the cap term fails the variance-ratio band (1.16) and beliefs
-alone read all lower wing; the belief half REFUNDS the vr60 the cap half spends. `drift` 0.118 ->
-0.120 compensates the cycle's return cost; the 0.22.1 world is frozen as `V0_22_1` in the release
-table.
+alone read all lower wing; the belief half REFUNDS the vr60 the cap half spends. The 0.22.1 world
+is frozen as `V0_22_1` in the release table.
 
 Graded on a new fidelity row, `valuation dispersion` (band 0.15-0.55, loss target 0.30 at
 judgment 0.5) — a BAND, never a point ratio, because the record has no observable fair value and
@@ -35,24 +34,20 @@ CAPE is a proxy, with the haircut stated in the fixture — plus a two-sided mec
 (`valuation cycle engages, not unmoored`), an off-world in the sweep, the binding diagnostic
 printed in every report (`valuation gap sd log(p/fair) ... century max ... over fair`), and
 contract tests in both twins pinning bit-identity at zero, release inheritance, and
-discrimination. `EmitSchema` 6 -> 7: `world` gained the four cycle dials and the six asymmetry
-dials below (`leverage`, `downShock`, `jumpSkew`, `newsRate`, `newsSize`, `refugeDays`).
+discrimination.
 
-The cycle was then RETUNED against a measured mania-anchor vector (Shiller 1881-2023, log CAPE
-about its mean: sd 0.415, monthly-AR1 half-life 11.5y, BOTH wings near 27.5% of months past
-±0.25 log — the record's valuation wings are SYMMETRIC, so a mania was never a missing
-upper-wing channel, just amplitude and persistence this cycle lacked; and at every major peak
-the 3-year resolution is price falling, never earnings catching up). What the shipped world
-reads at 1.5/0.95: dispersion 0.33 — inside the proxy windows' own 0.24-0.41 — with a per-path
-cycle of half-life 7.9y and both wings near 23%, roughly HALF the record's cycle from a fifth
-of it. Still disclosed: the ensemble century max stays near +11% over FAIR (the ensemble's
-mean gap sits below fair; a collapse from a 2x-fair peak remains out of reach — `-capyears 3`
-pays vr60 1.20 and d10 1.69 at the final world), and the model's cycle is more REGULAR than
-the record's (5y autocorrelation 0.84 vs 0.55, out of reach from above at every setting).
-Priced, beyond seed noise: d10 1.34 -> 1.39 and d20 2.79 -> 2.90 — the slow epochs buy
-underwater time on the way to the record's dispersion — against vr60 1.13 -> 1.12,
-crashes 1.03 -> 0.97, and the record moving to a TYPICAL history on the dispersion row
-(real@ 78% -> 39%).
+The defaults are anchored on a measured mania vector (Shiller 1881-2023, log CAPE about its mean:
+sd 0.415, monthly-AR1 half-life 11.5y, BOTH wings near 27.5% of months past ±0.25 log — the
+record's valuation wings are SYMMETRIC, so a mania is amplitude and persistence, not a missing
+upper-wing channel; and at every major peak the 3-year resolution is price falling, never earnings
+catching up). The shipped world reads dispersion 0.33 — inside the proxy windows' own 0.24-0.41 —
+with a per-path cycle of half-life 7.9y and both wings near 23%, roughly HALF the record's cycle
+from a fifth of it, and the record reads as a TYPICAL history on the row (real@ 39%). Disclosed:
+the ensemble century max stays near +11% over FAIR (the ensemble's mean gap sits below fair; a
+collapse from a 2x-fair peak remains out of reach — `-capyears 3` pays vr60 1.20 and d10 1.69),
+and the model's cycle is more REGULAR than the record's (5y autocorrelation 0.84 vs 0.55, out of
+reach from above at every setting). The slow epochs buy underwater time on the way to the record's
+dispersion — the d10 and d20 moves in the table below are the price.
 
 **What it moves, and the two rulers that read part of it as regression:**
 
@@ -83,29 +78,28 @@ sits inside the record on both horizons.
 
 **FIXED — the twins' paths could diverge by one ulp through native libm calls.** The momentum
 crowd's `tanh` disagreed between the JVM and Rust on a cycle-world input after four releases of
-input luck, and rebuilding tanh from the NATIVE `exp` only moved the divergence into exp's own
-wide-argument ulps — the PARITY.md `log` class, twice. `expDet`/`exp_det` is the fix: Cody-Waite
-reduction with fdlibm's split ln2 as bit patterns, a fixed Horner Taylor, and 2^k from raw
-exponent bits — every operation IEEE-exact-or-fixed, so the twins agree to the bit BY CONSTRUCTION
-(~2 ulp accuracy, invisible to a behavioural squash). Both squash sites use it. The cost is one
-cross-release compatibility: pre-0.23.0 paths reproduce STATISTICALLY but not bit-for-bit at any
-dial setting, because `trendPos` moved off the native tanh. Use it for any future transcendental
-that must match across the twins.
+input luck (rebuilding it from the NATIVE `exp` only inherits exp's own wide-argument ulps — the
+PARITY.md `log` class). `expDet`/`exp_det` is the fix: Cody-Waite reduction with fdlibm's split ln2
+as bit patterns, a fixed Horner Taylor, and 2^k from raw exponent bits — every operation
+IEEE-exact-or-fixed, so the twins agree to the bit BY CONSTRUCTION (~2 ulp accuracy, invisible to
+a behavioural squash). Both squash sites use it. The cost is one cross-release compatibility:
+pre-0.23.0 paths reproduce STATISTICALLY but not bit-for-bit at any dial setting, because
+`trendPos` moved off the native tanh. Use it for any future transcendental that must match across
+the twins.
 
 Per the defaults-change rule, every `-noise`-frozen spread was re-measured at this release's
-final world — the persistence retune above, with the outgoing world run as the control
-(`volSd` 0.13, `retVolSd` 0.27, `kurtSd` 1.17, `ac1Sd` 0.11, `crashesSd` 0.26, `medDepthSd`
-0.17, `worstDepthSd` 0.19, `semiExcessSd` 1.54, `levCorrSd` 0.44, `tailHedgeSd` 0.24, `vr`
-0.35, `valuation dispersion` 0.64 — the wider cycle makes single-history dispersion twice as
-variable, which is exactly the record's own window-dependence — `d5` 0.19, `d10` 0.45, `d20`
-2.38, bond vol 0.52, bond growth-crash 1.48, infl-crash 1.99, bond depth 0.36; kurtosis stays
-pinned twice as tightly as pre-0.23 because the rarer-larger jump pair narrows single-history
-spread) — and the measured tables in `docs/MarketSimWorlds.md` were regenerated at it. The
-calibration loss on the frozen ensemble reads **0.796** against the outgoing world's 0.865
-under the same final weights (neither comparable to 0.22.1's 0.579: the target set gained the
-valuation row and the three asymmetry rows below, and the weights re-froze). `beliefShare` and
-`capYears` joined `-calibrate`'s ranges. The Nasdaq recipe inherits every defaults change and
-still passes all three gate classes unchanged.
+world, with the outgoing world run as the control (`volSd` 0.13, `retVolSd` 0.27, `kurtSd` 1.17,
+`ac1Sd` 0.11, `crashesSd` 0.26, `medDepthSd` 0.17, `worstDepthSd` 0.19, `semiExcessSd` 1.54,
+`levCorrSd` 0.44, `tailHedgeSd` 0.24, `vr` 0.35, `valuation dispersion` 0.64 — the wider cycle
+makes single-history dispersion twice as variable, which is exactly the record's own
+window-dependence — `d5` 0.19, `d10` 0.45, `d20` 2.38, bond vol 0.52, bond growth-crash 1.48,
+infl-crash 1.99, bond depth 0.36; kurtosis stays pinned twice as tightly as pre-0.23 because the
+rarer-larger jump pair narrows single-history spread) — and the measured tables in
+`docs/MarketSimWorlds.md` were regenerated at it. The calibration loss on the frozen ensemble
+reads **0.796** (not comparable to 0.22.1's 0.579: the target set gained the valuation row and the
+three asymmetry rows below, and the weights re-froze). `beliefShare` and `capYears` joined
+`-calibrate`'s ranges. The Nasdaq recipe inherits every defaults change and still passes all three
+gate classes unchanged.
 
 **The verdict is graded at the calibration horizon.** Every band and anchor weight is calibrated
 on 100-year ensembles, and several graded statistics grow with the measurement window — sd
@@ -155,8 +149,7 @@ histories; `test-data/bond-anchors/tailcorr-2026-08-31.tsv` — the SPY/TLT and 
 
 All three carry judgment 0.5 with `-noise`-frozen spreads and NO gate bands — first-cycle
 disclosure, the `d20` pattern; bands wait for a release of margin data. On all three the record
-now reads as a TYPICAL single history of this model (43rd / 47th / 22nd percentile, from
-84th / 6th / above-all-200).
+reads as a TYPICAL single history of this model (43rd / 47th / 22nd percentile).
 
 **NEW MECHANISMS, and a defaults change — the asymmetry adoption.** Three channels close the
 rows above; each consumes no draws when off, is bit-identical off, and is pinned inert in every
@@ -181,7 +174,11 @@ frozen release by contract tests in both twins:
   measured), where the permanent step leaks ~+0.02 of vr60 at FULL effect (four-seed mean;
   neither the momentum crowd nor the recovery drag carries it — both measured). Its variance
   DISPLACES diffusive noise, the `jumpVar` budget rule: added on top instead, equity vol and
-  the crash rate pay ~5 seed-sd and no amplifier dial buys them back. Rarer-larger events buy
+  the crash rate pay ~5 seed-sd and no amplifier dial buys them back. The budget bounds the
+  pair: `newsRate * newsSize^2` must stay below `252 * SIGMA_N^2` (0.0123; size below 0.097 at
+  the default rate) — past it there is no diffusion left to displace, the price runs on jumps
+  alone and the bar channels' world level has no diffusion sd to stand on, so the CLI refuses
+  the world naming the bound (`-calibrate`'s ranges cannot reach it). Rarer-larger events buy
   more asymmetry and more kurtosis per unit of variance (at equal variance, 1.5/yr x -4% buys
   +3.4 of excess where 6/yr x -2% buys +1.3). Draws come from a dedicated stream; a
   deterministic compensator returns the drift cost on both legs. `-downshock` ships at 0 —
@@ -200,27 +197,20 @@ rarer-larger (`-jumpvar` 0.14 at `-jumprate` 0.0035), and stress 5.15 / volOfVol
 volPersist 0.992 / valuePull 0.056 / recoveryDrag 8.5 / drift 0.122 / refuge 0.115 hold the rest
 of the world on its anchors. All three mechanisms joined `-calibrate`'s ranges.
 
-Verified at 200x100 as 8-replicate means against the pre-adoption world: the three asymmetry
-rows read **1.06 / 0.95 / 0.87** of their records at the shipped world (from -0.66 / 0.30 /
-2.02), `bond growth-crash` 1.44 -> 1.09, clustering lag 1 lands ON the century anchor (0.96 ->
-1.04), `bond depth vs vol` reads 1.29 (the easing re-solve below spends its head-room on the
-`-crossasset` ladder), d20 3.13 -> 2.90, d5/d10/bond vol/bond infl-crash inside 2 seed-sd, and
-the seed-7 vr60 failure is unchanged from the prior world (1.15-1.18 on that seed both ways;
-the other three gate seeds PASS all three classes). **Two rows gave ground beyond seed noise as this adoption's priced costs: clustering lag 20,
-0.214 -> 0.197 against the 0.225 anchor — serially-independent news days dilute long-lag |r|
-correlation, and it does not yield to any in-band dial — and valuation dispersion, 0.230 ->
-0.215, compressed by the stronger valuePull the vr60 band demands. The dispersion cost was
-later RECOVERED, with interest, by the persistence retune above (0.33 at the final world);
-clustering lag 20 stands as the release's remaining disclosed cost, alongside the retune's
-own d10/d20 price.** `easing` re-solves 0.060 ->
-0.052 — the settled-stress refuge moved the `-crossasset` window again, its third move with the
-equity world — and 5.2 rate points is the BOTTOM of the real easing-cycle range (2007-08 ran
+Verified at 200x100 as 8-replicate means: the three asymmetry rows read **1.06 / 0.95 / 0.87** of
+their records at the shipped world, `bond growth-crash` 1.09, clustering lag 1 ON the century
+anchor (1.04), `bond depth vs vol` 1.29 (the easing re-solve below spends its head-room on the
+`-crossasset` ladder), d20 2.90; on the four gate seeds three PASS all three classes and seed 7
+fails only vr60 (1.15-1.18). **One row gives ground beyond seed noise as this adoption's priced
+cost: clustering lag 20 reads 0.197 against the 0.225 anchor — serially-independent news days
+dilute long-lag |r| correlation, and no in-band dial buys it back.** `easing` re-solves 0.060 ->
+0.052 — the settled-stress refuge moves the `-crossasset` window with the equity world, as 0.22.0's
+equity change did — and 5.2 rate points is the BOTTOM of the real easing-cycle range (2007-08 ran
 5.1), so the "one full real easing cycle" anchor holds: at 0.060 the shipped duration's bond
 depth fails its band outright (1.37 on the gate seed), at 0.045 the d=5.70 ladder rung converges
 below its floor (0.64 at 400 paths), and 0.052 passes both (`-crossasset` verdict PASS, 0.70 /
-1.30). `-releases` aggregate |ratio-1|: this world reads 3.89 against 6.09 for the best
-published release (0.22.0) — the first 0.23.0 world to beat every predecessor on the
-cross-release ruler.
+1.30). `-releases` aggregate |ratio-1|: this world reads 3.89 against 6.09 for the best earlier
+release (0.22.0).
 
 **NEW — `-atrelease V` runs a past release's world under the current binary.** Seeds every dial
 from the frozen world of release `V` (any `-releases` row, or the current version), so a consumer
@@ -236,19 +226,17 @@ higher-beta equity market — the Nasdaq to the default world's S&P — derived 
 vol state, log-vol and spiral amplification both. The state-sharing is the anchored constraint,
 not a convenience: SPY–QQQ correlation is state-flat (0.853 calm, 0.852 stressed) BECAUSE
 idiosyncratic vol triples with the shared state; constant idio noise manufactures a
-stress-correlation kick the record does not have (+0.30, measured on the first cut). At the
-anchored `-satbeta 1.2 -satidio 0.77` the leg reads corr 0.849 / vol ratio 1.41 / beta 1.20
-against anchors 0.853 / 1.40 / 1.195 (`joint-coupling-2026-08-31.tsv`, SPY–QQQ 1999–2026;
-re-derived by contract tests in both twins). `satIdio` is the idio sd as a FRACTION of the
-world's realized volatility, the depth rungs' own-vol philosophy, so the coupling holds at any
-world's volatility, and the dials are anchored, not searchable, like `-duration`. Disclosed misses, one family:
+stress-correlation kick the record does not have (+0.30, measured). At the anchored
+`-satbeta 1.2 -satidio 0.77` the leg reads corr 0.849 / vol ratio 1.41 / beta 1.20 against
+anchors 0.853 / 1.40 / 1.195 (`joint-coupling-2026-08-31.tsv`, SPY–QQQ 1999–2026; re-derived by
+contract tests in both twins). `satIdio` is the idio sd as a FRACTION of the world's realized
+volatility, the depth rungs' own-vol philosophy, so the coupling holds at any world's volatility,
+and the dials are anchored, not searchable, like `-duration`. Disclosed misses, one family:
 rolling-correlation and rolling-beta distributions run narrower than the record's (the missing
 corr-regime and mania structure), idio clustering light (0.25 vs 0.35). Draws come from a
-dedicated stream; 0 is bit-identical off. `EmitSchema` 7 -> 8: the `world` block gains both
-dials, and the TSV a `logSat` column present ONLY when the leg is on — the NATURAL LOG of the
-satellite price, because a level near 1e6 at six decimals sits within reach of a cross-language
-rounding tie (PARITY.md §6, measured); a satellite-off file stays byte-identical to schema 7's
-apart from the schema number and the two zero fields.
+dedicated stream; 0 is bit-identical off. The TSV gains a `logSat` column present ONLY when the
+leg is on — the NATURAL LOG of the satellite price, because a level near 1e6 at six decimals sits
+within reach of a cross-language rounding tie (PARITY.md §6, measured).
 
 **NEW — `-crowd drawdownNN`: the drawdown family as a crowd.** Exposure 1 within NN% of the
 running peak, 0 past it, same banded structure and information set as the trend crowds;
@@ -261,135 +249,122 @@ threshold-specific — the drawdown-20 crowd's world fails the acceptance gate, 
 -10% rule reads +0.36 — and the pressed-hard REACTIVE world remains the case where the family's
 rank collapses.
 
-**EVERY EMITTED CHANNEL IS NOW GRADED — the gate covers what it ships beside.** An external
-consumer found the sharpest defect in this release: because a channel that is bit-identical off
-also cannot perturb the graded series, the gate could not see the satellite leg or the sampled
-bars at all — so a sidecar printed `"fidelity": "PASS"` beside a `logSat` column that verdict
-never examined, and `logSat` is exactly the column a reader would take as their second index.
-**Fifteen new gate rows close it.** The satellite leg is graded on ten — correlation, |r|
-correlation, beta, and volatility ratio, plus kurtosis, both clustering lags, the 5% and 10%
-depth shares and the crash rate — every one a RATIO to the primary leg rather than a level,
-anchored on what QQQ holds to SPY over their shared window. Ratios are the honest form: the
-satellite is a coupled second leg at this world's own scale and is not claimed to be any index,
-so what can be graded is the relation a higher-beta leg holds to its primary, exactly as the
-depth rungs grade each world at its own volatility. Levels would have asked the wrong question —
-against QQQ's absolutes the leg misses kurtosis in both directions. The bar channels take five
-more rows, the same readings the build-time suites already assert from `bars-2026-09-01.tsv`,
-carried into the runtime gate. The rows exist only when their channel ran, so a channels-off
-world's verdict is byte-identical to what it always was, and contract tests in both twins pin
-both halves: no channel rows when off, and a materially wrong leg or bar (2.6x beta, 3x range
-scale) must FAIL. `ungradedChannelSeries` is consequently empty in every world the model can
-currently emit; it stays in the schema because the next channel is ungraded until someone
-anchors it, and that has to be said beside the data.
+**EVERY EMITTED CHANNEL IS GRADED — the gate covers what it ships beside.** A channel that is
+bit-identical off cannot perturb the graded price series, which is what makes it safe to add — and
+exactly why a verdict computed from the primary leg alone cannot see it: without rows of its own a
+sidecar would print `"fidelity": "PASS"` beside a `logSat` column that verdict never examined, and
+`logSat` is exactly the column a reader would take as their second index. **Fifteen gate rows
+close it.** The satellite leg is graded on ten — correlation, |r| correlation, beta, and
+volatility ratio, plus kurtosis, both clustering lags, the 5% and 10% depth shares and the crash
+rate — every one a RATIO to the primary leg rather than a level, anchored on what QQQ holds to
+SPY over their shared window. Ratios are the honest form: the satellite is a coupled second leg at
+this world's own scale and is not claimed to be any index, so what can be graded is the relation a
+higher-beta leg holds to its primary, exactly as the depth rungs grade each world at its own
+volatility. Levels would have asked the wrong question — against QQQ's absolutes the leg misses
+kurtosis in both directions. The bar channels take five more rows, the same readings the
+build-time suites assert from `bars-2026-09-01.tsv`, carried into the runtime gate. The rows exist
+only when their channel ran, so a channels-off world's verdict is byte-identical to what it always
+was, and contract tests in both twins pin both halves: no channel rows when off, and a materially
+wrong leg or bar (2.6x beta, 3x range scale) must FAIL. `gradedSeries` lists every series the
+verdict was computed from — `price` and `bond`, plus the channel columns whenever their rows ran —
+and `ungradedChannelSeries` is consequently empty in every world the model can currently emit; it
+stays in the schema because the next channel is ungraded until someone anchors it, and that has to
+be said beside the data. The report prints every channel reading the rows grade, and a top-level
+`channels` sidecar block carries them as data, led by the world level the channels were sampled
+at, so a channel FAIL can be sized from the file alone (`fidelityFailed` names a band, not a
+value).
 
 One row carries a disclosed tension rather than a clean pass: the model's leg opens ~1.6 crash
 episodes per primary episode against the record's 1.17. One history cannot resolve that ratio at
 all (SPY and QQQ show ~6 and ~7 episodes in 27 years; five-year blocks read 1.00-2.00), so the
 band admits the model and the central tendency is stated rather than buried.
 
-The same report exposed a real mis-weighting: the Nasdaq anchor set's sampling spreads were the
-S&P's, carried over with a comment promising to re-freeze them once a Nasdaq-calibrated world
-existed. One has existed since 0.22.x, so they are now measured at that recipe — and the
-assumption that carried values were "approximately right" was false where the worlds differ
-most: `medDepthSd` read 0.10 against a measured 0.37, a 3.7x OVERWEIGHT on the heaviest row in
-that set's loss, and `semiExcessSd` 1.54 against 3.57. The S&P world is untouched, and the
-Nasdaq recipe still passes all three classes on its corrected weights. Its fitness loss reads
-1.672 where the carried spreads gave 2.209, with the weight moving off median depth and
-clustering — a `-calibrate -anchors nasdaq` result from before this change optimised a different
-function. Still shared and now disclosed in code: the sds passed inline to `wgt` are per-target
-rather than per-anchor, so they remain the S&P world's readings for both sets. Three smaller corrections travel with it: the
-fidelity header printed `return per vol CRSP 1954-2026` as a literal and so mislabelled every
-Nasdaq run (now a per-anchor field), the depth-solve bracket started at 10.0 and therefore
-refused the equity-at-anchor solve for every Nasdaq world (now 5.0, since volatility falls as
-depth rises), and `-releases` grades S&P-calibrated frozen worlds against whatever anchor set is
-active, which it now says out loud.
+**FIXED — the Nasdaq anchor set's sampling spreads were the S&P's**, carried over with a comment
+promising to re-freeze them once a Nasdaq-calibrated world existed. One has existed since 0.22.x,
+so they are now measured at that recipe — and the assumption that carried values were
+"approximately right" was false where the worlds differ most: `medDepthSd` read 0.10 against a
+measured 0.37, a 3.7x OVERWEIGHT on the heaviest row in that set's loss, and `semiExcessSd` 1.54
+against 3.57. The S&P world is untouched, and the Nasdaq recipe still passes all three classes on
+its corrected weights. Its fitness loss reads 1.672 where the carried spreads gave 2.209, with the
+weight moving off median depth and clustering — a `-calibrate -anchors nasdaq` result from before
+this change optimised a different function. Still shared and now disclosed in code: the sds passed
+inline to `wgt` are per-target rather than per-anchor, so they remain the S&P world's readings for
+both sets. Three smaller corrections travel with it: the fidelity header printed `return per vol
+CRSP 1954-2026` as a literal and so mislabelled every Nasdaq run (now a per-anchor field), the
+depth-solve bracket started at 10.0 and therefore refused the equity-at-anchor solve for every
+Nasdaq world (now 5.0, since volatility falls as depth rises), and `-releases` grades
+S&P-calibrated frozen worlds against whatever anchor set is active, which it now says out loud.
 
-**THE CHANNEL DIALS ARE RELATIVE TO THE WORLD'S OWN VOLATILITY — `-satidio` and `-rangescale`
-transport across worlds.** An external consumer found the two published recipes jointly
-inadmissible: the Nasdaq recipe with the bar recipe on top FAILED `bar range vs cc vol` at 1.264
-against 1.00-1.20 on every seed, while `-rangescale 1.00` cleared it — the dial was a per-world
-scale, not the universal anchor the flag table described. The same root let the satellite pass on
-that recipe at correlation 0.93 against the anchored 0.85 with nothing to catch it. Both dials were
-ABSOLUTE — a multiple of the session's diffusion sd; a per-year idio sd — and what share of a
-world's close-to-close variance its diffusion carries is a property of the world (depth 10 and
-jumpVar 0.02 each moved the range ratio by +0.06-0.08). The channels are now sampled in a second
-pass after the price loop, from its recorded per-session inputs, and each rides the session's own
-state re-levelled onto the WORLD's realized close-to-close volatility — k = realized sd / mean
-diffusion sd, solved once per world on a fixed ensemble (8 paths × 100 years at a fixed seed; a
-mean over ~200k sessions, under 1% sampling error even at kurtosis 60) and shared by every path of
-that world. The channels are observational (nothing reaches a price; the first nine emitted
-columns are bit-identical with them on or off), which is what licenses the second pass. The
-second pass is what licenses a level from OUTSIDE the path, and that is where the level has to
-come from: the same consumer measured every alternative. A causal estimator is noisy, biased or
-both — an EWMA saturated at four sds (so one 10-sd session cannot lift the level 50% for months)
-has a truncated variance as its fixed point whose truncated share is a property of the tail (0.92
-at kurtosis 13, 0.56 at 96); unsaturated, slow or cumulative, it re-learns the level from every
-extreme session and mints idio kurtosis 31 and 23 against the record's 17; frozen at the end of
-burn-in it spans 0.60-2.08 of the path's own sd. And a constant read off the path itself LEAKS: it
-says nothing about when, but it carries the whole path's level, so years 1-10 of a bar series
-predicted the log volatility of years 11-100 at +0.81 against +0.06 in a channel-free control, and
-pinned the graded range/ccvol row by its own definition (cross-path sd 0.016 against 0.061). A
-world constant carries nothing a path could not already know, and the row's dispersion is back
-(p5-p95 1.00-1.20 across paths). The realized side is the OBSERVED return, markdown and news
-included (the model's internal scale excludes both, and their share differs by world too); the
-satellite's state factor is the vol state times the spiral's amplification, re-levelled by its
-own root mean square. Re-anchored: `-satidio 0.074 -> 0.77`, `-rangescale 1.1 -> 0.63`,
-`-rangedown 0.08 -> 0.09`. At the same dials on the default world / the Nasdaq recipe / a
-kurtosis-61 world: satellite correlation 0.853 / 0.848 / 0.86, range vs cc vol 1.111 / 1.112 /
-1.07; the stacked recipes pass every row, and the consumer's own sweep of sixteen worlds held
-correlation within 0.001 and vol ratio within 0.003. Nothing moved against the record: the coupling
-anchors read as 73b669a's (rolling-60 correlation p5/median 0.731/0.846 both, residual stress/calm
-2.80 against 2.78, idio kurtosis 22.0 against 21.8), volume's correlation with range is 0.530 both,
-and the range's correlation with |r| holds at 0.82 against the intraday 0.79-0.80, the same
-disclosed residual. `bar range clustering` at `-leverage 0` reads 0.58 against its 0.57 floor: a
-level estimated from the path had been lending the range an autocorrelation of its own. With it:
-`gradedSeries` lists the channel columns whenever their gate rows ran (it was a hard-coded
-`["price", "bond"]` beside fifteen rows computed from those columns — the original scope defect
-inverted); the report prints every channel reading the rows grade, and a top-level `channels`
-sidecar block carries them as data, led by the world level they were sampled at (`fidelityFailed`
-names a band, not a value); `EmitSchema` 9 -> 10 for the scope semantics, the block, and the two
-dials' changed meaning. Channels-off worlds are byte-identical to 73b669a at 200 × 100; the twins
-are byte-identical on 40-path taps and on the sidecar with every channel on.
+**The channel dials are relative to the world's own volatility, and the level is a constant of
+the world.** `-satidio` and `-rangescale` both ride the session's own diffusion state re-levelled
+onto the world's realized close-to-close volatility — k = realized sd / mean diffusion sd, solved
+once per world on a fixed ensemble (8 paths × 100 years at a fixed seed; a mean over ~200k
+sessions, under 1% sampling error even at kurtosis 60) and shared by every path of that world —
+because what share of a world's variance its diffusion carries is a property of the world (depth
+10 and jumpVar 0.02 each move the range ratio by 0.06-0.08), so an absolute dial cannot transport.
+At the same dials on the default world / the Nasdaq recipe / a kurtosis-61 world, satellite
+correlation reads 0.853 / 0.848 / 0.86 and range vs cc vol 1.111 / 1.112 / 1.07, and across
+sixteen worlds correlation holds within 0.001 and vol ratio within 0.003. The realized side is the
+OBSERVED return, markdown and news included (the model's internal scale excludes both, and their
+share differs by world too); the satellite's state factor is the vol state times the spiral's
+amplification, re-levelled by its own root mean square. The channels are observational — nothing
+reaches a price; the first nine emitted columns are bit-identical with them on or off — which is
+what licenses sampling them in a second pass after the price loop, at a level from OUTSIDE the
+path. It has to come from outside: a causal estimator is biased or noisy (an EWMA saturated at
+four sds has a truncated variance as its fixed point whose truncated share is a property of the
+tail, 0.92 at kurtosis 13 and 0.56 at 96; unsaturated, it re-learns the level from every extreme
+session and mints idio kurtosis 31 against the record's 17), and a constant read off the path
+itself LEAKS — it says nothing about when, but it carries the whole path's level, so years 1-10 of
+a bar series predicted the log volatility of years 11-100 at +0.81 against +0.06 in a channel-free
+control, and pinned the graded range row by its own definition. `channels.level` in the sidecar
+records the k the emitted data was sampled at.
 
 **NEW MECHANISMS — the bar channels (`-rangescale`, `-volidio`), off by default.** Bars stop
 being close-only. The RANGE: high/low sampled per session from the EXACT Brownian-bridge extreme
 distributions, endpoints at the observed open (= prior close; the model has no overnight) and
 close, diffusion scale the session's OWN noise sd as the price received it — news damp, vol
 state, leverage kick, jump mixing, spiral amplification — re-levelled onto the world's realized
-volatility, times the one disclosed identification dial (anchored 0.63; see the entry above). The
-range therefore scales with the session's noise, not with |return|,
-which is what a range-reading detector can test: the record's corr(lnH/L, |r|) is only
-0.70-0.72 (`bars-2026-09-01.tsv`, SPY/QQQ OHLCV), and the clustering that makes range a better
-vol proxy than |r| (acf20 0.42-0.54 vs ~0.20) EMERGES from the shared vol state — at the
-anchored dial the model reads mean-range/ccvol 1.110 vs 1.10-1.12, acf1/5/20 0.66/0.57/0.41 vs
-0.67/0.56/0.42, corr with trailing vol 0.69 vs 0.68. The VOLUME: a log turnover index riding
-the range — elasticity 0.59 to the range's deviation from its slow normal, a down-day term, and
-a two-component persistent idio, all structural constants FROZEN from the measured
-volume-on-range regression (the fixture's `const` rows, asserted by contract tests in both
-twins; the residual's acf5/acf1 of 0.84 is what rules out a single AR(1)) with one anchored
-dial (total idio sd 0.34): sd 0.490 vs 0.42-0.50, corr with range 0.53 vs 0.54-0.55.
-Two further measured findings closed most of what the first cut disclosed. `-rangedown`
-(anchored 0.09) is the SAME-SESSION sign<->vol coupling — the bridge sigma takes (1 + x) on a
-down session and its reciprocal on an up one — and ONE dial moved BOTH channels onto the
-intraday rulers: range down/up 1.03 -> 1.14 against 1.109-1.142, and volume's down-up gap
-0.04 -> 0.097 against a newly measured intraday-sign 0.094-0.098, with no volume-side change
-at all (it rides through the elasticity). `VOL_LAG` (0.145) is yesterday's range still moving
-today's volume: identified as the second term of a distributed lag `v_t ~ rx_t + rx_{t-1}`,
-which drops the contemporaneous slope 0.59 -> 0.51 because a single-lag fit absorbs it through
-the range's own autocorrelation. It exists because the record's volume autocorrelation EXCEEDS
-the variance-share blend of its parts (0.64 vs 0.52) — only a cross-term can do that, and the
-model's independent idio had corr(rx_t, resid_{t+1}) at ~0 where the record reads +0.14/+0.19.
-With it: that cross-term reads +0.140, volume acf1 0.48 -> 0.59, acf5 0.47 and acf20 0.32 both
-on anchor. What remains disclosed: the bridge draws' lag-0 noise leaves corr(range,|r|) at
-0.82 against the intraday 0.79-0.80 and volume acf1 short of 0.64-0.70. A JOINT (H,L) sampler
-was measured against discretized-bridge ground truth and REJECTED: it raises that correlation
-further (+0.045 to +0.089 across sigma regimes, the wrong direction from an already-high
-reading) and cuts relative range noise only 4-6%. The overnight share (33%/28% of close-close
-variance) is the stated commensurability haircut, and Parkinson recovering real INTRADAY vol at
-1.00 exactly is what validates the ruler pair. Draws come from dedicated streams; 0 is
-bit-identical off, and volume leaves the sampled bars bit-identical (tested). `EmitSchema`
-8 -> 9: `world` gains both dials, the TSV gains `logHigh`/`logLow`/`logVolume` when their
-channels are on — log columns, the `logSat` tie rule.
+volatility, times the one disclosed identification dial (anchored 0.63). The range therefore
+scales with the session's noise, not with |return|, which is what a range-reading detector can
+test: the record's corr(lnH/L, |r|) is only 0.70-0.72 (`bars-2026-09-01.tsv`, SPY/QQQ OHLCV),
+and the clustering that makes range a better vol proxy than |r| (acf20 0.42-0.54 vs ~0.20)
+EMERGES from the shared vol state — at the anchored dial the model reads mean-range/ccvol 1.110
+vs 1.10-1.12, acf1/5/20 0.66/0.57/0.41 vs 0.67/0.56/0.42, corr with trailing vol 0.69 vs 0.68.
+The VOLUME: a log turnover index riding the range — elasticity 0.51 to the range's deviation
+from its slow normal plus 0.145 to yesterday's (the distributed lag `v_t ~ rx_t + rx_{t-1}`; a
+single-lag fit reads 0.59 because the range's own autocorrelation absorbs the second term), a
+down-day term, and a two-component persistent idio, all structural constants FROZEN from the
+measured volume-on-range regression (the fixture's `const` rows, asserted by contract tests in
+both twins; the residual's acf5/acf1 of 0.84 is what rules out a single AR(1)) with one anchored
+dial (total idio sd 0.34): sd 0.490 vs 0.42-0.50, corr with range 0.53 vs 0.54-0.55. The lag
+term exists because the record's volume autocorrelation EXCEEDS the variance-share blend of its
+parts (0.64 vs 0.52) — only a cross-term can do that, and an independent idio leaves
+corr(rx_t, resid_{t+1}) at ~0 where the record reads +0.14/+0.19; with it the cross-term reads
++0.140 and volume acf1 0.59, acf5 0.47 and acf20 0.32 sit on anchor. `-rangedown` (anchored 0.09)
+is the SAME-SESSION sign<->vol coupling — the bridge sigma takes (1 + x) on a down session and
+its reciprocal on an up one — and ONE dial carries BOTH channels' sign asymmetry: range down/up
+1.14 against 1.109-1.142 and, through the elasticity with no volume-side term, volume's down-up
+gap 0.097 against the intraday-sign 0.094-0.098. What remains disclosed: the bridge draws' lag-0
+noise leaves corr(range,|r|) at 0.82 against the intraday 0.79-0.80 and volume acf1 short of
+0.64-0.70; a joint (H,L) sampler does not help — measured against discretized-bridge ground truth
+it raises that correlation further (+0.045 to +0.089 across sigma regimes) for 4-6% less relative
+range noise. The overnight share (33%/28% of close-close variance) is the stated
+commensurability haircut, and Parkinson recovering real INTRADAY vol at 1.00 exactly is what
+validates the ruler pair. Draws come from dedicated streams; 0 is bit-identical off, and volume
+leaves the sampled bars bit-identical (tested). The TSV gains `logHigh`/`logLow` and `logVolume`
+when their channels are on — log columns, the `logSat` tie rule.
+
+**`EmitSchema` 6 -> 10.** The `world` block gains the four valuation-cycle dials, the six
+asymmetry dials (`leverage`, `downShock`, `jumpSkew`, `newsRate`, `newsSize`, `refugeDays`), the
+satellite's `satBeta`/`satIdio` and the bars' `rangeScale`/`rangeDown`/`volIdio`; `gate` gains
+`ensembleYears` (the verdict horizon), `anchors` (which ruler graded the world — a `-anchors
+nasdaq` run was otherwise indistinguishable from an S&P one in its own provenance record),
+`gradedSeries` and `ungradedChannelSeries`; a top-level `channels` block carries the channel
+readings. The TSV gains `logSat`, `logHigh`/`logLow` and `logVolume`, each present only when its
+channel is on and each a natural log. A channels-off 0.23.0 sidecar differs from a 0.22.1 one in
+the schema number, the new zero-valued world fields and the new `gate` fields, so a schema-6
+reader that ignores unknown fields and columns keeps working. Schemas 7 through 9 were never in a
+release.
 
 ## v0.22.1 — 2026-08-30
 

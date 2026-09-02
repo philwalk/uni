@@ -288,6 +288,41 @@ const JUMP_GAMMA: f64 = 2.0;
 fn jump_scale(w: &World) -> f64 {
     SIGMA_N * (w.jump_var / (w.jump_rate * (1.0 + w.jump_skew * w.jump_skew))).sqrt()
 }
+
+/// The diffusion damp the news channel applies. News variance DISPLACES diffusive noise instead
+/// of stacking on top of it, the same budget rule `jump_var` enforces with its (1 - jump_var)
+/// factor: the record's 16% already contains its bad-news days, so a world calibrated without
+/// them must yield generic variance when the channel turns on — added instead, the channel taxed
+/// equity vol and the crash rate ~5 seed-sd and no amplifier dial could pay it back. Sized against
+/// SIGMA_N's own per-session variance; the vol-state factor is centred at 1 by `vol_norm`, so the
+/// unconditional budget is the right ruler. 1.0 when the channel is off. 0 once the news variance
+/// has consumed the whole budget — a price running on jumps alone, whose bar channels have no
+/// diffusion sd to level on (`world_level` divides by the MEAN diffusion sd); `news_budget_refusal`
+/// turns that world away at the CLI rather than letting it reach a NaN bar.
+fn news_damp_at(news_rate: f64, news_size: f64) -> f64 {
+    if news_rate > 0.0 {
+        (1.0 - (news_rate / DAYS_PER_YEAR as f64) * news_size * news_size / (SIGMA_N * SIGMA_N))
+            .max(0.0)
+            .sqrt()
+    } else {
+        1.0
+    }
+}
+
+/// The CLI's refusal text for a news channel past the diffusion budget — `news_rate *
+/// news_size^2` must stay below `252 * SIGMA_N^2` — stated at the caller's rate as the largest
+/// admissible size; `None` inside the budget or with the channel off.
+fn news_budget_refusal(news_rate: f64, news_size: f64) -> Option<String> {
+    if news_rate > 0.0 && news_damp_at(news_rate, news_size) <= 0.0 {
+        let budget = DAYS_PER_YEAR as f64 * SIGMA_N * SIGMA_N;
+        let max_size = (budget / news_rate).sqrt();
+        Some(format!(
+            "-newsrate {news_rate} -newssize {news_size} leave no diffusion to displace: newsRate*newsSize^2 must stay below 252*SIGMA_N^2 = {budget:.5} (at -newsrate {news_rate}, -newssize below {max_size:.4})"
+        ))
+    } else {
+        None
+    }
+}
 // THE shipped world. `main` seeds its mutable CLI variables from this and the release table
 /// derives its rows from it, so every default is written once — the same one-source rule the Scala
 /// twin's `Defaults` follows.
@@ -849,7 +884,9 @@ struct World {
     /// log decline per news event (positive; 0.02 = a -2% day). Deterministic size, so the sizing
     /// arithmetic p*J^2 stays exact; the drift cost `news_rate*news_size` is returned
     /// deterministically on BOTH legs each session, keeping return per vol comparable across
-    /// sweep points without retuning `drift`.
+    /// sweep points without retuning `drift`. Bounded with `news_rate` by the diffusion budget it
+    /// displaces — `news_rate * news_size^2 < 252 * SIGMA_N^2` (0.0123; size below 0.097 at the
+    /// default rate) — and refused at the CLI past it (`news_budget_refusal`).
     news_size: f64,
     /// BOND DECOUPLING: half-life in SESSIONS of the settled-stress EWMA the refuge
     /// bid reads, which EXCLUDES the current session — flight-to-quality follows the stress
@@ -1575,21 +1612,8 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
         0.0
     };
     let vol_norm = (w.vol_of_vol * w.vol_of_vol) / 1e-9f64.max(1.0 - w.vol_persist * w.vol_persist);
-    // News variance DISPLACES diffusive noise instead of stacking on top of it, the same
-    // budget rule `jump_var` enforces with its (1 - jump_var) factor: the record's 16% already
-    // contains its bad-news days, so a world calibrated without them must yield generic variance
-    // when the channel turns on — added instead, the channel taxed equity vol and the crash rate
-    // ~5 seed-sd and no amplifier dial could pay it back. Sized against SIGMA_N's own per-session
-    // variance; the vol-state factor is centred at 1 by `vol_norm`, so the unconditional budget is
-    // the right ruler. 1.0 when the channel is off.
-    let news_damp = if w.news_rate > 0.0 {
-        (1.0 - (w.news_rate / DAYS_PER_YEAR as f64) * w.news_size * w.news_size
-            / (SIGMA_N * SIGMA_N))
-            .max(0.0)
-            .sqrt()
-    } else {
-        1.0
-    };
+    // News variance DISPLACES diffusive noise (see `news_damp_at`); 1.0 when the channel is off.
+    let news_damp = news_damp_at(w.news_rate, w.news_size);
     let crowd_win: usize = match w.crowd {
         Crowd::Trend(d) => 2.max((f64::from(d) * 252.0 / 365.25).round() as usize),
         _ => 0,
@@ -8408,6 +8432,9 @@ fn main() {
         non_neg("-value", value_pull);
         non_neg("-newsrate", news_rate);
         non_neg("-newssize", news_size);
+        if let Some(why) = news_budget_refusal(news_rate, news_size) {
+            cli_die(&why);
+        }
         non_neg("-refugedays", refuge_days);
         non_neg("-satbeta", sat_beta);
         non_neg("-satidio", sat_idio);
@@ -8432,13 +8459,13 @@ fn main() {
                 "-disasterrecover {disaster_recover} needs -disasterreclen above 0"
             ));
         }
-        // beliefShare 1.0 would unmoor perceived fair from the fundamental entirely — the pull
         // A 2-sd shift is already past every fitted setting; negative would skew jumps UP.
         if !(0.0..=2.0).contains(&jump_skew) {
             cli_die(&format!(
                 "-jumpskew {jump_skew} out of range; needs 0 <= skew <= 2"
             ));
         }
+        // beliefShare 1.0 would unmoor perceived fair from the fundamental entirely — the pull
         // chases its own shadow and nothing anchors the price level. Strictly below 1.
         if !(0.0..1.0).contains(&belief_share) {
             cli_die(&format!(
@@ -9596,6 +9623,38 @@ mod contract_tests {
         for k in [0usize, 999, 1000, 1999] {
             assert_eq!(indexed_name("f.tsv", k, w).len(), "f-0000.tsv".len());
         }
+    }
+
+    /// The news channel displaces diffusive variance, so past `news_rate * news_size^2 =
+    /// 252 * SIGMA_N^2` there is none left: the price runs on jumps alone and the bar channels'
+    /// world level (realized sd over the MEAN diffusion sd) has no denominator. Such a world is
+    /// refused at the CLI, not clamped into a NaN bar — and `-calibrate`'s ranges cannot reach it.
+    #[test]
+    fn a_news_channel_past_the_diffusion_budget_is_refused() {
+        let dw = default_world();
+        assert!(news_budget_refusal(dw.news_rate, dw.news_size).is_none());
+        assert!(
+            news_budget_refusal(0.0, 1.0).is_none(),
+            "rate 0 is the channel off"
+        );
+        assert!(
+            news_budget_refusal(1.3, 0.097).is_none(),
+            "just inside the budget"
+        );
+        assert!(
+            news_damp_at(1.3, 0.10) <= 0.0,
+            "past it the damp clamps to nothing"
+        );
+        let why = news_budget_refusal(1.3, 0.10).expect("past the budget is refused");
+        assert!(why.contains("0.0975"), "{why}");
+        let hi = |name: &str| {
+            calibrate_ranges()
+                .iter()
+                .find(|r| r.0 == name)
+                .map(|r| r.2)
+                .expect("a -calibrate range")
+        };
+        assert!(news_budget_refusal(hi("newsRate"), hi("newsSize")).is_none());
     }
 
     /// An identity parameter describes WHICH ASSET this is, and `-crossasset` grades the bond
