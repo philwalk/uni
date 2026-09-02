@@ -511,6 +511,7 @@ fn releases() -> Vec<(&'static str, World)> {
         ("0.21.0", v0_21_0()),
         ("0.22.0", v0_22_0()),
         ("0.22.1", v0_22_1()),
+        ("0.23.0", v0_23_0()),
     ]
 }
 
@@ -530,8 +531,98 @@ fn release_world(version: &str) -> Option<World> {
         .map(|(_, w)| w)
 }
 
+/// Named worlds `-atrelease` resolves beside the version rows: a recipe VERIFIED at a release and
+/// frozen with the anchor set it was graded against, so a consumer can name a channel-emitting or
+/// non-S&P world without carrying its flags. Built on the frozen row, never on `default_world`, so
+/// a later defaults change cannot move it. Deliberately not `-releases` rows: that table grades
+/// every world against ONE anchor set, and a Nasdaq world under S&P rulers is not a reading.
+fn recipes() -> Vec<(&'static str, World, &'static str)> {
+    // The channel-emitting Nasdaq world of MarketSimWorlds.md ("A Nasdaq world that passes the
+    // gate") at the ANCHORED channel dials: realism, mechanism and fidelity PASS with all six
+    // series graded (verified at 0.23.0: satellite corr 0.846, beta 1.20, vol ratio 1.42; range
+    // vs cc vol 1.12, down/up 1.12).
+    let mut nasdaq = v0_23_0();
+    nasdaq.depth = 10.0;
+    nasdaq.drift = 0.105;
+    nasdaq.jump_var = 0.02;
+    nasdaq.fund_vol = 0.06;
+    nasdaq.sat_beta = 1.2;
+    nasdaq.sat_idio = 0.77;
+    nasdaq.range_scale = 0.63;
+    nasdaq.range_down = 0.09;
+    nasdaq.vol_idio = 0.34;
+    vec![("0.23.0-nasdaq", nasdaq, "nasdaq")]
+}
+
+/// What `-atrelease NAME` seeds from: a release's world, anchors untouched, or a recipe with the
+/// anchor set it was verified against — which an explicit `-anchors` still overrides.
+fn named_world(name: &str) -> Option<(World, Option<&'static str>)> {
+    release_world(name).map(|w| (w, None)).or_else(|| {
+        recipes()
+            .into_iter()
+            .find(|(n, _, _)| *n == name)
+            .map(|(_, w, a)| (w, Some(a)))
+    })
+}
+
 /// 0.22.1's world, frozen for the same reason `v0_20_0` is: the valuation cycle moved the
 /// default off it.
+/// 0.23.0's world, frozen when 0.23.1 development opened: the asymmetry adoption and the
+/// valuation cycle moved the default onto it. Identical to `default_world` until a default moves;
+/// the `-atrelease` contract test pins the equality for as long as the version is 0.23.0.
+fn v0_23_0() -> World {
+    World {
+        trend_share: 0.055,
+        depth: 17.4,
+        stress: 5.15,
+        beta: 3.0,
+        drift: 0.122,
+        fund_vol: 0.070,
+        rate_mean: 0.042,
+        vol_persist: 0.992,
+        vol_of_vol: 0.022,
+        recovery_drag: 8.5,
+        recovery_floor: 0.10,
+        halt_limit: 0.25,
+        disaster_rate: 0.6,
+        disaster_size: 2.0,
+        disaster_len: 2.5,
+        disaster_recover: 0.5,
+        disaster_rec_len: 4.0,
+        belief_share: 0.95,
+        belief_years: 1.5,
+        cap_years: 1.5,
+        cap_window: 6.0,
+        leverage: 0.12,
+        down_shock: 0.0,
+        jump_var: 0.14,
+        jump_rate: 0.0035,
+        jump_skew: 0.7,
+        news_rate: 1.3,
+        news_size: 0.033,
+        refuge_days: 1.0,
+        sat_beta: 0.0,
+        sat_idio: 0.0,
+        range_scale: 0.0,
+        range_down: 0.0,
+        vol_idio: 0.0,
+        value_pull: 0.056,
+        crowd: Crowd::Momentum,
+        crowd_impact: 0.030,
+        panic: 0.0,
+        duration: 13.5,
+        easing: 0.052,
+        unwind: 0.35,
+        refuge: 0.115,
+        infl_prob: 0.20,
+        infl_size: 0.10,
+        infl_speed: 0.010,
+        rate_speed: 3.0,
+        discount: 5.73,
+        margin: 0.006,
+    }
+}
+
 fn v0_22_1() -> World {
     World {
         trend_share: 0.055,
@@ -8154,19 +8245,20 @@ fn main() {
     // still grades with the CURRENT rulers — a pre-0.23.0 world has no valuation cycle and
     // honestly fails the valuation mechanism row AND the valuation dispersion band; pair with
     // `-gate realism` to require only what such a world claims, and read the rest as disclosure.
-    let dw = match args.iter().position(|a| a == "-atrelease") {
-        None => default_world(),
+    let (dw, recipe_anchors) = match args.iter().position(|a| a == "-atrelease") {
+        None => (default_world(), None),
         Some(i) => {
             if args[i + 1..].iter().any(|a| a == "-atrelease") {
                 cli_die("-atrelease given twice");
             }
             let v = args
                 .get(i + 1)
-                .unwrap_or_else(|| cli_die("-atrelease wants a version"));
-            release_world(v).unwrap_or_else(|| {
+                .unwrap_or_else(|| cli_die("-atrelease wants a version or a recipe name"));
+            named_world(v).unwrap_or_else(|| {
                 cli_die(&format!(
-                    "-atrelease {v} names no release this binary can reproduce; it has [{}] and {VERSION}",
-                    releases().iter().map(|(v, _)| *v).collect::<Vec<_>>().join(", ")
+                    "-atrelease {v} names no release or recipe this binary can reproduce; it has [{}], {VERSION} and [{}]",
+                    releases().iter().map(|(v, _)| *v).collect::<Vec<_>>().join(", "),
+                    recipes().iter().map(|(n, _, _)| *n).collect::<Vec<_>>().join(", ")
                 ))
             })
         }
@@ -8177,7 +8269,8 @@ fn main() {
     let mut beta = dw.beta;
     let mut vol_persist = dw.vol_persist;
     let mut vol_of_vol = dw.vol_of_vol;
-    let mut anchor_spec = "sp500".to_string();
+    // A recipe carries the anchor set it was verified against; `-anchors` in the loop overrides.
+    let mut anchor_spec = recipe_anchors.unwrap_or("sp500").to_string();
     let mut recovery_drag = dw.recovery_drag;
     let mut recovery_floor = dw.recovery_floor;
     let mut halt_limit = dw.halt_limit;
@@ -10105,11 +10198,14 @@ mod contract_tests {
             a.price, b.price,
             "at share 0 and cap 0 every other cycle dial must be inert, bit for bit"
         );
+        // The cycle shipped in 0.23.0, so only the releases BEFORE it must inherit share 0 and cap 0.
         for (v, w) in releases() {
-            assert!(
-                w.belief_share.abs() < 1e-12 && w.cap_years.abs() < 1e-12,
-                "release {v} predates the valuation cycle and must inherit share 0 and cap 0"
-            );
+            if v < "0.23.0" {
+                assert!(
+                    w.belief_share.abs() < 1e-12 && w.cap_years.abs() < 1e-12,
+                    "release {v} predates the valuation cycle and must inherit share 0 and cap 0"
+                );
+            }
         }
     }
 
@@ -10161,7 +10257,7 @@ mod contract_tests {
     /// dial's off-position rather than 0.
     #[test]
     fn the_asymmetry_dials_are_inert_in_every_frozen_release() {
-        for (v, w) in releases() {
+        for (v, w) in releases().into_iter().filter(|(v, _)| *v < "0.23.0") {
             assert!(
                 w.leverage == 0.0
                     && w.down_shock == 0.0
@@ -10369,6 +10465,80 @@ mod contract_tests {
         assert!(
             release_world("0.0.0").is_none(),
             "an unknown version must not resolve"
+        );
+        // A version row resolves with NO anchor set (the caller's -anchors stands); a recipe
+        // resolves with the set it was verified against; a recipe name must never shadow a
+        // version.
+        for (v, w) in releases() {
+            assert!(named_world(v) == Some((w, None)));
+        }
+        for (n, w, a) in recipes() {
+            assert!(
+                named_world(n) == Some((w, Some(a))),
+                "recipe {n} must resolve with its anchors"
+            );
+            assert!(
+                !releases().iter().any(|(v, _)| *v == n),
+                "recipe {n} shadows a release version"
+            );
+            let _ = anchors_named(a); // dies on an unknown set
+        }
+        assert!(
+            named_world("0.0.0-nasdaq").is_none(),
+            "an unknown recipe must not resolve"
+        );
+    }
+
+    /// The row was frozen when 0.23.1 development opened. Until a default moves, the literal and
+    /// `default_world` must agree field for field, or `-atrelease 0.23.0` under the next binary
+    /// would reproduce a world 0.23.0 never shipped. (Once `VERSION` moves on, `release_world` no
+    /// longer reaches `default_world` for 0.23.0 and this test compares the row with itself.)
+    #[test]
+    fn the_frozen_0_23_0_row_is_the_shipped_default_while_the_version_is_0_23_0() {
+        let row = releases()
+            .into_iter()
+            .find(|(v, _)| *v == "0.23.0")
+            .map(|(_, w)| w)
+            .expect("no 0.23.0 row");
+        if VERSION == "0.23.0" {
+            assert!(
+                row == default_world(),
+                "the 0.23.0 row has drifted from the shipped default"
+            );
+        }
+    }
+
+    /// Pins the recipe to the docs' "A Nasdaq world that passes the gate" and to the ANCHORED
+    /// channel dials, so neither can drift under a retune: the recipe is built on the frozen row
+    /// and differs from it in these nine fields only.
+    #[test]
+    fn the_nasdaq_recipe_is_the_frozen_0_23_0_world_with_exactly_the_published_dials_moved() {
+        let (name, w, a) = recipes()
+            .into_iter()
+            .find(|(n, _, _)| *n == "0.23.0-nasdaq")
+            .expect("no Nasdaq recipe");
+        let mut want = releases()
+            .into_iter()
+            .find(|(v, _)| *v == "0.23.0")
+            .map(|(_, w)| w)
+            .expect("no 0.23.0 row");
+        want.depth = 10.0;
+        want.drift = 0.105;
+        want.jump_var = 0.02;
+        want.fund_vol = 0.06;
+        want.sat_beta = 1.2;
+        want.sat_idio = 0.77;
+        want.range_scale = 0.63;
+        want.range_down = 0.09;
+        want.vol_idio = 0.34;
+        assert_eq!(a, "nasdaq");
+        assert!(
+            w == want,
+            "{name} must differ from the frozen 0.23.0 world in the nine published dials only"
+        );
+        assert!(
+            w.range_scale > 0.0 && w.sat_beta > 0.0 && w.vol_idio > 0.0,
+            "the recipe exists to name a world that emits every channel"
         );
     }
 

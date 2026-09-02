@@ -212,7 +212,9 @@ object MarketSim:
     "              ;   not just the previous release",
     "-atrelease V  ; seed every dial from release V's frozen world (the -releases rows, or the",
     "              ;   current version) so a pinned consumer takes binary fixes without taking a",
-    "              ;   recalibration; explicit dial flags override it wherever they appear.  The",
+    "              ;   recalibration; explicit dial flags override it wherever they appear.  Or a",
+    "              ;   named recipe, which also selects its -anchors: 0.23.0-nasdaq is the",
+    "              ;   channel-emitting Nasdaq world at the anchored dials.  The",
     "              ;   gate still grades with the CURRENT rulers — a world predating a mechanism",
     "              ;   fails that mechanism's rows honestly; pair with -gate realism to require",
     "              ;   only what it claims, and read the rest as disclosure",
@@ -755,10 +757,27 @@ object MarketSim:
     easing = 0.052, unwind = 0.35, refuge = 0.11,
     inflProb = 0.20, inflSize = 0.10, inflSpeed = 0.010, rateSpeed = 3.0, discount = 5.73,
     margin = 0.006)
+  /** 0.23.0's world, frozen when 0.23.1 development opened: the asymmetry adoption and the
+    * valuation cycle moved the default onto it.  Identical to `Defaults` until a default moves;
+    * the `-atrelease` contract test pins the equality for as long as the version is 0.23.0. */
+  private val V0_23_0 = World(
+    trendShare = 0.055, depth = 17.4, stress = 5.15, beta = 3.0, drift = 0.122, fundVol = 0.070,
+    rateMean = 0.042, volPersist = 0.992, volOfVol = 0.022,
+    jumpVar = 0.14, jumpRate = 0.0035, leverage = 0.12, downShock = 0.0, jumpSkew = 0.7,
+    newsRate = 1.3, newsSize = 0.033, refugeDays = 1.0,
+    valuePull = 0.056,
+    recoveryDrag = 8.5, recoveryFloor = 0.10, haltLimit = 0.25,
+    disasterRate = 0.6, disasterSize = 2.0, disasterLen = 2.5,
+    disasterRecover = 0.5, disasterRecLen = 4.0,
+    beliefShare = 0.95, beliefYears = 1.5, capYears = 1.5, capWindow = 6.0,
+    crowd = Crowd.Momentum, crowdImpact = 0.030, panic = 0.0, duration = 13.5,
+    easing = 0.052, unwind = 0.35, refuge = 0.115,
+    inflProb = 0.20, inflSize = 0.10, inflSpeed = 0.010, rateSpeed = 3.0, discount = 5.73,
+    margin = 0.006)
   val Releases: Vector[(String, World)] = Vector(
     ("0.17.0", PreV1901), ("0.18.0", PreV1901), ("0.19.0", PreV1901),
     ("0.19.1", PreV1902), ("0.19.2", V0_19_2), ("0.19.3", V0_19_2), ("0.20.0", V0_20_0),
-    ("0.21.0", V0_21_0), ("0.22.0", V0_22_0), ("0.22.1", V0_22_1))
+    ("0.21.0", V0_21_0), ("0.22.0", V0_22_0), ("0.22.1", V0_22_1), ("0.23.0", V0_23_0))
 
   /** The world a release shipped, for `-atrelease`: the current version's default, or a frozen row
     * of the `-releases` table.  `None` for anything else -- the CLI dies naming what exists.  The
@@ -769,6 +788,29 @@ object MarketSim:
   def releaseWorld(version: String): Option[World] =
     if version == Version then Some(Defaults)
     else Releases.find(_._1 == version).map(_._2)
+
+  /** Named worlds `-atrelease` resolves beside the version rows: a recipe VERIFIED at a release
+    * and frozen with the anchor set it was graded against, so a consumer can name a
+    * channel-emitting or non-S&P world without carrying its flags.  Built on the frozen row,
+    * never on `Defaults`, so a later defaults change cannot move it.  Deliberately not
+    * `-releases` rows: that table grades every world against ONE anchor set, and a Nasdaq world
+    * under S&P rulers is not a reading. */
+  val Recipes: Vector[(String, World, String)] = Vector(
+    // The channel-emitting Nasdaq world of MarketSimWorlds.md ("A Nasdaq world that passes the
+    // gate") at the ANCHORED channel dials: realism, mechanism and fidelity PASS with all six
+    // series graded (verified at 0.23.0: satellite corr 0.846, beta 1.20, vol ratio 1.42; range
+    // vs cc vol 1.12, down/up 1.12).
+    ("0.23.0-nasdaq",
+     V0_23_0.copy(depth = 10.0, drift = 0.105, jumpVar = 0.02, fundVol = 0.06,
+                  satBeta = 1.2, satIdio = 0.77, rangeScale = 0.63, rangeDown = 0.09,
+                  volIdio = 0.34),
+     "nasdaq"))
+
+  /** What `-atrelease NAME` seeds from: a release's world, anchors untouched, or a recipe with
+    * the anchor set it was verified against -- which an explicit `-anchors` still overrides. */
+  def namedWorld(name: String): Option[(World, Option[String])] =
+    releaseWorld(name).map(w => (w, None))
+      .orElse(Recipes.find(_._1 == name).map((_, w, a) => (w, Some(a))))
 
   /** `-power`'s default contrast arms, as 1-based indices into `Rules`, and its default history
     * lengths.  Named here rather than inside the report so `usage` states them and `main` seeds
@@ -4827,15 +4869,18 @@ object MarketSim:
     // still grades with the CURRENT rulers -- a pre-0.23.0 world has no valuation cycle and
     // honestly fails the valuation mechanism row AND the valuation dispersion band; pair with
     // `-gate realism` to require only what such a world claims, and read the rest as disclosure.
-    val dw =
+    val (dw, recipeAnchors) =
       args.indexOf("-atrelease") match
-        case -1 => Defaults
+        case -1 => (Defaults, None)
         case i  =>
           if args.indexOf("-atrelease", i + 1) >= 0 then usage("-atrelease given twice")
-          if i + 1 >= args.length then usage("-atrelease wants a version")
-          releaseWorld(args(i + 1)).getOrElse(usage(
-            s"-atrelease ${args(i + 1)} names no release this binary can reproduce; " +
-            s"it has ${Releases.map(_._1).mkString("[", ", ", "]")} and $Version"))
+          if i + 1 >= args.length then usage("-atrelease wants a version or a recipe name")
+          namedWorld(args(i + 1)).getOrElse(usage(
+            s"-atrelease ${args(i + 1)} names no release or recipe this binary can reproduce; " +
+            s"it has ${Releases.map(_._1).mkString("[", ", ", "]")}, $Version and " +
+            s"${Recipes.map(_._1).mkString("[", ", ", "]")}"))
+    // A recipe carries the anchor set it was verified against; `-anchors` in the loop overrides.
+    recipeAnchors.foreach(a => anchorSpec = a)
     var trendShare = dw.trendShare; var depth = dw.depth
     var stress = dw.stress; var beta = dw.beta
     var volPersist = dw.volPersist; var volOfVol = dw.volOfVol

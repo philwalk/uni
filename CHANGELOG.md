@@ -1,3 +1,16 @@
+## v0.23.1 — unreleased
+
+**`-atrelease` names recipes, and 0.23.0 is frozen**
+
+- `-atrelease 0.23.0-nasdaq` seeds the channel-emitting Nasdaq world (`-anchors nasdaq -depth 10
+  -drift 0.105 -jumpvar 0.02 -fundvol 0.06`, every channel at its anchored dial) and selects its
+  anchor set; an explicit `-anchors` still overrides. Recipes are built on the frozen release row,
+  so a later defaults change cannot move them, and they are not `-releases` rows: that table grades
+  every world against one anchor set. Both twins; contract tests pin the recipe to the frozen row
+  and the nine published dials.
+- `0.23.0` joins the frozen `-releases` rows, so `-atrelease 0.23.0` reproduces it under this and
+  later binaries.
+
 ## v0.23.0 — 2026-09-02
 
 **NEW MECHANISM, and a defaults change — the slow valuation cycle**

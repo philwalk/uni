@@ -409,7 +409,8 @@ class MarketSimContractSuite extends FunSuite:
     val b = MarketSim.simulate(off2, 4, MarketSim.DefaultSeed)
     assert(a.price.sameElements(b.price),
       "at share 0 and cap 0 every other cycle dial must be inert, bit for bit")
-    for (v, w) <- MarketSim.Releases do
+    // The cycle shipped in 0.23.0, so only the releases BEFORE it must inherit share 0 and cap 0.
+    for (v, w) <- MarketSim.Releases if v < "0.23.0" do
       assert(w.beliefShare == 0.0 && w.capYears == 0.0,
         s"release $v predates the valuation cycle and must inherit share 0 and cap 0")
   }
@@ -436,7 +437,8 @@ class MarketSimContractSuite extends FunSuite:
     // Every release predates them, so the frozen rows carry leverage 0 and downShock 0 -- and
     // jumpSkew 0.4, the CONSTANT those releases compiled in, which is that dial's off-position
     // rather than 0.
-    for (v, w) <- MarketSim.Releases do
+    // Adopted in 0.23.0, so only the releases BEFORE it carry the off-positions.
+    for (v, w) <- MarketSim.Releases if v < "0.23.0" do
       assert(w.leverage == 0.0 && w.downShock == 0.0 && w.jumpSkew == 0.4 &&
              w.newsRate == 0.0 && w.newsSize == 0.0 && w.refugeDays == 0.0,
         s"release $v predates the asymmetry mechanisms and must carry 0 / 0 / 0.4 / 0 / 0 / 0")
@@ -545,6 +547,40 @@ class MarketSimContractSuite extends FunSuite:
     assertEquals(MarketSim.releaseWorld(MarketSim.Version), Some(MarketSim.Defaults),
       "the current version must resolve to the shipped default")
     assertEquals(MarketSim.releaseWorld("0.0.0"), None, "an unknown version must not resolve")
+    // A version row resolves with NO anchor set (the caller's -anchors stands); a recipe resolves
+    // with the set it was verified against; a recipe name must never shadow a version.
+    for (v, w) <- MarketSim.Releases do
+      assertEquals(MarketSim.namedWorld(v), Some((w, None)))
+    for (n, w, a) <- MarketSim.Recipes do
+      assertEquals(MarketSim.namedWorld(n), Some((w, Some(a))), s"recipe $n must resolve with its anchors")
+      assert(!MarketSim.Releases.exists(_._1 == n), s"recipe $n shadows a release version")
+      val _ = MarketSim.anchorsNamed(a)   // dies on an unknown set
+    assertEquals(MarketSim.namedWorld("0.0.0-nasdaq"), None, "an unknown recipe must not resolve")
+  }
+
+  test("the frozen 0.23.0 row is the shipped default for as long as the version is 0.23.0") {
+    // The row was frozen when 0.23.1 development opened.  Until a default moves, the literal and
+    // `Defaults` must agree field for field, or `-atrelease 0.23.0` under the next binary would
+    // reproduce a world 0.23.0 never shipped.  (Once `Version` moves on, `releaseWorld` no longer
+    // reaches `Defaults` for 0.23.0 and this test compares the row with itself.)
+    val row = MarketSim.Releases.find(_._1 == "0.23.0").map(_._2).getOrElse(fail("no 0.23.0 row"))
+    if MarketSim.Version == "0.23.0" then
+      assertEquals(row, MarketSim.Defaults, "the 0.23.0 row has drifted from the shipped default")
+  }
+
+  test("the Nasdaq recipe is the frozen 0.23.0 world with exactly the published dials moved") {
+    // Pins the recipe to the docs' "A Nasdaq world that passes the gate" and to the ANCHORED
+    // channel dials, so neither can drift under a retune: the recipe is built on the frozen row
+    // and differs from it in these nine fields only.
+    val (name, w, a) = MarketSim.Recipes.find(_._1 == "0.23.0-nasdaq").getOrElse(fail("no Nasdaq recipe"))
+    val base = MarketSim.Releases.find(_._1 == "0.23.0").map(_._2).getOrElse(fail("no 0.23.0 row"))
+    assertEquals(a, "nasdaq")
+    assertEquals(w, base.copy(depth = 10.0, drift = 0.105, jumpVar = 0.02, fundVol = 0.06,
+                              satBeta = 1.2, satIdio = 0.77, rangeScale = 0.63, rangeDown = 0.09,
+                              volIdio = 0.34),
+      s"$name must differ from the frozen 0.23.0 world in the nine published dials only")
+    assert(w.rangeScale > 0.0 && w.satBeta > 0.0 && w.volIdio > 0.0,
+      "the recipe exists to name a world that emits every channel")
   }
 
   test("valuation dispersion grows with the horizon, which is why the verdict is pinned") {

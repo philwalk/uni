@@ -134,7 +134,12 @@ only mismatch is the exe against what the consumer expected.
 release's world does not have to hold the old binary to keep it: `-atrelease 0.22.0` seeds every
 dial from that release's frozen world (any `-releases` row, or the current version), so binary
 fixes arrive without a recalibration. Explicit dial flags override the base wherever they appear
-on the command line. Two things it deliberately does not do: paths reproduce *statistically*, not
+on the command line. A **recipe** resolves the same way and also selects its anchor set:
+`-atrelease 0.23.0-nasdaq` is the channel-emitting Nasdaq world of the recipes section, at the
+anchored channel dials and graded against the QQQ anchors, so a consumer names it without carrying
+nine flags; an explicit `-anchors` still overrides. Recipes are built on the frozen release row,
+never on the current default, and they are not `-releases` rows, since that table grades every
+world against one anchor set. Two things `-atrelease` deliberately does not do: paths reproduce *statistically*, not
 bit-for-bit, across 0.23.0 (`expDet` moved the twins off the native tanh); and the gate still
 grades with the *current* rulers, so a world predating a mechanism fails that mechanism's rows
 honestly — pair with `-gate realism` to require only what such a world claims, and read the rest
@@ -846,7 +851,9 @@ Nasdaq, and a per-crash hazard read off it is over-sampled by half.
 The channels ride along at their anchored dials: `-rangescale 0.63 -rangedown 0.09 -volidio 0.34`
 on this recipe reads range vs cc vol 1.11 and `-satbeta 1.2 -satidio 0.77` correlation 0.85 — the
 same readings as on the default world, because both dials are relative to the world's own realized
-volatility.
+volatility. `-atrelease 0.23.0-nasdaq` names exactly this world with every channel on at those
+dials and selects the Nasdaq anchors: realism, mechanism and fidelity PASS with all six series
+graded.
 
 The Nasdaq set's sampling spreads are measured at this recipe (`-noise -anchors nasdaq`, 200
 paths), not carried from the S&P's. Its loss therefore weights the rows differently from every
