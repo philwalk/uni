@@ -237,11 +237,11 @@ vol state, log-vol and spiral amplification both. The state-sharing is the ancho
 not a convenience: SPY–QQQ correlation is state-flat (0.853 calm, 0.852 stressed) BECAUSE
 idiosyncratic vol triples with the shared state; constant idio noise manufactures a
 stress-correlation kick the record does not have (+0.30, measured on the first cut). At the
-anchored `-satbeta 1.2 -satidio 0.074` the leg reads corr 0.850 / vol ratio 1.41 / beta 1.20
+anchored `-satbeta 1.2 -satidio 0.77` the leg reads corr 0.849 / vol ratio 1.41 / beta 1.20
 against anchors 0.853 / 1.40 / 1.195 (`joint-coupling-2026-08-31.tsv`, SPY–QQQ 1999–2026;
-re-derived by contract tests in both twins). The residual-vol target follows the MODEL's own
-primary volatility — `beta·sigma1·sqrt(1/corr^2 − 1)`, the depth rungs' own-vol philosophy —
-and the dials are anchored, not searchable, like `-duration`. Disclosed misses, one family:
+re-derived by contract tests in both twins). `satIdio` is the idio sd as a FRACTION of the
+world's realized volatility, the depth rungs' own-vol philosophy, so the coupling holds at any
+world's volatility, and the dials are anchored, not searchable, like `-duration`. Disclosed misses, one family:
 rolling-correlation and rolling-beta distributions run narrower than the record's (the missing
 corr-regime and mania structure), idio clustering light (0.25 vs 0.35). Draws come from a
 dedicated stream; 0 is bit-identical off. `EmitSchema` 7 -> 8: the `world` block gains both
@@ -285,9 +285,7 @@ anchors it, and that has to be said beside the data.
 One row carries a disclosed tension rather than a clean pass: the model's leg opens ~1.6 crash
 episodes per primary episode against the record's 1.17. One history cannot resolve that ratio at
 all (SPY and QQQ show ~6 and ~7 episodes in 27 years; five-year blocks read 1.00-2.00), so the
-band admits the model and the central tendency is stated rather than buried. `docs/` also records
-that stacking the satellite on the `-anchors nasdaq` recipe yields a levered fund (~32%
-volatility at 0.93 correlation) rather than a second index.
+band admits the model and the central tendency is stated rather than buried.
 
 The same report exposed a real mis-weighting: the Nasdaq anchor set's sampling spreads were the
 S&P's, carried over with a comment promising to re-freeze them once a Nasdaq-calibrated world
@@ -295,36 +293,86 @@ existed. One has existed since 0.22.x, so they are now measured at that recipe �
 assumption that carried values were "approximately right" was false where the worlds differ
 most: `medDepthSd` read 0.10 against a measured 0.37, a 3.7x OVERWEIGHT on the heaviest row in
 that set's loss, and `semiExcessSd` 1.54 against 3.57. The S&P world is untouched, and the
-Nasdaq recipe still passes all three classes on its corrected weights. Still shared and now
-disclosed in code: the sds passed inline to `wgt` are per-target rather than per-anchor, so they
-remain the S&P world's readings for both sets. Three smaller corrections travel with it: the
+Nasdaq recipe still passes all three classes on its corrected weights. Its fitness loss reads
+1.672 where the carried spreads gave 2.209, with the weight moving off median depth and
+clustering — a `-calibrate -anchors nasdaq` result from before this change optimised a different
+function. Still shared and now disclosed in code: the sds passed inline to `wgt` are per-target
+rather than per-anchor, so they remain the S&P world's readings for both sets. Three smaller corrections travel with it: the
 fidelity header printed `return per vol CRSP 1954-2026` as a literal and so mislabelled every
 Nasdaq run (now a per-anchor field), the depth-solve bracket started at 10.0 and therefore
 refused the equity-at-anchor solve for every Nasdaq world (now 5.0, since volatility falls as
 depth rises), and `-releases` grades S&P-calibrated frozen worlds against whatever anchor set is
 active, which it now says out loud.
 
+**THE CHANNEL DIALS ARE RELATIVE TO THE WORLD'S OWN VOLATILITY — `-satidio` and `-rangescale`
+transport across worlds.** An external consumer found the two published recipes jointly
+inadmissible: the Nasdaq recipe with the bar recipe on top FAILED `bar range vs cc vol` at 1.264
+against 1.00-1.20 on every seed, while `-rangescale 1.00` cleared it — the dial was a per-world
+scale, not the universal anchor the flag table described. The same root let the satellite pass on
+that recipe at correlation 0.93 against the anchored 0.85 with nothing to catch it. Both dials were
+ABSOLUTE — a multiple of the session's diffusion sd; a per-year idio sd — and what share of a
+world's close-to-close variance its diffusion carries is a property of the world (depth 10 and
+jumpVar 0.02 each moved the range ratio by +0.06-0.08). The channels are now sampled in a second
+pass after the price loop, from its recorded per-session inputs, and each rides the session's own
+state re-levelled onto the WORLD's realized close-to-close volatility — k = realized sd / mean
+diffusion sd, solved once per world on a fixed ensemble (8 paths × 100 years at a fixed seed; a
+mean over ~200k sessions, under 1% sampling error even at kurtosis 60) and shared by every path of
+that world. The channels are observational (nothing reaches a price; the first nine emitted
+columns are bit-identical with them on or off), which is what licenses the second pass. The
+second pass is what licenses a level from OUTSIDE the path, and that is where the level has to
+come from: the same consumer measured every alternative. A causal estimator is noisy, biased or
+both — an EWMA saturated at four sds (so one 10-sd session cannot lift the level 50% for months)
+has a truncated variance as its fixed point whose truncated share is a property of the tail (0.92
+at kurtosis 13, 0.56 at 96); unsaturated, slow or cumulative, it re-learns the level from every
+extreme session and mints idio kurtosis 31 and 23 against the record's 17; frozen at the end of
+burn-in it spans 0.60-2.08 of the path's own sd. And a constant read off the path itself LEAKS: it
+says nothing about when, but it carries the whole path's level, so years 1-10 of a bar series
+predicted the log volatility of years 11-100 at +0.81 against +0.06 in a channel-free control, and
+pinned the graded range/ccvol row by its own definition (cross-path sd 0.016 against 0.061). A
+world constant carries nothing a path could not already know, and the row's dispersion is back
+(p5-p95 1.00-1.20 across paths). The realized side is the OBSERVED return, markdown and news
+included (the model's internal scale excludes both, and their share differs by world too); the
+satellite's state factor is the vol state times the spiral's amplification, re-levelled by its
+own root mean square. Re-anchored: `-satidio 0.074 -> 0.77`, `-rangescale 1.1 -> 0.63`,
+`-rangedown 0.08 -> 0.09`. At the same dials on the default world / the Nasdaq recipe / a
+kurtosis-61 world: satellite correlation 0.853 / 0.848 / 0.86, range vs cc vol 1.111 / 1.112 /
+1.07; the stacked recipes pass every row, and the consumer's own sweep of sixteen worlds held
+correlation within 0.001 and vol ratio within 0.003. Nothing moved against the record: the coupling
+anchors read as 73b669a's (rolling-60 correlation p5/median 0.731/0.846 both, residual stress/calm
+2.80 against 2.78, idio kurtosis 22.0 against 21.8), volume's correlation with range is 0.530 both,
+and the range's correlation with |r| holds at 0.82 against the intraday 0.79-0.80, the same
+disclosed residual. `bar range clustering` at `-leverage 0` reads 0.58 against its 0.57 floor: a
+level estimated from the path had been lending the range an autocorrelation of its own. With it:
+`gradedSeries` lists the channel columns whenever their gate rows ran (it was a hard-coded
+`["price", "bond"]` beside fifteen rows computed from those columns — the original scope defect
+inverted); the report prints every channel reading the rows grade, and a top-level `channels`
+sidecar block carries them as data, led by the world level they were sampled at (`fidelityFailed`
+names a band, not a value); `EmitSchema` 9 -> 10 for the scope semantics, the block, and the two
+dials' changed meaning. Channels-off worlds are byte-identical to 73b669a at 200 × 100; the twins
+are byte-identical on 40-path taps and on the sidecar with every channel on.
+
 **NEW MECHANISMS — the bar channels (`-rangescale`, `-volidio`), off by default.** Bars stop
 being close-only. The RANGE: high/low sampled per session from the EXACT Brownian-bridge extreme
 distributions, endpoints at the observed open (= prior close; the model has no overnight) and
 close, diffusion scale the session's OWN noise sd as the price received it — news damp, vol
-state, leverage kick, jump mixing, spiral amplification — times the one disclosed identification
-dial (anchored 1.1). The range therefore scales with the session's noise, not with |return|,
+state, leverage kick, jump mixing, spiral amplification — re-levelled onto the world's realized
+volatility, times the one disclosed identification dial (anchored 0.63; see the entry above). The
+range therefore scales with the session's noise, not with |return|,
 which is what a range-reading detector can test: the record's corr(lnH/L, |r|) is only
 0.70-0.72 (`bars-2026-09-01.tsv`, SPY/QQQ OHLCV), and the clustering that makes range a better
 vol proxy than |r| (acf20 0.42-0.54 vs ~0.20) EMERGES from the shared vol state — at the
-anchored dial the model reads mean-range/ccvol 1.107 vs 1.10-1.12, acf1/5/20 0.65/0.57/0.41 vs
+anchored dial the model reads mean-range/ccvol 1.110 vs 1.10-1.12, acf1/5/20 0.66/0.57/0.41 vs
 0.67/0.56/0.42, corr with trailing vol 0.69 vs 0.68. The VOLUME: a log turnover index riding
 the range — elasticity 0.59 to the range's deviation from its slow normal, a down-day term, and
 a two-component persistent idio, all structural constants FROZEN from the measured
 volume-on-range regression (the fixture's `const` rows, asserted by contract tests in both
 twins; the residual's acf5/acf1 of 0.84 is what rules out a single AR(1)) with one anchored
-dial (total idio sd 0.34): sd 0.490 vs 0.42-0.50, corr with range 0.530 vs 0.54-0.55.
+dial (total idio sd 0.34): sd 0.490 vs 0.42-0.50, corr with range 0.53 vs 0.54-0.55.
 Two further measured findings closed most of what the first cut disclosed. `-rangedown`
-(anchored 0.08) is the SAME-SESSION sign<->vol coupling — the bridge sigma takes (1 + x) on a
+(anchored 0.09) is the SAME-SESSION sign<->vol coupling — the bridge sigma takes (1 + x) on a
 down session and its reciprocal on an up one — and ONE dial moved BOTH channels onto the
-intraday rulers: range down/up 1.03 -> 1.125 against 1.109-1.142, and volume's down-up gap
-0.04 -> 0.096 against a newly measured intraday-sign 0.094-0.098, with no volume-side change
+intraday rulers: range down/up 1.03 -> 1.14 against 1.109-1.142, and volume's down-up gap
+0.04 -> 0.097 against a newly measured intraday-sign 0.094-0.098, with no volume-side change
 at all (it rides through the elasticity). `VOL_LAG` (0.145) is yesterday's range still moving
 today's volume: identified as the second term of a distributed lag `v_t ~ rx_t + rx_{t-1}`,
 which drops the contemporaneous slope 0.59 -> 0.51 because a single-lag fit absorbs it through

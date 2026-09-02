@@ -21,11 +21,11 @@
 #     what carries the record's CROSS-persistence: corr(rx_t, resid_{t+1}) rows below.
 #
 # The `tol` column is the twins' test band half-width (median of 4 model paths, 100y, at
-# -rangescale 1.1 -volidio 0.34). Rows with `-` are documentation and grading-time anchors
+# -rangescale 0.63 -volidio 0.34). Rows with `-` are documentation and grading-time anchors
 # (python graders bars_grade.py / vol_grade.py over -barsemit output own the rest); the model's
 # disclosed residuals against them: corrRangeAbsR 0.82 vs the intraday 0.79-0.80 and volAcf1
-# 0.49 vs 0.64 (one root: the bridge draws' lag-0 noise). The sign<->vol root is CLOSED by
-# `rangeDown` 0.08: range downup 1.125 vs the intraday 1.109-1.142 and volume down-up 0.096 vs
+# 0.59 vs 0.64-0.70 (one root: the bridge draws' lag-0 noise). The sign<->vol root is CLOSED by
+# `rangeDown` 0.09: range downup 1.137 vs the intraday 1.109-1.142 and volume down-up 0.097 vs
 # the intraday-sign gap 0.094-0.098 (rows volDownupGapIntraday) — the raw cc-sign gaps 0.123/
 # 0.132 carry the overnight conditioning the model does not have.
 pair	stat	value	tol

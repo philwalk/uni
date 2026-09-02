@@ -69,7 +69,7 @@ class BarsAnchorSuite extends FunSuite:
   test("the bar channels sit on their anchors") {
     val a = rows(Bars)
     assume(a.nonEmpty, "fixture not present in this tree (source tarball?)")
-    val w = MarketSim.Defaults.copy(rangeScale = 1.1, volIdio = 0.34)
+    val w = MarketSim.Defaults.copy(rangeScale = 0.63, volIdio = 0.34)
     val sims = MarketSim.simPaths(w, 4, 100, MarketSim.DefaultSeed)
     val perPath = sims.toVector.map { p =>
       val r = Array.tabulate(p.price.length - 1)(i => math.log(p.price(i + 1) / p.price(i)))

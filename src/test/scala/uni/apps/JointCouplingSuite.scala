@@ -68,7 +68,7 @@ class JointCouplingSuite extends FunSuite:
   test("the satellite leg discriminates and sits on its coupling anchors") {
     val a = rows(Coupling)
     assume(a.nonEmpty, "fixture not present in this tree (source tarball?)")
-    val w = MarketSim.Defaults.copy(satBeta = 1.2, satIdio = 0.074)
+    val w = MarketSim.Defaults.copy(satBeta = 1.2, satIdio = 0.77)
     val sims = MarketSim.simPaths(w, 4, 100, MarketSim.DefaultSeed)
     val perPath = sims.toVector.map { p =>
       assertEquals(p.sat.length, p.price.length, "satBeta on must fill the satellite")

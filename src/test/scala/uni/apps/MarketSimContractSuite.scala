@@ -455,8 +455,8 @@ class MarketSimContractSuite extends FunSuite:
     assert(!namesOff.exists(n => n.startsWith("satellite") || n.startsWith("bar ")),
       "a channels-off world must carry no channel rows")
 
-    val on = MarketSim.Defaults.copy(satBeta = 1.2, satIdio = 0.074, rangeScale = 1.1,
-                                     rangeDown = 0.08, volIdio = 0.34)
+    val on = MarketSim.Defaults.copy(satBeta = 1.2, satIdio = 0.77, rangeScale = 0.63,
+                                     rangeDown = 0.09, volIdio = 0.34)
     val stOn = MarketSim.measure(MarketSim.simPaths(on, 8, 40, MarketSim.DefaultSeed), 40)
     assert(stOn.sat.isDefined && stOn.bars.isDefined)
     val rowsOn = MarketSim.gateChecks(MarketSim.SP500Anchors, stOn)
@@ -469,7 +469,7 @@ class MarketSimContractSuite extends FunSuite:
     assert(MarketSim.gateChecks(MarketSim.SP500Anchors, stB).exists((n, ok, _) => n.startsWith("satellite") && !ok),
       "a 2.6-beta leg must fail a satellite row")
     // A bar sampled at a wildly wrong scale is not a bar.
-    val stW = MarketSim.measure(MarketSim.simPaths(on.copy(rangeScale = 3.0), 8, 40, MarketSim.DefaultSeed), 40)
+    val stW = MarketSim.measure(MarketSim.simPaths(on.copy(rangeScale = 2.0), 8, 40, MarketSim.DefaultSeed), 40)
     assert(MarketSim.gateChecks(MarketSim.SP500Anchors, stW).exists((n, ok, _) => n.startsWith("bar ") && !ok),
       "a 3x-scale bar must fail a bar row")
   }
@@ -482,7 +482,7 @@ class MarketSimContractSuite extends FunSuite:
     // canary is blind to this dial until it joins the world block, so these are the guards.
     val off = MarketSim.simulate(MarketSim.Defaults, 2, MarketSim.DefaultSeed)
     assert(off.logHi.isEmpty && off.logLo.isEmpty)
-    val on = MarketSim.simulate(MarketSim.Defaults.copy(rangeScale = 1.1), 2, MarketSim.DefaultSeed)
+    val on = MarketSim.simulate(MarketSim.Defaults.copy(rangeScale = 0.63), 2, MarketSim.DefaultSeed)
     assertEquals(on.logHi.length, on.price.length)
     var prev = math.log(on.price(0))
     for i <- on.price.indices do
@@ -499,9 +499,9 @@ class MarketSimContractSuite extends FunSuite:
     // bit-identical -- the channels share nothing but the sampled bar itself.
     val off = MarketSim.simulate(MarketSim.Defaults, 2, MarketSim.DefaultSeed)
     assert(off.logVolume.isEmpty)
-    val barsOnly = MarketSim.simulate(MarketSim.Defaults.copy(rangeScale = 1.1), 2,
+    val barsOnly = MarketSim.simulate(MarketSim.Defaults.copy(rangeScale = 0.63), 2,
                                       MarketSim.DefaultSeed)
-    val on = MarketSim.simulate(MarketSim.Defaults.copy(rangeScale = 1.1, volIdio = 0.34), 2,
+    val on = MarketSim.simulate(MarketSim.Defaults.copy(rangeScale = 0.63, volIdio = 0.34), 2,
                                 MarketSim.DefaultSeed)
     assertEquals(on.logVolume.length, on.price.length)
     assert(on.logVolume.forall(_.isFinite))

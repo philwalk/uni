@@ -87,12 +87,17 @@ fields keeps working; the log convention exists because a level near 10^6 render
 sits within reach of a cross-language rounding tie the twins' byte-parity checks would trip on.
 **Every emitted channel is graded, and the verdict names its own scope.** Since schema 9 the
 `gate` block carries `anchors` (which ruler graded this world — a `-anchors nasdaq` run was
-otherwise indistinguishable from an S&P one in its own provenance record), `gradedSeries`, and
+otherwise indistinguishable from an S&P one in its own provenance record); since schema 10
+`gradedSeries` lists every series the verdict was computed from — `price` and `bond`, plus
+`logSat`, `logHigh`/`logLow` and `logVolume` exactly when their channel ran — beside
 `ungradedChannelSeries`. That last field is **empty in every world the model can currently emit**:
 the satellite leg is graded by the `satellite *` rows and the sampled bars by the `bar *` rows, so
 a `"fidelity": "PASS"` beside a `logSat` column is a verdict *about* that column too. It stays in
 the schema because the next channel to arrive is ungraded until someone anchors it, and that has
-to be said beside the data rather than in a document nobody opens.
+to be said beside the data rather than in a document nobody opens. Since schema 10 a top-level
+`channels` block also carries the readings those rows grade, led by the world level the channels
+were sampled at, so a channel FAIL can be sized from the file alone — `fidelityFailed` names a band,
+not a value.
 
 This was the trap worth closing: a channel that is bit-identical off cannot perturb the graded
 series, which is what makes it safe to add — and is exactly why a verdict computed from the
@@ -395,10 +400,17 @@ SPY and QQQ show roughly six and seven episodes in 27 years, and five-year block
 2.00 — so the band is wide enough to admit the model, and the central tendency is disclosed here
 rather than hidden inside it.
 
-**Do not stack them.** Running the satellite on top of the Nasdaq recipe compounds two
-higher-beta constructions: the result measures ~32% volatility at correlation 0.93 with its
-primary, which is a levered fund on one index rather than a second index. If you want two
-indices, run the satellite on the default world.
+**The dials hold across worlds.** `-satidio` is a fraction of the primary's own realized
+volatility and `-rangescale` a multiple of the session's vol state re-levelled onto it — the level
+is solved once per WORLD from a fixed ensemble, never read off the path being emitted, because a
+path's own whole-path variance leaks its future into every window (years 1–10 of a bar series
+predicted the log volatility of years 11–100 at +0.81 against +0.06 in a channel-free control, an
+external consumer's measurement) — so the same values read the same coupling at any admissible
+world: on the `-anchors nasdaq` recipe the leg measures correlation 0.85 and volatility ratio 1.41,
+as on the default world. Whether a
+second leg at 1.4x a 25%-volatility primary is the pair you want is a modelling choice, not a
+calibration one; if you want two indices at index-like volatility, run the satellite on the
+default world.
 
 ## The slow valuation cycle — `-beliefshare` / `-capyears`
 
@@ -561,8 +573,9 @@ with it.
 | `-refuge` | flight-to-quality bid into the bond, scaled by its duration | 0.115 |
 | `-refugedays` | half-life in sessions of the settled stress the refuge bid reads — excludes the current session, which kills the same-day stock-bond coupling while the crisis rally keeps the level; 0 reads live stress | 1 |
 | `-satbeta` | the satellite equity leg (the Nasdaq to the default world's S&P): beta on the primary's OBSERVED return, plus idio noise riding the primary's full vol state — which is what keeps the pair's correlation state-flat, as the record's is. When on, `-emit` adds a `logSat` column. Anchored 1.2 on SPY–QQQ 1999–2026; NOT searchable, like `-duration` | 0 (off) |
-| `-satidio` | the leg's idiosyncratic vol per year at unit vol-state; the anchored 0.074 lands the measured correlation (0.850 vs 0.853) and vol ratio (1.41 vs 1.40) at the default world's own volatility | 0 |
-| `-rangescale` | intra-bar high/low, sampled per session from the exact Brownian-bridge extremes at the session's own diffusion scale times this dial — the range scales with the session's noise, not with \|return\|, which is what makes it detectably real (record corr(lnH/L, \|r\|) is only 0.70–0.72). Anchored 1.1 on SPY/QQQ OHLCV; adds `logHigh`/`logLow` to `-emit`. NOT searchable | 0 (off) |
+| `-satidio` | the leg's idiosyncratic vol as a FRACTION of the primary's realized volatility, riding the primary's vol state; the anchored 0.77 lands correlation 0.853 and vol ratio 1.41 on the default world, on the `-anchors nasdaq` recipe, and on a kurtosis-61 world alike | 0 |
+| `-rangescale` | intra-bar high/low, sampled per session from the exact Brownian-bridge extremes at the session's own vol state re-levelled onto the world's realized volatility, times this dial — the range scales with the session's noise, not with \|return\|, which is what makes it detectably real (record corr(lnH/L, \|r\|) is only 0.70–0.72). Anchored 0.63 on SPY/QQQ OHLCV, and it reads the same bar-to-ccvol ratio at any world; adds `logHigh`/`logLow` to `-emit`. NOT searchable | 0 (off) |
+| `-rangedown` | same-session sign↔vol coupling on the bar: down sessions get (1+X) the bridge sigma, up sessions 1/(1+X). Anchored 0.09, which puts BOTH the range's down/up (1.14 vs 1.109–1.142) and volume's down-up gap (0.097 vs 0.094–0.098) on the intraday rulers. Requires `-rangescale` | 0 |
 | `-volidio` | log turnover index riding the range: elasticity 0.59 to the range's deviation from its slow normal (frozen from the measured regression) plus a two-component persistent idio whose total sd is this dial (anchored 0.34). Requires `-rangescale`; adds `logVolume` to `-emit`. NOT searchable | 0 |
 | `-inflsize` | size of an inflation regime's rate-pressure target | 0.10 |
 
@@ -821,25 +834,32 @@ grading a model ensemble on the mid-bear `w2001` block.
 market_sim -anchors nasdaq -depth 10 -drift 0.105 -jumpvar 0.02 -fundvol 0.06
 ```
 
-Realism PASS, mechanism PASS, fidelity PASS on every seed tried, with margin rather than on a band
-edge — `equity d10 vs real` reads 0.76–0.78 against a 0.70 floor and the seed spread is ±0.01.
-Against the QQQ anchors: volatility 0.98, return per volatility 1.04, median depth 1.28, depth rungs
-0.88 / 0.77 / 0.71.
+Realism PASS, mechanism PASS, fidelity PASS at the gate's own ensemble (200 paths × 100 years),
+with margin rather than on a band edge — `equity d10 vs real` reads 0.85 against a 0.70 floor.
+Against the QQQ anchors: volatility 0.92, return per volatility 0.97, median depth 1.07, depth rungs
+0.92 / 0.85 / 0.80.
 
-**Read what it passes with.** Three large fidelity misses are disclosed rather than gated: kurtosis
-1.98, crashes per century 1.78, and `worst crash %`, where the record sits at the **11th
-percentile** of 27-year model histories — improved from the 2nd by the disaster channel and the
-valuation cycle this recipe now inherits (its dispersion reads 0.23, in band), but QQQ's −83.0% is
-still deeper than 89% of them, so this world remains on the shallow side of the Nasdaq tail at the
-record's own horizon. The first two are the volatility-to-crash elasticity gap —
-the model's 1.44 against a real cross-section of about 0.50 — surfacing at Nasdaq volatility.
-Clustering also sits at 0.378 against its 0.40 realism ceiling. This world is admissible for
-**relative** work at Nasdaq-like volatility; it is not a calibrated Nasdaq, and a per-crash hazard
-read off it is over-sampled by nearly a factor of two.
+**Read what it passes with.** Four fidelity misses are disclosed rather than gated: kurtosis 2.2,
+crashes per century 1.5, `worst crash %`, where the record sits at the **13th percentile** of
+27-year model histories — QQQ's −83.0% is deeper than seven in eight of them, so this world sits on
+the shallow side of the Nasdaq tail at the record's own horizon — and the downside volatility
+excess, which reads −1.0% against QQQ's +1.1%: the sign is inverted, this world's declines carry
+*less* volatility than its advances where QQQ's carry more. The first two are the
+volatility-to-crash elasticity gap — the model's 1.44 against a real cross-section of about 0.50 —
+surfacing at Nasdaq volatility. Clustering at lag 1 reads 0.39 against its 0.40 realism ceiling.
+This world is admissible for **relative** work at Nasdaq-like volatility; it is not a calibrated
+Nasdaq, and a per-crash hazard read off it is over-sampled by half.
 
-Two things about the Nasdaq set are carried over rather than measured, and are marked as such in the
-code: its sampling spreads (an `sdRel` is model-implied, so an honest set needs `-noise -anchors
-nasdaq` at a Nasdaq-calibrated world, which does not exist yet) and the two fidelity bands.
+The channels ride along at their anchored dials: `-rangescale 0.63 -rangedown 0.09 -volidio 0.34`
+on this recipe reads range vs cc vol 1.11 and `-satbeta 1.2 -satidio 0.77` correlation 0.85 — the
+same readings as on the default world, because both dials are relative to the world's own realized
+volatility.
+
+The Nasdaq set's sampling spreads are measured at this recipe (`-noise -anchors nasdaq`, 200
+paths), not carried from the S&P's. Its loss therefore weights the rows differently from every
+earlier release — 1.672 at this recipe against 2.209 on the carried spreads — so a
+`-calibrate -anchors nasdaq` result from before 0.23.0 optimised a different function. Still
+shared: the per-target spreads the loss weights read inline are the S&P world's for both sets.
 
 ## Biases you inherit whatever you choose
 

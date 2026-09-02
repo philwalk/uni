@@ -111,7 +111,20 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 // own detrend convention as you would to a real series). Log columns for the same tie reason
 // as `logSat`. A bars-off schema-9 file is byte-identical to its schema-8 counterpart except
 // the schema number and the two new (zero) world fields.
-const EMIT_SCHEMA: u32 = 9;
+// 9 -> 10: the gate GRADES the channel columns (fifteen `satellite *` / `bar *` rows, present
+// exactly when their channel ran), so `gradedSeries` lists `logSat`, `logHigh`/`logLow` and
+// `logVolume` whenever those rows exist and `ungradedChannelSeries` is empty by construction —
+// a schema-9 reader that took `gradedSeries` as fixed at `["price", "bond"]` misreports the
+// verdict's scope. Two `world` dials changed MEANING: `satIdio` is the leg's idio sd as a
+// FRACTION of the primary's realized volatility (was an absolute per-year sd at unit vol-state;
+// anchored 0.074 -> 0.77) and `rangeScale` multiplies the session scale re-levelled onto the
+// world's realized volatility (was the diffusion scale alone; anchored 1.1 -> 0.63). A reader
+// that reconstructs a `World` from a schema-9 sidecar with either dial on and runs it here gets
+// a different leg or bar with no error — the `crowdImpact` case again. A top-level `channels`
+// block carries the readings those rows grade (`satellite`, `barRange`, `barVolume`, each
+// present exactly when its channel ran, led by the world `level` they were sampled at), so a
+// channel FAIL can be sized from the file alone — `fidelityFailed` names a band, not a value.
+const EMIT_SCHEMA: u32 = 10;
 
 /// Frozen structural constants of the volume channel — see the `vol_idio` field. Measured
 /// from the SPY/QQQ volume-on-range regression (`bars-2026-09-01.tsv`, whose rows the
@@ -147,7 +160,7 @@ const DEFAULT_SEED: u64 = 20_260_813;
         reason = "the contract is read by the tests, never by the writer"
     )
 )]
-const EMIT_SIDECAR_KEYS: [&str; 10] = [
+const EMIT_SIDECAR_KEYS: [&str; 11] = [
     "generator",
     "version",
     "schema",
@@ -157,6 +170,7 @@ const EMIT_SIDECAR_KEYS: [&str; 10] = [
     "path",
     "world",
     "gate",
+    "channels",
     "fidelity",
 ];
 
@@ -859,8 +873,11 @@ struct World {
     /// (SPY/QQQ 1999-2026): beta 1.20, corr 0.853, resid vol 14.1%/yr, rolling-252d beta
     /// p5/med/p95 0.90/1.18/1.92.
     sat_beta: f64,
-    /// idiosyncratic volatility of the satellite leg, per year at UNIT vol-state; the realized
-    /// residual vol adds the state variation on top
+    /// idiosyncratic volatility of the satellite leg as a FRACTION of the primary's own
+    /// realized volatility, riding the primary's vol state (`derive_channels`). Dimensionless so
+    /// the anchored coupling transports: an absolute per-year sd read relatively smaller at a
+    /// higher-vol primary, and stacked on the Nasdaq recipe the leg's correlation climbed to
+    /// 0.93 against the anchored 0.85 with nothing to catch it.
     sat_idio: f64,
     /// INTRA-BAR RANGE (prototype): high/low sampled per session from the EXACT Brownian-bridge
     /// extreme distributions, with endpoints at the observed open (= prior close; the model has
@@ -869,10 +886,14 @@ struct World {
     /// received them. The range therefore scales with the session's noise, NOT with |return|:
     /// the record's corr(lnH/L, |r|) is only 0.70-0.72, and a bar derived as a multiple of |r|
     /// is detectably fake (`bars_anchor` conventions, SPY/QQQ OHLCV). This dial is the one
-    /// disclosed free parameter: a multiplier on that diffusion scale, absorbing the real
-    /// intraday's sub-BM compression (~0.84 measured net of the overnight share) plus the
-    /// model's session/day identification. Draws (two per session) come from a dedicated
-    /// stream, read only when > 0, so 0 is bit-identical off.
+    /// disclosed free parameter: a multiplier on that session scale AFTER it is re-levelled onto
+    /// the world's realized close-to-close volatility (`derive_channels`), so it is a bar-to-ccvol
+    /// ratio that holds across worlds — on the diffusion scale alone the same dial read 1.115
+    /// at the default and 1.264 at the Nasdaq recipe, because the share of variance the
+    /// diffusion carries is a property of the world. Absorbs the real intraday's sub-BM
+    /// compression (~0.84 measured net of the overnight share) plus the model's session/day
+    /// identification. Draws (two per session) come from a dedicated stream, read only when
+    /// > 0, so 0 is bit-identical off.
     range_scale: f64,
     /// SAME-SESSION SIGN<->VOL COUPLING for the bar: a down session gets more intraday breadth
     /// per unit of net move — the bridge sigma is multiplied by (1 + rangeDown) when the
@@ -969,6 +990,11 @@ struct Path {
     /// log turnover index (empty when `vol_idio` is 0); mean-free by construction, the
     /// consumer's detrend convention applies unchanged
     log_volume: Vec<f64>,
+    /// the world's channel level the bars and the satellite were sampled at (`world_level`),
+    /// carried into the sidecar so the emitted data's scale is auditable; 0 / 0 when both
+    /// channels are off
+    chan_k: f64,
+    chan_k_sat: f64,
 }
 
 /// ONE price-formation mechanism for every traded asset: value demand toward `fair`, plus
@@ -1176,7 +1202,292 @@ impl Market {
     }
 }
 
-/// One independent history. Local mutable state only — nothing escapes this function.
+/// Per-session inputs the derived channels read, recorded by `simulate`'s price loop.
+struct ChannelInputs {
+    /// observed log price — markdown and news included, the return a consumer measures
+    px: Vec<f64>,
+    /// the session's diffusion sd as the price received it: `sess_sigma` x spiral amplification
+    d: Vec<f64>,
+    /// the satellite's state factor: vol state x spiral amplification over the base impact
+    state: Vec<f64>,
+    /// `Market::scale_var` after the step — the volume down-term's realized scale, read one
+    /// session fresher than the leverage signal's (stated, and mirrored)
+    scale_var: Vec<f64>,
+}
+
+impl ChannelInputs {
+    /// This path's contribution to the world's level: sums of the observed squared return, the
+    /// session diffusion sd and the squared satellite state factor from the second session (the
+    /// first has no return), plus the count — in session order, which is part of the
+    /// cross-language contract.
+    fn level_sums(&self) -> (f64, f64, f64, f64) {
+        let tot = self.px.len();
+        let mut s_r2 = 0.0f64;
+        let mut s_d = 0.0f64;
+        let mut s_st = 0.0f64;
+        for i in 1..tot {
+            let r = self.px[i] - self.px[i - 1];
+            s_r2 += r * r;
+            s_d += self.d[i];
+            s_st += self.state[i] * self.state[i];
+        }
+        (s_r2, s_d, s_st, (tot - 1) as f64)
+    }
+}
+
+/// The world's channel level: `k` re-levels the session diffusion sd onto the world's realized
+/// close-to-close sd, `k_sat` the satellite's state factor onto it in root-mean-square.
+#[derive(Clone, Copy, Debug)]
+struct ChannelLevel {
+    k: f64,
+    k_sat: f64,
+}
+
+/// The fixed ensemble the level is solved on. Small on purpose: the level is a mean over ~200k
+/// sessions, so its sampling error is under 1% even at kurtosis 60, and it is solved once per
+/// `sim_paths` call.
+const LEVEL_PATHS: usize = 8;
+const LEVEL_YEARS: usize = 100;
+const LEVEL_SEED: u64 = 0x1e7e_1000;
+
+/// THE WORLD'S CHANNEL LEVEL, pooled over `LEVEL_PATHS` x `LEVEL_YEARS` at `LEVEL_SEED` — a
+/// function of the world alone, so path k of (world, seed) stays reproducible from its sidecar
+/// and every path of a world is sampled at one scale. Sums run in path order then session order
+/// in both twins. 0 / 0 when both channels are off — never read.
+fn world_level(w: &World) -> ChannelLevel {
+    if !(w.range_scale > 0.0 || w.sat_beta > 0.0) {
+        return ChannelLevel { k: 0.0, k_sat: 0.0 };
+    }
+    let sums: Vec<(f64, f64, f64, f64)> = (0..LEVEL_PATHS)
+        .into_par_iter()
+        .map(|k| {
+            price_loop(w, LEVEL_YEARS, LEVEL_SEED.wrapping_add(k as u64 * 7919))
+                .inputs
+                .level_sums()
+        })
+        .collect();
+    let mut s_r2 = 0.0f64;
+    let mut s_d = 0.0f64;
+    let mut s_st = 0.0f64;
+    let mut m = 0.0f64;
+    for (a, b, c, n) in sums {
+        s_r2 += a;
+        s_d += b;
+        s_st += c;
+        m += n;
+    }
+    ChannelLevel {
+        k: (s_r2 / m).sqrt() / (s_d / m),
+        k_sat: (s_r2 / s_st).sqrt(),
+    }
+}
+
+/// One path's derived channels: the satellite leg's price and the sampled bars.
+struct Channels {
+    sat: Vec<f64>,
+    log_hi: Vec<f64>,
+    log_lo: Vec<f64>,
+    log_volume: Vec<f64>,
+}
+
+/// THE DERIVED CHANNELS, sampled in a second pass from the price loop's recorded inputs. They
+/// are OBSERVATIONAL — nothing here reaches a price — which is what licenses the second pass,
+/// and the second pass is what licenses the level. Each channel rides the session's own state
+/// (the diffusion sd as the price received it; the satellite's vol-state x spiral factor)
+/// re-levelled onto the WORLD's realized close-to-close volatility — `world_level`, k =
+/// realized sd / mean diffusion sd, solved once per world from a fixed ensemble and shared by
+/// every path. The level is a constant of the world, and no estimator read off the path itself
+/// is clean. A causal one is noisy, biased or both: an EWMA saturated at four sds (so that one
+/// 10-sd session cannot lift it 50% for months) has a TRUNCATED variance as its fixed point,
+/// and the truncated share is a property of the tail — 0.92 at kurtosis 13, 0.56 at 96;
+/// unsaturated, slow or cumulative, it re-learns the level from every extreme session and mints
+/// idio kurtosis 31 / 23 against the record's 17; frozen at end of burn-in it spans 0.60-2.08 of
+/// the path's own sd. And the path's whole-path variance LEAKS: a constant says nothing about
+/// when, but it carries the whole path's level, so years 1-10 of a bar series predicted the log
+/// volatility of years 11-100 at +0.81 against +0.06 in a channel-free control, and pinned the
+/// graded range/ccvol row by its own definition (cross-path sd 0.016 against 0.061). Both are
+/// the consumer's measurements. A world constant carries nothing a path could not already know.
+/// This is what makes `range_scale` a bar-to-realized-vol ratio and `sat_idio` an
+/// idio-to-primary-vol fraction that hold across worlds: on the diffusion scale alone the same
+/// range dial read bar/ccvol 1.115 at the default and 1.264 at the Nasdaq recipe, because the
+/// share of variance the diffusion carries is a property of the world. The satellite's state
+/// factor is the vol state times the spiral's amplification over the base impact, WITHOUT the
+/// leverage kick and news damp the range carries (on those the leg's kurtosis outran its
+/// primary's, ratio 1.2-1.4 against the record's 0.55-1.12), re-levelled by its own root mean
+/// square so the idio's realized sd is `sat_idio` times the primary's whatever shape the state
+/// takes — the correlation then transports by construction. Each channel reads its own
+/// dedicated stream — constructed from the path's seed, read only when the channel is on, so 0
+/// is bit-identical off; the range takes two uniforms per session, max then min, the volume two
+/// normals, slow innovation then white, and that draw ORDER is part of the cross-language
+/// contract. The first session's return-from-zero is absorbed by burn-in as before.
+fn derive_channels(w: &World, x: &ChannelInputs, level: ChannelLevel, seed: u64) -> Channels {
+    let mut srng = NumPyRng::new(seed ^ 0x5a7e_1117u64);
+    let mut rrng = NumPyRng::new(seed ^ 0xca9d_1e00u64);
+    let mut vrng = NumPyRng::new(seed ^ 0xd011_a5e5u64);
+    let tot = x.px.len();
+    let sat_on = w.sat_beta > 0.0;
+    let range_on = w.range_scale > 0.0;
+    let vol_on = range_on && w.vol_idio > 0.0;
+    let mut sat = if sat_on {
+        vec![0.0f64; tot]
+    } else {
+        Vec::new()
+    };
+    let (mut hi, mut lo) = if range_on {
+        (vec![0.0f64; tot], vec![0.0f64; tot])
+    } else {
+        (Vec::new(), Vec::new())
+    };
+    let mut vv = if vol_on {
+        vec![0.0f64; tot]
+    } else {
+        Vec::new()
+    };
+    if !(sat_on || range_on) {
+        return Channels {
+            sat,
+            log_hi: hi,
+            log_lo: lo,
+            log_volume: vv,
+        };
+    }
+    let k = level.k;
+    let k_s = level.k_sat;
+    // SATELLITE LEG state: its log price and the primary's observed log price last session.
+    let mut sat_log_p = 0.0f64;
+    let mut sat_prev_px = 0.0f64;
+    // RANGE state: the bar's open (the prior close — no overnight). Independent of the
+    // satellite's tracker on purpose: the channels must not couple through bookkeeping.
+    let mut bar_prev_px = 0.0f64;
+    // VOLUME state: the slow AR component, the EWMA of ln(range) that defines the range's
+    // "normal" (half-life 126 sessions — the grading convention's rolling-median window,
+    // centred), and its first-session initialization flag.
+    let mut vol_slow = 0.0f64;
+    let mut vol_rx_prev = 0.0f64;
+    let mut vol_ewma = 0.0f64;
+    let mut vol_ewma_set = false;
+    let vol_ewma_mu = 1.0 - (-(2.0f64.ln()) / 126.0).exp();
+    let vol_slow_innov = w.vol_idio * VOL_SLOW_SHARE.sqrt() * (1.0 - VOL_PHI * VOL_PHI).sqrt();
+    let vol_white_sd = w.vol_idio * (1.0 - VOL_SLOW_SHARE).sqrt();
+    for i in 0..tot {
+        let log_px = x.px[i];
+        // SATELLITE LEG: beta times the primary's observed log return, plus idio noise at
+        // `sat_idio` times the re-levelled state factor. The spiral's share of that factor is
+        // load-bearing: on log-vol alone the residual's stress/calm vol ratio read 1.13 against
+        // the anchored 3.1, and the missing state manufactured a +0.30 stress-correlation kick
+        // the record does not have. Reads `srng` only.
+        if sat_on {
+            let idio = w.sat_idio * (x.state[i] * k_s) * srng.randn();
+            sat_log_p += w.sat_beta * (log_px - sat_prev_px) + idio;
+            sat_prev_px = log_px;
+            sat[i] = sat_log_p.exp();
+        }
+        // RANGE CHANNEL: high/low of a Brownian bridge from the bar's open (prior close) to its
+        // close, at the re-levelled session scale times the disclosed compression dial. Exact
+        // inverse transforms for the one-sided extremes, max drawn first then min; sampling the
+        // pair independently is the stated approximation (their joint law is not independent —
+        // a joint sampler was measured and rejected, see the docs). A jump day's range is >=
+        // |ret| by construction — the extremes bracket both endpoints. The uniforms are floored
+        // at 1e-300 so a zero draw cannot mint an infinite bar; the floor is part of the
+        // cross-language contract. Reads `rrng` only.
+        if range_on {
+            let r_s = log_px - bar_prev_px;
+            let sig = (x.d[i] * k) * w.range_scale;
+            // The sign coupling — see the `range_down` field. Applied to the bridge sigma
+            // BEFORE the draws, consuming nothing; the near-reciprocal pair leaves the mean
+            // breadth at ~(1 + x^2/2), which `range_scale` absorbs.
+            let sig = if w.range_down > 0.0 {
+                if r_s < 0.0 {
+                    sig * (1.0 + w.range_down)
+                } else {
+                    sig / (1.0 + w.range_down)
+                }
+            } else {
+                sig
+            };
+            let sig2 = sig * sig;
+            let u1 = rrng.next_f64().max(1e-300);
+            let u2 = rrng.next_f64().max(1e-300);
+            hi[i] = bar_prev_px + (r_s + (r_s * r_s - 2.0 * sig2 * u1.ln()).sqrt()) / 2.0;
+            lo[i] = bar_prev_px + (r_s - (r_s * r_s - 2.0 * sig2 * u2.ln()).sqrt()) / 2.0;
+            bar_prev_px = log_px;
+            // VOLUME: elasticity VOL_SLOPE to the range's log-deviation from its slow normal,
+            // a down-day term shaped like the stress innovation (VOL_DOWN calibrated to the
+            // record's RESIDUAL +0.036 — most of the raw +0.12 flows THROUGH the range), plus
+            // the two-component idio. Reads `vrng` only; requires the range.
+            if vol_on {
+                let lnx = (hi[i] - lo[i]).max(1e-300).ln();
+                if !vol_ewma_set {
+                    vol_ewma = lnx;
+                    vol_ewma_set = true;
+                }
+                let rx = lnx - vol_ewma;
+                vol_ewma += vol_ewma_mu * (lnx - vol_ewma);
+                let down = 0.0f64.max(-r_s) / x.scale_var[i].sqrt();
+                vol_slow = VOL_PHI * vol_slow + vol_slow_innov * vrng.randn();
+                vv[i] = VOL_SLOPE * rx
+                    + VOL_LAG * vol_rx_prev
+                    + VOL_DOWN * down
+                    + vol_slow
+                    + vol_white_sd * vrng.randn();
+                vol_rx_prev = rx;
+            }
+        }
+    }
+    Channels {
+        sat,
+        log_hi: hi,
+        log_lo: lo,
+        log_volume: vv,
+    }
+}
+
+/// The price loop and the derived channels of one path; the channel arrays of `path` are empty
+/// until `simulate_at` fills them.
+struct Priced {
+    path: Path,
+    inputs: ChannelInputs,
+}
+
+/// One independent history: the price loop, then the derived channels at the given world level.
+fn simulate_at(w: &World, years: usize, seed: u64, level: ChannelLevel) -> Path {
+    let pr = price_loop(w, years, seed);
+    let chan = derive_channels(w, &pr.inputs, level, seed);
+    Path {
+        sat: if w.sat_beta > 0.0 {
+            chan.sat[BURN_IN..].to_vec()
+        } else {
+            Vec::new()
+        },
+        log_hi: if w.range_scale > 0.0 {
+            chan.log_hi[BURN_IN..].to_vec()
+        } else {
+            Vec::new()
+        },
+        log_lo: if w.range_scale > 0.0 {
+            chan.log_lo[BURN_IN..].to_vec()
+        } else {
+            Vec::new()
+        },
+        log_volume: if w.vol_idio > 0.0 {
+            chan.log_volume[BURN_IN..].to_vec()
+        } else {
+            Vec::new()
+        },
+        chan_k: level.k,
+        chan_k_sat: level.k_sat,
+        ..pr.path
+    }
+}
+
+/// `simulate_at` at the world's own level, solved here per call — `sim_paths` solves it once
+/// for the whole ensemble, so prefer that for more than one path.
+fn simulate(w: &World, years: usize, seed: u64) -> Path {
+    simulate_at(w, years, seed, world_level(w))
+}
+
+/// One independent history's PRICE LOOP, with the channels' per-session inputs recorded for the
+/// second pass. Local mutable state only — nothing escapes this function.
 #[expect(
     clippy::too_many_lines,
     clippy::cognitive_complexity,
@@ -1189,7 +1500,7 @@ impl Market {
               on NaN: `x < a || x > b` leaves NaN on the false branch, `!(a..=b).contains(&x)` \
               puts it on the true branch"
 )]
-fn simulate(w: &World, years: usize, seed: u64) -> Path {
+fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
     let n = years * DAYS_PER_YEAR;
     let tot = n + BURN_IN;
     let mut rng = NumPyRng::new(seed);
@@ -1205,16 +1516,7 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
     // The news channel's own stream (prototype), same survivability contract as `jrng`/`drng`:
     // constructed unconditionally, read only when `news_rate > 0`, so rate 0 is bit-identical.
     let mut nrng = NumPyRng::new(seed ^ 0x0bad_2e15u64);
-    // The satellite leg's own stream (prototype), same survivability contract: constructed
-    // unconditionally, read only when `sat_beta > 0`, so 0 is bit-identical off.
-    let mut srng = NumPyRng::new(seed ^ 0x5a7e_1117u64);
-    // The range channel's own stream (prototype), same survivability contract: constructed
-    // unconditionally, read only when `range_scale > 0` — two uniforms per session, max then
-    // min, and that draw ORDER is part of the cross-language contract.
-    let mut rrng = NumPyRng::new(seed ^ 0xca9d_1e00u64);
-    // The volume channel's own stream (prototype), same survivability contract: two normals
-    // per session, slow innovation then white, and that ORDER is part of the contract.
-    let mut vrng = NumPyRng::new(seed ^ 0xd011_a5e5u64);
+    // The channels' own streams are constructed in `derive_channels` from this same seed.
     let mut px = vec![0.0f64; tot];
     let mut fv = vec![0.0f64; tot];
     let mut rt = vec![0.0f64; tot];
@@ -1339,39 +1641,18 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
     let mut rec_step = 0.0f64;
     let mut disaster_count = 0usize;
     let dis_prob = w.disaster_rate / (100.0 * DAYS_PER_YEAR as f64);
-    // SATELLITE LEG state: its log price, and the primary's observed log price last session (so
-    // the leg loads on the OBSERVED return — markdown and news included). Draw-free when off.
-    let mut sat_log_p = 0.0f64;
-    let mut sat_prev_px = 0.0f64;
-    let mut sp = if w.sat_beta > 0.0 {
-        vec![0.0f64; tot]
-    } else {
-        Vec::new()
+    // THE CHANNELS' INPUTS, recorded per session and sampled AFTER the loop by `derive_channels`
+    // (see it for why the level has to be a path constant): the observed log price, the session
+    // diffusion sd as the price received it, the satellite's state factor, and the post-step
+    // realized scale the volume's down-term reads. Empty when both channels are off; draw-free
+    // either way, so off worlds stay bit-identical.
+    let ch_on = w.range_scale > 0.0 || w.sat_beta > 0.0;
+    let mut ch = ChannelInputs {
+        px: if ch_on { vec![0.0f64; tot] } else { Vec::new() },
+        d: if ch_on { vec![0.0f64; tot] } else { Vec::new() },
+        state: if ch_on { vec![0.0f64; tot] } else { Vec::new() },
+        scale_var: if ch_on { vec![0.0f64; tot] } else { Vec::new() },
     };
-    // RANGE channel state: the observed log price last session (the bar's open — no overnight),
-    // and the sampled log high/low. Independent of the satellite's tracker on purpose: the
-    // channels must not couple through bookkeeping.
-    let mut bar_prev_px = 0.0f64;
-    let (mut hi, mut lo) = if w.range_scale > 0.0 {
-        (vec![0.0f64; tot], vec![0.0f64; tot])
-    } else {
-        (Vec::new(), Vec::new())
-    };
-    // VOLUME channel state: the slow AR component, the EWMA of ln(range) that defines the
-    // range's "normal" (half-life 126 sessions — the grading convention's rolling-median
-    // window, centred), and its first-session initialization flag.
-    let mut vol_slow = 0.0f64;
-    let mut vol_rx_prev = 0.0f64;
-    let mut vol_ewma = 0.0f64;
-    let mut vol_ewma_set = false;
-    let vol_ewma_mu = 1.0 - (-(2.0f64.ln()) / 126.0).exp();
-    let mut vv = if w.vol_idio > 0.0 {
-        vec![0.0f64; tot]
-    } else {
-        Vec::new()
-    };
-    let vol_slow_innov = w.vol_idio * VOL_SLOW_SHARE.sqrt() * (1.0 - VOL_PHI * VOL_PHI).sqrt();
-    let vol_white_sd = w.vol_idio * (1.0 - VOL_SLOW_SHARE).sqrt();
 
     let mut i = 0usize;
     while i < tot {
@@ -1560,11 +1841,11 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
         } else {
             d_noise
         };
-        // The session's DIFFUSION SCALE, captured for the range channel below exactly as the
-        // noise term above is built — news damp, vol state, leverage kick (read BEFORE this
-        // session's update, like `d_noise` itself) — plus the jump branch's sqrt(1 - jumpVar)
-        // mixing. Draw-free; 0.0 when the channel is off.
-        let sess_sigma = if w.range_scale > 0.0 {
+        // The session's DIFFUSION SCALE, recorded for the range and satellite channels exactly
+        // as the noise term above is built — news damp, vol state, leverage kick (read BEFORE
+        // this session's update, like `d_noise` itself) — plus the jump branch's
+        // sqrt(1 - jumpVar) mixing. Draw-free; 0.0 when both channels are off.
+        let sess_sigma = if w.range_scale > 0.0 || w.sat_beta > 0.0 {
             let lev_mult = if w.leverage > 0.0 {
                 (w.leverage * lev_sig).exp()
             } else {
@@ -1711,79 +1992,11 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
         ip[i] = infl_press;
         log_cpi += (pi_base + infl_press) * dt;
         cp[i] = log_cpi.exp();
-        // SATELLITE LEG: beta times the primary's observed log return, plus idio noise riding the
-        // SAME vol state as the primary's diffusion (see the `sat_beta` field for the measured
-        // constraint this encodes). Reads `srng` only, so 0 is bit-identical off. The first
-        // session's return-from-zero is absorbed by burn-in.
-        if w.sat_beta > 0.0 {
-            let log_px = eq_m.log_p - markdown;
-            // The idio noise rides the primary's FULL per-session vol state: the log-vol factor
-            // AND the spiral's liquidity amplification, recovered exactly as this session's
-            // `last_liq` over the base impact. The spiral's share is load-bearing — on log-vol
-            // alone the residual's stress/calm vol ratio read 1.13 against the anchored 3.1,
-            // and the missing state manufactured a +0.30 stress-correlation kick the record
-            // does not have.
-            let amp_e = eq_m.last_liq * w.depth / 12.0;
-            let idio = w.sat_idio * sqdt * (log_vol - vol_norm).exp() * amp_e * srng.randn();
-            sat_log_p += w.sat_beta * (log_px - sat_prev_px) + idio;
-            sat_prev_px = log_px;
-            sp[i] = sat_log_p.exp();
-        }
-        // RANGE CHANNEL: high/low of a Brownian bridge from the bar's open (prior close) to its
-        // close, at the session's own diffusion scale as the price received it — `sess_sigma`
-        // times this session's spiral amplification (`last_liq` = amp x impact), times the
-        // disclosed compression dial. Exact inverse transforms for the one-sided extremes,
-        // max drawn first then min; sampling the pair independently is the prototype's stated
-        // approximation (their joint law is not independent). A jump day's range is >= |ret|
-        // by construction — the extremes bracket both endpoints. The uniforms are floored at
-        // 1e-300 so a zero draw cannot mint an infinite bar; the floor is part of the
-        // cross-language contract. Reads `rrng` only, so 0 is bit-identical off.
-        if w.range_scale > 0.0 {
-            let log_px = eq_m.log_p - markdown;
-            let r_s = log_px - bar_prev_px;
-            let sig = sess_sigma * eq_m.last_liq * w.range_scale;
-            // The sign coupling — see the `range_down` field. Applied to the bridge sigma
-            // BEFORE the draws, consuming nothing; the near-reciprocal pair leaves the mean
-            // breadth at ~(1 + x^2/2), which `range_scale` absorbs.
-            let sig = if w.range_down > 0.0 {
-                if r_s < 0.0 {
-                    sig * (1.0 + w.range_down)
-                } else {
-                    sig / (1.0 + w.range_down)
-                }
-            } else {
-                sig
-            };
-            let sig2 = sig * sig;
-            let u1 = rrng.next_f64().max(1e-300);
-            let u2 = rrng.next_f64().max(1e-300);
-            hi[i] = bar_prev_px + (r_s + (r_s * r_s - 2.0 * sig2 * u1.ln()).sqrt()) / 2.0;
-            lo[i] = bar_prev_px + (r_s - (r_s * r_s - 2.0 * sig2 * u2.ln()).sqrt()) / 2.0;
-            bar_prev_px = log_px;
-            // VOLUME: elasticity VOL_SLOPE to the range's log-deviation from its slow normal,
-            // a down-day term shaped like the stress innovation (VOL_DOWN calibrated to the
-            // record's RESIDUAL +0.036 — most of the raw +0.12 flows THROUGH the range, and
-            // the model's range is nearly sign-flat, so total down-up reads low: the same
-            // disclosed same-session sign gap the range carries), plus the two-component idio.
-            // The realized-vol scale is read POST-step, one session fresher than the leverage
-            // signal's — stated, and mirrored. Reads `vrng` only; requires the range block.
-            if w.vol_idio > 0.0 {
-                let lnx = (hi[i] - lo[i]).max(1e-300).ln();
-                if !vol_ewma_set {
-                    vol_ewma = lnx;
-                    vol_ewma_set = true;
-                }
-                let rx = lnx - vol_ewma;
-                vol_ewma += vol_ewma_mu * (lnx - vol_ewma);
-                let down = 0.0f64.max(-r_s) / eq_m.scale_var.sqrt();
-                vol_slow = VOL_PHI * vol_slow + vol_slow_innov * vrng.randn();
-                vv[i] = VOL_SLOPE * rx
-                    + VOL_LAG * vol_rx_prev
-                    + VOL_DOWN * down
-                    + vol_slow
-                    + vol_white_sd * vrng.randn();
-                vol_rx_prev = rx;
-            }
+        if ch_on {
+            ch.px[i] = eq_m.log_p - markdown;
+            ch.d[i] = sess_sigma * eq_m.last_liq;
+            ch.state[i] = (log_vol - vol_norm).exp() * eq_m.last_liq * w.depth / 12.0;
+            ch.scale_var[i] = eq_m.scale_var;
         }
 
         // ---- capital reallocation: spring, scored on positions actually held ---------------
@@ -1829,7 +2042,7 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
     }
 
     let nf = n as f64;
-    Path {
+    let path = Path {
         price: px[BURN_IN..].to_vec(),
         rate: rt[BURN_IN..].to_vec(),
         fundamental: fv[BURN_IN..].to_vec(),
@@ -1850,27 +2063,14 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
         duration: w.duration,
         mean_crowd_flow: crowd_flow_sum / nf,
         disasters: disaster_count,
-        sat: if w.sat_beta > 0.0 {
-            sp[BURN_IN..].to_vec()
-        } else {
-            Vec::new()
-        },
-        log_hi: if w.range_scale > 0.0 {
-            hi[BURN_IN..].to_vec()
-        } else {
-            Vec::new()
-        },
-        log_lo: if w.range_scale > 0.0 {
-            lo[BURN_IN..].to_vec()
-        } else {
-            Vec::new()
-        },
-        log_volume: if w.vol_idio > 0.0 {
-            vv[BURN_IN..].to_vec()
-        } else {
-            Vec::new()
-        },
-    }
+        sat: Vec::new(),
+        log_hi: Vec::new(),
+        log_lo: Vec::new(),
+        log_volume: Vec::new(),
+        chan_k: 0.0,
+        chan_k_sat: 0.0,
+    };
+    Priced { path, inputs: ch }
 }
 
 // ---- stylised-fact measurements ---------------------------------------------------------
@@ -3516,8 +3716,8 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     worst_depth_sd: 0.19,
     vol_band: (23.5, 30.3),
     ret_vol_band: (0.27, 0.47),
-    // QQQ wfull row of asymmetry-2026-08-31.tsv; the tail hedge is QQQ/TLT. Spreads are the
-    // S&P's carried over, like every spread in this set.
+    // QQQ wfull row of asymmetry-2026-08-31.tsv; the tail hedge is QQQ/TLT. Spreads measured
+    // at the recipe world (2026-09-01), like every spread in this set.
     semi_excess: 1.13,
     semi_excess_sd: 3.57,
     lev_corr: -0.1073,
@@ -4092,9 +4292,10 @@ fn sim_paths(w: &World, paths: usize, years: usize, seed: u64) -> Vec<Path> {
 /// taken from the middle is byte-identical to the same indices of a run that started at zero —
 /// which is what lets `-emitfrom` split one batch across invocations.
 fn sim_path_range(w: &World, from: usize, count: usize, years: usize, seed: u64) -> Vec<Path> {
+    let level = world_level(w);
     (from..from + count)
         .into_par_iter()
-        .map(|k| simulate(w, years, seed.wrapping_add(k as u64 * 7919)))
+        .map(|k| simulate_at(w, years, seed.wrapping_add(k as u64 * 7919), level))
         .collect()
 }
 
@@ -7533,6 +7734,112 @@ fn world_json_body(w: &World) -> Vec<String> {
         .collect()
 }
 
+/// The channel readings the `satellite *` / `bar *` gate rows grade, as DATA: `fidelityFailed`
+/// names a band, and a reader that never sees the report could not size a channel FAIL from it.
+/// Each object is present exactly when its channel ran (`sat_stats`/`bar_stats` return `Some`);
+/// `{}` when none did, else led by the world level they were sampled at (`world_level`). NaN
+/// prints as null, the `fidelity` rows' rule.
+fn channel_readings_block(st: &WorldStats, p: &Path) -> String {
+    let num = |x: f64| {
+        if x.is_nan() {
+            "null".to_string()
+        } else {
+            ef(x)
+        }
+    };
+    let mut blocks: Vec<String> = Vec::new();
+    if st.sat.is_some() || st.bars.is_some() {
+        blocks.push(format!(
+            "    \"level\": {{ \"k\": {}, \"kSat\": {} }}",
+            num(p.chan_k),
+            num(p.chan_k_sat)
+        ));
+    }
+    if let Some(sd) = st.sat {
+        blocks.push(format!(
+            "    \"satellite\": {{ \"corr\": {}, \"absCorr\": {}, \"beta\": {}, \"volRatio\": {}, \
+             \"kurtRatio\": {}, \"ac1Ratio\": {}, \"ac20Ratio\": {}, \"d5Ratio\": {}, \
+             \"d10Ratio\": {}, \"crashRatio\": {} }}",
+            num(sd.corr),
+            num(sd.abs_corr),
+            num(sd.beta),
+            num(sd.vol_ratio),
+            num(sd.kurt_ratio),
+            num(sd.ac1_ratio),
+            num(sd.ac20_ratio),
+            num(sd.d5_ratio),
+            num(sd.d10_ratio),
+            num(sd.crash_ratio)
+        ));
+    }
+    if let Some(b) = st.bars {
+        blocks.push(format!(
+            "    \"barRange\": {{ \"rangeOverCcvol\": {}, \"rangeAcf1\": {}, \"rangeDownup\": {} }}",
+            num(b.range_over_ccvol),
+            num(b.range_acf1),
+            num(b.range_downup)
+        ));
+        if b.vol_sd.is_finite() {
+            blocks.push(format!(
+                "    \"barVolume\": {{ \"volSd\": {}, \"volCorrRange\": {} }}",
+                num(b.vol_sd),
+                num(b.vol_corr_range)
+            ));
+        }
+    }
+    if blocks.is_empty() {
+        "  \"channels\": {},".to_string()
+    } else {
+        format!("  \"channels\": {{\n{}\n  }},", blocks.join(",\n"))
+    }
+}
+
+fn str_list<S: AsRef<str>>(v: &[S]) -> String {
+    let items: Vec<String> = v.iter().map(|s| json_str(s.as_ref())).collect();
+    format!("[{}]", items.join(", "))
+}
+
+/// WHICH RULER, and WHICH SERIES — the gate block's scope, as three JSON lines.
+///
+/// Without the first, a `-anchors nasdaq` run's verdict is indistinguishable from an S&P one in
+/// its own provenance record. Without the rest, a PASS sits beside emitted columns it never
+/// examined: the gate measures `price` and `bond`, so a satellite leg or a sampled bar is outside
+/// its scope entirely, and `logSat` is exactly the column a consumer would take as their second
+/// index. Same doctrine as `fidelityUnanchored` — name what was not graded, in the artifact that
+/// carries the verdict.
+///
+/// `gradedSeries` is the authoritative half: the verdict is computed from THOSE series — `price`
+/// and `bond` always, and each channel column exactly when its `satellite *` / `bar *` rows ran,
+/// which is the same condition under which the column exists. The channel list is scoped to
+/// optional channels rather than to every other column, so it cannot be read as a claim that
+/// `rate`/`cpi`/`liq` are graded — they are context, and some feed a band only indirectly.
+fn gate_scope_lines(a: Anchors, p: &Path) -> String {
+    // The presence conditions are `sat_stats`'/`bar_stats`' own — they return `Some` exactly
+    // when these columns are non-empty — so a column is listed the session its rows exist.
+    let mut graded = vec!["price", "bond"];
+    if !p.sat.is_empty() {
+        graded.push("logSat");
+    }
+    if !p.log_hi.is_empty() {
+        graded.push("logHigh");
+        graded.push("logLow");
+    }
+    if !p.log_volume.is_empty() {
+        graded.push("logVolume");
+    }
+    // EMPTY BY CONSTRUCTION today, and the field earns its place anyway: `logSat` is covered by
+    // the `satellite *` gate rows and the bar columns by the `bar *` rows, so there is nothing
+    // left to disclose — but the next channel to arrive is ungraded until someone anchors it,
+    // and this is the field that has to say so rather than a doc nobody reads beside the data.
+    let ungraded: Vec<&str> = Vec::new();
+    format!(
+        "    \"anchors\": {},\n    \"gradedSeries\": {},\n    \"ungradedChannelSeries\": {},",
+        json_str(a.name),
+        str_list(&graded),
+        str_list(&ungraded)
+    )
+}
+
 /// Everything that licenses the TSV: which (world, seed, path) produced it, on what calendar,
 /// and what the world's two gate verdicts and fidelity ratios were. A warning printed to stderr
 /// at export time does not survive the file being moved; this does.
@@ -7543,44 +7850,10 @@ fn world_json_body(w: &World) -> Vec<String> {
 /// columns and identical schema can still be incomparable — a consumer that pins its calibration
 /// to a release checks `version`, and one that needs the exact parameters reads `world` below.
 /// `schema` went 1 -> 2 when `version` was added, so its absence is detectable rather than
-/// WHICH RULER, and WHICH SERIES — the gate block's scope, as three JSON lines.
-///
-/// Without the first, a `-anchors nasdaq` run's verdict is indistinguishable from an S&P one in
-/// its own provenance record. Without the rest, a PASS sits beside emitted columns it never
-/// examined: the gate measures `price` and `bond`, so a satellite leg or a sampled bar is outside
-/// its scope entirely, and `logSat` is exactly the column a consumer would take as their second
-/// index. Same doctrine as `fidelityUnanchored` — name what was not graded, in the artifact that
-/// carries the verdict.
-///
-/// `gradedSeries` is the authoritative half: the verdict is computed from THOSE series. The
-/// channel list is scoped to optional channels rather than to every other column, so it cannot be
-/// read as a claim that `rate`/`cpi`/`liq` are graded — they are context, and some feed a band
-/// only indirectly.
-fn gate_scope_lines(a: Anchors) -> String {
-    // EMPTY BY CONSTRUCTION today, and the field earns its place anyway: `logSat` is covered by
-    // the `satellite *` gate rows and the bar columns by the `bar *` rows, so there is nothing
-    // left to disclose — but the next channel to arrive is ungraded until someone anchors it,
-    // and this is the field that has to say so rather than a doc nobody reads beside the data.
-    let ungraded: Vec<&str> = Vec::new();
-    let items: Vec<String> = ungraded.iter().map(|s| json_str(s)).collect();
-    format!(
-        "    \"anchors\": {},\n    \"gradedSeries\": [\"price\", \"bond\"],\n    \
-         \"ungradedChannelSeries\": [{}],",
-        json_str(a.name),
-        items.join(", ")
-    )
-}
-
 /// ambiguous.
 #[expect(
     clippy::too_many_arguments,
     reason = "the sidecar records the whole provenance tuple; grouping it would only move the list"
-)]
-#[expect(
-    clippy::too_many_lines,
-    reason = "a linear serializer whose length tracks the schema; the one cohesive block worth a \
-              name is extracted as `gate_scope_lines`, and splitting the rest would scatter the \
-              document across helpers where `EMIT_SIDECAR_KEYS` can no longer be read against it"
 )]
 fn write_emit_sidecar(
     a: Anchors,
@@ -7601,10 +7874,6 @@ fn write_emit_sidecar(
     let realism_bad = failed_in(a, gate_st, GateClass::Realism);
     let mechanism_bad = failed_in(a, gate_st, GateClass::Mechanism);
     let fidelity_bad = failed_in(a, gate_st, GateClass::Fidelity);
-    fn str_list<S: AsRef<str>>(v: &[S]) -> String {
-        let items: Vec<String> = v.iter().map(|s| json_str(s.as_ref())).collect();
-        format!("[{}]", items.join(", "))
-    }
     let num = |x: f64| -> String {
         if x.is_nan() {
             "null".to_string()
@@ -7689,7 +7958,7 @@ fn write_emit_sidecar(
         "  \"gate\": {".to_string(),
         format!("    \"ensemblePaths\": {gate_paths},"),
         format!("    \"ensembleYears\": {gate_years},"),
-        gate_scope_lines(a),
+        gate_scope_lines(a, p),
         format!("    \"realism\": {},", json_str(verdict(&realism_bad))),
         format!("    \"mechanism\": {},", json_str(verdict(&mechanism_bad))),
         format!("    \"fidelity\": {},", json_str(verdict(&fidelity_bad))),
@@ -7704,6 +7973,7 @@ fn write_emit_sidecar(
             str_list(&unanchored_in(gate_st))
         ),
         "  },".to_string(),
+        channel_readings_block(gate_st, p),
         "  \"fidelity\": [".to_string(),
         fidelity.join(",\n"),
         "  ]".to_string(),
@@ -8658,6 +8928,41 @@ fn main() {
         "  realized inflation     {}%/yr median (deterministic from regime pressure; no draws consumed)",
         jf(st.infl_ann, 0, 2)
     );
+    // The channel readings the gate rows grade, printed so a channel FAIL can be sized; absent
+    // when the channel is off, like the rows themselves.
+    if let Some(sd) = st.sat {
+        println!(
+            "  satellite leg          corr {}   |r| corr {}   beta {}   vol ratio {}   kurtosis ratio {}",
+            jf(sd.corr, 0, 3),
+            jf(sd.abs_corr, 0, 3),
+            jf(sd.beta, 0, 3),
+            jf(sd.vol_ratio, 0, 3),
+            jf(sd.kurt_ratio, 0, 3)
+        );
+        println!(
+            "                         clustering ratio lag 1 {}   lag 20 {}   d5 ratio {}   d10 ratio {}   crash ratio {}",
+            jf(sd.ac1_ratio, 0, 3),
+            jf(sd.ac20_ratio, 0, 3),
+            jf(sd.d5_ratio, 0, 3),
+            jf(sd.d10_ratio, 0, 3),
+            jf(sd.crash_ratio, 0, 3)
+        );
+    }
+    if let Some(b) = st.bars {
+        println!(
+            "  bar range              vs cc vol {}   clustering {}   down/up {}",
+            jf(b.range_over_ccvol, 0, 3),
+            jf(b.range_acf1, 0, 3),
+            jf(b.range_downup, 0, 3)
+        );
+        if b.vol_sd.is_finite() {
+            println!(
+                "  bar volume             sd {}   vs range {}",
+                jf(b.vol_sd, 0, 3),
+                jf(b.vol_corr_range, 0, 3)
+            );
+        }
+    }
     println!("  depth profile          share of sessions below the running peak, median path");
     // Against the relation at THIS world's own volatility and return, not against SPY's levels:
     // SPY produced 0.447 / 0.315 / 0.169 at 18.6% volatility and 0.554 return per vol, so printing
@@ -8933,8 +9238,8 @@ mod emit_sidecar_tests {
         let seed = 20260825u64;
         let mut w = default_world();
         w.sat_beta = 1.2;
-        w.sat_idio = 0.074;
-        w.range_scale = 1.1;
+        w.sat_idio = 0.77;
+        w.range_scale = 0.63;
         w.vol_idio = 0.34;
         let p = simulate(&w, years, seed);
         let st = measure(std::slice::from_ref(&p), years);
@@ -8990,6 +9295,7 @@ mod emit_sidecar_tests {
         // either GRADED by a gate row or DECLARED ungraded. A column that is neither is exactly
         // the trap this pair of fields exists to close — a verdict sitting beside a series it
         // never examined and never admitted to.
+        let graded = declared[0];
         let ungraded = declared[1];
         let rows = gate_checks(SP500_ANCHORS, &st);
         let graded_by = |prefix: &str| rows.iter().any(|(n, _, _)| n.starts_with(prefix));
@@ -9002,6 +9308,13 @@ mod emit_sidecar_tests {
             assert!(
                 graded_by(prefix) || ungraded.contains(col),
                 "{col} is neither graded (no `{prefix} *` gate row) nor declared ungraded"
+            );
+            // ...and the graded list must SAY so: a verdict computed from a column that the
+            // scope record does not name is the original defect inverted.
+            assert_eq!(
+                graded_by(prefix),
+                graded.contains(col),
+                "{col}: gradedSeries must list exactly the channel columns the gate rows grade"
             );
         }
         // and this world grades all four, so the declared list is empty
@@ -9839,9 +10152,9 @@ mod contract_tests {
 
         let mut on = default_world();
         on.sat_beta = 1.2;
-        on.sat_idio = 0.074;
-        on.range_scale = 1.1;
-        on.range_down = 0.08;
+        on.sat_idio = 0.77;
+        on.range_scale = 0.63;
+        on.range_down = 0.09;
         on.vol_idio = 0.34;
         let st_on = measure(&sim_paths(&on, 8, 40, DEFAULT_SEED), 40);
         assert!(st_on.sat.is_some() && st_on.bars.is_some());
@@ -9868,7 +10181,7 @@ mod contract_tests {
         );
         // A bar sampled at a wildly wrong scale is not a bar.
         let mut wide = on;
-        wide.range_scale = 3.0;
+        wide.range_scale = 2.0;
         let st_w = measure(&sim_paths(&wide, 8, 40, DEFAULT_SEED), 40);
         assert!(
             gate_checks(SP500_ANCHORS, &st_w)
@@ -9891,7 +10204,7 @@ mod contract_tests {
         let off = simulate(&default_world(), 2, DEFAULT_SEED);
         assert!(off.log_hi.is_empty() && off.log_lo.is_empty());
         let mut w = default_world();
-        w.range_scale = 1.1;
+        w.range_scale = 0.63;
         let on = simulate(&w, 2, DEFAULT_SEED);
         assert_eq!(on.log_hi.len(), on.price.len());
         let mut prev = on.price[0].ln();
@@ -9918,7 +10231,7 @@ mod contract_tests {
         let off = simulate(&default_world(), 2, DEFAULT_SEED);
         assert!(off.log_volume.is_empty());
         let mut rw = default_world();
-        rw.range_scale = 1.1;
+        rw.range_scale = 0.63;
         let bars_only = simulate(&rw, 2, DEFAULT_SEED);
         let mut w = rw;
         w.vol_idio = 0.34;
@@ -10882,7 +11195,7 @@ mod joint_coupling_tests {
         let Some(a) = rows(COUPLING) else { return };
         let mut w = default_world();
         w.sat_beta = 1.2;
-        w.sat_idio = 0.074;
+        w.sat_idio = 0.77;
         let sims = sim_paths(&w, 4, 100, DEFAULT_SEED);
         let mut corrs = Vec::new();
         let mut acorrs = Vec::new();
@@ -11006,7 +11319,7 @@ mod bars_anchor_tests {
     fn the_bar_channels_sit_on_their_anchors() {
         let Some(a) = rows(BARS) else { return };
         let mut w = default_world();
-        w.range_scale = 1.1;
+        w.range_scale = 0.63;
         w.vol_idio = 0.34;
         let sims = sim_paths(&w, 4, 100, DEFAULT_SEED);
         let mut mroc = Vec::new();

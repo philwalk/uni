@@ -1,4 +1,5 @@
 tmp/
+PLAN.md
 bench-logs/
 resume-claude.sh
 py/heatmap.py
