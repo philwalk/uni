@@ -156,15 +156,24 @@ program name from `#[track_caller]` + `Location::caller().file()` — the caller
 file, exactly as the Scala macro does, rather than `argv[0]`'s executable name:
 
 ```rust
-let usage = |m: &str| showUsage(m, &["-v          ; verbose",
-                                     "-n <count>  ; how many",
-                                     "<file> ..."]);
-eachArg(&args, &usage, |ctx, arg| match arg {
-    "-v" => verbose = true,
-    "-n" => count = ctx.nextInt(),          // consumes the value
-    f if !f.starts_with('-') => files.push(f.to_owned()),
-    other => ctx.usage(&format!("unknown argument [{other}]")),
-});
+use uni::cli::{eachArg, showUsage};
+
+fn main() {
+    let usage = |m: &str| showUsage(m, &["-v          ; verbose",
+                                         "-n <count>  ; how many",
+                                         "<file> ..."]);
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut verbose = false;
+    let mut count = 1;
+    let mut files: Vec<String> = Vec::new();
+    eachArg(&args, &usage, |ctx, arg| match arg {
+        "-v" => verbose = true,
+        "-n" => count = ctx.nextInt(),          // consumes the value
+        f if !f.starts_with('-') => files.push(f.to_owned()),
+        other => ctx.usage(&format!("unknown argument [{other}]")),
+    });
+    println!("verbose={verbose} count={count} files={files:?}");
+}
 ```
 
 `ctx` carries the cursor helpers Scala reaches through dynamic scoping — `thisArg`,

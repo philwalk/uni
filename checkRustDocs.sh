@@ -8,9 +8,10 @@
 # crate (a path dependency on the library) with warnings denied, so a documented call that
 # no longer exists, or an unused import, fails here rather than in a reader's editor — and
 # then every example is RUN: they are self-contained (temp dirs, no external files), so a
-# panic or a non-zero exit fails the check too. Every ```rust block in the Rust docs is a
-# complete program by policy; a fragment would silently escape both checks, so do not add
-# one.
+# panic or a non-zero exit fails the check too. Every ```rust block is a complete program by
+# policy, and the policy is enforced: a block without `fn main` FAILS the check unless it
+# carries a `// doc: fragment` line — the Rust twin of checkDocScripts.sh's `// doc:
+# compile-only` — so a fragment cannot escape both checks in silence.
 #
 # Runs in CI (rust.yml) and as release gate 6d.
 #
@@ -24,12 +25,22 @@ rm -rf "$out"; mkdir -p "$out"
 
 for md in "${files[@]}"; do
   base=$(basename "$md" .md)
-  awk -v base="$base" -v out="$out" '
-    /^```/ { if (inblock) { inblock=0; if (buf ~ /fn main/) { n++; f=sprintf("%s/%s_%02d.rs", out, base, n); printf "%s", buf > f; close(f) } buf=""; next }
+  awk -v base="$base" -v out="$out" -v md="$md" -v frag="$out/fragments.txt" '
+    /^```/ { if (inblock) { inblock=0
+                            if (buf ~ /fn main/) { n++; f=sprintf("%s/%s_%02d.rs", out, base, n); printf "%s", buf > f; close(f) }
+                            else if (buf !~ /\/\/ doc: fragment/) { printf "%s: rust block ending at line %d has no fn main and no // doc: fragment marker\n", md, NR >> frag }
+                            buf=""; next }
              if ($0 ~ /^```rust/) { inblock=1; buf="" } ; next }
     inblock { buf = buf $0 "\n" }
   ' "$md"
 done
+
+if [ -s "$out/fragments.txt" ]; then
+  cat "$out/fragments.txt"
+  echo "a rust block without fn main would escape both checks: make it a complete program, or mark a deliberate fragment with // doc: fragment"
+  exit 1
+fi
+rm -f "$out/fragments.txt"
 
 count=$(ls "$out"/*.rs 2>/dev/null | wc -l)
 if [ "$count" -eq 0 ]; then echo "no Rust doc examples found"; exit 0; fi

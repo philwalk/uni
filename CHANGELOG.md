@@ -1,4 +1,4 @@
-## v0.23.0 — unreleased
+## v0.23.0 — 2026-09-02
 
 **NEW MECHANISM, and a defaults change — the slow valuation cycle**
 
