@@ -1,12 +1,19 @@
 package uni.apps
 
 import munit.FunSuite
+import scala.concurrent.duration.*
 
 /**
  * Contracts on the report machinery itself — no fixture, no ensemble. The Rust twin carries the
  * same checks in `contract_tests`.
  */
 class MarketSimContractSuite extends FunSuite:
+
+  // The worst-crash runaway test simulates 1000 path-centuries -- half of them twice, since
+  // `fidelityRows` re-simulates the ensemble for its percentile pass.  It runs ~25 s on a
+  // local Mac and crossed munit's 30 s default on a GitHub macOS runner, which is ~1.7x
+  // slower.  Nothing here is on the clock; the margin was the defect.
+  override val munitTimeout: Duration = 120.seconds
 
   test("indexed names keep their width and their history") {
     // The padding is a promise about SORT ORDER, and it is only kept if every name a batch writes

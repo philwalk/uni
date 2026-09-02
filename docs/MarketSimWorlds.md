@@ -397,9 +397,10 @@ rather than hidden inside it.
 volatility and `-rangescale` a multiple of the session's vol state re-levelled onto it — the level
 is solved once per WORLD from a fixed ensemble, never read off the path being emitted, because a
 path's own whole-path variance leaks its future into every window (years 1–10 of a bar series
-predicted the log volatility of years 11–100 at +0.81 against +0.06 in a channel-free control) — so the same values read the same coupling at any admissible
-world: on the `-anchors nasdaq` recipe the leg measures correlation 0.85 and volatility ratio 1.41,
-as on the default world. Whether a
+predicted the log volatility of years 11–100 at +0.81, against +0.06 in a control whose level was
+computed causally, session by session) — so the same values read the same coupling at any
+admissible world: on the `-anchors nasdaq` recipe the leg measures correlation 0.85 and volatility
+ratio 1.41, as on the default world. Whether a
 second leg at 1.4x a 25%-volatility primary is the pair you want is a modelling choice, not a
 calibration one; if you want two indices at index-like volatility, run the satellite on the
 default world.

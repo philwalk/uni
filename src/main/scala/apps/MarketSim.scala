@@ -1376,10 +1376,10 @@ object MarketSim:
     var recLeft = 0; var recStep = 0.0
     val disProb = w.disasterRate / (100.0 * DaysPerYear)
     // THE CHANNELS' INPUTS, recorded per session and sampled AFTER the loop by `deriveChannels`
-    // (see it for why the level has to be a path constant): the observed log price, the session
-    // diffusion sd as the price received it, the satellite's state factor, and the post-step
-    // realized scale the volume's down-term reads.  Empty when both channels are off; draw-free
-    // either way, so off worlds stay bit-identical.
+    // (see it for why the level is a world constant, never read off the path being emitted): the
+    // observed log price, the session diffusion sd as the price received it, the satellite's
+    // state factor, and the post-step realized scale the volume's down-term reads.  Empty when
+    // both channels are off; draw-free either way, so off worlds stay bit-identical.
     val chOn    = w.rangeScale > 0.0 || w.satBeta > 0.0
     val chPx    = if chOn then new Array[Double](tot) else Array.emptyDoubleArray
     val chD     = if chOn then new Array[Double](tot) else Array.emptyDoubleArray

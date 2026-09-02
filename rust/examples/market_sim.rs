@@ -1666,10 +1666,10 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
     let mut disaster_count = 0usize;
     let dis_prob = w.disaster_rate / (100.0 * DAYS_PER_YEAR as f64);
     // THE CHANNELS' INPUTS, recorded per session and sampled AFTER the loop by `derive_channels`
-    // (see it for why the level has to be a path constant): the observed log price, the session
-    // diffusion sd as the price received it, the satellite's state factor, and the post-step
-    // realized scale the volume's down-term reads. Empty when both channels are off; draw-free
-    // either way, so off worlds stay bit-identical.
+    // (see it for why the level is a world constant, never read off the path being emitted): the
+    // observed log price, the session diffusion sd as the price received it, the satellite's
+    // state factor, and the post-step realized scale the volume's down-term reads. Empty when
+    // both channels are off; draw-free either way, so off worlds stay bit-identical.
     let ch_on = w.range_scale > 0.0 || w.sat_beta > 0.0;
     let mut ch = ChannelInputs {
         px: if ch_on { vec![0.0f64; tot] } else { Vec::new() },
