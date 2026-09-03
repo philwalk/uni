@@ -592,6 +592,13 @@ class MarketSimContractSuite extends FunSuite:
     assertEquals(base.overnight, 0.0, "the 0.23.0 recipe keeps its bars byte for byte: no open")
   }
 
+  test("the basket recipe is the frozen 0.23.0 world with exactly the basket dials moved") {
+    val (_, w, a) = MarketSim.Recipes.find(_._1 == "0.23.1-basket").getOrElse(fail("no basket recipe"))
+    val base = MarketSim.Releases.find(_._1 == "0.23.0").map(_._2).getOrElse(fail("no 0.23.0 row"))
+    assertEquals(a, "sp500")
+    assertEquals(w, base.copy(basket = 8, basketBeta = 1.56, basketSector = 1.2, basketIdio = 1.0, basketGaps = 3.0))
+  }
+
   test("valuation dispersion grows with the horizon, which is why the verdict is pinned") {
     // The defect `GateYears` closes: sd log(p/fair) is the sample sd of a near-integrated gap,
     // so it GROWS with the measurement window -- 0.11 at 30 years against 0.21 at 100 on the

@@ -958,14 +958,17 @@ can then be compared digit-for-digit rather than approximately.
 Three gaps sit outside the ten items and stop most of one consumer's book from being evaluated here
 at all. They are recorded rather than scheduled.
 
-- **There is no cross-section.** market_sim has exactly two assets, so cross-sectional dispersion,
-  rank stability and any correlation-regime component cannot be evaluated on an emitted path at all
-  — and 45 of the consumer's sleeves rank a basket of individual names. The minimal fix is N equity
+- **There is no cross-section** — closed in 0.23.1 by `-basket N` (see MarketSimWorlds.md, "A
+  basket of names"). The original gap: market_sim had exactly two assets, so cross-sectional
+  dispersion, rank stability and any correlation-regime component could not be evaluated on an
+  emitted path at all — and a few of the consumer's portfolios hold 8-20-name sector baskets that
+  nothing ranks. The minimal fix is N equity
   names sharing the market factor plus idiosyncratic fundamental and liquidity, so correlation rises
   endogenously in crashes. `Market` is already generic and `simulate` already runs two instances, so
   this is nearer W4 in cost than W7, and it unlocks that consumer's largest strategy class. **This
   is its W7.**
-- **Bars are close-only.** Rules that read dollar turnover or intra-bar range have nothing to read.
+- **Bars are close-only** — closed in 0.23.0 (range and volume) and 0.23.1 (the open). The
+  original gap: rules that read dollar turnover or intra-bar range had nothing to read.
   The model is well placed to fix this honestly rather than by a fudge: `stressIdx`/`liq` is a
   natural volume driver, and the within-step flow-versus-noise split is a natural intra-bar range
   driver, so H/L would come from the mechanism. Scaling a whole bar by one factor leaves `ln(H/L)`

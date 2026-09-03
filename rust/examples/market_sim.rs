@@ -132,9 +132,11 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 // by, and `channels.dividend` the mean yield read. THE OPEN, same release: `world` gained
 // `overnight`, the TSV `logOpen` (present ONLY when `overnight > 0` — the bar's open as a log;
 // `logHigh`/`logLow` then bracket the open and the close rather than the prior close and the
-// close), and `channels.open` the share readings. A channels-off schema-11 file is
-// byte-identical to its schema-10 counterpart except the schema number and two zero world
-// fields.
+// close), and `channels.open` the share readings. THE BASKET, same release: `world` gained
+// `basket` and its four dials, the TSV `logBasket` (the equal-weight aggregate, log) and
+// `logName1..N` (present ONLY when `basket > 0`; N from the header), and `channels.basket` the
+// three levels' readings. A channels-off schema-11 file is byte-identical to its schema-10
+// counterpart except the schema number and the new zero world fields.
 const EMIT_SCHEMA: u32 = 11;
 
 /// Frozen structural constants of the volume channel — see the `vol_idio` field. Measured
@@ -291,6 +293,10 @@ const SIGMA_N: f64 = 0.007;
 /// by that many of its own sd, carrying the negative skew a symmetric jump cannot.
 const JUMP_NU: usize = 5;
 const JUMP_GAMMA: f64 = 2.0;
+/// A basket name's gap size, log, per standardized t draw: 0.09 puts a 1-sd gap at ~9% and the
+/// per-year count past 10% at roughly half the intensity dial. Frozen, like the jump family's
+/// shape constants; `basket_gaps` is the one anchored parameter.
+const BASKET_GAP_SIZE: f64 = 0.09;
 
 /// Jump size, from the share of variance it carries and how often it fires. `1 + jump_skew^2` is
 /// the shift's own contribution to the second moment; without it the channel would overshoot the
@@ -408,6 +414,11 @@ fn default_world() -> World {
         vol_idio: 0.0,
         div_yield: 0.0,
         overnight: 0.0,
+        basket: 0,
+        basket_beta: 0.0,
+        basket_sector: 0.0,
+        basket_idio: 0.0,
+        basket_gaps: 0.0,
         value_pull: 0.056,
         crowd: Crowd::Momentum,
         crowd_impact: 0.030,
@@ -473,6 +484,11 @@ fn v0_19_2() -> World {
         vol_idio: 0.0,
         div_yield: 0.0,
         overnight: 0.0,
+        basket: 0,
+        basket_beta: 0.0,
+        basket_sector: 0.0,
+        basket_idio: 0.0,
+        basket_gaps: 0.0,
         value_pull: 0.013,
         belief_share: 0.0,
         belief_years: 2.5,
@@ -576,9 +592,20 @@ fn recipes() -> Vec<(&'static str, World, &'static str)> {
     open.overnight = 0.22;
     open.range_scale = 0.78;
     open.range_down = 0.13;
+    // The S&P default with THE BASKET on at its anchored dials (`basket-2026-09-02.tsv`: folio's
+    // eight semis under SMH). Verified at 200x100: names vol 2.47x, gaps 1.92/yr; aggregate corr
+    // 0.774, beta 1.560, vol 2.01x; pairwise 0.618, idio share 0.336, tail coincidence 0.487,
+    // pairwise on the worst decile 0.721 vs 0.269 mid; the primary untouched.
+    let mut basket = v0_23_0();
+    basket.basket = 8;
+    basket.basket_beta = 1.56;
+    basket.basket_sector = 1.2;
+    basket.basket_idio = 1.0;
+    basket.basket_gaps = 3.0;
     vec![
         ("0.23.0-nasdaq", nasdaq, "nasdaq"),
         ("0.23.1-nasdaq", open, "nasdaq"),
+        ("0.23.1-basket", basket, "sp500"),
     ]
 }
 
@@ -636,6 +663,11 @@ fn v0_23_0() -> World {
         vol_idio: 0.0,
         div_yield: 0.0,
         overnight: 0.0,
+        basket: 0,
+        basket_beta: 0.0,
+        basket_sector: 0.0,
+        basket_idio: 0.0,
+        basket_gaps: 0.0,
         value_pull: 0.056,
         crowd: Crowd::Momentum,
         crowd_impact: 0.030,
@@ -691,6 +723,11 @@ fn v0_22_1() -> World {
         vol_idio: 0.0,
         div_yield: 0.0,
         overnight: 0.0,
+        basket: 0,
+        basket_beta: 0.0,
+        basket_sector: 0.0,
+        basket_idio: 0.0,
+        basket_gaps: 0.0,
         value_pull: 0.045,
         crowd: Crowd::Momentum,
         crowd_impact: 0.030,
@@ -748,6 +785,11 @@ fn v0_22_0() -> World {
         vol_idio: 0.0,
         div_yield: 0.0,
         overnight: 0.0,
+        basket: 0,
+        basket_beta: 0.0,
+        basket_sector: 0.0,
+        basket_idio: 0.0,
+        basket_gaps: 0.0,
         value_pull: 0.045,
         crowd: Crowd::Momentum,
         crowd_impact: 0.030,
@@ -805,6 +847,11 @@ fn v0_21_0() -> World {
         vol_idio: 0.0,
         div_yield: 0.0,
         overnight: 0.0,
+        basket: 0,
+        basket_beta: 0.0,
+        basket_sector: 0.0,
+        basket_idio: 0.0,
+        basket_gaps: 0.0,
         value_pull: 0.045,
         crowd: Crowd::Momentum,
         crowd_impact: 0.07,
@@ -853,6 +900,11 @@ fn v0_20_0() -> World {
         vol_idio: 0.0,
         div_yield: 0.0,
         overnight: 0.0,
+        basket: 0,
+        basket_beta: 0.0,
+        basket_sector: 0.0,
+        basket_idio: 0.0,
+        basket_gaps: 0.0,
         value_pull: 0.0145,
         belief_share: 0.0,
         belief_years: 2.5,
@@ -1108,6 +1160,29 @@ struct World {
     /// 0.28 (QQQ), `bars-2026-09-01.tsv`, and the graded share includes the jumps, so the dial
     /// sits below it.
     overnight: f64,
+    /// THE BASKET: N single names as observational second-pass instances of the primary —
+    /// name_i = the SECTOR leg + its own idio + its own gaps. The sector leg is the satellite
+    /// construction (beta on the primary's observed return plus idio riding the re-levelled
+    /// state factor) and is shared by every name: the model has no sector index, so the
+    /// basket's equal-weight aggregate IS the sector, graded against SMH's own relation to SPY.
+    /// A name's idio rides the VOL STATE only, not the spiral's amplification, so in stress the
+    /// shared variance dominates and pairwise correlation rises — the mechanism the record shows
+    /// (0.60 on SPY's worst decile vs 0.28 mid). Own gaps: a per-name Student-t jump (JUMP_NU,
+    /// the primary's skew) at `basket_gaps` per year past ~10%. Reaches no price; 0 = off, no
+    /// columns, bit-identical. Anchored on folio's eight semis under SMH
+    /// (`basket-2026-09-02.tsv`): N = 8.
+    basket: usize,
+    /// sector leg: beta on the primary's observed return (anchored 1.56, the basket's beta on SPY)
+    basket_beta: f64,
+    /// sector leg: idio sd as a FRACTION of the primary's realized vol, riding the vol state x
+    /// spiral (the satellite's `sat_idio` construction)
+    basket_sector: f64,
+    /// per-name idio sd as a FRACTION of the primary's realized vol, riding the vol state WITHOUT
+    /// the spiral
+    basket_idio: f64,
+    /// per-name gap intensity, jumps per year; each a standardized t(JUMP_NU) x
+    /// `BASKET_GAP_SIZE` (log), skewed like the primary's
+    basket_gaps: f64,
     value_pull: f64,
     crowd: Crowd,
     crowd_impact: f64,
@@ -1188,6 +1263,8 @@ struct Path {
     traded: Vec<f64>,
     /// the bar's open, log (empty when `overnight` is 0)
     log_open: Vec<f64>,
+    /// the basket's names, LOG prices (empty when `basket` is 0)
+    names: Vec<Vec<f64>>,
     /// the world's channel level the bars and the satellite were sampled at (`world_level`),
     /// carried into the sidecar so the emitted data's scale is auditable; 0 / 0 when both
     /// channels are off
@@ -1195,6 +1272,8 @@ struct Path {
     chan_k_sat: f64,
     /// the world's mean fundamental/price the dividend yield was normalized by; 0 when off
     chan_k_div: f64,
+    /// the basket idio's level (realized sd over the vol state's rms); 0 when no channel ran
+    chan_k_vs: f64,
 }
 
 /// ONE price-formation mechanism for every traded asset: value demand toward `fair`, plus
@@ -1413,6 +1492,8 @@ struct ChannelInputs {
     /// the session's jump-channel move as the market delivered it (x its liquidity) plus the news
     /// repricing; 0 on a jump-free session
     jump: Vec<f64>,
+    /// exp(log_vol - vol_norm): the vol state WITHOUT the spiral, the basket idio's driver
+    vol_state: Vec<f64>,
     /// `Market::scale_var` after the step — the volume down-term's realized scale, read one
     /// session fresher than the leverage signal's (stated, and mirrored)
     scale_var: Vec<f64>,
@@ -1423,18 +1504,20 @@ impl ChannelInputs {
     /// session diffusion sd and the squared satellite state factor from the second session (the
     /// first has no return), plus the count — in session order, which is part of the
     /// cross-language contract.
-    fn level_sums(&self) -> (f64, f64, f64, f64) {
+    fn level_sums(&self) -> (f64, f64, f64, f64, f64) {
         let tot = self.px.len();
         let mut s_r2 = 0.0f64;
         let mut s_d = 0.0f64;
         let mut s_st = 0.0f64;
+        let mut s_vs = 0.0f64;
         for i in 1..tot {
             let r = self.px[i] - self.px[i - 1];
             s_r2 += r * r;
             s_d += self.d[i];
             s_st += self.state[i] * self.state[i];
+            s_vs += self.vol_state[i] * self.vol_state[i];
         }
-        (s_r2, s_d, s_st, (tot - 1) as f64)
+        (s_r2, s_d, s_st, s_vs, (tot - 1) as f64)
     }
 }
 
@@ -1446,6 +1529,9 @@ struct ChannelLevel {
     k_sat: f64,
     /// the world's mean fundamental/price the dividend yield is normalized by; 0 when off
     k_div: f64,
+    /// the basket idio's level: realized sd over the vol state's rms, so a fraction dial is a
+    /// fraction of the primary's realized vol whatever shape the state takes; 0 when no channel
+    k_vs: f64,
 }
 
 /// The fixed ensemble the level is solved on. Small on purpose: the level is a mean over ~200k
@@ -1461,16 +1547,17 @@ const LEVEL_SEED: u64 = 0x1e7e_1000;
 /// in both twins. 0 / 0 when both channels are off — never read.
 /// One level-ensemble path's sums: the channel inputs' three sums and count, then the
 /// fundamental/price sum and count.
-type LevelSums = ((f64, f64, f64, f64), (f64, f64));
+type LevelSums = ((f64, f64, f64, f64, f64), (f64, f64));
 
 fn world_level(w: &World) -> ChannelLevel {
-    let ch_on = w.range_scale > 0.0 || w.sat_beta > 0.0 || w.overnight > 0.0;
+    let ch_on = w.range_scale > 0.0 || w.sat_beta > 0.0 || w.overnight > 0.0 || w.basket > 0;
     let div_on = w.div_yield > 0.0;
     if !(ch_on || div_on) {
         return ChannelLevel {
             k: 0.0,
             k_sat: 0.0,
             k_div: 0.0,
+            k_vs: 0.0,
         };
     }
     let sums: Vec<LevelSums> = (0..LEVEL_PATHS)
@@ -1482,7 +1569,7 @@ fn world_level(w: &World) -> ChannelLevel {
             let ch = if ch_on {
                 pr.inputs.level_sums()
             } else {
-                (0.0, 0.0, 0.0, 0.0)
+                (0.0, 0.0, 0.0, 0.0, 0.0)
             };
             (ch, fair_over_price_sum(&pr.path))
         })
@@ -1490,13 +1577,15 @@ fn world_level(w: &World) -> ChannelLevel {
     let mut s_r2 = 0.0f64;
     let mut s_d = 0.0f64;
     let mut s_st = 0.0f64;
+    let mut s_vs = 0.0f64;
     let mut m = 0.0f64;
     let mut s_fp = 0.0f64;
     let mut n_fp = 0.0f64;
-    for ((a, b, c, n), (fp, nf)) in sums {
+    for ((a, b, c, vs, n), (fp, nf)) in sums {
         s_r2 += a;
         s_d += b;
         s_st += c;
+        s_vs += vs;
         m += n;
         s_fp += fp;
         n_fp += nf;
@@ -1508,6 +1597,7 @@ fn world_level(w: &World) -> ChannelLevel {
             0.0
         },
         k_sat: if ch_on { (s_r2 / s_st).sqrt() } else { 0.0 },
+        k_vs: if ch_on { (s_r2 / s_vs).sqrt() } else { 0.0 },
         k_div: if div_on { s_fp / n_fp } else { 0.0 },
     }
 }
@@ -1531,6 +1621,8 @@ struct Channels {
     log_lo: Vec<f64>,
     log_volume: Vec<f64>,
     log_open: Vec<f64>,
+    /// the basket's log prices, N of them
+    names: Vec<Vec<f64>>,
 }
 
 /// THE DERIVED CHANNELS, sampled in a second pass from the price loop's recorded inputs. They
@@ -1563,6 +1655,93 @@ struct Channels {
 /// is bit-identical off; the range takes two uniforms per session, max then min, the volume two
 /// normals, slow innovation then white, and that draw ORDER is part of the cross-language
 /// contract. The first session's return-from-zero is absorbed by burn-in as before.
+/// The derived channels' streams, one per channel, each constructed from the path's seed and
+/// read only when its channel is on — so a channel's presence never moves another's draws.
+struct ChannelRngs {
+    /// satellite
+    s: NumPyRng,
+    /// range (two uniforms per session, max then min)
+    r: NumPyRng,
+    /// volume (two normals per session, slow innovation then white)
+    v: NumPyRng,
+    /// the open (one normal per session)
+    o: NumPyRng,
+    /// the basket
+    b: NumPyRng,
+}
+
+impl ChannelRngs {
+    fn new(seed: u64) -> Self {
+        Self {
+            s: NumPyRng::new(seed ^ 0x5a7e_1117u64),
+            r: NumPyRng::new(seed ^ 0xca9d_1e00u64),
+            v: NumPyRng::new(seed ^ 0xd011_a5e5u64),
+            o: NumPyRng::new(seed ^ 0x09e7_a11eu64),
+            b: NumPyRng::new(seed ^ 0xba5c_e700u64),
+        }
+    }
+}
+
+/// The bar channels' state: the bar's open (the prior close — no overnight), kept independent
+/// of the satellite's tracker on purpose (the channels must not couple through bookkeeping),
+/// and the volume channel's state.
+struct BarState {
+    prev_px: f64,
+    vol: VolState,
+}
+
+/// The bar channels' outputs for one path: the open, the extremes, the volume — each empty
+/// when its channel is off.
+struct BarOut<'a> {
+    op: &'a mut [f64],
+    hi: &'a mut [f64],
+    lo: &'a mut [f64],
+    vv: &'a mut [f64],
+}
+
+/// One session of the bar channels: the open (see the `overnight` field — the bridge point at
+/// share w of the diffusive variance, jumps overnight whole, one normal from the open's stream),
+/// then the bar from it (see the `range_scale` field: the intraday bridge over the remaining
+/// (1-w) of the variance, x 1.0 exactly when the open is off), then the volume riding the range.
+fn bar_session(
+    w: &World,
+    x: &ChannelInputs,
+    at: (usize, f64),
+    st: &mut BarState,
+    out: BarOut<'_>,
+    rngs: &mut ChannelRngs,
+) {
+    let (i, k) = at;
+    let log_px = x.px[i];
+    let open_on = w.overnight > 0.0;
+    let range_on = w.range_scale > 0.0;
+    let r_c = log_px - st.prev_px;
+    let open_px = if open_on {
+        out.op[i] = st.prev_px + overnight_move(w, x.jump[i], r_c, x.d[i] * k, rngs.o.randn());
+        out.op[i]
+    } else {
+        st.prev_px
+    };
+    if range_on {
+        let r_s = log_px - open_px;
+        let intraday = if open_on {
+            (1.0 - w.overnight).sqrt()
+        } else {
+            1.0
+        };
+        let sig = (x.d[i] * k) * intraday * w.range_scale;
+        let (h, l) = bridge_extremes(w, r_s, sig, rngs.r.next_f64(), rngs.r.next_f64());
+        out.hi[i] = open_px + h;
+        out.lo[i] = open_px + l;
+        if w.vol_idio > 0.0 {
+            out.vv[i] = st
+                .vol
+                .step(out.hi[i] - out.lo[i], r_s, x.scale_var[i], &mut rngs.v);
+        }
+    }
+    st.prev_px = log_px;
+}
+
 /// The volume channel's state — see the `vol_idio` field: the slow AR component, the EWMA of
 /// ln(range) that defines the range's "normal" (half-life 126 sessions, the grading convention's
 /// rolling-median window, centred), and the previous session's range deviation the lag term reads.
@@ -1652,15 +1831,12 @@ fn bridge_extremes(w: &World, r_s: f64, sig0: f64, u1: f64, u2: f64) -> (f64, f6
 }
 
 fn derive_channels(w: &World, x: &ChannelInputs, level: ChannelLevel, seed: u64) -> Channels {
-    let mut srng = NumPyRng::new(seed ^ 0x5a7e_1117u64);
-    let mut rrng = NumPyRng::new(seed ^ 0xca9d_1e00u64);
-    let mut vrng = NumPyRng::new(seed ^ 0xd011_a5e5u64);
-    let mut orng = NumPyRng::new(seed ^ 0x09e7_a11eu64);
+    let mut rngs = ChannelRngs::new(seed);
     let tot = x.px.len();
     let sat_on = w.sat_beta > 0.0;
     let range_on = w.range_scale > 0.0;
-    let vol_on = range_on && w.vol_idio > 0.0;
     let open_on = w.overnight > 0.0;
+    let bsk_on = w.basket > 0;
     let mut sat = if sat_on {
         vec![0.0f64; tot]
     } else {
@@ -1671,7 +1847,7 @@ fn derive_channels(w: &World, x: &ChannelInputs, level: ChannelLevel, seed: u64)
     } else {
         (Vec::new(), Vec::new())
     };
-    let mut vv = if vol_on {
+    let mut vv = if range_on && w.vol_idio > 0.0 {
         vec![0.0f64; tot]
     } else {
         Vec::new()
@@ -1681,27 +1857,35 @@ fn derive_channels(w: &World, x: &ChannelInputs, level: ChannelLevel, seed: u64)
     } else {
         Vec::new()
     };
-    if !(sat_on || range_on || open_on) {
+    let mut nm: Vec<Vec<f64>> = if bsk_on {
+        vec![vec![0.0f64; tot]; w.basket]
+    } else {
+        Vec::new()
+    };
+    if !(sat_on || range_on || open_on || bsk_on) {
         return Channels {
             sat,
             log_hi: hi,
             log_lo: lo,
             log_volume: vv,
             log_open: op,
+            names: nm,
         };
     }
     let k = level.k;
     let k_s = level.k_sat;
+    let k_v = level.k_vs;
+    // BASKET state: the primary's observed log price last session (its own tracker, like the
+    // satellite's), and each name's log price.
+    let mut sec_prev_px = 0.0f64;
+    let mut name_log_p = vec![0.0f64; w.basket];
     // SATELLITE LEG state: its log price and the primary's observed log price last session.
     let mut sat_log_p = 0.0f64;
     let mut sat_prev_px = 0.0f64;
-    // RANGE state: the bar's open (the prior close — no overnight). Independent of the
-    // satellite's tracker on purpose: the channels must not couple through bookkeeping.
-    let mut bar_prev_px = 0.0f64;
-    // VOLUME state: the slow AR component, the EWMA of ln(range) that defines the range's
-    // "normal" (half-life 126 sessions — the grading convention's rolling-median window,
-    // centred), and its first-session initialization flag.
-    let mut vol = VolState::new(w);
+    let mut bar = BarState {
+        prev_px: 0.0,
+        vol: VolState::new(w),
+    };
     for i in 0..tot {
         let log_px = x.px[i];
         // SATELLITE LEG: beta times the primary's observed log return, plus idio noise at
@@ -1710,7 +1894,7 @@ fn derive_channels(w: &World, x: &ChannelInputs, level: ChannelLevel, seed: u64)
         // the anchored 3.1, and the missing state manufactured a +0.30 stress-correlation kick
         // the record does not have. Reads `srng` only.
         if sat_on {
-            let idio = w.sat_idio * (x.state[i] * k_s) * srng.randn();
+            let idio = w.sat_idio * (x.state[i] * k_s) * rngs.s.randn();
             sat_log_p += w.sat_beta * (log_px - sat_prev_px) + idio;
             sat_prev_px = log_px;
             sat[i] = sat_log_p.exp();
@@ -1723,36 +1907,31 @@ fn derive_channels(w: &World, x: &ChannelInputs, level: ChannelLevel, seed: u64)
         // |ret| by construction — the extremes bracket both endpoints. The uniforms are floored
         // at 1e-300 so a zero draw cannot mint an infinite bar; the floor is part of the
         // cross-language contract. Reads `rrng` only.
-        // THE OPEN — see the `overnight` field. The bridge point at share w of the session's
-        // diffusive variance, jumps landing overnight whole, one normal from `orng` per session
-        // read only when the dial is on; then the bar runs from it.
-        let r_c = log_px - bar_prev_px;
-        let open_px = if open_on {
-            op[i] = bar_prev_px + overnight_move(w, x.jump[i], r_c, x.d[i] * k, orng.randn());
-            op[i]
-        } else {
-            bar_prev_px
-        };
-        if range_on {
-            let r_s = log_px - open_px;
-            // the intraday bridge carries the remaining (1-w) of the variance; x 1.0 when the
-            // open is off, which is exact
-            let intraday = if open_on {
-                (1.0 - w.overnight).sqrt()
-            } else {
-                1.0
+        // THE BASKET — see the `basket` field. The shared sector leg first (its idio like the
+        // satellite's, riding state x spiral), then per name: the sector's move + own idio on the
+        // vol state alone + own gap. Reads `brng` only: one normal for the sector, then per name
+        // one normal, one uniform, and on a gap session one normal and JUMP_NU normals for the t
+        // — that draw ORDER is part of the cross-language contract.
+        if bsk_on {
+            let inp = BasketIn {
+                primary_ret: log_px - sec_prev_px,
+                state: x.state[i] * k_s,
+                vol_state: x.vol_state[i] * k_v,
             };
-            let sig = (x.d[i] * k) * intraday * w.range_scale;
-            let (h, l) = bridge_extremes(w, r_s, sig, rrng.next_f64(), rrng.next_f64());
-            hi[i] = open_px + h;
-            lo[i] = open_px + l;
-            // VOLUME rides the range — see `VolState`; requires the range.
-            if vol_on {
-                vv[i] = vol.step(hi[i] - lo[i], r_s, x.scale_var[i], &mut vrng);
+            basket_session(w, inp, &mut rngs.b, &mut name_log_p);
+            sec_prev_px = log_px;
+            for (q, lp) in name_log_p.iter().enumerate() {
+                nm[q][i] = *lp;
             }
         }
         if range_on || open_on {
-            bar_prev_px = log_px;
+            let out = BarOut {
+                op: &mut op,
+                hi: &mut hi,
+                lo: &mut lo,
+                vv: &mut vv,
+            };
+            bar_session(w, x, (i, k), &mut bar, out, &mut rngs);
         }
     }
     Channels {
@@ -1761,7 +1940,51 @@ fn derive_channels(w: &World, x: &ChannelInputs, level: ChannelLevel, seed: u64)
         log_lo: lo,
         log_volume: vv,
         log_open: op,
+        names: nm,
     }
+}
+
+/// One session's inputs to the basket: the primary's observed return, and the two re-levelled
+/// state factors — the satellite's (vol state x spiral) for the sector leg, the vol state alone
+/// for the names' idio.
+struct BasketIn {
+    primary_ret: f64,
+    state: f64,
+    vol_state: f64,
+}
+
+/// One session of the basket: the shared sector move (beta x the primary's observed return plus
+/// idio riding state x spiral), then per name its own idio on the vol state alone and its own
+/// gap, accumulated into `name_log_p`. Reads `brng` only — one normal for the sector, then per
+/// name one normal, one uniform, and on a gap session the t's draws — the cross-language draw
+/// order.
+fn basket_session(w: &World, inp: BasketIn, brng: &mut NumPyRng, name_log_p: &mut [f64]) {
+    let gap_prob = w.basket_gaps / DAYS_PER_YEAR as f64;
+    let sec_idio = w.basket_sector * inp.state * brng.randn();
+    let sec_ret = w.basket_beta * inp.primary_ret + sec_idio;
+    for lp in name_log_p.iter_mut() {
+        let idio = w.basket_idio * inp.vol_state * brng.randn();
+        let gap = if brng.next_f64() < gap_prob {
+            basket_gap(w, brng)
+        } else {
+            0.0
+        };
+        *lp += sec_ret + idio + gap;
+    }
+}
+
+/// One basket gap: a standardized t(JUMP_NU) draw — z / sqrt(chi2/nu), the draw ORDER the jump
+/// channel's — shifted by the primary's skew, times the frozen gap size.
+fn basket_gap(w: &World, brng: &mut NumPyRng) -> f64 {
+    let z = brng.randn();
+    let mut chi = 0.0f64;
+    for _ in 0..JUMP_NU {
+        let g = brng.randn();
+        chi += g * g;
+    }
+    let nu = JUMP_NU as f64;
+    let t = z / (chi / nu).sqrt() / (nu / (nu - 2.0)).sqrt();
+    (t - w.jump_skew) * BASKET_GAP_SIZE
 }
 
 /// The price loop and the derived channels of one path; the channel arrays of `path` are empty
@@ -1828,9 +2051,15 @@ fn simulate_at(w: &World, years: usize, seed: u64, level: ChannelLevel) -> Path 
         } else {
             Vec::new()
         },
+        names: if w.basket > 0 {
+            chan.names.iter().map(|lp| lp[BURN_IN..].to_vec()).collect()
+        } else {
+            Vec::new()
+        },
         chan_k: level.k,
         chan_k_sat: level.k_sat,
         chan_k_div: level.k_div,
+        chan_k_vs: level.k_vs,
         ..pr.path
     }
 }
@@ -1988,13 +2217,14 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
     // observed log price, the session diffusion sd as the price received it, the satellite's
     // state factor, and the post-step realized scale the volume's down-term reads. Empty when
     // both channels are off; draw-free either way, so off worlds stay bit-identical.
-    let ch_on = w.range_scale > 0.0 || w.sat_beta > 0.0 || w.overnight > 0.0;
+    let ch_on = w.range_scale > 0.0 || w.sat_beta > 0.0 || w.overnight > 0.0 || w.basket > 0;
     let mut ch = ChannelInputs {
         px: if ch_on { vec![0.0f64; tot] } else { Vec::new() },
         d: if ch_on { vec![0.0f64; tot] } else { Vec::new() },
         state: if ch_on { vec![0.0f64; tot] } else { Vec::new() },
         scale_var: if ch_on { vec![0.0f64; tot] } else { Vec::new() },
         jump: if ch_on { vec![0.0f64; tot] } else { Vec::new() },
+        vol_state: if ch_on { vec![0.0f64; tot] } else { Vec::new() },
     };
 
     let mut i = 0usize;
@@ -2189,21 +2419,22 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
         // as the noise term above is built — news damp, vol state, leverage kick (read BEFORE
         // this session's update, like `d_noise` itself) — plus the jump branch's
         // sqrt(1 - jumpVar) mixing. Draw-free; 0.0 when both channels are off.
-        let sess_sigma = if w.range_scale > 0.0 || w.sat_beta > 0.0 || w.overnight > 0.0 {
-            let lev_mult = if w.leverage > 0.0 {
-                (w.leverage * lev_sig).exp()
+        let sess_sigma =
+            if w.range_scale > 0.0 || w.sat_beta > 0.0 || w.overnight > 0.0 || w.basket > 0 {
+                let lev_mult = if w.leverage > 0.0 {
+                    (w.leverage * lev_sig).exp()
+                } else {
+                    1.0
+                };
+                let jv_mult = if w.jump_var > 0.0 {
+                    (1.0 - w.jump_var).sqrt()
+                } else {
+                    1.0
+                };
+                news_damp * SIGMA_N * (log_vol - vol_norm).exp() * lev_mult * jv_mult
             } else {
-                1.0
+                0.0
             };
-            let jv_mult = if w.jump_var > 0.0 {
-                (1.0 - w.jump_var).sqrt()
-            } else {
-                1.0
-            };
-            news_damp * SIGMA_N * (log_vol - vol_norm).exp() * lev_mult * jv_mult
-        } else {
-            0.0
-        };
 
         // The jump channel. Its draws come from `jrng`, NOT `rng`, so `jump_var = 0` takes the
         // untouched branch below and moves NOTHING ELSE in the path — the failure mode a shared
@@ -2343,6 +2574,7 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
             ch.state[i] = (log_vol - vol_norm).exp() * eq_m.last_liq * w.depth / 12.0;
             ch.scale_var[i] = eq_m.scale_var;
             ch.jump[i] = jump_now * eq_m.last_liq - news_j;
+            ch.vol_state[i] = (log_vol - vol_norm).exp();
         }
 
         // ---- capital reallocation: spring, scored on positions actually held ---------------
@@ -2416,9 +2648,11 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
         div_yield: Vec::new(),
         traded: Vec::new(),
         log_open: Vec::new(),
+        names: Vec::new(),
         chan_k: 0.0,
         chan_k_sat: 0.0,
         chan_k_div: 0.0,
+        chan_k_vs: 0.0,
     };
     Priced { path, inputs: ch }
 }
@@ -2667,6 +2901,8 @@ struct WorldStats {
     bars: Option<BarStats>,
     /// `None` when no open ran.
     open: Option<OpenStats>,
+    /// `None` when no basket ran.
+    basket: Option<BasketStats>,
     /// median across paths of the per-path mean session yield, %/yr; NaN when the dial is off,
     /// and the gate then carries no row
     div_yield_mean: f64,
@@ -3050,6 +3286,160 @@ fn sat_stats(sims: &[Path], years: usize) -> Option<SatStats> {
 }
 
 /// The bar channels' statistics — `None` when no range channel ran.
+/// THE BASKET's readings, medians across paths, at the three levels of `basket-2026-09-02.tsv`.
+/// Level 1 per name, pooled over names and paths: vol as a ratio to the primary's, sessions past
+/// 10% per year, the share of sessions >20% below the running peak. Level 2 the equal-weight
+/// aggregate against the primary: correlation and beta, and vol ratio. Level 3: mean pairwise
+/// correlation, idio share (1 - R^2 of a name on the aggregate), same-day tail coincidence, and
+/// the mechanism — mean pairwise correlation on the primary's worst decile against its middle
+/// decile. The equal-weight basket is the mean of simple returns, as a log series, the fixture's
+/// convention.
+#[derive(Clone, Copy, Debug)]
+struct BasketStats {
+    name_vol_ratio: f64,
+    name_gaps: f64,
+    name_d20: f64,
+    agg_corr: f64,
+    agg_beta: f64,
+    agg_vol_ratio: f64,
+    pair_corr: f64,
+    idio_share: f64,
+    tail_coincidence: f64,
+    pair_corr_worst: f64,
+    pair_corr_mid: f64,
+}
+
+fn sd_of(r: &[f64]) -> f64 {
+    let m = r.iter().sum::<f64>() / r.len() as f64;
+    (r.iter().map(|v| (v - m) * (v - m)).sum::<f64>() / (r.len() - 1) as f64).sqrt()
+}
+
+fn mean_pair_corr(rn: &[Vec<f64>]) -> f64 {
+    let mut sum = 0.0f64;
+    let mut cnt = 0usize;
+    for a in 0..rn.len() {
+        for b in (a + 1)..rn.len() {
+            sum += pearson(&rn[a], &rn[b]);
+            cnt += 1;
+        }
+    }
+    sum / cnt as f64
+}
+
+/// One path's eleven basket readings, in `BasketStats` field order.
+fn basket_path_stats(s: &Path) -> [f64; 11] {
+    let rp = daily_returns(&s.price);
+    let n = rp.len();
+    let rn: Vec<Vec<f64>> = s
+        .names
+        .iter()
+        .map(|lp| (0..n).map(|t| lp[t + 1] - lp[t]).collect())
+        .collect();
+    let agg: Vec<f64> = (0..n)
+        .map(|t| (rn.iter().map(|r| r[t].exp()).sum::<f64>() / rn.len() as f64).ln())
+        .collect();
+    let sd_p = sd_of(&rp);
+    let vol_ratios: Vec<f64> = rn.iter().map(|r| sd_of(r) / sd_p).collect();
+    let yrs = n as f64 / DAYS_PER_YEAR as f64;
+    let gaps: Vec<f64> = rn
+        .iter()
+        .map(|r| r.iter().filter(|v| v.abs() > 0.10).count() as f64 / yrs)
+        .collect();
+    let d20s: Vec<f64> = s
+        .names
+        .iter()
+        .map(|lp| {
+            let px: Vec<f64> = lp.iter().map(|v| v.exp()).collect();
+            depth_shares(&px).2
+        })
+        .collect();
+    let mp = rp.iter().sum::<f64>() / n as f64;
+    let ma = agg.iter().sum::<f64>() / n as f64;
+    let mut cov = 0.0f64;
+    let mut var_p = 0.0f64;
+    for t in 0..n {
+        cov += (rp[t] - mp) * (agg[t] - ma);
+        var_p += (rp[t] - mp) * (rp[t] - mp);
+    }
+    let idio: Vec<f64> = rn
+        .iter()
+        .map(|r| {
+            let ba = pearson(r, &agg);
+            1.0 - ba * ba
+        })
+        .collect();
+    let cuts: Vec<f64> = rn.iter().map(|r| pctile(r, 0.01)).collect();
+    let agg_cut = pctile(&agg, 0.01);
+    let worst_agg: Vec<usize> = (0..n).filter(|&t| agg[t] <= agg_cut).collect();
+    let coinc = if worst_agg.is_empty() {
+        f64::NAN
+    } else {
+        worst_agg
+            .iter()
+            .map(|&t| {
+                rn.iter()
+                    .enumerate()
+                    .filter(|(q, r)| r[t] < cuts[*q])
+                    .count() as f64
+                    / rn.len() as f64
+            })
+            .sum::<f64>()
+            / worst_agg.len() as f64
+    };
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_by(|&a, &b| {
+        rp[a]
+            .partial_cmp(&rp[b])
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let dec = n / 10;
+    let pair_on = |idx: &[usize]| -> f64 {
+        let sub: Vec<Vec<f64>> = rn
+            .iter()
+            .map(|r| idx.iter().map(|&t| r[t]).collect())
+            .collect();
+        mean_pair_corr(&sub)
+    };
+    [
+        med(&vol_ratios),
+        gaps.iter().sum::<f64>() / gaps.len() as f64,
+        med(&d20s),
+        pearson(&rp, &agg),
+        cov / var_p,
+        sd_of(&agg) / sd_p,
+        mean_pair_corr(&rn),
+        med(&idio),
+        coinc,
+        pair_on(&order[..dec]),
+        pair_on(&order[n / 2 - dec / 2..n / 2 + dec / 2]),
+    ]
+}
+
+fn basket_stats(sims: &[Path]) -> Option<BasketStats> {
+    if sims.is_empty() || sims[0].names.is_empty() {
+        return None;
+    }
+    let mut cols: Vec<Vec<f64>> = (0..11).map(|_| Vec::with_capacity(sims.len())).collect();
+    for s in sims {
+        for (c, v) in cols.iter_mut().zip(basket_path_stats(s)) {
+            c.push(v);
+        }
+    }
+    Some(BasketStats {
+        name_vol_ratio: med(&cols[0]),
+        name_gaps: med(&cols[1]),
+        name_d20: med(&cols[2]),
+        agg_corr: med(&cols[3]),
+        agg_beta: med(&cols[4]),
+        agg_vol_ratio: med(&cols[5]),
+        pair_corr: med(&cols[6]),
+        idio_share: med(&cols[7]),
+        tail_coincidence: med(&cols[8]),
+        pair_corr_worst: med(&cols[9]),
+        pair_corr_mid: med(&cols[10]),
+    })
+}
+
 /// The open's readings, medians across paths: the overnight share of close-to-close variance
 /// (sample variances), and the regression share of the overnight in the session — sum(o r) /
 /// sum(r^2) — over the worst 1% of sessions and over all of them. The record's largest declines
@@ -3265,6 +3655,7 @@ fn measure(sims: &[Path], years: usize) -> WorldStats {
         sat: sat_stats(sims, years),
         bars: bar_stats(sims),
         open: open_stats(sims),
+        basket: basket_stats(sims),
         div_yield_mean: med(&sims
             .iter()
             .map(|s| {
@@ -3903,6 +4294,35 @@ fn gate_checks(a: Anchors, st: &WorldStats) -> Vec<(String, bool, GateClass)> {
         v.push((
             "overnight gap share rises on the worst sessions".to_string(),
             os.worst_gap_share > os.all_gap_share,
+            Mechanism,
+        ));
+    }
+    // THE BASKET, graded when it ran — `basket-2026-09-02.tsv`, the eight semis under SMH: level 1
+    // as a POPULATION (the names' vol 1.9-3.5x SPY's, gaps 0.4-5.1/yr — the eight's ranges rounded
+    // outward, graded on the pooled median), level 2 the aggregate against the primary (corr 0.77
+    // +-0.10, beta 1.56 +-0.25, vol 2.0x +-0.3 — SMH's relation to SPY), level 3 the structure a
+    // basket rule reads (pairwise 0.59, idio share 0.37, tail coincidence 0.48), and the
+    // mechanism: pairwise correlation on the primary's worst decile above its middle decile (0.60
+    // vs 0.28). The names' d20 is REPORTED, not graded: the eight's 0.08-0.61 is the time below
+    // peak of names selected today as winners (the survivorship the fixture discloses), and a
+    // name at the sector's drift and 2.6x the index's volatility spends most of a century more
+    // than 20% below its peak, as a real name of that drift would.
+    if let Some(b) = st.basket {
+        for (name, got, lo, hi) in [
+            ("basket name vol ratio", b.name_vol_ratio, 1.90, 3.50),
+            ("basket name gaps/yr", b.name_gaps, 0.40, 5.10),
+            ("basket corr", b.agg_corr, 0.67, 0.87),
+            ("basket beta", b.agg_beta, 1.30, 1.90),
+            ("basket vol ratio", b.agg_vol_ratio, 1.70, 2.40),
+            ("basket pair corr", b.pair_corr, 0.42, 0.86),
+            ("basket idio share", b.idio_share, 0.26, 0.60),
+            ("basket tail coincidence", b.tail_coincidence, 0.35, 0.60),
+        ] {
+            v.push(band_check(name, got, lo, hi, GateClass::Fidelity, 2, ""));
+        }
+        v.push((
+            "basket pair corr rises on the worst decile".to_string(),
+            b.pair_corr_worst > b.pair_corr_mid,
             Mechanism,
         ));
     }
@@ -8312,7 +8732,8 @@ fn write_emitted(
             && p.log_volume.iter().all(|x| x.is_finite())
             && p.div_yield.iter().all(|x| x.is_finite())
             && p.traded.iter().all(|x| x.is_finite())
-            && p.log_open.iter().all(|x| x.is_finite()),
+            && p.log_open.iter().all(|x| x.is_finite())
+            && p.names.iter().all(|lp| lp.iter().all(|x| x.is_finite())),
         "path {k} holds a non-finite value; refusing {file}"
     );
     let dates = session_dates(p.price.len(), start_ymd);
@@ -8347,6 +8768,58 @@ fn channel_columns(p: &Path) -> Vec<&'static str> {
     cols
 }
 
+/// The basket's optional columns: the aggregate, then one per name.
+fn basket_columns(p: &Path) -> Vec<String> {
+    if p.names.is_empty() {
+        return Vec::new();
+    }
+    let mut cols = vec!["logBasket".to_string()];
+    cols.extend((1..=p.names.len()).map(|q| format!("logName{q}")));
+    cols
+}
+
+/// The equal-weight aggregate of the names as a LOG price series: the mean of the names' price
+/// levels relative to their common start, the fixture's convention (equal weights held from the
+/// first session, never rebalanced).
+fn basket_aggregate(names: &[Vec<f64>]) -> Vec<f64> {
+    (0..names[0].len())
+        .map(|i| {
+            (names.iter().map(|lp| (lp[i] - lp[0]).exp()).sum::<f64>() / names.len() as f64).ln()
+        })
+        .collect()
+}
+
+/// One session's optional cells, in header order, each present exactly when its channel ran.
+fn push_channel_cells(tsv: &mut String, p: &Path, i: usize, basket_agg: &[f64]) {
+    let mut cell = |v: f64| {
+        tsv.push('\t');
+        tsv.push_str(&ef(v));
+    };
+    if !p.sat.is_empty() {
+        cell(p.sat[i].ln());
+    }
+    if !p.log_hi.is_empty() {
+        cell(p.log_hi[i]);
+        cell(p.log_lo[i]);
+    }
+    if !p.log_volume.is_empty() {
+        cell(p.log_volume[i]);
+    }
+    if !p.traded.is_empty() {
+        cell(p.traded[i].ln());
+        cell(p.div_yield[i]);
+    }
+    if !p.log_open.is_empty() {
+        cell(p.log_open[i]);
+    }
+    if !p.names.is_empty() {
+        cell(basket_agg[i]);
+        for lp in &p.names {
+            cell(lp[i]);
+        }
+    }
+}
+
 fn write_emit_tsv(file: &str, p: &Path, dates: &[String]) {
     let mut tsv = String::new();
     tsv.push_str(&EMIT_COLUMNS.join("\t"));
@@ -8368,6 +8841,15 @@ fn write_emit_tsv(file: &str, p: &Path, dates: &[String]) {
     if !p.log_open.is_empty() {
         tsv.push_str("\tlogOpen");
     }
+    for c in basket_columns(p) {
+        tsv.push('\t');
+        tsv.push_str(&c);
+    }
+    let basket_agg = if p.names.is_empty() {
+        Vec::new()
+    } else {
+        basket_aggregate(&p.names)
+    };
     tsv.push('\n');
     for (i, d) in dates.iter().enumerate() {
         tsv.push_str(d);
@@ -8384,30 +8866,7 @@ fn write_emit_tsv(file: &str, p: &Path, dates: &[String]) {
             tsv.push('\t');
             tsv.push_str(&ef(v));
         }
-        if !p.sat.is_empty() {
-            tsv.push('\t');
-            tsv.push_str(&ef(p.sat[i].ln()));
-        }
-        if !p.log_hi.is_empty() {
-            tsv.push('\t');
-            tsv.push_str(&ef(p.log_hi[i]));
-            tsv.push('\t');
-            tsv.push_str(&ef(p.log_lo[i]));
-        }
-        if !p.log_volume.is_empty() {
-            tsv.push('\t');
-            tsv.push_str(&ef(p.log_volume[i]));
-        }
-        if !p.traded.is_empty() {
-            tsv.push('\t');
-            tsv.push_str(&ef(p.traded[i].ln()));
-            tsv.push('\t');
-            tsv.push_str(&ef(p.div_yield[i]));
-        }
-        if !p.log_open.is_empty() {
-            tsv.push('\t');
-            tsv.push_str(&ef(p.log_open[i]));
-        }
+        push_channel_cells(&mut tsv, p, i, &basket_agg);
         tsv.push('\n');
     }
     write_or_die(file, &tsv);
@@ -8461,6 +8920,11 @@ fn world_json_body(w: &World) -> Vec<String> {
         ("volIdio", ef(w.vol_idio)),
         ("divYield", ef(w.div_yield)),
         ("overnight", ef(w.overnight)),
+        ("basket", w.basket.to_string()),
+        ("basketBeta", ef(w.basket_beta)),
+        ("basketSector", ef(w.basket_sector)),
+        ("basketIdio", ef(w.basket_idio)),
+        ("basketGaps", ef(w.basket_gaps)),
         ("inflProb", ef(w.infl_prob)),
         ("inflSize", ef(w.infl_size)),
         ("inflSpeed", ef(w.infl_speed)),
@@ -8488,12 +8952,18 @@ fn channel_readings_block(st: &WorldStats, p: &Path) -> String {
         }
     };
     let mut blocks: Vec<String> = Vec::new();
-    if st.sat.is_some() || st.bars.is_some() || st.open.is_some() || st.div_yield_mean.is_finite() {
+    if st.sat.is_some()
+        || st.bars.is_some()
+        || st.open.is_some()
+        || st.basket.is_some()
+        || st.div_yield_mean.is_finite()
+    {
         blocks.push(format!(
-            "    \"level\": {{ \"k\": {}, \"kSat\": {}, \"kDiv\": {} }}",
+            "    \"level\": {{ \"k\": {}, \"kSat\": {}, \"kDiv\": {}, \"kVs\": {} }}",
             num(p.chan_k),
             num(p.chan_k_sat),
-            num(p.chan_k_div)
+            num(p.chan_k_div),
+            num(p.chan_k_vs)
         ));
     }
     if let Some(sd) = st.sat {
@@ -8542,6 +9012,24 @@ fn channel_readings_block(st: &WorldStats, p: &Path) -> String {
             num(os.all_gap_share)
         ));
     }
+    if let Some(b) = st.basket {
+        blocks.push(format!(
+            "    \"basket\": {{ \"nameVolRatio\": {}, \"nameGaps\": {}, \"nameD20\": {}, \"aggCorr\": {}, \
+             \"aggBeta\": {}, \"aggVolRatio\": {}, \"pairCorr\": {}, \"idioShare\": {}, \
+             \"tailCoincidence\": {}, \"pairCorrWorst\": {}, \"pairCorrMid\": {} }}",
+            num(b.name_vol_ratio),
+            num(b.name_gaps),
+            num(b.name_d20),
+            num(b.agg_corr),
+            num(b.agg_beta),
+            num(b.agg_vol_ratio),
+            num(b.pair_corr),
+            num(b.idio_share),
+            num(b.tail_coincidence),
+            num(b.pair_corr_worst),
+            num(b.pair_corr_mid)
+        ));
+    }
     if blocks.is_empty() {
         "  \"channels\": {},".to_string()
     } else {
@@ -8571,8 +9059,10 @@ fn str_list<S: AsRef<str>>(v: &[S]) -> String {
 fn gate_scope_lines(a: Anchors, p: &Path) -> String {
     // The presence conditions are `sat_stats`'/`bar_stats`' own — they return `Some` exactly
     // when these columns are non-empty — so a column is listed the session its rows exist.
+    let basket_cols = basket_columns(p);
     let mut graded = vec!["price", "bond"];
     graded.extend(channel_columns(p));
+    graded.extend(basket_cols.iter().map(String::as_str));
     // EMPTY BY CONSTRUCTION today, and the field earns its place anyway: `logSat` is covered by
     // the `satellite *` gate rows and the bar columns by the `bar *` rows, so there is nothing
     // left to disclose — but the next channel to arrive is ungraded until someone anchors it,
@@ -8671,9 +9161,11 @@ fn write_emit_sidecar(
         format!("  \"schema\": {EMIT_SCHEMA},"),
         format!("  \"file\": {},", json_str(file)),
         format!("  \"columns\": {},", {
-            let mut cols: Vec<&str> = EMIT_COLUMNS.to_vec();
-            cols.extend(channel_columns(p));
-            str_list(&cols)
+            let mut cols: Vec<String> = EMIT_COLUMNS.iter().map(|c| c.to_string()).collect();
+            cols.extend(channel_columns(p).into_iter().map(str::to_string));
+            cols.extend(basket_columns(p));
+            let refs: Vec<&str> = cols.iter().map(String::as_str).collect();
+            str_list(&refs)
         }),
         "  \"header\": true,".to_string(),
         "  \"path\": {".to_string(),
@@ -8919,6 +9411,11 @@ fn main() {
     let mut vol_idio = dw.vol_idio;
     let mut div_yield = dw.div_yield;
     let mut overnight = dw.overnight;
+    let mut basket = dw.basket;
+    let mut basket_beta = dw.basket_beta;
+    let mut basket_sector = dw.basket_sector;
+    let mut basket_idio = dw.basket_idio;
+    let mut basket_gaps = dw.basket_gaps;
     let mut joint_emit = String::new();
     let mut bars_emit = String::new();
     let mut jump_rate = dw.jump_rate;
@@ -9018,6 +9515,11 @@ fn main() {
             "-volidio" => vol_idio = req_f64(&mut it, "-volidio"),
             "-divyield" => div_yield = req_f64(&mut it, "-divyield"),
             "-overnight" => overnight = req_f64(&mut it, "-overnight"),
+            "-basket" => basket = req_usize(&mut it, "-basket"),
+            "-basketbeta" => basket_beta = req_f64(&mut it, "-basketbeta"),
+            "-basketsector" => basket_sector = req_f64(&mut it, "-basketsector"),
+            "-basketidio" => basket_idio = req_f64(&mut it, "-basketidio"),
+            "-basketgaps" => basket_gaps = req_f64(&mut it, "-basketgaps"),
             "-jointemit" => joint_emit = req_arg(&mut it, "-jointemit").clone(),
             "-barsemit" => bars_emit = req_arg(&mut it, "-barsemit").clone(),
             "-jumprate" => jump_rate = req_f64(&mut it, "-jumprate"),
@@ -9165,6 +9667,15 @@ fn main() {
         non_neg("-volidio", vol_idio);
         non_neg("-divyield", div_yield);
         non_neg("-overnight", overnight);
+        non_neg("-basketbeta", basket_beta);
+        non_neg("-basketsector", basket_sector);
+        non_neg("-basketidio", basket_idio);
+        non_neg("-basketgaps", basket_gaps);
+        if basket > 0 && basket_beta <= 0.0 {
+            cli_die(
+                "-basket requires -basketbeta > 0: a name with no sector leg is not a member of anything",
+            );
+        }
         if overnight >= 1.0 {
             cli_die(&format!(
                 "-overnight {overnight} leaves the intraday session no variance to run the bridge on; it must be below 1"
@@ -9294,6 +9805,11 @@ fn main() {
         vol_idio,
         div_yield,
         overnight,
+        basket,
+        basket_beta,
+        basket_sector,
+        basket_idio,
+        basket_gaps,
         value_pull,
         crowd,
         crowd_impact,
@@ -9520,6 +10036,7 @@ fn main() {
                 || !p.div_yield.iter().all(|x| x.is_finite())
                 || !p.traded.iter().all(|x| x.is_finite())
                 || !p.log_open.iter().all(|x| x.is_finite())
+                || !p.names.iter().all(|lp| lp.iter().all(|x| x.is_finite()))
             {
                 eprintln!("REFUSED: path {k} holds a non-finite value; nothing written to {f}");
                 std::process::exit(2);
@@ -9591,7 +10108,8 @@ fn main() {
                 + 2 * usize::from(w.range_scale > 0.0)
                 + usize::from(w.vol_idio > 0.0)
                 + 2 * usize::from(w.div_yield > 0.0)
-                + usize::from(w.overnight > 0.0),
+                + usize::from(w.overnight > 0.0)
+                + if w.basket > 0 { w.basket + 1 } else { 0 },
             written[0],
             sidecar_name(&written[0])
         );
@@ -9739,6 +10257,28 @@ fn main() {
                 jf(b.vol_corr_range, 0, 3)
             );
         }
+    }
+    if let Some(b) = st.basket {
+        println!(
+            "  basket names           vol ratio {}   gaps/yr {}   d20 {}",
+            jf(b.name_vol_ratio, 0, 2),
+            jf(b.name_gaps, 0, 2),
+            jf(b.name_d20, 0, 3)
+        );
+        println!(
+            "  basket aggregate       corr {}   beta {}   vol ratio {}",
+            jf(b.agg_corr, 0, 3),
+            jf(b.agg_beta, 0, 3),
+            jf(b.agg_vol_ratio, 0, 2)
+        );
+        println!(
+            "  basket structure       pair corr {}   idio share {}   tail coincidence {}   pair corr worst/mid {}/{}",
+            jf(b.pair_corr, 0, 3),
+            jf(b.idio_share, 0, 3),
+            jf(b.tail_coincidence, 0, 3),
+            jf(b.pair_corr_worst, 0, 3),
+            jf(b.pair_corr_mid, 0, 3)
+        );
     }
     if let Some(os) = st.open {
         println!(
@@ -12794,6 +13334,226 @@ mod open_tests {
                 && !gate_checks(a, &off)
                     .iter()
                     .any(|r| r.0.contains("overnight"))
+        );
+    }
+}
+
+/// The basket's anchors are MEASURED numbers; this re-derives the graded bands from the
+/// checked-in fixture (the eight names' ranges at level 1 and 3, SMH's relation to SPY at level
+/// 2) so the code and the record cannot drift apart, and pins the channel's contracts: off is
+/// bit-identical, the names are observational, the mechanism row discriminates. The Scala twin
+/// carries the same checks in `BasketAnchorSuite`, against the same file.
+#[cfg(test)]
+mod basket_anchor_tests {
+    use super::*;
+
+    const FIXTURE: &str = "../test-data/equity-anchors/basket-2026-09-02.tsv";
+
+    fn rows() -> Option<Vec<Vec<String>>> {
+        let text = std::fs::read_to_string(FIXTURE).ok()?;
+        Some(
+            text.lines()
+                .filter(|l| {
+                    !l.starts_with('#') && !l.starts_with("group\t") && !l.trim().is_empty()
+                })
+                .map(|l| l.split('\t').map(str::to_string).collect())
+                .collect(),
+        )
+    }
+
+    fn value(rs: &[Vec<String>], group: &str, name: &str, stat: &str) -> f64 {
+        rs.iter()
+            .find(|r| r[0] == group && r[1] == name && r[2] == stat)
+            .unwrap_or_else(|| panic!("fixture row [{group} {name} {stat}] missing"))[3]
+            .parse()
+            .expect("numeric fixture value")
+    }
+
+    fn eight(rs: &[Vec<String>], stat: &str) -> Vec<f64> {
+        rs.iter()
+            .filter(|r| r[0] == "eight" && r[2] == stat)
+            .map(|r| r[3].parse().expect("numeric"))
+            .collect()
+    }
+
+    fn anchored() -> World {
+        let mut w = default_world();
+        w.basket = 8;
+        w.basket_beta = 1.56;
+        w.basket_sector = 1.2;
+        w.basket_idio = 1.0;
+        w.basket_gaps = 3.0;
+        w
+    }
+
+    fn fmin(v: &[f64]) -> f64 {
+        v.iter().cloned().fold(f64::INFINITY, f64::min)
+    }
+    fn fmax(v: &[f64]) -> f64 {
+        v.iter().cloned().fold(f64::NEG_INFINITY, f64::max)
+    }
+    fn near(a: f64, b: f64) -> bool {
+        (a - b).abs() < 1e-9
+    }
+
+    /// The bands live in `gate_checks`' names, derived from the bounds they test; read them back
+    /// off a measured world so the test grades the code that runs, not a copy.
+    fn gate(name: &str) -> (f64, f64) {
+        let st = measure(&sim_paths(&anchored(), 2, 10, DEFAULT_SEED), 10);
+        let row = gate_checks(anchors_named("sp500"), &st)
+            .into_iter()
+            .map(|r| r.0)
+            .find(|n| n.starts_with(&format!("{name} ")))
+            .unwrap_or_else(|| panic!("no gate row [{name}]"));
+        let rest = row[name.len() + 1..].to_string();
+        let (lo, hi) = rest.split_once('-').expect("lo-hi");
+        (lo.parse().expect("lo"), hi.parse().expect("hi"))
+    }
+
+    #[test]
+    fn the_graded_bands_are_the_fixtures() {
+        let Some(rs) = rows() else {
+            return;
+        };
+        let spy_vol = value(&rs, "basket", "SPY", "vol");
+        let vr: Vec<f64> = eight(&rs, "vol").iter().map(|v| v / spy_vol).collect();
+        let g = gate("basket name vol ratio");
+        assert!(
+            near(g.0, (fmin(&vr) * 10.0).floor() / 10.0)
+                && near(g.1, (fmax(&vr) * 10.0).ceil() / 10.0),
+            "{g:?}"
+        );
+        let gp = eight(&rs, "gaps10");
+        let g = gate("basket name gaps/yr");
+        assert!(
+            near(g.0, (fmin(&gp) * 10.0).floor() / 10.0)
+                && near(g.1, (fmax(&gp) * 10.0).ceil() / 10.0),
+            "{g:?}"
+        );
+        let corr = value(&rs, "basket", "basket", "corrSpy");
+        let g = gate("basket corr");
+        assert!(near(g.0, corr - 0.10) && near(g.1, corr + 0.10), "{g:?}");
+        let beta = value(&rs, "basket", "basket", "betaOnSpy");
+        let g = gate("basket beta");
+        assert!(
+            near(g.0, ((beta - 0.25) * 10.0).floor() / 10.0)
+                && near(g.1, ((beta + 0.25) * 10.0).ceil() / 10.0),
+            "{g:?}"
+        );
+        let volr = value(&rs, "basket", "basket", "vol") / spy_vol;
+        let g = gate("basket vol ratio");
+        assert!(
+            near(g.0, ((volr - 0.30) * 10.0).floor() / 10.0)
+                && near(g.1, ((volr + 0.30) * 10.0).ceil() / 10.0),
+            "{g:?}"
+        );
+        let out2 = |lo: f64, hi: f64| ((lo * 100.0).floor() / 100.0, (hi * 100.0).ceil() / 100.0);
+        let want = out2(
+            value(&rs, "cross", "pairCorr", "min"),
+            value(&rs, "cross", "pairCorr", "max"),
+        );
+        let g = gate("basket pair corr");
+        assert!(near(g.0, want.0) && near(g.1, want.1), "{g:?} vs {want:?}");
+        let want = out2(
+            value(&rs, "cross", "idioShare", "min"),
+            value(&rs, "cross", "idioShare", "max"),
+        );
+        let g = gate("basket idio share");
+        assert!(near(g.0, want.0) && near(g.1, want.1), "{g:?} vs {want:?}");
+        let tc = value(&rs, "cross", "tailCoincidence", "value");
+        let g = gate("basket tail coincidence");
+        assert!(
+            near(g.0, ((tc - 0.13) * 100.0).round() / 100.0)
+                && near(g.1, ((tc + 0.12) * 100.0).round() / 100.0),
+            "{g:?}"
+        );
+        assert!(
+            value(&rs, "mechanism", "pairCorr", "spyWorstDecile")
+                > value(&rs, "mechanism", "pairCorr", "spyMiddleDecile"),
+            "the mechanism row's premise must hold in the record"
+        );
+    }
+
+    #[test]
+    fn off_is_bit_identical_and_carries_no_names_and_every_frozen_world_keeps_the_basket_off() {
+        let off = simulate(&default_world(), 3, DEFAULT_SEED);
+        let on = simulate(&anchored(), 3, DEFAULT_SEED);
+        assert!(off.names.is_empty());
+        assert_eq!(on.names.len(), 8);
+        assert!(
+            on.price == off.price && on.fundamental == off.fundamental,
+            "the names are observational"
+        );
+        for (v, w) in releases() {
+            assert!(w.basket == 0, "release {v}");
+        }
+        for (n, w, _) in recipes() {
+            if n != "0.23.1-basket" {
+                assert!(w.basket == 0, "recipe {n}");
+            }
+        }
+        assert!(default_world().basket == 0);
+        let mut chans = default_world();
+        chans.sat_beta = 1.2;
+        chans.sat_idio = 0.77;
+        chans.range_scale = 0.63;
+        chans.range_down = 0.09;
+        let a = simulate(&chans, 3, DEFAULT_SEED);
+        let mut with = chans;
+        with.basket = 8;
+        with.basket_beta = 1.56;
+        with.basket_sector = 1.2;
+        with.basket_idio = 1.0;
+        with.basket_gaps = 3.0;
+        let b = simulate(&with, 3, DEFAULT_SEED);
+        assert!(
+            a.sat == b.sat && a.log_hi == b.log_hi,
+            "the basket reads its own stream only"
+        );
+    }
+
+    /// A small ensemble at the verdict horizon; the bands are the eight's own ranges, wide enough
+    /// that 8 paths read inside them wherever 200 do.
+    #[test]
+    fn the_anchored_basket_sits_on_its_anchors_and_the_mechanism_row_discriminates() {
+        let st = measure(&sim_paths(&anchored(), 8, 100, DEFAULT_SEED), 100);
+        let b = st.basket.expect("no basket readings with the channel on");
+        let rows: Vec<(String, bool, GateClass)> = gate_checks(anchors_named("sp500"), &st)
+            .into_iter()
+            .filter(|r| r.0.starts_with("basket"))
+            .collect();
+        assert_eq!(rows.len(), 9);
+        for (nm, ok, _) in &rows {
+            assert!(
+                ok,
+                "{nm} failed: names vol {:.2} gaps {:.2} corr {:.3} beta {:.2} volr {:.2} pair {:.3} idio {:.3} coinc {:.3}",
+                b.name_vol_ratio,
+                b.name_gaps,
+                b.agg_corr,
+                b.agg_beta,
+                b.agg_vol_ratio,
+                b.pair_corr,
+                b.idio_share,
+                b.tail_coincidence
+            );
+        }
+        assert!(
+            b.pair_corr_worst > b.pair_corr_mid + 0.15,
+            "stress must raise pairwise correlation materially: {:.3} vs {:.3}",
+            b.pair_corr_worst,
+            b.pair_corr_mid
+        );
+        assert!(
+            b.name_d20 > 0.61,
+            "the names' time below peak is a disclosed reading: {:.3}",
+            b.name_d20
+        );
+        let off = measure(&sim_paths(&default_world(), 4, 20, DEFAULT_SEED), 20);
+        assert!(
+            off.basket.is_none()
+                && !gate_checks(anchors_named("sp500"), &off)
+                    .iter()
+                    .any(|r| r.0.starts_with("basket"))
         );
     }
 }

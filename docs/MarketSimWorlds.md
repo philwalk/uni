@@ -95,7 +95,9 @@ each session, beside the session yield in %/yr; `price` keeps its meaning, so a 
 decisions on the traded series and its accounting on `price`; `channels.level.kDiv` is the world's
 mean fundamental/price the yield was normalized by), and `logOpen` (`overnight > 0` — the bar's
 open; `logHigh`/`logLow` then bracket the open and the close rather than the prior close and the
-close, and `channels.open` carries the overnight share and the gap shares). Every log column carries a NATURAL
+close, and `channels.open` carries the overnight share and the gap shares), and `logBasket` plus
+`logName1..N` (`basket > 0` — the equal-weight aggregate and the names, all logs; N from the header;
+`channels.basket` carries the three levels' readings). Every log column carries a NATURAL
 LOG rather than a
 level, because a level near 10^6 rendered at six decimals sits within reach of a cross-language
 rounding tie the twins' byte-parity checks would trip on. A channels-off schema-10 file differs
@@ -595,6 +597,7 @@ with it.
 | `-volidio` | log turnover index riding the range: elasticity 0.59 to the range's deviation from its slow normal (frozen from the measured regression) plus a two-component persistent idio whose total sd is this dial (anchored 0.34). Requires `-rangescale`; adds `logVolume` to `-emit`. NOT searchable | 0 |
 | `-divyield` | DIVIDENDS: the world's mean dividend yield, %/yr. The session yield is Y × fundamental/price over the world's mean of it (a world constant solved on the same fixed ensemble as the bar level — the ensemble's mean fundamental/price is 2.06 at the default and 2.30 on the Nasdaq recipe, and a per-path mean would leak the path's future), so a rich session yields less and the ensemble's pooled mean yield is the dial; the reported median path's mean reads about 0.9× of it (2.62 at 2.95, 0.69 at 0.78), valuation epochs skewing the path means; `-emit` gains `logTraded` (the total-return `price` deflated by the accrued yield — `price` itself is unchanged) and `divYield`. Anchored 2.95 on Shiller's S&P 1954–2023 and 0.78 on QQQ 2005–2026 (`dividend-2026-09-02.tsv`); the level is graded when on. An identity parameter, never searched | 0 (off) |
 | `-overnight` | THE OPEN: the overnight share of the session's diffusive variance (0 ≤ X < 1). The open is the bridge point at that share of the session, with the session's news jump and jump-channel move landing overnight whole and the whole move becoming the gap when it overshoots the session on its own side; the bar then runs from the open over the remaining variance and the sign coupling reads the intraday return. `-emit` gains `logOpen`, and `logHigh`/`logLow` bracket the open and the close. Anchored 0.20 on the S&P default and 0.22 on the Nasdaq recipe against the record's overnight variance shares 0.33 / 0.28 (`bars-2026-09-01.tsv`, graded when on); the bar dials re-anchor with it, `-rangescale 0.78 -rangedown 0.13`, since the intraday bridge carries less of the session | 0 (open = prior close) |
+| `-basket` | THE BASKET: N single names as observational second-pass instances of the primary — each the shared sector leg (`-basketbeta` on the primary's observed return plus `-basketsector` idio riding the vol state × spiral, the satellite's construction) plus its own idio (`-basketidio`, riding the vol state WITHOUT the spiral, so shared variance dominates in stress and pairwise correlation rises) and its own gaps (`-basketgaps` per year, Student-t jumps of a frozen 9% size). The equal-weight aggregate is the sector, graded against SMH's relation to SPY; `-emit` gains `logBasket` and `logName1..N`. Anchored N 8, beta 1.56, sector 1.2, idio 1.0, gaps 3.0 on folio's eight semiconductor names under SMH 2012–2026 (`basket-2026-09-02.tsv`); `-atrelease 0.23.1-basket` names the S&P default with it on. On a Nasdaq primary set `-basketbeta` near 1.26, SMH's beta on QQQ | 0 (off) |
 | `-inflsize` | size of an inflation regime's rate-pressure target | 0.10 |
 
 `-easing` is a cap, not a speed. The flag it replaced, `-flight`, was a cut *rate* per year, so it
@@ -898,6 +901,41 @@ from any earlier release optimised a different function.
   every real profile, which is what the slopes are for. The shipped world reads 1.07 / 1.12 / 1.12
   / 1.33; the `0.23.0-nasdaq` recipe 0.95 / 0.88 / 0.77 / 0.72, mean-reverting at every horizon
   where the S&P default trends. The loss still reads the 60 rung alone, at its theory value.
+
+## A basket of names — `-basket`
+
+Forty-five of one consumer's sleeves rank a basket of single names, and a two-asset path cannot
+evaluate any of them: cross-sectional dispersion, rank stability, a per-name tail count and a
+"decoupling from the sector" gate all read across names. `-basket N` adds N names as observational
+second-pass instances of the primary — nothing here reaches a price, and 0 is bit-identical — each
+the shared **sector leg** (beta on the primary's observed return plus idio riding the vol state and
+the spiral, the satellite's construction) plus its **own idio**, riding the vol state alone, plus
+its **own gaps**, a Student-t jump stream of its own. The model has no sector index, so the
+basket's equal-weight aggregate *is* the sector, and it is graded against SMH's relation to SPY.
+
+The ruler is a population of real names, not an index (`basket-2026-09-02.tsv`: folio's eight
+semiconductor names under SMH, 2012–2026, every number reproducing their published ones). Three
+levels, graded when the channel runs:
+
+| level | rows | record | model at the anchored dials, 200 × 100 |
+|---|---|---|---|
+| per name | vol ratio to the primary; sessions past 10% per year | 1.9–3.4×; 0.4–5.1 | 2.47×; 1.92 |
+| the aggregate vs the primary | corr; beta; vol ratio | 0.77; 1.56; 2.0× | 0.774; 1.560; 2.01× |
+| the cross-section | pairwise corr; idio share; same-day tail coincidence | 0.59; 0.37; 0.48 | 0.618; 0.336; 0.487 |
+
+The mechanism row is what a beta-plus-noise leg cannot pass: pairwise correlation on the primary's
+worst decile of days must exceed its middle decile (record 0.60 vs 0.28; model 0.721 vs 0.269),
+which the split between shared and idiosyncratic variance produces because only the shared part
+rides the spiral. The names' time more than 20% below their running peak is **reported, not
+graded**: the eight read 0.08–0.61 because they are names selected today as winners — the
+survivorship the fixture discloses — where a name at the sector's drift and 2.5× the index's
+volatility spends most of a century below that line (the model reads 0.94), as a real name of that
+drift would. Level 1 as a proper population needs point-in-time membership, which no cache here
+holds; until then the eight's ranges are the bands and the reading is disclosed.
+
+`-atrelease 0.23.1-basket` names the S&P default with the basket on at the anchored dials. The
+dials are relative to the primary, so they transport: on a Nasdaq primary set `-basketbeta` near
+1.26 (SMH's beta on QQQ, against 1.44 on SPY) and read the aggregate against QQQ.
 
 ## Biases you inherit whatever you choose
 

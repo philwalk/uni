@@ -80,6 +80,27 @@
   1.097 / 1.104 and down/up 1.135 / 1.136 on the two worlds. `-atrelease 0.23.1-nasdaq` names the
   Nasdaq recipe with the open on at those dials; `0.23.0-nasdaq` keeps its bars byte for byte.
 
+**A basket of single names, so a rule that ranks a basket has something to rank**
+
+- `-basket N` (default 0, off): N names as observational second-pass instances of the primary,
+  each the shared sector leg (`-basketbeta` on the primary's observed return plus `-basketsector`
+  idio riding the vol state × spiral) plus its own idio (`-basketidio`, on the vol state alone) and
+  its own Student-t gaps (`-basketgaps` per year). The equal-weight aggregate is the sector; the
+  primary is untouched and 0 is bit-identical. `-emit` gains `logBasket` and `logName1..N` when
+  on; `channels.basket` carries the readings and `channels.level.kVs` the idio's level. Both twins
+  byte-identical.
+- Graded at three levels against `basket-2026-09-02.tsv` (folio's eight semiconductor names under
+  SMH, 2012–2026; re-derived by `BasketAnchorSuite` / `basket_anchor_tests`): per-name vol ratio
+  and gap rate against the eight's ranges, the aggregate's correlation, beta and vol ratio against
+  SMH's relation to SPY, pairwise correlation, idio share and same-day tail coincidence against the
+  eight's, and a mechanism row — pairwise correlation on the primary's worst decile exceeds its
+  middle decile — that a beta-plus-noise leg cannot pass. The names' time 20% below peak is
+  reported, not graded: the eight's 0.08–0.61 is survivorship, disclosed in the fixture.
+- Anchored N 8, beta 1.56, sector 1.2, idio 1.0, gaps 3.0: at 200 × 100 the names read 2.47× the
+  primary's vol and 1.92 gaps/yr, the aggregate corr 0.774 / beta 1.560 / vol 2.01×, pairwise 0.618,
+  idio share 0.336, tail coincidence 0.487, worst-decile pairwise 0.721 vs 0.269. `-atrelease
+  0.23.1-basket` names the S&P default with it on.
+
 ## v0.23.0 — 2026-09-02
 
 **NEW MECHANISM, and a defaults change — the slow valuation cycle**
