@@ -1,0 +1,51 @@
+# The CROSS-SECTIONAL DRIFT DISPERSION ruler for `-basketdrift`: how much the names of a real
+# basket differ in their own long-run drift, once the noise of a finite window is taken out.
+#
+# Measured 2026-09-03 from daily Yahoo adjusted closes over 2012-01-04..2026-08-31 (T = 14.6
+# years), LOG returns, on the same two groups the basket ruler uses (`basket-2026-09-02.tsv`):
+# folio's eight semiconductor names under SMH, and the cache's 26 single names with data from
+# 2012.  `scratchpad drift/measure.py`.
+#
+# THE DECOMPOSITION.  A name's realized drift over T years is its true drift plus estimation
+# noise, and the noise has sd = (the name's idio vol) / sqrt(T) -- so a cross-section of realized
+# drifts is dispersed even when every true drift is identical.  `driftSpread` is the observed
+# cross-sectional sd; `noiseFloor` is the mean per-name noise sd that T alone generates;
+# `trueSpread` is sqrt(max(0, driftSpread^2 - noiseFloor^2)), clamped at 0.
+#
+# THE RESULT, AND WHY THE DIAL SHIPS AT 0.  For both groups the observed spread is BELOW the
+# noise floor, so `trueSpread` is 0: over this window, among these names, no true drift dispersion
+# is detectable at all.  And the groups are selected TODAY -- survivors -- which truncates the
+# left tail of realized drift and biases the estimate DOWN.  So 0 is a FLOOR from biased data,
+# not a measurement of the world.  The true value needs point-in-time membership including the
+# names that left the universe, which no cache here holds; that is the same limitation the basket
+# fixture already discloses for `nameD20`, and it is why `-basketdrift` is ungraded.
+#
+# WHAT THIS DIAL DOES NOT FIX.  The names' time below peak is not a dispersion miss: the eight's
+# COMMON drift is +0.304/yr against the model's +0.144 (beta 1.37 x the Nasdaq recipe's 0.105),
+# and that difference is the whole of it.  Dispersion around the right centre widens the spread of
+# time-below-peak across names -- which is what the dial is for, and what `nameD20Spread` reads --
+# and leaves the MEDIAN where it was.  Raising the centre to the eight's +0.304 would be
+# calibrating the model to names selected for having won, so it is not on offer.
+#
+# `alphaSpread` / `alphaNoiseFloor` repeat the decomposition on the residual after regressing each
+# name on the group index (SMH), which removes the part of the drift spread that is beta times the
+# index's own drift.  Same answer.
+group	stat	value
+eight	names	8
+eight	years	14.6
+eight	commonDrift	0.304
+eight	driftSpread	0.068
+eight	noiseFloor	0.070
+eight	trueSpread	0.000
+eight	alphaSpread	0.058
+eight	alphaNoiseFloor	0.070
+eight	d20Spread	0.530
+pop26	names	26
+pop26	years	14.6
+pop26	commonDrift	0.229
+pop26	driftSpread	0.075
+pop26	noiseFloor	0.085
+pop26	trueSpread	0.000
+pop26	alphaSpread	0.079
+pop26	alphaNoiseFloor	0.085
+model	commonDrift	0.144

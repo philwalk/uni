@@ -419,6 +419,7 @@ fn default_world() -> World {
         basket_sector: 0.0,
         basket_idio: 0.0,
         basket_gaps: 0.0,
+        basket_drift: 0.0,
         value_pull: 0.056,
         crowd: Crowd::Momentum,
         crowd_impact: 0.030,
@@ -489,6 +490,7 @@ fn v0_19_2() -> World {
         basket_sector: 0.0,
         basket_idio: 0.0,
         basket_gaps: 0.0,
+        basket_drift: 0.0,
         value_pull: 0.013,
         belief_share: 0.0,
         belief_years: 2.5,
@@ -699,6 +701,7 @@ fn v0_23_0() -> World {
         basket_sector: 0.0,
         basket_idio: 0.0,
         basket_gaps: 0.0,
+        basket_drift: 0.0,
         value_pull: 0.056,
         crowd: Crowd::Momentum,
         crowd_impact: 0.030,
@@ -759,6 +762,7 @@ fn v0_22_1() -> World {
         basket_sector: 0.0,
         basket_idio: 0.0,
         basket_gaps: 0.0,
+        basket_drift: 0.0,
         value_pull: 0.045,
         crowd: Crowd::Momentum,
         crowd_impact: 0.030,
@@ -821,6 +825,7 @@ fn v0_22_0() -> World {
         basket_sector: 0.0,
         basket_idio: 0.0,
         basket_gaps: 0.0,
+        basket_drift: 0.0,
         value_pull: 0.045,
         crowd: Crowd::Momentum,
         crowd_impact: 0.030,
@@ -883,6 +888,7 @@ fn v0_21_0() -> World {
         basket_sector: 0.0,
         basket_idio: 0.0,
         basket_gaps: 0.0,
+        basket_drift: 0.0,
         value_pull: 0.045,
         crowd: Crowd::Momentum,
         crowd_impact: 0.07,
@@ -936,6 +942,7 @@ fn v0_20_0() -> World {
         basket_sector: 0.0,
         basket_idio: 0.0,
         basket_gaps: 0.0,
+        basket_drift: 0.0,
         value_pull: 0.0145,
         belief_share: 0.0,
         belief_years: 2.5,
@@ -1215,6 +1222,24 @@ struct World {
     /// per-name gap intensity, jumps per year; each a standardized t(JUMP_NU) x
     /// `BASKET_GAP_SIZE` (log), skewed like the primary's
     basket_gaps: f64,
+    /// CROSS-SECTIONAL DRIFT DISPERSION: the sd of the names' own annual log-drift offsets, as a
+    /// FRACTION of the primary's realized annualized vol (`ChannelLevel::k_dr`), so it transports.
+    /// Drawn once per name per path and centred EXACTLY, so the equal-weight sector's log drift is
+    /// untouched and only the cross-section moves. 0 = off, bit-identical; needs N >= 2.
+    ///
+    /// ANCHORED AT 0 by `basket-drift-2026-09-03.tsv`: among folio's eight the spread of realized
+    /// drift (0.068) is entirely accounted for by what a 14.6-year window generates from their own
+    /// idio vol (0.070), so no true dispersion is detectable, and selecting survivors truncates the
+    /// left tail — 0 is a FLOOR from biased data, not a measurement. The names' time below peak is
+    /// NOT what this dial fixes: that gap is the eight's COMMON drift (+0.304 against the model's
+    /// +0.144), which is the survivorship the basket fixture discloses.
+    ///
+    /// WHAT IT IS FOR: at 0 every name has the same expected drift BY CONSTRUCTION (shared sector
+    /// leg; idio and gaps share a mean), so the basket is a NULL WORLD for cross-sectional
+    /// selection — no name is better than another and any ranking edge a rule shows on it is
+    /// noise. Set the dial and there is a real edge of known size to find. Sweeping it gives a
+    /// ranking rule's detection threshold and the history it needs there.
+    basket_drift: f64,
     value_pull: f64,
     crowd: Crowd,
     crowd_impact: f64,
@@ -1306,6 +1331,8 @@ struct Path {
     chan_k_div: f64,
     /// the basket idio's level (realized sd over the vol state's rms); 0 when no channel ran
     chan_k_vs: f64,
+    /// the primary's realized annualized vol, what `basket_drift` is a fraction of; 0 when off
+    chan_k_dr: f64,
 }
 
 /// ONE price-formation mechanism for every traded asset: value demand toward `fair`, plus
@@ -1564,6 +1591,9 @@ struct ChannelLevel {
     /// the basket idio's level: realized sd over the vol state's rms, so a fraction dial is a
     /// fraction of the primary's realized vol whatever shape the state takes; 0 when no channel
     k_vs: f64,
+    /// the primary's realized ANNUALIZED volatility — what `basket_drift` is a fraction of, so the
+    /// dial transports; 0 when no channel ran
+    k_dr: f64,
 }
 
 /// The fixed ensemble the level is solved on. Small on purpose: the level is a mean over ~200k
@@ -1590,6 +1620,7 @@ fn world_level(w: &World) -> ChannelLevel {
             k_sat: 0.0,
             k_div: 0.0,
             k_vs: 0.0,
+            k_dr: 0.0,
         };
     }
     let sums: Vec<LevelSums> = (0..LEVEL_PATHS)
@@ -1630,6 +1661,12 @@ fn world_level(w: &World) -> ChannelLevel {
         },
         k_sat: if ch_on { (s_r2 / s_st).sqrt() } else { 0.0 },
         k_vs: if ch_on { (s_r2 / s_vs).sqrt() } else { 0.0 },
+        // the drift dispersion's level: the primary's realized ANNUALIZED vol
+        k_dr: if ch_on {
+            (s_r2 / m).sqrt() * (DAYS_PER_YEAR as f64).sqrt()
+        } else {
+            0.0
+        },
         k_div: if div_on { s_fp / n_fp } else { 0.0 },
     }
 }
@@ -1700,6 +1737,8 @@ struct ChannelRngs {
     o: NumPyRng,
     /// the basket
     b: NumPyRng,
+    /// the basket's drift dispersion (N draws once per path, before the session loop)
+    m: NumPyRng,
 }
 
 impl ChannelRngs {
@@ -1710,6 +1749,7 @@ impl ChannelRngs {
             v: NumPyRng::new(seed ^ 0xd011_a5e5u64),
             o: NumPyRng::new(seed ^ 0x09e7_a11eu64),
             b: NumPyRng::new(seed ^ 0xba5c_e700u64),
+            m: NumPyRng::new(seed ^ 0xd1f7_5eadu64),
         }
     }
 }
@@ -1915,6 +1955,20 @@ fn derive_channels(w: &World, x: &ChannelInputs, level: ChannelLevel, seed: u64)
     // satellite's), and each name's log price.
     let mut sec_prev_px = 0.0f64;
     let mut name_log_p = vec![0.0f64; w.basket];
+    // DRIFT DISPERSION — see the `basket_drift` field. One draw per name from `mrng`, taken BEFORE
+    // the session loop, then centred exactly so the sector's log drift is untouched: only the
+    // cross-section moves. Rescaled by sqrt(N/(N-1)) because centring N draws costs exactly that
+    // much sample sd, so the dial delivers the sd it names. A single name has no cross-section to
+    // disperse, so N < 2 is a no-op.
+    let name_mu: Vec<f64> = if bsk_on && w.basket_drift > 0.0 && w.basket >= 2 {
+        let z: Vec<f64> = (0..w.basket).map(|_| rngs.m.randn()).collect();
+        let zb = z.iter().sum::<f64>() / z.len() as f64;
+        let n = z.len() as f64;
+        let sc = w.basket_drift * level.k_dr * (n / (n - 1.0)).sqrt() / DAYS_PER_YEAR as f64;
+        z.iter().map(|v| (v - zb) * sc).collect()
+    } else {
+        vec![0.0f64; w.basket]
+    };
     // SATELLITE LEG state: its log price and the primary's observed log price last session.
     let mut sat_log_p = 0.0f64;
     let mut sat_prev_px = 0.0f64;
@@ -1954,7 +2008,7 @@ fn derive_channels(w: &World, x: &ChannelInputs, level: ChannelLevel, seed: u64)
                 state: x.state[i] * k_s,
                 vol_state: x.vol_state[i] * k_v,
             };
-            basket_session(w, inp, &mut rngs.b, &mut name_log_p);
+            basket_session(w, inp, &mut rngs.b, &mut name_log_p, &name_mu);
             sec_prev_px = log_px;
             for (q, lp) in name_log_p.iter().enumerate() {
                 nm[q][i] = *lp;
@@ -1994,18 +2048,24 @@ struct BasketIn {
 /// gap, accumulated into `name_log_p`. Reads `brng` only — one normal for the sector, then per
 /// name one normal, one uniform, and on a gap session the t's draws — the cross-language draw
 /// order.
-fn basket_session(w: &World, inp: BasketIn, brng: &mut NumPyRng, name_log_p: &mut [f64]) {
+fn basket_session(
+    w: &World,
+    inp: BasketIn,
+    brng: &mut NumPyRng,
+    name_log_p: &mut [f64],
+    name_mu: &[f64],
+) {
     let gap_prob = w.basket_gaps / DAYS_PER_YEAR as f64;
     let sec_idio = w.basket_sector * inp.state * brng.randn();
     let sec_ret = w.basket_beta * inp.primary_ret + sec_idio;
-    for lp in name_log_p.iter_mut() {
+    for (lp, mu) in name_log_p.iter_mut().zip(name_mu) {
         let idio = w.basket_idio * inp.vol_state * brng.randn();
         let gap = if brng.next_f64() < gap_prob {
             basket_gap(w, brng)
         } else {
             0.0
         };
-        *lp += sec_ret + idio + gap;
+        *lp += sec_ret + idio + gap + mu;
     }
 }
 
@@ -2096,6 +2156,12 @@ fn simulate_at(w: &World, years: usize, seed: u64, level: ChannelLevel) -> Path 
         chan_k_sat: level.k_sat,
         chan_k_div: level.k_div,
         chan_k_vs: level.k_vs,
+        // carried only when the dial is on, so every sidecar without it is unchanged
+        chan_k_dr: if w.basket_drift > 0.0 {
+            level.k_dr
+        } else {
+            0.0
+        },
         ..pr.path
     }
 }
@@ -2683,6 +2749,7 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
         chan_k_sat: 0.0,
         chan_k_div: 0.0,
         chan_k_vs: 0.0,
+        chan_k_dr: 0.0,
     };
     Priced { path, inputs: ch }
 }
@@ -3337,6 +3404,9 @@ struct BasketStats {
     tail_coincidence: f64,
     pair_corr_worst: f64,
     pair_corr_mid: f64,
+    /// the SPREAD of time-below-peak across the names (max - min), which is what `basket_drift`
+    /// moves; the eight span 0.53
+    name_d20_spread: f64,
 }
 
 fn sd_of(r: &[f64]) -> f64 {
@@ -3357,7 +3427,7 @@ fn mean_pair_corr(rn: &[Vec<f64>]) -> f64 {
 }
 
 /// One path's eleven basket readings, in `BasketStats` field order.
-fn basket_path_stats(s: &Path) -> [f64; 11] {
+fn basket_path_stats(s: &Path) -> [f64; 12] {
     let rp = daily_returns(&s.price);
     let n = rp.len();
     let rn: Vec<Vec<f64>> = s
@@ -3442,6 +3512,8 @@ fn basket_path_stats(s: &Path) -> [f64; 11] {
         coinc,
         pair_on(&order[..dec]),
         pair_on(&order[n / 2 - dec / 2..n / 2 + dec / 2]),
+        d20s.iter().cloned().fold(f64::NEG_INFINITY, f64::max)
+            - d20s.iter().cloned().fold(f64::INFINITY, f64::min),
     ]
 }
 
@@ -3449,7 +3521,7 @@ fn basket_stats(sims: &[Path]) -> Option<BasketStats> {
     if sims.is_empty() || sims[0].names.is_empty() {
         return None;
     }
-    let mut cols: Vec<Vec<f64>> = (0..11).map(|_| Vec::with_capacity(sims.len())).collect();
+    let mut cols: Vec<Vec<f64>> = (0..12).map(|_| Vec::with_capacity(sims.len())).collect();
     for s in sims {
         for (c, v) in cols.iter_mut().zip(basket_path_stats(s)) {
             c.push(v);
@@ -3467,6 +3539,7 @@ fn basket_stats(sims: &[Path]) -> Option<BasketStats> {
         tail_coincidence: med(&cols[8]),
         pair_corr_worst: med(&cols[9]),
         pair_corr_mid: med(&cols[10]),
+        name_d20_spread: med(&cols[11]),
     })
 }
 
@@ -8989,6 +9062,7 @@ fn world_json_body(w: &World) -> Vec<String> {
         ("basketSector", ef(w.basket_sector)),
         ("basketIdio", ef(w.basket_idio)),
         ("basketGaps", ef(w.basket_gaps)),
+        ("basketDrift", ef(w.basket_drift)),
         ("inflProb", ef(w.infl_prob)),
         ("inflSize", ef(w.infl_size)),
         ("inflSpeed", ef(w.infl_speed)),
@@ -9023,11 +9097,16 @@ fn channel_readings_block(st: &WorldStats, p: &Path) -> String {
         || st.div_yield_mean.is_finite()
     {
         blocks.push(format!(
-            "    \"level\": {{ \"k\": {}, \"kSat\": {}, \"kDiv\": {}, \"kVs\": {} }}",
+            "    \"level\": {{ \"k\": {}, \"kSat\": {}, \"kDiv\": {}, \"kVs\": {}{} }}",
             num(p.chan_k),
             num(p.chan_k_sat),
             num(p.chan_k_div),
-            num(p.chan_k_vs)
+            num(p.chan_k_vs),
+            if p.chan_k_dr > 0.0 {
+                format!(", \"kDr\": {}", num(p.chan_k_dr))
+            } else {
+                String::new()
+            }
         ));
     }
     if let Some(sd) = st.sat {
@@ -9080,7 +9159,8 @@ fn channel_readings_block(st: &WorldStats, p: &Path) -> String {
         blocks.push(format!(
             "    \"basket\": {{ \"nameVolRatio\": {}, \"nameGaps\": {}, \"nameD20\": {}, \"aggCorr\": {}, \
              \"aggBeta\": {}, \"aggVolRatio\": {}, \"pairCorr\": {}, \"idioShare\": {}, \
-             \"tailCoincidence\": {}, \"pairCorrWorst\": {}, \"pairCorrMid\": {} }}",
+             \"tailCoincidence\": {}, \"pairCorrWorst\": {}, \"pairCorrMid\": {}, \
+             \"nameD20Spread\": {} }}",
             num(b.name_vol_ratio),
             num(b.name_gaps),
             num(b.name_d20),
@@ -9091,7 +9171,8 @@ fn channel_readings_block(st: &WorldStats, p: &Path) -> String {
             num(b.idio_share),
             num(b.tail_coincidence),
             num(b.pair_corr_worst),
-            num(b.pair_corr_mid)
+            num(b.pair_corr_mid),
+            num(b.name_d20_spread)
         ));
     }
     if blocks.is_empty() {
@@ -9491,6 +9572,7 @@ fn main() {
     let mut basket_sector = dw.basket_sector;
     let mut basket_idio = dw.basket_idio;
     let mut basket_gaps = dw.basket_gaps;
+    let mut basket_drift = dw.basket_drift;
     let mut joint_emit = String::new();
     let mut bars_emit = String::new();
     let mut jump_rate = dw.jump_rate;
@@ -9595,6 +9677,7 @@ fn main() {
             "-basketsector" => basket_sector = req_f64(&mut it, "-basketsector"),
             "-basketidio" => basket_idio = req_f64(&mut it, "-basketidio"),
             "-basketgaps" => basket_gaps = req_f64(&mut it, "-basketgaps"),
+            "-basketdrift" => basket_drift = req_f64(&mut it, "-basketdrift"),
             "-jointemit" => joint_emit = req_arg(&mut it, "-jointemit").clone(),
             "-barsemit" => bars_emit = req_arg(&mut it, "-barsemit").clone(),
             "-jumprate" => jump_rate = req_f64(&mut it, "-jumprate"),
@@ -9746,6 +9829,7 @@ fn main() {
         non_neg("-basketsector", basket_sector);
         non_neg("-basketidio", basket_idio);
         non_neg("-basketgaps", basket_gaps);
+        non_neg("-basketdrift", basket_drift);
         if basket > 0 && basket_beta <= 0.0 {
             cli_die(
                 "-basket requires -basketbeta > 0: a name with no sector leg is not a member of anything",
@@ -9885,6 +9969,7 @@ fn main() {
         basket_sector,
         basket_idio,
         basket_gaps,
+        basket_drift,
         value_pull,
         crowd,
         crowd_impact,
@@ -10335,10 +10420,11 @@ fn main() {
     }
     if let Some(b) = st.basket {
         println!(
-            "  basket names           vol ratio {}   gaps/yr {}   d20 {}",
+            "  basket names           vol ratio {}   gaps/yr {}   d20 {} (spread {})",
             jf(b.name_vol_ratio, 0, 2),
             jf(b.name_gaps, 0, 2),
-            jf(b.name_d20, 0, 3)
+            jf(b.name_d20, 0, 3),
+            jf(b.name_d20_spread, 0, 3)
         );
         println!(
             "  basket aggregate       corr {}   beta {}   vol ratio {}",
@@ -13674,5 +13760,137 @@ mod basket_anchor_tests {
                     .iter()
                     .any(|r| r.0.starts_with("basket"))
         );
+    }
+}
+
+/// Cross-sectional drift dispersion (`basket_drift`): a per-name annual log-drift offset, centred
+/// exactly so the sector is untouched. The dial is ANCHORED AT 0 by the checked-in fixture, and
+/// that is the unusual thing worth pinning: the fixture says no true dispersion is DETECTABLE in a
+/// survivor cache, so a shipped world that turned this on would be asserting something the record
+/// cannot support. The Scala twin carries the same checks in `BasketDriftSuite`.
+#[cfg(test)]
+mod basket_drift_tests {
+    use super::*;
+
+    const FIXTURE: &str = "../test-data/equity-anchors/basket-drift-2026-09-03.tsv";
+
+    fn rows() -> Option<Vec<Vec<String>>> {
+        let text = std::fs::read_to_string(FIXTURE).ok()?;
+        Some(
+            text.lines()
+                .filter(|l| {
+                    !l.starts_with('#') && !l.starts_with("group\t") && !l.trim().is_empty()
+                })
+                .map(|l| l.split('\t').map(str::to_string).collect())
+                .collect(),
+        )
+    }
+
+    fn value(rs: &[Vec<String>], group: &str, stat: &str) -> f64 {
+        rs.iter()
+            .find(|r| r[0] == group && r[1] == stat)
+            .unwrap_or_else(|| panic!("fixture row [{group} {stat}] missing"))[2]
+            .parse()
+            .expect("numeric fixture value")
+    }
+
+    fn basket() -> World {
+        let mut w = default_world();
+        w.basket = 8;
+        w.basket_beta = 1.56;
+        w.basket_sector = 1.2;
+        w.basket_idio = 1.0;
+        w.basket_gaps = 3.0;
+        w
+    }
+
+    #[test]
+    fn the_fixture_anchors_the_dial_at_zero_the_spread_is_under_the_windows_noise_floor() {
+        let Some(rs) = rows() else {
+            return;
+        };
+        for g in ["eight", "pop26"] {
+            let spread = value(&rs, g, "driftSpread");
+            let floor = value(&rs, g, "noiseFloor");
+            let truth = value(&rs, g, "trueSpread");
+            assert!(
+                spread <= floor,
+                "[{g}] the fixture claims no detectable dispersion, but {spread} exceeds {floor}"
+            );
+            let decomposed = (spread * spread - floor * floor).max(0.0).sqrt();
+            assert!((truth - decomposed).abs() < 1e-9, "[{g}] trueSpread");
+            assert!(truth.abs() < 1e-9, "[{g}] the shipped anchor is 0");
+            // the same answer on the residual after the group index, so beta spread is not the cause
+            assert!(
+                value(&rs, g, "alphaSpread") <= value(&rs, g, "alphaNoiseFloor"),
+                "[{g}] alpha"
+            );
+        }
+        for (v, w) in releases() {
+            assert!(w.basket_drift == 0.0, "release {v}");
+        }
+        for (n, w, _) in recipes() {
+            assert!(w.basket_drift == 0.0, "recipe {n}");
+        }
+        assert!(default_world().basket_drift == 0.0);
+    }
+
+    #[test]
+    fn off_is_bit_identical_and_on_disperses_the_names_without_moving_the_sector() {
+        let off = simulate(&basket(), 12, DEFAULT_SEED);
+        let mut w = basket();
+        w.basket_drift = 0.6;
+        let on = simulate(&w, 12, DEFAULT_SEED);
+        let mut z = basket();
+        z.basket_drift = 0.0;
+        let zero = simulate(&z, 12, DEFAULT_SEED);
+        for q in 0..off.names.len() {
+            assert!(
+                off.names[q] == zero.names[q],
+                "name {q}: 0 must be bit-identical"
+            );
+        }
+        assert!(on.price == off.price, "the dispersion reaches no price");
+        assert!(
+            on.names.iter().any(|a| *a != off.names[0]),
+            "on must move the names"
+        );
+        // THE CENTRING: the mean of the names' log drifts is what the sector's is, exactly.
+        let mean_final = |p: &Path| -> f64 {
+            p.names.iter().map(|a| a[a.len() - 1] - a[0]).sum::<f64>() / p.names.len() as f64
+        };
+        assert!(
+            (mean_final(&on) - mean_final(&off)).abs() < 1e-9,
+            "centred offsets must leave the equal-weight sector's log drift untouched"
+        );
+    }
+
+    #[test]
+    fn the_dial_widens_the_spread_of_time_below_peak_and_leaves_its_median_alone() {
+        // At a CENTURY the off-state spread is only what estimation noise leaves, so this is where
+        // the dial's own contribution is legible.
+        let stats = |d: f64| {
+            let mut w = basket();
+            w.basket_drift = d;
+            basket_stats(&sim_paths(&w, 4, 100, DEFAULT_SEED)).expect("basket")
+        };
+        let a = stats(0.0);
+        let b = stats(0.8);
+        assert!(
+            b.name_d20_spread > a.name_d20_spread * 2.0,
+            "the dial must disperse time below peak: {} -> {}",
+            a.name_d20_spread,
+            b.name_d20_spread
+        );
+        // The MEDIAN is the common drift's, and mean-zero dispersion does not move it — which is
+        // why this dial is not the fix for the level the basket fixture discloses as survivorship.
+        assert!(
+            (b.name_d20 - a.name_d20).abs() < 0.05,
+            "the median must stay put"
+        );
+        // the graded level-2 rows are untouched: a constant per-name drift adds no covariance
+        assert!((b.agg_corr - a.agg_corr).abs() < 1e-3);
+        assert!((b.agg_beta - a.agg_beta).abs() < 1e-3);
+        assert!((b.agg_vol_ratio - a.agg_vol_ratio).abs() < 1e-3);
     }
 }

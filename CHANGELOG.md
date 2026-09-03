@@ -113,6 +113,25 @@
   primary, and that ratio's anchor is the eight against QQQ over 2012–2026 while the model's
   primary is anchored to QQQ over 1999–2026, which is a fifth more volatile. With own gaps off the
   rate still reads 2.14/yr against the eight's mean of 1.86, so no dial reaches it.
+- `-basketdrift X` (default 0, off, bit-identical): cross-sectional drift dispersion — the sd of
+  the names' own annual log-drift offsets as a fraction of the primary's volatility, drawn once per
+  name per path from its own stream and centred exactly, so the sector's log drift is untouched and
+  only the cross-section moves. `channels.basket` gains `nameD20Spread`. Both twins.
+- **What it is for: a null world for a rule that ranks names.** At 0 every name has the same
+  expected drift by construction, so no name is better than another and any cross-sectional edge a
+  rule shows is noise; set the dial and there is a real edge of known size to find. Sweeping it
+  gives a ranking rule's detection threshold and the history it needs there — the basket analogue
+  of what `-power` asks of the single-series statistics.
+- **It ships at 0, and the fixture is why** (`basket-drift-2026-09-03.tsv`, re-derived by
+  `BasketDriftSuite` / `basket_drift_tests`). Over the eight's own window the spread of realized
+  drift across them is 0.068 against the 0.070 that a 14.6-year window generates from their idio
+  volatility alone; for the 26-name population, 0.075 against 0.085. No true dispersion is
+  detectable, and selecting survivors truncates the left tail, so 0 is a floor from biased data.
+- The names' time below peak is **not** a dispersion miss and this dial does not close it: the
+  eight's common drift is +0.304/yr against the model's +0.144, which is the survivorship the
+  basket fixture discloses. Dispersion around the same centre widens the spread (0.04 → 0.43
+  across the dial's range) and leaves the median at 0.985. A rule reading mean drawdown across
+  names should use its own rolling quantile, not an absolute level.
 
 ## v0.23.0 — 2026-09-02
 

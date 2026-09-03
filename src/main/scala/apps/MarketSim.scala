@@ -316,6 +316,12 @@ object MarketSim:
     "              ;   its own idio (-basketidio, on the vol state alone -- so correlation rises",
     "              ;   in stress) and its own gaps (-basketgaps per year, t-jumps).  The aggregate",
     "              ;   is the sector.  Anchored N 8 on folio's semis under SMH.  Default 0 = off",
+    "-basketdrift X; cross-sectional DRIFT DISPERSION: sd of the names' own annual log-drift",
+    "              ;   offsets as a fraction of the primary's vol, centred so the sector is",
+    "              ;   untouched.  ANCHORED AT 0: among the eight the spread of realized drift",
+    "              ;   (0.068) is what a 14.6-year window alone generates (0.070), and survivors",
+    "              ;   truncate the left tail, so 0 is a floor from biased data.  Their time",
+    "              ;   below peak is the COMMON drift (+0.304 vs the model's +0.144), not this",
     "-barsemit P   ; dev tap: per-path logPrice/logHigh/logLow[/logVolume] TSVs for grading",
     "              ;   the bar channels against the bars anchors",
     s"-refugedays X ; half-life in sessions of the settled stress the refuge bid reads, which",
@@ -640,8 +646,31 @@ object MarketSim:
                                 // construction)
     basketIdio: Double = 0.0,   // per-name idio sd as a FRACTION of the primary's realized vol,
                                 // riding the vol state WITHOUT the spiral
-    basketGaps: Double = 0.0    // per-name gap intensity, jumps per year; each a standardized
+    basketGaps: Double = 0.0,   // per-name gap intensity, jumps per year; each a standardized
                                 // t(JumpNu) x `BasketGapSize` (log), skewed like the primary's
+    basketDrift: Double = 0.0   // CROSS-SECTIONAL DRIFT DISPERSION: the sd of the names' own
+                                // annual log-drift offsets, as a FRACTION of the primary's
+                                // realized annualized vol (`ChannelLevel.kDr`), so it transports.
+                                // Drawn once per name per path and centred EXACTLY, so the
+                                // equal-weight sector's log drift is untouched and only the
+                                // cross-section moves.  0 = off, bit-identical; needs N >= 2.
+                                // ANCHORED AT 0 by `basket-drift-2026-09-03.tsv`: among folio's
+                                // eight the spread of realized drift (0.068) is entirely
+                                // accounted for by what a 14.6-year window generates from their
+                                // own idio vol (0.070), so no true dispersion is detectable, and
+                                // selecting survivors truncates the left tail -- 0 is a FLOOR
+                                // from biased data, not a measurement.  The names' time below
+                                // peak is NOT what this dial fixes: that gap is the eight's
+                                // COMMON drift (+0.304 against the model's +0.144), which is the
+                                // survivorship the basket fixture discloses.
+                                //
+                                // WHAT IT IS FOR: at 0 every name has the same expected drift BY
+                                // CONSTRUCTION (shared sector leg; idio and gaps share a mean), so
+                                // the basket is a NULL WORLD for cross-sectional selection -- no
+                                // name is better than another and any ranking edge a rule shows on
+                                // it is noise.  Set the dial and there is a real edge of known
+                                // size to find.  Sweeping it gives a ranking rule's detection
+                                // threshold and the history it needs there.
   )
 
   final case class Path(price: Array[Double], rate: Array[Double], fundamental: Array[Double],
@@ -697,8 +726,10 @@ object MarketSim:
                                                  // scale is auditable; 0 / 0 when both are off
                         chanKDiv: Double = 0.0,  // the world's mean fundamental/price the
                                                  // dividend yield was normalized by; 0 when off
-                        chanKVs: Double = 0.0)   // the basket idio's level (realized sd over
+                        chanKVs: Double = 0.0,   // the basket idio's level (realized sd over
                                                  // the vol state's rms); 0 when no channel ran
+                        chanKDr: Double = 0.0)   // the primary's realized annualized vol, what
+                                                 // `basketDrift` is a fraction of; 0 when off
 
   /** THE shipped world.  `main` seeds its mutable CLI vars from this and `usage` interpolates its
     * numbers, so every default is written in exactly one place.  Help text that restates a constant
@@ -1309,7 +1340,10 @@ object MarketSim:
 
   /** The world's channel level: `k` re-levels the session diffusion sd onto the world's realized
     * close-to-close sd, `kSat` the satellite's state factor onto it in root-mean-square. */
-  final case class ChannelLevel(k: Double, kSat: Double, kDiv: Double = 0.0, kVs: Double = 0.0)
+  final case class ChannelLevel(k: Double, kSat: Double, kDiv: Double = 0.0, kVs: Double = 0.0,
+                                // the primary's realized ANNUALIZED volatility -- what
+                                // `basketDrift` is a fraction of, so the dial transports
+                                kDr: Double = 0.0)
 
   /** The fixed ensemble the level is solved on.  Small on purpose: the level is a mean over ~200k
     * sessions, so its sampling error is under 1% even at kurtosis 60, and it is solved once per
@@ -1347,7 +1381,9 @@ object MarketSim:
                    if divOn then sFp / nFp else 0.0,
                    // the basket idio's level: realized sd over the vol state's rms, so a fraction
                    // dial is a fraction of the primary's realized vol whatever shape the state takes
-                   if chOn then math.sqrt(sR2 / sVs) else 0.0)
+                   if chOn then math.sqrt(sR2 / sVs) else 0.0,
+                   // the drift dispersion's level: the primary's realized ANNUALIZED vol
+                   if chOn then math.sqrt(sR2 / m) * math.sqrt(DaysPerYear.toDouble) else 0.0)
 
   /** The dividend level's input: one path's sum of fundamental/price over its sessions, in
     * session order (part of the cross-language contract), and the count.  A world constant for
@@ -1402,6 +1438,7 @@ object MarketSim:
     val vrng    = new NumPyRNG(seed ^ 0xd011a5e5L)
     val orng    = new NumPyRNG(seed ^ 0x09e7a11eL)
     val brng    = new NumPyRNG(seed ^ 0xba5ce700L)
+    val mrng    = new NumPyRNG(seed ^ 0xd1f75eadL)
     val tot     = x.px.length
     val satOn   = w.satBeta > 0.0
     val rangeOn = w.rangeScale > 0.0
@@ -1425,6 +1462,18 @@ object MarketSim:
       val nameLogP = new Array[Double](w.basket)
       val gapProb  = w.basketGaps / DaysPerYear
       val gapSkew  = w.jumpSkew
+      // DRIFT DISPERSION -- see the `basketDrift` field.  One draw per name from `mrng`, taken
+      // BEFORE the session loop, then centred exactly so the sector's log drift is untouched:
+      // only the cross-section moves.  Rescaled by sqrt(N/(N-1)) because centring N draws costs
+      // exactly that much sample sd, so the dial delivers the sd it names.  A single name has no
+      // cross-section to disperse, so N < 2 is a no-op.
+      val nameMu =
+        if bskOn && w.basketDrift > 0.0 && w.basket >= 2 then
+          val z = Array.fill(w.basket)(mrng.randn())
+          val zb = z.sum / z.length
+          val sc = w.basketDrift * level.kDr * math.sqrt(z.length / (z.length - 1.0)) / DaysPerYear
+          z.map(v => (v - zb) * sc)
+        else new Array[Double](w.basket)
       // SATELLITE LEG state: its log price and the primary's observed log price last session.
       var satLogP = 0.0; var satPrevPx = 0.0
       // RANGE state: the bar's open (the prior close; the sampled open when `overnight` > 0).
@@ -1483,7 +1532,7 @@ object MarketSim:
                 val t = z / math.sqrt(chi / JumpNu) / math.sqrt(JumpNu / (JumpNu - 2.0))
                 (t - gapSkew) * BasketGapSize
               else 0.0
-            nameLogP(q) += secRet + idio + gap
+            nameLogP(q) += secRet + idio + gap + nameMu(q)
             nm(q)(i) = nameLogP(q)
             q += 1
         // THE OPEN -- see the `overnight` field.  The bridge point at share w of the session's
@@ -1584,7 +1633,8 @@ object MarketSim:
       chanK     = level.k,
       chanKSat  = level.kSat,
       chanKDiv  = level.kDiv,
-      chanKVs   = level.kVs)
+      chanKVs   = level.kVs,
+      chanKDr   = if w.basketDrift > 0.0 then level.kDr else 0.0)
 
   /** `simulateAt` at the world's own level, solved here per call -- `simPaths` solves it once
     * for the whole ensemble, so prefer that for more than one path. */
@@ -2269,7 +2319,10 @@ object MarketSim:
   final case class BasketStats(nameVolRatio: Double, nameGaps: Double, nameD20: Double,
                                aggCorr: Double, aggBeta: Double, aggVolRatio: Double,
                                pairCorr: Double, idioShare: Double, tailCoincidence: Double,
-                               pairCorrWorst: Double, pairCorrMid: Double)
+                               pairCorrWorst: Double, pairCorrMid: Double,
+                               // the SPREAD of time-below-peak across the names (max - min),
+                               // which is what `basketDrift` moves; the eight span 0.53
+                               nameD20Spread: Double)
 
   def basketStats(sims: Vector[Path]): Option[BasketStats] =
     if sims.isEmpty || sims.head.names.isEmpty then None
@@ -2308,12 +2361,13 @@ object MarketSim:
         (medOf(volRatios), gaps.sum / gaps.size, medOf(d20s),
          pearson(rp, agg), cov / varP, sdOf(agg) / sdP,
          pairs.sum / pairs.size, medOf(idio), coinc,
-         pairCorrOn(order.take(dec)), pairCorrOn(order.slice(n / 2 - dec / 2, n / 2 + dec / 2)))
+         pairCorrOn(order.take(dec)), pairCorrOn(order.slice(n / 2 - dec / 2, n / 2 + dec / 2)),
+         d20s.max - d20s.min)
       }
       Some(BasketStats(medOf(per.map(_._1)), medOf(per.map(_._2)), medOf(per.map(_._3)),
                        medOf(per.map(_._4)), medOf(per.map(_._5)), medOf(per.map(_._6)),
                        medOf(per.map(_._7)), medOf(per.map(_._8)), medOf(per.map(_._9)),
-                       medOf(per.map(_._10)), medOf(per.map(_._11))))
+                       medOf(per.map(_._10)), medOf(per.map(_._11)), medOf(per.map(_._12))))
 
   /** The open's readings, medians across paths: the overnight share of close-to-close variance
     * (sample variances), and the regression share of the overnight in the session -- sum(o r) /
@@ -5150,7 +5204,7 @@ object MarketSim:
       ("volIdio", ef(w.volIdio)), ("divYield", ef(w.divYield)), ("overnight", ef(w.overnight)),
       ("basket", w.basket.toString), ("basketBeta", ef(w.basketBeta)),
       ("basketSector", ef(w.basketSector)), ("basketIdio", ef(w.basketIdio)),
-      ("basketGaps", ef(w.basketGaps)),
+      ("basketGaps", ef(w.basketGaps)), ("basketDrift", ef(w.basketDrift)),
       ("inflProb", ef(w.inflProb)), ("inflSize", ef(w.inflSize)),
       ("inflSpeed", ef(w.inflSpeed)), ("rateSpeed", ef(w.rateSpeed)),
       ("discount", ef(w.discount)), ("margin", ef(w.margin)),
@@ -5165,7 +5219,8 @@ object MarketSim:
     def num(x: Double): String = if x.isNaN then "null" else ef(x)
     val level =
       if st.sat.isDefined || st.bars.isDefined || st.open.isDefined || st.basket.isDefined || st.divYieldMean.isFinite then
-        Vector(s"""    "level": { "k": ${num(p.chanK)}, "kSat": ${num(p.chanKSat)}, "kDiv": ${num(p.chanKDiv)}, "kVs": ${num(p.chanKVs)} }""")
+        Vector(s"""    "level": { "k": ${num(p.chanK)}, "kSat": ${num(p.chanKSat)}, "kDiv": ${num(p.chanKDiv)}, "kVs": ${num(p.chanKVs)}""" +
+               (if p.chanKDr > 0.0 then s""", "kDr": ${num(p.chanKDr)}""" else "") + " }")
       else Vector.empty
     val sat = st.sat.toVector.map { sd =>
       s"""    "satellite": { "corr": ${num(sd.corr)}, "absCorr": ${num(sd.absCorr)}, """ +
@@ -5190,7 +5245,8 @@ object MarketSim:
       s"""    "basket": { "nameVolRatio": ${num(b.nameVolRatio)}, "nameGaps": ${num(b.nameGaps)}, """ +
       s""""nameD20": ${num(b.nameD20)}, "aggCorr": ${num(b.aggCorr)}, "aggBeta": ${num(b.aggBeta)}, """ +
       s""""aggVolRatio": ${num(b.aggVolRatio)}, "pairCorr": ${num(b.pairCorr)}, "idioShare": ${num(b.idioShare)}, """ +
-      s""""tailCoincidence": ${num(b.tailCoincidence)}, "pairCorrWorst": ${num(b.pairCorrWorst)}, "pairCorrMid": ${num(b.pairCorrMid)} }"""
+      s""""tailCoincidence": ${num(b.tailCoincidence)}, "pairCorrWorst": ${num(b.pairCorrWorst)}, "pairCorrMid": ${num(b.pairCorrMid)}, """ +
+      s""""nameD20Spread": ${num(b.nameD20Spread)} }"""
     }
     val blocks = level ++ sat ++ bars ++ div ++ open ++ bsk
     if blocks.isEmpty then """  "channels": {},"""
@@ -5471,6 +5527,7 @@ object MarketSim:
     var volIdio = dw.volIdio; var divYield = dw.divYield; var overnight = dw.overnight
     var basket = dw.basket; var basketBeta = dw.basketBeta; var basketSector = dw.basketSector
     var basketIdio = dw.basketIdio; var basketGaps = dw.basketGaps
+    var basketDrift = dw.basketDrift
     var jointEmit = ""
     var barsEmit = ""
     var inflProb = dw.inflProb; var inflSize = dw.inflSize
@@ -5558,6 +5615,7 @@ object MarketSim:
       case "-basketsector" => basketSector = numOr("-basketsector", consumeNext)
       case "-basketidio" => basketIdio = numOr("-basketidio", consumeNext)
       case "-basketgaps" => basketGaps = numOr("-basketgaps", consumeNext)
+      case "-basketdrift" => basketDrift = numOr("-basketdrift", consumeNext)
       case "-jointemit"  => jointEmit = consumeNext
       case "-barsemit"   => barsEmit = consumeNext
       // Rejected, not silently reinterpreted: -flight was a rate cut SPEED per year and -easing is
@@ -5633,6 +5691,7 @@ object MarketSim:
     if basket < 0 then usage(s"-basket $basket: the name count cannot be negative")
     nonNeg("-basketbeta", basketBeta); nonNeg("-basketsector", basketSector)
     nonNeg("-basketidio", basketIdio); nonNeg("-basketgaps", basketGaps)
+    nonNeg("-basketdrift", basketDrift)
     if basket > 0 && basketBeta <= 0.0 then
       usage("-basket requires -basketbeta > 0: a name with no sector leg is not a member of anything")
     if overnight >= 1.0 then
@@ -5699,7 +5758,8 @@ object MarketSim:
                   satBeta = satBeta, satIdio = satIdio, rangeScale = rangeScale,
                   rangeDown = rangeDown, volIdio = volIdio, divYield = divYield,
                   overnight = overnight, basket = basket, basketBeta = basketBeta,
-                  basketSector = basketSector, basketIdio = basketIdio, basketGaps = basketGaps)
+                  basketSector = basketSector, basketIdio = basketIdio, basketGaps = basketGaps,
+                  basketDrift = basketDrift)
 
     // SATELLITE PROTOTYPE: write per-path primary+satellite LOG prices for grading against the
     // SPY-QQQ coupling anchors (the joint_anchor conventions, graded python-side).  Deliberately
@@ -5894,7 +5954,7 @@ object MarketSim:
         println(f"  bar volume             sd ${b.volSd}%.3f   vs range ${b.volCorrRange}%.3f")
     }
     st.basket.foreach { b =>
-      println(f"  basket names           vol ratio ${b.nameVolRatio}%.2f   gaps/yr ${b.nameGaps}%.2f   d20 ${b.nameD20}%.3f")
+      println(f"  basket names           vol ratio ${b.nameVolRatio}%.2f   gaps/yr ${b.nameGaps}%.2f   d20 ${b.nameD20}%.3f (spread ${b.nameD20Spread}%.3f)")
       println(f"  basket aggregate       corr ${b.aggCorr}%.3f   beta ${b.aggBeta}%.3f   vol ratio ${b.aggVolRatio}%.2f")
       println(f"  basket structure       pair corr ${b.pairCorr}%.3f   idio share ${b.idioShare}%.3f   tail coincidence ${b.tailCoincidence}%.3f   pair corr worst/mid ${b.pairCorrWorst}%.3f/${b.pairCorrMid}%.3f")
     }
