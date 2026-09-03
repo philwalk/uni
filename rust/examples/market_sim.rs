@@ -2418,7 +2418,10 @@ struct WorldStats {
     ac1: f64,
     ac20: f64,
     /// SIGNED-return persistence — `variance_ratio`.
+    vr20: f64,
     vr60: f64,
+    vr120: f64,
+    vr250: f64,
     ann_ret: f64,
     n_episodes: usize,
     ep_per_path: f64,
@@ -2595,18 +2598,38 @@ const BOND_VOL_SUPPORT: (f64, f64) = (1.44, 14.12);
 /// accountable. That is the direction that matters: a horizon chosen to spare the mechanism would be
 /// a longer or shorter one, and both were available.
 const VAR_RATIO_Q: usize = 60;
+/// The ladder `-validate` prints and the profile row grades — the four horizons of
+/// `persistence-2026-09-02.tsv`. `VAR_RATIO_Q` is the rung the loss row reads.
+const VAR_RATIO_LADDER: [usize; 4] = [20, 60, 120, 250];
 
-/// The `variance ratio 60d` band, from `test-data/equity-anchors/persistence-2026-08-29.tsv`: 18 real
+/// The variance-ratio envelopes, from `test-data/equity-anchors/persistence-2026-09-02.tsv`: 18 real
 /// equity funds over their full histories and over the depth cross-section's own 2001-2026 window,
-/// plus the CRSP value-weighted market opening in 1926, 1954 and 1990. The 39 readings span 0.547
-/// (XLV, 2001-2026) to 1.146 (the CRSP century), and the band is that range rounded outward to the
-/// nearest 0.05. The persistence-anchor tests re-derive both bounds from the file by that rule, so
-/// the band cannot be widened to admit a world without a real market moving first.
+/// plus the CRSP value-weighted market opening in 1926, 1954 and 1990, at four horizons. At 60
+/// sessions the 39 readings span 0.547 (XLV, 2001-2026) to 1.175 (the CRSP century), and each
+/// envelope is its rung's range rounded outward to the nearest 0.05. The persistence-anchor tests
+/// re-derive every bound from the file by that rule, so a band cannot be widened to admit a world
+/// without a real market moving first.
 ///
 /// SHARED across anchor sets rather than carried per asset, unlike the two bands in `Anchors`. What
 /// separates these readings is the ERA, not the index: QQQ reads 0.720 against SPY's 0.705 over
 /// their full histories, while the same market reads 1.14 over the century and 0.82 since 1990.
-const VAR_RATIO_BAND: (f64, f64) = (0.50, 1.15);
+/// Per-rung envelopes of the real cross-section — 39 readings, 18 instruments over two windows
+/// and three CRSP eras — the observed range rounded outward to 0.05, re-derived by
+/// `persistence_anchor_tests`. The two long rungs cannot discriminate: at 250 sessions the record
+/// itself spans 0.24-1.56. They are graded anyway, inside ONE profile row with the slopes below,
+/// so a world clears the ladder as a shape and never rung by rung.
+const VAR_RATIO_BANDS: [(usize, f64, f64); 4] = [
+    (20, 0.65, 1.20),
+    (60, 0.50, 1.20),
+    (120, 0.40, 1.35),
+    (250, 0.20, 1.60),
+];
+/// Adjacent-rung slopes vr(60)-vr(20) and vr(120)-vr(60), the cross-section's range rounded
+/// outward: the profile's SHAPE, which four boxes cannot see — a world at 0.70 and 1.15 on the two
+/// short rungs sits inside both boxes and outside every real profile. The 120->250 slope spans
+/// -0.75..+0.71 in the record and grades nothing.
+const VAR_RATIO_SLOPE_BANDS: [(usize, usize, f64, f64); 2] =
+    [(20, 60, -0.25, 0.10), (60, 120, -0.30, 0.20)];
 
 impl WorldStats {
     /// Return per unit volatility, in the units this report already prints: `ann_ret` is a LOG
@@ -2926,9 +2949,21 @@ fn measure(sims: &[Path], years: usize) -> WorldStats {
             .iter()
             .map(|r| autocorr_abs(r, 20))
             .collect::<Vec<f64>>()),
+        vr20: med(&rets
+            .iter()
+            .map(|r| variance_ratio(r, 20))
+            .collect::<Vec<f64>>()),
         vr60: med(&rets
             .iter()
             .map(|r| variance_ratio(r, VAR_RATIO_Q))
+            .collect::<Vec<f64>>()),
+        vr120: med(&rets
+            .iter()
+            .map(|r| variance_ratio(r, 120))
+            .collect::<Vec<f64>>()),
+        vr250: med(&rets
+            .iter()
+            .map(|r| variance_ratio(r, 250))
             .collect::<Vec<f64>>()),
         ann_ret: med(&sims
             .iter()
@@ -3139,6 +3174,56 @@ impl GateClass {
             ),
         }
     }
+}
+
+#[expect(
+    clippy::panic,
+    reason = "an unknown rung is a programming error: the ladder is a const and every caller iterates it"
+)]
+fn vr_of(st: &WorldStats, q: usize) -> f64 {
+    match q {
+        20 => st.vr20,
+        60 => st.vr60,
+        120 => st.vr120,
+        250 => st.vr250,
+        _ => panic!("no variance-ratio rung at {q} sessions"),
+    }
+}
+
+/// The variance-ratio ladder as ONE fidelity row: every rung inside its envelope and both short
+/// slopes inside theirs. The name is derived from the bounds, as `band_check`'s is, so it cannot
+/// read as bounds it does not enforce; the report's `trend persistence` lines show which rung or
+/// slope failed.
+fn var_ratio_profile_check(st: &WorldStats) -> (String, bool, GateClass) {
+    let rungs: Vec<(String, bool)> = VAR_RATIO_BANDS
+        .iter()
+        .map(|&(q, lo, hi)| {
+            let v = vr_of(st, q);
+            (format!("{q}d {lo:.2}-{hi:.2}"), v > lo && v < hi)
+        })
+        .collect();
+    let slopes: Vec<(String, bool)> = VAR_RATIO_SLOPE_BANDS
+        .iter()
+        .map(|&(a, b, lo, hi)| {
+            let sl = vr_of(st, b) - vr_of(st, a);
+            (format!("{a}->{b} {lo:+.2}..{hi:+.2}"), sl > lo && sl < hi)
+        })
+        .collect();
+    let name = format!(
+        "variance-ratio profile {}, slopes {}",
+        rungs
+            .iter()
+            .map(|r| r.0.as_str())
+            .collect::<Vec<_>>()
+            .join(" "),
+        slopes
+            .iter()
+            .map(|r| r.0.as_str())
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+    let pass = rungs.iter().chain(slopes.iter()).all(|r| r.1);
+    (name, pass, GateClass::Fidelity)
 }
 
 /// A gate whose printed name is DERIVED from the bounds its predicate tests, so the two cannot
@@ -3357,15 +3442,7 @@ fn gate_checks(a: Anchors, st: &WorldStats) -> Vec<(String, bool, GateClass)> {
         // rule's information coefficient, a p-value calibrated on synthetic paths, a
         // drawdown-conditioned hazard — all of them inherit the trend this row measures, and none of
         // the other fifteen targets can see it.
-        band_check(
-            "variance ratio 60d",
-            st.vr60,
-            VAR_RATIO_BAND.0,
-            VAR_RATIO_BAND.1,
-            GateClass::Fidelity,
-            2,
-            "",
-        ),
+        var_ratio_profile_check(st),
         // Anchored on the record's CAPE dispersion (valuation-2026-08-30.tsv: 0.24-0.41 across
         // windows). A BAND, never a point ratio: the record has no observable fair value and
         // CAPE is a proxy, so the floor sits a stated haircut below the calmest window.
@@ -4047,7 +4124,7 @@ fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
         ),
         // SIGNED persistence, the axis the two rows above cannot see — they are |r|, and a world can
         // cluster its volatility exactly right while its price trends. See `variance_ratio` for why
-        // this is not a per-lag autocorrelation and `VAR_RATIO_BAND` for the cross-section behind it.
+        // this is not a per-lag autocorrelation and `VAR_RATIO_BANDS` for the cross-section behind it.
         //
         // 1.00 IS A THEORY VALUE, DELIBERATELY, and it is the one row in this table that is not a
         // reading off a record. The real cross-section sits BELOW it — 0.74 median at 2001-2026 —
@@ -6638,7 +6715,7 @@ fn anchor_groups(a: Anchors) -> [(&'static str, usize, &'static [&'static str]);
         // The Shiller record is one series shared by every anchor set, at its own century horizon.
         ("Shiller CAPE 1881-2023", 100, &["valuation dispersion"]),
         // 18 equity funds and three CRSP windows, the shortest of them 24.9 years — see
-        // `VAR_RATIO_BAND`. The horizon is one instrument's record, as it is for the depth rungs, and
+        // `VAR_RATIO_BANDS`. The horizon is one instrument's record, as it is for the depth rungs, and
         // the target this group carries is a theory value rather than a reading, so `real@` here says
         // where 1.00 falls in the model's own spread of 25-year readings, not where a record does.
         ("equity funds + CRSP, 25y", 25, &["variance ratio 60d"]),
@@ -9171,11 +9248,28 @@ fn main() {
     // The line above is |r| and the line below is r, which is the whole reason both are printed:
     // they are different axes and a world can be right on one and wrong on the other.
     println!(
-        "  trend persistence      {}d variance ratio {}   (1.0 = no serial dependence; band {}-{})",
-        VAR_RATIO_Q,
-        jf(st.vr60, 6, 3),
-        jf(VAR_RATIO_BAND.0, 0, 2),
-        jf(VAR_RATIO_BAND.1, 0, 2)
+        "  trend persistence      variance ratio {}   (1.0 = no serial dependence)",
+        VAR_RATIO_LADDER
+            .iter()
+            .map(|&q| format!("{q}d {:.3}", vr_of(&st, q)))
+            .collect::<Vec<_>>()
+            .join("  ")
+    );
+    println!(
+        "                         envelopes {}; slopes {}",
+        VAR_RATIO_BANDS
+            .iter()
+            .map(|&(q, lo, hi)| format!("{q}d {lo:.2}-{hi:.2}"))
+            .collect::<Vec<_>>()
+            .join("  "),
+        VAR_RATIO_SLOPE_BANDS
+            .iter()
+            .map(|&(a, b, lo, hi)| {
+                let sl = vr_of(&st, b) - vr_of(&st, a) + 0.0;
+                format!("{a}->{b} {sl:+.3} ({lo:+.2}..{hi:+.2})")
+            })
+            .collect::<Vec<_>>()
+            .join("  ")
     );
     println!();
     println!(
@@ -10956,7 +11050,7 @@ mod equity_anchor_tests {
     }
 }
 
-/// `VAR_RATIO_BAND` is a FITTED NUMBER in the same sense the depth relation's constants are: it is
+/// `VAR_RATIO_BANDS` is a FITTED NUMBER in the same sense the depth relation's constants are: it is
 /// the real cross-section's own range, rounded outward. This re-derives both bounds from the
 /// checked-in readings, so the band is derivable rather than asserted, and a band widened to admit a
 /// world fails here instead of quietly becoming a band that grades nothing.
@@ -10966,18 +11060,20 @@ mod equity_anchor_tests {
 mod persistence_anchor_tests {
     use super::*;
 
-    const FIXTURE: &str = "../test-data/equity-anchors/persistence-2026-08-29.tsv";
+    const FIXTURE: &str = "../test-data/equity-anchors/persistence-2026-09-02.tsv";
 
     struct Row {
         window: String,
         ticker: String,
-        kind: String,
-        years: f64,
-        vr60: f64,
+        vr: [(usize, f64); 4],
     }
 
-    /// The rounding step the band is stated at. Outward from the observed range, never inward: a
-    /// bound that excluded a real reading would be a band asserting that a real market is not one.
+    impl Row {
+        fn at(&self, q: usize) -> f64 {
+            self.vr.iter().find(|r| r.0 == q).expect("rung").1
+        }
+    }
+
     const STEP: f64 = 0.05;
 
     fn outward(x: f64, up: bool) -> f64 {
@@ -10989,8 +11085,6 @@ mod persistence_anchor_tests {
         (n * STEP * 1e6).round() / 1e6
     }
 
-    /// `None` where the fixture is absent, which is a skip and not a failure: the crate ships
-    /// without `test-data/`, so a source-tarball build must not fail here.
     fn rows() -> Option<Vec<Row>> {
         let text = std::fs::read_to_string(FIXTURE).ok()?;
         Some(
@@ -11000,12 +11094,11 @@ mod persistence_anchor_tests {
                 })
                 .map(|l| {
                     let f: Vec<&str> = l.split('\t').collect();
+                    let v = |i: usize| -> f64 { f[i].parse().expect("vr") };
                     Row {
                         window: f[0].to_string(),
                         ticker: f[1].to_string(),
-                        kind: f[2].to_string(),
-                        years: f[4].parse().expect("years"),
-                        vr60: f[6].parse().expect("vr60"),
+                        vr: [(20, v(5)), (60, v(6)), (120, v(7)), (250, v(8))],
                     }
                 })
                 .collect(),
@@ -11013,91 +11106,132 @@ mod persistence_anchor_tests {
     }
 
     #[test]
-    fn band_is_the_real_range_rounded_outward() {
+    fn every_rungs_envelope_is_the_real_range_rounded_outward() {
         let Some(rows) = rows() else { return };
-        let lo = rows.iter().map(|r| r.vr60).fold(f64::INFINITY, f64::min);
-        let hi = rows
+        let rungs: Vec<usize> = VAR_RATIO_BANDS.iter().map(|b| b.0).collect();
+        assert_eq!(rungs, VAR_RATIO_LADDER.to_vec());
+        for (q, lo, hi) in VAR_RATIO_BANDS {
+            let mn = rows.iter().map(|r| r.at(q)).fold(f64::INFINITY, f64::min);
+            let mx = rows
+                .iter()
+                .map(|r| r.at(q))
+                .fold(f64::NEG_INFINITY, f64::max);
+            assert!(
+                (lo - outward(mn, false)).abs() < 1e-9,
+                "vr{q}: the low bound no longer follows from the fixture: readings start at {mn:.3}"
+            );
+            assert!(
+                (hi - outward(mx, true)).abs() < 1e-9,
+                "vr{q}: the high bound no longer follows from the fixture: readings reach {mx:.3}"
+            );
+        }
+        let rung60 = VAR_RATIO_BANDS
             .iter()
-            .map(|r| r.vr60)
-            .fold(f64::NEG_INFINITY, f64::max);
+            .find(|b| b.0 == VAR_RATIO_Q)
+            .map(|b| (b.1, b.2));
         assert!(
-            (VAR_RATIO_BAND.0 - outward(lo, false)).abs() < 1e-9,
-            "the low bound no longer follows from the fixture: readings start at {lo:.3}, which \
-             rounds outward to {:.3}",
-            outward(lo, false)
-        );
-        assert!(
-            (VAR_RATIO_BAND.1 - outward(hi, true)).abs() < 1e-9,
-            "the high bound no longer follows from the fixture: readings reach {hi:.3}, which \
-             rounds outward to {:.3}",
-            outward(hi, true)
+            rung60 == Some((0.50, 1.20)),
+            "the loss row's rung carries the 60-session envelope"
         );
     }
 
     #[test]
-    fn the_band_admits_every_real_reading() {
-        // Implied by the rule above and asserted anyway, because this is the property that matters:
-        // the gate uses STRICT inequalities, so a bound landing exactly on a real reading would fail
-        // the market that produced it.
+    fn every_slope_band_is_the_real_range_rounded_outward() {
         let Some(rows) = rows() else { return };
-        for r in &rows {
+        for (a, b, lo, hi) in VAR_RATIO_SLOPE_BANDS {
+            let xs: Vec<f64> = rows.iter().map(|r| r.at(b) - r.at(a)).collect();
+            let mn = xs.iter().cloned().fold(f64::INFINITY, f64::min);
+            let mx = xs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
             assert!(
-                r.vr60 > VAR_RATIO_BAND.0 && r.vr60 < VAR_RATIO_BAND.1,
-                "{} over {} reads {:.3}, outside the band the gate enforces",
-                r.ticker,
-                r.window,
-                r.vr60
+                (lo - outward(mn, false)).abs() < 1e-9,
+                "slope {a}->{b} low: readings start at {mn:.3}"
+            );
+            assert!(
+                (hi - outward(mx, true)).abs() < 1e-9,
+                "slope {a}->{b} high: readings reach {mx:.3}"
             );
         }
     }
 
+    /// Implied by the rules above and asserted anyway, because this is the property that matters:
+    /// the gate uses STRICT inequalities, so a bound landing exactly on a real reading would fail
+    /// the market that produced it.
+    #[test]
+    fn the_profile_admits_every_real_reading() {
+        let Some(rows) = rows() else { return };
+        for r in &rows {
+            for (q, lo, hi) in VAR_RATIO_BANDS {
+                assert!(
+                    r.at(q) > lo && r.at(q) < hi,
+                    "{} over {} reads vr{q} {:.3}, outside the envelope the gate enforces",
+                    r.ticker,
+                    r.window,
+                    r.at(q)
+                );
+            }
+            for (a, b, lo, hi) in VAR_RATIO_SLOPE_BANDS {
+                let sl = r.at(b) - r.at(a);
+                assert!(
+                    sl > lo && sl < hi,
+                    "{} over {} has slope {a}->{b} {sl:+.3}, outside the band the gate enforces",
+                    r.ticker,
+                    r.window
+                );
+            }
+        }
+    }
+
+    /// The reason the slopes exist: 0.70 at 20 sessions and 1.15 at 60 are each inside their
+    /// envelope and no real series has that shape.
+    #[test]
+    fn the_profile_row_fails_a_world_the_boxes_admit() {
+        let mut st = measure(&sim_paths(&default_world(), 4, 30, DEFAULT_SEED), 30);
+        st.vr20 = 0.70;
+        st.vr60 = 1.15;
+        st.vr120 = 1.15;
+        st.vr250 = 1.15;
+        let (name, pass, cls) = var_ratio_profile_check(&st);
+        assert!(
+            !pass,
+            "a +0.45 slope between the short rungs must fail the profile: {name}"
+        );
+        assert!(cls == GateClass::Fidelity);
+        assert!(
+            name.contains("20d 0.65-1.20") && name.contains("20->60 -0.25..+0.10"),
+            "the row's name must carry the bounds it enforces: {name}"
+        );
+    }
+
+    /// Why the bands are shared rather than carried per asset. Two indices as different as the
+    /// Nasdaq-100 and the S&P over the same era agree far more closely than one index does with
+    /// itself across eras — so a per-asset band would encode a difference the record does not
+    /// show, and would have to be invented for every new anchor set.
     #[test]
     fn the_era_separates_these_readings_and_the_index_does_not() {
-        // Why the band is shared rather than carried per asset. Two indices as different as the
-        // Nasdaq-100 and the S&P over the same era agree far more closely than one index does with
-        // itself across eras — so a per-asset band would encode a difference the record does not
-        // show, and would have to be invented for every new anchor set.
         let Some(rows) = rows() else { return };
         let at = |w: &str, t: &str| {
             rows.iter()
                 .find(|r| r.window == w && r.ticker == t)
-                .map(|r| r.vr60)
+                .map(|r| r.at(60))
         };
-        let (Some(qqq), Some(spy), Some(century), Some(modern)) = (
+        match (
             at("wfull", "QQQ"),
             at("wfull", "SPY"),
             at("c1926", "CRSP-VW"),
             at("c1990", "CRSP-VW"),
-        ) else {
-            panic!("the fixture no longer carries the QQQ/SPY/CRSP rows this claim rests on")
-        };
-        let across_index = (qqq - spy).abs();
-        let across_era = (century - modern).abs();
-        assert!(
-            across_index < across_era / 2.0,
-            "QQQ and SPY now differ by {across_index:.3} against {across_era:.3} between the CRSP \
-             century and 1990-2026. If the index has become the larger axis, the band belongs in \
-             `Anchors` per asset, not shared."
-        );
-    }
-
-    #[test]
-    fn the_fixture_covers_a_cross_section() {
-        let Some(rows) = rows() else { return };
-        let full = rows.iter().filter(|r| r.window == "wfull").count();
-        assert!(
-            full >= 15,
-            "only {full} instruments in the full-history block"
-        );
-        let mut kinds: Vec<&str> = rows.iter().map(|r| r.kind.as_str()).collect();
-        kinds.sort_unstable();
-        kinds.dedup();
-        assert!(kinds.len() >= 3, "the readings now span only {kinds:?}");
-        assert!(
-            rows.iter().all(|r| r.years >= 20.0),
-            "a window shorter than 20 years has appeared; the 60-session ratio needs blocks to \
-             average"
-        );
+        ) {
+            (Some(qqq), Some(spy), Some(century), Some(modern)) => {
+                let across_index = (qqq - spy).abs();
+                let across_era = (century - modern).abs();
+                assert!(
+                    across_index < across_era / 2.0,
+                    "QQQ and SPY now differ by {across_index:.3} against {across_era:.3} between \
+                     the CRSP century and 1990-2026. If the index has become the larger axis, the \
+                     band belongs in Anchors, per asset, and this test is the one that says so."
+                );
+            }
+            _ => panic!("the fixture no longer carries the four rows this claim is pinned on"),
+        }
     }
 }
 

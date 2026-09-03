@@ -102,7 +102,8 @@ measured to fail on the equity leg too (see W9), not merely anticipated. W7 stay
 | W5, W7a, W7b, W7d | **landed (0.19.2)**, both twins |
 | W8a | **landed (0.22.0)**, both twins — the equity variance ratio at one horizon |
 | W10 | **landed (0.22.0)**, both twins — price impact from exposure TRADED, not exposure held |
-| W4, W7c, W8b | open |
+| W8b | **landed (0.23.1)** on the equity leg — the 20/60/120/250 profile row; the bond series is not graded, since neither consumer holds a bond ticker |
+| W4, W7c | open |
 
 W6 was split in 0.19.1; its original framing — "make the crowd *window* usable" — was retired by
 measurement, see below.
@@ -602,7 +603,7 @@ pins it.
 ### W8a — the equity variance ratio at one horizon — **LANDED (0.22.0)**
 
 `variance ratio 60d` is a fidelity target (theory value 1.00) and a fidelity gate band
-(`VarRatioBand`, 0.50–1.15), measured by `varianceRatio` / `variance_ratio` on NON-OVERLAPPING
+(`VarRatioBands`' 60 rung, 0.50–1.20 since 0.23.1; the 0.22.0 fixture's century row read 1.143 on an unrecorded construction, the model's own reads 1.175), measured by `varianceRatio` / `variance_ratio` on NON-OVERLAPPING
 60-session blocks. The band is derived from
 `test-data/equity-anchors/persistence-2026-08-29.tsv` — 18 real equity funds over two windows plus
 the CRSP market over three — and re-derived from that file by `PersistenceAnchorSuite` /
@@ -622,7 +623,7 @@ Acceptance, against the criteria this item set:
   (0.93 → 0.81); the shallow rungs came back with `fundVol`, which the freed persistence budget made
   affordable. `docs/MarketSimWorlds.md`'s worked example says which world answers which question.
 
-### W8b — the rest of the term structure — open
+### W8b — the rest of the term structure — **LANDED (0.23.1)**, equity leg
 
 **Change.** VR(k) for k ≈ 1, 3, 6, 12, 24 months, on the bond series as well as the equity one, with
 real targets measured the same way and bands from the same cross-section.

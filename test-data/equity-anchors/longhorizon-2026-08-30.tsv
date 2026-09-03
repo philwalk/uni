@@ -3,6 +3,10 @@
 # LOG daily returns, series truncated to a whole number of blocks. The vr20/vr60 columns REPRODUCE
 # persistence-2026-08-29.tsv's c-rows to the third decimal, which is this file's control: the same
 # pipeline, re-run 2026-08-30 from the 202606-vintage F-F_Research_Data_Factors_daily (Mkt-RF + RF).
+# (persistence-2026-09-02.tsv re-measured those c-rows with the twins' own functions and reads
+# 1.169 / 1.175 at c1926 against the 1.166 / 1.143 here; that pipeline's construction was not recorded
+# and could not be reproduced. The rows below were not re-measured; the negative they settle does
+# not depend on the third decimal.)
 #
 # WHY THIS FILE SETTLES A NEGATIVE. The 60d variance-ratio row is blind past its own horizon, and the
 # 0.22.1 disaster channel moved the model's century-path vr(5y) from 0.89 to 1.15 unwatched. These

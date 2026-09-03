@@ -28,6 +28,20 @@
   proxy and the four bond rows — are anchor fields, measured for the Nasdaq set at the
   `0.23.0-nasdaq` recipe. Its loss reads 2.020 under its own spreads (1.672 on the carried ones).
 
+**The variance ratio is graded as a four-rung profile**
+
+- `-validate` prints the variance ratio at 20, 60, 120 and 250 sessions, and the gate carries the
+  ladder as ONE fidelity row (`variance-ratio profile ...`, the bounds in its name): every rung
+  inside the real cross-section's envelope and the two short slopes inside theirs
+  (`persistence-2026-09-02.tsv`, 39 readings, re-derived by `PersistenceAnchorSuite` /
+  `persistence_anchor_tests`). The 250-session rung cannot discriminate — the record spans
+  0.24-1.56 there — so the row binds at the short rungs and on the profile's shape. The
+  `variance ratio 60d` gate row is retired into it; the loss row keeps its theory value of 1.00.
+- The 60-session envelope is 0.50-1.20, from 0.50-1.15. The superseded fixture's century row
+  (1.143) was on an unrecorded construction; on the model's own returns the CRSP century reads
+  1.175, and a bound below a real reading fails the market that produced it. `WorldStats` gains
+  `vr20`, `vr120`, `vr250`.
+
 ## v0.23.0 — 2026-09-02
 
 **NEW MECHANISM, and a defaults change — the slow valuation cycle**

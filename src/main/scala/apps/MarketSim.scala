@@ -1934,20 +1934,35 @@ object MarketSim:
     * accountable.  That is the direction that matters: a horizon chosen to spare the mechanism
     * would be a longer or shorter one, and both were available. */
   val VarRatioQ = 60
+  /** The ladder `-validate` prints and the profile row grades -- the four horizons of
+    * `persistence-2026-09-02.tsv`.  `VarRatioQ` is the rung the loss row reads. */
+  val VarRatioLadder: Vector[Int] = Vector(20, 60, 120, 250)
 
-  /** The `variance ratio 60d` band, from `test-data/equity-anchors/persistence-2026-08-29.tsv`:
+  /** The variance-ratio envelopes, from `test-data/equity-anchors/persistence-2026-09-02.tsv`:
     * 18 real equity funds over their full histories and over the depth cross-section's own
-    * 2001-2026 window, plus the CRSP value-weighted market opening in 1926, 1954 and 1990.  The 39
-    * readings span 0.547 (XLV, 2001-2026) to 1.146 (the CRSP century), and the band is that range
-    * rounded outward to the nearest 0.05.  `PersistenceAnchorSuite` re-derives both bounds from
-    * the file by that rule, so the band cannot be widened to admit a world without a real market
-    * moving first.
+    * 2001-2026 window, plus the CRSP value-weighted market opening in 1926, 1954 and 1990, at
+    * four horizons.  At 60 sessions the 39 readings span 0.547 (XLV, 2001-2026) to 1.175 (the
+    * CRSP century), and each envelope is its rung's range rounded outward to the nearest 0.05.
+    * `PersistenceAnchorSuite` re-derives every bound from the file by that rule, so a band cannot
+    * be widened to admit a world without a real market moving first.
     *
     * SHARED across anchor sets rather than carried per asset, unlike the two bands in `Anchors`.
     * What separates these readings is the ERA, not the index: QQQ reads 0.720 against SPY's 0.705
     * over their full histories, while the same market reads 1.14 over the century and 0.82 since
     * 1990.  A per-asset band would encode a difference the record does not show. */
-  val VarRatioBand = (0.50, 1.15)
+  /** Per-rung envelopes of the real cross-section -- 39 readings, 18 instruments over two windows
+    * and three CRSP eras -- the observed range rounded outward to 0.05, re-derived by
+    * `PersistenceAnchorSuite`.  The two long rungs cannot discriminate: at 250 sessions the
+    * record itself spans 0.24-1.56.  They are graded anyway, inside ONE profile row with the
+    * slopes below, so a world clears the ladder as a shape and never rung by rung. */
+  val VarRatioBands: Vector[(Int, Double, Double)] =
+    Vector((20, 0.65, 1.20), (60, 0.50, 1.20), (120, 0.40, 1.35), (250, 0.20, 1.60))
+  /** Adjacent-rung slopes vr(60)-vr(20) and vr(120)-vr(60), the cross-section's range rounded
+    * outward: the profile's SHAPE, which four boxes cannot see -- a world at 0.70 and 1.15 on the
+    * two short rungs sits inside both boxes and outside every real profile.  The 120->250 slope
+    * spans -0.75..+0.71 in the record and grades nothing. */
+  val VarRatioSlopeBands: Vector[(Int, Int, Double, Double)] =
+    Vector((20, 60, -0.25, 0.10), (60, 120, -0.30, 0.20))
   /** Admissible sd of log(price/fair): the record's CAPE-proxy windows read 0.24-0.41, the floor
     * carries the stated proxy haircut, and the ceiling is past the century with room.  See the
     * `valuation dispersion` gate row and valuation-2026-08-30.tsv. */
@@ -1970,7 +1985,8 @@ object MarketSim:
                             volSd: Double, volCorrRange: Double)
 
   final case class WorldStats(vol: Double, kurt: Double, ac1: Double, ac20: Double,
-                              vr60: Double,          // SIGNED-return persistence -- `varianceRatio`
+                              vr20: Double, vr60: Double,   // SIGNED-return persistence at each
+                              vr120: Double, vr250: Double, // rung of `VarRatioLadder` -- `varianceRatio`
                               annRet: Double,
                               nEpisodes: Int, epPerPath: Double, depthMed: Double, worstDepth: Double,
                               vCount: Int, midCount: Int, uCount: Int, nShapes: Int, censored: Int,
@@ -2148,7 +2164,10 @@ object MarketSim:
       kurt = med(rets.map(kurtosis)),
       ac1  = med(rets.map(r => autocorrAbs(r, 1))),
       ac20 = med(rets.map(r => autocorrAbs(r, 20))),
-      vr60 = med(rets.map(r => varianceRatio(r, VarRatioQ))),
+      vr20  = med(rets.map(r => varianceRatio(r, 20))),
+      vr60  = med(rets.map(r => varianceRatio(r, VarRatioQ))),
+      vr120 = med(rets.map(r => varianceRatio(r, 120))),
+      vr250 = med(rets.map(r => varianceRatio(r, 250))),
       annRet = med(sims.map(s => math.log(s.price.last / s.price.head) / years * 100.0)),
       sat = satStats(sims), bars = barStats(sims),
       nEpisodes = eps.size, epPerPath = eps.size.toDouble / sims.size,
@@ -2345,7 +2364,7 @@ object MarketSim:
       // rule's information coefficient, a p-value calibrated on synthetic paths, a
       // drawdown-conditioned hazard — all of them inherit the trend this row measures, and none of
       // the other fifteen targets can see it.
-      bandCheck("variance ratio 60d", st.vr60, VarRatioBand._1, VarRatioBand._2, Fidelity),
+      varRatioProfileCheck(st),
       // Anchored on the record's CAPE dispersion (valuation-2026-08-30.tsv: 0.24-0.41 across
       // windows).  A BAND, never a point ratio: the record has no observable fair value and CAPE
       // is a proxy, so the floor sits a stated haircut below the calmest window -- far enough
@@ -2480,6 +2499,27 @@ object MarketSim:
                 dp: Int = 2, unit: String = ""): (String, Boolean, GateClass) =
     val fmt = s"%.${dp}f"
     (s"$name ${fmt.format(lo)}-${fmt.format(hi)}$unit", got > lo && got < hi, cls)
+
+  def vrOf(st: WorldStats, q: Int): Double = q match
+    case 20  => st.vr20
+    case 60  => st.vr60
+    case 120 => st.vr120
+    case 250 => st.vr250
+    case _   => throw IllegalArgumentException(s"no variance-ratio rung at $q sessions")
+
+  /** The variance-ratio ladder as ONE fidelity row: every rung inside its envelope and both short
+    * slopes inside theirs.  The name is derived from the bounds, as `bandCheck`'s is, so it cannot
+    * read as bounds it does not enforce; the report's `trend persistence` lines show which rung
+    * or slope failed. */
+  def varRatioProfileCheck(st: WorldStats): (String, Boolean, GateClass) =
+    val rungs  = VarRatioBands.map((q, lo, hi) =>
+      (f"${q}%dd $lo%.2f-$hi%.2f", vrOf(st, q) > lo && vrOf(st, q) < hi))
+    val slopes = VarRatioSlopeBands.map { (a, b, lo, hi) =>
+      val sl = vrOf(st, b) - vrOf(st, a)
+      (f"$a%d->$b%d $lo%+.2f..$hi%+.2f", sl > lo && sl < hi)
+    }
+    (s"variance-ratio profile ${rungs.map(_._1).mkString(" ")}, slopes ${slopes.map(_._1).mkString(" ")}",
+     (rungs ++ slopes).forall(_._2), GateClass.Fidelity)
 
   def failedIn(a: Anchors, st: WorldStats, cls: GateClass): Vector[String] =
     gateChecks(a, st).collect { case (n, false, c) if c == cls => n }
@@ -2797,7 +2837,7 @@ object MarketSim:
     ("clustering lag 20",  st => st.ac20,                                   a.ac20, wgt(0.5, a.ac20Sd)),
     // SIGNED persistence, the axis the two rows above cannot see -- they are |r|, and a world can
     // cluster its volatility exactly right while its price trends.  See `varianceRatio` for why
-    // this is not a per-lag autocorrelation and `VarRatioBand` for the cross-section behind it.
+    // this is not a per-lag autocorrelation and `VarRatioBands` for the cross-section behind it.
     //
     // 1.00 IS A THEORY VALUE, DELIBERATELY, and it is the one row in this table that is not a
     // reading off a record.  The real cross-section sits BELOW it -- 0.74 median at 2001-2026 --
@@ -4047,7 +4087,7 @@ object MarketSim:
     // The Shiller record is one series shared by every anchor set, at its own century horizon.
     ("Shiller CAPE 1881-2023", 100, Vector("valuation dispersion")),
     // 18 equity funds and three CRSP windows, the shortest of them 24.9 years -- see
-    // `VarRatioBand`.  The horizon is one instrument's record, as it is for the depth rungs, and
+    // `VarRatioBands`.  The horizon is one instrument's record, as it is for the depth rungs, and
     // the target this group carries is a theory value rather than a reading, so `real@` here says
     // where 1.00 falls in the model's own spread of 25-year readings, not where a record does.
     ("equity funds + CRSP, 25y", 25, Vector("variance ratio 60d")),
@@ -5334,8 +5374,13 @@ object MarketSim:
     println(f"  volatility clustering  lag  1 ${st.ac1}%6.3f   lag 20 ${st.ac20}%6.3f")
     // The line above is |r| and the line below is r, which is the whole reason both are printed:
     // they are different axes and a world can be right on one and wrong on the other.
-    println(f"  trend persistence      ${VarRatioQ}%dd variance ratio ${st.vr60}%6.3f   " +
-            f"(1.0 = no serial dependence; band ${VarRatioBand._1}%.2f-${VarRatioBand._2}%.2f)")
+    println("  trend persistence      variance ratio " +
+            VarRatioLadder.map(q => f"${q}%dd ${vrOf(st, q)}%.3f").mkString("  ") +
+            "   (1.0 = no serial dependence)")
+    println("                         envelopes " +
+            VarRatioBands.map((q, lo, hi) => f"${q}%dd $lo%.2f-$hi%.2f").mkString("  ") + "; slopes " +
+            VarRatioSlopeBands.map { (a, b, lo, hi) =>
+              f"$a%d->$b%d ${vrOf(st, b) - vrOf(st, a) + 0.0}%+.3f ($lo%+.2f..$hi%+.2f)" }.mkString("  "))
     println()
     println(f"  drawdowns of 15%%+      ${st.nEpisodes}%d, ${st.epPerPath}%.1f per path; ${st.censored}%d unrecovered at path end (included in depth)")
     println(f"  their depth            median ${st.depthMed}%6.1f%%   worst ${st.worstDepth}%6.1f%%")

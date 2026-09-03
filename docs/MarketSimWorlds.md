@@ -622,7 +622,7 @@ DEFAULT                      1.01  0.93  1.04  1.12  0.97  1.39  1.29  0.98   0.
 
 -depth 12                    1.32  1.16  1.17  0.98  1.53  0.96  1.30  0.75   0.20   4.01  F/P/F
 -depth 17.4 *                1.01  0.93  1.04  1.12  0.97  1.39  1.29  0.98   0.20   3.43  P/P/P
--depth 22                    0.89  0.72  0.96  1.19  0.74  1.74  1.30  1.12   0.20   3.14  P/F/F
+-depth 22                    0.89  0.72  0.96  1.19  0.74  1.74  1.30  1.12   0.20   3.14  P/F/P
 
 -drift 0.08                  1.03  0.98  1.05  1.10  0.85  1.48  1.30  0.59   0.20   3.53  P/P/F
 -drift 0.122 *               1.01  0.93  1.04  1.12  0.97  1.39  1.29  0.98   0.20   3.43  P/P/P
@@ -646,7 +646,7 @@ DEFAULT                      1.01  0.93  1.04  1.12  0.97  1.39  1.29  0.98   0.
 
 -newsrate 0                  1.01  1.00  1.14  1.08  0.95  1.21  1.30  0.97   0.20   3.47  P/P/P
 -newsrate 1.3 *              1.01  0.93  1.04  1.12  0.97  1.39  1.29  0.98   0.20   3.43  P/P/P
--newsrate 2.5                1.01  0.87  0.95  1.15  1.00  1.47  1.30  0.98   0.20   3.39  P/P/F
+-newsrate 2.5                1.01  0.87  0.95  1.15  1.00  1.47  1.30  0.98   0.20   3.39  P/P/P
 
 -refugedays 0                1.01  0.93  1.04  1.12  0.97  1.39  1.25  0.98   0.20   3.43  P/P/P
 -refugedays 1 *              1.01  0.93  1.04  1.12  0.97  1.39  1.29  0.98   0.20   3.43  P/P/P
@@ -695,7 +695,7 @@ DEFAULT                      1.01  0.93  1.04  1.12  0.97  1.39  1.29  0.98   0.
 
 200 paths x 100 years, seed 20260813 — the scoring ensemble. `vol` equity volatility · `kurt` daily kurtosis ·
 `clus` volatility clustering (lag 1) · `vr` the 60-session variance ratio, where 1.00 is no signed
-serial dependence and the band is 0.50–1.15 · `crash` crashes per century · `d10` time spent >10% below
+serial dependence and the envelope is 0.50–1.20 (the ladder's 60 rung) · `crash` crashes per century · `d10` time spent >10% below
 peak, against what real equity funds of the same volatility and return spend · `bdep` the bond's
 equivalent, against what its own volatility implies · `r/v` return per unit volatility ·
 `tshare` **realized** trend-follower share · `cflow` crowd flow, bp/session ·
@@ -704,7 +704,7 @@ equivalent, against what its own volatility implies · `r/v` return per unit vol
 Eight things that table is trying to tell you:
 
 - **The valuation cycle is a PAIR, and each half alone fails a different gate.** `-beliefshare 0`
-  (cap term alone) fails the variance-ratio band at 1.17 — re-climbs toward extrapolated fair are
+  (cap term alone) pushes the variance ratio to 1.17 — re-climbs toward extrapolated fair are
   60-day trends — and the cycle's own mechanism row with it; `-capyears 0` (beliefs alone) fails
   the same two and reads all lower wing. The belief half REFUNDS variance ratio (its
   perceived-fair tracking cuts medium-horizon drift-chasing), which is exactly the budget the cap
@@ -761,8 +761,9 @@ Eight things that table is trying to tell you:
 - **Some settings leave the admissible region.** `-stress 8.0`, `-jumpvar 0.23`, `-leverage 0.20`,
   `-depth 12` and `-haltlimit` at 0 or 0.40 fail realism (clustering, kurtosis, or the tail-shape
   checks); `-stress 2.0`, `-depth 22`, `-recoverydrag 0` and `-capyears 0` fail a mechanism row;
-  `-drift` at either end, `-newsrate 2.5` and `-crowdimpact 0.12` fail only fidelity — the level
-  of one quantity stops being readable. Always re-run `-validate` after changing a dial.
+  `-drift` at either end and `-crowdimpact 0.12` fail only fidelity — the level of one quantity
+  stops being readable; `-depth 22` and `-newsrate 2.5` cleared fidelity when the 60-session
+  envelope became the ladder's 0.50-1.20 (they read 1.19 and 1.15). Always re-run `-validate` after changing a dial.
 
 ## A worked example — when the target is not the statistic
 
@@ -874,6 +875,17 @@ default's 2.38, so the row carries real weight here where the S&P loss all but i
 loss at this recipe reads 2.020 under its own spreads, so a `-calibrate -anchors nasdaq` result
 from any earlier release optimised a different function.
 
+- **Signed persistence is graded as a four-rung profile since 0.23.1, not one rung.** `-validate`
+  prints the variance ratio at 20, 60, 120 and 250 sessions against the real cross-section's
+  envelopes (0.65-1.20, 0.50-1.20, 0.40-1.35, 0.20-1.60: 18 instruments over two windows and three
+  CRSP eras, `persistence-2026-09-02.tsv`) and the two short slopes against theirs (vr60-vr20
+  -0.25..+0.10, vr120-vr60 -0.30..+0.20), as ONE fidelity row. The long rungs cannot discriminate
+  — the record itself spans 0.24-1.56 at 250 sessions — so the row binds at the short rungs and
+  on the shape; a world at 0.70 and 1.15 on the two short rungs sits inside both boxes and outside
+  every real profile, which is what the slopes are for. The shipped world reads 1.07 / 1.12 / 1.12
+  / 1.33; the `0.23.0-nasdaq` recipe 0.95 / 0.88 / 0.77 / 0.72, mean-reverting at every horizon
+  where the S&P default trends. The loss still reads the 60 rung alone, at its theory value.
+
 ## Biases you inherit whatever you choose
 
 These are properties of the model, not of the default, and they do not go away by changing dials.
@@ -917,8 +929,8 @@ statistics the model computes — see the worked example above.
   This is a DRAWDOWN, accumulated over sessions; the worst single SESSION is a separate question and
   is set by `-haltlimit` rather than by a numerical constant.
 - **A century path is mildly trending (vr60 1.12), because its disasters and its valuation epochs
-  are.** The variance-ratio anchor (1.00, band 0.50-1.15) was measured on modern, disaster-free
-  windows; the CRSP century itself — the window with 1929-32 in it — reads **1.143** in the
+  are.** The variance-ratio anchor (1.00, envelope 0.50-1.20) was measured on modern, disaster-free
+  windows; the CRSP century itself — the window with 1929-32 in it — reads **1.175** in the
   committed persistence fixture, and its five-year VR is era-split beyond use as an anchor
   (`longhorizon-2026-08-30.tsv`: 0.730 for the century, 1.152 post-1954, ±30-40% block noise on
   both). A multi-year collapse IS signed serial dependence; the model without these channels read
