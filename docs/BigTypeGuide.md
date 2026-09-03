@@ -8,7 +8,7 @@ At runtime there is no wrapping — a `Big` value *is* a `BigDecimal`.
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.23.0
+//> using dep org.vastblue:uni_3:0.23.1
 
 import uni.data.*   // brings in Big, big, BigNaN, MatB, and all conversions
 
@@ -33,7 +33,7 @@ Standard `BigDecimal` has no NaN — dividing by zero or parsing a bad string th
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.23.0
+//> using dep org.vastblue:uni_3:0.23.1
 
 import uni.data.*
 
@@ -88,7 +88,7 @@ All constants are available after `import uni.data.*`:
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.23.0
+//> using dep org.vastblue:uni_3:0.23.1
 
 import uni.data.*
 
@@ -132,7 +132,7 @@ Every binary operator accepts `Big`, `Int`, `Long`, and `Double` on the right-ha
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.23.0
+//> using dep org.vastblue:uni_3:0.23.1
 
 import uni.data.*
 
@@ -148,7 +148,7 @@ println(s"$a $b $c")   // 30.0 20.00 1E+1  (BigDecimal keeps the quotient's scal
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.23.0
+//> using dep org.vastblue:uni_3:0.23.1
 
 import uni.data.*
 
@@ -180,7 +180,7 @@ The right-hand side can be `Big`, `Double`, `Long`, or `Int`.
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.23.0
+//> using dep org.vastblue:uni_3:0.23.1
 
 import uni.data.*
 
@@ -245,7 +245,7 @@ Custom `NumFormat`:
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.23.0
+//> using dep org.vastblue:uni_3:0.23.1
 
 import uni.data.*
 
@@ -263,7 +263,7 @@ for messy CSV/spreadsheet data.
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.23.0
+//> using dep org.vastblue:uni_3:0.23.1
 
 import uni.data.*
 
@@ -296,7 +296,7 @@ available on `MatB`. Element display uses `toPlainString`; CSV output maps
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.23.0
+//> using dep org.vastblue:uni_3:0.23.1
 
 import uni.*
 import uni.data.*

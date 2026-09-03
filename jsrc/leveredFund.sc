@@ -1,6 +1,6 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.23.0
+//> using dep org.vastblue:uni_3:0.23.1
 
 // LEVERED FUND — a daily-rebalanced kx fund (SSO/QLD at k=2, UPRO/TQQQ at k=3) built from an
 // emitted marketSim path, plus the tail substitution the underlying needs before leverage means

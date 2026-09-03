@@ -1,6 +1,6 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.23.0
+//> using dep org.vastblue:uni_3:0.23.1
 
 // Measures the volatility-clustering anchor for marketSim's `clustering lag 1` and `lag 20`
 // fidelity targets, from a real daily series.

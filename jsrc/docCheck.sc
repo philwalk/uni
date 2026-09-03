@@ -1,5 +1,5 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
-//> using dep org.vastblue:uni_3:0.23.0
+//> using dep org.vastblue:uni_3:0.23.1
 
 // Compile-checks the example FRAGMENTS in docs/ReferenceGuide.md and docs/QuickStartGuide.md
 // — the blocks that refer to values set up in the surrounding prose and so cannot be
