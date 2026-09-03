@@ -89,7 +89,12 @@ FAIL can be sized from the file alone — `fidelityFailed` names a band, not a v
 columns that exist only when their channel is on: `logSat` (`satBeta > 0`), `logHigh`/`logLow`
 (`rangeScale > 0` — the sampled intra-bar extremes; the bar's open is the prior close, the model
 has no overnight) and `logVolume` (`volIdio > 0` — a mean-free log turnover index; apply your own
-detrend convention as you would to a real series). Every one carries a NATURAL LOG rather than a
+detrend convention as you would to a real series), and since schema 11 `logTraded` and `divYield`
+(`divYield > 0` — the traded price as a log, the total-return `price` deflated by the yield accrued
+each session, beside the session yield in %/yr; `price` keeps its meaning, so a consumer runs its
+decisions on the traded series and its accounting on `price`; `channels.level.kDiv` is the world's
+mean fundamental/price the yield was normalized by). Every log column carries a NATURAL
+LOG rather than a
 level, because a level near 10^6 rendered at six decimals sits within reach of a cross-language
 rounding tie the twins' byte-parity checks would trip on. A channels-off schema-10 file differs
 from its schema-6 counterpart in the schema number, the new zero-valued world fields and the new
@@ -586,6 +591,7 @@ with it.
 | `-rangescale` | intra-bar high/low, sampled per session from the exact Brownian-bridge extremes at the session's own vol state re-levelled onto the world's realized volatility, times this dial — the range scales with the session's noise, not with \|return\|, which is what makes it detectably real (record corr(lnH/L, \|r\|) is only 0.70–0.72). Anchored 0.63 on SPY/QQQ OHLCV, and it reads the same bar-to-ccvol ratio at any world; adds `logHigh`/`logLow` to `-emit`. NOT searchable | 0 (off) |
 | `-rangedown` | same-session sign↔vol coupling on the bar: down sessions get (1+X) the bridge sigma, up sessions 1/(1+X). Anchored 0.09, which puts BOTH the range's down/up (1.14 vs 1.109–1.142) and volume's down-up gap (0.097 vs 0.094–0.098) on the intraday rulers. Requires `-rangescale` | 0 |
 | `-volidio` | log turnover index riding the range: elasticity 0.59 to the range's deviation from its slow normal (frozen from the measured regression) plus a two-component persistent idio whose total sd is this dial (anchored 0.34). Requires `-rangescale`; adds `logVolume` to `-emit`. NOT searchable | 0 |
+| `-divyield` | DIVIDENDS: the world's mean dividend yield, %/yr. The session yield is Y × fundamental/price over the world's mean of it (a world constant solved on the same fixed ensemble as the bar level — the ensemble's mean fundamental/price is 2.06 at the default and 2.30 on the Nasdaq recipe, and a per-path mean would leak the path's future), so a rich session yields less and the ensemble's pooled mean yield is the dial; the reported median path's mean reads about 0.9× of it (2.62 at 2.95, 0.69 at 0.78), valuation epochs skewing the path means; `-emit` gains `logTraded` (the total-return `price` deflated by the accrued yield — `price` itself is unchanged) and `divYield`. Anchored 2.95 on Shiller's S&P 1954–2023 and 0.78 on QQQ 2005–2026 (`dividend-2026-09-02.tsv`); the level is graded when on. An identity parameter, never searched | 0 (off) |
 | `-inflsize` | size of an inflation regime's rate-pressure target | 0.10 |
 
 `-easing` is a cap, not a speed. The flag it replaced, `-flight`, was a cut *rate* per year, so it

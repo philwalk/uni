@@ -42,6 +42,23 @@
   1.175, and a bound below a real reading fails the market that produced it. `WorldStats` gains
   `vr20`, `vr120`, `vr250`.
 
+**A dividend stream, so a consumer's two-series convention has simulated coverage**
+
+- `-divyield Y` (default 0, off): the world's mean dividend yield in %/yr. The session yield is
+  Y × fundamental/price over the world's mean of it — a world constant solved on the fixed
+  ensemble the bar level uses (`channels.level.kDiv`: 2.06 at the default, 2.30 on the Nasdaq
+  recipe), because a per-path mean would leak the path's future — so a rich session yields less,
+  as the record's does, and the ensemble's pooled mean yield is the dial; the reported median
+  path's mean reads about 0.9× of it (2.62 at 2.95, 0.69 at 0.78). The traded price is the total-return
+  index deflated by the yield accrued each session. Derived after the price loop, draw-free,
+  reaching no price: `price` keeps its meaning and 0 is bit-identical. `-emit` gains `logTraded`
+  and `divYield` when on; sidecar schema 10 → 11 (`world.divYield`, `channels.level.kDiv`, a
+  `channels.dividend` reading). Both twins byte-identical.
+- Anchored per set (`dividend-2026-09-02.tsv`, re-derived by `DividendSuite` / `dividend_tests`):
+  2.95 on Shiller's S&P D/P over 1954–2023, 0.78 on QQQ's distribution yield over 2005–2026; the
+  `dividend yield %` fidelity row grades the level against the window's annual means when the dial
+  is on. An identity parameter, never searched.
+
 ## v0.23.0 — 2026-09-02
 
 **NEW MECHANISM, and a defaults change — the slow valuation cycle**

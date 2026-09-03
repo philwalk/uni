@@ -160,7 +160,15 @@ object MarketSim:
   // `barVolume`, each present exactly when its channel ran, led by the world `level` they were
   // sampled at), so a channel FAIL can be sized from the file alone -- `fidelityFailed` names a
   // band, not a value.
-  val EmitSchema: Int = 10
+  // 10 -> 11: the dividend stream.  `world` gained `divYield` (the world's mean yield); the TSV
+  // gained `logTraded` (present ONLY when `divYield > 0` -- the natural log of the traded price,
+  // the total-return `price` deflated by the yield accrued each session, so `price` keeps its
+  // meaning) and `divYield` (the session yield in %/yr, a level: nothing here is near the tie
+  // magnitude); `channels.level` gained `kDiv`, the world's mean fundamental/price the yield was
+  // normalized by, and `channels.dividend` the mean yield read.  A dividends-off schema-11 file
+  // is byte-identical to its schema-10 counterpart except the schema number and one zero world
+  // field.
+  val EmitSchema: Int = 11
 
   val EmitSidecarKeys: Vector[String] =
     Vector("generator", "version", "schema", "file", "columns", "header", "path", "world",
@@ -289,6 +297,11 @@ object MarketSim:
     "              ;   range's deviation from its slow normal plus a two-component persistent",
     "              ;   idio whose TOTAL sd is X (anchored 0.34).  Requires -rangescale > 0.",
     "              ;   Default 0 = off, consuming no draws",
+    "-divyield Y   ; DIVIDENDS: the world's mean yield, %/yr; the session yield is Y x",
+    "              ;   fundamental/price over the world's mean of it, and -emit gains logTraded",
+    "              ;   (the total-return price deflated by the accrued yield; price itself is",
+    "              ;   unchanged) and divYield.",
+    "              ;   Anchored 2.95 (S&P) / 0.78 (Nasdaq); an identity parameter.  Default 0 = off",
     "-barsemit P   ; dev tap: per-path logPrice/logHigh/logLow[/logVolume] TSVs for grading",
     "              ;   the bar channels against the bars anchors",
     s"-refugedays X ; half-life in sessions of the settled stress the refuge bid reads, which",
@@ -559,6 +572,25 @@ object MarketSim:
                            // channel -- volume without a range to ride is refused at the CLI.
                            // Two draws per session from a dedicated stream, read only when > 0,
                            // so 0 is bit-identical off.
+    divYield: Double = 0.0 // DIVIDENDS: the world's MEAN dividend yield, %/yr.  The session
+                           // yield is divYield x (fundamental/price) / the world's mean
+                           // fundamental/price (`worldLevel`'s kDiv -- a world constant: the
+                           // ensemble's mean gap sits well below fair, 2.1x at the default and
+                           // 2.3x on the Nasdaq recipe, and a per-path mean would leak the
+                           // path's future), so a rich session yields less, as the record's
+                           // does, and the ensemble's pooled mean yield is the dial -- the
+                           // reported median path's mean reads ~0.9x of it (2.62 at 2.95),
+                           // valuation epochs skewing the path means; the traded price is the
+                           // total-return index (`price`,
+                           // unchanged) deflated by the yield accrued each session -- decisions
+                           // read the traded series and accounting the adjusted one, the
+                           // two-series convention a consumer enforces and could test only on
+                           // real data.  Derived after the price loop, draw-free, reaching no
+                           // price; 0 = off, no columns, bit-identical.  Anchored 2.95 (Shiller
+                           // D/P 1954-2023) for the S&P set and 0.78 (QQQ 2005-2026) for the
+                           // Nasdaq set -- `dividend-2026-09-02.tsv`; an identity parameter,
+                           // never searched.  The record's yield also moved with the payout
+                           // level across eras, which this does not model.
   )
 
   final case class Path(price: Array[Double], rate: Array[Double], fundamental: Array[Double],
@@ -600,10 +632,16 @@ object MarketSim:
                         logVolume: Array[Double],// log turnover index (empty when `volIdio`
                                                  // is 0); mean-free by construction, the
                                                  // consumer's detrend convention applies
+                        divYield: Array[Double] = Array.emptyDoubleArray, // session yield, %/yr,
+                                                 // and the traded price LEVEL (both empty when
+                        traded: Array[Double] = Array.emptyDoubleArray,   // `divYield` is 0);
+                                                 // emitted as a log, like `sat`
                         chanK: Double = 0.0,     // the world's channel level the bars and the
-                        chanKSat: Double = 0.0)  // satellite were sampled at (`worldLevel`),
+                        chanKSat: Double = 0.0,  // satellite were sampled at (`worldLevel`),
                                                  // carried into the sidecar so the emitted data's
                                                  // scale is auditable; 0 / 0 when both are off
+                        chanKDiv: Double = 0.0)  // the world's mean fundamental/price the
+                                                 // dividend yield was normalized by; 0 when off
 
   /** THE shipped world.  `main` seeds its mutable CLI vars from this and `usage` interpolates its
     * numbers, so every default is written in exactly one place.  Help text that restates a constant
@@ -1155,7 +1193,7 @@ object MarketSim:
 
   /** The world's channel level: `k` re-levels the session diffusion sd onto the world's realized
     * close-to-close sd, `kSat` the satellite's state factor onto it in root-mean-square. */
-  final case class ChannelLevel(k: Double, kSat: Double)
+  final case class ChannelLevel(k: Double, kSat: Double, kDiv: Double = 0.0)
 
   /** The fixed ensemble the level is solved on.  Small on purpose: the level is a mean over ~200k
     * sessions, so its sampling error is under 1% even at kurtosis 60, and it is solved once per
@@ -1169,18 +1207,40 @@ object MarketSim:
     * and every path of a world is sampled at one scale.  Sums run in path order then session
     * order in both twins.  0 / 0 when both channels are off -- never read. */
   def worldLevel(w: World): ChannelLevel =
-    if !(w.rangeScale > 0.0 || w.satBeta > 0.0) then ChannelLevel(0.0, 0.0)
+    val chOn  = w.rangeScale > 0.0 || w.satBeta > 0.0
+    val divOn = w.divYield > 0.0
+    if !(chOn || divOn) then ChannelLevel(0.0, 0.0, 0.0)
     else
       val sums = java.util.stream.IntStream.range(0, LevelPaths).parallel()
-        .mapToObj(k => priceLoop(w, LevelYears, LevelSeed + k.toLong * 7919L).inputs.levelSums)
+        .mapToObj { k =>
+          val pr = priceLoop(w, LevelYears, LevelSeed + k.toLong * 7919L)
+          // the channel inputs are recorded only when a channel ran; the dividend level needs
+          // none of them
+          (if chOn then pr.inputs.levelSums else (0.0, 0.0, 0.0, 0.0), fairOverPriceSum(pr.path))
+        }
         .toArray()
-      var sR2 = 0.0; var sD = 0.0; var sSt = 0.0; var m = 0.0
+      var sR2 = 0.0; var sD = 0.0; var sSt = 0.0; var m = 0.0; var sFp = 0.0; var nFp = 0.0
       var i = 0
       while i < sums.length do
-        val (a, b, c, n) = sums(i).asInstanceOf[(Double, Double, Double, Double)]
-        sR2 += a; sD += b; sSt += c; m += n
+        val ((a, b, c, n), (fp, nf)) =
+          sums(i).asInstanceOf[((Double, Double, Double, Double), (Double, Double))]
+        sR2 += a; sD += b; sSt += c; m += n; sFp += fp; nFp += nf
         i += 1
-      ChannelLevel(math.sqrt(sR2 / m) / (sD / m), math.sqrt(sR2 / sSt))
+      ChannelLevel(if chOn then math.sqrt(sR2 / m) / (sD / m) else 0.0,
+                   if chOn then math.sqrt(sR2 / sSt) else 0.0,
+                   if divOn then sFp / nFp else 0.0)
+
+  /** The dividend level's input: one path's sum of fundamental/price over its sessions, in
+    * session order (part of the cross-language contract), and the count.  A world constant for
+    * the same reason the bar level is: read off the path being emitted, a mean over the whole
+    * path leaks its future into every session's yield. */
+  def fairOverPriceSum(p: Path): (Double, Double) =
+    var sFp = 0.0
+    var i = 0
+    while i < p.price.length do
+      sFp += p.fundamental(i) / p.price(i)
+      i += 1
+    (sFp, p.price.length.toDouble)
 
   /** One path's derived channels: the satellite leg's price and the sampled bars. */
   final case class Channels(sat: Array[Double], logHi: Array[Double], logLo: Array[Double],
@@ -1304,18 +1364,42 @@ object MarketSim:
     * empty until `simulateAt` fills them. */
   final case class Priced(path: Path, inputs: ChannelInputs)
 
+  /** THE DIVIDEND STREAM, derived from the finished path: the session yield `divYield` x
+    * (fundamental/price) / kDiv in %/yr -- kDiv the world's mean fundamental/price from
+    * `worldLevel`, so the dial is the world's MEAN yield and a rich session yields less -- and
+    * the traded price as the total-return index deflated by the yield accrued each session,
+    * S_t = S_{t-1} (P_t/P_{t-1} - y_t/100/DaysPerYear), S_0 = P_0.  Observational: reaches no
+    * price and consumes no draw, so 0 is bit-identical off.  IEEE-exact arithmetic only,
+    * evaluated left to right in both twins. */
+  def deriveDividends(w: World, px: Array[Double], fv: Array[Double], kDiv: Double): (Array[Double], Array[Double]) =
+    if !(w.divYield > 0.0) then (Array.emptyDoubleArray, Array.emptyDoubleArray)
+    else
+      val n = px.length
+      val y = Array.tabulate(n)(i => w.divYield * (fv(i) / px(i)) / kDiv)
+      val t = new Array[Double](n)
+      t(0) = px(0)
+      var i = 1
+      while i < n do
+        t(i) = t(i - 1) * (px(i) / px(i - 1) - y(i) / 100.0 / DaysPerYear)
+        i += 1
+      (y, t)
+
   /** One independent history: the price loop, then the derived channels at the given world
     * level. */
   def simulateAt(w: World, years: Int, seed: Long, level: ChannelLevel): Path =
     val pr   = priceLoop(w, years, seed)
     val chan = deriveChannels(w, pr.inputs, level, seed)
+    val div  = deriveDividends(w, pr.path.price, pr.path.fundamental, level.kDiv)
     pr.path.copy(
+      divYield  = div._1,
+      traded    = div._2,
       sat       = if w.satBeta > 0.0 then chan.sat.drop(BurnIn) else Array.emptyDoubleArray,
       logHi     = if w.rangeScale > 0.0 then chan.logHi.drop(BurnIn) else Array.emptyDoubleArray,
       logLo     = if w.rangeScale > 0.0 then chan.logLo.drop(BurnIn) else Array.emptyDoubleArray,
       logVolume = if w.volIdio > 0.0 then chan.logVolume.drop(BurnIn) else Array.emptyDoubleArray,
       chanK     = level.k,
-      chanKSat  = level.kSat)
+      chanKSat  = level.kSat,
+      chanKDiv  = level.kDiv)
 
   /** `simulateAt` at the world's own level, solved here per call -- `simPaths` solves it once
     * for the whole ensemble, so prefer that for more than one path. */
@@ -2027,7 +2111,10 @@ object MarketSim:
                               // carries no such rows at all, which is what keeps a channels-off
                               // world's verdict byte-identical.
                               sat: Option[SatStats] = None,
-                              bars: Option[BarStats] = None):
+                              bars: Option[BarStats] = None,
+                              // median across paths of the per-path mean session yield, %/yr;
+                              // NaN when the dial is off, and the gate then carries no row
+                              divYieldMean: Double = Double.NaN):
     /** Return per unit volatility, in the units this report already prints: `annRet` is a LOG
       * return in %/yr and `vol` is a fraction.  An arithmetic-mean anchor is higher by about
       * sigma/2 (0.08 at 16% vol) and has to be restated before it can be compared with this. */
@@ -2170,6 +2257,8 @@ object MarketSim:
       vr250 = med(rets.map(r => varianceRatio(r, 250))),
       annRet = med(sims.map(s => math.log(s.price.last / s.price.head) / years * 100.0)),
       sat = satStats(sims), bars = barStats(sims),
+      divYieldMean = med(sims.map(s => if s.divYield.isEmpty then Double.NaN
+                                      else s.divYield.sum / s.divYield.length)),
       nEpisodes = eps.size, epPerPath = eps.size.toDouble / sims.size,
       depthMed = med(eps.map(_.depthPct)), worstDepth = eps.map(_.depthPct).minOption.getOrElse(Double.NaN),
       vCount = shapes.count(_ > 1.5), midCount = shapes.count(x => x >= 0.67 && x <= 1.5),
@@ -2448,7 +2537,15 @@ object MarketSim:
            Vector(bandCheck("bar volume sd", b.volSd, 0.40, 0.60, Fidelity),
                   bandCheck("bar volume vs range", b.volCorrRange, 0.44, 0.64, Fidelity))
          else Vector.empty)
-    base ++ eqDepthBands ++ depthBand ++ volBand ++ satBands ++ barBands
+    // THE DIVIDEND LEVEL, graded when the dial is on: the yield at fair value is an identity
+    // parameter, so this row can only catch a dial set outside what the record's own annual
+    // means span -- `dividend-2026-09-02.tsv`.
+    val divBand =
+      if st.divYieldMean.isFinite then
+        Vector(bandCheck("dividend yield %", st.divYieldMean, a.divYieldBand._1, a.divYieldBand._2,
+                         Fidelity, 1))
+      else Vector.empty
+    base ++ eqDepthBands ++ depthBand ++ volBand ++ satBands ++ barBands ++ divBand
 
   /** Whether an anchor-fitted band can be graded here: its driving variable inside the range the
     * anchor funds covered, and the statistic defined.  Mirrors `Relation.grade`'s refusal. */
@@ -2650,7 +2747,10 @@ object MarketSim:
     bondVolSd: Double, bondGrowthSd: Double, bondInflSd: Double, bondDepthSd: Double,
     // Drawdown-SHAPE references for `-ddshape`, the first the primary the ratios read against;
     // `ddshape-2026-09-02.tsv`, on the model's own episode definition and median.
-    ddRefs: Vector[DdReference])
+    ddRefs: Vector[DdReference],
+    // The dividend yield at fair value (%/yr) and the band its level is graded against when the
+    // `divYield` dial is on -- `dividend-2026-09-02.tsv`: the window's annual means rounded out.
+    divYield: Double, divYieldBand: (Double, Double))
 
   /** One real drawdown-shape reference: a series over a window, and per threshold (thr, episodes,
     * per year, median depth %, median decline, median recovery, median underwater, median
@@ -2719,7 +2819,8 @@ object MarketSim:
     tailHedge = -0.273, tailHedgeSd = 0.24,
     valDispSd = 0.64, d5Sd = 0.19, d10Sd = 0.45, d20Sd = 2.38,
     bondVolSd = 0.52, bondGrowthSd = 1.48, bondInflSd = 1.99, bondDepthSd = 0.36,
-    ddRefs = DdRefsSp500)
+    ddRefs = DdRefsSp500,
+    divYield = 2.95, divYieldBand = (1.1, 5.8))
 
   /** The Nasdaq-100 set, measured 2026-08-28 from QQQ daily adjusted closes over its own full
     * history, 1999-03-10 to 2026-08-20 (27.4 years).
@@ -2784,7 +2885,8 @@ object MarketSim:
     // pinned where the S&P default leaves it unreadable, so the row carries real weight here.
     valDispSd = 0.53, d5Sd = 0.12, d10Sd = 0.19, d20Sd = 0.30,
     bondVolSd = 0.52, bondGrowthSd = 0.91, bondInflSd = 1.71, bondDepthSd = 0.36,
-    ddRefs = DdRefsNasdaq)
+    ddRefs = DdRefsNasdaq,
+    divYield = 0.78, divYieldBand = (0.3, 1.5))
 
   val AnchorSets: Vector[Anchors] = Vector(SP500Anchors, NasdaqAnchors)
 
@@ -3354,7 +3456,7 @@ object MarketSim:
     * Enforced by `MarketSimContractSuite` against `CalibrateRanges`, not by this comment: the
     * 0.20.0 re-search proposed `duration = 11.1` and was refused by hand, and a rule that lives in
     * someone's memory of that refusal is one range row away from being lost. */
-  val IdentityParams: Vector[String] = Vector("duration")
+  val IdentityParams: Vector[String] = Vector("duration", "divYield")
 
   /** What `-calibrate` samples, and the ONLY place a searchable parameter is declared.  Named
     * rather than inline so the identity-parameter rule above can be tested against it. */
@@ -4651,7 +4753,8 @@ object MarketSim:
     // method takes a test harness down whole rather than failing one test.
     require(p.price.forall(_.isFinite) && p.sat.forall(_.isFinite) &&
             p.logHi.forall(_.isFinite) && p.logLo.forall(_.isFinite) &&
-            p.logVolume.forall(_.isFinite),
+            p.logVolume.forall(_.isFinite) && p.divYield.forall(_.isFinite) &&
+            p.traded.forall(_.isFinite),
             s"path $k holds a non-finite value; refusing $file")
     val dates = sessionDates(p.price.length, startYmd)
     writeEmitTsv(file, p, dates)
@@ -4665,14 +4768,16 @@ object MarketSim:
     val header = (EmitColumns
       ++ (if p.sat.isEmpty then Vector() else Vector("logSat"))
       ++ (if p.logHi.isEmpty then Vector() else Vector("logHigh", "logLow"))
-      ++ (if p.logVolume.isEmpty then Vector() else Vector("logVolume"))).mkString("\t")
+      ++ (if p.logVolume.isEmpty then Vector() else Vector("logVolume"))
+      ++ (if p.traded.isEmpty then Vector() else Vector("logTraded", "divYield"))).mkString("\t")
     val rows = header +: Vector.tabulate(dates.length) { i =>
       val base =
         s"${dates(i)}\t${ef(p.price(i))}\t${ef(p.bond(i))}\t${ef(p.rate(i))}\t${ef(p.cpi(i))}\t" +
         s"${ef(p.liq(i))}\t${ef(p.bliq(i))}\t${ef(p.fundamental(i))}\t${ef(p.inflPress(i))}"
       val s1 = if p.sat.isEmpty then base else s"$base\t${ef(math.log(p.sat(i)))}"
       val s2 = if p.logHi.isEmpty then s1 else s"$s1\t${ef(p.logHi(i))}\t${ef(p.logLo(i))}"
-      if p.logVolume.isEmpty then s2 else s"$s2\t${ef(p.logVolume(i))}"
+      val s3 = if p.logVolume.isEmpty then s2 else s"$s2\t${ef(p.logVolume(i))}"
+      if p.traded.isEmpty then s3 else s"$s3\t${ef(math.log(p.traded(i)))}\t${ef(p.divYield(i))}"
     }
     file.asPath.writeLines(rows)
 
@@ -4700,7 +4805,7 @@ object MarketSim:
       ("refugeDays", ef(w.refugeDays)),
       ("satBeta", ef(w.satBeta)), ("satIdio", ef(w.satIdio)),
       ("rangeScale", ef(w.rangeScale)), ("rangeDown", ef(w.rangeDown)),
-      ("volIdio", ef(w.volIdio)),
+      ("volIdio", ef(w.volIdio)), ("divYield", ef(w.divYield)),
       ("inflProb", ef(w.inflProb)), ("inflSize", ef(w.inflSize)),
       ("inflSpeed", ef(w.inflSpeed)), ("rateSpeed", ef(w.rateSpeed)),
       ("discount", ef(w.discount)), ("margin", ef(w.margin)),
@@ -4714,8 +4819,8 @@ object MarketSim:
   def channelReadingsBlock(st: WorldStats, p: Path): String =
     def num(x: Double): String = if x.isNaN then "null" else ef(x)
     val level =
-      if st.sat.isDefined || st.bars.isDefined then
-        Vector(s"""    "level": { "k": ${num(p.chanK)}, "kSat": ${num(p.chanKSat)} }""")
+      if st.sat.isDefined || st.bars.isDefined || st.divYieldMean.isFinite then
+        Vector(s"""    "level": { "k": ${num(p.chanK)}, "kSat": ${num(p.chanKSat)}, "kDiv": ${num(p.chanKDiv)} }""")
       else Vector.empty
     val sat = st.sat.toVector.map { sd =>
       s"""    "satellite": { "corr": ${num(sd.corr)}, "absCorr": ${num(sd.absCorr)}, """ +
@@ -4730,7 +4835,10 @@ object MarketSim:
            Vector(s"""    "barVolume": { "volSd": ${num(b.volSd)}, "volCorrRange": ${num(b.volCorrRange)} }""")
          else Vector.empty)
     }
-    val blocks = level ++ sat ++ bars
+    val div =
+      if st.divYieldMean.isFinite then Vector(s"""    "dividend": { "meanYield": ${num(st.divYieldMean)} }""")
+      else Vector.empty
+    val blocks = level ++ sat ++ bars ++ div
     if blocks.isEmpty then """  "channels": {},"""
     else "  \"channels\": {\n" + blocks.mkString(",\n") + "\n  },"
 
@@ -4776,7 +4884,8 @@ object MarketSim:
       s"""  "columns": ${strList(EmitColumns
         ++ (if p.sat.isEmpty then Vector() else Vector("logSat"))
         ++ (if p.logHi.isEmpty then Vector() else Vector("logHigh", "logLow"))
-        ++ (if p.logVolume.isEmpty then Vector() else Vector("logVolume")))},""",
+        ++ (if p.logVolume.isEmpty then Vector() else Vector("logVolume"))
+        ++ (if p.traded.isEmpty then Vector() else Vector("logTraded", "divYield")))},""",
       """  "header": true,""",
       """  "path": {""",
       s"""    "index": $k,""",
@@ -4811,7 +4920,8 @@ object MarketSim:
       s"""    "gradedSeries": ${strList(Vector("price", "bond")
         ++ (if p.sat.isEmpty then Vector() else Vector("logSat"))
         ++ (if p.logHi.isEmpty then Vector() else Vector("logHigh", "logLow"))
-        ++ (if p.logVolume.isEmpty then Vector() else Vector("logVolume")))},""",
+        ++ (if p.logVolume.isEmpty then Vector() else Vector("logVolume"))
+        ++ (if p.traded.isEmpty then Vector() else Vector("logTraded", "divYield")))},""",
       // EMPTY BY CONSTRUCTION today, and the field earns its place anyway: `logSat` is covered
       // by the `satellite *` gate rows and the bar columns by the `bar *` rows, so there is
       // nothing left to disclose -- but the next channel to arrive is ungraded until someone
@@ -4996,7 +5106,7 @@ object MarketSim:
     var satIdio = dw.satIdio
     var rangeScale = dw.rangeScale
     var rangeDown = dw.rangeDown
-    var volIdio = dw.volIdio
+    var volIdio = dw.volIdio; var divYield = dw.divYield
     var jointEmit = ""
     var barsEmit = ""
     var inflProb = dw.inflProb; var inflSize = dw.inflSize
@@ -5077,6 +5187,7 @@ object MarketSim:
       case "-rangescale" => rangeScale = numOr("-rangescale", consumeNext)
       case "-rangedown"  => rangeDown = numOr("-rangedown", consumeNext)
       case "-volidio"    => volIdio = numOr("-volidio", consumeNext)
+      case "-divyield"   => divYield = numOr("-divyield", consumeNext)
       case "-jointemit"  => jointEmit = consumeNext
       case "-barsemit"   => barsEmit = consumeNext
       // Rejected, not silently reinterpreted: -flight was a rate cut SPEED per year and -easing is
@@ -5148,7 +5259,7 @@ object MarketSim:
     nonNeg("-rangedown", rangeDown)
     if rangeDown > 0.0 && rangeScale <= 0.0 then
       usage("-rangedown requires -rangescale > 0: it shapes the sampled bar")
-    nonNeg("-volidio", volIdio)
+    nonNeg("-volidio", volIdio); nonNeg("-divyield", divYield)
     if volIdio > 0.0 && rangeScale <= 0.0 then
       usage("-volidio requires -rangescale > 0: volume rides the range")
     nonNeg("-disasterrate", disasterRate); nonNeg("-disastersize", disasterSize)
@@ -5209,7 +5320,7 @@ object MarketSim:
                   inflProb = inflProb, inflSize = inflSize,
                   inflSpeed = inflSpeed, rateSpeed = rateSpeed, discount = discount, margin = margin,
                   satBeta = satBeta, satIdio = satIdio, rangeScale = rangeScale,
-                  rangeDown = rangeDown, volIdio = volIdio)
+                  rangeDown = rangeDown, volIdio = volIdio, divYield = divYield)
 
     // SATELLITE PROTOTYPE: write per-path primary+satellite LOG prices for grading against the
     // SPY-QQQ coupling anchors (the joint_anchor conventions, graded python-side).  Deliberately
@@ -5351,7 +5462,8 @@ object MarketSim:
           Vector(emit)
       val sessions = pathAt(if emitAll then emitFrom else emitPath).price.length
       eprintln(s"wrote ${written.size} path(s), ${EmitColumns.size + (if w.satBeta > 0.0 then 1 else 0)
-        + (if w.rangeScale > 0.0 then 2 else 0) + (if w.volIdio > 0.0 then 1 else 0)} columns x $sessions sessions, " +
+        + (if w.rangeScale > 0.0 then 2 else 0) + (if w.volIdio > 0.0 then 1 else 0)
+        + (if w.divYield > 0.0 then 2 else 0)} columns x $sessions sessions, " +
                s"to ${written.head}${if written.size > 1 then s" .. ${written.last}" else ""} " +
                s"(+ sidecar ${sidecarName(written.head)})")
 
@@ -5401,6 +5513,9 @@ object MarketSim:
       if b.volSd.isFinite then
         println(f"  bar volume             sd ${b.volSd}%.3f   vs range ${b.volCorrRange}%.3f")
     }
+    if st.divYieldMean.isFinite then
+      println(f"  dividend yield         mean ${st.divYieldMean}%.2f%%/yr   (the dial, varying with fundamental/price; " +
+              f"anchor ${anchors.divYield}%.2f, band ${anchors.divYieldBand._1}%.1f-${anchors.divYieldBand._2}%.1f)")
     println(f"  depth profile          share of sessions below the running peak, median path")
     // Against the relation at THIS world's own volatility and return, not against SPY's levels:
     // SPY produced 0.447 / 0.315 / 0.169 at 18.6% volatility and 0.554 return per vol, so printing

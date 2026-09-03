@@ -124,7 +124,14 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 // block carries the readings those rows grade (`satellite`, `barRange`, `barVolume`, each
 // present exactly when its channel ran, led by the world `level` they were sampled at), so a
 // channel FAIL can be sized from the file alone — `fidelityFailed` names a band, not a value.
-const EMIT_SCHEMA: u32 = 10;
+// 10 -> 11: the dividend stream. `world` gained `divYield` (the world's mean yield); the TSV
+// gained `logTraded` (present ONLY when `divYield > 0` — the natural log of the traded price, the
+// total-return `price` deflated by the yield accrued each session, so `price` keeps its meaning)
+// and `divYield` (the session yield in %/yr, a level: nothing here is near the tie magnitude);
+// `channels.level` gained `kDiv`, the world's mean fundamental/price the yield was normalized
+// by, and `channels.dividend` the mean yield read. A dividends-off schema-11 file is
+// byte-identical to its schema-10 counterpart except the schema number and one zero world field.
+const EMIT_SCHEMA: u32 = 11;
 
 /// Frozen structural constants of the volume channel — see the `vol_idio` field. Measured
 /// from the SPY/QQQ volume-on-range regression (`bars-2026-09-01.tsv`, whose rows the
@@ -395,6 +402,7 @@ fn default_world() -> World {
         range_scale: 0.0,
         range_down: 0.0,
         vol_idio: 0.0,
+        div_yield: 0.0,
         value_pull: 0.056,
         crowd: Crowd::Momentum,
         crowd_impact: 0.030,
@@ -458,6 +466,7 @@ fn v0_19_2() -> World {
         range_scale: 0.0,
         range_down: 0.0,
         vol_idio: 0.0,
+        div_yield: 0.0,
         value_pull: 0.013,
         belief_share: 0.0,
         belief_years: 2.5,
@@ -606,6 +615,7 @@ fn v0_23_0() -> World {
         range_scale: 0.0,
         range_down: 0.0,
         vol_idio: 0.0,
+        div_yield: 0.0,
         value_pull: 0.056,
         crowd: Crowd::Momentum,
         crowd_impact: 0.030,
@@ -659,6 +669,7 @@ fn v0_22_1() -> World {
         range_scale: 0.0,
         range_down: 0.0,
         vol_idio: 0.0,
+        div_yield: 0.0,
         value_pull: 0.045,
         crowd: Crowd::Momentum,
         crowd_impact: 0.030,
@@ -714,6 +725,7 @@ fn v0_22_0() -> World {
         range_scale: 0.0,
         range_down: 0.0,
         vol_idio: 0.0,
+        div_yield: 0.0,
         value_pull: 0.045,
         crowd: Crowd::Momentum,
         crowd_impact: 0.030,
@@ -769,6 +781,7 @@ fn v0_21_0() -> World {
         range_scale: 0.0,
         range_down: 0.0,
         vol_idio: 0.0,
+        div_yield: 0.0,
         value_pull: 0.045,
         crowd: Crowd::Momentum,
         crowd_impact: 0.07,
@@ -815,6 +828,7 @@ fn v0_20_0() -> World {
         range_scale: 0.0,
         range_down: 0.0,
         vol_idio: 0.0,
+        div_yield: 0.0,
         value_pull: 0.0145,
         belief_share: 0.0,
         belief_years: 2.5,
@@ -1044,6 +1058,21 @@ struct World {
     /// refused at the CLI. Two draws per session from a dedicated stream, read only when > 0,
     /// so 0 is bit-identical off.
     vol_idio: f64,
+    /// DIVIDENDS: the world's MEAN dividend yield, %/yr. The session yield is div_yield x
+    /// (fundamental/price) / the world's mean fundamental/price (`world_level`'s k_div — a world
+    /// constant: the ensemble's mean gap sits well below fair, 2.1x at the default and 2.3x on
+    /// the Nasdaq recipe, and a per-path mean would leak the path's future), so a rich session
+    /// yields less, as the record's does, and the ensemble's pooled mean yield is the dial — the
+    /// reported median path's mean reads ~0.9x of it (2.62 at 2.95), valuation epochs skewing
+    /// the path means; the traded price is the total-return
+    /// index (`price`, unchanged) deflated by the yield accrued each session —
+    /// decisions read the traded series and accounting the adjusted one, the two-series
+    /// convention a consumer enforces and could test only on real data. Derived after the price
+    /// loop, draw-free, reaching no price; 0 = off, no columns, bit-identical. Anchored 2.95
+    /// (Shiller D/P 1954-2023) for the S&P set and 0.78 (QQQ 2005-2026) for the Nasdaq set —
+    /// `dividend-2026-09-02.tsv`; an identity parameter, never searched. The record's yield also
+    /// moved with the payout level across eras, which this does not model.
+    div_yield: f64,
     value_pull: f64,
     crowd: Crowd,
     crowd_impact: f64,
@@ -1118,11 +1147,17 @@ struct Path {
     /// log turnover index (empty when `vol_idio` is 0); mean-free by construction, the
     /// consumer's detrend convention applies unchanged
     log_volume: Vec<f64>,
+    /// session dividend yield, %/yr, and the traded price LEVEL (both empty when `div_yield` is
+    /// 0); the level is emitted as a log, like `sat`
+    div_yield: Vec<f64>,
+    traded: Vec<f64>,
     /// the world's channel level the bars and the satellite were sampled at (`world_level`),
     /// carried into the sidecar so the emitted data's scale is auditable; 0 / 0 when both
     /// channels are off
     chan_k: f64,
     chan_k_sat: f64,
+    /// the world's mean fundamental/price the dividend yield was normalized by; 0 when off
+    chan_k_div: f64,
 }
 
 /// ONE price-formation mechanism for every traded asset: value demand toward `fair`, plus
@@ -1369,6 +1404,8 @@ impl ChannelInputs {
 struct ChannelLevel {
     k: f64,
     k_sat: f64,
+    /// the world's mean fundamental/price the dividend yield is normalized by; 0 when off
+    k_div: f64,
 }
 
 /// The fixed ensemble the level is solved on. Small on purpose: the level is a mean over ~200k
@@ -1382,32 +1419,69 @@ const LEVEL_SEED: u64 = 0x1e7e_1000;
 /// function of the world alone, so path k of (world, seed) stays reproducible from its sidecar
 /// and every path of a world is sampled at one scale. Sums run in path order then session order
 /// in both twins. 0 / 0 when both channels are off — never read.
+/// One level-ensemble path's sums: the channel inputs' three sums and count, then the
+/// fundamental/price sum and count.
+type LevelSums = ((f64, f64, f64, f64), (f64, f64));
+
 fn world_level(w: &World) -> ChannelLevel {
-    if !(w.range_scale > 0.0 || w.sat_beta > 0.0) {
-        return ChannelLevel { k: 0.0, k_sat: 0.0 };
+    let ch_on = w.range_scale > 0.0 || w.sat_beta > 0.0;
+    let div_on = w.div_yield > 0.0;
+    if !(ch_on || div_on) {
+        return ChannelLevel {
+            k: 0.0,
+            k_sat: 0.0,
+            k_div: 0.0,
+        };
     }
-    let sums: Vec<(f64, f64, f64, f64)> = (0..LEVEL_PATHS)
+    let sums: Vec<LevelSums> = (0..LEVEL_PATHS)
         .into_par_iter()
         .map(|k| {
-            price_loop(w, LEVEL_YEARS, LEVEL_SEED.wrapping_add(k as u64 * 7919))
-                .inputs
-                .level_sums()
+            let pr = price_loop(w, LEVEL_YEARS, LEVEL_SEED.wrapping_add(k as u64 * 7919));
+            // the channel inputs are recorded only when a channel ran; the dividend level needs
+            // none of them
+            let ch = if ch_on {
+                pr.inputs.level_sums()
+            } else {
+                (0.0, 0.0, 0.0, 0.0)
+            };
+            (ch, fair_over_price_sum(&pr.path))
         })
         .collect();
     let mut s_r2 = 0.0f64;
     let mut s_d = 0.0f64;
     let mut s_st = 0.0f64;
     let mut m = 0.0f64;
-    for (a, b, c, n) in sums {
+    let mut s_fp = 0.0f64;
+    let mut n_fp = 0.0f64;
+    for ((a, b, c, n), (fp, nf)) in sums {
         s_r2 += a;
         s_d += b;
         s_st += c;
         m += n;
+        s_fp += fp;
+        n_fp += nf;
     }
     ChannelLevel {
-        k: (s_r2 / m).sqrt() / (s_d / m),
-        k_sat: (s_r2 / s_st).sqrt(),
+        k: if ch_on {
+            (s_r2 / m).sqrt() / (s_d / m)
+        } else {
+            0.0
+        },
+        k_sat: if ch_on { (s_r2 / s_st).sqrt() } else { 0.0 },
+        k_div: if div_on { s_fp / n_fp } else { 0.0 },
     }
+}
+
+/// The dividend level's input: one path's sum of fundamental/price over its sessions, in
+/// session order (part of the cross-language contract), and the count. A world constant for the
+/// same reason the bar level is: read off the path being emitted, a mean over the whole path
+/// leaks its future into every session's yield.
+fn fair_over_price_sum(p: &Path) -> (f64, f64) {
+    let mut s_fp = 0.0f64;
+    for i in 0..p.price.len() {
+        s_fp += p.fundamental[i] / p.price[i];
+    }
+    (s_fp, p.price.len() as f64)
 }
 
 /// One path's derived channels: the satellite leg's price and the sampled bars.
@@ -1578,10 +1652,37 @@ struct Priced {
 }
 
 /// One independent history: the price loop, then the derived channels at the given world level.
+/// THE DIVIDEND STREAM, derived from the finished path: the session yield `div_yield` x
+/// (fundamental/price) / k_div in %/yr — k_div the world's mean fundamental/price from
+/// `world_level`, so the dial is the world's MEAN yield and a rich session yields less — and the
+/// traded price as the total-return index deflated by the yield accrued each session,
+/// S_t = S_{t-1} (P_t/P_{t-1} - y_t/100/DAYS_PER_YEAR), S_0 = P_0. Observational: reaches no
+/// price and consumes no draw, so 0 is bit-identical off. IEEE-exact arithmetic only, evaluated
+/// left to right in both twins.
+fn derive_dividends(w: &World, px: &[f64], fv: &[f64], k_div: f64) -> (Vec<f64>, Vec<f64>) {
+    let on = w.div_yield > 0.0;
+    if !on {
+        return (Vec::new(), Vec::new());
+    }
+    let n = px.len();
+    let y: Vec<f64> = (0..n)
+        .map(|i| w.div_yield * (fv[i] / px[i]) / k_div)
+        .collect();
+    let mut t = vec![0.0f64; n];
+    t[0] = px[0];
+    for i in 1..n {
+        t[i] = t[i - 1] * (px[i] / px[i - 1] - y[i] / 100.0 / DAYS_PER_YEAR as f64);
+    }
+    (y, t)
+}
+
 fn simulate_at(w: &World, years: usize, seed: u64, level: ChannelLevel) -> Path {
     let pr = price_loop(w, years, seed);
     let chan = derive_channels(w, &pr.inputs, level, seed);
+    let div = derive_dividends(w, &pr.path.price, &pr.path.fundamental, level.k_div);
     Path {
+        div_yield: div.0,
+        traded: div.1,
         sat: if w.sat_beta > 0.0 {
             chan.sat[BURN_IN..].to_vec()
         } else {
@@ -1604,6 +1705,7 @@ fn simulate_at(w: &World, years: usize, seed: u64, level: ChannelLevel) -> Path 
         },
         chan_k: level.k,
         chan_k_sat: level.k_sat,
+        chan_k_div: level.k_div,
         ..pr.path
     }
 }
@@ -2182,8 +2284,11 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
         log_hi: Vec::new(),
         log_lo: Vec::new(),
         log_volume: Vec::new(),
+        div_yield: Vec::new(),
+        traded: Vec::new(),
         chan_k: 0.0,
         chan_k_sat: 0.0,
+        chan_k_div: 0.0,
     };
     Priced { path, inputs: ch }
 }
@@ -2430,6 +2535,9 @@ struct WorldStats {
     sat: Option<SatStats>,
     /// `None` when no range channel ran.
     bars: Option<BarStats>,
+    /// median across paths of the per-path mean session yield, %/yr; NaN when the dial is off,
+    /// and the gate then carries no row
+    div_yield_mean: f64,
     depth_med: f64,
     worst_depth: f64,
     v_count: usize,
@@ -2973,6 +3081,16 @@ fn measure(sims: &[Path], years: usize) -> WorldStats {
         ep_per_path: eps.len() as f64 / n_sims,
         sat: sat_stats(sims, years),
         bars: bar_stats(sims),
+        div_yield_mean: med(&sims
+            .iter()
+            .map(|s| {
+                if s.div_yield.is_empty() {
+                    f64::NAN
+                } else {
+                    s.div_yield.iter().sum::<f64>() / s.div_yield.len() as f64
+                }
+            })
+            .collect::<Vec<f64>>()),
         depth_med: med(&depths),
         worst_depth: if depths.is_empty() {
             f64::NAN
@@ -3585,6 +3703,20 @@ fn gate_checks(a: Anchors, st: &WorldStats) -> Vec<(String, bool, GateClass)> {
             }
         }
     }
+    // THE DIVIDEND LEVEL, graded when the dial is on: the yield at fair value is an identity
+    // parameter, so this row can only catch a dial set outside what the record's own annual
+    // means span — `dividend-2026-09-02.tsv`.
+    if st.div_yield_mean.is_finite() {
+        v.push(band_check(
+            "dividend yield %",
+            st.div_yield_mean,
+            a.div_yield_band.0,
+            a.div_yield_band.1,
+            GateClass::Fidelity,
+            1,
+            "",
+        ));
+    }
     v
 }
 
@@ -3810,6 +3942,10 @@ struct Anchors {
     /// Drawdown-SHAPE references for `-ddshape`, the first the primary the ratios read against;
     /// `ddshape-2026-09-02.tsv`, on the model's own episode definition and median.
     dd_refs: &'static [DdRef],
+    /// The dividend yield at fair value (%/yr) and the band its level is graded against when the
+    /// `div_yield` dial is on — `dividend-2026-09-02.tsv`: the window's annual means rounded out.
+    div_yield: f64,
+    div_yield_band: (f64, f64),
 }
 
 /// One real drawdown-shape reference: a series over a window, and per threshold (thr, episodes,
@@ -3955,6 +4091,8 @@ const SP500_ANCHORS: Anchors = Anchors {
     bond_infl_sd: 1.99,
     bond_depth_sd: 0.36,
     dd_refs: &DD_REFS_SP500,
+    div_yield: 2.95,
+    div_yield_band: (1.1, 5.8),
 };
 
 /// The Nasdaq-100 set, measured 2026-08-28 from QQQ daily adjusted closes over its own full history,
@@ -4033,6 +4171,8 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     bond_infl_sd: 1.71,
     bond_depth_sd: 0.36,
     dd_refs: &DD_REFS_NASDAQ,
+    div_yield: 0.78,
+    div_yield_band: (0.3, 1.5),
 };
 
 fn anchors_named(spec: &str) -> Anchors {
@@ -5382,7 +5522,7 @@ type Setter = fn(&mut World, f64);
         reason = "the rule is read by the tests, never by the search"
     )
 )]
-const IDENTITY_PARAMS: &[&str] = &["duration"];
+const IDENTITY_PARAMS: &[&str] = &["duration", "divYield"];
 
 /// What `-calibrate` samples, and the ONLY place a searchable parameter is declared. A function
 /// rather than an inline `vec!` so the identity-parameter rule above can be tested against it.
@@ -7966,7 +8106,9 @@ fn write_emitted(
             && p.sat.iter().all(|x| x.is_finite())
             && p.log_hi.iter().all(|x| x.is_finite())
             && p.log_lo.iter().all(|x| x.is_finite())
-            && p.log_volume.iter().all(|x| x.is_finite()),
+            && p.log_volume.iter().all(|x| x.is_finite())
+            && p.div_yield.iter().all(|x| x.is_finite())
+            && p.traded.iter().all(|x| x.is_finite()),
         "path {k} holds a non-finite value; refusing {file}"
     );
     let dates = session_dates(p.price.len(), start_ymd);
@@ -7975,6 +8117,27 @@ fn write_emitted(
         a, file, p, k, w, years, seed, start_ymd, &dates, gate_st, gate_paths, gate_years,
         gate_rows,
     );
+}
+
+/// The optional TSV columns, in header order, each present exactly when its channel ran — the
+/// one list the header, the sidecar's `columns` and its `gradedSeries` all read.
+fn channel_columns(p: &Path) -> Vec<&'static str> {
+    let mut cols: Vec<&'static str> = Vec::new();
+    if !p.sat.is_empty() {
+        cols.push("logSat");
+    }
+    if !p.log_hi.is_empty() {
+        cols.push("logHigh");
+        cols.push("logLow");
+    }
+    if !p.log_volume.is_empty() {
+        cols.push("logVolume");
+    }
+    if !p.traded.is_empty() {
+        cols.push("logTraded");
+        cols.push("divYield");
+    }
+    cols
 }
 
 fn write_emit_tsv(file: &str, p: &Path, dates: &[String]) {
@@ -7991,6 +8154,9 @@ fn write_emit_tsv(file: &str, p: &Path, dates: &[String]) {
     }
     if !p.log_volume.is_empty() {
         tsv.push_str("\tlogVolume");
+    }
+    if !p.traded.is_empty() {
+        tsv.push_str("\tlogTraded\tdivYield");
     }
     tsv.push('\n');
     for (i, d) in dates.iter().enumerate() {
@@ -8021,6 +8187,12 @@ fn write_emit_tsv(file: &str, p: &Path, dates: &[String]) {
         if !p.log_volume.is_empty() {
             tsv.push('\t');
             tsv.push_str(&ef(p.log_volume[i]));
+        }
+        if !p.traded.is_empty() {
+            tsv.push('\t');
+            tsv.push_str(&ef(p.traded[i].ln()));
+            tsv.push('\t');
+            tsv.push_str(&ef(p.div_yield[i]));
         }
         tsv.push('\n');
     }
@@ -8073,6 +8245,7 @@ fn world_json_body(w: &World) -> Vec<String> {
         ("rangeScale", ef(w.range_scale)),
         ("rangeDown", ef(w.range_down)),
         ("volIdio", ef(w.vol_idio)),
+        ("divYield", ef(w.div_yield)),
         ("inflProb", ef(w.infl_prob)),
         ("inflSize", ef(w.infl_size)),
         ("inflSpeed", ef(w.infl_speed)),
@@ -8100,11 +8273,12 @@ fn channel_readings_block(st: &WorldStats, p: &Path) -> String {
         }
     };
     let mut blocks: Vec<String> = Vec::new();
-    if st.sat.is_some() || st.bars.is_some() {
+    if st.sat.is_some() || st.bars.is_some() || st.div_yield_mean.is_finite() {
         blocks.push(format!(
-            "    \"level\": {{ \"k\": {}, \"kSat\": {} }}",
+            "    \"level\": {{ \"k\": {}, \"kSat\": {}, \"kDiv\": {} }}",
             num(p.chan_k),
-            num(p.chan_k_sat)
+            num(p.chan_k_sat),
+            num(p.chan_k_div)
         ));
     }
     if let Some(sd) = st.sat {
@@ -8139,6 +8313,12 @@ fn channel_readings_block(st: &WorldStats, p: &Path) -> String {
             ));
         }
     }
+    if st.div_yield_mean.is_finite() {
+        blocks.push(format!(
+            "    \"dividend\": {{ \"meanYield\": {} }}",
+            num(st.div_yield_mean)
+        ));
+    }
     if blocks.is_empty() {
         "  \"channels\": {},".to_string()
     } else {
@@ -8169,16 +8349,7 @@ fn gate_scope_lines(a: Anchors, p: &Path) -> String {
     // The presence conditions are `sat_stats`'/`bar_stats`' own — they return `Some` exactly
     // when these columns are non-empty — so a column is listed the session its rows exist.
     let mut graded = vec!["price", "bond"];
-    if !p.sat.is_empty() {
-        graded.push("logSat");
-    }
-    if !p.log_hi.is_empty() {
-        graded.push("logHigh");
-        graded.push("logLow");
-    }
-    if !p.log_volume.is_empty() {
-        graded.push("logVolume");
-    }
+    graded.extend(channel_columns(p));
     // EMPTY BY CONSTRUCTION today, and the field earns its place anyway: `logSat` is covered by
     // the `satellite *` gate rows and the bar columns by the `bar *` rows, so there is nothing
     // left to disclose — but the next channel to arrive is ungraded until someone anchors it,
@@ -8278,16 +8449,7 @@ fn write_emit_sidecar(
         format!("  \"file\": {},", json_str(file)),
         format!("  \"columns\": {},", {
             let mut cols: Vec<&str> = EMIT_COLUMNS.to_vec();
-            if !p.sat.is_empty() {
-                cols.push("logSat");
-            }
-            if !p.log_hi.is_empty() {
-                cols.push("logHigh");
-                cols.push("logLow");
-            }
-            if !p.log_volume.is_empty() {
-                cols.push("logVolume");
-            }
+            cols.extend(channel_columns(p));
             str_list(&cols)
         }),
         "  \"header\": true,".to_string(),
@@ -8532,6 +8694,7 @@ fn main() {
     let mut range_scale = dw.range_scale;
     let mut range_down = dw.range_down;
     let mut vol_idio = dw.vol_idio;
+    let mut div_yield = dw.div_yield;
     let mut joint_emit = String::new();
     let mut bars_emit = String::new();
     let mut jump_rate = dw.jump_rate;
@@ -8629,6 +8792,7 @@ fn main() {
             "-rangescale" => range_scale = req_f64(&mut it, "-rangescale"),
             "-rangedown" => range_down = req_f64(&mut it, "-rangedown"),
             "-volidio" => vol_idio = req_f64(&mut it, "-volidio"),
+            "-divyield" => div_yield = req_f64(&mut it, "-divyield"),
             "-jointemit" => joint_emit = req_arg(&mut it, "-jointemit").clone(),
             "-barsemit" => bars_emit = req_arg(&mut it, "-barsemit").clone(),
             "-jumprate" => jump_rate = req_f64(&mut it, "-jumprate"),
@@ -8774,6 +8938,7 @@ fn main() {
             cli_die("-rangedown requires -rangescale > 0: it shapes the sampled bar");
         }
         non_neg("-volidio", vol_idio);
+        non_neg("-divyield", div_yield);
         if vol_idio > 0.0 && range_scale <= 0.0 {
             cli_die("-volidio requires -rangescale > 0: volume rides the range");
         }
@@ -8896,6 +9061,7 @@ fn main() {
         range_scale,
         range_down,
         vol_idio,
+        div_yield,
         value_pull,
         crowd,
         crowd_impact,
@@ -9119,6 +9285,8 @@ fn main() {
                 || !p.log_hi.iter().all(|x| x.is_finite())
                 || !p.log_lo.iter().all(|x| x.is_finite())
                 || !p.log_volume.iter().all(|x| x.is_finite())
+                || !p.div_yield.iter().all(|x| x.is_finite())
+                || !p.traded.iter().all(|x| x.is_finite())
             {
                 eprintln!("REFUSED: path {k} holds a non-finite value; nothing written to {f}");
                 std::process::exit(2);
@@ -9188,7 +9356,8 @@ fn main() {
             EMIT_COLUMNS.len()
                 + usize::from(w.sat_beta > 0.0)
                 + 2 * usize::from(w.range_scale > 0.0)
-                + usize::from(w.vol_idio > 0.0),
+                + usize::from(w.vol_idio > 0.0)
+                + 2 * usize::from(w.div_yield > 0.0),
             written[0],
             sidecar_name(&written[0])
         );
@@ -9336,6 +9505,15 @@ fn main() {
                 jf(b.vol_corr_range, 0, 3)
             );
         }
+    }
+    if st.div_yield_mean.is_finite() {
+        println!(
+            "  dividend yield         mean {}%/yr   (the dial, varying with fundamental/price; anchor {}, band {}-{})",
+            jf(st.div_yield_mean, 0, 2),
+            jf(anchors.div_yield, 0, 2),
+            jf(anchors.div_yield_band.0, 0, 1),
+            jf(anchors.div_yield_band.1, 0, 1)
+        );
     }
     println!("  depth profile          share of sessions below the running peak, median path");
     // Against the relation at THIS world's own volatility and return, not against SPY's levels:
@@ -12022,5 +12200,221 @@ mod dd_shape_anchor_tests {
             nq.d20_sd,
             sp.d20_sd
         );
+    }
+}
+
+/// The dividend stream: a derived channel that reaches no price, so `price` keeps its meaning and
+/// the dial is bit-identical off. The anchors are MEASURED numbers re-derived from the checked-in
+/// fixture. The Scala twin carries the same checks in `DividendSuite`, against the same file.
+#[cfg(test)]
+mod dividend_tests {
+    use super::*;
+
+    const FIXTURE: &str = "../test-data/equity-anchors/dividend-2026-09-02.tsv";
+
+    fn rows() -> Option<Vec<Vec<String>>> {
+        let text = std::fs::read_to_string(FIXTURE).ok()?;
+        Some(
+            text.lines()
+                .filter(|l| !l.starts_with('#') && !l.starts_with("set\t") && !l.trim().is_empty())
+                .map(|l| l.split('\t').map(str::to_string).collect())
+                .collect(),
+        )
+    }
+
+    fn value(rs: &[Vec<String>], set: &str, series: &str, window: &str, stat: &str) -> f64 {
+        rs.iter()
+            .find(|r| r[0] == set && r[1] == series && r[2] == window && r[3] == stat)
+            .unwrap_or_else(|| panic!("fixture row [{set} {series} {window} {stat}] missing"))[4]
+            .parse()
+            .expect("numeric fixture value")
+    }
+
+    fn outward(x: f64, up: bool) -> f64 {
+        let n = if up {
+            (x / 0.1 - 1e-9).ceil()
+        } else {
+            (x / 0.1 + 1e-9).floor()
+        };
+        (n * 0.1 * 1e6).round() / 1e6
+    }
+
+    #[test]
+    fn off_is_bit_identical_and_carries_no_columns_and_every_frozen_world_is_off() {
+        let off = simulate(&default_world(), 3, DEFAULT_SEED);
+        let mut w = default_world();
+        w.div_yield = 2.95;
+        let on = simulate(&w, 3, DEFAULT_SEED);
+        assert!(off.div_yield.is_empty() && off.traded.is_empty());
+        assert!(
+            on.price == off.price && on.fundamental == off.fundamental,
+            "the dividend stream must reach no price"
+        );
+        for (v, w) in releases() {
+            assert!(w.div_yield == 0.0, "release {v}");
+        }
+        for (n, w, _) in recipes() {
+            assert!(w.div_yield == 0.0, "recipe {n}");
+        }
+        assert!(default_world().div_yield == 0.0);
+    }
+
+    /// The level is solved on the fixed 8 x 100 ensemble at LEVEL_SEED, in path then session
+    /// order, which `sim_paths` at that seed reproduces path for path. A per-path mean would leak
+    /// the path's future into every session's yield; this constant leaks nothing.
+    #[test]
+    fn the_worlds_mean_fundamental_over_price_is_a_constant_of_the_level_ensemble_and_the_dial_is_the_mean_yield()
+     {
+        let mut w = default_world();
+        w.div_yield = 2.95;
+        let lvl = world_level(&w);
+        let ens = sim_paths(&w, LEVEL_PATHS, LEVEL_YEARS, LEVEL_SEED);
+        let (s_fp, n_fp) = ens
+            .iter()
+            .map(fair_over_price_sum)
+            .fold((0.0, 0.0), |(a, b), (c, d)| (a + c, b + d));
+        assert!(
+            (lvl.k_div - s_fp / n_fp).abs() <= 1e-9 * lvl.k_div,
+            "k_div must be the pooled mean fundamental/price"
+        );
+        assert!(
+            lvl.k_div > 1.0,
+            "the ensemble's mean gap sits below fair, so k_div > 1: read {}",
+            lvl.k_div
+        );
+        assert!(
+            world_level(&default_world()).k_div == 0.0,
+            "off, no level is solved"
+        );
+        let st = measure(&sim_paths(&w, 16, 100, DEFAULT_SEED), 100);
+        assert!(
+            (st.div_yield_mean - 2.95).abs() < 0.30,
+            "mean yield {:.2} against the dial 2.95",
+            st.div_yield_mean
+        );
+    }
+
+    #[test]
+    fn the_session_yield_is_the_dial_times_fundamental_over_price_over_its_mean_and_the_traded_price_is_the_deflated_total_return()
+     {
+        let mut w = default_world();
+        w.div_yield = 2.95;
+        let k_div = world_level(&w).k_div;
+        let p = simulate(&w, 5, DEFAULT_SEED);
+        assert_eq!(p.div_yield.len(), p.price.len());
+        assert_eq!(p.traded.len(), p.price.len());
+        assert_eq!(p.chan_k_div, k_div);
+        for i in 0..p.price.len() {
+            assert!(
+                (p.div_yield[i] - 2.95 * (p.fundamental[i] / p.price[i]) / k_div).abs() < 1e-12,
+                "session {i}"
+            );
+        }
+        assert_eq!(p.traded[0], p.price[0]);
+        let mut t = p.price[0];
+        for i in 1..p.price.len() {
+            t *= p.price[i] / p.price[i - 1] - p.div_yield[i] / 100.0 / DAYS_PER_YEAR as f64;
+            assert!((p.traded[i] - t).abs() <= 1e-9 * t, "session {i}");
+        }
+        let yrs = p.price.len() as f64 / DAYS_PER_YEAR as f64;
+        let gap = (p.price[p.price.len() - 1] / p.price[0]).ln()
+            - (p.traded[p.traded.len() - 1] / p.traded[0]).ln();
+        let mean_y = p.div_yield.iter().sum::<f64>() / p.div_yield.len() as f64 / 100.0;
+        assert!(
+            (gap - mean_y * yrs).abs() <= 0.02 * mean_y * yrs + 1e-6,
+            "accrued yield {gap:.4} vs mean yield x years {:.4}",
+            mean_y * yrs
+        );
+    }
+
+    #[test]
+    fn the_level_and_its_band_are_the_fixtures_per_anchor_set() {
+        let Some(rs) = rows() else {
+            return;
+        };
+        let (sp, nq) = (anchors_named("sp500"), anchors_named("nasdaq"));
+        assert!(
+            (sp.div_yield - value(&rs, "sp500", "Shiller-S&P", "1954-2023", "monthlyMean")).abs()
+                < 1e-9
+        );
+        assert!(
+            (sp.div_yield_band.0
+                - outward(
+                    value(&rs, "sp500", "Shiller-S&P", "1954-2023", "annualMin"),
+                    false
+                ))
+            .abs()
+                < 1e-9
+        );
+        assert!(
+            (sp.div_yield_band.1
+                - outward(
+                    value(&rs, "sp500", "Shiller-S&P", "1954-2023", "annualMax"),
+                    true
+                ))
+            .abs()
+                < 1e-9
+        );
+        assert!(
+            (nq.div_yield - value(&rs, "nasdaq", "QQQ", "2005-2026", "annualMean")).abs() < 1e-9
+        );
+        assert!(
+            (nq.div_yield_band.0
+                - outward(value(&rs, "nasdaq", "QQQ", "2005-2026", "annualMin"), false))
+            .abs()
+                < 1e-9
+        );
+        assert!(
+            (nq.div_yield_band.1
+                - outward(value(&rs, "nasdaq", "QQQ", "2005-2026", "annualMax"), true))
+            .abs()
+                < 1e-9
+        );
+        for a in [sp, nq] {
+            assert!(
+                a.div_yield > a.div_yield_band.0 && a.div_yield < a.div_yield_band.1,
+                "{}: the anchored yield must sit inside its own band",
+                a.name
+            );
+        }
+    }
+
+    /// At the verdict horizon: the yield is normalized by the century's mean fundamental/price,
+    /// and a 20-year path's own mean sits well below it, so a short ensemble reads the dial low.
+    #[test]
+    fn the_gate_grades_the_level_only_when_the_dial_is_on_and_the_dial_is_an_identity_parameter() {
+        let a = anchors_named("sp500");
+        let off = measure(&sim_paths(&default_world(), 4, 100, DEFAULT_SEED), 100);
+        assert!(off.div_yield_mean.is_nan());
+        assert!(
+            !gate_checks(a, &off)
+                .iter()
+                .any(|r| r.0.starts_with("dividend yield")),
+            "a dividends-off world must carry no dividend row"
+        );
+        let mut w = default_world();
+        w.div_yield = a.div_yield;
+        let on = measure(&sim_paths(&w, 4, 100, DEFAULT_SEED), 100);
+        let row = gate_checks(a, &on)
+            .into_iter()
+            .find(|r| r.0.starts_with("dividend yield"))
+            .expect("no dividend row with the dial on");
+        assert!(
+            row.1,
+            "the anchored dial must pass its own band: mean {}, row {}",
+            on.div_yield_mean, row.0
+        );
+        assert!(row.2 == GateClass::Fidelity);
+        let mut far = default_world();
+        far.div_yield = 9.0;
+        let far_st = measure(&sim_paths(&far, 4, 100, DEFAULT_SEED), 100);
+        assert!(
+            !gate_checks(a, &far_st)
+                .iter()
+                .any(|r| r.0.starts_with("dividend yield") && r.1),
+            "a yield outside the record's annual means must fail the row"
+        );
+        assert!(IDENTITY_PARAMS.contains(&"divYield"));
+        assert!(!calibrate_ranges().iter().any(|r| r.0 == "divYield"));
     }
 }

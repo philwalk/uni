@@ -1,0 +1,29 @@
+# Dividend-yield anchors for the `divYield` dial: the yield at fair value each anchor set carries
+# (`Anchors.divYield`, %/yr) and the level band `dividend yield %` grades when the dial is on
+# (`divYieldBand`: the window's ANNUAL means, min and max rounded outward to 0.1).  `DividendSuite` /
+# `dividend_tests` re-derive both from this file; editing a row moves the shipped anchor.
+#
+# Conventions.  Shiller: D/P from the monthly S&P data (ie_data.xls, 2023.09 vintage: Dividend is
+# the trailing 12-month total, Price the monthly level), in percent; the set's level is the monthly
+# mean over the equity window 1954-2023, the century and full-history means are context.  Fund
+# rows: the trailing-252-session distribution yield read off Yahoo's adjusted-close / close ratio
+# (the ratio compounds every distribution), averaged by calendar year.  QQQ paid nothing before
+# 2004 (annual yields 0.00 through 2003, 0.08 in 2004); a yield of an instrument that pays nothing
+# is not a level, so the Nasdaq set's window opens 2005.  SPY is context for the S&P set: the ETF's
+# yield since 1994 sits below the window mean because the payout level itself fell across the era
+# (Shiller 1990-2023 monthly mean 2.02).  The model's yield varies only with fundamental/price;
+# the record's varied with the payout level too, which the dial does not model.
+#
+# Measured 2026-09-02.
+set	series	window	stat	value
+sp500	Shiller-S&P	1954-2023	monthlyMean	2.95
+sp500	Shiller-S&P	1954-2023	annualMin	1.16
+sp500	Shiller-S&P	1954-2023	annualMax	5.71
+sp500	Shiller-S&P	1926-2023	monthlyMean	3.69
+sp500	Shiller-S&P	1871-2023	monthlyMean	4.27
+sp500	Shiller-S&P	1990-2023	monthlyMean	2.02
+sp500	SPY	1994-2026	annualMean	1.78
+nasdaq	QQQ	2005-2026	annualMean	0.78
+nasdaq	QQQ	2005-2026	annualMin	0.31
+nasdaq	QQQ	2005-2026	annualMax	1.48
+nasdaq	QQQ	2001-2026	annualMean	0.66
