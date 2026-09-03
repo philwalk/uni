@@ -2187,6 +2187,12 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
     reason = "mirrors one Scala method; splitting it would obscure the draw order, which is \
               the thing that has to stay verifiable"
 )]
+#[expect(
+    clippy::manual_range_contains,
+    reason = "explicit comparisons mirror the Scala AND differ from RangeInclusive::contains \
+              on NaN: `x < a || x > b` leaves NaN on the false branch, `!(a..=b).contains(&x)` \
+              puts it on the true branch"
+)]
 fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
     let n = years * DAYS_PER_YEAR;
     let tot = n + BURN_IN;
