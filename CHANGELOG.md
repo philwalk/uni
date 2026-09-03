@@ -59,6 +59,27 @@
   `dividend yield %` fidelity row grades the level against the window's annual means when the dial
   is on. An identity parameter, never searched.
 
+**An open, so the bar is OHLC and a gap is a gap**
+
+- `-overnight X` (default 0, off): the overnight share of the session's diffusive variance. The
+  open is the bridge point at that share of the session — one normal per session from a dedicated
+  stream — with the session's news jump and jump-channel move landing overnight whole, since they
+  are the news that arrives while the market is closed, and the whole move becoming the gap when
+  it overshoots the session on its own side. The bar's bridge then runs from the open over the
+  remaining variance and the sign coupling reads the intraday return. Derived after the price
+  loop, reaching no price: `price` keeps its meaning, and at 0 every existing bar is byte-identical.
+  `-emit` gains `logOpen` when on; `logHigh`/`logLow` then bracket the open and the close.
+- Graded when on (`bars-2026-09-01.tsv`, whose `overnightShare` rows become graded rows at tol
+  0.10): the overnight share of daily variance as a fidelity row, 0.23–0.43, and a mechanism row
+  the record shows — the worst 1% of sessions open with a larger share of the day gone than
+  sessions do on average. Anchored `-overnight 0.20` on the S&P default (share 0.328; record 0.33)
+  and 0.22 on the Nasdaq recipe (0.279; record 0.28).
+- The bar dials re-anchor with the open, because the intraday bridge carries less of the session:
+  `-rangescale 0.78` (from 0.63, the intraday haircut made explicit — 0.63/√0.67) and
+  `-rangedown 0.13` (from 0.09, the coupling now read on the intraday return); range vs cc vol
+  1.097 / 1.104 and down/up 1.135 / 1.136 on the two worlds. `-atrelease 0.23.1-nasdaq` names the
+  Nasdaq recipe with the open on at those dials; `0.23.0-nasdaq` keeps its bars byte for byte.
+
 ## v0.23.0 — 2026-09-02
 
 **NEW MECHANISM, and a defaults change — the slow valuation cycle**

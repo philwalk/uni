@@ -5,9 +5,9 @@
 # w1999; scripts: the session's bars_anchor.py conventions).
 #
 # Conventions:
-#   range x = ln(H/L) per session; the model's bar has NO overnight (open = prior close), and
-#     the record's overnight variance share (row overnightShare) is the commensurability
-#     haircut. Rows suffixed `Intraday` are measured against |ln(C/O)| / sign(C-O) — the fair
+#   range x = ln(H/L) per session; with `-overnight` off the model's bar has NO overnight (open
+#     = prior close) and the record's overnight variance share (row overnightShare) is the
+#     commensurability haircut; with it on that row is GRADED (tol 0.10, since 0.23.1). Rows suffixed `Intraday` are measured against |ln(C/O)| / sign(C-O) — the fair
 #     ruler for a no-overnight model; Parkinson recovers real INTRADAY vol at 1.00 exactly,
 #     which is what validates the pair of rulers.
 #   volume v = ln(volume) minus its rolling 252-session median (the secular share-count trend
@@ -38,8 +38,8 @@ const	volLag	0.145	-
 const	volDown	0.045	-
 const	volPhi	0.97	-
 const	volSlowShare	0.55	-
-w1993	overnightShare	0.33	-
-w1999	overnightShare	0.28	-
+w1993	overnightShare	0.33	0.10
+w1999	overnightShare	0.28	0.10
 w1993	parkinson	0.83	-
 w1999	parkinson	0.85	-
 w1993	corrRangeAbsR	0.72	-

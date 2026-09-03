@@ -87,13 +87,15 @@ their channel ran — beside `ungradedChannelSeries`. A top-level `channels` blo
 readings the channel rows grade, led by the world level the channels were sampled at, so a channel
 FAIL can be sized from the file alone — `fidelityFailed` names a band, not a value. The TSV gained
 columns that exist only when their channel is on: `logSat` (`satBeta > 0`), `logHigh`/`logLow`
-(`rangeScale > 0` — the sampled intra-bar extremes; the bar's open is the prior close, the model
-has no overnight) and `logVolume` (`volIdio > 0` — a mean-free log turnover index; apply your own
+(`rangeScale > 0` — the sampled intra-bar extremes; the bar's open is the prior close unless
+`overnight > 0`) and `logVolume` (`volIdio > 0` — a mean-free log turnover index; apply your own
 detrend convention as you would to a real series), and since schema 11 `logTraded` and `divYield`
 (`divYield > 0` — the traded price as a log, the total-return `price` deflated by the yield accrued
 each session, beside the session yield in %/yr; `price` keeps its meaning, so a consumer runs its
 decisions on the traded series and its accounting on `price`; `channels.level.kDiv` is the world's
-mean fundamental/price the yield was normalized by). Every log column carries a NATURAL
+mean fundamental/price the yield was normalized by), and `logOpen` (`overnight > 0` — the bar's
+open; `logHigh`/`logLow` then bracket the open and the close rather than the prior close and the
+close, and `channels.open` carries the overnight share and the gap shares). Every log column carries a NATURAL
 LOG rather than a
 level, because a level near 10^6 rendered at six decimals sits within reach of a cross-language
 rounding tie the twins' byte-parity checks would trip on. A channels-off schema-10 file differs
@@ -588,10 +590,11 @@ with it.
 | `-refugedays` | half-life in sessions of the settled stress the refuge bid reads — excludes the current session, which kills the same-day stock-bond coupling while the crisis rally keeps the level; 0 reads live stress | 1 |
 | `-satbeta` | the satellite equity leg (the Nasdaq to the default world's S&P): beta on the primary's OBSERVED return, plus idio noise riding the primary's full vol state — which is what keeps the pair's correlation state-flat, as the record's is. When on, `-emit` adds a `logSat` column. Anchored 1.2 on SPY–QQQ 1999–2026; NOT searchable, like `-duration` | 0 (off) |
 | `-satidio` | the leg's idiosyncratic vol as a FRACTION of the primary's realized volatility, riding the primary's vol state; the anchored 0.77 lands correlation 0.853 and vol ratio 1.41 on the default world, on the `-anchors nasdaq` recipe, and on a kurtosis-61 world alike | 0 |
-| `-rangescale` | intra-bar high/low, sampled per session from the exact Brownian-bridge extremes at the session's own vol state re-levelled onto the world's realized volatility, times this dial — the range scales with the session's noise, not with \|return\|, which is what makes it detectably real (record corr(lnH/L, \|r\|) is only 0.70–0.72). Anchored 0.63 on SPY/QQQ OHLCV, and it reads the same bar-to-ccvol ratio at any world; adds `logHigh`/`logLow` to `-emit`. NOT searchable | 0 (off) |
-| `-rangedown` | same-session sign↔vol coupling on the bar: down sessions get (1+X) the bridge sigma, up sessions 1/(1+X). Anchored 0.09, which puts BOTH the range's down/up (1.14 vs 1.109–1.142) and volume's down-up gap (0.097 vs 0.094–0.098) on the intraday rulers. Requires `-rangescale` | 0 |
+| `-rangescale` | intra-bar high/low, sampled per session from the exact Brownian-bridge extremes at the session's own vol state re-levelled onto the world's realized volatility, times this dial — the range scales with the session's noise, not with \|return\|, which is what makes it detectably real (record corr(lnH/L, \|r\|) is only 0.70–0.72). Anchored 0.63 on SPY/QQQ OHLCV (0.78 with `-overnight` on, the intraday haircut made explicit), and it reads the same bar-to-ccvol ratio at any world; adds `logHigh`/`logLow` to `-emit`. NOT searchable | 0 (off) |
+| `-rangedown` | same-session sign↔vol coupling on the bar: down sessions get (1+X) the bridge sigma, up sessions 1/(1+X). Anchored 0.09 (0.13 with `-overnight` on, where it reads the intraday return), which puts BOTH the range's down/up (1.14 vs 1.109–1.142) and volume's down-up gap (0.097 vs 0.094–0.098) on the intraday rulers. Requires `-rangescale` | 0 |
 | `-volidio` | log turnover index riding the range: elasticity 0.59 to the range's deviation from its slow normal (frozen from the measured regression) plus a two-component persistent idio whose total sd is this dial (anchored 0.34). Requires `-rangescale`; adds `logVolume` to `-emit`. NOT searchable | 0 |
 | `-divyield` | DIVIDENDS: the world's mean dividend yield, %/yr. The session yield is Y × fundamental/price over the world's mean of it (a world constant solved on the same fixed ensemble as the bar level — the ensemble's mean fundamental/price is 2.06 at the default and 2.30 on the Nasdaq recipe, and a per-path mean would leak the path's future), so a rich session yields less and the ensemble's pooled mean yield is the dial; the reported median path's mean reads about 0.9× of it (2.62 at 2.95, 0.69 at 0.78), valuation epochs skewing the path means; `-emit` gains `logTraded` (the total-return `price` deflated by the accrued yield — `price` itself is unchanged) and `divYield`. Anchored 2.95 on Shiller's S&P 1954–2023 and 0.78 on QQQ 2005–2026 (`dividend-2026-09-02.tsv`); the level is graded when on. An identity parameter, never searched | 0 (off) |
+| `-overnight` | THE OPEN: the overnight share of the session's diffusive variance (0 ≤ X < 1). The open is the bridge point at that share of the session, with the session's news jump and jump-channel move landing overnight whole and the whole move becoming the gap when it overshoots the session on its own side; the bar then runs from the open over the remaining variance and the sign coupling reads the intraday return. `-emit` gains `logOpen`, and `logHigh`/`logLow` bracket the open and the close. Anchored 0.20 on the S&P default and 0.22 on the Nasdaq recipe against the record's overnight variance shares 0.33 / 0.28 (`bars-2026-09-01.tsv`, graded when on); the bar dials re-anchor with it, `-rangescale 0.78 -rangedown 0.13`, since the intraday bridge carries less of the session | 0 (open = prior close) |
 | `-inflsize` | size of an inflation regime's rate-pressure target | 0.10 |
 
 `-easing` is a cap, not a speed. The flag it replaced, `-flight`, was a cut *rate* per year, so it
@@ -871,7 +874,11 @@ on this recipe reads range vs cc vol 1.11 and `-satbeta 1.2 -satidio 0.77` corre
 same readings as on the default world, because both dials are relative to the world's own realized
 volatility. `-atrelease 0.23.0-nasdaq` names exactly this world with every channel on at those
 dials and selects the Nasdaq anchors: realism, mechanism and fidelity PASS with all six series
-graded.
+graded. `-atrelease 0.23.1-nasdaq` is the same world with the open on (`-overnight 0.22`) at the
+bar dials re-anchored for it (`-rangescale 0.78 -rangedown 0.13`): overnight share 0.279 against
+the record's 0.28, range vs cc vol 1.104, down/up 1.136, clustering 0.704, the satellite
+untouched, all three classes PASS. On the S&P default the same open reads 0.328 at
+`-overnight 0.20` with the same bar dials (range vs cc vol 1.097, down/up 1.135).
 
 The Nasdaq set's sampling spreads are measured at this recipe (`-noise -anchors nasdaq`, 200
 paths), not carried from the S&P's — every spread, since 0.23.1 including the depth rungs, the

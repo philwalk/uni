@@ -129,8 +129,12 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 // total-return `price` deflated by the yield accrued each session, so `price` keeps its meaning)
 // and `divYield` (the session yield in %/yr, a level: nothing here is near the tie magnitude);
 // `channels.level` gained `kDiv`, the world's mean fundamental/price the yield was normalized
-// by, and `channels.dividend` the mean yield read. A dividends-off schema-11 file is
-// byte-identical to its schema-10 counterpart except the schema number and one zero world field.
+// by, and `channels.dividend` the mean yield read. THE OPEN, same release: `world` gained
+// `overnight`, the TSV `logOpen` (present ONLY when `overnight > 0` — the bar's open as a log;
+// `logHigh`/`logLow` then bracket the open and the close rather than the prior close and the
+// close), and `channels.open` the share readings. A channels-off schema-11 file is
+// byte-identical to its schema-10 counterpart except the schema number and two zero world
+// fields.
 const EMIT_SCHEMA: u32 = 11;
 
 /// Frozen structural constants of the volume channel — see the `vol_idio` field. Measured
@@ -403,6 +407,7 @@ fn default_world() -> World {
         range_down: 0.0,
         vol_idio: 0.0,
         div_yield: 0.0,
+        overnight: 0.0,
         value_pull: 0.056,
         crowd: Crowd::Momentum,
         crowd_impact: 0.030,
@@ -467,6 +472,7 @@ fn v0_19_2() -> World {
         range_down: 0.0,
         vol_idio: 0.0,
         div_yield: 0.0,
+        overnight: 0.0,
         value_pull: 0.013,
         belief_share: 0.0,
         belief_years: 2.5,
@@ -560,7 +566,20 @@ fn recipes() -> Vec<(&'static str, World, &'static str)> {
     nasdaq.range_scale = 0.63;
     nasdaq.range_down = 0.09;
     nasdaq.vol_idio = 0.34;
-    vec![("0.23.0-nasdaq", nasdaq, "nasdaq")]
+    // The same world with THE OPEN on, at the bar dials re-anchored for it: the intraday bridge
+    // carries (1-w) of the variance, so the range dial rises from 0.63 to 0.78 (0.63/sqrt(0.67))
+    // and the sign coupling, now read on the intraday return, from 0.09 to 0.13. Verified at
+    // 200x100: overnight share 0.279 (record 0.28), range vs cc vol 1.104, down/up 1.136,
+    // clustering 0.704, the satellite untouched; realism, mechanism and fidelity PASS. A new name
+    // rather than a moved one: `0.23.0-nasdaq` keeps reproducing its bars byte for byte.
+    let mut open = nasdaq;
+    open.overnight = 0.22;
+    open.range_scale = 0.78;
+    open.range_down = 0.13;
+    vec![
+        ("0.23.0-nasdaq", nasdaq, "nasdaq"),
+        ("0.23.1-nasdaq", open, "nasdaq"),
+    ]
 }
 
 /// What `-atrelease NAME` seeds from: a release's world, anchors untouched, or a recipe with the
@@ -616,6 +635,7 @@ fn v0_23_0() -> World {
         range_down: 0.0,
         vol_idio: 0.0,
         div_yield: 0.0,
+        overnight: 0.0,
         value_pull: 0.056,
         crowd: Crowd::Momentum,
         crowd_impact: 0.030,
@@ -670,6 +690,7 @@ fn v0_22_1() -> World {
         range_down: 0.0,
         vol_idio: 0.0,
         div_yield: 0.0,
+        overnight: 0.0,
         value_pull: 0.045,
         crowd: Crowd::Momentum,
         crowd_impact: 0.030,
@@ -726,6 +747,7 @@ fn v0_22_0() -> World {
         range_down: 0.0,
         vol_idio: 0.0,
         div_yield: 0.0,
+        overnight: 0.0,
         value_pull: 0.045,
         crowd: Crowd::Momentum,
         crowd_impact: 0.030,
@@ -782,6 +804,7 @@ fn v0_21_0() -> World {
         range_down: 0.0,
         vol_idio: 0.0,
         div_yield: 0.0,
+        overnight: 0.0,
         value_pull: 0.045,
         crowd: Crowd::Momentum,
         crowd_impact: 0.07,
@@ -829,6 +852,7 @@ fn v0_20_0() -> World {
         range_down: 0.0,
         vol_idio: 0.0,
         div_yield: 0.0,
+        overnight: 0.0,
         value_pull: 0.0145,
         belief_share: 0.0,
         belief_years: 2.5,
@@ -1073,6 +1097,17 @@ struct World {
     /// `dividend-2026-09-02.tsv`; an identity parameter, never searched. The record's yield also
     /// moved with the payout level across eras, which this does not model.
     div_yield: f64,
+    /// THE OPEN: the overnight share of the session's DIFFUSIVE variance (0 <= x < 1). The open is
+    /// the bridge point at that share of the session — w x the non-jump move plus sqrt(w(1-w)) x
+    /// the session sd x one normal from a dedicated stream — with the session's news jump and
+    /// jump-channel move landing overnight WHOLE, since they are the news that arrives while the
+    /// market is closed; when the gap overshoots the session on its own side the whole move is
+    /// the gap. The bar's bridge then runs from the open over the remaining (1-w) of the
+    /// variance, and the sign coupling reads the intraday return. 0 = the open is the prior
+    /// close, bit-identical off; the record's overnight share of daily variance is 0.33 (SPY) /
+    /// 0.28 (QQQ), `bars-2026-09-01.tsv`, and the graded share includes the jumps, so the dial
+    /// sits below it.
+    overnight: f64,
     value_pull: f64,
     crowd: Crowd,
     crowd_impact: f64,
@@ -1151,6 +1186,8 @@ struct Path {
     /// 0); the level is emitted as a log, like `sat`
     div_yield: Vec<f64>,
     traded: Vec<f64>,
+    /// the bar's open, log (empty when `overnight` is 0)
+    log_open: Vec<f64>,
     /// the world's channel level the bars and the satellite were sampled at (`world_level`),
     /// carried into the sidecar so the emitted data's scale is auditable; 0 / 0 when both
     /// channels are off
@@ -1373,6 +1410,9 @@ struct ChannelInputs {
     d: Vec<f64>,
     /// the satellite's state factor: vol state x spiral amplification over the base impact
     state: Vec<f64>,
+    /// the session's jump-channel move as the market delivered it (x its liquidity) plus the news
+    /// repricing; 0 on a jump-free session
+    jump: Vec<f64>,
     /// `Market::scale_var` after the step — the volume down-term's realized scale, read one
     /// session fresher than the leverage signal's (stated, and mirrored)
     scale_var: Vec<f64>,
@@ -1424,7 +1464,7 @@ const LEVEL_SEED: u64 = 0x1e7e_1000;
 type LevelSums = ((f64, f64, f64, f64), (f64, f64));
 
 fn world_level(w: &World) -> ChannelLevel {
-    let ch_on = w.range_scale > 0.0 || w.sat_beta > 0.0;
+    let ch_on = w.range_scale > 0.0 || w.sat_beta > 0.0 || w.overnight > 0.0;
     let div_on = w.div_yield > 0.0;
     if !(ch_on || div_on) {
         return ChannelLevel {
@@ -1490,6 +1530,7 @@ struct Channels {
     log_hi: Vec<f64>,
     log_lo: Vec<f64>,
     log_volume: Vec<f64>,
+    log_open: Vec<f64>,
 }
 
 /// THE DERIVED CHANNELS, sampled in a second pass from the price loop's recorded inputs. They
@@ -1522,14 +1563,104 @@ struct Channels {
 /// is bit-identical off; the range takes two uniforms per session, max then min, the volume two
 /// normals, slow innovation then white, and that draw ORDER is part of the cross-language
 /// contract. The first session's return-from-zero is absorbed by burn-in as before.
+/// The volume channel's state — see the `vol_idio` field: the slow AR component, the EWMA of
+/// ln(range) that defines the range's "normal" (half-life 126 sessions, the grading convention's
+/// rolling-median window, centred), and the previous session's range deviation the lag term reads.
+struct VolState {
+    slow: f64,
+    rx_prev: f64,
+    ewma: f64,
+    ewma_set: bool,
+    ewma_mu: f64,
+    slow_innov: f64,
+    white_sd: f64,
+}
+
+impl VolState {
+    fn new(w: &World) -> Self {
+        Self {
+            slow: 0.0,
+            rx_prev: 0.0,
+            ewma: 0.0,
+            ewma_set: false,
+            ewma_mu: 1.0 - (-(2.0f64.ln()) / 126.0).exp(),
+            slow_innov: w.vol_idio * VOL_SLOW_SHARE.sqrt() * (1.0 - VOL_PHI * VOL_PHI).sqrt(),
+            white_sd: w.vol_idio * (1.0 - VOL_SLOW_SHARE).sqrt(),
+        }
+    }
+
+    /// One session: elasticity VOL_SLOPE to the range's log-deviation from its slow normal, a
+    /// down-day term shaped like the stress innovation (VOL_DOWN calibrated to the record's
+    /// RESIDUAL +0.036 — most of the raw +0.12 flows THROUGH the range), plus the two-component
+    /// idio. Reads `vrng` only, two normals per session: the slow innovation, then the white.
+    fn step(&mut self, range: f64, r_s: f64, scale_var: f64, vrng: &mut NumPyRng) -> f64 {
+        let lnx = range.max(1e-300).ln();
+        if !self.ewma_set {
+            self.ewma = lnx;
+            self.ewma_set = true;
+        }
+        let rx = lnx - self.ewma;
+        self.ewma += self.ewma_mu * (lnx - self.ewma);
+        let down = 0.0f64.max(-r_s) / scale_var.sqrt();
+        self.slow = VOL_PHI * self.slow + self.slow_innov * vrng.randn();
+        let v = VOL_SLOPE * rx
+            + VOL_LAG * self.rx_prev
+            + VOL_DOWN * down
+            + self.slow
+            + self.white_sd * vrng.randn();
+        self.rx_prev = rx;
+        v
+    }
+}
+
+/// The overnight part of a session's move — see the `overnight` field: the session's jump
+/// whole, plus the bridge point at share w of the non-jump move with its conditional noise `z`;
+/// the whole move when the gap overshoots the session on its own side.
+fn overnight_move(w: &World, j: f64, r_c: f64, s0: f64, z: f64) -> f64 {
+    let n = r_c - j;
+    let b = (w.overnight * (1.0 - w.overnight)).sqrt() * s0;
+    let o0 = j + w.overnight * n + b * z;
+    if (r_c < 0.0 && o0 < r_c) || (r_c > 0.0 && o0 > r_c) {
+        r_c
+    } else {
+        o0
+    }
+}
+
+/// The bar's extremes relative to its open: the sign coupling on the bridge sigma (see the
+/// `range_down` field — applied BEFORE the draws, consuming nothing; the near-reciprocal pair
+/// leaves the mean breadth at ~(1 + x^2/2), which `range_scale` absorbs), then the exact
+/// one-sided extremes of a Brownian bridge over the session's move `r_s`, the max from `u1` then
+/// the min from `u2`, the uniforms floored at 1e-300 so a zero draw cannot mint an infinite bar.
+fn bridge_extremes(w: &World, r_s: f64, sig0: f64, u1: f64, u2: f64) -> (f64, f64) {
+    let sig = if w.range_down > 0.0 {
+        if r_s < 0.0 {
+            sig0 * (1.0 + w.range_down)
+        } else {
+            sig0 / (1.0 + w.range_down)
+        }
+    } else {
+        sig0
+    };
+    let sig2 = sig * sig;
+    let u1 = u1.max(1e-300);
+    let u2 = u2.max(1e-300);
+    (
+        (r_s + (r_s * r_s - 2.0 * sig2 * u1.ln()).sqrt()) / 2.0,
+        (r_s - (r_s * r_s - 2.0 * sig2 * u2.ln()).sqrt()) / 2.0,
+    )
+}
+
 fn derive_channels(w: &World, x: &ChannelInputs, level: ChannelLevel, seed: u64) -> Channels {
     let mut srng = NumPyRng::new(seed ^ 0x5a7e_1117u64);
     let mut rrng = NumPyRng::new(seed ^ 0xca9d_1e00u64);
     let mut vrng = NumPyRng::new(seed ^ 0xd011_a5e5u64);
+    let mut orng = NumPyRng::new(seed ^ 0x09e7_a11eu64);
     let tot = x.px.len();
     let sat_on = w.sat_beta > 0.0;
     let range_on = w.range_scale > 0.0;
     let vol_on = range_on && w.vol_idio > 0.0;
+    let open_on = w.overnight > 0.0;
     let mut sat = if sat_on {
         vec![0.0f64; tot]
     } else {
@@ -1545,12 +1676,18 @@ fn derive_channels(w: &World, x: &ChannelInputs, level: ChannelLevel, seed: u64)
     } else {
         Vec::new()
     };
-    if !(sat_on || range_on) {
+    let mut op = if open_on {
+        vec![0.0f64; tot]
+    } else {
+        Vec::new()
+    };
+    if !(sat_on || range_on || open_on) {
         return Channels {
             sat,
             log_hi: hi,
             log_lo: lo,
             log_volume: vv,
+            log_open: op,
         };
     }
     let k = level.k;
@@ -1564,13 +1701,7 @@ fn derive_channels(w: &World, x: &ChannelInputs, level: ChannelLevel, seed: u64)
     // VOLUME state: the slow AR component, the EWMA of ln(range) that defines the range's
     // "normal" (half-life 126 sessions — the grading convention's rolling-median window,
     // centred), and its first-session initialization flag.
-    let mut vol_slow = 0.0f64;
-    let mut vol_rx_prev = 0.0f64;
-    let mut vol_ewma = 0.0f64;
-    let mut vol_ewma_set = false;
-    let vol_ewma_mu = 1.0 - (-(2.0f64.ln()) / 126.0).exp();
-    let vol_slow_innov = w.vol_idio * VOL_SLOW_SHARE.sqrt() * (1.0 - VOL_PHI * VOL_PHI).sqrt();
-    let vol_white_sd = w.vol_idio * (1.0 - VOL_SLOW_SHARE).sqrt();
+    let mut vol = VolState::new(w);
     for i in 0..tot {
         let log_px = x.px[i];
         // SATELLITE LEG: beta times the primary's observed log return, plus idio noise at
@@ -1592,48 +1723,36 @@ fn derive_channels(w: &World, x: &ChannelInputs, level: ChannelLevel, seed: u64)
         // |ret| by construction — the extremes bracket both endpoints. The uniforms are floored
         // at 1e-300 so a zero draw cannot mint an infinite bar; the floor is part of the
         // cross-language contract. Reads `rrng` only.
+        // THE OPEN — see the `overnight` field. The bridge point at share w of the session's
+        // diffusive variance, jumps landing overnight whole, one normal from `orng` per session
+        // read only when the dial is on; then the bar runs from it.
+        let r_c = log_px - bar_prev_px;
+        let open_px = if open_on {
+            op[i] = bar_prev_px + overnight_move(w, x.jump[i], r_c, x.d[i] * k, orng.randn());
+            op[i]
+        } else {
+            bar_prev_px
+        };
         if range_on {
-            let r_s = log_px - bar_prev_px;
-            let sig = (x.d[i] * k) * w.range_scale;
-            // The sign coupling — see the `range_down` field. Applied to the bridge sigma
-            // BEFORE the draws, consuming nothing; the near-reciprocal pair leaves the mean
-            // breadth at ~(1 + x^2/2), which `range_scale` absorbs.
-            let sig = if w.range_down > 0.0 {
-                if r_s < 0.0 {
-                    sig * (1.0 + w.range_down)
-                } else {
-                    sig / (1.0 + w.range_down)
-                }
+            let r_s = log_px - open_px;
+            // the intraday bridge carries the remaining (1-w) of the variance; x 1.0 when the
+            // open is off, which is exact
+            let intraday = if open_on {
+                (1.0 - w.overnight).sqrt()
             } else {
-                sig
+                1.0
             };
-            let sig2 = sig * sig;
-            let u1 = rrng.next_f64().max(1e-300);
-            let u2 = rrng.next_f64().max(1e-300);
-            hi[i] = bar_prev_px + (r_s + (r_s * r_s - 2.0 * sig2 * u1.ln()).sqrt()) / 2.0;
-            lo[i] = bar_prev_px + (r_s - (r_s * r_s - 2.0 * sig2 * u2.ln()).sqrt()) / 2.0;
-            bar_prev_px = log_px;
-            // VOLUME: elasticity VOL_SLOPE to the range's log-deviation from its slow normal,
-            // a down-day term shaped like the stress innovation (VOL_DOWN calibrated to the
-            // record's RESIDUAL +0.036 — most of the raw +0.12 flows THROUGH the range), plus
-            // the two-component idio. Reads `vrng` only; requires the range.
+            let sig = (x.d[i] * k) * intraday * w.range_scale;
+            let (h, l) = bridge_extremes(w, r_s, sig, rrng.next_f64(), rrng.next_f64());
+            hi[i] = open_px + h;
+            lo[i] = open_px + l;
+            // VOLUME rides the range — see `VolState`; requires the range.
             if vol_on {
-                let lnx = (hi[i] - lo[i]).max(1e-300).ln();
-                if !vol_ewma_set {
-                    vol_ewma = lnx;
-                    vol_ewma_set = true;
-                }
-                let rx = lnx - vol_ewma;
-                vol_ewma += vol_ewma_mu * (lnx - vol_ewma);
-                let down = 0.0f64.max(-r_s) / x.scale_var[i].sqrt();
-                vol_slow = VOL_PHI * vol_slow + vol_slow_innov * vrng.randn();
-                vv[i] = VOL_SLOPE * rx
-                    + VOL_LAG * vol_rx_prev
-                    + VOL_DOWN * down
-                    + vol_slow
-                    + vol_white_sd * vrng.randn();
-                vol_rx_prev = rx;
+                vv[i] = vol.step(hi[i] - lo[i], r_s, x.scale_var[i], &mut vrng);
             }
+        }
+        if range_on || open_on {
+            bar_prev_px = log_px;
         }
     }
     Channels {
@@ -1641,6 +1760,7 @@ fn derive_channels(w: &World, x: &ChannelInputs, level: ChannelLevel, seed: u64)
         log_hi: hi,
         log_lo: lo,
         log_volume: vv,
+        log_open: op,
     }
 }
 
@@ -1700,6 +1820,11 @@ fn simulate_at(w: &World, years: usize, seed: u64, level: ChannelLevel) -> Path 
         },
         log_volume: if w.vol_idio > 0.0 {
             chan.log_volume[BURN_IN..].to_vec()
+        } else {
+            Vec::new()
+        },
+        log_open: if w.overnight > 0.0 {
+            chan.log_open[BURN_IN..].to_vec()
         } else {
             Vec::new()
         },
@@ -1863,12 +1988,13 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
     // observed log price, the session diffusion sd as the price received it, the satellite's
     // state factor, and the post-step realized scale the volume's down-term reads. Empty when
     // both channels are off; draw-free either way, so off worlds stay bit-identical.
-    let ch_on = w.range_scale > 0.0 || w.sat_beta > 0.0;
+    let ch_on = w.range_scale > 0.0 || w.sat_beta > 0.0 || w.overnight > 0.0;
     let mut ch = ChannelInputs {
         px: if ch_on { vec![0.0f64; tot] } else { Vec::new() },
         d: if ch_on { vec![0.0f64; tot] } else { Vec::new() },
         state: if ch_on { vec![0.0f64; tot] } else { Vec::new() },
         scale_var: if ch_on { vec![0.0f64; tot] } else { Vec::new() },
+        jump: if ch_on { vec![0.0f64; tot] } else { Vec::new() },
     };
 
     let mut i = 0usize;
@@ -1922,6 +2048,7 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
         // session the way it trades on `markdown`. The compensator is deterministic and returns
         // the expected drift cost on BOTH legs.
         let mut news_j = 0.0f64;
+        let mut jump_now = 0.0f64;
         if w.news_rate > 0.0 {
             let comp = w.news_rate * w.news_size / DAYS_PER_YEAR as f64;
             log_vbase += comp;
@@ -2062,7 +2189,7 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
         // as the noise term above is built — news damp, vol state, leverage kick (read BEFORE
         // this session's update, like `d_noise` itself) — plus the jump branch's
         // sqrt(1 - jumpVar) mixing. Draw-free; 0.0 when both channels are off.
-        let sess_sigma = if w.range_scale > 0.0 || w.sat_beta > 0.0 {
+        let sess_sigma = if w.range_scale > 0.0 || w.sat_beta > 0.0 || w.overnight > 0.0 {
             let lev_mult = if w.leverage > 0.0 {
                 (w.leverage * lev_sig).exp()
             } else {
@@ -2112,6 +2239,7 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
                 let t = z / (chi / nu).sqrt() / (nu / (nu - 2.0)).sqrt();
                 (t - w.jump_skew) * scale
             };
+            jump_now = jump;
             d_noise * (1.0 - w.jump_var).sqrt() + jump + compens
         };
         // The shock, not the crowd's flows — see the `down_shock` field for the measured reason.
@@ -2214,6 +2342,7 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
             ch.d[i] = sess_sigma * eq_m.last_liq;
             ch.state[i] = (log_vol - vol_norm).exp() * eq_m.last_liq * w.depth / 12.0;
             ch.scale_var[i] = eq_m.scale_var;
+            ch.jump[i] = jump_now * eq_m.last_liq - news_j;
         }
 
         // ---- capital reallocation: spring, scored on positions actually held ---------------
@@ -2286,6 +2415,7 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
         log_volume: Vec::new(),
         div_yield: Vec::new(),
         traded: Vec::new(),
+        log_open: Vec::new(),
         chan_k: 0.0,
         chan_k_sat: 0.0,
         chan_k_div: 0.0,
@@ -2535,6 +2665,8 @@ struct WorldStats {
     sat: Option<SatStats>,
     /// `None` when no range channel ran.
     bars: Option<BarStats>,
+    /// `None` when no open ran.
+    open: Option<OpenStats>,
     /// median across paths of the per-path mean session yield, %/yr; NaN when the dial is off,
     /// and the gate then carries no row
     div_yield_mean: f64,
@@ -2918,6 +3050,57 @@ fn sat_stats(sims: &[Path], years: usize) -> Option<SatStats> {
 }
 
 /// The bar channels' statistics — `None` when no range channel ran.
+/// The open's readings, medians across paths: the overnight share of close-to-close variance
+/// (sample variances), and the regression share of the overnight in the session — sum(o r) /
+/// sum(r^2) — over the worst 1% of sessions and over all of them. The record's largest declines
+/// open with the larger part of the day already gone.
+#[derive(Clone, Copy, Debug)]
+struct OpenStats {
+    overnight_share: f64,
+    worst_gap_share: f64,
+    all_gap_share: f64,
+}
+
+fn open_stats(sims: &[Path]) -> Option<OpenStats> {
+    if sims.is_empty() || sims[0].log_open.is_empty() {
+        return None;
+    }
+    let mut shares = Vec::with_capacity(sims.len());
+    let mut worsts = Vec::with_capacity(sims.len());
+    let mut alls = Vec::with_capacity(sims.len());
+    for s in sims {
+        let lp: Vec<f64> = s.price.iter().map(|v| v.ln()).collect();
+        let n = lp.len() - 1;
+        let o: Vec<f64> = (0..n).map(|t| s.log_open[t + 1] - lp[t]).collect();
+        let r: Vec<f64> = (0..n).map(|t| lp[t + 1] - lp[t]).collect();
+        let sv = |x: &[f64]| -> f64 {
+            let m = x.iter().sum::<f64>() / x.len() as f64;
+            x.iter().map(|v| (v - m) * (v - m)).sum::<f64>() / (x.len() - 1) as f64
+        };
+        let reg_share = |idx: &[usize]| -> f64 {
+            let mut so = 0.0f64;
+            let mut sr = 0.0f64;
+            for &t in idx {
+                so += o[t] * r[t];
+                sr += r[t] * r[t];
+            }
+            if sr > 0.0 { so / sr } else { f64::NAN }
+        };
+        let mut order: Vec<usize> = (0..n).collect();
+        order.sort_by(|&a, &b| r[a].partial_cmp(&r[b]).unwrap_or(std::cmp::Ordering::Equal));
+        let worst = &order[..1.max(n / 100)];
+        let all: Vec<usize> = (0..n).collect();
+        shares.push(sv(&o) / sv(&r));
+        worsts.push(reg_share(worst));
+        alls.push(reg_share(&all));
+    }
+    Some(OpenStats {
+        overnight_share: med(&shares),
+        worst_gap_share: med(&worsts),
+        all_gap_share: med(&alls),
+    })
+}
+
 fn bar_stats(sims: &[Path]) -> Option<BarStats> {
     if sims.is_empty() || sims[0].log_hi.is_empty() {
         return None;
@@ -3081,6 +3264,7 @@ fn measure(sims: &[Path], years: usize) -> WorldStats {
         ep_per_path: eps.len() as f64 / n_sims,
         sat: sat_stats(sims, years),
         bars: bar_stats(sims),
+        open: open_stats(sims),
         div_yield_mean: med(&sims
             .iter()
             .map(|s| {
@@ -3702,6 +3886,25 @@ fn gate_checks(a: Anchors, st: &WorldStats) -> Vec<(String, bool, GateClass)> {
                 v.push(band_check(name, got, lo, hi, GateClass::Fidelity, 2, ""));
             }
         }
+    }
+    // THE OPEN, graded when it ran: the overnight share against the record's (0.33 SPY / 0.28
+    // QQQ, `bars-2026-09-01.tsv`, tol 0.10 like the other bar rows), and the mechanism the
+    // record shows — its worst sessions open with more of the day already gone.
+    if let Some(os) = st.open {
+        v.push(band_check(
+            "bar overnight share",
+            os.overnight_share,
+            0.23,
+            0.43,
+            GateClass::Fidelity,
+            2,
+            "",
+        ));
+        v.push((
+            "overnight gap share rises on the worst sessions".to_string(),
+            os.worst_gap_share > os.all_gap_share,
+            Mechanism,
+        ));
     }
     // THE DIVIDEND LEVEL, graded when the dial is on: the yield at fair value is an identity
     // parameter, so this row can only catch a dial set outside what the record's own annual
@@ -8108,7 +8311,8 @@ fn write_emitted(
             && p.log_lo.iter().all(|x| x.is_finite())
             && p.log_volume.iter().all(|x| x.is_finite())
             && p.div_yield.iter().all(|x| x.is_finite())
-            && p.traded.iter().all(|x| x.is_finite()),
+            && p.traded.iter().all(|x| x.is_finite())
+            && p.log_open.iter().all(|x| x.is_finite()),
         "path {k} holds a non-finite value; refusing {file}"
     );
     let dates = session_dates(p.price.len(), start_ymd);
@@ -8137,6 +8341,9 @@ fn channel_columns(p: &Path) -> Vec<&'static str> {
         cols.push("logTraded");
         cols.push("divYield");
     }
+    if !p.log_open.is_empty() {
+        cols.push("logOpen");
+    }
     cols
 }
 
@@ -8157,6 +8364,9 @@ fn write_emit_tsv(file: &str, p: &Path, dates: &[String]) {
     }
     if !p.traded.is_empty() {
         tsv.push_str("\tlogTraded\tdivYield");
+    }
+    if !p.log_open.is_empty() {
+        tsv.push_str("\tlogOpen");
     }
     tsv.push('\n');
     for (i, d) in dates.iter().enumerate() {
@@ -8193,6 +8403,10 @@ fn write_emit_tsv(file: &str, p: &Path, dates: &[String]) {
             tsv.push_str(&ef(p.traded[i].ln()));
             tsv.push('\t');
             tsv.push_str(&ef(p.div_yield[i]));
+        }
+        if !p.log_open.is_empty() {
+            tsv.push('\t');
+            tsv.push_str(&ef(p.log_open[i]));
         }
         tsv.push('\n');
     }
@@ -8246,6 +8460,7 @@ fn world_json_body(w: &World) -> Vec<String> {
         ("rangeDown", ef(w.range_down)),
         ("volIdio", ef(w.vol_idio)),
         ("divYield", ef(w.div_yield)),
+        ("overnight", ef(w.overnight)),
         ("inflProb", ef(w.infl_prob)),
         ("inflSize", ef(w.infl_size)),
         ("inflSpeed", ef(w.infl_speed)),
@@ -8273,7 +8488,7 @@ fn channel_readings_block(st: &WorldStats, p: &Path) -> String {
         }
     };
     let mut blocks: Vec<String> = Vec::new();
-    if st.sat.is_some() || st.bars.is_some() || st.div_yield_mean.is_finite() {
+    if st.sat.is_some() || st.bars.is_some() || st.open.is_some() || st.div_yield_mean.is_finite() {
         blocks.push(format!(
             "    \"level\": {{ \"k\": {}, \"kSat\": {}, \"kDiv\": {} }}",
             num(p.chan_k),
@@ -8317,6 +8532,14 @@ fn channel_readings_block(st: &WorldStats, p: &Path) -> String {
         blocks.push(format!(
             "    \"dividend\": {{ \"meanYield\": {} }}",
             num(st.div_yield_mean)
+        ));
+    }
+    if let Some(os) = st.open {
+        blocks.push(format!(
+            "    \"open\": {{ \"overnightShare\": {}, \"worstGapShare\": {}, \"allGapShare\": {} }}",
+            num(os.overnight_share),
+            num(os.worst_gap_share),
+            num(os.all_gap_share)
         ));
     }
     if blocks.is_empty() {
@@ -8695,6 +8918,7 @@ fn main() {
     let mut range_down = dw.range_down;
     let mut vol_idio = dw.vol_idio;
     let mut div_yield = dw.div_yield;
+    let mut overnight = dw.overnight;
     let mut joint_emit = String::new();
     let mut bars_emit = String::new();
     let mut jump_rate = dw.jump_rate;
@@ -8793,6 +9017,7 @@ fn main() {
             "-rangedown" => range_down = req_f64(&mut it, "-rangedown"),
             "-volidio" => vol_idio = req_f64(&mut it, "-volidio"),
             "-divyield" => div_yield = req_f64(&mut it, "-divyield"),
+            "-overnight" => overnight = req_f64(&mut it, "-overnight"),
             "-jointemit" => joint_emit = req_arg(&mut it, "-jointemit").clone(),
             "-barsemit" => bars_emit = req_arg(&mut it, "-barsemit").clone(),
             "-jumprate" => jump_rate = req_f64(&mut it, "-jumprate"),
@@ -8939,6 +9164,12 @@ fn main() {
         }
         non_neg("-volidio", vol_idio);
         non_neg("-divyield", div_yield);
+        non_neg("-overnight", overnight);
+        if overnight >= 1.0 {
+            cli_die(&format!(
+                "-overnight {overnight} leaves the intraday session no variance to run the bridge on; it must be below 1"
+            ));
+        }
         if vol_idio > 0.0 && range_scale <= 0.0 {
             cli_die("-volidio requires -rangescale > 0: volume rides the range");
         }
@@ -9062,6 +9293,7 @@ fn main() {
         range_down,
         vol_idio,
         div_yield,
+        overnight,
         value_pull,
         crowd,
         crowd_impact,
@@ -9287,6 +9519,7 @@ fn main() {
                 || !p.log_volume.iter().all(|x| x.is_finite())
                 || !p.div_yield.iter().all(|x| x.is_finite())
                 || !p.traded.iter().all(|x| x.is_finite())
+                || !p.log_open.iter().all(|x| x.is_finite())
             {
                 eprintln!("REFUSED: path {k} holds a non-finite value; nothing written to {f}");
                 std::process::exit(2);
@@ -9357,7 +9590,8 @@ fn main() {
                 + usize::from(w.sat_beta > 0.0)
                 + 2 * usize::from(w.range_scale > 0.0)
                 + usize::from(w.vol_idio > 0.0)
-                + 2 * usize::from(w.div_yield > 0.0),
+                + 2 * usize::from(w.div_yield > 0.0)
+                + usize::from(w.overnight > 0.0),
             written[0],
             sidecar_name(&written[0])
         );
@@ -9505,6 +9739,14 @@ fn main() {
                 jf(b.vol_corr_range, 0, 3)
             );
         }
+    }
+    if let Some(os) = st.open {
+        println!(
+            "  bar open               overnight share {}   gap share worst-1% {} vs all {}",
+            jf(os.overnight_share, 0, 3),
+            jf(os.worst_gap_share, 0, 3),
+            jf(os.all_gap_share, 0, 3)
+        );
     }
     if st.div_yield_mean.is_finite() {
         println!(
@@ -12416,5 +12658,142 @@ mod dividend_tests {
         );
         assert!(IDENTITY_PARAMS.contains(&"divYield"));
         assert!(!calibrate_ranges().iter().any(|r| r.0 == "divYield"));
+    }
+}
+
+/// The open: a derived channel that reaches no price. Off, the bar is the 0.23.0 bar byte for
+/// byte; on, the bar brackets the open and the close, the overnight part never overshoots the
+/// session on its own side, and the anchored worlds read the record's overnight share. The Scala
+/// twin carries the same checks in `OpenSuite`.
+#[cfg(test)]
+mod open_tests {
+    use super::*;
+
+    fn recipe(name: &str) -> World {
+        recipes()
+            .into_iter()
+            .find(|(n, _, _)| *n == name)
+            .map(|(_, w, _)| w)
+            .unwrap_or_else(|| panic!("no recipe {name}"))
+    }
+
+    #[test]
+    fn off_is_bit_identical_and_carries_no_open_and_every_frozen_release_keeps_the_open_off() {
+        let mut bars = default_world();
+        bars.range_scale = 0.63;
+        bars.range_down = 0.09;
+        let off = simulate(&bars, 3, DEFAULT_SEED);
+        assert!(off.log_open.is_empty());
+        let mut prev = off.price[0].ln();
+        for i in 0..off.price.len() {
+            let c = off.price[i].ln();
+            assert!(
+                off.log_hi[i] >= prev.max(c) - 1e-9 && off.log_lo[i] <= prev.min(c) + 1e-9,
+                "bar {i}"
+            );
+            prev = c;
+        }
+        for (v, w) in releases() {
+            assert!(w.overnight == 0.0, "release {v}");
+        }
+        assert!(recipe("0.23.0-nasdaq").overnight == 0.0);
+        assert!(default_world().overnight == 0.0);
+    }
+
+    #[test]
+    fn the_open_recipe_is_the_nasdaq_recipe_with_exactly_the_open_and_the_re_anchored_bar_dials_moved()
+     {
+        let mut want = recipe("0.23.0-nasdaq");
+        want.overnight = 0.22;
+        want.range_scale = 0.78;
+        want.range_down = 0.13;
+        assert!(
+            recipe("0.23.1-nasdaq") == want,
+            "0.23.1-nasdaq must differ from 0.23.0-nasdaq in the open and the two bar dials only"
+        );
+    }
+
+    #[test]
+    fn on_the_open_sits_between_the_prior_close_and_the_close_on_its_own_side_and_the_bar_brackets_open_and_close()
+     {
+        let mut w = default_world();
+        w.range_scale = 0.78;
+        w.range_down = 0.13;
+        w.overnight = 0.20;
+        let p = simulate(&w, 5, DEFAULT_SEED);
+        assert_eq!(p.log_open.len(), p.price.len());
+        let lp: Vec<f64> = p.price.iter().map(|v| v.ln()).collect();
+        let (mut gap_up, mut gap_down) = (0usize, 0usize);
+        for i in 1..lp.len() {
+            let o = p.log_open[i] - lp[i - 1];
+            let r = lp[i] - lp[i - 1];
+            if o < 0.0 && r < 0.0 {
+                assert!(o >= r - 1e-12, "session {i} gapped past its own decline");
+            }
+            if o > 0.0 && r > 0.0 {
+                assert!(o <= r + 1e-12, "session {i} gapped past its own advance");
+            }
+            if o > 0.0 {
+                gap_up += 1;
+            } else if o < 0.0 {
+                gap_down += 1;
+            }
+            assert!(
+                p.log_hi[i] >= p.log_open[i].max(lp[i]) - 1e-9
+                    && p.log_lo[i] <= p.log_open[i].min(lp[i]) + 1e-9,
+                "bar {i} must bracket its open and close"
+            );
+        }
+        assert!(gap_up > 0 && gap_down > 0, "the open gaps both ways");
+        let mut off_w = w;
+        off_w.overnight = 0.0;
+        let off = simulate(&off_w, 5, DEFAULT_SEED);
+        assert!(
+            p.price == off.price,
+            "the price itself is untouched by the open"
+        );
+    }
+
+    /// The bars fixture's overnightShare rows: 0.33 (SPY) / 0.28 (QQQ), tol 0.10. A small
+    /// ensemble, so the tolerance is the fixture's, not the scoring size's.
+    #[test]
+    fn the_anchored_open_worlds_read_the_records_overnight_share_and_the_opens_rows_grade_only_when_it_ran()
+     {
+        let a = anchors_named("sp500");
+        let mut w = default_world();
+        w.range_scale = 0.78;
+        w.range_down = 0.13;
+        w.vol_idio = 0.34;
+        w.overnight = 0.20;
+        let sp = measure(&sim_paths(&w, 8, 100, DEFAULT_SEED), 100);
+        let os = sp.open.expect("no open readings with the dial on");
+        assert!(
+            (os.overnight_share - 0.33).abs() < 0.10,
+            "S&P overnight share {:.3}",
+            os.overnight_share
+        );
+        assert!(
+            os.worst_gap_share > os.all_gap_share,
+            "the worst sessions must open with more of the day gone: {:.3} vs {:.3}",
+            os.worst_gap_share,
+            os.all_gap_share
+        );
+        let rows = gate_checks(a, &sp);
+        assert!(
+            rows.iter()
+                .any(|r| r.0.starts_with("bar overnight share") && r.1)
+        );
+        assert!(
+            rows.iter().any(|r| r.0.starts_with("overnight gap share")
+                && r.1
+                && r.2 == GateClass::Mechanism)
+        );
+        let off = measure(&sim_paths(&default_world(), 4, 20, DEFAULT_SEED), 20);
+        assert!(
+            off.open.is_none()
+                && !gate_checks(a, &off)
+                    .iter()
+                    .any(|r| r.0.contains("overnight"))
+        );
     }
 }

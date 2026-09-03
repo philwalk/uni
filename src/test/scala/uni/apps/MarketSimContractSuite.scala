@@ -583,6 +583,15 @@ class MarketSimContractSuite extends FunSuite:
       "the recipe exists to name a world that emits every channel")
   }
 
+  test("the open recipe is the Nasdaq recipe with exactly the open and the re-anchored bar dials moved") {
+    val (_, base, _) = MarketSim.Recipes.find(_._1 == "0.23.0-nasdaq").getOrElse(fail("no Nasdaq recipe"))
+    val (_, w, a)    = MarketSim.Recipes.find(_._1 == "0.23.1-nasdaq").getOrElse(fail("no open recipe"))
+    assertEquals(a, "nasdaq")
+    assertEquals(w, base.copy(overnight = 0.22, rangeScale = 0.78, rangeDown = 0.13),
+      "0.23.1-nasdaq must differ from 0.23.0-nasdaq in the open and the two bar dials only")
+    assertEquals(base.overnight, 0.0, "the 0.23.0 recipe keeps its bars byte for byte: no open")
+  }
+
   test("valuation dispersion grows with the horizon, which is why the verdict is pinned") {
     // The defect `GateYears` closes: sd log(p/fair) is the sample sd of a near-integrated gap,
     // so it GROWS with the measurement window -- 0.11 at 30 years against 0.21 at 100 on the
