@@ -88,40 +88,43 @@
 - `-basket N` (default 0, off): N names as observational second-pass instances of the primary,
   each the shared sector leg (`-basketbeta` on the primary's observed return plus `-basketsector`
   idio riding the vol state × spiral) plus its own idio (`-basketidio`, on the vol state alone) and
-  its own Student-t gaps (`-basketgaps` per year). The equal-weight aggregate is the sector; the
+  its own Student-t gaps (`-basketgaps` per year, symmetric). The equal-weight aggregate is the sector; the
   primary is untouched and 0 is bit-identical. `-emit` gains `logBasket` and `logName1..N` when
   on; `channels.basket` carries the readings and `channels.level.kVs` the idio's level. Both twins
   byte-identical.
 - Graded at three levels against `basket-2026-09-02.tsv` (folio's eight semiconductor names under
   SMH, 2012–2026; re-derived by `BasketAnchorSuite` / `basket_anchor_tests`): per-name vol ratio
   and gap rate against the eight's ranges, the aggregate's correlation, beta and vol ratio against
-  SMH's relation to SPY, pairwise correlation, idio share and same-day tail coincidence against the
-  eight's, and a mechanism row — pairwise correlation on the primary's worst decile exceeds its
+  the eight's own basket read on the anchor set's primary, pairwise correlation, idio share and
+  same-day tail coincidence against the eight's, and a mechanism row — pairwise correlation on the primary's worst decile exceeds its
   middle decile — that a beta-plus-noise leg cannot pass. The names' time 20% below peak is
   reported, not graded: the eight's 0.08–0.61 is survivorship, disclosed in the fixture.
-- **A name's own gaps are SYMMETRIC.** They carried the primary's down-skew, which at the anchored
-  rate imposed −0.22/yr of log drift that no dial compensated: every name's expected drift was
-  negative and the time-below-peak reading sat near 1. The record says the skew belongs to the
-  index, not the name — across the eight, own moves past 10% run 41 up to 32 down with mean +0.011,
-  while SMH itself reads 1 up to 3 down — and the index's skew already reaches every name through
-  the shared leg. The channel is now drift-neutral, pinned by `BasketDriftSuite` /
-  `basket_drift_tests` and anchored in `basket-drift-2026-09-03.tsv`.
+- **A name's own gaps are symmetric, and the channel is therefore drift-neutral.** The down-skew
+  belongs to the INDEX and already reaches every name through the shared leg: across the eight,
+  own moves past 10% run 41 up to 32 down with mean +0.011, while SMH itself reads 1 up to 3 down
+  at skew −0.27 (`basket-drift-2026-09-03.tsv`). A shifted own-gap channel would impose drift
+  nothing compensates — at these rates about −0.2/yr of log drift, enough to turn a name's expected
+  drift negative — so `BasketDriftSuite` / `basket_drift_tests` pin both the record's symmetry and
+  the model's drift-neutrality.
 - Anchored N 8, beta 1.56, sector 1.1, idio 0.9, gaps 6.0: at 200 × 100 the names read 2.49× the
   primary's vol and 2.13 gaps/yr, the aggregate corr 0.793 / beta 1.562 / vol 1.97×, pairwise 0.575,
   idio share 0.374, tail coincidence 0.547, worst-decile pairwise 0.682 vs 0.212. `-atrelease
-  0.23.1-basket` names the S&P default with it on. Time below peak falls 0.943 → 0.548 against the
-  eight's 0.084–0.610, a reported reading.
+  0.23.1-basket` names the S&P default with it on. Time below peak reads 0.548 against the eight's
+  0.084–0.610 (median 0.236), a reported reading.
 - The level-2 bands come from the anchor set: the eight against SPY (0.770 / 1.557 / 2.023) or
   against QQQ (0.837 / 1.365 / 1.630), and level 1's vol ratio against that set's primary.
   **The dials do not transport with them** — `-atrelease 0.23.1-nasdaq-basket` names the Nasdaq
   world with the basket at beta 1.37, sector 0.7, idio 0.85, gaps 8.0, and reads names 2.04× /
   3.78 gaps per year, aggregate corr 0.853 / beta 1.371 / vol 1.61×, pairwise 0.567, idio share
   0.380, coincidence 0.537, worst-decile 0.636 vs 0.140: all three classes PASS. Time below peak
-  0.710, reported.
+  0.710, reported. The higher-volatility primary wants less idio and more own gaps than the S&P
+  set, because the cross-section rows need per-name tails the shared leg cannot supply.
 - The Nasdaq gap rate is a level, not a match. Level 1 grades volatility as a ratio to the
   primary, and that ratio's anchor is the eight against QQQ over 2012–2026 while the model's
-  primary is anchored to QQQ over 1999–2026, which is a fifth more volatile. With own gaps off the
-  rate still reads 2.14/yr against the eight's mean of 1.86, so no dial reaches it.
+  primary is anchored to QQQ over 1999–2026, which is a fifth more volatile. A name at the right
+  ratio therefore clears 10% more often than the eight did: with own gaps off entirely the rate
+  still reads 1.94/yr against their mean of 1.86, before the tail-coincidence row asks for more.
+  The row passes on the eight's own range; read the rate as a level, not as a match.
 - `-basketdrift X` (default 0, off, bit-identical): cross-sectional drift dispersion — the sd of
   the names' own annual log-drift offsets as a fraction of the primary's volatility, drawn once per
   name per path from its own stream and centred exactly, so the sector's log drift is untouched and
@@ -136,8 +139,7 @@
   drift across them is 0.068 against the 0.070 that a 14.6-year window generates from their idio
   volatility alone; for the 26-name population, 0.075 against 0.085. No true dispersion is
   detectable, and selecting survivors truncates the left tail, so 0 is a floor from biased data.
-- What is left of the names' time below peak is **not** a dispersion miss and this dial does not
-  close it: the eight's common drift is +0.304/yr against the shared leg's +0.117 over the same
+- The names' time below peak is **not** a dispersion miss and this dial does not close it: the eight's common drift is +0.304/yr against the shared leg's +0.117 over the same
   horizon, which is the survivorship the basket fixture discloses. Dispersion around the same
   centre widens the spread (0.14 → 0.67 across the dial's range) and moves the median only 0.528 →
   0.557. A rule reading mean drawdown across names should use its own rolling quantile, not an

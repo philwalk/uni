@@ -97,7 +97,10 @@ mean fundamental/price the yield was normalized by), and `logOpen` (`overnight >
 open; `logHigh`/`logLow` then bracket the open and the close rather than the prior close and the
 close, and `channels.open` carries the overnight share and the gap shares), and `logBasket` plus
 `logName1..N` (`basket > 0` — the equal-weight aggregate and the names, all logs; N from the header;
-`channels.basket` carries the three levels' readings). Every log column carries a NATURAL
+`channels.basket` carries the three levels' readings plus `nameD20Spread`, the spread of time below
+peak across the names). `world.basketDrift` records the cross-sectional drift dispersion dial, and
+when it is on `channels.level.kDr` carries the primary's realized annualized volatility the dial is
+a fraction of; a file with the dial off has neither `kDr` nor any other new key. Every log column carries a NATURAL
 LOG rather than a
 level, because a level near 10^6 rendered at six decimals sits within reach of a cross-language
 rounding tie the twins' byte-parity checks would trip on. A channels-off schema-10 file differs
@@ -970,20 +973,10 @@ range (0.4–5.1, AMD at the top); read the rate as a level, not as a match. The
 
 The names spend more of their time than the record's do more than 20% below their running peak —
 0.548 on the S&P recipe and 0.710 on the Nasdaq, where folio's eight read 0.084–0.610 with a
-median of 0.236. That row is **reported, not graded**, and it is worth being exact about what is
-left in it, because two different things were once mixed together.
+median of 0.236. That row is **reported, not graded**. What is in it is the **common drift**, and
+that is survivorship.
 
-**One part was a defect, fixed in 0.23.1.** A name's own gaps carried the primary's down-skew, so
-each one landed 0.7 of a standard deviation low. At the anchored rate that imposed −0.22 a year of
-log drift with nothing to compensate it, which drove every name's expected drift *negative* and
-pinned the reading near 1.0. The record says a name's own large moves are not skewed down: across
-the eight, moves past 10% in the residual after SMH run 41 up to 32 down with mean +0.011, while
-the index itself is the skewed one (SMH: 1 up, 3 down, skew −0.27). The down-skew belongs to the
-index and already reaches every name through the shared leg, so the own-gap channel is now
-symmetric and drift-neutral. `BasketDriftSuite` / `basket_drift_tests` pin it.
-
-**What remains is the common drift, and that is survivorship.** Measured over the eight's own
-window (`basket-drift-2026-09-03.tsv`, 2012–2026, T = 14.6 years):
+Measured over the eight's own window (`basket-drift-2026-09-03.tsv`, 2012–2026, T = 14.6 years):
 
 | | the eight | the 26-name population |
 |---|---|---|
@@ -999,13 +992,20 @@ true drift dispersion is detectable at all. And both groups are selected today �
 truncates the left tail and biases the estimate downward, so 0 is a floor from biased data rather
 than a measurement of the world.
 
-The gap that is left is the **common** drift: +0.304 a year for the eight against the shared leg's
-+0.117 over the same horizon. These are the names that won. Dispersion around the right centre
-cannot close that, and the dial shows it: at 200 × 100 the spread of time below peak runs 0.14
-(off, pure estimation noise) → 0.52 at 0.6 → 0.67 at 0.9, while the median moves only 0.528 →
-0.557 and the aggregate's correlation, beta and volatility ratio do not move at all. Raising the
-centre to +0.304 would close the row and would be calibrating the model to names selected for
-having won, so it is not on offer.
+The gap that is left is the level: +0.304 a year for the eight against the shared leg's +0.117 over
+the same horizon. These are the names that won. Dispersion around the right centre cannot close
+that, and the dial shows it — at 200 × 100 the spread of time below peak runs 0.14 (off, pure
+estimation noise) → 0.52 at 0.6 → 0.67 at 0.9, while the median moves only 0.528 → 0.557 and the
+aggregate's correlation, beta and volatility ratio do not move at all. Raising the centre to +0.304
+would close the row and would be calibrating the model to names selected for having won, so it is
+not on offer.
+
+Two mechanism properties keep that reading honest, and both are pinned by
+`BasketDriftSuite` / `basket_drift_tests`. A name's **own gaps are symmetric**, so the gap channel
+imposes no drift of its own: the down-skew belongs to the index, which already reaches every name
+through the shared leg (across the eight, own moves past 10% run 41 up to 32 down with mean +0.011,
+while SMH itself reads 1 up to 3 down at skew −0.27). And the **drift offsets are centred exactly**,
+so turning the dial up moves the cross-section without moving the sector.
 
 So `-basketdrift` ships at 0 and no recipe turns it on. The model agrees with the record there:
 run the same decomposition on the model's own names over a 15-year window and the spread of

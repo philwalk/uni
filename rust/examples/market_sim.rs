@@ -1222,9 +1222,9 @@ struct World {
     /// per-name gap intensity, jumps per year; each a standardized t(JUMP_NU) x
     /// `BASKET_GAP_SIZE` (log), SYMMETRIC — the index's down-skew is the index's and reaches every
     /// name through the shared leg, while the record's own name-level gaps past 10% run 41 up to
-    /// 32 down with mean +0.011 (`basket-drift-2026-09-03.tsv`). A shifted own-gap channel would
-    /// impose drift no dial compensates: at 3.5/yr the primary's 0.7 skew cost -0.22/yr of log
-    /// drift, more than the shared leg supplies
+    /// 32 down with mean +0.011 (`basket-drift-2026-09-03.tsv`). A shifted own-gap channel imposes
+    /// drift nothing compensates — at these rates the primary's 0.7 skew is about -0.2/yr of log
+    /// drift, more than the shared leg supplies, so every name's expected drift goes negative
     basket_gaps: f64,
     /// CROSS-SECTIONAL DRIFT DISPERSION: the sd of the names' own annual log-drift offsets, as a
     /// FRACTION of the primary's realized annualized vol (`ChannelLevel::k_dr`), so it transports.
@@ -1235,8 +1235,8 @@ struct World {
     /// drift (0.068) is entirely accounted for by what a 14.6-year window generates from their own
     /// idio vol (0.070), so no true dispersion is detectable, and selecting survivors truncates the
     /// left tail — 0 is a FLOOR from biased data, not a measurement. The names' time below peak is
-    /// NOT what this dial fixes: that gap is the eight's COMMON drift (+0.304 against the model's
-    /// +0.144), which is the survivorship the basket fixture discloses.
+    /// NOT what this dial fixes: that gap is the eight's COMMON drift (+0.304 against the shared leg's
+    /// +0.117 over the same horizon), which is the survivorship the basket fixture discloses.
     ///
     /// WHAT IT IS FOR: at 0 every name has the same expected drift BY CONSTRUCTION (shared sector
     /// leg; idio and gaps share a mean), so the basket is a NULL WORLD for cross-sectional

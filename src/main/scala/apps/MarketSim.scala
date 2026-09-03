@@ -321,7 +321,9 @@ object MarketSim:
     "              ;   untouched.  ANCHORED AT 0: among the eight the spread of realized drift",
     "              ;   (0.068) is what a 14.6-year window alone generates (0.070), and survivors",
     "              ;   truncate the left tail, so 0 is a floor from biased data.  Their time",
-    "              ;   below peak is the COMMON drift (+0.304 vs the model's +0.144), not this",
+    "              ;   below peak is the COMMON drift (+0.304 vs the shared leg's +0.117), not",
+    "              ;   this.  At 0 every name has the SAME expected drift, so the basket is a null",
+    "              ;   world for a rule that ranks names: sweep the dial for its detection floor",
     "-barsemit P   ; dev tap: per-path logPrice/logHigh/logLow[/logVolume] TSVs for grading",
     "              ;   the bar channels against the bars anchors",
     s"-refugedays X ; half-life in sessions of the settled stress the refuge bid reads, which",
@@ -652,9 +654,10 @@ object MarketSim:
                                 // shared leg, while the record's own name-level gaps past 10%
                                 // run 41 up to 32 down with mean +0.011
                                 // (`basket-drift-2026-09-03.tsv`).  A shifted own-gap channel
-                                // would impose drift no dial compensates: at 3.5/yr the primary's
-                                // 0.7 skew cost -0.22/yr of log drift, more than the shared leg
-                                // supplies
+                                // imposes drift nothing compensates -- at these rates the
+                                // primary's 0.7 skew is about -0.2/yr of log drift, more than the
+                                // shared leg supplies, so every name's expected drift goes
+                                // negative
     basketDrift: Double = 0.0   // CROSS-SECTIONAL DRIFT DISPERSION: the sd of the names' own
                                 // annual log-drift offsets, as a FRACTION of the primary's
                                 // realized annualized vol (`ChannelLevel.kDr`), so it transports.
@@ -668,7 +671,8 @@ object MarketSim:
                                 // selecting survivors truncates the left tail -- 0 is a FLOOR
                                 // from biased data, not a measurement.  The names' time below
                                 // peak is NOT what this dial fixes: that gap is the eight's
-                                // COMMON drift (+0.304 against the model's +0.144), which is the
+                                // COMMON drift (+0.304 against the shared leg's +0.117 over the
+                                // same horizon), which is the
                                 // survivorship the basket fixture discloses.
                                 //
                                 // WHAT IT IS FOR: at 0 every name has the same expected drift BY
