@@ -335,20 +335,31 @@ plus a bisection solve for the equity section — so scale `-paths` down for a q
 
 Depth is not shape. `-ddshape` reports median decline duration, recovery duration, time underwater
 and **worst-day share** — how much of a peak-to-trough decline arrives in its single worst session —
-at the 10% and 20% thresholds, against SPY 1993–2026.
+at the 10% and 20% thresholds, against the anchor set's own references: the CRSP century, its three
+33-year windows and SPY for the S&P set; the Nasdaq-100 index from 1990 and QQQ for the Nasdaq set
+(`ddshape-2026-09-02.tsv`). The ratio reads against the longest history, and the min/max rows show
+how far the references disagree with each other — at 10% the century's windows put the median
+decline anywhere from 65 to 135 sessions and the worst-day share from 14% to 29%, which is wider
+than most model/real ratios in the table.
 
 It uses a **second episode definition on purpose**: the model's own crash count is a 15%-below-peak
 excursion that re-arms at 2%, built for counting; these are peak-to-trough-to-full-recovery
 episodes, built for shape. Do not mix the two.
 
-Nothing in it is gated. The reference is one history — 12 episodes at 10%, four at 20% — and a band
-off four episodes could not fail.
+Nothing in it is gated. Even the century holds only 16 episodes at 20%, SPY four, and a band off
+four episodes could not fail. Every median, real and model, is the twins' own `pctile(.., 0.5)`:
+the upper of the two middle elements of an ascending sort, where NumPy averages them — at four
+episodes the two conventions differ by up to a third of a statistic, so reproduce the reference
+rows with the model's median or expect to land one element away.
 
-At the shipped world, 10% declines take 1.42× as long as SPY's and deliver 0.61× as much of
-themselves in their worst session; at 20% they are 0.34× as long and recover 0.34× as fast.
-**Kurtosis is not the explanation** — it has sat on its anchor since 0.21.0 while the worst-day ratio
-barely moved. Read the worst-day column beside the decline column: a decline that grinds twice as
-long dilutes its worst session by construction. The finding is about duration, not tails.
+At the shipped world against the century (200 paths × 100 years): 10% declines are 0.79× as long,
+recover in 0.94× the time and deliver 1.6× as much of themselves in their worst session; 20%
+declines are 0.51× as long and recover in 0.83× the time. Against SPY alone the 10% row reads
+0.97× on duration and 0.85× on worst-day share. The miss that survives every reference is the
+**deep decline's duration**: a 20% decline takes half as long as any real one in the table. On the
+`0.23.0-nasdaq` recipe the shape runs the other way — 10% declines 1.26× and recoveries 1.43× the
+Nasdaq-100's, 20% recoveries 1.67× — so a rule keyed on time underwater reads a world that stays
+down too long at Nasdaq volatility and gets up too fast at the S&P's.
 
 ## The worst session — `-haltlimit`
 
@@ -856,10 +867,12 @@ dials and selects the Nasdaq anchors: realism, mechanism and fidelity PASS with 
 graded.
 
 The Nasdaq set's sampling spreads are measured at this recipe (`-noise -anchors nasdaq`, 200
-paths), not carried from the S&P's. Its loss therefore weights the rows differently from every
-earlier release — 1.672 at this recipe against 2.209 on the carried spreads — so a
-`-calibrate -anchors nasdaq` result from before 0.23.0 optimised a different function. Still
-shared: the per-target spreads the loss weights read inline are the S&P world's for both sets.
+paths), not carried from the S&P's — every spread, since 0.23.1 including the depth rungs, the
+valuation proxy and the bond rows, which through 0.23.0 read the S&P world's inline constants for
+both sets. The deep rung is where it matters: d20's spread at this recipe is 0.30 against the S&P
+default's 2.38, so the row carries real weight here where the S&P loss all but ignores it. The
+loss at this recipe reads 2.020 under its own spreads, so a `-calibrate -anchors nasdaq` result
+from any earlier release optimised a different function.
 
 ## Biases you inherit whatever you choose
 

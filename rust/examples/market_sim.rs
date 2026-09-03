@@ -3717,7 +3717,103 @@ struct Anchors {
     /// pair against TLT).
     tail_hedge: f64,
     tail_hedge_sd: f64,
+    /// Sampling spreads for the rows whose LEVEL is not asset-specific — the theory-valued depth
+    /// rungs, the valuation proxy and the bond rows — but whose spread is: measured by `-noise`
+    /// at the set's own world (the S&P default; the 0.23.0-nasdaq recipe), 200 paths, and frozen
+    /// like the spreads above. Carried inline through 0.23.0, so the Nasdaq loss weighted these
+    /// rows with the S&P world's spreads.
+    val_disp_sd: f64,
+    d5_sd: f64,
+    d10_sd: f64,
+    d20_sd: f64,
+    bond_vol_sd: f64,
+    bond_growth_sd: f64,
+    bond_infl_sd: f64,
+    bond_depth_sd: f64,
+    /// Drawdown-SHAPE references for `-ddshape`, the first the primary the ratios read against;
+    /// `ddshape-2026-09-02.tsv`, on the model's own episode definition and median.
+    dd_refs: &'static [DdRef],
 }
+
+/// One real drawdown-shape reference: a series over a window, and per threshold (thr, episodes,
+/// per year, median depth %, median decline, median recovery, median underwater, median worst-day
+/// share) — every median `pctile(.., 0.5)`, the model rows' own. Windows of the century at SPY's
+/// own length carry the spread one SPY-length history can show.
+struct DdRef {
+    series: &'static str,
+    window: &'static str,
+    years: f64,
+    rows: [DdRefRow; 2],
+}
+
+const DD_REFS_SP500: [DdRef; 5] = [
+    DdRef {
+        series: "CRSP",
+        window: "1926-2026",
+        years: 100.00,
+        rows: [
+            (0.10, 31, 0.310, -20.2, 78, 84, 196, 0.153),
+            (0.20, 16, 0.160, -27.7, 235, 234, 434, 0.143),
+        ],
+    },
+    DdRef {
+        series: "CRSP",
+        window: "1926-1959",
+        years: 33.50,
+        rows: [
+            (0.10, 7, 0.209, -12.8, 125, 67, 196, 0.191),
+            (0.20, 3, 0.090, -28.3, 273, 722, 994, 0.133),
+        ],
+    },
+    DdRef {
+        series: "CRSP",
+        window: "1960-1993",
+        years: 33.07,
+        rows: [
+            (0.10, 14, 0.423, -18.7, 135, 103, 269, 0.140),
+            (0.20, 7, 0.212, -27.7, 167, 233, 368, 0.131),
+        ],
+    },
+    DdRef {
+        series: "CRSP",
+        window: "1993-2026",
+        years: 33.42,
+        rows: [
+            (0.10, 10, 0.299, -20.4, 65, 94, 145, 0.236),
+            (0.20, 6, 0.180, -25.6, 235, 296, 530, 0.153),
+        ],
+    },
+    DdRef {
+        series: "SPY",
+        window: "1993-2026",
+        years: 33.59,
+        rows: [
+            (0.10, 12, 0.357, -18.8, 64, 75, 131, 0.290),
+            (0.20, 4, 0.119, -33.7, 355, 869, 1223, 0.158),
+        ],
+    },
+];
+
+const DD_REFS_NASDAQ: [DdRef; 2] = [
+    DdRef {
+        series: "NDX",
+        window: "1990-2026",
+        years: 36.66,
+        rows: [
+            (0.10, 32, 0.873, -13.2, 34, 37, 74, 0.302),
+            (0.20, 7, 0.191, -28.0, 62, 78, 142, 0.181),
+        ],
+    },
+    DdRef {
+        series: "QQQ",
+        window: "1999-2026",
+        years: 27.48,
+        rows: [
+            (0.10, 21, 0.764, -12.0, 20, 44, 61, 0.304),
+            (0.20, 5, 0.182, -28.6, 80, 75, 154, 0.181),
+        ],
+    },
+];
 
 /// The S&P/CRSP set. The LEVELS are the ones every release before 0.21.0 hard-coded, moved rather
 /// than re-measured. The SPREADS were re-frozen in 0.22.0 from `-noise -paths 200` at the adopted
@@ -3773,6 +3869,15 @@ const SP500_ANCHORS: Anchors = Anchors {
     lev_corr_sd: 0.44,
     tail_hedge: -0.273,
     tail_hedge_sd: 0.24,
+    val_disp_sd: 0.64,
+    d5_sd: 0.19,
+    d10_sd: 0.45,
+    d20_sd: 2.38,
+    bond_vol_sd: 0.52,
+    bond_growth_sd: 1.48,
+    bond_infl_sd: 1.99,
+    bond_depth_sd: 0.36,
+    dd_refs: &DD_REFS_SP500,
 };
 
 /// The Nasdaq-100 set, measured 2026-08-28 from QQQ daily adjusted closes over its own full history,
@@ -3839,6 +3944,18 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     lev_corr_sd: 0.43,
     tail_hedge: -0.236,
     tail_hedge_sd: 0.24,
+    // `-noise -anchors nasdaq` at the 0.23.0-nasdaq recipe, 200 paths, 2026-09-02. d20's spread
+    // is a fraction of the S&P world's (0.30 against 2.38): at Nasdaq volatility the deep rung is
+    // pinned where the S&P default leaves it unreadable, so the row carries real weight here.
+    val_disp_sd: 0.53,
+    d5_sd: 0.12,
+    d10_sd: 0.19,
+    d20_sd: 0.30,
+    bond_vol_sd: 0.52,
+    bond_growth_sd: 0.91,
+    bond_infl_sd: 1.71,
+    bond_depth_sd: 0.36,
+    dd_refs: &DD_REFS_NASDAQ,
 };
 
 fn anchors_named(spec: &str) -> Anchors {
@@ -3983,7 +4100,7 @@ fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             "valuation dispersion",
             (|st: &WorldStats| st.val_disp) as StatFn,
             0.30,
-            wgt(0.5, 0.64),
+            wgt(0.5, a.val_disp_sd),
         ),
         (
             "crashes/century",
@@ -4034,7 +4151,7 @@ fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             "bond vol % (24y)",
             (|st| st.bond_vol * 100.0) as StatFn,
             13.0,
-            wgt(1.0, 0.52),
+            wgt(1.0, a.bond_vol_sd),
         ),
         // RE-MEASURED in 0.22.0, same error class as `median depth %` above: `20.0` is 2008 ALONE,
         // the largest of the five growth-shock episodes in the record, and this row is a MEDIAN
@@ -4047,7 +4164,7 @@ fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             "bond growth-crash",
             (|st| st.bond_growth) as StatFn,
             6.6,
-            wgt(1.0, 1.48),
+            wgt(1.0, a.bond_growth_sd),
         ),
         // The judgment stays at 1.5 — inflation-crash behaviour is why the bond refuge exists —
         // and the measured precision crushes the weight to ~0.13 anyway: sd/real 2.89, and only
@@ -4061,7 +4178,7 @@ fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             "bond infl-crash",
             (|st| st.bond_infl) as StatFn,
             -34.7,
-            wgt(1.5, 1.99),
+            wgt(1.5, a.bond_infl_sd),
         ),
         // Does the refuge hold exactly where it is needed — stock-bond correlation on calm
         // sessions with the equity return below its own calm q10, against the pair's own record
@@ -4124,13 +4241,13 @@ fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             "equity d5 vs real",
             (|st: &WorldStats| st.eq_d5_vs_real()) as StatFn,
             1.00,
-            wgt(0.5, 0.19),
+            wgt(0.5, a.d5_sd),
         ),
         (
             "equity d10 vs real",
             (|st: &WorldStats| st.eq_d10_vs_real()) as StatFn,
             1.00,
-            wgt(1.0, 0.45),
+            wgt(1.0, a.d10_sd),
         ),
         // d20's sdRel moved 0.99 -> 1.56 in the 0.21.0 recovery-drag change, and like kurtosis's
         // move it is a re-measurement of a statistic that genuinely became more variable, not a
@@ -4141,13 +4258,13 @@ fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             "equity d20 vs real",
             (|st: &WorldStats| st.eq_d20_vs_real()) as StatFn,
             1.00,
-            wgt(0.5, 2.38),
+            wgt(0.5, a.d20_sd),
         ),
         (
             "bond depth vs vol",
             (|st: &WorldStats| st.bond_depth_vs_vol()) as StatFn,
             1.00,
-            wgt(0.5, 0.36),
+            wgt(0.5, a.bond_depth_sd),
         ),
     ]
 }
@@ -7047,17 +7164,100 @@ fn dd_episodes(px: &[f64], threshold: f64) -> Vec<DdEpisode> {
 /// (threshold, episodes, per year, depth %, decline, recovery, underwater, worst-day share)
 type DdRefRow = (f64, usize, f64, f64, usize, usize, usize, f64);
 
-/// SPY total return, 1993-01-29..2026-08-26, measured with `dd_episodes` above. ONE history, and
-/// the episode counts are printed so nobody reads a median of four as a population value.
-const DD_REAL_SPY: [DdRefRow; 2] = [
-    (0.10, 12, 0.36, -18.9, 50, 67, 125, 0.286),
-    (0.20, 4, 0.12, -40.6, 275, 582, 856, 0.144),
-];
+/// One threshold of the shape report: every reference row, the min/max across them, the model's
+/// pooled row, and the ratio against the primary reference.
+fn print_dd_threshold(thr: f64, eps: &[DdEpisode], rows: &[(&DdRef, DdRefRow)], p_yrs: f64) {
+    let pct = (thr * 100.0) as usize;
+    let med = |f: &dyn Fn(&DdEpisode) -> f64| {
+        let v: Vec<f64> = eps.iter().map(f).collect();
+        pctile(&v, 0.5)
+    };
+    let recov: Vec<f64> = eps
+        .iter()
+        .filter_map(|e| e.recovery.map(|r| r as f64))
+        .collect();
+    for (r, (_, r_eps, r_yr, r_depth, r_decl, r_recov, r_undw, r_wds)) in rows {
+        println!(
+            "  {:<15} {:>3}% {:>5} {} {}% {:>8} {:>9} {:>9} {}%",
+            format!("{} {}", r.series, r.window),
+            pct,
+            r_eps,
+            jf(*r_yr, 7, 2),
+            jf(*r_depth, 7, 1),
+            r_decl,
+            r_recov,
+            r_undw,
+            jf(r_wds * 100.0, 9, 1)
+        );
+    }
+    let ext = |pick: &dyn Fn(&[f64]) -> f64| -> [f64; 6] {
+        let col = |g: &dyn Fn(&DdRefRow) -> f64| -> f64 {
+            let v: Vec<f64> = rows.iter().map(|(_, row)| g(row)).collect();
+            pick(&v)
+        };
+        [
+            col(&|r| r.2),
+            col(&|r| r.3),
+            col(&|r| r.4 as f64),
+            col(&|r| r.5 as f64),
+            col(&|r| r.6 as f64),
+            col(&|r| r.7),
+        ]
+    };
+    let fmin = |v: &[f64]| v.iter().cloned().fold(f64::INFINITY, f64::min);
+    let fmax = |v: &[f64]| v.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    for (label, x) in [("refs min", ext(&fmin)), ("refs max", ext(&fmax))] {
+        println!(
+            "  {:<15} {:>3}% {:>5} {} {}% {} {} {} {}%",
+            label,
+            pct,
+            "",
+            jf(x[0], 7, 2),
+            jf(x[1], 7, 1),
+            jf(x[2], 8, 0),
+            jf(x[3], 9, 0),
+            jf(x[4], 9, 0),
+            jf(x[5] * 100.0, 9, 1)
+        );
+    }
+    let (_, _, r_yr, r_depth, r_decl, r_recov, r_undw, r_wds) = rows[0].1;
+    let m_depth = med(&|e| e.depth) * 100.0;
+    let m_decl = med(&|e| e.decline as f64);
+    let m_recov = pctile(&recov, 0.5);
+    let m_undw = med(&|e| e.underwater as f64);
+    let m_wds = med(&|e| e.worst_day_share);
+    println!(
+        "  {:<15} {:>3}% {:>5} {} {}% {} {} {} {}%",
+        "model",
+        pct,
+        eps.len(),
+        jf(eps.len() as f64 / p_yrs, 7, 2),
+        jf(m_depth, 7, 1),
+        jf(m_decl, 8, 0),
+        jf(m_recov, 9, 0),
+        jf(m_undw, 9, 0),
+        jf(m_wds * 100.0, 9, 1)
+    );
+    println!(
+        "  {:<15} {:>3}% {:>5} {} {} {} {} {} {}",
+        "ratio",
+        pct,
+        "",
+        jf(eps.len() as f64 / p_yrs / r_yr, 7, 2),
+        jf(m_depth / r_depth, 8, 2),
+        jf(m_decl / r_decl as f64, 8, 2),
+        jf(m_recov / r_recov as f64, 9, 2),
+        jf(m_undw / r_undw as f64, 9, 2),
+        jf(m_wds / r_wds, 10, 2)
+    );
+    println!();
+}
 
-fn run_drawdown_shape(paths: usize, years: usize, seed: u64, base: &World) {
+fn run_drawdown_shape(a: &Anchors, paths: usize, years: usize, seed: u64, base: &World) {
     eprintln!("{paths} paths x {years} years");
     let sims = sim_paths(base, paths, years, seed);
     let p_yrs = sims.len() as f64 * years as f64;
+    let refs = a.dd_refs;
     println!("DRAWDOWN SHAPE — how a decline is DELIVERED: how long it takes, and how much of it");
     println!(
         "arrives in its single worst session.  This is a SECOND episode definition on purpose:"
@@ -7070,90 +7270,50 @@ fn run_drawdown_shape(paths: usize, years: usize, seed: u64, base: &World) {
     );
     println!();
     println!(
-        "Reference: SPY total return 1993-01-29..2026-08-26, ONE history — 12 episodes at the"
+        "References for the {} set, every median on the model's own pctile(.., 0.5); the",
+        a.name
     );
     println!(
-        "10% threshold, 4 at the 20%.  NOTHING HERE IS GATED; a band off four episodes could not"
+        "ratio reads against {} {} ({:.0} years) and the min/max rows span every",
+        refs[0].series, refs[0].window, refs[0].years
     );
-    println!("fail.  The ratios are for reading, not for passing.");
+    println!("reference.  NOTHING HERE IS GATED: the episode counts are printed so nobody reads a");
+    println!(
+        "median of four as a population value, and the ratios are for reading, not for passing."
+    );
     println!();
     println!(
-        "  {:<10} {:>4} {:>5} {:>7} {:>8} {:>8} {:>9} {:>9} {:>10}",
+        "  {:<15} {:>4} {:>5} {:>7} {:>8} {:>8} {:>9} {:>9} {:>10}",
         "series", "thr", "eps", "eps/yr", "depth", "decline", "recovery", "underwtr", "worst-day"
     );
-    for (thr, r_eps, r_yr, r_depth, r_decl, r_recov, r_undw, r_wds) in DD_REAL_SPY {
+    for thr in [0.10, 0.20] {
         let eps: Vec<DdEpisode> = sims
             .iter()
             .flat_map(|p| dd_episodes(&p.price, thr))
             .collect();
-        let med = |f: &dyn Fn(&DdEpisode) -> f64| {
-            let v: Vec<f64> = eps.iter().map(f).collect();
-            pctile(&v, 0.5)
-        };
-        let recov: Vec<f64> = eps
+        let rows: Vec<(&DdRef, DdRefRow)> = refs
             .iter()
-            .filter_map(|e| e.recovery.map(|r| r as f64))
+            .filter_map(|r| r.rows.iter().find(|row| row.0 == thr).map(|row| (r, *row)))
             .collect();
-        let pct = (thr * 100.0) as usize;
-        let m_depth = med(&|e| e.depth) * 100.0;
-        let m_decl = med(&|e| e.decline as f64);
-        let m_recov = pctile(&recov, 0.5);
-        let m_undw = med(&|e| e.underwater as f64);
-        let m_wds = med(&|e| e.worst_day_share);
-        println!(
-            "  {:<10} {:>3}% {:>5} {} {}% {:>8} {:>9} {:>9} {}%",
-            "real SPY",
-            pct,
-            r_eps,
-            jf(r_yr, 7, 2),
-            jf(r_depth, 7, 1),
-            r_decl,
-            r_recov,
-            r_undw,
-            jf(r_wds * 100.0, 9, 1)
-        );
-        println!(
-            "  {:<10} {:>3}% {:>5} {} {}% {} {} {} {}%",
-            "model",
-            pct,
-            eps.len(),
-            jf(eps.len() as f64 / p_yrs, 7, 2),
-            jf(m_depth, 7, 1),
-            jf(m_decl, 8, 0),
-            jf(m_recov, 9, 0),
-            jf(m_undw, 9, 0),
-            jf(m_wds * 100.0, 9, 1)
-        );
-        println!(
-            "  {:<10} {:>3}% {:>5} {} {} {} {} {} {}",
-            "ratio",
-            pct,
-            "",
-            jf(eps.len() as f64 / p_yrs / r_yr, 7, 2),
-            jf(m_depth / r_depth, 8, 2),
-            jf(m_decl / r_decl as f64, 8, 2),
-            jf(m_recov / r_recov as f64, 9, 2),
-            jf(m_undw / r_undw as f64, 9, 2),
-            jf(m_wds / r_wds, 10, 2)
-        );
-        println!();
+        print_dd_threshold(thr, &eps, &rows, p_yrs);
     }
     println!("  A LOW worst-day ratio means the model's declines GRIND where the real one GAPPED.");
     println!(
         "  Read it beside the decline column: a decline taking twice as long dilutes its worst"
     );
-    println!("  session by construction, so the two move together.  Daily KURTOSIS is not the");
+    println!("  session by construction, so the two move together -- and read both against the");
     println!(
-        "  explanation -- it has sat on its anchor since 0.21.0 while this ratio barely moved."
+        "  min/max rows before the ratio: the references disagree with each other by more than"
     );
+    println!("  most model/real ratios here.");
     println!();
+    println!("  Medians here are `pctile(.., 0.5)`: the UPPER of the two middle elements of an");
     println!(
-        "  Medians here are `pctile(.., 0.5)`: the lower of the two middle elements on an even"
+        "  ascending sort on an even count (a depth reads the shallower, a duration the longer),"
     );
-    println!(
-        "  count, where NumPy averages them.  A consumer reproducing this can land one element"
-    );
-    println!("  away on a duration and be right.");
+    println!("  where NumPy averages them.  The reference rows are on the same median, so a");
+    println!("  consumer reproducing them with NumPy lands one element away on a four-episode");
+    println!("  statistic and is right.");
 }
 
 #[expect(
@@ -8812,7 +8972,7 @@ fn main() {
         return;
     }
     if dd_shape {
-        run_drawdown_shape(paths, years, seed, &w);
+        run_drawdown_shape(&anchors, paths, years, seed, &w);
         return;
     }
     if buffer_report {
@@ -11581,5 +11741,152 @@ mod bars_anchor_tests {
                 "{stat}: model median {got:.3} vs anchor {v:.3} +/- {tol:.2}"
             );
         }
+    }
+}
+
+/// The drawdown-shape references are MEASURED numbers on the model's own episode definition and
+/// median; this re-derives both anchor sets' references from the checked-in fixture so the code
+/// and the record cannot drift apart. The Scala twin carries the same checks in
+/// `DdShapeAnchorSuite`, against the same file.
+#[cfg(test)]
+mod dd_shape_anchor_tests {
+    use super::*;
+
+    const FIXTURE: &str = "../test-data/equity-anchors/ddshape-2026-09-02.tsv";
+
+    /// `None` where the fixture is absent — the crate ships without `test-data/`, so a
+    /// source-tarball build must not fail here.
+    fn rows() -> Option<Vec<Vec<String>>> {
+        let text = std::fs::read_to_string(FIXTURE).ok()?;
+        Some(
+            text.lines()
+                .filter(|l| !l.starts_with('#') && !l.starts_with("set\t") && !l.trim().is_empty())
+                .map(|l| l.split('\t').map(str::to_string).collect())
+                .collect(),
+        )
+    }
+
+    fn set_name(a: &Anchors) -> &'static str {
+        if a.name == SP500_ANCHORS.name {
+            "sp500"
+        } else if a.name == NASDAQ_ANCHORS.name {
+            "nasdaq"
+        } else {
+            panic!("no fixture set name for {}", a.name)
+        }
+    }
+
+    #[test]
+    fn every_reference_row_of_both_anchor_sets_is_the_fixtures_row() {
+        let Some(rs) = rows() else {
+            return;
+        };
+        for a in [SP500_ANCHORS, NASDAQ_ANCHORS] {
+            let set = set_name(&a);
+            assert!(
+                !a.dd_refs.is_empty(),
+                "{} carries no shape reference",
+                a.name
+            );
+            for r in a.dd_refs {
+                for (thr, eps, per_yr, depth, decl, recov, undw, wds) in r.rows {
+                    let pct = ((thr * 100.0) as usize).to_string();
+                    let f = rs
+                        .iter()
+                        .find(|x| {
+                            x[0] == set
+                                && x[1] == r.series
+                                && x[5] == pct
+                                && format!("{}-{}", &x[2][..4], &x[3][..4]) == r.window
+                        })
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "fixture row [{set} {} {} {pct}%] missing",
+                                r.series, r.window
+                            )
+                        });
+                    let tag = format!("{} {} {} {pct}%", a.name, r.series, r.window);
+                    let num = |i: usize| -> f64 { f[i].parse().expect("numeric fixture value") };
+                    assert!((r.years - num(4)).abs() < 0.005, "{tag} years");
+                    assert_eq!(eps, num(6) as usize, "{tag} episodes");
+                    assert!((per_yr - num(7)).abs() < 0.0005, "{tag} per year");
+                    assert!((depth - num(8)).abs() < 0.05, "{tag} depth");
+                    assert_eq!(decl, num(9) as usize, "{tag} decline");
+                    assert_eq!(recov, num(10) as usize, "{tag} recovery");
+                    assert_eq!(undw, num(11) as usize, "{tag} underwater");
+                    assert!((wds - num(12)).abs() < 0.0005, "{tag} worst-day share");
+                }
+            }
+        }
+    }
+
+    /// The ratio reads against the FIRST reference, so it must be the one with the most episodes
+    /// behind its medians; the fixture's shorter windows exist to show the spread, not to anchor.
+    #[test]
+    fn each_reference_carries_both_thresholds_and_the_primary_is_the_longest_history() {
+        for a in [SP500_ANCHORS, NASDAQ_ANCHORS] {
+            for r in a.dd_refs {
+                let thrs: Vec<f64> = r.rows.iter().map(|row| row.0).collect();
+                assert_eq!(
+                    thrs,
+                    vec![0.10, 0.20],
+                    "{} {} {}",
+                    a.name,
+                    r.series,
+                    r.window
+                );
+            }
+            let longest = a
+                .dd_refs
+                .iter()
+                .map(|r| r.years)
+                .fold(f64::NEG_INFINITY, f64::max);
+            assert!(
+                a.dd_refs[0].years >= longest,
+                "{}: the primary reference must be the longest history",
+                a.name
+            );
+        }
+    }
+
+    /// The 0.23.0 rows were NumPy medians and disagreed with the model rows by up to a third of a
+    /// statistic at four episodes. Pinned here so the convention cannot silently revert.
+    #[test]
+    fn the_reference_median_is_the_models_own_upper_middle_element_never_the_average() {
+        assert_eq!(pctile(&[1.0, 2.0, 3.0, 4.0], 0.5), 3.0);
+        assert_eq!(pctile(&[4.0, 1.0, 3.0, 2.0], 0.5), 3.0);
+    }
+
+    /// These spreads were inline S&P constants through 0.23.0, so the Nasdaq loss weighted its
+    /// rows with the S&P world's spreads. The one that matters most: the deep rung's spread at
+    /// Nasdaq volatility is a fraction of the S&P default's.
+    #[test]
+    fn the_eight_carried_spreads_are_per_anchor_set_and_the_nasdaq_deep_rung_is_the_sharp_one() {
+        for a in [SP500_ANCHORS, NASDAQ_ANCHORS] {
+            for (nm, v) in [
+                ("val_disp_sd", a.val_disp_sd),
+                ("d5_sd", a.d5_sd),
+                ("d10_sd", a.d10_sd),
+                ("d20_sd", a.d20_sd),
+                ("bond_vol_sd", a.bond_vol_sd),
+                ("bond_growth_sd", a.bond_growth_sd),
+                ("bond_infl_sd", a.bond_infl_sd),
+                ("bond_depth_sd", a.bond_depth_sd),
+            ] {
+                assert!(
+                    v > 0.0 && v.is_finite(),
+                    "{} {nm} must be a positive spread, read {v}",
+                    a.name
+                );
+            }
+        }
+        // Read through `anchors_named` so the comparison is a runtime value, not a folded const.
+        let (sp, nq) = (anchors_named("sp500"), anchors_named("nasdaq"));
+        assert!(
+            nq.d20_sd < sp.d20_sd / 4.0,
+            "Nasdaq d20 spread {} vs S&P {}",
+            nq.d20_sd,
+            sp.d20_sd
+        );
     }
 }

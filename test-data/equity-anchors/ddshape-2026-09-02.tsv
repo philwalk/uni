@@ -1,0 +1,35 @@
+# Drawdown SHAPE references for `-ddshape`, on `uni.apps.MarketSim.ddEpisodes`' definition and on
+# `pctile(.., 0.5)`'s median -- the UPPER of the two middle elements of an ascending sort on an even
+# count (a depth reads the shallower, a duration the longer), which is the median the model rows
+# print.  NumPy averages the two, and at four episodes the conventions differ
+# by up to a third of a statistic (SPY at 20%: depth -33.7 here against -40.6 averaged).  Measured
+# 2026-09-02 with the model's own functions over date/price series exported from folio's caches:
+#   CRSP  Ken French F-F_Research_Data_Factors_daily (202606 CRSP), Mkt-RF + RF compounded: the
+#         value-weighted US market TOTAL return, 1926-07-01..2026-06-30
+#   SPY   Yahoo adjusted close (total return), 1993-01-29..2026-08-31
+#   NDX   Yahoo Nasdaq-100 index close -- a PRICE index; its dividend yield runs under 1%/yr and
+#         does not move a decline's shape -- 1990-01-02..2026-08-31
+#   QQQ   Yahoo adjusted close (total return), 1999-03-10..2026-08-31
+# The three 33-year CRSP windows are SPY's own length and each opens near a high (the fresh-start
+# rule stated in episodes-2026-08-29.tsv), so their spread is what one SPY-length history can show.
+# `DdShapeAnchorSuite` / `dd_shape_anchor_tests` assert both anchor sets' references against these
+# rows; editing a row moves the shipped reference.
+# Columns: set, series, from, to, years, thr (%), eps (episodes deeper than thr), epsPerYr, depth
+# (median %), decline / recovery / underwater (median sessions; recovery over recovered episodes
+# only), worstDay (median share of the log decline in its worst session), recovered (episode count
+# with a recovery -- the rest were still underwater at the window's end).
+set	series	from	to	years	thr	eps	epsPerYr	depth	decline	recovery	underwater	worstDay	recovered
+sp500	CRSP	1926-07-01	2026-06-30	100.00	10	31	0.310	-20.2	78	84	196	0.153	31
+sp500	CRSP	1926-07-01	2026-06-30	100.00	20	16	0.160	-27.7	235	234	434	0.143	16
+sp500	CRSP	1926-07-01	1959-12-31	33.50	10	7	0.209	-12.8	125	67	196	0.191	7
+sp500	CRSP	1926-07-01	1959-12-31	33.50	20	3	0.090	-28.3	273	722	994	0.133	3
+sp500	CRSP	1960-01-04	1993-01-28	33.07	10	14	0.423	-18.7	135	103	269	0.140	14
+sp500	CRSP	1960-01-04	1993-01-28	33.07	20	7	0.212	-27.7	167	233	368	0.131	7
+sp500	CRSP	1993-01-29	2026-06-30	33.42	10	10	0.299	-20.4	65	94	145	0.236	10
+sp500	CRSP	1993-01-29	2026-06-30	33.42	20	6	0.180	-25.6	235	296	530	0.153	6
+sp500	SPY	1993-01-29	2026-08-31	33.59	10	12	0.357	-18.8	64	75	131	0.290	12
+sp500	SPY	1993-01-29	2026-08-31	33.59	20	4	0.119	-33.7	355	869	1223	0.158	4
+nasdaq	NDX	1990-01-02	2026-08-31	36.66	10	32	0.873	-13.2	34	37	74	0.302	31
+nasdaq	NDX	1990-01-02	2026-08-31	36.66	20	7	0.191	-28.0	62	78	142	0.181	7
+nasdaq	QQQ	1999-03-10	2026-08-31	27.48	10	21	0.764	-12.0	20	44	61	0.304	20
+nasdaq	QQQ	1999-03-10	2026-08-31	27.48	20	5	0.182	-28.6	80	75	154	0.181	5

@@ -11,6 +11,23 @@
 - `0.23.0` joins the frozen `-releases` rows, so `-atrelease 0.23.0` reproduces it under this and
   later binaries.
 
+**`-ddshape` grades against the anchor set's own references, on the model's own median**
+
+- Each anchor set carries its drawdown-shape references (`ddshape-2026-09-02.tsv`, re-derived by
+  `DdShapeAnchorSuite` / `dd_shape_anchor_tests`): the CRSP century, its three 33-year windows and
+  SPY for the S&P set; the Nasdaq-100 index from 1990 and QQQ for the Nasdaq set. The report
+  prints every reference, min/max rows across them, and the ratio against the longest history.
+- The references are measured with the twins' own `ddEpisodes` and `pctile(.., 0.5)`. The 0.23.0
+  SPY rows were NumPy medians, which average the two middle elements where `pctile` takes the
+  upper, and the model rows were never on that convention: at four episodes the 20% depth read
+  −40.6 against the model's-median −33.7, the decline 275 sessions against 355. The 1.42× decline
+  duration and 0.61× worst-day share 0.23.0 reported at 10% were that mismatch; against the same
+  median the shipped world reads 0.97× and 0.85× on SPY, and the deep decline's duration (0.51× the
+  century's at 20%) is the miss that survives every reference.
+- The eight loss spreads that were inline S&P constants — the three depth rungs, the valuation
+  proxy and the four bond rows — are anchor fields, measured for the Nasdaq set at the
+  `0.23.0-nasdaq` recipe. Its loss reads 2.020 under its own spreads (1.672 on the carried ones).
+
 ## v0.23.0 — 2026-09-02
 
 **NEW MECHANISM, and a defaults change — the slow valuation cycle**

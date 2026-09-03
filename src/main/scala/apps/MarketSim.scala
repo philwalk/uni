@@ -231,8 +231,9 @@ object MarketSim:
     s"              ;   ${PowerYearsDefault.mkString(",")})",
     "-buffer       ; distribution of REAL underwater-stretch length and depth at exhaustion —",
     "              ;   the cash-buffer question, as a distribution instead of one episode",
-    "-ddshape      ; drawdown SHAPE against SPY: decline and recovery duration, and how much of",
-    "              ;   a decline arrives in its single worst session.  Diagnostic, never gated",
+    "-ddshape      ; drawdown SHAPE against the anchor set's references (CRSP century + SPY;",
+    "              ;   NDX + QQQ): decline and recovery duration, and how much of a decline",
+    "              ;   arrives in its single worst session.  Diagnostic, never gated",
     "-strategies   ; exposure rules across a world sweep: stability, paired stats, breakevens,",
     "              ;   flight-to-safety decomposition, refuge-severity curve, crash types",
     "-single       ; with -strategies/-power/-buffer, baseline world only (skip the world sweep)",
@@ -2599,7 +2600,43 @@ object MarketSim:
     levCorr: Double, levCorrSd: Double,
     // Left-tail stock-bond correlation from `tailcorr-2026-08-31.tsv` (the equity leg's own pair
     // against TLT).
-    tailHedge: Double, tailHedgeSd: Double)
+    tailHedge: Double, tailHedgeSd: Double,
+    // Sampling spreads for the rows whose LEVEL is not asset-specific -- the theory-valued depth
+    // rungs, the valuation proxy and the bond rows -- but whose spread is: measured by `-noise` at
+    // the set's own world (the S&P default; the 0.23.0-nasdaq recipe), 200 paths, and frozen like
+    // the spreads above.  Carried inline through 0.23.0, so the Nasdaq loss weighted these rows
+    // with the S&P world's spreads.
+    valDispSd: Double, d5Sd: Double, d10Sd: Double, d20Sd: Double,
+    bondVolSd: Double, bondGrowthSd: Double, bondInflSd: Double, bondDepthSd: Double,
+    // Drawdown-SHAPE references for `-ddshape`, the first the primary the ratios read against;
+    // `ddshape-2026-09-02.tsv`, on the model's own episode definition and median.
+    ddRefs: Vector[DdReference])
+
+  /** One real drawdown-shape reference: a series over a window, and per threshold (thr, episodes,
+    * per year, median depth %, median decline, median recovery, median underwater, median
+    * worst-day share) -- every median `pctile(.., 0.5)`, the model rows' own.  Windows of the
+    * century at SPY's own length carry the spread one SPY-length history can show. */
+  final case class DdReference(series: String, window: String, years: Double,
+                               rows: Vector[(Double, Int, Double, Double, Int, Int, Int, Double)])
+
+  val DdRefsSp500: Vector[DdReference] = Vector(
+    //                                                thr  eps   /yr   depth%  decl recov undw  worst-day
+    DdReference("CRSP", "1926-2026", 100.00, Vector((0.10, 31, 0.310, -20.2,  78,  84,  196, 0.153),
+                                                    (0.20, 16, 0.160, -27.7, 235, 234,  434, 0.143))),
+    DdReference("CRSP", "1926-1959",  33.50, Vector((0.10,  7, 0.209, -12.8, 125,  67,  196, 0.191),
+                                                    (0.20,  3, 0.090, -28.3, 273, 722,  994, 0.133))),
+    DdReference("CRSP", "1960-1993",  33.07, Vector((0.10, 14, 0.423, -18.7, 135, 103,  269, 0.140),
+                                                    (0.20,  7, 0.212, -27.7, 167, 233,  368, 0.131))),
+    DdReference("CRSP", "1993-2026",  33.42, Vector((0.10, 10, 0.299, -20.4,  65,  94,  145, 0.236),
+                                                    (0.20,  6, 0.180, -25.6, 235, 296,  530, 0.153))),
+    DdReference("SPY",  "1993-2026",  33.59, Vector((0.10, 12, 0.357, -18.8,  64,  75,  131, 0.290),
+                                                    (0.20,  4, 0.119, -33.7, 355, 869, 1223, 0.158))))
+
+  val DdRefsNasdaq: Vector[DdReference] = Vector(
+    DdReference("NDX",  "1990-2026",  36.66, Vector((0.10, 32, 0.873, -13.2,  34,  37,   74, 0.302),
+                                                    (0.20,  7, 0.191, -28.0,  62,  78,  142, 0.181))),
+    DdReference("QQQ",  "1999-2026",  27.48, Vector((0.10, 21, 0.764, -12.0,  20,  44,   61, 0.304),
+                                                    (0.20,  5, 0.182, -28.6,  80,  75,  154, 0.181))))
 
   /** The S&P/CRSP set.  The LEVELS are the ones every release before 0.21.0 hard-coded, moved
     * rather than re-measured (except the two the 0.22 releases re-anchored -- `medDepth` and
@@ -2639,7 +2676,10 @@ object MarketSim:
     // (semivariance), 46th (leverage corr), 26th (tail hedge).
     semiExcess = 3.06, semiExcessSd = 1.54,
     levCorr = -0.0926, levCorrSd = 0.44,
-    tailHedge = -0.273, tailHedgeSd = 0.24)
+    tailHedge = -0.273, tailHedgeSd = 0.24,
+    valDispSd = 0.64, d5Sd = 0.19, d10Sd = 0.45, d20Sd = 2.38,
+    bondVolSd = 0.52, bondGrowthSd = 1.48, bondInflSd = 1.99, bondDepthSd = 0.36,
+    ddRefs = DdRefsSp500)
 
   /** The Nasdaq-100 set, measured 2026-08-28 from QQQ daily adjusted closes over its own full
     * history, 1999-03-10 to 2026-08-20 (27.4 years).
@@ -2698,7 +2738,13 @@ object MarketSim:
     // at the recipe world (2026-09-01), like every spread in this set.
     semiExcess = 1.13, semiExcessSd = 3.57,
     levCorr = -0.1073, levCorrSd = 0.43,
-    tailHedge = -0.236, tailHedgeSd = 0.24)
+    tailHedge = -0.236, tailHedgeSd = 0.24,
+    // `-noise -anchors nasdaq` at the 0.23.0-nasdaq recipe, 200 paths, 2026-09-02.  d20's spread
+    // is a fraction of the S&P world's (0.30 against 2.38): at Nasdaq volatility the deep rung is
+    // pinned where the S&P default leaves it unreadable, so the row carries real weight here.
+    valDispSd = 0.53, d5Sd = 0.12, d10Sd = 0.19, d20Sd = 0.30,
+    bondVolSd = 0.52, bondGrowthSd = 0.91, bondInflSd = 1.71, bondDepthSd = 0.36,
+    ddRefs = DdRefsNasdaq)
 
   val AnchorSets: Vector[Anchors] = Vector(SP500Anchors, NasdaqAnchors)
 
@@ -2783,7 +2829,7 @@ object MarketSim:
     // The record proxy (sd log CAPE) reads 0.24-0.41 across windows; 0.30 is the judgment centre
     // and the LITERAL is shared by both anchor sets -- one Shiller record, no QQQ equivalent.
     // Judgment 0.5 for the proxy commensurability stated in valuation-2026-08-30.tsv.
-    ("valuation dispersion", st => st.valDisp,                               0.30,  wgt(0.5, 0.64)),
+    ("valuation dispersion", st => st.valDisp,                               0.30,  wgt(0.5, a.valDispSd)),
     ("crashes/century",    st => st.epPerPath * 100.0 / st.yearsPerPath,    a.crashes,  wgt(1.0, a.crashesSd)),
     // RE-MEASURED in 0.22.0, and the old value was not this statistic.  `-27.1` shipped through
     // 0.21.0 with no recorded convention; the model measures every peak-to-trough decline of 15% or
@@ -2815,7 +2861,7 @@ object MarketSim:
     ("worst crash %",      st => st.worstDepth,                            a.worstDepth,  wgt(0.5, a.worstDepthSd)),
     // The "(24y)" is load-bearing, not decoration: this row is measured on a different horizon
     // from every other, and the label is the only part that travels when the number is quoted.
-    ("bond vol % (24y)",   st => st.bondVol * 100,                          13.0,  wgt(1.0, 0.52)),
+    ("bond vol % (24y)",   st => st.bondVol * 100,                          13.0,  wgt(1.0, a.bondVolSd)),
     // RE-MEASURED in 0.22.0, same error class as `median depth %` above: `20.0` is 2008 ALONE, the
     // largest of the five growth-shock episodes in the record, and this row is a MEDIAN across
     // episodes.  Measured the way `measure` measures it -- SPY drawdowns of 15%+, TLT's log return
@@ -2823,7 +2869,7 @@ object MarketSim:
     // +6.6 / +22.4 / +4.4 / +13.3 / +0.8.  The model was therefore read as UNDERSTATING a bond
     // rally it in fact overstates.  Six episodes is the honest limit here and `-noise` prices it in.
     // `test-data/bond-anchors/crash-response-2026-08-29.tsv`; `BondCrashSuite` re-derives both rows.
-    ("bond growth-crash",  st => st.bondGrowth,                              6.6,  wgt(1.0, 1.48)),
+    ("bond growth-crash",  st => st.bondGrowth,                              6.6,  wgt(1.0, a.bondGrowthSd)),
     // The judgment stays at 1.5 -- inflation-crash behaviour is why the bond refuge exists --
     // and the measured precision crushes the weight to ~0.13 anyway: sd/real 2.89, and only
     // 95 of 200 24-year histories produce a reading at all.  The old 1.5 was the largest
@@ -2832,7 +2878,7 @@ object MarketSim:
     // has, which reads -34.7% (SPY 2022-01-03..2022-10-12, TLT over the same span).  A median of one
     // is that one, so the anchor is the episode -- but rounded 28% toward zero, which is not a
     // convention, it is an error.
-    ("bond infl-crash",    st => st.bondInfl,                              -34.7,  wgt(1.5, 1.99)),
+    ("bond infl-crash",    st => st.bondInfl,                              -34.7,  wgt(1.5, a.bondInflSd)),
     // Does the refuge hold exactly where it is needed -- stock-bond correlation on calm sessions
     // with the equity return below its own calm q10, against the pair's own record
     // (tailcorr-2026-08-31.tsv).  Calm-conditioned on BOTH sides by construction: the TLT window
@@ -2881,15 +2927,15 @@ object MarketSim:
     // no longer tell this model from the cross-section they were measured from, which is a stronger
     // statement than any ratio near 1.00, because it is made against the spread rather than the
     // point.
-    ("equity d5 vs real",   st => st.eqD5VsReal,                             1.00,  wgt(0.5, 0.19)),
-    ("equity d10 vs real",  st => st.eqD10VsReal,                            1.00,  wgt(1.0, 0.45)),
+    ("equity d5 vs real",   st => st.eqD5VsReal,                             1.00,  wgt(0.5, a.d5Sd)),
+    ("equity d10 vs real",  st => st.eqD10VsReal,                            1.00,  wgt(1.0, a.d10Sd)),
     // d20's sdRel moved 0.99 -> 1.56 in the 0.21.0 recovery-drag change, and like kurtosis's move
     // it is a re-measurement of a statistic that genuinely became more variable, not a correction:
     // slowing recovery from deep drawdowns makes time spent DEEP swing much harder between
     // histories (p5 0.19, p95 4.35 over 25 years).  Weighting by measurability drops it to 0.06.
     // No other target's sdRel moved beyond its own noise, so none were churned.
-    ("equity d20 vs real",  st => st.eqD20VsReal,                            1.00,  wgt(0.5, 2.38)),
-    ("bond depth vs vol",   st => st.bondDepthVsVol,                          1.00, wgt(0.5, 0.36)),
+    ("equity d20 vs real",  st => st.eqD20VsReal,                            1.00,  wgt(0.5, a.d20Sd)),
+    ("bond depth vs vol",   st => st.bondDepthVsVol,                          1.00, wgt(0.5, a.bondDepthSd)),
   )
 
   /** Targets whose model statistic is an EXTREME order statistic over the pooled ensemble rather
@@ -4316,52 +4362,58 @@ object MarketSim:
                        hi - lo + 1, if total < 0.0 then worst / total else Double.NaN))
     }
 
-  /** SPY total return, 1993-01-29..2026-08-26, measured with `ddEpisodes` above.  ONE history, and
-    * the episode counts are printed so nobody reads a median of four as a population value. */
-  val DdRealSpy: Vector[(Double, Int, Double, Double, Int, Int, Int, Double)] = Vector(
-    //  thr   eps   /yr   depth%  decl recov undw  worst-day share
-    (0.10, 12, 0.36, -18.9,  50,  67, 125, 0.286),
-    (0.20,  4, 0.12, -40.6, 275, 582, 856, 0.144))
-
-  def runDrawdownShape(paths: Int, years: Int, seed: Long, base: World): Unit =
+  def runDrawdownShape(a: Anchors, paths: Int, years: Int, seed: Long, base: World): Unit =
     eprintln(s"$paths paths x $years years")
     val sims = simPaths(base, paths, years, seed)
     val pYrs = sims.size.toDouble * years
+    val refs = a.ddRefs
     println("DRAWDOWN SHAPE — how a decline is DELIVERED: how long it takes, and how much of it")
     println("arrives in its single worst session.  This is a SECOND episode definition on purpose:")
     println("the model's own crash count is a 15%-below-peak excursion re-arming at 2%, built for")
     println("counting; these are peak-to-trough-to-FULL-recovery, built for shape.  Do not mix them.")
     println()
-    println("Reference: SPY total return 1993-01-29..2026-08-26, ONE history — 12 episodes at the")
-    println("10% threshold, 4 at the 20%.  NOTHING HERE IS GATED; a band off four episodes could not")
-    println("fail.  The ratios are for reading, not for passing.")
+    println(s"References for the ${a.name} set, every median on the model's own pctile(.., 0.5); the")
+    println(f"ratio reads against ${refs.head.series} ${refs.head.window} (${refs.head.years}%.0f years) and the min/max rows span every")
+    println("reference.  NOTHING HERE IS GATED: the episode counts are printed so nobody reads a")
+    println("median of four as a population value, and the ratios are for reading, not for passing.")
     println()
-    println(f"  ${"series"}%-10s ${"thr"}%4s ${"eps"}%5s ${"eps/yr"}%7s ${"depth"}%8s ${"decline"}%8s " +
+    println(f"  ${"series"}%-15s ${"thr"}%4s ${"eps"}%5s ${"eps/yr"}%7s ${"depth"}%8s ${"decline"}%8s " +
             f"${"recovery"}%9s ${"underwtr"}%9s ${"worst-day"}%10s")
-    DdRealSpy.foreach { (thr, rEps, rYr, rDepth, rDecl, rRecov, rUndw, rWds) =>
+    for thr <- Vector(0.10, 0.20) do
+      val pct   = (thr * 100).toInt
       val eps   = sims.flatMap(p => ddEpisodes(p.price, thr))
       val recov = eps.flatMap(_.recovery).map(_.toDouble)
       def m(f: DdEpisode => Double) = pctile(eps.map(f), 0.5)
-      val pct = (thr * 100).toInt
-      println(f"  ${"real SPY"}%-10s $pct%3d%% $rEps%5d $rYr%7.2f $rDepth%7.1f%% $rDecl%8d " +
-              f"$rRecov%9d $rUndw%9d ${rWds * 100}%9.1f%%")
-      println(f"  ${"model"}%-10s $pct%3d%% ${eps.size}%5d ${eps.size / pYrs}%7.2f " +
+      val rows  = refs.flatMap(r => r.rows.find(_._1 == thr).map(row => (r, row)))
+      for (r, (_, rEps, rYr, rDepth, rDecl, rRecov, rUndw, rWds)) <- rows do
+        println(f"  ${s"${r.series} ${r.window}"}%-15s $pct%3d%% $rEps%5d $rYr%7.2f $rDepth%7.1f%% $rDecl%8d " +
+                f"$rRecov%9d $rUndw%9d ${rWds * 100}%9.1f%%")
+      def ext(pick: Vector[Double] => Double): (Double, Double, Double, Double, Double, Double) =
+        (pick(rows.map(_._2._3)), pick(rows.map(_._2._4)), pick(rows.map(_._2._5.toDouble)),
+         pick(rows.map(_._2._6.toDouble)), pick(rows.map(_._2._7.toDouble)), pick(rows.map(_._2._8)))
+      for (label, (xYr, xDepth, xDecl, xRecov, xUndw, xWds)) <- Vector(("refs min", ext(_.min)), ("refs max", ext(_.max))) do
+        println(f"  $label%-15s $pct%3d%% ${""}%5s $xYr%7.2f $xDepth%7.1f%% $xDecl%8.0f " +
+                f"$xRecov%9.0f $xUndw%9.0f ${xWds * 100}%9.1f%%")
+      val (_, _, rYr, rDepth, rDecl, rRecov, rUndw, rWds) = rows.head._2
+      println(f"  ${"model"}%-15s $pct%3d%% ${eps.size}%5d ${eps.size / pYrs}%7.2f " +
               f"${m(_.depth) * 100}%7.1f%% ${m(_.decline.toDouble)}%8.0f ${pctile(recov, 0.5)}%9.0f " +
               f"${m(_.underwater.toDouble)}%9.0f ${m(_.worstDayShare) * 100}%9.1f%%")
-      println(f"  ${"ratio"}%-10s $pct%3d%% ${""}%5s ${eps.size / pYrs / rYr}%7.2f " +
+      println(f"  ${"ratio"}%-15s $pct%3d%% ${""}%5s ${eps.size / pYrs / rYr}%7.2f " +
               f"${m(_.depth) * 100 / rDepth}%8.2f ${m(_.decline.toDouble) / rDecl}%8.2f " +
               f"${pctile(recov, 0.5) / rRecov}%9.2f ${m(_.underwater.toDouble) / rUndw}%9.2f " +
               f"${m(_.worstDayShare) / rWds}%10.2f")
       println()
-    }
     println("  A LOW worst-day ratio means the model's declines GRIND where the real one GAPPED.")
     println("  Read it beside the decline column: a decline taking twice as long dilutes its worst")
-    println("  session by construction, so the two move together.  Daily KURTOSIS is not the")
-    println("  explanation -- it has sat on its anchor since 0.21.0 while this ratio barely moved.")
+    println("  session by construction, so the two move together -- and read both against the")
+    println("  min/max rows before the ratio: the references disagree with each other by more than")
+    println("  most model/real ratios here.")
     println()
-    println("  Medians here are `pctile(.., 0.5)`: the lower of the two middle elements on an even")
-    println("  count, where NumPy averages them.  A consumer reproducing this can land one element")
-    println("  away on a duration and be right.")
+    println("  Medians here are `pctile(.., 0.5)`: the UPPER of the two middle elements of an")
+    println("  ascending sort on an even count (a depth reads the shallower, a duration the longer),")
+    println("  where NumPy averages them.  The reference rows are on the same median, so a")
+    println("  consumer reproducing them with NumPy lands one element away on a four-episode")
+    println("  statistic and is right.")
 
   def runBufferReport(a: Anchors, paths: Int, years: Int, seed: Long, cost: Double, single: Boolean,
                       base: World, gateReq: Set[GateClass]): Unit =
@@ -5189,7 +5241,7 @@ object MarketSim:
       runPowerReport(anchors, paths, seed, cost, single, w, gateReq, powerArms, powerYears)
       return
     if ddShape then
-      runDrawdownShape(paths, years, seed, w)
+      runDrawdownShape(anchors, paths, years, seed, w)
       return
     if bufferReport then
       runBufferReport(anchors, paths, years, seed, cost, single, w, gateReq)
