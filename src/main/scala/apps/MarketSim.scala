@@ -647,7 +647,14 @@ object MarketSim:
     basketIdio: Double = 0.0,   // per-name idio sd as a FRACTION of the primary's realized vol,
                                 // riding the vol state WITHOUT the spiral
     basketGaps: Double = 0.0,   // per-name gap intensity, jumps per year; each a standardized
-                                // t(JumpNu) x `BasketGapSize` (log), skewed like the primary's
+                                // t(JumpNu) x `BasketGapSize` (log), SYMMETRIC -- the index's
+                                // down-skew is the index's and reaches every name through the
+                                // shared leg, while the record's own name-level gaps past 10%
+                                // run 41 up to 32 down with mean +0.011
+                                // (`basket-drift-2026-09-03.tsv`).  A shifted own-gap channel
+                                // would impose drift no dial compensates: at 3.5/yr the primary's
+                                // 0.7 skew cost -0.22/yr of log drift, more than the shared leg
+                                // supplies
     basketDrift: Double = 0.0   // CROSS-SECTIONAL DRIFT DISPERSION: the sd of the names' own
                                 // annual log-drift offsets, as a FRACTION of the primary's
                                 // realized annualized vol (`ChannelLevel.kDr`), so it transports.
@@ -945,24 +952,23 @@ object MarketSim:
                   volIdio = 0.34, overnight = 0.22, divYield = 0.78),
      "nasdaq"),
     // The S&P default with THE BASKET on at its anchored dials and the dividend stream at its
-    // S&P anchor (`basket-2026-09-02.tsv`: folio's
-    // eight semis under SMH).  Verified at 200x100: names vol 2.47x, gaps 1.92/yr; aggregate corr
-    // 0.774, beta 1.560, vol 2.01x; pairwise 0.618, idio share 0.336, tail coincidence 0.487,
-    // pairwise on the worst decile 0.721 vs 0.269 mid; the primary untouched.
+    // S&P anchor (`basket-2026-09-02.tsv`: folio's eight semis under SMH).  Verified at 200x100:
+    // names vol 2.49x, gaps 2.13/yr; aggregate corr 0.793, beta 1.562, vol 1.97x; pairwise 0.575,
+    // idio share 0.374, tail coincidence 0.547, pairwise on the worst decile 0.682 vs 0.212 mid;
+    // the primary untouched.  Time below peak 0.548, a disclosed reading.
     ("0.23.1-basket",
-     V0_23_0.copy(basket = 8, basketBeta = 1.56, basketSector = 1.2, basketIdio = 1.0,
-                  basketGaps = 3.0, divYield = 2.95),
+     V0_23_0.copy(basket = 8, basketBeta = 1.56, basketSector = 1.1, basketIdio = 0.9,
+                  basketGaps = 6.0, divYield = 2.95),
      "sp500"),
     // The Nasdaq world with THE BASKET on, anchored on the SAME eight names read against QQQ
     // instead of SPY.  The dials are NOT the S&P set's: the eight's basket correlates 0.837 with
     // QQQ against 0.770 with SPY, so the shared leg carries more and the sector's own noise less
     // -- `basketSector` 1.2 -> 0.75, `basketBeta` the anchor's 1.365 -> 1.37.  `basketGaps` rises
     // 3.0 -> 3.5 because the level-3 rows need per-name tails the shared leg cannot supply (with
-    // gaps off, idio share reads 0.258 and tail coincidence 0.745, both outside).  Verified at
-    // 200x100: names vol 2.03x, gaps 3.35/yr; aggregate corr 0.845, beta 1.370, vol 1.62x;
-    // pairwise 0.589, idio share 0.361, tail coincidence 0.497, pairwise on the worst decile
-    // 0.654 vs 0.165 mid.  Nine of the ten rows read within 0.15 band-half-widths of the eight's
-    // own figures; the exception is the gap RATE, and it cannot be closed -- see below.
+    // gaps off the level-3 rows go outside).  Verified at 200x100: names vol 2.04x, gaps 3.78/yr;
+    // aggregate corr 0.853, beta 1.371, vol 1.61x; pairwise 0.567, idio share 0.380, tail
+    // coincidence 0.537, pairwise on the worst decile 0.636 vs 0.140 mid.  Time below peak 0.710,
+    // a disclosed reading.  The exception among the graded rows is the gap RATE -- see below.
     //
     // THE GAP RATE IS HIGH BY CONSTRUCTION, not by dial: level 1 grades the name's vol as a RATIO
     // to the primary, and the ratio's anchor is the eight against QQQ over 2012-2026 (20.6% vol)
@@ -976,8 +982,8 @@ object MarketSim:
      V0_23_0.copy(depth = 10.0, drift = 0.105, jumpVar = 0.02, fundVol = 0.06,
                   satBeta = 1.2, satIdio = 0.77, rangeScale = 0.78, rangeDown = 0.13,
                   volIdio = 0.34, overnight = 0.22, divYield = 0.78,
-                  basket = 8, basketBeta = 1.37, basketSector = 0.75, basketIdio = 1.0,
-                  basketGaps = 3.5),
+                  basket = 8, basketBeta = 1.37, basketSector = 0.7, basketIdio = 0.85,
+                  basketGaps = 8.0),
      "nasdaq"))
 
   /** What `-atrelease NAME` seeds from: a release's world, anchors untouched, or a recipe with
@@ -1461,7 +1467,6 @@ object MarketSim:
       var secPrevPx = 0.0
       val nameLogP = new Array[Double](w.basket)
       val gapProb  = w.basketGaps / DaysPerYear
-      val gapSkew  = w.jumpSkew
       // DRIFT DISPERSION -- see the `basketDrift` field.  One draw per name from `mrng`, taken
       // BEFORE the session loop, then centred exactly so the sector's log drift is untouched:
       // only the cross-section moves.  Rescaled by sqrt(N/(N-1)) because centring N draws costs
@@ -1530,7 +1535,11 @@ object MarketSim:
                   chi += g * g
                   kk += 1
                 val t = z / math.sqrt(chi / JumpNu) / math.sqrt(JumpNu / (JumpNu - 2.0))
-                (t - gapSkew) * BasketGapSize
+                // SYMMETRIC, unlike the primary's jumps -- see `basketGaps`.  The index's
+                // down-skew is the INDEX's and already reaches every name through the shared
+                // leg; a name's own large moves are earnings and idiosyncratic news, and the
+                // record shows those are not skewed down.
+                t * BasketGapSize
               else 0.0
             nameLogP(q) += secRet + idio + gap + nameMu(q)
             nm(q)(i) = nameLogP(q)

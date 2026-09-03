@@ -29,8 +29,8 @@ class BasketAnchorSuite extends FunSuite:
     rs.filter(r => r(0) == "eight" && r(2) == stat).map(_(3).toDouble)
 
   /** The anchored world: the S&P default with the basket at its anchored dials. */
-  val Anchored = MarketSim.Defaults.copy(basket = 8, basketBeta = 1.56, basketSector = 1.2,
-                                         basketIdio = 1.0, basketGaps = 3.0)
+  val Anchored = MarketSim.Defaults.copy(basket = 8, basketBeta = 1.56, basketSector = 1.1,
+                                         basketIdio = 0.9, basketGaps = 6.0)
 
   test("the graded bands are the fixture's: the eight's ranges at levels 1 and 3, the basket on the set's primary at level 2") {
     val rs = rows(Fixture)
@@ -82,22 +82,30 @@ class BasketAnchorSuite extends FunSuite:
     // channels-on world are byte-identical with and without the basket
     val chans = MarketSim.Defaults.copy(satBeta = 1.2, satIdio = 0.77, rangeScale = 0.63, rangeDown = 0.09)
     val a = MarketSim.simulate(chans, 3, MarketSim.DefaultSeed)
-    val b = MarketSim.simulate(chans.copy(basket = 8, basketBeta = 1.56, basketSector = 1.2, basketIdio = 1.0, basketGaps = 3.0), 3, MarketSim.DefaultSeed)
+    val b = MarketSim.simulate(chans.copy(basket = 8, basketBeta = 1.56, basketSector = 1.1, basketIdio = 0.9, basketGaps = 6.0), 3, MarketSim.DefaultSeed)
     assert(a.sat.sameElements(b.sat) && a.logHi.sameElements(b.logHi), "the basket reads its own stream only")
   }
 
   test("the anchored basket sits on its anchors, and the mechanism row discriminates") {
     // A small ensemble at the verdict horizon; the bands are the eight's own ranges, wide enough
     // that 8 paths read inside them wherever 200 do.
+    val rs = rows(Fixture)
+    assume(rs.nonEmpty, s"$Fixture absent")
     val st = MarketSim.measure(MarketSim.simPaths(Anchored, 8, 100, MarketSim.DefaultSeed), 100)
     val b  = st.basket.getOrElse(fail("no basket readings with the channel on"))
-    val rows = MarketSim.gateChecks(MarketSim.SP500Anchors, st).filter(_._1.startsWith("basket"))
-    assertEquals(rows.size, 9, rows.map(_._1).mkString(", "))
-    for (nm, ok, _) <- rows do assert(ok, f"$nm failed: names vol ${b.nameVolRatio}%.2f gaps ${b.nameGaps}%.2f corr ${b.aggCorr}%.3f beta ${b.aggBeta}%.2f volr ${b.aggVolRatio}%.2f pair ${b.pairCorr}%.3f idio ${b.idioShare}%.3f coinc ${b.tailCoincidence}%.3f")
+    val gateRows = MarketSim.gateChecks(MarketSim.SP500Anchors, st).filter(_._1.startsWith("basket"))
+    assertEquals(gateRows.size, 9, gateRows.map(_._1).mkString(", "))
+    for (nm, ok, _) <- gateRows do assert(ok, f"$nm failed: names vol ${b.nameVolRatio}%.2f gaps ${b.nameGaps}%.2f corr ${b.aggCorr}%.3f beta ${b.aggBeta}%.2f volr ${b.aggVolRatio}%.2f pair ${b.pairCorr}%.3f idio ${b.idioShare}%.3f coinc ${b.tailCoincidence}%.3f")
     assert(b.pairCorrWorst > b.pairCorrMid + 0.15, f"stress must raise pairwise correlation materially: ${b.pairCorrWorst}%.3f vs ${b.pairCorrMid}%.3f")
     // the discrimination: idio riding the spiral too (the satellite's construction for every
     // name) removes the mechanism -- shared and idio variance rise together in stress
-    assert(b.nameD20 > 0.61, f"the names' time below peak is a disclosed reading, expected above the winners' range: ${b.nameD20}%.3f")
+    // A DISCLOSED reading, not a gate.  Since the own-gap channel became symmetric the model
+    // lands inside the eight's 0.08-0.61 but above their median (0.236): what is left of the gap
+    // is their COMMON drift, +0.304/yr against the shared leg's, which is the survivorship the
+    // fixture discloses -- see `basket-drift-2026-09-03.tsv`.
+    val eightD20 = eight(rs, "d20").sorted
+    assert(b.nameD20 > eightD20(eightD20.size / 2),
+      f"the names' time below peak is a disclosed reading, expected above the winners' median: ${b.nameD20}%.3f")
     val off = MarketSim.measure(MarketSim.simPaths(MarketSim.Defaults, 4, 20, MarketSim.DefaultSeed), 20)
     assert(off.basket.isEmpty && !MarketSim.gateChecks(MarketSim.SP500Anchors, off).exists(_._1.startsWith("basket")))
   }

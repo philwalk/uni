@@ -596,7 +596,7 @@ class MarketSimContractSuite extends FunSuite:
     val (_, w, a) = MarketSim.Recipes.find(_._1 == "0.23.1-basket").getOrElse(fail("no basket recipe"))
     val base = MarketSim.Releases.find(_._1 == "0.23.0").map(_._2).getOrElse(fail("no 0.23.0 row"))
     assertEquals(a, "sp500")
-    assertEquals(w, base.copy(basket = 8, basketBeta = 1.56, basketSector = 1.2, basketIdio = 1.0, basketGaps = 3.0,
+    assertEquals(w, base.copy(basket = 8, basketBeta = 1.56, basketSector = 1.1, basketIdio = 0.9, basketGaps = 6.0,
                               divYield = 2.95))
   }
 
@@ -606,8 +606,8 @@ class MarketSimContractSuite extends FunSuite:
     assertEquals(a, "nasdaq")
     // The S&P set's basket dials do NOT transport: the eight correlate more with QQQ than with
     // SPY, so the sector's own noise falls, and the level-3 rows want more per-name tail.
-    assertEquals(w, base.copy(basket = 8, basketBeta = 1.37, basketSector = 0.75, basketIdio = 1.0,
-                              basketGaps = 3.5))
+    assertEquals(w, base.copy(basket = 8, basketBeta = 1.37, basketSector = 0.7, basketIdio = 0.85,
+                              basketGaps = 8.0))
     val (_, sp, _) = MarketSim.Recipes.find(_._1 == "0.23.1-basket").getOrElse(fail("no S&P basket recipe"))
     assertNotEquals(w.basketSector, sp.basketSector)
     assertNotEquals(w.basketBeta, sp.basketBeta)

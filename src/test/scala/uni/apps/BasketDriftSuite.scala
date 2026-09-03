@@ -25,8 +25,8 @@ class BasketDriftSuite extends FunSuite:
     rs.find(r => r(0) == group && r(1) == stat)
       .getOrElse(fail(s"fixture row [$group $stat] missing"))(2).toDouble
 
-  val Basket = MarketSim.Defaults.copy(basket = 8, basketBeta = 1.56, basketSector = 1.2,
-                                       basketIdio = 1.0, basketGaps = 3.0)
+  val Basket = MarketSim.Defaults.copy(basket = 8, basketBeta = 1.56, basketSector = 1.1,
+                                       basketIdio = 0.9, basketGaps = 6.0)
 
   test("the fixture anchors the dial at 0: the observed spread is under the window's noise floor") {
     val rs = rows(Fixture)
@@ -73,12 +73,42 @@ class BasketDriftSuite extends FunSuite:
     val b = stats(0.8)
     assert(b.nameD20Spread > a.nameD20Spread * 2.0,
       s"the dial must disperse time below peak: ${a.nameD20Spread} -> ${b.nameD20Spread}")
-    // The MEDIAN is the common drift's, and mean-zero dispersion does not move it -- which is why
-    // this dial is not the fix for the level the basket fixture discloses as survivorship.
-    assertEqualsDouble(b.nameD20, a.nameD20, 0.05,
-      "dispersion around the same centre must leave the median time below peak alone")
+    // THE LEVEL IS THE COMMON DRIFT'S, and mean-zero dispersion barely touches it -- which is why
+    // this dial is not the fix for the level the basket fixture discloses as survivorship.  Stated
+    // as a ratio rather than an absolute: the order statistic does shift a little once the level
+    // is off its ceiling, but by a small fraction of what the spread does (at 200x100 the spread
+    // runs 0.14 -> 0.67 across the dial while the median goes 0.528 -> 0.557).
+    val dLevel  = math.abs(b.nameD20 - a.nameD20)
+    val dSpread = b.nameD20Spread - a.nameD20Spread
+    assert(dLevel < 0.25 * dSpread,
+      s"the dial must move the SPREAD, not the level: level $dLevel vs spread $dSpread")
     // and the graded level-2 rows are untouched: a constant per-name drift adds no covariance
     assertEqualsDouble(b.aggCorr, a.aggCorr, 1e-3)
     assertEqualsDouble(b.aggBeta, a.aggBeta, 1e-3)
     assertEqualsDouble(b.aggVolRatio, a.aggVolRatio, 1e-3)
+  }
+
+  test("the names' own gaps impose no drift: the channel is symmetric, as the record's are") {
+    // THE DEFECT THIS PINS.  Own gaps carrying the primary's down-skew cost -0.22/yr of log drift
+    // that no dial compensated: every name's expected drift went NEGATIVE and the time-below-peak
+    // reading sat near 1.  The record says a name's OWN large moves are not skewed down -- the
+    // index's skew is the INDEX's, and already reaches every name through the shared leg.
+    val rs = rows(Fixture)
+    assume(rs.nonEmpty, s"$Fixture absent")
+    assert(value(rs, "eight", "idioGapsUp") >= value(rs, "eight", "idioGapsDown"),
+      "the record's own-name gaps past 10% are not down-skewed")
+    assert(value(rs, "eight", "idioGapMean") >= 0.0, "nor is their mean negative")
+    assert(value(rs, "eight", "indexGapSkew") < 0.0,
+      "the INDEX is down-skewed -- that is the skew the shared leg carries, and only it")
+    def drift(w: MarketSim.World): Double =
+      val ps = MarketSim.simPaths(w, 8, 100, MarketSim.DefaultSeed)
+      val per = ps.map { p =>
+        val years = p.names.head.length / MarketSim.DaysPerYear.toDouble
+        p.names.map(a => (a(a.length - 1) - a(0)) / years).sum / p.names.size
+      }
+      per.sum / per.size
+    val on  = drift(Basket)
+    val off = drift(Basket.copy(basketGaps = 0.0))
+    assert(math.abs(on - off) < 0.03,
+      f"the gap channel must be drift-neutral: $off%.4f with gaps off, $on%.4f with them on")
   }

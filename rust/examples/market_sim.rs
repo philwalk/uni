@@ -599,26 +599,26 @@ fn recipes() -> Vec<(&'static str, World, &'static str)> {
     open.div_yield = 0.78;
     // The S&P default with THE BASKET on at its anchored dials and the dividend stream at its S&P
     // anchor (`basket-2026-09-02.tsv`: folio's
-    // eight semis under SMH). Verified at 200x100: names vol 2.47x, gaps 1.92/yr; aggregate corr
-    // 0.774, beta 1.560, vol 2.01x; pairwise 0.618, idio share 0.336, tail coincidence 0.487,
-    // pairwise on the worst decile 0.721 vs 0.269 mid; the primary untouched.
+    // eight semis under SMH). Verified at 200x100: names vol 2.49x, gaps 2.13/yr; aggregate corr
+    // 0.793, beta 1.562, vol 1.97x; pairwise 0.575, idio share 0.374, tail coincidence 0.547,
+    // pairwise on the worst decile 0.682 vs 0.212 mid; the primary untouched. Time below peak
+    // 0.548, a disclosed reading.
     let mut basket = v0_23_0();
     basket.basket = 8;
     basket.basket_beta = 1.56;
-    basket.basket_sector = 1.2;
-    basket.basket_idio = 1.0;
-    basket.basket_gaps = 3.0;
+    basket.basket_sector = 1.1;
+    basket.basket_idio = 0.9;
+    basket.basket_gaps = 6.0;
     basket.div_yield = 2.95;
     // The Nasdaq world with THE BASKET on, anchored on the SAME eight names read against QQQ
     // instead of SPY. The dials are NOT the S&P set's: the eight's basket correlates 0.837 with
     // QQQ against 0.770 with SPY, so the shared leg carries more and the sector's own noise less
     // — `basket_sector` 1.2 -> 0.75, `basket_beta` the anchor's 1.365 -> 1.37. `basket_gaps` rises
     // 3.0 -> 3.5 because the level-3 rows need per-name tails the shared leg cannot supply (with
-    // gaps off, idio share reads 0.258 and tail coincidence 0.745, both outside). Verified at
-    // 200x100: names vol 2.03x, gaps 3.35/yr; aggregate corr 0.845, beta 1.370, vol 1.62x;
-    // pairwise 0.589, idio share 0.361, tail coincidence 0.497, pairwise on the worst decile 0.654
-    // vs 0.165 mid. Nine of the ten rows read within 0.15 band-half-widths of the eight's own
-    // figures; the exception is the gap RATE, and it cannot be closed — see below.
+    // gaps off the level-3 rows go outside). Verified at 200x100: names vol 2.04x, gaps 3.78/yr;
+    // aggregate corr 0.853, beta 1.371, vol 1.61x; pairwise 0.567, idio share 0.380, tail
+    // coincidence 0.537, pairwise on the worst decile 0.636 vs 0.140 mid. Time below peak 0.710, a
+    // disclosed reading. The exception among the graded rows is the gap RATE — see below.
     //
     // THE GAP RATE IS HIGH BY CONSTRUCTION, not by dial: level 1 grades the name's vol as a RATIO
     // to the primary, and the ratio's anchor is the eight against QQQ over 2012-2026 (20.6% vol)
@@ -631,9 +631,9 @@ fn recipes() -> Vec<(&'static str, World, &'static str)> {
     let mut nq_basket = open;
     nq_basket.basket = 8;
     nq_basket.basket_beta = 1.37;
-    nq_basket.basket_sector = 0.75;
-    nq_basket.basket_idio = 1.0;
-    nq_basket.basket_gaps = 3.5;
+    nq_basket.basket_sector = 0.7;
+    nq_basket.basket_idio = 0.85;
+    nq_basket.basket_gaps = 8.0;
     vec![
         ("0.23.0-nasdaq", nasdaq, "nasdaq"),
         ("0.23.1-nasdaq", open, "nasdaq"),
@@ -1220,7 +1220,11 @@ struct World {
     /// the spiral
     basket_idio: f64,
     /// per-name gap intensity, jumps per year; each a standardized t(JUMP_NU) x
-    /// `BASKET_GAP_SIZE` (log), skewed like the primary's
+    /// `BASKET_GAP_SIZE` (log), SYMMETRIC — the index's down-skew is the index's and reaches every
+    /// name through the shared leg, while the record's own name-level gaps past 10% run 41 up to
+    /// 32 down with mean +0.011 (`basket-drift-2026-09-03.tsv`). A shifted own-gap channel would
+    /// impose drift no dial compensates: at 3.5/yr the primary's 0.7 skew cost -0.22/yr of log
+    /// drift, more than the shared leg supplies
     basket_gaps: f64,
     /// CROSS-SECTIONAL DRIFT DISPERSION: the sd of the names' own annual log-drift offsets, as a
     /// FRACTION of the primary's realized annualized vol (`ChannelLevel::k_dr`), so it transports.
@@ -2061,7 +2065,7 @@ fn basket_session(
     for (lp, mu) in name_log_p.iter_mut().zip(name_mu) {
         let idio = w.basket_idio * inp.vol_state * brng.randn();
         let gap = if brng.next_f64() < gap_prob {
-            basket_gap(w, brng)
+            basket_gap(brng)
         } else {
             0.0
         };
@@ -2070,8 +2074,8 @@ fn basket_session(
 }
 
 /// One basket gap: a standardized t(JUMP_NU) draw — z / sqrt(chi2/nu), the draw ORDER the jump
-/// channel's — shifted by the primary's skew, times the frozen gap size.
-fn basket_gap(w: &World, brng: &mut NumPyRng) -> f64 {
+/// channel's — times the frozen gap size. SYMMETRIC, unlike the primary's jumps.
+fn basket_gap(brng: &mut NumPyRng) -> f64 {
     let z = brng.randn();
     let mut chi = 0.0f64;
     for _ in 0..JUMP_NU {
@@ -2080,7 +2084,10 @@ fn basket_gap(w: &World, brng: &mut NumPyRng) -> f64 {
     }
     let nu = JUMP_NU as f64;
     let t = z / (chi / nu).sqrt() / (nu / (nu - 2.0)).sqrt();
-    (t - w.jump_skew) * BASKET_GAP_SIZE
+    // SYMMETRIC, unlike the primary's jumps — see `basket_gaps`. The index's down-skew is the
+    // INDEX's and already reaches every name through the shared leg; a name's own large moves are
+    // earnings and idiosyncratic news, and the record shows those are not skewed down.
+    t * BASKET_GAP_SIZE
 }
 
 /// The price loop and the derived channels of one path; the channel arrays of `path` are empty
@@ -13424,9 +13431,9 @@ mod open_tests {
         let mut want = recipe("0.23.1-nasdaq");
         want.basket = 8;
         want.basket_beta = 1.37;
-        want.basket_sector = 0.75;
-        want.basket_idio = 1.0;
-        want.basket_gaps = 3.5;
+        want.basket_sector = 0.7;
+        want.basket_idio = 0.85;
+        want.basket_gaps = 8.0;
         assert!(recipe("0.23.1-nasdaq-basket") == want);
         let sp = recipe("0.23.1-basket");
         assert!(want.basket_sector != sp.basket_sector && want.basket_beta != sp.basket_beta);
@@ -13567,9 +13574,9 @@ mod basket_anchor_tests {
         let mut w = default_world();
         w.basket = 8;
         w.basket_beta = 1.56;
-        w.basket_sector = 1.2;
-        w.basket_idio = 1.0;
-        w.basket_gaps = 3.0;
+        w.basket_sector = 1.1;
+        w.basket_idio = 0.9;
+        w.basket_gaps = 6.0;
         w
     }
 
@@ -13707,9 +13714,9 @@ mod basket_anchor_tests {
         let mut with = chans;
         with.basket = 8;
         with.basket_beta = 1.56;
-        with.basket_sector = 1.2;
-        with.basket_idio = 1.0;
-        with.basket_gaps = 3.0;
+        with.basket_sector = 1.1;
+        with.basket_idio = 0.9;
+        with.basket_gaps = 6.0;
         let b = simulate(&with, 3, DEFAULT_SEED);
         assert!(
             a.sat == b.sat && a.log_hi == b.log_hi,
@@ -13721,6 +13728,9 @@ mod basket_anchor_tests {
     /// that 8 paths read inside them wherever 200 do.
     #[test]
     fn the_anchored_basket_sits_on_its_anchors_and_the_mechanism_row_discriminates() {
+        let Some(rs) = rows() else {
+            return;
+        };
         let st = measure(&sim_paths(&anchored(), 8, 100, DEFAULT_SEED), 100);
         let b = st.basket.expect("no basket readings with the channel on");
         let rows: Vec<(String, bool, GateClass)> = gate_checks(anchors_named("sp500"), &st)
@@ -13748,9 +13758,15 @@ mod basket_anchor_tests {
             b.pair_corr_worst,
             b.pair_corr_mid
         );
+        // A DISCLOSED reading, not a gate. Since the own-gap channel became symmetric the model
+        // lands inside the eight's 0.08-0.61 but above their median (0.236): what is left of the
+        // gap is their COMMON drift, +0.304/yr against the shared leg's, which is the
+        // survivorship the fixture discloses — see `basket-drift-2026-09-03.tsv`.
+        let mut eight_d20 = eight(&rs, "d20");
+        eight_d20.sort_by(|a, b| a.partial_cmp(b).expect("finite"));
         assert!(
-            b.name_d20 > 0.61,
-            "the names' time below peak is a disclosed reading: {:.3}",
+            b.name_d20 > eight_d20[eight_d20.len() / 2],
+            "the names' time below peak is a disclosed reading, expected above the winners' median: {}",
             b.name_d20
         );
         let off = measure(&sim_paths(&default_world(), 4, 20, DEFAULT_SEED), 20);
@@ -13798,9 +13814,9 @@ mod basket_drift_tests {
         let mut w = default_world();
         w.basket = 8;
         w.basket_beta = 1.56;
-        w.basket_sector = 1.2;
-        w.basket_idio = 1.0;
-        w.basket_gaps = 3.0;
+        w.basket_sector = 1.1;
+        w.basket_idio = 0.9;
+        w.basket_gaps = 6.0;
         w
     }
 
@@ -13882,15 +13898,68 @@ mod basket_drift_tests {
             a.name_d20_spread,
             b.name_d20_spread
         );
-        // The MEDIAN is the common drift's, and mean-zero dispersion does not move it — which is
-        // why this dial is not the fix for the level the basket fixture discloses as survivorship.
+        // THE LEVEL IS THE COMMON DRIFT'S, and mean-zero dispersion barely touches it — which is
+        // why this dial is not the fix for the level the basket fixture discloses as
+        // survivorship. Stated as a ratio rather than an absolute: the order statistic does shift
+        // a little once the level is off its ceiling, but by a small fraction of what the spread
+        // does (at 200x100 the spread runs 0.14 -> 0.67 across the dial while the median goes
+        // 0.528 -> 0.557).
+        let d_level = (b.name_d20 - a.name_d20).abs();
+        let d_spread = b.name_d20_spread - a.name_d20_spread;
         assert!(
-            (b.name_d20 - a.name_d20).abs() < 0.05,
-            "the median must stay put"
+            d_level < 0.25 * d_spread,
+            "the dial must move the SPREAD, not the level: level {d_level} vs spread {d_spread}"
         );
         // the graded level-2 rows are untouched: a constant per-name drift adds no covariance
         assert!((b.agg_corr - a.agg_corr).abs() < 1e-3);
         assert!((b.agg_beta - a.agg_beta).abs() < 1e-3);
         assert!((b.agg_vol_ratio - a.agg_vol_ratio).abs() < 1e-3);
+    }
+
+    #[test]
+    fn the_names_own_gaps_impose_no_drift_the_channel_is_symmetric_as_the_records_are() {
+        // THE DEFECT THIS PINS. Own gaps carrying the primary's down-skew cost -0.22/yr of log
+        // drift that no dial compensated: every name's expected drift went NEGATIVE and the
+        // time-below-peak reading sat near 1. The record says a name's OWN large moves are not
+        // skewed down — the index's skew is the INDEX's, and already reaches every name through
+        // the shared leg.
+        let Some(rs) = rows() else {
+            return;
+        };
+        assert!(
+            value(&rs, "eight", "idioGapsUp") >= value(&rs, "eight", "idioGapsDown"),
+            "the record's own-name gaps past 10% are not down-skewed"
+        );
+        assert!(
+            value(&rs, "eight", "idioGapMean") >= 0.0,
+            "nor is their mean negative"
+        );
+        assert!(
+            value(&rs, "eight", "indexGapSkew") < 0.0,
+            "the INDEX is down-skewed — that is the skew the shared leg carries, and only it"
+        );
+        let drift = |w: &World| -> f64 {
+            let ps = sim_paths(w, 8, 100, DEFAULT_SEED);
+            let per: Vec<f64> = ps
+                .iter()
+                .map(|p| {
+                    let years = p.names[0].len() as f64 / DAYS_PER_YEAR as f64;
+                    p.names
+                        .iter()
+                        .map(|a| (a[a.len() - 1] - a[0]) / years)
+                        .sum::<f64>()
+                        / p.names.len() as f64
+                })
+                .collect();
+            per.iter().sum::<f64>() / per.len() as f64
+        };
+        let on = drift(&basket());
+        let mut off_w = basket();
+        off_w.basket_gaps = 0.0;
+        let off = drift(&off_w);
+        assert!(
+            (on - off).abs() < 0.03,
+            "the gap channel must be drift-neutral: {off:.4} with gaps off, {on:.4} with them on"
+        );
     }
 }
