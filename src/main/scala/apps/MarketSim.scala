@@ -921,7 +921,33 @@ object MarketSim:
     ("0.23.1-basket",
      V0_23_0.copy(basket = 8, basketBeta = 1.56, basketSector = 1.2, basketIdio = 1.0,
                   basketGaps = 3.0, divYield = 2.95),
-     "sp500"))
+     "sp500"),
+    // The Nasdaq world with THE BASKET on, anchored on the SAME eight names read against QQQ
+    // instead of SPY.  The dials are NOT the S&P set's: the eight's basket correlates 0.837 with
+    // QQQ against 0.770 with SPY, so the shared leg carries more and the sector's own noise less
+    // -- `basketSector` 1.2 -> 0.75, `basketBeta` the anchor's 1.365 -> 1.37.  `basketGaps` rises
+    // 3.0 -> 3.5 because the level-3 rows need per-name tails the shared leg cannot supply (with
+    // gaps off, idio share reads 0.258 and tail coincidence 0.745, both outside).  Verified at
+    // 200x100: names vol 2.03x, gaps 3.35/yr; aggregate corr 0.845, beta 1.370, vol 1.62x;
+    // pairwise 0.589, idio share 0.361, tail coincidence 0.497, pairwise on the worst decile
+    // 0.654 vs 0.165 mid.  Nine of the ten rows read within 0.15 band-half-widths of the eight's
+    // own figures; the exception is the gap RATE, and it cannot be closed -- see below.
+    //
+    // THE GAP RATE IS HIGH BY CONSTRUCTION, not by dial: level 1 grades the name's vol as a RATIO
+    // to the primary, and the ratio's anchor is the eight against QQQ over 2012-2026 (20.6% vol)
+    // while the model's primary is anchored to QQQ over 1999-2026 (24.9% model, 26.9% real -- the
+    // dot-com bust is in the second window and not the first).  A name at the right RATIO is
+    // therefore a fifth more volatile than the eight were, and clears 10% correspondingly more
+    // often.  With own gaps off entirely the rate still reads 2.14/yr against the eight's mean of
+    // 1.86, so no dial reaches it.  The row passes on the eight's own range (0.4-5.1, AMD at the
+    // top); read the rate as a level, not as a match.
+    ("0.23.1-nasdaq-basket",
+     V0_23_0.copy(depth = 10.0, drift = 0.105, jumpVar = 0.02, fundVol = 0.06,
+                  satBeta = 1.2, satIdio = 0.77, rangeScale = 0.78, rangeDown = 0.13,
+                  volIdio = 0.34, overnight = 0.22, divYield = 0.78,
+                  basket = 8, basketBeta = 1.37, basketSector = 0.75, basketIdio = 1.0,
+                  basketGaps = 3.5),
+     "nasdaq"))
 
   /** What `-atrelease NAME` seeds from: a release's world, anchors untouched, or a recipe with
     * the anchor set it was verified against -- which an explicit `-anchors` still overrides. */

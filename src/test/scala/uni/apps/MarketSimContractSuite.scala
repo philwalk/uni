@@ -600,6 +600,19 @@ class MarketSimContractSuite extends FunSuite:
                               divYield = 2.95))
   }
 
+  test("the Nasdaq basket recipe is the 0.23.1 Nasdaq world with exactly the basket dials moved") {
+    val (_, w, a)    = MarketSim.Recipes.find(_._1 == "0.23.1-nasdaq-basket").getOrElse(fail("no Nasdaq basket recipe"))
+    val (_, base, _) = MarketSim.Recipes.find(_._1 == "0.23.1-nasdaq").getOrElse(fail("no open recipe"))
+    assertEquals(a, "nasdaq")
+    // The S&P set's basket dials do NOT transport: the eight correlate more with QQQ than with
+    // SPY, so the sector's own noise falls, and the level-3 rows want more per-name tail.
+    assertEquals(w, base.copy(basket = 8, basketBeta = 1.37, basketSector = 0.75, basketIdio = 1.0,
+                              basketGaps = 3.5))
+    val (_, sp, _) = MarketSim.Recipes.find(_._1 == "0.23.1-basket").getOrElse(fail("no S&P basket recipe"))
+    assertNotEquals(w.basketSector, sp.basketSector)
+    assertNotEquals(w.basketBeta, sp.basketBeta)
+  }
+
   test("valuation dispersion grows with the horizon, which is why the verdict is pinned") {
     // The defect `GateYears` closes: sd log(p/fair) is the sample sd of a near-integrated gap,
     // so it GROWS with the measurement window -- 0.11 at 30 years against 0.21 at 100 on the

@@ -9,7 +9,7 @@
   every world against one anchor set. Both twins; contract tests pin the recipe to the frozen row
   and the nine published dials.
 - `0.23.0` joins the frozen `-releases` rows, so `-atrelease 0.23.0` reproduces it under this and
-  later binaries. The two `0.23.1-*` recipes carry every channel this release adds, the dividend
+  later binaries. The three `0.23.1-*` recipes carry every channel this release adds, the dividend
   stream at the set's anchor included.
 
 **`-ddshape` grades against the anchor set's own references, on the model's own median**
@@ -103,6 +103,16 @@
   primary's vol and 1.92 gaps/yr, the aggregate corr 0.774 / beta 1.560 / vol 2.01×, pairwise 0.618,
   idio share 0.336, tail coincidence 0.487, worst-decile pairwise 0.721 vs 0.269. `-atrelease
   0.23.1-basket` names the S&P default with it on.
+- The level-2 bands come from the anchor set: the eight against SPY (0.770 / 1.557 / 2.023) or
+  against QQQ (0.837 / 1.365 / 1.630), and level 1's vol ratio against that set's primary.
+  **The dials do not transport with them** — `-atrelease 0.23.1-nasdaq-basket` names the Nasdaq
+  world with the basket at beta 1.37, sector 0.75, idio 1.0, gaps 3.5, and reads names 2.03× /
+  3.35 gaps per year, aggregate corr 0.845 / beta 1.370 / vol 1.62×, pairwise 0.589, idio share
+  0.361, coincidence 0.497, worst-decile 0.654 vs 0.165: all three classes PASS.
+- The Nasdaq gap rate is a level, not a match. Level 1 grades volatility as a ratio to the
+  primary, and that ratio's anchor is the eight against QQQ over 2012–2026 while the model's
+  primary is anchored to QQQ over 1999–2026, which is a fifth more volatile. With own gaps off the
+  rate still reads 2.14/yr against the eight's mean of 1.86, so no dial reaches it.
 
 ## v0.23.0 — 2026-09-02
 

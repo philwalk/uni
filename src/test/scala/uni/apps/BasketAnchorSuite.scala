@@ -74,7 +74,7 @@ class BasketAnchorSuite extends FunSuite:
     assert(on.price.sameElements(off.price) && on.fundamental.sameElements(off.fundamental),
       "the names are observational: the primary must not move")
     for (v, w) <- MarketSim.Releases do assertEquals(w.basket, 0, s"release $v")
-    for (n, w, _) <- MarketSim.Recipes if n != "0.23.1-basket" do assertEquals(w.basket, 0, s"recipe $n")
+    for (n, w, _) <- MarketSim.Recipes if !n.endsWith("basket") do assertEquals(w.basket, 0, s"recipe $n")
     assertEquals(MarketSim.Recipes.find(_._1 == "0.23.1-basket").map(_._2), Some(Anchored.copy(divYield = 2.95)),
       "the basket recipe is the S&P default at the anchored basket dials, dividends on")
     assertEquals(MarketSim.Defaults.basket, 0)

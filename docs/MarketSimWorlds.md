@@ -597,7 +597,7 @@ with it.
 | `-volidio` | log turnover index riding the range: elasticity 0.59 to the range's deviation from its slow normal (frozen from the measured regression) plus a two-component persistent idio whose total sd is this dial (anchored 0.34). Requires `-rangescale`; adds `logVolume` to `-emit`. NOT searchable | 0 |
 | `-divyield` | DIVIDENDS: the world's mean dividend yield, %/yr. The session yield is Y × fundamental/price over the world's mean of it (a world constant solved on the same fixed ensemble as the bar level — the ensemble's mean fundamental/price is 2.06 at the default and 2.30 on the Nasdaq recipe, and a per-path mean would leak the path's future), so a rich session yields less and the ensemble's pooled mean yield is the dial; the reported median path's mean reads about 0.9× of it (2.62 at 2.95, 0.69 at 0.78), valuation epochs skewing the path means; `-emit` gains `logTraded` (the total-return `price` deflated by the accrued yield — `price` itself is unchanged) and `divYield`. Anchored 2.95 on Shiller's S&P 1954–2023 and 0.78 on QQQ 2005–2026 (`dividend-2026-09-02.tsv`); the level is graded when on. An identity parameter, never searched | 0 (off) |
 | `-overnight` | THE OPEN: the overnight share of the session's diffusive variance (0 ≤ X < 1). The open is the bridge point at that share of the session, with the session's news jump and jump-channel move landing overnight whole and the whole move becoming the gap when it overshoots the session on its own side; the bar then runs from the open over the remaining variance and the sign coupling reads the intraday return. `-emit` gains `logOpen`, and `logHigh`/`logLow` bracket the open and the close. Anchored 0.20 on the S&P default and 0.22 on the Nasdaq recipe against the record's overnight variance shares 0.33 / 0.28 (`bars-2026-09-01.tsv`, graded when on); the bar dials re-anchor with it, `-rangescale 0.78 -rangedown 0.13`, since the intraday bridge carries less of the session | 0 (open = prior close) |
-| `-basket` | THE BASKET: N single names as observational second-pass instances of the primary — each the shared sector leg (`-basketbeta` on the primary's observed return plus `-basketsector` idio riding the vol state × spiral, the satellite's construction) plus its own idio (`-basketidio`, riding the vol state WITHOUT the spiral, so shared variance dominates in stress and pairwise correlation rises) and its own gaps (`-basketgaps` per year, Student-t jumps of a frozen 9% size). The equal-weight aggregate is the sector, graded against SMH's relation to SPY; `-emit` gains `logBasket` and `logName1..N`. Anchored N 8, beta 1.56, sector 1.2, idio 1.0, gaps 3.0 on folio's eight semiconductor names under SMH 2012–2026 (`basket-2026-09-02.tsv`); `-atrelease 0.23.1-basket` names the S&P default with it on. On a Nasdaq primary set `-basketbeta` near 1.26, SMH's beta on QQQ | 0 (off) |
+| `-basket` | THE BASKET: N single names as observational second-pass instances of the primary — each the shared sector leg (`-basketbeta` on the primary's observed return plus `-basketsector` idio riding the vol state × spiral, the satellite's construction) plus its own idio (`-basketidio`, riding the vol state WITHOUT the spiral, so shared variance dominates in stress and pairwise correlation rises) and its own gaps (`-basketgaps` per year, Student-t jumps of a frozen 9% size). The equal-weight aggregate is the sector, graded against SMH's relation to SPY; `-emit` gains `logBasket` and `logName1..N`. Anchored N 8, beta 1.56, sector 1.2, idio 1.0, gaps 3.0 on folio's eight semiconductor names under SMH 2012–2026 (`basket-2026-09-02.tsv`); `-atrelease 0.23.1-basket` names the S&P default with it on. The dials do NOT transport to the Nasdaq set — 8 / 1.37 / 0.75 / 1.0 / 3.5 there, which `-atrelease 0.23.1-nasdaq-basket` names | 0 (off) |
 | `-inflsize` | size of an inflation regime's rate-pressure target | 0.10 |
 
 `-easing` is a cap, not a speed. The flag it replaced, `-flight`, was a cut *rate* per year, so it
@@ -919,6 +919,9 @@ The ruler is a population of real names, not an index (`basket-2026-09-02.tsv`: 
 semiconductor names under SMH, 2012–2026, every number reproducing their published ones). Three
 levels, graded when the channel runs:
 
+The record column below is the eight read against **SPY**; the Nasdaq anchor set grades the same
+names against QQQ, at its own bands and its own dials (below).
+
 | level | rows | record | model at the anchored dials, 200 × 100 |
 |---|---|---|---|
 | per name | vol ratio to the primary; sessions past 10% per year | 1.9–3.4×; 0.4–5.1 | 2.47×; 1.92 |
@@ -936,9 +939,32 @@ drift would. Level 1 as a proper population needs point-in-time membership, whic
 holds; until then the eight's ranges are the bands and the reading is disclosed.
 
 `-atrelease 0.23.1-basket` names the S&P default with the basket on at the anchored dials and the
-dividend stream at its S&P anchor (`-divyield 2.95`). The dials are relative to the primary, so
-they transport: on a Nasdaq primary set `-basketbeta` near
-1.26 (SMH's beta on QQQ, against 1.44 on SPY) and read the aggregate against QQQ.
+dividend stream at its S&P anchor (`-divyield 2.95`). `-atrelease 0.23.1-nasdaq-basket` names the
+Nasdaq world of the section above with the basket on, graded against the same eight names read
+under QQQ instead of SPY.
+
+**The basket dials do not transport between anchor sets.** The eight correlate more with QQQ
+(0.837) than with SPY (0.770), so the shared leg has to carry more and the sector's own noise
+less: `-basketsector` falls 1.2 → 0.75 and `-basketbeta` follows its anchor, 1.56 → 1.37.
+`-basketgaps` rises 3.0 → 3.5 because the cross-section rows need per-name tails the shared leg
+cannot supply — with own gaps off, idio share reads 0.258 and tail coincidence 0.745, both outside
+their bands. The Nasdaq recipe reads:
+
+| level | statistic | the eight, under QQQ | model |
+|---|---|---|---|
+| a name | vol ratio to the primary; sessions past ±10%/yr | 2.0×; 1.9 | 2.03×; 3.35 |
+| the aggregate vs the primary | corr; beta; vol ratio | 0.84; 1.37; 1.63× | 0.845; 1.370; 1.62× |
+| the cross-section | pairwise corr; idio share; same-day tail coincidence | 0.59; 0.37; 0.48 | 0.589; 0.361; 0.497 |
+
+**The gap rate is high by construction, not by dial.** Level 1 grades a name's volatility as a
+*ratio* to the primary, and that ratio's anchor is the eight against QQQ over 2012–2026 (20.6%
+volatility) while the model's primary is anchored to QQQ over 1999–2026 (24.9% model against 26.9%
+real — the dot-com bust is in the second window and not the first). A name at the right ratio is
+therefore a fifth more volatile than the eight actually were, and clears 10% correspondingly more
+often. With own gaps off the rate still reads 2.14/yr against the eight's mean of 1.86, so no dial
+reaches it. The row passes on the eight's own range (0.4–5.1, AMD at the top); read the rate as a
+level, not as a match. The same effect makes `nameD20` read 0.985 here against 0.94 on the S&P
+side, and it is reported either way.
 
 ## Biases you inherit whatever you choose
 
