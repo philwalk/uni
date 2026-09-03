@@ -1,0 +1,139 @@
+# The BASKET ruler: what a cross-section of real single names looks like, at three levels, for the
+# `-basket` channel (N equity names as observational second-pass instances of the primary).  The
+# rows the model is graded against are the eight semiconductor names of folio's binary-trend-01
+# under the SMH sensor -- NVDA AMD AVGO TSM ASML MU KLAC LRCX -- over 2012-01-04..2026-08-31 (3685
+# sessions), daily Yahoo adjusted closes, LOG returns.  `BasketAnchorSuite` / `basket_anchor_tests`
+# re-derive the graded bands from the `eight` rows; editing a row moves the shipped bands.
+#
+# Conventions.  vol = sd of daily log returns x sqrt(252), %.  gaps10 / gaps5 = sessions with
+# |r| > 10% / 5% per year.  maxDD = deepest peak-to-trough decline, %.  d10 / d20 = share of sessions
+# more than 10% / 20% below the running peak.  acf1 = lag-1 autocorrelation of |r|.  kurt = daily
+# kurtosis.  The basket is the EQUAL-WEIGHT mean of the members' simple returns, as a log series.
+# pairCorr = the 28 pairwise correlations of daily log returns.  idioShare = 1 - R^2 of a name on
+# SMH.  tailCoincidence = on the basket's worst-1% sessions, the share of names below their own 1%
+# cut.  The mechanism rows split sessions by SPY's return decile.  Eras: 2012-2019 and 2020-2026.
+#
+# LEVEL 1 grades a name against a population of names, not an index: the eight run 1.9-3.4x SPY's
+# volatility (16.6%) and gap an order of magnitude more often (SPY: 0.1 sessions/yr past 10%).
+# LEVEL 2 is the basket's relation to its group index (SMH) and to the market (SPY): in the model,
+# which has no sector index, the basket's aggregate IS the sector, and the `spy` rows are the
+# relation it is graded on.  LEVEL 3 is what a basket rule reads.  The `population` rows are the
+# cache's 26 single names with data from 2012 (AAPL AMAT AMD ASML AVGO AXTI CAMT CAT CIEN CLS COHR
+# FN GLW GOOGL INTC JBL KLAC LRCX MRVL MSFT MU NVDA PLAB TSEM TSM VWDRY): SURVIVORSHIP-BIASED --
+# folio's book, selected today -- so context, never a band.
+#
+# The "aggregate clusters more than its members" check is NOT clean in the record (by era the basket
+# sits inside the members' range), so the acf1 rows are readings, not a gate.
+#
+# Measured 2026-09-02 (scratchpad basket_anchor.py; the model-side statistics are the twins' own).
+group	name	stat	value
+eight	NVDA	vol	44.36
+eight	NVDA	gaps10	1.641
+eight	NVDA	gaps5	17.30
+eight	NVDA	maxDD	-66.3
+eight	NVDA	d10	0.427
+eight	NVDA	d20	0.232
+eight	NVDA	acf1	0.189
+eight	NVDA	kurt	10.75
+eight	AMD	vol	57.01
+eight	AMD	gaps10	5.061
+eight	AMD	gaps5	30.71
+eight	AMD	maxDD	-80.4
+eight	AMD	d10	0.784
+eight	AMD	d20	0.610
+eight	AMD	acf1	0.139
+eight	AMD	kurt	12.15
+eight	AVGO	vol	38.02
+eight	AVGO	gaps10	1.368
+eight	AVGO	gaps5	9.92
+eight	AVGO	maxDD	-48.3
+eight	AVGO	d10	0.329
+eight	AVGO	d20	0.084
+eight	AVGO	acf1	0.198
+eight	AVGO	kurt	12.47
+eight	TSM	vol	31.77
+eight	TSM	gaps10	0.410
+eight	TSM	gaps5	6.70
+eight	TSM	maxDD	-56.5
+eight	TSM	d10	0.411
+eight	TSM	d20	0.155
+eight	TSM	acf1	0.152
+eight	TSM	kurt	7.21
+eight	ASML	vol	35.91
+eight	ASML	gaps10	0.615
+eight	ASML	gaps5	9.98
+eight	ASML	maxDD	-56.9
+eight	ASML	d10	0.434
+eight	ASML	d20	0.236
+eight	ASML	acf1	0.197
+eight	ASML	kurt	8.33
+eight	MU	vol	49.32
+eight	MU	gaps10	2.735
+eight	MU	gaps5	22.02
+eight	MU	maxDD	-73.8
+eight	MU	d10	0.723
+eight	MU	d20	0.549
+eight	MU	acf1	0.157
+eight	MU	kurt	6.98
+eight	KLAC	vol	38.51
+eight	KLAC	gaps10	1.573
+eight	KLAC	gaps5	12.65
+eight	KLAC	maxDD	-43.6
+eight	KLAC	d10	0.371
+eight	KLAC	d20	0.124
+eight	KLAC	acf1	0.217
+eight	KLAC	kurt	9.52
+eight	LRCX	vol	41.25
+eight	LRCX	gaps10	1.436
+eight	LRCX	gaps5	15.80
+eight	LRCX	maxDD	-56.4
+eight	LRCX	d10	0.446
+eight	LRCX	d20	0.256
+eight	LRCX	acf1	0.209
+eight	LRCX	kurt	8.56
+basket	SMH	vol	29.8
+basket	SPY	vol	16.6
+basket	basket	vol	33.5
+basket	basket	corrSmh	0.967
+basket	basket	betaOnSmh	1.087
+basket	basket	corrSpy	0.770
+basket	basket	betaOnSpy	1.557
+basket	basket	acf1	0.202
+basket	SMH	acf1	0.241
+basket	SPY	acf1	0.336
+basket	members	acf1Median	0.193
+basket	members	acf1Min	0.139
+basket	members	acf1Max	0.217
+cross	pairCorr	mean	0.593
+cross	pairCorr	min	0.429
+cross	pairCorr	max	0.858
+cross	idioShare	median	0.374
+cross	idioShare	min	0.262
+cross	idioShare	max	0.598
+cross	tailCoincidence	value	0.480
+mechanism	pairCorr	spyWorstDecile	0.600
+mechanism	pairCorr	spyMiddleDecile	0.281
+mechanism	pairCorr	spyBestDecile	0.550
+era2012	members	acf1Min	0.064
+era2012	members	acf1Max	0.177
+era2012	SMH	acf1	0.131
+era2012	SPY	acf1	0.224
+era2012	basket	acf1	0.119
+era2020	members	acf1Min	0.083
+era2020	members	acf1Max	0.234
+era2020	SMH	acf1	0.198
+era2020	SPY	acf1	0.356
+era2020	basket	acf1	0.166
+population	26names	volP10	28.8
+population	26names	volP50	42.8
+population	26names	volP90	54.2
+population	26names	gaps10P10	0.376
+population	26names	gaps10P50	1.915
+population	26names	gaps10P90	3.693
+population	26names	maxDDP10	-78.5
+population	26names	maxDDP50	-56.7
+population	26names	maxDDP90	-44.1
+population	26names	d10P50	0.586
+population	26names	d20P50	0.321
+population	26names	acf1P50	0.188
+population	26names	kurtP50	12.37
