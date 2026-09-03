@@ -587,8 +587,8 @@ class MarketSimContractSuite extends FunSuite:
     val (_, base, _) = MarketSim.Recipes.find(_._1 == "0.23.0-nasdaq").getOrElse(fail("no Nasdaq recipe"))
     val (_, w, a)    = MarketSim.Recipes.find(_._1 == "0.23.1-nasdaq").getOrElse(fail("no open recipe"))
     assertEquals(a, "nasdaq")
-    assertEquals(w, base.copy(overnight = 0.22, rangeScale = 0.78, rangeDown = 0.13),
-      "0.23.1-nasdaq must differ from 0.23.0-nasdaq in the open and the two bar dials only")
+    assertEquals(w, base.copy(overnight = 0.22, rangeScale = 0.78, rangeDown = 0.13, divYield = 0.78),
+      "0.23.1-nasdaq must differ from 0.23.0-nasdaq in the open, the two bar dials and the dividend only")
     assertEquals(base.overnight, 0.0, "the 0.23.0 recipe keeps its bars byte for byte: no open")
   }
 
@@ -596,7 +596,8 @@ class MarketSimContractSuite extends FunSuite:
     val (_, w, a) = MarketSim.Recipes.find(_._1 == "0.23.1-basket").getOrElse(fail("no basket recipe"))
     val base = MarketSim.Releases.find(_._1 == "0.23.0").map(_._2).getOrElse(fail("no 0.23.0 row"))
     assertEquals(a, "sp500")
-    assertEquals(w, base.copy(basket = 8, basketBeta = 1.56, basketSector = 1.2, basketIdio = 1.0, basketGaps = 3.0))
+    assertEquals(w, base.copy(basket = 8, basketBeta = 1.56, basketSector = 1.2, basketIdio = 1.0, basketGaps = 3.0,
+                              divYield = 2.95))
   }
 
   test("valuation dispersion grows with the horizon, which is why the verdict is pinned") {

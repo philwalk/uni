@@ -15,9 +15,11 @@
 #
 # LEVEL 1 grades a name against a population of names, not an index: the eight run 1.9-3.4x SPY's
 # volatility (16.6%) and gap an order of magnitude more often (SPY: 0.1 sessions/yr past 10%).
-# LEVEL 2 is the basket's relation to its group index (SMH) and to the market (SPY): in the model,
-# which has no sector index, the basket's aggregate IS the sector, and the `spy` rows are the
-# relation it is graded on.  LEVEL 3 is what a basket rule reads.  The `population` rows are the
+# LEVEL 2 is the basket's relation to its group index (SMH) and to the market -- SPY for the S&P
+# anchor set, QQQ for the Nasdaq set: in the model, which has no sector index, the basket's
+# aggregate IS the sector, and the `corrSpy`/`betaOnSpy`/`volRatioSpy` rows (or their `Qqq`
+# counterparts) are the relation it is graded on, per anchor set; level 1's vol ratio reads
+# against the set's primary vol (`SPY vol` / `QQQ vol`).  LEVEL 3 is what a basket rule reads.  The `population` rows are the
 # cache's 26 single names with data from 2012 (AAPL AMAT AMD ASML AVGO AXTI CAMT CAT CIEN CLS COHR
 # FN GLW GOOGL INTC JBL KLAC LRCX MRVL MSFT MU NVDA PLAB TSEM TSM VWDRY): SURVIVORSHIP-BIASED --
 # folio's book, selected today -- so context, never a band.
@@ -98,6 +100,11 @@ basket	basket	corrSmh	0.967
 basket	basket	betaOnSmh	1.087
 basket	basket	corrSpy	0.770
 basket	basket	betaOnSpy	1.557
+basket	basket	volRatioSpy	2.023
+basket	QQQ	vol	20.6
+basket	basket	corrQqq	0.837
+basket	basket	betaOnQqq	1.365
+basket	basket	volRatioQqq	1.630
 basket	basket	acf1	0.202
 basket	SMH	acf1	0.241
 basket	SPY	acf1	0.336

@@ -567,7 +567,7 @@ with it.
 | `-jumpvar` | share of the equity shock's **variance** carried by jumps rather than diffusion; 0 turns the tail channel off | 0.14 |
 | `-jumprate` | jumps per session at average volatility; with `-jumpvar` it sets the **size** | 0.0035 |
 | `-jumpskew` | how far each jump is shifted down, in its own sds; variance-normalised, so deeper skew means smaller jumps, not fatter tails | 0.7 |
-| `-leverage` | the leverage effect: a decline raises the NEXT session's diffusive volatility by `exp(leverage * decline-in-sds)`, saturated at 4 sds; a rally raises nothing. Reads the same session's news jump | 0.12 |
+| `-leverage` | the leverage effect: a decline raises the NEXT session's diffusive volatility by `exp(leverage * decline-in-sds)`, saturated at 4 sds; a rally raises nothing. Reads the same session's news jump. With the bar channels on, `-leverage 0` reads range clustering at 0.56–0.57 against the 0.57 floor, seed-dependent: the kick is what carries a decline's width into the next session's bar, and a world without it produces bars that cluster less than real bars | 0.12 |
 | `-newsrate` | fair-value news jumps per year — permanent down-jumps the price reprices the same session, gap-invariant; the downside-asymmetry channel, variance-DISPLACING | 1.3 |
 | `-newssize` | log decline per news event (0.033 = a −3.3% day); rarer-larger buys more asymmetry and kurtosis per unit of variance. Bounded with `-newsrate`: rate × size² must stay below 0.0123 (size below 0.097 at the default rate) — past it there is no diffusion left to displace, and the CLI refuses the world | 0.033 |
 | `-downshock` | transitory sign asymmetry on the equity shock; retired as a default by the news channel — pays vr60 ~+0.02 per 0.01, its recovery IS trend | 0 |
@@ -766,7 +766,8 @@ Eight things that table is trying to tell you:
   this; run it after any change, not only a bond one.
 - **The asymmetry trio reads exactly as designed, and `-leverage 0` shows what the kick now
   carries.** Off, clustering falls to 0.82 and kurtosis to 0.74 — the transient multiplier is a
-  third of both — while `-newsrate 0` pushes clustering back UP to 1.14 (serially-independent
+  third of both — and with the bar channels on, range clustering sits on its 0.57 floor
+  (0.56–0.57 across seeds; the sweep table was run with the channels off) — while `-newsrate 0` pushes clustering back UP to 1.14 (serially-independent
   news days are what dilute it) and drains the downside excess. `-refugedays` moves `bdep` a
   little and nothing else in this table; its real work, the calm-day tail hedge, is a row the
   table does not carry.
@@ -878,7 +879,8 @@ same readings as on the default world, because both dials are relative to the wo
 volatility. `-atrelease 0.23.0-nasdaq` names exactly this world with every channel on at those
 dials and selects the Nasdaq anchors: realism, mechanism and fidelity PASS with all six series
 graded. `-atrelease 0.23.1-nasdaq` is the same world with the open on (`-overnight 0.22`) at the
-bar dials re-anchored for it (`-rangescale 0.78 -rangedown 0.13`): overnight share 0.279 against
+bar dials re-anchored for it (`-rangescale 0.78 -rangedown 0.13`) and the dividend stream at its
+Nasdaq anchor (`-divyield 0.78`): overnight share 0.279 against
 the record's 0.28, range vs cc vol 1.104, down/up 1.136, clustering 0.704, the satellite
 untouched, all three classes PASS. On the S&P default the same open reads 0.328 at
 `-overnight 0.20` with the same bar dials (range vs cc vol 1.097, down/up 1.135).
@@ -933,8 +935,9 @@ volatility spends most of a century below that line (the model reads 0.94), as a
 drift would. Level 1 as a proper population needs point-in-time membership, which no cache here
 holds; until then the eight's ranges are the bands and the reading is disclosed.
 
-`-atrelease 0.23.1-basket` names the S&P default with the basket on at the anchored dials. The
-dials are relative to the primary, so they transport: on a Nasdaq primary set `-basketbeta` near
+`-atrelease 0.23.1-basket` names the S&P default with the basket on at the anchored dials and the
+dividend stream at its S&P anchor (`-divyield 2.95`). The dials are relative to the primary, so
+they transport: on a Nasdaq primary set `-basketbeta` near
 1.26 (SMH's beta on QQQ, against 1.44 on SPY) and read the aggregate against QQQ.
 
 ## Biases you inherit whatever you choose

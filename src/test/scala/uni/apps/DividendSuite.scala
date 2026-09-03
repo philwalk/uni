@@ -34,7 +34,7 @@ class DividendSuite extends FunSuite:
     assert(on.price.sameElements(off.price) && on.fundamental.sameElements(off.fundamental),
       "the dividend stream must reach no price")
     for (v, w) <- MarketSim.Releases do assertEquals(w.divYield, 0.0, s"release $v")
-    for (n, w, _) <- MarketSim.Recipes do assertEquals(w.divYield, 0.0, s"recipe $n")
+    for (n, w, _) <- MarketSim.Recipes if !n.startsWith("0.23.1") do assertEquals(w.divYield, 0.0, s"recipe $n")
     assertEquals(MarketSim.Defaults.divYield, 0.0, "the shipped default emits no dividend columns")
   }
 

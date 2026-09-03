@@ -32,35 +32,36 @@ class BasketAnchorSuite extends FunSuite:
   val Anchored = MarketSim.Defaults.copy(basket = 8, basketBeta = 1.56, basketSector = 1.2,
                                          basketIdio = 1.0, basketGaps = 3.0)
 
-  test("the graded bands are the fixture's: the eight's ranges at levels 1 and 3, SMH on SPY at level 2") {
+  test("the graded bands are the fixture's: the eight's ranges at levels 1 and 3, the basket on the set's primary at level 2") {
     val rs = rows(Fixture)
     assume(rs.nonEmpty, s"$Fixture absent")
-    val spyVol = value(rs, "basket", "SPY", "vol")
-    def gate(name: String): (Double, Double) =
-      // The bands live in `gateChecks`' names, derived from the bounds they test; read them
-      // back off a measured world so the test grades the code that runs, not a copy.
-      val st  = MarketSim.measure(MarketSim.simPaths(Anchored, 2, 10, MarketSim.DefaultSeed), 10)
-      val row = MarketSim.gateChecks(MarketSim.SP500Anchors, st).map(_._1)
+    val st = MarketSim.measure(MarketSim.simPaths(Anchored, 2, 10, MarketSim.DefaultSeed), 10)
+    // The bands live in `gateChecks`' names, derived from the bounds they test; read them back
+    // off a measured world so the test grades the code that runs, not a copy.
+    def gate(a: MarketSim.Anchors, name: String): (Double, Double) =
+      val row = MarketSim.gateChecks(a, st).map(_._1)
         .find(_.startsWith(name + " ")).getOrElse(fail(s"no gate row [$name]"))
       val Array(lo, hi) = row.stripPrefix(name + " ").split("-").map(_.toDouble)
       (lo, hi)
-    val vr = eight(rs, "vol").map(_ / spyVol)
-    assertEquals(gate("basket name vol ratio"), (math.floor(vr.min * 10) / 10, math.ceil(vr.max * 10) / 10))
-    val gp = eight(rs, "gaps10")
-    assertEquals(gate("basket name gaps/yr"), (math.floor(gp.min * 10) / 10, math.ceil(gp.max * 10) / 10))
-    val corr = value(rs, "basket", "basket", "corrSpy")
-    assertEqualsDouble(gate("basket corr")._1, corr - 0.10, 1e-9); assertEqualsDouble(gate("basket corr")._2, corr + 0.10, 1e-9)
-    val beta = value(rs, "basket", "basket", "betaOnSpy")
-    assertEqualsDouble(gate("basket beta")._1, math.floor((beta - 0.25) * 10) / 10, 1e-9)
-    assertEqualsDouble(gate("basket beta")._2, math.ceil((beta + 0.25) * 10) / 10, 1e-9)
-    val volr = value(rs, "basket", "basket", "vol") / spyVol
-    assertEqualsDouble(gate("basket vol ratio")._1, math.floor((volr - 0.30) * 10) / 10, 1e-9)
-    assertEqualsDouble(gate("basket vol ratio")._2, math.ceil((volr + 0.30) * 10) / 10, 1e-9)
+    def out1(lo: Double, hi: Double) = (math.floor(lo * 10) / 10, math.ceil(hi * 10) / 10)
     def out2(lo: Double, hi: Double) = (math.floor(lo * 100) / 100, math.ceil(hi * 100) / 100)
-    assertEquals(gate("basket pair corr"), out2(value(rs, "cross", "pairCorr", "min"), value(rs, "cross", "pairCorr", "max")))
-    assertEquals(gate("basket idio share"), out2(value(rs, "cross", "idioShare", "min"), value(rs, "cross", "idioShare", "max")))
-    val tc = value(rs, "cross", "tailCoincidence", "value")
-    assertEquals(gate("basket tail coincidence"), (math.round((tc - 0.13) * 100) / 100.0, math.round((tc + 0.12) * 100) / 100.0))
+    for (a, primary, sfx) <- Vector((MarketSim.SP500Anchors, "SPY", "Spy"), (MarketSim.NasdaqAnchors, "QQQ", "Qqq")) do
+      val pv = value(rs, "basket", primary, "vol")
+      val vr = eight(rs, "vol").map(_ / pv)
+      assertEquals(gate(a, "basket name vol ratio"), out1(vr.min, vr.max), s"${a.name} name vol ratio")
+      val gp = eight(rs, "gaps10")
+      assertEquals(gate(a, "basket name gaps/yr"), out1(gp.min, gp.max))
+      val corr = value(rs, "basket", "basket", "corr" + sfx)
+      def at2(x: Double) = math.round(x * 100) / 100.0
+      assertEquals(gate(a, "basket corr"), (at2(corr - 0.10), at2(corr + 0.10)), s"${a.name} corr")
+      val beta = value(rs, "basket", "basket", "betaOn" + sfx)
+      assertEquals(gate(a, "basket beta"), out1(beta - 0.25, beta + 0.25), s"${a.name} beta")
+      val volr = value(rs, "basket", "basket", "volRatio" + sfx)
+      assertEquals(gate(a, "basket vol ratio"), out1(volr - 0.30, volr + 0.30), s"${a.name} vol ratio")
+      assertEquals(gate(a, "basket pair corr"), out2(value(rs, "cross", "pairCorr", "min"), value(rs, "cross", "pairCorr", "max")))
+      assertEquals(gate(a, "basket idio share"), out2(value(rs, "cross", "idioShare", "min"), value(rs, "cross", "idioShare", "max")))
+      val tc = value(rs, "cross", "tailCoincidence", "value")
+      assertEquals(gate(a, "basket tail coincidence"), (math.round((tc - 0.13) * 100) / 100.0, math.round((tc + 0.12) * 100) / 100.0))
     assert(value(rs, "mechanism", "pairCorr", "spyWorstDecile") > value(rs, "mechanism", "pairCorr", "spyMiddleDecile"),
       "the mechanism row's premise must hold in the record")
   }
@@ -74,8 +75,8 @@ class BasketAnchorSuite extends FunSuite:
       "the names are observational: the primary must not move")
     for (v, w) <- MarketSim.Releases do assertEquals(w.basket, 0, s"release $v")
     for (n, w, _) <- MarketSim.Recipes if n != "0.23.1-basket" do assertEquals(w.basket, 0, s"recipe $n")
-    assertEquals(MarketSim.Recipes.find(_._1 == "0.23.1-basket").map(_._2), Some(Anchored.copy(drift = Anchored.drift)),
-      "the basket recipe is the S&P default at the anchored basket dials")
+    assertEquals(MarketSim.Recipes.find(_._1 == "0.23.1-basket").map(_._2), Some(Anchored.copy(divYield = 2.95)),
+      "the basket recipe is the S&P default at the anchored basket dials, dividends on")
     assertEquals(MarketSim.Defaults.basket, 0)
     // the other channels are untouched by the basket's draws: the bars and the satellite of a
     // channels-on world are byte-identical with and without the basket

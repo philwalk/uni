@@ -1,4 +1,4 @@
-## v0.23.1 — unreleased
+## v0.23.1 — 2026-09-03
 
 **`-atrelease` names recipes, and 0.23.0 is frozen**
 
@@ -9,7 +9,8 @@
   every world against one anchor set. Both twins; contract tests pin the recipe to the frozen row
   and the nine published dials.
 - `0.23.0` joins the frozen `-releases` rows, so `-atrelease 0.23.0` reproduces it under this and
-  later binaries.
+  later binaries. The two `0.23.1-*` recipes carry every channel this release adds, the dividend
+  stream at the set's anchor included.
 
 **`-ddshape` grades against the anchor set's own references, on the model's own median**
 
@@ -37,6 +38,8 @@
   `persistence_anchor_tests`). The 250-session rung cannot discriminate — the record spans
   0.24-1.56 there — so the row binds at the short rungs and on the profile's shape. The
   `variance ratio 60d` gate row is retired into it; the loss row keeps its theory value of 1.00.
+  The sidecar's `gate.varianceRatio` carries the four rungs' readings, since the profile is a
+  gate row and not a `fidelity` row.
 - The 60-session envelope is 0.50-1.20, from 0.50-1.15. The superseded fixture's century row
   (1.143) was on an unrecorded construction; on the model's own returns the CRSP century reads
   1.175, and a bound below a real reading fails the market that produced it. `WorldStats` gains

@@ -141,7 +141,7 @@ object MarketSim:
   // about `price` and `bond` and NOT about any emitted channel column.  `world` gained the bar
   // channels' dials (`rangeScale`, `rangeDown`, `volIdio`), and the TSV the
   // columns `logHigh`/`logLow` (present ONLY when `rangeScale > 0` -- log prices of the sampled
-  // intra-bar extremes; the bar's open is the prior close, the model has no overnight) and
+  // intra-bar extremes; the bar's open is the prior close unless `overnight` > 0) and
   // `logVolume` (present ONLY when `volIdio > 0` -- a mean-free log turnover index; apply your
   // own detrend convention as you would to a real series).  Log columns for the same tie reason
   // as `logSat`.  A bars-off schema-9 file is byte-identical to its schema-8 counterpart except
@@ -544,7 +544,8 @@ object MarketSim:
                            // 0.93 against the anchored 0.85 with nothing to catch it.
     rangeScale: Double = 0.0, // INTRA-BAR RANGE (prototype): high/low sampled per session from
                            // the EXACT Brownian-bridge extreme distributions, endpoints at the
-                           // observed open (= prior close; no overnight) and close, diffusion
+                           // observed open (the prior close, or the sampled open when
+                           // `overnight` > 0) and close, diffusion
                            // scale the session's OWN noise sd -- news damp, vol state, leverage
                            // kick, jump mixing, spiral amplification, all as the price itself
                            // received them.  The range therefore scales with the session's
@@ -900,7 +901,8 @@ object MarketSim:
                   satBeta = 1.2, satIdio = 0.77, rangeScale = 0.63, rangeDown = 0.09,
                   volIdio = 0.34),
      "nasdaq"),
-    // The same world with THE OPEN on, at the bar dials re-anchored for it: the intraday bridge
+    // The same world with THE OPEN on, at the bar dials re-anchored for it, and the dividend
+    // stream at its Nasdaq anchor -- every 0.23.1 channel a consumer of this world wants on: the intraday bridge
     // carries (1-w) of the variance, so the range dial rises from 0.63 to 0.78 (0.63/sqrt(0.67))
     // and the sign coupling, now read on the intraday return, from 0.09 to 0.13.  Verified at
     // 200x100: overnight share 0.279 (record 0.28), range vs cc vol 1.104, down/up 1.136,
@@ -909,15 +911,16 @@ object MarketSim:
     ("0.23.1-nasdaq",
      V0_23_0.copy(depth = 10.0, drift = 0.105, jumpVar = 0.02, fundVol = 0.06,
                   satBeta = 1.2, satIdio = 0.77, rangeScale = 0.78, rangeDown = 0.13,
-                  volIdio = 0.34, overnight = 0.22),
+                  volIdio = 0.34, overnight = 0.22, divYield = 0.78),
      "nasdaq"),
-    // The S&P default with THE BASKET on at its anchored dials (`basket-2026-09-02.tsv`: folio's
+    // The S&P default with THE BASKET on at its anchored dials and the dividend stream at its
+    // S&P anchor (`basket-2026-09-02.tsv`: folio's
     // eight semis under SMH).  Verified at 200x100: names vol 2.47x, gaps 1.92/yr; aggregate corr
     // 0.774, beta 1.560, vol 2.01x; pairwise 0.618, idio share 0.336, tail coincidence 0.487,
     // pairwise on the worst decile 0.721 vs 0.269 mid; the primary untouched.
     ("0.23.1-basket",
      V0_23_0.copy(basket = 8, basketBeta = 1.56, basketSector = 1.2, basketIdio = 1.0,
-                  basketGaps = 3.0),
+                  basketGaps = 3.0, divYield = 2.95),
      "sp500"))
 
   /** What `-atrelease NAME` seeds from: a release's world, anchors untouched, or a recipe with
@@ -1398,7 +1401,8 @@ object MarketSim:
       val gapSkew  = w.jumpSkew
       // SATELLITE LEG state: its log price and the primary's observed log price last session.
       var satLogP = 0.0; var satPrevPx = 0.0
-      // RANGE state: the bar's open (the prior close -- no overnight).  Independent of the
+      // RANGE state: the bar's open (the prior close; the sampled open when `overnight` > 0).
+      // Independent of the
       // satellite's tracker on purpose: the channels must not couple through bookkeeping.
       var barPrevPx = 0.0
       // VOLUME state: the slow AR component, the EWMA of ln(range) that defines the range's
@@ -1468,7 +1472,10 @@ object MarketSim:
             val b  = math.sqrt(w.overnight * (1.0 - w.overnight)) * s0
             val o0 = j + w.overnight * n + b * orng.randn()
             val o  = if (rC < 0.0 && o0 < rC) || (rC > 0.0 && o0 > rC) then rC else o0
-            op(i) = barPrevPx + o
+            // Clamped, the open IS the close: assign it exactly.  `barPrevPx + rC` leaves a
+            // rounding residual of a few ulps whose sign would pick the range coupling's branch,
+            // and the twins' log prices differ at that level.
+            op(i) = if o == rC then logPx else barPrevPx + o
             op(i)
           else barPrevPx
         if rangeOn then
@@ -2773,9 +2780,9 @@ object MarketSim:
       case Some(b) =>
         Vector(bandCheck("bar range vs cc vol", b.rangeOverCcvol, 1.00, 1.20, Fidelity),
                bandCheck("bar range clustering", b.rangeAcf1, 0.57, 0.77, Fidelity),
-               // Against the INTRADAY ruler (1.109-1.142): the model has no overnight, so the
-               // record's close-to-close down/up of 1.175-1.205 carries conditioning this bar
-               // cannot have.
+               // Against the INTRADAY ruler (1.109-1.142): with `overnight` off the bar has no
+               // overnight, so the record's close-to-close down/up of 1.175-1.205 carries
+               // conditioning it cannot have; with it on the coupling reads the intraday return.
                bandCheck("bar range down/up", b.rangeDownup, 1.00, 1.30, Fidelity)) ++
         (if b.volSd.isFinite then
            Vector(bandCheck("bar volume sd", b.volSd, 0.40, 0.60, Fidelity),
@@ -2799,9 +2806,10 @@ object MarketSim:
                ("overnight gap share rises on the worst sessions",
                 os.worstGapShare > os.allGapShare, Mechanism))
     // THE BASKET, graded when it ran -- `basket-2026-09-02.tsv`, the eight semis under SMH:
-    // level 1 as a POPULATION (the names' vol 1.9-3.5x SPY's, gaps 0.4-5.1/yr -- the eight's
-    // ranges rounded outward, graded on the pooled median), level 2 the aggregate against the
-    // primary (corr 0.77 +-0.10, beta 1.56 +-0.25, vol 2.0x +-0.3 -- SMH's relation to SPY), level 3 the
+    // level 1 as a POPULATION (the names' vol 1.9-3.5x SPY's or 1.5-2.8x QQQ's, gaps 0.4-5.1/yr
+    // -- the eight's ranges rounded outward, graded on the pooled median), level 2 the aggregate
+    // against the set's primary (the eight's basket on SPY: corr 0.77, beta 1.56, vol 2.0x; on
+    // QQQ: 0.84, 1.37, 1.63x; +-0.10 / +-0.25 / +-0.3), level 3 the
     // structure a basket rule reads (pairwise 0.59, idio share 0.37, tail coincidence 0.48), and
     // the mechanism: pairwise correlation on the primary's worst decile above its middle decile
     // (0.60 vs 0.28).  The names' d20 is REPORTED, not graded: the eight's 0.08-0.61 is the time
@@ -2811,11 +2819,18 @@ object MarketSim:
     val basketBands = st.basket match
       case None => Vector.empty
       case Some(b) =>
-        Vector(bandCheck("basket name vol ratio", b.nameVolRatio, 1.90, 3.50, Fidelity),
+        // level 2 bands from the set's anchor: corr +-0.10 at the row's 0.01 (the anchor carries a
+        // third decimal the row does not print), beta +-0.25 and vol ratio +-0.3 rounded outward
+        // to 0.1 -- the satellite's tolerances
+        def at2(x: Double) = math.round(x * 100) / 100.0
+        def out(lo: Double, hi: Double) = (math.floor(lo * 10) / 10, math.ceil(hi * 10) / 10)
+        val (betaLo, betaHi) = out(a.basketBeta - 0.25, a.basketBeta + 0.25)
+        val (volLo, volHi)   = out(a.basketVolRatio - 0.30, a.basketVolRatio + 0.30)
+        Vector(bandCheck("basket name vol ratio", b.nameVolRatio, a.basketNameVolBand._1, a.basketNameVolBand._2, Fidelity),
                bandCheck("basket name gaps/yr", b.nameGaps, 0.40, 5.10, Fidelity),
-               bandCheck("basket corr", b.aggCorr, 0.67, 0.87, Fidelity),
-               bandCheck("basket beta", b.aggBeta, 1.30, 1.90, Fidelity),
-               bandCheck("basket vol ratio", b.aggVolRatio, 1.70, 2.40, Fidelity),
+               bandCheck("basket corr", b.aggCorr, at2(a.basketCorr - 0.10), at2(a.basketCorr + 0.10), Fidelity),
+               bandCheck("basket beta", b.aggBeta, betaLo, betaHi, Fidelity),
+               bandCheck("basket vol ratio", b.aggVolRatio, volLo, volHi, Fidelity),
                bandCheck("basket pair corr", b.pairCorr, 0.42, 0.86, Fidelity),
                bandCheck("basket idio share", b.idioShare, 0.26, 0.60, Fidelity),
                bandCheck("basket tail coincidence", b.tailCoincidence, 0.35, 0.60, Fidelity),
@@ -3025,7 +3040,13 @@ object MarketSim:
     ddRefs: Vector[DdReference],
     // The dividend yield at fair value (%/yr) and the band its level is graded against when the
     // `divYield` dial is on -- `dividend-2026-09-02.tsv`: the window's annual means rounded out.
-    divYield: Double, divYieldBand: (Double, Double))
+    divYield: Double, divYieldBand: (Double, Double),
+    // THE BASKET's relation to this set's primary -- `basket-2026-09-02.tsv`: the equal-weight
+    // eight on SPY / on QQQ (corr, beta, vol ratio), and the eight's vol as a ratio to the
+    // primary's, rounded outward.  Level 3 of that fixture is a property of the names among
+    // themselves and stays shared.
+    basketCorr: Double, basketBeta: Double, basketVolRatio: Double,
+    basketNameVolBand: (Double, Double))
 
   /** One real drawdown-shape reference: a series over a window, and per threshold (thr, episodes,
     * per year, median depth %, median decline, median recovery, median underwater, median
@@ -3095,7 +3116,8 @@ object MarketSim:
     valDispSd = 0.64, d5Sd = 0.19, d10Sd = 0.45, d20Sd = 2.38,
     bondVolSd = 0.52, bondGrowthSd = 1.48, bondInflSd = 1.99, bondDepthSd = 0.36,
     ddRefs = DdRefsSp500,
-    divYield = 2.95, divYieldBand = (1.1, 5.8))
+    divYield = 2.95, divYieldBand = (1.1, 5.8),
+    basketCorr = 0.770, basketBeta = 1.557, basketVolRatio = 2.023, basketNameVolBand = (1.9, 3.5))
 
   /** The Nasdaq-100 set, measured 2026-08-28 from QQQ daily adjusted closes over its own full
     * history, 1999-03-10 to 2026-08-20 (27.4 years).
@@ -3161,7 +3183,8 @@ object MarketSim:
     valDispSd = 0.53, d5Sd = 0.12, d10Sd = 0.19, d20Sd = 0.30,
     bondVolSd = 0.52, bondGrowthSd = 0.91, bondInflSd = 1.71, bondDepthSd = 0.36,
     ddRefs = DdRefsNasdaq,
-    divYield = 0.78, divYieldBand = (0.3, 1.5))
+    divYield = 0.78, divYieldBand = (0.3, 1.5),
+    basketCorr = 0.837, basketBeta = 1.365, basketVolRatio = 1.630, basketNameVolBand = (1.5, 2.8))
 
   val AnchorSets: Vector[Anchors] = Vector(SP500Anchors, NasdaqAnchors)
 
@@ -5246,7 +5269,11 @@ object MarketSim:
       // Bands the anchors could not grade in this world, with the reason.  Without this a path
       // emitted from (say) a 1.8-year-duration world shows fidelity PASS and nothing says the
       // depth level was never graded at all -- a consumer would read levels off it.
-      s"""    "fidelityUnanchored": ${strList(unanchoredIn(gateSt))}""",
+      s"""    "fidelityUnanchored": ${strList(unanchoredIn(gateSt))},""",
+      // THE PROFILE ROW'S READINGS.  `fidelity` below carries the loss rows, and the
+      // variance-ratio profile is a gate row over four rungs, not a loss row: without this a
+      // consumer learns the profile passed and cannot read it.
+      s"""    "varianceRatio": { ${VarRatioLadder.map(q => s""""$q": ${num(vrOf(gateSt, q))}""").mkString(", ")} }""",
       "  },",
       channelReadingsBlock(gateSt, p),
       """  "fidelity": [""",

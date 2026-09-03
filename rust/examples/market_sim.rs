@@ -106,7 +106,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 // `bond` and NOT about any emitted channel column. `world` gained the bar channels' dials
 // (`rangeScale`, `rangeDown`, `volIdio`), and the TSV the
 // columns `logHigh`/`logLow` (present ONLY when `rangeScale > 0` — log prices of the sampled
-// intra-bar extremes; the bar's open is the prior close, the model has no overnight) and
+// intra-bar extremes; the bar's open is the prior close unless `overnight` > 0) and
 // `logVolume` (present ONLY when `volIdio > 0` — a mean-free log turnover index; apply your
 // own detrend convention as you would to a real series). Log columns for the same tie reason
 // as `logSat`. A bars-off schema-9 file is byte-identical to its schema-8 counterpart except
@@ -582,7 +582,9 @@ fn recipes() -> Vec<(&'static str, World, &'static str)> {
     nasdaq.range_scale = 0.63;
     nasdaq.range_down = 0.09;
     nasdaq.vol_idio = 0.34;
-    // The same world with THE OPEN on, at the bar dials re-anchored for it: the intraday bridge
+    // The same world with THE OPEN on, at the bar dials re-anchored for it, and the dividend
+    // stream at its Nasdaq anchor — every 0.23.1 channel a consumer of this world wants on: the
+    // intraday bridge
     // carries (1-w) of the variance, so the range dial rises from 0.63 to 0.78 (0.63/sqrt(0.67))
     // and the sign coupling, now read on the intraday return, from 0.09 to 0.13. Verified at
     // 200x100: overnight share 0.279 (record 0.28), range vs cc vol 1.104, down/up 1.136,
@@ -592,7 +594,9 @@ fn recipes() -> Vec<(&'static str, World, &'static str)> {
     open.overnight = 0.22;
     open.range_scale = 0.78;
     open.range_down = 0.13;
-    // The S&P default with THE BASKET on at its anchored dials (`basket-2026-09-02.tsv`: folio's
+    open.div_yield = 0.78;
+    // The S&P default with THE BASKET on at its anchored dials and the dividend stream at its S&P
+    // anchor (`basket-2026-09-02.tsv`: folio's
     // eight semis under SMH). Verified at 200x100: names vol 2.47x, gaps 1.92/yr; aggregate corr
     // 0.774, beta 1.560, vol 2.01x; pairwise 0.618, idio share 0.336, tail coincidence 0.487,
     // pairwise on the worst decile 0.721 vs 0.269 mid; the primary untouched.
@@ -602,6 +606,7 @@ fn recipes() -> Vec<(&'static str, World, &'static str)> {
     basket.basket_sector = 1.2;
     basket.basket_idio = 1.0;
     basket.basket_gaps = 3.0;
+    basket.div_yield = 2.95;
     vec![
         ("0.23.0-nasdaq", nasdaq, "nasdaq"),
         ("0.23.1-nasdaq", open, "nasdaq"),
@@ -1099,7 +1104,8 @@ struct World {
     sat_idio: f64,
     /// INTRA-BAR RANGE (prototype): high/low sampled per session from the EXACT Brownian-bridge
     /// extreme distributions, with endpoints at the observed open (= prior close; the model has
-    /// no overnight) and close, and diffusion scale the session's OWN noise sd — news-damped,
+    /// the sampled open when `overnight` > 0) and close, and diffusion scale the session's OWN
+    /// noise sd — news-damped,
     /// vol-state, leverage kick, jump mixing, spiral amplification, all as the price itself
     /// received them. The range therefore scales with the session's noise, NOT with |return|:
     /// the record's corr(lnH/L, |r|) is only 0.70-0.72, and a bar derived as a multiple of |r|
@@ -1682,9 +1688,9 @@ impl ChannelRngs {
     }
 }
 
-/// The bar channels' state: the bar's open (the prior close — no overnight), kept independent
-/// of the satellite's tracker on purpose (the channels must not couple through bookkeeping),
-/// and the volume channel's state.
+/// The bar channels' state: the bar's open (the prior close, or the sampled open when
+/// `overnight` > 0), kept independent of the satellite's tracker on purpose (the channels must
+/// not couple through bookkeeping), and the volume channel's state.
 struct BarState {
     prev_px: f64,
     vol: VolState,
@@ -1717,7 +1723,11 @@ fn bar_session(
     let range_on = w.range_scale > 0.0;
     let r_c = log_px - st.prev_px;
     let open_px = if open_on {
-        out.op[i] = st.prev_px + overnight_move(w, x.jump[i], r_c, x.d[i] * k, rngs.o.randn());
+        let o = overnight_move(w, x.jump[i], r_c, x.d[i] * k, rngs.o.randn());
+        // Clamped, the open IS the close: assign it exactly. `prev_px + r_c` leaves a rounding
+        // residual of a few ulps whose sign would pick the range coupling's branch, and the
+        // twins' log prices differ at that level.
+        out.op[i] = if o == r_c { log_px } else { st.prev_px + o };
         out.op[i]
     } else {
         st.prev_px
@@ -2077,12 +2087,6 @@ fn simulate(w: &World, years: usize, seed: u64) -> Path {
     clippy::cognitive_complexity,
     reason = "mirrors one Scala method; splitting it would obscure the draw order, which is \
               the thing that has to stay verifiable"
-)]
-#[expect(
-    clippy::manual_range_contains,
-    reason = "explicit comparisons mirror the Scala AND differ from RangeInclusive::contains \
-              on NaN: `x < a || x > b` leaves NaN on the false branch, `!(a..=b).contains(&x)` \
-              puts it on the true branch"
 )]
 fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
     let n = years * DAYS_PER_YEAR;
@@ -4262,9 +4266,9 @@ fn gate_checks(a: Anchors, st: &WorldStats) -> Vec<(String, bool, GateClass)> {
         for (name, got, lo, hi) in [
             ("bar range vs cc vol", b.range_over_ccvol, 1.00, 1.20),
             ("bar range clustering", b.range_acf1, 0.57, 0.77),
-            // Against the INTRADAY ruler (1.109-1.142): the model has no overnight, so the
-            // record's close-to-close down/up of 1.175-1.205 carries conditioning this bar
-            // cannot have.
+            // Against the INTRADAY ruler (1.109-1.142): with `overnight` off the bar has no
+            // overnight, so the record's close-to-close down/up of 1.175-1.205 carries
+            // conditioning it cannot have; with it on the coupling reads the intraday return.
             ("bar range down/up", b.range_downup, 1.00, 1.30),
         ] {
             v.push(band_check(name, got, lo, hi, GateClass::Fidelity, 2, ""));
@@ -4277,6 +4281,20 @@ fn gate_checks(a: Anchors, st: &WorldStats) -> Vec<(String, bool, GateClass)> {
                 v.push(band_check(name, got, lo, hi, GateClass::Fidelity, 2, ""));
             }
         }
+    }
+    // THE DIVIDEND LEVEL, graded when the dial is on: the yield at fair value is an identity
+    // parameter, so this row can only catch a dial set outside what the record's own annual
+    // means span — `dividend-2026-09-02.tsv`.
+    if st.div_yield_mean.is_finite() {
+        v.push(band_check(
+            "dividend yield %",
+            st.div_yield_mean,
+            a.div_yield_band.0,
+            a.div_yield_band.1,
+            GateClass::Fidelity,
+            1,
+            "",
+        ));
     }
     // THE OPEN, graded when it ran: the overnight share against the record's (0.33 SPY / 0.28
     // QQQ, `bars-2026-09-01.tsv`, tol 0.10 like the other bar rows), and the mechanism the
@@ -4298,9 +4316,10 @@ fn gate_checks(a: Anchors, st: &WorldStats) -> Vec<(String, bool, GateClass)> {
         ));
     }
     // THE BASKET, graded when it ran — `basket-2026-09-02.tsv`, the eight semis under SMH: level 1
-    // as a POPULATION (the names' vol 1.9-3.5x SPY's, gaps 0.4-5.1/yr — the eight's ranges rounded
-    // outward, graded on the pooled median), level 2 the aggregate against the primary (corr 0.77
-    // +-0.10, beta 1.56 +-0.25, vol 2.0x +-0.3 — SMH's relation to SPY), level 3 the structure a
+    // as a POPULATION (the names' vol 1.9-3.5x SPY's or 1.5-2.8x QQQ's, gaps 0.4-5.1/yr — the
+    // eight's ranges rounded outward, graded on the pooled median), level 2 the aggregate against
+    // the set's primary (the eight's basket on SPY: corr 0.77, beta 1.56, vol 2.0x; on QQQ: 0.84,
+    // 1.37, 1.63x; +-0.10 / +-0.25 / +-0.3), level 3 the structure a
     // basket rule reads (pairwise 0.59, idio share 0.37, tail coincidence 0.48), and the
     // mechanism: pairwise correlation on the primary's worst decile above its middle decile (0.60
     // vs 0.28). The names' d20 is REPORTED, not graded: the eight's 0.08-0.61 is the time below
@@ -4308,12 +4327,29 @@ fn gate_checks(a: Anchors, st: &WorldStats) -> Vec<(String, bool, GateClass)> {
     // name at the sector's drift and 2.6x the index's volatility spends most of a century more
     // than 20% below its peak, as a real name of that drift would.
     if let Some(b) = st.basket {
+        // level 2 bands from the set's anchor: corr +-0.10 at the row's 0.01 (the anchor carries a
+        // third decimal the row does not print), beta +-0.25 and vol ratio +-0.3 rounded outward
+        // to 0.1 — the satellite's tolerances
+        let at2 = |x: f64| (x * 100.0).round() / 100.0;
+        let out = |lo: f64, hi: f64| ((lo * 10.0).floor() / 10.0, (hi * 10.0).ceil() / 10.0);
+        let (beta_lo, beta_hi) = out(a.basket_beta - 0.25, a.basket_beta + 0.25);
+        let (vol_lo, vol_hi) = out(a.basket_vol_ratio - 0.30, a.basket_vol_ratio + 0.30);
         for (name, got, lo, hi) in [
-            ("basket name vol ratio", b.name_vol_ratio, 1.90, 3.50),
+            (
+                "basket name vol ratio",
+                b.name_vol_ratio,
+                a.basket_name_vol_band.0,
+                a.basket_name_vol_band.1,
+            ),
             ("basket name gaps/yr", b.name_gaps, 0.40, 5.10),
-            ("basket corr", b.agg_corr, 0.67, 0.87),
-            ("basket beta", b.agg_beta, 1.30, 1.90),
-            ("basket vol ratio", b.agg_vol_ratio, 1.70, 2.40),
+            (
+                "basket corr",
+                b.agg_corr,
+                at2(a.basket_corr - 0.10),
+                at2(a.basket_corr + 0.10),
+            ),
+            ("basket beta", b.agg_beta, beta_lo, beta_hi),
+            ("basket vol ratio", b.agg_vol_ratio, vol_lo, vol_hi),
             ("basket pair corr", b.pair_corr, 0.42, 0.86),
             ("basket idio share", b.idio_share, 0.26, 0.60),
             ("basket tail coincidence", b.tail_coincidence, 0.35, 0.60),
@@ -4324,20 +4360,6 @@ fn gate_checks(a: Anchors, st: &WorldStats) -> Vec<(String, bool, GateClass)> {
             "basket pair corr rises on the worst decile".to_string(),
             b.pair_corr_worst > b.pair_corr_mid,
             Mechanism,
-        ));
-    }
-    // THE DIVIDEND LEVEL, graded when the dial is on: the yield at fair value is an identity
-    // parameter, so this row can only catch a dial set outside what the record's own annual
-    // means span — `dividend-2026-09-02.tsv`.
-    if st.div_yield_mean.is_finite() {
-        v.push(band_check(
-            "dividend yield %",
-            st.div_yield_mean,
-            a.div_yield_band.0,
-            a.div_yield_band.1,
-            GateClass::Fidelity,
-            1,
-            "",
         ));
     }
     v
@@ -4569,6 +4591,14 @@ struct Anchors {
     /// `div_yield` dial is on — `dividend-2026-09-02.tsv`: the window's annual means rounded out.
     div_yield: f64,
     div_yield_band: (f64, f64),
+    /// THE BASKET's relation to this set's primary — `basket-2026-09-02.tsv`: the equal-weight
+    /// eight on SPY / on QQQ (corr, beta, vol ratio), and the eight's vol as a ratio to the
+    /// primary's, rounded outward. Level 3 of that fixture is a property of the names among
+    /// themselves and stays shared.
+    basket_corr: f64,
+    basket_beta: f64,
+    basket_vol_ratio: f64,
+    basket_name_vol_band: (f64, f64),
 }
 
 /// One real drawdown-shape reference: a series over a window, and per threshold (thr, episodes,
@@ -4716,6 +4746,10 @@ const SP500_ANCHORS: Anchors = Anchors {
     dd_refs: &DD_REFS_SP500,
     div_yield: 2.95,
     div_yield_band: (1.1, 5.8),
+    basket_corr: 0.770,
+    basket_beta: 1.557,
+    basket_vol_ratio: 2.023,
+    basket_name_vol_band: (1.9, 3.5),
 };
 
 /// The Nasdaq-100 set, measured 2026-08-28 from QQQ daily adjusted closes over its own full history,
@@ -4796,6 +4830,10 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     dd_refs: &DD_REFS_NASDAQ,
     div_yield: 0.78,
     div_yield_band: (0.3, 1.5),
+    basket_corr: 0.837,
+    basket_beta: 1.365,
+    basket_vol_ratio: 1.630,
+    basket_name_vol_band: (1.5, 2.8),
 };
 
 fn anchors_named(spec: &str) -> Anchors {
@@ -9198,8 +9236,19 @@ fn write_emit_sidecar(
         // emitted from (say) a 1.8-year-duration world shows fidelity PASS and nothing says the
         // depth level was never graded at all — a consumer would read levels off it.
         format!(
-            "    \"fidelityUnanchored\": {}",
+            "    \"fidelityUnanchored\": {},",
             str_list(&unanchored_in(gate_st))
+        ),
+        // THE PROFILE ROW'S READINGS. `fidelity` below carries the loss rows, and the
+        // variance-ratio profile is a gate row over four rungs, not a loss row: without this a
+        // consumer learns the profile passed and cannot read it.
+        format!(
+            "    \"varianceRatio\": {{ {} }}",
+            VAR_RATIO_LADDER
+                .iter()
+                .map(|&q| format!("\"{q}\": {}", num(vr_of(gate_st, q))))
+                .collect::<Vec<_>>()
+                .join(", ")
         ),
         "  },".to_string(),
         channel_readings_block(gate_st, p),
@@ -13036,7 +13085,9 @@ mod dividend_tests {
             assert!(w.div_yield == 0.0, "release {v}");
         }
         for (n, w, _) in recipes() {
-            assert!(w.div_yield == 0.0, "recipe {n}");
+            if !n.starts_with("0.23.1") {
+                assert!(w.div_yield == 0.0, "recipe {n}");
+            }
         }
         assert!(default_world().div_yield == 0.0);
     }
@@ -13247,9 +13298,10 @@ mod open_tests {
         want.overnight = 0.22;
         want.range_scale = 0.78;
         want.range_down = 0.13;
+        want.div_yield = 0.78;
         assert!(
             recipe("0.23.1-nasdaq") == want,
-            "0.23.1-nasdaq must differ from 0.23.0-nasdaq in the open and the two bar dials only"
+            "0.23.1-nasdaq must differ from 0.23.0-nasdaq in the open, the two bar dials and the dividend only"
         );
     }
 
@@ -13398,9 +13450,9 @@ mod basket_anchor_tests {
 
     /// The bands live in `gate_checks`' names, derived from the bounds they test; read them back
     /// off a measured world so the test grades the code that runs, not a copy.
-    fn gate(name: &str) -> (f64, f64) {
+    fn gate(a: Anchors, name: &str) -> (f64, f64) {
         let st = measure(&sim_paths(&anchored(), 2, 10, DEFAULT_SEED), 10);
-        let row = gate_checks(anchors_named("sp500"), &st)
+        let row = gate_checks(a, &st)
             .into_iter()
             .map(|r| r.0)
             .find(|n| n.starts_with(&format!("{name} ")))
@@ -13410,63 +13462,81 @@ mod basket_anchor_tests {
         (lo.parse().expect("lo"), hi.parse().expect("hi"))
     }
 
+    fn out1(lo: f64, hi: f64) -> (f64, f64) {
+        ((lo * 10.0).floor() / 10.0, (hi * 10.0).ceil() / 10.0)
+    }
+    fn out2(lo: f64, hi: f64) -> (f64, f64) {
+        ((lo * 100.0).floor() / 100.0, (hi * 100.0).ceil() / 100.0)
+    }
+    fn at2(x: f64) -> f64 {
+        (x * 100.0).round() / 100.0
+    }
+    fn same(g: (f64, f64), w: (f64, f64)) -> bool {
+        near(g.0, w.0) && near(g.1, w.1)
+    }
+
     #[test]
-    fn the_graded_bands_are_the_fixtures() {
+    fn the_graded_bands_are_the_fixtures_per_anchor_set() {
         let Some(rs) = rows() else {
             return;
         };
-        let spy_vol = value(&rs, "basket", "SPY", "vol");
-        let vr: Vec<f64> = eight(&rs, "vol").iter().map(|v| v / spy_vol).collect();
-        let g = gate("basket name vol ratio");
-        assert!(
-            near(g.0, (fmin(&vr) * 10.0).floor() / 10.0)
-                && near(g.1, (fmax(&vr) * 10.0).ceil() / 10.0),
-            "{g:?}"
-        );
-        let gp = eight(&rs, "gaps10");
-        let g = gate("basket name gaps/yr");
-        assert!(
-            near(g.0, (fmin(&gp) * 10.0).floor() / 10.0)
-                && near(g.1, (fmax(&gp) * 10.0).ceil() / 10.0),
-            "{g:?}"
-        );
-        let corr = value(&rs, "basket", "basket", "corrSpy");
-        let g = gate("basket corr");
-        assert!(near(g.0, corr - 0.10) && near(g.1, corr + 0.10), "{g:?}");
-        let beta = value(&rs, "basket", "basket", "betaOnSpy");
-        let g = gate("basket beta");
-        assert!(
-            near(g.0, ((beta - 0.25) * 10.0).floor() / 10.0)
-                && near(g.1, ((beta + 0.25) * 10.0).ceil() / 10.0),
-            "{g:?}"
-        );
-        let volr = value(&rs, "basket", "basket", "vol") / spy_vol;
-        let g = gate("basket vol ratio");
-        assert!(
-            near(g.0, ((volr - 0.30) * 10.0).floor() / 10.0)
-                && near(g.1, ((volr + 0.30) * 10.0).ceil() / 10.0),
-            "{g:?}"
-        );
-        let out2 = |lo: f64, hi: f64| ((lo * 100.0).floor() / 100.0, (hi * 100.0).ceil() / 100.0);
-        let want = out2(
-            value(&rs, "cross", "pairCorr", "min"),
-            value(&rs, "cross", "pairCorr", "max"),
-        );
-        let g = gate("basket pair corr");
-        assert!(near(g.0, want.0) && near(g.1, want.1), "{g:?} vs {want:?}");
-        let want = out2(
-            value(&rs, "cross", "idioShare", "min"),
-            value(&rs, "cross", "idioShare", "max"),
-        );
-        let g = gate("basket idio share");
-        assert!(near(g.0, want.0) && near(g.1, want.1), "{g:?} vs {want:?}");
-        let tc = value(&rs, "cross", "tailCoincidence", "value");
-        let g = gate("basket tail coincidence");
-        assert!(
-            near(g.0, ((tc - 0.13) * 100.0).round() / 100.0)
-                && near(g.1, ((tc + 0.12) * 100.0).round() / 100.0),
-            "{g:?}"
-        );
+        for (a, primary, sfx) in [
+            (anchors_named("sp500"), "SPY", "Spy"),
+            (anchors_named("nasdaq"), "QQQ", "Qqq"),
+        ] {
+            let pv = value(&rs, "basket", primary, "vol");
+            let vr: Vec<f64> = eight(&rs, "vol").iter().map(|v| v / pv).collect();
+            assert!(
+                same(gate(a, "basket name vol ratio"), out1(fmin(&vr), fmax(&vr))),
+                "{} name vol ratio",
+                a.name
+            );
+            let gp = eight(&rs, "gaps10");
+            assert!(same(
+                gate(a, "basket name gaps/yr"),
+                out1(fmin(&gp), fmax(&gp))
+            ));
+            let corr = value(&rs, "basket", "basket", &format!("corr{sfx}"));
+            assert!(
+                same(gate(a, "basket corr"), (at2(corr - 0.10), at2(corr + 0.10))),
+                "{} corr",
+                a.name
+            );
+            let beta = value(&rs, "basket", "basket", &format!("betaOn{sfx}"));
+            assert!(
+                same(gate(a, "basket beta"), out1(beta - 0.25, beta + 0.25)),
+                "{} beta",
+                a.name
+            );
+            let volr = value(&rs, "basket", "basket", &format!("volRatio{sfx}"));
+            assert!(
+                same(gate(a, "basket vol ratio"), out1(volr - 0.30, volr + 0.30)),
+                "{} vol ratio",
+                a.name
+            );
+            assert!(same(
+                gate(a, "basket pair corr"),
+                out2(
+                    value(&rs, "cross", "pairCorr", "min"),
+                    value(&rs, "cross", "pairCorr", "max")
+                )
+            ));
+            assert!(same(
+                gate(a, "basket idio share"),
+                out2(
+                    value(&rs, "cross", "idioShare", "min"),
+                    value(&rs, "cross", "idioShare", "max")
+                )
+            ));
+            let tc = value(&rs, "cross", "tailCoincidence", "value");
+            assert!(same(
+                gate(a, "basket tail coincidence"),
+                (
+                    ((tc - 0.13) * 100.0).round() / 100.0,
+                    ((tc + 0.12) * 100.0).round() / 100.0
+                )
+            ));
+        }
         assert!(
             value(&rs, "mechanism", "pairCorr", "spyWorstDecile")
                 > value(&rs, "mechanism", "pairCorr", "spyMiddleDecile"),
