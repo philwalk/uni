@@ -105,7 +105,7 @@ transcendental as agreeing to ~1 ulp rather than exactly, and assume nothing abo
 of them without measuring it.
 
 Consequence for consumers, and how it actually plays out — `uni.apps.MarketSim` and
-`examples/market_sim.rs` are the worked example. A 1-ulp difference is invisible at any
+`src/market_sim.rs` are the worked example. A 1-ulp difference is invisible at any
 normal print precision, so it can only surface where a printed column's true value is
 **identically zero** and the rounding noise is the only thing left in it. In marketSim
 that is exactly one column: the always-invested rule against buy-and-hold, where
@@ -138,7 +138,11 @@ and the version the sidecar stamps (`uni.BuildInfo.version`) and the code that r
 from the same artifact. `ScriptTwinSuite` fails the build if the launcher stops dispatching
 or is overwritten with a copy of the model. A consumer fork (`/opt/ue/jsrc`) should adopt
 the launcher rather than track the old full-source copy, which no longer exists upstream.
-The Rust side ships in the crate itself: `cargo install vastblue-uni --example market_sim`.
+The Rust side ships in the crate itself, as `uni::market_sim` (the `market-sim` feature, on by
+default) with a two-line binary: `cargo install vastblue-uni` builds it, and a crate that depends
+on `vastblue-uni` drives the same paths in-process through `named_world` / `simulate` /
+`sim_paths`, grades them with `measure` / `gate_checks` / `fidelity_rows` and writes them with
+`write_emitted` — no subprocess and no TSV round trip.
 The sidecar's shape is itself under contract: `EMIT_SCHEMA`/`EMIT_SIDECAR_KEYS` here and
 `EmitSchema`/`EmitSidecarKeys` in the Scala twin, cross-checked by tests on both sides
 (`emit_sidecar_tests`, `EmitSidecarSuite`), so a key added to one twin's sidecar fails the

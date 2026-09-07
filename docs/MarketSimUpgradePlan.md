@@ -13,7 +13,7 @@ that pattern complete instead of accidental.
 
 ## Constraints any change must respect
 
-- **Two twins, byte-identical.** `jsrc/marketSim.sc` and `rust/examples/market_sim.rs` agree exactly
+- **Two twins, byte-identical.** `jsrc/marketSim.sc` and `rust/src/market_sim.rs` agree exactly
   across `-emit`, `-validate`, `-buffer`, `-power` and `-strategies`. Every item lands in both, in
   one change, and the output diff is the test.
 - **Signed zeros.** Any printed column whose true value can be identically zero must render through
@@ -64,14 +64,16 @@ that pattern complete instead of accidental.
   precisely because the alternative — relaxing the bond-volatility band so calm bonds pass — would
   make the gate stop meaning anything.
 
-## How the simulator ships (0.23.1)
+## How the simulator ships (0.24.0)
 
 The simulator is public API in both published artifacts, not a repo-only tool:
 
-- **Rust**: the crate packages `examples/market_sim.rs` (with the other eight demo pairs), so
-  `cargo install vastblue-uni --example market_sim` builds the binary from crates.io.
+- **Rust**: the simulator is library code, `uni::market_sim` (the `market-sim` feature, on by
+  default), with a two-line binary in the package: `cargo install vastblue-uni` builds it from
+  crates.io, and a dependent crate calls `named_world` / `simulate` / `sim_paths`, `measure` /
+  `gate_checks` / `fidelity_rows` and `write_emitted` in-process.
 - **Scala**: `uni.apps.MarketSim` is compiled into the jar —
-  `scala-cli run --jar uni_3-0.23.1.jar --main-class uni.apps.MarketSim -- -validate`.
+  `scala-cli run --jar uni_3-0.24.0.jar --main-class uni.apps.MarketSim -- -validate`.
 - `src/main/scala/apps/MarketSim.scala` is the only Scala copy of the model; `jsrc/marketSim.sc` is
   a thin launcher that dispatches into it, so the version its sidecar stamps
   (`uni.BuildInfo.version`) and the code that runs come from one artifact. `ScriptTwinSuite` fails

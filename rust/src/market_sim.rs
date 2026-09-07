@@ -16,7 +16,8 @@
 //! `showUsage`, which has no counterpart here, so a bad argument prints the same message on both but
 //! only the Scala side follows it with the flag list. Consult that side for the flags.
 //!
-//! Run: `cargo run --release --example market_sim -- -validate`
+//! Run: `cargo run --release --bin market_sim -- -validate`, or `cargo install vastblue-uni` for the
+//! binary; in-process, `uni::market_sim::{named_world, simulate}` return the same paths.
 //!
 //! `-version` prints the crate version and exits, and the `-emit` sidecar records it. The
 //! default world moved at 0.19.1 and 0.19.2, so a consumer holding an emitted path needs to
@@ -32,7 +33,7 @@
 //! - **Draw order is load-bearing.** Every `randn()`/`next_f64()`/`next_bounded_u32()`
 //!   call must happen in the same sequence as in Scala, including inside branches that
 //!   look reorderable.
-//! - **`%.6f` is Java's, not Rust's.** [`uni::udata::java_format_f`] rounds the shortest
+//! - **`%.6f` is Java's, not Rust's.** [`crate::udata::java_format_f`] rounds the shortest
 //!   decimal representation half-up, as `f"$x%.6f"` does; Rust's `{:.6}` rounds the exact
 //!   binary value half-to-even, and the two disagree on boundary cases.
 //! - **`signum` differs.** Scala's `Double.sign` returns 0.0 at zero; Rust's `f64::signum`
@@ -54,10 +55,11 @@ use std::collections::BinaryHeap;
 use std::sync::Arc;
 
 use rayon::prelude::*;
-use uni::NumPyRng;
-use uni::udata::MatD;
-use uni::udata::java_format_f;
-use uni::utime::UniDateTime;
+
+use crate::NumPyRng;
+use crate::udata::MatD;
+use crate::udata::java_format_f;
+use crate::utime::UniDateTime;
 
 /// Which release this binary is, from `Cargo.toml` at compile time. Never a literal: a copied
 /// or stale `market_sim` cannot report a version it was not built from, which is the whole
@@ -137,7 +139,17 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 // `logName1..N` (present ONLY when `basket > 0`; N from the header), and `channels.basket` the
 // three levels' readings. A channels-off schema-11 file is byte-identical to its schema-10
 // counterpart except the schema number and the new zero world fields.
-const EMIT_SCHEMA: u32 = 11;
+// 11 -> 12: THE MACRO PANEL. `world` gained `macro` (the flag's name, like every dial's key; the
+// field is `macro_panel` because the Scala twin's cannot be `macro`, a reserved word there); the
+// TSV gained `macroSpread`, `macroSlope`, `macroCond`, `macroIvol` (present ONLY when `macro > 0` — levels in their
+// counterparts' units, BAA10Y / T10Y2Y / NFCILEVERAGE / VIXCLS, each the value an agency would
+// MEASURE that session: cadence, release lag and revisions are the consumer's point-in-time
+// layer, applied to an emitted column exactly as to the real series); and `channels.macro` the
+// readings the macro rows grade, naming each column's counterpart and natural cadence so a
+// consumer's loader can route it through the table its FRED name would get. A panel-off
+// schema-12 file is byte-identical to its schema-11 counterpart except the schema number and the
+// new zero world field.
+const EMIT_SCHEMA: u32 = 12;
 
 /// Frozen structural constants of the volume channel — see the `vol_idio` field. Measured
 /// from the SPY/QQQ volume-on-range regression (`bars-2026-09-01.tsv`, whose rows the
@@ -343,16 +355,16 @@ fn news_budget_refusal(news_rate: f64, news_size: f64) -> Option<String> {
 // THE shipped world. `main` seeds its mutable CLI variables from this and the release table
 /// derives its rows from it, so every default is written once — the same one-source rule the Scala
 /// twin's `Defaults` follows.
-fn default_world() -> World {
+pub fn default_world() -> World {
     World {
         trend_share: 0.055,
         depth: 17.4,
-        stress: 5.15,
+        stress: 4.7,
         beta: 3.0,
         drift: 0.122,
-        fund_vol: 0.070,
+        fund_vol: 0.060,
         rate_mean: 0.042,
-        vol_persist: 0.992,
+        vol_persist: 0.993,
         vol_of_vol: 0.022,
         recovery_drag: 8.5,
         recovery_floor: 0.10,
@@ -387,11 +399,11 @@ fn default_world() -> World {
         belief_years: 1.5,
         cap_years: 1.5,
         cap_window: 6.0,
-        leverage: 0.12,
+        leverage: 0.10,
         down_shock: 0.0,
-        jump_var: 0.14,
+        jump_var: 0.11,
         jump_rate: 0.0035,
-        jump_skew: 0.7,
+        jump_skew: 1.0,
         // The asymmetry adoption, 0.23.0: the leverage kick (0.12, news-coupled), fair-value
         // news jumps (1.3/yr x -3.3%, variance-displacing) with the transitory `down_shock`
         // retired at 0, jump_skew 0.7 with the jump channel rarer-larger (0.14 var at 0.0035),
@@ -420,6 +432,9 @@ fn default_world() -> World {
         basket_idio: 0.0,
         basket_gaps: 0.0,
         basket_drift: 0.0,
+        macro_panel: 0,
+        macro_null: 0,
+        lev_gain: 6.0,
         value_pull: 0.056,
         crowd: Crowd::Momentum,
         crowd_impact: 0.030,
@@ -491,6 +506,9 @@ fn v0_19_2() -> World {
         basket_idio: 0.0,
         basket_gaps: 0.0,
         basket_drift: 0.0,
+        macro_panel: 0,
+        macro_null: 0,
+        lev_gain: 0.0,
         value_pull: 0.013,
         belief_share: 0.0,
         belief_years: 2.5,
@@ -517,7 +535,7 @@ fn v0_19_2() -> World {
     }
 }
 
-fn releases() -> Vec<(&'static str, World)> {
+pub fn releases() -> Vec<(&'static str, World)> {
     let mut pre = v0_19_2();
     pre.trend_share = 0.30;
     pre.depth = 12.0;
@@ -545,6 +563,7 @@ fn releases() -> Vec<(&'static str, World)> {
         ("0.22.0", v0_22_0()),
         ("0.22.1", v0_22_1()),
         ("0.23.0", v0_23_0()),
+        ("0.23.1", v0_23_0()),
     ]
 }
 
@@ -569,7 +588,7 @@ fn release_world(version: &str) -> Option<World> {
 /// non-S&P world without carrying its flags. Built on the frozen row, never on `default_world`, so
 /// a later defaults change cannot move it. Deliberately not `-releases` rows: that table grades
 /// every world against ONE anchor set, and a Nasdaq world under S&P rulers is not a reading.
-fn recipes() -> Vec<(&'static str, World, &'static str)> {
+pub fn recipes() -> Vec<(&'static str, World, &'static str)> {
     // The channel-emitting Nasdaq world of MarketSimWorlds.md ("A Nasdaq world that passes the
     // gate") at the ANCHORED channel dials: realism, mechanism and fidelity PASS with all six
     // series graded (verified at 0.23.0: satellite corr 0.846, beta 1.20, vol ratio 1.42; range
@@ -634,17 +653,57 @@ fn recipes() -> Vec<(&'static str, World, &'static str)> {
     nq_basket.basket_sector = 0.7;
     nq_basket.basket_idio = 0.85;
     nq_basket.basket_gaps = 8.0;
+    // THE MACRO PANEL's recipes: the 0.24.0 default with `-macro 1`, and each 0.23.1 recipe with
+    // the panel and the leverage cycle — the dials 0.24.0 moved taken from `default_world` for
+    // the S&P worlds, so no dial is restated, and the two that are the Nasdaq's own re-solved
+    // (`stress` 4.4, `jump_var` 0: its jump share was 0.02, and at its deeper dial the cycle's
+    // tails need the lower base gain to hold kurtosis on four seeds; its `fund_vol` was 0.06
+    // already). Verified at 200x100 on four seeds: the conditions index concentrates a 20% peak
+    // within a quarter 1.61-1.69x (S&P) / 1.55-1.57x (Nasdaq) into its top decile, builds to
+    // rank 0.90-0.92 / 0.87-0.88 through the quarter before the peak, and realism, mechanism and
+    // fidelity PASS on every seed.
+    let d = default_world();
+    let sp = |mut w: World| {
+        w.stress = d.stress;
+        w.jump_var = d.jump_var;
+        w.jump_skew = d.jump_skew;
+        w.leverage = d.leverage;
+        w.vol_persist = d.vol_persist;
+        w.fund_vol = d.fund_vol;
+        w.lev_gain = d.lev_gain;
+        w.macro_panel = 1;
+        w
+    };
+    let nq = |mut w: World| {
+        w.stress = 4.4;
+        w.jump_var = 0.0;
+        w.jump_skew = d.jump_skew;
+        w.leverage = d.leverage;
+        w.vol_persist = d.vol_persist;
+        w.lev_gain = d.lev_gain;
+        w.macro_panel = 1;
+        w
+    };
+    let mut sp_macro = default_world();
+    sp_macro.macro_panel = 1;
+    let nq_macro = nq(open);
+    let basket_macro = sp(basket);
+    let nq_basket_macro = nq(nq_basket);
     vec![
         ("0.23.0-nasdaq", nasdaq, "nasdaq"),
         ("0.23.1-nasdaq", open, "nasdaq"),
         ("0.23.1-basket", basket, "sp500"),
         ("0.23.1-nasdaq-basket", nq_basket, "nasdaq"),
+        ("0.24.0-macro", sp_macro, "sp500"),
+        ("0.24.0-nasdaq", nq_macro, "nasdaq"),
+        ("0.24.0-basket", basket_macro, "sp500"),
+        ("0.24.0-nasdaq-basket", nq_basket_macro, "nasdaq"),
     ]
 }
 
 /// What `-atrelease NAME` seeds from: a release's world, anchors untouched, or a recipe with the
 /// anchor set it was verified against — which an explicit `-anchors` still overrides.
-fn named_world(name: &str) -> Option<(World, Option<&'static str>)> {
+pub fn named_world(name: &str) -> Option<(World, Option<&'static str>)> {
     release_world(name).map(|w| (w, None)).or_else(|| {
         recipes()
             .into_iter()
@@ -655,9 +714,9 @@ fn named_world(name: &str) -> Option<(World, Option<&'static str>)> {
 
 /// 0.22.1's world, frozen for the same reason `v0_20_0` is: the valuation cycle moved the
 /// default off it.
-/// 0.23.0's world, frozen when 0.23.1 development opened: the asymmetry adoption and the
-/// valuation cycle moved the default onto it. Identical to `default_world` until a default moves;
-/// the `-atrelease` contract test pins the equality for as long as the version is 0.23.0.
+/// 0.23.0's world, which 0.23.1 shipped unchanged (its releases row points here): the asymmetry
+/// adoption and the valuation cycle moved the default onto it, and 0.24.0's leverage cycle moved
+/// it off (`lev_gain`, and the six dials re-solved around it).
 fn v0_23_0() -> World {
     World {
         trend_share: 0.055,
@@ -702,6 +761,9 @@ fn v0_23_0() -> World {
         basket_idio: 0.0,
         basket_gaps: 0.0,
         basket_drift: 0.0,
+        macro_panel: 0,
+        macro_null: 0,
+        lev_gain: 0.0,
         value_pull: 0.056,
         crowd: Crowd::Momentum,
         crowd_impact: 0.030,
@@ -763,6 +825,9 @@ fn v0_22_1() -> World {
         basket_idio: 0.0,
         basket_gaps: 0.0,
         basket_drift: 0.0,
+        macro_panel: 0,
+        macro_null: 0,
+        lev_gain: 0.0,
         value_pull: 0.045,
         crowd: Crowd::Momentum,
         crowd_impact: 0.030,
@@ -826,6 +891,9 @@ fn v0_22_0() -> World {
         basket_idio: 0.0,
         basket_gaps: 0.0,
         basket_drift: 0.0,
+        macro_panel: 0,
+        macro_null: 0,
+        lev_gain: 0.0,
         value_pull: 0.045,
         crowd: Crowd::Momentum,
         crowd_impact: 0.030,
@@ -889,6 +957,9 @@ fn v0_21_0() -> World {
         basket_idio: 0.0,
         basket_gaps: 0.0,
         basket_drift: 0.0,
+        macro_panel: 0,
+        macro_null: 0,
+        lev_gain: 0.0,
         value_pull: 0.045,
         crowd: Crowd::Momentum,
         crowd_impact: 0.07,
@@ -943,6 +1014,9 @@ fn v0_20_0() -> World {
         basket_idio: 0.0,
         basket_gaps: 0.0,
         basket_drift: 0.0,
+        macro_panel: 0,
+        macro_null: 0,
+        lev_gain: 0.0,
         value_pull: 0.0145,
         belief_share: 0.0,
         belief_years: 2.5,
@@ -981,7 +1055,7 @@ const BAND: f64 = 0.05;
 /// What the non-value crowd trades on. Momentum is the generic extrapolator; the other two
 /// run the SAME RULE being tested, so its de-risking moves the price it reacts to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Crowd {
+pub enum Crowd {
     Momentum,
     Trend(i32),
     VolScaled,
@@ -993,28 +1067,28 @@ enum Crowd {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct World {
-    trend_share: f64,
-    depth: f64,
-    stress: f64,
-    beta: f64,
+pub struct World {
+    pub trend_share: f64,
+    pub depth: f64,
+    pub stress: f64,
+    pub beta: f64,
     /// fundamental drift per year; no dividend, so this IS total return
-    drift: f64,
-    fund_vol: f64,
-    rate_mean: f64,
-    vol_persist: f64,
-    vol_of_vol: f64,
+    pub drift: f64,
+    pub fund_vol: f64,
+    pub rate_mean: f64,
+    pub vol_persist: f64,
+    pub vol_of_vol: f64,
     /// how fast value arbitrage WEAKENS as the drawdown deepens. 0 is the symmetric pull every
     /// release before 0.21.0 had, bit for bit.
-    recovery_drag: f64,
+    pub recovery_drag: f64,
     /// the residual arbitrage that never goes away, as a share of full strength. 1.0 with drag 0
     /// is the old behaviour exactly.
-    recovery_floor: f64,
+    pub recovery_floor: f64,
     /// Equity trading halt: the largest ONE-session decline the market prints, as a simple
     /// fraction, with the unfilled pressure deferred to the next session. 0 disables it, which is
     /// what the frozen release rows inherit -- correctly, since no release before this one had the
     /// mechanism.
-    halt_limit: f64,
+    pub halt_limit: f64,
     /// Macro disasters per CENTURY: rare multi-year collapses of the real fundamental (1929-32,
     /// not 1987) — the Barro-Rietz channel. Rare is what lets it deepen the century-scale tail
     /// without touching daily volatility or the 60d variance ratio, which fence off every
@@ -1027,17 +1101,17 @@ struct World {
     /// so the 1929/2000 shape — a collapse from a peak far ABOVE fair value, multiples doing the
     /// falling — cannot occur. Price-path statistics cannot tell; anything reading the emitted
     /// `fundamental` column or `-strategies`' crash-type conditioning can.
-    disaster_rate: f64,
+    pub disaster_rate: f64,
     /// total log decline of the fundamental per disaster
-    disaster_size: f64,
+    pub disaster_size: f64,
     /// years from onset to trough; the decline is spread evenly
-    disaster_len: f64,
+    pub disaster_len: f64,
     /// share of the decline that REVERSES after the trough — Barro's cross-country estimate is
     /// about half. Without it a disaster century spends decades >20% underwater and the deep depth
     /// rung runs far past even the real 1929 century's share.
-    disaster_recover: f64,
+    pub disaster_recover: f64,
     /// years the recovery is spread over
-    disaster_rec_len: f64,
+    pub disaster_rec_len: f64,
     /// THE SLOW VALUATION CYCLE: how far the market's PERCEIVED fair value drifts toward realized
     /// prices. Value capital arbs the gap to what it BELIEVES fair is, and after years of elevated
     /// prices it believes them ("this time is different"); after years depressed, the pessimism is
@@ -1045,20 +1119,20 @@ struct World {
     /// sessions, so the variance-ratio band is untouched), multi-year reversion weakened to
     /// (1 - belief_share) of the pull — which is where CAPE-scale valuation swings live. Consumes
     /// no draws; 0 is bit-identical off.
-    belief_share: f64,
+    pub belief_share: f64,
     /// half-life of belief adaptation, in years
-    belief_years: f64,
+    pub belief_years: f64,
     /// THE MANIA HALF of the cycle: how many years of the fundamental's RECENT excess growth
     /// beliefs capitalize into perceived fair value — "this growth is the new normal", priced.
     /// The fundamental's drift regime (`drift_now`, redrawn every 1-11 years) is what beliefs
     /// extrapolate, so booms carry perceived fair — and the price that arbs toward it — above the
     /// true fundamental, and a regime ending on a re-draw is a valuation crash with the
     /// fundamental FINE: the 2000 shape. 0 is off, bit for bit, no draws consumed.
-    cap_years: f64,
+    pub cap_years: f64,
     /// years of EWMA through which beliefs read that growth: the narrative horizon. Short windows
     /// pass fundVol noise into the term capYears-fold (at 1y, vr60 read 2.3-5.2, measured) — the
     /// window must sit between the noise and the ~6-year regime.
-    cap_window: f64,
+    pub cap_window: f64,
     /// THE LEVERAGE EFFECT: how hard a decline raises the NEXT session's diffusive volatility,
     /// where an equal rally raises nothing — EGARCH's signed term, fed by the same decline
     /// signal the spiral's `stress_idx` reads (max(-ret,0)/scale, centred at 0.399 so the vol
@@ -1067,7 +1141,7 @@ struct World {
     /// CRSP era, `asymmetry-2026-08-31.tsv`) is an everyday property; this is the everyday
     /// channel. In log-vol units against `vol_of_vol` 0.027, so 0.01 is a material setting.
     /// Consumes no draws; 0 is bit-identical off.
-    leverage: f64,
+    pub leverage: f64,
     /// SIGN-DEPENDENT NEWS RESPONSE, the contemporaneous half of the asymmetry pair: a bad shock
     /// moves a levered market further than an equal good one, so the equity news term is scaled
     /// by (1 + down_shock) when negative and its reciprocal when positive — down sessions
@@ -1077,20 +1151,20 @@ struct World {
     /// amplifying a persistent signed flow manufactures signed persistence — measured, the
     /// flow-and-noise form paid vr60 1.11 -> 1.25 for the same skew, and this form pays a
     /// fraction of that. Consumes no draws; 0 is bit-identical off.
-    down_shock: f64,
+    pub down_shock: f64,
     /// share of the equity flow's VARIANCE carried by jumps rather than diffusion. 0 disables the
     /// channel and reproduces pre-0.21 behaviour byte for byte — the draws come from their own
     /// stream, so nothing else in the path shifts.
-    jump_var: f64,
+    pub jump_var: f64,
     /// unconditional jump intensity per session. With `jump_var` it fixes the size: rarer jumps of
     /// the same total variance are larger ones.
-    jump_rate: f64,
+    pub jump_rate: f64,
     /// how far each jump is shifted DOWN, in units of its own sd — the contemporaneous-skew half
     /// of the asymmetry pair (`leverage` is the conditional half, and cutting `jump_var` to pay
     /// for it robs this channel; the two move together). Variance-normalised in `jump_scale`, so
     /// the skew deepens the down-jumps without fattening the tail. 0.4 reproduces every release
     /// back to 0.21.0 bit for bit.
-    jump_skew: f64,
+    pub jump_skew: f64,
     /// FAIR-VALUE NEWS JUMPS, the downside-asymmetry channel: rare permanent DOWN-jumps of the
     /// fundamental that the
     /// price reprices the SAME session, gap-invariant — `log_vbase` and `log_p` drop together, so
@@ -1099,14 +1173,14 @@ struct World {
     /// draws come from a dedicated stream, so 0 is bit-identical off. The hypothesis under test:
     /// a permanent same-session repricing moves DOWNSIDE variance without moving the 60d variance
     /// ratio — the channel the transitory `down_shock` cannot be (its rebound IS trend).
-    news_rate: f64,
+    pub news_rate: f64,
     /// log decline per news event (positive; 0.02 = a -2% day). Deterministic size, so the sizing
     /// arithmetic p*J^2 stays exact; the drift cost `news_rate*news_size` is returned
     /// deterministically on BOTH legs each session, keeping return per vol comparable across
     /// sweep points without retuning `drift`. Bounded with `news_rate` by the diffusion budget it
     /// displaces — `news_rate * news_size^2 < 252 * SIGMA_N^2` (0.0123; size below 0.097 at the
     /// default rate) — and refused at the CLI past it (`news_budget_refusal`).
-    news_size: f64,
+    pub news_size: f64,
     /// BOND DECOUPLING: half-life in SESSIONS of the settled-stress EWMA the refuge
     /// bid reads, which EXCLUDES the current session — flight-to-quality follows the stress
     /// investors went home with, not the move printing right now. The calm-day stock-bond
@@ -1116,7 +1190,7 @@ struct World {
     /// stress LEVEL, which a short lag leaves intact. The `margin` term keeps reading live
     /// stress: joint-stress selling is a margin call, and margin calls do not wait overnight.
     /// 0 reads live stress, bit-identical to every frozen release.
-    refuge_days: f64,
+    pub refuge_days: f64,
     /// SATELLITE EQUITY LEG (prototype): a second, higher-beta equity market — the Nasdaq to the
     /// default world's S&P — derived from the primary leg rather than agent-simulated. Its session
     /// return is `sat_beta` times the primary's OBSERVED log return (markdown and news included —
@@ -1128,13 +1202,13 @@ struct World {
     /// dedicated stream, read only when `sat_beta > 0`, so 0 is bit-identical off. Anchors
     /// (SPY/QQQ 1999-2026): beta 1.20, corr 0.853, resid vol 14.1%/yr, rolling-252d beta
     /// p5/med/p95 0.90/1.18/1.92.
-    sat_beta: f64,
+    pub sat_beta: f64,
     /// idiosyncratic volatility of the satellite leg as a FRACTION of the primary's own
     /// realized volatility, riding the primary's vol state (`derive_channels`). Dimensionless so
     /// the anchored coupling transports: an absolute per-year sd read relatively smaller at a
     /// higher-vol primary, and stacked on the Nasdaq recipe the leg's correlation climbed to
     /// 0.93 against the anchored 0.85 with nothing to catch it.
-    sat_idio: f64,
+    pub sat_idio: f64,
     /// INTRA-BAR RANGE (prototype): high/low sampled per session from the EXACT Brownian-bridge
     /// extreme distributions, with endpoints at the observed open (= prior close; the model has
     /// the sampled open when `overnight` > 0) and close, and diffusion scale the session's OWN
@@ -1151,7 +1225,7 @@ struct World {
     /// compression (~0.84 measured net of the overnight share) plus the model's session/day
     /// identification. Draws (two per session) come from a dedicated stream, read only when
     /// > 0, so 0 is bit-identical off.
-    range_scale: f64,
+    pub range_scale: f64,
     /// SAME-SESSION SIGN<->VOL COUPLING for the bar: a down session gets more intraday breadth
     /// per unit of net move — the bridge sigma is multiplied by (1 + rangeDown) when the
     /// session's return is negative and divided by it otherwise, the `downShock` shape. The
@@ -1160,7 +1234,7 @@ struct World {
     /// that closes it (the realized sign informs the day's breadth — no feedback into the
     /// price). ONE root serving two channels: volume's down-up gap rides this through
     /// `VOL_SLOPE` with no volume-side change. Draw-free; 0 is bit-identical off.
-    range_down: f64,
+    pub range_down: f64,
     /// VOLUME (prototype): a log turnover index riding the RANGE — the record says volume
     /// follows the day's travel, not its net move (corr with lnH/L 0.54-0.55 vs 0.40-0.44
     /// with |r|), with elasticity ~0.6 to the range's deviation from its slow normal and a
@@ -1172,7 +1246,7 @@ struct World {
     /// residual sd 0.29-0.38). Requires the range channel — volume without a range to ride is
     /// refused at the CLI. Two draws per session from a dedicated stream, read only when > 0,
     /// so 0 is bit-identical off.
-    vol_idio: f64,
+    pub vol_idio: f64,
     /// DIVIDENDS: the world's MEAN dividend yield, %/yr. The session yield is div_yield x
     /// (fundamental/price) / the world's mean fundamental/price (`world_level`'s k_div — a world
     /// constant: the ensemble's mean gap sits well below fair, 2.1x at the default and 2.3x on
@@ -1187,7 +1261,7 @@ struct World {
     /// (Shiller D/P 1954-2023) for the S&P set and 0.78 (QQQ 2005-2026) for the Nasdaq set —
     /// `dividend-2026-09-02.tsv`; an identity parameter, never searched. The record's yield also
     /// moved with the payout level across eras, which this does not model.
-    div_yield: f64,
+    pub div_yield: f64,
     /// THE OPEN: the overnight share of the session's DIFFUSIVE variance (0 <= x < 1). The open is
     /// the bridge point at that share of the session — w x the non-jump move plus sqrt(w(1-w)) x
     /// the session sd x one normal from a dedicated stream — with the session's news jump and
@@ -1198,7 +1272,7 @@ struct World {
     /// close, bit-identical off; the record's overnight share of daily variance is 0.33 (SPY) /
     /// 0.28 (QQQ), `bars-2026-09-01.tsv`, and the graded share includes the jumps, so the dial
     /// sits below it.
-    overnight: f64,
+    pub overnight: f64,
     /// THE BASKET: N single names as observational second-pass instances of the primary —
     /// name_i = the SECTOR leg + its own idio + its own gaps. The sector leg is the satellite
     /// construction (beta on the primary's observed return plus idio riding the re-levelled
@@ -1210,22 +1284,22 @@ struct World {
     /// the primary's skew) at `basket_gaps` per year past ~10%. Reaches no price; 0 = off, no
     /// columns, bit-identical. Anchored on folio's eight semis under SMH
     /// (`basket-2026-09-02.tsv`): N = 8.
-    basket: usize,
+    pub basket: usize,
     /// sector leg: beta on the primary's observed return (anchored 1.56, the basket's beta on SPY)
-    basket_beta: f64,
+    pub basket_beta: f64,
     /// sector leg: idio sd as a FRACTION of the primary's realized vol, riding the vol state x
     /// spiral (the satellite's `sat_idio` construction)
-    basket_sector: f64,
+    pub basket_sector: f64,
     /// per-name idio sd as a FRACTION of the primary's realized vol, riding the vol state WITHOUT
     /// the spiral
-    basket_idio: f64,
+    pub basket_idio: f64,
     /// per-name gap intensity, jumps per year; each a standardized t(JUMP_NU) x
     /// `BASKET_GAP_SIZE` (log), SYMMETRIC — the index's down-skew is the index's and reaches every
     /// name through the shared leg, while the record's own name-level gaps past 10% run 41 up to
     /// 32 down with mean +0.011 (`basket-drift-2026-09-03.tsv`). A shifted own-gap channel imposes
     /// drift nothing compensates — at these rates the primary's 0.7 skew is about -0.2/yr of log
     /// drift, more than the shared leg supplies, so every name's expected drift goes negative
-    basket_gaps: f64,
+    pub basket_gaps: f64,
     /// CROSS-SECTIONAL DRIFT DISPERSION: the sd of the names' own annual log-drift offsets, as a
     /// FRACTION of the primary's realized annualized vol (`ChannelLevel::k_dr`), so it transports.
     /// Drawn once per name per path and centred EXACTLY, so the equal-weight sector's log drift is
@@ -1243,100 +1317,125 @@ struct World {
     /// selection — no name is better than another and any ranking edge a rule shows on it is
     /// noise. Set the dial and there is a real edge of known size to find. Sweeping it gives a
     /// ranking rule's detection threshold and the history it needs there.
-    basket_drift: f64,
-    value_pull: f64,
-    crowd: Crowd,
-    crowd_impact: f64,
-    panic: f64,
+    pub basket_drift: f64,
+    /// THE MACRO PANEL: 1 emits four observables DERIVED from the model's own state —
+    /// macroSpread / macroSlope / macroCond / macroIvol, the counterparts of BAA10Y / T10Y2Y /
+    /// NFCILEVERAGE / VIXCLS — see `derive_macro` and `macro_k`. Observational: reaches no
+    /// price, draws from a dedicated stream read only when on, so 0 is bit-identical.
+    pub macro_panel: usize,
+    /// THE NULL PANEL: 1 takes the four columns from a SIBLING path (the same world at seed ^
+    /// `macro_k::NULL_SEED`), so their marginals and persistence are this world's and their
+    /// coupling to this path's price is nil — the no-edge comparison for a rule that reads
+    /// them. The macro rows do not grade a null panel and the sidecar lists its columns as
+    /// ungraded. Needs `macro_panel`; one extra price loop per path; 0 = the path's own panel,
+    /// bit-identical.
+    pub macro_null: usize,
+    /// THE LEVERAGE CYCLE: declines that follow leverage. A borrowing stock swings over years as
+    /// a credit cycle of its own (a damped oscillator on a dedicated stream, `macro_k::LEV_*`),
+    /// is paid down under stress, and the spiral's gain is multiplied by 1 + lev_gain x (the
+    /// stock's rise over its trailing-year average), so an ordinary shock cascades into a 20%
+    /// decline where leverage has been building and not where it has not. The ratio the
+    /// panel's conditions index reads is that stock over the equity securing it, raised by the
+    /// drawdown. The record's target (`macro-*.tsv`, NFCILEVERAGE): a 20% peak within a quarter
+    /// 2.0-2.7x as likely with the index in its top decile, ~1x for 10% dips; the index at rank
+    /// 0.92-0.94 through the quarter before the peak. 0 = the amplification is bit-identical
+    /// (the stock still runs for the panel).
+    pub lev_gain: f64,
+    pub value_pull: f64,
+    pub crowd: Crowd,
+    pub crowd_impact: f64,
+    pub panic: f64,
     /// bond duration: sensitivity of its fair value to the rate
-    duration: f64,
+    pub duration: f64,
     /// CAP on policy accommodation under equity stress, in rate points
-    easing: f64,
+    pub easing: f64,
     /// how fast that accommodation is withdrawn, per year
-    unwind: f64,
+    pub unwind: f64,
     /// flight-to-quality bid into the bond, per unit of equity stress
-    refuge: f64,
-    infl_prob: f64,
-    infl_size: f64,
-    infl_speed: f64,
-    rate_speed: f64,
+    pub refuge: f64,
+    pub infl_prob: f64,
+    pub infl_size: f64,
+    pub infl_speed: f64,
+    pub rate_speed: f64,
     /// equity fair-value markdown per pp of rate above its long-run mean
-    discount: f64,
+    pub discount: f64,
     /// joint-stress forced selling pressure on the bond
-    margin: f64,
+    pub margin: f64,
 }
 
 #[derive(Clone, Debug)]
-struct Path {
-    price: Vec<f64>,
-    rate: Vec<f64>,
-    fundamental: Vec<f64>,
+pub struct Path {
+    pub price: Vec<f64>,
+    pub rate: Vec<f64>,
+    pub fundamental: Vec<f64>,
     /// per-session slippage multiplier (equity market)
-    liq: Vec<f64>,
+    pub liq: Vec<f64>,
     /// the same, for the BOND market: an arm that trades the bond is charged its own
     /// market's slippage, not the equity book's
-    bliq: Vec<f64>,
+    pub bliq: Vec<f64>,
     /// flight-to-safety asset price (its own Market)
-    bond: Vec<f64>,
+    pub bond: Vec<f64>,
     /// inflation pressure, for regime classification
-    infl_press: Vec<f64>,
+    pub infl_press: Vec<f64>,
     /// realized price level, deterministic from pressure
-    cpi: Vec<f64>,
+    pub cpi: Vec<f64>,
     /// BINDING diagnostic for the population knob
-    mean_trend_share: f64,
+    pub mean_trend_share: f64,
     /// share of sessions on the numerical guard rails
-    trend_pinned: f64,
+    pub trend_pinned: f64,
     /// share of sessions the choice target saturated
-    target_sat: f64,
+    pub target_sat: f64,
     /// both markets, post-burn-in
-    clamped_days: usize,
+    pub clamped_days: usize,
     /// EQUITY sessions held off the downward guard, post-burn-in, and the sessions past `TAIL_REF`
     /// that are their denominator. The equity leg alone because that is the series a tail consumer
     /// reads. `eq_halt_days` is the BINDING diagnostic for the trading halt.
-    eq_floor_days: usize,
-    eq_tail_days: usize,
-    eq_halt_days: usize,
+    pub eq_floor_days: usize,
+    pub eq_tail_days: usize,
+    pub eq_halt_days: usize,
     /// BINDING diagnostic for the bond spiral
-    mean_bond_stress: f64,
+    pub mean_bond_stress: f64,
     /// share of sessions bond stress index > 0.5
-    pct_bond_stress: f64,
+    pub pct_bond_stress: f64,
     /// BINDING diagnostic for the reflexive channel: mean |crowd flow| per session, post burn-in.
     /// Its ABSENCE is why -crowdimpact sat dead in the default world across four releases.
     /// the world's bond duration, carried so the gate can judge bond volatility RELATIVE to it;
     /// a fixed absolute band can only ever fit one bond
-    duration: f64,
-    mean_crowd_flow: f64,
+    pub duration: f64,
+    pub mean_crowd_flow: f64,
     /// BINDING diagnostic for the disaster channel: collapses begun post burn-in on this path.
-    disasters: usize,
+    pub disasters: usize,
     /// satellite equity leg price (empty when `sat_beta` is 0)
-    sat: Vec<f64>,
+    pub sat: Vec<f64>,
     /// intra-bar LOG high/low (empty when `range_scale` is 0). Log, not a level, unlike
     /// `price`/`sat`: these are born in log space and emitted in log space, and the level
     /// round-trip would only add transcendental noise (PARITY.md §6).
-    log_hi: Vec<f64>,
-    log_lo: Vec<f64>,
+    pub log_hi: Vec<f64>,
+    pub log_lo: Vec<f64>,
     /// log turnover index (empty when `vol_idio` is 0); mean-free by construction, the
     /// consumer's detrend convention applies unchanged
-    log_volume: Vec<f64>,
+    pub log_volume: Vec<f64>,
     /// session dividend yield, %/yr, and the traded price LEVEL (both empty when `div_yield` is
     /// 0); the level is emitted as a log, like `sat`
-    div_yield: Vec<f64>,
-    traded: Vec<f64>,
+    pub div_yield: Vec<f64>,
+    pub traded: Vec<f64>,
     /// the bar's open, log (empty when `overnight` is 0)
-    log_open: Vec<f64>,
+    pub log_open: Vec<f64>,
     /// the basket's names, LOG prices (empty when `basket` is 0)
-    names: Vec<Vec<f64>>,
+    pub names: Vec<Vec<f64>>,
     /// the world's channel level the bars and the satellite were sampled at (`world_level`),
     /// carried into the sidecar so the emitted data's scale is auditable; 0 / 0 when both
     /// channels are off
-    chan_k: f64,
-    chan_k_sat: f64,
+    pub chan_k: f64,
+    pub chan_k_sat: f64,
     /// the world's mean fundamental/price the dividend yield was normalized by; 0 when off
-    chan_k_div: f64,
+    pub chan_k_div: f64,
     /// the basket idio's level (realized sd over the vol state's rms); 0 when no channel ran
-    chan_k_vs: f64,
+    pub chan_k_vs: f64,
     /// the primary's realized annualized vol, what `basket_drift` is a fraction of; 0 when off
-    chan_k_dr: f64,
+    pub chan_k_dr: f64,
+    /// the macro panel (None when `macro_panel` is 0), in its counterparts' units
+    pub macro_panel: Option<MacroPanel>,
 }
 
 /// ONE price-formation mechanism for every traded asset: value demand toward `fair`, plus
@@ -1430,6 +1529,10 @@ struct Market {
     log_p: f64,
     peak: f64,
     stress_idx: f64,
+    /// THE LEVERAGE CYCLE's multiplier on the spiral's gain, set by the loop each session from
+    /// the leverage stock (`lev_gain`); exactly 1.0 with the dial off, so the amplification is
+    /// bit-identical there.
+    lev_mult: f64,
     last_liq: f64,
     clamps: usize,
     /// Sessions on the DOWNWARD guard, and sessions in the tail at all. Counted separately from
@@ -1469,6 +1572,7 @@ impl Market {
             log_p: 0.0,
             peak: 0.0,
             stress_idx: 0.0,
+            lev_mult: 1.0,
             last_liq: impact,
             clamps: 0,
             floor_days: 0,
@@ -1479,7 +1583,7 @@ impl Market {
 
     fn step(&mut self, fair: f64, flow_plus_noise: f64) -> f64 {
         let scale = self.scale_var.sqrt();
-        let amp = 1.0 + self.stress_k * self.stress_idx;
+        let amp = 1.0 + self.stress_k * self.stress_idx * self.lev_mult;
         self.last_liq = amp * self.impact;
         // amplification applies to FLOW AND NOISE, not to the value-arbitrage pull: thin
         // liquidity makes any ORDER move price further, but amplifying the arbitrage itself
@@ -1616,7 +1720,11 @@ const LEVEL_SEED: u64 = 0x1e7e_1000;
 type LevelSums = ((f64, f64, f64, f64, f64), (f64, f64));
 
 fn world_level(w: &World) -> ChannelLevel {
-    let ch_on = w.range_scale > 0.0 || w.sat_beta > 0.0 || w.overnight > 0.0 || w.basket > 0;
+    let ch_on = w.range_scale > 0.0
+        || w.sat_beta > 0.0
+        || w.overnight > 0.0
+        || w.basket > 0
+        || w.macro_panel > 0; // the implied-vol member reads `k`, like the range does
     let div_on = w.div_yield > 0.0;
     if !(ch_on || div_on) {
         return ChannelLevel {
@@ -2095,6 +2203,275 @@ fn basket_gap(brng: &mut NumPyRng) -> f64 {
 struct Priced {
     path: Path,
     inputs: ChannelInputs,
+    macro_in: MacroInputs,
+}
+
+/// THE MACRO PANEL's inputs: per-session states the price loop already carries, recorded when
+/// `macro_panel` is on and read AFTER the loop by `derive_macro`. Nothing is computed for the
+/// panel's sake and nothing here reaches a price. Empty when off; draw-free either way.
+struct MacroInputs {
+    /// equity `stress_idx` after the session's step
+    stress: Vec<f64>,
+    /// bond `stress_idx`
+    b_stress: Vec<f64>,
+    /// exp(log_vol - vol_norm), the vol state
+    vol_state: Vec<f64>,
+    /// the spiral's amplification, last_liq / impact
+    amp: Vec<f64>,
+    /// the policy accommodation stock
+    acc: Vec<f64>,
+    /// the trend crowd's capital share ENTERING the session
+    w_trend: Vec<f64>,
+    /// the leverage ratio, read before the session's step
+    lev: Vec<f64>,
+    /// the policy rate, decimal
+    rate: Vec<f64>,
+    /// inflation pressure, decimal
+    infl: Vec<f64>,
+}
+
+/// The four emitted counterparts, one value per session, in the counterpart's units.
+#[derive(Clone, Debug)]
+pub struct MacroPanel {
+    pub spread: Vec<f64>,
+    pub slope: Vec<f64>,
+    pub cond: Vec<f64>,
+    pub ivol: Vec<f64>,
+    /// a sibling path's panel (`-macronull`), decoupled from this path's price
+    pub sibling: bool,
+}
+
+impl MacroPanel {
+    fn drop(&self, k: usize) -> Self {
+        Self {
+            spread: self.spread[k..].to_vec(),
+            slope: self.slope[k..].to_vec(),
+            cond: self.cond[k..].to_vec(),
+            ivol: self.ivol[k..].to_vec(),
+            sibling: self.sibling,
+        }
+    }
+
+    fn member(&self, j: usize) -> &[f64] {
+        match j {
+            0 => &self.spread,
+            1 => &self.slope,
+            2 => &self.cond,
+            _ => &self.ivol,
+        }
+    }
+}
+
+/// The panel's FIXED maps. No scale dials: every consumer vote is a percentile rank against
+/// trailing history or a sign, so a column's scale is invisible to it, and each map is a literal
+/// in its counterpart's units, disclosed as unanchored (the `-ddshape` precedent). The slope is
+/// the exception — rate units the model anchors — and its inversion share is graded, which is
+/// what `TERM_PREMIUM` is solved against. The measurement components (`*_PHI`, `*_SD`) are
+/// PERSISTENT, an AR(1) per member: a real spread carries its own market's factors, which a white
+/// error could not mimic without collapsing the level's autocorrelation (0.999 in the record),
+/// and they are sized so the member's predictive R^2 for forward 60-session returns matches the
+/// record's (`macro-2026-09-06.tsv`, <= 0.02) — the oracle-leak guard.
+mod macro_k {
+    use super::DAYS_PER_YEAR;
+    pub(super) const T2: f64 = 2.0;
+    pub(super) const T10: f64 = 10.0;
+    /// 10y over 2y at neutral, decimal
+    pub(super) const TERM_PREMIUM: f64 = 0.010;
+    /// the regime countdown's mean, 250 + U(0, 2500)
+    pub(super) const REGIME_YEARS: f64 = 1500.0 / DAYS_PER_YEAR as f64;
+    pub(super) const SPREAD_BASE: f64 = 1.3;
+    pub(super) const SPREAD_STRESS: f64 = 1.0;
+    pub(super) const SPREAD_BOND: f64 = 1.0;
+    pub(super) const SPREAD_FLOOR: f64 = 0.5;
+    pub(super) const SPREAD_SLOW: f64 = 12.0;
+    /// the credit cycle: stress EWMA'd at a ~400-session half-life, 1 - 0.5^(1/400)
+    pub(super) const SLOW_MU: f64 = 0.00173;
+    /// a credit-market factor as slow as the level itself (record ac1 0.999), sd ~0.27 pp
+    pub(super) const SPREAD_PHI: f64 = 0.999;
+    pub(super) const SPREAD_SD: f64 = 0.012;
+    /// THE CONDITIONS INDEX: the leverage ratio over its mean, scaled to the record's spread (sd
+    /// about one index unit, p50 near the record's -0.24), plus the trend crowd's share over its
+    /// home. The valuation gap is NOT a member: it is a price-level reading, and with the
+    /// leverage cycle carrying the coupling it only diluted the build-up (0.85 -> 0.81, measured)
+    pub(super) const COND_BASE: f64 = -0.7;
+    pub(super) const COND_LEV: f64 = 10.0;
+    pub(super) const COND_CROWD: f64 = 2.0;
+    /// THE LEVERAGE CYCLE's constants (see `lev_gain`). The stock is a damped oscillator whose
+    /// period (four years) and damping ratio (0.2) put the record's NFCILEVERAGE shape on it —
+    /// weekly changes autocorrelated over a quarter, the level's autocorrelation 0.42 at a year
+    /// and ~0 at two, rank spells of ~four months — around a mean of 0.75 with the level's
+    /// stationary sd 0.15 (`lev_sd` is the velocity innovation that yields it, computed the way
+    /// the Scala twin computes it so the two agree to the bit). Paid down per session per unit
+    /// of the stress index at 0.007: the paydown sets how long a cascade keeps its gain, and
+    /// with it lag-20 clustering (0.17 at 0.01, 0.19 at 0.007, the record's 0.225) against
+    /// kurtosis. The fragility the spiral reads is the stock's rise over its trailing-year
+    /// average, so the multiplier is centred by construction; the ratio's drawdown is smoothed
+    /// over 21 sessions, a balance sheet not a tape; the multiplier is floored.
+    pub(super) const LEV_PERIOD: f64 = 1008.0;
+    pub(super) const LEV_ZETA: f64 = 0.2;
+    pub(super) const LEV_OMEGA: f64 = 2.0 * core::f64::consts::PI / LEV_PERIOD;
+    pub(super) const LEV_SPRING: f64 = LEV_OMEGA * LEV_OMEGA;
+    pub(super) const LEV_DAMP: f64 = 2.0 * LEV_ZETA * LEV_OMEGA;
+    pub(super) const LEV_LEVEL_SD: f64 = 0.15;
+    pub(super) fn lev_sd() -> f64 {
+        LEV_LEVEL_SD * (4.0 * LEV_ZETA * LEV_OMEGA * LEV_OMEGA * LEV_OMEGA).sqrt()
+    }
+    pub(super) const LEV_MEAN: f64 = 0.75;
+    pub(super) const LEV_PAYDOWN: f64 = 0.007;
+    pub(super) const LEV_SLOW_K: f64 = 1.0 / 252.0;
+    pub(super) const LEV_DD_K: f64 = 1.0 / 21.0;
+    pub(super) const LEV_MULT_FLOOR: f64 = 0.25;
+    pub(super) const COND_PHI: f64 = 0.995;
+    pub(super) const COND_SD: f64 = 0.02;
+    /// e^0.28: the record's log variance risk premium
+    pub(super) const VRP_MULT: f64 = 1.32;
+    pub(super) const IVOL_PHI: f64 = 0.97;
+    pub(super) const IVOL_SD: f64 = 0.02;
+    pub(super) const IVOL_FLOOR: f64 = 5.0;
+    /// well below the 21-session average of the spiral's decay (0.69): the record's implied vol
+    /// persists past what the spiral does, and the leverage cycle's spikes are sharper still —
+    /// 0.35 read the VIX's persistence at 0.69, on the band's floor
+    pub(super) const IVOL_AMP_SHARE: f64 = 0.15;
+    /// the sibling path's seed offset (`-macronull`)
+    pub(super) const NULL_SEED: u64 = 0x51b1_1a60;
+    pub(super) const COLUMNS: [&str; 4] = ["macroSpread", "macroSlope", "macroCond", "macroIvol"];
+    pub(super) const COUNTERPARTS: [&str; 4] = ["BAA10Y", "T10Y2Y", "NFCILEVERAGE", "VIXCLS"];
+    pub(super) const CADENCE: [&str; 4] = ["daily", "daily", "weekly", "daily"];
+}
+
+/// THE MACRO PANEL's bands, US-wide so shared by both sets — `macro-2026-09-06.tsv`: the FIRING
+/// LAG of the spread and the conditions index, +-40 sessions (the episode-to-episode spread of
+/// the record's own lags) around the upper-middle of the four references' medians (spread +7 /
+/// +7 / +16 / +16, conditions -48 / -44 / -49 / +101 — QQQ's is a four-episode median with two
+/// late firings); the level's autocorrelation at 20 sessions (4 weekly readings for the
+/// conditions index) +-0.08 around the record's; the oracle bound above the record's largest
+/// predictive R^2 (0.019); the slope's inversion share around the record's 0.115; and the
+/// variance risk premium around the record's 0.28-0.29 (log). `macro_panel_tests` /
+/// `MacroPanelSuite` re-derive each from the fixture.
+mod macro_bands {
+    /// the four references' upper-middle 0.943 less 0.12, to 1
+    pub(super) const COND_PRE_PEAK: (f64, f64) = (0.82, 1.00);
+    /// engaged: clear of the null panel's 0.49 (+-0.02 on 500 episodes); the model read 0.63
+    /// before the leverage cycle and reads 0.92 with it
+    pub(super) const COND_PRE_PEAK_NULL: f64 = 0.55;
+    /// the quarter-horizon 20% hazard: the four references' minimum (QQQ 1.45) floored to 0.1;
+    /// CRSP 2.7, SPY 2.2, NDX 2.0; a decoupled series 1.0
+    pub(super) const HAZARD_MIN: f64 = 1.4;
+    pub(super) const SPREAD_LAG: (f64, f64) = (-24.0, 56.0);
+    pub(super) const COND_LAG: (f64, f64) = (-84.0, -4.0);
+    pub(super) const SPREAD_AC_K: (f64, f64) = (0.88, 1.00);
+    pub(super) const COND_AC_K: (f64, f64) = (0.90, 1.00);
+    pub(super) const IVOL_AC_K: (f64, f64) = (0.69, 0.85);
+    pub(super) const ORACLE_R2: f64 = 0.03;
+    pub(super) const INV_SHARE: (f64, f64) = (0.05, 0.25);
+    pub(super) const VRP: (f64, f64) = (0.15, 0.40);
+}
+
+/// THE MACRO PANEL, derived from the finished loop's recorded state. Each member is a fixed map
+/// of states the loop already carries plus its own persistent measurement component, so the
+/// coupling to price is causal by construction and the read is lossy by construction:
+///   spread  BAA10Y-like, pp: base + equity stress (fast and credit-cycle slow) + bond stress,
+///           floored
+///   slope   T10Y2Y-like, pp: the 10y minus the 2y yield the rate process implies — each the
+///           OU-expected average of the short rate over its horizon, the rate decaying to the
+///           policy target at `rate_speed`, the target's inflation term at the regime's mean life
+///           and its accommodation term at `unwind` — plus a term premium. The same path drives
+///           the bond, so the slope cannot contradict the `bond` column, and it inverts when
+///           policy is tight against neutral: derived, never synthesized. No noise: it is an
+///           expectation, and the one anchored-scale member
+///   cond    NFCILEVERAGE-like, raw index: the trend crowd's share over its home plus the
+///           valuation gap — the model's build-then-unwind state
+///   ivol    VIXCLS-like, annualized %: the session's conditional sd x the record's variance risk
+///           premium, floored
+/// Publication — cadence, release lag, revisions — is the consumer's point-in-time layer, so
+/// every member is the value an agency would MEASURE that session. Three normals per session from
+/// a dedicated stream, spread then cond then ivol (the draw order is part of the cross-language
+/// contract); the OU factors go through `exp_det`; everything else is IEEE-exact arithmetic in
+/// fixed order.
+fn derive_macro(w: &World, m: &MacroInputs, seed: u64, k: f64) -> Option<MacroPanel> {
+    if w.macro_panel == 0 {
+        return None;
+    }
+    let mut rng = NumPyRng::new(seed ^ 0x3ac2_0c0du64);
+    let n = m.stress.len();
+    // the T-year average of a deviation decaying at speed k: (1 - e^{-kT}) / (kT), 1 at k = 0
+    let phi = |k: f64, t: f64| -> f64 {
+        let kt = k * t;
+        if kt <= 0.0 {
+            1.0
+        } else {
+            (1.0 - exp_det(-kt)) / kt
+        }
+    };
+    let d_r = phi(w.rate_speed, macro_k::T10) - phi(w.rate_speed, macro_k::T2);
+    let d_a = phi(w.unwind, macro_k::T10) - phi(w.unwind, macro_k::T2);
+    let d_i = phi(1.0 / macro_k::REGIME_YEARS, macro_k::T10)
+        - phi(1.0 / macro_k::REGIME_YEARS, macro_k::T2);
+    // annualized %, at vol state 1: the diffusive sd as the price receives it (news damp, the
+    // jump branch's mixing), RE-LEVELLED onto the world's realized volatility by `k` — the bar
+    // channels' level, so the read premium is the record's in every world, not only the one the
+    // constants were read in — times the record's variance risk premium
+    // `k` is realized vol over the diffusion sd AS THE PRICE RECEIVED IT, which carries the
+    // market's base impact 12/depth as well as the spiral's amplification, so both belong here
+    let jv_mult = if w.jump_var > 0.0 {
+        (1.0 - w.jump_var).sqrt()
+    } else {
+        1.0
+    };
+    let k_ivol = 100.0
+        * (DAYS_PER_YEAR as f64).sqrt()
+        * news_damp_at(w.news_rate, w.news_size)
+        * SIGMA_N
+        * jv_mult
+        * (12.0 / w.depth)
+        * k
+        * macro_k::VRP_MULT;
+    let mut spread = vec![0.0f64; n];
+    let mut slope = vec![0.0f64; n];
+    let mut cond = vec![0.0f64; n];
+    let mut ivol = vec![0.0f64; n];
+    let mut e_s = 0.0f64;
+    let mut e_c = 0.0f64;
+    let mut e_v = 0.0f64;
+    let mut slow = 0.0f64;
+    for i in 0..n {
+        e_s = macro_k::SPREAD_PHI * e_s + macro_k::SPREAD_SD * rng.randn();
+        e_c = macro_k::COND_PHI * e_c + macro_k::COND_SD * rng.randn();
+        e_v = macro_k::IVOL_PHI * e_v + macro_k::IVOL_SD * rng.randn();
+        slow += macro_k::SLOW_MU * (m.stress[i] - slow);
+        spread[i] = (macro_k::SPREAD_BASE
+            + macro_k::SPREAD_STRESS * m.stress[i]
+            + macro_k::SPREAD_SLOW * slow
+            + macro_k::SPREAD_BOND * m.b_stress[i]
+            + e_s)
+            .max(macro_k::SPREAD_FLOOR);
+        let target = w.rate_mean + m.infl[i] - m.acc[i];
+        slope[i] = 100.0
+            * (m.infl[i] * d_i - m.acc[i] * d_a
+                + (m.rate[i] - target) * d_r
+                + macro_k::TERM_PREMIUM);
+        // the leverage ratio — the state the record's index measures and, through `lev_gain`,
+        // the state the model's big declines follow — over its mean, plus the crowd's share
+        cond[i] = macro_k::COND_BASE
+            + macro_k::COND_LEV * (m.lev[i] - macro_k::LEV_MEAN)
+            + macro_k::COND_CROWD * (m.w_trend[i] - w.trend_share)
+            + e_c;
+        // a forward-looking vol prices the amplification it expects over its horizon, not the
+        // session's: the spiral's stress index decays at 0.96 a session, and its 21-session
+        // average is `IVOL_AMP_SHARE` of today's
+        ivol[i] = (k_ivol
+            * m.vol_state[i]
+            * (1.0 + macro_k::IVOL_AMP_SHARE * (m.amp[i] - 1.0))
+            * (1.0 + e_v))
+            .max(macro_k::IVOL_FLOOR);
+    }
+    Some(MacroPanel {
+        spread,
+        slope,
+        cond,
+        ivol,
+        sibling: w.macro_null > 0,
+    })
 }
 
 /// One independent history: the price loop, then the derived channels at the given world level.
@@ -2169,13 +2546,30 @@ fn simulate_at(w: &World, years: usize, seed: u64, level: ChannelLevel) -> Path 
         } else {
             0.0
         },
+        macro_panel: {
+            // THE NULL PANEL (`-macronull`): the panel of a SIBLING path — the same world at
+            // another seed, its own price loop and its own measurement stream — so the columns
+            // keep this world's marginals and persistence and their coupling to this path's
+            // price is nil. One extra price loop per path, only when on.
+            let sib = seed ^ macro_k::NULL_SEED;
+            let sibling = if w.macro_null > 0 {
+                Some(price_loop(w, years, sib).macro_in)
+            } else {
+                None
+            };
+            let (macro_in, macro_seed) = match &sibling {
+                Some(m) => (m, sib),
+                None => (&pr.macro_in, seed),
+            };
+            derive_macro(w, macro_in, macro_seed, level.k).map(|m| m.drop(BURN_IN))
+        },
         ..pr.path
     }
 }
 
 /// `simulate_at` at the world's own level, solved here per call — `sim_paths` solves it once
 /// for the whole ensemble, so prefer that for more than one path.
-fn simulate(w: &World, years: usize, seed: u64) -> Path {
+pub fn simulate(w: &World, years: usize, seed: u64) -> Path {
     simulate_at(w, years, seed, world_level(w))
 }
 
@@ -2209,6 +2603,8 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
     // The news channel's own stream (prototype), same survivability contract as `jrng`/`drng`:
     // constructed unconditionally, read only when `news_rate > 0`, so rate 0 is bit-identical.
     let mut nrng = NumPyRng::new(seed ^ 0x0bad_2e15u64);
+    // The leverage cycle's own stream, same contract: read only when the stock is evolved.
+    let mut lrng = NumPyRng::new(seed ^ 0xc2ed_17c7u64);
     // The channels' own streams are constructed in `derive_channels` from this same seed.
     let mut px = vec![0.0f64; tot];
     let mut fv = vec![0.0f64; tot];
@@ -2262,6 +2658,18 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
     // Settled equity stress for the refuge bid (see `refuge_days`); draw-free, and both its use
     // and its update sit behind `refuge_days > 0`, so 0 is bit-identical off.
     let mut settled_stress = 0.0f64;
+    // THE LEVERAGE CYCLE's stock (see `lev_gain`), evolved whenever the mechanism or the macro
+    // panel reads it, on its own stream, and reaching the price only through `lev_mult`, which
+    // stays exactly 1.0 with the dial off. `lev` is the session's ratio, read before the step;
+    // `lev_slow` the stock's trailing-year average the growth is read against; `dd_s` the
+    // drawdown the ratio reads.
+    let lev_on = w.lev_gain > 0.0 || w.macro_panel > 0;
+    let lev_sd = macro_k::lev_sd();
+    let mut borrow = macro_k::LEV_MEAN;
+    let mut lev_vel = 0.0f64;
+    let mut lev_slow = macro_k::LEV_MEAN;
+    let mut dd_s = 0.0f64;
+    let mut lev = 0.0f64;
     let settle_mu = if w.refuge_days > 0.0 {
         1.0 - (-(2.0f64.ln()) / w.refuge_days).exp()
     } else {
@@ -2326,7 +2734,11 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
     // observed log price, the session diffusion sd as the price received it, the satellite's
     // state factor, and the post-step realized scale the volume's down-term reads. Empty when
     // both channels are off; draw-free either way, so off worlds stay bit-identical.
-    let ch_on = w.range_scale > 0.0 || w.sat_beta > 0.0 || w.overnight > 0.0 || w.basket > 0;
+    let ch_on = w.range_scale > 0.0
+        || w.sat_beta > 0.0
+        || w.overnight > 0.0
+        || w.basket > 0
+        || w.macro_panel > 0; // the implied-vol member reads `k`, like the range does
     let mut ch = ChannelInputs {
         px: if ch_on { vec![0.0f64; tot] } else { Vec::new() },
         d: if ch_on { vec![0.0f64; tot] } else { Vec::new() },
@@ -2334,6 +2746,21 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
         scale_var: if ch_on { vec![0.0f64; tot] } else { Vec::new() },
         jump: if ch_on { vec![0.0f64; tot] } else { Vec::new() },
         vol_state: if ch_on { vec![0.0f64; tot] } else { Vec::new() },
+    };
+    // THE MACRO PANEL's inputs, recorded per session and read after the loop by `derive_macro`;
+    // empty when the dial is off, draw-free either way.
+    let mc_on = w.macro_panel > 0;
+    let mc_vec = || if mc_on { vec![0.0f64; tot] } else { Vec::new() };
+    let mut mc = MacroInputs {
+        stress: mc_vec(),
+        b_stress: mc_vec(),
+        vol_state: mc_vec(),
+        amp: mc_vec(),
+        acc: mc_vec(),
+        w_trend: mc_vec(),
+        lev: mc_vec(),
+        rate: mc_vec(),
+        infl: mc_vec(),
     };
 
     let mut i = 0usize;
@@ -2528,22 +2955,26 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
         // as the noise term above is built — news damp, vol state, leverage kick (read BEFORE
         // this session's update, like `d_noise` itself) — plus the jump branch's
         // sqrt(1 - jumpVar) mixing. Draw-free; 0.0 when both channels are off.
-        let sess_sigma =
-            if w.range_scale > 0.0 || w.sat_beta > 0.0 || w.overnight > 0.0 || w.basket > 0 {
-                let lev_mult = if w.leverage > 0.0 {
-                    (w.leverage * lev_sig).exp()
-                } else {
-                    1.0
-                };
-                let jv_mult = if w.jump_var > 0.0 {
-                    (1.0 - w.jump_var).sqrt()
-                } else {
-                    1.0
-                };
-                news_damp * SIGMA_N * (log_vol - vol_norm).exp() * lev_mult * jv_mult
+        let sess_sigma = if w.range_scale > 0.0
+            || w.sat_beta > 0.0
+            || w.overnight > 0.0
+            || w.basket > 0
+            || w.macro_panel > 0
+        {
+            let lev_mult = if w.leverage > 0.0 {
+                (w.leverage * lev_sig).exp()
             } else {
-                0.0
+                1.0
             };
+            let jv_mult = if w.jump_var > 0.0 {
+                (1.0 - w.jump_var).sqrt()
+            } else {
+                1.0
+            };
+            news_damp * SIGMA_N * (log_vol - vol_norm).exp() * lev_mult * jv_mult
+        } else {
+            0.0
+        };
 
         // The jump channel. Its draws come from `jrng`, NOT `rng`, so `jump_var = 0` takes the
         // untouched branch below and moves NOTHING ELSE in the path — the failure mode a shared
@@ -2628,7 +3059,33 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
         } else {
             0.0
         };
+        if lev_on {
+            // The ratio the index reads: borrowing over the equity securing it, the log drawdown
+            // from the running peak — smoothed, a balance sheet not a tape — standing in for the
+            // equity's fall. The spiral reads the stock's GROWTH over its trailing year: the
+            // record's index rises into every classic peak and credit growth is what predicts
+            // the crisis. A level or the ratio put the gain inside the drawdown, where the
+            // spiral already amplifies, and deepened crashes instead of starting them (measured:
+            // hazard 1.1-1.3 at kurtosis 50-150; the growth reads 1.6-1.7 at the calibrated 28).
+            dd_s += macro_k::LEV_DD_K * ((eq_m.peak - eq_m.log_p) - dd_s);
+            lev = borrow * (1.0 + dd_s);
+            if w.lev_gain > 0.0 {
+                eq_m.lev_mult =
+                    (1.0 + w.lev_gain * (borrow - lev_slow)).max(macro_k::LEV_MULT_FLOOR);
+            }
+        }
         let ret_e = eq_m.step(perceived_fair, eq_flow + eq_shock);
+        if lev_on {
+            // THE CREDIT CYCLE: a damped oscillator in the stock (its velocity persists for a
+            // quarter, its level swings over years — the record's NFCILEVERAGE shape), driven by
+            // its own innovation and paid down under the stress the step just read; then the
+            // trailing-year average the growth is read against
+            lev_vel += -macro_k::LEV_DAMP * lev_vel
+                - macro_k::LEV_SPRING * (borrow - macro_k::LEV_MEAN)
+                + lev_sd * lrng.randn();
+            borrow = (borrow + lev_vel - macro_k::LEV_PAYDOWN * eq_m.stress_idx * borrow).max(0.0);
+            lev_slow += macro_k::LEV_SLOW_K * (borrow - lev_slow);
+        }
         if w.leverage > 0.0 {
             // SATURATED at four realized sds, and the cap is a priced trade, not a free guard:
             // uncapped, a jump day mints a 2.6x next-session multiplier and the kurtosis
@@ -2684,6 +3141,17 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
             ch.scale_var[i] = eq_m.scale_var;
             ch.jump[i] = jump_now * eq_m.last_liq - news_j;
             ch.vol_state[i] = (log_vol - vol_norm).exp();
+        }
+        if mc_on {
+            mc.stress[i] = eq_m.stress_idx;
+            mc.b_stress[i] = bd_m.stress_idx;
+            mc.vol_state[i] = (log_vol - vol_norm).exp();
+            mc.amp[i] = eq_m.last_liq * w.depth / 12.0;
+            mc.acc[i] = acc;
+            mc.w_trend[i] = w_trend;
+            mc.lev[i] = lev;
+            mc.rate[i] = rate;
+            mc.infl[i] = infl_press;
         }
 
         // ---- capital reallocation: spring, scored on positions actually held ---------------
@@ -2763,8 +3231,13 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
         chan_k_div: 0.0,
         chan_k_vs: 0.0,
         chan_k_dr: 0.0,
+        macro_panel: None,
     };
-    Priced { path, inputs: ch }
+    Priced {
+        path,
+        inputs: ch,
+        macro_in: mc,
+    }
 }
 
 // ---- stylised-fact measurements ---------------------------------------------------------
@@ -2964,17 +3437,17 @@ fn depth_shares(px: &[f64]) -> (f64, f64, f64) {
 /// a RELATION to its primary, the same doctrine the depth rungs use when they grade each world
 /// at its own volatility. The record's relation is QQQ against SPY over their shared window.
 #[derive(Clone, Copy, Debug)]
-struct SatStats {
-    corr: f64,
-    abs_corr: f64,
-    beta: f64,
-    vol_ratio: f64,
-    kurt_ratio: f64,
-    ac1_ratio: f64,
-    ac20_ratio: f64,
-    d5_ratio: f64,
-    d10_ratio: f64,
-    crash_ratio: f64,
+pub struct SatStats {
+    pub corr: f64,
+    pub abs_corr: f64,
+    pub beta: f64,
+    pub vol_ratio: f64,
+    pub kurt_ratio: f64,
+    pub ac1_ratio: f64,
+    pub ac20_ratio: f64,
+    pub d5_ratio: f64,
+    pub d10_ratio: f64,
+    pub crash_ratio: f64,
 }
 
 /// The BAR channels' statistics — present only when the range channel ran. `vol_*` are NaN
@@ -2982,98 +3455,97 @@ struct SatStats {
 /// build-time suites already assert; these carry the same readings into the RUNTIME gate, so an
 /// emitted `logHigh`/`logLow`/`logVolume` is covered by the verdict travelling beside it.
 #[derive(Clone, Copy, Debug)]
-struct BarStats {
-    range_over_ccvol: f64,
-    range_acf1: f64,
-    range_downup: f64,
-    vol_sd: f64,
-    vol_corr_range: f64,
+pub struct BarStats {
+    pub range_over_ccvol: f64,
+    pub range_acf1: f64,
+    pub range_downup: f64,
+    pub vol_sd: f64,
+    pub vol_corr_range: f64,
 }
 
 #[derive(Clone, Copy, Debug)]
-struct WorldStats {
-    vol: f64,
-    kurt: f64,
-    ac1: f64,
-    ac20: f64,
+pub struct WorldStats {
+    pub vol: f64,
+    pub kurt: f64,
+    pub ac1: f64,
+    pub ac20: f64,
     /// SIGNED-return persistence — `variance_ratio`.
-    vr20: f64,
-    vr60: f64,
-    vr120: f64,
-    vr250: f64,
-    ann_ret: f64,
-    n_episodes: usize,
-    ep_per_path: f64,
+    pub vr20: f64,
+    pub vr60: f64,
+    pub vr120: f64,
+    pub vr250: f64,
+    pub ann_ret: f64,
+    pub n_episodes: usize,
+    pub ep_per_path: f64,
     /// `None` when no satellite leg ran — the gate then carries no satellite rows at all,
     /// which is what keeps a satellite-off world's verdict byte-identical.
-    sat: Option<SatStats>,
+    pub sat: Option<SatStats>,
     /// `None` when no range channel ran.
-    bars: Option<BarStats>,
+    pub bars: Option<BarStats>,
     /// `None` when no open ran.
-    open: Option<OpenStats>,
+    pub open: Option<OpenStats>,
     /// `None` when no basket ran.
-    basket: Option<BasketStats>,
+    pub basket: Option<BasketStats>,
+    /// the macro panel's readings when it ran
+    pub macro_panel: Option<MacroStats>,
     /// median across paths of the per-path mean session yield, %/yr; NaN when the dial is off,
     /// and the gate then carries no row
-    div_yield_mean: f64,
-    depth_med: f64,
-    worst_depth: f64,
-    v_count: usize,
-    mid_count: usize,
-    u_count: usize,
-    n_shapes: usize,
-    censored: usize,
-    clamp_pct: f64,
+    pub div_yield_mean: f64,
+    pub depth_med: f64,
+    pub worst_depth: f64,
+    pub v_count: usize,
+    pub mid_count: usize,
+    pub u_count: usize,
+    pub n_shapes: usize,
+    pub censored: usize,
+    pub clamp_pct: f64,
     /// Share of equity sessions the halt bound.
-    halt_pct: f64,
+    pub halt_pct: f64,
     /// Share of EQUITY tail sessions sitting ON the downward guard: the guard's grip on the tail,
     /// which `clamp_pct` cannot see.
-    tail_floor_pct: f64,
-    trend_share: f64,
-    years_per_path: f64,
-    trend_pinned: f64,
-    target_sat: f64,
-    bond_vol: f64,
-    bond_growth: f64,
-    bond_infl: f64,
-    corr_calm: f64,
-    corr_infl: f64,
-    #[expect(
-        dead_code,
-        reason = "kept for parity with the Scala record; not printed"
-    )]
-    mean_bond_stress: f64,
-    pct_bond_stress: f64,
-    crowd_flow: f64,
-    dis_per_century: f64,
+    pub tail_floor_pct: f64,
+    pub trend_share: f64,
+    pub years_per_path: f64,
+    pub trend_pinned: f64,
+    pub target_sat: f64,
+    pub bond_vol: f64,
+    pub bond_growth: f64,
+    pub bond_infl: f64,
+    pub corr_calm: f64,
+    pub corr_infl: f64,
+    /// kept for parity with the Scala record; not printed
+    pub mean_bond_stress: f64,
+    pub pct_bond_stress: f64,
+    pub crowd_flow: f64,
+    pub dis_per_century: f64,
     /// median per-path sd of log(price/fundamental): the valuation-gap dispersion the record
     /// proxies with CAPE (valuation-2026-08-30.tsv)
-    val_disp: f64,
+    pub val_disp: f64,
     /// median per-path MAX log overvaluation — the mania a century produces
-    max_over: f64,
+    pub max_over: f64,
     /// median per-path 100*(sqrt(sum r^2 | r<0 / sum r^2 | r>0) - 1), tau = 0: how much more the
     /// downside disperses than the upside (Roy 1952 / Markowitz 1959; asymmetry-2026-08-31.tsv)
-    semi_excess: f64,
+    pub semi_excess: f64,
     /// median per-path corr(r_t, r^2_{t+1}) — the leverage effect at daily lag. The sharper
     /// signed-half block regression (Patton-Sheppard) was measured and CANNOT anchor on
     /// close-only data: era-split with the sign flipping (asymmetry-2026-08-31.tsv), the
     /// longhorizon-2026-08-30 lesson again. This correlation reads -0.09 on every CRSP era.
-    lev_corr: f64,
+    pub lev_corr: f64,
     /// median per-path stock-bond corr on CALM sessions with the equity return below its own
     /// calm q10 — does the refuge hold exactly where it is needed (tailcorr-2026-08-31.tsv).
     /// Calm-conditioned because the record window (TLT's history) is a disinflation era
     /// throughout; a century pooling inflation regimes is not comparable on any column.
-    tail_hedge: f64,
-    duration: f64,
-    infl_ann: f64,
+    pub tail_hedge: f64,
+    pub duration: f64,
+    pub infl_ann: f64,
     /// depth profile: median share of sessions more than 5/10/20% below the running peak,
     /// equity leg then bond leg
-    dd_eq5: f64,
-    dd_eq10: f64,
-    dd_eq20: f64,
-    dd_bd5: f64,
-    dd_bd10: f64,
-    dd_bd20: f64,
+    pub dd_eq5: f64,
+    pub dd_eq10: f64,
+    pub dd_eq20: f64,
+    pub dd_bd5: f64,
+    pub dd_bd10: f64,
+    pub dd_bd20: f64,
 }
 
 /// Real equity funds' time under water, stated against the part a random walk already explains.
@@ -3405,21 +3877,21 @@ fn sat_stats(sims: &[Path], years: usize) -> Option<SatStats> {
 /// decile. The equal-weight basket is the mean of simple returns, as a log series, the fixture's
 /// convention.
 #[derive(Clone, Copy, Debug)]
-struct BasketStats {
-    name_vol_ratio: f64,
-    name_gaps: f64,
-    name_d20: f64,
-    agg_corr: f64,
-    agg_beta: f64,
-    agg_vol_ratio: f64,
-    pair_corr: f64,
-    idio_share: f64,
-    tail_coincidence: f64,
-    pair_corr_worst: f64,
-    pair_corr_mid: f64,
+pub struct BasketStats {
+    pub name_vol_ratio: f64,
+    pub name_gaps: f64,
+    pub name_d20: f64,
+    pub agg_corr: f64,
+    pub agg_beta: f64,
+    pub agg_vol_ratio: f64,
+    pub pair_corr: f64,
+    pub idio_share: f64,
+    pub tail_coincidence: f64,
+    pub pair_corr_worst: f64,
+    pub pair_corr_mid: f64,
     /// the SPREAD of time-below-peak across the names (max - min), which is what `basket_drift`
     /// moves; the eight span 0.53
-    name_d20_spread: f64,
+    pub name_d20_spread: f64,
 }
 
 fn sd_of(r: &[f64]) -> f64 {
@@ -3561,10 +4033,10 @@ fn basket_stats(sims: &[Path]) -> Option<BasketStats> {
 /// sum(r^2) — over the worst 1% of sessions and over all of them. The record's largest declines
 /// open with the larger part of the day already gone.
 #[derive(Clone, Copy, Debug)]
-struct OpenStats {
-    overnight_share: f64,
-    worst_gap_share: f64,
-    all_gap_share: f64,
+pub struct OpenStats {
+    pub overnight_share: f64,
+    pub worst_gap_share: f64,
+    pub all_gap_share: f64,
 }
 
 fn open_stats(sims: &[Path]) -> Option<OpenStats> {
@@ -3604,6 +4076,507 @@ fn open_stats(sims: &[Path]) -> Option<OpenStats> {
         overnight_share: med(&shares),
         worst_gap_share: med(&worsts),
         all_gap_share: med(&alls),
+    })
+}
+
+/// One macro member's readings on the ruler's statistics (`macro-2026-09-06.tsv`): the level's
+/// autocorrelation at 1 and K observations (K = 20 sessions, or 4 weekly readings for the
+/// conditions index), its predictive R^2 for the forward 60-session log return, the WARNING SHARE
+/// — over the 20% episodes pooled across paths, the median fraction of the peak-to-trough log
+/// decline still ahead when the member first fires in [peak - lookback, trough], 0 if it never
+/// fires — with the share of episodes it fired in at all, and the level's percentiles. Medians
+/// across paths except the pooled episode statistics.
+#[derive(Clone, Copy, Debug)]
+pub struct MacroMember {
+    pub ac1: f64,
+    pub ac_k: f64,
+    pub r2fwd60: f64,
+    pub warn: f64,
+    pub warn_fired: f64,
+    /// the firing LAG: sessions from the peak to the first firing, negative before it, median
+    /// over the episodes the member fired in — the timing statistic that is invariant to how
+    /// fast the decline runs
+    pub lag: f64,
+    /// the same lag and fired share over the 10% episodes: more events behind the timing,
+    /// REPORTED
+    pub lag10: f64,
+    pub fired10: f64,
+    /// THE BUILD-UP, the coupling statistic: the mean trailing rank over the quarter before the
+    /// peak (the slope: the share inverted), median over the 20% episodes. A decoupled series
+    /// reads its unconditional level there
+    pub pre_peak: f64,
+    pub lvl10: f64,
+    pub lvl50: f64,
+    pub lvl90: f64,
+}
+
+/// The panel's readings: the four members in `macro_k::COLUMNS` order, the slope's inversion
+/// share and mean spell length (observations, pooled), the implied-vol member's variance risk
+/// premium (mean log ivol - log forward-21-session realized vol) and their R^2, and the pooled 20%
+/// episode count the warning shares are medians of.
+#[derive(Clone, Copy, Debug)]
+pub struct MacroStats {
+    pub members: [MacroMember; 4],
+    /// the panel is a sibling path's (`-macronull`): the readings are the no-edge level and
+    /// the rows do not grade them
+    pub sibling: bool,
+    /// THE HAZARD: how much likelier a 20% peak is within a quarter / a year, and a 10% peak
+    /// within a quarter, when the conditions index sits in its top decile — the mechanism's
+    /// target (record 2.0-2.7 / ~1.2 / ~1 on the S&P) — and the unconditional quarter
+    /// probability of a 20% peak
+    pub hazard20q: f64,
+    pub hazard20y: f64,
+    pub hazard10q: f64,
+    pub p20q: f64,
+    pub inv_share: f64,
+    pub inv_dur: f64,
+    pub vrp: f64,
+    pub r2rv: f64,
+    pub episodes: usize,
+}
+
+/// The rank rule a consumer's vote reads: the member's trailing-`win` percentile rank, the share
+/// of the window (this reading included) at or below it; NaN until the window fills.
+fn trailing_rank(x: &[f64], win: usize) -> Vec<f64> {
+    (0..x.len())
+        .map(|i| {
+            if i + 1 < win {
+                f64::NAN
+            } else {
+                let c = x[i + 1 - win..=i].iter().filter(|&&v| v <= x[i]).count();
+                c as f64 / win as f64
+            }
+        })
+        .collect()
+}
+
+/// Pearson correlation over the finite pairs.
+fn pearson_finite(x: &[f64], y: &[f64]) -> f64 {
+    let mut n = 0usize;
+    let mut sx = 0.0f64;
+    let mut sy = 0.0f64;
+    for (a, b) in x.iter().zip(y) {
+        if a.is_finite() && b.is_finite() {
+            n += 1;
+            sx += a;
+            sy += b;
+        }
+    }
+    if n < 3 {
+        return f64::NAN;
+    }
+    let mx = sx / n as f64;
+    let my = sy / n as f64;
+    let mut sxx = 0.0f64;
+    let mut syy = 0.0f64;
+    let mut sxy = 0.0f64;
+    for (a, b) in x.iter().zip(y) {
+        if a.is_finite() && b.is_finite() {
+            let dx = a - mx;
+            let dy = b - my;
+            sxx += dx * dx;
+            syy += dy * dy;
+            sxy += dx * dy;
+        }
+    }
+    if sxx <= 0.0 || syy <= 0.0 {
+        f64::NAN
+    } else {
+        sxy / (sxx * syy).sqrt()
+    }
+}
+
+fn level_autocorr(x: &[f64], k: usize) -> f64 {
+    if x.len() < k + 3 {
+        f64::NAN
+    } else {
+        pearson_finite(&x[..x.len() - k], &x[k..])
+    }
+}
+
+/// R^2 as the squared correlation, r * r rather than pow(r, 2) so the twins print the same digit.
+fn r2_of(x: &[f64], y: &[f64]) -> f64 {
+    let r = pearson_finite(x, y);
+    r * r
+}
+
+/// The forward h-session log return from each session; NaN where the path ends first.
+fn fwd_return(lp: &[f64], h: usize) -> Vec<f64> {
+    (0..lp.len())
+        .map(|i| {
+            if i + h < lp.len() {
+                lp[i + h] - lp[i]
+            } else {
+                f64::NAN
+            }
+        })
+        .collect()
+}
+
+/// Annualized realized volatility in % over the h sessions AFTER each session.
+fn fwd_realized_vol(lp: &[f64], h: usize) -> Vec<f64> {
+    let n = lp.len();
+    let mut r2 = vec![0.0f64; n];
+    for i in 1..n {
+        let d = lp[i] - lp[i - 1];
+        r2[i] = r2[i - 1] + d * d;
+    }
+    (0..n)
+        .map(|i| {
+            if i + h < n {
+                100.0 * (DAYS_PER_YEAR as f64 * (r2[i + h] - r2[i]) / h as f64).sqrt()
+            } else {
+                f64::NAN
+            }
+        })
+        .collect()
+}
+
+/// One episode's warning: the share of the log decline still ahead at the first firing (0 if
+/// never), and the firing LAG — sessions from the peak to that firing, negative before it (None
+/// if never).
+struct Warning {
+    share: f64,
+    lag: Option<i64>,
+}
+
+/// The warnings of one path's episodes: see `MacroMember`.
+fn warn_shares(lp: &[f64], spans: &[DdSpan], fired: &[bool], lookback: usize) -> Vec<Warning> {
+    spans
+        .iter()
+        .map(|s| {
+            let base = s.lo.saturating_sub(1);
+            let from = base.saturating_sub(lookback);
+            match (from..=s.trough).find(|&t| fired[t]) {
+                None => Warning {
+                    share: 0.0,
+                    lag: None,
+                },
+                Some(t) => {
+                    let tot = lp[base] - lp[s.trough];
+                    Warning {
+                        share: ((lp[t] - lp[s.trough]) / tot).clamp(0.0, 1.0),
+                        lag: Some(t as i64 - base as i64),
+                    }
+                }
+            }
+        })
+        .collect()
+}
+
+/// The rank window: an episode whose peak falls inside the first `RANK_WINDOW` sessions has no
+/// trailing rank to fire on and is excluded from the warning statistics, on the record and on
+/// the model alike.
+const RANK_WINDOW: usize = 252;
+
+/// Lengths of the runs of `true`.
+fn run_lengths(mask: &[bool]) -> Vec<usize> {
+    let mut out = Vec::new();
+    let mut run = 0usize;
+    for &b in mask {
+        if b {
+            run += 1;
+        } else if run > 0 {
+            out.push(run);
+            run = 0;
+        }
+    }
+    if run > 0 {
+        out.push(run);
+    }
+    out
+}
+
+/// One path's reading of one member: (ac1, acK, r2fwd60, warnings over the 20% episodes, the
+/// same over the 10% episodes, (p10, p50, p90), the build-up per 20% episode).
+type MemberRead = (
+    f64,
+    f64,
+    f64,
+    Vec<Warning>,
+    Vec<Warning>,
+    (f64, f64, f64),
+    Vec<f64>,
+);
+
+/// The BUILD-UP of one path's episodes: the mean of `rank` over the quarter before each
+/// episode's peak, [peak - q, peak].
+fn pre_peak_ranks(rank: &[f64], spans: &[DdSpan], q: usize) -> Vec<f64> {
+    spans
+        .iter()
+        .filter_map(|s| {
+            let base = s.lo.saturating_sub(1);
+            let w: Vec<f64> = rank[base.saturating_sub(q)..=base]
+                .iter()
+                .copied()
+                .filter(|v| v.is_finite())
+                .collect();
+            if w.is_empty() {
+                None
+            } else {
+                Some(w.iter().sum::<f64>() / w.len() as f64)
+            }
+        })
+        .collect()
+}
+
+/// One path's reading of the panel: the four members in `macro_k::COLUMNS` order, the slope's
+/// inversion share and spells, the implied vol's log premium and its R^2 against forward
+/// realized vol.
+/// One path's hazard counts: top-decile sessions with a peak inside the horizon, top-decile
+/// sessions, and the same over every session with a finite rank.
+#[derive(Clone, Copy, Default)]
+struct HazardCounts {
+    hit_top: usize,
+    n_top: usize,
+    hit_all: usize,
+    n_all: usize,
+}
+
+struct MacroPathRead {
+    members: [MemberRead; 4],
+    inv_share: f64,
+    spells: Vec<usize>,
+    vrp: f64,
+    r2rv: f64,
+    /// 20% peaks within a quarter, within a year, and 10% peaks within a quarter
+    hazards: [HazardCounts; 3],
+}
+
+/// The conditions index read weekly like its counterpart: the last session of each five, ranked
+/// over 52 readings, each reading held until the next — the weekly values, their sessions, the
+/// firing flag per session (rank >= 0.90) and the held rank per session.
+fn cond_weekly(cond: &[f64], n: usize) -> (Vec<f64>, Vec<usize>, Vec<bool>, Vec<f64>) {
+    const WEEKLY_STRIDE: usize = 5;
+    let w: Vec<f64> = (0..cond.len() / WEEKLY_STRIDE)
+        .map(|t| cond[t * WEEKLY_STRIDE + WEEKLY_STRIDE - 1])
+        .collect();
+    let at: Vec<usize> = (0..w.len())
+        .map(|t| t * WEEKLY_STRIDE + WEEKLY_STRIDE - 1)
+        .collect();
+    let rk = trailing_rank(&w, 52);
+    let mut fired = vec![false; n];
+    let mut held = vec![f64::NAN; n];
+    for t in 0..w.len() {
+        let next = if t + 1 < w.len() { at[t + 1] } else { n };
+        let on = rk[t].is_finite() && rk[t] >= 0.90;
+        for k in at[t]..next {
+            held[k] = rk[t];
+            if on {
+                fired[k] = true;
+            }
+        }
+    }
+    (w, at, fired, held)
+}
+
+/// THE HAZARD's counts, pooled across paths by the caller: sessions in the index's top decile
+/// with a peak inside the next `h`, over all such sessions, and the same for every session with
+/// a finite rank — the ratio is how much likelier a peak is soon when leverage is high.
+fn hazard_counts(held: &[f64], sp: &[DdSpan], h: usize) -> HazardCounts {
+    let n = held.len();
+    let mut ahead = vec![false; n];
+    for s in sp {
+        let base = s.lo.saturating_sub(1);
+        for a in &mut ahead[base.saturating_sub(h)..base] {
+            *a = true;
+        }
+    }
+    let mut c = HazardCounts::default();
+    for u in 0..n.saturating_sub(h) {
+        if held[u].is_finite() {
+            c.n_all += 1;
+            if ahead[u] {
+                c.hit_all += 1;
+            }
+            if held[u] >= 0.90 {
+                c.n_top += 1;
+                if ahead[u] {
+                    c.hit_top += 1;
+                }
+            }
+        }
+    }
+    c
+}
+
+fn macro_path_read(s: &Path) -> Option<MacroPathRead> {
+    let m = s.macro_panel.as_ref()?;
+    let levels = |x: &[f64]| (pctile(x, 0.1), pctile(x, 0.5), pctile(x, 0.9));
+    let lp: Vec<f64> = s.price.iter().map(|v| v.ln()).collect();
+    let fwd60 = fwd_return(&lp, 60);
+    // the 20% episodes the rows grade, and the 10% ones — more events, mostly not macro ones on
+    // a Nasdaq-like world — whose lag and fired share are reported beside them
+    let episodes = |thr: f64| -> Vec<DdSpan> {
+        dd_spans(&s.price, thr)
+            .into_iter()
+            .filter(|s| s.lo.saturating_sub(1) >= RANK_WINDOW)
+            .collect()
+    };
+    let spans = episodes(0.20);
+    let spans10 = episodes(0.10);
+    // a daily rank member (spread, ivol): rank >= 0.90 in the quarter before the peak
+    let rank_member = |x: &[f64]| -> MemberRead {
+        let rk = trailing_rank(x, 252);
+        let fired: Vec<bool> = rk.iter().map(|r| r.is_finite() && *r >= 0.90).collect();
+        (
+            level_autocorr(x, 1),
+            level_autocorr(x, 20),
+            r2_of(x, &fwd60),
+            warn_shares(&lp, &spans, &fired, 63),
+            warn_shares(&lp, &spans10, &fired, 63),
+            levels(x),
+            pre_peak_ranks(&rk, &spans, 63),
+        )
+    };
+    // the slope: inverted in the 18 months before the peak; its build-up is the share of the
+    // quarter before the peak spent inverted
+    let slope_m: MemberRead = {
+        let x = &m.slope;
+        let fired: Vec<bool> = x.iter().map(|v| *v < 0.0).collect();
+        let inverted: Vec<f64> = fired.iter().map(|&b| if b { 1.0 } else { 0.0 }).collect();
+        (
+            level_autocorr(x, 1),
+            level_autocorr(x, 20),
+            r2_of(x, &fwd60),
+            warn_shares(&lp, &spans, &fired, 378),
+            warn_shares(&lp, &spans10, &fired, 378),
+            levels(x),
+            pre_peak_ranks(&inverted, &spans, 63),
+        )
+    };
+    // the conditions index, READ WEEKLY like its counterpart
+    let (cond_w, cond_at, cond_fired, cond_held) = cond_weekly(&m.cond, lp.len());
+    let cond_m: MemberRead = {
+        let fwd_at: Vec<f64> = cond_at.iter().map(|&k| fwd60[k]).collect();
+        (
+            level_autocorr(&cond_w, 1),
+            level_autocorr(&cond_w, 4),
+            r2_of(&cond_w, &fwd_at),
+            warn_shares(&lp, &spans, &cond_fired, 63),
+            warn_shares(&lp, &spans10, &cond_fired, 63),
+            levels(&cond_w),
+            pre_peak_ranks(&cond_held, &spans, 63),
+        )
+    };
+    let hazards = [
+        hazard_counts(&cond_held, &spans, 63),
+        hazard_counts(&cond_held, &spans, 252),
+        hazard_counts(&cond_held, &spans10, 63),
+    ];
+    let inv: Vec<bool> = m.slope.iter().map(|v| *v < 0.0).collect();
+    let rv = fwd_realized_vol(&lp, 21);
+    let l_iv: Vec<f64> = m.ivol.iter().map(|v| v.ln()).collect();
+    let l_rv: Vec<f64> = rv.iter().map(|v| v.ln()).collect();
+    let d_ok: Vec<f64> = (0..lp.len())
+        .filter(|&i| l_rv[i].is_finite())
+        .map(|i| l_iv[i] - l_rv[i])
+        .collect();
+    Some(MacroPathRead {
+        members: [
+            rank_member(&m.spread),
+            slope_m,
+            cond_m,
+            rank_member(&m.ivol),
+        ],
+        inv_share: inv.iter().filter(|&&b| b).count() as f64 / inv.len() as f64,
+        spells: run_lengths(&inv),
+        vrp: if d_ok.is_empty() {
+            f64::NAN
+        } else {
+            d_ok.iter().sum::<f64>() / d_ok.len() as f64
+        },
+        r2rv: r2_of(&l_iv, &l_rv),
+        hazards,
+    })
+}
+
+fn macro_stats(sims: &[Path]) -> Option<MacroStats> {
+    let per: Vec<MacroPathRead> = sims.iter().map(macro_path_read).collect::<Option<_>>()?;
+    if per.is_empty() {
+        return None;
+    }
+    // the hazards, pooled: (hits in the top decile / its sessions) over (the same over every
+    // session); NaN where nothing qualified
+    let hazard_ratio = |j: usize| -> (f64, f64) {
+        let c = per
+            .iter()
+            .fold(HazardCounts::default(), |a, p| HazardCounts {
+                hit_top: a.hit_top + p.hazards[j].hit_top,
+                n_top: a.n_top + p.hazards[j].n_top,
+                hit_all: a.hit_all + p.hazards[j].hit_all,
+                n_all: a.n_all + p.hazards[j].n_all,
+            });
+        let p_all = if c.n_all > 0 {
+            c.hit_all as f64 / c.n_all as f64
+        } else {
+            f64::NAN
+        };
+        let p_top = if c.n_top > 0 {
+            c.hit_top as f64 / c.n_top as f64
+        } else {
+            f64::NAN
+        };
+        (if p_all > 0.0 { p_top / p_all } else { f64::NAN }, p_all)
+    };
+    let fired_share = |ws: &[&Warning]| -> f64 {
+        if ws.is_empty() {
+            f64::NAN
+        } else {
+            ws.iter().filter(|w| w.share > 0.0).count() as f64 / ws.len() as f64
+        }
+    };
+    let lag_median = |ws: &[&Warning]| -> f64 {
+        let lags: Vec<f64> = ws.iter().filter_map(|w| w.lag.map(|l| l as f64)).collect();
+        pctile(&lags, 0.5)
+    };
+    let members: [MacroMember; 4] = std::array::from_fn(|j| {
+        let ws: Vec<&Warning> = per.iter().flat_map(|p| p.members[j].3.iter()).collect();
+        let ws10: Vec<&Warning> = per.iter().flat_map(|p| p.members[j].4.iter()).collect();
+        let shares: Vec<f64> = ws.iter().map(|w| w.share).collect();
+        let col = |f: &dyn Fn(&MemberRead) -> f64| -> Vec<f64> {
+            per.iter().map(|p| f(&p.members[j])).collect()
+        };
+        MacroMember {
+            ac1: med(&col(&|r| r.0)),
+            ac_k: med(&col(&|r| r.1)),
+            r2fwd60: med(&col(&|r| r.2)),
+            warn: pctile(&shares, 0.5),
+            warn_fired: fired_share(&ws),
+            lag: lag_median(&ws),
+            lag10: lag_median(&ws10),
+            fired10: fired_share(&ws10),
+            pre_peak: pctile(
+                &per.iter()
+                    .flat_map(|p| p.members[j].6.iter().copied())
+                    .collect::<Vec<_>>(),
+                0.5,
+            ),
+            lvl10: med(&col(&|r| r.5.0)),
+            lvl50: med(&col(&|r| r.5.1)),
+            lvl90: med(&col(&|r| r.5.2)),
+        }
+    });
+    let spells: Vec<usize> = per.iter().flat_map(|p| p.spells.iter().copied()).collect();
+    Some(MacroStats {
+        members,
+        inv_share: med(&per.iter().map(|p| p.inv_share).collect::<Vec<_>>()),
+        inv_dur: if spells.is_empty() {
+            f64::NAN
+        } else {
+            spells.iter().sum::<usize>() as f64 / spells.len() as f64
+        },
+        vrp: med(&per.iter().map(|p| p.vrp).collect::<Vec<_>>()),
+        r2rv: med(&per.iter().map(|p| p.r2rv).collect::<Vec<_>>()),
+        episodes: per.iter().map(|p| p.members[0].3.len()).sum(),
+        sibling: sims
+            .first()
+            .and_then(|s| s.macro_panel.as_ref())
+            .is_some_and(|m| m.sibling),
+        hazard20q: hazard_ratio(0).0,
+        hazard20y: hazard_ratio(1).0,
+        hazard10q: hazard_ratio(2).0,
+        p20q: hazard_ratio(0).1,
     })
 }
 
@@ -3667,7 +4640,7 @@ fn bar_stats(sims: &[Path]) -> Option<BarStats> {
     clippy::too_many_lines,
     reason = "one Scala method; the field-by-field construction is the readable form"
 )]
-fn measure(sims: &[Path], years: usize) -> WorldStats {
+pub fn measure(sims: &[Path], years: usize) -> WorldStats {
     let rets: Vec<Vec<f64>> = sims.iter().map(|s| daily_returns(&s.price)).collect();
     // once per path (was recomputed 3x)
     let eps_by: Vec<(&Path, Vec<Episode>)> =
@@ -3772,6 +4745,7 @@ fn measure(sims: &[Path], years: usize) -> WorldStats {
         bars: bar_stats(sims),
         open: open_stats(sims),
         basket: basket_stats(sims),
+        macro_panel: macro_stats(sims),
         div_yield_mean: med(&sims
             .iter()
             .map(|s| {
@@ -3947,7 +4921,7 @@ fn measure(sims: &[Path], years: usize) -> WorldStats {
 /// statistics cannot be measured from one short path, so `-emit` takes its verdict from an
 /// ensemble (`-emitgate`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum GateClass {
+pub enum GateClass {
     Realism,
     Mechanism,
     Fidelity,
@@ -4083,7 +5057,12 @@ const GATE_YEARS: usize = 100;
 /// `-emitgate 0` is the caller's explicit request to grade the emitted ensemble itself,
 /// caller's horizon and all. Equal to (paths, years) exactly when the report ensemble already
 /// is the verdict ensemble — which at the defaults it is: same seed, same draws.
-fn verdict_spec(emitting: bool, emit_gate: usize, paths: usize, years: usize) -> (usize, usize) {
+pub fn verdict_spec(
+    emitting: bool,
+    emit_gate: usize,
+    paths: usize,
+    years: usize,
+) -> (usize, usize) {
     if emitting && emit_gate == 0 {
         (paths, years)
     } else if emitting && emit_gate > paths {
@@ -4105,7 +5084,13 @@ fn verdict_spec(emitting: bool, emit_gate: usize, paths: usize, years: usize) ->
     clippy::too_many_lines,
     reason = "one table of bands, mirroring the Scala twin's gateChecks row for row"
 )]
-fn gate_checks(a: Anchors, st: &WorldStats) -> Vec<(String, bool, GateClass)> {
+#[expect(
+    clippy::cognitive_complexity,
+    reason = "one row per graded quantity in gate order, each channel's rows behind its own \
+              presence test; splitting it would scatter the order the report and the sidecar \
+              print"
+)]
+pub fn gate_checks(a: Anchors, st: &WorldStats) -> Vec<(String, bool, GateClass)> {
     use GateClass::Mechanism;
     use GateClass::Realism;
     let pc = st.ep_per_path * 100.0 / st.years_per_path;
@@ -4474,6 +5459,120 @@ fn gate_checks(a: Anchors, st: &WorldStats) -> Vec<(String, bool, GateClass)> {
             Mechanism,
         ));
     }
+    // THE MACRO PANEL, graded when it ran — `macro-2026-09-06.tsv`. Mechanism: the spread and the
+    // conditions index FIRE — their trailing rank crosses 90 in most 20% episodes (the record:
+    // 0.71-1.00 of them across both sets' references). Fidelity: their FIRING LAG, sessions from
+    // the peak to the first firing — the record's conditions index leads the peak by about two
+    // months on every reference's classic episodes and its spread trails it by one to three
+    // weeks, and the lag is invariant to how fast the decline runs; each member's persistence at
+    // K observations (record +-0.08); the ORACLE BOUND (no member predicts the forward 60-session
+    // return better than the record's counterparts do, <= 0.02 there); the slope's inversion
+    // share — rate units the model anchors — and the implied-vol member's variance risk premium.
+    // REPORTED, not graded: every WARNING SHARE (at one and the same lag it reads lower on an
+    // index that runs up harder into its peaks and falls less deep, so it grades the index's
+    // price dynamics as much as the signal), the implied-vol member's lag (the model's leads the
+    // peak by a month where the record's is coincident — a high vol state is a CAUSE of the
+    // model's declines where VIX is a response), the slope's (never: the model's inversions are
+    // regime-length) and the inversion spell length, and the ivol's R^2 against forward realized
+    // vol (the unforecastable jump share of the model's realized variance) — each disclosed in
+    // MarketSimWorlds.md.
+    // a decoupled panel grades nothing: its readings are the no-edge level, by construction
+    if let Some(ms) = st.macro_panel.filter(|m| !m.sibling) {
+        let r2_max = ms
+            .members
+            .iter()
+            .map(|m| m.r2fwd60)
+            .fold(f64::NEG_INFINITY, f64::max);
+        // the coupling test: the conditions index builds before the peak, clear of what a
+        // decoupled series reads there (the null panel: 0.49); "fires in most episodes" is not
+        // one (a null panel fires in 0.70-0.77 of them), so the fired shares are reported. The
+        // LEVEL of the build-up is a fidelity row against the record's span, which the model
+        // misses at ~0.63: its 20% declines are not late-cycle events the way the record's are,
+        // and no map of its recorded states reaches the record — a price-model limit, disclosed.
+        v.push((
+            "macro cond builds before the peak: rank above a decoupled series' 0.49".to_string(),
+            ms.members[2].pre_peak > macro_bands::COND_PRE_PEAK_NULL,
+            Mechanism,
+        ));
+        v.push((
+            format!(
+                "macro cond concentrates the big peaks: a 20% peak within a quarter above {}x as likely",
+                jf(macro_bands::HAZARD_MIN, 0, 1)
+            ),
+            ms.hazard20q > macro_bands::HAZARD_MIN,
+            Mechanism,
+        ));
+        v.push(band_check(
+            "macro cond build-up",
+            ms.members[2].pre_peak,
+            macro_bands::COND_PRE_PEAK.0,
+            macro_bands::COND_PRE_PEAK.1,
+            GateClass::Fidelity,
+            2,
+            "",
+        ));
+        // a signed band in sessions, `lo..hi`, since `-84--4` reads as nothing
+        for (name, got, (lo, hi)) in [
+            (
+                "macro spread lag",
+                ms.members[0].lag,
+                macro_bands::SPREAD_LAG,
+            ),
+            ("macro cond lag", ms.members[2].lag, macro_bands::COND_LAG),
+        ] {
+            v.push((
+                format!("{name} {}..{} sessions", jf(lo, 0, 0), jf(hi, 0, 0)),
+                got > lo && got < hi,
+                GateClass::Fidelity,
+            ));
+        }
+        for (name, got, lo, hi, dp) in [
+            (
+                "macro spread persistence",
+                ms.members[0].ac_k,
+                macro_bands::SPREAD_AC_K.0,
+                macro_bands::SPREAD_AC_K.1,
+                2,
+            ),
+            (
+                "macro cond persistence",
+                ms.members[2].ac_k,
+                macro_bands::COND_AC_K.0,
+                macro_bands::COND_AC_K.1,
+                2,
+            ),
+            (
+                "macro ivol persistence",
+                ms.members[3].ac_k,
+                macro_bands::IVOL_AC_K.0,
+                macro_bands::IVOL_AC_K.1,
+                2,
+            ),
+            (
+                "macro oracle bound r2",
+                r2_max,
+                -1e-12,
+                macro_bands::ORACLE_R2,
+                3,
+            ),
+            (
+                "macro inversion share",
+                ms.inv_share,
+                macro_bands::INV_SHARE.0,
+                macro_bands::INV_SHARE.1,
+                2,
+            ),
+            (
+                "macro vol premium",
+                ms.vrp,
+                macro_bands::VRP.0,
+                macro_bands::VRP.1,
+                2,
+            ),
+        ] {
+            v.push(band_check(name, got, lo, hi, GateClass::Fidelity, dp, ""));
+        }
+    }
     v
 }
 
@@ -4531,7 +5630,7 @@ fn unanchored_in(st: &WorldStats) -> Vec<String> {
     out
 }
 
-fn failed_in(a: Anchors, st: &WorldStats, cls: GateClass) -> Vec<String> {
+pub fn failed_in(a: Anchors, st: &WorldStats, cls: GateClass) -> Vec<String> {
     gate_checks(a, st)
         .into_iter()
         .filter(|(_, ok, c)| !ok && *c == cls)
@@ -4550,7 +5649,7 @@ fn gate_ok(a: Anchors, st: &WorldStats, required: &[GateClass]) -> bool {
 /// The historical binary verdict: a market with its mechanisms live. Level fidelity is NOT in
 /// it, so every report keeps the admissibility it had before the depth profile was measured —
 /// a consumer that reads levels asks for `fidelity` explicitly.
-fn gate_default() -> Vec<GateClass> {
+pub fn gate_default() -> Vec<GateClass> {
     vec![GateClass::Realism, GateClass::Mechanism]
 }
 
@@ -4631,17 +5730,17 @@ const SD_REL_REF: f64 = 0.20;
 /// market at all", and a Nasdaq is still a market. The two FIDELITY bands are, because they say "is
 /// this THIS market".
 #[derive(Clone, Copy)]
-struct Anchors {
-    name: &'static str,
-    equity_window: &'static str,
-    equity_years: usize,
-    cluster_window: &'static str,
+pub struct Anchors {
+    pub name: &'static str,
+    pub equity_window: &'static str,
+    pub equity_years: usize,
+    pub cluster_window: &'static str,
     /// Window for the return-per-volatility anchor. Its own field because it is NOT the equity
     /// window: the S&P set takes r/v from CRSP 1954-2026 where its levels come from the S&P, and
     /// the Nasdaq set takes it from QQQ. The report header printed "CRSP 1954-2026" as a literal
     /// and so mislabelled every Nasdaq run.
-    ret_vol_window: &'static str,
-    cluster_years: usize,
+    pub ret_vol_window: &'static str,
+    pub cluster_years: usize,
     /// The TAIL reads its own window, and for a sharper reason than horizon-sensitivity: the
     /// deepest episode is the one statistic a window can DELETE. Across the committed fixture the
     /// median depth swings 11% between windows and the crash rate 30%, while the worst swings 54%
@@ -4650,78 +5749,78 @@ struct Anchors {
     /// on the thing it exists to test. Never fold this back into `equity_window`: the two coincide
     /// in neither shipped set for the same reason, and coinciding today is not a reason to share a
     /// field.
-    tail_window: &'static str,
-    tail_years: usize,
-    vol: f64,
-    vol_sd: f64,
-    ret_vol: f64,
-    ret_vol_sd: f64,
-    kurt: f64,
-    kurt_sd: f64,
-    ac1: f64,
-    ac1_sd: f64,
-    ac20: f64,
-    ac20_sd: f64,
-    crashes: f64,
-    crashes_sd: f64,
-    med_depth: f64,
-    med_depth_sd: f64,
-    worst_depth: f64,
-    worst_depth_sd: f64,
-    vol_band: (f64, f64),
-    ret_vol_band: (f64, f64),
+    pub tail_window: &'static str,
+    pub tail_years: usize,
+    pub vol: f64,
+    pub vol_sd: f64,
+    pub ret_vol: f64,
+    pub ret_vol_sd: f64,
+    pub kurt: f64,
+    pub kurt_sd: f64,
+    pub ac1: f64,
+    pub ac1_sd: f64,
+    pub ac20: f64,
+    pub ac20_sd: f64,
+    pub crashes: f64,
+    pub crashes_sd: f64,
+    pub med_depth: f64,
+    pub med_depth_sd: f64,
+    pub worst_depth: f64,
+    pub worst_depth_sd: f64,
+    pub vol_band: (f64, f64),
+    pub ret_vol_band: (f64, f64),
     /// 100*(sdRatio - 1) from `asymmetry-2026-08-31.tsv` — the raw model/real quotient of
     /// sdRatio itself sits so near 1 by construction that no miss could ever fire; the EXCESS is
     /// the phenomenon (positive everywhere the record was measured).
-    semi_excess: f64,
-    semi_excess_sd: f64,
+    pub semi_excess: f64,
+    pub semi_excess_sd: f64,
     /// corr(r_t, r^2_{t+1}) from the same fixture — the one leverage statistic that is stable
     /// across every CRSP era and all 18 funds on close-only data.
-    lev_corr: f64,
-    lev_corr_sd: f64,
+    pub lev_corr: f64,
+    pub lev_corr_sd: f64,
     /// Left-tail stock-bond correlation from `tailcorr-2026-08-31.tsv` (the equity leg's own
     /// pair against TLT).
-    tail_hedge: f64,
-    tail_hedge_sd: f64,
+    pub tail_hedge: f64,
+    pub tail_hedge_sd: f64,
     /// Sampling spreads for the rows whose LEVEL is not asset-specific — the theory-valued depth
     /// rungs, the valuation proxy and the bond rows — but whose spread is: measured by `-noise`
     /// at the set's own world (the S&P default; the 0.23.0-nasdaq recipe), 200 paths, and frozen
     /// like the spreads above. Carried inline through 0.23.0, so the Nasdaq loss weighted these
     /// rows with the S&P world's spreads.
-    val_disp_sd: f64,
-    d5_sd: f64,
-    d10_sd: f64,
-    d20_sd: f64,
-    bond_vol_sd: f64,
-    bond_growth_sd: f64,
-    bond_infl_sd: f64,
-    bond_depth_sd: f64,
+    pub val_disp_sd: f64,
+    pub d5_sd: f64,
+    pub d10_sd: f64,
+    pub d20_sd: f64,
+    pub bond_vol_sd: f64,
+    pub bond_growth_sd: f64,
+    pub bond_infl_sd: f64,
+    pub bond_depth_sd: f64,
     /// Drawdown-SHAPE references for `-ddshape`, the first the primary the ratios read against;
     /// `ddshape-2026-09-02.tsv`, on the model's own episode definition and median.
-    dd_refs: &'static [DdRef],
+    pub dd_refs: &'static [DdRef],
     /// The dividend yield at fair value (%/yr) and the band its level is graded against when the
     /// `div_yield` dial is on — `dividend-2026-09-02.tsv`: the window's annual means rounded out.
-    div_yield: f64,
-    div_yield_band: (f64, f64),
+    pub div_yield: f64,
+    pub div_yield_band: (f64, f64),
     /// THE BASKET's relation to this set's primary — `basket-2026-09-02.tsv`: the equal-weight
     /// eight on SPY / on QQQ (corr, beta, vol ratio), and the eight's vol as a ratio to the
     /// primary's, rounded outward. Level 3 of that fixture is a property of the names among
     /// themselves and stays shared.
-    basket_corr: f64,
-    basket_beta: f64,
-    basket_vol_ratio: f64,
-    basket_name_vol_band: (f64, f64),
+    pub basket_corr: f64,
+    pub basket_beta: f64,
+    pub basket_vol_ratio: f64,
+    pub basket_name_vol_band: (f64, f64),
 }
 
 /// One real drawdown-shape reference: a series over a window, and per threshold (thr, episodes,
 /// per year, median depth %, median decline, median recovery, median underwater, median worst-day
 /// share) — every median `pctile(.., 0.5)`, the model rows' own. Windows of the century at SPY's
 /// own length carry the spread one SPY-length history can show.
-struct DdRef {
-    series: &'static str,
-    window: &'static str,
-    years: f64,
-    rows: [DdRefRow; 2],
+pub struct DdRef {
+    pub series: &'static str,
+    pub window: &'static str,
+    pub years: f64,
+    pub rows: [DdRefRow; 2],
 }
 
 const DD_REFS_SP500: [DdRef; 5] = [
@@ -4809,15 +5908,15 @@ const SP500_ANCHORS: Anchors = Anchors {
     tail_window: "CRSP 1926-2026, the century",
     tail_years: 100,
     vol: 16.0,
-    vol_sd: 0.13,
+    vol_sd: 0.14,
     ret_vol: 0.69,
-    ret_vol_sd: 0.27,
+    ret_vol_sd: 0.26,
     kurt: 28.0,
-    kurt_sd: 1.17,
+    kurt_sd: 0.97,
     ac1: 0.299,
-    ac1_sd: 0.11,
+    ac1_sd: 0.14,
     ac20: 0.225,
-    ac20_sd: 0.19,
+    ac20_sd: 0.20,
     crashes: 20.7,
     crashes_sd: 0.26,
     med_depth: -21.4,
@@ -4833,7 +5932,7 @@ const SP500_ANCHORS: Anchors = Anchors {
     // sd RE-MEASURED with the window: 0.24 was the spread of 72-year readings, 0.18 the spread
     // of 100-year readings at the adopted disaster world (`-noise -paths 200`, 2026-08-30).
     worst_depth: -84.1,
-    worst_depth_sd: 0.19,
+    worst_depth_sd: 0.20,
     vol_band: (14.0, 18.0),
     ret_vol_band: (0.50, 0.85),
     // CRSP c1954 rows of asymmetry-2026-08-31.tsv; the tail hedge is SPY/TLT. Spreads frozen
@@ -4842,18 +5941,18 @@ const SP500_ANCHORS: Anchors = Anchors {
     // record now reads as a TYPICAL history of this model on all three rows — 42nd percentile
     // (semivariance), 46th (leverage corr), 26th (tail hedge).
     semi_excess: 3.06,
-    semi_excess_sd: 1.54,
+    semi_excess_sd: 1.44,
     lev_corr: -0.0926,
-    lev_corr_sd: 0.44,
+    lev_corr_sd: 0.50,
     tail_hedge: -0.273,
-    tail_hedge_sd: 0.24,
-    val_disp_sd: 0.64,
+    tail_hedge_sd: 0.29,
+    val_disp_sd: 0.62,
     d5_sd: 0.19,
-    d10_sd: 0.45,
-    d20_sd: 2.38,
+    d10_sd: 0.50,
+    d20_sd: 3.44,
     bond_vol_sd: 0.52,
-    bond_growth_sd: 1.48,
-    bond_infl_sd: 1.99,
+    bond_growth_sd: 1.51,
+    bond_infl_sd: 1.93,
     bond_depth_sd: 0.36,
     dd_refs: &DD_REFS_SP500,
     div_yield: 2.95,
@@ -4903,42 +6002,42 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     tail_window: "QQQ 1999-2026",
     tail_years: 27,
     vol: 26.90,
-    vol_sd: 0.10,
+    vol_sd: 0.11,
     ret_vol: 0.38,
-    ret_vol_sd: 0.49,
+    ret_vol_sd: 0.53,
     kurt: 9.55,
-    kurt_sd: 1.07,
+    kurt_sd: 1.94,
     ac1: 0.293,
-    ac1_sd: 0.17,
+    ac1_sd: 0.24,
     ac20: 0.249,
-    ac20_sd: 0.15,
+    ac20_sd: 0.18,
     crashes: 25.6,
-    crashes_sd: 0.49,
+    crashes_sd: 0.45,
     med_depth: -22.8,
-    med_depth_sd: 0.37,
+    med_depth_sd: 0.41,
     worst_depth: -83.0,
-    worst_depth_sd: 0.19,
+    worst_depth_sd: 0.20,
     vol_band: (23.5, 30.3),
     ret_vol_band: (0.27, 0.47),
     // QQQ wfull row of asymmetry-2026-08-31.tsv; the tail hedge is QQQ/TLT. Spreads measured
     // at the recipe world (2026-09-01), like every spread in this set.
     semi_excess: 1.13,
-    semi_excess_sd: 3.57,
+    semi_excess_sd: 4.64,
     lev_corr: -0.1073,
-    lev_corr_sd: 0.43,
+    lev_corr_sd: 0.54,
     tail_hedge: -0.236,
-    tail_hedge_sd: 0.24,
+    tail_hedge_sd: 0.32,
     // `-noise -anchors nasdaq` at the 0.23.0-nasdaq recipe, 200 paths, 2026-09-02. d20's spread
     // is a fraction of the S&P world's (0.30 against 2.38): at Nasdaq volatility the deep rung is
     // pinned where the S&P default leaves it unreadable, so the row carries real weight here.
     val_disp_sd: 0.53,
-    d5_sd: 0.12,
-    d10_sd: 0.19,
-    d20_sd: 0.30,
+    d5_sd: 0.13,
+    d10_sd: 0.22,
+    d20_sd: 0.36,
     bond_vol_sd: 0.52,
-    bond_growth_sd: 0.91,
-    bond_infl_sd: 1.71,
-    bond_depth_sd: 0.36,
+    bond_growth_sd: 0.98,
+    bond_infl_sd: 1.74,
+    bond_depth_sd: 0.37,
     dd_refs: &DD_REFS_NASDAQ,
     div_yield: 0.78,
     div_yield_band: (0.3, 1.5),
@@ -4948,7 +6047,7 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     basket_name_vol_band: (1.5, 2.8),
 };
 
-fn anchors_named(spec: &str) -> Anchors {
+pub fn anchors_named(spec: &str) -> Anchors {
     match spec {
         "sp500" | "sp" | "spx" => SP500_ANCHORS,
         "nasdaq" | "ndx" | "qqq" => NASDAQ_ANCHORS,
@@ -5300,14 +6399,14 @@ const EXTREME_MIN_HISTORIES: usize = 100 / EXTREME_PCT_BAND.0;
 /// is carried on EVERY row, not just the extreme ones, because a per-path ratio still folds a
 /// horizon mismatch a reader cannot otherwise see.
 #[derive(Debug, Clone)]
-struct FidelityRow {
-    name: &'static str,
-    model: f64,
-    real: f64,
-    ratio: Option<f64>,
-    pctile: Option<usize>,
-    horizon_years: usize,
-    n_histories: usize,
+pub struct FidelityRow {
+    pub name: &'static str,
+    pub model: f64,
+    pub real: f64,
+    pub ratio: Option<f64>,
+    pub pctile: Option<usize>,
+    pub horizon_years: usize,
+    pub n_histories: usize,
 }
 
 impl FidelityRow {
@@ -5405,7 +6504,7 @@ fn extreme_score_stats(
 
 /// Every fidelity row as the report and the sidecar both read it. Built ONCE per invocation so the
 /// printed table and the emitted JSON cannot describe the same world differently.
-fn fidelity_rows(
+pub fn fidelity_rows(
     a: Anchors,
     st: &WorldStats,
     paths: usize,
@@ -5506,14 +6605,14 @@ fn fitness(
     (total, rows)
 }
 
-fn sim_paths(w: &World, paths: usize, years: usize, seed: u64) -> Vec<Path> {
+pub fn sim_paths(w: &World, paths: usize, years: usize, seed: u64) -> Vec<Path> {
     sim_path_range(w, 0, paths, years, seed)
 }
 
 /// Paths `from..from + count`. Path k is a function of (world, years, seed, k) alone, so a range
 /// taken from the middle is byte-identical to the same indices of a run that started at zero —
 /// which is what lets `-emitfrom` split one batch across invocations.
-fn sim_path_range(w: &World, from: usize, count: usize, years: usize, seed: u64) -> Vec<Path> {
+pub fn sim_path_range(w: &World, from: usize, count: usize, years: usize, seed: u64) -> Vec<Path> {
     let level = world_level(w);
     (from..from + count)
         .into_par_iter()
@@ -8077,21 +9176,27 @@ type BufferArm = (Vec<f64>, Vec<f64>, Vec<Vec<f64>>);
 //
 // NOTHING HERE IS GATED. The real reference is ONE history: 12 episodes at the 10% threshold and 4
 // at the 20%. A band drawn off four episodes could not fail.
-struct DdEpisode {
-    depth: f64,
-    decline: usize,
-    recovery: Option<usize>,
-    underwater: usize,
-    worst_day_share: f64,
+pub struct DdEpisode {
+    pub depth: f64,
+    pub decline: usize,
+    pub recovery: Option<usize>,
+    pub underwater: usize,
+    pub worst_day_share: f64,
 }
 
-/// Peak-to-trough-to-recovery episodes deeper than `threshold`. An episode still underwater at the
-/// end is CENSORED: its depth and decline count, its recovery does not.
-///
-/// `worst_day_share` is the fraction of the peak-to-trough LOG decline delivered by its single
-/// worst session — low means the decline ground down, high means it gapped. The leg starts at the
-/// session BEFORE the first underwater bar, because that is the session the fall began on.
-fn dd_episodes(px: &[f64], threshold: f64) -> Vec<DdEpisode> {
+/// An underwater span deeper than a threshold: `lo` the first underwater bar (the peak is the
+/// session before it), `trough` its deepest, `hi` its last, `depth` px/peak - 1 at the trough.
+struct DdSpan {
+    lo: usize,
+    trough: usize,
+    hi: usize,
+    depth: f64,
+    censored: bool,
+}
+
+/// The spans `dd_episodes` and the macro panel's warning share share, so the two read the same
+/// episodes.
+fn dd_spans(px: &[f64], threshold: f64) -> Vec<DdSpan> {
     let n = px.len();
     let mut peak = f64::NEG_INFINITY;
     let under: Vec<f64> = px
@@ -8129,6 +9234,27 @@ fn dd_episodes(px: &[f64], threshold: f64) -> Vec<DdEpisode> {
                 trough = k;
             }
         }
+        out.push(DdSpan {
+            lo,
+            trough,
+            hi,
+            depth,
+            censored,
+        });
+    }
+    out
+}
+
+/// Peak-to-trough-to-recovery episodes deeper than `threshold`. An episode still underwater at the
+/// end is CENSORED: its depth and decline count, its recovery does not.
+///
+/// `worst_day_share` is the fraction of the peak-to-trough LOG decline delivered by its single
+/// worst session — low means the decline ground down, high means it gapped. The leg starts at the
+/// session BEFORE the first underwater bar, because that is the session the fall began on.
+pub fn dd_episodes(px: &[f64], threshold: f64) -> Vec<DdEpisode> {
+    let mut out = Vec::new();
+    for s in dd_spans(px, threshold) {
+        let (lo, trough, hi, depth, censored) = (s.lo, s.trough, s.hi, s.depth, s.censored);
         let base = lo.saturating_sub(1);
         let total = (px[trough] / px[base]).ln();
         let worst = (lo.max(1)..=trough)
@@ -8152,7 +9278,7 @@ fn dd_episodes(px: &[f64], threshold: f64) -> Vec<DdEpisode> {
 
 /// One real drawdown reference row:
 /// (threshold, episodes, per year, depth %, decline, recovery, underwater, worst-day share)
-type DdRefRow = (f64, usize, f64, f64, usize, usize, usize, f64);
+pub type DdRefRow = (f64, usize, f64, f64, usize, usize, usize, f64);
 
 /// One threshold of the shape report: every reference row, the min/max across them, the model's
 /// pooled row, and the ratio against the primary reference.
@@ -8753,7 +9879,7 @@ fn crowd_name(c: Crowd) -> String {
 /// stepping 365/252 days, which lands on weekends and so can never be joined to a real dated
 /// series. A date instead steps by WEEKDAYS (no holiday calendar — recorded, not hidden), which
 /// is what lets an emitted path through a normal dated loader untouched.
-fn session_dates(n: usize, start_ymd: &str) -> Vec<String> {
+pub fn session_dates(n: usize, start_ymd: &str) -> Vec<String> {
     if start_ymd.is_empty() {
         let start = UniDateTime::ofYmd(1900, 1, 2);
         return (0..n)
@@ -8856,7 +9982,7 @@ fn write_or_die(file: &str, body: &str) {
     clippy::too_many_arguments,
     reason = "the sidecar records the whole provenance tuple; grouping it would only move the list"
 )]
-fn write_emitted(
+pub fn write_emitted(
     a: Anchors,
     file: &str,
     p: &Path,
@@ -8883,7 +10009,10 @@ fn write_emitted(
             && p.div_yield.iter().all(|x| x.is_finite())
             && p.traded.iter().all(|x| x.is_finite())
             && p.log_open.iter().all(|x| x.is_finite())
-            && p.names.iter().all(|lp| lp.iter().all(|x| x.is_finite())),
+            && p.names.iter().all(|lp| lp.iter().all(|x| x.is_finite()))
+            && p.macro_panel
+                .as_ref()
+                .is_none_or(|m| (0..4).all(|j| m.member(j).iter().all(|x| x.is_finite()))),
         "path {k} holds a non-finite value; refusing {file}"
     );
     let dates = session_dates(p.price.len(), start_ymd);
@@ -8916,6 +10045,15 @@ fn channel_columns(p: &Path) -> Vec<&'static str> {
         cols.push("logOpen");
     }
     cols
+}
+
+/// The macro panel's columns, present exactly when it ran — after the basket's in every list.
+fn macro_columns(p: &Path) -> &'static [&'static str] {
+    if p.macro_panel.is_some() {
+        &macro_k::COLUMNS
+    } else {
+        &[]
+    }
 }
 
 /// The basket's optional columns: the aggregate, then one per name.
@@ -8968,9 +10106,15 @@ fn push_channel_cells(tsv: &mut String, p: &Path, i: usize, basket_agg: &[f64]) 
             cell(lp[i]);
         }
     }
+    if let Some(m) = &p.macro_panel {
+        cell(m.spread[i]);
+        cell(m.slope[i]);
+        cell(m.cond[i]);
+        cell(m.ivol[i]);
+    }
 }
 
-fn write_emit_tsv(file: &str, p: &Path, dates: &[String]) {
+pub fn write_emit_tsv(file: &str, p: &Path, dates: &[String]) {
     let mut tsv = String::new();
     tsv.push_str(&EMIT_COLUMNS.join("\t"));
     // The optional columns, present only when their channel ran — a channels-off file is
@@ -8994,6 +10138,10 @@ fn write_emit_tsv(file: &str, p: &Path, dates: &[String]) {
     for c in basket_columns(p) {
         tsv.push('\t');
         tsv.push_str(&c);
+    }
+    for c in macro_columns(p) {
+        tsv.push('\t');
+        tsv.push_str(c);
     }
     let basket_agg = if p.names.is_empty() {
         Vec::new()
@@ -9076,6 +10224,11 @@ fn world_json_body(w: &World) -> Vec<String> {
         ("basketIdio", ef(w.basket_idio)),
         ("basketGaps", ef(w.basket_gaps)),
         ("basketDrift", ef(w.basket_drift)),
+        // the flag's name, as every dial's key is: the field is `macro_panel` only because the
+        // Scala twin's cannot be `macro`, a reserved word there
+        ("macro", w.macro_panel.to_string()),
+        ("levGain", ef(w.lev_gain)),
+        ("macroNull", w.macro_null.to_string()),
         ("inflProb", ef(w.infl_prob)),
         ("inflSize", ef(w.infl_size)),
         ("inflSpeed", ef(w.infl_speed)),
@@ -9108,6 +10261,7 @@ fn channel_readings_block(st: &WorldStats, p: &Path) -> String {
         || st.open.is_some()
         || st.basket.is_some()
         || st.div_yield_mean.is_finite()
+        || st.macro_panel.is_some()
     {
         blocks.push(format!(
             "    \"level\": {{ \"k\": {}, \"kSat\": {}, \"kDiv\": {}, \"kVs\": {}{} }}",
@@ -9188,11 +10342,63 @@ fn channel_readings_block(st: &WorldStats, p: &Path) -> String {
             num(b.name_d20_spread)
         ));
     }
+    blocks.extend(st.macro_panel.iter().map(macro_readings_block));
     if blocks.is_empty() {
         "  \"channels\": {},".to_string()
     } else {
         format!("  \"channels\": {{\n{}\n  }},", blocks.join(",\n"))
     }
+}
+
+/// The macro panel's `channels.macro` block: the readings its rows grade, each member naming its
+/// counterpart and natural cadence — the routing a consumer's point-in-time loader needs, in the
+/// data rather than in prose. NaN prints as null, the `fidelity` rows' rule.
+fn macro_readings_block(ms: &MacroStats) -> String {
+    let num = |x: f64| {
+        if x.is_nan() {
+            "null".to_string()
+        } else {
+            ef(x)
+        }
+    };
+    let members: Vec<String> = (0..4)
+        .map(|j| {
+            let m = &ms.members[j];
+            format!(
+                "      {{ \"column\": {}, \"counterpart\": {}, \"cadence\": {}, \"ac1\": {}, \"acK\": {}, \
+                 \"r2fwd60\": {}, \"warn20\": {}, \"fired\": {}, \"lag20\": {}, \"lag10\": {}, \
+                 \"fired10\": {}, \"prePeak\": {} }}",
+                json_str(macro_k::COLUMNS[j]),
+                json_str(macro_k::COUNTERPARTS[j]),
+                json_str(macro_k::CADENCE[j]),
+                num(m.ac1),
+                num(m.ac_k),
+                num(m.r2fwd60),
+                num(m.warn),
+                num(m.warn_fired),
+                num(m.lag),
+                num(m.lag10),
+                num(m.fired10),
+                num(m.pre_peak)
+            )
+        })
+        .collect();
+    format!(
+        "    \"macro\": {{ \"null\": {}, \"episodes\": {}, \"invShare\": {}, \"invDur\": {}, \"vrp\": {}, \"r2rv\": {}, \
+         \"hazard20q\": {}, \"hazard20y\": {}, \"hazard10q\": {}, \"p20q\": {},\n      \
+         \"members\": [\n{}\n      ] }}",
+        ms.sibling,
+        ms.episodes,
+        num(ms.inv_share),
+        num(ms.inv_dur),
+        num(ms.vrp),
+        num(ms.r2rv),
+        num(ms.hazard20q),
+        num(ms.hazard20y),
+        num(ms.hazard10q),
+        num(ms.p20q),
+        members.join(",\n")
+    )
 }
 
 fn str_list<S: AsRef<str>>(v: &[S]) -> String {
@@ -9221,11 +10427,20 @@ fn gate_scope_lines(a: Anchors, p: &Path) -> String {
     let mut graded = vec!["price", "bond"];
     graded.extend(channel_columns(p));
     graded.extend(basket_cols.iter().map(String::as_str));
-    // EMPTY BY CONSTRUCTION today, and the field earns its place anyway: `logSat` is covered by
-    // the `satellite *` gate rows and the bar columns by the `bar *` rows, so there is nothing
-    // left to disclose — but the next channel to arrive is ungraded until someone anchors it,
-    // and this is the field that has to say so rather than a doc nobody reads beside the data.
-    let ungraded: Vec<&str> = Vec::new();
+    // The field that says a column reached the file UNGRADED: `logSat` is covered by the
+    // `satellite *` rows and the bar columns by the `bar *` rows, and the one case today is a
+    // NULL macro panel (`-macronull`), whose four columns are a sibling path's and grade nothing
+    // by construction — said here, in the artifact, rather than in a doc nobody reads beside the
+    // data.
+    let null_panel = p.macro_panel.as_ref().is_some_and(|m| m.sibling);
+    let ungraded: Vec<&str> = if null_panel {
+        macro_columns(p).to_vec()
+    } else {
+        Vec::new()
+    };
+    if !null_panel {
+        graded.extend(macro_columns(p));
+    }
     format!(
         "    \"anchors\": {},\n    \"gradedSeries\": {},\n    \"ungradedChannelSeries\": {},",
         json_str(a.name),
@@ -9322,6 +10537,7 @@ fn write_emit_sidecar(
             let mut cols: Vec<String> = EMIT_COLUMNS.iter().map(|c| c.to_string()).collect();
             cols.extend(channel_columns(p).into_iter().map(str::to_string));
             cols.extend(basket_columns(p));
+            cols.extend(macro_columns(p).iter().map(|c| c.to_string()));
             let refs: Vec<&str> = cols.iter().map(String::as_str).collect();
             str_list(&refs)
         }),
@@ -9388,7 +10604,7 @@ fn write_emit_sidecar(
     clippy::cognitive_complexity,
     reason = "one linear dispatch over the CLI, as in the Scala twin"
 )]
-fn main() {
+pub fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
     let mut paths = 200usize;
@@ -9586,6 +10802,9 @@ fn main() {
     let mut basket_idio = dw.basket_idio;
     let mut basket_gaps = dw.basket_gaps;
     let mut basket_drift = dw.basket_drift;
+    let mut macro_panel = dw.macro_panel;
+    let mut macro_null = dw.macro_null;
+    let mut lev_gain = dw.lev_gain;
     let mut joint_emit = String::new();
     let mut bars_emit = String::new();
     let mut jump_rate = dw.jump_rate;
@@ -9691,6 +10910,9 @@ fn main() {
             "-basketidio" => basket_idio = req_f64(&mut it, "-basketidio"),
             "-basketgaps" => basket_gaps = req_f64(&mut it, "-basketgaps"),
             "-basketdrift" => basket_drift = req_f64(&mut it, "-basketdrift"),
+            "-macro" => macro_panel = req_usize(&mut it, "-macro"),
+            "-macronull" => macro_null = req_usize(&mut it, "-macronull"),
+            "-levgain" => lev_gain = req_f64(&mut it, "-levgain"),
             "-jointemit" => joint_emit = req_arg(&mut it, "-jointemit").clone(),
             "-barsemit" => bars_emit = req_arg(&mut it, "-barsemit").clone(),
             "-jumprate" => jump_rate = req_f64(&mut it, "-jumprate"),
@@ -9840,9 +11062,21 @@ fn main() {
         non_neg("-overnight", overnight);
         non_neg("-basketbeta", basket_beta);
         non_neg("-basketsector", basket_sector);
+        non_neg("-levgain", lev_gain);
         non_neg("-basketidio", basket_idio);
         non_neg("-basketgaps", basket_gaps);
         non_neg("-basketdrift", basket_drift);
+        if macro_panel > 1 {
+            cli_die(&format!("-macro {macro_panel}: 0 (off) or 1 (the panel)"));
+        }
+        if macro_null > 1 {
+            cli_die(&format!(
+                "-macronull {macro_null}: 0 (the path's own panel) or 1 (a sibling's)"
+            ));
+        }
+        if macro_null > 0 && macro_panel == 0 {
+            cli_die("-macronull needs -macro 1: it is the panel's null, not a panel");
+        }
         if basket > 0 && basket_beta <= 0.0 {
             cli_die(
                 "-basket requires -basketbeta > 0: a name with no sector leg is not a member of anything",
@@ -9983,6 +11217,9 @@ fn main() {
         basket_idio,
         basket_gaps,
         basket_drift,
+        macro_panel,
+        macro_null,
+        lev_gain,
         value_pull,
         crowd,
         crowd_impact,
@@ -10460,6 +11697,69 @@ fn main() {
             jf(os.overnight_share, 0, 3),
             jf(os.worst_gap_share, 0, 3),
             jf(os.all_gap_share, 0, 3)
+        );
+    }
+    if let Some(ms) = &st.macro_panel {
+        println!(
+            "  macro panel            {} pooled 20% episodes; warning share = median fraction of the log decline still ahead at the first firing",
+            ms.episodes
+        );
+        if ms.sibling {
+            println!(
+                "    NULL PANEL: the columns are a sibling path's, decoupled from this price -- these readings are the"
+            );
+            println!("    no-edge level, and the macro rows do not grade them");
+        }
+        println!(
+            "    {:<12} {:>7} {:>7} {:>8} {:>7} {:>6} {:>5} {:>6} {:>8} {:>5} {:>8} {:>8} {:>8}",
+            "member",
+            "ac1",
+            "acK",
+            "r2fwd60",
+            "warn20",
+            "fired",
+            "lag",
+            "lag10",
+            "fired10",
+            "pre",
+            "p10",
+            "p50",
+            "p90"
+        );
+        for (j, m) in ms.members.iter().enumerate() {
+            println!(
+                "    {:<12} {} {} {} {} {} {} {} {} {} {} {} {}",
+                macro_k::COLUMNS[j],
+                jf(m.ac1, 7, 4),
+                jf(m.ac_k, 7, 4),
+                jf(m.r2fwd60, 8, 4),
+                jf(m.warn, 7, 3),
+                jf(m.warn_fired, 6, 2),
+                jf(m.lag, 5, 0),
+                jf(m.lag10, 6, 0),
+                jf(m.fired10, 8, 2),
+                jf(m.pre_peak, 5, 2),
+                jf(m.lvl10, 8, 2),
+                jf(m.lvl50, 8, 2),
+                jf(m.lvl90, 8, 2)
+            );
+        }
+        println!(
+            "    leverage hazard        20% peak within a quarter x{} (unconditional {})   within a year x{}   10% within a quarter x{}",
+            jf(ms.hazard20q, 0, 2),
+            jf(ms.p20q, 0, 3),
+            jf(ms.hazard20y, 0, 2),
+            jf(ms.hazard10q, 0, 2)
+        );
+        println!(
+            "    slope inverted         share {}   mean spell {} sessions",
+            jf(ms.inv_share, 0, 3),
+            jf(ms.inv_dur, 0, 1)
+        );
+        println!(
+            "    ivol premium           vrp {} (log)   r2 vs forward realized {}",
+            jf(ms.vrp, 0, 3),
+            jf(ms.r2rv, 0, 3)
         );
     }
     if st.div_yield_mean.is_finite() {
@@ -11460,8 +12760,10 @@ mod contract_tests {
             .iter()
             .find(|(n, _, _, _)| *n == "worst crash %")
             .expect("no worst crash % loss row");
+        // the contrast is a fifth since 0.24.0 (it was a half): the leverage cycle's cascades
+        // carry a share of the century tail the disasters used to carry alone
         assert!(
-            off_row.3 > row.3 + 0.05,
+            off_row.3 > row.3 * 1.2,
             "the tail term must price the disaster-off world's shallow century tail well above              the adopted world's: off {:.4} vs on {:.4}",
             off_row.3,
             row.3
@@ -13159,6 +14461,334 @@ mod dd_shape_anchor_tests {
     }
 }
 
+/// The macro panel: four observables derived from the model's own state after the price loop, so
+/// `price` keeps its meaning and the dial is bit-identical off. The bands are MEASURED numbers
+/// re-derived from the checked-in fixture. The Scala twin carries the same checks in
+/// `MacroPanelSuite`, against the same file.
+#[cfg(test)]
+mod macro_panel_tests {
+    use super::*;
+
+    #[test]
+    fn off_is_bit_identical_and_carries_no_columns_and_every_frozen_world_is_off() {
+        let off = simulate(&default_world(), 3, DEFAULT_SEED);
+        let mut w = default_world();
+        w.macro_panel = 1;
+        let on = simulate(&w, 3, DEFAULT_SEED);
+        assert!(off.macro_panel.is_none());
+        assert!(
+            on.price == off.price
+                && on.fundamental == off.fundamental
+                && on.bond == off.bond
+                && on.rate == off.rate,
+            "the panel must reach no price"
+        );
+        for (v, w) in releases() {
+            assert!(w.macro_panel == 0, "release {v}");
+        }
+        for (n, w, _) in recipes() {
+            if !n.starts_with("0.24.0") {
+                assert!(w.macro_panel == 0, "recipe {n}");
+            }
+        }
+        assert!(default_world().macro_panel == 0);
+    }
+
+    #[test]
+    fn the_leverage_cycle_is_off_in_every_frozen_world_and_zero_reproduces_0_23_1_bit_for_bit() {
+        for (v, w) in releases() {
+            assert!(w.lev_gain == 0.0, "release {v}");
+        }
+        for (n, w, _) in recipes() {
+            if !n.starts_with("0.24.0") {
+                assert!(w.lev_gain == 0.0, "recipe {n}");
+            }
+        }
+        assert!(
+            default_world().lev_gain > 0.0,
+            "the shipped default runs the leverage cycle"
+        );
+        // the dial off at 0.23.1's dials IS 0.23.1's world: the stock still runs (its stream is
+        // its own) and the multiplier stays exactly 1.0
+        let frozen = release_world("0.23.1").expect("0.23.1 must resolve");
+        let mut off = default_world();
+        off.lev_gain = 0.0;
+        off.stress = frozen.stress;
+        off.jump_var = frozen.jump_var;
+        off.jump_skew = frozen.jump_skew;
+        off.leverage = frozen.leverage;
+        off.vol_persist = frozen.vol_persist;
+        off.fund_vol = frozen.fund_vol;
+        assert!(
+            off == frozen,
+            "0.24.0 moved lev_gain and the six dials re-solved around it, nothing else"
+        );
+        let a = simulate(&frozen, 3, DEFAULT_SEED);
+        off.macro_panel = 1;
+        let b = simulate(&off, 3, DEFAULT_SEED);
+        assert!(
+            a.price == b.price && a.bond == b.bond,
+            "lev_gain 0 must leave the price bit-identical"
+        );
+    }
+
+    #[test]
+    fn on_the_four_members_span_the_path_in_their_counterparts_units_and_the_slope_consumes_no_draw()
+     {
+        let mut w = default_world();
+        w.macro_panel = 1;
+        // a century: an inversion needs an inflation regime tight enough to invert, which a
+        // short path can miss (the ensemble inverts 0.13 of sessions, in spells of ~480)
+        let p = simulate(&w, 100, DEFAULT_SEED);
+        let m = p.macro_panel.as_ref().expect("no panel with the dial on");
+        for j in 0..4 {
+            assert_eq!(m.member(j).len(), p.price.len(), "{}", macro_k::COLUMNS[j]);
+        }
+        assert!(
+            m.spread.iter().all(|&x| x >= macro_k::SPREAD_FLOOR),
+            "a credit spread is floored, never negative"
+        );
+        assert!(
+            m.ivol.iter().all(|&x| x >= macro_k::IVOL_FLOOR),
+            "an implied vol is floored, never negative"
+        );
+        assert!(
+            m.slope.iter().any(|&x| x < 0.0) && m.slope.iter().any(|&x| x > 0.0),
+            "the curve both inverts and steepens"
+        );
+        // The slope is an expectation of the rate process, so it is the same function of the
+        // same states whatever the measurement stream drew: the other members move with the
+        // seed's panel stream, the slope only with the price loop's.
+        let q = simulate(&w, 100, DEFAULT_SEED + 1);
+        let qm = q.macro_panel.as_ref().expect("panel");
+        assert!(qm.spread != m.spread, "the spread reads its own stream");
+        assert!(
+            qm.slope
+                .iter()
+                .zip(&q.rate)
+                .all(|(s, r)| s.is_finite() && r.is_finite())
+        );
+        // the measured values hold their counterparts' scale: percentage points, a raw index, %
+        let mid = pctile(&m.spread, 0.5);
+        assert!(mid > 0.5 && mid < 6.0);
+        let iv = pctile(&m.ivol, 0.5);
+        assert!(iv > 5.0 && iv < 60.0);
+    }
+
+    #[test]
+    fn the_readings_exist_only_when_the_panel_ran_and_read_as_the_rulers_statistics() {
+        let off = measure(&sim_paths(&default_world(), 4, 30, DEFAULT_SEED), 30);
+        assert!(off.macro_panel.is_none());
+        let mut w = default_world();
+        w.macro_panel = 1;
+        let on = measure(&sim_paths(&w, 4, 30, DEFAULT_SEED), 30);
+        let ms = on.macro_panel.expect("no readings with the dial on");
+        assert!(ms.episodes > 0);
+        for (j, m) in ms.members.iter().enumerate() {
+            let nm = macro_k::COLUMNS[j];
+            assert!((0.0..=1.0).contains(&m.warn), "{nm} warn {}", m.warn);
+            assert!(
+                (0.0..=1.0).contains(&m.warn_fired),
+                "{nm} fired {}",
+                m.warn_fired
+            );
+            assert!(
+                m.ac1 > 0.9 && m.ac1 <= 1.0,
+                "{nm} ac1 {}: a level series, not a return series",
+                m.ac1
+            );
+            assert!((0.0..=1.0).contains(&m.r2fwd60), "{nm} r2 {}", m.r2fwd60);
+            assert!(m.lvl10 <= m.lvl50 && m.lvl50 <= m.lvl90, "{nm} levels");
+        }
+        assert!((0.0..=1.0).contains(&ms.inv_share));
+        assert!(ms.vrp.is_finite() && (0.0..=1.0).contains(&ms.r2rv));
+    }
+
+    const FIXTURE: &str = "../test-data/equity-anchors/macro-2026-09-06.tsv";
+
+    fn rows() -> Option<Vec<Vec<String>>> {
+        let text = std::fs::read_to_string(FIXTURE).ok()?;
+        Some(
+            text.lines()
+                .filter(|l| !l.starts_with('#') && !l.starts_with("set\t") && !l.trim().is_empty())
+                .map(|l| l.split('\t').map(str::to_string).collect())
+                .collect(),
+        )
+    }
+
+    fn value(rs: &[Vec<String>], set: &str, series: &str, member: &str, stat: &str) -> f64 {
+        rs.iter()
+            .find(|r| r[0] == set && r[1] == series && r[2] == member && r[3] == stat)
+            .unwrap_or_else(|| panic!("fixture row [{set} {series} {member} {stat}] missing"))[6]
+            .parse()
+            .expect("numeric fixture value")
+    }
+
+    fn at2(x: f64) -> f64 {
+        (x * 100.0).round() / 100.0
+    }
+
+    #[test]
+    fn the_bands_are_the_fixtures_warning_shares_per_set_from_its_two_references_the_shape_rows_shared()
+     {
+        let Some(rs) = rows() else {
+            return;
+        };
+        // the lag bands are US-wide: +-40 sessions around the upper-middle (the twins' median)
+        // of the four references' median firing lags — sessions from the peak to the first
+        // firing, over the 20% episodes the member fired in, rank members in the quarter before
+        // the peak
+        let refs = [
+            ("sp500", "CRSP"),
+            ("sp500", "SPY"),
+            ("nasdaq", "NDX"),
+            ("nasdaq", "QQQ"),
+        ];
+        let lag_band = |fred: &str, member: &str| -> (f64, f64) {
+            let v: Vec<f64> = refs
+                .iter()
+                .map(|(s, r)| value(&rs, s, &format!("{fred}/{r}"), member, "lag20_63"))
+                .collect();
+            let m = pctile(&v, 0.5);
+            (m - 40.0, m + 40.0)
+        };
+        assert_eq!(macro_bands::SPREAD_LAG, lag_band("BAA10Y", "spread"));
+        assert_eq!(macro_bands::COND_LAG, lag_band("NFCILEVERAGE", "cond"));
+        // the build-up: the conditions index's mean trailing rank over the quarter before the
+        // peak, 0.12 under the four references' upper-middle, to 1 — the coupling test, which a
+        // decoupled series (the null panel, 0.49) fails by construction
+        let pres: Vec<f64> = refs
+            .iter()
+            .map(|(s, r)| value(&rs, s, &format!("NFCILEVERAGE/{r}"), "cond", "prepeak20_63"))
+            .collect();
+        assert_eq!(
+            macro_bands::COND_PRE_PEAK,
+            (at2(pctile(&pres, 0.5) - 0.12), 1.0)
+        );
+        assert!(
+            pres.iter().all(|&p| p > 0.8),
+            "the record's leverage index builds before every reference's peaks"
+        );
+        // the hazard: the references' minimum quarter-horizon 20% hazard, floored to 0.1
+        let hz: Vec<f64> = refs
+            .iter()
+            .map(|(s, r)| value(&rs, s, &format!("NFCILEVERAGE/{r}"), "cond", "hazard20_63"))
+            .collect();
+        let hz_min = hz.iter().copied().fold(f64::INFINITY, f64::min);
+        assert_eq!(macro_bands::HAZARD_MIN, (hz_min * 10.0).floor() / 10.0);
+        assert!(
+            hz.iter().all(|&h| h > 1.4)
+                && hz.iter().copied().fold(f64::NEG_INFINITY, f64::max) > 2.5,
+            "leverage concentrates the big peaks on every reference"
+        );
+        // the record's conditions index leads the peak on three of the four references
+        let leads = refs
+            .iter()
+            .filter(|(s, r)| value(&rs, s, &format!("NFCILEVERAGE/{r}"), "cond", "lag20_63") < 0.0)
+            .count();
+        assert!(leads >= 3, "{leads} of four references lead");
+        // the shape rows: persistence +-0.08 around the record's, capped at 1
+        let ac_band = |fred: &str, member: &str, stat: &str| -> (f64, f64) {
+            let x = value(&rs, "shared", fred, member, stat);
+            (at2(x - 0.08), at2((x + 0.08).min(1.0)))
+        };
+        assert_eq!(
+            macro_bands::SPREAD_AC_K,
+            ac_band("BAA10Y", "spread", "ac20")
+        );
+        assert_eq!(
+            macro_bands::COND_AC_K,
+            ac_band("NFCILEVERAGE", "cond", "ac4")
+        );
+        assert_eq!(macro_bands::IVOL_AC_K, ac_band("VIXCLS", "ivol", "ac20"));
+        // the oracle bound sits above every predictive R^2 the record shows, and not far above
+        let r2_max = rs
+            .iter()
+            .filter(|r| r[3] == "r2fwd60")
+            .map(|r| r[6].parse::<f64>().expect("numeric"))
+            .fold(f64::NEG_INFINITY, f64::max);
+        assert!(
+            r2_max < macro_bands::ORACLE_R2 && macro_bands::ORACLE_R2 <= r2_max + 0.02,
+            "oracle bound {} against the record's largest {r2_max:.4}",
+            macro_bands::ORACLE_R2
+        );
+        // the slope's inversion share and the variance risk premium bands hold the record
+        let inv = value(&rs, "shared", "T10Y2Y", "slope", "invShare");
+        assert!(inv > macro_bands::INV_SHARE.0 && inv < macro_bands::INV_SHARE.1);
+        for r in ["CRSP", "SPY"] {
+            let vrp = value(&rs, "shared", &format!("VIXCLS/{r}"), "ivol", "vrp");
+            assert!(
+                vrp > macro_bands::VRP.0 && vrp < macro_bands::VRP.1,
+                "{r} vrp {vrp}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_null_panel_is_a_sibling_paths_the_same_price_a_decoupled_panel_and_no_macro_rows() {
+        let mut w = default_world();
+        w.macro_panel = 1;
+        let own = simulate(&w, 20, DEFAULT_SEED);
+        let mut n = w;
+        n.macro_null = 1;
+        let nul = simulate(&n, 20, DEFAULT_SEED);
+        assert!(
+            nul.price == own.price && nul.rate == own.rate,
+            "the null reaches no price"
+        );
+        let op = own.macro_panel.as_ref().expect("panel");
+        let np = nul.macro_panel.as_ref().expect("panel");
+        assert!(np.spread != op.spread, "a sibling's panel, not this path's");
+        assert!(np.sibling && !op.sibling);
+        // the sibling IS another path of this world, at seed ^ NULL_SEED: its own panel, verbatim
+        let sib = simulate(&w, 20, DEFAULT_SEED ^ macro_k::NULL_SEED);
+        let sp = sib.macro_panel.as_ref().expect("panel");
+        assert!(np.spread == sp.spread && np.ivol == sp.ivol);
+        let st = measure(&sim_paths(&n, 4, 30, DEFAULT_SEED), 30);
+        assert!(st.macro_panel.is_some_and(|m| m.sibling));
+        // the panel's rows all start "macro <member>"; "macro disasters ..." is the disaster
+        // channel's
+        let panel_row = |n: &str| n.starts_with("macro ") && !n.starts_with("macro disasters");
+        assert!(
+            !gate_checks(anchors_named("sp500"), &st)
+                .iter()
+                .any(|r| panel_row(&r.0)),
+            "a null panel grades nothing"
+        );
+        // a decoupled conditions index reads its unconditional level before a peak
+        let null_pre = st.macro_panel.expect("readings").members[2].pre_peak;
+        assert!(null_pre < 0.65, "null pre-peak rank {null_pre}");
+        let own = measure(&sim_paths(&w, 4, 30, DEFAULT_SEED), 30);
+        assert_eq!(
+            gate_checks(anchors_named("sp500"), &own)
+                .iter()
+                .filter(|r| panel_row(&r.0))
+                .count(),
+            11,
+            "the path's own panel carries its eleven rows"
+        );
+        for (v, w0) in releases() {
+            assert!(w0.macro_null == 0, "release {v}");
+        }
+        for (nm, w0, _) in recipes() {
+            assert!(w0.macro_null == 0, "recipe {nm}");
+        }
+    }
+
+    #[test]
+    fn the_episode_spans_the_warning_share_reads_are_dd_episodes_own() {
+        let p = simulate(&default_world(), 20, DEFAULT_SEED);
+        let ep = dd_episodes(&p.price, 0.20);
+        let sp = dd_spans(&p.price, 0.20);
+        assert_eq!(ep.len(), sp.len());
+        for (e, s) in ep.iter().zip(&sp) {
+            assert!(e.depth == s.depth);
+            assert_eq!(e.decline, s.trough - s.lo + 1);
+            assert_eq!(e.underwater, s.hi - s.lo + 1);
+        }
+    }
+}
+
 /// The dividend stream: a derived channel that reaches no price, so `price` keeps its meaning and
 /// the dial is bit-identical off. The anchors are MEASURED numbers re-derived from the checked-in
 /// fixture. The Scala twin carries the same checks in `DividendSuite`, against the same file.
@@ -13209,8 +14839,10 @@ mod dividend_tests {
         for (v, w) in releases() {
             assert!(w.div_yield == 0.0, "release {v}");
         }
+        // the 0.23.1 recipes carry the stream at their set's anchor, and the 0.24.0 ones are
+        // those bases
         for (n, w, _) in recipes() {
-            if !n.starts_with("0.23.1") {
+            if !n.starts_with("0.23.1") && !n.starts_with("0.24.0") {
                 assert!(w.div_yield == 0.0, "recipe {n}");
             }
         }

@@ -5,6 +5,8 @@ extern crate blas_src;
 
 pub mod cli;
 pub mod error;
+#[cfg(feature = "market-sim")]
+pub mod market_sim;
 pub mod numpy_rng;
 pub mod t3prf;
 pub mod udata;

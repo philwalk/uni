@@ -1,0 +1,43 @@
+Simulating the macro and market signals for this strategy is entirely practical, as every input it relies on is public, historical data. However, generating realistic *synthetic* versions of these signals requires modeling macroeconomic state transitions rather than treating price and macro data separately.
+
+Here are the concrete, practical ways to simulate the strategy's signal set:
+
+**1. Historical Replay (The Baseline)**
+Since the underlying series are public, the most direct simulation uses historical data re-indexed to point-in-time release schedules:
+
+* **FRED Series:** Pull historical FRED data for credit, yield spreads, and fed funds (e.g., `NFCI`, `BUSLOANS`, `BAA10Y`, `T10Y2Y`, `FEDFUNDS`).
+* **Point-in-Time Real-Time Data (ALFRED):** The strategy explicitly notes reading economic figures only on the day they were published. Using ALFRED (Archival Federal Reserve Economic Data) avoids look-ahead bias by preserving vintage revisions and actual release lag dates.
+
+---
+
+**2. Joint-Distribution Synthetic Simulation (Co-integrated Paths)**
+If the goal is to create synthetic market paths (e.g., Monte Carlo or bootstrapped alternate histories) without breaking the signal-price coupling, you must simulate prices and signals **jointly**:
+
+* **Vector Autoregression (VAR) / Markov-Switching Vector Autoregression (MS-VAR):**
+* Fit an MS-VAR model to price returns, VIX, credit spreads, and yield curve slope simultaneously.
+* *Why it works:* When the model transitions to a high-volatility or recession "regime state," the synthetic data generator simultaneously degrades price returns, inverts the yield curve, and widens credit spreads. This ensures the strategy's 6-vote stress counter actually sees the macro stress ahead of/during simulated drawdowns.
+
+
+* **Block Bootstrap with Joint Resampling:**
+* Instead of bootstrapping price returns alone, construct historical data blocks (e.g., 20-to-60 trading day windows) containing both asset returns and all 10 feature readings (VIX, yield spread, BAA premium, NFCI, etc.).
+* Resample these multi-asset/multi-feature blocks together so that signal-to-price lead/lag dynamics remain intact across transitions.
+
+
+
+---
+
+**3. Macro Regime State Generators (Hidden Markov Models)**
+Rather than simulating continuous economic series directly (which can be noisy), map the 6 macro questions to underlying macro regimes:
+
+* Fit a **Hidden Markov Model (HMM)** with 3–4 latent states (e.g., *Early Cycle, Late Cycle, Tightening/Crisis, Recovery*).
+* Define the emission probabilities for each of the 6 vote questions per state (e.g., in a *Crisis* state, the probability of an inverted yield curve or elevated BAA spread is high).
+* Generate synthetic macro regimes over time, emitting binary/scaled survey votes that naturally drive the strategy's smoothed stress count switch.
+
+---
+
+**4. Parametric Copulas for Cross-Asset Dependencies**
+To generate continuous synthetic daily series for asset returns, VIX, and short/long rate differentials:
+
+* Use **GARCH processes** for asset and VIX returns to capture daily volatility clustering.
+* Link the residual innovations of price returns, VIX, and credit spreads using a **t-Copula** or **Vine Copula**.
+* This preserves extreme tail dependence—ensuring that when price drops spike in synthetic paths, credit spreads widen and expected turbulence surges concurrently.

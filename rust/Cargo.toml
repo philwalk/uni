@@ -5,7 +5,7 @@ name = "vastblue-uni"
 # Lockstep with the Scala library's version in build.sbt: both publish together
 # from release-and-publish.sh, which asserts the two agree. The number says
 # which uni release this port mirrors; PARITY.md says how much of it.
-version = "0.23.1"
+version = "0.24.0"
 edition = "2024"
 rust-version = "1.87"
 description = "Rust port of the uni Scala library: NumPy/pandas-style matrices and linear algebra (MatD) pinned bit-for-bit to the JVM, big-data CSV tooling, MSYS2/Cygwin-aware path resolution, date-time parsing and arithmetic, BigDecimal-compatible decimals, and 3PRF forecasting"
@@ -19,22 +19,23 @@ keywords = ["linear-algebra", "numpy", "pandas", "scala", "big-data"]
 categories = ["filesystem", "date-and-time", "mathematics", "parser-implementations", "science"]
 # The tests and bench bins read ../test-data, which lives outside the package root and
 # cannot ship in the crate -- exclude them so the tarball carries no tests that cannot run.
-# The examples DO ship: they are the cross-language demo pairs the README documents, they
-# are self-contained (no fixtures), and market_sim is consumed as a product --
-# `cargo install vastblue-uni --example market_sim` builds the simulator from the crate.
-# rust-toolchain.toml is excluded so the repo's pinned toolchain is not forced onto consumers.
-exclude = ["tests/", "src/bin/", "doc-examples/", "docs/", "Makefile", "rustfmt.toml", "rust-toolchain.toml"]
+# The examples DO ship: they are the cross-language demo pairs the README documents and
+# they are self-contained (no fixtures). The market simulator is LIBRARY code
+# (`uni::market_sim`, the `market-sim` feature) with a two-line binary in src/bin that the
+# package keeps: `cargo install vastblue-uni` builds it, and a dependent crate drives the
+# same paths in-process. rust-toolchain.toml is excluded so the repo's pinned toolchain is
+# not forced onto consumers.
+exclude = ["tests/", "src/bin/bench_*.rs", "doc-examples/", "docs/", "Makefile", "rustfmt.toml", "rust-toolchain.toml"]
 
 [lib]
 name = "uni"
 crate-type = ["rlib"]
 
-# The other examples are auto-discovered; this one is declared so `test = true` makes
-# `cargo test` RUN its `#[cfg(test)]` sidecar-contract tests. Without it cargo only
-# compiles the example, and the contract guards would pass by never executing.
-[[example]]
+# The simulator's CLI. Its `#[cfg(test)]` contract suites live with the module and run under
+# `cargo test` as unit tests, so no target needs `test = true` for them any more.
+[[bin]]
 name = "market_sim"
-test = true
+required-features = ["market-sim"]
 
 [lints.rust]
 unreachable_pub = "warn"
@@ -66,7 +67,11 @@ map_err_ignore = "warn"
 let_underscore_must_use = "warn"
 
 [features]
-default = []
+default = ["market-sim"]
+# The market simulator as library code plus its binary. On by default so `cargo install
+# vastblue-uni` yields the binary; a consumer that wants only the numerics builds with
+# `default-features = false`.
+market-sim = []
 # Route ndarray's matmul through a system OpenBLAS instead of the pure-Rust
 # `matrixmultiply` kernels. Worth ~3x on the OOS paths, whose gemms are skinny
 # (one operand has only L+1 columns) — a shape matrixmultiply handles poorly.

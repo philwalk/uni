@@ -75,8 +75,15 @@ class BasketAnchorSuite extends FunSuite:
       "the names are observational: the primary must not move")
     for (v, w) <- MarketSim.Releases do assertEquals(w.basket, 0, s"release $v")
     for (n, w, _) <- MarketSim.Recipes if !n.endsWith("basket") do assertEquals(w.basket, 0, s"recipe $n")
-    assertEquals(MarketSim.Recipes.find(_._1 == "0.23.1-basket").map(_._2), Some(Anchored.copy(divYield = 2.95)),
-      "the basket recipe is the S&P default at the anchored basket dials, dividends on")
+    // the 0.23.1 recipe sits on the frozen 0.23.1 world, the 0.24.0 one on the default: the
+    // leverage cycle moved six dials between them and nothing else
+    val f = MarketSim.releaseWorld("0.23.1").getOrElse(fail("0.23.1 must resolve"))
+    assertEquals(MarketSim.Recipes.find(_._1 == "0.23.1-basket").map(_._2),
+      Some(Anchored.copy(divYield = 2.95, stress = f.stress, jumpVar = f.jumpVar, jumpSkew = f.jumpSkew,
+                         leverage = f.leverage, volPersist = f.volPersist, fundVol = f.fundVol, levGain = f.levGain)),
+      "the 0.23.1 basket recipe is the frozen 0.23.1 world at the anchored basket dials, dividends on")
+    assertEquals(MarketSim.Recipes.find(_._1 == "0.24.0-basket").map(_._2), Some(Anchored.copy(divYield = 2.95, macroPanel = 1)),
+      "the 0.24.0 basket recipe is the S&P default at the anchored basket dials, dividends and the panel on")
     assertEquals(MarketSim.Defaults.basket, 0)
     // the other channels are untouched by the basket's draws: the bars and the satellite of a
     // channels-on world are byte-identical with and without the basket

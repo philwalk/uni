@@ -71,7 +71,7 @@ class EmitSidecarSuite extends FunSuite:
   }
 
   test("the Rust twin declares the same schema") {
-    val rs = "rust/examples/market_sim.rs".asPath
+    val rs = "rust/src/market_sim.rs".asPath
     assume(rs.exists, "rust twin not present in this tree (source tarball?)")
     val declared = rs.lines.collectFirst { case s"const EMIT_SCHEMA: u32 = ${n};" => n.trim.toInt }
     assertEquals(declared, Some(MarketSim.EmitSchema),

@@ -1,3 +1,148 @@
+## v0.24.0 — 2026-09-07
+
+**Declines that follow leverage — the leverage cycle, on by default**
+
+- `-levgain` (default 6; 0 is 0.23.1's amplification bit for bit): a borrowing stock swings over
+  years as a credit cycle of its own — a damped oscillator on a dedicated stream, four-year
+  period, damping 0.2, the shape of the record's NFCILEVERAGE (weekly changes autocorrelated over
+  a quarter, the level's autocorrelation 0.42 at a year and ~0 at two, rank spells of ~four
+  months) — is paid down under stress, and the liquidity spiral's gain is multiplied by
+  1 + levgain × (the stock's rise over its trailing-year average), so an ordinary shock cascades
+  into a 20% decline where leverage has been building and not where it has not: credit GROWTH
+  precedes the crisis (Schularick–Taylor), and the record's leverage index rises into every
+  classic peak. Reading the stock's level, or the leverage ratio, instead puts the gain inside the
+  drawdown, where the spiral already amplifies, and deepens crashes without concentrating them
+  (hazard 1.1–1.3 at kurtosis 50–150); the growth read concentrates them at the calibrated
+  kurtosis.
+- The record's target, from FRED's NFCILEVERAGE on CRSP / SPY / NDX / QQQ 1990–2026
+  (`macro-2026-09-06.tsv`): with the index in the top decile of its trailing year, a 20% peak
+  falls within the next quarter 2.0–2.7× as often as unconditionally (1.45× on QQQ's four
+  episodes), ~1.2× within a year, ~1× for 10% dips; the index's mean rank over the quarter before
+  a 20% peak is 0.92–0.94. The model, on the emitted `macroCond` with the record's own statistics:
+  1.68× / 1.39× / 1.35× on the S&P (a decoupled panel 0.94×), 1.55× on the Nasdaq; build-up 0.92
+  / 0.87 (0.55 before the cycle); in its top decile at 0.51 of its 20% peaks (the record five of
+  six), rank spells of 11 weeks against the record's 15. Two rows grade it: mechanism `macro cond
+  concentrates the big peaks` (quarter hazard > 1.4×, the references' floor) and the build-up's
+  fidelity band 0.82–1.00, now a PASS on both recipes. `hazard20q` / `hazard20y` / `hazard10q` /
+  `p20q` join the sidecar's `macro` block; `world.levGain` names the dial.
+- SIX DIALS RE-SOLVED so that every row the 0.23.1 world read stays where it was, on four seeds:
+  `stress` 5.15 → 4.7 and `jumpVar` 0.14 → 0.11 (the cycle's cascades supply tail the jump channel
+  and the spiral's base gain used to), `jumpSkew` 0.7 → 1.0 (the downside excess back on 3.26),
+  `leverage` 0.12 → 0.10 (the leverage correlation and lag-1 clustering), `fundVol` 0.070 → 0.060
+  (the cycle's fragile phases lengthen time under water: d10 back on 1.38) and `volPersist`
+  0.992 → 0.993 with the stock's paydown at 0.007 per unit stress (its cascades shorten vol
+  memory: lag-20 clustering back on 0.19). At the default seed: kurtosis 25.9, crashes 20.0 per
+  century, median depth −22.2, worst-crash percentile 36th, vr60 1.08, downside excess 1.07,
+  leverage corr 1.02, tail hedge 0.96, d5 / d10 1.08 / 1.38; every gate row green on both
+  recipes and four seeds, `-crossasset` PASS (5 graded, 0 outside), the frozen fitness loss 0.786
+  against 0.796. Disclosed: lag-20 clustering 0.19 against 0.225 (0.20 before), the one row the
+  cycle costs.
+- The defaults-change checklist executed: `0.23.1` joins the `-releases` rows (0.23.0's world,
+  which 0.23.1 shipped unchanged), so `-atrelease 0.23.1` reproduces it bit for bit; every
+  anchor spread re-frozen from `-noise -paths 200` at the adopted world (the same command at the
+  outgoing world reproduces the previous literals); the dial-sensitivity table and the
+  worlds document's measured numbers regenerated; the 0.24.0 recipes carry the cycle (below).
+
+**A macro panel, so a rule that reads FRED can be graded on simulated paths**
+
+- `-macro 1` (default 0, off): four observables DERIVED from the model's own state after the price
+  loop, each the counterpart of a FRED series and in its units — `macroSpread` (BAA10Y: equity and
+  bond stress, the fast index plus a ~400-session credit cycle), `macroSlope` (T10Y2Y: the 10y
+  minus the 2y yield the rate process implies, each the OU-expected average of the short rate over
+  its horizon plus a term premium — derived from the same path that prices the bond, so it cannot
+  contradict the `bond` column, and it inverts when policy is tight against neutral), `macroCond`
+  (NFCILEVERAGE: the leverage cycle's ratio — the borrowing stock over the equity securing it —
+  over its mean, plus the trend crowd's share over its home; emitted RAW because its counterpart
+  is full-sample standardized and a fixed threshold on that level reads the future), `macroIvol` (VIXCLS: the session's conditional
+  sd re-levelled onto the world's realized volatility by the bar channels' `k`, times the record's
+  variance risk premium e^0.28). Reaches no price: 0 is bit-identical, and every other column of a
+  world with the panel on is that world's byte for byte. With `rate` already emitted, five of a
+  macro-vote's six inputs have a counterpart; GDP and bank credit do not (no output gap, no
+  banking sector). Both twins byte-identical; sidecar schema 11 → 12 (`world.macro`, the
+  four columns present only when on, `channels.macro` with each column's `counterpart` and
+  natural `cadence`).
+- NO scale dials: a consumer's votes are percentile ranks against trailing history or a sign, so a
+  column's scale is invisible to them; each map is a literal in its counterpart's units, disclosed
+  as unanchored. The slope is the exception — rate units the model anchors — and is graded
+  absolutely. Each noisy member carries a PERSISTENT measurement component (an AR(1), the credit
+  factor as slow as the level itself) sized so no member predicts the forward 60-session return
+  better than the record's counterparts do: the ORACLE BOUND, a graded row (record ≤ 0.019; the
+  model reads 0.002–0.016).
+- Publication is the consumer's layer. The panel is the value an agency would MEASURE that
+  session; release lag, cadence and revisions are applied to an emitted column exactly as to the
+  real series — a consumer's point-in-time loader already owns those rules, and the sidecar names
+  each column's counterpart so it can route the column through the same table.
+- The no-edge world is a sibling path, and `-macronull 1` writes one into the path's own file:
+  the four columns come from the same world at another seed, its own price loop and measurement
+  stream, so their coupling to this file's `price` is nil. The macro rows do not grade a null
+  panel (its readings print as the no-edge level), the sidecar lists its columns in
+  `ungradedChannelSeries` with `channels.macro.null` true, and `world.macroNull` records the
+  dial. Needs `-macro 1`; one extra price loop per path. This is the distribution a
+  minimum-detectable-effect calculation needs — and its readings say how large that effect must
+  be: a decoupled panel still fires in 0.64–0.76 of the 20% episodes (coupled: 0.88–0.96),
+  because a persistent series crosses its top decile somewhere in a quarter-plus-decline window
+  whether or not it is coupled; what separates the two is the hazard (1.68× against 0.94×) and
+  the build-up (0.92 against 0.48), while by the predictive R² they are barely apart (0.002–0.005
+  against 0.001), as the record's own series are (0.0006–0.019). The fired shares are reported,
+  not graded: they say a member is alive, not that it is coupled.
+- The 10% episodes' firing lag and fired share are reported beside the graded 20% rows (`lag10`,
+  `fired10`, in the report and the sidecar): on the S&P they put 8–9 fired episodes per reference
+  behind the timing (record: conditions −44, spread +4; model −63, −9). On the Nasdaq the 10% set
+  is mostly not macro events and corroborates nothing.
+- Levels: a fixed threshold inside the record's interquartile range transports roughly (the
+  spread's p10 and p50 sit on the record's); one in the upper tail fires less often in the model
+  (its spread tops out near 3 against the record's 6 in 2008, its implied vol's p90 is 21 against
+  28.5), because no map constant creates a tail the world does not have.
+- Graded when on against the record (`macro-2026-09-06.tsv`, FRED 1990–2026 joined to CRSP / SPY
+  and to NDX / QQQ, over the 20% episodes). The coupling tests are the conditions index's HAZARD
+  and BUILD-UP above — the one genuinely leading signal in the panel, and not the run-up itself
+  (the trailing-year return's own pre-peak rank is 0.46–0.78 on the record). The fidelity rows:
+  the FIRING LAG of the spread and the conditions index, sessions from the peak to the first
+  firing, the timing statistic that is invariant to how fast the decline runs — the record's
+  conditions index leads the peak by about two months on every reference's classic episodes
+  (−48 / −44 / −49 on CRSP / SPY / NDX; QQQ's +101 is a four-episode median with two late
+  firings) and the model's is already firing when the quarter before the peak opens (−63); its
+  spread trails the peak by +7 / +16, the model's leads by −6 / −14; both bands are shared by the
+  two sets, ±40 sessions around the four references' median. Each member's persistence at 20
+  sessions (spread 0.912 vs 0.962, conditions 0.992 vs 0.985 weekly, implied vol 0.750 vs 0.771;
+  ±0.08); the slope's inversion share (0.130 vs 0.115); the variance risk premium (0.27 / 0.29 vs
+  0.28–0.29). Both recipes pass realism, mechanism and fidelity on four seeds.
+- Reported, not graded: every WARNING SHARE — the fraction of the decline still ahead at the first
+  firing — because at one and the same lag it reads lower on an index that runs up harder into
+  its peaks and falls less deep (2020: fired 44 sessions before both peaks, 0.82 of the S&P's
+  decline ahead and 0.59 of the Nasdaq's), so it grades the index's price dynamics as much as the
+  signal's timing; the model reads 0.63–0.74 against the record's 0.38–0.96. The implied-vol
+  member fires a month BEFORE the peak (−33 / −36) where the record's VIX is coincident (±12): a
+  high vol state is a cause of the model's declines where VIX is a response. The slope never
+  leads: the model's inversions are regime-length (482 sessions against the record's 42 — it has
+  no policy-tightening-causes-downturn channel). Its implied vol forecasts its own forward
+  realized vol at R² 0.19 / 0.32 against VIX's 0.55, the unforecastable jump and cascade share of
+  its realized variance. Levels are context only; the conditions index is wider than its
+  counterpart (p10–p90 4.3 index units against 1.8) because its drawdown term rises with every
+  decline, and a rank over a trailing window is the only sensible reading. The gate grades pooled
+  statistics and a consumer runs one path: per 40-year path the slope's inverted share runs
+  0–0.56 in one spell, and a single path's forward-return R² on the conditions index can reach
+  ~0.1 — the sibling-path pairing is the no-edge comparison.
+- `-atrelease 0.24.0-macro` (the default with the panel), `0.24.0-nasdaq`, `0.24.0-basket` and
+  `0.24.0-nasdaq-basket` — each its 0.23.1 base with the panel and the leverage cycle: the S&P
+  worlds take the dials 0.24.0 moved from the default, so none is restated; the Nasdaq worlds
+  re-solve `stress` (4.4) and `jumpVar` (0) for their own depth and pass every class on four
+  seeds.
+
+**The Rust simulator is library code**
+
+- `uni::market_sim` (the `market-sim` feature, on by default) replaces the `market_sim` example.
+  `cargo install vastblue-uni` builds the binary — no `--example` — and a crate that depends on
+  `vastblue-uni` runs the same paths in-process: `named_world("0.24.0-macro")`, `simulate` and
+  `sim_paths` return `Path`s whose columns are the emitted TSV's (`price`, `bond`, `rate`, …, the
+  channels, `macro_panel`), and `World`'s fields are the dials; `measure` reads an ensemble into
+  a `WorldStats`, `gate_checks` / `failed_in` grade it against `anchors_named("sp500" | "nasdaq")`,
+  `fidelity_rows` builds the sidecar's fidelity table, and `write_emitted` writes a path with its
+  sidecar exactly as `-emit` does (`verdict_spec` says which ensemble the verdict is measured on).
+  `main` is the CLI, so the binary and an in-process caller cannot diverge. The simulator's
+  contract suites run as the library's unit tests. A consumer that wants only the numerics builds
+  with `default-features = false`.
+
 ## v0.23.1 — 2026-09-03
 
 **`-atrelease` names recipes, and 0.23.0 is frozen**

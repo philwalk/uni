@@ -1,0 +1,378 @@
+# THE MACRO PANEL's ruler: what the record says about the four series `-macro` emits counterparts
+# of -- BAA10Y (`macroSpread`), T10Y2Y (`macroSlope`), VIXCLS (`macroIvol`), NFCILEVERAGE
+# (`macroCond`) -- as MEASURED series, lag 0: the consumer's point-in-time layer (release lag,
+# cadence, revisions) applies to the record and to an emitted path alike, so neither side carries
+# it here.  `MacroPanelSuite` / `macro_panel_tests` re-derive the shipped bands from this file;
+# editing a graded row moves them.
+#
+# Measured 2026-09-06 from folio's caches: FRED daily CSVs (1990-01-02 .. 2026-09-04; NFCILEVERAGE
+# weekly, Fridays); equity histories CRSP = Ken French F-F_Research_Data_Factors_daily (202606
+# CRSP) Mkt-RF + RF compounded, the value-weighted US market TOTAL return, read from 1990-01-02;
+# SPY and QQQ = Yahoo adjusted close (total return); NDX = Yahoo Nasdaq-100 index close, a PRICE
+# index.  A FRED series is joined to an equity calendar as-of (the latest value at or before the
+# session).  Medians are `pctile(.., 0.5)` -- the UPPER middle element -- the twins' own convention.
+#
+# Rows (set `shared` = US-wide shape rows, the same for both anchor sets; `sp500` / `nasdaq` =
+# the equity-relation rows, per set, on two references each so a band can span them -- their
+# `series` reads FRED/reference, e.g. `BAA10Y/CRSP`, and `episodesT` rows carry the reference):
+#   ac1, ac20 (ac4)  autocorrelation of the LEVEL at 1 and 20 observations (weekly member: 1 and 4)
+#   lvl10/50/90      level percentiles on the native calendar -- CONTEXT for the affine map's units,
+#                    never graded: the model has no anchor for a spread's or an index's scale
+#   invShare/invDur  slope: share of observations inverted; mean inversion spell (observations);
+#                    invSpells the count -- graded ABSOLUTELY, the slope is in anchored rate units
+#   vrp, vrpSd, r2rv ivol: mean and sd of log VIX - log forward-21-session realized vol (VIX prices
+#                    S&P variance, so against the S&P histories only), and their R^2
+#   episodes10/20    drawdown episodes deeper than 10% / 20% in the window, on `ddEpisodes`' spans,
+#                    EXCLUDING an episode whose peak falls inside the first 252 sessions -- no
+#                    trailing rank exists there, so such an episode cannot fire (the 1990 episode
+#                    on the 1990-based histories is that case)
+#   r2fwd60          R^2 of the forward 60-session equity log return on the level -- the ORACLE
+#                    BOUND: an emitted member that predicts forward returns materially better than
+#                    the record's (<= 0.02 everywhere here) is reading the model's state, not
+#                    measuring it.  r2fwd60rank: the same on the trailing-252 percentile rank
+#   warnT_L          WARNING SHARE, the mechanism row: over episodes deeper than T%, the fraction of
+#                    the peak-to-trough LOG decline still ahead when the member first fires in the
+#                    window [peak - L, trough]; 0 if it never fires; median over episodes.  A rank
+#                    member fires at trailing-252 percentile rank >= 0.90 (NFCILEVERAGE: trailing-52
+#                    weekly rank, held to the next reading); the slope fires when inverted.
+#                    warnT_L_fired: the share of episodes it fired in at all.  The share is
+#                    REPORTED: at one and the same firing lag it reads lower on an index that runs
+#                    up harder into its peaks and falls less deep, so it grades the index's price
+#                    dynamics as much as the signal's timing.  The 10% rows and the other lookback
+#                    are context; the Nasdaq's 10% episodes are mostly not macro events (32 on NDX)
+#                    and the median warning there is 0 for every member.
+#   prepeak20_63     the BUILD-UP, the coupling statistic: the member's mean trailing-252
+#                    percentile rank (NFCILEVERAGE: trailing-52 weekly, held to the next reading;
+#                    the slope: the share inverted) over the quarter before the peak, [peak - 63,
+#                    peak], median over the 20% episodes.  A decoupled series reads its
+#                    unconditional level there -- the model's null panel reads 0.49 for the
+#                    conditions index -- and the record's leverage index reads 0.92-0.94 on three
+#                    of four references: in the top decile of its year for most of the quarter
+#                    before every classic peak.  GRADED for the conditions index; the spread's
+#                    (tight before tops) and the implied vol's (calm before tops) are reported.
+#   hazardT_H        THE HAZARD, the price model's target for the conditions index: P(a peak of an
+#                    episode deeper than T% falls within the next H sessions | the index's rank
+#                    >= 0.9) over the same probability unconditionally (pT_H, the context row).
+#                    Leverage concentrates the BIG peaks into a quarter (20%, 63: 2.0-2.7x on
+#                    CRSP / SPY / NDX) and fades at a year; it does not cause ordinary corrections
+#                    (10%, 63: ~1x).  A decoupled series reads 1.0.  GRADED at 20%, 63 as a
+#                    mechanism row (the references' minimum, floored to 0.1).
+#   posttrough20_63  the mean rank over the quarter after the trough -- the stock's unwind
+#   ac52 / ac104     the conditions index's autocorrelation at a year and two years of weekly
+#                    readings -- the stock's accrual timescale
+#   lagT_L           the FIRING LAG, the mechanism's timing: sessions from the peak to the first
+#                    firing (negative = before the peak), median over the episodes it fired in --
+#                    invariant to how fast the decline runs.  GRADED at T=20, L=63 for the spread
+#                    and the conditions index: a shared band +-40 sessions around the upper-middle
+#                    of the four references' medians (the twins' `pctile(.., 0.5)`).  A lag of -L
+#                    means the member was already firing when the lookback window opened.
+#
+# Windows: the equity history's own span from 1990-01-02 (CRSP ends 2026-06-30 in the 202606 file).
+set	series	member	stat	window	n	value
+shared	BAA10Y	spread	ac1	1990-01-02..2026-09-03	9169	0.9991
+shared	BAA10Y	spread	ac20	1990-01-02..2026-09-03	9169	0.9617
+shared	BAA10Y	spread	lvl50	1990-01-02..2026-09-03	9169	2.1400
+shared	BAA10Y	spread	lvl10	1990-01-02..2026-09-03	9169	1.5700
+shared	BAA10Y	spread	lvl90	1990-01-02..2026-09-03	9169	3.1500
+shared	T10Y2Y	slope	ac1	1990-01-02..2026-09-04	9176	0.9992
+shared	T10Y2Y	slope	ac20	1990-01-02..2026-09-04	9176	0.9838
+shared	T10Y2Y	slope	lvl50	1990-01-02..2026-09-04	9176	0.8400
+shared	T10Y2Y	slope	lvl10	1990-01-02..2026-09-04	9176	-0.0500
+shared	T10Y2Y	slope	lvl90	1990-01-02..2026-09-04	9176	2.3200
+shared	T10Y2Y	slope	invShare	1990-01-02..2026-09-04	9176	0.1146
+shared	T10Y2Y	slope	invDur	1990-01-02..2026-09-04	25	42.0800
+shared	T10Y2Y	slope	invSpells	1990-01-02..2026-09-04	25	25
+shared	VIXCLS	ivol	ac1	1990-01-02..2026-09-03	9266	0.9769
+shared	VIXCLS	ivol	ac20	1990-01-02..2026-09-03	9266	0.7707
+shared	VIXCLS	ivol	lvl50	1990-01-02..2026-09-03	9266	17.5800
+shared	VIXCLS	ivol	lvl10	1990-01-02..2026-09-03	9266	12.1600
+shared	VIXCLS	ivol	lvl90	1990-01-02..2026-09-03	9266	28.5300
+shared	NFCILEVERAGE	cond	ac1	1990-01-05..2026-08-28	1913	0.9990
+shared	NFCILEVERAGE	cond	ac4	1990-01-05..2026-08-28	1913	0.9847
+shared	NFCILEVERAGE	cond	ac52	1990-01-05..2026-08-28	1913	0.4165
+shared	NFCILEVERAGE	cond	ac104	1990-01-05..2026-08-28	1913	-0.0710
+shared	NFCILEVERAGE	cond	lvl50	1990-01-05..2026-08-28	1913	-0.2380
+shared	NFCILEVERAGE	cond	lvl10	1990-01-05..2026-08-28	1913	-1.0290
+shared	NFCILEVERAGE	cond	lvl90	1990-01-05..2026-08-28	1913	0.7420
+shared	VIXCLS/CRSP	ivol	vrp	1990-01-02..2026-06-30	9169	0.2928
+shared	VIXCLS/CRSP	ivol	r2rv	1990-01-02..2026-06-30	9169	0.5543
+shared	VIXCLS/CRSP	ivol	vrpSd	1990-01-02..2026-06-30	9169	0.3177
+shared	VIXCLS/SPY	ivol	vrp	1993-01-29..2026-09-04	8437	0.2766
+shared	VIXCLS/SPY	ivol	r2rv	1993-01-29..2026-09-04	8437	0.5673
+shared	VIXCLS/SPY	ivol	vrpSd	1993-01-29..2026-09-04	8437	0.3207
+sp500	CRSP	-	episodes10	1990-01-02..2026-06-30	10	10
+sp500	CRSP	-	episodes20	1990-01-02..2026-06-30	6	6
+sp500	BAA10Y/CRSP	spread	r2fwd60	1990-01-02..2026-06-30	9130	0.0006
+sp500	BAA10Y/CRSP	spread	r2fwd60rank	1990-01-02..2026-06-30	8879	0.0004
+sp500	BAA10Y/CRSP	spread	warn10_63	1990-01-02..2026-06-30	10	0.6793
+sp500	BAA10Y/CRSP	spread	warn10_63_fired	1990-01-02..2026-06-30	10	0.8000
+sp500	BAA10Y/CRSP	spread	lag10_63	1990-01-02..2026-06-30	9	4.0000
+sp500	BAA10Y/CRSP	spread	warn10_378	1990-01-02..2026-06-30	10	0.2967
+sp500	BAA10Y/CRSP	spread	warn10_378_fired	1990-01-02..2026-06-30	10	0.6000
+sp500	BAA10Y/CRSP	spread	lag10_378	1990-01-02..2026-06-30	10	-232.0000
+sp500	BAA10Y/CRSP	spread	warn20_63	1990-01-02..2026-06-30	6	0.8300
+sp500	BAA10Y/CRSP	spread	warn20_63_fired	1990-01-02..2026-06-30	6	1.0000
+sp500	BAA10Y/CRSP	spread	lag20_63	1990-01-02..2026-06-30	6	7.0000
+sp500	BAA10Y/CRSP	spread	warn20_378	1990-01-02..2026-06-30	6	0.4365
+sp500	BAA10Y/CRSP	spread	warn20_378_fired	1990-01-02..2026-06-30	6	0.6667
+sp500	BAA10Y/CRSP	spread	lag20_378	1990-01-02..2026-06-30	6	-232.0000
+sp500	BAA10Y/CRSP	spread	prepeak20_63	1990-01-02..2026-06-30	6	0.6013
+sp500	T10Y2Y/CRSP	slope	r2fwd60	1990-01-02..2026-06-30	9130	0.0008
+sp500	T10Y2Y/CRSP	slope	r2fwd60rank	1990-01-02..2026-06-30	8879	0.0001
+sp500	T10Y2Y/CRSP	slope	warn10_63	1990-01-02..2026-06-30	10	0.0000
+sp500	T10Y2Y/CRSP	slope	warn10_63_fired	1990-01-02..2026-06-30	10	0.3000
+sp500	T10Y2Y/CRSP	slope	lag10_63	1990-01-02..2026-06-30	3	-36.0000
+sp500	T10Y2Y/CRSP	slope	warn10_378	1990-01-02..2026-06-30	10	0.5625
+sp500	T10Y2Y/CRSP	slope	warn10_378_fired	1990-01-02..2026-06-30	10	0.5000
+sp500	T10Y2Y/CRSP	slope	lag10_378	1990-01-02..2026-06-30	7	-120.0000
+sp500	T10Y2Y/CRSP	slope	warn20_63	1990-01-02..2026-06-30	6	0.6907
+sp500	T10Y2Y/CRSP	slope	warn20_63_fired	1990-01-02..2026-06-30	6	0.5000
+sp500	T10Y2Y/CRSP	slope	lag20_63	1990-01-02..2026-06-30	3	-36.0000
+sp500	T10Y2Y/CRSP	slope	warn20_378	1990-01-02..2026-06-30	6	0.6938
+sp500	T10Y2Y/CRSP	slope	warn20_378_fired	1990-01-02..2026-06-30	6	0.8333
+sp500	T10Y2Y/CRSP	slope	lag20_378	1990-01-02..2026-06-30	5	-37.0000
+sp500	T10Y2Y/CRSP	slope	prepeak20_63	1990-01-02..2026-06-30	6	0.0000
+sp500	VIXCLS/CRSP	ivol	r2fwd60	1990-01-02..2026-06-30	9130	0.0139
+sp500	VIXCLS/CRSP	ivol	r2fwd60rank	1990-01-02..2026-06-30	8879	0.0115
+sp500	VIXCLS/CRSP	ivol	warn10_63	1990-01-02..2026-06-30	10	0.8064
+sp500	VIXCLS/CRSP	ivol	warn10_63_fired	1990-01-02..2026-06-30	10	0.8000
+sp500	VIXCLS/CRSP	ivol	lag10_63	1990-01-02..2026-06-30	8	7.0000
+sp500	VIXCLS/CRSP	ivol	warn10_378	1990-01-02..2026-06-30	10	0.0890
+sp500	VIXCLS/CRSP	ivol	warn10_378_fired	1990-01-02..2026-06-30	10	0.7000
+sp500	VIXCLS/CRSP	ivol	lag10_378	1990-01-02..2026-06-30	10	-280.0000
+sp500	VIXCLS/CRSP	ivol	warn20_63	1990-01-02..2026-06-30	6	0.8926
+sp500	VIXCLS/CRSP	ivol	warn20_63_fired	1990-01-02..2026-06-30	6	1.0000
+sp500	VIXCLS/CRSP	ivol	lag20_63	1990-01-02..2026-06-30	6	12.0000
+sp500	VIXCLS/CRSP	ivol	warn20_378	1990-01-02..2026-06-30	6	0.4759
+sp500	VIXCLS/CRSP	ivol	warn20_378_fired	1990-01-02..2026-06-30	6	0.8333
+sp500	VIXCLS/CRSP	ivol	lag20_378	1990-01-02..2026-06-30	6	-340.0000
+sp500	VIXCLS/CRSP	ivol	prepeak20_63	1990-01-02..2026-06-30	6	0.4071
+sp500	NFCILEVERAGE/CRSP	cond	r2fwd60	1990-01-02..2026-06-30	1892	0.0025
+sp500	NFCILEVERAGE/CRSP	cond	r2fwd60rank	1990-01-02..2026-06-30	1841	0.0134
+sp500	NFCILEVERAGE/CRSP	cond	warn10_63	1990-01-02..2026-06-30	10	0.7800
+sp500	NFCILEVERAGE/CRSP	cond	warn10_63_fired	1990-01-02..2026-06-30	10	0.8000
+sp500	NFCILEVERAGE/CRSP	cond	lag10_63	1990-01-02..2026-06-30	8	-44.0000
+sp500	NFCILEVERAGE/CRSP	cond	warn10_378	1990-01-02..2026-06-30	10	0.2967
+sp500	NFCILEVERAGE/CRSP	cond	warn10_378_fired	1990-01-02..2026-06-30	10	0.7000
+sp500	NFCILEVERAGE/CRSP	cond	lag10_378	1990-01-02..2026-06-30	9	-228.0000
+sp500	NFCILEVERAGE/CRSP	cond	warn20_63	1990-01-02..2026-06-30	6	0.8222
+sp500	NFCILEVERAGE/CRSP	cond	warn20_63_fired	1990-01-02..2026-06-30	6	1.0000
+sp500	NFCILEVERAGE/CRSP	cond	lag20_63	1990-01-02..2026-06-30	6	-48.0000
+sp500	NFCILEVERAGE/CRSP	cond	warn20_378	1990-01-02..2026-06-30	6	0.5335
+sp500	NFCILEVERAGE/CRSP	cond	warn20_378_fired	1990-01-02..2026-06-30	6	1.0000
+sp500	NFCILEVERAGE/CRSP	cond	lag20_378	1990-01-02..2026-06-30	6	-135.0000
+sp500	NFCILEVERAGE/CRSP	cond	prepeak20_63	1990-01-02..2026-06-30	6	0.9429
+sp500	NFCILEVERAGE/CRSP	cond	hazard20_63	1990-01-02..2026-06-30	6	2.7383
+sp500	NFCILEVERAGE/CRSP	cond	p20_63	1990-01-02..2026-06-30	6	0.0426
+sp500	NFCILEVERAGE/CRSP	cond	hazard20_252	1990-01-02..2026-06-30	6	1.2425
+sp500	NFCILEVERAGE/CRSP	cond	p20_252	1990-01-02..2026-06-30	6	0.1741
+sp500	NFCILEVERAGE/CRSP	cond	hazard10_63	1990-01-02..2026-06-30	10	1.6430
+sp500	NFCILEVERAGE/CRSP	cond	p10_63	1990-01-02..2026-06-30	10	0.0710
+sp500	NFCILEVERAGE/CRSP	cond	posttrough20_63	1990-01-02..2026-06-30	6	0.8606
+sp500	SPY	-	episodes10	1993-01-29..2026-09-04	12	12
+sp500	SPY	-	episodes20	1993-01-29..2026-09-04	4	4
+sp500	BAA10Y/SPY	spread	r2fwd60	1993-01-29..2026-09-04	8398	0.0050
+sp500	BAA10Y/SPY	spread	r2fwd60rank	1993-01-29..2026-09-04	8147	0.0030
+sp500	BAA10Y/SPY	spread	warn10_63	1993-01-29..2026-09-04	12	0.6835
+sp500	BAA10Y/SPY	spread	warn10_63_fired	1993-01-29..2026-09-04	12	0.7500
+sp500	BAA10Y/SPY	spread	lag10_63	1993-01-29..2026-09-04	9	4.0000
+sp500	BAA10Y/SPY	spread	warn10_378	1993-01-29..2026-09-04	12	0.4239
+sp500	BAA10Y/SPY	spread	warn10_378_fired	1993-01-29..2026-09-04	12	0.6667
+sp500	BAA10Y/SPY	spread	lag10_378	1993-01-29..2026-09-04	11	-169.0000
+sp500	BAA10Y/SPY	spread	warn20_63	1993-01-29..2026-09-04	4	0.9249
+sp500	BAA10Y/SPY	spread	warn20_63_fired	1993-01-29..2026-09-04	4	1.0000
+sp500	BAA10Y/SPY	spread	lag20_63	1993-01-29..2026-09-04	4	7.0000
+sp500	BAA10Y/SPY	spread	warn20_378	1993-01-29..2026-09-04	4	0.6835
+sp500	BAA10Y/SPY	spread	warn20_378_fired	1993-01-29..2026-09-04	4	1.0000
+sp500	BAA10Y/SPY	spread	lag20_378	1993-01-29..2026-09-04	4	-145.0000
+sp500	BAA10Y/SPY	spread	prepeak20_63	1993-01-29..2026-09-04	4	0.1555
+sp500	T10Y2Y/SPY	slope	r2fwd60	1993-01-29..2026-09-04	8398	0.0034
+sp500	T10Y2Y/SPY	slope	r2fwd60rank	1993-01-29..2026-09-04	8147	0.0006
+sp500	T10Y2Y/SPY	slope	warn10_63	1993-01-29..2026-09-04	12	0.0000
+sp500	T10Y2Y/SPY	slope	warn10_63_fired	1993-01-29..2026-09-04	12	0.2500
+sp500	T10Y2Y/SPY	slope	lag10_63	1993-01-29..2026-09-04	3	-36.0000
+sp500	T10Y2Y/SPY	slope	warn10_378	1993-01-29..2026-09-04	12	0.0000
+sp500	T10Y2Y/SPY	slope	warn10_378_fired	1993-01-29..2026-09-04	12	0.4167
+sp500	T10Y2Y/SPY	slope	lag10_378	1993-01-29..2026-09-04	7	-120.0000
+sp500	T10Y2Y/SPY	slope	warn20_63	1993-01-29..2026-09-04	4	0.8214
+sp500	T10Y2Y/SPY	slope	warn20_63_fired	1993-01-29..2026-09-04	4	0.5000
+sp500	T10Y2Y/SPY	slope	lag20_63	1993-01-29..2026-09-04	2	62.0000
+sp500	T10Y2Y/SPY	slope	warn20_378	1993-01-29..2026-09-04	4	0.8214
+sp500	T10Y2Y/SPY	slope	warn20_378_fired	1993-01-29..2026-09-04	4	1.0000
+sp500	T10Y2Y/SPY	slope	lag20_378	1993-01-29..2026-09-04	4	-36.0000
+sp500	T10Y2Y/SPY	slope	prepeak20_63	1993-01-29..2026-09-04	4	0.0000
+sp500	VIXCLS/SPY	ivol	r2fwd60	1993-01-29..2026-09-04	8398	0.0091
+sp500	VIXCLS/SPY	ivol	r2fwd60rank	1993-01-29..2026-09-04	8147	0.0121
+sp500	VIXCLS/SPY	ivol	warn10_63	1993-01-29..2026-09-04	12	0.7698
+sp500	VIXCLS/SPY	ivol	warn10_63_fired	1993-01-29..2026-09-04	12	0.8333
+sp500	VIXCLS/SPY	ivol	lag10_63	1993-01-29..2026-09-04	11	-25.0000
+sp500	VIXCLS/SPY	ivol	warn10_378	1993-01-29..2026-09-04	12	0.0158
+sp500	VIXCLS/SPY	ivol	warn10_378_fired	1993-01-29..2026-09-04	12	0.5000
+sp500	VIXCLS/SPY	ivol	lag10_378	1993-01-29..2026-09-04	12	-331.0000
+sp500	VIXCLS/SPY	ivol	warn20_63	1993-01-29..2026-09-04	4	0.9578
+sp500	VIXCLS/SPY	ivol	warn20_63_fired	1993-01-29..2026-09-04	4	1.0000
+sp500	VIXCLS/SPY	ivol	lag20_63	1993-01-29..2026-09-04	4	-12.0000
+sp500	VIXCLS/SPY	ivol	warn20_378	1993-01-29..2026-09-04	4	0.7277
+sp500	VIXCLS/SPY	ivol	warn20_378_fired	1993-01-29..2026-09-04	4	1.0000
+sp500	VIXCLS/SPY	ivol	lag20_378	1993-01-29..2026-09-04	4	-340.0000
+sp500	VIXCLS/SPY	ivol	prepeak20_63	1993-01-29..2026-09-04	4	0.4100
+sp500	NFCILEVERAGE/SPY	cond	r2fwd60	1993-01-29..2026-09-04	1741	0.0042
+sp500	NFCILEVERAGE/SPY	cond	r2fwd60rank	1993-01-29..2026-09-04	1690	0.0165
+sp500	NFCILEVERAGE/SPY	cond	warn10_63	1993-01-29..2026-09-04	12	0.6780
+sp500	NFCILEVERAGE/SPY	cond	warn10_63_fired	1993-01-29..2026-09-04	12	0.6667
+sp500	NFCILEVERAGE/SPY	cond	lag10_63	1993-01-29..2026-09-04	8	-44.0000
+sp500	NFCILEVERAGE/SPY	cond	warn10_378	1993-01-29..2026-09-04	12	0.0478
+sp500	NFCILEVERAGE/SPY	cond	warn10_378_fired	1993-01-29..2026-09-04	12	0.5000
+sp500	NFCILEVERAGE/SPY	cond	lag10_378	1993-01-29..2026-09-04	9	-378.0000
+sp500	NFCILEVERAGE/SPY	cond	warn20_63	1993-01-29..2026-09-04	4	0.9229
+sp500	NFCILEVERAGE/SPY	cond	warn20_63_fired	1993-01-29..2026-09-04	4	1.0000
+sp500	NFCILEVERAGE/SPY	cond	lag20_63	1993-01-29..2026-09-04	4	-44.0000
+sp500	NFCILEVERAGE/SPY	cond	warn20_378	1993-01-29..2026-09-04	4	0.5040
+sp500	NFCILEVERAGE/SPY	cond	warn20_378_fired	1993-01-29..2026-09-04	4	1.0000
+sp500	NFCILEVERAGE/SPY	cond	lag20_378	1993-01-29..2026-09-04	4	-186.0000
+sp500	NFCILEVERAGE/SPY	cond	prepeak20_63	1993-01-29..2026-09-04	4	0.9429
+sp500	NFCILEVERAGE/SPY	cond	hazard20_63	1993-01-29..2026-09-04	4	2.2124
+sp500	NFCILEVERAGE/SPY	cond	p20_63	1993-01-29..2026-09-04	4	0.0309
+sp500	NFCILEVERAGE/SPY	cond	hazard20_252	1993-01-29..2026-09-04	4	1.1833
+sp500	NFCILEVERAGE/SPY	cond	p20_252	1993-01-29..2026-09-04	4	0.1267
+sp500	NFCILEVERAGE/SPY	cond	hazard10_63	1993-01-29..2026-09-04	12	1.2703
+sp500	NFCILEVERAGE/SPY	cond	p10_63	1993-01-29..2026-09-04	12	0.0928
+sp500	NFCILEVERAGE/SPY	cond	posttrough20_63	1993-01-29..2026-09-04	4	0.8606
+nasdaq	NDX	-	episodes10	1990-01-02..2026-09-04	30	30
+nasdaq	NDX	-	episodes20	1990-01-02..2026-09-04	6	6
+nasdaq	BAA10Y/NDX	spread	r2fwd60	1990-01-02..2026-09-04	9177	0.0003
+nasdaq	BAA10Y/NDX	spread	r2fwd60rank	1990-01-02..2026-09-04	8926	0.0007
+nasdaq	BAA10Y/NDX	spread	warn10_63	1990-01-02..2026-09-04	30	0.0000
+nasdaq	BAA10Y/NDX	spread	warn10_63_fired	1990-01-02..2026-09-04	30	0.4667
+nasdaq	BAA10Y/NDX	spread	lag10_63	1990-01-02..2026-09-04	18	-39.0000
+nasdaq	BAA10Y/NDX	spread	warn10_378	1990-01-02..2026-09-04	30	0.0000
+nasdaq	BAA10Y/NDX	spread	warn10_378_fired	1990-01-02..2026-09-04	30	0.3000
+nasdaq	BAA10Y/NDX	spread	lag10_378	1990-01-02..2026-09-04	28	-284.0000
+nasdaq	BAA10Y/NDX	spread	warn20_63	1990-01-02..2026-09-04	6	0.6438
+nasdaq	BAA10Y/NDX	spread	warn20_63_fired	1990-01-02..2026-09-04	6	1.0000
+nasdaq	BAA10Y/NDX	spread	lag20_63	1990-01-02..2026-09-04	6	16.0000
+nasdaq	BAA10Y/NDX	spread	warn20_378	1990-01-02..2026-09-04	6	0.3096
+nasdaq	BAA10Y/NDX	spread	warn20_378_fired	1990-01-02..2026-09-04	6	0.8333
+nasdaq	BAA10Y/NDX	spread	lag20_378	1990-01-02..2026-09-04	6	-135.0000
+nasdaq	BAA10Y/NDX	spread	prepeak20_63	1990-01-02..2026-09-04	6	0.1614
+nasdaq	T10Y2Y/NDX	slope	r2fwd60	1990-01-02..2026-09-04	9177	0.0006
+nasdaq	T10Y2Y/NDX	slope	r2fwd60rank	1990-01-02..2026-09-04	8926	0.0011
+nasdaq	T10Y2Y/NDX	slope	warn10_63	1990-01-02..2026-09-04	30	0.0000
+nasdaq	T10Y2Y/NDX	slope	warn10_63_fired	1990-01-02..2026-09-04	30	0.1333
+nasdaq	T10Y2Y/NDX	slope	lag10_63	1990-01-02..2026-09-04	4	-37.0000
+nasdaq	T10Y2Y/NDX	slope	warn10_378	1990-01-02..2026-09-04	30	0.0000
+nasdaq	T10Y2Y/NDX	slope	warn10_378_fired	1990-01-02..2026-09-04	30	0.1333
+nasdaq	T10Y2Y/NDX	slope	lag10_378	1990-01-02..2026-09-04	16	-257.0000
+nasdaq	T10Y2Y/NDX	slope	warn20_63	1990-01-02..2026-09-04	6	0.2343
+nasdaq	T10Y2Y/NDX	slope	warn20_63_fired	1990-01-02..2026-09-04	6	0.5000
+nasdaq	T10Y2Y/NDX	slope	lag20_63	1990-01-02..2026-09-04	3	-37.0000
+nasdaq	T10Y2Y/NDX	slope	warn20_378	1990-01-02..2026-09-04	6	0.2389
+nasdaq	T10Y2Y/NDX	slope	warn20_378_fired	1990-01-02..2026-09-04	6	0.6667
+nasdaq	T10Y2Y/NDX	slope	lag20_378	1990-01-02..2026-09-04	5	-38.0000
+nasdaq	T10Y2Y/NDX	slope	prepeak20_63	1990-01-02..2026-09-04	6	0.0000
+nasdaq	VIXCLS/NDX	ivol	r2fwd60	1990-01-02..2026-09-04	9177	0.0185
+nasdaq	VIXCLS/NDX	ivol	r2fwd60rank	1990-01-02..2026-09-04	8926	0.0095
+nasdaq	VIXCLS/NDX	ivol	warn10_63	1990-01-02..2026-09-04	30	0.0000
+nasdaq	VIXCLS/NDX	ivol	warn10_63_fired	1990-01-02..2026-09-04	30	0.4667
+nasdaq	VIXCLS/NDX	ivol	lag10_63	1990-01-02..2026-09-04	19	-29.0000
+nasdaq	VIXCLS/NDX	ivol	warn10_378	1990-01-02..2026-09-04	30	0.0000
+nasdaq	VIXCLS/NDX	ivol	warn10_378_fired	1990-01-02..2026-09-04	30	0.1667
+nasdaq	VIXCLS/NDX	ivol	lag10_378	1990-01-02..2026-09-04	30	-340.0000
+nasdaq	VIXCLS/NDX	ivol	warn20_63	1990-01-02..2026-09-04	6	0.8290
+nasdaq	VIXCLS/NDX	ivol	warn20_63_fired	1990-01-02..2026-09-04	6	1.0000
+nasdaq	VIXCLS/NDX	ivol	lag20_63	1990-01-02..2026-09-04	6	6.0000
+nasdaq	VIXCLS/NDX	ivol	warn20_378	1990-01-02..2026-09-04	6	0.1360
+nasdaq	VIXCLS/NDX	ivol	warn20_378_fired	1990-01-02..2026-09-04	6	0.6667
+nasdaq	VIXCLS/NDX	ivol	lag20_378	1990-01-02..2026-09-04	6	-265.0000
+nasdaq	VIXCLS/NDX	ivol	prepeak20_63	1990-01-02..2026-09-04	6	0.4167
+nasdaq	NFCILEVERAGE/NDX	cond	r2fwd60	1990-01-02..2026-09-04	1901	0.0046
+nasdaq	NFCILEVERAGE/NDX	cond	r2fwd60rank	1990-01-02..2026-09-04	1850	0.0023
+nasdaq	NFCILEVERAGE/NDX	cond	warn10_63	1990-01-02..2026-09-04	30	0.0000
+nasdaq	NFCILEVERAGE/NDX	cond	warn10_63_fired	1990-01-02..2026-09-04	30	0.3000
+nasdaq	NFCILEVERAGE/NDX	cond	lag10_63	1990-01-02..2026-09-04	15	-63.0000
+nasdaq	NFCILEVERAGE/NDX	cond	warn10_378	1990-01-02..2026-09-04	30	0.0000
+nasdaq	NFCILEVERAGE/NDX	cond	warn10_378_fired	1990-01-02..2026-09-04	30	0.2333
+nasdaq	NFCILEVERAGE/NDX	cond	lag10_378	1990-01-02..2026-09-04	23	-318.0000
+nasdaq	NFCILEVERAGE/NDX	cond	warn20_63	1990-01-02..2026-09-04	6	0.5883
+nasdaq	NFCILEVERAGE/NDX	cond	warn20_63_fired	1990-01-02..2026-09-04	6	0.8333
+nasdaq	NFCILEVERAGE/NDX	cond	lag20_63	1990-01-02..2026-09-04	5	-49.0000
+nasdaq	NFCILEVERAGE/NDX	cond	warn20_378	1990-01-02..2026-09-04	6	0.2339
+nasdaq	NFCILEVERAGE/NDX	cond	warn20_378_fired	1990-01-02..2026-09-04	6	0.6667
+nasdaq	NFCILEVERAGE/NDX	cond	lag20_378	1990-01-02..2026-09-04	5	-136.0000
+nasdaq	NFCILEVERAGE/NDX	cond	prepeak20_63	1990-01-02..2026-09-04	6	0.9174
+nasdaq	NFCILEVERAGE/NDX	cond	hazard20_63	1990-01-02..2026-09-04	6	2.0483
+nasdaq	NFCILEVERAGE/NDX	cond	p20_63	1990-01-02..2026-09-04	6	0.0424
+nasdaq	NFCILEVERAGE/NDX	cond	hazard20_252	1990-01-02..2026-09-04	6	0.7957
+nasdaq	NFCILEVERAGE/NDX	cond	p20_252	1990-01-02..2026-09-04	6	0.1731
+nasdaq	NFCILEVERAGE/NDX	cond	hazard10_63	1990-01-02..2026-09-04	30	1.1061
+nasdaq	NFCILEVERAGE/NDX	cond	p10_63	1990-01-02..2026-09-04	30	0.1895
+nasdaq	NFCILEVERAGE/NDX	cond	posttrough20_63	1990-01-02..2026-09-04	6	0.8666
+nasdaq	QQQ	-	episodes10	1999-03-10..2026-09-04	16	16
+nasdaq	QQQ	-	episodes20	1999-03-10..2026-09-04	5	5
+nasdaq	BAA10Y/QQQ	spread	r2fwd60	1999-03-10..2026-09-04	6856	0.0002
+nasdaq	BAA10Y/QQQ	spread	r2fwd60rank	1999-03-10..2026-09-04	6605	0.0113
+nasdaq	BAA10Y/QQQ	spread	warn10_63	1999-03-10..2026-09-04	16	0.2418
+nasdaq	BAA10Y/QQQ	spread	warn10_63_fired	1999-03-10..2026-09-04	16	0.5625
+nasdaq	BAA10Y/QQQ	spread	lag10_63	1999-03-10..2026-09-04	9	16.0000
+nasdaq	BAA10Y/QQQ	spread	warn10_378	1999-03-10..2026-09-04	16	0.0360
+nasdaq	BAA10Y/QQQ	spread	warn10_378_fired	1999-03-10..2026-09-04	16	0.5625
+nasdaq	BAA10Y/QQQ	spread	lag10_378	1999-03-10..2026-09-04	13	-169.0000
+nasdaq	BAA10Y/QQQ	spread	warn20_63	1999-03-10..2026-09-04	5	0.6411
+nasdaq	BAA10Y/QQQ	spread	warn20_63_fired	1999-03-10..2026-09-04	5	1.0000
+nasdaq	BAA10Y/QQQ	spread	lag20_63	1999-03-10..2026-09-04	5	16.0000
+nasdaq	BAA10Y/QQQ	spread	warn20_378	1999-03-10..2026-09-04	5	0.6411
+nasdaq	BAA10Y/QQQ	spread	warn20_378_fired	1999-03-10..2026-09-04	5	1.0000
+nasdaq	BAA10Y/QQQ	spread	lag20_378	1999-03-10..2026-09-04	5	3.0000
+nasdaq	BAA10Y/QQQ	spread	prepeak20_63	1999-03-10..2026-09-04	5	0.1584
+nasdaq	T10Y2Y/QQQ	slope	r2fwd60	1999-03-10..2026-09-04	6856	0.0003
+nasdaq	T10Y2Y/QQQ	slope	r2fwd60rank	1999-03-10..2026-09-04	6605	0.0000
+nasdaq	T10Y2Y/QQQ	slope	warn10_63	1999-03-10..2026-09-04	16	0.0000
+nasdaq	T10Y2Y/QQQ	slope	warn10_63_fired	1999-03-10..2026-09-04	16	0.1875
+nasdaq	T10Y2Y/QQQ	slope	lag10_63	1999-03-10..2026-09-04	4	-25.0000
+nasdaq	T10Y2Y/QQQ	slope	warn10_378	1999-03-10..2026-09-04	16	0.0000
+nasdaq	T10Y2Y/QQQ	slope	warn10_378_fired	1999-03-10..2026-09-04	16	0.1875
+nasdaq	T10Y2Y/QQQ	slope	lag10_378	1999-03-10..2026-09-04	9	-257.0000
+nasdaq	T10Y2Y/QQQ	slope	warn20_63	1999-03-10..2026-09-04	5	0.0000
+nasdaq	T10Y2Y/QQQ	slope	warn20_63_fired	1999-03-10..2026-09-04	5	0.4000
+nasdaq	T10Y2Y/QQQ	slope	lag20_63	1999-03-10..2026-09-04	2	67.0000
+nasdaq	T10Y2Y/QQQ	slope	warn20_378	1999-03-10..2026-09-04	5	0.2421
+nasdaq	T10Y2Y/QQQ	slope	warn20_378_fired	1999-03-10..2026-09-04	5	0.6000
+nasdaq	T10Y2Y/QQQ	slope	lag20_378	1999-03-10..2026-09-04	4	-37.0000
+nasdaq	T10Y2Y/QQQ	slope	prepeak20_63	1999-03-10..2026-09-04	5	0.0000
+nasdaq	VIXCLS/QQQ	ivol	r2fwd60	1999-03-10..2026-09-04	6856	0.0126
+nasdaq	VIXCLS/QQQ	ivol	r2fwd60rank	1999-03-10..2026-09-04	6605	0.0083
+nasdaq	VIXCLS/QQQ	ivol	warn10_63	1999-03-10..2026-09-04	16	0.5454
+nasdaq	VIXCLS/QQQ	ivol	warn10_63_fired	1999-03-10..2026-09-04	16	0.5625
+nasdaq	VIXCLS/QQQ	ivol	lag10_63	1999-03-10..2026-09-04	12	-20.0000
+nasdaq	VIXCLS/QQQ	ivol	warn10_378	1999-03-10..2026-09-04	16	0.0000
+nasdaq	VIXCLS/QQQ	ivol	warn10_378_fired	1999-03-10..2026-09-04	16	0.2500
+nasdaq	VIXCLS/QQQ	ivol	lag10_378	1999-03-10..2026-09-04	15	-318.0000
+nasdaq	VIXCLS/QQQ	ivol	warn20_63	1999-03-10..2026-09-04	5	0.8248
+nasdaq	VIXCLS/QQQ	ivol	warn20_63_fired	1999-03-10..2026-09-04	5	1.0000
+nasdaq	VIXCLS/QQQ	ivol	lag20_63	1999-03-10..2026-09-04	5	-12.0000
+nasdaq	VIXCLS/QQQ	ivol	warn20_378	1999-03-10..2026-09-04	5	0.1135
+nasdaq	VIXCLS/QQQ	ivol	warn20_378_fired	1999-03-10..2026-09-04	5	0.8000
+nasdaq	VIXCLS/QQQ	ivol	lag20_378	1999-03-10..2026-09-04	5	-212.0000
+nasdaq	VIXCLS/QQQ	ivol	prepeak20_63	1999-03-10..2026-09-04	5	0.4364
+nasdaq	NFCILEVERAGE/QQQ	cond	r2fwd60	1999-03-10..2026-09-04	1422	0.0113
+nasdaq	NFCILEVERAGE/QQQ	cond	r2fwd60rank	1999-03-10..2026-09-04	1371	0.0002
+nasdaq	NFCILEVERAGE/QQQ	cond	warn10_63	1999-03-10..2026-09-04	16	0.0000
+nasdaq	NFCILEVERAGE/QQQ	cond	warn10_63_fired	1999-03-10..2026-09-04	16	0.4375
+nasdaq	NFCILEVERAGE/QQQ	cond	lag10_63	1999-03-10..2026-09-04	8	-8.0000
+nasdaq	NFCILEVERAGE/QQQ	cond	warn10_378	1999-03-10..2026-09-04	16	0.0000
+nasdaq	NFCILEVERAGE/QQQ	cond	warn10_378_fired	1999-03-10..2026-09-04	16	0.3750
+nasdaq	NFCILEVERAGE/QQQ	cond	lag10_378	1999-03-10..2026-09-04	13	-231.0000
+nasdaq	NFCILEVERAGE/QQQ	cond	warn20_63	1999-03-10..2026-09-04	5	0.3810
+nasdaq	NFCILEVERAGE/QQQ	cond	warn20_63_fired	1999-03-10..2026-09-04	5	0.8000
+nasdaq	NFCILEVERAGE/QQQ	cond	lag20_63	1999-03-10..2026-09-04	4	101.0000
+nasdaq	NFCILEVERAGE/QQQ	cond	warn20_378	1999-03-10..2026-09-04	5	0.2289
+nasdaq	NFCILEVERAGE/QQQ	cond	warn20_378_fired	1999-03-10..2026-09-04	5	0.8000
+nasdaq	NFCILEVERAGE/QQQ	cond	lag20_378	1999-03-10..2026-09-04	4	101.0000
+nasdaq	NFCILEVERAGE/QQQ	cond	prepeak20_63	1999-03-10..2026-09-04	5	0.8179
+nasdaq	NFCILEVERAGE/QQQ	cond	hazard20_63	1999-03-10..2026-09-04	5	1.4503
+nasdaq	NFCILEVERAGE/QQQ	cond	p20_63	1999-03-10..2026-09-04	5	0.0406
+nasdaq	NFCILEVERAGE/QQQ	cond	hazard20_252	1999-03-10..2026-09-04	5	0.4022
+nasdaq	NFCILEVERAGE/QQQ	cond	p20_252	1999-03-10..2026-09-04	5	0.1596
+nasdaq	NFCILEVERAGE/QQQ	cond	hazard10_63	1999-03-10..2026-09-04	16	0.9072
+nasdaq	NFCILEVERAGE/QQQ	cond	p10_63	1999-03-10..2026-09-04	16	0.1310
+nasdaq	NFCILEVERAGE/QQQ	cond	posttrough20_63	1999-03-10..2026-09-04	5	0.4874

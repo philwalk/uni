@@ -337,15 +337,17 @@ class MarketSimContractSuite extends FunSuite:
     val row = MarketSim.fitness(a, st, ext)._2.find(_._1 == "worst crash %")
       .getOrElse(fail("no worst crash % loss row"))
     assertEqualsDouble(row._2, med, 1e-12, "the loss row must carry the median, not the minimum")
-    // The term DISCRIMINATES: with the disaster channel off the century tail is far too shallow
-    // and the term prices it; at the adopted defaults it is much smaller.  This is what makes the
-    // tail term the thing that FOUND the adopted world, and what a cosmetic revert would undo.
+    // The term DISCRIMINATES: with the disaster channel off the century tail is too shallow and
+    // the term prices it; at the adopted defaults it is smaller.  This is what makes the tail
+    // term the thing that FOUND the adopted world, and what a cosmetic revert would undo.  The
+    // contrast is a fifth since 0.24.0 (it was a half): the leverage cycle's cascades carry a
+    // share of the century tail the disasters used to carry alone.
     val offW  = w.copy(disasterRate = 0.0)
     val offSt = MarketSim.measure(MarketSim.simPaths(offW, 20, 100, MarketSim.DefaultSeed), 100)
     val offRow = MarketSim.fitness(a, offSt,
         MarketSim.extremeScoreStats(a, 20, MarketSim.DefaultSeed, offW))._2
       .find(_._1 == "worst crash %").getOrElse(fail("no worst crash % loss row"))
-    assert(offRow._4 > row._4 + 0.05,
+    assert(offRow._4 > row._4 * 1.2,
       f"the tail term must price the disaster-off world's shallow century tail well above the " +
       f"adopted world's: off ${offRow._4}%.4f vs on ${row._4}%.4f")
     // supplied exactly at the anchor the term is zero -- pins that the supplied value is priced
