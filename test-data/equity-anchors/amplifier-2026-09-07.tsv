@@ -8,6 +8,9 @@
 #             post-war (w1954) and QQQ's own span (w1999); SPY and QQQ = Yahoo adjusted close log
 #             returns; NDX = the Nasdaq-100 index close, a price index.  The shipped `clustering
 #             lag 1` / `lag 20` anchors are this file's CRSP w1926 ac1 / ac20 rows.
+# levprofile  the leverage-effect profile corr(r_t, |r_t+k|) at k = 1, 2, 3, 5, 10, 20 on the same
+#             windows -- the record's vol after a decline stays elevated for 2-20 sessions; the
+#             model's spiral gives -0.04 flat past lag 1 and its kick lag 1 only (item 12's ruler).
 # elasticity  crash count against volatility across the fresh-start cross-section: the w2001
 #             instruments of yahoo-2026-08-24.tsv on ONE window opening at the 2007-10-09 high
 #             (the convention `marketsim-crash-anchor-conventions` requires: fresh start, opening
@@ -17,7 +20,7 @@
 #             and its two recipes 1.44 -- and `SPY-QQQ own` the slope between the two anchor sets'
 #             shipped numbers (20.7 at 16.0%, 25.6 at 26.9%).
 #
-# Measured 2026-09-07 from folio's caches.
+# Measured 2026-09-07 from folio's caches; the leverage-effect rows added 2026-09-08.
 section	series	window	stat	n	value
 profile	CRSP	w1926	ac1	26274	0.2982
 profile	CRSP	w1926	ac2	26274	0.3314
@@ -28,6 +31,12 @@ profile	CRSP	w1926	ac60	26274	0.1387
 profile	CRSP	w1926	ac120	26274	0.1293
 profile	CRSP	w1926	annVol	26274	17.1044
 profile	CRSP	w1926	kurtosis	26274	19.1202
+levprofile	CRSP	w1926	lev1	26274	-0.0922
+levprofile	CRSP	w1926	lev2	26274	-0.1105
+levprofile	CRSP	w1926	lev3	26274	-0.0857
+levprofile	CRSP	w1926	lev5	26274	-0.0786
+levprofile	CRSP	w1926	lev10	26274	-0.0572
+levprofile	CRSP	w1926	lev20	26274	-0.0383
 profile	CRSP	w1954	ac1	18245	0.2693
 profile	CRSP	w1954	ac2	18245	0.3166
 profile	CRSP	w1954	ac5	18245	0.3048
@@ -37,6 +46,12 @@ profile	CRSP	w1954	ac60	18245	0.0985
 profile	CRSP	w1954	ac120	18245	0.0913
 profile	CRSP	w1954	annVol	18245	15.6157
 profile	CRSP	w1954	kurtosis	18245	19.2314
+levprofile	CRSP	w1954	lev1	18245	-0.1093
+levprofile	CRSP	w1954	lev2	18245	-0.1214
+levprofile	CRSP	w1954	lev3	18245	-0.0799
+levprofile	CRSP	w1954	lev5	18245	-0.0854
+levprofile	CRSP	w1954	lev10	18245	-0.0638
+levprofile	CRSP	w1954	lev20	18245	-0.0520
 profile	CRSP	w1999	ac1	6869	0.2673
 profile	CRSP	w1999	ac2	6869	0.3590
 profile	CRSP	w1999	ac5	6869	0.3254
@@ -46,6 +61,12 @@ profile	CRSP	w1999	ac60	6869	0.0802
 profile	CRSP	w1999	ac120	6869	0.0772
 profile	CRSP	w1999	annVol	6869	19.5039
 profile	CRSP	w1999	kurtosis	6869	12.2019
+levprofile	CRSP	w1999	lev1	6869	-0.1223
+levprofile	CRSP	w1999	lev2	6869	-0.1186
+levprofile	CRSP	w1999	lev3	6869	-0.0893
+levprofile	CRSP	w1999	lev5	6869	-0.0758
+levprofile	CRSP	w1999	lev10	6869	-0.0742
+levprofile	CRSP	w1999	lev20	6869	-0.0638
 profile	SPY	w1993	ac1	8458	0.2778
 profile	SPY	w1993	ac2	8458	0.3553
 profile	SPY	w1993	ac5	8458	0.3177
@@ -55,6 +76,12 @@ profile	SPY	w1993	ac60	8458	0.0841
 profile	SPY	w1993	ac120	8458	0.0908
 profile	SPY	w1993	annVol	8458	18.5498
 profile	SPY	w1993	kurtosis	8458	14.4181
+levprofile	SPY	w1993	lev1	8458	-0.1259
+levprofile	SPY	w1993	lev2	8458	-0.1284
+levprofile	SPY	w1993	lev3	8458	-0.1022
+levprofile	SPY	w1993	lev5	8458	-0.0744
+levprofile	SPY	w1993	lev10	8458	-0.0786
+levprofile	SPY	w1993	lev20	8458	-0.0735
 profile	QQQ	w1999	ac1	6916	0.2927
 profile	QQQ	w1999	ac2	6916	0.3349
 profile	QQQ	w1999	ac5	6916	0.3226
@@ -64,6 +91,12 @@ profile	QQQ	w1999	ac60	6916	0.1751
 profile	QQQ	w1999	ac120	6916	0.1710
 profile	QQQ	w1999	annVol	6916	26.8771
 profile	QQQ	w1999	kurtosis	6916	9.5698
+levprofile	QQQ	w1999	lev1	6916	-0.1108
+levprofile	QQQ	w1999	lev2	6916	-0.1094
+levprofile	QQQ	w1999	lev3	6916	-0.0720
+levprofile	QQQ	w1999	lev5	6916	-0.0688
+levprofile	QQQ	w1999	lev10	6916	-0.0691
+levprofile	QQQ	w1999	lev20	6916	-0.0461
 profile	NDX	w1990	ac1	9237	0.2705
 profile	NDX	w1990	ac2	9237	0.3219
 profile	NDX	w1990	ac5	9237	0.3087
@@ -73,6 +106,12 @@ profile	NDX	w1990	ac60	9237	0.1690
 profile	NDX	w1990	ac120	9237	0.1588
 profile	NDX	w1990	annVol	9237	26.3340
 profile	NDX	w1990	kurtosis	9237	9.3252
+levprofile	NDX	w1990	lev1	9237	-0.1050
+levprofile	NDX	w1990	lev2	9237	-0.1216
+levprofile	NDX	w1990	lev3	9237	-0.0682
+levprofile	NDX	w1990	lev5	9237	-0.0715
+levprofile	NDX	w1990	lev10	9237	-0.0628
+levprofile	NDX	w1990	lev20	9237	-0.0279
 elasticity	DIA	w2007	annVol	4746	18.8522
 elasticity	DIA	w2007	crashesPerCentury	4746	26.5487
 elasticity	EFA	w2007	annVol	4746	21.8292

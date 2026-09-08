@@ -343,6 +343,14 @@ object MarketSim:
     "              ;   predictive R^2, so a rank rule sees what it sees on the record.  Cadence,",
     "              ;   release lag and revisions are the consumer's point-in-time layer; the",
     "              ;   sidecar names each counterpart.  Reaches no price.  Default 0 = off",
+    "-levpersist P ; THE PERSISTENT KICK: the leverage kick's own memory.  At 0 a decline raises",
+    "              ;   only the NEXT session's diffusive noise; at P it raises the following ones",
+    "              ;   too, through weights that sum to 1 -- the integrated response per decline is",
+    "              ;   unchanged, only its shape.  The record's vol after a fall stays elevated for",
+    "              ;   2-20 sessions; 0 = bit-identical",
+    "-noiseasym T  ; THE ASYMMETRIC NOISE VOL: the diffusive noise times exp(g), g decaying at 0.96",
+    "              ;   and driven by MINUS the session's own diffusive draw -- the EGARCH asymmetry",
+    "              ;   term on the one input the price cannot inflate; 0 = bit-identical",
     "-stressscale E ; THE AMPLIFIER STUDY: the spiral's excess gain scaled by (depth/17.4)^E, so a",
     "              ;   thinner market's liquidity event is not proportionally larger than the",
     "              ;   reference world's (the record's crash count is volatility-flat across a",
@@ -700,6 +708,33 @@ object MarketSim:
                            // counterparts of BAA10Y / T10Y2Y / NFCILEVERAGE / VIXCLS -- see
                            // `deriveMacro` and `MacroK`.  Observational: reaches no price, draws
                            // from a dedicated stream read only when on, so 0 is bit-identical.
+    levPersist: Double = 0.0, // THE PERSISTENT KICK (item 12): the leverage kick's own memory.  At
+                           // 0 the kick raises only the NEXT session's diffusive noise; at P it
+                           // raises the following ones too, through an EWMA whose weights sum to 1
+                           // -- the integrated response per decline is unchanged and only its
+                           // SHAPE moves.  SHIPPED AT 0 after the measurement: preserving the
+                           // integral divides the per-lag amplitude, so at 0.95 the clustering
+                           // hump closes (lag 5 within 0.017 of lag 1, against 0.048 today) and
+                           // lag-1 clustering lands on the record's 0.298, but the lag-1 leverage
+                           // correlation falls -0.09 -> -0.04 against a -0.093 anchor and the
+                           // downside excess with it.  The record's response is a PLATEAU, not a
+                           // spread integral.  Must stay below 1; 0 = bit-identical.
+    noiseAsym: Double = 0.0, // THE ASYMMETRIC NOISE VOL (item 12): the diffusive noise multiplied
+                           // by exp(g - Var(g)), g a CASCADE of the session's own diffusive DRAW:
+                           // -z through a fast attack into a slow decay (`NoiseAsymAttack`,
+                           // `NoiseAsymPhi`), so the response BUILDS over two to five sessions and
+                           // persists for twenty, the shape the record's profiles show.  The draw
+                           // is a unit normal by construction, so the state cannot be inflated by
+                           // the price it helps set -- every price-standardized form of this
+                           // self-excites, measured.  Level-preserving.  SHIPPED AT 0 after the
+                           // measurement: it is the one form that moves the profile the right way
+                           // (the vol response at lag 5 reaches the record's -0.05..-0.08 from
+                           // -0.042 at 0.05-0.10) but the model's clustering already peaks at lag
+                           // 1 from the spiral, so the hump does not close, and every setting that
+                           // holds the other rows pays 5-40 points of kurtosis or the downside
+                           // excess: 0.04 with the kick off reads kurtosis 27.8 and downside 1.5
+                           // against 3.26, 0.10 at a lower spiral gain reads kurtosis 36.
+                           // 0 = bit-identical.
     stressScale: Double = 0.0, // THE AMPLIFIER STUDY (item 11): the spiral's excess gain scaled by
                            // (depth / DepthRef)^stressScale.  0 = the spiral's size proportional
                            // to the world's everyday move (the record's crash count is
@@ -1366,8 +1401,26 @@ object MarketSim:
     * At 0.0 the mechanism is absent and `carry` never leaves zero, so every earlier world is
     * reproduced BIT-IDENTICALLY -- the halt consumes no random draws. */
   /** The depth the spiral's gain was calibrated at, the reference `stressScale` scales from -- a
-    * literal, not `Defaults.depth`: a later depth move must not silently rescale the law. */
-  val DepthRef = 17.4
+    * literal, not `Defaults.depth`: a later depth move must not silently rescale the law -- and
+    * the asymmetric noise vol's persistence (half-life 17 sessions, the ~20 the record's vol
+    * response runs for; `noiseAsym` sizes it). */
+  val DepthRef      = 17.4
+  /** THE ASYMMETRIC NOISE VOL's two timescales (item 12; `noiseAsym` sizes the response, these
+    * shape it).  The record's vol after a decline BUILDS over two to five sessions and stays
+    * elevated for about twenty -- its |r| autocorrelation humps at lags 2-5 and its
+    * leverage-effect profile still reads -0.08 at lag 5 -- so the driver is a cascade: the
+    * session's draw through a fast attack (`Attack`, ~3 sessions) into a slow decay (`Phi`, a
+    * 17-session half-life).  One exponential alone peaks at lag 1 and makes no hump, measured. */
+  val NoiseAsymPhi    = 0.96
+  val NoiseAsymAttack = 0.50
+  /** Var(g) in closed form, for the level-preserving centring: the cascade's impulse response is
+    * T(1-A)(A^{k+1} - phi^{k+1})/(A - phi), and this is the sum of its squares. */
+  def noiseAsymVar(t: Double): Double =
+    val a = NoiseAsymAttack; val ph = NoiseAsymPhi
+    if t <= 0.0 then 0.0
+    else
+      val k = t * (1.0 - a) / (a - ph)
+      k * k * (a * a / (1.0 - a * a) - 2.0 * a * ph / (1.0 - a * ph) + ph * ph / (1.0 - ph * ph))
   final class Market(kValue: Double, stressK: Double, impact: Double,
                      recoveryDrag: Double = 0.0, recoveryFloor: Double = 1.0,
                      haltLimit: Double = 0.0):
@@ -2016,7 +2069,14 @@ object MarketSim:
     // decline reading `stressIdx` consumes, centred so the vol level does not drift with the
     // dial.  Draw-free; both its update and its use sit behind `leverage > 0`, so 0 is
     // bit-identical off.
-    var levSig = 0.0
+    // ITEM 12's two states, both exactly inert at their dial's 0: `kickS` is the persistent
+    // kick's own EWMA of the same saturated decline signal (at 0 it IS `levSig`, so the
+    // multiplier is the shipped one bit for bit), `asymG` the asymmetric noise vol's log
+    // multiplier, driven by the DIFFUSIVE DRAW rather than by any price-derived quantity.
+    var kickS = 0.0
+    var asymG = 0.0
+    var asymA = 0.0
+    val asymNorm = noiseAsymVar(w.noiseAsym)
     // Settled equity stress for the refuge bid (see `refugeDays`); draw-free, and both its use
     // and its update sit behind `refugeDays > 0`, so 0 is bit-identical off.
     var settledStress = 0.0
@@ -2224,8 +2284,20 @@ object MarketSim:
       // reaches the anchor).  The lag-1 form is also the statistic the `leverage corr` row
       // grades; the multi-session persistence of real post-decline volatility is the spiral's
       // job, and the clustering rows hold the total.
-      val dNoise0 = newsDamp * SigmaN * math.exp(logVol - volNorm) * rng.randn()
-      val dNoise  = if w.leverage > 0.0 then dNoise0 * math.exp(w.leverage * levSig) else dNoise0
+      // THE ASYMMETRIC NOISE VOL (`noiseAsym`): `z` is this session's diffusive draw, a unit
+      // normal BY CONSTRUCTION, which is why the state it drives cannot be inflated by the
+      // price the way a realized-scale or return-standardized input is (measured: those forms
+      // self-excite -- see PLAN item 11's map).  Read before its own update, like the kick.
+      val z       = rng.randn()
+      // Level-preserving, the same convention `volNorm` applies to the vol state: g is centred at
+      // minus its own stationary variance, so the noise's VARIANCE is what it was and the dial
+      // buys shape rather than volatility.
+      val asymM   = if w.noiseAsym > 0.0 then math.exp(asymG - asymNorm) else 1.0
+      val dNoise0 = newsDamp * SigmaN * math.exp(logVol - volNorm) * z * asymM
+      val dNoise  = if w.leverage > 0.0 then dNoise0 * math.exp(w.leverage * kickS) else dNoise0
+      if w.noiseAsym > 0.0 then
+        asymA = NoiseAsymAttack * asymA - (1.0 - NoiseAsymAttack) * z
+        asymG = NoiseAsymPhi * asymG + w.noiseAsym * asymA
       // The session's DIFFUSION SCALE, recorded for the range and satellite channels exactly
       // as the noise term above is built -- news damp, vol state, leverage kick (read
       // BEFORE this session's update, like `dNoise` itself) -- plus the jump branch's
@@ -2233,9 +2305,9 @@ object MarketSim:
       val sessSigma =
         if w.rangeScale > 0.0 || w.satBeta > 0.0 || w.overnight > 0.0 || w.basket > 0 ||
            w.macroPanel > 0 then
-          val levMult = if w.leverage > 0.0 then math.exp(w.leverage * levSig) else 1.0
+          val levMult = if w.leverage > 0.0 then math.exp(w.leverage * kickS) else 1.0
           val jvMult  = if w.jumpVar > 0.0 then math.sqrt(1.0 - w.jumpVar) else 1.0
-          newsDamp * SigmaN * math.exp(logVol - volNorm) * levMult * jvMult
+          newsDamp * SigmaN * math.exp(logVol - volNorm) * levMult * jvMult * asymM
         else 0.0
 
       // The jump channel.  Its draws come from `jrng`, NOT `rng`, so `jumpVar = 0` takes the
@@ -2341,7 +2413,12 @@ object MarketSim:
         // exactly the day real volatility responds to, and the external repricing bypasses
         // `retE` (it never passes through `step`).  `newsJ` is 0 whenever the channel is off,
         // so the pre-news leverage behaviour is untouched bit for bit.
-        levSig = math.min(math.max(newsJ - retE, 0.0) / sPre, 4.0) - 0.399
+        val levSig = math.min(math.max(newsJ - retE, 0.0) / sPre, 4.0) - 0.399
+        // THE PERSISTENT KICK (`levPersist`): the same signal through an EWMA whose weights sum
+        // to 1, so the integrated log-multiplier per unit decline is what it is today and only
+        // its SHAPE over the following sessions changes -- built over 2-5 sessions by the
+        // attack, decaying over ~1/(1-P).  At 0 this is `levSig` itself.
+        kickS = w.levPersist * kickS + (1.0 - w.levPersist) * levSig
       // joint-stress margin selling: when both markets are stressed, the bond gets dumped too --
       // and against it the refuge bid, flight-to-quality into a bond that is itself still orderly.
       // DURATION-SCALED, like the bond's own noise: an absolute bid gave a 5-year bond the same
@@ -2438,6 +2515,15 @@ object MarketSim:
     if m2 <= 0 then Double.NaN else z.power(4).mean / (m2 * m2)
 
   /** sum(z_t * z_(t+lag)) / sum(z_t^2) for z = |r| - mean|r| -- volatility clustering. */
+  /** THE LEVERAGE-EFFECT PROFILE (item 12): corr(r_t, |r_{t+lag}|) -- how much of the next
+    * sessions' volatility a decline predicts.  The signed sibling of `autocorrAbs`, and the
+    * statistic `amplifier-2026-09-07.tsv` measures on the record: -0.09 / -0.11 / -0.08 / -0.06
+    * at lags 1 / 2 / 5 / 10 on the CRSP century, where a market whose vol responds only to the
+    * NEXT session reads its lag-1 value and then nothing. */
+  def levAbs(r: Array[Double], lag: Int): Double =
+    if r.length <= lag then Double.NaN
+    else pearson(r.dropRight(lag), r.drop(lag).map(math.abs))
+
   def autocorrAbs(r: Array[Double], lag: Int): Double =
     val a = MatD(r).abs
     val z = a - a.mean
@@ -3022,6 +3108,13 @@ object MarketSim:
                       hazardRatio(0)._1, hazardRatio(1)._1, hazardRatio(2)._1, hazardRatio(0)._2))
 
   final case class WorldStats(vol: Double, kurt: Double, ac1: Double, ac20: Double,
+                              // THE VOL-RESPONSE PROFILE (item 12), reported beside the two
+                              // graded clustering lags: |r| autocorrelation at 5 and 60, and the
+                              // leverage-effect profile at 1, 5 and 20.  Defaulted so a caller
+                              // that builds a `WorldStats` by hand need not know about them.
+                              ac5: Double = Double.NaN, ac60: Double = Double.NaN,
+                              lev1: Double = Double.NaN, lev5: Double = Double.NaN,
+                              lev20: Double = Double.NaN,
                               vr20: Double, vr60: Double,   // SIGNED-return persistence at each
                               vr120: Double, vr250: Double, // rung of `VarRatioLadder` -- `varianceRatio`
                               annRet: Double,
@@ -3207,6 +3300,11 @@ object MarketSim:
       kurt = med(rets.map(kurtosis)),
       ac1  = med(rets.map(r => autocorrAbs(r, 1))),
       ac20 = med(rets.map(r => autocorrAbs(r, 20))),
+      ac5  = med(rets.map(r => autocorrAbs(r, 5))),
+      ac60 = med(rets.map(r => autocorrAbs(r, 60))),
+      lev1  = med(rets.map(r => levAbs(r, 1))),
+      lev5  = med(rets.map(r => levAbs(r, 5))),
+      lev20 = med(rets.map(r => levAbs(r, 20))),
       vr20  = med(rets.map(r => varianceRatio(r, 20))),
       vr60  = med(rets.map(r => varianceRatio(r, VarRatioQ))),
       vr120 = med(rets.map(r => varianceRatio(r, 120))),
@@ -3955,6 +4053,15 @@ object MarketSim:
     * largest predictive R^2 (0.019); the slope's inversion share around the record's 0.115; and
     * the variance risk premium around the record's 0.28-0.29 (log).  `MacroPanelSuite` /
     * `macro_panel_tests` re-derive each from the fixture. */
+  /** THE VOL RESPONSE TO A FALL (item 12), REPORTED and not graded -- the `equity d20` precedent
+    * for a statistic the model cannot currently reach.  The record's |r| autocorrelation RISES
+    * from lag 1 to a hump at lags 2-5 (+0.01 to +0.06 on every reference) and its leverage-effect
+    * profile still reads -0.07 to -0.08 at lag 5; the model's profiles peak at lag 1 and are half
+    * the record's by lag 5, because every channel that makes volatility here fires on the session
+    * after the shock.  `-noiseasym` and `-levpersist` are the two mechanisms that move it, both
+    * shipped at 0: what they buy and what they cost is in their field comments and in
+    * `MarketSimWorlds.md`.  `amplifier-2026-09-07.tsv` carries the record's profiles. */
+
   object MacroBands:
     val CondPrePeak = (0.82, 1.00)   // the four references' upper-middle 0.943 less 0.12, to 1
     val CondPrePeakNull = 0.55       // engaged: clear of the null panel's 0.49 (+-0.02 on 500
@@ -5927,6 +6034,7 @@ object MarketSim:
       // is a reserved word in Scala, and a consumer reconstructing a world from this block passes
       // `-macro`
       ("macro", w.macroPanel.toString), ("levGain", ef(w.levGain)), ("stressScale", ef(w.stressScale)),
+      ("levPersist", ef(w.levPersist)), ("noiseAsym", ef(w.noiseAsym)),
       ("macroNull", w.macroNull.toString),
       ("inflProb", ef(w.inflProb)), ("inflSize", ef(w.inflSize)),
       ("inflSpeed", ef(w.inflSpeed)), ("rateSpeed", ef(w.rateSpeed)),
@@ -6270,6 +6378,7 @@ object MarketSim:
     var basketIdio = dw.basketIdio; var basketGaps = dw.basketGaps
     var basketDrift = dw.basketDrift; var macroPanel = dw.macroPanel; var macroNull = dw.macroNull
     var levGain = dw.levGain; var stressScale = dw.stressScale
+    var levPersist = dw.levPersist; var noiseAsym = dw.noiseAsym
     var jointEmit = ""
     var barsEmit = ""
     var inflProb = dw.inflProb; var inflSize = dw.inflSize
@@ -6362,6 +6471,8 @@ object MarketSim:
       case "-macronull"  => macroNull = intOr("-macronull", consumeNext)
       case "-levgain"    => levGain = numOr("-levgain", consumeNext)
       case "-stressscale" => stressScale = numOr("-stressscale", consumeNext)
+      case "-levpersist" => levPersist = numOr("-levpersist", consumeNext)
+      case "-noiseasym" => noiseAsym = numOr("-noiseasym", consumeNext)
 
       case "-jointemit"  => jointEmit = consumeNext
       case "-barsemit"   => barsEmit = consumeNext
@@ -6444,6 +6555,8 @@ object MarketSim:
     if macroNull > 0 && macroPanel == 0 then usage("-macronull needs -macro 1: it is the panel's null, not a panel")
     nonNeg("-levgain", levGain)
     nonNeg("-stressscale", stressScale)
+    nonNeg("-noiseasym", noiseAsym)
+    if levPersist < 0.0 || levPersist >= 1.0 then usage("-levpersist is a persistence in [0, 1)")
 
     if basket > 0 && basketBeta <= 0.0 then
       usage("-basket requires -basketbeta > 0: a name with no sector leg is not a member of anything")
@@ -6513,7 +6626,8 @@ object MarketSim:
                   overnight = overnight, basket = basket, basketBeta = basketBeta,
                   basketSector = basketSector, basketIdio = basketIdio, basketGaps = basketGaps,
                   basketDrift = basketDrift, macroPanel = macroPanel, macroNull = macroNull,
-                  levGain = levGain, stressScale = stressScale)
+                  levGain = levGain, stressScale = stressScale, levPersist = levPersist,
+                  noiseAsym = noiseAsym)
 
     // SATELLITE PROTOTYPE: write per-path primary+satellite LOG prices for grading against the
     // SPY-QQQ coupling anchors (the joint_anchor conventions, graded python-side).  Deliberately
@@ -6677,7 +6791,10 @@ object MarketSim:
     println(f"  annualised return      median ${st.annRet}%6.2f%%   5th ${pctile(annRet, 0.05)}%6.2f%%   95th ${pctile(annRet, 0.95)}%6.2f%%")
     println(f"  annualised volatility  median ${st.vol * 100}%6.2f%%   5th ${pctile(annVol, 0.05) * 100}%6.2f%%   95th ${pctile(annVol, 0.95) * 100}%6.2f%%")
     println(f"  daily return kurtosis  median ${st.kurt}%6.2f")
-    println(f"  volatility clustering  lag  1 ${st.ac1}%6.3f   lag 20 ${st.ac20}%6.3f")
+    println(f"  volatility clustering  lag  1 ${st.ac1}%6.3f   lag 20 ${st.ac20}%6.3f" +
+            f"   (lag 5 ${st.ac5}%.3f   lag 60 ${st.ac60}%.3f)")
+    println(f"  vol response to a fall corr(r, |r+k|)  k=1 ${st.lev1}%6.3f   k=5 ${st.lev5}%6.3f" +
+            f"   k=20 ${st.lev20}%6.3f   (record -0.09 / -0.08 / -0.04)")
     // The line above is |r| and the line below is r, which is the whole reason both are printed:
     // they are different axes and a world can be right on one and wrong on the other.
     println("  trend persistence      variance ratio " +

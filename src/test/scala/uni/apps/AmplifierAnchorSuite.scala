@@ -33,6 +33,38 @@ class AmplifierAnchorSuite extends FunSuite:
       assert(ac(5) > 0.12 && ac(6) > 0.12, s"$s: the tail holds past 0.12 at 60 and 120, $ac")
   }
 
+  test("the record's vol response to a fall persists past lag 1, where the model's decays") {
+    for (sr, w) <- Vector(("CRSP", "w1926"), ("QQQ", "w1999")) do
+      val lev = Vector(1, 2, 3, 5, 10, 20).map(k => value("levprofile", sr, w, s"lev$k"))
+      assert(lev.forall(_ < 0.0), s"$sr: a decline predicts more volatility at every lag, $lev")
+      assert(lev(3) < -0.05, s"$sr: still -0.05 or beyond at lag 5, ${lev(3)}")
+      assert(lev(3) / lev(0) > 0.6, s"$sr: lag 5 holds most of lag 1's strength, $lev")
+    // the model's own, at the shipped defaults: its lag-1 response is the record's and its lag-5
+    // is half of it -- item 12's disclosed miss, and the reason both dials below ship at 0.  The
+    // statistic needs ensemble: it is a median over paths and reads -0.060 on eight paths against
+    // -0.042 on two hundred, converging by about forty.
+    val st = MarketSim.measure(MarketSim.simPaths(MarketSim.Defaults, 40, 100, MarketSim.DefaultSeed), 100)
+    assert(st.lev1 < -0.05, s"the model's lag-1 response is the record's: ${st.lev1}")
+    assert(st.lev5 / st.lev1 < 0.6, s"the disclosed miss: lag 5 is ${st.lev5} against lag 1's ${st.lev1}")
+  }
+
+  test("both vol-response dials are off everywhere, and 0 is bit-identical") {
+    val d = MarketSim.Defaults
+    assertEquals(d.noiseAsym, 0.0); assertEquals(d.levPersist, 0.0)
+    for (v, w) <- MarketSim.Releases do
+      assertEquals(w.noiseAsym, 0.0, s"release $v"); assertEquals(w.levPersist, 0.0, s"release $v")
+    for (n, w, _) <- MarketSim.Recipes do
+      assertEquals(w.noiseAsym, 0.0, s"recipe $n"); assertEquals(w.levPersist, 0.0, s"recipe $n")
+    // the persistent kick at 0 IS the shipped kick: its EWMA reduces to the signal itself
+    val a = MarketSim.simulate(d, 3, MarketSim.DefaultSeed)
+    val b = MarketSim.simulate(d.copy(levPersist = 0.0, noiseAsym = 0.0), 3, MarketSim.DefaultSeed)
+    assert(a.price.sameElements(b.price))
+    // and both move the profile the way their comments say
+    val on = MarketSim.measure(MarketSim.simPaths(d.copy(noiseAsym = 0.06), 40, 100, MarketSim.DefaultSeed), 100)
+    val off = MarketSim.measure(MarketSim.simPaths(d, 40, 100, MarketSim.DefaultSeed), 100)
+    assert(on.lev5 < off.lev5, s"the asymmetric noise vol must deepen the lag-5 response: ${off.lev5} -> ${on.lev5}")
+  }
+
   test("crash count is volatility-flat across the fresh-start cross-section") {
     assert(value("elasticity", "cross-section", "w2007", "logSlope") < 0.2)
     assert(math.abs(value("elasticity", "cross-section", "w2007", "logCorr")) < 0.2)

@@ -434,6 +434,8 @@ pub fn default_world() -> World {
         basket_drift: 0.0,
         macro_panel: 0,
         macro_null: 0,
+        lev_persist: 0.0,
+        noise_asym: 0.0,
         stress_scale: 0.0,
         lev_gain: 6.0,
         value_pull: 0.056,
@@ -509,6 +511,8 @@ fn v0_19_2() -> World {
         basket_drift: 0.0,
         macro_panel: 0,
         macro_null: 0,
+        lev_persist: 0.0,
+        noise_asym: 0.0,
         stress_scale: 0.0,
         lev_gain: 0.0,
         value_pull: 0.013,
@@ -776,6 +780,8 @@ fn v0_23_0() -> World {
         basket_drift: 0.0,
         macro_panel: 0,
         macro_null: 0,
+        lev_persist: 0.0,
+        noise_asym: 0.0,
         stress_scale: 0.0,
         lev_gain: 0.0,
         value_pull: 0.056,
@@ -841,6 +847,8 @@ fn v0_22_1() -> World {
         basket_drift: 0.0,
         macro_panel: 0,
         macro_null: 0,
+        lev_persist: 0.0,
+        noise_asym: 0.0,
         stress_scale: 0.0,
         lev_gain: 0.0,
         value_pull: 0.045,
@@ -908,6 +916,8 @@ fn v0_22_0() -> World {
         basket_drift: 0.0,
         macro_panel: 0,
         macro_null: 0,
+        lev_persist: 0.0,
+        noise_asym: 0.0,
         stress_scale: 0.0,
         lev_gain: 0.0,
         value_pull: 0.045,
@@ -975,6 +985,8 @@ fn v0_21_0() -> World {
         basket_drift: 0.0,
         macro_panel: 0,
         macro_null: 0,
+        lev_persist: 0.0,
+        noise_asym: 0.0,
         stress_scale: 0.0,
         lev_gain: 0.0,
         value_pull: 0.045,
@@ -1033,6 +1045,8 @@ fn v0_20_0() -> World {
         basket_drift: 0.0,
         macro_panel: 0,
         macro_null: 0,
+        lev_persist: 0.0,
+        noise_asym: 0.0,
         stress_scale: 0.0,
         lev_gain: 0.0,
         value_pull: 0.0145,
@@ -1364,6 +1378,28 @@ pub struct World {
     /// (the record's crash count is volatility-FLAT across a fresh-start cross-section, the
     /// model's rises at 1.4-1.8); 1 = a liquidity event of the same absolute size in every
     /// market. The reference world is unchanged at any value.
+    /// THE PERSISTENT KICK (item 12): the leverage kick's own memory. At 0 the kick raises only
+    /// the NEXT session's diffusive noise; at P it raises the following ones too, through an EWMA
+    /// whose weights sum to 1 — the integrated response per decline is unchanged and only its
+    /// SHAPE moves. SHIPPED AT 0 after the measurement: preserving the integral divides the
+    /// per-lag amplitude, so at 0.95 the clustering hump closes (lag 5 within 0.017 of lag 1,
+    /// against 0.048 today) and lag-1 clustering lands on the record's 0.298, but the lag-1
+    /// leverage correlation falls -0.09 -> -0.04 against a -0.093 anchor and the downside excess
+    /// with it. The record's response is a PLATEAU, not a spread integral. Must stay below 1;
+    /// 0 = bit-identical.
+    pub lev_persist: f64,
+    /// THE ASYMMETRIC NOISE VOL (item 12): the diffusive noise multiplied by exp(g - Var(g)), g a
+    /// CASCADE of the session's own diffusive DRAW: -z through a fast attack into a slow decay
+    /// (`NOISE_ASYM_ATTACK`, `NOISE_ASYM_PHI`), so the response BUILDS over two to five sessions
+    /// and persists for twenty, the shape the record's profiles show. The draw is a unit normal by
+    /// construction, so the state cannot be inflated by the price it helps set — every
+    /// price-standardized form of this self-excites, measured. Level-preserving. SHIPPED AT 0
+    /// after the measurement: it is the one form that moves the profile the right way (the vol
+    /// response at lag 5 reaches the record's -0.05..-0.08 from -0.042 at 0.05-0.10) but the
+    /// model's clustering already peaks at lag 1 from the spiral, so the hump does not close, and
+    /// every setting that holds the other rows pays 5-40 points of kurtosis or the downside
+    /// excess. 0 = bit-identical.
+    pub noise_asym: f64,
     pub stress_scale: f64,
     pub value_pull: f64,
     pub crowd: Crowd,
@@ -1574,6 +1610,25 @@ struct Market {
 /// The depth the spiral's gain was calibrated at, the reference `stress_scale` scales from — a
 /// literal, not the default's depth: a later depth move must not silently rescale the law.
 const DEPTH_REF: f64 = 17.4;
+/// THE ASYMMETRIC NOISE VOL's two timescales (item 12; `noise_asym` sizes the response, these
+/// shape it). The record's vol after a decline BUILDS over two to five sessions and stays
+/// elevated for about twenty — its |r| autocorrelation humps at lags 2-5 and its leverage-effect
+/// profile still reads -0.08 at lag 5 — so the driver is a cascade: the session's draw through a
+/// fast attack (`ATTACK`, ~3 sessions) into a slow decay (`PHI`, a 17-session half-life). One
+/// exponential alone peaks at lag 1 and makes no hump, measured.
+const NOISE_ASYM_PHI: f64 = 0.96;
+const NOISE_ASYM_ATTACK: f64 = 0.50;
+
+/// Var(g) in closed form, for the level-preserving centring: the cascade's impulse response is
+/// T(1-A)(A^{k+1} - phi^{k+1})/(A - phi), and this is the sum of its squares.
+fn noise_asym_var(t: f64) -> f64 {
+    if t <= 0.0 {
+        return 0.0;
+    }
+    let (a, ph) = (NOISE_ASYM_ATTACK, NOISE_ASYM_PHI);
+    let k = t * (1.0 - a) / (a - ph);
+    k * k * (a * a / (1.0 - a * a) - 2.0 * a * ph / (1.0 - a * ph) + ph * ph / (1.0 - ph * ph))
+}
 
 impl Market {
     fn new(k_value: f64, stress_k: f64, impact: f64) -> Self {
@@ -2700,7 +2755,14 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
     // decline reading `stress_idx` consumes, centred so the vol level does not drift with the
     // dial. Draw-free; both its update and its use sit behind `leverage > 0`, so 0 is
     // bit-identical off.
-    let mut lev_sig = 0.0f64;
+    // ITEM 12's states, both exactly inert at their dial's 0: `kick_s` is the persistent kick's
+    // own EWMA of the same saturated decline signal (at 0 it IS `lev_sig`, so the multiplier is
+    // the shipped one bit for bit), `asym_g` the asymmetric noise vol's log multiplier, driven by
+    // the DIFFUSIVE DRAW rather than by any price-derived quantity.
+    let mut kick_s = 0.0f64;
+    let mut asym_g = 0.0f64;
+    let mut asym_a = 0.0f64;
+    let asym_norm = noise_asym_var(w.noise_asym);
     // Settled equity stress for the refuge bid (see `refuge_days`); draw-free, and both its use
     // and its update sit behind `refuge_days > 0`, so 0 is bit-identical off.
     let mut settled_stress = 0.0f64;
@@ -2991,12 +3053,27 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
         // reaches the anchor). The lag-1 form is also the statistic the `leverage corr` row
         // grades; the multi-session persistence of real post-decline volatility is the spiral's
         // job, and the clustering rows hold the total.
-        let d_noise = news_damp * SIGMA_N * (log_vol - vol_norm).exp() * rng.randn();
+        // THE ASYMMETRIC NOISE VOL (`noise_asym`): `z` is this session's diffusive draw, a unit
+        // normal BY CONSTRUCTION, which is why the state it drives cannot be inflated by the
+        // price the way a realized-scale or return-standardized input is (measured: those forms
+        // self-excite — see PLAN item 11's map). Read before its own update, like the kick.
+        // Level-preserving, the same convention `vol_norm` applies to the vol state.
+        let z = rng.randn();
+        let asym_m = if w.noise_asym > 0.0 {
+            (asym_g - asym_norm).exp()
+        } else {
+            1.0
+        };
+        let d_noise = news_damp * SIGMA_N * (log_vol - vol_norm).exp() * z * asym_m;
         let d_noise = if w.leverage > 0.0 {
-            d_noise * (w.leverage * lev_sig).exp()
+            d_noise * (w.leverage * kick_s).exp()
         } else {
             d_noise
         };
+        if w.noise_asym > 0.0 {
+            asym_a = NOISE_ASYM_ATTACK * asym_a - (1.0 - NOISE_ASYM_ATTACK) * z;
+            asym_g = NOISE_ASYM_PHI * asym_g + w.noise_asym * asym_a;
+        }
         // The session's DIFFUSION SCALE, recorded for the range and satellite channels exactly
         // as the noise term above is built — news damp, vol state, leverage kick (read BEFORE
         // this session's update, like `d_noise` itself) — plus the jump branch's
@@ -3008,7 +3085,7 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
             || w.macro_panel > 0
         {
             let lev_mult = if w.leverage > 0.0 {
-                (w.leverage * lev_sig).exp()
+                (w.leverage * kick_s).exp()
             } else {
                 1.0
             };
@@ -3017,7 +3094,7 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
             } else {
                 1.0
             };
-            news_damp * SIGMA_N * (log_vol - vol_norm).exp() * lev_mult * jv_mult
+            news_damp * SIGMA_N * (log_vol - vol_norm).exp() * lev_mult * jv_mult * asym_m
         } else {
             0.0
         };
@@ -3143,7 +3220,11 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
             // exactly the day real volatility responds to, and the external repricing bypasses
             // `ret_e` (it never passes through `step`). `news_j` is 0 whenever the channel is off,
             // so the pre-news leverage behaviour is untouched bit for bit.
-            lev_sig = ((news_j - ret_e).max(0.0) / s_pre).min(4.0) - 0.399;
+            let lev_sig = ((news_j - ret_e).max(0.0) / s_pre).min(4.0) - 0.399;
+            // THE PERSISTENT KICK (`lev_persist`): the same signal through an EWMA whose weights
+            // sum to 1, so the integrated log-multiplier per unit decline is what it is today and
+            // only its SHAPE over the following sessions changes. At 0 this is `lev_sig` itself.
+            kick_s = w.lev_persist * kick_s + (1.0 - w.lev_persist) * lev_sig;
         }
         // joint-stress margin selling: when both markets are stressed, the bond gets dumped too —
         // and against it the refuge bid, flight-to-quality into a bond that is itself still
@@ -3307,6 +3388,19 @@ fn kurtosis(r: &[f64]) -> f64 {
 }
 
 /// sum(z_t * z_(t+lag)) / sum(z_t^2) for z = |r| - mean|r| — volatility clustering.
+/// THE LEVERAGE-EFFECT PROFILE (item 12): corr(r_t, |r_{t+lag}|) — how much of the next sessions'
+/// volatility a decline predicts. The signed sibling of `autocorr_abs`, and the statistic
+/// `amplifier-2026-09-07.tsv` measures on the record: -0.09 / -0.11 / -0.08 / -0.06 at lags
+/// 1 / 2 / 5 / 10 on the CRSP century, where a market whose vol responds only to the NEXT session
+/// reads its lag-1 value and then nothing.
+fn lev_abs(r: &[f64], lag: usize) -> f64 {
+    if r.len() <= lag {
+        return f64::NAN;
+    }
+    let b: Vec<f64> = r[lag..].iter().map(|x| x.abs()).collect();
+    pearson(&r[..r.len() - lag], &b)
+}
+
 fn autocorr_abs(r: &[f64], lag: usize) -> f64 {
     let a = MatD::apply(r).abs();
     let z = &a - a.mean();
@@ -3515,6 +3609,13 @@ pub struct WorldStats {
     pub kurt: f64,
     pub ac1: f64,
     pub ac20: f64,
+    /// THE VOL-RESPONSE PROFILE (item 12), reported beside the two graded clustering lags: |r|
+    /// autocorrelation at 5 and 60, and the leverage-effect profile at 1, 5 and 20.
+    pub ac5: f64,
+    pub ac60: f64,
+    pub lev1: f64,
+    pub lev5: f64,
+    pub lev20: f64,
     /// SIGNED-return persistence — `variance_ratio`.
     pub vr20: f64,
     pub vr60: f64,
@@ -4765,6 +4866,17 @@ pub fn measure(sims: &[Path], years: usize) -> WorldStats {
             .iter()
             .map(|r| autocorr_abs(r, 20))
             .collect::<Vec<f64>>()),
+        ac5: med(&rets
+            .iter()
+            .map(|r| autocorr_abs(r, 5))
+            .collect::<Vec<f64>>()),
+        ac60: med(&rets
+            .iter()
+            .map(|r| autocorr_abs(r, 60))
+            .collect::<Vec<f64>>()),
+        lev1: med(&rets.iter().map(|r| lev_abs(r, 1)).collect::<Vec<f64>>()),
+        lev5: med(&rets.iter().map(|r| lev_abs(r, 5)).collect::<Vec<f64>>()),
+        lev20: med(&rets.iter().map(|r| lev_abs(r, 20)).collect::<Vec<f64>>()),
         vr20: med(&rets
             .iter()
             .map(|r| variance_ratio(r, 20))
@@ -10275,6 +10387,8 @@ fn world_json_body(w: &World) -> Vec<String> {
         ("macro", w.macro_panel.to_string()),
         ("levGain", ef(w.lev_gain)),
         ("stressScale", ef(w.stress_scale)),
+        ("levPersist", ef(w.lev_persist)),
+        ("noiseAsym", ef(w.noise_asym)),
         ("macroNull", w.macro_null.to_string()),
         ("inflProb", ef(w.infl_prob)),
         ("inflSize", ef(w.infl_size)),
@@ -10853,6 +10967,8 @@ pub fn main() {
     let mut macro_null = dw.macro_null;
     let mut lev_gain = dw.lev_gain;
     let mut stress_scale = dw.stress_scale;
+    let mut lev_persist = dw.lev_persist;
+    let mut noise_asym = dw.noise_asym;
     let mut joint_emit = String::new();
     let mut bars_emit = String::new();
     let mut jump_rate = dw.jump_rate;
@@ -10962,6 +11078,8 @@ pub fn main() {
             "-macronull" => macro_null = req_usize(&mut it, "-macronull"),
             "-levgain" => lev_gain = req_f64(&mut it, "-levgain"),
             "-stressscale" => stress_scale = req_f64(&mut it, "-stressscale"),
+            "-levpersist" => lev_persist = req_f64(&mut it, "-levpersist"),
+            "-noiseasym" => noise_asym = req_f64(&mut it, "-noiseasym"),
             "-jointemit" => joint_emit = req_arg(&mut it, "-jointemit").clone(),
             "-barsemit" => bars_emit = req_arg(&mut it, "-barsemit").clone(),
             "-jumprate" => jump_rate = req_f64(&mut it, "-jumprate"),
@@ -11113,6 +11231,10 @@ pub fn main() {
         non_neg("-basketsector", basket_sector);
         non_neg("-levgain", lev_gain);
         non_neg("-stressscale", stress_scale);
+        non_neg("-noiseasym", noise_asym);
+        if !(0.0..1.0).contains(&lev_persist) {
+            cli_die("-levpersist is a persistence in [0, 1)");
+        }
         non_neg("-basketidio", basket_idio);
         non_neg("-basketgaps", basket_gaps);
         non_neg("-basketdrift", basket_drift);
@@ -11271,6 +11393,8 @@ pub fn main() {
         macro_null,
         lev_gain,
         stress_scale,
+        lev_persist,
+        noise_asym,
         value_pull,
         crowd,
         crowd_impact,
@@ -11623,9 +11747,17 @@ pub fn main() {
     );
     println!("  daily return kurtosis  median {}", jf(st.kurt, 6, 2));
     println!(
-        "  volatility clustering  lag  1 {}   lag 20 {}",
+        "  volatility clustering  lag  1 {}   lag 20 {}   (lag 5 {}   lag 60 {})",
         jf(st.ac1, 6, 3),
-        jf(st.ac20, 6, 3)
+        jf(st.ac20, 6, 3),
+        jf(st.ac5, 0, 3),
+        jf(st.ac60, 0, 3)
+    );
+    println!(
+        "  vol response to a fall corr(r, |r+k|)  k=1 {}   k=5 {}   k=20 {}   (record -0.09 / -0.08 / -0.04)",
+        jf(st.lev1, 6, 3),
+        jf(st.lev5, 6, 3),
+        jf(st.lev20, 6, 3)
     );
     // The line above is |r| and the line below is r, which is the whole reason both are printed:
     // they are different axes and a world can be right on one and wrong on the other.
@@ -14568,6 +14700,76 @@ mod amplifier_anchor_tests {
                 "{s}: the tail holds past 0.12, {ac:?}"
             );
         }
+    }
+
+    #[test]
+    fn the_records_vol_response_to_a_fall_persists_past_lag_1_where_the_models_decays() {
+        let rs = rows();
+        for (sr, w) in [("CRSP", "w1926"), ("QQQ", "w1999")] {
+            let lev: Vec<f64> = [1, 2, 3, 5, 10, 20]
+                .iter()
+                .map(|k| value(&rs, "levprofile", sr, w, &format!("lev{k}")))
+                .collect();
+            assert!(
+                lev.iter().all(|v| *v < 0.0),
+                "{sr}: negative at every lag, {lev:?}"
+            );
+            assert!(
+                lev[3] < -0.05,
+                "{sr}: still -0.05 or beyond at lag 5, {}",
+                lev[3]
+            );
+            assert!(
+                lev[3] / lev[0] > 0.6,
+                "{sr}: lag 5 holds most of lag 1's strength, {lev:?}"
+            );
+        }
+        // the model's own, at the shipped defaults: its lag-1 response is the record's and its
+        // lag-5 is half of it — item 12's disclosed miss, and the reason both dials ship at 0.
+        // The statistic needs ensemble: a median over paths, it reads -0.060 on eight paths
+        // against -0.042 on two hundred, converging by about forty.
+        let st = measure(&sim_paths(&default_world(), 40, 100, DEFAULT_SEED), 100);
+        assert!(
+            st.lev1 < -0.05,
+            "the model's lag-1 response is the record's: {}",
+            st.lev1
+        );
+        assert!(
+            st.lev5 / st.lev1 < 0.6,
+            "the disclosed miss: lag 5 is {} against lag 1's {}",
+            st.lev5,
+            st.lev1
+        );
+    }
+
+    #[test]
+    fn both_vol_response_dials_are_off_everywhere_and_zero_is_bit_identical() {
+        let d = default_world();
+        assert!(d.noise_asym == 0.0 && d.lev_persist == 0.0);
+        for (v, w) in releases() {
+            assert!(w.noise_asym == 0.0 && w.lev_persist == 0.0, "release {v}");
+        }
+        for (n, w, _) in recipes() {
+            assert!(w.noise_asym == 0.0 && w.lev_persist == 0.0, "recipe {n}");
+        }
+        // the persistent kick at 0 IS the shipped kick: its EWMA reduces to the signal itself
+        let a = simulate(&d, 3, DEFAULT_SEED);
+        let mut z = d;
+        z.lev_persist = 0.0;
+        z.noise_asym = 0.0;
+        let b = simulate(&z, 3, DEFAULT_SEED);
+        assert!(a.price == b.price);
+        // and both move the profile the way their comments say
+        let mut on_w = d;
+        on_w.noise_asym = 0.06;
+        let on = measure(&sim_paths(&on_w, 40, 100, DEFAULT_SEED), 100);
+        let off = measure(&sim_paths(&d, 40, 100, DEFAULT_SEED), 100);
+        assert!(
+            on.lev5 < off.lev5,
+            "the asymmetric noise vol must deepen the lag-5 response: {} -> {}",
+            off.lev5,
+            on.lev5
+        );
     }
 
     #[test]

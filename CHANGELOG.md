@@ -43,6 +43,34 @@
   outgoing world reproduces the previous literals); the dial-sensitivity table and the
   worlds document's measured numbers regenerated; the 0.24.0 recipes carry the cycle (below).
 
+**The vol response to a fall, measured and reported**
+
+- Every report now prints the |r| autocorrelation at lags 5 and 60 beside the graded 1 and 20,
+  and a new line: the leverage-effect profile corr(r_t, |r_{t+k}|) at k = 1, 5 and 20 — how much
+  of the next sessions' volatility a decline predicts. Both are in the sidecar's readings and in
+  `amplifier-2026-09-07.tsv` for the CRSP century, SPY, QQQ and NDX.
+- What they say: the record's volatility after a decline BUILDS for two to five sessions and
+  stays elevated for about twenty (its |r| autocorrelation humps at lags 2–5, its leverage-effect
+  profile still reads −0.079 at lag 5), where the model's fires on the next session and fades
+  (−0.090 at lag 1, the record's, and −0.042 at lag 5, half of it). Every channel that makes
+  volatility here responds on the session after the shock, so the profiles peak at lag 1 by
+  construction. A 5–60 session volatility forecast read off a path decays about twice too fast;
+  ranks and thresholds on the level are unaffected. REPORTED, not graded: the `equity d20`
+  precedent for a statistic the model cannot currently reach.
+- `-noiseasym T` and `-levpersist P` (both default 0, bit-identical) are the two mechanisms that
+  move it, shipped off because each closes part of the gap and opens another. `-noiseasym`
+  multiplies the diffusive noise by exp(g − Var g), g a cascade of the session's own diffusive
+  DRAW — a unit normal, the one input the price cannot inflate — through a fast attack into a
+  17-session decay, so the response peaks at lag 3–5: at 0.05 with the kick off it puts the
+  lag-5 response on −0.053 at kurtosis 27.8, but the downside volatility excess falls to 1.5
+  against 3.06; at 0.06 with the kick on it reaches −0.067 at kurtosis 45. `-levpersist` spreads
+  the existing kick through weights that sum to 1: at 0.95 the hump closes and lag-1 clustering
+  lands on the record's 0.298, but preserving the integral divides the per-lag amplitude and the
+  lag-1 leverage correlation falls to −0.04 against a −0.093 anchor. The record's response is a
+  plateau, not a spread integral. Closing it needs the model's tail to come from persistent
+  volatility rather than from the spiral's spikes, a change to how kurtosis is sourced rather
+  than a dial.
+
 **The amplifier's gain scale, and the record's clustering profile**
 
 - `-stressscale E` (default 0, bit-identical): the liquidity spiral's excess gain multiplied by
