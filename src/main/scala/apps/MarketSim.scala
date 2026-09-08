@@ -183,7 +183,7 @@ object MarketSim:
   // consumer's loader can route it through the table its FRED name would get.  A panel-off
   // schema-12 file is byte-identical to its schema-11 counterpart except the schema number and
   // the new zero world field.
-  val EmitSchema: Int = 12
+  val EmitSchema: Int = 13
 
   val EmitSidecarKeys: Vector[String] =
     Vector("generator", "version", "schema", "file", "columns", "header", "path", "world",
@@ -1116,8 +1116,8 @@ object MarketSim:
     * 4.4, `jumpVar` 0: its jump share was 0.02, and at its deeper dial the cycle's tails need the
     * lower base gain to hold kurtosis on four seeds; its `fundVol` was 0.06 already).  Verified
     * at 200x100 on four seeds: the conditions index concentrates a 20% peak within a quarter
-    * 1.61-1.69x (S&P) / 1.55-1.57x (Nasdaq) into its top decile, builds to rank 0.90-0.92 /
-    * 0.87-0.88 through the quarter before the peak, and realism, mechanism and fidelity PASS on
+    * 1.61-1.69x (S&P) / 1.47-1.50x (Nasdaq, six seeds) into its top decile, builds to rank 0.90-0.92 /
+    * 0.83-0.85 through the quarter before the peak, and realism, mechanism and fidelity PASS on
     * every seed. */
   val MacroRecipes: Vector[(String, World, String)] =
     def base(name: String): World =
@@ -1129,15 +1129,16 @@ object MarketSim:
     // THE AMPLIFIER's gain scale (item 11) on the Nasdaq worlds: at `stressScale` 0.5 the
     // spiral's absolute size is 0.71 of the reference world's, which takes daily kurtosis 24 ->
     // 16 (record 9.6 at its own horizon) and lag-1 clustering 0.38 -> 0.31 (record 0.29); the
-    // volatility it no longer supplies comes back through `depth` 10 -> 8.7 (the band's floor
-    // 23.5%), the bond's rally through `refuge` 0.115 -> 0.15, the hazard through `levGain` 8.
+    // volatility it no longer supplies comes back through `depth` 10 -> 8.4 (24.1-24.5% on six
+    // seeds against the band's 23.5% floor: 8.7 sat on the floor and failed it on a consumer's
+    // seed), the bond's rally through `refuge` 0.115 -> 0.15, the hazard through `levGain` 8.
     // The crash count does not move at the band (35 -> 37/century against 25.6: diffusion alone
     // at this volatility crosses 15% thirty times a century) and lag-20 clustering gives 0.22 ->
     // 0.18 (record 0.25) -- both disclosed.
     def nq(w: World): World =
       w.copy(stress = 4.4, jumpVar = 0.0, jumpSkew = d.jumpSkew, leverage = d.leverage,
              volPersist = d.volPersist, levGain = 8.0, macroPanel = 1,
-             stressScale = 0.5, depth = 8.7, refuge = 0.15)
+             stressScale = 0.5, depth = 8.4, refuge = 0.15)
     Vector(("0.24.0-macro", Defaults.copy(macroPanel = 1), "sp500"),
            ("0.24.0-nasdaq", nq(base("0.23.1-nasdaq")), "nasdaq"),
            ("0.24.0-basket", sp(base("0.23.1-basket")), "sp500"),
@@ -1803,21 +1804,25 @@ object MarketSim:
                                acc: Array[Double],     // the policy accommodation stock
                                wTrend: Array[Double],  // the trend crowd's capital share ENTERING the session
                                lev: Array[Double],     // the leverage ratio, read before the session's step
+                               borrow: Array[Double],  // the borrowing stock itself, the credit cycle's level
                                rate: Array[Double],    // the policy rate, decimal
                                infl: Array[Double])    // inflation pressure, decimal
 
-  /** The four emitted counterparts, one value per session, in the counterpart's units. */
+  /** The six emitted counterparts, one value per session, in the counterpart's units. */
   final case class MacroPanel(spread: Array[Double], slope: Array[Double], cond: Array[Double],
-                              ivol: Array[Double],
+                              ivol: Array[Double], yield10: Array[Double], credit: Array[Double],
                               sibling: Boolean):  // a sibling path's panel (`-macronull`),
                                                   // decoupled from this path's price
     def drop(k: Int): MacroPanel =
-      MacroPanel(spread.drop(k), slope.drop(k), cond.drop(k), ivol.drop(k), sibling)
+      MacroPanel(spread.drop(k), slope.drop(k), cond.drop(k), ivol.drop(k), yield10.drop(k),
+                 credit.drop(k), sibling)
     def member(j: Int): Array[Double] = j match
       case 0 => spread
       case 1 => slope
       case 2 => cond
-      case _ => ivol
+      case 3 => ivol
+      case 4 => yield10
+      case _ => credit
 
   /** The panel's FIXED maps.  No scale dials: every consumer vote is a percentile rank against
     * trailing history or a sign, so a column's scale is invisible to it, and each map is a
@@ -1875,9 +1880,14 @@ object MarketSim:
                                                     // still -- 0.35 read the VIX's persistence
                                                     // at 0.69, on the band's floor
     val NullSeed     = 0x51b11a60L                  // the sibling path's seed offset (`-macronull`)
-    val Columns      = Vector("macroSpread", "macroSlope", "macroCond", "macroIvol")
-    val Counterparts = Vector("BAA10Y", "T10Y2Y", "NFCILEVERAGE", "VIXCLS")
-    val Cadence      = Vector("daily", "daily", "weekly", "daily")
+    val Columns      = Vector("macroSpread", "macroSlope", "macroCond", "macroIvol", "macroYield10", "macroCredit")
+    val Counterparts = Vector("BAA10Y", "T10Y2Y", "NFCILEVERAGE", "VIXCLS", "DGS10", "TOTBKCR/GDP")
+    val Cadence      = Vector("daily", "daily", "weekly", "daily", "daily", "weekly")
+    // THE CREDIT-TO-OUTPUT counterpart is the borrowing stock itself, in percent: the stock is
+    // already the model's credit relative to the economy's scale (a stationary cycle about 0.75,
+    // no nominal growth in it), which is how a consumer's credit-expansion rank reads bank credit
+    // over GDP.  Draw-free, like the 10-year yield: both are states the loop already carries.
+    val CreditScale  = 100.0
 
   /** THE MACRO PANEL, derived from the finished loop's recorded state.  Each member is a fixed
     * map of states the loop already carries plus its own persistent measurement component, so the
@@ -1911,6 +1921,10 @@ object MarketSim:
       val dR = phi(w.rateSpeed, MacroK.T10) - phi(w.rateSpeed, MacroK.T2)
       val dA = phi(w.unwind, MacroK.T10) - phi(w.unwind, MacroK.T2)
       val dI = phi(1.0 / MacroK.RegimeYears, MacroK.T10) - phi(1.0 / MacroK.RegimeYears, MacroK.T2)
+      // the 10-year yield's own factors: the level the slope is a difference of
+      val pR10 = phi(w.rateSpeed, MacroK.T10)
+      val pA10 = phi(w.unwind, MacroK.T10)
+      val pI10 = phi(1.0 / MacroK.RegimeYears, MacroK.T10)
       // annualized %, at vol state 1: the diffusive sd as the price receives it (news damp, the
       // jump branch's mixing), RE-LEVELLED onto the world's realized volatility by `k` -- the bar
       // channels' level, so the read premium is the record's in every world, not only the one the
@@ -1922,6 +1936,7 @@ object MarketSim:
                    SigmaN * jvMult * (12.0 / w.depth) * k * MacroK.VrpMult
       val spread = new Array[Double](n); val slope = new Array[Double](n)
       val cond   = new Array[Double](n); val ivol  = new Array[Double](n)
+      val yield10 = new Array[Double](n); val credit = new Array[Double](n)
       var eS = 0.0; var eC = 0.0; var eV = 0.0; var slow = 0.0
       var i = 0
       while i < n do
@@ -1933,6 +1948,13 @@ object MarketSim:
                                                  MacroK.SpreadSlow * slow + MacroK.SpreadBond * m.bStress(i) + eS)
         val target = w.rateMean + m.infl(i) - m.acc(i)
         slope(i) = 100.0 * (m.infl(i) * dI - m.acc(i) * dA + (m.rate(i) - target) * dR + MacroK.TermPremium)
+        // THE 10-YEAR YIELD (DGS10-like, pp): the OU-expected average of the short rate over ten
+        // years -- the neutral rate, the regime's inflation term, the accommodation term and the
+        // rate's own gap decaying at their speeds -- plus the term premium.  The slope above is
+        // this less the 2-year's, so the level cannot contradict it.  No noise: an expectation.
+        yield10(i) = 100.0 * (w.rateMean + m.infl(i) * pI10 - m.acc(i) * pA10 + (m.rate(i) - target) * pR10 + MacroK.TermPremium)
+        // THE CREDIT-TO-OUTPUT RATIO (TOTBKCR/GDP-like, percent): the borrowing stock
+        credit(i) = MacroK.CreditScale * m.borrow(i)
         // the leverage ratio -- the state the record's index measures and, through `levGain`,
         // the state the model's big declines follow -- over its mean, plus the crowd's share
         cond(i) = MacroK.CondBase + MacroK.CondLev * (m.lev(i) - MacroK.LevMean) +
@@ -1943,7 +1965,7 @@ object MarketSim:
         ivol(i) = math.max(MacroK.IvolFloor,
                            kIvol * m.volState(i) * (1.0 + MacroK.IvolAmpShare * (m.amp(i) - 1.0)) * (1.0 + eV))
         i += 1
-      Some(MacroPanel(spread, slope, cond, ivol, sibling = w.macroNull > 0))
+      Some(MacroPanel(spread, slope, cond, ivol, yield10, credit, sibling = w.macroNull > 0))
 
   /** THE DIVIDEND STREAM, derived from the finished path: the session yield `divYield` x
     * (fundamental/price) / kDiv in %/yr -- kDiv the world's mean fundamental/price from
@@ -2148,6 +2170,7 @@ object MarketSim:
     val mcAcc    = if mcOn then new Array[Double](tot) else Array.emptyDoubleArray
     val mcWTrend = if mcOn then new Array[Double](tot) else Array.emptyDoubleArray
     val mcLev    = if mcOn then new Array[Double](tot) else Array.emptyDoubleArray
+    val mcBorrow = if mcOn then new Array[Double](tot) else Array.emptyDoubleArray
     val mcRate   = if mcOn then new Array[Double](tot) else Array.emptyDoubleArray
     val mcInfl   = if mcOn then new Array[Double](tot) else Array.emptyDoubleArray
     var crowdFlowSum = 0.0
@@ -2459,6 +2482,7 @@ object MarketSim:
         mcAcc(i)    = acc
         mcWTrend(i) = wTrend
         mcLev(i)    = lev
+        mcBorrow(i) = borrow
         mcRate(i)   = rate
         mcInfl(i)   = inflPress
 
@@ -2502,7 +2526,7 @@ object MarketSim:
          Array.emptyDoubleArray, Array.emptyDoubleArray, Array.emptyDoubleArray,
          Array.emptyDoubleArray)
     Priced(path, ChannelInputs(chPx, chD, chState, chSv, chJ, chVs),
-           MacroInputs(mcStress, mcBStr, mcVs, mcAmp, mcAcc, mcWTrend, mcLev, mcRate, mcInfl))
+           MacroInputs(mcStress, mcBStr, mcVs, mcAmp, mcAcc, mcWTrend, mcLev, mcBorrow, mcRate, mcInfl))
 
   // ---- stylised-fact measurements ------------------------------------------------------------
   def dailyReturns(px: Array[Double]): Array[Double] =
@@ -2880,8 +2904,24 @@ object MarketSim:
     * share and mean spell length (observations, pooled), the implied-vol member's variance risk
     * premium (mean log ivol - log forward-21-session realized vol) and their R^2, and the pooled
     * 20% episode count the warning shares are medians of. */
+  /** A graded statistic's PER-PATH spread across the ensemble: p5 / p50 / p95 of the per-path
+    * readings (`pctile`, the twins' upper-middle convention).  The gate grades pooled statistics
+    * and a consumer runs one path; this is the width of the null that path sits in, so a report
+    * can state it without re-deriving it. */
+  final case class Spread(p5: Double, p50: Double, p95: Double)
+  def spreadOf(xs: Vector[Double]): Spread =
+    val f = xs.filter(x => !x.isNaN)
+    if f.isEmpty then Spread(Double.NaN, Double.NaN, Double.NaN)
+    else Spread(pctile(f, 0.05), pctile(f, 0.5), pctile(f, 0.95))
+
   final case class MacroStats(members: Vector[MacroMember], invShare: Double, invDur: Double,
                               vrp: Double, r2rv: Double, episodes: Int,
+                              // per-path spreads: each member's forward-return R^2, build-up and
+                              // 20% firing lag; the world's slope inversion share, vol premium,
+                              // its R^2 against forward realized vol, and the quarter hazard
+                              memberSpread: Vector[(Spread, Spread, Spread)],
+                              invShareSpread: Spread, vrpSpread: Spread, r2rvSpread: Spread,
+                              hazardSpread: Spread,
                               sibling: Boolean,  // the panel is a sibling path's (`-macronull`):
                                                  // the readings are the no-edge level and the
                                                  // rows do not grade them
@@ -3073,7 +3113,7 @@ object MarketSim:
         val lRv   = rv.map(math.log)
         val diffs = Array.tabulate(lp.length)(i => if lRv(i).isFinite then lIv(i) - lRv(i) else Double.NaN)
         val dOk   = diffs.filter(_.isFinite)
-        (Vector(rankMember(m.spread), slopeM, condM, rankMember(m.ivol)),
+        (Vector(rankMember(m.spread), slopeM, condM, rankMember(m.ivol), rankMember(m.yield10), rankMember(m.credit)),
          inv.count(identity).toDouble / inv.length, runLengths(inv),
          if dOk.isEmpty then Double.NaN else dOk.sum / dOk.length,
          r2Of(lIv, lRv), hz)
@@ -3086,7 +3126,7 @@ object MarketSim:
         val pAll = if nAll > 0 then hitAll.toDouble / nAll else Double.NaN
         val pTop = if nTop > 0 then hitTop.toDouble / nTop else Double.NaN
         (if pAll > 0.0 then pTop / pAll else Double.NaN, pAll)
-      val members = (0 to 3).toVector.map { j =>
+      val members = (0 to 5).toVector.map { j =>
         val ws     = per.flatMap(_._1(j)._4)
         val ws10   = per.flatMap(_._1(j)._5)
         val lags   = ws.flatMap(_.lag).map(_.toDouble)
@@ -3100,10 +3140,25 @@ object MarketSim:
                     medOf(per.map(_._1(j)._6._1)), medOf(per.map(_._1(j)._6._2)), medOf(per.map(_._1(j)._6._3)))
       }
       val spells = per.flatMap(_._3)
+      // the per-path spreads: one reading per path -- its own median over its episodes where the
+      // statistic is per episode, its own hazard ratio from its own counts (NaN where a path has
+      // no top-decile session or no episode ahead)
+      val memberSpread = (0 to 5).toVector.map { j =>
+        (spreadOf(per.map(_._1(j)._3)),
+         spreadOf(per.map(pp => pctile(pp._1(j)._7, 0.5))),
+         spreadOf(per.map(pp => pctile(pp._1(j)._4.flatMap(_.lag).map(_.toDouble), 0.5))))
+      }
+      val hazardSpread = spreadOf(per.map { pp =>
+        val (hitTop, nTop, hitAll, nAll) = pp._6(0)
+        if nTop > 0 && nAll > 0 && hitAll > 0 then (hitTop.toDouble / nTop) / (hitAll.toDouble / nAll)
+        else Double.NaN
+      })
       Some(MacroStats(members, medOf(per.map(_._2)),
                       if spells.isEmpty then Double.NaN else spells.sum.toDouble / spells.size,
                       medOf(per.map(_._4)), medOf(per.map(_._5)),
                       per.map(_._1(0)._4.size).sum,
+                      memberSpread, spreadOf(per.map(_._2)), spreadOf(per.map(_._4)),
+                      spreadOf(per.map(_._5)), hazardSpread,
                       sims.head.macroPanel.get.sibling,
                       hazardRatio(0)._1, hazardRatio(1)._1, hazardRatio(2)._1, hazardRatio(0)._2))
 
@@ -3671,7 +3726,10 @@ object MarketSim:
       // a decoupled panel grades nothing: its readings are the no-edge level, by construction
       case Some(ms) if ms.sibling => Vector.empty
       case Some(ms) =>
-        val r2Max = ms.members.map(_.r2fwd60).max
+        // the oracle bound is the noise-sizing guard for the four measured members; the two
+        // draw-free levels (10-year, credit ratio) are reported -- the record's own reach 0.038
+        // on the QQQ window, above the bound
+        val r2Max = ms.members.take(4).map(_.r2fwd60).max
         Vector(("macro cond builds before the peak: rank above a decoupled series' 0.49",
                 ms.members(2).prePeak > MacroBands.CondPrePeakNull, Mechanism),
                (f"macro cond concentrates the big peaks: a 20%% peak within a quarter above ${MacroBands.HazardMin}%.1fx as likely",
@@ -4019,25 +4077,25 @@ object MarketSim:
     clusterWindow = "QQQ 1999-2026", clusterYears = 27,
     tailWindow = "QQQ 1999-2026", tailYears = 27,
     vol = 26.90,         volSd = 0.10,
-    retVol = 0.38,       retVolSd = 0.52,
-    kurt = 9.55,         kurtSd = 1.82,
+    retVol = 0.38,       retVolSd = 0.50,
+    kurt = 9.55,         kurtSd = 1.78,
     ac1 = 0.293,         ac1Sd = 0.25,
     ac20 = 0.249,        ac20Sd = 0.19,
-    crashes = 25.6,      crashesSd = 0.47,
+    crashes = 25.6,      crashesSd = 0.48,
     medDepth = -22.8,    medDepthSd = 0.40,
     worstDepth = -83.0,  worstDepthSd = 0.21,
     volBand = (23.5, 30.3),
     retVolBand = (0.27, 0.47),
     // QQQ wfull row of asymmetry-2026-08-31.tsv; the tail hedge is QQQ/TLT.  Spreads measured
     // at the recipe world (2026-09-01), like every spread in this set.
-    semiExcess = 1.13, semiExcessSd = 3.82,
-    levCorr = -0.1073, levCorrSd = 0.48,
+    semiExcess = 1.13, semiExcessSd = 3.71,
+    levCorr = -0.1073, levCorrSd = 0.47,
     tailHedge = -0.236, tailHedgeSd = 0.35,
     // `-noise -anchors nasdaq` at the 0.23.0-nasdaq recipe, 200 paths, 2026-09-02.  d20's spread
     // is a fraction of the S&P world's (0.30 against 2.38): at Nasdaq volatility the deep rung is
     // pinned where the S&P default leaves it unreadable, so the row carries real weight here.
-    valDispSd = 0.51, d5Sd = 0.12, d10Sd = 0.21, d20Sd = 0.34,
-    bondVolSd = 0.52, bondGrowthSd = 1.08, bondInflSd = 1.66, bondDepthSd = 0.36,
+    valDispSd = 0.51, d5Sd = 0.12, d10Sd = 0.21, d20Sd = 0.33,
+    bondVolSd = 0.52, bondGrowthSd = 1.07, bondInflSd = 1.66, bondDepthSd = 0.36,
     ddRefs = DdRefsNasdaq,
     divYield = 0.78, divYieldBand = (0.3, 1.5),
     basketCorr = 0.837, basketBeta = 1.365, basketVolRatio = 1.630, basketNameVolBand = (1.5, 2.8))
@@ -5954,7 +6012,7 @@ object MarketSim:
             p.logVolume.forall(_.isFinite) && p.divYield.forall(_.isFinite) &&
             p.traded.forall(_.isFinite) && p.logOpen.forall(_.isFinite) &&
             p.names.forall(_.forall(_.isFinite)) &&
-            p.macroPanel.forall(m => (0 to 3).forall(j => m.member(j).forall(_.isFinite))),
+            p.macroPanel.forall(m => (0 to 5).forall(j => m.member(j).forall(_.isFinite))),
             s"path $k holds a non-finite value; refusing $file")
     val dates = sessionDates(p.price.length, startYmd)
     writeEmitTsv(file, p, dates)
@@ -5998,7 +6056,7 @@ object MarketSim:
                else s5 + "\t" + ef(basketAgg(i)) + p.names.map(lp => "\t" + ef(lp(i))).mkString
       p.macroPanel match
         case None    => s6
-        case Some(m) => s"$s6\t${ef(m.spread(i))}\t${ef(m.slope(i))}\t${ef(m.cond(i))}\t${ef(m.ivol(i))}"
+        case Some(m) => s"$s6\t${ef(m.spread(i))}\t${ef(m.slope(i))}\t${ef(m.cond(i))}\t${ef(m.ivol(i))}\t${ef(m.yield10(i))}\t${ef(m.credit(i))}"
     }
     file.asPath.writeLines(rows)
 
@@ -6082,17 +6140,23 @@ object MarketSim:
     }
     // The macro panel's readings, each member naming its counterpart and natural cadence -- the
     // routing a consumer's point-in-time loader needs, in the data rather than in prose.
+    // A per-path spread beside each pooled statistic: `[p5, p50, p95]` of the per-path readings,
+    // the width of the null a single path sits in.
+    def sp(x: Spread) = s"[${num(x.p5)}, ${num(x.p50)}, ${num(x.p95)}]"
     val mac = st.macroPanel.toVector.map { ms =>
-      val members = (0 to 3).map { j =>
-        val m = ms.members(j)
+      val members = ms.members.indices.map { j =>
+        val m = ms.members(j); val (r2S, preS, lagS) = ms.memberSpread(j)
         s"""      { "column": ${jsonStr(MacroK.Columns(j))}, "counterpart": ${jsonStr(MacroK.Counterparts(j))}, """ +
         s""""cadence": ${jsonStr(MacroK.Cadence(j))}, "ac1": ${num(m.ac1)}, "acK": ${num(m.acK)}, """ +
         s""""r2fwd60": ${num(m.r2fwd60)}, "warn20": ${num(m.warn)}, "fired": ${num(m.warnFired)}, "lag20": ${num(m.lag)}, """ +
-        s""""lag10": ${num(m.lag10)}, "fired10": ${num(m.fired10)}, "prePeak": ${num(m.prePeak)} }"""
+        s""""lag10": ${num(m.lag10)}, "fired10": ${num(m.fired10)}, "prePeak": ${num(m.prePeak)},\n""" +
+        s"""        "perPath": { "r2fwd60": ${sp(r2S)}, "prePeak": ${sp(preS)}, "lag20": ${sp(lagS)} } }"""
       }
       s"""    "macro": { "null": ${ms.sibling}, "episodes": ${ms.episodes}, "invShare": ${num(ms.invShare)}, "invDur": ${num(ms.invDur)}, """ +
       s""""vrp": ${num(ms.vrp)}, "r2rv": ${num(ms.r2rv)}, "hazard20q": ${num(ms.hazard20q)}, "hazard20y": ${num(ms.hazard20y)}, """ +
-      s""""hazard10q": ${num(ms.hazard10q)}, "p20q": ${num(ms.p20q)},\n      "members": [\n""" +
+      s""""hazard10q": ${num(ms.hazard10q)}, "p20q": ${num(ms.p20q)},\n""" +
+      s"""      "perPath": { "invShare": ${sp(ms.invShareSpread)}, "vrp": ${sp(ms.vrpSpread)}, "r2rv": ${sp(ms.r2rvSpread)}, "hazard20q": ${sp(ms.hazardSpread)} },\n""" +
+      s"""      "members": [\n""" +
       members.mkString(",\n") + "\n      ] }"
     }
     val blocks = level ++ sat ++ bars ++ div ++ open ++ bsk ++ mac
@@ -6838,10 +6902,11 @@ object MarketSim:
         println("    NULL PANEL: the columns are a sibling path's, decoupled from this price -- these readings are the")
         println("    no-edge level, and the macro rows do not grade them")
       println(f"    ${"member"}%-12s ${"ac1"}%7s ${"acK"}%7s ${"r2fwd60"}%8s ${"warn20"}%7s ${"fired"}%6s ${"lag"}%5s ${"lag10"}%6s ${"fired10"}%8s ${"pre"}%5s ${"p10"}%8s ${"p50"}%8s ${"p90"}%8s")
-      for j <- 0 to 3 do
+      for j <- ms.members.indices do
         val m = ms.members(j)
         println(f"    ${MacroK.Columns(j)}%-12s ${m.ac1}%7.4f ${m.acK}%7.4f ${m.r2fwd60}%8.4f ${m.warn}%7.3f ${m.warnFired}%6.2f ${m.lag}%5.0f ${m.lag10}%6.0f ${m.fired10}%8.2f ${m.prePeak}%5.2f ${m.lvl10}%8.2f ${m.lvl50}%8.2f ${m.lvl90}%8.2f")
       println(f"    leverage hazard        20%% peak within a quarter x${ms.hazard20q}%.2f (unconditional ${ms.p20q}%.3f)   within a year x${ms.hazard20y}%.2f   10%% within a quarter x${ms.hazard10q}%.2f")
+      println(f"    per path (p5 / p50 / p95)  hazard x${ms.hazardSpread.p5}%.2f / ${ms.hazardSpread.p50}%.2f / ${ms.hazardSpread.p95}%.2f   slope inverted ${ms.invShareSpread.p5}%.2f / ${ms.invShareSpread.p50}%.2f / ${ms.invShareSpread.p95}%.2f   cond r2fwd60 ${ms.memberSpread(2)._1.p5}%.3f / ${ms.memberSpread(2)._1.p50}%.3f / ${ms.memberSpread(2)._1.p95}%.3f   cond build-up ${ms.memberSpread(2)._2.p5}%.2f / ${ms.memberSpread(2)._2.p50}%.2f / ${ms.memberSpread(2)._2.p95}%.2f")
       println(f"    slope inverted         share ${ms.invShare}%.3f   mean spell ${ms.invDur}%.1f sessions")
       println(f"    ivol premium           vrp ${ms.vrp}%.3f (log)   r2 vs forward realized ${ms.r2rv}%.3f")
     }

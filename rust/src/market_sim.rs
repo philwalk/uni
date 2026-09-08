@@ -149,7 +149,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 // consumer's loader can route it through the table its FRED name would get. A panel-off
 // schema-12 file is byte-identical to its schema-11 counterpart except the schema number and the
 // new zero world field.
-const EMIT_SCHEMA: u32 = 12;
+const EMIT_SCHEMA: u32 = 13;
 
 /// Frozen structural constants of the volume channel — see the `vol_idio` field. Measured
 /// from the SPY/QQQ volume-on-range regression (`bars-2026-09-01.tsv`, whose rows the
@@ -665,8 +665,8 @@ pub fn recipes() -> Vec<(&'static str, World, &'static str)> {
     // (`stress` 4.4, `jump_var` 0: its jump share was 0.02, and at its deeper dial the cycle's
     // tails need the lower base gain to hold kurtosis on four seeds; its `fund_vol` was 0.06
     // already). Verified at 200x100 on four seeds: the conditions index concentrates a 20% peak
-    // within a quarter 1.61-1.69x (S&P) / 1.55-1.57x (Nasdaq) into its top decile, builds to
-    // rank 0.90-0.92 / 0.87-0.88 through the quarter before the peak, and realism, mechanism and
+    // within a quarter 1.61-1.69x (S&P) / 1.47-1.50x (Nasdaq, six seeds) into its top decile, builds to
+    // rank 0.90-0.92 / 0.83-0.85 through the quarter before the peak, and realism, mechanism and
     // fidelity PASS on every seed.
     let d = default_world();
     let sp = |mut w: World| {
@@ -683,8 +683,9 @@ pub fn recipes() -> Vec<(&'static str, World, &'static str)> {
     // THE AMPLIFIER's gain scale (item 11) on the Nasdaq worlds: at `stress_scale` 0.5 the
     // spiral's absolute size is 0.71 of the reference world's, which takes daily kurtosis 24 ->
     // 16 (record 9.6 at its own horizon) and lag-1 clustering 0.38 -> 0.31 (record 0.29); the
-    // volatility it no longer supplies comes back through `depth` 10 -> 8.7 (the band's floor
-    // 23.5%), the bond's rally through `refuge` 0.115 -> 0.15, the hazard through `lev_gain` 8.
+    // volatility it no longer supplies comes back through `depth` 10 -> 8.4 (24.1-24.5% on six
+    // seeds against the band's 23.5% floor: 8.7 sat on the floor and failed it on a consumer's
+    // seed), the bond's rally through `refuge` 0.115 -> 0.15, the hazard through `lev_gain` 8.
     // The crash count does not move at the band (35 -> 37/century against 25.6: diffusion alone
     // at this volatility crosses 15% thirty times a century) and lag-20 clustering gives 0.22 ->
     // 0.18 (record 0.25) — both disclosed.
@@ -697,7 +698,7 @@ pub fn recipes() -> Vec<(&'static str, World, &'static str)> {
         w.lev_gain = 8.0;
         w.macro_panel = 1;
         w.stress_scale = 0.5;
-        w.depth = 8.7;
+        w.depth = 8.4;
         w.refuge = 0.15;
         w
     };
@@ -2312,6 +2313,8 @@ struct MacroInputs {
     w_trend: Vec<f64>,
     /// the leverage ratio, read before the session's step
     lev: Vec<f64>,
+    /// the borrowing stock itself, the credit cycle's level
+    borrow: Vec<f64>,
     /// the policy rate, decimal
     rate: Vec<f64>,
     /// inflation pressure, decimal
@@ -2325,6 +2328,8 @@ pub struct MacroPanel {
     pub slope: Vec<f64>,
     pub cond: Vec<f64>,
     pub ivol: Vec<f64>,
+    pub yield10: Vec<f64>,
+    pub credit: Vec<f64>,
     /// a sibling path's panel (`-macronull`), decoupled from this path's price
     pub sibling: bool,
 }
@@ -2336,6 +2341,8 @@ impl MacroPanel {
             slope: self.slope[k..].to_vec(),
             cond: self.cond[k..].to_vec(),
             ivol: self.ivol[k..].to_vec(),
+            yield10: self.yield10[k..].to_vec(),
+            credit: self.credit[k..].to_vec(),
             sibling: self.sibling,
         }
     }
@@ -2345,7 +2352,9 @@ impl MacroPanel {
             0 => &self.spread,
             1 => &self.slope,
             2 => &self.cond,
-            _ => &self.ivol,
+            3 => &self.ivol,
+            4 => &self.yield10,
+            _ => &self.credit,
         }
     }
 }
@@ -2422,9 +2431,29 @@ mod macro_k {
     pub(super) const IVOL_AMP_SHARE: f64 = 0.15;
     /// the sibling path's seed offset (`-macronull`)
     pub(super) const NULL_SEED: u64 = 0x51b1_1a60;
-    pub(super) const COLUMNS: [&str; 4] = ["macroSpread", "macroSlope", "macroCond", "macroIvol"];
-    pub(super) const COUNTERPARTS: [&str; 4] = ["BAA10Y", "T10Y2Y", "NFCILEVERAGE", "VIXCLS"];
-    pub(super) const CADENCE: [&str; 4] = ["daily", "daily", "weekly", "daily"];
+    pub(super) const COLUMNS: [&str; 6] = [
+        "macroSpread",
+        "macroSlope",
+        "macroCond",
+        "macroIvol",
+        "macroYield10",
+        "macroCredit",
+    ];
+    pub(super) const COUNTERPARTS: [&str; 6] = [
+        "BAA10Y",
+        "T10Y2Y",
+        "NFCILEVERAGE",
+        "VIXCLS",
+        "DGS10",
+        "TOTBKCR/GDP",
+    ];
+    pub(super) const CADENCE: [&str; 6] = ["daily", "daily", "weekly", "daily", "daily", "weekly"];
+    /// THE CREDIT-TO-OUTPUT counterpart is the borrowing stock itself, in percent: the stock is
+    /// already the model's credit relative to the economy's scale (a stationary cycle about 0.75,
+    /// no nominal growth in it), which is how a consumer's credit-expansion rank reads bank
+    /// credit over GDP. Draw-free, like the 10-year yield: both are states the loop already
+    /// carries.
+    pub(super) const CREDIT_SCALE: f64 = 100.0;
 }
 
 /// THE MACRO PANEL's bands, US-wide so shared by both sets — `macro-2026-09-06.tsv`: the FIRING
@@ -2495,6 +2524,10 @@ fn derive_macro(w: &World, m: &MacroInputs, seed: u64, k: f64) -> Option<MacroPa
     let d_a = phi(w.unwind, macro_k::T10) - phi(w.unwind, macro_k::T2);
     let d_i = phi(1.0 / macro_k::REGIME_YEARS, macro_k::T10)
         - phi(1.0 / macro_k::REGIME_YEARS, macro_k::T2);
+    // the 10-year yield's own factors: the level the slope is a difference of
+    let p_r10 = phi(w.rate_speed, macro_k::T10);
+    let p_a10 = phi(w.unwind, macro_k::T10);
+    let p_i10 = phi(1.0 / macro_k::REGIME_YEARS, macro_k::T10);
     // annualized %, at vol state 1: the diffusive sd as the price receives it (news damp, the
     // jump branch's mixing), RE-LEVELLED onto the world's realized volatility by `k` — the bar
     // channels' level, so the read premium is the record's in every world, not only the one the
@@ -2518,6 +2551,8 @@ fn derive_macro(w: &World, m: &MacroInputs, seed: u64, k: f64) -> Option<MacroPa
     let mut slope = vec![0.0f64; n];
     let mut cond = vec![0.0f64; n];
     let mut ivol = vec![0.0f64; n];
+    let mut yield10 = vec![0.0f64; n];
+    let mut credit = vec![0.0f64; n];
     let mut e_s = 0.0f64;
     let mut e_c = 0.0f64;
     let mut e_v = 0.0f64;
@@ -2538,6 +2573,16 @@ fn derive_macro(w: &World, m: &MacroInputs, seed: u64, k: f64) -> Option<MacroPa
             * (m.infl[i] * d_i - m.acc[i] * d_a
                 + (m.rate[i] - target) * d_r
                 + macro_k::TERM_PREMIUM);
+        // THE 10-YEAR YIELD (DGS10-like, pp): the OU-expected average of the short rate over ten
+        // years — the neutral rate, the regime's inflation term, the accommodation term and the
+        // rate's own gap decaying at their speeds — plus the term premium. The slope above is
+        // this less the 2-year's, so the level cannot contradict it. No noise: an expectation.
+        yield10[i] = 100.0
+            * (w.rate_mean + m.infl[i] * p_i10 - m.acc[i] * p_a10
+                + (m.rate[i] - target) * p_r10
+                + macro_k::TERM_PREMIUM);
+        // THE CREDIT-TO-OUTPUT RATIO (TOTBKCR/GDP-like, percent): the borrowing stock
+        credit[i] = macro_k::CREDIT_SCALE * m.borrow[i];
         // the leverage ratio — the state the record's index measures and, through `lev_gain`,
         // the state the model's big declines follow — over its mean, plus the crowd's share
         cond[i] = macro_k::COND_BASE
@@ -2558,6 +2603,8 @@ fn derive_macro(w: &World, m: &MacroInputs, seed: u64, k: f64) -> Option<MacroPa
         slope,
         cond,
         ivol,
+        yield10,
+        credit,
         sibling: w.macro_null > 0,
     })
 }
@@ -2867,6 +2914,7 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
         acc: mc_vec(),
         w_trend: mc_vec(),
         lev: mc_vec(),
+        borrow: mc_vec(),
         rate: mc_vec(),
         infl: mc_vec(),
     };
@@ -3277,6 +3325,7 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
             mc.acc[i] = acc;
             mc.w_trend[i] = w_trend;
             mc.lev[i] = lev;
+            mc.borrow[i] = borrow;
             mc.rate[i] = rate;
             mc.infl[i] = infl_press;
         }
@@ -4261,9 +4310,44 @@ pub struct MacroMember {
 /// share and mean spell length (observations, pooled), the implied-vol member's variance risk
 /// premium (mean log ivol - log forward-21-session realized vol) and their R^2, and the pooled 20%
 /// episode count the warning shares are medians of.
+/// A graded statistic's PER-PATH spread across the ensemble: p5 / p50 / p95 of the per-path
+/// readings (`pctile`, the twins' upper-middle convention). The gate grades pooled statistics and
+/// a consumer runs one path; this is the width of the null that path sits in.
+#[derive(Clone, Copy, Debug)]
+pub struct Spread {
+    pub p5: f64,
+    pub p50: f64,
+    pub p95: f64,
+}
+
+fn spread_of(xs: &[f64]) -> Spread {
+    let f: Vec<f64> = xs.iter().copied().filter(|x| !x.is_nan()).collect();
+    if f.is_empty() {
+        Spread {
+            p5: f64::NAN,
+            p50: f64::NAN,
+            p95: f64::NAN,
+        }
+    } else {
+        Spread {
+            p5: pctile(&f, 0.05),
+            p50: pctile(&f, 0.5),
+            p95: pctile(&f, 0.95),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct MacroStats {
-    pub members: [MacroMember; 4],
+    pub members: [MacroMember; 6],
+    /// per-path spreads: each member's forward-return R^2, build-up and 20% firing lag
+    pub member_spread: [(Spread, Spread, Spread); 6],
+    /// the world's slope inversion share, vol premium, its R^2 against forward realized vol, and
+    /// the quarter hazard, per path
+    pub inv_share_spread: Spread,
+    pub vrp_spread: Spread,
+    pub r2rv_spread: Spread,
+    pub hazard_spread: Spread,
     /// the panel is a sibling path's (`-macronull`): the readings are the no-edge level and
     /// the rows do not grade them
     pub sibling: bool,
@@ -4481,7 +4565,7 @@ struct HazardCounts {
 }
 
 struct MacroPathRead {
-    members: [MemberRead; 4],
+    members: [MemberRead; 6],
     inv_share: f64,
     spells: Vec<usize>,
     vrp: f64,
@@ -4625,6 +4709,8 @@ fn macro_path_read(s: &Path) -> Option<MacroPathRead> {
             slope_m,
             cond_m,
             rank_member(&m.ivol),
+            rank_member(&m.yield10),
+            rank_member(&m.credit),
         ],
         inv_share: inv.iter().filter(|&&b| b).count() as f64 / inv.len() as f64,
         spells: run_lengths(&inv),
@@ -4677,7 +4763,7 @@ fn macro_stats(sims: &[Path]) -> Option<MacroStats> {
         let lags: Vec<f64> = ws.iter().filter_map(|w| w.lag.map(|l| l as f64)).collect();
         pctile(&lags, 0.5)
     };
-    let members: [MacroMember; 4] = std::array::from_fn(|j| {
+    let members: [MacroMember; 6] = std::array::from_fn(|j| {
         let ws: Vec<&Warning> = per.iter().flat_map(|p| p.members[j].3.iter()).collect();
         let ws10: Vec<&Warning> = per.iter().flat_map(|p| p.members[j].4.iter()).collect();
         let shares: Vec<f64> = ws.iter().map(|w| w.share).collect();
@@ -4705,8 +4791,14 @@ fn macro_stats(sims: &[Path]) -> Option<MacroStats> {
         }
     });
     let spells: Vec<usize> = per.iter().flat_map(|p| p.spells.iter().copied()).collect();
+    let (member_spread, hazard_spread) = macro_spreads(&per);
     Some(MacroStats {
         members,
+        member_spread,
+        inv_share_spread: spread_of(&per.iter().map(|p| p.inv_share).collect::<Vec<_>>()),
+        vrp_spread: spread_of(&per.iter().map(|p| p.vrp).collect::<Vec<_>>()),
+        r2rv_spread: spread_of(&per.iter().map(|p| p.r2rv).collect::<Vec<_>>()),
+        hazard_spread,
         inv_share: med(&per.iter().map(|p| p.inv_share).collect::<Vec<_>>()),
         inv_dur: if spells.is_empty() {
             f64::NAN
@@ -4725,6 +4817,41 @@ fn macro_stats(sims: &[Path]) -> Option<MacroStats> {
         hazard10q: hazard_ratio(2).0,
         p20q: hazard_ratio(0).1,
     })
+}
+
+/// The per-path spreads: one reading per path — its own median over its episodes where the
+/// statistic is per episode, its own hazard ratio from its own counts (NaN where a path has no
+/// top-decile session or no episode ahead).
+fn macro_spreads(per: &[MacroPathRead]) -> ([(Spread, Spread, Spread); 6], Spread) {
+    let member_spread: [(Spread, Spread, Spread); 6] = std::array::from_fn(|j| {
+        let r2: Vec<f64> = per.iter().map(|p| p.members[j].2).collect();
+        let pre: Vec<f64> = per.iter().map(|p| pctile(&p.members[j].6, 0.5)).collect();
+        let lag: Vec<f64> = per
+            .iter()
+            .map(|p| {
+                let l: Vec<f64> = p.members[j]
+                    .3
+                    .iter()
+                    .filter_map(|w| w.lag)
+                    .map(|x| x as f64)
+                    .collect();
+                pctile(&l, 0.5)
+            })
+            .collect();
+        (spread_of(&r2), spread_of(&pre), spread_of(&lag))
+    });
+    let hazard_per: Vec<f64> = per
+        .iter()
+        .map(|p| {
+            let c = p.hazards[0];
+            if c.n_top > 0 && c.n_all > 0 && c.hit_all > 0 {
+                (c.hit_top as f64 / c.n_top as f64) / (c.hit_all as f64 / c.n_all as f64)
+            } else {
+                f64::NAN
+            }
+        })
+        .collect();
+    (member_spread, spread_of(&hazard_per))
 }
 
 fn bar_stats(sims: &[Path]) -> Option<BarStats> {
@@ -5636,8 +5763,10 @@ pub fn gate_checks(a: Anchors, st: &WorldStats) -> Vec<(String, bool, GateClass)
     // MarketSimWorlds.md.
     // a decoupled panel grades nothing: its readings are the no-edge level, by construction
     if let Some(ms) = st.macro_panel.filter(|m| !m.sibling) {
-        let r2_max = ms
-            .members
+        // the oracle bound is the noise-sizing guard for the four measured members; the two
+        // draw-free levels (10-year, credit ratio) are reported — the record's own reach 0.038
+        // on the QQQ window, above the bound
+        let r2_max = ms.members[..4]
             .iter()
             .map(|m| m.r2fwd60)
             .fold(f64::NEG_INFINITY, f64::max);
@@ -6162,15 +6291,15 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     vol: 26.90,
     vol_sd: 0.10,
     ret_vol: 0.38,
-    ret_vol_sd: 0.52,
+    ret_vol_sd: 0.50,
     kurt: 9.55,
-    kurt_sd: 1.82,
+    kurt_sd: 1.78,
     ac1: 0.293,
     ac1_sd: 0.25,
     ac20: 0.249,
     ac20_sd: 0.19,
     crashes: 25.6,
-    crashes_sd: 0.47,
+    crashes_sd: 0.48,
     med_depth: -22.8,
     med_depth_sd: 0.40,
     worst_depth: -83.0,
@@ -6180,9 +6309,9 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     // QQQ wfull row of asymmetry-2026-08-31.tsv; the tail hedge is QQQ/TLT. Spreads measured
     // at the recipe world (2026-09-01), like every spread in this set.
     semi_excess: 1.13,
-    semi_excess_sd: 3.82,
+    semi_excess_sd: 3.71,
     lev_corr: -0.1073,
-    lev_corr_sd: 0.48,
+    lev_corr_sd: 0.47,
     tail_hedge: -0.236,
     tail_hedge_sd: 0.35,
     // `-noise -anchors nasdaq` at the 0.23.0-nasdaq recipe, 200 paths, 2026-09-02. d20's spread
@@ -6191,9 +6320,9 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     val_disp_sd: 0.51,
     d5_sd: 0.12,
     d10_sd: 0.21,
-    d20_sd: 0.34,
+    d20_sd: 0.33,
     bond_vol_sd: 0.52,
-    bond_growth_sd: 1.08,
+    bond_growth_sd: 1.07,
     bond_infl_sd: 1.66,
     bond_depth_sd: 0.36,
     dd_refs: &DD_REFS_NASDAQ,
@@ -10170,7 +10299,7 @@ pub fn write_emitted(
             && p.names.iter().all(|lp| lp.iter().all(|x| x.is_finite()))
             && p.macro_panel
                 .as_ref()
-                .is_none_or(|m| (0..4).all(|j| m.member(j).iter().all(|x| x.is_finite()))),
+                .is_none_or(|m| (0..6).all(|j| m.member(j).iter().all(|x| x.is_finite()))),
         "path {k} holds a non-finite value; refusing {file}"
     );
     let dates = session_dates(p.price.len(), start_ymd);
@@ -10269,6 +10398,8 @@ fn push_channel_cells(tsv: &mut String, p: &Path, i: usize, basket_agg: &[f64]) 
         cell(m.slope[i]);
         cell(m.cond[i]);
         cell(m.ivol[i]);
+        cell(m.yield10[i]);
+        cell(m.credit[i]);
     }
 }
 
@@ -10522,13 +10653,18 @@ fn macro_readings_block(ms: &MacroStats) -> String {
             ef(x)
         }
     };
-    let members: Vec<String> = (0..4)
+    // A per-path spread beside each pooled statistic: `[p5, p50, p95]` of the per-path readings,
+    // the width of the null a single path sits in.
+    let sp = |x: Spread| format!("[{}, {}, {}]", num(x.p5), num(x.p50), num(x.p95));
+    let members: Vec<String> = (0..6)
         .map(|j| {
             let m = &ms.members[j];
+            let (r2s, pres, lags) = ms.member_spread[j];
             format!(
                 "      {{ \"column\": {}, \"counterpart\": {}, \"cadence\": {}, \"ac1\": {}, \"acK\": {}, \
                  \"r2fwd60\": {}, \"warn20\": {}, \"fired\": {}, \"lag20\": {}, \"lag10\": {}, \
-                 \"fired10\": {}, \"prePeak\": {} }}",
+                 \"fired10\": {}, \"prePeak\": {},\n        \
+                 \"perPath\": {{ \"r2fwd60\": {}, \"prePeak\": {}, \"lag20\": {} }} }}",
                 json_str(macro_k::COLUMNS[j]),
                 json_str(macro_k::COUNTERPARTS[j]),
                 json_str(macro_k::CADENCE[j]),
@@ -10540,13 +10676,17 @@ fn macro_readings_block(ms: &MacroStats) -> String {
                 num(m.lag),
                 num(m.lag10),
                 num(m.fired10),
-                num(m.pre_peak)
+                num(m.pre_peak),
+                sp(r2s),
+                sp(pres),
+                sp(lags)
             )
         })
         .collect();
     format!(
         "    \"macro\": {{ \"null\": {}, \"episodes\": {}, \"invShare\": {}, \"invDur\": {}, \"vrp\": {}, \"r2rv\": {}, \
          \"hazard20q\": {}, \"hazard20y\": {}, \"hazard10q\": {}, \"p20q\": {},\n      \
+         \"perPath\": {{ \"invShare\": {}, \"vrp\": {}, \"r2rv\": {}, \"hazard20q\": {} }},\n      \
          \"members\": [\n{}\n      ] }}",
         ms.sibling,
         ms.episodes,
@@ -10558,6 +10698,10 @@ fn macro_readings_block(ms: &MacroStats) -> String {
         num(ms.hazard20y),
         num(ms.hazard10q),
         num(ms.p20q),
+        sp(ms.inv_share_spread),
+        sp(ms.vrp_spread),
+        sp(ms.r2rv_spread),
+        sp(ms.hazard_spread),
         members.join(",\n")
     )
 }
@@ -11933,6 +12077,22 @@ pub fn main() {
             jf(ms.p20q, 0, 3),
             jf(ms.hazard20y, 0, 2),
             jf(ms.hazard10q, 0, 2)
+        );
+        let (c_r2, c_pre, _) = ms.member_spread[2];
+        println!(
+            "    per path (p5 / p50 / p95)  hazard x{} / {} / {}   slope inverted {} / {} / {}   cond r2fwd60 {} / {} / {}   cond build-up {} / {} / {}",
+            jf(ms.hazard_spread.p5, 0, 2),
+            jf(ms.hazard_spread.p50, 0, 2),
+            jf(ms.hazard_spread.p95, 0, 2),
+            jf(ms.inv_share_spread.p5, 0, 2),
+            jf(ms.inv_share_spread.p50, 0, 2),
+            jf(ms.inv_share_spread.p95, 0, 2),
+            jf(c_r2.p5, 0, 3),
+            jf(c_r2.p50, 0, 3),
+            jf(c_r2.p95, 0, 3),
+            jf(c_pre.p5, 0, 2),
+            jf(c_pre.p50, 0, 2),
+            jf(c_pre.p95, 0, 2)
         );
         println!(
             "    slope inverted         share {}   mean spell {} sessions",
@@ -14888,15 +15048,15 @@ mod macro_panel_tests {
     }
 
     #[test]
-    fn on_the_four_members_span_the_path_in_their_counterparts_units_and_the_slope_consumes_no_draw()
-     {
+    fn on_the_six_members_span_the_path_in_their_counterparts_units_and_the_slope_consumes_no_draw()
+    {
         let mut w = default_world();
         w.macro_panel = 1;
         // a century: an inversion needs an inflation regime tight enough to invert, which a
         // short path can miss (the ensemble inverts 0.13 of sessions, in spells of ~480)
         let p = simulate(&w, 100, DEFAULT_SEED);
         let m = p.macro_panel.as_ref().expect("no panel with the dial on");
-        for j in 0..4 {
+        for j in 0..6 {
             assert_eq!(m.member(j).len(), p.price.len(), "{}", macro_k::COLUMNS[j]);
         }
         assert!(
@@ -15057,9 +15217,11 @@ mod macro_panel_tests {
         );
         assert_eq!(macro_bands::IVOL_AC_K, ac_band("VIXCLS", "ivol", "ac20"));
         // the oracle bound sits above every predictive R^2 the record shows, and not far above
+        // over the four measured members; the two draw-free levels are reported, not bounded
+        let measured = ["spread", "slope", "cond", "ivol"];
         let r2_max = rs
             .iter()
-            .filter(|r| r[3] == "r2fwd60")
+            .filter(|r| r[3] == "r2fwd60" && measured.contains(&r[2].as_str()))
             .map(|r| r[6].parse::<f64>().expect("numeric"))
             .fold(f64::NEG_INFINITY, f64::max);
         assert!(

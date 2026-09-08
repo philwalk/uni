@@ -97,7 +97,7 @@ mean fundamental/price the yield was normalized by), and `logOpen` (`overnight >
 open; `logHigh`/`logLow` then bracket the open and the close rather than the prior close and the
 close, and `channels.open` carries the overnight share and the gap shares), and `logBasket` plus
 `logName1..N` (`basket > 0` — the equal-weight aggregate and the names, all logs; N from the header;
-the aggregate is BUY-AND-HOLD, equal weights held from the first session and never rebalanced, so it
+the aggregate is BUY-AND-HOLD, equal weights held from the first EMITTED session and never rebalanced -- exactly `logBasket(t) = log(mean_i exp(logName_i(t) - logName_i(0)))`, which a reader reproduces from the emitted names to the sixth decimal (the columns' own rounding); a rebalanced index of the names correlates 0.999 with it and is a different series -- so it
 reconstructs exactly as `ln(mean_j exp(logName_j - logName_j[0]))` — a daily-rebalanced mean of the
 same names is a different series (session returns correlate about 0.98 with it, and the levels
 diverge by the dispersion drag);
@@ -105,7 +105,7 @@ diverge by the dispersion drag);
 peak across the names). `world.basketDrift` records the cross-sectional drift dispersion dial, and
 when it is on `channels.level.kDr` carries the primary's realized annualized volatility the dial is
 a fraction of; a file with the dial off has neither `kDr` nor any other new key. Since schema 12,
-`macroSpread`, `macroSlope`, `macroCond` and `macroIvol` (`world.macro > 0` — the four observables of
+`macroSpread`, `macroSlope`, `macroCond`, `macroIvol`, `macroYield10` and `macroCredit` (`world.macro > 0` — the six observables of
 [the macro panel](#the-macro-panel--macro), LEVELS in their counterparts' units rather than logs,
 none near a rounding tie; `channels.macro` names each column's FRED `counterpart` and natural
 `cadence` beside the readings the macro rows grade, so a consumer's point-in-time loader can route
@@ -615,7 +615,7 @@ with it.
 | `-overnight` | THE OPEN: the overnight share of the session's diffusive variance (0 ≤ X < 1). The open is the bridge point at that share of the session, with the session's news jump and jump-channel move landing overnight whole and the whole move becoming the gap when it overshoots the session on its own side; the bar then runs from the open over the remaining variance and the sign coupling reads the intraday return. `-emit` gains `logOpen`, and `logHigh`/`logLow` bracket the open and the close. Anchored 0.20 on the S&P default and 0.22 on the Nasdaq recipe against the record's overnight variance shares 0.33 / 0.28 (`bars-2026-09-01.tsv`, graded when on); the bar dials re-anchor with it, `-rangescale 0.78 -rangedown 0.13`, since the intraday bridge carries less of the session | 0 (open = prior close) |
 | `-basket` | THE BASKET: N single names as observational second-pass instances of the primary — each the shared sector leg (`-basketbeta` on the primary's observed return plus `-basketsector` idio riding the vol state × spiral, the satellite's construction) plus its own idio (`-basketidio`, riding the vol state WITHOUT the spiral, so shared variance dominates in stress and pairwise correlation rises) and its own gaps (`-basketgaps` per year, Student-t jumps of a frozen 9% size, SYMMETRIC — the down-skew belongs to the index and reaches names through the shared leg). The equal-weight aggregate (buy-and-hold, never rebalanced) is the sector, graded against the eight's basket on the set's own primary; `-emit` gains `logBasket` and `logName1..N`. Anchored N 8, beta 1.56, sector 1.1, idio 0.9, gaps 6.0 on folio's eight semiconductor names under SMH 2012–2026 (`basket-2026-09-02.tsv`); `-atrelease 0.24.0-basket` names the default with it on (`0.23.1-basket` the 0.23.1 world). The dials do NOT transport to the Nasdaq set — 8 / 1.37 / 0.7 / 0.85 / 8.0 there, which `-atrelease 0.24.0-nasdaq-basket` names | 0 (off) |
 | `-basketdrift` | CROSS-SECTIONAL DRIFT DISPERSION: the sd of the names' own annual log-drift offsets, as a fraction of the primary's realized volatility, drawn once per name per path and centred exactly so the sector's log drift is untouched. Moves the SPREAD of time below peak across names, not its median. **Anchored at 0** and off in every recipe: the record cannot supply a positive value (below) | 0 (off) |
-| `-macro` | THE MACRO PANEL: 1 emits four observables derived from the model's own state after the price loop — `macroSpread` (BAA10Y: equity + bond stress, fast and credit-cycle slow), `macroSlope` (T10Y2Y: the 10y−2y expectation the rate process implies; the one anchored-scale member), `macroCond` (NFCILEVERAGE: the leverage cycle's ratio + the crowd share, raw), `macroIvol` (VIXCLS: the conditional sd re-levelled onto the world's realized vol, × the record's variance risk premium) — each a persistent-noise read sized to the record's predictive R². No scale dials: a rank-reading consumer cannot see scale. Cadence, release lag and revisions are the consumer's point-in-time layer. Reaches no price; graded when on ([below](#the-macro-panel--macro)) | 0 (off) |
+| `-macro` | THE MACRO PANEL: 1 emits six observables derived from the model's own state after the price loop — `macroSpread` (BAA10Y: equity + bond stress, fast and credit-cycle slow), `macroSlope` (T10Y2Y: the 10y−2y expectation the rate process implies; the one anchored-scale member), `macroCond` (NFCILEVERAGE: the leverage cycle's ratio + the crowd share, raw), `macroIvol` (VIXCLS: the conditional sd re-levelled onto the world's realized vol, × the record's variance risk premium) — each a persistent-noise read sized to the record's predictive R² — and two draw-free levels, `macroYield10` (DGS10: the 10-year the slope is a difference of) and `macroCredit` (TOTBKCR/GDP: the borrowing stock, in percent). No scale dials: a rank-reading consumer cannot see scale. Cadence, release lag and revisions are the consumer's point-in-time layer. Reaches no price; graded when on ([below](#the-macro-panel--macro)) | 0 (off) |
 | `-macronull` | THE NULL PANEL: 1 takes the four macro columns from a SIBLING path — the same world at another seed — so their marginals and persistence are this world's and their coupling to this path's price is nil: the no-edge comparison for a rule that reads them. The macro rows do not grade a null panel; the sidecar lists its columns as ungraded. Needs `-macro 1`; one extra price loop per path | 0 (the path's own panel) |
 | `-inflsize` | size of an inflation regime's rate-pressure target | 0.10 |
 
@@ -924,10 +924,10 @@ the leverage cycle and the amplifier's gain scale on: `-stressscale 0.5` makes t
 absolute size 0.71 of the S&P world's, which the record asks for — crash count is
 volatility-flat across the fresh-start cross-section, slope 0.01, where the model's `depth` sweep
 reads 1.8 — and it takes daily kurtosis from 24 to 16 (the record's 9.6 at its own horizon) and
-lag-1 clustering from 0.38 to 0.31 (0.29), with `depth` 8.7 giving back the volatility the spiral
+lag-1 clustering from 0.38 to 0.31 (0.29), with `depth` 8.4 giving back the volatility the spiral
 no longer supplies (the band's floor is 23.5%), `refuge` 0.15 the bond's rally and `levGain` 8
-the hazard (1.49–1.52 on four seeds, build-up 0.84–0.86); `stress` 4.4 and `jumpVar` 0 as before.
-All three classes PASS on four seeds. What the scale does not buy, disclosed: the crash count
+the hazard (1.47–1.50 on six seeds, build-up 0.83–0.85); `stress` 4.4 and `jumpVar` 0 as before.
+All three classes PASS on six seeds, volatility 24.1–24.5% against the band's 23.5% floor. What the scale does not buy, disclosed: the crash count
 stays at 36–37 per century against 25.6, because diffusion alone at this volatility crosses 15%
 thirty times a century (`-stress 0.01` reads 29.5) and the volatility band forces the depth
 that buys them; and lag-20 clustering gives 0.22 → 0.18 against the record's 0.25 — the model's
@@ -1098,7 +1098,7 @@ A consumer's macro-reading rules — a credit gate on BAA10Y's percentile rank, 
 "fragility" score over seven FRED series, a systemic brake — were unevaluable on simulated paths,
 and no statistical generator fitted outside the simulator can change that: a VAR, a bootstrap or
 a copula couples macro series to prices by assumption, so a rule that reads them scores well
-exactly to the degree the assumed coupling is right. `-macro 1` derives four observables from
+exactly to the degree the assumed coupling is right. `-macro 1` derives six observables from
 the model's **own** state instead — stress, liquidity, the policy rate, crowd positioning and the
 leverage cycle already unfold inside it, so the coupling to price is causal by construction —
 each the counterpart of one series, in its units. Nothing here reaches a price and 0 is
@@ -1110,6 +1110,8 @@ bit-identical.
 | `macroSlope` | T10Y2Y, pp | the 10y minus the 2y yield the rate process implies — each the OU-expected average of the short rate over its horizon, decaying to the policy target at `rateSpeed`, the target's inflation term at the regime's mean life and its accommodation at `unwind`, plus a 1.0 pp term premium. The same path prices the bond, so the slope cannot contradict the `bond` column, and it inverts when policy is tight against neutral: derived, never synthesized | none |
 | `macroCond` | NFCILEVERAGE, raw index | the leverage cycle's ratio — the borrowing stock over the equity securing it, the drawdown smoothed over 21 sessions — over its mean, plus the trend crowd's capital share over its home | one normal |
 | `macroIvol` | VIXCLS, annualized % | the session's conditional sd (vol state, the spiral's amplification discounted to its 21-session average) re-levelled onto the world's realized volatility by the bar channels' `k`, times the record's variance risk premium e^0.28 | one normal |
+| `macroYield10` | DGS10, pp | the 10-year yield the slope's long leg already is: the OU-expected average of the short rate over ten years plus the term premium, so `macroSlope` is this less the 2-year and the level cannot contradict it | none |
+| `macroCredit` | TOTBKCR/GDP, % | the leverage cycle's borrowing stock itself, in percent — the model's credit relative to the economy's scale, a stationary cycle about 75 with no nominal growth in it. A consumer's credit-expansion rank reads the three-year CHANGE of the record's ratio, which carries a secular rise (43 to 63 over 1990–2026) the model's cycle does not: the model's change centres on zero where the record's centres above it, invisible to an expanding rank, visible to a fixed threshold on the change | none |
 
 Three design decisions carry the rest. **No scale dials**: every consumer vote is a percentile
 rank against trailing history or a sign, so a column's scale is invisible to it, and each map is
@@ -1145,17 +1147,17 @@ default gate ensemble, which is also what an emitted path's `channels.macro` car
 
 | row | record, S&P (CRSP / SPY) | model, `0.24.0-macro` | record, Nasdaq (NDX / QQQ) | model, `0.24.0-nasdaq` |
 |---|---|---|---|---|
-| conditions HAZARD (mechanism): a 20% peak within the next quarter, with the index in its top decile, as a multiple of the unconditional chance; within a year and for 10% dips reported | 2.74 / 2.21; 1.24 / 1.18; 1.64 / 1.27 | **1.68**; 1.39; 1.35 | 2.05 / 1.45; 0.80 / 0.40; 1.11 / 0.91 | **1.55**; 1.25; 1.20 |
-| conditions BUILD-UP: mean trailing rank over the quarter before the peak (mechanism: clear of a decoupled 0.48; fidelity: the record's level 0.82–1.00) | 0.94 / 0.94 | 0.92 | 0.92 / 0.82 | 0.87 |
-| build-up (reported): spread, implied vol, slope's share inverted | 0.60 / 0.16, 0.41 / 0.41, 0 / 0 | 0.45, 0.64, 0.00 | 0.16 / 0.16, 0.42 / 0.44, 0 / 0 | 0.49, 0.69, 0.00 |
+| conditions HAZARD (mechanism): a 20% peak within the next quarter, with the index in its top decile, as a multiple of the unconditional chance; within a year and for 10% dips reported | 2.74 / 2.21; 1.24 / 1.18; 1.64 / 1.27 | **1.68**; 1.39; 1.35 | 2.05 / 1.45; 0.80 / 0.40; 1.11 / 0.91 | **1.47**; 1.23; 1.14 |
+| conditions BUILD-UP: mean trailing rank over the quarter before the peak (mechanism: clear of a decoupled 0.48; fidelity: the record's level 0.82–1.00) | 0.94 / 0.94 | 0.92 | 0.92 / 0.82 | 0.84 |
+| build-up (reported): spread, implied vol, slope's share inverted | 0.60 / 0.16, 0.41 / 0.41, 0 / 0 | 0.45, 0.64, 0.00 | 0.16 / 0.16, 0.42 / 0.44, 0 / 0 | 0.48, 0.66, 0.00 |
 | firing lag, sessions (fidelity): spread, conditions | +7 / +7, −48 / −44 | −6, −63 | +16 / +16, −49 / +101 | −14, −63 |
-| firing lag (reported): implied vol, slope | +12 / −12, −37 / −36 | −33, never | +6 / −12, −38 / −37 | −36, never |
-| fires in most episodes (reported): spread, conditions | 1.00 / 1.00, 1.00 / 1.00 | 0.96, 0.88 | 1.00 / 1.00, 0.83 / 0.80 | 0.92, 0.86 |
-| warning share (reported): spread, conditions, implied vol | 0.83 / 0.92, 0.82 / 0.92, 0.89 / 0.96 | 0.721, 0.705, 0.742 | 0.64 / 0.64, 0.59 / 0.38, 0.83 / 0.83 | 0.638, 0.628, 0.683 |
-| persistence at 20 sessions: spread, conditions (4 weekly), implied vol | 0.962, 0.985, 0.771 | 0.912, 0.992, 0.750 | shared | 0.914, 0.991, 0.767 |
+| firing lag (reported): implied vol, slope | +12 / −12, −37 / −36 | −33, never | +6 / −12, −38 / −37 | −34, never |
+| fires in most episodes (reported): spread, conditions | 1.00 / 1.00, 1.00 / 1.00 | 0.96, 0.88 | 1.00 / 1.00, 0.83 / 0.80 | 0.91, 0.84 |
+| warning share (reported): spread, conditions, implied vol | 0.83 / 0.92, 0.82 / 0.92, 0.89 / 0.96 | 0.721, 0.705, 0.742 | 0.64 / 0.64, 0.59 / 0.38, 0.83 / 0.83 | 0.611, 0.601, 0.664 |
+| persistence at 20 sessions: spread, conditions (4 weekly), implied vol | 0.962, 0.985, 0.771 | 0.912, 0.992, 0.750 | shared | 0.918, 0.991, 0.783 |
 | oracle bound, largest predictive R² | ≤ 0.019 | 0.005 | shared | 0.005 |
-| slope: share inverted; mean spell (sessions) | 0.115; 42 | 0.130; 482 (reported) | shared | 0.129; 483 |
-| implied vol: log premium; R² vs forward realized | 0.28–0.29; 0.55–0.57 | 0.27; 0.19 (reported) | shared | 0.29; 0.32 |
+| slope: share inverted; mean spell (sessions) | 0.115; 42 | 0.130; 482 (reported) | shared | 0.130; 505 |
+| implied vol: log premium; R² vs forward realized | 0.28–0.29; 0.55–0.57 | 0.27; 0.19 (reported) | shared | 0.28; 0.30 |
 
 The one genuinely leading signal in the record is the leverage index, and what it leads is a
 **hazard**: with NFCILEVERAGE in the top decile of its trailing year, a 20% peak falls within the
@@ -1176,8 +1178,8 @@ Schularick–Taylor reading: credit growth is what precedes the crisis. Read on 
 `macroCond` with the record's own statistics, the model's index is in its top decile at 0.51 of
 its 20% peaks (the record: five of six), its median pre-peak rank is 0.93, and the two rows
 grade it — mechanism, the quarter hazard above 1.4× (the four references' floor; the model reads
-1.68 on the S&P and 1.55 on the Nasdaq, a decoupled panel 0.94), and fidelity, the build-up at
-the record's level (0.92 and 0.87 against 0.82–1.00). The gap that remains — 1.7× against the
+1.68 on the S&P and 1.47 on the Nasdaq, a decoupled panel 0.94), and fidelity, the build-up at
+the record's level (0.92 and 0.84 against 0.82–1.00). The gap that remains — 1.7× against the
 record's 2.0–2.7× — is the half of the model's 20% declines that still start from jumps,
 disasters and valuation unwinds at any point of the cycle. The firing lags, which are
 speed-invariant, hold on both worlds: the record's conditions index leads the peak by about two
@@ -1222,7 +1224,11 @@ inverted share runs from 0 to 0.56 — typically one regime-length spell, agains
 spells of 42 sessions over 37 years — and the oracle bound is an ensemble property: a single
 40-year path's forward-return R² on the conditions index reaches about 0.1 (median 0.02), because
 the panel is a coupled world by construction. The no-edge comparison for any one path is the
-sibling-path pairing below, never the path's own panel.
+sibling-path pairing below, never the path's own panel. The sidecar carries that width: beside
+each pooled macro statistic a `perPath` block gives `[p5, p50, p95]` across the ensemble of the
+per-path readings — the hazard, the slope's inversion share, the vol premium and its R², and each
+member's forward R², build-up and firing lag — and the report prints one line of it, so a
+consumer running one path states the null's width without re-deriving it.
 
 Levels are unanchored and printed for reading only — the median across paths of each 100-year
 path's p10 / p50 / p90 on `0.24.0-macro`, the record's in parentheses: spread 1.65 / 2.09 / 2.64
@@ -1238,7 +1244,7 @@ no map constant creates a tail the world does not have.
 
 **The null is a sibling path — `-macronull 1`.** A no-edge world with the panel's exact marginals
 and persistence is another path's panel, and the dial writes one into the path's own file: the
-four columns come from a sibling path — the same world at another seed, its own price loop and
+six columns come from a sibling path — the same world at another seed, its own price loop and
 its own measurement stream — so a consumer's loader takes one file per path and the columns'
 coupling to that file's `price` is nil. The macro rows do not grade a null panel (its readings,
 printed, are the no-edge level) and the sidecar lists its columns in `ungradedChannelSeries` with

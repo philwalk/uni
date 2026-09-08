@@ -52,13 +52,17 @@ class MacroPanelSuite extends FunSuite:
     assert(a.price.sameElements(b.price) && a.bond.sameElements(b.bond), "levGain 0 must leave the price bit-identical")
   }
 
-  test("on, the four members span the path in their counterparts' units, and the slope consumes no draw") {
+  test("on, the six members span the path in their counterparts' units, and the slope consumes no draw") {
     val w = MarketSim.Defaults.copy(macroPanel = 1)
     // a century: an inversion needs an inflation regime tight enough to invert, which a short
     // path can miss (the ensemble inverts 0.13 of sessions, in spells of ~480)
     val p = MarketSim.simulate(w, 100, MarketSim.DefaultSeed)
     val m = p.macroPanel.getOrElse(fail("no panel with the dial on"))
-    for j <- 0 to 3 do assertEquals(m.member(j).length, p.price.length, MarketSim.MacroK.Columns(j))
+    for j <- 0 to 5 do assertEquals(m.member(j).length, p.price.length, MarketSim.MacroK.Columns(j))
+    // the two draw-free levels: the 10-year is the slope's long leg, so the two move together
+    // in sign of change, and the credit ratio is the borrowing stock in percent, never negative
+    assert(m.yield10.forall(_.isFinite) && m.credit.forall(_ >= 0.0))
+    assert(MarketSim.pctile(m.yield10.toIndexedSeq, 0.5) > 1.0 && MarketSim.pctile(m.yield10.toIndexedSeq, 0.5) < 12.0)
     assert(m.spread.forall(_ >= MarketSim.MacroK.SpreadFloor), "a credit spread is floored, never negative")
     assert(m.ivol.forall(_ >= MarketSim.MacroK.IvolFloor), "an implied vol is floored, never negative")
     assert(m.slope.exists(_ < 0.0) && m.slope.exists(_ > 0.0), "the curve both inverts and steepens")
@@ -124,7 +128,9 @@ class MacroPanelSuite extends FunSuite:
     assertEquals(MarketSim.MacroBands.CondAcK,   acBand("NFCILEVERAGE", "cond", "ac4"))
     assertEquals(MarketSim.MacroBands.IvolAcK,   acBand("VIXCLS", "ivol", "ac20"))
     // the oracle bound sits above every predictive R^2 the record shows, and not far above
-    val r2s = rs.filter(r => r(3) == "r2fwd60").map(_(6).toDouble)
+    // over the four measured members; the two draw-free levels are reported, not bounded
+    val measured = Set("spread", "slope", "cond", "ivol")
+    val r2s = rs.filter(r => r(3) == "r2fwd60" && measured(r(2))).map(_(6).toDouble)
     assert(r2s.nonEmpty && r2s.max < MarketSim.MacroBands.OracleR2 && MarketSim.MacroBands.OracleR2 <= r2s.max + 0.02,
       f"oracle bound ${MarketSim.MacroBands.OracleR2} against the record's largest ${r2s.max}%.4f")
     // the slope's inversion share and the variance risk premium bands hold the record

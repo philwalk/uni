@@ -19,8 +19,8 @@
   falls within the next quarter 2.0–2.7× as often as unconditionally (1.45× on QQQ's four
   episodes), ~1.2× within a year, ~1× for 10% dips; the index's mean rank over the quarter before
   a 20% peak is 0.92–0.94. The model, on the emitted `macroCond` with the record's own statistics:
-  1.68× / 1.39× / 1.35× on the S&P (a decoupled panel 0.94×), 1.55× on the Nasdaq; build-up 0.92
-  / 0.87 (0.55 before the cycle); in its top decile at 0.51 of its 20% peaks (the record five of
+  1.68× / 1.39× / 1.35× on the S&P (a decoupled panel 0.94×), 1.47× on the Nasdaq at its
+  re-solved recipe; build-up 0.92 / 0.84 (0.55 before the cycle); in its top decile at 0.51 of its 20% peaks (the record five of
   six), rank spells of 11 weeks against the record's 15. Two rows grade it: mechanism `macro cond
   concentrates the big peaks` (quarter hazard > 1.4×, the references' floor) and the build-up's
   fidelity band 0.82–1.00, now a PASS on both recipes. `hazard20q` / `hazard20y` / `hazard10q` /
@@ -78,9 +78,10 @@
   reference world's. The ruler is the fresh-start cross-section of 35 instruments on a window
   opening at the 2007 high (`amplifier-2026-09-07.tsv`): crash count against volatility has a
   log-log slope of 0.01 — flat — where the model's `depth` sweep reads 1.8 and its two recipes
-  1.44. The default world is unchanged at any E. `0.24.0-nasdaq` runs at 0.5 with `depth` 8.7,
+  1.44. The default world is unchanged at any E. `0.24.0-nasdaq` runs at 0.5 with `depth` 8.4,
   `refuge` 0.15 and `levGain` 8 re-solved: daily kurtosis 24 → 16 (the record's 9.6 at its own
-  horizon), lag-1 clustering 0.38 → 0.31 (0.29), every class PASS on four seeds. Disclosed: the
+  horizon), lag-1 clustering 0.38 → 0.31 (0.29), volatility 24.1–24.5% against the band's 23.5%
+  floor, every class PASS on six seeds. Disclosed: the
   crash count stays at 36–37 per century against 25.6 (diffusion alone at this volatility
   crosses 15% thirty times a century, and the volatility band sets the depth), and lag-20
   clustering gives 0.22 → 0.18 against 0.25.
@@ -96,7 +97,7 @@
 
 **A macro panel, so a rule that reads FRED can be graded on simulated paths**
 
-- `-macro 1` (default 0, off): four observables DERIVED from the model's own state after the price
+- `-macro 1` (default 0, off): six observables DERIVED from the model's own state after the price
   loop, each the counterpart of a FRED series and in its units — `macroSpread` (BAA10Y: equity and
   bond stress, the fast index plus a ~400-session credit cycle), `macroSlope` (T10Y2Y: the 10y
   minus the 2y yield the rate process implies, each the OU-expected average of the short rate over
@@ -106,12 +107,21 @@
   over its mean, plus the trend crowd's share over its home; emitted RAW because its counterpart
   is full-sample standardized and a fixed threshold on that level reads the future), `macroIvol` (VIXCLS: the session's conditional
   sd re-levelled onto the world's realized volatility by the bar channels' `k`, times the record's
-  variance risk premium e^0.28). Reaches no price: 0 is bit-identical, and every other column of a
-  world with the panel on is that world's byte for byte. With `rate` already emitted, five of a
-  macro-vote's six inputs have a counterpart; GDP and bank credit do not (no output gap, no
-  banking sector). Both twins byte-identical; sidecar schema 11 → 12 (`world.macro`, the
-  four columns present only when on, `channels.macro` with each column's `counterpart` and
-  natural `cadence`).
+  variance risk premium e^0.28), and two draw-free levels the loop already carries —
+  `macroYield10` (DGS10: the 10-year yield the slope's long leg is, so the slope is this less the
+  2-year) and `macroCredit` (TOTBKCR/GDP: the leverage cycle's borrowing stock, in percent; a
+  consumer ranks the three-year change of the record's ratio, which carries a secular rise the
+  model's stationary cycle does not — disclosed). Reaches no price: 0 is bit-identical, and every
+  other column of a world with the panel on is that world's byte for byte. With `rate` already
+  emitted, every input of a six-vote macro rule has a counterpart. Both twins byte-identical;
+  sidecar schema 11 → 13 (`world.macro`, the six columns present only when on, `channels.macro`
+  with each column's `counterpart` and natural `cadence`, and a `perPath` block beside each pooled
+  macro statistic — `[p5, p50, p95]` across the ensemble of the per-path readings, for the
+  hazard, the slope's inversion share, the vol premium and its R², and each member's forward R²,
+  build-up and firing lag — so a consumer running one path can state the null's width without
+  re-deriving it; the report prints one line of it). The 10-year and the credit ratio are
+  reported, never graded: their record rows sit in the fixture (build-up 0.67 / 0.94 on the S&P
+  against the model's 0.69 / 0.92).
 - NO scale dials: a consumer's votes are percentile ranks against trailing history or a sign, so a
   column's scale is invisible to them; each map is a literal in its counterpart's units, disclosed
   as unanchored. The slope is the exception — rate units the model anchors — and is graded
@@ -124,7 +134,7 @@
   real series — a consumer's point-in-time loader already owns those rules, and the sidecar names
   each column's counterpart so it can route the column through the same table.
 - The no-edge world is a sibling path, and `-macronull 1` writes one into the path's own file:
-  the four columns come from the same world at another seed, its own price loop and measurement
+  the six columns come from the same world at another seed, its own price loop and measurement
   stream, so their coupling to this file's `price` is nil. The macro rows do not grade a null
   panel (its readings print as the no-edge level), the sidecar lists its columns in
   `ungradedChannelSeries` with `channels.macro.null` true, and `world.macroNull` records the
