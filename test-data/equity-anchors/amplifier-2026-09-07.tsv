@@ -1,0 +1,148 @@
+# THE AMPLIFIER's rulers (item 11): two things the liquidity spiral sets that no dial reads.
+#
+# profile     volatility clustering as the FULL autocorrelation profile of |r| (demeaned,
+#             full-sample denominator -- `uni.apps.MarketSim.autocorrAbs`, the function the model
+#             grades itself with) at lags 1, 2, 5, 10, 20, 60, 120, with the window's annual
+#             volatility and daily kurtosis (Pearson, 3 = normal) as context.  CRSP = Ken French
+#             F-F_Research_Data_Factors_daily (202606 vintage), Mkt-RF + RF, the century (w1926),
+#             post-war (w1954) and QQQ's own span (w1999); SPY and QQQ = Yahoo adjusted close log
+#             returns; NDX = the Nasdaq-100 index close, a price index.  The shipped `clustering
+#             lag 1` / `lag 20` anchors are this file's CRSP w1926 ac1 / ac20 rows.
+# elasticity  crash count against volatility across the fresh-start cross-section: the w2001
+#             instruments of yahoo-2026-08-24.tsv on ONE window opening at the 2007-10-09 high
+#             (the convention `marketsim-crash-anchor-conventions` requires: fresh start, opening
+#             near a high) through 2026-08-20, each instrument's 15%+ drawdown episodes per century
+#             on `ddEpisodes`' definition and its annual volatility; `logSlope` is the OLS slope of
+#             log(crashes per century) on log(annVol) -- the model's own `depth` sweep reads ~1.8
+#             and its two recipes 1.44 -- and `SPY-QQQ own` the slope between the two anchor sets'
+#             shipped numbers (20.7 at 16.0%, 25.6 at 26.9%).
+#
+# Measured 2026-09-07 from folio's caches.
+section	series	window	stat	n	value
+profile	CRSP	w1926	ac1	26274	0.2982
+profile	CRSP	w1926	ac2	26274	0.3314
+profile	CRSP	w1926	ac5	26274	0.3087
+profile	CRSP	w1926	ac10	26274	0.2558
+profile	CRSP	w1926	ac20	26274	0.2245
+profile	CRSP	w1926	ac60	26274	0.1387
+profile	CRSP	w1926	ac120	26274	0.1293
+profile	CRSP	w1926	annVol	26274	17.1044
+profile	CRSP	w1926	kurtosis	26274	19.1202
+profile	CRSP	w1954	ac1	18245	0.2693
+profile	CRSP	w1954	ac2	18245	0.3166
+profile	CRSP	w1954	ac5	18245	0.3048
+profile	CRSP	w1954	ac10	18245	0.2499
+profile	CRSP	w1954	ac20	18245	0.2073
+profile	CRSP	w1954	ac60	18245	0.0985
+profile	CRSP	w1954	ac120	18245	0.0913
+profile	CRSP	w1954	annVol	18245	15.6157
+profile	CRSP	w1954	kurtosis	18245	19.2314
+profile	CRSP	w1999	ac1	6869	0.2673
+profile	CRSP	w1999	ac2	6869	0.3590
+profile	CRSP	w1999	ac5	6869	0.3254
+profile	CRSP	w1999	ac10	6869	0.2792
+profile	CRSP	w1999	ac20	6869	0.2168
+profile	CRSP	w1999	ac60	6869	0.0802
+profile	CRSP	w1999	ac120	6869	0.0772
+profile	CRSP	w1999	annVol	6869	19.5039
+profile	CRSP	w1999	kurtosis	6869	12.2019
+profile	SPY	w1993	ac1	8458	0.2778
+profile	SPY	w1993	ac2	8458	0.3553
+profile	SPY	w1993	ac5	8458	0.3177
+profile	SPY	w1993	ac10	8458	0.2812
+profile	SPY	w1993	ac20	8458	0.2148
+profile	SPY	w1993	ac60	8458	0.0841
+profile	SPY	w1993	ac120	8458	0.0908
+profile	SPY	w1993	annVol	8458	18.5498
+profile	SPY	w1993	kurtosis	8458	14.4181
+profile	QQQ	w1999	ac1	6916	0.2927
+profile	QQQ	w1999	ac2	6916	0.3349
+profile	QQQ	w1999	ac5	6916	0.3226
+profile	QQQ	w1999	ac10	6916	0.2992
+profile	QQQ	w1999	ac20	6916	0.2487
+profile	QQQ	w1999	ac60	6916	0.1751
+profile	QQQ	w1999	ac120	6916	0.1710
+profile	QQQ	w1999	annVol	6916	26.8771
+profile	QQQ	w1999	kurtosis	6916	9.5698
+profile	NDX	w1990	ac1	9237	0.2705
+profile	NDX	w1990	ac2	9237	0.3219
+profile	NDX	w1990	ac5	9237	0.3087
+profile	NDX	w1990	ac10	9237	0.2839
+profile	NDX	w1990	ac20	9237	0.2248
+profile	NDX	w1990	ac60	9237	0.1690
+profile	NDX	w1990	ac120	9237	0.1588
+profile	NDX	w1990	annVol	9237	26.3340
+profile	NDX	w1990	kurtosis	9237	9.3252
+elasticity	DIA	w2007	annVol	4746	18.8522
+elasticity	DIA	w2007	crashesPerCentury	4746	26.5487
+elasticity	EFA	w2007	annVol	4746	21.8292
+elasticity	EFA	w2007	crashesPerCentury	4746	21.2389
+elasticity	EWA	w2007	annVol	4746	27.8055
+elasticity	EWA	w2007	crashesPerCentury	4746	37.1681
+elasticity	EWC	w2007	annVol	4746	22.5291
+elasticity	EWC	w2007	crashesPerCentury	4746	26.5487
+elasticity	EWD	w2007	annVol	4746	29.7247
+elasticity	EWD	w2007	crashesPerCentury	4746	37.1681
+elasticity	EWG	w2007	annVol	4746	25.6637
+elasticity	EWG	w2007	crashesPerCentury	4746	26.5487
+elasticity	EWH	w2007	annVol	4746	24.1426
+elasticity	EWH	w2007	crashesPerCentury	4746	26.5487
+elasticity	EWI	w2007	annVol	4746	28.9247
+elasticity	EWI	w2007	crashesPerCentury	4746	10.6195
+elasticity	EWJ	w2007	annVol	4746	20.7832
+elasticity	EWJ	w2007	crashesPerCentury	4746	21.2389
+elasticity	EWL	w2007	annVol	4746	19.6784
+elasticity	EWL	w2007	crashesPerCentury	4746	31.8584
+elasticity	EWN	w2007	annVol	4746	25.1016
+elasticity	EWN	w2007	crashesPerCentury	4746	31.8584
+elasticity	EWP	w2007	annVol	4746	28.3100
+elasticity	EWP	w2007	crashesPerCentury	4746	5.3097
+elasticity	EWQ	w2007	annVol	4746	25.6563
+elasticity	EWQ	w2007	crashesPerCentury	4746	26.5487
+elasticity	EWS	w2007	annVol	4746	22.9993
+elasticity	EWS	w2007	crashesPerCentury	4746	31.8584
+elasticity	EWT	w2007	annVol	4746	25.6323
+elasticity	EWT	w2007	crashesPerCentury	4746	42.4779
+elasticity	EWU	w2007	annVol	4746	23.1120
+elasticity	EWU	w2007	crashesPerCentury	4746	21.2389
+elasticity	EWW	w2007	annVol	4746	27.5763
+elasticity	EWW	w2007	crashesPerCentury	4746	37.1681
+elasticity	EWY	w2007	annVol	4746	32.6325
+elasticity	EWY	w2007	crashesPerCentury	4746	31.8584
+elasticity	EWZ	w2007	annVol	4746	37.4868
+elasticity	EWZ	w2007	crashesPerCentury	4746	15.9292
+elasticity	IWM	w2007	annVol	4746	24.9150
+elasticity	IWM	w2007	crashesPerCentury	4746	31.8584
+elasticity	QQQ	w2007	annVol	4746	22.4735
+elasticity	QQQ	w2007	crashesPerCentury	4746	37.1681
+elasticity	SMH	w2007	annVol	4746	31.0202
+elasticity	SMH	w2007	crashesPerCentury	4746	47.7876
+elasticity	SOXX	w2007	annVol	4746	32.1548
+elasticity	SOXX	w2007	crashesPerCentury	4746	58.4071
+elasticity	SPY	w2007	annVol	4746	19.7917
+elasticity	SPY	w2007	crashesPerCentury	4746	26.5487
+elasticity	VFINX	w2007	annVol	4746	19.9082
+elasticity	VFINX	w2007	crashesPerCentury	4746	26.5487
+elasticity	VGTSX	w2007	annVol	4746	20.0117
+elasticity	VGTSX	w2007	crashesPerCentury	4746	15.9292
+elasticity	XLB	w2007	annVol	4746	23.9121
+elasticity	XLB	w2007	crashesPerCentury	4746	26.5487
+elasticity	XLE	w2007	annVol	4746	30.6173
+elasticity	XLE	w2007	crashesPerCentury	4746	31.8584
+elasticity	XLF	w2007	annVol	4746	30.4127
+elasticity	XLF	w2007	crashesPerCentury	4746	26.5487
+elasticity	XLI	w2007	annVol	4746	21.7657
+elasticity	XLI	w2007	crashesPerCentury	4746	37.1681
+elasticity	XLK	w2007	annVol	4746	23.6678
+elasticity	XLK	w2007	crashesPerCentury	4746	42.4779
+elasticity	XLP	w2007	annVol	4746	14.7350
+elasticity	XLP	w2007	crashesPerCentury	4746	21.2389
+elasticity	XLU	w2007	annVol	4746	19.1263
+elasticity	XLU	w2007	crashesPerCentury	4746	31.8584
+elasticity	XLV	w2007	annVol	4746	17.4032
+elasticity	XLV	w2007	crashesPerCentury	4746	37.1681
+elasticity	XLY	w2007	annVol	4746	22.9586
+elasticity	XLY	w2007	crashesPerCentury	4746	37.1681
+elasticity	cross-section	w2007	logSlope	35	0.0094
+elasticity	cross-section	w2007	logCorr	35	0.0043
+elasticity	SPY-QQQ	own	logSlope	2	0.4089

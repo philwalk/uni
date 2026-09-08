@@ -573,6 +573,7 @@ with it.
 | flag | what it is | default |
 |---|---|---|
 | `-stress` | liquidity-spiral gain: how much a run of down days amplifies later moves | 4.7 |
+| `-stressscale` | THE AMPLIFIER's gain scale: the spiral's excess gain multiplied by (depth / 17.4)^E, so a thinner market's liquidity event is not proportionally larger than the reference world's. The record's crash count is volatility-flat across a fresh-start cross-section (`amplifier-2026-09-07.tsv`) where the model's `depth` sweep reads 1.8; the default world is unchanged at any E, and `0.24.0-nasdaq` runs at 0.5 | 0 |
 | `-levgain` | THE LEVERAGE CYCLE: a borrowing stock swings over years as a credit cycle of its own and is paid down under stress; the spiral's gain is multiplied by 1 + levgain × (the stock's rise over its trailing year), so an ordinary shock cascades into a 20% decline where leverage has been building and not where it has not. 0 restores 0.23.1's amplification bit for bit | 6 |
 | `-depth` | market depth; price impact scales as `12/depth`, so higher = calmer | 17.4 |
 | `-drift` | fundamental drift per year; no dividend, so this IS total return | 0.122 |
@@ -916,10 +917,22 @@ graded. `-atrelease 0.23.1-nasdaq` is the same world with the open on (`-overnig
 bar dials re-anchored for it (`-rangescale 0.78 -rangedown 0.13`) and the dividend stream at its
 Nasdaq anchor (`-divyield 0.78`): overnight share 0.279 against
 the record's 0.28, range vs cc vol 1.104, down/up 1.136, clustering 0.704, the satellite
-untouched, all three classes PASS. `-atrelease 0.24.0-nasdaq` is that world with the macro panel
-and the leverage cycle on, `stress` re-solved to 4.4 and `jumpVar` to 0 for its depth: kurtosis
-24–26 and crashes 34–36 per century on four seeds (38 before the cycle), the channels' readings
-unchanged, all three classes PASS. On the S&P default the same open reads 0.328 at
+untouched, all three classes PASS. `-atrelease 0.24.0-nasdaq` is that world with the macro panel,
+the leverage cycle and the amplifier's gain scale on: `-stressscale 0.5` makes the spiral's
+absolute size 0.71 of the S&P world's, which the record asks for — crash count is
+volatility-flat across the fresh-start cross-section, slope 0.01, where the model's `depth` sweep
+reads 1.8 — and it takes daily kurtosis from 24 to 16 (the record's 9.6 at its own horizon) and
+lag-1 clustering from 0.38 to 0.31 (0.29), with `depth` 8.7 giving back the volatility the spiral
+no longer supplies (the band's floor is 23.5%), `refuge` 0.15 the bond's rally and `levGain` 8
+the hazard (1.49–1.52 on four seeds, build-up 0.84–0.86); `stress` 4.4 and `jumpVar` 0 as before.
+All three classes PASS on four seeds. What the scale does not buy, disclosed: the crash count
+stays at 36–37 per century against 25.6, because diffusion alone at this volatility crosses 15%
+thirty times a century (`-stress 0.01` reads 29.5) and the volatility band forces the depth
+that buys them; and lag-20 clustering gives 0.22 → 0.18 against the record's 0.25 — the model's
+|r| autocorrelation decays from lag 1 where the record's rises to a hump at lags 2–5 and holds
+0.13–0.17 at lags 60–120 on both references (the profile rows of `amplifier-2026-09-07.tsv`,
+reported), a persistent asymmetric vol response the amplifier's single timescale cannot give
+without paying kurtosis. On the S&P default the same open reads 0.328 at
 `-overnight 0.20` with the same bar dials (range vs cc vol 1.097, down/up 1.135).
 
 The Nasdaq set's sampling spreads are measured at the current recipe (`-noise -atrelease

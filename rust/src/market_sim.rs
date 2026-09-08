@@ -434,6 +434,7 @@ pub fn default_world() -> World {
         basket_drift: 0.0,
         macro_panel: 0,
         macro_null: 0,
+        stress_scale: 0.0,
         lev_gain: 6.0,
         value_pull: 0.056,
         crowd: Crowd::Momentum,
@@ -508,6 +509,7 @@ fn v0_19_2() -> World {
         basket_drift: 0.0,
         macro_panel: 0,
         macro_null: 0,
+        stress_scale: 0.0,
         lev_gain: 0.0,
         value_pull: 0.013,
         belief_share: 0.0,
@@ -674,14 +676,25 @@ pub fn recipes() -> Vec<(&'static str, World, &'static str)> {
         w.macro_panel = 1;
         w
     };
+    // THE AMPLIFIER's gain scale (item 11) on the Nasdaq worlds: at `stress_scale` 0.5 the
+    // spiral's absolute size is 0.71 of the reference world's, which takes daily kurtosis 24 ->
+    // 16 (record 9.6 at its own horizon) and lag-1 clustering 0.38 -> 0.31 (record 0.29); the
+    // volatility it no longer supplies comes back through `depth` 10 -> 8.7 (the band's floor
+    // 23.5%), the bond's rally through `refuge` 0.115 -> 0.15, the hazard through `lev_gain` 8.
+    // The crash count does not move at the band (35 -> 37/century against 25.6: diffusion alone
+    // at this volatility crosses 15% thirty times a century) and lag-20 clustering gives 0.22 ->
+    // 0.18 (record 0.25) — both disclosed.
     let nq = |mut w: World| {
         w.stress = 4.4;
         w.jump_var = 0.0;
         w.jump_skew = d.jump_skew;
         w.leverage = d.leverage;
         w.vol_persist = d.vol_persist;
-        w.lev_gain = d.lev_gain;
+        w.lev_gain = 8.0;
         w.macro_panel = 1;
+        w.stress_scale = 0.5;
+        w.depth = 8.7;
+        w.refuge = 0.15;
         w
     };
     let mut sp_macro = default_world();
@@ -763,6 +776,7 @@ fn v0_23_0() -> World {
         basket_drift: 0.0,
         macro_panel: 0,
         macro_null: 0,
+        stress_scale: 0.0,
         lev_gain: 0.0,
         value_pull: 0.056,
         crowd: Crowd::Momentum,
@@ -827,6 +841,7 @@ fn v0_22_1() -> World {
         basket_drift: 0.0,
         macro_panel: 0,
         macro_null: 0,
+        stress_scale: 0.0,
         lev_gain: 0.0,
         value_pull: 0.045,
         crowd: Crowd::Momentum,
@@ -893,6 +908,7 @@ fn v0_22_0() -> World {
         basket_drift: 0.0,
         macro_panel: 0,
         macro_null: 0,
+        stress_scale: 0.0,
         lev_gain: 0.0,
         value_pull: 0.045,
         crowd: Crowd::Momentum,
@@ -959,6 +975,7 @@ fn v0_21_0() -> World {
         basket_drift: 0.0,
         macro_panel: 0,
         macro_null: 0,
+        stress_scale: 0.0,
         lev_gain: 0.0,
         value_pull: 0.045,
         crowd: Crowd::Momentum,
@@ -1016,6 +1033,7 @@ fn v0_20_0() -> World {
         basket_drift: 0.0,
         macro_panel: 0,
         macro_null: 0,
+        stress_scale: 0.0,
         lev_gain: 0.0,
         value_pull: 0.0145,
         belief_share: 0.0,
@@ -1341,6 +1359,12 @@ pub struct World {
     /// 0.92-0.94 through the quarter before the peak. 0 = the amplification is bit-identical
     /// (the stock still runs for the panel).
     pub lev_gain: f64,
+    /// THE AMPLIFIER STUDY (item 11): the spiral's excess gain scaled by (depth /
+    /// DEPTH_REF)^stress_scale. 0 = the spiral's size proportional to the world's everyday move
+    /// (the record's crash count is volatility-FLAT across a fresh-start cross-section, the
+    /// model's rises at 1.4-1.8); 1 = a liquidity event of the same absolute size in every
+    /// market. The reference world is unchanged at any value.
+    pub stress_scale: f64,
     pub value_pull: f64,
     pub crowd: Crowd,
     pub crowd_impact: f64,
@@ -1533,6 +1557,10 @@ struct Market {
     /// the leverage stock (`lev_gain`); exactly 1.0 with the dial off, so the amplification is
     /// bit-identical there.
     lev_mult: f64,
+    /// THE AMPLIFIER STUDY's gain scale (item 11), exactly inert at 1: the spiral's excess gain
+    /// scaled by (depth / DEPTH_REF)^stress_scale, set by the loop, so a thinner market's
+    /// liquidity event is not proportionally larger than the reference world's.
+    gain_mult: f64,
     last_liq: f64,
     clamps: usize,
     /// Sessions on the DOWNWARD guard, and sessions in the tail at all. Counted separately from
@@ -1542,6 +1570,10 @@ struct Market {
     tail_days: usize,
     scale_var: f64,
 }
+
+/// The depth the spiral's gain was calibrated at, the reference `stress_scale` scales from — a
+/// literal, not the default's depth: a later depth move must not silently rescale the law.
+const DEPTH_REF: f64 = 17.4;
 
 impl Market {
     fn new(k_value: f64, stress_k: f64, impact: f64) -> Self {
@@ -1573,6 +1605,7 @@ impl Market {
             peak: 0.0,
             stress_idx: 0.0,
             lev_mult: 1.0,
+            gain_mult: 1.0,
             last_liq: impact,
             clamps: 0,
             floor_days: 0,
@@ -1583,7 +1616,7 @@ impl Market {
 
     fn step(&mut self, fair: f64, flow_plus_noise: f64) -> f64 {
         let scale = self.scale_var.sqrt();
-        let amp = 1.0 + self.stress_k * self.stress_idx * self.lev_mult;
+        let amp = 1.0 + self.stress_k * self.stress_idx * self.lev_mult * self.gain_mult;
         self.last_liq = amp * self.impact;
         // amplification applies to FLOW AND NOISE, not to the value-arbitrage pull: thin
         // liquidity makes any ORDER move price further, but amplifying the arbitrage itself
@@ -2626,6 +2659,19 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
         w.halt_limit,
     );
     let mut bd_m = Market::new(K_VALUE_BOND, w.stress, 1.0);
+    // THE AMPLIFIER STUDY's gain scale: the equity market's alone (the bond's impact IS its
+    // reference). Exact forms at 1 and 0.5; anything else goes through `exp_det` on a log, which
+    // the twins' parity run guards.
+    if w.stress_scale > 0.0 {
+        let ratio = w.depth / DEPTH_REF;
+        eq_m.gain_mult = if w.stress_scale == 1.0 {
+            ratio
+        } else if w.stress_scale == 0.5 {
+            ratio.sqrt()
+        } else {
+            exp_det(w.stress_scale * ratio.ln())
+        };
+    }
 
     let mut log_vbase = 0.0f64;
     let mut rate = w.rate_mean;
@@ -6002,42 +6048,42 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     tail_window: "QQQ 1999-2026",
     tail_years: 27,
     vol: 26.90,
-    vol_sd: 0.11,
+    vol_sd: 0.10,
     ret_vol: 0.38,
-    ret_vol_sd: 0.53,
+    ret_vol_sd: 0.52,
     kurt: 9.55,
-    kurt_sd: 1.94,
+    kurt_sd: 1.82,
     ac1: 0.293,
-    ac1_sd: 0.24,
+    ac1_sd: 0.25,
     ac20: 0.249,
-    ac20_sd: 0.18,
+    ac20_sd: 0.19,
     crashes: 25.6,
-    crashes_sd: 0.45,
+    crashes_sd: 0.47,
     med_depth: -22.8,
-    med_depth_sd: 0.41,
+    med_depth_sd: 0.40,
     worst_depth: -83.0,
-    worst_depth_sd: 0.20,
+    worst_depth_sd: 0.21,
     vol_band: (23.5, 30.3),
     ret_vol_band: (0.27, 0.47),
     // QQQ wfull row of asymmetry-2026-08-31.tsv; the tail hedge is QQQ/TLT. Spreads measured
     // at the recipe world (2026-09-01), like every spread in this set.
     semi_excess: 1.13,
-    semi_excess_sd: 4.64,
+    semi_excess_sd: 3.82,
     lev_corr: -0.1073,
-    lev_corr_sd: 0.54,
+    lev_corr_sd: 0.48,
     tail_hedge: -0.236,
-    tail_hedge_sd: 0.32,
+    tail_hedge_sd: 0.35,
     // `-noise -anchors nasdaq` at the 0.23.0-nasdaq recipe, 200 paths, 2026-09-02. d20's spread
     // is a fraction of the S&P world's (0.30 against 2.38): at Nasdaq volatility the deep rung is
     // pinned where the S&P default leaves it unreadable, so the row carries real weight here.
-    val_disp_sd: 0.53,
-    d5_sd: 0.13,
-    d10_sd: 0.22,
-    d20_sd: 0.36,
+    val_disp_sd: 0.51,
+    d5_sd: 0.12,
+    d10_sd: 0.21,
+    d20_sd: 0.34,
     bond_vol_sd: 0.52,
-    bond_growth_sd: 0.98,
-    bond_infl_sd: 1.74,
-    bond_depth_sd: 0.37,
+    bond_growth_sd: 1.08,
+    bond_infl_sd: 1.66,
+    bond_depth_sd: 0.36,
     dd_refs: &DD_REFS_NASDAQ,
     div_yield: 0.78,
     div_yield_band: (0.3, 1.5),
@@ -10228,6 +10274,7 @@ fn world_json_body(w: &World) -> Vec<String> {
         // Scala twin's cannot be `macro`, a reserved word there
         ("macro", w.macro_panel.to_string()),
         ("levGain", ef(w.lev_gain)),
+        ("stressScale", ef(w.stress_scale)),
         ("macroNull", w.macro_null.to_string()),
         ("inflProb", ef(w.infl_prob)),
         ("inflSize", ef(w.infl_size)),
@@ -10805,6 +10852,7 @@ pub fn main() {
     let mut macro_panel = dw.macro_panel;
     let mut macro_null = dw.macro_null;
     let mut lev_gain = dw.lev_gain;
+    let mut stress_scale = dw.stress_scale;
     let mut joint_emit = String::new();
     let mut bars_emit = String::new();
     let mut jump_rate = dw.jump_rate;
@@ -10913,6 +10961,7 @@ pub fn main() {
             "-macro" => macro_panel = req_usize(&mut it, "-macro"),
             "-macronull" => macro_null = req_usize(&mut it, "-macronull"),
             "-levgain" => lev_gain = req_f64(&mut it, "-levgain"),
+            "-stressscale" => stress_scale = req_f64(&mut it, "-stressscale"),
             "-jointemit" => joint_emit = req_arg(&mut it, "-jointemit").clone(),
             "-barsemit" => bars_emit = req_arg(&mut it, "-barsemit").clone(),
             "-jumprate" => jump_rate = req_f64(&mut it, "-jumprate"),
@@ -11063,6 +11112,7 @@ pub fn main() {
         non_neg("-basketbeta", basket_beta);
         non_neg("-basketsector", basket_sector);
         non_neg("-levgain", lev_gain);
+        non_neg("-stressscale", stress_scale);
         non_neg("-basketidio", basket_idio);
         non_neg("-basketgaps", basket_gaps);
         non_neg("-basketdrift", basket_drift);
@@ -11220,6 +11270,7 @@ pub fn main() {
         macro_panel,
         macro_null,
         lev_gain,
+        stress_scale,
         value_pull,
         crowd,
         crowd_impact,
@@ -14464,6 +14515,108 @@ mod dd_shape_anchor_tests {
 /// The macro panel: four observables derived from the model's own state after the price loop, so
 /// `price` keeps its meaning and the dial is bit-identical off. The bands are MEASURED numbers
 /// re-derived from the checked-in fixture. The Scala twin carries the same checks in
+/// THE AMPLIFIER's rulers (`amplifier-2026-09-07.tsv`): the record's |r| autocorrelation profile
+/// and its crash-count elasticity against volatility, and what `stress_scale` does to the model's
+/// own elasticity. The Scala twin's `AmplifierAnchorSuite` reads the same file.
+#[cfg(test)]
+mod amplifier_anchor_tests {
+    use super::*;
+
+    fn rows() -> Vec<Vec<String>> {
+        std::fs::read_to_string("../test-data/equity-anchors/amplifier-2026-09-07.tsv")
+            .expect("fixture")
+            .lines()
+            .filter(|l| !(l.starts_with('#') || l.starts_with("section\t") || l.trim().is_empty()))
+            .map(|l| l.split('\t').map(str::to_string).collect())
+            .collect()
+    }
+
+    fn value(rs: &[Vec<String>], section: &str, series: &str, window: &str, stat: &str) -> f64 {
+        rs.iter()
+            .find(|r| r[0] == section && r[1] == series && r[2] == window && r[3] == stat)
+            .unwrap_or_else(|| panic!("fixture row [{section} {series} {window} {stat}] missing"))
+            [5]
+        .parse()
+        .expect("value")
+    }
+
+    #[test]
+    fn the_shipped_clustering_anchors_are_the_century_profiles_lag_1_and_lag_20_rows() {
+        let rs = rows();
+        let a = anchors_named("sp500");
+        assert!((a.ac1 - value(&rs, "profile", "CRSP", "w1926", "ac1")).abs() < 0.002);
+        assert!((a.ac20 - value(&rs, "profile", "CRSP", "w1926", "ac20")).abs() < 0.002);
+        let n = anchors_named("nasdaq");
+        assert!((n.ac1 - value(&rs, "profile", "QQQ", "w1999", "ac1")).abs() < 0.002);
+        assert!((n.ac20 - value(&rs, "profile", "QQQ", "w1999", "ac20")).abs() < 0.002);
+    }
+
+    #[test]
+    fn the_records_profile_has_a_hump_at_lags_2_to_5_and_a_tail_at_60_to_120() {
+        let rs = rows();
+        for (s, w) in [("CRSP", "w1926"), ("QQQ", "w1999")] {
+            let ac: Vec<f64> = [1, 2, 5, 10, 20, 60, 120]
+                .iter()
+                .map(|l| value(&rs, "profile", s, w, &format!("ac{l}")))
+                .collect();
+            assert!(
+                ac[1] > ac[0] && ac[2] > ac[0],
+                "{s}: lags 2 and 5 above lag 1, {ac:?}"
+            );
+            assert!(
+                ac[5] > 0.12 && ac[6] > 0.12,
+                "{s}: the tail holds past 0.12, {ac:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn crash_count_is_volatility_flat_across_the_fresh_start_cross_section() {
+        let rs = rows();
+        assert!(value(&rs, "elasticity", "cross-section", "w2007", "logSlope") < 0.2);
+        assert!(value(&rs, "elasticity", "cross-section", "w2007", "logCorr").abs() < 0.2);
+        assert!(value(&rs, "elasticity", "SPY-QQQ", "own", "logSlope") < 0.5);
+    }
+
+    #[test]
+    fn stress_scale_shrinks_a_thinner_worlds_spiral_and_zero_is_bit_identical() {
+        // the Nasdaq recipe's depth at the reference world's other dials: the gain scale at 0.5
+        // multiplies the spiral's excess gain by sqrt(10 / 17.4) = 0.76 (200x100: crashes
+        // 35 -> 31, kurtosis 24 -> 12)
+        let d = default_world();
+        let mut thin = d;
+        thin.depth = 10.0;
+        let s0 = measure(&sim_paths(&thin, 8, 40, DEFAULT_SEED), 40);
+        let mut thin5 = thin;
+        thin5.stress_scale = 0.5;
+        let s5 = measure(&sim_paths(&thin5, 8, 40, DEFAULT_SEED), 40);
+        assert!(s5.kurt < s0.kurt, "kurtosis {} -> {}", s0.kurt, s5.kurt);
+        assert!(
+            s5.ep_per_path <= s0.ep_per_path,
+            "crashes per path {} -> {}",
+            s0.ep_per_path,
+            s5.ep_per_path
+        );
+        let a = simulate(&d, 3, DEFAULT_SEED);
+        let mut w = d;
+        w.stress_scale = 1.0;
+        let b = simulate(&w, 3, DEFAULT_SEED);
+        assert!(
+            a.price == b.price,
+            "depth 17.4 is the reference: the gain scale is 1 there"
+        );
+        for (v, w) in releases() {
+            assert!(w.stress_scale == 0.0, "release {v}");
+        }
+        for (n, w, _) in recipes() {
+            if !n.contains("nasdaq") || !n.starts_with("0.24.0") {
+                assert!(w.stress_scale == 0.0, "recipe {n}");
+            }
+        }
+        assert!(default_world().stress_scale == 0.0);
+    }
+}
+
 /// `MacroPanelSuite`, against the same file.
 #[cfg(test)]
 mod macro_panel_tests {

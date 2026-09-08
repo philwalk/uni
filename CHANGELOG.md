@@ -43,6 +43,29 @@
   outgoing world reproduces the previous literals); the dial-sensitivity table and the
   worlds document's measured numbers regenerated; the 0.24.0 recipes carry the cycle (below).
 
+**The amplifier's gain scale, and the record's clustering profile**
+
+- `-stressscale E` (default 0, bit-identical): the liquidity spiral's excess gain multiplied by
+  (depth / 17.4)^E, so a thinner market's liquidity event is not proportionally larger than the
+  reference world's. The ruler is the fresh-start cross-section of 35 instruments on a window
+  opening at the 2007 high (`amplifier-2026-09-07.tsv`): crash count against volatility has a
+  log-log slope of 0.01 — flat — where the model's `depth` sweep reads 1.8 and its two recipes
+  1.44. The default world is unchanged at any E. `0.24.0-nasdaq` runs at 0.5 with `depth` 8.7,
+  `refuge` 0.15 and `levGain` 8 re-solved: daily kurtosis 24 → 16 (the record's 9.6 at its own
+  horizon), lag-1 clustering 0.38 → 0.31 (0.29), every class PASS on four seeds. Disclosed: the
+  crash count stays at 36–37 per century against 25.6 (diffusion alone at this volatility
+  crosses 15% thirty times a century, and the volatility band sets the depth), and lag-20
+  clustering gives 0.22 → 0.18 against 0.25.
+- The record's |r| autocorrelation PROFILE at lags 1 to 120, on the CRSP century and QQQ, is a
+  new fixture: it rises from lag 1 to a hump at lags 2–5 and holds 0.13–0.17 at lags 60–120,
+  where the model's decays from lag 1 and dies by 60; its leverage-effect profile
+  corr(r_t, |r_t+k|) stays at −0.08 to −0.11 through lag 5 where the model's spiral gives −0.04
+  past lag 1. A persistent asymmetric vol response at a ~20-session timescale is what the
+  amplifier lacks; six forms inside it (a slow stress index, a slow vol factor, a delayed or
+  spread attack, an EGARCH feed in three forms, a slower decay) each buy it with kurtosis or
+  crash count, so the profile ships as a reported ruler (`AmplifierAnchorSuite` /
+  `amplifier_anchor_tests` pin the fixture and the scale's flattening of the depth sweep).
+
 **A macro panel, so a rule that reads FRED can be graded on simulated paths**
 
 - `-macro 1` (default 0, off): four observables DERIVED from the model's own state after the price

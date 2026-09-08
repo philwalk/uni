@@ -343,6 +343,11 @@ object MarketSim:
     "              ;   predictive R^2, so a rank rule sees what it sees on the record.  Cadence,",
     "              ;   release lag and revisions are the consumer's point-in-time layer; the",
     "              ;   sidecar names each counterpart.  Reaches no price.  Default 0 = off",
+    "-stressscale E ; THE AMPLIFIER STUDY: the spiral's excess gain scaled by (depth/17.4)^E, so a",
+    "              ;   thinner market's liquidity event is not proportionally larger than the",
+    "              ;   reference world's (the record's crash count is volatility-flat across a",
+    "              ;   cross-section; the model's rises at 1.4-1.8).  0 = today; 1 = the same",
+    "              ;   absolute event everywhere.  The default world is unchanged at any E",
     "-levgain X    ; THE LEVERAGE CYCLE: declines that follow leverage.  A borrowing stock swings",
     "              ;   over years as a credit cycle of its own and is paid down under stress; the",
     "              ;   spiral's gain is multiplied by 1 + X(the stock's rise over its trailing",
@@ -695,6 +700,12 @@ object MarketSim:
                            // counterparts of BAA10Y / T10Y2Y / NFCILEVERAGE / VIXCLS -- see
                            // `deriveMacro` and `MacroK`.  Observational: reaches no price, draws
                            // from a dedicated stream read only when on, so 0 is bit-identical.
+    stressScale: Double = 0.0, // THE AMPLIFIER STUDY (item 11): the spiral's excess gain scaled by
+                           // (depth / DepthRef)^stressScale.  0 = the spiral's size proportional
+                           // to the world's everyday move (the record's crash count is
+                           // volatility-FLAT across a fresh-start cross-section, the model's
+                           // rises at 1.4-1.8); 1 = a liquidity event of the same absolute size
+                           // in every market.  The reference world is unchanged at any value.
     levGain: Double = 0.0, // THE LEVERAGE CYCLE: declines that follow leverage.  A borrowing
                            // stock swings over years as a credit cycle of its own (a damped
                            // oscillator on a dedicated stream, `MacroK.Lev*`), is paid down under
@@ -1080,9 +1091,18 @@ object MarketSim:
     def sp(w: World): World =
       w.copy(stress = d.stress, jumpVar = d.jumpVar, jumpSkew = d.jumpSkew, leverage = d.leverage,
              volPersist = d.volPersist, fundVol = d.fundVol, levGain = d.levGain, macroPanel = 1)
+    // THE AMPLIFIER's gain scale (item 11) on the Nasdaq worlds: at `stressScale` 0.5 the
+    // spiral's absolute size is 0.71 of the reference world's, which takes daily kurtosis 24 ->
+    // 16 (record 9.6 at its own horizon) and lag-1 clustering 0.38 -> 0.31 (record 0.29); the
+    // volatility it no longer supplies comes back through `depth` 10 -> 8.7 (the band's floor
+    // 23.5%), the bond's rally through `refuge` 0.115 -> 0.15, the hazard through `levGain` 8.
+    // The crash count does not move at the band (35 -> 37/century against 25.6: diffusion alone
+    // at this volatility crosses 15% thirty times a century) and lag-20 clustering gives 0.22 ->
+    // 0.18 (record 0.25) -- both disclosed.
     def nq(w: World): World =
       w.copy(stress = 4.4, jumpVar = 0.0, jumpSkew = d.jumpSkew, leverage = d.leverage,
-             volPersist = d.volPersist, levGain = d.levGain, macroPanel = 1)
+             volPersist = d.volPersist, levGain = 8.0, macroPanel = 1,
+             stressScale = 0.5, depth = 8.7, refuge = 0.15)
     Vector(("0.24.0-macro", Defaults.copy(macroPanel = 1), "sp500"),
            ("0.24.0-nasdaq", nq(base("0.23.1-nasdaq")), "nasdaq"),
            ("0.24.0-basket", sp(base("0.23.1-basket")), "sp500"),
@@ -1345,6 +1365,9 @@ object MarketSim:
     *
     * At 0.0 the mechanism is absent and `carry` never leaves zero, so every earlier world is
     * reproduced BIT-IDENTICALLY -- the halt consumes no random draws. */
+  /** The depth the spiral's gain was calibrated at, the reference `stressScale` scales from -- a
+    * literal, not `Defaults.depth`: a later depth move must not silently rescale the law. */
+  val DepthRef = 17.4
   final class Market(kValue: Double, stressK: Double, impact: Double,
                      recoveryDrag: Double = 0.0, recoveryFloor: Double = 1.0,
                      haltLimit: Double = 0.0):
@@ -1359,6 +1382,10 @@ object MarketSim:
       * the leverage stock (`levGain`); exactly 1.0 with the dial off, so the amplification is
       * bit-identical there. */
     var levMult = 1.0
+    /** THE AMPLIFIER STUDY's gain scale (item 11), exactly inert at 1: the spiral's excess gain
+      * scaled by (depth / DepthRef)^stressScale, set by the loop, so a thinner market's liquidity
+      * event is not proportionally larger than the reference world's. */
+    var gainMult = 1.0
     var lastLiq = impact
     var clamps = 0
     /** Sessions on the DOWNWARD guard, and sessions in the tail at all.  Counted separately from
@@ -1369,7 +1396,7 @@ object MarketSim:
     private[apps] var scaleVar = 0.01 * 0.01
     def step(fair: Double, flowPlusNoise: Double): Double =
       val scale = math.sqrt(scaleVar)
-      val amp   = 1.0 + stressK * stressIdx * levMult
+      val amp   = 1.0 + stressK * stressIdx * levMult * gainMult
       lastLiq   = amp * impact
       // amplification applies to FLOW AND NOISE, not to the value-arbitrage pull: thin liquidity
       // makes any ORDER move price further, but amplifying the arbitrage itself sets a feedback
@@ -1958,6 +1985,14 @@ object MarketSim:
     val eqM = new Market(w.valuePull, w.stress, 12.0 / w.depth, w.recoveryDrag, w.recoveryFloor,
                          w.haltLimit)
     val bdM = new Market(KValueBond, w.stress, 1.0)
+    // THE AMPLIFIER STUDY's gain scale: the equity market's alone (the bond's impact IS its
+    // reference).  Exact forms at 1 and 0.5; anything else goes through `expDet` on a log, which
+    // the twins' parity run guards.
+    if w.stressScale > 0.0 then
+      val ratio = w.depth / DepthRef
+      eqM.gainMult = if w.stressScale == 1.0 then ratio
+                     else if w.stressScale == 0.5 then math.sqrt(ratio)
+                     else expDet(w.stressScale * math.log(ratio))
 
     var logVbase = 0.0
     var rate = w.rateMean
@@ -3885,26 +3920,26 @@ object MarketSim:
     retVolWindow = "QQQ 1999-2026",
     clusterWindow = "QQQ 1999-2026", clusterYears = 27,
     tailWindow = "QQQ 1999-2026", tailYears = 27,
-    vol = 26.90,         volSd = 0.11,
-    retVol = 0.38,       retVolSd = 0.53,
-    kurt = 9.55,         kurtSd = 1.94,
-    ac1 = 0.293,         ac1Sd = 0.24,
-    ac20 = 0.249,        ac20Sd = 0.18,
-    crashes = 25.6,      crashesSd = 0.45,
-    medDepth = -22.8,    medDepthSd = 0.41,
-    worstDepth = -83.0,  worstDepthSd = 0.20,
+    vol = 26.90,         volSd = 0.10,
+    retVol = 0.38,       retVolSd = 0.52,
+    kurt = 9.55,         kurtSd = 1.82,
+    ac1 = 0.293,         ac1Sd = 0.25,
+    ac20 = 0.249,        ac20Sd = 0.19,
+    crashes = 25.6,      crashesSd = 0.47,
+    medDepth = -22.8,    medDepthSd = 0.40,
+    worstDepth = -83.0,  worstDepthSd = 0.21,
     volBand = (23.5, 30.3),
     retVolBand = (0.27, 0.47),
     // QQQ wfull row of asymmetry-2026-08-31.tsv; the tail hedge is QQQ/TLT.  Spreads measured
     // at the recipe world (2026-09-01), like every spread in this set.
-    semiExcess = 1.13, semiExcessSd = 4.64,
-    levCorr = -0.1073, levCorrSd = 0.54,
-    tailHedge = -0.236, tailHedgeSd = 0.32,
+    semiExcess = 1.13, semiExcessSd = 3.82,
+    levCorr = -0.1073, levCorrSd = 0.48,
+    tailHedge = -0.236, tailHedgeSd = 0.35,
     // `-noise -anchors nasdaq` at the 0.23.0-nasdaq recipe, 200 paths, 2026-09-02.  d20's spread
     // is a fraction of the S&P world's (0.30 against 2.38): at Nasdaq volatility the deep rung is
     // pinned where the S&P default leaves it unreadable, so the row carries real weight here.
-    valDispSd = 0.53, d5Sd = 0.13, d10Sd = 0.22, d20Sd = 0.36,
-    bondVolSd = 0.52, bondGrowthSd = 0.98, bondInflSd = 1.74, bondDepthSd = 0.37,
+    valDispSd = 0.51, d5Sd = 0.12, d10Sd = 0.21, d20Sd = 0.34,
+    bondVolSd = 0.52, bondGrowthSd = 1.08, bondInflSd = 1.66, bondDepthSd = 0.36,
     ddRefs = DdRefsNasdaq,
     divYield = 0.78, divYieldBand = (0.3, 1.5),
     basketCorr = 0.837, basketBeta = 1.365, basketVolRatio = 1.630, basketNameVolBand = (1.5, 2.8))
@@ -5891,7 +5926,8 @@ object MarketSim:
       // the flag's name, as every dial's key is: the FIELD is `macroPanel` only because `macro`
       // is a reserved word in Scala, and a consumer reconstructing a world from this block passes
       // `-macro`
-      ("macro", w.macroPanel.toString), ("levGain", ef(w.levGain)), ("macroNull", w.macroNull.toString),
+      ("macro", w.macroPanel.toString), ("levGain", ef(w.levGain)), ("stressScale", ef(w.stressScale)),
+      ("macroNull", w.macroNull.toString),
       ("inflProb", ef(w.inflProb)), ("inflSize", ef(w.inflSize)),
       ("inflSpeed", ef(w.inflSpeed)), ("rateSpeed", ef(w.rateSpeed)),
       ("discount", ef(w.discount)), ("margin", ef(w.margin)),
@@ -6233,7 +6269,7 @@ object MarketSim:
     var basket = dw.basket; var basketBeta = dw.basketBeta; var basketSector = dw.basketSector
     var basketIdio = dw.basketIdio; var basketGaps = dw.basketGaps
     var basketDrift = dw.basketDrift; var macroPanel = dw.macroPanel; var macroNull = dw.macroNull
-    var levGain = dw.levGain
+    var levGain = dw.levGain; var stressScale = dw.stressScale
     var jointEmit = ""
     var barsEmit = ""
     var inflProb = dw.inflProb; var inflSize = dw.inflSize
@@ -6325,6 +6361,8 @@ object MarketSim:
       case "-macro"      => macroPanel = intOr("-macro", consumeNext)
       case "-macronull"  => macroNull = intOr("-macronull", consumeNext)
       case "-levgain"    => levGain = numOr("-levgain", consumeNext)
+      case "-stressscale" => stressScale = numOr("-stressscale", consumeNext)
+
       case "-jointemit"  => jointEmit = consumeNext
       case "-barsemit"   => barsEmit = consumeNext
       // Rejected, not silently reinterpreted: -flight was a rate cut SPEED per year and -easing is
@@ -6405,6 +6443,8 @@ object MarketSim:
     if macroNull != 0 && macroNull != 1 then usage(s"-macronull $macroNull: 0 (the path's own panel) or 1 (a sibling's)")
     if macroNull > 0 && macroPanel == 0 then usage("-macronull needs -macro 1: it is the panel's null, not a panel")
     nonNeg("-levgain", levGain)
+    nonNeg("-stressscale", stressScale)
+
     if basket > 0 && basketBeta <= 0.0 then
       usage("-basket requires -basketbeta > 0: a name with no sector leg is not a member of anything")
     if overnight >= 1.0 then
@@ -6473,7 +6513,7 @@ object MarketSim:
                   overnight = overnight, basket = basket, basketBeta = basketBeta,
                   basketSector = basketSector, basketIdio = basketIdio, basketGaps = basketGaps,
                   basketDrift = basketDrift, macroPanel = macroPanel, macroNull = macroNull,
-                  levGain = levGain)
+                  levGain = levGain, stressScale = stressScale)
 
     // SATELLITE PROTOTYPE: write per-path primary+satellite LOG prices for grading against the
     // SPY-QQQ coupling anchors (the joint_anchor conventions, graded python-side).  Deliberately
