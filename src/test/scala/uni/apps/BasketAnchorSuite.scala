@@ -80,10 +80,29 @@ class BasketAnchorSuite extends FunSuite:
     val f = MarketSim.releaseWorld("0.23.1").getOrElse(fail("0.23.1 must resolve"))
     assertEquals(MarketSim.Recipes.find(_._1 == "0.23.1-basket").map(_._2),
       Some(Anchored.copy(divYield = 2.95, stress = f.stress, jumpVar = f.jumpVar, jumpSkew = f.jumpSkew,
-                         leverage = f.leverage, volPersist = f.volPersist, fundVol = f.fundVol, levGain = f.levGain)),
+                         leverage = f.leverage, volPersist = f.volPersist, fundVol = f.fundVol, levGain = f.levGain,
+                         volResp = f.volResp, volRespPhi = f.volRespPhi, volRespAttack = f.volRespAttack,
+                         stressAdapt = f.stressAdapt, volOfVol = f.volOfVol, slowShare = f.slowShare)),
       "the 0.23.1 basket recipe is the frozen 0.23.1 world at the anchored basket dials, dividends on")
-    assertEquals(MarketSim.Recipes.find(_._1 == "0.24.0-basket").map(_._2), Some(Anchored.copy(divYield = 2.95, macroPanel = 1)),
-      "the 0.24.0 basket recipe is the S&P default at the anchored basket dials, dividends and the panel on")
+    // the 0.24.0 recipe sits on the FROZEN 0.24.0 world and the 0.24.1 one on today's default:
+    // 0.24.1 moved the vol response's four dials and re-solved three around them
+    val f24 = MarketSim.releaseWorld("0.24.0").getOrElse(fail("0.24.0 must resolve"))
+    assertEquals(MarketSim.Recipes.find(_._1 == "0.24.0-basket").map(_._2),
+      Some(Anchored.copy(divYield = 2.95, macroPanel = 1, stress = f24.stress, jumpVar = f24.jumpVar,
+                         jumpSkew = f24.jumpSkew, leverage = f24.leverage, volPersist = f24.volPersist,
+                         fundVol = f24.fundVol, levGain = f24.levGain, volResp = f24.volResp,
+                         volRespPhi = f24.volRespPhi, volRespAttack = f24.volRespAttack,
+                         stressAdapt = f24.stressAdapt, volOfVol = f24.volOfVol,
+                         slowShare = f24.slowShare)),
+      "the 0.24.0 basket recipe is the frozen 0.24.0 world at the anchored basket dials, dividends and the panel on")
+    // 0.24.1's own recipe carries the slow repricing channel and the dials re-solved around it
+    val d = MarketSim.Defaults
+    assertEquals(MarketSim.Recipes.find(_._1 == "0.24.1-basket").map(_._2),
+      Some(Anchored.copy(divYield = 2.95, macroPanel = 1, volOfVol = d.volOfVol, jumpVar = d.jumpVar,
+                         jumpSkew = d.jumpSkew, stress = d.stress, volResp = d.volResp,
+                         slowShare = d.slowShare, slowVol = d.slowVol, slowLev = d.slowLev,
+                         slowPhi = d.slowPhi, slowPerm = d.slowPerm, slowBeta = d.slowBeta)),
+      "the 0.24.1 basket recipe is the S&P default at the anchored basket dials, dividends and the panel on")
     assertEquals(MarketSim.Defaults.basket, 0)
     // the other channels are untouched by the basket's draws: the bars and the satellite of a
     // channels-on world are byte-identical with and without the basket

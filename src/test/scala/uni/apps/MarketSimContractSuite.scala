@@ -292,7 +292,11 @@ class MarketSimContractSuite extends FunSuite:
       (st.worstDepth, r)
     val (lvlSmall, small) = at(100)
     val (lvlLarge, large) = at(400)
-    assert(lvlLarge < lvlSmall - 3.0,
+    // COMPARED IN LOGS.  The run-away is unbounded but PERCENT depth is not -- it saturates at
+    // -100%, and at 400 paths every world is already there (0.23.1 -99.62, 0.24.0 -99.65), so a
+    // margin in points measures the floor rather than the run-away.
+    def logDepth(lvl: Double): Double = math.log(1.0 + lvl / 100.0)
+    assert(logDepth(lvlLarge) < logDepth(lvlSmall) - 0.5,
       f"the pooled minimum must still run away with the ensemble or this test asserts nothing: " +
       f"$lvlSmall%.2f%% at 100 paths, $lvlLarge%.2f%% at 400")
     val (pSmall, pLarge) = (small.pctile.getOrElse(fail("no percentile at 100 paths")),

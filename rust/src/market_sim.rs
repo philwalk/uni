@@ -149,6 +149,23 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 // consumer's loader can route it through the table its FRED name would get. A panel-off
 // schema-12 file is byte-identical to its schema-11 counterpart except the schema number and the
 // new zero world field.
+// 12 -> 13: THE PANEL'S TWO NEW MEMBERS. The TSV gained `macroYield10` and `macroCredit`
+// (present ONLY when `macro > 0`, like the first four — the 10-year yield in pp against DGS10, and
+// the borrowing stock read as credit over output in percent against TOTBKCR/GDP), and
+// `channels.macro` their member blocks: a schema-12 reader that took the column list as fixed at
+// four, or indexed the members positionally, misroutes both. EVERY POOLED PANEL STATISTIC also
+// gained a `perPath` object beside it — `[p5, p50, p95]` of the per-path readings, the width of
+// the null a single path sits in — at the panel level and inside each member, so a reader that
+// took `channels.macro` as flat numbers finds objects. THE VOL RESPONSE, same schema: `world`
+// gained `volResp`, `volRespPhi`, `volRespCap`, `volRespAttack`, `jumpResp` and `stressAdapt`, and
+// the item-12 cascade gained `noiseAsymPhi` and `noiseAsymCap`. THE SLOW REPRICING CHANNEL, same
+// schema again: `world` gained `slowShare`, `slowVol`, `slowLev`, `slowPhi`, `slowPerm` and
+// `slowBeta`. A reader that reconstructs a
+// `World` from a schema-12 sidecar and runs it here gets no volatility response and the slow
+// amplifier scale — a different market, the `crowdImpact` case again. A panel-off schema-13 file
+// differs from its schema-12 counterpart in the schema number and the eight new world fields,
+// which are NOT all zero: `volRespPhi`, `volRespCap`, `stressAdapt` and `noiseAsymPhi` carry their
+// off values.
 const EMIT_SCHEMA: u32 = 13;
 
 /// Frozen structural constants of the volume channel — see the `vol_idio` field. Measured
@@ -359,13 +376,13 @@ pub fn default_world() -> World {
     World {
         trend_share: 0.055,
         depth: 17.4,
-        stress: 4.7,
+        stress: 5.0,
         beta: 3.0,
         drift: 0.122,
         fund_vol: 0.060,
         rate_mean: 0.042,
-        vol_persist: 0.993,
-        vol_of_vol: 0.022,
+        vol_persist: 0.982,
+        vol_of_vol: 0.028,
         recovery_drag: 8.5,
         recovery_floor: 0.10,
         halt_limit: 0.25,
@@ -401,9 +418,9 @@ pub fn default_world() -> World {
         cap_window: 6.0,
         leverage: 0.10,
         down_shock: 0.0,
-        jump_var: 0.11,
+        jump_var: 0.16,
         jump_rate: 0.0035,
-        jump_skew: 1.0,
+        jump_skew: 0.65,
         // The asymmetry adoption, 0.23.0: the leverage kick (0.12, news-coupled), fair-value
         // news jumps (1.3/yr x -3.3%, variance-displacing) with the transitory `down_shock`
         // retired at 0, jump_skew 0.7 with the jump channel rarer-larger (0.14 var at 0.0035),
@@ -435,6 +452,49 @@ pub fn default_world() -> World {
         macro_panel: 0,
         macro_null: 0,
         lev_persist: 0.0,
+        noise_asym_phi: NOISE_ASYM_PHI,
+        // THE VOL RESPONSE, 0.24.1: a persistent vol state driven by the session's decline in
+        // units of the conditional sd THAT GENERATED IT, and a faster spiral scale so the spiral
+        // can tell a volatile stretch from a stressed one. The record's volatility after a fall
+        // stays elevated for twenty sessions; 0.24.0 read 55-62% of the record's leverage-effect
+        // profile at every lag past 1, this world reads 77-135% from lag 6 out and reaches the
+        // record at lag 20. `stress` 4.7 -> 5.3 and `vol_persist` 0.993 -> 0.982 re-solve around
+        // the two mechanisms, `jump_var` 0.11 -> 0.12 holds the downside excess. Verified at
+        // 400x100 on sixteen seeds: lag-5 response 0.52 -> 0.71 of the record and lag-20
+        // 0.58 -> 0.95, the crash count 0.96 -> 0.98, time spent 20% underwater 3.11 -> 2.86,
+        // every gate row green. Kurtosis does NOT move on net (0.97 either side): the lower
+        // `vol_persist` costs it — 0.57 with the response off — and the response restores it.
+        // PRICED, and disclosed, each on 16 of 16 seeds: lag-1 clustering 1.08 -> 1.15 of the
+        // record, the lag-1 leverage correlation 0.98 -> 1.08 (the response adds to a channel
+        // already AT the record), and lag-20 clustering 0.83 -> 0.78. That last is the release's
+        // real trade, SYMMETRIC persistence for asymmetric: `vol_persist` 0.993 -> 0.982 takes
+        // the |r| autocorrelation at lag 20 from 0.188 to 0.113 against a record of 0.230, and
+        // the decline-driven state returns it only to 0.175.
+        vol_resp: 0.021,
+        vol_resp_phi: 0.992,
+        vol_resp_cap: 40.0,
+        vol_resp_attack: 0.5,
+        jump_resp: 0.0,
+        stress_adapt: 0.036,
+        noise_asym_cap: 0.0,
+        // THE SLOW REPRICING CHANNEL, 0.24.1: a fifth of the diffusive variance leaves the
+        // order-flow channel and reprices the fundamental and the price together, so it never
+        // passes the spiral. It is what flattens the |r| autocorrelation profile toward the
+        // record's SHAPE: lag-20 over lag-1 reads 0.594 against the record's 0.753, where the vol
+        // response alone read 0.527 (400x100, default seed). `stress` 5.3 -> 5.0, `vol_of_vol` 0.022 -> 0.028, `jump_var` 0.12 ->
+        // 0.16, `jump_skew` 1.0 -> 0.65 and `vol_resp` 0.019 -> 0.021 re-solve around it, holding
+        // kurtosis and the crash count and putting the downside excess on the record. Verified at
+        // 400x100 on sixteen seeds and scored on 32: the calibration loss falls 0.102 +/- 0.040
+        // against the channel-free world, better on 29 of 32 seeds.
+        // PRICED, and disclosed: equity volatility 5% over the record against 3% before, and the
+        // return per unit of volatility that follows from it (0.94 against 0.96). The band keeps
+        // 10.8 seed-sd of headroom at 400x100 and 3.9 at 60x80.
+        slow_share: 0.20,
+        slow_vol: 0.894,
+        slow_lev: 1.1,
+        slow_phi: 0.996,
+        slow_perm: 0.30,
+        slow_beta: 0.55,
         noise_asym: 0.0,
         stress_scale: 0.0,
         lev_gain: 6.0,
@@ -512,6 +572,20 @@ fn v0_19_2() -> World {
         macro_panel: 0,
         macro_null: 0,
         lev_persist: 0.0,
+        noise_asym_phi: NOISE_ASYM_PHI,
+        vol_resp: 0.0,
+        vol_resp_phi: 0.98,
+        vol_resp_cap: 40.0,
+        vol_resp_attack: 0.0,
+        jump_resp: 0.0,
+        stress_adapt: 0.005,
+        noise_asym_cap: 0.0,
+        slow_share: 0.0,
+        slow_vol: 0.894,
+        slow_lev: 1.1,
+        slow_phi: 0.996,
+        slow_perm: 0.30,
+        slow_beta: 0.55,
         noise_asym: 0.0,
         stress_scale: 0.0,
         lev_gain: 0.0,
@@ -539,6 +613,25 @@ fn v0_19_2() -> World {
         discount: 3.35,
         margin: 0.006,
     }
+}
+
+/// 0.24.0's world: the leverage cycle's, before 0.24.1's vol response moved `stress`,
+/// `vol_persist` and `jump_var` around the two new mechanisms. Built from today's default and
+/// moved back, so only the dials that changed are restated; the item-14 dials return to their off
+/// values and this row reproduces 0.24.0 bit for bit.
+fn v0_24_0() -> World {
+    let mut w = default_world();
+    w.stress = 4.7;
+    w.vol_persist = 0.993;
+    w.jump_var = 0.11;
+    w.vol_resp = 0.0;
+    w.vol_resp_phi = 0.98;
+    w.vol_resp_attack = 0.0;
+    w.stress_adapt = 0.005;
+    w.slow_share = 0.0;
+    w.vol_of_vol = 0.022;
+    w.jump_skew = 1.0;
+    w
 }
 
 pub fn releases() -> Vec<(&'static str, World)> {
@@ -570,6 +663,7 @@ pub fn releases() -> Vec<(&'static str, World)> {
         ("0.22.1", v0_22_1()),
         ("0.23.0", v0_23_0()),
         ("0.23.1", v0_23_0()),
+        ("0.24.0", v0_24_0()),
     ]
 }
 
@@ -668,7 +762,9 @@ pub fn recipes() -> Vec<(&'static str, World, &'static str)> {
     // within a quarter 1.61-1.69x (S&P) / 1.47-1.50x (Nasdaq, six seeds) into its top decile, builds to
     // rank 0.90-0.92 / 0.83-0.85 through the quarter before the peak, and realism, mechanism and
     // fidelity PASS on every seed.
-    let d = default_world();
+    // `v0_24_0`, not `default_world`: these rows carry 0.24.0's name and must keep 0.24.0's world
+    // when the default moves. 0.24.1's are below.
+    let d = v0_24_0();
     let sp = |mut w: World| {
         w.stress = d.stress;
         w.jump_var = d.jump_var;
@@ -702,11 +798,24 @@ pub fn recipes() -> Vec<(&'static str, World, &'static str)> {
         w.refuge = 0.15;
         w
     };
-    let mut sp_macro = default_world();
+    let mut sp_macro = v0_24_0();
     sp_macro.macro_panel = 1;
     let nq_macro = nq(open);
     let basket_macro = sp(basket);
     let nq_basket_macro = nq(nq_basket);
+    // THE VOL RESPONSE's recipes (0.24.1): each 0.24.0 recipe with the two new mechanisms. The
+    // S&P worlds take the moved dials from the default, so no dial is restated. The Nasdaq's are
+    // its own, re-solved: `stress_adapt` 0.015 rather than the default's 0.036 (its spiral is
+    // doing different work at `stress_scale` 0.5), `vol_resp` 0.008, and the three dials that pay
+    // for them — `depth` 8.4 -> 10.0 and `stress` 4.4 -> 4.2 hold the crash count while the
+    // response supplies the volatility, `lev_gain` 8 -> 9 holds the conditions index's build-up.
+    // Verified at 200x100 on four seeds, every class PASS on both sets.
+    //
+    // A jump channel here (`jump_var` 0.06, with `lev_gain` 10 and `stress` 4.0 around it) would
+    // put the recipe's downside excess back on the record's SIGN — 0.24.0 turned its jumps off and
+    // nothing else in it carries skew — but it costs 21% of daily kurtosis on a row already at
+    // 1.7x. Measured, not taken; the sign stays disclosed.
+    let (sp_vr, nq_vr, basket_vr, nq_basket_vr) = recipes_0241(open, basket, nq_basket);
     vec![
         ("0.23.0-nasdaq", nasdaq, "nasdaq"),
         ("0.23.1-nasdaq", open, "nasdaq"),
@@ -716,7 +825,58 @@ pub fn recipes() -> Vec<(&'static str, World, &'static str)> {
         ("0.24.0-nasdaq", nq_macro, "nasdaq"),
         ("0.24.0-basket", basket_macro, "sp500"),
         ("0.24.0-nasdaq-basket", nq_basket_macro, "nasdaq"),
+        ("0.24.1-macro", sp_vr, "sp500"),
+        ("0.24.1-nasdaq", nq_vr, "nasdaq"),
+        ("0.24.1-basket", basket_vr, "sp500"),
+        ("0.24.1-nasdaq-basket", nq_basket_vr, "nasdaq"),
     ]
+}
+
+/// The 0.24.1 recipe worlds, returned as (macro, nasdaq, basket, nasdaq-basket).
+fn recipes_0241(open: World, basket: World, nq_basket: World) -> (World, World, World, World) {
+    let d1 = default_world();
+    let sp1 = |mut w: World| {
+        w.stress = d1.stress;
+        w.jump_var = d1.jump_var;
+        w.jump_skew = d1.jump_skew;
+        w.leverage = d1.leverage;
+        w.vol_persist = d1.vol_persist;
+        w.fund_vol = d1.fund_vol;
+        w.lev_gain = d1.lev_gain;
+        w.macro_panel = 1;
+        w.vol_resp = d1.vol_resp;
+        w.vol_resp_phi = d1.vol_resp_phi;
+        w.vol_resp_attack = d1.vol_resp_attack;
+        w.stress_adapt = d1.stress_adapt;
+        w.vol_of_vol = d1.vol_of_vol;
+        w.slow_share = d1.slow_share;
+        w.slow_vol = d1.slow_vol;
+        w.slow_lev = d1.slow_lev;
+        w.slow_phi = d1.slow_phi;
+        w.slow_perm = d1.slow_perm;
+        w.slow_beta = d1.slow_beta;
+        w
+    };
+    let nq1 = |mut w: World| {
+        w.stress = 4.2;
+        w.jump_var = 0.0;
+        w.jump_skew = d1.jump_skew;
+        w.leverage = d1.leverage;
+        w.vol_persist = v0_24_0().vol_persist;
+        w.lev_gain = 9.0;
+        w.macro_panel = 1;
+        w.stress_scale = 0.5;
+        w.depth = 10.0;
+        w.refuge = 0.15;
+        w.vol_resp = 0.008;
+        w.vol_resp_phi = d1.vol_resp_phi;
+        w.vol_resp_attack = d1.vol_resp_attack;
+        w.stress_adapt = 0.015;
+        w
+    };
+    let mut sp_vr = default_world();
+    sp_vr.macro_panel = 1;
+    (sp_vr, nq1(open), sp1(basket), nq1(nq_basket))
 }
 
 /// What `-atrelease NAME` seeds from: a release's world, anchors untouched, or a recipe with the
@@ -782,6 +942,20 @@ fn v0_23_0() -> World {
         macro_panel: 0,
         macro_null: 0,
         lev_persist: 0.0,
+        noise_asym_phi: NOISE_ASYM_PHI,
+        vol_resp: 0.0,
+        vol_resp_phi: 0.98,
+        vol_resp_cap: 40.0,
+        vol_resp_attack: 0.0,
+        jump_resp: 0.0,
+        stress_adapt: 0.005,
+        noise_asym_cap: 0.0,
+        slow_share: 0.0,
+        slow_vol: 0.894,
+        slow_lev: 1.1,
+        slow_phi: 0.996,
+        slow_perm: 0.30,
+        slow_beta: 0.55,
         noise_asym: 0.0,
         stress_scale: 0.0,
         lev_gain: 0.0,
@@ -849,6 +1023,20 @@ fn v0_22_1() -> World {
         macro_panel: 0,
         macro_null: 0,
         lev_persist: 0.0,
+        noise_asym_phi: NOISE_ASYM_PHI,
+        vol_resp: 0.0,
+        vol_resp_phi: 0.98,
+        vol_resp_cap: 40.0,
+        vol_resp_attack: 0.0,
+        jump_resp: 0.0,
+        stress_adapt: 0.005,
+        noise_asym_cap: 0.0,
+        slow_share: 0.0,
+        slow_vol: 0.894,
+        slow_lev: 1.1,
+        slow_phi: 0.996,
+        slow_perm: 0.30,
+        slow_beta: 0.55,
         noise_asym: 0.0,
         stress_scale: 0.0,
         lev_gain: 0.0,
@@ -918,6 +1106,20 @@ fn v0_22_0() -> World {
         macro_panel: 0,
         macro_null: 0,
         lev_persist: 0.0,
+        noise_asym_phi: NOISE_ASYM_PHI,
+        vol_resp: 0.0,
+        vol_resp_phi: 0.98,
+        vol_resp_cap: 40.0,
+        vol_resp_attack: 0.0,
+        jump_resp: 0.0,
+        stress_adapt: 0.005,
+        noise_asym_cap: 0.0,
+        slow_share: 0.0,
+        slow_vol: 0.894,
+        slow_lev: 1.1,
+        slow_phi: 0.996,
+        slow_perm: 0.30,
+        slow_beta: 0.55,
         noise_asym: 0.0,
         stress_scale: 0.0,
         lev_gain: 0.0,
@@ -987,6 +1189,20 @@ fn v0_21_0() -> World {
         macro_panel: 0,
         macro_null: 0,
         lev_persist: 0.0,
+        noise_asym_phi: NOISE_ASYM_PHI,
+        vol_resp: 0.0,
+        vol_resp_phi: 0.98,
+        vol_resp_cap: 40.0,
+        vol_resp_attack: 0.0,
+        jump_resp: 0.0,
+        stress_adapt: 0.005,
+        noise_asym_cap: 0.0,
+        slow_share: 0.0,
+        slow_vol: 0.894,
+        slow_lev: 1.1,
+        slow_phi: 0.996,
+        slow_perm: 0.30,
+        slow_beta: 0.55,
         noise_asym: 0.0,
         stress_scale: 0.0,
         lev_gain: 0.0,
@@ -1047,6 +1263,20 @@ fn v0_20_0() -> World {
         macro_panel: 0,
         macro_null: 0,
         lev_persist: 0.0,
+        noise_asym_phi: NOISE_ASYM_PHI,
+        vol_resp: 0.0,
+        vol_resp_phi: 0.98,
+        vol_resp_cap: 40.0,
+        vol_resp_attack: 0.0,
+        jump_resp: 0.0,
+        stress_adapt: 0.005,
+        noise_asym_cap: 0.0,
+        slow_share: 0.0,
+        slow_vol: 0.894,
+        slow_lev: 1.1,
+        slow_phi: 0.996,
+        slow_perm: 0.30,
+        slow_beta: 0.55,
         noise_asym: 0.0,
         stress_scale: 0.0,
         lev_gain: 0.0,
@@ -1389,6 +1619,66 @@ pub struct World {
     /// with it. The record's response is a PLATEAU, not a spread integral. Must stay below 1;
     /// 0 = bit-identical.
     pub lev_persist: f64,
+    /// the cascade's DECAY (item 14): `NOISE_ASYM_PHI` (0.96) is a 17-session half-life; higher
+    /// carries the response to lag 20.  The Scala twin spells this default as the LITERAL 0.96,
+    /// because there `Defaults` is constructed before that val is initialized; the two must stay
+    /// equal, and the sidecar's `world` block is where a divergence would show.
+    pub noise_asym_phi: f64,
+    /// THE VOL RESPONSE (item 14): the diffusive noise multiplied by exp(vol_resp * S), S the
+    /// session's decline in units of the conditional sd THAT GENERATED IT, accumulated at
+    /// `vol_resp_phi`. Two things separate it from the item-12 forms: the denominator is the
+    /// session's own sd rather than a trailing scale (so the state is scale-free instantly and
+    /// cannot self-excite), and the accumulation is UNNORMALIZED, so one decline's response is a
+    /// PLATEAU of height `vol_resp` decaying at `vol_resp_phi` — not an integral divided over the
+    /// following sessions, which is what halved the per-lag amplitude in item 12. Draw-free:
+    /// 0 is bit-identical.
+    pub vol_resp: f64,
+    pub vol_resp_phi: f64,
+    /// the vol response state's ceiling
+    pub vol_resp_cap: f64,
+    /// the vol response's ATTACK, 0 = none: the standardized decline through a fast EWMA before it
+    /// accumulates, so the response BUILDS over two to five sessions instead of peaking at lag 1.
+    pub vol_resp_attack: f64,
+    /// THE JUMP RESPONSE (item 14): the jump INTENSITY multiplied by exp(jump_resp * S), the same
+    /// persistent decline state `vol_resp` reads. Consumes no extra draw.
+    pub jump_resp: f64,
+    /// the equity spiral's SCALE speed (item 14): the EWMA weight on ret^2 that standardizes the
+    /// decline `stress_idx` reads. 0.005 is a ~140-session memory, so a stretch a persistent vol
+    /// mechanism has genuinely made volatile reads as continuous STRESS and the spiral mints
+    /// spikes out of it — the measured blocker on every form tried. Faster lets the spiral tell
+    /// volatile from stressed.
+    pub stress_adapt: f64,
+    /// the cascade's CAP, 0 = uncapped: the largest log multiplier the cascade may apply.
+    pub noise_asym_cap: f64,
+    /// THE SLOW REPRICING CHANNEL (item 15): the share of the diffusive VARIANCE taken out of the
+    /// order-flow channel, which reappears as a repricing that moves the fundamental and the price
+    /// TOGETHER — like the news jump, so the value channel has nothing to arbitrage and the move
+    /// never passes through `step` and its spiral. Its volatility has LONG memory the amplifier
+    /// cannot steepen, which is what puts the |r| autocorrelation profile back on the record's
+    /// shape. Own RNG stream; 0 = bit-identical.
+    pub slow_share: f64,
+    /// the channel's scale, as a multiple of the session's base diffusive scale at this depth.
+    /// Not derived from `slow_share`: the order-flow channel reaches price multiplied by the
+    /// spiral's gain and this one does not, so equal variance shares are not equal price shares.
+    pub slow_vol: f64,
+    /// the channel's OWN leverage effect, in units of its state's stationary sd — EGARCH-style on
+    /// its own draw. It is the only thing driving the state: a symmetric component was measured
+    /// and is strictly worse, because variance moved out of the amplifier then loses the leverage
+    /// profile the amplifier was supplying.
+    pub slow_lev: f64,
+    /// the state's persistence. Scaled by sqrt(1 - phi^2) on input, so `slow_lev` stays in
+    /// stationary units — unscaled, its variance runs 11x nominal and volatility reaches 200%.
+    pub slow_phi: f64,
+    /// the share of the repricing that reaches the FUNDAMENTAL. The rest opens a gap the value
+    /// channel closes over its own horizon. At 1.0 the move is permanent and nothing arbitrages
+    /// it, which the momentum crowd chases into a variance ratio: 1.0 reads 1.14 against the
+    /// record's 1.00, 0.30 reads 1.09.
+    pub slow_perm: f64,
+    /// the BOND's loading on the same repricing, opposite sign — a flight-to-quality factor.
+    /// Without it the channel is equity-only, and the worst equity days have no bond response at
+    /// all: the tail hedge correlation reads -0.239 against a record of -0.270, and the bond's
+    /// growth-shock rally 5.64 against 6.60.
+    pub slow_beta: f64,
     /// THE ASYMMETRIC NOISE VOL (item 12): the diffusive noise multiplied by exp(g - Var(g)), g a
     /// CASCADE of the session's own diffusive DRAW: -z through a fast attack into a slow decay
     /// (`NOISE_ASYM_ATTACK`, `NOISE_ASYM_PHI`), so the response BUILDS over two to five sessions
@@ -1577,6 +1867,9 @@ struct Market {
     k_value: f64,
     stress_k: f64,
     impact: f64,
+    /// the EWMA weight on ret^2 in `scale_var`, the denominator `stress_idx` standardizes by; set
+    /// by the loop from `stress_adapt` for the equity market
+    scale_mu: f64,
     recovery_drag: f64,
     recovery_floor: f64,
     /// Trading halt: the largest ONE-session decline this market prints, as a simple fraction,
@@ -1606,6 +1899,16 @@ struct Market {
     floor_days: usize,
     tail_days: usize,
     scale_var: f64,
+    /// The SPIRAL's own scale, at `scale_mu`, and the stress index built from it. Separate from
+    /// `scale_var`/`stress_idx` on purpose: `stress_adapt` is the amplifier's dial, and the index
+    /// the rest of the world reads — policy easing, the refuge bid, joint-stress margin selling,
+    /// the leverage stock's paydown, the macro panel's spread and conditions members — was
+    /// calibrated against the SLOW one. Letting the dial move both shrank the equity stress the
+    /// bond's crisis behaviour reads: measured, the growth-shock rally fell 6.7 -> 4.2 against a
+    /// record of 6.6 and `-crossasset` failed its short-duration rung. At `scale_mu` 0.005 the two
+    /// are identical, so the dial is bit-identical off.
+    scale_var_amp: f64,
+    stress_amp: f64,
 }
 
 /// The depth the spiral's gain was calibrated at, the reference `stress_scale` scales from — a
@@ -1622,11 +1925,11 @@ const NOISE_ASYM_ATTACK: f64 = 0.50;
 
 /// Var(g) in closed form, for the level-preserving centring: the cascade's impulse response is
 /// T(1-A)(A^{k+1} - phi^{k+1})/(A - phi), and this is the sum of its squares.
-fn noise_asym_var(t: f64) -> f64 {
+fn noise_asym_var(t: f64, ph: f64) -> f64 {
     if t <= 0.0 {
         return 0.0;
     }
-    let (a, ph) = (NOISE_ASYM_ATTACK, NOISE_ASYM_PHI);
+    let a = NOISE_ASYM_ATTACK;
     let k = t * (1.0 - a) / (a - ph);
     k * k * (a * a / (1.0 - a * a) - 2.0 * a * ph / (1.0 - a * ph) + ph * ph / (1.0 - ph * ph))
 }
@@ -1648,6 +1951,7 @@ impl Market {
             k_value,
             stress_k,
             impact,
+            scale_mu: 0.005,
             recovery_drag,
             recovery_floor,
             floor_log: if halt_limit <= 0.0 {
@@ -1667,12 +1971,15 @@ impl Market {
             floor_days: 0,
             tail_days: 0,
             scale_var: 0.01 * 0.01,
+            scale_var_amp: 0.01 * 0.01,
+            stress_amp: 0.0,
         }
     }
 
     fn step(&mut self, fair: f64, flow_plus_noise: f64) -> f64 {
         let scale = self.scale_var.sqrt();
-        let amp = 1.0 + self.stress_k * self.stress_idx * self.lev_mult * self.gain_mult;
+        let scale_a = self.scale_var_amp.sqrt();
+        let amp = 1.0 + self.stress_k * self.stress_amp * self.lev_mult * self.gain_mult;
         self.last_liq = amp * self.impact;
         // amplification applies to FLOW AND NOISE, not to the value-arbitrage pull: thin
         // liquidity makes any ORDER move price further, but amplifying the arbitrage itself
@@ -1733,6 +2040,9 @@ impl Market {
         self.scale_var = 0.995 * self.scale_var + 0.005 * ret * ret;
         self.stress_idx =
             0.0f64.max(0.96 * self.stress_idx + 0.04 * (0.0f64.max(-ret) / scale - 0.399));
+        self.scale_var_amp = (1.0 - self.scale_mu) * self.scale_var_amp + self.scale_mu * ret * ret;
+        self.stress_amp =
+            0.0f64.max(0.96 * self.stress_amp + 0.04 * (0.0f64.max(-ret) / scale_a - 0.399));
         ret
     }
 }
@@ -2760,6 +3070,9 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
         w.recovery_floor,
         w.halt_limit,
     );
+    // set after construction rather than as a seventh constructor argument, the way `lev_mult` and
+    // `gain_mult` are: the equity spiral's scale speed, the bond's left at its default.
+    eq_m.scale_mu = w.stress_adapt;
     let mut bd_m = Market::new(K_VALUE_BOND, w.stress, 1.0);
     // THE AMPLIFIER STUDY's gain scale: the equity market's alone (the bond's impact IS its
     // reference). Exact forms at 1 and 0.5; anything else goes through `exp_det` on a log, which
@@ -2807,9 +3120,11 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
     // the shipped one bit for bit), `asym_g` the asymmetric noise vol's log multiplier, driven by
     // the DIFFUSIVE DRAW rather than by any price-derived quantity.
     let mut kick_s = 0.0f64;
+    let mut vol_resp_s = 0.0f64;
+    let mut vol_resp_a = 0.0f64;
     let mut asym_g = 0.0f64;
     let mut asym_a = 0.0f64;
-    let asym_norm = noise_asym_var(w.noise_asym);
+    let asym_norm = noise_asym_var(w.noise_asym, w.noise_asym_phi);
     // Settled equity stress for the refuge bid (see `refuge_days`); draw-free, and both its use
     // and its update sit behind `refuge_days > 0`, so 0 is bit-identical off.
     let mut settled_stress = 0.0f64;
@@ -2831,6 +3146,23 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
         0.0
     };
     let vol_norm = (w.vol_of_vol * w.vol_of_vol) / 1e-9f64.max(1.0 - w.vol_persist * w.vol_persist);
+    // THE SLOW REPRICING CHANNEL (item 15). `slow_share` of the diffusive variance leaves the
+    // order-flow channel and reappears as a repricing that moves the fundamental and the price
+    // TOGETHER, the way the news jump does, so the value channel has nothing to arbitrage and the
+    // move never passes through `step` and its spiral. Its state is driven ONLY by its own
+    // leverage term, so the variance it carries is long-memoried AND asymmetric — a symmetric
+    // component was measured and is strictly worse, because variance moved out of the amplifier
+    // then loses the leverage profile the amplifier was supplying. Own RNG stream, and
+    // `slow_share` is the switch: at 0 the block never runs and `mix` is exactly 1.
+    let mut slow_rng = NumPyRng::new(seed ^ 0x510e_c0deu64);
+    let mut slow_g = 0.0f64;
+    let mut slow_b = 0.0f64;
+    // scaled by sqrt(1 - phi^2) on input, so `slow_lev` is in units of the state's STATIONARY sd
+    // and the centring is its variance; unscaled it runs 11x nominal and volatility reaches 200%.
+    let slow_k = (1.0 - w.slow_phi * w.slow_phi).sqrt();
+    let slow_norm = w.slow_lev * w.slow_lev;
+    let slow_scale = SIGMA_N * w.slow_vol * (12.0 / w.depth);
+    let mix = (1.0 - w.slow_share).sqrt();
     // News variance DISPLACES diffusive noise (see `news_damp_at`); 1.0 when the channel is off.
     let news_damp = news_damp_at(w.news_rate, w.news_size);
     let crowd_win: usize = match w.crowd {
@@ -2981,6 +3313,24 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
                 news_j = w.news_size;
             }
         }
+        // the channel's share of THIS session's conditional variance, for the implied-vol member;
+        // 0 when the channel is off, so that member is unchanged.
+        let mut slow_var = 0.0f64;
+        if w.slow_share > 0.0 {
+            let zs = slow_rng.randn();
+            let smul = (slow_g - slow_norm).exp();
+            slow_var = w.slow_vol * w.slow_vol * smul * smul;
+            let sm = slow_scale * smul * zs;
+            // only `slow_perm` of it reaches the fundamental: the rest opens a gap the value
+            // channel closes, which is what keeps the momentum crowd from chasing the whole move
+            // into a variance ratio. The bond takes the same repricing with the opposite sign.
+            log_vbase += w.slow_perm * sm;
+            eq_m.log_p += sm;
+            let bm = -w.slow_beta * sm;
+            bd_m.log_p += bm;
+            slow_b += w.slow_perm * bm;
+            slow_g = w.slow_phi * slow_g - w.slow_lev * slow_k * zs;
+        }
         infl_press += w.infl_speed * (infl_target - infl_press);
         // policy: chase rateMean + pressure MINUS accommodation, and accommodation is a CAPPED
         // STOCK rather than a cut speed — eased in within ~2 months, withdrawn over years. As a
@@ -3107,20 +3457,33 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
         // self-excite — see PLAN item 11's map). Read before its own update, like the kick.
         // Level-preserving, the same convention `vol_norm` applies to the vol state.
         let z = rng.randn();
-        let asym_m = if w.noise_asym > 0.0 {
+        let asym_m = if w.noise_asym <= 0.0 {
+            1.0
+        } else if w.noise_asym_cap > 0.0 {
+            (asym_g - asym_norm).min(w.noise_asym_cap).exp()
+        } else {
             (asym_g - asym_norm).exp()
+        };
+        let d_noise = news_damp * SIGMA_N * (log_vol - vol_norm).exp() * z * asym_m * mix;
+        // read BEFORE this session's update, like the kick: the response is to PAST declines
+        let vol_resp_m = if w.vol_resp > 0.0 {
+            (w.vol_resp * vol_resp_s).exp()
         } else {
             1.0
         };
-        let d_noise = news_damp * SIGMA_N * (log_vol - vol_norm).exp() * z * asym_m;
         let d_noise = if w.leverage > 0.0 {
             d_noise * (w.leverage * kick_s).exp()
         } else {
             d_noise
         };
+        let d_noise = if w.vol_resp > 0.0 {
+            d_noise * vol_resp_m
+        } else {
+            d_noise
+        };
         if w.noise_asym > 0.0 {
             asym_a = NOISE_ASYM_ATTACK * asym_a - (1.0 - NOISE_ASYM_ATTACK) * z;
-            asym_g = NOISE_ASYM_PHI * asym_g + w.noise_asym * asym_a;
+            asym_g = w.noise_asym_phi * asym_g + w.noise_asym * asym_a;
         }
         // The session's DIFFUSION SCALE, recorded for the range and satellite channels exactly
         // as the noise term above is built — news damp, vol state, leverage kick (read BEFORE
@@ -3131,6 +3494,8 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
             || w.overnight > 0.0
             || w.basket > 0
             || w.macro_panel > 0
+            || w.vol_resp > 0.0
+            || w.jump_resp > 0.0
         {
             let lev_mult = if w.leverage > 0.0 {
                 (w.leverage * kick_s).exp()
@@ -3142,7 +3507,14 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
             } else {
                 1.0
             };
-            news_damp * SIGMA_N * (log_vol - vol_norm).exp() * lev_mult * jv_mult * asym_m
+            news_damp
+                * SIGMA_N
+                * (log_vol - vol_norm).exp()
+                * lev_mult
+                * jv_mult
+                * asym_m
+                * vol_resp_m
+                * mix
         } else {
             0.0
         };
@@ -3159,11 +3531,24 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
             d_noise
         } else {
             let vol_mult = (log_vol - vol_norm).exp();
-            let lam_now = 0.25f64.min(w.jump_rate * vol_mult.powf(JUMP_GAMMA));
+            let lam_j = if w.jump_resp > 0.0 {
+                (w.jump_resp * vol_resp_s).exp()
+            } else {
+                1.0
+            };
+            let lam_now = 0.25f64.min(w.jump_rate * vol_mult.powf(JUMP_GAMMA) * lam_j);
             let scale = jump_scale(w);
             // The compensator is deterministic and consumes no draw: it removes the mean the
             // downward shift would otherwise add, so `jump_var` moves the tail without moving drift.
-            let compens = w.jump_rate * w.jump_skew * scale;
+            // With `jump_resp` on it must be CONDITIONAL — the intensity then correlates with past
+            // declines, and an unconditional compensator would leave a systematic post-decline
+            // return, i.e. manufactured TREND rather than the volatility response asked for
+            // (measured: the 60-day variance ratio 1.07 -> 2.65).
+            let compens = if w.jump_resp > 0.0 {
+                lam_now * w.jump_skew * scale
+            } else {
+                w.jump_rate * w.jump_skew * scale
+            };
             let fired = jrng.next_f64() < lam_now;
             let jump = if !fired {
                 0.0
@@ -3246,6 +3631,35 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
             }
         }
         let ret_e = eq_m.step(perceived_fair, eq_flow + eq_shock);
+        if w.vol_resp > 0.0 || w.jump_resp > 0.0 {
+            // The REALIZED decline, in units of the sd that generated it, saturated at four like
+            // the kick's and centred at a normal's E[max(-z,0)] so the state has mean zero and the
+            // multiplier does not move the vol LEVEL. `sess_sigma` carries this session's own
+            // multiplier, so a stretch the state has already made volatile reads no larger here:
+            // scale-free by construction, where a trailing-scale denominator lags ~140 sessions
+            // and self-excites. The numerator is the realized return rather than the shock on
+            // purpose: the spiral's amplification is part of what real volatility responds to, and
+            // a shock-only driver loses the skew the downside excess is measured from.
+            let vr_u = ((news_j - ret_e).max(0.0) / (sess_sigma).max(1e-12)).min(4.0) - 0.399;
+            // the ATTACK stage: at 0 the state receives the session's reading whole, which peaks
+            // the response at lag 1; above 0 it receives a fast EWMA of it.
+            if w.vol_resp_attack > 0.0 {
+                vol_resp_a = w.vol_resp_attack * vol_resp_a + (1.0 - w.vol_resp_attack) * vr_u;
+            }
+            let vr_in = if w.vol_resp_attack > 0.0 {
+                vol_resp_a
+            } else {
+                vr_u
+            };
+            // SATURATED, and the cap is what makes the accumulation safe rather than a nicety. The
+            // state is unnormalized so that one decline's response is a plateau rather than a
+            // divided integral, which means a stretch of saturated readings COMPOUNDS: the
+            // realized return carries the spiral's amplification while `sess_sigma` does not, so
+            // in a thin market the state raises volatility, the spiral amplifies harder, and the
+            // reading grows again. The S&P default is stable without a cap; the Nasdaq recipe at
+            // depth 8.4 ran to 49% volatility and 70 crashes a century.
+            vol_resp_s = (w.vol_resp_phi * vol_resp_s + vr_in).min(w.vol_resp_cap);
+        }
         if lev_on {
             // THE CREDIT CYCLE: a damped oscillator in the stock (its velocity persists for a
             // quarter, its level swings over years — the record's NFCILEVERAGE shape), driven by
@@ -3296,7 +3710,7 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
             settled_stress += settle_mu * (eq_m.stress_idx - settled_stress);
         }
         let _ret_b = bd_m.step(
-            fair_b,
+            fair_b + slow_b,
             bond_flow + SIGMA_N_BOND * (w.duration / DURATION_REF) * rng.randn(),
         );
 
@@ -3315,12 +3729,22 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
             ch.state[i] = (log_vol - vol_norm).exp() * eq_m.last_liq * w.depth / 12.0;
             ch.scale_var[i] = eq_m.scale_var;
             ch.jump[i] = jump_now * eq_m.last_liq - news_j;
-            ch.vol_state[i] = (log_vol - vol_norm).exp();
+            let vb = (log_vol - vol_norm).exp() * vol_resp_m * mix;
+            ch.vol_state[i] = (vb * vb + slow_var).sqrt();
         }
         if mc_on {
             mc.stress[i] = eq_m.stress_idx;
             mc.b_stress[i] = bd_m.stress_idx;
-            mc.vol_state[i] = (log_vol - vol_norm).exp();
+            // TIMES the vol response's multiplier: the implied vol reads the price process's own
+            // conditional variance, and with `vol_resp` on the exogenous state is no longer all of
+            // it. A member that misses a real vol component reads CALM while returns are
+            // turbulent, which is the failure this column exists to avoid — measured, it drops the
+            // variance risk premium out of its band.
+            // PLUS the slow channel's variance: a member that misses a real vol component reads
+            // CALM while returns are turbulent, which drops the variance risk premium out of its
+            // band — measured, two macro rows fail without it.
+            let vb = (log_vol - vol_norm).exp() * vol_resp_m * mix;
+            mc.vol_state[i] = (vb * vb + slow_var).sqrt();
             mc.amp[i] = eq_m.last_liq * w.depth / 12.0;
             mc.acc[i] = acc;
             mc.w_trend[i] = w_trend;
@@ -10520,6 +10944,20 @@ fn world_json_body(w: &World) -> Vec<String> {
         ("stressScale", ef(w.stress_scale)),
         ("levPersist", ef(w.lev_persist)),
         ("noiseAsym", ef(w.noise_asym)),
+        ("noiseAsymPhi", ef(w.noise_asym_phi)),
+        ("noiseAsymCap", ef(w.noise_asym_cap)),
+        ("volResp", ef(w.vol_resp)),
+        ("volRespPhi", ef(w.vol_resp_phi)),
+        ("volRespCap", ef(w.vol_resp_cap)),
+        ("volRespAttack", ef(w.vol_resp_attack)),
+        ("jumpResp", ef(w.jump_resp)),
+        ("stressAdapt", ef(w.stress_adapt)),
+        ("slowShare", ef(w.slow_share)),
+        ("slowVol", ef(w.slow_vol)),
+        ("slowLev", ef(w.slow_lev)),
+        ("slowPhi", ef(w.slow_phi)),
+        ("slowPerm", ef(w.slow_perm)),
+        ("slowBeta", ef(w.slow_beta)),
         ("macroNull", w.macro_null.to_string()),
         ("inflProb", ef(w.infl_prob)),
         ("inflSize", ef(w.infl_size)),
@@ -11113,6 +11551,20 @@ pub fn main() {
     let mut stress_scale = dw.stress_scale;
     let mut lev_persist = dw.lev_persist;
     let mut noise_asym = dw.noise_asym;
+    let mut noise_asym_phi = dw.noise_asym_phi;
+    let mut noise_asym_cap = dw.noise_asym_cap;
+    let mut vol_resp = dw.vol_resp;
+    let mut vol_resp_phi = dw.vol_resp_phi;
+    let mut vol_resp_cap = dw.vol_resp_cap;
+    let mut vol_resp_attack = dw.vol_resp_attack;
+    let mut jump_resp = dw.jump_resp;
+    let mut stress_adapt = dw.stress_adapt;
+    let mut slow_share = dw.slow_share;
+    let mut slow_vol = dw.slow_vol;
+    let mut slow_lev = dw.slow_lev;
+    let mut slow_phi = dw.slow_phi;
+    let mut slow_perm = dw.slow_perm;
+    let mut slow_beta = dw.slow_beta;
     let mut joint_emit = String::new();
     let mut bars_emit = String::new();
     let mut jump_rate = dw.jump_rate;
@@ -11224,6 +11676,20 @@ pub fn main() {
             "-stressscale" => stress_scale = req_f64(&mut it, "-stressscale"),
             "-levpersist" => lev_persist = req_f64(&mut it, "-levpersist"),
             "-noiseasym" => noise_asym = req_f64(&mut it, "-noiseasym"),
+            "-noiseasymphi" => noise_asym_phi = req_f64(&mut it, "-noiseasymphi"),
+            "-noiseasymcap" => noise_asym_cap = req_f64(&mut it, "-noiseasymcap"),
+            "-jumpresp" => jump_resp = req_f64(&mut it, "-jumpresp"),
+            "-stressadapt" => stress_adapt = req_f64(&mut it, "-stressadapt"),
+            "-slowshare" => slow_share = req_f64(&mut it, "-slowshare"),
+            "-slowvol" => slow_vol = req_f64(&mut it, "-slowvol"),
+            "-slowlev" => slow_lev = req_f64(&mut it, "-slowlev"),
+            "-slowphi" => slow_phi = req_f64(&mut it, "-slowphi"),
+            "-slowperm" => slow_perm = req_f64(&mut it, "-slowperm"),
+            "-slowbeta" => slow_beta = req_f64(&mut it, "-slowbeta"),
+            "-volresp" => vol_resp = req_f64(&mut it, "-volresp"),
+            "-volrespphi" => vol_resp_phi = req_f64(&mut it, "-volrespphi"),
+            "-volrespattack" => vol_resp_attack = req_f64(&mut it, "-volrespattack"),
+            "-volrespcap" => vol_resp_cap = req_f64(&mut it, "-volrespcap"),
             "-jointemit" => joint_emit = req_arg(&mut it, "-jointemit").clone(),
             "-barsemit" => bars_emit = req_arg(&mut it, "-barsemit").clone(),
             "-jumprate" => jump_rate = req_f64(&mut it, "-jumprate"),
@@ -11376,8 +11842,36 @@ pub fn main() {
         non_neg("-levgain", lev_gain);
         non_neg("-stressscale", stress_scale);
         non_neg("-noiseasym", noise_asym);
+        non_neg("-noiseasymcap", noise_asym_cap);
+        non_neg("-volresp", vol_resp);
+        non_neg("-volrespcap", vol_resp_cap);
+        non_neg("-jumpresp", jump_resp);
         if !(0.0..1.0).contains(&lev_persist) {
             cli_die("-levpersist is a persistence in [0, 1)");
+        }
+        if !(0.0..1.0).contains(&noise_asym_phi) {
+            cli_die("-noiseasymphi is a persistence in [0, 1)");
+        }
+        if !(0.0..1.0).contains(&vol_resp_phi) {
+            cli_die("-volrespphi is a persistence in [0, 1)");
+        }
+        if !(0.0..1.0).contains(&vol_resp_attack) {
+            cli_die("-volrespattack is a persistence in [0, 1)");
+        }
+        if !(0.0..1.0).contains(&stress_adapt) || stress_adapt <= 0.0 {
+            cli_die("-stressadapt is an EWMA weight in (0, 1)");
+        }
+        non_neg("-slowvol", slow_vol);
+        non_neg("-slowlev", slow_lev);
+        non_neg("-slowbeta", slow_beta);
+        if !(0.0..1.0).contains(&slow_share) {
+            cli_die("-slowshare is a share in [0, 1)");
+        }
+        if !(0.0..1.0).contains(&slow_phi) {
+            cli_die("-slowphi is a persistence in [0, 1)");
+        }
+        if !(0.0..=1.0).contains(&slow_perm) {
+            cli_die("-slowperm is a share in [0, 1]");
         }
         non_neg("-basketidio", basket_idio);
         non_neg("-basketgaps", basket_gaps);
@@ -11539,6 +12033,20 @@ pub fn main() {
         stress_scale,
         lev_persist,
         noise_asym,
+        noise_asym_phi,
+        noise_asym_cap,
+        vol_resp,
+        vol_resp_phi,
+        vol_resp_cap,
+        vol_resp_attack,
+        jump_resp,
+        stress_adapt,
+        slow_share,
+        slow_vol,
+        slow_lev,
+        slow_phi,
+        slow_perm,
+        slow_beta,
         value_pull,
         crowd,
         crowd_impact,
@@ -13042,8 +13550,12 @@ mod contract_tests {
         };
         let (lvl_small, small) = at(100);
         let (lvl_large, large) = at(400);
+        // COMPARED IN LOGS. The run-away is unbounded but PERCENT depth is not — it saturates at
+        // -100%, and at 400 paths every world is already there (0.23.1 -99.62, 0.24.0 -99.65),
+        // so a margin in points measures the floor rather than the run-away.
+        let log_depth = |lvl: f64| (1.0 + lvl / 100.0).ln();
         assert!(
-            lvl_large < lvl_small - 3.0,
+            log_depth(lvl_large) < log_depth(lvl_small) - 0.5,
             "the pooled minimum must still run away with the ensemble or this test asserts              nothing: {lvl_small:.2}% at 100 paths, {lvl_large:.2}% at 400"
         );
         let p_small = small.pctile.expect("no percentile at 100 paths");
@@ -14884,19 +15396,21 @@ mod amplifier_anchor_tests {
                 "{sr}: lag 5 holds most of lag 1's strength, {lev:?}"
             );
         }
-        // the model's own, at the shipped defaults: its lag-1 response is the record's and its
-        // lag-5 is half of it — item 12's disclosed miss, and the reason both dials ship at 0.
-        // The statistic needs ensemble: a median over paths, it reads -0.060 on eight paths
-        // against -0.042 on two hundred, converging by about forty.
+        // the model's own, at the shipped defaults. Item 12 disclosed a lag-5 response HALF of
+        // lag 1's; the vol response and then the slow repricing channel closed most of that, so
+        // the model now clears the same 0.6 the record does — from below, and still short of the
+        // record's own 0.85. The statistic needs ensemble: a median over paths, it reads -0.060
+        // on eight paths against -0.042 on two hundred, converging by about forty.
         let st = measure(&sim_paths(&default_world(), 40, 100, DEFAULT_SEED), 100);
         assert!(
             st.lev1 < -0.05,
             "the model's lag-1 response is the record's: {}",
             st.lev1
         );
+        let ratio = st.lev5 / st.lev1;
         assert!(
-            st.lev5 / st.lev1 < 0.6,
-            "the disclosed miss: lag 5 is {} against lag 1's {}",
+            (0.60..0.80).contains(&ratio),
+            "lag 5 holds most of lag 1's strength but not the record's 0.85: {ratio}              (lag 5 {}, lag 1 {})",
             st.lev5,
             st.lev1
         );
@@ -14929,6 +15443,126 @@ mod amplifier_anchor_tests {
             "the asymmetric noise vol must deepen the lag-5 response: {} -> {}",
             off.lev5,
             on.lev5
+        );
+    }
+
+    /// THE VOL RESPONSE and the spiral's scale speed (item 14): off in every frozen world,
+    /// unreachable through their own shape dials when off, and 0.24.1's default is 0.24.0's row
+    /// plus exactly seven dials.
+    /// THE SLOW REPRICING CHANNEL (item 15): off in every frozen world, its shape dials
+    /// unreachable when it is, the bond loading reaching the BOND and not the price, and the
+    /// mechanism moving the |r| autocorrelation SHAPE it was adopted for.
+    #[test]
+    fn the_slow_channel_is_off_in_every_frozen_world_and_zero_is_bit_identical() {
+        let d = default_world();
+        assert!(d.slow_share > 0.0, "the shipped default runs the channel");
+        for (v, w) in releases() {
+            assert!(w.slow_share == 0.0, "release {v}");
+        }
+        for (n, w, _) in recipes() {
+            // the Nasdaq recipes carry their own dials and were NOT re-solved against the channel
+            if !n.starts_with("0.24.1") || n.contains("nasdaq") {
+                assert!(w.slow_share == 0.0, "recipe {n}");
+            }
+        }
+        // off, the channel's own dials reach no price and no bond
+        let mut off = d;
+        off.slow_share = 0.0;
+        let a = simulate(&off, 3, DEFAULT_SEED);
+        let mut z = off;
+        z.slow_vol = 3.0;
+        z.slow_lev = 0.2;
+        z.slow_phi = 0.5;
+        z.slow_perm = 1.0;
+        z.slow_beta = 2.0;
+        let b = simulate(&z, 3, DEFAULT_SEED);
+        assert!(
+            a.price == b.price && a.bond == b.bond,
+            "off, the channel's dials are unreachable"
+        );
+        // the bond loading reaches the BOND and nothing else
+        let mut nb = d;
+        nb.slow_beta = 0.0;
+        let on = simulate(&d, 3, DEFAULT_SEED);
+        let no_bond = simulate(&nb, 3, DEFAULT_SEED);
+        assert!(
+            on.price == no_bond.price,
+            "the loading must reach no equity price"
+        );
+        assert!(on.bond != no_bond.bond, "the loading must reach the bond");
+        // and the channel FLATTENS the clustering profile, which is what it was adopted for
+        let with = measure(&sim_paths(&d, 40, 100, DEFAULT_SEED), 100);
+        let without = measure(&sim_paths(&off, 40, 100, DEFAULT_SEED), 100);
+        assert!(
+            with.ac20 / with.ac1 > without.ac20 / without.ac1,
+            "the slow channel must flatten the |r| profile: {} -> {}",
+            without.ac20 / without.ac1,
+            with.ac20 / with.ac1
+        );
+    }
+
+    #[test]
+    fn the_vol_response_is_off_in_every_frozen_world_and_zero_is_bit_identical() {
+        let d = default_world();
+        // the Scala twin spells this default as the LITERAL 0.96, because `Defaults` is built
+        // there before the val initializes; a divergence would ship in the sidecar's `world` block
+        assert!(d.noise_asym_phi == NOISE_ASYM_PHI && d.noise_asym_phi == 0.96);
+        assert!(
+            d.vol_resp > 0.0,
+            "the shipped default runs the vol response"
+        );
+        for (v, w) in releases() {
+            assert!(w.vol_resp == 0.0 && w.jump_resp == 0.0, "release {v}");
+            assert!(
+                w.vol_resp_attack == 0.0 && w.noise_asym_cap == 0.0,
+                "release {v}"
+            );
+            assert!(w.stress_adapt == 0.005, "release {v}");
+        }
+        for (n, w, _) in recipes() {
+            if !n.starts_with("0.24.1") {
+                assert!(w.vol_resp == 0.0 && w.jump_resp == 0.0, "recipe {n}");
+                assert!(w.stress_adapt == 0.005, "recipe {n}");
+            }
+        }
+        // the frozen row is today's default less the two mechanisms' four dials and the three
+        // re-solved around them, and nothing else moved with them
+        let frozen = release_world("0.24.0").expect("0.24.0 must resolve");
+        let mut off = d;
+        off.vol_resp = frozen.vol_resp;
+        off.vol_resp_phi = frozen.vol_resp_phi;
+        off.vol_resp_attack = frozen.vol_resp_attack;
+        off.stress_adapt = frozen.stress_adapt;
+        off.stress = frozen.stress;
+        off.vol_persist = frozen.vol_persist;
+        off.jump_var = frozen.jump_var;
+        off.slow_share = frozen.slow_share;
+        off.vol_of_vol = frozen.vol_of_vol;
+        off.jump_skew = frozen.jump_skew;
+        assert!(
+            off == frozen,
+            "0.24.1 moved the two mechanisms' dials and the six re-solved around them,              nothing else"
+        );
+        // off, the shape dials of both mechanisms reach no price
+        let a = simulate(&off, 3, DEFAULT_SEED);
+        let mut z = off;
+        z.vol_resp_phi = 0.5;
+        z.vol_resp_attack = 0.9;
+        z.vol_resp_cap = 1.0;
+        z.noise_asym_phi = 0.5;
+        z.noise_asym_cap = 0.1;
+        let b = simulate(&z, 3, DEFAULT_SEED);
+        assert!(a.price == b.price, "off, the shape dials are unreachable");
+        // and the response deepens the LAG-20 profile, which is what 0.24.1 adopted it for
+        let mut without = d;
+        without.vol_resp = 0.0;
+        let on = measure(&sim_paths(&d, 20, 100, DEFAULT_SEED), 100);
+        let no = measure(&sim_paths(&without, 20, 100, DEFAULT_SEED), 100);
+        assert!(
+            on.lev20 < no.lev20,
+            "the vol response must deepen the lag-20 response: {} -> {}",
+            no.lev20,
+            on.lev20
         );
     }
 
@@ -14971,7 +15605,7 @@ mod amplifier_anchor_tests {
             assert!(w.stress_scale == 0.0, "release {v}");
         }
         for (n, w, _) in recipes() {
-            if !n.contains("nasdaq") || !n.starts_with("0.24.0") {
+            if !n.contains("nasdaq") || !n.starts_with("0.24.") {
                 assert!(w.stress_scale == 0.0, "recipe {n}");
             }
         }
@@ -15002,7 +15636,7 @@ mod macro_panel_tests {
             assert!(w.macro_panel == 0, "release {v}");
         }
         for (n, w, _) in recipes() {
-            if !n.starts_with("0.24.0") {
+            if !n.starts_with("0.24.") {
                 assert!(w.macro_panel == 0, "recipe {n}");
             }
         }
@@ -15011,11 +15645,14 @@ mod macro_panel_tests {
 
     #[test]
     fn the_leverage_cycle_is_off_in_every_frozen_world_and_zero_reproduces_0_23_1_bit_for_bit() {
+        // 0.24.0 is the release that ADOPTED the cycle, so its frozen row carries it
         for (v, w) in releases() {
-            assert!(w.lev_gain == 0.0, "release {v}");
+            if v != "0.24.0" {
+                assert!(w.lev_gain == 0.0, "release {v}");
+            }
         }
         for (n, w, _) in recipes() {
-            if !n.starts_with("0.24.0") {
+            if !n.starts_with("0.24.") {
                 assert!(w.lev_gain == 0.0, "recipe {n}");
             }
         }
@@ -15026,7 +15663,8 @@ mod macro_panel_tests {
         // the dial off at 0.23.1's dials IS 0.23.1's world: the stock still runs (its stream is
         // its own) and the multiplier stays exactly 1.0
         let frozen = release_world("0.23.1").expect("0.23.1 must resolve");
-        let mut off = default_world();
+        // against 0.24.0's world, not today's: 0.24.1 moved the vol response's dials on top
+        let mut off = release_world("0.24.0").expect("0.24.0 must resolve");
         off.lev_gain = 0.0;
         off.stress = frozen.stress;
         off.jump_var = frozen.jump_var;
@@ -15261,7 +15899,10 @@ mod macro_panel_tests {
         let sib = simulate(&w, 20, DEFAULT_SEED ^ macro_k::NULL_SEED);
         let sp = sib.macro_panel.as_ref().expect("panel");
         assert!(np.spread == sp.spread && np.ivol == sp.ivol);
-        let st = measure(&sim_paths(&n, 4, 30, DEFAULT_SEED), 30);
+        // 20 x 100, not 4 x 30: the pre-peak rank is a median over 20% EPISODES, and a handful of
+        // paths yields a handful of episodes — at 4 x 30 the null reads 0.87 where it converges to
+        // 0.55 by twelve paths. The same ensemble lesson the vol-response statistics carry.
+        let st = measure(&sim_paths(&n, 20, 100, DEFAULT_SEED), 100);
         assert!(st.macro_panel.is_some_and(|m| m.sibling));
         // the panel's rows all start "macro <member>"; "macro disasters ..." is the disaster
         // channel's
@@ -15359,7 +16000,7 @@ mod dividend_tests {
         // the 0.23.1 recipes carry the stream at their set's anchor, and the 0.24.0 ones are
         // those bases
         for (n, w, _) in recipes() {
-            if !n.starts_with("0.23.1") && !n.starts_with("0.24.0") {
+            if !n.starts_with("0.23.1") && !n.starts_with("0.24.") {
                 assert!(w.div_yield == 0.0, "recipe {n}");
             }
         }

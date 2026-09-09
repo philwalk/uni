@@ -2,7 +2,7 @@
 package uni.apps
 
 //> using scala 3.7.2
-//> using dep org.vastblue:uni_3:0.24.0
+//> using dep org.vastblue:uni_3:0.24.1
 
 // MARKET SIMULATOR — a testbed for COMPARING exposure strategies over long horizons.
 //
@@ -183,6 +183,23 @@ object MarketSim:
   // consumer's loader can route it through the table its FRED name would get.  A panel-off
   // schema-12 file is byte-identical to its schema-11 counterpart except the schema number and
   // the new zero world field.
+  // 12 -> 13: THE PANEL'S TWO NEW MEMBERS.  The TSV gained `macroYield10` and `macroCredit`
+  // (present ONLY when `macro > 0`, like the first four -- the 10-year yield in pp against DGS10,
+  // and the borrowing stock read as credit over output in percent against TOTBKCR/GDP), and
+  // `channels.macro` their member blocks: a schema-12 reader that took the column list as fixed
+  // at four, or indexed the members positionally, misroutes both.  EVERY POOLED PANEL STATISTIC
+  // also gained a `perPath` object beside it -- `[p5, p50, p95]` of the per-path readings, the
+  // width of the null a single path sits in -- at the panel level and inside each member, so a
+  // reader that took `channels.macro` as flat numbers finds objects.  THE VOL RESPONSE, same
+  // schema: `world` gained `volResp`, `volRespPhi`, `volRespCap`, `volRespAttack`, `jumpResp` and
+  // `stressAdapt`, and the item-12 cascade gained `noiseAsymPhi` and `noiseAsymCap`.  THE SLOW
+  // REPRICING CHANNEL, same schema again: `world` gained `slowShare`, `slowVol`, `slowLev`,
+  // `slowPhi`, `slowPerm` and `slowBeta`.  A reader
+  // that reconstructs a `World` from a schema-12 sidecar and runs it here gets no volatility
+  // response and the slow amplifier scale -- a different market, the `crowdImpact` case again.
+  // A panel-off schema-13 file differs from its schema-12 counterpart in the schema number and
+  // the eight new world fields, which are NOT all zero: `volRespPhi`, `volRespCap`, `stressAdapt`
+  // and `noiseAsymPhi` carry their off values.
   val EmitSchema: Int = 13
 
   val EmitSidecarKeys: Vector[String] =
@@ -348,9 +365,54 @@ object MarketSim:
     "              ;   too, through weights that sum to 1 -- the integrated response per decline is",
     "              ;   unchanged, only its shape.  The record's vol after a fall stays elevated for",
     "              ;   2-20 sessions; 0 = bit-identical",
-    "-noiseasym T  ; THE ASYMMETRIC NOISE VOL: the diffusive noise times exp(g), g decaying at 0.96",
-    "              ;   and driven by MINUS the session's own diffusive draw -- the EGARCH asymmetry",
-    "              ;   term on the one input the price cannot inflate; 0 = bit-identical",
+    "-noiseasym T  ; THE ASYMMETRIC NOISE VOL: the diffusive noise times exp(g), g decaying at",
+    "              ;   -noiseasymphi and driven by MINUS the session's own diffusive draw -- the",
+    "              ;   EGARCH asymmetry term on the one input the price cannot inflate;",
+    "              ;   0 = bit-identical",
+    "-noiseasymphi P ; the cascade's DECAY, default 0.96 -- a 17-session half-life; higher carries",
+    "              ;   its response out to lag 20.  A persistence in [0, 1)",
+    "-noiseasymcap C ; the cascade's CAP, 0 = uncapped: the largest log multiplier it may apply.",
+    "              ;   Its profile gain comes from the state's BODY and its kurtosis from the right",
+    "              ;   tail, so a cap buys the one without the other",
+    "-volresp V    ; THE VOL RESPONSE: the diffusive noise times exp(V * S), S the session's",
+    "              ;   decline in units of the conditional sd THAT GENERATED IT, accumulated at",
+    "              ;   -volrespphi.  One decline's response is a PLATEAU, not an integral divided",
+    "              ;   over the sessions after it -- the record's vol after a fall stays elevated",
+    "              ;   for ~20 sessions.  Draw-free; 0 = bit-identical",
+    "-volrespphi P ; the vol response state's DECAY, a persistence in [0, 1)",
+    "-volrespattack A ; the vol response's ATTACK, 0 = none: the standardized decline through a",
+    "              ;   fast EWMA before it accumulates, so the response BUILDS over 2-5 sessions",
+    "              ;   instead of peaking at lag 1.  A persistence in [0, 1)",
+    "-volrespcap C ; the vol response state's CEILING.  The state is unnormalized, so a stretch of",
+    "              ;   saturated readings compounds where the spiral amplifies -- the cap bounds",
+    "              ;   the multiplier at exp(V * C) and leaves the plateau intact below it",
+    "-jumpresp J   ; THE JUMP RESPONSE: the jump INTENSITY times exp(J * S), the same state",
+    "              ;   -volresp reads, so the extra variance lands where the kurtosis budget and",
+    "              ;   the skew already are.  Its compensator turns conditional with it.  Consumes",
+    "              ;   no draw; 0 = bit-identical",
+    "-stressadapt M ; the equity spiral's SCALE speed: the EWMA weight on ret^2 that standardizes",
+    "              ;   the decline the spiral's stress index reads.  0.005, a ~140-session memory,",
+    "              ;   reads a persistently volatile stretch as continuous stress; faster lets the",
+    "              ;   spiral tell volatile from stressed.  An EWMA weight in (0, 1); 0.005 is",
+    "              ;   bit-identical, and the index the rest of the world reads is untouched",
+    "-slowshare S  ; THE SLOW REPRICING CHANNEL: S of the diffusive VARIANCE leaves the order-flow",
+    "              ;   channel and reprices the fundamental and the price TOGETHER, like the news",
+    "              ;   jump -- so the value channel has nothing to arbitrage and the move never",
+    "              ;   passes through the liquidity spiral.  Its volatility has LONG memory the",
+    "              ;   amplifier cannot steepen, which is what puts the |r| autocorrelation",
+    "              ;   profile back on the record's SHAPE.  A share in [0, 1); 0 = bit-identical",
+    "-slowvol V    ; the channel's scale, a multiple of the session's base diffusive scale at this",
+    "              ;   depth.  NOT derived from -slowshare: the order-flow channel reaches price",
+    "              ;   multiplied by the spiral's gain and this one does not",
+    "-slowlev L    ; the channel's OWN leverage effect, in units of its state's stationary sd, and",
+    "              ;   the only thing driving that state.  A symmetric component is strictly worse",
+    "-slowphi P    ; the state's persistence, in [0, 1)",
+    "-slowperm M   ; the share of the repricing that reaches the FUNDAMENTAL, in [0, 1].  The rest",
+    "              ;   opens a gap the value channel closes; at 1 the move is permanent and the",
+    "              ;   momentum crowd chases it into a variance ratio (1.14 against 1.00)",
+    "-slowbeta B   ; the BOND's loading on the same repricing, opposite sign -- a flight-to-quality",
+    "              ;   factor.  At 0 the channel is equity-only and the worst equity days have no",
+    "              ;   bond response, which costs the tail hedge and the growth-shock rally",
     "-stressscale E ; THE AMPLIFIER STUDY: the spiral's excess gain scaled by (depth/17.4)^E, so a",
     "              ;   thinner market's liquidity event is not proportionally larger than the",
     "              ;   reference world's (the record's crash count is volatility-flat across a",
@@ -719,6 +781,75 @@ object MarketSim:
                            // correlation falls -0.09 -> -0.04 against a -0.093 anchor and the
                            // downside excess with it.  The record's response is a PLATEAU, not a
                            // spread integral.  Must stay below 1; 0 = bit-identical.
+    noiseAsymPhi: Double = 0.96, // the cascade's DECAY (item 14 probe): 0.96 is a 17-session
+                           // half-life; higher carries the response to lag 20.  A LITERAL, not
+                           // `NoiseAsymPhi`: `Defaults` is constructed earlier in this object
+                           // than that val is initialized, so a default reading it would be 0.0.
+    volResp: Double = 0.0, // THE VOL RESPONSE (item 14 probe): the diffusive noise multiplied by
+                           // exp(volResp * S), S the session's decline in units of the
+                           // conditional sd THAT GENERATED IT, accumulated at `volRespPhi`.  Two
+                           // things separate it from the item-12 forms: the denominator is the
+                           // session's own sd rather than a trailing scale (so the state is
+                           // scale-free instantly and cannot self-excite), and the accumulation
+                           // is UNNORMALIZED, so one decline's response is a PLATEAU of height
+                           // `volResp` decaying at `volRespPhi` -- not an integral divided over
+                           // the following sessions, which is what halved the per-lag amplitude
+                           // in item 12.  Draw-free: 0 is bit-identical.
+    volRespPhi: Double = 0.98,
+    volRespCap: Double = 40.0, // the vol response state's ceiling (item 14 probe)
+    volRespAttack: Double = 0.0, // the vol response's ATTACK (item 14 probe), 0 = none: the
+                           // standardized decline through a fast EWMA before it accumulates, so
+                           // the response BUILDS over two to five sessions instead of peaking at
+                           // lag 1.  The record's profile humps at lag 2; with the attack off the
+                           // model's peaks at lag 1 and dips, which is the whole residual gap
+                           // once the accumulation has matched lags 6-40.
+    jumpResp: Double = 0.0, // THE JUMP RESPONSE (item 14 probe): the jump INTENSITY multiplied by
+                           // exp(jumpResp * S), the same persistent decline state `volResp` reads.
+                           // The record's bad news arrives in clusters after a fall; routing the
+                           // response through the jump channel puts the extra variance where the
+                           // kurtosis budget already is, and jumps are SKEWED, so unlike a
+                           // multiplicative noise state this should carry the downside excess
+                           // rather than dilute it.  Consumes no extra draw.
+    stressAdapt: Double = 0.005, // the equity spiral's SCALE speed (item 14 probe): the EWMA
+                           // weight on ret^2 that standardizes the decline `stressIdx` reads.
+                           // 0.005 is a ~140-session memory, so a stretch a persistent vol
+                           // mechanism has genuinely made volatile reads as continuous STRESS and
+                           // the spiral mints spikes out of it -- the measured blocker on every
+                           // form tried.  Faster lets the spiral tell volatile from stressed.
+    noiseAsymCap: Double = 0.0, // the cascade's CAP (item 14 probe), 0 = uncapped: the largest log
+                           // multiplier the cascade may apply.  Its profile gain comes from the
+                           // state's BODY and its kurtosis from the right tail, so a cap buys the
+                           // one without the other -- the leverage kick's saturation, one level up.
+    slowShare: Double = 0.0, // THE SLOW REPRICING CHANNEL (item 15): the share of the diffusive
+                           // VARIANCE taken out of the order-flow channel, which reappears as a
+                           // repricing that moves the fundamental and the price TOGETHER -- like
+                           // the news jump, so the value channel has nothing to arbitrage and the
+                           // move never passes through `step` and its spiral.  Its volatility has
+                           // LONG memory the amplifier cannot steepen, which is what puts the |r|
+                           // autocorrelation profile back on the record's shape.  Own RNG stream,
+                           // and this dial is the SWITCH: 0 = bit-identical.
+    slowVol: Double = 0.894, // the channel's scale, as a multiple of the session's base diffusive
+                           // scale at this depth.  NOT derived from `slowShare`: the order-flow
+                           // channel reaches price multiplied by the spiral's gain and this one
+                           // does not, so equal variance shares are not equal price shares.
+    slowLev: Double = 1.1, // the channel's OWN leverage effect, in units of its state's stationary
+                           // sd -- EGARCH-style on its own draw, and the only thing driving the
+                           // state.  A symmetric component was measured and is strictly worse:
+                           // variance moved out of the amplifier then loses the leverage profile
+                           // the amplifier was supplying.
+    slowPhi: Double = 0.996, // the state's persistence.  Both inputs are scaled by sqrt(1 - phi^2)
+                           // so `slowLev` stays in stationary units; unscaled its variance runs
+                           // 11x nominal and volatility reaches 200%.
+    slowPerm: Double = 0.30, // the share of the repricing that reaches the FUNDAMENTAL.  The rest
+                           // opens a gap the value channel closes over its own horizon.  At 1.0
+                           // the move is permanent and nothing arbitrages it, which the momentum
+                           // crowd chases into a variance ratio: 1.0 reads 1.14 against the
+                           // record's 1.00, 0.30 reads 1.09.
+    slowBeta: Double = 0.55, // the BOND's loading on the same repricing, opposite sign -- a
+                           // flight-to-quality factor.  Without it the channel is equity-only and
+                           // the worst equity days have no bond response at all: the tail hedge
+                           // correlation reads -0.239 against a record of -0.270, and the bond's
+                           // growth-shock rally 5.64 against 6.60.
     noiseAsym: Double = 0.0, // THE ASYMMETRIC NOISE VOL (item 12): the diffusive noise multiplied
                            // by exp(g - Var(g)), g a CASCADE of the session's own diffusive DRAW:
                            // -z through a fast attack into a slow decay (`NoiseAsymAttack`,
@@ -853,9 +984,40 @@ object MarketSim:
     * wrong three times before it was centralised.  A mismatch between the twins is caught directly
     * by the `-emit` sidecar, which names every field: bare `-emit` writes THIS world. */
   val Defaults = World(
-    trendShare = 0.055, depth = 17.4, stress = 4.7, beta = 3.0, drift = 0.122, fundVol = 0.060,
-    rateMean = 0.042, volPersist = 0.993, volOfVol = 0.022,
-    jumpVar = 0.11, jumpRate = 0.0035, leverage = 0.10, downShock = 0.0, jumpSkew = 1.0,
+    trendShare = 0.055, depth = 17.4, stress = 5.0, beta = 3.0, drift = 0.122, fundVol = 0.060,
+    rateMean = 0.042, volPersist = 0.982, volOfVol = 0.028,
+    jumpVar = 0.16, jumpRate = 0.0035, leverage = 0.10, downShock = 0.0, jumpSkew = 0.65,
+    // THE VOL RESPONSE, 0.24.1: a persistent vol state driven by the session's decline in units
+    // of the conditional sd THAT GENERATED IT, and a faster spiral scale so the spiral can tell
+    // a volatile stretch from a stressed one.  The record's volatility after a fall stays
+    // elevated for twenty sessions; 0.24.0 read 55-62% of the record's leverage-effect profile at
+    // every lag past 1, this world reads 77-135% from lag 6 out and reaches the record at lag 20.
+    // `stress` 4.7 -> 5.3 and `volPersist` 0.993 -> 0.982 re-solve around the two mechanisms (the
+    // faster scale costs spiral volatility, and the decline-driven state replaces exogenous vol
+    // memory), `jumpVar` 0.11 -> 0.12 holds the downside excess.  Verified at 400x100 on sixteen
+    // seeds: lag-5 response 0.52 -> 0.71 of the record and lag-20 0.58 -> 0.95, the crash count
+    // 0.96 -> 0.98, time spent 20% underwater 3.11 -> 2.86, every gate row green.  Kurtosis does
+    // NOT move on net (0.97 either side): the lower `volPersist` costs it -- 0.57 with the
+    // response off -- and the response restores it.  PRICED, and disclosed, each on 16 of 16
+    // seeds: lag-1 clustering 1.08 -> 1.15 of the record, the lag-1 leverage correlation
+    // 0.98 -> 1.08 (the response adds to a channel already AT the record), and lag-20 clustering
+    // 0.83 -> 0.78.  That last is the release's real trade, SYMMETRIC persistence for asymmetric:
+    // `volPersist` 0.993 -> 0.982 takes the |r| autocorrelation at lag 20 from 0.188 to 0.113
+    // against a record of 0.230, and the decline-driven state returns it only to 0.175.
+    volResp = 0.021, volRespPhi = 0.992, volRespAttack = 0.5, stressAdapt = 0.036,
+    // THE SLOW REPRICING CHANNEL, 0.24.1: a fifth of the diffusive variance leaves the order-flow
+    // channel and reprices the fundamental and the price together, so it never passes the spiral.
+    // It is what flattens the |r| autocorrelation profile toward the record's SHAPE: lag-20 over
+    // lag-1 reads 0.594 against the record's 0.753, where the vol response alone read 0.527
+    // (400x100, default seed).
+    // `stress` 5.3 -> 5.0, `volOfVol` 0.022 -> 0.028, `jumpVar` 0.12 -> 0.16, `jumpSkew` 1.0 ->
+    // 0.65 and `volResp` 0.019 -> 0.021 re-solve around it, holding kurtosis and the crash count
+    // and putting the downside excess on the record.  Verified at 400x100 on sixteen seeds and
+    // scored on 32: the calibration loss falls 0.102 +/- 0.040 against the channel-free world,
+    // better on 29 of 32 seeds.  PRICED, and disclosed: equity volatility 5% over the record
+    // against 3% before, and the return per unit of volatility that follows (0.94 against 0.96).
+    // The band keeps 10.8 seed-sd of headroom at 400x100 and 3.9 at 60x80.
+    slowShare = 0.20,
     // THE LEVERAGE CYCLE, 0.24.0: levGain 6, with six dials re-solved so that every row the
     // 0.23.1 world read stays where it was.  The cycle's cascades supply tail the jump channel
     // and the spiral's base gain used to (`stress` 5.15 -> 4.7, `jumpVar` 0.14 -> 0.11 with
@@ -1031,11 +1193,29 @@ object MarketSim:
     easing = 0.052, unwind = 0.35, refuge = 0.115,
     inflProb = 0.20, inflSize = 0.10, inflSpeed = 0.010, rateSpeed = 3.0, discount = 5.73,
     margin = 0.006)
+  /** 0.24.0's world: the leverage cycle's, before 0.24.1's vol response moved `stress`,
+    * `volPersist` and `jumpVar` around the two new mechanisms.  The item-14 dials are absent, so
+    * they take their off values and this row reproduces 0.24.0 bit for bit. */
+  private val V0_24_0 = World(
+    trendShare = 0.055, depth = 17.4, stress = 4.7, beta = 3.0, drift = 0.122, fundVol = 0.060,
+    rateMean = 0.042, volPersist = 0.993, volOfVol = 0.022,
+    jumpVar = 0.11, jumpRate = 0.0035, leverage = 0.10, downShock = 0.0, jumpSkew = 1.0,
+    levGain = 6.0,
+    newsRate = 1.3, newsSize = 0.033, refugeDays = 1.0,
+    valuePull = 0.056,
+    recoveryDrag = 8.5, recoveryFloor = 0.10, haltLimit = 0.25,
+    disasterRate = 0.6, disasterSize = 2.0, disasterLen = 2.5,
+    disasterRecover = 0.5, disasterRecLen = 4.0,
+    beliefShare = 0.95, beliefYears = 1.5, capYears = 1.5, capWindow = 6.0,
+    crowd = Crowd.Momentum, crowdImpact = 0.030, panic = 0.0, duration = 13.5,
+    easing = 0.052, unwind = 0.35, refuge = 0.115,
+    inflProb = 0.20, inflSize = 0.10, inflSpeed = 0.010, rateSpeed = 3.0, discount = 5.73,
+    margin = 0.006)
   val Releases: Vector[(String, World)] = Vector(
     ("0.17.0", PreV1901), ("0.18.0", PreV1901), ("0.19.0", PreV1901),
     ("0.19.1", PreV1902), ("0.19.2", V0_19_2), ("0.19.3", V0_19_2), ("0.20.0", V0_20_0),
     ("0.21.0", V0_21_0), ("0.22.0", V0_22_0), ("0.22.1", V0_22_1), ("0.23.0", V0_23_0),
-    ("0.23.1", V0_23_0))
+    ("0.23.1", V0_23_0), ("0.24.0", V0_24_0))
 
   /** The world a release shipped, for `-atrelease`: the current version's default, or a frozen row
     * of the `-releases` table.  `None` for anything else -- the CLI dies naming what exists.  The
@@ -1122,7 +1302,9 @@ object MarketSim:
   val MacroRecipes: Vector[(String, World, String)] =
     def base(name: String): World =
       Recipes0231.find(_._1 == name).map(_._2).getOrElse(sys.error(s"no base recipe $name"))
-    val d = Defaults
+    // V0_24_0, not `Defaults`: these rows carry 0.24.0's name and must keep 0.24.0's world when
+    // the default moves.  0.24.1's are below.
+    val d = V0_24_0
     def sp(w: World): World =
       w.copy(stress = d.stress, jumpVar = d.jumpVar, jumpSkew = d.jumpSkew, leverage = d.leverage,
              volPersist = d.volPersist, fundVol = d.fundVol, levGain = d.levGain, macroPanel = 1)
@@ -1139,12 +1321,48 @@ object MarketSim:
       w.copy(stress = 4.4, jumpVar = 0.0, jumpSkew = d.jumpSkew, leverage = d.leverage,
              volPersist = d.volPersist, levGain = 8.0, macroPanel = 1,
              stressScale = 0.5, depth = 8.4, refuge = 0.15)
-    Vector(("0.24.0-macro", Defaults.copy(macroPanel = 1), "sp500"),
+    Vector(("0.24.0-macro", V0_24_0.copy(macroPanel = 1), "sp500"),
            ("0.24.0-nasdaq", nq(base("0.23.1-nasdaq")), "nasdaq"),
            ("0.24.0-basket", sp(base("0.23.1-basket")), "sp500"),
            ("0.24.0-nasdaq-basket", nq(base("0.23.1-nasdaq-basket")), "nasdaq"))
 
-  val Recipes: Vector[(String, World, String)] = Recipes0231 ++ MacroRecipes
+  /** THE VOL RESPONSE's recipes (0.24.1): each 0.24.0 recipe with the two new mechanisms.  The
+    * S&P worlds take the moved dials from `Defaults`, so no dial is restated.  The Nasdaq's are
+    * its own, re-solved: `stressAdapt` 0.015 rather than the default's 0.036 (its spiral is doing
+    * different work at `stressScale` 0.5), `volResp` 0.008, and the three dials that pay for them
+    * -- `depth` 8.4 -> 10.0 and `stress` 4.4 -> 4.2 hold the crash count while the response
+    * supplies the volatility, `levGain` 8 -> 9 holds the conditions index's build-up.  Verified at
+    * 200x100 on four seeds, every class PASS on both sets: the vol response at lag 5 reaches 0.77
+    * of the record from 0.62 and at lag 20 0.60 from 0.45.  Priced: lag-20 clustering 0.71 -> 0.65
+    * of the record and lag-1 1.08 -> 1.13.
+    *
+    * A jump channel here (`jumpVar` 0.06, with `levGain` 10 and `stress` 4.0 around it) would put
+    * the recipe's downside excess back on the record's SIGN -- 0.24.0 turned its jumps off and
+    * nothing else in it carries skew, so the row reads -1.06 of the record -- but it costs 21% of
+    * daily kurtosis on a row already at 1.7x.  Measured, not taken; the sign stays disclosed. */
+  val Recipes0241: Vector[(String, World, String)] =
+    def base(name: String): World =
+      Recipes0231.find(_._1 == name).map(_._2).getOrElse(sys.error(s"no base recipe $name"))
+    val d = Defaults
+    def sp(w: World): World =
+      w.copy(stress = d.stress, jumpVar = d.jumpVar, jumpSkew = d.jumpSkew, leverage = d.leverage,
+             volPersist = d.volPersist, fundVol = d.fundVol, levGain = d.levGain, macroPanel = 1,
+             volResp = d.volResp, volRespPhi = d.volRespPhi, volRespAttack = d.volRespAttack,
+             stressAdapt = d.stressAdapt, volOfVol = d.volOfVol, slowShare = d.slowShare,
+             slowVol = d.slowVol, slowLev = d.slowLev, slowPhi = d.slowPhi,
+             slowPerm = d.slowPerm, slowBeta = d.slowBeta)
+    def nq(w: World): World =
+      w.copy(stress = 4.2, jumpVar = 0.0, jumpSkew = d.jumpSkew, leverage = d.leverage,
+             volPersist = V0_24_0.volPersist, levGain = 9.0, macroPanel = 1,
+             stressScale = 0.5, depth = 10.0, refuge = 0.15,
+             volResp = 0.008, volRespPhi = d.volRespPhi, volRespAttack = d.volRespAttack,
+             stressAdapt = 0.015)
+    Vector(("0.24.1-macro", Defaults.copy(macroPanel = 1), "sp500"),
+           ("0.24.1-nasdaq", nq(base("0.23.1-nasdaq")), "nasdaq"),
+           ("0.24.1-basket", sp(base("0.23.1-basket")), "sp500"),
+           ("0.24.1-nasdaq-basket", nq(base("0.23.1-nasdaq-basket")), "nasdaq"))
+
+  val Recipes: Vector[(String, World, String)] = Recipes0231 ++ MacroRecipes ++ Recipes0241
 
   /** What `-atrelease NAME` seeds from: a release's world, anchors untouched, or a recipe with
     * the anchor set it was verified against -- which an explicit `-anchors` still overrides. */
@@ -1416,15 +1634,15 @@ object MarketSim:
   val NoiseAsymAttack = 0.50
   /** Var(g) in closed form, for the level-preserving centring: the cascade's impulse response is
     * T(1-A)(A^{k+1} - phi^{k+1})/(A - phi), and this is the sum of its squares. */
-  def noiseAsymVar(t: Double): Double =
-    val a = NoiseAsymAttack; val ph = NoiseAsymPhi
+  def noiseAsymVar(t: Double, ph: Double = NoiseAsymPhi): Double =
+    val a = NoiseAsymAttack
     if t <= 0.0 then 0.0
     else
       val k = t * (1.0 - a) / (a - ph)
       k * k * (a * a / (1.0 - a * a) - 2.0 * a * ph / (1.0 - a * ph) + ph * ph / (1.0 - ph * ph))
   final class Market(kValue: Double, stressK: Double, impact: Double,
                      recoveryDrag: Double = 0.0, recoveryFloor: Double = 1.0,
-                     haltLimit: Double = 0.0):
+                     haltLimit: Double = 0.0, scaleMu: Double = 0.005):
     private val floorLog = if haltLimit <= 0.0 then Double.NegativeInfinity
                            else math.log(1.0 - haltLimit)
     private var carry = 0.0
@@ -1448,9 +1666,20 @@ object MarketSim:
     var floorDays = 0
     var tailDays = 0
     private[apps] var scaleVar = 0.01 * 0.01
+    /** The SPIRAL's own scale, at `scaleMu`, and the stress index built from it.  Separate from
+      * `scaleVar`/`stressIdx` on purpose: `stressAdapt` is the amplifier's dial, and the index
+      * the rest of the world reads -- policy easing, the refuge bid, joint-stress margin selling,
+      * the leverage stock's paydown, the macro panel's spread and conditions members -- was
+      * calibrated against the SLOW one.  Letting the dial move both shrank the equity stress the
+      * bond's crisis behaviour reads: measured, the growth-shock rally fell 6.7 -> 4.2 against a
+      * record of 6.6 and `-crossasset` failed its short-duration rung.  At `scaleMu` 0.005 the
+      * two are identical, so the dial is bit-identical off. */
+    private var scaleVarAmp = 0.01 * 0.01
+    private var stressAmp = 0.0
     def step(fair: Double, flowPlusNoise: Double): Double =
       val scale = math.sqrt(scaleVar)
-      val amp   = 1.0 + stressK * stressIdx * levMult * gainMult
+      val scaleA = math.sqrt(scaleVarAmp)
+      val amp   = 1.0 + stressK * stressAmp * levMult * gainMult
       lastLiq   = amp * impact
       // amplification applies to FLOW AND NOISE, not to the value-arbitrage pull: thin liquidity
       // makes any ORDER move price further, but amplifying the arbitrage itself sets a feedback
@@ -1499,6 +1728,8 @@ object MarketSim:
       if logP > peak then peak = logP
       scaleVar  = 0.995 * scaleVar + 0.005 * ret * ret
       stressIdx = math.max(0.0, 0.96 * stressIdx + 0.04 * (math.max(0.0, -ret) / scale - 0.399))
+      scaleVarAmp = (1.0 - scaleMu) * scaleVarAmp + scaleMu * ret * ret
+      stressAmp = math.max(0.0, 0.96 * stressAmp + 0.04 * (math.max(0.0, -ret) / scaleA - 0.399))
       ret
 
   /** Per-session inputs the derived channels read, recorded by `simulate`'s price loop: the
@@ -2058,7 +2289,7 @@ object MarketSim:
     // market-wide breaker on Treasuries, and inventing one would be a fudge wearing a mechanism's
     // name.
     val eqM = new Market(w.valuePull, w.stress, 12.0 / w.depth, w.recoveryDrag, w.recoveryFloor,
-                         w.haltLimit)
+                         w.haltLimit, w.stressAdapt)
     val bdM = new Market(KValueBond, w.stress, 1.0)
     // THE AMPLIFIER STUDY's gain scale: the equity market's alone (the bond's impact IS its
     // reference).  Exact forms at 1 and 0.5; anything else goes through `expDet` on a log, which
@@ -2096,9 +2327,11 @@ object MarketSim:
     // multiplier is the shipped one bit for bit), `asymG` the asymmetric noise vol's log
     // multiplier, driven by the DIFFUSIVE DRAW rather than by any price-derived quantity.
     var kickS = 0.0
+    var volRespS = 0.0
+    var volRespA = 0.0
     var asymG = 0.0
     var asymA = 0.0
-    val asymNorm = noiseAsymVar(w.noiseAsym)
+    val asymNorm = noiseAsymVar(w.noiseAsym, w.noiseAsymPhi)
     // Settled equity stress for the refuge bid (see `refugeDays`); draw-free, and both its use
     // and its update sit behind `refugeDays > 0`, so 0 is bit-identical off.
     var settledStress = 0.0
@@ -2115,6 +2348,23 @@ object MarketSim:
     var ddS    = 0.0
     var lev    = 0.0
     val volNorm = (w.volOfVol * w.volOfVol) / math.max(1e-9, 1.0 - w.volPersist * w.volPersist)
+    // THE SLOW REPRICING CHANNEL (item 15).  `slowShare` of the diffusive variance leaves the
+    // order-flow channel and reappears as a repricing that moves the fundamental and the price
+    // TOGETHER, the way the news jump does, so the value channel has nothing to arbitrage and the
+    // move never passes through `step` and its spiral.  Its state is driven ONLY by its own
+    // leverage term, so the variance it carries is long-memoried AND asymmetric -- a symmetric
+    // component was measured and is strictly worse, because variance moved out of the amplifier
+    // then loses the leverage profile the amplifier was supplying.  Own RNG stream, and
+    // `slowShare` is the switch: at 0 the block never runs and `mix` is exactly 1.
+    val slowRng = new NumPyRNG(seed ^ 0x510ec0deL)
+    var slowG = 0.0
+    var slowB = 0.0
+    // scaled by sqrt(1 - phi^2) on input, so `slowLev` is in units of the state's STATIONARY sd
+    // and the centring is its variance; unscaled it runs 11x nominal and volatility reaches 200%.
+    val slowK = math.sqrt(1.0 - w.slowPhi * w.slowPhi)
+    val slowNorm = w.slowLev * w.slowLev
+    val slowScale = SigmaN * w.slowVol * (12.0 / w.depth)
+    val mix = math.sqrt(1.0 - w.slowShare)
     // News variance DISPLACES diffusive noise (see `newsDampAt`); 1.0 when the channel is off.
     val newsDamp = newsDampAt(w.newsRate, w.newsSize)
     val crowdWin = w.crowd match
@@ -2220,6 +2470,23 @@ object MarketSim:
           logVbase -= w.newsSize
           eqM.logP -= w.newsSize
           newsJ = w.newsSize
+      // the channel's share of THIS session's conditional variance, for the implied-vol member;
+      // 0 when the channel is off, so that member is unchanged.
+      var slowVar = 0.0
+      if w.slowShare > 0.0 then
+        val zs = slowRng.randn()
+        val smul = math.exp(slowG - slowNorm)
+        slowVar = w.slowVol * w.slowVol * smul * smul
+        val sm = slowScale * smul * zs
+        // only `slowPerm` of it reaches the fundamental: the rest opens a gap the value channel
+        // closes, which is what keeps the momentum crowd from chasing the whole move into a
+        // variance ratio.  The bond takes the same repricing with the opposite sign.
+        logVbase += w.slowPerm * sm
+        eqM.logP += sm
+        val bm = -w.slowBeta * sm
+        bdM.logP += bm
+        slowB += w.slowPerm * bm
+        slowG = w.slowPhi * slowG - w.slowLev * slowK * zs
       inflPress += w.inflSpeed * (inflTarget - inflPress)
       // policy: chase rateMean + pressure MINUS accommodation, and accommodation is a CAPPED
       // STOCK rather than a cut speed -- eased in within ~2 months, withdrawn over years.  As a
@@ -2315,22 +2582,28 @@ object MarketSim:
       // Level-preserving, the same convention `volNorm` applies to the vol state: g is centred at
       // minus its own stationary variance, so the noise's VARIANCE is what it was and the dial
       // buys shape rather than volatility.
-      val asymM   = if w.noiseAsym > 0.0 then math.exp(asymG - asymNorm) else 1.0
-      val dNoise0 = newsDamp * SigmaN * math.exp(logVol - volNorm) * z * asymM
-      val dNoise  = if w.leverage > 0.0 then dNoise0 * math.exp(w.leverage * kickS) else dNoise0
+      val asymM   =
+        if w.noiseAsym <= 0.0 then 1.0
+        else if w.noiseAsymCap > 0.0 then math.exp(math.min(asymG - asymNorm, w.noiseAsymCap))
+        else math.exp(asymG - asymNorm)
+      val dNoise0 = newsDamp * SigmaN * math.exp(logVol - volNorm) * z * asymM * mix
+      // read BEFORE this session's update, like the kick: the response is to PAST declines
+      val volRespM = if w.volResp > 0.0 then math.exp(w.volResp * volRespS) else 1.0
+      val dNoise0k = if w.leverage > 0.0 then dNoise0 * math.exp(w.leverage * kickS) else dNoise0
+      val dNoise  = if w.volResp > 0.0 then dNoise0k * volRespM else dNoise0k
       if w.noiseAsym > 0.0 then
         asymA = NoiseAsymAttack * asymA - (1.0 - NoiseAsymAttack) * z
-        asymG = NoiseAsymPhi * asymG + w.noiseAsym * asymA
+        asymG = w.noiseAsymPhi * asymG + w.noiseAsym * asymA
       // The session's DIFFUSION SCALE, recorded for the range and satellite channels exactly
       // as the noise term above is built -- news damp, vol state, leverage kick (read
       // BEFORE this session's update, like `dNoise` itself) -- plus the jump branch's
       // sqrt(1 - jumpVar) mixing.  Draw-free; 0.0 when both channels are off.
       val sessSigma =
         if w.rangeScale > 0.0 || w.satBeta > 0.0 || w.overnight > 0.0 || w.basket > 0 ||
-           w.macroPanel > 0 then
+           w.macroPanel > 0 || w.volResp > 0.0 || w.jumpResp > 0.0 then
           val levMult = if w.leverage > 0.0 then math.exp(w.leverage * kickS) else 1.0
           val jvMult  = if w.jumpVar > 0.0 then math.sqrt(1.0 - w.jumpVar) else 1.0
-          newsDamp * SigmaN * math.exp(logVol - volNorm) * levMult * jvMult * asymM
+          newsDamp * SigmaN * math.exp(logVol - volNorm) * levMult * jvMult * asymM * volRespM * mix
         else 0.0
 
       // The jump channel.  Its draws come from `jrng`, NOT `rng`, so `jumpVar = 0` takes the
@@ -2345,11 +2618,19 @@ object MarketSim:
         if w.jumpVar <= 0.0 then dNoise
         else
           val volMult  = math.exp(logVol - volNorm)
-          val lamNow   = math.min(0.25, w.jumpRate * math.pow(volMult, JumpGamma))
+          val lamJ     = if w.jumpResp > 0.0 then math.exp(w.jumpResp * volRespS) else 1.0
+          val lamNow   = math.min(0.25, w.jumpRate * math.pow(volMult, JumpGamma) * lamJ)
           val scale    = jumpScale(w)
           // The compensator is deterministic and consumes no draw: it removes the mean the
           // downward shift would otherwise add, so `jumpVar` moves the tail without moving drift.
-          val compens  = w.jumpRate * w.jumpSkew * scale
+          // With `jumpResp` on it must be CONDITIONAL -- the intensity then correlates with past
+          // declines, and an unconditional compensator would leave a systematic post-decline
+          // return, i.e. manufactured TREND rather than the volatility response asked for
+          // (measured: the 60-day variance ratio 1.07 -> 2.65).  Off, `lamJ` is 1 and this is the
+          // shipped constant times the volatility state's own factor, which the jump channel has
+          // always carried in `lamNow`.
+          val compens  = if w.jumpResp > 0.0 then lamNow * w.jumpSkew * scale
+                         else w.jumpRate * w.jumpSkew * scale
           val fired    = jrng.nextDouble() < lamNow
           val jump =
             if !fired then 0.0
@@ -2417,6 +2698,31 @@ object MarketSim:
         if w.levGain > 0.0 then
           eqM.levMult = math.max(MacroK.LevMultFloor, 1.0 + w.levGain * (borrow - levSlow))
       val retE = eqM.step(perceivedFair, eqFlow + eqShockA)
+      if w.volResp > 0.0 || w.jumpResp > 0.0 then
+        // The REALIZED decline, in units of the sd that generated it, saturated at four like the
+        // kick's and centred at a normal's E[max(-z,0)] so the state has mean zero and the
+        // multiplier does not move the vol LEVEL.  `sessSigma` carries this session's own
+        // multiplier, so a stretch the state has already made volatile reads no larger here:
+        // scale-free by construction, where a trailing-scale denominator lags ~140 sessions and
+        // self-excites.  The numerator is the realized return rather than the shock on purpose:
+        // the spiral's amplification is part of what real volatility responds to, and a
+        // shock-only driver loses the skew the downside excess is measured from (2.85% -> 1.15%).
+        val vrU = math.min(math.max(newsJ - retE, 0.0) / math.max(1e-12, sessSigma), 4.0) - 0.399
+        // the ATTACK stage: at 0 the state receives the session's reading whole, which peaks the
+        // response at lag 1; above 0 it receives a fast EWMA of it, which is what makes the
+        // record's lag-2 hump.
+        if w.volRespAttack > 0.0 then
+          volRespA = w.volRespAttack * volRespA + (1.0 - w.volRespAttack) * vrU
+        val vrIn = if w.volRespAttack > 0.0 then volRespA else vrU
+        // SATURATED, and the cap is what makes the accumulation safe rather than a nicety.  The
+        // state is unnormalized so that one decline's response is a plateau rather than a divided
+        // integral, which means a stretch of saturated readings COMPOUNDS: the realized return
+        // carries the spiral's amplification while `sessSigma` does not, so in a thin market the
+        // state raises volatility, the spiral amplifies harder, and the reading grows again.  The
+        // S&P default is stable without a cap; the Nasdaq recipe at depth 8.4 ran to 49%
+        // volatility and 70 crashes a century.  The cap bounds the multiplier at
+        // exp(volResp * volRespCap) and leaves the plateau intact below it.
+        volRespS = math.min(w.volRespPhi * volRespS + vrIn, w.volRespCap)
       if levOn then
         // THE CREDIT CYCLE: a damped oscillator in the stock (its velocity persists for a quarter,
         // its level swings over years -- the record's NFCILEVERAGE shape), driven by its own
@@ -2455,7 +2761,7 @@ object MarketSim:
                      w.refuge * (w.duration / DurationRef) * eqStressForRefuge *
                        math.max(0.0, 1.0 - bdM.stressIdx)
       if w.refugeDays > 0.0 then settledStress += settleMu * (eqM.stressIdx - settledStress)
-      val retB = bdM.step(fairB, bondFlow + SigmaNBond * (w.duration / DurationRef) * rng.randn())
+      val retB = bdM.step(fairB + slowB, bondFlow + SigmaNBond * (w.duration / DurationRef) * rng.randn())
       val _ = retB
 
       px(i) = math.exp(eqM.logP - markdown)
@@ -2473,11 +2779,21 @@ object MarketSim:
         chState(i) = math.exp(logVol - volNorm) * eqM.lastLiq * w.depth / 12.0
         chSv(i) = eqM.scaleVar
         chJ(i) = jumpNow * eqM.lastLiq - newsJ
-        chVs(i) = math.exp(logVol - volNorm)
+        val vb = math.exp(logVol - volNorm) * volRespM * mix
+        chVs(i) = math.sqrt(vb * vb + slowVar)
       if mcOn then
         mcStress(i) = eqM.stressIdx
         mcBStr(i)   = bdM.stressIdx
-        mcVs(i)     = math.exp(logVol - volNorm)
+        // TIMES the vol response's multiplier: the implied vol reads the price process's own
+        // conditional variance, and with `volResp` on the exogenous state is no longer all of it.
+        // A member that misses a real vol component reads CALM while returns are turbulent, which
+        // is the failure this column exists to avoid -- measured, it drops the variance risk
+        // premium out of its band.
+        // PLUS the slow channel's variance: a member that misses a real vol component reads CALM
+        // while returns are turbulent, which drops the variance risk premium out of its band --
+        // measured, two macro rows fail without it.
+        val vbM = math.exp(logVol - volNorm) * volRespM * mix
+        mcVs(i)     = math.sqrt(vbM * vbM + slowVar)
         mcAmp(i)    = eqM.lastLiq * w.depth / 12.0
         mcAcc(i)    = acc
         mcWTrend(i) = wTrend
@@ -6093,6 +6409,12 @@ object MarketSim:
       // `-macro`
       ("macro", w.macroPanel.toString), ("levGain", ef(w.levGain)), ("stressScale", ef(w.stressScale)),
       ("levPersist", ef(w.levPersist)), ("noiseAsym", ef(w.noiseAsym)),
+      ("noiseAsymPhi", ef(w.noiseAsymPhi)), ("noiseAsymCap", ef(w.noiseAsymCap)),
+      ("volResp", ef(w.volResp)), ("volRespPhi", ef(w.volRespPhi)),
+      ("volRespCap", ef(w.volRespCap)), ("volRespAttack", ef(w.volRespAttack)),
+      ("jumpResp", ef(w.jumpResp)), ("stressAdapt", ef(w.stressAdapt)),
+      ("slowShare", ef(w.slowShare)), ("slowVol", ef(w.slowVol)), ("slowLev", ef(w.slowLev)),
+      ("slowPhi", ef(w.slowPhi)), ("slowPerm", ef(w.slowPerm)), ("slowBeta", ef(w.slowBeta)),
       ("macroNull", w.macroNull.toString),
       ("inflProb", ef(w.inflProb)), ("inflSize", ef(w.inflSize)),
       ("inflSpeed", ef(w.inflSpeed)), ("rateSpeed", ef(w.rateSpeed)),
@@ -6443,6 +6765,13 @@ object MarketSim:
     var basketDrift = dw.basketDrift; var macroPanel = dw.macroPanel; var macroNull = dw.macroNull
     var levGain = dw.levGain; var stressScale = dw.stressScale
     var levPersist = dw.levPersist; var noiseAsym = dw.noiseAsym
+    var noiseAsymPhi = dw.noiseAsymPhi
+    var volResp = dw.volResp; var volRespPhi = dw.volRespPhi
+    var volRespAttack = dw.volRespAttack; var volRespCap = dw.volRespCap
+    var noiseAsymCap = dw.noiseAsymCap
+    var jumpResp = dw.jumpResp; var stressAdapt = dw.stressAdapt
+    var slowShare = dw.slowShare; var slowVol = dw.slowVol; var slowLev = dw.slowLev
+    var slowPhi = dw.slowPhi; var slowPerm = dw.slowPerm; var slowBeta = dw.slowBeta
     var jointEmit = ""
     var barsEmit = ""
     var inflProb = dw.inflProb; var inflSize = dw.inflSize
@@ -6537,6 +6866,20 @@ object MarketSim:
       case "-stressscale" => stressScale = numOr("-stressscale", consumeNext)
       case "-levpersist" => levPersist = numOr("-levpersist", consumeNext)
       case "-noiseasym" => noiseAsym = numOr("-noiseasym", consumeNext)
+      case "-noiseasymphi" => noiseAsymPhi = numOr("-noiseasymphi", consumeNext)
+      case "-noiseasymcap" => noiseAsymCap = numOr("-noiseasymcap", consumeNext)
+      case "-jumpresp"     => jumpResp = numOr("-jumpresp", consumeNext)
+      case "-stressadapt"  => stressAdapt = numOr("-stressadapt", consumeNext)
+      case "-slowshare"  => slowShare = numOr("-slowshare", consumeNext)
+      case "-slowvol"    => slowVol = numOr("-slowvol", consumeNext)
+      case "-slowlev"    => slowLev = numOr("-slowlev", consumeNext)
+      case "-slowphi"    => slowPhi = numOr("-slowphi", consumeNext)
+      case "-slowperm"   => slowPerm = numOr("-slowperm", consumeNext)
+      case "-slowbeta"   => slowBeta = numOr("-slowbeta", consumeNext)
+      case "-volresp"    => volResp = numOr("-volresp", consumeNext)
+      case "-volrespphi" => volRespPhi = numOr("-volrespphi", consumeNext)
+      case "-volrespattack" => volRespAttack = numOr("-volrespattack", consumeNext)
+      case "-volrespcap" => volRespCap = numOr("-volrespcap", consumeNext)
 
       case "-jointemit"  => jointEmit = consumeNext
       case "-barsemit"   => barsEmit = consumeNext
@@ -6620,7 +6963,27 @@ object MarketSim:
     nonNeg("-levgain", levGain)
     nonNeg("-stressscale", stressScale)
     nonNeg("-noiseasym", noiseAsym)
-    if levPersist < 0.0 || levPersist >= 1.0 then usage("-levpersist is a persistence in [0, 1)")
+    nonNeg("-noiseasymcap", noiseAsymCap)
+    nonNeg("-volresp", volResp); nonNeg("-volrespcap", volRespCap); nonNeg("-jumpresp", jumpResp)
+    // WORD FOR WORD the Rust twin's messages: the two CLIs must refuse the same worlds, and
+    // `-stressadapt 0` is the one that would otherwise pass -- the spiral's scale never updates,
+    // so its stress index reads every session against the seed value.  NEGATED comparisons, like
+    // `nonNeg`: NaN parses, and `x < 0 || x >= 1` admits it where the Rust twin's range test
+    // refuses it.
+    if !(levPersist >= 0.0 && levPersist < 1.0) then
+      usage("-levpersist is a persistence in [0, 1)")
+    if !(noiseAsymPhi >= 0.0 && noiseAsymPhi < 1.0) then
+      usage("-noiseasymphi is a persistence in [0, 1)")
+    if !(volRespPhi >= 0.0 && volRespPhi < 1.0) then
+      usage("-volrespphi is a persistence in [0, 1)")
+    if !(volRespAttack >= 0.0 && volRespAttack < 1.0) then
+      usage("-volrespattack is a persistence in [0, 1)")
+    if !(stressAdapt > 0.0 && stressAdapt < 1.0) then
+      usage("-stressadapt is an EWMA weight in (0, 1)")
+    nonNeg("-slowvol", slowVol); nonNeg("-slowlev", slowLev); nonNeg("-slowbeta", slowBeta)
+    if !(slowShare >= 0.0 && slowShare < 1.0) then usage("-slowshare is a share in [0, 1)")
+    if !(slowPhi >= 0.0 && slowPhi < 1.0) then usage("-slowphi is a persistence in [0, 1)")
+    if !(slowPerm >= 0.0 && slowPerm <= 1.0) then usage("-slowperm is a share in [0, 1]")
 
     if basket > 0 && basketBeta <= 0.0 then
       usage("-basket requires -basketbeta > 0: a name with no sector leg is not a member of anything")
@@ -6691,6 +7054,11 @@ object MarketSim:
                   basketSector = basketSector, basketIdio = basketIdio, basketGaps = basketGaps,
                   basketDrift = basketDrift, macroPanel = macroPanel, macroNull = macroNull,
                   levGain = levGain, stressScale = stressScale, levPersist = levPersist,
+                  noiseAsymPhi = noiseAsymPhi, volResp = volResp, volRespPhi = volRespPhi,
+                  volRespAttack = volRespAttack, volRespCap = volRespCap,
+                  noiseAsymCap = noiseAsymCap, jumpResp = jumpResp, stressAdapt = stressAdapt,
+                  slowShare = slowShare, slowVol = slowVol, slowLev = slowLev,
+                  slowPhi = slowPhi, slowPerm = slowPerm, slowBeta = slowBeta,
                   noiseAsym = noiseAsym)
 
     // SATELLITE PROTOTYPE: write per-path primary+satellite LOG prices for grading against the

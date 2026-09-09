@@ -1,3 +1,90 @@
+## v0.24.1 — 2026-09-09
+
+**The volatility profile after a fall — two mechanisms, on by default**
+
+- `-volresp` (default 0.021; 0 is bit-identical): the diffusive noise times exp(V × S), S the
+  session's decline in units of the conditional sd that GENERATED it, accumulated at
+  `-volrespphi` 0.992 and fed through `-volrespattack` 0.5 so the response builds over two to five
+  sessions instead of peaking at lag 1. Two things separate it from the item-12 forms that failed:
+  the denominator is the session's own sd rather than a trailing scale, so the state is scale-free
+  instantly and cannot self-excite, and the accumulation is unnormalised, so one decline's
+  response is a PLATEAU rather than an integral divided over the sessions after it. `-volrespcap`
+  bounds the state, which is what makes the accumulation safe in a thin market rather than a
+  nicety: the Nasdaq recipe at depth 8.4 ran to 49% volatility uncapped.
+- `-stressadapt` (default 0.036; 0.005 is bit-identical) is what unblocked it. At the spiral's old
+  ~140-session scale a stretch that a persistent vol mechanism had genuinely made volatile read as
+  continuous STRESS and the spiral minted spikes out of it — the measured blocker on every form
+  tried. The index the rest of the world reads — policy easing, the refuge bid, joint-stress
+  margin selling, the credit stock's paydown, the panel's spread and conditions members — keeps
+  the SLOW scale: letting the dial move both shrank the equity stress the bond's crisis behaviour
+  reads and `-crossasset` failed its short-duration rung.
+- `-slowshare` (default 0.20; 0 is bit-identical): THE SLOW REPRICING CHANNEL. That share of the
+  diffusive variance leaves the order-flow channel and reprices the fundamental and the price
+  TOGETHER, the way a fair-value news jump does, so the value channel has nothing to arbitrage and
+  the move never passes through the liquidity spiral. `-slowvol` 0.894 sets its scale, `-slowphi`
+  0.996 its persistence, and `-slowlev` 1.1 its OWN leverage effect — the only thing driving its
+  state, because variance moved out of the amplifier otherwise loses the leverage profile the
+  amplifier was supplying. Own RNG stream.
+- The spiral is a FAST channel, and with all the variance running through it the abs-r
+  autocorrelation profile is too steep: lag 20 over lag 1 reads 0.527 against the record's 0.753,
+  where 0.24.0 read 0.578. Moving a fifth of the variance to a channel the amplifier cannot
+  steepen reads 0.594. Measured
+  400 × 100 on sixteen seeds, model against record: lag-1 clustering 1.15 → 1.08, lag-20 0.78 →
+  0.84, the lag-1 leverage correlation 1.08 → 0.96, the lag-5 response 0.71 → 0.66 and lag-20 0.95
+  → 0.90, kurtosis 0.96 → 0.97, the crash count 0.98 → 0.97, the downside excess 1.13 → 1.02, time
+  spent 20% underwater 2.86 → 2.67. Scored on 32 seeds the calibration loss falls 0.102 ± 0.040
+  against the channel-free world, better on 29 of them.
+- `-slowperm` 0.30: only that share of each repricing reaches the FUNDAMENTAL, the rest opening a
+  gap the value channel closes over its own horizon. Fully permanent, the momentum crowd chases a
+  move nothing arbitrages and the 60-day variance ratio reads 1.14 against the record's 1.00; at
+  0.30 it reads 1.09, which is where the channel-free world sits.
+- `-slowbeta` 0.55: the bond takes the same repricing with the opposite sign, a flight-to-quality
+  factor. Without it the channel is equity-only and the worst equity days — which its own leverage
+  effect concentrates — have no bond response at all: the tail hedge correlation reads −0.239
+  against a record of −0.270 and the bond's growth-shock rally 5.64 against 6.60. At 0.55 they
+  read −0.268 and 6.56.
+- FIVE DIALS RE-SOLVED around the two mechanisms: `stress` 4.7 → 5.0, `volPersist` 0.993 → 0.982,
+  `volOfVol` 0.022 → 0.028, `jumpVar` 0.11 → 0.16 and `jumpSkew` 1.0 → 0.65. Kurtosis and the
+  crash count end where they started and the downside excess lands on the record.
+- PRICED, and disclosed: **equity volatility runs 5% over the record**, against 3% for the
+  channel-free world and 0% for 0.24.0, and the return per unit of volatility 0.94 against 0.96.
+  Six attacks on it all cost more than they bought, because the slow channel's variance is
+  unamplified and therefore generates no 20% declines while the spiral's does — swapping one for
+  the other at constant volatility necessarily cuts the crash count, which is anchored. The
+  volatility fidelity band is 14–18%: the world sits 10.8 seed-sd inside it at 400 × 100 and 3.9
+  at 60 × 80, and below that ensemble the statistic's own spread rather than its level decides.
+- Also disclosed: the record's profile HUMPS above its own lag 1 at lags 2 to 5 and the model's
+  does not, so the lag-5 response holds two thirds of lag 1's strength against the record's 0.85.
+  `-noiseasym` and `-levpersist` still ship at 0 — at any setting that closes part of the hump,
+  kurtosis passes 45 or the downside excess halves.
+
+**The macro panel gains two members, and every pooled statistic a per-path spread**
+
+- `-macro 1` emits `macroYield10` (DGS10: the OU-expected average of the short rate over ten years
+  plus the term premium, so the slope cannot contradict it) and `macroCredit` (TOTBKCR/GDP: the
+  borrowing stock itself in percent, already credit relative to the economy's scale). Both are
+  draw-free states the loop already carries.
+- Every pooled panel statistic carries a `perPath` block — p5 / p50 / p95 of the per-path
+  readings, the width of the null a single path sits in — at the panel level and inside each
+  member.
+- `0.24.0-nasdaq` re-solves `depth` 8.7 → 8.4 for its volatility band, which sat on the floor and
+  failed it on a consumer's seed. This CHANGES a recipe named after a shipped release: the frozen
+  `-releases` row `0.24.0` is what reproduces that release, and the `0.24.0-*` recipes are named
+  for the world they were built on, not pinned to the binary that shipped it.
+
+**Recipes, the frozen row and the schema**
+
+- `-releases` gains `0.24.0`, and `-atrelease 0.24.1-macro` / `-nasdaq` / `-basket` /
+  `-nasdaq-basket` name the new set. The slow repricing channel is ON in the S&P recipes and OFF
+  in the Nasdaq ones: those carry their own dials for their own depth and have not been re-solved
+  against it.
+- Schema 12 → 13. `world` gained the two mechanisms' dials and the item-12 cascade's
+  `noiseAsymPhi` / `noiseAsymCap`; the TSV gained the panel's two columns; `channels.macro` gained
+  the two members and the `perPath` blocks. A reader that reconstructs a `World` from a schema-12
+  sidecar and runs it here gets a different market with no error.
+- Twins byte-identical on `-emit` across every world, and both CLIs reject the new flags with the
+  same messages.
+
 ## v0.24.0 — 2026-09-07
 
 **Declines that follow leverage — the leverage cycle, on by default**

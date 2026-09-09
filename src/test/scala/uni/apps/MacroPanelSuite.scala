@@ -32,20 +32,23 @@ class MacroPanelSuite extends FunSuite:
            on.bond.sameElements(off.bond) && on.rate.sameElements(off.rate),
       "the panel must reach no price")
     for (v, w) <- MarketSim.Releases do assertEquals(w.macroPanel, 0, s"release $v")
-    for (n, w, _) <- MarketSim.Recipes if !n.startsWith("0.24.0") do assertEquals(w.macroPanel, 0, s"recipe $n")
+    for (n, w, _) <- MarketSim.Recipes if !n.startsWith("0.24.") do assertEquals(w.macroPanel, 0, s"recipe $n")
     assertEquals(MarketSim.Defaults.macroPanel, 0, "the shipped default emits no macro columns")
   }
 
-  test("the leverage cycle is off in every frozen release and pre-0.24.0 recipe, and 0 reproduces 0.23.1 bit for bit") {
-    for (v, w) <- MarketSim.Releases do assertEquals(w.levGain, 0.0, s"release $v")
-    for (n, w, _) <- MarketSim.Recipes if !n.startsWith("0.24.0") do assertEquals(w.levGain, 0.0, s"recipe $n")
+  test("the leverage cycle is off in every pre-0.24.0 release and recipe, and 0 reproduces 0.23.1 bit for bit") {
+    // 0.24.0 is the release that ADOPTED the cycle, so its frozen row carries it
+    for (v, w) <- MarketSim.Releases if v != "0.24.0" do assertEquals(w.levGain, 0.0, s"release $v")
+    for (n, w, _) <- MarketSim.Recipes if !n.startsWith("0.24.") do assertEquals(w.levGain, 0.0, s"recipe $n")
     assert(MarketSim.Defaults.levGain > 0.0, "the shipped default runs the leverage cycle")
     // the dial off at 0.23.1's dials IS 0.23.1's world: the stock still runs (draw-free for the
     // price, its stream is its own) and the multiplier stays exactly 1.0
     val frozen = MarketSim.releaseWorld("0.23.1").getOrElse(fail("0.23.1 must resolve"))
-    val off    = MarketSim.Defaults.copy(levGain = 0.0, stress = frozen.stress, jumpVar = frozen.jumpVar,
-                                         jumpSkew = frozen.jumpSkew, leverage = frozen.leverage,
-                                         volPersist = frozen.volPersist, fundVol = frozen.fundVol)
+    // against 0.24.0's world, not today's: 0.24.1 moved the vol response's dials on top
+    val w2400  = MarketSim.releaseWorld("0.24.0").getOrElse(fail("0.24.0 must resolve"))
+    val off    = w2400.copy(levGain = 0.0, stress = frozen.stress, jumpVar = frozen.jumpVar,
+                            jumpSkew = frozen.jumpSkew, leverage = frozen.leverage,
+                            volPersist = frozen.volPersist, fundVol = frozen.fundVol)
     assertEquals(off, frozen, "0.24.0 moved levGain and the six dials re-solved around it, nothing else")
     val a = MarketSim.simulate(frozen, 3, MarketSim.DefaultSeed)
     val b = MarketSim.simulate(off.copy(macroPanel = 1), 3, MarketSim.DefaultSeed)
@@ -152,7 +155,10 @@ class MacroPanelSuite extends FunSuite:
     val sib = MarketSim.simulate(w, 20, MarketSim.DefaultSeed ^ MarketSim.MacroK.NullSeed)
     assert(nul.macroPanel.get.spread.sameElements(sib.macroPanel.get.spread) &&
            nul.macroPanel.get.ivol.sameElements(sib.macroPanel.get.ivol))
-    val st = MarketSim.measure(MarketSim.simPaths(w.copy(macroNull = 1), 4, 30, MarketSim.DefaultSeed), 30)
+    // 20 x 100, not 4 x 30: the pre-peak rank is a median over 20% EPISODES, and a handful of
+    // paths yields a handful of episodes -- at 4 x 30 the null reads 0.87 where it converges to
+    // 0.55 by twelve paths.  The same ensemble lesson the vol-response statistics carry.
+    val st = MarketSim.measure(MarketSim.simPaths(w.copy(macroNull = 1), 20, 100, MarketSim.DefaultSeed), 100)
     assert(st.macroPanel.exists(_.sibling))
     // the panel's rows all start "macro <member>"; "macro disasters ..." is the disaster channel's
     val panelRow = (n: String) => n.startsWith("macro ") && !n.startsWith("macro disasters")

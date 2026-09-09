@@ -39,13 +39,17 @@ class AmplifierAnchorSuite extends FunSuite:
       assert(lev.forall(_ < 0.0), s"$sr: a decline predicts more volatility at every lag, $lev")
       assert(lev(3) < -0.05, s"$sr: still -0.05 or beyond at lag 5, ${lev(3)}")
       assert(lev(3) / lev(0) > 0.6, s"$sr: lag 5 holds most of lag 1's strength, $lev")
-    // the model's own, at the shipped defaults: its lag-1 response is the record's and its lag-5
-    // is half of it -- item 12's disclosed miss, and the reason both dials below ship at 0.  The
-    // statistic needs ensemble: it is a median over paths and reads -0.060 on eight paths against
-    // -0.042 on two hundred, converging by about forty.
+    // the model's own, at the shipped defaults.  Item 12 disclosed a lag-5 response HALF of lag
+    // 1's; the vol response and then the slow repricing channel closed most of that, so the model
+    // now clears the same 0.6 the record does -- from below, and still short of the record's own
+    // 0.85.  The statistic needs ensemble: it is a median over paths and reads -0.060 on eight
+    // paths against -0.042 on two hundred, converging by about forty.
     val st = MarketSim.measure(MarketSim.simPaths(MarketSim.Defaults, 40, 100, MarketSim.DefaultSeed), 100)
     assert(st.lev1 < -0.05, s"the model's lag-1 response is the record's: ${st.lev1}")
-    assert(st.lev5 / st.lev1 < 0.6, s"the disclosed miss: lag 5 is ${st.lev5} against lag 1's ${st.lev1}")
+    val ratio = st.lev5 / st.lev1
+    assert(ratio > 0.60 && ratio < 0.80,
+      s"lag 5 holds most of lag 1's strength but not the record's 0.85: $ratio " +
+      s"(lag 5 ${st.lev5}, lag 1 ${st.lev1})")
   }
 
   test("both vol-response dials are off everywhere, and 0 is bit-identical") {
@@ -63,6 +67,72 @@ class AmplifierAnchorSuite extends FunSuite:
     val on = MarketSim.measure(MarketSim.simPaths(d.copy(noiseAsym = 0.06), 40, 100, MarketSim.DefaultSeed), 100)
     val off = MarketSim.measure(MarketSim.simPaths(d, 40, 100, MarketSim.DefaultSeed), 100)
     assert(on.lev5 < off.lev5, s"the asymmetric noise vol must deepen the lag-5 response: ${off.lev5} -> ${on.lev5}")
+  }
+
+  test("the slow repricing channel is off in every frozen world, and 0 is bit-identical") {
+    val d = MarketSim.Defaults
+    assert(d.slowShare > 0.0, "the shipped default runs the channel")
+    for (v, w) <- MarketSim.Releases do assertEquals(w.slowShare, 0.0, s"release $v")
+    // the Nasdaq recipes carry their own dials and were NOT re-solved against the channel
+    for (n, w, _) <- MarketSim.Recipes if !n.startsWith("0.24.1") || n.contains("nasdaq") do
+      assertEquals(w.slowShare, 0.0, s"recipe $n")
+    // off, the channel's own dials reach no price and no bond
+    val off = d.copy(slowShare = 0.0)
+    val a = MarketSim.simulate(off, 3, MarketSim.DefaultSeed)
+    val b = MarketSim.simulate(off.copy(slowVol = 3.0, slowLev = 0.2, slowPhi = 0.5,
+                                        slowPerm = 1.0, slowBeta = 2.0), 3, MarketSim.DefaultSeed)
+    assert(a.price.sameElements(b.price) && a.bond.sameElements(b.bond),
+      "off, the channel's dials are unreachable")
+    // the bond loading reaches the BOND and nothing else
+    val on = MarketSim.simulate(d, 3, MarketSim.DefaultSeed)
+    val noBond = MarketSim.simulate(d.copy(slowBeta = 0.0), 3, MarketSim.DefaultSeed)
+    assert(on.price.sameElements(noBond.price), "the loading must reach no equity price")
+    assert(!on.bond.sameElements(noBond.bond), "the loading must reach the bond")
+    // and the channel FLATTENS the clustering profile, which is what it was adopted for
+    val withCh = MarketSim.measure(MarketSim.simPaths(d, 40, 100, MarketSim.DefaultSeed), 100)
+    val without = MarketSim.measure(MarketSim.simPaths(off, 40, 100, MarketSim.DefaultSeed), 100)
+    assert(withCh.ac20 / withCh.ac1 > without.ac20 / without.ac1,
+      s"the slow channel must flatten the |r| profile: ${without.ac20 / without.ac1} -> " +
+      s"${withCh.ac20 / withCh.ac1}")
+  }
+
+  test("the vol response is off in every frozen world, 0.24.0's row is the seven-dial move, and 0 is bit-identical") {
+    val d = MarketSim.Defaults
+    // the LITERAL 0.96 in `Defaults`, because it is constructed before `NoiseAsymPhi` initializes;
+    // the Rust twin spells it as the constant, and a divergence would ship in the sidecar's world
+    assertEquals(d.noiseAsymPhi, MarketSim.NoiseAsymPhi)
+    assertEquals(d.noiseAsymPhi, 0.96)
+    assert(d.volResp > 0.0, "the shipped default runs the vol response")
+    for (v, w) <- MarketSim.Releases do
+      assertEquals(w.volResp, 0.0, s"release $v")
+      assertEquals(w.jumpResp, 0.0, s"release $v")
+      assertEquals(w.volRespAttack, 0.0, s"release $v")
+      assertEquals(w.noiseAsymCap, 0.0, s"release $v")
+      assertEquals(w.stressAdapt, 0.005, s"release $v")
+    for (n, w, _) <- MarketSim.Recipes if !n.startsWith("0.24.1") do
+      assertEquals(w.volResp, 0.0, s"recipe $n")
+      assertEquals(w.jumpResp, 0.0, s"recipe $n")
+      assertEquals(w.stressAdapt, 0.005, s"recipe $n")
+    // the frozen row is today's default less the two mechanisms' four dials and the three
+    // re-solved around them, and nothing else moved with them
+    val frozen = MarketSim.releaseWorld("0.24.0").getOrElse(fail("0.24.0 must resolve"))
+    val off = d.copy(volResp = frozen.volResp, volRespPhi = frozen.volRespPhi,
+                     volRespAttack = frozen.volRespAttack, stressAdapt = frozen.stressAdapt,
+                     stress = frozen.stress, volPersist = frozen.volPersist, jumpVar = frozen.jumpVar,
+                     slowShare = frozen.slowShare, volOfVol = frozen.volOfVol,
+                     jumpSkew = frozen.jumpSkew)
+    assertEquals(off, frozen,
+      "0.24.1 moved the two mechanisms' dials and the six re-solved around them, nothing else")
+    // off, the shape dials of both mechanisms reach no price
+    val a = MarketSim.simulate(off, 3, MarketSim.DefaultSeed)
+    val b = MarketSim.simulate(off.copy(volRespPhi = 0.5, volRespAttack = 0.9, volRespCap = 1.0,
+                                        noiseAsymPhi = 0.5, noiseAsymCap = 0.1), 3, MarketSim.DefaultSeed)
+    assert(a.price.sameElements(b.price), "off, the shape dials are unreachable")
+    // and the response deepens the LAG-20 profile, which is what 0.24.1 adopted it for
+    val on20 = MarketSim.measure(MarketSim.simPaths(d, 20, 100, MarketSim.DefaultSeed), 100)
+    val no20 = MarketSim.measure(MarketSim.simPaths(d.copy(volResp = 0.0), 20, 100, MarketSim.DefaultSeed), 100)
+    assert(on20.lev20 < no20.lev20,
+      s"the vol response must deepen the lag-20 response: ${no20.lev20} -> ${on20.lev20}")
   }
 
   test("crash count is volatility-flat across the fresh-start cross-section") {
@@ -86,7 +156,7 @@ class AmplifierAnchorSuite extends FunSuite:
     val b = MarketSim.simulate(d.copy(stressScale = 1.0), 3, MarketSim.DefaultSeed)
     assert(a.price.sameElements(b.price), "depth 17.4 is the reference: the gain scale is 1 there")
     for (v, w) <- MarketSim.Releases do assertEquals(w.stressScale, 0.0, s"release $v")
-    for (n, w, _) <- MarketSim.Recipes if !n.contains("nasdaq") || !n.startsWith("0.24.0") do
+    for (n, w, _) <- MarketSim.Recipes if !n.contains("nasdaq") || !n.startsWith("0.24.") do
       assertEquals(w.stressScale, 0.0, s"recipe $n")
     assertEquals(MarketSim.Defaults.stressScale, 0.0)
   }

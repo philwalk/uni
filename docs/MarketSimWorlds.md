@@ -44,7 +44,7 @@ Two checks, with different jobs and different lifetimes. Use both.
 exit 0. Nothing to parse, so a caller can assert on it without depending on any other output:
 
 ```
-[ "$(market_sim.exe -version)" = "0.24.0" ] || { echo "wrong simulator" >&2; exit 1; }
+[ "$(market_sim.exe -version)" = "0.24.1" ] || { echo "wrong simulator" >&2; exit 1; }
 ```
 
 This catches the wrong binary, and it is the only check available *before* you spend the run. It
@@ -144,8 +144,8 @@ place, so a failed reinstall silently leaves the previous one there. Install to 
 invoke the absolute path, so the path itself carries the assertion:
 
 ```
-cargo install vastblue-uni@0.24.0 --root ~/.local/uni-0.24.0
-~/.local/uni-0.24.0/bin/market_sim.exe -version
+cargo install vastblue-uni@0.24.1 --root ~/.local/uni-0.24.1
+~/.local/uni-0.24.1/bin/market_sim.exe -version
 ```
 
 Exe-versus-library mismatch is not a risk — the example links the library from the same crate. The
@@ -572,17 +572,20 @@ with it.
 
 | flag | what it is | default |
 |---|---|---|
-| `-stress` | liquidity-spiral gain: how much a run of down days amplifies later moves | 4.7 |
-| `-noiseasym` | THE VOL RESPONSE TO A FALL: the diffusive noise times exp(g − Var g), g a cascade of the session's own diffusive draw (a fast attack into a 17-session decay), so volatility builds over two to five sessions after a decline and persists for twenty. Level-preserving. Moves the model's lag-5 response from −0.042 to the record's −0.05..−0.08, and costs kurtosis or the downside asymmetry at every setting — [below](#the-vol-response-to-a-fall) | 0 |
+| `-stress` | liquidity-spiral gain: how much a run of down days amplifies later moves | 5.0 |
+| `-volresp` | THE VOL RESPONSE: the diffusive noise times exp(V × S), S the session's decline in units of the conditional sd that GENERATED it, accumulated at `-volrespphi` and fed through `-volrespattack` so the response builds over two to five sessions rather than peaking at lag 1. One decline's response is a plateau, not an integral divided over the sessions after it. Draw-free, `-volrespcap` bounds the state, and 0 is bit-identical — [below](#the-vol-response-to-a-fall) | 0.021 |
+| `-stressadapt` | the liquidity spiral's SCALE speed: the EWMA weight on r² that standardises the decline its own stress index reads. At 0.005 (a ~140-session memory) a stretch that a persistent vol mechanism has genuinely made volatile reads as continuous STRESS and the spiral mints spikes out of it, which blocked every form of the response tried. The index the rest of the world reads — policy easing, the refuge bid, margin selling, the credit stock's paydown — keeps the slow scale | 0.036 |
+| `-slowshare` | THE SLOW REPRICING CHANNEL: this share of the diffusive variance leaves the order-flow channel and reprices the fundamental and the price TOGETHER, like a news jump, so the value channel has nothing to arbitrage and the move never passes through the spiral. Its volatility is long-memoried and asymmetric, which is what puts the abs-r profile back on the record's SHAPE. `-slowvol` sets its scale, `-slowlev` its own leverage effect, `-slowphi` its persistence, `-slowperm` how much of each move is permanent, `-slowbeta` the bond's opposite-sign loading. 0 is bit-identical — [below](#the-vol-response-to-a-fall) | 0.20 |
+| `-noiseasym` | the item-12 cascade: the diffusive noise times exp(g − Var g), g a cascade of the session's own diffusive draw — a fast attack into a decay at `-noiseasymphi`, capped by `-noiseasymcap`. Ships at 0: at every setting that closes part of what is left, something graded gives way — [below](#the-vol-response-to-a-fall) | 0 |
 | `-levpersist` | the leverage kick's own memory: at P the kick raises the following sessions too, through weights that sum to 1, so only the shape of the response moves. Closes the clustering hump and puts lag-1 clustering on the record's 0.298, at the cost of the lag-1 leverage correlation — [below](#the-vol-response-to-a-fall) | 0 |
 | `-stressscale` | THE AMPLIFIER's gain scale: the spiral's excess gain multiplied by (depth / 17.4)^E, so a thinner market's liquidity event is not proportionally larger than the reference world's. The record's crash count is volatility-flat across a fresh-start cross-section (`amplifier-2026-09-07.tsv`) where the model's `depth` sweep reads 1.8; the default world is unchanged at any E, and `0.24.0-nasdaq` runs at 0.5 | 0 |
 | `-levgain` | THE LEVERAGE CYCLE: a borrowing stock swings over years as a credit cycle of its own and is paid down under stress; the spiral's gain is multiplied by 1 + levgain × (the stock's rise over its trailing year), so an ordinary shock cascades into a 20% decline where leverage has been building and not where it has not. 0 restores 0.23.1's amplification bit for bit | 6 |
 | `-depth` | market depth; price impact scales as `12/depth`, so higher = calmer | 17.4 |
 | `-drift` | fundamental drift per year; no dividend, so this IS total return | 0.122 |
 | `-fundvol` | fundamental volatility per year — sets time under water, not daily return scale | 0.060 |
-| `-jumpvar` | share of the equity shock's **variance** carried by jumps rather than diffusion; 0 turns the tail channel off | 0.11 |
+| `-jumpvar` | share of the equity shock's **variance** carried by jumps rather than diffusion; 0 turns the tail channel off | 0.16 |
 | `-jumprate` | jumps per session at average volatility; with `-jumpvar` it sets the **size** | 0.0035 |
-| `-jumpskew` | how far each jump is shifted down, in its own sds; variance-normalised, so deeper skew means smaller jumps, not fatter tails | 1.0 |
+| `-jumpskew` | how far each jump is shifted down, in its own sds; variance-normalised, so deeper skew means smaller jumps, not fatter tails | 0.65 |
 | `-leverage` | the leverage effect: a decline raises the NEXT session's diffusive volatility by `exp(leverage * decline-in-sds)`, saturated at 4 sds; a rally raises nothing. Reads the same session's news jump. With the bar channels on, `-leverage 0` reads range clustering at 0.56–0.57 against the 0.57 floor, seed-dependent: the kick is what carries a decline's width into the next session's bar, and a world without it produces bars that cluster less than real bars | 0.10 |
 | `-newsrate` | fair-value news jumps per year — permanent down-jumps the price reprices the same session, gap-invariant; the downside-asymmetry channel, variance-DISPLACING | 1.3 |
 | `-newssize` | log decline per news event (0.033 = a −3.3% day); rarer-larger buys more asymmetry and kurtosis per unit of variance. Bounded with `-newsrate`: rate × size² must stay below 0.0123 (size below 0.097 at the default rate) — past it there is no diffusion left to displace, and the CLI refuses the world | 0.033 |
@@ -1258,43 +1261,67 @@ worth keeping, given how few stress episodes any record holds.
 cycle — the S&P worlds take the dials 0.24.0 moved from the default, the Nasdaq worlds re-solve
 `stress` (4.4) and `jumpVar` (0) for their own depth.
 
+`0.24.1-macro`, `0.24.1-basket` and `0.24.1-nasdaq-basket` are the same set at 0.24.1's world.
+**The slow repricing channel is on in the S&P recipes and off in the Nasdaq ones**: those carry
+their own dials for their own depth and have not been re-solved against it, so a Nasdaq world
+reads 0.24.0's clustering shape. `0.24.1-nasdaq` carries the vol response only, at its own
+re-solve — `depth` 10.0, `stress` 4.2, `levGain` 9, `stressAdapt` 0.015, `volResp` 0.008 — where
+`0.24.0-nasdaq` runs `depth` 8.4, `stress` 4.4 and `levGain` 8.
+
 ## The vol response to a fall
 
-Two statistics the report prints and nothing grades, because the model cannot currently reach
-them and a band that always fails is not information. Both are in
-`amplifier-2026-09-07.tsv` for the CRSP century, SPY, QQQ and NDX, and both say the same thing.
-
-| lag k | 1 | 2 | 5 | 10 | 20 |
-|---|---|---|---|---|---|
-| abs-r autocorrelation, CRSP century | 0.298 | 0.331 | 0.309 | 0.256 | 0.225 |
-| abs-r autocorrelation, model | 0.326 | 0.289 | 0.278 | 0.233 | 0.190 |
-| corr(r, abs r at k), CRSP century | −0.092 | −0.111 | −0.079 | −0.057 | −0.038 |
-| corr(r, abs r at k), model | −0.090 | −0.056 | −0.042 | −0.031 | −0.022 |
-
 The record's volatility after a decline **builds** for two to five sessions and stays elevated for
-about twenty. The model's fires on the next session and fades: its lag-1 response is the
-record's, its lag-5 is half. Every channel that makes volatility here — the liquidity spiral, the
-leverage kick, the vol state — responds on the session after the shock, so the profiles peak at
-lag 1 by construction. What it costs a consumer: a 5 to 60 session volatility forecast, a
-vol-targeted sleeve or an option-priced hedge reads a world whose volatility decays about twice
-too fast after a shock. Ranks and thresholds on the level are unaffected.
+about twenty. Through 0.24.0 the model's fired on the next session and faded, because every
+channel that made volatility here responded on the session after the shock. Two mechanisms
+adopted in 0.24.1 close most of that gap. The record's rows are `amplifier-2026-09-07.tsv`; the
+model's are 400 × 100 at the default seed, which `-paths 400 -years 100` reproduces.
 
-Two dials move it and both ship at 0, because at every setting that closes part of the gap
-something graded gives way. `-noiseasym` is the mechanism that works in kind: it drives the
-diffusive noise from the session's own draw — a unit normal, the one input the price cannot
-inflate, where a realized-scale or return-standardized input self-excites — through a cascade
-that peaks at lag 3 to 5. At 0.05 with the kick off it puts the lag-5 response on −0.053 and
-holds kurtosis at 27.8, but the downside volatility excess falls to 1.5 against the record's
-3.06; at 0.06 with the kick on, the lag-5 response reaches −0.067 and kurtosis 45. `-levpersist`
-spreads the existing kick instead: at 0.95 the |r| profile's hump closes (lag 5 within 0.017 of
-lag 1, against 0.048 at the defaults) and lag-1 clustering lands on the record's 0.298, but
-preserving the integral divides the per-lag amplitude, so the lag-1 leverage correlation falls
-from −0.09 to −0.04 against a −0.093 anchor. The record's response is a plateau, not a spread
-integral, and the model has no budget to pay for one.
+| lag k | 1 | 5 | 20 | 60 |
+|---|---|---|---|---|
+| abs-r autocorrelation, CRSP century | 0.298 | 0.309 | 0.225 | 0.139 |
+| abs-r autocorrelation, model 0.24.0 | 0.325 | 0.272 | 0.188 | 0.077 |
+| abs-r autocorrelation, model 0.24.1 | 0.323 | 0.278 | 0.192 | 0.113 |
+| corr(r, abs r at k), CRSP century | −0.092 | −0.079 | −0.038 | — |
+| corr(r, abs r at k), model 0.24.0 | −0.090 | −0.041 | −0.024 | — |
+| corr(r, abs r at k), model 0.24.1 | −0.084 | −0.052 | −0.036 | — |
 
-Closing it is not a dial: the model's daily kurtosis comes from the spiral's spikes and the
-jumps, the record's from persistent volatility, and a response that persists has to be paid for
-out of that budget. Re-sourcing the tail is the change that would free it.
+**`-volresp` supplies the persistence.** A state driven by the session's decline in units of the
+conditional sd that generated it, accumulated at 0.992 and attacked at 0.5, multiplies the
+diffusive noise. Measuring the decline against the sd that produced it rather than against a
+trailing scale is what keeps it from self-exciting, and leaving the accumulation unnormalised is
+what makes one decline's response a plateau instead of an integral divided over the sessions that
+follow. It needed `-stressadapt`: at the spiral's old 140-session scale, a stretch the response
+had genuinely made volatile read as continuous stress and the spiral minted spikes out of it.
+
+**`-slowshare` supplies the shape.** A fifth of the diffusive variance leaves the order-flow
+channel and reprices the fundamental and the price together, so it never passes through the
+spiral, and its own volatility is long-memoried and asymmetric. The spiral is a fast channel: with
+all the variance running through it the profile is too steep, abs-r autocorrelation at lag 20 over
+lag 1 reading 0.527 against the record's 0.753. Moving a fifth of the variance to a channel the
+amplifier cannot steepen reads 0.594, against 0.578 for 0.24.0.
+Only 0.30 of each repricing is permanent — at 1.0 the momentum crowd chases a move nothing
+arbitrages, and the 60-day variance ratio reads 1.14 against the record's 1.00 — and the bond
+takes the same repricing with the opposite sign, without which the worst equity days have no bond
+response and the tail hedge correlation falls to −0.239 against a record of −0.270.
+
+**What is left** is the hump. The record's profile rises ABOVE its own lag 1 at lags 2 to 5 and
+the model's does not, so the lag-5 response reads two thirds of the record's rather than the
+record's. `-noiseasym` and `-levpersist` are the two dials that move it and both still ship at 0:
+the first drives the noise from the session's own draw through a cascade peaking at lag 3 to 5,
+and at any setting that closes part of the hump it takes kurtosis past 45 or the downside excess
+to half the record's; the second spreads the existing leverage kick but preserves its integral,
+so the per-lag amplitude divides and the lag-1 leverage correlation falls to −0.04.
+
+**What it costs.** Equity volatility runs 5% over the record against 3% before, and the return per
+unit of volatility 0.94 against 0.96. The volatility fidelity band is 14–18%: at 400 × 100 the
+world sits 10.8 seed-sd inside it and no seed of 32 came within a point of the edge, at the 60 × 80
+ensemble 3.9 sd. Below that the statistic's own spread, not its level, decides — at 8 × 40 the
+band is unreliable for every world, 0.24.0 included.
+
+**What it buys a consumer.** A 5 to 60 session volatility forecast, a vol-targeted sleeve or an
+option-priced hedge now reads a world whose volatility decays at roughly the record's rate after a
+shock rather than about twice too fast. Ranks and thresholds on the level were unaffected either
+way.
 
 ## Biases you inherit whatever you choose
 
