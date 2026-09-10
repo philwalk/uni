@@ -4,7 +4,7 @@ import munit.FunSuite
 import uni.*
 
 /**
- * The macro panel: seven observables derived from the model's own state after the price loop,
+ * The macro panel: nine observables derived from the model's own state after the price loop,
  * so `price` keeps its meaning and the dial is bit-identical off.  The bands are MEASURED numbers
  * re-derived from the checked-in fixture.  The Rust twin carries the same checks in
  * `macro_panel_tests`, against the same file.
@@ -55,13 +55,13 @@ class MacroPanelSuite extends FunSuite:
     assert(a.price.sameElements(b.price) && a.bond.sameElements(b.bond), "levGain 0 must leave the price bit-identical")
   }
 
-  test("on, the seven members span the path in their counterparts' units, and the slope consumes no draw") {
+  test("on, the nine members span the path in their counterparts' units, and the slope consumes no draw") {
     val w = MarketSim.Defaults.copy(macroPanel = 1)
     // a century: an inversion needs an inflation regime tight enough to invert, which a short
     // path can miss (the ensemble inverts 0.13 of sessions, in spells of ~480)
     val p = MarketSim.simulate(w, 100, MarketSim.DefaultSeed)
     val m = p.macroPanel.getOrElse(fail("no panel with the dial on"))
-    for j <- 0 to 6 do assertEquals(m.member(j).length, p.price.length, MarketSim.MacroK.Columns(j))
+    for j <- 0 to 8 do assertEquals(m.member(j).length, p.price.length, MarketSim.MacroK.Columns(j))
     // the two draw-free levels: the 10-year is the slope's long leg, so the two move together
     // in sign of change, and the credit ratio is the borrowing stock in percent, never negative
     assert(m.yield10.forall(_.isFinite) && m.credit.forall(_ >= 0.0))
@@ -105,6 +105,33 @@ class MacroPanelSuite extends FunSuite:
     for i <- m.policy.indices if (i + MarketSim.BurnIn) % MarketSim.MacroK.PolicyMeeting == 0 do
       assert(math.abs(m.policy(i) - 100.0 * p.rate(i)) <= MarketSim.MacroK.PolicyStep / 2.0,
         s"session $i: published ${m.policy(i)} against the loop's ${100.0 * p.rate(i)}")
+  }
+
+  test("the credit ratio is a slow stock of its own, and the two levels reproduce it") {
+    val rs = rows(Fixture)
+    assume(rs.nonEmpty, s"$Fixture absent")
+    val w = MarketSim.Defaults.copy(macroPanel = 1)
+    val p = MarketSim.simulate(w, 100, MarketSim.DefaultSeed)
+    val m = p.macroPanel.getOrElse(fail("no panel with the dial on"))
+    // THE SPLIT: a consumer that divides the two levels gets the ratio column back.  The levels
+    // are indices, so only their ratio is meaningful -- and it is, to the columns' own rounding.
+    val worst = m.credit.indices.map(i => math.abs(100.0 * m.bank(i) / m.output(i) - m.credit(i))).max
+    assert(worst < 1e-6, s"credit / output does not reproduce the ratio: $worst")
+    assert(m.output.forall(_ > 0.0) && m.bank.forall(_ > 0.0), "levels are positive")
+    assert(m.output.head == MarketSim.MacroK.OutBase, s"the index base is the first emitted session: ${m.output.head}")
+    assert(m.output.last > m.output.head, "output grows over a century")
+    // A STOCK OF ITS OWN, not the leverage cycle: that oscillator turned every four years and its
+    // level read -0.40 at two years.  Against the record DETRENDED (the window's secular rise is
+    // no stationary stock's), the ratio's own persistence is what the fixture carries.
+    val wk = m.credit.grouped(5).map(_.head).toArray
+    def ac(x: Array[Double], k: Int) = MarketSim.levelAutocorr(x, k)
+    assert(ac(wk, 104) > 0.1, s"a four-year oscillator reads below zero at two years: ${ac(wk, 104)}")
+    val rec52 = value(rs, "shared", "TOTBKCR/GDP", "credit", "ac52d")
+    assert(math.abs(ac(wk, 52) - rec52) < 0.25, s"ratio ac52 ${ac(wk, 52)} against the record's detrended $rec52")
+    // the level sits on the record's scale, and the ratio is bounded by construction
+    val med = MarketSim.pctile(m.credit.toIndexedSeq, 0.5)
+    assert(med > 40.0 && med < 75.0, s"ratio median $med")
+    assert(m.credit.forall(x => x > 0.0 && x < MarketSim.MacroK.CreditMax * 1.5), "the ratio stays bounded")
   }
 
   test("the readings exist only when the panel ran, and read as the ruler's statistics") {

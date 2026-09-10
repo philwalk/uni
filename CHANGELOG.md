@@ -25,14 +25,43 @@
   and the two rows that size the level gap, `shareLt05` and `shareGt5`. They are shape rows only:
   the equity-relation rows need the four reference histories at the vintage the rest of the file
   was measured at.
-- Schema 13 → 14: the TSV gained `macroPolicy` and `channels.macro` its member block. A panel-off
-  file is byte-identical to its schema-13 counterpart except the schema number. Twins
-  byte-identical on `-validate`, `-emit` and the sidecar across every world.
-- Also measured, not yet acted on: `macroCredit` is the model's LEVERAGE cycle read as a
-  credit-to-output ratio, and it turns every four years where the record's borrowing stock turns
-  over decades — weekly autocorrelation 0.21 at a year and −0.40 at two, against TOTBKCR/GDP's
-  0.97 and 0.93. Splitting the ratio into separate credit and output levels waits on a slow stock
-  of its own.
+
+**The credit system gets a baseline of its own, and splits**
+
+- `macroCredit` REPLACES ITS STATE. It was the leverage cycle read in percent, and one state
+  cannot be two record series: the cycle `macroCond` reads turns every four years (weekly
+  autocorrelation 0.42 at a year, −0.07 at two) where bank credit over output turns over decades
+  (0.97, 0.93), so the emitted ratio changed 18pp a year against the record's 2.1 and its rank was
+  a four-year clock. The column keeps its name, its counterpart and its units; **its values
+  change**, and a consumer's credit gate tuned on the old series must be re-tuned.
+- The new stock grows at the smooth nominal rate output does, plus a deepening term that fades
+  toward a 72% ceiling, minus a paydown of 0.45 a year at full equity stress, plus the borrowing
+  cycle's deviation — every term a state the loop already carries, so it stays draw-free.
+- `-macro 1` also emits `macroBankCredit` (TOTBKCR) and `macroOutput` (GDP), the two levels the
+  ratio is now the quotient of. Both are INDICES at 100 on the first emitted session: the model
+  has no anchor for the size of its economy, so growth and the ratio are the readable questions.
+  `macroBankCredit / macroOutput × 100` reproduces `macroCredit` to 2e-6 pp read back from the
+  emitted text, the columns' own six-decimal rounding. Output is a 2.4%/yr real trend plus 0.12 of the fundamental's excess growth — the
+  fundamental is the model's real activity and a macro disaster is its depression — carried to
+  nominal by the price level, and the ratio is net of it, so a depression raises the ratio the way
+  the record's rose in 2020.
+- ANCHORED ON THE RECORD DETRENDED. Bank credit over output rose 43 to 63 over 1990–2026, +0.72pp
+  a year, and no century-long stationary world reproduces a secular rise — that trend also
+  dominates the raw persistence rows, so the ruler gained the same statistics on the residual
+  (`trend`, `sdDetrend`, `ac52d`, `ac104d`, `lvl10d`, `lvl90d`, `d52sd`) and rows for TOTBKCR's and
+  GDP's growth. Against those the ratio reads 0.72 / 0.42 at one and two years (record 0.75 /
+  0.47), a p10–p90 spread of 7.3pp (6.6), a year-over-year change of 1.99pp (2.14) and a median
+  55.9 (57.3); the Nasdaq recipe 0.78 / 0.53, 7.5pp, 1.77pp, 54.8.
+- DISCLOSED: nominal growth runs hot. Emitted output grows 6.4%/yr against the record's 4.85 with
+  a year-over-year sd of 3.3 against 2.6, and bank credit inherits both (4.97 against 3.05),
+  because the model's price level runs 4.0%/yr where the record's window ran 2.5. A rule reading
+  the ratio, real growth, or a rank of either is unaffected. DISCLOSED also: both levels TREND, so
+  their trailing-year rank sits in the top decile almost always and their `warn` / `prePeak` /
+  `lag` readings say nothing — the ratio is the member to rank.
+- Schema 13 → 15: the TSV gained `macroPolicy`, then `macroBankCredit` and `macroOutput`, and
+  `channels.macro` their member blocks. A panel-off file is byte-identical to its schema-13
+  counterpart except the schema number. Twins byte-identical on `-validate`, `-emit` and the
+  sidecar across every world, and both disclosed recipes pass realism, mechanism and fidelity.
 
 ## v0.24.1 — 2026-09-09
 

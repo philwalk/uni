@@ -1,11 +1,14 @@
-# THE MACRO PANEL's ruler: what the record says about the seven series `-macro` emits counterparts
+# THE MACRO PANEL's ruler: what the record says about the nine series `-macro` emits counterparts
 # of -- BAA10Y (`macroSpread`), T10Y2Y (`macroSlope`), VIXCLS (`macroIvol`), NFCILEVERAGE
-# (`macroCond`), DGS10 (`macroYield10`), TOTBKCR/GDP (`macroCredit`: bank credit over the GDP
+# (`macroCond`), DGS10 (`macroYield10`), TOTBKCR (`macroBankCredit`) and GDP (`macroOutput`), whose
+# rows are growth rather than level -- both emitted columns are INDICES, the model having no anchor
+# for the size of its economy -- TOTBKCR/GDP (`macroCredit`: bank credit over the GDP
 # figure for the latest quarter at or before each weekly observation, in percent; its relation
 # rows read it as the model reads its member, held as-of onto the session calendar and ranked
 # over 252 sessions; its shape rows are on its weekly calendar, the conditions index's lags.  The
-# record's ratio carries a secular rise, 43 to 63 over the window, that the model's stationary
-# cycle does not) and DFF (`macroPolicy`: the overnight rate, on WEEKDAYS -- the record publishes
+# record's ratio carries a secular rise, 43 to 63 over the window, that no stationary stock
+# reproduces -- the `*d` rows below are the same statistics on the residual, which is what the
+# model is held to) and DFF (`macroPolicy`: the overnight rate, on WEEKDAYS -- the record publishes
 # it every calendar day and a weekend repeats Friday's value, which no session calendar has, so a
 # calendar-day lag 20 would be four weeks on one side and under three on the other.  It is the
 # EFFECTIVE rate, which moves in money-market increments the model's published target has no
@@ -70,6 +73,16 @@
 #   posttrough20_63  the mean rank over the quarter after the trough -- the stock's unwind
 #   ac52 / ac104     the conditions index's autocorrelation at a year and two years of weekly
 #                    readings -- the stock's accrual timescale
+#   trend, sdDetrend the credit ratio: the record's window carries a SECULAR RISE (43 to 63,
+#   ac52d, ac104d    +0.72pp a year) that no stationary model reproduces and that dominates the raw
+#   lvl10d, lvl90d   ac52 / ac104 rows above.  These are the same statistics on the residual from a
+#   d52sd            straight line through the window -- the cyclical part a stationary stock can
+#                    be held to: its sd, its autocorrelation at one and two years, its 10th and
+#                    90th percentiles (pp around the trend) and the sd of its 52-week change
+#   g, gSd           TOTBKCR and GDP: mean year-over-year growth in percent and its sd, on each
+#                    series' own calendar (bank credit weekly, output quarterly).  Emitted output
+#                    grows faster than this: the model's price level runs 4.0%/yr where the
+#                    record's window ran 2.5, and nominal growth carries that
 #   hold, move50     policy: the share of sessions the rate is UNCHANGED, and the median absolute
 #                    move over the sessions it does move -- how much of a rate series is decision
 #                    and how much is drift.  d63: the median absolute 63-session move
@@ -119,6 +132,17 @@ shared	TOTBKCR/GDP	credit	ac104	1990-01-03..2026-08-26	1913	0.9312
 shared	TOTBKCR/GDP	credit	lvl50	1990-01-03..2026-08-26	1913	57.2668
 shared	TOTBKCR/GDP	credit	lvl10	1990-01-03..2026-08-26	1913	43.2646
 shared	TOTBKCR/GDP	credit	lvl90	1990-01-03..2026-08-26	1913	63.1862
+shared	TOTBKCR/GDP	credit	trend	1990-01-03..2026-08-26	1913	0.7195
+shared	TOTBKCR/GDP	credit	sdDetrend	1990-01-03..2026-08-26	1913	3.0973
+shared	TOTBKCR/GDP	credit	ac52d	1990-01-03..2026-08-26	1913	0.7510
+shared	TOTBKCR/GDP	credit	ac104d	1990-01-03..2026-08-26	1913	0.4667
+shared	TOTBKCR/GDP	credit	lvl10d	1990-01-03..2026-08-26	1913	-2.9930
+shared	TOTBKCR/GDP	credit	lvl90d	1990-01-03..2026-08-26	1913	3.5710
+shared	TOTBKCR/GDP	credit	d52sd	1990-01-03..2026-08-26	1861	2.1360
+shared	TOTBKCR	bank	g	1990-01-03..2026-08-26	1861	5.7788
+shared	TOTBKCR	bank	gSd	1990-01-03..2026-08-26	1861	3.0538
+shared	GDP	output	g	1990-01-01..2026-04-01	142	4.8528
+shared	GDP	output	gSd	1990-01-01..2026-04-01	142	2.6122
 shared	DFF	policy	ac1	1990-01-02..2026-09-03	9568	0.9974
 shared	DFF	policy	ac20	1990-01-02..2026-09-03	9568	0.9934
 shared	DFF	policy	lvl50	1990-01-02..2026-09-03	9568	2.9100

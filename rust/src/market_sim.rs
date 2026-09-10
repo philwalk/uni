@@ -173,7 +173,14 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 // and unpublished; nothing about it changed, and a consumer reading DFF wants the pp staircase
 // beside the credit spread and the term spread, in the units its thresholds are in. A panel-off
 // schema-14 file is byte-identical to its schema-13 counterpart except the schema number.
-const EMIT_SCHEMA: u32 = 14;
+// 14 -> 15: THE CREDIT SYSTEM SPLIT. The TSV gained `macroBankCredit` (TOTBKCR) and `macroOutput`
+// (GDP), both INDICES at 100 on the first emitted session, and `channels.macro` their member
+// blocks; `macroCredit` is the ratio they imply and its VALUES CHANGE, because it is now its own
+// slow stock rather than the leverage cycle read in percent -- a schema-14 reader gets the same
+// column meaning a materially different series, and one that turns over decades rather than every
+// four years. A panel-off schema-15 file is byte-identical to its schema-14 counterpart except the
+// schema number.
+const EMIT_SCHEMA: u32 = 15;
 
 /// Frozen structural constants of the volume channel — see the `vol_idio` field. Measured
 /// from the SPY/QQQ volume-on-range regression (`bars-2026-09-01.tsv`, whose rows the
@@ -1588,11 +1595,12 @@ pub struct World {
     /// noise. Set the dial and there is a real edge of known size to find. Sweeping it gives a
     /// ranking rule's detection threshold and the history it needs there.
     pub basket_drift: f64,
-    /// THE MACRO PANEL: 1 emits seven observables DERIVED from the model's own state —
+    /// THE MACRO PANEL: 1 emits nine observables DERIVED from the model's own state —
     /// macroSpread / macroSlope / macroCond / macroIvol / macroYield10 / macroCredit /
-    /// macroPolicy, the counterparts of BAA10Y / T10Y2Y / NFCILEVERAGE / VIXCLS / DGS10 /
-    /// TOTBKCR-over-GDP / DFF — see `derive_macro` and `macro_k`. Observational: reaches no
-    /// price, draws from a dedicated stream read only when on, so 0 is bit-identical.
+    /// macroPolicy / macroBankCredit / macroOutput, the counterparts of BAA10Y / T10Y2Y /
+    /// NFCILEVERAGE / VIXCLS / DGS10 / TOTBKCR-over-GDP / DFF / TOTBKCR / GDP — see
+    /// `derive_macro` and `macro_k`. Observational: reaches no price, draws from a dedicated
+    /// stream read only when on, so 0 is bit-identical.
     pub macro_panel: usize,
     /// THE NULL PANEL: 1 takes the four columns from a SIBLING path (the same world at seed ^
     /// `macro_k::NULL_SEED`), so their marginals and persistence are this world's and their
@@ -2637,9 +2645,13 @@ struct MacroInputs {
     rate: Vec<f64>,
     /// inflation pressure, decimal
     infl: Vec<f64>,
+    /// the log price level, for nominal output
+    log_cpi: Vec<f64>,
+    /// the fundamental's log base, BEFORE the rate markdown: the model's real activity
+    log_fund: Vec<f64>,
 }
 
-/// The seven emitted counterparts, one value per session, in the counterpart's units.
+/// The nine emitted counterparts, one value per session, in the counterpart's units.
 #[derive(Clone, Debug)]
 pub struct MacroPanel {
     pub spread: Vec<f64>,
@@ -2649,6 +2661,8 @@ pub struct MacroPanel {
     pub yield10: Vec<f64>,
     pub credit: Vec<f64>,
     pub policy: Vec<f64>,
+    pub bank: Vec<f64>,
+    pub output: Vec<f64>,
     /// a sibling path's panel (`-macronull`), decoupled from this path's price
     pub sibling: bool,
 }
@@ -2663,6 +2677,8 @@ impl MacroPanel {
             yield10: self.yield10[k..].to_vec(),
             credit: self.credit[k..].to_vec(),
             policy: self.policy[k..].to_vec(),
+            bank: self.bank[k..].to_vec(),
+            output: self.output[k..].to_vec(),
             sibling: self.sibling,
         }
     }
@@ -2675,7 +2691,9 @@ impl MacroPanel {
             3 => &self.ivol,
             4 => &self.yield10,
             5 => &self.credit,
-            _ => &self.policy,
+            6 => &self.policy,
+            7 => &self.bank,
+            _ => &self.output,
         }
     }
 }
@@ -2752,7 +2770,7 @@ mod macro_k {
     pub(super) const IVOL_AMP_SHARE: f64 = 0.15;
     /// the sibling path's seed offset (`-macronull`)
     pub(super) const NULL_SEED: u64 = 0x51b1_1a60;
-    pub(super) const COLUMNS: [&str; 7] = [
+    pub(super) const COLUMNS: [&str; 9] = [
         "macroSpread",
         "macroSlope",
         "macroCond",
@@ -2760,8 +2778,10 @@ mod macro_k {
         "macroYield10",
         "macroCredit",
         "macroPolicy",
+        "macroBankCredit",
+        "macroOutput",
     ];
-    pub(super) const COUNTERPARTS: [&str; 7] = [
+    pub(super) const COUNTERPARTS: [&str; 9] = [
         "BAA10Y",
         "T10Y2Y",
         "NFCILEVERAGE",
@@ -2769,16 +2789,64 @@ mod macro_k {
         "DGS10",
         "TOTBKCR/GDP",
         "DFF",
+        "TOTBKCR",
+        "GDP",
     ];
-    pub(super) const CADENCE: [&str; 7] = [
-        "daily", "daily", "weekly", "daily", "daily", "weekly", "daily",
+    pub(super) const CADENCE: [&str; 9] = [
+        "daily",
+        "daily",
+        "weekly",
+        "daily",
+        "daily",
+        "weekly",
+        "daily",
+        "weekly",
+        "quarterly",
     ];
-    /// THE CREDIT-TO-OUTPUT counterpart is the borrowing stock itself, in percent: the stock is
-    /// already the model's credit relative to the economy's scale (a stationary cycle about 0.75,
-    /// no nominal growth in it), which is how a consumer's credit-expansion rank reads bank
-    /// credit over GDP. Draw-free, like the 10-year yield: both are states the loop already
-    /// carries.
+    /// THE CREDIT-TO-OUTPUT RATIO IS A STOCK OF ITS OWN. It used to be the leverage cycle read in
+    /// percent, and one state cannot be two record series: the leverage cycle `macroCond` reads
+    /// turns every four years (weekly autocorrelation 0.42 at a year, -0.07 at two) where bank
+    /// credit over output turns over decades (0.97, 0.93), so the ratio changed 18pp a year
+    /// against the record's 2.1 and its rank was a four-year clock.
+    ///
+    /// The stock grows at the smooth nominal rate output does, plus a deepening term that fades at
+    /// the ceiling, minus a paydown under stress, plus the borrowing cycle's deviation; the ratio
+    /// is what the two levels imply, so a depression raises it the way the record's rose in 2020.
+    /// ANCHORED ON THE RECORD DETRENDED, because the record's window carries a secular rise
+    /// (43 to 63 over 1990-2026, +0.72pp a year) that no century-long stationary world can hold
+    /// and that dominates the raw persistence rows: against the residual the model reads
+    /// 0.72 / 0.42 at one and two years (record 0.75 / 0.47), a p10-p90 spread of 7.6pp (6.6), a
+    /// median 55.9 (57.3) and a year-over-year change of 2.0pp (2.1). The secular rise itself is
+    /// disclosed, not fitted.
     pub(super) const CREDIT_SCALE: f64 = 100.0;
+    /// the ceiling deepening fades at, percent of output
+    pub(super) const CREDIT_MAX: f64 = 72.0;
+    /// how much faster than output credit grows at ratio 0, per year, fading linearly to nothing
+    /// at the ceiling
+    pub(super) const CREDIT_DEEPEN: f64 = 0.1322;
+    /// paydown per year at full equity stress, as a growth rate
+    pub(super) const CREDIT_PAY: f64 = 0.45;
+    /// the borrowing cycle's deviation as a growth rate per unit
+    pub(super) const CREDIT_LEV: f64 = 0.18;
+    /// the record's median, where the stock starts
+    pub(super) const CREDIT_START: f64 = 57.3;
+    /// NOMINAL OUTPUT, the denominator made explicit so `macroBankCredit` (TOTBKCR) and
+    /// `macroOutput` (GDP) can be read apart. Real output grows at `OUT_REAL` and takes
+    /// `OUT_SHARE` of the fundamental's EXCESS growth -- the fundamental is the model's real
+    /// activity, and a macro disaster is its depression -- and the price level makes it nominal.
+    /// An INDEX: the model has no anchor for the size of its economy, so the base is `OUT_BASE` at
+    /// the first EMITTED session (`logBasket`'s convention) and every consumer question about it
+    /// -- growth, the ratio, credit relative to output -- is scale-free.
+    ///
+    /// real output trend per year, the record's 1990-2026 rate. NOMINAL growth is this plus the
+    /// model's own inflation, which runs 4.0%/yr where the record's window ran 2.5 -- so emitted
+    /// output grows 6.4%/yr against the record's 4.85, disclosed, not fitted: the price level is
+    /// anchored in the price model, not here
+    pub(super) const OUT_REAL: f64 = 0.024;
+    /// share of the fundamental's excess growth output takes: earnings swing ~10%/yr where output
+    /// swings ~2.6%
+    pub(super) const OUT_SHARE: f64 = 0.12;
+    pub(super) const OUT_BASE: f64 = 100.0;
     /// THE POLICY RATE is the loop's own rate read the way policy PUBLISHES it: a target set at a
     /// meeting, quantized to a quarter point, held until the next one. The loop's rate is a
     /// diffusion — it carries the rate uncertainty that makes stocks and bonds co-move in an
@@ -2838,17 +2906,25 @@ mod macro_bands {
 ///   ivol    VIXCLS-like, annualized %: the session's conditional sd x the record's variance risk
 ///           premium, floored
 ///   yield10 DGS10-like, pp: the slope's long leg, the same expectation at ten years
-///   credit  TOTBKCR/GDP-like, %: the borrowing stock itself
+///   credit  TOTBKCR/GDP-like, %: the ratio the two levels below imply — its own slow stock,
+///           deepening toward a ceiling, paid down under stress, over an output that a depression
+///           cuts
 ///   policy  DFF-like, pp: the loop's own policy rate, re-set at a meeting to the nearest quarter
 ///           point and held — the target as policy publishes it
-/// The last three are DRAW-FREE: states the loop already carries, read in the counterpart's
+///   bank    TOTBKCR-like, index: the credit stock, 100 at the first emitted session
+///   output  GDP-like, index: nominal output, 100 at the first emitted session
+/// The last five are DRAW-FREE: states the loop already carries, read in the counterpart's
 /// units, so adding one leaves every other member of a world bit-identical.
 /// Publication — cadence, release lag, revisions — is the consumer's point-in-time layer, so
 /// every member is the value an agency would MEASURE that session. Three normals per session from
 /// a dedicated stream, spread then cond then ivol (the draw order is part of the cross-language
 /// contract); the OU factors go through `exp_det`; everything else is IEEE-exact arithmetic in
 /// fixed order.
-fn derive_macro(w: &World, m: &MacroInputs, seed: u64, k: f64) -> Option<MacroPanel> {
+#[expect(
+    clippy::too_many_lines,
+    reason = "mirrors one Scala method; splitting it would obscure the draw order, which is               the thing that has to stay verifiable"
+)]
+fn derive_macro(w: &World, m: &MacroInputs, seed: u64, k: f64, base: usize) -> Option<MacroPanel> {
     if w.macro_panel == 0 {
         return None;
     }
@@ -2897,7 +2973,12 @@ fn derive_macro(w: &World, m: &MacroInputs, seed: u64, k: f64) -> Option<MacroPa
     let mut yield10 = vec![0.0f64; n];
     let mut credit = vec![0.0f64; n];
     let mut policy = vec![0.0f64; n];
+    let mut bank = vec![0.0f64; n];
+    let mut output = vec![0.0f64; n];
     let mut target25 = 0.0f64;
+    let mut ratio = macro_k::CREDIT_START;
+    let mut log_out = 0.0f64;
+    let dt_y = 1.0 / DAYS_PER_YEAR as f64;
     let mut e_s = 0.0f64;
     let mut e_c = 0.0f64;
     let mut e_v = 0.0f64;
@@ -2926,8 +3007,44 @@ fn derive_macro(w: &World, m: &MacroInputs, seed: u64, k: f64) -> Option<MacroPa
             * (w.rate_mean + m.infl[i] * p_i10 - m.acc[i] * p_a10
                 + (m.rate[i] - target) * p_r10
                 + macro_k::TERM_PREMIUM);
-        // THE CREDIT-TO-OUTPUT RATIO (TOTBKCR/GDP-like, percent): the borrowing stock
-        credit[i] = macro_k::CREDIT_SCALE * m.borrow[i];
+        // NOMINAL OUTPUT (GDP-like, index): the real trend and the price level — the SMOOTH
+        // nominal rate credit also grows at — plus `OUT_SHARE` of the fundamental's excess
+        // growth, which is the model's real activity and carries its disasters as depressions.
+        let d_nom = macro_k::OUT_REAL * dt_y
+            + if i > 0 {
+                m.log_cpi[i] - m.log_cpi[i - 1]
+            } else {
+                0.0
+            };
+        let d_excess = if i > 0 {
+            macro_k::OUT_SHARE * ((m.log_fund[i] - m.log_fund[i - 1]) - w.drift * dt_y)
+        } else {
+            0.0
+        };
+        log_out += d_nom + d_excess;
+        output[i] = exp_det(log_out);
+        // THE CREDIT-TO-OUTPUT RATIO (TOTBKCR/GDP-like, percent). The STOCK grows at the smooth
+        // nominal rate plus its own three terms, so the ratio is what the two levels imply:
+        //   deepening   credit outgrows output by `CREDIT_DEEPEN` at ratio 0, fading to nothing at
+        //               the ceiling — the secular half of the record's window, stationary
+        //   paydown     `CREDIT_PAY` a year at full equity stress — itself a state that decays
+        //               over weeks, so this is a crisis's deleveraging and not one session's —
+        //               and the LEVEL then carries that crisis until deepening pulls it back,
+        //               which is what makes the ratio's own history readable
+        //   appetite    the borrowing cycle's deviation from its mean, so the ratio still moves
+        //               with the model's own credit state at an amplitude that leaves the
+        //               four-year period a ripple rather than the signal
+        // and the DENOMINATOR moves it too: output's excess growth is subtracted, so a depression
+        // raises the ratio the way the record's rose in 2020. Euler on a per-session step of
+        // ~1e-4, so no exponential is needed and the twins share the arithmetic exactly.
+        credit[i] = ratio;
+        ratio += ratio
+            * ((macro_k::CREDIT_DEEPEN * (1.0 - ratio / macro_k::CREDIT_MAX)
+                - macro_k::CREDIT_PAY * m.stress[i]
+                + macro_k::CREDIT_LEV * (m.borrow[i] - macro_k::LEV_MEAN))
+                * dt_y
+                - d_excess);
+        ratio = ratio.max(0.0);
         // THE POLICY RATE (DFF-like, pp): the loop's own rate, published as policy publishes it —
         // re-set at a meeting to the nearest quarter point and held until the next. Draw-free.
         // `floor(x + 0.5)`, never `round`: half-way values must round the same way in both twins,
@@ -2952,6 +3069,16 @@ fn derive_macro(w: &World, m: &MacroInputs, seed: u64, k: f64) -> Option<MacroPa
             * (1.0 + e_v))
             .max(macro_k::IVOL_FLOOR);
     }
+    // THE INDEX BASE: `OUT_BASE` at the first EMITTED session, so both levels are indices a
+    // consumer reads as growth and as a ratio. The credit stock is built from the rescaled output,
+    // so `macroBankCredit / macroOutput x 100` reproduces `macroCredit`: to 1e-6 here, and to
+    // 2e-6 pp read back from the emitted text, which is the columns' own six-decimal rounding —
+    // `logBasket`'s convention.
+    let f = macro_k::OUT_BASE / output[base.clamp(0, n - 1)];
+    for q in 0..n {
+        output[q] *= f;
+        bank[q] = credit[q] * output[q] / macro_k::CREDIT_SCALE;
+    }
     Some(MacroPanel {
         spread,
         slope,
@@ -2960,6 +3087,8 @@ fn derive_macro(w: &World, m: &MacroInputs, seed: u64, k: f64) -> Option<MacroPa
         yield10,
         credit,
         policy,
+        bank,
+        output,
         sibling: w.macro_null > 0,
     })
 }
@@ -3051,7 +3180,7 @@ fn simulate_at(w: &World, years: usize, seed: u64, level: ChannelLevel) -> Path 
                 Some(m) => (m, sib),
                 None => (&pr.macro_in, seed),
             };
-            derive_macro(w, macro_in, macro_seed, level.k).map(|m| m.drop(BURN_IN))
+            derive_macro(w, macro_in, macro_seed, level.k, BURN_IN).map(|m| m.drop(BURN_IN))
         },
         ..pr.path
     }
@@ -3294,6 +3423,8 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
         borrow: mc_vec(),
         rate: mc_vec(),
         infl: mc_vec(),
+        log_cpi: mc_vec(),
+        log_fund: mc_vec(),
     };
 
     let mut i = 0usize;
@@ -3797,6 +3928,8 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
             mc.borrow[i] = borrow;
             mc.rate[i] = rate;
             mc.infl[i] = infl_press;
+            mc.log_cpi[i] = log_cpi;
+            mc.log_fund[i] = log_vbase;
         }
 
         // ---- capital reallocation: spring, scored on positions actually held ---------------
@@ -4808,9 +4941,9 @@ fn spread_of(xs: &[f64]) -> Spread {
 
 #[derive(Clone, Copy, Debug)]
 pub struct MacroStats {
-    pub members: [MacroMember; 7],
+    pub members: [MacroMember; 9],
     /// per-path spreads: each member's forward-return R^2, build-up and 20% firing lag
-    pub member_spread: [(Spread, Spread, Spread); 7],
+    pub member_spread: [(Spread, Spread, Spread); 9],
     /// the world's slope inversion share, vol premium, its R^2 against forward realized vol, and
     /// the quarter hazard, per path
     pub inv_share_spread: Spread,
@@ -5034,7 +5167,7 @@ struct HazardCounts {
 }
 
 struct MacroPathRead {
-    members: [MemberRead; 7],
+    members: [MemberRead; 9],
     inv_share: f64,
     spells: Vec<usize>,
     vrp: f64,
@@ -5181,6 +5314,8 @@ fn macro_path_read(s: &Path) -> Option<MacroPathRead> {
             rank_member(&m.yield10),
             rank_member(&m.credit),
             rank_member(&m.policy),
+            rank_member(&m.bank),
+            rank_member(&m.output),
         ],
         inv_share: inv.iter().filter(|&&b| b).count() as f64 / inv.len() as f64,
         spells: run_lengths(&inv),
@@ -5233,7 +5368,7 @@ fn macro_stats(sims: &[Path]) -> Option<MacroStats> {
         let lags: Vec<f64> = ws.iter().filter_map(|w| w.lag.map(|l| l as f64)).collect();
         pctile(&lags, 0.5)
     };
-    let members: [MacroMember; 7] = std::array::from_fn(|j| {
+    let members: [MacroMember; 9] = std::array::from_fn(|j| {
         let ws: Vec<&Warning> = per.iter().flat_map(|p| p.members[j].3.iter()).collect();
         let ws10: Vec<&Warning> = per.iter().flat_map(|p| p.members[j].4.iter()).collect();
         let shares: Vec<f64> = ws.iter().map(|w| w.share).collect();
@@ -5292,8 +5427,8 @@ fn macro_stats(sims: &[Path]) -> Option<MacroStats> {
 /// The per-path spreads: one reading per path — its own median over its episodes where the
 /// statistic is per episode, its own hazard ratio from its own counts (NaN where a path has no
 /// top-decile session or no episode ahead).
-fn macro_spreads(per: &[MacroPathRead]) -> ([(Spread, Spread, Spread); 7], Spread) {
-    let member_spread: [(Spread, Spread, Spread); 7] = std::array::from_fn(|j| {
+fn macro_spreads(per: &[MacroPathRead]) -> ([(Spread, Spread, Spread); 9], Spread) {
+    let member_spread: [(Spread, Spread, Spread); 9] = std::array::from_fn(|j| {
         let r2: Vec<f64> = per.iter().map(|p| p.members[j].2).collect();
         let pre: Vec<f64> = per.iter().map(|p| pctile(&p.members[j].6, 0.5)).collect();
         let lag: Vec<f64> = per
@@ -10769,7 +10904,7 @@ pub fn write_emitted(
             && p.names.iter().all(|lp| lp.iter().all(|x| x.is_finite()))
             && p.macro_panel
                 .as_ref()
-                .is_none_or(|m| (0..7).all(|j| m.member(j).iter().all(|x| x.is_finite()))),
+                .is_none_or(|m| (0..9).all(|j| m.member(j).iter().all(|x| x.is_finite()))),
         "path {k} holds a non-finite value; refusing {file}"
     );
     let dates = session_dates(p.price.len(), start_ymd);
@@ -10871,6 +11006,8 @@ fn push_channel_cells(tsv: &mut String, p: &Path, i: usize, basket_agg: &[f64]) 
         cell(m.yield10[i]);
         cell(m.credit[i]);
         cell(m.policy[i]);
+        cell(m.bank[i]);
+        cell(m.output[i]);
     }
 }
 
@@ -11141,7 +11278,7 @@ fn macro_readings_block(ms: &MacroStats) -> String {
     // A per-path spread beside each pooled statistic: `[p5, p50, p95]` of the per-path readings,
     // the width of the null a single path sits in.
     let sp = |x: Spread| format!("[{}, {}, {}]", num(x.p5), num(x.p50), num(x.p95));
-    let members: Vec<String> = (0..7)
+    let members: Vec<String> = (0..9)
         .map(|j| {
             let m = &ms.members[j];
             let (r2s, pres, lags) = ms.member_spread[j];
@@ -15363,7 +15500,7 @@ mod dd_shape_anchor_tests {
     }
 }
 
-/// The macro panel: seven observables derived from the model's own state after the price loop, so
+/// The macro panel: nine observables derived from the model's own state after the price loop, so
 /// `price` keeps its meaning and the dial is bit-identical off. The bands are MEASURED numbers
 /// re-derived from the checked-in fixture. The Scala twin carries the same checks in
 /// THE AMPLIFIER's rulers (`amplifier-2026-09-07.tsv`): the record's |r| autocorrelation profile
@@ -15733,7 +15870,7 @@ mod macro_panel_tests {
     }
 
     #[test]
-    fn on_the_seven_members_span_the_path_in_their_counterparts_units_and_the_slope_consumes_no_draw()
+    fn on_the_nine_members_span_the_path_in_their_counterparts_units_and_the_slope_consumes_no_draw()
      {
         let mut w = default_world();
         w.macro_panel = 1;
@@ -15741,7 +15878,7 @@ mod macro_panel_tests {
         // short path can miss (the ensemble inverts 0.13 of sessions, in spells of ~480)
         let p = simulate(&w, 100, DEFAULT_SEED);
         let m = p.macro_panel.as_ref().expect("no panel with the dial on");
-        for j in 0..7 {
+        for j in 0..9 {
             assert_eq!(m.member(j).len(), p.price.len(), "{}", macro_k::COLUMNS[j]);
         }
         assert!(
@@ -15824,6 +15961,61 @@ mod macro_panel_tests {
                 100.0 * p.rate[i]
             );
         }
+    }
+
+    #[test]
+    fn the_credit_ratio_is_a_slow_stock_of_its_own_and_the_two_levels_reproduce_it() {
+        let Some(rs) = rows() else { return };
+        let mut w = default_world();
+        w.macro_panel = 1;
+        let p = simulate(&w, 100, DEFAULT_SEED);
+        let m = p.macro_panel.as_ref().expect("no panel with the dial on");
+        // THE SPLIT: a consumer that divides the two levels gets the ratio column back. The levels
+        // are indices, so only their ratio is meaningful — and it is, to the columns' own rounding.
+        let worst = (0..m.credit.len())
+            .map(|i| (100.0 * m.bank[i] / m.output[i] - m.credit[i]).abs())
+            .fold(0.0f64, f64::max);
+        assert!(
+            worst < 1e-6,
+            "credit / output does not reproduce the ratio: {worst}"
+        );
+        assert!(
+            m.output.iter().all(|&x| x > 0.0) && m.bank.iter().all(|&x| x > 0.0),
+            "levels are positive"
+        );
+        assert!(
+            m.output[0] == macro_k::OUT_BASE,
+            "the index base is the first emitted session: {}",
+            m.output[0]
+        );
+        assert!(
+            m.output[m.output.len() - 1] > m.output[0],
+            "output grows over a century"
+        );
+        // A STOCK OF ITS OWN, not the leverage cycle: that oscillator turned every four years and
+        // its level read -0.40 at two years. Against the record DETRENDED (the window's secular
+        // rise is no stationary stock's), the ratio's own persistence is what the fixture carries.
+        let wk: Vec<f64> = m.credit.iter().step_by(5).copied().collect();
+        let ac104 = level_autocorr(&wk, 104);
+        assert!(
+            ac104 > 0.1,
+            "a four-year oscillator reads below zero at two years: {ac104}"
+        );
+        let ac52 = level_autocorr(&wk, 52);
+        let rec52 = value(&rs, "shared", "TOTBKCR/GDP", "credit", "ac52d");
+        assert!(
+            (ac52 - rec52).abs() < 0.25,
+            "ratio ac52 {ac52} against the record's detrended {rec52}"
+        );
+        // the level sits on the record's scale, and the ratio is bounded by construction
+        let med = pctile(&m.credit, 0.5);
+        assert!(med > 40.0 && med < 75.0, "ratio median {med}");
+        assert!(
+            m.credit
+                .iter()
+                .all(|&x| x > 0.0 && x < macro_k::CREDIT_MAX * 1.5),
+            "the ratio stays bounded"
+        );
     }
 
     #[test]
