@@ -1,3 +1,39 @@
+## v0.24.2 — unreleased
+
+**The macro panel gains the overnight rate**
+
+- `-macro 1` emits `macroPolicy` (DFF, pp): the loop's own policy rate, published the way policy
+  publishes a target — re-set every 32 sessions (8 a year) to the nearest quarter point and held
+  between meetings. Draw-free, so every other member of a world is unchanged. The rate has always
+  been the `rate` column, in DECIMAL and naming no counterpart; a vote that decides on DFF beside
+  the credit spread and the term spread reads all three from the panel now, in the units its
+  thresholds are in.
+- The publication is the point. Read raw, the loop's rate moves every session — it carries the
+  rate uncertainty that makes stocks and bonds co-move in an inflation regime — where the record's
+  overnight rate is unchanged on 42% of weekdays. Published, the model holds 0.976 of sessions and
+  moves a quarter point when it moves, and its persistence lands: 0.9916 at 20 sessions against
+  the record's 0.9934.
+- DISCLOSED, and the rate process's rather than the publication's: **no zero bound**. `easing`
+  caps accommodation at one easing cycle and inflation suppresses it, so the model reaches the
+  floor only in brief episodes — 0.000 of a century's sessions below 0.5%, 0.011 on the widest
+  path — where the record spent 28% of 1990–2026 there. The high end transports (0.19 of sessions
+  above 5% against 0.27). A rate leg read as a rank transports; one read as a fixed low threshold
+  fires on the record and almost never here.
+- The ruler gains DFF's shape rows (`macro-2026-09-06.tsv`, on WEEKDAYS: the record publishes the
+  rate every calendar day and a weekend repeats Friday's value, which no session calendar has),
+  including how much of a rate series is decision rather than drift — `hold`, `move50`, `d63` —
+  and the two rows that size the level gap, `shareLt05` and `shareGt5`. They are shape rows only:
+  the equity-relation rows need the four reference histories at the vintage the rest of the file
+  was measured at.
+- Schema 13 → 14: the TSV gained `macroPolicy` and `channels.macro` its member block. A panel-off
+  file is byte-identical to its schema-13 counterpart except the schema number. Twins
+  byte-identical on `-validate`, `-emit` and the sidecar across every world.
+- Also measured, not yet acted on: `macroCredit` is the model's LEVERAGE cycle read as a
+  credit-to-output ratio, and it turns every four years where the record's borrowing stock turns
+  over decades — weekly autocorrelation 0.21 at a year and −0.40 at two, against TOTBKCR/GDP's
+  0.97 and 0.93. Splitting the ratio into separate credit and output levels waits on a slow stock
+  of its own.
+
 ## v0.24.1 — 2026-09-09
 
 **The volatility profile after a fall — two mechanisms, on by default**

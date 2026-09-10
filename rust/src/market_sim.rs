@@ -166,7 +166,14 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 // differs from its schema-12 counterpart in the schema number and the eight new world fields,
 // which are NOT all zero: `volRespPhi`, `volRespCap`, `stressAdapt` and `noiseAsymPhi` carry their
 // off values.
-const EMIT_SCHEMA: u32 = 13;
+// 13 -> 14: THE PANEL'S POLICY RATE. The TSV gained `macroPolicy` (present ONLY when `macro > 0` —
+// the overnight rate in pp against DFF: the loop's own policy rate re-set at a meeting to the
+// nearest quarter point and held, which is how the record's target is published) and
+// `channels.macro` its member block. The rate itself has always been the `rate` column, in DECIMAL
+// and unpublished; nothing about it changed, and a consumer reading DFF wants the pp staircase
+// beside the credit spread and the term spread, in the units its thresholds are in. A panel-off
+// schema-14 file is byte-identical to its schema-13 counterpart except the schema number.
+const EMIT_SCHEMA: u32 = 14;
 
 /// Frozen structural constants of the volume channel — see the `vol_idio` field. Measured
 /// from the SPY/QQQ volume-on-range regression (`bars-2026-09-01.tsv`, whose rows the
@@ -1581,9 +1588,10 @@ pub struct World {
     /// noise. Set the dial and there is a real edge of known size to find. Sweeping it gives a
     /// ranking rule's detection threshold and the history it needs there.
     pub basket_drift: f64,
-    /// THE MACRO PANEL: 1 emits four observables DERIVED from the model's own state —
-    /// macroSpread / macroSlope / macroCond / macroIvol, the counterparts of BAA10Y / T10Y2Y /
-    /// NFCILEVERAGE / VIXCLS — see `derive_macro` and `macro_k`. Observational: reaches no
+    /// THE MACRO PANEL: 1 emits seven observables DERIVED from the model's own state —
+    /// macroSpread / macroSlope / macroCond / macroIvol / macroYield10 / macroCredit /
+    /// macroPolicy, the counterparts of BAA10Y / T10Y2Y / NFCILEVERAGE / VIXCLS / DGS10 /
+    /// TOTBKCR-over-GDP / DFF — see `derive_macro` and `macro_k`. Observational: reaches no
     /// price, draws from a dedicated stream read only when on, so 0 is bit-identical.
     pub macro_panel: usize,
     /// THE NULL PANEL: 1 takes the four columns from a SIBLING path (the same world at seed ^
@@ -2631,7 +2639,7 @@ struct MacroInputs {
     infl: Vec<f64>,
 }
 
-/// The four emitted counterparts, one value per session, in the counterpart's units.
+/// The seven emitted counterparts, one value per session, in the counterpart's units.
 #[derive(Clone, Debug)]
 pub struct MacroPanel {
     pub spread: Vec<f64>,
@@ -2640,6 +2648,7 @@ pub struct MacroPanel {
     pub ivol: Vec<f64>,
     pub yield10: Vec<f64>,
     pub credit: Vec<f64>,
+    pub policy: Vec<f64>,
     /// a sibling path's panel (`-macronull`), decoupled from this path's price
     pub sibling: bool,
 }
@@ -2653,6 +2662,7 @@ impl MacroPanel {
             ivol: self.ivol[k..].to_vec(),
             yield10: self.yield10[k..].to_vec(),
             credit: self.credit[k..].to_vec(),
+            policy: self.policy[k..].to_vec(),
             sibling: self.sibling,
         }
     }
@@ -2664,7 +2674,8 @@ impl MacroPanel {
             2 => &self.cond,
             3 => &self.ivol,
             4 => &self.yield10,
-            _ => &self.credit,
+            5 => &self.credit,
+            _ => &self.policy,
         }
     }
 }
@@ -2741,29 +2752,45 @@ mod macro_k {
     pub(super) const IVOL_AMP_SHARE: f64 = 0.15;
     /// the sibling path's seed offset (`-macronull`)
     pub(super) const NULL_SEED: u64 = 0x51b1_1a60;
-    pub(super) const COLUMNS: [&str; 6] = [
+    pub(super) const COLUMNS: [&str; 7] = [
         "macroSpread",
         "macroSlope",
         "macroCond",
         "macroIvol",
         "macroYield10",
         "macroCredit",
+        "macroPolicy",
     ];
-    pub(super) const COUNTERPARTS: [&str; 6] = [
+    pub(super) const COUNTERPARTS: [&str; 7] = [
         "BAA10Y",
         "T10Y2Y",
         "NFCILEVERAGE",
         "VIXCLS",
         "DGS10",
         "TOTBKCR/GDP",
+        "DFF",
     ];
-    pub(super) const CADENCE: [&str; 6] = ["daily", "daily", "weekly", "daily", "daily", "weekly"];
+    pub(super) const CADENCE: [&str; 7] = [
+        "daily", "daily", "weekly", "daily", "daily", "weekly", "daily",
+    ];
     /// THE CREDIT-TO-OUTPUT counterpart is the borrowing stock itself, in percent: the stock is
     /// already the model's credit relative to the economy's scale (a stationary cycle about 0.75,
     /// no nominal growth in it), which is how a consumer's credit-expansion rank reads bank
     /// credit over GDP. Draw-free, like the 10-year yield: both are states the loop already
     /// carries.
     pub(super) const CREDIT_SCALE: f64 = 100.0;
+    /// THE POLICY RATE is the loop's own rate read the way policy PUBLISHES it: a target set at a
+    /// meeting, quantized to a quarter point, held until the next one. The loop's rate is a
+    /// diffusion — it carries the rate uncertainty that makes stocks and bonds co-move in an
+    /// inflation regime — so read raw it moves every session where the record's overnight rate is
+    /// unchanged on 42% of weekdays, and 0.32pp over a quarter against the record's 0.13pp. The
+    /// staircase is the same state, published: it consumes no draw, so a world's other members
+    /// are unchanged by it.
+    ///
+    /// the record's move size, percentage points
+    pub(super) const POLICY_STEP: f64 = 0.25;
+    /// sessions between meetings; 8 a year is 31.5
+    pub(super) const POLICY_MEETING: usize = 32;
 }
 
 /// THE MACRO PANEL's bands, US-wide so shared by both sets — `macro-2026-09-06.tsv`: the FIRING
@@ -2810,6 +2837,12 @@ mod macro_bands {
 ///           valuation gap — the model's build-then-unwind state
 ///   ivol    VIXCLS-like, annualized %: the session's conditional sd x the record's variance risk
 ///           premium, floored
+///   yield10 DGS10-like, pp: the slope's long leg, the same expectation at ten years
+///   credit  TOTBKCR/GDP-like, %: the borrowing stock itself
+///   policy  DFF-like, pp: the loop's own policy rate, re-set at a meeting to the nearest quarter
+///           point and held — the target as policy publishes it
+/// The last three are DRAW-FREE: states the loop already carries, read in the counterpart's
+/// units, so adding one leaves every other member of a world bit-identical.
 /// Publication — cadence, release lag, revisions — is the consumer's point-in-time layer, so
 /// every member is the value an agency would MEASURE that session. Three normals per session from
 /// a dedicated stream, spread then cond then ivol (the draw order is part of the cross-language
@@ -2863,6 +2896,8 @@ fn derive_macro(w: &World, m: &MacroInputs, seed: u64, k: f64) -> Option<MacroPa
     let mut ivol = vec![0.0f64; n];
     let mut yield10 = vec![0.0f64; n];
     let mut credit = vec![0.0f64; n];
+    let mut policy = vec![0.0f64; n];
+    let mut target25 = 0.0f64;
     let mut e_s = 0.0f64;
     let mut e_c = 0.0f64;
     let mut e_v = 0.0f64;
@@ -2893,6 +2928,15 @@ fn derive_macro(w: &World, m: &MacroInputs, seed: u64, k: f64) -> Option<MacroPa
                 + macro_k::TERM_PREMIUM);
         // THE CREDIT-TO-OUTPUT RATIO (TOTBKCR/GDP-like, percent): the borrowing stock
         credit[i] = macro_k::CREDIT_SCALE * m.borrow[i];
+        // THE POLICY RATE (DFF-like, pp): the loop's own rate, published as policy publishes it —
+        // re-set at a meeting to the nearest quarter point and held until the next. Draw-free.
+        // `floor(x + 0.5)`, never `round`: half-way values must round the same way in both twins,
+        // and Rust's round rounds half AWAY from zero where Scala's rint rounds half to EVEN.
+        if i.is_multiple_of(macro_k::POLICY_MEETING) {
+            target25 =
+                macro_k::POLICY_STEP * (100.0 * m.rate[i] / macro_k::POLICY_STEP + 0.5).floor();
+        }
+        policy[i] = target25;
         // the leverage ratio — the state the record's index measures and, through `lev_gain`,
         // the state the model's big declines follow — over its mean, plus the crowd's share
         cond[i] = macro_k::COND_BASE
@@ -2915,6 +2959,7 @@ fn derive_macro(w: &World, m: &MacroInputs, seed: u64, k: f64) -> Option<MacroPa
         ivol,
         yield10,
         credit,
+        policy,
         sibling: w.macro_null > 0,
     })
 }
@@ -4730,7 +4775,7 @@ pub struct MacroMember {
     pub lvl90: f64,
 }
 
-/// The panel's readings: the four members in `macro_k::COLUMNS` order, the slope's inversion
+/// The panel's readings: the members in `macro_k::COLUMNS` order, the slope's inversion
 /// share and mean spell length (observations, pooled), the implied-vol member's variance risk
 /// premium (mean log ivol - log forward-21-session realized vol) and their R^2, and the pooled 20%
 /// episode count the warning shares are medians of.
@@ -4763,9 +4808,9 @@ fn spread_of(xs: &[f64]) -> Spread {
 
 #[derive(Clone, Copy, Debug)]
 pub struct MacroStats {
-    pub members: [MacroMember; 6],
+    pub members: [MacroMember; 7],
     /// per-path spreads: each member's forward-return R^2, build-up and 20% firing lag
-    pub member_spread: [(Spread, Spread, Spread); 6],
+    pub member_spread: [(Spread, Spread, Spread); 7],
     /// the world's slope inversion share, vol premium, its R^2 against forward realized vol, and
     /// the quarter hazard, per path
     pub inv_share_spread: Spread,
@@ -4975,7 +5020,7 @@ fn pre_peak_ranks(rank: &[f64], spans: &[DdSpan], q: usize) -> Vec<f64> {
         .collect()
 }
 
-/// One path's reading of the panel: the four members in `macro_k::COLUMNS` order, the slope's
+/// One path's reading of the panel: the members in `macro_k::COLUMNS` order, the slope's
 /// inversion share and spells, the implied vol's log premium and its R^2 against forward
 /// realized vol.
 /// One path's hazard counts: top-decile sessions with a peak inside the horizon, top-decile
@@ -4989,7 +5034,7 @@ struct HazardCounts {
 }
 
 struct MacroPathRead {
-    members: [MemberRead; 6],
+    members: [MemberRead; 7],
     inv_share: f64,
     spells: Vec<usize>,
     vrp: f64,
@@ -5135,6 +5180,7 @@ fn macro_path_read(s: &Path) -> Option<MacroPathRead> {
             rank_member(&m.ivol),
             rank_member(&m.yield10),
             rank_member(&m.credit),
+            rank_member(&m.policy),
         ],
         inv_share: inv.iter().filter(|&&b| b).count() as f64 / inv.len() as f64,
         spells: run_lengths(&inv),
@@ -5187,7 +5233,7 @@ fn macro_stats(sims: &[Path]) -> Option<MacroStats> {
         let lags: Vec<f64> = ws.iter().filter_map(|w| w.lag.map(|l| l as f64)).collect();
         pctile(&lags, 0.5)
     };
-    let members: [MacroMember; 6] = std::array::from_fn(|j| {
+    let members: [MacroMember; 7] = std::array::from_fn(|j| {
         let ws: Vec<&Warning> = per.iter().flat_map(|p| p.members[j].3.iter()).collect();
         let ws10: Vec<&Warning> = per.iter().flat_map(|p| p.members[j].4.iter()).collect();
         let shares: Vec<f64> = ws.iter().map(|w| w.share).collect();
@@ -5246,8 +5292,8 @@ fn macro_stats(sims: &[Path]) -> Option<MacroStats> {
 /// The per-path spreads: one reading per path — its own median over its episodes where the
 /// statistic is per episode, its own hazard ratio from its own counts (NaN where a path has no
 /// top-decile session or no episode ahead).
-fn macro_spreads(per: &[MacroPathRead]) -> ([(Spread, Spread, Spread); 6], Spread) {
-    let member_spread: [(Spread, Spread, Spread); 6] = std::array::from_fn(|j| {
+fn macro_spreads(per: &[MacroPathRead]) -> ([(Spread, Spread, Spread); 7], Spread) {
+    let member_spread: [(Spread, Spread, Spread); 7] = std::array::from_fn(|j| {
         let r2: Vec<f64> = per.iter().map(|p| p.members[j].2).collect();
         let pre: Vec<f64> = per.iter().map(|p| pctile(&p.members[j].6, 0.5)).collect();
         let lag: Vec<f64> = per
@@ -10723,7 +10769,7 @@ pub fn write_emitted(
             && p.names.iter().all(|lp| lp.iter().all(|x| x.is_finite()))
             && p.macro_panel
                 .as_ref()
-                .is_none_or(|m| (0..6).all(|j| m.member(j).iter().all(|x| x.is_finite()))),
+                .is_none_or(|m| (0..7).all(|j| m.member(j).iter().all(|x| x.is_finite()))),
         "path {k} holds a non-finite value; refusing {file}"
     );
     let dates = session_dates(p.price.len(), start_ymd);
@@ -10824,6 +10870,7 @@ fn push_channel_cells(tsv: &mut String, p: &Path, i: usize, basket_agg: &[f64]) 
         cell(m.ivol[i]);
         cell(m.yield10[i]);
         cell(m.credit[i]);
+        cell(m.policy[i]);
     }
 }
 
@@ -11094,7 +11141,7 @@ fn macro_readings_block(ms: &MacroStats) -> String {
     // A per-path spread beside each pooled statistic: `[p5, p50, p95]` of the per-path readings,
     // the width of the null a single path sits in.
     let sp = |x: Spread| format!("[{}, {}, {}]", num(x.p5), num(x.p50), num(x.p95));
-    let members: Vec<String> = (0..6)
+    let members: Vec<String> = (0..7)
         .map(|j| {
             let m = &ms.members[j];
             let (r2s, pres, lags) = ms.member_spread[j];
@@ -15316,7 +15363,7 @@ mod dd_shape_anchor_tests {
     }
 }
 
-/// The macro panel: four observables derived from the model's own state after the price loop, so
+/// The macro panel: seven observables derived from the model's own state after the price loop, so
 /// `price` keeps its meaning and the dial is bit-identical off. The bands are MEASURED numbers
 /// re-derived from the checked-in fixture. The Scala twin carries the same checks in
 /// THE AMPLIFIER's rulers (`amplifier-2026-09-07.tsv`): the record's |r| autocorrelation profile
@@ -15686,15 +15733,15 @@ mod macro_panel_tests {
     }
 
     #[test]
-    fn on_the_six_members_span_the_path_in_their_counterparts_units_and_the_slope_consumes_no_draw()
-    {
+    fn on_the_seven_members_span_the_path_in_their_counterparts_units_and_the_slope_consumes_no_draw()
+     {
         let mut w = default_world();
         w.macro_panel = 1;
         // a century: an inversion needs an inflation regime tight enough to invert, which a
         // short path can miss (the ensemble inverts 0.13 of sessions, in spells of ~480)
         let p = simulate(&w, 100, DEFAULT_SEED);
         let m = p.macro_panel.as_ref().expect("no panel with the dial on");
-        for j in 0..6 {
+        for j in 0..7 {
             assert_eq!(m.member(j).len(), p.price.len(), "{}", macro_k::COLUMNS[j]);
         }
         assert!(
@@ -15726,6 +15773,57 @@ mod macro_panel_tests {
         assert!(mid > 0.5 && mid < 6.0);
         let iv = pctile(&m.ivol, 0.5);
         assert!(iv > 5.0 && iv < 60.0);
+        // THE POLICY RATE is a published target, not the loop's rate: never negative, an exact
+        // multiple of the step (0.25 is binary-exact, so `%` is exact too), and it moves only at
+        // a meeting — the burn-in is dropped whole, so the phase survives it
+        assert!(
+            m.policy
+                .iter()
+                .all(|&x| x >= 0.0 && x % macro_k::POLICY_STEP == 0.0),
+            "the published rate is a non-negative multiple of the step"
+        );
+        let moved: Vec<usize> = (1..m.policy.len())
+            .filter(|&i| m.policy[i] != m.policy[i - 1])
+            .collect();
+        assert!(
+            moved
+                .iter()
+                .all(|i| (i + BURN_IN).is_multiple_of(macro_k::POLICY_MEETING)),
+            "the rate changes only at a meeting"
+        );
+        assert!(
+            !moved.is_empty(),
+            "a century of policy is not one held rate"
+        );
+    }
+
+    #[test]
+    fn the_published_rate_sits_on_the_records_scale_and_reads_the_loops_own_rate() {
+        let Some(rs) = rows() else { return };
+        let mut w = default_world();
+        w.macro_panel = 1;
+        let p = simulate(&w, 100, DEFAULT_SEED);
+        let m = p.macro_panel.as_ref().expect("no panel with the dial on");
+        // the record's DFF, 1990-2026 on weekdays: a model century's median overnight rate has to
+        // land inside it, or the panel's rate map is off its counterpart's scale
+        let lo = value(&rs, "shared", "DFF", "policy", "lvl10");
+        let hi = value(&rs, "shared", "DFF", "policy", "lvl90");
+        let med = pctile(&m.policy, 0.5);
+        assert!(
+            med > lo && med < hi,
+            "published rate median {med} outside the record's [{lo}, {hi}]"
+        );
+        // it is the LOOP's rate, published: never more than half a step from it at a meeting
+        for i in
+            (0..m.policy.len()).filter(|i| (i + BURN_IN).is_multiple_of(macro_k::POLICY_MEETING))
+        {
+            assert!(
+                (m.policy[i] - 100.0 * p.rate[i]).abs() <= macro_k::POLICY_STEP / 2.0,
+                "session {i}: published {} against the loop's {}",
+                m.policy[i],
+                100.0 * p.rate[i]
+            );
+        }
     }
 
     #[test]

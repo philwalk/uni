@@ -200,7 +200,15 @@ object MarketSim:
   // A panel-off schema-13 file differs from its schema-12 counterpart in the schema number and
   // the eight new world fields, which are NOT all zero: `volRespPhi`, `volRespCap`, `stressAdapt`
   // and `noiseAsymPhi` carry their off values.
-  val EmitSchema: Int = 13
+  // 13 -> 14: THE PANEL'S POLICY RATE.  The TSV gained `macroPolicy` (present ONLY when
+  // `macro > 0` -- the overnight rate in pp against DFF: the loop's own policy rate re-set at a
+  // meeting to the nearest quarter point and held, which is how the record's target is published)
+  // and `channels.macro` its member block.  The rate itself has always been the `rate` column, in
+  // DECIMAL and unpublished; nothing about it changed, and a consumer reading DFF wants the pp
+  // staircase beside the credit spread and the term spread, in the units its thresholds are in.
+  // A panel-off schema-14 file is byte-identical to its schema-13 counterpart except the schema
+  // number.
+  val EmitSchema: Int = 14
 
   val EmitSidecarKeys: Vector[String] =
     Vector("generator", "version", "schema", "file", "columns", "header", "path", "world",
@@ -351,15 +359,18 @@ object MarketSim:
     "              ;   below peak is the COMMON drift (+0.304 vs the shared leg's +0.117), not",
     "              ;   this.  At 0 every name has the SAME expected drift, so the basket is a null",
     "              ;   world for a rule that ranks names: sweep the dial for its detection floor",
-    "-macro 1      ; THE MACRO PANEL: four observables DERIVED from the model's own state, in",
+    "-macro 1      ; THE MACRO PANEL: seven observables DERIVED from the model's own state, in",
     "              ;   their counterparts' units -- macroSpread (BAA10Y: equity + bond stress),",
     "              ;   macroSlope (T10Y2Y: the 10y-2y expectation the rate process implies; the",
     "              ;   one anchored-scale member), macroCond (NFCILEVERAGE: crowd share +",
     "              ;   valuation gap, raw), macroIvol (VIXCLS: the conditional sd x the record's",
     "              ;   variance risk premium) -- each a persistent-noise read sized to the record's",
-    "              ;   predictive R^2, so a rank rule sees what it sees on the record.  Cadence,",
-    "              ;   release lag and revisions are the consumer's point-in-time layer; the",
-    "              ;   sidecar names each counterpart.  Reaches no price.  Default 0 = off",
+    "              ;   predictive R^2, so a rank rule sees what it sees on the record -- and three",
+    "              ;   DRAW-FREE levels: macroYield10 (DGS10), macroCredit (TOTBKCR/GDP, the",
+    "              ;   borrowing stock in percent) and macroPolicy (DFF: the loop's own policy",
+    "              ;   rate in pp, re-set at a meeting to the nearest quarter point and held).",
+    "              ;   Cadence, release lag and revisions are the consumer's point-in-time layer;",
+    "              ;   the sidecar names each counterpart.  Reaches no price.  Default 0 = off",
     "-levpersist P ; THE PERSISTENT KICK: the leverage kick's own memory.  At 0 a decline raises",
     "              ;   only the NEXT session's diffusive noise; at P it raises the following ones",
     "              ;   too, through weights that sum to 1 -- the integrated response per decline is",
@@ -765,11 +776,13 @@ object MarketSim:
                                 // primary's 0.7 skew is about -0.2/yr of log drift, more than the
                                 // shared leg supplies, so every name's expected drift goes
                                 // negative
-    macroPanel: Int = 0,   // THE MACRO PANEL: 1 emits four observables DERIVED from the model's
-                           // own state -- macroSpread / macroSlope / macroCond / macroIvol, the
-                           // counterparts of BAA10Y / T10Y2Y / NFCILEVERAGE / VIXCLS -- see
-                           // `deriveMacro` and `MacroK`.  Observational: reaches no price, draws
-                           // from a dedicated stream read only when on, so 0 is bit-identical.
+    macroPanel: Int = 0,   // THE MACRO PANEL: 1 emits seven observables DERIVED from the model's
+                           // own state -- macroSpread / macroSlope / macroCond / macroIvol /
+                           // macroYield10 / macroCredit / macroPolicy, the counterparts of
+                           // BAA10Y / T10Y2Y / NFCILEVERAGE / VIXCLS / DGS10 / TOTBKCR-over-GDP /
+                           // DFF -- see `deriveMacro` and `MacroK`.  Observational: reaches no
+                           // price, draws from a dedicated stream read only when on, so 0 is
+                           // bit-identical.
     levPersist: Double = 0.0, // THE PERSISTENT KICK (item 12): the leverage kick's own memory.  At
                            // 0 the kick raises only the NEXT session's diffusive noise; at P it
                            // raises the following ones too, through an EWMA whose weights sum to 1
@@ -2039,21 +2052,23 @@ object MarketSim:
                                rate: Array[Double],    // the policy rate, decimal
                                infl: Array[Double])    // inflation pressure, decimal
 
-  /** The six emitted counterparts, one value per session, in the counterpart's units. */
+  /** The seven emitted counterparts, one value per session, in the counterpart's units. */
   final case class MacroPanel(spread: Array[Double], slope: Array[Double], cond: Array[Double],
                               ivol: Array[Double], yield10: Array[Double], credit: Array[Double],
+                              policy: Array[Double],
                               sibling: Boolean):  // a sibling path's panel (`-macronull`),
                                                   // decoupled from this path's price
     def drop(k: Int): MacroPanel =
       MacroPanel(spread.drop(k), slope.drop(k), cond.drop(k), ivol.drop(k), yield10.drop(k),
-                 credit.drop(k), sibling)
+                 credit.drop(k), policy.drop(k), sibling)
     def member(j: Int): Array[Double] = j match
       case 0 => spread
       case 1 => slope
       case 2 => cond
       case 3 => ivol
       case 4 => yield10
-      case _ => credit
+      case 5 => credit
+      case _ => policy
 
   /** The panel's FIXED maps.  No scale dials: every consumer vote is a percentile rank against
     * trailing history or a sign, so a column's scale is invisible to it, and each map is a
@@ -2111,14 +2126,24 @@ object MarketSim:
                                                     // still -- 0.35 read the VIX's persistence
                                                     // at 0.69, on the band's floor
     val NullSeed     = 0x51b11a60L                  // the sibling path's seed offset (`-macronull`)
-    val Columns      = Vector("macroSpread", "macroSlope", "macroCond", "macroIvol", "macroYield10", "macroCredit")
-    val Counterparts = Vector("BAA10Y", "T10Y2Y", "NFCILEVERAGE", "VIXCLS", "DGS10", "TOTBKCR/GDP")
-    val Cadence      = Vector("daily", "daily", "weekly", "daily", "daily", "weekly")
+    val Columns      = Vector("macroSpread", "macroSlope", "macroCond", "macroIvol", "macroYield10",
+                              "macroCredit", "macroPolicy")
+    val Counterparts = Vector("BAA10Y", "T10Y2Y", "NFCILEVERAGE", "VIXCLS", "DGS10", "TOTBKCR/GDP", "DFF")
+    val Cadence      = Vector("daily", "daily", "weekly", "daily", "daily", "weekly", "daily")
     // THE CREDIT-TO-OUTPUT counterpart is the borrowing stock itself, in percent: the stock is
     // already the model's credit relative to the economy's scale (a stationary cycle about 0.75,
     // no nominal growth in it), which is how a consumer's credit-expansion rank reads bank credit
     // over GDP.  Draw-free, like the 10-year yield: both are states the loop already carries.
     val CreditScale  = 100.0
+    // THE POLICY RATE is the loop's own rate read the way policy PUBLISHES it: a target set at a
+    // meeting, quantized to a quarter point, held until the next one.  The loop's rate is a
+    // diffusion -- it carries the rate uncertainty that makes stocks and bonds co-move in an
+    // inflation regime -- so read raw it moves every session where the record's overnight rate is
+    // unchanged on 42% of weekdays, and 0.32pp over a quarter against the record's 0.13pp.  The
+    // staircase is the same state, published: it consumes no draw, so a world's other members are
+    // unchanged by it.
+    val PolicyStep    = 0.25                        // the record's move size, percentage points
+    val PolicyMeeting = 32                          // sessions between meetings; 8 a year is 31.5
 
   /** THE MACRO PANEL, derived from the finished loop's recorded state.  Each member is a fixed
     * map of states the loop already carries plus its own persistent measurement component, so the
@@ -2135,6 +2160,12 @@ object MarketSim:
     *           valuation gap -- the model's build-then-unwind state
     *   ivol    VIXCLS-like, annualized %: the session's conditional sd x the record's variance
     *           risk premium, floored
+    *   yield10 DGS10-like, pp: the slope's long leg, the same expectation at ten years
+    *   credit  TOTBKCR/GDP-like, %: the borrowing stock itself
+    *   policy  DFF-like, pp: the loop's own policy rate, re-set at a meeting to the nearest
+    *           quarter point and held -- the target as policy publishes it
+    * The last three are DRAW-FREE: states the loop already carries, read in the counterpart's
+    * units, so adding one leaves every other member of a world bit-identical.
     * Publication -- cadence, release lag, revisions -- is the consumer's point-in-time layer, so
     * every member is the value an agency would MEASURE that session.  Three normals per session
     * from a dedicated stream, spread then cond then ivol (the draw order is part of the
@@ -2168,7 +2199,9 @@ object MarketSim:
       val spread = new Array[Double](n); val slope = new Array[Double](n)
       val cond   = new Array[Double](n); val ivol  = new Array[Double](n)
       val yield10 = new Array[Double](n); val credit = new Array[Double](n)
+      val policy  = new Array[Double](n)
       var eS = 0.0; var eC = 0.0; var eV = 0.0; var slow = 0.0
+      var target25 = 0.0
       var i = 0
       while i < n do
         eS = MacroK.SpreadPhi * eS + MacroK.SpreadSd * rng.randn()
@@ -2186,6 +2219,13 @@ object MarketSim:
         yield10(i) = 100.0 * (w.rateMean + m.infl(i) * pI10 - m.acc(i) * pA10 + (m.rate(i) - target) * pR10 + MacroK.TermPremium)
         // THE CREDIT-TO-OUTPUT RATIO (TOTBKCR/GDP-like, percent): the borrowing stock
         credit(i) = MacroK.CreditScale * m.borrow(i)
+        // THE POLICY RATE (DFF-like, pp): the loop's own rate, published as policy publishes it --
+        // re-set at a meeting to the nearest quarter point and held until the next.  Draw-free.
+        // `floor(x + 0.5)`, never `rint`: half-way values must round the same way in both twins,
+        // and Scala's rint rounds half to EVEN where Rust's round rounds half AWAY from zero.
+        if i % MacroK.PolicyMeeting == 0 then
+          target25 = MacroK.PolicyStep * math.floor(100.0 * m.rate(i) / MacroK.PolicyStep + 0.5)
+        policy(i) = target25
         // the leverage ratio -- the state the record's index measures and, through `levGain`,
         // the state the model's big declines follow -- over its mean, plus the crowd's share
         cond(i) = MacroK.CondBase + MacroK.CondLev * (m.lev(i) - MacroK.LevMean) +
@@ -2196,7 +2236,7 @@ object MarketSim:
         ivol(i) = math.max(MacroK.IvolFloor,
                            kIvol * m.volState(i) * (1.0 + MacroK.IvolAmpShare * (m.amp(i) - 1.0)) * (1.0 + eV))
         i += 1
-      Some(MacroPanel(spread, slope, cond, ivol, yield10, credit, sibling = w.macroNull > 0))
+      Some(MacroPanel(spread, slope, cond, ivol, yield10, credit, policy, sibling = w.macroNull > 0))
 
   /** THE DIVIDEND STREAM, derived from the finished path: the session yield `divYield` x
     * (fundamental/price) / kDiv in %/yr -- kDiv the world's mean fundamental/price from
@@ -3216,7 +3256,7 @@ object MarketSim:
                                                   // its unconditional level there
                                lvl10: Double, lvl50: Double, lvl90: Double)
 
-  /** The panel's readings: the four members in `MacroK.Columns` order, the slope's inversion
+  /** The panel's readings: the members in `MacroK.Columns` order, the slope's inversion
     * share and mean spell length (observations, pooled), the implied-vol member's variance risk
     * premium (mean log ivol - log forward-21-session realized vol) and their R^2, and the pooled
     * 20% episode count the warning shares are medians of. */
@@ -3429,7 +3469,8 @@ object MarketSim:
         val lRv   = rv.map(math.log)
         val diffs = Array.tabulate(lp.length)(i => if lRv(i).isFinite then lIv(i) - lRv(i) else Double.NaN)
         val dOk   = diffs.filter(_.isFinite)
-        (Vector(rankMember(m.spread), slopeM, condM, rankMember(m.ivol), rankMember(m.yield10), rankMember(m.credit)),
+        (Vector(rankMember(m.spread), slopeM, condM, rankMember(m.ivol), rankMember(m.yield10),
+                rankMember(m.credit), rankMember(m.policy)),
          inv.count(identity).toDouble / inv.length, runLengths(inv),
          if dOk.isEmpty then Double.NaN else dOk.sum / dOk.length,
          r2Of(lIv, lRv), hz)
@@ -3442,7 +3483,7 @@ object MarketSim:
         val pAll = if nAll > 0 then hitAll.toDouble / nAll else Double.NaN
         val pTop = if nTop > 0 then hitTop.toDouble / nTop else Double.NaN
         (if pAll > 0.0 then pTop / pAll else Double.NaN, pAll)
-      val members = (0 to 5).toVector.map { j =>
+      val members = (0 to 6).toVector.map { j =>
         val ws     = per.flatMap(_._1(j)._4)
         val ws10   = per.flatMap(_._1(j)._5)
         val lags   = ws.flatMap(_.lag).map(_.toDouble)
@@ -3459,7 +3500,7 @@ object MarketSim:
       // the per-path spreads: one reading per path -- its own median over its episodes where the
       // statistic is per episode, its own hazard ratio from its own counts (NaN where a path has
       // no top-decile session or no episode ahead)
-      val memberSpread = (0 to 5).toVector.map { j =>
+      val memberSpread = (0 to 6).toVector.map { j =>
         (spreadOf(per.map(_._1(j)._3)),
          spreadOf(per.map(pp => pctile(pp._1(j)._7, 0.5))),
          spreadOf(per.map(pp => pctile(pp._1(j)._4.flatMap(_.lag).map(_.toDouble), 0.5))))
@@ -6328,7 +6369,7 @@ object MarketSim:
             p.logVolume.forall(_.isFinite) && p.divYield.forall(_.isFinite) &&
             p.traded.forall(_.isFinite) && p.logOpen.forall(_.isFinite) &&
             p.names.forall(_.forall(_.isFinite)) &&
-            p.macroPanel.forall(m => (0 to 5).forall(j => m.member(j).forall(_.isFinite))),
+            p.macroPanel.forall(m => (0 to 6).forall(j => m.member(j).forall(_.isFinite))),
             s"path $k holds a non-finite value; refusing $file")
     val dates = sessionDates(p.price.length, startYmd)
     writeEmitTsv(file, p, dates)
@@ -6372,7 +6413,8 @@ object MarketSim:
                else s5 + "\t" + ef(basketAgg(i)) + p.names.map(lp => "\t" + ef(lp(i))).mkString
       p.macroPanel match
         case None    => s6
-        case Some(m) => s"$s6\t${ef(m.spread(i))}\t${ef(m.slope(i))}\t${ef(m.cond(i))}\t${ef(m.ivol(i))}\t${ef(m.yield10(i))}\t${ef(m.credit(i))}"
+        case Some(m) => s"$s6\t${ef(m.spread(i))}\t${ef(m.slope(i))}\t${ef(m.cond(i))}\t" +
+                        s"${ef(m.ivol(i))}\t${ef(m.yield10(i))}\t${ef(m.credit(i))}\t${ef(m.policy(i))}"
     }
     file.asPath.writeLines(rows)
 

@@ -4,7 +4,7 @@ import munit.FunSuite
 import uni.*
 
 /**
- * The macro panel: four observables derived from the model's own state after the price loop,
+ * The macro panel: seven observables derived from the model's own state after the price loop,
  * so `price` keeps its meaning and the dial is bit-identical off.  The bands are MEASURED numbers
  * re-derived from the checked-in fixture.  The Rust twin carries the same checks in
  * `macro_panel_tests`, against the same file.
@@ -55,13 +55,13 @@ class MacroPanelSuite extends FunSuite:
     assert(a.price.sameElements(b.price) && a.bond.sameElements(b.bond), "levGain 0 must leave the price bit-identical")
   }
 
-  test("on, the six members span the path in their counterparts' units, and the slope consumes no draw") {
+  test("on, the seven members span the path in their counterparts' units, and the slope consumes no draw") {
     val w = MarketSim.Defaults.copy(macroPanel = 1)
     // a century: an inversion needs an inflation regime tight enough to invert, which a short
     // path can miss (the ensemble inverts 0.13 of sessions, in spells of ~480)
     val p = MarketSim.simulate(w, 100, MarketSim.DefaultSeed)
     val m = p.macroPanel.getOrElse(fail("no panel with the dial on"))
-    for j <- 0 to 5 do assertEquals(m.member(j).length, p.price.length, MarketSim.MacroK.Columns(j))
+    for j <- 0 to 6 do assertEquals(m.member(j).length, p.price.length, MarketSim.MacroK.Columns(j))
     // the two draw-free levels: the 10-year is the slope's long leg, so the two move together
     // in sign of change, and the credit ratio is the borrowing stock in percent, never negative
     assert(m.yield10.forall(_.isFinite) && m.credit.forall(_ >= 0.0))
@@ -78,6 +78,33 @@ class MacroPanelSuite extends FunSuite:
     // the measured values hold their counterparts' scale: percentage points, a raw index, %
     assert(MarketSim.pctile(m.spread.toIndexedSeq, 0.5) > 0.5 && MarketSim.pctile(m.spread.toIndexedSeq, 0.5) < 6.0)
     assert(MarketSim.pctile(m.ivol.toIndexedSeq, 0.5) > 5.0 && MarketSim.pctile(m.ivol.toIndexedSeq, 0.5) < 60.0)
+    // THE POLICY RATE is a published target, not the loop's rate: never negative, an exact
+    // multiple of the step (0.25 is binary-exact, so `%` is exact too), and it moves only at a
+    // meeting -- the burn-in is dropped whole, so the phase survives it
+    assert(m.policy.forall(x => x >= 0.0 && x % MarketSim.MacroK.PolicyStep == 0.0),
+      "the published rate is a non-negative multiple of the step")
+    val moved = (1 until m.policy.length).filter(i => m.policy(i) != m.policy(i - 1))
+    assert(moved.forall(i => (i + MarketSim.BurnIn) % MarketSim.MacroK.PolicyMeeting == 0),
+      "the rate changes only at a meeting")
+    assert(moved.nonEmpty, "a century of policy is not one held rate")
+  }
+
+  test("the published rate sits on the record's scale, and reads the loop's own rate") {
+    val rs = rows(Fixture)
+    assume(rs.nonEmpty, s"$Fixture absent")
+    val w = MarketSim.Defaults.copy(macroPanel = 1)
+    val p = MarketSim.simulate(w, 100, MarketSim.DefaultSeed)
+    val m = p.macroPanel.getOrElse(fail("no panel with the dial on"))
+    // the record's DFF, 1990-2026 on weekdays: a model century's median overnight rate has to
+    // land inside it, or the panel's rate map is off its counterpart's scale
+    val lo = value(rs, "shared", "DFF", "policy", "lvl10")
+    val hi = value(rs, "shared", "DFF", "policy", "lvl90")
+    val med = MarketSim.pctile(m.policy.toIndexedSeq, 0.5)
+    assert(med > lo && med < hi, s"published rate median $med outside the record's [$lo, $hi]")
+    // it is the LOOP's rate, published: never more than half a step from it at a meeting
+    for i <- m.policy.indices if (i + MarketSim.BurnIn) % MarketSim.MacroK.PolicyMeeting == 0 do
+      assert(math.abs(m.policy(i) - 100.0 * p.rate(i)) <= MarketSim.MacroK.PolicyStep / 2.0,
+        s"session $i: published ${m.policy(i)} against the loop's ${100.0 * p.rate(i)}")
   }
 
   test("the readings exist only when the panel ran, and read as the ruler's statistics") {

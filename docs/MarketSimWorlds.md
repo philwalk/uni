@@ -105,7 +105,8 @@ diverge by the dispersion drag);
 peak across the names). `world.basketDrift` records the cross-sectional drift dispersion dial, and
 when it is on `channels.level.kDr` carries the primary's realized annualized volatility the dial is
 a fraction of; a file with the dial off has neither `kDr` nor any other new key. Since schema 12,
-`macroSpread`, `macroSlope`, `macroCond`, `macroIvol`, `macroYield10` and `macroCredit` (`world.macro > 0` — the six observables of
+`macroSpread`, `macroSlope`, `macroCond` and `macroIvol`, since 13 `macroYield10` and
+`macroCredit`, and since 14 `macroPolicy` (`world.macro > 0` — the seven observables of
 [the macro panel](#the-macro-panel--macro), LEVELS in their counterparts' units rather than logs,
 none near a rounding tie; `channels.macro` names each column's FRED `counterpart` and natural
 `cadence` beside the readings the macro rows grade, so a consumer's point-in-time loader can route
@@ -618,7 +619,7 @@ with it.
 | `-overnight` | THE OPEN: the overnight share of the session's diffusive variance (0 ≤ X < 1). The open is the bridge point at that share of the session, with the session's news jump and jump-channel move landing overnight whole and the whole move becoming the gap when it overshoots the session on its own side; the bar then runs from the open over the remaining variance and the sign coupling reads the intraday return. `-emit` gains `logOpen`, and `logHigh`/`logLow` bracket the open and the close. Anchored 0.20 on the S&P default and 0.22 on the Nasdaq recipe against the record's overnight variance shares 0.33 / 0.28 (`bars-2026-09-01.tsv`, graded when on); the bar dials re-anchor with it, `-rangescale 0.78 -rangedown 0.13`, since the intraday bridge carries less of the session | 0 (open = prior close) |
 | `-basket` | THE BASKET: N single names as observational second-pass instances of the primary — each the shared sector leg (`-basketbeta` on the primary's observed return plus `-basketsector` idio riding the vol state × spiral, the satellite's construction) plus its own idio (`-basketidio`, riding the vol state WITHOUT the spiral, so shared variance dominates in stress and pairwise correlation rises) and its own gaps (`-basketgaps` per year, Student-t jumps of a frozen 9% size, SYMMETRIC — the down-skew belongs to the index and reaches names through the shared leg). The equal-weight aggregate (buy-and-hold, never rebalanced) is the sector, graded against the eight's basket on the set's own primary; `-emit` gains `logBasket` and `logName1..N`. Anchored N 8, beta 1.56, sector 1.1, idio 0.9, gaps 6.0 on folio's eight semiconductor names under SMH 2012–2026 (`basket-2026-09-02.tsv`); `-atrelease 0.24.0-basket` names the default with it on (`0.23.1-basket` the 0.23.1 world). The dials do NOT transport to the Nasdaq set — 8 / 1.37 / 0.7 / 0.85 / 8.0 there, which `-atrelease 0.24.0-nasdaq-basket` names | 0 (off) |
 | `-basketdrift` | CROSS-SECTIONAL DRIFT DISPERSION: the sd of the names' own annual log-drift offsets, as a fraction of the primary's realized volatility, drawn once per name per path and centred exactly so the sector's log drift is untouched. Moves the SPREAD of time below peak across names, not its median. **Anchored at 0** and off in every recipe: the record cannot supply a positive value (below) | 0 (off) |
-| `-macro` | THE MACRO PANEL: 1 emits six observables derived from the model's own state after the price loop — `macroSpread` (BAA10Y: equity + bond stress, fast and credit-cycle slow), `macroSlope` (T10Y2Y: the 10y−2y expectation the rate process implies; the one anchored-scale member), `macroCond` (NFCILEVERAGE: the leverage cycle's ratio + the crowd share, raw), `macroIvol` (VIXCLS: the conditional sd re-levelled onto the world's realized vol, × the record's variance risk premium) — each a persistent-noise read sized to the record's predictive R² — and two draw-free levels, `macroYield10` (DGS10: the 10-year the slope is a difference of) and `macroCredit` (TOTBKCR/GDP: the borrowing stock, in percent). No scale dials: a rank-reading consumer cannot see scale. Cadence, release lag and revisions are the consumer's point-in-time layer. Reaches no price; graded when on ([below](#the-macro-panel--macro)) | 0 (off) |
+| `-macro` | THE MACRO PANEL: 1 emits seven observables derived from the model's own state after the price loop — `macroSpread` (BAA10Y: equity + bond stress, fast and credit-cycle slow), `macroSlope` (T10Y2Y: the 10y−2y expectation the rate process implies; the one anchored-scale member), `macroCond` (NFCILEVERAGE: the leverage cycle's ratio + the crowd share, raw), `macroIvol` (VIXCLS: the conditional sd re-levelled onto the world's realized vol, × the record's variance risk premium) — each a persistent-noise read sized to the record's predictive R² — and three draw-free levels, `macroYield10` (DGS10: the 10-year the slope is a difference of), `macroCredit` (TOTBKCR/GDP: the borrowing stock, in percent) and `macroPolicy` (DFF: the loop's own policy rate, re-set at a meeting to the nearest quarter point and held). No scale dials: a rank-reading consumer cannot see scale. Cadence, release lag and revisions are the consumer's point-in-time layer. Reaches no price; graded when on ([below](#the-macro-panel--macro)) | 0 (off) |
 | `-macronull` | THE NULL PANEL: 1 takes the four macro columns from a SIBLING path — the same world at another seed — so their marginals and persistence are this world's and their coupling to this path's price is nil: the no-edge comparison for a rule that reads them. The macro rows do not grade a null panel; the sidecar lists its columns as ungraded. Needs `-macro 1`; one extra price loop per path | 0 (the path's own panel) |
 | `-inflsize` | size of an inflation regime's rate-pressure target | 0.10 |
 
@@ -1101,7 +1102,7 @@ A consumer's macro-reading rules — a credit gate on BAA10Y's percentile rank, 
 "fragility" score over seven FRED series, a systemic brake — were unevaluable on simulated paths,
 and no statistical generator fitted outside the simulator can change that: a VAR, a bootstrap or
 a copula couples macro series to prices by assumption, so a rule that reads them scores well
-exactly to the degree the assumed coupling is right. `-macro 1` derives six observables from
+exactly to the degree the assumed coupling is right. `-macro 1` derives seven observables from
 the model's **own** state instead — stress, liquidity, the policy rate, crowd positioning and the
 leverage cycle already unfold inside it, so the coupling to price is causal by construction —
 each the counterpart of one series, in its units. Nothing here reaches a price and 0 is
@@ -1114,7 +1115,8 @@ bit-identical.
 | `macroCond` | NFCILEVERAGE, raw index | the leverage cycle's ratio — the borrowing stock over the equity securing it, the drawdown smoothed over 21 sessions — over its mean, plus the trend crowd's capital share over its home | one normal |
 | `macroIvol` | VIXCLS, annualized % | the session's conditional sd (vol state, the spiral's amplification discounted to its 21-session average) re-levelled onto the world's realized volatility by the bar channels' `k`, times the record's variance risk premium e^0.28 | one normal |
 | `macroYield10` | DGS10, pp | the 10-year yield the slope's long leg already is: the OU-expected average of the short rate over ten years plus the term premium, so `macroSlope` is this less the 2-year and the level cannot contradict it | none |
-| `macroCredit` | TOTBKCR/GDP, % | the leverage cycle's borrowing stock itself, in percent — the model's credit relative to the economy's scale, a stationary cycle about 75 with no nominal growth in it. A consumer's credit-expansion rank reads the three-year CHANGE of the record's ratio, which carries a secular rise (43 to 63 over 1990–2026) the model's cycle does not: the model's change centres on zero where the record's centres above it, invisible to an expanding rank, visible to a fixed threshold on the change | none |
+| `macroCredit` | TOTBKCR/GDP, % | the leverage cycle's borrowing stock itself, in percent — the model's credit relative to the economy's scale, a stationary cycle about 75 with no nominal growth in it. A consumer's credit-expansion rank reads the three-year CHANGE of the record's ratio, which carries a secular rise (43 to 63 over 1990–2026) the model's cycle does not: the model's change centres on zero where the record's centres above it, invisible to an expanding rank, visible to a fixed threshold on the change. It is also the model's LEVERAGE cycle, which turns every four years where the record's borrowing stock turns over decades: weekly autocorrelation 0.21 at a year and −0.40 at two, against the record's 0.97 and 0.93 | none |
+| `macroPolicy` | DFF, pp | the loop's own policy rate, published as policy publishes it: a target re-set every 32 sessions (8 a year) to the nearest quarter point and held between meetings. The rate itself is the `rate` column, in decimal — a diffusion, because rate uncertainty is what makes stocks and bonds co-move in an inflation regime — so the raw read moves every session where the record's is unchanged on 42% of weekdays. Published, the model holds 98% of sessions and moves a quarter point when it moves. THE ZERO BOUND is the gap that remains, and it is the rate process's rather than the publication's: `easing` caps accommodation and inflation suppresses it, so the model reaches the floor only in brief episodes (0.000 of a century's sessions below 0.5%, 0.011 at the widest path) where the record spent 28% of 1990–2026 there. Its high end transports (0.19 of sessions above 5% against 0.27), and inside a quarter it wanders further, a median 63-session move of 0.25 against 0.13 | none |
 
 Three design decisions carry the rest. **No scale dials**: every consumer vote is a percentile
 rank against trailing history or a sign, so a column's scale is invisible to it, and each map is
@@ -1222,6 +1224,18 @@ vol forecasts its own forward realized vol at R² 0.19 / 0.32 against VIX's 0.55
 unforecastable jump and cascade share of the model's realized variance (its disclosed kurtosis
 budget).
 
+The policy rate is disclosed on its LEVELS, not its timing. Published as a staircase it holds
+0.976 of sessions and moves a quarter point when it moves, against a record that holds 0.42 of
+weekdays and moves 0.05 — the record's is the EFFECTIVE rate, which carries money-market
+increments the model's target has no counterpart for, and DFEDTARU is the closer comparison for
+both. Its persistence lands (0.9916 at 20 sessions against 0.9934) and so does its high end (0.19
+of a century's sessions above 5% against the record's 0.27). What is missing is the ZERO BOUND:
+the record spent 28% of 1990–2026 below 0.5% and the model reaches the floor only in brief
+episodes, because `easing` caps accommodation at one easing cycle and inflation suppresses it —
+so a vote whose rate leg is a fixed low threshold fires on the record and almost never here, while
+a rank leg transports. Its firing lag (−30 / −32) reads like the 10-year's and the conditions
+index's, all three slow members firing at the lookback's edge.
+
 The gate grades pooled statistics; a consumer runs one path. Over a 40-year path the slope's
 inverted share runs from 0 to 0.56 — typically one regime-length spell, against the record's 25
 spells of 42 sessions over 37 years — and the oracle bound is an ensemble property: a single
@@ -1236,7 +1250,8 @@ consumer running one path states the null's width without re-deriving it.
 Levels are unanchored and printed for reading only — the median across paths of each 100-year
 path's p10 / p50 / p90 on `0.24.0-macro`, the record's in parentheses: spread 1.65 / 2.09 / 2.64
 (1.57 / 2.14 / 3.15), implied vol 11.8 / 15.5 / 21.0 (12.2 / 17.6 / 28.5), slope −0.71 / 1.41 /
-1.86 (−0.05 / 0.84 / 2.32), conditions −2.04 / −0.15 / 2.31 (−1.03 / −0.24 / 0.74). The conditions
+1.86 (−0.05 / 0.84 / 2.32), conditions −2.04 / −0.15 / 2.31 (−1.03 / −0.24 / 0.74), policy
+2.25 / 3.25 / 9.00 (0.09 / 2.91 / 5.69), 10-year 4.65 / 4.94 / 7.62 (1.82 / 4.19 / 6.92). The conditions
 index is wider than its counterpart — its p10–p90 spans 4.3 index units against the record's 1.8
 — because its drawdown term rises with every decline the path takes; a rule reading a rank over a
 trailing window sees none of this. A rule reading a fixed level should know where the level sits:
@@ -1247,7 +1262,7 @@ no map constant creates a tail the world does not have.
 
 **The null is a sibling path — `-macronull 1`.** A no-edge world with the panel's exact marginals
 and persistence is another path's panel, and the dial writes one into the path's own file: the
-six columns come from a sibling path — the same world at another seed, its own price loop and
+seven columns come from a sibling path — the same world at another seed, its own price loop and
 its own measurement stream — so a consumer's loader takes one file per path and the columns'
 coupling to that file's `price` is nil. The macro rows do not grade a null panel (its readings,
 printed, are the no-edge level) and the sidecar lists its columns in `ungradedChannelSeries` with

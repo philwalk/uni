@@ -1,11 +1,16 @@
-# THE MACRO PANEL's ruler: what the record says about the six series `-macro` emits counterparts
+# THE MACRO PANEL's ruler: what the record says about the seven series `-macro` emits counterparts
 # of -- BAA10Y (`macroSpread`), T10Y2Y (`macroSlope`), VIXCLS (`macroIvol`), NFCILEVERAGE
 # (`macroCond`), DGS10 (`macroYield10`), TOTBKCR/GDP (`macroCredit`: bank credit over the GDP
 # figure for the latest quarter at or before each weekly observation, in percent; its relation
 # rows read it as the model reads its member, held as-of onto the session calendar and ranked
 # over 252 sessions; its shape rows are on its weekly calendar, the conditions index's lags.  The
 # record's ratio carries a secular rise, 43 to 63 over the window, that the model's stationary
-# cycle does not) -- as MEASURED series, lag 0: the consumer's point-in-time layer (release lag,
+# cycle does not) and DFF (`macroPolicy`: the overnight rate, on WEEKDAYS -- the record publishes
+# it every calendar day and a weekend repeats Friday's value, which no session calendar has, so a
+# calendar-day lag 20 would be four weeks on one side and under three on the other.  It is the
+# EFFECTIVE rate, which moves in money-market increments the model's published target has no
+# counterpart for: `hold` and `move50` below read the target's shape on the record's effective
+# series, and DFEDTARU is the closer comparison for both) -- as MEASURED series, lag 0: the consumer's point-in-time layer (release lag,
 # cadence, revisions) applies to the record and to an emitted path alike, so neither side carries
 # it here.  `MacroPanelSuite` / `macro_panel_tests` re-derive the shipped bands from this file;
 # editing a graded row moves them.
@@ -65,6 +70,13 @@
 #   posttrough20_63  the mean rank over the quarter after the trough -- the stock's unwind
 #   ac52 / ac104     the conditions index's autocorrelation at a year and two years of weekly
 #                    readings -- the stock's accrual timescale
+#   hold, move50     policy: the share of sessions the rate is UNCHANGED, and the median absolute
+#                    move over the sessions it does move -- how much of a rate series is decision
+#                    and how much is drift.  d63: the median absolute 63-session move
+#   shareLt05/Gt5    policy: the share of sessions below 0.5 and above 5.0 -- the record's rate is
+#                    BIMODAL (a zero-bound era and a 1990s era, 0.28 and 0.27 of its sessions) and
+#                    the model's is a mid-band process, so a vote with fixed level thresholds
+#                    reads far fewer firings in a model world than on the record
 #   lagT_L           the FIRING LAG, the mechanism's timing: sessions from the peak to the first
 #                    firing (negative = before the peak), median over the episodes it fired in --
 #                    invariant to how fast the decline runs.  GRADED at T=20, L=63 for the spread
@@ -73,6 +85,9 @@
 #                    means the member was already firing when the lookback window opened.
 #
 # Windows: the equity history's own span from 1990-01-02 (CRSP ends 2026-06-30 in the 202606 file).
+# DFF's rows were added 2026-09-10 from the same FRED caches.  They are SHAPE rows only: the
+# equity-relation rows need the four reference histories at the vintage the rest of this file was
+# measured at, and the policy member is reported rather than graded, so nothing here reads them.
 set	series	member	stat	window	n	value
 shared	BAA10Y	spread	ac1	1990-01-02..2026-09-03	9169	0.9991
 shared	BAA10Y	spread	ac20	1990-01-02..2026-09-03	9169	0.9617
@@ -104,6 +119,16 @@ shared	TOTBKCR/GDP	credit	ac104	1990-01-03..2026-08-26	1913	0.9312
 shared	TOTBKCR/GDP	credit	lvl50	1990-01-03..2026-08-26	1913	57.2668
 shared	TOTBKCR/GDP	credit	lvl10	1990-01-03..2026-08-26	1913	43.2646
 shared	TOTBKCR/GDP	credit	lvl90	1990-01-03..2026-08-26	1913	63.1862
+shared	DFF	policy	ac1	1990-01-02..2026-09-03	9568	0.9974
+shared	DFF	policy	ac20	1990-01-02..2026-09-03	9568	0.9934
+shared	DFF	policy	lvl50	1990-01-02..2026-09-03	9568	2.9100
+shared	DFF	policy	lvl10	1990-01-02..2026-09-03	9568	0.0900
+shared	DFF	policy	lvl90	1990-01-02..2026-09-03	9568	5.6900
+shared	DFF	policy	hold	1990-01-02..2026-09-03	9567	0.4245
+shared	DFF	policy	move50	1990-01-02..2026-09-03	5506	0.0500
+shared	DFF	policy	d63	1990-01-02..2026-09-03	9505	0.1300
+shared	DFF	policy	shareLt05	1990-01-02..2026-09-03	9568	0.2793
+shared	DFF	policy	shareGt5	1990-01-02..2026-09-03	9568	0.2746
 shared	NFCILEVERAGE	cond	ac1	1990-01-05..2026-08-28	1913	0.9990
 shared	NFCILEVERAGE	cond	ac4	1990-01-05..2026-08-28	1913	0.9847
 shared	NFCILEVERAGE	cond	ac52	1990-01-05..2026-08-28	1913	0.4165
