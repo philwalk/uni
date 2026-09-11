@@ -37,6 +37,28 @@
   be checked against the worlds it must contain. The model is untouched and the twins stay
   byte-identical.
 
+**The variance-ratio rungs are phase-averaged, and the record's bands tighten**
+
+- `varianceRatio` now averages over all q block offsets instead of starting at the first
+  observation. Non-overlapping blocks have to start somewhere, and on one historical series that
+  arbitrary choice was worth as much as the statistic: the CRSP century reads vr60 1.175 at offset
+  zero against a span of 1.057 to 1.333 across the 60 offsets, and vr250 1.564 against 0.955 to
+  1.613. The shipped rows sat at or near the top of their phase range on three rungs of four.
+- A single observation of phase is the entire difference between `persistence-2026-09-02.tsv` and
+  its predecessor on the same data (vr60 1.175 against 1.143). The construction that reproduces the
+  09-02 rows compounds the index WITHOUT a leading 1.0 and then differences it, dropping the first
+  observation; that detail was not recorded, and it is now.
+- `persistence-2026-09-11.tsv` carries the same 39 readings phase-averaged. The generator was
+  validated by reproducing all 156 of the previous file's values at offset zero before averaging.
+- EVERY BAND TIGHTENS, because much of the cross-section's apparent spread was alignment rather
+  than a difference between markets or eras. The vr250 range falls from 0.240–1.564 to
+  0.474–1.255. The ladder moves to (20, 0.70–1.15), (60, 0.55–1.20), (120, 0.45–1.20),
+  (250, 0.45–1.30) and the two slopes to −0.20..0.10 and −0.15..0.15, all still the fixture's own
+  range rounded outward, re-derived by the anchor suites.
+- The model side is unaffected in practice: an ensemble already averages phases across its paths,
+  so the default world reads 1.049 / 1.070 / 1.103 / 1.222 and passes every rung and both slopes.
+  The gate is stricter on evidence that did not change.
+
 **The credit system gets a baseline of its own, and splits**
 
 - `macroCredit` REPLACES ITS STATE. It was the leverage cycle read in percent, and one state

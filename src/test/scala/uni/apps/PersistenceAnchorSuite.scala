@@ -17,7 +17,7 @@ import uni.*
  */
 class PersistenceAnchorSuite extends FunSuite:
 
-  val Fixture = "test-data/equity-anchors/persistence-2026-09-02.tsv"
+  val Fixture = "test-data/equity-anchors/persistence-2026-09-11.tsv"
 
   case class Row(window: String, ticker: String, kind: String, years: Double,
                  vr: Map[Int, Double])
@@ -54,7 +54,7 @@ class PersistenceAnchorSuite extends FunSuite:
         assertEqualsDouble(hi, outward(xs.max, up = true), 1e-9,
           f"vr$q: the high bound no longer follows from the fixture: readings reach ${xs.max}%.3f")
       assertEquals(MarketSim.VarRatioBands.find(_._1 == MarketSim.VarRatioQ).map(b => (b._2, b._3)),
-        Some((0.50, 1.20)), "the loss row's rung carries the 60-session envelope")
+        Some((0.55, 1.20)), "the loss row's rung carries the 60-session envelope")
   }
 
   test("every slope band is the real range rounded outward") {
@@ -87,7 +87,7 @@ class PersistenceAnchorSuite extends FunSuite:
     val (name, pass, cls) = MarketSim.varRatioProfileCheck(shaped)
     assert(!pass, s"a +0.45 slope between the short rungs must fail the profile: $name")
     assertEquals(cls, MarketSim.GateClass.Fidelity)
-    assert(name.contains("20d 0.65-1.20") && name.contains("20->60 -0.25..+0.10"),
+    assert(name.contains("20d 0.70-1.15") && name.contains("20->60 -0.20..+0.10"),
       s"the row's name must carry the bounds it enforces: $name")
   }
 

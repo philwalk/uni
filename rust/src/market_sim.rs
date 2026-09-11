@@ -4080,25 +4080,65 @@ fn autocorr_abs(r: &[f64], lag: usize) -> f64 {
 /// CONVENTION, stated for the same reason `clustering lag 1` states one, because "variance ratio"
 /// names several estimators that disagree in small samples: NON-OVERLAPPING q-blocks, sample
 /// variances (n-1), the series truncated to a whole number of blocks.
+/// PHASE-AVERAGED over every block offset. Non-overlapping blocks have to start somewhere, and on
+/// a century of daily data that arbitrary choice is worth as much as the statistic: the record's
+/// own q = 60 reading spans 1.06 to 1.33 across the 60 possible offsets, q = 250 spans 0.96 to
+/// 1.61, and the shipped rows sat at or near the top of that range on three rungs of four. One
+/// observation of phase is what separated two vintages of `persistence-*.tsv`. Averaging over all
+/// q offsets removes a free parameter nobody chose deliberately; it costs a factor of q in
+/// arithmetic on an O(n) statistic and nothing in interpretation, because each offset estimates
+/// the same quantity.
 fn variance_ratio(r: &[f64], q: usize) -> f64 {
-    let n = r.len() / q * q;
+    let len = r.len();
+    let n = len / q * q;
     if q < 2 || n < 2 * q {
         return f64::NAN;
     }
-    fn sample_var(x: &[f64]) -> f64 {
-        let m = MatD::apply(x);
-        let z = &m - m.mean();
-        z.power(2).sum() / (x.len() - 1) as f64
+    // PREFIX SUMS, so averaging over all q offsets costs ONE pass rather than q. Written naively
+    // it was q passes per rung, which across the four rungs is 450 passes where the unaveraged
+    // form took 4: a measured 1.6x on the whole gate, and the same on every evaluation a search
+    // makes. With running sums of r and r^2 every block sum and every slice's variance is O(1),
+    // so the phase average costs what one phase used to.
+    let mut s = vec![0.0f64; len + 1];
+    let mut s2 = vec![0.0f64; len + 1];
+    for i in 0..len {
+        s[i + 1] = s[i] + r[i];
+        s2[i + 1] = s2[i] + r[i] * r[i];
     }
-    let daily = &r[..n];
-    let blocks: Vec<f64> = (0..n / q)
-        .map(|k| daily[k * q..(k + 1) * q].iter().sum())
-        .collect();
-    let v_daily = sample_var(daily);
-    if v_daily <= 0.0 {
+    // Sample variance of `r[a..b]` from the running sums.
+    let slice_var = |a: usize, b: usize| -> f64 {
+        let m = b - a;
+        if m < 2 {
+            return f64::NAN;
+        }
+        let mu = (s[b] - s[a]) / m as f64;
+        ((s2[b] - s2[a]) - m as f64 * mu * mu) / (m - 1) as f64
+    };
+    let at = |off: usize| -> f64 {
+        let m = (len - off) / q * q;
+        if m < 2 * q {
+            return f64::NAN;
+        }
+        let nb = m / q;
+        let blocks: Vec<f64> = (0..nb)
+            .map(|k| s[off + (k + 1) * q] - s[off + k * q])
+            .collect();
+        let b_mu = blocks.iter().sum::<f64>() / nb as f64;
+        let b_var = blocks.iter().map(|x| (x - b_mu) * (x - b_mu)).sum::<f64>() / (nb - 1) as f64;
+        let v_daily = slice_var(off, off + m);
+        // positive test rather than a negated one: a NaN daily variance falls to the NaN arm
+        if v_daily > 0.0 {
+            b_var / (q as f64 * v_daily)
+        } else {
+            f64::NAN
+        }
+    };
+    // fixed order, so the twins sum the same doubles in the same sequence
+    let vs: Vec<f64> = (0..q).map(at).filter(|v| v.is_finite()).collect();
+    if vs.is_empty() {
         f64::NAN
     } else {
-        sample_var(&blocks) / (q as f64 * v_daily)
+        vs.iter().sum::<f64>() / vs.len() as f64
     }
 }
 
@@ -4455,10 +4495,10 @@ const BOND_VOL_SUPPORT: (f64, f64) = (1.44, 14.12);
 /// a longer or shorter one, and both were available.
 const VAR_RATIO_Q: usize = 60;
 /// The ladder `-validate` prints and the profile row grades — the four horizons of
-/// `persistence-2026-09-02.tsv`. `VAR_RATIO_Q` is the rung the loss row reads.
+/// `persistence-2026-09-11.tsv`. `VAR_RATIO_Q` is the rung the loss row reads.
 const VAR_RATIO_LADDER: [usize; 4] = [20, 60, 120, 250];
 
-/// The variance-ratio envelopes, from `test-data/equity-anchors/persistence-2026-09-02.tsv`: 18 real
+/// The variance-ratio envelopes, from `test-data/equity-anchors/persistence-2026-09-11.tsv`: 18 real
 /// equity funds over their full histories and over the depth cross-section's own 2001-2026 window,
 /// plus the CRSP value-weighted market opening in 1926, 1954 and 1990, at four horizons. At 60
 /// sessions the 39 readings span 0.547 (XLV, 2001-2026) to 1.175 (the CRSP century), and each
@@ -4475,17 +4515,18 @@ const VAR_RATIO_LADDER: [usize; 4] = [20, 60, 120, 250];
 /// itself spans 0.24-1.56. They are graded anyway, inside ONE profile row with the slopes below,
 /// so a world clears the ladder as a shape and never rung by rung.
 const VAR_RATIO_BANDS: [(usize, f64, f64); 4] = [
-    (20, 0.65, 1.20),
-    (60, 0.50, 1.20),
-    (120, 0.40, 1.35),
-    (250, 0.20, 1.60),
+    (20, 0.70, 1.15),
+    (60, 0.55, 1.20),
+    (120, 0.45, 1.20),
+    (250, 0.45, 1.30),
 ];
 /// Adjacent-rung slopes vr(60)-vr(20) and vr(120)-vr(60), the cross-section's range rounded
 /// outward: the profile's SHAPE, which four boxes cannot see — a world at 0.70 and 1.15 on the two
-/// short rungs sits inside both boxes and outside every real profile. The 120->250 slope spans
-/// -0.75..+0.71 in the record and grades nothing.
+/// short rungs sits inside both boxes and outside every real profile. Both tightened when the
+/// rungs became phase-averaged, the 60->120 slope from -0.30..0.20 to -0.15..0.15: a third of the
+/// record's apparent shape variation was block alignment.
 const VAR_RATIO_SLOPE_BANDS: [(usize, usize, f64, f64); 2] =
-    [(20, 60, -0.25, 0.10), (60, 120, -0.30, 0.20)];
+    [(20, 60, -0.20, 0.10), (60, 120, -0.15, 0.15)];
 
 impl WorldStats {
     /// Return per unit volatility, in the units this report already prints: `ann_ret` is a LOG
@@ -14680,7 +14721,7 @@ mod equity_anchor_tests {
 mod persistence_anchor_tests {
     use super::*;
 
-    const FIXTURE: &str = "../test-data/equity-anchors/persistence-2026-09-02.tsv";
+    const FIXTURE: &str = "../test-data/equity-anchors/persistence-2026-09-11.tsv";
 
     struct Row {
         window: String,
@@ -14750,7 +14791,7 @@ mod persistence_anchor_tests {
             .find(|b| b.0 == VAR_RATIO_Q)
             .map(|b| (b.1, b.2));
         assert!(
-            rung60 == Some((0.50, 1.20)),
+            rung60 == Some((0.55, 1.20)),
             "the loss row's rung carries the 60-session envelope"
         );
     }
@@ -14817,7 +14858,7 @@ mod persistence_anchor_tests {
         );
         assert!(cls == GateClass::Fidelity);
         assert!(
-            name.contains("20d 0.65-1.20") && name.contains("20->60 -0.25..+0.10"),
+            name.contains("20d 0.70-1.15") && name.contains("20->60 -0.20..+0.10"),
             "the row's name must carry the bounds it enforces: {name}"
         );
     }

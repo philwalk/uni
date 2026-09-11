@@ -953,7 +953,7 @@ from any earlier release optimised a different function.
 - **Signed persistence is graded as a four-rung profile since 0.23.1, not one rung.** `-validate`
   prints the variance ratio at 20, 60, 120 and 250 sessions against the real cross-section's
   envelopes (0.65-1.20, 0.50-1.20, 0.40-1.35, 0.20-1.60: 18 instruments over two windows and three
-  CRSP eras, `persistence-2026-09-02.tsv`) and the two short slopes against theirs (vr60-vr20
+  CRSP eras, `persistence-2026-09-11.tsv`) and the two short slopes against theirs (vr60-vr20
   -0.25..+0.10, vr120-vr60 -0.30..+0.20), as ONE fidelity row. The long rungs cannot discriminate
   — the record itself spans 0.24-1.56 at 250 sessions — so the row binds at the short rungs and
   on the shape; a world at 0.70 and 1.15 on the two short rungs sits inside both boxes and outside

@@ -3027,16 +3027,51 @@ object MarketSim:
     * `jsrc/clusteringAnchor.sc` calls THIS function to measure the anchor, so the two cannot drift.
     */
   def varianceRatio(r: Array[Double], q: Int): Double =
-    val n = r.length / q * q
+    // PHASE-AVERAGED over every block offset.  Non-overlapping blocks have to start somewhere, and
+    // on a century of daily data that arbitrary choice is worth as much as the statistic: the
+    // record's own q = 60 reading spans 1.06 to 1.33 across the 60 possible offsets, q = 250 spans
+    // 0.96 to 1.61, and the shipped rows sat at or near the top of that range on three rungs of
+    // four.  One observation of phase is what separated two vintages of `persistence-*.tsv`.
+    // Averaging over all q offsets removes a free parameter nobody chose deliberately; it costs a
+    // factor of q in arithmetic on an O(n) statistic and nothing in interpretation, because each
+    // offset estimates the same quantity.
+    val len = r.length
+    val n   = len / q * q
     if q < 2 || n < 2 * q then Double.NaN
     else
-      def sampleVar(x: Array[Double]): Double =
-        val z = MatD(x) - MatD(x).mean
-        z.power(2).sum / (x.length - 1)
-      val daily  = r.take(n)
-      val blocks = Array.tabulate(n / q)(k => daily.slice(k * q, (k + 1) * q).sum)
-      val vDaily = sampleVar(daily)
-      if vDaily <= 0.0 then Double.NaN else sampleVar(blocks) / (q * vDaily)
+      // PREFIX SUMS, so averaging over all q offsets costs ONE pass rather than q.  Written
+      // naively it was q passes per rung, which across the four rungs is 450 passes where the
+      // unaveraged form took 4: a measured 1.6x on the whole gate, and the same on every
+      // evaluation a search makes.  With running sums of r and r^2 every block sum and every
+      // slice's variance is O(1), so the phase average costs what one phase used to.
+      val s  = new Array[Double](len + 1)
+      val s2 = new Array[Double](len + 1)
+      var i = 0
+      while i < len do
+        s(i + 1)  = s(i) + r(i)
+        s2(i + 1) = s2(i) + r(i) * r(i)
+        i += 1
+      /** Sample variance of `r[a until b]` from the running sums. */
+      def sliceVar(a: Int, b: Int): Double =
+        val m = b - a
+        if m < 2 then Double.NaN
+        else
+          val mu = (s(b) - s(a)) / m
+          ((s2(b) - s2(a)) - m * mu * mu) / (m - 1)
+      def at(off: Int): Double =
+        val m = (len - off) / q * q
+        if m < 2 * q then Double.NaN
+        else
+          val nb     = m / q
+          val blocks = Array.tabulate(nb)(k => s(off + (k + 1) * q) - s(off + k * q))
+          val bMu    = blocks.sum / nb
+          val bVar   = blocks.map(x => (x - bMu) * (x - bMu)).sum / (nb - 1)
+          val vDaily = sliceVar(off, off + m)
+          // positive test rather than a negated one: a NaN daily variance falls to the NaN arm
+          if vDaily > 0.0 then bVar / (q * vDaily) else Double.NaN
+      // fixed order, so the twins sum the same doubles in the same sequence
+      val vs = (0 until q).toVector.map(at).filter(_.isFinite)
+      if vs.isEmpty then Double.NaN else vs.sum / vs.length
 
   /** cov(a,b) / (sigma_a * sigma_b), in unnormalised sums -- written as the formula. */
   def pearson(a: Array[Double], b: Array[Double]): Double =
@@ -3195,10 +3230,10 @@ object MarketSim:
     * would be a longer or shorter one, and both were available. */
   val VarRatioQ = 60
   /** The ladder `-validate` prints and the profile row grades -- the four horizons of
-    * `persistence-2026-09-02.tsv`.  `VarRatioQ` is the rung the loss row reads. */
+    * `persistence-2026-09-11.tsv`.  `VarRatioQ` is the rung the loss row reads. */
   val VarRatioLadder: Vector[Int] = Vector(20, 60, 120, 250)
 
-  /** The variance-ratio envelopes, from `test-data/equity-anchors/persistence-2026-09-02.tsv`:
+  /** The variance-ratio envelopes, from `test-data/equity-anchors/persistence-2026-09-11.tsv`:
     * 18 real equity funds over their full histories and over the depth cross-section's own
     * 2001-2026 window, plus the CRSP value-weighted market opening in 1926, 1954 and 1990, at
     * four horizons.  At 60 sessions the 39 readings span 0.547 (XLV, 2001-2026) to 1.175 (the
@@ -3216,13 +3251,14 @@ object MarketSim:
     * record itself spans 0.24-1.56.  They are graded anyway, inside ONE profile row with the
     * slopes below, so a world clears the ladder as a shape and never rung by rung. */
   val VarRatioBands: Vector[(Int, Double, Double)] =
-    Vector((20, 0.65, 1.20), (60, 0.50, 1.20), (120, 0.40, 1.35), (250, 0.20, 1.60))
+    Vector((20, 0.70, 1.15), (60, 0.55, 1.20), (120, 0.45, 1.20), (250, 0.45, 1.30))
   /** Adjacent-rung slopes vr(60)-vr(20) and vr(120)-vr(60), the cross-section's range rounded
     * outward: the profile's SHAPE, which four boxes cannot see -- a world at 0.70 and 1.15 on the
-    * two short rungs sits inside both boxes and outside every real profile.  The 120->250 slope
-    * spans -0.75..+0.71 in the record and grades nothing. */
+    * two short rungs sits inside both boxes and outside every real profile.  Both tightened when
+    * the rungs became phase-averaged, the 60->120 slope from -0.30..0.20 to -0.15..0.15: a third
+    * of the record's apparent shape variation was block alignment. */
   val VarRatioSlopeBands: Vector[(Int, Int, Double, Double)] =
-    Vector((20, 60, -0.25, 0.10), (60, 120, -0.30, 0.20))
+    Vector((20, 60, -0.20, 0.10), (60, 120, -0.15, 0.15))
   /** Admissible sd of log(price/fair): the record's CAPE-proxy windows read 0.24-0.41, the floor
     * carries the stated proxy haircut, and the ceiling is past the century with room.  See the
     * `valuation dispersion` gate row and valuation-2026-08-30.tsv. */

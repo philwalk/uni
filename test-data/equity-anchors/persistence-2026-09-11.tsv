@@ -1,0 +1,91 @@
+# Real SIGNED-return persistence at four horizons: the variance-ratio ladder `MarketSim.VarRatioBands`
+# and the adjacent-rung slope bands `VarRatioSlopeBands` are derived from this file, and
+# `PersistenceAnchorSuite` / `persistence_anchor_tests` re-derive them.  Editing a row moves the
+# shipped bands.  Nothing else is fitted from this file; the loss row keeps its theory value of 1.00.
+#
+# vr(q) = Var(non-overlapping q-session sums) / (q * Var(daily)), sample variances (n-1), the
+# series truncated to a whole number of blocks, AVERAGED OVER ALL q BLOCK PHASES --
+# `uni.apps.MarketSim.varianceRatio` over `MarketSim.dailyReturns` (LOG returns of the price
+# series) exactly; the same function measures every model path.  1.0 is no serial dependence at
+# that horizon; above 1 is trend, below is mean reversion.
+#
+# WHY PHASE-AVERAGED, new in this vintage.  Non-overlapping blocks have to start somewhere, and on
+# one historical series that arbitrary choice was worth as much as the statistic.  Measured on the
+# CRSP century: offset zero gave vr60 1.175 while the 60 offsets span 1.057..1.333, and vr250 gave
+# 1.564 against a span of 0.955..1.613.  The shipped rows sat at or near the TOP of their phase
+# range on three rungs of four, and a single observation of phase is the whole difference between
+# this file's predecessor (vr60 1.175) and ITS predecessor (1.143) on the same data.  Averaging
+# over every offset removes a free parameter nobody chose.  A model path is unaffected in practice
+# -- an ensemble already averages phases across paths -- so this tightens the RECORD side: the
+# cross-section's vr250 range falls from 0.240..1.564 to 0.474..1.255, and the bands with it.
+#
+# WHAT THIS FILE SETTLES.  Volatility clustering is measured on |r| and is blind to signed
+# persistence, so nothing else in the target set stops the model from manufacturing a trend.
+# Modern series mean-revert mildly at one to six months (vr60 0.55-1.15 across 18 instruments and
+# two windows, vr120 0.43-1.30); the pre-war century trends mildly (1.17 at both short rungs).
+# QQQ and SPY over their full histories are indistinguishable, which is why the bands are shared
+# across anchor sets rather than carried per asset.  At 250 sessions the record itself spans
+# 0.24-1.56, so that rung cannot discriminate; it is graded inside the profile row rather than
+# dropped, so a world clears the ladder as a shape and never rung by rung.  The two short slopes
+# vr60-vr20 (-0.24..+0.10) and vr120-vr60 (-0.26..+0.16) are the shape the boxes cannot see.
+#
+# Measured 2026-09-11, superseding persistence-2026-09-02.tsv, which carried the same 39 readings
+# at block offset zero; every row here is that row phase-averaged, on the same data and windows.
+# The 2026-09-02 construction reproduces exactly when the index is compounded WITHOUT a leading
+# 1.0 and then differenced, which drops the first observation -- a detail that file did not state
+# and the reason its CRSP rows disagreed with its own predecessor's.
+#
+# Earlier history: 2026-09-02 superseded persistence-2026-08-29.tsv (vr20/vr60 only).  The 36 fund rows
+# reproduce that file's vr20/vr60 to the printed digit.  Its three CRSP rows do not (1.143 vs
+# 1.175 at c1926 vr60), and it recorded no construction for them; the construction here is stated
+# and reproducible.
+#   wfull  each instrument's full history through 2026-08-03
+#   w2001  2001-08-27.. -- the window the depth cross-section in yahoo-2026-08-24.tsv uses
+#   c1926/c1954/c1990  CRSP value-weighted US market TOTAL return -- Ken French's
+#          F-F_Research_Data_Factors_daily (202606 CRSP), (1 + (Mkt-RF + RF)/100) compounded into
+#          a price index, then log returns of it -- windows opening 1926-07-01, 1954-01-04 and
+#          1990-01-02, through 2026-06-30
+#   years  the calendar span of the window
+#
+# Fund series are daily Yahoo adjusted closes -- the same source and definition as the depth
+# cross-section, from a local cache holding 18 of that file's 35 instruments.
+window	ticker	kind	source	years	vr20	vr60	vr120	vr250
+wfull	DIA	us-broad	yahoo-adj-close	28.5	0.773	0.633	0.603	0.604
+wfull	EFA	intl-broad	yahoo-adj-close	24.9	0.769	0.770	0.848	0.844
+wfull	IWM	us-broad	yahoo-adj-close	26.2	0.850	0.788	0.746	0.686
+wfull	QQQ	us-growth	yahoo-adj-close	27.4	0.802	0.833	0.924	1.107
+wfull	SMH	sector	yahoo-adj-close	26.2	0.779	0.776	0.867	0.918
+wfull	SOXX	sector	yahoo-adj-close	25.1	0.823	0.810	0.893	0.927
+wfull	SPY	us-broad	yahoo-adj-close	33.5	0.742	0.665	0.694	0.781
+wfull	VFINX	us-broad	yahoo-adj-close	36.6	0.767	0.692	0.711	0.776
+wfull	VGTSX	intl-broad	yahoo-adj-close	30.3	0.952	0.983	1.076	1.098
+wfull	XLB	sector	yahoo-adj-close	27.6	0.839	0.736	0.748	0.616
+wfull	XLE	sector	yahoo-adj-close	27.6	0.871	0.774	0.732	0.755
+wfull	XLF	sector	yahoo-adj-close	27.6	0.708	0.676	0.734	0.765
+wfull	XLI	sector	yahoo-adj-close	27.6	0.910	0.798	0.804	0.799
+wfull	XLK	sector	yahoo-adj-close	27.6	0.807	0.788	0.851	1.057
+wfull	XLP	sector	yahoo-adj-close	27.6	0.724	0.582	0.545	0.524
+wfull	XLU	sector	yahoo-adj-close	27.6	0.790	0.631	0.630	0.679
+wfull	XLV	sector	yahoo-adj-close	27.6	0.765	0.606	0.491	0.474
+wfull	XLY	sector	yahoo-adj-close	27.6	0.860	0.724	0.677	0.651
+w2001	DIA	us-broad	yahoo-adj-close	24.9	0.764	0.643	0.641	0.645
+w2001	EFA	intl-broad	yahoo-adj-close	24.9	0.769	0.770	0.848	0.844
+w2001	IWM	us-broad	yahoo-adj-close	24.9	0.849	0.801	0.772	0.697
+w2001	QQQ	us-growth	yahoo-adj-close	24.9	0.797	0.799	0.828	0.800
+w2001	SMH	sector	yahoo-adj-close	24.9	0.782	0.797	0.900	0.922
+w2001	SOXX	sector	yahoo-adj-close	24.9	0.806	0.819	0.904	0.914
+w2001	SPY	us-broad	yahoo-adj-close	24.9	0.750	0.681	0.717	0.741
+w2001	VFINX	us-broad	yahoo-adj-close	24.9	0.743	0.676	0.713	0.735
+w2001	VGTSX	intl-broad	yahoo-adj-close	24.9	0.923	0.971	1.085	1.088
+w2001	XLB	sector	yahoo-adj-close	24.9	0.829	0.745	0.782	0.653
+w2001	XLE	sector	yahoo-adj-close	24.9	0.887	0.793	0.748	0.782
+w2001	XLF	sector	yahoo-adj-close	24.9	0.703	0.702	0.785	0.829
+w2001	XLI	sector	yahoo-adj-close	24.9	0.908	0.823	0.856	0.849
+w2001	XLK	sector	yahoo-adj-close	24.9	0.779	0.771	0.770	0.751
+w2001	XLP	sector	yahoo-adj-close	24.9	0.734	0.604	0.586	0.556
+w2001	XLU	sector	yahoo-adj-close	24.9	0.821	0.641	0.646	0.662
+w2001	XLV	sector	yahoo-adj-close	24.9	0.767	0.623	0.528	0.517
+w2001	XLY	sector	yahoo-adj-close	24.9	0.869	0.768	0.751	0.729
+c1926	CRSP-VW	us-broad	ken-french-daily	100.0	1.118	1.179	1.169	1.255
+c1954	CRSP-VW	us-broad	ken-french-daily	72.5	1.019	1.007	1.033	1.034
+c1990	CRSP-VW	us-broad	ken-french-daily	36.5	0.819	0.757	0.758	0.796
