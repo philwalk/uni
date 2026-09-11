@@ -1,7 +1,7 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
 //> using scala 3.7.2
-//> using dep org.vastblue:uni_3:0.24.1
+//> using dep org.vastblue:uni_3:0.24.2
 
 // THIN BY DESIGN — do not restore the full source here.
 //

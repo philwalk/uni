@@ -1,7 +1,7 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
 //> using scala 3.7.0
-//> using dep org.vastblue:uni_3:0.24.1
+//> using dep org.vastblue:uni_3:0.24.2
 
 // A CALIBRATION SEARCH for the market simulator, built to run for days and to be killed at any
 // moment.  NOT SHIPPED, and it adds NOTHING to the library: the simulator and its whole runtime

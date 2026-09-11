@@ -232,7 +232,7 @@ labels and log axes. The Rust crate's `uni::uplot` produces the same SVG bytes; 
 
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
-//> using dep org.vastblue:uni_3:0.24.1
+//> using dep org.vastblue:uni_3:0.24.2
 import uni.data.*
 import uni.plot.*
 // doc: compile-only  (opens the browser; run from the repo root for datasets/)
@@ -396,7 +396,7 @@ So ordinary client code written the obvious way is already allocation-free for t
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.24.1
+//> using dep org.vastblue:uni_3:0.24.2
 
 import uni.data.*
 
@@ -430,7 +430,7 @@ Note: inline annotations were removed before running JaCoCo to prevent Scala 3's
 Add the following to your `build.sbt`:
 
 ```scala
-libraryDependencies += "org.vastblue" %% "uni" % "0.24.1"
+libraryDependencies += "org.vastblue" %% "uni" % "0.24.2"
 ```
 
 ### Native BLAS backend
@@ -491,7 +491,7 @@ libraries, `bundled` only bytedeco's — and nothing needs to be purged from the
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.24.1
+//> using dep org.vastblue:uni_3:0.24.2
 
 import uni.data.*
 
@@ -514,7 +514,7 @@ They add type-safe BLAS-style vector dispatch on top of `Mat`.
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.24.1
+//> using dep org.vastblue:uni_3:0.24.2
 
 import uni.data.*
 
@@ -576,7 +576,7 @@ Each alias has a matching factory object mirroring the `MatD` API:
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.24.1
+//> using dep org.vastblue:uni_3:0.24.2
 
 import uni.data.*
 
@@ -596,7 +596,7 @@ val identityB: MatB = MatB.eye(5)
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.24.1
+//> using dep org.vastblue:uni_3:0.24.2
 
 import uni.data.*
 
@@ -620,7 +620,7 @@ println(s"rotated: ${rotated.show("%7.2f")}")
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.24.1
+//> using dep org.vastblue:uni_3:0.24.2
 
 import uni.data.*
 
@@ -638,7 +638,7 @@ val f = a.relu    // built-in activation function
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.24.1
+//> using dep org.vastblue:uni_3:0.24.2
 
 import uni.data.*
 
@@ -657,7 +657,7 @@ m :+= n      // element-wise add matrix in-place
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.24.1
+//> using dep org.vastblue:uni_3:0.24.2
 
 import uni.data.*
 
@@ -675,7 +675,7 @@ val allTrue  = mask.all
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.24.1
+//> using dep org.vastblue:uni_3:0.24.2
 
 import uni.data.*
 
@@ -696,7 +696,7 @@ val cols  = wide.hsplit(2)               // Seq of two 4x2 Mats
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.24.1
+//> using dep org.vastblue:uni_3:0.24.2
 
 import uni.data.*
 
@@ -719,7 +719,7 @@ The following example demonstrates a wide array of `uni.MatD` capabilities
 
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
-//> using dep org.vastblue:uni_3:0.24.1
+//> using dep org.vastblue:uni_3:0.24.2
 
 import uni.data.*
 
@@ -788,7 +788,7 @@ Because activation functions are members of the `MatD` type, building layers is 
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.24.1
+//> using dep org.vastblue:uni_3:0.24.2
 
 import uni.data.*
 
@@ -824,7 +824,7 @@ Raw financial and scientific datasets rarely arrive in clean form. `uni.data.Big
 ```scala
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.24.1
+//> using dep org.vastblue:uni_3:0.24.2
 
 import uni.data.*
 
