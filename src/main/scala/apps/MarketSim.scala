@@ -265,6 +265,14 @@ object MarketSim:
     "-releases     ; every fidelity ratio at every published default, plus the world this",
     "              ;   invocation describes — what a candidate costs against the whole history,",
     "              ;   not just the previous release",
+    "-worldset F   ; seed every dial from a member of an exported calibration archive, the",
+    "              ;   file jsrc/marketSimSearch.sc -export writes: a SET of worlds all",
+    "              ;   consistent with the record, so a verdict can be formed across it",
+    "              ;   rather than from one best fit.  Seeded as -atrelease is, and explicit",
+    "              ;   dial flags override it wherever they appear.  Refuses a file whose",
+    "              ;   dials are not exactly this binary's -- an omitted dial would take the",
+    "              ;   shipped default and be a different world under a member's name",
+    "-worldindex K ; which member of -worldset's file, by its own `member` number; default 0",
     "-atrelease V  ; seed every dial from release V's frozen world (the -releases rows, or the",
     "              ;   current version) so a pinned consumer takes binary fixes without taking a",
     "              ;   recalibration; explicit dial flags override it wherever they appear.  Or a",
@@ -5231,6 +5239,21 @@ object MarketSim:
     * getter the containment test reads back. */
   type DialRange = (String, Double, Double, (World, Double) => World, World => Double)
 
+  /** THE ORDER IS A CROSS-TWIN CONTRACT, restated here so a reorder fails a build rather than a
+    * diff.  `-calibrate` draws one uniform per dial from a single stream in table order, so a
+    * permutation hands every draw to a different dial: the twins sampled different worlds from
+    * the same seed for as long as their tables disagreed, and the loss gap that showed up
+    * downstream read like a rounding divergence in the scoring path.  It was this.  A search
+    * archive's columns are in this order too, so the order is also the archive's format.  Same
+    * shape as `EmitSchema` / `EMIT_SCHEMA`: the literal is in the model, checked by each twin's
+    * own contract test, and changing one twin without the other cannot pass. */
+  val CalibrateDialOrder: Vector[String] = Vector(
+    "depth", "trendShare", "drift", "fundVol", "crowdImpact", "stress", "valuePull",
+    "recoveryDrag", "recoveryFloor", "disasterRate", "disasterSize", "disasterRecover",
+    "beliefShare", "capYears", "volOfVol", "jumpVar", "jumpRate", "leverage", "downShock",
+    "jumpSkew", "newsRate", "newsSize", "refugeDays", "easing", "refuge", "inflSize",
+    "discount", "margin")
+
   val CalibrateRanges: Vector[DialRange] = Vector(
     ("depth",       8.0,  26.0, (w, x) => w.copy(depth = x), _.depth),
     ("trendShare",  0.05,  0.70, (w, x) => w.copy(trendShare = x), _.trendShare),
@@ -6006,18 +6029,51 @@ object MarketSim:
     * function, so the two judgements cannot be read off different ensembles, and the same
     * measurement `-noise` prints as `real@`.  One extra ensemble per distinct horizon, and only
     * `ExtremeTargets` need it, so at the shipped anchor sets that is exactly one. */
-  def extremeReadings(a: Anchors, paths: Int, seed: Long, w: World): Map[String, Vector[Double]] =
+  /** The horizons an `ExtremeTargets` row is read at -- the anchor group's own window length,
+    * never the caller's `-years`.  Exposed so a caller running AT one of them can simulate once
+    * instead of twice: see `extremeReadingsFrom`. */
+  def extremeHorizons(a: Anchors): Vector[Int] =
+    anchorGroups(a).filter((_, _, names) => names.exists(ExtremeTargets.contains)).map(_._2)
+
+  /** The fidelity rows read as a MEDIAN OF SINGLE HISTORIES rather than off the pooled ensemble.
+    * Exposed so a caller that has skipped the second ensemble knows which rows it therefore has
+    * no reading for, instead of scoring them as unmeasurable. */
+  def extremeTargetNames: Set[String] = ExtremeTargets
+
+  /** The single-history readings for every `ExtremeTargets` row whose group is read at `yrs`, from
+    * an ensemble the CALLER already holds.
+    *
+    * Split out of `extremeReadings` for one reason: the extreme row costs a SECOND ensemble at its
+    * own horizon, and that is over half of an evaluation -- 2.89 s against the main reading's
+    * 2.28 s at 60 x 80 on the shipped world.  A caller running at the extreme horizon is
+    * simulating exactly the same paths from exactly the same seed twice.  Nothing here changes
+    * what is computed.
+    *
+    * Each path is measured on its own, IN PARALLEL: `measure` is pure and the order is preserved,
+    * so the readings and their median are what they were. */
+  def extremeReadingsFrom(a: Anchors, sims: Vector[Path], yrs: Int): Map[String, Vector[Double]] =
+    val sts = java.util.stream.IntStream.range(0, sims.size).parallel()
+      .mapToObj(k => measure(Vector(sims(k)), yrs)).toArray()
+      .toVector.map(_.asInstanceOf[WorldStats])
     anchorGroups(a)
-      .map((_, yrs, names) => (yrs, names.filter(ExtremeTargets.contains)))
-      .filter(_._2.nonEmpty)
-      .flatMap { (yrs, names) =>
-        val sts = simPaths(w, paths, yrs, seed).map(p => measure(Vector(p), yrs))
-        names.map { nm =>
-          val (_, get, _, _) = fitTargets(a).find(_._1 == nm)
-            .getOrElse(usage(s"ExtremeTargets names [$nm], which is not a fidelity target"))
-          nm -> sts.map(get).filter(x => !x.isNaN)
-        }
-      }.toMap
+      .filter((_, gy, names) => gy == yrs && names.exists(ExtremeTargets.contains))
+      .flatMap((_, _, names) => names.filter(ExtremeTargets.contains).map { nm =>
+        val (_, get, _, _) = fitTargets(a).find(_._1 == nm)
+          .getOrElse(usage(s"ExtremeTargets names [$nm], which is not a fidelity target"))
+        nm -> sts.map(get).filter(x => !x.isNaN)
+      }).toMap
+
+  /** The median of `extremeReadingsFrom`, for an ensemble the caller already holds. */
+  def extremeScoreStatsFrom(a: Anchors, sims: Vector[Path], yrs: Int): Map[String, Double] =
+    extremeReadingsFrom(a, sims, yrs).map { (nm, xs) =>
+      val f = xs.filter(_.isFinite)
+      nm -> (if f.isEmpty then Double.NaN else f.sorted.apply(f.size / 2))
+    }
+
+  def extremeReadings(a: Anchors, paths: Int, seed: Long, w: World): Map[String, Vector[Double]] =
+    extremeHorizons(a)
+      .flatMap(yrs => extremeReadingsFrom(a, simPaths(w, paths, yrs, seed), yrs))
+      .toMap
 
   /** What the LOSS grades an extreme row by: the median of the single-history readings.  A median
     * of extremes converges as histories are added, where the pooled minimum deepens without
@@ -6586,49 +6642,103 @@ object MarketSim:
     }
     file.asPath.writeLines(rows)
 
+  /** Member `index` of an exported calibration archive, as ARGUMENTS.
+    *
+    * The `world` block is keyed by FLAG NAME by design -- `macro`, never the field's `macroPanel`
+    * -- so a loader has only to lowercase each key.  Turning the block into arguments and letting
+    * the ordinary flag loop set them keeps ONE rule where a second copy of 76 setters would be a
+    * parity surface, and it gives the member `-atrelease`'s precedence for free: a dial flag after
+    * `-worldset` still overrides it.
+    *
+    * The expected keys ARE `worldJsonBody`'s, read off its own output, so a dial added to the
+    * world cannot be silently skipped here.  A block that does not carry exactly them is REFUSED:
+    * a missing dial would take the shipped default, which is a different world wearing a member's
+    * name. */
+  def worldSetArgs(file: String, index: Int): Seq[String] =
+    val MemberLine = """^"member":\s*(\d+),?$""".r
+    val FieldLine  = """^"([A-Za-z][A-Za-z0-9]*)":\s*(.+?),?$""".r
+    val p = file.asPath
+    if !p.exists then usage(s"-worldset $file does not exist")
+    // The file this program writes: one `"key": value` a line inside a member's `world` block.  A
+    // general JSON parser would buy nothing here and cost a dependency -- a foreign file fails the
+    // key check below, which is the check that matters.
+    val ls = p.lines.toVector.map(_.trim)
+    val opens = ls.indices.filter(i => ls(i) == "\"world\": {").toVector
+    if opens.isEmpty then
+      usage(s"-worldset $file holds no world block; -export writes the file this reads")
+    val members = opens.map { i =>
+      val end = ls.indexWhere(_ == "}", i + 1)
+      if end < 0 then usage(s"-worldset $file: the world block at line ${i + 1} never closes")
+      val id = ls.take(i).reverse.collectFirst { case MemberLine(k) => k.toInt }
+      (id.getOrElse(usage(s"-worldset $file: the world block at line ${i + 1} has no member number")),
+       ls.slice(i + 1, end))
+    }
+    val block = members.collectFirst { case (k, b) if k == index => b }.getOrElse(usage(
+      s"-worldindex $index is not in $file: it holds ${members.length} members, " +
+      s"${members.map(_._1).min} to ${members.map(_._1).max}"))
+    val fields = block.map {
+      case FieldLine(k, v) => (k, v)
+      case l => usage(s"-worldset $file member $index: cannot read [$l] as a world field")
+    }
+    val want = worldJsonBody(Defaults).map(_.trim).collect { case FieldLine(k, _) => k }
+    if fields.map(_._1).sorted != want.sorted then
+      val missing = want.filterNot(fields.map(_._1).contains)
+      val extra = fields.map(_._1).filterNot(want.contains)
+      usage(s"-worldset $file member $index does not carry this binary's dials" +
+            (if missing.nonEmpty then s"; missing [${missing.mkString(", ")}]" else "") +
+            (if extra.nonEmpty then s"; unknown [${extra.mkString(", ")}]" else ""))
+    fields.flatMap { (k, v) =>
+      // a quoted value is a MODE name (`crowd`), which its flag takes unquoted
+      Seq("-" + k.toLowerCase, if v.startsWith("\"") then v.drop(1).dropRight(1) else v)
+    }
+
   /** Every `World` field, in declaration order, as the indented body of a JSON object.  A world
-    * that reaches a consumer without its parameters cannot be re-simulated. */
-  def worldJsonBody(w: World): Vector[String] =
+    * that reaches a consumer without its parameters cannot be re-simulated.
+    * `num` renders every dial, so a caller needing a different width than the report's asks for
+    * one here rather than keeping a second copy of the key list: the calibration search exports
+    * its archive at the archive's own width, because a consumer RECONSTRUCTS a world from this
+    * block and the report's six decimals drop digits the archive holds. */
+  def worldJsonBody(w: World, num: Double => String = ef): Vector[String] =
     Vector(
-      ("trendShare", ef(w.trendShare)), ("depth", ef(w.depth)), ("stress", ef(w.stress)),
-      ("beta", ef(w.beta)), ("drift", ef(w.drift)), ("fundVol", ef(w.fundVol)),
-      ("rateMean", ef(w.rateMean)), ("volPersist", ef(w.volPersist)),
-      ("volOfVol", ef(w.volOfVol)), ("leverage", ef(w.leverage)),
-      ("downShock", ef(w.downShock)), ("jumpSkew", ef(w.jumpSkew)), ("jumpVar", ef(w.jumpVar)),
-      ("jumpRate", ef(w.jumpRate)), ("newsRate", ef(w.newsRate)), ("newsSize", ef(w.newsSize)),
-      ("valuePull", ef(w.valuePull)),
-      ("recoveryDrag", ef(w.recoveryDrag)), ("recoveryFloor", ef(w.recoveryFloor)),
-      ("haltLimit", ef(w.haltLimit)),
-      ("disasterRate", ef(w.disasterRate)), ("disasterSize", ef(w.disasterSize)),
-      ("disasterLen", ef(w.disasterLen)), ("disasterRecover", ef(w.disasterRecover)),
-      ("disasterRecLen", ef(w.disasterRecLen)),
-      ("beliefShare", ef(w.beliefShare)), ("beliefYears", ef(w.beliefYears)),
-      ("capYears", ef(w.capYears)), ("capWindow", ef(w.capWindow)),
-      ("crowd", jsonStr(crowdName(w.crowd))), ("crowdImpact", ef(w.crowdImpact)),
-      ("panic", ef(w.panic)), ("duration", ef(w.duration)),
-      ("easing", ef(w.easing)), ("unwind", ef(w.unwind)), ("refuge", ef(w.refuge)),
-      ("refugeDays", ef(w.refugeDays)),
-      ("satBeta", ef(w.satBeta)), ("satIdio", ef(w.satIdio)),
-      ("rangeScale", ef(w.rangeScale)), ("rangeDown", ef(w.rangeDown)),
-      ("volIdio", ef(w.volIdio)), ("divYield", ef(w.divYield)), ("overnight", ef(w.overnight)),
-      ("basket", w.basket.toString), ("basketBeta", ef(w.basketBeta)),
-      ("basketSector", ef(w.basketSector)), ("basketIdio", ef(w.basketIdio)),
-      ("basketGaps", ef(w.basketGaps)), ("basketDrift", ef(w.basketDrift)),
+      ("trendShare", num(w.trendShare)), ("depth", num(w.depth)), ("stress", num(w.stress)),
+      ("beta", num(w.beta)), ("drift", num(w.drift)), ("fundVol", num(w.fundVol)),
+      ("rateMean", num(w.rateMean)), ("volPersist", num(w.volPersist)),
+      ("volOfVol", num(w.volOfVol)), ("leverage", num(w.leverage)),
+      ("downShock", num(w.downShock)), ("jumpSkew", num(w.jumpSkew)), ("jumpVar", num(w.jumpVar)),
+      ("jumpRate", num(w.jumpRate)), ("newsRate", num(w.newsRate)), ("newsSize", num(w.newsSize)),
+      ("valuePull", num(w.valuePull)),
+      ("recoveryDrag", num(w.recoveryDrag)), ("recoveryFloor", num(w.recoveryFloor)),
+      ("haltLimit", num(w.haltLimit)),
+      ("disasterRate", num(w.disasterRate)), ("disasterSize", num(w.disasterSize)),
+      ("disasterLen", num(w.disasterLen)), ("disasterRecover", num(w.disasterRecover)),
+      ("disasterRecLen", num(w.disasterRecLen)),
+      ("beliefShare", num(w.beliefShare)), ("beliefYears", num(w.beliefYears)),
+      ("capYears", num(w.capYears)), ("capWindow", num(w.capWindow)),
+      ("crowd", jsonStr(crowdName(w.crowd))), ("crowdImpact", num(w.crowdImpact)),
+      ("panic", num(w.panic)), ("duration", num(w.duration)),
+      ("easing", num(w.easing)), ("unwind", num(w.unwind)), ("refuge", num(w.refuge)),
+      ("refugeDays", num(w.refugeDays)),
+      ("satBeta", num(w.satBeta)), ("satIdio", num(w.satIdio)),
+      ("rangeScale", num(w.rangeScale)), ("rangeDown", num(w.rangeDown)),
+      ("volIdio", num(w.volIdio)), ("divYield", num(w.divYield)), ("overnight", num(w.overnight)),
+      ("basket", w.basket.toString), ("basketBeta", num(w.basketBeta)),
+      ("basketSector", num(w.basketSector)), ("basketIdio", num(w.basketIdio)),
+      ("basketGaps", num(w.basketGaps)), ("basketDrift", num(w.basketDrift)),
       // the flag's name, as every dial's key is: the FIELD is `macroPanel` only because `macro`
       // is a reserved word in Scala, and a consumer reconstructing a world from this block passes
       // `-macro`
-      ("macro", w.macroPanel.toString), ("levGain", ef(w.levGain)), ("stressScale", ef(w.stressScale)),
-      ("levPersist", ef(w.levPersist)), ("noiseAsym", ef(w.noiseAsym)),
-      ("noiseAsymPhi", ef(w.noiseAsymPhi)), ("noiseAsymCap", ef(w.noiseAsymCap)),
-      ("volResp", ef(w.volResp)), ("volRespPhi", ef(w.volRespPhi)),
-      ("volRespCap", ef(w.volRespCap)), ("volRespAttack", ef(w.volRespAttack)),
-      ("jumpResp", ef(w.jumpResp)), ("stressAdapt", ef(w.stressAdapt)),
-      ("slowShare", ef(w.slowShare)), ("slowVol", ef(w.slowVol)), ("slowLev", ef(w.slowLev)),
-      ("slowPhi", ef(w.slowPhi)), ("slowPerm", ef(w.slowPerm)), ("slowBeta", ef(w.slowBeta)),
+      ("macro", w.macroPanel.toString), ("levGain", num(w.levGain)), ("stressScale", num(w.stressScale)),
+      ("levPersist", num(w.levPersist)), ("noiseAsym", num(w.noiseAsym)),
+      ("noiseAsymPhi", num(w.noiseAsymPhi)), ("noiseAsymCap", num(w.noiseAsymCap)),
+      ("volResp", num(w.volResp)), ("volRespPhi", num(w.volRespPhi)),
+      ("volRespCap", num(w.volRespCap)), ("volRespAttack", num(w.volRespAttack)),
+      ("jumpResp", num(w.jumpResp)), ("stressAdapt", num(w.stressAdapt)),
+      ("slowShare", num(w.slowShare)), ("slowVol", num(w.slowVol)), ("slowLev", num(w.slowLev)),
+      ("slowPhi", num(w.slowPhi)), ("slowPerm", num(w.slowPerm)), ("slowBeta", num(w.slowBeta)),
       ("macroNull", w.macroNull.toString),
-      ("inflProb", ef(w.inflProb)), ("inflSize", ef(w.inflSize)),
-      ("inflSpeed", ef(w.inflSpeed)), ("rateSpeed", ef(w.rateSpeed)),
-      ("discount", ef(w.discount)), ("margin", ef(w.margin)),
+      ("inflProb", num(w.inflProb)), ("inflSize", num(w.inflSize)),
+      ("inflSpeed", num(w.inflSpeed)), ("rateSpeed", num(w.rateSpeed)),
+      ("discount", num(w.discount)), ("margin", num(w.margin)),
     ).map((nm, v) => s"""    ${jsonStr(nm)}: $v""")
 
   /** The channel readings the `satellite *` / `bar *` gate rows grade, as DATA: `fidelityFailed`
@@ -6946,6 +7056,25 @@ object MarketSim:
             s"${Recipes.map(_._1).mkString("[", ", ", "]")}"))
     // A recipe carries the anchor set it was verified against; `-anchors` in the loop overrides.
     recipeAnchors.foreach(a => anchorSpec = a)
+    // `-worldset F -worldindex K` runs member K of an exported archive.  Pre-scanned as
+    // `-atrelease` is, but it arrives as ARGUMENTS placed BEFORE the command line's own, so a
+    // dial flag after it still overrides the member.
+    val worldSet: Seq[String] =
+      args.indexOf("-worldset") match
+        case -1 =>
+          if args.contains("-worldindex") then usage("-worldindex wants -worldset")
+          Seq.empty
+        case i =>
+          if args.indexOf("-worldset", i + 1) >= 0 then usage("-worldset given twice")
+          if args.indexOf("-atrelease") >= 0 then
+            usage("-worldset and -atrelease each name a whole world; give one")
+          if i + 1 >= args.length then usage("-worldset wants an exported archive file")
+          val k = args.indexOf("-worldindex") match
+            case -1 => 0
+            case j  =>
+              if j + 1 >= args.length then usage("-worldindex wants a member number")
+              intOr("-worldindex", args(j + 1))
+          worldSetArgs(args(i + 1), k)
     var trendShare = dw.trendShare; var depth = dw.depth
     var stress = dw.stress; var beta = dw.beta
     var volPersist = dw.volPersist; var volOfVol = dw.volOfVol
@@ -6987,7 +7116,7 @@ object MarketSim:
     var inflProb = dw.inflProb; var inflSize = dw.inflSize
     var inflSpeed = dw.inflSpeed; var rateSpeed = dw.rateSpeed
     var discount = dw.discount; var margin = dw.margin
-    eachArg(args.toSeq, usage) {
+    eachArg(worldSet ++ args.toSeq, usage) {
       // Bare version on stdout and nothing else, so a caller can gate on it without parsing:
       // `[ "$(marketSim.sc -version)" = "$want" ] || exit 1`.  Handled where it is seen, so it
       // answers before any other flag is validated.
@@ -7029,11 +7158,16 @@ object MarketSim:
       case "-jumpskew"   => jumpSkew = numOr("-jumpskew", consumeNext)
       case "-newsrate"   => newsRate = numOr("-newsrate", consumeNext)
       case "-newssize"   => newsSize = numOr("-newssize", consumeNext)
-      case "-value"      => valuePull = numOr("-value", consumeNext)
+      // `-valuepull` names the DIAL, which is the key `worldJsonBody` writes and so the flag
+      // `-worldset` synthesizes; `-value` is kept because it shipped.
+      case a @ ("-value" | "-valuepull") => valuePull = numOr(a, consumeNext)
       case "-anchors"    => anchorSpec = consumeNext
       // Applied in the pre-scan that seeded `dw`; consumed here so the loop does not reject it
       // as unknown.
       case "-atrelease"  => val _ = consumeNext
+      // Likewise: the pre-scan already turned the member into the arguments ahead of these.
+      case "-worldset"   => val _ = consumeNext
+      case "-worldindex" => val _ = consumeNext
       case "-recoverydrag"  => recoveryDrag = numOr("-recoverydrag", consumeNext)
       case "-recoveryfloor" => recoveryFloor = numOr("-recoveryfloor", consumeNext)
       case "-disasterrate"  => disasterRate = numOr("-disasterrate", consumeNext)

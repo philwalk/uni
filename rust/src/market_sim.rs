@@ -4649,7 +4649,7 @@ fn med(v: &[f64]) -> f64 {
 /// slots and biases every quantile DOWNWARD rather than propagating the NaN. A contaminated ensemble
 /// read a 6.17% median volatility against a 15.7% baseline that way. A quantile is the wrong place
 /// to LEARN that an ensemble was contaminated -- the reports count that directly.
-fn pctile(v: &[f64], q: f64) -> f64 {
+pub fn pctile(v: &[f64], q: f64) -> f64 {
     let f: Vec<f64> = v.iter().copied().filter(|x| x.is_finite()).collect();
     if f.is_empty() {
         return f64::NAN;
@@ -6645,7 +6645,7 @@ type StatFn = fn(&WorldStats) -> f64;
 /// measurable as a target whose single-history sd is 20% of its anchor" — near the median of the
 /// measured set, and chosen so the weights SUM to about what the equal-precision objective's did
 /// (12.2 against 12.5), which keeps the 0.5-per-failed-gate penalty at its established bite.
-const SD_REL_REF: f64 = 0.20;
+pub const SD_REL_REF: f64 = 0.20;
 
 /// A fidelity weight: JUDGMENT x measured PRECISION.
 ///
@@ -7403,28 +7403,54 @@ fn anchor_horizon(a: Anchors, name: &str) -> usize {
 /// so the two judgements cannot be read off different ensembles, and the same measurement
 /// `-noise` prints as `real@`. One extra ensemble per distinct horizon, and only
 /// `EXTREME_TARGETS` need it, so at the shipped anchor sets that is exactly one.
-fn extreme_readings(
+/// The fidelity rows that are read as a MEDIAN OF SINGLE HISTORIES rather than off the pooled
+/// ensemble. Exposed so a caller that has skipped the second ensemble knows which rows it
+/// therefore has no reading for, instead of scoring them as unmeasurable.
+pub fn extreme_target_names() -> &'static [&'static str] {
+    EXTREME_TARGETS
+}
+
+/// The horizons an `EXTREME_TARGETS` row is read at — the anchor group's own window length,
+/// never the caller's `-years`. Exposed so a caller running AT one of them can simulate once
+/// instead of twice: see `extreme_readings_from`.
+pub fn extreme_horizons(a: Anchors) -> Vec<usize> {
+    anchor_groups(a)
+        .into_iter()
+        .filter(|(_, _, names)| names.iter().any(|n| EXTREME_TARGETS.contains(n)))
+        .map(|(_, yrs, _)| yrs)
+        .collect()
+}
+
+/// The single-history readings for every `EXTREME_TARGETS` row whose group is read at `yrs`,
+/// from an ensemble the CALLER already holds.
+///
+/// Split out of `extreme_readings` for one reason: the extreme row costs a SECOND ensemble at its
+/// own horizon, and that is over half of an evaluation — 2.89 s against the main reading's 2.28 s
+/// at 60 x 80 on the shipped world. A caller running at the extreme horizon is simulating exactly
+/// the same paths from exactly the same seed twice. Nothing here changes what is computed.
+///
+/// Each path is measured on its own, in PARALLEL: `measure` is pure and the collect preserves
+/// order, so the readings and their median are what they were.
+pub fn extreme_readings_from(
     a: Anchors,
-    paths: usize,
-    seed: u64,
-    w: &World,
+    sims: &[Path],
+    yrs: usize,
 ) -> std::collections::HashMap<&'static str, Vec<f64>> {
     let mut out: std::collections::HashMap<&'static str, Vec<f64>> =
         std::collections::HashMap::new();
-    for (_, yrs, names) in anchor_groups(a) {
-        let extreme: Vec<&'static str> = names
+    let sts: Vec<WorldStats> = sims
+        .par_iter()
+        .map(|p| measure(std::slice::from_ref(p), yrs))
+        .collect();
+    for (_, gy, names) in anchor_groups(a) {
+        if gy != yrs {
+            continue;
+        }
+        for nm in names
             .iter()
             .copied()
             .filter(|n| EXTREME_TARGETS.contains(n))
-            .collect();
-        if extreme.is_empty() {
-            continue;
-        }
-        let sts: Vec<WorldStats> = sim_paths(w, paths, yrs, seed)
-            .into_iter()
-            .map(|p| measure(std::slice::from_ref(&p), yrs))
-            .collect();
-        for nm in extreme {
+        {
             let Some((_, get, _, _)) = fit_targets(a).into_iter().find(|(n, _, _, _)| *n == nm)
             else {
                 cli_die(&format!(
@@ -7437,11 +7463,41 @@ fn extreme_readings(
     out
 }
 
+/// The median of `extreme_readings_from`, for an ensemble the caller already holds.
+pub fn extreme_score_stats_from(
+    a: Anchors,
+    sims: &[Path],
+    yrs: usize,
+) -> std::collections::HashMap<&'static str, f64> {
+    extreme_readings_from(a, sims, yrs)
+        .into_iter()
+        .map(|(nm, xs)| (nm, med(&xs)))
+        .collect()
+}
+
+fn extreme_readings(
+    a: Anchors,
+    paths: usize,
+    seed: u64,
+    w: &World,
+) -> std::collections::HashMap<&'static str, Vec<f64>> {
+    let mut out: std::collections::HashMap<&'static str, Vec<f64>> =
+        std::collections::HashMap::new();
+    for yrs in extreme_horizons(a) {
+        out.extend(extreme_readings_from(
+            a,
+            &sim_paths(w, paths, yrs, seed),
+            yrs,
+        ));
+    }
+    out
+}
+
 /// What the LOSS grades an extreme row by: the median of the single-history readings. A median of
 /// extremes converges as histories are added, where the pooled minimum deepens without bound. NaN
 /// where the ensemble produced no finite reading, which `fitness` prices as unmeasurable rather
 /// than as agreement.
-fn extreme_score_stats(
+pub fn extreme_score_stats(
     a: Anchors,
     histories: usize,
     seed: u64,
@@ -7528,7 +7584,7 @@ fn scala_sign(x: f64) -> f64 {
 /// `extreme_score_stats` — the loss must never price the pooled minimum those rows' StatFn
 /// computes, so the caller supplies the converging statistic explicitly and a missing entry
 /// prices as unmeasurable rather than silently falling back.
-fn fitness(
+pub fn fitness(
     a: Anchors,
     st: &WorldStats,
     extreme_stats: &std::collections::HashMap<&'static str, f64>,
@@ -8324,8 +8380,8 @@ fn n_star_str(x: f64) -> String {
 
 // ---- calibration search -----------------------------------------------------------------
 
-type Setter = fn(&mut World, f64);
-type Getter = fn(&World) -> f64;
+pub type Setter = fn(&mut World, f64);
+pub type Getter = fn(&World) -> f64;
 
 /// Parameters that say WHICH ASSET is being simulated, not how a market behaves. Each is a real
 /// fund's published number: MEASURED once and then held, never fitted. `-calibrate` must not
@@ -8338,7 +8394,8 @@ type Getter = fn(&World) -> f64;
 /// Enforced by `contract_tests` against `calibrate_ranges`, not by this comment: the 0.20.0
 /// re-search proposed `duration = 11.1` and was refused by hand, and a rule that lives in someone's
 /// memory of that refusal is one range row away from being lost.
-// Referenced only from the test module below; the search reads its own ranges, never this list.
+// Referenced only from the test module below: the rule is a contract on the ranges table, not
+// a value any search reads.
 #[cfg_attr(
     not(test),
     expect(
@@ -8347,6 +8404,45 @@ type Getter = fn(&World) -> f64;
     )
 )]
 const IDENTITY_PARAMS: &[&str] = &["duration", "divYield"];
+
+/// THE ORDER IS A CROSS-TWIN CONTRACT, restated here so a reorder fails a build rather than a
+/// diff. `-calibrate` draws one uniform per dial from a single stream in table order, so a
+/// permutation hands every draw to a different dial: the twins sampled different worlds from the
+/// same seed for as long as their tables disagreed, and the loss gap that showed up downstream
+/// read like a rounding divergence in the scoring path. It was this. A search archive's columns
+/// are in this order too, so the order is also the archive's format. Same shape as `EMIT_SCHEMA` /
+/// `EmitSchema`: the literal is in the model, checked by each twin's own contract test, and
+/// changing one twin without the other cannot pass.
+pub const CALIBRATE_DIAL_ORDER: [&str; 28] = [
+    "depth",
+    "trendShare",
+    "drift",
+    "fundVol",
+    "crowdImpact",
+    "stress",
+    "valuePull",
+    "recoveryDrag",
+    "recoveryFloor",
+    "disasterRate",
+    "disasterSize",
+    "disasterRecover",
+    "beliefShare",
+    "capYears",
+    "volOfVol",
+    "jumpVar",
+    "jumpRate",
+    "leverage",
+    "downShock",
+    "jumpSkew",
+    "newsRate",
+    "newsSize",
+    "refugeDays",
+    "easing",
+    "refuge",
+    "inflSize",
+    "discount",
+    "margin",
+];
 
 /// What `-calibrate` samples, and the ONLY place a searchable parameter is declared. A function
 /// rather than an inline `vec!` so the identity-parameter rule above can be tested against it.
@@ -8364,7 +8460,7 @@ const IDENTITY_PARAMS: &[&str] = &["duration", "divYield"];
     clippy::too_many_lines,
     reason = "one row per searched dial, mirroring the Scala twin's table; splitting it would               put the bounds somewhere other than beside the dial they bound"
 )]
-fn calibrate_ranges() -> Vec<(&'static str, f64, f64, Setter, Getter)> {
+pub fn calibrate_ranges() -> Vec<(&'static str, f64, f64, Setter, Getter)> {
     vec![
         ("depth", 8.0, 26.0, |w, x| w.depth = x, |w| w.depth),
         (
@@ -8451,6 +8547,25 @@ fn calibrate_ranges() -> Vec<(&'static str, f64, f64, Setter, Getter)> {
             |w, x| w.cap_years = x,
             |w| w.cap_years,
         ),
+        (
+            "volOfVol",
+            0.010,
+            0.030,
+            |w, x| w.vol_of_vol = x,
+            |w| w.vol_of_vol,
+        ),
+        // In the ranges from the release it arrived in. `fund_vol` sat outside them for four
+        // releases and that is exactly why its defect survived four releases of one-knob-at-a-time
+        // sweeps; a mechanism the search cannot reach is a mechanism nobody will find the wrong
+        // value of.
+        ("jumpVar", 0.00, 0.20, |w, x| w.jump_var = x, |w| w.jump_var),
+        (
+            "jumpRate",
+            0.0,
+            0.006,
+            |w, x| w.jump_rate = x,
+            |w| w.jump_rate,
+        ),
         // The asymmetry pair and the jump shift, in the ranges the hand sweeps mapped: leverage
         // reaches the `leverage corr` anchor near 0.10 under the saturation cap, downShock pays
         // vr60 ~+0.02 per 0.01 so the band bounds it near 0.03, and the best hand candidate
@@ -8492,25 +8607,6 @@ fn calibrate_ranges() -> Vec<(&'static str, f64, f64, Setter, Getter)> {
             3.0,
             |w, x| w.refuge_days = x,
             |w| w.refuge_days,
-        ),
-        (
-            "volOfVol",
-            0.010,
-            0.030,
-            |w, x| w.vol_of_vol = x,
-            |w| w.vol_of_vol,
-        ),
-        // In the ranges from the release it arrived in. `fund_vol` sat outside them for four
-        // releases and that is exactly why its defect survived four releases of one-knob-at-a-time
-        // sweeps; a mechanism the search cannot reach is a mechanism nobody will find the wrong
-        // value of.
-        ("jumpVar", 0.00, 0.20, |w, x| w.jump_var = x, |w| w.jump_var),
-        (
-            "jumpRate",
-            0.0,
-            0.006,
-            |w, x| w.jump_rate = x,
-            |w| w.jump_rate,
         ),
         ("easing", 0.0, 0.09, |w, x| w.easing = x, |w| w.easing),
         ("refuge", 0.0, 0.20, |w, x| w.refuge = x, |w| w.refuge),
@@ -11251,86 +11347,95 @@ pub fn write_emit_tsv(file: &str, p: &Path, dates: &[String]) {
 
 /// Every `World` field, in declaration order, as the indented body of a JSON object. A world
 /// that reaches a consumer without its parameters cannot be re-simulated.
-fn world_json_body(w: &World) -> Vec<String> {
+/// The world under its CLI flag names, at the sidecar's own width.
+pub fn world_json_body(w: &World) -> Vec<String> {
+    world_json_body_fmt(w, &ef)
+}
+
+/// As above, with every dial rendered by `num`. A caller needing a different width than the
+/// report's asks for one here rather than keeping a second copy of the key list: the calibration
+/// search exports its archive at the archive's own width, because a consumer RECONSTRUCTS a world
+/// from this block and the report's six decimals drop digits the archive holds.
+pub fn world_json_body_fmt(w: &World, num: &dyn Fn(f64) -> String) -> Vec<String> {
     let fields: Vec<(&str, String)> = vec![
-        ("trendShare", ef(w.trend_share)),
-        ("depth", ef(w.depth)),
-        ("stress", ef(w.stress)),
-        ("beta", ef(w.beta)),
-        ("drift", ef(w.drift)),
-        ("fundVol", ef(w.fund_vol)),
-        ("rateMean", ef(w.rate_mean)),
-        ("volPersist", ef(w.vol_persist)),
-        ("volOfVol", ef(w.vol_of_vol)),
-        ("leverage", ef(w.leverage)),
-        ("downShock", ef(w.down_shock)),
-        ("jumpSkew", ef(w.jump_skew)),
-        ("jumpVar", ef(w.jump_var)),
-        ("jumpRate", ef(w.jump_rate)),
-        ("newsRate", ef(w.news_rate)),
-        ("newsSize", ef(w.news_size)),
-        ("valuePull", ef(w.value_pull)),
-        ("recoveryDrag", ef(w.recovery_drag)),
-        ("recoveryFloor", ef(w.recovery_floor)),
-        ("haltLimit", ef(w.halt_limit)),
-        ("disasterRate", ef(w.disaster_rate)),
-        ("disasterSize", ef(w.disaster_size)),
-        ("disasterLen", ef(w.disaster_len)),
-        ("disasterRecover", ef(w.disaster_recover)),
-        ("disasterRecLen", ef(w.disaster_rec_len)),
-        ("beliefShare", ef(w.belief_share)),
-        ("beliefYears", ef(w.belief_years)),
-        ("capYears", ef(w.cap_years)),
-        ("capWindow", ef(w.cap_window)),
+        ("trendShare", num(w.trend_share)),
+        ("depth", num(w.depth)),
+        ("stress", num(w.stress)),
+        ("beta", num(w.beta)),
+        ("drift", num(w.drift)),
+        ("fundVol", num(w.fund_vol)),
+        ("rateMean", num(w.rate_mean)),
+        ("volPersist", num(w.vol_persist)),
+        ("volOfVol", num(w.vol_of_vol)),
+        ("leverage", num(w.leverage)),
+        ("downShock", num(w.down_shock)),
+        ("jumpSkew", num(w.jump_skew)),
+        ("jumpVar", num(w.jump_var)),
+        ("jumpRate", num(w.jump_rate)),
+        ("newsRate", num(w.news_rate)),
+        ("newsSize", num(w.news_size)),
+        ("valuePull", num(w.value_pull)),
+        ("recoveryDrag", num(w.recovery_drag)),
+        ("recoveryFloor", num(w.recovery_floor)),
+        ("haltLimit", num(w.halt_limit)),
+        ("disasterRate", num(w.disaster_rate)),
+        ("disasterSize", num(w.disaster_size)),
+        ("disasterLen", num(w.disaster_len)),
+        ("disasterRecover", num(w.disaster_recover)),
+        ("disasterRecLen", num(w.disaster_rec_len)),
+        ("beliefShare", num(w.belief_share)),
+        ("beliefYears", num(w.belief_years)),
+        ("capYears", num(w.cap_years)),
+        ("capWindow", num(w.cap_window)),
         ("crowd", json_str(&crowd_name(w.crowd))),
-        ("crowdImpact", ef(w.crowd_impact)),
-        ("panic", ef(w.panic)),
-        ("duration", ef(w.duration)),
-        ("easing", ef(w.easing)),
-        ("unwind", ef(w.unwind)),
-        ("refuge", ef(w.refuge)),
-        ("refugeDays", ef(w.refuge_days)),
-        ("satBeta", ef(w.sat_beta)),
-        ("satIdio", ef(w.sat_idio)),
-        ("rangeScale", ef(w.range_scale)),
-        ("rangeDown", ef(w.range_down)),
-        ("volIdio", ef(w.vol_idio)),
-        ("divYield", ef(w.div_yield)),
-        ("overnight", ef(w.overnight)),
+        ("crowdImpact", num(w.crowd_impact)),
+        ("panic", num(w.panic)),
+        ("duration", num(w.duration)),
+        ("easing", num(w.easing)),
+        ("unwind", num(w.unwind)),
+        ("refuge", num(w.refuge)),
+        ("refugeDays", num(w.refuge_days)),
+        ("satBeta", num(w.sat_beta)),
+        ("satIdio", num(w.sat_idio)),
+        ("rangeScale", num(w.range_scale)),
+        ("rangeDown", num(w.range_down)),
+        ("volIdio", num(w.vol_idio)),
+        ("divYield", num(w.div_yield)),
+        ("overnight", num(w.overnight)),
         ("basket", w.basket.to_string()),
-        ("basketBeta", ef(w.basket_beta)),
-        ("basketSector", ef(w.basket_sector)),
-        ("basketIdio", ef(w.basket_idio)),
-        ("basketGaps", ef(w.basket_gaps)),
-        ("basketDrift", ef(w.basket_drift)),
+        ("basketBeta", num(w.basket_beta)),
+        ("basketSector", num(w.basket_sector)),
+        ("basketIdio", num(w.basket_idio)),
+        ("basketGaps", num(w.basket_gaps)),
+        ("basketDrift", num(w.basket_drift)),
         // the flag's name, as every dial's key is: the field is `macro_panel` only because the
         // Scala twin's cannot be `macro`, a reserved word there
         ("macro", w.macro_panel.to_string()),
-        ("levGain", ef(w.lev_gain)),
-        ("stressScale", ef(w.stress_scale)),
-        ("levPersist", ef(w.lev_persist)),
-        ("noiseAsym", ef(w.noise_asym)),
-        ("noiseAsymPhi", ef(w.noise_asym_phi)),
-        ("noiseAsymCap", ef(w.noise_asym_cap)),
-        ("volResp", ef(w.vol_resp)),
-        ("volRespPhi", ef(w.vol_resp_phi)),
-        ("volRespCap", ef(w.vol_resp_cap)),
-        ("volRespAttack", ef(w.vol_resp_attack)),
-        ("jumpResp", ef(w.jump_resp)),
-        ("stressAdapt", ef(w.stress_adapt)),
-        ("slowShare", ef(w.slow_share)),
-        ("slowVol", ef(w.slow_vol)),
-        ("slowLev", ef(w.slow_lev)),
-        ("slowPhi", ef(w.slow_phi)),
-        ("slowPerm", ef(w.slow_perm)),
-        ("slowBeta", ef(w.slow_beta)),
+        ("levGain", num(w.lev_gain)),
+        ("stressScale", num(w.stress_scale)),
+        ("levPersist", num(w.lev_persist)),
+        ("noiseAsym", num(w.noise_asym)),
+        ("noiseAsymPhi", num(w.noise_asym_phi)),
+        ("noiseAsymCap", num(w.noise_asym_cap)),
+        ("volResp", num(w.vol_resp)),
+        ("volRespPhi", num(w.vol_resp_phi)),
+        ("volRespCap", num(w.vol_resp_cap)),
+        ("volRespAttack", num(w.vol_resp_attack)),
+        ("jumpResp", num(w.jump_resp)),
+        ("stressAdapt", num(w.stress_adapt)),
+        ("slowShare", num(w.slow_share)),
+        ("slowVol", num(w.slow_vol)),
+        ("slowLev", num(w.slow_lev)),
+        ("slowPhi", num(w.slow_phi)),
+        ("slowPerm", num(w.slow_perm)),
+        ("slowBeta", num(w.slow_beta)),
         ("macroNull", w.macro_null.to_string()),
-        ("inflProb", ef(w.infl_prob)),
-        ("inflSize", ef(w.infl_size)),
-        ("inflSpeed", ef(w.infl_speed)),
-        ("rateSpeed", ef(w.rate_speed)),
-        ("discount", ef(w.discount)),
-        ("margin", ef(w.margin)),
+        ("inflProb", num(w.infl_prob)),
+        ("inflSize", num(w.infl_size)),
+        ("inflSpeed", num(w.infl_speed)),
+        ("rateSpeed", num(w.rate_speed)),
+        ("discount", num(w.discount)),
+        ("margin", num(w.margin)),
     ];
     fields
         .iter()
@@ -11705,6 +11810,161 @@ fn write_emit_sidecar(
     write_or_die(&sidecar_name(file), &format!("{}\n", json.join("\n")));
 }
 
+/// One `"key": value` line of a machine-written world block, as (key, value). `None` for anything
+/// else, which is how the block's braces and a member's provenance rows are skipped.
+fn json_field(l: &str) -> Option<(String, String)> {
+    let (k, rest) = l.strip_prefix('"')?.split_once("\":")?;
+    if k.is_empty() || !k.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return None;
+    }
+    let v = rest.trim().trim_end_matches(',').trim();
+    if v.is_empty() || v == "{" {
+        return None;
+    }
+    Some((k.to_string(), v.to_string()))
+}
+
+/// Member `index` of an exported calibration archive, as ARGUMENTS.
+///
+/// The `world` block is keyed by FLAG NAME by design -- `macro`, never the field's `macro_panel`
+/// -- so a loader has only to lowercase each key. Turning the block into arguments and letting the
+/// ordinary flag loop set them keeps ONE rule where a second copy of 76 setters would be a parity
+/// surface, and it gives the member `-atrelease`'s precedence for free: a dial flag after
+/// `-worldset` still overrides it.
+///
+/// The expected keys ARE `world_json_body`'s, read off its own output, so a dial added to the world
+/// cannot be silently skipped here. A block not carrying exactly them is REFUSED: a missing dial
+/// would take the shipped default, which is a different world wearing a member's name.
+///
+/// `Err` rather than `cli_die` so the refusals are testable -- `cli_die` exits the process, where
+/// the Scala twin's `usage` can have its exit swapped for a throw. Same rules, both sides.
+fn world_set_flags(text: &str, file: &str, index: i64) -> Result<Vec<String>, String> {
+    // The file the search writes: one `"key": value` a line inside a member's `world` block. A
+    // general JSON parser would buy nothing here and cost a dependency -- a foreign file fails the
+    // key check below, which is the check that matters.
+    let ls: Vec<&str> = text.lines().map(str::trim).collect();
+    let opens: Vec<usize> = (0..ls.len()).filter(|&i| ls[i] == "\"world\": {").collect();
+    if opens.is_empty() {
+        return Err(format!(
+            "-worldset {file} holds no world block; -export writes the file this reads"
+        ));
+    }
+    let mut members: Vec<(i64, &[&str])> = Vec::with_capacity(opens.len());
+    for &i in &opens {
+        let Some(end) = (i + 1..ls.len()).find(|&j| ls[j] == "}") else {
+            return Err(format!(
+                "-worldset {file}: the world block at line {} never closes",
+                i + 1
+            ));
+        };
+        let id = ls[..i].iter().rev().find_map(|l| match json_field(l) {
+            Some((k, v)) if k == "member" => v.parse::<i64>().ok(),
+            _ => None,
+        });
+        let Some(id) = id else {
+            return Err(format!(
+                "-worldset {file}: the world block at line {} has no member number",
+                i + 1
+            ));
+        };
+        members.push((id, &ls[i + 1..end]));
+    }
+    let Some(block) = members.iter().find(|(k, _)| *k == index).map(|(_, b)| *b) else {
+        return Err(format!(
+            "-worldindex {index} is not in {file}: it holds {} members, {} to {}",
+            members.len(),
+            members.iter().map(|(k, _)| *k).min().unwrap_or(0),
+            members.iter().map(|(k, _)| *k).max().unwrap_or(0)
+        ));
+    };
+    let mut fields: Vec<(String, String)> = Vec::with_capacity(block.len());
+    for l in block {
+        let Some(kv) = json_field(l) else {
+            return Err(format!(
+                "-worldset {file} member {index}: cannot read [{l}] as a world field"
+            ));
+        };
+        fields.push(kv);
+    }
+    let want: Vec<String> = world_json_body(&default_world())
+        .iter()
+        .filter_map(|l| json_field(l.trim()).map(|(k, _)| k))
+        .collect();
+    let got: Vec<String> = fields.iter().map(|(k, _)| k.clone()).collect();
+    let mut seen = got.clone();
+    let mut expect = want.clone();
+    seen.sort();
+    expect.sort();
+    if seen != expect {
+        let missing: Vec<&str> = want
+            .iter()
+            .filter(|k| !got.contains(*k))
+            .map(String::as_str)
+            .collect();
+        let extra: Vec<&str> = got
+            .iter()
+            .filter(|k| !want.contains(*k))
+            .map(String::as_str)
+            .collect();
+        let mut m = format!("-worldset {file} member {index} does not carry this binary's dials");
+        if !missing.is_empty() {
+            m.push_str(&format!("; missing [{}]", missing.join(", ")));
+        }
+        if !extra.is_empty() {
+            m.push_str(&format!("; unknown [{}]", extra.join(", ")));
+        }
+        return Err(m);
+    }
+    Ok(fields
+        .iter()
+        .flat_map(|(k, v)| {
+            // a quoted value is a MODE name (`crowd`), which its flag takes unquoted
+            let val = v
+                .strip_prefix('"')
+                .and_then(|x| x.strip_suffix('"'))
+                .unwrap_or(v);
+            [format!("-{}", k.to_lowercase()), val.to_string()]
+        })
+        .collect())
+}
+
+/// `-worldset F -worldindex K` runs member K of an exported archive. Pre-scanned as `-atrelease`
+/// is, but it arrives as ARGUMENTS placed BEFORE the command line's own, so a dial flag after it
+/// still overrides the member.
+fn with_world_set(args: Vec<String>) -> Vec<String> {
+    let Some(i) = args.iter().position(|a| a == "-worldset") else {
+        if args.iter().any(|a| a == "-worldindex") {
+            cli_die("-worldindex wants -worldset");
+        }
+        return args;
+    };
+    if args[i + 1..].iter().any(|a| a == "-worldset") {
+        cli_die("-worldset given twice");
+    }
+    if args.iter().any(|a| a == "-atrelease") {
+        cli_die("-worldset and -atrelease each name a whole world; give one");
+    }
+    let file = args
+        .get(i + 1)
+        .cloned()
+        .unwrap_or_else(|| cli_die("-worldset wants an exported archive file"));
+    let index = match args.iter().position(|a| a == "-worldindex") {
+        None => 0,
+        Some(j) => args
+            .get(j + 1)
+            .and_then(|v| v.parse::<i64>().ok())
+            .unwrap_or_else(|| cli_die("-worldindex wants a member number")),
+    };
+    if !std::path::Path::new(&file).exists() {
+        cli_die(&format!("-worldset {file} does not exist"));
+    }
+    let text = std::fs::read_to_string(&file)
+        .unwrap_or_else(|e| cli_die(&format!("-worldset {file} cannot be read: {e}")));
+    let mut out = world_set_flags(&text, &file, index).unwrap_or_else(|m| cli_die(&m));
+    out.extend(args);
+    out
+}
+
 #[expect(
     clippy::too_many_lines,
     reason = "one linear report, mirroring the Scala twin's main statement for statement"
@@ -11715,6 +11975,7 @@ fn write_emit_sidecar(
 )]
 pub fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    let args = with_world_set(args);
 
     let mut paths = 200usize;
     let mut years = 100usize;
@@ -12004,6 +12265,14 @@ pub fn main() {
             "-atrelease" => {
                 req_arg(&mut it, "-atrelease");
             }
+            // Likewise: the pre-scan already turned the member into the arguments ahead of
+            // these.
+            "-worldset" => {
+                req_arg(&mut it, "-worldset");
+            }
+            "-worldindex" => {
+                req_arg(&mut it, "-worldindex");
+            }
             "-recoverydrag" => recovery_drag = req_f64(&mut it, "-recoverydrag"),
             "-recoveryfloor" => recovery_floor = req_f64(&mut it, "-recoveryfloor"),
             "-disasterrate" => disaster_rate = req_f64(&mut it, "-disasterrate"),
@@ -12059,7 +12328,9 @@ pub fn main() {
             "-jointemit" => joint_emit = req_arg(&mut it, "-jointemit").clone(),
             "-barsemit" => bars_emit = req_arg(&mut it, "-barsemit").clone(),
             "-jumprate" => jump_rate = req_f64(&mut it, "-jumprate"),
-            "-value" => value_pull = req_f64(&mut it, "-value"),
+            // `-valuepull` names the DIAL, which is the key `world_json_body` writes and so
+            // the flag `-worldset` synthesizes; `-value` is kept because it shipped.
+            "-value" | "-valuepull" => value_pull = req_f64(&mut it, a),
             "-crowdimpact" => crowd_impact = req_f64(&mut it, "-crowdimpact"),
             "-panic" => panic_k = req_f64(&mut it, "-panic"),
             "-drift" => drift = req_f64(&mut it, "-drift"),
@@ -13685,6 +13956,21 @@ mod contract_tests {
         }
     }
 
+    /// `-calibrate` draws one uniform per dial from a single stream in table order, so the order
+    /// IS part of the sampler: permute it and the same seed yields a different world. This table
+    /// was permuted at positions 15-23 against the Scala twin's through 0.24.1, which is why the
+    /// two disagreed on `-calibrate`'s per-sample loss while agreeing byte for byte on
+    /// `-validate` and `-fitness`. A search archive's columns are in this order too.
+    #[test]
+    fn the_searchable_dials_are_in_the_order_both_twins_agree_on() {
+        let searched: Vec<&str> = calibrate_ranges().iter().map(|r| r.0).collect();
+        assert_eq!(
+            searched.as_slice(),
+            CALIBRATE_DIAL_ORDER.as_slice(),
+            "the searchable dial order changed; CalibrateDialOrder in the Scala twin must match"
+        );
+    }
+
     /// An identity parameter describes WHICH ASSET this is, and `-crossasset` grades the bond
     /// relations by moving one. Letting the search fit it makes that grader circular — and the
     /// range row that would do it is one line, added in a moment when the loss looks improvable.
@@ -14494,6 +14780,75 @@ mod contract_tests {
         assert_eq!(verdict_spec(true, 50, 300, 33), (300, GATE_YEARS));
         assert_eq!(verdict_spec(true, 200, 300, 100), (300, GATE_YEARS));
         assert_eq!(verdict_spec(true, 0, 40, 33), (40, 33));
+    }
+
+    fn member_file(body: &[String]) -> String {
+        let mut v = vec![
+            "[".to_string(),
+            "  {".to_string(),
+            "    \"member\": 0,".to_string(),
+            "    \"seededFrom\": \"current\",".to_string(),
+            "    \"score\": 0.000000,".to_string(),
+            "    \"worstRow\": \"none\",".to_string(),
+            "    \"world\": {".to_string(),
+        ];
+        v.push(body.join(",\n"));
+        v.push("    }".to_string());
+        v.push("  }".to_string());
+        v.push("]".to_string());
+        v.join("\n")
+    }
+
+    #[test]
+    fn worldset_reads_a_member_back_as_exactly_the_flags_that_wrote_it() {
+        // THE LOADER RESTS ON ONE RULE: a world block's key IS its flag name, lowercased. Assert
+        // it over every dial rather than trusting it -- a dial whose flag does not follow the rule
+        // makes `-worldset` die on an unrecognized argument, loudly, but only for whoever runs a
+        // member next.
+        let body = world_json_body(&default_world());
+        let keys: Vec<String> = body
+            .iter()
+            .filter_map(|l| json_field(l.trim()).map(|(k, _)| k))
+            .collect();
+        let got = world_set_flags(&member_file(&body), "f.json", 0).expect("the default loads");
+        assert_eq!(
+            got.len(),
+            body.len() * 2,
+            "a flag and a value for every dial"
+        );
+        let flags: Vec<&String> = got.iter().step_by(2).collect();
+        let want: Vec<String> = keys
+            .iter()
+            .map(|k| format!("-{}", k.to_lowercase()))
+            .collect();
+        assert_eq!(flags, want.iter().collect::<Vec<&String>>());
+        let vals: Vec<&String> = got.iter().skip(1).step_by(2).collect();
+        let at = |k: &str| keys.iter().position(|x| x == k).expect(k);
+        assert_eq!(vals[at("depth")], &ef(default_world().depth));
+        assert!(
+            !vals[at("crowd")].starts_with('"'),
+            "a mode name loses its quotes"
+        );
+    }
+
+    #[test]
+    fn a_world_block_that_is_not_exactly_this_binarys_dials_is_refused_never_defaulted() {
+        // A dial the file omits would take the shipped default and be a DIFFERENT world wearing a
+        // member's name, which is the one failure a consumer could not see.
+        let full = world_json_body(&default_world());
+        let short: Vec<String> = full
+            .iter()
+            .filter(|l| !l.contains("\"volOfVol\""))
+            .cloned()
+            .collect();
+        let why = world_set_flags(&member_file(&short), "f.json", 0).expect_err("refused");
+        assert!(why.contains("missing [volOfVol]"), "{why}");
+        let mut more = full.clone();
+        more.push("    \"noSuchDial\": 1.0".to_string());
+        let why = world_set_flags(&member_file(&more), "f.json", 0).expect_err("refused");
+        assert!(why.contains("unknown [noSuchDial]"), "{why}");
+        let why = world_set_flags(&member_file(&full), "f.json", 7).expect_err("refused");
+        assert!(why.contains("-worldindex 7 is not in"), "{why}");
     }
 }
 

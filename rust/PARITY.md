@@ -127,6 +127,24 @@ With that in place, marketSim is byte-identical across `-emit`, `-validate`, `-b
 practical rule for a new script is: transcendental noise is only a parity risk in
 identically-zero columns, and blanking the sign there removes it.
 
+## A table's ORDER can be a parity surface
+
+`-calibrate` draws one uniform per searchable dial from a single stream, in the order the
+ranges table declares. The order is therefore part of the sampler, not presentation: permute
+it and the same seed builds a different world. The two tables were permuted against each
+other at positions 15 to 23 — Scala had `volOfVol`/`jumpVar`/`jumpRate` before the asymmetry
+group, Rust after — so `-calibrate` sampled different worlds in the two languages while
+`-validate`, `-emit` and `-fitness` all stayed byte-identical, because none of them reads
+that table. The visible symptom was a per-sample loss gap that looked like rounding in the
+scoring path and was not.
+
+`CALIBRATE_DIAL_ORDER` / `CalibrateDialOrder` restates the order as a literal beside the
+table in each twin, checked by that twin's own contract test, exactly as `EMIT_SCHEMA` /
+`EmitSchema` restate the sidecar's keys. Changing one twin's table now fails that twin's
+build rather than showing up as a diff nobody runs. The rule generalises: **when a table is
+consumed positionally — by an RNG stream, by a file's column order, by an index — its order
+needs a contract, and a set-equality check on its names is not one.**
+
 `-emit`'s own columns are levels rather than differences, so that trap is remote there —
 but `rate` is floored at zero and `inflPress` starts there, and a column that can be
 *identically* zero is exactly the case. They are folded through `(-0.0) + 0.0 = +0.0`,

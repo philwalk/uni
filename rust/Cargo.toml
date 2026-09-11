@@ -25,7 +25,7 @@ categories = ["filesystem", "date-and-time", "mathematics", "parser-implementati
 # package keeps: `cargo install vastblue-uni` builds it, and a dependent crate drives the
 # same paths in-process. rust-toolchain.toml is excluded so the repo's pinned toolchain is
 # not forced onto consumers.
-exclude = ["tests/", "src/bin/bench_*.rs", "doc-examples/", "docs/", "Makefile", "rustfmt.toml", "rust-toolchain.toml"]
+exclude = ["tests/", "src/bin/bench_*.rs", "src/bin/market_sim_search.rs", "doc-examples/", "docs/", "Makefile", "rustfmt.toml", "rust-toolchain.toml"]
 
 [lib]
 name = "uni"
@@ -35,6 +35,12 @@ crate-type = ["rlib"]
 # `cargo test` as unit tests, so no target needs `test = true` for them any more.
 [[bin]]
 name = "market_sim"
+required-features = ["market-sim"]
+
+# The calibration search. Excluded from the published crate above: `cargo install
+# vastblue-uni` builds the simulator, not the search.
+[[bin]]
+name = "market_sim_search"
 required-features = ["market-sim"]
 
 [lints.rust]
@@ -108,4 +114,9 @@ debug = false
 [profile.release]
 opt-level = 3
 lto = true
+codegen-units = 1
+
+[profile.search]
+inherits = "release"
+lto = "fat"
 codegen-units = 1

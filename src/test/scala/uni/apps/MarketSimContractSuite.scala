@@ -43,6 +43,16 @@ class MarketSimContractSuite extends FunSuite:
         "a world the model has shipped")
   }
 
+  test("the searchable dials are in the order both twins agree on") {
+    // `-calibrate` draws one uniform per dial from a single stream in table order, so the order
+    // IS part of the sampler: permute it and the same seed yields a different world.  The Rust
+    // twin's table was permuted at positions 15-23 through 0.24.1, which is why the two disagreed
+    // on `-calibrate`'s per-sample loss while agreeing byte for byte on `-validate` and
+    // `-fitness`.  A search archive's columns are in this order too.
+    assertEquals(MarketSim.CalibrateRanges.map(_._1), MarketSim.CalibrateDialOrder,
+      "the searchable dial order changed; CALIBRATE_DIAL_ORDER in the Rust twin must match")
+  }
+
   test("the search never fits an identity parameter") {
     // An identity parameter describes WHICH ASSET this is, and `-crossasset` grades the bond
     // relations by moving one. Letting the search fit it makes that grader circular — and the
@@ -674,4 +684,57 @@ class MarketSimContractSuite extends FunSuite:
     def hi(name: String): Double =
       MarketSim.CalibrateRanges.find(_._1 == name).map(_._3).getOrElse(fail(s"no range for $name"))
     assert(MarketSim.newsBudgetRefusal(hi("newsRate"), hi("newsSize")).isEmpty)
+  }
+
+  // `-worldset` refuses through `usage`, which exits; swap the exit for a throw so a refusal is
+  // assertable.  The same pattern `ArgsParserCoverageSuite` uses.
+  private case class ExitCalled(code: Int) extends Throwable
+
+  private def refusal[A](body: => A): String =
+    val origErr = System.err
+    val baos = new java.io.ByteArrayOutputStream()
+    System.setErr(new java.io.PrintStream(baos, true))
+    val origExit = uni.cli.ArgsParser.exitFn
+    uni.cli.ArgsParser.exitFn = code => throw ExitCalled(code)
+    try
+      body
+      fail("the loader accepted a file it should refuse")
+    catch case ExitCalled(_) => baos.toString("UTF-8")
+    finally
+      System.setErr(origErr)
+      uni.cli.ArgsParser.exitFn = origExit
+
+  private def memberFile(body: Seq[String]): String =
+    val f = java.nio.file.Files.createTempFile("worldset", ".json")
+    val text = (Seq("[", "  {", "    \"member\": 0,", "    \"seededFrom\": \"current\",",
+                    "    \"score\": 0.000000,", "    \"worstRow\": \"none\",",
+                    "    \"world\": {", body.mkString(",\n"), "    }", "  }", "]")).mkString("\n")
+    java.nio.file.Files.write(f, text.getBytes("UTF-8"))
+    f.toFile.deleteOnExit()
+    f.toString
+
+  test("-worldset reads a member back as exactly the flags that wrote it") {
+    // THE LOADER RESTS ON ONE RULE: a world block's key IS its flag name, lowercased.  Assert it
+    // over every dial rather than trusting it -- a dial whose flag does not follow the rule makes
+    // `-worldset` die on an unrecognized argument, loudly, but only for whoever runs a member next.
+    val body = MarketSim.worldJsonBody(MarketSim.Defaults)
+    val keys = body.map(_.trim.drop(1).takeWhile(_ != '"'))
+    val got = MarketSim.worldSetArgs(memberFile(body), 0)
+    assertEquals(got.length, body.length * 2, "a flag and a value for every dial")
+    assertEquals(got.grouped(2).map(_.head).toVector, keys.map("-" + _.toLowerCase))
+    val vals = got.grouped(2).map(_.last).toVector
+    assertEquals(vals(keys.indexOf("depth")), MarketSim.ef(MarketSim.Defaults.depth))
+    assert(!vals(keys.indexOf("crowd")).startsWith("\""), "a mode name loses its quotes")
+  }
+
+  test("a world block that is not exactly this binary's dials is refused, never defaulted") {
+    // A dial the file omits would take the shipped default and be a DIFFERENT world wearing a
+    // member's name, which is the one failure a consumer could not see.
+    val full = MarketSim.worldJsonBody(MarketSim.Defaults)
+    val short = refusal(MarketSim.worldSetArgs(memberFile(full.filterNot(_.contains("\"volOfVol\""))), 0))
+    assert(short.contains("missing [volOfVol]"), short)
+    val extra = refusal(MarketSim.worldSetArgs(memberFile(full :+ "    \"noSuchDial\": 1.0"), 0))
+    assert(extra.contains("unknown [noSuchDial]"), extra)
+    val absent = refusal(MarketSim.worldSetArgs(memberFile(full), 7))
+    assert(absent.contains("-worldindex 7 is not in"), absent)
   }

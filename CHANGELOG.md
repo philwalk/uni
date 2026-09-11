@@ -1,5 +1,157 @@
 ## v0.24.2 — unreleased
 
+**A calibration archive's members can be run: `-worldset` / `-worldindex`**
+
+- `-worldset F -worldindex K` seeds every dial from member K of the JSON the calibration search's
+  `-export` writes, so a strategy can be run across the whole set of worlds consistent with the
+  record rather than against one best fit. Seeded like `-atrelease`: the member arrives as
+  arguments ahead of the command line's own, so an explicit dial flag after it still overrides.
+  `-worldindex` defaults to 0 and addresses a member by its own `member` number, not its position.
+  `-worldset` and `-atrelease` each name a whole world, so giving both is refused.
+- A world block that is not exactly this binary's dials is refused, naming what is missing or
+  unknown. An omitted dial would take the shipped default and be a different world under a
+  member's name, which is the one failure a consumer could not see. The expected keys are read off
+  `worldJsonBody`'s own output, so a dial added to the world cannot be skipped here.
+- The loader lowercases each key to its flag and lets the ordinary flag loop set it, one rule
+  instead of a second copy of 76 setters. `-valuepull` is added as the name that rule needs;
+  `-value` still sets the same dial.
+
+**The exported archive is valid JSON, and carries the archive's own precision**
+
+- `-export` joined the world block's fields on a bare newline, with no separator, so no JSON parser
+  accepted the file. The sidecar's join was always correct.
+- The block is now written at the archive's width, eight significant digits, rather than the
+  report's six decimals. `-export` reads `archive.tsv`, so the report's width re-truncated an
+  already-rounded dial: 7303 of the 8400 searched-dial values in a 300-member export differed from
+  the row they came from. A consumer reconstructs a world from this block, so it reproduces the
+  archive exactly. `worldJsonBody` / `world_json_body` take the renderer as a parameter; the
+  sidecar keeps six decimals and is unchanged byte for byte.
+- `state.tsv` carries `noiseSum` and `noiseN`, the seed-noise accumulator `admit` compares against.
+  It is state rather than a setting, so the resume guard does not compare it and a resume no longer
+  rebuilds the threshold from one reading. A checkpoint written without the keys reads as zero.
+
+**The archive keeps its spread, and the search says why it rejects**
+
+- `admit` replaces a member only by more than the seed-noise spread measured during the run, and
+  when the archive overflows it drops the member whose removal costs the least behavioural ground
+  rather than the worst-scoring one. The old rules sorted forty statistically indistinguishable
+  worlds by score and discarded diversity to chase differences four times smaller than the noise;
+  over one 4300-generation run the archive's signed lag-1 range fell from 0.057 to 0.032. A/B at
+  identical settings over 40 generations: lag-1 range 0.043 to 0.074, variance ratio 250 0.59 to
+  1.79, crashes per path 2.1 to 7.9. Recorded in the checkpoint as `admit = spread-keeping`, so an
+  older archive refuses to resume under the new rules rather than mixing two standards.
+- `log.tsv` gains `gateFail`, the gate rows a rejected candidate failed. The existing `worstRow`
+  is a fitness row and feasibility is decided by the gate, two different sets, so a rejected line
+  said nothing about the rejection. Transport-arm failures carry their market prefix as `worstRow`
+  does.
+- `-holdout` runs a NULL CONTROL: each member against the world it was seeded from, on the fresh
+  stream, with a threshold of twice the seed-noise sd pooled across lineages, and it prints its own
+  resolution so an empty result is never read as evidence of nothing. Its columns are now `passA
+  rawA passB rawB worstB`: the search draws mutation seeds from a third stream, so both arms are
+  unseen and the test is seed-sensitivity, which the old train/test names misdescribed.
+- `jsrc/marketSimSearchReport.sc` reports convergence on a live or finished run from its files
+  alone: cost, yield, best-so-far and per-block draw quantiles as trend lines, admission pressure,
+  the archive's behavioural spread and a verdict. `-full` for every block, `-ascii` for a console
+  not in UTF-8.
+- Measured with `gateFail`: at 30 paths the shipped default reads kurtosis 30.3 with a seed sd of
+  7.4 against a realism ceiling of 30 and a fidelity target of 28.0, so that one row was a third
+  of all rejections. At 60 paths the sd is 2.8 and at 100 it is 1.7. The search should run at 60
+  paths; the 30-path steer came from a fidelity study on worlds well inside their bands. The
+  ceiling itself, an undocumented literal two points above the record, is a model question and is
+  not moved here.
+
+**An evaluation stops paying for what it cannot use**
+
+- `extremeReadingsFrom` / `extreme_readings_from` take an ensemble the caller already holds. The
+  extreme row is read at its anchor's own horizon, 100 years for the S&P set, whatever `-years`
+  says, and that second ensemble is the larger half of an evaluation: 2.89 seconds against the
+  main reading's 2.28 at 60 paths by 80 years. A caller already running at that horizon was
+  simulating the same paths from the same seed twice.
+- Each path in that ensemble is measured in parallel rather than one at a time. `measure` is pure
+  and the order is preserved, so every reading and every median is what it was.
+- Nothing computed changes. `-validate` on seven worlds, `-emit` with its sidecar and `-calibrate`
+  on one seed stay byte-identical across the twins.
+- In the search itself, the second ensemble is skipped outright once the gate has failed, since
+  feasibility reads only the pooled statistics and a failing candidate is rejected whatever its
+  score. Its rows are then dropped from the worst-row search rather than scored as unmeasurable,
+  so a rejected candidate still names a row that was measured. Repetitions stop at the first
+  failure, and a transport arm is not evaluated at all when the primary market has already failed.
+- Measured at 30 paths by 80 years: a rejected candidate falls from about 1.2 seconds to 0.38, a
+  feasible one is unchanged at 1.16, so a run rejecting half its candidates is about 1.7 times
+  faster. At `-years 100` a feasible candidate costs 0.99, less than at 80, because the reuse
+  applies there.
+- A `search` build profile adds link-time optimisation and a single codegen unit, worth a further
+  4.5% and verified to produce an identical archive. Build with `cargo build --profile search`.
+- Measured and NOT taken: evaluating a generation's candidates in parallel. Going from 30 paths to
+  48 improves per-path efficiency only 8%, so there is little idle capacity to reclaim, and it
+  would have changed which parents a generation draws from.
+
+**The search records what a world DOES, ranks its own cheap ensembles, and selects for transport**
+
+- **Behaviour descriptors.** Every candidate now carries six readings beside its dials — signed
+  lag-1, the 250-session variance ratio, lag-20 clustering, kurtosis, crashes per path and median
+  crash depth — into `archive.tsv` and into `log.tsv` for every candidate, including the rejected
+  majority that vanishes when a run ends. The archive thins in dial space, which is a proxy for
+  behavioural difference rather than a measurement of it, so without these its spread is assumed.
+  Signed lag-1 leads because it is the axis the record cannot pin down, and finding that took a
+  separate study after the last run; as a column it is a sort. Never graded, never optimised.
+- **`-fidelity 20x40,30x60,…`** scores the frozen pool at the reference ensemble and at each
+  cheaper one, and reports how faithfully each RANKS the worlds, since the search only ever
+  compares candidates. Measured against 60 paths by 80 years: 30 by 80 costs half as much for a
+  rank correlation of 0.993 with no feasibility disagreement, where 20 by 40 is 3.9x but puts two
+  of nineteen worlds on the wrong side of the gate. Paths govern feasibility agreement and years
+  govern ranking, so the saving comes from a modest path cut, not from short paths.
+- **`-transport 0.24.1-nasdaq`** judges every candidate on the WORSE of its two markets, so a world
+  that fits the S&P by doing something the Nasdaq will not tolerate never enters the archive. One
+  dial vector cannot pass both anchor sets and is not meant to: the volatility bands do not
+  overlap. What travels is the mechanism, while the six dials that counterpart moved away from the
+  default stay at its values. The held set is derived from the two worlds and printed at startup
+  rather than listed in code.
+- **Both harnesses now mutate through `NumPyRNG`**, whose `randn` and bounded-integer draw are
+  gated bit-identical across the twins, so one `-seed` walks one trajectory in either language.
+  They were on each language's native generator, which cannot agree: a Gaussian is scaled by a
+  logarithm and the two measure those 1 ulp apart on 0.235% of a corpus. `-calibrate` was moved
+  off a native generator for this reason and the search was the last place one survived.
+- The two harnesses agree byte for byte on the archive, the checkpoint and the log, including the
+  candidates a search proposes, wherever the Rust one runs without a transport arm. Where it runs
+  with one, the Scala harness refuses the archive instead of re-scoring it, because it would read
+  the primary arm alone and call members feasible that were never judged that way.
+
+**The searchable dials are in one order, and the twins now agree on `-calibrate`**
+
+- The two ranges tables were permuted against each other at positions 15 to 23. `-calibrate`
+  draws one uniform per dial from a single stream in table order, so the same seed built
+  different worlds in the two languages. `-validate`, `-emit` and `-fitness` were unaffected and
+  stayed byte-identical throughout, because none of them reads that table, which is why this
+  survived as a per-sample loss gap that looked like rounding in the scoring path.
+- `CalibrateDialOrder` / `CALIBRATE_DIAL_ORDER` restates the order as a literal beside each
+  twin's table, asserted by that twin's contract test — the shape `EmitSchema` / `EMIT_SCHEMA`
+  already use for the sidecar's keys. A table consumed positionally needs a contract on its
+  order; a set-equality check on its names is not one.
+- `-calibrate` is now byte-identical across the twins on the same seed. No default moves and no
+  model code changes: the whole diff is the order of the rows and the literal that pins it.
+- `fitness`, `extreme_score_stats`, `calibrate_ranges`, `world_json_body`, `pctile` and
+  `SD_REL_REF` are `pub` in `uni::market_sim`. The Scala twin already exposed all six; Rust
+  keeping them private was the asymmetry.
+
+**A calibration search in Rust**
+
+- `rust/src/bin/market_sim_search.rs`, the twin of `jsrc/marketSimSearch.sc`, built with
+  `cargo build --release --bin market_sim_search`. Excluded from the published crate, like the
+  `bench_*` binaries: `cargo install vastblue-uni` still builds the simulator alone.
+- Measured against the Scala harness on identical settings, the two agree byte for byte on the
+  archive, the checkpoint, the exported worlds JSON, the pruned and dropped sets, and every line
+  of console output; the log differs only in its elapsed-seconds column. A Scala `-holdout` run
+  re-scores a Rust archive exactly, which is the check worth running before an archive is
+  published.
+- Cost per candidate at 60 paths by 80 years on two repetitions: 1.2 s on a plain equity world
+  against a warmed JVM's 10.3 s. The channels dominate what is left — 4.2 s with the macro panel
+  on, 8.4 s with the basket — so seeding from a recipe is several times the price of seeding from
+  a release.
+- It reads the library's dial table rather than carrying a copy. The Scala script carries its own
+  to avoid a `publishLocal` round trip; this one is rebuilt from the same tree as the model, so a
+  copy would buy nothing and cost exactly the failure above.
+
 **The macro panel gains the overnight rate**
 
 - `-macro 1` emits `macroPolicy` (DFF, pp): the loop's own policy rate, published the way policy

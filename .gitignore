@@ -1,4 +1,6 @@
 search/
+search-*/
+worlds-*.json
 tmp/
 PLAN.md
 bench-logs/
