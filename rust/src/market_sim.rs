@@ -8266,6 +8266,7 @@ fn n_star_str(x: f64) -> String {
 // ---- calibration search -----------------------------------------------------------------
 
 type Setter = fn(&mut World, f64);
+type Getter = fn(&World) -> f64;
 
 /// Parameters that say WHICH ASSET is being simulated, not how a market behaves. Each is a real
 /// fund's published number: MEASURED once and then held, never fitted. `-calibrate` must not
@@ -8290,57 +8291,179 @@ const IDENTITY_PARAMS: &[&str] = &["duration", "divYield"];
 
 /// What `-calibrate` samples, and the ONLY place a searchable parameter is declared. A function
 /// rather than an inline `vec!` so the identity-parameter rule above can be tested against it.
-fn calibrate_ranges() -> Vec<(&'static str, f64, f64, Setter)> {
+///
+/// EVERY BOUND CONTAINS EVERY FROZEN WORLD, and `contract_tests` asserts it. Four did not:
+/// `margin` shipped at 0.006 from 0.19.1 onward against a ceiling of 0.004, so for eleven releases
+/// the search could not propose the value the model itself uses and every candidate-vs-default
+/// line it printed was across a boundary the candidate could not cross; `depth` 8.4 (the 0.24.0
+/// Nasdaq recipes) sat under a floor of 10.0, `jumpRate` 0.005 (0.22.x) and 0 (through 0.20.0)
+/// outside 0.0004 .. 0.004, `volOfVol` 0.011 (0.19.x) under 0.012. This is the `fundVol` failure
+/// the note below already records, and the test is what stops it recurring: a range that excludes
+/// a shipped world is a search that cannot reach the model. Bounds are rounded OUTWARD past the
+/// extreme so a value at the edge can still be explored.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one row per searched dial, mirroring the Scala twin's table; splitting it would               put the bounds somewhere other than beside the dial they bound"
+)]
+fn calibrate_ranges() -> Vec<(&'static str, f64, f64, Setter, Getter)> {
     vec![
-        ("depth", 10.0, 26.0, |w, x| w.depth = x),
-        ("trendShare", 0.05, 0.70, |w, x| w.trend_share = x),
-        ("drift", 0.06, 0.16, |w, x| w.drift = x),
+        ("depth", 8.0, 26.0, |w, x| w.depth = x, |w| w.depth),
+        (
+            "trendShare",
+            0.05,
+            0.70,
+            |w, x| w.trend_share = x,
+            |w| w.trend_share,
+        ),
+        ("drift", 0.06, 0.16, |w, x| w.drift = x, |w| w.drift),
         // The depth profile's second axis, and the one no sweep could reach before 0.21: the value
         // channel passes only a few percent of a fundamental move into any one session, so
         // fundamental variance accumulates into time under water without moving daily return scale.
         // It is in the search only now that the depth targets are stated against a real relation —
         // against SPY's absolute levels a search free to raise it would have closed them by making
         // the fundamental hotter still, which is how the world it replaces was reached.
-        ("fundVol", 0.03, 0.16, |w, x| w.fund_vol = x),
-        ("crowdImpact", 0.01, 0.20, |w, x| w.crowd_impact = x),
-        ("stress", 2.0, 6.0, |w, x| w.stress = x),
+        ("fundVol", 0.03, 0.16, |w, x| w.fund_vol = x, |w| w.fund_vol),
+        (
+            "crowdImpact",
+            0.01,
+            0.20,
+            |w, x| w.crowd_impact = x,
+            |w| w.crowd_impact,
+        ),
+        ("stress", 2.0, 6.0, |w, x| w.stress = x, |w| w.stress),
         // Widened from 0.010-0.035 in 0.21.0: with the recovery drag the base pull governs
         // SHALLOW water only, so its useful range moved up. The old ceiling would have excluded the
         // shipped value, which is the `fund_vol` failure mode — a search that cannot reach the
         // answer.
-        ("valuePull", 0.010, 0.070, |w, x| w.value_pull = x),
+        (
+            "valuePull",
+            0.010,
+            0.070,
+            |w, x| w.value_pull = x,
+            |w| w.value_pull,
+        ),
         // Both in the ranges from the release they arrive in, for the same reason.
-        ("recoveryDrag", 0.0, 20.0, |w, x| w.recovery_drag = x),
-        ("recoveryFloor", 0.05, 1.0, |w, x| w.recovery_floor = x),
-        ("disasterRate", 0.0, 1.5, |w, x| w.disaster_rate = x),
-        ("disasterSize", 0.5, 2.5, |w, x| w.disaster_size = x),
-        ("disasterRecover", 0.0, 0.9, |w, x| w.disaster_recover = x),
-        ("beliefShare", 0.0, 0.97, |w, x| w.belief_share = x),
-        ("capYears", 0.0, 4.0, |w, x| w.cap_years = x),
+        (
+            "recoveryDrag",
+            0.0,
+            20.0,
+            |w, x| w.recovery_drag = x,
+            |w| w.recovery_drag,
+        ),
+        (
+            "recoveryFloor",
+            0.05,
+            1.0,
+            |w, x| w.recovery_floor = x,
+            |w| w.recovery_floor,
+        ),
+        (
+            "disasterRate",
+            0.0,
+            1.5,
+            |w, x| w.disaster_rate = x,
+            |w| w.disaster_rate,
+        ),
+        (
+            "disasterSize",
+            0.5,
+            2.5,
+            |w, x| w.disaster_size = x,
+            |w| w.disaster_size,
+        ),
+        (
+            "disasterRecover",
+            0.0,
+            0.9,
+            |w, x| w.disaster_recover = x,
+            |w| w.disaster_recover,
+        ),
+        (
+            "beliefShare",
+            0.0,
+            0.97,
+            |w, x| w.belief_share = x,
+            |w| w.belief_share,
+        ),
+        (
+            "capYears",
+            0.0,
+            4.0,
+            |w, x| w.cap_years = x,
+            |w| w.cap_years,
+        ),
         // The asymmetry pair and the jump shift, in the ranges the hand sweeps mapped: leverage
         // reaches the `leverage corr` anchor near 0.10 under the saturation cap, downShock pays
         // vr60 ~+0.02 per 0.01 so the band bounds it near 0.03, and the best hand candidate
         // (0.10 / 0.015 / jumpVar 0.12 / drift 0.124) missed a four-seed gate PASS only on
         // `bond depth vs vol` — the search has the bond dials in its hands where a hand sweep
         // does not.
-        ("leverage", 0.0, 0.15, |w, x| w.leverage = x),
-        ("downShock", 0.0, 0.05, |w, x| w.down_shock = x),
-        ("jumpSkew", 0.0, 1.4, |w, x| w.jump_skew = x),
-        ("newsRate", 0.0, 3.0, |w, x| w.news_rate = x),
-        ("newsSize", 0.0, 0.05, |w, x| w.news_size = x),
-        ("refugeDays", 0.0, 3.0, |w, x| w.refuge_days = x),
-        ("volOfVol", 0.012, 0.030, |w, x| w.vol_of_vol = x),
+        ("leverage", 0.0, 0.15, |w, x| w.leverage = x, |w| w.leverage),
+        (
+            "downShock",
+            0.0,
+            0.05,
+            |w, x| w.down_shock = x,
+            |w| w.down_shock,
+        ),
+        (
+            "jumpSkew",
+            0.0,
+            1.4,
+            |w, x| w.jump_skew = x,
+            |w| w.jump_skew,
+        ),
+        (
+            "newsRate",
+            0.0,
+            3.0,
+            |w, x| w.news_rate = x,
+            |w| w.news_rate,
+        ),
+        (
+            "newsSize",
+            0.0,
+            0.05,
+            |w, x| w.news_size = x,
+            |w| w.news_size,
+        ),
+        (
+            "refugeDays",
+            0.0,
+            3.0,
+            |w, x| w.refuge_days = x,
+            |w| w.refuge_days,
+        ),
+        (
+            "volOfVol",
+            0.010,
+            0.030,
+            |w, x| w.vol_of_vol = x,
+            |w| w.vol_of_vol,
+        ),
         // In the ranges from the release it arrived in. `fund_vol` sat outside them for four
         // releases and that is exactly why its defect survived four releases of one-knob-at-a-time
         // sweeps; a mechanism the search cannot reach is a mechanism nobody will find the wrong
         // value of.
-        ("jumpVar", 0.00, 0.20, |w, x| w.jump_var = x),
-        ("jumpRate", 0.0004, 0.0040, |w, x| w.jump_rate = x),
-        ("easing", 0.0, 0.09, |w, x| w.easing = x),
-        ("refuge", 0.0, 0.20, |w, x| w.refuge = x),
-        ("inflSize", 0.03, 0.12, |w, x| w.infl_size = x),
-        ("discount", 3.0, 10.0, |w, x| w.discount = x),
-        ("margin", 0.0, 0.004, |w, x| w.margin = x),
+        ("jumpVar", 0.00, 0.20, |w, x| w.jump_var = x, |w| w.jump_var),
+        (
+            "jumpRate",
+            0.0,
+            0.006,
+            |w, x| w.jump_rate = x,
+            |w| w.jump_rate,
+        ),
+        ("easing", 0.0, 0.09, |w, x| w.easing = x, |w| w.easing),
+        ("refuge", 0.0, 0.20, |w, x| w.refuge = x, |w| w.refuge),
+        (
+            "inflSize",
+            0.03,
+            0.12,
+            |w, x| w.infl_size = x,
+            |w| w.infl_size,
+        ),
+        ("discount", 3.0, 10.0, |w, x| w.discount = x, |w| w.discount),
+        ("margin", 0.0, 0.008, |w, x| w.margin = x, |w| w.margin),
     ]
 }
 
@@ -8377,7 +8500,7 @@ fn calibrate(a: Anchors, n_samples: usize, base: &World, seed: u64) {
         .map(|k| {
             let mut w = *base;
             let mut desc: Vec<String> = Vec::new();
-            for (nm, lo, hi, set) in &ranges {
+            for (nm, lo, hi, set, _) in &ranges {
                 let x = sr.uniform(*lo, *hi);
                 set(&mut w, x);
                 desc.push(format!("{nm}={}", jf(x, 0, 4)));
@@ -13471,6 +13594,28 @@ mod contract_tests {
                 .expect("a -calibrate range")
         };
         assert!(news_budget_refusal(hi("newsRate"), hi("newsSize")).is_none());
+    }
+
+    /// A range that excludes a shipped world is a search that cannot reach the model: `margin`
+    /// shipped at 0.006 from 0.19.1 while the range stopped at 0.004, so for eleven releases
+    /// `-calibrate` could not propose the value the default itself uses and every
+    /// candidate-vs-default line it printed was across a boundary the candidate could not cross.
+    /// The same class as the `fundVol` range that hid a defect for four releases. Releases AND
+    /// recipes: a frozen row is permanent, so this must not be scoped to the ones today's gate
+    /// still likes.
+    #[test]
+    fn every_searchable_range_contains_every_frozen_world() {
+        let mut worlds: Vec<(&str, World)> = releases();
+        worlds.extend(recipes().into_iter().map(|(n, w, _)| (n, w)));
+        for (nm, lo, hi, _, get) in calibrate_ranges() {
+            for (label, w) in &worlds {
+                let v = get(w);
+                assert!(
+                    v >= lo && v <= hi,
+                    "{nm} = {v} in {label} is outside its -calibrate range [{lo}, {hi}]: the                      search cannot reach a world the model has shipped"
+                );
+            }
+        }
     }
 
     /// An identity parameter describes WHICH ASSET this is, and `-crossasset` grades the bond

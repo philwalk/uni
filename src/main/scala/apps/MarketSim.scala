@@ -5161,55 +5161,69 @@ object MarketSim:
   val IdentityParams: Vector[String] = Vector("duration", "divYield")
 
   /** What `-calibrate` samples, and the ONLY place a searchable parameter is declared.  Named
-    * rather than inline so the identity-parameter rule above can be tested against it. */
-  val CalibrateRanges: Vector[(String, Double, Double, (World, Double) => World)] = Vector(
-    ("depth",       10.0,  26.0, (w, x) => w.copy(depth = x)),
-    ("trendShare",  0.05,  0.70, (w, x) => w.copy(trendShare = x)),
-    ("drift",       0.06,  0.16, (w, x) => w.copy(drift = x)),
+    * rather than inline so the identity-parameter rule above can be tested against it.
+    *
+    * EVERY BOUND CONTAINS EVERY FROZEN WORLD, and `MarketSimContractSuite` asserts it.  Four did
+    * not: `margin` shipped at 0.006 from 0.19.1 onward against a ceiling of 0.004, so for eleven
+    * releases the search could not propose the value the model itself uses and every
+    * candidate-vs-default line it printed was across a boundary the candidate could not cross;
+    * `depth` 8.4 (the 0.24.0 Nasdaq recipes) sat under a floor of 10.0, `jumpRate` 0.005 (0.22.x)
+    * and 0 (through 0.20.0) outside 0.0004 .. 0.004, `volOfVol` 0.011 (0.19.x) under 0.012.  This
+    * is the `fundVol` failure the note below already records, and the test is what stops it
+    * recurring: a range that excludes a shipped world is a search that cannot reach the model.
+    * Bounds are rounded OUTWARD past the extreme so a value at the edge can still be explored. */
+  /** One searchable dial: its name, its bounds, the setter the search writes through and the
+    * getter the containment test reads back. */
+  type DialRange = (String, Double, Double, (World, Double) => World, World => Double)
+
+  val CalibrateRanges: Vector[DialRange] = Vector(
+    ("depth",       8.0,  26.0, (w, x) => w.copy(depth = x), _.depth),
+    ("trendShare",  0.05,  0.70, (w, x) => w.copy(trendShare = x), _.trendShare),
+    ("drift",       0.06,  0.16, (w, x) => w.copy(drift = x), _.drift),
     // The depth profile's second axis, and the one no sweep could reach before 0.21: the value
     // channel passes only a few percent of a fundamental move into any one session, so fundamental
     // variance accumulates into time under water without moving daily return scale.  It is in the
     // search only now that the depth targets are stated against a real relation -- against SPY's
     // absolute levels a search free to raise it would have closed them by making the fundamental
     // hotter still, which is how the world it replaces was reached.
-    ("fundVol",     0.03,  0.16, (w, x) => w.copy(fundVol = x)),
-    ("crowdImpact", 0.01,  0.20, (w, x) => w.copy(crowdImpact = x)),
-    ("stress",       2.0,   6.0, (w, x) => w.copy(stress = x)),
+    ("fundVol",     0.03,  0.16, (w, x) => w.copy(fundVol = x), _.fundVol),
+    ("crowdImpact", 0.01,  0.20, (w, x) => w.copy(crowdImpact = x), _.crowdImpact),
+    ("stress",       2.0,   6.0, (w, x) => w.copy(stress = x), _.stress),
     // Widened from 0.010-0.035 in 0.21.0: with the recovery drag the base pull governs SHALLOW
     // water only, so its useful range moved up.  The old ceiling would have excluded the shipped
     // value, which is the `fundVol` failure mode -- a search that cannot reach the answer.
-    ("valuePull",  0.010, 0.070, (w, x) => w.copy(valuePull = x)),
+    ("valuePull",  0.010, 0.070, (w, x) => w.copy(valuePull = x), _.valuePull),
     // Both in the ranges from the release they arrive in, for the same reason.
-    ("recoveryDrag",  0.0, 20.0, (w, x) => w.copy(recoveryDrag = x)),
-    ("recoveryFloor", 0.05, 1.0, (w, x) => w.copy(recoveryFloor = x)),
-    ("disasterRate",  0.0, 1.5, (w, x) => w.copy(disasterRate = x)),
-    ("disasterSize",  0.5, 2.5, (w, x) => w.copy(disasterSize = x)),
-    ("disasterRecover", 0.0, 0.9, (w, x) => w.copy(disasterRecover = x)),
-    ("beliefShare",   0.0, 0.97, (w, x) => w.copy(beliefShare = x)),
-    ("capYears",      0.0, 4.0, (w, x) => w.copy(capYears = x)),
-    ("volOfVol",   0.012, 0.030, (w, x) => w.copy(volOfVol = x)),
+    ("recoveryDrag",  0.0, 20.0, (w, x) => w.copy(recoveryDrag = x), _.recoveryDrag),
+    ("recoveryFloor", 0.05, 1.0, (w, x) => w.copy(recoveryFloor = x), _.recoveryFloor),
+    ("disasterRate",  0.0, 1.5, (w, x) => w.copy(disasterRate = x), _.disasterRate),
+    ("disasterSize",  0.5, 2.5, (w, x) => w.copy(disasterSize = x), _.disasterSize),
+    ("disasterRecover", 0.0, 0.9, (w, x) => w.copy(disasterRecover = x), _.disasterRecover),
+    ("beliefShare",   0.0, 0.97, (w, x) => w.copy(beliefShare = x), _.beliefShare),
+    ("capYears",      0.0, 4.0, (w, x) => w.copy(capYears = x), _.capYears),
+    ("volOfVol",   0.010, 0.030, (w, x) => w.copy(volOfVol = x), _.volOfVol),
     // In the ranges from the release it arrived in.  `fundVol` sat outside them for four releases
     // and that is exactly why its defect survived four releases of one-knob-at-a-time sweeps; a
     // mechanism the search cannot reach is a mechanism nobody will find the wrong value of.
-    ("jumpVar",     0.00,  0.20, (w, x) => w.copy(jumpVar = x)),
-    ("jumpRate",  0.0004, 0.0040, (w, x) => w.copy(jumpRate = x)),
+    ("jumpVar",     0.00,  0.20, (w, x) => w.copy(jumpVar = x), _.jumpVar),
+    ("jumpRate",  0.0, 0.006, (w, x) => w.copy(jumpRate = x), _.jumpRate),
     // The asymmetry pair and the jump shift, in the ranges the hand sweeps mapped: leverage
     // reaches the `leverage corr` anchor near 0.10 under the saturation cap, downShock pays vr60
     // ~+0.02 per 0.01 so the band bounds it near 0.03, and the best hand candidate
     // (0.10 / 0.015 / jumpVar 0.12 / drift 0.124) missed a four-seed gate PASS only on
     // `bond depth vs vol` -- the search has the bond dials in its hands where a hand sweep does
     // not.
-    ("leverage",    0.00,  0.15, (w, x) => w.copy(leverage = x)),
-    ("downShock",   0.00,  0.05, (w, x) => w.copy(downShock = x)),
-    ("jumpSkew",    0.00,  1.40, (w, x) => w.copy(jumpSkew = x)),
-    ("newsRate",    0.00,  3.00, (w, x) => w.copy(newsRate = x)),
-    ("newsSize",    0.00,  0.05, (w, x) => w.copy(newsSize = x)),
-    ("refugeDays",  0.00,  3.00, (w, x) => w.copy(refugeDays = x)),
-    ("easing",       0.0,  0.09, (w, x) => w.copy(easing = x)),
-    ("refuge",       0.0,  0.20, (w, x) => w.copy(refuge = x)),
-    ("inflSize",    0.03,  0.12, (w, x) => w.copy(inflSize = x)),
-    ("discount",     3.0,  10.0, (w, x) => w.copy(discount = x)),
-    ("margin",       0.0, 0.004, (w, x) => w.copy(margin = x)),
+    ("leverage",    0.00,  0.15, (w, x) => w.copy(leverage = x), _.leverage),
+    ("downShock",   0.00,  0.05, (w, x) => w.copy(downShock = x), _.downShock),
+    ("jumpSkew",    0.00,  1.40, (w, x) => w.copy(jumpSkew = x), _.jumpSkew),
+    ("newsRate",    0.00,  3.00, (w, x) => w.copy(newsRate = x), _.newsRate),
+    ("newsSize",    0.00,  0.05, (w, x) => w.copy(newsSize = x), _.newsSize),
+    ("refugeDays",  0.00,  3.00, (w, x) => w.copy(refugeDays = x), _.refugeDays),
+    ("easing",       0.0,  0.09, (w, x) => w.copy(easing = x), _.easing),
+    ("refuge",       0.0,  0.20, (w, x) => w.copy(refuge = x), _.refuge),
+    ("inflSize",    0.03,  0.12, (w, x) => w.copy(inflSize = x), _.inflSize),
+    ("discount",     3.0,  10.0, (w, x) => w.copy(discount = x), _.discount),
+    ("margin",       0.0, 0.008, (w, x) => w.copy(margin = x), _.margin),
   )
 
   def calibrate(a: Anchors, nSamples: Int, base: World, seed: Long): Unit =
@@ -5236,7 +5250,7 @@ object MarketSim:
       fitness(a, measure(simPaths(w, 50, 100, s), 100), extremeScoreStats(a, 50, s, w))._1
     eprintln(s"calibrate: $nSamples samples, 50 paths x 100 years each; holdout re-score of top 5")
     val scored = (0 until nSamples).map { k =>
-      val (w, desc) = ranges.foldLeft((base, List.empty[String])) { case ((wAcc, d), (nm, lo, hi, set)) =>
+      val (w, desc) = ranges.foldLeft((base, List.empty[String])) { case ((wAcc, d), (nm, lo, hi, set, _)) =>
         val x = sr.uniform(lo, hi)
         (set(wAcc, x), f"$nm%s=$x%.4f" :: d)
       }

@@ -26,6 +26,17 @@
   the equity-relation rows need the four reference histories at the vintage the rest of the file
   was measured at.
 
+**The search box now contains the model**
+
+- `-calibrate`'s ranges hold every frozen world, and a contract test in both twins asserts it.
+  `margin` has shipped at 0.006 since 0.19.1 against a ceiling of 0.004, so for eleven releases the
+  search could not propose the value the default itself uses. Also widened: `depth` to 8.0 (the
+  0.24.0 Nasdaq recipes run 8.4), `jumpRate` to 0.0 .. 0.006, `volOfVol` to 0.010. Bounds round
+  outward past the extreme so a dial shipped at the edge can still be explored past it.
+- Each range row gained a getter beside its setter, because a range that cannot be read back cannot
+  be checked against the worlds it must contain. The model is untouched and the twins stay
+  byte-identical.
+
 **The credit system gets a baseline of its own, and splits**
 
 - `macroCredit` REPLACES ITS STATE. It was the leverage cycle read in percent, and one state

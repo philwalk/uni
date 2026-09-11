@@ -28,6 +28,21 @@ class MarketSimContractSuite extends FunSuite:
       assertEquals(MarketSim.indexedName("f.tsv", k, w).length, "f-0000.tsv".length)
   }
 
+  test("every searchable range contains every frozen world") {
+    // A range that excludes a shipped world is a search that cannot reach the model: `margin`
+    // shipped at 0.006 from 0.19.1 while the range stopped at 0.004, so for eleven releases
+    // `-calibrate` could not propose the value the default itself uses and every candidate-vs-
+    // default line it printed was across a boundary the candidate could not cross.  The same
+    // class as the `fundVol` range that hid a defect for four releases.  Releases AND recipes:
+    // a frozen row is permanent, so this must not be scoped to the ones today's gate still likes.
+    val worlds = MarketSim.Releases.map((v, w) => (v, w)) ++ MarketSim.Recipes.map((n, w, _) => (n, w))
+    for (nm, lo, hi, _, get) <- MarketSim.CalibrateRanges; (label, w) <- worlds do
+      val v = get(w)
+      assert(v >= lo && v <= hi,
+        s"$nm = $v in $label is outside its -calibrate range [$lo, $hi]: the search cannot reach " +
+        "a world the model has shipped")
+  }
+
   test("the search never fits an identity parameter") {
     // An identity parameter describes WHICH ASSET this is, and `-crossasset` grades the bond
     // relations by moving one. Letting the search fit it makes that grader circular — and the
