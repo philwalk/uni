@@ -44,7 +44,7 @@ Two checks, with different jobs and different lifetimes. Use both.
 exit 0. Nothing to parse, so a caller can assert on it without depending on any other output:
 
 ```
-[ "$(market_sim.exe -version)" = "0.24.1" ] || { echo "wrong simulator" >&2; exit 1; }
+[ "$(market_sim.exe -version)" = "0.24.2" ] || { echo "wrong simulator" >&2; exit 1; }
 ```
 
 This catches the wrong binary, and it is the only check available *before* you spend the run. It
@@ -146,8 +146,8 @@ place, so a failed reinstall silently leaves the previous one there. Install to 
 invoke the absolute path, so the path itself carries the assertion:
 
 ```
-cargo install vastblue-uni@0.24.1 --root ~/.local/uni-0.24.1
-~/.local/uni-0.24.1/bin/market_sim.exe -version
+cargo install vastblue-uni@0.24.2 --root ~/.local/uni-0.24.2
+~/.local/uni-0.24.2/bin/market_sim.exe -version
 ```
 
 Exe-versus-library mismatch is not a risk — the example links the library from the same crate. The
@@ -952,14 +952,35 @@ from any earlier release optimised a different function.
 
 - **Signed persistence is graded as a four-rung profile since 0.23.1, not one rung.** `-validate`
   prints the variance ratio at 20, 60, 120 and 250 sessions against the real cross-section's
-  envelopes (0.65-1.20, 0.50-1.20, 0.40-1.35, 0.20-1.60: 18 instruments over two windows and three
+  envelopes (0.70-1.15, 0.55-1.20, 0.45-1.20, 0.45-1.30: 18 instruments over two windows and three
   CRSP eras, `persistence-2026-09-11.tsv`) and the two short slopes against theirs (vr60-vr20
-  -0.25..+0.10, vr120-vr60 -0.30..+0.20), as ONE fidelity row. The long rungs cannot discriminate
+  -0.20..+0.10, vr120-vr60 -0.15..+0.15), as ONE fidelity row. The long rungs cannot discriminate
   — the record itself spans 0.24-1.56 at 250 sessions — so the row binds at the short rungs and
   on the shape; a world at 0.70 and 1.15 on the two short rungs sits inside both boxes and outside
   every real profile, which is what the slopes are for. The shipped world reads 1.07 / 1.12 / 1.12
   / 1.33; the `0.23.0-nasdaq` recipe 0.95 / 0.88 / 0.77 / 0.72, mean-reverting at every horizon
   where the S&P default trends. The loss still reads the 60 rung alone, at its theory value.
+
+  Every rung is PHASE-AVERAGED over its q block offsets since 2026-09-11. Non-overlapping blocks
+  have to start somewhere, and on one historical series that choice was worth as much as the
+  statistic: the CRSP century reads 1.175 at q=60 from offset zero against a span of 1.057-1.333
+  across the 60 offsets, and one observation of phase is the whole difference between the two
+  previous vintages of the fixture on the same data. Averaging it away tightened every envelope,
+  the 250 rung's cross-section from 0.240-1.564 to 0.474-1.255, so the gate is stricter on
+  evidence that did not change. A model ensemble already averages phases across its paths, so the
+  model side barely moved.
+
+- **The lag-1 rung is REPORTED, never graded, and it is the one the ladder cannot see.** A
+  variance ratio constrains a weighted SUM of the first q-1 autocorrelations, so a world can hold
+  vr60 at 1.0 with a positive first term paid for by negatives further out; the clustering rows
+  read |r| and are blind to sign. `-validate` now prints the signed lag-1 autocorrelation beside
+  the ladder. It is not graded because the record has no one value to grade against: CRSP reads
+  +0.047 over the century, +0.023 from 1954 and -0.058 from 1990, and all 18 modern funds revert,
+  spanning -0.106 to -0.018. Only 2 of the 39 readings are positive, and both are the long CRSP
+  windows. The shipped world reads +0.039, inside the long-window record and above the entire
+  modern cross-section. A rule that reads one-day reversal will find the model's sign wrong for
+  the modern era and right for the century it is scored on; the numbers the report quotes are the
+  fixture's own, checked by the anchor suites so the printed claim cannot drift from the file.
 
 ## A basket of names — `-basket`
 

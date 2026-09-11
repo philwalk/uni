@@ -4312,6 +4312,13 @@ pub struct WorldStats {
     pub vr60: f64,
     pub vr120: f64,
     pub vr250: f64,
+    /// SIGNED lag-1 autocorrelation, the one horizon the ladder cannot see: a variance ratio
+    /// constrains a weighted SUM of the first q-1 autocorrelations, so a world can hold vr60 at
+    /// 1.0 with a positive first term paid for by negatives further out, and `ac1` above reads
+    /// |r| and is blind to sign. REPORTED, never graded: the record's own sign flips by era
+    /// (CRSP +0.047 over the century, +0.023 from 1954, -0.058 from 1990, every modern fund
+    /// negative), so there is no one value to grade against.
+    pub ret_ac1: f64,
     pub ann_ret: f64,
     pub n_episodes: usize,
     pub ep_per_path: f64,
@@ -4525,6 +4532,13 @@ const VAR_RATIO_BANDS: [(usize, f64, f64); 4] = [
 /// short rungs sits inside both boxes and outside every real profile. Both tightened when the
 /// rungs became phase-averaged, the 60->120 slope from -0.30..0.20 to -0.15..0.15: a third of the
 /// record's apparent shape variation was block alignment.
+/// The record's lag-1 signed autocorrelation, quoted in the report: the three CRSP eras, then the
+/// modern funds' range. Not derived from anything here — these are `persistence-2026-09-11.tsv`'s
+/// own `ac1` readings, and `persistence_anchor_tests` checks they still are. A printed claim that
+/// no longer follows from the file is worse than no claim, which is the same reason the envelope
+/// row carries its own bounds in its name.
+const RET_AC1_RECORD: (f64, f64, f64, f64, f64) = (0.0471, 0.0232, -0.0577, -0.1058, -0.0180);
+
 const VAR_RATIO_SLOPE_BANDS: [(usize, usize, f64, f64); 2] =
     [(20, 60, -0.20, 0.10), (60, 120, -0.15, 0.15)];
 
@@ -5665,6 +5679,10 @@ pub fn measure(sims: &[Path], years: usize) -> WorldStats {
         vr250: med(&rets
             .iter()
             .map(|r| variance_ratio(r, 250))
+            .collect::<Vec<f64>>()),
+        ret_ac1: med(&rets
+            .iter()
+            .map(|r| level_autocorr(r, 1))
             .collect::<Vec<f64>>()),
         ann_ret: med(&sims
             .iter()
@@ -12769,6 +12787,14 @@ pub fn main() {
             .collect::<Vec<_>>()
             .join("  ")
     );
+    // The rung the ladder cannot see. REPORTED, never graded: the record's sign flips by era, so
+    // the cross-section carries no one value to grade against — see persistence-2026-09-11.tsv.
+    let (rc26, rc54, rc90, rf_lo, rf_hi) = RET_AC1_RECORD;
+    println!(
+        "                         lag-1 signed  {:+.4}   (record: CRSP {rc26:+.3} century, \
+         {rc54:+.3} from 1954, {rc90:+.3} from 1990; every modern fund {rf_lo:+.3}..{rf_hi:+.3})",
+        st.ret_ac1
+    );
     println!(
         "                         envelopes {}; slopes {}",
         VAR_RATIO_BANDS
@@ -14727,6 +14753,7 @@ mod persistence_anchor_tests {
         window: String,
         ticker: String,
         vr: [(usize, f64); 4],
+        ac1: f64,
     }
 
     impl Row {
@@ -14760,10 +14787,53 @@ mod persistence_anchor_tests {
                         window: f[0].to_string(),
                         ticker: f[1].to_string(),
                         vr: [(20, v(5)), (60, v(6)), (120, v(7)), (250, v(8))],
+                        ac1: v(9),
                     }
                 })
                 .collect(),
         )
+    }
+
+    /// The rung the ladder cannot see is REPORTED rather than graded, so the only thing that can
+    /// go wrong is the printed claim drifting from the evidence. This pins it, and pins the era
+    /// flip that is the reason it is not graded.
+    #[test]
+    fn the_lag_1_readings_the_report_quotes_are_the_files_own() {
+        let Some(rows) = rows() else { return };
+        let crsp = |w: &str| -> f64 {
+            rows.iter()
+                .find(|r| r.window == w && r.ticker == "CRSP-VW")
+                .unwrap_or_else(|| panic!("no {w} CRSP row"))
+                .ac1
+        };
+        let funds: Vec<f64> = rows
+            .iter()
+            .filter(|r| r.ticker != "CRSP-VW")
+            .map(|r| r.ac1)
+            .collect();
+        let f_lo = funds.iter().copied().fold(f64::INFINITY, f64::min);
+        let f_hi = funds.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let (rc26, rc54, rc90, rf_lo, rf_hi) = RET_AC1_RECORD;
+        for (quoted, actual, what) in [
+            (rc26, crsp("c1926"), "the century reading"),
+            (rc54, crsp("c1954"), "the 1954 reading"),
+            (rc90, crsp("c1990"), "the 1990 reading"),
+            (rf_lo, f_lo, "the modern funds' low"),
+            (rf_hi, f_hi, "the modern funds' high"),
+        ] {
+            assert!(
+                (quoted - actual).abs() < 5e-5,
+                "{what} the report quotes is {quoted}, the file says {actual}"
+            );
+        }
+        assert!(
+            crsp("c1926") > 0.0 && crsp("c1990") < 0.0,
+            "the era flip is what makes a single lag-1 target meaningless"
+        );
+        assert!(
+            funds.iter().all(|&x| x < 0.0),
+            "every modern fund reverts at one day"
+        );
     }
 
     #[test]

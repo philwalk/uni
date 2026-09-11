@@ -20,7 +20,7 @@ class PersistenceAnchorSuite extends FunSuite:
   val Fixture = "test-data/equity-anchors/persistence-2026-09-11.tsv"
 
   case class Row(window: String, ticker: String, kind: String, years: Double,
-                 vr: Map[Int, Double])
+                 vr: Map[Int, Double], ac1: Double)
 
   /** Empty where the fixture is absent, which is a skip and not a failure: a source tarball ships
     * without `test-data/`, and asserting there would fail for no benefit. */
@@ -33,7 +33,8 @@ class PersistenceAnchorSuite extends FunSuite:
         .map { l =>
           val f = l.split("\t")
           Row(f(0), f(1), f(2), f(4).toDouble,
-              Map(20 -> f(5).toDouble, 60 -> f(6).toDouble, 120 -> f(7).toDouble, 250 -> f(8).toDouble))
+              Map(20 -> f(5).toDouble, 60 -> f(6).toDouble, 120 -> f(7).toDouble, 250 -> f(8).toDouble),
+              f(9).toDouble)
         }
 
   /** The rounding step the bands are stated at. Outward from the observed range, never inward: a
@@ -55,6 +56,25 @@ class PersistenceAnchorSuite extends FunSuite:
           f"vr$q: the high bound no longer follows from the fixture: readings reach ${xs.max}%.3f")
       assertEquals(MarketSim.VarRatioBands.find(_._1 == MarketSim.VarRatioQ).map(b => (b._2, b._3)),
         Some((0.55, 1.20)), "the loss row's rung carries the 60-session envelope")
+  }
+
+  test("the lag-1 readings the report quotes are the file's own, and the era flip is real") {
+    if rows.nonEmpty then
+      // The rung the ladder cannot see, REPORTED rather than graded -- so the only thing that can
+      // go wrong is the printed claim drifting from the evidence, which is what this pins.
+      def crsp(w: String) = rows.find(r => r.window == w && r.ticker == "CRSP-VW")
+        .getOrElse(fail(s"no $w CRSP row")).ac1
+      val funds = rows.filter(_.ticker != "CRSP-VW").map(_.ac1)
+      val (rc26, rc54, rc90, rfLo, rfHi) = MarketSim.RetAc1Record
+      assertEqualsDouble(rc26, crsp("c1926"), 5e-5, "the century reading the report quotes")
+      assertEqualsDouble(rc54, crsp("c1954"), 5e-5, "the 1954 reading the report quotes")
+      assertEqualsDouble(rc90, crsp("c1990"), 5e-5, "the 1990 reading the report quotes")
+      assertEqualsDouble(rfLo, funds.min, 5e-5, "the modern funds' low the report quotes")
+      assertEqualsDouble(rfHi, funds.max, 5e-5, "the modern funds' high the report quotes")
+      // The reason it is not graded: the record has no one sign to grade against.
+      assert(crsp("c1926") > 0.0 && crsp("c1990") < 0.0,
+        "the era flip is what makes a single lag-1 target meaningless")
+      assert(funds.forall(_ < 0.0), "every modern fund reverts at one day")
   }
 
   test("every slope band is the real range rounded outward") {

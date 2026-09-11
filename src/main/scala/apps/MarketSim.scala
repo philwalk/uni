@@ -2,7 +2,7 @@
 package uni.apps
 
 //> using scala 3.7.2
-//> using dep org.vastblue:uni_3:0.24.1
+//> using dep org.vastblue:uni_3:0.24.2
 
 // MARKET SIMULATOR — a testbed for COMPARING exposure strategies over long horizons.
 //
@@ -3257,6 +3257,14 @@ object MarketSim:
     * two short rungs sits inside both boxes and outside every real profile.  Both tightened when
     * the rungs became phase-averaged, the 60->120 slope from -0.30..0.20 to -0.15..0.15: a third
     * of the record's apparent shape variation was block alignment. */
+  /** The record's lag-1 signed autocorrelation, quoted in the report: the three CRSP eras, then
+    * the modern funds' range.  Not derived from anything here -- these are
+    * `persistence-2026-09-11.tsv`'s own `ac1` readings, and `PersistenceAnchorSuite` checks they
+    * still are.  A printed claim that no longer follows from the file is worse than no claim,
+    * which is the same reason the envelope row carries its own bounds in its name. */
+  val RetAc1Record: (Double, Double, Double, Double, Double) =
+    (0.0471, 0.0232, -0.0577, -0.1058, -0.0180)
+
   val VarRatioSlopeBands: Vector[(Int, Int, Double, Double)] =
     Vector((20, 60, -0.20, 0.10), (60, 120, -0.15, 0.15))
   /** Admissible sd of log(price/fair): the record's CAPE-proxy windows read 0.24-0.41, the floor
@@ -3663,6 +3671,16 @@ object MarketSim:
                               lev20: Double = Double.NaN,
                               vr20: Double, vr60: Double,   // SIGNED-return persistence at each
                               vr120: Double, vr250: Double, // rung of `VarRatioLadder` -- `varianceRatio`
+                              // SIGNED lag-1 autocorrelation, the one horizon the ladder cannot
+                              // see: a variance ratio constrains a weighted SUM of the first q-1
+                              // autocorrelations, so a world can hold vr60 at 1.0 with a positive
+                              // first term paid for by negatives further out, and `ac1` above
+                              // reads |r| and is blind to sign.  REPORTED, never graded: the
+                              // record's own sign flips by era (CRSP +0.047 over the century,
+                              // +0.023 from 1954, -0.058 from 1990, every modern fund negative),
+                              // so there is no one value to grade against.  Defaulted, like the
+                              // vol-response profile beside it.
+                              retAc1: Double = Double.NaN,
                               annRet: Double,
                               macroPanel: Option[MacroStats], // the macro panel's readings when it ran
                               nEpisodes: Int, epPerPath: Double, depthMed: Double, worstDepth: Double,
@@ -3855,6 +3873,7 @@ object MarketSim:
       vr60  = med(rets.map(r => varianceRatio(r, VarRatioQ))),
       vr120 = med(rets.map(r => varianceRatio(r, 120))),
       vr250 = med(rets.map(r => varianceRatio(r, 250))),
+      retAc1 = med(rets.map(r => levelAutocorr(r, 1))),
       annRet = med(sims.map(s => math.log(s.price.last / s.price.head) / years * 100.0)),
       sat = satStats(sims), bars = barStats(sims), open = openStats(sims),
       basket = basketStats(sims), macroPanel = macroStats(sims),
@@ -7423,6 +7442,12 @@ object MarketSim:
     println("  trend persistence      variance ratio " +
             VarRatioLadder.map(q => f"${q}%dd ${vrOf(st, q)}%.3f").mkString("  ") +
             "   (1.0 = no serial dependence)")
+    // The rung the ladder cannot see.  REPORTED, never graded: the record's sign flips by era, so
+    // the cross-section carries no one value to grade against -- see persistence-2026-09-11.tsv.
+    val (rc26, rc54, rc90, rfLo, rfHi) = RetAc1Record
+    println(f"                         lag-1 signed  ${st.retAc1}%+.4f   (record: CRSP $rc26%+.3f" +
+            f" century, $rc54%+.3f from 1954, $rc90%+.3f from 1990;" +
+            f" every modern fund $rfLo%+.3f..$rfHi%+.3f)")
     println("                         envelopes " +
             VarRatioBands.map((q, lo, hi) => f"${q}%dd $lo%.2f-$hi%.2f").mkString("  ") + "; slopes " +
             VarRatioSlopeBands.map { (a, b, lo, hi) =>

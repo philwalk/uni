@@ -59,6 +59,20 @@
   so the default world reads 1.049 / 1.070 / 1.103 / 1.222 and passes every rung and both slopes.
   The gate is stricter on evidence that did not change.
 
+- THE LAG-1 RUNG, reported and never graded. A variance ratio constrains a weighted SUM of the
+  first q-1 autocorrelations, so a world can hold vr60 at 1.0 with a positive first term paid for
+  by negatives further out, and the clustering rows read |r| and are blind to sign. Signed lag-1
+  was therefore unconstrained by anything in the target set. `-validate` now prints it, and
+  `persistence-2026-09-11.tsv` carries an `ac1` column beside the four rungs, same series and
+  windows.
+- It is NOT graded because the record has no one value to grade against: CRSP reads +0.047 over
+  the century, +0.023 from 1954 and −0.058 from 1990, and all 18 modern funds revert, spanning
+  −0.106 to −0.018. Two of the 39 readings are positive and both are long CRSP windows. The
+  shipped world reads +0.039, inside the long-window record and above the whole modern
+  cross-section.
+- The record numbers the report quotes live in one place and the anchor suites check them against
+  the file, so a printed claim cannot outlive the evidence behind it.
+
 **The credit system gets a baseline of its own, and splits**
 
 - `macroCredit` REPLACES ITS STATE. It was the leverage cycle read in percent, and one state
