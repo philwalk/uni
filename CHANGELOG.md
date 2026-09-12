@@ -1,5 +1,22 @@
 ## v0.24.2 — unreleased
 
+**The fitness weights are re-frozen at the current worlds, and the variance ratio has a spread of its own**
+
+- Every fidelity row's sampling spread is re-frozen from `-noise -paths 200` at the world its anchor
+  set describes: the default world for the S&P set, `0.24.1-nasdaq` for the Nasdaq set. The same
+  command at the 0.24.0 worlds reproduces 19 of the 20 previous spreads in each set exactly, so
+  every move is the world's.
+- The 60-day variance ratio's spread was one constant, 0.35, shared by both sets and never measured.
+  The S&P world reads 0.28 and the Nasdaq 0.24, so the row was underweighted on both. `Anchors`
+  gains `vr60Sd` (`vr60_sd` in Rust).
+- `-fitness` losses are not comparable across this change: every model reading is the same and the
+  weights moved. The S&P default reads 0.749 where it read 0.762, mostly because lag-20 clustering
+  weighs less. The Nasdaq recipe reads 1.894 where it read 1.753: lag-20 clustering and the variance
+  ratio each add about 0.06, two misses the old weights understated.
+- The calibration search records an `objective` digest of every row's name, target and weight in
+  its checkpoint, and refuses to resume an archive scored under different ones.
+- Rust's `fit_targets` and `StatFn` are public, as Scala's `fitTargets` already is.
+
 **Both simulators measure their ensembles across cores: a calibration search runs 4.8 times faster in Rust and 2.7 in Scala**
 
 - Measured on a calibration search at 60 paths by 80 years with the Nasdaq transport arm, on 24

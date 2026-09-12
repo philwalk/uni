@@ -473,6 +473,28 @@ fn judge(
     }
 }
 
+/// the OBJECTIVE, as a digest of every row a candidate is judged on -- each set's name, then each
+/// row's name, target and weight, for the primary set and the transport arm's. Recorded with the
+/// settings so a resume refuses an archive scored under different weights: re-freezing one
+/// spread changes the loss every member was admitted on, and nothing else in the checkpoint
+/// would show it. FNV-1a over the rows as text, numbers at eight significant digits, so both
+/// twins write the same digest.
+fn objective_digest(anchors: Anchors, transport: Option<&Transport>) -> String {
+    let mut text = String::new();
+    for a in std::iter::once(anchors).chain(transport.map(|t| t.anchors)) {
+        let _ = writeln!(text, "{}", a.name);
+        for (name, _, target, weight) in ms::fit_targets(a) {
+            let _ = writeln!(text, "{name}|{}|{}", g8(target), g8(weight));
+        }
+    }
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in text.bytes() {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    format!("{h:016x}")
+}
+
 // ---- the archive ---------------------------------------------------------------------------
 
 /// One archive member: which seed world carries the non-searched dials, the searched dials
@@ -1161,6 +1183,11 @@ fn main() {
         // `-nearest` since the replacement rule compares the NEAREST member inside `sep`; an
         // archive built on the first-found one refuses to resume
         ("admit".into(), "spread-keeping-nearest".to_string()),
+        // the weights and targets the loss applies: see `objective_digest`
+        (
+            "objective".into(),
+            objective_digest(anchors, transport.as_ref()),
+        ),
         (
             "transport".into(),
             if c.transport.is_empty() {

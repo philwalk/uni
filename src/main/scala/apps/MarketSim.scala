@@ -4697,11 +4697,11 @@ object MarketSim:
     // against TLT).
     tailHedge: Double, tailHedgeSd: Double,
     // Sampling spreads for the rows whose LEVEL is not asset-specific -- the theory-valued depth
-    // rungs, the valuation proxy and the bond rows -- but whose spread is: measured by `-noise` at
-    // the set's own world (the S&P default; the 0.23.0-nasdaq recipe), 200 paths, and frozen like
-    // the spreads above.  Carried inline through 0.23.0, so the Nasdaq loss weighted these rows
-    // with the S&P world's spreads.
-    valDispSd: Double, d5Sd: Double, d10Sd: Double, d20Sd: Double,
+    // rungs, the 60-session variance ratio, the valuation proxy and the bond rows -- but whose
+    // spread is: measured by `-noise` at the set's own world, 200 paths, and frozen like the
+    // spreads above.  A spread passed inline to `wgt` weights both sets' rows with one world's
+    // reading; the variance ratio's 0.35 did, where the two worlds read 0.28 and 0.24.
+    valDispSd: Double, vr60Sd: Double, d5Sd: Double, d10Sd: Double, d20Sd: Double,
     bondVolSd: Double, bondGrowthSd: Double, bondInflSd: Double, bondDepthSd: Double,
     // Drawdown-SHAPE references for `-ddshape`, the first the primary the ratios read against;
     // `ddshape-2026-09-02.tsv`, on the model's own episode definition and median.
@@ -4745,23 +4745,25 @@ object MarketSim:
   /** The S&P/CRSP set.  The LEVELS are the ones every release before 0.21.0 hard-coded, moved
     * rather than re-measured (except the two the 0.22 releases re-anchored -- `medDepth` and
     * `worstDepth` -- each re-derived from a committed fixture).  The SPREADS were re-frozen from
-    * `-noise -paths 200` at the adopted 0.24.0 leverage-cycle world, 2026-09-07, as the
-    * defaults-change rule requires (the same command at the outgoing 0.23.1 world reproduces the
-    * previous literals, so every move below is the world's); `-noise`'s `sd/real` column agrees
-    * with the `wt` beside it, which is the whole point of printing them together. */
+    * `-noise -paths 200` at the adopted 0.24.1 vol-response world, 2026-09-12, as the
+    * defaults-change rule requires.  The same command at the outgoing 0.24.0 world reproduces 19
+    * of the 20 previous literals exactly, so every move below is the world's; the twentieth, the
+    * variance ratio's, had been a constant shared with the Nasdaq set and never measured.
+    * `-noise`'s `sd/real` column agrees with the `wt` beside it, which is the whole point of
+    * printing them together. */
   val SP500Anchors = Anchors(
     name = "S&P 500 / CRSP",
     equityWindow = "S&P / CRSP 1954-2026", equityYears = 72,
     retVolWindow = "CRSP 1954-2026",
     clusterWindow = "CRSP 1926-2026, the century", clusterYears = 100,
     tailWindow = "CRSP 1926-2026, the century", tailYears = 100,
-    vol = 16.0,          volSd = 0.14,
-    retVol = 0.69,       retVolSd = 0.26,
-    kurt = 28.0,         kurtSd = 0.97,
-    ac1 = 0.299,         ac1Sd = 0.14,
-    ac20 = 0.225,        ac20Sd = 0.20,
-    crashes = 20.7,      crashesSd = 0.26,
-    medDepth = -21.4,    medDepthSd = 0.17,
+    vol = 16.0,          volSd = 0.16,
+    retVol = 0.69,       retVolSd = 0.27,
+    kurt = 28.0,         kurtSd = 0.85,
+    ac1 = 0.299,         ac1Sd = 0.15,
+    ac20 = 0.225,        ac20Sd = 0.25,
+    crashes = 20.7,      crashesSd = 0.29,
+    medDepth = -21.4,    medDepthSd = 0.16,
     // RE-ANCHORED in 0.22.1, same error class as `median depth %` in 0.22.0: -56.8 was the
     // 2007-09 episode, the worst of the 1954-2026 window, used where the model computes the worst
     // over a whole history.  1954 opens AFTER the crash that set the record's worst, so the anchor
@@ -4769,21 +4771,20 @@ object MarketSim:
     // 15% threshold, the record reads -84.1% (`episodes-2026-08-29.tsv`, w1926) -- the 1929-32
     // decline, which every threshold in that window agrees on because it is one episode.
     // `tailYears` moves to 100 with it, so the percentile is read at the window's own length.
-    // sd RE-MEASURED with the window: 0.24 was the spread of 72-year readings, 0.19 the spread
-    // of 100-year readings at the adopted 0.23.0 world (`-noise -paths 200`, 2026-08-30).
-    worstDepth = -84.1,  worstDepthSd = 0.20,
+    // Its sd is read at the same 100 years: a 72-year history's spread of the worst decline is
+    // not a century's.
+    worstDepth = -84.1,  worstDepthSd = 0.19,
     volBand = (14.0, 18.0),
     retVolBand = (0.50, 0.85),
-    // CRSP c1954 rows of asymmetry-2026-08-31.tsv; the tail hedge is SPY/TLT.  Spreads frozen
-    // from `-noise -paths 200` at the adopted 0.23.0 asymmetry world, 2026-08-31: a single
-    // 72-year history barely pins the semivariance excess (one crash day swings it), and the
-    // record now reads as a TYPICAL history of this model on all three rows -- 42nd percentile
-    // (semivariance), 46th (leverage corr), 26th (tail hedge).
-    semiExcess = 3.06, semiExcessSd = 1.44,
-    levCorr = -0.0926, levCorrSd = 0.50,
-    tailHedge = -0.273, tailHedgeSd = 0.29,
-    valDispSd = 0.62, d5Sd = 0.19, d10Sd = 0.50, d20Sd = 3.44,
-    bondVolSd = 0.52, bondGrowthSd = 1.51, bondInflSd = 1.93, bondDepthSd = 0.36,
+    // CRSP c1954 rows of asymmetry-2026-08-31.tsv; the tail hedge is SPY/TLT.  A single 72-year
+    // history barely pins the semivariance excess (one crash day swings it), and the record reads
+    // as a TYPICAL history of this model on all three rows -- the 51st percentile (semivariance),
+    // 37th (leverage corr), 40th (tail hedge).
+    semiExcess = 3.06, semiExcessSd = 1.40,
+    levCorr = -0.0926, levCorrSd = 0.41,
+    tailHedge = -0.273, tailHedgeSd = 0.34,
+    valDispSd = 0.62, vr60Sd = 0.28, d5Sd = 0.18, d10Sd = 0.45, d20Sd = 4.17,
+    bondVolSd = 0.52, bondGrowthSd = 1.69, bondInflSd = 2.00, bondDepthSd = 0.36,
     ddRefs = DdRefsSp500,
     divYield = 2.95, divYieldBand = (1.1, 5.8),
     basketCorr = 0.770, basketBeta = 1.557, basketVolRatio = 2.023, basketNameVolBand = (1.9, 3.5))
@@ -4806,22 +4807,16 @@ object MarketSim:
     * exactly (18.57 / 10.31 / 0.447 / 0.315 / 0.169 against 18.6 / 10.30 / 0.447 / 0.315 / 0.169),
     * so these readings are on the fixture's own definitions.
     *
-    * THE SAMPLING SPREADS ARE NOW THE NASDAQ WORLD'S OWN, re-frozen 2026-09-01 from
-    * `-noise -anchors nasdaq -depth 10 -drift 0.105 -jumpvar 0.02 -fundvol 0.06 -paths 200` --
-    * the gate-passing recipe this set describes, which did not exist when they were first
-    * carried over from the S&P.  The assumption that carried values were "approximately right
+    * THE SAMPLING SPREADS ARE THE NASDAQ WORLD'S OWN, re-frozen 2026-09-12 from
+    * `-noise -paths 200 -atrelease 0.24.1-nasdaq`, the recipe this set describes.  The same
+    * command at the outgoing 0.24.0-nasdaq recipe reproduces 19 of the 20 previous literals
+    * exactly.  They were first carried over from the S&P, and the assumption that carried values
+    * were "approximately right
     * because both assets' statistics have similar relative spreads" was FALSE where the two
     * worlds differ most: `medDepthSd` read 0.10 against a measured 0.37, a 3.7x OVERWEIGHT on
     * the heaviest row in this set's loss (weight is `SdRelRef / sdRel`), and `semiExcessSd`
     * 1.54 against 3.57.  Re-measure whenever the recipe moves; a spread is model-implied, so it
     * belongs to the world, not the index.
-    *
-    * STILL SHARED, and disclosed: the sds passed inline to `wgt` (variance ratio, valuation
-    * dispersion, the depth rungs, and every bond row) are per-TARGET constants rather than
-    * per-anchor fields, so they stay at the S&P world's readings for both anchor sets.  Measured
-    * at this recipe they would be vr 0.33, valuation dispersion 0.53, d5/d10/d20 0.12/0.19/0.30
-    * -- the depth rungs differ most.  Moving them into `Anchors` is the fix; it is a structural
-    * change, not a re-freeze.
     *
     * The two fidelity bands are the S&P bands' proportional widths around the Nasdaq levels
     * (+/-12.5% on volatility, -28%/+23% on return per volatility), for the same reason. */
@@ -4832,25 +4827,24 @@ object MarketSim:
     clusterWindow = "QQQ 1999-2026", clusterYears = 27,
     tailWindow = "QQQ 1999-2026", tailYears = 27,
     vol = 26.90,         volSd = 0.10,
-    retVol = 0.38,       retVolSd = 0.50,
+    retVol = 0.38,       retVolSd = 0.51,
     kurt = 9.55,         kurtSd = 1.78,
-    ac1 = 0.293,         ac1Sd = 0.25,
-    ac20 = 0.249,        ac20Sd = 0.19,
-    crashes = 25.6,      crashesSd = 0.48,
-    medDepth = -22.8,    medDepthSd = 0.40,
-    worstDepth = -83.0,  worstDepthSd = 0.21,
+    ac1 = 0.293,         ac1Sd = 0.22,
+    ac20 = 0.249,        ac20Sd = 0.15,
+    crashes = 25.6,      crashesSd = 0.51,
+    medDepth = -22.8,    medDepthSd = 0.39,
+    worstDepth = -83.0,  worstDepthSd = 0.20,
     volBand = (23.5, 30.3),
     retVolBand = (0.27, 0.47),
-    // QQQ wfull row of asymmetry-2026-08-31.tsv; the tail hedge is QQQ/TLT.  Spreads measured
-    // at the recipe world (2026-09-01), like every spread in this set.
-    semiExcess = 1.13, semiExcessSd = 3.71,
+    // QQQ wfull row of asymmetry-2026-08-31.tsv; the tail hedge is QQQ/TLT.
+    semiExcess = 1.13, semiExcessSd = 3.97,
     levCorr = -0.1073, levCorrSd = 0.47,
-    tailHedge = -0.236, tailHedgeSd = 0.35,
-    // `-noise -anchors nasdaq` at the 0.23.0-nasdaq recipe, 200 paths, 2026-09-02.  d20's spread
-    // is a fraction of the S&P world's (0.30 against 2.38): at Nasdaq volatility the deep rung is
-    // pinned where the S&P default leaves it unreadable, so the row carries real weight here.
-    valDispSd = 0.51, d5Sd = 0.12, d10Sd = 0.21, d20Sd = 0.33,
-    bondVolSd = 0.52, bondGrowthSd = 1.07, bondInflSd = 1.66, bondDepthSd = 0.36,
+    tailHedge = -0.236, tailHedgeSd = 0.36,
+    // d20's spread is a fraction of the S&P world's (0.31 against 4.17): at Nasdaq volatility the
+    // deep rung is pinned where the S&P default leaves it unreadable, so the row carries real
+    // weight here.
+    valDispSd = 0.54, vr60Sd = 0.24, d5Sd = 0.11, d10Sd = 0.19, d20Sd = 0.31,
+    bondVolSd = 0.52, bondGrowthSd = 0.89, bondInflSd = 1.83, bondDepthSd = 0.36,
     ddRefs = DdRefsNasdaq,
     divYield = 0.78, divYieldBand = (0.3, 1.5),
     basketCorr = 0.837, basketBeta = 1.365, basketVolRatio = 1.630, basketNameVolBand = (1.5, 2.8))
@@ -4955,7 +4949,7 @@ object MarketSim:
     // four: across the crowdImpact sweep corr(vr60, equity d20 vs real) is 0.98, which is the
     // finding, not an argument for dropping a row.  The depth rungs said the world was too deep
     // and named no cause; this row names it.
-    ("variance ratio 60d", st => st.vr60,                                    1.00,  wgt(1.0, 0.35)),
+    ("variance ratio 60d", st => st.vr60,                                    1.00,  wgt(1.0, a.vr60Sd)),
     // THE THIRD ASYMMETRY AXIS the rows above cannot see: clustering is |r| (sign-blind), vr60 is
     // the signed MEAN's persistence -- this pair is the signed SECOND moment.  Graded as the
     // EXCESS because the raw down/up ratio sits so near 1 that its model/real quotient could

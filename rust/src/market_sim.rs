@@ -6738,7 +6738,8 @@ fn parse_gate(spec: &str) -> Vec<GateClass> {
     out
 }
 
-type StatFn = fn(&WorldStats) -> f64;
+/// A fit row's reading of the ensemble statistics.
+pub type StatFn = fn(&WorldStats) -> f64;
 
 /// name, extractor, target, weight
 /// Reference relative sd for the precision factor below: a weight of `judgment` means "as
@@ -6834,11 +6835,12 @@ pub struct Anchors {
     pub tail_hedge: f64,
     pub tail_hedge_sd: f64,
     /// Sampling spreads for the rows whose LEVEL is not asset-specific — the theory-valued depth
-    /// rungs, the valuation proxy and the bond rows — but whose spread is: measured by `-noise`
-    /// at the set's own world (the S&P default; the 0.23.0-nasdaq recipe), 200 paths, and frozen
-    /// like the spreads above. Carried inline through 0.23.0, so the Nasdaq loss weighted these
-    /// rows with the S&P world's spreads.
+    /// rungs, the 60-session variance ratio, the valuation proxy and the bond rows — but whose
+    /// spread is: measured by `-noise` at the set's own world, 200 paths, and frozen like the
+    /// spreads above. A spread passed inline to `wgt` weights both sets' rows with one world's
+    /// reading; the variance ratio's 0.35 did, where the two worlds read 0.28 and 0.24.
     pub val_disp_sd: f64,
+    pub vr60_sd: f64,
     pub d5_sd: f64,
     pub d10_sd: f64,
     pub d20_sd: f64,
@@ -6944,11 +6946,13 @@ const DD_REFS_NASDAQ: [DdRef; 2] = [
 ];
 
 /// The S&P/CRSP set. The LEVELS are the ones every release before 0.21.0 hard-coded, moved rather
-/// than re-measured. The SPREADS were re-frozen in 0.22.0 from `-noise -paths 200` at the adopted
-/// world — the first time all of them came from one ensemble at one size, which is why several moved
-/// by more than the world change explains: only `kurt_sd` had been re-frozen at 200 paths, and the
-/// rest still carried a 120-path run's readings. `-noise`'s `sd/real` column now agrees with the
-/// `wt` beside it, which is the whole point of printing them together.
+/// than re-measured (except the two the 0.22 releases re-anchored — `med_depth` and `worst_depth`
+/// — each re-derived from a committed fixture). The SPREADS were re-frozen from `-noise -paths 200`
+/// at the adopted 0.24.1 vol-response world, 2026-09-12, as the defaults-change rule requires. The
+/// same command at the outgoing 0.24.0 world reproduces 19 of the 20 previous literals exactly, so
+/// every move below is the world's; the twentieth, the variance ratio's, had been a constant shared
+/// with the Nasdaq set and never measured. `-noise`'s `sd/real` column agrees with the `wt` beside
+/// it, which is the whole point of printing them together.
 const SP500_ANCHORS: Anchors = Anchors {
     name: "S&P 500 / CRSP",
     equity_window: "S&P / CRSP 1954-2026",
@@ -6959,19 +6963,19 @@ const SP500_ANCHORS: Anchors = Anchors {
     tail_window: "CRSP 1926-2026, the century",
     tail_years: 100,
     vol: 16.0,
-    vol_sd: 0.14,
+    vol_sd: 0.16,
     ret_vol: 0.69,
-    ret_vol_sd: 0.26,
+    ret_vol_sd: 0.27,
     kurt: 28.0,
-    kurt_sd: 0.97,
+    kurt_sd: 0.85,
     ac1: 0.299,
-    ac1_sd: 0.14,
+    ac1_sd: 0.15,
     ac20: 0.225,
-    ac20_sd: 0.20,
+    ac20_sd: 0.25,
     crashes: 20.7,
-    crashes_sd: 0.26,
+    crashes_sd: 0.29,
     med_depth: -21.4,
-    med_depth_sd: 0.17,
+    med_depth_sd: 0.16,
     // RE-ANCHORED in 0.22.1, same error class as `med_depth` in 0.22.0: -56.8 was the 2007-09
     // episode, the worst of the 1954-2026 window, used where the model computes the worst over a
     // whole history. 1954 opens AFTER the crash that set the record's worst, so the anchor graded
@@ -6980,30 +6984,30 @@ const SP500_ANCHORS: Anchors = Anchors {
     // which every threshold in that window agrees on because it is one episode. `tail_years` moves
     // to 100 with it, so the percentile is read at the window's own length.
     //
-    // sd RE-MEASURED with the window: 0.24 was the spread of 72-year readings, 0.18 the spread
-    // of 100-year readings at the adopted disaster world (`-noise -paths 200`, 2026-08-30).
+    // Its sd is read at the same 100 years: a 72-year history's spread of the worst decline is
+    // not a century's.
     worst_depth: -84.1,
-    worst_depth_sd: 0.20,
+    worst_depth_sd: 0.19,
     vol_band: (14.0, 18.0),
     ret_vol_band: (0.50, 0.85),
-    // CRSP c1954 rows of asymmetry-2026-08-31.tsv; the tail hedge is SPY/TLT. Spreads frozen
-    // from `-noise -paths 200` at the adopted 0.23.0 asymmetry world, 2026-08-31: a single
-    // 72-year history barely pins the semivariance excess (one crash day swings it), and the
-    // record now reads as a TYPICAL history of this model on all three rows — 42nd percentile
-    // (semivariance), 46th (leverage corr), 26th (tail hedge).
+    // CRSP c1954 rows of asymmetry-2026-08-31.tsv; the tail hedge is SPY/TLT. A single 72-year
+    // history barely pins the semivariance excess (one crash day swings it), and the record reads
+    // as a TYPICAL history of this model on all three rows — the 51st percentile (semivariance),
+    // 37th (leverage corr), 40th (tail hedge).
     semi_excess: 3.06,
-    semi_excess_sd: 1.44,
+    semi_excess_sd: 1.40,
     lev_corr: -0.0926,
-    lev_corr_sd: 0.50,
+    lev_corr_sd: 0.41,
     tail_hedge: -0.273,
-    tail_hedge_sd: 0.29,
+    tail_hedge_sd: 0.34,
     val_disp_sd: 0.62,
-    d5_sd: 0.19,
-    d10_sd: 0.50,
-    d20_sd: 3.44,
+    vr60_sd: 0.28,
+    d5_sd: 0.18,
+    d10_sd: 0.45,
+    d20_sd: 4.17,
     bond_vol_sd: 0.52,
-    bond_growth_sd: 1.51,
-    bond_infl_sd: 1.93,
+    bond_growth_sd: 1.69,
+    bond_infl_sd: 2.00,
     bond_depth_sd: 0.36,
     dd_refs: &DD_REFS_SP500,
     div_yield: 2.95,
@@ -7029,19 +7033,15 @@ const SP500_ANCHORS: Anchors = Anchors {
 ///
 /// Control: the same pipeline on SPY 1993-01-29 reproduces the committed w1993 fixture row exactly.
 ///
-/// THE SAMPLING SPREADS ARE NOW THE NASDAQ WORLD'S OWN, re-frozen 2026-09-01 from
-/// `-noise -anchors nasdaq -depth 10 -drift 0.105 -jumpvar 0.02 -fundvol 0.06 -paths 200` — the
-/// gate-passing recipe this set describes, which did not exist when they were first carried over
-/// from the S&P. The carried values were badly wrong where the two worlds differ most: `med_depth_sd`
+/// THE SAMPLING SPREADS ARE THE NASDAQ WORLD'S OWN, re-frozen 2026-09-12 from
+/// `-noise -paths 200 -atrelease 0.24.1-nasdaq`, the recipe this set describes. The same command at
+/// the outgoing 0.24.0-nasdaq recipe reproduces 19 of the 20 previous literals exactly. They were
+/// first carried over from the S&P, and those values were badly wrong where the two worlds differ
+/// most: `med_depth_sd`
 /// read 0.10 against a measured 0.37, a 3.7x OVERWEIGHT on the heaviest row in this set's loss
 /// (weight is `SD_REL_REF / sd_rel`), and `semi_excess_sd` 1.54 against 3.57. Re-measure these
 /// whenever the recipe moves; a spread is model-implied, so it belongs to the world, not the index.
 ///
-/// STILL SHARED, and disclosed: the sds passed inline to `wgt` (variance ratio, valuation
-/// dispersion, the depth rungs, and every bond row) are per-TARGET constants rather than per-anchor
-/// fields, so they stay at the S&P world's readings for both anchor sets. Measured at this recipe
-/// they would be vr 0.33, valuation dispersion 0.53, d5/d10/d20 0.12/0.19/0.30 — the depth rungs
-/// differ most. Moving them into `Anchors` is the fix; it is a structural change, not a re-freeze.
 /// The two fidelity bands are likewise the S&P bands' proportional widths around the Nasdaq levels.
 const NASDAQ_ANCHORS: Anchors = Anchors {
     name: "Nasdaq-100 / QQQ",
@@ -7055,39 +7055,39 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     vol: 26.90,
     vol_sd: 0.10,
     ret_vol: 0.38,
-    ret_vol_sd: 0.50,
+    ret_vol_sd: 0.51,
     kurt: 9.55,
     kurt_sd: 1.78,
     ac1: 0.293,
-    ac1_sd: 0.25,
+    ac1_sd: 0.22,
     ac20: 0.249,
-    ac20_sd: 0.19,
+    ac20_sd: 0.15,
     crashes: 25.6,
-    crashes_sd: 0.48,
+    crashes_sd: 0.51,
     med_depth: -22.8,
-    med_depth_sd: 0.40,
+    med_depth_sd: 0.39,
     worst_depth: -83.0,
-    worst_depth_sd: 0.21,
+    worst_depth_sd: 0.20,
     vol_band: (23.5, 30.3),
     ret_vol_band: (0.27, 0.47),
-    // QQQ wfull row of asymmetry-2026-08-31.tsv; the tail hedge is QQQ/TLT. Spreads measured
-    // at the recipe world (2026-09-01), like every spread in this set.
+    // QQQ wfull row of asymmetry-2026-08-31.tsv; the tail hedge is QQQ/TLT.
     semi_excess: 1.13,
-    semi_excess_sd: 3.71,
+    semi_excess_sd: 3.97,
     lev_corr: -0.1073,
     lev_corr_sd: 0.47,
     tail_hedge: -0.236,
-    tail_hedge_sd: 0.35,
-    // `-noise -anchors nasdaq` at the 0.23.0-nasdaq recipe, 200 paths, 2026-09-02. d20's spread
-    // is a fraction of the S&P world's (0.30 against 2.38): at Nasdaq volatility the deep rung is
-    // pinned where the S&P default leaves it unreadable, so the row carries real weight here.
-    val_disp_sd: 0.51,
-    d5_sd: 0.12,
-    d10_sd: 0.21,
-    d20_sd: 0.33,
+    tail_hedge_sd: 0.36,
+    // d20's spread is a fraction of the S&P world's (0.31 against 4.17): at Nasdaq volatility the
+    // deep rung is pinned where the S&P default leaves it unreadable, so the row carries real
+    // weight here.
+    val_disp_sd: 0.54,
+    vr60_sd: 0.24,
+    d5_sd: 0.11,
+    d10_sd: 0.19,
+    d20_sd: 0.31,
     bond_vol_sd: 0.52,
-    bond_growth_sd: 1.07,
-    bond_infl_sd: 1.66,
+    bond_growth_sd: 0.89,
+    bond_infl_sd: 1.83,
     bond_depth_sd: 0.36,
     dd_refs: &DD_REFS_NASDAQ,
     div_yield: 0.78,
@@ -7114,7 +7114,8 @@ fn wgt(judgment: f64, sd_rel: f64) -> f64 {
     clippy::too_many_lines,
     reason = "one row per fidelity target, and the target list is the contract"
 )]
-fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
+/// Every fidelity row `fitness` scores for an anchor set: name, reading, target, weight.
+pub fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
     vec![
         (
             "equity vol %",
@@ -7205,7 +7206,7 @@ fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             "variance ratio 60d",
             (|st: &WorldStats| st.vr60) as StatFn,
             1.00,
-            wgt(1.0, 0.35),
+            wgt(1.0, a.vr60_sd),
         ),
         // THE THIRD ASYMMETRY AXIS the rows above cannot see: clustering is |r| (sign-blind),
         // vr60 is the signed MEAN's persistence — this pair is the signed SECOND moment. Graded

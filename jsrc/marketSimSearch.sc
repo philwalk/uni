@@ -306,6 +306,22 @@ object MarketSimSearch:
              gateFail = if a.gateFail.isEmpty then b.gateFail.map(r => s"${tr.spec}: $r")
                         else a.gateFail)
 
+  /** the OBJECTIVE, as a digest of every row a candidate is judged on -- each set's name, then each
+    * row's name, target and weight, for the primary set and the transport arm's. Recorded with the
+    * settings so a resume refuses an archive scored under different weights: re-freezing one
+    * spread changes the loss every member was admitted on, and nothing else in the checkpoint
+    * would show it. FNV-1a over the rows as text, numbers at eight significant digits, so both
+    * twins write the same digest. */
+  def objectiveDigest(anchors: MarketSim.Anchors, transport: Option[Transport]): String =
+    val text = (anchors +: transport.map(_.anchors).toVector).flatMap { a =>
+      a.name +: MarketSim.fitTargets(a).map((name, _, target, weight) =>
+        f"$name|$target%.8g|$weight%.8g")
+    }.map(_ + "\n").mkString
+    val h = text.getBytes("UTF-8").foldLeft(0xcbf29ce484222325L) { (acc, b) =>
+      (acc ^ (b & 0xffL)) * 0x100000001b3L
+    }
+    f"$h%016x"
+
   // ---- checkpoint ---------------------------------------------------------------------------
   // Plain TSV, one member per row, dial columns in `CalibrateRanges` order.  A days-long run that
   // cannot be killed and resumed is a run nobody will start.
@@ -585,6 +601,8 @@ object MarketSimSearch:
                           // `-nearest` since the replacement rule compares the NEAREST member
                           // inside `sep`; an archive built on the first-found one refuses to resume.
                           "admit" -> "spread-keeping-nearest",
+                          // the weights and targets the loss applies: see `objectiveDigest`
+                          "objective" -> objectiveDigest(anchors, transport),
                           "transport" -> (if transportName.isEmpty then "(none)" else transportName))
     val prior = readState(out)
     val loaded = readArchive(out)
