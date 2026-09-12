@@ -1,5 +1,28 @@
 ## v0.24.2 — unreleased
 
+**Both simulators measure their ensembles across cores: a calibration search runs 4.8 times faster in Rust and 2.7 in Scala**
+
+- Measured on a calibration search at 60 paths by 80 years with the Nasdaq transport arm, on 24
+  cores: Rust 42.6 seconds to 8.9, Scala 158.2 to 58.7. Every statistic `measure`, the extreme rows
+  and `fitness` produce is bit-identical to before, compared at full precision across four worlds
+  in each twin, and the twins still agree byte for byte.
+- `measure` computes each path's statistics in ONE parallel pass and takes the medians after. They
+  ran one path at a time while the simulation used every core: a 60-path Nasdaq ensemble simulated
+  in 0.07 seconds and measured in 1.07. The channel and macro-panel statistics run across paths the
+  same way.
+- The extreme-horizon rows read each path's worst decline directly. They ran all of `measure` on
+  every path, macro panel and channels included, to take one statistic from each. A contract test
+  in each twin holds the direct reading to `measure`'s, bit for bit.
+- Percentiles and medians sort one copy, and the macro panel sorts each series once for its three
+  quantiles instead of three times.
+- Scala only: the sorts are on primitive arrays rather than boxed values; `trailingRank` keeps a
+  sorted window instead of rescanning; the price loop calls `java.lang.Math` for `min` and `max`,
+  which the JIT could not inline from `scala.math` in a method that large. In Rust the plain rescan
+  stays, since it vectorizes and measured faster than a sorted window.
+- The clustering lags share their absolute returns, centring and denominator, and several rows stop
+  recomputing a path's returns or building intermediate arrays. The kernels stay on `MatD`'s own
+  arithmetic: its summation order and its handling of -0.0 are what the twins agree on.
+
 **The Scala search harness gains `-transport` and `-fidelity`, and admission is recorded as it happened**
 
 - `jsrc/marketSimSearch.sc` runs `-transport` and `-fidelity`, byte-identical to the Rust harness.

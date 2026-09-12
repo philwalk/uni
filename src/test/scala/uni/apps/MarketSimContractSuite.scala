@@ -774,3 +774,83 @@ class MarketSimContractSuite extends FunSuite:
       }
     }
   }
+
+  // ---- the speedups must not move a bit --------------------------------------------------------
+  // `trailingRank` and the percentiles were rewritten for speed.  Each is checked here against the
+  // algorithm it replaced, on inputs built to break a sorted-window or primitive-sort shortcut:
+  // NaN, both zeros, both infinities, long runs of ties, and windows wider than the series.  The
+  // comparison is on raw bits, so -0.0 against 0.0 and one NaN against another both count.
+
+  private def rescanRank(x: Array[Double], win: Int): Array[Double] =
+    Array.tabulate(x.length) { i =>
+      if i < win - 1 then Double.NaN
+      else
+        var c = 0; var k = i - win + 1
+        while k <= i do
+          if x(k) <= x(i) then c += 1
+          k += 1
+        c.toDouble / win
+    }
+
+  private def adversarial(seed: Long, n: Int): Array[Double] =
+    val rng = new scala.util.Random(seed)
+    val specials = Array(Double.NaN, 0.0, -0.0, Double.PositiveInfinity, Double.NegativeInfinity,
+                         1.0, -1.0, 1e-300, -1e-300)
+    Array.fill(n) {
+      rng.nextInt(10) match
+        case 0 | 1 => specials(rng.nextInt(specials.length))
+        case 2 | 3 => (rng.nextInt(5) - 2).toDouble          // heavy ties
+        case _     => rng.nextGaussian()
+    }
+
+  private def sameBits(a: Array[Double], b: Array[Double]): Boolean =
+    a.length == b.length && a.indices.forall(i =>
+      java.lang.Double.doubleToRawLongBits(a(i)) == java.lang.Double.doubleToRawLongBits(b(i)) ||
+      (a(i).isNaN && b(i).isNaN))
+
+  test("trailingRank's sorted window reads exactly what the rescan read") {
+    for
+      seed <- 1L to 40L
+      n    <- Seq(0, 1, 5, 51, 300)
+      win  <- Seq(1, 2, 3, 7, 52, 252, 400)
+    do
+      val x = adversarial(seed * 7919L + n, n)
+      assert(sameBits(MarketSim.trailingRank(x, win), rescanRank(x, win)),
+             s"seed $seed n $n win $win: ${x.mkString(",")}")
+  }
+
+  test("the primitive percentiles read exactly what the boxed sort read") {
+    def boxed(v: Seq[Double], q: Double): Double =
+      val f = v.filter(_.isFinite)
+      if f.isEmpty then Double.NaN else f.sorted.apply(math.min((f.size * q).toInt, f.size - 1))
+    for
+      seed <- 1L to 60L
+      n    <- Seq(0, 1, 2, 9, 100, 2001)
+      q    <- Seq(0.0, 0.1, 0.5, 0.9, 0.999, 1.0)
+    do
+      val x = adversarial(seed * 104729L + n, n)
+      val want = boxed(x.toIndexedSeq, q)
+      val got  = MarketSim.pctile(x.toIndexedSeq, q)
+      val viaSorted = MarketSim.pctileOf(MarketSim.finiteSorted(x), q)
+      assert(java.lang.Double.doubleToRawLongBits(got) == java.lang.Double.doubleToRawLongBits(want) ||
+             (got.isNaN && want.isNaN), s"pctile seed $seed n $n q $q: $got vs $want")
+      assert(java.lang.Double.doubleToRawLongBits(viaSorted) == java.lang.Double.doubleToRawLongBits(want) ||
+             (viaSorted.isNaN && want.isNaN), s"pctileOf seed $seed n $n q $q: $viaSorted vs $want")
+  }
+
+  test("each direct extreme reading is what measure reads on that path") {
+    // The extreme rows skip `measure` per path; this holds each direct reading to the full path bit
+    // for bit, on horizons short enough that some paths have no episode (the NaN arm).
+    for
+      (w, spec) <- Seq(MarketSim.Defaults -> "sp500", MarketSim.namedWorld("0.24.1-nasdaq").get._1 -> "nasdaq")
+      years     <- Seq(2, 8, 40)
+    do
+      val a    = MarketSim.anchorsNamed(spec)
+      val sims = MarketSim.simPaths(w, 6, years, 20260813L + years)
+      for nm <- MarketSim.ExtremeTargets do
+        val get = MarketSim.fitTargets(a).find(_._1 == nm).getOrElse(fail(s"$nm is not a fidelity target"))._2
+        for p <- sims; direct <- MarketSim.extremeReading(nm, p) do
+          val full = get(MarketSim.measure(Vector(p), years))
+          assert(java.lang.Double.doubleToRawLongBits(direct) == java.lang.Double.doubleToRawLongBits(full) ||
+                 (direct.isNaN && full.isNaN), s"$nm at ${years}y: direct $direct against measure's $full")
+  }

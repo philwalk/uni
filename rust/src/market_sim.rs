@@ -4053,17 +4053,27 @@ fn lev_abs(r: &[f64], lag: usize) -> f64 {
 }
 
 fn autocorr_abs(r: &[f64], lag: usize) -> f64 {
+    autocorrs_abs(r, &[lag])[0]
+}
+
+/// `autocorr_abs` at several lags, sharing what does not depend on the lag -- |r|, its centring and
+/// the denominator -- which a caller asking for four lags otherwise builds four times.
+fn autocorrs_abs(r: &[f64], lags: &[usize]) -> Vec<f64> {
     let a = MatD::apply(r).abs();
     let z = &a - a.mean();
     let den = z.power(2).sum();
-    if den <= 0.0 || r.len() <= lag {
-        f64::NAN
-    } else {
-        let n = r.len();
-        // Scala writes these as z(0 until n-lag, 0) and z(lag until n, 0); on an n x 1
-        // column those are exactly row slices.
-        (&z.applyRowsAll(0..n - lag) * &z.applyRowsAll(lag..n)).sum() / den
-    }
+    let n = r.len();
+    lags.iter()
+        .map(|&lag| {
+            if den <= 0.0 || n <= lag {
+                f64::NAN
+            } else {
+                // Scala writes these as z(0 until n-lag, 0) and z(lag until n, 0); on an n x 1
+                // column those are exactly row slices.
+                (&z.applyRowsAll(0..n - lag) * &z.applyRowsAll(lag..n)).sum() / den
+            }
+        })
+        .collect()
 }
 
 /// Var(sum of q consecutive returns) / (q * Var(r)) on SIGNED returns: 1.0 under no serial
@@ -4635,13 +4645,32 @@ fn sorted_total(v: &[f64]) -> Vec<f64> {
 
 /// `is_finite`, not `!is_nan`: an infinite path is no more a datum than a NaN one, and `pctile`
 /// drops the same set, so a median and the percentiles printed beside it describe the same paths.
-fn med(v: &[f64]) -> f64 {
-    let f: Vec<f64> = v.iter().copied().filter(|x| x.is_finite()).collect();
-    if f.is_empty() {
-        return f64::NAN;
+/// The finite entries, sorted by `total_cmp`, in ONE owned copy. Entries that compare equal under
+/// `total_cmp` are bit-identical, so an unstable sort puts the same double at every index a stable
+/// one does -- and `pctile` then indexes a sort it made once rather than two copies deep.
+fn finite_sorted(v: &[f64]) -> Vec<f64> {
+    let mut f: Vec<f64> = v.iter().copied().filter(|x| x.is_finite()).collect();
+    f.sort_unstable_by(f64::total_cmp);
+    f
+}
+
+/// `pctile`'s index rule on a series `finite_sorted` has already prepared, so a caller wanting
+/// several quantiles of one series sorts it once.
+fn pctile_of(sorted: &[f64], q: f64) -> f64 {
+    if sorted.is_empty() {
+        f64::NAN
+    } else {
+        sorted[((sorted.len() as f64 * q) as usize).min(sorted.len() - 1)]
     }
-    let s = sorted_total(&f);
-    s[s.len() / 2]
+}
+
+fn med(v: &[f64]) -> f64 {
+    let s = finite_sorted(v);
+    if s.is_empty() {
+        f64::NAN
+    } else {
+        s[s.len() / 2]
+    }
 }
 
 /// NON-FINITE ENTRIES ARE DROPPED, the same rule `med` applies, because `total_cmp` -- like Scala's
@@ -4650,12 +4679,7 @@ fn med(v: &[f64]) -> f64 {
 /// read a 6.17% median volatility against a 15.7% baseline that way. A quantile is the wrong place
 /// to LEARN that an ensemble was contaminated -- the reports count that directly.
 pub fn pctile(v: &[f64], q: f64) -> f64 {
-    let f: Vec<f64> = v.iter().copied().filter(|x| x.is_finite()).collect();
-    if f.is_empty() {
-        return f64::NAN;
-    }
-    let s = sorted_total(&f);
-    s[((f.len() as f64 * q) as usize).min(f.len() - 1)]
+    pctile_of(&finite_sorted(v), q)
 }
 
 /// The satellite leg's statistics as ratios to the primary's — `None` when no leg ran, so a
@@ -4668,55 +4692,64 @@ fn sat_stats(sims: &[Path], years: usize) -> Option<SatStats> {
     if sims.is_empty() || sims[0].sat.is_empty() {
         return None;
     }
-    let mut corr = Vec::new();
-    let mut abs_corr = Vec::new();
-    let mut beta = Vec::new();
-    let mut vol_r = Vec::new();
-    let mut kurt_r = Vec::new();
-    let mut ac1_r = Vec::new();
-    let mut ac20_r = Vec::new();
-    let mut d5_r = Vec::new();
-    let mut d10_r = Vec::new();
-    let mut crash_r = Vec::new();
-    for s in sims {
-        let rp = daily_returns(&s.price);
-        let rs = daily_returns(&s.sat);
-        let ap: Vec<f64> = rp.iter().map(|x| x.abs()).collect();
-        let a_s: Vec<f64> = rs.iter().map(|x| x.abs()).collect();
-        corr.push(pearson(&rp, &rs));
-        abs_corr.push(pearson(&ap, &a_s));
-        let mp = rp.iter().sum::<f64>() / rp.len() as f64;
-        let ms = rs.iter().sum::<f64>() / rs.len() as f64;
-        let cov: f64 = rp.iter().zip(&rs).map(|(x, y)| (x - mp) * (y - ms)).sum();
-        let var_p: f64 = rp.iter().map(|x| (x - mp) * (x - mp)).sum();
-        let var_s: f64 = rs.iter().map(|x| (x - ms) * (x - ms)).sum();
-        beta.push(cov / var_p);
-        vol_r.push((var_s / var_p).sqrt());
-        kurt_r.push(kurtosis(&rs) / kurtosis(&rp));
-        ac1_r.push(autocorr_abs(&rs, 1) / autocorr_abs(&rp, 1));
-        ac20_r.push(autocorr_abs(&rs, 20) / autocorr_abs(&rp, 20));
-        let (p5, p10, _) = depth_shares(&s.price);
-        let (s5, s10, _) = depth_shares(&s.sat);
-        d5_r.push(s5 / p5);
-        d10_r.push(s10 / p10);
-        let ep = episodes(&s.price, 15.0).len() as f64;
-        let es = episodes(&s.sat, 15.0).len() as f64;
-        if ep > 0.0 {
-            crash_r.push(es / ep);
-        }
+    struct SatPath {
+        corr: f64,
+        abs_corr: f64,
+        beta: f64,
+        vol: f64,
+        kurt: f64,
+        ac1: f64,
+        ac20: f64,
+        d5: f64,
+        d10: f64,
+        crash: Option<f64>,
     }
+    // THE PATHS ACROSS CORES, gathered in path order. Each path's reading is a pure function of
+    // that path, so no median moves; sequential, these channel statistics were three quarters of
+    // a channel-emitting world's `measure` once the rest ran in parallel.
+    let per: Vec<SatPath> = sims
+        .par_iter()
+        .map(|s| {
+            let rp = daily_returns(&s.price);
+            let rs = daily_returns(&s.sat);
+            let ap: Vec<f64> = rp.iter().map(|x| x.abs()).collect();
+            let a_s: Vec<f64> = rs.iter().map(|x| x.abs()).collect();
+            let mp = rp.iter().sum::<f64>() / rp.len() as f64;
+            let ms = rs.iter().sum::<f64>() / rs.len() as f64;
+            let cov: f64 = rp.iter().zip(&rs).map(|(x, y)| (x - mp) * (y - ms)).sum();
+            let var_p: f64 = rp.iter().map(|x| (x - mp) * (x - mp)).sum();
+            let var_s: f64 = rs.iter().map(|x| (x - ms) * (x - ms)).sum();
+            let (p5, p10, _) = depth_shares(&s.price);
+            let (s5, s10, _) = depth_shares(&s.sat);
+            let ep = episodes(&s.price, 15.0).len() as f64;
+            let es = episodes(&s.sat, 15.0).len() as f64;
+            SatPath {
+                corr: pearson(&rp, &rs),
+                abs_corr: pearson(&ap, &a_s),
+                beta: cov / var_p,
+                vol: (var_s / var_p).sqrt(),
+                kurt: kurtosis(&rs) / kurtosis(&rp),
+                ac1: autocorr_abs(&rs, 1) / autocorr_abs(&rp, 1),
+                ac20: autocorr_abs(&rs, 20) / autocorr_abs(&rp, 20),
+                d5: s5 / p5,
+                d10: s10 / p10,
+                crash: (ep > 0.0).then_some(es / ep),
+            }
+        })
+        .collect();
     let _ = years;
+    let med_of = |f: fn(&SatPath) -> f64| med(&per.iter().map(f).collect::<Vec<f64>>());
     Some(SatStats {
-        corr: med(&corr),
-        abs_corr: med(&abs_corr),
-        beta: med(&beta),
-        vol_ratio: med(&vol_r),
-        kurt_ratio: med(&kurt_r),
-        ac1_ratio: med(&ac1_r),
-        ac20_ratio: med(&ac20_r),
-        d5_ratio: med(&d5_r),
-        d10_ratio: med(&d10_r),
-        crash_ratio: med(&crash_r),
+        corr: med_of(|p| p.corr),
+        abs_corr: med_of(|p| p.abs_corr),
+        beta: med_of(|p| p.beta),
+        vol_ratio: med_of(|p| p.vol),
+        kurt_ratio: med_of(|p| p.kurt),
+        ac1_ratio: med_of(|p| p.ac1),
+        ac20_ratio: med_of(|p| p.ac20),
+        d5_ratio: med_of(|p| p.d5),
+        d10_ratio: med_of(|p| p.d10),
+        crash_ratio: med(&per.iter().filter_map(|p| p.crash).collect::<Vec<f64>>()),
     })
 }
 
@@ -4859,9 +4892,13 @@ fn basket_stats(sims: &[Path]) -> Option<BasketStats> {
     if sims.is_empty() || sims[0].names.is_empty() {
         return None;
     }
+    // THE PATHS ACROSS CORES, gathered in path order. Each path's reading is a pure function of
+    // that path, so no median moves; sequential, these channel statistics were three quarters of
+    // a channel-emitting world's `measure` once the rest ran in parallel.
+    let per: Vec<_> = sims.par_iter().map(basket_path_stats).collect();
     let mut cols: Vec<Vec<f64>> = (0..12).map(|_| Vec::with_capacity(sims.len())).collect();
-    for s in sims {
-        for (c, v) in cols.iter_mut().zip(basket_path_stats(s)) {
+    for p in per {
+        for (c, v) in cols.iter_mut().zip(p) {
             c.push(v);
         }
     }
@@ -4896,39 +4933,40 @@ fn open_stats(sims: &[Path]) -> Option<OpenStats> {
     if sims.is_empty() || sims[0].log_open.is_empty() {
         return None;
     }
-    let mut shares = Vec::with_capacity(sims.len());
-    let mut worsts = Vec::with_capacity(sims.len());
-    let mut alls = Vec::with_capacity(sims.len());
-    for s in sims {
-        let lp: Vec<f64> = s.price.iter().map(|v| v.ln()).collect();
-        let n = lp.len() - 1;
-        let o: Vec<f64> = (0..n).map(|t| s.log_open[t + 1] - lp[t]).collect();
-        let r: Vec<f64> = (0..n).map(|t| lp[t + 1] - lp[t]).collect();
-        let sv = |x: &[f64]| -> f64 {
-            let m = x.iter().sum::<f64>() / x.len() as f64;
-            x.iter().map(|v| (v - m) * (v - m)).sum::<f64>() / (x.len() - 1) as f64
-        };
-        let reg_share = |idx: &[usize]| -> f64 {
-            let mut so = 0.0f64;
-            let mut sr = 0.0f64;
-            for &t in idx {
-                so += o[t] * r[t];
-                sr += r[t] * r[t];
-            }
-            if sr > 0.0 { so / sr } else { f64::NAN }
-        };
-        let mut order: Vec<usize> = (0..n).collect();
-        order.sort_by(|&a, &b| r[a].partial_cmp(&r[b]).unwrap_or(std::cmp::Ordering::Equal));
-        let worst = &order[..1.max(n / 100)];
-        let all: Vec<usize> = (0..n).collect();
-        shares.push(sv(&o) / sv(&r));
-        worsts.push(reg_share(worst));
-        alls.push(reg_share(&all));
-    }
+    // THE PATHS ACROSS CORES, gathered in path order. Each path's reading is a pure function of
+    // that path, so no median moves; sequential, these channel statistics were three quarters of
+    // a channel-emitting world's `measure` once the rest ran in parallel.
+    let per: Vec<(f64, f64, f64)> = sims
+        .par_iter()
+        .map(|s| {
+            let lp: Vec<f64> = s.price.iter().map(|v| v.ln()).collect();
+            let n = lp.len() - 1;
+            let o: Vec<f64> = (0..n).map(|t| s.log_open[t + 1] - lp[t]).collect();
+            let r: Vec<f64> = (0..n).map(|t| lp[t + 1] - lp[t]).collect();
+            let sv = |x: &[f64]| -> f64 {
+                let m = x.iter().sum::<f64>() / x.len() as f64;
+                x.iter().map(|v| (v - m) * (v - m)).sum::<f64>() / (x.len() - 1) as f64
+            };
+            let reg_share = |idx: &[usize]| -> f64 {
+                let mut so = 0.0f64;
+                let mut sr = 0.0f64;
+                for &t in idx {
+                    so += o[t] * r[t];
+                    sr += r[t] * r[t];
+                }
+                if sr > 0.0 { so / sr } else { f64::NAN }
+            };
+            let mut order: Vec<usize> = (0..n).collect();
+            order.sort_by(|&a, &b| r[a].partial_cmp(&r[b]).unwrap_or(std::cmp::Ordering::Equal));
+            let worst = &order[..1.max(n / 100)];
+            let all: Vec<usize> = (0..n).collect();
+            (sv(&o) / sv(&r), reg_share(worst), reg_share(&all))
+        })
+        .collect();
     Some(OpenStats {
-        overnight_share: med(&shares),
-        worst_gap_share: med(&worsts),
-        all_gap_share: med(&alls),
+        overnight_share: med(&per.iter().map(|p| p.0).collect::<Vec<f64>>()),
+        worst_gap_share: med(&per.iter().map(|p| p.1).collect::<Vec<f64>>()),
+        all_gap_share: med(&per.iter().map(|p| p.2).collect::<Vec<f64>>()),
     })
 }
 
@@ -5290,7 +5328,11 @@ fn hazard_counts(held: &[f64], sp: &[DdSpan], h: usize) -> HazardCounts {
 
 fn macro_path_read(s: &Path) -> Option<MacroPathRead> {
     let m = s.macro_panel.as_ref()?;
-    let levels = |x: &[f64]| (pctile(x, 0.1), pctile(x, 0.5), pctile(x, 0.9));
+    // sorted ONCE for all three quantiles; it was three filtered copies and three sorts
+    let levels = |x: &[f64]| {
+        let f = finite_sorted(x);
+        (pctile_of(&f, 0.1), pctile_of(&f, 0.5), pctile_of(&f, 0.9))
+    };
     let lp: Vec<f64> = s.price.iter().map(|v| v.ln()).collect();
     let fwd60 = fwd_return(&lp, 60);
     // the 20% episodes the rows grade, and the 10% ones — more events, mostly not macro ones on
@@ -5385,7 +5427,11 @@ fn macro_path_read(s: &Path) -> Option<MacroPathRead> {
 }
 
 fn macro_stats(sims: &[Path]) -> Option<MacroStats> {
-    let per: Vec<MacroPathRead> = sims.iter().map(macro_path_read).collect::<Option<_>>()?;
+    // across cores, in path order: each read is a pure function of its own path
+    let per: Vec<MacroPathRead> = sims
+        .par_iter()
+        .map(macro_path_read)
+        .collect::<Option<_>>()?;
     if per.is_empty() {
         return None;
     }
@@ -5518,116 +5564,261 @@ fn bar_stats(sims: &[Path]) -> Option<BarStats> {
     if sims.is_empty() || sims[0].log_hi.is_empty() {
         return None;
     }
-    let mut roc = Vec::new();
-    let mut racf = Vec::new();
-    let mut rdu = Vec::new();
-    let mut vsd = Vec::new();
-    let mut vcx = Vec::new();
-    for s in sims {
-        let r = daily_returns(&s.price);
-        let x: Vec<f64> = (0..s.log_hi.len())
-            .map(|i| s.log_hi[i] - s.log_lo[i])
-            .collect();
-        let mx = x.iter().sum::<f64>() / x.len() as f64;
-        let mr = r.iter().sum::<f64>() / r.len() as f64;
-        let sr = (r.iter().map(|v| (v - mr) * (v - mr)).sum::<f64>() / r.len() as f64).sqrt();
-        roc.push(mx / sr);
-        racf.push(pearson(&x[..x.len() - 1], &x[1..]));
-        // The bar's return is measured over the SAME window the bar spans (open = prior close),
-        // so the sign that conditions the range is `r` shifted by one: bar i spans price i-1..i.
-        let dn: Vec<f64> = (1..x.len())
-            .filter(|&i| r[i - 1] < 0.0)
-            .map(|i| x[i])
-            .collect();
-        let up: Vec<f64> = (1..x.len())
-            .filter(|&i| r[i - 1] > 0.0)
-            .map(|i| x[i])
-            .collect();
-        if !dn.is_empty() && !up.is_empty() {
-            let md = dn.iter().sum::<f64>() / dn.len() as f64;
-            let mu = up.iter().sum::<f64>() / up.len() as f64;
-            rdu.push(md / mu);
-        }
-        if !s.log_volume.is_empty() {
-            let mv = s.log_volume.iter().sum::<f64>() / s.log_volume.len() as f64;
-            vsd.push(
-                (s.log_volume
+    // THE PATHS ACROSS CORES, gathered in path order. Each path's reading is a pure function of
+    // that path, so no median moves; sequential, these channel statistics were three quarters of
+    // a channel-emitting world's `measure` once the rest ran in parallel.
+    struct BarPath {
+        range_over_ccvol: f64,
+        range_acf1: f64,
+        downup: Option<f64>,        // when both return signs occur
+        volume: Option<(f64, f64)>, // (sd, corr with the range) when the volume channel ran
+    }
+    let per: Vec<BarPath> = sims
+        .par_iter()
+        .map(|s| {
+            let r = daily_returns(&s.price);
+            let x: Vec<f64> = (0..s.log_hi.len())
+                .map(|i| s.log_hi[i] - s.log_lo[i])
+                .collect();
+            let mx = x.iter().sum::<f64>() / x.len() as f64;
+            let mr = r.iter().sum::<f64>() / r.len() as f64;
+            let sr = (r.iter().map(|v| (v - mr) * (v - mr)).sum::<f64>() / r.len() as f64).sqrt();
+            // The bar's return is measured over the SAME window the bar spans (open = prior close),
+            // so the sign that conditions the range is `r` shifted by one: bar i spans price i-1..i.
+            let dn: Vec<f64> = (1..x.len())
+                .filter(|&i| r[i - 1] < 0.0)
+                .map(|i| x[i])
+                .collect();
+            let up: Vec<f64> = (1..x.len())
+                .filter(|&i| r[i - 1] > 0.0)
+                .map(|i| x[i])
+                .collect();
+            let downup = (!dn.is_empty() && !up.is_empty()).then(|| {
+                let md = dn.iter().sum::<f64>() / dn.len() as f64;
+                let mu = up.iter().sum::<f64>() / up.len() as f64;
+                md / mu
+            });
+            let volume = (!s.log_volume.is_empty()).then(|| {
+                let mv = s.log_volume.iter().sum::<f64>() / s.log_volume.len() as f64;
+                let sd = (s
+                    .log_volume
                     .iter()
                     .map(|v| (v - mv) * (v - mv))
                     .sum::<f64>()
                     / s.log_volume.len() as f64)
-                    .sqrt(),
-            );
-            vcx.push(pearson(&s.log_volume, &x));
-        }
-    }
+                    .sqrt();
+                (sd, pearson(&s.log_volume, &x))
+            });
+            BarPath {
+                range_over_ccvol: mx / sr,
+                range_acf1: pearson(&x[..x.len() - 1], &x[1..]),
+                downup,
+                volume,
+            }
+        })
+        .collect();
     Some(BarStats {
-        range_over_ccvol: med(&roc),
-        range_acf1: med(&racf),
-        range_downup: med(&rdu),
-        vol_sd: med(&vsd),
-        vol_corr_range: med(&vcx),
+        range_over_ccvol: med(&per.iter().map(|p| p.range_over_ccvol).collect::<Vec<f64>>()),
+        range_acf1: med(&per.iter().map(|p| p.range_acf1).collect::<Vec<f64>>()),
+        range_downup: med(&per.iter().filter_map(|p| p.downup).collect::<Vec<f64>>()),
+        vol_sd: med(&per
+            .iter()
+            .filter_map(|p| p.volume.map(|v| v.0))
+            .collect::<Vec<f64>>()),
+        vol_corr_range: med(&per
+            .iter()
+            .filter_map(|p| p.volume.map(|v| v.1))
+            .collect::<Vec<f64>>()),
     })
+}
+
+/// Everything `measure` takes a median of from ONE path. Computed in a single parallel pass per
+/// ensemble: as separate passes -- one per statistic, about twenty-five over the same paths -- each
+/// carried too little work to pay for its own fork and join, and a 60-path ensemble on 24 cores
+/// measured only 4.5 times faster than one path at a time. Every field is the expression `measure`
+/// computed per path, so no median moves.
+struct PathRead {
+    episodes: Vec<Episode>,
+    dd_eq: (f64, f64, f64),
+    dd_bd: (f64, f64, f64),
+    vol: f64,
+    kurt: f64,
+    /// clustering at lags 1, 20, 5 and 60
+    ac: [f64; 4],
+    /// the leverage profile at lags 1, 5 and 20
+    lev: [f64; 3],
+    /// variance ratios at q = 20, `VAR_RATIO_Q`, 120 and 250
+    vr: [f64; 4],
+    ret_ac1: f64,
+    ann_ret: f64,
+    div_yield: f64,
+    bond_vol: Vec<f64>,
+    /// the bond's move over each episode outside, and inside, an inflation regime
+    bond_growth: Vec<f64>,
+    bond_infl: Vec<f64>,
+    corr_calm: f64,
+    corr_infl: f64,
+    val_disp: f64,
+    max_over: f64,
+    semi_excess: f64,
+    lev_corr: f64,
+    tail_hedge: f64,
+    infl_ann: f64,
 }
 
 #[expect(
     clippy::too_many_lines,
-    reason = "one Scala method; the field-by-field construction is the readable form"
+    reason = "every per-path statistic `measure` takes a median of, in one place"
 )]
-pub fn measure(sims: &[Path], years: usize) -> WorldStats {
-    let rets: Vec<Vec<f64>> = sims.iter().map(|s| daily_returns(&s.price)).collect();
+fn path_read(s: &Path, years: usize) -> PathRead {
+    let dpy = DAYS_PER_YEAR as f64;
+    let r = daily_returns(&s.price);
     // once per path (was recomputed 3x)
-    let eps_by: Vec<(&Path, Vec<Episode>)> =
-        sims.iter().map(|s| (s, episodes(&s.price, 15.0))).collect();
-    let dd_eq: Vec<(f64, f64, f64)> = sims.iter().map(|s| depth_shares(&s.price)).collect();
-    let dd_bd: Vec<(f64, f64, f64)> = sims.iter().map(|s| depth_shares(&s.bond)).collect();
-    let eps: Vec<Episode> = eps_by.iter().flat_map(|(_, e)| e.iter().copied()).collect();
+    let eps = episodes(&s.price, 15.0);
+    let bond_in_windows = |infl_regime: bool| -> Vec<f64> {
+        eps.iter()
+            .filter(|ep| {
+                let sum: f64 = scala_sum((ep.peak..=ep.trough).map(|k| s.infl_press[k]));
+                let infl = sum / 1.max(ep.trough - ep.peak + 1) as f64;
+                (infl > 0.005) == infl_regime
+            })
+            .map(|ep| (s.bond[ep.trough] / s.bond[ep.peak]).ln() * 100.0)
+            .collect()
+    };
+    let corr_in = |infl_regime: bool| -> f64 {
+        let idx: Vec<usize> = (1..s.price.len())
+            .filter(|&i| (s.infl_press[i] > 0.005) == infl_regime)
+            .collect();
+        let a: Vec<f64> = idx
+            .iter()
+            .map(|&i| (s.price[i] / s.price[i - 1]).ln())
+            .collect();
+        let b: Vec<f64> = idx
+            .iter()
+            .map(|&i| (s.bond[i] / s.bond[i - 1]).ln())
+            .collect();
+        pearson(&a, &b)
+    };
+    let ac = autocorrs_abs(&r, &[1, 20, 5, 60]);
+    PathRead {
+        dd_eq: depth_shares(&s.price),
+        dd_bd: depth_shares(&s.bond),
+        vol: (MatD::apply(&r).power(2).mean() * dpy).sqrt(),
+        kurt: kurtosis(&r),
+        ac: [ac[0], ac[1], ac[2], ac[3]],
+        lev: [lev_abs(&r, 1), lev_abs(&r, 5), lev_abs(&r, 20)],
+        vr: [
+            variance_ratio(&r, 20),
+            variance_ratio(&r, VAR_RATIO_Q),
+            variance_ratio(&r, 120),
+            variance_ratio(&r, 250),
+        ],
+        ret_ac1: level_autocorr(&r, 1),
+        ann_ret: (s.price[s.price.len() - 1] / s.price[0]).ln() / years as f64 * 100.0,
+        div_yield: if s.div_yield.is_empty() {
+            f64::NAN
+        } else {
+            s.div_yield.iter().sum::<f64>() / s.div_yield.len() as f64
+        },
+        // Median over non-overlapping BOND_VOL_YEARS windows, pooled across paths — see
+        // BOND_VOL_YEARS for why this row alone is windowed. A path shorter than one window
+        // contributes itself, so a short run still reports something rather than nothing.
+        bond_vol: {
+            let rb = daily_returns(&s.bond);
+            let w = BOND_VOL_YEARS * DAYS_PER_YEAR;
+            let nw = rb.len() / w;
+            let segs: Vec<Vec<f64>> = if nw < 1 {
+                vec![rb.clone()]
+            } else {
+                (0..nw).map(|k| rb[k * w..(k + 1) * w].to_vec()).collect()
+            };
+            segs.into_iter()
+                .map(|seg| (MatD::apply(&seg).power(2).mean() * dpy).sqrt())
+                .collect()
+        },
+        bond_growth: bond_in_windows(false),
+        bond_infl: bond_in_windows(true),
+        corr_calm: corr_in(false),
+        corr_infl: corr_in(true),
+        val_disp: {
+            let g: Vec<f64> = s
+                .price
+                .iter()
+                .zip(s.fundamental.iter())
+                .map(|(p, f)| (p / f).ln())
+                .collect();
+            let m = scala_sum(g.iter().copied()) / g.len() as f64;
+            (scala_sum(g.iter().map(|x| (x - m) * (x - m))) / (g.len() - 1) as f64).sqrt()
+        },
+        max_over: s
+            .price
+            .iter()
+            .zip(s.fundamental.iter())
+            .map(|(p, f)| (p / f).ln())
+            .fold(f64::MIN, f64::max),
+        // the path's own returns, where these two each made a fresh copy of the same numbers
+        semi_excess: {
+            let d = scala_sum(r.iter().filter(|x| **x < 0.0).map(|x| x * x));
+            let u = scala_sum(r.iter().filter(|x| **x > 0.0).map(|x| x * x));
+            if u > 0.0 {
+                ((d / u).sqrt() - 1.0) * 100.0
+            } else {
+                f64::NAN
+            }
+        },
+        lev_corr: {
+            let a: Vec<f64> = r[..r.len() - 1].to_vec();
+            let b: Vec<f64> = r[1..].iter().map(|x| x * x).collect();
+            pearson(&a, &b)
+        },
+        tail_hedge: {
+            let idx: Vec<usize> = (1..s.price.len())
+                .filter(|&i| s.infl_press[i] <= 0.005)
+                .collect();
+            let re: Vec<f64> = idx
+                .iter()
+                .map(|&i| (s.price[i] / s.price[i - 1]).ln())
+                .collect();
+            let rb: Vec<f64> = idx
+                .iter()
+                .map(|&i| (s.bond[i] / s.bond[i - 1]).ln())
+                .collect();
+            let q = pctile(&re, 0.10);
+            let ta: Vec<f64> = re.iter().copied().filter(|x| *x < q).collect();
+            let tb: Vec<f64> = re
+                .iter()
+                .zip(rb.iter())
+                .filter(|(x, _)| **x < q)
+                .map(|(_, y)| *y)
+                .collect();
+            // A tail too small to correlate is unmeasurable, not zero — the same rule the
+            // 24-year bond windows apply.
+            if ta.len() < 30 {
+                f64::NAN
+            } else {
+                pearson(&ta, &tb)
+            }
+        },
+        infl_ann: (s.cpi[s.cpi.len() - 1] / s.cpi[0]).ln() / years as f64 * 100.0,
+        episodes: eps,
+    }
+}
+
+pub fn measure(sims: &[Path], years: usize) -> WorldStats {
+    // THE PER-PATH STATISTICS, ACROSS CORES AND IN ONE PASS: `path_read` computes each path's
+    // readings and `collect` keeps path order, so every median below reads what it always did.
+    let per: Vec<PathRead> = sims.par_iter().map(|s| path_read(s, years)).collect();
+    let med_by = |f: fn(&PathRead) -> f64| med(&per.iter().map(f).collect::<Vec<f64>>());
+    let eps: Vec<Episode> = per
+        .iter()
+        .flat_map(|p| p.episodes.iter().copied())
+        .collect();
     let shapes: Vec<f64> = eps
         .iter()
         .map(|e| e.shape())
         .filter(|x| !x.is_nan())
         .collect();
     let days: f64 = scala_sum(sims.iter().map(|s| s.price.len() as f64));
-
-    let bond_in_windows = |infl_regime: bool| -> f64 {
-        let vals: Vec<f64> = eps_by
-            .iter()
-            .flat_map(|(sp, es)| {
-                es.iter()
-                    .filter(|ep| {
-                        let s: f64 = scala_sum((ep.peak..=ep.trough).map(|k| sp.infl_press[k]));
-                        let infl = s / 1.max(ep.trough - ep.peak + 1) as f64;
-                        (infl > 0.005) == infl_regime
-                    })
-                    .map(|ep| (sp.bond[ep.trough] / sp.bond[ep.peak]).ln() * 100.0)
-                    .collect::<Vec<f64>>()
-            })
-            .collect();
-        med(&vals)
-    };
-
-    let corr_in = |infl_regime: bool| -> f64 {
-        let vals: Vec<f64> = sims
-            .iter()
-            .map(|sp| {
-                let idx: Vec<usize> = (1..sp.price.len())
-                    .filter(|&i| (sp.infl_press[i] > 0.005) == infl_regime)
-                    .collect();
-                let a: Vec<f64> = idx
-                    .iter()
-                    .map(|&i| (sp.price[i] / sp.price[i - 1]).ln())
-                    .collect();
-                let b: Vec<f64> = idx
-                    .iter()
-                    .map(|&i| (sp.bond[i] / sp.bond[i - 1]).ln())
-                    .collect();
-                pearson(&a, &b)
-            })
-            .collect();
-        med(&vals)
-    };
-
-    let dpy = DAYS_PER_YEAR as f64;
     let n_sims = sims.len() as f64;
     // POOLED, not a median of per-path shares: most paths hold no tail session at all, so a median
     // would read 0 forever and the check built on it could not fail.
@@ -5640,54 +5831,21 @@ pub fn measure(sims: &[Path], years: usize) -> WorldStats {
     let depths: Vec<f64> = eps.iter().map(|e| e.depth_pct).collect();
 
     WorldStats {
-        vol: med(&rets
-            .iter()
-            .map(|r| (MatD::apply(r).power(2).mean() * dpy).sqrt())
-            .collect::<Vec<f64>>()),
-        kurt: med(&rets.iter().map(|r| kurtosis(r)).collect::<Vec<f64>>()),
-        ac1: med(&rets
-            .iter()
-            .map(|r| autocorr_abs(r, 1))
-            .collect::<Vec<f64>>()),
-        ac20: med(&rets
-            .iter()
-            .map(|r| autocorr_abs(r, 20))
-            .collect::<Vec<f64>>()),
-        ac5: med(&rets
-            .iter()
-            .map(|r| autocorr_abs(r, 5))
-            .collect::<Vec<f64>>()),
-        ac60: med(&rets
-            .iter()
-            .map(|r| autocorr_abs(r, 60))
-            .collect::<Vec<f64>>()),
-        lev1: med(&rets.iter().map(|r| lev_abs(r, 1)).collect::<Vec<f64>>()),
-        lev5: med(&rets.iter().map(|r| lev_abs(r, 5)).collect::<Vec<f64>>()),
-        lev20: med(&rets.iter().map(|r| lev_abs(r, 20)).collect::<Vec<f64>>()),
-        vr20: med(&rets
-            .iter()
-            .map(|r| variance_ratio(r, 20))
-            .collect::<Vec<f64>>()),
-        vr60: med(&rets
-            .iter()
-            .map(|r| variance_ratio(r, VAR_RATIO_Q))
-            .collect::<Vec<f64>>()),
-        vr120: med(&rets
-            .iter()
-            .map(|r| variance_ratio(r, 120))
-            .collect::<Vec<f64>>()),
-        vr250: med(&rets
-            .iter()
-            .map(|r| variance_ratio(r, 250))
-            .collect::<Vec<f64>>()),
-        ret_ac1: med(&rets
-            .iter()
-            .map(|r| level_autocorr(r, 1))
-            .collect::<Vec<f64>>()),
-        ann_ret: med(&sims
-            .iter()
-            .map(|s| (s.price[s.price.len() - 1] / s.price[0]).ln() / years as f64 * 100.0)
-            .collect::<Vec<f64>>()),
+        vol: med_by(|p| p.vol),
+        kurt: med_by(|p| p.kurt),
+        ac1: med_by(|p| p.ac[0]),
+        ac20: med_by(|p| p.ac[1]),
+        ac5: med_by(|p| p.ac[2]),
+        ac60: med_by(|p| p.ac[3]),
+        lev1: med_by(|p| p.lev[0]),
+        lev5: med_by(|p| p.lev[1]),
+        lev20: med_by(|p| p.lev[2]),
+        vr20: med_by(|p| p.vr[0]),
+        vr60: med_by(|p| p.vr[1]),
+        vr120: med_by(|p| p.vr[2]),
+        vr250: med_by(|p| p.vr[3]),
+        ret_ac1: med_by(|p| p.ret_ac1),
+        ann_ret: med_by(|p| p.ann_ret),
         n_episodes: eps.len(),
         ep_per_path: eps.len() as f64 / n_sims,
         sat: sat_stats(sims, years),
@@ -5695,16 +5853,7 @@ pub fn measure(sims: &[Path], years: usize) -> WorldStats {
         open: open_stats(sims),
         basket: basket_stats(sims),
         macro_panel: macro_stats(sims),
-        div_yield_mean: med(&sims
-            .iter()
-            .map(|s| {
-                if s.div_yield.is_empty() {
-                    f64::NAN
-                } else {
-                    s.div_yield.iter().sum::<f64>() / s.div_yield.len() as f64
-                }
-            })
-            .collect::<Vec<f64>>()),
+        div_yield_mean: med_by(|p| p.div_yield),
         depth_med: med(&depths),
         worst_depth: if depths.is_empty() {
             f64::NAN
@@ -5726,121 +5875,38 @@ pub fn measure(sims: &[Path], years: usize) -> WorldStats {
         years_per_path: years as f64,
         trend_pinned: scala_sum(sims.iter().map(|s| s.trend_pinned)) / n_sims,
         target_sat: scala_sum(sims.iter().map(|s| s.target_sat)) / n_sims,
-        // Median over non-overlapping BOND_VOL_YEARS windows, pooled across paths — see
-        // BOND_VOL_YEARS for why this row alone is windowed. A path shorter than one window
-        // contributes itself, so a short run still reports something rather than nothing.
-        bond_vol: med(&sims
+        bond_vol: med(&per
             .iter()
-            .flat_map(|s| {
-                let r = daily_returns(&s.bond);
-                let w = BOND_VOL_YEARS * DAYS_PER_YEAR;
-                let nw = r.len() / w;
-                let segs: Vec<Vec<f64>> = if nw < 1 {
-                    vec![r.clone()]
-                } else {
-                    (0..nw).map(|k| r[k * w..(k + 1) * w].to_vec()).collect()
-                };
-                segs.into_iter()
-                    .map(|seg| (MatD::apply(&seg).power(2).mean() * dpy).sqrt())
-                    .collect::<Vec<f64>>()
-            })
+            .flat_map(|p| p.bond_vol.iter().copied())
             .collect::<Vec<f64>>()),
-        bond_growth: bond_in_windows(false),
-        bond_infl: bond_in_windows(true),
-        corr_calm: corr_in(false),
-        corr_infl: corr_in(true),
+        bond_growth: med(&per
+            .iter()
+            .flat_map(|p| p.bond_growth.iter().copied())
+            .collect::<Vec<f64>>()),
+        bond_infl: med(&per
+            .iter()
+            .flat_map(|p| p.bond_infl.iter().copied())
+            .collect::<Vec<f64>>()),
+        corr_calm: med_by(|p| p.corr_calm),
+        corr_infl: med_by(|p| p.corr_infl),
         mean_bond_stress: scala_sum(sims.iter().map(|s| s.mean_bond_stress)) / n_sims,
         pct_bond_stress: scala_sum(sims.iter().map(|s| s.pct_bond_stress)) / n_sims,
         crowd_flow: scala_sum(sims.iter().map(|s| s.mean_crowd_flow)) / n_sims,
         dis_per_century: scala_sum(sims.iter().map(|s| s.disasters as f64)) / n_sims / years as f64
             * 100.0,
-        val_disp: med(&sims
-            .iter()
-            .map(|sp| {
-                let g: Vec<f64> = sp
-                    .price
-                    .iter()
-                    .zip(sp.fundamental.iter())
-                    .map(|(p, f)| (p / f).ln())
-                    .collect();
-                let m = scala_sum(g.iter().copied()) / g.len() as f64;
-                (scala_sum(g.iter().map(|x| (x - m) * (x - m))) / (g.len() - 1) as f64).sqrt()
-            })
-            .collect::<Vec<f64>>()),
-        max_over: med(&sims
-            .iter()
-            .map(|sp| {
-                sp.price
-                    .iter()
-                    .zip(sp.fundamental.iter())
-                    .map(|(p, f)| (p / f).ln())
-                    .fold(f64::MIN, f64::max)
-            })
-            .collect::<Vec<f64>>()),
-        semi_excess: med(&sims
-            .iter()
-            .map(|sp| {
-                let r = daily_returns(&sp.price);
-                let d = scala_sum(r.iter().filter(|x| **x < 0.0).map(|x| x * x));
-                let u = scala_sum(r.iter().filter(|x| **x > 0.0).map(|x| x * x));
-                if u > 0.0 {
-                    ((d / u).sqrt() - 1.0) * 100.0
-                } else {
-                    f64::NAN
-                }
-            })
-            .collect::<Vec<f64>>()),
-        lev_corr: med(&sims
-            .iter()
-            .map(|sp| {
-                let r = daily_returns(&sp.price);
-                let a: Vec<f64> = r[..r.len() - 1].to_vec();
-                let b: Vec<f64> = r[1..].iter().map(|x| x * x).collect();
-                pearson(&a, &b)
-            })
-            .collect::<Vec<f64>>()),
-        tail_hedge: med(&sims
-            .iter()
-            .map(|sp| {
-                let idx: Vec<usize> = (1..sp.price.len())
-                    .filter(|&i| sp.infl_press[i] <= 0.005)
-                    .collect();
-                let re: Vec<f64> = idx
-                    .iter()
-                    .map(|&i| (sp.price[i] / sp.price[i - 1]).ln())
-                    .collect();
-                let rb: Vec<f64> = idx
-                    .iter()
-                    .map(|&i| (sp.bond[i] / sp.bond[i - 1]).ln())
-                    .collect();
-                let q = pctile(&re, 0.10);
-                let ta: Vec<f64> = re.iter().copied().filter(|x| *x < q).collect();
-                let tb: Vec<f64> = re
-                    .iter()
-                    .zip(rb.iter())
-                    .filter(|(x, _)| **x < q)
-                    .map(|(_, y)| *y)
-                    .collect();
-                // A tail too small to correlate is unmeasurable, not zero — the same rule the
-                // 24-year bond windows apply.
-                if ta.len() < 30 {
-                    f64::NAN
-                } else {
-                    pearson(&ta, &tb)
-                }
-            })
-            .collect::<Vec<f64>>()),
+        val_disp: med_by(|p| p.val_disp),
+        max_over: med_by(|p| p.max_over),
+        semi_excess: med_by(|p| p.semi_excess),
+        lev_corr: med_by(|p| p.lev_corr),
+        tail_hedge: med_by(|p| p.tail_hedge),
         duration: sims[0].duration,
-        infl_ann: med(&sims
-            .iter()
-            .map(|s| (s.cpi[s.cpi.len() - 1] / s.cpi[0]).ln() / years as f64 * 100.0)
-            .collect::<Vec<f64>>()),
-        dd_eq5: med(&dd_eq.iter().map(|d| d.0).collect::<Vec<f64>>()),
-        dd_eq10: med(&dd_eq.iter().map(|d| d.1).collect::<Vec<f64>>()),
-        dd_eq20: med(&dd_eq.iter().map(|d| d.2).collect::<Vec<f64>>()),
-        dd_bd5: med(&dd_bd.iter().map(|d| d.0).collect::<Vec<f64>>()),
-        dd_bd10: med(&dd_bd.iter().map(|d| d.1).collect::<Vec<f64>>()),
-        dd_bd20: med(&dd_bd.iter().map(|d| d.2).collect::<Vec<f64>>()),
+        infl_ann: med_by(|p| p.infl_ann),
+        dd_eq5: med_by(|p| p.dd_eq.0),
+        dd_eq10: med_by(|p| p.dd_eq.1),
+        dd_eq20: med_by(|p| p.dd_eq.2),
+        dd_bd5: med_by(|p| p.dd_bd.0),
+        dd_bd10: med_by(|p| p.dd_bd.1),
+        dd_bd20: med_by(|p| p.dd_bd.2),
     }
 }
 
@@ -7465,6 +7531,29 @@ pub fn extreme_horizons(a: Anchors) -> Vec<usize> {
 ///
 /// Each path is measured on its own, in PARALLEL: `measure` is pure and the collect preserves
 /// order, so the readings and their median are what they were.
+/// ONE PATH'S READING of an `EXTREME_TARGETS` row, taken directly instead of through `measure`.
+/// Each of these rows reads a single statistic of each path, and `measure` on a one-path ensemble
+/// computed every other statistic too -- the macro panel and the channels included -- and dropped
+/// them: most of the extreme ensemble's cost. `None` for a row with no direct reading, which then
+/// takes the full path. A contract test holds each direct reading to `measure`'s own, bit for bit.
+fn extreme_reading(nm: &str, p: &Path) -> Option<f64> {
+    match nm {
+        // `measure`'s `worst_depth` for this path alone: its smallest episode depth, NaN without one
+        "worst crash %" => {
+            let depths: Vec<f64> = episodes(&p.price, 15.0)
+                .iter()
+                .map(|e| e.depth_pct)
+                .collect();
+            Some(if depths.is_empty() {
+                f64::NAN
+            } else {
+                sorted_total(&depths)[0]
+            })
+        }
+        _ => None,
+    }
+}
+
 pub fn extreme_readings_from(
     a: Anchors,
     sims: &[Path],
@@ -7472,10 +7561,8 @@ pub fn extreme_readings_from(
 ) -> std::collections::HashMap<&'static str, Vec<f64>> {
     let mut out: std::collections::HashMap<&'static str, Vec<f64>> =
         std::collections::HashMap::new();
-    let sts: Vec<WorldStats> = sims
-        .par_iter()
-        .map(|p| measure(std::slice::from_ref(p), yrs))
-        .collect();
+    // `measure` per path only for a row with no direct reading, and then only once
+    let mut full: Option<Vec<WorldStats>> = None;
     for (_, gy, names) in anchor_groups(a) {
         if gy != yrs {
             continue;
@@ -7491,7 +7578,19 @@ pub fn extreme_readings_from(
                     "EXTREME_TARGETS names [{nm}], which is not a fidelity target"
                 ));
             };
-            out.insert(nm, sts.iter().map(get).filter(|x| !x.is_nan()).collect());
+            let direct: Option<Vec<f64>> =
+                sims.par_iter().map(|p| extreme_reading(nm, p)).collect();
+            let vals: Vec<f64> = direct.unwrap_or_else(|| {
+                full.get_or_insert_with(|| {
+                    sims.par_iter()
+                        .map(|p| measure(std::slice::from_ref(p), yrs))
+                        .collect()
+                })
+                .iter()
+                .map(get)
+                .collect()
+            });
+            out.insert(nm, vals.into_iter().filter(|x| !x.is_nan()).collect());
         }
     }
     out
@@ -14929,6 +15028,38 @@ mod contract_tests {
                     band.0,
                     band.1
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn each_direct_extreme_reading_is_what_measure_reads_on_that_path() {
+        // The extreme rows skip `measure` per path; this holds each direct reading to the full path
+        // bit for bit, on horizons short enough that some paths have no episode (the NaN arm).
+        for (w, spec) in [
+            (default_world(), "sp500"),
+            (named_world("0.24.1-nasdaq").expect("recipe").0, "nasdaq"),
+        ] {
+            let a = anchors_named(spec);
+            for years in [2usize, 8, 40] {
+                let sims = sim_paths(&w, 6, years, 20_260_813 + years as u64);
+                for nm in EXTREME_TARGETS.iter().copied() {
+                    let (_, get, _, _) = fit_targets(a)
+                        .into_iter()
+                        .find(|(n, _, _, _)| *n == nm)
+                        .expect("an extreme target is a fidelity target");
+                    for p in &sims {
+                        let Some(direct) = extreme_reading(nm, p) else {
+                            continue;
+                        };
+                        let full = get(&measure(std::slice::from_ref(p), years));
+                        assert!(
+                            direct.to_bits() == full.to_bits()
+                                || (direct.is_nan() && full.is_nan()),
+                            "{nm} at {years}y: direct {direct} against measure's {full}"
+                        );
+                    }
+                }
             }
         }
     }

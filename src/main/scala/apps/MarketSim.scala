@@ -2396,6 +2396,12 @@ object MarketSim:
   /** One independent history's PRICE LOOP, with the channels' per-session inputs recorded for the
     * second pass.  Local mutable state only — nothing escapes this method. */
   def priceLoop(w: World, years: Int, seed: Long): Priced =
+    // java.lang.Math's min and max, NOT scala.math's.  This method is past what C2 will inline
+    // into -- it compiled with under 9 kB of callees inlined -- so scala.math's forwarding call
+    // stayed a real call on every session and was 13% of a search's CPU.  The java.lang versions
+    // are intrinsics, compiled in place whatever the budget, and they are the functions scala.math
+    // forwards to, so no result moves.
+    import java.lang.Math.{max, min}
     val n    = years * DaysPerYear
     val tot  = n + BurnIn
     val rng  = new NumPyRNG(seed)
@@ -2487,7 +2493,7 @@ object MarketSim:
     var levSlow = MacroK.LevMean
     var ddS    = 0.0
     var lev    = 0.0
-    val volNorm = (w.volOfVol * w.volOfVol) / math.max(1e-9, 1.0 - w.volPersist * w.volPersist)
+    val volNorm = (w.volOfVol * w.volOfVol) / max(1e-9, 1.0 - w.volPersist * w.volPersist)
     // THE SLOW REPRICING CHANNEL (item 15).  `slowShare` of the diffusive variance leaves the
     // order-flow channel and reappears as a repricing that moves the fundamental and the price
     // TOGETHER, the way the news jump does, so the value channel has nothing to arbitrage and the
@@ -2508,7 +2514,7 @@ object MarketSim:
     // News variance DISPLACES diffusive noise (see `newsDampAt`); 1.0 when the channel is off.
     val newsDamp = newsDampAt(w.newsRate, w.newsSize)
     val crowdWin = w.crowd match
-      case Crowd.Trend(d) => math.max(2, math.round(d * 252.0 / 365.25).toInt)
+      case Crowd.Trend(d) => max(2, math.round(d * 252.0 / 365.25).toInt)
       case _              => 0
     // The crowd starts where its own target starts, so the first session is not a trade it never
     // made.  The banded crowds begin fully invested (1.0); the momentum crowd's target IS
@@ -2588,12 +2594,12 @@ object MarketSim:
           // trough reached: the RECOVERY leg arms, spreading `disasterRecover` of the decline
           // back over `disasterRecLen` years.  What does NOT reverse is permanent.
           if disLeft == 0 && w.disasterRecover > 0.0 then
-            recLeft = math.max(1, (w.disasterRecLen * DaysPerYear).toInt)
+            recLeft = max(1, (w.disasterRecLen * DaysPerYear).toInt)
             recStep = w.disasterRecover * w.disasterSize / recLeft
         else
           if recLeft > 0 then { logVbase += recStep; recLeft -= 1 }
           if drng.nextDouble() < disProb then
-            disLeft = math.max(1, (w.disasterLen * DaysPerYear).toInt)
+            disLeft = max(1, (w.disasterLen * DaysPerYear).toInt)
             disStep = w.disasterSize / disLeft
             if i >= BurnIn then disasterCount += 1
       logVbase += driftNow * dt + w.fundVol * sqdt * rng.randn()
@@ -2637,13 +2643,13 @@ object MarketSim:
       // suppresses the easing, which is what ties policy's hands in 2022-like regimes.
       val accWant = w.easing * eqM.stressIdx * math.exp(-inflPress / 0.005)
       acc = if accWant > acc then acc + EaseInSpeed * (accWant - acc) * dt
-            else math.max(0.0, acc - w.unwind * acc * dt)
+            else max(0.0, acc - w.unwind * acc * dt)
       val rOld = rate
       // rate UNCERTAINTY rises with inflation pressure (2022: MOVE elevated all year).  This is what
       // makes stocks and bonds co-move in an inflation regime: both are priced off the same rate,
       // so more rate news = more shared-factor variance = the correlation flip.  A constant rate
       // noise produced a flip of only +0.05 — present but too weak to pass its own gate.
-      rate = math.max(0.0, rate + w.rateSpeed * ((w.rateMean + inflPress - acc) - rate) * dt
+      rate = max(0.0, rate + w.rateSpeed * ((w.rateMean + inflPress - acc) - rate) * dt
                               + 0.01 * (1.0 + 25.0 * inflPress) * sqdt * rng.randn())
       // bond fair value: carry minus duration times the realised rate move
       fairB += rate * dt - w.duration * (rate - rOld)
@@ -2661,14 +2667,14 @@ object MarketSim:
           case Crowd.Trend(_) =>
             maSum += pPrev
             if i > crowdWin then maSum -= px(i - 1 - crowdWin)
-            val tgt = if pPrev >= maSum / math.min(i, crowdWin) then 1.0 else 0.0
+            val tgt = if pPrev >= maSum / min(i, crowdWin) then 1.0 else 0.0
             if math.abs(tgt - crowdE) > Band then crowdE = tgt
           case Crowd.VolScaled =>
-            val r = math.log(pPrev / px(math.max(i - 2, 0)))
+            val r = math.log(pPrev / px(max(i - 2, 0)))
             crowdRv = 0.94 * crowdRv + 0.06 * r * r
             val v = math.sqrt(crowdRv * DaysPerYear)
             crowdAnchor = if crowdAnchor == 0.0 then v else 0.999 * crowdAnchor + 0.001 * v
-            val tgt = math.max(0.0, math.min(1.0, if v > 0 then crowdAnchor / v else 1.0))
+            val tgt = max(0.0, min(1.0, if v > 0 then crowdAnchor / v else 1.0))
             if math.abs(tgt - crowdE) > Band then crowdE = tgt
           case Crowd.Drawdown(d) =>
             if pPrev > crowdPeak then crowdPeak = pPrev
@@ -2726,7 +2732,7 @@ object MarketSim:
       // buys shape rather than volatility.
       val asymM   =
         if w.noiseAsym <= 0.0 then 1.0
-        else if w.noiseAsymCap > 0.0 then math.exp(math.min(asymG - asymNorm, w.noiseAsymCap))
+        else if w.noiseAsymCap > 0.0 then math.exp(min(asymG - asymNorm, w.noiseAsymCap))
         else math.exp(asymG - asymNorm)
       val dNoise0 = newsDamp * SigmaN * math.exp(logVol - volNorm) * z * asymM * mix
       // read BEFORE this session's update, like the kick: the response is to PAST declines
@@ -2761,7 +2767,7 @@ object MarketSim:
         else
           val volMult  = math.exp(logVol - volNorm)
           val lamJ     = if w.jumpResp > 0.0 then math.exp(w.jumpResp * volRespS) else 1.0
-          val lamNow   = math.min(0.25, w.jumpRate * math.pow(volMult, JumpGamma) * lamJ)
+          val lamNow   = min(0.25, w.jumpRate * math.pow(volMult, JumpGamma) * lamJ)
           val scale    = jumpScale(w)
           // The compensator is deterministic and consumes no draw: it removes the mean the
           // downward shift would otherwise add, so `jumpVar` moves the tail without moving drift.
@@ -2838,7 +2844,7 @@ object MarketSim:
         ddS += MacroK.LevDdK * ((eqM.peak - eqM.logP) - ddS)
         lev = borrow * (1.0 + ddS)
         if w.levGain > 0.0 then
-          eqM.levMult = math.max(MacroK.LevMultFloor, 1.0 + w.levGain * (borrow - levSlow))
+          eqM.levMult = max(MacroK.LevMultFloor, 1.0 + w.levGain * (borrow - levSlow))
       val retE = eqM.step(perceivedFair, eqFlow + eqShockA)
       if w.volResp > 0.0 || w.jumpResp > 0.0 then
         // The REALIZED decline, in units of the sd that generated it, saturated at four like the
@@ -2849,7 +2855,7 @@ object MarketSim:
         // self-excites.  The numerator is the realized return rather than the shock on purpose:
         // the spiral's amplification is part of what real volatility responds to, and a
         // shock-only driver loses the skew the downside excess is measured from (2.85% -> 1.15%).
-        val vrU = math.min(math.max(newsJ - retE, 0.0) / math.max(1e-12, sessSigma), 4.0) - 0.399
+        val vrU = min(max(newsJ - retE, 0.0) / max(1e-12, sessSigma), 4.0) - 0.399
         // the ATTACK stage: at 0 the state receives the session's reading whole, which peaks the
         // response at lag 1; above 0 it receives a fast EWMA of it, which is what makes the
         // record's lag-2 hump.
@@ -2864,14 +2870,14 @@ object MarketSim:
         // S&P default is stable without a cap; the Nasdaq recipe at depth 8.4 ran to 49%
         // volatility and 70 crashes a century.  The cap bounds the multiplier at
         // exp(volResp * volRespCap) and leaves the plateau intact below it.
-        volRespS = math.min(w.volRespPhi * volRespS + vrIn, w.volRespCap)
+        volRespS = min(w.volRespPhi * volRespS + vrIn, w.volRespCap)
       if levOn then
         // THE CREDIT CYCLE: a damped oscillator in the stock (its velocity persists for a quarter,
         // its level swings over years -- the record's NFCILEVERAGE shape), driven by its own
         // innovation and paid down under the stress the step just read; then the trailing-year
         // average the growth is read against
         levVel += -MacroK.LevDamp * levVel - MacroK.LevSpring * (borrow - MacroK.LevMean) + MacroK.LevSd * lrng.randn()
-        borrow  = math.max(0.0, borrow + levVel - MacroK.LevPaydown * eqM.stressIdx * borrow)
+        borrow  = max(0.0, borrow + levVel - MacroK.LevPaydown * eqM.stressIdx * borrow)
         levSlow += MacroK.LevSlowK * (borrow - levSlow)
       if w.leverage > 0.0 then
         // SATURATED at four realized sds, and the cap is a priced trade, not a free guard:
@@ -2884,7 +2890,7 @@ object MarketSim:
         // exactly the day real volatility responds to, and the external repricing bypasses
         // `retE` (it never passes through `step`).  `newsJ` is 0 whenever the channel is off,
         // so the pre-news leverage behaviour is untouched bit for bit.
-        val levSig = math.min(math.max(newsJ - retE, 0.0) / sPre, 4.0) - 0.399
+        val levSig = min(max(newsJ - retE, 0.0) / sPre, 4.0) - 0.399
         // THE PERSISTENT KICK (`levPersist`): the same signal through an EWMA whose weights sum
         // to 1, so the integrated log-multiplier per unit decline is what it is today and only
         // its SHAPE over the following sessions changes -- built over 2-5 sessions by the
@@ -2901,7 +2907,7 @@ object MarketSim:
       val eqStressForRefuge = if w.refugeDays > 0.0 then settledStress else eqM.stressIdx
       val bondFlow = -w.margin * eqM.stressIdx * bdM.stressIdx +
                      w.refuge * (w.duration / DurationRef) * eqStressForRefuge *
-                       math.max(0.0, 1.0 - bdM.stressIdx)
+                       max(0.0, 1.0 - bdM.stressIdx)
       if w.refugeDays > 0.0 then settledStress += settleMu * (eqM.stressIdx - settledStress)
       val retB = bdM.step(fairB + slowB, bondFlow + SigmaNBond * (w.duration / DurationRef) * rng.randn())
       val _ = retB
@@ -2956,12 +2962,12 @@ object MarketSim:
         case Crowd.Momentum => trendPos
         case _              => crowdE - 1.0
       perfT = 0.99 * perfT + 0.01 * (crowdPos * retE) * 100.0
-      val eT = math.exp(math.min(50.0, w.beta * perfT))
-      val eV = math.exp(math.min(50.0, w.beta * perfV))
+      val eT = math.exp(min(50.0, w.beta * perfT))
+      val eV = math.exp(min(50.0, w.beta * perfV))
       val target = eT / (eT + eV)
       val kNow = kAdapt * (1.0 + w.panic * eqM.stressIdx)   // redemptions fast, subscriptions slow
       wTrend += kNow * (target - wTrend) + kHome * (w.trendShare - wTrend)
-      wTrend = math.max(0.02, math.min(0.95, wTrend))       // numerical guard; binding is REPORTED
+      wTrend = max(0.02, min(0.95, wTrend))       // numerical guard; binding is REPORTED
       if i >= BurnIn then
         wTrendSum += wTrend
         if wTrend <= 0.02 + 1e-9 || wTrend >= 0.95 - 1e-9 then pinnedCnt += 1
@@ -2991,11 +2997,21 @@ object MarketSim:
 
   // ---- stylised-fact measurements ------------------------------------------------------------
   def dailyReturns(px: Array[Double]): Array[Double] =
-    Array.tabulate(px.length - 1)(i => math.log(px(i + 1) / px(i)))
+    val out = new Array[Double](math.max(px.length - 1, 0))
+    var i = 0
+    while i < out.length do
+      out(i) = math.log(px(i + 1) / px(i))
+      i += 1
+    out
 
   /** mean(z^4) / mean(z^2)^2 for z = r - mean(r) -- written as the formula it implements. */
   def kurtosis(r: Array[Double]): Double =
-    val z  = MatD(r) - MatD(r).mean
+    // ON MatD, NOT A LOOP, here and in `pearson` and `autocorrsAbs`.  MatD folds a contiguous array
+    // in eight lanes and up to sixteen parallel chunks, and its `abs` keeps -0.0 where `math.abs`
+    // does not, so a loop that looks equivalent moves the last bit and the twins stop agreeing.
+    // Only the duplicate work went: `MatD(r)` copies `r`, and this used to make that copy twice.
+    val m  = MatD(r)
+    val z  = m - m.mean
     val m2 = z.power(2).mean
     if m2 <= 0 then Double.NaN else z.power(4).mean / (m2 * m2)
 
@@ -3007,14 +3023,28 @@ object MarketSim:
     * NEXT session reads its lag-1 value and then nothing. */
   def levAbs(r: Array[Double], lag: Int): Double =
     if r.length <= lag then Double.NaN
-    else pearson(r.dropRight(lag), r.drop(lag).map(math.abs))
+    else
+      // |r[lag, n)| built in one pass, where `drop` then `map` made two copies of it
+      val k = math.max(lag, 0)
+      val b = new Array[Double](r.length - k)
+      var i = 0
+      while i < b.length do
+        b(i) = math.abs(r(k + i))
+        i += 1
+      pearson(java.util.Arrays.copyOf(r, b.length), b)
 
-  def autocorrAbs(r: Array[Double], lag: Int): Double =
+  def autocorrAbs(r: Array[Double], lag: Int): Double = autocorrsAbs(r, Vector(lag))(0)
+
+  /** `autocorrAbs` at several lags, sharing what does not depend on the lag -- |r|, its centring
+    * and the denominator -- which a caller asking for four lags otherwise builds four times. */
+  private[apps] def autocorrsAbs(r: Array[Double], lags: Vector[Int]): Vector[Double] =
     val a = MatD(r).abs
     val z = a - a.mean
     val den = z.power(2).sum
-    if den <= 0 || r.length <= lag then Double.NaN
-    else (z(0 until r.length - lag, 0) * z(lag until r.length, 0)).sum / den
+    lags.map { lag =>
+      if den <= 0 || r.length <= lag then Double.NaN
+      else (z(0 until r.length - lag, 0) * z(lag until r.length, 0)).sum / den
+    }
 
   /** Var(sum of q consecutive returns) / (q * Var(r)) on SIGNED returns: 1.0 under no serial
     * dependence at that horizon, above 1 for trend, below for mean reversion.  The two `clustering`
@@ -3070,10 +3100,24 @@ object MarketSim:
         val m = (len - off) / q * q
         if m < 2 * q then Double.NaN
         else
-          val nb     = m / q
-          val blocks = Array.tabulate(nb)(k => s(off + (k + 1) * q) - s(off + k * q))
-          val bMu    = blocks.sum / nb
-          val bVar   = blocks.map(x => (x - bMu) * (x - bMu)).sum / (nb - 1)
+          val nb = m / q
+          // Two left folds over the block sums, each starting from the FIRST block as
+          // `Array.sum` reduces -- no block array, no squared copy.  Not the telescoped
+          // `(s(end) - s(off)) / nb`: that is the same number on paper and a different double.
+          var bSum = s(off + q) - s(off)
+          var k = 1
+          while k < nb do
+            bSum += s(off + (k + 1) * q) - s(off + k * q)
+            k += 1
+          val bMu = bSum / nb
+          val d0  = (s(off + q) - s(off)) - bMu
+          var bSq = d0 * d0
+          k = 1
+          while k < nb do
+            val d = (s(off + (k + 1) * q) - s(off + k * q)) - bMu
+            bSq += d * d
+            k += 1
+          val bVar = bSq / (nb - 1)
           val vDaily = sliceVar(off, off + m)
           // positive test rather than a negated one: a NaN daily variance falls to the NaN arm
           if vDaily > 0.0 then bVar / (q * vDaily) else Double.NaN
@@ -3085,8 +3129,10 @@ object MarketSim:
   def pearson(a: Array[Double], b: Array[Double]): Double =
     if a.length < 50 then Double.NaN
     else
-      val za = MatD(a) - MatD(a).mean
-      val zb = MatD(b) - MatD(b).mean
+      val ma = MatD(a)
+      val mb = MatD(b)
+      val za = ma - ma.mean
+      val zb = mb - mb.mean
       val den = math.sqrt(za.power(2).sum * zb.power(2).sum)
       if den <= 0 then Double.NaN else (za * zb).sum / den
 
@@ -3315,7 +3361,7 @@ object MarketSim:
   def basketStats(sims: Vector[Path]): Option[BasketStats] =
     if sims.isEmpty || sims.head.names.isEmpty then None
     else
-      val per = sims.map { s =>
+      val per = parMap(sims) { s =>
         val rp  = dailyReturns(s.price)
         val n   = rp.length
         val rn  = s.names.map(lp => Array.tabulate(n)(t => lp(t + 1) - lp(t)))
@@ -3366,7 +3412,7 @@ object MarketSim:
   def openStats(sims: Vector[Path]): Option[OpenStats] =
     if sims.isEmpty || sims.head.logOpen.isEmpty then None
     else
-      val per = sims.map { s =>
+      val per = parMap(sims) { s =>
         val lp = s.price.map(math.log)
         val n  = lp.length - 1
         val o  = Array.tabulate(n)(t => s.logOpen(t + 1) - lp(t))
@@ -3440,6 +3486,60 @@ object MarketSim:
   /** The rank rule a consumer's vote reads: the member's trailing-`win` percentile rank, the
     * share of the window (this reading included) at or below it; NaN until the window fills. */
   def trailingRank(x: Array[Double], win: Int): Array[Double] =
+    if win < 1 then trailingRankScan(x, win)
+    else
+      // A SORTED WINDOW: each reading costs a binary search and one shift instead of a rescan of
+      // `win` values, which was a tenth of a search's CPU and a fifth of its single-threaded time.
+      // It counts the same thing.  Values enter as `x + 0.0`, which turns -0.0 into 0.0 -- a
+      // pair `<=` cannot tell apart anyway -- and NaN sorts last under `Double.compare`, where the
+      // count below never reaches it, just as `<=` never counts a NaN.
+      val n   = x.length
+      val out = new Array[Double](n)
+      val buf = new Array[Double](win)
+      /** First index in `buf[0, len)` holding a value ABOVE `v` in `Double.compare` order. */
+      def above(len: Int, v: Double): Int =
+        var lo = 0; var hi = len
+        while lo < hi do
+          val mid = (lo + hi) >>> 1
+          if java.lang.Double.compare(buf(mid), v) > 0 then hi = mid else lo = mid + 1
+        lo
+      /** First index in `buf[0, len)` holding a value NOT BELOW `v`: where `v` itself sits. */
+      def atOrAbove(len: Int, v: Double): Int =
+        var lo = 0; var hi = len
+        while lo < hi do
+          val mid = (lo + hi) >>> 1
+          if java.lang.Double.compare(buf(mid), v) >= 0 then hi = mid else lo = mid + 1
+        lo
+      var i = 0
+      while i < n do
+        val v = x(i) + 0.0
+        // after this step `buf` holds the window ending at i, sorted; `rank` is how many of it
+        // compare at or below `v`, which is where `v` landed plus one
+        val rank =
+          if i < win then
+            val p = above(i, v)
+            System.arraycopy(buf, p, buf, p + 1, i - p)
+            buf(p) = v
+            p + 1
+          else
+            val r = atOrAbove(win, x(i - win) + 0.0)   // the reading leaving the window
+            val p = above(win, v)
+            if p <= r then
+              System.arraycopy(buf, p, buf, p + 1, r - p)
+              buf(p) = v
+              p + 1
+            else
+              System.arraycopy(buf, r + 1, buf, r, p - 1 - r)
+              buf(p - 1) = v
+              p
+        out(i) =
+          if i < win - 1 then Double.NaN
+          else (if v.isNaN then 0 else rank).toDouble / win
+        i += 1
+      out
+
+  /** The rescan `trailingRank` replaced, kept for a window below 1, where it is the definition. */
+  private def trailingRankScan(x: Array[Double], win: Int): Array[Double] =
     Array.tabulate(x.length) { i =>
       if i < win - 1 then Double.NaN
       else
@@ -3543,7 +3643,7 @@ object MarketSim:
     if sims.isEmpty || sims.head.macroPanel.isEmpty then None
     else
       val WeeklyStride = 5
-      val per = sims.map { s =>
+      val per = parMap(sims) { s =>
         val m     = s.macroPanel.get
         val lp    = s.price.map(math.log)
         val fwd60 = fwdReturn(lp, 60)
@@ -3551,7 +3651,10 @@ object MarketSim:
         // ones on a Nasdaq-like world -- whose lag and fired share are reported beside them
         val spans   = ddSpans(s.price, 0.20).filter(_.lo - 1 >= RankWindow)
         val spans10 = ddSpans(s.price, 0.10).filter(_.lo - 1 >= RankWindow)
-        def levels(x: Array[Double]) = (pctile(x.toIndexedSeq, 0.1), pctile(x.toIndexedSeq, 0.5), pctile(x.toIndexedSeq, 0.9))
+        def levels(x: Array[Double]) =
+          // sorted ONCE for all three quantiles; it was three boxed sorts of the whole series
+          val f = finiteSorted(x)
+          (pctileOf(f, 0.1), pctileOf(f, 0.5), pctileOf(f, 0.9))
         // a daily rank member (spread, ivol): rank >= 0.90 in the quarter before the peak
         def rankMember(x: Array[Double]) =
           val rk    = trailingRank(x, 252)
@@ -3775,8 +3878,8 @@ object MarketSim:
 
   /** Median over paths, dropping non-finite -- the same rule `measure`'s local `med` applies. */
   private def medOf(v: Seq[Double]): Double =
-    val f = v.filter(_.isFinite)
-    if f.isEmpty then Double.NaN else f.sorted.apply(f.size / 2)
+    val f = finiteSorted(v.toArray)
+    if f.isEmpty then Double.NaN else f(f.length / 2)
 
   /** The satellite leg's statistics as ratios to the primary's -- `None` when no leg ran, so a
     * satellite-off world produces exactly the rows it always did.
@@ -3787,7 +3890,7 @@ object MarketSim:
   def satStats(sims: Vector[Path]): Option[SatStats] =
     if sims.isEmpty || sims.head.sat.isEmpty then None
     else
-      val per = sims.map { s =>
+      val per = parMap(sims) { s =>
         val rp = dailyReturns(s.price); val rs = dailyReturns(s.sat)
         val mp = rp.sum / rp.length; val ms = rs.sum / rs.length
         var cov = 0.0; var varP = 0.0; var varS = 0.0
@@ -3815,7 +3918,7 @@ object MarketSim:
   def barStats(sims: Vector[Path]): Option[BarStats] =
     if sims.isEmpty || sims.head.logHi.isEmpty then None
     else
-      val per = sims.map { s =>
+      val per = parMap(sims) { s =>
         val r = dailyReturns(s.price)
         val x = Array.tabulate(s.logHi.length)(i => s.logHi(i) - s.logLo(i))
         val mx = x.sum / x.length
@@ -3838,28 +3941,176 @@ object MarketSim:
       Some(BarStats(medOf(per.map(_._1)), medOf(per.map(_._2)), medOf(per.map(_._3)),
                     medOf(per.map(_._4)), medOf(per.map(_._5))))
 
-  def measure(sims: Vector[Path], years: Int): WorldStats =
-    val rets = sims.map(s => dailyReturns(s.price))
-    // `isFinite`, not `!isNaN`: an infinite path is no more a datum than a NaN one, and `pctile`
-    // drops the same set, so a median and the percentiles printed beside it describe the same paths.
-    def med(v: Seq[Double]) = { val f = v.filter(_.isFinite); if f.isEmpty then Double.NaN else f.sorted.apply(f.size / 2) }
-    val epsBy  = sims.map(s => s -> episodes(s.price, 15.0))   // once per path (was recomputed 3x)
-    val ddEq   = sims.map(s => depthShares(s.price))
-    val ddBd   = sims.map(s => depthShares(s.bond))
-    val eps    = epsBy.flatMap(_._2)
-    val shapes = eps.map(_.shape).filter(x => !x.isNaN)
-    val days   = sims.map(_.price.length.toLong).sum.toDouble
-    def bondInWindows(inflRegime: Boolean): Double = med(epsBy.flatMap { (sp, es) =>
-      es.filter { ep =>
+  /** Everything `measure` takes a median of from ONE path.  Computed in a single parallel pass per
+    * ensemble: as separate passes -- one per statistic, about twenty-five over the same paths --
+    * each carried too little work to pay for its own fork and join (the Rust twin measured a 60-path
+    * ensemble on 24 cores at only 4.5 times one path at a time).  Every field is the expression
+    * `measure` computed per path, so no median moves. */
+  private final case class PathRead(
+    episodes: Vector[Episode], ddEq: (Double, Double, Double), ddBd: (Double, Double, Double),
+    vol: Double, kurt: Double,
+    ac: Vector[Double],      // clustering at lags 1, 20, 5 and 60
+    lev: Vector[Double],     // the leverage profile at lags 1, 5 and 20
+    vr: Vector[Double],      // variance ratios at q = 20, VarRatioQ, 120 and 250
+    retAc1: Double, annRet: Double, divYield: Double,
+    bondVol: Vector[Double],
+    bondGrowth: Vector[Double], bondInfl: Vector[Double],   // the bond over each episode, by regime
+    corrCalm: Double, corrInfl: Double,
+    valDisp: Double, maxOver: Double, semiExcess: Double, levCorr: Double, tailHedge: Double,
+    inflAnn: Double)
+
+  private def pathRead(sp: Path, years: Int): PathRead =
+    val r   = dailyReturns(sp.price)
+    val eps = episodes(sp.price, 15.0)   // once per path (was recomputed 3x)
+    def bondInWindows(inflRegime: Boolean): Vector[Double] =
+      eps.filter { ep =>
         val infl = (ep.peak to ep.trough).map(sp.inflPress).sum / math.max(1, ep.trough - ep.peak + 1)
         (infl > 0.005) == inflRegime
       }.map(ep => math.log(sp.bond(ep.trough) / sp.bond(ep.peak)) * 100.0)
-    })
-    def corrIn(inflRegime: Boolean): Double = med(sims.map { sp =>
-      val idx = (1 until sp.price.length).filter(i => (sp.inflPress(i) > 0.005) == inflRegime).toArray
-      pearson(idx.map(i => math.log(sp.price(i) / sp.price(i - 1))),
-              idx.map(i => math.log(sp.bond(i) / sp.bond(i - 1))))
-    })
+    def corrIn(inflRegime: Boolean): Double =
+      // the regime's sessions in order, counted then filled, instead of a boxed index sequence
+      val n = sp.price.length
+      def inRegime(i: Int) = (sp.inflPress(i) > 0.005) == inflRegime
+      var cnt = 0
+      var i = 1
+      while i < n do
+        if inRegime(i) then cnt += 1
+        i += 1
+      val a = new Array[Double](cnt)
+      val b = new Array[Double](cnt)
+      var j = 0
+      i = 1
+      while i < n do
+        if inRegime(i) then
+          a(j) = math.log(sp.price(i) / sp.price(i - 1))
+          b(j) = math.log(sp.bond(i) / sp.bond(i - 1))
+          j += 1
+        i += 1
+      pearson(a, b)
+    val valDisp =
+      val len = sp.price.length
+      if len == 0 then math.sqrt(0.0 / (len - 1))   // what the empty folds gave
+      else
+        val g = new Array[Double](len)
+        var i = 0
+        while i < len do
+          g(i) = math.log(sp.price(i) / sp.fundamental(i))
+          i += 1
+        // left folds from the first element, as `Array.sum` reduces; no squared copy
+        var sum = g(0)
+        i = 1
+        while i < len do
+          sum += g(i)
+          i += 1
+        val m  = sum / len
+        var sq = (g(0) - m) * (g(0) - m)
+        i = 1
+        while i < len do
+          sq += (g(i) - m) * (g(i) - m)
+          i += 1
+        math.sqrt(sq / (len - 1))
+    val maxOver =
+      var mx = Double.MinValue; var i = 0
+      while i < sp.price.length do
+        val v = math.log(sp.price(i) / sp.fundamental(i)); if v > mx then mx = v; i += 1
+      mx
+    // the path's own returns, where these two each made a fresh `dailyReturns` of the same prices
+    val semiExcess =
+      // one pass, no filtered copies.  Each sum starts at 0.0 and adds its squares in path order:
+      // the double `filter.map.sum` reduces to, since a square is never -0.0.
+      var d = 0.0
+      var u = 0.0
+      var i = 0
+      while i < r.length do
+        val x = r(i)
+        if x < 0.0 then d += x * x else if x > 0.0 then u += x * x
+        i += 1
+      if u > 0.0 then (math.sqrt(d / u) - 1.0) * 100.0 else Double.NaN
+    val levCorr =
+      val sq = new Array[Double](math.max(r.length - 1, 0))
+      var i = 0
+      while i < sq.length do
+        sq(i) = r(i + 1) * r(i + 1)
+        i += 1
+      pearson(java.util.Arrays.copyOf(r, sq.length), sq)
+    val tailHedge =
+      // counted then filled, in session order, where a boxed index sequence, two mapped copies and
+      // a zip of tuples built the same two series
+      val n = sp.price.length
+      var cnt = 0
+      var i = 1
+      while i < n do
+        if sp.inflPress(i) <= 0.005 then cnt += 1
+        i += 1
+      val re = new Array[Double](cnt)
+      val rb = new Array[Double](cnt)
+      var j = 0
+      i = 1
+      while i < n do
+        if sp.inflPress(i) <= 0.005 then
+          re(j) = math.log(sp.price(i) / sp.price(i - 1))
+          rb(j) = math.log(sp.bond(i) / sp.bond(i - 1))
+          j += 1
+        i += 1
+      val q = pctileOf(finiteSorted(re), 0.10)
+      var t = 0
+      j = 0
+      while j < cnt do
+        if re(j) < q then t += 1
+        j += 1
+      // A tail too small to correlate is unmeasurable, not zero -- the same rule the 24-year bond
+      // windows apply.
+      if t < 30 then Double.NaN
+      else
+        val x = new Array[Double](t)
+        val y = new Array[Double](t)
+        var k = 0
+        j = 0
+        while j < cnt do
+          if re(j) < q then
+            x(k) = re(j)
+            y(k) = rb(j)
+            k += 1
+          j += 1
+        pearson(x, y)
+    PathRead(
+      episodes = eps, ddEq = depthShares(sp.price), ddBd = depthShares(sp.bond),
+      vol  = math.sqrt(MatD(r).power(2).mean * DaysPerYear),
+      kurt = kurtosis(r),
+      // the four clustering lags share |r|, its centring and its denominator
+      ac   = autocorrsAbs(r, Vector(1, 20, 5, 60)),
+      lev  = Vector(levAbs(r, 1), levAbs(r, 5), levAbs(r, 20)),
+      vr   = Vector(varianceRatio(r, 20), varianceRatio(r, VarRatioQ), varianceRatio(r, 120),
+                    varianceRatio(r, 250)),
+      retAc1 = levelAutocorr(r, 1),
+      annRet = math.log(sp.price.last / sp.price.head) / years * 100.0,
+      divYield = if sp.divYield.isEmpty then Double.NaN else sp.divYield.sum / sp.divYield.length,
+      // Median over non-overlapping BondVolYears windows, pooled across paths -- see BondVolYears
+      // for why this row alone is windowed.  A path shorter than one window contributes itself, so
+      // a short run still reports something rather than nothing.
+      bondVol = {
+        val rb = dailyReturns(sp.bond)
+        val w = BondVolYears * DaysPerYear
+        val nw = rb.length / w
+        val segs = if nw < 1 then Vector(rb) else (0 until nw).toVector.map(k => rb.slice(k * w, (k + 1) * w))
+        segs.map(seg => math.sqrt(MatD(seg).power(2).mean * DaysPerYear))
+      },
+      bondGrowth = bondInWindows(false), bondInfl = bondInWindows(true),
+      corrCalm = corrIn(false), corrInfl = corrIn(true),
+      valDisp = valDisp, maxOver = maxOver, semiExcess = semiExcess, levCorr = levCorr,
+      tailHedge = tailHedge,
+      inflAnn = math.log(sp.cpi.last / sp.cpi.head) / years * 100.0)
+
+  def measure(sims: Vector[Path], years: Int): WorldStats =
+    // THE PER-PATH STATISTICS, ACROSS CORES AND IN ONE PASS: `pathRead` computes each path's
+    // readings and `parMap` keeps path order, so every median below reads what it always did.
+    val per = parMap(sims)(s => pathRead(s, years))
+    // `isFinite`, not `!isNaN`: an infinite path is no more a datum than a NaN one, and `pctile`
+    // drops the same set, so a median and the percentiles printed beside it describe the same paths.
+    def med(v: Seq[Double]) = { val f = finiteSorted(v.toArray); if f.isEmpty then Double.NaN else f(f.length / 2) }
+    val eps    = per.flatMap(_.episodes)
+    val shapes = eps.map(_.shape).filter(x => !x.isNaN)
+    val days   = sims.map(_.price.length.toLong).sum.toDouble
     // POOLED, not a median of per-path shares: most paths hold no tail session at all, so a median
     // would read 0 forever and the check built on it could not fail.
     val tailSessions = sims.map(_.eqTailDays.toLong).sum
@@ -3868,25 +4119,24 @@ object MarketSim:
       else sims.map(_.eqFloorDays.toLong).sum * 100.0 / tailSessions
 
     WorldStats(
-      vol  = med(rets.map(r => math.sqrt(MatD(r).power(2).mean * DaysPerYear))),
-      kurt = med(rets.map(kurtosis)),
-      ac1  = med(rets.map(r => autocorrAbs(r, 1))),
-      ac20 = med(rets.map(r => autocorrAbs(r, 20))),
-      ac5  = med(rets.map(r => autocorrAbs(r, 5))),
-      ac60 = med(rets.map(r => autocorrAbs(r, 60))),
-      lev1  = med(rets.map(r => levAbs(r, 1))),
-      lev5  = med(rets.map(r => levAbs(r, 5))),
-      lev20 = med(rets.map(r => levAbs(r, 20))),
-      vr20  = med(rets.map(r => varianceRatio(r, 20))),
-      vr60  = med(rets.map(r => varianceRatio(r, VarRatioQ))),
-      vr120 = med(rets.map(r => varianceRatio(r, 120))),
-      vr250 = med(rets.map(r => varianceRatio(r, 250))),
-      retAc1 = med(rets.map(r => levelAutocorr(r, 1))),
-      annRet = med(sims.map(s => math.log(s.price.last / s.price.head) / years * 100.0)),
+      vol  = med(per.map(_.vol)),
+      kurt = med(per.map(_.kurt)),
+      ac1  = med(per.map(_.ac(0))),
+      ac20 = med(per.map(_.ac(1))),
+      ac5  = med(per.map(_.ac(2))),
+      ac60 = med(per.map(_.ac(3))),
+      lev1  = med(per.map(_.lev(0))),
+      lev5  = med(per.map(_.lev(1))),
+      lev20 = med(per.map(_.lev(2))),
+      vr20  = med(per.map(_.vr(0))),
+      vr60  = med(per.map(_.vr(1))),
+      vr120 = med(per.map(_.vr(2))),
+      vr250 = med(per.map(_.vr(3))),
+      retAc1 = med(per.map(_.retAc1)),
+      annRet = med(per.map(_.annRet)),
       sat = satStats(sims), bars = barStats(sims), open = openStats(sims),
       basket = basketStats(sims), macroPanel = macroStats(sims),
-      divYieldMean = med(sims.map(s => if s.divYield.isEmpty then Double.NaN
-                                      else s.divYield.sum / s.divYield.length)),
+      divYieldMean = med(per.map(_.divYield)),
       nEpisodes = eps.size, epPerPath = eps.size.toDouble / sims.size,
       depthMed = med(eps.map(_.depthPct)), worstDepth = eps.map(_.depthPct).minOption.getOrElse(Double.NaN),
       vCount = shapes.count(_ > 1.5), midCount = shapes.count(x => x >= 0.67 && x <= 1.5),
@@ -3897,57 +4147,22 @@ object MarketSim:
       trendShare = sims.map(_.meanTrendShare).sum / sims.size, yearsPerPath = years.toDouble,
       trendPinned = sims.map(_.trendPinned).sum / sims.size,
       targetSat = sims.map(_.targetSat).sum / sims.size,
-      // Median over non-overlapping BondVolYears windows, pooled across paths -- see BondVolYears
-      // for why this row alone is windowed.  A path shorter than one window contributes itself, so
-      // a short run still reports something rather than nothing.
-      bondVol = med(sims.flatMap { s =>
-        val r = dailyReturns(s.bond)
-        val w = BondVolYears * DaysPerYear
-        val nw = r.length / w
-        val segs = if nw < 1 then Vector(r) else (0 until nw).toVector.map(k => r.slice(k * w, (k + 1) * w))
-        segs.map(seg => math.sqrt(MatD(seg).power(2).mean * DaysPerYear))
-      }),
-      bondGrowth = bondInWindows(false), bondInfl = bondInWindows(true),
-      corrCalm = corrIn(false), corrInfl = corrIn(true),
+      bondVol = med(per.flatMap(_.bondVol)),
+      bondGrowth = med(per.flatMap(_.bondGrowth)), bondInfl = med(per.flatMap(_.bondInfl)),
+      corrCalm = med(per.map(_.corrCalm)), corrInfl = med(per.map(_.corrInfl)),
       meanBondStress = sims.map(_.meanBondStress).sum / sims.size,
       pctBondStress = sims.map(_.pctBondStress).sum / sims.size,
       crowdFlow = sims.map(_.meanCrowdFlow).sum / sims.size,
       disPerCentury = sims.map(_.disasters.toDouble).sum / sims.size / years * 100.0,
-      valDisp = med(sims.map { sp =>
-        val g = Array.tabulate(sp.price.length)(i => math.log(sp.price(i) / sp.fundamental(i)))
-        val m = g.sum / g.length
-        math.sqrt(g.map(x => (x - m) * (x - m)).sum / (g.length - 1))
-      }),
-      maxOver = med(sims.map { sp =>
-        var mx = Double.MinValue; var i = 0
-        while i < sp.price.length do
-          val v = math.log(sp.price(i) / sp.fundamental(i)); if v > mx then mx = v; i += 1
-        mx
-      }),
-      semiExcess = med(sims.map { sp =>
-        val r = dailyReturns(sp.price)
-        val d = r.filter(_ < 0.0).map(x => x * x).sum
-        val u = r.filter(_ > 0.0).map(x => x * x).sum
-        if u > 0.0 then (math.sqrt(d / u) - 1.0) * 100.0 else Double.NaN
-      }),
-      levCorr = med(sims.map { sp =>
-        val r = dailyReturns(sp.price)
-        pearson(r.dropRight(1), r.drop(1).map(x => x * x))
-      }),
-      tailHedge = med(sims.map { sp =>
-        val idx = (1 until sp.price.length).filter(i => sp.inflPress(i) <= 0.005)
-        val re  = idx.map(i => math.log(sp.price(i) / sp.price(i - 1))).toArray
-        val rb  = idx.map(i => math.log(sp.bond(i) / sp.bond(i - 1))).toArray
-        val q   = pctile(re.toIndexedSeq, 0.10)
-        val ta  = re.zip(rb).filter(_._1 < q)
-        // A tail too small to correlate is unmeasurable, not zero -- the same rule the 24-year
-        // bond windows apply.
-        if ta.length < 30 then Double.NaN else pearson(ta.map(_._1), ta.map(_._2))
-      }),
+      valDisp = med(per.map(_.valDisp)),
+      maxOver = med(per.map(_.maxOver)),
+      semiExcess = med(per.map(_.semiExcess)),
+      levCorr = med(per.map(_.levCorr)),
+      tailHedge = med(per.map(_.tailHedge)),
       duration = sims.head.duration,
-      inflAnn = med(sims.map(s => math.log(s.cpi.last / s.cpi.head) / years * 100.0)),
-      ddEq5  = med(ddEq.map(_._1)), ddEq10 = med(ddEq.map(_._2)), ddEq20 = med(ddEq.map(_._3)),
-      ddBd5  = med(ddBd.map(_._1)), ddBd10 = med(ddBd.map(_._2)), ddBd20 = med(ddBd.map(_._3)))
+      inflAnn = med(per.map(_.inflAnn)),
+      ddEq5  = med(per.map(_.ddEq._1)), ddEq10 = med(per.map(_.ddEq._2)), ddEq20 = med(per.map(_.ddEq._3)),
+      ddBd5  = med(per.map(_.ddBd._1)), ddBd10 = med(per.map(_.ddBd._2)), ddBd20 = med(per.map(_.ddBd._3)))
 
   /** The gate answers three different questions and used to report one verdict.  Each class names
     * what a failure costs, and a report declares which classes it requires (`-gate`).
@@ -5215,9 +5430,40 @@ object MarketSim:
     * slots and biases every quantile DOWNWARD rather than propagating the NaN.  A contaminated
     * ensemble read a 6.17% median volatility against a 15.7% baseline that way.  A quantile is the
     * wrong place to LEARN that an ensemble was contaminated -- the reports count that directly. */
-  def pctile(v: Seq[Double], q: Double): Double =
-    val f = v.filter(_.isFinite)
-    if f.isEmpty then Double.NaN else f.sorted.apply(math.min((f.size * q).toInt, f.size - 1))
+  def pctile(v: Seq[Double], q: Double): Double = pctileOf(finiteSorted(v.toArray), q)
+
+  /** `pctile`'s index rule on a series `finiteSorted` has already prepared, so a caller that wants
+    * several quantiles of one series sorts it once. */
+  private[apps] def pctileOf(sorted: Array[Double], q: Double): Double =
+    if sorted.isEmpty then Double.NaN
+    else sorted(math.min((sorted.length * q).toInt, sorted.length - 1))
+
+  /** The finite entries, sorted, as a PRIMITIVE array.  `java.util.Arrays.sort` orders a
+    * `double[]` by `Double.compare`, the total order `Ordering[Double]` sorts boxed values by, so
+    * every index holds the double the boxed sort put there -- and nothing is boxed.  The boxed
+    * sort was a fifth of a search's CPU, nearly all of it on one thread, in the macro panel's
+    * per-member quantiles. */
+  private[apps] def finiteSorted(v: Array[Double]): Array[Double] =
+    val out = new Array[Double](v.length)
+    var n = 0
+    var i = 0
+    while i < v.length do
+      if v(i).isFinite then
+        out(n) = v(i)
+        n += 1
+      i += 1
+    val f = if n == out.length then out else java.util.Arrays.copyOf(out, n)
+    java.util.Arrays.sort(f)
+    f
+
+  /** `xs.map(f)` across cores, in order.  For the per-path statistics: each reading is a pure
+    * function of its own path, so which core computes it cannot move a bit, and the result keeps
+    * index order.  They were the SINGLE-THREADED half of every evaluation -- 42% of a search's
+    * CPU samples sat on the main thread while the price loops ran on all of the others. */
+  private[apps] def parMap[A, B](xs: Vector[A])(f: A => B): Vector[B] =
+    java.util.stream.IntStream.range(0, xs.length).parallel()
+      .mapToObj(i => f(xs(i)).asInstanceOf[AnyRef]).toArray()
+      .toVector.map(_.asInstanceOf[B])
 
   def simPaths(w: World, paths: Int, years: Int, seed: Long): Vector[Path] =
     simPathRange(w, 0, paths, years, seed)
@@ -6073,16 +6319,28 @@ object MarketSim:
     *
     * Each path is measured on its own, IN PARALLEL: `measure` is pure and the order is preserved,
     * so the readings and their median are what they were. */
+  /** ONE PATH'S READING of an `ExtremeTargets` row, taken directly instead of through `measure`.
+    * Each of these rows reads a single statistic of each path, and `measure` on a one-path ensemble
+    * computed every other statistic too -- the macro panel and the channels included -- and dropped
+    * them: most of the extreme ensemble's cost.  `None` for a row with no direct reading, which
+    * then takes the full path.  A contract test holds each direct reading to `measure`'s own, bit
+    * for bit. */
+  private[apps] def extremeReading(nm: String, p: Path): Option[Double] = nm match
+    // `measure`'s `worstDepth` for this path alone: its smallest episode depth, NaN without one
+    case "worst crash %" => Some(episodes(p.price, 15.0).map(_.depthPct).minOption.getOrElse(Double.NaN))
+    case _               => None
+
   def extremeReadingsFrom(a: Anchors, sims: Vector[Path], yrs: Int): Map[String, Vector[Double]] =
-    val sts = java.util.stream.IntStream.range(0, sims.size).parallel()
-      .mapToObj(k => measure(Vector(sims(k)), yrs)).toArray()
-      .toVector.map(_.asInstanceOf[WorldStats])
+    // `measure` per path only for a row with no direct reading, and then only once
+    lazy val full = parMap(sims)(p => measure(Vector(p), yrs))
     anchorGroups(a)
       .filter((_, gy, names) => gy == yrs && names.exists(ExtremeTargets.contains))
       .flatMap((_, _, names) => names.filter(ExtremeTargets.contains).map { nm =>
         val (_, get, _, _) = fitTargets(a).find(_._1 == nm)
           .getOrElse(usage(s"ExtremeTargets names [$nm], which is not a fidelity target"))
-        nm -> sts.map(get).filter(x => !x.isNaN)
+        val direct = parMap(sims)(p => extremeReading(nm, p))
+        val vals   = if direct.forall(_.isDefined) then direct.flatten else full.map(get)
+        nm -> vals.filter(x => !x.isNaN)
       }).toMap
 
   /** The median of `extremeReadingsFrom`, for an ensemble the caller already holds. */
