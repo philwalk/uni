@@ -6001,6 +6001,14 @@ fn band_check(
 /// ensemble; only the verdict is pinned.
 const GATE_YEARS: usize = 100;
 
+/// The REALISM bands on statistics a FIDELITY row also targets, as data. The gate reads them and
+/// so does the contract that no edge sits inside a target's own noise -- a test that restated
+/// the literals would pass forever after someone moved one here.
+pub const REALISM_VOL: (f64, f64) = (8.0, 40.0); // equity vol, % a year
+pub const REALISM_KURT: (f64, f64) = (4.0, 40.0); // daily kurtosis
+pub const REALISM_AC1: (f64, f64) = (0.10, 0.40); // lag-1 clustering
+pub const REALISM_CRASHES: (f64, f64) = (8.0, 55.0); // 20% declines a century
+
 /// The (paths, years) the verdict — gate classes, fidelity table, every emitted sidecar — is
 /// measured on: `GATE_YEARS` always, on the larger of the report and `-emitgate` ensembles.
 /// `-emitgate 0` is the caller's explicit request to grade the emitted ensemble itself,
@@ -6026,10 +6034,6 @@ pub fn verdict_spec(
 /// written as bondInfl < bondGrowth passed while bonds still RALLIED +2.8; crash frequency
 /// shipped without an upper bound WHILE the one-sided lesson was being applied elsewhere.
 #[expect(
-    clippy::manual_range_contains,
-    reason = "kept in the Scala's spelling so the gate reads as the bounds it documents"
-)]
-#[expect(
     clippy::too_many_lines,
     reason = "one table of bands, mirroring the Scala twin's gateChecks row for row"
 )]
@@ -6053,11 +6057,38 @@ pub fn gate_checks(a: Anchors, st: &WorldStats) -> Vec<(String, bool, GateClass)
         // 35 instruments span 15.2-37.4% over the clean w1996 window, and 8-40 rounds outward from
         // that. The FIDELITY band — now `Anchors::vol_band`, 14-18% for the S&P and 24-30% for the
         // Nasdaq — is what answers "is this THIS market", and it stayed narrow.
-        band_check("equity vol", st.vol * 100.0, 8.0, 40.0, Realism, 0, "%"),
-        band_check("kurtosis", st.kurt, 4.0, 30.0, Realism, 0, ""),
+        band_check(
+            "equity vol",
+            st.vol * 100.0,
+            REALISM_VOL.0,
+            REALISM_VOL.1,
+            Realism,
+            0,
+            "%",
+        ),
+        // WIDENED from 4-30 for the same reason as the volatility band above, and it is the
+        // same failure: 30 sits two points above the S&P FIDELITY target of 28.0, so the band
+        // called the actual S&P century not a market. `measure` reads kurtosis as a MEDIAN over
+        // paths and a single century of it has a relative sd of 0.97, so the median's own
+        // spread is 1.9 at the 200-path scoring ensemble and 2.8 at a 60-path search ensemble
+        // -- the record failed on roughly a seed in four, which made this one row a THIRD of a
+        // calibration search's rejections and biased the surviving set light-tailed. 40 clears
+        // 28.0 by three of those spreads, the margin `contract_tests` now asserts for every row
+        // graded in both classes. The cross-section would be the better ruler, as it is for
+        // volatility, but `test-data/equity-anchors` carries no kurtosis column. The FIDELITY
+        // target is untouched at 28.0 / 9.55: that is the row answering "is this THIS market".
+        band_check(
+            "kurtosis",
+            st.kurt,
+            REALISM_KURT.0,
+            REALISM_KURT.1,
+            Realism,
+            0,
+            "",
+        ),
         (
-            n("clustering 0.10-0.40"),
-            st.ac1 > 0.10 && st.ac1 < 0.40 && st.ac20 > 0.03,
+            format!("clustering {:.2}-{:.2}", REALISM_AC1.0, REALISM_AC1.1),
+            st.ac1 > REALISM_AC1.0 && st.ac1 < REALISM_AC1.1 && st.ac20 > 0.03,
             Realism,
         ),
         // Widened from 8-45 for the same reason as the volatility band above: 45 excluded two of
@@ -6065,8 +6096,11 @@ pub fn gate_checks(a: Anchors, st: &WorldStats) -> Vec<(String, bool, GateClass)
         // against a cross-section range of 13.2-49.4. A band that calls a real market unreal is not
         // a realism check.
         (
-            n("crash rate 8-55/century"),
-            st.ep_per_path >= 1.0 && pc >= 8.0 && pc <= 55.0,
+            format!(
+                "crash rate {:.0}-{:.0}/century",
+                REALISM_CRASHES.0, REALISM_CRASHES.1
+            ),
+            st.ep_per_path >= 1.0 && pc >= REALISM_CRASHES.0 && pc <= REALISM_CRASHES.1,
             Realism,
         ),
         (
@@ -6677,7 +6711,7 @@ pub const SD_REL_REF: f64 = 0.20;
 /// a property of the statistic, not of the index; only the measured level and its sampling spread
 /// are asset-specific.
 ///
-/// The realism bands are not here either. `equity vol 8-40%` and `kurtosis 4-30` say "is this a
+/// The realism bands are not here either. `equity vol 8-40%` and `kurtosis 4-40` say "is this a
 /// market at all", and a Nasdaq is still a market. The two FIDELITY bands are, because they say "is
 /// this THIS market".
 #[derive(Clone, Copy)]
@@ -14849,6 +14883,54 @@ mod contract_tests {
         assert!(why.contains("unknown [noSuchDial]"), "{why}");
         let why = world_set_flags(&member_file(&full), "f.json", 7).expect_err("refused");
         assert!(why.contains("-worldindex 7 is not in"), "{why}");
+    }
+
+    #[test]
+    fn no_realism_band_edge_sits_inside_a_fidelity_targets_own_noise_for_the_same_statistic() {
+        // THE RECORD IS ADMISSIBLE BY DEFINITION. A realism band answers "is this a market at
+        // all", so an edge within the estimator's own noise of a FIDELITY target for the same
+        // statistic calls the real market not a market on some share of seeds. Kurtosis 4-30
+        // against an S&P century of 28.0 did exactly that, and was a third of a calibration
+        // search's rejections.
+        //
+        // A target's spread is its frozen `sd_rel` -- ONE history's relative sd, from `-noise` --
+        // and `measure` reads these rows as a median over paths, so the median's spread is that
+        // over sqrt(paths). 200 paths is the scoring ensemble those spreads are frozen against.
+        const SCORING_PATHS: f64 = 200.0;
+        const K: f64 = 3.0;
+        // (distance from the target to the nearer edge, K of the median's own spreads)
+        let room = |band: (f64, f64), target: f64, sd_rel: f64| {
+            (
+                (target - band.0).abs().min((band.1 - target).abs()),
+                K * sd_rel * target.abs() / SCORING_PATHS.sqrt(),
+            )
+        };
+
+        // The rule catches the band it was written for, so the assertions below can fail.
+        let sp = SP500_ANCHORS;
+        let (old_edge, old_need) = room((4.0, 30.0), sp.kurt, sp.kurt_sd);
+        assert!(
+            old_edge < old_need,
+            "4-30 should violate: {old_edge:.3} vs {old_need:.3}"
+        );
+
+        for a in [SP500_ANCHORS, NASDAQ_ANCHORS] {
+            for (name, band, target, sd_rel) in [
+                ("equity vol", REALISM_VOL, a.vol, a.vol_sd),
+                ("kurtosis", REALISM_KURT, a.kurt, a.kurt_sd),
+                ("clustering", REALISM_AC1, a.ac1, a.ac1_sd),
+                ("crash rate", REALISM_CRASHES, a.crashes, a.crashes_sd),
+            ] {
+                let (edge, need) = room(band, target, sd_rel);
+                assert!(
+                    edge >= need,
+                    "{} {name}: the band {}-{} sits {edge:.3} from the target {target}, inside {K} of its own spreads ({need:.3})",
+                    a.name,
+                    band.0,
+                    band.1
+                );
+            }
+        }
     }
 }
 

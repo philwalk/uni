@@ -3983,6 +3983,14 @@ object MarketSim:
     * ensemble; only the verdict is pinned. */
   val GateYears = 100
 
+  /** The REALISM bands on statistics a FIDELITY row also targets, as data.  The gate reads them
+    * and so does the contract that no edge sits inside a target's own noise -- a test that
+    * restated the literals would pass forever after someone moved one here. */
+  val RealismVol     = (8.0, 40.0)     // equity vol, % a year
+  val RealismKurt    = (4.0, 40.0)     // daily kurtosis
+  val RealismAc1     = (0.10, 0.40)    // lag-1 clustering
+  val RealismCrashes = (8.0, 55.0)     // 20% declines a century
+
   /** The (paths, years) the verdict -- gate classes, fidelity table, every emitted sidecar -- is
     * measured on: `GateYears` always, on the larger of the report and `-emitgate` ensembles.
     * `-emitgate 0` is the caller's explicit request to grade the emitted ensemble itself,
@@ -4008,15 +4016,29 @@ object MarketSim:
       // 35 instruments span 15.2-37.4% over the clean w1996 window, and 8-40 rounds outward from
       // that.  The FIDELITY band -- now `Anchors.volBand`, 14-18% for the S&P and 24-30% for the
       // Nasdaq -- is what answers "is this THIS market", and it stayed narrow.
-      bandCheck("equity vol",       st.vol * 100.0, 8.0, 40.0, Realism, dp = 0, unit = "%"),
-      bandCheck("kurtosis",         st.kurt, 4.0, 30.0, Realism, dp = 0),
-      ("clustering 0.10-0.40",      st.ac1 > 0.10 && st.ac1 < 0.40 && st.ac20 > 0.03, Realism),
+      bandCheck("equity vol",       st.vol * 100.0, RealismVol._1, RealismVol._2, Realism, dp = 0,
+                unit = "%"),
+      // WIDENED from 4-30 for the same reason as the volatility band above, and it is the same
+      // failure: 30 sits two points above the S&P FIDELITY target of 28.0, so the band called
+      // the actual S&P century not a market.  `measure` reads kurtosis as a MEDIAN over paths
+      // and a single century of it has a relative sd of 0.97, so the median's own spread is
+      // 1.9 at the 200-path scoring ensemble and 2.8 at a 60-path search ensemble -- the record
+      // failed on roughly a seed in four, which made this one row a THIRD of a calibration
+      // search's rejections and biased the surviving set light-tailed.  40 clears 28.0 by three
+      // of those spreads, the margin `MarketSimContractSuite` now asserts for every row graded
+      // in both classes.  The cross-section would be the better ruler, as it is for volatility,
+      // but `test-data/equity-anchors` carries no kurtosis column.  The FIDELITY target is
+      // untouched at 28.0 / 9.55: that is the row that answers "is this THIS market".
+      bandCheck("kurtosis",         st.kurt, RealismKurt._1, RealismKurt._2, Realism, dp = 0),
+      (f"clustering ${RealismAc1._1}%.2f-${RealismAc1._2}%.2f",
+        st.ac1 > RealismAc1._1 && st.ac1 < RealismAc1._2 && st.ac20 > 0.03, Realism),
       // Widened from 8-45 for the same reason as the volatility band above: 45 excluded two of
       // the 35 real instruments (EWA, EWW), which read 49.4 and 46.6 over the clean w1996 window
       // against a cross-section range of 13.2-49.4.  A band that calls a real market unreal is
       // not a realism check.
-      ("crash rate 8-55/century",   st.epPerPath >= 1.0 && {
-          val pc = st.epPerPath * 100.0 / st.yearsPerPath; pc >= 8.0 && pc <= 55.0 }, Realism),
+      (f"crash rate ${RealismCrashes._1}%.0f-${RealismCrashes._2}%.0f/century", st.epPerPath >= 1.0 && {
+          val pc = st.epPerPath * 100.0 / st.yearsPerPath
+          pc >= RealismCrashes._1 && pc <= RealismCrashes._2 }, Realism),
       // max(1, _) is load-bearing.  nShapes / 10 is INTEGER division, so below ten shapes both
       // clauses read ">= 0" and the check passes with NEITHER shape present -- measured at
       // -drift 0.9, which produced V=0, balanced=1, U=0 and passed a check named "both
@@ -4417,7 +4439,7 @@ object MarketSim:
     * is a property of the statistic, not of the index; only the measured level and its sampling
     * spread are asset-specific.
     *
-    * The realism bands are not here either.  `equity vol 8-40%` and `kurtosis 4-30` say "is this a
+    * The realism bands are not here either.  `equity vol 8-40%` and `kurtosis 4-40` say "is this a
     * market at all", and a Nasdaq is still a market.  The two FIDELITY bands are, because they say
     * "is this THIS market". */
   final case class Anchors(

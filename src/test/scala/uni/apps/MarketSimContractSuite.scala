@@ -738,3 +738,39 @@ class MarketSimContractSuite extends FunSuite:
     val absent = refusal(MarketSim.worldSetArgs(memberFile(full), 7))
     assert(absent.contains("-worldindex 7 is not in"), absent)
   }
+
+  test("no realism band edge sits inside a fidelity target's own noise for the same statistic") {
+    // THE RECORD IS ADMISSIBLE BY DEFINITION.  A realism band answers "is this a market at all", so
+    // an edge within the estimator's own noise of a FIDELITY target for the same statistic calls the
+    // real market not a market on some share of seeds.  Kurtosis 4-30 against an S&P century of
+    // 28.0 did exactly that, and was a third of a calibration search's rejections.
+    //
+    // A target's spread is its frozen `sdRel` -- ONE history's relative sd, from `-noise` -- and
+    // `measure` reads these rows as a median over paths, so the median's spread is that over
+    // sqrt(paths).  200 paths is the scoring ensemble those spreads are frozen against.
+    val ScoringPaths = 200.0
+    val K = 3.0
+    // (distance from the target to the nearer edge, K of the median's own spreads)
+    def room(band: (Double, Double), target: Double, sdRel: Double): (Double, Double) =
+      (math.min(math.abs(target - band._1), math.abs(band._2 - target)),
+       K * sdRel * math.abs(target) / math.sqrt(ScoringPaths))
+
+    // The rule catches the band it was written for, so the assertions below can fail.
+    val sp = MarketSim.SP500Anchors
+    val (oldEdge, oldNeed) = room((4.0, 30.0), sp.kurt, sp.kurtSd)
+    assert(oldEdge < oldNeed, f"4-30 should violate: $oldEdge%.3f vs $oldNeed%.3f")
+
+    Vector(MarketSim.SP500Anchors, MarketSim.NasdaqAnchors).foreach { a =>
+      Vector(
+        ("equity vol", MarketSim.RealismVol,     a.vol,     a.volSd),
+        ("kurtosis",   MarketSim.RealismKurt,    a.kurt,    a.kurtSd),
+        ("clustering", MarketSim.RealismAc1,     a.ac1,     a.ac1Sd),
+        ("crash rate", MarketSim.RealismCrashes, a.crashes, a.crashesSd)
+      ).foreach { (name, band, target, sdRel) =>
+        val (edge, need) = room(band, target, sdRel)
+        assert(edge >= need,
+          f"${a.name} $name: the band ${band._1}-${band._2} sits $edge%.3f from the target " +
+          f"$target, inside $K%.0f of its own spreads ($need%.3f)")
+      }
+    }
+  }

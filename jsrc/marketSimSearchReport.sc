@@ -45,21 +45,33 @@ object MarketSimSearchReport:
   /** One candidate as `log.tsv` records it -- written for every candidate the search evaluates,
     * including the rejected majority, which is what makes these trends possible at all. */
   final case class Row(gen: Int, feasible: Boolean, score: Double, raw: Double,
-                       worst: String, secs: Double)
+                       worst: String, secs: Double, admitted: Option[Boolean])
 
+  /** BY HEADER NAME, never by position: the log gained `gateFail` once and `admitted` since,
+    * and a reader that counts columns reads the wrong one the next time that happens. */
   def readLog(dir: String): Vector[Row] =
     val p = s"$dir/log.tsv".asPath
     if !p.exists then usage(s"no $dir/log.tsv")
-    p.lines.toVector.drop(1).filter(_.trim.nonEmpty).flatMap { l =>
+    val ls = p.lines.toVector
+    val at = ls.headOption.getOrElse(usage(s"$dir/log.tsv is empty")).split("\t")
+                .zipWithIndex.toMap
+    def col(name: String): Int =
+      at.getOrElse(name, usage(s"$dir/log.tsv has no `$name` column"))
+    val (cg, cf, cs, cr, cw, ct) =
+      (col("gen"), col("feasible"), col("score"), col("raw"), col("worstRow"), col("seconds"))
+    // `admitted` arrived after the first runs; absent means the proxy, and the report says so
+    val ca = at.get("admitted")
+    ls.drop(1).filter(_.trim.nonEmpty).flatMap { l =>
       val f = l.split("\t")
-      if f.length < 8 then None
+      if f.length <= ct then None
       else
         for
-          g <- f(0).toIntOption
-          s <- f(4).toDoubleOption
-          r <- f(5).toDoubleOption
-          t <- f(7).toDoubleOption
-        yield Row(g, f(3) == "true", s, r, f(6), t)
+          g <- f(cg).toIntOption
+          s <- f(cs).toDoubleOption
+          r <- f(cr).toDoubleOption
+          t <- f(ct).toDoubleOption
+        yield Row(g, f(cf) == "true", s, r, f(cw), t,
+                  ca.filter(f.length > _).map(f(_) == "true"))
     }
 
   def readState(dir: String): Map[String, String] =
@@ -184,12 +196,20 @@ object MarketSimSearchReport:
     val (y0, y1) = ends(yld)
     println(f"YIELD     feas   ${spark(yld, ramp)}  ${y0}%.0f%% -> ${y1}%.0f%%")
 
-    if arc.scores.nonEmpty then
-      val worst = arc.scores.max
-      val pres = series(g => g.count(r => r.feasible && r.score < worst).toDouble)
+    val logged = log.exists(_.admitted.isDefined)
+    if logged || arc.scores.nonEmpty then
+      // THE REAL COUNT when the log carries it.  The old proxy -- feasible and scoring better
+      // than the archive's worst member -- SATURATES under spread-keeping, which admits a poor
+      // scorer for its behaviour: at a worst of 0.906 against a best of 0.070 it counts every
+      // feasible candidate, and its verdict then says "still turning over" forever.
+      val worst = if arc.scores.isEmpty then Double.MaxValue else arc.scores.max
+      val pres = series(g =>
+        if logged then g.count(_.admitted.contains(true)).toDouble
+        else g.count(r => r.feasible && r.score < worst).toDouble)
       val (p0, p1) = ends(pres)
-      println(f"PRESSURE  beats  ${spark(pres, ramp)}  ${p0}%.0f -> ${p1}%.0f a block" +
-              "   (early blocks read low)")
+      println(f"PRESSURE  ${if logged then "admit" else "beats"}%-6s ${spark(pres, ramp)}  " +
+              f"${p0}%.0f -> ${p1}%.0f a block" +
+              (if logged then "" else "   (PROXY: no `admitted` column; early blocks read low)"))
 
       println(f"ARCHIVE   ${arc.names.length}%d members, score ${arc.scores.min}%.3f..${arc.scores.max}%.3f; " +
               "from " + arc.names.groupBy(identity).view.mapValues(_.length).toVector

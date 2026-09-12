@@ -364,19 +364,26 @@ object MarketSimSearch:
     * 2.1 -> 7.9.  The price is a wider SCORE range, since members further from the record are now
     * kept when they are behaviourally distinct -- they pass the gate, which is the claim the
     * archive makes about them. */
-  def admit(arc: Vector[Member], m: Member, sep: Double, keep: Int, noise: Double): Vector[Member] =
+  /** Returns the archive AND WHETHER THE CANDIDATE ENTERED IT.  A reader cannot recover that
+    * from the archive -- a replacement leaves the member count unchanged -- and without it
+    * admission pressure can only be proxied by "scores better than the worst member", which
+    * SATURATES once spread-keeping starts admitting a poor scorer for its behaviour: on a
+    * 471-generation run the worst member scored 0.906 against a best of 0.070, so the proxy
+    * counted every feasible candidate and its verdict read "still turning over" throughout. */
+  def admit(arc: Vector[Member], m: Member, sep: Double, keep: Int,
+            noise: Double): (Vector[Member], Boolean) =
     val near = arc.indexWhere(o => apart(o.dials, m.dials) < sep)
-    val grown =
-      if near < 0 then arc :+ m
-      else if m.score < arc(near).score - noise then arc.updated(near, m)
-      else arc
+    val (grown, took) =
+      if near < 0 then (arc :+ m, true)
+      else if m.score < arc(near).score - noise then (arc.updated(near, m), true)
+      else (arc, false)
     @annotation.tailrec
     def trim(v: Vector[Member]): Vector[Member] =
       if v.length <= keep then v
       else leastDistinct(v) match
         case Some(i) => trim(v.patch(i, Nil, 1))
         case None    => v.sortBy(_.score).take(keep)   // no descriptors: the old rule
-    trim(grown)
+    (trim(grown), took)
 
   def main(args: Array[String]): Unit =
     var out = "search"; var anchorSpec = "sp500"; var seedSpec = ""
@@ -645,10 +652,19 @@ object MarketSimSearch:
       sys.exit(0)
 
     writeArchive(out, startArc, gen0, evals0, (nsum0, nn0), settings)
-    if !s"$out/log.tsv".asPath.exists then
-      s"$out/log.tsv".asPath.writeLines(
-        Seq((Vector("gen", "eval", "parent", "feasible", "score", "raw", "worstRow", "seconds") ++
-             descNames :+ "gateFail").mkString("\t")))
+    // THE HEADER IS A CONTRACT, and it is written only when the log is absent, so a resume
+    // after a column was added would append wider rows under the narrower header and quietly
+    // ragged the file.  Refuse instead: the run that wrote those rows read a different log.
+    val logHeader =
+      (Vector("gen", "eval", "parent", "feasible", "score", "raw", "worstRow", "seconds") ++
+       descNames ++ Vector("gateFail", "admitted")).mkString("\t")
+    val logPath = s"$out/log.tsv".asPath
+    if !logPath.exists then logPath.writeLines(Seq(logHeader))
+    else
+      val had = logPath.lines.headOption.getOrElse("")
+      if had != logHeader then
+        usage(s"$out/log.tsv was written with different columns; move it aside\n" +
+              s"  it has [$had]\n  this binary writes [$logHeader]")
 
     /** One generation: `pop` mutations of members drawn from the archive, then a checkpoint.  The
       * archive is passed and returned rather than mutated, and a kill between generations loses
@@ -675,15 +691,17 @@ object MarketSimSearch:
         val r = evaluate(worldOf(worldFor(parent.name), child), anchors, paths, years,
                          (0 until reps).toVector.map(j => base + (ev + j) * 7919L), deadZone(dead))
         val secs = (System.nanoTime() - t0) / 1e9
-        val line = f"$g\t${ev + k}\t${parent.name}\t${r.feasible}\t${r.score}%.6f\t${r.raw}%.6f" +
-                   f"\t${r.worst}\t$secs%.3f\t" + r.desc.map(x => f"$x%.8g").mkString("\t") +
-                   "\t" + r.gateFail.mkString("; ")
         val nsum2 = if r.feasible then nsum + r.spread else nsum
         val nn2   = if r.feasible then nn + 1 else nn
-        val grown = if r.feasible then
-                      admit(acc, Member(parent.name, child, r.score, r.raw, r.worst, r.desc),
-                            sep, keep, nsum2 / nn2) // nn2 >= 1: incremented on this path
-                    else acc
+        // admitted BEFORE the line is built, because the line records the answer
+        val (grown, took) =
+          if r.feasible then
+            admit(acc, Member(parent.name, child, r.score, r.raw, r.worst, r.desc),
+                  sep, keep, nsum2 / nn2) // nn2 >= 1: incremented on this path
+          else (acc, false)
+        val line = f"$g\t${ev + k}\t${parent.name}\t${r.feasible}\t${r.score}%.6f\t${r.raw}%.6f" +
+                   f"\t${r.worst}\t$secs%.3f\t" + r.desc.map(x => f"$x%.8g").mkString("\t") +
+                   "\t" + r.gateFail.mkString("; ") + s"\t$took"
         (grown, ev + reps, lg :+ line, nsum2, nn2)
       }
       appendLog(out, log)

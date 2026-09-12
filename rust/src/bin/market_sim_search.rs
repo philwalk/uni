@@ -646,20 +646,26 @@ fn append_log(dir: &str, lines: &[String]) {
 /// so no descriptor's units dominate and no bounds have to be guessed in advance. This is the
 /// plan's MAP-Elites intent without a grid: keeping a spread set needs a rule that prefers spread,
 /// and a cell grid is only one way to write it.
-fn admit(arc: Vec<Member>, m: Member, sep: f64, keep: usize, noise: f64) -> Vec<Member> {
+/// Returns the archive AND WHETHER THE CANDIDATE ENTERED IT. A reader cannot recover that from
+/// the archive -- a replacement leaves the member count unchanged -- and without it admission
+/// pressure can only be proxied by "scores better than the worst member", which SATURATES once
+/// spread-keeping starts admitting a poor scorer for its behaviour: on a 471-generation run the
+/// worst member scored 0.906 against a best of 0.070, so the proxy counted every feasible
+/// candidate and its verdict said "still turning over" for as long as the search ran.
+fn admit(arc: Vec<Member>, m: Member, sep: f64, keep: usize, noise: f64) -> (Vec<Member>, bool) {
     let near = arc.iter().position(|o| apart(&o.dials, &m.dials) < sep);
-    let mut next = match near {
+    let (mut next, took) = match near {
         None => {
             let mut v = arc;
             v.push(m);
-            v
+            (v, true)
         }
         Some(i) if m.score < arc[i].score - noise => {
             let mut v = arc;
             v[i] = m;
-            v
+            (v, true)
         }
-        Some(_) => arc,
+        Some(_) => (arc, false),
     };
     while next.len() > keep {
         match least_distinct(&next) {
@@ -673,7 +679,7 @@ fn admit(arc: Vec<Member>, m: Member, sep: f64, keep: usize, noise: f64) -> Vec<
             }
         }
     }
-    next
+    (next, took)
 }
 
 /// The member whose removal costs the least behavioural spread: of the closest pair in normalised
@@ -1543,14 +1549,25 @@ fn main() {
     }
 
     write_archive(&c.out, &start_arc, gen0, evals0, (nsum0, nn0), &settings);
-    if read_text(&format!("{}/log.tsv", c.out)).is_none() {
-        write_text(
-            &format!("{}/log.tsv", c.out),
-            &format!(
-                "gen\teval\tparent\tfeasible\tscore\traw\tworstRow\tseconds\t{}\tgateFail\n",
-                DESC_NAMES.join("\t")
-            ),
-        );
+    // THE HEADER IS A CONTRACT, and it is written only when the log is absent, so a resume
+    // after a column was added would append wider rows under the narrower header and quietly
+    // ragged the file. Refuse instead: the run that wrote those rows read a different log.
+    let header = format!(
+        "gen\teval\tparent\tfeasible\tscore\traw\tworstRow\tseconds\t{}\tgateFail\tadmitted\n",
+        DESC_NAMES.join("\t")
+    );
+    match read_text(&format!("{}/log.tsv", c.out)) {
+        None => write_text(&format!("{}/log.tsv", c.out), &header),
+        Some(t) => {
+            let had = t.lines().next().unwrap_or_default();
+            if had != header.trim_end() {
+                usage(&format!(
+                    "{}/log.tsv was written with different columns; move it aside\n  it has [{had}]\n  this binary writes [{}]",
+                    c.out,
+                    header.trim_end()
+                ));
+            }
+        }
     }
 
     // `-gens 0` runs until killed; the checkpoint after every generation is what makes that safe.
@@ -1600,8 +1617,33 @@ fn main() {
             );
             let secs = t0.elapsed().as_secs_f64();
             let bs: Vec<String> = r.desc.iter().map(|x| g8(*x)).collect();
+            let gate_fail = r.gate_fail.join("; ");
+            // admitted BEFORE the line is written, because the line records the answer
+            let mut took = false;
+            if r.feasible {
+                noise_sum += r.spread;
+                noise_n += 1;
+                // at least one reading here: the increment above is on this path
+                let noise = noise_sum / noise_n as f64;
+                let (next, entered) = admit(
+                    arc,
+                    Member {
+                        name: parent.name.clone(),
+                        dials: child,
+                        score: r.score,
+                        raw: r.raw,
+                        worst: r.worst.clone(),
+                        desc: r.desc,
+                    },
+                    c.sep,
+                    c.keep,
+                    noise,
+                );
+                arc = next;
+                took = entered;
+            }
             log.push(format!(
-                "{g}\t{}\t{}\t{}\t{:.6}\t{:.6}\t{}\t{:.3}\t{}\t{}",
+                "{g}\t{}\t{}\t{}\t{:.6}\t{:.6}\t{}\t{:.3}\t{}\t{}\t{took}",
                 evals + k as u64,
                 parent.name,
                 r.feasible,
@@ -1610,28 +1652,8 @@ fn main() {
                 r.worst,
                 secs,
                 bs.join("\t"),
-                r.gate_fail.join("; ")
+                gate_fail
             ));
-            if r.feasible {
-                noise_sum += r.spread;
-                noise_n += 1;
-                // at least one reading here: the increment above is on this path
-                let noise = noise_sum / noise_n as f64;
-                arc = admit(
-                    arc,
-                    Member {
-                        name: parent.name.clone(),
-                        dials: child,
-                        score: r.score,
-                        raw: r.raw,
-                        worst: r.worst,
-                        desc: r.desc,
-                    },
-                    c.sep,
-                    c.keep,
-                    noise,
-                );
-            }
             evals += c.reps as u64;
         }
         append_log(&c.out, &log);

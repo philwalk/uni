@@ -1,5 +1,34 @@
 ## v0.24.2 — unreleased
 
+**The realism kurtosis band is 4-40, and no realism edge may sit inside a target's own noise**
+
+- `kurtosis 4-30` is now `kurtosis 4-40`. The ceiling sat two points above the S&P fidelity target
+  of 28.0, and `measure` reads kurtosis as a median over paths whose seed spread is 1.9 at 200
+  paths and 2.8 at 60, so the band rejected the actual S&P century on roughly one seed in four. In
+  a calibration search it was a third of all rejections, and it removed the heavy-tailed end of
+  the surviving set. 40 clears 28.0 by three of those spreads. The fidelity targets, 28.0 for the
+  S&P and 9.55 for the Nasdaq, are unchanged: they answer "is this this market", which the realism
+  band does not.
+- Widening a realism ceiling cannot fail a world that passed, so every frozen release and recipe
+  reproduces. A world reading kurtosis between 30 and 40 now passes the realism class; the default
+  world reads 33.97 at 20 paths.
+- A contract test on each side asserts that no realism band edge lies within three estimator
+  standard deviations of a fidelity target for the same statistic, across equity volatility,
+  kurtosis, lag-1 clustering and crash rate on both anchor sets. Kurtosis was the only violation.
+  The four bands are named constants the gate and the test both read.
+
+**The search log records admission, and a resume refuses a log with different columns**
+
+- `log.tsv` gains `admitted`, whether each candidate actually entered the archive. It is not
+  recoverable from the archive, since a replacement leaves the member count unchanged.
+- `marketSimSearchReport.sc` counts PRESSURE from that column. Its old estimate, candidates scoring
+  better than the archive's worst member, saturates once spread-keeping admits a poor scorer for
+  its behaviour; on a 471-generation run it counted every feasible candidate. Reading a log
+  without the column, the report still uses the estimate and labels it a proxy.
+- The report reads the log by header name rather than column position.
+- A resume whose `log.tsv` was written with different columns is refused, naming both headers,
+  rather than appending wider rows under the old header.
+
 **A calibration archive's members can be run: `-worldset` / `-worldindex`**
 
 - `-worldset F -worldindex K` seeds every dial from member K of the JSON the calibration search's
