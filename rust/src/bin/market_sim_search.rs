@@ -25,13 +25,13 @@
 //! own sampling error there is no gradient to climb, which is what stops a long search optimising
 //! noise.  Minimising the worst row rather than a sum is what stops one row being sacrificed.
 //!
-//! THE DIAL TABLE IS THE LIBRARY'S, not a copy.  The Scala script carries its own because editing
-//! it there would otherwise need a `publishLocal` round trip; this binary is rebuilt from the same
-//! tree as the model, so a copy would buy nothing and cost the failure it was just fixed for --
-//! the two tables were permuted against each other at positions 15-23, and the same seed therefore
-//! drew different worlds in the two languages.  `CALIBRATE_DIAL_ORDER` is now a contract in both.
+//! THE DIAL TABLE IS THE LIBRARY'S, in both harnesses, never a copy. A copy is what failed: the
+//! twins' tables were permuted against each other at positions 15-23, a name-set check passed, and
+//! the same seed drew different worlds in the two languages. `CALIBRATE_DIAL_ORDER` is a contract
+//! in both.
 //!
-//! EVERYTHING IS PORTABLE BETWEEN THE TWO HARNESSES.  The archive format and every reading in it:
+//! EVERYTHING IS PORTABLE BETWEEN THE TWO HARNESSES, including `-transport` and `-fidelity`, and a
+//! capability added to one is added to the other. The archive format and every reading in it:
 //! feasibility comes from `gate_checks`, which reads only the ensemble's statistics, and those are
 //! byte-identical across the twins, so a Scala `-holdout` re-scores a Rust archive exactly and
 //! that is the check worth running before an archive is published.  The MUTATION STREAM too, since
@@ -653,8 +653,22 @@ fn append_log(dir: &str, lines: &[String]) {
 /// worst member scored 0.906 against a best of 0.070, so the proxy counted every feasible
 /// candidate and its verdict said "still turning over" for as long as the search ran.
 fn admit(arc: Vec<Member>, m: Member, sep: f64, keep: usize, noise: f64) -> (Vec<Member>, bool) {
-    let near = arc.iter().position(|o| apart(&o.dials, &m.dials) < sep);
-    let (mut next, took) = match near {
+    // THE NEAREST member inside `sep`, not the first one found. Archive order is insertion
+    // order, so "first" was an arbitrary neighbour: a candidate could be refused against one
+    // member while beating the one it was actually closest to. Strict `<` keeps the earliest on
+    // a tie, as the Scala twin's fold does.
+    let near = arc
+        .iter()
+        .enumerate()
+        .map(|(i, o)| (i, apart(&o.dials, &m.dials)))
+        .filter(|&(_, d)| d < sep)
+        .fold(None, |best: Option<(usize, f64)>, (i, d)| match best {
+            Some((_, bd)) if bd <= d => best,
+            _ => Some((i, d)),
+        })
+        .map(|(i, _)| i);
+    let dials = m.dials.clone();
+    let (mut next, placed) = match near {
         None => {
             let mut v = arc;
             v.push(m);
@@ -679,6 +693,11 @@ fn admit(arc: Vec<Member>, m: Member, sep: f64, keep: usize, noise: f64) -> (Vec
             }
         }
     }
+    // ADMITTED MEANS STILL THERE AFTER THE TRIM. An appended candidate that is itself the worse
+    // half of the closest behavioural pair is evicted in the same step, and the flag used to say
+    // "admitted" of a world the archive never held. Its dials identify it: a candidate is only
+    // appended when no member lies within `sep` of it.
+    let took = placed && next.iter().any(|o| o.dials == dials);
     (next, took)
 }
 
@@ -1139,7 +1158,9 @@ fn main() {
         ),
         // the ADMISSION RULES are recorded: a resume under different ones puts two standards in
         // one archive, which is the same failure the ensemble settings guard against
-        ("admit".into(), "spread-keeping".to_string()),
+        // `-nearest` since the replacement rule compares the NEAREST member inside `sep`; an
+        // archive built on the first-found one refuses to resume
+        ("admit".into(), "spread-keeping-nearest".to_string()),
         (
             "transport".into(),
             if c.transport.is_empty() {
@@ -1199,7 +1220,7 @@ fn main() {
 
     let start_arc: Vec<Member> = if !loaded.is_empty() {
         println!(
-            "resumed: {} members, generation {gen0}, {evals0} evaluations",
+            "resumed: {} members, generation {gen0}, {evals0} seed slots",
             loaded.len()
         );
         loaded.clone()
@@ -1297,19 +1318,24 @@ fn main() {
         let mut out = String::new();
         let _ = writeln!(
             out,
-            "name\tscore\traw\tworstRow\t{}\tpassA\tpassB\trawB\tworstB",
-            names().join("\t")
+            "name\tscore\traw\tworstRow\t{}\t{}\tpassA\tpassB\trawB\tworstB",
+            names().join("\t"),
+            DESC_NAMES.join("\t")
         );
         for (m, r) in &gone {
             let ds: Vec<String> = m.dials.iter().map(|x| g8(*x)).collect();
+            // the DESCRIPTORS travel with a dropped member, as they do in the archive: a member
+            // that fails today's ensemble is evidence, and what it did is half of that evidence
+            let bs: Vec<String> = m.desc.iter().map(|x| g8(*x)).collect();
             let _ = writeln!(
                 out,
-                "{}\t{:.6}\t{:.6}\t{}\t{}\t{}\t{}\t{}\t{}",
+                "{}\t{:.6}\t{:.6}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                 m.name,
                 m.score,
                 m.raw,
                 m.worst,
                 ds.join("\t"),
+                bs.join("\t"),
                 r[1],
                 r[3],
                 r[4],
@@ -1591,7 +1617,7 @@ fn main() {
         let mut rng =
             NumPyRng::new(((c.base ^ (g as i64).wrapping_mul(0x9e37_79b9)) & i64::MAX) as u64);
         let mut log = Vec::new();
-        for k in 0..c.pop {
+        for _ in 0..c.pop {
             let parent = arc[rng.next_bounded_u32(arc.len() as u32) as usize].clone();
             let child: Vec<f64> = (0..rs.len())
                 .map(|i| {
@@ -1644,7 +1670,10 @@ fn main() {
             }
             log.push(format!(
                 "{g}\t{}\t{}\t{}\t{:.6}\t{:.6}\t{}\t{:.3}\t{}\t{}\t{took}",
-                evals + k as u64,
+                // `evals`, the SEED BASE this candidate drew from (seeds are base + (evals + j) *
+                // 7919), so a log line reproduces its candidate; `evals + k` advanced by reps + 1
+                // and was neither that nor a candidate number
+                evals,
                 parent.name,
                 r.feasible,
                 r.score,
@@ -1662,7 +1691,7 @@ fn main() {
         let raw = arc.iter().map(|m| m.raw).fold(f64::INFINITY, f64::min);
         let scores: Vec<f64> = arc.iter().map(|m| m.score).collect();
         println!(
-            "gen {g:>5}  archive {:>3}  best {best:>7.3}  median {:>7.3}  raw {raw:>7.3}  evals {evals:>6}",
+            "gen {g:>5}  archive {:>3}  best {best:>7.3}  median {:>7.3}  raw {raw:>7.3}  slots {evals:>6}",
             arc.len(),
             ms::pctile(&scores, 0.5)
         );

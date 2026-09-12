@@ -1,5 +1,27 @@
 ## v0.24.2 — unreleased
 
+**The Scala search harness gains `-transport` and `-fidelity`, and admission is recorded as it happened**
+
+- `jsrc/marketSimSearch.sc` runs `-transport` and `-fidelity`, byte-identical to the Rust harness.
+  It previously refused any archive built with `-transport`, so the independent re-score before
+  publishing, a Scala `-holdout` of a Rust archive, could not run on any archive a search
+  produced. It now can.
+- The Scala harness reads the library's `CalibrateRanges` instead of carrying its own copy,
+  as the Rust harness already did.
+- A candidate now replaces the NEAREST archive member inside `-sep`, not the first one found in
+  archive order, so it is never refused against one member while beating the one it is closest
+  to. The checkpoint records `admit = spread-keeping-nearest`, so an archive built under the old
+  rule refuses to resume.
+- `log.tsv`'s `admitted` is true only when the candidate is still in the archive after the trim.
+  A candidate appended and then evicted in the same step as the worse half of the closest
+  behavioural pair was logged as admitted.
+- `log.tsv`'s `eval` is the candidate's seed base, so its seeds are `seed + (eval + j) * 7919`.
+  It previously advanced by the repetition count plus one per candidate and matched neither the
+  seed base nor the candidate number. The running counter is reported as seed slots: every
+  candidate is allotted `-reps` seeds whether or not it stops at its first infeasible one.
+- A pruned archive's `dropped.tsv` carries each dropped member's descriptors from the Rust harness,
+  as it already did from the Scala one.
+
 **The realism kurtosis band is 4-40, and no realism edge may sit inside a target's own noise**
 
 - `kurtosis 4-30` is now `kurtosis 4-40`. The ceiling sat two points above the S&P fidelity target
