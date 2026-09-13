@@ -172,9 +172,18 @@ object MarketSimSearch:
               s: Long, dead: Double): Read =
     val main = MarketSim.simPaths(w, paths, years, s)
     val st   = MarketSim.measure(main, years)
-    val bad  = MarketSim.gateChecks(anchors, st)
-      .count((_, ok, cls) => !ok && MarketSim.GateDefault.contains(cls))
+    val checks = MarketSim.gateChecks(anchors, st)
+    val bad  = checks.count((_, ok, cls) => !ok && MarketSim.GateDefault.contains(cls))
     val feasible = bad == 0
+    // THE FIDELITY BANDS THAT ARE NOT FITNESS ROWS -- the macro panel's, the channels', the
+    // variance-ratio profile, the bond's -- were invisible to the search: neither gated (a
+    // fidelity band flips on a seed at 60 paths, and feasibility has to hold on every seed) nor
+    // scored (no fitness row reads them).  An archive built blind to them had 139 of 145 members
+    // failing one, and a recipe has to pass every class.  Each failed band now costs one dead
+    // zone, the one priced term in the score: a flip on one seed is a nudge, a band a member sits
+    // outside on every seed is a row's worth of excess.  Named in `gateFail` for a feasible
+    // candidate, so the log says which.
+    val fidFail = checks.collect { case (nm, false, MarketSim.GateClass.Fidelity) => s"fidelity: $nm" }
     val ex =
       if !feasible then Map.empty[String, Double]
       else if MarketSim.extremeHorizons(anchors) == Vector(years) then
@@ -183,10 +192,10 @@ object MarketSimSearch:
     val (total, allRows) = MarketSim.fitness(anchors, st, ex)
     val rows = allRows.filter((nm, _, _, _) => feasible || !MarketSim.extremeTargetNames.contains(nm))
     val raw = rows.map((nm, _, _, term) => (term, nm)).max
-    // in row order, a plain left fold, as the Rust harness's `sum` is
-    val score = rows.map((_, _, _, term) => math.max(0.0, term - dead)).sum
+    // in row order, a plain left fold, as the Rust harness's `sum` is; then the fidelity bands
+    val score = rows.map((_, _, _, term) => math.max(0.0, term - dead)).sum + dead * fidFail.length
     val gateFail =
-      if feasible then Vector.empty
+      if feasible then fidFail
       else MarketSim.GateDefault.toVector.flatMap(cls => MarketSim.failedIn(anchors, st, cls))
     Read(feasible, score, raw._1, raw._2, descOf(st), total, gateFail = gateFail)
 
@@ -250,10 +259,8 @@ object MarketSimSearch:
     * never enters.  One dial vector cannot pass both sets (equity vol bands 14-18 and 23.5-30.3); the
     * MECHANISM transports and the market dials re-solve, which is the structure of the shipped
     * recipes.  So the arm is the counterpart world carrying the candidate's values on every searched
-    * dial EXCEPT the ones on which the counterpart differs from the candidate's SEED world -- the
-    * dials that say which market each is -- which stay at the counterpart's.  Derived from the two
-    * worlds, in either direction (a Nasdaq-primary search names the S&P default as its counterpart
-    * and holds the same six dials at the default's values), and printed at startup. */
+    * dial EXCEPT the market dials (`MarketDials`), which stay at the counterpart's, in either
+    * direction. */
   final case class Transport(name: String, anchors: MarketSim.Anchors, world: World, spec: String)
 
   def transportOf(name: String, primarySpec: String): Transport =
@@ -265,15 +272,22 @@ object MarketSimSearch:
             "a transport arm has to be the OTHER market")
     Transport(name, MarketSim.anchorsNamed(spec), world, spec)
 
-  /** The dials held at the counterpart's values for a candidate seeded from `seed`: the ones on
-    * which the two worlds differ. */
-  def pinned(t: Transport, seed: World): Vector[Boolean] =
-    ranges.map((_, _, _, _, get) => get(t.world) != get(seed))
+  /** THE MARKET DIALS: the searched dials that say which market a world is rather than how its
+    * mechanism works, held at the counterpart's values on the transport arm.  Named, not derived:
+    * the set used to be "the dials on which the counterpart differs from the seed world", which
+    * produced this list for every hand-built recipe and all thirty for `0.24.2-nasdaq`, a recipe
+    * the search itself re-solved -- an arm holding everything judges the counterpart, not the
+    * candidate.  Every name must be a searched dial; the harness refuses to start otherwise. */
+  val MarketDials: Vector[String] =
+    Vector("depth", "drift", "stress", "volOfVol", "jumpVar", "refuge", "slowShare")
 
-  def transportWorld(t: Transport, seed: World, dials: Vector[Double]): World =
-    val held = pinned(t, seed)
+  /** Which searched dials the transport arm holds, in table order. */
+  def held: Vector[Boolean] = ranges.map((nm, _, _, _, _) => MarketDials.contains(nm))
+
+  def transportWorld(t: Transport, dials: Vector[Double]): World =
+    val h = held
     ranges.indices.foldLeft(t.world) { (w, i) =>
-      if held(i) then w else ranges(i)._4(w, dials(i))
+      if h(i) then w else ranges(i)._4(w, dials(i))
     }
 
   /** One candidate's reading: the primary arm alone, or both arms when a transport counterpart
@@ -290,7 +304,7 @@ object MarketSimSearch:
       // the transport arm is a whole second evaluation
       case Some(_) if !a.feasible => a
       case Some(tr) =>
-        val b = evaluate(transportWorld(tr, base, dials), tr.anchors, paths, years, seeds, dead)
+        val b = evaluate(transportWorld(tr, dials), tr.anchors, paths, years, seeds, dead)
         val score = a.score + b.score
         val (raw, worst) =
           if b.raw > a.raw then (b.raw, s"${tr.spec}: ${b.worst}")
@@ -524,10 +538,12 @@ object MarketSimSearch:
         got
     val seedWorld = pool.toMap
     def worldFor(n: String): World = seedWorld.getOrElse(n, MarketSim.Defaults)
-    for t <- transport; (nm, w) <- pool do
-      val held = ranges.zip(pinned(t, w)).collect { case (r, true) => r._1 }
-      println(s"transport arm: ${t.name} (${t.spec}), holding ${held.length} of ${ranges.length} " +
-              s"dials at its own values against seed $nm [${held.mkString(", ")}]")
+    for t <- transport do
+      val missing = MarketDials.filterNot(names.contains)
+      if missing.nonEmpty then
+        usage(s"the market dials name [${missing.mkString(", ")}], which is not a searched dial")
+      println(s"transport arm: ${t.name} (${t.spec}), holding the ${MarketDials.length} market " +
+              s"dials of ${ranges.length} at its own values [${MarketDials.mkString(", ")}]")
 
     // CHEAP FIDELITY: a smaller ensemble is good enough when it RANKS worlds as the reference does;
     // the losses need not agree.  Measured on the frozen pool at the S&P set against 60 x 80:

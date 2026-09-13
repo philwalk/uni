@@ -68,12 +68,12 @@
   alone). Spread-keeping admitted on distance whatever the score, and a set built that way read a
   median summed excess of 1.14 against its seed pair's 0.65. Recorded in the checkpoint; members
   above it are dropped on resume and counted.
-- The transport arm holds at the counterpart's values the dials on which the counterpart differs
-  from the candidate's SEED world, not from the shipped default, so the rule works in either
-  direction: a Nasdaq-primary search (`-anchors nasdaq -seeds 0.24.1-nasdaq -transport 0.24.2`)
-  holds the same market dials at the S&P default's values that an S&P-primary search holds at the
-  recipe's. Against the default it read the Nasdaq recipe as an S&P world and rejected its own
-  seed on equity vol. The held set is printed per seed at startup.
+- The transport arm holds the MARKET DIALS at the counterpart's values — `depth`, `drift`,
+  `stress`, `volOfVol`, `jumpVar`, `refuge`, `slowShare`, named in both harnesses and printed at
+  startup — and carries the candidate's values on the other twenty-three, in either direction.
+  The set used to be derived as the dials on which the counterpart differs from the shipped
+  default, which read the Nasdaq recipe as an S&P world for a Nasdaq-primary search and rejected
+  its own seed, and which is every dial for a recipe the search itself re-solved.
 
 **The calibration search scores every row's excess past the dead zone, not the worst row alone**
 

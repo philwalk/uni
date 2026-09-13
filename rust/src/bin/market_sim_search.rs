@@ -252,13 +252,27 @@ fn one_read(w: &World, anchors: Anchors, paths: usize, years: usize, s: u64, dea
     let main = ms::sim_paths(w, paths, years, s);
     let st = ms::measure(&main, years);
     let default = ms::gate_default();
-    let bad = ms::gate_checks(anchors, &st)
-        .into_iter()
+    let checks = ms::gate_checks(anchors, &st);
+    let bad = checks
+        .iter()
         .filter(|(_, ok, cls)| !ok && default.contains(cls))
         .count();
     let feasible = bad == 0;
+    // THE FIDELITY BANDS THAT ARE NOT FITNESS ROWS -- the macro panel's, the channels', the
+    // variance-ratio profile, the bond's -- were invisible to the search: neither gated (a
+    // fidelity band flips on a seed at 60 paths, and feasibility has to hold on every seed) nor
+    // scored (no fitness row reads them). An archive built blind to them had 139 of 145 members
+    // failing one, and a recipe has to pass every class. Each failed band now costs one dead
+    // zone, the one priced term in the score: a flip on one seed is a nudge, a band a member
+    // sits outside on every seed is a row's worth of excess. Named in `gate_fail` for a
+    // feasible candidate, so the log says which.
+    let fid_fail: Vec<String> = checks
+        .iter()
+        .filter(|(_, ok, cls)| !ok && *cls == ms::GateClass::Fidelity)
+        .map(|(nm, _, _)| format!("fidelity: {nm}"))
+        .collect();
     let gate_fail: Vec<String> = if feasible {
-        Vec::new()
+        fid_fail.clone()
     } else {
         default
             .iter()
@@ -291,11 +305,12 @@ fn one_read(w: &World, anchors: Anchors, paths: usize, years: usize, s: u64, dea
                 a
             }
         });
-    // in row order, a plain left fold, as the Scala harness's `sum` is
+    // in row order, a plain left fold, as the Scala harness's `sum` is; then the fidelity bands
     let score = scored
         .iter()
         .map(|(term, _)| (term - dead).max(0.0))
-        .sum::<f64>();
+        .sum::<f64>()
+        + dead * fid_fail.len() as f64;
     Read {
         feasible,
         score,
@@ -361,10 +376,8 @@ fn evaluate(
 /// never enters.  One dial vector cannot pass both sets (equity vol bands 14-18 and 23.5-30.3); the
 /// MECHANISM transports and the market dials re-solve, which is the structure of the shipped
 /// recipes.  So the arm is the counterpart world carrying the candidate's values on every searched
-/// dial EXCEPT the ones on which the counterpart differs from the candidate's SEED world -- the
-/// dials that say which market each is -- which stay at the counterpart's.  Derived from the two
-/// worlds, in either direction (a Nasdaq-primary search names the S&P default as its counterpart
-/// and holds the same six dials at the default's values), and printed at startup.
+/// dial EXCEPT the market dials (`MARKET_DIALS`), which stay at the counterpart's, in either
+/// direction.
 struct Transport {
     name: String,
     anchors: Anchors,
@@ -392,17 +405,32 @@ fn transport_of(name: &str, primary_spec: &str) -> Transport {
     }
 }
 
-/// The dials held at the counterpart's values for a candidate seeded from `seed`: the ones on
-/// which the two worlds differ.
-fn pinned(t: &Transport, seed: &World) -> Vec<bool> {
+/// THE MARKET DIALS: the searched dials that say which market a world is rather than how its
+/// mechanism works, held at the counterpart's values on the transport arm. Named, not derived:
+/// the set used to be "the dials on which the counterpart differs from the seed world", which
+/// produced this list for every hand-built recipe and all thirty for `0.24.2-nasdaq`, a recipe
+/// the search itself re-solved -- an arm holding everything judges the counterpart, not the
+/// candidate. Every name must be a searched dial; the harness refuses to start otherwise.
+const MARKET_DIALS: [&str; 7] = [
+    "depth",
+    "drift",
+    "stress",
+    "volOfVol",
+    "jumpVar",
+    "refuge",
+    "slowShare",
+];
+
+/// Which searched dials the transport arm holds, in table order.
+fn held() -> Vec<bool> {
     ranges()
         .iter()
-        .map(|r| (r.4)(&t.world) != (r.4)(seed))
+        .map(|r| MARKET_DIALS.contains(&r.0))
         .collect()
 }
 
-fn transport_world(t: &Transport, seed: &World, dials: &[f64]) -> World {
-    let held = pinned(t, seed);
+fn transport_world(t: &Transport, dials: &[f64]) -> World {
+    let held = held();
     let mut w = t.world;
     for (i, r) in ranges().iter().enumerate() {
         if !held[i] {
@@ -439,7 +467,7 @@ fn judge(
         return a;
     }
     let b = evaluate(
-        &transport_world(tr, base, dials),
+        &transport_world(tr, dials),
         tr.anchors,
         paths,
         years,
@@ -1032,22 +1060,25 @@ fn main() {
     let world_for =
         |n: &str| -> World { seed_world.get(n).copied().unwrap_or_else(ms::default_world) };
     if let Some(t) = &transport {
-        for (nm, w) in &pool {
-            let held: Vec<&str> = ranges()
-                .iter()
-                .zip(pinned(t, w))
-                .filter(|(_, p)| *p)
-                .map(|(r, _)| r.0)
-                .collect();
-            println!(
-                "transport arm: {} ({}), holding {} of {} dials at its own values against seed {nm} [{}]",
-                t.name,
-                t.spec,
-                held.len(),
-                ranges().len(),
-                held.join(", ")
-            );
+        let missing: Vec<&str> = MARKET_DIALS
+            .iter()
+            .copied()
+            .filter(|d| !names().contains(d))
+            .collect();
+        if !missing.is_empty() {
+            usage(&format!(
+                "the market dials name [{}], which is not a searched dial",
+                missing.join(", ")
+            ));
         }
+        println!(
+            "transport arm: {} ({}), holding the {} market dials of {} at its own values [{}]",
+            t.name,
+            t.spec,
+            MARKET_DIALS.len(),
+            ranges().len(),
+            MARKET_DIALS.join(", ")
+        );
     }
 
     // CHEAP FIDELITY: a smaller ensemble is good enough when it RANKS worlds as the reference does;
