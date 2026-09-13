@@ -16,17 +16,21 @@
 // score has not moved for fifty generations may still be filling gaps in the set, and a search
 // still nudging its best down may have stopped adding anything else.
 //
-// TWO TRACES, because each is blind where the other sees.
+// THREE TRACES, because each is blind where the others see.
 //
 // DRAW is what the mutation operator produced, compared with nothing.  No bias, and if its
 // quantiles are still sinking the search is still learning where to look.
 //
-// PRESSURE is how many candidates would enter TODAY's archive.  Falling to zero means the archive
-// has closed and further generations buy only a lucky draw.  It understates the true admission
-// rate -- a candidate also enters by beating the nearest member within `-sep`, which needs the
-// archive's history to see -- and it is BIASED AGAINST EARLY BLOCKS, which are judged against an
-// archive better than the one they faced.  So a RISING pressure trace is partly an artifact; a
-// FALLING one is real, because the comparison only gets harder.
+// PRESSURE is how many candidates entered the archive.  Under spread-keeping admission it does
+// NOT fall as the search converges: a feasible candidate that improves on its nearest neighbour
+// enters, and late in a run about a third of them do, replacing members INSIDE the spread.  So
+// it says whether the search is alive, not whether it is buying anything.
+//
+// SPREAD is what it is buying: the span of the descriptor columns over everything admitted so far,
+// each descriptor against its final span, averaged.  The product is the set, and the set is worth
+// its spread; when two blocks add under a percent of it, more generations buy replacements, not
+// coverage.  The VERDICT reads this trace.  A member trimmed later still counts, so the trace is
+// an upper bound that stops growing when the archive does.
 
 import uni.*
 import uni.apps.MarketSim
@@ -45,23 +49,30 @@ object MarketSimSearchReport:
   /** One candidate as `log.tsv` records it -- written for every candidate the search evaluates,
     * including the rejected majority, which is what makes these trends possible at all. */
   final case class Row(gen: Int, feasible: Boolean, score: Double, raw: Double,
-                       worst: String, secs: Double, admitted: Option[Boolean])
+                       worst: String, secs: Double, desc: Vector[Double],
+                       admitted: Option[Boolean])
+
+  /** The log's fixed columns; every other column is a behaviour descriptor, whatever the
+    * harness names them. */
+  val Fixed = Set("gen", "eval", "parent", "feasible", "score", "raw", "worstRow", "seconds",
+                  "gateFail", "admitted")
 
   /** BY HEADER NAME, never by position: the log gained `gateFail` once and `admitted` since,
     * and a reader that counts columns reads the wrong one the next time that happens. */
-  def readLog(dir: String): Vector[Row] =
+  def readLog(dir: String): (Vector[String], Vector[Row]) =
     val p = s"$dir/log.tsv".asPath
     if !p.exists then usage(s"no $dir/log.tsv")
     val ls = p.lines.toVector
-    val at = ls.headOption.getOrElse(usage(s"$dir/log.tsv is empty")).split("\t")
-                .zipWithIndex.toMap
+    val head = ls.headOption.getOrElse(usage(s"$dir/log.tsv is empty")).split("\t").toVector
+    val at = head.zipWithIndex.toMap
     def col(name: String): Int =
       at.getOrElse(name, usage(s"$dir/log.tsv has no `$name` column"))
     val (cg, cf, cs, cr, cw, ct) =
       (col("gen"), col("feasible"), col("score"), col("raw"), col("worstRow"), col("seconds"))
+    val descCols = head.zipWithIndex.filterNot((n, _) => Fixed(n))
     // `admitted` arrived after the first runs; absent means the proxy, and the report says so
     val ca = at.get("admitted")
-    ls.drop(1).filter(_.trim.nonEmpty).flatMap { l =>
+    val rows = ls.drop(1).filter(_.trim.nonEmpty).flatMap { l =>
       val f = l.split("\t")
       if f.length <= ct then None
       else
@@ -71,8 +82,10 @@ object MarketSimSearchReport:
           r <- f(cr).toDoubleOption
           t <- f(ct).toDoubleOption
         yield Row(g, f(cf) == "true", s, r, f(cw), t,
+                  descCols.map((_, i) => f.lift(i).flatMap(_.toDoubleOption).getOrElse(Double.NaN)),
                   ca.filter(f.length > _).map(f(_) == "true"))
     }
+    (descCols.map(_._1), rows)
 
   def readState(dir: String): Map[String, String] =
     val p = s"$dir/state.tsv".asPath
@@ -105,6 +118,13 @@ object MarketSimSearchReport:
   val Blocks = "\u2581\u2582\u2583\u2584\u2585\u2586\u2587\u2588"
   val Plain  = "_.-=+*#%"
 
+  /** Each descriptor's range over the rows, NaN where none reads. */
+  def descSpan(rows: Vector[Row], n: Int): Vector[Double] =
+    (0 until n).toVector.map { j =>
+      val xs = rows.map(_.desc(j)).filter(x => !x.isNaN)
+      if xs.isEmpty then Double.NaN else xs.max - xs.min
+    }
+
   def spark(v: Vector[Double], ramp: String): String =
     val f = v.filter(x => !x.isNaN)
     if f.isEmpty then ""
@@ -136,7 +156,7 @@ object MarketSimSearchReport:
     }
     if dir.isEmpty then dir = "search"
 
-    val log = readLog(dir)
+    val (descNames, log) = readLog(dir)
     if log.isEmpty then usage(s"$dir/log.tsv has no candidates yet")
     val st   = readState(dir)
     val arc  = readArchive(dir)
@@ -211,6 +231,21 @@ object MarketSimSearchReport:
               f"${p0}%.0f -> ${p1}%.0f a block" +
               (if logged then "" else "   (PROXY: no `admitted` column; early blocks read low)"))
 
+    // SPREAD: the descriptor span over everything that entered the archive, cumulative to each
+    // generation, each descriptor as a fraction of its final span, averaged.  Without an
+    // `admitted` column every feasible candidate counts, which over-reads the early blocks.
+    val entered = if logged then log.filter(_.admitted.contains(true)) else feas
+    val spanEnd = descSpan(entered, descNames.length)
+    def spreadAt(g: Int): Double =
+      val r = descSpan(entered.filter(_.gen < g), descNames.length).zip(spanEnd)
+                .collect { case (a, b) if !a.isNaN && b > 0 => a / b }
+      if r.isEmpty then Double.NaN else mean(r)
+    if descNames.nonEmpty then
+      val spr = (0 until nb).toVector.map(i => 100.0 * spreadAt(bucket(i)._2))
+      val (s0, s1) = ends(spr)
+      println(f"SPREAD    span   ${spark(spr, ramp)}  ${s0}%.0f%% -> ${s1}%.0f%% of final   (flat tail = done)")
+
+    if logged || arc.scores.nonEmpty then
       println(f"ARCHIVE   ${arc.names.length}%d members, score ${arc.scores.min}%.3f..${arc.scores.max}%.3f; " +
               "from " + arc.names.groupBy(identity).view.mapValues(_.length).toVector
                 .sortBy(-_._2).map((n, c) => s"$n $c").mkString(", "))
@@ -223,23 +258,19 @@ object MarketSimSearchReport:
 
     // ---- the verdict ---------------------------------------------------------------------
     // Deliberately crude, and it says which numbers it read: a stopping rule nobody can check is
-    // worse than no stopping rule.  Two blocks, because one block of a search this noisy proves
-    // nothing.
-    if arc.scores.nonEmpty && gens >= 3 * blk then
-      val worst = arc.scores.max
-      def pressure(lo: Int, hi: Int) = inGen(lo, hi).count(r => r.feasible && r.score < worst)
-      val last  = pressure(gens - 2 * blk, gens)
-      val prior = pressure(gens - 4 * blk, gens - 2 * blk)
-      val since = feas.minByOption(_.raw).map(b => gens - 1 - b.gen).getOrElse(0)
+    // worse than no stopping rule.  It reads SPREAD, in points of the final span added over the
+    // last two blocks against the two before, because admissions never fall under spread-keeping
+    // and the best score is one row of the product.  Two blocks, because one block of a search
+    // this noisy proves nothing.
+    if descNames.nonEmpty && gens >= 4 * blk then
+      val last  = 100.0 * (spreadAt(gens) - spreadAt(gens - 2 * blk))
+      val prior = 100.0 * (spreadAt(gens - 2 * blk) - spreadAt(gens - 4 * blk))
+      val added = f"the last ${2 * blk}%d gen added ${last}%.1f%% of the spread, the ${2 * blk}%d " +
+                  f"before ${prior}%.1f%%"
       val verdict =
-        if last == 0 && since > 2 * blk then
-          f"CLOSED -- nothing beat the archive in ${2 * blk}%d gen and the best is $since%d old. " +
-          "Run -holdout, then -prune."
-        else if prior > 0 && last < prior / 2 then
-          f"CLOSING -- $last%d beat the archive lately against $prior%d before. Finish, do not extend."
-        else
-          f"STILL TURNING OVER -- $last%d beat the archive lately against $prior%d before, " +
-          f"best is $since%d gen old."
+        if last < 2.0 then s"CLOSED -- $added. Run -holdout, then -prune."
+        else if last < prior / 2 then s"CLOSING -- $added. Finish, do not extend."
+        else s"STILL GROWING -- $added."
       println(s"VERDICT   $verdict")
 
     if full then

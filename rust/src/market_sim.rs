@@ -8547,7 +8547,7 @@ const IDENTITY_PARAMS: &[&str] = &["duration", "divYield"];
 /// are in this order too, so the order is also the archive's format. Same shape as `EMIT_SCHEMA` /
 /// `EmitSchema`: the literal is in the model, checked by each twin's own contract test, and
 /// changing one twin without the other cannot pass.
-pub const CALIBRATE_DIAL_ORDER: [&str; 28] = [
+pub const CALIBRATE_DIAL_ORDER: [&str; 30] = [
     "depth",
     "trendShare",
     "drift",
@@ -8576,6 +8576,8 @@ pub const CALIBRATE_DIAL_ORDER: [&str; 28] = [
     "inflSize",
     "discount",
     "margin",
+    "slowShare",
+    "slowVol",
 ];
 
 /// What `-calibrate` samples, and the ONLY place a searchable parameter is declared. A function
@@ -8753,6 +8755,22 @@ pub fn calibrate_ranges() -> Vec<(&'static str, f64, f64, Setter, Getter)> {
         ),
         ("discount", 3.0, 10.0, |w, x| w.discount = x, |w| w.discount),
         ("margin", 0.0, 0.008, |w, x| w.margin = x, |w| w.margin),
+        // THE SLOW REPRICING CHANNEL's share and scale, searched from 0.24.2: the channel is what
+        // carries the |r| autocorrelation past lag 20 (the S&P reads 0.117 at lag 60 with it and
+        // the Nasdaq recipe, which runs it at 0, reads 0.036 against a record of 0.175), and no
+        // searched dial could reach that row — measured on a 113-member archive, the one row no
+        // member reached. `slow_vol` beside `slow_share` because the channel bypasses the spiral:
+        // the share takes volatility out and the scale gives it back without thinning the market
+        // (0.5 / 1.5 on the Nasdaq recipe reads vol 27.2, lag-20 0.27, lag-60 0.175 against
+        // 26.9 / 0.25 / 0.175).
+        (
+            "slowShare",
+            0.0,
+            0.80,
+            |w, x| w.slow_share = x,
+            |w| w.slow_share,
+        ),
+        ("slowVol", 0.5, 2.50, |w, x| w.slow_vol = x, |w| w.slow_vol),
     ]
 }
 

@@ -1,5 +1,46 @@
 ## v0.24.2 — unreleased
 
+**The slow repricing channel's share and scale are searched**
+
+- `slowShare` (0–0.8) and `slowVol` (0.5–2.5) join `CalibrateRanges` / `calibrate_ranges`, 30
+  searched dials from 28. The channel is what carries volatility clustering past lag 20: the S&P
+  world reads 0.117 at lag 60 with it, the Nasdaq recipe, which runs it at 0, reads 0.036 against
+  a record of 0.175, and Nasdaq lag-20 clustering was the one fitness row no member of a
+  113-world archive could reach. On the recipe `-slowshare 0.5 -slowvol 1.5` reads vol 27.2,
+  lag-20 0.27 and lag-60 0.175 against the record's 26.9, 0.25 and 0.175. `slowVol` is searched
+  beside the share because the channel bypasses the spiral: the share takes volatility out and the
+  scale gives it back without thinning the market.
+- A search archive carries 30 dial columns, and both harnesses now refuse an archive whose header
+  is not exactly this binary's dial and descriptor columns — by name, not by width: a row-width
+  check let a 28-dial archive read as 30 with two descriptors taken for dials. `-calibrate` draws
+  two more uniforms per sample, in both twins identically.
+- `-bar M`, THE QUALITY BAR: a feasible candidate enters the archive only if its score is at most
+  M times its seed world's, judged the same way (default 1.0, so every member fits the record at
+  least as well as the shipped world its lineage started from; 0 restores admission on distance
+  alone). Spread-keeping admitted on distance whatever the score, and a set built that way read a
+  median summed excess of 1.14 against its seed pair's 0.65. Recorded in the checkpoint; members
+  above it are dropped on resume and counted.
+- The transport arm holds at the counterpart's values the dials on which the counterpart differs
+  from the candidate's SEED world, not from the shipped default, so the rule works in either
+  direction: a Nasdaq-primary search (`-anchors nasdaq -seeds 0.24.1-nasdaq -transport 0.24.2`)
+  holds the same market dials at the S&P default's values that an S&P-primary search holds at the
+  recipe's. Against the default it read the Nasdaq recipe as an S&P world and rejected its own
+  seed on equity vol. The held set is printed per seed at startup.
+
+**The calibration search scores every row's excess past the dead zone, not the worst row alone**
+
+- A candidate's score is the sum over every fitness row of both arms of `max(0, term − dead)`.
+  Inside the record's own sampling error a row contributes nothing, as before; outside it every
+  row counts, and a row cannot be bought below the dead zone because its excess is paid in full.
+- The worst row alone put no pressure on any other row, and an archive built on it drifted out to
+  the binding row's level everywhere: measured on the 113-member set, only 2 members fit the S&P
+  record as well as the shipped default, the median member had 5 rows past the dead zone against
+  the default's 1, and 74 of 113 read equity vol outside 14–18%. The worst row and its name are
+  still recorded (`raw`, `worstRow`) and the holdout's null control still reads them.
+- The checkpoint records `score = sum-excess`; an archive written under the worst row refuses to
+  resume, since its scores are not comparable. Both harnesses agree byte for byte on a fresh
+  search's archive, checkpoint and log.
+
 **The fitness weights are re-frozen at the current worlds, and the variance ratio has a spread of its own**
 
 - Every fidelity row's sampling spread is re-frozen from `-noise -paths 200` at the world its anchor
@@ -137,13 +178,18 @@
   does.
 - `-holdout` runs a NULL CONTROL: each member against the world it was seeded from, on the fresh
   stream, with a threshold of twice the seed-noise sd pooled across lineages, and it prints its own
-  resolution so an empty result is never read as evidence of nothing. Its columns are now `passA
-  rawA passB rawB worstB`: the search draws mutation seeds from a third stream, so both arms are
-  unseen and the test is seed-sensitivity, which the old train/test names misdescribed.
+  resolution so an empty result is never read as evidence of nothing. A member is flagged only when
+  it beats its seed's worst row AND reads no worse on the whole signature, `fitness`'s summed loss
+  over both arms; the score pays nothing inside the dead zone, so a member can lower its worst row
+  while the others drift, and those are counted separately. Its columns are `passA rawA passB rawB
+  worstB lossA
+  lossB`: the search draws mutation seeds from a third stream, so both arms are unseen and the test
+  is seed-sensitivity, which the old train/test names misdescribed.
 - `jsrc/marketSimSearchReport.sc` reports convergence on a live or finished run from its files
   alone: cost, yield, best-so-far and per-block draw quantiles as trend lines, admission pressure,
-  the archive's behavioural spread and a verdict. `-full` for every block, `-ascii` for a console
-  not in UTF-8.
+  the growth of the archive's behavioural spread, and a verdict that reads the spread: under
+  spread-keeping admission candidates keep entering after the set has stopped widening. `-full` for
+  every block, `-ascii` for a console not in UTF-8.
 - Measured with `gateFail`: at 30 paths the shipped default reads kurtosis 30.3 with a seed sd of
   7.4 against a realism ceiling of 30 and a fidelity target of 28.0, so that one row was a third
   of all rejections. At 60 paths the sd is 2.8 and at 100 it is 1.7. The search should run at 60
@@ -192,8 +238,9 @@
   rank correlation of 0.993 with no feasibility disagreement, where 20 by 40 is 3.9x but puts two
   of nineteen worlds on the wrong side of the gate. Paths govern feasibility agreement and years
   govern ranking, so the saving comes from a modest path cut, not from short paths.
-- **`-transport 0.24.1-nasdaq`** judges every candidate on the WORSE of its two markets, so a world
-  that fits the S&P by doing something the Nasdaq will not tolerate never enters the archive. One
+- **`-transport 0.24.1-nasdaq`** judges every candidate on both of its markets, feasible in each and
+  the scores added, so a world that fits the S&P by doing something the Nasdaq will not tolerate
+  never enters the archive. One
   dial vector cannot pass both anchor sets and is not meant to: the volatility bands do not
   overlap. What travels is the mechanism, while the six dials that counterpart moved away from the
   default stay at its values. The held set is derived from the two worlds and printed at startup

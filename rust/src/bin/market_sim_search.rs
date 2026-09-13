@@ -6,39 +6,30 @@
 //!   ./target/release/market_sim_search -out search -paths 60 -years 80
 //! ```
 //!
-//! WHY THIS EXISTS BESIDE THE SCALA ONE: measured on the shipped world at 60 x 80, one evaluation
-//! costs 5.17 s of warmed JVM against 0.67 s here, and the two produce byte-identical readings.
-//! A search that fills an archive overnight in Scala fills it in under two hours here.
+//! One evaluation at 60 x 80 costs 0.67 s here against 5.17 s of warmed JVM, with byte-identical
+//! readings.  NOT SHIPPED: `Cargo.toml` excludes this file from the published crate, as it does the
+//! `bench_*` binaries.
 //!
-//! NOT SHIPPED.  `Cargo.toml` excludes this file from the published crate, the way the `bench_*`
-//! binaries are excluded: `cargo install vastblue-uni` builds the simulator, not the search.
+//! WHAT IT PRODUCES is an ARCHIVE, not a champion: 30 searched dials against ~45 graded rows that
+//! are not independent means distinct worlds match the record equally well, and a strategy feels
+//! the mechanism, not the summary statistic.
 //!
-//! WHAT IT PRODUCES is an ARCHIVE, not a champion.  Distinct worlds match the record equally well
-//! -- 28 searched dials against ~45 graded rows that are not independent -- and a strategy
-//! interacts with the mechanism rather than with the summary statistic, so a verdict from one
-//! best-fit world carries the same over-confidence that weakens a backtest.  A verdict that holds
-//! across every world consistent with the record does not.
+//! THE OBJECTIVE IS LEXICOGRAPHIC.  Feasibility first, a hard gate never priced into a scalar, so a
+//! failed row cannot be bought.  Then the SUM over rows of each row's distance from the record past
+//! a DEAD ZONE at the record's own sampling error: inside it no gradient, so a long search cannot
+//! optimise noise; outside it every row counts, so no row drifts while another binds.
 //!
-//! THE OBJECTIVE IS LEXICOGRAPHIC and fixes no target value.  Feasibility first, as a hard gate
-//! never priced into a scalar, so a failed row cannot be bought with a gain elsewhere.  Then the
-//! WORST row's distance from the record, with a DEAD ZONE at one anchor sd: inside the record's
-//! own sampling error there is no gradient to climb, which is what stops a long search optimising
-//! noise.  Minimising the worst row rather than a sum is what stops one row being sacrificed.
+//! SETTINGS THAT MEASUREMENT SET: 1 uniform draw in 60 is feasible, so the search is seeded from
+//! the frozen worlds; a Gaussian mutation of 5-10% of a dial's range keeps four children in five
+//! feasible and 20% breaks, so plain rejection handles the constraint; seed noise is a smooth sd of
+//! 0.074 plus a 0.5 jump when a band-edge row flips (one seed in six), so every `-reps` seed must
+//! pass.
 //!
-//! THE DIAL TABLE IS THE LIBRARY'S, in both harnesses, never a copy. A copy is what failed: the
-//! twins' tables were permuted against each other at positions 15-23, a name-set check passed, and
-//! the same seed drew different worlds in the two languages. `CALIBRATE_DIAL_ORDER` is a contract
-//! in both.
-//!
-//! EVERYTHING IS PORTABLE BETWEEN THE TWO HARNESSES, including `-transport` and `-fidelity`, and a
-//! capability added to one is added to the other. The archive format and every reading in it:
-//! feasibility comes from `gate_checks`, which reads only the ensemble's statistics, and those are
-//! byte-identical across the twins, so a Scala `-holdout` re-scores a Rust archive exactly and
-//! that is the check worth running before an archive is published.  The MUTATION STREAM too, since
-//! both harnesses draw from `NumPyRng`, whose `randn` and `next_bounded_u32` are gated
-//! bit-identical -- a language-native generator would not be, because a Gaussian is scaled by a
-//! logarithm and the twins measure those 1 ulp apart on 0.235% of a corpus.  So one `-seed` walks
-//! one trajectory in either language.
+//! EVERYTHING IS PORTABLE BETWEEN THE TWO HARNESSES, `-transport` and `-fidelity` included, and a
+//! capability added to one is added to the other.  Feasibility comes from `gate_checks`, whose
+//! statistics are byte-identical across the twins, so a Scala `-holdout` re-scores this archive
+//! exactly.  The mutation stream too: both draw from `NumPyRng`, gated bit-identical, where a
+//! language-native Gaussian is not.
 
 #![allow(
     clippy::print_stdout,
@@ -92,20 +83,12 @@ fn g8(x: f64) -> String {
 
 // ---- behaviour descriptors -----------------------------------------------------------------
 
-/// WHAT A WORLD DOES, recorded beside what it is set to. Never graded, never optimised: the
-/// archive keeps worlds apart by DIAL distance, which is a proxy for behavioural difference
-/// rather than a measurement of it, so without these the archive's spread is assumed. Two
-/// members far apart in dials can produce markets a strategy cannot tell apart, and the reverse
-/// is the case worth keeping both of.
-///
-/// `retAc1` leads because it is what the record cannot pin down: a variance ratio constrains a
-/// weighted SUM of the first q-1 autocorrelations and the clustering rows read |r|, so signed
-/// lag-1 is unconstrained by anything in the target set, and across a 32-world archive it spread
-/// further than any other candidate statistic measured. Finding that took a separate study after
-/// the run; as a column it would have been a sort.
-///
-/// They are written for EVERY candidate, into `log.tsv`, not only for the members that survive.
-/// The rejected candidates are the large majority and they are gone when the run ends.
+/// WHAT A WORLD DOES, beside what it is set to.  Never graded, never optimised: the archive keeps
+/// worlds apart by dial distance, a proxy for behavioural difference; these measure it.  `retAc1`
+/// leads because nothing in the target set constrains it -- variance ratios read a weighted sum of
+/// autocorrelations and the clustering rows read |r| -- and it spread furthest across an archive.
+/// Written for EVERY candidate into `log.tsv`: the rejected majority is gone when the run ends.
+/// Both harnesses share this list; the archive is a format they share.
 const DESC_NAMES: [&str; 6] = ["retAc1", "vr250", "clus20", "kurt", "epPerPath", "depthMed"];
 
 fn desc_of(st: &ms::WorldStats) -> Vec<f64> {
@@ -183,6 +166,8 @@ fn parse_ensembles(spec: &str) -> Vec<(usize, usize)> {
 
 type Range = (&'static str, f64, f64, ms::Setter, ms::Getter);
 
+/// THE SEARCH SPACE IS THE LIBRARY'S table, never a copy: the sampler draws one uniform per dial
+/// in table order, so order is part of it, and `CALIBRATE_DIAL_ORDER` pins it in both twins.
 fn ranges() -> Vec<Range> {
     ms::calibrate_ranges()
 }
@@ -224,43 +209,45 @@ fn dead_zone(sds: f64) -> f64 {
 
 // ---- evaluation ---------------------------------------------------------------------------
 
-/// Feasible on every rep, and the worst row's distance past the dead zone. The reading is the
-/// WORST across reps, never the mean: a world that passes only on a lucky seed has not passed.
+/// Feasible on every rep, and the SUM over rows of each row's distance past the dead zone. The
+/// reading is the WORST across reps, never the mean: a world that passes only on a lucky seed
+/// has not passed.
 #[derive(Clone)]
 struct Read {
     feasible: bool,
+    /// THE OBJECTIVE: `sum(max(0, term - dead))` over every row of every arm. Inside the record's
+    /// own error a row contributes nothing; outside it every row counts, and a row cannot be
+    /// bought below the dead zone because its excess is paid in full. The worst row alone put no
+    /// pressure on any other, and an archive built on it drifted out to the binding row's level
+    /// on every row (median member 5 rows past the dead zone against the default's 1).
     score: f64,
+    /// The worst row's term, and its name: what a member is furthest from, for the reports.
     raw: f64,
     worst: String,
     /// MEAN over the reps, not the hardest one: a descriptor describes the world, where `raw`
     /// deliberately describes its worst seed.
     desc: Vec<f64>,
-    /// WHICH GATE ROWS FAILED, empty when the candidate is feasible. Recorded because the log's
-    /// `worstRow` is a FITNESS row while feasibility is decided by the GATE -- two different sets
-    /// -- so a rejected candidate's log line said nothing about why it was rejected, and there was
-    /// no way to see which rows a search had walked onto the edge of.
+    /// THE WHOLE SIGNATURE: `fitness`'s summed loss over every row, both arms when a transport
+    /// counterpart is set, as a mean over the reps. `raw` is one row, and a world can improve
+    /// that row by degrading every other; this is what says whether it did. Meaningful only
+    /// for a feasible reading -- an infeasible one never measured its extreme rows.
+    total: f64,
+    /// WHICH GATE ROWS FAILED, empty when feasible: `worstRow` is a fitness row and says nothing
+    /// about rejection.
     gate_fail: Vec<String>,
-    /// How far this world's reading MOVED across its own repetitions -- max minus min of `raw`.
-    /// Free to compute and it is the noise scale the archive needs: a score difference smaller
-    /// than this is a seed draw, not a better world. Zero at `-reps 1`, which is honest, since
-    /// one seed measures no spread at all.
+    /// How far this world's SCORE moved across its own repetitions, max minus min. Free to
+    /// compute and it is the noise scale the archive needs: a score difference smaller than this
+    /// is a seed draw, not a better world. Zero at `-reps 1`, which is honest.
     spread: f64,
 }
 
-/// One seed's reading. THREE THINGS IT DOES NOT DO, each worth more than anything else here:
+/// One seed's reading.  The extreme row is read at its anchor's own horizon, so when `-years` is
+/// that horizon the main ensemble serves and nothing is simulated twice.  An infeasible candidate
+/// never pays for the extreme ensemble: feasibility reads only the pooled statistics, and the rows
+/// needing that ensemble are dropped from the worst-row search rather than scored as unmeasurable,
+/// so a rejected candidate's `worstRow` still names something measured.
 ///
-/// It does not simulate twice when it does not have to. The extreme row is read at its anchor's
-/// own horizon — 100 years for the S&P set — so a run at `-years 100` was asking for the same
-/// paths from the same seed a second time, and that second ensemble is the larger half of an
-/// evaluation. At the extreme horizon the main ensemble IS that ensemble.
-///
-/// It does not pay for the second ensemble at all once the gate has failed. Feasibility comes
-/// from `gate_checks`, which reads only the pooled statistics, so a candidate that fails is
-/// rejected whatever its score. The rows that need the second ensemble are then dropped from the
-/// worst-row search rather than scored as unmeasurable, so a rejected candidate's `worstRow`
-/// still names something that was actually measured.
-///
-/// And it stops at the first seed that fails, because feasibility needs every seed to pass.
+/// `evaluate` stops at the first seed that fails, because feasibility needs every seed.
 fn one_read(w: &World, anchors: Anchors, paths: usize, years: usize, s: u64, dead: f64) -> Read {
     let main = ms::sim_paths(w, paths, years, s);
     let st = ms::measure(&main, years);
@@ -286,13 +273,17 @@ fn one_read(w: &World, anchors: Anchors, paths: usize, years: usize, s: u64, dea
     } else {
         ms::extreme_score_stats(anchors, paths, s, w)
     };
-    let rows = ms::fitness(anchors, &st, &ex).1;
-    // the worst row, ties broken by name exactly as the Scala harness's `max` on a (term, name)
-    // pair does
-    let worst = rows
+    let (total, rows) = ms::fitness(anchors, &st, &ex);
+    let scored: Vec<(f64, &str)> = rows
         .iter()
         .filter(|(nm, _, _, _)| feasible || !ms::extreme_target_names().contains(nm))
         .map(|(nm, _, _, term)| (*term, *nm))
+        .collect();
+    // the worst row, ties broken by name exactly as the Scala harness's `max` on a (term, name)
+    // pair does
+    let worst = scored
+        .iter()
+        .copied()
         .fold((f64::NEG_INFINITY, ""), |a, b| {
             if b.0 > a.0 || (b.0 == a.0 && b.1 > a.1) {
                 b
@@ -300,16 +291,25 @@ fn one_read(w: &World, anchors: Anchors, paths: usize, years: usize, s: u64, dea
                 a
             }
         });
+    // in row order, a plain left fold, as the Scala harness's `sum` is
+    let score = scored
+        .iter()
+        .map(|(term, _)| (term - dead).max(0.0))
+        .sum::<f64>();
     Read {
         feasible,
-        score: (worst.0 - dead).max(0.0),
+        score,
         raw: worst.0,
         worst: worst.1.to_string(),
         desc: desc_of(&st),
+        total,
         gate_fail,
         spread: 0.0,
     }
 }
+
+/// A member with its readings on the two holdout streams.
+type HoldoutRow = (Member, Read, Read);
 
 fn evaluate(
     w: &World,
@@ -337,15 +337,18 @@ fn evaluate(
         .collect();
     let hi = reads
         .iter()
-        .map(|r| r.raw)
+        .map(|r| r.score)
         .fold(f64::NEG_INFINITY, f64::max);
-    let lo = reads.iter().map(|r| r.raw).fold(f64::INFINITY, f64::min);
+    let lo = reads.iter().map(|r| r.score).fold(f64::INFINITY, f64::min);
+    let total = reads.iter().map(|r| r.total).sum::<f64>() / reads.len() as f64;
     Read {
         feasible: reads.iter().all(|r| r.feasible),
-        score: hardest.score,
+        // the worst seed's score, as the worst seed's row is the reported one
+        score: hi,
         raw: hardest.raw,
         worst: hardest.worst,
         desc,
+        total,
         gate_fail: hardest.gate_fail,
         spread: hi - lo,
     }
@@ -353,27 +356,19 @@ fn evaluate(
 
 // ---- transport -------------------------------------------------------------------------------
 
-/// SELECTING FOR TRANSPORT rather than testing it afterwards: a candidate is judged on the worse
-/// of its two markets, so a world that fits the S&P by doing something the Nasdaq will not tolerate
-/// never enters the archive.
-///
-/// One dial vector cannot pass both anchor sets, and it is not supposed to. The S&P volatility
-/// band is 14 to 18 and the Nasdaq's 23.5 to 30.3; a world reading both is not a market. What
-/// transports is the MECHANISM, while the dials that say which market this is get re-solved, which
-/// is exactly the structure the shipped recipes already have: `0.24.1-nasdaq` is the default world
-/// with six searched dials moved.
-///
-/// So the transport arm is the counterpart recipe carrying the candidate's values on every
-/// searched dial EXCEPT the ones the counterpart itself moved away from the default. Those stay at
-/// the counterpart's values. The set is derived from the two worlds rather than listed here, and
-/// printed at startup, because it includes both dials deliberately re-solved for that market and
-/// any the recipe simply has not tracked since the default moved -- and which is which is a
-/// judgement no code should make silently.
+/// SELECTING FOR TRANSPORT rather than testing it afterwards: a candidate is judged on the WORSE of
+/// its two markets, so a world that fits the S&P by doing something the Nasdaq will not tolerate
+/// never enters.  One dial vector cannot pass both sets (equity vol bands 14-18 and 23.5-30.3); the
+/// MECHANISM transports and the market dials re-solve, which is the structure of the shipped
+/// recipes.  So the arm is the counterpart world carrying the candidate's values on every searched
+/// dial EXCEPT the ones on which the counterpart differs from the candidate's SEED world -- the
+/// dials that say which market each is -- which stay at the counterpart's.  Derived from the two
+/// worlds, in either direction (a Nasdaq-primary search names the S&P default as its counterpart
+/// and holds the same six dials at the default's values), and printed at startup.
 struct Transport {
     name: String,
     anchors: Anchors,
     world: World,
-    pinned: Vec<bool>,
     spec: String,
 }
 
@@ -389,34 +384,38 @@ fn transport_of(name: &str, primary_spec: &str) -> Transport {
             "-transport {name} is anchored to [{spec}], the set already being searched; a transport arm has to be the OTHER market"
         ));
     }
-    let d = ms::default_world();
-    let pinned: Vec<bool> = ranges()
-        .iter()
-        .map(|r| (r.4)(&world) != (r.4)(&d))
-        .collect();
     Transport {
         name: name.to_string(),
         anchors: ms::anchors_named(spec),
         world,
-        pinned,
         spec: spec.to_string(),
     }
 }
 
-fn transport_world(t: &Transport, dials: &[f64]) -> World {
+/// The dials held at the counterpart's values for a candidate seeded from `seed`: the ones on
+/// which the two worlds differ.
+fn pinned(t: &Transport, seed: &World) -> Vec<bool> {
+    ranges()
+        .iter()
+        .map(|r| (r.4)(&t.world) != (r.4)(seed))
+        .collect()
+}
+
+fn transport_world(t: &Transport, seed: &World, dials: &[f64]) -> World {
+    let held = pinned(t, seed);
     let mut w = t.world;
     for (i, r) in ranges().iter().enumerate() {
-        if !t.pinned[i] {
+        if !held[i] {
             (r.3)(&mut w, dials[i]);
         }
     }
     w
 }
 
-/// One candidate's reading: the primary arm alone, or the WORSE of the two arms when a transport
-/// counterpart is set. Feasible means feasible in both. The descriptors stay the primary world's:
-/// they describe the world the archive holds, and the transport arm is a different world by
-/// construction.
+/// One candidate's reading: the primary arm alone, or both arms when a transport counterpart is
+/// set -- the scores add, feasible means feasible in both, and the worst row is the worse arm's.
+/// The descriptors stay the primary world's: they describe the world the archive holds, and the
+/// transport arm is a different world by construction.
 #[expect(
     clippy::too_many_arguments,
     reason = "the ensemble and the seed stream are what a reading means; passing them in a struct \
@@ -440,17 +439,18 @@ fn judge(
         return a;
     }
     let b = evaluate(
-        &transport_world(tr, dials),
+        &transport_world(tr, base, dials),
         tr.anchors,
         paths,
         years,
         seeds,
         dead,
     );
-    let (score, raw, worst) = if b.raw > a.raw {
-        (b.score, b.raw, format!("{}: {}", tr.spec, b.worst))
+    let score = a.score + b.score;
+    let (raw, worst) = if b.raw > a.raw {
+        (b.raw, format!("{}: {}", tr.spec, b.worst))
     } else {
-        (a.score, a.raw, a.worst.clone())
+        (a.raw, a.worst.clone())
     };
     Read {
         feasible: a.feasible && b.feasible,
@@ -458,6 +458,7 @@ fn judge(
         raw,
         worst,
         desc: a.desc,
+        total: a.total + b.total,
         // the transport arm's failures carry their market, as `worst` does, so a row that only
         // exists there -- the macro rows, when the counterpart runs the panel -- is not read as
         // a primary-market failure
@@ -513,10 +514,9 @@ fn names() -> Vec<&'static str> {
     ranges().iter().map(|r| r.0).collect()
 }
 
-/// THE SETTINGS ARE PART OF THE CHECKPOINT. An archive says which worlds were kept; without the
-/// ensemble and the dials that judged them it does not say what "kept" meant, cannot be
-/// reproduced, and silently mixes standards if a resume changes a flag. Key/value so a reader and
-/// a later version can both cope with a row they do not recognise.
+/// THE SETTINGS ARE PART OF THE CHECKPOINT: without the ensemble and rules that judged them the
+/// members cannot be reproduced, and a resume that changed a flag would mix standards silently.
+/// Key/value so a later version copes with a row it does not recognise.
 fn write_archive(
     dir: &str,
     arc: &[Member],
@@ -551,11 +551,9 @@ fn write_archive(
     let mut st = String::from("key\tvalue\n");
     let _ = writeln!(st, "gen\t{generation}");
     let _ = writeln!(st, "evals\t{evals}");
-    // THE SEED-NOISE ACCUMULATOR IS RESUMABLE STATE, not a setting, so it is written here and
-    // not compared by the resume guard. It is the threshold `admit` replaces on: a resume that
-    // rebuilt it from one reading would admit on differences inside the noise for the first
-    // generations back -- the same failure as resetting it per generation, one process
-    // boundary out. `g8` so both twins write and read one text.
+    // The seed-noise accumulator is resumable STATE, not a setting: the resume guard ignores it, and
+    // a resume that restarted it would admit inside the noise for its first generations.  `g8` so both
+    // twins write one text.
     let _ = writeln!(st, "noiseSum\t{}", g8(noise.0));
     let _ = writeln!(st, "noiseN\t{}", noise.1);
     for (k, v) in cfg {
@@ -590,13 +588,28 @@ fn read_archive(dir: &str) -> Vec<Member> {
     let Some(text) = read_text(&format!("{dir}/archive.tsv")) else {
         return Vec::new();
     };
+    // THE HEADER IS THE CONTRACT: the dial columns are read by position, so an archive written
+    // with a different dial table -- fewer dials, or the same count in another order -- must be
+    // refused by name, not by width. A row-width check let a 28-dial archive read as 30 with two
+    // descriptors taken for dials.
+    let expect = format!(
+        "name\tscore\traw\tworstRow\t{}\t{}",
+        names().join("\t"),
+        DESC_NAMES.join("\t")
+    );
+    let head = text.lines().next().unwrap_or_default();
+    if head != expect {
+        usage(&format!(
+            "{dir}/archive.tsv was written with different columns; it has [{head}]\n  this binary reads [{expect}]"
+        ));
+    }
+    let want = 4 + ranges().len() + DESC_NAMES.len();
     text.lines()
         .skip(1)
         .filter(|l| !l.trim().is_empty())
         .map(|l| {
             let f: Vec<&str> = l.split('\t').collect();
-            let want = 4 + ranges().len();
-            if f.len() < want {
+            if f.len() != want {
                 usage(&format!(
                     "{dir}/archive.tsv has a row of {} fields where {want} are expected",
                     f.len()
@@ -615,7 +628,6 @@ fn read_archive(dir: &str) -> Vec<Member> {
                     .take(ranges().len())
                     .map(|x| num(x))
                     .collect(),
-                // an archive written before the descriptors landed simply has none
                 desc: f
                     .iter()
                     .skip(4 + ranges().len())
@@ -645,40 +657,22 @@ fn append_log(dir: &str, lines: &[String]) {
     }
 }
 
-/// Admit a feasible candidate.
+/// Admit a feasible candidate.  Returns the archive and whether the candidate is IN IT AFTER THE
+/// TRIM -- a replacement leaves the count unchanged, so the log needs the flag.
 ///
-/// TWO RULES, BOTH FIXED 2026-09-12 after a 4317-generation run demonstrated what the old ones do.
+/// REPLACING NEEDS A MARGIN: a candidate takes the place of the NEAREST member inside `sep` only
+/// when it beats that member by more than the running seed noise.  Without one a 4317-generation
+/// run sorted an archive whose whole score range, 0.018, sat inside one seed sd of 0.044.  The dead
+/// zone does not help: it discounts a row, not a comparison of two worlds.
 ///
-/// REPLACING NEEDS A REAL MARGIN. A candidate takes the place of the member nearest it in dial
-/// space only if it beats that member by more than a seed draw moves a reading. Without that
-/// margin the old rule replaced on any improvement whatever, and after thousands of generations
-/// the archive's whole score range was 0.018 against a seed-noise sd of 0.0441 -- every member
-/// statistically indistinguishable from every other, and the search still sorting them. The dead
-/// zone does not help here: it discounts each ROW's distance from the record, and says nothing
-/// about comparing two worlds' totals.
-///
-/// TRIMMING DROPS THE LEAST DISTINCT, not the worst-scoring. Sorting by score and truncating is an
-/// optimiser, and it showed: over that run the archive's signed lag-1 range fell from 0.057 to
-/// 0.032 and its variance-ratio range from 0.85 to 0.78, while the operator's own output narrowed
-/// the same way. The archive exists to SPAN what the record cannot pin down, so when it overflows
-/// the member to lose is the one whose removal costs the least behavioural ground: find the closest
-/// pair in descriptor space and drop whichever of the two scores worse.
-///
-/// Distance is normalised by each descriptor's own range ACROSS THE ARCHIVE, recomputed each time,
-/// so no descriptor's units dominate and no bounds have to be guessed in advance. This is the
-/// plan's MAP-Elites intent without a grid: keeping a spread set needs a rule that prefers spread,
-/// and a cell grid is only one way to write it.
-/// Returns the archive AND WHETHER THE CANDIDATE ENTERED IT. A reader cannot recover that from
-/// the archive -- a replacement leaves the member count unchanged -- and without it admission
-/// pressure can only be proxied by "scores better than the worst member", which SATURATES once
-/// spread-keeping starts admitting a poor scorer for its behaviour: on a 471-generation run the
-/// worst member scored 0.906 against a best of 0.070, so the proxy counted every feasible
-/// candidate and its verdict said "still turning over" for as long as the search ran.
+/// TRIMMING DROPS THE LEAST DISTINCT, never the worst-scoring: of the closest pair in descriptor
+/// space, each descriptor normalised by its range across the archive, the worse scorer goes.
+/// Trimming by score is an optimiser and narrows the spread the archive exists to keep (signed
+/// lag-1 range 0.057 -> 0.032 over that run; 0.043 -> 0.074 for spread-keeping in a 40-generation
+/// A/B).  Feasibility is the membership test; score was never meant to be a second one.
 fn admit(arc: Vec<Member>, m: Member, sep: f64, keep: usize, noise: f64) -> (Vec<Member>, bool) {
-    // THE NEAREST member inside `sep`, not the first one found. Archive order is insertion
-    // order, so "first" was an arbitrary neighbour: a candidate could be refused against one
-    // member while beating the one it was actually closest to. Strict `<` keeps the earliest on
-    // a tie, as the Scala twin's fold does.
+    // the nearest member inside `sep`, not the first found; strict `<` keeps the earliest on a tie,
+    // as the Scala twin's fold does
     let near = arc
         .iter()
         .enumerate()
@@ -715,10 +709,7 @@ fn admit(arc: Vec<Member>, m: Member, sep: f64, keep: usize, noise: f64) -> (Vec
             }
         }
     }
-    // ADMITTED MEANS STILL THERE AFTER THE TRIM. An appended candidate that is itself the worse
-    // half of the closest behavioural pair is evicted in the same step, and the flag used to say
-    // "admitted" of a world the archive never held. Its dials identify it: a candidate is only
-    // appended when no member lies within `sep` of it.
+    // in the archive after the trim: an appended candidate can be the worse half of the closest pair
     let took = placed && next.iter().any(|o| o.dials == dials);
     (next, took)
 }
@@ -793,13 +784,9 @@ fn export_worlds(dir: &str, file: &str, seed_for: &dyn Fn(&str) -> World) {
                 m.name,
                 m.score,
                 m.worst,
-                // AT THE ARCHIVE'S OWN WIDTH, not the report's: this block is what a consumer
-                // reconstructs a world from, and re-rendering already-truncated dials at six
-                // decimals dropped two to three significant digits from 87% of them.
-                // `,\n`, as the sidecar joins it: `world_json_body_fmt` returns the fields
-                // WITHOUT separators, and joining them on a bare newline wrote an archive no
-                // JSON parser accepts. Both twins did it, identically, which is how parity
-                // missed it.
+                // at the archive's own width, not the report's six decimals -- this block is what a consumer
+                // reconstructs a world from -- and joined on `,\n`, since `world_json_body_fmt` returns the fields
+                // without separators
                 ms::world_json_body_fmt(&w, &|x| g8(x)).join(",\n")
             )
         })
@@ -843,6 +830,10 @@ fn usage(msg: &str) -> ! {
   -sigma S      ; mutation sd as a fraction of each dial's range (default 0.07; 0.20 breaks)
   -keep N       ; archive size cap (default 40)
   -sep D        ; minimum separation between members in normalised dial space (default 0.12)
+  -bar M        ; THE QUALITY BAR: a feasible candidate enters only if its score is at most M
+                ;   times its seed world's, judged the same way (default 1.0: at least as
+                ;   consistent with the record as the world it was seeded from; 0 = no bar,
+                ;   distance alone admits).  Members above it are dropped on resume
   -pop P        ; candidates per generation, checkpointed after each (default 8)
   -gens G       ; generations to run; 0 runs until killed (default 0)
   -dead D       ; dead zone in anchor sds; a row inside it scores 0 (default 0.5).  At 1.0 a
@@ -884,6 +875,7 @@ struct Cfg {
     dead: f64,
     base: i64,
     holdout: usize,
+    bar: f64,
     prune: bool,
     force: bool,
     export_to: String,
@@ -907,6 +899,7 @@ fn parse_args() -> Cfg {
         dead: 0.5,
         base: 20260813,
         holdout: 0,
+        bar: 1.0,
         prune: false,
         force: false,
         export_to: String::new(),
@@ -937,6 +930,7 @@ fn parse_args() -> Cfg {
             "-dead" => c.dead = fnum(&need(&mut i, "-dead"), "-dead"),
             "-seed" => c.base = num::<i64>(&need(&mut i, "-seed"), "-seed"),
             "-holdout" => c.holdout = num(&need(&mut i, "-holdout"), "-holdout"),
+            "-bar" => c.bar = fnum(&need(&mut i, "-bar"), "-bar"),
             "-prune" => c.prune = true,
             "-force" => c.force = true,
             "-export" => c.export_to = need(&mut i, "-export"),
@@ -988,32 +982,10 @@ fn main() {
     } else {
         Some(transport_of(&c.transport, &c.anchor_spec))
     };
-    if let Some(t) = &transport {
-        let held: Vec<&str> = ranges()
-            .iter()
-            .zip(&t.pinned)
-            .filter(|(_, p)| **p)
-            .map(|(r, _)| r.0)
-            .collect();
-        println!(
-            "transport arm: {} ({}), holding {} of {} dials at its own values [{}]",
-            t.name,
-            t.spec,
-            held.len(),
-            ranges().len(),
-            held.join(", ")
-        );
-    }
-
-    // `releases()` stops at the last FROZEN row, so the library's own current default -- the
-    // newest and most complete world, and the one a search is usually about -- is not in it.
-    // Added first so it is always a seed.
-    //
-    // A RECIPE CARRIES THE ANCHOR SET IT WAS VERIFIED AGAINST, and a seed graded against the wrong
-    // ruler is worse than no seed: the Nasdaq recipes read `equity vol %` 0.5 past the dead zone
-    // against S&P anchors and would drag an S&P archive toward a target they were never built for.
-    // So the pool is restricted to seeds whose anchor set is the one being searched, which also
-    // means an S&P archive and a Nasdaq archive are separate products, as they should be.
+    // `releases()` stops at the last frozen row, so the current default is added first.  A seed is graded
+    // against the anchor set it was verified against -- the Nasdaq recipes read equity vol 0.5 past
+    // the dead zone on S&P anchors -- so the pool is restricted to the set being searched: an S&P
+    // archive and a Nasdaq archive are separate products.
     let mut named: Vec<(String, World)> = vec![("current".to_string(), ms::default_world())];
     named.extend(ms::releases().into_iter().map(|(v, w)| (v.to_string(), w)));
     named.extend(
@@ -1059,13 +1031,27 @@ fn main() {
     let seed_world: HashMap<String, World> = pool.iter().cloned().collect();
     let world_for =
         |n: &str| -> World { seed_world.get(n).copied().unwrap_or_else(ms::default_world) };
+    if let Some(t) = &transport {
+        for (nm, w) in &pool {
+            let held: Vec<&str> = ranges()
+                .iter()
+                .zip(pinned(t, w))
+                .filter(|(_, p)| *p)
+                .map(|(r, _)| r.0)
+                .collect();
+            println!(
+                "transport arm: {} ({}), holding {} of {} dials at its own values against seed {nm} [{}]",
+                t.name,
+                t.spec,
+                held.len(),
+                ranges().len(),
+                held.join(", ")
+            );
+        }
+    }
 
-    // CHEAP FIDELITY. The search only ever compares candidates, so a smaller ensemble is good
-    // enough exactly when it RANKS worlds the way the reference does -- the losses need not agree.
-    // This scores the frozen pool at the reference and at each candidate ensemble and reports the
-    // rank correlation, how often the two disagree on feasibility, and what each costs.
-    //
-    // THE TWO AXES DO DIFFERENT DAMAGE, measured on the frozen pool at the S&P set:
+    // CHEAP FIDELITY: a smaller ensemble is good enough when it RANKS worlds as the reference does;
+    // the losses need not agree.  Measured on the frozen pool at the S&P set against 60 x 80:
     //
     //     ensemble    rank corr   feasibility agrees   speedup
     //     20 x 40y        0.945           17 of 19        3.9x
@@ -1073,14 +1059,9 @@ fn main() {
     //     30 x 80y        0.993           19 of 19        2.0x
     //     40 x 80y        1.000           19 of 19        1.5x
     //
-    // PATHS govern whether the two agree on FEASIBILITY -- 20 of them puts worlds near a band
-    // edge on the wrong side, which is the seed-noise quantum showing through -- and YEARS govern
-    // how faithfully the cheap ensemble RANKS. So 30 x 80 is the trade: half the cost for a rank
-    // correlation of 0.993 and no feasibility disagreement at all. Do not read the cost the other
-    // way round: cutting `-years` saves less than it looks, because the worst-crash row is read at
-    // its own anchor's horizon -- 100 years for the S&P set, whatever `-years` says -- and that is
-    // the larger half of an evaluation. 20 paths is a hard floor regardless, below which that row
-    // can no longer place a record inside its own percentile band.
+    // Paths govern feasibility agreement and years govern ranking.  `-years` saves less than it looks:
+    // the worst-crash row reads at its anchor's horizon, 100 years for the S&P, whatever `-years`
+    // says.  20 paths is a floor, below which that row cannot place a record inside its band.
     if !c.fidelity.is_empty() {
         let ens = parse_ensembles(&c.fidelity);
         let seeds: Vec<u64> = (0..c.reps)
@@ -1170,6 +1151,7 @@ fn main() {
         ("pop".into(), c.pop.to_string()),
         ("anchors".into(), c.anchor_spec.clone()),
         ("seed".into(), c.base.to_string()),
+        ("bar".into(), format!("{:.4}", c.bar)),
         (
             "seeds".into(),
             if c.seed_spec.is_empty() {
@@ -1178,11 +1160,10 @@ fn main() {
                 c.seed_spec.clone()
             },
         ),
-        // the ADMISSION RULES are recorded: a resume under different ones puts two standards in
-        // one archive, which is the same failure the ensemble settings guard against
-        // `-nearest` since the replacement rule compares the NEAREST member inside `sep`; an
-        // archive built on the first-found one refuses to resume
+        // the admission rules and the objective are recorded with the ensemble: a resume under different
+        // ones puts two standards in one archive
         ("admit".into(), "spread-keeping-nearest".to_string()),
+        ("score".into(), "sum-excess".to_string()),
         // the weights and targets the loss applies: see `objective_digest`
         (
             "objective".into(),
@@ -1198,8 +1179,13 @@ fn main() {
         ),
     ];
 
-    let prior = read_state(&c.out);
+    let mut prior = read_state(&c.out);
     let loaded = read_archive(&c.out);
+    // a checkpoint without `score` was scored on the worst row alone; a resume must refuse, not
+    // adopt, since its members' scores are not comparable to the sum
+    if !loaded.is_empty() && !prior.contains_key("score") {
+        prior.insert("score".into(), "worst-row".into());
+    }
     let gen0: u64 = prior.get("gen").and_then(|s| s.parse().ok()).unwrap_or(0);
     let evals0: u64 = prior.get("evals").and_then(|s| s.parse().ok()).unwrap_or(0);
     let nsum0: f64 = prior
@@ -1245,57 +1231,90 @@ fn main() {
         }
     }
 
-    let start_arc: Vec<Member> = if !loaded.is_empty() {
-        println!(
-            "resumed: {} members, generation {gen0}, {evals0} seed slots",
-            loaded.len()
-        );
-        loaded.clone()
-    } else {
-        // Membership is re-checked, never inherited: the older releases were adopted against an
-        // earlier gate and several no longer pass the rows the model has since grown.
-        println!(
-            "seeding from {} frozen worlds at {}, {} x {}y x {} reps",
-            pool.len(),
-            c.anchor_spec,
-            c.paths,
-            c.years,
-            c.reps
-        );
+    // THE SEED WORLDS' OWN READINGS, on the pool's seeds, whenever a search will run: the archive
+    // is seeded from them on a fresh start, and the quality bar is set from them either way.
+    // Membership is re-checked, never inherited: the older releases were adopted against an
+    // earlier gate and several no longer pass the rows the model has since grown.
+    let search_mode = c.holdout == 0 && !c.prune && c.export_to.is_empty();
+    let seed_reads: Vec<(String, World, Read)> = if search_mode {
         let seeds: Vec<u64> = (0..c.reps)
             .map(|k| (c.base as u64).wrapping_add(k as u64 * 1_000_003))
             .collect();
-        let mut seeded = Vec::new();
-        for (nm, w) in &pool {
-            let r = judge(
-                w,
-                &dials_of(w),
-                anchors,
-                transport.as_ref(),
-                c.paths,
-                c.years,
-                &seeds,
-                dead_zone(c.dead),
-            );
-            println!(
-                "  {:<24} {:<9} score {:>7.3}  raw {:>7.3}  {}",
-                nm,
-                if r.feasible { "feasible" } else { "REJECTED" },
-                r.score,
-                r.raw,
-                r.worst
-            );
-            if r.feasible {
-                seeded.push(Member {
-                    name: nm.clone(),
-                    dials: dials_of(w),
-                    score: r.score,
-                    raw: r.raw,
-                    worst: r.worst,
-                    desc: r.desc,
-                });
-            }
+        println!(
+            "seed worlds at {}, {} x {}y x {} reps",
+            c.anchor_spec, c.paths, c.years, c.reps
+        );
+        pool.iter()
+            .map(|(nm, w)| {
+                let r = judge(
+                    w,
+                    &dials_of(w),
+                    anchors,
+                    transport.as_ref(),
+                    c.paths,
+                    c.years,
+                    &seeds,
+                    dead_zone(c.dead),
+                );
+                println!(
+                    "  {:<24} {:<9} score {:>7.3}  raw {:>7.3}  {}",
+                    nm,
+                    if r.feasible { "feasible" } else { "REJECTED" },
+                    r.score,
+                    r.raw,
+                    r.worst
+                );
+                (nm.clone(), *w, r)
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    // THE QUALITY BAR. Spread-keeping admits on distance: a feasible candidate far enough from
+    // every member entered whatever its score, and a set built that way read a median summed
+    // excess of 1.14 against its seed's 0.65, with a third of it well outside "consistent with
+    // the record". A candidate now also has to score no worse than `bar` times the world it was
+    // seeded from, judged the same way -- so with the default 1.0 every member fits the record
+    // at least as well as the shipped world its lineage started from, which is the world the
+    // consumer already trusts. Per lineage, as the null control compares, because the gate is
+    // not the same for every seed world.
+    let bar_for: HashMap<String, f64> = seed_reads
+        .iter()
+        .map(|(nm, _, r)| (nm.clone(), c.bar * r.score))
+        .collect();
+    let above_bar = |name: &str, score: f64| -> bool {
+        c.bar > 0.0 && bar_for.get(name).is_some_and(|b| score > *b)
+    };
+    let start_arc: Vec<Member> = if !loaded.is_empty() {
+        // SEED SLOTS, not evaluations: every candidate is allotted `reps` seeds whether or not it stops
+        // at its first infeasible one, so its seeds are independent of how earlier candidates fared
+        let kept: Vec<Member> = loaded
+            .iter()
+            .filter(|m| !above_bar(&m.name, m.score))
+            .cloned()
+            .collect();
+        println!(
+            "resumed: {} members, generation {gen0}, {evals0} seed slots; {} above the bar dropped",
+            loaded.len(),
+            loaded.len() - kept.len()
+        );
+        if search_mode && kept.is_empty() {
+            usage("every resumed member is above the bar; nothing to search from");
         }
+        kept
+    } else {
+        let seeded: Vec<Member> = seed_reads
+            .iter()
+            .filter(|(_, _, r)| r.feasible)
+            .map(|(nm, w, r)| Member {
+                name: nm.clone(),
+                dials: dials_of(w),
+                score: r.score,
+                raw: r.raw,
+                worst: r.worst.clone(),
+                desc: r.desc.clone(),
+            })
+            .collect();
         if seeded.is_empty() {
             usage("no seed world passes today's gate; nothing to search from");
         }
@@ -1380,20 +1399,12 @@ fn main() {
         return;
     }
 
-    // THE HOLDOUT. Every member earned its place on seeds the search itself chose, and a world
-    // sitting near a band edge flips on roughly one draw in six, so some members are in on a lucky
-    // pair. Re-score each one TWICE at the same ensemble, on TWO INDEPENDENT STREAMS.
-    //
-    // NEITHER STREAM SELECTED THE MUTATIONS. The search draws a candidate's seeds from
-    // `base + (evals + j) * 7919`; stream A here is `base + k * 1_000_003`, which is what the
-    // initial POOL was judged on, and stream B is that shifted by 991. So for the frozen worlds
-    // stream A is the one they entered on, and for everything the search produced -- nearly the
-    // whole archive -- both streams are new.
-    //
-    // That makes this a SEED-SENSITIVITY test rather than a train-versus-test split, and it is
-    // still the test worth running: a member that passes one stream and fails the other was
-    // admitted by a draw, not by the record. The columns are named for what they are, because the
-    // old names said train and test and someone would eventually build an argument on that.
+    // THE HOLDOUT: every member earned its place on seeds the search chose, and a band-edge world
+    // flips on one draw in six.  Re-score each member at the same ensemble on TWO INDEPENDENT
+    // STREAMS, neither of which selected the mutations (the search draws `base + (evals + j) * 7919`;
+    // stream A is `base + k * 1000003`, the pool's own seeds, stream B that shifted by 991).  A
+    // SEED-SENSITIVITY test, not train against test, and the columns say so: a member that passes one
+    // stream and fails the other was admitted by a draw, not by the record.
     if c.holdout > 0 {
         if loaded.is_empty() {
             usage(&format!("no archive in {} to re-score", c.out));
@@ -1447,41 +1458,23 @@ fn main() {
             );
             rows.push((m.clone(), a, b));
         }
-        // ---- THE NULL CONTROL -------------------------------------------------------------
-        // Every member is compared with THE WORLD IT WAS SEEDED FROM, on the same fresh stream.
+        // ---- THE NULL CONTROL: each member against the world it was seeded from, on the fresh stream.
+        // The seed worlds are hand-tuned against these anchors, so a member that beats its seed means the
+        // tuning left something on the table or the objective has a hole; the hole is what this exists to
+        // catch.  Against its OWN seed because channel rows fire only when the channel is on, so lineages
+        // face different gates.
         //
-        // The seed worlds are hand-tuned, some of them over many releases, against these same
-        // anchors. A days-long automated search against the same objective should land where that
-        // work already is. Three outcomes, and they mean different things:
+        // THE THRESHOLD is twice the seed-noise sd, pooled across lineages from each seed world's
+        // deviations from its own mean over the fresh seeds (a per-world range over three draws varied
+        // 22-fold between lineages).  The control prints its own resolution: seed noise is a smooth sd of
+        // 0.074 plus a 0.5 jump when a band-edge row flips, so resolving 0.05 needs a dozen seeds.
         //
-        //   nothing beats its seed          the objective is already at its limit, and the
-        //                                   archive's worth is its SPREAD, not a better world
-        //   something beats it, and it holds  the hand-tuning left something on the table
-        //   something beats it, and it does not  THE OBJECTIVE HAS A HOLE, and a search running for
-        //                                   days will find any hole its scoring function has
-        //
-        // The third is what this exists to catch, and it is the one nobody goes looking for.
-        //
-        // AGAINST ITS OWN SEED, not against a single global default, because the gate is not the
-        // same for every lineage: channel rows only fire when that channel is on, so a basket
-        // world faces rows a plain one never does. Comparing across lineages would be comparing
-        // scores earned under different standards.
-        //
-        // THE THRESHOLD IS MEASURED, not assumed, and POOLED ACROSS LINEAGES. Each seed world is
-        // read on each fresh seed on its own; the deviations from each world's own mean are pooled
-        // and their spread is the noise scale.
-        //
-        // Pooled, because the noise belongs to the OBJECTIVE and the ensemble, not to a world. A
-        // per-world range over three draws is a terrible estimator and behaves accordingly: on the
-        // first real archive it gave 0.0049 for one lineage and 0.1102 for another, a 22-fold
-        // difference in how hard it was to raise a flag, and flagged three members whose margins
-        // were 0.006 to 0.017 -- all far inside the objective's own seed noise.
-        //
-        // AND THE CONTROL STATES ITS OWN RESOLUTION, because a control that cannot see a difference
-        // must not be read as evidence there is none. Seed noise here is large: Phase 0 measured a
-        // smooth sd of 0.074 plus a half-point jump whenever a row near its band edge flips, on
-        // about one seed in six. Detecting a difference of 0.05 therefore needs of order a dozen
-        // holdout seeds, not three.
+        // A BETTER WORLD BEATS THE WORST ROW WITHOUT PAYING FOR IT ELSEWHERE.  The score pays nothing
+        // inside the dead zone, so a member can lower the worst row while every other drifts (under
+        // the worst-row objective one took 0.05 off it for three times the summed loss).  A member is
+        // flagged only when it also reads no worse than its seed on the WHOLE SIGNATURE, the summed
+        // loss over every row of both arms; the ones that paid are counted separately, as the
+        // objective's hole.
         let seed_names: Vec<String> = {
             let mut v: Vec<String> = loaded.iter().map(|m| m.name.clone()).collect();
             v.sort();
@@ -1496,11 +1489,11 @@ fn main() {
             );
         }
         // pass one: read every seed world on every fresh seed, and pool the deviations
-        let mut seed_reads: Vec<(String, Vec<f64>)> = Vec::new();
+        let mut seed_reads: Vec<(String, Vec<f64>, f64)> = Vec::new();
         for nm in &seed_names {
             let w = world_for(nm);
             let dials = dials_of(&w);
-            let per: Vec<f64> = fresh
+            let reads: Vec<Read> = fresh
                 .iter()
                 .map(|&sd| {
                     judge(
@@ -1513,13 +1506,14 @@ fn main() {
                         &[sd],
                         dead_zone(c.dead),
                     )
-                    .raw
                 })
                 .collect();
-            seed_reads.push((nm.clone(), per));
+            let per: Vec<f64> = reads.iter().map(|r| r.raw).collect();
+            let total = reads.iter().map(|r| r.total).sum::<f64>() / reads.len() as f64;
+            seed_reads.push((nm.clone(), per, total));
         }
         let mut devs: Vec<f64> = Vec::new();
-        for (_, per) in &seed_reads {
+        for (_, per, _) in &seed_reads {
             let m = per.iter().sum::<f64>() / per.len() as f64;
             devs.extend(per.iter().map(|x| x - m));
         }
@@ -1533,42 +1527,71 @@ fn main() {
         println!(
             "   RESOLUTION: differences under {threshold:.4} are invisible here, whatever their sign"
         );
-        println!("   seed world              its raw   members beating it by more");
-        let mut flagged: Vec<(String, String, f64)> = Vec::new();
-        for (nm, per) in &seed_reads {
+        println!("   seed world              its raw   its loss   beat it   paid elsewhere");
+        let mut flagged: Vec<(String, String, f64, f64, f64)> = Vec::new();
+        let mut paid: Vec<(String, String, f64, f64, f64)> = Vec::new();
+        for (nm, per, seed_total) in &seed_reads {
             let hi = per.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-            let mine: Vec<&(Member, Read, Read)> =
-                rows.iter().filter(|(m, _, _)| &m.name == nm).collect();
-            let beat: Vec<&&(Member, Read, Read)> = mine
+            let mine: Vec<&HoldoutRow> = rows.iter().filter(|(m, _, _)| &m.name == nm).collect();
+            let (held, bought): (Vec<&HoldoutRow>, Vec<&HoldoutRow>) = mine
                 .iter()
+                .copied()
                 .filter(|(_, _, b)| b.feasible && hi - b.raw > threshold)
-                .collect();
+                .partition(|(_, _, b)| b.total <= *seed_total);
             println!(
-                "   {nm:<22} {hi:>7.4}   {:>4} of {:<4}",
-                beat.len(),
-                mine.len()
+                "   {nm:<22} {hi:>7.4}   {seed_total:>8.3}   {:>4} of {:<4}  {:>4}",
+                held.len(),
+                mine.len(),
+                bought.len()
             );
-            for (m, _, b) in &beat {
-                flagged.push((m.name.clone(), b.worst.clone(), hi - b.raw));
+            for (m, _, b) in &held {
+                flagged.push((
+                    m.name.clone(),
+                    b.worst.clone(),
+                    hi - b.raw,
+                    b.total,
+                    *seed_total,
+                ));
+            }
+            for (m, _, b) in &bought {
+                paid.push((
+                    m.name.clone(),
+                    b.worst.clone(),
+                    hi - b.raw,
+                    b.total,
+                    *seed_total,
+                ));
             }
         }
         if flagged.is_empty() {
-            println!("   PASSES: no member beats its seed by more than this control can resolve.");
-            println!("   The archive's value is its spread, which is what it was built for.");
+            println!("   PASSES: no member beats its seed by more than this control can resolve");
+            println!("   without paying for it on the other rows. The archive's value is its");
+            println!("   spread, which is what it was built for.");
         } else {
             println!(
-                "   {} members beat their seed by more than its own spread. Before believing it,",
+                "   {} members beat their seed by more than its own spread AND read no worse on",
                 flagged.len()
             );
             println!(
-                "   look at WHICH ROW moved -- the objective minimises the WORST row, so a world can"
+                "   the whole signature. Before believing it, look at WHICH ROW moved and at the"
             );
+            println!("   descriptor columns, which carry the statistics nothing grades:");
+            for (nm, worst, by, total, seed_total) in flagged.iter().take(8) {
+                println!(
+                    "     {nm:<22} better by {by:>6.4}, now worst on {worst}; loss {total:.3} vs {seed_total:.3}"
+                );
+            }
+        }
+        if !paid.is_empty() {
             println!(
-                "   degrade every other row freely while that one improves -- and at the descriptor"
+                "   {} beat the worst row by PAYING FOR IT ELSEWHERE -- the objective's hole, not a",
+                paid.len()
             );
-            println!("   columns, which carry the statistics nothing grades:");
-            for (nm, worst, by) in flagged.iter().take(8) {
-                println!("     {nm:<22} better by {by:>6.4}, now worst on {worst}");
+            println!("   better world; the summed loss over every row is worse than the seed's:");
+            for (nm, worst, by, total, seed_total) in paid.iter().take(8) {
+                println!(
+                    "     {nm:<22} worst row better by {by:>6.4} on {worst}; loss {total:.3} vs {seed_total:.3}"
+                );
             }
         }
         println!();
@@ -1579,18 +1602,18 @@ fn main() {
             .count();
         let lucky = rows
             .iter()
-            .filter(|(_, a, b)| a.feasible && !b.feasible)
+            .filter(|(_, a, b)| a.feasible != b.feasible)
             .count();
         let both = rows
             .iter()
             .filter(|(_, a, b)| !a.feasible && !b.feasible)
             .count();
-        let mut out = String::from("name\tpassA\trawA\tpassB\trawB\tworstB\n");
+        let mut out = String::from("name\tpassA\trawA\tpassB\trawB\tworstB\tlossA\tlossB\n");
         for (m, a, b) in &rows {
             let _ = writeln!(
                 out,
-                "{}\t{}\t{:.6}\t{}\t{:.6}\t{}",
-                m.name, a.feasible, a.raw, b.feasible, b.raw, b.worst
+                "{}\t{}\t{:.6}\t{}\t{:.6}\t{}\t{:.6}\t{:.6}",
+                m.name, a.feasible, a.raw, b.feasible, b.raw, b.worst, a.total, b.total
             );
         }
         write_text(&format!("{}/holdout.tsv", c.out), &out);
@@ -1625,8 +1648,7 @@ fn main() {
 
     // `-gens 0` runs until killed; the checkpoint after every generation is what makes that safe.
     let rs = ranges();
-    // A RUNNING NOISE ESTIMATE, from the spread each candidate showed across its own repetitions.
-    // Measured rather than declared, and it costs nothing: the readings are already there.
+    // a running seed-noise estimate from each candidate's spread across its own reps, carried across generations
     let mut noise_sum = nsum0;
     let mut noise_n = nn0;
     let mut arc = start_arc;
@@ -1635,12 +1657,9 @@ fn main() {
     while c.gens == 0 || g < gen0 + c.gens {
         // One generation: `pop` mutations of members drawn from the archive, then a checkpoint. A
         // kill between generations loses at most one generation's work.
-        // THE SAME GENERATOR AS THE REST OF THE PROGRAM, and the same one the Scala harness
-        // uses: `NumPyRng`'s `randn` and `next_bounded_u32` are gated bit-identical across the
-        // twins, so both harnesses propose the SAME candidates from one `-seed`. `-calibrate` was
-        // moved off a language-native RNG for this reason and the search was the last place one
-        // survived. The mask keeps the derived seed non-negative, because the two languages type
-        // it differently.
+        // The same `NumPyRng` as the rest of the program and as the Scala harness: `randn` and `next_bounded_u32`
+        // are gated bit-identical across the twins, so one `-seed` proposes the same candidates in both.
+        // The mask keeps the derived seed non-negative in both languages.
         let mut rng =
             NumPyRng::new(((c.base ^ (g as i64).wrapping_mul(0x9e37_79b9)) & i64::MAX) as u64);
         let mut log = Vec::new();
@@ -1676,6 +1695,10 @@ fn main() {
             if r.feasible {
                 noise_sum += r.spread;
                 noise_n += 1;
+            }
+            // a candidate above the bar still feeds the noise estimate: its spread is a reading
+            // of the objective's own noise whatever its level
+            if r.feasible && !above_bar(&parent.name, r.score) {
                 // at least one reading here: the increment above is on this path
                 let noise = noise_sum / noise_n as f64;
                 let (next, entered) = admit(
@@ -1697,9 +1720,8 @@ fn main() {
             }
             log.push(format!(
                 "{g}\t{}\t{}\t{}\t{:.6}\t{:.6}\t{}\t{:.3}\t{}\t{}\t{took}",
-                // `evals`, the SEED BASE this candidate drew from (seeds are base + (evals + j) *
-                // 7919), so a log line reproduces its candidate; `evals + k` advanced by reps + 1
-                // and was neither that nor a candidate number
+                // `evals` is the SEED BASE this candidate drew from (seeds are base + (evals + j) * 7919), so a
+                // log line reproduces its candidate
                 evals,
                 parent.name,
                 r.feasible,

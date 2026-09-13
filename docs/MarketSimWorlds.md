@@ -173,6 +173,50 @@ binary that wrote the file, which together are the whole provenance:
 market_sim.exe -atrelease 0.22.0 -gate realism -paths 2000 -years 33 -emitall -emit rung.tsv
 ```
 
+**A set of worlds, not a best fit — `-worldset`.** Thirty searched dials against some forty-five
+graded rows that are not independent means several distinct worlds match the record equally
+well, and a strategy interacts with the mechanism rather than with the summary statistic. A
+verdict formed on one best-fit world therefore carries the same over-confidence that weakens a
+backtest: it is conditional on a single realisation. The calibration search
+(`market_sim_search`, or `jsrc/marketSimSearch.sc`, which produce identical files) keeps an
+**archive** of every world it finds that is *feasible* — passes every realism and mechanism gate
+row on every one of its seeds, on both the S&P and the Nasdaq anchor sets — and spreads them
+across the behaviours the record cannot pin down. Fidelity rows are scored, not gated: members
+differ from the record inside its own sampling error, which is where the set's value is. Each
+member is then re-scored on seed streams the search never selected on, and the ones that fail
+there are dropped before the set is exported:
+
+```
+market_sim_search -out search -paths 60 -years 80 -reps 3 -keep 300 -transport 0.24.1-nasdaq
+market_sim_search -out search ... -holdout 12
+market_sim_search -out search ... -prune
+market_sim_search -out search ... -export worlds.json
+```
+
+`worlds.json` is a JSON array of members, each with its `member` number, the world it was seeded
+from, its score and worst row, and a `world` block in the sidecar's own key format at the
+archive's full precision. To run one:
+
+```
+market_sim.exe -worldset worlds.json -worldindex 38 -paths 200 -years 40 -emitall -emit m38.tsv
+```
+
+`-worldindex` addresses a member by its own number, defaulting to 0. The member seeds every dial
+exactly as `-atrelease` does, explicit flags after it override, and a file whose dials are not
+exactly this binary's is refused rather than filled in — an omitted dial would take the shipped
+default and be a different world under the member's name. `-worldset` and `-atrelease` each name
+a whole world, so giving both is refused.
+
+**How to read a ranking across the set.** Run the strategy on every member and rank it on each.
+A ranking that holds across every member is the claim the set exists to support: it holds across
+every world consistent with the record, which is stronger than holding on the one path history
+provides. A ranking that flips between members is not a failure of the set; it says the verdict
+depends on a mechanism the record does not pin down, and the members it flips between name which
+one — their `world` blocks differ, and the descriptor columns of `archive.tsv` (signed lag-1
+autocorrelation, the 250-session variance ratio, lag-20 clustering, kurtosis, crashes per path,
+median crash depth) say how the markets they produce differ. That is a finding about the strategy,
+not noise to average away.
+
 ## Generating an ensemble
 
 `-emitall` writes every path of the run from one invocation, to `F-000.tsv`, `F-001.tsv`, … each
@@ -1470,10 +1514,13 @@ statistics the model computes — see the worked example above.
 
 ## If you are calibrating rather than choosing
 
-`-calibrate N` random-searches thirteen parameters against the fitness loss and reports the best few
+`-calibrate N` random-searches thirty parameters against the fitness loss and reports the best few
 re-scored on a held-out seed. It prints; it does not modify defaults. Note that the loss has no
 notion of *not breaking what is already right* — it will happily spend an accurate row to improve an
-inaccurate one, so read the whole fidelity table after any recalibration, not just the loss.
+inaccurate one, so read the whole fidelity table after any recalibration, not just the loss. For
+calibration work proper, the archive search of the `-worldset` section above is the tool: it gates
+feasibility instead of pricing it, scores only the excess past each row's own sampling error, and
+keeps a set rather than a champion.
 
 The current default is not the search's own optimum and does not need to be. Two things the loss
 cannot see were corrected by hand when 0.21.0 was calibrated: the search drove `-crowdimpact` to its

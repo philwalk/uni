@@ -5514,7 +5514,7 @@ object MarketSim:
     "recoveryDrag", "recoveryFloor", "disasterRate", "disasterSize", "disasterRecover",
     "beliefShare", "capYears", "volOfVol", "jumpVar", "jumpRate", "leverage", "downShock",
     "jumpSkew", "newsRate", "newsSize", "refugeDays", "easing", "refuge", "inflSize",
-    "discount", "margin")
+    "discount", "margin", "slowShare", "slowVol")
 
   val CalibrateRanges: Vector[DialRange] = Vector(
     ("depth",       8.0,  26.0, (w, x) => w.copy(depth = x), _.depth),
@@ -5564,6 +5564,15 @@ object MarketSim:
     ("inflSize",    0.03,  0.12, (w, x) => w.copy(inflSize = x), _.inflSize),
     ("discount",     3.0,  10.0, (w, x) => w.copy(discount = x), _.discount),
     ("margin",       0.0, 0.008, (w, x) => w.copy(margin = x), _.margin),
+    // THE SLOW REPRICING CHANNEL's share and scale, searched from 0.24.2: the channel is what
+    // carries the |r| autocorrelation past lag 20 (the S&P reads 0.117 at lag 60 with it and the
+    // Nasdaq recipe, which runs it at 0, reads 0.036 against a record of 0.175), and no searched
+    // dial could reach that row -- measured on a 113-member archive, the one row no member
+    // reached.  `slowVol` beside `slowShare` because the channel bypasses the spiral: the share
+    // takes volatility out and the scale gives it back without thinning the market (0.5 / 1.5 on
+    // the Nasdaq recipe reads vol 27.2, lag-20 0.27, lag-60 0.175 against 26.9 / 0.25 / 0.175).
+    ("slowShare",    0.0,  0.80, (w, x) => w.copy(slowShare = x), _.slowShare),
+    ("slowVol",      0.5,  2.50, (w, x) => w.copy(slowVol = x), _.slowVol),
   )
 
   def calibrate(a: Anchors, nSamples: Int, base: World, seed: Long): Unit =
