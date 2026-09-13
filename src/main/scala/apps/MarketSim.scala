@@ -215,7 +215,12 @@ object MarketSim:
   // reader gets the same column meaning a materially different series, and one that turns over
   // decades rather than every four years.  A panel-off schema-15 file is byte-identical to its
   // schema-14 counterpart except the schema number.
-  val EmitSchema: Int = 15
+  // 15 -> 16: THE IMPLIED-VOL LEVEL.  `macroIvol`'s VALUES CHANGE: the member is re-levelled in
+  // the premium's own statistic (`level.kIv`, now in the sidecar's `level` block), so its log
+  // premium over forward realized vol is the record's in every world; the old level counted the
+  // slow channel's variance twice.  A panel-off schema-16 file is byte-identical to its schema-15
+  // counterpart except the schema number and the `kIv` key.
+  val EmitSchema: Int = 16
 
   val EmitSidecarKeys: Vector[String] =
     Vector("generator", "version", "schema", "file", "columns", "header", "path", "world",
@@ -1002,6 +1007,8 @@ object MarketSim:
                                                  // dividend yield was normalized by; 0 when off
                         chanKVs: Double = 0.0,   // the basket idio's level (realized sd over
                                                  // the vol state's rms); 0 when no channel ran
+                        chanKIv: Double = 0.0,   // the implied-vol member's level
+                                                 // (`ChannelLevel.kIv`); 0 when no channel ran
                         chanKDr: Double = 0.0,   // the primary's realized annualized vol, what
                                                  // `basketDrift` is a fraction of; 0 when off
                         macroPanel: Option[MacroPanel] = None)  // the macro panel (None when
@@ -1773,9 +1780,13 @@ object MarketSim:
                                                         // market delivered it (x its liquidity)
                                                         // plus the news repricing; 0 on a
                                                         // jump-free session
-                                 volState: Array[Double]): // exp(logVol - volNorm): the vol state
+                                 volState: Array[Double], // exp(logVol - volNorm): the vol state
                                                         // WITHOUT the spiral, the basket idio's
                                                         // driver
+                                 amp: Array[Double]):    // the spiral's amplification this
+                                                        // session, `lastLiq` over the base impact
+                                                        // -- what the implied-vol member prices a
+                                                        // share of
     /** This path's contribution to the world's level: sums of the observed squared return, the
       * session diffusion sd and the squared satellite state factor from the second session (the
       * first has no return), plus the count -- in session order, which is part of the
@@ -1793,12 +1804,46 @@ object MarketSim:
         i += 1
       (sR2, sD, sSt, sVs, (tot - 1).toDouble)
 
+    /** This path's contribution to the implied-vol level: the sums of log(vol state x the
+      * forward-looking amplification) and of log forward-21-session realized vol, over the
+      * post-burn-in sessions that have one, and their count -- in session order.  The same window
+      * and the same factor the premium reads, so the level is taken in the premium's own
+      * statistic: a root-mean-square level put the premium 0.2 high on a thin market, whose
+      * forward realized vol is dominated by rare stretches. */
+    def ivolLevelSums: (Double, Double, Double) =
+      val n  = px.length
+      val r2 = new Array[Double](n)
+      var i = 1
+      while i < n do
+        val d = px(i) - px(i - 1)
+        r2(i) = r2(i - 1) + d * d
+        i += 1
+      val h = 21
+      var sLiv = 0.0; var sLrv = 0.0; var c = 0.0
+      i = BurnIn
+      while i < n do
+        if i + h < n then
+          val rv = 100.0 * math.sqrt(DaysPerYear.toDouble * (r2(i + h) - r2(i)) / h)
+          val f  = volState(i) * (1.0 + MacroK.IvolAmpShare * (amp(i) - 1.0))
+          if rv > 0.0 && f > 0.0 then
+            sLiv += math.log(f)
+            sLrv += math.log(rv)
+            c += 1.0
+        i += 1
+      (sLiv, sLrv, c)
+
   /** The world's channel level: `k` re-levels the session diffusion sd onto the world's realized
     * close-to-close sd, `kSat` the satellite's state factor onto it in root-mean-square. */
   final case class ChannelLevel(k: Double, kSat: Double, kDiv: Double = 0.0, kVs: Double = 0.0,
                                 // the primary's realized ANNUALIZED volatility -- what
                                 // `basketDrift` is a fraction of, so the dial transports
-                                kDr: Double = 0.0)
+                                kDr: Double = 0.0,
+                                // the implied-vol member's level: exp of the mean over sessions of
+                                // log forward-21-session realized vol minus log(vol state x
+                                // forward-looking amplification), in annualized %, so the member's
+                                // log premium over realized is the record's by construction in
+                                // every world; 0 when no channel ran
+                                kIv: Double = 0.0)
 
   /** The fixed ensemble the level is solved on.  Small on purpose: the level is a mean over ~200k
     * sessions, so its sampling error is under 1% even at kurtosis 60, and it is solved once per
@@ -1813,7 +1858,7 @@ object MarketSim:
     * order in both twins.  0 / 0 when both channels are off -- never read. */
   def worldLevel(w: World): ChannelLevel =
     val chOn  = w.rangeScale > 0.0 || w.satBeta > 0.0 || w.overnight > 0.0 || w.basket > 0 ||
-                w.macroPanel > 0   // the implied-vol member reads `k`, like the range does
+                w.macroPanel > 0   // the implied-vol member reads `kVs`
     val divOn = w.divYield > 0.0
     if !(chOn || divOn) then ChannelLevel(0.0, 0.0, 0.0, 0.0)
     else
@@ -1822,15 +1867,20 @@ object MarketSim:
           val pr = priceLoop(w, LevelYears, LevelSeed + k.toLong * 7919L)
           // the channel inputs are recorded only when a channel ran; the dividend level needs
           // none of them
-          (if chOn then pr.inputs.levelSums else (0.0, 0.0, 0.0, 0.0, 0.0), fairOverPriceSum(pr.path))
+          (if chOn then pr.inputs.levelSums else (0.0, 0.0, 0.0, 0.0, 0.0),
+           if chOn then pr.inputs.ivolLevelSums else (0.0, 0.0, 0.0),
+           fairOverPriceSum(pr.path))
         }
         .toArray()
       var sR2 = 0.0; var sD = 0.0; var sSt = 0.0; var sVs = 0.0; var m = 0.0; var sFp = 0.0; var nFp = 0.0
+      var sLiv = 0.0; var sLrv = 0.0; var nIv = 0.0
       var i = 0
       while i < sums.length do
-        val ((a, b, c, vs, n), (fp, nf)) =
-          sums(i).asInstanceOf[((Double, Double, Double, Double, Double), (Double, Double))]
-        sR2 += a; sD += b; sSt += c; sVs += vs; m += n; sFp += fp; nFp += nf
+        val ((a, b, c, vs, n), (liv, lrv, niv), (fp, nf)) =
+          sums(i).asInstanceOf[((Double, Double, Double, Double, Double), (Double, Double, Double),
+                                (Double, Double))]
+        sR2 += a; sD += b; sSt += c; sVs += vs; m += n; sLiv += liv; sLrv += lrv; nIv += niv
+        sFp += fp; nFp += nf
         i += 1
       ChannelLevel(if chOn then math.sqrt(sR2 / m) / (sD / m) else 0.0,
                    if chOn then math.sqrt(sR2 / sSt) else 0.0,
@@ -1839,7 +1889,9 @@ object MarketSim:
                    // dial is a fraction of the primary's realized vol whatever shape the state takes
                    if chOn then math.sqrt(sR2 / sVs) else 0.0,
                    // the drift dispersion's level: the primary's realized ANNUALIZED vol
-                   if chOn then math.sqrt(sR2 / m) * math.sqrt(DaysPerYear.toDouble) else 0.0)
+                   if chOn then math.sqrt(sR2 / m) * math.sqrt(DaysPerYear.toDouble) else 0.0,
+                   // `expDet`, as the OU factors use: the twins' libm exps differ in the last bit
+                   if chOn && nIv > 0.0 then expDet((sLrv - sLiv) / nIv) else 0.0)
 
   /** The dividend level's input: one path's sum of fundamental/price over its sessions, in
     * session order (part of the cross-language contract), and the count.  A world constant for
@@ -2247,15 +2299,13 @@ object MarketSim:
       val pR10 = phi(w.rateSpeed, MacroK.T10)
       val pA10 = phi(w.unwind, MacroK.T10)
       val pI10 = phi(1.0 / MacroK.RegimeYears, MacroK.T10)
-      // annualized %, at vol state 1: the diffusive sd as the price receives it (news damp, the
-      // jump branch's mixing), RE-LEVELLED onto the world's realized volatility by `k` -- the bar
-      // channels' level, so the read premium is the record's in every world, not only the one the
-      // constants were read in -- times the record's variance risk premium
-      // `k` is realized vol over the diffusion sd AS THE PRICE RECEIVED IT, which carries the
-      // market's base impact 12/depth as well as the spiral's amplification, so both belong here
-      val jvMult = if w.jumpVar > 0.0 then math.sqrt(1.0 - w.jumpVar) else 1.0
-      val kIvol  = 100.0 * math.sqrt(DaysPerYear.toDouble) * newsDampAt(w.newsRate, w.newsSize) *
-                   SigmaN * jvMult * (12.0 / w.depth) * k * MacroK.VrpMult
+      // `k` is the world's implied-vol level (`ChannelLevel.kIv`): forward realized vol over the
+      // very factor read below, as a mean of logs, so the member's log premium over forward
+      // realized vol is the record's by construction in every world and only the premium's R^2
+      // and persistence read the world.  Re-levelling the DIFFUSIVE sd instead counted the slow
+      // channel's variance twice -- a world with the channel at half share read 0.55 against the
+      // record's 0.29, and the shipped default with the panel on read 0.44.
+      val kIvol  = k * MacroK.VrpMult
       val spread = new Array[Double](n); val slope = new Array[Double](n)
       val cond   = new Array[Double](n); val ivol  = new Array[Double](n)
       val yield10 = new Array[Double](n); val credit = new Array[Double](n)
@@ -2386,8 +2436,9 @@ object MarketSim:
       chanKSat  = level.kSat,
       chanKDiv  = level.kDiv,
       chanKVs   = level.kVs,
+      chanKIv   = level.kIv,
       chanKDr   = if w.basketDrift > 0.0 then level.kDr else 0.0,
-      macroPanel = deriveMacro(w, macroIn, macroSeed, level.k, BurnIn).map(_.drop(BurnIn)))
+      macroPanel = deriveMacro(w, macroIn, macroSeed, level.kIv, BurnIn).map(_.drop(BurnIn)))
 
   /** `simulateAt` at the world's own level, solved here per call -- `simPaths` solves it once
     * for the whole ensemble, so prefer that for more than one path. */
@@ -2556,6 +2607,7 @@ object MarketSim:
     val chSv    = if chOn then new Array[Double](tot) else Array.emptyDoubleArray
     val chJ     = if chOn then new Array[Double](tot) else Array.emptyDoubleArray
     val chVs    = if chOn then new Array[Double](tot) else Array.emptyDoubleArray
+    val chAmp   = if chOn then new Array[Double](tot) else Array.emptyDoubleArray
     // THE MACRO PANEL's inputs, recorded per session and read after the loop by `deriveMacro`;
     // empty when the dial is off, draw-free either way.
     val mcOn     = w.macroPanel > 0
@@ -2929,6 +2981,7 @@ object MarketSim:
         chJ(i) = jumpNow * eqM.lastLiq - newsJ
         val vb = math.exp(logVol - volNorm) * volRespM * mix
         chVs(i) = math.sqrt(vb * vb + slowVar)
+        chAmp(i) = eqM.lastLiq * w.depth / 12.0
       if mcOn then
         mcStress(i) = eqM.stressIdx
         mcBStr(i)   = bdM.stressIdx
@@ -2991,7 +3044,7 @@ object MarketSim:
          disasterCount,
          Array.emptyDoubleArray, Array.emptyDoubleArray, Array.emptyDoubleArray,
          Array.emptyDoubleArray)
-    Priced(path, ChannelInputs(chPx, chD, chState, chSv, chJ, chVs),
+    Priced(path, ChannelInputs(chPx, chD, chState, chSv, chJ, chVs, chAmp),
            MacroInputs(mcStress, mcBStr, mcVs, mcAmp, mcAcc, mcWTrend, mcLev, mcBorrow, mcRate,
                        mcInfl, mcCpi, mcFund))
 
@@ -7034,7 +7087,7 @@ object MarketSim:
     val level =
       if st.sat.isDefined || st.bars.isDefined || st.open.isDefined || st.basket.isDefined || st.divYieldMean.isFinite ||
          st.macroPanel.isDefined then
-        Vector(s"""    "level": { "k": ${num(p.chanK)}, "kSat": ${num(p.chanKSat)}, "kDiv": ${num(p.chanKDiv)}, "kVs": ${num(p.chanKVs)}""" +
+        Vector(s"""    "level": { "k": ${num(p.chanK)}, "kSat": ${num(p.chanKSat)}, "kDiv": ${num(p.chanKDiv)}, "kVs": ${num(p.chanKVs)}, "kIv": ${num(p.chanKIv)}""" +
                (if p.chanKDr > 0.0 then s""", "kDr": ${num(p.chanKDr)}""" else "") + " }")
       else Vector.empty
     val sat = st.sat.toVector.map { sd =>

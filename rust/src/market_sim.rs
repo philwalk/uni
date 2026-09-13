@@ -180,7 +180,12 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 // column meaning a materially different series, and one that turns over decades rather than every
 // four years. A panel-off schema-15 file is byte-identical to its schema-14 counterpart except the
 // schema number.
-const EMIT_SCHEMA: u32 = 15;
+// 15 -> 16: THE IMPLIED-VOL LEVEL. `macroIvol`'s VALUES CHANGE: the member is re-levelled in the
+// premium's own statistic (`level.kIv`, now in the sidecar's `level` block), so its log premium
+// over forward realized vol is the record's in every world; the old level counted the slow
+// channel's variance twice. A panel-off schema-16 file is byte-identical to its schema-15
+// counterpart except the schema number and the `kIv` key.
+const EMIT_SCHEMA: u32 = 16;
 
 /// Frozen structural constants of the volume channel — see the `vol_idio` field. Measured
 /// from the SPY/QQQ volume-on-range regression (`bars-2026-09-01.tsv`, whose rows the
@@ -1799,6 +1804,8 @@ pub struct Path {
     pub chan_k_div: f64,
     /// the basket idio's level (realized sd over the vol state's rms); 0 when no channel ran
     pub chan_k_vs: f64,
+    /// the implied-vol member's level (`ChannelLevel::k_iv`); 0 when no channel ran
+    pub chan_k_iv: f64,
     /// the primary's realized annualized vol, what `basket_drift` is a fraction of; 0 when off
     pub chan_k_dr: f64,
     /// the macro panel (None when `macro_panel` is 0), in its counterparts' units
@@ -2079,6 +2086,9 @@ struct ChannelInputs {
     /// `Market::scale_var` after the step — the volume down-term's realized scale, read one
     /// session fresher than the leverage signal's (stated, and mirrored)
     scale_var: Vec<f64>,
+    /// the spiral's amplification this session, `last_liq` over the base impact — what the
+    /// implied-vol member prices a share of
+    amp: Vec<f64>,
 }
 
 impl ChannelInputs {
@@ -2101,6 +2111,37 @@ impl ChannelInputs {
         }
         (s_r2, s_d, s_st, s_vs, (tot - 1) as f64)
     }
+
+    /// This path's contribution to the implied-vol level: the sums of log(vol state x the
+    /// forward-looking amplification) and of log forward-21-session realized vol, over the
+    /// post-burn-in sessions that have one, and their count — in session order. The same window
+    /// and the same factor the premium reads, so the level is taken in the premium's own
+    /// statistic: a root-mean-square level put the premium 0.2 high on a thin market, whose
+    /// forward realized vol is dominated by rare stretches.
+    fn ivol_level_sums(&self) -> (f64, f64, f64) {
+        let n = self.px.len();
+        let mut r2 = vec![0.0f64; n];
+        for i in 1..n {
+            let d = self.px[i] - self.px[i - 1];
+            r2[i] = r2[i - 1] + d * d;
+        }
+        let h = 21usize;
+        let mut s_liv = 0.0f64;
+        let mut s_lrv = 0.0f64;
+        let mut c = 0.0f64;
+        for i in BURN_IN..n {
+            if i + h < n {
+                let rv = 100.0 * (DAYS_PER_YEAR as f64 * (r2[i + h] - r2[i]) / h as f64).sqrt();
+                let f = self.vol_state[i] * (1.0 + macro_k::IVOL_AMP_SHARE * (self.amp[i] - 1.0));
+                if rv > 0.0 && f > 0.0 {
+                    s_liv += f.ln();
+                    s_lrv += rv.ln();
+                    c += 1.0;
+                }
+            }
+        }
+        (s_liv, s_lrv, c)
+    }
 }
 
 /// The world's channel level: `k` re-levels the session diffusion sd onto the world's realized
@@ -2117,6 +2158,11 @@ struct ChannelLevel {
     /// the primary's realized ANNUALIZED volatility — what `basket_drift` is a fraction of, so the
     /// dial transports; 0 when no channel ran
     k_dr: f64,
+    /// the implied-vol member's level: exp of the mean over sessions of log forward-21-session
+    /// realized vol minus log(vol state x forward-looking amplification), in annualized %, so
+    /// the member's log premium over realized is the record's by construction in every world;
+    /// 0 when no channel ran
+    k_iv: f64,
 }
 
 /// The fixed ensemble the level is solved on. Small on purpose: the level is a mean over ~200k
@@ -2132,14 +2178,14 @@ const LEVEL_SEED: u64 = 0x1e7e_1000;
 /// in both twins. 0 / 0 when both channels are off — never read.
 /// One level-ensemble path's sums: the channel inputs' three sums and count, then the
 /// fundamental/price sum and count.
-type LevelSums = ((f64, f64, f64, f64, f64), (f64, f64));
+type LevelSums = ((f64, f64, f64, f64, f64), (f64, f64, f64), (f64, f64));
 
 fn world_level(w: &World) -> ChannelLevel {
     let ch_on = w.range_scale > 0.0
         || w.sat_beta > 0.0
         || w.overnight > 0.0
         || w.basket > 0
-        || w.macro_panel > 0; // the implied-vol member reads `k`, like the range does
+        || w.macro_panel > 0; // the implied-vol member reads `k_vs`
     let div_on = w.div_yield > 0.0;
     if !(ch_on || div_on) {
         return ChannelLevel {
@@ -2148,6 +2194,7 @@ fn world_level(w: &World) -> ChannelLevel {
             k_div: 0.0,
             k_vs: 0.0,
             k_dr: 0.0,
+            k_iv: 0.0,
         };
     }
     let sums: Vec<LevelSums> = (0..LEVEL_PATHS)
@@ -2161,7 +2208,12 @@ fn world_level(w: &World) -> ChannelLevel {
             } else {
                 (0.0, 0.0, 0.0, 0.0, 0.0)
             };
-            (ch, fair_over_price_sum(&pr.path))
+            let iv = if ch_on {
+                pr.inputs.ivol_level_sums()
+            } else {
+                (0.0, 0.0, 0.0)
+            };
+            (ch, iv, fair_over_price_sum(&pr.path))
         })
         .collect();
     let mut s_r2 = 0.0f64;
@@ -2171,12 +2223,18 @@ fn world_level(w: &World) -> ChannelLevel {
     let mut m = 0.0f64;
     let mut s_fp = 0.0f64;
     let mut n_fp = 0.0f64;
-    for ((a, b, c, vs, n), (fp, nf)) in sums {
+    let mut s_liv = 0.0f64;
+    let mut s_lrv = 0.0f64;
+    let mut n_iv = 0.0f64;
+    for ((a, b, c, vs, n), (liv, lrv, niv), (fp, nf)) in sums {
         s_r2 += a;
         s_d += b;
         s_st += c;
         s_vs += vs;
         m += n;
+        s_liv += liv;
+        s_lrv += lrv;
+        n_iv += niv;
         s_fp += fp;
         n_fp += nf;
     }
@@ -2195,6 +2253,12 @@ fn world_level(w: &World) -> ChannelLevel {
             0.0
         },
         k_div: if div_on { s_fp / n_fp } else { 0.0 },
+        // `exp_det`, as the OU factors use: the twins' libm exps differ in the last bit
+        k_iv: if ch_on && n_iv > 0.0 {
+            exp_det((s_lrv - s_liv) / n_iv)
+        } else {
+            0.0
+        },
     }
 }
 
@@ -2947,25 +3011,13 @@ fn derive_macro(w: &World, m: &MacroInputs, seed: u64, k: f64, base: usize) -> O
     let p_r10 = phi(w.rate_speed, macro_k::T10);
     let p_a10 = phi(w.unwind, macro_k::T10);
     let p_i10 = phi(1.0 / macro_k::REGIME_YEARS, macro_k::T10);
-    // annualized %, at vol state 1: the diffusive sd as the price receives it (news damp, the
-    // jump branch's mixing), RE-LEVELLED onto the world's realized volatility by `k` — the bar
-    // channels' level, so the read premium is the record's in every world, not only the one the
-    // constants were read in — times the record's variance risk premium
-    // `k` is realized vol over the diffusion sd AS THE PRICE RECEIVED IT, which carries the
-    // market's base impact 12/depth as well as the spiral's amplification, so both belong here
-    let jv_mult = if w.jump_var > 0.0 {
-        (1.0 - w.jump_var).sqrt()
-    } else {
-        1.0
-    };
-    let k_ivol = 100.0
-        * (DAYS_PER_YEAR as f64).sqrt()
-        * news_damp_at(w.news_rate, w.news_size)
-        * SIGMA_N
-        * jv_mult
-        * (12.0 / w.depth)
-        * k
-        * macro_k::VRP_MULT;
+    // `k` is the world's implied-vol level (`ChannelLevel::k_iv`): forward realized vol over the
+    // very factor read below, as a mean of logs, so the member's log premium over forward
+    // realized vol is the record's by construction in every world and only the premium's
+    // R^2 and persistence read the world. Re-levelling the DIFFUSIVE sd instead counted the slow
+    // channel's variance twice — a world with the channel at half share read 0.55 against the
+    // record's 0.29, and the shipped default with the panel on read 0.44.
+    let k_ivol = k * macro_k::VRP_MULT;
     let mut spread = vec![0.0f64; n];
     let mut slope = vec![0.0f64; n];
     let mut cond = vec![0.0f64; n];
@@ -3159,6 +3211,7 @@ fn simulate_at(w: &World, years: usize, seed: u64, level: ChannelLevel) -> Path 
         chan_k_sat: level.k_sat,
         chan_k_div: level.k_div,
         chan_k_vs: level.k_vs,
+        chan_k_iv: level.k_iv,
         // carried only when the dial is on, so every sidecar without it is unchanged
         chan_k_dr: if w.basket_drift > 0.0 {
             level.k_dr
@@ -3180,7 +3233,7 @@ fn simulate_at(w: &World, years: usize, seed: u64, level: ChannelLevel) -> Path 
                 Some(m) => (m, sib),
                 None => (&pr.macro_in, seed),
             };
-            derive_macro(w, macro_in, macro_seed, level.k, BURN_IN).map(|m| m.drop(BURN_IN))
+            derive_macro(w, macro_in, macro_seed, level.k_iv, BURN_IN).map(|m| m.drop(BURN_IN))
         },
         ..pr.path
     }
@@ -3399,7 +3452,7 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
         || w.sat_beta > 0.0
         || w.overnight > 0.0
         || w.basket > 0
-        || w.macro_panel > 0; // the implied-vol member reads `k`, like the range does
+        || w.macro_panel > 0; // the implied-vol member reads `k_vs`
     let mut ch = ChannelInputs {
         px: if ch_on { vec![0.0f64; tot] } else { Vec::new() },
         d: if ch_on { vec![0.0f64; tot] } else { Vec::new() },
@@ -3407,6 +3460,7 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
         scale_var: if ch_on { vec![0.0f64; tot] } else { Vec::new() },
         jump: if ch_on { vec![0.0f64; tot] } else { Vec::new() },
         vol_state: if ch_on { vec![0.0f64; tot] } else { Vec::new() },
+        amp: if ch_on { vec![0.0f64; tot] } else { Vec::new() },
     };
     // THE MACRO PANEL's inputs, recorded per session and read after the loop by `derive_macro`;
     // empty when the dial is off, draw-free either way.
@@ -3907,6 +3961,7 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
             ch.jump[i] = jump_now * eq_m.last_liq - news_j;
             let vb = (log_vol - vol_norm).exp() * vol_resp_m * mix;
             ch.vol_state[i] = (vb * vb + slow_var).sqrt();
+            ch.amp[i] = eq_m.last_liq * w.depth / 12.0;
         }
         if mc_on {
             mc.stress[i] = eq_m.stress_idx;
@@ -4008,6 +4063,7 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
         chan_k_sat: 0.0,
         chan_k_div: 0.0,
         chan_k_vs: 0.0,
+        chan_k_iv: 0.0,
         chan_k_dr: 0.0,
         macro_panel: None,
     };
@@ -11600,6 +11656,30 @@ pub fn world_json_body_fmt(w: &World, num: &dyn Fn(f64) -> String) -> Vec<String
 /// Each object is present exactly when its channel ran (`sat_stats`/`bar_stats` return `Some`);
 /// `{}` when none did, else led by the world level they were sampled at (`world_level`). NaN
 /// prints as null, the `fidelity` rows' rule.
+/// The sidecar's `level` block: the world level every channel was sampled at.
+fn level_block(p: &Path) -> String {
+    let num = |x: f64| {
+        if x.is_nan() {
+            "null".to_string()
+        } else {
+            ef(x)
+        }
+    };
+    format!(
+        "    \"level\": {{ \"k\": {}, \"kSat\": {}, \"kDiv\": {}, \"kVs\": {}, \"kIv\": {}{} }}",
+        num(p.chan_k),
+        num(p.chan_k_sat),
+        num(p.chan_k_div),
+        num(p.chan_k_vs),
+        num(p.chan_k_iv),
+        if p.chan_k_dr > 0.0 {
+            format!(", \"kDr\": {}", num(p.chan_k_dr))
+        } else {
+            String::new()
+        }
+    )
+}
+
 fn channel_readings_block(st: &WorldStats, p: &Path) -> String {
     let num = |x: f64| {
         if x.is_nan() {
@@ -11616,18 +11696,7 @@ fn channel_readings_block(st: &WorldStats, p: &Path) -> String {
         || st.div_yield_mean.is_finite()
         || st.macro_panel.is_some()
     {
-        blocks.push(format!(
-            "    \"level\": {{ \"k\": {}, \"kSat\": {}, \"kDiv\": {}, \"kVs\": {}{} }}",
-            num(p.chan_k),
-            num(p.chan_k_sat),
-            num(p.chan_k_div),
-            num(p.chan_k_vs),
-            if p.chan_k_dr > 0.0 {
-                format!(", \"kDr\": {}", num(p.chan_k_dr))
-            } else {
-                String::new()
-            }
-        ));
+        blocks.push(level_block(p));
     }
     if let Some(sd) = st.sat {
         blocks.push(format!(

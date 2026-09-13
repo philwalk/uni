@@ -1,5 +1,19 @@
 ## v0.24.2 — unreleased
 
+**The implied-vol member is levelled in the premium's own statistic, so its premium is the record's in every world**
+
+- `macroIvol`'s VALUES CHANGE. The member is re-levelled by `kIv`, the mean over sessions of log
+  forward-21-session realized vol minus log of the factor the member reads, solved on the world's
+  level ensemble, so its log premium over forward realized vol reads the record's 0.28 by
+  construction in every world (0.24–0.26 on every shipped world and every archive member checked)
+  and only the premium's R² and persistence read the world. The old level re-levelled the
+  diffusive sd while the member also carried the slow repricing channel's variance, which counted
+  that variance twice: the shipped default with the panel on (`0.24.1-macro`) read 0.44 and
+  FAILED its own band, and a world with the channel at half share read 0.55.
+- Sidecar schema 15 → 16: the `level` block gains `kIv`. A panel-off file is byte-identical to its
+  schema-15 counterpart except the schema number and that key. `-validate`, `-fitness` and `-emit`
+  are byte-identical between the twins on every macro world.
+
 **The slow repricing channel's share and scale are searched**
 
 - `slowShare` (0–0.8) and `slowVol` (0.5–2.5) join `CalibrateRanges` / `calibrate_ranges`, 30
