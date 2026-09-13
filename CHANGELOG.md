@@ -2,7 +2,7 @@
 
 **`0.24.2-nasdaq`: the Nasdaq recipe re-solved by the calibration search, and the Nasdaq spreads re-frozen at it**
 
-- `-atrelease 0.24.2-nasdaq` is `0.24.1-nasdaq` re-solved by the archive search with the slow
+- `-atrelease 0.24.2-nasdaq` is `0.24.1-nasdaq` re-solved by the archive search below with the slow
   repricing channel's share and scale among the thirty searched dials, judged on both markets,
   admitted under the quality bar and picked as the steadiest of the thirteen members that pass
   every gate class on four seeds at 200 paths. Every searched dial moved; the literals are the
@@ -18,81 +18,30 @@
   0.22): the slow channel's regime shows in single histories. Nasdaq losses are not comparable
   across this change.
 
-**The satellite's and the sector's state carries the slow repricing channel's variance**
+**Two derived channels read the slow repricing channel at the state's full share**
 
+- `macroIvol`'s VALUES CHANGE. The implied-vol member is re-levelled by `kIv`, the mean over
+  sessions of log forward-21-session realized vol minus log of the factor the member reads, solved
+  on the world's level ensemble, so its log premium over forward realized vol reads the record's
+  0.28 by construction in every world (0.24–0.26 on every shipped world and every archive member
+  checked) and only the premium's R² and persistence read the world. The old level re-levelled
+  the diffusive sd while the member also carried the slow channel's variance, which counted that
+  variance twice: `0.24.1-macro` read 0.44 and FAILED its own band, and a world with the channel
+  at half share read 0.55.
 - The state factor the satellite leg's idio and the basket's sector leg ride — the vol state times
-  the spiral's amplification — now carries the slow repricing channel's variance beside the
-  diffusive state at its share, as the implied-vol member reads it. Without it a world carrying
-  its long-lag clustering in the channel gave the satellite none of it, and the satellite's
-  clustering-20 ratio left its band on every seed at a channel share of 0.3. Every shipped world
-  with channels on still passes every class; a channel-off world is bit-identical. Satellite and
-  basket columns move on worlds with the channel on, which includes the S&P default's recipes.
-
-**The implied-vol member is levelled in the premium's own statistic, so its premium is the record's in every world**
-
-- `macroIvol`'s VALUES CHANGE. The member is re-levelled by `kIv`, the mean over sessions of log
-  forward-21-session realized vol minus log of the factor the member reads, solved on the world's
-  level ensemble, so its log premium over forward realized vol reads the record's 0.28 by
-  construction in every world (0.24–0.26 on every shipped world and every archive member checked)
-  and only the premium's R² and persistence read the world. The old level re-levelled the
-  diffusive sd while the member also carried the slow repricing channel's variance, which counted
-  that variance twice: the shipped default with the panel on (`0.24.1-macro`) read 0.44 and
-  FAILED its own band, and a world with the channel at half share read 0.55.
+  the spiral's amplification — carries the slow channel's variance beside the diffusive state at
+  its share, as the implied-vol member reads it. Without it a world carrying its long-lag
+  clustering in the channel gave the satellite none of it. Satellite and basket columns move on
+  worlds with the channel on, which includes the S&P default's recipes; a channel-off world is
+  bit-identical, and every shipped world with channels on passes every class as before.
 - Sidecar schema 15 → 16: the `level` block gains `kIv`. A panel-off file is byte-identical to its
   schema-15 counterpart except the schema number and that key. `-validate`, `-fitness` and `-emit`
-  are byte-identical between the twins on every macro world.
-
-**The slow repricing channel's share and scale are searched**
-
-- `slowShare` (0–0.8) and `slowVol` (0.5–2.5) join `CalibrateRanges` / `calibrate_ranges`, 30
-  searched dials from 28. The channel is what carries volatility clustering past lag 20: the S&P
-  world reads 0.117 at lag 60 with it, the Nasdaq recipe, which runs it at 0, reads 0.036 against
-  a record of 0.175, and Nasdaq lag-20 clustering was the one fitness row no member of a
-  113-world archive could reach. On the recipe `-slowshare 0.5 -slowvol 1.5` reads vol 27.2,
-  lag-20 0.27 and lag-60 0.175 against the record's 26.9, 0.25 and 0.175. `slowVol` is searched
-  beside the share because the channel bypasses the spiral: the share takes volatility out and the
-  scale gives it back without thinning the market.
-- A search archive carries 30 dial columns, and both harnesses now refuse an archive whose header
-  is not exactly this binary's dial and descriptor columns — by name, not by width: a row-width
-  check let a 28-dial archive read as 30 with two descriptors taken for dials. `-calibrate` draws
-  two more uniforms per sample, in both twins identically.
-- Each fidelity-class gate band a candidate fails adds one dead zone to its score, in both
-  harnesses. Bands no fitness row covers — the macro panel's, the channels', the variance-ratio
-  profile, the bond's volatility — were neither gated (a band flips on a seed at 60 paths) nor
-  scored; 139 of one archive's 145 survivors failed one on the fitness seed, and a recipe has to
-  pass every class. A feasible candidate's failed bands are named in `gateFail` with a
-  `fidelity:` prefix.
-- `-bar M`, THE QUALITY BAR: a feasible candidate enters the archive only if its score is at most
-  M times its seed world's, judged the same way (default 1.0, so every member fits the record at
-  least as well as the shipped world its lineage started from; 0 restores admission on distance
-  alone). Spread-keeping admitted on distance whatever the score, and a set built that way read a
-  median summed excess of 1.14 against its seed pair's 0.65. Recorded in the checkpoint; members
-  above it are dropped on resume and counted.
-- The transport arm holds the MARKET DIALS at the counterpart's values — `depth`, `drift`,
-  `stress`, `volOfVol`, `jumpVar`, `refuge`, `slowShare`, named in both harnesses and printed at
-  startup — and carries the candidate's values on the other twenty-three, in either direction.
-  The set used to be derived as the dials on which the counterpart differs from the shipped
-  default, which read the Nasdaq recipe as an S&P world for a Nasdaq-primary search and rejected
-  its own seed, and which is every dial for a recipe the search itself re-solved.
-
-**The calibration search scores every row's excess past the dead zone, not the worst row alone**
-
-- A candidate's score is the sum over every fitness row of both arms of `max(0, term − dead)`.
-  Inside the record's own sampling error a row contributes nothing, as before; outside it every
-  row counts, and a row cannot be bought below the dead zone because its excess is paid in full.
-- The worst row alone put no pressure on any other row, and an archive built on it drifted out to
-  the binding row's level everywhere: measured on the 113-member set, only 2 members fit the S&P
-  record as well as the shipped default, the median member had 5 rows past the dead zone against
-  the default's 1, and 74 of 113 read equity vol outside 14–18%. The worst row and its name are
-  still recorded (`raw`, `worstRow`) and the holdout's null control still reads them.
-- The checkpoint records `score = sum-excess`; an archive written under the worst row refuses to
-  resume, since its scores are not comparable. Both harnesses agree byte for byte on a fresh
-  search's archive, checkpoint and log.
+  are byte-identical between the twins on every macro and channel world.
 
 **The fitness weights are re-frozen at the current worlds, and the variance ratio has a spread of its own**
 
 - Every fidelity row's sampling spread is re-frozen from `-noise -paths 200` at the world its anchor
-  set describes: the default world for the S&P set, `0.24.1-nasdaq` for the Nasdaq set. The same
+  set describes: the default world for the S&P set, the Nasdaq recipe for the Nasdaq set. The same
   command at the 0.24.0 worlds reproduces 19 of the 20 previous spreads in each set exactly, so
   every move is the world's.
 - The 60-day variance ratio's spread was one constant, 0.35, shared by both sets and never measured.
@@ -100,56 +49,8 @@
   gains `vr60Sd` (`vr60_sd` in Rust).
 - `-fitness` losses are not comparable across this change: every model reading is the same and the
   weights moved. The S&P default reads 0.749 where it read 0.762, mostly because lag-20 clustering
-  weighs less. The Nasdaq recipe reads 1.894 where it read 1.753: lag-20 clustering and the variance
-  ratio each add about 0.06, two misses the old weights understated.
-- The calibration search records an `objective` digest of every row's name, target and weight in
-  its checkpoint, and refuses to resume an archive scored under different ones.
+  weighs less.
 - Rust's `fit_targets` and `StatFn` are public, as Scala's `fitTargets` already is.
-
-**Both simulators measure their ensembles across cores: a calibration search runs 4.8 times faster in Rust and 2.7 in Scala**
-
-- Measured on a calibration search at 60 paths by 80 years with the Nasdaq transport arm, on 24
-  cores: Rust 42.6 seconds to 8.9, Scala 158.2 to 58.7. Every statistic `measure`, the extreme rows
-  and `fitness` produce is bit-identical to before, compared at full precision across four worlds
-  in each twin, and the twins still agree byte for byte.
-- `measure` computes each path's statistics in ONE parallel pass and takes the medians after. They
-  ran one path at a time while the simulation used every core: a 60-path Nasdaq ensemble simulated
-  in 0.07 seconds and measured in 1.07. The channel and macro-panel statistics run across paths the
-  same way.
-- The extreme-horizon rows read each path's worst decline directly. They ran all of `measure` on
-  every path, macro panel and channels included, to take one statistic from each. A contract test
-  in each twin holds the direct reading to `measure`'s, bit for bit.
-- Percentiles and medians sort one copy, and the macro panel sorts each series once for its three
-  quantiles instead of three times.
-- Scala only: the sorts are on primitive arrays rather than boxed values; `trailingRank` keeps a
-  sorted window instead of rescanning; the price loop calls `java.lang.Math` for `min` and `max`,
-  which the JIT could not inline from `scala.math` in a method that large. In Rust the plain rescan
-  stays, since it vectorizes and measured faster than a sorted window.
-- The clustering lags share their absolute returns, centring and denominator, and several rows stop
-  recomputing a path's returns or building intermediate arrays. The kernels stay on `MatD`'s own
-  arithmetic: its summation order and its handling of -0.0 are what the twins agree on.
-
-**The Scala search harness gains `-transport` and `-fidelity`, and admission is recorded as it happened**
-
-- `jsrc/marketSimSearch.sc` runs `-transport` and `-fidelity`, byte-identical to the Rust harness.
-  It previously refused any archive built with `-transport`, so the independent re-score before
-  publishing, a Scala `-holdout` of a Rust archive, could not run on any archive a search
-  produced. It now can.
-- The Scala harness reads the library's `CalibrateRanges` instead of carrying its own copy,
-  as the Rust harness already did.
-- A candidate now replaces the NEAREST archive member inside `-sep`, not the first one found in
-  archive order, so it is never refused against one member while beating the one it is closest
-  to. The checkpoint records `admit = spread-keeping-nearest`, so an archive built under the old
-  rule refuses to resume.
-- `log.tsv`'s `admitted` is true only when the candidate is still in the archive after the trim.
-  A candidate appended and then evicted in the same step as the worse half of the closest
-  behavioural pair was logged as admitted.
-- `log.tsv`'s `eval` is the candidate's seed base, so its seeds are `seed + (eval + j) * 7919`.
-  It previously advanced by the repetition count plus one per candidate and matched neither the
-  seed base nor the candidate number. The running counter is reported as seed slots: every
-  candidate is allotted `-reps` seeds whether or not it stops at its first infeasible one.
-- A pruned archive's `dropped.tsv` carries each dropped member's descriptors from the Rust harness,
-  as it already did from the Scala one.
 
 **The realism kurtosis band is 4-40, and no realism edge may sit inside a target's own noise**
 
@@ -161,182 +62,141 @@
   S&P and 9.55 for the Nasdaq, are unchanged: they answer "is this this market", which the realism
   band does not.
 - Widening a realism ceiling cannot fail a world that passed, so every frozen release and recipe
-  reproduces. A world reading kurtosis between 30 and 40 now passes the realism class; the default
-  world reads 33.97 at 20 paths.
+  reproduces. A world reading kurtosis between 30 and 40 now passes the realism class.
 - A contract test on each side asserts that no realism band edge lies within three estimator
   standard deviations of a fidelity target for the same statistic, across equity volatility,
   kurtosis, lag-1 clustering and crash rate on both anchor sets. Kurtosis was the only violation.
   The four bands are named constants the gate and the test both read.
 
-**The search log records admission, and a resume refuses a log with different columns**
+**Both simulators measure their ensembles across cores: a calibration search runs 4.8 times faster in Rust and 2.7 in Scala**
 
-- `log.tsv` gains `admitted`, whether each candidate actually entered the archive. It is not
-  recoverable from the archive, since a replacement leaves the member count unchanged.
-- `marketSimSearchReport.sc` counts PRESSURE from that column. Its old estimate, candidates scoring
-  better than the archive's worst member, saturates once spread-keeping admits a poor scorer for
-  its behaviour; on a 471-generation run it counted every feasible candidate. Reading a log
-  without the column, the report still uses the estimate and labels it a proxy.
-- The report reads the log by header name rather than column position.
-- A resume whose `log.tsv` was written with different columns is refused, naming both headers,
-  rather than appending wider rows under the old header.
-
-**A calibration archive's members can be run: `-worldset` / `-worldindex`**
-
-- `-worldset F -worldindex K` seeds every dial from member K of the JSON the calibration search's
-  `-export` writes, so a strategy can be run across the whole set of worlds consistent with the
-  record rather than against one best fit. Seeded like `-atrelease`: the member arrives as
-  arguments ahead of the command line's own, so an explicit dial flag after it still overrides.
-  `-worldindex` defaults to 0 and addresses a member by its own `member` number, not its position.
-  `-worldset` and `-atrelease` each name a whole world, so giving both is refused.
-- A world block that is not exactly this binary's dials is refused, naming what is missing or
-  unknown. An omitted dial would take the shipped default and be a different world under a
-  member's name, which is the one failure a consumer could not see. The expected keys are read off
-  `worldJsonBody`'s own output, so a dial added to the world cannot be skipped here.
-- The loader lowercases each key to its flag and lets the ordinary flag loop set it, one rule
-  instead of a second copy of 76 setters. `-valuepull` is added as the name that rule needs;
-  `-value` still sets the same dial.
-
-**The exported archive is valid JSON, and carries the archive's own precision**
-
-- `-export` joined the world block's fields on a bare newline, with no separator, so no JSON parser
-  accepted the file. The sidecar's join was always correct.
-- The block is now written at the archive's width, eight significant digits, rather than the
-  report's six decimals. `-export` reads `archive.tsv`, so the report's width re-truncated an
-  already-rounded dial: 7303 of the 8400 searched-dial values in a 300-member export differed from
-  the row they came from. A consumer reconstructs a world from this block, so it reproduces the
-  archive exactly. `worldJsonBody` / `world_json_body` take the renderer as a parameter; the
-  sidecar keeps six decimals and is unchanged byte for byte.
-- `state.tsv` carries `noiseSum` and `noiseN`, the seed-noise accumulator `admit` compares against.
-  It is state rather than a setting, so the resume guard does not compare it and a resume no longer
-  rebuilds the threshold from one reading. A checkpoint written without the keys reads as zero.
-
-**The archive keeps its spread, and the search says why it rejects**
-
-- `admit` replaces a member only by more than the seed-noise spread measured during the run, and
-  when the archive overflows it drops the member whose removal costs the least behavioural ground
-  rather than the worst-scoring one. The old rules sorted forty statistically indistinguishable
-  worlds by score and discarded diversity to chase differences four times smaller than the noise;
-  over one 4300-generation run the archive's signed lag-1 range fell from 0.057 to 0.032. A/B at
-  identical settings over 40 generations: lag-1 range 0.043 to 0.074, variance ratio 250 0.59 to
-  1.79, crashes per path 2.1 to 7.9. Recorded in the checkpoint as `admit = spread-keeping`, so an
-  older archive refuses to resume under the new rules rather than mixing two standards.
-- `log.tsv` gains `gateFail`, the gate rows a rejected candidate failed. The existing `worstRow`
-  is a fitness row and feasibility is decided by the gate, two different sets, so a rejected line
-  said nothing about the rejection. Transport-arm failures carry their market prefix as `worstRow`
-  does.
-- `-holdout` runs a NULL CONTROL: each member against the world it was seeded from, on the fresh
-  stream, with a threshold of twice the seed-noise sd pooled across lineages, and it prints its own
-  resolution so an empty result is never read as evidence of nothing. A member is flagged only when
-  it beats its seed's worst row AND reads no worse on the whole signature, `fitness`'s summed loss
-  over both arms; the score pays nothing inside the dead zone, so a member can lower its worst row
-  while the others drift, and those are counted separately. Its columns are `passA rawA passB rawB
-  worstB lossA
-  lossB`: the search draws mutation seeds from a third stream, so both arms are unseen and the test
-  is seed-sensitivity, which the old train/test names misdescribed.
-- `jsrc/marketSimSearchReport.sc` reports convergence on a live or finished run from its files
-  alone: cost, yield, best-so-far and per-block draw quantiles as trend lines, admission pressure,
-  the growth of the archive's behavioural spread, and a verdict that reads the spread: under
-  spread-keeping admission candidates keep entering after the set has stopped widening. `-full` for
-  every block, `-ascii` for a console not in UTF-8.
-- Measured with `gateFail`: at 30 paths the shipped default reads kurtosis 30.3 with a seed sd of
-  7.4 against a realism ceiling of 30 and a fidelity target of 28.0, so that one row was a third
-  of all rejections. At 60 paths the sd is 2.8 and at 100 it is 1.7. The search should run at 60
-  paths; the 30-path steer came from a fidelity study on worlds well inside their bands. The
-  ceiling itself, an undocumented literal two points above the record, is a model question and is
-  not moved here.
-
-**An evaluation stops paying for what it cannot use**
-
-- `extremeReadingsFrom` / `extreme_readings_from` take an ensemble the caller already holds. The
-  extreme row is read at its anchor's own horizon, 100 years for the S&P set, whatever `-years`
-  says, and that second ensemble is the larger half of an evaluation: 2.89 seconds against the
-  main reading's 2.28 at 60 paths by 80 years. A caller already running at that horizon was
-  simulating the same paths from the same seed twice.
-- Each path in that ensemble is measured in parallel rather than one at a time. `measure` is pure
-  and the order is preserved, so every reading and every median is what it was.
-- Nothing computed changes. `-validate` on seven worlds, `-emit` with its sidecar and `-calibrate`
-  on one seed stay byte-identical across the twins.
-- In the search itself, the second ensemble is skipped outright once the gate has failed, since
-  feasibility reads only the pooled statistics and a failing candidate is rejected whatever its
-  score. Its rows are then dropped from the worst-row search rather than scored as unmeasurable,
-  so a rejected candidate still names a row that was measured. Repetitions stop at the first
-  failure, and a transport arm is not evaluated at all when the primary market has already failed.
-- Measured at 30 paths by 80 years: a rejected candidate falls from about 1.2 seconds to 0.38, a
-  feasible one is unchanged at 1.16, so a run rejecting half its candidates is about 1.7 times
-  faster. At `-years 100` a feasible candidate costs 0.99, less than at 80, because the reuse
-  applies there.
-- A `search` build profile adds link-time optimisation and a single codegen unit, worth a further
-  4.5% and verified to produce an identical archive. Build with `cargo build --profile search`.
+- Measured on a calibration search at 60 paths by 80 years with the Nasdaq transport arm, on 24
+  cores: Rust 42.6 seconds to 8.9, Scala 158.2 to 58.7. Every statistic `measure`, the extreme rows
+  and `fitness` produce is bit-identical to before, compared at full precision across four worlds
+  in each twin, and the twins still agree byte for byte.
+- `measure` computes each path's statistics in ONE parallel pass and takes the medians after. They
+  ran one path at a time while the simulation used every core: a 60-path Nasdaq ensemble simulated
+  in 0.07 seconds and measured in 1.07. The channel and macro-panel statistics run across paths the
+  same way.
+- The extreme-horizon rows read each path's worst decline directly (`extremeReadingsFrom` /
+  `extreme_readings_from` take an ensemble the caller already holds). They ran all of `measure` on
+  every path, macro panel and channels included, to take one statistic from each. A contract test
+  in each twin holds the direct reading to `measure`'s, bit for bit. The extreme row is read at its
+  anchor's own horizon whatever `-years` says, so a caller at that horizon no longer simulates the
+  same paths twice.
+- Percentiles and medians sort one copy, and the macro panel sorts each series once for its three
+  quantiles instead of three times. The clustering lags share their absolute returns, centring and
+  denominator. The kernels stay on `MatD`'s own arithmetic: its summation order and its handling
+  of -0.0 are what the twins agree on.
+- Scala only: the sorts are on primitive arrays rather than boxed values; `trailingRank` keeps a
+  sorted window instead of rescanning; the price loop calls `java.lang.Math` for `min` and `max`,
+  which the JIT could not inline from `scala.math` in a method that large. In Rust the plain rescan
+  stays, since it vectorizes and measured faster than a sorted window.
 - Measured and NOT taken: evaluating a generation's candidates in parallel. Going from 30 paths to
   48 improves per-path efficiency only 8%, so there is little idle capacity to reclaim, and it
   would have changed which parents a generation draws from.
 
-**The search records what a world DOES, ranks its own cheap ensembles, and selects for transport**
+**The calibration search: an archive of the worlds consistent with the record, in both twins**
 
-- **Behaviour descriptors.** Every candidate now carries six readings beside its dials — signed
-  lag-1, the 250-session variance ratio, lag-20 clustering, kurtosis, crashes per path and median
-  crash depth — into `archive.tsv` and into `log.tsv` for every candidate, including the rejected
-  majority that vanishes when a run ends. The archive thins in dial space, which is a proxy for
-  behavioural difference rather than a measurement of it, so without these its spread is assumed.
-  Signed lag-1 leads because it is the axis the record cannot pin down, and finding that took a
-  separate study after the last run; as a column it is a sort. Never graded, never optimised.
-- **`-fidelity 20x40,30x60,…`** scores the frozen pool at the reference ensemble and at each
-  cheaper one, and reports how faithfully each RANKS the worlds, since the search only ever
-  compares candidates. Measured against 60 paths by 80 years: 30 by 80 costs half as much for a
-  rank correlation of 0.993 with no feasibility disagreement, where 20 by 40 is 3.9x but puts two
-  of nineteen worlds on the wrong side of the gate. Paths govern feasibility agreement and years
-  govern ranking, so the saving comes from a modest path cut, not from short paths.
-- **`-transport 0.24.1-nasdaq`** judges every candidate on both of its markets, feasible in each and
-  the scores added, so a world that fits the S&P by doing something the Nasdaq will not tolerate
-  never enters the archive. One
-  dial vector cannot pass both anchor sets and is not meant to: the volatility bands do not
-  overlap. What travels is the mechanism, while the six dials that counterpart moved away from the
-  default stay at its values. The held set is derived from the two worlds and printed at startup
-  rather than listed in code.
-- **Both harnesses now mutate through `NumPyRNG`**, whose `randn` and bounded-integer draw are
-  gated bit-identical across the twins, so one `-seed` walks one trajectory in either language.
-  They were on each language's native generator, which cannot agree: a Gaussian is scaled by a
-  logarithm and the two measure those 1 ulp apart on 0.235% of a corpus. `-calibrate` was moved
-  off a native generator for this reason and the search was the last place one survived.
-- The two harnesses agree byte for byte on the archive, the checkpoint and the log, including the
-  candidates a search proposes, wherever the Rust one runs without a transport arm. Where it runs
-  with one, the Scala harness refuses the archive instead of re-scoring it, because it would read
-  the primary arm alone and call members feasible that were never judged that way.
+- `rust/src/bin/market_sim_search.rs` and `jsrc/marketSimSearch.sc` (built with
+  `cargo build --release --bin market_sim_search`; the Rust one is excluded from the published
+  crate, like the `bench_*` binaries) run the same search and agree byte for byte on the archive,
+  the checkpoint, the log, the exported worlds and the pruned sets; a Scala `-holdout` re-scores a
+  Rust archive exactly. The Rust harness costs 1.2 s a candidate at 60 paths by 80 years on two
+  repetitions against a warmed JVM's 10.3; channels dominate what is left. `MarketSimWorlds.md`'s
+  `-worldset` section says what the archive is, what feasible means, and how to read a ranking
+  across the set.
+- WHAT IT PRODUCES is a set, not a champion: thirty searched dials against some forty-five graded
+  rows that are not independent means distinct worlds match the record equally well, and a
+  strategy feels the mechanism rather than the summary statistic.
+- FEASIBILITY is a hard gate: every realism and mechanism row on every one of `-reps` seeds, on
+  both markets when `-transport` names a counterpart, and a failed row is never priced into a
+  scalar. THE SCORE is the sum over every fitness row of both arms of `max(0, term − dead)`: inside
+  the record's own sampling error a row contributes nothing, so a long search cannot optimise
+  noise; outside it every row counts, and a row cannot be bought below the dead zone because its
+  excess is paid in full. Each fidelity-class gate band a candidate fails adds one dead zone — the
+  macro panel's, the channels', the variance-ratio profile and the bond's volatility have no
+  fitness row, and a band flips on a seed at 60 paths, so they are scored rather than gated; a
+  feasible candidate names its failed bands in `gateFail` with a `fidelity:` prefix. The
+  checkpoint records the objective as a digest of every row's name, target and weight, and refuses
+  to resume an archive scored under different ones.
+- ADMISSION keeps a spread, not a ranking. A candidate replaces its NEAREST member inside `-sep`
+  only by more than the seed-noise spread measured during the run from each candidate's own
+  repetitions; an overflowing archive drops the member whose removal costs the least behavioural
+  ground, the closest pair in descriptor space with the worse score losing. A/B over 40
+  generations against a score-sorted trim: lag-1 range 0.043 to 0.074, variance ratio 250 0.59 to
+  1.79, crashes per path 2.1 to 7.9. `-bar M` (default 1.0) is the quality bar: a candidate enters
+  only if its score is at most M times its seed world's, judged the same way, so every member fits
+  the record at least as well as the shipped world its lineage started from; members above it are
+  dropped on resume and counted. Measured on the S&P set: median summed excess 1.50 → 1.06 and rows
+  past the dead zone 5 → 2.5 (default 1). `admit`, `score`, `bar` and the seed-noise accumulator
+  are part of the checkpoint; a resume under different settings is refused.
+- BEHAVIOUR DESCRIPTORS ride beside every candidate's dials — signed lag-1, the 250-session
+  variance ratio, lag-20 clustering, kurtosis, crashes per path and median crash depth — into
+  `archive.tsv` and into `log.tsv` for every candidate, the rejected majority included. The
+  archive thins in dial space, a proxy for behavioural difference; these measure it. Signed lag-1
+  leads because it is the axis the record cannot pin down. Never graded, never optimised.
+- `-transport 0.24.1-nasdaq` judges every candidate on both markets, feasible in each and the
+  scores added, so a world that fits the S&P by doing something the Nasdaq will not tolerate never
+  enters. The MARKET DIALS — `depth`, `drift`, `stress`, `volOfVol`, `jumpVar`, `refuge`,
+  `slowShare`, named in both harnesses and printed at startup — stay at the counterpart's values
+  and the candidate's other twenty-three transport, in either direction.
+- `slowShare` (0–0.8) and `slowVol` (0.5–2.5) join `CalibrateRanges` / `calibrate_ranges`, 30
+  searched dials from 28. The channel is what carries volatility clustering past lag 20 — the S&P
+  world reads 0.117 at lag 60 with it, the 0.24.1 Nasdaq recipe 0.036 against a record of 0.175 —
+  and Nasdaq lag-20 clustering was the one fitness row no member of a 113-world archive could
+  reach. `slowVol` is searched beside the share because the channel bypasses the spiral: the share
+  takes volatility out and the scale gives it back without thinning the market.
+- `-holdout K` re-scores every member on two seed streams the search never selected on and drops
+  the seed-sensitive; `-prune` keeps what survived. It runs a NULL CONTROL: each member against
+  the world it was seeded from, flagged only when it beats its seed's worst row by more than twice
+  the pooled seed-noise sd AND reads no worse on the summed loss over both arms — the ones that
+  paid for the worst row elsewhere are counted separately, as the objective's hole — and it prints
+  its own resolution, so an empty result is never read as evidence of nothing.
+- `-export F` writes the archive as a worlds JSON at the archive's own eight significant digits,
+  and `-worldset F -worldindex K` seeds every dial from member K the way `-atrelease` does, with an
+  explicit flag after it still overriding. A world block that is not exactly this binary's dials
+  is refused, naming what is missing or unknown; `-worldset` and `-atrelease` each name a whole
+  world, so giving both is refused. `-valuepull` is the flag name the loader's key rule needs;
+  `-value` still sets the same dial. An archive whose header is not exactly this binary's dial and
+  descriptor columns is refused by name.
+- `-fidelity 20x40,30x60,…` scores the frozen pool at the reference ensemble and at each cheaper
+  one and reports how faithfully each RANKS the worlds. Against 60 paths by 80 years: 30 by 80
+  keeps a rank correlation of 0.993 at half the cost; paths govern feasibility agreement and years
+  govern ranking, and 20 paths is a floor. The search should run at 60 paths: at 30 the shipped
+  default's kurtosis seed sd is 7.4 against a target of 28.0, and that one row was a third of all
+  rejections.
+- `log.tsv` records, per candidate, its seed base (`eval`; seeds are `seed + (eval + j) * 7919`),
+  the gate rows a rejected candidate failed (`gateFail`) and whether it entered (`admitted`); a
+  resume whose log was written with different columns is refused. `jsrc/marketSimSearchReport.sc`
+  reports convergence from the files alone — cost, yield, best-so-far and per-block draw
+  quantiles, admission pressure, the growth of the archive's behavioural spread, and a verdict
+  that reads the spread, since under spread-keeping candidates keep entering after the set has
+  stopped widening.
+- Both harnesses mutate through `NumPyRNG`, whose `randn` and bounded-integer draw are gated
+  bit-identical across the twins, so one `-seed` walks one trajectory in either language; a
+  language-native Gaussian is scaled by a logarithm the twins measure 1 ulp apart on 0.235% of a
+  corpus.
 
-**The searchable dials are in one order, and the twins now agree on `-calibrate`**
+**The searchable dials are in one order, the search box contains the model, and the twins agree on `-calibrate`**
 
 - The two ranges tables were permuted against each other at positions 15 to 23. `-calibrate`
   draws one uniform per dial from a single stream in table order, so the same seed built
-  different worlds in the two languages. `-validate`, `-emit` and `-fitness` were unaffected and
-  stayed byte-identical throughout, because none of them reads that table, which is why this
-  survived as a per-sample loss gap that looked like rounding in the scoring path.
-- `CalibrateDialOrder` / `CALIBRATE_DIAL_ORDER` restates the order as a literal beside each
-  twin's table, asserted by that twin's contract test — the shape `EmitSchema` / `EMIT_SCHEMA`
-  already use for the sidecar's keys. A table consumed positionally needs a contract on its
-  order; a set-equality check on its names is not one.
-- `-calibrate` is now byte-identical across the twins on the same seed. No default moves and no
-  model code changes: the whole diff is the order of the rows and the literal that pins it.
+  different worlds in the two languages; `-validate`, `-emit` and `-fitness` were unaffected,
+  since none reads that table. `CalibrateDialOrder` / `CALIBRATE_DIAL_ORDER` restates the order as
+  a literal beside each twin's table, asserted by that twin's contract test — the shape
+  `EmitSchema` / `EMIT_SCHEMA` already use. A table consumed positionally needs a contract on its
+  order; a set-equality check on its names is not one. `-calibrate` is byte-identical across the
+  twins on the same seed.
+- `-calibrate`'s ranges hold every frozen world, and a contract test in both twins asserts it.
+  `margin` had shipped at 0.006 since 0.19.1 against a ceiling of 0.004, so for eleven releases the
+  search could not propose the value the default itself uses. Also widened: `depth` to 8.0 (the
+  0.24.0 Nasdaq recipes run 8.4), `jumpRate` to 0.0 .. 0.006, `volOfVol` to 0.010. Bounds round
+  outward past the extreme so a dial shipped at the edge can still be explored past it. Each range
+  row gained a getter beside its setter, because a range that cannot be read back cannot be
+  checked against the worlds it must contain.
 - `fitness`, `extreme_score_stats`, `calibrate_ranges`, `world_json_body`, `pctile` and
-  `SD_REL_REF` are `pub` in `uni::market_sim`. The Scala twin already exposed all six; Rust
-  keeping them private was the asymmetry.
-
-**A calibration search in Rust**
-
-- `rust/src/bin/market_sim_search.rs`, the twin of `jsrc/marketSimSearch.sc`, built with
-  `cargo build --release --bin market_sim_search`. Excluded from the published crate, like the
-  `bench_*` binaries: `cargo install vastblue-uni` still builds the simulator alone.
-- Measured against the Scala harness on identical settings, the two agree byte for byte on the
-  archive, the checkpoint, the exported worlds JSON, the pruned and dropped sets, and every line
-  of console output; the log differs only in its elapsed-seconds column. A Scala `-holdout` run
-  re-scores a Rust archive exactly, which is the check worth running before an archive is
-  published.
-- Cost per candidate at 60 paths by 80 years on two repetitions: 1.2 s on a plain equity world
-  against a warmed JVM's 10.3 s. The channels dominate what is left — 4.2 s with the macro panel
-  on, 8.4 s with the basket — so seeding from a recipe is several times the price of seeding from
-  a release.
-- It reads the library's dial table rather than carrying a copy. The Scala script carries its own
-  to avoid a `publishLocal` round trip; this one is rebuilt from the same tree as the model, so a
-  copy would buy nothing and cost exactly the failure above.
+  `SD_REL_REF` are `pub` in `uni::market_sim`, as the Scala twin already exposed them.
 
 **The macro panel gains the overnight rate**
 
@@ -363,17 +223,6 @@
   and the two rows that size the level gap, `shareLt05` and `shareGt5`. They are shape rows only:
   the equity-relation rows need the four reference histories at the vintage the rest of the file
   was measured at.
-
-**The search box now contains the model**
-
-- `-calibrate`'s ranges hold every frozen world, and a contract test in both twins asserts it.
-  `margin` has shipped at 0.006 since 0.19.1 against a ceiling of 0.004, so for eleven releases the
-  search could not propose the value the default itself uses. Also widened: `depth` to 8.0 (the
-  0.24.0 Nasdaq recipes run 8.4), `jumpRate` to 0.0 .. 0.006, `volOfVol` to 0.010. Bounds round
-  outward past the extreme so a dial shipped at the edge can still be explored past it.
-- Each range row gained a getter beside its setter, because a range that cannot be read back cannot
-  be checked against the worlds it must contain. The model is untouched and the twins stay
-  byte-identical.
 
 **The variance-ratio rungs are phase-averaged, and the record's bands tighten**
 
