@@ -1,5 +1,33 @@
 ## v0.24.2 — unreleased
 
+**`0.24.2-nasdaq`: the Nasdaq recipe re-solved by the calibration search, and the Nasdaq spreads re-frozen at it**
+
+- `-atrelease 0.24.2-nasdaq` is `0.24.1-nasdaq` re-solved by the archive search with the slow
+  repricing channel's share and scale among the thirty searched dials, judged on both markets,
+  admitted under the quality bar and picked as the steadiest of the thirteen members that pass
+  every gate class on four seeds at 200 paths. Every searched dial moved; the literals are the
+  archive's own, so the recipe reproduces the member byte for byte. Against `0.24.1-nasdaq` at 200
+  paths: crashes per century 39.7 → 29.0 (record 25.6), lag-20 clustering 0.16 → 0.20 (0.25), the
+  60-day variance ratio 0.81 → 0.98, the record's worst crash at the 22nd percentile of the
+  model's 27-year worsts from the 12th, the downside excess −1.3 → −0.4 (sign still wrong). Paid:
+  kurtosis 15.8 → 17.8 (record 9.6) and lag-1 clustering 0.32 → 0.35 (0.29). Fitness loss 1.17
+  against 1.61 under one set of weights. `0.24.1-nasdaq` stays a frozen row.
+- The Nasdaq anchor set's sampling spreads are re-frozen from `-noise -paths 200` at the new
+  recipe; the same command at `0.24.1-nasdaq` reproduces all twenty previous literals exactly.
+  Wider on volatility (0.10 → 0.16), median depth (0.39 → 0.52) and lag-20 clustering (0.15 →
+  0.22): the slow channel's regime shows in single histories. Nasdaq losses are not comparable
+  across this change.
+
+**The satellite's and the sector's state carries the slow repricing channel's variance**
+
+- The state factor the satellite leg's idio and the basket's sector leg ride — the vol state times
+  the spiral's amplification — now carries the slow repricing channel's variance beside the
+  diffusive state at its share, as the implied-vol member reads it. Without it a world carrying
+  its long-lag clustering in the channel gave the satellite none of it, and the satellite's
+  clustering-20 ratio left its band on every seed at a channel share of 0.3. Every shipped world
+  with channels on still passes every class; a channel-off world is bit-identical. Satellite and
+  basket columns move on worlds with the channel on, which includes the S&P default's recipes.
+
 **The implied-vol member is levelled in the premium's own statistic, so its premium is the record's in every world**
 
 - `macroIvol`'s VALUES CHANGE. The member is re-levelled by `kIv`, the mean over sessions of log
@@ -28,6 +56,12 @@
   is not exactly this binary's dial and descriptor columns — by name, not by width: a row-width
   check let a 28-dial archive read as 30 with two descriptors taken for dials. `-calibrate` draws
   two more uniforms per sample, in both twins identically.
+- Each fidelity-class gate band a candidate fails adds one dead zone to its score, in both
+  harnesses. Bands no fitness row covers — the macro panel's, the channels', the variance-ratio
+  profile, the bond's volatility — were neither gated (a band flips on a seed at 60 paths) nor
+  scored; 139 of one archive's 145 survivors failed one on the fitness seed, and a recipe has to
+  pass every class. A feasible candidate's failed bands are named in `gateFail` with a
+  `fidelity:` prefix.
 - `-bar M`, THE QUALITY BAR: a feasible candidate enters the archive only if its score is at most
   M times its seed world's, judged the same way (default 1.0, so every member fits the record at
   least as well as the shipped world its lineage started from; 0 restores admission on distance

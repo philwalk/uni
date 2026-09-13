@@ -187,7 +187,7 @@ member is then re-scored on seed streams the search never selected on, and the o
 there are dropped before the set is exported:
 
 ```
-market_sim_search -out search -paths 60 -years 80 -reps 3 -keep 300 -transport 0.24.1-nasdaq
+market_sim_search -out search -paths 60 -years 80 -reps 3 -keep 300 -transport 0.24.1-nasdaq -bar 1
 market_sim_search -out search ... -holdout 12
 market_sim_search -out search ... -prune
 market_sim_search -out search ... -export worlds.json
@@ -1372,6 +1372,17 @@ their own dials for their own depth and have not been re-solved against it, so a
 reads 0.24.0's clustering shape. `0.24.1-nasdaq` carries the vol response only, at its own
 re-solve — `depth` 10.0, `stress` 4.2, `levGain` 9, `stressAdapt` 0.015, `volResp` 0.008 — where
 `0.24.0-nasdaq` runs `depth` 8.4, `stress` 4.4 and `levGain` 8.
+
+**`0.24.2-nasdaq` is the searched Nasdaq**: `0.24.1-nasdaq` re-solved by the calibration search
+of the `-worldset` section, with the slow repricing channel's share and scale among the thirty
+searched dials, judged on both markets and picked as the steadiest of the members that pass every
+class on four seeds at 200 paths. Every searched dial moved and the recipe's literals are the
+archive's own, so `-atrelease 0.24.2-nasdaq` reproduces the archive member byte for byte. Against
+`0.24.1-nasdaq`: crashes per century 39.7 → 29.0 (record 25.6), lag-20 clustering 0.16 → 0.20
+(0.25), the 60-day variance ratio 0.81 → 0.98, the record's worst crash at the 22nd percentile of
+the model's 27-year worsts from the 12th; paid in kurtosis 15.8 → 17.8 (record 9.6) and lag-1
+clustering 0.32 → 0.35 (0.29). The Nasdaq anchor set's spreads are frozen at this world. The
+un-searched dials are the 0.24.1 recipe's, so it carries the vol response and the macro panel.
 
 ## The vol response to a fall
 

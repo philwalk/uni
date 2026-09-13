@@ -842,7 +842,7 @@ class MarketSimContractSuite extends FunSuite:
     // The extreme rows skip `measure` per path; this holds each direct reading to the full path bit
     // for bit, on horizons short enough that some paths have no episode (the NaN arm).
     for
-      (w, spec) <- Seq(MarketSim.Defaults -> "sp500", MarketSim.namedWorld("0.24.1-nasdaq").get._1 -> "nasdaq")
+      (w, spec) <- Seq(MarketSim.Defaults -> "sp500", MarketSim.namedWorld("0.24.2-nasdaq").get._1 -> "nasdaq")
       years     <- Seq(2, 8, 40)
     do
       val a    = MarketSim.anchorsNamed(spec)

@@ -835,6 +835,7 @@ pub fn recipes() -> Vec<(&'static str, World, &'static str)> {
     // nothing else in it carries skew — but it costs 21% of daily kurtosis on a row already at
     // 1.7x. Measured, not taken; the sign stays disclosed.
     let (sp_vr, nq_vr, basket_vr, nq_basket_vr) = recipes_0241(open, basket, nq_basket);
+    let nq_searched = recipe_0242_nasdaq(nq_vr);
     vec![
         ("0.23.0-nasdaq", nasdaq, "nasdaq"),
         ("0.23.1-nasdaq", open, "nasdaq"),
@@ -848,7 +849,54 @@ pub fn recipes() -> Vec<(&'static str, World, &'static str)> {
         ("0.24.1-nasdaq", nq_vr, "nasdaq"),
         ("0.24.1-basket", basket_vr, "sp500"),
         ("0.24.1-nasdaq-basket", nq_basket_vr, "nasdaq"),
+        ("0.24.2-nasdaq", nq_searched, "nasdaq"),
     ]
+}
+
+/// THE SEARCHED NASDAQ (0.24.2): the 0.24.1 recipe re-solved by the calibration search with the
+/// slow repricing channel's share and scale among the thirty searched dials, seeded from
+/// `0.24.1-nasdaq` and judged on both markets -- member 59 of search-v7, the member with the best
+/// and steadiest four-seed loss of the thirteen that pass every class on every seed at 200 paths.
+/// Every searched dial moved; the literals are the archive's, at its eight significant digits, so
+/// `-atrelease 0.24.2-nasdaq` reproduces the member byte for byte. Against 0.24.1-nasdaq at 200
+/// paths: crashes/century 39.7 -> 29.0 (record 25.6), lag-20 clustering 0.16 -> 0.20 (0.25), the
+/// 60-day variance ratio 0.81 -> 0.98, the record's worst crash at the 22nd percentile of the
+/// model's 27-year worsts from the 12th, the downside excess -1.3 -> -0.4 (its sign still wrong);
+/// paid in kurtosis 15.8 -> 17.8 (record 9.6) and lag-1 clustering 0.32 -> 0.35 (0.29). Fitness
+/// loss 1.34-1.38 on four seeds against 1.89. The channel at 0.26 is what carries the long-lag
+/// clustering; the un-searched dials are the 0.24.1 recipe's.
+fn recipe_0242_nasdaq(mut w: World) -> World {
+    w.depth = 11.358200;
+    w.trend_share = 0.050000000;
+    w.drift = 0.081690703;
+    w.fund_vol = 0.050101631;
+    w.crowd_impact = 0.035528819;
+    w.stress = 4.9416411;
+    w.value_pull = 0.053088392;
+    w.recovery_drag = 7.6010353;
+    w.recovery_floor = 0.050000000;
+    w.disaster_rate = 0.37752848;
+    w.disaster_size = 1.9863881;
+    w.disaster_recover = 0.54438475;
+    w.belief_share = 0.82720104;
+    w.cap_years = 3.8114382;
+    w.vol_of_vol = 0.020494984;
+    w.jump_var = 0.010020763;
+    w.jump_rate = 0.0042044464;
+    w.leverage = 0.075596038;
+    w.down_shock = 0.0053327418;
+    w.jump_skew = 0.44612461;
+    w.news_rate = 0.75803958;
+    w.news_size = 0.035103095;
+    w.refuge_days = 0.40464222;
+    w.easing = 0.038096751;
+    w.refuge = 0.11669169;
+    w.infl_size = 0.11053817;
+    w.discount = 7.0558391;
+    w.margin = 0.0060943221;
+    w.slow_share = 0.25871333;
+    w.slow_vol = 0.83824954;
+    w
 }
 
 /// The 0.24.1 recipe worlds, returned as (macro, nasdaq, basket, nasdaq-basket).
@@ -3956,7 +4004,19 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
         if ch_on {
             ch.px[i] = eq_m.log_p - markdown;
             ch.d[i] = sess_sigma * eq_m.last_liq;
-            ch.state[i] = (log_vol - vol_norm).exp() * eq_m.last_liq * w.depth / 12.0;
+            // the satellite's and the sector's state: the primary's conditional vol -- the
+            // diffusive state at its share beside the slow channel's variance, as the implied-vol
+            // member reads it -- times the spiral's amplification. Without the channel's term a
+            // world carrying its long-lag clustering in the channel gave the satellite none of it,
+            // and the satellite's clustering-20 ratio left its band on every seed. The branch
+            // keeps a channel-off world bit-identical: sqrt(x * x) is not always x.
+            let vs = (log_vol - vol_norm).exp();
+            let st = if w.slow_share > 0.0 {
+                (vs * mix * vs * mix + slow_var).sqrt()
+            } else {
+                vs
+            };
+            ch.state[i] = st * eq_m.last_liq * w.depth / 12.0;
             ch.scale_var[i] = eq_m.scale_var;
             ch.jump[i] = jump_now * eq_m.last_liq - news_j;
             let vb = (log_vol - vol_norm).exp() * vol_resp_m * mix;
@@ -7089,9 +7149,12 @@ const SP500_ANCHORS: Anchors = Anchors {
 ///
 /// Control: the same pipeline on SPY 1993-01-29 reproduces the committed w1993 fixture row exactly.
 ///
-/// THE SAMPLING SPREADS ARE THE NASDAQ WORLD'S OWN, re-frozen 2026-09-12 from
-/// `-noise -paths 200 -atrelease 0.24.1-nasdaq`, the recipe this set describes. The same command at
-/// the outgoing 0.24.0-nasdaq recipe reproduces 19 of the 20 previous literals exactly. They were
+/// THE SAMPLING SPREADS ARE THE NASDAQ WORLD'S OWN, re-frozen 2026-09-13 from
+/// `-noise -paths 200 -atrelease 0.24.2-nasdaq`, the recipe this set describes. The same command at
+/// the outgoing 0.24.1-nasdaq recipe reproduces all 20 of the previous literals exactly, so every
+/// move is the world's: the searched recipe reads wider on volatility (0.10 -> 0.16), median depth
+/// (0.39 -> 0.52) and lag-20 clustering (0.15 -> 0.22), which is the slow channel's regime showing
+/// in single histories. They were
 /// first carried over from the S&P, and those values were badly wrong where the two worlds differ
 /// most: `med_depth_sd`
 /// read 0.10 against a measured 0.37, a 3.7x OVERWEIGHT on the heaviest row in this set's loss
@@ -7109,42 +7172,42 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     tail_window: "QQQ 1999-2026",
     tail_years: 27,
     vol: 26.90,
-    vol_sd: 0.10,
+    vol_sd: 0.16,
     ret_vol: 0.38,
-    ret_vol_sd: 0.51,
+    ret_vol_sd: 0.56,
     kurt: 9.55,
-    kurt_sd: 1.78,
+    kurt_sd: 1.74,
     ac1: 0.293,
-    ac1_sd: 0.22,
+    ac1_sd: 0.23,
     ac20: 0.249,
-    ac20_sd: 0.15,
+    ac20_sd: 0.22,
     crashes: 25.6,
-    crashes_sd: 0.51,
+    crashes_sd: 0.50,
     med_depth: -22.8,
-    med_depth_sd: 0.39,
+    med_depth_sd: 0.52,
     worst_depth: -83.0,
-    worst_depth_sd: 0.20,
+    worst_depth_sd: 0.19,
     vol_band: (23.5, 30.3),
     ret_vol_band: (0.27, 0.47),
     // QQQ wfull row of asymmetry-2026-08-31.tsv; the tail hedge is QQQ/TLT.
     semi_excess: 1.13,
-    semi_excess_sd: 3.97,
+    semi_excess_sd: 4.57,
     lev_corr: -0.1073,
-    lev_corr_sd: 0.47,
+    lev_corr_sd: 0.50,
     tail_hedge: -0.236,
-    tail_hedge_sd: 0.36,
-    // d20's spread is a fraction of the S&P world's (0.31 against 4.17): at Nasdaq volatility the
+    tail_hedge_sd: 0.47,
+    // d20's spread is a fraction of the S&P world's (0.35 against 4.17): at Nasdaq volatility the
     // deep rung is pinned where the S&P default leaves it unreadable, so the row carries real
     // weight here.
-    val_disp_sd: 0.54,
-    vr60_sd: 0.24,
-    d5_sd: 0.11,
-    d10_sd: 0.19,
-    d20_sd: 0.31,
-    bond_vol_sd: 0.52,
-    bond_growth_sd: 0.89,
-    bond_infl_sd: 1.83,
-    bond_depth_sd: 0.36,
+    val_disp_sd: 0.48,
+    vr60_sd: 0.27,
+    d5_sd: 0.13,
+    d10_sd: 0.20,
+    d20_sd: 0.35,
+    bond_vol_sd: 0.57,
+    bond_growth_sd: 1.50,
+    bond_infl_sd: 2.62,
+    bond_depth_sd: 0.31,
     dd_refs: &DD_REFS_NASDAQ,
     div_yield: 0.78,
     div_yield_band: (0.3, 1.5),
@@ -15126,7 +15189,7 @@ mod contract_tests {
         // bit for bit, on horizons short enough that some paths have no episode (the NaN arm).
         for (w, spec) in [
             (default_world(), "sp500"),
-            (named_world("0.24.1-nasdaq").expect("recipe").0, "nasdaq"),
+            (named_world("0.24.2-nasdaq").expect("recipe").0, "nasdaq"),
         ] {
             let a = anchors_named(spec);
             for years in [2usize, 8, 40] {
@@ -16556,8 +16619,13 @@ mod amplifier_anchor_tests {
             assert!(w.slow_share == 0.0, "release {v}");
         }
         for (n, w, _) in recipes() {
-            // the Nasdaq recipes carry their own dials and were NOT re-solved against the channel
-            if !n.starts_with("0.24.1") || n.contains("nasdaq") {
+            // the 0.24.1 Nasdaq recipes carry their own dials and were NOT re-solved against the
+            // channel; the 0.24.2 Nasdaq recipe was
+            if !n.starts_with("0.24.")
+                || n.starts_with("0.24.0")
+                || n == "0.24.1-nasdaq"
+                || n == "0.24.1-nasdaq-basket"
+            {
                 assert!(w.slow_share == 0.0, "recipe {n}");
             }
         }
@@ -16616,7 +16684,7 @@ mod amplifier_anchor_tests {
             assert!(w.stress_adapt == 0.005, "release {v}");
         }
         for (n, w, _) in recipes() {
-            if !n.starts_with("0.24.1") {
+            if !(n.starts_with("0.24.1") || n.starts_with("0.24.2")) {
                 assert!(w.vol_resp == 0.0 && w.jump_resp == 0.0, "recipe {n}");
                 assert!(w.stress_adapt == 0.005, "recipe {n}");
             }
