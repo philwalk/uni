@@ -412,4 +412,3 @@ object LeveredFund {
       eprintln(s"wrote ${use.length} levered path(s) to $emit in the emit schema")
 }
 
-LeveredFund.main(args)

@@ -1386,14 +1386,16 @@ re-solve — `depth` 10.0, `stress` 4.2, `levGain` 9, `stressAdapt` 0.015, `volR
 
 **`0.24.2-nasdaq` is the searched Nasdaq**: `0.24.1-nasdaq` re-solved by the calibration search
 of the `-worldset` section, with the slow repricing channel's share and scale among the thirty
-searched dials, judged on both markets and picked as the steadiest of the members that pass every
-class on four seeds at 200 paths. Every searched dial moved and the recipe's literals are the
-archive's own, so `-atrelease 0.24.2-nasdaq` reproduces the archive member byte for byte. Against
-`0.24.1-nasdaq`: crashes per century 39.7 → 29.0 (record 25.6), lag-20 clustering 0.16 → 0.20
-(0.25), the 60-day variance ratio 0.81 → 0.98, the record's worst crash at the 22nd percentile of
-the model's 27-year worsts from the 12th; paid in kurtosis 15.8 → 17.8 (record 9.6) and lag-1
-clustering 0.32 → 0.35 (0.29). The Nasdaq anchor set's spreads are frozen at this world. The
-un-searched dials are the 0.24.1 recipe's, so it carries the vol response and the macro panel.
+searched dials, under the inflation regime's ceiling, judged on both markets and picked as the
+steadiest of the members that pass every class on four seeds at 200 paths. Every searched dial
+moved and the recipe's literals are the archive's own, so `-atrelease 0.24.2-nasdaq` reproduces
+the archive member byte for byte. Against `0.24.1-nasdaq`: crashes per century 39.7 → 29.0
+(record 25.6), lag-20 clustering 0.16 → 0.19 (0.25), the 60-day variance ratio 0.81 → 0.96, the
+record's worst crash at the 14th percentile of the model's 27-year worsts from the 12th; paid in
+kurtosis 15.8 → 17.3 (record 9.6), lag-1 clustering 0.32 → 0.33 (0.29) and equity vol 24.0
+against 26.9. `jumpVar` is 0: the slow channel carries the long-lag clustering. The Nasdaq anchor
+set's spreads are frozen at this world. The un-searched dials are the 0.24.1 recipe's, so it
+carries the vol response and the macro panel.
 
 ## The vol response to a fall
 

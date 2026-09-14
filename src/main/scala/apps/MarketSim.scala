@@ -1400,22 +1400,22 @@ object MarketSim:
            ("0.24.1-nasdaq-basket", nq(base("0.23.1-nasdaq-basket")), "nasdaq"))
 
   /** THE SEARCHED NASDAQ (0.24.2): the 0.24.1 recipe re-solved by the calibration search with the
-    * slow repricing channel's share and scale among the thirty searched dials, seeded from
-    * `0.24.1-nasdaq` and judged on both markets -- member 59 of search-v7, the member with the best
-    * and steadiest four-seed loss of the thirteen that pass every class on every seed at 200 paths.
+    * slow repricing channel's share and scale among the thirty searched dials, under the inflation
+    * regime's ceiling, judged on both markets -- member 6 of search-v11, the member with the best
+    * and steadiest four-seed loss of the fourteen that pass every class on every seed at 200 paths.
     * Every searched dial moved; the literals are the archive's, at its eight significant digits, so
     * `-atrelease 0.24.2-nasdaq` reproduces the member byte for byte. Against 0.24.1-nasdaq at 200
-    * paths: crashes/century 39.7 -> 29.0 (record 25.6), lag-20 clustering 0.16 -> 0.20 (0.25), the
-    * 60-day variance ratio 0.81 -> 0.98, the record's worst crash at the 22nd percentile of the
-    * model's 27-year worsts from the 12th, the downside excess -1.3 -> -0.4 (its sign still wrong);
-    * paid in kurtosis 15.8 -> 17.8 (record 9.6) and lag-1 clustering 0.32 -> 0.35 (0.29). Fitness
-    * loss 1.34-1.38 on four seeds against 1.89. The channel at 0.26 is what carries the long-lag
-    * clustering; the un-searched dials are the 0.24.1 recipe's. */
+    * paths: crashes/century 39.7 -> 29.0 (record 25.6), lag-20 clustering 0.16 -> 0.19 (0.25), the
+    * 60-day variance ratio 0.81 -> 0.96, the record's worst crash at the 14th percentile of the
+    * model's 27-year worsts from the 12th, the downside excess -1.3 -> -0.3 (its sign still wrong);
+    * paid in kurtosis 15.8 -> 17.3 (record 9.6), lag-1 clustering 0.32 -> 0.33 (0.29) and equity
+    * vol 24.0 against 26.9. Fitness loss 1.20-1.24 on four seeds. The channel at 0.24 is what
+    * carries the long-lag clustering; jumpVar is 0; the un-searched dials are the 0.24.1 recipe's. */
   val Recipes0242: Vector[(String, World, String)] =
     val b = Recipes0241.find(_._1 == "0.24.1-nasdaq").map(_._2)
       .getOrElse(sys.error("no base recipe 0.24.1-nasdaq"))
     Vector(("0.24.2-nasdaq",
-            b.copy(depth = 11.358200, trendShare = 0.050000000, drift = 0.081690703, fundVol = 0.050101631, crowdImpact = 0.035528819, stress = 4.9416411, valuePull = 0.053088392, recoveryDrag = 7.6010353, recoveryFloor = 0.050000000, disasterRate = 0.37752848, disasterSize = 1.9863881, disasterRecover = 0.54438475, beliefShare = 0.82720104, capYears = 3.8114382, volOfVol = 0.020494984, jumpVar = 0.010020763, jumpRate = 0.0042044464, leverage = 0.075596038, downShock = 0.0053327418, jumpSkew = 0.44612461, newsRate = 0.75803958, newsSize = 0.035103095, refugeDays = 0.40464222, easing = 0.038096751, refuge = 0.11669169, inflSize = 0.11053817, discount = 7.0558391, margin = 0.0060943221, slowShare = 0.25871333, slowVol = 0.83824954),
+            b.copy(depth = 11.7205, trendShare = 0.05, drift = 0.078012823, fundVol = 0.03, crowdImpact = 0.048391393, stress = 4.8298039, valuePull = 0.052523421, recoveryDrag = 9.0363421, recoveryFloor = 0.05, disasterRate = 0.46874687, disasterSize = 1.948638, disasterRecover = 0.56444827, beliefShare = 0.84568138, capYears = 2.9900737, volOfVol = 0.018951116, jumpVar = 0.0, jumpRate = 0.00482868, leverage = 0.069007581, downShock = 0.0073220361, jumpSkew = 0.48665602, newsRate = 0.63064016, newsSize = 0.039154222, refugeDays = 0.60052388, easing = 0.018171647, refuge = 0.11311295, inflSize = 0.11254528, discount = 7.3886613, margin = 0.008, slowShare = 0.2392292, slowVol = 0.862505),
             "nasdaq"))
 
   val Recipes: Vector[(String, World, String)] =
@@ -4922,24 +4922,24 @@ object MarketSim:
     clusterWindow = "QQQ 1999-2026", clusterYears = 27,
     tailWindow = "QQQ 1999-2026", tailYears = 27,
     vol = 26.90,         volSd = 0.12,
-    retVol = 0.38,       retVolSd = 0.55,
-    kurt = 9.55,         kurtSd = 1.74,
-    ac1 = 0.293,         ac1Sd = 0.23,
+    retVol = 0.38,       retVolSd = 0.51,
+    kurt = 9.55,         kurtSd = 1.53,
+    ac1 = 0.293,         ac1Sd = 0.24,
     ac20 = 0.249,        ac20Sd = 0.20,
-    crashes = 25.6,      crashesSd = 0.51,
-    medDepth = -22.8,    medDepthSd = 0.52,
-    worstDepth = -83.0,  worstDepthSd = 0.18,
+    crashes = 25.6,      crashesSd = 0.49,
+    medDepth = -22.8,    medDepthSd = 0.45,
+    worstDepth = -83.0,  worstDepthSd = 0.19,
     volBand = (23.5, 30.3),
     retVolBand = (0.27, 0.47),
     // QQQ wfull row of asymmetry-2026-08-31.tsv; the tail hedge is QQQ/TLT.
-    semiExcess = 1.13, semiExcessSd = 4.59,
+    semiExcess = 1.13, semiExcessSd = 4.26,
     levCorr = -0.1073, levCorrSd = 0.49,
-    tailHedge = -0.236, tailHedgeSd = 0.47,
+    tailHedge = -0.236, tailHedgeSd = 0.48,
     // d20's spread is a fraction of the S&P world's (0.35 against 4.18): at Nasdaq volatility the
     // deep rung is pinned where the S&P default leaves it unreadable, so the row carries real
     // weight here.
-    valDispSd = 0.48, vr60Sd = 0.27, d5Sd = 0.12, d10Sd = 0.20, d20Sd = 0.35,
-    bondVolSd = 0.37, bondGrowthSd = 1.51, bondInflSd = 1.92, bondDepthSd = 0.28,
+    valDispSd = 0.46, vr60Sd = 0.27, d5Sd = 0.12, d10Sd = 0.20, d20Sd = 0.35,
+    bondVolSd = 0.37, bondGrowthSd = 1.49, bondInflSd = 1.83, bondDepthSd = 0.24,
     ddRefs = DdRefsNasdaq,
     divYield = 0.78, divYieldBand = (0.3, 1.5),
     basketCorr = 0.837, basketBeta = 1.365, basketVolRatio = 1.630, basketNameVolBand = (1.5, 2.8))

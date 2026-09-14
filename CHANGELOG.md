@@ -3,20 +3,20 @@
 **`0.24.2-nasdaq`: the Nasdaq recipe re-solved by the calibration search, and the Nasdaq spreads re-frozen at it**
 
 - `-atrelease 0.24.2-nasdaq` is `0.24.1-nasdaq` re-solved by the archive search below with the slow
-  repricing channel's share and scale among the thirty searched dials, judged on both markets,
-  admitted under the quality bar and picked as the steadiest of the thirteen members that pass
-  every gate class on four seeds at 200 paths. Every searched dial moved; the literals are the
-  archive's own, so the recipe reproduces the member byte for byte. Against `0.24.1-nasdaq` at 200
-  paths: crashes per century 39.7 → 29.0 (record 25.6), lag-20 clustering 0.16 → 0.20 (0.25), the
-  60-day variance ratio 0.81 → 0.98, the record's worst crash at the 22nd percentile of the
-  model's 27-year worsts from the 12th, the downside excess −1.3 → −0.4 (sign still wrong). Paid:
-  kurtosis 15.8 → 17.8 (record 9.6) and lag-1 clustering 0.32 → 0.35 (0.29). Fitness loss 1.17
-  against 1.61 under one set of weights. `0.24.1-nasdaq` stays a frozen row.
+  repricing channel's share and scale among the thirty searched dials, under the inflation
+  regime's ceiling, judged on both markets, admitted under the quality bar and picked as the
+  steadiest of the fourteen members that pass every gate class on four seeds at 200 paths. Every
+  searched dial moved; the literals are the archive's own, so the recipe reproduces the member
+  byte for byte. Against `0.24.1-nasdaq` at 200 paths: crashes per century 39.7 → 29.0 (record
+  25.6), lag-20 clustering 0.16 → 0.19 (0.25), the 60-day variance ratio 0.81 → 0.96, the
+  record's worst crash at the 14th percentile of the model's 27-year worsts from the 12th, the
+  downside excess −1.3 → −0.3 (sign still wrong). Paid: kurtosis 15.8 → 17.3 (record 9.6), lag-1
+  clustering 0.32 → 0.33 (0.29), equity vol 24.0 against 26.9. Fitness loss 1.20–1.24 on four
+  seeds against 1.36 for the recipe it was seeded from, under the weights frozen at that recipe;
+  1.26 under the ones re-frozen at this one. `0.24.1-nasdaq` stays a frozen row.
 - The Nasdaq anchor set's sampling spreads are re-frozen from `-noise -paths 200` at the new
-  recipe; the same command at `0.24.1-nasdaq` reproduces all twenty previous literals exactly.
-  Wider on volatility (0.10 → 0.16), median depth (0.39 → 0.52) and lag-20 clustering (0.15 →
-  0.22): the slow channel's regime shows in single histories. Nasdaq losses are not comparable
-  across this change.
+  recipe, each step checked against the recipe it replaced. Wider on median depth (0.39 → 0.45) and lag-20 clustering (0.15 → 0.20): the slow channel's
+  regime shows in single histories. Nasdaq losses are not comparable across this change.
 
 **The inflation regime has a ceiling, so the policy rate's upper tail is the record's**
 
@@ -41,10 +41,10 @@
 - The ruler gains DFF's upper-tail rows on the series' whole span (`shareGt10` / `shareGt15` /
   `shareGt20`, `max`, `run20`), and a test per twin holds eight model centuries to them.
 - Both anchor sets' sampling spreads are re-frozen from `-noise -paths 200` at the capped
-  worlds; the same command uncapped reproduces all forty previous literals exactly. Narrower
-  where the tail was: volatility 0.16 → 0.12 on both, lag-20 clustering 0.25 → 0.21 (S&P) and
-  0.22 → 0.20 (Nasdaq), bond vol 0.52 → 0.36 and 0.57 → 0.37, the bond's inflation-crash 2.00 →
-  1.55 and 2.62 → 1.92. Losses are not comparable across this change.
+  worlds; the same command at the uncapped default reproduces all twenty previous S&P literals
+  exactly. Narrower where the tail was: volatility 0.16 → 0.12 on both, lag-20 clustering 0.25 →
+  0.21 (S&P) and 0.22 → 0.20 (Nasdaq), bond vol 0.52 → 0.36 and 0.57 → 0.37, the bond's
+  inflation-crash 2.00 → 1.55 and 2.62 → 1.83. Losses are not comparable across this change.
 - The two calibration sets below were searched before the ceiling; member 0 of each passes every
   class under it, and a path of any member whose regimes never reach the cap is unchanged.
 
@@ -185,6 +185,20 @@
   dropped on resume and counted. Measured on the S&P set: median summed excess 1.50 → 1.06 and rows
   past the dead zone 5 → 2.5 (default 1). `admit`, `score`, `bar` and the seed-noise accumulator
   are part of the checkpoint; a resume under different settings is refused.
+- AN EVALUATION STOPS AS SOON AS ITS REJECTION IS CERTAIN. The score is the maximum over the reps
+  plus the transport arm, so once the primary arm's reps so far put a candidate over its bar no
+  later rep or the other arm can bring it back, and neither is run; a cut-short reading is
+  rejected as before and kept out of the seed-noise estimate. Two thirds of a search's time went
+  to finishing such evaluations (1837 of 3664 in one run, 59 of 86 minutes), and the archive a
+  search admits is unchanged: the same twelve generations with and without the exit admit the
+  same members with the same scores.
+- THE SEARCH STOPS ITSELF. `-close P` (default 2) ends a run when the last two blocks of
+  generations added under P points of the archive's spread, the report's CLOSED rule, a block
+  being an eighth of the run and at least 75 generations; `-gens 0` now runs until then, `-close
+  0` until killed. The trace is rebuilt from the log on a resume, so the rule reads the whole run.
+  The floor is 75 because live the ruler is the span so far, not the report's final span:
+  replayed over three archived searches, a floor of 10 stopped them at generation 54–84 and a
+  floor of 50 forfeited a tenth of one set's spread; 75 stops at 496–516 keeping 96–97% of it.
 - BEHAVIOUR DESCRIPTORS ride beside every candidate's dials — signed lag-1, the 250-session
   variance ratio, lag-20 clustering, kurtosis, crashes per path and median crash depth — into
   `archive.tsv` and into `log.tsv` for every candidate, the rejected majority included. The

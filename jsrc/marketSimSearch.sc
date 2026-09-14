@@ -58,7 +58,11 @@ object MarketSimSearch:
     "              ;   consistent with the record as the world it was seeded from; 0 = no bar,",
     "              ;   distance alone admits).  Members above it are dropped on resume",
     "-pop P        ; candidates per generation, checkpointed after each (default 8)",
-    "-gens G       ; generations to run; 0 runs until killed (default 0)",
+    "-gens G       ; generations to run; 0 runs until the spread closes, or until killed (default 0)",
+    "-close P      ; stop when the last two blocks of generations added under P points of the",
+    "              ;   archive's spread, the report's CLOSED rule, a block being an eighth of the",
+    "              ;   run and at least 75 generations, so never before generation 300",
+    "              ;   (default 2; 0 = never stop on its own)",
     "-dead D       ; dead zone in anchor sds; a row inside it scores 0 (default 0.5).  At 1.0 a",
     "              ;   calibrated world scores 0 on every row and the objective goes flat",
     "-seed S       ; base seed (default 20260813)",
@@ -159,7 +163,14 @@ object MarketSimSearch:
                         spread: Double = 0.0,
                         /** WHICH GATE ROWS FAILED, empty when feasible: `worstRow` is a fitness
                           * row and says nothing about rejection. */
-                        gateFail: Vector[String] = Vector.empty)
+                        gateFail: Vector[String] = Vector.empty,
+                        /** Every rep and both arms ran.  False when the quality bar stopped the
+                          * evaluation early: the score is the maximum over the reps plus the
+                          * transport arm, so once the reps so far exceed the bar nothing later
+                          * can bring it back under, and the rest is not run.  Such a reading is
+                          * rejected as before, but its `spread` and `desc` are partial and must
+                          * not feed the noise estimate. */
+                        complete: Boolean = true)
 
   /** One seed's reading.  The extreme row is read at its anchor's own horizon, so when `-years` is
     * that horizon the main ensemble serves and nothing is simulated twice.  An infeasible candidate
@@ -200,19 +211,23 @@ object MarketSimSearch:
     Read(feasible, score, raw._1, raw._2, descOf(st), total, gateFail = gateFail)
 
   def evaluate(w: World, anchors: MarketSim.Anchors, paths: Int, years: Int,
-               seeds: Vector[Long], dead: Double): Read =
-    // takeWhile-with-the-failure: every seed up to and including the first infeasible one
+               seeds: Vector[Long], dead: Double, bar: Option[Double] = None): Read =
+    // takeWhile-with-the-failure: every seed up to and including the first infeasible one, or
+    // up to the first that puts the running maximum over the bar: the rest cannot change the
+    // answer
+    def over(r: Read): Boolean = r.feasible && bar.exists(b => r.score > b)
     val reads = seeds.foldLeft(Vector.empty[Read]) { (acc, s) =>
-      if acc.nonEmpty && !acc.last.feasible then acc
+      if acc.nonEmpty && (!acc.last.feasible || over(acc.last)) then acc
       else acc :+ oneRead(w, anchors, paths, years, s, dead)
     }
+    val cut = reads.length < seeds.length && over(reads.last)
     val hardest = reads.maxBy(_.raw)
     val desc = descNames.indices.toVector.map(i => reads.map(_.desc(i)).sum / reads.length)
     val spread = reads.map(_.score).max - reads.map(_.score).min
     val total  = reads.map(_.total).sum / reads.length
     // the worst seed's score, as the worst seed's row is the reported one
     Read(reads.forall(_.feasible), reads.map(_.score).max, hardest.raw, hardest.worst, desc, total,
-         spread, hardest.gateFail)
+         spread, hardest.gateFail, complete = !cut)
 
   // ---- cheap fidelity -------------------------------------------------------------------------
 
@@ -296,15 +311,17 @@ object MarketSimSearch:
     * and the transport arm is a different world by construction. */
   def judge(base: World, dials: Vector[Double], anchors: MarketSim.Anchors,
             t: Option[Transport], paths: Int, years: Int, seeds: Vector[Long],
-            dead: Double): Read =
-    val a = evaluate(worldOf(base, dials), anchors, paths, years, seeds, dead)
+            dead: Double, bar: Option[Double] = None): Read =
+    val a = evaluate(worldOf(base, dials), anchors, paths, years, seeds, dead, bar)
     t match
       case None => a
       // a candidate that fails its primary market is rejected whatever the other one says, and
-      // the transport arm is a whole second evaluation
+      // the transport arm is a whole second evaluation; so is one whose primary arm alone is
+      // over the bar, because the arm's scores add
       case Some(_) if !a.feasible => a
+      case Some(_) if bar.exists(b => a.score > b) => a.copy(complete = false)
       case Some(tr) =>
-        val b = evaluate(transportWorld(tr, dials), tr.anchors, paths, years, seeds, dead)
+        val b = evaluate(transportWorld(tr, dials), tr.anchors, paths, years, seeds, dead, bar)
         val score = a.score + b.score
         val (raw, worst) =
           if b.raw > a.raw then (b.raw, s"${tr.spec}: ${b.worst}")
@@ -315,7 +332,8 @@ object MarketSimSearch:
         Read(a.feasible && b.feasible, score, raw, worst, a.desc, a.total + b.total,
              spread = math.max(a.spread, b.spread),
              gateFail = if a.gateFail.isEmpty then b.gateFail.map(r => s"${tr.spec}: $r")
-                        else a.gateFail)
+                        else a.gateFail,
+             complete = a.complete && b.complete)
 
   /** the OBJECTIVE, as a digest of every row a candidate is judged on -- each set's name, then each
     * row's name, target and weight, for the primary set and the transport arm's. Recorded with the
@@ -479,10 +497,43 @@ object MarketSimSearch:
     // in the archive after the trim: an appended candidate can be the worse half of the closest pair
     (kept, placed && kept.exists(_.dials == m.dials))
 
+  /** THE STOPPING RULE, the report's: the spread is the descriptor span over everything admitted
+    * so far, each descriptor as a fraction of its span over the whole run, averaged; the points
+    * of it added over the last two blocks, a block being an eighth of the run and at least
+    * `BlockFloor` generations.  Deliberately crude, and it says which numbers it read: a
+    * stopping rule nobody can check is worse than no stopping rule.  It reads the spread because
+    * admissions never fall under spread-keeping and the best score is one row of the product;
+    * two blocks, because one block of a search this noisy proves nothing.  None until the run is
+    * four blocks long or while no descriptor has any span.
+    *
+    * THE FLOOR IS 75 BECAUSE THE RULER IS THE SPAN SO FAR.  The report reads a finished run
+    * against its final span; live, only the span so far exists, and it is still small while the
+    * archive is young, so a short flat stretch reads as closed.  Replayed over three archived
+    * searches, a floor of 10 stopped them at generation 54-84 and a floor of 50 forfeited a
+    * tenth of one set's final spread; 75 stops at 496-516 keeping 96-97% of it, and cannot fire
+    * before generation 300. */
+  val BlockFloor = 75
+
+  def spreadAdded(trace: Vector[(Int, Vector[Double])], gens: Int): Option[(Double, Int)] =
+    val blk = math.max(BlockFloor, gens / 8)
+    if gens < 4 * blk || trace.isEmpty then None
+    else
+      val nd = trace.head._2.length
+      def span(before: Int): Vector[Double] =
+        (0 until nd).toVector.map { j =>
+          val xs = trace.collect { case (g, d) if g < before && !d(j).isNaN => d(j) }
+          if xs.isEmpty then Double.NaN else xs.max - xs.min
+        }
+      val end = span(Int.MaxValue)
+      def at(before: Int): Option[Double] =
+        val r = span(before).zip(end).collect { case (a, b) if !a.isNaN && b > 0 => a / b }
+        if r.isEmpty then None else Some(r.sum / r.length)
+      for a <- at(gens); b <- at(gens - 2 * blk) yield (100.0 * (a - b), blk)
+
   def main(args: Array[String]): Unit =
     var out = "search"; var anchorSpec = "sp500"; var seedSpec = ""
     var paths = 60; var years = 80; var reps = 2; var sigma = 0.07
-    var keep = 40; var sep = 0.12; var pop = 8; var gens = 0
+    var keep = 40; var sep = 0.12; var pop = 8; var gens = 0; var close = 2.0
     var base = 20260813L; var exportTo = ""; var dead = 0.5
     var holdout = 0; var force = false; var prune = false; var bar = 1.0
     var transportName = ""; var fidelity = ""
@@ -498,6 +549,7 @@ object MarketSimSearch:
       case "-sep"     => sep = numOr("-sep", consumeNext)
       case "-pop"     => pop = intOr("-pop", consumeNext)
       case "-gens"    => gens = intOr("-gens", consumeNext)
+      case "-close"   => close = numOr("-close", consumeNext)
       case "-dead"    => dead = numOr("-dead", consumeNext)
       case "-seed"    => base = consumeNext.toLong
       case "-holdout" => holdout = intOr("-holdout", consumeNext)
@@ -825,51 +877,73 @@ object MarketSimSearch:
     /** One generation: `pop` mutations of members drawn from the archive, then a checkpoint.  The
       * archive is passed and returned rather than mutated, and a kill between generations loses
       * at most one generation's work. */
-    def generation(arc: Vector[Member], g: Int, evals: Int,
-                   nsum0: Double, nn0: Int): (Vector[Member], Int, Double, Int) =
+    def generation(arc: Vector[Member], g: Int, evals: Int, nsum0: Double, nn0: Int,
+                   trace0: Vector[(Int, Vector[Double])])
+        : (Vector[Member], Int, Double, Int, Vector[(Int, Vector[Double])]) =
       // The same `NumPyRNG` as the rest of the program and as the Rust harness: `randn` and `nextBoundedInt`
       // are gated bit-identical across the twins, so one `-seed` proposes the same candidates in both.
       // The mask keeps the derived seed non-negative in both languages.
       val rng = new NumPyRNG((base ^ (g.toLong * 0x9e3779b9L)) & 0x7fffffffffffffffL)
       // a running seed-noise estimate from each candidate's spread across its own reps, carried across generations
-      val start = (arc, evals, Vector.empty[String], nsum0, nn0)
-      val (next, used, log, nsum, nn) =
-        (0 until pop).foldLeft(start) { case ((acc, ev, lg, nsum, nn), _) =>
+      val start = (arc, evals, Vector.empty[String], nsum0, nn0, trace0)
+      val (next, used, log, nsum, nn, trace) =
+        (0 until pop).foldLeft(start) { case ((acc, ev, lg, nsum, nn, tr), _) =>
         val parent = acc(rng.nextBoundedInt(acc.length))
         val child = parent.dials.indices.toVector.map { i =>
           clamped(i, parent.dials(i) + rng.randn() * sigma * (ranges(i)._3 - ranges(i)._2))
         }
         val t0 = System.nanoTime()
+        // the lineage's bar, so an evaluation stops as soon as it is over it
         val r = judge(worldFor(parent.name), child, anchors, transport, paths, years,
-                      (0 until reps).toVector.map(j => base + (ev + j) * 7919L), deadZone(dead))
+                      (0 until reps).toVector.map(j => base + (ev + j) * 7919L), deadZone(dead),
+                      bar = if bar > 0.0 then barFor.get(parent.name) else None)
         val secs = (System.nanoTime() - t0) / 1e9
-        val nsum2 = if r.feasible then nsum + r.spread else nsum
-        val nn2   = if r.feasible then nn + 1 else nn
-        // admitted BEFORE the line is built, because the line records the answer.  A candidate
-        // above the bar still feeds the noise estimate: its spread is a reading of the
-        // objective's own noise whatever its level
+        // a candidate above the bar still feeds the noise estimate when it ran to the end: its
+        // spread is a reading of the objective's own noise whatever its level.  One the bar cut
+        // short does not: a partial spread is not that reading
+        val nsum2 = if r.feasible && r.complete then nsum + r.spread else nsum
+        val nn2   = if r.feasible && r.complete then nn + 1 else nn
+        // admitted BEFORE the line is built, because the line records the answer
         val (grown, took) =
           if r.feasible && !aboveBar(parent.name, r.score) then
+            // nn2 >= 1: a candidate under the bar ran to the end, so it was counted above
             admit(acc, Member(parent.name, child, r.score, r.raw, r.worst, r.desc),
-                  sep, keep, nsum2 / nn2) // nn2 >= 1: incremented on this path
+                  sep, keep, nsum2 / nn2)
           else (acc, false)
         // `ev` is the SEED BASE this candidate drew from (seeds are base + (ev + j) * 7919), so a
         // log line reproduces its candidate
         val line = f"$g\t$ev\t${parent.name}\t${r.feasible}\t${r.score}%.6f\t${r.raw}%.6f" +
                    f"\t${r.worst}\t$secs%.3f\t" + r.desc.map(x => f"$x%.8g").mkString("\t") +
                    "\t" + r.gateFail.mkString("; ") + s"\t$took"
-        (grown, ev + reps, lg :+ line, nsum2, nn2)
+        (grown, ev + reps, lg :+ line, nsum2, nn2, if took then tr :+ (g, r.desc) else tr)
       }
       appendLog(out, log)
       writeArchive(out, next, g + 1, used, (nsum, nn), settings)
       println(f"gen $g%5d  archive ${next.length}%3d  best ${next.map(_.score).min}%7.3f  " +
               f"median ${MarketSim.pctile(next.map(_.score), 0.5)}%7.3f  " +
               f"raw ${next.map(_.raw).min}%7.3f  slots $used%6d")
-      (next, used, nsum, nn)
+      (next, used, nsum, nn, trace)
 
-    // `-gens 0` runs until killed; the checkpoint after every generation is what makes that safe.
+    // `-gens 0` runs until the spread closes or the run is killed; the checkpoint after every
+    // generation is what makes that safe.
+    // THE SPREAD TRACE the stopping rule reads: the descriptors of every candidate admitted so
+    // far, by generation, rebuilt from the log on a resume so the rule reads the whole run
+    val trace0: Vector[(Int, Vector[Double])] =
+      logPath.lines.drop(1).toVector.flatMap { l =>
+        val f = l.split('\t')
+        if f.length < 10 + descNames.length || f.last != "true" then None
+        else f(0).toIntOption.map(at =>
+          (at, f.slice(8, 8 + descNames.length).toVector.map(x => x.toDoubleOption.getOrElse(Double.NaN))))
+      }
     var arc = startArc; var g = gen0; var evals = evals0
-    var nsum = nsum0; var nn = nn0
-    while gens == 0 || g < gen0 + gens do
-      val (a2, e2, s2, n2) = generation(arc, g, evals, nsum, nn)
-      arc = a2; evals = e2; nsum = s2; nn = n2; g += 1
+    var nsum = nsum0; var nn = nn0; var trace = trace0
+    var closed = false
+    while !closed && (gens == 0 || g < gen0 + gens) do
+      val (a2, e2, s2, n2, t2) = generation(arc, g, evals, nsum, nn, trace)
+      arc = a2; evals = e2; nsum = s2; nn = n2; trace = t2; g += 1
+      if close > 0.0 then
+        spreadAdded(trace, g).foreach { (added, blk) =>
+          if added < close then
+            println(f"CLOSED -- the last ${2 * blk}%d gen added $added%.1f%% of the spread; stopping. Run -holdout, then -prune.")
+            closed = true
+        }

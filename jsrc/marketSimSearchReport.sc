@@ -1,4 +1,4 @@
-#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
+#!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation -q
 
 //> using scala 3.7.0
 //> using dep org.vastblue:uni_3:0.24.2
@@ -299,4 +299,3 @@ object MarketSimSearchReport:
 
   def intOrDie(v: String): Int = v.toIntOption.getOrElse(usage(s"-block wants an integer, got [$v]"))
 
-MarketSimSearchReport.main(args.toArray)

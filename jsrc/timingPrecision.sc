@@ -611,4 +611,3 @@ object TimingPrecision {
     if mode == "power" || mode == "all" then runPower(cfg, cs)
 }
 
-TimingPrecision.main(args)

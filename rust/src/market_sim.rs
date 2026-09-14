@@ -863,48 +863,48 @@ pub fn recipes() -> Vec<(&'static str, World, &'static str)> {
 }
 
 /// THE SEARCHED NASDAQ (0.24.2): the 0.24.1 recipe re-solved by the calibration search with the
-/// slow repricing channel's share and scale among the thirty searched dials, seeded from
-/// `0.24.1-nasdaq` and judged on both markets -- member 59 of search-v7, the member with the best
-/// and steadiest four-seed loss of the thirteen that pass every class on every seed at 200 paths.
+/// slow repricing channel's share and scale among the thirty searched dials, under the inflation
+/// regime's ceiling, judged on both markets -- member 6 of search-v11, the member with the best
+/// and steadiest four-seed loss of the fourteen that pass every class on every seed at 200 paths.
 /// Every searched dial moved; the literals are the archive's, at its eight significant digits, so
 /// `-atrelease 0.24.2-nasdaq` reproduces the member byte for byte. Against 0.24.1-nasdaq at 200
-/// paths: crashes/century 39.7 -> 29.0 (record 25.6), lag-20 clustering 0.16 -> 0.20 (0.25), the
-/// 60-day variance ratio 0.81 -> 0.98, the record's worst crash at the 22nd percentile of the
-/// model's 27-year worsts from the 12th, the downside excess -1.3 -> -0.4 (its sign still wrong);
-/// paid in kurtosis 15.8 -> 17.8 (record 9.6) and lag-1 clustering 0.32 -> 0.35 (0.29). Fitness
-/// loss 1.34-1.38 on four seeds against 1.89. The channel at 0.26 is what carries the long-lag
-/// clustering; the un-searched dials are the 0.24.1 recipe's.
+/// paths: crashes/century 39.7 -> 29.0 (record 25.6), lag-20 clustering 0.16 -> 0.19 (0.25), the
+/// 60-day variance ratio 0.81 -> 0.96, the record's worst crash at the 14th percentile of the
+/// model's 27-year worsts from the 12th, the downside excess -1.3 -> -0.3 (its sign still wrong);
+/// paid in kurtosis 15.8 -> 17.3 (record 9.6), lag-1 clustering 0.32 -> 0.33 (0.29) and equity
+/// vol 24.0 against 26.9. Fitness loss 1.20-1.24 on four seeds. The channel at 0.24 is what
+/// carries the long-lag clustering; jump_var is 0; the un-searched dials are the 0.24.1 recipe's.
 fn recipe_0242_nasdaq(mut w: World) -> World {
-    w.depth = 11.358200;
-    w.trend_share = 0.050000000;
-    w.drift = 0.081690703;
-    w.fund_vol = 0.050101631;
-    w.crowd_impact = 0.035528819;
-    w.stress = 4.9416411;
-    w.value_pull = 0.053088392;
-    w.recovery_drag = 7.6010353;
-    w.recovery_floor = 0.050000000;
-    w.disaster_rate = 0.37752848;
-    w.disaster_size = 1.9863881;
-    w.disaster_recover = 0.54438475;
-    w.belief_share = 0.82720104;
-    w.cap_years = 3.8114382;
-    w.vol_of_vol = 0.020494984;
-    w.jump_var = 0.010020763;
-    w.jump_rate = 0.0042044464;
-    w.leverage = 0.075596038;
-    w.down_shock = 0.0053327418;
-    w.jump_skew = 0.44612461;
-    w.news_rate = 0.75803958;
-    w.news_size = 0.035103095;
-    w.refuge_days = 0.40464222;
-    w.easing = 0.038096751;
-    w.refuge = 0.11669169;
-    w.infl_size = 0.11053817;
-    w.discount = 7.0558391;
-    w.margin = 0.0060943221;
-    w.slow_share = 0.25871333;
-    w.slow_vol = 0.83824954;
+    w.depth = 11.7205;
+    w.trend_share = 0.05;
+    w.drift = 0.078012823;
+    w.fund_vol = 0.03;
+    w.crowd_impact = 0.048391393;
+    w.stress = 4.8298039;
+    w.value_pull = 0.052523421;
+    w.recovery_drag = 9.0363421;
+    w.recovery_floor = 0.05;
+    w.disaster_rate = 0.46874687;
+    w.disaster_size = 1.948638;
+    w.disaster_recover = 0.56444827;
+    w.belief_share = 0.84568138;
+    w.cap_years = 2.9900737;
+    w.vol_of_vol = 0.018951116;
+    w.jump_var = 0.0;
+    w.jump_rate = 0.00482868;
+    w.leverage = 0.069007581;
+    w.down_shock = 0.0073220361;
+    w.jump_skew = 0.48665602;
+    w.news_rate = 0.63064016;
+    w.news_size = 0.039154222;
+    w.refuge_days = 0.60052388;
+    w.easing = 0.018171647;
+    w.refuge = 0.11311295;
+    w.infl_size = 0.11254528;
+    w.discount = 7.3886613;
+    w.margin = 0.008;
+    w.slow_share = 0.2392292;
+    w.slow_vol = 0.862505;
     w
 }
 
@@ -7186,40 +7186,40 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     vol: 26.90,
     vol_sd: 0.12,
     ret_vol: 0.38,
-    ret_vol_sd: 0.55,
+    ret_vol_sd: 0.51,
     kurt: 9.55,
-    kurt_sd: 1.74,
+    kurt_sd: 1.53,
     ac1: 0.293,
-    ac1_sd: 0.23,
+    ac1_sd: 0.24,
     ac20: 0.249,
     ac20_sd: 0.20,
     crashes: 25.6,
-    crashes_sd: 0.51,
+    crashes_sd: 0.49,
     med_depth: -22.8,
-    med_depth_sd: 0.52,
+    med_depth_sd: 0.45,
     worst_depth: -83.0,
-    worst_depth_sd: 0.18,
+    worst_depth_sd: 0.19,
     vol_band: (23.5, 30.3),
     ret_vol_band: (0.27, 0.47),
     // QQQ wfull row of asymmetry-2026-08-31.tsv; the tail hedge is QQQ/TLT.
     semi_excess: 1.13,
-    semi_excess_sd: 4.59,
+    semi_excess_sd: 4.26,
     lev_corr: -0.1073,
     lev_corr_sd: 0.49,
     tail_hedge: -0.236,
-    tail_hedge_sd: 0.47,
+    tail_hedge_sd: 0.48,
     // d20's spread is a fraction of the S&P world's (0.35 against 4.18): at Nasdaq volatility the
     // deep rung is pinned where the S&P default leaves it unreadable, so the row carries real
     // weight here.
-    val_disp_sd: 0.48,
+    val_disp_sd: 0.46,
     vr60_sd: 0.27,
     d5_sd: 0.12,
     d10_sd: 0.20,
     d20_sd: 0.35,
     bond_vol_sd: 0.37,
-    bond_growth_sd: 1.51,
-    bond_infl_sd: 1.92,
-    bond_depth_sd: 0.28,
+    bond_growth_sd: 1.49,
+    bond_infl_sd: 1.83,
+    bond_depth_sd: 0.24,
     dd_refs: &DD_REFS_NASDAQ,
     div_yield: 0.78,
     div_yield_band: (0.3, 1.5),

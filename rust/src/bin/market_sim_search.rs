@@ -239,6 +239,12 @@ struct Read {
     /// compute and it is the noise scale the archive needs: a score difference smaller than this
     /// is a seed draw, not a better world. Zero at `-reps 1`, which is honest.
     spread: f64,
+    /// Every rep and both arms ran. False when the quality bar stopped the evaluation early:
+    /// the score is the maximum over the reps plus the transport arm, so once the reps so far
+    /// exceed the bar nothing later can bring it back under, and the rest is not run. Such a
+    /// reading is rejected as before, but its `spread` and `desc` are partial and must not feed
+    /// the noise estimate.
+    complete: bool,
 }
 
 /// One seed's reading.  The extreme row is read at its anchor's own horizon, so when `-years` is
@@ -320,12 +326,18 @@ fn one_read(w: &World, anchors: Anchors, paths: usize, years: usize, s: u64, dea
         total,
         gate_fail,
         spread: 0.0,
+        complete: true,
     }
 }
 
 /// A member with its readings on the two holdout streams.
 type HoldoutRow = (Member, Read, Read);
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the ensemble, the seed stream and the bar are what a reading means; passing them \
+              in a struct would hide the thing the checkpoint records"
+)]
 fn evaluate(
     w: &World,
     anchors: Anchors,
@@ -333,13 +345,21 @@ fn evaluate(
     years: usize,
     seeds: &[u64],
     dead: f64,
+    bar: Option<f64>,
 ) -> Read {
     let mut reads: Vec<Read> = Vec::with_capacity(seeds.len());
+    // every seed up to and including the first infeasible one, or up to the first that puts
+    // the running maximum over the bar: the rest cannot change the answer
+    let mut cut = false;
     for &s in seeds {
         let r = one_read(w, anchors, paths, years, s, dead);
         let stop = !r.feasible;
+        let over = r.feasible && bar.is_some_and(|b| r.score > b);
         reads.push(r);
-        if stop {
+        if over && reads.len() < seeds.len() {
+            cut = true;
+        }
+        if stop || over {
             break;
         }
     }
@@ -366,6 +386,7 @@ fn evaluate(
         total,
         gate_fail: hardest.gate_fail,
         spread: hi - lo,
+        complete: !cut,
     }
 }
 
@@ -458,13 +479,29 @@ fn judge(
     years: usize,
     seeds: &[u64],
     dead: f64,
+    bar: Option<f64>,
 ) -> Read {
-    let a = evaluate(&world_of(base, dials), anchors, paths, years, seeds, dead);
+    let a = evaluate(
+        &world_of(base, dials),
+        anchors,
+        paths,
+        years,
+        seeds,
+        dead,
+        bar,
+    );
     let Some(tr) = t else { return a };
     // a candidate that fails its primary market is rejected whatever the other one says,
-    // and the transport arm is a whole second evaluation
+    // and the transport arm is a whole second evaluation; so is one whose primary arm alone
+    // is over the bar, because the arm's scores add
     if !a.feasible {
         return a;
+    }
+    if bar.is_some_and(|b| a.score > b) {
+        return Read {
+            complete: false,
+            ..a
+        };
     }
     let b = evaluate(
         &transport_world(tr, dials),
@@ -473,6 +510,7 @@ fn judge(
         years,
         seeds,
         dead,
+        bar,
     );
     let score = a.score + b.score;
     let (raw, worst) = if b.raw > a.raw {
@@ -499,6 +537,7 @@ fn judge(
             a.gate_fail
         },
         spread: a.spread.max(b.spread),
+        complete: a.complete && b.complete,
     }
 }
 
@@ -698,6 +737,63 @@ fn append_log(dir: &str, lines: &[String]) {
 /// Trimming by score is an optimiser and narrows the spread the archive exists to keep (signed
 /// lag-1 range 0.057 -> 0.032 over that run; 0.043 -> 0.074 for spread-keeping in a 40-generation
 /// A/B).  Feasibility is the membership test; score was never meant to be a second one.
+/// THE STOPPING RULE, the report's: the spread is the descriptor span over everything admitted
+/// so far, each descriptor as a fraction of its span over the whole run, averaged; the points of
+/// it added over the last two blocks, a block being an eighth of the run and at least
+/// `BLOCK_FLOOR` generations. Deliberately crude, and it says which numbers it read: a stopping
+/// rule nobody can check is worse than no stopping rule. It reads the spread because admissions
+/// never fall under spread-keeping and the best score is one row of the product; two blocks,
+/// because one block of a search this noisy proves nothing. None until the run is four blocks
+/// long or while no descriptor has any span.
+///
+/// THE FLOOR IS 75 BECAUSE THE RULER IS THE SPAN SO FAR. The report reads a finished run
+/// against its final span; live, only the span so far exists, and it is still small while the
+/// archive is young, so a short flat stretch reads as closed. Replayed over three archived
+/// searches, a floor of 10 stopped them at generation 54-84 and a floor of 50 forfeited a tenth
+/// of one set's final spread; 75 stops at 496-516 keeping 96-97% of it, and cannot fire before
+/// generation 300.
+const BLOCK_FLOOR: u64 = 75;
+
+fn spread_added(trace: &[(u64, Vec<f64>)], gens: u64) -> Option<(f64, u64)> {
+    let blk = (gens / 8).max(BLOCK_FLOOR);
+    if gens < 4 * blk || trace.is_empty() {
+        return None;
+    }
+    let nd = trace[0].1.len();
+    let span = |before: u64| -> Vec<f64> {
+        (0..nd)
+            .map(|j| {
+                let xs: Vec<f64> = trace
+                    .iter()
+                    .filter(|(g, d)| *g < before && !d[j].is_nan())
+                    .map(|(_, d)| d[j])
+                    .collect();
+                if xs.is_empty() {
+                    f64::NAN
+                } else {
+                    xs.iter().copied().fold(f64::MIN, f64::max)
+                        - xs.iter().copied().fold(f64::MAX, f64::min)
+                }
+            })
+            .collect()
+    };
+    let end = span(u64::MAX);
+    let at = |before: u64| -> Option<f64> {
+        let r: Vec<f64> = span(before)
+            .iter()
+            .zip(&end)
+            .filter(|(a, b)| !a.is_nan() && **b > 0.0)
+            .map(|(a, b)| a / b)
+            .collect();
+        if r.is_empty() {
+            None
+        } else {
+            Some(r.iter().sum::<f64>() / r.len() as f64)
+        }
+    };
+    Some((100.0 * (at(gens)? - at(gens - 2 * blk)?), blk))
+}
+
 fn admit(arc: Vec<Member>, m: Member, sep: f64, keep: usize, noise: f64) -> (Vec<Member>, bool) {
     // the nearest member inside `sep`, not the first found; strict `<` keeps the earliest on a tie,
     // as the Scala twin's fold does
@@ -863,7 +959,11 @@ fn usage(msg: &str) -> ! {
                 ;   consistent with the record as the world it was seeded from; 0 = no bar,
                 ;   distance alone admits).  Members above it are dropped on resume
   -pop P        ; candidates per generation, checkpointed after each (default 8)
-  -gens G       ; generations to run; 0 runs until killed (default 0)
+  -gens G       ; generations to run; 0 runs until the spread closes, or until killed (default 0)
+  -close P      ; stop when the last two blocks of generations added under P points of the
+                ;   archive's spread, the report's CLOSED rule, a block being an eighth of the
+                ;   run and at least 75 generations, so never before generation 300
+                ;   (default 2; 0 = never stop on its own)
   -dead D       ; dead zone in anchor sds; a row inside it scores 0 (default 0.5).  At 1.0 a
                 ;   calibrated world scores 0 on every row and the objective goes flat
   -seed S       ; base seed (default 20260813)
@@ -900,6 +1000,7 @@ struct Cfg {
     sep: f64,
     pop: usize,
     gens: u64,
+    close: f64,
     dead: f64,
     base: i64,
     holdout: usize,
@@ -924,6 +1025,7 @@ fn parse_args() -> Cfg {
         sep: 0.12,
         pop: 8,
         gens: 0,
+        close: 2.0,
         dead: 0.5,
         base: 20260813,
         holdout: 0,
@@ -955,6 +1057,7 @@ fn parse_args() -> Cfg {
             "-sep" => c.sep = fnum(&need(&mut i, "-sep"), "-sep"),
             "-pop" => c.pop = num(&need(&mut i, "-pop"), "-pop"),
             "-gens" => c.gens = num::<u64>(&need(&mut i, "-gens"), "-gens"),
+            "-close" => c.close = fnum(&need(&mut i, "-close"), "-close"),
             "-dead" => c.dead = fnum(&need(&mut i, "-dead"), "-dead"),
             "-seed" => c.base = num::<i64>(&need(&mut i, "-seed"), "-seed"),
             "-holdout" => c.holdout = num(&need(&mut i, "-holdout"), "-holdout"),
@@ -1117,6 +1220,7 @@ fn main() {
                     c.years,
                     &seeds,
                     dead_zone(c.dead),
+                    None,
                 )
             })
             .collect();
@@ -1142,6 +1246,7 @@ fn main() {
                         y,
                         &seeds,
                         dead_zone(c.dead),
+                        None,
                     )
                 })
                 .collect();
@@ -1286,6 +1391,7 @@ fn main() {
                     c.years,
                     &seeds,
                     dead_zone(c.dead),
+                    None,
                 );
                 println!(
                     "  {:<24} {:<9} score {:>7.3}  raw {:>7.3}  {}",
@@ -1467,6 +1573,7 @@ fn main() {
                 c.years,
                 &train,
                 dead_zone(c.dead),
+                None,
             );
             let b = judge(
                 &base,
@@ -1477,6 +1584,7 @@ fn main() {
                 c.years,
                 &fresh,
                 dead_zone(c.dead),
+                None,
             );
             println!(
                 "  {:<22} stream A {:<4} raw {:>6.3}   stream B {:<4} raw {:>6.3}   {}",
@@ -1536,6 +1644,7 @@ fn main() {
                         c.years,
                         &[sd],
                         dead_zone(c.dead),
+                        None,
                     )
                 })
                 .collect();
@@ -1677,8 +1786,31 @@ fn main() {
         }
     }
 
-    // `-gens 0` runs until killed; the checkpoint after every generation is what makes that safe.
+    // `-gens 0` runs until the spread closes or the run is killed; the checkpoint after every
+    // generation is what makes that safe.
     let rs = ranges();
+    // THE SPREAD TRACE the stopping rule reads: the descriptors of every candidate admitted so
+    // far, by generation, rebuilt from the log on a resume so the rule reads the whole run
+    let nd = DESC_NAMES.len();
+    let mut trace: Vec<(u64, Vec<f64>)> = read_text(&format!("{}/log.tsv", c.out))
+        .map(|t| {
+            t.lines()
+                .skip(1)
+                .filter_map(|l| {
+                    let f: Vec<&str> = l.split('\t').collect();
+                    if f.len() < 10 + nd || f[f.len() - 1] != "true" {
+                        return None;
+                    }
+                    let at: u64 = f[0].parse().ok()?;
+                    let desc: Vec<f64> = f[8..8 + nd]
+                        .iter()
+                        .map(|x| x.parse().unwrap_or(f64::NAN))
+                        .collect();
+                    Some((at, desc))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     // a running seed-noise estimate from each candidate's spread across its own reps, carried across generations
     let mut noise_sum = nsum0;
     let mut noise_n = nn0;
@@ -1717,20 +1849,28 @@ fn main() {
                 c.years,
                 &seeds,
                 dead_zone(c.dead),
+                // the lineage's bar, so an evaluation stops as soon as it is over it
+                if c.bar > 0.0 {
+                    bar_for.get(&parent.name).copied()
+                } else {
+                    None
+                },
             );
             let secs = t0.elapsed().as_secs_f64();
             let bs: Vec<String> = r.desc.iter().map(|x| g8(*x)).collect();
             let gate_fail = r.gate_fail.join("; ");
             // admitted BEFORE the line is written, because the line records the answer
             let mut took = false;
-            if r.feasible {
+            // a candidate above the bar still feeds the noise estimate when it ran to the end:
+            // its spread is a reading of the objective's own noise whatever its level. One the
+            // bar cut short does not: a partial spread is not that reading
+            if r.feasible && r.complete {
                 noise_sum += r.spread;
                 noise_n += 1;
             }
-            // a candidate above the bar still feeds the noise estimate: its spread is a reading
-            // of the objective's own noise whatever its level
             if r.feasible && !above_bar(&parent.name, r.score) {
-                // at least one reading here: the increment above is on this path
+                // at least one reading here: a candidate under the bar ran to the end, so the
+                // increment above is on this path
                 let noise = noise_sum / noise_n as f64;
                 let (next, entered) = admit(
                     arc,
@@ -1740,7 +1880,7 @@ fn main() {
                         score: r.score,
                         raw: r.raw,
                         worst: r.worst.clone(),
-                        desc: r.desc,
+                        desc: r.desc.clone(),
                     },
                     c.sep,
                     c.keep,
@@ -1748,6 +1888,9 @@ fn main() {
                 );
                 arc = next;
                 took = entered;
+                if took {
+                    trace.push((g, r.desc.clone()));
+                }
             }
             log.push(format!(
                 "{g}\t{}\t{}\t{}\t{:.6}\t{:.6}\t{}\t{:.3}\t{}\t{}\t{took}",
@@ -1776,5 +1919,16 @@ fn main() {
             ms::pctile(&scores, 0.5)
         );
         g += 1;
+        if c.close > 0.0 {
+            if let Some((added, blk)) = spread_added(&trace, g) {
+                if added < c.close {
+                    println!(
+                        "CLOSED -- the last {} gen added {added:.1}% of the spread; stopping. Run -holdout, then -prune.",
+                        2 * blk
+                    );
+                    break;
+                }
+            }
+        }
     }
 }
