@@ -29,9 +29,15 @@
   puts 3.1% of sessions against the record's 1.6%: its high-rate regimes are plateaus where the
   record's was a spike.
 - VALUES CHANGE on any path whose inflation regimes reach the cap — 70 of 128 century paths on
-  the default, 81 on the Nasdaq recipe, about a third of forty-year paths — and `macroIvol` on
-  every path of a world whose level ensemble reaches it, which every shipped world's does. A path
-  whose regimes never reach the cap is bit-identical; the cap consumes no draw.
+  the default, 81 on the Nasdaq recipe, about a third of forty-year paths: price, fundamental,
+  bond, rate, liquidity and the macro columns move together. On EVERY path, whether or not its
+  own regimes reach the cap, every channel levelled on the world's fixed eight-century level
+  ensemble moves, because one of those centuries reaches it on every shipped world: the
+  satellite (`kSat`, `kVs`), the bars and the open, volume, the dividend stream (`kDiv`), the
+  basket names and `macroIvol` (`kIv`). The shift is the level constant's: on
+  `0.24.1-nasdaq-basket` `kSat` and `kVs` move −0.6%, `kIv` −0.4%, `kDiv` +0.004%, read from the
+  sidecar's `level` block. The cap consumes no draw, so a path's price columns are bit-identical
+  unless its own regimes reach it.
 - Every frozen release and recipe passes every gate class as before. Fitness loss on the default
   0.749 → 0.724 under the old weights (0.768 under the re-frozen ones below). On `0.24.2-nasdaq`
   1.17 → 1.26 (1.36 re-frozen): equity vol 24.9 → 24.3 (target 26.9) and lag-20 clustering 0.20 → 0.19, because
@@ -45,8 +51,7 @@
   exactly. Narrower where the tail was: volatility 0.16 → 0.12 on both, lag-20 clustering 0.25 →
   0.21 (S&P) and 0.22 → 0.20 (Nasdaq), bond vol 0.52 → 0.36 and 0.57 → 0.37, the bond's
   inflation-crash 2.00 → 1.55 and 2.62 → 1.83. Losses are not comparable across this change.
-- The two calibration sets below were searched before the ceiling; member 0 of each passes every
-  class under it, and a path of any member whose regimes never reach the cap is unchanged.
+- The two calibration sets below are searched under the ceiling.
 
 **The slow repricing channel's bond leg is a yield move, so it scales with duration**
 
@@ -139,15 +144,21 @@
 
 **Two calibration archives ship: the sets of worlds consistent with the record, one per market**
 
-- `test-data/worlds/0.24.2-sp500.json` (173 members, seeded from the default) and
-  `test-data/worlds/0.24.2-nasdaq.json` (191 members, seeded from `0.24.2-nasdaq`), each the
-  output of the calibration search below at 60 paths by 80 years on three seeds, judged on both
-  markets, admitted under the quality bar with the fidelity bands scored, re-scored on two
-  seed streams of 3 and then 12 that the search never selected on, and pruned to what survived.
+- `test-data/worlds/0.24.2-sp500.json` (150 members, seeded from the default) and
+  `test-data/worlds/0.24.2-nasdaq.json` (174 members, seeded from `0.24.2-nasdaq`), each the
+  output of the calibration search below under the inflation regime's ceiling, at 60 paths by 80
+  years on three seeds, judged on both markets, admitted under the quality bar with the fidelity
+  bands scored, run until its spread closed (877 and 535 generations), re-scored on two seed
+  streams of 3 and then 12 that the search never selected on, and pruned to what survived.
   `-worldset test-data/worlds/0.24.2-nasdaq.json -worldindex K -anchors nasdaq` runs member K.
-  Every fitness row of the Nasdaq set's own market has members inside the record's sampling
-  error, lag-20 clustering among them; on the S&P set the median member sits two rows past it
-  against the default's one. What the sets are for, and how to read a ranking across one, is in
+  Every fitness row of each set's own market has members inside the record's sampling error: on
+  the Nasdaq set equity vol for 62 of 174, crashes per century 50, lag-20 clustering 41, the
+  worst crash 5; on the S&P set lag-20 clustering for 121 of 150 and the worst crash 139. On the
+  fitness seed 55 of the S&P members and 114 of the Nasdaq members fail a fidelity band, the
+  ensemble's own seed flips at 60 paths. The null control flags 68 of the S&P set's 199 holdout
+  survivors as better than the shipped default on the whole signature and 16 of the Nasdaq set's
+  224 as better than the recipe: a pool for the next default and recipe, under the ordinary
+  checklist. What the sets are for, and how to read a ranking across one, is in
   `MarketSimWorlds.md`'s `-worldset` section.
 
 **The calibration search: an archive of the worlds consistent with the record, in both twins**
