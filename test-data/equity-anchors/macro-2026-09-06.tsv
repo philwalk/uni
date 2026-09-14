@@ -101,6 +101,9 @@
 # DFF's rows were added 2026-09-10 from the same FRED caches.  They are SHAPE rows only: the
 # equity-relation rows need the four reference histories at the vintage the rest of this file was
 # measured at, and the policy member is reported rather than graded, so nothing here reads them.
+# DFF's UPPER-TAIL rows (`shareGt10` / `shareGt15` / `shareGt20`, `max`, `run20`: the longest run
+# of sessions above 20%) are on the series' whole span from 1954-07-01, weekdays, because 1990-2026
+# never saw 11%: the tail is 1979-82's, and it is what the inflation regime's ceiling is held to.
 set	series	member	stat	window	n	value
 shared	BAA10Y	spread	ac1	1990-01-02..2026-09-03	9169	0.9991
 shared	BAA10Y	spread	ac20	1990-01-02..2026-09-03	9169	0.9617
@@ -153,6 +156,11 @@ shared	DFF	policy	move50	1990-01-02..2026-09-03	5506	0.0500
 shared	DFF	policy	d63	1990-01-02..2026-09-03	9505	0.1300
 shared	DFF	policy	shareLt05	1990-01-02..2026-09-03	9568	0.2793
 shared	DFF	policy	shareGt5	1990-01-02..2026-09-03	9568	0.2746
+shared	DFF	policy	shareGt10	1954-07-01..2026-09-10	18836	0.0678
+shared	DFF	policy	shareGt15	1954-07-01..2026-09-10	18836	0.0160
+shared	DFF	policy	shareGt20	1954-07-01..2026-09-10	18836	0.0011
+shared	DFF	policy	max	1954-07-01..2026-09-10	18836	22.3600
+shared	DFF	policy	run20	1954-07-01..2026-09-10	18836	4
 shared	NFCILEVERAGE	cond	ac1	1990-01-05..2026-08-28	1913	0.9990
 shared	NFCILEVERAGE	cond	ac4	1990-01-05..2026-08-28	1913	0.9847
 shared	NFCILEVERAGE	cond	ac52	1990-01-05..2026-08-28	1913	0.4165

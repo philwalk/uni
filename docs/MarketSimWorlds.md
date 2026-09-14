@@ -374,8 +374,12 @@ recalibration, the jump channel and the anchor corrections each shifted it, in b
 0.23.0's settled-stress refuge moved it again, downward this time (0.060, clear at that world,
 now fails the shipped duration's own depth band at 1.37). The equity crowd reaches the bond leg
 through the correlation channel, so a bond dial settled once is not settled. The shipped 0.052 —
-5.2 rate points, the bottom of the three real cycles — reads d=5.70 at 0.70 and d=13.50 at 1.30,
-verdict PASS. **Re-run `-crossasset` after any world change, not only after a bond one.**
+5.2 rate points, the bottom of the three real cycles — reads d=5.70 at 0.73 and d=13.50 at 1.32 at
+400 paths, verdict PASS (EDGE at 200: the 13.50 cell sits 0.02 under its ceiling). **Re-run
+`-crossasset` after any world change, not only after a bond one.** And every flow the bond takes
+must scale with duration: the slow repricing channel's bond leg shipped in 0.24.1 as a price shock
+of one size at every duration, and the 1.80-year rung read it as 1.52 on bond vol × duration until
+0.24.2 made it a yield move.
 
 **The calibration loss cannot see this rung.** `fitness` scores a single `WorldStats` and the ladder
 re-simulates at other durations, so a re-search optimises the bond depth relation at the *shipped*
@@ -1304,7 +1308,11 @@ of a century's sessions above 5% against the record's 0.27). What is missing is 
 the record spent 28% of 1990–2026 below 0.5% and the model reaches the floor only in brief
 episodes, because `easing` caps accommodation at one easing cycle and inflation suppresses it —
 so a vote whose rate leg is a fixed low threshold fires on the record and almost never here, while
-a rank leg transports. Its firing lag (−30 / −32) reads like the 10-year's and the conditions
+a rank leg transports. Its upper tail is held to the record's: an inflation regime's target is
+capped 12 points over the mean rate, so a century puts 0.02% of sessions above 20% (the record's
+1954–2026: 0.11%, its maximum 22.4%, its longest run above 20% four sessions) and 3.1% above 15%
+against 1.6% — the model's high-rate regimes are plateaus of a year or more where the record's
+was a spike, so a fixed threshold between 15 and 20 fires here about twice as often. Its firing lag (−30 / −32) reads like the 10-year's and the conditions
 index's, all three slow members firing at the lookback's edge.
 
 The credit system is anchored on the record DETRENDED. Bank credit over output rose 43 to 63 over

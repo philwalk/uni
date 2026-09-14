@@ -107,6 +107,33 @@ class MacroPanelSuite extends FunSuite:
         s"session $i: published ${m.policy(i)} against the loop's ${100.0 * p.rate(i)}")
   }
 
+  test("the policy rate's upper tail is the record's: an inflation regime's target is capped") {
+    val rs = rows(Fixture)
+    assume(rs.nonEmpty, s"$Fixture absent")
+    val w = MarketSim.Defaults.copy(macroPanel = 1)
+    // eight centuries: the tail is a 0.1% event on the record, and a century holds one or two
+    // inflation regimes that reach the cap
+    val ps  = MarketSim.simPaths(w, 8, 100, MarketSim.DefaultSeed)
+    val pol = ps.flatMap(_.macroPanel.getOrElse(fail("no panel with the dial on")).policy)
+    val gt20    = pol.count(_ > 20.0).toDouble / pol.size
+    val recGt20 = value(rs, "shared", "DFF", "policy", "shareGt20")
+    val recMax  = value(rs, "shared", "DFF", "policy", "max")
+    // the record's share is one 1980-81 spike in seventy-two years; uncapped, the model put
+    // fifteen times as much there
+    assert(gt20 <= 3.0 * recGt20, f"share above 20%%: $gt20%.4f against the record's $recGt20%.4f")
+    // the ceiling is rateMean + InflCap and the rate's own noise carries the spike, never past the
+    // record's maximum by more than that noise reaches
+    assert(pol.max <= recMax + 3.0, f"policy rate reached ${pol.max}%.2f against the record's $recMax%.2f")
+    // no path holds 20% for a year: the record's longest run above it is four sessions
+    val longest = ps.map { p =>
+      p.macroPanel.get.policy.foldLeft((0, 0)) { case ((best, cur), x) =>
+        val c = if x > 20.0 then cur + 1 else 0
+        (math.max(best, c), c)
+      }._1
+    }.max
+    assert(longest <= 252, s"a path held the rate above 20% for $longest sessions")
+  }
+
   test("the credit ratio is a slow stock of its own, and the two levels reproduce it") {
     val rs = rows(Fixture)
     assume(rs.nonEmpty, s"$Fixture absent")

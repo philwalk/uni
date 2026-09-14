@@ -277,6 +277,14 @@ const DURATION_REF: f64 = 13.5;
 /// and the shipped value sat under it. Cost: fitness loss 1.375 -> 1.385, every equity statistic
 /// unchanged.
 const EASE_IN_SPEED: f64 = 6.0;
+/// THE INFLATION REGIME'S CEILING, in rate units: an inflation regime's target is a half-normal
+/// of `infl_size`, capped here. Uncapped, a two-sigma regime held the policy rate near 26% for the
+/// regime's one to eleven years and a century put 1.7% of sessions above 20% where the record's
+/// 1954-2026 put 0.11%, its maximum 22.4% (1981) and its longest run above 20% four sessions.
+/// Capped at 0.12 the target's ceiling is `rate_mean` + 12 = 16.2%, the record's 1980-81 plateau,
+/// and the rate's own noise carries the spike above it. A cap consumes no draw, so a path whose
+/// regimes never reach it is bit-identical to the uncapped model.
+const INFL_CAP: f64 = 0.12;
 /// Bond volatility is measured over NON-OVERLAPPING windows of this many years, even when the
 /// paths are longer. Every other statistic is measured over the whole path.
 ///
@@ -3536,7 +3544,7 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
         regime_countdown -= 1;
         if regime_countdown <= 0 {
             infl_target = if rng.next_f64() < w.infl_prob {
-                rng.randn().abs() * w.infl_size
+                INFL_CAP.min(rng.randn().abs() * w.infl_size)
             } else {
                 0.0
             };
@@ -3605,7 +3613,10 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
             // into a variance ratio. The bond takes the same repricing with the opposite sign.
             log_vbase += w.slow_perm * sm;
             eq_m.log_p += sm;
-            let bm = -w.slow_beta * sm;
+            // a YIELD repricing, so the bond's move scales with its duration like every other
+            // bond flow (`SIGMA_N_BOND`, the refuge); the ratio is a bit-exact 1.0 at the shipped
+            // duration
+            let bm = -w.slow_beta * sm * (w.duration / DURATION_REF);
             bd_m.log_p += bm;
             slow_b += w.slow_perm * bm;
             slow_g = w.slow_phi * slow_g - w.slow_lev * slow_k * zs;
@@ -7080,7 +7091,7 @@ const SP500_ANCHORS: Anchors = Anchors {
     tail_window: "CRSP 1926-2026, the century",
     tail_years: 100,
     vol: 16.0,
-    vol_sd: 0.16,
+    vol_sd: 0.12,
     ret_vol: 0.69,
     ret_vol_sd: 0.27,
     kurt: 28.0,
@@ -7088,11 +7099,11 @@ const SP500_ANCHORS: Anchors = Anchors {
     ac1: 0.299,
     ac1_sd: 0.15,
     ac20: 0.225,
-    ac20_sd: 0.25,
+    ac20_sd: 0.21,
     crashes: 20.7,
-    crashes_sd: 0.29,
+    crashes_sd: 0.30,
     med_depth: -21.4,
-    med_depth_sd: 0.16,
+    med_depth_sd: 0.15,
     // RE-ANCHORED in 0.22.1, same error class as `med_depth` in 0.22.0: -56.8 was the 2007-09
     // episode, the worst of the 1954-2026 window, used where the model computes the worst over a
     // whole history. 1954 opens AFTER the crash that set the record's worst, so the anchor graded
@@ -7104,28 +7115,28 @@ const SP500_ANCHORS: Anchors = Anchors {
     // Its sd is read at the same 100 years: a 72-year history's spread of the worst decline is
     // not a century's.
     worst_depth: -84.1,
-    worst_depth_sd: 0.19,
+    worst_depth_sd: 0.20,
     vol_band: (14.0, 18.0),
     ret_vol_band: (0.50, 0.85),
     // CRSP c1954 rows of asymmetry-2026-08-31.tsv; the tail hedge is SPY/TLT. A single 72-year
     // history barely pins the semivariance excess (one crash day swings it), and the record reads
     // as a TYPICAL history of this model on all three rows — the 51st percentile (semivariance),
-    // 37th (leverage corr), 40th (tail hedge).
+    // 39th (leverage corr), 39th (tail hedge).
     semi_excess: 3.06,
-    semi_excess_sd: 1.40,
+    semi_excess_sd: 1.42,
     lev_corr: -0.0926,
-    lev_corr_sd: 0.41,
+    lev_corr_sd: 0.40,
     tail_hedge: -0.273,
     tail_hedge_sd: 0.34,
     val_disp_sd: 0.62,
     vr60_sd: 0.28,
     d5_sd: 0.18,
     d10_sd: 0.45,
-    d20_sd: 4.17,
-    bond_vol_sd: 0.52,
+    d20_sd: 4.18,
+    bond_vol_sd: 0.36,
     bond_growth_sd: 1.69,
-    bond_infl_sd: 2.00,
-    bond_depth_sd: 0.36,
+    bond_infl_sd: 1.55,
+    bond_depth_sd: 0.34,
     dd_refs: &DD_REFS_SP500,
     div_yield: 2.95,
     div_yield_band: (1.1, 5.8),
@@ -7173,42 +7184,42 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     tail_window: "QQQ 1999-2026",
     tail_years: 27,
     vol: 26.90,
-    vol_sd: 0.16,
+    vol_sd: 0.12,
     ret_vol: 0.38,
-    ret_vol_sd: 0.56,
+    ret_vol_sd: 0.55,
     kurt: 9.55,
     kurt_sd: 1.74,
     ac1: 0.293,
     ac1_sd: 0.23,
     ac20: 0.249,
-    ac20_sd: 0.22,
+    ac20_sd: 0.20,
     crashes: 25.6,
-    crashes_sd: 0.50,
+    crashes_sd: 0.51,
     med_depth: -22.8,
     med_depth_sd: 0.52,
     worst_depth: -83.0,
-    worst_depth_sd: 0.19,
+    worst_depth_sd: 0.18,
     vol_band: (23.5, 30.3),
     ret_vol_band: (0.27, 0.47),
     // QQQ wfull row of asymmetry-2026-08-31.tsv; the tail hedge is QQQ/TLT.
     semi_excess: 1.13,
-    semi_excess_sd: 4.57,
+    semi_excess_sd: 4.59,
     lev_corr: -0.1073,
-    lev_corr_sd: 0.50,
+    lev_corr_sd: 0.49,
     tail_hedge: -0.236,
     tail_hedge_sd: 0.47,
-    // d20's spread is a fraction of the S&P world's (0.35 against 4.17): at Nasdaq volatility the
+    // d20's spread is a fraction of the S&P world's (0.35 against 4.18): at Nasdaq volatility the
     // deep rung is pinned where the S&P default leaves it unreadable, so the row carries real
     // weight here.
     val_disp_sd: 0.48,
     vr60_sd: 0.27,
-    d5_sd: 0.13,
+    d5_sd: 0.12,
     d10_sd: 0.20,
     d20_sd: 0.35,
-    bond_vol_sd: 0.57,
-    bond_growth_sd: 1.50,
-    bond_infl_sd: 2.62,
-    bond_depth_sd: 0.31,
+    bond_vol_sd: 0.37,
+    bond_growth_sd: 1.51,
+    bond_infl_sd: 1.92,
+    bond_depth_sd: 0.28,
     dd_refs: &DD_REFS_NASDAQ,
     div_yield: 0.78,
     div_yield_band: (0.3, 1.5),
@@ -17046,6 +17057,58 @@ mod macro_panel_tests {
             .unwrap_or_else(|| panic!("fixture row [{set} {series} {member} {stat}] missing"))[6]
             .parse()
             .expect("numeric fixture value")
+    }
+
+    #[test]
+    fn the_policy_rates_upper_tail_is_the_records_an_inflation_regimes_target_is_capped() {
+        let Some(rs) = rows() else { return };
+        let mut w = default_world();
+        w.macro_panel = 1;
+        // eight centuries: the tail is a 0.1% event on the record, and a century holds one or two
+        // inflation regimes that reach the cap
+        let ps = sim_paths(&w, 8, 100, DEFAULT_SEED);
+        let policy = |p: &Path| -> Vec<f64> {
+            p.macro_panel
+                .as_ref()
+                .expect("no panel with the dial on")
+                .policy
+                .clone()
+        };
+        let pol: Vec<f64> = ps.iter().flat_map(policy).collect();
+        let gt20 = pol.iter().filter(|&&x| x > 20.0).count() as f64 / pol.len() as f64;
+        let rec_gt20 = value(&rs, "shared", "DFF", "policy", "shareGt20");
+        let rec_max = value(&rs, "shared", "DFF", "policy", "max");
+        // the record's share is one 1980-81 spike in seventy-two years; uncapped, the model put
+        // fifteen times as much there
+        assert!(
+            gt20 <= 3.0 * rec_gt20,
+            "share above 20%: {gt20:.4} against the record's {rec_gt20:.4}"
+        );
+        // the ceiling is rate_mean + INFL_CAP and the rate's own noise carries the spike, never
+        // past the record's maximum by more than that noise reaches
+        let mx = pol.iter().copied().fold(f64::MIN, f64::max);
+        assert!(
+            mx <= rec_max + 3.0,
+            "policy rate reached {mx:.2} against the record's {rec_max:.2}"
+        );
+        // no path holds 20% for a year: the record's longest run above it is four sessions
+        let longest = ps
+            .iter()
+            .map(|p| {
+                policy(p)
+                    .iter()
+                    .fold((0usize, 0usize), |(best, cur), &x| {
+                        let c = if x > 20.0 { cur + 1 } else { 0 };
+                        (best.max(c), c)
+                    })
+                    .0
+            })
+            .max()
+            .unwrap_or(0);
+        assert!(
+            longest <= 252,
+            "a path held the rate above 20% for {longest} sessions"
+        );
     }
 
     fn at2(x: f64) -> f64 {

@@ -1473,6 +1473,14 @@ object MarketSim:
     * at 400 paths), and 0.052 passes both ends (0.70 / 1.30, `-crossasset` verdict PASS).  A bond
     * dial cannot be settled once and left; re-run `-crossasset` after any equity-side change. */
   val EaseInSpeed = 6.0
+  /** THE INFLATION REGIME'S CEILING, in rate units: an inflation regime's target is a half-normal
+    * of `inflSize`, capped here.  Uncapped, a two-sigma regime held the policy rate near 26% for
+    * the regime's one to eleven years and a century put 1.7% of sessions above 20% where the
+    * record's 1954-2026 put 0.11%, its maximum 22.4% (1981) and its longest run above 20% four
+    * sessions.  Capped at 0.12 the target's ceiling is `rateMean` + 12 = 16.2%, the record's
+    * 1980-81 plateau, and the rate's own noise carries the spike above it.  A cap consumes no
+    * draw, so a path whose regimes never reach it is bit-identical to the uncapped model. */
+  val InflCap     = 0.12
   val DurationRef = 13.5
   /** Bond volatility is measured over NON-OVERLAPPING windows of this many years, even when the
     * paths are longer.  Every other statistic is measured over the whole path.
@@ -2653,7 +2661,7 @@ object MarketSim:
       // ---- exogenous layer: regimes, fundamental, the policy rate ---------------------------
       regimeCountdown -= 1
       if regimeCountdown <= 0 then
-        inflTarget = if rng.nextDouble() < w.inflProb then math.abs(rng.randn()) * w.inflSize else 0.0
+        inflTarget = if rng.nextDouble() < w.inflProb then math.min(InflCap, math.abs(rng.randn()) * w.inflSize) else 0.0
         driftNow = w.drift + rng.randn() * 0.04
         regimeCountdown = 250 + rng.nextBoundedInt(2500)
       // MACRO DISASTER: a rare multi-year collapse of the real fundamental.  One uniform draw
@@ -2704,7 +2712,9 @@ object MarketSim:
         // variance ratio.  The bond takes the same repricing with the opposite sign.
         logVbase += w.slowPerm * sm
         eqM.logP += sm
-        val bm = -w.slowBeta * sm
+        // a YIELD repricing, so the bond's move scales with its duration like every other bond
+        // flow (`SigmaNBond`, the refuge); the ratio is a bit-exact 1.0 at the shipped duration
+        val bm = -w.slowBeta * sm * (w.duration / DurationRef)
         bdM.logP += bm
         slowB += w.slowPerm * bm
         slowG = w.slowPhi * slowG - w.slowLev * slowK * zs
@@ -4839,13 +4849,13 @@ object MarketSim:
     retVolWindow = "CRSP 1954-2026",
     clusterWindow = "CRSP 1926-2026, the century", clusterYears = 100,
     tailWindow = "CRSP 1926-2026, the century", tailYears = 100,
-    vol = 16.0,          volSd = 0.16,
+    vol = 16.0,          volSd = 0.12,
     retVol = 0.69,       retVolSd = 0.27,
     kurt = 28.0,         kurtSd = 0.85,
     ac1 = 0.299,         ac1Sd = 0.15,
-    ac20 = 0.225,        ac20Sd = 0.25,
-    crashes = 20.7,      crashesSd = 0.29,
-    medDepth = -21.4,    medDepthSd = 0.16,
+    ac20 = 0.225,        ac20Sd = 0.21,
+    crashes = 20.7,      crashesSd = 0.30,
+    medDepth = -21.4,    medDepthSd = 0.15,
     // RE-ANCHORED in 0.22.1, same error class as `median depth %` in 0.22.0: -56.8 was the
     // 2007-09 episode, the worst of the 1954-2026 window, used where the model computes the worst
     // over a whole history.  1954 opens AFTER the crash that set the record's worst, so the anchor
@@ -4855,18 +4865,18 @@ object MarketSim:
     // `tailYears` moves to 100 with it, so the percentile is read at the window's own length.
     // Its sd is read at the same 100 years: a 72-year history's spread of the worst decline is
     // not a century's.
-    worstDepth = -84.1,  worstDepthSd = 0.19,
+    worstDepth = -84.1,  worstDepthSd = 0.20,
     volBand = (14.0, 18.0),
     retVolBand = (0.50, 0.85),
     // CRSP c1954 rows of asymmetry-2026-08-31.tsv; the tail hedge is SPY/TLT.  A single 72-year
     // history barely pins the semivariance excess (one crash day swings it), and the record reads
     // as a TYPICAL history of this model on all three rows -- the 51st percentile (semivariance),
-    // 37th (leverage corr), 40th (tail hedge).
-    semiExcess = 3.06, semiExcessSd = 1.40,
-    levCorr = -0.0926, levCorrSd = 0.41,
+    // 39th (leverage corr), 39th (tail hedge).
+    semiExcess = 3.06, semiExcessSd = 1.42,
+    levCorr = -0.0926, levCorrSd = 0.40,
     tailHedge = -0.273, tailHedgeSd = 0.34,
-    valDispSd = 0.62, vr60Sd = 0.28, d5Sd = 0.18, d10Sd = 0.45, d20Sd = 4.17,
-    bondVolSd = 0.52, bondGrowthSd = 1.69, bondInflSd = 2.00, bondDepthSd = 0.36,
+    valDispSd = 0.62, vr60Sd = 0.28, d5Sd = 0.18, d10Sd = 0.45, d20Sd = 4.18,
+    bondVolSd = 0.36, bondGrowthSd = 1.69, bondInflSd = 1.55, bondDepthSd = 0.34,
     ddRefs = DdRefsSp500,
     divYield = 2.95, divYieldBand = (1.1, 5.8),
     basketCorr = 0.770, basketBeta = 1.557, basketVolRatio = 2.023, basketNameVolBand = (1.9, 3.5))
@@ -4911,25 +4921,25 @@ object MarketSim:
     retVolWindow = "QQQ 1999-2026",
     clusterWindow = "QQQ 1999-2026", clusterYears = 27,
     tailWindow = "QQQ 1999-2026", tailYears = 27,
-    vol = 26.90,         volSd = 0.16,
-    retVol = 0.38,       retVolSd = 0.56,
+    vol = 26.90,         volSd = 0.12,
+    retVol = 0.38,       retVolSd = 0.55,
     kurt = 9.55,         kurtSd = 1.74,
     ac1 = 0.293,         ac1Sd = 0.23,
-    ac20 = 0.249,        ac20Sd = 0.22,
-    crashes = 25.6,      crashesSd = 0.50,
+    ac20 = 0.249,        ac20Sd = 0.20,
+    crashes = 25.6,      crashesSd = 0.51,
     medDepth = -22.8,    medDepthSd = 0.52,
-    worstDepth = -83.0,  worstDepthSd = 0.19,
+    worstDepth = -83.0,  worstDepthSd = 0.18,
     volBand = (23.5, 30.3),
     retVolBand = (0.27, 0.47),
     // QQQ wfull row of asymmetry-2026-08-31.tsv; the tail hedge is QQQ/TLT.
-    semiExcess = 1.13, semiExcessSd = 4.57,
-    levCorr = -0.1073, levCorrSd = 0.50,
+    semiExcess = 1.13, semiExcessSd = 4.59,
+    levCorr = -0.1073, levCorrSd = 0.49,
     tailHedge = -0.236, tailHedgeSd = 0.47,
-    // d20's spread is a fraction of the S&P world's (0.35 against 4.17): at Nasdaq volatility the
+    // d20's spread is a fraction of the S&P world's (0.35 against 4.18): at Nasdaq volatility the
     // deep rung is pinned where the S&P default leaves it unreadable, so the row carries real
     // weight here.
-    valDispSd = 0.48, vr60Sd = 0.27, d5Sd = 0.13, d10Sd = 0.20, d20Sd = 0.35,
-    bondVolSd = 0.57, bondGrowthSd = 1.50, bondInflSd = 2.62, bondDepthSd = 0.31,
+    valDispSd = 0.48, vr60Sd = 0.27, d5Sd = 0.12, d10Sd = 0.20, d20Sd = 0.35,
+    bondVolSd = 0.37, bondGrowthSd = 1.51, bondInflSd = 1.92, bondDepthSd = 0.28,
     ddRefs = DdRefsNasdaq,
     divYield = 0.78, divYieldBand = (0.3, 1.5),
     basketCorr = 0.837, basketBeta = 1.365, basketVolRatio = 1.630, basketNameVolBand = (1.5, 2.8))

@@ -18,6 +18,47 @@
   0.22): the slow channel's regime shows in single histories. Nasdaq losses are not comparable
   across this change.
 
+**The inflation regime has a ceiling, so the policy rate's upper tail is the record's**
+
+- An inflation regime's target is a half-normal of `inflSize` capped at 0.12, twelve points over
+  the mean rate: the record's 1980–81 plateau. Uncapped, a two-sigma regime held the rate near 26%
+  for the regime's one to eleven years, and a century put 1.7% of sessions above 20% on the default
+  (2.4% on the Nasdaq recipe, the widest century 45%) against the record's 0.11% over 1954–2026,
+  its maximum 22.4% and its longest run above 20% four sessions. Capped: 0.02% of sessions above
+  20%, the widest of 128 centuries 21.75%, the longest run a quarter. Above 15% the model still
+  puts 3.1% of sessions against the record's 1.6%: its high-rate regimes are plateaus where the
+  record's was a spike.
+- VALUES CHANGE on any path whose inflation regimes reach the cap — 70 of 128 century paths on
+  the default, 81 on the Nasdaq recipe, about a third of forty-year paths — and `macroIvol` on
+  every path of a world whose level ensemble reaches it, which every shipped world's does. A path
+  whose regimes never reach the cap is bit-identical; the cap consumes no draw.
+- Every frozen release and recipe passes every gate class as before. Fitness loss on the default
+  0.749 → 0.724 under the old weights (0.768 under the re-frozen ones below). On `0.24.2-nasdaq`
+  1.17 → 1.26 (1.36 re-frozen): equity vol 24.9 → 24.3 (target 26.9) and lag-20 clustering 0.20 → 0.19, because
+  extreme rate regimes were supplying variance, and part of the worst crashes: 43 of the Nasdaq
+  batch's 119 crashes deeper than 70% sat inside a rate regime above 20%, 17 of the default's 77;
+  capped, 4 and 0 (the default's worst-crash row −74.6 → −68.1 against the record's −84.1).
+- The ruler gains DFF's upper-tail rows on the series' whole span (`shareGt10` / `shareGt15` /
+  `shareGt20`, `max`, `run20`), and a test per twin holds eight model centuries to them.
+- Both anchor sets' sampling spreads are re-frozen from `-noise -paths 200` at the capped
+  worlds; the same command uncapped reproduces all forty previous literals exactly. Narrower
+  where the tail was: volatility 0.16 → 0.12 on both, lag-20 clustering 0.25 → 0.21 (S&P) and
+  0.22 → 0.20 (Nasdaq), bond vol 0.52 → 0.36 and 0.57 → 0.37, the bond's inflation-crash 2.00 →
+  1.55 and 2.62 → 1.92. Losses are not comparable across this change.
+- The two calibration sets below were searched before the ceiling; member 0 of each passes every
+  class under it, and a path of any member whose regimes never reach the cap is unchanged.
+
+**The slow repricing channel's bond leg is a yield move, so it scales with duration**
+
+- The bond took the channel's repricing as a price shock of the same size at every duration,
+  and `-crossasset` FAILED at the shipped default since 0.24.1: a 1.8-year bond read 2.74% vol
+  where the duration relation predicts 1.8, the bond-vol-times-duration rung 1.52 against a
+  0.70–1.10 band. The leg now scales by duration over `DurationRef` like the bond's noise and
+  the refuge flow, a bit-exact 1.0 at the shipped 13.5 years: every shipped world is bit-identical,
+  and the ladder reads 1.00 on every graded rung, verdict PASS at 400 paths (EDGE at 200, the
+  13.5-year depth cell 1.33 against a 1.35 ceiling, 1.32 at 400). Only a world with `-duration`
+  off 13.5 changes.
+
 **Two derived channels read the slow repricing channel at the state's full share**
 
 - `macroIvol`'s VALUES CHANGE. The implied-vol member is re-levelled by `kIv`, the mean over
@@ -229,7 +270,8 @@
   floor only in brief episodes — 0.000 of a century's sessions below 0.5%, 0.011 on the widest
   path — where the record spent 28% of 1990–2026 there. The high end transports (0.19 of sessions
   above 5% against 0.27). A rate leg read as a rank transports; one read as a fixed low threshold
-  fires on the record and almost never here.
+  fires on the record and almost never here. The upper tail is held to the record's by the
+  inflation regime's ceiling (the block above).
 - The ruler gains DFF's shape rows (`macro-2026-09-06.tsv`, on WEEKDAYS: the record publishes the
   rate every calendar day and a weekend repeats Friday's value, which no session calendar has),
   including how much of a rate series is decision rather than drift — `hold`, `move50`, `d63` —
