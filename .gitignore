@@ -112,6 +112,9 @@ test-data/*
 # `git check-ignore -v`, which prints nothing for them.
 !test-data/bond-anchors/
 !test-data/equity-anchors/
+# The calibration archives a release ships: the sets of worlds consistent with the record, one per
+# anchor set, that `-worldset` runs a member of. Search working directories stay ignored.
+!test-data/worlds/
 # Anchored: an unanchored `bin/` also swallows rust/src/bin/, whose contents are
 # real source.
 /bin/

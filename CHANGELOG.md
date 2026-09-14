@@ -96,6 +96,19 @@
   48 improves per-path efficiency only 8%, so there is little idle capacity to reclaim, and it
   would have changed which parents a generation draws from.
 
+**Two calibration archives ship: the sets of worlds consistent with the record, one per market**
+
+- `test-data/worlds/0.24.2-sp500.json` (173 members, seeded from the default) and
+  `test-data/worlds/0.24.2-nasdaq.json` (191 members, seeded from `0.24.2-nasdaq`), each the
+  output of the calibration search below at 60 paths by 80 years on three seeds, judged on both
+  markets, admitted under the quality bar with the fidelity bands scored, re-scored on two
+  seed streams of 3 and then 12 that the search never selected on, and pruned to what survived.
+  `-worldset test-data/worlds/0.24.2-nasdaq.json -worldindex K -anchors nasdaq` runs member K.
+  Every fitness row of the Nasdaq set's own market has members inside the record's sampling
+  error, lag-20 clustering among them; on the S&P set the median member sits two rows past it
+  against the default's one. What the sets are for, and how to read a ranking across one, is in
+  `MarketSimWorlds.md`'s `-worldset` section.
+
 **The calibration search: an archive of the worlds consistent with the record, in both twins**
 
 - `rust/src/bin/market_sim_search.rs` and `jsrc/marketSimSearch.sc` (built with

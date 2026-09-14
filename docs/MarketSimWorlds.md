@@ -195,10 +195,13 @@ market_sim_search -out search ... -export worlds.json
 
 `worlds.json` is a JSON array of members, each with its `member` number, the world it was seeded
 from, its score and worst row, and a `world` block in the sidecar's own key format at the
-archive's full precision. To run one:
+archive's full precision. The release ships two, built this way and pruned by their holdouts:
+`test-data/worlds/0.24.2-sp500.json` (173 members, seeded from the default; pass `-anchors sp500`
+or nothing) and `test-data/worlds/0.24.2-nasdaq.json` (191 members, seeded from `0.24.2-nasdaq`;
+pass `-anchors nasdaq`, since a member names no anchor set). To run one:
 
 ```
-market_sim.exe -worldset worlds.json -worldindex 38 -paths 200 -years 40 -emitall -emit m38.tsv
+market_sim.exe -worldset test-data/worlds/0.24.2-nasdaq.json -worldindex 38 -anchors nasdaq -paths 200 -years 40 -emitall -emit m38.tsv
 ```
 
 `-worldindex` addresses a member by its own number, defaulting to 0. The member seeds every dial
