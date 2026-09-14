@@ -1,4 +1,4 @@
-## v0.24.2 — unreleased
+## v0.24.2 — 2026-09-14
 
 **`0.24.2-nasdaq`: the Nasdaq recipe re-solved by the calibration search, and the Nasdaq spreads re-frozen at it**
 
@@ -285,7 +285,8 @@
   toward a 72% ceiling, minus a paydown of 0.45 a year at full equity stress, plus the borrowing
   cycle's deviation — every term a state the loop already carries, so it stays draw-free.
 - `-macro 1` also emits `macroBankCredit` (TOTBKCR) and `macroOutput` (GDP), the two levels the
-  ratio is now the quotient of. Both are INDICES at 100 on the first emitted session: the model
+  ratio is now the quotient of. Output is an INDEX at 100 on the first emitted session and bank
+  credit is the ratio times it, so it starts at the ratio's first value (about 55): the model
   has no anchor for the size of its economy, so growth and the ratio are the readable questions.
   `macroBankCredit / macroOutput × 100` reproduces `macroCredit` to 2e-6 pp read back from the
   emitted text, the columns' own six-decimal rounding. Output is a 2.4%/yr real trend plus 0.12 of the fundamental's excess growth — the

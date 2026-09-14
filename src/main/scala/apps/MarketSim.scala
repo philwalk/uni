@@ -209,8 +209,9 @@ object MarketSim:
   // A panel-off schema-14 file is byte-identical to its schema-13 counterpart except the schema
   // number.
   // 14 -> 15: THE CREDIT SYSTEM SPLIT.  The TSV gained `macroBankCredit` (TOTBKCR) and
-  // `macroOutput` (GDP), both INDICES at 100 on the first emitted session, and `channels.macro`
-  // their member blocks; `macroCredit` is the ratio they imply and its VALUES CHANGE, because it
+  // `macroOutput` (GDP) -- output an INDEX at 100 on the first emitted session, bank credit the
+  // ratio times it, so it starts at the ratio's first value -- and `channels.macro` their member
+  // blocks; `macroCredit` is the ratio they imply and its VALUES CHANGE, because it
   // is now its own slow stock rather than the leverage cycle read in percent -- a schema-14
   // reader gets the same column meaning a materially different series, and one that turns over
   // decades rather than every four years.  A panel-off schema-15 file is byte-identical to its
