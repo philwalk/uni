@@ -1005,13 +1005,17 @@ fn recipe_0242_nasdaq(mut w: World) -> World {
 /// typical-year and wing rows, with the bust swing, the belief half-life and the slow channel's
 /// bond leg and permanent share among the thirty-four searched dials -- member 53 of search-v18,
 /// the steadiest of the nine members that pass every class on four seeds at 200 paths. The
-/// literals are the archive's, so `-atrelease 0.24.3-nasdaq` reproduces the member byte for byte.
+/// literals are the archive's except `bust_amp`, which the archive left at 0.014 because the
+/// bust's shape is no graded row: it is 0.14, the largest amplitude whose four-seed loss stays
+/// inside the member's own (1.52-1.92 against 1.51-1.90) once the ceiling holds the swing under
+/// the mania's high -- the mania-led busts read 39% vol over 3.5 years with four rallies of 20%
+/// (the member's own 32.5%, 3.7 years, two; NDX 2000-02: 53%, 2.5, five); 0.20 reads 47% over
+/// 2.8 years at half a point of loss on two seeds.
 /// Against 0.24.2-nasdaq on the same four seeds: loss 1.50-1.89 from 1.58-2.61; the upper wing
 /// 2.5 -> 7.2 (record 7.6), the lower 14.0 -> 10.7 (6.7), the downside excess 0.3 -> 0.1 (1.1);
 /// paid in the worst crash (-66 -> -63 against -83) and crashes/century 30.8 -> 31.4 (25.6);
-/// equity vol 24.4 against 26.9 and kurtosis 16.4 (9.6) as before. The bust swing runs at the
-/// archive's 0.014: at 0.10 and above its rallies mint 20% peaks inside the busts and the macro
-/// build-up band fails. The un-searched dials are the 0.24.2 recipe's.
+/// equity vol 24.4 against 26.9 and kurtosis 16.4 (9.6) as before. The un-searched dials are the
+/// 0.24.2 recipe's.
 fn recipe_0243_nasdaq(mut w: World) -> World {
     w.depth = 11.378441;
     w.trend_share = 0.091321869;
@@ -1046,7 +1050,7 @@ fn recipe_0243_nasdaq(mut w: World) -> World {
     w.slow_beta = 0.57226776;
     w.slow_perm = 0.024347201;
     w.belief_years = 0.7730648;
-    w.bust_amp = 0.01448313;
+    w.bust_amp = 0.14;
     w
 }
 
@@ -1993,6 +1997,9 @@ pub struct Path {
     pub mean_crowd_flow: f64,
     /// BINDING diagnostic for the disaster channel: collapses begun post burn-in on this path.
     pub disasters: usize,
+    /// BINDING diagnostic for the bust swing's ceiling: post-burn-in sessions on which it held
+    /// the swing under the running peak (0 whenever `bust_amp` is 0).
+    pub bust_ceil_days: usize,
     /// satellite equity leg price (empty when `sat_beta` is 0)
     pub sat: Vec<f64>,
     /// intra-bar LOG high/low (empty when `range_scale` is 0). Log, not a level, unlike
@@ -2053,6 +2060,21 @@ const BUST_PHI: f64 = 0.98;
 const BUST_DECAY_NEAR: f64 = 0.999_083_558_838_992_4;
 const BUST_DECAY_AFTER: f64 = 0.994_513_935_616_828_5;
 const BUST_RELIEF: f64 = 2.0;
+/// THE UNWIND'S CEILING (see `bust_amp`): the swing may not carry the price nearer than this to
+/// the running peak, in log. A mania's unwind never re-attains its high (the NDX's 2000 high
+/// stood until 2015, the Dow's 1929 high until 1954): the nearest its rallies came was 0.14
+/// under it (September 2000) and 0.20 (October 1929), and no deep episode on the record came
+/// nearer than 0.08. Without it the swing's rallies re-attained the high a month after the
+/// bust opened and minted 20% peaks whose quarter sat inside the bust, which failed the macro
+/// build-up band from amplitude 0.10. Binds only while armed and within reach of the peak, so
+/// every path where it never binds is bit-identical.
+const BUST_CEIL: f64 = 0.10;
+/// The state below which the unwind is over and the state is cut to exactly 0 (a geometric
+/// decay never reaches it): the swing, the drag relief and the ceiling are then inert until the
+/// next mania arms, so a stretch with no mania is bit-identical to the dial off and
+/// `bust_ceil_days` counts a live unwind only. At full amplitude 0.3 the cut swing is under
+/// 1e-4 log.
+const BUST_OFF: f64 = 1e-4;
 
 /// DETERMINISTIC exp: Cody-Waite range reduction with fdlibm's split ln2, a fixed Horner Taylor
 /// to r^12 on the reduced argument, and 2^k built from raw exponent bits. Every operation is
@@ -3601,6 +3623,7 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
     let mut bust_swing = 0.0f64;
     let mut bust_news = 0.0f64;
     let mut bust_move = 0.0f64;
+    let mut bust_ceil_days = 0usize;
     let mut vol_resp_a = 0.0f64;
     let mut asym_g = 0.0f64;
     let mut asym_a = 0.0f64;
@@ -4002,12 +4025,27 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
             } else {
                 BUST_DECAY_AFTER
             };
+            if bust_s < BUST_OFF {
+                bust_s = 0.0;
+            }
             let m = 1.0 + BUST_RELIEF * bust_s;
             eq_m.stress_div = m;
             eq_m.drag_mult = 1.0 / m;
             bust_swing =
                 BUST_PHI * bust_swing + (1.0 - BUST_PHI * BUST_PHI).sqrt() * bust_rng.randn();
-            let priced = w.bust_amp * bust_s * bust_swing;
+            // THE CEILING (see `BUST_CEIL`): the level the swing carries is held to BUST_CEIL
+            // under the running peak, measured from the price without it (the centre); once
+            // the centre is already nearer, the swing can only subtract
+            let bust_raw = w.bust_amp * bust_s * bust_swing;
+            let bust_room = (eq_m.peak - BUST_CEIL - (eq_m.log_p - bust_news)).max(0.0);
+            let priced = if bust_raw > bust_room {
+                if i >= BURN_IN {
+                    bust_ceil_days += 1;
+                }
+                bust_room
+            } else {
+                bust_raw
+            };
             bust_move = priced - bust_news;
             eq_m.log_p += bust_move;
             bust_news = priced;
@@ -4370,6 +4408,7 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
         duration: w.duration,
         mean_crowd_flow: crowd_flow_sum / nf,
         disasters: disaster_count,
+        bust_ceil_days,
         sat: Vec::new(),
         log_hi: Vec::new(),
         log_lo: Vec::new(),
@@ -7576,19 +7615,19 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     // QQQ 1999-2026 (`yearvol-2026-09-15.tsv`, w1999): 18.26, only 0.68 of pooled — the window's
     // vol is 2000-02 at 58 / 55 / 42%; QQQ from 2007 reads 0.82 like SPY.
     year_vol: 18.3,
-    year_vol_sd: 0.16,
+    year_vol_sd: 0.15,
     ret_vol: 0.38,
-    ret_vol_sd: 0.50,
+    ret_vol_sd: 0.49,
     kurt: 9.55,
-    kurt_sd: 1.69,
+    kurt_sd: 1.68,
     ac1: 0.293,
     ac1_sd: 0.24,
     ac20: 0.249,
     ac20_sd: 0.22,
     crashes: 25.6,
-    crashes_sd: 0.49,
+    crashes_sd: 0.50,
     med_depth: -22.8,
-    med_depth_sd: 0.36,
+    med_depth_sd: 0.35,
     worst_depth: -83.0,
     worst_depth_sd: 0.18,
     vol_band: (23.5, 30.3),
@@ -7596,7 +7635,7 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     ret_vol_band: (0.27, 0.47),
     // QQQ wfull row of asymmetry-2026-08-31.tsv; the tail hedge is QQQ/TLT.
     semi_excess: 1.13,
-    semi_excess_sd: 4.47,
+    semi_excess_sd: 4.46,
     lev_corr: -0.1073,
     lev_corr_sd: 0.47,
     tail_hedge: -0.236,
@@ -7612,7 +7651,7 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     vr60_sd: 0.29,
     d5_sd: 0.12,
     d10_sd: 0.22,
-    d20_sd: 0.44,
+    d20_sd: 0.43,
     bond_vol_sd: 0.37,
     bond_growth_sd: 1.64,
     bond_infl_sd: 1.61,
@@ -17099,9 +17138,9 @@ mod bust_swing_tests {
                 assert!(w.bust_amp == 0.0, "recipe {n}");
             }
         }
-        // the searched 0.24.3 recipe carries the archive's own amplitude
+        // the 0.24.3 recipe carries the amplitude decided by measurement under the ceiling
         let (w0243, _) = named_world("0.24.3-nasdaq").expect("recipe");
-        assert!(w0243.bust_amp == 0.01448313, "0.24.3-nasdaq");
+        assert!(w0243.bust_amp == 0.14, "0.24.3-nasdaq");
         // at 0 the block never runs: its own stream is never drawn and no hook moves
         let (w, _) = named_world("0.24.2-nasdaq").expect("recipe");
         let mut z = w;
@@ -17116,8 +17155,11 @@ mod bust_swing_tests {
 
     #[test]
     fn on_the_swing_reaches_the_price_and_raises_the_ensembles_vol_inside_the_busts() {
-        let (w, _) = named_world("0.24.2-nasdaq").expect("recipe");
-        let mut on_w = w;
+        // the recipe the swing is calibrated on, with the swing off against 0.14
+        let (r, _) = named_world("0.24.3-nasdaq").expect("recipe");
+        let mut w = r;
+        w.bust_amp = 0.0;
+        let mut on_w = r;
         on_w.bust_amp = 0.14;
         // a mania has to form first, which takes decades: one 80-year path
         let on = simulate(&on_w, 80, DEFAULT_SEED);
@@ -17131,12 +17173,41 @@ mod bust_swing_tests {
             st_off.vol,
             st_on.vol
         );
-        // and it adds it inside the busts, not to the ordinary year
+        // and it adds it inside the busts, not to the ordinary year (the recipe's manias are
+        // frequent enough that a few of its years carry a bust, so the median year moves a
+        // fraction of a point where the pooled vol moves a point)
         assert!(
-            st_on.year_vol - st_off.year_vol < 0.002,
+            st_on.year_vol - st_off.year_vol < 0.005,
             "the typical year must stay put: {:.4} -> {:.4}",
             st_off.year_vol,
             st_on.year_vol
+        );
+    }
+    #[test]
+    fn the_ceiling_holds_the_swing_under_the_manias_high_and_never_runs_at_zero() {
+        let (w, _) = named_world("0.24.3-nasdaq").expect("recipe");
+        let mut off_w = w;
+        off_w.bust_amp = 0.0;
+        let off = sim_paths(&off_w, 20, 80, DEFAULT_SEED);
+        assert!(
+            off.iter().all(|p| p.bust_ceil_days == 0),
+            "at 0 the block never runs"
+        );
+        let mut on_w = w;
+        on_w.bust_amp = 0.14;
+        let on = sim_paths(&on_w, 20, 80, DEFAULT_SEED);
+        let held: usize = on.iter().map(|p| p.bust_ceil_days).sum();
+        let sessions: usize = on.iter().map(|p| p.price.len()).sum();
+        assert!(
+            held > 0,
+            "the ceiling must bind on a mania's unwind at 0.14"
+        );
+        let share = held as f64 / sessions as f64;
+        println!("ceiling held on {:.3}% of sessions", share * 100.0);
+        assert!(
+            share < 0.10,
+            "the ceiling bounds the swing's rallies, not the ordinary session: held on {:.2}% of sessions",
+            share * 100.0
         );
     }
 }

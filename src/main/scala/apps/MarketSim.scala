@@ -430,7 +430,9 @@ object MarketSim:
     "              ;   in the price and in perceived fair while the unwind makes new lows, the",
     "              ;   recovery drag relieved and the amplifier blind to it -- the record's mania",
     "              ;   bust: NDX 2000-02 spent 2.5 years at 53% vol in five legs and rallies.",
-    "              ;   Own stream; 0 = bit-identical",
+    "              ;   The swing never carries the price nearer than 0.10 log to the running",
+    "              ;   peak (a mania's unwind never re-attains its high), and the state is cut",
+    "              ;   to 0 once the unwind is over.  Own stream; 0 = bit-identical",
     "-stressadapt M ; the equity spiral's SCALE speed: the EWMA weight on ret^2 that standardizes",
     "              ;   the decline the spiral's stress index reads.  0.005, a ~140-session memory,",
     "              ;   reads a persistently volatile stretch as continuous stress; faster lets the",
@@ -1006,6 +1008,9 @@ object MarketSim:
                                                  // default world across four releases.
                         disasters: Int,          // BINDING diagnostic for the disaster channel:
                                                  // collapses begun post burn-in on this path.
+                        bustCeilDays: Int,       // BINDING diagnostic for the bust swing's ceiling:
+                                                 // post-burn-in sessions on which it held the
+                                                 // swing under the running peak (0 at bustAmp 0)
                         sat: Array[Double],      // satellite equity leg price (empty when
                                                  // `satBeta` is 0)
                         logHi: Array[Double],    // intra-bar LOG high/low (empty when
@@ -1468,18 +1473,22 @@ object MarketSim:
     * typical-year and wing rows, with the bust swing, the belief half-life and the slow channel's
     * bond leg and permanent share among the thirty-four searched dials -- member 53 of search-v18,
     * the steadiest of the nine members that pass every class on four seeds at 200 paths. The
-    * literals are the archive's, so `-atrelease 0.24.3-nasdaq` reproduces the member byte for byte.
+    * literals are the archive's except `bustAmp`, which the archive left at 0.014 because the
+    * bust's shape is no graded row: it is 0.14, the largest amplitude whose four-seed loss stays
+    * inside the member's own (1.52-1.92 against 1.51-1.90) once the ceiling holds the swing
+    * under the mania's high -- the mania-led busts read 39% vol over 3.5 years with four
+    * rallies of 20% (the member's own 32.5%, 3.7 years, two; NDX 2000-02: 53%, 2.5, five);
+    * 0.20 reads 47% over 2.8 years at half a point of loss on two seeds.
     * Against 0.24.2-nasdaq on the same four seeds: loss 1.50-1.89 from 1.58-2.61; the upper wing
     * 2.5 -> 7.2 (record 7.6), the lower 14.0 -> 10.7 (6.7), the downside excess 0.3 -> 0.1 (1.1);
     * paid in the worst crash (-66 -> -63 against -83) and crashes/century 30.8 -> 31.4 (25.6);
-    * equity vol 24.4 against 26.9 and kurtosis 16.4 (9.6) as before. The bust swing runs at the
-    * archive's 0.014: at 0.10 and above its rallies mint 20% peaks inside the busts and the macro
-    * build-up band fails. The un-searched dials are the 0.24.2 recipe's. */
+    * equity vol 24.4 against 26.9 and kurtosis 16.4 (9.6) as before. The un-searched dials are
+    * the 0.24.2 recipe's. */
   val Recipes0243: Vector[(String, World, String)] =
     val b = Recipes0242.find(_._1 == "0.24.2-nasdaq").map(_._2)
       .getOrElse(sys.error("no base recipe 0.24.2-nasdaq"))
     Vector(("0.24.3-nasdaq",
-            b.copy(depth = 11.378441, trendShare = 0.091321869, drift = 0.085311578, fundVol = 0.03, crowdImpact = 0.030261189, stress = 5.2350165, valuePull = 0.059293455, recoveryDrag = 6.7192147, recoveryFloor = 0.064560211, disasterRate = 0.42211827, disasterSize = 2.1563503, disasterRecover = 0.61330999, beliefShare = 0.7281211, capYears = 4.4211681, volOfVol = 0.019282161, jumpVar = 0.0, jumpRate = 0.005674479, leverage = 0.049527937, downShock = 0.010033667, jumpSkew = 0.46293234, newsRate = 1.1896798, newsSize = 0.042578621, refugeDays = 0.88502808, easing = 0.034326342, refuge = 0.12391532, inflSize = 0.10614338, discount = 6.4992686, margin = 0.0066204344, slowShare = 0.21615067, slowVol = 0.9349886, slowBeta = 0.57226776, slowPerm = 0.024347201, beliefYears = 0.7730648, bustAmp = 0.01448313),
+            b.copy(depth = 11.378441, trendShare = 0.091321869, drift = 0.085311578, fundVol = 0.03, crowdImpact = 0.030261189, stress = 5.2350165, valuePull = 0.059293455, recoveryDrag = 6.7192147, recoveryFloor = 0.064560211, disasterRate = 0.42211827, disasterSize = 2.1563503, disasterRecover = 0.61330999, beliefShare = 0.7281211, capYears = 4.4211681, volOfVol = 0.019282161, jumpVar = 0.0, jumpRate = 0.005674479, leverage = 0.049527937, downShock = 0.010033667, jumpSkew = 0.46293234, newsRate = 1.1896798, newsSize = 0.042578621, refugeDays = 0.88502808, easing = 0.034326342, refuge = 0.12391532, inflSize = 0.10614338, discount = 6.4992686, margin = 0.0066204344, slowShare = 0.21615067, slowVol = 0.9349886, slowBeta = 0.57226776, slowPerm = 0.024347201, beliefYears = 0.7730648, bustAmp = 0.14),
             "nasdaq"))
 
   val Recipes: Vector[(String, World, String)] =
@@ -1681,6 +1690,21 @@ object MarketSim:
   val BustDecayNear = 0.9990835588389924
   val BustDecayAfter = 0.9945139356168285
   val BustRelief = 2.0
+  /** THE UNWIND'S CEILING (see `bustAmp`): the swing may not carry the price nearer than this to
+    * the running peak, in log.  A mania's unwind never re-attains its high (the NDX's 2000 high
+    * stood until 2015, the Dow's 1929 high until 1954): the nearest its rallies came was 0.14
+    * under it (September 2000) and 0.20 (October 1929), and no deep episode on the record came
+    * nearer than 0.08.  Without it the swing's rallies re-attained the high a month after the
+    * bust opened and minted 20% peaks whose quarter sat inside the bust, which failed the
+    * macro build-up band from amplitude 0.10.  Binds only while armed and within reach of the
+    * peak, so every path where it never binds is bit-identical. */
+  val BustCeil = 0.10
+  /** The state below which the unwind is over and the state is cut to exactly 0 (a geometric
+    * decay never reaches it): the swing, the drag relief and the ceiling are then inert until
+    * the next mania arms, so a stretch with no mania is bit-identical to the dial off and
+    * `bustCeilDays` counts a live unwind only.  At full amplitude 0.3 the cut swing is under
+    * 1e-4 log. */
+  val BustOff = 1e-4
 
   /** DETERMINISTIC exp: Cody-Waite range reduction with fdlibm's split ln2, a fixed Horner
     * Taylor to r^12 on the reduced argument, and 2^k built from raw exponent bits.  Every
@@ -2650,6 +2674,7 @@ object MarketSim:
     var bustSwing = 0.0
     var bustNews = 0.0
     var bustMove = 0.0
+    var bustCeilDays = 0
     var volRespA = 0.0
     var asymG = 0.0
     var asymA = 0.0
@@ -2943,11 +2968,21 @@ object MarketSim:
           sinceLow = 0
         else sinceLow += 1
         bustS *= (if sinceLow <= DaysPerYear then BustDecayNear else BustDecayAfter)
+        if bustS < BustOff then bustS = 0.0
         val m = 1.0 + BustRelief * bustS
         eqM.stressDiv = m
         eqM.dragMult = 1.0 / m
         bustSwing = BustPhi * bustSwing + math.sqrt(1.0 - BustPhi * BustPhi) * bustRng.randn()
-        val priced = w.bustAmp * bustS * bustSwing
+        // THE CEILING (see `BustCeil`): the level the swing carries is held to BustCeil under the
+        // running peak, measured from the price without it (the centre); once the centre is
+        // already nearer, the swing can only subtract
+        val bustRaw  = w.bustAmp * bustS * bustSwing
+        val bustRoom = math.max(eqM.peak - BustCeil - (eqM.logP - bustNews), 0.0)
+        val priced =
+          if bustRaw > bustRoom then
+            if i >= BurnIn then bustCeilDays += 1
+            bustRoom
+          else bustRaw
         bustMove = priced - bustNews
         eqM.logP += bustMove
         bustNews = priced
@@ -3212,7 +3247,7 @@ object MarketSim:
          eqM.floorDays - eqFloorAtBurn, eqM.tailDays - eqTailAtBurn,
          eqM.haltDays - eqHaltAtBurn,
          bondStressSum / n, bondStressHi.toDouble / n, w.duration, crowdFlowSum / n,
-         disasterCount,
+         disasterCount, bustCeilDays,
          Array.emptyDoubleArray, Array.emptyDoubleArray, Array.emptyDoubleArray,
          Array.emptyDoubleArray)
     Priced(path, ChannelInputs(chPx, chD, chState, chSv, chJ, chVs, chAmp),
@@ -5098,26 +5133,26 @@ object MarketSim:
     vol = 26.90,         volSd = 0.12,
     // QQQ 1999-2026 (`yearvol-2026-09-15.tsv`, w1999): 18.26, only 0.68 of pooled -- the window's
     // vol is 2000-02 at 58 / 55 / 42%; QQQ from 2007 reads 0.82 like SPY.
-    yearVol = 18.3,      yearVolSd = 0.16,
-    retVol = 0.38,       retVolSd = 0.50,
-    kurt = 9.55,         kurtSd = 1.69,
+    yearVol = 18.3,      yearVolSd = 0.15,
+    retVol = 0.38,       retVolSd = 0.49,
+    kurt = 9.55,         kurtSd = 1.68,
     ac1 = 0.293,         ac1Sd = 0.24,
     ac20 = 0.249,        ac20Sd = 0.22,
-    crashes = 25.6,      crashesSd = 0.49,
-    medDepth = -22.8,    medDepthSd = 0.36,
+    crashes = 25.6,      crashesSd = 0.50,
+    medDepth = -22.8,    medDepthSd = 0.35,
     worstDepth = -83.0,  worstDepthSd = 0.18,
     volBand = (23.5, 30.3),
     yearVolBand = (15.0, 21.6),
     retVolBand = (0.27, 0.47),
     // QQQ wfull row of asymmetry-2026-08-31.tsv; the tail hedge is QQQ/TLT.
-    semiExcess = 1.13, semiExcessSd = 4.47,
+    semiExcess = 1.13, semiExcessSd = 4.46,
     levCorr = -0.1073, levCorrSd = 0.47,
     tailHedge = -0.236, tailHedgeSd = 0.37,
     wingUp = 7.6, wingUpSd = 0.60, wingDown = 6.7, wingDownSd = 0.61,
     // d20's spread is a fraction of the S&P world's (0.35 against 4.18): at Nasdaq volatility the
     // deep rung is pinned where the S&P default leaves it unreadable, so the row carries real
     // weight here.
-    valDispSd = 0.38, vr60Sd = 0.29, d5Sd = 0.12, d10Sd = 0.22, d20Sd = 0.44,
+    valDispSd = 0.38, vr60Sd = 0.29, d5Sd = 0.12, d10Sd = 0.22, d20Sd = 0.43,
     bondVolSd = 0.37, bondGrowthSd = 1.64, bondInflSd = 1.61, bondDepthSd = 0.28,
     ddRefs = DdRefsNasdaq,
     divYield = 0.78, divYieldBand = (0.3, 1.5),

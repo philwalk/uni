@@ -1,3 +1,32 @@
+## v0.24.4 — unreleased
+
+**The bust swing has a ceiling, and the Nasdaq recipe runs it at 0.14**
+
+- The swing never carries the price nearer than 0.10 log to the running peak, measured from the
+  price without it: a mania's unwind never re-attains its high (the NDX's 2000 high stood until
+  2015, the Dow's 1929 high until 1954; the nearest their rallies came was 0.14 and 0.20 under it).
+  Without the ceiling the swing's rallies re-attained the high a month after the bust opened and
+  minted 20% peaks whose quarter sat inside the bust — three per century at amplitude 0.14,
+  reading a conditions rank of 0.52 where every other peak reads 0.85 — which is what failed the
+  macro build-up band from 0.10; under it every amplitude to 0.20 passes every class on four
+  seeds. The state is cut to exactly 0 once it has decayed below 1e-4, so the block is inert
+  between manias, and `bustCeilDays` / `bust_ceil_days` on a path counts the sessions a live
+  unwind was held (3% of the recipe's at 0.14). Every world with the dial at 0 is bit-identical;
+  twins byte-identical on the default, both Nasdaq recipes and the swing at 0, 0.14 and 0.20.
+- `0.24.3-nasdaq` runs the swing at 0.14 instead of its archive's 0.014, the largest amplitude
+  whose four-seed loss stays inside the member's own (1.52-1.92 against 1.51-1.90). Its mania-led
+  busts read 39% vol over 3.5 years with four rallies of 20% and two of 30% (at 0.014: 32.5%, 3.7
+  years, two and one; NDX 2000-02: 53%, 2.5, five and three); 0.20 reads 47% over 2.8 years at
+  half a point of loss on two seeds and the upper wing a point lower, a trade left on the table.
+  At 0.14 the typical year reads 20.6 (band 15.0-21.6), pooled vol 24.8 (26.9), the upper wing 6.5
+  (7.6, inside its sampling spread). The Nasdaq spreads are re-frozen at it: seven of the
+  twenty-one move by 0.01 (typical year 0.16 → 0.15, return per vol 0.50 → 0.49, kurtosis 1.69 →
+  1.68, crashes 0.49 → 0.50, median depth 0.36 → 0.35, downside 4.47 → 4.46, the deep rung 0.44 →
+  0.43) and the same command at 0.014 reproduces all twenty-one, so every move is the amplitude's.
+  `-crossasset` reads the d=5.70 rung at 0.58 as before. The recipe's other 33 literals are still
+  member 53's; the sets' members with a nonzero `bustAmp` run under the ceiling, which their
+  `score` and `worstRow` predate.
+
 ## v0.24.3 — 2026-09-16
 
 **`0.24.3-nasdaq`: the Nasdaq recipe re-solved under the new rows, and its set**
