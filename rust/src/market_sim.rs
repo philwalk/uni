@@ -937,6 +937,7 @@ pub fn recipes() -> Vec<(&'static str, World, &'static str)> {
     // 1.7x. Measured, not taken; the sign stays disclosed.
     let (sp_vr, nq_vr, basket_vr, nq_basket_vr) = recipes_0241(open, basket, nq_basket);
     let nq_searched = recipe_0242_nasdaq(nq_vr);
+    let nq_0244 = recipe_0244_nasdaq(recipe_0243_nasdaq(nq_searched));
     vec![
         ("0.23.0-nasdaq", nasdaq, "nasdaq"),
         ("0.23.1-nasdaq", open, "nasdaq"),
@@ -952,6 +953,12 @@ pub fn recipes() -> Vec<(&'static str, World, &'static str)> {
         ("0.24.1-nasdaq-basket", nq_basket_vr, "nasdaq"),
         ("0.24.2-nasdaq", nq_searched, "nasdaq"),
         ("0.24.3-nasdaq", recipe_0243_nasdaq(nq_searched), "nasdaq"),
+        ("0.24.4-nasdaq", nq_0244, "nasdaq"),
+        (
+            "0.24.4-nasdaq-basket",
+            recipe_0244_nasdaq_basket(nq_0244),
+            "nasdaq",
+        ),
     ]
 }
 
@@ -1005,17 +1012,14 @@ fn recipe_0242_nasdaq(mut w: World) -> World {
 /// typical-year and wing rows, with the bust swing, the belief half-life and the slow channel's
 /// bond leg and permanent share among the thirty-four searched dials -- member 53 of search-v18,
 /// the steadiest of the nine members that pass every class on four seeds at 200 paths. The
-/// literals are the archive's except `bust_amp`, which the archive left at 0.014 because the
-/// bust's shape is no graded row: it is 0.14, the largest amplitude whose four-seed loss stays
-/// inside the member's own (1.52-1.92 against 1.51-1.90) once the ceiling holds the swing under
-/// the mania's high -- the mania-led busts read 39% vol over 3.5 years with four rallies of 20%
-/// (the member's own 32.5%, 3.7 years, two; NDX 2000-02: 53%, 2.5, five); 0.20 reads 47% over
-/// 2.8 years at half a point of loss on two seeds.
+/// literals are the archive's, so `-atrelease 0.24.3-nasdaq` reproduces the member byte for byte.
 /// Against 0.24.2-nasdaq on the same four seeds: loss 1.50-1.89 from 1.58-2.61; the upper wing
 /// 2.5 -> 7.2 (record 7.6), the lower 14.0 -> 10.7 (6.7), the downside excess 0.3 -> 0.1 (1.1);
 /// paid in the worst crash (-66 -> -63 against -83) and crashes/century 30.8 -> 31.4 (25.6);
-/// equity vol 24.4 against 26.9 and kurtosis 16.4 (9.6) as before. The un-searched dials are the
-/// 0.24.2 recipe's.
+/// equity vol 24.4 against 26.9 and kurtosis 16.4 (9.6) as before. The bust swing runs at the
+/// archive's 0.014, which the archive left there because the bust's shape is no graded row;
+/// `0.24.4-nasdaq` is this world at the measured amplitude. The un-searched dials are the 0.24.2
+/// recipe's.
 fn recipe_0243_nasdaq(mut w: World) -> World {
     w.depth = 11.378441;
     w.trend_share = 0.091321869;
@@ -1050,7 +1054,35 @@ fn recipe_0243_nasdaq(mut w: World) -> World {
     w.slow_beta = 0.57226776;
     w.slow_perm = 0.024347201;
     w.belief_years = 0.7730648;
+    w.bust_amp = 0.01448313;
+    w
+}
+
+/// THE NASDAQ AT THE SWING'S MEASURED AMPLITUDE (0.24.4): `0.24.3-nasdaq` with `bust_amp` 0.14,
+/// the largest amplitude whose four-seed loss stays inside the member's own (1.52-1.92 against
+/// 1.51-1.90) once the ceiling holds the swing under the mania's high -- the mania-led busts read
+/// 39% vol over 3.5 years with four rallies of 20% (the member's own 32.5%, 3.7 years, two; NDX
+/// 2000-02: 53%, 2.5, five); 0.20 reads 47% over 2.8 years at half a point of loss on two seeds.
+/// A released name is never re-solved in place, so this is a new recipe and the Nasdaq spreads
+/// are frozen at it.
+fn recipe_0244_nasdaq(mut w: World) -> World {
     w.bust_amp = 0.14;
+    w
+}
+
+/// THE NASDAQ BASKET (0.24.4): `0.24.4-nasdaq` with THE BASKET on, re-anchored on the eight names
+/// under QQQ. The swing's moves reach the names through the shared leg, so at the 0.23.1 dials
+/// the aggregate read corr 0.88 and vol ratio 1.56 against the anchors' 0.837 and 1.630;
+/// `basket_sector` 0.7 -> 0.9 puts them back (corr 0.843-0.846, beta 1.37, vol ratio 1.62-1.63
+/// on four seeds at 200 paths; pairwise 0.58, idio share 0.37, tail coincidence 0.50,
+/// worst-decile pair corr 0.59 against 0.16 mid; names 2.04x, gaps 3.7/yr, time below peak
+/// 0.73 disclosed), every class passing.
+fn recipe_0244_nasdaq_basket(mut w: World) -> World {
+    w.basket = 8;
+    w.basket_beta = 1.37;
+    w.basket_sector = 0.9;
+    w.basket_idio = 0.85;
+    w.basket_gaps = 8.0;
     w
 }
 
@@ -7588,12 +7620,11 @@ const SP500_ANCHORS: Anchors = Anchors {
 /// Control: the same pipeline on SPY 1993-01-29 reproduces the committed w1993 fixture row exactly.
 ///
 /// THE SAMPLING SPREADS ARE THE NASDAQ WORLD'S OWN, re-frozen 2026-09-16 from
-/// `-noise -paths 200 -atrelease 0.24.3-nasdaq`, the recipe this set describes. The same command
-/// at the outgoing 0.24.2-nasdaq recipe reproduces all 21 of the previous literals exactly, so
-/// every move is the world's: the 0.24.3 recipe reads narrower on median depth (0.45 -> 0.36),
-/// the tail hedge (0.48 -> 0.37) and valuation dispersion (0.46 -> 0.38), wider on kurtosis
-/// (1.53 -> 1.69) and the deep rung (0.35 -> 0.44), the slow channel's regime showing
-/// in single histories. They were
+/// `-noise -paths 200 -atrelease 0.24.4-nasdaq`, the recipe this set describes. The same command
+/// at the outgoing 0.24.3-nasdaq recipe reproduces all 21 of the previous literals exactly, so
+/// every move is the swing amplitude's: seven move by 0.01 (typical year 0.16 -> 0.15, return
+/// per vol 0.50 -> 0.49, kurtosis 1.69 -> 1.68, crashes 0.49 -> 0.50, median depth 0.36 -> 0.35,
+/// downside 4.47 -> 4.46, the deep rung 0.44 -> 0.43). They were
 /// first carried over from the S&P, and those values were badly wrong where the two worlds differ
 /// most: `med_depth_sd`
 /// read 0.10 against a measured 0.37, a 3.7x OVERWEIGHT on the heaviest row in this set's loss
@@ -17093,7 +17124,7 @@ mod year_vol_anchor_tests {
     fn both_shipped_worlds_read_a_typical_year_inside_their_own_band() {
         for (name, a) in [
             ("default", anchors_named("sp500")),
-            ("0.24.3-nasdaq", anchors_named("nasdaq")),
+            ("0.24.4-nasdaq", anchors_named("nasdaq")),
         ] {
             let w = if name == "default" {
                 default_world()
@@ -17134,13 +17165,18 @@ mod bust_swing_tests {
             assert!(w.bust_amp == 0.0, "release {v}");
         }
         for (n, w, _) in recipes() {
-            if n != "0.24.3-nasdaq" {
+            if n != "0.24.3-nasdaq" && !n.starts_with("0.24.4") {
                 assert!(w.bust_amp == 0.0, "recipe {n}");
             }
         }
-        // the 0.24.3 recipe carries the amplitude decided by measurement under the ceiling
+        // the searched 0.24.3 recipe carries the archive's own amplitude, the 0.24.4 recipes
+        // the one decided by measurement under the ceiling
         let (w0243, _) = named_world("0.24.3-nasdaq").expect("recipe");
-        assert!(w0243.bust_amp == 0.14, "0.24.3-nasdaq");
+        assert!(w0243.bust_amp == 0.01448313, "0.24.3-nasdaq");
+        for n in ["0.24.4-nasdaq", "0.24.4-nasdaq-basket"] {
+            let (w, _) = named_world(n).expect("recipe");
+            assert!(w.bust_amp == 0.14, "{n}");
+        }
         // at 0 the block never runs: its own stream is never drawn and no hook moves
         let (w, _) = named_world("0.24.2-nasdaq").expect("recipe");
         let mut z = w;
@@ -17155,8 +17191,8 @@ mod bust_swing_tests {
 
     #[test]
     fn on_the_swing_reaches_the_price_and_raises_the_ensembles_vol_inside_the_busts() {
-        // the recipe the swing is calibrated on, with the swing off against 0.14
-        let (r, _) = named_world("0.24.3-nasdaq").expect("recipe");
+        // the recipe the swing is calibrated on, with the swing off against its 0.14
+        let (r, _) = named_world("0.24.4-nasdaq").expect("recipe");
         let mut w = r;
         w.bust_amp = 0.0;
         let mut on_w = r;
@@ -17185,7 +17221,7 @@ mod bust_swing_tests {
     }
     #[test]
     fn the_ceiling_holds_the_swing_under_the_manias_high_and_never_runs_at_zero() {
-        let (w, _) = named_world("0.24.3-nasdaq").expect("recipe");
+        let (w, _) = named_world("0.24.4-nasdaq").expect("recipe");
         let mut off_w = w;
         off_w.bust_amp = 0.0;
         let off = sim_paths(&off_w, 20, 80, DEFAULT_SEED);
@@ -17516,7 +17552,8 @@ mod amplifier_anchor_tests {
             assert!(w.stress_adapt == 0.005, "release {v}");
         }
         for (n, w, _) in recipes() {
-            if !(n.starts_with("0.24.1") || n.starts_with("0.24.2") || n.starts_with("0.24.3")) {
+            // the recipes before 0.24.1 predate the mechanism; every later one carries it
+            if n < "0.24.1" {
                 assert!(w.vol_resp == 0.0 && w.jump_resp == 0.0, "recipe {n}");
                 assert!(w.stress_adapt == 0.005, "recipe {n}");
             }

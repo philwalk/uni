@@ -2,7 +2,7 @@
 package uni.apps
 
 //> using scala 3.7.2
-//> using dep org.vastblue:uni_3:0.24.3
+//> using dep org.vastblue:uni_3:0.24.4
 
 // MARKET SIMULATOR — a testbed for COMPARING exposure strategies over long horizons.
 //
@@ -1473,26 +1473,46 @@ object MarketSim:
     * typical-year and wing rows, with the bust swing, the belief half-life and the slow channel's
     * bond leg and permanent share among the thirty-four searched dials -- member 53 of search-v18,
     * the steadiest of the nine members that pass every class on four seeds at 200 paths. The
-    * literals are the archive's except `bustAmp`, which the archive left at 0.014 because the
-    * bust's shape is no graded row: it is 0.14, the largest amplitude whose four-seed loss stays
-    * inside the member's own (1.52-1.92 against 1.51-1.90) once the ceiling holds the swing
-    * under the mania's high -- the mania-led busts read 39% vol over 3.5 years with four
-    * rallies of 20% (the member's own 32.5%, 3.7 years, two; NDX 2000-02: 53%, 2.5, five);
-    * 0.20 reads 47% over 2.8 years at half a point of loss on two seeds.
+    * literals are the archive's, so `-atrelease 0.24.3-nasdaq` reproduces the member byte for byte.
     * Against 0.24.2-nasdaq on the same four seeds: loss 1.50-1.89 from 1.58-2.61; the upper wing
     * 2.5 -> 7.2 (record 7.6), the lower 14.0 -> 10.7 (6.7), the downside excess 0.3 -> 0.1 (1.1);
     * paid in the worst crash (-66 -> -63 against -83) and crashes/century 30.8 -> 31.4 (25.6);
-    * equity vol 24.4 against 26.9 and kurtosis 16.4 (9.6) as before. The un-searched dials are
-    * the 0.24.2 recipe's. */
+    * equity vol 24.4 against 26.9 and kurtosis 16.4 (9.6) as before. The bust swing runs at the
+    * archive's 0.014, which the archive left there because the bust's shape is no graded row;
+    * `0.24.4-nasdaq` is this world at the measured amplitude. The un-searched dials are the
+    * 0.24.2 recipe's. */
   val Recipes0243: Vector[(String, World, String)] =
     val b = Recipes0242.find(_._1 == "0.24.2-nasdaq").map(_._2)
       .getOrElse(sys.error("no base recipe 0.24.2-nasdaq"))
     Vector(("0.24.3-nasdaq",
-            b.copy(depth = 11.378441, trendShare = 0.091321869, drift = 0.085311578, fundVol = 0.03, crowdImpact = 0.030261189, stress = 5.2350165, valuePull = 0.059293455, recoveryDrag = 6.7192147, recoveryFloor = 0.064560211, disasterRate = 0.42211827, disasterSize = 2.1563503, disasterRecover = 0.61330999, beliefShare = 0.7281211, capYears = 4.4211681, volOfVol = 0.019282161, jumpVar = 0.0, jumpRate = 0.005674479, leverage = 0.049527937, downShock = 0.010033667, jumpSkew = 0.46293234, newsRate = 1.1896798, newsSize = 0.042578621, refugeDays = 0.88502808, easing = 0.034326342, refuge = 0.12391532, inflSize = 0.10614338, discount = 6.4992686, margin = 0.0066204344, slowShare = 0.21615067, slowVol = 0.9349886, slowBeta = 0.57226776, slowPerm = 0.024347201, beliefYears = 0.7730648, bustAmp = 0.14),
+            b.copy(depth = 11.378441, trendShare = 0.091321869, drift = 0.085311578, fundVol = 0.03, crowdImpact = 0.030261189, stress = 5.2350165, valuePull = 0.059293455, recoveryDrag = 6.7192147, recoveryFloor = 0.064560211, disasterRate = 0.42211827, disasterSize = 2.1563503, disasterRecover = 0.61330999, beliefShare = 0.7281211, capYears = 4.4211681, volOfVol = 0.019282161, jumpVar = 0.0, jumpRate = 0.005674479, leverage = 0.049527937, downShock = 0.010033667, jumpSkew = 0.46293234, newsRate = 1.1896798, newsSize = 0.042578621, refugeDays = 0.88502808, easing = 0.034326342, refuge = 0.12391532, inflSize = 0.10614338, discount = 6.4992686, margin = 0.0066204344, slowShare = 0.21615067, slowVol = 0.9349886, slowBeta = 0.57226776, slowPerm = 0.024347201, beliefYears = 0.7730648, bustAmp = 0.01448313),
+            "nasdaq"))
+
+  /** THE NASDAQ AT THE SWING'S MEASURED AMPLITUDE (0.24.4): `0.24.3-nasdaq` with `bustAmp` 0.14,
+    * the largest amplitude whose four-seed loss stays inside the member's own (1.52-1.92 against
+    * 1.51-1.90) once the ceiling holds the swing under the mania's high -- the mania-led busts
+    * read 39% vol over 3.5 years with four rallies of 20% (the member's own 32.5%, 3.7 years,
+    * two; NDX 2000-02: 53%, 2.5, five); 0.20 reads 47% over 2.8 years at half a point of loss on
+    * two seeds. A released name is never re-solved in place, so this is a new recipe and the
+    * Nasdaq spreads are frozen at it. `0.24.4-nasdaq-basket` is the same world with THE BASKET
+    * on, re-anchored on the eight names under QQQ: the swing's moves reach the names through
+    * the shared leg, so at the 0.23.1 dials the aggregate read corr 0.88 and vol ratio 1.56
+    * against the anchors' 0.837 and 1.630; `basketSector` 0.7 -> 0.9 puts them back (corr
+    * 0.843-0.846, beta 1.37, vol ratio 1.62-1.63 on four seeds at 200 paths; pairwise 0.58,
+    * idio share 0.37, tail coincidence 0.50, worst-decile pair corr 0.59 against 0.16 mid;
+    * names 2.04x, gaps 3.7/yr, time below peak 0.73 disclosed), every class passing. */
+  val Recipes0244: Vector[(String, World, String)] =
+    val b = Recipes0243.find(_._1 == "0.24.3-nasdaq").map(_._2)
+      .getOrElse(sys.error("no base recipe 0.24.3-nasdaq"))
+    val nq = b.copy(bustAmp = 0.14)
+    Vector(("0.24.4-nasdaq", nq, "nasdaq"),
+           ("0.24.4-nasdaq-basket",
+            nq.copy(basket = 8, basketBeta = 1.37, basketSector = 0.9, basketIdio = 0.85,
+                    basketGaps = 8.0),
             "nasdaq"))
 
   val Recipes: Vector[(String, World, String)] =
-    Recipes0231 ++ MacroRecipes ++ Recipes0241 ++ Recipes0242 ++ Recipes0243
+    Recipes0231 ++ MacroRecipes ++ Recipes0241 ++ Recipes0242 ++ Recipes0243 ++ Recipes0244
 
   /** What `-atrelease NAME` seeds from: a release's world, anchors untouched, or a recipe with
     * the anchor set it was verified against -- which an explicit `-anchors` still overrides. */
@@ -5109,11 +5129,11 @@ object MarketSim:
     * so these readings are on the fixture's own definitions.
     *
     * THE SAMPLING SPREADS ARE THE NASDAQ WORLD'S OWN, re-frozen 2026-09-16 from
-    * `-noise -paths 200 -atrelease 0.24.3-nasdaq`, the recipe this set describes.  The same
-    * command at the outgoing 0.24.2-nasdaq recipe reproduces all 21 of the previous literals
-    * exactly, so every move is the world's: the 0.24.3 recipe reads narrower on median depth
-    * (0.45 -> 0.36), the tail hedge (0.48 -> 0.37) and valuation dispersion (0.46 -> 0.38), wider
-    * on kurtosis (1.53 -> 1.69) and the deep rung (0.35 -> 0.44).  They were first carried
+    * `-noise -paths 200 -atrelease 0.24.4-nasdaq`, the recipe this set describes.  The same
+    * command at the outgoing 0.24.3-nasdaq recipe reproduces all 21 of the previous literals
+    * exactly, so every move is the swing amplitude's: seven move by 0.01 (typical year 0.16 ->
+    * 0.15, return per vol 0.50 -> 0.49, kurtosis 1.69 -> 1.68, crashes 0.49 -> 0.50, median depth
+    * 0.36 -> 0.35, downside 4.47 -> 4.46, the deep rung 0.44 -> 0.43).  They were first carried
     * over from the S&P, and the assumption that carried values
     * were "approximately right
     * because both assets' statistics have similar relative spreads" was FALSE where the two

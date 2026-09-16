@@ -1,7 +1,7 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
 //> using scala 3.7.0
-//> using dep org.vastblue:uni_3:0.24.3
+//> using dep org.vastblue:uni_3:0.24.4
 
 // WHICH STATISTIC WOULD RULE THESE WORLDS OUT.
 //

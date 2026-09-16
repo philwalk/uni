@@ -44,7 +44,7 @@ Two checks, with different jobs and different lifetimes. Use both.
 exit 0. Nothing to parse, so a caller can assert on it without depending on any other output:
 
 ```
-[ "$(market_sim.exe -version)" = "0.24.3" ] || { echo "wrong simulator" >&2; exit 1; }
+[ "$(market_sim.exe -version)" = "0.24.4" ] || { echo "wrong simulator" >&2; exit 1; }
 ```
 
 This catches the wrong binary, and it is the only check available *before* you spend the run. It
@@ -146,8 +146,8 @@ place, so a failed reinstall silently leaves the previous one there. Install to 
 invoke the absolute path, so the path itself carries the assertion:
 
 ```
-cargo install vastblue-uni@0.24.3 --root ~/.local/uni-0.24.3
-~/.local/uni-0.24.3/bin/market_sim.exe -version
+cargo install vastblue-uni@0.24.4 --root ~/.local/uni-0.24.4
+~/.local/uni-0.24.4/bin/market_sim.exe -version
 ```
 
 Exe-versus-library mismatch is not a risk — the example links the library from the same crate. The
@@ -197,8 +197,8 @@ market_sim_search -out search ... -export worlds.json
 from, its score and worst row, and a `world` block in the sidecar's own key format at the
 archive's full precision. The release ships three, built this way and pruned by their holdouts:
 `test-data/worlds/0.24.3-nasdaq.json` (173 members, seeded from `0.24.2-nasdaq` under the current
-objective, the set `0.24.3-nasdaq` was picked from -- member 53, whose bust amplitude the recipe
-raises to 0.14; pass `-anchors nasdaq`, since a member names no anchor set), and the two 0.24.2
+objective, the set `0.24.3-nasdaq` was picked from -- member 53, which `0.24.4-nasdaq` runs at bust
+amplitude 0.14; pass `-anchors nasdaq`, since a member names no anchor set), and the two 0.24.2
 sets, `0.24.2-sp500.json` (150 members, seeded from the
 default; pass `-anchors sp500` or nothing) and `0.24.2-nasdaq.json` (174, seeded from
 `0.24.2-nasdaq`), searched before the typical-year and wing rows, so their `score` and
@@ -1026,7 +1026,7 @@ without paying kurtosis. On the S&P default the same open reads 0.328 at
 `-overnight 0.20` with the same bar dials (range vs cc vol 1.097, down/up 1.135).
 
 The Nasdaq set's sampling spreads are measured at the current recipe (`-noise -atrelease
-0.24.3-nasdaq`, 200 paths), not carried from the S&P's — every spread, since 0.23.1 including the depth rungs, the
+0.24.4-nasdaq`, 200 paths), not carried from the S&P's — every spread, since 0.23.1 including the depth rungs, the
 valuation proxy and the bond rows, which through 0.23.0 read the S&P world's inline constants for
 both sets. The deep rung is where it matters: d20's spread at this recipe is 0.43 against the S&P
 default's 4.18, so the row carries real weight here where the S&P loss all but ignores it. The
@@ -1105,6 +1105,9 @@ same and the macro panel; `-atrelease 0.23.1-nasdaq-basket` and `0.24.0-nasdaq-b
 Nasdaq worlds of the section above with the basket on, graded against the same eight names read
 under QQQ instead of SPY. The basket's rows read the same on the 0.24.0 worlds as on their bases:
 the names are observational, and the leverage cycle reaches them only through the primary.
+`0.24.4-nasdaq-basket` names the 0.24.4 Nasdaq world with the basket on at the dials re-anchored
+on it (`basketSector` 0.9: the bust swing's moves reach the names through the shared leg); see
+its recipe paragraph below.
 
 **The basket dials do not transport between anchor sets.** The eight correlate more with QQQ
 (0.837) than with SPY (0.770), so the shared leg has to carry more and the sector's own noise
@@ -1432,16 +1435,28 @@ dials are the 0.24.1 recipe's, so it carries the vol response and the macro pane
 re-solved by the calibration search with the bust swing, the belief half-life and the slow
 channel's bond leg and permanent share among the thirty-four searched dials, and picked as the
 steadiest of the nine members of `test-data/worlds/0.24.3-nasdaq.json` that pass every class on
-four seeds at 200 paths (member 53). Its literals are the archive's own except the bust
-amplitude, which the archive left at 0.014 because the bust's shape is no graded row: the recipe
-runs it at 0.14, the largest amplitude whose four-seed loss stays inside the member's own
-(1.52-1.92 against 1.51-1.90) under the swing's ceiling. Against `0.24.2-nasdaq` on the same
-four seeds: fitness loss 1.52-1.92 from 1.58-2.61; the upper wing 2.5 → 6.5 (record 7.6), the
-lower 14.0 → 10.7 (6.7), the downside excess 0.3 → 0.1 (1.1); paid in the worst crash (−66 →
-−63 against −83) and crashes per century 30.8 → 32.4 (25.6); equity vol 24.8 against 26.9 and
-kurtosis 16.4 (9.6). Its mania-led busts read 39% vol over 3.5 years with four rallies of 20%
-(the member at 0.014: 32.5%, 3.7 years, two; NDX 2000-02: 53%, 2.5, five). The Nasdaq anchor
-set's spreads are frozen at this world. The un-searched dials are the 0.24.2 recipe's.
+four seeds at 200 paths (member 53). Its literals are the archive's own, so `-atrelease
+0.24.3-nasdaq` reproduces the member byte for byte. Against `0.24.2-nasdaq` on the same four
+seeds: fitness loss 1.50-1.89 from 1.58-2.61; the upper wing 2.5 → 7.2 (record 7.6), the lower
+14.0 → 10.7 (6.7), the downside excess 0.3 → 0.1 (1.1); paid in the worst crash (−66 → −63
+against −83) and crashes per century 30.8 → 31.4 (25.6); equity vol 24.4 against 26.9 and
+kurtosis 16.4 (9.6) as before. The bust swing runs at the archive's 0.014, which the search left
+there because the bust's shape is no graded row. The un-searched dials are the 0.24.2 recipe's.
+
+**`0.24.4-nasdaq` is that world with the bust swing at 0.14**, the largest amplitude whose
+four-seed loss stays inside the member's own (1.52-1.92 against 1.51-1.90) under the swing's
+ceiling; a released name is never re-solved in place. Its mania-led busts read 39% vol over 3.5
+years with four rallies of 20% (the member at 0.014: 32.5%, 3.7 years, two; NDX 2000-02: 53%,
+2.5, five); 0.20 reads 47% over 2.8 years at half a point of loss on two seeds and the upper wing
+a point lower. At 0.14 the typical year reads 20.6 (band 15.0-21.6), pooled vol 24.8 (26.9), the
+upper wing 6.5 (7.6). The Nasdaq anchor set's spreads are frozen at this world.
+**`0.24.4-nasdaq-basket`** is the same world with the basket on, re-anchored on the eight names
+under QQQ: the swing's moves reach the names through the shared leg, so at the 0.23.1 dials the
+aggregate read corr 0.88 and vol ratio 1.56 against the anchors' 0.837 and 1.630, and
+`basketSector` 0.7 → 0.9 puts them back (corr 0.843-0.846, beta 1.37, vol ratio 1.62-1.63 on four
+seeds at 200 paths; pairwise 0.58, idio share 0.37, tail coincidence 0.50, worst-decile pair
+corr 0.59 against 0.16 mid; names 2.04x, gaps 3.7/yr; time below peak 0.73, disclosed), every
+class passing. It is the Nasdaq basket world to pin in place of `0.24.1-nasdaq-basket`.
 
 ## The bust swing — `-bustamp`
 
@@ -1476,7 +1491,7 @@ of 0.52 where every other peak reads 0.85: that is what failed the macro build-u
 amplitude 0.10. Under the ceiling every amplitude to 0.20 passes every class on four seeds.
 `bustCeilDays` on a path counts the sessions a live unwind was held; 3% of the recipe's.
 
-What it reads, at A 0.14 on `0.24.3-nasdaq` over 120 centuries: the busts of 2000 size that start
+What it reads, at A 0.14 on the 0.24.3 recipe (`0.24.4-nasdaq`) over 120 centuries: the busts of 2000 size that start
 from a mania peak run 3.5 years at 39% vol with four rallies of 20% and two of 30% (the world
 at 0.014: 3.7 years, 32.5%, two and one; NDX 2000-02: 2.5 years, 53%, five and three), the
 other deep episodes are untouched (30%), the typical year moves 20.3 → 20.6 (band 15.0-21.6),
@@ -1489,9 +1504,10 @@ deeper trough; relieving the drag alone gave gentle rallies and no vol; the crow
 too small; a swing in perceived fair alone is smoothed away by the pull. The stationary swing
 repriced the same session is the one form whose extra variance does not diffuse.
 
-The dial ships at 0 in every world before `0.24.3-nasdaq`, which runs it at 0.14. It is bounded
-by how often the model makes the mania it arms on: the record spends 7.6% of its months more
-than +0.5 over its 20-year mean, the Nasdaq recipe 6.5%, and that gap is the cycle's upper wing
+The dial ships at 0 in every world before `0.24.3-nasdaq`, which carries its archive's 0.014;
+`0.24.4-nasdaq` runs it at 0.14. It is bounded by how often the model makes the mania it arms
+on: the record spends 7.6% of its months more than +0.5 over its 20-year mean, the 0.24.4 Nasdaq
+recipe 6.5%, and that gap is the cycle's upper wing
 (PLAN item 25), not this dial's.
 
 ## The vol response to a fall

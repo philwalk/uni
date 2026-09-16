@@ -1,7 +1,7 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation -q
 
 //> using scala 3.7.0
-//> using dep org.vastblue:uni_3:0.24.3
+//> using dep org.vastblue:uni_3:0.24.4
 
 // IS THE SEARCH STILL BUYING ANYTHING?  A read-only report on a running or finished calibration
 // search, from the files `market_sim_search` writes -- so it can be run at any time, as often as

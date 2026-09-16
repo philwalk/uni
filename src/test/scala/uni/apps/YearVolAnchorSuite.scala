@@ -47,7 +47,7 @@ class YearVolAnchorSuite extends FunSuite:
   }
 
   test("both shipped worlds read a typical year inside their own band") {
-    for (name, a) <- Vector(("default", MarketSim.SP500Anchors), ("0.24.3-nasdaq", MarketSim.NasdaqAnchors)) do
+    for (name, a) <- Vector(("default", MarketSim.SP500Anchors), ("0.24.4-nasdaq", MarketSim.NasdaqAnchors)) do
       val w = if name == "default" then MarketSim.Defaults else MarketSim.namedWorld(name).get._1
       val st = MarketSim.measure(MarketSim.simPaths(w, 24, 30, 20260915L), 30)
       val y  = st.yearVol * 100.0

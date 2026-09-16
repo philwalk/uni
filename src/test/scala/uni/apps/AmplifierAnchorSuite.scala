@@ -112,7 +112,8 @@ class AmplifierAnchorSuite extends FunSuite:
       assertEquals(w.volRespAttack, 0.0, s"release $v")
       assertEquals(w.noiseAsymCap, 0.0, s"release $v")
       assertEquals(w.stressAdapt, 0.005, s"release $v")
-    for (n, w, _) <- MarketSim.Recipes if !(n.startsWith("0.24.1") || n.startsWith("0.24.2") || n.startsWith("0.24.3")) do
+    // the recipes before 0.24.1 predate the mechanism; every later one carries it
+    for (n, w, _) <- MarketSim.Recipes if n < "0.24.1" do
       assertEquals(w.volResp, 0.0, s"recipe $n")
       assertEquals(w.jumpResp, 0.0, s"recipe $n")
       assertEquals(w.stressAdapt, 0.005, s"recipe $n")

@@ -6,15 +6,18 @@ import munit.FunSuite
   * every frozen world and bit-identical there; on, the swing reaches the price and raises the
   * ensemble's volatility inside the busts, not in the typical year, which is what the mania-led
   * busts it targets carry.  Every world before the 0.24.3 recipe keeps it off; that recipe
-  * carries the amplitude decided by measurement under the ceiling.  The Rust twin's
-  * `bust_swing_tests` makes the same checks. */
+  * carries its archive's amplitude and the 0.24.4 recipes the one decided by measurement under
+  * the ceiling.  The Rust twin's `bust_swing_tests` makes the same checks. */
 class BustSwingSuite extends FunSuite:
 
   test("the bust swing is off in every world before 0.24.3, and 0 is bit-identical") {
     assertEquals(MarketSim.Defaults.bustAmp, 0.0, "the S&P default keeps it off")
     for (v, w) <- MarketSim.Releases do assertEquals(w.bustAmp, 0.0, s"release $v")
-    for (n, w, _) <- MarketSim.Recipes if n != "0.24.3-nasdaq" do assertEquals(w.bustAmp, 0.0, s"recipe $n")
-    assertEquals(MarketSim.namedWorld("0.24.3-nasdaq").get._1.bustAmp, 0.14, "the recipe carries the measured amplitude")
+    for (n, w, _) <- MarketSim.Recipes if n != "0.24.3-nasdaq" && !n.startsWith("0.24.4") do
+      assertEquals(w.bustAmp, 0.0, s"recipe $n")
+    assertEquals(MarketSim.namedWorld("0.24.3-nasdaq").get._1.bustAmp, 0.01448313, "the searched recipe carries the archive's amplitude")
+    for n <- Vector("0.24.4-nasdaq", "0.24.4-nasdaq-basket") do
+      assertEquals(MarketSim.namedWorld(n).get._1.bustAmp, 0.14, s"$n carries the measured amplitude")
     // at 0 the block never runs: its own stream is never drawn and no hook moves
     val (w, _) = MarketSim.namedWorld("0.24.2-nasdaq").get
     val a = MarketSim.simulate(w, 3, MarketSim.DefaultSeed)
@@ -23,8 +26,8 @@ class BustSwingSuite extends FunSuite:
   }
 
   test("on, the swing reaches the price and raises the ensemble's vol inside the busts") {
-    // the recipe the swing is calibrated on, with the swing off against 0.14
-    val (r, _) = MarketSim.namedWorld("0.24.3-nasdaq").get
+    // the recipe the swing is calibrated on, with the swing off against its 0.14
+    val (r, _) = MarketSim.namedWorld("0.24.4-nasdaq").get
     val w = r.copy(bustAmp = 0.0)
     // a mania has to form first, which takes decades: one 80-year path
     val on  = MarketSim.simulate(w.copy(bustAmp = 0.14), 80, MarketSim.DefaultSeed)
@@ -41,7 +44,7 @@ class BustSwingSuite extends FunSuite:
   }
 
   test("the ceiling holds the swing under the mania's high, and never runs at 0") {
-    val (w, _) = MarketSim.namedWorld("0.24.3-nasdaq").get
+    val (w, _) = MarketSim.namedWorld("0.24.4-nasdaq").get
     val off = MarketSim.simPaths(w.copy(bustAmp = 0.0), 20, 80, MarketSim.DefaultSeed)
     assert(off.forall(_.bustCeilDays == 0), "at 0 the block never runs")
     val on       = MarketSim.simPaths(w.copy(bustAmp = 0.14), 20, 80, MarketSim.DefaultSeed)
