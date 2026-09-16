@@ -1,0 +1,68 @@
+# THE TYPICAL YEAR (PLAN item 24): how a record's volatility is spread across its years.  The
+# pooled vol anchor (`equity vol %`) cannot tell an ordinary year from an episode, so a search
+# can close it by making every year more volatile; this file is the ruler that separates the two,
+# and `typical-year vol %` in both twins is anchored on its medianYearVol rows.
+#
+# Per calendar year with at least 200 sessions: annualised RMS vol of daily LOG returns,
+# sqrt(mean(r^2) * 252) * 100 -- the convention `equity vol %` uses, read one year at a time.
+#   medianYearVol      the median of those yearly vols (the anchor; n = years)
+#   pooledVol          the whole window's vol on the same convention (n = sessions)
+#   ratio              medianYearVol / pooledVol
+#   p10YearVol, p90YearVol   the year distribution's tails
+#   topDecileVarShare  the share of the window's summed r^2 in its most volatile tenth of years
+# The model reads the same statistic over whole 252-session blocks of each path, median over
+# blocks, then the median across paths.
+#
+# WHAT IT SETTLES.  QQQ over its whole history reads 0.68 of pooled where every other window
+# and series reads 0.75-0.83: the Nasdaq anchor's 26.9 is a 27-year window whose volatility is
+# ONE episode -- 2000, 2001 and 2002 at 58, 55 and 42% -- and QQQ from 2007 spreads its vol like
+# SPY.  The model's Nasdaq recipe reads 0.81 on 27-year paths with a median year of 19.0, i.e.
+# ON the record's ordinary year; the pooled gap is the bust.  CRSP from 1926 reads 0.75 for the
+# same reason (1929-33).
+#
+# Sources: SPY and QQQ Yahoo adjusted close from folio's cache (through 2026-08-03); CRSP = Ken
+# French F-F_Research_Data_Factors_daily (202606 vintage), Mkt-RF + RF compounded into a price
+# index, log returns of it.  Measured 2026-09-15.
+section	series	window	stat	n	value
+yearvol	SPY	w1993	medianYearVol	33	15.4203
+yearvol	SPY	w1993	pooledVol	8433	18.5804
+yearvol	SPY	w1993	ratio	33	0.8299
+yearvol	SPY	w1993	p10YearVol	33	10.0840
+yearvol	SPY	w1993	p90YearVol	33	25.9449
+yearvol	SPY	w1993	topDecileVarShare	33	0.3097
+yearvol	QQQ	w1999	medianYearVol	27	18.2583
+yearvol	QQQ	w1999	pooledVol	6891	26.9137
+yearvol	QQQ	w1999	ratio	27	0.6784
+yearvol	QQQ	w1999	p10YearVol	27	13.6064
+yearvol	QQQ	w1999	p90YearVol	27	40.5755
+yearvol	QQQ	w1999	topDecileVarShare	27	0.4083
+yearvol	QQQ	w2007	medianYearVol	19	18.1811
+yearvol	QQQ	w2007	pooledVol	4926	22.2726
+yearvol	QQQ	w2007	ratio	19	0.8163
+yearvol	QQQ	w2007	p10YearVol	19	13.5622
+yearvol	QQQ	w2007	p90YearVol	19	32.9480
+yearvol	QQQ	w2007	topDecileVarShare	19	0.3069
+yearvol	CRSP	w1926	medianYearVol	99	12.8375
+yearvol	CRSP	w1926	pooledVol	26273	17.1400
+yearvol	CRSP	w1926	ratio	99	0.7490
+yearvol	CRSP	w1926	p10YearVol	99	8.2635
+yearvol	CRSP	w1926	p90YearVol	99	25.4258
+yearvol	CRSP	w1926	topDecileVarShare	99	0.4131
+yearvol	CRSP	w1954	medianYearVol	72	12.8715
+yearvol	CRSP	w1954	pooledVol	18245	15.6762
+yearvol	CRSP	w1954	ratio	72	0.8211
+yearvol	CRSP	w1954	p10YearVol	72	8.2706
+yearvol	CRSP	w1954	p90YearVol	72	24.0522
+yearvol	CRSP	w1954	topDecileVarShare	72	0.3565
+yearvol	CRSP	w1990	medianYearVol	36	14.4737
+yearvol	CRSP	w1990	pooledVol	9190	18.1146
+yearvol	CRSP	w1990	ratio	36	0.7990
+yearvol	CRSP	w1990	p10YearVol	36	9.3234
+yearvol	CRSP	w1990	p90YearVol	36	25.2382
+yearvol	CRSP	w1990	topDecileVarShare	36	0.3546
+yearvol	CRSP	w1999	medianYearVol	27	15.7560
+yearvol	CRSP	w1999	pooledVol	6914	19.5388
+yearvol	CRSP	w1999	ratio	27	0.8064
+yearvol	CRSP	w1999	p10YearVol	27	11.1219
+yearvol	CRSP	w1999	p90YearVol	27	26.0880
+yearvol	CRSP	w1999	topDecileVarShare	27	0.3441

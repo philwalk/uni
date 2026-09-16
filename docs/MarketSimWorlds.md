@@ -44,7 +44,7 @@ Two checks, with different jobs and different lifetimes. Use both.
 exit 0. Nothing to parse, so a caller can assert on it without depending on any other output:
 
 ```
-[ "$(market_sim.exe -version)" = "0.24.2" ] || { echo "wrong simulator" >&2; exit 1; }
+[ "$(market_sim.exe -version)" = "0.24.3" ] || { echo "wrong simulator" >&2; exit 1; }
 ```
 
 This catches the wrong binary, and it is the only check available *before* you spend the run. It
@@ -146,8 +146,8 @@ place, so a failed reinstall silently leaves the previous one there. Install to 
 invoke the absolute path, so the path itself carries the assertion:
 
 ```
-cargo install vastblue-uni@0.24.2 --root ~/.local/uni-0.24.2
-~/.local/uni-0.24.2/bin/market_sim.exe -version
+cargo install vastblue-uni@0.24.3 --root ~/.local/uni-0.24.3
+~/.local/uni-0.24.3/bin/market_sim.exe -version
 ```
 
 Exe-versus-library mismatch is not a risk — the example links the library from the same crate. The
@@ -173,7 +173,7 @@ binary that wrote the file, which together are the whole provenance:
 market_sim.exe -atrelease 0.22.0 -gate realism -paths 2000 -years 33 -emitall -emit rung.tsv
 ```
 
-**A set of worlds, not a best fit — `-worldset`.** Thirty searched dials against some forty-five
+**A set of worlds, not a best fit — `-worldset`.** Thirty-four searched dials against some forty-five
 graded rows that are not independent means several distinct worlds match the record equally
 well, and a strategy interacts with the mechanism rather than with the summary statistic. A
 verdict formed on one best-fit world therefore carries the same over-confidence that weakens a
@@ -195,13 +195,16 @@ market_sim_search -out search ... -export worlds.json
 
 `worlds.json` is a JSON array of members, each with its `member` number, the world it was seeded
 from, its score and worst row, and a `world` block in the sidecar's own key format at the
-archive's full precision. The release ships two, built this way and pruned by their holdouts:
-`test-data/worlds/0.24.2-sp500.json` (150 members, seeded from the default; pass `-anchors sp500`
-or nothing) and `test-data/worlds/0.24.2-nasdaq.json` (174 members, seeded from `0.24.2-nasdaq`;
-pass `-anchors nasdaq`, since a member names no anchor set). To run one:
+archive's full precision. The release ships three, built this way and pruned by their holdouts:
+`test-data/worlds/0.24.3-nasdaq.json` (173 members, seeded from `0.24.2-nasdaq` under the current
+objective, the set `0.24.3-nasdaq` was picked from; pass `-anchors nasdaq`, since a member names
+no anchor set), and the two 0.24.2 sets, `0.24.2-sp500.json` (150 members, seeded from the
+default; pass `-anchors sp500` or nothing) and `0.24.2-nasdaq.json` (174, seeded from
+`0.24.2-nasdaq`), searched before the typical-year and wing rows, so their `score` and
+`worstRow` are that objective's readings. To run one:
 
 ```
-market_sim.exe -worldset test-data/worlds/0.24.2-nasdaq.json -worldindex 38 -anchors nasdaq -paths 200 -years 40 -emitall -emit m38.tsv
+market_sim.exe -worldset test-data/worlds/0.24.3-nasdaq.json -worldindex 53 -anchors nasdaq -paths 200 -years 40 -emitall -emit m53.tsv
 ```
 
 `-worldindex` addresses a member by its own number, defaulting to 0. The member seeds every dial
@@ -629,6 +632,7 @@ with it.
 | `-volresp` | THE VOL RESPONSE: the diffusive noise times exp(V × S), S the session's decline in units of the conditional sd that GENERATED it, accumulated at `-volrespphi` and fed through `-volrespattack` so the response builds over two to five sessions rather than peaking at lag 1. One decline's response is a plateau, not an integral divided over the sessions after it. Draw-free, `-volrespcap` bounds the state, and 0 is bit-identical — [below](#the-vol-response-to-a-fall) | 0.021 |
 | `-stressadapt` | the liquidity spiral's SCALE speed: the EWMA weight on r² that standardises the decline its own stress index reads. At 0.005 (a ~140-session memory) a stretch that a persistent vol mechanism has genuinely made volatile reads as continuous STRESS and the spiral mints spikes out of it, which blocked every form of the response tried. The index the rest of the world reads — policy easing, the refuge bid, margin selling, the credit stock's paydown — keeps the slow scale | 0.036 |
 | `-slowshare` | THE SLOW REPRICING CHANNEL: this share of the diffusive variance leaves the order-flow channel and reprices the fundamental and the price TOGETHER, like a news jump, so the value channel has nothing to arbitrage and the move never passes through the spiral. Its volatility is long-memoried and asymmetric, which is what puts the abs-r profile back on the record's SHAPE. `-slowvol` sets its scale, `-slowlev` its own leverage effect, `-slowphi` its persistence, `-slowperm` how much of each move is permanent, `-slowbeta` the bond's opposite-sign loading. 0 is bit-identical — [below](#the-vol-response-to-a-fall) | 0.20 |
+| `-bustamp` | THE BUST SWING: when a 0.2-log drawdown opens under a peak that stood 0.5 log or more over the gap's 20-year mean, a months-long stationary swing of this amplitude is repriced the same session in the price and in perceived fair while the unwind keeps making new lows, with the recovery drag relieved and the amplifier blind to it — the record's mania bust, NDX 2000-02: two and a half years at 53% vol in five legs and rallies. Own stream; 0 is bit-identical; the S&P default keeps 0 — [below](#the-bust-swing--bustamp) | 0 |
 | `-noiseasym` | the item-12 cascade: the diffusive noise times exp(g − Var g), g a cascade of the session's own diffusive draw — a fast attack into a decay at `-noiseasymphi`, capped by `-noiseasymcap`. Ships at 0: at every setting that closes part of what is left, something graded gives way — [below](#the-vol-response-to-a-fall) | 0 |
 | `-levpersist` | the leverage kick's own memory: at P the kick raises the following sessions too, through weights that sum to 1, so only the shape of the response moves. Closes the clustering hump and puts lag-1 clustering on the record's 0.298, at the cost of the lag-1 leverage correlation — [below](#the-vol-response-to-a-fall) | 0 |
 | `-stressscale` | THE AMPLIFIER's gain scale: the spiral's excess gain multiplied by (depth / 17.4)^E, so a thinner market's liquidity event is not proportionally larger than the reference world's. The record's crash count is volatility-flat across a fresh-start cross-section (`amplifier-2026-09-07.tsv`) where the model's `depth` sweep reads 1.8; the default world is unchanged at any E, and `0.24.0-nasdaq` runs at 0.5 | 0 |
@@ -929,6 +933,32 @@ the target set for *being* that other index. `-anchors nasdaq` swaps in a QQQ ve
 1999-03-10 to 2026-08-20: volatility 26.90%, return per volatility 0.38, kurtosis 9.55, 25.6 crashes
 per century, median depth −22.8%, worst −83.0%.
 
+**The typical year — `typical-year vol %`.** Pooled volatility cannot tell an ordinary year from an
+episode, so beside it both sets grade the median calendar-year vol (`yearvol-2026-09-15.tsv`):
+18.3% for QQQ, 12.9% for CRSP from 1954, each with a band one sd of the row's own single-history
+spread wide (11.3-14.5 and 15.0-21.6). The two rows read the Nasdaq record differently on
+purpose. QQQ's median year is 0.68 of its pooled vol where QQQ from 2007, SPY and CRSP all read
+0.82-0.83, because the 1999-2026 window's volatility is one episode — 2000, 2001 and 2002 at 58, 55
+and 42%. The model's Nasdaq recipe reads a typical year of 19-20% on 27-year paths (the record's 18.3%
+sits at the 23rd percentile of its histories; on the S&P the 12.9% sits at the 47th), so its pooled
+miss (24-25% against 26.9%) is the bust's. The row exists so
+that a search cannot close the pooled row by making every year more volatile: a world that reaches
+26.9% pooled with a typical year of 20% or more has spread the bust across its calm years, which no
+window of the record does.
+
+**The wings — `upper wing months %` / `lower wing months %`.** The valuation cycle's time far
+above and far below its own 20-year mean, on both sets from one series: Shiller's CAPE spends 7.6%
+of its months more than +0.5 log over that mean and 6.7% more than −0.5 under it
+(`mania-2026-09-15.tsv`; four spells past +0.5 in 123 years: 1929, 1937, 1999, 2021). The rows are
+pooled over paths, because a spell past +0.5 is a once-in-decades event and a median of per-path
+shares would read zero. The model's cycle has the record's amplitude (sd 0.36 against 0.375) with
+the wrong sign: the Nasdaq recipe reads 2.5% above and 14% below, the S&P default 0.2% and 13%.
+Crashes take the price far under its mean and nothing takes it far over. `valuation dispersion` is
+sign-blind and could not see this; these two rows are what a mania-capable world has to read, and
+the search re-solves `beliefYears` beside `beliefShare` and `capYears` for them. The spread frozen
+for both is the record's own, a moving-block bootstrap of the level series that puts the share's
+relative sd at 0.60, because a world that never makes a wing reads no sampling spread for it.
+
 Only the equity rows move. The bond targets are the same Treasury whatever the equity index is, and
 the three depth rungs are already ratios against a relation evaluated at each world's own volatility
 and return, so they read 1.00 for any asset. The realism bands do not move *with the anchor* — they
@@ -994,11 +1024,11 @@ without paying kurtosis. On the S&P default the same open reads 0.328 at
 `-overnight 0.20` with the same bar dials (range vs cc vol 1.097, down/up 1.135).
 
 The Nasdaq set's sampling spreads are measured at the current recipe (`-noise -atrelease
-0.24.0-nasdaq`, 200 paths), not carried from the S&P's — every spread, since 0.23.1 including the depth rungs, the
+0.24.3-nasdaq`, 200 paths), not carried from the S&P's — every spread, since 0.23.1 including the depth rungs, the
 valuation proxy and the bond rows, which through 0.23.0 read the S&P world's inline constants for
-both sets. The deep rung is where it matters: d20's spread at this recipe is 0.30 against the S&P
-default's 2.38, so the row carries real weight here where the S&P loss all but ignores it. The
-loss at this recipe reads 2.020 under its own spreads, so a `-calibrate -anchors nasdaq` result
+both sets. The deep rung is where it matters: d20's spread at this recipe is 0.44 against the S&P
+default's 4.18, so the row carries real weight here where the S&P loss all but ignores it. The
+loss at this recipe reads 1.502 under its own spreads, so a `-calibrate -anchors nasdaq` result
 from any earlier release optimised a different function.
 
 - **Signed persistence is graded as a four-rung profile since 0.23.1, not one rung.** `-validate`
@@ -1393,9 +1423,59 @@ the archive member byte for byte. Against `0.24.1-nasdaq`: crashes per century 3
 (record 25.6), lag-20 clustering 0.16 → 0.19 (0.25), the 60-day variance ratio 0.81 → 0.96, the
 record's worst crash at the 14th percentile of the model's 27-year worsts from the 12th; paid in
 kurtosis 15.8 → 17.3 (record 9.6), lag-1 clustering 0.32 → 0.33 (0.29) and equity vol 24.0
-against 26.9. `jumpVar` is 0: the slow channel carries the long-lag clustering. The Nasdaq anchor
-set's spreads are frozen at this world. The un-searched dials are the 0.24.1 recipe's, so it
-carries the vol response and the macro panel.
+against 26.9. `jumpVar` is 0: the slow channel carries the long-lag clustering. The un-searched
+dials are the 0.24.1 recipe's, so it carries the vol response and the macro panel.
+
+**`0.24.3-nasdaq` is the recipe re-solved under the typical-year and wing rows**: `0.24.2-nasdaq`
+re-solved by the calibration search with the bust swing, the belief half-life and the slow
+channel's bond leg and permanent share among the thirty-four searched dials, and picked as the
+steadiest of the nine members of `test-data/worlds/0.24.3-nasdaq.json` that pass every class on
+four seeds at 200 paths (member 53). Its literals are the archive's own, so `-atrelease
+0.24.3-nasdaq` reproduces the member byte for byte. Against `0.24.2-nasdaq` on the same four
+seeds: fitness loss 1.50-1.89 from 1.58-2.61; the upper wing 2.5 → 7.2 (record 7.6), the lower
+14.0 → 10.7 (6.7), the downside excess 0.3 → 0.1 (1.1); paid in the worst crash (−66 → −63
+against −83) and crashes per century 30.8 → 31.4 (25.6); equity vol 24.4 against 26.9 and
+kurtosis 16.4 (9.6) as before. The bust swing runs at the archive's 0.014: at 0.10 and above its
+rallies mint 20% peaks inside the busts and the macro build-up band fails. The Nasdaq anchor
+set's spreads are frozen at this world. The un-searched dials are the 0.24.2 recipe's.
+
+## The bust swing — `-bustamp`
+
+A mania's unwind is not a crash. The NDX fell 83% from March 2000 to October 2002 in five legs
+with four rallies of 20% or more between them, at 53% annualised vol for two and a half years,
+while SPY read 24%; 1929-32 was the same shape at 34%. The model's deep episodes are a spiral
+crash and a calm underwater spell: 33% vol, two rallies, whatever the peak they start from.
+
+`-bustamp A` adds the unwind. The valuation level is the price's log gap to the fundamental
+above its own 20-year mean (the model's reading of "the multiple over its long mean", the same
+statistic `mania-2026-09-15.tsv` reads on Shiller's CAPE). When a drawdown of 0.2 log opens under
+a peak that stood +0.5 or more, a state arms, at full strength +0.65 and above. While it is armed
+a months-long unit-variance swing (a 50-session memory, its own stream) is repriced the same
+session in the price and in perceived fair at amplitude A times the state, so no gap opens for
+the value channel to close and the price does not race to its trough: the bust is a stationary
+swing about a slowly falling centre. The move is a same-session repricing the derived channels
+(bars, the satellite, the basket) see through the same input as the news jump. The recovery drag is relieved and the spiral's amplifier
+reads declines in ordinary units by 1 + 2 × state, so the legs keep their ordinary cascade and the
+rallies exist. The state decays with a 3-year half-life while the unwind keeps making new lows
+(the NDX made one every six months through 2000-02) and a 6-month one once a year has passed
+without one (2003-06 was calm 70% under the 2000 peak).
+
+What it reads, at A 0.14 on `0.24.2-nasdaq` over 120 centuries: the busts of 2000 size that start
+from a mania peak run 2.5-3.2 years at 45-51% vol with five rallies of 20% (the model without it:
+3.2 years, 35%, two rallies), the other deep episodes are untouched (33%), the typical year is
+untouched, and the four-seed loss moves by less than 0.1. Sixteen forms were measured before
+this one: every form that multiplies the diffusive noise inside a bust — by the multiple, by a
+bust state, with the spiral compensated or blind — shortened and deepened the bust instead of
+lengthening it, because diffusive noise under a one-way restoring force races the price to a
+deeper trough; relieving the drag alone gave gentle rallies and no vol; the crowd's flow is
+too small; a swing in perceived fair alone is smoothed away by the pull. The stationary swing
+repriced the same session is the one form whose extra variance does not diffuse.
+
+The dial ships at 0 in every world before `0.24.3-nasdaq`, which carries its archive's 0.014; at
+0.10 and above the swing's rallies mint 20% peaks inside the busts and the macro build-up band
+fails. It is bounded by how often the model makes the mania it
+arms on: the record spends 7.6% of its months more than +0.5 over its 20-year mean, the Nasdaq
+recipe 2.5%, and that gap is the cycle's upper wing (PLAN item 25), not this dial's.
 
 ## The vol response to a fall
 
@@ -1538,7 +1618,7 @@ statistics the model computes — see the worked example above.
 
 ## If you are calibrating rather than choosing
 
-`-calibrate N` random-searches thirty parameters against the fitness loss and reports the best few
+`-calibrate N` random-searches thirty-four parameters against the fitness loss and reports the best few
 re-scored on a held-out seed. It prints; it does not modify defaults. Note that the loss has no
 notion of *not breaking what is already right* — it will happily spend an accurate row to improve an
 inaccurate one, so read the whole fidelity table after any recalibration, not just the loss. For

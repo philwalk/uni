@@ -1,0 +1,55 @@
+# THE UPPER WING of the valuation cycle ABOUT ITS OWN 20-YEAR MEAN (PLAN item 25): the record's
+# manias as the model can read them.  Level = log CAPE minus an EWMA of itself with a 20-year time
+# constant (the model's `gapMean` reference on log(price / fundamental)); the first 20 years of the
+# monthly series (1881-1900) are burn-in for the reference and excluded from w1901.
+#   shareAboveNN / shareBelowNN   share of months with the level above +0.NN / below -0.NN
+#   sdLevel, maxLevel, minLevel   the level's spread and extremes in the window
+#   excursionsPerCentury          distinct spells above +0.5 (a spell ends under +0.25), per century
+#   excursionYearsMedian          the median spell's years above +0.25
+#   shareAbove50BootSd / shareBelow50BootSd   the share's sampling sd by a moving-block bootstrap of the level
+#                                 series (20-year blocks, 4000 resamples, seed 20260915); relative to the share,
+#                                 0.60 / 0.61 -- the anchors' frozen spreads
+#   peak rows                     the named peaks' levels and dates
+# Source: Shiller ie_data.xls (2023-09-17 vintage; column 12, CAPE), monthly.  Measured 2026-09-15.
+#
+# WHAT IT SETTLES: the record spends 27% of its months above +0.3 and 7.6% above +0.5, with four
+# spells past +0.5 in 123 years (1929 +0.94, 1937 +0.53, 1999 +0.98, 2021 +0.53).  The model's
+# Nasdaq recipe reads 12% / 2.5% and 0.8 spells a century, the S&P default 2.8% / 0.2% and 0.1:
+# the model's manias are too rare by four times on the Nasdaq and thirty on the S&P.
+section	series	window	stat	n	value
+wing	CAPE	w1901	shareAbove25	1473	0.3374
+wing	CAPE	w1901	shareAbove30	1473	0.2709
+wing	CAPE	w1901	shareAbove50	1473	0.0760
+wing	CAPE	w1901	shareAbove70	1473	0.0387
+wing	CAPE	w1901	shareBelow25	1473	0.2261
+wing	CAPE	w1901	shareBelow30	1473	0.1819
+wing	CAPE	w1901	shareBelow50	1473	0.0672
+wing	CAPE	w1901	sdLevel	1473	0.3746
+wing	CAPE	w1901	maxLevel	1473	0.9760
+wing	CAPE	w1901	minLevel	1473	-1.0356
+wing	CAPE	w1901	excursionsPerCentury	4	3.2587
+wing	CAPE	w1901	excursionYearsMedian	4	1.7917
+wing	CAPE	w1901	shareAbove50BootSd	4000	0.0456
+wing	CAPE	w1901	shareBelow50BootSd	4000	0.0407
+wing	CAPE	w1954	shareAbove25	837	0.5114
+wing	CAPE	w1954	shareAbove30	837	0.4026
+wing	CAPE	w1954	shareAbove50	837	0.0968
+wing	CAPE	w1954	shareAbove70	837	0.0538
+wing	CAPE	w1954	shareBelow25	837	0.1601
+wing	CAPE	w1954	shareBelow30	837	0.1231
+wing	CAPE	w1954	shareBelow50	837	0.0299
+wing	CAPE	w1954	sdLevel	837	0.3319
+wing	CAPE	w1954	maxLevel	837	0.9760
+wing	CAPE	w1954	minLevel	837	-0.6967
+wing	CAPE	w1954	excursionsPerCentury	2	2.8674
+wing	CAPE	w1954	excursionYearsMedian	2	3.8750
+peak	CAPE	peak1929	level	1	0.9381
+peak	CAPE	peak1929	date	1	1929.0900
+peak	CAPE	peak1937	level	1	0.5303
+peak	CAPE	peak1937	date	1	1937.0200
+peak	CAPE	peak1999	level	1	0.9760
+peak	CAPE	peak1999	date	1	1999.0700
+peak	CAPE	peak2021	level	1	0.5286
+peak	CAPE	peak2021	date	1	2021.1100
+peak	CAPE	peak1966	level	1	0.4750
+peak	CAPE	peak1966	date	1	1965.0500

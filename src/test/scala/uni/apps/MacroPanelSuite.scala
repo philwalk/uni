@@ -38,7 +38,7 @@ class MacroPanelSuite extends FunSuite:
 
   test("the leverage cycle is off in every pre-0.24.0 release and recipe, and 0 reproduces 0.23.1 bit for bit") {
     // 0.24.0 is the release that ADOPTED the cycle, so its frozen row carries it
-    for (v, w) <- MarketSim.Releases if v != "0.24.0" do assertEquals(w.levGain, 0.0, s"release $v")
+    for (v, w) <- MarketSim.Releases if v < "0.24.0" do assertEquals(w.levGain, 0.0, s"release $v")
     for (n, w, _) <- MarketSim.Recipes if !n.startsWith("0.24.") do assertEquals(w.levGain, 0.0, s"recipe $n")
     assert(MarketSim.Defaults.levGain > 0.0, "the shipped default runs the leverage cycle")
     // the dial off at 0.23.1's dials IS 0.23.1's world: the stock still runs (draw-free for the

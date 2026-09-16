@@ -1,3 +1,84 @@
+## v0.24.3 — 2026-09-16
+
+**`0.24.3-nasdaq`: the Nasdaq recipe re-solved under the new rows, and its set**
+
+- `-atrelease 0.24.3-nasdaq` names member 53 of `test-data/worlds/0.24.3-nasdaq.json`, the
+  Nasdaq set searched under the typical-year and wing rows with thirty-four dials (173 members,
+  seeded from `0.24.2-nasdaq`, pruned by 3- and 12-seed holdouts): the steadiest of the nine
+  members that pass every class on four seeds at 200 paths. Against `0.24.2-nasdaq` on the same
+  four seeds: fitness loss 1.50-1.89 from 1.58-2.61; the upper wing 2.5 → 7.2 (record 7.6), the
+  lower 14.0 → 10.7 (6.7), the downside excess 0.3 → 0.1 (1.1); paid in the worst crash (−66 →
+  −63 against −83) and crashes per century 30.8 → 31.4 (25.6). The bust swing runs at the
+  archive's 0.014: at 0.10 and above its rallies mint 20% peaks inside the busts and the macro
+  build-up band fails. The Nasdaq anchor set's sampling spreads are re-frozen at it from
+  `-noise -paths 200` (the same command at `0.24.2-nasdaq` reproduces every previous literal):
+  median depth 0.45 → 0.36, the tail hedge 0.48 → 0.37, valuation dispersion 0.46 → 0.38,
+  kurtosis 1.53 → 1.69, the deep rung 0.35 → 0.44. `0.24.2-nasdaq` stays as a named world; the
+  0.24.2 sets stay as shipped. `-crossasset` reads the recipe's d=5.70 `bond depth vs vol` rung
+  at 0.58 (band 0.65-1.35), from 0.54 at `0.24.2-nasdaq`: the Nasdaq recipe's one cross-asset
+  miss, the ladder's mid rung that no searched row grades.
+- `-atrelease 0.24.1` and `0.24.2` resolve: the S&P default both shipped, which 0.24.3 ships
+  unchanged, is a frozen `-releases` row, so the names survive the next default move.
+
+**`-bustamp`: the mania's unwind as the record has it**
+
+- A new dial, 0 in every shipped world and bit-identical there. When a 0.2-log drawdown opens
+  under a peak that stood 0.5 log or more over the gap's 20-year mean, a months-long stationary
+  swing of amplitude `bustAmp` is repriced the same session in the price and in perceived fair
+  while the unwind keeps making new lows, the recovery drag relieved and the spiral's amplifier
+  blind to it. At 0.14 on `0.24.2-nasdaq` the busts of 2000 size that start from a mania peak run
+  2.5-3.2 years at 45-51% vol with five rallies of 20%, against the model's 3.2 years, 35% and two
+  before, and NDX 2000-02's 2.5 years at 53% with five; the other deep episodes and the typical
+  year are untouched. Sixteen forms of the bust's vol were measured first (every one that
+  multiplies diffusive noise inside a bust shortens and deepens it). Schema 16 → 17: `world`
+  gains `bustAmp`; the shipped sets under `test-data/worlds` carry it at 0. `BustSwingSuite` /
+  `bust_swing_tests`; twins byte-identical on and off.
+- `mania-2026-09-15.tsv`: the valuation cycle's wings about its own 20-year mean, from Shiller's
+  CAPE — 7.6% of months above +0.5 and 6.7% below −0.5 (sd 0.375; four spells past +0.5 in 123
+  years). The model's Nasdaq recipe reads 2.5% above and 13.7% below, the S&P default 0.2% and
+  11.7%: the record's amplitude with the wrong sign. Graded: `upper wing months %` and
+  `lower wing months %` are fitness rows on both sets, pooled over paths (a spell past +0.5 is
+  a once-in-decades event; a per-path median reads 0), targets 7.6 and 6.7, with the record's
+  own spread (a moving-block bootstrap of the level series, relative sd 0.60) rather than a
+  `-noise` spread a world that never makes a wing cannot supply. Losses are not comparable: the default reads 1.538 from
+  0.817, `0.24.2-nasdaq` 1.656 from 1.347. `ManiaAnchorSuite` / `mania_anchor_tests` pin the
+  anchors and the finding. `beliefYears` joins the searched dials (33 from 32): the 0.23.0 sweep
+  found the cycle's persistence on Shiller's at 1.0 years where the recipe runs 1.5, and nothing
+  graded the wings until now; `capYears` is searched to 8.0 from 4.0, where the archive under
+  these rows sat at the ceiling. The 0.24.2 sets under `test-data/worlds` carry the new dial at
+  0, and their `score` and `worstRow` fields are the search's own readings under the objective it
+  ran with (before these rows); the current binary's reading of a member is
+  `-worldset F -worldindex K -fitness`.
+
+**`typical-year vol %`: the median calendar-year vol is a graded row on both anchor sets**
+
+- A new fitness row and fidelity band beside `equity vol %`: the median over whole 252-session
+  blocks of each block's own annualised vol, median across paths, anchored on
+  `yearvol-2026-09-15.tsv` — QQQ 1999-2026 18.3% (band 15.0-21.6), CRSP 1954-2026 12.9% (band
+  11.3-14.5), each band one sd of the row's own single-history spread wide. It separates an ordinary year from an episode, which the pooled row cannot: QQQ's
+  median year is 0.68 of its pooled vol where QQQ from 2007, SPY and CRSP from 1954 read
+  0.82-0.83, because the window's volatility is 2000-02. The model reads 0.81 on both worlds, so
+  the Nasdaq recipe's pooled vol miss is the bust's own, and a search can no longer close it by
+  making every year more volatile. The row appears in `-fitness`, `-validate`, `-noise`,
+  `-crossasset`'s equity section and the sidecar's `fidelity` list under its name. Spreads frozen
+  from `-noise -paths 200` at each set's own world: 0.11 (S&P, 72-year histories, the record at
+  the 47th percentile) and 0.18 (Nasdaq, 27-year, the record at the 23rd: the recipe's ordinary
+  year runs 19.8% against 18.3%). Losses are not comparable with 0.24.2's: the default reads
+  0.817 from 0.768, `0.24.2-nasdaq` 1.347 from 1.258. `YearVolAnchorSuite` /
+  `year_vol_anchor_tests` pin the anchors to the fixture and the finding to the record.
+
+**The slow repricing channel's bond leg and permanent share are searched dials**
+
+- `slowBeta` and `slowPerm` join `CalibrateRanges` (thirty-two searched dials from thirty; the
+  archive format widens with them, so an archive written under thirty is refused by name and a
+  new search starts fresh). With `slowBeta` fixed, every step the search took in `slowVol` moved
+  Treasury vol with it: on `0.24.2-nasdaq` the bond leaves its 0.70-1.10x-duration band at
+  `-slowshare 0.5 -slowvol 1.5`, and at `-slowbeta 0` it loses its growth-shock rally (2.2 against
+  the record's 6.6), so the archive could not grow the equity's channel without growing the
+  bond's. Held at the recipe's product, 0.4 / 1.3 passes every class at vol 25.1 with lag-20
+  clustering 0.23 against the record's 0.25 at the recipe's loss. No world moves: both dials
+  ship at one value everywhere.
+
 ## v0.24.2 — 2026-09-14
 
 **`0.24.2-nasdaq`: the Nasdaq recipe re-solved by the calibration search, and the Nasdaq spreads re-frozen at it**

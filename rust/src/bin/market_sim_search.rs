@@ -10,7 +10,7 @@
 //! readings.  NOT SHIPPED: `Cargo.toml` excludes this file from the published crate, as it does the
 //! `bench_*` binaries.
 //!
-//! WHAT IT PRODUCES is an ARCHIVE, not a champion: 30 searched dials against ~45 graded rows that
+//! WHAT IT PRODUCES is an ARCHIVE, not a champion: 34 searched dials against ~45 graded rows that
 //! are not independent means distinct worlds match the record equally well, and a strategy feels
 //! the mechanism, not the summary statistic.
 //!

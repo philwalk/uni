@@ -72,7 +72,7 @@ class AmplifierAnchorSuite extends FunSuite:
   test("the slow repricing channel is off in every frozen world, and 0 is bit-identical") {
     val d = MarketSim.Defaults
     assert(d.slowShare > 0.0, "the shipped default runs the channel")
-    for (v, w) <- MarketSim.Releases do assertEquals(w.slowShare, 0.0, s"release $v")
+    for (v, w) <- MarketSim.Releases if v < "0.24.1" do assertEquals(w.slowShare, 0.0, s"release $v")
     // the 0.24.1 Nasdaq recipes carry their own dials and were NOT re-solved against the
     // channel; the 0.24.2 Nasdaq recipe was
     for (n, w, _) <- MarketSim.Recipes
@@ -106,13 +106,13 @@ class AmplifierAnchorSuite extends FunSuite:
     assertEquals(d.noiseAsymPhi, MarketSim.NoiseAsymPhi)
     assertEquals(d.noiseAsymPhi, 0.96)
     assert(d.volResp > 0.0, "the shipped default runs the vol response")
-    for (v, w) <- MarketSim.Releases do
+    for (v, w) <- MarketSim.Releases if v < "0.24.1" do
       assertEquals(w.volResp, 0.0, s"release $v")
       assertEquals(w.jumpResp, 0.0, s"release $v")
       assertEquals(w.volRespAttack, 0.0, s"release $v")
       assertEquals(w.noiseAsymCap, 0.0, s"release $v")
       assertEquals(w.stressAdapt, 0.005, s"release $v")
-    for (n, w, _) <- MarketSim.Recipes if !(n.startsWith("0.24.1") || n.startsWith("0.24.2")) do
+    for (n, w, _) <- MarketSim.Recipes if !(n.startsWith("0.24.1") || n.startsWith("0.24.2") || n.startsWith("0.24.3")) do
       assertEquals(w.volResp, 0.0, s"recipe $n")
       assertEquals(w.jumpResp, 0.0, s"recipe $n")
       assertEquals(w.stressAdapt, 0.005, s"recipe $n")

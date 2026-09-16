@@ -2,7 +2,7 @@
 package uni.apps
 
 //> using scala 3.7.2
-//> using dep org.vastblue:uni_3:0.24.2
+//> using dep org.vastblue:uni_3:0.24.3
 
 // MARKET SIMULATOR — a testbed for COMPARING exposure strategies over long horizons.
 //
@@ -221,7 +221,9 @@ object MarketSim:
   // premium over forward realized vol is the record's in every world; the old level counted the
   // slow channel's variance twice.  A panel-off schema-16 file is byte-identical to its schema-15
   // counterpart except the schema number and the `kIv` key.
-  val EmitSchema: Int = 16
+  // 16 -> 17: THE BUST SWING.  `world` gained `bustAmp` (0 in every shipped world); a schema-17
+  // file is byte-identical to its schema-16 counterpart except the schema number and that key.
+  val EmitSchema: Int = 17
 
   val EmitSidecarKeys: Vector[String] =
     Vector("generator", "version", "schema", "file", "columns", "header", "path", "world",
@@ -423,6 +425,12 @@ object MarketSim:
     "              ;   -volresp reads, so the extra variance lands where the kurtosis budget and",
     "              ;   the skew already are.  Its compensator turns conditional with it.  Consumes",
     "              ;   no draw; 0 = bit-identical",
+    "-bustamp A    ; THE BUST SWING: when a 0.2-log drawdown opens under a peak 0.5 log or more",
+    "              ;   over the gap's 20-year mean, a months-long swing of amplitude A is repriced",
+    "              ;   in the price and in perceived fair while the unwind makes new lows, the",
+    "              ;   recovery drag relieved and the amplifier blind to it -- the record's mania",
+    "              ;   bust: NDX 2000-02 spent 2.5 years at 53% vol in five legs and rallies.",
+    "              ;   Own stream; 0 = bit-identical",
     "-stressadapt M ; the equity spiral's SCALE speed: the EWMA weight on ret^2 that standardizes",
     "              ;   the decline the spiral's stress index reads.  0.005, a ~140-session memory,",
     "              ;   reads a persistently volatile stretch as continuous stress; faster lets the",
@@ -851,6 +859,22 @@ object MarketSim:
                            // mechanism has genuinely made volatile reads as continuous STRESS and
                            // the spiral mints spikes out of it -- the measured blocker on every
                            // form tried.  Faster lets the spiral tell volatile from stressed.
+    bustAmp: Double = 0.0,   // THE BUST SWING (item 25): a mania's unwind is two and a half years
+                           // of legs and rallies at 40-60% vol (NDX 2000-02), where the model's
+                           // was a crash and a calm underwater spell.  When a 0.2-log drawdown
+                           // opens under a peak that stood `BustArm` or more over the gap's
+                           // 20-year mean, a state s arms (full strength `BustRamp` above the
+                           // arm) and, while the unwind makes new lows, a months-long
+                           // unit-variance swing is repriced the same session in the price and
+                           // in perceived fair at amplitude bustAmp x s -- a STATIONARY swing
+                           // about the falling centre, so no gap opens for the pull to close
+                           // and the price does not race to its trough; the recovery drag is
+                           // relieved and the amplifier reads declines in ordinary units by
+                           // (1 + 2s), so the legs keep their ordinary cascade and the rallies
+                           // exist.  Sixteen forms of the bust's vol were measured before this
+                           // one (PLAN item 25's ledger): every diffusive-noise form shortened
+                           // and deepened the bust.  Own stream; 0 = bit-identical; the S&P
+                           // default keeps 0.
     noiseAsymCap: Double = 0.0, // the cascade's CAP (item 14 probe), 0 = uncapped: the largest log
                            // multiplier the cascade may apply.  Its profile gain comes from the
                            // state's BODY and its kurtosis from the right tail, so a cap buys the
@@ -1248,11 +1272,33 @@ object MarketSim:
     easing = 0.052, unwind = 0.35, refuge = 0.115,
     inflProb = 0.20, inflSize = 0.10, inflSpeed = 0.010, rateSpeed = 3.0, discount = 5.73,
     margin = 0.006)
+  /** 0.24.1's world, which 0.24.2 shipped unchanged and 0.24.3 ships unchanged: the vol
+    * response and the slow repricing channel on the leverage cycle, every dial spelled out so the
+    * row cannot follow a later `Defaults` move.  Frozen 2026-09-16 from the 0.24.3 default's
+    * sidecar block; `-atrelease 0.24.1` / `0.24.2` name it. */
+  private val V0_24_1 = World(
+    trendShare = 0.055, depth = 17.4, stress = 5.0, beta = 3.0, drift = 0.122, fundVol = 0.06,
+    rateMean = 0.042, volPersist = 0.982, volOfVol = 0.028, leverage = 0.1, downShock = 0.0,
+    jumpSkew = 0.65, jumpVar = 0.16, jumpRate = 0.0035, newsRate = 1.3, newsSize = 0.033,
+    valuePull = 0.056, recoveryDrag = 8.5, recoveryFloor = 0.1, haltLimit = 0.25,
+    disasterRate = 0.6, disasterSize = 2.0, disasterLen = 2.5, disasterRecover = 0.5,
+    disasterRecLen = 4.0, beliefShare = 0.95, beliefYears = 1.5, capYears = 1.5,
+    capWindow = 6.0, crowd = Crowd.Momentum, crowdImpact = 0.03, panic = 0.0, duration = 13.5,
+    easing = 0.052, unwind = 0.35, refuge = 0.115, refugeDays = 1.0, satBeta = 0.0,
+    satIdio = 0.0, rangeScale = 0.0, rangeDown = 0.0, volIdio = 0.0, divYield = 0.0,
+    overnight = 0.0, basket = 0, basketBeta = 0.0, basketSector = 0.0, basketIdio = 0.0,
+    basketGaps = 0.0, basketDrift = 0.0, macroPanel = 0, levGain = 6.0, stressScale = 0.0,
+    levPersist = 0.0, noiseAsym = 0.0, noiseAsymPhi = 0.96, noiseAsymCap = 0.0,
+    volResp = 0.021, volRespPhi = 0.992, volRespCap = 40.0, volRespAttack = 0.5,
+    jumpResp = 0.0, stressAdapt = 0.036, bustAmp = 0.0, slowShare = 0.2, slowVol = 0.894,
+    slowLev = 1.1, slowPhi = 0.996, slowPerm = 0.3, slowBeta = 0.55, macroNull = 0,
+    inflProb = 0.2, inflSize = 0.1, inflSpeed = 0.01, rateSpeed = 3.0, discount = 5.73,
+    margin = 0.006)
   val Releases: Vector[(String, World)] = Vector(
     ("0.17.0", PreV1901), ("0.18.0", PreV1901), ("0.19.0", PreV1901),
     ("0.19.1", PreV1902), ("0.19.2", V0_19_2), ("0.19.3", V0_19_2), ("0.20.0", V0_20_0),
     ("0.21.0", V0_21_0), ("0.22.0", V0_22_0), ("0.22.1", V0_22_1), ("0.23.0", V0_23_0),
-    ("0.23.1", V0_23_0), ("0.24.0", V0_24_0))
+    ("0.23.1", V0_23_0), ("0.24.0", V0_24_0), ("0.24.1", V0_24_1), ("0.24.2", V0_24_1))
 
   /** The world a release shipped, for `-atrelease`: the current version's default, or a frozen row
     * of the `-releases` table.  `None` for anything else -- the CLI dies naming what exists.  The
@@ -1418,8 +1464,26 @@ object MarketSim:
             b.copy(depth = 11.7205, trendShare = 0.05, drift = 0.078012823, fundVol = 0.03, crowdImpact = 0.048391393, stress = 4.8298039, valuePull = 0.052523421, recoveryDrag = 9.0363421, recoveryFloor = 0.05, disasterRate = 0.46874687, disasterSize = 1.948638, disasterRecover = 0.56444827, beliefShare = 0.84568138, capYears = 2.9900737, volOfVol = 0.018951116, jumpVar = 0.0, jumpRate = 0.00482868, leverage = 0.069007581, downShock = 0.0073220361, jumpSkew = 0.48665602, newsRate = 0.63064016, newsSize = 0.039154222, refugeDays = 0.60052388, easing = 0.018171647, refuge = 0.11311295, inflSize = 0.11254528, discount = 7.3886613, margin = 0.008, slowShare = 0.2392292, slowVol = 0.862505),
             "nasdaq"))
 
+  /** THE SEARCHED NASDAQ (0.24.3): the 0.24.2 recipe re-solved by the calibration search under the
+    * typical-year and wing rows, with the bust swing, the belief half-life and the slow channel's
+    * bond leg and permanent share among the thirty-four searched dials -- member 53 of search-v18,
+    * the steadiest of the nine members that pass every class on four seeds at 200 paths. The
+    * literals are the archive's, so `-atrelease 0.24.3-nasdaq` reproduces the member byte for byte.
+    * Against 0.24.2-nasdaq on the same four seeds: loss 1.50-1.89 from 1.58-2.61; the upper wing
+    * 2.5 -> 7.2 (record 7.6), the lower 14.0 -> 10.7 (6.7), the downside excess 0.3 -> 0.1 (1.1);
+    * paid in the worst crash (-66 -> -63 against -83) and crashes/century 30.8 -> 31.4 (25.6);
+    * equity vol 24.4 against 26.9 and kurtosis 16.4 (9.6) as before. The bust swing runs at the
+    * archive's 0.014: at 0.10 and above its rallies mint 20% peaks inside the busts and the macro
+    * build-up band fails. The un-searched dials are the 0.24.2 recipe's. */
+  val Recipes0243: Vector[(String, World, String)] =
+    val b = Recipes0242.find(_._1 == "0.24.2-nasdaq").map(_._2)
+      .getOrElse(sys.error("no base recipe 0.24.2-nasdaq"))
+    Vector(("0.24.3-nasdaq",
+            b.copy(depth = 11.378441, trendShare = 0.091321869, drift = 0.085311578, fundVol = 0.03, crowdImpact = 0.030261189, stress = 5.2350165, valuePull = 0.059293455, recoveryDrag = 6.7192147, recoveryFloor = 0.064560211, disasterRate = 0.42211827, disasterSize = 2.1563503, disasterRecover = 0.61330999, beliefShare = 0.7281211, capYears = 4.4211681, volOfVol = 0.019282161, jumpVar = 0.0, jumpRate = 0.005674479, leverage = 0.049527937, downShock = 0.010033667, jumpSkew = 0.46293234, newsRate = 1.1896798, newsSize = 0.042578621, refugeDays = 0.88502808, easing = 0.034326342, refuge = 0.12391532, inflSize = 0.10614338, discount = 6.4992686, margin = 0.0066204344, slowShare = 0.21615067, slowVol = 0.9349886, slowBeta = 0.57226776, slowPerm = 0.024347201, beliefYears = 0.7730648, bustAmp = 0.01448313),
+            "nasdaq"))
+
   val Recipes: Vector[(String, World, String)] =
-    Recipes0231 ++ MacroRecipes ++ Recipes0241 ++ Recipes0242
+    Recipes0231 ++ MacroRecipes ++ Recipes0241 ++ Recipes0242 ++ Recipes0243
 
   /** What `-atrelease NAME` seeds from: a release's world, anchors untouched, or a recipe with
     * the anchor set it was verified against -- which an explicit `-anchors` still overrides. */
@@ -1604,6 +1668,20 @@ object MarketSim:
     * gap channel's share).  FROZEN: it is a guard on the term's DOMAIN, not a tuning surface. */
   val CapSpan = 0.80
 
+  /** THE BUST SWING's constants (see `bustAmp`), frozen like `CapSpan`: the gap's slow mean, the
+    * peak level over it that arms the state, the level range over which the state ramps to full
+    * strength, the swing's per-session persistence (a 50-session memory), the state's decay while
+    * the unwind makes new lows and after a year without one (as per-session factors, written as
+    * literals so both twins carry the same bits), and the drag relief / amplifier blindness at
+    * full strength (1 + BustRelief x s). */
+  val BustMeanYears = 20.0
+  val BustArm = 0.5
+  val BustRamp = 0.15
+  val BustPhi = 0.98
+  val BustDecayNear = 0.9990835588389924
+  val BustDecayAfter = 0.9945139356168285
+  val BustRelief = 2.0
+
   /** DETERMINISTIC exp: Cody-Waite range reduction with fdlibm's split ln2, a fixed Horner
     * Taylor to r^12 on the reduced argument, and 2^k built from raw exponent bits.  Every
     * operation is IEEE-exact-or-fixed, so the twins agree TO THE BIT by construction -- which no
@@ -1724,6 +1802,11 @@ object MarketSim:
       * event is not proportionally larger than the reference world's. */
     var gainMult = 1.0
     var lastLiq = impact
+    /** THE BUST SWING's two per-session hooks (see `bustAmp`), set by the loop and exactly 1.0
+      * otherwise: the recovery drag times `dragMult`, and the amplifier's stress reading declines
+      * divided by `stressDiv`. */
+    var dragMult = 1.0
+    var stressDiv = 1.0
     var clamps = 0
     /** Sessions on the DOWNWARD guard, and sessions in the tail at all.  Counted separately from
       * `clamps` because the question the gate has to answer is not how often the guard binds --
@@ -1772,7 +1855,7 @@ object MarketSim:
       val drop  = peak - logP
       val damp  = if recoveryDrag <= 0.0 || gap <= 0.0 || drop <= DrawdownRef then 1.0
                   else math.max(recoveryFloor,
-                                1.0 / (1.0 + recoveryDrag * (drop - DrawdownRef) / DrawdownRef))
+                                1.0 / (1.0 + recoveryDrag * dragMult * (drop - DrawdownRef) / DrawdownRef))
       val raw   = (kValue * gap * damp + flowPlusNoise * amp) * impact
       // Numerical guard ONLY, and verified to be exactly that: at ±0.25 vs ±0.50 every statistic in
       // every gate-passing world is BIT-IDENTICAL (the clamp consumes no draws and never binds
@@ -1793,8 +1876,8 @@ object MarketSim:
       if logP > peak then peak = logP
       scaleVar  = 0.995 * scaleVar + 0.005 * ret * ret
       stressIdx = math.max(0.0, 0.96 * stressIdx + 0.04 * (math.max(0.0, -ret) / scale - 0.399))
-      scaleVarAmp = (1.0 - scaleMu) * scaleVarAmp + scaleMu * ret * ret
-      stressAmp = math.max(0.0, 0.96 * stressAmp + 0.04 * (math.max(0.0, -ret) / scaleA - 0.399))
+      scaleVarAmp = (1.0 - scaleMu) * scaleVarAmp + scaleMu * (ret / stressDiv) * (ret / stressDiv)
+      stressAmp = math.max(0.0, 0.96 * stressAmp + 0.04 * (math.max(0.0, -ret / stressDiv) / scaleA - 0.399))
       ret
 
   /** Per-session inputs the derived channels read, recorded by `simulate`'s price loop: the
@@ -2554,6 +2637,19 @@ object MarketSim:
     // multiplier, driven by the DIFFUSIVE DRAW rather than by any price-derived quantity.
     var kickS = 0.0
     var volRespS = 0.0
+    // THE BUST SWING's state (see `bustAmp`): the gap's slow mean, the level at the running
+    // peak, the armed state, the episode's low and the sessions since it, the swing and its own
+    // stream.  Draw-free at 0: the stream is only drawn while the dial is on.
+    var gapMean = 0.0
+    val gapMu = 1.0 / (BustMeanYears * DaysPerYear)
+    var peakLvl = 0.0
+    var bustS = 0.0
+    var epLow = Double.PositiveInfinity
+    var sinceLow = 0
+    val bustRng = new NumPyRNG(seed ^ 0xb057c0deL)
+    var bustSwing = 0.0
+    var bustNews = 0.0
+    var bustMove = 0.0
     var volRespA = 0.0
     var asymG = 0.0
     var asymA = 0.0
@@ -2822,6 +2918,39 @@ object MarketSim:
       val volRespM = if w.volResp > 0.0 then math.exp(w.volResp * volRespS) else 1.0
       val dNoise0k = if w.leverage > 0.0 then dNoise0 * math.exp(w.leverage * kickS) else dNoise0
       val dNoise  = if w.volResp > 0.0 then dNoise0k * volRespM else dNoise0k
+      // THE BUST SWING (item 25, see `bustAmp`).  The level is the pre-step price against the
+      // fundamental as this session left it -- information strictly before the step, like every
+      // crowd's -- and the slow mean advances after the read.  The state arms once per peak, off
+      // a drawdown of 0.2 log under a peak `BustArm` over the mean; the unwind is in progress
+      // while its lows are under a year old (the NDX made one every six months through 2000-02)
+      // and over once a year has passed without one (2003-06 was calm 70% under the 2000 peak).
+      // The swing is repriced here, ahead of the step, and perceived fair carries it too, so the
+      // step sees no gap from it.
+      if w.bustAmp > 0.0 then
+        val gapNow = eqM.logP - logVbase
+        val lvl = gapNow - gapMean
+        gapMean += gapMu * (gapNow - gapMean)
+        if eqM.logP >= eqM.peak then peakLvl = lvl
+        if peakLvl > BustArm && eqM.peak - eqM.logP > 0.2 then
+          val armed = min((peakLvl - BustArm) / BustRamp, 1.0)
+          if armed > bustS then
+            bustS = armed
+            epLow = eqM.logP
+            sinceLow = 0
+          peakLvl = 0.0
+        if eqM.logP < epLow then
+          epLow = eqM.logP
+          sinceLow = 0
+        else sinceLow += 1
+        bustS *= (if sinceLow <= DaysPerYear then BustDecayNear else BustDecayAfter)
+        val m = 1.0 + BustRelief * bustS
+        eqM.stressDiv = m
+        eqM.dragMult = 1.0 / m
+        bustSwing = BustPhi * bustSwing + math.sqrt(1.0 - BustPhi * BustPhi) * bustRng.randn()
+        val priced = w.bustAmp * bustS * bustSwing
+        bustMove = priced - bustNews
+        eqM.logP += bustMove
+        bustNews = priced
       if w.noiseAsym > 0.0 then
         asymA = NoiseAsymAttack * asymA - (1.0 - NoiseAsymAttack) * z
         asymG = w.noiseAsymPhi * asymG + w.noiseAsym * asymA
@@ -2914,7 +3043,7 @@ object MarketSim:
             // tanh-squashed at CapSpan: extrapolated growth prices a mania, never an infinity --
             // a lucky regime draw must not walk perceived fair past anything the record holds.
             pf += CapSpan * tanhP(w.capYears * (gEwma * DaysPerYear - w.drift) / CapSpan)
-          pf
+          pf + bustNews
       val sPre = if w.leverage > 0.0 then math.sqrt(eqM.scaleVar) else 0.0
       if levOn then
         // The ratio the index reads: borrowing over the equity securing it, the log drawdown
@@ -3017,7 +3146,10 @@ object MarketSim:
         val st = if w.slowShare > 0.0 then math.sqrt(vs * mix * vs * mix + slowVar) else vs
         chState(i) = st * eqM.lastLiq * w.depth / 12.0
         chSv(i) = eqM.scaleVar
-        chJ(i) = jumpNow * eqM.lastLiq - newsJ
+        // the bust swing's same-session move is a repricing the derived channels must see,
+        // like the news jump; guarded so the off state stays bit-identical
+        chJ(i) = if w.bustAmp > 0.0 then jumpNow * eqM.lastLiq - newsJ + bustMove
+                 else jumpNow * eqM.lastLiq - newsJ
         val vb = math.exp(logVol - volNorm) * volRespM * mix
         chVs(i) = math.sqrt(vb * vb + slowVar)
         chAmp(i) = eqM.lastLiq * w.depth / 12.0
@@ -3865,6 +3997,14 @@ object MarketSim:
                       hazardRatio(0)._1, hazardRatio(1)._1, hazardRatio(2)._1, hazardRatio(0)._2))
 
   final case class WorldStats(vol: Double, kurt: Double, ac1: Double, ac20: Double,
+                              // THE TYPICAL YEAR (item 24): the median calendar-year vol, the
+                              // row that separates an ordinary year from an episode.  Defaulted
+                              // like the profile rows below.
+                              yearVol: Double = Double.NaN,
+                              // THE WINGS (item 25): the share of sessions the valuation level
+                              // spends more than 0.5 log above / below its own 20-year mean
+                              // (`wingsOf`); the record's CAPE reads 0.076 / 0.067.
+                              wingUp: Double = Double.NaN, wingDown: Double = Double.NaN,
                               // THE VOL-RESPONSE PROFILE (item 12), reported beside the two
                               // graded clustering lags: |r| autocorrelation at 5 and 60, and the
                               // leverage-effect profile at 1, 5 and 20.  Defaulted so a caller
@@ -4041,6 +4181,7 @@ object MarketSim:
   private final case class PathRead(
     episodes: Vector[Episode], ddEq: (Double, Double, Double), ddBd: (Double, Double, Double),
     vol: Double, kurt: Double,
+    yearVol: Double,         // the typical year: `yearVolOf`
     ac: Vector[Double],      // clustering at lags 1, 20, 5 and 60
     lev: Vector[Double],     // the leverage profile at lags 1, 5 and 20
     vr: Vector[Double],      // variance ratios at q = 20, VarRatioQ, 120 and 250
@@ -4049,6 +4190,7 @@ object MarketSim:
     bondGrowth: Vector[Double], bondInfl: Vector[Double],   // the bond over each episode, by regime
     corrCalm: Double, corrInfl: Double,
     valDisp: Double, maxOver: Double, semiExcess: Double, levCorr: Double, tailHedge: Double,
+    wingUp: Double, wingDown: Double, wingN: Double,   // the cycle's wings about its 20-year mean, as COUNTS over `wingsOf`'s sessions
     inflAnn: Double)
 
   private def pathRead(sp: Path, years: Int): PathRead =
@@ -4165,9 +4307,11 @@ object MarketSim:
             k += 1
           j += 1
         pearson(x, y)
+    val wings = wingsOf(sp.price, sp.fundamental)
     PathRead(
       episodes = eps, ddEq = depthShares(sp.price), ddBd = depthShares(sp.bond),
       vol  = math.sqrt(MatD(r).power(2).mean * DaysPerYear),
+      yearVol = yearVolOf(r),
       kurt = kurtosis(r),
       // the four clustering lags share |r|, its centring and its denominator
       ac   = autocorrsAbs(r, Vector(1, 20, 5, 60)),
@@ -4190,6 +4334,7 @@ object MarketSim:
       bondGrowth = bondInWindows(false), bondInfl = bondInWindows(true),
       corrCalm = corrIn(false), corrInfl = corrIn(true),
       valDisp = valDisp, maxOver = maxOver, semiExcess = semiExcess, levCorr = levCorr,
+      wingUp = wings._1, wingDown = wings._2, wingN = wings._3,
       tailHedge = tailHedge,
       inflAnn = math.log(sp.cpi.last / sp.cpi.head) / years * 100.0)
 
@@ -4212,6 +4357,11 @@ object MarketSim:
 
     WorldStats(
       vol  = med(per.map(_.vol)),
+      yearVol = med(per.map(_.yearVol)),
+      // POOLED, not a median of per-path shares: a spell past +0.5 is a once-in-decades event,
+      // so most paths hold none and a median would read 0 forever (the tail-floor share's rule).
+      wingUp = pooledShare(per.map(_.wingUp), per.map(_.wingN)),
+      wingDown = pooledShare(per.map(_.wingDown), per.map(_.wingN)),
       kurt = med(per.map(_.kurt)),
       ac1  = med(per.map(_.ac(0))),
       ac20 = med(per.map(_.ac(1))),
@@ -4395,6 +4545,7 @@ object MarketSim:
       // 0.5 per failed check whatever the class.  Volatility keeps its realism band as well —
       // 8-40% answers "is this a market", the anchor's own band "can its level be read".
       bandCheck("equity vol", st.vol * 100.0, a.volBand._1, a.volBand._2, Fidelity, dp = 0, unit = "%"),
+      bandCheck("typical-year vol", st.yearVol * 100.0, a.yearVolBand._1, a.yearVolBand._2, Fidelity, dp = 0, unit = "%"),
       // 0.50 clears the 1926-2026 reading (0.55) downward; 0.85 sits above the 1954-2026 anchor
       // (0.69) and below the most favourable non-overlapping 20-year block the record produced
       // (0.93).  A world may be as favourable as a long-horizon market, not as favourable as its
@@ -4769,6 +4920,11 @@ object MarketSim:
     // neither shipped set for the same reason, and coinciding today is not a reason to share a field.
     tailWindow: String, tailYears: Int,
     vol: Double,        volSd: Double,
+    // THE TYPICAL YEAR (item 24): the median calendar-year vol of the equity window, from
+    // `yearvol-2026-09-15.tsv`.  The pooled `vol` cannot tell an ordinary year from an episode;
+    // this can, and it is what keeps a search from closing the pooled row by making every year
+    // more volatile.
+    yearVol: Double,    yearVolSd: Double,
     retVol: Double,     retVolSd: Double,
     kurt: Double,       kurtSd: Double,
     ac1: Double,        ac1Sd: Double,
@@ -4777,6 +4933,8 @@ object MarketSim:
     medDepth: Double,   medDepthSd: Double,
     worstDepth: Double, worstDepthSd: Double,
     volBand: (Double, Double),                   // the two asset-specific FIDELITY bands
+    yearVolBand: (Double, Double),               // the typical year's: one sd of the row's own
+                                                 // single-history spread (0.11 at 72y, 0.18 at 27y)
     retVolBand: (Double, Double),
     // 100*(sdRatio - 1) from `asymmetry-2026-08-31.tsv` -- the raw model/real quotient of sdRatio
     // itself sits so near 1 by construction that no miss could ever fire; the EXCESS is the
@@ -4788,6 +4946,17 @@ object MarketSim:
     // Left-tail stock-bond correlation from `tailcorr-2026-08-31.tsv` (the equity leg's own pair
     // against TLT).
     tailHedge: Double, tailHedgeSd: Double,
+    // THE WINGS (item 25), in percent of sessions: the valuation level's time more than 0.5 log
+    // above and below its own 20-year mean, from Shiller's CAPE (`mania-2026-09-15.tsv`, w1901,
+    // one series shared by both sets like the dispersion row).  The record is symmetric; the
+    // model's cycle had the record's amplitude with the wrong sign (2.5% above, 13.7% below on
+    // the Nasdaq recipe) until these rows gave the search a reason to care.  THE SPREAD IS THE
+    // RECORD'S OWN, not `-noise`'s: a world that never makes the upper wing reads a spread of
+    // 0.07 for it (the default) and one that makes it rarely 0.79 (the recipe) -- neither is a
+    // sampling error of the statistic.  A moving-block bootstrap of the record's level series
+    // (20-year blocks, 4000 resamples; the fixture's bootSd rows) puts the share's relative sd
+    // at 0.60 for both wings -- one spell, 1995-2003, is most of the upper share.
+    wingUp: Double, wingUpSd: Double, wingDown: Double, wingDownSd: Double,
     // Sampling spreads for the rows whose LEVEL is not asset-specific -- the theory-valued depth
     // rungs, the 60-session variance ratio, the valuation proxy and the bond rows -- but whose
     // spread is: measured by `-noise` at the set's own world, 200 paths, and frozen like the
@@ -4850,6 +5019,9 @@ object MarketSim:
     clusterWindow = "CRSP 1926-2026, the century", clusterYears = 100,
     tailWindow = "CRSP 1926-2026, the century", tailYears = 100,
     vol = 16.0,          volSd = 0.12,
+    // CRSP 1954-2026 (`yearvol-2026-09-15.tsv`, w1954): 12.87, 0.82 of pooled; the S&P index's
+    // own daily record is not in the fixture, and CRSP is the series the r/v row reads too.
+    yearVol = 12.9,      yearVolSd = 0.11,
     retVol = 0.69,       retVolSd = 0.27,
     kurt = 28.0,         kurtSd = 0.85,
     ac1 = 0.299,         ac1Sd = 0.15,
@@ -4867,6 +5039,7 @@ object MarketSim:
     // not a century's.
     worstDepth = -84.1,  worstDepthSd = 0.20,
     volBand = (14.0, 18.0),
+    yearVolBand = (11.3, 14.5),
     retVolBand = (0.50, 0.85),
     // CRSP c1954 rows of asymmetry-2026-08-31.tsv; the tail hedge is SPY/TLT.  A single 72-year
     // history barely pins the semivariance excess (one crash day swings it), and the record reads
@@ -4875,6 +5048,7 @@ object MarketSim:
     semiExcess = 3.06, semiExcessSd = 1.42,
     levCorr = -0.0926, levCorrSd = 0.40,
     tailHedge = -0.273, tailHedgeSd = 0.34,
+    wingUp = 7.6, wingUpSd = 0.60, wingDown = 6.7, wingDownSd = 0.61,
     valDispSd = 0.62, vr60Sd = 0.28, d5Sd = 0.18, d10Sd = 0.45, d20Sd = 4.18,
     bondVolSd = 0.36, bondGrowthSd = 1.69, bondInflSd = 1.55, bondDepthSd = 0.34,
     ddRefs = DdRefsSp500,
@@ -4899,12 +5073,12 @@ object MarketSim:
     * exactly (18.57 / 10.31 / 0.447 / 0.315 / 0.169 against 18.6 / 10.30 / 0.447 / 0.315 / 0.169),
     * so these readings are on the fixture's own definitions.
     *
-    * THE SAMPLING SPREADS ARE THE NASDAQ WORLD'S OWN, re-frozen 2026-09-12 from
-    * `-noise -paths 200 -atrelease 0.24.2-nasdaq`, the recipe this set describes (re-frozen
-    * 2026-09-13).  The same command at the outgoing 0.24.1-nasdaq recipe reproduces all 20 of the
-    * previous literals exactly, so every move is the world's: the searched recipe reads wider on
-    * volatility (0.10 -> 0.16), median depth (0.39 -> 0.52) and lag-20 clustering (0.15 -> 0.22),
-    * which is the slow channel's regime showing in single histories.  They were first carried
+    * THE SAMPLING SPREADS ARE THE NASDAQ WORLD'S OWN, re-frozen 2026-09-16 from
+    * `-noise -paths 200 -atrelease 0.24.3-nasdaq`, the recipe this set describes.  The same
+    * command at the outgoing 0.24.2-nasdaq recipe reproduces all 21 of the previous literals
+    * exactly, so every move is the world's: the 0.24.3 recipe reads narrower on median depth
+    * (0.45 -> 0.36), the tail hedge (0.48 -> 0.37) and valuation dispersion (0.46 -> 0.38), wider
+    * on kurtosis (1.53 -> 1.69) and the deep rung (0.35 -> 0.44).  They were first carried
     * over from the S&P, and the assumption that carried values
     * were "approximately right
     * because both assets' statistics have similar relative spreads" was FALSE where the two
@@ -4922,24 +5096,29 @@ object MarketSim:
     clusterWindow = "QQQ 1999-2026", clusterYears = 27,
     tailWindow = "QQQ 1999-2026", tailYears = 27,
     vol = 26.90,         volSd = 0.12,
-    retVol = 0.38,       retVolSd = 0.51,
-    kurt = 9.55,         kurtSd = 1.53,
+    // QQQ 1999-2026 (`yearvol-2026-09-15.tsv`, w1999): 18.26, only 0.68 of pooled -- the window's
+    // vol is 2000-02 at 58 / 55 / 42%; QQQ from 2007 reads 0.82 like SPY.
+    yearVol = 18.3,      yearVolSd = 0.16,
+    retVol = 0.38,       retVolSd = 0.50,
+    kurt = 9.55,         kurtSd = 1.69,
     ac1 = 0.293,         ac1Sd = 0.24,
-    ac20 = 0.249,        ac20Sd = 0.20,
+    ac20 = 0.249,        ac20Sd = 0.22,
     crashes = 25.6,      crashesSd = 0.49,
-    medDepth = -22.8,    medDepthSd = 0.45,
-    worstDepth = -83.0,  worstDepthSd = 0.19,
+    medDepth = -22.8,    medDepthSd = 0.36,
+    worstDepth = -83.0,  worstDepthSd = 0.18,
     volBand = (23.5, 30.3),
+    yearVolBand = (15.0, 21.6),
     retVolBand = (0.27, 0.47),
     // QQQ wfull row of asymmetry-2026-08-31.tsv; the tail hedge is QQQ/TLT.
-    semiExcess = 1.13, semiExcessSd = 4.26,
-    levCorr = -0.1073, levCorrSd = 0.49,
-    tailHedge = -0.236, tailHedgeSd = 0.48,
+    semiExcess = 1.13, semiExcessSd = 4.47,
+    levCorr = -0.1073, levCorrSd = 0.47,
+    tailHedge = -0.236, tailHedgeSd = 0.37,
+    wingUp = 7.6, wingUpSd = 0.60, wingDown = 6.7, wingDownSd = 0.61,
     // d20's spread is a fraction of the S&P world's (0.35 against 4.18): at Nasdaq volatility the
     // deep rung is pinned where the S&P default leaves it unreadable, so the row carries real
     // weight here.
-    valDispSd = 0.46, vr60Sd = 0.27, d5Sd = 0.12, d10Sd = 0.20, d20Sd = 0.35,
-    bondVolSd = 0.37, bondGrowthSd = 1.49, bondInflSd = 1.83, bondDepthSd = 0.24,
+    valDispSd = 0.38, vr60Sd = 0.29, d5Sd = 0.12, d10Sd = 0.22, d20Sd = 0.44,
+    bondVolSd = 0.37, bondGrowthSd = 1.64, bondInflSd = 1.61, bondDepthSd = 0.28,
     ddRefs = DdRefsNasdaq,
     divYield = 0.78, divYieldBand = (0.3, 1.5),
     basketCorr = 0.837, basketBeta = 1.365, basketVolRatio = 1.630, basketNameVolBand = (1.5, 2.8))
@@ -4988,6 +5167,12 @@ object MarketSim:
 
   def fitTargets(a: Anchors): Vector[(String, WorldStats => Double, Double, Double)] = Vector(
     ("equity vol %",       st => st.vol * 100,                              a.vol,  wgt(1.0, a.volSd)),
+    // THE TYPICAL YEAR (item 24): the median calendar-year vol, so the pooled row above cannot be
+    // closed by making every year more volatile.  QQQ 1999-2026 reads 18.3 against a pooled 26.9
+    // -- the gap is 2000-02 -- where QQQ from 2007, SPY and CRSP from 1954 all read 0.82-0.83 of
+    // pooled, as the model does on both worlds (0.81).  The pooled miss that remains on the
+    // Nasdaq is the bust's, and only a mania closes it.
+    ("typical-year vol %",  st => st.yearVol * 100,                          a.yearVol, wgt(1.0, a.yearVolSd)),
     // Ken French F-F_Research_Data_Factors, US total market (Mkt-RF + RF), measured in the units
     // this row is compared in: annualised LOG return over sqrt(mean(r^2) * 252) on DAILY data.
     // Both conversions matter -- a CAGR read as a simple rate and a monthly-derived volatility
@@ -5063,6 +5248,11 @@ object MarketSim:
     // and the LITERAL is shared by both anchor sets -- one Shiller record, no QQQ equivalent.
     // Judgment 0.5 for the proxy commensurability stated in valuation-2026-08-30.tsv.
     ("valuation dispersion", st => st.valDisp,                               0.30,  wgt(0.5, a.valDispSd)),
+    // THE WINGS (item 25): the same cycle's time far above and far below its own 20-year mean.
+    // Dispersion alone is sign-blind, and the model reached the record's amplitude with crashes
+    // below and no manias above; these two rows are what a mania-capable world has to read.
+    ("upper wing months %", st => st.wingUp * 100,                           a.wingUp,   wgt(0.5, a.wingUpSd)),
+    ("lower wing months %", st => st.wingDown * 100,                         a.wingDown, wgt(0.5, a.wingDownSd)),
     ("crashes/century",    st => st.epPerPath * 100.0 / st.yearsPerPath,    a.crashes,  wgt(1.0, a.crashesSd)),
     // RE-MEASURED in 0.22.0, and the old value was not this statistic.  `-27.1` shipped through
     // 0.21.0 with no recorded convention; the model measures every peak-to-trough decline of 15% or
@@ -5532,6 +5722,67 @@ object MarketSim:
     * every index holds the double the boxed sort put there -- and nothing is boxed.  The boxed
     * sort was a fifth of a search's CPU, nearly all of it on one thread, in the macro panel's
     * per-member quantiles. */
+  /** THE TYPICAL YEAR (item 24): the median over whole `DaysPerYear`-session blocks of each
+    * block's own annualised RMS vol -- `vol`, read one year at a time -- so the row separates the
+    * ordinary year from the episodes the pooled row cannot tell apart.  Whole blocks from the
+    * path's start; shorter than a block, the pooled vol.  Sequential sums, so the twins agree bit
+    * for bit. */
+  private[apps] def yearVolOf(r: Array[Double]): Double =
+    val w  = DaysPerYear
+    val nb = r.length / w
+    if nb < 1 then math.sqrt(MatD(r).power(2).mean * DaysPerYear)
+    else
+      val v = new Array[Double](nb)
+      var k = 0
+      while k < nb do
+        var s = 0.0
+        var i = k * w
+        while i < (k + 1) * w do
+          s += r(i) * r(i)
+          i += 1
+        v(k) = math.sqrt(s / w * DaysPerYear)
+        k += 1
+      val f = finiteSorted(v)
+      if f.isEmpty then Double.NaN else f(f.length / 2)
+
+  /** THE WINGS (item 25): the share of sessions the valuation level -- log(price / fundamental)
+    * minus its own EWMA with `BustMeanYears`' time constant, started at the first reading, the
+    * bust swing's reference -- spends more than 0.5 above and more than 0.5 below its mean, after
+    * the reference's first `BustMeanYears`.  The record's CAPE about the same reference
+    * (`mania-2026-09-15.tsv`, w1901) reads 0.076 / 0.067: symmetric.  Returned as COUNTS over the
+    * sessions read, (0, 0, 0) on a path shorter than the burn-in, so `measure` can pool them. */
+  private[apps] def wingsOf(price: Array[Double], fund: Array[Double]): (Double, Double, Double) =
+    val n = price.length
+    val burn = (BustMeanYears * DaysPerYear).toInt
+    if n <= burn then (0.0, 0.0, 0.0)
+    else
+      val mu = 1.0 / (BustMeanYears * DaysPerYear)
+      var ref = math.log(price(0) / fund(0))
+      var up = 0
+      var down = 0
+      var i = 0
+      while i < n do
+        val g = math.log(price(i) / fund(i))
+        if i >= burn then
+          val lvl = g - ref
+          if lvl > 0.5 then up += 1
+          else if lvl < -0.5 then down += 1
+        ref += mu * (g - ref)
+        i += 1
+      (up.toDouble, down.toDouble, (n - burn).toDouble)
+
+  /** A share pooled over paths: the counts summed over the sessions summed, NaN when nothing was
+    * read.  Left folds in path order, like every pooled sum here. */
+  private[apps] def pooledShare(counts: Seq[Double], sessions: Seq[Double]): Double =
+    var c = 0.0
+    var n = 0.0
+    var i = 0
+    while i < counts.length do
+      c += counts(i)
+      n += sessions(i)
+      i += 1
+    if n > 0.0 then c / n else Double.NaN
+
   private[apps] def finiteSorted(v: Array[Double]): Array[Double] =
     val out = new Array[Double](v.length)
     var n = 0
@@ -5609,7 +5860,7 @@ object MarketSim:
     "recoveryDrag", "recoveryFloor", "disasterRate", "disasterSize", "disasterRecover",
     "beliefShare", "capYears", "volOfVol", "jumpVar", "jumpRate", "leverage", "downShock",
     "jumpSkew", "newsRate", "newsSize", "refugeDays", "easing", "refuge", "inflSize",
-    "discount", "margin", "slowShare", "slowVol")
+    "discount", "margin", "slowShare", "slowVol", "slowBeta", "slowPerm", "beliefYears", "bustAmp")
 
   val CalibrateRanges: Vector[DialRange] = Vector(
     ("depth",       8.0,  26.0, (w, x) => w.copy(depth = x), _.depth),
@@ -5635,7 +5886,7 @@ object MarketSim:
     ("disasterSize",  0.5, 2.5, (w, x) => w.copy(disasterSize = x), _.disasterSize),
     ("disasterRecover", 0.0, 0.9, (w, x) => w.copy(disasterRecover = x), _.disasterRecover),
     ("beliefShare",   0.0, 0.97, (w, x) => w.copy(beliefShare = x), _.beliefShare),
-    ("capYears",      0.0, 4.0, (w, x) => w.copy(capYears = x), _.capYears),
+    ("capYears",      0.0, 8.0, (w, x) => w.copy(capYears = x), _.capYears),
     ("volOfVol",   0.010, 0.030, (w, x) => w.copy(volOfVol = x), _.volOfVol),
     // In the ranges from the release it arrived in.  `fundVol` sat outside them for four releases
     // and that is exactly why its defect survived four releases of one-knob-at-a-time sweeps; a
@@ -5668,6 +5919,23 @@ object MarketSim:
     // the Nasdaq recipe reads vol 27.2, lag-20 0.27, lag-60 0.175 against 26.9 / 0.25 / 0.175).
     ("slowShare",    0.0,  0.80, (w, x) => w.copy(slowShare = x), _.slowShare),
     ("slowVol",      0.5,  2.50, (w, x) => w.copy(slowVol = x), _.slowVol),
+    // THE CHANNEL'S BOND LEG AND ITS PERMANENT SHARE, searched from 0.24.3.  The bond takes
+    // `slowBeta` x the equity's repricing, so with `slowBeta` fixed every step the search took in
+    // `slowVol` moved Treasury vol with it: at 0.5 / 1.5 on the Nasdaq recipe the bond leaves
+    // its 0.70-1.10x-duration band, and the archive could not grow the equity's channel without
+    // growing the bond's.  Held at the recipe's product (slowBeta x slowVol), 0.4 / 1.3 passes
+    // every class at vol 25.1 with lag-20 0.23 at the recipe's loss.  `slowPerm` because the share that
+    // reaches the fundamental sets what the value channel has to close, which is the channel's
+    // variance-ratio and drawdown footprint; both dials ship at one value in every frozen world.
+    ("slowBeta",     0.0,  1.20, (w, x) => w.copy(slowBeta = x), _.slowBeta),
+    ("slowPerm",     0.0,  1.00, (w, x) => w.copy(slowPerm = x), _.slowPerm),
+    // THE BELIEF HALF-LIFE, searched from 0.24.3 beside `beliefShare` and `capYears`: the
+    // 0.23.0 sweep found 1.0 / 0.95 puts the cycle's persistence on Shiller's where 1.5 / 0.85
+    // (the Nasdaq recipe) does not, and nothing graded the wings until item 25's rows.
+    ("beliefYears",  0.5,  4.00, (w, x) => w.copy(beliefYears = x), _.beliefYears),
+    // THE BUST SWING's amplitude, searched from 0.24.3: 0.14 reads the record's mania bust on the
+    // Nasdaq recipe (item 25); the wings and the typical-year row are what it trades against.
+    ("bustAmp",      0.0,  0.30, (w, x) => w.copy(bustAmp = x), _.bustAmp),
   )
 
   def calibrate(a: Anchors, nSamples: Int, base: World, seed: Long): Unit =
@@ -6130,8 +6398,9 @@ object MarketSim:
     * places it.  The failure being prevented is a target silently absent from the equity section --
     * a shorter table reads as a shorter list of concerns, not as a bug. */
   val EquityTargets = Vector(
-    "equity vol %", "return per vol", "kurtosis", "clustering lag 1", "clustering lag 20",
+    "equity vol %", "typical-year vol %", "return per vol", "kurtosis", "clustering lag 1", "clustering lag 20",
     "variance ratio 60d", "downside vol excess %", "leverage corr", "valuation dispersion",
+    "upper wing months %", "lower wing months %",
     "crashes/century", "median depth %",
     "worst crash %", "equity d5 vs real", "equity d10 vs real", "equity d20 vs real")
 
@@ -6338,7 +6607,7 @@ object MarketSim:
     * partition, so a new target cannot land without a declared horizon. */
   def anchorGroups(a: Anchors): Vector[(String, Int, Vector[String])] = Vector(
     (a.equityWindow, a.equityYears,
-     Vector("equity vol %", "return per vol", "kurtosis", "crashes/century",
+     Vector("equity vol %", "typical-year vol %", "return per vol", "kurtosis", "crashes/century",
             "median depth %", "downside vol excess %", "leverage corr")),
     (a.clusterWindow, a.clusterYears,
      Vector("clustering lag 1", "clustering lag 20")),
@@ -6347,7 +6616,7 @@ object MarketSim:
     // deepest episode.
     (a.tailWindow, a.tailYears, Vector("worst crash %")),
     // The Shiller record is one series shared by every anchor set, at its own century horizon.
-    ("Shiller CAPE 1881-2023", 100, Vector("valuation dispersion")),
+    ("Shiller CAPE 1881-2023", 100, Vector("valuation dispersion", "upper wing months %", "lower wing months %")),
     // 18 equity funds and three CRSP windows, the shortest of them 24.9 years -- see
     // `VarRatioBands`.  The horizon is one instrument's record, as it is for the depth rungs, and
     // the target this group carries is a theory value rather than a reading, so `real@` here says
@@ -7111,6 +7380,7 @@ object MarketSim:
       ("volResp", num(w.volResp)), ("volRespPhi", num(w.volRespPhi)),
       ("volRespCap", num(w.volRespCap)), ("volRespAttack", num(w.volRespAttack)),
       ("jumpResp", num(w.jumpResp)), ("stressAdapt", num(w.stressAdapt)),
+      ("bustAmp", num(w.bustAmp)),
       ("slowShare", num(w.slowShare)), ("slowVol", num(w.slowVol)), ("slowLev", num(w.slowLev)),
       ("slowPhi", num(w.slowPhi)), ("slowPerm", num(w.slowPerm)), ("slowBeta", num(w.slowBeta)),
       ("macroNull", w.macroNull.toString),
@@ -7487,6 +7757,7 @@ object MarketSim:
     var volRespAttack = dw.volRespAttack; var volRespCap = dw.volRespCap
     var noiseAsymCap = dw.noiseAsymCap
     var jumpResp = dw.jumpResp; var stressAdapt = dw.stressAdapt
+    var bustAmp = dw.bustAmp
     var slowShare = dw.slowShare; var slowVol = dw.slowVol; var slowLev = dw.slowLev
     var slowPhi = dw.slowPhi; var slowPerm = dw.slowPerm; var slowBeta = dw.slowBeta
     var jointEmit = ""
@@ -7592,6 +7863,7 @@ object MarketSim:
       case "-noiseasymcap" => noiseAsymCap = numOr("-noiseasymcap", consumeNext)
       case "-jumpresp"     => jumpResp = numOr("-jumpresp", consumeNext)
       case "-stressadapt"  => stressAdapt = numOr("-stressadapt", consumeNext)
+      case "-bustamp"    => bustAmp = numOr("-bustamp", consumeNext)
       case "-slowshare"  => slowShare = numOr("-slowshare", consumeNext)
       case "-slowvol"    => slowVol = numOr("-slowvol", consumeNext)
       case "-slowlev"    => slowLev = numOr("-slowlev", consumeNext)
@@ -7687,6 +7959,7 @@ object MarketSim:
     nonNeg("-noiseasym", noiseAsym)
     nonNeg("-noiseasymcap", noiseAsymCap)
     nonNeg("-volresp", volResp); nonNeg("-volrespcap", volRespCap); nonNeg("-jumpresp", jumpResp)
+    nonNeg("-bustamp", bustAmp)
     // WORD FOR WORD the Rust twin's messages: the two CLIs must refuse the same worlds, and
     // `-stressadapt 0` is the one that would otherwise pass -- the spiral's scale never updates,
     // so its stress index reads every session against the seed value.  NEGATED comparisons, like
@@ -7779,6 +8052,7 @@ object MarketSim:
                   noiseAsymPhi = noiseAsymPhi, volResp = volResp, volRespPhi = volRespPhi,
                   volRespAttack = volRespAttack, volRespCap = volRespCap,
                   noiseAsymCap = noiseAsymCap, jumpResp = jumpResp, stressAdapt = stressAdapt,
+                  bustAmp = bustAmp,
                   slowShare = slowShare, slowVol = slowVol, slowLev = slowLev,
                   slowPhi = slowPhi, slowPerm = slowPerm, slowBeta = slowBeta,
                   noiseAsym = noiseAsym)

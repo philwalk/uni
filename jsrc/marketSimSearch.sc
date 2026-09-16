@@ -1,7 +1,7 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
 //> using scala 3.7.0
-//> using dep org.vastblue:uni_3:0.24.2
+//> using dep org.vastblue:uni_3:0.24.3
 
 // A CALIBRATION SEARCH for the market simulator, built to run for days and to be killed at any
 // moment.  NOT SHIPPED, and it adds nothing to the library: the simulator and its runtime come
@@ -11,7 +11,7 @@
 //
 //   jsrc/marketSimSearch.sc -out search
 //
-// WHAT IT PRODUCES is an ARCHIVE, not a champion: 30 searched dials against ~45 graded rows that
+// WHAT IT PRODUCES is an ARCHIVE, not a champion: 34 searched dials against ~45 graded rows that
 // are not independent means distinct worlds match the record equally well, and a strategy feels
 // the mechanism, not the summary statistic.
 //
