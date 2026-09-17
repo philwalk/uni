@@ -1059,8 +1059,8 @@ fn recipe_0243_nasdaq(mut w: World) -> World {
 }
 
 /// THE NASDAQ AT THE SWING'S MEASURED AMPLITUDE (0.24.4): `0.24.3-nasdaq` with `bust_amp` 0.20,
-/// the largest amplitude whose four-seed loss stays inside the member's own (1.56-1.95 against
-/// 1.51-1.90; seed 2 carries the bond vol x duration row's penalty at 60 paths in both) once the
+/// the largest amplitude whose four-seed loss stays inside the member's own (1.54-1.93 against
+/// 1.54-1.90 under the same spreads; seed 2 carries the bond vol x duration row's penalty at 60 paths in both) once the
 /// ceiling holds the swing under the mania's high and the unwind ends at the regained high -- the
 /// mania-led busts read 46% vol over 3.0 years with four rallies of 20% and two of 30% (the
 /// member's own 32.5%, 3.7 years, two and one; NDX 2000-02: 53%, 2.5, five and three); 0.25

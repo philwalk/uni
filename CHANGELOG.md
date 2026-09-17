@@ -19,8 +19,8 @@
   live unwind was held (1.7% of the recipe's). Every world with the dial at 0 is bit-identical;
   twins byte-identical on the default, the four Nasdaq recipes and the swing at 0 and 0.20.
 - `0.24.4-nasdaq` is the 0.24.3 recipe with the swing at 0.20 instead of its archive's 0.014, the
-  largest amplitude whose four-seed loss stays inside the member's own (1.56-1.95 against
-  1.51-1.90; on both, seed 2 carries the bond vol × duration row's penalty at 60 paths); a
+  largest amplitude whose four-seed loss stays inside the member's own (1.54-1.93 against
+  1.54-1.90 under the same spreads; on both, seed 2 carries the bond vol × duration row's penalty at 60 paths); a
   released name is never re-solved in place, so `0.24.3-nasdaq` keeps its literals. Its
   mania-led busts read 46% vol over 3.0 years with four rallies of 20% and two of 30% (at 0.014:
   32.5%, 3.7 years, two and one; NDX 2000-02: 53%, 2.5, five and three); 0.25 passes every class
@@ -40,6 +40,13 @@
   pair corr 0.60 against 0.17 mid; names 2.04x, gaps 3.9/yr; time below peak 0.74, disclosed),
   every class passing. It is the Nasdaq basket world to pin in place of `0.24.1-nasdaq-basket`,
   which stays as shipped.
+- `test-data/worlds/0.24.4-nasdaq.json`: the Nasdaq set searched under the ceiling and the recovery
+  rule, seeded from `0.24.4-nasdaq` (50 admitted under the recipe's own bar, 30 after the 3- and
+  12-seed holdouts; member 0 is the recipe byte for byte). Every member passes every class at 200
+  paths and all fourteen candidates on four seeds. The one row no member reaches is the worst
+  crash (best −67 against −83): the model's mania busts are undershoot, 0.39 over the fundamental
+  at the peak to 0.67 under it at the trough, where the 2000-02 bust ran with the index's earnings
+  roughly halving — the next mechanism row. The 0.24.3 and 0.24.2 sets stay as shipped.
 
 ## v0.24.3 — 2026-09-16
 

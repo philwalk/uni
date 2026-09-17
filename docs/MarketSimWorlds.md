@@ -195,18 +195,22 @@ market_sim_search -out search ... -export worlds.json
 
 `worlds.json` is a JSON array of members, each with its `member` number, the world it was seeded
 from, its score and worst row, and a `world` block in the sidecar's own key format at the
-archive's full precision. The release ships three, built this way and pruned by their holdouts:
-`test-data/worlds/0.24.3-nasdaq.json` (173 members, seeded from `0.24.2-nasdaq` under the current
-objective, the set `0.24.3-nasdaq` was picked from -- member 53, which `0.24.4-nasdaq` runs at bust
-amplitude 0.20; pass `-anchors nasdaq`, since a member names no anchor set), and the two 0.24.2
+archive's full precision. The release ships four, built this way and pruned by their holdouts:
+`test-data/worlds/0.24.4-nasdaq.json` (30 members, seeded from `0.24.4-nasdaq` under the swing's
+ceiling and recovery rule; member 0 is the recipe itself, byte for byte; every member passes every
+class at 200 paths and the fourteen candidates on four seeds; the one row no member reaches is the
+worst crash, the best at −67 against −83; pass `-anchors nasdaq`, since a member names no anchor
+set), `0.24.3-nasdaq.json` (173 members, seeded from `0.24.2-nasdaq`, the set `0.24.3-nasdaq` was
+picked from -- member 53, which `0.24.4-nasdaq` runs at bust amplitude 0.20), and the two 0.24.2
 sets, `0.24.2-sp500.json` (150 members, seeded from the
 default; pass `-anchors sp500` or nothing) and `0.24.2-nasdaq.json` (174, seeded from
 `0.24.2-nasdaq`), searched before the typical-year and wing rows, so their `score` and
-`worstRow` are that objective's readings. Every member with a nonzero `bustAmp` now runs under
-the swing's ceiling, which its `score` predates. To run one:
+`worstRow` are that objective's readings. Every member of the three older sets with a nonzero
+`bustAmp` now runs under the swing's ceiling and recovery rule, which its `score` predates; the
+0.24.4 set was searched under both. To run one:
 
 ```
-market_sim.exe -worldset test-data/worlds/0.24.3-nasdaq.json -worldindex 53 -anchors nasdaq -paths 200 -years 40 -emitall -emit m53.tsv
+market_sim.exe -worldset test-data/worlds/0.24.4-nasdaq.json -worldindex 4 -anchors nasdaq -paths 200 -years 40 -emitall -emit m4.tsv
 ```
 
 `-worldindex` addresses a member by its own number, defaulting to 0. The member seeds every dial
@@ -1444,7 +1448,7 @@ kurtosis 16.4 (9.6) as before. The bust swing runs at the archive's 0.014, which
 there because the bust's shape is no graded row. The un-searched dials are the 0.24.2 recipe's.
 
 **`0.24.4-nasdaq` is that world with the bust swing at 0.20**, the largest amplitude whose
-four-seed loss stays inside the member's own (1.56-1.95 against 1.51-1.90; on both, seed 2 carries
+four-seed loss stays inside the member's own (1.54-1.93 against 1.54-1.90 under the same spreads; on both, seed 2 carries
 the bond vol × duration row's penalty at 60 paths) under the swing's ceiling and the rule that ends
 the unwind at the regained high; a released name is never re-solved in place. Its mania-led busts
 read 46% vol over 3.0 years with four rallies of 20% and two of 30% (the member at 0.014: 32.5%,
