@@ -198,7 +198,7 @@ from, its score and worst row, and a `world` block in the sidecar's own key form
 archive's full precision. The release ships three, built this way and pruned by their holdouts:
 `test-data/worlds/0.24.3-nasdaq.json` (173 members, seeded from `0.24.2-nasdaq` under the current
 objective, the set `0.24.3-nasdaq` was picked from -- member 53, which `0.24.4-nasdaq` runs at bust
-amplitude 0.14; pass `-anchors nasdaq`, since a member names no anchor set), and the two 0.24.2
+amplitude 0.20; pass `-anchors nasdaq`, since a member names no anchor set), and the two 0.24.2
 sets, `0.24.2-sp500.json` (150 members, seeded from the
 default; pass `-anchors sp500` or nothing) and `0.24.2-nasdaq.json` (174, seeded from
 `0.24.2-nasdaq`), searched before the typical-year and wing rows, so their `score` and
@@ -634,7 +634,7 @@ with it.
 | `-volresp` | THE VOL RESPONSE: the diffusive noise times exp(V × S), S the session's decline in units of the conditional sd that GENERATED it, accumulated at `-volrespphi` and fed through `-volrespattack` so the response builds over two to five sessions rather than peaking at lag 1. One decline's response is a plateau, not an integral divided over the sessions after it. Draw-free, `-volrespcap` bounds the state, and 0 is bit-identical — [below](#the-vol-response-to-a-fall) | 0.021 |
 | `-stressadapt` | the liquidity spiral's SCALE speed: the EWMA weight on r² that standardises the decline its own stress index reads. At 0.005 (a ~140-session memory) a stretch that a persistent vol mechanism has genuinely made volatile reads as continuous STRESS and the spiral mints spikes out of it, which blocked every form of the response tried. The index the rest of the world reads — policy easing, the refuge bid, margin selling, the credit stock's paydown — keeps the slow scale | 0.036 |
 | `-slowshare` | THE SLOW REPRICING CHANNEL: this share of the diffusive variance leaves the order-flow channel and reprices the fundamental and the price TOGETHER, like a news jump, so the value channel has nothing to arbitrage and the move never passes through the spiral. Its volatility is long-memoried and asymmetric, which is what puts the abs-r profile back on the record's SHAPE. `-slowvol` sets its scale, `-slowlev` its own leverage effect, `-slowphi` its persistence, `-slowperm` how much of each move is permanent, `-slowbeta` the bond's opposite-sign loading. 0 is bit-identical — [below](#the-vol-response-to-a-fall) | 0.20 |
-| `-bustamp` | THE BUST SWING: when a 0.2-log drawdown opens under a peak that stood 0.5 log or more over the gap's 20-year mean, a months-long stationary swing of this amplitude is repriced the same session in the price and in perceived fair while the unwind keeps making new lows, with the recovery drag relieved and the amplifier blind to it — the record's mania bust, NDX 2000-02: two and a half years at 53% vol in five legs and rallies. The swing never carries the price nearer than 0.10 log to the running peak (a mania's unwind never re-attains its high), and the state is cut to 0 once the unwind is over. Own stream; 0 is bit-identical; the S&P default keeps 0 — [below](#the-bust-swing--bustamp) | 0 |
+| `-bustamp` | THE BUST SWING: when a 0.2-log drawdown opens under a peak that stood 0.5 log or more over the gap's 20-year mean, a months-long stationary swing of this amplitude is repriced the same session in the price and in perceived fair while the unwind keeps making new lows, with the recovery drag relieved and the amplifier blind to it — the record's mania bust, NDX 2000-02: two and a half years at 53% vol in five legs and rallies. The swing never carries the price nearer than 0.10 log to the running peak (a mania's unwind never re-attains its high), the unwind ends once the high is regained, and the state is cut to 0 once it is over. Own stream; 0 is bit-identical; the S&P default keeps 0 — [below](#the-bust-swing--bustamp) | 0 |
 | `-noiseasym` | the item-12 cascade: the diffusive noise times exp(g − Var g), g a cascade of the session's own diffusive draw — a fast attack into a decay at `-noiseasymphi`, capped by `-noiseasymcap`. Ships at 0: at every setting that closes part of what is left, something graded gives way — [below](#the-vol-response-to-a-fall) | 0 |
 | `-levpersist` | the leverage kick's own memory: at P the kick raises the following sessions too, through weights that sum to 1, so only the shape of the response moves. Closes the clustering hump and puts lag-1 clustering on the record's 0.298, at the cost of the lag-1 leverage correlation — [below](#the-vol-response-to-a-fall) | 0 |
 | `-stressscale` | THE AMPLIFIER's gain scale: the spiral's excess gain multiplied by (depth / 17.4)^E, so a thinner market's liquidity event is not proportionally larger than the reference world's. The record's crash count is volatility-flat across a fresh-start cross-section (`amplifier-2026-09-07.tsv`) where the model's `depth` sweep reads 1.8; the default world is unchanged at any E, and `0.24.0-nasdaq` runs at 0.5 | 0 |
@@ -1030,7 +1030,7 @@ The Nasdaq set's sampling spreads are measured at the current recipe (`-noise -a
 valuation proxy and the bond rows, which through 0.23.0 read the S&P world's inline constants for
 both sets. The deep rung is where it matters: d20's spread at this recipe is 0.43 against the S&P
 default's 4.18, so the row carries real weight here where the S&P loss all but ignores it. The
-loss at this recipe reads 1.53 under its own spreads, so a `-calibrate -anchors nasdaq` result
+loss at this recipe reads 1.57 under its own spreads, so a `-calibrate -anchors nasdaq` result
 from any earlier release optimised a different function.
 
 - **Signed persistence is graded as a four-rung profile since 0.23.1, not one rung.** `-validate`
@@ -1443,19 +1443,21 @@ against −83) and crashes per century 30.8 → 31.4 (25.6); equity vol 24.4 aga
 kurtosis 16.4 (9.6) as before. The bust swing runs at the archive's 0.014, which the search left
 there because the bust's shape is no graded row. The un-searched dials are the 0.24.2 recipe's.
 
-**`0.24.4-nasdaq` is that world with the bust swing at 0.14**, the largest amplitude whose
-four-seed loss stays inside the member's own (1.52-1.92 against 1.51-1.90) under the swing's
-ceiling; a released name is never re-solved in place. Its mania-led busts read 39% vol over 3.5
-years with four rallies of 20% (the member at 0.014: 32.5%, 3.7 years, two; NDX 2000-02: 53%,
-2.5, five); 0.20 reads 47% over 2.8 years at half a point of loss on two seeds and the upper wing
-a point lower. At 0.14 the typical year reads 20.6 (band 15.0-21.6), pooled vol 24.8 (26.9), the
-upper wing 6.5 (7.6). The Nasdaq anchor set's spreads are frozen at this world.
+**`0.24.4-nasdaq` is that world with the bust swing at 0.20**, the largest amplitude whose
+four-seed loss stays inside the member's own (1.56-1.95 against 1.51-1.90; on both, seed 2 carries
+the bond vol × duration row's penalty at 60 paths) under the swing's ceiling and the rule that ends
+the unwind at the regained high; a released name is never re-solved in place. Its mania-led busts
+read 46% vol over 3.0 years with four rallies of 20% and two of 30% (the member at 0.014: 32.5%,
+3.7 years, two and one; NDX 2000-02: 53%, 2.5, five and three); 0.25 passes every class too but its
+busts run 1.4 years at 57%, faster than the record's. At 0.20 the typical year reads 20.5 (band
+15.0-21.6), pooled vol 25.0 (26.9), the upper wing 6.4 (7.6). The Nasdaq anchor set's spreads are
+frozen at this world.
 **`0.24.4-nasdaq-basket`** is the same world with the basket on, re-anchored on the eight names
 under QQQ: the swing's moves reach the names through the shared leg, so at the 0.23.1 dials the
 aggregate read corr 0.88 and vol ratio 1.56 against the anchors' 0.837 and 1.630, and
-`basketSector` 0.7 → 0.9 puts them back (corr 0.843-0.846, beta 1.37, vol ratio 1.62-1.63 on four
-seeds at 200 paths; pairwise 0.58, idio share 0.37, tail coincidence 0.50, worst-decile pair
-corr 0.59 against 0.16 mid; names 2.04x, gaps 3.7/yr; time below peak 0.73, disclosed), every
+`basketSector` 0.7 → 0.9 puts them back (corr 0.844-0.846, beta 1.37, vol ratio 1.62-1.63 on four
+seeds at 200 paths; pairwise 0.59, idio share 0.36, tail coincidence 0.50, worst-decile pair
+corr 0.60 against 0.17 mid; names 2.04x, gaps 3.9/yr; time below peak 0.74, disclosed), every
 class passing. It is the Nasdaq basket world to pin in place of `0.24.1-nasdaq-basket`.
 
 ## The bust swing — `-bustamp`
@@ -1477,8 +1479,14 @@ swing about a slowly falling centre. The move is a same-session repricing the de
 reads declines in ordinary units by 1 + 2 × state, so the legs keep their ordinary cascade and the
 rallies exist. The state decays with a 3-year half-life while the unwind keeps making new lows
 (the NDX made one every six months through 2000-02) and a 6-month one once a year has passed
-without one (2003-06 was calm 70% under the 2000 peak), and is cut to exactly 0 once it has
-decayed below 1e-4, so the block is inert between manias.
+without one (2003-06 was calm 70% under the 2000 peak). Once the price regains the running peak
+while the state is armed the unwind is over and the state fades with a one-month half-life on top:
+no mania's unwind on the record re-attained its high before it was over, and without the rule
+the swing ran on for up to a year after a full recovery, its downward moves minting 20% peaks
+under a still-depressed conditions index (two such peaks a century at amplitude 0.20, against 0.9
+with the swing off; a relief that fades near the peak and beliefs blind to the swing left them
+untouched; the rule cuts them to 1.4 and the build-up band holds on every seed to 0.25). The
+state is cut to exactly 0 once it has decayed below 1e-4, so the block is inert between manias.
 
 The swing has a ceiling: it never carries the price nearer than 0.10 log to the running peak,
 measured from the price without it, and once the price is already nearer it can only
@@ -1489,14 +1497,14 @@ unbounded swing re-attained the high a month after the bust opened, three times 
 amplitude 0.14, minting 20% peaks whose quarter sat inside the bust and read a conditions rank
 of 0.52 where every other peak reads 0.85: that is what failed the macro build-up band from
 amplitude 0.10. Under the ceiling every amplitude to 0.20 passes every class on four seeds.
-`bustCeilDays` on a path counts the sessions a live unwind was held; 3% of the recipe's.
+`bustCeilDays` on a path counts the sessions a live unwind was held; 1.7% of the recipe's.
 
-What it reads, at A 0.14 on the 0.24.3 recipe (`0.24.4-nasdaq`) over 120 centuries: the busts of 2000 size that start
-from a mania peak run 3.5 years at 39% vol with four rallies of 20% and two of 30% (the world
-at 0.014: 3.7 years, 32.5%, two and one; NDX 2000-02: 2.5 years, 53%, five and three), the
-other deep episodes are untouched (30%), the typical year moves 20.3 → 20.6 (band 15.0-21.6),
-and the four-seed loss stays inside the world's own; at 0.20 the busts read 47% over 2.8 years
-at half a point of loss on two seeds and the upper wing a point lower. Sixteen forms were measured before
+What it reads, at A 0.20 on the 0.24.3 recipe (`0.24.4-nasdaq`) over 120 centuries: the busts of
+2000 size that start from a mania peak run 3.0 years at 46% vol (p10 30, p90 88) with four rallies
+of 20% and two of 30% (the world at 0.014: 3.7 years, 32.5%, two and one; at 0.14: 4.3 years, 36%;
+NDX 2000-02: 2.5 years, 53%, five and three), the other deep episodes are untouched (30%), the
+typical year moves 20.3 → 20.5 (band 15.0-21.6), and the four-seed loss stays inside the world's
+own; 0.25 passes every class but its busts run 1.4 years at 57%. Sixteen forms were measured before
 this one: every form that multiplies the diffusive noise inside a bust — by the multiple, by a
 bust state, with the spiral compensated or blind — shortened and deepened the bust instead of
 lengthening it, because diffusive noise under a one-way restoring force races the price to a
@@ -1505,9 +1513,9 @@ too small; a swing in perceived fair alone is smoothed away by the pull. The sta
 repriced the same session is the one form whose extra variance does not diffuse.
 
 The dial ships at 0 in every world before `0.24.3-nasdaq`, which carries its archive's 0.014;
-`0.24.4-nasdaq` runs it at 0.14. It is bounded by how often the model makes the mania it arms
+`0.24.4-nasdaq` runs it at 0.20. It is bounded by how often the model makes the mania it arms
 on: the record spends 7.6% of its months more than +0.5 over its 20-year mean, the 0.24.4 Nasdaq
-recipe 6.5%, and that gap is the cycle's upper wing
+recipe 6.4%, and that gap is the cycle's upper wing
 (PLAN item 25), not this dial's.
 
 ## The vol response to a fall

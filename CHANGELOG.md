@@ -1,6 +1,6 @@
 ## v0.24.4 — unreleased
 
-**The bust swing has a ceiling, and the Nasdaq recipe runs it at 0.14**
+**The bust swing has a ceiling and an end, and the Nasdaq recipe runs it at 0.20**
 
 - The swing never carries the price nearer than 0.10 log to the running peak, measured from the
   price without it: a mania's unwind never re-attains its high (the NDX's 2000 high stood until
@@ -8,31 +8,36 @@
   Without the ceiling the swing's rallies re-attained the high a month after the bust opened and
   minted 20% peaks whose quarter sat inside the bust — three per century at amplitude 0.14,
   reading a conditions rank of 0.52 where every other peak reads 0.85 — which is what failed the
-  macro build-up band from 0.10; under it every amplitude to 0.20 passes every class on four
-  seeds. The state is cut to exactly 0 once it has decayed below 1e-4, so the block is inert
-  between manias, and `bustCeilDays` / `bust_ceil_days` on a path counts the sessions a live
-  unwind was held (3% of the recipe's at 0.14). Every world with the dial at 0 is bit-identical;
+  macro build-up band from 0.10. Once the price regains the running peak while the state is armed
+  the unwind is over and the state fades with a one-month half-life: without that the swing ran
+  on for up to a year after a full recovery and its downward moves minted 20% peaks under a
+  still-depressed conditions index (two a century at 0.20 against 0.9 with the swing off; a
+  relief fading near the peak and beliefs blind to the swing left them untouched), which is what
+  remained of the band's failure under the ceiling; with both, every amplitude to 0.25 passes the
+  band on every seed. The state is cut to exactly 0 once it has decayed below 1e-4, so the block
+  is inert between manias, and `bustCeilDays` / `bust_ceil_days` on a path counts the sessions a
+  live unwind was held (1.7% of the recipe's). Every world with the dial at 0 is bit-identical;
   twins byte-identical on the default, the four Nasdaq recipes and the swing at 0 and 0.20.
-- `0.24.4-nasdaq` is the 0.24.3 recipe with the swing at 0.14 instead of its archive's 0.014, the
-  largest amplitude whose four-seed loss stays inside the member's own (1.52-1.92 against
-  1.51-1.90); a released name is never re-solved in place, so `0.24.3-nasdaq` keeps its literals.
-  Its mania-led busts read 39% vol over 3.5 years with four rallies of 20% and two of 30% (at
-  0.014: 32.5%, 3.7 years, two and one; NDX 2000-02: 53%, 2.5, five and three); 0.20 reads 47%
-  over 2.8 years at half a point of loss on two seeds and the upper wing a point lower, a trade
-  left on the table. At 0.14 the typical year reads 20.6 (band 15.0-21.6), pooled vol 24.8
-  (26.9), the upper wing 6.5 (7.6, inside its sampling spread). The Nasdaq spreads are re-frozen
-  at it: seven of the twenty-one move by 0.01 (typical year 0.16 → 0.15, return per vol 0.50 →
-  0.49, kurtosis 1.69 → 1.68, crashes 0.49 → 0.50, median depth 0.36 → 0.35, downside 4.47 →
-  4.46, the deep rung 0.44 → 0.43) and the same command at `0.24.3-nasdaq` reproduces all
-  twenty-one, so every move is the amplitude's. `-crossasset` reads the d=5.70 rung at 0.58 as
-  before. The sets' members with a nonzero `bustAmp` run under the ceiling, which their `score`
-  and `worstRow` predate.
+- `0.24.4-nasdaq` is the 0.24.3 recipe with the swing at 0.20 instead of its archive's 0.014, the
+  largest amplitude whose four-seed loss stays inside the member's own (1.56-1.95 against
+  1.51-1.90; on both, seed 2 carries the bond vol × duration row's penalty at 60 paths); a
+  released name is never re-solved in place, so `0.24.3-nasdaq` keeps its literals. Its
+  mania-led busts read 46% vol over 3.0 years with four rallies of 20% and two of 30% (at 0.014:
+  32.5%, 3.7 years, two and one; NDX 2000-02: 53%, 2.5, five and three); 0.25 passes every class
+  too but its busts run 1.4 years at 57%. At 0.20 the typical year reads 20.5 (band 15.0-21.6),
+  pooled vol 25.0 (26.9), the upper wing 6.4 (7.6, inside its sampling spread). The Nasdaq spreads
+  are re-frozen at it: six of the twenty-one move (return per vol 0.50 → 0.49, kurtosis 1.69 →
+  1.68, crashes 0.49 → 0.50, downside 4.47 → 4.43, d5 0.12 → 0.13, the deep rung 0.44 → 0.43)
+  and the same command at `0.24.3-nasdaq` reproduces twenty of its twenty-one (downside 4.47 →
+  4.46, the recovery rule's at the archive's amplitude), so the moves are the amplitude's.
+  `-crossasset` reads the d=5.70 rung at 0.57 (0.58 before). The sets' members with a nonzero
+  `bustAmp` run under the ceiling and the rule, which their `score` and `worstRow` predate.
 - `0.24.4-nasdaq-basket` is `0.24.4-nasdaq` with the basket on, re-anchored on the eight names
   under QQQ: the swing's moves reach the names through the shared leg, so at the 0.23.1 dials the
   aggregate read corr 0.88 and vol ratio 1.56 against the anchors' 0.837 and 1.630, and
-  `basketSector` 0.7 → 0.9 puts them back (corr 0.843-0.846, beta 1.37, vol ratio 1.62-1.63 on
-  four seeds at 200 paths; pairwise 0.58, idio share 0.37, tail coincidence 0.50, worst-decile
-  pair corr 0.59 against 0.16 mid; names 2.04x, gaps 3.7/yr; time below peak 0.73, disclosed),
+  `basketSector` 0.7 → 0.9 puts them back (corr 0.844-0.846, beta 1.37, vol ratio 1.62-1.63 on
+  four seeds at 200 paths; pairwise 0.59, idio share 0.36, tail coincidence 0.50, worst-decile
+  pair corr 0.60 against 0.17 mid; names 2.04x, gaps 3.9/yr; time below peak 0.74, disclosed),
   every class passing. It is the Nasdaq basket world to pin in place of `0.24.1-nasdaq-basket`,
   which stays as shipped.
 

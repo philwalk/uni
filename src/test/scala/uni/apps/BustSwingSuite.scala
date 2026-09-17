@@ -17,7 +17,7 @@ class BustSwingSuite extends FunSuite:
       assertEquals(w.bustAmp, 0.0, s"recipe $n")
     assertEquals(MarketSim.namedWorld("0.24.3-nasdaq").get._1.bustAmp, 0.01448313, "the searched recipe carries the archive's amplitude")
     for n <- Vector("0.24.4-nasdaq", "0.24.4-nasdaq-basket") do
-      assertEquals(MarketSim.namedWorld(n).get._1.bustAmp, 0.14, s"$n carries the measured amplitude")
+      assertEquals(MarketSim.namedWorld(n).get._1.bustAmp, 0.20, s"$n carries the measured amplitude")
     // at 0 the block never runs: its own stream is never drawn and no hook moves
     val (w, _) = MarketSim.namedWorld("0.24.2-nasdaq").get
     val a = MarketSim.simulate(w, 3, MarketSim.DefaultSeed)
@@ -26,14 +26,14 @@ class BustSwingSuite extends FunSuite:
   }
 
   test("on, the swing reaches the price and raises the ensemble's vol inside the busts") {
-    // the recipe the swing is calibrated on, with the swing off against its 0.14
+    // the recipe the swing is calibrated on, with the swing off against its own amplitude
     val (r, _) = MarketSim.namedWorld("0.24.4-nasdaq").get
     val w = r.copy(bustAmp = 0.0)
     // a mania has to form first, which takes decades: one 80-year path
-    val on  = MarketSim.simulate(w.copy(bustAmp = 0.14), 80, MarketSim.DefaultSeed)
+    val on  = MarketSim.simulate(r, 80, MarketSim.DefaultSeed)
     val off = MarketSim.simulate(w, 80, MarketSim.DefaultSeed)
     assert(!on.price.sameElements(off.price), "the swing must reach the price")
-    val stOn  = MarketSim.measure(MarketSim.simPaths(w.copy(bustAmp = 0.14), 60, 80, MarketSim.DefaultSeed), 80)
+    val stOn  = MarketSim.measure(MarketSim.simPaths(r, 60, 80, MarketSim.DefaultSeed), 80)
     val stOff = MarketSim.measure(MarketSim.simPaths(w, 60, 80, MarketSim.DefaultSeed), 80)
     assert(stOn.vol > stOff.vol, f"the swing must add volatility: ${stOff.vol}%.4f -> ${stOn.vol}%.4f")
     // and it adds it inside the busts, not to the ordinary year (the recipe's manias are
@@ -47,10 +47,10 @@ class BustSwingSuite extends FunSuite:
     val (w, _) = MarketSim.namedWorld("0.24.4-nasdaq").get
     val off = MarketSim.simPaths(w.copy(bustAmp = 0.0), 20, 80, MarketSim.DefaultSeed)
     assert(off.forall(_.bustCeilDays == 0), "at 0 the block never runs")
-    val on       = MarketSim.simPaths(w.copy(bustAmp = 0.14), 20, 80, MarketSim.DefaultSeed)
+    val on       = MarketSim.simPaths(w, 20, 80, MarketSim.DefaultSeed)
     val held     = on.map(_.bustCeilDays.toLong).sum
     val sessions = on.map(_.price.length.toLong).sum
-    assert(held > 0, "the ceiling must bind on a mania's unwind at 0.14")
+    assert(held > 0, "the ceiling must bind on a mania's unwind at the recipe's amplitude")
     val share = held.toDouble / sessions
     println(f"ceiling held on ${share * 100}%.3f%% of sessions")
     assert(share < 0.10,

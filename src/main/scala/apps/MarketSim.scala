@@ -1488,23 +1488,25 @@ object MarketSim:
             b.copy(depth = 11.378441, trendShare = 0.091321869, drift = 0.085311578, fundVol = 0.03, crowdImpact = 0.030261189, stress = 5.2350165, valuePull = 0.059293455, recoveryDrag = 6.7192147, recoveryFloor = 0.064560211, disasterRate = 0.42211827, disasterSize = 2.1563503, disasterRecover = 0.61330999, beliefShare = 0.7281211, capYears = 4.4211681, volOfVol = 0.019282161, jumpVar = 0.0, jumpRate = 0.005674479, leverage = 0.049527937, downShock = 0.010033667, jumpSkew = 0.46293234, newsRate = 1.1896798, newsSize = 0.042578621, refugeDays = 0.88502808, easing = 0.034326342, refuge = 0.12391532, inflSize = 0.10614338, discount = 6.4992686, margin = 0.0066204344, slowShare = 0.21615067, slowVol = 0.9349886, slowBeta = 0.57226776, slowPerm = 0.024347201, beliefYears = 0.7730648, bustAmp = 0.01448313),
             "nasdaq"))
 
-  /** THE NASDAQ AT THE SWING'S MEASURED AMPLITUDE (0.24.4): `0.24.3-nasdaq` with `bustAmp` 0.14,
-    * the largest amplitude whose four-seed loss stays inside the member's own (1.52-1.92 against
-    * 1.51-1.90) once the ceiling holds the swing under the mania's high -- the mania-led busts
-    * read 39% vol over 3.5 years with four rallies of 20% (the member's own 32.5%, 3.7 years,
-    * two; NDX 2000-02: 53%, 2.5, five); 0.20 reads 47% over 2.8 years at half a point of loss on
-    * two seeds. A released name is never re-solved in place, so this is a new recipe and the
-    * Nasdaq spreads are frozen at it. `0.24.4-nasdaq-basket` is the same world with THE BASKET
-    * on, re-anchored on the eight names under QQQ: the swing's moves reach the names through
-    * the shared leg, so at the 0.23.1 dials the aggregate read corr 0.88 and vol ratio 1.56
-    * against the anchors' 0.837 and 1.630; `basketSector` 0.7 -> 0.9 puts them back (corr
-    * 0.843-0.846, beta 1.37, vol ratio 1.62-1.63 on four seeds at 200 paths; pairwise 0.58,
-    * idio share 0.37, tail coincidence 0.50, worst-decile pair corr 0.59 against 0.16 mid;
-    * names 2.04x, gaps 3.7/yr, time below peak 0.73 disclosed), every class passing. */
+  /** THE NASDAQ AT THE SWING'S MEASURED AMPLITUDE (0.24.4): `0.24.3-nasdaq` with `bustAmp` 0.20,
+    * the largest amplitude whose four-seed loss stays inside the member's own (1.56-1.95 against
+    * 1.51-1.90; seed 2 carries the bond vol x duration row's penalty at 60 paths in both) once
+    * the ceiling holds the swing under the mania's high and the unwind ends at the regained high
+    * -- the mania-led busts read 46% vol over 3.0 years with four rallies of 20% and two of 30%
+    * (the member's own 32.5%, 3.7 years, two and one; NDX 2000-02: 53%, 2.5, five and three);
+    * 0.25 passes every class too but its busts run 1.4 years at 57%. A released name is never
+    * re-solved in place, so this is a new recipe and the Nasdaq spreads are frozen at it.
+    * `0.24.4-nasdaq-basket` is the same world with THE BASKET on, re-anchored on the eight names
+    * under QQQ: the swing's moves reach the names through the shared leg, so at the 0.23.1 dials
+    * the aggregate read corr 0.88 and vol ratio 1.56 against the anchors' 0.837 and 1.630;
+    * `basketSector` 0.7 -> 0.9 puts them back (corr 0.844-0.846, beta 1.37, vol ratio 1.62-1.63
+    * on four seeds at 200 paths; pairwise 0.59, idio share 0.36, tail coincidence 0.50,
+    * worst-decile pair corr 0.60 against 0.17 mid; names 2.04x, gaps 3.9/yr, time below peak
+    * 0.74 disclosed), every class passing. */
   val Recipes0244: Vector[(String, World, String)] =
     val b = Recipes0243.find(_._1 == "0.24.3-nasdaq").map(_._2)
       .getOrElse(sys.error("no base recipe 0.24.3-nasdaq"))
-    val nq = b.copy(bustAmp = 0.14)
+    val nq = b.copy(bustAmp = 0.20)
     Vector(("0.24.4-nasdaq", nq, "nasdaq"),
            ("0.24.4-nasdaq-basket",
             nq.copy(basket = 8, basketBeta = 1.37, basketSector = 0.9, basketIdio = 0.85,
@@ -1725,6 +1727,13 @@ object MarketSim:
     * `bustCeilDays` counts a live unwind only.  At full amplitude 0.3 the cut swing is under
     * 1e-4 log. */
   val BustOff = 1e-4
+  /** Once the price regains the running peak while the state is armed the unwind is over (no
+    * mania's unwind on the record re-attained its high before it was over), and the state decays
+    * by this factor a session from then on -- a 23-session half-life -- on top of the ordinary
+    * decay.  Without it the swing ran on for up to a year after a full recovery, and its downward
+    * moves minted 20% peaks under a still-depressed conditions index: the residual that failed the
+    * build-up band from amplitude 0.20 under the ceiling.  A fresh arming clears it. */
+  val BustDecayOver = 0.97
 
   /** DETERMINISTIC exp: Cody-Waite range reduction with fdlibm's split ln2, a fixed Horner
     * Taylor to r^12 on the reduced argument, and 2^k built from raw exponent bits.  Every
@@ -2695,6 +2704,7 @@ object MarketSim:
     var bustNews = 0.0
     var bustMove = 0.0
     var bustCeilDays = 0
+    var bustOver = false
     var volRespA = 0.0
     var asymG = 0.0
     var asymA = 0.0
@@ -2975,20 +2985,27 @@ object MarketSim:
         val gapNow = eqM.logP - logVbase
         val lvl = gapNow - gapMean
         gapMean += gapMu * (gapNow - gapMean)
-        if eqM.logP >= eqM.peak then peakLvl = lvl
+        if eqM.logP >= eqM.peak then
+          peakLvl = lvl
+          // the unwind is over once the high is regained (see `BustDecayOver`)
+          if bustS > 0.0 then bustOver = true
         if peakLvl > BustArm && eqM.peak - eqM.logP > 0.2 then
           val armed = min((peakLvl - BustArm) / BustRamp, 1.0)
           if armed > bustS then
             bustS = armed
             epLow = eqM.logP
             sinceLow = 0
+            bustOver = false
           peakLvl = 0.0
         if eqM.logP < epLow then
           epLow = eqM.logP
           sinceLow = 0
         else sinceLow += 1
         bustS *= (if sinceLow <= DaysPerYear then BustDecayNear else BustDecayAfter)
-        if bustS < BustOff then bustS = 0.0
+        if bustOver then bustS *= BustDecayOver
+        if bustS < BustOff then
+          bustS = 0.0
+          bustOver = false
         val m = 1.0 + BustRelief * bustS
         eqM.stressDiv = m
         eqM.dragMult = 1.0 / m
@@ -5130,10 +5147,11 @@ object MarketSim:
     *
     * THE SAMPLING SPREADS ARE THE NASDAQ WORLD'S OWN, re-frozen 2026-09-16 from
     * `-noise -paths 200 -atrelease 0.24.4-nasdaq`, the recipe this set describes.  The same
-    * command at the outgoing 0.24.3-nasdaq recipe reproduces all 21 of the previous literals
-    * exactly, so every move is the swing amplitude's: seven move by 0.01 (typical year 0.16 ->
-    * 0.15, return per vol 0.50 -> 0.49, kurtosis 1.69 -> 1.68, crashes 0.49 -> 0.50, median depth
-    * 0.36 -> 0.35, downside 4.47 -> 4.46, the deep rung 0.44 -> 0.43).  They were first carried
+    * command at the outgoing 0.24.3-nasdaq recipe reproduces 20 of its 21 literals exactly (the
+    * downside spread 4.47 -> 4.46 is the recovery rule's at the archive's amplitude), so the
+    * moves are the swing amplitude's: six move (return per vol 0.50 -> 0.49, kurtosis 1.69 ->
+    * 1.68, crashes 0.49 -> 0.50, downside 4.47 -> 4.43, d5 0.12 -> 0.13, the deep rung 0.44 ->
+    * 0.43).  They were first carried
     * over from the S&P, and the assumption that carried values
     * were "approximately right
     * because both assets' statistics have similar relative spreads" was FALSE where the two
@@ -5153,26 +5171,26 @@ object MarketSim:
     vol = 26.90,         volSd = 0.12,
     // QQQ 1999-2026 (`yearvol-2026-09-15.tsv`, w1999): 18.26, only 0.68 of pooled -- the window's
     // vol is 2000-02 at 58 / 55 / 42%; QQQ from 2007 reads 0.82 like SPY.
-    yearVol = 18.3,      yearVolSd = 0.15,
+    yearVol = 18.3,      yearVolSd = 0.16,
     retVol = 0.38,       retVolSd = 0.49,
     kurt = 9.55,         kurtSd = 1.68,
     ac1 = 0.293,         ac1Sd = 0.24,
     ac20 = 0.249,        ac20Sd = 0.22,
     crashes = 25.6,      crashesSd = 0.50,
-    medDepth = -22.8,    medDepthSd = 0.35,
+    medDepth = -22.8,    medDepthSd = 0.36,
     worstDepth = -83.0,  worstDepthSd = 0.18,
     volBand = (23.5, 30.3),
     yearVolBand = (15.0, 21.6),
     retVolBand = (0.27, 0.47),
     // QQQ wfull row of asymmetry-2026-08-31.tsv; the tail hedge is QQQ/TLT.
-    semiExcess = 1.13, semiExcessSd = 4.46,
+    semiExcess = 1.13, semiExcessSd = 4.43,
     levCorr = -0.1073, levCorrSd = 0.47,
     tailHedge = -0.236, tailHedgeSd = 0.37,
     wingUp = 7.6, wingUpSd = 0.60, wingDown = 6.7, wingDownSd = 0.61,
     // d20's spread is a fraction of the S&P world's (0.35 against 4.18): at Nasdaq volatility the
     // deep rung is pinned where the S&P default leaves it unreadable, so the row carries real
     // weight here.
-    valDispSd = 0.38, vr60Sd = 0.29, d5Sd = 0.12, d10Sd = 0.22, d20Sd = 0.43,
+    valDispSd = 0.38, vr60Sd = 0.29, d5Sd = 0.13, d10Sd = 0.22, d20Sd = 0.43,
     bondVolSd = 0.37, bondGrowthSd = 1.64, bondInflSd = 1.61, bondDepthSd = 0.28,
     ddRefs = DdRefsNasdaq,
     divYield = 0.78, divYieldBand = (0.3, 1.5),
