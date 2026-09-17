@@ -1,6 +1,60 @@
 ## v0.24.4 — unreleased
 
-**The bust swing has a ceiling and an end, and the Nasdaq recipe runs it at 0.20**
+**Paths start stationary: the valuation cycle as a state**
+
+- Every path used to start at fair value and the valuation gap then fell for decades (to −0.3 log
+  on the Nasdaq recipe after ~40 years, to −1.0 on the S&P default after ~120): at the calibrated
+  belief share the pull sees 5-27% of the fundamental, so the price tracked a disaster's decline
+  and never its recovery leg (the S&P's gap −0.86 log under its onset level four years after the
+  trough and −0.88 at twenty, with the fundamental fully regained), and every spiral crash did the
+  same in miniature. The wing, dispersion, tail and underwater rows on both worlds were calibrated
+  on that transient, in opposite directions (the shipped worlds read in the stationary state:
+  Nasdaq wings 6.4/10.7 → 12.4/12.0, dispersion 0.37 → 0.44; S&P upper wing 0 → 2.0, century
+  worst −83 → −67), a mania could not arm in a path's first two decades, and a consumer's
+  40-year path carried a 0.25-0.40 log downtrend in price over fair from its first session.
+- `-cyclesd S` / `-cycleyears Y`: the slow swing as a stationary AR(1) in perceived fair
+  (stationary sd S in log, half-life Y years, 11.5 by default), drawn from its own stream and
+  started from its own law so the first session is stationary, its move repriced the same
+  session in the price (tracked through the pull it failed the variance-ratio profile); the
+  beliefs track the gap net of it, and the recovery drag reads the drawdown of the price net of
+  it (value capital is depleted by a crash, not by a slow re-rating; a drag reading the cycle's
+  down-swings lifted the 250-day variance ratio to 1.17-1.22 at amplitudes 0.2-0.4 on the S&P,
+  1.10 net of the cycle). 0 is bit-identical; schema 17 → 18 (`world.cycleSd`,
+  `world.cycleYears`); the four shipped sets carry the keys at 0.
+- `-beliefleak L`: the beliefs' own fade toward the fundamental, per year, so the belief share
+  stays `-beliefshare` at the daily scale and falls to share × mu/(mu + L) in the long run. It is
+  what holds the residual gap stationary at a high share: on the S&P default 0.2 reads drift
+  −0.52 → −0.06 with the variance-ratio profile untouched (1.08 → 1.12 at 250 days), where a
+  lower share breaks the profile. The dispersion and lower wing the walk supplied go with it
+  (0.29 → 0.15, 11.8 → 3.1); the cycle carries them. 0 is bit-identical; searched (37 dials).
+- `valuation stationary from the first session`, a mechanism gate row: the pooled gap's mean over
+  the paths' later half minus over their first decade within 0.15 log (a stationary world reads
+  within ±0.05 at 60 paths; the pre-cycle default −0.5 to −0.7). Every pre-cycle world fails it,
+  the frozen release rows included. The report's `valuation gap` line prints the reading.
+- The S&P default is the 0.24.1 world with the beliefs' fade at 0.2 and the cycle at 0.1 (15
+  years): the smallest change that starts its paths stationary (drift −0.53..−0.64 → −0.06 on
+  four seeds), every class passing at 200 paths on all four. Against the outgoing world at seed
+  1: kurtosis 32.0 → 27.5 (28), d10 1.28 → 1.25, d20 2.70 → 2.59, the lower wing 11.8 → 3.3
+  (6.7), return per vol 0.66 → 0.70 (0.69); paid in the valuation dispersion 0.29 → 0.17 (0.30)
+  and the typical year 13.0 → 13.4 (12.9), with pooled vol 16.4 → 16.6, crashes 21.1 → 22.8
+  (20.7) and every bond row inside noise. The dispersion and the lower wing were the walk's: the
+  outgoing world reads 0.30 / 6.6 once settled, from a random walk with a century's memory, and
+  no larger cycle passes the variance-ratio profile on every seed (0.12 and 0.15 each fail it on
+  one of three harness seeds). The S&P's upper wing (0.0 against 7.6) stays the disclosed miss it
+  was. Three S&P searches under the row found no world that improves on this one without moving
+  other rows down: with the cycle and a lower belief share (v22: 4 of 116 members pass every
+  class, both four-seed passes regress six rows; the members that reach the wing do it as a trend
+  through the growth-extrapolation term, VR250 2-4), with the fade (v24: one four-seed pass, no
+  mania), and with the fade and the drag net of the cycle (v25: three members pass every class,
+  each regressing vol, the typical year, downside, crashes or the bond rows). No S&P set ships;
+  the 0.24.2 S&P set stays. The S&P spreads are re-frozen at the new default (16 of 21 move; the
+  deep rung's 4.18 → 2.18 is the largest, the walk having made the rung unreadable), the same
+  command at the 0.24.1 row reproducing all 21. `-crossasset` reads EDGE (d=5.70 0.67, d=13.50
+  1.32). The released names built from the default (`0.24.1-macro`, `0.24.1-basket`, the
+  0.24.0 row) are rebased on the frozen 0.24.1 row and reproduce byte for byte; `-atrelease
+  0.24.3` resolves again (the released version had no row).
+
+**The bust swing has a ceiling and an end**
 
 - The swing never carries the price nearer than 0.10 log to the running peak, measured from the
   price without it: a mania's unwind never re-attains its high (the NDX's 2000 high stood until
@@ -16,37 +70,43 @@
   remained of the band's failure under the ceiling; with both, every amplitude to 0.25 passes the
   band on every seed. The state is cut to exactly 0 once it has decayed below 1e-4, so the block
   is inert between manias, and `bustCeilDays` / `bust_ceil_days` on a path counts the sessions a
-  live unwind was held (1.7% of the recipe's). Every world with the dial at 0 is bit-identical;
-  twins byte-identical on the default, the four Nasdaq recipes and the swing at 0 and 0.20.
-- `0.24.4-nasdaq` is the 0.24.3 recipe with the swing at 0.20 instead of its archive's 0.014, the
-  largest amplitude whose four-seed loss stays inside the member's own (1.54-1.93 against
-  1.54-1.90 under the same spreads; on both, seed 2 carries the bond vol × duration row's penalty at 60 paths); a
-  released name is never re-solved in place, so `0.24.3-nasdaq` keeps its literals. Its
-  mania-led busts read 46% vol over 3.0 years with four rallies of 20% and two of 30% (at 0.014:
-  32.5%, 3.7 years, two and one; NDX 2000-02: 53%, 2.5, five and three); 0.25 passes every class
-  too but its busts run 1.4 years at 57%. At 0.20 the typical year reads 20.5 (band 15.0-21.6),
-  pooled vol 25.0 (26.9), the upper wing 6.4 (7.6, inside its sampling spread). The Nasdaq spreads
-  are re-frozen at it: six of the twenty-one move (return per vol 0.50 → 0.49, kurtosis 1.69 →
-  1.68, crashes 0.49 → 0.50, downside 4.47 → 4.43, d5 0.12 → 0.13, the deep rung 0.44 → 0.43)
-  and the same command at `0.24.3-nasdaq` reproduces twenty of its twenty-one (downside 4.47 →
-  4.46, the recovery rule's at the archive's amplitude), so the moves are the amplitude's.
-  `-crossasset` reads the d=5.70 rung at 0.57 (0.58 before). The sets' members with a nonzero
-  `bustAmp` run under the ceiling and the rule, which their `score` and `worstRow` predate.
+  live unwind was held. Every world with the dial at 0 is bit-identical; twins byte-identical on
+  the default, the Nasdaq recipes and the swing at 0 and 0.20.
+- `0.24.4-nasdaq` is the Nasdaq recipe re-solved under the stationarity row: member 49 of
+  `test-data/worlds/0.24.4-nasdaq.json` (73 members, seeded from the 0.24.3 recipe at the swing's
+  measured amplitude with the cycle on, the transport arm the S&P default; 52 of 73 pass every
+  class at 200 paths and 8 of 14 candidates on four seeds), picked for the mildest moves against
+  the outgoing world and the best upper wing; `-atrelease 0.24.4-nasdaq` reproduces the member
+  byte for byte. Its stationarity comes from the beliefs' share (0.73 → 0.65) and its wings from
+  the growth-extrapolation term (`capYears` 4.4 → 5.6); the cycle sits near 0 (0.06) and the
+  swing at the archive's 0.24. Against the outgoing world (the 0.24.3 recipe with the swing at
+  0.20, which fails the stationarity row on every seed) on the same four seeds under the
+  re-frozen spreads: loss 1.51-2.06 from 1.59-2.11; at seed 1 the typical year 20.5 → 19.3
+  (18.3), return per vol 0.33 → 0.38 (0.38), the downside excess 0.02 → 0.37 (1.13), the 60-day
+  variance ratio 0.89 → 0.91, the lower wing 10.7 → 7.6 (6.7), the bond's growth-crash rally
+  3.7 → 4.5 (6.6); paid in kurtosis 17.8 → 20.6 (9.6), lag-1 clustering 0.34 → 0.36 (0.29), the
+  upper wing 6.4 → 5.5 (7.6; the outgoing world's 6.4 was its transient's reading, 12.4 once
+  settled), pooled vol 25.0 → 24.2 (26.9), median depth −24.1 → −25.0 (−22.8), the deep rung
+  1.13 → 1.16 and bond depth 1.16 → 1.27.
+  Its mania-led busts run 1.7 years at 43% vol with three rallies of 20% and one of 30% (NDX
+  2000-02: 2.5 years, 53%, five and three). The Nasdaq spreads are re-frozen at it: 17 of the 21
+  move (kurtosis 1.68 → 2.42, the deep rung 0.43 → 0.48, valuation 0.38 → 0.30, median depth
+  0.36 → 0.26, return per vol 0.49 → 0.45, the bond rows 1.64 → 1.20 and 1.61 → 1.54 among them)
+  and the same command at the outgoing world reproduces all 21. `-crossasset` reads the d=5.70
+  bond-depth rung at 0.63 (0.57 before; band 0.65-1.35): the pre-existing miss, disclosed, not
+  re-solved.
 - `0.24.4-nasdaq-basket` is `0.24.4-nasdaq` with the basket on, re-anchored on the eight names
-  under QQQ: the swing's moves reach the names through the shared leg, so at the 0.23.1 dials the
-  aggregate read corr 0.88 and vol ratio 1.56 against the anchors' 0.837 and 1.630, and
-  `basketSector` 0.7 → 0.9 puts them back (corr 0.844-0.846, beta 1.37, vol ratio 1.62-1.63 on
-  four seeds at 200 paths; pairwise 0.59, idio share 0.36, tail coincidence 0.50, worst-decile
-  pair corr 0.60 against 0.17 mid; names 2.04x, gaps 3.9/yr; time below peak 0.74, disclosed),
-  every class passing. It is the Nasdaq basket world to pin in place of `0.24.1-nasdaq-basket`,
-  which stays as shipped.
-- `test-data/worlds/0.24.4-nasdaq.json`: the Nasdaq set searched under the ceiling and the recovery
-  rule, seeded from `0.24.4-nasdaq` (50 admitted under the recipe's own bar, 30 after the 3- and
-  12-seed holdouts; member 0 is the recipe byte for byte). Every member passes every class at 200
-  paths and all fourteen candidates on four seeds. The one row no member reaches is the worst
-  crash (best −67 against −83): the model's mania busts are undershoot, 0.39 over the fundamental
-  at the peak to 0.67 under it at the trough, where the 2000-02 bust ran with the index's earnings
-  roughly halving — the next mechanism row. The 0.24.3 and 0.24.2 sets stay as shipped.
+  under QQQ: `basketSector` 0.9 → 0.8 (corr 0.837-0.840, beta 1.37, vol ratio 1.63-1.64 on four
+  seeds at 200 paths against the anchors' 0.837 / 1.365 / 1.630; pairwise 0.58, idio share 0.36,
+  tail coincidence 0.51, worst-decile pair corr 0.63 against 0.16 mid; names 2.09x, gaps 4.1/yr;
+  time below peak 0.72, disclosed), every class passing. It is the Nasdaq basket world to pin in
+  place of `0.24.1-nasdaq-basket`, which stays as shipped.
+- `test-data/worlds/0.24.4-nasdaq.json`: the set above, searched under the stationarity row, the
+  ceiling and the recovery rule (the transport arm the S&P default, 73 members after the 3- and
+  12-seed holdouts; member 49 is the recipe). The one row no member reaches is the worst crash
+  (best −67 against −83). The 0.24.3 and 0.24.2 sets stay as shipped; every member of the older
+  sets starts at fair value, which the stationarity row refuses, so their `score` and `worstRow`
+  predate it.
 
 ## v0.24.3 — 2026-09-16
 

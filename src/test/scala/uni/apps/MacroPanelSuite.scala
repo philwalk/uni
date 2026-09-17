@@ -32,14 +32,14 @@ class MacroPanelSuite extends FunSuite:
            on.bond.sameElements(off.bond) && on.rate.sameElements(off.rate),
       "the panel must reach no price")
     for (v, w) <- MarketSim.Releases do assertEquals(w.macroPanel, 0, s"release $v")
-    for (n, w, _) <- MarketSim.Recipes if !n.startsWith("0.24.") do assertEquals(w.macroPanel, 0, s"recipe $n")
+    for (n, w, _) <- MarketSim.Recipes if MarketSim.recipeVersion(n) < "0.24" do assertEquals(w.macroPanel, 0, s"recipe $n")
     assertEquals(MarketSim.Defaults.macroPanel, 0, "the shipped default emits no macro columns")
   }
 
   test("the leverage cycle is off in every pre-0.24.0 release and recipe, and 0 reproduces 0.23.1 bit for bit") {
     // 0.24.0 is the release that ADOPTED the cycle, so its frozen row carries it
     for (v, w) <- MarketSim.Releases if v < "0.24.0" do assertEquals(w.levGain, 0.0, s"release $v")
-    for (n, w, _) <- MarketSim.Recipes if !n.startsWith("0.24.") do assertEquals(w.levGain, 0.0, s"recipe $n")
+    for (n, w, _) <- MarketSim.Recipes if MarketSim.recipeVersion(n) < "0.24" do assertEquals(w.levGain, 0.0, s"recipe $n")
     assert(MarketSim.Defaults.levGain > 0.0, "the shipped default runs the leverage cycle")
     // the dial off at 0.23.1's dials IS 0.23.1's world: the stock still runs (draw-free for the
     // price, its stream is its own) and the multiplier stays exactly 1.0

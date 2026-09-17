@@ -223,7 +223,10 @@ object MarketSim:
   // counterpart except the schema number and the `kIv` key.
   // 16 -> 17: THE BUST SWING.  `world` gained `bustAmp` (0 in every shipped world); a schema-17
   // file is byte-identical to its schema-16 counterpart except the schema number and that key.
-  val EmitSchema: Int = 17
+  // 17 -> 18: THE VALUATION CYCLE AS A STATE.  `world` gained `cycleSd`, `cycleYears` and
+  // `beliefLeak`; a schema-18 file is byte-identical to its schema-17 counterpart except the
+  // schema number and those keys.  Where the cycle is on, `price` starts on it rather than at `fundamental`.
+  val EmitSchema: Int = 18
 
   val EmitSidecarKeys: Vector[String] =
     Vector("generator", "version", "schema", "file", "columns", "header", "path", "world",
@@ -433,6 +436,13 @@ object MarketSim:
     "              ;   The swing never carries the price nearer than 0.10 log to the running",
     "              ;   peak (a mania's unwind never re-attains its high), and the state is cut",
     "              ;   to 0 once the unwind is over.  Own stream; 0 = bit-identical",
+    "-beliefleak L ; THE BELIEFS' OWN FADE toward the fundamental, per year: the belief share",
+    "              ;   stays -beliefshare at the daily scale and falls to share x mu/(mu + L) in",
+    "              ;   the long run, which is what keeps the gap stationary.  0 = bit-identical",
+    "-cyclesd S    ; THE VALUATION CYCLE AS A STATE: a slow stationary AR(1) in perceived fair",
+    "              ;   with stationary sd S (log), started from its own law so paths begin",
+    "              ;   stationary; beliefs track the gap net of it.  Own stream; 0 = bit-identical",
+    s"-cycleyears Y ; its half-life in years (default ${Defaults.cycleYears}; the record's CAPE 11.5)",
     "-stressadapt M ; the equity spiral's SCALE speed: the EWMA weight on ret^2 that standardizes",
     "              ;   the decline the spiral's stress index reads.  0.005, a ~140-session memory,",
     "              ;   reads a persistently volatile stretch as continuous stress; faster lets the",
@@ -617,6 +627,16 @@ object MarketSim:
                                  // where CAPE-scale valuation swings live.  Consumes no draws;
                                  // 0 is bit-identical off.
     beliefYears: Double = 2.5,   // half-life of belief adaptation, in years
+    beliefLeak: Double = 0.0,    // THE BELIEFS' OWN FADE (item 27), per year: what the price has
+                                 // taught the market is unlearned at this rate, so the belief
+                                 // share is `beliefShare` at the daily scale and
+                                 // beliefShare x mu / (mu + leak) in the long run (mu the
+                                 // adaptation rate).  Without it the beliefs absorbed every crash
+                                 // markdown for good and the gap walked under the fundamental for
+                                 // a century from the fair-value start; a lower share fixes that
+                                 // and breaks the variance-ratio profile, the leak fixes it and
+                                 // leaves the profile alone (0.2 on the default: drift -0.52 ->
+                                 // -0.06, VR250 1.08 -> 1.12).  0 is bit-identical off.
     capWindow: Double = 6.0,     // years of EWMA through which beliefs read that growth: the
                                  // narrative horizon.  Short windows pass fundVol noise into the
                                  // term capYears-fold (at 1y, vr60 read 2.3-5.2, measured) --
@@ -631,6 +651,18 @@ object MarketSim:
                                  // crash with the fundamental FINE: the 2000 shape.  Growth is
                                  // read through a one-year EWMA (`CapEwmaYears`); 0 is off, bit
                                  // for bit, no draws consumed.
+    cycleSd: Double = 0.0,       // THE VALUATION CYCLE AS A STATE (item 27): a slow, stationary
+                                 // AR(1) in log added to perceived fair -- the discount-rate /
+                                 // sentiment cycle whose stationary sd this is -- STARTED FROM ITS
+                                 // OWN LAW, so a path's first session is a draw from the same
+                                 // distribution as its thousandth.  Before it, the only slow
+                                 // valuation variation was the beliefs' near-random walk from the
+                                 // fair-value start every path was given, and the gap fell for 40
+                                 // (Nasdaq) to 120 (S&P) years before settling: the wing,
+                                 // dispersion and tail rows were reading that transient.  The
+                                 // beliefs now track the gap NET of the cycle.  Own stream; 0 is
+                                 // bit-identical off.
+    cycleYears: Double = 11.5,   // the cycle's half-life in years (Shiller's CAPE reads 11.5)
     crowd: Crowd, crowdImpact: Double, panic: Double,
     haltLimit: Double = 0.0,  // equity trading halt: the largest ONE-session decline the market
                               // will print, as a simple fraction, with the unfilled pressure
@@ -1136,6 +1168,13 @@ object MarketSim:
     // (0.55) stays out of reach from ABOVE (model 0.84 at every setting): the model cycle is
     // more regular than the record's — disclosed, not anchored.
     beliefShare = 0.95, beliefYears = 1.5, capYears = 1.5, capWindow = 6.0,
+    // THE START (item 27, 0.24.4): the beliefs' fade and a small valuation cycle make the paths
+    // stationary from the first session -- the gap used to fall for a century from the
+    // fair-value start (drift -0.52 -> -0.06).  Every other dial is the 0.24.1 world's; the
+    // dispersion and lower wing the walk supplied go with it (0.29 -> 0.18, 11.8 -> 3.3), and
+    // no larger cycle passes the variance-ratio profile on every seed (0.12 and 0.15 each fail
+    // it on one of three): the S&P's upper wing stays the disclosed miss it was.
+    beliefLeak = 0.2, cycleSd = 0.1, cycleYears = 15.0,
     crowd = Crowd.Momentum, crowdImpact = 0.030, panic = 0.0, duration = 13.5,
     easing = 0.052, unwind = 0.35, refuge = 0.115,
     inflProb = 0.20, inflSize = 0.10, inflSpeed = 0.010, rateSpeed = 3.0, discount = 5.73,
@@ -1303,7 +1342,8 @@ object MarketSim:
     ("0.17.0", PreV1901), ("0.18.0", PreV1901), ("0.19.0", PreV1901),
     ("0.19.1", PreV1902), ("0.19.2", V0_19_2), ("0.19.3", V0_19_2), ("0.20.0", V0_20_0),
     ("0.21.0", V0_21_0), ("0.22.0", V0_22_0), ("0.22.1", V0_22_1), ("0.23.0", V0_23_0),
-    ("0.23.1", V0_23_0), ("0.24.0", V0_24_0), ("0.24.1", V0_24_1), ("0.24.2", V0_24_1))
+    ("0.23.1", V0_23_0), ("0.24.0", V0_24_0), ("0.24.1", V0_24_1), ("0.24.2", V0_24_1),
+    ("0.24.3", V0_24_1))
 
   /** The world a release shipped, for `-atrelease`: the current version's default, or a frozen row
     * of the `-releases` table.  `None` for anything else -- the CLI dies naming what exists.  The
@@ -1431,7 +1471,8 @@ object MarketSim:
   val Recipes0241: Vector[(String, World, String)] =
     def base(name: String): World =
       Recipes0231.find(_._1 == name).map(_._2).getOrElse(sys.error(s"no base recipe $name"))
-    val d = Defaults
+    // the frozen 0.24.1 row, not `Defaults`: these are released names and the default moves
+    val d = V0_24_1
     def sp(w: World): World =
       w.copy(stress = d.stress, jumpVar = d.jumpVar, jumpSkew = d.jumpSkew, leverage = d.leverage,
              volPersist = d.volPersist, fundVol = d.fundVol, levGain = d.levGain, macroPanel = 1,
@@ -1445,7 +1486,7 @@ object MarketSim:
              stressScale = 0.5, depth = 10.0, refuge = 0.15,
              volResp = 0.008, volRespPhi = d.volRespPhi, volRespAttack = d.volRespAttack,
              stressAdapt = 0.015)
-    Vector(("0.24.1-macro", Defaults.copy(macroPanel = 1), "sp500"),
+    Vector(("0.24.1-macro", V0_24_1.copy(macroPanel = 1), "sp500"),
            ("0.24.1-nasdaq", nq(base("0.23.1-nasdaq")), "nasdaq"),
            ("0.24.1-basket", sp(base("0.23.1-basket")), "sp500"),
            ("0.24.1-nasdaq-basket", nq(base("0.23.1-nasdaq-basket")), "nasdaq"))
@@ -1488,33 +1529,28 @@ object MarketSim:
             b.copy(depth = 11.378441, trendShare = 0.091321869, drift = 0.085311578, fundVol = 0.03, crowdImpact = 0.030261189, stress = 5.2350165, valuePull = 0.059293455, recoveryDrag = 6.7192147, recoveryFloor = 0.064560211, disasterRate = 0.42211827, disasterSize = 2.1563503, disasterRecover = 0.61330999, beliefShare = 0.7281211, capYears = 4.4211681, volOfVol = 0.019282161, jumpVar = 0.0, jumpRate = 0.005674479, leverage = 0.049527937, downShock = 0.010033667, jumpSkew = 0.46293234, newsRate = 1.1896798, newsSize = 0.042578621, refugeDays = 0.88502808, easing = 0.034326342, refuge = 0.12391532, inflSize = 0.10614338, discount = 6.4992686, margin = 0.0066204344, slowShare = 0.21615067, slowVol = 0.9349886, slowBeta = 0.57226776, slowPerm = 0.024347201, beliefYears = 0.7730648, bustAmp = 0.01448313),
             "nasdaq"))
 
-  /** THE NASDAQ AT THE SWING'S MEASURED AMPLITUDE (0.24.4): `0.24.3-nasdaq` with `bustAmp` 0.20,
-    * the largest amplitude whose four-seed loss stays inside the member's own (1.54-1.93 against
-    * 1.54-1.90 under the same spreads; seed 2 carries the bond vol x duration row's penalty at 60 paths in both) once
-    * the ceiling holds the swing under the mania's high and the unwind ends at the regained high
-    * -- the mania-led busts read 46% vol over 3.0 years with four rallies of 20% and two of 30%
-    * (the member's own 32.5%, 3.7 years, two and one; NDX 2000-02: 53%, 2.5, five and three);
-    * 0.25 passes every class too but its busts run 1.4 years at 57%. A released name is never
-    * re-solved in place, so this is a new recipe and the Nasdaq spreads are frozen at it.
-    * `0.24.4-nasdaq-basket` is the same world with THE BASKET on, re-anchored on the eight names
-    * under QQQ: the swing's moves reach the names through the shared leg, so at the 0.23.1 dials
-    * the aggregate read corr 0.88 and vol ratio 1.56 against the anchors' 0.837 and 1.630;
-    * `basketSector` 0.7 -> 0.9 puts them back (corr 0.844-0.846, beta 1.37, vol ratio 1.62-1.63
-    * on four seeds at 200 paths; pairwise 0.59, idio share 0.36, tail coincidence 0.50,
-    * worst-decile pair corr 0.60 against 0.17 mid; names 2.04x, gaps 3.9/yr, time below peak
-    * 0.74 disclosed), every class passing. */
+  /** THE NASDAQ RE-SOLVED UNDER THE VALUATION CYCLE (0.24.4, item 27): the adopted member of
+    * search-v23 (seeded from the 0.24.3 recipe at the swing's measured amplitude with the cycle
+    * on, transport the S&P default), its un-searched dials the 0.24.3 recipe's; the basket world
+    * is the same world with THE BASKET on at the dials re-anchored on the eight names under QQQ
+    * (beta 1.37, sector 0.9, idio 0.85, gaps 8.0).  The literals are the archive's, so
+    * `-atrelease 0.24.4-nasdaq` reproduces the member byte for byte. */
   val Recipes0244: Vector[(String, World, String)] =
     val b = Recipes0243.find(_._1 == "0.24.3-nasdaq").map(_._2)
       .getOrElse(sys.error("no base recipe 0.24.3-nasdaq"))
-    val nq = b.copy(bustAmp = 0.20)
+    val nq = b.copy(depth = 13.217042, trendShare = 0.081717774, drift = 0.092633792, fundVol = 0.030000000, crowdImpact = 0.034269679, stress = 5.5386629, valuePull = 0.057571925, recoveryDrag = 7.4909165, recoveryFloor = 0.13917948, disasterRate = 0.42670973, disasterSize = 1.9166335, disasterRecover = 0.69384978, beliefShare = 0.64475229, capYears = 5.5949202, volOfVol = 0.014230648, jumpVar = 0.014422687, jumpRate = 0.0050692766, leverage = 0.057014576, downShock = 0.019879674, jumpSkew = 0.24396655, newsRate = 1.2913049, newsSize = 0.039826444, refugeDays = 1.5444569, easing = 0.015584691, refuge = 0.14535655, inflSize = 0.10684091, discount = 6.5168590, margin = 0.0050461631, slowShare = 0.15692325, slowVol = 1.0395141, slowBeta = 0.68519189, slowPerm = 0.0000000, beliefYears = 0.60904368, bustAmp = 0.24445490, cycleSd = 0.064125445, cycleYears = 15.209229, beliefLeak = 0.0000000)
     Vector(("0.24.4-nasdaq", nq, "nasdaq"),
            ("0.24.4-nasdaq-basket",
-            nq.copy(basket = 8, basketBeta = 1.37, basketSector = 0.9, basketIdio = 0.85,
+            nq.copy(basket = 8, basketBeta = 1.37, basketSector = 0.8, basketIdio = 0.85,
                     basketGaps = 8.0),
             "nasdaq"))
 
   val Recipes: Vector[(String, World, String)] =
     Recipes0231 ++ MacroRecipes ++ Recipes0241 ++ Recipes0242 ++ Recipes0243 ++ Recipes0244
+
+  /** A recipe name's version, the leading digits and dots (`0.24.1-nasdaq-basket` -> `0.24.1`);
+    * empty for a name that carries none.  Compares as a string, which orders these versions. */
+  def recipeVersion(name: String): String = name.takeWhile(c => c.isDigit || c == '.')
 
   /** What `-atrelease NAME` seeds from: a release's world, anchors untouched, or a recipe with
     * the anchor set it was verified against -- which an explicit `-anchors` still overrides. */
@@ -1734,6 +1770,11 @@ object MarketSim:
     * moves minted 20% peaks under a still-depressed conditions index: the residual that failed the
     * build-up band from amplitude 0.20 under the ceiling.  A fresh arming clears it. */
   val BustDecayOver = 0.97
+  /** THE STATIONARITY ROW's band (see `cycleSd` and `gapDriftOf`): the pooled valuation gap may
+    * not drift more than this, in log, between a path's first decade and its later half.  A
+    * stationary world reads within +-0.05 at 60 paths; the transient worlds read -0.15 (Nasdaq)
+    * and -0.6 (S&P). */
+  val GapDriftBand = 0.15
 
   /** DETERMINISTIC exp: Cody-Waite range reduction with fdlibm's split ln2, a fixed Horner
     * Taylor to r^12 on the reduced argument, and 2^k built from raw exponent bits.  Every
@@ -1860,6 +1901,10 @@ object MarketSim:
       * divided by `stressDiv`. */
     var dragMult = 1.0
     var stressDiv = 1.0
+    /** THE VALUATION CYCLE's hook (see `cycleSd`): the drawdown the recovery drag reads, set by
+      * the loop to the drawdown of the price WITHOUT the cycle while the cycle is on; NaN (the
+      * price's own drawdown) otherwise, so the dial off is bit-identical. */
+    var dropOverride = Double.NaN
     var clamps = 0
     /** Sessions on the DOWNWARD guard, and sessions in the tail at all.  Counted separately from
       * `clamps` because the question the gate has to answer is not how often the guard binds --
@@ -1905,7 +1950,11 @@ object MarketSim:
       // crash count but drained d5, d10 and kurtosis with it, because a stronger pull cannot tell a
       // deep drawdown from an ordinary one, and a market can sit 10% under fair while 3% under peak.
       val gap   = fair - logP
-      val drop  = peak - logP
+      // the drawdown the drag reads: the price's own, or the price's without the valuation
+      // cycle when the loop supplies it (value capital is depleted by a crash, not by a slow
+      // re-rating; a drag that read the cycle's down-swings as drawdowns manufactured a lagged
+      // recovery and lifted the 250-day variance ratio past its profile)
+      val drop  = if dropOverride.isNaN then peak - logP else dropOverride
       val damp  = if recoveryDrag <= 0.0 || gap <= 0.0 || drop <= DrawdownRef then 1.0
                   else math.max(recoveryFloor,
                                 1.0 / (1.0 + recoveryDrag * dragMult * (drop - DrawdownRef) / DrawdownRef))
@@ -2705,6 +2754,21 @@ object MarketSim:
     var bustMove = 0.0
     var bustCeilDays = 0
     var bustOver = false
+    // THE VALUATION CYCLE's state (see `cycleSd`): a stationary AR(1) drawn from its own stream
+    // and started from its stationary law; the price and its running peak start ON the cycle,
+    // so the first session is stationary too.  Draw-free at 0: the stream is only drawn while
+    // the dial is on, and the price then starts at the fundamental as before.
+    val cycRng  = new NumPyRNG(seed ^ 0xc7c1e0deL)
+    val cycPhi  = if w.cycleYears <= 0.0 then 0.0
+                  else math.exp(-math.log(2.0) / (w.cycleYears * DaysPerYear))
+    val cycInno = w.cycleSd * math.sqrt(1.0 - cycPhi * cycPhi)
+    var cyc = 0.0
+    // the running peak of the price WITHOUT the cycle, for the drag's drawdown read
+    var cycPeakEx = 0.0
+    if w.cycleSd > 0.0 then
+      cyc = w.cycleSd * cycRng.randn()
+      eqM.logP = cyc
+      eqM.peak = cyc
     var volRespA = 0.0
     var asymG = 0.0
     var asymA = 0.0
@@ -2759,6 +2823,7 @@ object MarketSim:
     var belief = 0.0
     val beliefMu = if w.beliefYears <= 0.0 then 0.0
                    else 1.0 - math.exp(-math.log(2.0) / (w.beliefYears * DaysPerYear))
+    val leakMu = w.beliefLeak / DaysPerYear
     // Growth-extrapolation state: EWMA of the fundamental's per-session log change, annualized in
     // the perceived-fair term.  Seeded at the unconditional drift so burn-in starts neutral.
     var gEwma = w.drift * dt
@@ -3104,12 +3169,33 @@ object MarketSim:
       if w.capYears > 0.0 then
         if i > 0 then gEwma += gMu * ((logVbase - vPrev) - gEwma)
         vPrev = logVbase
+      // THE VALUATION CYCLE (see `cycleSd`) advances ahead of the read, like the fundamental, and
+      // its move is REPRICED THE SAME SESSION in the price and in perceived fair -- the bust
+      // swing's convention: discount-rate news is absorbed at once, so no gap opens for the pull
+      // to close and no return autocorrelation is manufactured (tracked through the pull, the
+      // cycle failed the variance-ratio profile).  The derived channels see the move as a
+      // repricing, like the swing's.
+      var cycMove = 0.0
+      if w.cycleSd > 0.0 then
+        val cycNew = cycPhi * cyc + cycInno * cycRng.randn()
+        cycMove = cycNew - cyc
+        cyc = cycNew
+        eqM.logP += cycMove
+        // the drag reads the drawdown of the price without the cycle (see `Market.step`)
+        val ex = eqM.logP - cyc
+        if ex > cycPeakEx then cycPeakEx = ex
+        eqM.dropOverride = cycPeakEx - ex
       val perceivedFair =
-        if w.beliefShare <= 0.0 && w.capYears <= 0.0 then logVbase
+        if w.beliefShare <= 0.0 && w.capYears <= 0.0 && w.cycleSd <= 0.0 then logVbase
         else
-          var pf = logVbase
+          // the cycle is the slow component of perceived fair; the beliefs absorb the gap NET of
+          // it, so the two do not compound (a belief tracking the whole gap would feed the cycle
+          // back into the target at 1 / (1 - beliefShare))
+          val fairC = if w.cycleSd > 0.0 then logVbase + cyc else logVbase
+          var pf = fairC
           if w.beliefShare > 0.0 then
-            belief += beliefMu * ((eqM.logP - logVbase) - belief)
+            belief += beliefMu * ((eqM.logP - fairC) - belief)
+            if w.beliefLeak > 0.0 then belief -= leakMu * belief
             pf += w.beliefShare * belief
           if w.capYears > 0.0 then
             // tanh-squashed at CapSpan: extrapolated growth prices a mania, never an infinity --
@@ -3220,7 +3306,7 @@ object MarketSim:
         chSv(i) = eqM.scaleVar
         // the bust swing's same-session move is a repricing the derived channels must see,
         // like the news jump; guarded so the off state stays bit-identical
-        chJ(i) = if w.bustAmp > 0.0 then jumpNow * eqM.lastLiq - newsJ + bustMove
+        chJ(i) = if w.bustAmp > 0.0 || w.cycleSd > 0.0 then jumpNow * eqM.lastLiq - newsJ + bustMove + cycMove
                  else jumpNow * eqM.lastLiq - newsJ
         val vb = math.exp(logVol - volNorm) * volRespM * mix
         chVs(i) = math.sqrt(vb * vb + slowVar)
@@ -4077,6 +4163,10 @@ object MarketSim:
                               // spends more than 0.5 log above / below its own 20-year mean
                               // (`wingsOf`); the record's CAPE reads 0.076 / 0.067.
                               wingUp: Double = Double.NaN, wingDown: Double = Double.NaN,
+                              // THE STATIONARITY ROW (item 27): the pooled valuation gap's mean
+                              // over the paths' later half minus over their first decade
+                              // (`gapDriftOf`), in log.  0 for a stationary world.
+                              gapDrift: Double = Double.NaN,
                               // THE VOL-RESPONSE PROFILE (item 12), reported beside the two
                               // graded clustering lags: |r| autocorrelation at 5 and 60, and the
                               // leverage-effect profile at 1, 5 and 20.  Defaulted so a caller
@@ -4263,6 +4353,7 @@ object MarketSim:
     corrCalm: Double, corrInfl: Double,
     valDisp: Double, maxOver: Double, semiExcess: Double, levCorr: Double, tailHedge: Double,
     wingUp: Double, wingDown: Double, wingN: Double,   // the cycle's wings about its 20-year mean, as COUNTS over `wingsOf`'s sessions
+    gapEarly: Double, gapEarlyN: Double, gapLate: Double, gapLateN: Double,   // `gapDriftOf`'s sums and counts
     inflAnn: Double)
 
   private def pathRead(sp: Path, years: Int): PathRead =
@@ -4380,6 +4471,7 @@ object MarketSim:
           j += 1
         pearson(x, y)
     val wings = wingsOf(sp.price, sp.fundamental)
+    val gd = gapDriftOf(sp.price, sp.fundamental)
     PathRead(
       episodes = eps, ddEq = depthShares(sp.price), ddBd = depthShares(sp.bond),
       vol  = math.sqrt(MatD(r).power(2).mean * DaysPerYear),
@@ -4407,6 +4499,7 @@ object MarketSim:
       corrCalm = corrIn(false), corrInfl = corrIn(true),
       valDisp = valDisp, maxOver = maxOver, semiExcess = semiExcess, levCorr = levCorr,
       wingUp = wings._1, wingDown = wings._2, wingN = wings._3,
+      gapEarly = gd._1, gapEarlyN = gd._2, gapLate = gd._3, gapLateN = gd._4,
       tailHedge = tailHedge,
       inflAnn = math.log(sp.cpi.last / sp.cpi.head) / years * 100.0)
 
@@ -4434,6 +4527,8 @@ object MarketSim:
       // so most paths hold none and a median would read 0 forever (the tail-floor share's rule).
       wingUp = pooledShare(per.map(_.wingUp), per.map(_.wingN)),
       wingDown = pooledShare(per.map(_.wingDown), per.map(_.wingN)),
+      gapDrift = pooledShare(per.map(_.gapLate), per.map(_.gapLateN)) -
+                 pooledShare(per.map(_.gapEarly), per.map(_.gapEarlyN)),
       kurt = med(per.map(_.kurt)),
       ac1  = med(per.map(_.ac(0))),
       ac20 = med(per.map(_.ac(1))),
@@ -4609,6 +4704,12 @@ object MarketSim:
       // for the same reason at the CLI).
       ("valuation cycle engages, not unmoored",
         st.valDisp > 0.13 && st.valDisp < 0.70, Mechanism),
+      // THE STATIONARITY ROW (item 27): the paths must be stationary from the first session --
+      // the valuation gap's pooled mean may not drift between a path's first decade and its later
+      // half.  A world whose slow valuation state starts off its own law (the fair-value start
+      // every world had before the cycle) fails it, which is what a mechanism row MEANS.
+      ("valuation stationary from the first session",
+        !st.gapDrift.isNaN && math.abs(st.gapDrift) < GapDriftBand, Mechanism),
       bandCheck("inflation",        st.inflAnn, 1.0, 6.0, Realism, dp = 0, unit = "%/yr"),
       // LEVEL bands, not realism.  A 12%-volatility market is still a market, and realism is
       // ALWAYS required — either band placed there would make the sweep's own OFF-worlds
@@ -5093,13 +5194,13 @@ object MarketSim:
     vol = 16.0,          volSd = 0.12,
     // CRSP 1954-2026 (`yearvol-2026-09-15.tsv`, w1954): 12.87, 0.82 of pooled; the S&P index's
     // own daily record is not in the fixture, and CRSP is the series the r/v row reads too.
-    yearVol = 12.9,      yearVolSd = 0.11,
-    retVol = 0.69,       retVolSd = 0.27,
-    kurt = 28.0,         kurtSd = 0.85,
-    ac1 = 0.299,         ac1Sd = 0.15,
+    yearVol = 12.9,      yearVolSd = 0.10,
+    retVol = 0.69,       retVolSd = 0.21,
+    kurt = 28.0,         kurtSd = 0.84,
+    ac1 = 0.299,         ac1Sd = 0.16,
     ac20 = 0.225,        ac20Sd = 0.21,
-    crashes = 20.7,      crashesSd = 0.30,
-    medDepth = -21.4,    medDepthSd = 0.15,
+    crashes = 20.7,      crashesSd = 0.28,
+    medDepth = -21.4,    medDepthSd = 0.16,
     // RE-ANCHORED in 0.22.1, same error class as `median depth %` in 0.22.0: -56.8 was the
     // 2007-09 episode, the worst of the 1954-2026 window, used where the model computes the worst
     // over a whole history.  1954 opens AFTER the crash that set the record's worst, so the anchor
@@ -5117,12 +5218,12 @@ object MarketSim:
     // history barely pins the semivariance excess (one crash day swings it), and the record reads
     // as a TYPICAL history of this model on all three rows -- the 51st percentile (semivariance),
     // 39th (leverage corr), 39th (tail hedge).
-    semiExcess = 3.06, semiExcessSd = 1.42,
-    levCorr = -0.0926, levCorrSd = 0.40,
+    semiExcess = 3.06, semiExcessSd = 1.37,
+    levCorr = -0.0926, levCorrSd = 0.42,
     tailHedge = -0.273, tailHedgeSd = 0.34,
     wingUp = 7.6, wingUpSd = 0.60, wingDown = 6.7, wingDownSd = 0.61,
-    valDispSd = 0.62, vr60Sd = 0.28, d5Sd = 0.18, d10Sd = 0.45, d20Sd = 4.18,
-    bondVolSd = 0.36, bondGrowthSd = 1.69, bondInflSd = 1.55, bondDepthSd = 0.34,
+    valDispSd = 0.22, vr60Sd = 0.29, d5Sd = 0.17, d10Sd = 0.41, d20Sd = 2.18,
+    bondVolSd = 0.36, bondGrowthSd = 1.60, bondInflSd = 1.56, bondDepthSd = 0.33,
     ddRefs = DdRefsSp500,
     divYield = 2.95, divYieldBand = (1.1, 5.8),
     basketCorr = 0.770, basketBeta = 1.557, basketVolRatio = 2.023, basketNameVolBand = (1.9, 3.5))
@@ -5168,30 +5269,30 @@ object MarketSim:
     retVolWindow = "QQQ 1999-2026",
     clusterWindow = "QQQ 1999-2026", clusterYears = 27,
     tailWindow = "QQQ 1999-2026", tailYears = 27,
-    vol = 26.90,         volSd = 0.12,
+    vol = 26.90,         volSd = 0.13,
     // QQQ 1999-2026 (`yearvol-2026-09-15.tsv`, w1999): 18.26, only 0.68 of pooled -- the window's
     // vol is 2000-02 at 58 / 55 / 42%; QQQ from 2007 reads 0.82 like SPY.
     yearVol = 18.3,      yearVolSd = 0.16,
-    retVol = 0.38,       retVolSd = 0.49,
-    kurt = 9.55,         kurtSd = 1.68,
+    retVol = 0.38,       retVolSd = 0.45,
+    kurt = 9.55,         kurtSd = 2.42,
     ac1 = 0.293,         ac1Sd = 0.24,
     ac20 = 0.249,        ac20Sd = 0.22,
-    crashes = 25.6,      crashesSd = 0.50,
-    medDepth = -22.8,    medDepthSd = 0.36,
+    crashes = 25.6,      crashesSd = 0.46,
+    medDepth = -22.8,    medDepthSd = 0.26,
     worstDepth = -83.0,  worstDepthSd = 0.18,
     volBand = (23.5, 30.3),
     yearVolBand = (15.0, 21.6),
     retVolBand = (0.27, 0.47),
     // QQQ wfull row of asymmetry-2026-08-31.tsv; the tail hedge is QQQ/TLT.
-    semiExcess = 1.13, semiExcessSd = 4.43,
-    levCorr = -0.1073, levCorrSd = 0.47,
-    tailHedge = -0.236, tailHedgeSd = 0.37,
+    semiExcess = 1.13, semiExcessSd = 4.69,
+    levCorr = -0.1073, levCorrSd = 0.52,
+    tailHedge = -0.236, tailHedgeSd = 0.38,
     wingUp = 7.6, wingUpSd = 0.60, wingDown = 6.7, wingDownSd = 0.61,
     // d20's spread is a fraction of the S&P world's (0.35 against 4.18): at Nasdaq volatility the
     // deep rung is pinned where the S&P default leaves it unreadable, so the row carries real
     // weight here.
-    valDispSd = 0.38, vr60Sd = 0.29, d5Sd = 0.13, d10Sd = 0.22, d20Sd = 0.43,
-    bondVolSd = 0.37, bondGrowthSd = 1.64, bondInflSd = 1.61, bondDepthSd = 0.28,
+    valDispSd = 0.30, vr60Sd = 0.26, d5Sd = 0.14, d10Sd = 0.24, d20Sd = 0.48,
+    bondVolSd = 0.36, bondGrowthSd = 1.20, bondInflSd = 1.54, bondDepthSd = 0.30,
     ddRefs = DdRefsNasdaq,
     divYield = 0.78, divYieldBand = (0.3, 1.5),
     basketCorr = 0.837, basketBeta = 1.365, basketVolRatio = 1.630, basketNameVolBand = (1.5, 2.8))
@@ -5844,6 +5945,28 @@ object MarketSim:
         i += 1
       (up.toDouble, down.toDouble, (n - burn).toDouble)
 
+  /** THE STATIONARITY ROW's reading (item 27): the valuation gap log(price / fundamental) summed
+    * over a path's first decade and over its later half -- sessions [0, 10y) and [40y, n), or
+    * the two halves of a path under 50 years -- with the session counts, so `measure` can pool them and read the
+    * drift between the two.  Every path used to start at the fundamental and drift under it for
+    * decades; a world whose paths are stationary from the first session reads 0 here. */
+  private[apps] def gapDriftOf(price: Array[Double], fund: Array[Double]): (Double, Double, Double, Double) =
+    val n = price.length
+    // a path shorter than 50 years reads its first half against its second
+    val half = n / 2
+    val long = n >= 50 * DaysPerYear
+    val earlyEnd = if long then 10 * DaysPerYear else half
+    val lateFrom = if long then 40 * DaysPerYear else half
+    var e = 0.0
+    var l = 0.0
+    var i = 0
+    while i < n do
+      val g = math.log(price(i) / fund(i))
+      if i < earlyEnd then e += g
+      else if i >= lateFrom then l += g
+      i += 1
+    (e, earlyEnd.toDouble, l, (n - lateFrom).toDouble)
+
   /** A share pooled over paths: the counts summed over the sessions summed, NaN when nothing was
     * read.  Left folds in path order, like every pooled sum here. */
   private[apps] def pooledShare(counts: Seq[Double], sessions: Seq[Double]): Double =
@@ -5933,7 +6056,8 @@ object MarketSim:
     "recoveryDrag", "recoveryFloor", "disasterRate", "disasterSize", "disasterRecover",
     "beliefShare", "capYears", "volOfVol", "jumpVar", "jumpRate", "leverage", "downShock",
     "jumpSkew", "newsRate", "newsSize", "refugeDays", "easing", "refuge", "inflSize",
-    "discount", "margin", "slowShare", "slowVol", "slowBeta", "slowPerm", "beliefYears", "bustAmp")
+    "discount", "margin", "slowShare", "slowVol", "slowBeta", "slowPerm", "beliefYears", "bustAmp",
+    "cycleSd", "cycleYears", "beliefLeak")
 
   val CalibrateRanges: Vector[DialRange] = Vector(
     ("depth",       8.0,  26.0, (w, x) => w.copy(depth = x), _.depth),
@@ -6009,6 +6133,13 @@ object MarketSim:
     // THE BUST SWING's amplitude, searched from 0.24.3: 0.14 reads the record's mania bust on the
     // Nasdaq recipe (item 25); the wings and the typical-year row are what it trades against.
     ("bustAmp",      0.0,  0.30, (w, x) => w.copy(bustAmp = x), _.bustAmp),
+    // THE VALUATION CYCLE (item 27): its stationary sd and half-life; the record's CAPE reads
+    // 0.415 about its mean at a half-life of 11.5 years, and the dispersion / wing rows are what
+    // the pair trades against the beliefs' share.
+    ("cycleSd",      0.0,  0.60, (w, x) => w.copy(cycleSd = x), _.cycleSd),
+    ("cycleYears",   3.0, 20.00, (w, x) => w.copy(cycleYears = x), _.cycleYears),
+    // THE BELIEFS' FADE (item 27): the residual gap's stationarity at a high belief share
+    ("beliefLeak",   0.0,  0.60, (w, x) => w.copy(beliefLeak = x), _.beliefLeak),
   )
 
   def calibrate(a: Anchors, nSamples: Int, base: World, seed: Long): Unit =
@@ -7433,7 +7564,9 @@ object MarketSim:
       ("disasterLen", num(w.disasterLen)), ("disasterRecover", num(w.disasterRecover)),
       ("disasterRecLen", num(w.disasterRecLen)),
       ("beliefShare", num(w.beliefShare)), ("beliefYears", num(w.beliefYears)),
+      ("beliefLeak", num(w.beliefLeak)),
       ("capYears", num(w.capYears)), ("capWindow", num(w.capWindow)),
+      ("cycleSd", num(w.cycleSd)), ("cycleYears", num(w.cycleYears)),
       ("crowd", jsonStr(crowdName(w.crowd))), ("crowdImpact", num(w.crowdImpact)),
       ("panic", num(w.panic)), ("duration", num(w.duration)),
       ("easing", num(w.easing)), ("unwind", num(w.unwind)), ("refuge", num(w.refuge)),
@@ -7831,6 +7964,8 @@ object MarketSim:
     var noiseAsymCap = dw.noiseAsymCap
     var jumpResp = dw.jumpResp; var stressAdapt = dw.stressAdapt
     var bustAmp = dw.bustAmp
+    var cycleSd = dw.cycleSd; var cycleYears = dw.cycleYears
+    var beliefLeak = dw.beliefLeak
     var slowShare = dw.slowShare; var slowVol = dw.slowVol; var slowLev = dw.slowLev
     var slowPhi = dw.slowPhi; var slowPerm = dw.slowPerm; var slowBeta = dw.slowBeta
     var jointEmit = ""
@@ -7937,6 +8072,9 @@ object MarketSim:
       case "-jumpresp"     => jumpResp = numOr("-jumpresp", consumeNext)
       case "-stressadapt"  => stressAdapt = numOr("-stressadapt", consumeNext)
       case "-bustamp"    => bustAmp = numOr("-bustamp", consumeNext)
+      case "-cyclesd"    => cycleSd = numOr("-cyclesd", consumeNext)
+      case "-cycleyears" => cycleYears = numOr("-cycleyears", consumeNext)
+      case "-beliefleak" => beliefLeak = numOr("-beliefleak", consumeNext)
       case "-slowshare"  => slowShare = numOr("-slowshare", consumeNext)
       case "-slowvol"    => slowVol = numOr("-slowvol", consumeNext)
       case "-slowlev"    => slowLev = numOr("-slowlev", consumeNext)
@@ -8033,6 +8171,10 @@ object MarketSim:
     nonNeg("-noiseasymcap", noiseAsymCap)
     nonNeg("-volresp", volResp); nonNeg("-volrespcap", volRespCap); nonNeg("-jumpresp", jumpResp)
     nonNeg("-bustamp", bustAmp)
+    nonNeg("-cyclesd", cycleSd)
+    nonNeg("-beliefleak", beliefLeak)
+    if cycleSd > 0.0 && cycleYears <= 0.0 then
+      usage(s"-cyclesd $cycleSd needs -cycleyears above 0")
     // WORD FOR WORD the Rust twin's messages: the two CLIs must refuse the same worlds, and
     // `-stressadapt 0` is the one that would otherwise pass -- the spiral's scale never updates,
     // so its stress index reads every session against the seed value.  NEGATED comparisons, like
@@ -8125,7 +8267,8 @@ object MarketSim:
                   noiseAsymPhi = noiseAsymPhi, volResp = volResp, volRespPhi = volRespPhi,
                   volRespAttack = volRespAttack, volRespCap = volRespCap,
                   noiseAsymCap = noiseAsymCap, jumpResp = jumpResp, stressAdapt = stressAdapt,
-                  bustAmp = bustAmp,
+                  bustAmp = bustAmp, cycleSd = cycleSd, cycleYears = cycleYears,
+                  beliefLeak = beliefLeak,
                   slowShare = slowShare, slowVol = slowVol, slowLev = slowLev,
                   slowPhi = slowPhi, slowPerm = slowPerm, slowBeta = slowBeta,
                   noiseAsym = noiseAsym)
@@ -8378,7 +8521,7 @@ object MarketSim:
             f"(${st.crowdFlow / SigmaN * 100}%.1f%% of the noise term) — the reflexive channel   " +
             f"macro disasters ${st.disPerCentury}%.2f/century")
     println(f"  valuation gap          sd log(p/fair) ${st.valDisp}%.3f   century max +${st.maxOver * 100}%.0f%% over fair" +
-            f"   (record proxy: sd log CAPE 0.24-0.41, peaks +70-100%%)")
+            f"   (record proxy: sd log CAPE 0.24-0.41, peaks +70-100%%)   drift late-early ${st.gapDrift}%.3f")
 
     println()
     // The anchors do NOT share one window, and a single-window label invites a reader to re-derive

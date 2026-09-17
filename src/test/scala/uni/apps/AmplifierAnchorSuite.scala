@@ -76,8 +76,8 @@ class AmplifierAnchorSuite extends FunSuite:
     // the 0.24.1 Nasdaq recipes carry their own dials and were NOT re-solved against the
     // channel; the 0.24.2 Nasdaq recipe was
     for (n, w, _) <- MarketSim.Recipes
-        if !n.startsWith("0.24.") || n.startsWith("0.24.0") || n == "0.24.1-nasdaq" ||
-           n == "0.24.1-nasdaq-basket" do
+        if (MarketSim.recipeVersion(n) < "0.24" || n.startsWith("0.24.0") || n == "0.24.1-nasdaq" ||
+           n == "0.24.1-nasdaq-basket") do
       assertEquals(w.slowShare, 0.0, s"recipe $n")
     // off, the channel's own dials reach no price and no bond
     val off = d.copy(slowShare = 0.0)
@@ -117,10 +117,12 @@ class AmplifierAnchorSuite extends FunSuite:
       assertEquals(w.volResp, 0.0, s"recipe $n")
       assertEquals(w.jumpResp, 0.0, s"recipe $n")
       assertEquals(w.stressAdapt, 0.005, s"recipe $n")
-    // the frozen row is today's default less the two mechanisms' four dials and the three
-    // re-solved around them, and nothing else moved with them
+    // the frozen row is the 0.24.1 row less the two mechanisms' four dials and the three
+    // re-solved around them, and nothing else moved with them (the default moved on at 0.24.4:
+    // the beliefs' fade and the cycle)
     val frozen = MarketSim.releaseWorld("0.24.0").getOrElse(fail("0.24.0 must resolve"))
-    val off = d.copy(volResp = frozen.volResp, volRespPhi = frozen.volRespPhi,
+    val d1 = MarketSim.releaseWorld("0.24.1").getOrElse(fail("0.24.1 must resolve"))
+    val off = d1.copy(volResp = frozen.volResp, volRespPhi = frozen.volRespPhi,
                      volRespAttack = frozen.volRespAttack, stressAdapt = frozen.stressAdapt,
                      stress = frozen.stress, volPersist = frozen.volPersist, jumpVar = frozen.jumpVar,
                      slowShare = frozen.slowShare, volOfVol = frozen.volOfVol,
@@ -160,7 +162,7 @@ class AmplifierAnchorSuite extends FunSuite:
     val b = MarketSim.simulate(d.copy(stressScale = 1.0), 3, MarketSim.DefaultSeed)
     assert(a.price.sameElements(b.price), "depth 17.4 is the reference: the gain scale is 1 there")
     for (v, w) <- MarketSim.Releases do assertEquals(w.stressScale, 0.0, s"release $v")
-    for (n, w, _) <- MarketSim.Recipes if !n.contains("nasdaq") || !n.startsWith("0.24.") do
+    for (n, w, _) <- MarketSim.Recipes if (!n.contains("nasdaq") || MarketSim.recipeVersion(n) < "0.24") do
       assertEquals(w.stressScale, 0.0, s"recipe $n")
     assertEquals(MarketSim.Defaults.stressScale, 0.0)
   }

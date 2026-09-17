@@ -644,17 +644,24 @@ class MarketSimContractSuite extends FunSuite:
     assertNotEquals(w.basketBeta, sp.basketBeta)
   }
 
-  test("valuation dispersion grows with the horizon, which is why the verdict is pinned") {
-    // The defect `GateYears` closes: sd log(p/fair) is the sample sd of a near-integrated gap,
-    // so it GROWS with the measurement window -- 0.11 at 30 years against 0.21 at 100 on the
-    // shipped world -- and a fixed floor read at the caller's -years graded the horizon, not
-    // the world.  The ordering is far outside seed noise at 24 paths.
+  test("valuation dispersion grew with the horizon on the walk, and no longer does on the stationary start") {
+    // The defect `GateYears` closes: on the fair-value start sd log(p/fair) was the sample sd of
+    // a near-integrated gap, so it GREW with the measurement window -- 0.11 at 30 years against
+    // 0.21 at 100 on the 0.24.1 world -- and a fixed floor read at the caller's -years graded
+    // the horizon, not the world.  The pin stays; since 0.24.4 the default starts stationary
+    // (the beliefs' fade, the cycle) and the two horizons read alike.
+    val old      = MarketSim.releaseWorld("0.24.1").getOrElse(fail("0.24.1 must resolve"))
+    val shortOld = MarketSim.measure(MarketSim.simPaths(old, 24, 30, MarketSim.DefaultSeed), 30).valDisp
+    val longOld  = MarketSim.measure(MarketSim.simPaths(old, 24, MarketSim.GateYears,
+                     MarketSim.DefaultSeed), MarketSim.GateYears).valDisp
+    assert(shortOld < longOld * 0.8,
+      f"on the walk the short horizon read well below the century's: 30y $shortOld%.3f vs 100y $longOld%.3f")
     val w     = MarketSim.Defaults
     val short = MarketSim.measure(MarketSim.simPaths(w, 24, 30, MarketSim.DefaultSeed), 30).valDisp
     val long  = MarketSim.measure(MarketSim.simPaths(w, 24, MarketSim.GateYears,
                   MarketSim.DefaultSeed), MarketSim.GateYears).valDisp
-    assert(short < long * 0.8,
-      f"short-horizon dispersion should read well below the century's: 30y $short%.3f vs 100y $long%.3f")
+    assert(short > long * 0.7,
+      f"on the stationary start the two horizons read alike: 30y $short%.3f vs 100y $long%.3f")
   }
 
   test("the verdict ensemble is pinned to the calibration horizon") {

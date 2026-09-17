@@ -188,7 +188,10 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 // counterpart except the schema number and the `kIv` key.
 // 16 -> 17: THE BUST SWING. `world` gained `bustAmp` (0 in every shipped world); a schema-17
 // file is byte-identical to its schema-16 counterpart except the schema number and that key.
-const EMIT_SCHEMA: u32 = 17;
+// 17 -> 18: THE VALUATION CYCLE AS A STATE. `world` gained `cycleSd`, `cycleYears` and
+// `beliefLeak`; a schema-18 file is byte-identical to its schema-17 counterpart except the
+// schema number and those keys. Where the cycle is on, `price` starts on it rather than at `fundamental`.
+const EMIT_SCHEMA: u32 = 18;
 
 /// Frozen structural constants of the volume channel — see the `vol_idio` field. Measured
 /// from the SPY/QQQ volume-on-range regression (`bars-2026-09-01.tsv`, whose rows the
@@ -446,6 +449,14 @@ pub fn default_world() -> World {
         belief_years: 1.5,
         cap_years: 1.5,
         cap_window: 6.0,
+        // THE START (item 27, 0.24.4): the beliefs' fade and a small valuation cycle make the
+        // paths stationary from the first session (the gap used to fall for a century from the
+        // fair-value start; drift -0.52 -> -0.06). Every other dial is the 0.24.1 world's; the
+        // dispersion and lower wing the walk supplied go with it (0.29 -> 0.18, 11.8 -> 3.3), and
+        // no larger cycle passes the variance-ratio profile on every seed.
+        cycle_sd: 0.1,
+        cycle_years: 15.0,
+        belief_leak: 0.2,
         leverage: 0.10,
         down_shock: 0.0,
         jump_var: 0.16,
@@ -626,6 +637,9 @@ fn v0_19_2() -> World {
         belief_years: 2.5,
         cap_years: 0.0,
         cap_window: 6.0,
+        cycle_sd: 0.0,
+        cycle_years: 11.5,
+        belief_leak: 0.0,
         disaster_rate: 0.0,
         disaster_size: 2.0,
         disaster_len: 2.5,
@@ -648,11 +662,11 @@ fn v0_19_2() -> World {
 }
 
 /// 0.24.0's world: the leverage cycle's, before 0.24.1's vol response moved `stress`,
-/// `vol_persist` and `jump_var` around the two new mechanisms. Built from today's default and
-/// moved back, so only the dials that changed are restated; the item-14 dials return to their off
+/// `vol_persist` and `jump_var` around the two new mechanisms. Built from the frozen 0.24.1 row
+/// and moved back, so only the dials that changed are restated; the item-14 dials return to their off
 /// values and this row reproduces 0.24.0 bit for bit.
 fn v0_24_0() -> World {
-    let mut w = default_world();
+    let mut w = v0_24_1();
     w.stress = 4.7;
     w.vol_persist = 0.993;
     w.jump_var = 0.11;
@@ -701,6 +715,9 @@ fn v0_24_1() -> World {
         belief_years: 1.5,
         cap_years: 1.5,
         cap_window: 6.0,
+        cycle_sd: 0.0,
+        cycle_years: 11.5,
+        belief_leak: 0.0,
         crowd: Crowd::Momentum,
         crowd_impact: 0.03,
         panic: 0.0,
@@ -784,6 +801,7 @@ pub fn releases() -> Vec<(&'static str, World)> {
         ("0.24.0", v0_24_0()),
         ("0.24.1", v0_24_1()),
         ("0.24.2", v0_24_1()),
+        ("0.24.3", v0_24_1()),
     ]
 }
 
@@ -962,6 +980,15 @@ pub fn recipes() -> Vec<(&'static str, World, &'static str)> {
     ]
 }
 
+/// A recipe name's version, the leading digits and dots (`0.24.1-nasdaq-basket` -> `0.24.1`);
+/// empty for a name that carries none. Compares as a string, which orders these versions.
+pub fn recipe_version(name: &str) -> &str {
+    let end = name
+        .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .unwrap_or(name.len());
+    &name[..end]
+}
+
 /// THE SEARCHED NASDAQ (0.24.2): the 0.24.1 recipe re-solved by the calibration search with the
 /// slow repricing channel's share and scale among the thirty searched dials, under the inflation
 /// regime's ceiling, judged on both markets -- member 6 of search-v11, the member with the best
@@ -1058,16 +1085,49 @@ fn recipe_0243_nasdaq(mut w: World) -> World {
     w
 }
 
-/// THE NASDAQ AT THE SWING'S MEASURED AMPLITUDE (0.24.4): `0.24.3-nasdaq` with `bust_amp` 0.20,
-/// the largest amplitude whose four-seed loss stays inside the member's own (1.54-1.93 against
-/// 1.54-1.90 under the same spreads; seed 2 carries the bond vol x duration row's penalty at 60 paths in both) once the
-/// ceiling holds the swing under the mania's high and the unwind ends at the regained high -- the
-/// mania-led busts read 46% vol over 3.0 years with four rallies of 20% and two of 30% (the
-/// member's own 32.5%, 3.7 years, two and one; NDX 2000-02: 53%, 2.5, five and three); 0.25
-/// passes every class too but its busts run 1.4 years at 57%. A released name is never re-solved
-/// in place, so this is a new recipe and the Nasdaq spreads are frozen at it.
+/// THE NASDAQ RE-SOLVED UNDER THE VALUATION CYCLE (0.24.4, item 27): the adopted member of
+/// search-v23 (seeded from the 0.24.3 recipe at the swing's measured amplitude with the cycle on,
+/// transport the S&P default), its un-searched dials the 0.24.3 recipe's; the basket world is the
+/// same world with THE BASKET on at the dials re-anchored on the eight names under QQQ. The
+/// literals are the archive's, so `-atrelease 0.24.4-nasdaq` reproduces the member byte for byte.
 fn recipe_0244_nasdaq(mut w: World) -> World {
-    w.bust_amp = 0.20;
+    w.depth = 13.217042;
+    w.trend_share = 0.081717774;
+    w.drift = 0.092633792;
+    w.fund_vol = 0.030000000;
+    w.crowd_impact = 0.034269679;
+    w.stress = 5.5386629;
+    w.value_pull = 0.057571925;
+    w.recovery_drag = 7.4909165;
+    w.recovery_floor = 0.13917948;
+    w.disaster_rate = 0.42670973;
+    w.disaster_size = 1.9166335;
+    w.disaster_recover = 0.69384978;
+    w.belief_share = 0.64475229;
+    w.cap_years = 5.5949202;
+    w.vol_of_vol = 0.014230648;
+    w.jump_var = 0.014422687;
+    w.jump_rate = 0.0050692766;
+    w.leverage = 0.057014576;
+    w.down_shock = 0.019879674;
+    w.jump_skew = 0.24396655;
+    w.news_rate = 1.2913049;
+    w.news_size = 0.039826444;
+    w.refuge_days = 1.5444569;
+    w.easing = 0.015584691;
+    w.refuge = 0.14535655;
+    w.infl_size = 0.10684091;
+    w.discount = 6.5168590;
+    w.margin = 0.0050461631;
+    w.slow_share = 0.15692325;
+    w.slow_vol = 1.0395141;
+    w.slow_beta = 0.68519189;
+    w.slow_perm = 0.0000000;
+    w.belief_years = 0.60904368;
+    w.bust_amp = 0.24445490;
+    w.cycle_sd = 0.064125445;
+    w.cycle_years = 15.209229;
+    w.belief_leak = 0.0000000;
     w
 }
 
@@ -1081,7 +1141,7 @@ fn recipe_0244_nasdaq(mut w: World) -> World {
 fn recipe_0244_nasdaq_basket(mut w: World) -> World {
     w.basket = 8;
     w.basket_beta = 1.37;
-    w.basket_sector = 0.9;
+    w.basket_sector = 0.8;
     w.basket_idio = 0.85;
     w.basket_gaps = 8.0;
     w
@@ -1089,7 +1149,8 @@ fn recipe_0244_nasdaq_basket(mut w: World) -> World {
 
 /// The 0.24.1 recipe worlds, returned as (macro, nasdaq, basket, nasdaq-basket).
 fn recipes_0241(open: World, basket: World, nq_basket: World) -> (World, World, World, World) {
-    let d1 = default_world();
+    // the frozen 0.24.1 row, not the default: these are released names and the default moves
+    let d1 = v0_24_1();
     let sp1 = |mut w: World| {
         w.stress = d1.stress;
         w.jump_var = d1.jump_var;
@@ -1129,7 +1190,7 @@ fn recipes_0241(open: World, basket: World, nq_basket: World) -> (World, World, 
         w.stress_adapt = 0.015;
         w
     };
-    let mut sp_vr = default_world();
+    let mut sp_vr = v0_24_1();
     sp_vr.macro_panel = 1;
     (sp_vr, nq1(open), sp1(basket), nq1(nq_basket))
 }
@@ -1173,6 +1234,9 @@ fn v0_23_0() -> World {
         belief_years: 1.5,
         cap_years: 1.5,
         cap_window: 6.0,
+        cycle_sd: 0.0,
+        cycle_years: 11.5,
+        belief_leak: 0.0,
         leverage: 0.12,
         down_shock: 0.0,
         jump_var: 0.14,
@@ -1255,6 +1319,9 @@ fn v0_22_1() -> World {
         belief_years: 2.5,
         cap_years: 0.0,
         cap_window: 6.0,
+        cycle_sd: 0.0,
+        cycle_years: 11.5,
+        belief_leak: 0.0,
         leverage: 0.0,
         down_shock: 0.0,
         jump_var: 0.17,
@@ -1339,6 +1406,9 @@ fn v0_22_0() -> World {
         belief_years: 2.5,
         cap_years: 0.0,
         cap_window: 6.0,
+        cycle_sd: 0.0,
+        cycle_years: 11.5,
+        belief_leak: 0.0,
         leverage: 0.0,
         down_shock: 0.0,
         jump_var: 0.17,
@@ -1423,6 +1493,9 @@ fn v0_21_0() -> World {
         belief_years: 2.5,
         cap_years: 0.0,
         cap_window: 6.0,
+        cycle_sd: 0.0,
+        cycle_years: 11.5,
+        belief_leak: 0.0,
         leverage: 0.0,
         down_shock: 0.0,
         jump_var: 0.10,
@@ -1545,6 +1618,9 @@ fn v0_20_0() -> World {
         belief_years: 2.5,
         cap_years: 0.0,
         cap_window: 6.0,
+        cycle_sd: 0.0,
+        cycle_years: 11.5,
+        belief_leak: 0.0,
         disaster_rate: 0.0,
         disaster_size: 2.0,
         disaster_len: 2.5,
@@ -1645,6 +1721,14 @@ pub struct World {
     pub belief_share: f64,
     /// half-life of belief adaptation, in years
     pub belief_years: f64,
+    /// THE BELIEFS' OWN FADE (item 27), per year: what the price has taught the market is
+    /// unlearned at this rate, so the belief share is `belief_share` at the daily scale and
+    /// belief_share x mu / (mu + leak) in the long run (mu the adaptation rate). Without it the
+    /// beliefs absorbed every crash markdown for good and the gap walked under the fundamental
+    /// for a century from the fair-value start; a lower share fixes that and breaks the
+    /// variance-ratio profile, the leak fixes it and leaves the profile alone (0.2 on the
+    /// default: drift -0.52 -> -0.06, VR250 1.08 -> 1.12). 0 is bit-identical off.
+    pub belief_leak: f64,
     /// THE MANIA HALF of the cycle: how many years of the fundamental's RECENT excess growth
     /// beliefs capitalize into perceived fair value — "this growth is the new normal", priced.
     /// The fundamental's drift regime (`drift_now`, redrawn every 1-11 years) is what beliefs
@@ -1656,6 +1740,17 @@ pub struct World {
     /// pass fundVol noise into the term capYears-fold (at 1y, vr60 read 2.3-5.2, measured) — the
     /// window must sit between the noise and the ~6-year regime.
     pub cap_window: f64,
+    /// THE VALUATION CYCLE AS A STATE (item 27): a slow, stationary AR(1) in log added to
+    /// perceived fair — the discount-rate / sentiment cycle whose stationary sd this is — STARTED
+    /// FROM ITS OWN LAW, so a path's first session is a draw from the same distribution as its
+    /// thousandth. Before it, the only slow valuation variation was the beliefs' near-random walk
+    /// from the fair-value start every path was given, and the gap fell for 40 (Nasdaq) to 120
+    /// (S&P) years before settling: the wing, dispersion and tail rows were reading that
+    /// transient. The beliefs now track the gap NET of the cycle. Own stream; 0 is bit-identical
+    /// off.
+    pub cycle_sd: f64,
+    /// the cycle's half-life in years (Shiller's CAPE reads 11.5)
+    pub cycle_years: f64,
     /// THE LEVERAGE EFFECT: how hard a decline raises the NEXT session's diffusive volatility,
     /// where an equal rally raises nothing — EGARCH's signed term, fed by the same decline
     /// signal the spiral's `stress_idx` reads (max(-ret,0)/scale, centred at 0.399 so the vol
@@ -2115,6 +2210,11 @@ const BUST_OFF: f64 = 1e-4;
 /// peaks under a still-depressed conditions index: the residual that failed the build-up band
 /// from amplitude 0.20 under the ceiling. A fresh arming clears it.
 const BUST_DECAY_OVER: f64 = 0.97;
+/// THE STATIONARITY ROW's band (see `cycle_sd` and `gap_drift_of`): the pooled valuation gap may
+/// not drift more than this, in log, between a path's first decade and its later half. A
+/// stationary world reads within ±0.05 at 60 paths; the transient worlds read -0.15 (Nasdaq) and
+/// -0.6 (S&P).
+const GAP_DRIFT_BAND: f64 = 0.15;
 
 /// DETERMINISTIC exp: Cody-Waite range reduction with fdlibm's split ln2, a fixed Horner Taylor
 /// to r^12 on the reduced argument, and 2^k built from raw exponent bits. Every operation is
@@ -2210,6 +2310,10 @@ struct Market {
     /// stress reads declines divided by `stress_div`.
     pub drag_mult: f64,
     pub stress_div: f64,
+    /// THE VALUATION CYCLE's hook (see `cycle_sd`): the drawdown the recovery drag reads, set by
+    /// the loop to the drawdown of the price WITHOUT the cycle while the cycle is on; NaN (the
+    /// price's own drawdown) otherwise, so the dial off is bit-identical.
+    pub drop_override: f64,
     last_liq: f64,
     clamps: usize,
     /// Sessions on the DOWNWARD guard, and sessions in the tail at all. Counted separately from
@@ -2287,6 +2391,7 @@ impl Market {
             gain_mult: 1.0,
             drag_mult: 1.0,
             stress_div: 1.0,
+            drop_override: f64::NAN,
             last_liq: impact,
             clamps: 0,
             floor_days: 0,
@@ -2322,7 +2427,15 @@ impl Market {
         // rather than depleted, and the deepest drawdowns run away. Both defaults reproduce the
         // symmetric pull of every earlier release BIT-IDENTICALLY — the multiplier is exactly 1.0.
         let gap = fair - self.log_p;
-        let drop = self.peak - self.log_p;
+        // the drawdown the drag reads: the price's own, or the price's without the valuation
+        // cycle when the loop supplies it (value capital is depleted by a crash, not by a slow
+        // re-rating; a drag that read the cycle's down-swings as drawdowns manufactured a lagged
+        // recovery and lifted the 250-day variance ratio past its profile)
+        let drop = if self.drop_override.is_nan() {
+            self.peak - self.log_p
+        } else {
+            self.drop_override
+        };
         let damp = if self.recovery_drag <= 0.0 || gap <= 0.0 || drop <= DRAWDOWN_REF {
             1.0
         } else {
@@ -3665,6 +3778,25 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
     let mut bust_move = 0.0f64;
     let mut bust_ceil_days = 0usize;
     let mut bust_over = false;
+    // THE VALUATION CYCLE's state (see `cycle_sd`): a stationary AR(1) drawn from its own stream
+    // and started from its stationary law; the price and its running peak start ON the cycle,
+    // so the first session is stationary too. Draw-free at 0: the stream is only drawn while
+    // the dial is on, and the price then starts at the fundamental as before.
+    let mut cyc_rng = NumPyRng::new(seed ^ 0xc7c1_e0deu64);
+    let cyc_phi = if w.cycle_years <= 0.0 {
+        0.0
+    } else {
+        (-(2.0f64.ln()) / (w.cycle_years * DAYS_PER_YEAR as f64)).exp()
+    };
+    let cyc_inno = w.cycle_sd * (1.0 - cyc_phi * cyc_phi).sqrt();
+    let mut cyc = 0.0f64;
+    // the running peak of the price WITHOUT the cycle, for the drag's drawdown read
+    let mut cyc_peak_ex = 0.0f64;
+    if w.cycle_sd > 0.0 {
+        cyc = w.cycle_sd * cyc_rng.randn();
+        eq_m.log_p = cyc;
+        eq_m.peak = cyc;
+    }
     let mut vol_resp_a = 0.0f64;
     let mut asym_g = 0.0f64;
     let mut asym_a = 0.0f64;
@@ -3726,6 +3858,7 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
     // BELIEF state for the slow valuation cycle: the EWMA of the price/fair gap that perceived
     // fair value has absorbed. Updated from information strictly before this session.
     let mut belief = 0.0f64;
+    let leak_mu = w.belief_leak / DAYS_PER_YEAR as f64;
     let belief_mu = if w.belief_years <= 0.0 {
         0.0
     } else {
@@ -4215,12 +4348,42 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
             }
             v_prev = log_vbase;
         }
-        let perceived_fair = if w.belief_share <= 0.0 && w.cap_years <= 0.0 {
+        // THE VALUATION CYCLE (see `cycle_sd`) advances ahead of the read, like the fundamental,
+        // and its move is REPRICED THE SAME SESSION in the price and in perceived fair — the bust
+        // swing's convention: discount-rate news is absorbed at once, so no gap opens for the pull
+        // to close and no return autocorrelation is manufactured (tracked through the pull, the
+        // cycle failed the variance-ratio profile). The derived channels see the move as a
+        // repricing, like the swing's.
+        let mut cyc_move = 0.0f64;
+        if w.cycle_sd > 0.0 {
+            let cyc_new = cyc_phi * cyc + cyc_inno * cyc_rng.randn();
+            cyc_move = cyc_new - cyc;
+            cyc = cyc_new;
+            eq_m.log_p += cyc_move;
+            // the drag reads the drawdown of the price without the cycle (see `Market::step`)
+            let ex = eq_m.log_p - cyc;
+            if ex > cyc_peak_ex {
+                cyc_peak_ex = ex;
+            }
+            eq_m.drop_override = cyc_peak_ex - ex;
+        }
+        let perceived_fair = if w.belief_share <= 0.0 && w.cap_years <= 0.0 && w.cycle_sd <= 0.0 {
             log_vbase
         } else {
-            let mut pf = log_vbase;
+            // the cycle is the slow component of perceived fair; the beliefs absorb the gap NET
+            // of it, so the two do not compound (a belief tracking the whole gap would feed the
+            // cycle back into the target at 1 / (1 - belief_share))
+            let fair_c = if w.cycle_sd > 0.0 {
+                log_vbase + cyc
+            } else {
+                log_vbase
+            };
+            let mut pf = fair_c;
             if w.belief_share > 0.0 {
-                belief += belief_mu * ((eq_m.log_p - log_vbase) - belief);
+                belief += belief_mu * ((eq_m.log_p - fair_c) - belief);
+                if w.belief_leak > 0.0 {
+                    belief -= leak_mu * belief;
+                }
                 pf += w.belief_share * belief;
             }
             if w.cap_years > 0.0 {
@@ -4361,8 +4524,8 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
             ch.scale_var[i] = eq_m.scale_var;
             // the bust swing's same-session move is a repricing the derived channels must see,
             // like the news jump; guarded so the off state stays bit-identical
-            ch.jump[i] = if w.bust_amp > 0.0 {
-                jump_now * eq_m.last_liq - news_j + bust_move
+            ch.jump[i] = if w.bust_amp > 0.0 || w.cycle_sd > 0.0 {
+                jump_now * eq_m.last_liq - news_j + bust_move + cyc_move
             } else {
                 jump_now * eq_m.last_liq - news_j
             };
@@ -4847,6 +5010,9 @@ pub struct WorldStats {
     /// above / below its own 20-year mean (`wings_of`); the record's CAPE reads 0.076 / 0.067.
     pub wing_up: f64,
     pub wing_down: f64,
+    /// THE STATIONARITY ROW (item 27): the pooled valuation gap's mean over the paths' later half
+    /// minus over their first decade (`gap_drift_of`), in log. 0 for a stationary world.
+    pub gap_drift: f64,
     /// median per-path MAX log overvaluation — the mania a century produces
     pub max_over: f64,
     /// median per-path 100*(sqrt(sum r^2 | r<0 / sum r^2 | r>0) - 1), tau = 0: how much more the
@@ -5188,6 +5354,31 @@ fn wings_of(price: &[f64], fund: &[f64]) -> (f64, f64, f64) {
         reference += mu * (g - reference);
     }
     (up as f64, down as f64, (n - burn) as f64)
+}
+
+/// THE STATIONARITY ROW's reading (item 27): the valuation gap log(price / fundamental) summed
+/// over a path's first decade and over its later half — sessions [0, 10y) and [40y, n), or the
+/// two halves of a path under 50 years — with the session counts, so `measure` can pool them and read the drift
+/// between the two. Every path used to start at the fundamental and drift under it for decades;
+/// a world whose paths are stationary from the first session reads 0 here.
+fn gap_drift_of(price: &[f64], fund: &[f64]) -> (f64, f64, f64, f64) {
+    let n = price.len();
+    // a path shorter than 50 years reads its first half against its second
+    let half = n / 2;
+    let long = n >= 50 * DAYS_PER_YEAR;
+    let early_end = if long { 10 * DAYS_PER_YEAR } else { half };
+    let late_from = if long { 40 * DAYS_PER_YEAR } else { half };
+    let mut e = 0.0f64;
+    let mut l = 0.0f64;
+    for i in 0..n {
+        let g = (price[i] / fund[i]).ln();
+        if i < early_end {
+            e += g;
+        } else if i >= late_from {
+            l += g;
+        }
+    }
+    (e, early_end as f64, l, (n - late_from) as f64)
 }
 
 /// A share pooled over paths: the counts summed over the sessions summed, NaN when nothing was
@@ -6205,6 +6396,11 @@ struct PathRead {
     wing_up: f64,
     wing_down: f64,
     wing_n: f64,
+    /// `gap_drift_of`'s sums and counts
+    gap_early: f64,
+    gap_early_n: f64,
+    gap_late: f64,
+    gap_late_n: f64,
     max_over: f64,
     semi_excess: f64,
     lev_corr: f64,
@@ -6247,6 +6443,7 @@ fn path_read(s: &Path, years: usize) -> PathRead {
     };
     let ac = autocorrs_abs(&r, &[1, 20, 5, 60]);
     let wings = wings_of(&s.price, &s.fundamental);
+    let gd = gap_drift_of(&s.price, &s.fundamental);
     PathRead {
         dd_eq: depth_shares(&s.price),
         dd_bd: depth_shares(&s.bond),
@@ -6301,6 +6498,10 @@ fn path_read(s: &Path, years: usize) -> PathRead {
         wing_up: wings.0,
         wing_down: wings.1,
         wing_n: wings.2,
+        gap_early: gd.0,
+        gap_early_n: gd.1,
+        gap_late: gd.2,
+        gap_late_n: gd.3,
         max_over: s
             .price
             .iter()
@@ -6457,6 +6658,13 @@ pub fn measure(sims: &[Path], years: usize) -> WorldStats {
         wing_down: pooled_share(
             per.iter().map(|p| p.wing_down),
             per.iter().map(|p| p.wing_n),
+        ),
+        gap_drift: pooled_share(
+            per.iter().map(|p| p.gap_late),
+            per.iter().map(|p| p.gap_late_n),
+        ) - pooled_share(
+            per.iter().map(|p| p.gap_early),
+            per.iter().map(|p| p.gap_early_n),
         ),
         max_over: med_by(|p| p.max_over),
         semi_excess: med_by(|p| p.semi_excess),
@@ -6807,6 +7015,15 @@ pub fn gate_checks(a: Anchors, st: &WorldStats) -> Vec<(String, bool, GateClass)
         (
             n("valuation cycle engages, not unmoored"),
             st.val_disp > 0.13 && st.val_disp < 0.70,
+            Mechanism,
+        ),
+        // THE STATIONARITY ROW (item 27): the paths must be stationary from the first session —
+        // the valuation gap's pooled mean may not drift between a path's first decade and its
+        // later half. A world whose slow valuation state starts off its own law (the fair-value
+        // start every world had before the cycle) fails it, which is what a mechanism row MEANS.
+        (
+            n("valuation stationary from the first session"),
+            !st.gap_drift.is_nan() && st.gap_drift.abs() < GAP_DRIFT_BAND,
             Mechanism,
         ),
         band_check("inflation", st.infl_ann, 1.0, 6.0, Realism, 0, "%/yr"),
@@ -7562,19 +7779,19 @@ const SP500_ANCHORS: Anchors = Anchors {
     // CRSP 1954-2026 (`yearvol-2026-09-15.tsv`, w1954): 12.87, 0.82 of pooled; the S&P index's
     // own daily record is not in the fixture, and CRSP is the series the r/v row reads too.
     year_vol: 12.9,
-    year_vol_sd: 0.11,
+    year_vol_sd: 0.10,
     ret_vol: 0.69,
-    ret_vol_sd: 0.27,
+    ret_vol_sd: 0.21,
     kurt: 28.0,
-    kurt_sd: 0.85,
+    kurt_sd: 0.84,
     ac1: 0.299,
-    ac1_sd: 0.15,
+    ac1_sd: 0.16,
     ac20: 0.225,
     ac20_sd: 0.21,
     crashes: 20.7,
-    crashes_sd: 0.30,
+    crashes_sd: 0.28,
     med_depth: -21.4,
-    med_depth_sd: 0.15,
+    med_depth_sd: 0.16,
     // RE-ANCHORED in 0.22.1, same error class as `med_depth` in 0.22.0: -56.8 was the 2007-09
     // episode, the worst of the 1954-2026 window, used where the model computes the worst over a
     // whole history. 1954 opens AFTER the crash that set the record's worst, so the anchor graded
@@ -7595,24 +7812,24 @@ const SP500_ANCHORS: Anchors = Anchors {
     // as a TYPICAL history of this model on all three rows — the 51st percentile (semivariance),
     // 39th (leverage corr), 39th (tail hedge).
     semi_excess: 3.06,
-    semi_excess_sd: 1.42,
+    semi_excess_sd: 1.37,
     lev_corr: -0.0926,
-    lev_corr_sd: 0.40,
+    lev_corr_sd: 0.42,
     tail_hedge: -0.273,
     tail_hedge_sd: 0.34,
     wing_up: 7.6,
     wing_up_sd: 0.60,
     wing_down: 6.7,
     wing_down_sd: 0.61,
-    val_disp_sd: 0.62,
-    vr60_sd: 0.28,
-    d5_sd: 0.18,
-    d10_sd: 0.45,
-    d20_sd: 4.18,
+    val_disp_sd: 0.22,
+    vr60_sd: 0.29,
+    d5_sd: 0.17,
+    d10_sd: 0.41,
+    d20_sd: 2.18,
     bond_vol_sd: 0.36,
-    bond_growth_sd: 1.69,
-    bond_infl_sd: 1.55,
-    bond_depth_sd: 0.34,
+    bond_growth_sd: 1.60,
+    bond_infl_sd: 1.56,
+    bond_depth_sd: 0.33,
     dd_refs: &DD_REFS_SP500,
     div_yield: 2.95,
     div_yield_band: (1.1, 5.8),
@@ -7660,23 +7877,23 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     tail_window: "QQQ 1999-2026",
     tail_years: 27,
     vol: 26.90,
-    vol_sd: 0.12,
+    vol_sd: 0.13,
     // QQQ 1999-2026 (`yearvol-2026-09-15.tsv`, w1999): 18.26, only 0.68 of pooled — the window's
     // vol is 2000-02 at 58 / 55 / 42%; QQQ from 2007 reads 0.82 like SPY.
     year_vol: 18.3,
     year_vol_sd: 0.16,
     ret_vol: 0.38,
-    ret_vol_sd: 0.49,
+    ret_vol_sd: 0.45,
     kurt: 9.55,
-    kurt_sd: 1.68,
+    kurt_sd: 2.42,
     ac1: 0.293,
     ac1_sd: 0.24,
     ac20: 0.249,
     ac20_sd: 0.22,
     crashes: 25.6,
-    crashes_sd: 0.50,
+    crashes_sd: 0.46,
     med_depth: -22.8,
-    med_depth_sd: 0.36,
+    med_depth_sd: 0.26,
     worst_depth: -83.0,
     worst_depth_sd: 0.18,
     vol_band: (23.5, 30.3),
@@ -7684,11 +7901,11 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     ret_vol_band: (0.27, 0.47),
     // QQQ wfull row of asymmetry-2026-08-31.tsv; the tail hedge is QQQ/TLT.
     semi_excess: 1.13,
-    semi_excess_sd: 4.43,
+    semi_excess_sd: 4.69,
     lev_corr: -0.1073,
-    lev_corr_sd: 0.47,
+    lev_corr_sd: 0.52,
     tail_hedge: -0.236,
-    tail_hedge_sd: 0.37,
+    tail_hedge_sd: 0.38,
     wing_up: 7.6,
     wing_up_sd: 0.60,
     wing_down: 6.7,
@@ -7696,15 +7913,15 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     // d20's spread is a fraction of the S&P world's (0.35 against 4.18): at Nasdaq volatility the
     // deep rung is pinned where the S&P default leaves it unreadable, so the row carries real
     // weight here.
-    val_disp_sd: 0.38,
-    vr60_sd: 0.29,
-    d5_sd: 0.13,
-    d10_sd: 0.22,
-    d20_sd: 0.43,
-    bond_vol_sd: 0.37,
-    bond_growth_sd: 1.64,
-    bond_infl_sd: 1.61,
-    bond_depth_sd: 0.28,
+    val_disp_sd: 0.30,
+    vr60_sd: 0.26,
+    d5_sd: 0.14,
+    d10_sd: 0.24,
+    d20_sd: 0.48,
+    bond_vol_sd: 0.36,
+    bond_growth_sd: 1.20,
+    bond_infl_sd: 1.54,
+    bond_depth_sd: 0.30,
     dd_refs: &DD_REFS_NASDAQ,
     div_yield: 0.78,
     div_yield_band: (0.3, 1.5),
@@ -9190,7 +9407,7 @@ const IDENTITY_PARAMS: &[&str] = &["duration", "divYield"];
 /// are in this order too, so the order is also the archive's format. Same shape as `EMIT_SCHEMA` /
 /// `EmitSchema`: the literal is in the model, checked by each twin's own contract test, and
 /// changing one twin without the other cannot pass.
-pub const CALIBRATE_DIAL_ORDER: [&str; 34] = [
+pub const CALIBRATE_DIAL_ORDER: [&str; 37] = [
     "depth",
     "trendShare",
     "drift",
@@ -9225,6 +9442,9 @@ pub const CALIBRATE_DIAL_ORDER: [&str; 34] = [
     "slowPerm",
     "beliefYears",
     "bustAmp",
+    "cycleSd",
+    "cycleYears",
+    "beliefLeak",
 ];
 
 /// What `-calibrate` samples, and the ONLY place a searchable parameter is declared. A function
@@ -9455,6 +9675,25 @@ pub fn calibrate_ranges() -> Vec<(&'static str, f64, f64, Setter, Getter)> {
         // the Nasdaq recipe (item 25); the wings and the typical-year row are what it trades
         // against.
         ("bustAmp", 0.0, 0.30, |w, x| w.bust_amp = x, |w| w.bust_amp),
+        // THE VALUATION CYCLE (item 27): its stationary sd and half-life; the record's CAPE reads
+        // 0.415 about its mean at a half-life of 11.5 years, and the dispersion / wing rows are
+        // what the pair trades against the beliefs' share.
+        ("cycleSd", 0.0, 0.60, |w, x| w.cycle_sd = x, |w| w.cycle_sd),
+        (
+            "cycleYears",
+            3.0,
+            20.0,
+            |w, x| w.cycle_years = x,
+            |w| w.cycle_years,
+        ),
+        // THE BELIEFS' FADE (item 27): the residual gap's stationarity at a high belief share
+        (
+            "beliefLeak",
+            0.0,
+            0.60,
+            |w, x| w.belief_leak = x,
+            |w| w.belief_leak,
+        ),
     ]
 }
 
@@ -12233,8 +12472,11 @@ pub fn world_json_body_fmt(w: &World, num: &dyn Fn(f64) -> String) -> Vec<String
         ("disasterRecLen", num(w.disaster_rec_len)),
         ("beliefShare", num(w.belief_share)),
         ("beliefYears", num(w.belief_years)),
+        ("beliefLeak", num(w.belief_leak)),
         ("capYears", num(w.cap_years)),
         ("capWindow", num(w.cap_window)),
+        ("cycleSd", num(w.cycle_sd)),
+        ("cycleYears", num(w.cycle_years)),
         ("crowd", json_str(&crowd_name(w.crowd))),
         ("crowdImpact", num(w.crowd_impact)),
         ("panic", num(w.panic)),
@@ -13049,6 +13291,9 @@ pub fn main() {
     let mut jump_resp = dw.jump_resp;
     let mut stress_adapt = dw.stress_adapt;
     let mut bust_amp = dw.bust_amp;
+    let mut cycle_sd = dw.cycle_sd;
+    let mut cycle_years = dw.cycle_years;
+    let mut belief_leak = dw.belief_leak;
     let mut slow_share = dw.slow_share;
     let mut slow_vol = dw.slow_vol;
     let mut slow_lev = dw.slow_lev;
@@ -13179,6 +13424,9 @@ pub fn main() {
             "-jumpresp" => jump_resp = req_f64(&mut it, "-jumpresp"),
             "-stressadapt" => stress_adapt = req_f64(&mut it, "-stressadapt"),
             "-bustamp" => bust_amp = req_f64(&mut it, "-bustamp"),
+            "-cyclesd" => cycle_sd = req_f64(&mut it, "-cyclesd"),
+            "-cycleyears" => cycle_years = req_f64(&mut it, "-cycleyears"),
+            "-beliefleak" => belief_leak = req_f64(&mut it, "-beliefleak"),
             "-slowshare" => slow_share = req_f64(&mut it, "-slowshare"),
             "-slowvol" => slow_vol = req_f64(&mut it, "-slowvol"),
             "-slowlev" => slow_lev = req_f64(&mut it, "-slowlev"),
@@ -13346,6 +13594,11 @@ pub fn main() {
         non_neg("-noiseasymcap", noise_asym_cap);
         non_neg("-volresp", vol_resp);
         non_neg("-bustamp", bust_amp);
+        non_neg("-cyclesd", cycle_sd);
+        non_neg("-beliefleak", belief_leak);
+        if cycle_sd > 0.0 && cycle_years <= 0.0 {
+            cli_die(&format!("-cyclesd {cycle_sd} needs -cycleyears above 0"));
+        }
         non_neg("-volrespcap", vol_resp_cap);
         non_neg("-jumpresp", jump_resp);
         if !(0.0..1.0).contains(&lev_persist) {
@@ -13544,6 +13797,9 @@ pub fn main() {
         jump_resp,
         stress_adapt,
         bust_amp,
+        cycle_sd,
+        cycle_years,
+        belief_leak,
         slow_share,
         slow_vol,
         slow_lev,
@@ -14183,9 +14439,10 @@ pub fn main() {
         jf(st.dis_per_century, 0, 2)
     );
     println!(
-        "  valuation gap          sd log(p/fair) {}   century max +{}% over fair   (record proxy: sd log CAPE 0.24-0.41, peaks +70-100%)",
+        "  valuation gap          sd log(p/fair) {}   century max +{}% over fair   (record proxy: sd log CAPE 0.24-0.41, peaks +70-100%)   drift late-early {}",
         jf(st.val_disp, 0, 3),
-        jf(st.max_over * 100.0, 0, 0)
+        jf(st.max_over * 100.0, 0, 0),
+        jf(st.gap_drift, 0, 3)
     );
 
     println!();
@@ -15335,13 +15592,22 @@ mod contract_tests {
     /// the shipped world — and a fixed floor read at the caller's `-years` graded the horizon,
     /// not the world. The ordering is far outside seed noise at 24 paths.
     #[test]
-    fn valuation_dispersion_grows_with_the_horizon_so_the_verdict_is_pinned() {
+    fn valuation_dispersion_grew_with_the_horizon_on_the_walk_and_no_longer_does() {
+        // on the fair-value start the gap was near-integrated, so its sample sd grew with the
+        // window; since 0.24.4 the default starts stationary and the two horizons read alike
+        let old = release_world("0.24.1").expect("0.24.1 must resolve");
+        let short_old = measure(&sim_paths(&old, 24, 30, DEFAULT_SEED), 30).val_disp;
+        let long_old = measure(&sim_paths(&old, 24, GATE_YEARS, DEFAULT_SEED), GATE_YEARS).val_disp;
+        assert!(
+            short_old < long_old * 0.8,
+            "on the walk the short horizon read well below the century's: 30y {short_old:.3} vs 100y {long_old:.3}"
+        );
         let w = default_world();
         let short = measure(&sim_paths(&w, 24, 30, DEFAULT_SEED), 30).val_disp;
         let long = measure(&sim_paths(&w, 24, GATE_YEARS, DEFAULT_SEED), GATE_YEARS).val_disp;
         assert!(
-            short < long * 0.8,
-            "short-horizon dispersion should read well below the century's: 30y {short:.3} vs 100y {long:.3}"
+            short > long * 0.7,
+            "on the stationary start the two horizons read alike: 30y {short:.3} vs 100y {long:.3}"
         );
     }
 
@@ -17183,18 +17449,13 @@ mod bust_swing_tests {
             assert!(w.bust_amp == 0.0, "release {v}");
         }
         for (n, w, _) in recipes() {
-            if n != "0.24.3-nasdaq" && !n.starts_with("0.24.4") {
+            if recipe_version(n) < "0.24.3" {
                 assert!(w.bust_amp == 0.0, "recipe {n}");
             }
         }
-        // the searched 0.24.3 recipe carries the archive's own amplitude, the 0.24.4 recipes
-        // the one decided by measurement under the ceiling
+        // the searched recipes carry their archive's own amplitude
         let (w0243, _) = named_world("0.24.3-nasdaq").expect("recipe");
         assert!(w0243.bust_amp == 0.01448313, "0.24.3-nasdaq");
-        for n in ["0.24.4-nasdaq", "0.24.4-nasdaq-basket"] {
-            let (w, _) = named_world(n).expect("recipe");
-            assert!(w.bust_amp == 0.20, "{n}");
-        }
         // at 0 the block never runs: its own stream is never drawn and no hook moves
         let (w, _) = named_world("0.24.2-nasdaq").expect("recipe");
         let mut z = w;
@@ -17209,17 +17470,25 @@ mod bust_swing_tests {
 
     #[test]
     fn on_the_swing_reaches_the_price_and_raises_the_ensembles_vol_inside_the_busts() {
-        // the recipe the swing is calibrated on, with the swing off against its own amplitude
-        let (r, _) = named_world("0.24.4-nasdaq").expect("recipe");
+        // the Nasdaq recipe at the swing's measured amplitude, against the swing off
+        let (mut r, _) = named_world("0.24.4-nasdaq").expect("recipe");
+        r.bust_amp = 0.20;
         let mut w = r;
         w.bust_amp = 0.0;
         let on_w = r;
-        // a mania has to form first, which takes decades: one 80-year path
-        let on = simulate(&on_w, 80, DEFAULT_SEED);
-        let off = simulate(&w, 80, DEFAULT_SEED);
-        assert!(on.price != off.price, "the swing must reach the price");
-        let st_on = measure(&sim_paths(&on_w, 60, 80, DEFAULT_SEED), 80);
-        let st_off = measure(&sim_paths(&w, 60, 80, DEFAULT_SEED), 80);
+        // a mania has to form first, which takes decades and does not happen on every path:
+        // the swing must reach the price somewhere in the ensemble
+        let on_paths = sim_paths(&on_w, 60, 80, DEFAULT_SEED);
+        let off_paths = sim_paths(&w, 60, 80, DEFAULT_SEED);
+        assert!(
+            on_paths
+                .iter()
+                .zip(off_paths.iter())
+                .any(|(a, b)| a.price != b.price),
+            "the swing must reach the price"
+        );
+        let st_on = measure(&on_paths, 80);
+        let st_off = measure(&off_paths, 80);
         assert!(
             st_on.vol > st_off.vol,
             "the swing must add volatility: {:.4} -> {:.4}",
@@ -17238,7 +17507,8 @@ mod bust_swing_tests {
     }
     #[test]
     fn the_ceiling_holds_the_swing_under_the_manias_high_and_never_runs_at_zero() {
-        let (w, _) = named_world("0.24.4-nasdaq").expect("recipe");
+        let (mut w, _) = named_world("0.24.4-nasdaq").expect("recipe");
+        w.bust_amp = 0.20;
         let mut off_w = w;
         off_w.bust_amp = 0.0;
         let off = sim_paths(&off_w, 20, 80, DEFAULT_SEED);
@@ -17504,7 +17774,7 @@ mod amplifier_anchor_tests {
         for (n, w, _) in recipes() {
             // the 0.24.1 Nasdaq recipes carry their own dials and were NOT re-solved against the
             // channel; the 0.24.2 Nasdaq recipe was
-            if !n.starts_with("0.24.")
+            if recipe_version(n) < "0.24"
                 || n.starts_with("0.24.0")
                 || n == "0.24.1-nasdaq"
                 || n == "0.24.1-nasdaq-basket"
@@ -17573,10 +17843,11 @@ mod amplifier_anchor_tests {
                 assert!(w.stress_adapt == 0.005, "recipe {n}");
             }
         }
-        // the frozen row is today's default less the two mechanisms' four dials and the three
-        // re-solved around them, and nothing else moved with them
+        // the frozen row is the 0.24.1 row less the two mechanisms' four dials and the three
+        // re-solved around them, and nothing else moved with them (the default moved on at
+        // 0.24.4: the beliefs' fade and the cycle)
         let frozen = release_world("0.24.0").expect("0.24.0 must resolve");
-        let mut off = d;
+        let mut off = release_world("0.24.1").expect("0.24.1 must resolve");
         off.vol_resp = frozen.vol_resp;
         off.vol_resp_phi = frozen.vol_resp_phi;
         off.vol_resp_attack = frozen.vol_resp_attack;
@@ -17653,7 +17924,7 @@ mod amplifier_anchor_tests {
             assert!(w.stress_scale == 0.0, "release {v}");
         }
         for (n, w, _) in recipes() {
-            if !n.contains("nasdaq") || !n.starts_with("0.24.") {
+            if !n.contains("nasdaq") || recipe_version(n) < "0.24" {
                 assert!(w.stress_scale == 0.0, "recipe {n}");
             }
         }
@@ -17684,7 +17955,7 @@ mod macro_panel_tests {
             assert!(w.macro_panel == 0, "release {v}");
         }
         for (n, w, _) in recipes() {
-            if !n.starts_with("0.24.") {
+            if recipe_version(n) < "0.24" {
                 assert!(w.macro_panel == 0, "recipe {n}");
             }
         }
@@ -17700,7 +17971,7 @@ mod macro_panel_tests {
             }
         }
         for (n, w, _) in recipes() {
-            if !n.starts_with("0.24.") {
+            if recipe_version(n) < "0.24" {
                 assert!(w.lev_gain == 0.0, "recipe {n}");
             }
         }
@@ -18206,7 +18477,7 @@ mod dividend_tests {
         // the 0.23.1 recipes carry the stream at their set's anchor, and the 0.24.0 ones are
         // those bases
         for (n, w, _) in recipes() {
-            if !n.starts_with("0.23.1") && !n.starts_with("0.24.") {
+            if recipe_version(n) < "0.23.1" {
                 assert!(w.div_yield == 0.0, "recipe {n}");
             }
         }
@@ -18962,6 +19233,153 @@ mod basket_drift_tests {
         assert!(
             (on - off).abs() < 0.03,
             "the gap channel must be drift-neutral: {off:.4} with gaps off, {on:.4} with them on"
+        );
+    }
+}
+
+/// THE VALUATION CYCLE AS A STATE (`-cyclesd`, PLAN item 27) and the stationarity row. Before it
+/// every path started at the fundamental and the valuation gap drifted under it for decades,
+/// because at the calibrated belief share the price never followed the fundamental back up; the
+/// wing, dispersion and tail rows were graded on that transient. The cycle is a stationary AR(1)
+/// in perceived fair, started from its own law and repriced the same session, and the
+/// `valuation stationary from the first session` row is what refuses the old start. The Scala
+/// twin's `ValuationCycleSuite` makes the same checks.
+#[cfg(test)]
+mod valuation_cycle_tests {
+    use super::*;
+
+    /// the S&P default with the cycle on and the beliefs' share halved: the probe that showed
+    /// the start stationary and the disaster's recovery priced (item 27)
+    fn probe() -> World {
+        let mut w = default_world();
+        w.cycle_sd = 0.3;
+        w.cycle_years = 11.5;
+        w.belief_share = 0.5;
+        w.belief_leak = 0.0;
+        w
+    }
+
+    #[test]
+    fn the_cycle_is_off_in_every_frozen_release_row_and_zero_is_bit_identical() {
+        for (v, w) in releases() {
+            assert!(w.cycle_sd == 0.0, "release {v}");
+        }
+        // at 0 the block never runs: its own stream is never drawn and the price starts at the
+        // fundamental as before
+        let (_, w) = releases().last().cloned().expect("a release row");
+        let mut z = w;
+        z.cycle_sd = 0.0;
+        let a = simulate(&w, 3, DEFAULT_SEED);
+        let b = simulate(&z, 3, DEFAULT_SEED);
+        assert!(
+            a.price == b.price && a.bond == b.bond,
+            "0 must be bit-identical"
+        );
+    }
+
+    #[test]
+    fn on_the_cycle_reaches_the_price_and_widens_the_valuation_gap() {
+        let mut off = default_world();
+        off.belief_share = 0.5;
+        off.belief_leak = 0.0;
+        off.cycle_sd = 0.0;
+        let on = probe();
+        let a = simulate(&off, 20, DEFAULT_SEED);
+        let b = simulate(&on, 20, DEFAULT_SEED);
+        assert!(a.price != b.price, "the cycle must reach the price");
+        let st_off = measure(&sim_paths(&off, 20, 80, DEFAULT_SEED), 80);
+        let st_on = measure(&sim_paths(&on, 20, 80, DEFAULT_SEED), 80);
+        assert!(
+            st_on.val_disp > st_off.val_disp + 0.05,
+            "the cycle must widen the gap's dispersion: {:.3} -> {:.3}",
+            st_off.val_disp,
+            st_on.val_disp
+        );
+    }
+
+    #[test]
+    fn gap_drift_of_reads_the_later_half_against_the_first_decade() {
+        let n = 80 * DAYS_PER_YEAR;
+        let fund = vec![1.0f64; n];
+        // +0.5 log through the first decade, -0.5 through the later half, 0 between
+        let price: Vec<f64> = (0..n)
+            .map(|i| {
+                if i < 10 * DAYS_PER_YEAR {
+                    0.5f64.exp()
+                } else if i >= 40 * DAYS_PER_YEAR {
+                    (-0.5f64).exp()
+                } else {
+                    1.0
+                }
+            })
+            .collect();
+        let (e, en, l, ln) = gap_drift_of(&price, &fund);
+        assert!((e / en - 0.5).abs() < 1e-12);
+        assert!((l / ln + 0.5).abs() < 1e-12);
+        assert!(en == (10 * DAYS_PER_YEAR) as f64);
+        assert!(ln == (40 * DAYS_PER_YEAR) as f64);
+        // a short path: the first half against the second
+        let (_, en3, _, ln3) = gap_drift_of(&price[..1000], &fund[..1000]);
+        assert!(en3 == 500.0 && ln3 == 500.0);
+    }
+
+    #[test]
+    fn the_beliefs_fade_alone_makes_the_outgoing_default_stationary_and_zero_is_bit_identical() {
+        // the 0.24.1 row is the default before the fade and the cycle: the fair-value start
+        let (_, w) = releases()
+            .into_iter()
+            .find(|(v, _)| *v == "0.24.1")
+            .expect("no 0.24.1 release row");
+        let mut z = w;
+        z.belief_leak = 0.0;
+        let a = simulate(&w, 3, DEFAULT_SEED);
+        let b = simulate(&z, 3, DEFAULT_SEED);
+        assert!(a.price == b.price, "0 must be bit-identical");
+        let mut leaked = w;
+        leaked.belief_leak = 0.2;
+        let st = measure(&sim_paths(&leaked, 60, 80, DEFAULT_SEED), 80);
+        println!("gap drift: default + leak 0.2 {:.3}", st.gap_drift);
+        assert!(
+            st.gap_drift.abs() < GAP_DRIFT_BAND,
+            "the leak must hold the gap stationary: drift {:.3}",
+            st.gap_drift
+        );
+        // and the short-horizon reversion the belief share carries is untouched
+        let st0 = measure(&sim_paths(&w, 60, 80, DEFAULT_SEED), 80);
+        assert!(
+            (st.vr60 - st0.vr60).abs() < 0.05,
+            "the 60-day variance ratio must stay put: {:.3} -> {:.3}",
+            st0.vr60,
+            st.vr60
+        );
+    }
+
+    #[test]
+    fn the_stationarity_row_refuses_the_fair_value_start_and_admits_the_cycles() {
+        // the 0.24.1 release row is the frozen transient world: its gap falls for a century from
+        // the fair-value start, which the row reads as a drift far past the band
+        let (_, old) = releases()
+            .into_iter()
+            .find(|(v, _)| *v == "0.24.1")
+            .expect("no 0.24.1 release row");
+        let st_old = measure(&sim_paths(&old, 60, 80, DEFAULT_SEED), 80);
+        println!("gap drift: 0.24.1 {:.3}", st_old.gap_drift);
+        assert!(
+            st_old.gap_drift < -GAP_DRIFT_BAND,
+            "the frozen transient world must fail the row: drift {:.3}",
+            st_old.gap_drift
+        );
+        assert!(
+            gate_checks(SP500_ANCHORS, &st_old)
+                .iter()
+                .any(|(n, ok, _)| n == "valuation stationary from the first session" && !ok)
+        );
+        let st_new = measure(&sim_paths(&probe(), 60, 80, DEFAULT_SEED), 80);
+        println!("gap drift: probe {:.3}", st_new.gap_drift);
+        assert!(
+            st_new.gap_drift.abs() < GAP_DRIFT_BAND,
+            "a world started on its own law must pass the row: drift {:.3}",
+            st_new.gap_drift
         );
     }
 }

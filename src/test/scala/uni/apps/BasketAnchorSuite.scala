@@ -29,7 +29,8 @@ class BasketAnchorSuite extends FunSuite:
     rs.filter(r => r(0) == "eight" && r(2) == stat).map(_(3).toDouble)
 
   /** The anchored world: the S&P default with the basket at its anchored dials. */
-  val Anchored = MarketSim.Defaults.copy(basket = 8, basketBeta = 1.56, basketSector = 1.1,
+  // the 0.24.1 row, the default these recipes were anchored on (the default moved on at 0.24.4)
+  val Anchored = MarketSim.releaseWorld("0.24.1").getOrElse(fail("0.24.1 must resolve")).copy(basket = 8, basketBeta = 1.56, basketSector = 1.1,
                                          basketIdio = 0.9, basketGaps = 6.0)
 
   test("the graded bands are the fixture's: the eight's ranges at levels 1 and 3, the basket on the set's primary at level 2") {
@@ -67,7 +68,8 @@ class BasketAnchorSuite extends FunSuite:
   }
 
   test("off is bit-identical and carries no names; every frozen release and recipe keeps the basket off") {
-    val off = MarketSim.simulate(MarketSim.Defaults, 3, MarketSim.DefaultSeed)
+    // the same base with and without the basket (Anchored sits on the 0.24.1 row)
+    val off = MarketSim.simulate(Anchored.copy(basket = 0), 3, MarketSim.DefaultSeed)
     val on  = MarketSim.simulate(Anchored, 3, MarketSim.DefaultSeed)
     assert(off.names.isEmpty)
     assertEquals(on.names.size, 8)

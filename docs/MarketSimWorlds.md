@@ -196,21 +196,23 @@ market_sim_search -out search ... -export worlds.json
 `worlds.json` is a JSON array of members, each with its `member` number, the world it was seeded
 from, its score and worst row, and a `world` block in the sidecar's own key format at the
 archive's full precision. The release ships four, built this way and pruned by their holdouts:
-`test-data/worlds/0.24.4-nasdaq.json` (30 members, seeded from `0.24.4-nasdaq` under the swing's
-ceiling and recovery rule; member 0 is the recipe itself, byte for byte; every member passes every
-class at 200 paths and the fourteen candidates on four seeds; the one row no member reaches is the
-worst crash, the best at −67 against −83; pass `-anchors nasdaq`, since a member names no anchor
-set), `0.24.3-nasdaq.json` (173 members, seeded from `0.24.2-nasdaq`, the set `0.24.3-nasdaq` was
-picked from -- member 53, which `0.24.4-nasdaq` runs at bust amplitude 0.20), and the two 0.24.2
-sets, `0.24.2-sp500.json` (150 members, seeded from the
+`test-data/worlds/0.24.4-nasdaq.json` (73 members, seeded from the 0.24.3 recipe at the swing's
+measured amplitude with the cycle on and searched under the stationarity row, the transport arm the
+S&P default; member 49 is the recipe itself, byte for byte; 52 of 73 pass every class at 200 paths
+and 8 of 14 candidates on four seeds; the one row no member reaches is the worst crash, the best at
+−67 against −83; pass `-anchors nasdaq`, since a member names no anchor set), `0.24.3-nasdaq.json`
+(173 members, seeded from `0.24.2-nasdaq`, the set `0.24.3-nasdaq` was picked from -- member 53),
+and the two 0.24.2 sets, `0.24.2-sp500.json` (150 members, seeded from the
 default; pass `-anchors sp500` or nothing) and `0.24.2-nasdaq.json` (174, seeded from
 `0.24.2-nasdaq`), searched before the typical-year and wing rows, so their `score` and
-`worstRow` are that objective's readings. Every member of the three older sets with a nonzero
-`bustAmp` now runs under the swing's ceiling and recovery rule, which its `score` predates; the
-0.24.4 set was searched under both. To run one:
+`worstRow` are that objective's readings. Every member of the three older sets starts at fair
+value, which the stationarity row now refuses, and those with a nonzero `bustAmp` run under the
+swing's ceiling and recovery rule; their `score` and `worstRow` predate all of it. The 0.24.4 set
+was searched under it; no S&P set was exported this release (three searches under the row found no
+member that improves on the default without moving other rows down). To run one:
 
 ```
-market_sim.exe -worldset test-data/worlds/0.24.4-nasdaq.json -worldindex 4 -anchors nasdaq -paths 200 -years 40 -emitall -emit m4.tsv
+market_sim.exe -worldset test-data/worlds/0.24.4-nasdaq.json -worldindex 55 -anchors nasdaq -paths 200 -years 40 -emitall -emit m55.tsv
 ```
 
 `-worldindex` addresses a member by its own number, defaulting to 0. The member seeds every dial
@@ -539,6 +541,70 @@ which is why the disaster channel's tail *deepened* under the cycle.
 `-beliefshare` must stay below 1: at 1 the pull chases its own shadow and nothing anchors the
 price level (the CLI refuses it; the mechanism row's 0.70 ceiling is the same guard one level up).
 
+The slow swing itself is a state since the cycle landed: `-cyclesd` carries it, started from its
+own law, the beliefs fade toward the fundamental (`-beliefleak`) and carry only what the price has
+absorbed net of it — [below](#the-valuation-cycle-as-a-state--cyclesd). The readings above are the
+pre-cycle world's; the shipped default now reads dispersion 0.17 and wings 0.0 / 3.3, the
+stationary walk having been most of the 0.33.
+
+## The valuation cycle as a state — `-cyclesd`
+
+Every path used to start at fair value, and the valuation gap then fell for decades: to −0.3 log
+on the Nasdaq recipe after about forty years, to −1.0 on the S&P default after about a hundred
+and twenty. At the calibrated belief share the pull sees 5-27% of the fundamental, so after a
+disaster the price tracked the decline and never the recovery leg (the S&P's gap sat 0.86 log
+under its onset level four years after the trough and 0.88 twenty years after, with the
+fundamental fully regained and growing), and every spiral crash did the same in miniature. The
+slow valuation variation the wing and dispersion rows graded was that walk plus its transient; a
+mania could not arm in a path's first two decades (0.3-0.7 mania-led episodes per
+century-equivalent against 4-8 later), so the 27-year tail row never saw the mania channel; and a
+consumer's 40-year path carried a 0.25-0.40 log downtrend in price over fair from its first
+session. Read in the stationary state, the shipped worlds sat off their own calibration in
+opposite directions: the Nasdaq recipe's wings 6.4 / 10.7 → 12.4 / 12.0, the S&P's upper wing
+0 → 2.0 and its century worst −83 → −67.
+
+`-cyclesd S` makes the slow swing a state: a stationary AR(1) in log added to perceived fair,
+half-life `-cycleyears` (11.5 years by default, Shiller's CAPE), stationary sd S, drawn from its
+own stream and started from its stationary law, with the price and its running peak starting on
+it — the first session is a draw from the same distribution as the thousandth. Its move is
+repriced the same session in the price, the bust swing's convention: tracked through the pull it
+manufactured a lagged response and failed the variance-ratio profile. The beliefs track the gap
+net of the cycle, so the two do not compound, and the derived channels see the move as a
+repricing through the news-jump input. 0 is bit-identical off.
+
+The row that refuses the old start is `valuation stationary from the first session`, a mechanism
+row: the pooled gap's mean over the paths' later half minus over their first decade must sit
+within 0.15 log (a path under 50 years reads its two halves). A stationary world reads within
+±0.05 at 60 paths; the pre-cycle S&P default reads −0.5 to −0.7 and the pre-cycle Nasdaq recipe
+−0.05 to −0.23. The report's `valuation gap` line prints the reading as `drift late-early`.
+The recovery drag reads the drawdown of the price *without* the cycle: value capital is depleted
+by a crash, not by a slow re-rating. A drag that read the cycle's down-swings as drawdowns
+weakened the pull for years at a time and manufactured a lagged recovery, which lifted the 250-day
+variance ratio past the profile's 1.30 at the 25-year horizon on the S&P (1.17-1.22 at amplitudes
+0.2-0.4, 1.10 with the drag reading the price net of the cycle; drag 0 reads 1.08). What the cycle
+still costs, measured on the S&P at 15 years: each 0.1 of amplitude adds about a point of pooled
+vol and thins the tails (kurtosis 24 → 14 from 0.2 to 0.4), which the re-solve pays for in depth
+and the tail dials.
+
+The residual gap — what the beliefs absorb net of the cycle — has its own fix, `-beliefleak L`:
+the beliefs fade toward the fundamental at L per year, so the belief share stays `-beliefshare`
+at the daily scale (the variance-ratio profile reads the same) and falls to share × mu/(mu + L)
+in the long run (mu the adaptation rate), where the walk under the fundamental lived. A lower
+share alone does the second and breaks the first. On the shipped S&P default 0.2 reads drift
+−0.52 → −0.06 with every other row inside noise of its old reading except the two the walk was
+supplying: the valuation dispersion 0.29 → 0.15 and the lower wing 11.8 → 3.1, which the cycle
+is there to carry.
+
+The shipped S&P default is the 0.24.1 world with the fade at 0.2 and the cycle at 0.1: its paths
+start stationary (drift −0.06 on four seeds) and every class passes; kurtosis 32 → 27.5, d10 and
+d20 down a little, the lower wing 11.8 → 3.3, at the cost of the dispersion (0.29 → 0.17) and the
+typical year (13.0 → 13.4). No larger cycle passes the variance-ratio profile on every seed
+(0.12 and 0.15 each fail it on one of three), so the S&P's upper wing stays the disclosed miss it
+was; three searches under the row (the cycle with a lower belief share, the fade, the fade with the
+drag net of the cycle) found no world that improves on it without moving other rows down. The
+Nasdaq recipe re-solved under the row (`0.24.4-nasdaq`) reaches its wings through the
+growth-extrapolation term with the cycle near 0 — see its recipe paragraph.
+
 ## How tight are the anchors? — `-noise`
 
 Every fidelity target is a point read from one historical record. `-noise` reports, per target, the
@@ -639,6 +705,8 @@ with it.
 | `-stressadapt` | the liquidity spiral's SCALE speed: the EWMA weight on r² that standardises the decline its own stress index reads. At 0.005 (a ~140-session memory) a stretch that a persistent vol mechanism has genuinely made volatile reads as continuous STRESS and the spiral mints spikes out of it, which blocked every form of the response tried. The index the rest of the world reads — policy easing, the refuge bid, margin selling, the credit stock's paydown — keeps the slow scale | 0.036 |
 | `-slowshare` | THE SLOW REPRICING CHANNEL: this share of the diffusive variance leaves the order-flow channel and reprices the fundamental and the price TOGETHER, like a news jump, so the value channel has nothing to arbitrage and the move never passes through the spiral. Its volatility is long-memoried and asymmetric, which is what puts the abs-r profile back on the record's SHAPE. `-slowvol` sets its scale, `-slowlev` its own leverage effect, `-slowphi` its persistence, `-slowperm` how much of each move is permanent, `-slowbeta` the bond's opposite-sign loading. 0 is bit-identical — [below](#the-vol-response-to-a-fall) | 0.20 |
 | `-bustamp` | THE BUST SWING: when a 0.2-log drawdown opens under a peak that stood 0.5 log or more over the gap's 20-year mean, a months-long stationary swing of this amplitude is repriced the same session in the price and in perceived fair while the unwind keeps making new lows, with the recovery drag relieved and the amplifier blind to it — the record's mania bust, NDX 2000-02: two and a half years at 53% vol in five legs and rallies. The swing never carries the price nearer than 0.10 log to the running peak (a mania's unwind never re-attains its high), the unwind ends once the high is regained, and the state is cut to 0 once it is over. Own stream; 0 is bit-identical; the S&P default keeps 0 — [below](#the-bust-swing--bustamp) | 0 |
+| `-beliefleak` | THE BELIEFS' OWN FADE toward the fundamental, per year: the belief share stays `-beliefshare` at the daily scale and falls to share × mu/(mu + L) in the long run, which is what holds the residual gap stationary at a high share (0.2 on the default: drift −0.52 → −0.06, the variance-ratio profile untouched). 0 is bit-identical — [below](#the-valuation-cycle-as-a-state--cyclesd) | 0.2 |
+| `-cyclesd` / `-cycleyears` | THE VALUATION CYCLE AS A STATE: a slow stationary AR(1) in perceived fair with stationary sd S (log) and half-life Y (years), started from its own law so paths begin stationary, its move repriced the same session in the price; the beliefs track the gap net of it. Own stream; 0 is bit-identical — [below](#the-valuation-cycle-as-a-state--cyclesd) | 0.1 / 15 |
 | `-noiseasym` | the item-12 cascade: the diffusive noise times exp(g − Var g), g a cascade of the session's own diffusive draw — a fast attack into a decay at `-noiseasymphi`, capped by `-noiseasymcap`. Ships at 0: at every setting that closes part of what is left, something graded gives way — [below](#the-vol-response-to-a-fall) | 0 |
 | `-levpersist` | the leverage kick's own memory: at P the kick raises the following sessions too, through weights that sum to 1, so only the shape of the response moves. Closes the clustering hump and puts lag-1 clustering on the record's 0.298, at the cost of the lag-1 leverage correlation — [below](#the-vol-response-to-a-fall) | 0 |
 | `-stressscale` | THE AMPLIFIER's gain scale: the spiral's excess gain multiplied by (depth / 17.4)^E, so a thinner market's liquidity event is not proportionally larger than the reference world's. The record's crash count is volatility-flat across a fresh-start cross-section (`amplifier-2026-09-07.tsv`) where the model's `depth` sweep reads 1.8; the default world is unchanged at any E, and `0.24.0-nasdaq` runs at 0.5 | 0 |
@@ -709,97 +777,109 @@ This is the part to read before changing anything. Columns are **ratios to the r
 1.00 is on target. Starred rows are the defaults.
 
 ```
-setting                        vol  kurt  clus    vr crash   d10  bdep   r/v  tshare  cflow  gate
+setting                        vol  kurt  clus    vr crash   d10  bdep   r/v tshare  cflow  gate
 -------------------------------------------------------------------------------------------------
-DEFAULT                       1.00  0.93  1.09  1.08  0.97  1.38  1.31  0.99   0.20   3.43  P/P/P
+DEFAULT                       1.04  0.94  1.00  1.06  1.06  1.23  1.33  1.00   0.20   3.59  P/P/P
 
--stress 2.0                   0.83  0.34  0.58  1.10  0.55  1.86  1.06  1.22   0.20   3.26  P/F/F
--stress 4.7 *                1.00  0.93  1.09  1.08  0.97  1.38  1.31  0.99   0.20   3.43  P/P/P
--stress 8.0                   1.33  2.47  1.59  0.99  1.36  1.05  1.45  0.72   0.20   3.47  F/P/F
+-stress 2.0                   0.88  0.52  0.70  1.09  0.67  1.63  1.11  1.19   0.21   3.28  P/F/F
+-stress 5 *                   1.04  0.94  1.00  1.06  1.06  1.23  1.33  1.00   0.20   3.59  P/P/P
+-stress 8.0                   1.43  1.86  1.51  1.02  1.68  0.91  1.46  0.72   0.20   3.90  F/P/F
 
--levgain 0                    0.97  0.62  0.93  1.07  0.87  1.36  1.26  1.03   0.20   3.45  P/F/P
--levgain 6 *                 1.00  0.93  1.09  1.08  0.97  1.38  1.31  0.99   0.20   3.43  P/P/P
--levgain 10                   1.09  1.70  1.28  1.06  1.07  1.25  1.36  0.90   0.20   3.43  F/P/F
+-levgain 0                    0.99  0.65  0.84  1.06  0.97  1.28  1.25  1.06   0.20   3.56  P/P/P
+-levgain 6 *                  1.04  0.94  1.00  1.06  1.06  1.23  1.33  1.00   0.20   3.59  P/P/P
+-levgain 10                   1.13  1.45  1.17  1.05  1.21  1.11  1.40  0.93   0.20   3.64  F/P/F
 
--depth 12                     1.31  1.23  1.23  0.94  1.49  0.95  1.31  0.76   0.20   4.02  F/P/F
--depth 17.4 *                1.00  0.93  1.09  1.08  0.97  1.38  1.31  0.99   0.20   3.43  P/P/P
--depth 22                     0.88  0.73  0.99  1.16  0.72  1.72  1.30  1.13   0.20   3.13  P/F/P
+-depth 12                     1.73  0.98  1.30  0.89  2.34  0.76  1.33  0.59   0.20   4.73  P/P/F
+-depth 17.4 *                 1.04  0.94  1.00  1.06  1.06  1.23  1.33  1.00   0.20   3.59  P/P/P
+-depth 22                     0.86  0.73  0.84  1.16  0.71  1.76  1.31  1.22   0.21   3.16  P/P/F
 
--drift 0.08                   1.01  0.91  1.10  1.08  0.85  1.46  1.31  0.60   0.20   3.52  P/P/F
--drift 0.122 *               1.00  0.93  1.09  1.08  0.97  1.38  1.31  0.99   0.20   3.43  P/P/P
--drift 0.15                   1.00  0.94  1.09  1.09  0.96  1.36  1.30  1.25   0.20   3.36  P/P/F
+-drift 0.08                   1.07  0.90  1.04  1.04  1.01  1.27  1.33  0.61   0.20   3.73  P/P/F
+-drift 0.122 *                1.04  0.94  1.00  1.06  1.06  1.23  1.33  1.00   0.20   3.59  P/P/P
+-drift 0.15                   1.01  0.94  0.97  1.07  1.02  1.27  1.32  1.28   0.21   3.49  P/P/F
 
--fundvol 0.041                1.00  0.91  1.09  1.03  0.92  1.21  1.30  1.00   0.20   3.46  P/P/P
--fundvol 0.060 *             1.00  0.93  1.09  1.08  0.97  1.38  1.31  0.99   0.20   3.43  P/P/P
--fundvol 0.10                 1.02  0.91  1.10  1.27  1.06  1.80  1.31  0.97   0.20   3.36  P/P/F
+-fundvol 0.041                1.02  0.94  0.97  1.01  0.99  1.14  1.32  1.01   0.20   3.59  P/P/P
+-fundvol 0.06 *               1.04  0.94  1.00  1.06  1.06  1.23  1.33  1.00   0.20   3.59  P/P/P
+-fundvol 0.10                 1.07  0.94  1.00  1.22  1.21  1.53  1.35  0.97   0.21   3.57  P/P/F
 
--jumpvar 0                    1.01  0.67  1.12  1.06  0.96  1.35  1.30  0.99   0.20   3.50  P/P/P
--jumpvar 0.11 *              1.00  0.93  1.09  1.08  0.97  1.38  1.31  0.99   0.20   3.43  P/P/P
--jumpvar 0.23                 0.99  1.54  1.05  1.10  0.95  1.37  1.29  1.00   0.20   3.33  F/P/P
+-jumpvar 0                    1.01  0.58  1.04  1.05  1.01  1.25  1.31  1.03   0.20   3.65  P/P/P
+-jumpvar 0.16 *               1.04  0.94  1.00  1.06  1.06  1.23  1.33  1.00   0.20   3.59  P/P/P
+-jumpvar 0.23                 1.05  1.30  0.97  1.07  1.08  1.23  1.34  1.00   0.20   3.55  P/P/P
 
--jumpskew 0.7                 1.00  0.96  1.09  1.08  0.96  1.38  1.31  0.99   0.20   3.43  P/P/P
--jumpskew 1.0 *              1.00  0.93  1.09  1.08  0.97  1.38  1.31  0.99   0.20   3.43  P/P/P
--jumpskew 1.3                 1.00  0.90  1.09  1.08  0.97  1.38  1.30  0.99   0.20   3.44  P/P/P
+-jumpskew 0.7                 1.04  0.92  1.00  1.06  1.06  1.23  1.33  1.00   0.20   3.59  P/P/P
+-jumpskew 0.65 *              1.04  0.94  1.00  1.06  1.06  1.23  1.33  1.00   0.20   3.59  P/P/P
+-jumpskew 1.3                 1.04  0.90  1.00  1.07  1.08  1.21  1.33  1.00   0.20   3.60  P/P/P
 
--jumprate 0.002               1.00  0.98  1.10  1.08  0.96  1.35  1.30  0.99   0.20   3.42  P/P/P
--jumprate 0.0035 *           1.00  0.93  1.09  1.08  0.97  1.38  1.31  0.99   0.20   3.43  P/P/P
--jumprate 0.012               1.01  0.81  1.10  1.07  0.97  1.36  1.31  0.98   0.20   3.46  P/P/P
+-jumprate 0.002               1.04  1.16  1.00  1.07  1.07  1.23  1.33  1.00   0.20   3.57  P/P/P
+-jumprate 0.0035 *            1.04  0.94  1.00  1.06  1.06  1.23  1.33  1.00   0.20   3.59  P/P/P
+-jumprate 0.012               1.04  0.70  1.00  1.06  1.09  1.21  1.31  1.00   0.20   3.65  P/P/P
 
--leverage 0                   0.97  0.76  0.89  1.08  0.90  1.46  1.26  1.03   0.20   3.43  P/P/P
--leverage 0.10 *             1.00  0.93  1.09  1.08  0.97  1.38  1.31  0.99   0.20   3.43  P/P/P
--leverage 0.20                1.07  1.74  1.29  1.06  1.02  1.22  1.35  0.92   0.20   3.42  F/P/F
+-leverage 0                   1.01  0.80  0.87  1.06  1.00  1.28  1.29  1.03   0.20   3.58  P/P/P
+-leverage 0.1 *               1.04  0.94  1.00  1.06  1.06  1.23  1.33  1.00   0.20   3.59  P/P/P
+-leverage 0.20                1.08  1.34  1.14  1.05  1.15  1.16  1.37  0.96   0.20   3.60  P/P/F
 
--volpersist 0.990             1.00  0.90  1.07  1.08  0.95  1.39  1.29  0.99   0.20   3.44  P/P/P
--volpersist 0.993 *          1.00  0.93  1.09  1.08  0.97  1.38  1.31  0.99   0.20   3.43  P/P/P
--volpersist 0.996             1.02  1.00  1.12  1.08  0.96  1.32  1.31  0.98   0.20   3.41  P/P/P
+-volpersist 0.990             1.04  0.99  1.00  1.07  1.06  1.21  1.34  1.00   0.20   3.59  P/P/P
+-volpersist 0.982 *           1.04  0.94  1.00  1.06  1.06  1.23  1.33  1.00   0.20   3.59  P/P/P
+-volpersist 0.996             1.06  1.09  1.04  1.08  1.06  1.19  1.34  0.99   0.20   3.56  P/P/P
 
--newsrate 0                   1.01  1.04  1.19  1.04  0.93  1.22  1.31  0.99   0.20   3.47  P/P/P
--newsrate 1.3 *              1.00  0.93  1.09  1.08  0.97  1.38  1.31  0.99   0.20   3.43  P/P/P
--newsrate 2.5                 1.00  0.90  0.99  1.12  0.99  1.47  1.29  0.99   0.20   3.39  P/P/P
+-newsrate 0                   1.02  0.96  1.07  1.04  1.00  1.15  1.33  1.01   0.20   3.56  P/P/P
+-newsrate 1.3 *               1.04  0.94  1.00  1.06  1.06  1.23  1.33  1.00   0.20   3.59  P/P/P
+-newsrate 2.5                 1.06  0.86  0.94  1.08  1.13  1.29  1.34  0.99   0.21   3.61  P/P/P
 
--refugedays 0                 1.00  0.93  1.09  1.08  0.97  1.38  1.26  0.99   0.20   3.43  P/P/P
--refugedays 1 *              1.00  0.93  1.09  1.08  0.97  1.38  1.31  0.99   0.20   3.43  P/P/P
--refugedays 5                 1.00  0.93  1.09  1.08  0.97  1.38  1.32  0.99   0.20   3.43  P/F/P
+-refugedays 0                 1.04  0.94  1.00  1.06  1.06  1.23  1.27  1.00   0.20   3.59  P/P/P
+-refugedays 1 *               1.04  0.94  1.00  1.06  1.06  1.23  1.33  1.00   0.20   3.59  P/P/P
+-refugedays 5                 1.04  0.94  1.00  1.06  1.06  1.23  1.33  1.00   0.20   3.59  P/P/P
 
--haltlimit 0                  1.00  0.93  1.08  1.07  0.97  1.37  1.31  0.99   0.20   3.43  F/P/P
--haltlimit 0.25 *            1.00  0.93  1.09  1.08  0.97  1.38  1.31  0.99   0.20   3.43  P/P/P
--haltlimit 0.40               1.00  0.93  1.08  1.07  0.97  1.37  1.31  0.99   0.20   3.43  F/P/P
+-haltlimit 0                  1.04  0.94  0.97  1.05  1.06  1.23  1.33  1.00   0.20   3.59  F/P/P
+-haltlimit 0.25 *             1.04  0.94  1.00  1.06  1.06  1.23  1.33  1.00   0.20   3.59  P/P/P
+-haltlimit 0.40               1.04  0.94  0.97  1.05  1.06  1.23  1.33  1.00   0.20   3.59  F/P/P
 
--disasterrate 0               1.00  0.94  1.09  1.00  1.04  1.26  1.30  1.05   0.20   3.49  P/F/P
--disasterrate 0.6 *          1.00  0.93  1.09  1.08  0.97  1.38  1.31  0.99   0.20   3.43  P/P/P
--disasterrate 1.2             1.00  0.96  1.09  1.17  0.90  1.53  1.31  0.91   0.20   3.37  P/P/F
+-disasterrate 0               1.03  0.97  0.97  0.98  1.11  1.12  1.32  1.06   0.20   3.63  P/F/F
+-disasterrate 0.6 *           1.04  0.94  1.00  1.06  1.06  1.23  1.33  1.00   0.20   3.59  P/P/P
+-disasterrate 1.2             1.05  0.96  1.00  1.14  1.00  1.30  1.33  0.94   0.20   3.56  P/P/F
 
--beliefshare 0                1.00  0.94  1.09  1.12  1.09  1.24  1.30  1.05   0.21   3.51  P/F/F
--beliefshare 0.95 *          1.00  0.93  1.09  1.08  0.97  1.38  1.31  0.99   0.20   3.43  P/P/P
--beliefshare 0.99             1.00  0.92  1.09  1.07  0.94  1.39  1.30  0.92   0.20   3.40  P/P/P
+-beliefshare 0                1.04  0.93  0.97  1.10  1.17  1.16  1.33  1.01   0.21   3.61  P/F/F
+-beliefshare 0.95 *           1.04  0.94  1.00  1.06  1.06  1.23  1.33  1.00   0.20   3.59  P/P/P
+-beliefshare 0.99             1.04  0.94  1.00  1.05  1.05  1.23  1.33  1.00   0.20   3.59  P/P/P
 
--beliefyears 0.75             1.00  0.95  1.09  1.07  0.86  1.53  1.30  0.99   0.20   3.40  P/P/P
--beliefyears 1.5 *           1.00  0.93  1.09  1.08  0.97  1.38  1.31  0.99   0.20   3.43  P/P/P
--beliefyears 5                1.00  0.92  1.09  1.10  1.05  1.27  1.31  1.02   0.20   3.48  P/P/P
+-beliefyears 0.75             1.04  0.91  1.00  1.03  0.97  1.30  1.33  1.00   0.20   3.57  P/P/P
+-beliefyears 1.5 *            1.04  0.94  1.00  1.06  1.06  1.23  1.33  1.00   0.20   3.59  P/P/P
+-beliefyears 5                1.04  0.94  0.97  1.09  1.13  1.19  1.33  1.01   0.21   3.61  P/P/F
 
--capyears 0                   1.00  0.92  1.09  1.00  0.98  1.11  1.30  1.01   0.20   3.49  P/P/P
--capyears 1.5 *              1.00  0.93  1.09  1.08  0.97  1.38  1.31  0.99   0.20   3.43  P/P/P
--capyears 3                   1.00  0.94  1.09  1.17  0.92  1.64  1.31  0.98   0.20   3.39  P/P/F
+-beliefleak 0                 1.04  0.96  1.00  1.06  1.01  1.26  1.33  0.94   0.20   3.53  P/F/P
+-beliefleak 0.2 *             1.04  0.94  1.00  1.06  1.06  1.23  1.33  1.00   0.20   3.59  P/P/P
+-beliefleak 0.5               1.04  0.97  0.97  1.07  1.09  1.21  1.33  1.01   0.21   3.60  P/P/P
 
--trendshare 0.02              1.00  0.91  1.08  1.07  0.96  1.38  1.30  0.99   0.18   3.03  P/P/P
--trendshare 0.055 *          1.00  0.93  1.09  1.08  0.97  1.38  1.31  0.99   0.20   3.43  P/P/P
--trendshare 0.30              1.03  1.03  1.16  1.11  1.04  1.33  1.32  0.96   0.36   6.24  P/P/P
+-capyears 0                   1.03  0.93  0.97  1.00  1.05  1.08  1.32  1.01   0.20   3.62  P/F/F
+-capyears 1.5 *               1.04  0.94  1.00  1.06  1.06  1.23  1.33  1.00   0.20   3.59  P/P/P
+-capyears 3                   1.05  0.93  1.00  1.13  1.06  1.39  1.34  0.99   0.21   3.56  P/P/P
 
--crowdimpact 0.010            0.98  0.88  1.06  1.06  0.90  1.39  1.28  1.01   0.20   1.15  P/P/P
--crowdimpact 0.030 *         1.00  0.93  1.09  1.08  0.97  1.38  1.31  0.99   0.20   3.43  P/P/P
--crowdimpact 0.12             1.12  1.57  1.34  1.21  1.29  1.26  1.39  0.87   0.20  13.62  F/P/F
+-cyclesd 0                    1.02  1.00  1.04  1.06  1.03  1.24  1.33  1.01   0.20   3.50  P/P/P
+-cyclesd 0.1 *                1.04  0.94  1.00  1.06  1.06  1.23  1.33  1.00   0.20   3.59  P/P/P
+-cyclesd 0.4                  1.27  0.47  0.60  1.05  1.62  1.26  1.33  0.81   0.20   4.46  P/F/F
 
--value 0.020                  1.00  1.00  1.11  1.10  0.88  1.58  1.33  0.91   0.19   3.31  P/P/F
--value 0.056 *               1.00  0.93  1.09  1.08  0.97  1.38  1.31  0.99   0.20   3.43  P/P/P
--value 0.070                  1.00  0.95  1.09  1.07  0.97  1.33  1.30  1.01   0.20   3.46  P/P/P
+-cycleyears 5                 1.07  0.85  0.90  1.06  1.14  1.22  1.33  0.97   0.20   3.75  P/P/P
+-cycleyears 15 *              1.04  0.94  1.00  1.06  1.06  1.23  1.33  1.00   0.20   3.59  P/P/P
+-cycleyears 20                1.03  0.95  1.00  1.06  1.05  1.23  1.33  1.00   0.20   3.57  P/P/P
 
--recoverydrag 0               0.99  0.84  1.06  0.91  0.99  1.15  1.26  1.04   0.20   3.53  P/P/P
--recoverydrag 8.5 *          1.00  0.93  1.09  1.08  0.97  1.38  1.31  0.99   0.20   3.43  P/P/P
--recoverydrag 20              1.00  0.92  1.10  1.09  0.98  1.41  1.30  0.99   0.20   3.42  P/P/P
+-trendshare 0.02              1.03  0.92  0.97  1.05  1.04  1.24  1.33  1.00   0.18   3.18  P/P/P
+-trendshare 0.055 *           1.04  0.94  1.00  1.06  1.06  1.23  1.33  1.00   0.20   3.59  P/P/P
+-trendshare 0.30              1.07  0.95  1.07  1.10  1.17  1.21  1.35  0.97   0.37   6.50  P/P/F
 
--recoveryfloor 0.05           1.00  0.96  1.09  1.09  0.91  1.47  1.31  0.96   0.20   3.40  P/P/P
--recoveryfloor 0.10 *        1.00  0.93  1.09  1.08  0.97  1.38  1.31  0.99   0.20   3.43  P/P/P
--recoveryfloor 0.50           1.00  0.90  1.08  0.98  1.03  1.19  1.29  1.02   0.20   3.50  P/P/P
+-crowdimpact 0.010            1.01  0.90  0.97  1.03  0.97  1.27  1.31  1.03   0.20   1.19  P/P/P
+-crowdimpact 0.03 *           1.04  0.94  1.00  1.06  1.06  1.23  1.33  1.00   0.20   3.59  P/P/P
+-crowdimpact 0.12             1.21  1.24  1.27  1.23  1.62  1.11  1.43  0.86   0.21  14.71  P/P/F
+
+-value 0.020                  1.03  1.00  1.00  1.12  0.96  1.43  1.36  1.00   0.20   3.50  P/P/F
+-value 0.056 *                1.04  0.94  1.00  1.06  1.06  1.23  1.33  1.00   0.20   3.59  P/P/P
+-value 0.070                  1.04  0.95  0.97  1.05  1.07  1.19  1.32  1.00   0.20   3.62  P/P/P
+
+-recoverydrag 0               1.03  0.88  0.97  0.84  1.10  1.04  1.27  1.01   0.20   3.69  P/F/F
+-recoverydrag 8.5 *           1.04  0.94  1.00  1.06  1.06  1.23  1.33  1.00   0.20   3.59  P/P/P
+-recoverydrag 20              1.03  0.92  1.00  1.07  1.06  1.27  1.33  1.00   0.20   3.58  P/P/P
+
+-recoveryfloor 0.05           1.04  0.93  1.00  1.09  1.01  1.28  1.33  0.99   0.20   3.58  P/P/P
+-recoveryfloor 0.1 *          1.04  0.94  1.00  1.06  1.06  1.23  1.33  1.00   0.20   3.59  P/P/P
+-recoveryfloor 0.50           1.03  0.92  0.97  0.94  1.13  1.09  1.31  1.01   0.20   3.65  P/F/F
 ```
 
 200 paths x 100 years, seed 20260813 — the scoring ensemble. `vol` equity volatility · `kurt` daily kurtosis ·
@@ -813,42 +893,42 @@ equivalent, against what its own volatility implies · `r/v` return per unit vol
 Nine things that table is trying to tell you:
 
 - **`levgain` is where the tail now comes from, and it has a ceiling of its own.** Off, kurtosis
-  falls to 0.62 and clustering to 0.93, and the mechanism gate fails on the conditions index's
-  hazard row — a world whose 20% declines do not follow leverage; at 10 the fragile phases run
-  away — kurtosis 1.70, clustering 1.28, realism fails. 6 is where the cycle's cascades supply
-  what the jump channel gave up (`-jumpvar` 0.14 → 0.11) with the tail budget unmoved.
+  falls to 0.65 and clustering to 0.84 (the conditions index's hazard row survives at this
+  ensemble, where it used to fail); at 10 the fragile phases run away — kurtosis 1.45, clustering
+  1.17, realism fails. 6 is where the cycle's cascades supply what the jump channel gave up with
+  the tail budget unmoved.
 - **The valuation cycle is a PAIR, and each half alone fails a different gate.** `-beliefshare 0`
-  (cap term alone) pushes the variance ratio to 1.12 — re-climbs toward extrapolated fair are
+  (cap term alone) pushes the variance ratio to 1.10 — re-climbs toward extrapolated fair are
   60-day trends — and the cycle's own mechanism row with it; `-capyears 0` (beliefs alone) reads
-  all lower wing (vr 1.00, d10 1.11). The belief half REFUNDS variance ratio (its perceived-fair
-  tracking cuts medium-horizon drift-chasing), which is exactly the budget the cap half spends:
-  together at the defaults they read vr 1.08, dispersion 0.31.
+  all lower wing (vr 1.00, d10 1.08) and fails the same row. The belief half REFUNDS variance ratio
+  (its perceived-fair tracking cuts medium-horizon drift-chasing), which is exactly the budget the
+  cap half spends: together at the defaults they read vr 1.06.
 - **`disasterrate` is the century-tail dial and almost nothing else.** Off, the world fails the
   mechanism gate (the channel is inert) and the record's century-worst returns to the far tail of
-  what the model can produce; at 1.2 the variance ratio reads 1.17 and the fidelity band FAILS,
+  what the model can produce; at 1.2 the variance ratio reads 1.14 and a fidelity band FAILS,
   because more multi-year declines is more signed persistence. Daily volatility, kurtosis and
   clustering barely move at any setting — rarity is what buys that.
-
 - **`crowdimpact` is a mechanism dial again, not a trend dial.** Since 0.22.0 the crowd's price
   pressure comes from the exposure it TRADES in a session rather than the exposure it holds, so
   running it harder no longer manufactures drift. `-crowdimpact 0.12` is four times the default and
-  reaches 13.6 bp/session of crowd flow — 20% of the noise term — while `vr` only reaches 1.21. Under
-  the old law the shipped default was already at 1.52 on 4.7 bp. What running it hard DOES buy is
-  crash frequency (1.29), clustering (1.34) and kurtosis (1.57), which is why the default is not there.
+  reaches 14.7 bp/session of crowd flow — a fifth of the noise term — while `vr` only reaches 1.23.
+  Under the old law the shipped default was already at 1.52 on 4.7 bp. What running it hard DOES
+  buy is crash frequency (1.62), clustering (1.27) and kurtosis (1.24), which is why the default is
+  not there.
 - **`stress` is not a volatility dial.** It is one amplifier producing volatility, fat tails *and*
-  volatility clustering together. Raising it 4.7 → 8.0 takes volatility from 1.00 to 1.33 and
-  clustering from 1.09 to 1.59 — and fails the realism gate. You cannot buy tails *here* without
+  volatility clustering together. Raising it 5.0 → 8.0 takes volatility from 1.04 to 1.43 and
+  clustering from 1.00 to 1.51 — and fails the realism gate. You cannot buy tails *here* without
   buying clustering.
 - **`recoverydrag` and `value` are one pair, and neither reads correctly alone.** The base pull
   governs shallow water; the drag governs deep drawdowns. Turn the drag off and leave the pull at
-  its shipped 0.056 and `d10` falls to 1.15. Weaken the pull instead and `d10` runs to 1.58 with a
-  fidelity row failing. Both also move `vr` — the drag off reads 0.91, the weak pull 1.10 — so
-  a world tuned for time under water on this pair alone lands its serial persistence somewhere it
-  did not choose.
+  its shipped 0.056 and `d10` falls to 1.04 with a mechanism row failing. Weaken the pull instead
+  and `d10` runs to 1.43 with a fidelity row failing. Both also move `vr` — the drag off reads
+  0.84, the weak pull 1.12 — so a world tuned for time under water on this pair alone lands its
+  serial persistence somewhere it did not choose.
 - **`jumpvar` and `jumprate` are ONE dial with two handles, and that is what makes the tail
   reachable.** `-jumpvar 0` is this world with the tail channel off and nothing else moved: the jump
   draws come from their own RNG stream, so no other statistic shifts by construction. Turning it on
-  moves `kurt` 0.67 → 0.93 at the shipped pair — the leverage cycle's cascades and the leverage
+  moves `kurt` 0.58 → 0.94 at the shipped pair — the leverage cycle's cascades and the leverage
   kick carry the rest of the tail budget, which was all jumps in 0.22.1. **The ceiling is the realism band, not the target**,
   and the band is what `jumprate` buys headroom against: at the old rate of 0.0010, `-jumpvar 0.12`
   passed at the default seed and read kurtosis 35.2 on another, against a ceiling of 30. Raising the
@@ -857,9 +937,9 @@ Nine things that table is trying to tell you:
   Rarer jumps are not fatter tails; they are noisier ones. Set the pair by the band, on more than one
   seed.
 - **`fundvol` is the dial for time under water, and it is not free.** Raising `-fundvol` 0.041 →
-  0.10 moves `d10` from 1.21 to 1.80 while volatility and return-per-volatility sit still — the
+  0.10 moves `d10` from 1.14 to 1.53 while volatility and return-per-volatility sit still — the
   fundamental accumulates into drawdown depth without reaching daily return scale. It pays in trend:
-  `vr` goes 1.03 → 1.27. The shipped 0.060 is where the two meet (0.070 before the leverage cycle,
+  `vr` goes 1.01 → 1.22. The shipped 0.060 is where the two meet (0.070 before the leverage cycle,
   whose fragile phases lengthen time under water on their own), and it is the dial that carries the
   drawdown rungs now that the crowd no longer does.
 - **The two bond dials are almost orthogonal to the equity leg, but the reverse is not true.**
@@ -868,19 +948,26 @@ Nine things that table is trying to tell you:
   re-solve `easing` twice while the equity side settled. `-crossasset` is the only thing that shows
   this; run it after any change, not only a bond one.
 - **The asymmetry trio reads exactly as designed, and `-leverage 0` shows what the kick now
-  carries.** Off, clustering falls to 0.89 and kurtosis to 0.76 — the transient multiplier is a
+  carries.** Off, clustering falls to 0.87 and kurtosis to 0.80 — the transient multiplier is a
   fifth of both — and with the bar channels on, range clustering sits on its 0.57 floor
-  (0.56–0.57 across seeds; the sweep table was run with the channels off) — while `-newsrate 0` pushes clustering back UP to 1.19 (serially-independent
-  news days are what dilute it) and drains the downside excess. `-refugedays` moves `bdep` a
-  little and nothing else in this table; its real work, the calm-day tail hedge, is a row the
-  table does not carry.
-- **Some settings leave the admissible region.** `-stress 8.0`, `-levgain 10`, `-jumpvar 0.23`,
-  `-leverage 0.20`, `-depth 12`, `-crowdimpact 0.12` and `-haltlimit` at 0 or 0.40 fail realism
-  (clustering, kurtosis, or the tail-shape checks); `-stress 2.0`, `-levgain 0`, `-depth 22`,
-  `-refugedays 5`, `-disasterrate 0` and `-beliefshare 0` fail a mechanism row; `-drift` at either
-  end, `-fundvol 0.10`, `-disasterrate 1.2`, `-capyears 3` and `-value 0.020` fail only fidelity —
-  the level of one quantity stops being readable. Always re-run `-validate` after changing a dial.
-
+  (0.56–0.57 across seeds; the sweep table was run with the channels off) — while `-newsrate 0`
+  pushes clustering back UP to 1.07 (serially-independent news days are what dilute it) and drains
+  the downside excess. `-refugedays` moves `bdep` a little and nothing else in this table; its real
+  work, the calm-day tail hedge, is a row the table does not carry.
+- **The start is a dial pair too, and `-beliefleak 0` is the only setting here that fails the
+  stationarity row alone.** With the fade off the world is the 0.24.1 one, every level inside its
+  band, and the valuation gap walks under the fundamental for a century: the mechanism gate fails
+  on `valuation stationary from the first session` and nothing else moves (r/v 0.94, d10 1.26).
+  The cycle is cheap at 0.1 and ruinous at 0.4: volatility 1.27, kurtosis 0.47, clustering 0.60,
+  crashes 1.62, two gates failing — each 0.1 of amplitude is a point of pooled vol and a thinner
+  tail, which is why the S&P default carries 0.1 and its upper wing stays a disclosed miss.
+- **Some settings leave the admissible region.** `-stress 8.0`, `-levgain 10` and `-haltlimit` at
+  0 or 0.40 fail realism (clustering, kurtosis, or the tail-shape checks); `-stress 2.0`,
+  `-disasterrate 0`, `-beliefshare 0`, `-capyears 0`, `-recoverydrag 0`, `-recoveryfloor 0.50`,
+  `-beliefleak 0` and `-cyclesd 0.4` fail a mechanism row; `-drift` at either end, `-depth` at
+  either end, `-fundvol 0.10`, `-leverage 0.20`, `-disasterrate 1.2`, `-beliefyears 5`,
+  `-trendshare 0.30`, `-crowdimpact 0.12` and `-value 0.020` fail only fidelity — the level of one
+  quantity stops being readable. Always re-run `-validate` after changing a dial.
 ## A worked example — when the target is not the statistic
 
 The most useful thing 0.22.0 found was not a model defect. It was that **three of the sixteen
@@ -1032,7 +1119,7 @@ without paying kurtosis. On the S&P default the same open reads 0.328 at
 The Nasdaq set's sampling spreads are measured at the current recipe (`-noise -atrelease
 0.24.4-nasdaq`, 200 paths), not carried from the S&P's — every spread, since 0.23.1 including the depth rungs, the
 valuation proxy and the bond rows, which through 0.23.0 read the S&P world's inline constants for
-both sets. The deep rung is where it matters: d20's spread at this recipe is 0.43 against the S&P
+both sets. The deep rung is where it matters: d20's spread at this recipe is 0.48 against the S&P
 default's 4.18, so the row carries real weight here where the S&P loss all but ignores it. The
 loss at this recipe reads 1.57 under its own spreads, so a `-calibrate -anchors nasdaq` result
 from any earlier release optimised a different function.
@@ -1110,8 +1197,8 @@ Nasdaq worlds of the section above with the basket on, graded against the same e
 under QQQ instead of SPY. The basket's rows read the same on the 0.24.0 worlds as on their bases:
 the names are observational, and the leverage cycle reaches them only through the primary.
 `0.24.4-nasdaq-basket` names the 0.24.4 Nasdaq world with the basket on at the dials re-anchored
-on it (`basketSector` 0.9: the bust swing's moves reach the names through the shared leg); see
-its recipe paragraph below.
+on it (`basketSector` 0.8; the dial moves with the world because the shared leg carries whatever
+the primary's own slow moves are); see its recipe paragraph below.
 
 **The basket dials do not transport between anchor sets.** The eight correlate more with QQQ
 (0.837) than with SPY (0.770), so the shared leg has to carry more and the sector's own noise
@@ -1447,22 +1534,31 @@ against −83) and crashes per century 30.8 → 31.4 (25.6); equity vol 24.4 aga
 kurtosis 16.4 (9.6) as before. The bust swing runs at the archive's 0.014, which the search left
 there because the bust's shape is no graded row. The un-searched dials are the 0.24.2 recipe's.
 
-**`0.24.4-nasdaq` is that world with the bust swing at 0.20**, the largest amplitude whose
-four-seed loss stays inside the member's own (1.54-1.93 against 1.54-1.90 under the same spreads; on both, seed 2 carries
-the bond vol × duration row's penalty at 60 paths) under the swing's ceiling and the rule that ends
-the unwind at the regained high; a released name is never re-solved in place. Its mania-led busts
-read 46% vol over 3.0 years with four rallies of 20% and two of 30% (the member at 0.014: 32.5%,
-3.7 years, two and one; NDX 2000-02: 53%, 2.5, five and three); 0.25 passes every class too but its
-busts run 1.4 years at 57%, faster than the record's. At 0.20 the typical year reads 20.5 (band
-15.0-21.6), pooled vol 25.0 (26.9), the upper wing 6.4 (7.6). The Nasdaq anchor set's spreads are
-frozen at this world.
+**`0.24.4-nasdaq` is the recipe re-solved under the stationarity row**: member 49 of
+`test-data/worlds/0.24.4-nasdaq.json` (73 members, seeded from the 0.24.3 recipe at the swing's
+measured amplitude with the cycle on, the transport arm the S&P default; 52 of 73 pass every class
+at 200 paths and 8 of 14 candidates on four seeds), picked for the mildest moves against the
+outgoing world and the best upper wing. Its literals are the archive's own, so `-atrelease
+0.24.4-nasdaq` reproduces the member byte for byte. Its stationarity comes from the beliefs' share
+(0.73 → 0.65) and its wings from the growth-extrapolation term (`capYears` 4.4 → 5.6), with the
+cycle near 0 (0.06) and the swing at the archive's 0.24. Against the outgoing world (the 0.24.3
+recipe with the swing at 0.20, which fails the stationarity row on every seed) on the same four
+seeds under the re-frozen spreads: fitness loss 1.51-2.06 from 1.59-2.11; at seed 1 the typical
+year 20.5 → 19.3 (18.3), return per vol 0.33 → 0.38 (0.38), the downside excess 0.02 → 0.37
+(1.13), the 60-day variance ratio 0.89 → 0.91, the lower wing 10.7 → 7.6 (6.7), the bond's
+growth-crash rally 3.7 → 4.5 (6.6); paid in kurtosis 17.8 → 20.6 (9.6), lag-1 clustering
+0.34 → 0.36 (0.29), the upper wing 6.4 → 5.5 (7.6; the outgoing world's 6.4 was its transient's
+reading, 12.4 once settled), pooled vol 25.0 → 24.2 (26.9), median depth −24.1 → −25.0 (−22.8),
+the deep rung 1.13 → 1.16 and bond depth 1.16 → 1.27. `-crossasset` reads the d=5.70 bond-depth
+rung at 0.63 (0.57 before; band 0.65-1.35), the pre-existing miss. Its mania-led busts run 1.7 years at 43% vol with three rallies of 20% and one
+of 30% (NDX 2000-02: 2.5 years, 53%, five and three). The Nasdaq anchor set's spreads are frozen
+at this world. The un-searched dials are the 0.24.2 recipe's.
 **`0.24.4-nasdaq-basket`** is the same world with the basket on, re-anchored on the eight names
-under QQQ: the swing's moves reach the names through the shared leg, so at the 0.23.1 dials the
-aggregate read corr 0.88 and vol ratio 1.56 against the anchors' 0.837 and 1.630, and
-`basketSector` 0.7 → 0.9 puts them back (corr 0.844-0.846, beta 1.37, vol ratio 1.62-1.63 on four
-seeds at 200 paths; pairwise 0.59, idio share 0.36, tail coincidence 0.50, worst-decile pair
-corr 0.60 against 0.17 mid; names 2.04x, gaps 3.9/yr; time below peak 0.74, disclosed), every
-class passing. It is the Nasdaq basket world to pin in place of `0.24.1-nasdaq-basket`.
+under QQQ: `basketSector` 0.8 (corr 0.837-0.840, beta 1.37, vol ratio 1.63-1.64 on four seeds at
+200 paths against the anchors' 0.837 / 1.365 / 1.630; pairwise 0.58, idio share 0.36, tail
+coincidence 0.51, worst-decile pair corr 0.63 against 0.16 mid; names 2.09x, gaps 4.1/yr; time
+below peak 0.72, disclosed), every class passing. It is the Nasdaq basket world to pin in place of
+`0.24.1-nasdaq-basket`.
 
 ## The bust swing — `-bustamp`
 
@@ -1503,7 +1599,7 @@ of 0.52 where every other peak reads 0.85: that is what failed the macro build-u
 amplitude 0.10. Under the ceiling every amplitude to 0.20 passes every class on four seeds.
 `bustCeilDays` on a path counts the sessions a live unwind was held; 1.7% of the recipe's.
 
-What it reads, at A 0.20 on the 0.24.3 recipe (`0.24.4-nasdaq`) over 120 centuries: the busts of
+What it reads, at A 0.20 on the 0.24.3 recipe over 120 centuries: the busts of
 2000 size that start from a mania peak run 3.0 years at 46% vol (p10 30, p90 88) with four rallies
 of 20% and two of 30% (the world at 0.014: 3.7 years, 32.5%, two and one; at 0.14: 4.3 years, 36%;
 NDX 2000-02: 2.5 years, 53%, five and three), the other deep episodes are untouched (30%), the
@@ -1517,10 +1613,10 @@ too small; a swing in perceived fair alone is smoothed away by the pull. The sta
 repriced the same session is the one form whose extra variance does not diffuse.
 
 The dial ships at 0 in every world before `0.24.3-nasdaq`, which carries its archive's 0.014;
-`0.24.4-nasdaq` runs it at 0.20. It is bounded by how often the model makes the mania it arms
-on: the record spends 7.6% of its months more than +0.5 over its 20-year mean, the 0.24.4 Nasdaq
-recipe 6.4%, and that gap is the cycle's upper wing
-(PLAN item 25), not this dial's.
+`0.24.4-nasdaq` runs it at its own archive's 0.24 (its mania-led busts 1.7 years at 43% with three
+rallies of 20%). It is bounded by how often the model makes the mania it arms on: the record spends
+7.6% of its months more than +0.5 over its 20-year mean, the 0.24.4 Nasdaq recipe 5.5%, and that gap
+is the cycle's upper wing (PLAN item 25), not this dial's.
 
 ## The vol response to a fall
 
@@ -1595,16 +1691,17 @@ statistics the model computes — see the worked example above.
   1.39, priced and disclosed). d10's band (0.70-1.55) accommodates the reading with margin;
   d20's band is deliberately absent and its weight is 0.03 — one 25-year record cannot pin it
   (`-noise`: 0.09 to 4.89).
-- **Valuation dispersion sits inside the record proxy's own windows since the persistence
-  retune** (0.33 against sd log CAPE 0.24-0.41), with a per-path cycle at half the record's
-  half-life and both wings symmetric — the record's own wings are (27.3% of months past +0.25
-  log, 27.9% past -0.25, 1881-2023), so a mania was never a missing upper-wing channel, just
-  amplitude this cycle lacked. What remains disclosed: the ensemble century MAX over FAIR stays
-  near +11% where the record's manias peaked at 2.0-2.7x the mean valuation (Sep-1929 CAPE
-  32.6, Dec-1999 44.2) — the ensemble's mean gap sits below fair, so a collapse from a 2x-fair
-  peak remains out of reach and the led-mix is not a calibrated quantity. Pushing harder is
-  fenced by the depth rungs and the variance-ratio ceiling (`-capyears 3` reads vr 1.20 and
-  d10 1.69; `-beliefyears 0.75` fails d10).
+- **Valuation dispersion sits below the record proxy's windows since the start became
+  stationary** (0.17 against sd log CAPE 0.24-0.41; 0.33 before 0.24.4). The 0.33 was the
+  beliefs' near-random walk from the fair-value start every path was given — a transient of a
+  century on this world, read as a cycle — and the lower wing with it (11.8% of months past −0.5
+  against the record's 6.7, now 3.3). The cycle that replaces the walk (`-cyclesd`) is held at
+  0.1 by the variance-ratio profile, which every larger amplitude fails on some seed, so the S&P
+  reads no upper wing (0.0 against 7.6; the record's manias peaked at 2.0-2.7x the mean
+  valuation, Sep-1929 CAPE 32.6, Dec-1999 44.2) and a collapse from a 2x-fair peak remains out
+  of reach; the led-mix is not a calibrated quantity. The Nasdaq recipe reaches its wings through
+  the growth-extrapolation term. Pushing the cap term harder is fenced by the depth rungs and the
+  variance-ratio ceiling (`-capyears 3` reads vr 1.13 and d10 1.39).
 - **The century-scale tail is carried by the macro-disaster channel, and its anchor is one draw.**
   `-disasterrate 0.6` per century, each a 2.0-log fundamental collapse over 2.5 years with half
   reversing over 4 — the Barro-Rietz channel, adopted 0.22.1 after every dial sweep left the median
