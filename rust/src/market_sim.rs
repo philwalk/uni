@@ -191,6 +191,8 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 // 17 -> 18: THE VALUATION CYCLE AS A STATE. `world` gained `cycleSd`, `cycleYears` and
 // `beliefLeak`; a schema-18 file is byte-identical to its schema-17 counterpart except the
 // schema number and those keys. Where the cycle is on, `price` starts on it rather than at `fundamental`.
+// In the same schema each `gate.fidelity` row gained `target`, `recordBand` and `recordPercentile`,
+// and `real` became the record, read the model's way, on every row that carries a band.
 const EMIT_SCHEMA: u32 = 18;
 
 /// Frozen structural constants of the volume channel — see the `vol_idio` field. Measured
@@ -5018,6 +5020,9 @@ pub struct WorldStats {
     /// median per-path 100*(sqrt(sum r^2 | r<0 / sum r^2 | r>0) - 1), tau = 0: how much more the
     /// downside disperses than the upside (Roy 1952 / Markowitz 1959; asymmetry-2026-08-31.tsv)
     pub semi_excess: f64,
+    /// median per-path share of moving sessions that rise, in percent (`up_share_of`): the COUNT
+    /// half of the return asymmetry, which `semi_excess` cancels by construction
+    pub up_share: f64,
     /// median per-path corr(r_t, r^2_{t+1}) — the leverage effect at daily lag. The sharper
     /// signed-half block regression (Patton-Sheppard) was measured and CANNOT anchor on
     /// close-only data: era-split with the sign flipping (asymmetry-2026-08-31.tsv), the
@@ -5323,6 +5328,231 @@ fn year_vol_of(r: &[f64]) -> f64 {
         })
         .collect();
     med(&v)
+}
+
+/// `year_vol_of` averaged over every one of its `DAYS_PER_YEAR` block phases, in percent. What a
+/// SINGLE record's typical year is: on one series the phase is a free parameter worth as much as
+/// the gap it measures — QQQ's median year reads 18.2 to 21.5 across the 252 phases, and calendar
+/// years (18.3) sit at the bottom of that range. A model ensemble averages phases across its paths
+/// already, which is why `year_vol_of` reads a path from its first session.
+pub fn year_vol_phase_mean(r: &[f64]) -> f64 {
+    let n = DAYS_PER_YEAR.min(r.len());
+    scala_sum((0..n).map(|off| year_vol_of(&r[off..]))) / n as f64 * 100.0
+}
+
+/// 100*(sqrt(sum r^2 | r<0 / sum r^2 | r>0) - 1): how much more the downside disperses than the
+/// upside BY SQUARED RETURN. The day counts cancel out of the quotient, so a market that rises on
+/// more sessions in smaller steps than it falls reads here as symmetric: see `up_share_of`.
+fn semi_excess_of(r: &[f64]) -> f64 {
+    let d = scala_sum(r.iter().filter(|x| **x < 0.0).map(|x| x * x));
+    let u = scala_sum(r.iter().filter(|x| **x > 0.0).map(|x| x * x));
+    if u > 0.0 {
+        ((d / u).sqrt() - 1.0) * 100.0
+    } else {
+        f64::NAN
+    }
+}
+
+/// THE UP-DAY SHARE: rising sessions as a percent of the sessions that moved. The count half of
+/// the return asymmetry, and the half the record pins: QQQ rises on 54.8% of its moving sessions,
+/// in smaller steps than it falls, and one-year-block resamples of it read 53.5 to 56.2.
+/// Zero-return sessions are excluded rather than counted as falls: a record priced in ticks has
+/// some (38 of QQQ's), and a model path has none.
+fn up_share_of(r: &[f64]) -> f64 {
+    let up = r.iter().filter(|x| **x > 0.0).count();
+    let down = r.iter().filter(|x| **x < 0.0).count();
+    if up + down == 0 {
+        f64::NAN
+    } else {
+        up as f64 * 100.0 / (up + down) as f64
+    }
+}
+
+/// corr(r_t, r^2_{t+1}): the leverage effect at daily lag.
+fn lev_corr_of(r: &[f64]) -> f64 {
+    if r.len() < 2 {
+        return f64::NAN;
+    }
+    let a: Vec<f64> = r[..r.len() - 1].to_vec();
+    let b: Vec<f64> = r[1..].iter().map(|x| x * x).collect();
+    pearson(&a, &b)
+}
+
+/// THE RECORD BANDS' rows: every fidelity target whose model reading is a per-path statistic of
+/// the equity price alone, so the same function reads a model path, a record and a resample of the
+/// record. In `series_readings`' order, which the fixture and `RecordBand` literals follow.
+pub const RECORD_BAND_ROWS: [&str; 12] = [
+    "equity vol %",
+    "typical-year vol %",
+    "return per vol",
+    "kurtosis",
+    "clustering lag 1",
+    "clustering lag 20",
+    "variance ratio 60d",
+    "downside vol excess %",
+    "up-day share %",
+    "leverage corr",
+    "crashes/century",
+    "median depth %",
+];
+
+/// The percentiles a `RecordBand` carries: every 5th, and the 1st and 99th so a reading past the
+/// band edge is placed against something steadier than the resamples' extremes.
+pub const RECORD_BAND_PCTS: [usize; 23] = [
+    0, 1, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 99, 100,
+];
+
+/// The positions of the band's edges, 5th and 95th, in `RECORD_BAND_PCTS`.
+const RECORD_BAND_LO: usize = 2;
+const RECORD_BAND_HI: usize = 20;
+
+/// ONE RECORD'S OWN SAMPLING SPREAD for one fidelity row (`recordbands-2026-09-18.tsv`): the
+/// record's reading, taken the way the model reads a path, and where that statistic lands over
+/// moving one-year-block resamples of the record. A row carrying one is judged by where the model
+/// falls in the record's 5th-95th band, not by the ratio band every other row shares: a ratio band
+/// of fixed width is too narrow for a statistic one history barely pins (the downside excess, whose
+/// band spans zero) and too wide for one it pins tightly (lag-1 clustering, 0.79 to 1.14).
+#[derive(Clone, Copy, Debug)]
+pub struct RecordBand {
+    pub name: &'static str,
+    /// the record's reading; the typical year's is `year_vol_phase_mean`
+    pub record: f64,
+    /// the resampled readings at `RECORD_BAND_PCTS`
+    pub q: [f64; 23],
+}
+
+impl RecordBand {
+    /// The 5th to 95th percentile of the record's resamples.
+    pub fn band(&self) -> (f64, f64) {
+        (self.q[RECORD_BAND_LO], self.q[RECORD_BAND_HI])
+    }
+
+    /// Where a reading falls among the record's resamples, in percent: linear between the
+    /// carried percentiles, `floor(x + 0.5)`, 0 below the smallest resample and 100 past the
+    /// largest -- and never on the other side of a band edge from the reading, so a reading just
+    /// past the 95th percentile reads 96 rather than rounding back inside the band it missed.
+    /// `None` for a reading that is not a number.
+    pub fn percentile(&self, x: f64) -> Option<usize> {
+        if !x.is_finite() {
+            return None;
+        }
+        let q = &self.q;
+        let last = q.len() - 1;
+        let p = if x < q[0] {
+            0
+        } else if x > q[last] {
+            100
+        } else {
+            // the first segment whose top reaches x
+            let mut i = 0;
+            while x > q[i + 1] {
+                i += 1;
+            }
+            let (p0, p1) = (RECORD_BAND_PCTS[i] as f64, RECORD_BAND_PCTS[i + 1] as f64);
+            let frac = if q[i + 1] > q[i] {
+                (x - q[i]) / (q[i + 1] - q[i])
+            } else {
+                1.0
+            };
+            (p0 + (p1 - p0) * frac + 0.5).floor() as usize
+        };
+        let (lo, hi) = self.band();
+        Some(if x > hi {
+            p.max(96)
+        } else if x < lo {
+            p.min(4)
+        } else {
+            p.clamp(5, 95)
+        })
+    }
+
+    /// Outside the band, or not a number: the verdict's `miss` for a row that carries one.
+    pub fn misses(&self, x: f64) -> bool {
+        let (lo, hi) = self.band();
+        !(lo..=hi).contains(&x)
+    }
+}
+
+/// Every `RECORD_BAND_ROWS` reading of ONE series of daily log returns, as the model reads it off
+/// one path: the functions `path_read` applies, and the aggregation `measure` and `WorldStats`
+/// apply to them, on the price the returns trace. Two readings are taken directly rather than
+/// through the price: the annual return is the returns' own sum, and the price is rebuilt with
+/// `exp_det`, so the twins' episodes agree to the bit.
+pub fn series_readings(r: &[f64]) -> [f64; 12] {
+    let dpy = DAYS_PER_YEAR as f64;
+    let years = r.len() as f64 / dpy;
+    let vol = (MatD::apply(r).power(2).mean() * dpy).sqrt();
+    let ann_ret = scala_sum(r.iter().copied()) / years * 100.0;
+    let ac = autocorrs_abs(r, &[1, 20]);
+    let mut px = Vec::with_capacity(r.len() + 1);
+    let mut c = 0.0;
+    px.push(exp_det(c));
+    for x in r {
+        c += x;
+        px.push(exp_det(c));
+    }
+    let eps = episodes(&px, 15.0);
+    let depths: Vec<f64> = eps.iter().map(|e| e.depth_pct).collect();
+    [
+        vol * 100.0,
+        year_vol_of(r) * 100.0,
+        // `WorldStats::ret_vol`
+        if vol <= 0.0 {
+            f64::NAN
+        } else {
+            ann_ret / (vol * 100.0)
+        },
+        kurtosis(r),
+        ac[0],
+        ac[1],
+        variance_ratio(r, VAR_RATIO_Q),
+        semi_excess_of(r),
+        up_share_of(r),
+        lev_corr_of(r),
+        eps.len() as f64 * 100.0 / years,
+        med(&depths),
+    ]
+}
+
+/// The moving-block bootstrap behind a `RecordBand`: `resamples` series of the record's own length,
+/// each whole `DAYS_PER_YEAR`-session blocks of it laid end to end from uniformly drawn starts and
+/// cut to length, each read by `series_readings`. Every start is drawn before any series is read,
+/// from one `NumPyRng`, so the readings are the same on any number of cores and in either twin.
+pub fn record_resamples(r: &[f64], resamples: usize, seed: u64) -> Vec<[f64; 12]> {
+    let n = r.len();
+    let l = DAYS_PER_YEAR;
+    assert!(
+        n > l && u32::try_from(n).is_ok(),
+        "a record must be longer than one block, and shorter than 2^32 sessions"
+    );
+    let blocks = n.div_ceil(l);
+    // exact: the assertion bounds it
+    let bound = (n - l + 1) as u32;
+    let mut rng = NumPyRng::new(seed);
+    let starts: Vec<Vec<usize>> = (0..resamples)
+        .map(|_| {
+            (0..blocks)
+                .map(|_| rng.next_bounded_u32(bound) as usize)
+                .collect()
+        })
+        .collect();
+    starts
+        .par_iter()
+        .map(|st| {
+            let mut x = Vec::with_capacity(blocks * l);
+            for &s in st {
+                x.extend_from_slice(&r[s..s + l]);
+            }
+            x.truncate(n);
+            series_readings(&x)
+        })
+        .collect()
+}
+
+/// One row's resampled readings at `RECORD_BAND_PCTS`, by `pctile`'s own index rule.
+pub fn record_band_quantiles(readings: &[f64]) -> [f64; 23] {
+    let s = finite_sorted(readings);
+    RECORD_BAND_PCTS.map(|p| pctile_of(&s, p as f64 / 100.0))
 }
 
 /// THE WINGS (item 25): the share of sessions the valuation level — log(price / fundamental)
@@ -6403,6 +6633,7 @@ struct PathRead {
     gap_late_n: f64,
     max_over: f64,
     semi_excess: f64,
+    up_share: f64,
     lev_corr: f64,
     tail_hedge: f64,
     infl_ann: f64,
@@ -6508,21 +6739,10 @@ fn path_read(s: &Path, years: usize) -> PathRead {
             .zip(s.fundamental.iter())
             .map(|(p, f)| (p / f).ln())
             .fold(f64::MIN, f64::max),
-        // the path's own returns, where these two each made a fresh copy of the same numbers
-        semi_excess: {
-            let d = scala_sum(r.iter().filter(|x| **x < 0.0).map(|x| x * x));
-            let u = scala_sum(r.iter().filter(|x| **x > 0.0).map(|x| x * x));
-            if u > 0.0 {
-                ((d / u).sqrt() - 1.0) * 100.0
-            } else {
-                f64::NAN
-            }
-        },
-        lev_corr: {
-            let a: Vec<f64> = r[..r.len() - 1].to_vec();
-            let b: Vec<f64> = r[1..].iter().map(|x| x * x).collect();
-            pearson(&a, &b)
-        },
+        // the path's own returns, through the same functions a record is read with
+        semi_excess: semi_excess_of(&r),
+        up_share: up_share_of(&r),
+        lev_corr: lev_corr_of(&r),
         tail_hedge: {
             let idx: Vec<usize> = (1..s.price.len())
                 .filter(|&i| s.infl_press[i] <= 0.005)
@@ -6668,6 +6888,7 @@ pub fn measure(sims: &[Path], years: usize) -> WorldStats {
         ),
         max_over: med_by(|p| p.max_over),
         semi_excess: med_by(|p| p.semi_excess),
+        up_share: med_by(|p| p.up_share),
         lev_corr: med_by(|p| p.lev_corr),
         tail_hedge: med_by(|p| p.tail_hedge),
         duration: sims[0].duration,
@@ -7594,10 +7815,11 @@ pub struct Anchors {
     pub tail_years: usize,
     pub vol: f64,
     pub vol_sd: f64,
-    /// THE TYPICAL YEAR (item 24): the median calendar-year vol of the equity window, from
-    /// `yearvol-2026-09-15.tsv`. The pooled `vol` cannot tell an ordinary year from an episode;
-    /// this can, and it is what keeps a search from closing the pooled row by making every year
-    /// more volatile.
+    /// THE TYPICAL YEAR (item 24): the equity window's median-year vol averaged over all 252 block
+    /// phases, `recordbands-2026-09-18.tsv`'s `record` (`year_vol_phase_mean`). The pooled `vol`
+    /// cannot tell an ordinary year from an episode; this can, and it is what keeps a search from
+    /// closing the pooled row by making every year more volatile. Calendar years, which it read
+    /// before 0.24.4, are one phase, and on QQQ the one at the bottom of the range.
     pub year_vol: f64,
     pub year_vol_sd: f64,
     pub ret_vol: f64,
@@ -7624,6 +7846,11 @@ pub struct Anchors {
     /// the phenomenon (positive everywhere the record was measured).
     pub semi_excess: f64,
     pub semi_excess_sd: f64,
+    /// THE UP-DAY SHARE, in percent of moving sessions: the record's `up_share_of`, from
+    /// `recordbands-2026-09-18.tsv`. REPORTED, NOT GRADED — its fit target carries weight 0 until a
+    /// mechanism reaches it; the verdict still judges it against the record's band.
+    pub up_share: f64,
+    pub up_share_sd: f64,
     /// corr(r_t, r^2_{t+1}) from the same fixture — the one leverage statistic that is stable
     /// across every CRSP era and all 18 funds on close-only data.
     pub lev_corr: f64,
@@ -7663,6 +7890,9 @@ pub struct Anchors {
     /// Drawdown-SHAPE references for `-ddshape`, the first the primary the ratios read against;
     /// `ddshape-2026-09-02.tsv`, on the model's own episode definition and median.
     pub dd_refs: &'static [DdRef],
+    /// Each `RECORD_BAND_ROWS` row's record, read the model's way, and that record's own sampling
+    /// spread: what the verdict's `real`, `recordBand`, `recordPercentile` and `miss` read.
+    pub record_bands: &'static [RecordBand],
     /// The dividend yield at fair value (%/yr) and the band its level is graded against when the
     /// `div_yield` dial is on — `dividend-2026-09-02.tsv`: the window's annual means rounded out.
     pub div_yield: f64,
@@ -7757,6 +7987,233 @@ const DD_REFS_NASDAQ: [DdRef; 2] = [
     },
 ];
 
+/// The S&P set's `RecordBand`s: `recordbands-2026-09-18.tsv`, CRSP total return 1954-2026 and, for
+/// the two clustering rows, the century -- each row on the window the set reads it over.
+const RECORD_BANDS_SP500: [RecordBand; 12] = [
+    RecordBand {
+        name: "equity vol %",
+        record: 15.676352,
+        q: [
+            12.225522, 13.554540, 14.098651, 14.418655, 14.645319, 14.839507, 14.996511, 15.139559,
+            15.273133, 15.405282, 15.528511, 15.651989, 15.778938, 15.911952, 16.044293, 16.194243,
+            16.354227, 16.533317, 16.744801, 17.011904, 17.439124, 18.221814, 20.485377,
+        ],
+    },
+    RecordBand {
+        name: "typical-year vol %",
+        record: 12.481326,
+        q: [
+            10.430590, 11.275418, 11.662812, 11.876182, 11.959549, 12.042027, 12.115706, 12.197218,
+            12.274618, 12.331730, 12.396422, 12.485338, 12.560784, 12.683060, 12.768444, 12.879745,
+            12.939449, 13.045397, 13.148558, 13.288156, 13.806844, 14.641141, 15.981653,
+        ],
+    },
+    RecordBand {
+        name: "return per vol",
+        record: 0.689806,
+        q: [
+            0.091803, 0.357546, 0.449244, 0.498831, 0.533227, 0.558743, 0.582127, 0.602338,
+            0.622021, 0.641492, 0.658761, 0.677024, 0.694098, 0.712407, 0.731306, 0.750821,
+            0.772914, 0.797044, 0.825311, 0.861199, 0.918055, 1.022803, 1.251306,
+        ],
+    },
+    RecordBand {
+        name: "kurtosis",
+        record: 21.781759,
+        q: [
+            6.091702, 7.655249, 10.196171, 11.937134, 13.213876, 14.372872, 15.505583, 16.660463,
+            17.896602, 18.950341, 19.870825, 20.719651, 21.538490, 22.358080, 23.309753, 24.513472,
+            25.808621, 27.297538, 28.948845, 31.075336, 34.379212, 40.993913, 64.166988,
+        ],
+    },
+    RecordBand {
+        name: "clustering lag 1",
+        record: 0.298940,
+        q: [
+            0.195715, 0.233437, 0.251197, 0.261301, 0.268135, 0.273322, 0.277749, 0.281922,
+            0.285360, 0.288922, 0.292196, 0.295562, 0.298809, 0.302274, 0.305731, 0.309295,
+            0.313035, 0.317185, 0.322266, 0.328697, 0.337914, 0.355216, 0.395036,
+        ],
+    },
+    RecordBand {
+        name: "clustering lag 20",
+        record: 0.223792,
+        q: [
+            0.117690, 0.147091, 0.163521, 0.172530, 0.178866, 0.183698, 0.187619, 0.191246,
+            0.194761, 0.197856, 0.200982, 0.203894, 0.206830, 0.209742, 0.212829, 0.215849,
+            0.219220, 0.222825, 0.227041, 0.232271, 0.239720, 0.253162, 0.284810,
+        ],
+    },
+    RecordBand {
+        name: "variance ratio 60d",
+        record: 1.007037,
+        q: [
+            0.746797, 0.851681, 0.894355, 0.916336, 0.932559, 0.945317, 0.956854, 0.967279,
+            0.977029, 0.986345, 0.995939, 1.004917, 1.014074, 1.023669, 1.034073, 1.044440,
+            1.055878, 1.069562, 1.085471, 1.105368, 1.135944, 1.199247, 1.310759,
+        ],
+    },
+    RecordBand {
+        name: "downside vol excess %",
+        record: 3.067352,
+        q: [
+            -6.469303, -3.149884, -1.413525, -0.501105, 0.119703, 0.646366, 1.090301, 1.497923,
+            1.891690, 2.263146, 2.621224, 2.961804, 3.300304, 3.672815, 4.081361, 4.495622,
+            4.917591, 5.442710, 6.003845, 6.773708, 7.923641, 10.117275, 17.160698,
+        ],
+    },
+    RecordBand {
+        name: "up-day share %",
+        record: 54.982059,
+        q: [
+            52.568777, 53.599426, 54.002429, 54.198895, 54.332928, 54.438066, 54.532406, 54.612832,
+            54.685430, 54.754677, 54.825190, 54.893523, 54.960821, 55.031481, 55.100353, 55.175835,
+            55.254013, 55.348272, 55.456201, 55.581331, 55.766681, 56.128141, 56.952728,
+        ],
+    },
+    RecordBand {
+        name: "leverage corr",
+        record: -0.092620,
+        q: [
+            -0.143941, -0.120180, -0.112390, -0.108314, -0.105496, -0.103267, -0.101267, -0.099481,
+            -0.097840, -0.096306, -0.094801, -0.093383, -0.091925, -0.090467, -0.088930, -0.087265,
+            -0.085550, -0.083659, -0.081498, -0.078808, -0.074682, -0.066495, -0.041726,
+        ],
+    },
+    RecordBand {
+        name: "crashes/century",
+        record: 24.862969,
+        q: [
+            8.287656, 15.194036, 17.956588, 19.337865, 20.719141, 20.719141, 22.100417, 22.100417,
+            23.481693, 23.481693, 24.862969, 24.862969, 24.862969, 26.244245, 26.244245, 27.625521,
+            27.625521, 29.006797, 29.006797, 30.388073, 31.769349, 35.913177, 45.582109,
+        ],
+    },
+    RecordBand {
+        name: "median depth %",
+        record: -20.795378,
+        q: [
+            -43.522128, -33.114246, -30.256618, -27.715937, -26.819929, -25.785801, -24.953529,
+            -24.177300, -23.355401, -22.569043, -22.116532, -21.919901, -21.919901, -21.553083,
+            -20.956817, -20.795378, -20.651400, -20.446132, -20.430505, -20.261105, -19.557597,
+            -18.661378, -16.070895,
+        ],
+    },
+];
+
+/// The Nasdaq set's `RecordBand`s: `recordbands-2026-09-18.tsv`, QQQ 1999-03-11..2026-08-20.
+const RECORD_BANDS_NASDAQ: [RecordBand; 12] = [
+    RecordBand {
+        name: "equity vol %",
+        record: 26.901577,
+        q: [
+            16.978047, 20.483348, 22.226065, 23.163107, 23.809259, 24.323458, 24.768747, 25.187080,
+            25.575214, 25.933833, 26.295109, 26.644488, 27.006345, 27.360215, 27.761212, 28.142000,
+            28.557865, 29.048477, 29.609975, 30.314636, 31.408602, 33.344443, 38.171744,
+        ],
+    },
+    RecordBand {
+        name: "typical-year vol %",
+        record: 19.966715,
+        q: [
+            13.846252, 16.530688, 17.397075, 17.811595, 18.258322, 18.684506, 18.960346, 19.291191,
+            19.432684, 19.564056, 19.701465, 19.854891, 19.941719, 20.137238, 20.451540, 20.913609,
+            21.279249, 21.646618, 22.343644, 22.857755, 23.444980, 24.674651, 34.834227,
+        ],
+    },
+    RecordBand {
+        name: "return per vol",
+        record: 0.380553,
+        q: [
+            -0.403388, -0.129890, 0.005006, 0.082489, 0.131686, 0.172962, 0.208764, 0.243087,
+            0.272005, 0.298493, 0.328610, 0.356969, 0.387892, 0.416830, 0.447033, 0.480692,
+            0.515387, 0.552254, 0.597192, 0.653093, 0.741078, 0.899654, 1.220561,
+        ],
+    },
+    RecordBand {
+        name: "kurtosis",
+        record: 9.554069,
+        q: [
+            4.711033, 6.775459, 7.594679, 7.971117, 8.252677, 8.487016, 8.688466, 8.854247,
+            9.015825, 9.168515, 9.321957, 9.484207, 9.639491, 9.806465, 9.972342, 10.149984,
+            10.336813, 10.564895, 10.827960, 11.171723, 11.720816, 12.734690, 16.207453,
+        ],
+    },
+    RecordBand {
+        name: "clustering lag 1",
+        record: 0.292770,
+        q: [
+            0.105963, 0.200378, 0.232372, 0.246570, 0.255755, 0.262517, 0.268262, 0.272928,
+            0.277223, 0.281235, 0.285201, 0.288836, 0.292467, 0.295870, 0.299372, 0.303210,
+            0.307276, 0.311634, 0.316689, 0.322959, 0.332084, 0.349405, 0.393203,
+        ],
+    },
+    RecordBand {
+        name: "clustering lag 20",
+        record: 0.248803,
+        q: [
+            0.046058, 0.124548, 0.160759, 0.177523, 0.187920, 0.195603, 0.201787, 0.207376,
+            0.212243, 0.216785, 0.220706, 0.224759, 0.228608, 0.232376, 0.236302, 0.240176,
+            0.244481, 0.249020, 0.254205, 0.260078, 0.268727, 0.284755, 0.335159,
+        ],
+    },
+    RecordBand {
+        name: "variance ratio 60d",
+        record: 0.831558,
+        q: [
+            0.514834, 0.632326, 0.689445, 0.719287, 0.739068, 0.754811, 0.768352, 0.778939,
+            0.789056, 0.798778, 0.808300, 0.816910, 0.825511, 0.834846, 0.844108, 0.853960,
+            0.864269, 0.875894, 0.889135, 0.906583, 0.931117, 0.982527, 1.086121,
+        ],
+    },
+    RecordBand {
+        name: "downside vol excess %",
+        record: 1.072223,
+        q: [
+            -8.375022, -3.473217, -1.911703, -1.065323, -0.514075, -0.108740, 0.247915, 0.554157,
+            0.835950, 1.092732, 1.361124, 1.615989, 1.863066, 2.119029, 2.363603, 2.629444,
+            2.909271, 3.216147, 3.553364, 3.997832, 4.626134, 5.727797, 8.339008,
+        ],
+    },
+    RecordBand {
+        name: "up-day share %",
+        record: 54.777163,
+        q: [
+            50.867980, 52.901721, 53.463614, 53.774410, 53.982816, 54.143003, 54.283217, 54.407693,
+            54.521625, 54.631518, 54.740061, 54.840588, 54.944574, 55.048812, 55.155316, 55.270821,
+            55.395579, 55.526431, 55.678509, 55.874636, 56.166181, 56.691423, 58.066860,
+        ],
+    },
+    RecordBand {
+        name: "leverage corr",
+        record: -0.107111,
+        q: [
+            -0.195601, -0.165954, -0.148922, -0.139764, -0.133214, -0.128037, -0.123638, -0.119485,
+            -0.115678, -0.111994, -0.108432, -0.104824, -0.101165, -0.097354, -0.093575, -0.089341,
+            -0.084973, -0.080282, -0.074603, -0.067438, -0.056780, -0.037189, 0.001315,
+        ],
+    },
+    RecordBand {
+        name: "crashes/century",
+        record: 25.550406,
+        q: [
+            3.650058, 3.650058, 10.950174, 18.250290, 18.250290, 21.900348, 25.550406, 25.550406,
+            29.200463, 29.200463, 32.850521, 32.850521, 32.850521, 36.500579, 36.500579, 40.150637,
+            40.150637, 43.800695, 43.800695, 47.450753, 51.100811, 58.400927, 73.001159,
+        ],
+    },
+    RecordBand {
+        name: "median depth %",
+        record: -22.796671,
+        q: [
+            -98.929999, -79.792922, -49.366815, -36.464957, -32.654551, -28.633866, -28.559349,
+            -28.469599, -25.233404, -24.944541, -23.318058, -22.796671, -22.796671, -22.768300,
+            -22.768300, -21.764737, -21.285594, -19.542980, -18.285694, -17.266643, -16.104390,
+            -15.859033, -15.000029,
+        ],
+    },
+];
+
 /// The S&P/CRSP set. The LEVELS are the ones every release before 0.21.0 hard-coded, moved rather
 /// than re-measured (except the two the 0.22 releases re-anchored — `med_depth` and `worst_depth`
 /// — each re-derived from a committed fixture). The SPREADS were re-frozen from `-noise -paths 200`
@@ -7776,9 +8233,10 @@ const SP500_ANCHORS: Anchors = Anchors {
     tail_years: 100,
     vol: 16.0,
     vol_sd: 0.12,
-    // CRSP 1954-2026 (`yearvol-2026-09-15.tsv`, w1954): 12.87, 0.82 of pooled; the S&P index's
-    // own daily record is not in the fixture, and CRSP is the series the r/v row reads too.
-    year_vol: 12.9,
+    // CRSP 1954-2026 over all 252 block phases (`recordbands-2026-09-18.tsv`): 12.48, where
+    // calendar years read 12.87 (`yearvol-2026-09-15.tsv`, w1954); the S&P index's own daily
+    // record is not in the fixture, and CRSP is the series the r/v row reads too.
+    year_vol: 12.5,
     year_vol_sd: 0.10,
     ret_vol: 0.69,
     ret_vol_sd: 0.21,
@@ -7805,7 +8263,8 @@ const SP500_ANCHORS: Anchors = Anchors {
     worst_depth: -84.1,
     worst_depth_sd: 0.20,
     vol_band: (14.0, 18.0),
-    year_vol_band: (11.3, 14.5),
+    // the old band's relative width, -12.4% / +12.4%, around the phase-averaged anchor
+    year_vol_band: (10.9, 14.1),
     ret_vol_band: (0.50, 0.85),
     // CRSP c1954 rows of asymmetry-2026-08-31.tsv; the tail hedge is SPY/TLT. A single 72-year
     // history barely pins the semivariance excess (one crash day swings it), and the record reads
@@ -7813,6 +8272,9 @@ const SP500_ANCHORS: Anchors = Anchors {
     // 39th (leverage corr), 39th (tail hedge).
     semi_excess: 3.06,
     semi_excess_sd: 1.37,
+    // CRSP 1954-2026: 54.98% of moving sessions rise
+    up_share: 55.0,
+    up_share_sd: 0.01,
     lev_corr: -0.0926,
     lev_corr_sd: 0.42,
     tail_hedge: -0.273,
@@ -7831,6 +8293,7 @@ const SP500_ANCHORS: Anchors = Anchors {
     bond_infl_sd: 1.56,
     bond_depth_sd: 0.33,
     dd_refs: &DD_REFS_SP500,
+    record_bands: &RECORD_BANDS_SP500,
     div_yield: 2.95,
     div_yield_band: (1.1, 5.8),
     basket_corr: 0.770,
@@ -7855,7 +8318,9 @@ const SP500_ANCHORS: Anchors = Anchors {
 /// Control: the same pipeline on SPY 1993-01-29 reproduces the committed w1993 fixture row exactly.
 ///
 /// THE SAMPLING SPREADS ARE THE NASDAQ WORLD'S OWN, re-frozen 2026-09-16 from
-/// `-noise -paths 200 -atrelease 0.24.4-nasdaq`, the recipe this set describes. The same command
+/// `-noise -paths 200 -atrelease 0.24.4-nasdaq`, the recipe this set describes. The typical year's
+/// moved 0.16 -> 0.15 on 2026-09-18 with its anchor, 18.3 -> 20.0 — the same spread over a larger
+/// denominator — in a run that reproduces every other literal. The same command
 /// at the outgoing 0.24.3-nasdaq recipe reproduces 20 of its 21 literals exactly (the downside
 /// spread 4.47 -> 4.46 is the recovery rule's at the archive's amplitude), so the moves are the
 /// swing amplitude's: six move (return per vol 0.50 -> 0.49, kurtosis 1.69 -> 1.68, crashes 0.49
@@ -7878,10 +8343,11 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     tail_years: 27,
     vol: 26.90,
     vol_sd: 0.13,
-    // QQQ 1999-2026 (`yearvol-2026-09-15.tsv`, w1999): 18.26, only 0.68 of pooled — the window's
-    // vol is 2000-02 at 58 / 55 / 42%; QQQ from 2007 reads 0.82 like SPY.
-    year_vol: 18.3,
-    year_vol_sd: 0.16,
+    // QQQ 1999-2026 over all 252 block phases (`recordbands-2026-09-18.tsv`): 19.97, where calendar
+    // years read 18.26 (`yearvol-2026-09-15.tsv`, w1999) — the bottom of the 18.2-21.5 phase range.
+    // Either way it is well under the pooled 26.9: the window's vol is 2000-02 at 58 / 55 / 42%.
+    year_vol: 20.0,
+    year_vol_sd: 0.15,
     ret_vol: 0.38,
     ret_vol_sd: 0.45,
     kurt: 9.55,
@@ -7897,11 +8363,15 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     worst_depth: -83.0,
     worst_depth_sd: 0.18,
     vol_band: (23.5, 30.3),
-    year_vol_band: (15.0, 21.6),
+    // one sd of the row's own 27-year spread, +-18%, around the phase-averaged anchor
+    year_vol_band: (16.4, 23.6),
     ret_vol_band: (0.27, 0.47),
     // QQQ wfull row of asymmetry-2026-08-31.tsv; the tail hedge is QQQ/TLT.
     semi_excess: 1.13,
     semi_excess_sd: 4.69,
+    // QQQ 1999-2026: 54.78% of moving sessions rise
+    up_share: 54.8,
+    up_share_sd: 0.01,
     lev_corr: -0.1073,
     lev_corr_sd: 0.52,
     tail_hedge: -0.236,
@@ -7923,6 +8393,7 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     bond_infl_sd: 1.54,
     bond_depth_sd: 0.30,
     dd_refs: &DD_REFS_NASDAQ,
+    record_bands: &RECORD_BANDS_NASDAQ,
     div_yield: 0.78,
     div_yield_band: (0.3, 1.5),
     basket_corr: 0.837,
@@ -8064,6 +8535,18 @@ pub fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             (|st: &WorldStats| st.semi_excess) as StatFn,
             a.semi_excess,
             wgt(0.5, a.semi_excess_sd),
+        ),
+        // THE COUNT HALF of the same asymmetry, which the row above cancels by construction: the
+        // record rises on 54.8% (QQQ) and 55.0% (CRSP 1954-2026) of its moving sessions, in smaller
+        // steps than it falls, and one history pins it — QQQ's resamples read 53.5 to 56.2.
+        // REPORTED, NOT GRADED: judgment 0, so the loss does not see it, while the verdict judges it
+        // against the record's band like every banded row. The weight moves off 0 when a mechanism
+        // reaches the record.
+        (
+            "up-day share %",
+            (|st: &WorldStats| st.up_share) as StatFn,
+            a.up_share,
+            wgt(0.0, a.up_share_sd),
         ),
         // The leverage effect, graded by the one statistic that survives close-only data:
         // corr(r_t, r^2_{t+1}) reads -0.09 on every CRSP era and negative on all 18 funds. The
@@ -8283,9 +8766,12 @@ pub fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
 /// name here to be a fidelity target.
 const EXTREME_TARGETS: &[&str] = &["worst crash %"];
 
-/// The admissible interval for a per-path fidelity ratio, and the admissible percentile band for an
-/// `EXTREME_TARGETS` row. Stated ONCE: the report, the sidecar and the tests read the same pair, so
-/// a consumer's `miss` and a reader's `<-- MISS` cannot drift apart.
+/// The admissible interval for a per-path fidelity ratio on a row WITHOUT a `RecordBand`, and the
+/// admissible percentile band for an `EXTREME_TARGETS` row. Stated ONCE: the report, the sidecar and
+/// the tests read the same pair, so a consumer's `miss` and a reader's `<-- MISS` cannot drift
+/// apart. A row with a record band is judged by that band instead: one width for every row flagged
+/// the downside excess on every pin, inside a record whose own band spans zero, and passed a lag-1
+/// clustering of 1.23x the record, past its band's 1.14.
 ///
 /// Outside 5-95 is the condition `-noise`'s header already names — the model cannot produce
 /// record-like histories on that statistic — and it is the honest analogue of a ratio miss: both
@@ -8310,22 +8796,38 @@ const EXTREME_MIN_HISTORIES: usize = 100 / EXTREME_PCT_BAND.0;
 /// `horizon_years` is the length of the record the anchor was read over, from `anchor_groups`; it
 /// is carried on EVERY row, not just the extreme ones, because a per-path ratio still folds a
 /// horizon mismatch a reader cannot otherwise see.
+///
+/// `real` IS THE RECORD, read the way the model reads a path, wherever the row has a `RecordBand`,
+/// and the row's anchor elsewhere; `target` is what the loss grades against. The two differ where
+/// the target is a theory value (the variance ratio's 1.00), a literal older than its record (four
+/// S&P rows), or an earlier vintage of the same series — and a consumer dividing by a `real` that
+/// was a target read a theory value as a bias.
 #[derive(Debug, Clone)]
 pub struct FidelityRow {
     pub name: &'static str,
     pub model: f64,
     pub real: f64,
+    pub target: f64,
     pub ratio: Option<f64>,
     pub pctile: Option<usize>,
+    /// the record's own 5th-95th resampling band, where the row has one
+    pub record_band: Option<(f64, f64)>,
+    /// where the model falls among the record's resamples, in percent — the reverse of `pctile`,
+    /// which places the record among the model's histories
+    pub record_pctile: Option<usize>,
     pub horizon_years: usize,
     pub n_histories: usize,
 }
 
 impl FidelityRow {
     /// Stated as the admissible interval and NEGATED, so an unmeasurable row reports a miss rather
-    /// than a clean bill of health — a `NaN` ratio fails both outward comparisons, and an extreme
-    /// row whose ensemble produced no reading has nothing to stand on either.
+    /// than a clean bill of health — a `NaN` reading fails every outward comparison, and an extreme
+    /// row whose ensemble produced no reading has nothing to stand on either. A row with a record
+    /// band is judged by it alone.
     fn miss(&self) -> bool {
+        if let Some((lo, hi)) = self.record_band {
+            return !(lo..=hi).contains(&self.model);
+        }
         match self.ratio {
             Some(r) => !(FIDELITY_RATIO_BAND.0..=FIDELITY_RATIO_BAND.1).contains(&r),
             None => !self
@@ -8537,18 +9039,27 @@ pub fn fidelity_rows(
                     name,
                     model,
                     real: want,
+                    target: want,
                     ratio: None,
                     pctile,
+                    record_band: None,
+                    record_pctile: None,
                     horizon_years,
                     n_histories: xs.len(),
                 }
             } else {
+                // the record, read the model's way, where the row has a band; the anchor elsewhere
+                let band = a.record_bands.iter().find(|b| b.name == name);
+                let real = band.map_or(want, |b| b.record);
                 FidelityRow {
                     name,
                     model,
-                    real: want,
-                    ratio: Some(if want == 0.0 { f64::NAN } else { model / want }),
+                    real,
+                    target: want,
+                    ratio: Some(if real == 0.0 { f64::NAN } else { model / real }),
                     pctile: None,
+                    record_band: band.map(RecordBand::band),
+                    record_pctile: band.and_then(|b| b.percentile(model)),
                     horizon_years,
                     n_histories: 1,
                 }
@@ -10553,7 +11064,7 @@ fn bond_relations() -> [Relation; 2] {
 /// target added or renamed fails the build until someone places it. The failure being prevented is
 /// a target silently absent from the equity section — a shorter table reads as a shorter list of
 /// concerns, not as a bug.
-const EQUITY_TARGETS: [&str; 18] = [
+const EQUITY_TARGETS: [&str; 19] = [
     "equity vol %",
     "typical-year vol %",
     "return per vol",
@@ -10562,6 +11073,7 @@ const EQUITY_TARGETS: [&str; 18] = [
     "clustering lag 20",
     "variance ratio 60d",
     "downside vol excess %",
+    "up-day share %",
     "leverage corr",
     "valuation dispersion",
     "upper wing months %",
@@ -10961,6 +11473,7 @@ fn anchor_groups(a: Anchors) -> [(&'static str, usize, &'static [&'static str]);
                 "crashes/century",
                 "median depth %",
                 "downside vol excess %",
+                "up-day share %",
                 "leverage corr",
             ],
         ),
@@ -12767,6 +13280,55 @@ fn gate_scope_lines(a: Anchors, p: &Path) -> String {
     )
 }
 
+/// One fidelity row of the sidecar, as the Scala twin writes it, byte for byte.
+///
+/// `aggregation` and `horizonYears` are the terms of the comparison, and they are in the DATA
+/// because prose does not travel: a consumer holding this file has no access to the report's note,
+/// and an `ensemble-extreme` row divided by its anchor gives a quotient that grades the ensemble
+/// size. Such a row carries `ratio: null` and a `percentile` instead — where the record falls among
+/// single histories of its own length — so the division cannot be made by accident. `miss` is the
+/// admissible interval NEGATED for both kinds, so a row that could not be measured reports a miss
+/// rather than a clean bill of health. `real` is the record read the model's way on every row with
+/// a `recordBand`, and `target` what the loss grades against; `recordPercentile` places the MODEL
+/// among the record's resamples, the reverse of `percentile`, so the two never share a field.
+fn fidelity_row_json(r: &FidelityRow) -> String {
+    let num = |x: f64| -> String {
+        if x.is_nan() {
+            "null".to_string()
+        } else {
+            ef(x)
+        }
+    };
+    // Three pieces, not one line-continued literal: `\<newline>` keeps the source indentation
+    // inside the string, and the twins must emit byte-identical JSON.
+    let head = format!(
+        "    {{ \"name\": {}, \"model\": {}, \"real\": {}, \"target\": {}, ",
+        json_str(r.name),
+        num(r.model),
+        num(r.real),
+        num(r.target)
+    );
+    let mid = format!(
+        "\"aggregation\": {}, \"horizonYears\": {}, \"ratio\": {}, \"percentile\": {}, ",
+        json_str(r.aggregation()),
+        r.horizon_years,
+        r.ratio.map_or_else(|| "null".to_string(), num),
+        r.pctile
+            .map_or_else(|| "null".to_string(), |x| x.to_string())
+    );
+    let tail = format!(
+        "\"recordBand\": {}, \"recordPercentile\": {}, \"miss\": {} }}",
+        r.record_band.map_or_else(
+            || "null".to_string(),
+            |(lo, hi)| format!("[{}, {}]", num(lo), num(hi))
+        ),
+        r.record_pctile
+            .map_or_else(|| "null".to_string(), |x| x.to_string()),
+        r.miss()
+    );
+    head + &mid + &tail
+}
+
 /// Everything that licenses the TSV: which (world, seed, path) produced it, on what calendar,
 /// and what the world's two gate verdicts and fidelity ratios were. A warning printed to stderr
 /// at export time does not survive the file being moved; this does.
@@ -12808,36 +13370,7 @@ fn write_emit_sidecar(
             ef(x)
         }
     };
-    // `aggregation` and `horizonYears` are the terms of the comparison, and they are in the DATA
-    // because prose does not travel: a consumer holding this file has no access to the report's
-    // note, and an `ensemble-extreme` row divided by its anchor gives a quotient that grades the
-    // ensemble size. Such a row carries `ratio: null` and a `percentile` instead — where the record
-    // falls among single histories of its own length — so the division cannot be made by accident.
-    // `miss` is the admissible interval NEGATED for both kinds, so a row that could not be measured
-    // reports a miss rather than a clean bill of health.
-    let fidelity: Vec<String> = gate_rows
-        .iter()
-        .map(|r| {
-            // Two pieces, not one line-continued literal: `\<newline>` keeps the source
-            // indentation inside the string, and the twins must emit byte-identical JSON.
-            let head = format!(
-                "    {{ \"name\": {}, \"model\": {}, \"real\": {}, ",
-                json_str(r.name),
-                num(r.model),
-                num(r.real)
-            );
-            let tail = format!(
-                "\"aggregation\": {}, \"horizonYears\": {}, \"ratio\": {}, \"percentile\": {}, \"miss\": {} }}",
-                json_str(r.aggregation()),
-                r.horizon_years,
-                r.ratio.map_or_else(|| "null".to_string(), num),
-                r.pctile
-                    .map_or_else(|| "null".to_string(), |x| x.to_string()),
-                r.miss()
-            );
-            head + &tail
-        })
-        .collect();
+    let fidelity: Vec<String> = gate_rows.iter().map(fidelity_row_json).collect();
     let world_body = world_json_body(w);
     let verdict = |bad: &[String]| if bad.is_empty() { "PASS" } else { "FAIL" };
     let calendar = if start_ymd.is_empty() {
@@ -14504,10 +15037,35 @@ pub fn main() {
     println!(
         "      near 50% the record is a typical history of this model.  Same reading as -noise."
     );
+    println!(
+        "    NOTE: `real` is the record, read the way the model reads a path.  A row with a record"
+    );
+    println!(
+        "      band is judged by where the model falls among one-year-block resamples of that"
+    );
+    println!(
+        "      record (`model@`, against its 5th-95th band); `target` is printed where the loss"
+    );
+    println!("      grades against something else.");
     for r in &verdict_rows {
         let flag = if r.miss() { "  <-- MISS" } else { "" };
         let judgement = match (r.ratio, r.pctile) {
-            (Some(x), _) => format!("ratio {}", jf(x, 5, 2)),
+            (Some(x), _) => {
+                let band = r.record_band.map_or_else(String::new, |(lo, hi)| {
+                    let at = r
+                        .record_pctile
+                        .map_or_else(|| "n/a".to_string(), |p| format!("{p:>3}%"));
+                    format!("   model@ {at} of {}..{}", jf(lo, 0, 2), jf(hi, 0, 2))
+                });
+                // printed only where it differs past rounding: vintage noise is not a difference
+                let target = if (r.target - r.real).abs() > 0.01 * r.real.abs().max(r.target.abs())
+                {
+                    format!("   target {}", jf(r.target, 0, 2))
+                } else {
+                    String::new()
+                };
+                format!("ratio {}{band}{target}", jf(x, 5, 2))
+            }
             (None, Some(pc)) => format!(
                 "record@ {pc:>3}% of {}y histories (n={})",
                 r.horizon_years, r.n_histories
@@ -17327,11 +17885,11 @@ mod dd_shape_anchor_tests {
 /// `price` keeps its meaning and the dial is bit-identical off. The bands are MEASURED numbers
 /// re-derived from the checked-in fixture. The Scala twin carries the same checks in
 /// THE TYPICAL YEAR's ruler (`yearvol-2026-09-15.tsv`): the median calendar-year vol over the
-/// pooled vol, which is what separates an ordinary year from an episode. The shipped
-/// `typical-year vol %` anchors are this file's medianYearVol rows, and the finding the row
+/// pooled vol, which is what separates an ordinary year from an episode. The finding the row
 /// exists for — that the Nasdaq anchor's pooled vol is one bust — is pinned here so a
-/// re-measured fixture that no longer shows it fails loudly. The Scala twin's
-/// `YearVolAnchorSuite` reads the same file.
+/// re-measured fixture that no longer shows it fails loudly. The shipped anchors are no longer
+/// this file's calendar-year rows but the record bands' phase means (`record_band_tests`). The
+/// Scala twin's `YearVolAnchorSuite` reads the same file.
 #[cfg(test)]
 mod year_vol_anchor_tests {
     use super::*;
@@ -17351,19 +17909,6 @@ mod year_vol_anchor_tests {
             .unwrap_or_else(|| panic!("fixture row [yearvol {series} {window} {stat}] missing"))[5]
             .parse()
             .expect("value")
-    }
-
-    #[test]
-    fn the_shipped_typical_year_anchors_are_the_fixtures_median_year_vol_rows() {
-        let rs = rows();
-        assert!(
-            (anchors_named("sp500").year_vol - value(&rs, "CRSP", "w1954", "medianYearVol")).abs()
-                < 0.1
-        );
-        assert!(
-            (anchors_named("nasdaq").year_vol - value(&rs, "QQQ", "w1999", "medianYearVol")).abs()
-                < 0.1
-        );
     }
 
     #[test]
@@ -17428,6 +17973,231 @@ mod year_vol_anchor_tests {
                 st.vol * 100.0
             );
         }
+    }
+}
+
+/// THE RECORD BANDS (`recordbands-2026-09-18.tsv`): the shipped `RecordBand` literals and the
+/// typical-year and up-day-share anchors are re-derived from the fixture; a banded row's percentile
+/// never contradicts its miss; and a pinned series fixes `series_readings` and `record_resamples`
+/// to the bit, so the Scala twin's `RecordBandSuite`, which pins the same values, shows the twins
+/// read a record identically.
+#[cfg(test)]
+mod record_band_tests {
+    use super::*;
+
+    fn lines() -> Vec<String> {
+        std::fs::read_to_string("../test-data/equity-anchors/recordbands-2026-09-18.tsv")
+            .expect("fixture")
+            .lines()
+            .filter(|l| !(l.starts_with('#') || l.trim().is_empty()))
+            .map(str::to_string)
+            .collect()
+    }
+
+    fn row(set: &str, name: &str) -> Vec<f64> {
+        lines()
+            .iter()
+            .map(|l| l.split('\t').collect::<Vec<&str>>())
+            .find(|r| r[0] == set && r[1] == name)
+            .unwrap_or_else(|| panic!("fixture row [{set} {name}] missing"))[6..]
+            .iter()
+            .map(|s| s.parse().expect("number"))
+            .collect()
+    }
+
+    fn sets() -> [(&'static str, Anchors); 2] {
+        [
+            ("sp500", anchors_named("sp500")),
+            ("nasdaq", anchors_named("nasdaq")),
+        ]
+    }
+
+    /// The series both twins pin: uniform draws, no transcendental, with a 6% fall every 97
+    /// sessions so it has episodes to count.
+    fn pinned_series() -> Vec<f64> {
+        let mut rng = NumPyRng::new(20_260_918);
+        (0..3000)
+            .map(|i| {
+                let u = rng.next_f64();
+                if i % 97 == 50 {
+                    -0.06
+                } else {
+                    (u - 0.48) * 0.03
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_shipped_bands_are_the_fixtures_rows() {
+        let header: Vec<String> = lines()[0].split('\t').map(str::to_string).collect();
+        let pcts: Vec<String> = RECORD_BAND_PCTS.iter().map(|p| format!("p{p}")).collect();
+        assert_eq!(
+            header[7..].to_vec(),
+            pcts,
+            "the fixture carries the shipped grid"
+        );
+        for (set, a) in sets() {
+            let names: Vec<&str> = a.record_bands.iter().map(|b| b.name).collect();
+            assert_eq!(
+                names, RECORD_BAND_ROWS,
+                "{set}: the literals follow RECORD_BAND_ROWS"
+            );
+            for b in a.record_bands {
+                let r = row(set, b.name);
+                assert_eq!(b.record, r[0], "{set} {}: record", b.name);
+                assert_eq!(
+                    b.q.to_vec(),
+                    r[1..].to_vec(),
+                    "{set} {}: percentiles",
+                    b.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_typical_year_and_up_day_anchors_are_the_fixtures_records() {
+        for (set, a) in sets() {
+            let ty = row(set, "typical-year vol %")[0];
+            assert!(
+                (a.year_vol - ty).abs() < 0.1,
+                "{set}: typical year {} against the record's phase mean {ty}",
+                a.year_vol
+            );
+            let up = row(set, "up-day share %")[0];
+            assert!(
+                (a.up_share - up).abs() < 0.1,
+                "{set}: up-day share {} against the record's {up}",
+                a.up_share
+            );
+        }
+    }
+
+    #[test]
+    fn the_up_day_share_counts_moving_sessions_only() {
+        // two rises, one fall, two sessions that did not move
+        assert!((up_share_of(&[0.01, -0.02, 0.0, 0.03, 0.0]) - 200.0 / 3.0).abs() < 1e-12);
+        assert!(up_share_of(&[0.0, 0.0]).is_nan());
+    }
+
+    #[test]
+    fn a_percentile_never_contradicts_the_band() {
+        for (set, a) in sets() {
+            for b in a.record_bands {
+                let (lo, hi) = b.band();
+                let span = b.q[22] - b.q[0];
+                for k in 0..=400 {
+                    let x = b.q[0] - 0.1 * span + 1.2 * span * f64::from(k) / 400.0;
+                    let p = b.percentile(x).expect("a number places");
+                    assert_eq!(
+                        b.misses(x),
+                        !(5..=95).contains(&p),
+                        "{set} {}: {x} placed at {p}%",
+                        b.name
+                    );
+                }
+                // just past an edge reads past it, never rounded back inside; the edge itself is in
+                assert!(
+                    b.percentile(hi + 1e-9 * hi.abs().max(1.0))
+                        .is_some_and(|p| p >= 96)
+                );
+                assert!(
+                    b.percentile(lo - 1e-9 * lo.abs().max(1.0))
+                        .is_some_and(|p| p <= 4)
+                );
+                assert!(!b.misses(hi) && !b.misses(lo));
+                assert_eq!(b.percentile(f64::NAN), None);
+                assert!(b.misses(f64::NAN), "{set} {}: not a number misses", b.name);
+            }
+        }
+    }
+
+    #[test]
+    fn a_pinned_series_reads_the_same_in_both_twins() {
+        // `RecordBandSuite` pins these same values; a change here is a change there
+        let r = pinned_series();
+        assert_eq!(
+            series_readings(&r),
+            [
+                16.798312848172113,
+                17.02219625010289,
+                -0.12963037209238956,
+                11.437126469063255,
+                -0.022101390142453572,
+                -0.012940593813227222,
+                0.7407002578651204,
+                29.603735914033912,
+                50.766666666666666,
+                0.025507720490428657,
+                16.8,
+                -15.548714909190897,
+            ]
+        );
+        assert_eq!(year_vol_phase_mean(&r), 16.862007639884688);
+        let reads = record_resamples(&r, 40, 7);
+        let meds: Vec<f64> = (0..12)
+            .map(|k| med(&reads.iter().map(|x| x[k]).collect::<Vec<f64>>()))
+            .collect();
+        assert_eq!(
+            meds,
+            vec![
+                16.78655352771039,
+                16.877627553056403,
+                -0.16675076546846718,
+                11.388024993784173,
+                -0.02498629581122743,
+                -0.01046514345997916,
+                0.7513339475330946,
+                29.880494878185225,
+                50.63333333333333,
+                0.027222579780510212,
+                16.8,
+                -26.478692229354827,
+            ]
+        );
+        let crashes: Vec<f64> = reads.iter().map(|x| x[10]).collect();
+        assert_eq!(
+            record_band_quantiles(&crashes),
+            [
+                8.4, 8.4, 8.4, 8.4, 8.4, 8.4, 8.4, 16.8, 16.8, 16.8, 16.8, 16.8, 16.8, 16.8, 16.8,
+                16.8, 16.8, 16.8, 25.2, 25.2, 33.6, 33.6, 33.6
+            ]
+        );
+    }
+
+    #[test]
+    fn a_banded_rows_real_is_the_record_and_its_miss_the_band() {
+        let w = named_world("0.24.4-nasdaq").expect("recipe").0;
+        let a = anchors_named("nasdaq");
+        let st = measure(&sim_paths(&w, 12, 27, 20_260_918), 27);
+        let rows = fidelity_rows(a, &st, 12, 20_260_918, &w);
+        for r in &rows {
+            if let Some(b) = a.record_bands.iter().find(|b| b.name == r.name) {
+                assert_eq!(r.real, b.record, "{}: real is the record", r.name);
+                assert_eq!(r.record_band, Some(b.band()));
+                assert_eq!(r.record_pctile, b.percentile(r.model));
+                assert_eq!(
+                    r.miss(),
+                    b.misses(r.model),
+                    "{}: miss is the band's",
+                    r.name
+                );
+            } else {
+                assert!(r.record_band.is_none() && r.record_pctile.is_none());
+                assert_eq!(
+                    r.real, r.target,
+                    "{}: an unbanded row's real is its anchor",
+                    r.name
+                );
+            }
+        }
+        let vr = rows
+            .iter()
+            .find(|r| r.name == "variance ratio 60d")
+            .expect("row");
+        assert_eq!(vr.target, 1.00, "the loss keeps its theory value");
+        assert!(vr.real < 0.9, "and `real` is QQQ's own, {}", vr.real);
     }
 }
 

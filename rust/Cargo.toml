@@ -25,7 +25,7 @@ categories = ["filesystem", "date-and-time", "mathematics", "parser-implementati
 # package keeps: `cargo install vastblue-uni` builds it, and a dependent crate drives the
 # same paths in-process. rust-toolchain.toml is excluded so the repo's pinned toolchain is
 # not forced onto consumers.
-exclude = ["tests/", "src/bin/bench_*.rs", "src/bin/market_sim_search.rs", "doc-examples/", "docs/", "Makefile", "rustfmt.toml", "rust-toolchain.toml"]
+exclude = ["tests/", "src/bin/bench_*.rs", "src/bin/market_sim_search.rs", "src/bin/record_bands.rs", "doc-examples/", "docs/", "Makefile", "rustfmt.toml", "rust-toolchain.toml"]
 
 [lib]
 name = "uni"
@@ -41,6 +41,12 @@ required-features = ["market-sim"]
 # vastblue-uni` builds the simulator, not the search.
 [[bin]]
 name = "market_sim_search"
+required-features = ["market-sim"]
+
+# The record-band generator (`test-data/equity-anchors/recordbands-*.tsv`). Excluded from the
+# published crate above, like the search.
+[[bin]]
+name = "record_bands"
 required-features = ["market-sim"]
 
 [lints.rust]

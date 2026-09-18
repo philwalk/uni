@@ -62,9 +62,15 @@ different questions:
 | `world` | with which parameters? |
 | `gate` | was that world even admissible? |
 
-Each `gate.fidelity` row carries `miss`, true when the ratio falls outside 0.667-1.5 **or cannot be
-computed** — a `null` model value reads `miss: true`, not `false`. A path holding a non-finite price
-is refused outright: `-emit` exits 2 and writes nothing, where every other gate verdict only warns.
+Each `gate.fidelity` row carries `real`, `target` and `miss`. `real` is the record, read the way the
+model reads a path, on every row with a `recordBand`; `target` is what the loss grades against, and
+the two differ where the target is a theory value or older than its record (see
+[Reading a row against its record](#reading-a-row-against-its-record)). On a banded row `miss` is
+true when the model falls outside the record's own 5th-95th resampling band, and
+`recordPercentile` says where it falls; on every other row `miss` is true when the ratio falls
+outside 0.667-1.5. Either way a row that **cannot be computed** reads `miss: true` — a `null` model
+value is not a pass. A path holding a non-finite price is refused outright: `-emit` exits 2 and
+writes nothing, where every other gate verdict only warns.
 
 **`schema` and `version` do not substitute for each other.** The default world moved at 0.19.1 and
 again at 0.19.2, so two files with identical columns and identical `schema` can still be
@@ -116,7 +122,10 @@ LOG rather than a
 level, because a level near 10^6 rendered at six decimals sits within reach of a cross-language
 rounding tie the twins' byte-parity checks would trip on. A channels-off schema-10 file differs
 from its schema-6 counterpart in the schema number, the new zero-valued world fields and the new
-`gate` fields, so a schema-6 reader that ignores unknown columns and fields keeps working.
+`gate` fields, so a schema-6 reader that ignores unknown columns and fields keeps working. Schema 18
+gave each `fidelity` row `target`, `recordBand` and `recordPercentile`, and made `real` the record
+on every banded row: `model / real` on the variance ratio is now the model against QQQ's 0.83, not
+against the loss's theory value of 1.00.
 
 **Every emitted channel is graded, and the verdict names its own scope.** `ungradedChannelSeries`
 is **empty in every world the model can currently emit**: the satellite leg is graded by the
@@ -675,6 +684,57 @@ Read the result as a consistency check, not a falsification test. The bands came
 funds and the ladder walks Treasury durations, so it cannot detect a mechanism that is wrong in a
 way every Treasury shares. That needs an asset class the bands did not come from.
 
+### Reading a row against its record
+
+`-noise` asks where the record falls among the model's histories. The record bands ask the reverse:
+where the model falls among the histories the record itself could have produced. Every row one
+daily record can be read the model's way — twelve on each set: volatility, the typical year, return
+per volatility, kurtosis, both clustering lags, the 60-day variance ratio, the downside excess, the
+up-day share, leverage corr, the crash rate and median depth — carries the record's reading and its
+spread over 20,000 moving one-year-block resamples of that record
+(`test-data/equity-anchors/recordbands-2026-09-18.tsv`: QQQ 1999-2026 for the Nasdaq set, CRSP
+1954-2026 for the S&P set, the century for its clustering rows). `-validate` prints where the model
+falls and the 5th-95th band, and the row misses outside it:
+
+```
+ variance ratio 60d     model     0.91   real     0.83   ratio  1.09   model@  90% of 0.69..0.93   target 1.00
+ up-day share %         model    52.29   real    54.78   ratio  0.95   model@   1% of 53.46..56.17  <-- MISS
+```
+
+A band per row replaces a ratio band of one width for all, which was wrong both ways: too narrow
+for a statistic one history barely pins (the downside excess, whose band spans zero, read MISS on
+every recent Nasdaq world) and too wide for one it pins tightly (lag-1 clustering's band is
+0.79-1.14 times the record, and the Nasdaq recipe's 1.24 passed). Rows no single daily record reads — the depth rungs, the wings,
+the valuation dispersion, the bond rows — keep the ratio band.
+
+`real` is the record, so where the loss grades against something else the report prints `target`
+beside it:
+
+| row | target | record | why |
+|---|---|---|---|
+| variance ratio 60d | 1.00 | QQQ 0.83, CRSP 1.01 | a theory value: the model has no mean-reversion channel |
+| S&P equity vol % | 16.0 | 15.68 | a literal older than the fixture |
+| S&P kurtosis | 28 | 21.8 | the century's, on a row read over 1954-2026 |
+| S&P crashes/century | 20.7 | 24.9 | between the century's 19.2 and 1954-2026's 24.9 |
+| S&P median depth % | −21.4 | −20.8 | the mean of the two middle of 18 episodes; the model's median takes the upper |
+| Nasdaq downside vol excess % | 1.13 | 1.07 | an earlier vintage of the same series |
+
+The targets are unchanged. Re-anchoring the four S&P rows moves the S&P calibration, and is its own
+decision.
+
+**The up-day share** — `up-day share %`, the share of moving sessions that rise — is the count half
+of the return asymmetry, which the downside excess cancels by construction. The record pins it: QQQ
+rises on 54.8% of its sessions, in smaller steps than it falls (band 53.5-56.2), and CRSP 1954-2026
+on 55.0% (54.0-55.8). Both shipped worlds miss it low — the Nasdaq recipe 52.3%, the S&P default
+53.8% — and `-noise` agrees from the other side, with the record above 99% of the model's own
+histories on both. The row is reported at weight 0 in the loss until a mechanism reaches it.
+
+**Read the two spreads together.** Resampling a record's years cannot produce a session worse than
+its worst, so the record bands run narrow on tail statistics; the model's own spread runs wide
+wherever its tail is too heavy. On kurtosis they disagree for that reason — the Nasdaq recipe sits
+above every resample of QQQ, while `-noise` puts QQQ at the recipe's 11th percentile. Where both
+agree, as on the up-day share, the miss is the model's.
+
 ### The equity section: ratios at the volatility anchor
 
 `-crossasset` also re-reads every equity target with volatility put **on its anchor**. This matters
@@ -1027,16 +1087,19 @@ the target set for *being* that other index. `-anchors nasdaq` swaps in a QQQ ve
 per century, median depth −22.8%, worst −83.0%.
 
 **The typical year — `typical-year vol %`.** Pooled volatility cannot tell an ordinary year from an
-episode, so beside it both sets grade the median calendar-year vol (`yearvol-2026-09-15.tsv`):
-18.3% for QQQ, 12.9% for CRSP from 1954, each with a band one sd of the row's own single-history
-spread wide (11.3-14.5 and 15.0-21.6). The two rows read the Nasdaq record differently on
-purpose. QQQ's median year is 0.68 of its pooled vol where QQQ from 2007, SPY and CRSP all read
-0.82-0.83, because the 1999-2026 window's volatility is one episode — 2000, 2001 and 2002 at 58, 55
-and 42%. The model's Nasdaq recipe reads a typical year of 19-20% on 27-year paths (the record's 18.3%
-sits at the 23rd percentile of its histories; on the S&P the 12.9% sits at the 47th), so its pooled
-miss (24-25% against 26.9%) is the bust's. The row exists so
-that a search cannot close the pooled row by making every year more volatile: a world that reaches
-26.9% pooled with a typical year of 20% or more has spread the bust across its calm years, which no
+episode, so beside it both sets grade the median-year vol, averaged over all 252 block phases
+(`recordbands-2026-09-18.tsv`): 20.0% for QQQ, 12.5% for CRSP from 1954, each with a gate band one
+sd of the row's own single-history spread wide (16.4-23.6 and 10.9-14.1). One series' median year
+depends on where its years start — QQQ's reads 18.2 to 21.5 across the phases, and calendar years
+sit at the bottom (18.3) — while a model ensemble averages the phase away, so the anchor has to as
+well. The two rows read the Nasdaq record differently on purpose. On calendar years QQQ's median
+year is 0.68 of its pooled vol where QQQ from 2007, SPY and CRSP all read 0.82-0.83
+(`yearvol-2026-09-15.tsv`), because the 1999-2026 window's volatility is one episode — 2000, 2001
+and 2002 at 58, 55 and 42%. The Nasdaq recipe's typical year, 19.4%, sits at the 34th percentile of
+QQQ's resamples, so its pooled miss (24-25% against 26.9%) is the bust's; the S&P default's 13.2%
+sits at the 86th percentile of CRSP's, an ordinary year about 5% hot. The row exists so that a
+search cannot close the pooled row by making every year more volatile: a world that reaches 26.9%
+pooled with a typical year well above 20% has spread the bust across its calm years, which no
 window of the record does.
 
 **The wings — `upper wing months %` / `lower wing months %`.** The valuation cycle's time far

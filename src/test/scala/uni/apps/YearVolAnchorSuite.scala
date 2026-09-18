@@ -4,11 +4,11 @@ import munit.FunSuite
 import uni.*
 
 /** THE TYPICAL YEAR's ruler (`yearvol-2026-09-15.tsv`): the median calendar-year vol over the
-  * pooled vol, which is what separates an ordinary year from an episode.  The shipped
-  * `typical-year vol %` anchors are this file's medianYearVol rows, and the finding the row exists
-  * for -- that the Nasdaq anchor's pooled vol is one bust -- is pinned here so a re-measured
-  * fixture that no longer shows it fails loudly.  The Rust twin's `year_vol_anchor_tests` reads
-  * the same file. */
+  * pooled vol, which is what separates an ordinary year from an episode.  The finding the row
+  * exists for -- that the Nasdaq anchor's pooled vol is one bust -- is pinned here so a re-measured
+  * fixture that no longer shows it fails loudly.  The shipped anchors are no longer this file's
+  * calendar-year rows but the record bands' phase means (`RecordBandSuite`).  The Rust twin's
+  * `year_vol_anchor_tests` reads the same file. */
 class YearVolAnchorSuite extends FunSuite:
   private val fixture = Paths.get("test-data/equity-anchors/yearvol-2026-09-15.tsv")
   private lazy val rows: Vector[Vector[String]] =
@@ -19,11 +19,6 @@ class YearVolAnchorSuite extends FunSuite:
   private def value(series: String, window: String, stat: String): Double =
     rows.find(r => r(0) == "yearvol" && r(1) == series && r(2) == window && r(3) == stat)
       .getOrElse(fail(s"fixture row [yearvol $series $window $stat] missing"))(5).toDouble
-
-  test("the shipped typical-year anchors are the fixture's medianYearVol rows") {
-    assertEqualsDouble(MarketSim.SP500Anchors.yearVol, value("CRSP", "w1954", "medianYearVol"), 0.1)
-    assertEqualsDouble(MarketSim.NasdaqAnchors.yearVol, value("QQQ", "w1999", "medianYearVol"), 0.1)
-  }
 
   test("the Nasdaq anchor's pooled vol is one episode: QQQ's whole history alone concentrates") {
     // every other window and series spreads its vol the same way; only the window holding
