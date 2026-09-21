@@ -37,16 +37,18 @@ class NewsLevSuite extends FunSuite:
     MarketSim.namedWorld("0.24.4-nasdaq").get._1
       .copy(newsRate = 22.0, newsSize = 0.02, newsLev = 50.0, newsRevert = 0.5)
 
-  test("news paid by the body buys more up days and keeps the mean") {
-    // the lift and the flips pay the same compensator; the flips turn down days up
-    def read(flip: Double): (Double, Double) =
+  test("news paid by the day flip buys up days cheaply and keeps the mean") {
+    // the lift and the flips pay the same compensator; a flip turns a small down day up
+    def read(flip: Double): (Double, Double, Double) =
       val w = MarketSim.namedWorld("0.24.3-nasdaq").get._1
         .copy(newsRate = 16.0, newsSize = 0.02, newsLev = 50.0, newsRevert = 0.6, newsFlip = flip)
       val st = MarketSim.measure(MarketSim.simPaths(w, 40, 60, 20260918L), 60)
-      (st.upShare, st.annRet)
-    val ((u0, r0), (u1, r1)) = (read(0.0), read(1.0))
-    assert(u1 > u0 + 0.5, f"up-day share $u0%.2f -> $u1%.2f")
+      (st.upShare, st.annRet, st.semiExcess)
+    val ((u0, r0, e0), (u1, r1, e1)) = (read(0.0), read(0.5))
+    assert(u1 > u0 + 1.0, f"up-day share $u0%.2f -> $u1%.2f")
     assert(math.abs(r1 - r0) < 1.0, f"annual return $r0%.2f -> $r1%.2f")
+    // under 2 points of downside excess a point of share, where news charges 3-4
+    assert(e1 - e0 < 2.0 * (u1 - u0), f"downside excess $e0%.2f -> $e1%.2f for up-day share $u0%.2f -> $u1%.2f")
   }
 
   test("news at the session's own volatility gives back the vol it displaced") {

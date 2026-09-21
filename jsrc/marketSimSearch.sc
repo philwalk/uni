@@ -49,7 +49,8 @@ object MarketSimSearch:
     "              ;   come from the seed, so seeding from a recipe searches THAT configuration",
     "-paths N      ; ensemble paths per evaluation (default 60)",
     "-years Y      ; years per path (default 80)",
-    "-reps K       ; seeds a candidate must pass feasibility on, all of them (default 2)",
+    "-reps K       ; seeds a candidate must pass feasibility on, all of them (default 2); at 1 each",
+    "              ;   generation reads one passing candidate once more, for the seed noise alone",
     "-sigma S      ; mutation sd as a fraction of each dial's range (default 0.07; 0.20 breaks),",
     "              ;   the news rate's in ln(1 + rate)",
     "-keep N       ; archive size cap (default 40)",
@@ -336,7 +337,8 @@ object MarketSimSearch:
                         /** How far this world's SCORE moved across its own repetitions, max
                           * minus min.  Free to compute and it is the noise scale the archive
                           * needs: a score difference smaller than this is a seed draw, not a
-                          * better world.  Zero at `-reps 1`, which is honest. */
+                          * better world.  Zero at `-reps 1`, where `noiseReading` takes a read of
+                          * its own instead. */
                         spread: Double = 0.0,
                         /** WHICH GATE ROWS FAILED, empty when feasible: `worstRow` is a fitness
                           * row and says nothing about rejection. */
@@ -797,6 +799,18 @@ object MarketSimSearch:
       val (_, i, j) = pairs.minBy(_._1)
       Some(if arc(i).score > arc(j).score then i else j)
 
+  /** What a candidate's reading adds to the running seed noise the replacement margin reads, if
+    * anything: the gap between two independent reads of one world, both feasible and run to the
+    * end.  With two or more reps that is the candidate's own `spread`.  With one there is no gap
+    * to read, and a 0 would say the score has no noise, so every better single read would replace
+    * a member and the archive would fill with lucky reads: `second` is then a further read of the
+    * same world, taken for this alone, and the reading is its distance from the first.  The
+    * candidate's score is its first read either way. */
+  def noiseReading(reps: Int, r: Read, second: Option[Read]): Option[Double] =
+    if !(r.feasible && r.complete) then None
+    else if reps > 1 then Some(r.spread)
+    else second.filter(s => s.feasible && s.complete).map(s => math.abs(s.score - r.score))
+
   /** Admit a feasible candidate.  Returns the archive and whether the candidate is IN IT AFTER THE
     * TRIM -- a replacement leaves the count unchanged, so the log needs the flag.
     *
@@ -1034,9 +1048,16 @@ object MarketSimSearch:
 
     // `-export`, `-prune` and `-holdout` read no candidate, so they carry the archive's own scheme
     // (see `candidateSeed`): one written before the key was searched a path stride apart
+    val readsNoCandidate = prune || exportTo.nonEmpty || holdout > 0
     val candidateSeeds =
-      if prune || exportTo.nonEmpty || holdout > 0 then readState(out).getOrElse("candidateSeeds", "path-stride")
+      if readsNoCandidate then readState(out).getOrElse("candidateSeeds", "path-stride")
       else "independent"
+    // likewise where the seed noise is read (see `noiseReading`): one written before the key read
+    // it off the reps' spread alone, which at one rep is no reading
+    val noiseReads =
+      if readsNoCandidate then readState(out).getOrElse("noiseReads", "reps")
+      else if reps > 1 then "reps"
+      else "second-read"
     // the weights and targets the loss applies (see `objectiveDigest`); `-export` and `-prune`
     // score nothing, so they carry the archive's own and never read the reference
     val objective = readState(out).get("objective") match
@@ -1053,6 +1074,7 @@ object MarketSimSearch:
                           "seedWorlds" -> seedWorldsDigest(pool),
                           // how a candidate's reads are seeded: see `candidateSeed`
                           "candidateSeeds" -> candidateSeeds,
+                          "noiseReads" -> noiseReads,
                           // the admission rules and the objective are recorded with the ensemble: a resume under different
                           // ones puts two standards in one archive
                           "admit" -> "spread-keeping-nearest",
@@ -1085,8 +1107,12 @@ object MarketSimSearch:
       val strided =
         if loaded.nonEmpty && !drawn.contains("candidateSeeds") then drawn + ("candidateSeeds" -> "path-stride")
         else drawn
+      // one written before `noiseReads` read its seed noise off the reps' spread alone
+      val noised =
+        if loaded.nonEmpty && !strided.contains("noiseReads") then strided + ("noiseReads" -> "reps")
+        else strided
       // one written before `-hold` held no row
-      val held = if loaded.nonEmpty && !strided.contains("hold") then strided + ("hold" -> "(none)") else strided
+      val held = if loaded.nonEmpty && !noised.contains("hold") then noised + ("hold" -> "(none)") else noised
       // one written before `-gate` gated on the verdict's default classes
       val classed =
         if loaded.nonEmpty && !held.contains("gateClasses") then held + ("gateClasses" -> "realism,mechanism")
@@ -1329,12 +1355,15 @@ object MarketSimSearch:
       // The mask keeps the derived seed non-negative in both languages.
       val rng = new NumPyRNG((base ^ (g.toLong * 0x9e3779b9L)) & 0x7fffffffffffffffL)
       // a running seed-noise estimate from each candidate's spread across its own reps, carried across generations
-      val start = (arc, evals, Vector.empty[String], nsum0, nn0, trace0)
+      // the noise read's slot (see `noiseReading`), past the generation's candidates and reserved
+      // whether it is used or not, so a candidate's slot never depends on an outcome
+      val noiseSlot = evals + pop * reps
+      val start = (arc, evals, Vector.empty[String], nsum0, nn0, trace0, reps == 1)
       // the archive's shape is read once a generation; `-cov 0` reads none and draws nothing
       // extra, so a run without it proposes exactly what it always did
       val factor = if cov > 0.0 then proposalFactor(arc, covShrink) else None
-      val (next, used, log, nsum, nn, trace) =
-        (0 until pop).foldLeft(start) { case ((acc, ev, lg, nsum, nn, tr), _) =>
+      val (next, slots, log, nsum, nn, trace, _) =
+        (0 until pop).foldLeft(start) { case ((acc, ev, lg, nsum, nn, tr, noiseDue), _) =>
         val parent = acc(rng.nextBoundedInt(acc.length))
         val along = factor.filter(_ => rng.nextDouble() < cov)
         val z = parent.dials.indices.toVector.map(_ => rng.randn())
@@ -1350,25 +1379,36 @@ object MarketSimSearch:
                       (0 until reps).toVector.map(j => candidateSeed(base, ev + j)), obj,
                       bar = if bar > 0.0 then barFor.get(parent.name) else None)
         val secs = (System.nanoTime() - t0) / 1e9
+        // THE NOISE READ (`-reps 1`): the generation's first candidate to pass its own read is read
+        // once more, at the generation's reserved slot and to the end whatever the bar.  It feeds
+        // the estimate alone: the candidate is scored on its first read, as its siblings are
+        val second =
+          if noiseDue && r.feasible && r.complete then
+            Some(judge(worldFor(parent.name), child, anchors, transport, paths, years,
+                       Vector(candidateSeed(base, noiseSlot)), obj, bar = None))
+          else None
         // a candidate above the bar still feeds the noise estimate when it ran to the end: its
         // spread is a reading of the objective's own noise whatever its level.  One the bar cut
         // short does not: a partial spread is not that reading
-        val nsum2 = if r.feasible && r.complete then nsum + r.spread else nsum
-        val nn2   = if r.feasible && r.complete then nn + 1 else nn
+        val reading = noiseReading(reps, r, second)
+        val nsum2 = reading.fold(nsum)(nsum + _)
+        val nn2   = if reading.isDefined then nn + 1 else nn
         // admitted BEFORE the line is built, because the line records the answer
         val (grown, took) =
           if r.feasible && !aboveBar(parent.name, r.score) then
-            // nn2 >= 1: a candidate under the bar ran to the end, so it was counted above
+            // no reading yet is no margin: at `-reps 1` the first may come generations in
             admit(acc, Member(parent.name, child, r.score, r.raw, r.worst, r.desc),
-                  sep, keep, nsum2 / nn2)
+                  sep, keep, if nn2 > 0 then nsum2 / nn2 else 0.0)
           else (acc, false)
         // `ev` is the SEED SLOT this candidate drew from (rep j reads `candidateSeed(base, ev + j)`), so a
         // log line reproduces its candidate
         val line = f"$g\t$ev\t${parent.name}\t${r.feasible}\t${r.score}%.6f\t${r.raw}%.6f" +
                    f"\t${r.worst}\t$secs%.3f\t" + r.desc.map(x => f"$x%.8g").mkString("\t") +
                    "\t" + r.gateFail.mkString("; ") + s"\t$took"
-        (grown, ev + reps, lg :+ line, nsum2, nn2, if took then tr :+ (g, r.desc) else tr)
+        (grown, ev + reps, lg :+ line, nsum2, nn2, if took then tr :+ (g, r.desc) else tr,
+         noiseDue && reading.isEmpty)
       }
+      val used = if reps == 1 then slots + 1 else slots
       appendLog(out, log)
       writeArchive(out, next, g + 1, used, (nsum, nn), settings)
       println(f"gen $g%5d  archive ${next.length}%3d  best ${next.map(_.score).min}%7.3f  " +

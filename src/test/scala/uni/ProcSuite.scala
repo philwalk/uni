@@ -1,12 +1,15 @@
 package uni
 
 import munit.FunSuite
+import scala.concurrent.duration.*
 
 /** Unit tests for the subprocess API introduced in PathsUtils.scala:
  *  ProcResult fields/methods, buffered run, streaming run,
  *  Int extensions (!! / orElse / orFail), failFast, and shell routing.
  */
 class ProcSuite extends FunSuite:
+  // subprocess spawns run 24 s on an idle host: munit's 30 s default fails on a loaded one
+  override val munitTimeout: Duration = 60.seconds
 
   // ============================================================================
   // ProcResult — field accessors and derived methods

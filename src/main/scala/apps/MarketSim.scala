@@ -741,24 +741,20 @@ object MarketSim:
                               // other row within its seed noise, and the S&P default's 53.8 ->
                               // 54.5, inside its band.  In [0, 1); 0 is bit-identical and draws
                               // nothing.
-    newsFlip: Double = 0.0,   // NEWS PAID BY THE BODY: the share of the price's news compensator
-                              // paid by turning moderate DOWN diffusion shocks up, not by a
-                              // deterministic lift.  A negative shock z flips sign with probability
-                              // q0 exp(-z^2 / 2), q0 set each session so the expected price gain
-                              // equals the share of the compensator it replaces (`FlipGain`, at
-                              // the liquidity the step will apply), from its own stream; the
-                              // fundamental keeps its deterministic compensator.  Where the flips
-                              // cannot pay it at q0 = 1 (a large compensator on a quiet session)
-                              // the rest is a lift, so the mean holds at any rate.  A flip moves a
-                              // session's squares to the up side, where a lift shifts every
-                              // session, so the count asymmetry the record has costs far less
-                              // downside excess: the record moves mass out of -1..-0.5 sigma into
-                              // +0.5..+1 sigma and pays for it beyond -2 sigma.  On the Nasdaq
-                              // recipe at 16/yr x 2% news the full share reads up 55.3 at downside
-                              // excess 7.7 against a lift's 53.9 at 5.8; at 10/yr, up 53.7 at 2.8.
-                              // A share in [0, 1]; 0 is bit-identical and draws nothing.
-                              // Calibrated for the normal body: with `noiseSkew` on, the paid mean
-                              // is approximate.
+    newsFlip: Double = 0.0,   // NEWS PAID BY THE DAY FLIP: the share of the price's news compensator
+                              // paid by reflecting a small DOWN DAY into an equal up day, not by a
+                              // deterministic lift.  The day's would-be return t (the session's
+                              // repricings plus `Market.predict` of the step, which is affine in
+                              // its input) flips sign with probability q0 exp(-(t / sd)^2 / 2), q0
+                              // set so the expected gain equals the share (`FlipGain`), from its
+                              // own stream; what the flips cannot pay at q0 = 1 is a lift, so the
+                              // mean holds.  The record's up days outnumber its down days in calm
+                              // and middle vol states with the down/up energy near even, which no
+                              // shock-level asymmetry buys: a flipped noise shock is outvoted by
+                              // the day's other moves, and news or skew charge 3-4 points of
+                              // downside excess for a point of up-day share where the day flip
+                              // charges 1-1.5 (the lift it replaces is what it costs).  A share in
+                              // [0, 1]; 0 is bit-identical and draws nothing.
     jumpSkew: Double = 0.4,   // how far each jump is shifted DOWN, in units of its own sd -- a
                               // dialised constant (0.4 in every release since jumps arrived), so
                               // 0.4 is this dial's off-position, not 0.  Variance-normalised in
@@ -1700,23 +1696,23 @@ object MarketSim:
   /** THE NASDAQ RE-SOLVED FOR THE DAILY RETURN'S SHAPE (0.24.4): the 0.24.3 recipe with its
     * kurtosis and up-day share brought inside their record bands, which 0.24.3-nasdaq misses on 29
     * and on all of 32 seeds, and its lag-1 clustering onto the record.  Four mechanisms carry it: news
-    * that is frequent, small and credit-coupled, paid for by the body's own down days
-    * (`newsRate` 12.6 x 1.9%, `newsLev`, `newsRevert`, `newsFlip`, with a bond leg); a shock skewed
-    * long tail left (`noiseSkew`); a credit-triggered vol regime (`creditRegime` 0.8 at onset rate
-    * 18) that carries the kurtosis the spiral's credit gain did, so `levGain` runs at 2; and the
-    * slow bond leg's reversal in an inflation regime (`slowBondInfl`).  Solved by hand on the 0.24.3
-    * recipe, whose un-searched dials it keeps.  At 200 paths x 100 years on 32 seeds against
-    * 0.24.3-nasdaq on the same seeds no row sits further from its record past tolerance and 15 sit
-    * nearer: kurtosis 13.8 -> 9.4 (record 9.55), lag-1 0.32 -> 0.29 (0.29), lag-20 0.17 -> 0.20
-    * (0.25), the up-day share 51.9 -> 53.6 (54.8), the wings 11.0 / 11.9 -> 9.1 / 9.9 (7.6 / 6.7);
-    * equity vol 23.6 against 26.9 and the typical year 20.7 against 20.0, as 0.24.3.  Every class
-    * on 29 of the 32 seeds, the others the bond's vol gate at its edge, which 0.24.3-nasdaq fails
-    * as often.  The basket world is the same world with THE BASKET on at the dials anchored on the
+    * that is frequent, small and credit-coupled, half its compensator paid by the day flip
+    * (`newsRate` 16.7 x 1.5% at a fixed size, `newsLev`, `newsRevert`, `newsFlip` 0.54, with a bond
+    * leg); a shock skewed long tail left (`noiseSkew`); a credit-triggered vol regime
+    * (`creditRegime` 0.66 at onset rate 17) that carries the kurtosis the spiral's credit gain did;
+    * and the slow bond leg's reversal in an inflation regime (`slowBondInfl`), its beta at 0.8 for
+    * room under the bond's vol gate.  The un-searched dials are the 0.24.3 recipe's.  At 200 paths x
+    * 100 years on 32 seeds against 0.24.3-nasdaq on the same seeds no row sits further from its
+    * record past tolerance and 15 sit nearer: kurtosis 13.8 -> 9.5 (record 9.55), lag-1 0.32 ->
+    * 0.29 (0.29), lag-20 0.17 -> 0.19 (0.25), the up-day share 51.9 -> 54.8 (54.8), the downside
+    * excess -0.0 -> 1.0 (1.07), the wings 11.0 / 11.9 -> 6.3 / 8.2 (7.6 / 6.7), d20 1.24 -> 1.15;
+    * equity vol 23.4 against 26.9 and the typical year 20.4 against 20.0, as 0.24.3.  Every class
+    * on all 32 seeds, where 0.24.3-nasdaq passes on 29.  The basket world is the same world with THE BASKET on at the dials anchored on the
     * eight names under QQQ (beta 1.37, sector 0.8, idio 0.85, gaps 8.0). */
   val Recipes0244: Vector[(String, World, String)] =
     val b = Recipes0243.find(_._1 == "0.24.3-nasdaq").map(_._2)
       .getOrElse(sys.error("no base recipe 0.24.3-nasdaq"))
-    val nq = b.copy(depth = 12.2, trendShare = 0.18177818, drift = 0.094, fundVol = 0.044135816, crowdImpact = 0.025327738, stress = 3.2, valuePull = 0.065785945, recoveryDrag = 6.1379506, recoveryFloor = 0.12, disasterRate = 0.52121981, disasterSize = 2.0970071, disasterRecover = 0.57178485, beliefShare = 0.68, capYears = 6.1607435, volOfVol = 0.022687053, jumpVar = 0.0000000, jumpRate = 0.0060000000, leverage = 0.09, downShock = 0.010507903, jumpSkew = 0.45955628, newsRate = 12.63, newsSize = 0.019, refugeDays = 1.5696625, easing = 0.015, refuge = 0.17, inflSize = 0.089899958, discount = 6.6682160, margin = 0.0058247336, slowShare = 0.20694113, slowVol = 1.0473712, slowBeta = 0.95, slowPerm = 0.030377671, beliefYears = 0.53246834, bustAmp = 0.1, cycleSd = 0.0000000, cycleYears = 12.549357, beliefLeak = 0.13660766, newsLev = 52.449630, newsRevert = 0.59653986, newsScale = 1.0000000, newsBond = 0.34, noiseSkew = 0.091747575, newsFlip = 0.98417909, newsBondSkip = 0.1, levGain = 2.0, creditRegime = 0.8, creditRegimeRate = 18.0, slowBondInfl = 1.0)
+    val nq = b.copy(depth = 12.23494, trendShare = 0.1567742, drift = 0.094781179, fundVol = 0.039632939, crowdImpact = 0.030639325, stress = 3.308124, valuePull = 0.068439631, recoveryDrag = 8.0164577, recoveryFloor = 0.078974799, disasterRate = 0.49766283, disasterSize = 2.0541844, disasterRecover = 0.63853766, beliefShare = 0.62873317, capYears = 6.4817353, volOfVol = 0.021122274, jumpVar = 0.01356148, jumpRate = 0.0054048114, leverage = 0.1096042, downShock = 0.010266898, jumpSkew = 0.48317695, newsRate = 16.656172, newsSize = 0.014663505, refugeDays = 1.5015834, easing = 0.012, refuge = 0.15719021, inflSize = 0.095, discount = 6.6668779, margin = 0.0067990002, slowShare = 0.2395246, slowVol = 1.0210931, slowBeta = 0.8, slowPerm = 0.089307732, beliefYears = 0.95044563, bustAmp = 0.13817382, cycleSd = 0.0, cycleYears = 11.628, beliefLeak = 0.10974615, newsLev = 46.054668, newsRevert = 0.54545066, newsScale = 0.0, newsBond = 0.31140013, noiseSkew = 0.1356407, newsFlip = 0.5369486, newsBondSkip = 0.10892382, levGain = 2.5965862, creditRegime = 0.66159052, creditRegimeRate = 17.42129, slowBondInfl = 0.9384087)
     Vector(("0.24.4-nasdaq", nq, "nasdaq"),
            ("0.24.4-nasdaq-basket",
             nq.copy(basket = 8, basketBeta = 1.37, basketSector = 0.8, basketIdio = 0.85,
@@ -1956,19 +1952,9 @@ object MarketSim:
   val CreditRegimeDecay  = 0.9890579681360733
   val CreditRegimeRearm  = 0.2
 
-  /** A flip's expected price gain per unit of noise sd and liquidity at `q0` = 1:
+  /** A day flip's expected gain per unit of the day's sd at `q0` = 1:
     * 2 E[|z| exp(-z^2 / 2); z < 0] = 1 / sqrt(2 pi), for a unit normal `z`.  See `newsFlip`. */
   val FlipGain = 0.3989422804014327
-
-  /** The share of a flip's move that reaches the price, against the 2|x| `FlipGain` counts: the
-    * jump branch mixes the noise in at sqrt(1 - jumpVar), and `downShock` takes a down shock x to
-    * x (1 + d) and the flipped one to -x / (1 + d), a move of |x| ((1 + d) + 1 / (1 + d)).  Exact
-    * on every session without `downShock`; with it, the jump compensator's shift of the kink and
-    * a fired jump's sign make it approximate.  Exactly 1.0 with both dials off. */
-  def flipReach(w: World): Double =
-    val jv = if w.jumpVar > 0.0 then math.sqrt(1.0 - w.jumpVar) else 1.0
-    val ds = if w.downShock > 0.0 then 0.5 * ((1.0 + w.downShock) + 1.0 / (1.0 + w.downShock)) else 1.0
-    jv * ds
 
   /** sqrt(2/pi), a unit normal's mean absolute value: what centres `skewedShock`'s half-normal
     * part.  A literal, so the twins cannot differ in its last bit. */
@@ -2231,6 +2217,17 @@ object MarketSim:
     /** The liquidity multiplier this session's step will apply to flow and noise, read before
       * the step: `lastLiq`'s expression. */
     def liquidity: Double = (1.0 + stressK * stressAmp * levMult * gainMult) * impact
+
+    /** The return `step` would make of `flowPlusNoise`, halts and clamps aside: affine in the
+      * input, with slope `liquidity`.  What the day flip reads before the step. */
+    def predict(fair: Double, flowPlusNoise: Double): Double =
+      val amp  = 1.0 + stressK * stressAmp * levMult * gainMult
+      val gap  = fair - logP
+      val drop = if dropOverride.isNaN then peak - logP else dropOverride
+      val damp = if recoveryDrag <= 0.0 || gap <= 0.0 || drop <= DrawdownRef then 1.0
+                 else math.max(recoveryFloor,
+                               1.0 / (1.0 + recoveryDrag * dragMult * (drop - DrawdownRef) / DrawdownRef))
+      (kValue * gap * damp + flowPlusNoise * amp) * impact + carry
 
     def step(fair: Double, flowPlusNoise: Double): Double =
       val scale = math.sqrt(scaleVar)
@@ -3142,9 +3139,11 @@ object MarketSim:
     val nrng = new NumPyRNG(seed ^ 0x0bad2e15L)
     // THE SKEWED BODY's stream and constants (see `noiseSkew`)
     val skewRng = new NumPyRNG(seed ^ 0x05ce3a11L)
-    // NEWS PAID BY THE BODY's stream and what this session's flips owe (see `newsFlip`)
+    // THE DAY FLIP's stream, what this session's flips owe and the last session's markdown (see
+    // `newsFlip`)
     val flipRng = new NumPyRNG(seed ^ 0x0f119e00L)
     var flipOwed = 0.0
+    var markdownPrev = 0.0
     val skewA   = Math.sqrt(1.0 - w.noiseSkew * w.noiseSkew)
     val skewB   = Math.sqrt(1.0 - 2.0 * w.noiseSkew * w.noiseSkew / math.Pi)
     // The leverage cycle's own stream, same contract: read only when the stock is evolved.
@@ -3319,6 +3318,7 @@ object MarketSim:
 
     var i = 0
     while i < tot do
+      val logPOpen = eqM.logP
       // ---- exogenous layer: regimes, fundamental, the policy rate ---------------------------
       regimeCountdown -= 1
       if regimeCountdown <= 0 then
@@ -3575,30 +3575,13 @@ object MarketSim:
       // release.)  `volMult` is this session's volatility state, so jumps CLUSTER
       // inside a stressed stretch instead of scattering uniformly, which is what turns a fat tail
       // into a survivable-or-not sequence for anything levered.
-      // NEWS PAID BY THE BODY (see `newsFlip`): a moderate down shock turned up, at the rate that
-      // pays what the session owes.  The flips can pay at most their gain at q0 = 1 -- the noise's
-      // sd, from the states `dNoise` read, times the share that reaches the price (`flipReach`)
-      // and the liquidity -- and what they cannot pay arrives as a lift, here, where the flips
-      // would have, on every session whatever the shock's sign.  The off branch draws nothing,
-      // and a shock at or above zero draws nothing either.
       // THE LEVERAGE CYCLE's multiplier on the spiral's gain, set here rather than beside the step
       // so `liquidity` below is the step's own: it reads the credit stock's growth, which nothing
       // between here and the step moves, so the step is bit-identical wherever this line sits.
       if levOn && w.levGain > 0.0 then
         eqM.levMult = max(MacroK.LevMultFloor, 1.0 + w.levGain * (borrow - levSlow))
-      val dNoiseF =
-        if flipOwed > 0.0 then
-          val sdN = newsDamp * SigmaN * newsVolMultiplier(w, logVol, volNorm, kickS, volRespS) * asymM * regimeM *
-            mix
-          val cap = FlipGain * flipReach(w) * sdN * eqM.liquidity
-          if flipOwed > cap then eqM.logP += flipOwed - cap
-          val q0 = Math.min(flipOwed / cap, 1.0)
-          if dNoise < 0.0 && flipRng.nextDouble() < q0 * Math.exp(-0.5 * zBody * zBody) then -dNoise
-          else dNoise
-        else dNoise
-      flipOwed = 0.0
       val eqShock =
-        if w.jumpVar <= 0.0 then dNoiseF
+        if w.jumpVar <= 0.0 then dNoise
         else
           val volMult  = Math.exp(logVol - volNorm)
           val lamJ     = if w.jumpResp > 0.0 then Math.exp(w.jumpResp * volRespS) else 1.0
@@ -3617,7 +3600,7 @@ object MarketSim:
           val fired    = jrng.nextDouble() < lamNow
           val jump = if fired then jumpDraw(jrng, w.jumpSkew, scale) else 0.0
           jumpNow = jump
-          dNoiseF * Math.sqrt(1.0 - w.jumpVar) + jump + compens
+          dNoise * Math.sqrt(1.0 - w.jumpVar) + jump + compens
       // The shock, not the crowd's flows -- see the `downShock` field for the measured reason.
       val eqShockA =
         if w.downShock > 0.0 then
@@ -3686,7 +3669,25 @@ object MarketSim:
         // the spiral's multiplier was set from the same growth ahead of the flips (see `newsFlip`)
         ddS += MacroK.LevDdK * ((eqM.peak - eqM.logP) - ddS)
         lev = borrow * (1.0 + ddS)
-      val retE = eqM.step(perceivedFair, eqFlow + eqShockA)
+      // THE DAY FLIP (see `newsFlip`): the day's would-be return, reflected when the draw fires;
+      // the debt the flips cannot pay at q0 = 1 is a lift
+      val stepIn =
+        if flipOwed > 0.0 then
+          val x0    = eqFlow + eqShockA
+          val slope = eqM.liquidity
+          val day   = (eqM.logP - logPOpen) + eqM.predict(perceivedFair, x0) - (markdown - markdownPrev)
+          val sdDay = newsDamp * SigmaN * newsVolMultiplier(w, logVol, volNorm, kickS, volRespS) * asymM *
+            regimeM * slope
+          val cap   = FlipGain * sdDay
+          if flipOwed > cap then eqM.logP += flipOwed - cap
+          val q0    = Math.min(flipOwed / cap, 1.0)
+          val zDay  = day / sdDay
+          flipOwed = 0.0
+          if day < 0.0 && flipRng.nextDouble() < q0 * Math.exp(-0.5 * zDay * zDay) then x0 - 2.0 * day / slope
+          else x0
+        else eqFlow + eqShockA
+      markdownPrev = markdown
+      val retE = eqM.step(perceivedFair, stepIn)
       if w.volResp > 0.0 || w.jumpResp > 0.0 then
         // The REALIZED decline, in units of the sd that generated it, saturated at four like the
         // kick's and centred at a normal's E[max(-z,0)] so the state has mean zero and the
@@ -5892,8 +5893,8 @@ object MarketSim:
     * THE SAMPLING SPREADS ARE THE NASDAQ WORLD'S OWN, frozen from
     * `-noise -paths 200 -atrelease 0.24.4-nasdaq -anchors nasdaq`, the recipe this set describes;
     * the run is seeded, so the same command reproduces every literal exactly but the wings', which
-    * are the record's own.  The recipe's daily shape moved the largest ones: kurtosis 1.93 -> 1.03,
-    * the downside excess 4.26 -> 3.22, the leverage correlation 0.53 -> 0.37.  They were first carried
+    * are the record's own.  The recipe's daily shape moved the largest ones: kurtosis 1.93 -> 1.02,
+    * the downside excess 4.26 -> 2.87, the leverage correlation 0.53 -> 0.37.  They were first carried
     * over from the S&P, and the assumption that carried values
     * were "approximately right
     * because both assets' statistics have similar relative spreads" was FALSE where the two
@@ -5910,18 +5911,18 @@ object MarketSim:
     retVolWindow = "QQQ 1999-2026",
     clusterWindow = "QQQ 1999-2026", clusterYears = 27,
     tailWindow = "QQQ 1999-2026", tailYears = 27,
-    vol = 26.90,         volSd = 0.14,
+    vol = 26.90,         volSd = 0.13,
     // QQQ 1999-2026 over all 252 block phases (`recordbands-2026-09-18.tsv`): 19.97, where calendar
     // years read 18.26 (`yearvol-2026-09-15.tsv`, w1999) -- the bottom of the 18.2-21.5 phase range.
     // Either way it is well under the pooled 26.9: the window's vol is 2000-02 at 58 / 55 / 42%.
     yearVol = 20.0,      yearVolSd = 0.17,
-    retVol = 0.38,       retVolSd = 0.52,
-    kurt = 9.55,         kurtSd = 1.03,
-    ac1 = 0.293,         ac1Sd = 0.19,
+    retVol = 0.38,       retVolSd = 0.48,
+    kurt = 9.55,         kurtSd = 1.02,
+    ac1 = 0.293,         ac1Sd = 0.20,
     ac20 = 0.249,        ac20Sd = 0.20,
-    crashes = 25.6,      crashesSd = 0.49,
-    medDepth = -22.8,    medDepthSd = 0.46,
-    worstDepth = -83.0,  worstDepthSd = 0.22,
+    crashes = 25.6,      crashesSd = 0.50,
+    medDepth = -22.8,    medDepthSd = 0.39,
+    worstDepth = -83.0,  worstDepthSd = 0.21,
     // QQQ's own 5th-95th over its resamples (22.23-31.41, recordbands-2026-09-18.tsv), rounded
     // outward: a level gate no narrower than what the record's own history produces
     volBand = (22.2, 31.5),
@@ -5929,17 +5930,17 @@ object MarketSim:
     yearVolBand = (16.4, 23.6),
     retVolBand = (0.27, 0.47),
     // QQQ wfull row of asymmetry-2026-08-31.tsv; the tail hedge is QQQ/TLT.
-    semiExcess = 1.13, semiExcessSd = 3.22,
+    semiExcess = 1.13, semiExcessSd = 2.87,
     // QQQ 1999-2026: 54.78% of moving sessions rise
     upShare = 54.8, upShareSd = 0.02,
     levCorr = -0.1073, levCorrSd = 0.37,
-    tailHedge = -0.236, tailHedgeSd = 0.47,
+    tailHedge = -0.236, tailHedgeSd = 0.51,
     wingUp = 7.6, wingUpSd = 0.60, wingDown = 6.7, wingDownSd = 0.61,
-    // d20's spread is a fraction of the S&P world's (0.57 against 2.27): at Nasdaq volatility the
+    // d20's spread is a fraction of the S&P world's (0.53 against 2.27): at Nasdaq volatility the
     // deep rung is pinned where the S&P default leaves it unreadable, so the row carries real
     // weight here.
-    valDispSd = 0.37, vr60Sd = 0.33, d5Sd = 0.14, d10Sd = 0.25, d20Sd = 0.57,
-    bondVolSd = 0.41, bondGrowthSd = 1.47, bondInflSd = 1.29, bondDepthSd = 0.27,
+    valDispSd = 0.32, vr60Sd = 0.29, d5Sd = 0.13, d10Sd = 0.24, d20Sd = 0.53,
+    bondVolSd = 0.42, bondGrowthSd = 1.30, bondInflSd = 1.26, bondDepthSd = 0.26,
     ddRefs = DdRefsNasdaq,
     recordBands = RecordBandsNasdaq,
     divYield = 0.78, divYieldBand = (0.3, 1.5),

@@ -66,10 +66,15 @@ class VerdictReadingsSuite extends FunSuite:
     rows.filter(_.recordBand.isDefined).foreach(r => assertEquals(b(r.name), r.model))
   }
 
-  test("a flip's reach is 1 with both dials off, and each dial's own share with one on") {
-    val off = world.copy(jumpVar = 0.0, downShock = 0.0)
-    assertEquals(MarketSim.flipReach(off), 1.0)
-    assertEquals(MarketSim.flipReach(off.copy(jumpVar = 0.16)), math.sqrt(1.0 - 0.16))
-    val d = 0.2
-    assertEquals(MarketSim.flipReach(off.copy(downShock = d)), 0.5 * ((1.0 + d) + 1.0 / (1.0 + d)))
+  test("predict is the return the step then makes") {
+    val m = new MarketSim.Market(0.07, 3.2, 12.0 / 12.2, 6.1, 0.12, 0.25, 0.0)
+    val fairs = Iterator.iterate(0.0004)(_ + 0.0004).take(400).toVector
+    fairs.zipWithIndex.foreach: (fair, k) =>
+      val x    = 0.012 * ((k * 37 % 19).toDouble - 9.0) / 9.0
+      val want = m.predict(fair, x)
+      assertEquals(m.step(fair, x), want, s"session $k")
+    // reflecting the input about the day's zero flips the return exactly where the step is affine
+    val (fair, x) = (fairs.last, -0.004)
+    val r = m.predict(fair, x)
+    assertEqualsDouble(m.predict(fair, x - 2.0 * r / m.liquidity), -r, 1e-15)
   }

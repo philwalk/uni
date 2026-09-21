@@ -89,41 +89,49 @@
 - `0.24.4-nasdaq` is the Nasdaq recipe re-solved for the daily return's shape: the 0.24.3 recipe
   with its kurtosis and up-day share inside their record bands, which `0.24.3-nasdaq` misses on 29
   and on all of 32 seeds, and its lag-1 clustering on the record. Four mechanisms carry it, on the
-  0.24.3 recipe's un-searched dials: frequent, small, credit-coupled news paid for by the body's
-  own down days (`newsRate` 12.6 × 1.9%, `newsLev`, `newsRevert`, `newsFlip`, with a bond leg); a
-  shock skewed long tail left (`noiseSkew`); a credit-triggered vol regime (`creditRegime` 0.8 at
-  onset rate 18), which carries the kurtosis the spiral's credit gain did, so `levGain` runs at
-  2; and the slow bond leg reversed in an inflation regime (`slowBondInfl`). At 200 paths × 100
-  years on 32 seeds against `0.24.3-nasdaq` on the same seeds no row sits further from its record
-  past tolerance (5 percentile points on a banded row, 0.02 log on any other) and 15 sit nearer:
-  kurtosis 13.8 → 9.4 (9.55), lag-1 clustering 0.32 → 0.29 (0.29), lag-20 0.17 → 0.20 (0.25),
-  the up-day share 51.9 → 53.6 (54.8), the wings 11.0 / 11.9 → 9.1 / 9.9 (7.6 / 6.7), return per
-  vol 0.35 → 0.39 (0.38), the bond's growth-crash rally 4.2 → 4.6 (6.6); equity vol 23.6 against
-  26.9 and the typical year 20.7 against 20.0, as `0.24.3-nasdaq`. Every class on 29 of the 32
-  seeds, the others the bond's vol gate at its edge, which `0.24.3-nasdaq` fails as often.
-  `-crossasset` reads the d=5.70 bond-depth rung at 0.53 (0.55 on `0.24.3-nasdaq`; band
-  0.65-1.35): the pre-existing miss, disclosed, not re-solved. The name was re-solved in place: no
-  release has carried it. The Nasdaq anchor set's sampling spreads are re-frozen at it (`-noise
-  -paths 200 -atrelease 0.24.4-nasdaq -anchors nasdaq`: kurtosis 2.42 → 1.03, median depth 0.26 →
-  0.46, bond vol 0.36 → 0.41; the wings' stay the record's own), under which `-fitness` reads it
-  1.203; a Nasdaq loss from any earlier binary is a different function's.
+  0.24.3 recipe's un-searched dials: frequent, small, credit-coupled news, half its compensator
+  paid by the day flip (`newsRate` 16.7 × 1.5% at a fixed size, `newsLev`, `newsRevert`,
+  `newsFlip` 0.54, with a bond leg); a shock skewed long tail left (`noiseSkew`); a
+  credit-triggered vol regime (`creditRegime` 0.66 at onset rate 17), which carries the kurtosis
+  the spiral's credit gain did; and the slow bond leg reversed in an inflation regime
+  (`slowBondInfl`), its beta at 0.8 for room under the bond's vol gate. At 200 paths × 100 years
+  on 32 seeds against `0.24.3-nasdaq` on the same seeds no row sits further from its record past
+  tolerance (5 percentile points on a banded row, 0.02 log on any other) and 15 sit nearer:
+  kurtosis 13.8 → 9.5 (9.55), lag-1 clustering 0.32 → 0.29 (0.29), lag-20 0.17 → 0.19 (0.25),
+  the up-day share 51.9 → 54.8 (54.8), the downside excess −0.0 → 1.0 (1.07), the wings 11.0 /
+  11.9 → 6.3 / 8.2 (7.6 / 6.7), return per vol 0.35 → 0.40 (0.38), d20 1.24 → 1.15, the bond's
+  growth-crash rally 4.2 → 4.5 (6.6); equity vol 23.4 against 26.9 and the typical year 20.4
+  against 20.0, as `0.24.3-nasdaq`. Every class on all 32 seeds, where `0.24.3-nasdaq` passes on
+  29. By the vol state before the day its up days are 54.9 / 55.4 / 53.6% of sessions (calm /
+  middle / turbulent; QQQ 56.5 / 56.0 / 51.8), each inside the record's resampling band (the
+  calm-minus-turbulent gradient and the calm state's down/up energy sit at or under their bands'
+  lower edges, disclosed), and a
+  3× daily-rebalanced fund of it sits inside the bands of the same fund of QQQ's whole record on
+  vol, kurtosis, the downside gap, the up-day share, drawdown and drag. `-crossasset` reads the
+  d=5.70 bond-depth rung at 0.53 (0.55 on `0.24.3-nasdaq`; band 0.65-1.35): the pre-existing
+  miss, disclosed, not re-solved. The name was re-solved in place: no release has carried it. The
+  Nasdaq anchor set's sampling spreads are re-frozen at it (`-noise -paths 200 -atrelease
+  0.24.4-nasdaq -anchors nasdaq`: kurtosis 2.42 → 1.02, median depth 0.26 → 0.39, bond vol 0.36
+  → 0.42; the wings' stay the record's own), under which `-fitness` reads it 1.161; a Nasdaq
+  loss from any earlier binary is a different function's.
 - `0.24.4-nasdaq-basket` is `0.24.4-nasdaq` with the basket on, anchored on the eight names
-  under QQQ: `basketSector` 0.8 (corr 0.833-0.835, beta 1.37, vol ratio 1.64-1.65 on four seeds
-  at 200 paths against the anchors' 0.837 / 1.365 / 1.630; pairwise 0.58, idio share 0.37, tail
-  coincidence 0.46, worst-decile pair corr 0.52 against 0.20 mid; names 2.08x, gaps 3.4/yr; time
-  below peak 0.71, disclosed), every class passing. It is the Nasdaq basket world to pin in
+  under QQQ: `basketSector` 0.8 (corr 0.837-0.841, beta 1.37, vol ratio 1.63-1.64 on four seeds
+  at 200 paths against the anchors' 0.837 / 1.365 / 1.630; pairwise 0.57, idio share 0.38, tail
+  coincidence 0.46, worst-decile pair corr 0.51 against 0.19 mid; names 2.07x, gaps 3.3/yr; time
+  below peak 0.70, disclosed), every class passing. It is the Nasdaq basket world to pin in
   place of `0.24.1-nasdaq-basket`, which stays as shipped.
 - `test-data/worlds/0.24.4-nasdaq.json`: the Nasdaq calibration set searched from `0.24.4-nasdaq`
   under `-gate all`, the daily-shape and bond crash rows under `-gap`, equity vol, the tail hedge,
-  bond depth, d10 and d20 under `-hold`, the transport arm the S&P default. 55 members, each
-  passing every class on all of four seeds at 200 paths × 100 years and missing no row on three of
-  them; member 51 is the recipe, byte for byte. Read seed by seed against the members of the
-  0.24.3 set that pass the same test (28 of 173), each row's median member distance from its
-  record is nearer on ten rows (kurtosis, lag-1 clustering, the 60-day variance ratio, the
-  downside excess, the leverage correlation, valuation dispersion, both wings, both bond crash
-  rows), within tolerance on thirteen, bond depth against its vol among them, and further on
-  none; equity vol is unresolved (within 5 points on three seeds, 6 further on the fourth).
-  Coverage weights' effective sample 30.3. The 0.24.3 and 0.24.2 sets stay as shipped; every
+  bond depth, d10, d20 and a margin on the bond's vol under `-hold`, the transport arm the S&P
+  default. 58 members, each passing every class on all of four seeds at 200 paths × 100 years and
+  missing no row on three of them (67 of the 94 searched did: the bond-vol margin is what
+  survives the four seeds); member 44 is the recipe, byte for byte. Read seed by seed against the
+  members of the 0.24.3 set that pass the same test (28 of 173), each row's median member
+  distance from its record is nearer on nine rows (kurtosis, lag-1 clustering, the downside
+  excess, the up-day share, the leverage correlation, valuation dispersion, the lower wing, both
+  bond crash rows), within tolerance on thirteen, bond depth against its vol among them, and
+  further on none; the upper wing and d20 are unresolved (past 0.02 log on two seeds of four
+  each). Coverage weights' effective sample 40.4. The 0.24.3 and 0.24.2 sets stay as shipped; every
   member of the older sets starts at fair value, which the stationarity row refuses, so their
   `score` and `worstRow` predate it.
 
@@ -221,10 +229,14 @@
 - `-noiseskew D`: the diffusion's unit shock as a mean-zero, unit-variance skew-normal with its
   long tail on the left. 0.9 moves the up-day share 51.8 → 53.3 on `0.24.3-nasdaq`, every other
   row within its seed noise, and the S&P default's 53.8 → 54.5.
-- `-newsflip S`: the share of the news compensator paid by turning moderate down shocks up
-  instead of a steady lift. At 16/yr × 2% the full share reads up 55.3 at downside excess 7.7
-  against a lift's 53.9 at 5.8. Where the flips cannot pay it all — frequent news on a quiet or
-  deep market — the rest is a lift, so the mean holds at any rate.
+- `-newsflip S`: THE DAY FLIP, the share of the news compensator paid by reflecting a small down
+  day into an equal up day instead of a steady lift. The step is affine in its input, so the
+  day's would-be return is known before it is taken (`Market.predict`) and the reflection is
+  exact. QQQ's up days outnumber its down days in calm and middle vol states (56.5 / 56.0% of
+  sessions against 51.8 in turbulent ones, by the 20-session vol before the day) with the down/up
+  energy near even; news and skew buy a point of up-day share for 3-4 points of downside excess,
+  the day flip for 1-1.5. Where the flips cannot pay it all the rest is a lift, so the mean
+  holds at any rate.
 - `-creditregime A` / `-creditregimerate L`: THE CREDIT-TRIGGERED VOL REGIME, turbulent spells
   that open at credit highs. Outside one, a session starts one with probability L × the credit
   growth gap's excess over half an sd / 252; the diffusive noise, the session's sd and the
@@ -326,6 +338,14 @@
   the pool's, the holdout's and the reference's, none sharing a path to 4,096 paths (a contract
   test sweeps it). Recorded as `candidateSeeds`; an archive searched the old way resumes only
   with `-force`, and exports, prunes and holds out as before. Twins byte-identical.
+- `-reps 1` has a replacement margin. The margin is the running gap between two reads of one
+  world, which one rep never takes, so it was 0 and any better single read replaced a member.
+  Each generation now reads its first passing candidate once more, to the end whatever the bar,
+  at a slot reserved past the generation's candidates (so no candidate's seed depends on an
+  outcome); the gap feeds the estimate alone and the candidate is scored on its first read, as
+  its siblings are. It costs one read a generation, an eighth more at `-pop 8`; `-reps 2` and up
+  are unchanged. Recorded as
+  `noiseReads`, so a one-rep archive from before resumes only with `-force`.
 
 **A reachability check for the rows a world misses**
 
@@ -373,7 +393,7 @@
   The bust swing's state (`BustSwing`), the jump's Student-t draw and the channel and macro
   inputs' per-session records now live outside it, every `scala.math` call in it goes to
   `java.lang.Math` (C2 had stopped inlining the forwarders into a method this large) and the
-  news block's per-session tuple is two scalars: 5986 bytes, every emitted path byte-identical,
+  news block's per-session tuple is two scalars: 6085 bytes, every emitted path byte-identical,
   the Nasdaq recipe's 200-path × 100-year `-validate` 24 s against 31 s. `PriceLoopSizeSuite`
   reads the compiled method's length and fails past 7000.
 

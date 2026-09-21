@@ -475,7 +475,8 @@ struct Read {
     gate_fail: Vec<String>,
     /// How far this world's SCORE moved across its own repetitions, max minus min. Free to
     /// compute and it is the noise scale the archive needs: a score difference smaller than this
-    /// is a seed draw, not a better world. Zero at `-reps 1`, which is honest.
+    /// is a seed draw, not a better world. Zero at `-reps 1`, where `noise_reading` takes a read
+    /// of its own instead.
     spread: f64,
     /// Every rep and both arms ran. False when the quality bar stopped the evaluation early:
     /// the score is the maximum over the reps plus the transport arm, so once the reps so far
@@ -1221,6 +1222,25 @@ fn append_log(dir: &str, lines: &[String]) {
     }
 }
 
+/// What a candidate's reading adds to the running seed noise the replacement margin reads, if
+/// anything: the gap between two independent reads of one world, both feasible and run to the
+/// end. With two or more reps that is the candidate's own `spread`. With one there is no gap to
+/// read, and a 0 would say the score has no noise, so every better single read would replace a
+/// member and the archive would fill with lucky reads: `second` is then a further read of the
+/// same world, taken for this alone, and the reading is its distance from the first. The
+/// candidate's score is its first read either way.
+fn noise_reading(reps: usize, r: &Read, second: Option<&Read>) -> Option<f64> {
+    if !(r.feasible && r.complete) {
+        None
+    } else if reps > 1 {
+        Some(r.spread)
+    } else {
+        second
+            .filter(|s| s.feasible && s.complete)
+            .map(|s| (s.score - r.score).abs())
+    }
+}
+
 /// Admit a feasible candidate.  Returns the archive and whether the candidate is IN IT AFTER THE
 /// TRIM -- a replacement leaves the count unchanged, so the log needs the flag.
 ///
@@ -1513,7 +1533,8 @@ fn usage(msg: &str) -> ! {
                 ;   come from the seed, so seeding from a recipe searches THAT configuration
   -paths N      ; ensemble paths per evaluation (default 60)
   -years Y      ; years per path (default 80)
-  -reps K       ; seeds a candidate must pass feasibility on, all of them (default 2)
+  -reps K       ; seeds a candidate must pass feasibility on, all of them (default 2); at 1 each
+                ;   generation reads one passing candidate once more, for the seed noise alone
   -sigma S      ; mutation sd as a fraction of each dial's range (default 0.07; 0.20 breaks),
                 ;   the news rate's in ln(1 + rate)
   -keep N       ; archive size cap (default 40)
@@ -2014,13 +2035,26 @@ fn main() {
     let mut prior = read_state(&c.out);
     // `-export`, `-prune` and `-holdout` read no candidate, so they carry the archive's own scheme
     // (see `candidate_seed`): one written before the key was searched a path stride apart
-    let candidate_seeds = if c.prune || !c.export_to.is_empty() || c.holdout > 0 {
+    let reads_no_candidate = c.prune || !c.export_to.is_empty() || c.holdout > 0;
+    let candidate_seeds = if reads_no_candidate {
         prior
             .get("candidateSeeds")
             .cloned()
             .unwrap_or_else(|| "path-stride".to_string())
     } else {
         "independent".to_string()
+    };
+    // likewise where the seed noise is read (see `noise_reading`): one written before the key read
+    // it off the reps' spread alone, which at one rep is no reading
+    let noise_reads = if reads_no_candidate {
+        prior
+            .get("noiseReads")
+            .cloned()
+            .unwrap_or_else(|| "reps".to_string())
+    } else if c.reps > 1 {
+        "reps".to_string()
+    } else {
+        "second-read".to_string()
     };
     // the weights and targets the loss applies (see `objective_digest`); `-export` and `-prune`
     // score nothing, so they carry the archive's own and never read the reference
@@ -2058,6 +2092,7 @@ fn main() {
         ("seedWorlds".into(), seed_worlds_digest(&pool)),
         // how a candidate's reads are seeded: see `candidate_seed`
         ("candidateSeeds".into(), candidate_seeds),
+        ("noiseReads".into(), noise_reads),
         // the admission rules and the objective are recorded with the ensemble: a resume under different
         // ones puts two standards in one archive
         ("admit".into(), "spread-keeping-nearest".to_string()),
@@ -2134,6 +2169,10 @@ fn main() {
     // one written before `candidateSeeds` read its candidates a path stride apart
     if !loaded.is_empty() && !prior.contains_key("candidateSeeds") {
         prior.insert("candidateSeeds".into(), "path-stride".into());
+    }
+    // one written before `noiseReads` read its seed noise off the reps' spread alone
+    if !loaded.is_empty() && !prior.contains_key("noiseReads") {
+        prior.insert("noiseReads".into(), "reps".into());
     }
     // one written before `-hold` held no row
     if !loaded.is_empty() && !prior.contains_key("hold") {
@@ -2683,6 +2722,10 @@ fn main() {
         } else {
             None
         };
+        // the noise read's slot (see `noise_reading`), past the generation's candidates and
+        // reserved whether it is used or not, so a candidate's slot never depends on an outcome
+        let noise_slot = evals + (c.pop * c.reps) as u64;
+        let mut noise_due = c.reps == 1;
         for _ in 0..c.pop {
             let parent = arc[rng.next_bounded_u32(arc.len() as u32) as usize].clone();
             let along = factor.as_ref().filter(|_| rng.next_f64() < c.cov);
@@ -2726,17 +2769,38 @@ fn main() {
             let gate_fail = r.gate_fail.join("; ");
             // admitted BEFORE the line is written, because the line records the answer
             let mut took = false;
+            // THE NOISE READ (`-reps 1`): the generation's first candidate to pass its own read is
+            // read once more, at the generation's reserved slot and to the end whatever the bar.
+            // It feeds the estimate alone: the candidate is scored on its first read, as its
+            // siblings are
+            let second = (noise_due && r.feasible && r.complete).then(|| {
+                judge(
+                    &world_for(&parent.name),
+                    &child,
+                    anchors,
+                    transport.as_ref(),
+                    c.paths,
+                    c.years,
+                    &[candidate_seed(c.base, noise_slot)],
+                    &obj,
+                    None,
+                )
+            });
             // a candidate above the bar still feeds the noise estimate when it ran to the end:
             // its spread is a reading of the objective's own noise whatever its level. One the
             // bar cut short does not: a partial spread is not that reading
-            if r.feasible && r.complete {
-                noise_sum += r.spread;
+            if let Some(x) = noise_reading(c.reps, &r, second.as_ref()) {
+                noise_sum += x;
                 noise_n += 1;
+                noise_due = false;
             }
             if r.feasible && !above_bar(&parent.name, r.score) {
-                // at least one reading here: a candidate under the bar ran to the end, so the
-                // increment above is on this path
-                let noise = noise_sum / noise_n as f64;
+                // no reading yet is no margin: at `-reps 1` the first may come generations in
+                let noise = if noise_n > 0 {
+                    noise_sum / noise_n as f64
+                } else {
+                    0.0
+                };
                 let (next, entered) = admit(
                     arc,
                     Member {
@@ -2772,6 +2836,9 @@ fn main() {
                 gate_fail
             ));
             evals += c.reps as u64;
+        }
+        if c.reps == 1 {
+            evals += 1;
         }
         append_log(&c.out, &log);
         write_archive(&c.out, &arc, g + 1, evals, (noise_sum, noise_n), &settings);
@@ -2846,6 +2913,58 @@ mod seed_stream_tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod noise_tests {
+    use super::*;
+
+    fn read(score: f64, spread: f64, feasible: bool, complete: bool) -> Read {
+        Read {
+            feasible,
+            score,
+            raw: score,
+            worst: String::new(),
+            desc: Vec::new(),
+            total: score,
+            gate_fail: Vec::new(),
+            spread,
+            complete,
+            watch_miss: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn reps_feed_the_noise_their_own_spread() {
+        let r = read(0.50, 0.07, true, true);
+        assert_eq!(noise_reading(2, &r, None), Some(0.07));
+        // a second read is not taken at two reps, and would not be read if it were
+        assert_eq!(
+            noise_reading(2, &r, Some(&read(0.90, 0.0, true, true))),
+            Some(0.07)
+        );
+        assert_eq!(noise_reading(2, &read(0.50, 0.07, false, true), None), None);
+        assert_eq!(noise_reading(2, &read(0.50, 0.07, true, false), None), None);
+    }
+
+    #[test]
+    fn one_rep_feeds_it_a_second_reads_distance_and_never_a_zero() {
+        let r = read(0.50, 0.0, true, true);
+        // no second read is no reading: a 0 would say the score has no noise
+        assert_eq!(noise_reading(1, &r, None), None);
+        let gap = |s: f64| noise_reading(1, &r, Some(&read(s, 0.0, true, true)));
+        assert!((gap(0.62).unwrap() - 0.12).abs() < 1e-12);
+        assert!((gap(0.41).unwrap() - 0.09).abs() < 1e-12);
+        // a second read that failed a gate, or that the bar cut short, scored another thing
+        assert_eq!(
+            noise_reading(1, &r, Some(&read(0.62, 0.0, false, true))),
+            None
+        );
+        assert_eq!(
+            noise_reading(1, &r, Some(&read(0.62, 0.0, true, false))),
+            None
+        );
     }
 }
 
