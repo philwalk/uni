@@ -19,6 +19,16 @@ import uni.*
  */
 class EmitSidecarSuite extends FunSuite:
 
+  test("a sidecar is named beside its TSV, and the null device is its own") {
+    assertEquals(MarketSim.sidecarName("out/run.tsv"), "out/run.json")
+    assertEquals(MarketSim.sidecarName("out.d/run"), "out.d/run.json")
+    // an -emit run made for the verdict alone leaves no nul.json behind
+    assertEquals(MarketSim.sidecarName("nul"), "nul")
+    assertEquals(MarketSim.sidecarName("C:/tmp/NUL"), "C:/tmp/NUL")
+    assertEquals(MarketSim.sidecarName("/dev/null"), "/dev/null")
+    assertEquals(MarketSim.sidecarName("annul"), "annul.json")
+  }
+
   /** A top-level key of the sidecar object: exactly two spaces of indent, then a quoted name.
     * Nested blocks (`path`, `world`, `gate`) indent by four, so this cannot reach into them. */
   val TopLevelKey = """^  "([^"]+)":.*""".r
@@ -38,7 +48,7 @@ class EmitSidecarSuite extends FunSuite:
       val w     = MarketSim.Defaults
       val p     = MarketSim.simulate(w, years, seed)
       val st    = MarketSim.measure(Vector(p), years)
-      val rows  = MarketSim.fidelityRows(MarketSim.SP500Anchors, st, 1, seed, w)
+      val rows  = MarketSim.fidelityRows(MarketSim.SP500Anchors, st, None, years, 1, seed, w)
       MarketSim.writeEmitted(MarketSim.SP500Anchors, tsv, p, 0, w, years, seed, "", st, 1, years,
         rows)
       body(json.asPath.lines.toVector, json)

@@ -32,6 +32,10 @@ object RecordBands {
     "-rows A,B     print only these rows (default every `RecordBandRows` row)",
     "-resamples N  one-year-block resamples (default 20000)",
     "-seed S       the resampling stream's seed (default 20260918)",
+    "-joint A      the share of the set's record-consistent worlds its joint band may miss",
+    "              (default 0.10), split over the set's record windows by their rows: this window's",
+    "              rows jointly miss A x (rows here) / N of the time",
+    "-of N         the set's banded rows across all its windows (default: the rows printed here)",
     "-header       print the column header first",
   )
 
@@ -62,6 +66,7 @@ object RecordBands {
     var yahoo = ""; var french = ""; var from = ""; var to = ""
     var set = ""; var series = ""; var rows = Vector.empty[String]
     var resamples = 20000; var seed = 20260918L; var header = false
+    var joint = 0.10; var of = 0
     eachArg(args.toSeq, usage) {
       case "-yahoo"     => yahoo = consumeNext
       case "-french"    => french = consumeNext
@@ -72,6 +77,8 @@ object RecordBands {
       case "-rows"      => rows = consumeNext.split(",").map(_.trim).toVector
       case "-resamples" => resamples = consumeNext.toIntOption.getOrElse(usage("-resamples wants an integer"))
       case "-seed"      => seed = consumeNext.toLongOption.getOrElse(usage("-seed wants a non-negative integer"))
+      case "-joint"     => joint = consumeNext.toDoubleOption.getOrElse(usage("-joint wants a share in (0, 1)"))
+      case "-of"        => of = consumeNext.toIntOption.getOrElse(usage("-of wants a row count"))
       case "-header"    => header = true
       case a            => usage(s"unrecognized arg [$a]")
     }
@@ -88,7 +95,10 @@ object RecordBands {
       else
         val days = readFrench(french).filter((d, _) => inWindow(d))
         val idx = days.scanLeft(1.0)((p, dx) => p * (1.0 + dx._2 / 100.0)).drop(1)
-        (1 until days.length).toVector.map(k => (days(k)._1, math.log(idx(k) / idx(k - 1))))
+        // `lnDet`, not the native log, which differs from the Rust twin's in the last bit on about
+        // 0.2% of inputs: the twins must read the same returns to the bit, or the joint band's
+        // ranks tie differently
+        (1 until days.length).toVector.map(k => (days(k)._1, MarketSim.lnDet(idx(k) / idx(k - 1))))
     if dated.length <= 252 then
       usage(s"the window holds ${dated.length} sessions; a block bootstrap needs more than a year")
     val r = dated.map(_._2).toArray
@@ -103,10 +113,16 @@ object RecordBands {
 
     if header then
       println("set\trow\tseries\twindow\tn\tresamples\trecord\t" +
-              MarketSim.RecordBandPcts.map(p => s"p$p").mkString("\t"))
-    for (name, k) <- MarketSim.RecordBandRows.zipWithIndex if rows.isEmpty || rows.contains(name) do
+              MarketSim.RecordBandPcts.map(p => s"p$p").mkString("\t") + "\tjointC\tjointLo\tjointHi")
+    // THE JOINT BAND over the rows this window prints, at this window's share of the set's miss rate
+    val ks = MarketSim.RecordBandRows.indices.toVector
+      .filter(k => rows.isEmpty || rows.contains(MarketSim.RecordBandRows(k)))
+    val alpha = joint * ks.length / (if of == 0 then ks.length else of)
+    val (c, edges) = MarketSim.recordBandJoint(reads, ks, alpha)
+    for (k, (lo, hi)) <- ks.zip(edges) do
+      val name = MarketSim.RecordBandRows(k)
       val qs = MarketSim.recordBandQuantiles(reads.map(_(k))).map(v => f"$v%.6f")
       println(f"$set%s\t$name%s\t$series%s\t$window%s\t${r.length}%d\t$resamples%d\t${record(k)}%.6f\t" +
-              qs.mkString("\t"))
+              qs.mkString("\t") + f"\t$c%.6f\t$lo%.6f\t$hi%.6f")
   }
 }

@@ -15,6 +15,34 @@ class MarketSimContractSuite extends FunSuite:
   // slower.  Nothing here is on the clock; the margin was the defect.
   override val munitTimeout: Duration = 120.seconds
 
+  test("judgeDistance reads each row in the judge's units") {
+    // A held row's distance is the judge's: percentile points from the band's middle where the row
+    // has a record band, the log ratio to the target where it has none, nothing for an extreme row
+    // or a name that is no row, and the furthest a row can be when the reading is missing.
+    val a  = MarketSim.anchorsNamed("nasdaq")
+    val st = MarketSim.measure(MarketSim.simPaths(MarketSim.Defaults, 4, 30, 11L), 30)
+    val band   = a.recordBands.find(_.name == "kurtosis").get
+    val banded = Map("kurtosis" -> band.record)
+    val atRecord = MarketSim.judgeDistance(a, "kurtosis", st, banded).get
+    assert(math.abs(atRecord - math.abs(band.percentileExact(band.record) - 50.0)) < 1e-12, atRecord)
+    assertEquals(MarketSim.judgeDistance(a, "kurtosis", st, Map.empty), Some(50.0))
+    val (_, get, target, _) = MarketSim.fitTargets(a).find(_._1 == "tail hedge corr").get
+    assertEquals(MarketSim.judgeDistance(a, "tail hedge corr", st, banded),
+      Some(math.abs(MarketSim.lnDet(get(st) / target))))
+    assertEquals(MarketSim.judgeDistance(a, "worst crash %", st, banded), None)
+    assertEquals(MarketSim.judgeDistance(a, "no such row", st, banded), None)
+  }
+
+  test("gate classes are recorded in the verdict's own order") {
+    // A search checkpoint records the classes feasibility read, so a resume can refuse an archive
+    // admitted under another standard. The order is the verdict's printed one whatever the flag
+    // said, so the twins write one text and a resume compares like with like.
+    val spelt = MarketSim.gateClassesLabel(MarketSim.parseGate("fidelity,mechanism"))
+    assertEquals(spelt, "realism,mechanism,fidelity")
+    assertEquals(spelt, MarketSim.gateClassesLabel(MarketSim.parseGate("all")))
+    assertEquals(MarketSim.gateClassesLabel(MarketSim.GateDefault), "realism,mechanism")
+  }
+
   test("indexed names keep their width and their history") {
     // The padding is a promise about SORT ORDER, and it is only kept if every name a batch writes
     // is the same width. The floor at 3 is the other half of the contract: it is what keeps every
@@ -281,7 +309,7 @@ class MarketSimContractSuite extends FunSuite:
     val w    = MarketSim.Defaults
     val a    = MarketSim.SP500Anchors
     val st   = MarketSim.measure(MarketSim.simPaths(w, 60, 100, MarketSim.DefaultSeed), 100)
-    val rows = MarketSim.fidelityRows(a, st, 60, MarketSim.DefaultSeed, w)
+    val rows = MarketSim.fidelityRows(a, st, None, 100, 60, MarketSim.DefaultSeed, w)
     assertEquals(rows.map(_.name), MarketSim.fitTargets(a).map(_._1),
       "every fidelity target must produce exactly one row, in report order")
     for r <- rows do
@@ -312,7 +340,7 @@ class MarketSimContractSuite extends FunSuite:
     val name = "worst crash %"
     def at(paths: Int): (Double, MarketSim.FidelityRow) =
       val st = MarketSim.measure(MarketSim.simPaths(w, paths, 100, MarketSim.DefaultSeed), 100)
-      val r  = MarketSim.fidelityRows(a, st, paths, MarketSim.DefaultSeed, w)
+      val r  = MarketSim.fidelityRows(a, st, None, 100, paths, MarketSim.DefaultSeed, w)
         .find(_.name == name).getOrElse(fail(s"no [$name] row"))
       (st.worstDepth, r)
     val (lvlSmall, small) = at(100)
@@ -343,7 +371,7 @@ class MarketSimContractSuite extends FunSuite:
     val w    = MarketSim.Defaults
     val a    = MarketSim.SP500Anchors
     val st   = MarketSim.measure(MarketSim.simPaths(w, 1, 100, MarketSim.DefaultSeed), 100)
-    val r    = MarketSim.fidelityRows(a, st, 1, MarketSim.DefaultSeed, w)
+    val r    = MarketSim.fidelityRows(a, st, None, 100, 1, MarketSim.DefaultSeed, w)
       .find(_.name == "worst crash %").getOrElse(fail("no worst crash % row"))
     assert(r.pctile.isEmpty, s"one history cannot place a record, read ${r.pctile}")
     assert(r.miss, "an unplaceable record must report a miss, not a pass")
@@ -644,12 +672,12 @@ class MarketSimContractSuite extends FunSuite:
     assertNotEquals(w.basketBeta, sp.basketBeta)
   }
 
-  test("valuation dispersion grew with the horizon on the walk, and no longer does on the stationary start") {
-    // The defect `GateYears` closes: on the fair-value start sd log(p/fair) was the sample sd of
-    // a near-integrated gap, so it GREW with the measurement window -- 0.11 at 30 years against
-    // 0.21 at 100 on the 0.24.1 world -- and a fixed floor read at the caller's -years graded
-    // the horizon, not the world.  The pin stays; since 0.24.4 the default starts stationary
-    // (the beliefs' fade, the cycle) and the two horizons read alike.
+  test("valuation dispersion grows with the window, so the verdict reads a century") {
+    // The defect `GateYears` closes: sd log(p/fair) is the sample sd of a slowly reverting gap, so
+    // it GROWS with the measurement window, and a fixed floor read at the caller's -years graded
+    // the horizon, not the world.  On the fair-value start the gap walked, 0.11 at 30 years
+    // against 0.21 at 100 on the 0.24.1 world; from the stationary start a 30-year window still
+    // reads 0.11-0.14 against 0.19 on the default.
     val old      = MarketSim.releaseWorld("0.24.1").getOrElse(fail("0.24.1 must resolve"))
     val shortOld = MarketSim.measure(MarketSim.simPaths(old, 24, 30, MarketSim.DefaultSeed), 30).valDisp
     val longOld  = MarketSim.measure(MarketSim.simPaths(old, 24, MarketSim.GateYears,
@@ -660,8 +688,8 @@ class MarketSimContractSuite extends FunSuite:
     val short = MarketSim.measure(MarketSim.simPaths(w, 24, 30, MarketSim.DefaultSeed), 30).valDisp
     val long  = MarketSim.measure(MarketSim.simPaths(w, 24, MarketSim.GateYears,
                   MarketSim.DefaultSeed), MarketSim.GateYears).valDisp
-    assert(short > long * 0.7,
-      f"on the stationary start the two horizons read alike: 30y $short%.3f vs 100y $long%.3f")
+    assert(short < long * 0.8,
+      f"a 30-year window reads less of a slow gap's spread than a century: 30y $short%.3f vs 100y $long%.3f")
   }
 
   test("the verdict ensemble is pinned to the calibration horizon") {
@@ -680,7 +708,7 @@ class MarketSimContractSuite extends FunSuite:
     // The news channel displaces diffusive variance, so past newsRate * newsSize^2 =
     // 252 * SigmaN^2 there is none left: the price runs on jumps alone and the bar channels'
     // world level (realized sd over the MEAN diffusion sd) has no denominator.  Such a world is
-    // refused at the CLI, not clamped into a NaN bar -- and -calibrate's ranges cannot reach it.
+    // refused at the CLI, not clamped into a NaN bar -- and a search pulls its proposals inside.
     val dw = MarketSim.Defaults
     assert(MarketSim.newsBudgetRefusal(dw.newsRate, dw.newsSize).isEmpty)
     assert(MarketSim.newsBudgetRefusal(0.0, 1.0).isEmpty, "rate 0 is the channel off")
@@ -690,7 +718,12 @@ class MarketSimContractSuite extends FunSuite:
     assert(why.contains("0.0975"), why)
     def hi(name: String): Double =
       MarketSim.CalibrateRanges.find(_._1 == name).map(_._3).getOrElse(fail(s"no range for $name"))
-    assert(MarketSim.newsBudgetRefusal(hi("newsRate"), hi("newsSize")).isEmpty)
+    // the ranges' corner is past the budget; a search pulls its size back inside
+    val corner = MarketSim.newsSizeWithinBudget(hi("newsRate"), hi("newsSize"))
+    assert(corner < hi("newsSize"))
+    assert(MarketSim.newsBudgetRefusal(hi("newsRate"), corner).isEmpty)
+    assertEquals(MarketSim.newsSizeWithinBudget(1.3, 0.05), 0.05, "inside it is untouched")
+    assertEquals(MarketSim.newsSizeWithinBudget(0.0, 1.0), 1.0, "and so is the channel off")
   }
 
   // `-worldset` refuses through `usage`, which exits; swap the exit for a throw so a refusal is

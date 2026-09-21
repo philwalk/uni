@@ -66,7 +66,7 @@ Each `gate.fidelity` row carries `real`, `target` and `miss`. `real` is the reco
 model reads a path, on every row with a `recordBand`; `target` is what the loss grades against, and
 the two differ where the target is a theory value or older than its record (see
 [Reading a row against its record](#reading-a-row-against-its-record)). On a banded row `miss` is
-true when the model falls outside the record's own 5th-95th resampling band, and
+true when the model falls outside the record's own joint resampling band, and
 `recordPercentile` says where it falls; on every other row `miss` is true when the ratio falls
 outside 0.667-1.5. Either way a row that **cannot be computed** reads `miss: true` — a `null` model
 value is not a pass. A path holding a non-finite price is refused outright: `-emit` exits 2 and
@@ -182,7 +182,7 @@ binary that wrote the file, which together are the whole provenance:
 market_sim.exe -atrelease 0.22.0 -gate realism -paths 2000 -years 33 -emitall -emit rung.tsv
 ```
 
-**A set of worlds, not a best fit — `-worldset`.** Thirty-four searched dials against some forty-five
+**A set of worlds, not a best fit — `-worldset`.** Forty-eight searched dials against some forty-five
 graded rows that are not independent means several distinct worlds match the record equally
 well, and a strategy interacts with the mechanism rather than with the summary statistic. A
 verdict formed on one best-fit world therefore carries the same over-confidence that weakens a
@@ -191,7 +191,28 @@ backtest: it is conditional on a single realisation. The calibration search
 **archive** of every world it finds that is *feasible* — passes every realism and mechanism gate
 row on every one of its seeds, on both the S&P and the Nasdaq anchor sets — and spreads them
 across the behaviours the record cannot pin down. Fidelity rows are scored, not gated: members
-differ from the record inside its own sampling error, which is where the set's value is. Each
+differ from the record inside its own sampling error, which is where the set's value is. A row
+the daily record reads directly (the twelve that carry a record band) is scored against that band
+at the record's own horizon, 27 years for QQQ: a miss costs what a failed fidelity band costs, plus
+its distance past the edge in the band's own sd. `-noregress R` prices the release rule itself:
+every row a candidate holds further from its record than recipe R does costs the difference (R read
+at the search's own ensemble, the mean of six reads), which a dead zone alone lets every row drift
+inside. `-gap ROWS` makes named graded rows a feasibility condition on the primary arm: a
+candidate that misses one on any of its reads is rejected, as a realism failure is, because a
+priced near miss is traded for the regressions it saves. A row with a record band is judged by that
+band and a row without one by its ratio to the anchor's target, which is the verdict's own miss
+either way. `-gate C` says which classes feasibility reads — the default `realism,mechanism` is the
+verdict's own, and `all` adds fidelity, which is what a calibration set needs, every member of one
+having to pass every class: priced instead, a failed band is one dead zone against a row's worth of
+gain, and an archive fills with members that buy a row by leaving a band. `-hold ROW<=D,...` holds
+a named row within D of its record on every read, D in the units a set is judged in (percentile
+points from the band's middle on a banded row, |ln(model/target)| on any other): a set is graded on
+each row's median member distance, and a row the loss only prices is traded away, so an archive
+ends where the loss pulls it whatever it was seeded from. The second market's arm holds its own magnitudes
+(depth, drift, stress, vol of vol, `jumpVar`, refuge, `slowShare`, the news rate and size) and
+its own valuation (`beliefShare`, `capYears`, `beliefLeak`, `beliefYears`, the cycle, `bustAmp`),
+and carries the candidate's mechanism dials. The seed worlds are not held to `-gap`: they root
+the lineages, and `-holdout` holds every member to it. Each
 member is then re-scored on seed streams the search never selected on, and the ones that fail
 there are dropped before the set is exported:
 
@@ -205,11 +226,12 @@ market_sim_search -out search ... -export worlds.json
 `worlds.json` is a JSON array of members, each with its `member` number, the world it was seeded
 from, its score and worst row, and a `world` block in the sidecar's own key format at the
 archive's full precision. The release ships four, built this way and pruned by their holdouts:
-`test-data/worlds/0.24.4-nasdaq.json` (73 members, seeded from the 0.24.3 recipe at the swing's
-measured amplitude with the cycle on and searched under the stationarity row, the transport arm the
-S&P default; member 49 is the recipe itself, byte for byte; 52 of 73 pass every class at 200 paths
-and 8 of 14 candidates on four seeds; the one row no member reaches is the worst crash, the best at
-−67 against −83; pass `-anchors nasdaq`, since a member names no anchor set), `0.24.3-nasdaq.json`
+`test-data/worlds/0.24.4-nasdaq.json` (55 members, seeded from the `0.24.4-nasdaq` recipe and
+searched under `-gate all` with the daily-shape and bond crash rows under `-gap` and equity vol, the
+tail hedge, bond depth, d10 and d20 under `-hold`, the transport arm the S&P default; its holdout is
+the verdict's own read, 200 paths × 100 years on four seeds: every member passes every class on
+all four and misses no row on three of them; member 51 is the recipe itself, byte for byte; pass
+`-anchors nasdaq`, since a member names no anchor set), `0.24.3-nasdaq.json`
 (173 members, seeded from `0.24.2-nasdaq`, the set `0.24.3-nasdaq` was picked from -- member 53),
 and the two 0.24.2 sets, `0.24.2-sp500.json` (150 members, seeded from the
 default; pass `-anchors sp500` or nothing) and `0.24.2-nasdaq.json` (174, seeded from
@@ -221,7 +243,7 @@ was searched under it; no S&P set was exported this release (three searches unde
 member that improves on the default without moving other rows down). To run one:
 
 ```
-market_sim.exe -worldset test-data/worlds/0.24.4-nasdaq.json -worldindex 55 -anchors nasdaq -paths 200 -years 40 -emitall -emit m55.tsv
+market_sim.exe -worldset test-data/worlds/0.24.4-nasdaq.json -worldindex 30 -anchors nasdaq -paths 200 -years 40 -emitall -emit m30.tsv
 ```
 
 `-worldindex` addresses a member by its own number, defaulting to 0. The member seeds every dial
@@ -661,7 +683,8 @@ all — below that the row reports `n/a` and a MISS, since one history reads 0% 
 a measurement.
 
 In the sidecar such a row carries `"aggregation": "ensemble-extreme"`, `"ratio": null` and a
-`"percentile"`, so a consumer cannot make the division by accident. `"horizonYears"` is on every row.
+`"percentile"`, so a consumer cannot make the division by accident. `"horizonYears"` is on every
+row: the length `model` was read over on a row with a record band, the anchor's record elsewhere.
 
 **An extreme also needs its own window**, and that is a separate decision from its own horizon. The
 deepest episode is the one statistic a window can delete: across the committed fixture, median depth
@@ -694,18 +717,23 @@ up-day share, leverage corr, the crash rate and median depth — carries the rec
 spread over 20,000 moving one-year-block resamples of that record
 (`test-data/equity-anchors/recordbands-2026-09-18.tsv`: QQQ 1999-2026 for the Nasdaq set, CRSP
 1954-2026 for the S&P set, the century for its clustering rows). `-validate` prints where the model
-falls and the 5th-95th band, and the row misses outside it:
+falls among the resamples and the row's band, and the row misses outside it:
 
 ```
- variance ratio 60d     model     0.91   real     0.83   ratio  1.09   model@  90% of 0.69..0.93   target 1.00
- up-day share %         model    52.29   real    54.78   ratio  0.95   model@   1% of 53.46..56.17  <-- MISS
+ variance ratio 60d     model     0.89   real     0.83   ratio  1.07   model@  85% of 0.61..0.99   target 1.00
+ up-day share %         model    52.37   real    54.78   ratio  0.96   model@   0% of 52.71..56.83  <-- MISS
 ```
+
+The bands are JOINT: a set's rows all fall inside theirs together on 90% of the record's
+resamples, so a history drawn like the record misses no row nine times in ten. That puts each
+row's edges near its 0.6th and 99.4th percentiles (`jointLo`/`jointHi` in the fixture); twelve
+per-row 5th-95th bands held QQQ's resamples together only 42.7% of the time.
 
 A band per row replaces a ratio band of one width for all, which was wrong both ways: too narrow
 for a statistic one history barely pins (the downside excess, whose band spans zero, read MISS on
 every recent Nasdaq world) and too wide for one it pins tightly (lag-1 clustering's band is
-0.79-1.14 times the record, and the Nasdaq recipe's 1.24 passed). Rows no single daily record reads — the depth rungs, the wings,
-the valuation dispersion, the bond rows — keep the ratio band.
+0.65-1.21 times the record, where the ratio band ran to 1.5). Rows no single daily record reads —
+the depth rungs, the wings, the valuation dispersion, the bond rows — keep the ratio band.
 
 `real` is the record, so where the loss grades against something else the report prints `target`
 beside it:
@@ -724,15 +752,16 @@ decision.
 
 **The up-day share** — `up-day share %`, the share of moving sessions that rise — is the count half
 of the return asymmetry, which the downside excess cancels by construction. The record pins it: QQQ
-rises on 54.8% of its sessions, in smaller steps than it falls (band 53.5-56.2), and CRSP 1954-2026
-on 55.0% (54.0-55.8). Both shipped worlds miss it low — the Nasdaq recipe 52.3%, the S&P default
-53.8% — and `-noise` agrees from the other side, with the record above 99% of the model's own
-histories on both. The row is reported at weight 0 in the loss until a mechanism reaches it.
+rises on 54.8% of its sessions, in smaller steps than it falls (band 52.7-56.8), and CRSP 1954-2026
+on 55.0% (53.5-56.3). Both shipped worlds read it low — the Nasdaq recipe's 52.4% misses, and the
+S&P default's 53.8% sits at the 3rd percentile of CRSP's resamples — and `-noise` agrees from the
+other side, with the record above 98% of the model's own histories on both. The row is reported at
+weight 0 in the loss until a mechanism reaches it.
 
 **Read the two spreads together.** Resampling a record's years cannot produce a session worse than
 its worst, so the record bands run narrow on tail statistics; the model's own spread runs wide
 wherever its tail is too heavy. On kurtosis they disagree for that reason — the Nasdaq recipe sits
-above every resample of QQQ, while `-noise` puts QQQ at the recipe's 11th percentile. Where both
+above every resample of QQQ, while `-noise` puts QQQ at the recipe's 12th percentile. Where both
 agree, as on the up-day share, the miss is the model's.
 
 ### The equity section: ratios at the volatility anchor
@@ -780,6 +809,16 @@ with it.
 | `-leverage` | the leverage effect: a decline raises the NEXT session's diffusive volatility by `exp(leverage * decline-in-sds)`, saturated at 4 sds; a rally raises nothing. Reads the same session's news jump. With the bar channels on, `-leverage 0` reads range clustering at 0.56–0.57 against the 0.57 floor, seed-dependent: the kick is what carries a decline's width into the next session's bar, and a world without it produces bars that cluster less than real bars | 0.10 |
 | `-newsrate` | fair-value news jumps per year — permanent down-jumps the price reprices the same session, gap-invariant; the downside-asymmetry channel, variance-DISPLACING | 1.3 |
 | `-newssize` | log decline per news event (0.033 = a −3.3% day); rarer-larger buys more asymmetry and kurtosis per unit of variance. Bounded with `-newsrate`: rate × size² must stay below 0.0123 (size below 0.097 at the default rate) — past it there is no diffusion left to displace, and the CLI refuses the world | 0.033 |
+| `-newslev` | NEWS THAT FOLLOWS LEVERAGE: the news intensity × (1 + X × the credit stock's rise over its trailing-year average), clipped to [0, 2] so the average rate is kept, held under 0.25 a session, the compensator paid on the same intensity. Frequent moderate markdowns give the record's up-day share and left tail, and tied to the credit stock they land late in the cycle, where the record's declines start; independent ones start declines no leverage preceded and break the macro build-up | 0 |
+| `-newsrevert` | the share of each news markdown that does NOT reach the fundamental, in [0, 1]: the price takes the whole step and value capital buys the rest back, as the record bounces after its down days. Permanent steps displacing the diffusion's transient noise lift the 60-day variance ratio past the record's; the reverting share holds it | 0 |
+| `-newsscale` | the share of each news markdown, and of its compensator, that scales with the session's conditional vol (the log-vol state, the leverage kick, the vol response), in [0, 1]. News that has displaced most of the diffusion otherwise takes the volatility response with it: fixed-size markdowns leave the variance after a fall to the diffusion alone | 0 |
+| `-noiseskew` | THE SKEWED BODY: the diffusion's unit shock as a mean-zero, unit-variance skew-normal with its long tail on the left, skew in [0, 1). The record's session is centred right of zero with more sessions far below than far above — a count asymmetry the variance cannot carry. 0.9 moves the up-day share about 1.5 points on the Nasdaq recipe and 0.7 on the S&P default, every other row within its seed noise | 0 |
+| `-newsflip` | NEWS PAID BY THE BODY: the share of the price's news compensator paid by turning moderate down diffusion shocks up rather than a steady lift, in [0, 1]. A flip moves a session's squares to the up side, where a lift shifts every session, so the up-day share the record has costs far less downside excess | 0 |
+| `-newsbond` | THE BOND LEG OF NEWS: the bond's fair value and price rise this × the markdown × (duration / 13.5) the session it lands, decaying at half a year's half-life, on top of the bond's own noise; reversed in an inflation regime, where bad equity news is rate news. Without it the sessions news drives carry no bond response and the growth-crash rally falls short | 0 |
+| `-creditregime` | THE CREDIT-TRIGGERED VOL REGIME: turbulent spells that open at credit highs. Outside one, a session starts one with probability `-creditregimerate` × the credit growth gap's excess over half an sd / 252; the diffusive noise, the session's sd and the implied-vol state take exp(this), held half a year, then decaying at a quarter's half-life. Carries the credit onset of big declines without the spiral's spikes, so `-levgain` can fall | 0 |
+| `-creditregimerate` | the credit regime's onsets per year per sd of credit growth over half an sd | 0 |
+| `-slowbondinfl` | the share of the slow channel's bond leg that reverses in an inflation regime, as the news leg does, in [0, 1] | 0 |
+| `-newsbondskip` | THE BOND ANSWERS SOME NEWS: the share of news events the bond leg skips, the rest scaled by 1 / (1 − this) so the leg's mean and the growth-crash rally are kept. A leg that answers every markdown ties the bond to the stock's worst calm sessions tighter than the record (tail hedge −0.24): at a 0.42 leg on 12/yr × 2% Nasdaq news, 0.3 reads −0.263 → −0.245. In [0, 1) | 0 |
 | `-downshock` | transitory sign asymmetry on the equity shock; retired as a default by the news channel — pays vr60 ~+0.02 per 0.01, its recovery IS trend | 0 |
 | `-trendshare` | mandate level for trend-following capital (a spring, not a wall) | 0.055 |
 | `-crowdimpact` | price pressure per unit of exposure the crowd **trades** in a session — one rule for every crowd | 0.030 |
@@ -1167,9 +1206,9 @@ absolute size 0.71 of the S&P world's, which the record asks for — crash count
 volatility-flat across the fresh-start cross-section, slope 0.01, where the model's `depth` sweep
 reads 1.8 — and it takes daily kurtosis from 24 to 16 (the record's 9.6 at its own horizon) and
 lag-1 clustering from 0.38 to 0.31 (0.29), with `depth` 8.4 giving back the volatility the spiral
-no longer supplies (the band's floor is 23.5%), `refuge` 0.15 the bond's rally and `levGain` 8
+no longer supplies (against the band's floor, then 23.5%), `refuge` 0.15 the bond's rally and `levGain` 8
 the hazard (1.47–1.50 on six seeds, build-up 0.83–0.85); `stress` 4.4 and `jumpVar` 0 as before.
-All three classes PASS on six seeds, volatility 24.1–24.5% against the band's 23.5% floor. What the scale does not buy, disclosed: the crash count
+All three classes PASS on six seeds, volatility 24.1–24.5% against the band's floor, then 23.5%. What the scale does not buy, disclosed: the crash count
 stays at 36–37 per century against 25.6, because diffusion alone at this volatility crosses 15%
 thirty times a century (`-stress 0.01` reads 29.5) and the volatility band forces the depth
 that buys them; and lag-20 clustering gives 0.22 → 0.18 against the record's 0.25 — the model's
@@ -1182,10 +1221,12 @@ without paying kurtosis. On the S&P default the same open reads 0.328 at
 The Nasdaq set's sampling spreads are measured at the current recipe (`-noise -atrelease
 0.24.4-nasdaq`, 200 paths), not carried from the S&P's — every spread, since 0.23.1 including the depth rungs, the
 valuation proxy and the bond rows, which through 0.23.0 read the S&P world's inline constants for
-both sets. The deep rung is where it matters: d20's spread at this recipe is 0.48 against the S&P
-default's 4.18, so the row carries real weight here where the S&P loss all but ignores it. The
-loss at this recipe reads 1.57 under its own spreads, so a `-calibrate -anchors nasdaq` result
-from any earlier release optimised a different function.
+both sets; the wings' alone are the record's own block bootstrap. The deep rung is where it
+matters: d20's spread at this recipe is 0.57 against the S&P default's 2.27, so the row carries
+real weight here where the S&P loss all but ignores it. The loss at this recipe reads 1.203 under
+its own spreads, so a `-calibrate -anchors nasdaq` result from any earlier release optimised a
+different function, and the 0.24.4 set's `score` and `worstRow` are the search's readings under
+the spreads of the recipe before it.
 
 - **Signed persistence is graded as a four-rung profile since 0.23.1, not one rung.** `-validate`
   prints the variance ratio at 20, 60, 120 and 250 sessions against the real cross-section's
@@ -1597,30 +1638,40 @@ against −83) and crashes per century 30.8 → 31.4 (25.6); equity vol 24.4 aga
 kurtosis 16.4 (9.6) as before. The bust swing runs at the archive's 0.014, which the search left
 there because the bust's shape is no graded row. The un-searched dials are the 0.24.2 recipe's.
 
-**`0.24.4-nasdaq` is the recipe re-solved under the stationarity row**: member 49 of
-`test-data/worlds/0.24.4-nasdaq.json` (73 members, seeded from the 0.24.3 recipe at the swing's
-measured amplitude with the cycle on, the transport arm the S&P default; 52 of 73 pass every class
-at 200 paths and 8 of 14 candidates on four seeds), picked for the mildest moves against the
-outgoing world and the best upper wing. Its literals are the archive's own, so `-atrelease
-0.24.4-nasdaq` reproduces the member byte for byte. Its stationarity comes from the beliefs' share
-(0.73 → 0.65) and its wings from the growth-extrapolation term (`capYears` 4.4 → 5.6), with the
-cycle near 0 (0.06) and the swing at the archive's 0.24. Against the outgoing world (the 0.24.3
-recipe with the swing at 0.20, which fails the stationarity row on every seed) on the same four
-seeds under the re-frozen spreads: fitness loss 1.51-2.06 from 1.59-2.11; at seed 1 the typical
-year 20.5 → 19.3 (18.3), return per vol 0.33 → 0.38 (0.38), the downside excess 0.02 → 0.37
-(1.13), the 60-day variance ratio 0.89 → 0.91, the lower wing 10.7 → 7.6 (6.7), the bond's
-growth-crash rally 3.7 → 4.5 (6.6); paid in kurtosis 17.8 → 20.6 (9.6), lag-1 clustering
-0.34 → 0.36 (0.29), the upper wing 6.4 → 5.5 (7.6; the outgoing world's 6.4 was its transient's
-reading, 12.4 once settled), pooled vol 25.0 → 24.2 (26.9), median depth −24.1 → −25.0 (−22.8),
-the deep rung 1.13 → 1.16 and bond depth 1.16 → 1.27. `-crossasset` reads the d=5.70 bond-depth
-rung at 0.63 (0.57 before; band 0.65-1.35), the pre-existing miss. Its mania-led busts run 1.7 years at 43% vol with three rallies of 20% and one
-of 30% (NDX 2000-02: 2.5 years, 53%, five and three). The Nasdaq anchor set's spreads are frozen
-at this world. The un-searched dials are the 0.24.2 recipe's.
-**`0.24.4-nasdaq-basket`** is the same world with the basket on, re-anchored on the eight names
-under QQQ: `basketSector` 0.8 (corr 0.837-0.840, beta 1.37, vol ratio 1.63-1.64 on four seeds at
-200 paths against the anchors' 0.837 / 1.365 / 1.630; pairwise 0.58, idio share 0.36, tail
-coincidence 0.51, worst-decile pair corr 0.63 against 0.16 mid; names 2.09x, gaps 4.1/yr; time
-below peak 0.72, disclosed), every class passing. It is the Nasdaq basket world to pin in place of
+**`0.24.4-nasdaq` is the recipe re-solved for the daily return's shape**: the 0.24.3 recipe with
+its kurtosis and up-day share inside their record bands, which `0.24.3-nasdaq` misses on 29 and on
+all of 32 seeds, and its lag-1 clustering on the record. Four mechanisms carry it, on the 0.24.3
+recipe's un-searched dials: frequent, small, credit-coupled news paid for by the body's own down
+days (`newsRate` 12.6 × 1.9%, `newsLev`, `newsRevert`, `newsFlip`, with a bond leg); a shock skewed
+long tail left (`noiseSkew`); a credit-triggered vol regime (`creditRegime` 0.8 at onset rate 18),
+which carries the kurtosis the spiral's credit gain did, so `levGain` runs at 2; and the slow bond
+leg reversed in an inflation regime (`slowBondInfl`). At 200 paths × 100 years on 32 seeds against
+`0.24.3-nasdaq` on the same seeds no row sits further from its record past tolerance (5 percentile
+points on a banded row, 0.02 log on any other) and 15 sit nearer: kurtosis 13.8 → 9.4 (9.55), lag-1
+clustering 0.32 → 0.29 (0.29), lag-20 0.17 → 0.20 (0.25), the up-day share 51.9 → 53.6 (54.8), the
+wings 11.0 / 11.9 → 9.1 / 9.9 (7.6 / 6.7), return per vol 0.35 → 0.39 (0.38), the bond's
+growth-crash rally 4.2 → 4.6 (6.6); equity vol 23.6 against 26.9 and the typical year 20.7 against
+20.0, as `0.24.3-nasdaq`. Every class on 29 of the 32 seeds, the others the bond's vol gate at its
+edge, which `0.24.3-nasdaq` fails as often. `-crossasset` reads the d=5.70 bond-depth rung at 0.53
+(0.55 on `0.24.3-nasdaq`; band 0.65-1.35), the pre-existing miss. The Nasdaq anchor set's spreads
+are frozen at this world. It is member 51 of
+`test-data/worlds/0.24.4-nasdaq.json`, the set searched from it, byte for byte.
+
+**The 0.24.4 set is graded against the 0.24.3 set, member for member**: each row's median member
+distance from its record (percentile points from the band's middle on a banded row,
+|ln(model/record)| on any other), seed by seed on four seeds at 200 paths × 100 years, against the
+members of `0.24.3-nasdaq.json` that pass every class on the same four seeds (28 of 173). The 55
+members sit nearer on ten rows (kurtosis, lag-1 clustering, the 60-day variance ratio, the downside
+excess, the leverage correlation, valuation dispersion, both wings, both bond crash rows), within
+tolerance on thirteen, bond depth against its vol among them, and further on none; equity vol is
+unresolved, within the 5-point tolerance on three seeds and 6 further on the fourth. Coverage
+weights' effective sample 30.3.
+
+**`0.24.4-nasdaq-basket`** is the same world with the basket on, anchored on the eight names
+under QQQ: `basketSector` 0.8 (corr 0.833-0.835, beta 1.37, vol ratio 1.64-1.65 on four seeds at
+200 paths against the anchors' 0.837 / 1.365 / 1.630; pairwise 0.58, idio share 0.37, tail
+coincidence 0.46, worst-decile pair corr 0.52 against 0.20 mid; names 2.08x, gaps 3.4/yr; time
+below peak 0.71, disclosed), every class passing. It is the Nasdaq basket world to pin in place of
 `0.24.1-nasdaq-basket`.
 
 ## The bust swing — `-bustamp`

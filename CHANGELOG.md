@@ -31,6 +31,20 @@
   the paths' later half minus over their first decade within 0.15 log (a stationary world reads
   within ±0.05 at 60 paths; the pre-cycle default −0.5 to −0.7). Every pre-cycle world fails it,
   the frozen release rows included. The report's `valuation gap` line prints the reading.
+- Paths now run a 28-year warm-up (was 3), and the bust swing's 20-year average of the gap is a
+  running mean until its window fills. The gap, started at the fundamental, took about 20 years
+  to reach its long-run spread (Nasdaq recipe 0.45, S&P default 0.24) and the swing's average
+  longer, so a path's first decades ran calm while the mean row passed: the Nasdaq recipe's first
+  decade read 0.76 points of median path vol under decades 5-10 (now within 0.2), and its 27-year
+  reading 23.2-23.5% (now 23.7-24.6).
+- `valuation spread stationary from the first session`, a mechanism gate row: the pooled gap's sd
+  over the paths' first decade within 20% of its sd over their later half. Both recipes read
+  −0.16 to −0.42 on the 3-year warm-up; −0.07 to +0.15 now, at 60 paths on four seeds.
+- Every world's paths move. `-fitness` reads the S&P default 4.413 → 1.894 (its upper wing
+  0.00 → 0.18%, dispersion 0.15 → 0.18, worst crash −67 → −76). Both sets' spreads are re-frozen (bond vol 0.36 → 0.43 on the S&P; the Nasdaq's at its new
+  recipe, below); the 3-year warm-up reproduces every one but the shared wing
+  spreads, which stay. A read costs about 25% more at 100 years and a search read about 56% more.
+  The sidecar's `burnIn` reads 7056.
 - The S&P default is the 0.24.1 world with the beliefs' fade at 0.2 and the cycle at 0.1 (15
   years): the smallest change that starts its paths stationary (drift −0.53..−0.64 → −0.06 on
   four seeds), every class passing at 200 paths on all four. Against the outgoing world at seed
@@ -72,41 +86,46 @@
   is inert between manias, and `bustCeilDays` / `bust_ceil_days` on a path counts the sessions a
   live unwind was held. Every world with the dial at 0 is bit-identical; twins byte-identical on
   the default, the Nasdaq recipes and the swing at 0 and 0.20.
-- `0.24.4-nasdaq` is the Nasdaq recipe re-solved under the stationarity row: member 49 of
-  `test-data/worlds/0.24.4-nasdaq.json` (73 members, seeded from the 0.24.3 recipe at the swing's
-  measured amplitude with the cycle on, the transport arm the S&P default; 52 of 73 pass every
-  class at 200 paths and 8 of 14 candidates on four seeds), picked for the mildest moves against
-  the outgoing world and the best upper wing; `-atrelease 0.24.4-nasdaq` reproduces the member
-  byte for byte. Its stationarity comes from the beliefs' share (0.73 → 0.65) and its wings from
-  the growth-extrapolation term (`capYears` 4.4 → 5.6); the cycle sits near 0 (0.06) and the
-  swing at the archive's 0.24. Against the outgoing world (the 0.24.3 recipe with the swing at
-  0.20, which fails the stationarity row on every seed) on the same four seeds under the
-  re-frozen spreads: loss 1.51-2.06 from 1.59-2.11; at seed 1 the typical year 20.5 → 19.3
-  (18.3), return per vol 0.33 → 0.38 (0.38), the downside excess 0.02 → 0.37 (1.13), the 60-day
-  variance ratio 0.89 → 0.91, the lower wing 10.7 → 7.6 (6.7), the bond's growth-crash rally
-  3.7 → 4.5 (6.6); paid in kurtosis 17.8 → 20.6 (9.6), lag-1 clustering 0.34 → 0.36 (0.29), the
-  upper wing 6.4 → 5.5 (7.6; the outgoing world's 6.4 was its transient's reading, 12.4 once
-  settled), pooled vol 25.0 → 24.2 (26.9), median depth −24.1 → −25.0 (−22.8), the deep rung
-  1.13 → 1.16 and bond depth 1.16 → 1.27.
-  Its mania-led busts run 1.7 years at 43% vol with three rallies of 20% and one of 30% (NDX
-  2000-02: 2.5 years, 53%, five and three). The Nasdaq spreads are re-frozen at it: 17 of the 21
-  move (kurtosis 1.68 → 2.42, the deep rung 0.43 → 0.48, valuation 0.38 → 0.30, median depth
-  0.36 → 0.26, return per vol 0.49 → 0.45, the bond rows 1.64 → 1.20 and 1.61 → 1.54 among them)
-  and the same command at the outgoing world reproduces all 21. `-crossasset` reads the d=5.70
-  bond-depth rung at 0.63 (0.57 before; band 0.65-1.35): the pre-existing miss, disclosed, not
-  re-solved.
-- `0.24.4-nasdaq-basket` is `0.24.4-nasdaq` with the basket on, re-anchored on the eight names
-  under QQQ: `basketSector` 0.9 → 0.8 (corr 0.837-0.840, beta 1.37, vol ratio 1.63-1.64 on four
-  seeds at 200 paths against the anchors' 0.837 / 1.365 / 1.630; pairwise 0.58, idio share 0.36,
-  tail coincidence 0.51, worst-decile pair corr 0.63 against 0.16 mid; names 2.09x, gaps 4.1/yr;
-  time below peak 0.72, disclosed), every class passing. It is the Nasdaq basket world to pin in
+- `0.24.4-nasdaq` is the Nasdaq recipe re-solved for the daily return's shape: the 0.24.3 recipe
+  with its kurtosis and up-day share inside their record bands, which `0.24.3-nasdaq` misses on 29
+  and on all of 32 seeds, and its lag-1 clustering on the record. Four mechanisms carry it, on the
+  0.24.3 recipe's un-searched dials: frequent, small, credit-coupled news paid for by the body's
+  own down days (`newsRate` 12.6 × 1.9%, `newsLev`, `newsRevert`, `newsFlip`, with a bond leg); a
+  shock skewed long tail left (`noiseSkew`); a credit-triggered vol regime (`creditRegime` 0.8 at
+  onset rate 18), which carries the kurtosis the spiral's credit gain did, so `levGain` runs at
+  2; and the slow bond leg reversed in an inflation regime (`slowBondInfl`). At 200 paths × 100
+  years on 32 seeds against `0.24.3-nasdaq` on the same seeds no row sits further from its record
+  past tolerance (5 percentile points on a banded row, 0.02 log on any other) and 15 sit nearer:
+  kurtosis 13.8 → 9.4 (9.55), lag-1 clustering 0.32 → 0.29 (0.29), lag-20 0.17 → 0.20 (0.25),
+  the up-day share 51.9 → 53.6 (54.8), the wings 11.0 / 11.9 → 9.1 / 9.9 (7.6 / 6.7), return per
+  vol 0.35 → 0.39 (0.38), the bond's growth-crash rally 4.2 → 4.6 (6.6); equity vol 23.6 against
+  26.9 and the typical year 20.7 against 20.0, as `0.24.3-nasdaq`. Every class on 29 of the 32
+  seeds, the others the bond's vol gate at its edge, which `0.24.3-nasdaq` fails as often.
+  `-crossasset` reads the d=5.70 bond-depth rung at 0.53 (0.55 on `0.24.3-nasdaq`; band
+  0.65-1.35): the pre-existing miss, disclosed, not re-solved. The name was re-solved in place: no
+  release has carried it. The Nasdaq anchor set's sampling spreads are re-frozen at it (`-noise
+  -paths 200 -atrelease 0.24.4-nasdaq -anchors nasdaq`: kurtosis 2.42 → 1.03, median depth 0.26 →
+  0.46, bond vol 0.36 → 0.41; the wings' stay the record's own), under which `-fitness` reads it
+  1.203; a Nasdaq loss from any earlier binary is a different function's.
+- `0.24.4-nasdaq-basket` is `0.24.4-nasdaq` with the basket on, anchored on the eight names
+  under QQQ: `basketSector` 0.8 (corr 0.833-0.835, beta 1.37, vol ratio 1.64-1.65 on four seeds
+  at 200 paths against the anchors' 0.837 / 1.365 / 1.630; pairwise 0.58, idio share 0.37, tail
+  coincidence 0.46, worst-decile pair corr 0.52 against 0.20 mid; names 2.08x, gaps 3.4/yr; time
+  below peak 0.71, disclosed), every class passing. It is the Nasdaq basket world to pin in
   place of `0.24.1-nasdaq-basket`, which stays as shipped.
-- `test-data/worlds/0.24.4-nasdaq.json`: the set above, searched under the stationarity row, the
-  ceiling and the recovery rule (the transport arm the S&P default, 73 members after the 3- and
-  12-seed holdouts; member 49 is the recipe). The one row no member reaches is the worst crash
-  (best −67 against −83). The 0.24.3 and 0.24.2 sets stay as shipped; every member of the older
-  sets starts at fair value, which the stationarity row refuses, so their `score` and `worstRow`
-  predate it.
+- `test-data/worlds/0.24.4-nasdaq.json`: the Nasdaq calibration set searched from `0.24.4-nasdaq`
+  under `-gate all`, the daily-shape and bond crash rows under `-gap`, equity vol, the tail hedge,
+  bond depth, d10 and d20 under `-hold`, the transport arm the S&P default. 55 members, each
+  passing every class on all of four seeds at 200 paths × 100 years and missing no row on three of
+  them; member 51 is the recipe, byte for byte. Read seed by seed against the members of the
+  0.24.3 set that pass the same test (28 of 173), each row's median member distance from its
+  record is nearer on ten rows (kurtosis, lag-1 clustering, the 60-day variance ratio, the
+  downside excess, the leverage correlation, valuation dispersion, both wings, both bond crash
+  rows), within tolerance on thirteen, bond depth against its vol among them, and further on
+  none; equity vol is unresolved (within 5 points on three seeds, 6 further on the fourth).
+  Coverage weights' effective sample 30.3. The 0.24.3 and 0.24.2 sets stay as shipped; every
+  member of the older sets starts at fair value, which the stationarity row refuses, so their
+  `score` and `worstRow` predate it.
 
 **Each fidelity row is read against its own record**
 
@@ -121,18 +140,28 @@
 - Each of those rows carries its record's own spread: 20,000 moving one-year-block resamples of
   QQQ 1999-2026 or CRSP 1954-2026 (the century for the S&P clustering rows), read with the
   model's own functions (`test-data/equity-anchors/recordbands-2026-09-18.tsv`, generated by
-  `rust/src/bin/record_bands.rs` and `jsrc/recordBands.sc`, which agree byte for byte). The
-  sidecar's rows gain `recordBand` (5th-95th) and `recordPercentile` (where the model falls — the
-  reverse of `percentile`, which places the record among the model's histories), and `miss` on
-  those rows is the band's. The 0.667-1.5 ratio band it replaces there flagged the downside
-  excess on every Nasdaq world, inside a record band that spans zero, and passed lag-1 clustering
-  at 1.24 times QQQ, past its band's 1.14. `-validate` prints `model@` and the band, and `target`
-  where it differs from the record by more than 1%. Schema stays 18.
+  `rust/src/bin/record_bands.rs` and `jsrc/recordBands.sc`, which agree byte for byte). The band
+  is JOINT: a set's rows all fall inside theirs together on 90% of the resamples (`-joint 0.10`,
+  split over the set's record windows by their rows with `-of`), which puts each row's edges near
+  its 0.6th and 99.4th percentiles; twelve per-row 5th-95th bands held QQQ's resamples together
+  only 42.7% of the time. The sidecar's rows gain `recordBand` (the joint band) and
+  `recordPercentile` (where the model falls — the reverse of `percentile`, which places the record
+  among the model's histories), and `miss` on those rows is the band's. The 0.667-1.5 ratio band
+  it replaces there flagged the downside excess on every Nasdaq world, inside a record band that
+  spans zero, and reached 1.5 times QQQ on lag-1 clustering, whose band ends at 1.21. `-validate`
+  prints `model@` and the band, and `target` where it differs from the record by more than 1%.
+  Schema stays 18.
 - `up-day share %`, the share of moving sessions that rise: the count half of the return
   asymmetry, which the downside excess cancels by construction. QQQ rises on 54.8% of sessions
-  (band 53.5-56.2) and CRSP 1954-2026 on 55.0% (54.0-55.8); the Nasdaq recipe reads 52.3% and the
-  S&P default 53.8%, both MISS, and `-noise` puts both records above 99% of the model's own
-  histories. Reported at weight 0 in the loss until a mechanism reaches it.
+  (band 52.7-56.8) and CRSP 1954-2026 on 55.0% (53.5-56.3); the Nasdaq recipe's 52.4% misses and
+  the S&P default's 53.8% sits at the 3rd percentile of CRSP's resamples, and `-noise` puts both
+  records above 98% of the model's own histories. Reported at weight 0 in the loss until a
+  mechanism reaches it.
+- The Nasdaq equity-vol gate is QQQ's own 5th-95th over its resamples, 22.2-31.5% (was 23.5-30.3,
+  a fixed ±12.5% around 26.9 that failed worlds inside what QQQ's own history produces). A level
+  gate on a record-banded quantity is never narrower than the record's 5th-95th, which each
+  twin's tests check; the S&P vol gate and both typical-year gates already were. Return per vol
+  keeps its population-value gate.
 - `typical-year vol %` is anchored on the median-year vol averaged over all 252 block phases: QQQ
   18.3 → 20.0, CRSP 1954-2026 12.9 → 12.5. One series' median year moves with where its years
   start (QQQ 18.2 to 21.5), and calendar years sat at the bottom of QQQ's range. The gate bands
@@ -140,8 +169,213 @@
   (19.4 and 13.2 at 200 paths; the S&P default's ordinary year sits at the 86th percentile of
   CRSP's band). The Nasdaq spread re-freezes 0.16 → 0.15 with its anchor, and the same `-noise`
   runs reproduce every other spread on both sets. The loss moves with no model change — at the
-  `-fitness` ensemble the S&P default 4.350 → 4.413 and `0.24.4-nasdaq` 1.522 → 1.530 — and the
-  search's objective digest with it, so an archive in progress will not resume.
+  `-fitness` ensemble the S&P default 4.350 → 4.413 — and the search's objective digest with it,
+  so an archive in progress will not resume.
+- A banded row's `model` is read on paths as long as its record — 27 years on the Nasdaq set, 72
+  on the S&P and the century for the S&P's two clustering rows — not on the verdict's 100: read
+  off a longer ensemble, a statistic that grows with the window grades the horizon, not the model
+  (the Nasdaq recipe reads kurtosis 21-24 over 100 years against 17-18 over 27, band 7.6-11.7). The
+  60-day variance ratio follows its band's window, not its target's 25-year fund records: the S&P
+  default reads 1.01-1.08 over 72 years (band 0.89-1.14; three seeds). Each horizon costs one
+  ensemble, shared with the worst-crash row's where the two meet, and a horizon shorter than the
+  verdict's is cut from the verdict's own paths. The sidecar's `horizonYears` on a banded row is
+  that length (the variance ratio's 25 → 27 on the Nasdaq set, 72 on the S&P). `fidelity_rows` /
+  `fidelityRows` take the verdict ensemble's paths and their length as new arguments, `main` and
+  `years`.
+- Every gate verdict — the report's, the sidecar's, and the admissibility the sweep, severity,
+  power and buffer reports print — reads the quantities the fidelity table grades (equity vol,
+  typical-year vol, return per vol, kurtosis, clustering, crash rate) where the table reads them,
+  so a world has one value for each and one admissibility. A report run shorter than a record's
+  horizon simulates that horizon once per world. `gate_checks_at` / `gateChecksAt` and
+  `failed_in_at` / `failedInAt` take those readings; `gate_checks` / `gateChecks`, which the
+  loss's gate penalty uses, read the ensemble they are given.
+- `-emit nul` (any case, any directory) or `-emit /dev/null`, the run made for the 200-path
+  verdict alone, writes its sidecar to the null device too; it left a `nul.json` in the working
+  directory.
+
+**Ten dials for the daily-return shape, all off by default**
+
+- The record's session, in its own volatility's units, is centred right of zero with the heavier
+  tail on the left (QQQ 54.8% up days); both shipped worlds read the up-day share low. Each dial
+  below is 0 in every shipped world and bit-identical there, and draws, where it draws, from a
+  stream of its own. The sidecar's `world` carries all ten; schema stays 18.
+- `-newslev X`: the news intensity × (1 + X × the credit stock's rise over its trailing-year
+  average), clipped to [0, 2] and held under 0.25 a session, the compensator paid on the same
+  intensity, so the average rate is kept. Frequent moderate markdowns give the up-day share
+  (52.2 → 55.0 on the Nasdaq recipe at 20/yr × 2%) but, independent, start declines no leverage
+  preceded (macro build-up 0.87 → 0.67); tied to the credit stock they land late in the cycle,
+  where the record's declines start.
+- `-newsrevert S`: the share of each markdown that does not reach the fundamental, bought back by
+  value capital. Permanent steps in place of the diffusion's transient noise lift the 60-day
+  variance ratio (0.85 → 1.08 at 20/yr × 2%); a share of 0.6 reads 0.83, the record's.
+- `-newsscale S`: the share of each markdown, and of its compensator, that scales with the
+  session's conditional vol. At 22/yr × 2% the whole share lifts vol 22.8 → 25.1, the upper wing
+  6.1 → 7.5 and the up-day share 53.7 → 55.2, and costs the tail hedge (−0.20 → −0.12).
+- `-newsbond B`: the bond's fair value and price rise B × the markdown × duration/13.5 the session
+  news lands, decaying with a half-year half-life, and fall instead in an inflation regime.
+  Without it news-driven sessions carry no bond response (growth-crash rally 3.1 against the
+  record's 6.6 at 22/yr × 2%).
+- `-newsbondskip S`: the share of news the bond leg skips, the rest scaled by 1/(1 − S) to keep its
+  mean. At a 0.42 leg on 12/yr × 2%, 0.3 reads the tail hedge −0.263 → −0.245 (record −0.24) and
+  the growth-crash rally 4.30 → 4.33.
+- `-noiseskew D`: the diffusion's unit shock as a mean-zero, unit-variance skew-normal with its
+  long tail on the left. 0.9 moves the up-day share 51.8 → 53.3 on `0.24.3-nasdaq`, every other
+  row within its seed noise, and the S&P default's 53.8 → 54.5.
+- `-newsflip S`: the share of the news compensator paid by turning moderate down shocks up
+  instead of a steady lift. At 16/yr × 2% the full share reads up 55.3 at downside excess 7.7
+  against a lift's 53.9 at 5.8. Where the flips cannot pay it all — frequent news on a quiet or
+  deep market — the rest is a lift, so the mean holds at any rate.
+- `-creditregime A` / `-creditregimerate L`: THE CREDIT-TRIGGERED VOL REGIME, turbulent spells
+  that open at credit highs. Outside one, a session starts one with probability L × the credit
+  growth gap's excess over half an sd / 252; the diffusive noise, the session's sd and the
+  implied-vol state then take exp(A), held half a year and decaying at a quarter's half-life. The
+  record's big down days sit inside such spells, each opening at a credit peak; the spiral's
+  credit gain put them in calm markets as cascades. Carrying that onset, it lets `-levgain` fall:
+  on the item-29 Nasdaq world at 0.8 and 10 with `-levgain` 9 → 2 and `-stress` 4.5 → 3.2,
+  kurtosis 10.9 → 9.7 and lag-20 clustering 0.155 → 0.200, the build-up and hazard gates held.
+  0 is bit-identical and draws nothing.
+- `-slowbondinfl S`: the share of the slow channel's bond leg that reverses in an inflation
+  regime, the news leg's rule. At 1 with `-slowbeta` 0.75 the inflation-crash row reads -24.9 →
+  -25.5 (record -34.7). 0 is bit-identical.
+- All ten are searched, with `levGain` (48 dials). `newsRate` and `creditRegimeRate` (0-30 a
+  year) and `levGain` (0-15) are stepped in ln(1 + x), so a child of a recipe low in the range
+  stays near it. A proposed `newsSize` is pulled back to 0.9 of the
+  diffusion budget at its rate (`news_size_within_budget` / `newsSizeWithinBudget`), so no search
+  scores a world the CLI refuses; `-calibrate` prints the size it scored.
+- `ln_det` / `lnDet`: a natural log that agrees across the twins to the bit, beside `exp_det`,
+  which is now public in the Rust crate. The record-band generators take CRSP's log returns
+  through it: the joint band ranks the resamples, and a one-ulp difference in a return splits a
+  tie.
+
+**The calibration search prices the record and the outgoing recipe**
+
+- Feasibility reads the verdict's horizons: equity vol, the typical year, return per vol,
+  kurtosis, both clustering lags and the crash rate are gated at their records' horizons
+  (`gate_checks_at`), as a recipe's verdict gates them. Every read takes those readings, cut from
+  its own ensemble, so an S&P search at `-years 100` simulates nothing twice where one at 80
+  simulates the century's clustering rows again (0.04 s against 0.10 s a read at 60 paths). A
+  candidate that fails a gate those readings cannot change (`gate_reads_table` /
+  `gateReadsTable`) is rejected before they are taken. An archive begun under the old gating
+  refuses to resume without `-force` (`gates` in its settings).
+- A record-band row outside its band costs a dead zone plus its distance past the edge in the
+  resamples' own sd, (p95 − p5)/3.29, read at the record's horizon.
+- `-noregress R`: every fitness row a candidate holds further from its record than recipe R does
+  costs the difference — a banded row's distance is |percentile − 50| in anchor sd, any other
+  row's its fitness term — with R the mean of six reads at the search's ensemble, on seeds no
+  other read uses.
+- `-gap ROWS`: named graded rows are a feasibility condition on the primary arm on every read — a
+  row with a record band judged by that band, a row without one by its ratio to the anchor's
+  target, which is the verdict's own miss either way. The seed worlds are exempt, since they root
+  the lineages and the rows a release must close are the ones the outgoing recipe misses;
+  `-holdout` holds every member to them.
+- `-gate C`: the classes a candidate must pass to be feasible — `realism`, `mechanism`, `fidelity`
+  or `all`, realism always among them; the default `realism,mechanism` is the verdict's own and
+  leaves the search as it was. With `fidelity` the bands that are otherwise only priced gate too,
+  which is what a calibration set needs, every member having to pass every class at the verdict's
+  ensemble: priced at one dead zone against a row's worth of gain, they let an archive fill with
+  members that buy a row by leaving a band — of one 300-member archive, 238 failed a class at 200
+  paths and 3 were admissible. The transport arm keeps the default classes at any setting. The
+  `gateClasses` settings key stops an archive resuming across a change.
+- `-hold ROW<=D,...`: a graded row a candidate must hold within D of its record on every read of
+  its primary arm to be feasible, D in the units a set is judged in — percentile points from the
+  band's middle on a row with a record band, |ln(model/target)| on any other (`judge_distance` /
+  `judgeDistance`, on the deterministic log, so the twins agree which side of a bar a candidate
+  falls). What `-gap` is to a band's edges, for a distance: a priced row is traded away, and an
+  archive ends where the loss pulls it whatever it was seeded from — four Nasdaq archives seeded
+  inside every bar ended with pooled vol 36-40 points from its band's middle and the tail hedge
+  0.11-0.17 from its record. The seed worlds are exempt; extreme rows are refused. The `hold`
+  settings key and a digest line, written only when a row is held, stop an archive resuming
+  across a change.
+- The transport arm also holds the counterpart's news rate and size and its valuation dials
+  (`beliefShare`, `capYears`, `beliefLeak`, `beliefYears`, the cycle, `bustAmp`): each market's
+  valuation was solved on its own, and a Nasdaq solution carried to the S&P failed its
+  stationarity row for reasons that say nothing about the mechanism under test.
+- `-transportweight W` (default 0.25): the transport arm's share of the score. At 1 the
+  counterpart's rows carry most of a seed's score (5-6 of 7.1 on a Nasdaq search) and outweigh
+  the market being searched. Feasibility in both markets stays a gate at any weight. An archive
+  begun before the weight resumes only at 1 (`transportWeight` in its settings).
+- `-cov F`: that share of children is stepped along the archive's own shape — its covariance in
+  the dials' search coordinates, shrunk toward the independent step (`-covshrink`, default 0.3)
+  and scaled to the same expected step length, so only the direction changes. The dials are not
+  independent in their effect (`depth` carries pooled volatility and the typical year together),
+  so a step taken one dial at a time spends most children across the grain. At `-cov 0.5` a
+  Nasdaq set search under `-gate all` read feasible children 1.8% → 4.3% and closed in 574
+  generations against 1139, with the archive's spread unchanged. Default 0, which draws nothing extra
+  from the mutation stream and reproduces the previous search byte for byte; the `proposal`
+  settings key stops an archive resuming across a change.
+- The archive's settings record `seedWorlds`, a digest of every field of every seed world. A
+  member is its searched dials on the world it was seeded from by name, and an unreleased recipe
+  may be re-solved under its name, so a resume, `-export` or `-prune` after that is refused
+  without `-force`; an archive written before the key adopts it with a warning.
+- `-export` writes each member's `coverageWeight`, and prints the set's effective sample. An
+  archive is not a sample: where its members crowd says where the search looked, so a consumer
+  counting the share of worlds that pass counts a near-duplicate twice. The weight is the inverse
+  of the member's Gaussian-kernel density in the descriptor space admission keeps spread in, the
+  bandwidth that archive's median nearest-neighbour distance, scaled to mean 1 — 0.6 counts as
+  0.6 of a world. A set's shipped members gain it when the set is next exported.
+- The objective digest covers the record bands, the held dials, `-gap` and the `-noregress`
+  reference's distances, so an archive in progress will not resume, and neither will one whose
+  reference a model change has moved. `-export` and `-prune` keep the archive's recorded digest
+  and do not read the reference.
+- FIXED: a candidate's reads were seeded a path stride apart. An ensemble at seed `s` runs path k
+  at `s + k * 7919`, and rep j of a candidate read `seed + (eval + j) * 7919`, so consecutive
+  reads were one window sliding a path at a time: a second rep re-read all but one path of the
+  first (`-reps 2` cost two reads and bought one), the seed noise the replacement margin reads
+  was measured between them, and a 6,400-candidate search at 200 paths saw about 33 independent
+  ensembles. Candidates now read `seed + 3301 + (eval + j) * 1000003`, their own stream beside
+  the pool's, the holdout's and the reference's, none sharing a path to 4,096 paths (a contract
+  test sweeps it). Recorded as `candidateSeeds`; an archive searched the old way resumes only
+  with `-force`, and exports, prunes and holds out as before. Twins byte-identical.
+
+**A reachability check for the rows a world misses**
+
+- `market_sim_reach` (Rust) and `jsrc/marketSimReach.sc` (Scala), byte-identical, not shipped:
+  each searched dial's response on every graded row, read one search step away on the same seeds
+  as the base with its standard error, then the one step that closes the largest equal share of
+  every gap row while every other row holds its band. It solves at the mean responses and at
+  their k-standard-error worst case (`-robust`, default 2), prints the constraints that bind with
+  their dual weights, and reads the robust step on fresh seeds. It also holds what adopting the
+  step would: every gate that is a band on one reading (`gate_bands_at`; `-nogates` drops them,
+  and the check names the other gates the step breaks), and with `-noregress R` every row no
+  further from its record than recipe R on the same seeds, plus the release judge's tolerance
+  (`-tol`, default 5 percentile points on a banded row and 0.02 in log on any other). A dial at a
+  range bound is read `-probe` steps away (default 3), and `-iterate N` re-reads the responses at
+  the stepped world and steps again, stopping once every gap row is inside its band or no step
+  closes any of the gap. `-flags FILE` starts from a candidate: the `-at` world with the searched
+  dials a search export sets; `-margin M` closes a gap row only M inside its band's edge, the room
+  a reading needs to clear it on other seeds. On `0.24.3-nasdaq` at 60 × 80 on 8 seeds, holding
+  the record bands alone, the robust step closes 61% of its five gap rows and takes the world out
+  of the equity-vol gate on fresh seeds; holding the gates as well it closes 31%, bound by that
+  gate and the macro conditions build-up, which still fails on the fresh seeds: a gate that binds
+  has no room to spare.
+- `FidelityRow::interval` / `FidelityRow.interval`: the interval `miss` admits a reading in, the
+  record band or the ratio band times `real`. Rust's `FidelityRow::miss` is now public.
+- `gate_bands_at` / `gateBandsAt`: every gate that is a band on one reading, in gate order, with
+  its reading, band and class. The gates that combine readings or count episodes are not bands
+  and are left out; `gate_checks_at` grades every gate as before.
+
+**The Rust simulator's binaries allocate through mimalloc**
+
+- `market_sim`, `market_sim_search` and `record_bands` use mimalloc instead of the system heap,
+  under a new feature, `fast-alloc`, on by default. Output is byte-identical. On Windows the system
+  heap bounded every read: the Nasdaq recipe's `-validate` takes 1.5 s against 4.0 s, a 40-path ×
+  40-year emit 5.6 s against 13.6 s, and a calibration-search generation about 7 s against 37 s
+  (one 24-core Windows machine; Linux and macOS system allocators start faster, so expect less
+  there).
+- The allocator is set in the binaries only, so a crate that depends on `vastblue-uni` keeps its
+  own. The feature compiles mimalloc's C source and needs a C compiler; `default-features = false,
+  features = ["market-sim"]` keeps the simulator without it. The benchmark binaries keep the
+  system allocator.
+
+**The Scala price loop keeps clear of the JIT's method limit**
+
+- HotSpot never compiles a method over 8000 bytes of bytecode, and `priceLoop` had reached 7598.
+  The bust swing's state (`BustSwing`), the jump's Student-t draw and the channel and macro
+  inputs' per-session records now live outside it, every `scala.math` call in it goes to
+  `java.lang.Math` (C2 had stopped inlining the forwarders into a method this large) and the
+  news block's per-session tuple is two scalars: 5986 bytes, every emitted path byte-identical,
+  the Nasdaq recipe's 200-path × 100-year `-validate` 24 s against 31 s. `PriceLoopSizeSuite`
+  reads the compiled method's length and fails past 7000.
 
 ## v0.24.3 — 2026-09-16
 

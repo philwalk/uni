@@ -10,7 +10,7 @@
 //! readings.  NOT SHIPPED: `Cargo.toml` excludes this file from the published crate, as it does the
 //! `bench_*` binaries.
 //!
-//! WHAT IT PRODUCES is an ARCHIVE, not a champion: 34 searched dials against ~45 graded rows that
+//! WHAT IT PRODUCES is an ARCHIVE, not a champion: 48 searched dials against ~45 graded rows that
 //! are not independent means distinct worlds match the record equally well, and a strategy feels
 //! the mechanism, not the summary statistic.
 //!
@@ -26,9 +26,9 @@
 //! pass.
 //!
 //! EVERYTHING IS PORTABLE BETWEEN THE TWO HARNESSES, `-transport` and `-fidelity` included, and a
-//! capability added to one is added to the other.  Feasibility comes from `gate_checks`, whose
-//! statistics are byte-identical across the twins, so a Scala `-holdout` re-scores this archive
-//! exactly.  The mutation stream too: both draw from `NumPyRng`, gated bit-identical, where a
+//! capability added to one is added to the other.  Feasibility comes from `gate_checks_at` on the
+//! record-horizon readings, whose statistics are byte-identical across the twins, so a Scala
+//! `-holdout` re-scores this archive exactly.  The mutation stream too: both draw from `NumPyRng`, gated bit-identical, where a
 //! language-native Gaussian is not.
 
 #![allow(
@@ -49,6 +49,12 @@ use uni::NumPyRng;
 use uni::market_sim::Anchors;
 use uni::market_sim::World;
 use uni::market_sim::{self as ms};
+use uni::udata::java_format_f;
+
+// the binary's allocator: see the `fast-alloc` feature
+#[cfg(feature = "fast-alloc")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 // ---- formatting ---------------------------------------------------------------------------
 
@@ -184,18 +190,124 @@ fn world_of(base: &World, d: &[f64]) -> World {
     w
 }
 
+/// A dial's value in the coordinates the search steps and measures it in: ln(1 + x) for the
+/// library's `SEARCH_LOG_DIALS`, which the reachability check shares.
+fn coord(r: &Range, x: f64) -> f64 {
+    ms::search_coord(r.0, x)
+}
+
+/// A dial's width in its search coordinates.
+fn coord_width(r: &Range) -> f64 {
+    coord(r, r.2) - coord(r, r.1)
+}
+
 /// Distance in normalised dial space, max over dials -- the same reading the seed pool's spread
-/// was measured with, so `-sep` is comparable to it.
+/// was measured with, so `-sep` is comparable to it. In each dial's search coordinates.
 fn apart(a: &[f64], b: &[f64]) -> f64 {
     ranges()
         .iter()
         .enumerate()
-        .map(|(i, r)| (a[i] - b[i]).abs() / (r.2 - r.1))
+        .map(|(i, r)| (coord(r, a[i]) - coord(r, b[i])).abs() / coord_width(r))
         .fold(f64::NEG_INFINITY, f64::max)
 }
 
 fn clamped(r: &Range, x: f64) -> f64 {
     x.max(r.1).min(r.2)
+}
+
+/// A parent's dial moved by `z` sd of `sigma` times its width, in its search coordinates, and
+/// held inside its range. Identical to a step on the value itself for every other dial.
+fn stepped(r: &Range, x: f64, z: f64, sigma: f64) -> f64 {
+    let y = coord(r, x) + z * sigma * coord_width(r);
+    if ms::SEARCH_LOG_DIALS.contains(&r.0) {
+        let y = y.max(coord(r, r.1)).min(coord(r, r.2));
+        clamped(r, ms::from_search_coord(r.0, y))
+    } else {
+        clamped(r, y)
+    }
+}
+
+/// THE ARCHIVE'S OWN SHAPE as a step (`-cov`): the Cholesky factor of its members' covariance in
+/// the dials' search coordinates, shrunk toward the independent step by `shrink` and scaled to
+/// trace `nd`, so a child's expected squared step is the independent step's and only its direction
+/// changes. `None` while the archive is too small to read a shape from.
+///
+/// WHY: the dials are not independent in their effect -- `depth` carries pooled volatility and the
+/// typical year together, the slow channel carries the bond with it -- so the admitted members lie
+/// along a few directions, and a step taken one dial at a time spends most of its children across
+/// the grain. Measured on the 0.24.4-nasdaq set at 60 x 80, children both feasible and closer to
+/// the record than their parent: 31 of 150 this way against 17 taken independently.
+fn proposal_factor(arc: &[Member], rs: &[Range], shrink: f64) -> Option<Vec<Vec<f64>>> {
+    let nd = rs.len();
+    let m = arc.len();
+    if m < nd / 4 || m < 4 {
+        return None;
+    }
+    let u: Vec<Vec<f64>> = arc
+        .iter()
+        .map(|x| {
+            (0..nd)
+                .map(|i| (coord(&rs[i], x.dials[i]) - coord(&rs[i], rs[i].1)) / coord_width(&rs[i]))
+                .collect()
+        })
+        .collect();
+    let mean: Vec<f64> = (0..nd)
+        .map(|i| u.iter().map(|x| x[i]).sum::<f64>() / m as f64)
+        .collect();
+    let mut c = vec![vec![0.0; nd]; nd];
+    for i in 0..nd {
+        for j in 0..nd {
+            c[i][j] = u
+                .iter()
+                .map(|x| (x[i] - mean[i]) * (x[j] - mean[j]))
+                .sum::<f64>()
+                / (m - 1) as f64;
+        }
+    }
+    let tr: f64 = (0..nd).map(|i| c[i][i]).sum();
+    if !(tr > 0.0 && tr.is_finite()) {
+        return None;
+    }
+    // shrunk toward the independent step, then trace nd: the step's length is the independent
+    // step's whatever shape the archive has
+    let k: Vec<Vec<f64>> = (0..nd)
+        .map(|i| {
+            (0..nd)
+                .map(|j| {
+                    (1.0 - shrink) * c[i][j] * nd as f64 / tr + if i == j { shrink } else { 0.0 }
+                })
+                .collect()
+        })
+        .collect();
+    // Cholesky, the twins' operation order: a lower factor L with K = L L^T
+    let mut l = vec![vec![0.0; nd]; nd];
+    for i in 0..nd {
+        for j in 0..=i {
+            let mut s = 0.0;
+            for (a, b) in l[i].iter().zip(&l[j]).take(j) {
+                s += a * b;
+            }
+            if i == j {
+                l[i][j] = (k[i][i] - s).max(1e-12).sqrt();
+            } else {
+                l[i][j] = (k[i][j] - s) / l[j][j];
+            }
+        }
+    }
+    Some(l)
+}
+
+/// A proposal with its news size pulled inside the search's share of the diffusion budget
+/// (`news_size_within_budget`), so the archive holds the dials of the world it scored.
+fn admissible(d: Vec<f64>) -> Vec<f64> {
+    let rs = ranges();
+    let dial = |n: &str| rs.iter().zip(&d).find(|(r, _)| r.0 == n).map(|(_, x)| *x);
+    let rate = dial("newsRate").unwrap_or(0.0);
+    let size = dial("newsSize").map_or(0.0, |x| ms::news_size_within_budget(rate, x));
+    rs.iter()
+        .zip(d.iter())
+        .map(|(r, &x)| if r.0 == "newsSize" { size } else { x })
+        .collect()
 }
 
 /// The dead zone in the units `fitness` scores rows in. `wgt` makes one anchor sd worth
@@ -205,6 +317,132 @@ fn clamped(r: &Range, x: f64) -> f64 {
 /// one so the width is chosen from what the rows actually read.
 fn dead_zone(sds: f64) -> f64 {
     sds * ms::SD_REL_REF
+}
+
+/// HOW A READ IS PRICED beyond feasibility: the dead zone, and with `-noregress` the outgoing
+/// recipe's distance from the record on every fitness row (`reference_distances`). A row the
+/// candidate holds as close to its record as the recipe costs nothing; a row further out costs the
+/// difference, whatever the dead zone says. The release rule is exactly that comparison, and a dead
+/// zone alone let every row drift half an anchor sd for free, which is how a search whose members
+/// all scored well produced none that could replace the recipe. The primary arm only: the
+/// transport arm is a check that the mechanism carries, not a recipe being replaced.
+struct Objective {
+    dead: f64,
+    reference: Option<Vec<(&'static str, f64)>>,
+    /// THE GAP ROWS (`-gap`): the rows a release must bring inside their record band, made a
+    /// feasibility condition on the primary arm like the realism and mechanism classes. Priced,
+    /// a near miss on one cost less than the regressions it saved, and a search under
+    /// `-noregress` traded them away member after member. The seed worlds are judged without
+    /// them (`without_gap`).
+    gap: Vec<&'static str>,
+    /// THE CLASSES A READ MUST PASS (`-gate`), the primary arm's: the verdict's own by default
+    /// (realism and mechanism). With `fidelity` the bands a search otherwise only prices -- the
+    /// macro panel's, the channels', the bond's -- gate too, which is what a calibration SET needs,
+    /// every member of one having to pass every class at the verdict's ensemble. Priced, a failed
+    /// band is one dead zone against a row's worth of gain, so an archive fills with members that
+    /// buy a row by leaving a band: of search-v40's 300, 238 failed a class at 200 paths, and 3
+    /// were admissible. The TRANSPORT arm keeps the verdict's default classes at any setting -- it
+    /// is a check that the mechanism carries to another market, not a member being built.
+    classes: Vec<ms::GateClass>,
+    /// THE ROWS A SEED IS REPORTED ON and not gated on: `without_gap` moves the gap rows here, so
+    /// a seed world's read still says which of them it misses (`Read::watch_miss`). Read off the
+    /// gate's labels instead, that report was blind to a row graded by its ratio, which carries
+    /// no `band:` label, and to every row once the transport arm failed and `gate_fail` named
+    /// that arm alone.
+    watch: Vec<&'static str>,
+    /// THE ROWS HELD TO A DISTANCE (`-hold ROW<=D`): a candidate whose row reads further from its
+    /// record than the bar, in the judge's units (`judge_distance`), on any read of its primary
+    /// arm is infeasible. A set is graded on each row's MEDIAN member distance, and the loss
+    /// trades rows: four archives seeded inside every bar ended with pooled vol 36-40 points from
+    /// its band's middle and the tail hedge 0.11-0.17 from its record whatever they were seeded
+    /// from, because seeding sets where an archive starts and the loss where it ends. The seed
+    /// worlds are exempt, as they are from `-gap`.
+    hold: Vec<(&'static str, f64)>,
+}
+
+impl Objective {
+    /// the same dead zone without the reference or the gap rows: the transport arm's pricing
+    fn plain(&self) -> Objective {
+        Objective {
+            dead: self.dead,
+            reference: None,
+            gap: Vec::new(),
+            classes: ms::gate_default(),
+            watch: Vec::new(),
+            hold: Vec::new(),
+        }
+    }
+
+    /// the same pricing with the gap rows watched, not gated: the seed worlds' (see `main`)
+    fn without_gap(&self) -> Objective {
+        Objective {
+            dead: self.dead,
+            reference: self.reference.clone(),
+            gap: Vec::new(),
+            classes: self.classes.clone(),
+            watch: self.gap.clone(),
+            hold: Vec::new(),
+        }
+    }
+}
+
+/// Reads of the `-noregress` recipe its reference is the mean of.
+const NOREGRESS_READS: u64 = 6;
+
+/// THE READ STREAMS. An ensemble read at seed `s` runs path k at `s + k * PATH_STRIDE`
+/// (`sim_paths`), so two reads share paths whenever their seeds differ by `t * PATH_STRIDE` with
+/// |t| under the path count, not only when they are equal. Every stream therefore steps by
+/// `READ_STRIDE`, which is 2209 mod the prime `PATH_STRIDE`: within a stream two reads can only
+/// meet a million paths apart, and the offsets are chosen so no two streams meet either
+/// (`read_streams_share_no_path` sweeps it). The streams past `-seed`: the seed pool and the
+/// holdout's train at `k * READ_STRIDE`, the holdout's fresh at `HOLDOUT_FRESH_OFFSET`, the
+/// `-noregress` reference at `NOREGRESS_OFFSET`, the candidates at `CANDIDATE_OFFSET`.
+#[cfg(test)]
+const PATH_STRIDE: u64 = 7919;
+const READ_STRIDE: u64 = 1_000_003;
+const HOLDOUT_FRESH_OFFSET: u64 = 991;
+const NOREGRESS_OFFSET: u64 = 7;
+const CANDIDATE_OFFSET: u64 = 3301;
+
+/// The seed of a candidate's read in seed slot `slot` (`evals + rep`). Candidates stepped by
+/// `PATH_STRIDE` once, which made consecutive reads one window sliding a path at a time: a
+/// second rep re-read all but one path of the first, and the seed noise read between them was
+/// no noise at all. Recorded as `candidateSeeds`, so an archive searched that way does not resume
+/// under this one unforced.
+fn candidate_seed(base: i64, slot: u64) -> u64 {
+    (base as u64).wrapping_add(CANDIDATE_OFFSET.wrapping_add(slot.wrapping_mul(READ_STRIDE)))
+}
+
+/// The outgoing recipe's distance from the record on every fitness row: the mean of
+/// `NOREGRESS_READS` reads at the search's own ensemble, each priced as `one_read` prices a
+/// candidate (`record_distances`).
+fn reference_distances(
+    w: &World,
+    anchors: Anchors,
+    paths: usize,
+    years: usize,
+    base: i64,
+) -> Vec<(&'static str, f64)> {
+    let reads: Vec<Vec<(&'static str, f64)>> = (1..=NOREGRESS_READS)
+        .map(|j| {
+            let s = (base as u64).wrapping_add(NOREGRESS_OFFSET + j * READ_STRIDE);
+            let main = ms::sim_paths(w, paths, years, s);
+            let st = ms::measure(&main, years);
+            let hr = ms::horizon_readings(anchors, &st, Some(&main), years, paths, s, w, true);
+            let (_, rows) = ms::fitness(anchors, &st, &hr.extreme_scores());
+            ms::record_distances(anchors, &rows, &hr.banded)
+        })
+        .collect();
+    reads[0]
+        .iter()
+        .enumerate()
+        .map(|(i, (name, _))| {
+            (
+                *name,
+                reads.iter().map(|r| r[i].1).sum::<f64>() / reads.len() as f64,
+            )
+        })
+        .collect()
 }
 
 // ---- evaluation ---------------------------------------------------------------------------
@@ -245,25 +483,66 @@ struct Read {
     /// reading is rejected as before, but its `spread` and `desc` are partial and must not feed
     /// the noise estimate.
     complete: bool,
+    /// THE WATCHED ROWS THIS READ MISSES (`Objective::watch`), in the order they were named: a
+    /// seed world's gap rows. Empty for a candidate, which watches nothing, and for a read that
+    /// left before the table was read.
+    watch_miss: Vec<&'static str>,
 }
 
-/// One seed's reading.  The extreme row is read at its anchor's own horizon, so when `-years` is
-/// that horizon the main ensemble serves and nothing is simulated twice.  An infeasible candidate
-/// never pays for the extreme ensemble: feasibility reads only the pooled statistics, and the rows
-/// needing that ensemble are dropped from the worst-row search rather than scored as unmeasurable,
-/// so a rejected candidate's `worstRow` still names something measured.
+/// One seed's reading.  Every quantity the fidelity table grades is read at its record's horizon
+/// and the extreme rows at their anchors', cut from the main ensemble where the horizon is shorter,
+/// so when `-years` is the longest horizon nothing is simulated twice; a candidate that fails a
+/// gate those readings cannot change never pays for them.  An infeasible candidate's extreme rows
+/// stay out of its score and its worst-row search, so a rejected candidate's `worstRow` names a
+/// pooled row.
 ///
 /// `evaluate` stops at the first seed that fails, because feasibility needs every seed.
-fn one_read(w: &World, anchors: Anchors, paths: usize, years: usize, s: u64, dead: f64) -> Read {
+#[expect(
+    clippy::too_many_lines,
+    reason = "one read scored in the order the Scala harness's oneRead scores it; splitting it \
+              would scatter the terms the twins' scores must add up in the same order"
+)]
+fn one_read(
+    w: &World,
+    anchors: Anchors,
+    paths: usize,
+    years: usize,
+    s: u64,
+    obj: &Objective,
+) -> Read {
+    let dead = obj.dead;
     let main = ms::sim_paths(w, paths, years, s);
     let st = ms::measure(&main, years);
-    let default = ms::gate_default();
-    let checks = ms::gate_checks(anchors, &st);
+    // THE VERDICT'S READINGS: vol, the typical year, return per vol, kurtosis, the clustering lags
+    // and the crash rate are gated at their records' horizons (`gate_checks_at`), as a recipe's
+    // verdict gates them, so the search and the verdict never disagree on those rows because they
+    // read different horizons.
+    // A GATE NO TABLE READING CAN CHANGE (`gate_reads_table`) fails at those horizons exactly as it
+    // fails here, so a candidate that fails one is rejected before their ensembles are simulated:
+    // the table's gates are then not read, and neither priced nor named.
+    let default = obj.classes.clone();
+    let own = ms::gate_checks(anchors, &st);
+    let early = own
+        .iter()
+        .any(|(nm, ok, cls)| !ok && default.contains(cls) && !ms::gate_reads_table(nm));
+    let hr = if early {
+        ms::HorizonReadings::default()
+    } else {
+        ms::horizon_readings(anchors, &st, Some(&main), years, paths, s, w, true)
+    };
+    let banded = &hr.banded;
+    let checks = if early {
+        own.into_iter()
+            .filter(|(nm, _, _)| !ms::gate_reads_table(nm))
+            .collect()
+    } else {
+        ms::gate_checks_at(anchors, &st, banded)
+    };
     let bad = checks
         .iter()
         .filter(|(_, ok, cls)| !ok && default.contains(cls))
         .count();
-    let feasible = bad == 0;
+    let gated = bad == 0;
     // THE FIDELITY BANDS THAT ARE NOT FITNESS ROWS -- the macro panel's, the channels', the
     // variance-ratio profile, the bond's -- were invisible to the search: neither gated (a
     // fidelity band flips on a seed at 60 paths, and feasibility has to hold on every seed) nor
@@ -277,23 +556,75 @@ fn one_read(w: &World, anchors: Anchors, paths: usize, years: usize, s: u64, dea
         .filter(|(_, ok, cls)| !ok && *cls == ms::GateClass::Fidelity)
         .map(|(nm, _, _)| format!("fidelity: {nm}"))
         .collect();
+    // THE RECORD BANDS, read at the record's own horizon: a miss costs a dead zone, as a failed
+    // fidelity band does, plus its distance past the edge, so the search has a slope back inside.
+    // the gap rows' bands, read on this read: a miss on one is a failed gate (see `Objective::gap`)
+    let gap_miss = if gated {
+        gap_misses(anchors, &obj.gap, banded, &st)
+    } else {
+        Vec::new()
+    };
+    // the rows a seed is reported on, where the table was read: an early exit leaves `banded`
+    // empty, and a banded row without a reading counts as a miss
+    let watch_miss = if early {
+        Vec::new()
+    } else {
+        gap_misses(anchors, &obj.watch, banded, &st)
+    };
+    // the held rows' distances on this read, in the judge's units: past a bar is a failed gate
+    let hold_miss: Vec<&'static str> = if gated {
+        obj.hold
+            .iter()
+            .filter(|(nm, bar)| {
+                ms::judge_distance(anchors, nm, &st, banded).is_none_or(|d| d > *bar)
+            })
+            .map(|(nm, _)| *nm)
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let feasible = gated && gap_miss.is_empty() && hold_miss.is_empty();
+    let band_miss: Vec<(&str, f64)> = ms::record_band_terms(anchors, banded)
+        .into_iter()
+        .filter(|(_, t)| feasible && *t > 0.0)
+        .collect();
     let gate_fail: Vec<String> = if feasible {
-        fid_fail.clone()
+        fid_fail
+            .iter()
+            .cloned()
+            .chain(band_miss.iter().map(|(nm, _)| format!("band: {nm}")))
+            .collect()
+    } else if gated {
+        gap_miss
+            .iter()
+            .map(|nm| format!("gap: {nm}"))
+            .chain(hold_miss.iter().map(|nm| format!("hold: {nm}")))
+            .collect()
     } else {
         default
             .iter()
-            .flat_map(|cls| ms::failed_in(anchors, &st, *cls))
+            .flat_map(|cls| {
+                checks
+                    .iter()
+                    .filter(move |(_, ok, c)| !ok && c == cls)
+                    .map(|(nm, _, _)| nm.clone())
+            })
             .collect()
     };
 
-    let ex = if !feasible {
-        HashMap::new()
-    } else if ms::extreme_horizons(anchors) == vec![years] {
-        ms::extreme_score_stats_from(anchors, &main, years)
+    let ex = if feasible {
+        hr.extreme_scores()
     } else {
-        ms::extreme_score_stats(anchors, paths, s, w)
+        HashMap::new()
     };
     let (total, rows) = ms::fitness(anchors, &st, &ex);
+    // AGAINST THE OUTGOING RECIPE (`-noregress`): each row's excess over the recipe's distance from
+    // its record, in `fitness` row order as the reference was taken
+    let regress = if feasible {
+        regressions(anchors, obj, &rows, banded)
+    } else {
+        Vec::new()
+    };
     let scored: Vec<(f64, &str)> = rows
         .iter()
         .filter(|(nm, _, _, _)| feasible || !ms::extreme_target_names().contains(nm))
@@ -311,12 +642,25 @@ fn one_read(w: &World, anchors: Anchors, paths: usize, years: usize, s: u64, dea
                 a
             }
         });
-    // in row order, a plain left fold, as the Scala harness's `sum` is; then the fidelity bands
+    // in row order, a plain left fold, as the Scala harness's `sum` is; then the fidelity bands,
+    // then the record bands, then the regressions
     let score = scored
         .iter()
         .map(|(term, _)| (term - dead).max(0.0))
         .sum::<f64>()
-        + dead * fid_fail.len() as f64;
+        + dead * fid_fail.len() as f64
+        + band_miss.iter().map(|(_, t)| dead + t).sum::<f64>()
+        + regress.iter().map(|(_, e)| e).sum::<f64>();
+    // the log names a regression past a dead zone; smaller ones are priced but not listed
+    let gate_fail: Vec<String> = gate_fail
+        .into_iter()
+        .chain(
+            regress
+                .iter()
+                .filter(|(_, e)| *e > dead)
+                .map(|(nm, _)| format!("regress: {nm}")),
+        )
+        .collect();
     Read {
         feasible,
         score,
@@ -327,7 +671,54 @@ fn one_read(w: &World, anchors: Anchors, paths: usize, years: usize, s: u64, dea
         gate_fail,
         spread: 0.0,
         complete: true,
+        watch_miss,
     }
+}
+
+/// The gap rows (`Objective::gap`) whose band this read misses: its banded reading outside the
+/// record's joint band, or no reading at all.
+fn gap_misses(
+    anchors: Anchors,
+    gap: &[&'static str],
+    banded: &HashMap<&'static str, f64>,
+    st: &ms::WorldStats,
+) -> Vec<&'static str> {
+    gap.iter()
+        .copied()
+        .filter(|nm| {
+            if let Some(b) = anchors.record_bands.iter().find(|b| b.name == *nm) {
+                return b.misses(banded.get(nm).copied().unwrap_or(f64::NAN));
+            }
+            // a row without a record band is graded by its ratio to the anchor's target, which is
+            // the verdict's `miss` for it (`FidelityRow::miss`); an extreme row, graded by where
+            // the record falls among single histories of its own length, carries neither and
+            // `-gap` refuses it
+            ms::fit_targets(anchors)
+                .into_iter()
+                .find(|(n, _, _, _)| n == nm)
+                .is_some_and(|(_, get, target, _)| {
+                    let ratio = get(st) / target;
+                    !(ms::FIDELITY_RATIO_BAND.0..=ms::FIDELITY_RATIO_BAND.1).contains(&ratio)
+                })
+        })
+        .collect()
+}
+
+/// AGAINST THE OUTGOING RECIPE (`-noregress`): each fitness row's excess over the recipe's distance
+/// from its record, in `fitness` row order as the reference was taken; empty without a reference.
+fn regressions(
+    anchors: Anchors,
+    obj: &Objective,
+    rows: &[(&'static str, f64, f64, f64)],
+    banded: &HashMap<&'static str, f64>,
+) -> Vec<(&'static str, f64)> {
+    obj.reference.as_ref().map_or_else(Vec::new, |reference| {
+        ms::record_distances(anchors, rows, banded)
+            .iter()
+            .zip(reference)
+            .map(|((name, d), (_, r))| (*name, (d - r).max(0.0)))
+            .collect()
+    })
 }
 
 /// A member with its readings on the two holdout streams.
@@ -344,7 +735,7 @@ fn evaluate(
     paths: usize,
     years: usize,
     seeds: &[u64],
-    dead: f64,
+    obj: &Objective,
     bar: Option<f64>,
 ) -> Read {
     let mut reads: Vec<Read> = Vec::with_capacity(seeds.len());
@@ -352,7 +743,7 @@ fn evaluate(
     // the running maximum over the bar: the rest cannot change the answer
     let mut cut = false;
     for &s in seeds {
-        let r = one_read(w, anchors, paths, years, s, dead);
+        let r = one_read(w, anchors, paths, years, s, obj);
         let stop = !r.feasible;
         let over = r.feasible && bar.is_some_and(|b| r.score > b);
         reads.push(r);
@@ -384,9 +775,21 @@ fn evaluate(
         worst: hardest.worst,
         desc,
         total,
-        gate_fail: hardest.gate_fail,
+        // the read that FAILED says why, where there is one: the hardest read is the one with the
+        // worst row, which on a rejected world is as often a read that passed
+        gate_fail: reads
+            .iter()
+            .find(|r| !r.feasible)
+            .map_or(hardest.gate_fail, |r| r.gate_fail.clone()),
         spread: hi - lo,
         complete: !cut,
+        // a row any read misses, in the order the rows were named
+        watch_miss: obj
+            .watch
+            .iter()
+            .copied()
+            .filter(|g| reads.iter().any(|r| r.watch_miss.contains(g)))
+            .collect(),
     }
 }
 
@@ -394,7 +797,7 @@ fn evaluate(
 
 /// SELECTING FOR TRANSPORT rather than testing it afterwards: a candidate is judged on the WORSE of
 /// its two markets, so a world that fits the S&P by doing something the Nasdaq will not tolerate
-/// never enters.  One dial vector cannot pass both sets (equity vol bands 14-18 and 23.5-30.3); the
+/// never enters.  One dial vector cannot pass both sets (equity vol bands 14-18 and 22.2-31.5); the
 /// MECHANISM transports and the market dials re-solve, which is the structure of the shipped
 /// recipes.  So the arm is the counterpart world carrying the candidate's values on every searched
 /// dial EXCEPT the market dials (`MARKET_DIALS`), which stay at the counterpart's, in either
@@ -404,9 +807,13 @@ struct Transport {
     anchors: Anchors,
     world: World,
     spec: String,
+    /// the arm's share of the score (`-transportweight`): a primary-market search at 1 spent its
+    /// generations on the counterpart's rows (search-v38: the S&P arm carried 5-6 of the seed's 7.1
+    /// and the Nasdaq rows drifted). Feasibility in both markets stays a gate at any weight.
+    weight: f64,
 }
 
-fn transport_of(name: &str, primary_spec: &str) -> Transport {
+fn transport_of(name: &str, primary_spec: &str, weight: f64) -> Transport {
     let Some((world, spec)) = ms::named_world(name) else {
         usage(&format!(
             "-transport names [{name}], which is not a release or recipe"
@@ -423,6 +830,7 @@ fn transport_of(name: &str, primary_spec: &str) -> Transport {
         anchors: ms::anchors_named(spec),
         world,
         spec: spec.to_string(),
+        weight,
     }
 }
 
@@ -432,7 +840,13 @@ fn transport_of(name: &str, primary_spec: &str) -> Transport {
 /// produced this list for every hand-built recipe and all thirty for `0.24.2-nasdaq`, a recipe
 /// the search itself re-solved -- an arm holding everything judges the counterpart, not the
 /// candidate. Every name must be a searched dial; the harness refuses to start otherwise.
-const MARKET_DIALS: [&str; 7] = [
+/// The news channel's rate and size are a market's magnitudes, as `jumpVar` is; how the news
+/// follows leverage and how much of it reverts are the mechanism, and transport. So are the
+/// valuation dials -- how much of the fundamental beliefs see, their fade and horizon, the
+/// extrapolation, the cycle and the mania's bust: each market was solved on its own (the S&P
+/// default runs a belief share of 0.95 with its own leak), and a Nasdaq solution carried to the S&P
+/// failed its stationarity row for reasons that say nothing about the mechanism under test.
+const MARKET_DIALS: [&str; 16] = [
     "depth",
     "drift",
     "stress",
@@ -440,6 +854,15 @@ const MARKET_DIALS: [&str; 7] = [
     "jumpVar",
     "refuge",
     "slowShare",
+    "newsRate",
+    "newsSize",
+    "beliefShare",
+    "capYears",
+    "beliefLeak",
+    "beliefYears",
+    "cycleSd",
+    "cycleYears",
+    "bustAmp",
 ];
 
 /// Which searched dials the transport arm holds, in table order.
@@ -478,7 +901,7 @@ fn judge(
     paths: usize,
     years: usize,
     seeds: &[u64],
-    dead: f64,
+    obj: &Objective,
     bar: Option<f64>,
 ) -> Read {
     let a = evaluate(
@@ -487,13 +910,13 @@ fn judge(
         paths,
         years,
         seeds,
-        dead,
+        obj,
         bar,
     );
     let Some(tr) = t else { return a };
     // a candidate that fails its primary market is rejected whatever the other one says,
     // and the transport arm is a whole second evaluation; so is one whose primary arm alone
-    // is over the bar, because the arm's scores add
+    // is over the bar, because the arms' scores add
     if !a.feasible {
         return a;
     }
@@ -503,18 +926,21 @@ fn judge(
             ..a
         };
     }
+    // the arm is priced at its weight, so its own early exit is the bar over the weight: past
+    // that, the weighted sum is over the bar whatever the primary arm scored (a weight of 0
+    // leaves the arm a gate and never cuts it short)
     let b = evaluate(
         &transport_world(tr, dials),
         tr.anchors,
         paths,
         years,
         seeds,
-        dead,
-        bar,
+        &obj.plain(),
+        bar.map(|x| x / tr.weight),
     );
-    let score = a.score + b.score;
-    let (raw, worst) = if b.raw > a.raw {
-        (b.raw, format!("{}: {}", tr.spec, b.worst))
+    let score = a.score + tr.weight * b.score;
+    let (raw, worst) = if tr.weight * b.raw > a.raw {
+        (tr.weight * b.raw, format!("{}: {}", tr.spec, b.worst))
     } else {
         (a.raw, a.worst.clone())
     };
@@ -524,35 +950,106 @@ fn judge(
         raw,
         worst,
         desc: a.desc,
-        total: a.total + b.total,
-        // the transport arm's failures carry their market, as `worst` does, so a row that only
+        total: a.total + tr.weight * b.total,
+        // the transport arm's rows carry their market, as `worst` does, so a row that only
         // exists there -- the macro rows, when the counterpart runs the panel -- is not read as
-        // a primary-market failure
-        gate_fail: if a.gate_fail.is_empty() {
-            b.gate_fail
-                .iter()
-                .map(|r| format!("{}: {r}", tr.spec))
-                .collect()
-        } else {
-            a.gate_fail
+        // a primary-market failure. The primary arm is feasible here, so an infeasible reading
+        // names the transport arm's failures alone, and a feasible one both arms' misses.
+        gate_fail: {
+            let tb = b.gate_fail.iter().map(|r| format!("{}: {r}", tr.spec));
+            if b.feasible {
+                a.gate_fail.iter().cloned().chain(tb).collect()
+            } else {
+                tb.collect()
+            }
         },
         spread: a.spread.max(b.spread),
         complete: a.complete && b.complete,
+        // the primary arm's: the transport arm watches nothing
+        watch_miss: a.watch_miss,
     }
 }
 
 /// the OBJECTIVE, as a digest of every row a candidate is judged on -- each set's name, then each
-/// row's name, target and weight, for the primary set and the transport arm's. Recorded with the
-/// settings so a resume refuses an archive scored under different weights: re-freezing one
-/// spread changes the loss every member was admitted on, and nothing else in the checkpoint
-/// would show it. FNV-1a over the rows as text, numbers at eight significant digits, so both
-/// twins write the same digest.
-fn objective_digest(anchors: Anchors, transport: Option<&Transport>) -> String {
+/// row's name, target and weight, then each record band's edges, for the primary set and the
+/// transport arm's, the dials that arm holds, and the `-noregress` reference. Recorded with the
+/// settings so a resume refuses
+/// an archive scored under different weights: re-freezing one spread changes the loss every
+/// member was admitted on, and nothing else in the checkpoint would show it. FNV-1a over the
+/// rows as text, numbers at eight significant digits, so both twins write the same digest.
+/// The reference's VALUES, not only its name: a model change that moves the recipe's readings
+/// refuses a resume across it. `-export` and `-prune` score nothing and carry the archive's
+/// recorded digest instead (`main`), so they never read the reference.
+/// The held rows as the checkpoint and the digest spell them: `ROW<=D,...` at eight significant
+/// digits, `(none)` when there are none, the same text from both twins.
+fn hold_text(hold: &[(&'static str, f64)]) -> String {
+    if hold.is_empty() {
+        "(none)".to_string()
+    } else {
+        hold.iter()
+            .map(|(nm, d)| format!("{nm}<={}", g8(*d)))
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+}
+
+fn objective_digest(
+    anchors: Anchors,
+    transport: Option<&Transport>,
+    noregress: Option<(&str, &[(&'static str, f64)])>,
+    gap: &[&str],
+    hold: &[(&'static str, f64)],
+) -> String {
     let mut text = String::new();
     for a in std::iter::once(anchors).chain(transport.map(|t| t.anchors)) {
         let _ = writeln!(text, "{}", a.name);
         for (name, _, target, weight) in ms::fit_targets(a) {
             let _ = writeln!(text, "{name}|{}|{}", g8(target), g8(weight));
+        }
+        for b in a.record_bands {
+            let (lo, hi) = b.band();
+            let _ = writeln!(text, "band|{}|{}|{}", b.name, g8(lo), g8(hi));
+        }
+    }
+    if let Some(tr) = transport {
+        let _ = writeln!(text, "held|{}", MARKET_DIALS.join(","));
+        // written only off 1, so an archive scored before the weight existed keeps its digest
+        if tr.weight != 1.0 {
+            let _ = writeln!(text, "tweight|{}", g8(tr.weight));
+        }
+    }
+    if !gap.is_empty() {
+        let _ = writeln!(text, "gap|{}", gap.join(","));
+    }
+    // written only when a row is held, so an archive built before `-hold` keeps its digest
+    if !hold.is_empty() {
+        let _ = writeln!(text, "hold|{}", hold_text(hold));
+    }
+    if let Some((name, reference)) = noregress {
+        let _ = writeln!(text, "noregress|{name}");
+        for (row, d) in reference {
+            let _ = writeln!(text, "reg|{row}|{}", g8(*d));
+        }
+    }
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in text.bytes() {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    format!("{h:016x}")
+}
+
+/// THE SEED WORLDS' OWN VALUES, digested into the archive's settings (`seedWorlds`). A member is
+/// its searched dials on top of the world it was seeded from, by NAME, and an unreleased recipe may
+/// be re-solved under its name: an archive resumed or exported after that would rebuild every
+/// member on a different world and say nothing. Every field of every seed world, in the sidecar's
+/// own key format and the archive's own width, in pool order.
+fn seed_worlds_digest(pool: &[(String, World)]) -> String {
+    let mut text = String::new();
+    for (name, w) in pool {
+        let _ = writeln!(text, "{name}");
+        for l in ms::world_json_body_fmt(w, &|x| g8(x)) {
+            let _ = writeln!(text, "{}", l.trim());
         }
     }
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
@@ -838,17 +1335,12 @@ fn admit(arc: Vec<Member>, m: Member, sep: f64, keep: usize, noise: f64) -> (Vec
     (next, took)
 }
 
-/// The member whose removal costs the least behavioural spread: of the closest pair in normalised
-/// descriptor space, the one that scores worse. `None` when no member carries descriptors, which
-/// is only an archive written before they existed.
-fn least_distinct(arc: &[Member]) -> Option<usize> {
-    let n = arc.len();
+/// THE DESCRIPTOR SPACE admission and coverage share: each descriptor's range across the archive,
+/// so none of them dominates on units alone; empty when no member carries descriptors, which is
+/// only an archive written before they existed.
+fn desc_span(arc: &[Member]) -> Vec<f64> {
     let k = arc.iter().map(|m| m.desc.len()).max().unwrap_or(0);
-    if n < 2 || k == 0 {
-        return None;
-    }
-    // each descriptor's range across the archive, so none of them dominates on units alone
-    let span: Vec<f64> = (0..k)
+    (0..k)
         .map(|j| {
             let xs: Vec<f64> = arc
                 .iter()
@@ -862,25 +1354,87 @@ fn least_distinct(arc: &[Member]) -> Option<usize> {
                     - xs.iter().copied().fold(f64::INFINITY, f64::min)
             }
         })
+        .collect()
+}
+
+/// Two members' distance in that space, over the descriptors both read.
+fn desc_dist(a: &Member, b: &Member, span: &[f64]) -> f64 {
+    (0..span.len())
+        .filter(|&j| span[j] > 0.0)
+        .filter_map(|j| {
+            let (x, y) = (a.desc.get(j)?, b.desc.get(j)?);
+            if x.is_finite() && y.is_finite() {
+                Some(((x - y) / span[j]).powi(2))
+            } else {
+                None
+            }
+        })
+        .sum::<f64>()
+        .sqrt()
+}
+
+/// COVERAGE WEIGHTS: how much of the archive's behaviour each member stands for. An archive is not
+/// a sample -- where its members crowd says where the search looked, not how likely a market is --
+/// so a consumer counting "the share of worlds that pass" counts a near-duplicate twice. Each
+/// weight is the inverse of the member's Gaussian-kernel density in the descriptor space admission
+/// keeps spread in, the bandwidth the median nearest-neighbour distance, scaled to mean 1: 0.6
+/// counts as 0.6 of a world. All 1 when there are no descriptors or no spread to read.
+fn coverage_weights(arc: &[Member]) -> Vec<f64> {
+    let n = arc.len();
+    let span = desc_span(arc);
+    if n < 2 || span.is_empty() {
+        return vec![1.0; n];
+    }
+    let d: Vec<Vec<f64>> = (0..n)
+        .map(|i| (0..n).map(|j| desc_dist(&arc[i], &arc[j], &span)).collect())
         .collect();
-    let dist = |a: &Member, b: &Member| -> f64 {
-        (0..k)
-            .filter(|&j| span[j] > 0.0)
-            .filter_map(|j| {
-                let (x, y) = (a.desc.get(j)?, b.desc.get(j)?);
-                if x.is_finite() && y.is_finite() {
-                    Some(((x - y) / span[j]).powi(2))
-                } else {
-                    None
-                }
-            })
-            .sum::<f64>()
-            .sqrt()
-    };
+    let mut nn: Vec<f64> = (0..n)
+        .map(|i| {
+            (0..n)
+                .filter(|&j| j != i)
+                .map(|j| d[i][j])
+                .fold(f64::INFINITY, f64::min)
+        })
+        .collect();
+    nn.sort_by(f64::total_cmp);
+    let h = nn[n / 2];
+    if !(h > 0.0 && h.is_finite()) {
+        return vec![1.0; n];
+    }
+    // the kernel through `exp_det`, so the Scala harness exports the same bytes
+    let raw: Vec<f64> = (0..n)
+        .map(|i| {
+            let mut s = 0.0;
+            for x in &d[i] {
+                let z = x / h;
+                let e = -0.5 * z * z;
+                // `exp_det` builds 2^k from raw exponent bits and does not guard its range; a
+                // member far outside the bandwidth contributes under 1e-304 either way
+                s += if e < -700.0 { 0.0 } else { ms::exp_det(e) };
+            }
+            1.0 / s
+        })
+        .collect();
+    let mut tot = 0.0;
+    for r in &raw {
+        tot += r;
+    }
+    raw.iter().map(|r| r * n as f64 / tot).collect()
+}
+
+/// The member whose removal costs the least behavioural spread: of the closest pair in normalised
+/// descriptor space, the one that scores worse. `None` when no member carries descriptors, which
+/// is only an archive written before they existed.
+fn least_distinct(arc: &[Member]) -> Option<usize> {
+    let n = arc.len();
+    let span = desc_span(arc);
+    if n < 2 || span.is_empty() {
+        return None;
+    }
     let mut worst = (f64::INFINITY, 0usize);
     for i in 0..n {
         for j in (i + 1)..n {
-            let d = dist(&arc[i], &arc[j]);
+            let d = desc_dist(&arc[i], &arc[j], &span);
             if d < worst.0 {
                 // of the pair, lose the one that scores worse
                 let loser = if arc[i].score > arc[j].score { i } else { j };
@@ -898,16 +1452,18 @@ fn export_worlds(dir: &str, file: &str, seed_for: &dyn Fn(&str) -> World) {
     if arc.is_empty() {
         usage(&format!("no archive in {dir} to export"));
     }
+    let cover = coverage_weights(&arc);
     let bodies: Vec<String> = arc
         .iter()
         .enumerate()
         .map(|(k, m)| {
             let w = world_of(&seed_for(&m.name), &m.dials);
             format!(
-                "  {{\n    \"member\": {k},\n    \"seededFrom\": \"{}\",\n    \"score\": {:.6},\n    \"worstRow\": \"{}\",\n    \"world\": {{\n{}\n    }}\n  }}",
+                "  {{\n    \"member\": {k},\n    \"seededFrom\": \"{}\",\n    \"score\": {:.6},\n    \"worstRow\": \"{}\",\n    \"coverageWeight\": {},\n    \"world\": {{\n{}\n    }}\n  }}",
                 m.name,
                 m.score,
                 m.worst,
+                java_format_f(cover[k], 0, 6),
                 // at the archive's own width, not the report's six decimals -- this block is what a consumer
                 // reconstructs a world from -- and joined on `,\n`, since `world_json_body_fmt` returns the fields
                 // without separators
@@ -916,7 +1472,14 @@ fn export_worlds(dir: &str, file: &str, seed_for: &dyn Fn(&str) -> World) {
         })
         .collect();
     write_text(file, &format!("[\n{}\n]\n", bodies.join(",\n")));
-    println!("wrote {} worlds to {file}", arc.len());
+    let (s, s2) = cover
+        .iter()
+        .fold((0.0, 0.0), |(s, s2), w| (s + w, s2 + w * w));
+    println!(
+        "wrote {} worlds to {file}; coverage weights' effective sample {}",
+        arc.len(),
+        java_format_f(s * s / s2, 0, 1)
+    );
 }
 
 // ---- file io ---------------------------------------------------------------------------------
@@ -951,7 +1514,8 @@ fn usage(msg: &str) -> ! {
   -paths N      ; ensemble paths per evaluation (default 60)
   -years Y      ; years per path (default 80)
   -reps K       ; seeds a candidate must pass feasibility on, all of them (default 2)
-  -sigma S      ; mutation sd as a fraction of each dial's range (default 0.07; 0.20 breaks)
+  -sigma S      ; mutation sd as a fraction of each dial's range (default 0.07; 0.20 breaks),
+                ;   the news rate's in ln(1 + rate)
   -keep N       ; archive size cap (default 40)
   -sep D        ; minimum separation between members in normalised dial space (default 0.12)
   -bar M        ; THE QUALITY BAR: a feasible candidate enters only if its score is at most M
@@ -977,7 +1541,36 @@ fn usage(msg: &str) -> ! {
                 ;   values on every searched dial except the ones that counterpart moved away
                 ;   from the default, which stay at the counterpart's.  Roughly doubles the cost
                 ;   an evaluation
+  -transportweight W ; the transport arm's share of the score (default 0.25); feasibility in
+                ;   both markets stays a gate at any weight
+  -cov F        ; the share of children stepped along the ARCHIVE'S OWN SHAPE rather than one
+                ;   dial at a time (default 0): its covariance in the dials' search coordinates,
+                ;   shrunk toward the independent step and scaled to the same expected step
+                ;   length, so only the direction changes.  Dials move together in this model --
+                ;   `depth` carries pooled volatility and the typical year alike -- and an
+                ;   independent step spends most children across the grain
+  -covshrink S  ; how far that covariance is pulled back toward the independent step, 0 to 1
+                ;   (default 0.3): insurance against a shape read from few members
   -export F     ; write the archive as a worlds JSON and exit
+  -hold BARS    ; comma-separated ROW<=D (e.g. 'equity vol %<=36.6,tail hedge corr<=0.08'): a graded
+                ;   row a candidate must hold within D of its record on every read of its primary
+                ;   arm to be feasible, D in the units a set is judged in -- percentile points from
+                ;   the band's middle on a row with a record band, |ln(model/target)| on any other.
+                ;   What -gap is to a band's edges, for a distance: a priced row is traded away, and
+                ;   an archive ends where the loss pulls it whatever it was seeded from.  The seed
+                ;   worlds are exempt
+  -gate C       ; comma-separated gate classes a candidate must pass on every read of its primary
+                ;   arm to be feasible: realism, mechanism, fidelity or all (default
+                ;   realism,mechanism, the verdict's own).  With fidelity the bands a search
+                ;   otherwise only prices gate too, which every member of a calibration set has to
+                ;   pass anyway; realism is always in
+  -noregress R  ; price every row a candidate holds further from its record than recipe R does,
+                ;   by the difference (R read at the search's ensemble, the mean of six reads):
+                ;   the release rule, which a dead zone alone lets every row drift inside
+  -gap ROWS     ; comma-separated graded rows (e.g. 'kurtosis,up-day share %') a candidate
+                ;   must hold inside their bands on every read of its primary arm to be feasible:
+                ;   the rows a release has to close, which a priced miss lets a search trade away.
+                ;   The seed worlds are exempt (they root the lineages); -holdout holds them to it
   -fidelity L   ; comma-separated PxY ensembles (e.g. 20x40,30x60).  Score the frozen pool at
                 ;   -paths/-years and at each of these, report how well each RANKS the worlds
                 ;   against the reference and what it costs, and exit.  Measured against 60x80:
@@ -1010,6 +1603,14 @@ struct Cfg {
     export_to: String,
     fidelity: String,
     transport: String,
+    transport_weight: f64,
+    noregress: String,
+    gap: String,
+    hold: String,
+    gate: String,
+    /// the share of children drawn from the archive's own covariance
+    cov: f64,
+    cov_shrink: f64,
 }
 
 fn parse_args() -> Cfg {
@@ -1035,6 +1636,13 @@ fn parse_args() -> Cfg {
         export_to: String::new(),
         fidelity: String::new(),
         transport: String::new(),
+        transport_weight: 0.25,
+        noregress: String::new(),
+        gap: String::new(),
+        hold: String::new(),
+        gate: "realism,mechanism".into(),
+        cov: 0.0,
+        cov_shrink: 0.3,
     };
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -1064,9 +1672,18 @@ fn parse_args() -> Cfg {
             "-bar" => c.bar = fnum(&need(&mut i, "-bar"), "-bar"),
             "-prune" => c.prune = true,
             "-force" => c.force = true,
+            "-cov" => c.cov = fnum(&need(&mut i, "-cov"), "-cov"),
+            "-covshrink" => c.cov_shrink = fnum(&need(&mut i, "-covshrink"), "-covshrink"),
             "-export" => c.export_to = need(&mut i, "-export"),
             "-fidelity" => c.fidelity = need(&mut i, "-fidelity"),
             "-transport" => c.transport = need(&mut i, "-transport"),
+            "-transportweight" => {
+                c.transport_weight = fnum(&need(&mut i, "-transportweight"), "-transportweight");
+            }
+            "-noregress" => c.noregress = need(&mut i, "-noregress"),
+            "-gate" => c.gate = need(&mut i, "-gate"),
+            "-hold" => c.hold = need(&mut i, "-hold"),
+            "-gap" => c.gap = need(&mut i, "-gap"),
             "-h" | "-help" | "--help" => usage(""),
             a => usage(&format!("unrecognized arg [{a}]")),
         }
@@ -1103,6 +1720,9 @@ fn main() {
     if c.pop < 1 {
         usage("-pop wants at least 1");
     }
+    if !(0.0..=1.0).contains(&c.cov) || !(0.0..=1.0).contains(&c.cov_shrink) {
+        usage("-cov and -covshrink are shares, 0 to 1");
+    }
     if let Err(e) = std::fs::create_dir_all(&c.out) {
         usage(&format!("cannot create {}: {e}", c.out));
     }
@@ -1111,7 +1731,14 @@ fn main() {
     let transport = if c.transport.is_empty() {
         None
     } else {
-        Some(transport_of(&c.transport, &c.anchor_spec))
+        if !(c.transport_weight >= 0.0 && c.transport_weight.is_finite()) {
+            usage("-transportweight is a share of the score, 0 or more");
+        }
+        Some(transport_of(
+            &c.transport,
+            &c.anchor_spec,
+            c.transport_weight,
+        ))
     };
     // `releases()` stops at the last frozen row, so the current default is added first.  A seed is graded
     // against the anchor set it was verified against -- the Nasdaq recipes read equity vol 0.5 past
@@ -1196,10 +1823,19 @@ fn main() {
     // Paths govern feasibility agreement and years govern ranking.  `-years` saves less than it looks:
     // the worst-crash row reads at its anchor's horizon, 100 years for the S&P, whatever `-years`
     // says.  20 paths is a floor, below which that row cannot place a record inside its band.
+    // the -fidelity ranking reads other ensembles, which a reference taken at this one does not fit
+    let plain = Objective {
+        dead: dead_zone(c.dead),
+        reference: None,
+        gap: Vec::new(),
+        classes: ms::gate_default(),
+        watch: Vec::new(),
+        hold: Vec::new(),
+    };
     if !c.fidelity.is_empty() {
         let ens = parse_ensembles(&c.fidelity);
         let seeds: Vec<u64> = (0..c.reps)
-            .map(|k| (c.base as u64).wrapping_add(k as u64 * 1_000_003))
+            .map(|k| (c.base as u64).wrapping_add(k as u64 * READ_STRIDE))
             .collect();
         println!(
             "cheap fidelity at {}, {} frozen worlds x {} reps",
@@ -1219,7 +1855,7 @@ fn main() {
                     c.paths,
                     c.years,
                     &seeds,
-                    dead_zone(c.dead),
+                    &plain,
                     None,
                 )
             })
@@ -1245,7 +1881,7 @@ fn main() {
                         p,
                         y,
                         &seeds,
-                        dead_zone(c.dead),
+                        &plain,
                         None,
                     )
                 })
@@ -1276,6 +1912,128 @@ fn main() {
         return;
     }
 
+    // THE REFERENCE (`-noregress`): the outgoing recipe read at this ensemble, before any candidate;
+    // checked in every mode, read only where a candidate is scored (a search, `-holdout`)
+    let reference = if c.noregress.is_empty() {
+        None
+    } else {
+        let (w, spec) = ms::named_world(&c.noregress).unwrap_or_else(|| {
+            usage(&format!(
+                "-noregress names [{}], which is not a release or recipe",
+                c.noregress
+            ))
+        });
+        if ms::anchors_named(spec.unwrap_or("sp500")).name != anchors.name {
+            usage(&format!(
+                "-noregress {} is anchored to another set than [{}]",
+                c.noregress, c.anchor_spec
+            ));
+        }
+        if c.prune || !c.export_to.is_empty() {
+            None
+        } else {
+            let r = reference_distances(&w, anchors, c.paths, c.years, c.base);
+            println!(
+                "noregress: {} at {} x {}y, the mean of {NOREGRESS_READS} reads; a row further from its record costs the difference",
+                c.noregress, c.paths, c.years
+            );
+            Some(r)
+        }
+    };
+    // THE GAP ROWS (`-gap`): each must name a graded row of this anchor set -- a record band, or a
+    // fitness row the verdict grades by its ratio to the target. An extreme row carries neither.
+    let gap: Vec<&'static str> = c
+        .gap
+        .split(',')
+        .map(str::trim)
+        .filter(|g| !g.is_empty())
+        .map(|g| {
+            anchors
+                .record_bands
+                .iter()
+                .find(|b| b.name == g)
+                .map(|b| b.name)
+                .or_else(|| {
+                    ms::fit_targets(anchors)
+                        .into_iter()
+                        .map(|(n, _, _, _)| n)
+                        .find(|n| *n == g && !ms::extreme_target_names().contains(n))
+                })
+                .unwrap_or_else(|| {
+                    usage(&format!(
+                        "-gap names [{g}], which is not a graded row of [{}]",
+                        c.anchor_spec
+                    ))
+                })
+        })
+        .collect();
+    // THE HELD ROWS (`-hold ROW<=D,...`): each a graded, non-extreme row of this anchor set and a
+    // finite distance at or above 0 in the judge's units
+    let hold: Vec<(&'static str, f64)> = c
+        .hold
+        .split(',')
+        .map(str::trim)
+        .filter(|h| !h.is_empty())
+        .map(|h| {
+            let (row, bar) = h
+                .split_once("<=")
+                .unwrap_or_else(|| usage(&format!("-hold wants ROW<=D, got [{h}]")));
+            let name = anchors
+                .record_bands
+                .iter()
+                .map(|b| b.name)
+                .chain(ms::fit_targets(anchors).into_iter().map(|(n, _, _, _)| n))
+                .find(|n| *n == row.trim() && !ms::extreme_target_names().contains(n))
+                .unwrap_or_else(|| {
+                    usage(&format!(
+                        "-hold names [{}], which is not a graded row of [{}]",
+                        row.trim(),
+                        c.anchor_spec
+                    ))
+                });
+            let d = bar
+                .trim()
+                .parse::<f64>()
+                .ok()
+                .filter(|d| d.is_finite() && *d >= 0.0)
+                .unwrap_or_else(|| {
+                    usage(&format!("-hold {name}: [{}] is not a distance", bar.trim()))
+                });
+            (name, d)
+        })
+        .collect();
+    let obj = Objective {
+        dead: dead_zone(c.dead),
+        reference,
+        gap,
+        classes: ms::parse_gate(&c.gate),
+        watch: Vec::new(),
+        hold,
+    };
+
+    let mut prior = read_state(&c.out);
+    // `-export`, `-prune` and `-holdout` read no candidate, so they carry the archive's own scheme
+    // (see `candidate_seed`): one written before the key was searched a path stride apart
+    let candidate_seeds = if c.prune || !c.export_to.is_empty() || c.holdout > 0 {
+        prior
+            .get("candidateSeeds")
+            .cloned()
+            .unwrap_or_else(|| "path-stride".to_string())
+    } else {
+        "independent".to_string()
+    };
+    // the weights and targets the loss applies (see `objective_digest`); `-export` and `-prune`
+    // score nothing, so they carry the archive's own and never read the reference
+    let objective = match prior.get("objective") {
+        Some(recorded) if c.prune || !c.export_to.is_empty() => recorded.clone(),
+        _ => objective_digest(
+            anchors,
+            transport.as_ref(),
+            obj.reference.as_deref().map(|r| (c.noregress.as_str(), r)),
+            &obj.gap,
+            &obj.hold,
+        ),
+    };
     let settings: Vec<(String, String)> = vec![
         ("paths".into(), c.paths.to_string()),
         ("years".into(), c.years.to_string()),
@@ -1296,15 +2054,41 @@ fn main() {
                 c.seed_spec.clone()
             },
         ),
+        // the seed worlds' own values, not only their names: see `seed_worlds_digest`
+        ("seedWorlds".into(), seed_worlds_digest(&pool)),
+        // how a candidate's reads are seeded: see `candidate_seed`
+        ("candidateSeeds".into(), candidate_seeds),
         // the admission rules and the objective are recorded with the ensemble: a resume under different
         // ones puts two standards in one archive
         ("admit".into(), "spread-keeping-nearest".to_string()),
-        ("score".into(), "sum-excess".to_string()),
-        // the weights and targets the loss applies: see `objective_digest`
+        // the coordinates a child is stepped in and the archive's distance is read in
         (
-            "objective".into(),
-            objective_digest(anchors, transport.as_ref()),
+            "steps".into(),
+            format!("ln1p:{}", ms::SEARCH_LOG_DIALS.join(",")),
         ),
+        // how a child is drawn from its parent: one dial at a time, or along the archive's shape
+        (
+            "proposal".into(),
+            if c.cov > 0.0 {
+                // Java's `%.2f`, as the Scala harness writes it: a tie rounds up there
+                format!(
+                    "cov:{},shrink:{}",
+                    java_format_f(c.cov, 0, 2),
+                    java_format_f(c.cov_shrink, 0, 2)
+                )
+            } else {
+                "dial".to_string()
+            },
+        ),
+        // the horizon the gates read the table's quantities at: their records', as the verdict does
+        ("gates".into(), "record-horizon".to_string()),
+        // the classes feasibility read, so an archive cannot resume across a change of standard
+        (
+            "gateClasses".into(),
+            ms::gate_classes_label(&ms::parse_gate(&c.gate)),
+        ),
+        ("score".into(), "sum-excess".to_string()),
+        ("objective".into(), objective),
         (
             "transport".into(),
             if c.transport.is_empty() {
@@ -1313,14 +2097,67 @@ fn main() {
                 c.transport.clone()
             },
         ),
+        (
+            "transportWeight".into(),
+            if c.transport.is_empty() {
+                "(none)".to_string()
+            } else {
+                java_format_f(c.transport_weight, 0, 4)
+            },
+        ),
+        (
+            "noregress".into(),
+            if c.noregress.is_empty() {
+                "(none)".to_string()
+            } else {
+                c.noregress.clone()
+            },
+        ),
+        (
+            "gap".into(),
+            if obj.gap.is_empty() {
+                "(none)".to_string()
+            } else {
+                obj.gap.join(",")
+            },
+        ),
+        ("hold".into(), hold_text(&obj.hold)),
     ];
 
-    let mut prior = read_state(&c.out);
     let loaded = read_archive(&c.out);
-    // a checkpoint without `score` was scored on the worst row alone; a resume must refuse, not
-    // adopt, since its members' scores are not comparable to the sum
+    // a checkpoint without `score` was scored on the worst row alone, and one without `gates` gated
+    // on its own ensemble; a resume must refuse, not adopt, since its members were admitted by
+    // another standard
     if !loaded.is_empty() && !prior.contains_key("score") {
         prior.insert("score".into(), "worst-row".into());
+    }
+    // one written before `candidateSeeds` read its candidates a path stride apart
+    if !loaded.is_empty() && !prior.contains_key("candidateSeeds") {
+        prior.insert("candidateSeeds".into(), "path-stride".into());
+    }
+    // one written before `-hold` held no row
+    if !loaded.is_empty() && !prior.contains_key("hold") {
+        prior.insert("hold".into(), "(none)".into());
+    }
+    // one written before `-gate` gated on the verdict's default classes
+    if !loaded.is_empty() && !prior.contains_key("gateClasses") {
+        prior.insert("gateClasses".into(), "realism,mechanism".into());
+    }
+    if !loaded.is_empty() && !prior.contains_key("gates") {
+        prior.insert("gates".into(), "search-ensemble".into());
+    }
+    // one written before `-cov` existed drew its children one dial at a time
+    if !loaded.is_empty() && !prior.contains_key("proposal") {
+        prior.insert("proposal".into(), "dial".into());
+    }
+    // one without `transportWeight` priced its transport arm in full
+    if !loaded.is_empty() && !prior.contains_key("transportWeight") {
+        let full = if prior.get("transport").is_none_or(|t| t == "(none)") {
+            "(none)"
+        } else {
+            "1.0000"
+        };
+        prior.insert("transportWeight".into(), full.into());
     }
     let gen0: u64 = prior.get("gen").and_then(|s| s.parse().ok()).unwrap_or(0);
     let evals0: u64 = prior.get("evals").and_then(|s| s.parse().ok()).unwrap_or(0);
@@ -1374,12 +2211,17 @@ fn main() {
     let search_mode = c.holdout == 0 && !c.prune && c.export_to.is_empty();
     let seed_reads: Vec<(String, World, Read)> = if search_mode {
         let seeds: Vec<u64> = (0..c.reps)
-            .map(|k| (c.base as u64).wrapping_add(k as u64 * 1_000_003))
+            .map(|k| (c.base as u64).wrapping_add(k as u64 * READ_STRIDE))
             .collect();
         println!(
             "seed worlds at {}, {} x {}y x {} reps",
             c.anchor_spec, c.paths, c.years, c.reps
         );
+        // THE SEED WORLDS ARE NOT HELD TO THE GAP ROWS: they root the lineages and set the bars,
+        // and the rows a release has to close are the ones the outgoing recipe misses, so gating
+        // them left nothing to search from. Their misses are priced as any band's; every
+        // candidate, and a `-holdout` re-score of every member, is held to the gap.
+        let seed_obj = obj.without_gap();
         pool.iter()
             .map(|(nm, w)| {
                 let r = judge(
@@ -1390,7 +2232,7 @@ fn main() {
                     c.paths,
                     c.years,
                     &seeds,
-                    dead_zone(c.dead),
+                    &seed_obj,
                     None,
                 );
                 println!(
@@ -1401,6 +2243,14 @@ fn main() {
                     r.raw,
                     r.worst
                 );
+                // a rejected seed names the gates it failed: its worst row is a fitness row, not
+                // the reason
+                if !r.feasible {
+                    println!("    fails: {}", r.gate_fail.join("; "));
+                }
+                if !r.watch_miss.is_empty() {
+                    println!("    misses gap rows: {}", r.watch_miss.join(", "));
+                }
                 (nm.clone(), *w, r)
             })
             .collect()
@@ -1538,8 +2388,8 @@ fn main() {
 
     // THE HOLDOUT: every member earned its place on seeds the search chose, and a band-edge world
     // flips on one draw in six.  Re-score each member at the same ensemble on TWO INDEPENDENT
-    // STREAMS, neither of which selected the mutations (the search draws `base + (evals + j) * 7919`;
-    // stream A is `base + k * 1000003`, the pool's own seeds, stream B that shifted by 991).  A
+    // STREAMS, neither of which selected the mutations (the search draws `candidate_seed`'s; stream
+    // A is the pool's own seeds, stream B that shifted by `HOLDOUT_FRESH_OFFSET`).  A
     // SEED-SENSITIVITY test, not train against test, and the columns say so: a member that passes one
     // stream and fails the other was admitted by a draw, not by the record.
     if c.holdout > 0 {
@@ -1547,10 +2397,10 @@ fn main() {
             usage(&format!("no archive in {} to re-score", c.out));
         }
         let train: Vec<u64> = (0..c.holdout)
-            .map(|k| (c.base as u64).wrapping_add(k as u64 * 1_000_003))
+            .map(|k| (c.base as u64).wrapping_add(k as u64 * READ_STRIDE))
             .collect();
         let fresh: Vec<u64> = (0..c.holdout)
-            .map(|k| (c.base as u64).wrapping_add(991 + k as u64 * 1_000_003))
+            .map(|k| (c.base as u64).wrapping_add(HOLDOUT_FRESH_OFFSET + k as u64 * READ_STRIDE))
             .collect();
         println!(
             "re-scoring {} members on two independent streams of {} and {} seeds at {} x {}y, {}; neither selected the mutations",
@@ -1572,7 +2422,7 @@ fn main() {
                 c.paths,
                 c.years,
                 &train,
-                dead_zone(c.dead),
+                &obj,
                 None,
             );
             let b = judge(
@@ -1583,7 +2433,7 @@ fn main() {
                 c.paths,
                 c.years,
                 &fresh,
-                dead_zone(c.dead),
+                &obj,
                 None,
             );
             println!(
@@ -1643,7 +2493,7 @@ fn main() {
                         c.paths,
                         c.years,
                         &[sd],
-                        dead_zone(c.dead),
+                        &obj,
                         None,
                     )
                 })
@@ -1826,18 +2676,33 @@ fn main() {
         let mut rng =
             NumPyRng::new(((c.base ^ (g as i64).wrapping_mul(0x9e37_79b9)) & i64::MAX) as u64);
         let mut log = Vec::new();
+        // the archive's shape is read once a generation; `-cov 0` reads none and draws nothing
+        // extra, so a run without it proposes exactly what it always did
+        let factor = if c.cov > 0.0 {
+            proposal_factor(&arc, &rs, c.cov_shrink)
+        } else {
+            None
+        };
         for _ in 0..c.pop {
             let parent = arc[rng.next_bounded_u32(arc.len() as u32) as usize].clone();
-            let child: Vec<f64> = (0..rs.len())
-                .map(|i| {
-                    clamped(
-                        &rs[i],
-                        parent.dials[i] + rng.randn() * c.sigma * (rs[i].2 - rs[i].1),
-                    )
-                })
-                .collect();
+            let along = factor.as_ref().filter(|_| rng.next_f64() < c.cov);
+            let z: Vec<f64> = (0..rs.len()).map(|_| rng.randn()).collect();
+            let child = admissible(
+                (0..rs.len())
+                    .map(|i| {
+                        let zi = along.map_or(z[i], |l| {
+                            let mut s = 0.0;
+                            for (t, zt) in z.iter().enumerate().take(i + 1) {
+                                s += l[i][t] * zt;
+                            }
+                            s
+                        });
+                        stepped(&rs[i], parent.dials[i], zi, c.sigma)
+                    })
+                    .collect(),
+            );
             let seeds: Vec<u64> = (0..c.reps)
-                .map(|j| (c.base as u64).wrapping_add((evals + j as u64) * 7919))
+                .map(|j| candidate_seed(c.base, evals + j as u64))
                 .collect();
             let t0 = std::time::Instant::now();
             let r = judge(
@@ -1848,7 +2713,7 @@ fn main() {
                 c.paths,
                 c.years,
                 &seeds,
-                dead_zone(c.dead),
+                &obj,
                 // the lineage's bar, so an evaluation stops as soon as it is over it
                 if c.bar > 0.0 {
                     bar_for.get(&parent.name).copied()
@@ -1894,8 +2759,8 @@ fn main() {
             }
             log.push(format!(
                 "{g}\t{}\t{}\t{}\t{:.6}\t{:.6}\t{}\t{:.3}\t{}\t{}\t{took}",
-                // `evals` is the SEED BASE this candidate drew from (seeds are base + (evals + j) * 7919), so a
-                // log line reproduces its candidate
+                // `evals` is the SEED SLOT this candidate drew from (rep j reads `candidate_seed(base,
+                // evals + j)`), so a log line reproduces its candidate
                 evals,
                 parent.name,
                 r.feasible,
@@ -1930,5 +2795,182 @@ fn main() {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod seed_stream_tests {
+    use super::*;
+
+    /// Two reads share a path when their seeds differ by `t * PATH_STRIDE` with |t| under the path
+    /// count. Swept to 4096 paths over every pair of streams and every slot distance near enough
+    /// to matter.
+    #[test]
+    fn read_streams_share_no_path() {
+        const MAX_PATHS: i128 = 4096;
+        let (path, read) = (PATH_STRIDE as i128, READ_STRIDE as i128);
+        let streams: [(&str, i128); 4] = [
+            ("pool", 0),
+            ("holdout fresh", HOLDOUT_FRESH_OFFSET as i128),
+            ("noregress", NOREGRESS_OFFSET as i128),
+            ("candidates", CANDIDATE_OFFSET as i128),
+        ];
+        // past this many slots apart the seeds are further apart than MAX_PATHS path strides
+        let reach = MAX_PATHS * path / read + 2;
+        for (na, a) in streams {
+            for (nb, b) in streams {
+                for d in -reach..=reach {
+                    if na == nb && d == 0 {
+                        continue;
+                    }
+                    let gap = a - b + d * read;
+                    assert!(
+                        gap % path != 0 || (gap / path).abs() >= MAX_PATHS,
+                        "{na} and {nb}, {d} slots apart, sit {} path strides apart",
+                        gap / path
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_candidates_reps_and_its_neighbours_read_disjoint_paths() {
+        let mut seen = std::collections::HashSet::new();
+        for slot in 0..16 {
+            let s = candidate_seed(20260958, slot);
+            for k in 0..200u64 {
+                assert!(
+                    seen.insert(s.wrapping_add(k * PATH_STRIDE)),
+                    "slot {slot} path {k} was read before"
+                );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod gate_tests {
+    use super::*;
+
+    /// `-gap` IS THE VERDICT'S OWN MISS, row for row: a row with a record band judged by that band,
+    /// a row without one by its ratio to the anchor's target. A search gating on anything else
+    /// would reject worlds the release rule admits, or admit ones it rejects.
+    #[test]
+    fn gap_miss_agrees_with_the_verdict() {
+        let anchors = ms::anchors_named("nasdaq");
+        let (_, w, _) = ms::recipes()
+            .into_iter()
+            .find(|(n, _, _)| *n == "0.24.3-nasdaq")
+            .expect("the recipe the gap rows were named against");
+        let (paths, years, seed) = (8, 40, 7);
+        let main = ms::sim_paths(&w, paths, years, seed);
+        let st = ms::measure(&main, years);
+        let hr = ms::horizon_readings(anchors, &st, Some(&main), years, paths, seed, &w, true);
+        let verdict = ms::fidelity_rows(anchors, &st, Some(&main), years, paths, seed, &w);
+        let extreme = ms::extreme_target_names();
+        for row in &verdict {
+            if extreme.contains(&row.name) {
+                continue; // graded by a record percentile: `-gap` refuses it
+            }
+            let by_gap = !gap_misses(anchors, &[row.name], &hr.banded, &st).is_empty();
+            assert_eq!(by_gap, row.miss(), "{} read differently by -gap", row.name);
+        }
+    }
+}
+
+#[cfg(test)]
+mod watch_tests {
+    use super::*;
+
+    /// A SEED'S READ NAMES EVERY GAP ROW IT MISSES, whichever way the row is graded. Read off the
+    /// gate's `band:` labels that report was blind to a row graded by its ratio, which carries
+    /// none -- and `0.24.3-nasdaq` misses one, the lower wing, on every seed.
+    #[test]
+    fn a_seed_read_reports_the_gap_rows_it_misses() {
+        let anchors = ms::anchors_named("nasdaq");
+        let (_, w, _) = ms::recipes()
+            .into_iter()
+            .find(|(n, _, _)| *n == "0.24.3-nasdaq")
+            .expect("the recipe the gap rows were named against");
+        let (paths, years, seed) = (16, 60, 7);
+        let extreme = ms::extreme_target_names();
+        let graded: Vec<&'static str> = ms::fit_targets(anchors)
+            .into_iter()
+            .map(|(n, _, _, _)| n)
+            .filter(|n| !extreme.contains(n))
+            .collect();
+        // realism alone: a mechanism gate can flip at this ensemble, and an early exit reads no table
+        let seed_obj = Objective {
+            dead: dead_zone(0.5),
+            reference: None,
+            gap: graded.clone(),
+            classes: ms::parse_gate("realism"),
+            watch: Vec::new(),
+            hold: Vec::new(),
+        }
+        .without_gap();
+        assert!(seed_obj.gap.is_empty() && seed_obj.watch == graded);
+        let r = one_read(&w, anchors, paths, years, seed, &seed_obj);
+
+        let main = ms::sim_paths(&w, paths, years, seed);
+        let st = ms::measure(&main, years);
+        let verdict = ms::fidelity_rows(anchors, &st, Some(&main), years, paths, seed, &w);
+        let want: Vec<&'static str> = graded
+            .iter()
+            .copied()
+            .filter(|n| verdict.iter().any(|row| row.name == *n && row.miss()))
+            .collect();
+        assert_eq!(r.watch_miss, want, "the seed's report against the verdict");
+        let unbanded = |n: &&str| !anchors.record_bands.iter().any(|b| b.name == *n);
+        assert!(
+            r.watch_miss.iter().any(unbanded),
+            "no ratio row missed here, so this read cannot tell the old report from the new: {:?}",
+            r.watch_miss
+        );
+        // a candidate watches nothing
+        let cand = one_read(&w, anchors, paths, years, seed, &seed_obj.plain());
+        assert!(cand.watch_miss.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod coverage_tests {
+    use super::*;
+
+    fn member(desc: &[f64]) -> Member {
+        Member {
+            name: "m".to_string(),
+            dials: Vec::new(),
+            score: 0.0,
+            raw: 0.0,
+            worst: String::new(),
+            desc: desc.to_vec(),
+        }
+    }
+
+    /// A member with near-duplicates stands for less of the archive than one on its own, and the
+    /// weights average 1 whatever the crowding.
+    #[test]
+    fn coverage_weight_is_shared_among_near_duplicates() {
+        // three readings at one point, one far away: the four are a two-point archive, not four
+        let arc: Vec<Member> = [0.0, 0.001, 0.002, 1.0]
+            .iter()
+            .map(|x| member(&[*x]))
+            .collect();
+        let w = coverage_weights(&arc);
+        let mean = w.iter().sum::<f64>() / w.len() as f64;
+        assert!((mean - 1.0).abs() < 1e-12, "mean {mean}");
+        // the lone member stands for most, the crowd's middle for least, its edges alike
+        assert!(w[3] > w[0] && w[0] > w[1], "{w:?}");
+        assert!((w[0] - w[2]).abs() < 1e-12, "{w:?}");
+        assert!(
+            w[0] + w[1] + w[2] < 2.0 * w[3],
+            "three at one point are worth under two apart: {w:?}"
+        );
+        // an archive with no descriptors, or none that vary, weighs its members alike
+        let flat: Vec<Member> = (0..3).map(|_| member(&[1.0])).collect();
+        assert_eq!(coverage_weights(&flat), vec![1.0; 3]);
+        assert_eq!(coverage_weights(&[member(&[])]), vec![1.0]);
     }
 }

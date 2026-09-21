@@ -71,7 +71,9 @@ The simulator is public API in both published artifacts, not a repo-only tool:
 - **Rust**: the simulator is library code, `uni::market_sim` (the `market-sim` feature, on by
   default), with a two-line binary in the package: `cargo install vastblue-uni` builds it from
   crates.io, and a dependent crate calls `named_world` / `simulate` / `sim_paths`, `measure` /
-  `gate_checks` / `fidelity_rows` and `write_emitted` in-process.
+  `gate_checks` / `fidelity_rows` and `write_emitted` in-process. The binary allocates through
+  mimalloc (the `fast-alloc` feature, also on by default; 2-3x faster on Windows, identical
+  output); a dependent crate keeps its own allocator.
 - **Scala**: `uni.apps.MarketSim` is compiled into the jar —
   `scala-cli run --jar uni_3-0.24.4.jar --main-class uni.apps.MarketSim -- -validate`.
 - `src/main/scala/apps/MarketSim.scala` is the only Scala copy of the model; `jsrc/marketSim.sc` is

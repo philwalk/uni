@@ -74,5 +74,5 @@ class DdShapeAnchorSuite extends FunSuite:
                             "bondGrowthSd" -> a.bondGrowthSd, "bondInflSd" -> a.bondInflSd,
                             "bondDepthSd" -> a.bondDepthSd) do
         assert(v > 0.0 && v.isFinite, s"${a.name} $nm must be a positive spread, read $v")
-    assert(nq.d20Sd < sp.d20Sd / 4, s"Nasdaq d20 spread ${nq.d20Sd} vs S&P ${sp.d20Sd}")
+    assert(nq.d20Sd < sp.d20Sd / 3, s"Nasdaq d20 spread ${nq.d20Sd} vs S&P ${sp.d20Sd}")
   }

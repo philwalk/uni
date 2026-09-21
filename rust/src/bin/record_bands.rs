@@ -24,9 +24,15 @@
 
 use uni::market_sim::{self as ms};
 
+// the binary's allocator: see the `fast-alloc` feature
+#[cfg(feature = "fast-alloc")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 const USAGE: &str =
     "usage: record_bands (-yahoo FILE | -french FILE) -from YYYY-MM-DD -to YYYY-MM-DD
-                    -set NAME -series LABEL [-rows A,B] [-resamples N] [-seed S] [-header]
+                    -set NAME -series LABEL [-rows A,B] [-resamples N] [-seed S]
+                    [-joint A] [-of N] [-header]
 
   -yahoo FILE   folio's cached prices: the `dlog_adj_close` column; the first row is the anchor
                 price, not a return, and is skipped
@@ -36,6 +42,10 @@ const USAGE: &str =
   -rows A,B     print only these rows (default every `RECORD_BAND_ROWS` row)
   -resamples N  one-year-block resamples (default 20000)
   -seed S       the resampling stream's seed (default 20260918)
+  -joint A      the share of the set's record-consistent worlds its joint band may miss
+                (default 0.10), split over the set's record windows by their rows: this window's
+                rows jointly miss A x (rows here) / N of the time
+  -of N         the set's banded rows across all its windows (default: the rows printed here)
   -header       print the column header first";
 
 fn usage(msg: &str) -> ! {
@@ -61,6 +71,8 @@ struct Opts {
     rows: Vec<String>,
     resamples: usize,
     seed: u64,
+    joint: f64,
+    of: usize,
     header: bool,
 }
 
@@ -68,6 +80,7 @@ fn parse_args(args: &[String]) -> Opts {
     let (mut yahoo, mut french, mut from, mut to) = (None, None, None, None);
     let (mut set, mut series, mut rows) = (String::new(), String::new(), Vec::new());
     let (mut resamples, mut seed, mut header) = (20_000usize, 20_260_918u64, false);
+    let (mut joint, mut of) = (0.10f64, 0usize);
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut next = || {
@@ -92,6 +105,16 @@ fn parse_args(args: &[String]) -> Opts {
                 seed = next()
                     .parse()
                     .unwrap_or_else(|_| usage("-seed wants a non-negative integer"));
+            }
+            "-joint" => {
+                joint = next()
+                    .parse()
+                    .unwrap_or_else(|_| usage("-joint wants a share in (0, 1)"));
+            }
+            "-of" => {
+                of = next()
+                    .parse()
+                    .unwrap_or_else(|_| usage("-of wants a row count"));
             }
             "-header" => header = true,
             other => usage(&format!("unrecognized arg [{other}]")),
@@ -125,6 +148,8 @@ fn parse_args(args: &[String]) -> Opts {
         rows,
         resamples,
         seed,
+        joint,
+        of,
         header,
     }
 }
@@ -189,7 +214,10 @@ fn returns_in_window(o: &Opts) -> Vec<(String, f64)> {
                 idx.push(p);
             }
             (1..days.len())
-                .map(|k| (days[k].0.clone(), (idx[k] / idx[k - 1]).ln()))
+                // `ln_det`, not the native log, which differs from the JVM's in the last bit on
+                // about 0.2% of inputs: the twins must read the same returns to the bit, or the
+                // joint band's ranks tie differently
+                .map(|k| (days[k].0.clone(), ms::ln_det(idx[k] / idx[k - 1])))
                 .collect()
         }
     }
@@ -230,21 +258,26 @@ fn main() {
             .map(|p| format!("p{p}"))
             .collect();
         println!(
-            "set\trow\tseries\twindow\tn\tresamples\trecord\t{}",
+            "set\trow\tseries\twindow\tn\tresamples\trecord\t{}\tjointC\tjointLo\tjointHi",
             pcts.join("\t")
         );
     }
-    for (k, name) in ms::RECORD_BAND_ROWS.iter().enumerate() {
-        if !o.rows.is_empty() && !o.rows.iter().any(|r| r == name) {
-            continue;
-        }
+    // THE JOINT BAND over the rows this window prints, at this window's share of the set's miss rate
+    let ks: Vec<usize> = (0..ms::RECORD_BAND_ROWS.len())
+        .filter(|&k| o.rows.is_empty() || o.rows.iter().any(|r| r == ms::RECORD_BAND_ROWS[k]))
+        .collect();
+    let of = if o.of == 0 { ks.len() } else { o.of };
+    let alpha = o.joint * ks.len() as f64 / of as f64;
+    let (c, edges) = ms::record_band_joint(&reads, &ks, alpha);
+    for (&k, (lo, hi)) in ks.iter().zip(&edges) {
+        let name = ms::RECORD_BAND_ROWS[k];
         let col: Vec<f64> = reads.iter().map(|x| x[k]).collect();
         let qs: Vec<String> = ms::record_band_quantiles(&col)
             .iter()
             .map(|v| format!("{v:.6}"))
             .collect();
         println!(
-            "{}\t{name}\t{}\t{window}\t{}\t{}\t{:.6}\t{}",
+            "{}\t{name}\t{}\t{window}\t{}\t{}\t{:.6}\t{}\t{c:.6}\t{lo:.6}\t{hi:.6}",
             o.set,
             o.series,
             r.len(),

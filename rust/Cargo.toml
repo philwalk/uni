@@ -11,6 +11,8 @@ rust-version = "1.87"
 description = "Rust port of the uni Scala library: NumPy/pandas-style matrices and linear algebra (MatD) pinned bit-for-bit to the JVM, big-data CSV tooling, MSYS2/Cygwin-aware path resolution, date-time parsing and arithmetic, BigDecimal-compatible decimals, and 3PRF forecasting"
 license = "Apache-2.0"
 repository = "https://github.com/philwalk/uni"
+homepage = "https://github.com/philwalk/uni/tree/main/rust"
+documentation = "https://github.com/philwalk/uni/blob/main/rust/docs/RustQuickStart.md"
 readme = "README.md"
 # crates.io search leans on these three fields; the name "uni" is unsearchable on its own.
 # Budget: 5 keywords (<=20 chars), 5 categories from crates.io's fixed slug list. The
@@ -25,7 +27,7 @@ categories = ["filesystem", "date-and-time", "mathematics", "parser-implementati
 # package keeps: `cargo install vastblue-uni` builds it, and a dependent crate drives the
 # same paths in-process. rust-toolchain.toml is excluded so the repo's pinned toolchain is
 # not forced onto consumers.
-exclude = ["tests/", "src/bin/bench_*.rs", "src/bin/market_sim_search.rs", "src/bin/record_bands.rs", "doc-examples/", "docs/", "Makefile", "rustfmt.toml", "rust-toolchain.toml"]
+exclude = ["tests/", "src/bin/bench_*.rs", "src/bin/market_sim_search.rs", "src/bin/record_bands.rs", "src/bin/market_sim_reach.rs", "doc-examples/", "docs/", "Makefile", "rustfmt.toml", "rust-toolchain.toml"]
 
 [lib]
 name = "uni"
@@ -47,6 +49,12 @@ required-features = ["market-sim"]
 # published crate above, like the search.
 [[bin]]
 name = "record_bands"
+required-features = ["market-sim"]
+
+# The reachability check: dial responses on shared seeds and a linear program over them.
+# Excluded from the published crate above, like the search.
+[[bin]]
+name = "market_sim_reach"
 required-features = ["market-sim"]
 
 [lints.rust]
@@ -79,11 +87,18 @@ map_err_ignore = "warn"
 let_underscore_must_use = "warn"
 
 [features]
-default = ["market-sim"]
+default = ["market-sim", "fast-alloc"]
 # The market simulator as library code plus its binary. On by default so `cargo install
 # vastblue-uni` yields the binary; a consumer that wants only the numerics builds with
 # `default-features = false`.
 market-sim = []
+# The simulator's binaries allocate through mimalloc instead of the system heap. Set in the
+# binaries only (`#[global_allocator]` in src/bin): a program has one allocator, and a library
+# must not choose it for the program linking it, so a dependent crate's allocator is untouched.
+# Output is byte-identical; on Windows the system heap is what bounds a simulator read (six
+# search reads 3.9 s -> 1.4 s). Compiles mimalloc's C source, so it needs a C compiler; a
+# consumer that wants only the library builds with `default-features = false`.
+fast-alloc = ["dep:mimalloc"]
 # Route ndarray's matmul through a system OpenBLAS instead of the pure-Rust
 # `matrixmultiply` kernels. Worth ~3x on the OOS paths, whose gemms are skinny
 # (one operand has only L+1 columns) — a shape matrixmultiply handles poorly.
@@ -103,6 +118,7 @@ rayon = "1.10"
 thiserror = "2"
 blas-src = { version = "0.11", optional = true, features = ["openblas"] }
 openblas-src = { version = "0.10", optional = true, features = ["system"] }
+mimalloc = { version = "0.1.52", optional = true, default-features = false }
 
 [dev-dependencies]
 tempfile = "3"

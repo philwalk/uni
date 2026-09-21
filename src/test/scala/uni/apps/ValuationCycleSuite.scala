@@ -58,6 +58,23 @@ class ValuationCycleSuite extends FunSuite:
     assertEquals(ln3, 500.0)
   }
 
+  test("gapSpreadOf reads each window's spread") {
+    val n = 80 * MarketSim.DaysPerYear
+    val fund = Array.fill(n)(1.0)
+    // +-0.2 alternating through the first decade, +-0.4 through the later half, 0 between
+    val price = Array.tabulate(n) { i =>
+      val a =
+        if i < 10 * MarketSim.DaysPerYear then 0.2
+        else if i >= 40 * MarketSim.DaysPerYear then 0.4
+        else 0.0
+      math.exp(if i % 2 == 0 then a else -a)
+    }
+    val (e, en, l, ln) = MarketSim.gapDriftOf(price, fund)
+    val (e2, l2) = MarketSim.gapSpreadOf(price, fund)
+    assertEqualsDouble(MarketSim.pooledSd(Seq((e, e2, en))), 0.2, 1e-9)
+    assertEqualsDouble(MarketSim.pooledSd(Seq((l, l2, ln))), 0.4, 1e-9)
+  }
+
   test("the beliefs' fade alone makes the outgoing default stationary, and 0 is bit-identical") {
     // the 0.24.1 row is the default before the fade and the cycle: the fair-value start
     val w = MarketSim.Releases.find(_._1 == "0.24.1").map(_._2).getOrElse(fail("no 0.24.1 release row"))

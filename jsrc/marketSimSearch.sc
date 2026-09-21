@@ -11,7 +11,7 @@
 //
 //   jsrc/marketSimSearch.sc -out search
 //
-// WHAT IT PRODUCES is an ARCHIVE, not a champion: 34 searched dials against ~45 graded rows that
+// WHAT IT PRODUCES is an ARCHIVE, not a champion: 48 searched dials against ~45 graded rows that
 // are not independent means distinct worlds match the record equally well, and a strategy feels
 // the mechanism, not the summary statistic.
 //
@@ -27,9 +27,9 @@
 // pass.
 //
 // EVERYTHING IS PORTABLE BETWEEN THE TWO HARNESSES, `-transport` and `-fidelity` included, and a
-// capability added to one is added to the other.  Feasibility comes from `gateChecks`, whose
-// statistics are byte-identical across the twins, so a Rust `-holdout` re-scores this archive
-// exactly.  The mutation stream too: both draw from `NumPyRNG`, gated bit-identical, where a
+// capability added to one is added to the other.  Feasibility comes from `gateChecksAt` on the
+// record-horizon readings, whose statistics are byte-identical across the twins, so a Rust
+// `-holdout` re-scores this archive exactly.  The mutation stream too: both draw from `NumPyRNG`, gated bit-identical, where a
 // language-native Gaussian is not.
 
 import uni.*
@@ -50,7 +50,8 @@ object MarketSimSearch:
     "-paths N      ; ensemble paths per evaluation (default 60)",
     "-years Y      ; years per path (default 80)",
     "-reps K       ; seeds a candidate must pass feasibility on, all of them (default 2)",
-    "-sigma S      ; mutation sd as a fraction of each dial's range (default 0.07; 0.20 breaks)",
+    "-sigma S      ; mutation sd as a fraction of each dial's range (default 0.07; 0.20 breaks),",
+    "              ;   the news rate's in ln(1 + rate)",
     "-keep N       ; archive size cap (default 40)",
     "-sep D        ; minimum separation between members in normalised dial space (default 0.12)",
     "-bar M        ; THE QUALITY BAR: a feasible candidate enters only if its score is at most M",
@@ -76,7 +77,36 @@ object MarketSimSearch:
     "              ;   values on every searched dial except the ones that counterpart moved away",
     "              ;   from the default, which stay at the counterpart's.  Roughly doubles the cost",
     "              ;   an evaluation",
+    "-transportweight W ; the transport arm's share of the score (default 0.25); feasibility in",
+    "              ;   both markets stays a gate at any weight",
+    "-cov F        ; the share of children stepped along the ARCHIVE'S OWN SHAPE rather than one",
+    "              ;   dial at a time (default 0): its covariance in the dials' search coordinates,",
+    "              ;   shrunk toward the independent step and scaled to the same expected step",
+    "              ;   length, so only the direction changes.  Dials move together in this model --",
+    "              ;   `depth` carries pooled volatility and the typical year alike -- and an",
+    "              ;   independent step spends most children across the grain",
+    "-covshrink S  ; how far that covariance is pulled back toward the independent step, 0 to 1",
+    "              ;   (default 0.3): insurance against a shape read from few members",
     "-export F     ; write the archive as a worlds JSON and exit",
+    "-hold BARS    ; comma-separated ROW<=D (e.g. 'equity vol %<=36.6,tail hedge corr<=0.08'): a graded",
+    "              ;   row a candidate must hold within D of its record on every read of its primary",
+    "              ;   arm to be feasible, D in the units a set is judged in -- percentile points from",
+    "              ;   the band's middle on a row with a record band, |ln(model/target)| on any other.",
+    "              ;   What -gap is to a band's edges, for a distance: a priced row is traded away, and",
+    "              ;   an archive ends where the loss pulls it whatever it was seeded from.  The seed",
+    "              ;   worlds are exempt",
+    "-gate C       ; comma-separated gate classes a candidate must pass on every read of its primary",
+    "              ;   arm to be feasible: realism, mechanism, fidelity or all (default",
+    "              ;   realism,mechanism, the verdict's own).  With fidelity the bands a search",
+    "              ;   otherwise only prices gate too, which every member of a calibration set has to",
+    "              ;   pass anyway; realism is always in",
+    "-noregress R  ; price every row a candidate holds further from its record than recipe R does,",
+    "              ;   by the difference (R read at the search's ensemble, the mean of six reads):",
+    "              ;   the release rule, which a dead zone alone lets every row drift inside",
+    "-gap ROWS     ; comma-separated graded rows (e.g. 'kurtosis,up-day share %') a candidate",
+    "              ;   must hold inside their bands on every read of its primary arm to be feasible:",
+    "              ;   the rows a release has to close, which a priced miss lets a search trade away.",
+    "              ;   The seed worlds are exempt (they root the lineages); -holdout holds them to it",
     "-fidelity L   ; comma-separated PxY ensembles (e.g. 20x40,30x60).  Score the frozen pool at",
     "              ;   -paths/-years and at each of these, report how well each RANKS the worlds",
     "              ;   against the reference and what it costs, and exit.  Measured against 60x80:",
@@ -108,18 +138,165 @@ object MarketSimSearch:
     * scored one so the width is chosen from what the rows actually read. */
   def deadZone(sds: Double): Double = sds * MarketSim.SdRelRef
 
+  /** HOW A READ IS PRICED beyond feasibility: the dead zone, and with `-noregress` the outgoing
+    * recipe's distance from the record on every fitness row (`referenceDistances`).  A row the
+    * candidate holds as close to its record as the recipe costs nothing; a row further out costs the
+    * difference, whatever the dead zone says.  The release rule is exactly that comparison, and a
+    * dead zone alone let every row drift half an anchor sd for free, which is how a search whose
+    * members all scored well produced none that could replace the recipe.  The primary arm only:
+    * the transport arm is a check that the mechanism carries, not a recipe being replaced.
+    *
+    * THE GAP ROWS (`-gap`): the rows a release must bring inside their record band, made a
+    * feasibility condition on the primary arm like the realism and mechanism classes.  Priced, a
+    * near miss on one cost less than the regressions it saved, and a search under `-noregress`
+    * traded them away member after member.  The seed worlds are judged without them
+    * (`withoutGap`).
+    *
+    * THE CLASSES A READ MUST PASS (`-gate`), the primary arm's: the verdict's own by default
+    * (realism and mechanism).  With `fidelity` the bands a search otherwise only prices -- the
+    * macro panel's, the channels', the bond's -- gate too, which is what a calibration SET needs,
+    * every member of one having to pass every class at the verdict's ensemble.  Priced, a failed
+    * band is one dead zone against a row's worth of gain, so an archive fills with members that buy
+    * a row by leaving a band: of search-v40's 300, 238 failed a class at 200 paths, and 3 were
+    * admissible.  The TRANSPORT arm keeps the verdict's default classes at any setting -- it is a
+    * check that the mechanism carries to another market, not a member being built. */
+  final case class Objective(dead: Double, reference: Option[Vector[(String, Double)]],
+                             gap: Vector[String] = Vector.empty,
+                             classes: Set[MarketSim.GateClass] = MarketSim.GateDefault,
+                             /** THE ROWS A SEED IS REPORTED ON and not gated on: `withoutGap` moves
+                               * the gap rows here, so a seed world's read still says which of them
+                               * it misses (`Read.watchMiss`).  Read off the gate's labels instead,
+                               * that report was blind to a row graded by its ratio, which carries
+                               * no `band:` label, and to every row once the transport arm failed
+                               * and `gateFail` named that arm alone. */
+                             watch: Vector[String] = Vector.empty,
+                             /** THE ROWS HELD TO A DISTANCE (`-hold ROW<=D`): a candidate whose row
+                               * reads further from its record than the bar, in the judge's units
+                               * (`judgeDistance`), on any read of its primary arm is infeasible.  A
+                               * set is graded on each row's MEDIAN member distance, and the loss
+                               * trades rows: four archives seeded inside every bar ended with pooled
+                               * vol 36-40 points from its band's middle and the tail hedge 0.11-0.17
+                               * from its record whatever they were seeded from, because seeding sets
+                               * where an archive starts and the loss where it ends.  The seed worlds
+                               * are exempt, as they are from `-gap`. */
+                             hold: Vector[(String, Double)] = Vector.empty):
+    /** the same dead zone without the reference or the gap rows: the transport arm's pricing */
+    def plain: Objective =
+      copy(reference = None, gap = Vector.empty, classes = MarketSim.GateDefault, watch = Vector.empty,
+           hold = Vector.empty)
+    /** the same pricing with the gap rows watched, not gated: the seed worlds' (see `main`) */
+    def withoutGap: Objective = copy(gap = Vector.empty, watch = gap, hold = Vector.empty)
+
+  /** Reads of the `-noregress` recipe its reference is the mean of. */
+  val NoregressReads = 6
+
+  /** THE READ STREAMS.  An ensemble read at seed `s` runs path k at `s + k * PathStride`
+    * (`simPaths`), so two reads share paths whenever their seeds differ by `t * PathStride` with
+    * |t| under the path count, not only when they are equal.  Every stream therefore steps by
+    * `ReadStride`, which is 2209 mod the prime `PathStride`: within a stream two reads can only
+    * meet a million paths apart, and the offsets are chosen so no two streams meet either (the
+    * Rust twin's `read_streams_share_no_path` sweeps it).  The streams past `-seed`: the seed pool
+    * and the holdout's train at `k * ReadStride`, the holdout's fresh at `HoldoutFreshOffset`, the
+    * `-noregress` reference at `NoregressOffset`, the candidates at `CandidateOffset`. */
+  val PathStride = 7919L
+  val ReadStride = 1000003L
+  val HoldoutFreshOffset = 991L
+  val NoregressOffset = 7L
+  val CandidateOffset = 3301L
+
+  /** The seed of a candidate's read in seed slot `slot` (`evals + rep`).  Candidates stepped by
+    * `PathStride` once, which made consecutive reads one window sliding a path at a time: a second
+    * rep re-read all but one path of the first, and the seed noise read between them was no noise
+    * at all.  Recorded as `candidateSeeds`, so an archive searched that way does not resume under
+    * this one unforced. */
+  def candidateSeed(base: Long, slot: Long): Long = base + CandidateOffset + slot * ReadStride
+
+  /** The outgoing recipe's distance from the record on every fitness row: the mean of
+    * `NoregressReads` reads at the search's own ensemble, each priced as `oneRead` prices a
+    * candidate (`recordDistances`). */
+  def referenceDistances(w: World, anchors: MarketSim.Anchors, paths: Int, years: Int,
+                         base: Long): Vector[(String, Double)] =
+    val reads = (1 to NoregressReads).toVector.map: j =>
+      val s = base + NoregressOffset + j * ReadStride
+      val main = MarketSim.simPaths(w, paths, years, s)
+      val st = MarketSim.measure(main, years)
+      val hr = MarketSim.horizonReadings(anchors, st, Some(main), years, paths, s, w, extremeToo = true)
+      val (_, rows) = MarketSim.fitness(anchors, st, hr.extremeScores)
+      MarketSim.recordDistances(anchors, rows, hr.banded)
+    reads.head.indices.toVector.map(i => (reads.head(i)._1, reads.map(_(i)._2).sum / reads.length))
+
   def dialsOf(w: World): Vector[Double] = ranges.map((_, _, _, _, get) => get(w))
 
   def worldOf(base: World, d: Vector[Double]): World =
     ranges.zip(d).foldLeft(base) { case (w, ((_, _, _, set, _), x)) => set(w, x) }
 
+  /** A dial's value in the coordinates the search steps and measures it in: ln(1 + x) for the
+    * library's `SearchLogDials`, which the reachability check shares. */
+  def coord(i: Int, x: Double): Double = MarketSim.searchCoord(ranges(i)._1, x)
+
+  /** A dial's width in its search coordinates. */
+  def coordWidth(i: Int): Double = coord(i, ranges(i)._3) - coord(i, ranges(i)._2)
+
   /** Distance in normalised dial space, max over dials -- the same reading the seed pool's spread
-    * was measured with, so `-sep` is comparable to it. */
+    * was measured with, so `-sep` is comparable to it.  In each dial's search coordinates. */
   def apart(a: Vector[Double], b: Vector[Double]): Double =
-    ranges.indices.map(i => math.abs(a(i) - b(i)) / (ranges(i)._3 - ranges(i)._2)).max
+    ranges.indices.map(i => math.abs(coord(i, a(i)) - coord(i, b(i))) / coordWidth(i)).max
 
   def clamped(i: Int, x: Double): Double =
     math.max(ranges(i)._2, math.min(ranges(i)._3, x))
+
+  /** THE ARCHIVE'S OWN SHAPE as a step (`-cov`): the Cholesky factor of its members' covariance in
+    * the dials' search coordinates, shrunk toward the independent step by `shrink` and scaled to
+    * trace `nd`, so a child's expected squared step is the independent step's and only its
+    * direction changes.  `None` while the archive is too small to read a shape from.
+    *
+    * WHY: the dials are not independent in their effect -- `depth` carries pooled volatility and
+    * the typical year together, the slow channel carries the bond with it -- so the admitted
+    * members lie along a few directions, and a step taken one dial at a time spends most of its
+    * children across the grain.  Measured on the 0.24.4-nasdaq set at 60 x 80, children both
+    * feasible and closer to the record than their parent: 31 of 150 this way against 17 taken
+    * independently. */
+  def proposalFactor(arc: Vector[Member], shrink: Double): Option[Vector[Vector[Double]]] =
+    val nd = ranges.length
+    val m = arc.length
+    if m < nd / 4 || m < 4 then None
+    else
+      val u = arc.map(x => (0 until nd).toVector.map(i =>
+        (coord(i, x.dials(i)) - coord(i, ranges(i)._2)) / coordWidth(i)))
+      val mean = (0 until nd).toVector.map(i => u.map(_(i)).sum / m)
+      val c = (0 until nd).toVector.map(i => (0 until nd).toVector.map(j =>
+        u.map(x => (x(i) - mean(i)) * (x(j) - mean(j))).sum / (m - 1)))
+      val tr = (0 until nd).map(i => c(i)(i)).sum
+      if !(tr > 0.0 && tr.isFinite) then None
+      else
+        // shrunk toward the independent step, then trace nd: the step's length is the independent
+        // step's whatever shape the archive has
+        val k = (0 until nd).toVector.map(i => (0 until nd).toVector.map(j =>
+          (1.0 - shrink) * c(i)(j) * nd / tr + (if i == j then shrink else 0.0)))
+        // Cholesky, the twins' operation order: a lower factor L with K = L L^T
+        val l = Array.fill(nd, nd)(0.0)
+        for i <- 0 until nd; j <- 0 to i do
+          var s = 0.0
+          for t <- 0 until j do s += l(i)(t) * l(j)(t)
+          l(i)(j) = if i == j then math.sqrt(math.max(k(i)(i) - s, 1e-12)) else (k(i)(j) - s) / l(j)(j)
+        Some(l.toVector.map(_.toVector))
+
+  /** A parent's dial moved by `z` sd of `sigma` times its width, in its search coordinates, and
+    * held inside its range.  Identical to a step on the value itself for every other dial. */
+  def stepped(i: Int, x: Double, z: Double, sigma: Double): Double =
+    val y = coord(i, x) + z * sigma * coordWidth(i)
+    if MarketSim.SearchLogDials.contains(ranges(i)._1) then
+      val yc = math.min(coord(i, ranges(i)._3), math.max(coord(i, ranges(i)._2), y))
+      clamped(i, MarketSim.fromSearchCoord(ranges(i)._1, yc))
+    else clamped(i, y)
+
+  /** A proposal with its news size pulled inside the search's share of the diffusion budget
+    * (`newsSizeWithinBudget`), so the archive holds the dials of the world it scored. */
+  def admissible(d: Vector[Double]): Vector[Double] =
+    def dial(n: String): Option[Double] = ranges.zip(d).find(_._1._1 == n).map(_._2)
+    val rate = dial("newsRate").getOrElse(0.0)
+    val size = dial("newsSize").fold(0.0)(x => MarketSim.newsSizeWithinBudget(rate, x))
+    ranges.zip(d).map((r, x) => if r._1 == "newsSize" then size else x)
 
   /** WHAT A WORLD DOES, beside what it is set to.  Never graded, never optimised: the archive keeps
     * worlds apart by dial distance, a proxy for behavioural difference; these measure it.  `retAc1`
@@ -170,22 +347,58 @@ object MarketSimSearch:
                           * can bring it back under, and the rest is not run.  Such a reading is
                           * rejected as before, but its `spread` and `desc` are partial and must
                           * not feed the noise estimate. */
-                        complete: Boolean = true)
+                        complete: Boolean = true,
+                        /** THE WATCHED ROWS THIS READ MISSES (`Objective.watch`), in the order
+                          * they were named: a seed world's gap rows.  Empty for a candidate, which
+                          * watches nothing, and for a read that left before the table was read. */
+                        watchMiss: Vector[String] = Vector.empty)
 
-  /** One seed's reading.  The extreme row is read at its anchor's own horizon, so when `-years` is
-    * that horizon the main ensemble serves and nothing is simulated twice.  An infeasible candidate
-    * never pays for the extreme ensemble: feasibility reads only the pooled statistics, and the rows
-    * needing that ensemble are dropped from the worst-row search rather than scored as unmeasurable,
-    * so a rejected candidate's `worstRow` still names something measured.
+  /** Does this read MISS the named gap row's band?  A row with a record band is judged by it; a row
+    * without one is graded by its ratio to the anchor's target, which is the verdict's `miss` for
+    * it (`FidelityRow.miss`).  An extreme row, graded by where the record falls among single
+    * histories of its own length, carries neither and `-gap` refuses it. */
+  def gapMisses(anchors: MarketSim.Anchors, nm: String, banded: Map[String, Double],
+                st: MarketSim.WorldStats): Boolean =
+    anchors.recordBands.find(_.name == nm) match
+      case Some(b) => b.misses(banded.getOrElse(nm, Double.NaN))
+      case None    =>
+        MarketSim.fitTargets(anchors).find(_._1 == nm).exists { (_, get, target, _) =>
+          val ratio = get(st) / target
+          !(ratio >= MarketSim.FidelityRatioBand._1 && ratio <= MarketSim.FidelityRatioBand._2)
+        }
+
+  /** One seed's reading.  Every quantity the fidelity table grades is read at its record's horizon
+    * and the extreme rows at their anchors', cut from the main ensemble where the horizon is
+    * shorter, so when `-years` is the longest horizon nothing is simulated twice; a candidate that
+    * fails a gate those readings cannot change never pays for them.  An infeasible candidate's
+    * extreme rows stay out of its score and its worst-row search, so a rejected candidate's
+    * `worstRow` names a pooled row.
     *
     * `evaluate` stops at the first seed that fails, because feasibility needs every seed. */
   def oneRead(w: World, anchors: MarketSim.Anchors, paths: Int, years: Int,
-              s: Long, dead: Double): Read =
+              s: Long, obj: Objective): Read =
+    val dead = obj.dead
     val main = MarketSim.simPaths(w, paths, years, s)
     val st   = MarketSim.measure(main, years)
-    val checks = MarketSim.gateChecks(anchors, st)
-    val bad  = checks.count((_, ok, cls) => !ok && MarketSim.GateDefault.contains(cls))
-    val feasible = bad == 0
+    // THE VERDICT'S READINGS: vol, the typical year, return per vol, kurtosis, the clustering lags
+    // and the crash rate are gated at their records' horizons (`gateChecksAt`), as a recipe's
+    // verdict gates them, so the search and the verdict never disagree on those rows because they
+    // read different horizons.
+    // A GATE NO TABLE READING CAN CHANGE (`gateReadsTable`) fails at those horizons exactly as it
+    // fails here, so a candidate that fails one is rejected before their ensembles are simulated:
+    // the table's gates are then not read, and neither priced nor named.
+    val own = MarketSim.gateChecks(anchors, st)
+    val early = own.exists((nm, ok, cls) =>
+      !ok && obj.classes.contains(cls) && !MarketSim.gateReadsTable(nm))
+    val hr =
+      if early then MarketSim.HorizonReadings.empty
+      else MarketSim.horizonReadings(anchors, st, Some(main), years, paths, s, w, extremeToo = true)
+    val banded = hr.banded
+    val checks =
+      if early then own.filterNot((nm, _, _) => MarketSim.gateReadsTable(nm))
+      else MarketSim.gateChecksAt(anchors, st, banded)
+    val bad  = checks.count((_, ok, cls) => !ok && obj.classes.contains(cls))
+    val gated = bad == 0
     // THE FIDELITY BANDS THAT ARE NOT FITNESS ROWS -- the macro panel's, the channels', the
     // variance-ratio profile, the bond's -- were invisible to the search: neither gated (a
     // fidelity band flips on a seed at 60 paths, and feasibility has to hold on every seed) nor
@@ -195,30 +408,58 @@ object MarketSimSearch:
     // outside on every seed is a row's worth of excess.  Named in `gateFail` for a feasible
     // candidate, so the log says which.
     val fidFail = checks.collect { case (nm, false, MarketSim.GateClass.Fidelity) => s"fidelity: $nm" }
-    val ex =
-      if !feasible then Map.empty[String, Double]
-      else if MarketSim.extremeHorizons(anchors) == Vector(years) then
-        MarketSim.extremeScoreStatsFrom(anchors, main, years)
-      else MarketSim.extremeScoreStats(anchors, paths, s, w)
+    // THE RECORD BANDS, read at the record's own horizon: a miss costs a dead zone, as a failed
+    // fidelity band does, plus its distance past the edge, so the search has a slope back inside.
+    // the gap rows' bands, read on this read: a miss on one is a failed gate (see `Objective`)
+    val gapMiss =
+      if gated then obj.gap.filter(nm => gapMisses(anchors, nm, banded, st))
+      else Vector.empty[String]
+    // the rows a seed is reported on, where the table was read: an early exit leaves `banded`
+    // empty, and a banded row without a reading counts as a miss
+    val watchMiss =
+      if early then Vector.empty[String]
+      else obj.watch.filter(nm => gapMisses(anchors, nm, banded, st))
+    // the held rows' distances on this read, in the judge's units: past a bar is a failed gate
+    val holdMiss =
+      if gated then obj.hold.collect {
+        case (nm, bar) if MarketSim.judgeDistance(anchors, nm, st, banded).forall(_ > bar) => nm
+      }
+      else Vector.empty[String]
+    val feasible = gated && gapMiss.isEmpty && holdMiss.isEmpty
+    val bandMiss = MarketSim.recordBandTerms(anchors, banded).filter((_, t) => feasible && t > 0.0)
+    val ex = if feasible then hr.extremeScores else Map.empty[String, Double]
     val (total, allRows) = MarketSim.fitness(anchors, st, ex)
+    // AGAINST THE OUTGOING RECIPE (`-noregress`): each row's excess over the recipe's distance from
+    // its record, in `fitness` row order as the reference was taken
+    val regress = obj.reference match
+      case Some(reference) if feasible =>
+        MarketSim.recordDistances(anchors, allRows, banded).zip(reference)
+          .map { case ((name, d), (_, r)) => (name, math.max(0.0, d - r)) }
+      case _ => Vector.empty[(String, Double)]
     val rows = allRows.filter((nm, _, _, _) => feasible || !MarketSim.extremeTargetNames.contains(nm))
     val raw = rows.map((nm, _, _, term) => (term, nm)).max
-    // in row order, a plain left fold, as the Rust harness's `sum` is; then the fidelity bands
-    val score = rows.map((_, _, _, term) => math.max(0.0, term - dead)).sum + dead * fidFail.length
+    // in row order, a plain left fold, as the Rust harness's `sum` is; then the fidelity bands,
+    // then the record bands, then the regressions
+    val score = rows.map((_, _, _, term) => math.max(0.0, term - dead)).sum + dead * fidFail.length +
+      bandMiss.map((_, t) => dead + t).sum + regress.map(_._2).sum
+    // the log names a regression past a dead zone; smaller ones are priced but not listed
     val gateFail =
-      if feasible then fidFail
-      else MarketSim.GateDefault.toVector.flatMap(cls => MarketSim.failedIn(anchors, st, cls))
-    Read(feasible, score, raw._1, raw._2, descOf(st), total, gateFail = gateFail)
+      (if feasible then fidFail ++ bandMiss.map((nm, _) => s"band: $nm")
+       else if gated then gapMiss.map(nm => s"gap: $nm") ++ holdMiss.map(nm => s"hold: $nm")
+       else MarketSim.GateClass.values.toVector.filter(obj.classes.contains)
+              .flatMap(cls => checks.collect { case (nm, false, c) if c == cls => nm })) ++
+        regress.collect { case (nm, e) if e > dead => s"regress: $nm" }
+    Read(feasible, score, raw._1, raw._2, descOf(st), total, gateFail = gateFail, watchMiss = watchMiss)
 
   def evaluate(w: World, anchors: MarketSim.Anchors, paths: Int, years: Int,
-               seeds: Vector[Long], dead: Double, bar: Option[Double] = None): Read =
+               seeds: Vector[Long], obj: Objective, bar: Option[Double] = None): Read =
     // takeWhile-with-the-failure: every seed up to and including the first infeasible one, or
     // up to the first that puts the running maximum over the bar: the rest cannot change the
     // answer
     def over(r: Read): Boolean = r.feasible && bar.exists(b => r.score > b)
     val reads = seeds.foldLeft(Vector.empty[Read]) { (acc, s) =>
       if acc.nonEmpty && (!acc.last.feasible || over(acc.last)) then acc
-      else acc :+ oneRead(w, anchors, paths, years, s, dead)
+      else acc :+ oneRead(w, anchors, paths, years, s, obj)
     }
     val cut = reads.length < seeds.length && over(reads.last)
     val hardest = reads.maxBy(_.raw)
@@ -227,7 +468,11 @@ object MarketSimSearch:
     val total  = reads.map(_.total).sum / reads.length
     // the worst seed's score, as the worst seed's row is the reported one
     Read(reads.forall(_.feasible), reads.map(_.score).max, hardest.raw, hardest.worst, desc, total,
-         spread, hardest.gateFail, complete = !cut)
+         // the read that FAILED says why, where there is one: the hardest read is the one with the
+         // worst row, which on a rejected world is as often a read that passed
+         spread, reads.find(!_.feasible).map(_.gateFail).getOrElse(hardest.gateFail), complete = !cut,
+         // a row any read misses, in the order the rows were named
+         watchMiss = obj.watch.filter(g => reads.exists(_.watchMiss.contains(g))))
 
   // ---- cheap fidelity -------------------------------------------------------------------------
 
@@ -271,30 +516,43 @@ object MarketSimSearch:
 
   /** SELECTING FOR TRANSPORT rather than testing it afterwards: a candidate is judged on the WORSE of
     * its two markets, so a world that fits the S&P by doing something the Nasdaq will not tolerate
-    * never enters.  One dial vector cannot pass both sets (equity vol bands 14-18 and 23.5-30.3); the
+    * never enters.  One dial vector cannot pass both sets (equity vol bands 14-18 and 22.2-31.5); the
     * MECHANISM transports and the market dials re-solve, which is the structure of the shipped
     * recipes.  So the arm is the counterpart world carrying the candidate's values on every searched
     * dial EXCEPT the market dials (`MarketDials`), which stay at the counterpart's, in either
     * direction. */
-  final case class Transport(name: String, anchors: MarketSim.Anchors, world: World, spec: String)
+  /** `weight` is the arm's share of the score (`-transportweight`): a primary-market search at 1
+    * spent its generations on the counterpart's rows (search-v38: the S&P arm carried 5-6 of the
+    * seed's 7.1 and the Nasdaq rows drifted).  Feasibility in both markets stays a gate at any
+    * weight. */
+  final case class Transport(name: String, anchors: MarketSim.Anchors, world: World, spec: String,
+                             weight: Double)
 
-  def transportOf(name: String, primarySpec: String): Transport =
+  def transportOf(name: String, primarySpec: String, weight: Double): Transport =
     val (world, specOpt) = MarketSim.namedWorld(name).getOrElse(
       usage(s"-transport names [$name], which is not a release or recipe"))
     val spec = specOpt.getOrElse("sp500")
     if spec == primarySpec then
       usage(s"-transport $name is anchored to [$spec], the set already being searched; " +
             "a transport arm has to be the OTHER market")
-    Transport(name, MarketSim.anchorsNamed(spec), world, spec)
+    Transport(name, MarketSim.anchorsNamed(spec), world, spec, weight)
 
   /** THE MARKET DIALS: the searched dials that say which market a world is rather than how its
     * mechanism works, held at the counterpart's values on the transport arm.  Named, not derived:
     * the set used to be "the dials on which the counterpart differs from the seed world", which
     * produced this list for every hand-built recipe and all thirty for `0.24.2-nasdaq`, a recipe
     * the search itself re-solved -- an arm holding everything judges the counterpart, not the
-    * candidate.  Every name must be a searched dial; the harness refuses to start otherwise. */
+    * candidate.  Every name must be a searched dial; the harness refuses to start otherwise.
+    * The news channel's rate and size are a market's magnitudes, as `jumpVar` is; how the news
+    * follows leverage and how much of it reverts are the mechanism, and transport.  So are the
+    * valuation dials -- how much of the fundamental beliefs see, their fade and horizon, the
+    * extrapolation, the cycle and the mania's bust: each market was solved on its own (the S&P
+    * default runs a belief share of 0.95 with its own leak), and a Nasdaq solution carried to the
+    * S&P failed its stationarity row for reasons that say nothing about the mechanism under test. */
   val MarketDials: Vector[String] =
-    Vector("depth", "drift", "stress", "volOfVol", "jumpVar", "refuge", "slowShare")
+    Vector("depth", "drift", "stress", "volOfVol", "jumpVar", "refuge", "slowShare", "newsRate",
+           "newsSize", "beliefShare", "capYears", "beliefLeak", "beliefYears", "cycleSd",
+           "cycleYears", "bustAmp")
 
   /** Which searched dials the transport arm holds, in table order. */
   def held: Vector[Boolean] = ranges.map((nm, _, _, _, _) => MarketDials.contains(nm))
@@ -311,41 +569,84 @@ object MarketSimSearch:
     * and the transport arm is a different world by construction. */
   def judge(base: World, dials: Vector[Double], anchors: MarketSim.Anchors,
             t: Option[Transport], paths: Int, years: Int, seeds: Vector[Long],
-            dead: Double, bar: Option[Double] = None): Read =
-    val a = evaluate(worldOf(base, dials), anchors, paths, years, seeds, dead, bar)
+            obj: Objective, bar: Option[Double] = None): Read =
+    val a = evaluate(worldOf(base, dials), anchors, paths, years, seeds, obj, bar)
     t match
       case None => a
       // a candidate that fails its primary market is rejected whatever the other one says, and
       // the transport arm is a whole second evaluation; so is one whose primary arm alone is
-      // over the bar, because the arm's scores add
+      // over the bar, because the arms' scores add
       case Some(_) if !a.feasible => a
       case Some(_) if bar.exists(b => a.score > b) => a.copy(complete = false)
       case Some(tr) =>
-        val b = evaluate(transportWorld(tr, dials), tr.anchors, paths, years, seeds, dead, bar)
-        val score = a.score + b.score
+        // the arm is priced at its weight, so its own early exit is the bar over the weight: past
+        // that, the weighted sum is over the bar whatever the primary arm scored (a weight of 0
+        // leaves the arm a gate and never cuts it short)
+        val b = evaluate(transportWorld(tr, dials), tr.anchors, paths, years, seeds, obj.plain,
+                         bar.map(_ / tr.weight))
+        val score = a.score + tr.weight * b.score
         val (raw, worst) =
-          if b.raw > a.raw then (b.raw, s"${tr.spec}: ${b.worst}")
+          if tr.weight * b.raw > a.raw then (tr.weight * b.raw, s"${tr.spec}: ${b.worst}")
           else (a.raw, a.worst)
-        // the transport arm's failures carry their market, as `worst` does, so a row that only
-        // exists there -- the macro rows, when the counterpart runs the panel -- is not read as a
-        // primary-market failure
-        Read(a.feasible && b.feasible, score, raw, worst, a.desc, a.total + b.total,
+        // the transport arm's rows carry their market, as `worst` does, so a row that only exists
+        // there -- the macro rows, when the counterpart runs the panel -- is not read as a
+        // primary-market failure.  The primary arm is feasible here, so an infeasible reading
+        // names the transport arm's failures alone, and a feasible one both arms' misses.
+        val tb = b.gateFail.map(r => s"${tr.spec}: $r")
+        Read(a.feasible && b.feasible, score, raw, worst, a.desc, a.total + tr.weight * b.total,
              spread = math.max(a.spread, b.spread),
-             gateFail = if a.gateFail.isEmpty then b.gateFail.map(r => s"${tr.spec}: $r")
-                        else a.gateFail,
-             complete = a.complete && b.complete)
+             gateFail = if b.feasible then a.gateFail ++ tb else tb,
+             complete = a.complete && b.complete,
+             // the primary arm's: the transport arm watches nothing
+             watchMiss = a.watchMiss)
 
   /** the OBJECTIVE, as a digest of every row a candidate is judged on -- each set's name, then each
-    * row's name, target and weight, for the primary set and the transport arm's. Recorded with the
-    * settings so a resume refuses an archive scored under different weights: re-freezing one
-    * spread changes the loss every member was admitted on, and nothing else in the checkpoint
-    * would show it. FNV-1a over the rows as text, numbers at eight significant digits, so both
-    * twins write the same digest. */
-  def objectiveDigest(anchors: MarketSim.Anchors, transport: Option[Transport]): String =
-    val text = (anchors +: transport.map(_.anchors).toVector).flatMap { a =>
-      a.name +: MarketSim.fitTargets(a).map((name, _, target, weight) =>
-        f"$name|$target%.8g|$weight%.8g")
-    }.map(_ + "\n").mkString
+    * row's name, target and weight, then each record band's edges, for the primary set and the
+    * transport arm's, the dials that arm holds, and the `-noregress` reference. Recorded with the
+    * settings so a resume refuses
+    * an archive scored under different weights: re-freezing one spread changes the loss every
+    * member was admitted on, and nothing else in the checkpoint would show it. FNV-1a over the
+    * rows as text, numbers at eight significant digits, so both twins write the same digest.
+    * The reference's VALUES, not only its name: a model change that moves the recipe's readings
+    * refuses a resume across it.  `-export` and `-prune` score nothing and carry the archive's
+    * recorded digest instead (`main`), so they never read the reference. */
+  /** The held rows as the checkpoint and the digest spell them: `ROW<=D,...` at eight significant
+    * digits, `(none)` when there are none, the same text from both twins. */
+  def holdText(hold: Vector[(String, Double)]): String =
+    if hold.isEmpty then "(none)" else hold.map((nm, d) => f"$nm<=$d%.8g").mkString(",")
+
+  def objectiveDigest(anchors: MarketSim.Anchors, transport: Option[Transport],
+                      noregress: Option[(String, Vector[(String, Double)])],
+                      gap: Vector[String], hold: Vector[(String, Double)] = Vector.empty): String =
+    val rows = (anchors +: transport.map(_.anchors).toVector).flatMap { a =>
+      (a.name +: MarketSim.fitTargets(a).map((name, _, target, weight) =>
+        f"$name|$target%.8g|$weight%.8g")) ++
+        a.recordBands.map { b =>
+          val (lo, hi) = b.band
+          f"band|${b.name}|$lo%.8g|$hi%.8g"
+        }
+    } ++ transport.map(_ => "held|" + MarketDials.mkString(",")) ++
+      // written only off 1, so an archive scored before the weight existed keeps its digest
+      transport.filter(_.weight != 1.0).map(tr => f"tweight|${tr.weight}%.8g") ++
+      Option.when(gap.nonEmpty)("gap|" + gap.mkString(",")) ++
+      // written only when a row is held, so an archive built before `-hold` keeps its digest
+      Option.when(hold.nonEmpty)("hold|" + holdText(hold)) ++
+      noregress.toVector.flatMap((name, ref) =>
+        s"noregress|$name" +: ref.map((row, d) => f"reg|$row|$d%.8g"))
+    val text = rows.map(_ + "\n").mkString
+    val h = text.getBytes("UTF-8").foldLeft(0xcbf29ce484222325L) { (acc, b) =>
+      (acc ^ (b & 0xffL)) * 0x100000001b3L
+    }
+    f"$h%016x"
+
+  /** THE SEED WORLDS' OWN VALUES, digested into the archive's settings (`seedWorlds`).  A member
+    * is its searched dials on top of the world it was seeded from, by NAME, and an unreleased
+    * recipe may be re-solved under its name: an archive resumed or exported after that would
+    * rebuild every member on a different world and say nothing.  Every field of every seed world,
+    * in the sidecar's own key format and the archive's own width, in pool order. */
+  def seedWorldsDigest(pool: Vector[(String, World)]): String =
+    val text = pool.flatMap((name, w) =>
+      name +: MarketSim.worldJsonBody(w, x => f"$x%.8g").map(_.trim)).map(_ + "\n").mkString
     val h = text.getBytes("UTF-8").foldLeft(0xcbf29ce484222325L) { (acc, b) =>
       (acc ^ (b & 0xffL)) * 0x100000001b3L
     }
@@ -422,39 +723,76 @@ object MarketSimSearch:
   def exportWorlds(dir: String, file: String, seedFor: String => World): Unit =
     val arc = readArchive(dir)
     if arc.isEmpty then usage(s"no archive in $dir to export")
+    val cover = coverageWeights(arc)
     val bodies = arc.zipWithIndex.map { (m, k) =>
       val w = worldOf(seedFor(m.name), m.dials)
       s"""  {\n    "member": $k,\n    "seededFrom": "${m.name}",\n""" +
-      f"""    "score": ${m.score}%.6f,\n    "worstRow": "${m.worst}",\n    "world": {\n""" +
+      f"""    "score": ${m.score}%.6f,\n    "worstRow": "${m.worst}",\n    "coverageWeight": ${cover(k)}%.6f,\n    "world": {\n""" +
       // at the archive's own width, not the report's six decimals -- this block is what a consumer
       // reconstructs a world from -- and joined on `,\n`, since `worldJsonBody` returns the fields
       // without separators
       MarketSim.worldJsonBody(w, x => f"$x%.8g").mkString(",\n") + "\n    }\n  }"
     }
     file.asPath.writeLines(Seq("[", bodies.mkString(",\n"), "]"))
-    println(s"wrote ${arc.length} worlds to $file")
+    val (s, s2) = cover.foldLeft((0.0, 0.0)) { case ((s, s2), w) => (s + w, s2 + w * w) }
+    println(f"wrote ${arc.length} worlds to $file; coverage weights' effective sample ${s * s / s2}%.1f")
+
+  /** THE DESCRIPTOR SPACE admission and coverage share: each descriptor's range across the
+    * archive, so none of them dominates on units alone; empty when no member carries descriptors,
+    * which is only an archive written before they existed. */
+  def descSpan(arc: Vector[Member]): Vector[Double] =
+    val k = arc.map(_.desc.length).maxOption.getOrElse(0)
+    (0 until k).toVector.map { j =>
+      val xs = arc.flatMap(_.desc.lift(j)).filter(_.isFinite)
+      if xs.isEmpty then 0.0 else xs.max - xs.min
+    }
+
+  /** Two members' distance in that space, over the descriptors both read. */
+  def descDist(a: Member, b: Member, span: Vector[Double]): Double =
+    val terms = span.indices.toVector.flatMap { j =>
+      if span(j) <= 0.0 then None
+      else (a.desc.lift(j), b.desc.lift(j)) match
+        case (Some(x), Some(y)) if x.isFinite && y.isFinite =>
+          Some(math.pow((x - y) / span(j), 2))
+        case _ => None
+    }
+    math.sqrt(terms.sum)
+
+  /** COVERAGE WEIGHTS: how much of the archive's behaviour each member stands for.  An archive is
+    * not a sample -- where its members crowd says where the search looked, not how likely a market
+    * is -- so a consumer counting "the share of worlds that pass" counts a near-duplicate twice.
+    * Each weight is the inverse of the member's Gaussian-kernel density in the descriptor space
+    * admission keeps spread in, the bandwidth the median nearest-neighbour distance, scaled to mean
+    * 1: 0.6 counts as 0.6 of a world.  All 1 when there are no descriptors or no spread to read. */
+  def coverageWeights(arc: Vector[Member]): Vector[Double] =
+    val n = arc.length
+    val span = descSpan(arc)
+    if n < 2 || span.isEmpty then Vector.fill(n)(1.0)
+    else
+      val d = Vector.tabulate(n, n)((i, j) => descDist(arc(i), arc(j), span))
+      val nn = Vector.tabulate(n)(i => (0 until n).filter(_ != i).map(d(i)(_)).foldLeft(Double.PositiveInfinity)(math.min)).sorted
+      val h = nn(n / 2)
+      if !(h > 0.0 && h.isFinite) then Vector.fill(n)(1.0)
+      else
+        // the kernel through `expDet`, so the Rust harness exports the same bytes
+        // `expDet` builds 2^k from raw exponent bits and does not guard its range; a member far
+        // outside the bandwidth contributes under 1e-304 either way
+        def kern(x: Double): Double =
+          val z = x / h
+          val e = -0.5 * z * z
+          if e < -700.0 then 0.0 else MarketSim.expDet(e)
+        val raw = Vector.tabulate(n)(i => 1.0 / (0 until n).foldLeft(0.0)((s, j) => s + kern(d(i)(j))))
+        val tot = raw.foldLeft(0.0)(_ + _)
+        raw.map(r => r * n / tot)
 
   /** The member whose removal costs the least behavioural spread: of the closest pair in
     * normalised descriptor space, the one that scores worse.  `None` when no member carries
     * descriptors, which is only an archive written before they existed. */
   def leastDistinct(arc: Vector[Member]): Option[Int] =
-    val k = arc.map(_.desc.length).maxOption.getOrElse(0)
-    if arc.length < 2 || k == 0 then None
+    val span = descSpan(arc)
+    if arc.length < 2 || span.isEmpty then None
     else
-      // each descriptor's range across the archive, so none dominates on units alone
-      val span = (0 until k).toVector.map { j =>
-        val xs = arc.flatMap(_.desc.lift(j)).filter(_.isFinite)
-        if xs.isEmpty then 0.0 else xs.max - xs.min
-      }
-      def dist(a: Member, b: Member): Double =
-        val terms = (0 until k).toVector.flatMap { j =>
-          if span(j) <= 0.0 then None
-          else (a.desc.lift(j), b.desc.lift(j)) match
-            case (Some(x), Some(y)) if x.isFinite && y.isFinite =>
-              Some(math.pow((x - y) / span(j), 2))
-            case _ => None
-        }
-        math.sqrt(terms.sum)
+      def dist(a: Member, b: Member): Double = descDist(a, b, span)
       val pairs = for i <- arc.indices; j <- (i + 1) until arc.length yield (dist(arc(i), arc(j)), i, j)
       val (_, i, j) = pairs.minBy(_._1)
       Some(if arc(i).score > arc(j).score then i else j)
@@ -536,7 +874,11 @@ object MarketSimSearch:
     var keep = 40; var sep = 0.12; var pop = 8; var gens = 0; var close = 2.0
     var base = 20260813L; var exportTo = ""; var dead = 0.5
     var holdout = 0; var force = false; var prune = false; var bar = 1.0
-    var transportName = ""; var fidelity = ""
+    var transportName = ""; var fidelity = ""; var noregress = ""; var gap = ""
+    var gate = "realism,mechanism"
+    var hold = ""
+    var transportWeight = 0.25
+    var cov = 0.0; var covShrink = 0.3
     eachArg(args.toSeq, usage) {
       case "-out"     => out = consumeNext
       case "-anchors" => anchorSpec = consumeNext
@@ -556,18 +898,30 @@ object MarketSimSearch:
       case "-bar"     => bar = numOr("-bar", consumeNext)
       case "-prune"   => prune = true
       case "-force"   => force = true
+      case "-cov"       => cov = numOr("-cov", consumeNext)
+      case "-covshrink" => covShrink = numOr("-covshrink", consumeNext)
       case "-export"  => exportTo = consumeNext
       case "-transport" => transportName = consumeNext
+      case "-transportweight" => transportWeight = numOr("-transportweight", consumeNext)
+      case "-noregress" => noregress = consumeNext
+      case "-gate"      => gate = consumeNext
+      case "-hold"      => hold = consumeNext
+      case "-gap"       => gap = consumeNext
       case "-fidelity"  => fidelity = consumeNext
       case a          => usage(s"unrecognized arg [$a]")
     }
     if reps < 1 then usage("-reps wants at least 1")
     if sigma <= 0.0 then usage("-sigma wants a positive fraction")
     if pop < 1 then usage("-pop wants at least 1")
+    if cov < 0.0 || cov > 1.0 || covShrink < 0.0 || covShrink > 1.0 then
+      usage("-cov and -covshrink are shares, 0 to 1")
     val _ = out.asPath.mkdirs
 
     val anchors = MarketSim.anchorsNamed(anchorSpec)
-    val transport = Option.when(transportName.nonEmpty)(transportOf(transportName, anchorSpec))
+    if transportName.nonEmpty && !(transportWeight >= 0.0 && !transportWeight.isInfinite) then
+      usage("-transportweight is a share of the score, 0 or more")
+    val transport =
+      Option.when(transportName.nonEmpty)(transportOf(transportName, anchorSpec, transportWeight))
     // `Releases` stops at the last frozen row, so the current default is added first.  A seed is graded
     // against the anchor set it was verified against -- the Nasdaq recipes read equity vol 0.5 past
     // the dead zone on S&P anchors -- so the pool is restricted to the set being searched: an S&P
@@ -609,12 +963,14 @@ object MarketSimSearch:
     // Paths govern feasibility agreement and years govern ranking.  `-years` saves less than it looks:
     // the worst-crash row reads at its anchor's horizon, 100 years for the S&P, whatever `-years`
     // says.  20 paths is a floor, below which that row cannot place a record inside its band.
+    // the -fidelity ranking reads other ensembles, which a reference taken at this one does not fit
+    val plain = Objective(deadZone(dead), None)
     if fidelity.nonEmpty then
       val ens = parseEnsembles(fidelity)
-      val seeds = (0 until reps).toVector.map(k => base + k * 1000003L)
+      val seeds = (0 until reps).toVector.map(k => base + k * ReadStride)
       println(s"cheap fidelity at $anchorSpec, ${pool.length} frozen worlds x $reps reps")
       def scoreAll(p: Int, y: Int): Vector[Read] =
-        pool.map((_, w) => judge(w, dialsOf(w), anchors, transport, p, y, seeds, deadZone(dead)))
+        pool.map((_, w) => judge(w, dialsOf(w), anchors, transport, p, y, seeds, plain))
       val t0 = System.nanoTime()
       val reference = scoreAll(paths, years)
       val refSecs = (System.nanoTime() - t0) / 1e9 / pool.length
@@ -639,6 +995,53 @@ object MarketSimSearch:
       sys.exit(0)
 
 
+    // THE REFERENCE (`-noregress`): the outgoing recipe read at this ensemble, before any candidate;
+    // checked in every mode, read only where a candidate is scored (a search, `-holdout`)
+    val reference = Option.when(noregress.nonEmpty) {
+      val (w, spec) = MarketSim.namedWorld(noregress).getOrElse(
+        usage(s"-noregress names [$noregress], which is not a release or recipe"))
+      if MarketSim.anchorsNamed(spec.getOrElse("sp500")).name != anchors.name then
+        usage(s"-noregress $noregress is anchored to another set than [$anchorSpec]")
+      w
+    }.filter(_ => !prune && exportTo.isEmpty).map { w =>
+      val r = referenceDistances(w, anchors, paths, years, base)
+      println(s"noregress: $noregress at $paths x ${years}y, the mean of $NoregressReads reads; " +
+              "a row further from its record costs the difference")
+      r
+    }
+    // THE GAP ROWS (`-gap`): each must name a graded row of this anchor set -- a record band, or a
+    // fitness row the verdict grades by its ratio to the target.  An extreme row carries neither.
+    val gapRows = gap.split(",").toVector.map(_.trim).filter(_.nonEmpty).map { g =>
+      if anchors.recordBands.exists(_.name == g) then g
+      else if MarketSim.fitTargets(anchors).exists((n, _, _, _) =>
+             n == g && !MarketSim.extremeTargetNames.contains(n)) then g
+      else usage(s"-gap names [$g], which is not a graded row of [$anchorSpec]")
+    }
+    // THE HELD ROWS (`-hold ROW<=D,...`): each a graded, non-extreme row of this anchor set and a
+    // finite distance at or above 0 in the judge's units
+    val holdRows = hold.split(",").toVector.map(_.trim).filter(_.nonEmpty).map { h =>
+      val at = h.indexOf("<=")
+      if at < 0 then usage(s"-hold wants ROW<=D, got [$h]")
+      val (row, bar) = (h.take(at).trim, h.drop(at + 2).trim)
+      val names = anchors.recordBands.map(_.name) ++ MarketSim.fitTargets(anchors).map(_._1)
+      if !names.exists(n => n == row && !MarketSim.extremeTargetNames.contains(n)) then
+        usage(s"-hold names [$row], which is not a graded row of [$anchorSpec]")
+      val d = bar.toDoubleOption.filter(x => x.isFinite && x >= 0.0)
+        .getOrElse(usage(s"-hold $row: [$bar] is not a distance"))
+      (row, d)
+    }
+    val obj = Objective(deadZone(dead), reference, gapRows, MarketSim.parseGate(gate), hold = holdRows)
+
+    // `-export`, `-prune` and `-holdout` read no candidate, so they carry the archive's own scheme
+    // (see `candidateSeed`): one written before the key was searched a path stride apart
+    val candidateSeeds =
+      if prune || exportTo.nonEmpty || holdout > 0 then readState(out).getOrElse("candidateSeeds", "path-stride")
+      else "independent"
+    // the weights and targets the loss applies (see `objectiveDigest`); `-export` and `-prune`
+    // score nothing, so they carry the archive's own and never read the reference
+    val objective = readState(out).get("objective") match
+      case Some(recorded) if prune || exportTo.nonEmpty => recorded
+      case _ => objectiveDigest(anchors, transport, obj.reference.map(r => (noregress, r)), obj.gap, obj.hold)
     val settings = Vector("paths" -> paths.toString, "years" -> years.toString,
                           "reps" -> reps.toString, "sigma" -> f"$sigma%.4f",
                           "dead" -> f"$dead%.4f", "keep" -> keep.toString,
@@ -646,19 +1049,52 @@ object MarketSimSearch:
                           "anchors" -> anchorSpec, "seed" -> base.toString,
                           "bar" -> f"$bar%.4f",
                           "seeds" -> (if seedSpec.isEmpty then "(all)" else seedSpec),
+                          // the seed worlds' own values, not only their names: see `seedWorldsDigest`
+                          "seedWorlds" -> seedWorldsDigest(pool),
+                          // how a candidate's reads are seeded: see `candidateSeed`
+                          "candidateSeeds" -> candidateSeeds,
                           // the admission rules and the objective are recorded with the ensemble: a resume under different
                           // ones puts two standards in one archive
                           "admit" -> "spread-keeping-nearest",
+                          // the coordinates a child is stepped in and the archive's distance is read in
+                          "steps" -> ("ln1p:" + MarketSim.SearchLogDials.mkString(",")),
+                          // how a child is drawn from its parent: one dial at a time, or along the archive's shape
+                          "proposal" -> (if cov > 0.0 then f"cov:$cov%.2f,shrink:$covShrink%.2f" else "dial"),
+                          // the horizon the gates read the table's quantities at: their records', as the verdict does
+                          "gates" -> "record-horizon",
+                          // the classes feasibility read, so an archive cannot resume across a change of standard
+                          "gateClasses" -> MarketSim.gateClassesLabel(MarketSim.parseGate(gate)),
                           "score" -> "sum-excess",
-                          // the weights and targets the loss applies: see `objectiveDigest`
-                          "objective" -> objectiveDigest(anchors, transport),
-                          "transport" -> (if transportName.isEmpty then "(none)" else transportName))
+                          "objective" -> objective,
+                          "transport" -> (if transportName.isEmpty then "(none)" else transportName),
+                          "transportWeight" -> (if transportName.isEmpty then "(none)" else f"$transportWeight%.4f"),
+                          "noregress" -> (if noregress.isEmpty then "(none)" else noregress),
+                          "gap" -> (if obj.gap.isEmpty then "(none)" else obj.gap.mkString(",")),
+                          "hold" -> holdText(obj.hold))
     val loaded = readArchive(out)
-    // a checkpoint without `score` was scored on the worst row alone; a resume must refuse, not
-    // adopt, since its members' scores are not comparable to the sum
+    // a checkpoint without `score` was scored on the worst row alone, and one without `gates` gated
+    // on its own ensemble; a resume must refuse, not adopt, since its members were admitted by
+    // another standard
     val prior =
       val p = readState(out)
-      if loaded.nonEmpty && !p.contains("score") then p + ("score" -> "worst-row") else p
+      val scored = if loaded.nonEmpty && !p.contains("score") then p + ("score" -> "worst-row") else p
+      val gated = if loaded.nonEmpty && !scored.contains("gates") then scored + ("gates" -> "search-ensemble") else scored
+      // one written before `-cov` existed drew its children one dial at a time
+      val drawn = if loaded.nonEmpty && !gated.contains("proposal") then gated + ("proposal" -> "dial") else gated
+      // one written before `candidateSeeds` read its candidates a path stride apart
+      val strided =
+        if loaded.nonEmpty && !drawn.contains("candidateSeeds") then drawn + ("candidateSeeds" -> "path-stride")
+        else drawn
+      // one written before `-hold` held no row
+      val held = if loaded.nonEmpty && !strided.contains("hold") then strided + ("hold" -> "(none)") else strided
+      // one written before `-gate` gated on the verdict's default classes
+      val classed =
+        if loaded.nonEmpty && !held.contains("gateClasses") then held + ("gateClasses" -> "realism,mechanism")
+        else held
+      // one without `transportWeight` priced its transport arm in full
+      if loaded.nonEmpty && !classed.contains("transportWeight") then
+        classed + ("transportWeight" -> (if classed.get("transport").forall(_ == "(none)") then "(none)" else "1.0000"))
+      else classed
     val gen0 = prior.getOrElse("gen", "0").toInt
     val evals0 = prior.getOrElse("evals", "0").toInt
     val nsum0 = prior.getOrElse("noiseSum", "0").toDouble
@@ -685,11 +1121,19 @@ object MarketSimSearch:
       if !searchMode then Vector.empty
       else
         println(s"seed worlds at $anchorSpec, $paths x ${years}y x $reps reps")
+        // THE SEED WORLDS ARE NOT HELD TO THE GAP ROWS: they root the lineages and set the bars,
+        // and the rows a release has to close are the ones the outgoing recipe misses, so gating
+        // them left nothing to search from.  Their misses are priced as any band's; every
+        // candidate, and a `-holdout` re-score of every member, is held to the gap.
+        val seedObj = obj.withoutGap
         pool.map { (nm, w) =>
           val r = judge(w, dialsOf(w), anchors, transport, paths, years,
-                        (0 until reps).toVector.map(k => base + k * 1000003L), deadZone(dead))
+                        (0 until reps).toVector.map(k => base + k * ReadStride), seedObj)
           println(f"  $nm%-24s ${if r.feasible then "feasible" else "REJECTED"}%-9s " +
                   f"score ${r.score}%7.3f  raw ${r.raw}%7.3f  ${r.worst}")
+          // a rejected seed names the gates it failed: its worst row is a fitness row, not the reason
+          if !r.feasible then println(s"    fails: ${r.gateFail.mkString("; ")}")
+          if r.watchMiss.nonEmpty then println(s"    misses gap rows: ${r.watchMiss.mkString(", ")}")
           (nm, w, r)
         }
     // THE QUALITY BAR.  Spread-keeping admits on distance: a feasible candidate far enough from
@@ -751,22 +1195,22 @@ object MarketSimSearch:
 
     // THE HOLDOUT: every member earned its place on seeds the search chose, and a band-edge world
     // flips on one draw in six.  Re-score each member at the same ensemble on TWO INDEPENDENT
-    // STREAMS, neither of which selected the mutations (the search draws `base + (evals + j) * 7919`;
-    // stream A is `base + k * 1000003`, the pool's own seeds, stream B that shifted by 991).  A
+    // STREAMS, neither of which selected the mutations (the search draws `candidateSeed`'s; stream
+    // A is the pool's own seeds, stream B that shifted by `HoldoutFreshOffset`).  A
     // SEED-SENSITIVITY test, not train against test, and the columns say so: a member that passes one
     // stream and fails the other was admitted by a draw, not by the record.
     if holdout > 0 then
       if loaded.isEmpty then usage(s"no archive in $out to re-score")
-      val train = (0 until holdout).toVector.map(k => base + k * 1000003L)
-      val fresh = (0 until holdout).toVector.map(k => base + 991L + k * 1000003L)
+      val train = (0 until holdout).toVector.map(k => base + k * ReadStride)
+      val fresh = (0 until holdout).toVector.map(k => base + HoldoutFreshOffset + k * ReadStride)
       println(s"re-scoring ${loaded.length} members on two independent streams of $holdout " +
               s"and $holdout seeds at $paths x ${years}y, $anchorSpec; neither selected the " +
               "mutations")
       val out2 = loaded.map { m =>
         val a = judge(worldFor(m.name), m.dials, anchors, transport, paths, years, train,
-                      deadZone(dead))
+                      obj)
         val b = judge(worldFor(m.name), m.dials, anchors, transport, paths, years, fresh,
-                      deadZone(dead))
+                      obj)
         println(f"  ${m.name}%-22s stream A ${if a.feasible then "pass" else "FAIL"}%-4s " +
                 f"raw ${a.raw}%6.3f   stream B ${if b.feasible then "pass" else "FAIL"}%-4s " +
                 f"raw ${b.raw}%6.3f   ${b.worst}")
@@ -797,7 +1241,7 @@ object MarketSimSearch:
       val seedReads = loaded.map(_.name).distinct.sorted.map { nm =>
         val w = worldFor(nm)
         val reads = fresh.map(sd =>
-          judge(w, dialsOf(w), anchors, transport, paths, years, Vector(sd), deadZone(dead)))
+          judge(w, dialsOf(w), anchors, transport, paths, years, Vector(sd), obj))
         (nm, reads.map(_.raw), reads.map(_.total).sum / reads.length)
       }
       val devs = seedReads.flatMap { (_, per, _) =>
@@ -886,16 +1330,24 @@ object MarketSimSearch:
       val rng = new NumPyRNG((base ^ (g.toLong * 0x9e3779b9L)) & 0x7fffffffffffffffL)
       // a running seed-noise estimate from each candidate's spread across its own reps, carried across generations
       val start = (arc, evals, Vector.empty[String], nsum0, nn0, trace0)
+      // the archive's shape is read once a generation; `-cov 0` reads none and draws nothing
+      // extra, so a run without it proposes exactly what it always did
+      val factor = if cov > 0.0 then proposalFactor(arc, covShrink) else None
       val (next, used, log, nsum, nn, trace) =
         (0 until pop).foldLeft(start) { case ((acc, ev, lg, nsum, nn, tr), _) =>
         val parent = acc(rng.nextBoundedInt(acc.length))
-        val child = parent.dials.indices.toVector.map { i =>
-          clamped(i, parent.dials(i) + rng.randn() * sigma * (ranges(i)._3 - ranges(i)._2))
-        }
+        val along = factor.filter(_ => rng.nextDouble() < cov)
+        val z = parent.dials.indices.toVector.map(_ => rng.randn())
+        val child = admissible(parent.dials.indices.toVector.map { i =>
+          val zi = along match
+            case Some(l) => (0 to i).foldLeft(0.0)((s, t) => s + l(i)(t) * z(t))
+            case None    => z(i)
+          stepped(i, parent.dials(i), zi, sigma)
+        })
         val t0 = System.nanoTime()
         // the lineage's bar, so an evaluation stops as soon as it is over it
         val r = judge(worldFor(parent.name), child, anchors, transport, paths, years,
-                      (0 until reps).toVector.map(j => base + (ev + j) * 7919L), deadZone(dead),
+                      (0 until reps).toVector.map(j => candidateSeed(base, ev + j)), obj,
                       bar = if bar > 0.0 then barFor.get(parent.name) else None)
         val secs = (System.nanoTime() - t0) / 1e9
         // a candidate above the bar still feeds the noise estimate when it ran to the end: its
@@ -910,7 +1362,7 @@ object MarketSimSearch:
             admit(acc, Member(parent.name, child, r.score, r.raw, r.worst, r.desc),
                   sep, keep, nsum2 / nn2)
           else (acc, false)
-        // `ev` is the SEED BASE this candidate drew from (seeds are base + (ev + j) * 7919), so a
+        // `ev` is the SEED SLOT this candidate drew from (rep j reads `candidateSeed(base, ev + j)`), so a
         // log line reproduces its candidate
         val line = f"$g\t$ev\t${parent.name}\t${r.feasible}\t${r.score}%.6f\t${r.raw}%.6f" +
                    f"\t${r.worst}\t$secs%.3f\t" + r.desc.map(x => f"$x%.8g").mkString("\t") +
