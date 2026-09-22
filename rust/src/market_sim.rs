@@ -1112,6 +1112,11 @@ pub fn recipes() -> Vec<(&'static str, World, &'static str)> {
             recipe_0244_nasdaq_basket(nq_0244),
             "nasdaq",
         ),
+        (
+            "0.24.4-sp500-channels",
+            recipe_0244_sp500_channels(v0_24_4()),
+            "sp500",
+        ),
     ]
 }
 
@@ -1285,6 +1290,46 @@ fn recipe_0244_nasdaq(mut w: World) -> World {
     w.credit_regime = 0.66159052;
     w.credit_regime_rate = 17.42129;
     w.slow_bond_infl = 0.9384087;
+    w
+}
+
+/// The 0.24.4 S&P default, frozen for the recipes built on it: the 0.24.1 row with the beliefs'
+/// fade and the valuation cycle.
+fn v0_24_4() -> World {
+    World {
+        belief_leak: 0.2,
+        cycle_sd: 0.1,
+        cycle_years: 15.0,
+        ..v0_24_1()
+    }
+}
+
+/// THE S&P CHANNEL WORLD (0.24.4): the 0.24.4 default emitting everything a consumer's bundle
+/// reads -- the satellite, bars with the open, dividends, THE BASKET and the macro panel -- at the
+/// S&P anchor set's dials. `lev_gain` runs at 8 where the default's 6 leaves the panel's
+/// `macro cond build-up` on its gate's lower edge (0.83-0.85 against 0.82-1.00: every class on
+/// 19 of 32 seeds with the panel on; 0.86-0.92 and 29 of 32 here, the default's own rate with
+/// the panel off being 30). Against the default on the same 32 seeds no row is further from its
+/// record on every seed; d10 1.27 -> 1.21 and d20 2.59 -> 2.27 are nearer on every one, bond
+/// depth against its vol 1.25 -> 1.29 further on 28. Verified at 200 x 100 on 32 seeds:
+/// overnight share 0.32-0.34 at `overnight` 0.14 (record 0.33), range vs cc vol 1.13-1.15,
+/// down/up 1.15; basket corr 0.81-0.82, beta 1.56, vol ratio 1.90-1.93, names 2.4x, gaps
+/// 2.4-2.6/yr.
+fn recipe_0244_sp500_channels(mut w: World) -> World {
+    w.lev_gain = 8.0;
+    w.macro_panel = 1;
+    w.sat_beta = 1.2;
+    w.sat_idio = 0.77;
+    w.range_scale = 0.78;
+    w.range_down = 0.13;
+    w.vol_idio = 0.34;
+    w.overnight = 0.14;
+    w.div_yield = 2.95;
+    w.basket = 8;
+    w.basket_beta = 1.56;
+    w.basket_sector = 1.1;
+    w.basket_idio = 0.9;
+    w.basket_gaps = 6.0;
     w
 }
 
@@ -18016,6 +18061,31 @@ mod contract_tests {
         }
     }
 
+    /// `v0_24_4` is the 0.24.4 default frozen for the recipes built on it: while `VERSION` is
+    /// 0.24.4 the two agree field for field, and the S&P channel recipe emits every derived
+    /// series and the macro panel.
+    #[test]
+    fn the_frozen_0_24_4_world_is_the_shipped_default_and_the_channel_recipe_emits_everything() {
+        if VERSION == "0.24.4" {
+            assert!(
+                v0_24_4() == default_world(),
+                "the frozen 0.24.4 world has drifted from the shipped default"
+            );
+        }
+        let (w, a) = named_world("0.24.4-sp500-channels").expect("no S&P channel recipe");
+        assert_eq!(a, Some("sp500"));
+        assert!(
+            w.macro_panel == 1
+                && w.sat_beta > 0.0
+                && w.range_scale > 0.0
+                && w.vol_idio > 0.0
+                && w.overnight > 0.0
+                && w.div_yield > 0.0
+                && w.basket == 8,
+            "the recipe exists to name an S&P world that emits every channel and the panel"
+        );
+    }
+
     /// Pins the recipe to the docs' "A Nasdaq world that passes the gate" and to the ANCHORED
     /// channel dials, so neither can drift under a retune: the recipe is built on the frozen row
     /// and differs from it in these nine fields only.
@@ -21705,7 +21775,7 @@ mod basket_anchor_tests {
             assert!(w.basket == 0, "release {v}");
         }
         for (n, w, _) in recipes() {
-            if !n.ends_with("basket") {
+            if !n.ends_with("basket") && !n.ends_with("channels") {
                 assert!(w.basket == 0, "recipe {n}");
             }
         }

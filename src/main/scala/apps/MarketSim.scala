@@ -1502,6 +1502,9 @@ object MarketSim:
     slowLev = 1.1, slowPhi = 0.996, slowPerm = 0.3, slowBeta = 0.55, macroNull = 0,
     inflProb = 0.2, inflSize = 0.1, inflSpeed = 0.01, rateSpeed = 3.0, discount = 5.73,
     margin = 0.006)
+  /** The 0.24.4 S&P default, frozen for the recipes built on it: the 0.24.1 row with the beliefs'
+    * fade and the valuation cycle. */
+  private[apps] val V0_24_4 = V0_24_1.copy(beliefLeak = 0.2, cycleSd = 0.1, cycleYears = 15.0)
   val Releases: Vector[(String, World)] = Vector(
     ("0.17.0", PreV1901), ("0.18.0", PreV1901), ("0.19.0", PreV1901),
     ("0.19.1", PreV1902), ("0.19.2", V0_19_2), ("0.19.3", V0_19_2), ("0.20.0", V0_20_0),
@@ -1708,7 +1711,18 @@ object MarketSim:
     * excess -0.0 -> 1.0 (1.07), the wings 11.0 / 11.9 -> 6.3 / 8.2 (7.6 / 6.7), d20 1.24 -> 1.15;
     * equity vol 23.4 against 26.9 and the typical year 20.4 against 20.0, as 0.24.3.  Every class
     * on all 32 seeds, where 0.24.3-nasdaq passes on 29.  The basket world is the same world with THE BASKET on at the dials anchored on the
-    * eight names under QQQ (beta 1.37, sector 0.8, idio 0.85, gaps 8.0). */
+    * eight names under QQQ (beta 1.37, sector 0.8, idio 0.85, gaps 8.0).
+    *
+    * THE S&P CHANNEL WORLD (`0.24.4-sp500-channels`): the 0.24.4 default emitting everything a
+    * consumer's bundle reads -- the satellite, bars with the open, dividends, THE BASKET and the
+    * macro panel -- at the S&P anchor set's dials.  `levGain` runs at 8 where the default's 6 leaves
+    * the panel's `macro cond build-up` on its gate's lower edge (0.83-0.85 against 0.82-1.00: every
+    * class on 19 of 32 seeds with the panel on; 0.86-0.92 and 29 of 32 here, the default's own rate
+    * with the panel off being 30).  Against the default on the same 32 seeds no row is further from
+    * its record on every seed; d10 1.27 -> 1.21 and d20 2.59 -> 2.27 are nearer on every one, bond
+    * depth against its vol 1.25 -> 1.29 further on 28.  Verified at 200 x 100 on 32 seeds: overnight
+    * share 0.32-0.34 at `overnight` 0.14 (record 0.33), range vs cc vol 1.13-1.15, down/up 1.15;
+    * basket corr 0.81-0.82, beta 1.56, vol ratio 1.90-1.93, names 2.4x, gaps 2.4-2.6/yr. */
   val Recipes0244: Vector[(String, World, String)] =
     val b = Recipes0243.find(_._1 == "0.24.3-nasdaq").map(_._2)
       .getOrElse(sys.error("no base recipe 0.24.3-nasdaq"))
@@ -1717,7 +1731,13 @@ object MarketSim:
            ("0.24.4-nasdaq-basket",
             nq.copy(basket = 8, basketBeta = 1.37, basketSector = 0.8, basketIdio = 0.85,
                     basketGaps = 8.0),
-            "nasdaq"))
+            "nasdaq"),
+           ("0.24.4-sp500-channels",
+            V0_24_4.copy(levGain = 8.0, macroPanel = 1, satBeta = 1.2, satIdio = 0.77,
+                         rangeScale = 0.78, rangeDown = 0.13, volIdio = 0.34, overnight = 0.14,
+                         divYield = 2.95, basket = 8, basketBeta = 1.56, basketSector = 1.1,
+                         basketIdio = 0.9, basketGaps = 6.0),
+            "sp500"))
 
   val Recipes: Vector[(String, World, String)] =
     Recipes0231 ++ MacroRecipes ++ Recipes0241 ++ Recipes0242 ++ Recipes0243 ++ Recipes0244

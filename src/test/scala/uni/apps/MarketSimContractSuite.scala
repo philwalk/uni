@@ -627,6 +627,16 @@ class MarketSimContractSuite extends FunSuite:
       assertEquals(row, MarketSim.Defaults, "the 0.23.0 row has drifted from the shipped default")
   }
 
+  test("the frozen 0.24.4 world is the shipped default and the channel recipe emits everything") {
+    if MarketSim.Version == "0.24.4" then
+      assertEquals(MarketSim.V0_24_4, MarketSim.Defaults, "the frozen 0.24.4 world has drifted from the shipped default")
+    val (w, a) = MarketSim.namedWorld("0.24.4-sp500-channels").getOrElse(fail("no S&P channel recipe"))
+    assertEquals(a, Some("sp500"))
+    assert(w.macroPanel == 1 && w.satBeta > 0.0 && w.rangeScale > 0.0 && w.volIdio > 0.0 &&
+             w.overnight > 0.0 && w.divYield > 0.0 && w.basket == 8,
+      "the recipe exists to name an S&P world that emits every channel and the panel")
+  }
+
   test("the Nasdaq recipe is the frozen 0.23.0 world with exactly the published dials moved") {
     // Pins the recipe to the docs' "A Nasdaq world that passes the gate" and to the ANCHORED
     // channel dials, so neither can drift under a retune: the recipe is built on the frozen row

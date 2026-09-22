@@ -226,13 +226,15 @@ market_sim_search -out search ... -export worlds.json
 `worlds.json` is a JSON array of members, each with its `member` number, the world it was seeded
 from, its score and worst row, and a `world` block in the sidecar's own key format at the
 archive's full precision. The release ships four, built this way and pruned by their holdouts:
-`test-data/worlds/0.24.4-nasdaq.json` (58 members, seeded from the `0.24.4-nasdaq` recipe and
+`test-data/worlds/0.24.4-nasdaq.json` (62 members, seeded from the `0.24.4-nasdaq` recipe and
 searched under `-gate all` with the daily-shape and bond crash rows under `-gap` and equity vol, the
 tail hedge, bond depth, d10, d20 and a margin on the bond's vol under `-hold`, the transport arm the
 S&P default; its holdout is the verdict's own read, 200 paths × 100 years on four seeds: every
-member passes every class on all four and misses no row on three of them, which 67 of the 94
-searched did -- the bond-vol margin (`-hold "bond vol % (24y)<=0.105"`) is what survives four
-seeds, where a third to a half did without it; member 44 is the recipe itself, byte for byte; pass
+member passes every class on all four and misses no row on three of them, which 73 of the 104
+searched did -- the bond-vol margin (`-hold "bond vol % (24y)<=0.092"`, the recipe's own level
+under that gate) is what survives a seed: a third to a half passed four seeds without it, and on
+four fresh seeds 54 of the 62 pass every class on all four, none failing the bond's vol gate, and
+on a seed whose bond vol draws 2 sd high 12 fail it (37 of the 58 did at 0.105); member 28 is the recipe itself, byte for byte; pass
 `-anchors nasdaq`, since a member names no anchor set), `0.24.3-nasdaq.json`
 (173 members, seeded from `0.24.2-nasdaq`, the set `0.24.3-nasdaq` was picked from -- member 53),
 and the two 0.24.2 sets, `0.24.2-sp500.json` (150 members, seeded from the
@@ -1662,18 +1664,18 @@ calm-minus-turbulent gradient (1.0 against 4.75, band from 0.98) and the calm st
 energy (−1.7% against +5.5, band from 0.2) sit at or under their bands' lower edges, disclosed.
 `-crossasset` reads the d=5.70 bond-depth rung at 0.53
 (0.55 on `0.24.3-nasdaq`; band 0.65-1.35), the pre-existing miss. The Nasdaq anchor set's spreads
-are frozen at this world. It is member 44 of
+are frozen at this world. It is member 28 of
 `test-data/worlds/0.24.4-nasdaq.json`, the set searched from it, byte for byte.
 
 **The 0.24.4 set is graded against the 0.24.3 set, member for member**: each row's median member
 distance from its record (percentile points from the band's middle on a banded row,
 |ln(model/record)| on any other), seed by seed on four seeds at 200 paths × 100 years, against the
-members of `0.24.3-nasdaq.json` that pass every class on the same four seeds (28 of 173). The 58
-members sit nearer on nine rows (kurtosis, lag-1 clustering, the downside excess, the up-day share,
-the leverage correlation, valuation dispersion, the lower wing, both bond crash rows), within
-tolerance on thirteen, bond depth against its vol among them, and further on none; the upper wing
-and d20 are unresolved, past the 0.02 log tolerance on two seeds of four each. Coverage weights'
-effective sample 40.4.
+members of `0.24.3-nasdaq.json` that pass every class on the same four seeds (28 of 173). The 62
+members sit nearer on eleven rows (kurtosis, lag-1 clustering, the downside excess, the up-day
+share, the leverage correlation, valuation dispersion, the lower wing, bond vol, both bond crash
+rows, bond depth against its vol), within tolerance on eleven and further on none; equity vol and
+d20 are unresolved, past tolerance on two seeds of four and on one. Coverage weights' effective
+sample 36.9.
 
 **`0.24.4-nasdaq-basket`** is the same world with the basket on, anchored on the eight names
 under QQQ: `basketSector` 0.8 (corr 0.837-0.841, beta 1.37, vol ratio 1.63-1.64 on four seeds at
@@ -1681,6 +1683,19 @@ under QQQ: `basketSector` 0.8 (corr 0.837-0.841, beta 1.37, vol ratio 1.63-1.64 
 coincidence 0.46, worst-decile pair corr 0.51 against 0.19 mid; names 2.07x, gaps 3.3/yr; time
 below peak 0.70, disclosed), every class passing. It is the Nasdaq basket world to pin in place of
 `0.24.1-nasdaq-basket`.
+
+**`0.24.4-sp500-channels`** is the S&P default emitting everything a bundle reads, graded on the
+S&P anchors: the satellite, bars with the open, dividends, the basket and the macro panel, at the
+dials each channel's section anchors, with two moved. `-levgain` runs at 8: the default's 6 leaves
+the panel's `macro cond build-up` on its gate's lower edge (0.83-0.85 against 0.82-1.00), so the
+default with the panel on passes every class on 19 of 32 seeds at 200 paths x 100 years, where the
+recipe reads 0.86-0.92 and passes on 29 and the default with the panel off on 30. `-overnight` runs
+at 0.14, which centres the overnight share on the record (0.32-0.34 against 0.33; 0.20 reads
+0.37-0.40 on this world). Against the default on the same seeds no row is further from its record
+on every seed; d10 (1.27 → 1.21) and d20 (2.59 → 2.27) are nearer on every one, and bond depth
+against its vol (1.25 → 1.29) is further on 28. Range vs close-to-close vol 1.13-1.15, down/up
+1.15; basket corr 0.81-0.82, beta 1.56, vol ratio 1.90-1.93, names 2.4x, gaps 2.4-2.6/yr. It is
+the S&P world to pin in place of `0.24.1-macro` and `0.24.1-basket`.
 
 ## The bust swing — `-bustamp`
 

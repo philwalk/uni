@@ -76,7 +76,8 @@ class BasketAnchorSuite extends FunSuite:
     assert(on.price.sameElements(off.price) && on.fundamental.sameElements(off.fundamental),
       "the names are observational: the primary must not move")
     for (v, w) <- MarketSim.Releases do assertEquals(w.basket, 0, s"release $v")
-    for (n, w, _) <- MarketSim.Recipes if !n.endsWith("basket") do assertEquals(w.basket, 0, s"recipe $n")
+    for (n, w, _) <- MarketSim.Recipes if !n.endsWith("basket") && !n.endsWith("channels") do
+      assertEquals(w.basket, 0, s"recipe $n")
     // the 0.23.1 recipe sits on the frozen 0.23.1 world, the 0.24.0 one on the default: the
     // leverage cycle moved six dials between them and nothing else
     val f = MarketSim.releaseWorld("0.23.1").getOrElse(fail("0.23.1 must resolve"))

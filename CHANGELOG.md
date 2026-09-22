@@ -1,4 +1,4 @@
-## v0.24.4 — unreleased
+## v0.24.4 — 2026-09-21
 
 **Paths start stationary: the valuation cycle as a state**
 
@@ -120,18 +120,35 @@
   coincidence 0.46, worst-decile pair corr 0.51 against 0.19 mid; names 2.07x, gaps 3.3/yr; time
   below peak 0.70, disclosed), every class passing. It is the Nasdaq basket world to pin in
   place of `0.24.1-nasdaq-basket`, which stays as shipped.
+- `0.24.4-sp500-channels` is the S&P default emitting everything a bundle reads, graded on the
+  S&P anchors: the satellite, bars with the open, dividends, the basket and the macro panel
+  (`-satbeta 1.2 -satidio 0.77 -rangescale 0.78 -rangedown 0.13 -volidio 0.34 -overnight 0.14
+  -divyield 2.95 -basket 8 -basketbeta 1.56 -basketsector 1.1 -basketidio 0.9 -basketgaps 6.0
+  -macro 1`), with `-levgain 8`. The default's own 6 leaves the panel's `macro cond build-up` on
+  its gate's lower edge (0.83-0.85 against 0.82-1.00), so the default with the panel on passes
+  every class on 19 of 32 seeds; the recipe reads 0.86-0.92 and passes on 29, where the default
+  with the panel off passes on 30. Against the default on the same seeds no row is further from
+  its record on every seed, d10 (1.27 → 1.21) and d20 (2.59 → 2.27) are nearer on every one, and
+  bond depth against its vol (1.25 → 1.29) is further on 28. `-overnight` 0.14 centres the
+  overnight share on the record (0.32-0.34 against 0.33; the 0.20 anchored at 0.23.1 reads
+  0.37-0.40 on this world). Range vs close-to-close vol 1.13-1.15, down/up 1.15; basket corr
+  0.81-0.82, beta 1.56, vol ratio 1.90-1.93, names 2.4x, gaps 2.4-2.6/yr. Pin it in place of
+  `0.24.1-macro` and `0.24.1-basket`, which stay as shipped.
 - `test-data/worlds/0.24.4-nasdaq.json`: the Nasdaq calibration set searched from `0.24.4-nasdaq`
   under `-gate all`, the daily-shape and bond crash rows under `-gap`, equity vol, the tail hedge,
   bond depth, d10, d20 and a margin on the bond's vol under `-hold`, the transport arm the S&P
-  default. 58 members, each passing every class on all of four seeds at 200 paths × 100 years and
-  missing no row on three of them (67 of the 94 searched did: the bond-vol margin is what
-  survives the four seeds); member 44 is the recipe, byte for byte. Read seed by seed against the
+  default. 62 members, each passing every class on all of four seeds at 200 paths × 100 years and
+  missing no row on three of them (73 of the 104 searched did); member 28 is the recipe, byte for
+  byte. The bond-vol margin holds the members at the recipe's level under that gate (`-hold "bond
+  vol % (24y)<=0.092"`), which is what survives a seed: on four fresh seeds 54 of the 62 pass
+  every class on all four and none fails the bond's vol gate; on a seed whose bond vol draws
+  2 sd high, 12 do (37 of the 58 did at 0.105). Read seed by seed against the
   members of the 0.24.3 set that pass the same test (28 of 173), each row's median member
-  distance from its record is nearer on nine rows (kurtosis, lag-1 clustering, the downside
-  excess, the up-day share, the leverage correlation, valuation dispersion, the lower wing, both
-  bond crash rows), within tolerance on thirteen, bond depth against its vol among them, and
-  further on none; the upper wing and d20 are unresolved (past 0.02 log on two seeds of four
-  each). Coverage weights' effective sample 40.4. The 0.24.3 and 0.24.2 sets stay as shipped; every
+  distance from its record is nearer on eleven rows (kurtosis, lag-1 clustering, the downside
+  excess, the up-day share, the leverage correlation, valuation dispersion, the lower wing, bond
+  vol, both bond crash rows, bond depth against its vol), within tolerance on eleven and further
+  on none; equity vol and d20 are unresolved (past tolerance on two seeds of four and on one).
+  Coverage weights' effective sample 36.9. The 0.24.3 and 0.24.2 sets stay as shipped; every
   member of the older sets starts at fair value, which the stationarity row refuses, so their
   `score` and `worstRow` predate it.
 
