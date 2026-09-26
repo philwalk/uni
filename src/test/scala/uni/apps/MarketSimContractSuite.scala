@@ -888,6 +888,109 @@ class MarketSimContractSuite extends FunSuite:
              (viaSorted.isNaN && want.isNaN), s"pctileOf seed $seed n $n q $q: $viaSorted vs $want")
   }
 
+  test("the verdict world runs every channel at the anchor set's dials over an untouched primary") {
+    // the anchor sets' channel dials ARE the channel recipes' (the verdict grades a world's
+    // derived series at exactly the dials the shipped channel worlds run), the verdict world of a
+    // channels-off world is that world with every channel at them and its primary untouched, a
+    // channel the caller turned on keeps the caller's dials, and a null panel is graded as a real one
+    val sp = MarketSim.namedWorld("0.24.4-sp500-channels").get._1
+    val nq = MarketSim.namedWorld("0.24.4-nasdaq-basket").get._1
+    assertEquals(MarketSim.ChannelDials.of(sp), MarketSim.SP500Anchors.channelDials)
+    assertEquals(MarketSim.ChannelDials.of(nq), MarketSim.NasdaqAnchors.channelDials)
+    val d  = MarketSim.Defaults
+    val vw = MarketSim.verdictWorld(MarketSim.SP500Anchors, d)
+    assertEquals(MarketSim.ChannelDials.of(vw), MarketSim.Sp500ChannelDials)
+    val c = MarketSim.ChannelDials.of(d)
+    assertEquals(vw.copy(satBeta = c.satBeta, satIdio = c.satIdio, rangeScale = c.rangeScale,
+                         rangeDown = c.rangeDown, volIdio = c.volIdio, overnight = c.overnight,
+                         divYield = c.divYield, basket = c.basket, basketBeta = c.basketBeta,
+                         basketSector = c.basketSector, basketIdio = c.basketIdio,
+                         basketGaps = c.basketGaps, basketDrift = c.basketDrift,
+                         macroPanel = c.macroPanel), d)
+    assertEquals(MarketSim.ChannelDials.of(MarketSim.verdictWorld(MarketSim.NasdaqAnchors, d)),
+                 MarketSim.NasdaqChannelDials)
+    val w = d.copy(satBeta = 1.5, satIdio = 0.5, macroPanel = 1, macroNull = 1)
+    val v = MarketSim.verdictWorld(MarketSim.SP500Anchors, w)
+    assert(v.satBeta == 1.5 && v.satIdio == 0.5 && v.macroNull == 0 && v.basket == 8,
+           "a channel the caller turned on keeps its dials; the rest are anchored")
+    assertEquals(MarketSim.verdictWorld(MarketSim.SP500Anchors, sp), sp)
+  }
+
+  test("the boom regime is absent at zero and releases inherit that") {
+    // absent at rate 0 bit for bit whatever its other dials read, engages at a rate on a
+    // century of paths, and every release predates it
+    val off  = MarketSim.Defaults
+    val off2 = off.copy(boomSize = 9.9, boomLen = 0.1)
+    val a = MarketSim.simulate(off, 4, MarketSim.DefaultSeed)
+    val b = MarketSim.simulate(off2, 4, MarketSim.DefaultSeed)
+    assert(a.price.sameElements(b.price), "at rate 0 the boom's other dials must be inert, bit for bit")
+    val onW = MarketSim.namedWorld("0.24.4-nasdaq").get._1.copy(boomRate = 2.0, boomSize = 1.0, boomLen = 2.5)
+    val on = MarketSim.simPaths(onW, 4, 100, MarketSim.DefaultSeed)
+    assert(on.map(_.booms).sum > 0, "two booms a century must strike within four centuries at this seed")
+    assert(MarketSim.Releases.forall((_, w) => math.abs(w.boomRate) < 1e-12),
+           "every release predates the boom regime and inherits rate 0")
+  }
+
+  // The seven dials of items 32-34's forms are absent at their off values bit for bit whatever
+  // their companions read, and every release predates them.
+  test("the rate and recession forms are absent when off and releases inherit that") {
+    val off  = MarketSim.Defaults
+    val off2 = off.copy(recessSize = 9.9, recessLen = 0.1, recessRecover = 0.9, recessNews = 5.0)
+    val a = MarketSim.simulate(off, 4, MarketSim.DefaultSeed)
+    val b = MarketSim.simulate(off2, 4, MarketSim.DefaultSeed)
+    assert(a.price.sameElements(b.price), "at rate 0 the recession's other dials must be inert, bit for bit")
+    for (name, w) <- MarketSim.Releases do
+      assert(w.floorhold == 0.0 && w.recessRate == 0.0 && w.recessNews == 1.0 && w.volPull == 0.0 &&
+             w.discountLag == 0.0, s"$name predates the forms and inherits their off values")
+  }
+
+  // The floor holds: on the shipped recipe at a 3% mean with the record's cut size, the hold
+  // turns flicker at the floor into spells of years, and at 0 the paths are the shipped ones.
+  test("the floor hold turns flicker into spells") {
+    val w    = MarketSim.namedWorld("0.24.4-nasdaq").get._1.copy(rateMean = 0.03, easing = 0.08)
+    val base = MarketSim.simPaths(w, 4, 60, MarketSim.DefaultSeed)
+    val held = MarketSim.simPaths(w.copy(floorhold = 0.05), 4, 60, MarketSim.DefaultSeed)
+    def longest(paths: Vector[MarketSim.Path]): Int =
+      paths.map { p =>
+        val (best, _) = p.rate.foldLeft((0, 0)) { case ((b, run), r) =>
+          if r < MarketSim.RateFloor then (math.max(b, run + 1), run + 1) else (b, 0)
+        }
+        best
+      }.max
+    val (lb, lh) = (longest(base), longest(held))
+    assert(lh > 2 * MarketSim.DaysPerYear && lh > lb,
+           s"the held world's longest floor spell ($lh sessions) must exceed two years and the unheld world's ($lb)")
+  }
+
+  // A recession follows stress: on the recipe with the form on, the first session the fundamental
+  // leaves the off world's comes after a drawdown, and paths run recessions.
+  test("the recession follows a drawdown") {
+    val base = MarketSim.namedWorld("0.24.4-nasdaq").get._1
+    val on   = base.copy(recessRate = 2.0, recessSize = 0.5, recessLen = 1.5)
+    val a = MarketSim.simPaths(base, 4, 60, MarketSim.DefaultSeed)
+    val b = MarketSim.simPaths(on, 4, 60, MarketSim.DefaultSeed)
+    assert(b.map(_.recessions).sum > 0, "two a year per unit stress must start a recession within four 60-year paths")
+    // the first path whose divergence falls after its burn-in (a recession begun in the burn-in
+    // diverges at session 0, which says nothing about what preceded it)
+    val judged = a.zip(b).collectFirst {
+      case (pa, pb) if pa.fundamental(0) == pb.fundamental(0) &&
+                       (1 until pa.fundamental.length).exists(i => pa.fundamental(i) != pb.fundamental(i)) =>
+        val k = (1 until pa.fundamental.length).find(i => pa.fundamental(i) != pb.fundamental(i)).get
+        val peak = pb.price.take(k).max
+        (k, pb.price(k - 1) < peak)
+    }
+    judged.foreach((k, inDrawdown) => assert(inDrawdown, s"the first divergence (session $k) must sit inside a drawdown"))
+  }
+
+  test("the default's verdict grades every channel and the macro panel") {
+    val vw = MarketSim.verdictWorld(MarketSim.SP500Anchors, MarketSim.Defaults)
+    val st = MarketSim.measure(MarketSim.simPaths(vw, 8, 40, MarketSim.DefaultSeed), 40)
+    val rows = MarketSim.gateChecks(MarketSim.SP500Anchors, st)
+    for prefix <- Seq("satellite corr", "bar range vs cc vol", "bar volume sd", "dividend yield",
+                      "bar overnight share", "basket corr", "macro cond build-up") do
+      assert(rows.exists(_._1.startsWith(prefix)), s"the default's verdict has no `$prefix` row")
+  }
+
   test("each direct extreme reading is what measure reads on that path") {
     // The extreme rows skip `measure` per path; this holds each direct reading to the full path bit
     // for bit, on horizons short enough that some paths have no episode (the NaN arm).

@@ -380,7 +380,10 @@ object MarketSimSearch:
   def oneRead(w: World, anchors: MarketSim.Anchors, paths: Int, years: Int,
               s: Long, obj: Objective): Read =
     val dead = obj.dead
-    val main = MarketSim.simPaths(w, paths, years, s)
+    // the verdict world: every derived series and the macro panel graded at the anchor set's
+    // dials where the candidate leaves them off, so feasibility is the bundle's, as a recipe's
+    // verdict is; the primary is bit-identical, so the table's horizons read `w`
+    val main = MarketSim.simPaths(MarketSim.verdictWorld(anchors, w), paths, years, s)
     val st   = MarketSim.measure(main, years)
     // THE VERDICT'S READINGS: vol, the typical year, return per vol, kurtosis, the clustering lags
     // and the crash rate are gated at their records' horizons (`gateChecksAt`), as a recipe's

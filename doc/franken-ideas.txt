@@ -1,0 +1,75 @@
+Based on the project implementations and documentation:
+
+### Key Differences & Scope Overview
+
+* **[FrankenNumPy](https://github.com/Dicklesworthstone/franken_numpy?utm_source=gemini)** is a comprehensive, **100% full-surface clean-room reimplementation of NumPy**. It aims for bit-exact differential compatibility across 499/499 `numpy.__all__` exports, including array manipulation, elementwise math (ufuncs), linear algebra, full random generation, floating-point error state machines, and file I/O (`.npy`/`.npz`).
+
+---
+New ideas for porting 100% numpy-compatible methods to `uni` from FrankenNumPy.
+FrankenNumPy is under MIT license so perhaps we can leverage their implementations in rust and mirror the algorithms in scala.
+
+### 1. Probability Distributions & Random Number Generation
+
+#### **`philwalk/uni` Implementation**
+
+* Implements the **PCG64** base bit generator.
+* Only implements basic normal distribution draws (`randn` / `standard_normal`) and fundamental uniform float draws.
+
+#### **Implemented in `FrankenNumPy` (Missing in `uni`)**
+
+FrankenNumPy implements the **full suite of NumPy probability distributions** (exact matching to NumPy’s BTPE, Ziggurat, and inversion methods) through its bit-exact **PCG64DXSM** engine, including:
+
+* **Discrete Distributions:**
+* `binomial`
+* `poisson`
+* `negative_binomial`
+* `hypergeometric`
+* `multinomial`
+* `geometric`
+* `logseries`
+* `zipf`
+* `choice` & `permutation`
+
+
+* **Continuous / Non-Normal Distributions:**
+* `gamma` & `beta`
+* `exponential`
+* `chisquare` & `noncentral_chisquare`
+* `f` & `noncentral_f`
+* `t` (Student's t)
+* `lognormal`
+* `normal` & `standard_normal`
+* `dirichlet`
+* `laplace` & `logistic`
+* `vonmises`
+* `pareto`, `power`, `weibull`, `gumbel`, `rayleigh`, `triangular`, `uniform`, `vonmises`, `wald`
+
+
+* **Advanced RNG Utility Methods:**
+* `SeedSequence` spawning (`SeedSequence::spawn(n)`) for deterministic parallel streams
+* Full in-memory generator state serialization/snapshots (`to_pickle_payload` / `from_pickle_payload`)
+
+
+
+---
+
+### 2. General Methods & Submodules Implemented by `FrankenNumPy` (Not in `uni`)
+
+Outside of random distributions, `FrankenNumPy` implements a vast surface area of NumPy that `uni` does not attempt to cover:
+
+1. **Ufuncs & Array Reductions:**
+* Advanced stride manipulation / sliding windows (`sliding_window_view`, `as_strided`).
+* Full axis-wise reductions with NaN semantics (`reduce_mean`, `reduce_std`, `percentile`, `cumsum`, `ptp`, `median`).
+
+
+2. **Floating-Point State Machine Management:**
+* Scope-based RAII error context control via `errstate` matching NumPy’s `divide`, `over`, `under`, and `invalid` mode controls.
+
+
+3. **Array File I/O (`fnp-io`):**
+* Hardened, fail-closed `.npy` and `.npz` binary parsers with bounded memory and resource protection limits.
+
+
+4. **Differential Conformance & Multi-mode Runtimes:**
+* Strict compatibility mode vs. Hardened safety mode with audit logging / evidence ledgers.
+* Python PyO3 bindings (`fnp_python`) featuring 100% zero-copy buffer views and automatic fallback to live Python `numpy` for non-Rust operations.

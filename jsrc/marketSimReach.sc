@@ -108,7 +108,8 @@ object MarketSimReach:
   /** Every graded row with an interval, as the verdict reads it; then each `-noregress` limit on its
     * row's reading; then, unless `-nogates`, every gate that is a band on one reading. */
   def read(w: World, a: MarketSim.Anchors, o: Opts, limits: Vector[Limit], seed: Long): Reading =
-    val sims = MarketSim.simPaths(w, o.paths, o.years, seed)
+    // the verdict world, so the gates are the bundle's, as the verdict reads them
+    val sims = MarketSim.simPaths(MarketSim.verdictWorld(a, w), o.paths, o.years, seed)
     val st = MarketSim.measure(sims, o.years)
     val fid = MarketSim.fidelityRows(a, st, Some(sims), o.years, o.paths, seed, w)
     val banded = MarketSim.bandedOf(fid)

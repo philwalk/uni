@@ -142,7 +142,8 @@ struct Reading {
 /// Every graded row with an interval, as the verdict reads it; then each `-noregress` limit on its
 /// row's reading; then, unless `-nogates`, every gate that is a band on one reading.
 fn read(w: &World, a: ms::Anchors, o: &Opts, limits: &[Limit], seed: u64) -> Reading {
-    let sims = ms::sim_paths(w, o.paths, o.years, seed);
+    // the verdict world, so the gates are the bundle's, as the verdict reads them
+    let sims = ms::sim_paths(&ms::verdict_world(a, w), o.paths, o.years, seed);
     let st = ms::measure(&sims, o.years);
     let fid = ms::fidelity_rows(a, &st, Some(&sims), o.years, o.paths, seed, w);
     let banded = ms::banded_of(&fid);

@@ -512,7 +512,10 @@ fn one_read(
     obj: &Objective,
 ) -> Read {
     let dead = obj.dead;
-    let main = ms::sim_paths(w, paths, years, s);
+    // the verdict world: every derived series and the macro panel graded at the anchor set's
+    // dials where the candidate leaves them off, so feasibility is the bundle's, as a recipe's
+    // verdict is; the primary is bit-identical, so the table's horizons read `w`
+    let main = ms::sim_paths(&ms::verdict_world(anchors, w), paths, years, s);
     let st = ms::measure(&main, years);
     // THE VERDICT'S READINGS: vol, the typical year, return per vol, kurtosis, the clustering lags
     // and the crash rate are gated at their records' horizons (`gate_checks_at`), as a recipe's

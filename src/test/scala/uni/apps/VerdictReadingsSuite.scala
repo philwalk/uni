@@ -37,8 +37,8 @@ class VerdictReadingsSuite extends FunSuite:
     for (o, b) <- own.zip(blind) do
       if MarketSim.gateReadsTable(o._1) then assert(!b._2, s"${o._1} reads the table and cannot pass without it")
       else assertEquals(o, b, s"${o._1} reads the ensemble alone")
-    // vol in two classes, and one gate for each of the other five
-    assertEquals(own.count(g => MarketSim.gateReadsTable(g._1)), 7)
+    // vol in two classes, one gate for each of the other five, and the bond's depth
+    assertEquals(own.count(g => MarketSim.gateReadsTable(g._1)), 8)
   }
 
   test("the gate bands are the band gates, in gate order") {

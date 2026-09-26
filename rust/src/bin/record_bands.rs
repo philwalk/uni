@@ -1,6 +1,6 @@
 //! THE RECORD BANDS: one real record's own sampling spread on every fidelity row a single daily
 //! series can be read the model's way. The generator behind
-//! `test-data/equity-anchors/recordbands-2026-09-18.tsv`, and the Rust twin of
+//! `test-data/equity-anchors/recordbands-2026-09-25.tsv`, and the Rust twin of
 //! `jsrc/recordBands.sc`.
 //!
 //! ```text
@@ -46,7 +46,9 @@ const USAGE: &str =
                 (default 0.10), split over the set's record windows by their rows: this window's
                 rows jointly miss A x (rows here) / N of the time
   -of N         the set's banded rows across all its windows (default: the rows printed here)
-  -header       print the column header first";
+  -header       print the column header first
+  -coupling     print the record's bubble coupling (`bubble_coupling_of`) instead, the row of
+                `bubblebust-2026-09-24.tsv`: no resampling keeps the structure it measures";
 
 fn usage(msg: &str) -> ! {
     if !msg.is_empty() {
@@ -56,10 +58,13 @@ fn usage(msg: &str) -> ! {
     std::process::exit(2)
 }
 
-/// Where the record comes from: one of the two file layouts the fixture is built from.
+/// Where the record comes from: one of the three file layouts the fixture is built from.
 enum Source {
     Yahoo(String),
     French(String),
+    /// FRED's daily `date,value` CSV (the effective federal funds rate, DFF): a level in percent,
+    /// read on Monday-Friday dates, for the rate rows (`-rate`)
+    Fred(String),
 }
 
 struct Opts {
@@ -74,12 +79,19 @@ struct Opts {
     joint: f64,
     of: usize,
     header: bool,
+    coupling: bool,
+    rate: bool,
+    bond: bool,
 }
 
 fn parse_args(args: &[String]) -> Opts {
     let (mut yahoo, mut french, mut from, mut to) = (None, None, None, None);
     let (mut set, mut series, mut rows) = (String::new(), String::new(), Vec::new());
     let (mut resamples, mut seed, mut header) = (20_000usize, 20_260_918u64, false);
+    let mut coupling = false;
+    let mut rate = false;
+    let mut bond = false;
+    let mut fred: Option<String> = None;
     let (mut joint, mut of) = (0.10f64, 0usize);
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -91,6 +103,7 @@ fn parse_args(args: &[String]) -> Opts {
         match a.as_str() {
             "-yahoo" => yahoo = Some(next()),
             "-french" => french = Some(next()),
+            "-fred" => fred = Some(next()),
             "-from" => from = Some(next()),
             "-to" => to = Some(next()),
             "-set" => set = next(),
@@ -117,14 +130,21 @@ fn parse_args(args: &[String]) -> Opts {
                     .unwrap_or_else(|_| usage("-of wants a row count"));
             }
             "-header" => header = true,
+            "-coupling" => coupling = true,
+            "-rate" => rate = true,
+            "-bond" => bond = true,
             other => usage(&format!("unrecognized arg [{other}]")),
         }
     }
-    let source = match (yahoo, french) {
-        (Some(f), None) => Source::Yahoo(f),
-        (None, Some(f)) => Source::French(f),
-        _ => usage("give exactly one of -yahoo and -french"),
+    let source = match (yahoo, french, fred) {
+        (Some(f), None, None) => Source::Yahoo(f),
+        (None, Some(f), None) => Source::French(f),
+        (None, None, Some(f)) => Source::Fred(f),
+        _ => usage("give exactly one of -yahoo, -french and -fred"),
     };
+    if rate != matches!(source, Source::Fred(_)) {
+        usage("-rate reads a -fred file, and a -fred file is read by -rate");
+    }
     let (Some(from), Some(to)) = (from, to) else {
         usage("-from and -to are required")
     };
@@ -151,6 +171,9 @@ fn parse_args(args: &[String]) -> Opts {
         joint,
         of,
         header,
+        coupling,
+        rate,
+        bond,
     }
 }
 
@@ -194,10 +217,44 @@ fn read_french(file: &str) -> Vec<(String, f64)> {
         .collect()
 }
 
-/// The window's daily log returns, each with the date it ended on.
+/// `(date, rate as a decimal)` for every Monday-Friday date of FRED's daily `date,value` CSV
+/// (`observation_date,DFF` in fredgraph's spelling) whose value is a number.
+fn read_fred(file: &str) -> Vec<(String, f64)> {
+    let text = std::fs::read_to_string(file).unwrap_or_else(|e| usage(&format!("{file}: {e}")));
+    text.lines()
+        .skip(1)
+        .filter_map(|l| {
+            let f: Vec<&str> = l.split(',').map(str::trim).collect();
+            let d = *f.first()?;
+            let v: f64 = f.get(1)?.parse().ok()?;
+            weekday(d).then(|| (d.to_string(), v / 100.0))
+        })
+        .collect()
+}
+
+/// Whether an ISO date falls on Monday to Friday (Zeller, proleptic Gregorian).
+fn weekday(d: &str) -> bool {
+    let p = |a: usize, b: usize| d.get(a..b).and_then(|x| x.parse::<i64>().ok());
+    let (Some(y), Some(m), Some(day)) = (p(0, 4), p(5, 7), p(8, 10)) else {
+        return false;
+    };
+    let (y, m) = if m < 3 { (y - 1, m + 12) } else { (y, m) };
+    let k = y % 100;
+    let j = y / 100;
+    // 0 = Saturday
+    let h = (day + 13 * (m + 1) / 5 + k + k / 4 + j / 4 + 5 * j).rem_euclid(7);
+    h >= 2
+}
+
+/// The window's daily log returns, each with the date it ended on -- or, on a `-fred` source,
+/// the window's daily rate levels, no session dropped.
 fn returns_in_window(o: &Opts) -> Vec<(String, f64)> {
     let in_window = |d: &str| d >= o.from.as_str() && d <= o.to.as_str();
     match &o.source {
+        Source::Fred(f) => read_fred(f)
+            .into_iter()
+            .filter(|(d, _)| in_window(d))
+            .collect(),
         Source::Yahoo(f) => read_yahoo(f)
             .into_iter()
             .filter(|(d, _)| in_window(d))
@@ -235,6 +292,27 @@ fn main() {
     }
     let r: Vec<f64> = dated.iter().map(|(_, x)| *x).collect();
     let window = format!("{}..{}", dated[0].0, dated[dated.len() - 1].0);
+    if o.coupling {
+        if o.header {
+            println!("set\trow\tseries\twindow\tn\trecord");
+        }
+        println!(
+            "{}\tbubble coupling 3y\t{}\t{window}\t{}\t{:.6}",
+            o.set,
+            o.series,
+            r.len(),
+            ms::bubble_coupling_of(&r)
+        );
+        return;
+    }
+    if o.rate {
+        print_rate_rows(&o, &r, &window);
+        return;
+    }
+    if o.bond {
+        print_bond_rows(&o, &r, &window);
+        return;
+    }
     eprintln!(
         "{}: {} returns {window}, {} exactly zero; {} resamples, seed {}",
         o.series,
@@ -286,4 +364,100 @@ fn main() {
             qs.join("\t")
         );
     }
+}
+
+/// The two rate rows (`RATE_BAND_ROWS`) on a rate window: the record by `rate_readings`, its
+/// block resamples by `rate_resamples`, and a joint band over the two at this window's share of
+/// the set's miss rate -- the same columns as the equity rows.
+fn print_rate_rows(o: &Opts, rate: &[f64], window: &str) {
+    eprintln!(
+        "{}: {} sessions {window}, mean {:.4}%, {:.2}% under the floor; {} resamples, seed {}",
+        o.series,
+        rate.len(),
+        ms::rate_readings(rate)[0],
+        ms::rate_readings(rate)[1],
+        o.resamples,
+        o.seed
+    );
+    let record = ms::rate_readings(rate);
+    let reads = ms::rate_resamples(rate, o.resamples, o.seed);
+    if o.header {
+        let pcts: Vec<String> = ms::RECORD_BAND_PCTS
+            .iter()
+            .map(|p| format!("p{p}"))
+            .collect();
+        println!(
+            "set\trow\tseries\twindow\tn\tresamples\trecord\t{}\tjointC\tjointLo\tjointHi",
+            pcts.join("\t")
+        );
+    }
+    let ks: Vec<usize> = (0..ms::RATE_BAND_ROWS.len())
+        .filter(|&k| o.rows.is_empty() || o.rows.iter().any(|r| r == ms::RATE_BAND_ROWS[k]))
+        .collect();
+    let of = if o.of == 0 { ks.len() } else { o.of };
+    let alpha = o.joint * ks.len() as f64 / of as f64;
+    let (c, edges) = ms::record_band_joint(&reads, &ks, alpha);
+    for (&k, (lo, hi)) in ks.iter().zip(&edges) {
+        let name = ms::RATE_BAND_ROWS[k];
+        let col: Vec<f64> = reads.iter().map(|x| x[k]).collect();
+        let qs: Vec<String> = ms::record_band_quantiles(&col)
+            .iter()
+            .map(|v| format!("{v:.6}"))
+            .collect();
+        println!(
+            "{}\t{name}\t{}\t{window}\t{}\t{}\t{:.6}\t{}\t{c:.6}\t{lo:.6}\t{hi:.6}",
+            o.set,
+            o.series,
+            rate.len(),
+            o.resamples,
+            record[k],
+            qs.join("\t")
+        );
+    }
+}
+
+/// The bond row (`BOND_BAND_ROWS`) on a bond's return window (`-yahoo`, TLT): the record by
+/// `bond_readings`, its block resamples by `bond_resamples`, a joint band over the one row at
+/// this window's share of the set's miss rate -- the same columns as the equity rows.
+fn print_bond_rows(o: &Opts, r: &[f64], window: &str) {
+    let record = ms::bond_readings(r);
+    eprintln!(
+        "{}: {} returns {window}, bond depth vs vol {:.4}; {} resamples, seed {}",
+        o.series,
+        r.len(),
+        record[0],
+        o.resamples,
+        o.seed
+    );
+    let reads = ms::bond_resamples(r, o.resamples, o.seed);
+    if o.header {
+        let pcts: Vec<String> = ms::RECORD_BAND_PCTS
+            .iter()
+            .map(|p| format!("p{p}"))
+            .collect();
+        println!(
+            "set\trow\tseries\twindow\tn\tresamples\trecord\t{}\tjointC\tjointLo\tjointHi",
+            pcts.join("\t")
+        );
+    }
+    let ks: Vec<usize> = vec![0];
+    let of = if o.of == 0 { 1 } else { o.of };
+    let alpha = o.joint / of as f64;
+    let (c, edges) = ms::record_band_joint(&reads, &ks, alpha);
+    let col: Vec<f64> = reads.iter().map(|x| x[0]).collect();
+    let qs: Vec<String> = ms::record_band_quantiles(&col)
+        .iter()
+        .map(|v| format!("{v:.6}"))
+        .collect();
+    let (lo, hi) = edges[0];
+    println!(
+        "{}\t{}\t{}\t{window}\t{}\t{}\t{:.6}\t{}\t{c:.6}\t{lo:.6}\t{hi:.6}",
+        o.set,
+        ms::BOND_BAND_ROWS[0],
+        o.series,
+        r.len(),
+        o.resamples,
+        record[0],
+        qs.join("\t")
+    );
 }

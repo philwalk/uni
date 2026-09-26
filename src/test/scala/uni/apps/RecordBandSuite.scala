@@ -4,13 +4,13 @@ import munit.FunSuite
 import uni.*
 import uni.data.*
 
-/** THE RECORD BANDS (`recordbands-2026-09-18.tsv`): the shipped `RecordBand` literals and the
+/** THE RECORD BANDS (`recordbands-2026-09-25.tsv`): the shipped `RecordBand` literals and the
   * typical-year and up-day-share anchors are re-derived from the fixture; a banded row's percentile
   * never contradicts its miss; and a pinned series fixes `seriesReadings` and `recordResamples` to
   * the bit, so the Rust twin's `record_band_tests`, which pins the same values, shows the twins read
   * a record identically. */
 class RecordBandSuite extends FunSuite:
-  private val fixture = Paths.get("test-data/equity-anchors/recordbands-2026-09-18.tsv")
+  private val fixture = Paths.get("test-data/equity-anchors/recordbands-2026-09-25.tsv")
   private lazy val lines: Vector[String] =
     fixture.lines.toVector.filterNot(l => l.startsWith("#") || l.trim.isEmpty)
 
@@ -46,8 +46,9 @@ class RecordBandSuite extends FunSuite:
       "the fixture carries the shipped grid")
     assertEquals(header.drop(30), Vector("jointC", "jointLo", "jointHi"), "and the joint band")
     for (set, a) <- sets do
-      assertEquals(a.recordBands.map(_.name), MarketSim.RecordBandRows,
-        s"$set: the literals follow RecordBandRows")
+      assertEquals(a.recordBands.map(_.name),
+        MarketSim.RecordBandRows ++ MarketSim.RateBandRows ++ MarketSim.BondBandRows,
+        s"$set: the literals follow RecordBandRows, RateBandRows, BondBandRows")
       for b <- a.recordBands do
         val r = row(set, b.name)
         assertEquals(b.record, r.head, s"$set ${b.name}: record")
@@ -61,6 +62,54 @@ class RecordBandSuite extends FunSuite:
       assertEqualsDouble(a.yearVol, ty, 0.1, s"$set: typical year against the record's phase mean")
       val up = row(set, "up-day share %").head
       assertEqualsDouble(a.upShare, up, 0.1, s"$set: up-day share against the record's")
+      val vt = row(set, "vol-timing edge pts/yr").head
+      assertEqualsDouble(a.volTiming, vt, 1e-6, s"$set: vol-timing edge against the record's")
+  }
+
+  // THE BUBBLE COUPLING's anchors are `bubblebust-2026-09-24.tsv`'s records, and the statistic
+  // reads a hand-built series as stated: one 3-year run-up of +1.0 into a 50% fall counts, a high
+  // without three years behind it does not, and a series with no 40% fall has no reading.
+  test("the bubble coupling anchors are the fixture's records and the statistic reads as stated") {
+    val rows = Paths.get("test-data/equity-anchors/bubblebust-2026-09-24.tsv").lines.toVector
+      .filterNot(l => l.startsWith("#") || l.trim.isEmpty || l.startsWith("set	"))
+      .map(_.split('	').toVector)
+    for (set, a) <- sets do
+      val r = rows.find(f => f(0) == set && f(1) == "bubble coupling 3y").getOrElse(fail(s"fixture row [$set] missing"))
+      assertEqualsDouble(a.bubbleCoupling, r(5).toDouble, 1e-6, s"$set: bubble coupling against the record's")
+    val h = MarketSim.BubbleRunup
+    val r = Array.fill(h)(0.0) ++ Array.fill(h)(1.0 / h) ++ Array(-0.7) ++ Array.fill(h)(1.4 / h)
+    val c = MarketSim.bubbleCouplingOf(r)
+    assert(c > 0.0 && c < 1.0, s"coupling $c")
+    assert(MarketSim.bubbleCouplingOf(Array.fill(4 * h)(0.001)).isNaN, "no 40% fall, no reading")
+    val early = Array.fill(100)(0.01) ++ Array(-0.7) ++ Array.fill(4 * h)(0.0001)
+    assert(MarketSim.bubbleCouplingOf(early).isNaN, "a peak without three years behind it")
+  }
+
+  // THE RATE ROWS' anchors are the fixture's records, and the statistic reads as stated: the mean
+  // in percent and the share of sessions under the floor.
+  test("the rate rows' anchors are the fixture's records and the statistic reads as stated") {
+    for (set, a) <- sets do
+      assertEquals(a.shortRate, row(set, "short rate %").head, s"$set: short rate")
+      assertEquals(a.rateFloor, row(set, "rate floor share %").head, s"$set: floor share")
+      assertEquals(MarketSim.recordBandYears(a, "short rate %"), a.rateYears, s"$set: horizon")
+      assertEquals(a.bondDepth, row(set, "bond depth vs vol").head, s"$set: bond depth")
+      assertEquals(MarketSim.recordBandYears(a, "bond depth vs vol"), a.bondYears, s"$set: bond horizon")
+    val path = Array(0.0, 0.004, 0.005, 0.01, 0.02, 0.03, 0.04, 0.05)
+    val rr = MarketSim.rateReadings(path)
+    assertEqualsDouble(rr(0), 1.9875, 1e-12, s"mean ${rr(0)}")
+    assertEqualsDouble(rr(1), 25.0, 1e-12, s"floor share ${rr(1)}")
+  }
+
+  // THE FLOOR BINDS once the mean is low: the default world's rate never reaches 0.5%, and the
+  // same world at a 0.5% mean spends a share of its sessions there, which is what the row grades.
+  test("the rate floor binds when the mean is low") {
+    val seed = MarketSim.DefaultSeed
+    val base = MarketSim.measure(MarketSim.simPaths(MarketSim.Defaults, 4, 30, seed), 30)
+    val low  = MarketSim.Defaults.copy(rateMean = 0.005)
+    val st   = MarketSim.measure(MarketSim.simPaths(low, 4, 30, seed), 30)
+    assertEquals(base.rateFloor, 0.0, "the default's rate reaches the floor")
+    assert(st.rateFloor > 5.0 && st.shortRate < base.shortRate,
+      s"at a 0.5% mean the floor share reads ${st.rateFloor} and the mean ${st.shortRate} (default ${base.shortRate})")
   }
 
   test("the up-day share counts moving sessions only") {
@@ -94,14 +143,14 @@ class RecordBandSuite extends FunSuite:
     assertEquals(MarketSim.seriesReadings(r), Vector(
       16.798312848172113, 17.02219625010289, -0.12963037209238956, 11.437126469063255,
       -0.022101390142453572, -0.012940593813227222, 0.7407002578651204, 29.603735914033912,
-      50.766666666666666, 0.025507720490428657, 16.8, -15.548714909190897))
+      50.766666666666666, 0.025507720490428657, 16.8, -15.548714909190897, -2.6641426084559097))
     assertEquals(MarketSim.yearVolPhaseMean(r), 16.862007639884688)
     val reads = MarketSim.recordResamples(r, 40, 7L)
     def med(v: Seq[Double]): Double = { val f = MarketSim.finiteSorted(v.toArray); f(f.length / 2) }
-    assertEquals((0 until 12).toVector.map(k => med(reads.map(_(k)))), Vector(
+    assertEquals((0 until 13).toVector.map(k => med(reads.map(_(k)))), Vector(
       16.78655352771039, 16.877627553056403, -0.16675076546846718, 11.388024993784173,
       -0.02498629581122743, -0.01046514345997916, 0.7513339475330946, 29.880494878185225,
-      50.63333333333333, 0.027222579780510212, 16.8, -26.478692229354827))
+      50.63333333333333, 0.027222579780510212, 16.8, -26.478692229354827, -3.036702249727999))
     assertEquals(MarketSim.recordBandQuantiles(reads.map(_(10))), Vector(
       8.4, 8.4, 8.4, 8.4, 8.4, 8.4, 8.4, 16.8, 16.8, 16.8, 16.8, 16.8, 16.8, 16.8, 16.8,
       16.8, 16.8, 16.8, 25.2, 25.2, 33.6, 33.6, 33.6))
@@ -194,12 +243,14 @@ class RecordBandSuite extends FunSuite:
   test("the exact percentile agrees with the verdict's inside the band and keeps a slope past it") {
     for (set, a) <- sets; b <- a.recordBands do
       val (lo, hi) = b.band
-      // interior points: at an edge the verdict's rule never rounds back inside
+      // interior points: at an edge the verdict's rule never rounds back inside -- and a band
+      // whose edge sits under half a percentile point from the resamples' end (the bond row's
+      // one-row family) bumps a reading just inside it by up to one point rather than half
       for k <- 1 until 40 do
         val x = lo + (hi - lo) * k.toDouble / 40.0
         val rounded = b.percentile(x).getOrElse(fail("a number places"))
         val exact = b.percentileExact(x)
-        assert(math.abs(exact - rounded) <= 0.5 + 1e-9, s"$set ${b.name}: $exact vs $rounded")
+        assert(math.abs(exact - rounded) <= 1.0 + 1e-9, s"$set ${b.name}: $exact vs $rounded")
       val span = b.q(22) - b.q(0)
       assert(b.percentileExact(b.q(22) + span) > 100.0, b.name)
       assert(b.percentileExact(b.q(0) - span) < 0.0, b.name)
