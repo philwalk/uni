@@ -1,6 +1,6 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
-//> using dep org.vastblue:uni_3:0.24.4
+//> using dep org.vastblue:uni_3:0.24.5
 import uni.data.*
 import uni.plot.*
 import java.awt.Color

@@ -1,7 +1,7 @@
 #!/usr/bin/env -S scala-cli shebang -Wunused:imports -Wunused:locals -deprecation
 
 //> using scala 3.7.0
-//> using dep org.vastblue:uni_3:0.24.4
+//> using dep org.vastblue:uni_3:0.24.5
 
 // THE REACHABILITY CHECK for the market simulator: can one small step of the searched dials move
 // the rows a world misses toward their bands without pushing any other row out of its band?  The
