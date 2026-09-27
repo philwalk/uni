@@ -505,7 +505,7 @@ class MarketSimContractSuite extends FunSuite:
 
   test("the satellite dials are inert in every frozen release") {
     for (v, w) <- MarketSim.Releases do
-      assert(w.satBeta == 0.0 && w.satIdio == 0.0,
+      assert(w.satBeta == 0.0 && w.satIdio == 0.0 && w.satCycleSd == 0.0,
         s"release $v predates the satellite leg and must carry 0 / 0")
     // The engagement contract's off half: no satellite series exists to consume, and no
     // logSat column is written (schema 8 makes the column conditional on the dial).
@@ -893,15 +893,15 @@ class MarketSimContractSuite extends FunSuite:
     // derived series at exactly the dials the shipped channel worlds run), the verdict world of a
     // channels-off world is that world with every channel at them and its primary untouched, a
     // channel the caller turned on keeps the caller's dials, and a null panel is graded as a real one
-    val sp = MarketSim.namedWorld("0.24.4-sp500-channels").get._1
-    val nq = MarketSim.namedWorld("0.24.4-nasdaq-basket").get._1
+    val sp = MarketSim.namedWorld("0.24.5-sp500").get._1
+    val nq = MarketSim.namedWorld("0.24.5-nasdaq-basket").get._1
     assertEquals(MarketSim.ChannelDials.of(sp), MarketSim.SP500Anchors.channelDials)
     assertEquals(MarketSim.ChannelDials.of(nq), MarketSim.NasdaqAnchors.channelDials)
     val d  = MarketSim.Defaults
     val vw = MarketSim.verdictWorld(MarketSim.SP500Anchors, d)
     assertEquals(MarketSim.ChannelDials.of(vw), MarketSim.Sp500ChannelDials)
     val c = MarketSim.ChannelDials.of(d)
-    assertEquals(vw.copy(satBeta = c.satBeta, satIdio = c.satIdio, rangeScale = c.rangeScale,
+    assertEquals(vw.copy(satBeta = c.satBeta, satIdio = c.satIdio, satCycleSd = c.satCycleSd, satDriftHalf = c.satDriftHalf, satLevelHalf = c.satLevelHalf, rangeScale = c.rangeScale,
                          rangeDown = c.rangeDown, volIdio = c.volIdio, overnight = c.overnight,
                          divYield = c.divYield, basket = c.basket, basketBeta = c.basketBeta,
                          basketSector = c.basketSector, basketIdio = c.basketIdio,
@@ -935,12 +935,13 @@ class MarketSimContractSuite extends FunSuite:
   // their companions read, and every release predates them.
   test("the rate and recession forms are absent when off and releases inherit that") {
     val off  = MarketSim.Defaults
-    val off2 = off.copy(recessSize = 9.9, recessLen = 0.1, recessRecover = 0.9, recessNews = 5.0)
+    val off2 = off.copy(recessSize = 9.9, recessLen = 0.1, recessRecover = 0.9, recessNews = 5.0, recessVol = 0.7)
     val a = MarketSim.simulate(off, 4, MarketSim.DefaultSeed)
     val b = MarketSim.simulate(off2, 4, MarketSim.DefaultSeed)
     assert(a.price.sameElements(b.price), "at rate 0 the recession's other dials must be inert, bit for bit")
     for (name, w) <- MarketSim.Releases do
-      assert(w.floorhold == 0.0 && w.recessRate == 0.0 && w.recessNews == 1.0 && w.volPull == 0.0 &&
+      assert(w.floorhold == 0.0 && w.recessRate == 0.0 && w.recessNews == 1.0 && w.recessVol == 0.0 &&
+             w.regimeDrift == 0.0 && w.spreadDd == 0.0 && w.volPull == 0.0 &&
              w.discountLag == 0.0, s"$name predates the forms and inherits their off values")
   }
 

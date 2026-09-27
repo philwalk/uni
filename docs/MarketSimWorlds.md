@@ -259,21 +259,28 @@ default; pass `-anchors sp500` or nothing) and `0.24.2-nasdaq.json` (174, seeded
 `worstRow` are that objective's readings. Every member of the three older sets starts at fair
 value, which the stationarity row now refuses, and those with a nonzero `bustAmp` run under the
 swing's ceiling and recovery rule; their `score` and `worstRow` predate all of it. The 0.24.4 set
-was searched under it. **The 0.24.5 sets** are the two to draw from now: `0.24.5-nasdaq.json` (40
+was searched under it. **The 0.24.5 sets** are the two to draw from now: `0.24.5-nasdaq.json` (37
 members seeded from `0.24.5-nasdaq`, member 0 the recipe itself) and `0.24.5-sp500.json` (24
 members seeded from `0.24.5-sp500`, member 0 the recipe). Their membership test is the verdict's own
 read on four fresh seeds at 200 paths × 100 years with every derived series and the macro panel
 graded: every member passes every class on all four, which 9 of the 150 members of `0.24.2-sp500.json`
 do under the same verdict (it predates the channels' grading; keep it for its worlds, not as a set).
 The set-level reading is each row's median over members and seeds beside the record and the share of
-reads that miss: on the Nasdaq set the short rate 1.7% and the floor share 31% (records 2.1% and 37%,
-1% and 0% of reads missing), both wings, valuation dispersion, d20 and the timing row inside their
-bands on at least 92% of reads, kurtosis 11.0 (9.6, 2%), and the two rows every member inherits from
-the recipe: the bubble coupling (100%) and the bond's growth rally 4.7 against 7.0 (48%). Against
-the 0.24.4 set member for member (each row's median member distance from its record, seed by seed)
-it is nearer on the rate rows, lag-20 clustering and bond vol, within tolerance on 21 rows and
-further on three: kurtosis and lag-1 clustering, spread inside their bands (2% and 0% of reads
-missing), and the bond's underwater share, the recipe's own move. On the S&P set
+reads that miss: on the Nasdaq set the timing row +0.1 (record +1.4; inside on every read), the short
+rate 1.8% and the floor share 30% (records 2.1% and 37%, 3% and 12% of reads missing), kurtosis 10.4
+(9.6, 5%), the up-day share 54.5 (54.8), lag-1 clustering 0.31 (0.29), the variance ratios 0.86 /
+0.83 / 0.96 (0.83 / 0.92 / 1.11), crashes 30 a century (25.6), the wings 7.0 / 6.2 (7.6 / 6.7), the
+bond's growth rally 5.2 against 7.0 (17%), and the bubble coupling the recipe's own miss. The set is
+the 37 members, of the 122 the search from the recipe admitted, that pass every class on four seeds
+AND read kurtosis, the up-day share, lag-1 clustering and the bond's inflation crash inside their
+bands on those seeds (44 pass the classes alone). With `-spreaddd` on every member, with the smoothing the Nasdaq recipe's `macro spread lag` reads -14..-17 on seeds 0-3 (-18..-20 before the term; band -24..56; the record's own +4..+12 on six episodes spanning -63..+70) and the set's reads -21..+2, none at the band; 30 of the 37 Nasdaq members pass every class on all four judge seeds and the other seven read the `macro oracle bound` above 0.030 on one to three seeds (the smoothed drawdown carries the price's own rebound predictability into the spread's forward R^2: the recipes read 0.014-0.024, the record's spread 0.0006, where the forward 60-session return's R^2 on the trailing-year drawdown itself is 0.018 on the NDX and 0.003 on the S&P against the worlds' medians 0.015 and 0.018 with a 5th-95th of 0.0001-0.15 across windows); on the S&P set 19 of 24, one member at the oracle bound on one seed and four failing the satellite d5 / d10 ratio rows with the term off as well (the satellite's relative cycle in the verdict's anchored leg, unresolved for them). On folio's acceptance test every member reads the
+record inside the 20th-80th percentiles on the two variance ratios and the correlation, and 20 of 37
+on the 200-day moving-average edge (median the 80th). Against the 0.24.4 set member for member
+(each row's median member distance from its record, seed by seed) it is nearer on eight rows (equity
+vol, lag-20 clustering, the timing row, valuation dispersion, bond vol, the bond's growth rally and
+both rate rows), within tolerance on 13 and further on seven: the typical year, kurtosis, lag-1
+clustering, median depth, the tail hedge, d20 and the bond's underwater share, each inside its band.
+On the S&P set
 the short rate 4.2% and the floor share 8.2% (4.6% / 14.6%; 0% and 2%), the bond rows inside on at
 least 97% of reads, and the S&P's standing misses carried by every member: d20 2.55 (100%), the upper
 wing 1.6 against 7.6 (92%), the lower wing 3.8 against 6.7 (66%), the up-day share 53.6 against 55.0
@@ -759,12 +766,13 @@ way every Treasury shares. That needs an asset class the bands did not come from
 
 `-noise` asks where the record falls among the model's histories. The record bands ask the reverse:
 where the model falls among the histories the record itself could have produced. Every row one
-daily record can be read the model's way — sixteen on each set: volatility, the typical year, return
-per volatility, kurtosis, both clustering lags, the 60-day variance ratio, the downside excess, the
-up-day share, leverage corr, the crash rate, median depth, the volatility-timing edge, the short
-rate's mean and time at the floor, and the bond's underwater share against its volatility — carries
+daily record can be read the model's way — eighteen on each set: volatility, the typical year, return
+per volatility, kurtosis, both clustering lags, the variance ratio at 60, 120 and 250 sessions, the
+downside excess, the up-day share, leverage corr, the crash rate, median depth, the volatility-timing
+edge, the short rate's mean and time at the floor, and the bond's underwater share against its
+volatility — carries
 the record's reading and its spread over 20,000 moving one-year-block resamples of that record
-(`test-data/equity-anchors/recordbands-2026-09-25.tsv`: QQQ 1999-2026 for the Nasdaq set, CRSP
+(`test-data/equity-anchors/recordbands-2026-09-26.tsv`: QQQ 1999-2026 for the Nasdaq set, CRSP
 1954-2026 for the S&P set, the century for its clustering rows, the federal funds rate over each
 set's own window for the rate rows, and TLT's 24 years for the bond row). `-validate` prints where the model
 falls among the resamples and the row's band, and the row misses outside it:
@@ -791,6 +799,7 @@ beside it:
 | row | target | record | why |
 |---|---|---|---|
 | variance ratio 60d | 1.00 | QQQ 0.83, CRSP 1.01 | a theory value: the model has no mean-reversion channel |
+| variance ratio 120d, 250d | 1.00 | QQQ 0.92, 1.11; CRSP 1.03, 1.03 | the same theory value at three times the 60-day row's weight; the verdict reads each against its record band |
 | S&P equity vol % | 16.0 | 15.68 | a literal older than the fixture |
 | S&P kurtosis | 28 | 21.8 | the century's, on a row read over 1954-2026 |
 | S&P crashes/century | 20.7 | 24.9 | between the century's 19.2 and 1954-2026's 24.9 |
@@ -830,8 +839,8 @@ carry gap folio measured on the Nasdaq worlds (a 3x fund paying about 7 points a
 TQQQ did) is this row. The shipped worlds read 4.8% (S&P) and 5.6% (Nasdaq) with no session at
 the floor: the rate cannot go below zero, but chasing a 4.2% mean it never gets near it. The
 floor share is priced as an additive row, since a log ratio of a share that reads zero prices
-nothing but the zero. `0.24.5-nasdaq`, the Nasdaq recipe re-solved under it, reads 1.9% and 31%
-(inside both bands on every one of 32 seeds) with the floor held while the market is in its drawdown
+nothing but the zero. `0.24.5-nasdaq`, the Nasdaq recipe re-solved under it, reads 2.0% and 30%
+(inside both bands on every one of 33 seeds) with the floor held while the market is in its drawdown
 (`-floorhold`) and a recession following stress (`-recessrate`); `0.24.5-sp500`, the channels
 recipe re-solved under it, reads 4.4% and 7.5% (records 4.6% and 14.6%, inside both bands on every
 seed) with the floor held and the rate mean at 6%; the shipped S&P default's rate level is inside
@@ -932,6 +941,9 @@ with it.
 | `-refugedays` | half-life in sessions of the settled stress the refuge bid reads — excludes the current session, which kills the same-day stock-bond coupling while the crisis rally keeps the level; 0 reads live stress | 1 |
 | `-satbeta` | the satellite equity leg (the Nasdaq to the default world's S&P): beta on the primary's OBSERVED return, plus idio noise riding the primary's full vol state — which is what keeps the pair's correlation state-flat, as the record's is. When on, `-emit` adds a `logSat` column. Anchored 1.2 on SPY–QQQ 1999–2026; NOT searchable, like `-duration` | 0 (off) |
 | `-satidio` | the leg's idiosyncratic vol as a FRACTION of the primary's realized volatility, riding the primary's vol state; the anchored 0.77 lands correlation 0.853 and vol ratio 1.41 on the default world, on the `-anchors nasdaq` recipe, and on a kurtosis-61 world alike | 0 |
+| `-satcyclesd` | THE SATELLITE'S RELATIVE CYCLE: a persistent relative drift (innovations this many log a session, from the cycle's own stream; half-life `-satdrifthalf` years) integrated into a relative level that reverts at `-satlevelhalf` years, added to the leg's return. Read as the `satellite rel-trend` rows: the autocorrelation of successive non-overlapping 63-, 126- and 252-session changes of log(satellite/primary), QQQ/SPY 1999-2026 +0.05, +0.18, −0.29; bands the record's own one-year-block resamples. At 0.0003 / 0.2 / 0.5 (`0.24.5-sp500`, `0.24.5-nasdaq-basket`, the verdict's anchored leg) the record sits at the worlds' 20th, 79th and 18th percentiles on 80 record-length paths, against the 73rd, 91st and 5th with beta-plus-noise alone; the leg's other rows are unmoved. 0 is off and bit-identical | 0 (off) |
+| `-satdrifthalf` | the relative drift's half-life in years; inert at `-satcyclesd` 0 | 0.25 |
+| `-satlevelhalf` | the relative level's half-life in years; inert at `-satcyclesd` 0 | 0.8 |
 | `-rangescale` | intra-bar high/low, sampled per session from the exact Brownian-bridge extremes at the session's own vol state re-levelled onto the world's realized volatility, times this dial — the range scales with the session's noise, not with \|return\|, which is what makes it detectably real (record corr(lnH/L, \|r\|) is only 0.70–0.72). Anchored 0.63 on SPY/QQQ OHLCV (0.78 with `-overnight` on, the intraday haircut made explicit), and it reads the same bar-to-ccvol ratio at any world; adds `logHigh`/`logLow` to `-emit`. NOT searchable | 0 (off) |
 | `-rangedown` | same-session sign↔vol coupling on the bar: down sessions get (1+X) the bridge sigma, up sessions 1/(1+X). Anchored 0.09 (0.13 with `-overnight` on, where it reads the intraday return), which puts BOTH the range's down/up (1.14 vs 1.109–1.142) and volume's down-up gap (0.097 vs 0.094–0.098) on the intraday rulers. Requires `-rangescale` | 0 |
 | `-volidio` | log turnover index riding the range: elasticity 0.59 to the range's deviation from its slow normal (frozen from the measured regression) plus a two-component persistent idio whose total sd is this dial (anchored 0.34). Requires `-rangescale`; adds `logVolume` to `-emit`. NOT searchable | 0 |
@@ -939,8 +951,8 @@ with it.
 | `-overnight` | THE OPEN: the overnight share of the session's diffusive variance (0 ≤ X < 1). The open is the bridge point at that share of the session, with the session's news jump and jump-channel move landing overnight whole and the whole move becoming the gap when it overshoots the session on its own side; the bar then runs from the open over the remaining variance and the sign coupling reads the intraday return. `-emit` gains `logOpen`, and `logHigh`/`logLow` bracket the open and the close. Anchored 0.20 on the S&P default and 0.22 on the Nasdaq recipe against the record's overnight variance shares 0.33 / 0.28 (`bars-2026-09-01.tsv`, graded when on); the bar dials re-anchor with it, `-rangescale 0.78 -rangedown 0.13`, since the intraday bridge carries less of the session | 0 (open = prior close) |
 | `-basket` | THE BASKET: N single names as observational second-pass instances of the primary — each the shared sector leg (`-basketbeta` on the primary's observed return plus `-basketsector` idio riding the vol state × spiral, the satellite's construction) plus its own idio (`-basketidio`, riding the vol state WITHOUT the spiral, so shared variance dominates in stress and pairwise correlation rises) and its own gaps (`-basketgaps` per year, Student-t jumps of a frozen 9% size, SYMMETRIC — the down-skew belongs to the index and reaches names through the shared leg). The equal-weight aggregate (buy-and-hold, never rebalanced) is the sector, graded against the eight's basket on the set's own primary; `-emit` gains `logBasket` and `logName1..N`. Anchored N 8, beta 1.56, sector 1.1, idio 0.9, gaps 6.0 on folio's eight semiconductor names under SMH 2012–2026 (`basket-2026-09-02.tsv`); `-atrelease 0.24.0-basket` names the default with it on (`0.23.1-basket` the 0.23.1 world). The dials do NOT transport to the Nasdaq set — 8 / 1.37 / 0.7 / 0.85 / 8.0 there, which `-atrelease 0.24.0-nasdaq-basket` names | 0 (off) |
 | `-basketdrift` | CROSS-SECTIONAL DRIFT DISPERSION: the sd of the names' own annual log-drift offsets, as a fraction of the primary's realized volatility, drawn once per name per path and centred exactly so the sector's log drift is untouched. Moves the SPREAD of time below peak across names, not its median. **Anchored at 0** and off in every recipe: the record cannot supply a positive value (below) | 0 (off) |
-| `-macro` | THE MACRO PANEL: 1 emits seven observables derived from the model's own state after the price loop — `macroSpread` (BAA10Y: equity + bond stress, fast and credit-cycle slow), `macroSlope` (T10Y2Y: the 10y−2y expectation the rate process implies; the one anchored-scale member), `macroCond` (NFCILEVERAGE: the leverage cycle's ratio + the crowd share, raw), `macroIvol` (VIXCLS: the conditional sd re-levelled onto the world's realized vol, × the record's variance risk premium) — each a persistent-noise read sized to the record's predictive R² — and five draw-free levels, `macroYield10` (DGS10: the 10-year the slope is a difference of), `macroPolicy` (DFF: the loop's own policy rate, re-set at a meeting to the nearest quarter point and held), and the credit system: `macroBankCredit` (TOTBKCR) and `macroOutput` (GDP) as indices with `macroCredit` (TOTBKCR/GDP, percent) the ratio they imply. No scale dials: a rank-reading consumer cannot see scale. Cadence, release lag and revisions are the consumer's point-in-time layer. Reaches no price; graded when on ([below](#the-macro-panel--macro)) | 0 (off) |
-| `-macronull` | THE NULL PANEL: 1 takes the four macro columns from a SIBLING path — the same world at another seed — so their marginals and persistence are this world's and their coupling to this path's price is nil: the no-edge comparison for a rule that reads them. The macro rows do not grade a null panel; the sidecar lists its columns as ungraded. Needs `-macro 1`; one extra price loop per path | 0 (the path's own panel) |
+| `-macro` | THE MACRO PANEL: 1 emits seven observables derived from the model's own state after the price loop — `macroSpread` (BAA10Y: equity + bond stress, fast and credit-cycle slow), `macroSlope` (T10Y2Y: the 10y−2y expectation the rate process implies; the one anchored-scale member), `macroCond` (NFCILEVERAGE: the leverage cycle's ratio + the crowd share, raw), `macroIvol` (VIXCLS: the conditional sd re-levelled onto the world's realized vol, × the record's variance risk premium) — each a persistent-noise read sized to the record's predictive R² — and five draw-free levels, `macroYield10` (DGS10: the 10-year the slope is a difference of), `macroPolicy` (DFF: the loop's own policy rate, re-set at a meeting to the nearest quarter point and held), and the credit system: `macroBankCredit` (TOTBKCR) and `macroOutput` (GDP) as indices with `macroCredit` (TOTBKCR/GDP, percent) the ratio they imply. No scale dials but the spread's drawdown term (`-spreaddd`, read off the record): a rank-reading consumer cannot see scale. Cadence, release lag and revisions are the consumer's point-in-time layer. Reaches no price; graded when on ([below](#the-macro-panel--macro)) | 0 (off) |
+| `-macronull` | THE NULL PANEL: 1 takes the four macro columns from a SIBLING path — the same world at another seed — so their marginals and persistence are this world's and their coupling to this path's price is nil: the no-edge comparison for a rule that reads them. The macro rows do not grade a null panel; the sidecar lists its columns as ungraded. 2 is THE PAIRED CONTROL (folio's request 5): the path's own panel as at 0, graded, and the sibling's beside it as nine `nullMacro*` columns, ungraded, so the no-edge comparison rides in the same file instead of a second emit of every world. Needs `-macro 1`; one extra price loop per path at 1 or 2 | 0 (the path's own panel) |
 | `-inflsize` | size of an inflation regime's rate-pressure target | 0.10 |
 | `-ratemean` | the level the policy rate chases between regimes, as a decimal; the realised mean adds the inflation pressure's mean and subtracts the accommodation's, and the floor at zero binds once it is low. Searched, graded by `short rate %` and `rate floor share %` against the set's own federal-funds window | 0.042 |
 | `-floorhold` | THE FLOOR HOLDS: while the equity's drawdown from its running peak exceeds this (log units), the policy accommodation does not unwind, so a rate the easing took to zero stays there until the market has recovered. The record held the floor for 7 and 2 years after 2008 and 2020 and lifted off 1.5-2.5 years after the pre-crash high was regained; at 0 the accommodation unwinds at `-unwind` from the moment stress fades and the floor is touched for days. Draw-free; the Nasdaq re-solve runs 0.05 with `-easing 0.08` | 0 |
@@ -949,6 +961,9 @@ with it.
 | `-recesslen` | the recession's length in years; the recovery leg regains `-recessrecover` of the fall over twice this | 1.5 |
 | `-recessrecover` | the share of the recession's fall regained; the rest is permanent | 0.5 |
 | `-recessnews` | the news channel's event rate, and its compensator with it, multiplied while a recession runs (zero-mean; the news stream's draws are unchanged). 1 is off; probed to no gain | 1 |
+| `-recessvol` | THE RECESSION'S VOL: the log of the multiplier the diffusive noise, the session's sd and the vol state the channels and the macro panel read all take while a recession runs, compounded on the credit regime's: the earnings decline runs inside a turbulent spell, as 2000-02 (40%+ for two and a half years) and 2008 did, so the decline sits in the sessions a volatility rule is in cash. 0 is off and bit-identical; searched | 0 (off) |
+| `-regimedrift` | THE REGIME'S DRIFT: while a credit-regime spell runs, the real fundamental and the price fall together by this times the spell's level per session, repriced the same session so the value pull does not buy it back. The regime was a zero-mean turbulent spell; the record's turbulent spells (2000-02, 2008, 2022) were declines, which is what a rule that steps out on volatility earns from. The return it costs is re-solved by `-drift`, the floor time it adds by `-ratemean`. 0 is off and bit-identical; searched | 0 (off) |
+| `-spreaddd` | THE MACRO SPREAD'S DRAWDOWN TERM: `macroSpread` carries this times the log drawdown from the trailing-year high, pp per unit — the persistent level a credit spread holds while equity is under water. Read off the record per recipe, not solved through a row: BAA10Y's level over its window median inside drawdown bins against the recipe's own index reads 0.55 / 0.77 / 2.06 / 3.44 pp at 10-20 / 20-30 / 30-50 / 50%+ on the S&P 1990-2026 (BAA-AAA monthly 1926-2026: 0.40 / 0.49 / 0.97 / 2.72) and 0.09 / 0.44 / 0.84 / 1.42 on the NDX, where the stress terms alone read a third of that; the fast response to realized vol was already the record's (convexity 4.0 against the worlds' 3.4 [1.4, 6.4]). `0.24.5-sp500` 3.0, `0.24.5-nasdaq` 1.5, at which every bin reads inside the worlds' 5th-95th; the term is smoothed at a 10-session half-life because the record's spread FOLLOWS the price: after a 10-session fall of 10% BAA10Y has risen 0.03 pp the same session, 0.14 five sessions on, 0.21 at ten, 0.29 at twenty and 0.24 at forty (S&P), and its 10-session change correlates most with the return ending five sessions earlier (-0.44 at -5, -0.29 at -10); with the smoothing the worlds' shock response reads 0.16 / 0.28 / 0.34 / 0.37 / 0.25 and the change's price-driven share 0.40 against the record's 0.22 (0.58 unsmoothed, 0.32 without the term). Reaches no price; 0 is off and bit-identical; not searched | 0 (off) |
 | `-volpull` | THE REBOUND WAITS FOR VOL TO SUBSIDE: the value pull's damp is divided by 1 + this x (the spiral's fast realized sd over its four-year level, less 1, floored at 0), so a gap opened in a high-volatility decline is bought back as volatility settles. What a volatility-timing rule's cash sessions inside a recovery leg return: +18 bp on the record, +27 in the worlds. 0 is off | 0 |
 | `-discountlag` | the rate the equity's markdown reads is an EWMA of the policy rate at this horizon in years. 0 is off, and the right setting: a lag removes the equity's fall WITH a rate rise, and with it the inflation-regime episodes the bond's inflation crash is read in | 0 |
 | `-discountref` | the level the markdown measures the rate from is an EWMA of the rate at this horizon in years instead of `-ratemean`. 0 is off; probed to no effect on the wings | 0 |
@@ -1229,7 +1244,7 @@ per century, median depth −22.8%, worst −83.0%.
 
 **The typical year — `typical-year vol %`.** Pooled volatility cannot tell an ordinary year from an
 episode, so beside it both sets grade the median-year vol, averaged over all 252 block phases
-(`recordbands-2026-09-25.tsv`): 20.0% for QQQ, 12.5% for CRSP from 1954, each with a gate band one
+(`recordbands-2026-09-26.tsv`): 20.0% for QQQ, 12.5% for CRSP from 1954, each with a gate band one
 sd of the row's own single-history spread wide (16.4-23.6 and 10.9-14.1). One series' median year
 depends on where its years start — QQQ's reads 18.2 to 21.5 across the phases, and calendar years
 sit at the bottom (18.3) — while a model ensemble averages the phase away, so the anchor has to as
@@ -1515,7 +1530,7 @@ bit-identical.
 
 | column | counterpart | reads | draws |
 |---|---|---|---|
-| `macroSpread` | BAA10Y, pp | equity and bond stress: the fast index plus a ~400-session credit cycle, plus a credit-market factor as slow as the level itself | one normal per session |
+| `macroSpread` | BAA10Y, pp | equity and bond stress: the fast index plus a ~400-session credit cycle, plus the drawdown from the trailing-year high times `-spreaddd` (the level a spread holds while equity is under water, read off the record), plus a credit-market factor as slow as the level itself | one normal per session |
 | `macroSlope` | T10Y2Y, pp | the 10y minus the 2y yield the rate process implies — each the OU-expected average of the short rate over its horizon, decaying to the policy target at `rateSpeed`, the target's inflation term at the regime's mean life and its accommodation at `unwind`, plus a 1.0 pp term premium. The same path prices the bond, so the slope cannot contradict the `bond` column, and it inverts when policy is tight against neutral: derived, never synthesized | none |
 | `macroCond` | NFCILEVERAGE, raw index | the leverage cycle's ratio — the borrowing stock over the equity securing it, the drawdown smoothed over 21 sessions — over its mean, plus the trend crowd's capital share over its home | one normal |
 | `macroIvol` | VIXCLS, annualized % | the session's conditional sd (vol state, the spiral's amplification discounted to its 21-session average) re-levelled onto the world's realized volatility by the bar channels' `k`, times the record's variance risk premium e^0.28 | one normal |
@@ -1528,7 +1543,8 @@ bit-identical.
 Three design decisions carry the rest. **No scale dials**: every consumer vote is a percentile
 rank against trailing history or a sign, so a column's scale is invisible to it, and each map is
 a literal in its counterpart's units, disclosed as unanchored the way `-ddshape` ships ungated;
-the slope, in rate units the model anchors, is the exception and is graded absolutely.
+the slope, in rate units the model anchors, is the exception and is graded absolutely, and the
+spread's drawdown term (`-spreaddd`) is read off the record rather than left to a literal.
 **Lossy by design**: `liq`, `bliq` and `fundamental` remain oracle columns no rule may read; each
 noisy member carries a persistent measurement component (an AR(1) — a real spread carries its
 own market's factors, which a white error could not mimic without collapsing the level's
@@ -1795,6 +1811,45 @@ on every seed; d10 (1.27 → 1.21) and d20 (2.59 → 2.27) are nearer on every o
 against its vol (1.25 → 1.29) is further on 28. Range vs close-to-close vol 1.13-1.15, down/up
 1.15; basket corr 0.81-0.82, beta 1.56, vol ratio 1.90-1.93, names 2.4x, gaps 2.4-2.6/yr. It is
 the S&P world to pin in place of `0.24.1-macro` and `0.24.1-basket`.
+
+**`0.24.5-nasdaq` is the recipe re-solved for the timing structure, the long end and the short
+rate**: `0.24.4-nasdaq` re-solved by the search under the graded 120- and 250-day variance ratios,
+then seven dials set by hand on the rulers. A recession follows stress at 1.5 a year per unit
+stress (6 a century; the record's 27 years hold three), its 0.48-log earnings decline over 1.5
+years running inside a turbulent spell (`-recessvol` 0.5); the credit regime carries a decline
+(`-regimedrift` 0.0005) at a lower amplitude (`creditRegime` 0.6); the value pull is 0.08; the
+drift 13.5% and the rate mean 4.5% re-solve the return and the floor time those cost; the floor is
+held while the market is more than 3.9% under its peak and the rebound is damped by realized vol
+(`-volpull` 0.82). The record's turbulent stretches were declines and the worlds' were zero-mean
+spells, which is why every rule that steps out on volatility read a loss in the worlds and a gain
+on the record. On 33 seeds (0 to 32) at 200 paths × 100 years every class passes on 32 (seed 19's
+credit-spread lag reads one session under its band's −24), no row is further from its record than
+`0.24.4-nasdaq`'s beyond seed noise toward a band edge, and every row reads inside its band on
+every seed but the bubble coupling: the timing row +0.6 (0.0 to +1.3 across seeds; record +1.4;
+`0.24.4-nasdaq` −2.2), the 60-, 120- and 250-day variance ratios 0.89 / 0.90 / 1.04 (records 0.83
+/ 0.92 / 1.11), crashes 28 a century (25.6; `0.24.4-nasdaq` 31), the wings 6.3 / 6.2 (7.6 / 6.7),
+the short rate 2.0% at the floor 30% of sessions (records 2.1% and 37%; `0.24.4-nasdaq` 4.7% and
+never at the floor), the bond's growth rally 6.2 (7.0; a miss on every seed of `0.24.4-nasdaq`),
+return per vol 0.32 (0.38), kurtosis 11.0 (9.6), d20 1.27. On 128 paths of the record's 27 years
+the QQQ record sits at the worlds' 55th percentile on the 126-day variance ratio, 55th on the
+250-day, 48th on the 12-month-to-1-month return correlation and 66th on the 200-day moving-average
+edge (`0.24.4-nasdaq`: 73rd, 77th, 73rd, 84th). On folio's production rule, run with folio's own
+scripts on 128 histories of `0.24.5-nasdaq-basket`, the timing rung (the rule's in/out signal at
+1x, points a year over buy-and-hold) has a median of −0.2 with the record's +4.1 above 88% of the
+histories; `0.24.4-nasdaq-basket` read −2.2 with the record above 98%. The Nasdaq anchor set's
+spreads are frozen at this world. It is member 0 of `test-data/worlds/0.24.5-nasdaq.json`, the set
+searched from it, byte for byte.
+
+**`0.24.5-nasdaq-basket`** is `0.24.5-nasdaq` with the basket at `0.24.4-nasdaq-basket`'s dials and
+the satellite's relative cycle (`-satcyclesd` 0.0003, `-satdrifthalf` 0.2, `-satlevelhalf` 0.5);
+the Nasdaq basket world to pin in place of `0.24.4-nasdaq-basket`.
+
+**`0.24.5-sp500`** is `0.24.4-sp500-channels` with the floor held while the market is more than 5%
+under its peak, the cut at 9 points and the rate mean at 6%, and the satellite's relative cycle at
+the same dials: every class on 31 of 32 seeds (seed 23's variance-ratio profile, which the channels
+recipe fails too), no row regressed; the short rate 4.4% and the floor share 7.5% (records 4.6% and
+14.6%, inside on every seed). It is member 0 of `test-data/worlds/0.24.5-sp500.json` and the S&P
+world to pin in place of `0.24.4-sp500-channels`.
 
 ## The bust swing — `-bustamp`
 

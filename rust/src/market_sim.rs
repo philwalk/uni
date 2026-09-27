@@ -209,7 +209,11 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 // level the verdict's channels were sampled at. `gradedSeries` keeps its meaning: the columns in
 // THIS file the verdict graded. In the same schema `world` gained `boomRate`, `boomSize` and
 // `boomLen` (the boom regime, 0 in every shipped world), and `gate.fidelity` two rows.
-const EMIT_SCHEMA: u32 = 19;
+// 19 -> 20: `-macronull 2` carries BOTH panels: the path's own nine macro columns, graded as at
+// `-macronull 0`, and the sibling's beside them as `nullMacro*` (`macro_k::NULL_COLUMNS`, listed
+// under `ungradedChannelSeries`) -- folio's paired control in one pass, where before the null
+// panel meant a second emit of every world. `world` gained the satellite's three cycle dials.
+const EMIT_SCHEMA: u32 = 20;
 
 /// Frozen structural constants of the volume channel — see the `vol_idio` field. Measured
 /// from the SPY/QQQ volume-on-range regression (`bars-2026-09-01.tsv`, whose rows the
@@ -553,6 +557,9 @@ pub fn default_world() -> World {
         recess_len: 1.5,
         recess_recover: 0.5,
         recess_news: 1.0,
+        recess_vol: 0.0,
+        regime_drift: 0.0,
+        spread_dd: 0.0,
         boom_rate: 0.0,
         boom_size: 1.0,
         boom_len: 2.5,
@@ -615,6 +622,9 @@ pub fn default_world() -> World {
         refuge_days: 1.0,
         sat_beta: 0.0,
         sat_idio: 0.0,
+        sat_cycle_sd: 0.0,
+        sat_drift_half: 0.25,
+        sat_level_half: 0.8,
         range_scale: 0.0,
         range_down: 0.0,
         vol_idio: 0.0,
@@ -754,6 +764,9 @@ fn v0_19_2() -> World {
         refuge_days: 0.0,
         sat_beta: 0.0,
         sat_idio: 0.0,
+        sat_cycle_sd: 0.0,
+        sat_drift_half: 0.25,
+        sat_level_half: 0.8,
         range_scale: 0.0,
         range_down: 0.0,
         vol_idio: 0.0,
@@ -804,6 +817,9 @@ fn v0_19_2() -> World {
         recess_len: 1.5,
         recess_recover: 0.5,
         recess_news: 1.0,
+        recess_vol: 0.0,
+        regime_drift: 0.0,
+        spread_dd: 0.0,
         boom_rate: 0.0,
         boom_size: 1.0,
         boom_len: 2.5,
@@ -896,6 +912,9 @@ fn v0_24_1() -> World {
         recess_len: 1.5,
         recess_recover: 0.5,
         recess_news: 1.0,
+        recess_vol: 0.0,
+        regime_drift: 0.0,
+        spread_dd: 0.0,
         boom_rate: 0.0,
         boom_size: 1.0,
         boom_len: 2.5,
@@ -917,6 +936,9 @@ fn v0_24_1() -> World {
         refuge_days: 1.0,
         sat_beta: 0.0,
         sat_idio: 0.0,
+        sat_cycle_sd: 0.0,
+        sat_drift_half: 0.25,
+        sat_level_half: 0.8,
         range_scale: 0.0,
         range_down: 0.0,
         vol_idio: 0.0,
@@ -1147,7 +1169,7 @@ pub fn recipes() -> Vec<(&'static str, World, &'static str)> {
     let (sp_vr, nq_vr, basket_vr, nq_basket_vr) = recipes_0241(open, basket, nq_basket);
     let nq_searched = recipe_0242_nasdaq(nq_vr);
     let nq_0244 = recipe_0244_nasdaq(recipe_0243_nasdaq(nq_searched));
-    vec![
+    let mut rows = vec![
         ("0.23.0-nasdaq", nasdaq, "nasdaq"),
         ("0.23.1-nasdaq", open, "nasdaq"),
         ("0.23.1-basket", basket, "sp500"),
@@ -1173,7 +1195,20 @@ pub fn recipes() -> Vec<(&'static str, World, &'static str)> {
             recipe_0244_sp500_channels(v0_24_4()),
             "sp500",
         ),
+    ];
+    rows.extend(rows_0245(nq_0244));
+    rows
+}
+
+/// The 0.24.5 recipes (unreleased).
+fn rows_0245(nq_0244: World) -> Vec<(&'static str, World, &'static str)> {
+    vec![
         ("0.24.5-nasdaq", recipe_0245_nasdaq(nq_0244), "nasdaq"),
+        (
+            "0.24.5-nasdaq-basket",
+            recipe_0245_nasdaq_basket(recipe_0245_nasdaq(nq_0244)),
+            "nasdaq",
+        ),
         (
             "0.24.5-sp500",
             recipe_0245_sp500(recipe_0244_sp500_channels(v0_24_4())),
@@ -1196,31 +1231,115 @@ fn recipe_0245_sp500(mut w: World) -> World {
     w.floorhold = 0.05;
     w.easing = 0.09;
     w.rate_mean = 0.06;
+    w.spread_dd = 3.0;
+    sat_cycle_0245(&mut w);
     w
 }
 
-/// THE NASDAQ RECIPE RE-SOLVED FOR THE SHORT RATE (items 33-34, unreleased): `0.24.4-nasdaq` with
-/// the policy rate at a 3.5% mean, the record's cut size and the floor held while the market is
-/// more than 5% under its peak (`floorhold`), a recession following stress at half a year per
-/// unit stress (a 0.4-log earnings decline over 1.5 years, 0.7 of it regained), and the
-/// rebound damped by realized vol (`vol_pull` 1). On 32 seeds at 200 x 100 every class passes
-/// and no row regresses against `0.24.4-nasdaq` on fresh seeds: the short rate reads 1.9% at
-/// the floor 31% of sessions (the record 2.1% and 37%, both inside their bands on every seed)
-/// where the shipped recipe read 4.7% and never at the floor; the bond's inflation crash on the
-/// record, its growth rally 4.5 (record 7.0; a miss on 25 seeds where the recipe missed on all),
-/// its underwater share at the 74th percentile of TLT's own resamples; the timing row -2.6 (19th
-/// percentile of its band; the recipe -2.2); the bubble coupling still the record's miss (item
-/// 32: the boom regime stays a dial at 0, its lineages failing the variance-ratio and bond
-/// gates). The dials the search did not touch are the shipped recipe's.
+/// THE SATELLITE'S RELATIVE CYCLE at its adopted values (folio's request 2; see `sat_cycle_sd`):
+/// innovations 0.0003 log a session, the relative drift's half-life 0.2 years, the level's 0.5.
+/// On 80 paths of the record's 27 years the QQQ/SPY record's relative-trend readings sit at the
+/// worlds' 20th (63 sessions), 79th (126) and 18th (252) percentiles, against the 73rd, 91st and
+/// 5th without the cycle; the leg's correlation, beta, vol ratio and the rest of its rows are
+/// unmoved (corr 0.855-0.860, beta 1.200, vol ratio 1.40). The verdict's anchored satellite
+/// (`ChannelDials`) runs it for both sets, and every recipe from 0.24.5 that carries the leg.
+fn sat_cycle_0245(w: &mut World) {
+    w.sat_cycle_sd = 0.0003;
+    w.sat_drift_half = 0.2;
+    w.sat_level_half = 0.5;
+}
+
+/// THE NASDAQ BASKET on the 0.24.5 recipe: `0.24.5-nasdaq` with the basket at `0.24.4-nasdaq-
+/// basket`'s dials and the satellite's relative cycle. The Nasdaq basket world to pin in place
+/// of `0.24.4-nasdaq-basket`.
+fn recipe_0245_nasdaq_basket(mut w: World) -> World {
+    w = recipe_0244_nasdaq_basket(w);
+    sat_cycle_0245(&mut w);
+    w
+}
+
+/// THE NASDAQ RECIPE RE-SOLVED FOR THE TIMING STRUCTURE, THE LONG END AND THE SHORT RATE (items
+/// 33-34, folio's requests 1 and 3; unreleased): search-v111's member 2 with seven dials set by
+/// hand on the rulers. The recession's hazard at 1.5 a year per unit stress (6 a century where the
+/// record's 27 years hold three) with its vol at 0.5 (`recess_vol`: the earnings decline runs
+/// inside a turbulent spell), the credit regime carrying a decline (`regime_drift` 0.0005) at a
+/// lower amplitude (0.6), the value pull at 0.08, the drift at 13.5% and the rate mean at 4.5% to
+/// re-solve the return and the floor time those cost; the other literals the archive's. On 33
+/// seeds (0-32) at 200 x 100 every class passes on 32 (seed 19's credit-spread lag reads a
+/// session under its band's -24), no row regresses against `0.24.4-nasdaq` on fresh seeds, and
+/// every row reads inside its band on every seed but the bubble coupling: the timing row +0.6
+/// (0.0 to +1.3; record +1.4, inside), the 60-, 120- and 250-day variance ratios 0.89 / 0.90 /
+/// 1.04 (records 0.83 / 0.92 / 1.11), crashes 28 a century (25.6), the wings 6.3 / 6.2 (7.6 /
+/// 6.7), the short rate 2.0% at the floor 30% of sessions (2.1% / 37%), the bond's growth rally
+/// 6.2 (7.0), return per vol 0.32 (0.38), kurtosis 11.0 (9.6), d20 1.27. folio's acceptance —
+/// the record between the worlds' 20th and 80th percentiles on 128 record-length paths — reads
+/// the 55th (126-day variance ratio), 55th (252-day), 48th (the 12-month-to-1-month return
+/// correlation) and 66th (the 200-day moving-average edge); `0.24.4-nasdaq` read the 73rd, 77th,
+/// 73rd and 84th. On folio's production rule the worlds' timing rung reads -0.2 a year (median of
+/// 128 histories; +4.1 on the record, above 88% of them) where `0.24.4-nasdaq`'s read -2.2 with
+/// the record above 98%.
 fn recipe_0245_nasdaq(mut w: World) -> World {
-    w.rate_mean = 0.035;
-    w.easing = 0.08;
-    w.floorhold = 0.05;
-    w.recess_rate = 0.5;
-    w.recess_size = 0.4;
-    w.recess_len = 1.5;
-    w.recess_recover = 0.7;
-    w.vol_pull = 1.0;
+    w.trend_share = 0.16206258;
+    w.depth = 11.97807;
+    w.stress = 3.1245814;
+    w.drift = 0.135;
+    w.fund_vol = 0.03;
+    w.rate_mean = 0.045;
+    w.vol_of_vol = 0.019782185;
+    w.leverage = 0.11956591;
+    w.down_shock = 0.0094028421;
+    w.jump_skew = 0.40181632;
+    w.jump_var = 0.0067042998;
+    w.jump_rate = 0.0056657937;
+    w.news_rate = 22.102562;
+    w.news_size = 0.012917498;
+    w.news_lev = 49.640883;
+    w.news_revert = 0.59741761;
+    w.news_bond = 0.35948657;
+    w.news_bond_skip = 0.080650603;
+    w.credit_regime = 0.6;
+    w.credit_regime_rate = 15.106269;
+    w.slow_bond_infl = 0.84637482;
+    w.noise_skew = 0.23516287;
+    w.news_flip = 0.4557323;
+    w.value_pull = 0.08;
+    w.recovery_drag = 8.1555265;
+    w.recovery_floor = 0.10284597;
+    w.disaster_rate = 0.5212816;
+    w.disaster_size = 1.7951989;
+    w.disaster_recover = 0.6720218;
+    w.boom_rate = 2.2744563;
+    w.boom_size = 0.96101399;
+    w.boom_len = 2.2377797;
+    w.recess_rate = 1.5;
+    w.recess_size = 0.48366137;
+    w.recess_len = 1.5265747;
+    w.recess_recover = 0.59055711;
+    w.recess_news = 1.2461308;
+    w.recess_vol = 0.5;
+    w.regime_drift = 0.0005;
+    w.spread_dd = 1.5;
+    w.vol_pull = 0.81869132;
+    w.belief_share = 0.61313134;
+    w.belief_years = 1.2453281;
+    w.belief_leak = 0.095289707;
+    w.cap_years = 5.9950491;
+    w.cycle_years = 10.374459;
+    w.crowd_impact = 0.029968427;
+    w.easing = 0.086684243;
+    w.floorhold = 0.038880482;
+    w.refuge = 0.1685941;
+    w.refuge_days = 1.3072279;
+    w.lev_gain = 3.6644866;
+    w.bust_amp = 0.15522867;
+    w.slow_share = 0.19670248;
+    w.slow_vol = 0.9847244;
+    w.slow_perm = 0.061851081;
+    w.slow_beta = 0.88082057;
+    w.infl_size = 0.084518271;
+    w.discount = 7.0147671;
+    w.discount_ref = 1.5309653;
+    w.margin = 0.0069385301;
     w
 }
 
@@ -1546,6 +1665,9 @@ fn v0_23_0() -> World {
         recess_len: 1.5,
         recess_recover: 0.5,
         recess_news: 1.0,
+        recess_vol: 0.0,
+        regime_drift: 0.0,
+        spread_dd: 0.0,
         boom_rate: 0.0,
         boom_size: 1.0,
         boom_len: 2.5,
@@ -1576,6 +1698,9 @@ fn v0_23_0() -> World {
         refuge_days: 1.0,
         sat_beta: 0.0,
         sat_idio: 0.0,
+        sat_cycle_sd: 0.0,
+        sat_drift_half: 0.25,
+        sat_level_half: 0.8,
         range_scale: 0.0,
         range_down: 0.0,
         vol_idio: 0.0,
@@ -1657,6 +1782,9 @@ fn v0_22_1() -> World {
         recess_len: 1.5,
         recess_recover: 0.5,
         recess_news: 1.0,
+        recess_vol: 0.0,
+        regime_drift: 0.0,
+        spread_dd: 0.0,
         boom_rate: 0.0,
         boom_size: 1.0,
         boom_len: 2.5,
@@ -1687,6 +1815,9 @@ fn v0_22_1() -> World {
         refuge_days: 0.0,
         sat_beta: 0.0,
         sat_idio: 0.0,
+        sat_cycle_sd: 0.0,
+        sat_drift_half: 0.25,
+        sat_level_half: 0.8,
         range_scale: 0.0,
         range_down: 0.0,
         vol_idio: 0.0,
@@ -1770,6 +1901,9 @@ fn v0_22_0() -> World {
         recess_len: 1.5,
         recess_recover: 0.5,
         recess_news: 1.0,
+        recess_vol: 0.0,
+        regime_drift: 0.0,
+        spread_dd: 0.0,
         boom_rate: 0.0,
         boom_size: 1.0,
         boom_len: 2.5,
@@ -1800,6 +1934,9 @@ fn v0_22_0() -> World {
         refuge_days: 0.0,
         sat_beta: 0.0,
         sat_idio: 0.0,
+        sat_cycle_sd: 0.0,
+        sat_drift_half: 0.25,
+        sat_level_half: 0.8,
         range_scale: 0.0,
         range_down: 0.0,
         vol_idio: 0.0,
@@ -1883,6 +2020,9 @@ fn v0_21_0() -> World {
         recess_len: 1.5,
         recess_recover: 0.5,
         recess_news: 1.0,
+        recess_vol: 0.0,
+        regime_drift: 0.0,
+        spread_dd: 0.0,
         boom_rate: 0.0,
         boom_size: 1.0,
         boom_len: 2.5,
@@ -1913,6 +2053,9 @@ fn v0_21_0() -> World {
         refuge_days: 0.0,
         sat_beta: 0.0,
         sat_idio: 0.0,
+        sat_cycle_sd: 0.0,
+        sat_drift_half: 0.25,
+        sat_level_half: 0.8,
         range_scale: 0.0,
         range_down: 0.0,
         vol_idio: 0.0,
@@ -2006,6 +2149,9 @@ fn v0_20_0() -> World {
         refuge_days: 0.0,
         sat_beta: 0.0,
         sat_idio: 0.0,
+        sat_cycle_sd: 0.0,
+        sat_drift_half: 0.25,
+        sat_level_half: 0.8,
         range_scale: 0.0,
         range_down: 0.0,
         vol_idio: 0.0,
@@ -2056,6 +2202,9 @@ fn v0_20_0() -> World {
         recess_len: 1.5,
         recess_recover: 0.5,
         recess_news: 1.0,
+        recess_vol: 0.0,
+        regime_drift: 0.0,
+        spread_dd: 0.0,
         boom_rate: 0.0,
         boom_size: 1.0,
         boom_len: 2.5,
@@ -2175,6 +2324,37 @@ pub struct World {
     /// news stream's draws are unchanged (one per session), only the threshold moves. 1 is off
     /// and bit-identical.
     pub recess_news: f64,
+    /// THE RECESSION'S VOL: while a recession runs, the diffusive noise, the session's sd and the
+    /// vol state the channels and the macro panel read take exp(this), compounded on the credit
+    /// regime's multiplier, so the earnings decline runs inside a turbulent spell -- 2000-02 held
+    /// 40%+ for two and a half years and 2008 for six months -- and sits in the sessions a
+    /// volatility rule is in cash, which is what the record's timing edge is made of. On the
+    /// Nasdaq recipe at 6.5 recessions a century, 0.5 moves the timing row from -1.6 to -0.1,
+    /// d20 from 1.27 to 1.09 and lag-20 clustering from 0.21 to 0.23 (records +1.4, 1.00, 0.25),
+    /// at a cost in kurtosis (10.7 -> 13) and the implied vol's persistence that the search
+    /// trades. 0 is off and bit-identical; searched.
+    pub recess_vol: f64,
+    /// THE REGIME'S DRIFT: during a credit-regime spell the real fundamental and the price fall
+    /// together by this x the spell's level per session, repriced the same session so the value
+    /// pull does not buy it back. The regime was a zero-mean turbulent spell; the record's
+    /// turbulent spells (2000-02, 2008, 2022) were declines, which is what a rule that steps out
+    /// on volatility earns from. On the Nasdaq recipe 0.0006 moves the timing row from -0.8 to
+    /// +1.4 (the record's +1.4), crashes a century from 31 to 25.5 (record 25.6) and the lower
+    /// wing from 7.8 to 5.6 (6.7); the return it costs is re-solved by `drift`, the floor time it
+    /// adds by `rate_mean`. 0 is off and bit-identical; searched.
+    pub regime_drift: f64,
+    /// THE MACRO SPREAD'S DRAWDOWN TERM, pp per unit of log drawdown from the trailing-year high:
+    /// the persistent level a credit spread holds while equity is under water (the equity cushion
+    /// under the debt). Read off the record per recipe as the spread's level over its window
+    /// median inside drawdown bins, BAA10Y 1990-2026 against the recipe's own index: against the
+    /// S&P 0.55 / 0.77 / 2.06 / 3.44 pp at 10-20 / 20-30 / 30-50 / 50%+ (BAA-AAA monthly
+    /// 1926-2026: 0.40 / 0.49 / 0.97 / 2.72), against the NDX 0.09 / 0.44 / 0.84 / 1.42, where
+    /// the stress terms alone read 0.16 / 0.37 / 0.66 / 1.03 and 0.12 / 0.22 / 0.34 / 0.53. The
+    /// fast response to realized vol needs nothing: its convexity (top 1% over the 90-99% band)
+    /// reads 4.0 on the record against 3.4 [1.4, 6.4] in the worlds. The drawdown enters through
+    /// a 10-session EWMA (`SPREAD_DD_MU`): the record's spread follows the price, it does not move
+    /// with it. Reaches no price; 0 is off and bit-identical; read from the record, not searched.
+    pub spread_dd: f64,
     /// THE BOOM REGIME (item 32): a rare multi-year melt-up of PERCEIVED fair value, the disaster
     /// channel mirrored. The record's deep declines follow large run-ups (NDX x5.75 over the three
     /// years into 2000-03, CRSP x2.25 into 1929-09) where the model's followed ordinary ones: the
@@ -2403,6 +2583,18 @@ pub struct World {
     /// higher-vol primary, and stacked on the Nasdaq recipe the leg's correlation climbed to
     /// 0.93 against the anchored 0.85 with nothing to catch it.
     pub sat_idio: f64,
+    /// THE SATELLITE'S RELATIVE CYCLE (folio's request 2): a slow component in the leg's return
+    /// relative to the primary -- a persistent relative drift `g` (half-life `sat_drift_half`
+    /// years, innovations `sat_cycle_sd` log a session from the cycle's own stream) integrated
+    /// into a relative level `d` that reverts at `sat_level_half` years; the session's relative
+    /// return adds the level's change. What it is for: on the record the ratio log(QQQ/SPY)
+    /// trends at a half-year (the autocorrelation of successive 126-session changes +0.18) and
+    /// reverses at a year (-0.29 at 252 sessions), where a leg that is beta times the primary
+    /// plus independent noise has no persistence at any horizon. Read as the three
+    /// `satellite rel-trend` rows. 0 is off and bit-identical; the half-lives are inert at 0.
+    pub sat_cycle_sd: f64,
+    pub sat_drift_half: f64,
+    pub sat_level_half: f64,
     /// INTRA-BAR RANGE (prototype): high/low sampled per session from the EXACT Brownian-bridge
     /// extreme distributions, with endpoints at the observed open (= prior close; the model has
     /// the sampled open when `overnight` > 0) and close, and diffusion scale the session's OWN
@@ -2525,6 +2717,9 @@ pub struct World {
     /// them. The macro rows do not grade a null panel and the sidecar lists its columns as
     /// ungraded. Needs `macro_panel`; one extra price loop per path; 0 = the path's own panel,
     /// bit-identical.
+    /// 2 (THE PAIRED CONTROL, folio's request 5): the path's own panel as at 0, graded, and the
+    /// sibling's beside it as the `nullMacro*` columns, ungraded, so the no-edge comparison rides
+    /// in the same file as the real panel instead of a second emit of every world.
     pub macro_null: usize,
     /// THE LEVERAGE CYCLE: declines that follow leverage. A borrowing stock swings over years as
     /// a credit cycle of its own (a damped oscillator on a dedicated stream, `macro_k::LEV_*`),
@@ -2762,6 +2957,8 @@ pub struct Path {
     pub chan_k_dr: f64,
     /// the macro panel (None when `macro_panel` is 0), in its counterparts' units
     pub macro_panel: Option<MacroPanel>,
+    /// the sibling's panel beside the path's own (`-macronull 2`); None otherwise
+    pub macro_null_panel: Option<MacroPanel>,
 }
 
 impl Path {
@@ -2814,6 +3011,7 @@ impl Path {
             chan_k_iv: self.chan_k_iv,
             chan_k_dr: self.chan_k_dr,
             macro_panel: None,
+            macro_null_panel: None,
         }
     }
 }
@@ -3495,6 +3693,8 @@ struct Channels {
 struct ChannelRngs {
     /// satellite
     s: NumPyRng,
+    /// the satellite's relative cycle (see `sat_cycle_sd`), read only while the dial is on
+    c: NumPyRng,
     /// range (two uniforms per session, max then min)
     r: NumPyRng,
     /// volume (two normals per session, slow innovation then white)
@@ -3511,6 +3711,7 @@ impl ChannelRngs {
     fn new(seed: u64) -> Self {
         Self {
             s: NumPyRng::new(seed ^ 0x5a7e_1117u64),
+            c: NumPyRng::new(seed ^ 0x5a7c_c1e5u64),
             r: NumPyRng::new(seed ^ 0xca9d_1e00u64),
             v: NumPyRng::new(seed ^ 0xd011_a5e5u64),
             o: NumPyRng::new(seed ^ 0x09e7_a11eu64),
@@ -3672,6 +3873,53 @@ fn bridge_extremes(w: &World, r_s: f64, sig0: f64, u1: f64, u2: f64) -> (f64, f6
     )
 }
 
+/// THE RELATIVE CYCLE's state (see `sat_cycle_sd`): the drift and the level, with their per-session
+/// persistence from the half-lives in years (`exp_det`, so the twins agree to the bit).
+struct SatCycle {
+    pg: f64,
+    pd: f64,
+    g: f64,
+    d: f64,
+}
+
+impl SatCycle {
+    fn new(w: &World) -> Self {
+        let dpy = DAYS_PER_YEAR as f64;
+        Self {
+            pg: exp_det(-std::f64::consts::LN_2 / (w.sat_drift_half * dpy)),
+            pd: exp_det(-std::f64::consts::LN_2 / (w.sat_level_half * dpy)),
+            g: 0.0,
+            d: 0.0,
+        }
+    }
+
+    /// One session: the drift takes its innovation, the level its step; returns the level's change,
+    /// the session's relative return.
+    fn step(&mut self, sd: f64, rng: &mut NumPyRng) -> f64 {
+        self.g = self.pg * self.g + sd * rng.randn();
+        let d_next = self.pd * self.d + self.g;
+        let change = d_next - self.d;
+        self.d = d_next;
+        change
+    }
+}
+
+/// The basket's DRIFT DISPERSION (see the `basket_drift` field): one draw per name from `rng`,
+/// taken before the session loop, centred exactly so the sector's log drift is untouched, and
+/// rescaled by sqrt(N/(N-1)) because centring N draws costs exactly that much sample sd. A single
+/// name has no cross-section to disperse, so N < 2 is a no-op; every name's drift is 0 otherwise.
+fn basket_name_drift(w: &World, level: ChannelLevel, bsk_on: bool, rng: &mut NumPyRng) -> Vec<f64> {
+    if bsk_on && w.basket_drift > 0.0 && w.basket >= 2 {
+        let z: Vec<f64> = (0..w.basket).map(|_| rng.randn()).collect();
+        let zb = z.iter().sum::<f64>() / z.len() as f64;
+        let n = z.len() as f64;
+        let sc = w.basket_drift * level.k_dr * (n / (n - 1.0)).sqrt() / DAYS_PER_YEAR as f64;
+        z.iter().map(|v| (v - zb) * sc).collect()
+    } else {
+        vec![0.0f64; w.basket]
+    }
+}
+
 fn derive_channels(w: &World, x: &ChannelInputs, level: ChannelLevel, seed: u64) -> Channels {
     let mut rngs = ChannelRngs::new(seed);
     let tot = x.px.len();
@@ -3721,23 +3969,12 @@ fn derive_channels(w: &World, x: &ChannelInputs, level: ChannelLevel, seed: u64)
     // satellite's), and each name's log price.
     let mut sec_prev_px = 0.0f64;
     let mut name_log_p = vec![0.0f64; w.basket];
-    // DRIFT DISPERSION — see the `basket_drift` field. One draw per name from `mrng`, taken BEFORE
-    // the session loop, then centred exactly so the sector's log drift is untouched: only the
-    // cross-section moves. Rescaled by sqrt(N/(N-1)) because centring N draws costs exactly that
-    // much sample sd, so the dial delivers the sd it names. A single name has no cross-section to
-    // disperse, so N < 2 is a no-op.
-    let name_mu: Vec<f64> = if bsk_on && w.basket_drift > 0.0 && w.basket >= 2 {
-        let z: Vec<f64> = (0..w.basket).map(|_| rngs.m.randn()).collect();
-        let zb = z.iter().sum::<f64>() / z.len() as f64;
-        let n = z.len() as f64;
-        let sc = w.basket_drift * level.k_dr * (n / (n - 1.0)).sqrt() / DAYS_PER_YEAR as f64;
-        z.iter().map(|v| (v - zb) * sc).collect()
-    } else {
-        vec![0.0f64; w.basket]
-    };
+    // DRIFT DISPERSION (`basket_name_drift`): drawn before the session loop
+    let name_mu = basket_name_drift(w, level, bsk_on, &mut rngs.m);
     // SATELLITE LEG state: its log price and the primary's observed log price last session.
     let mut sat_log_p = 0.0f64;
     let mut sat_prev_px = 0.0f64;
+    let mut sat_cycle = (sat_on && w.sat_cycle_sd > 0.0).then(|| SatCycle::new(w));
     let mut bar = BarState {
         prev_px: 0.0,
         vol: VolState::new(w),
@@ -3752,6 +3989,9 @@ fn derive_channels(w: &World, x: &ChannelInputs, level: ChannelLevel, seed: u64)
         if sat_on {
             let idio = w.sat_idio * (x.state[i] * k_s) * rngs.s.randn();
             sat_log_p += w.sat_beta * (log_px - sat_prev_px) + idio;
+            if let Some(c) = sat_cycle.as_mut() {
+                sat_log_p += c.step(w.sat_cycle_sd, &mut rngs.c);
+            }
             sat_prev_px = log_px;
             sat[i] = sat_log_p.exp();
         }
@@ -3888,6 +4128,8 @@ struct MacroInputs {
     log_cpi: Vec<f64>,
     /// the fundamental's log base, BEFORE the rate markdown: the model's real activity
     log_fund: Vec<f64>,
+    /// the equity log price after the session's step, for the spread's drawdown term
+    log_p: Vec<f64>,
 }
 
 /// The nine emitted counterparts, one value per session, in the counterpart's units.
@@ -3959,6 +4201,15 @@ mod macro_k {
     pub(super) const SPREAD_BOND: f64 = 1.0;
     pub(super) const SPREAD_FLOOR: f64 = 0.5;
     pub(super) const SPREAD_SLOW: f64 = 12.0;
+    /// the drawdown term's window (`World::spread_dd`): the trailing year
+    pub(super) const SPREAD_DD_WINDOW: usize = 252;
+    /// the drawdown term's EWMA weight, a 10-session half-life (1 - 0.5^(1/10)): the record's
+    /// spread follows the price, not moves with it -- after a 10-session fall of 10% BAA10Y has
+    /// risen 0.03 pp the same session, 0.14 five sessions on, 0.21 at ten and 0.29 at twenty,
+    /// and its 10-session change correlates most with the return ending five sessions EARLIER;
+    /// the unsmoothed term read coincident and doubled the change's price-driven share
+    /// (R^2 0.58 against the record's 0.22)
+    pub(super) const SPREAD_DD_MU: f64 = 0.066_967_008_463_192_59;
     /// the credit cycle: stress EWMA'd at a ~400-session half-life, 1 - 0.5^(1/400)
     pub(super) const SLOW_MU: f64 = 0.00173;
     /// a credit-market factor as slow as the level itself (record ac1 0.999), sd ~0.27 pp
@@ -4001,7 +4252,7 @@ mod macro_k {
     /// e^0.28: the record's log variance risk premium
     pub(super) const VRP_MULT: f64 = 1.32;
     pub(super) const IVOL_PHI: f64 = 0.97;
-    pub(super) const IVOL_SD: f64 = 0.02;
+    pub(super) const IVOL_SD: f64 = 0.04;
     pub(super) const IVOL_FLOOR: f64 = 5.0;
     /// well below the 21-session average of the spiral's decay (0.69): the record's implied vol
     /// persists past what the spiral does, and the leverage cycle's spikes are sharper still —
@@ -4019,6 +4270,18 @@ mod macro_k {
         "macroPolicy",
         "macroBankCredit",
         "macroOutput",
+    ];
+    /// the sibling's panel beside the path's own (`-macronull 2`), in `COLUMNS` order
+    pub(super) const NULL_COLUMNS: [&str; 9] = [
+        "nullMacroSpread",
+        "nullMacroSlope",
+        "nullMacroCond",
+        "nullMacroIvol",
+        "nullMacroYield10",
+        "nullMacroCredit",
+        "nullMacroPolicy",
+        "nullMacroBankCredit",
+        "nullMacroOutput",
     ];
     pub(super) const COUNTERPARTS: [&str; 9] = [
         "BAA10Y",
@@ -4210,15 +4473,34 @@ fn derive_macro(w: &World, m: &MacroInputs, seed: u64, k: f64, base: usize) -> O
     let mut e_c = 0.0f64;
     let mut e_v = 0.0f64;
     let mut slow = 0.0f64;
+    // the drawdown from the trailing-year high, exact (a running max over a window, no arithmetic)
+    let mut dd = vec![0.0f64; n];
+    let mut deque: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
+    for (i, slot) in dd.iter_mut().enumerate() {
+        while deque.back().is_some_and(|&j| m.log_p[j] <= m.log_p[i]) {
+            deque.pop_back();
+        }
+        deque.push_back(i);
+        while deque
+            .front()
+            .is_some_and(|&j| j + macro_k::SPREAD_DD_WINDOW <= i)
+        {
+            deque.pop_front();
+        }
+        *slot = m.log_p[deque[0]] - m.log_p[i];
+    }
+    let mut dd_s = 0.0f64;
     for i in 0..n {
         e_s = macro_k::SPREAD_PHI * e_s + macro_k::SPREAD_SD * rng.randn();
         e_c = macro_k::COND_PHI * e_c + macro_k::COND_SD * rng.randn();
         e_v = macro_k::IVOL_PHI * e_v + macro_k::IVOL_SD * rng.randn();
         slow += macro_k::SLOW_MU * (m.stress[i] - slow);
+        dd_s += macro_k::SPREAD_DD_MU * (dd[i] - dd_s);
         spread[i] = (macro_k::SPREAD_BASE
             + macro_k::SPREAD_STRESS * m.stress[i]
             + macro_k::SPREAD_SLOW * slow
             + macro_k::SPREAD_BOND * m.b_stress[i]
+            + w.spread_dd * dd_s
             + e_s)
             .max(macro_k::SPREAD_FLOOR);
         let target = w.rate_mean + m.infl[i] - m.acc[i];
@@ -4316,7 +4598,7 @@ fn derive_macro(w: &World, m: &MacroInputs, seed: u64, k: f64, base: usize) -> O
         policy,
         bank,
         output,
-        sibling: w.macro_null > 0,
+        sibling: w.macro_null == 1,
     })
 }
 
@@ -4349,6 +4631,9 @@ fn simulate_at(w: &World, years: usize, seed: u64, level: ChannelLevel) -> Path 
     let pr = price_loop(w, years, seed);
     let chan = derive_channels(w, &pr.inputs, level, seed);
     let div = derive_dividends(w, &pr.path.price, &pr.path.fundamental, level.k_div);
+    // the sibling path's panel inputs (`-macronull` 1 or 2): one extra price loop, only when on
+    let sib = seed ^ macro_k::NULL_SEED;
+    let sibling = (w.macro_null > 0).then(|| price_loop(w, years, sib).macro_in);
     Path {
         div_yield: div.0,
         traded: div.1,
@@ -4394,21 +4679,25 @@ fn simulate_at(w: &World, years: usize, seed: u64, level: ChannelLevel) -> Path 
             0.0
         },
         macro_panel: {
-            // THE NULL PANEL (`-macronull`): the panel of a SIBLING path — the same world at
+            // THE NULL PANEL (`-macronull 1`): the panel of a SIBLING path — the same world at
             // another seed, its own price loop and its own measurement stream — so the columns
             // keep this world's marginals and persistence and their coupling to this path's
-            // price is nil. One extra price loop per path, only when on.
-            let sib = seed ^ macro_k::NULL_SEED;
-            let sibling = if w.macro_null > 0 {
-                Some(price_loop(w, years, sib).macro_in)
-            } else {
-                None
-            };
+            // price is nil. One extra price loop per path, only when on. At 2 the path keeps
+            // its own panel here and the sibling's rides beside it (`macro_null_panel`).
             let (macro_in, macro_seed) = match &sibling {
-                Some(m) => (m, sib),
-                None => (&pr.macro_in, seed),
+                Some(m) if w.macro_null == 1 => (m, sib),
+                _ => (&pr.macro_in, seed),
             };
             derive_macro(w, macro_in, macro_seed, level.k_iv, BURN_IN).map(|m| m.drop(BURN_IN))
+        },
+        macro_null_panel: match &sibling {
+            Some(m) if w.macro_null == 2 => {
+                derive_macro(w, m, sib, level.k_iv, BURN_IN).map(|m| MacroPanel {
+                    sibling: true,
+                    ..m.drop(BURN_IN)
+                })
+            }
+            _ => None,
         },
         ..pr.path
     }
@@ -4727,6 +5016,7 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
         infl: mc_vec(),
         log_cpi: mc_vec(),
         log_fund: mc_vec(),
+        log_p: mc_vec(),
     };
 
     let mut i = 0usize;
@@ -5120,11 +5410,23 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
                 regime_r = 1.0;
                 regime_held = CREDIT_REGIME_HOLD;
             }
+            if w.regime_drift > 0.0 && regime_r > 0.0 {
+                // THE REGIME'S DRIFT (see `regime_drift`): the spell carries a decline
+                let dm = w.regime_drift * regime_r;
+                log_vbase -= dm;
+                eq_m.log_p -= dm;
+            }
             (w.credit_regime * regime_r).exp()
         } else {
             1.0
         };
-        let d_noise = if w.credit_regime > 0.0 {
+        // THE RECESSION'S VOL (see `recess_vol`): the decline runs inside a turbulent spell
+        let regime_m = if recess_left > 0 && w.recess_vol > 0.0 {
+            regime_m * w.recess_vol.exp()
+        } else {
+            regime_m
+        };
+        let d_noise = if w.credit_regime > 0.0 || w.recess_vol > 0.0 {
             d_noise * regime_m
         } else {
             d_noise
@@ -5589,6 +5891,7 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
             mc.infl[i] = infl_press;
             mc.log_cpi[i] = log_cpi;
             mc.log_fund[i] = log_vbase;
+            mc.log_p[i] = eq_m.log_p;
         }
 
         // ---- capital reallocation: spring, scored on positions actually held ---------------
@@ -5673,6 +5976,7 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
         chan_k_iv: 0.0,
         chan_k_dr: 0.0,
         macro_panel: None,
+        macro_null_panel: None,
     };
     Priced {
         path,
@@ -5942,6 +6246,10 @@ fn depth_shares(px: &[f64]) -> (f64, f64, f64) {
 /// at its own volatility. The record's relation is QQQ against SPY over their shared window.
 #[derive(Clone, Copy, Debug)]
 pub struct SatStats {
+    /// THE RELATIVE TREND (folio's request 2): the autocorrelation of successive non-overlapping
+    /// 63-, 126- and 252-session changes of log(satellite / primary), the leg ratio's persistence
+    /// at a quarter, a half-year and a year (QQQ/SPY 1999-2026: +0.05, +0.18, -0.29)
+    pub rel_trend: [f64; 3],
     pub corr: f64,
     pub abs_corr: f64,
     pub beta: f64,
@@ -6554,7 +6862,7 @@ fn lev_corr_of(r: &[f64]) -> f64 {
 /// THE RECORD BANDS' rows: every fidelity target whose model reading is a per-path statistic of
 /// the equity price alone, so the same function reads a model path, a record and a resample of the
 /// record. In `series_readings`' order, which the fixture and `RecordBand` literals follow.
-pub const RECORD_BAND_ROWS: [&str; 13] = [
+pub const RECORD_BAND_ROWS: [&str; 15] = [
     "equity vol %",
     "typical-year vol %",
     "return per vol",
@@ -6568,6 +6876,8 @@ pub const RECORD_BAND_ROWS: [&str; 13] = [
     "crashes/century",
     "median depth %",
     "vol-timing edge pts/yr",
+    "variance ratio 120d",
+    "variance ratio 250d",
 ];
 
 /// THE RATE BANDS' rows: the fidelity rows read from the short rate's path alone
@@ -6627,7 +6937,7 @@ pub fn bond_readings(r: &[f64]) -> [f64; 1] {
 /// The banded rows whose record is the set's CLUSTER window (`Anchors::cluster_years`, the century
 /// on the S&P); every other banded row's record is its EQUITY window -- the variance ratio too,
 /// whose loss target is read over 25-year fund records while its band is the set's own index
-/// (`recordbands-2026-09-25.tsv`) -- a rate row's its RATE window, the same dates on the rate,
+/// (`recordbands-2026-09-26.tsv`) -- a rate row's its RATE window, the same dates on the rate,
 /// and the bond row's its BOND window (`Anchors::bond_years`).
 pub const RECORD_BAND_CLUSTER_ROWS: [&str; 2] = ["clustering lag 1", "clustering lag 20"];
 
@@ -6656,7 +6966,7 @@ pub const RECORD_BAND_PCTS: [usize; 23] = [
 const RECORD_BAND_LO: usize = 2;
 const RECORD_BAND_HI: usize = 20;
 
-/// ONE RECORD'S OWN SAMPLING SPREAD for one fidelity row (`recordbands-2026-09-25.tsv`): the
+/// ONE RECORD'S OWN SAMPLING SPREAD for one fidelity row (`recordbands-2026-09-26.tsv`): the
 /// record's reading, taken the way the model reads a path, and where that statistic lands over
 /// moving one-year-block resamples of the record. A row carrying one is judged by where the model
 /// falls against the record's joint band (`band`), not by the ratio band every other row shares: a ratio band
@@ -6790,7 +7100,7 @@ impl RecordBand {
 /// apply to them, on the price the returns trace. Two readings are taken directly rather than
 /// through the price: the annual return is the returns' own sum, and the price is rebuilt with
 /// `exp_det`, so the twins' episodes agree to the bit.
-pub fn series_readings(r: &[f64]) -> [f64; 13] {
+pub fn series_readings(r: &[f64]) -> [f64; 15] {
     let dpy = DAYS_PER_YEAR as f64;
     let years = r.len() as f64 / dpy;
     let vol = (MatD::apply(r).power(2).mean() * dpy).sqrt();
@@ -6824,6 +7134,8 @@ pub fn series_readings(r: &[f64]) -> [f64; 13] {
         eps.len() as f64 * 100.0 / years,
         med(&depths),
         vol_timing_of(r),
+        variance_ratio(r, 120),
+        variance_ratio(r, 250),
     ]
 }
 
@@ -6831,7 +7143,7 @@ pub fn series_readings(r: &[f64]) -> [f64; 13] {
 /// each whole `DAYS_PER_YEAR`-session blocks of it laid end to end from uniformly drawn starts and
 /// cut to length, each read by `series_readings`. Every start is drawn before any series is read,
 /// from one `NumPyRng`, so the readings are the same on any number of cores and in either twin.
-pub fn record_resamples(r: &[f64], resamples: usize, seed: u64) -> Vec<[f64; 13]> {
+pub fn record_resamples(r: &[f64], resamples: usize, seed: u64) -> Vec<[f64; 15]> {
     block_resamples(r, resamples, seed, series_readings)
 }
 
@@ -7076,6 +7388,35 @@ pub fn pctile(v: &[f64], q: f64) -> f64 {
     p
 }
 
+/// THE LEG RATIO'S PERSISTENCE (`SatStats::rel_trend`): from the two legs' daily log returns,
+/// the cumulative relative log level, then the lag-1 autocorrelation of its successive
+/// non-overlapping h-session changes for h = 63, 126, 252 (`REL_TREND_HORIZONS`); NaN where fewer
+/// than three changes fit.
+pub const REL_TREND_HORIZONS: [usize; 3] = [63, 126, 252];
+
+fn rel_trend_of(rp: &[f64], rs: &[f64]) -> [f64; 3] {
+    let mut level = Vec::with_capacity(rp.len() + 1);
+    let mut c = 0.0f64;
+    level.push(c);
+    for (p, s) in rp.iter().zip(rs) {
+        c += s - p;
+        level.push(c);
+    }
+    REL_TREND_HORIZONS.map(|h| {
+        let ch: Vec<f64> = (0..level.len().saturating_sub(h))
+            .step_by(h)
+            .map(|i| level[i + h] - level[i])
+            .collect();
+        if ch.len() < 3 {
+            return f64::NAN;
+        }
+        let m = ch.iter().sum::<f64>() / ch.len() as f64;
+        let num: f64 = ch.windows(2).map(|w| (w[0] - m) * (w[1] - m)).sum();
+        let den: f64 = ch.iter().map(|x| (x - m) * (x - m)).sum();
+        if den > 0.0 { num / den } else { f64::NAN }
+    })
+}
+
 /// The satellite leg's statistics as ratios to the primary's — `None` when no leg ran, so a
 /// satellite-off world produces exactly the rows it always did.
 ///
@@ -7087,6 +7428,7 @@ fn sat_stats(sims: &[Path], years: usize) -> Option<SatStats> {
         return None;
     }
     struct SatPath {
+        rel_trend: [f64; 3],
         corr: f64,
         abs_corr: f64,
         beta: f64,
@@ -7118,6 +7460,7 @@ fn sat_stats(sims: &[Path], years: usize) -> Option<SatStats> {
             let ep = episodes(&s.price, 15.0).len() as f64;
             let es = episodes(&s.sat, 15.0).len() as f64;
             SatPath {
+                rel_trend: rel_trend_of(&rp, &rs),
                 corr: pearson(&rp, &rs),
                 abs_corr: pearson(&ap, &a_s),
                 beta: cov / var_p,
@@ -7134,6 +7477,8 @@ fn sat_stats(sims: &[Path], years: usize) -> Option<SatStats> {
     let _ = years;
     let med_of = |f: fn(&SatPath) -> f64| med(&per.iter().map(f).collect::<Vec<f64>>());
     Some(SatStats {
+        rel_trend: [0, 1, 2]
+            .map(|k| med(&per.iter().map(|p| p.rel_trend[k]).collect::<Vec<f64>>())),
         corr: med_of(|p| p.corr),
         abs_corr: med_of(|p| p.abs_corr),
         beta: med_of(|p| p.beta),
@@ -8973,6 +9318,12 @@ fn gate_checks_with(
     // loosely than it pins a level.
     if let Some(sd) = st.sat {
         for (name, got, lo, hi, dp) in [
+            // THE RELATIVE TREND (folio's request 2): bands are the record's own one-year-block
+            // resamples (QQQ/SPY 1999-2026, 2000 resamples, 5th-95th), inside which the record
+            // reads +0.05, +0.18 and -0.29 -- the last at the band's edge
+            ("satellite rel-trend 63d", sd.rel_trend[0], -0.20, 0.33, 2),
+            ("satellite rel-trend 126d", sd.rel_trend[1], -0.22, 0.31, 2),
+            ("satellite rel-trend 252d", sd.rel_trend[2], -0.29, 0.26, 2),
             ("satellite corr", sd.corr, 0.75, 0.95, 2),
             ("satellite |r| corr", sd.abs_corr, 0.65, 0.90, 2),
             ("satellite beta", sd.beta, 1.00, 1.45, 2),
@@ -9465,7 +9816,7 @@ pub struct Anchors {
     pub vol: f64,
     pub vol_sd: f64,
     /// THE TYPICAL YEAR (item 24): the equity window's median-year vol averaged over all 252 block
-    /// phases, `recordbands-2026-09-25.tsv`'s `record` (`year_vol_phase_mean`). The pooled `vol`
+    /// phases, `recordbands-2026-09-26.tsv`'s `record` (`year_vol_phase_mean`). The pooled `vol`
     /// cannot tell an ordinary year from an episode; this can, and it is what keeps a search from
     /// closing the pooled row by making every year more volatile. Calendar years, which it read
     /// before 0.24.4, are one phase, and on QQQ the one at the bottom of the range.
@@ -9495,7 +9846,7 @@ pub struct Anchors {
     pub bubble_coupling_sd: f64,
     /// THE SHORT RATE's record: the daily effective federal funds rate (FRED DFF) over the equity
     /// window's dates, its mean in percent and the share of its sessions under `RATE_FLOOR`
-    /// (`rate_readings`; `recordbands-2026-09-25.tsv`, whose bands the rows are graded by). The
+    /// (`rate_readings`; `recordbands-2026-09-26.tsv`, whose bands the rows are graded by). The
     /// window is the set's own, item 28's doctrine: 4.6% over 1954-2026, 2.1% over 1999-2026 --
     /// a 3x fund on a world at the S&P's rate pays the Nasdaq record's carry gap twice over.
     pub rate_window: &'static str,
@@ -9521,7 +9872,7 @@ pub struct Anchors {
     pub semi_excess: f64,
     pub semi_excess_sd: f64,
     /// THE UP-DAY SHARE, in percent of moving sessions: the record's `up_share_of`, from
-    /// `recordbands-2026-09-25.tsv`. REPORTED, NOT GRADED — its fit target carries weight 0 until a
+    /// `recordbands-2026-09-26.tsv`. REPORTED, NOT GRADED — its fit target carries weight 0 until a
     /// mechanism reaches it; the verdict still judges it against the record's band.
     pub up_share: f64,
     pub up_share_sd: f64,
@@ -9606,6 +9957,9 @@ pub struct Anchors {
 pub struct ChannelDials {
     pub sat_beta: f64,
     pub sat_idio: f64,
+    pub sat_cycle_sd: f64,
+    pub sat_drift_half: f64,
+    pub sat_level_half: f64,
     pub range_scale: f64,
     pub range_down: f64,
     pub vol_idio: f64,
@@ -9627,6 +9981,9 @@ impl ChannelDials {
         Self {
             sat_beta: w.sat_beta,
             sat_idio: w.sat_idio,
+            sat_cycle_sd: w.sat_cycle_sd,
+            sat_drift_half: w.sat_drift_half,
+            sat_level_half: w.sat_level_half,
             range_scale: w.range_scale,
             range_down: w.range_down,
             vol_idio: w.vol_idio,
@@ -9643,11 +10000,14 @@ impl ChannelDials {
     }
 }
 
-/// The S&P set's derived-series dials: `0.24.4-sp500-channels`' (its `lev_gain` is a primary
+/// The S&P set's derived-series dials: `0.24.5-sp500`'s (its `lev_gain` is a primary
 /// dial, not one of these).
 pub const SP500_CHANNEL_DIALS: ChannelDials = ChannelDials {
     sat_beta: 1.2,
     sat_idio: 0.77,
+    sat_cycle_sd: 0.0003,
+    sat_drift_half: 0.2,
+    sat_level_half: 0.5,
     range_scale: 0.78,
     range_down: 0.13,
     vol_idio: 0.34,
@@ -9662,10 +10022,13 @@ pub const SP500_CHANNEL_DIALS: ChannelDials = ChannelDials {
     macro_panel: 1,
 };
 
-/// The Nasdaq set's derived-series dials: `0.24.4-nasdaq-basket`'s.
+/// The Nasdaq set's derived-series dials: `0.24.5-nasdaq-basket`'s.
 pub const NASDAQ_CHANNEL_DIALS: ChannelDials = ChannelDials {
     sat_beta: 1.2,
     sat_idio: 0.77,
+    sat_cycle_sd: 0.0003,
+    sat_drift_half: 0.2,
+    sat_level_half: 0.5,
     range_scale: 0.78,
     range_down: 0.13,
     vol_idio: 0.34,
@@ -9695,6 +10058,9 @@ pub fn verdict_world(a: Anchors, w: &World) -> World {
     if w.sat_beta <= 0.0 {
         v.sat_beta = d.sat_beta;
         v.sat_idio = d.sat_idio;
+        v.sat_cycle_sd = d.sat_cycle_sd;
+        v.sat_drift_half = d.sat_drift_half;
+        v.sat_level_half = d.sat_level_half;
     }
     if w.range_scale <= 0.0 {
         v.range_scale = d.range_scale;
@@ -9804,9 +10170,9 @@ const DD_REFS_NASDAQ: [DdRef; 2] = [
     },
 ];
 
-/// The S&P set's `RecordBand`s: `recordbands-2026-09-25.tsv`, CRSP total return 1954-2026 and, for
+/// The S&P set's `RecordBand`s: `recordbands-2026-09-26.tsv`, CRSP total return 1954-2026 and, for
 /// the two clustering rows, the century -- each row on the window the set reads it over.
-const RECORD_BANDS_SP500: [RecordBand; 16] = [
+const RECORD_BANDS_SP500: [RecordBand; 18] = [
     RecordBand {
         name: "equity vol %",
         record: 15.676352,
@@ -9815,8 +10181,8 @@ const RECORD_BANDS_SP500: [RecordBand; 16] = [
             15.273133, 15.405282, 15.528511, 15.651989, 15.778938, 15.911952, 16.044293, 16.194243,
             16.354227, 16.533317, 16.744801, 17.011904, 17.439124, 18.221814, 20.485377,
         ],
-        joint_c: 0.496325,
-        joint: (13.291481, 18.569999),
+        joint_c: 0.496475,
+        joint: (13.269472, 18.581324),
     },
     RecordBand {
         name: "typical-year vol %",
@@ -9826,8 +10192,8 @@ const RECORD_BANDS_SP500: [RecordBand; 16] = [
             12.274618, 12.33173, 12.396422, 12.485338, 12.560784, 12.68306, 12.768444, 12.879745,
             12.939449, 13.045397, 13.148558, 13.288156, 13.806844, 14.641141, 15.981653,
         ],
-        joint_c: 0.496325,
-        joint: (11.129056, 15.094109),
+        joint_c: 0.496475,
+        joint: (11.126937, 15.109086),
     },
     RecordBand {
         name: "return per vol",
@@ -9837,8 +10203,8 @@ const RECORD_BANDS_SP500: [RecordBand; 16] = [
             0.622021, 0.641492, 0.658761, 0.677024, 0.694098, 0.712407, 0.731306, 0.750821,
             0.772914, 0.797044, 0.825311, 0.861199, 0.918055, 1.022803, 1.251306,
         ],
-        joint_c: 0.496325,
-        joint: (0.315268, 1.080454),
+        joint_c: 0.496475,
+        joint: (0.312428, 1.080964),
     },
     RecordBand {
         name: "kurtosis",
@@ -9848,8 +10214,8 @@ const RECORD_BANDS_SP500: [RecordBand; 16] = [
             17.896602, 18.950341, 19.870825, 20.719651, 21.53849, 22.35808, 23.309753, 24.513472,
             25.808621, 27.297538, 28.948845, 31.075336, 34.379212, 40.993913, 64.166988,
         ],
-        joint_c: 0.496325,
-        joint: (7.118733, 44.60282),
+        joint_c: 0.496475,
+        joint: (7.082582, 44.851904),
     },
     RecordBand {
         name: "clustering lag 1",
@@ -9859,8 +10225,8 @@ const RECORD_BANDS_SP500: [RecordBand; 16] = [
             0.28536, 0.288922, 0.292196, 0.295562, 0.298809, 0.302274, 0.305731, 0.309295,
             0.313035, 0.317185, 0.322266, 0.328697, 0.337914, 0.355216, 0.395036,
         ],
-        joint_c: 0.496675,
-        joint: (0.222863, 0.365383),
+        joint_c: 0.497025,
+        joint: (0.222409, 0.36641),
     },
     RecordBand {
         name: "clustering lag 20",
@@ -9870,8 +10236,8 @@ const RECORD_BANDS_SP500: [RecordBand; 16] = [
             0.197856, 0.200982, 0.203894, 0.20683, 0.209742, 0.212829, 0.215849, 0.21922, 0.222825,
             0.227041, 0.232271, 0.23972, 0.253162, 0.28481,
         ],
-        joint_c: 0.496675,
-        joint: (0.138061, 0.261827),
+        joint_c: 0.497025,
+        joint: (0.137231, 0.262353),
     },
     RecordBand {
         name: "variance ratio 60d",
@@ -9881,8 +10247,8 @@ const RECORD_BANDS_SP500: [RecordBand; 16] = [
             0.977029, 0.986345, 0.995939, 1.004917, 1.014074, 1.023669, 1.034073, 1.04444,
             1.055878, 1.069562, 1.085471, 1.105368, 1.135944, 1.199247, 1.310759,
         ],
-        joint_c: 0.496325,
-        joint: (0.832157, 1.231002),
+        joint_c: 0.496475,
+        joint: (0.831714, 1.232992),
     },
     RecordBand {
         name: "downside vol excess %",
@@ -9892,8 +10258,8 @@ const RECORD_BANDS_SP500: [RecordBand; 16] = [
             1.89169, 2.263146, 2.621224, 2.961804, 3.300304, 3.672815, 4.081361, 4.495622,
             4.917591, 5.44271, 6.003845, 6.773708, 7.923641, 10.117275, 17.160698,
         ],
-        joint_c: 0.496325,
-        joint: (-3.962976, 11.27096),
+        joint_c: 0.496475,
+        joint: (-3.997549, 11.318638),
     },
     RecordBand {
         name: "up-day share %",
@@ -9903,8 +10269,8 @@ const RECORD_BANDS_SP500: [RecordBand; 16] = [
             54.68543, 54.754677, 54.82519, 54.893523, 54.960821, 55.031481, 55.100353, 55.175835,
             55.254013, 55.348272, 55.456201, 55.581331, 55.766681, 56.128141, 56.952728,
         ],
-        joint_c: 0.496325,
-        joint: (53.381882, 56.319682),
+        joint_c: 0.496475,
+        joint: (53.371965, 56.32114),
     },
     RecordBand {
         name: "leverage corr",
@@ -9914,8 +10280,8 @@ const RECORD_BANDS_SP500: [RecordBand; 16] = [
             -0.09784, -0.096306, -0.094801, -0.093383, -0.091925, -0.090467, -0.08893, -0.087265,
             -0.08555, -0.083659, -0.081498, -0.078808, -0.074682, -0.066495, -0.041726,
         ],
-        joint_c: 0.496325,
-        joint: (-0.12385, -0.061155),
+        joint_c: 0.496475,
+        joint: (-0.124016, -0.060972),
     },
     RecordBand {
         name: "crashes/century",
@@ -9925,7 +10291,7 @@ const RECORD_BANDS_SP500: [RecordBand; 16] = [
             23.481693, 23.481693, 24.862969, 24.862969, 24.862969, 26.244245, 26.244245, 27.625521,
             27.625521, 29.006797, 29.006797, 30.388073, 31.769349, 35.913177, 45.582109,
         ],
-        joint_c: 0.496325,
+        joint_c: 0.496475,
         joint: (13.81276, 37.294453),
     },
     RecordBand {
@@ -9937,8 +10303,8 @@ const RECORD_BANDS_SP500: [RecordBand; 16] = [
             -20.956817, -20.795378, -20.6514, -20.446132, -20.430505, -20.261105, -19.557597,
             -18.661378, -16.070895,
         ],
-        joint_c: 0.496325,
-        joint: (-34.216281, -18.405617),
+        joint_c: 0.496475,
+        joint: (-34.216281, -18.355191),
     },
     RecordBand {
         name: "vol-timing edge pts/yr",
@@ -9948,8 +10314,30 @@ const RECORD_BANDS_SP500: [RecordBand; 16] = [
             -4.473977, -4.306148, -4.150292, -3.996343, -3.827405, -3.654427, -3.487236, -3.30862,
             -3.109928, -2.888645, -2.631003, -2.301937, -1.815916, -0.857432, 2.105966,
         ],
-        joint_c: 0.496325,
-        joint: (-7.26889, -0.356825),
+        joint_c: 0.496475,
+        joint: (-7.278644, -0.340598),
+    },
+    RecordBand {
+        name: "variance ratio 120d",
+        record: 1.033341,
+        q: [
+            0.633785, 0.794275, 0.853842, 0.887541, 0.911934, 0.930517, 0.946754, 0.961476,
+            0.97508, 0.987734, 1.001151, 1.014413, 1.026949, 1.040062, 1.05448, 1.068544, 1.084805,
+            1.103363, 1.124515, 1.151578, 1.192858, 1.276049, 1.503097,
+        ],
+        joint_c: 0.496475,
+        joint: (0.764153, 1.326746),
+    },
+    RecordBand {
+        name: "variance ratio 250d",
+        record: 1.033509,
+        q: [
+            0.551145, 0.713797, 0.794267, 0.839571, 0.87076, 0.896856, 0.918528, 0.938744,
+            0.957689, 0.976299, 0.994879, 1.012966, 1.031782, 1.050365, 1.069659, 1.090869,
+            1.114234, 1.140225, 1.170662, 1.210988, 1.273826, 1.401233, 1.87212,
+        ],
+        joint_c: 0.496475,
+        joint: (0.677163, 1.468996),
     },
     RecordBand {
         name: "short rate %",
@@ -9959,8 +10347,8 @@ const RECORD_BANDS_SP500: [RecordBand; 16] = [
             4.52452, 4.573902, 4.620935, 4.669148, 4.717381, 4.771603, 4.827784, 4.889457,
             4.956948, 5.038634, 5.141448, 5.290178, 5.573231, 6.381581,
         ],
-        joint_c: 0.496675,
-        joint: (3.583476, 5.750253),
+        joint_c: 0.497075,
+        joint: (3.569032, 5.777877),
     },
     RecordBand {
         name: "rate floor share %",
@@ -9970,8 +10358,8 @@ const RECORD_BANDS_SP500: [RecordBand; 16] = [
             13.074957, 13.575383, 14.086457, 14.576235, 15.044719, 15.561116, 16.072189, 16.615204,
             17.243399, 17.908859, 18.728705, 19.734881, 21.268101, 24.382453, 31.079642,
         ],
-        joint_c: 0.496675,
-        joint: (5.174617, 26.000852),
+        joint_c: 0.497075,
+        joint: (5.030877, 26.091354),
     },
     RecordBand {
         name: "bond depth vs vol",
@@ -9981,13 +10369,13 @@ const RECORD_BANDS_SP500: [RecordBand; 16] = [
             1.050809, 1.094922, 1.139143, 1.183327, 1.226545, 1.273317, 1.323438, 1.375117,
             1.435519, 1.499503, 1.570601, 1.657599, 1.785306, 1.965568, 2.304313,
         ],
-        joint_c: 0.496875,
-        joint: (0.381134, 2.062255),
+        joint_c: 0.497225,
+        joint: (0.372218, 2.074475),
     },
 ];
 
-/// The Nasdaq set's `RecordBand`s: `recordbands-2026-09-25.tsv`, QQQ 1999-03-11..2026-08-20.
-const RECORD_BANDS_NASDAQ: [RecordBand; 16] = [
+/// The Nasdaq set's `RecordBand`s: `recordbands-2026-09-26.tsv`, QQQ 1999-03-11..2026-08-20.
+const RECORD_BANDS_NASDAQ: [RecordBand; 18] = [
     RecordBand {
         name: "equity vol %",
         record: 26.901577,
@@ -9996,8 +10384,8 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 16] = [
             25.575214, 25.933833, 26.295109, 26.644488, 27.006345, 27.360215, 27.761212, 28.142,
             28.557865, 29.048477, 29.609975, 30.314636, 31.408602, 33.344443, 38.171744,
         ],
-        joint_c: 0.495425,
-        joint: (19.946302, 34.128086),
+        joint_c: 0.495775,
+        joint: (19.850093, 34.191968),
     },
     RecordBand {
         name: "typical-year vol %",
@@ -10007,8 +10395,8 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 16] = [
             19.432684, 19.564056, 19.701465, 19.854891, 19.941719, 20.137238, 20.45154, 20.913609,
             21.279249, 21.646618, 22.343644, 22.857755, 23.44498, 24.674651, 34.834227,
         ],
-        joint_c: 0.495425,
-        joint: (16.120305, 26.088026),
+        joint_c: 0.495775,
+        joint: (16.084733, 26.455213),
     },
     RecordBand {
         name: "return per vol",
@@ -10018,8 +10406,8 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 16] = [
             0.272005, 0.298493, 0.32861, 0.356969, 0.387892, 0.41683, 0.447033, 0.480692, 0.515387,
             0.552254, 0.597192, 0.653093, 0.741078, 0.899654, 1.220561,
         ],
-        joint_c: 0.495425,
-        joint: (-0.17313, 0.958168),
+        joint_c: 0.495775,
+        joint: (-0.176345, 0.964258),
     },
     RecordBand {
         name: "kurtosis",
@@ -10029,8 +10417,8 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 16] = [
             9.015825, 9.168515, 9.321957, 9.484207, 9.639491, 9.806465, 9.972342, 10.149984,
             10.336813, 10.564895, 10.82796, 11.171723, 11.720816, 12.73469, 16.207453,
         ],
-        joint_c: 0.495425,
-        joint: (6.354458, 13.227799),
+        joint_c: 0.495775,
+        joint: (6.320988, 13.262918),
     },
     RecordBand {
         name: "clustering lag 1",
@@ -10040,8 +10428,8 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 16] = [
             0.277223, 0.281235, 0.285201, 0.288836, 0.292467, 0.29587, 0.299372, 0.30321, 0.307276,
             0.311634, 0.316689, 0.322959, 0.332084, 0.349405, 0.393203,
         ],
-        joint_c: 0.495425,
-        joint: (0.18421, 0.355639),
+        joint_c: 0.495775,
+        joint: (0.182685, 0.356158),
     },
     RecordBand {
         name: "clustering lag 20",
@@ -10051,8 +10439,8 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 16] = [
             0.212243, 0.216785, 0.220706, 0.224759, 0.228608, 0.232376, 0.236302, 0.240176,
             0.244481, 0.24902, 0.254205, 0.260078, 0.268727, 0.284755, 0.335159,
         ],
-        joint_c: 0.495425,
-        joint: (0.109637, 0.291517),
+        joint_c: 0.495775,
+        joint: (0.107942, 0.292101),
     },
     RecordBand {
         name: "variance ratio 60d",
@@ -10062,8 +10450,8 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 16] = [
             0.789056, 0.798778, 0.8083, 0.81691, 0.825511, 0.834846, 0.844108, 0.85396, 0.864269,
             0.875894, 0.889135, 0.906583, 0.931117, 0.982527, 1.086121,
         ],
-        joint_c: 0.495425,
-        joint: (0.606549, 0.999373),
+        joint_c: 0.495775,
+        joint: (0.604932, 1.000927),
     },
     RecordBand {
         name: "downside vol excess %",
@@ -10073,8 +10461,8 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 16] = [
             0.83595, 1.092732, 1.361124, 1.615989, 1.863066, 2.119029, 2.363603, 2.629444,
             2.909271, 3.216147, 3.553364, 3.997832, 4.626134, 5.727797, 8.339008,
         ],
-        joint_c: 0.495425,
-        joint: (-4.06385, 6.12169),
+        joint_c: 0.495775,
+        joint: (-4.142547, 6.169085),
     },
     RecordBand {
         name: "up-day share %",
@@ -10084,8 +10472,8 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 16] = [
             54.521625, 54.631518, 54.740061, 54.840588, 54.944574, 55.048812, 55.155316, 55.270821,
             55.395579, 55.526431, 55.678509, 55.874636, 56.166181, 56.691423, 58.06686,
         ],
-        joint_c: 0.495425,
-        joint: (52.639253, 56.891282),
+        joint_c: 0.495775,
+        joint: (52.613951, 56.905836),
     },
     RecordBand {
         name: "leverage corr",
@@ -10095,8 +10483,8 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 16] = [
             -0.115678, -0.111994, -0.108432, -0.104824, -0.101165, -0.097354, -0.093575, -0.089341,
             -0.084973, -0.080282, -0.074603, -0.067438, -0.05678, -0.037189, 0.001315,
         ],
-        joint_c: 0.495425,
-        joint: (-0.172126, -0.029111),
+        joint_c: 0.495775,
+        joint: (-0.17272, -0.028122),
     },
     RecordBand {
         name: "crashes/century",
@@ -10106,7 +10494,7 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 16] = [
             29.200463, 29.200463, 32.850521, 32.850521, 32.850521, 36.500579, 36.500579, 40.150637,
             40.150637, 43.800695, 43.800695, 47.450753, 51.100811, 58.400927, 73.001159,
         ],
-        joint_c: 0.495425,
+        joint_c: 0.495775,
         joint: (3.650058, 62.050985),
     },
     RecordBand {
@@ -10118,8 +10506,8 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 16] = [
             -22.7683, -21.764737, -21.285594, -19.54298, -18.285694, -17.266643, -16.10439,
             -15.859033, -15.000029,
         ],
-        joint_c: 0.495425,
-        joint: (-91.413038, -15.609315),
+        joint_c: 0.495775,
+        joint: (-92.109019, -15.609315),
     },
     RecordBand {
         name: "vol-timing edge pts/yr",
@@ -10129,8 +10517,30 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 16] = [
             -0.849834, -0.175065, 0.486265, 1.140094, 1.79515, 2.425237, 3.054484, 3.715401,
             4.420316, 5.18801, 5.99233, 6.891132, 8.008388, 9.509201, 12.319534, 17.678657,
         ],
-        joint_c: 0.495425,
-        joint: (-9.59032, 13.527993),
+        joint_c: 0.495775,
+        joint: (-9.665527, 13.630702),
+    },
+    RecordBand {
+        name: "variance ratio 120d",
+        record: 0.923272,
+        q: [
+            0.382528, 0.541004, 0.633353, 0.688093, 0.723495, 0.750007, 0.773775, 0.79578,
+            0.814282, 0.831841, 0.849016, 0.865292, 0.882173, 0.899942, 0.916732, 0.934868,
+            0.953161, 0.974375, 0.999842, 1.030191, 1.075804, 1.1611, 1.335886,
+        ],
+        joint_c: 0.495775,
+        joint: (0.501251, 1.194677),
+    },
+    RecordBand {
+        name: "variance ratio 250d",
+        record: 1.106648,
+        q: [
+            0.322401, 0.481016, 0.602653, 0.674201, 0.72305, 0.761262, 0.794593, 0.823583,
+            0.852795, 0.880536, 0.907209, 0.934726, 0.960711, 0.989173, 1.017197, 1.048521,
+            1.08214, 1.121155, 1.166465, 1.225195, 1.317713, 1.487675, 1.877279,
+        ],
+        joint_c: 0.495775,
+        joint: (0.436192, 1.575484),
     },
     RecordBand {
         name: "short rate %",
@@ -10140,8 +10550,8 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 16] = [
             1.905629, 1.953942, 1.997838, 2.04316, 2.090443, 2.138789, 2.189316, 2.242692,
             2.300256, 2.364969, 2.440335, 2.535389, 2.677798, 2.958886, 3.576963,
         ],
-        joint_c: 0.496325,
-        joint: (1.110201, 3.110154),
+        joint_c: 0.496725,
+        joint: (1.09943, 3.120816),
     },
     RecordBand {
         name: "rate floor share %",
@@ -10151,8 +10561,8 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 16] = [
             35.35819, 36.475353, 37.60648, 38.709677, 39.743053, 40.860215, 42.019271, 43.178327,
             44.477028, 45.971233, 47.674906, 49.78355, 52.981427, 59.460969, 75.715682,
         ],
-        joint_c: 0.496325,
-        joint: (16.436252, 62.295769),
+        joint_c: 0.496725,
+        joint: (16.073174, 62.575059),
     },
     RecordBand {
         name: "bond depth vs vol",
@@ -10162,8 +10572,8 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 16] = [
             1.050809, 1.094922, 1.139143, 1.183327, 1.226545, 1.273317, 1.323438, 1.375117,
             1.435519, 1.499503, 1.570601, 1.657599, 1.785306, 1.965568, 2.304313,
         ],
-        joint_c: 0.496875,
-        joint: (0.381134, 2.062255),
+        joint_c: 0.497225,
+        joint: (0.372218, 2.074475),
     },
 ];
 
@@ -10199,7 +10609,7 @@ const SP500_ANCHORS: Anchors = Anchors {
     rate_floor_sd: 0.27,
     vol: 16.0,
     vol_sd: 0.12,
-    // CRSP 1954-2026 over all 252 block phases (`recordbands-2026-09-25.tsv`): 12.48, where
+    // CRSP 1954-2026 over all 252 block phases (`recordbands-2026-09-26.tsv`): 12.48, where
     // calendar years read 12.87 (`yearvol-2026-09-15.tsv`, w1954); the S&P index's own daily
     // record is not in the fixture, and CRSP is the series the r/v row reads too.
     year_vol: 12.5,
@@ -10288,7 +10698,7 @@ const SP500_ANCHORS: Anchors = Anchors {
 /// Control: the same pipeline on SPY 1993-01-29 reproduces the committed w1993 fixture row exactly.
 ///
 /// THE SAMPLING SPREADS ARE THE NASDAQ WORLD'S OWN, frozen from
-/// `-noise -paths 200 -atrelease 0.24.4-nasdaq -anchors nasdaq`, the recipe this set describes;
+/// `-noise -paths 200 -atrelease 0.24.5-nasdaq -anchors nasdaq`, the recipe this set describes;
 /// the run is seeded, so the same command reproduces every literal exactly but the wings', which
 /// are the record's own. The recipe's daily shape moved the largest ones: kurtosis 1.93 -> 1.02,
 /// the downside excess 4.26 -> 2.87, the leverage correlation 0.53 -> 0.37. They were
@@ -10311,38 +10721,38 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     bubble_window: "NDX 1990-2026",
     bubble_years: 37,
     bubble_coupling: 1.042337,
-    bubble_coupling_sd: 0.22,
+    bubble_coupling_sd: 0.25,
     rate_window: "DFF 1999-2026",
     rate_years: 27,
     bond_window: "clean TLT, 24y",
     bond_years: 24,
     bond_depth: 1.029057,
     short_rate: 2.136466,
-    short_rate_sd: 0.98,
+    short_rate_sd: 1.00,
     rate_floor: 37.313224,
-    rate_floor_sd: 0.56,
+    rate_floor_sd: 0.64,
     vol: 26.90,
-    vol_sd: 0.13,
-    // QQQ 1999-2026 over all 252 block phases (`recordbands-2026-09-25.tsv`): 19.97, where calendar
+    vol_sd: 0.15,
+    // QQQ 1999-2026 over all 252 block phases (`recordbands-2026-09-26.tsv`): 19.97, where calendar
     // years read 18.26 (`yearvol-2026-09-15.tsv`, w1999) — the bottom of the 18.2-21.5 phase range.
     // Either way it is well under the pooled 26.9: the window's vol is 2000-02 at 58 / 55 / 42%.
     year_vol: 20.0,
-    year_vol_sd: 0.17,
+    year_vol_sd: 0.19,
     ret_vol: 0.38,
-    ret_vol_sd: 0.47,
+    ret_vol_sd: 0.44,
     kurt: 9.55,
-    kurt_sd: 1.01,
+    kurt_sd: 1.17,
     ac1: 0.293,
-    ac1_sd: 0.20,
+    ac1_sd: 0.21,
     ac20: 0.249,
-    ac20_sd: 0.20,
+    ac20_sd: 0.21,
     crashes: 25.6,
-    crashes_sd: 0.47,
+    crashes_sd: 0.48,
     med_depth: -22.8,
-    med_depth_sd: 0.33,
+    med_depth_sd: 0.65,
     worst_depth: -83.0,
-    worst_depth_sd: 0.20,
-    // QQQ's own 5th-95th over its resamples (22.23-31.41, recordbands-2026-09-25.tsv), rounded
+    worst_depth_sd: 0.17,
+    // QQQ's own 5th-95th over its resamples (22.23-31.41, recordbands-2026-09-26.tsv), rounded
     // outward: a level gate no narrower than what the record's own history produces
     vol_band: (22.2, 31.5),
     // one sd of the row's own 27-year spread, +-18%, around the phase-averaged anchor
@@ -10350,33 +10760,33 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     ret_vol_band: (0.27, 0.47),
     // QQQ wfull row of asymmetry-2026-08-31.tsv; the tail hedge is QQQ/TLT.
     semi_excess: 1.13,
-    semi_excess_sd: 2.78,
+    semi_excess_sd: 3.23,
     // QQQ 1999-2026: 54.78% of moving sessions rise
     up_share: 54.8,
     up_share_sd: 0.02,
     vol_timing: 1.395702,
-    vol_timing_sd: 2.19,
+    vol_timing_sd: 2.34,
     vol_timing_judgment: 3.0,
     lev_corr: -0.1073,
-    lev_corr_sd: 0.40,
+    lev_corr_sd: 0.45,
     tail_hedge: -0.236,
-    tail_hedge_sd: 0.52,
+    tail_hedge_sd: 0.51,
     wing_up: 7.6,
     wing_up_sd: 0.90,
     wing_down: 6.7,
     wing_down_sd: 0.98,
-    // d20's spread is a fraction of the S&P world's (0.53 against 2.27): at Nasdaq volatility the
+    // d20's spread is a fraction of the S&P world's (0.42 against 2.27): at Nasdaq volatility the
     // deep rung is pinned where the S&P default leaves it unreadable, so the row carries real
     // weight here.
-    val_disp_sd: 0.31,
-    vr60_sd: 0.27,
-    d5_sd: 0.13,
-    d10_sd: 0.22,
-    d20_sd: 0.50,
-    bond_vol_sd: 0.44,
-    bond_growth_sd: 1.06,
-    bond_infl_sd: 1.81,
-    bond_depth_sd: 0.49,
+    val_disp_sd: 0.22,
+    vr60_sd: 0.20,
+    d5_sd: 0.11,
+    d10_sd: 0.19,
+    d20_sd: 0.42,
+    bond_vol_sd: 0.42,
+    bond_growth_sd: 2.03,
+    bond_infl_sd: 1.56,
+    bond_depth_sd: 0.53,
     dd_refs: &DD_REFS_NASDAQ,
     record_bands: &RECORD_BANDS_NASDAQ,
     div_yield: 0.78,
@@ -10508,6 +10918,24 @@ pub fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             (|st: &WorldStats| st.vr60) as StatFn,
             1.00,
             wgt(1.0, a.vr60_sd),
+        ),
+        // THE LONG END (folio's request 1, 2026-09-23): the same ratio at 120 and 250 sessions,
+        // where QQQ's rises (0.94, 1.12) and the worlds' falls. Graded toward the 60-day row's
+        // theory value 1.00 at three times its weight, not toward QQQ's 1.12 (the record's rise
+        // is one episode's; the NDX price index from 1990 reads the long end flat): the search
+        // sees the long end without chasing 1999-2002. The verdict judges each against its
+        // record band.
+        (
+            "variance ratio 120d",
+            (|st: &WorldStats| st.vr120) as StatFn,
+            1.00,
+            wgt(3.0, a.vr60_sd),
+        ),
+        (
+            "variance ratio 250d",
+            (|st: &WorldStats| st.vr250) as StatFn,
+            1.00,
+            wgt(3.0, a.vr60_sd),
         ),
         // THE THIRD ASYMMETRY AXIS the rows above cannot see: clustering is |r| (sign-blind),
         // vr60 is the signed MEAN's persistence — this pair is the signed SECOND moment. Graded
@@ -12205,7 +12633,7 @@ const IDENTITY_PARAMS: &[&str] = &["duration", "divYield"];
 /// are in this order too, so the order is also the archive's format. Same shape as `EMIT_SCHEMA` /
 /// `EmitSchema`: the literal is in the model, checked by each twin's own contract test, and
 /// changing one twin without the other cannot pass.
-pub const CALIBRATE_DIAL_ORDER: [&str; 61] = [
+pub const CALIBRATE_DIAL_ORDER: [&str; 64] = [
     "depth",
     "trendShare",
     "drift",
@@ -12264,6 +12692,9 @@ pub const CALIBRATE_DIAL_ORDER: [&str; 61] = [
     "recessLen",
     "recessRecover",
     "recessNews",
+    "recessVol",
+    "regimeDrift",
+    "spreadDd",
     "volPull",
     "discountLag",
     "discountRef",
@@ -12348,7 +12779,7 @@ pub fn calibrate_ranges() -> Vec<(&'static str, f64, f64, Setter, Getter)> {
         (
             "valuePull",
             0.010,
-            0.070,
+            0.100,
             |w, x| w.value_pull = x,
             |w| w.value_pull,
         ),
@@ -12687,6 +13118,31 @@ pub fn calibrate_ranges() -> Vec<(&'static str, f64, f64, Setter, Getter)> {
             6.0,
             |w, x| w.recess_news = x,
             |w| w.recess_news,
+        ),
+        // the vol multiplier's log while a recession runs (0 off): e^0.7 doubles the session sd
+        (
+            "recessVol",
+            0.0,
+            1.0,
+            |w, x| w.recess_vol = x,
+            |w| w.recess_vol,
+        ),
+        // the decline per session x the credit regime's level, in log (0 off): 0.0006 at a
+        // half-year plateau is a 7% fall
+        (
+            "regimeDrift",
+            0.0,
+            0.002,
+            |w, x| w.regime_drift = x,
+            |w| w.regime_drift,
+        ),
+        // the macro spread's level per unit of log drawdown, pp (0 off); read off the record
+        (
+            "spreadDd",
+            0.0,
+            5.0,
+            |w, x| w.spread_dd = x,
+            |w| w.spread_dd,
         ),
         ("volPull", 0.0, 6.0, |w, x| w.vol_pull = x, |w| w.vol_pull),
         // the markdown's lag in years (0 off): a cut supports valuations over years
@@ -13568,7 +14024,7 @@ fn bond_relations() -> [Relation; 2] {
 /// target added or renamed fails the build until someone places it. The failure being prevented is
 /// a target silently absent from the equity section — a shorter table reads as a shorter list of
 /// concerns, not as a bug.
-const EQUITY_TARGETS: [&str; 21] = [
+const EQUITY_TARGETS: [&str; 23] = [
     "equity vol %",
     "typical-year vol %",
     "return per vol",
@@ -13576,6 +14032,8 @@ const EQUITY_TARGETS: [&str; 21] = [
     "clustering lag 1",
     "clustering lag 20",
     "variance ratio 60d",
+    "variance ratio 120d",
+    "variance ratio 250d",
     "downside vol excess %",
     "up-day share %",
     "vol-timing edge pts/yr",
@@ -14019,7 +14477,15 @@ fn anchor_groups(a: Anchors) -> [(&'static str, usize, &'static [&'static str]);
         // `VAR_RATIO_BANDS`. The horizon is one instrument's record, as it is for the depth rungs, and
         // the target this group carries is a theory value rather than a reading, so `real@` here says
         // where 1.00 falls in the model's own spread of 25-year readings, not where a record does.
-        ("equity funds + CRSP, 25y", 25, &["variance ratio 60d"]),
+        (
+            "equity funds + CRSP, 25y",
+            25,
+            &[
+                "variance ratio 60d",
+                "variance ratio 120d",
+                "variance ratio 250d",
+            ],
+        ),
         // 35 equity funds over 2001-2026; the horizon is one instrument's record, because that is
         // what each residual ratio in the fit was measured from.
         (
@@ -15307,9 +15773,10 @@ pub fn write_emitted(
             && p.traded.iter().all(|x| x.is_finite())
             && p.log_open.iter().all(|x| x.is_finite())
             && p.names.iter().all(|lp| lp.iter().all(|x| x.is_finite()))
-            && p.macro_panel
-                .as_ref()
-                .is_none_or(|m| (0..9).all(|j| m.member(j).iter().all(|x| x.is_finite()))),
+            && [&p.macro_panel, &p.macro_null_panel]
+                .into_iter()
+                .flatten()
+                .all(|m| (0..9).all(|j| m.member(j).iter().all(|x| x.is_finite()))),
         "path {k} holds a non-finite value; refusing {file}"
     );
     let dates = session_dates(p.price.len(), start_ymd);
@@ -15348,6 +15815,15 @@ fn channel_columns(p: &Path) -> Vec<&'static str> {
 fn macro_columns(p: &Path) -> &'static [&'static str] {
     if p.macro_panel.is_some() {
         &macro_k::COLUMNS
+    } else {
+        &[]
+    }
+}
+
+/// The sibling's panel beside the path's own (`-macronull 2`) — after the macro columns.
+fn null_macro_columns(p: &Path) -> &'static [&'static str] {
+    if p.macro_null_panel.is_some() {
+        &macro_k::NULL_COLUMNS
     } else {
         &[]
     }
@@ -15403,7 +15879,7 @@ fn push_channel_cells(tsv: &mut String, p: &Path, i: usize, basket_agg: &[f64]) 
             cell(lp[i]);
         }
     }
-    if let Some(m) = &p.macro_panel {
+    for m in [&p.macro_panel, &p.macro_null_panel].into_iter().flatten() {
         cell(m.spread[i]);
         cell(m.slope[i]);
         cell(m.cond[i]);
@@ -15441,7 +15917,7 @@ pub fn write_emit_tsv(file: &str, p: &Path, dates: &[String]) {
         tsv.push('\t');
         tsv.push_str(&c);
     }
-    for c in macro_columns(p) {
+    for c in macro_columns(p).iter().chain(null_macro_columns(p)) {
         tsv.push('\t');
         tsv.push_str(c);
     }
@@ -15532,6 +16008,9 @@ pub fn world_json_body_fmt(w: &World, num: &dyn Fn(f64) -> String) -> Vec<String
         ("recessLen", num(w.recess_len)),
         ("recessRecover", num(w.recess_recover)),
         ("recessNews", num(w.recess_news)),
+        ("recessVol", num(w.recess_vol)),
+        ("regimeDrift", num(w.regime_drift)),
+        ("spreadDd", num(w.spread_dd)),
         ("volPull", num(w.vol_pull)),
         ("beliefShare", num(w.belief_share)),
         ("beliefYears", num(w.belief_years)),
@@ -15551,6 +16030,9 @@ pub fn world_json_body_fmt(w: &World, num: &dyn Fn(f64) -> String) -> Vec<String
         ("refugeDays", num(w.refuge_days)),
         ("satBeta", num(w.sat_beta)),
         ("satIdio", num(w.sat_idio)),
+        ("satCycleSd", num(w.sat_cycle_sd)),
+        ("satDriftHalf", num(w.sat_drift_half)),
+        ("satLevelHalf", num(w.sat_level_half)),
         ("rangeScale", num(w.range_scale)),
         ("rangeDown", num(w.range_down)),
         ("volIdio", num(w.vol_idio)),
@@ -15853,9 +16335,12 @@ fn gate_scope_lines(
     let source = |emitted: bool| json_str(if emitted { "emitted" } else { "anchored" });
     let verdict_channels = [
         format!(
-            "\"satellite\": {{ \"satBeta\": {}, \"satIdio\": {}, \"source\": {} }}",
+            "\"satellite\": {{ \"satBeta\": {}, \"satIdio\": {}, \"satCycleSd\": {}, \"satDriftHalf\": {}, \"satLevelHalf\": {}, \"source\": {} }}",
             num(gate_w.sat_beta),
             num(gate_w.sat_idio),
+            num(gate_w.sat_cycle_sd),
+            num(gate_w.sat_drift_half),
+            num(gate_w.sat_level_half),
             source(w.sat_beta > 0.0)
         ),
         format!(
@@ -15893,7 +16378,7 @@ fn gate_scope_lines(
         format!(
             "\"macro\": {{ \"macro\": {}, \"source\": {} }}",
             gate_w.macro_panel,
-            source(w.macro_panel > 0 && w.macro_null == 0)
+            source(w.macro_panel > 0 && w.macro_null != 1)
         ),
     ];
     // The field that says a column reached the file UNGRADED: `logSat` is covered by the
@@ -15902,11 +16387,12 @@ fn gate_scope_lines(
     // by construction — said here, in the artifact, rather than in a doc nobody reads beside the
     // data.
     let null_panel = p.macro_panel.as_ref().is_some_and(|m| m.sibling);
-    let ungraded: Vec<&str> = if null_panel {
+    let mut ungraded: Vec<&str> = if null_panel {
         macro_columns(p).to_vec()
     } else {
         Vec::new()
     };
+    ungraded.extend(null_macro_columns(p));
     if !null_panel {
         graded.extend(macro_columns(p));
     }
@@ -16033,6 +16519,7 @@ fn write_emit_sidecar(
             cols.extend(channel_columns(p).into_iter().map(str::to_string));
             cols.extend(basket_columns(p));
             cols.extend(macro_columns(p).iter().map(|c| c.to_string()));
+            cols.extend(null_macro_columns(p).iter().map(|c| c.to_string()));
             let refs: Vec<&str> = cols.iter().map(String::as_str).collect();
             str_list(&refs)
         }),
@@ -16435,6 +16922,9 @@ pub fn main() {
     let mut recess_len = dw.recess_len;
     let mut recess_recover = dw.recess_recover;
     let mut recess_news = dw.recess_news;
+    let mut recess_vol = dw.recess_vol;
+    let mut regime_drift = dw.regime_drift;
+    let mut spread_dd = dw.spread_dd;
     let mut vol_pull = dw.vol_pull;
     let mut disaster_size = dw.disaster_size;
     let mut disaster_len = dw.disaster_len;
@@ -16463,6 +16953,9 @@ pub fn main() {
     let mut refuge_days = dw.refuge_days;
     let mut sat_beta = dw.sat_beta;
     let mut sat_idio = dw.sat_idio;
+    let mut sat_cycle_sd = dw.sat_cycle_sd;
+    let mut sat_drift_half = dw.sat_drift_half;
+    let mut sat_level_half = dw.sat_level_half;
     let mut range_scale = dw.range_scale;
     let mut range_down = dw.range_down;
     let mut vol_idio = dw.vol_idio;
@@ -16593,6 +17086,9 @@ pub fn main() {
             "-recesslen" => recess_len = req_f64(&mut it, "-recesslen"),
             "-recessrecover" => recess_recover = req_f64(&mut it, "-recessrecover"),
             "-recessnews" => recess_news = req_f64(&mut it, "-recessnews"),
+            "-recessvol" => recess_vol = req_f64(&mut it, "-recessvol"),
+            "-regimedrift" => regime_drift = req_f64(&mut it, "-regimedrift"),
+            "-spreaddd" => spread_dd = req_f64(&mut it, "-spreaddd"),
             "-volpull" => vol_pull = req_f64(&mut it, "-volpull"),
             "-disastersize" => disaster_size = req_f64(&mut it, "-disastersize"),
             "-disasterlen" => disaster_len = req_f64(&mut it, "-disasterlen"),
@@ -16622,6 +17118,9 @@ pub fn main() {
             "-refugedays" => refuge_days = req_f64(&mut it, "-refugedays"),
             "-satbeta" => sat_beta = req_f64(&mut it, "-satbeta"),
             "-satidio" => sat_idio = req_f64(&mut it, "-satidio"),
+            "-satcyclesd" => sat_cycle_sd = req_f64(&mut it, "-satcyclesd"),
+            "-satdrifthalf" => sat_drift_half = req_f64(&mut it, "-satdrifthalf"),
+            "-satlevelhalf" => sat_level_half = req_f64(&mut it, "-satlevelhalf"),
             "-rangescale" => range_scale = req_f64(&mut it, "-rangescale"),
             "-rangedown" => range_down = req_f64(&mut it, "-rangedown"),
             "-volidio" => vol_idio = req_f64(&mut it, "-volidio"),
@@ -16811,6 +17310,10 @@ pub fn main() {
         non_neg("-refugedays", refuge_days);
         non_neg("-satbeta", sat_beta);
         non_neg("-satidio", sat_idio);
+        non_neg("-satcyclesd", sat_cycle_sd);
+        if sat_cycle_sd > 0.0 && (sat_drift_half <= 0.0 || sat_level_half <= 0.0) {
+            cli_die("-satcyclesd needs -satdrifthalf and -satlevelhalf above 0");
+        }
         non_neg("-rangescale", range_scale);
         non_neg("-rangedown", range_down);
         if range_down > 0.0 && range_scale <= 0.0 {
@@ -16879,9 +17382,9 @@ pub fn main() {
         if macro_panel > 1 {
             cli_die(&format!("-macro {macro_panel}: 0 (off) or 1 (the panel)"));
         }
-        if macro_null > 1 {
+        if macro_null > 2 {
             cli_die(&format!(
-                "-macronull {macro_null}: 0 (the path's own panel) or 1 (a sibling's)"
+                "-macronull {macro_null}: 0 (the path's own panel), 1 (a sibling's) or 2 (both)"
             ));
         }
         if macro_null > 0 && macro_panel == 0 {
@@ -16915,6 +17418,15 @@ pub fn main() {
         }
         if recess_news < 1.0 {
             cli_die(&format!("-recessnews {recess_news} must be at least 1"));
+        }
+        if recess_vol < 0.0 {
+            cli_die(&format!("-recessvol {recess_vol} must be at least 0"));
+        }
+        if regime_drift < 0.0 {
+            cli_die(&format!("-regimedrift {regime_drift} must be at least 0"));
+        }
+        if spread_dd < 0.0 {
+            cli_die(&format!("-spreaddd {spread_dd} must be at least 0"));
         }
         non_neg("-volpull", vol_pull);
         non_neg("-boomrate", boom_rate);
@@ -17034,6 +17546,9 @@ pub fn main() {
         recess_len,
         recess_recover,
         recess_news,
+        recess_vol,
+        regime_drift,
+        spread_dd,
         vol_pull,
         belief_share,
         belief_years,
@@ -17059,6 +17574,9 @@ pub fn main() {
         refuge_days,
         sat_beta,
         sat_idio,
+        sat_cycle_sd,
+        sat_drift_half,
+        sat_level_half,
         range_scale,
         range_down,
         vol_idio,
@@ -17567,6 +18085,12 @@ pub fn main() {
             jf(sd.d5_ratio, 0, 3),
             jf(sd.d10_ratio, 0, 3),
             jf(sd.crash_ratio, 0, 3)
+        );
+        println!(
+            "                         rel-trend acf 63d {}   126d {}   252d {}   (QQQ/SPY +0.05 +0.18 -0.29)",
+            jf(sd.rel_trend[0], 0, 3),
+            jf(sd.rel_trend[1], 0, 3),
+            jf(sd.rel_trend[2], 0, 3)
         );
     }
     if let Some(b) = st.bars {
@@ -18966,6 +19490,7 @@ mod contract_tests {
         off2.recess_len = 0.1;
         off2.recess_recover = 0.9;
         off2.recess_news = 5.0;
+        off2.recess_vol = 0.7;
         let a = simulate(&off, 4, DEFAULT_SEED);
         let b = simulate(&off2, 4, DEFAULT_SEED);
         assert_eq!(
@@ -18977,6 +19502,9 @@ mod contract_tests {
                 w.floorhold == 0.0
                     && w.recess_rate == 0.0
                     && w.recess_news == 1.0
+                    && w.recess_vol == 0.0
+                    && w.regime_drift == 0.0
+                    && w.spread_dd == 0.0
                     && w.vol_pull == 0.0
                     && w.discount_lag == 0.0,
                 "{name} predates the forms and inherits their off values"
@@ -19222,7 +19750,7 @@ mod contract_tests {
     fn the_satellite_dials_are_inert_in_every_frozen_release() {
         for (v, w) in releases() {
             assert!(
-                w.sat_beta == 0.0 && w.sat_idio == 0.0,
+                w.sat_beta == 0.0 && w.sat_idio == 0.0 && w.sat_cycle_sd == 0.0,
                 "release {v} predates the satellite leg and must carry 0 / 0"
             );
         }
@@ -19238,6 +19766,44 @@ mod contract_tests {
     /// The channel rows are not decoration: a leg or a bar that is materially wrong must FAIL
     /// the gate, and a channels-off world must carry none of these rows at all. Without the
     /// second half the first is cheap — a row that never appears cannot be wrong.
+    /// The relative cycle reaches the leg alone: the primary is bit-identical with it on, and the
+    /// leg ratio's persistence rows move from about zero to the record's shape (positive at a
+    /// quarter, negative at a year) while the leg's correlation and beta stay.
+    #[test]
+    fn the_satellite_relative_cycle_moves_the_leg_ratio_alone() {
+        let off = named_world("0.24.4-nasdaq-basket").expect("recipe").0;
+        let mut on = off;
+        sat_cycle_0245(&mut on);
+        let a = sim_paths(&off, 6, 40, 11);
+        let b = sim_paths(&on, 6, 40, 11);
+        for (x, y) in a.iter().zip(&b) {
+            assert_eq!(
+                x.price, y.price,
+                "the primary is the cycle's business only in the leg"
+            );
+            assert_ne!(x.sat, y.sat);
+        }
+        let so = sat_stats(&a, 40).expect("leg");
+        let sn = sat_stats(&b, 40).expect("leg");
+        assert!(
+            so.rel_trend[0].abs() < 0.12,
+            "off: no persistence, {}",
+            so.rel_trend[0]
+        );
+        assert!(
+            sn.rel_trend[0] > 0.10,
+            "on: momentum at a quarter, {}",
+            sn.rel_trend[0]
+        );
+        assert!(
+            sn.rel_trend[2] < so.rel_trend[2],
+            "on: reversal at a year, {} vs {}",
+            sn.rel_trend[2],
+            so.rel_trend[2]
+        );
+        assert!((sn.beta - so.beta).abs() < 0.02 && (sn.corr - so.corr).abs() < 0.02);
+    }
+
     #[test]
     fn the_channel_gate_rows_appear_only_when_the_channel_runs_and_can_fail() {
         let off = measure(&sim_paths(&default_world(), 8, 40, DEFAULT_SEED), 40);
@@ -19488,6 +20054,9 @@ mod contract_tests {
         w.range_scale = c.range_scale;
         w.range_down = c.range_down;
         w.vol_idio = c.vol_idio;
+        w.sat_cycle_sd = c.sat_cycle_sd;
+        w.sat_drift_half = c.sat_drift_half;
+        w.sat_level_half = c.sat_level_half;
         w.overnight = c.overnight;
         w.div_yield = c.div_yield;
         w.basket = c.basket;
@@ -19500,6 +20069,34 @@ mod contract_tests {
         w
     }
 
+    /// `-macronull 2` is `-macronull 0`'s file with `-macronull 1`'s panel beside it: the
+    /// primary and the path's own panel are 0's bit for bit, the null columns are 1's.
+    #[test]
+    fn the_paired_null_panel_is_the_own_panel_with_the_siblings_beside_it() {
+        let mut w = named_world("0.24.0-macro").expect("recipe").0;
+        let own = simulate(&w, 30, 5);
+        w.macro_null = 1;
+        let null = simulate(&w, 30, 5);
+        w.macro_null = 2;
+        let both = simulate(&w, 30, 5);
+        assert_eq!(both.price, own.price);
+        assert_eq!(both.price, null.price);
+        let (o, b) = (
+            own.macro_panel.as_ref().unwrap(),
+            both.macro_panel.as_ref().unwrap(),
+        );
+        let (n, bn) = (
+            null.macro_panel.as_ref().unwrap(),
+            both.macro_null_panel.as_ref().unwrap(),
+        );
+        for j in 0..9 {
+            assert_eq!(b.member(j), o.member(j), "own panel, member {j}");
+            assert_eq!(bn.member(j), n.member(j), "null panel, member {j}");
+        }
+        assert!(!b.sibling && bn.sibling && n.sibling);
+        assert!(own.macro_null_panel.is_none() && null.macro_null_panel.is_none());
+    }
+
     /// The anchor sets' channel dials ARE the channel recipes' (the verdict grades a world's
     /// derived series at exactly the dials the shipped channel worlds run), the verdict world of a
     /// channels-off world is that world with every channel at them and its primary untouched, a
@@ -19507,8 +20104,8 @@ mod contract_tests {
     /// one.
     #[test]
     fn the_verdict_world_runs_every_channel_at_the_anchor_sets_dials_over_an_untouched_primary() {
-        let (sp, _) = named_world("0.24.4-sp500-channels").expect("recipe");
-        let (nq, _) = named_world("0.24.4-nasdaq-basket").expect("recipe");
+        let (sp, _) = named_world("0.24.5-sp500").expect("recipe");
+        let (nq, _) = named_world("0.24.5-nasdaq-basket").expect("recipe");
         assert_eq!(ChannelDials::of(&sp), SP500_ANCHORS.channel_dials);
         assert_eq!(ChannelDials::of(&nq), NASDAQ_ANCHORS.channel_dials);
         let d = default_world();
@@ -21115,7 +21712,7 @@ mod year_vol_anchor_tests {
     }
 }
 
-/// THE RECORD BANDS (`recordbands-2026-09-25.tsv`): the shipped `RecordBand` literals and the
+/// THE RECORD BANDS (`recordbands-2026-09-26.tsv`): the shipped `RecordBand` literals and the
 /// typical-year and up-day-share anchors are re-derived from the fixture; a banded row's percentile
 /// never contradicts its miss; and a pinned series fixes `series_readings` and `record_resamples`
 /// to the bit, so the Scala twin's `RecordBandSuite`, which pins the same values, shows the twins
@@ -21125,7 +21722,7 @@ mod record_band_tests {
     use super::*;
 
     fn lines() -> Vec<String> {
-        std::fs::read_to_string("../test-data/equity-anchors/recordbands-2026-09-25.tsv")
+        std::fs::read_to_string("../test-data/equity-anchors/recordbands-2026-09-26.tsv")
             .expect("fixture")
             .lines()
             .filter(|l| !(l.starts_with('#') || l.trim().is_empty()))
@@ -21439,11 +22036,13 @@ mod record_band_tests {
                 16.8,
                 -15.548714909190897,
                 -2.6641426084559097,
+                0.6469573924082413,
+                0.46904973503687153,
             ]
         );
         assert_eq!(year_vol_phase_mean(&r), 16.862007639884688);
         let reads = record_resamples(&r, 40, 7);
-        let meds: Vec<f64> = (0..13)
+        let meds: Vec<f64> = (0..15)
             .map(|k| med(&reads.iter().map(|x| x[k]).collect::<Vec<f64>>()))
             .collect();
         assert_eq!(
@@ -21462,6 +22061,8 @@ mod record_band_tests {
                 16.8,
                 -26.478692229354827,
                 -3.036702249727999,
+                0.6332136135562098,
+                0.5270138283992784,
             ]
         );
         let crashes: Vec<f64> = reads.iter().map(|x| x[10]).collect();

@@ -4,13 +4,13 @@ import munit.FunSuite
 import uni.*
 import uni.data.*
 
-/** THE RECORD BANDS (`recordbands-2026-09-25.tsv`): the shipped `RecordBand` literals and the
+/** THE RECORD BANDS (`recordbands-2026-09-26.tsv`): the shipped `RecordBand` literals and the
   * typical-year and up-day-share anchors are re-derived from the fixture; a banded row's percentile
   * never contradicts its miss; and a pinned series fixes `seriesReadings` and `recordResamples` to
   * the bit, so the Rust twin's `record_band_tests`, which pins the same values, shows the twins read
   * a record identically. */
 class RecordBandSuite extends FunSuite:
-  private val fixture = Paths.get("test-data/equity-anchors/recordbands-2026-09-25.tsv")
+  private val fixture = Paths.get("test-data/equity-anchors/recordbands-2026-09-26.tsv")
   private lazy val lines: Vector[String] =
     fixture.lines.toVector.filterNot(l => l.startsWith("#") || l.trim.isEmpty)
 
@@ -143,14 +143,16 @@ class RecordBandSuite extends FunSuite:
     assertEquals(MarketSim.seriesReadings(r), Vector(
       16.798312848172113, 17.02219625010289, -0.12963037209238956, 11.437126469063255,
       -0.022101390142453572, -0.012940593813227222, 0.7407002578651204, 29.603735914033912,
-      50.766666666666666, 0.025507720490428657, 16.8, -15.548714909190897, -2.6641426084559097))
+      50.766666666666666, 0.025507720490428657, 16.8, -15.548714909190897, -2.6641426084559097,
+      0.6469573924082413, 0.46904973503687153))
     assertEquals(MarketSim.yearVolPhaseMean(r), 16.862007639884688)
     val reads = MarketSim.recordResamples(r, 40, 7L)
     def med(v: Seq[Double]): Double = { val f = MarketSim.finiteSorted(v.toArray); f(f.length / 2) }
-    assertEquals((0 until 13).toVector.map(k => med(reads.map(_(k)))), Vector(
+    assertEquals((0 until 15).toVector.map(k => med(reads.map(_(k)))), Vector(
       16.78655352771039, 16.877627553056403, -0.16675076546846718, 11.388024993784173,
       -0.02498629581122743, -0.01046514345997916, 0.7513339475330946, 29.880494878185225,
-      50.63333333333333, 0.027222579780510212, 16.8, -26.478692229354827, -3.036702249727999))
+      50.63333333333333, 0.027222579780510212, 16.8, -26.478692229354827, -3.036702249727999,
+      0.6332136135562098, 0.5270138283992784))
     assertEquals(MarketSim.recordBandQuantiles(reads.map(_(10))), Vector(
       8.4, 8.4, 8.4, 8.4, 8.4, 8.4, 8.4, 16.8, 16.8, 16.8, 16.8, 16.8, 16.8, 16.8, 16.8,
       16.8, 16.8, 16.8, 25.2, 25.2, 33.6, 33.6, 33.6))

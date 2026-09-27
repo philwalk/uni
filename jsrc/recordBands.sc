@@ -4,7 +4,7 @@
 
 // THE RECORD BANDS: one real record's own sampling spread on every fidelity row a single daily
 // series can be read the model's way.  The generator behind
-// `test-data/equity-anchors/recordbands-2026-09-25.tsv`, and the Scala twin of
+// `test-data/equity-anchors/recordbands-2026-09-26.tsv`, and the Scala twin of
 // `rust/src/bin/record_bands.rs`: same flags, same rows.
 //
 //     scala-cli run jsrc/recordBands.sc -- -header -set nasdaq -series QQQ \
