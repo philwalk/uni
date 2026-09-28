@@ -2,6 +2,7 @@ package uni.apps
 
 import munit.FunSuite
 import uni.*
+import uni.data.*
 
 /**
  * The bond relations' constants are FITTED NUMBERS, and until this suite nothing in the repo could

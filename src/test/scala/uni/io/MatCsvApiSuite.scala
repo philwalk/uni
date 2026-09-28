@@ -3,6 +3,7 @@ package uni.io
 import munit.FunSuite
 import java.nio.file.Files
 import uni.*
+import uni.data.*
 
 /** Exhaustive tests for the CSV read/write API.
  *

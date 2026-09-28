@@ -74,8 +74,18 @@ class RecordBandSuite extends FunSuite:
       .filterNot(l => l.startsWith("#") || l.trim.isEmpty || l.startsWith("set	"))
       .map(_.split('	').toVector)
     for (set, a) <- sets do
-      val r = rows.find(f => f(0) == set && f(1) == "bubble coupling 3y").getOrElse(fail(s"fixture row [$set] missing"))
-      assertEqualsDouble(a.bubbleCoupling, r(5).toDouble, 1e-6, s"$set: bubble coupling against the record's")
+      for (name, got) <- Vector(("bubble coupling 3y", a.bubbleCoupling), ("largest 3y run-up", a.runUp3y),
+                                ("longest calm stretch", a.calmStretch)) do
+        val r = rows.find(f => f(0) == set && f(1) == name).getOrElse(fail(s"fixture row [$set] $name missing"))
+        assertEqualsDouble(got, r(5).toDouble, 1e-6, s"$set: $name against the record's")
+    // the run-up reads the best 3-year window and the calm stretch the longest run inside 20% of
+    // the peak: 4 flat years, then +1.0 over 3 years, a 30% fall, then 2 flat years
+    val hh = MarketSim.BubbleRunup
+    val rr = Array.fill(4 * hh / 3)(0.0) ++ Array.fill(hh)(1.0 / hh) ++ Array(-0.4) ++ Array.fill(2 * hh / 3)(0.0)
+    assertEqualsDouble(MarketSim.runUp3yOf(rr), 1.0, 1e-9, "run-up")
+    assertEqualsDouble(MarketSim.calmStretchOf(rr), (4 * hh / 3 + hh + 1).toDouble, 0.5, "calm")
+    assert(MarketSim.runUp3yOf(rr.take(hh - 1)).isNaN, "under three years, no run-up")
+    assertEqualsDouble(MarketSim.calmStretchOf(Array.fill(100)(0.001)), 101.0, 0.5, "never 20% down")
     val h = MarketSim.BubbleRunup
     val r = Array.fill(h)(0.0) ++ Array.fill(h)(1.0 / h) ++ Array(-0.7) ++ Array.fill(h)(1.4 / h)
     val c = MarketSim.bubbleCouplingOf(r)

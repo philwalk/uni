@@ -2,6 +2,7 @@ package uni.apps
 
 import munit.FunSuite
 import scala.concurrent.duration.*
+import uni.data.*
 
 /**
  * Contracts on the report machinery itself — no fixture, no ensemble. The Rust twin carries the
@@ -941,7 +942,8 @@ class MarketSimContractSuite extends FunSuite:
     assert(a.price.sameElements(b.price), "at rate 0 the recession's other dials must be inert, bit for bit")
     for (name, w) <- MarketSim.Releases do
       assert(w.floorhold == 0.0 && w.recessRate == 0.0 && w.recessNews == 1.0 && w.recessVol == 0.0 &&
-             w.regimeDrift == 0.0 && w.spreadDd == 0.0 && w.volPull == 0.0 &&
+             w.regimeDrift == 0.0 && w.spreadDd == 0.0 && w.disasterAnticipate == 0.0 &&
+             w.disasterOvershoot == 0.0 && w.volPull == 0.0 &&
              w.discountLag == 0.0, s"$name predates the forms and inherits their off values")
   }
 
@@ -1007,4 +1009,26 @@ class MarketSimContractSuite extends FunSuite:
           val full = get(MarketSim.measure(Vector(p), years))
           assert(java.lang.Double.doubleToRawLongBits(direct) == java.lang.Double.doubleToRawLongBits(full) ||
                  (direct.isNaN && full.isNaN), s"$nm at ${years}y: direct $direct against measure's $full")
+  }
+
+  test("the event labels find nested declines and ignore a dip") {
+    val lp = Array.newBuilder[Double]
+    for i <- 0 until 800 do lp += i * 0.001
+    for i <- 1 to 100 do lp += 0.799 - i * 0.004
+    for i <- 1 to 300 do lp += 0.399 + i * 0.001
+    for i <- 1 to 50 do lp += 0.699 - i * 0.005
+    for i <- 1 to 200 do lp += 0.449 + i * 0.001
+    val series = lp.result()
+    val rows = MarketSim.episodeRows(series, Array.fill(series.length)(0.02), None)
+    assertEquals(rows.length, 2)
+    assertEquals((rows(0).peak, rows(0).trough, rows(0).regain), (799, 899, None))
+    assert(math.abs(rows(0).depth - 0.40) < 1e-9)
+    assert(math.abs(rows(0).runUp3y.get - 0.756) < 1e-9)
+    assert(math.abs(rows(0).worstSession + 0.004) < 1e-12)
+    assert(math.abs(rows(0).worst20 + 0.08) < 1e-9)
+    assertEquals((rows(1).peak, rows(1).trough, rows(1).regain), (1199, 1249, None))
+    assert(math.abs(rows(1).depth - 0.25) < 1e-9)
+    assert(rows(1).spreadRise.isEmpty)
+    val dip = series.take(800) ++ (1 to 50).map(i => 0.799 - i * 0.002)
+    assert(MarketSim.episodeRows(dip, Array.fill(dip.length)(0.0), None).isEmpty)
   }

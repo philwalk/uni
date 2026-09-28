@@ -47,7 +47,8 @@ const USAGE: &str =
                 rows jointly miss A x (rows here) / N of the time
   -of N         the set's banded rows across all its windows (default: the rows printed here)
   -header       print the column header first
-  -coupling     print the record's bubble coupling (`bubble_coupling_of`) instead, the row of
+  -coupling     print the record's bubble coupling (`bubble_coupling_of`), largest 3-year run-up
+                and longest calm stretch instead, the rows of
                 `bubblebust-2026-09-24.tsv`: no resampling keeps the structure it measures";
 
 fn usage(msg: &str) -> ! {
@@ -296,13 +297,18 @@ fn main() {
         if o.header {
             println!("set\trow\tseries\twindow\tn\trecord");
         }
-        println!(
-            "{}\tbubble coupling 3y\t{}\t{window}\t{}\t{:.6}",
-            o.set,
-            o.series,
-            r.len(),
-            ms::bubble_coupling_of(&r)
-        );
+        for (name, value) in [
+            ("bubble coupling 3y", ms::bubble_coupling_of(&r)),
+            ("largest 3y run-up", ms::run_up_3y_of(&r)),
+            ("longest calm stretch", ms::calm_stretch_of(&r)),
+        ] {
+            println!(
+                "{}\t{name}\t{}\t{window}\t{}\t{value:.6}",
+                o.set,
+                o.series,
+                r.len()
+            );
+        }
         return;
     }
     if o.rate {

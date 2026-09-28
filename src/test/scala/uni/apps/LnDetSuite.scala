@@ -1,6 +1,7 @@
 package uni.apps
 
 import munit.FunSuite
+import uni.data.*
 
 /** `lnDet`, the deterministic natural log beside `expDet`: pinned to the bit at the same inputs as
   * the Rust twin's `det_math_tests`, so the two agree by test rather than by inspection. */

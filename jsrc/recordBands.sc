@@ -39,7 +39,8 @@ object RecordBands {
     "              rows jointly miss A x (rows here) / N of the time",
     "-of N         the set's banded rows across all its windows (default: the rows printed here)",
     "-header       print the column header first",
-    "-coupling     print the record's bubble coupling (`bubbleCouplingOf`) instead, the row of",
+    "-coupling     print the record's bubble coupling (`bubbleCouplingOf`), largest 3-year run-up",
+    "              and longest calm stretch instead, the rows of",
     "              `bubblebust-2026-09-24.tsv`: no resampling keeps the structure it measures",
     "-rate         print the two rate rows (`RateBandRows`) of a -fred window instead: the record",
     "              by `rateReadings`, its resamples by `rateResamples`, their own joint band",
@@ -145,7 +146,10 @@ object RecordBands {
     val window = s"${dated.head._1}..${dated.last._1}"
     if coupling then
       if header then println("set\trow\tseries\twindow\tn\trecord")
-      println(f"$set%s\tbubble coupling 3y\t$series%s\t$window%s\t${r.length}%d\t${MarketSim.bubbleCouplingOf(r)}%.6f")
+      for (name, value) <- Vector(("bubble coupling 3y", MarketSim.bubbleCouplingOf(r)),
+                                  ("largest 3y run-up", MarketSim.runUp3yOf(r)),
+                                  ("longest calm stretch", MarketSim.calmStretchOf(r))) do
+        println(f"$set%s\t$name%s\t$series%s\t$window%s\t${r.length}%d\t$value%.6f")
       return
     if rate then
       printRateRows(set, series, rows, resamples, seed, joint, of, header, r, window)

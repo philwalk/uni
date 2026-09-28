@@ -104,6 +104,9 @@ object MarketSimSearch:
     "-noregress R  ; price every row a candidate holds further from its record than recipe R does,",
     "              ;   by the difference (R read at the search's ensemble, the mean of six reads):",
     "              ;   the release rule, which a dead zone alone lets every row drift inside",
+    "-fix DIALS    ; comma-separated dials (e.g. 'disasterSize,disasterOvershoot') every child keeps",
+    "              ;   at its parent's value, so at the seed's: the dials read off the record rather",
+    "              ;   than solved.  The draws are made as without it, so the other dials step alike",
     "-gap ROWS     ; comma-separated graded rows (e.g. 'kurtosis,up-day share %') a candidate",
     "              ;   must hold inside their bands on every read of its primary arm to be feasible:",
     "              ;   the rows a release has to close, which a priced miss lets a search trade away.",
@@ -894,6 +897,7 @@ object MarketSimSearch:
     var transportName = ""; var fidelity = ""; var noregress = ""; var gap = ""
     var gate = "realism,mechanism"
     var hold = ""
+    var fix = ""
     var transportWeight = 0.25
     var cov = 0.0; var covShrink = 0.3
     eachArg(args.toSeq, usage) {
@@ -924,6 +928,7 @@ object MarketSimSearch:
       case "-gate"      => gate = consumeNext
       case "-hold"      => hold = consumeNext
       case "-gap"       => gap = consumeNext
+      case "-fix"       => fix = consumeNext
       case "-fidelity"  => fidelity = consumeNext
       case a          => usage(s"unrecognized arg [$a]")
     }
@@ -1052,6 +1057,10 @@ object MarketSimSearch:
     // `-export`, `-prune` and `-holdout` read no candidate, so they carry the archive's own scheme
     // (see `candidateSeed`): one written before the key was searched a path stride apart
     val readsNoCandidate = prune || exportTo.nonEmpty || holdout > 0
+    // THE FIXED DIALS (`-fix`): each must name a dial of the table
+    val fixNames: Vector[String] = fix.split(',').toVector.map(_.trim).filter(_.nonEmpty)
+    for f <- fixNames if !names.contains(f) do usage(s"-fix names [$f], which is not a searched dial")
+    val fixed: Vector[Boolean] = names.map(fixNames.contains)
     val candidateSeeds =
       if readsNoCandidate then readState(out).getOrElse("candidateSeeds", "path-stride")
       else "independent"
@@ -1095,7 +1104,8 @@ object MarketSimSearch:
                           "transportWeight" -> (if transportName.isEmpty then "(none)" else f"$transportWeight%.4f"),
                           "noregress" -> (if noregress.isEmpty then "(none)" else noregress),
                           "gap" -> (if obj.gap.isEmpty then "(none)" else obj.gap.mkString(",")),
-                          "hold" -> holdText(obj.hold))
+                          "hold" -> holdText(obj.hold),
+                          "fix" -> (if fixNames.isEmpty then "(none)" else fixNames.mkString(",")))
     val loaded = readArchive(out)
     // a checkpoint without `score` was scored on the worst row alone, and one without `gates` gated
     // on its own ensemble; a resume must refuse, not adopt, since its members were admitted by
@@ -1115,7 +1125,9 @@ object MarketSimSearch:
         if loaded.nonEmpty && !strided.contains("noiseReads") then strided + ("noiseReads" -> "reps")
         else strided
       // one written before `-hold` held no row
-      val held = if loaded.nonEmpty && !noised.contains("hold") then noised + ("hold" -> "(none)") else noised
+      val held0 = if loaded.nonEmpty && !noised.contains("hold") then noised + ("hold" -> "(none)") else noised
+      // one written before `-fix` stepped every dial
+      val held = if loaded.nonEmpty && !held0.contains("fix") then held0 + ("fix" -> "(none)") else held0
       // one written before `-gate` gated on the verdict's default classes
       val classed =
         if loaded.nonEmpty && !held.contains("gateClasses") then held + ("gateClasses" -> "realism,mechanism")
@@ -1374,7 +1386,7 @@ object MarketSimSearch:
           val zi = along match
             case Some(l) => (0 to i).foldLeft(0.0)((s, t) => s + l(i)(t) * z(t))
             case None    => z(i)
-          stepped(i, parent.dials(i), zi, sigma)
+          if fixed(i) then parent.dials(i) else stepped(i, parent.dials(i), zi, sigma)
         })
         val t0 = System.nanoTime()
         // the lineage's bar, so an evaluation stops as soon as it is over it

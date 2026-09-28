@@ -17,10 +17,11 @@ class ValuationCycleSuite extends FunSuite:
     MarketSim.Defaults.copy(cycleSd = 0.3, cycleYears = 11.5, beliefShare = 0.5, beliefLeak = 0.0)
 
   test("the cycle is off in every frozen release row, and 0 is bit-identical") {
-    for (v, w) <- MarketSim.Releases do assertEquals(w.cycleSd, 0.0, s"release $v")
+    // 0.24.4 shipped the cycle (the S&P default of item 27); every row before it is off
+    for (v, w) <- MarketSim.Releases if v != "0.24.4" do assertEquals(w.cycleSd, 0.0, s"release $v")
     // at 0 the block never runs: its own stream is never drawn and the price starts at the
     // fundamental as before
-    val w = MarketSim.Releases.last._2
+    val w = MarketSim.Releases.filter(_._2.cycleSd == 0.0).last._2
     val a = MarketSim.simulate(w, 3, MarketSim.DefaultSeed)
     val b = MarketSim.simulate(w.copy(cycleSd = 0.0), 3, MarketSim.DefaultSeed)
     assert(a.price.sameElements(b.price) && a.bond.sameElements(b.bond), "0 must be bit-identical")

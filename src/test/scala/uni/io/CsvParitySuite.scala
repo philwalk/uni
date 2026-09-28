@@ -2,6 +2,7 @@ package uni.io
 
 import munit.FunSuite
 import uni.*
+import uni.data.*
 
 /**
  * Checks `uni.io.FastCsv` against the committed reference in `test-data/csv-parity/`,

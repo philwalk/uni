@@ -213,7 +213,13 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 // `-macronull 0`, and the sibling's beside them as `nullMacro*` (`macro_k::NULL_COLUMNS`, listed
 // under `ungradedChannelSeries`) -- folio's paired control in one pass, where before the null
 // panel meant a second emit of every world. `world` gained the satellite's three cycle dials.
-const EMIT_SCHEMA: u32 = 20;
+// 20 -> 21: `episodes`, THE EVENT LABELS: every 20%+ decline of the emitted path from its
+// trailing-year high, with its joint shape (the run-up into it, depth, speed, the vol at its
+// peak, the recovery, the worst session and month inside it, the rate's and the spread's move),
+// so a consumer can judge a rule conditional on the event -- "in histories holding a 2000-shaped
+// bust" -- instead of on how often the simulator chose to produce one, a frequency no record can
+// pin. `world` gained `spreadDd`.
+const EMIT_SCHEMA: u32 = 21;
 
 /// Frozen structural constants of the volume channel — see the `vol_idio` field. Measured
 /// from the SPY/QQQ volume-on-range regression (`bars-2026-09-01.tsv`, whose rows the
@@ -249,7 +255,7 @@ const DEFAULT_SEED: u64 = 20_260_813;
         reason = "the contract is read by the tests, never by the writer"
     )
 )]
-const EMIT_SIDECAR_KEYS: [&str; 11] = [
+const EMIT_SIDECAR_KEYS: [&str; 12] = [
     "generator",
     "version",
     "schema",
@@ -260,6 +266,7 @@ const EMIT_SIDECAR_KEYS: [&str; 11] = [
     "world",
     "gate",
     "channels",
+    "episodes",
     "fidelity",
 ];
 
@@ -560,6 +567,8 @@ pub fn default_world() -> World {
         recess_vol: 0.0,
         regime_drift: 0.0,
         spread_dd: 0.0,
+        disaster_anticipate: 0.0,
+        disaster_overshoot: 0.0,
         boom_rate: 0.0,
         boom_size: 1.0,
         boom_len: 2.5,
@@ -820,6 +829,8 @@ fn v0_19_2() -> World {
         recess_vol: 0.0,
         regime_drift: 0.0,
         spread_dd: 0.0,
+        disaster_anticipate: 0.0,
+        disaster_overshoot: 0.0,
         boom_rate: 0.0,
         boom_size: 1.0,
         boom_len: 2.5,
@@ -915,6 +926,8 @@ fn v0_24_1() -> World {
         recess_vol: 0.0,
         regime_drift: 0.0,
         spread_dd: 0.0,
+        disaster_anticipate: 0.0,
+        disaster_overshoot: 0.0,
         boom_rate: 0.0,
         boom_size: 1.0,
         boom_len: 2.5,
@@ -1015,6 +1028,7 @@ pub fn releases() -> Vec<(&'static str, World)> {
         ("0.24.1", v0_24_1()),
         ("0.24.2", v0_24_1()),
         ("0.24.3", v0_24_1()),
+        ("0.24.4", v0_24_4()),
     ]
 }
 
@@ -1217,19 +1231,79 @@ fn rows_0245(nq_0244: World) -> Vec<(&'static str, World, &'static str)> {
     ]
 }
 
-/// THE S&P RECIPE RE-SOLVED FOR THE SHORT RATE (item 34; unreleased): the channels recipe with
-/// the floor held while the market is more than 5% under its peak (`floorhold`), the cut at 9
-/// points and the rate mean at 6%. On 32 seeds at 200 x 100: every class on 31 (seed 23's
-/// variance-ratio profile, which `0.24.4-sp500-channels` fails too), no row regressed against it
-/// on fresh seeds; the short rate 4.4% (record 4.6%, band 3.6-5.8, the 32nd percentile), the floor
-/// share 7.5% (record 14.6%, band 5.2-26.0, inside on every seed) where the channels recipe reads
-/// 4.3% and 0.03%. A cut of 0.10-0.12 lifts the floor share to 10-13% but reads the macro
-/// build-up under its gate on one seed of 32; `levGain` 9 lifts it back and moves equity vol,
-/// kurtosis and lag-1 clustering to their bands' edges. The wings, d20 and the up-day share stay
-/// the S&P's standing misses (items 28, 31(b), 32).
+/// THE S&P RECIPE RE-SOLVED AROUND THE 1929 DISASTER (unreleased): the disaster at 1929-32's
+/// trend-free readings off Shiller's earnings and the CRSP daily index — 1.5 log over three years
+/// evenly, half of it back over five (`disaster_size`, `disaster_len`, `disaster_recover`,
+/// `disaster_rec_len`), the valuation leg's overshoot 0.31 and the anticipated recovery 1 — and the
+/// spread's drawdown term at 3.0, all read off the record and held fixed; the other dials re-solved by
+/// search with valuation dispersion, the floor share and the bond's growth rally required inside their
+/// bands, and the noise skew at 0.85 for the up-day share. On 32 fresh seeds at 200 x 100 every class
+/// passes on 32, with 4.0 rows missed a seed: valuation dispersion 0.31 (record 0.30), the lower wing
+/// 7.4% (6.7%), kurtosis 23.9 (21.8), the downside excess 3.0 (3.1), the up-day share 53.6% (55.0%),
+/// the bond's inflation crash -27.8 (-27.9), the short rate 4.3% and the floor share 8.3% (4.6% /
+/// 14.6%), the bond's growth rally 9.3 (7.0), tail hedge corr -0.33 (-0.27). The upper wing, d20, the
+/// largest 3-year run-up and the longest calm stretch are its standing misses.
 fn recipe_0245_sp500(mut w: World) -> World {
-    w.floorhold = 0.05;
-    w.easing = 0.09;
+    w.trend_share = 0.052973269;
+    w.depth = 18.015402;
+    w.stress = 4.0334913;
+    w.drift = 0.12927572;
+    w.fund_vol = 0.03;
+    w.vol_of_vol = 0.02633778;
+    w.leverage = 0.11121662;
+    w.down_shock = 0.01387046;
+    w.jump_skew = 0.76015484;
+    w.jump_var = 0.16756524;
+    w.jump_rate = 0.0042363358;
+    w.news_rate = 0.47451628;
+    w.news_size = 0.035421047;
+    w.news_lev = 2.5878189;
+    w.news_revert = 0.32351801;
+    w.news_scale = 0.11982032;
+    w.news_bond = 0.19460614;
+    w.credit_regime = 0.16314499;
+    w.credit_regime_rate = 0.48687488;
+    w.slow_bond_infl = 0.18788882;
+    w.noise_skew = 0.85;
+    w.news_flip = 0.039819772;
+    w.value_pull = 0.050744312;
+    w.recovery_drag = 8.0048576;
+    w.recovery_floor = 0.066616651;
+    w.disaster_size = 1.5;
+    w.disaster_len = 3.0;
+    w.disaster_rec_len = 5.0;
+    w.boom_rate = 0.75338688;
+    w.boom_size = 0.67080707;
+    w.boom_len = 2.6931865;
+    w.recess_size = 0.58196498;
+    w.recess_len = 0.93905109;
+    w.recess_recover = 0.19277167;
+    w.recess_news = 1.0459283;
+    w.recess_vol = 0.026401209;
+    w.regime_drift = 0.00030014719;
+    w.disaster_anticipate = 1.0;
+    w.disaster_overshoot = 0.31;
+    w.belief_share = 0.97;
+    w.belief_years = 2.0268995;
+    w.belief_leak = 0.18444429;
+    w.cap_years = 3.5078893;
+    w.cycle_sd = 0.11074784;
+    w.cycle_years = 19.599533;
+    w.crowd_impact = 0.063830048;
+    w.easing = 0.086351469;
+    w.floorhold = 0.036314005;
+    w.refuge = 0.11284783;
+    w.refuge_days = 1.1366498;
+    w.lev_gain = 9.7961082;
+    w.bust_amp = 0.09345786;
+    w.slow_share = 0.19526483;
+    w.slow_vol = 0.86875143;
+    w.slow_perm = 0.24569577;
+    w.slow_beta = 0.53958104;
+    w.infl_size = 0.079140058;
+    w.discount = 7.4821889;
+    w.discount_ref = 0.2606615;
+    w.margin = 0.0066092611;
     w.rate_mean = 0.06;
     w.spread_dd = 3.0;
     sat_cycle_0245(&mut w);
@@ -1668,6 +1742,8 @@ fn v0_23_0() -> World {
         recess_vol: 0.0,
         regime_drift: 0.0,
         spread_dd: 0.0,
+        disaster_anticipate: 0.0,
+        disaster_overshoot: 0.0,
         boom_rate: 0.0,
         boom_size: 1.0,
         boom_len: 2.5,
@@ -1785,6 +1861,8 @@ fn v0_22_1() -> World {
         recess_vol: 0.0,
         regime_drift: 0.0,
         spread_dd: 0.0,
+        disaster_anticipate: 0.0,
+        disaster_overshoot: 0.0,
         boom_rate: 0.0,
         boom_size: 1.0,
         boom_len: 2.5,
@@ -1904,6 +1982,8 @@ fn v0_22_0() -> World {
         recess_vol: 0.0,
         regime_drift: 0.0,
         spread_dd: 0.0,
+        disaster_anticipate: 0.0,
+        disaster_overshoot: 0.0,
         boom_rate: 0.0,
         boom_size: 1.0,
         boom_len: 2.5,
@@ -2023,6 +2103,8 @@ fn v0_21_0() -> World {
         recess_vol: 0.0,
         regime_drift: 0.0,
         spread_dd: 0.0,
+        disaster_anticipate: 0.0,
+        disaster_overshoot: 0.0,
         boom_rate: 0.0,
         boom_size: 1.0,
         boom_len: 2.5,
@@ -2205,6 +2287,8 @@ fn v0_20_0() -> World {
         recess_vol: 0.0,
         regime_drift: 0.0,
         spread_dd: 0.0,
+        disaster_anticipate: 0.0,
+        disaster_overshoot: 0.0,
         boom_rate: 0.0,
         boom_size: 1.0,
         boom_len: 2.5,
@@ -2302,6 +2386,31 @@ pub struct World {
     pub disaster_recover: f64,
     /// years the recovery is spread over
     pub disaster_rec_len: f64,
+    /// THE DISASTER'S ANTICIPATION: the share of a disaster's expected recovery the market sees
+    /// from the trough on. The decline is priced as it comes; once it bottoms, the value pull's
+    /// target, the beliefs' read of growth and the value crowd's gap read the fundamental plus this
+    /// x the recovery still to come (`disaster_recover` of the decline, less what has come back),
+    /// so the price turns at the trough and rebounds ahead of the fundamental instead of grinding
+    /// up with it for years. Read off Shiller's earnings 1871-2023 (real and nominal alike): in
+    /// the depression-type collapse this channel stands for, 1929-32, the price fell 0.8 of the
+    /// earnings' decline -- the decline is priced -- and bottomed half a year before the earnings;
+    /// across all ten collapses of 30%+ the price bottomed before the earnings in seven and
+    /// regained before them. Anticipating the decline too (the price moving a quarter as far, the
+    /// median collapse) took the century's worst crash from the 40th percentile of histories to
+    /// the 2nd-8th at any strength from 0.5 up. 0 is off and bit-identical; read off the record,
+    /// a search holds it there with `-fix`.
+    pub disaster_anticipate: f64,
+    /// THE DISASTER'S OVERSHOOT, the valuation leg: while a disaster declines the market sees the
+    /// fundamental less this x the decline so far, so the multiple compresses as the collapse
+    /// deepens and the price falls further than the fundamental; at the trough the overshoot is
+    /// gone and the price rebounds ahead of the fundamental (with `disaster_anticipate`, further).
+    /// Read off 1929-32, the collapse this channel stands for: nominal earnings fell 1.37 log over
+    /// three years evenly while the price (CRSP's daily total return) fell 1.84 over 3.4 years,
+    /// 0.34 of the earnings' decline further, the fall weighted to its end (a quarter, a third and
+    /// three fifths done at a quarter, half and three quarters of the way), and took back 0.40 of
+    /// its fall within a year of its low while earnings had regained 0.05. 0 is off and
+    /// bit-identical; read off the record; a search holds it there with `-fix`.
+    pub disaster_overshoot: f64,
     /// THE RECESSION (items 32/33): a fundamental decline in the disaster's shape -- `recess_size`
     /// log spread evenly over `recess_len` years, then `recess_recover` of it regained over the
     /// same length -- TRIGGERED BY STRESS rather than by a clock: each session no recession,
@@ -2353,7 +2462,7 @@ pub struct World {
     /// fast response to realized vol needs nothing: its convexity (top 1% over the 90-99% band)
     /// reads 4.0 on the record against 3.4 [1.4, 6.4] in the worlds. The drawdown enters through
     /// a 10-session EWMA (`SPREAD_DD_MU`): the record's spread follows the price, it does not move
-    /// with it. Reaches no price; 0 is off and bit-identical; read from the record, not searched.
+    /// with it. Reaches no price; 0 is off and bit-identical; read off the record; a search holds it there with `-fix`.
     pub spread_dd: f64,
     /// THE BOOM REGIME (item 32): a rare multi-year melt-up of PERCEIVED fair value, the disaster
     /// channel mirrored. The record's deep declines follow large run-ups (NDX x5.75 over the three
@@ -4627,6 +4736,29 @@ fn derive_dividends(w: &World, px: &[f64], fv: &[f64], k_div: f64) -> (Vec<f64>,
     (y, t)
 }
 
+/// THE FUNDAMENTAL THE MARKET SEES (see `disaster_overshoot` and `disaster_anticipate`): while a
+/// disaster declines, less the overshoot's share of the decline so far; from its trough on, plus the
+/// anticipated share of the recovery still to come; otherwise the fundamental itself.
+fn fundamental_seen(
+    w: &World,
+    log_vbase: f64,
+    dis_left: usize,
+    dis_down: f64,
+    dis_back: f64,
+) -> f64 {
+    if dis_left > 0 {
+        if w.disaster_overshoot > 0.0 {
+            log_vbase - w.disaster_overshoot * dis_down
+        } else {
+            log_vbase
+        }
+    } else if w.disaster_anticipate > 0.0 {
+        log_vbase + w.disaster_anticipate * dis_back
+    } else {
+        log_vbase
+    }
+}
+
 fn simulate_at(w: &World, years: usize, seed: u64, level: ChannelLevel) -> Path {
     let pr = price_loop(w, years, seed);
     let chan = derive_channels(w, &pr.inputs, level, seed);
@@ -4963,6 +5095,12 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
     let mut dis_step = 0.0f64;
     let mut rec_left = 0usize;
     let mut rec_step = 0.0f64;
+    // the recovery still to come, `disaster_recover` of the decline so far less what has come back:
+    // what `disaster_anticipate` adds to the fundamental the market sees
+    let mut dis_back = 0.0f64;
+    // the running disaster's decline so far: what `disaster_overshoot` takes off the fundamental
+    // the market sees while it declines
+    let mut dis_down = 0.0f64;
     let mut disaster_count = 0usize;
     let dis_prob = w.disaster_rate / (100.0 * DAYS_PER_YEAR as f64);
     // THE RECESSION's state (see `recess_rate`): its own stream, read only while the dial is on
@@ -5042,6 +5180,12 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
             if dis_left > 0 {
                 log_vbase -= dis_step;
                 dis_left -= 1;
+                if w.disaster_anticipate > 0.0 {
+                    dis_back += w.disaster_recover * dis_step;
+                }
+                if w.disaster_overshoot > 0.0 {
+                    dis_down += dis_step;
+                }
                 // trough reached: the RECOVERY leg arms, spreading `disaster_recover` of the
                 // decline back over `disaster_rec_len` years. What does NOT reverse is permanent.
                 if dis_left == 0 && w.disaster_recover > 0.0 {
@@ -5052,10 +5196,19 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
                 if rec_left > 0 {
                     log_vbase += rec_step;
                     rec_left -= 1;
+                    if w.disaster_anticipate > 0.0 {
+                        // exactly 0 once the recovery is over, whatever the rounding on the way
+                        dis_back = if rec_left == 0 {
+                            0.0
+                        } else {
+                            dis_back - rec_step
+                        };
+                    }
                 }
                 if drng.next_f64() < dis_prob {
                     dis_left = ((w.disaster_len * DAYS_PER_YEAR as f64) as usize).max(1);
                     dis_step = w.disaster_size / dis_left as f64;
+                    dis_down = 0.0;
                     if i >= BURN_IN {
                         disaster_count += 1;
                     }
@@ -5315,7 +5468,9 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
 
         // ---- demand flows -----------------------------------------------------------------
         let log_pobs = eq_m.log_p - markdown; // what everyone actually sees and trades
-        let mispricing_pre = log_vbase - eq_m.log_p; // value agents arb the traded component
+        // the fundamental the market sees: plus the anticipated recovery (see `disaster_anticipate`)
+        let fund_seen = fundamental_seen(w, log_vbase, dis_left, dis_down, dis_back);
+        let mispricing_pre = fund_seen - eq_m.log_p; // value agents arb the traded component
         let lookback = 60usize;
         let past = if i >= lookback {
             px[i - lookback].ln()
@@ -5619,11 +5774,14 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
         // strength, which is what lets CAPE-scale swings build. A collapsing fundamental still
         // transmits at full strength — the belief lags it by years. Consumes no draws; at share 0
         // and cap 0 the perceived fair IS the fundamental, bit for bit.
+        // read again here: the regime's drift and the bust swing move the fundamental after the
+        // value crowd's read above
+        let fund_seen = fundamental_seen(w, log_vbase, dis_left, dis_down, dis_back);
         if w.cap_years > 0.0 {
             if i > 0 {
-                g_ewma += g_mu * ((log_vbase - v_prev) - g_ewma);
+                g_ewma += g_mu * ((fund_seen - v_prev) - g_ewma);
             }
-            v_prev = log_vbase;
+            v_prev = fund_seen;
         }
         // THE VALUATION CYCLE (see `cycle_sd`) advances ahead of the read, like the fundamental,
         // and its move is REPRICED THE SAME SESSION in the price and in perceived fair — the bust
@@ -5676,16 +5834,16 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
             && w.cycle_sd <= 0.0
             && boom_prob <= 0.0
         {
-            log_vbase
+            fund_seen
         } else {
             // the cycle is the slow component of perceived fair; the beliefs absorb the gap NET
             // of it, so the two do not compound (a belief tracking the whole gap would feed the
             // cycle back into the target at 1 / (1 - belief_share)); the boom's level sits
             // beside the cycle for the same reason
             let fair_c = if w.cycle_sd > 0.0 {
-                log_vbase + cyc + boom
+                fund_seen + cyc + boom
             } else {
-                log_vbase + boom
+                fund_seen + boom
             };
             let mut pf = fair_c;
             if w.belief_share > 0.0 {
@@ -6378,6 +6536,11 @@ pub struct WorldStats {
     /// median per-path bubble coupling in log (`bubble_coupling_of`), NaN-free: paths without a
     /// qualifying decline are left out of the median
     pub bubble_coupling: f64,
+    /// median per-path largest 3-year log run-up (`run_up_3y_of`) and longest calm stretch in
+    /// sessions (`calm_stretch_of`): the extreme rows that catch worlds trending where the
+    /// record did not
+    pub run_up_3y: f64,
+    pub calm_stretch: f64,
     /// median per-path mean short rate, percent, and share of sessions under `RATE_FLOOR`,
     /// percent (`rate_readings`)
     pub short_rate: f64,
@@ -6847,6 +7010,57 @@ pub fn bubble_coupling_of(r: &[f64]) -> f64 {
     } else {
         into / n_into as f64 - base / n_base as f64
     }
+}
+
+/// ln 0.8: the drawdown that ends a calm stretch
+const CALM_DEEP_LOG: f64 = -0.223_143_551_314_209_76;
+
+/// THE LARGEST 3-YEAR RUN-UP: the maximum over the series of the log return over the trailing
+/// 756 sessions; NaN under three years. The century's largest (CRSP, x2.39) sat below 99.9% of the
+/// S&P worlds' single histories, whose median ran x3.8: the worlds trend at three years where the
+/// record does not. An extreme row like the bubble coupling: the record's percentile among single
+/// histories of its own window, scored by the median.
+pub fn run_up_3y_of(r: &[f64]) -> f64 {
+    let h = BUBBLE_RUNUP;
+    if r.len() < h {
+        return f64::NAN;
+    }
+    let mut lp = vec![0.0f64; r.len() + 1];
+    for i in 0..r.len() {
+        lp[i + 1] = lp[i] + r[i];
+    }
+    let mut best = f64::NEG_INFINITY;
+    for k in h..lp.len() {
+        let x = lp[k] - lp[k - h];
+        if x > best {
+            best = x;
+        }
+    }
+    best
+}
+
+/// THE LONGEST CALM STRETCH: the most sessions in a row during which the series stayed within 20%
+/// of its running peak (the whole series when it never fell that far). The century's longest
+/// (CRSP, 2190 sessions) sat below 98% of the S&P worlds', whose median ran 4000. An extreme row
+/// like the bubble coupling, scored by the median of single histories.
+pub fn calm_stretch_of(r: &[f64]) -> f64 {
+    let mut lp = 0.0f64;
+    let mut peak = 0.0f64;
+    let mut best = 0usize;
+    let mut run = 1usize; // the first session, at its own peak
+    for &x in r {
+        lp += x;
+        if lp > peak {
+            peak = lp;
+        }
+        if lp - peak <= CALM_DEEP_LOG {
+            best = best.max(run);
+            run = 0;
+        } else {
+            run += 1;
+        }
+    }
+    best.max(run) as f64
 }
 
 /// corr(r_t, r^2_{t+1}): the leverage effect at daily lag.
@@ -8428,6 +8642,8 @@ struct PathRead {
     lev_corr: f64,
     vol_timing: f64,
     bubble_coupling: f64,
+    run_up_3y: f64,
+    calm_stretch: f64,
     tail_hedge: f64,
     infl_ann: f64,
     short_rate: f64,
@@ -8543,6 +8759,8 @@ fn path_read(s: &Path, years: usize) -> PathRead {
         lev_corr: lev_corr_of(&r),
         vol_timing: vol_timing_of(&r),
         bubble_coupling: bubble_coupling_of(&r),
+        run_up_3y: run_up_3y_of(&r),
+        calm_stretch: calm_stretch_of(&r),
         short_rate: rate_readings(&s.rate)[0],
         rate_floor: rate_readings(&s.rate)[1],
         tail_hedge: {
@@ -8705,6 +8923,8 @@ pub fn measure(sims: &[Path], years: usize) -> WorldStats {
         up_share: med_by(|p| p.up_share),
         vol_timing: med_by(|p| p.vol_timing),
         bubble_coupling: med_by(|p| p.bubble_coupling),
+        run_up_3y: med_by(|p| p.run_up_3y),
+        calm_stretch: med_by(|p| p.calm_stretch),
         short_rate: med_by(|p| p.short_rate),
         rate_floor: med_by(|p| p.rate_floor),
         lev_corr: med_by(|p| p.lev_corr),
@@ -9844,6 +10064,14 @@ pub struct Anchors {
     pub bubble_years: usize,
     pub bubble_coupling: f64,
     pub bubble_coupling_sd: f64,
+    /// THE LARGEST 3-YEAR RUN-UP's and THE LONGEST CALM STRETCH's records over the bubble window
+    /// (`run_up_3y_of`, `calm_stretch_of`, `bubblebust-2026-09-24.tsv`), graded as extreme rows
+    /// like the bubble coupling; the sds are the spread of single histories at the window's length,
+    /// relative to the record as every `_sd` here is (the precision factor divides by it)
+    pub run_up_3y: f64,
+    pub run_up_3y_sd: f64,
+    pub calm_stretch: f64,
+    pub calm_stretch_sd: f64,
     /// THE SHORT RATE's record: the daily effective federal funds rate (FRED DFF) over the equity
     /// window's dates, its mean in percent and the share of its sessions under `RATE_FLOOR`
     /// (`rate_readings`; `recordbands-2026-09-26.tsv`, whose bands the rows are graded by). The
@@ -10598,6 +10826,10 @@ const SP500_ANCHORS: Anchors = Anchors {
     bubble_years: 100,
     bubble_coupling: 0.114404,
     bubble_coupling_sd: 1.07,
+    run_up_3y: 0.872450,
+    run_up_3y_sd: 0.28,
+    calm_stretch: 2190.0,
+    calm_stretch_sd: 0.61,
     rate_window: "DFF 1954-2026",
     rate_years: 72,
     bond_window: "clean TLT, 24y",
@@ -10722,6 +10954,10 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     bubble_years: 37,
     bubble_coupling: 1.042337,
     bubble_coupling_sd: 0.25,
+    run_up_3y: 1.753345,
+    run_up_3y_sd: 0.21,
+    calm_stretch: 1927.0,
+    calm_stretch_sd: 0.30,
     rate_window: "DFF 1999-2026",
     rate_years: 27,
     bond_window: "clean TLT, 24y",
@@ -11062,6 +11298,25 @@ pub fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             a.bubble_coupling,
             wgt(0.5, a.bubble_coupling_sd),
         ),
+        // THE LARGEST 3-YEAR RUN-UP and THE LONGEST CALM STRETCH: extreme rows like the bubble
+        // coupling, on the same window. The S&P worlds made run-ups the century never did (its
+        // largest below 99.9% of histories) and calm stretches it never had (below 98%): the
+        // reverse of the Nasdaq's bubble gap, a world producing events the record rules out.
+        // Judgment 1.0 each, the neutral judgment: the precision factor alone (the single-history
+        // spread, 0.28 and 0.61 of the record on the S&P) sets how hard the row pulls. At 0.5 with
+        // the spreads mistyped as absolute the S&P re-solve (search-v128) did not move either row.
+        (
+            "largest 3y run-up",
+            (|st| st.run_up_3y) as StatFn,
+            a.run_up_3y,
+            wgt(1.0, a.run_up_3y_sd),
+        ),
+        (
+            "longest calm stretch",
+            (|st| st.calm_stretch) as StatFn,
+            a.calm_stretch,
+            wgt(1.0, a.calm_stretch_sd),
+        ),
         // The "(24y)" is load-bearing, not decoration: this row is measured on a different
         // horizon from every other, and the label is the only part that travels when the number
         // is quoted.
@@ -11216,7 +11471,12 @@ pub fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
 /// length — `-noise`'s `real@`, which converges — and carry no ratio at all. A median survives
 /// pooling and a minimum does not; that is the whole distinction. The contract test requires every
 /// name here to be a fidelity target.
-const EXTREME_TARGETS: &[&str] = &["worst crash %", "bubble coupling 3y"];
+const EXTREME_TARGETS: &[&str] = &[
+    "worst crash %",
+    "bubble coupling 3y",
+    "largest 3y run-up",
+    "longest calm stretch",
+];
 
 /// The admissible interval for a per-path fidelity ratio on a row WITHOUT a `RecordBand`, and the
 /// admissible percentile band for an `EXTREME_TARGETS` row. Stated ONCE: the report, the sidecar and
@@ -11394,6 +11654,8 @@ fn extreme_reading(nm: &str, p: &Path) -> Option<f64> {
             })
         }
         "bubble coupling 3y" => Some(bubble_coupling_of(&daily_returns(&p.price))),
+        "largest 3y run-up" => Some(run_up_3y_of(&daily_returns(&p.price))),
+        "longest calm stretch" => Some(calm_stretch_of(&daily_returns(&p.price))),
         _ => None,
     }
 }
@@ -12633,7 +12895,7 @@ const IDENTITY_PARAMS: &[&str] = &["duration", "divYield"];
 /// are in this order too, so the order is also the archive's format. Same shape as `EMIT_SCHEMA` /
 /// `EmitSchema`: the literal is in the model, checked by each twin's own contract test, and
 /// changing one twin without the other cannot pass.
-pub const CALIBRATE_DIAL_ORDER: [&str; 64] = [
+pub const CALIBRATE_DIAL_ORDER: [&str; 66] = [
     "depth",
     "trendShare",
     "drift",
@@ -12695,6 +12957,8 @@ pub const CALIBRATE_DIAL_ORDER: [&str; 64] = [
     "recessVol",
     "regimeDrift",
     "spreadDd",
+    "disasterAnticipate",
+    "disasterOvershoot",
     "volPull",
     "discountLag",
     "discountRef",
@@ -13143,6 +13407,23 @@ pub fn calibrate_ranges() -> Vec<(&'static str, f64, f64, Setter, Getter)> {
             5.0,
             |w, x| w.spread_dd = x,
             |w| w.spread_dd,
+        ),
+        // the share of a running disaster's expected recovery the market sees (0 off); read off
+        // the record
+        (
+            "disasterAnticipate",
+            0.0,
+            1.0,
+            |w, x| w.disaster_anticipate = x,
+            |w| w.disaster_anticipate,
+        ),
+        // the valuation leg's share of a declining disaster's fall (0 off); read off the record
+        (
+            "disasterOvershoot",
+            0.0,
+            1.0,
+            |w, x| w.disaster_overshoot = x,
+            |w| w.disaster_overshoot,
         ),
         ("volPull", 0.0, 6.0, |w, x| w.vol_pull = x, |w| w.vol_pull),
         // the markdown's lag in years (0 off): a cut supports valuations over years
@@ -14024,7 +14305,7 @@ fn bond_relations() -> [Relation; 2] {
 /// target added or renamed fails the build until someone places it. The failure being prevented is
 /// a target silently absent from the equity section — a shorter table reads as a shorter list of
 /// concerns, not as a bug.
-const EQUITY_TARGETS: [&str; 23] = [
+const EQUITY_TARGETS: [&str; 25] = [
     "equity vol %",
     "typical-year vol %",
     "return per vol",
@@ -14045,6 +14326,8 @@ const EQUITY_TARGETS: [&str; 23] = [
     "median depth %",
     "worst crash %",
     "bubble coupling 3y",
+    "largest 3y run-up",
+    "longest calm stretch",
     "equity d5 vs real",
     "equity d10 vs real",
     "equity d20 vs real",
@@ -14456,7 +14739,15 @@ fn anchor_groups(a: Anchors) -> [(&'static str, usize, &'static [&'static str]);
         // Its own group because its own window: the Nasdaq's is the NDX price index from 1990,
         // since QQQ's record starts nine years too late for a 3-year run-up into the 2000 peak
         // (`Anchors::bubble_window`); the S&P's is the century, as the tail's is.
-        (a.bubble_window, a.bubble_years, &["bubble coupling 3y"]),
+        (
+            a.bubble_window,
+            a.bubble_years,
+            &[
+                "bubble coupling 3y",
+                "largest 3y run-up",
+                "longest calm stretch",
+            ],
+        ),
         // The rate's record over the equity window's dates -- see `Anchors::rate_window`.
         (
             a.rate_window,
@@ -16011,6 +16302,8 @@ pub fn world_json_body_fmt(w: &World, num: &dyn Fn(f64) -> String) -> Vec<String
         ("recessVol", num(w.recess_vol)),
         ("regimeDrift", num(w.regime_drift)),
         ("spreadDd", num(w.spread_dd)),
+        ("disasterAnticipate", num(w.disaster_anticipate)),
+        ("disasterOvershoot", num(w.disaster_overshoot)),
         ("volPull", num(w.vol_pull)),
         ("beliefShare", num(w.belief_share)),
         ("beliefYears", num(w.belief_years)),
@@ -16456,6 +16749,212 @@ fn fidelity_row_json(r: &FidelityRow) -> String {
     head + &mid + &tail
 }
 
+/// One 20%+ decline of an emitted path: see `episodes_block`.
+struct EpisodeRow {
+    peak: usize,
+    trough: usize,
+    regain: Option<usize>,
+    run_up_3y: Option<f64>,
+    depth: f64,
+    vol_peak_over_median: f64,
+    worst_session: f64,
+    worst_20: f64,
+    rate_change: f64,
+    spread_rise: Option<f64>,
+}
+
+/// -ln 0.8: a decline counts from 20%
+const EPISODE_DEEP: f64 = 0.223_143_551_314_209_76;
+const EPISODE_HIGH_WINDOW: usize = 252;
+const EPISODE_VOL_WINDOW: usize = 21;
+const EPISODE_RUN_UP: usize = 756;
+
+/// The running maximum of `x` over the last `w` sessions including the current one, exact.
+fn trailing_high(x: &[f64], w: usize) -> Vec<f64> {
+    let mut out = vec![0.0f64; x.len()];
+    let mut deque: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
+    for (i, slot) in out.iter_mut().enumerate() {
+        while deque.back().is_some_and(|&j| x[j] <= x[i]) {
+            deque.pop_back();
+        }
+        deque.push_back(i);
+        while deque.front().is_some_and(|&j| j + w <= i) {
+            deque.pop_front();
+        }
+        *slot = x[deque[0]];
+    }
+    out
+}
+
+/// `v[k]`, the annualized sd of the `w` log returns ending at session `k` (NaN before there are
+/// `w` of them), summed in index order so the twins agree to the bit.
+fn realized_vol(lp: &[f64], w: usize) -> Vec<f64> {
+    let n = lp.len();
+    let mut v = vec![f64::NAN; n];
+    for (k, slot) in v.iter_mut().enumerate().skip(w) {
+        let mut s = 0.0f64;
+        let mut s2 = 0.0f64;
+        for j in (k - w)..k {
+            let r = lp[j + 1] - lp[j];
+            s += r;
+            s2 += r * r;
+        }
+        let mean = s / w as f64;
+        let var = (s2 / w as f64 - mean * mean).max(0.0);
+        *slot = (var * DAYS_PER_YEAR as f64).sqrt();
+    }
+    v
+}
+
+/// Every decline of 20%+ from the trailing-year high of `lp`, measured to the first regain of
+/// its peak; after a trough the next may start at the next such high even while the older peak
+/// stands unregained, so 2008 counts inside 2000's spell. `spread` is the macro spread when the
+/// panel ran.
+fn episode_rows(lp: &[f64], rate: &[f64], spread: Option<&[f64]>) -> Vec<EpisodeRow> {
+    let n = lp.len();
+    let mut out = Vec::new();
+    if n < 2 {
+        return out;
+    }
+    let trail = trailing_high(lp, EPISODE_HIGH_WINDOW);
+    let v = realized_vol(lp, EPISODE_VOL_WINDOW);
+    let mut finite: Vec<f64> = v.iter().copied().filter(|x| x.is_finite()).collect();
+    finite.sort_by(f64::total_cmp);
+    let vmed = if finite.is_empty() {
+        f64::NAN
+    } else if finite.len() % 2 == 1 {
+        finite[finite.len() / 2]
+    } else {
+        (finite[finite.len() / 2 - 1] + finite[finite.len() / 2]) / 2.0
+    };
+    let mut i = 0usize;
+    while i + 1 < n {
+        if lp[i] < trail[i] {
+            i += 1;
+            continue;
+        }
+        let j = (i + 1..n).find(|&k| lp[k] > lp[i]).unwrap_or(n);
+        let mut t = i + 1;
+        for k in i + 1..j {
+            if lp[k] < lp[t] {
+                t = k;
+            }
+        }
+        if lp[i] - lp[t] < EPISODE_DEEP {
+            i += 1;
+            continue;
+        }
+        out.push(episode_at(lp, &v, vmed, rate, spread, i, t, j));
+        i = t + 1;
+    }
+    out
+}
+
+/// The shape of the decline from the high at `i` to the trough at `t`, regained at `j` (`n` when
+/// never): see `episode_rows`.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one episode's measurement takes the path, its vol and the three sessions that bound it"
+)]
+fn episode_at(
+    lp: &[f64],
+    v: &[f64],
+    vmed: f64,
+    rate: &[f64],
+    spread: Option<&[f64]>,
+    i: usize,
+    t: usize,
+    j: usize,
+) -> EpisodeRow {
+    let n = lp.len();
+    let mut volmax = f64::NAN;
+    for &x in &v[i..=t] {
+        if x.is_finite() && (volmax.is_nan() || x > volmax) {
+            volmax = x;
+        }
+    }
+    let mut worst_session = f64::INFINITY;
+    let mut worst_20 = f64::INFINITY;
+    for k in i..t {
+        worst_session = worst_session.min(lp[k + 1] - lp[k]);
+        worst_20 = worst_20.min(lp[(k + 20).min(n - 1)] - lp[k]);
+    }
+    let spread_rise = spread.map(|s| {
+        let mut hi = s[i];
+        for &x in &s[i..=(t + 63).min(n - 1)] {
+            if x > hi {
+                hi = x;
+            }
+        }
+        hi - s[i]
+    });
+    EpisodeRow {
+        peak: i,
+        trough: t,
+        regain: (j < n).then_some(j),
+        run_up_3y: (i >= EPISODE_RUN_UP).then(|| lp[i] - lp[i - EPISODE_RUN_UP]),
+        depth: lp[i] - lp[t],
+        vol_peak_over_median: volmax / vmed,
+        worst_session,
+        worst_20,
+        rate_change: rate[(t + 252).min(n - 1)] - rate[i],
+        spread_rise,
+    }
+}
+
+/// THE EVENT LABELS block of the sidecar (schema 21): the path's 20%+ declines with their joint
+/// shape, on `logTraded` when the file carries it and on the log of `price` otherwise. Row
+/// indices are the TSV's. `runUp3y` and `depth` are log; `volPeakOverMedian` the peak 21-session
+/// realized vol inside the decline over the path's median; `worstSession` and `worst20` the worst
+/// log return over one and twenty sessions inside it; `rateChange` the rate a year past the trough
+/// less at the peak, decimal; `spreadRise` the macro spread's high by the trough plus a quarter
+/// less at the peak, pp (null without the panel).
+fn episodes_block(p: &Path) -> String {
+    let (series, lp): (&str, Vec<f64>) = if p.traded.is_empty() {
+        ("price", p.price.iter().map(|x| x.ln()).collect())
+    } else {
+        ("logTraded", p.traded.iter().map(|x| x.ln()).collect())
+    };
+    let spread = p
+        .macro_panel
+        .as_ref()
+        .filter(|m| !m.sibling)
+        .map(|m| m.spread.as_slice());
+    let opt_usize = |x: Option<usize>| x.map_or_else(|| "null".to_string(), |v| v.to_string());
+    let opt_f = |x: Option<f64>| x.map_or_else(|| "null".to_string(), ef);
+    let rows: Vec<String> = episode_rows(&lp, &p.rate, spread)
+        .iter()
+        .map(|e| {
+            format!(
+                "      {{ \"peak\": {}, \"trough\": {}, \"regain\": {}, \"sessionsToTrough\": {}, \
+                 \"sessionsToRegain\": {}, \"runUp3y\": {}, \"depth\": {}, \"volPeakOverMedian\": {}, \
+                 \"worstSession\": {}, \"worst20\": {}, \"rateChange\": {}, \"spreadRise\": {} }}",
+                e.peak,
+                e.trough,
+                opt_usize(e.regain),
+                e.trough - e.peak,
+                opt_usize(e.regain.map(|r| r - e.trough)),
+                opt_f(e.run_up_3y),
+                ef(e.depth),
+                if e.vol_peak_over_median.is_finite() {
+                    ef(e.vol_peak_over_median)
+                } else {
+                    "null".to_string()
+                },
+                ef(e.worst_session),
+                ef(e.worst_20),
+                ef(e.rate_change),
+                opt_f(e.spread_rise)
+            )
+        })
+        .collect();
+    format!(
+        "  \"episodes\": {{\n    \"series\": {},\n    \"rule\": \"declines of 20%+ from the trailing-252-session high, each to the first regain of its peak; the next may start at the next such high after the trough\",\n    \"rows\": [\n{}\n    ]\n  }},",
+        json_str(series),
+        rows.join(",\n")
+    )
+}
+
 /// Everything that licenses the TSV: which (world, seed, path) produced it, on what calendar,
 /// and what the world's two gate verdicts and fidelity ratios were. A warning printed to stderr
 /// at export time does not survive the file being moved; this does.
@@ -16572,6 +17071,7 @@ fn write_emit_sidecar(
         // the verdict's readings, led by the level ITS channels were sampled at: the level is a
         // function of the primary alone, so it is this file's level wherever this file has one
         channel_readings_block(gate_st, gate_level),
+        episodes_block(p),
         "  \"fidelity\": [".to_string(),
         fidelity.join(",\n"),
         "  ]".to_string(),
@@ -16925,6 +17425,8 @@ pub fn main() {
     let mut recess_vol = dw.recess_vol;
     let mut regime_drift = dw.regime_drift;
     let mut spread_dd = dw.spread_dd;
+    let mut disaster_anticipate = dw.disaster_anticipate;
+    let mut disaster_overshoot = dw.disaster_overshoot;
     let mut vol_pull = dw.vol_pull;
     let mut disaster_size = dw.disaster_size;
     let mut disaster_len = dw.disaster_len;
@@ -17089,6 +17591,12 @@ pub fn main() {
             "-recessvol" => recess_vol = req_f64(&mut it, "-recessvol"),
             "-regimedrift" => regime_drift = req_f64(&mut it, "-regimedrift"),
             "-spreaddd" => spread_dd = req_f64(&mut it, "-spreaddd"),
+            "-disasteranticipate" => {
+                disaster_anticipate = req_f64(&mut it, "-disasteranticipate");
+            }
+            "-disasterovershoot" => {
+                disaster_overshoot = req_f64(&mut it, "-disasterovershoot");
+            }
             "-volpull" => vol_pull = req_f64(&mut it, "-volpull"),
             "-disastersize" => disaster_size = req_f64(&mut it, "-disastersize"),
             "-disasterlen" => disaster_len = req_f64(&mut it, "-disasterlen"),
@@ -17428,6 +17936,16 @@ pub fn main() {
         if spread_dd < 0.0 {
             cli_die(&format!("-spreaddd {spread_dd} must be at least 0"));
         }
+        if !(0.0..=1.0).contains(&disaster_overshoot) {
+            cli_die(&format!(
+                "-disasterovershoot {disaster_overshoot} must be in 0..1"
+            ));
+        }
+        if !(0.0..=1.0).contains(&disaster_anticipate) {
+            cli_die(&format!(
+                "-disasteranticipate {disaster_anticipate} must be in 0..1"
+            ));
+        }
         non_neg("-volpull", vol_pull);
         non_neg("-boomrate", boom_rate);
         if boom_rate > 0.0 && (boom_size <= 0.0 || boom_len <= 0.0) {
@@ -17549,6 +18067,8 @@ pub fn main() {
         recess_vol,
         regime_drift,
         spread_dd,
+        disaster_anticipate,
+        disaster_overshoot,
         vol_pull,
         belief_share,
         belief_years,
@@ -18492,6 +19012,59 @@ mod emit_sidecar_tests {
     /// simulated (the `-emitgate 0` reading), so this costs one short simulation rather than a
     /// 200-path ensemble.
     ///
+    /// THE EVENT LABELS: a 30% fall from a trailing-year high is one episode with its peak,
+    /// trough and regain where they were planted, a second fall after a partial recovery to a new
+    /// trailing-year high is a second episode even though the first peak stands unregained, and a
+    /// 10% dip is none.
+    /// a rise to 0.799 at session 799, down 0.40 log to 0.399 at 899, back to 0.699 at 1199 (a
+    /// trailing-year high from 1152), 0.25 down to 0.449 at 1249, then to 0.649 at 1449: neither
+    /// peak regained
+    fn planted_declines() -> Vec<f64> {
+        let legs: [(usize, f64, f64); 5] = [
+            (800, 0.0, 0.001),
+            (100, 0.799, -0.004),
+            (300, 0.399, 0.001),
+            (50, 0.699, -0.005),
+            (200, 0.449, 0.001),
+        ];
+        let mut lp = Vec::new();
+        for (leg, (count, from, step)) in legs.iter().enumerate() {
+            let first = usize::from(leg > 0);
+            for i in first..first + count {
+                lp.push(from + i as f64 * step);
+            }
+        }
+        lp
+    }
+
+    #[test]
+    fn episode_rows_find_nested_declines() {
+        let lp = planted_declines();
+        let n = lp.len();
+        let rate = vec![0.02f64; n];
+        let rows = episode_rows(&lp, &rate, None);
+        assert_eq!(rows.len(), 2, "two declines of 20%+");
+        assert_eq!(
+            (rows[0].peak, rows[0].trough, rows[0].regain),
+            (799, 899, None)
+        );
+        assert!((rows[0].depth - 0.40).abs() < 1e-9);
+        assert!((rows[0].run_up_3y.expect("a 3y run-up") - 0.756).abs() < 1e-9);
+        assert!((rows[0].worst_session + 0.004).abs() < 1e-12);
+        assert!((rows[0].worst_20 + 0.08).abs() < 1e-9);
+        assert_eq!(
+            (rows[1].peak, rows[1].trough, rows[1].regain),
+            (1199, 1249, None)
+        );
+        assert!((rows[1].depth - 0.25).abs() < 1e-9);
+        assert!(rows[1].spread_rise.is_none());
+        let mut dip = lp[..800].to_vec();
+        for i in 1..=50 {
+            dip.push(0.799 - i as f64 * 0.002); // a 10% dip
+        }
+        assert!(episode_rows(&dip, &vec![0.0; dip.len()], None).is_empty());
+    }
+
     /// `tag` keeps concurrent callers apart: the harness runs tests in parallel, and a shared
     /// directory name lets one test delete the sidecar another is writing — `write_or_die` then
     /// `process::exit`s and takes the whole harness down, not just the raced test. Each test
@@ -19505,6 +20078,8 @@ mod contract_tests {
                     && w.recess_vol == 0.0
                     && w.regime_drift == 0.0
                     && w.spread_dd == 0.0
+                    && w.disaster_anticipate == 0.0
+                    && w.disaster_overshoot == 0.0
                     && w.vol_pull == 0.0
                     && w.discount_lag == 0.0,
                 "{name} predates the forms and inherits their off values"
@@ -21907,17 +22482,47 @@ mod record_band_tests {
                 .map(|l| l.split('\t').map(str::to_string).collect())
                 .collect();
         for (set, a) in sets() {
-            let r = lines
-                .iter()
-                .find(|f| f[0] == set && f[1] == "bubble coupling 3y")
-                .unwrap_or_else(|| panic!("fixture row [{set}] missing"));
-            let rec: f64 = r[5].parse().expect("number");
-            assert!(
-                (a.bubble_coupling - rec).abs() < 1e-6,
-                "{set}: bubble coupling {} against the record's {rec}",
-                a.bubble_coupling
-            );
+            for (name, got) in [
+                ("bubble coupling 3y", a.bubble_coupling),
+                ("largest 3y run-up", a.run_up_3y),
+                ("longest calm stretch", a.calm_stretch),
+            ] {
+                let r = lines
+                    .iter()
+                    .find(|f| f[0] == set && f[1] == name)
+                    .unwrap_or_else(|| panic!("fixture row [{set}] {name} missing"));
+                let rec: f64 = r[5].parse().expect("number");
+                assert!(
+                    (got - rec).abs() < 1e-6,
+                    "{set}: {name} {got} against the record's {rec}"
+                );
+            }
         }
+        // the run-up reads the best 3-year window and the calm stretch the longest run inside 20%
+        // of the peak: 4 flat years, then +1.0 over 3 years, a 30% fall, then 2 flat years
+        let h = BUBBLE_RUNUP;
+        let mut r = vec![0.0f64; 4 * h / 3];
+        r.extend(std::iter::repeat_n(1.0 / h as f64, h));
+        r.push(-0.4);
+        r.extend(std::iter::repeat_n(0.0, 2 * h / 3));
+        assert!(
+            (run_up_3y_of(&r) - 1.0).abs() < 1e-9,
+            "run-up {}",
+            run_up_3y_of(&r)
+        );
+        assert!(
+            (calm_stretch_of(&r) - (4 * h / 3 + h + 1) as f64).abs() < 0.5,
+            "calm {}",
+            calm_stretch_of(&r)
+        );
+        assert!(
+            run_up_3y_of(&r[..h - 1]).is_nan(),
+            "under three years, no run-up"
+        );
+        assert!(
+            (calm_stretch_of(&[0.001; 100]) - 101.0).abs() < 0.5,
+            "never 20% down: the whole series"
+        );
         // 3 years flat, +1.0 over 3 years, a 50% fall, then a recovery to a new high: the fall's
         // peak carries a run-up of 1.0; the highs at the end carry the run-up from the trough
         let h = BUBBLE_RUNUP;
@@ -24267,12 +24872,16 @@ mod valuation_cycle_tests {
 
     #[test]
     fn the_cycle_is_off_in_every_frozen_release_row_and_zero_is_bit_identical() {
+        // 0.24.4 shipped the cycle (the S&P default of item 27); every row before it is off
         for (v, w) in releases() {
-            assert!(w.cycle_sd == 0.0, "release {v}");
+            assert!(v == "0.24.4" || w.cycle_sd == 0.0, "release {v}");
         }
         // at 0 the block never runs: its own stream is never drawn and the price starts at the
         // fundamental as before
-        let (_, w) = releases().last().cloned().expect("a release row");
+        let (_, w) = releases()
+            .into_iter()
+            .rfind(|(_, w)| w.cycle_sd == 0.0)
+            .expect("a release row with the cycle off");
         let mut z = w;
         z.cycle_sd = 0.0;
         let a = simulate(&w, 3, DEFAULT_SEED);

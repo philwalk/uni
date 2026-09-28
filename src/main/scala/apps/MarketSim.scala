@@ -243,11 +243,11 @@ object MarketSim:
   // level the verdict's channels were sampled at.  `gradedSeries` keeps its meaning: the columns in
   // THIS file the verdict graded.  In the same schema `world` gained `boomRate`, `boomSize` and
   // `boomLen` (the boom regime, 0 in every shipped world), and `gate.fidelity` two rows.
-  val EmitSchema: Int = 20
+  val EmitSchema: Int = 21
 
   val EmitSidecarKeys: Vector[String] =
     Vector("generator", "version", "schema", "file", "columns", "header", "path", "world",
-           "gate", "channels", "fidelity")
+           "gate", "channels", "episodes", "fidelity")
 
   // Numeric arguments fail LOUDLY.  `toInt` alone dies with a raw NumberFormatException, and the
   // Rust twin's old parse-or-default silently substituted the default — `-emitpath -1` emitted
@@ -568,6 +568,10 @@ object MarketSim:
     s"              ;   regime's level, while a spell runs (default ${Defaults.regimeDrift}; 0 is off)",
     s"-spreaddd X    ; the macro spread's level per unit of log drawdown from the trailing-year",
     s"              ;   high, pp (default ${Defaults.spreadDd}; 0 is off; reaches no price)",
+    s"-disasteranticipate X ; the share of a disaster's expected recovery the market sees from its trough,",
+    s"              ;   0..1 (default ${Defaults.disasterAnticipate}; 0 is off)",
+    s"-disasterovershoot X ; the share of a declining disaster's fall the market sees on top of it,",
+    s"              ;   the valuation leg, 0..1 (default ${Defaults.disasterOvershoot}; 0 is off)",
     s"-volpull X    ; the rebound waits for vol to subside: the value pull's damp is divided by",
     s"              ;   1 + X x (fast realized sd over its four-year level, less 1) (default",
     s"              ;   ${Defaults.volPull}; 0 off)",
@@ -928,7 +932,21 @@ object MarketSim:
                                  // spread holds while equity is under water.  Read off the record
                                  // per recipe (BAA10Y 1990-2026 against the recipe's own index;
                                  // the Rust twin's doc carries the bins).  Reaches no price; 0 is
-                                 // off and bit-identical; not searched.
+                                 // off and bit-identical; a search holds it with `-fix`.
+    disasterAnticipate: Double = 0.0, // THE DISASTER'S ANTICIPATION: the share of a disaster's
+                                 // expected recovery the market sees from the trough on -- the
+                                 // decline is priced as it comes; once it bottoms the pull's target,
+                                 // the beliefs' growth read and the value crowd's gap read the
+                                 // fundamental plus this x the recovery still to come, so the price
+                                 // turns at the trough and rebounds ahead of the fundamental.  Read off Shiller's
+                                 // real earnings (the Rust twin's doc carries the reading).  0 is
+                                 // off and bit-identical; a search holds it with `-fix`.
+    disasterOvershoot: Double = 0.0, // THE DISASTER'S OVERSHOOT, the valuation leg: while a disaster
+                                 // declines the market sees the fundamental less this x the decline
+                                 // so far, so the price falls further than the fundamental and
+                                 // rebounds ahead of it at the trough.  Read off 1929-32 (the Rust
+                                 // twin's doc carries the reading).  0 is off and bit-identical;
+                                 // a search holds it with `-fix`.
     boomRate: Double = 0.0,   // THE BOOM REGIME (item 32): a rare multi-year melt-up of PERCEIVED
                               // fair value, the disaster channel mirrored.  The record's deep
                               // declines follow large run-ups (NDX x5.75 over the three years into
@@ -1658,7 +1676,7 @@ object MarketSim:
     ("0.19.1", PreV1902), ("0.19.2", V0_19_2), ("0.19.3", V0_19_2), ("0.20.0", V0_20_0),
     ("0.21.0", V0_21_0), ("0.22.0", V0_22_0), ("0.22.1", V0_22_1), ("0.23.0", V0_23_0),
     ("0.23.1", V0_23_0), ("0.24.0", V0_24_0), ("0.24.1", V0_24_1), ("0.24.2", V0_24_1),
-    ("0.24.3", V0_24_1))
+    ("0.24.3", V0_24_1), ("0.24.4", V0_24_4))
 
   /** The world a release shipped, for `-atrelease`: the current version's default, or a frozen row
     * of the `-releases` table.  `None` for anything else -- the CLI dies naming what exists.  The
@@ -1928,18 +1946,36 @@ object MarketSim:
                         basketGaps = 8.0, satCycleSd = 0.0003, satDriftHalf = 0.2,
                         satLevelHalf = 0.5),
             "nasdaq"),
-           // THE S&P RECIPE RE-SOLVED FOR THE SHORT RATE (item 34; unreleased): the channels recipe
-           // with the floor held while the market is more than 5% under its peak, the cut at 9 points
-           // and the rate mean at 6%: every class on 31 of 32 seeds (seed 23's variance-ratio profile,
-           // which the channels recipe fails too), no row regressed; the short rate 4.4% and the floor
-           // share 7.5% (records 4.6% / 14.6%, both inside their bands on every seed).
-           // THE SATELLITE'S RELATIVE CYCLE at its adopted values (folio's request 2; see
-           // `satCycleSd`): on 80 paths of the record's 27 years the QQQ/SPY record's relative-trend
-           // readings sit at the worlds' 20th, 79th and 18th percentiles (73rd, 91st, 5th without it);
-           // the leg's other rows are unmoved.  The verdict's anchored satellite runs it for both sets.
+           // THE S&P RECIPE RE-SOLVED AROUND THE 1929 DISASTER (unreleased): the disaster at 1929-32's
+           // trend-free readings (1.5 log over three years, half back over five), its overshoot 0.31 and the
+           // anticipated recovery 1, and the spread's drawdown term 3.0, read off the record and held fixed; the
+           // other dials re-solved by search, the noise skew at 0.85 for the up-day share (the Rust twin's doc
+           // carries the readings).  On 32 fresh seeds at 200 x 100 every class passes on 32, 4.0 rows missed a
+           // seed: valuation dispersion 0.31 (record 0.30), the lower wing 7.4% (6.7%), kurtosis 23.9 (21.8).
+           // The satellite's relative cycle at its adopted values (folio's request 2; see `satCycleSd`).
            ("0.24.5-sp500",
-            spChannels.copy(floorhold = 0.05, easing = 0.09, rateMean = 0.06, spreadDd = 3.0,
-                            satCycleSd = 0.0003, satDriftHalf = 0.2, satLevelHalf = 0.5),
+            spChannels.copy(trendShare = 0.052973269, depth = 18.015402, stress = 4.0334913,
+                            drift = 0.12927572, fundVol = 0.03, volOfVol = 0.02633778,
+                            leverage = 0.11121662, downShock = 0.01387046, jumpSkew = 0.76015484,
+                            jumpVar = 0.16756524, jumpRate = 0.0042363358, newsRate = 0.47451628,
+                            newsSize = 0.035421047, newsLev = 2.5878189, newsRevert = 0.32351801,
+                            newsScale = 0.11982032, newsBond = 0.19460614, creditRegime = 0.16314499,
+                            creditRegimeRate = 0.48687488, slowBondInfl = 0.18788882, noiseSkew = 0.85,
+                            newsFlip = 0.039819772, valuePull = 0.050744312, recoveryDrag = 8.0048576,
+                            recoveryFloor = 0.066616651, disasterSize = 1.5, disasterLen = 3.0,
+                            disasterRecLen = 5.0, boomRate = 0.75338688, boomSize = 0.67080707,
+                            boomLen = 2.6931865, recessSize = 0.58196498, recessLen = 0.93905109,
+                            recessRecover = 0.19277167, recessNews = 1.0459283, recessVol = 0.026401209,
+                            regimeDrift = 0.00030014719, disasterAnticipate = 1.0,
+                            disasterOvershoot = 0.31, beliefShare = 0.97, beliefYears = 2.0268995,
+                            beliefLeak = 0.18444429, capYears = 3.5078893, cycleSd = 0.11074784,
+                            cycleYears = 19.599533, crowdImpact = 0.063830048, easing = 0.086351469,
+                            floorhold = 0.036314005, refuge = 0.11284783, refugeDays = 1.1366498,
+                            levGain = 9.7961082, bustAmp = 0.09345786, slowShare = 0.19526483,
+                            slowVol = 0.86875143, slowPerm = 0.24569577, slowBeta = 0.53958104,
+                            inflSize = 0.079140058, discount = 7.4821889, discountRef = 0.2606615,
+                            margin = 0.0066092611, rateMean = 0.06, spreadDd = 3.0, satCycleSd = 0.0003,
+                            satDriftHalf = 0.2, satLevelHalf = 0.5),
             "sp500"))
 
   val Recipes: Vector[(String, World, String)] =
@@ -3396,6 +3432,44 @@ object MarketSim:
     val t = z / math.sqrt(chi / JumpNu) / math.sqrt(JumpNu / (JumpNu - 2.0))
     (t - skew) * scale
 
+  /** Multipliers `priceLoop` reads, out of it for its size, each the very expression it computed
+    * inline: the leverage kick's, the jump share's diffusive remainder, a recession's vol and the vol
+    * response's. */
+  private[apps] def leverageMult(w: World, kickS: Double): Double =
+    if w.leverage > 0.0 then Math.exp(w.leverage * kickS) else 1.0
+  private[apps] def jumpVarMult(w: World): Double =
+    if w.jumpVar > 0.0 then Math.sqrt(1.0 - w.jumpVar) else 1.0
+  private[apps] def recessionVolMult(w: World, regimeM0: Double, recessLeft: Int): Double =
+    if recessLeft > 0 && w.recessVol > 0.0 then regimeM0 * Math.exp(w.recessVol) else regimeM0
+  private[apps] def volResponseMult(w: World, volRespS: Double): Double =
+    if w.volResp > 0.0 then Math.exp(w.volResp * volRespS) else 1.0
+
+  /** The per-session decay of a state with a half-life of `sessions`: exp(-ln 2 / sessions), the
+    * very expression `priceLoop` computed inline, out of it for its size. */
+  private[apps] def halfLifeDecay(sessions: Double): Double = Math.exp(-Math.log(2.0) / sessions)
+
+  /** THE DISASTER'S ANTICIPATION (see `disasterAnticipate`), out of `priceLoop` for its size:
+    * the recovery still to come grows by `disasterRecover` of each declining session's step... */
+  private[apps] def disBackDeclining(w: World, disBack: Double, disStep: Double): Double =
+    if w.disasterAnticipate > 0.0 then disBack + w.disasterRecover * disStep else disBack
+
+  /** ...shrinks by each recovering session's step, and is exactly 0 once the recovery is over. */
+  private[apps] def disBackRecovering(w: World, disBack: Double, recLeft: Int, recStep: Double): Double =
+    if w.disasterAnticipate <= 0.0 then disBack else if recLeft == 0 then 0.0 else disBack - recStep
+
+  /** THE DISASTER'S OVERSHOOT (see `disasterOvershoot`): the running disaster's decline so far. */
+  private[apps] def disDownDeclining(w: World, disDown: Double, disStep: Double): Double =
+    if w.disasterOvershoot > 0.0 then disDown + disStep else disDown
+
+  /** The fundamental the market sees: while a disaster declines, less the overshoot's share of the
+    * decline so far; from its trough on, plus the anticipated share of the recovery still to come. */
+  private[apps] def fundamentalSeen(w: World, logVbase: Double, disLeft: Int, disDown: Double,
+                                    disBack: Double): Double =
+    if disLeft > 0 then
+      if w.disasterOvershoot > 0.0 then logVbase - w.disasterOvershoot * disDown else logVbase
+    else if w.disasterAnticipate > 0.0 then logVbase + w.disasterAnticipate * disBack
+    else logVbase
+
   /** One independent history's PRICE LOOP, with the channels' per-session inputs recorded for the
     * second pass.  Local mutable state only — nothing escapes this method. */
   def priceLoop(w: World, years: Int, seed: Long): Priced =
@@ -3499,7 +3573,7 @@ object MarketSim:
     // the dial is on, and the price then starts at the fundamental as before.
     val cycRng  = new NumPyRNG(seed ^ 0xc7c1e0deL)
     val cycPhi  = if w.cycleYears <= 0.0 then 0.0
-                  else Math.exp(-Math.log(2.0) / (w.cycleYears * DaysPerYear))
+                  else halfLifeDecay(w.cycleYears * DaysPerYear)
     val cycInno = w.cycleSd * Math.sqrt(1.0 - cycPhi * cycPhi)
     var cyc = 0.0
     // the running peak of the price WITHOUT the cycle, for the drag's drawdown read
@@ -3515,7 +3589,7 @@ object MarketSim:
     // Settled equity stress for the refuge bid (see `refugeDays`); draw-free, and both its use
     // and its update sit behind `refugeDays > 0`, so 0 is bit-identical off.
     var settledStress = 0.0
-    val settleMu = if w.refugeDays > 0.0 then 1.0 - Math.exp(-Math.log(2.0) / w.refugeDays) else 0.0
+    val settleMu = if w.refugeDays > 0.0 then 1.0 - halfLifeDecay(w.refugeDays) else 0.0
     // THE LEVERAGE CYCLE's stock (see `levGain`), evolved whenever the mechanism or the macro
     // panel reads it, on its own stream, and reaching the price only through `levMult`, which
     // stays exactly 1.0 with the dial off.  `lev` is the session's ratio, read before the step;
@@ -3570,13 +3644,13 @@ object MarketSim:
     // fair value has absorbed.  Updated from information strictly before this session.
     var belief = 0.0
     val beliefMu = if w.beliefYears <= 0.0 then 0.0
-                   else 1.0 - Math.exp(-Math.log(2.0) / (w.beliefYears * DaysPerYear))
+                   else 1.0 - halfLifeDecay(w.beliefYears * DaysPerYear)
     val leakMu = w.beliefLeak / DaysPerYear
     // Growth-extrapolation state: EWMA of the fundamental's per-session log change, annualized in
     // the perceived-fair term.  Seeded at the unconditional drift so burn-in starts neutral.
     var gEwma = w.drift * dt
     val gMu   = if w.capWindow <= 0.0 then 0.0
-                else 1.0 - Math.exp(-Math.log(2.0) / (w.capWindow * DaysPerYear))
+                else 1.0 - halfLifeDecay(w.capWindow * DaysPerYear)
     var vPrev = 0.0
     var crowdRv = 0.01 * 0.01; var crowdAnchor = 0.0
     // The drawdown crowd's running peak of the prior session's emitted price; draw-free.
@@ -3586,6 +3660,10 @@ object MarketSim:
     // the post-burn-in onset count -- the channel's BINDING diagnostic.
     var disLeft = 0; var disStep = 0.0; var disasterCount = 0
     var recLeft = 0; var recStep = 0.0
+    // the recovery still to come, `disasterRecover` of the decline so far less what has come back:
+    // what `disasterAnticipate` adds to the fundamental the market sees
+    var disBack = 0.0
+    var disDown = 0.0   // the running disaster's decline so far (see `disasterOvershoot`)
     val disProb = w.disasterRate / (100.0 * DaysPerYear)
     // THE RECESSION's state (see `recessRate`): its own stream, read only while the dial is on
     val recessRng = new NumPyRNG(seed ^ 0x2ece5510L)
@@ -3630,16 +3708,22 @@ object MarketSim:
       if disProb > 0.0 then
         if disLeft > 0 then
           logVbase -= disStep; disLeft -= 1
+          disBack = disBackDeclining(w, disBack, disStep)
+          disDown = disDownDeclining(w, disDown, disStep)
           // trough reached: the RECOVERY leg arms, spreading `disasterRecover` of the decline
           // back over `disasterRecLen` years.  What does NOT reverse is permanent.
           if disLeft == 0 && w.disasterRecover > 0.0 then
             recLeft = max(1, (w.disasterRecLen * DaysPerYear).toInt)
             recStep = w.disasterRecover * w.disasterSize / recLeft
         else
-          if recLeft > 0 then { logVbase += recStep; recLeft -= 1 }
+          if recLeft > 0 then
+            logVbase += recStep; recLeft -= 1
+            // exactly 0 once the recovery is over, whatever the rounding on the way
+            disBack = disBackRecovering(w, disBack, recLeft, recStep)
           if drng.nextDouble() < disProb then
             disLeft = max(1, (w.disasterLen * DaysPerYear).toInt)
             disStep = w.disasterSize / disLeft
+            disDown = 0.0
             if i >= BurnIn then disasterCount += 1
       // THE RECESSION (see `recessRate`): the disaster's machine, started by stress.  Its draw is
       // its own stream's and only while idle, so an off world is bit-identical and a change to
@@ -3812,7 +3896,9 @@ object MarketSim:
 
       // ---- demand flows ----------------------------------------------------------------------
       val logPobs = eqM.logP - markdown                 // what everyone actually sees and trades
-      val mispricingPre = logVbase - eqM.logP           // value agents arb the traded component
+      // the fundamental the market sees: plus the anticipated recovery (see `disasterAnticipate`)
+      val fundSeenPre = fundamentalSeen(w, logVbase, disLeft, disDown, disBack)
+      val mispricingPre = fundSeenPre - eqM.logP        // value agents arb the traded component
       val lookback = 60
       val past = if i >= lookback then Math.log(px(i - lookback)) else logPobs
       val momentum = logPobs - past
@@ -3867,7 +3953,7 @@ object MarketSim:
         else Math.exp(asymG - asymNorm)
       val dNoise0 = newsDamp * SigmaN * Math.exp(logVol - volNorm) * zBody * asymM * mix
       // read BEFORE this session's update, like the kick: the response is to PAST declines
-      val volRespM = if w.volResp > 0.0 then Math.exp(w.volResp * volRespS) else 1.0
+      val volRespM = volResponseMult(w, volRespS)
       val dNoise0k = if w.leverage > 0.0 then dNoise0 * Math.exp(w.leverage * kickS) else dNoise0
       val dNoiseR = if w.volResp > 0.0 then dNoise0k * volRespM else dNoise0k
       // THE CREDIT-TRIGGERED VOL REGIME (see `creditRegime`): the plateau holds, then decays;
@@ -3890,7 +3976,7 @@ object MarketSim:
           Math.exp(w.creditRegime * regimeR)
         else 1.0
       // THE RECESSION'S VOL (see `recessVol`): the decline runs inside a turbulent spell
-      val regimeM = if recessLeft > 0 && w.recessVol > 0.0 then regimeM0 * Math.exp(w.recessVol) else regimeM0
+      val regimeM = recessionVolMult(w, regimeM0, recessLeft)
       val dNoise  = if w.creditRegime > 0.0 || w.recessVol > 0.0 then dNoiseR * regimeM else dNoiseR
       // THE BUST SWING (see `BustSwing.advance`), repriced here, ahead of the step
       if w.bustAmp > 0.0 then bust.advance(eqM, logVbase, i)
@@ -3904,8 +3990,8 @@ object MarketSim:
       val sessSigma =
         if w.rangeScale > 0.0 || w.satBeta > 0.0 || w.overnight > 0.0 || w.basket > 0 ||
            w.macroPanel > 0 || w.volResp > 0.0 || w.jumpResp > 0.0 then
-          val levMult = if w.leverage > 0.0 then Math.exp(w.leverage * kickS) else 1.0
-          val jvMult  = if w.jumpVar > 0.0 then Math.sqrt(1.0 - w.jumpVar) else 1.0
+          val levMult = leverageMult(w, kickS)
+          val jvMult  = jumpVarMult(w)
           newsDamp * SigmaN * Math.exp(logVol - volNorm) * levMult * jvMult * asymM * volRespM * regimeM *
             mix
         else 0.0
@@ -3964,9 +4050,12 @@ object MarketSim:
       // (read through a one-year EWMA) into the fair value the pull aims at.  During a high-drift
       // regime perceived fair rides above the fundamental and the price follows; the regime
       // ending on its re-draw is a valuation decline with the fundamental untouched.
+      // read again here: the regime's drift and the bust swing move the fundamental after the
+      // value crowd's read above
+      val fundSeen = fundamentalSeen(w, logVbase, disLeft, disDown, disBack)
       if w.capYears > 0.0 then
-        if i > 0 then gEwma += gMu * ((logVbase - vPrev) - gEwma)
-        vPrev = logVbase
+        if i > 0 then gEwma += gMu * ((fundSeen - vPrev) - gEwma)
+        vPrev = fundSeen
       // THE VALUATION CYCLE (see `cycleSd`) advances ahead of the read, like the fundamental, and
       // its move is REPRICED THE SAME SESSION in the price and in perceived fair -- the bust
       // swing's convention: discount-rate news is absorbed at once, so no gap opens for the pull
@@ -4000,13 +4089,13 @@ object MarketSim:
         boom += boomMove
         eqM.logP += boomMove
       val perceivedFair =
-        if w.beliefShare <= 0.0 && w.capYears <= 0.0 && w.cycleSd <= 0.0 && boomProb <= 0.0 then logVbase
+        if w.beliefShare <= 0.0 && w.capYears <= 0.0 && w.cycleSd <= 0.0 && boomProb <= 0.0 then fundSeen
         else
           // the cycle is the slow component of perceived fair; the beliefs absorb the gap NET of
           // it, so the two do not compound (a belief tracking the whole gap would feed the cycle
           // back into the target at 1 / (1 - beliefShare)); the boom's level sits beside the
           // cycle for the same reason
-          val fairC = if w.cycleSd > 0.0 then logVbase + cyc + boom else logVbase + boom
+          val fairC = if w.cycleSd > 0.0 then fundSeen + cyc + boom else fundSeen + boom
           var pf = fairC
           if w.beliefShare > 0.0 then
             belief += beliefMu * ((eqM.logP - fairC) - belief)
@@ -5055,6 +5144,9 @@ object MarketSim:
                               bubbleCoupling: Double, // median per-path bubble coupling in log
                                                   // (`bubbleCouplingOf`); paths without a
                                                   // qualifying decline are left out of the median
+                              runUp3y: Double,    // median per-path largest 3-year log run-up
+                                                  // (`runUp3yOf`) and longest calm stretch in
+                              calmStretch: Double, // sessions (`calmStretchOf`)
                               shortRate: Double,  // median per-path mean short rate, percent, and
                               rateFloor: Double,  // share of sessions under `RateFloor`, percent
                                                   // (`rateReadings`)
@@ -5202,7 +5294,7 @@ object MarketSim:
     bondGrowth: Vector[Double], bondInfl: Vector[Double],   // the bond over each episode, by regime
     corrCalm: Double, corrInfl: Double,
     valDisp: Double, maxOver: Double, semiExcess: Double, upShare: Double, levCorr: Double,
-    volTiming: Double, bubbleCoupling: Double,
+    volTiming: Double, bubbleCoupling: Double, runUp3y: Double, calmStretch: Double,
     shortRate: Double, rateFloor: Double,   // `rateReadings` of the path's rate
     tailHedge: Double,
     wingUp: Double, wingDown: Double, wingN: Double,   // the cycle's wings about its 20-year mean, as COUNTS over `wingsOf`'s sessions
@@ -5336,6 +5428,7 @@ object MarketSim:
       // the path's own returns, through the same functions a record is read with
       valDisp = valDisp, maxOver = maxOver, semiExcess = semiExcessOf(r), upShare = upShareOf(r),
       levCorr = levCorrOf(r), volTiming = volTimingOf(r), bubbleCoupling = bubbleCouplingOf(r),
+      runUp3y = runUp3yOf(r), calmStretch = calmStretchOf(r),
       shortRate = rateReadings(sp.rate)(0), rateFloor = rateReadings(sp.rate)(1),
       wingUp = wings._1, wingDown = wings._2, wingN = wings._3,
       gapEarly = gd._1, gapEarlyN = gd._2, gapLate = gd._3, gapLateN = gd._4,
@@ -5413,6 +5506,8 @@ object MarketSim:
       upShare = med(per.map(_.upShare)),
       volTiming = med(per.map(_.volTiming)),
       bubbleCoupling = med(per.map(_.bubbleCoupling)),
+      runUp3y = med(per.map(_.runUp3y)),
+      calmStretch = med(per.map(_.calmStretch)),
       shortRate = med(per.map(_.shortRate)),
       rateFloor = med(per.map(_.rateFloor)),
       levCorr = med(per.map(_.levCorr)),
@@ -6058,6 +6153,11 @@ object MarketSim:
     // extreme row, the record's percentile among single histories of `bubbleYears`.
     bubbleWindow: String, bubbleYears: Int,
     bubbleCoupling: Double, bubbleCouplingSd: Double,
+    // THE LARGEST 3-YEAR RUN-UP's and THE LONGEST CALM STRETCH's records over the bubble window
+    // (`runUp3yOf`, `calmStretchOf`, the same fixture), graded as extreme rows like the bubble
+    // coupling; the sds are the spread of single histories at the window's length, relative
+    // to the record as every `Sd` here is
+    runUp3y: Double, runUp3ySd: Double, calmStretch: Double, calmStretchSd: Double,
     // THE SHORT RATE's record: the daily effective federal funds rate (FRED DFF) over the equity
     // window's dates, its mean in percent and the share of its sessions under `RateFloor`
     // (`rateReadings`; `recordbands-2026-09-26.tsv`, whose bands the rows are graded by).  The
@@ -6353,6 +6453,7 @@ object MarketSim:
     tailWindow = "CRSP 1926-2026, the century", tailYears = 100,
     bubbleWindow = "CRSP 1926-2026, the century", bubbleYears = 100,
     bubbleCoupling = 0.114404, bubbleCouplingSd = 1.07,
+    runUp3y = 0.872450, runUp3ySd = 0.28, calmStretch = 2190.0, calmStretchSd = 0.61,
     rateWindow = "DFF 1954-2026", rateYears = 72,
     shortRate = 4.595174, shortRateSd = 0.09,
     rateFloor = 14.565588, rateFloorSd = 0.27,
@@ -6442,6 +6543,7 @@ object MarketSim:
     tailWindow = "QQQ 1999-2026", tailYears = 27,
     bubbleWindow = "NDX 1990-2026", bubbleYears = 37,
     bubbleCoupling = 1.042337, bubbleCouplingSd = 0.25,
+    runUp3y = 1.753345, runUp3ySd = 0.21, calmStretch = 1927.0, calmStretchSd = 0.30,
     rateWindow = "DFF 1999-2026", rateYears = 27,
     shortRate = 2.136466, shortRateSd = 1.00,
     rateFloor = 37.313224, rateFloorSd = 0.64,
@@ -6662,6 +6764,13 @@ object MarketSim:
     // median of those histories.  Judgment 0.5: one statistic of a handful of episodes per record,
     // partially redundant with the run-up and crash rows.
     ("bubble coupling 3y",  st => st.bubbleCoupling,                        a.bubbleCoupling, wgt(0.5, a.bubbleCouplingSd)),
+    // THE LARGEST 3-YEAR RUN-UP and THE LONGEST CALM STRETCH: extreme rows like the bubble
+    // coupling, on the same window.  The S&P worlds made run-ups the century never did (its largest
+    // below 99.9% of histories) and calm stretches it never had (below 98%): a world producing
+    // events the record rules out.  Judgment 1.0 each, the neutral judgment: the precision factor
+    // alone (the single-history spread relative to the record) sets how hard the row pulls.
+    ("largest 3y run-up",   st => st.runUp3y,                               a.runUp3y,        wgt(1.0, a.runUp3ySd)),
+    ("longest calm stretch", st => st.calmStretch,                          a.calmStretch,    wgt(1.0, a.calmStretchSd)),
     // The "(24y)" is load-bearing, not decoration: this row is measured on a different horizon
     // from every other, and the label is the only part that travels when the number is quoted.
     ("bond vol % (24y)",   st => st.bondVol * 100,                          13.0,  wgt(1.0, a.bondVolSd)),
@@ -6759,7 +6868,8 @@ object MarketSim:
     * length -- `-noise`'s `real@`, which converges -- and carry no ratio at all.  A median survives
     * pooling and a minimum does not; that is the whole distinction.  `MarketSimContractSuite`
     * requires every name here to be a fidelity target. */
-  val ExtremeTargets: Set[String] = Set("worst crash %", "bubble coupling 3y")
+  val ExtremeTargets: Set[String] =
+    Set("worst crash %", "bubble coupling 3y", "largest 3y run-up", "longest calm stretch")
   /** Fidelity rows whose statistic is ADDITIVE and straddles zero (points a year): the loss prices
     * them as the linear |model - target| over |target|, the log ratio's small-deviation limit, since
     * a log ratio has no meaning across zero and its wrong-sign penalty grows as the reading nears it. */
@@ -7277,6 +7387,44 @@ object MarketSim:
       nInto += 1
     if nInto == 0 || nBase == 0 then Double.NaN else into / nInto - base / nBase
 
+  /** ln 0.8: the drawdown that ends a calm stretch */
+  val CalmDeepLog: Double = -0.22314355131420976
+
+  /** THE LARGEST 3-YEAR RUN-UP: the maximum over the series of the log return over the trailing 756
+    * sessions; NaN under three years.  An extreme row like the bubble coupling (the Rust twin's
+    * `run_up_3y_of` carries the reading). */
+  def runUp3yOf(r: Array[Double]): Double =
+    val h = BubbleRunup
+    if r.length < h then return Double.NaN
+    val lp = new Array[Double](r.length + 1)
+    var i = 0
+    while i < r.length do
+      lp(i + 1) = lp(i) + r(i)
+      i += 1
+    var best = Double.NegativeInfinity
+    var k = h
+    while k < lp.length do
+      val x = lp(k) - lp(k - h)
+      if x > best then best = x
+      k += 1
+    best
+
+  /** THE LONGEST CALM STRETCH: the most sessions in a row during which the series stayed within
+    * 20% of its running peak (the whole series when it never fell that far). */
+  def calmStretchOf(r: Array[Double]): Double =
+    var lp = 0.0; var peak = 0.0
+    var best = 0; var run = 1
+    var i = 0
+    while i < r.length do
+      lp += r(i)
+      if lp > peak then peak = lp
+      if lp - peak <= CalmDeepLog then
+        best = math.max(best, run)
+        run = 0
+      else run += 1
+      i += 1
+    math.max(best, run).toDouble
+
   private[apps] def levCorrOf(r: Array[Double]): Double =
     val sq = new Array[Double](math.max(r.length - 1, 0))
     var i = 0
@@ -7772,6 +7920,7 @@ object MarketSim:
     "noiseSkew", "newsFlip", "newsBondSkip", "creditRegime", "creditRegimeRate", "slowBondInfl",
     "levGain", "boomRate", "boomSize", "boomLen", "rateMean", "floorhold", "recessRate",
     "recessSize", "recessLen", "recessRecover", "recessNews", "recessVol", "regimeDrift", "spreadDd",
+    "disasterAnticipate", "disasterOvershoot",
     "volPull", "discountLag",
     "discountRef")
 
@@ -7896,6 +8045,10 @@ object MarketSim:
     ("regimeDrift",  0.0,  0.002, (w, x) => w.copy(regimeDrift = x), _.regimeDrift),
     // the macro spread's level per unit of log drawdown, pp (0 off); read off the record
     ("spreadDd",     0.0,  5.0,   (w, x) => w.copy(spreadDd = x), _.spreadDd),
+    // the share of a running disaster's expected recovery the market sees (0 off); read off the record
+    ("disasterAnticipate", 0.0, 1.0, (w, x) => w.copy(disasterAnticipate = x), _.disasterAnticipate),
+    // the valuation leg's share of a declining disaster's fall (0 off); read off the record
+    ("disasterOvershoot",  0.0, 1.0, (w, x) => w.copy(disasterOvershoot = x), _.disasterOvershoot),
     ("volPull",      0.0,  6.00, (w, x) => w.copy(volPull = x), _.volPull),
     // the markdown's lag in years (0 off): a cut supports valuations over years
     ("discountLag",  0.0,  3.00, (w, x) => w.copy(discountLag = x), _.discountLag),
@@ -8369,7 +8522,8 @@ object MarketSim:
     "up-day share %", "vol-timing edge pts/yr",
     "leverage corr", "valuation dispersion", "upper wing months %", "lower wing months %",
     "crashes/century", "median depth %",
-    "worst crash %", "bubble coupling 3y", "equity d5 vs real", "equity d10 vs real",
+    "worst crash %", "bubble coupling 3y", "largest 3y run-up", "longest calm stretch",
+    "equity d5 vs real", "equity d10 vs real",
     "equity d20 vs real")
 
   /** The other half of the partition.  Read only by the partition test -- the report has no bond
@@ -8587,7 +8741,7 @@ object MarketSim:
     // Its own group because its own window: the Nasdaq's is the NDX price index from 1990, since
     // QQQ's record starts nine years too late for a 3-year run-up into the 2000 peak
     // (`Anchors.bubbleWindow`); the S&P's is the century, as the tail's is.
-    (a.bubbleWindow, a.bubbleYears, Vector("bubble coupling 3y")),
+    (a.bubbleWindow, a.bubbleYears, Vector("bubble coupling 3y", "largest 3y run-up", "longest calm stretch")),
     // The rate's record over the equity window's dates -- see `Anchors.rateWindow`.
     (a.rateWindow, a.rateYears, Vector("short rate %", "rate floor share %")),
     // The Shiller record is one series shared by every anchor set, at its own century horizon.
@@ -8696,6 +8850,8 @@ object MarketSim:
     // `measure`'s `worstDepth` for this path alone: its smallest episode depth, NaN without one
     case "worst crash %" => Some(episodes(p.price, 15.0).map(_.depthPct).minOption.getOrElse(Double.NaN))
     case "bubble coupling 3y" => Some(bubbleCouplingOf(dailyReturns(p.price)))
+    case "largest 3y run-up" => Some(runUp3yOf(dailyReturns(p.price)))
+    case "longest calm stretch" => Some(calmStretchOf(dailyReturns(p.price)))
     case _               => None
 
   def extremeReadingsFrom(a: Anchors, sims: Vector[Path], yrs: Int): Map[String, Vector[Double]] =
@@ -9498,7 +9654,9 @@ object MarketSim:
       ("recessRate", num(w.recessRate)), ("recessSize", num(w.recessSize)),
       ("recessLen", num(w.recessLen)), ("recessRecover", num(w.recessRecover)),
       ("recessNews", num(w.recessNews)), ("recessVol", num(w.recessVol)),
-      ("regimeDrift", num(w.regimeDrift)), ("spreadDd", num(w.spreadDd)), ("volPull", num(w.volPull)),
+      ("regimeDrift", num(w.regimeDrift)), ("spreadDd", num(w.spreadDd)),
+      ("disasterAnticipate", num(w.disasterAnticipate)), ("disasterOvershoot", num(w.disasterOvershoot)),
+      ("volPull", num(w.volPull)),
       ("beliefShare", num(w.beliefShare)), ("beliefYears", num(w.beliefYears)),
       ("beliefLeak", num(w.beliefLeak)),
       ("capYears", num(w.capYears)), ("capWindow", num(w.capWindow)),
@@ -9750,11 +9908,134 @@ object MarketSim:
       // the verdict's readings, led by the level ITS channels were sampled at: the level is a
       // function of the primary alone, so it is this file's level wherever this file has one
       channelReadingsBlock(gateSt, gateLevel),
+      episodesBlock(p),
       """  "fidelity": [""",
       fidelity.mkString(",\n"),
       "  ]",
       "}")
     sidecarName(file).asPath.writeLines(json)
+
+  /** One 20%+ decline of an emitted path: see `episodesBlock`. */
+  final case class EpisodeRow(peak: Int, trough: Int, regain: Option[Int], runUp3y: Option[Double],
+                              depth: Double, volPeakOverMedian: Double, worstSession: Double,
+                              worst20: Double, rateChange: Double, spreadRise: Option[Double])
+
+  val EpisodeDeep      = 0.22314355131420976  // -ln 0.8: a decline counts from 20%
+  val EpisodeHighWindow = 252
+  val EpisodeVolWindow  = 21
+  val EpisodeRunUp      = 756
+
+  /** The running maximum of `x` over the last `w` sessions including the current one, exact. */
+  def trailingHigh(x: Array[Double], w: Int): Array[Double] =
+    val out = new Array[Double](x.length)
+    val deque = new java.util.ArrayDeque[Int]()
+    var i = 0
+    while i < x.length do
+      while !deque.isEmpty && x(deque.peekLast) <= x(i) do deque.pollLast()
+      deque.addLast(i)
+      while deque.peekFirst + w <= i do deque.pollFirst()
+      out(i) = x(deque.peekFirst)
+      i += 1
+    out
+
+  /** `v(k)`, the annualized sd of the `w` log returns ending at session `k` (NaN before there are
+    * `w` of them), summed in index order so the twins agree to the bit. */
+  def realizedVol(lp: Array[Double], w: Int): Array[Double] =
+    val n = lp.length
+    val v = Array.fill(n)(Double.NaN)
+    var k = w
+    while k < n do
+      var s = 0.0; var s2 = 0.0
+      var j = k - w
+      while j < k do
+        val r = lp(j + 1) - lp(j)
+        s += r; s2 += r * r
+        j += 1
+      val mean = s / w
+      val variance = math.max(s2 / w - mean * mean, 0.0)
+      v(k) = math.sqrt(variance * DaysPerYear)
+      k += 1
+    v
+
+  /** Every decline of 20%+ from the trailing-year high of `lp`, measured to the first regain of
+    * its peak; after a trough the next may start at the next such high even while the older peak
+    * stands unregained.  `spread` is the macro spread when the panel ran. */
+  def episodeRows(lp: Array[Double], rate: Array[Double], spread: Option[Array[Double]]): Vector[EpisodeRow] =
+    val n = lp.length
+    if n < 2 then return Vector.empty
+    val trail = trailingHigh(lp, EpisodeHighWindow)
+    val v = realizedVol(lp, EpisodeVolWindow)
+    val finite = v.filter(x => !x.isNaN && !x.isInfinite).sorted
+    val vmed =
+      if finite.isEmpty then Double.NaN
+      else if finite.length % 2 == 1 then finite(finite.length / 2)
+      else (finite(finite.length / 2 - 1) + finite(finite.length / 2)) / 2.0
+    val out = Vector.newBuilder[EpisodeRow]
+    var i = 0
+    while i + 1 < n do
+      if lp(i) < trail(i) then i += 1
+      else
+        var j = i + 1
+        while j < n && !(lp(j) > lp(i)) do j += 1
+        var t = i + 1
+        var k = i + 1
+        while k < j do
+          if lp(k) < lp(t) then t = k
+          k += 1
+        if lp(i) - lp(t) < EpisodeDeep then i += 1
+        else
+          var volmax = Double.NaN
+          k = i
+          while k <= t do
+            val x = v(k)
+            if !x.isNaN && !x.isInfinite && (volmax.isNaN || x > volmax) then volmax = x
+            k += 1
+          var worstSession = Double.PositiveInfinity
+          var worst20 = Double.PositiveInfinity
+          k = i
+          while k < t do
+            worstSession = math.min(worstSession, lp(k + 1) - lp(k))
+            worst20 = math.min(worst20, lp(math.min(k + 20, n - 1)) - lp(k))
+            k += 1
+          val spreadRise = spread.map { s =>
+            var hi = s(i)
+            var q = i
+            val end = math.min(t + 63, n - 1)
+            while q <= end do
+              if s(q) > hi then hi = s(q)
+              q += 1
+            hi - s(i)
+          }
+          out += EpisodeRow(i, t, if j < n then Some(j) else None,
+                            if i >= EpisodeRunUp then Some(lp(i) - lp(i - EpisodeRunUp)) else None,
+                            lp(i) - lp(t), volmax / vmed, worstSession, worst20,
+                            rate(math.min(t + 252, n - 1)) - rate(i), spreadRise)
+          i = t + 1
+    out.result()
+
+  /** THE EVENT LABELS block of the sidecar (schema 21): the path's 20%+ declines with their joint
+    * shape, on `logTraded` when the file carries it and on the log of `price` otherwise.  Row
+    * indices are the TSV's; the Rust twin's `episodes_block` carries the fields' meanings. */
+  def episodesBlock(p: Path): String =
+    val (series, lp) =
+      if p.traded.isEmpty then ("price", p.price.map(math.log))
+      else ("logTraded", p.traded.map(math.log))
+    val spread = p.macroPanel.filter(!_.sibling).map(_.spread)
+    def optInt(x: Option[Int]): String = x.fold("null")(_.toString)
+    def optF(x: Option[Double]): String = x.fold("null")(ef)
+    val rows = episodeRows(lp, p.rate, spread).map { e =>
+      s"""      { "peak": ${e.peak}, "trough": ${e.trough}, "regain": ${optInt(e.regain)}, "sessionsToTrough": ${e.trough - e.peak}, """ +
+      s""""sessionsToRegain": ${optInt(e.regain.map(_ - e.trough))}, "runUp3y": ${optF(e.runUp3y)}, "depth": ${ef(e.depth)}, """ +
+      s""""volPeakOverMedian": ${if e.volPeakOverMedian.isNaN || e.volPeakOverMedian.isInfinite then "null" else ef(e.volPeakOverMedian)}, """ +
+      s""""worstSession": ${ef(e.worstSession)}, "worst20": ${ef(e.worst20)}, "rateChange": ${ef(e.rateChange)}, "spreadRise": ${optF(e.spreadRise)} }"""
+    }
+    s"""  "episodes": {
+    "series": ${jsonStr(series)},
+    "rule": "declines of 20%+ from the trailing-252-session high, each to the first regain of its peak; the next may start at the next such high after the trough",
+    "rows": [
+${rows.mkString(",\n")}
+    ]
+  },"""
 
   // ---- entry point ---------------------------------------------------------------------------
   def main(args: Array[String]): Unit =
@@ -9935,6 +10216,7 @@ object MarketSim:
     var recessRate = dw.recessRate; var recessSize = dw.recessSize; var recessLen = dw.recessLen
     var recessRecover = dw.recessRecover; var recessNews = dw.recessNews; var volPull = dw.volPull
     var recessVol = dw.recessVol; var regimeDrift = dw.regimeDrift; var spreadDd = dw.spreadDd
+    var disasterAnticipate = dw.disasterAnticipate; var disasterOvershoot = dw.disasterOvershoot
     var floorhold = dw.floorhold; var discountLag = dw.discountLag; var discountRef = dw.discountRef
     var beliefShare = dw.beliefShare; var beliefYears = dw.beliefYears
     var capYears = dw.capYears; var capWindow = dw.capWindow
@@ -10051,6 +10333,8 @@ object MarketSim:
       case "-recessvol"       => recessVol = numOr("-recessvol", consumeNext)
       case "-regimedrift"     => regimeDrift = numOr("-regimedrift", consumeNext)
       case "-spreaddd"        => spreadDd = numOr("-spreaddd", consumeNext)
+      case "-disasteranticipate" => disasterAnticipate = numOr("-disasteranticipate", consumeNext)
+      case "-disasterovershoot" => disasterOvershoot = numOr("-disasterovershoot", consumeNext)
       case "-volpull"         => volPull = numOr("-volpull", consumeNext)
       case "-beliefshare"     => beliefShare = numOr("-beliefshare", consumeNext)
       case "-beliefyears"     => beliefYears = numOr("-beliefyears", consumeNext)
@@ -10264,6 +10548,10 @@ object MarketSim:
     nonNeg("-recessvol", recessVol)
     nonNeg("-regimedrift", regimeDrift)
     nonNeg("-spreaddd", spreadDd)
+    if disasterOvershoot < 0.0 || disasterOvershoot > 1.0 then
+      usage(s"-disasterovershoot $disasterOvershoot must be in 0..1")
+    if disasterAnticipate < 0.0 || disasterAnticipate > 1.0 then
+      usage(s"-disasteranticipate $disasterAnticipate must be in 0..1")
     nonNeg("-volpull", volPull)
     nonNeg("-boomrate", boomRate)
     if boomRate > 0.0 && (boomSize <= 0.0 || boomLen <= 0.0) then
@@ -10313,7 +10601,9 @@ object MarketSim:
                   boomRate = boomRate, boomSize = boomSize, boomLen = boomLen,
                   recessRate = recessRate, recessSize = recessSize, recessLen = recessLen,
                   recessRecover = recessRecover, recessNews = recessNews, recessVol = recessVol,
-                  regimeDrift = regimeDrift, spreadDd = spreadDd, volPull = volPull,
+                  regimeDrift = regimeDrift, spreadDd = spreadDd, disasterAnticipate = disasterAnticipate,
+                  disasterOvershoot = disasterOvershoot,
+                  volPull = volPull,
                   floorhold = floorhold, discountLag = discountLag, discountRef = discountRef,
                   beliefShare = beliefShare, beliefYears = beliefYears,
                   capYears = capYears, capWindow = capWindow,

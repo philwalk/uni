@@ -1591,6 +1591,9 @@ fn usage(msg: &str) -> ! {
   -noregress R  ; price every row a candidate holds further from its record than recipe R does,
                 ;   by the difference (R read at the search's ensemble, the mean of six reads):
                 ;   the release rule, which a dead zone alone lets every row drift inside
+  -fix DIALS    ; comma-separated dials (e.g. 'disasterSize,disasterOvershoot') every child keeps
+                ;   at its parent's value, so at the seed's: the dials read off the record rather
+                ;   than solved.  The draws are made as without it, so the other dials step alike
   -gap ROWS     ; comma-separated graded rows (e.g. 'kurtosis,up-day share %') a candidate
                 ;   must hold inside their bands on every read of its primary arm to be feasible:
                 ;   the rows a release has to close, which a priced miss lets a search trade away.
@@ -1631,6 +1634,8 @@ struct Cfg {
     noregress: String,
     gap: String,
     hold: String,
+    /// dials held at the parent's value (`-fix`): read off the record, never searched
+    fix: String,
     gate: String,
     /// the share of children drawn from the archive's own covariance
     cov: f64,
@@ -1664,6 +1669,7 @@ fn parse_args() -> Cfg {
         noregress: String::new(),
         gap: String::new(),
         hold: String::new(),
+        fix: String::new(),
         gate: "realism,mechanism".into(),
         cov: 0.0,
         cov_shrink: 0.3,
@@ -1708,6 +1714,7 @@ fn parse_args() -> Cfg {
             "-gate" => c.gate = need(&mut i, "-gate"),
             "-hold" => c.hold = need(&mut i, "-hold"),
             "-gap" => c.gap = need(&mut i, "-gap"),
+            "-fix" => c.fix = need(&mut i, "-fix"),
             "-h" | "-help" | "--help" => usage(""),
             a => usage(&format!("unrecognized arg [{a}]")),
         }
@@ -2160,6 +2167,18 @@ fn main() {
             },
         ),
         ("hold".into(), hold_text(&obj.hold)),
+        (
+            "fix".into(),
+            if c.fix.trim().is_empty() {
+                "(none)".to_string()
+            } else {
+                c.fix
+                    .split(',')
+                    .map(str::trim)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            },
+        ),
     ];
 
     let loaded = read_archive(&c.out);
@@ -2180,6 +2199,10 @@ fn main() {
     // one written before `-hold` held no row
     if !loaded.is_empty() && !prior.contains_key("hold") {
         prior.insert("hold".into(), "(none)".into());
+    }
+    // one written before `-fix` stepped every dial
+    if !loaded.is_empty() && !prior.contains_key("fix") {
+        prior.insert("fix".into(), "(none)".into());
     }
     // one written before `-gate` gated on the verdict's default classes
     if !loaded.is_empty() && !prior.contains_key("gateClasses") {
@@ -2681,6 +2704,19 @@ fn main() {
     // `-gens 0` runs until the spread closes or the run is killed; the checkpoint after every
     // generation is what makes that safe.
     let rs = ranges();
+    // THE FIXED DIALS (`-fix`): each must name a dial of the table
+    let fix_names: Vec<&str> = c
+        .fix
+        .split(',')
+        .map(str::trim)
+        .filter(|x| !x.is_empty())
+        .collect();
+    for f in &fix_names {
+        if !rs.iter().any(|r| r.0 == *f) {
+            usage(&format!("-fix names [{f}], which is not a searched dial"));
+        }
+    }
+    let fixed: Vec<bool> = rs.iter().map(|r| fix_names.contains(&r.0)).collect();
     // THE SPREAD TRACE the stopping rule reads: the descriptors of every candidate admitted so
     // far, by generation, rebuilt from the log on a resume so the rule reads the whole run
     let nd = DESC_NAMES.len();
@@ -2743,7 +2779,11 @@ fn main() {
                             }
                             s
                         });
-                        stepped(&rs[i], parent.dials[i], zi, c.sigma)
+                        if fixed[i] {
+                            parent.dials[i]
+                        } else {
+                            stepped(&rs[i], parent.dials[i], zi, c.sigma)
+                        }
                     })
                     .collect(),
             );

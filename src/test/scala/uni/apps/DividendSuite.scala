@@ -2,6 +2,7 @@ package uni.apps
 
 import munit.FunSuite
 import uni.*
+import uni.data.*
 
 /**
  * The dividend stream: a derived channel that reaches no price, so `price` keeps its meaning and
