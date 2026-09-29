@@ -86,15 +86,15 @@ The simulator is public API in both published artifacts, not a repo-only tool:
 
 ## Two consumers, one plan
 
-A second consumer — folio, a levered-ETF book whose core strategy family reads distance from a
+A second consumer — a levered-ETF book whose core strategy family reads distance from a
 running peak — grades these items differently, and its ordering governs where a shared item lands.
 It holds **no bond ticker of any kind**, so W2 and W7 buy it nothing; it uses the Rust binary only,
 so W0 does not apply; and it will not add rules to `rules()`, so W4 is evidence rather than code.
-Against that, it needs W1 for a reason this plan did not name: every folio exposure rule de-risks to
+Against that, it needs W1 for a reason this plan did not name: every one of its exposure rules de-risks to
 *cash*, and its backtest engine credits idle cash at a dated rate, so an emitted path without `rate`
 silently understates the de-risked leg of every timing rule.
 
-folio's order is **W1 → W3 → W5 → W9 → W8**, and it reverses this plan's W8-before-W9 because W9 is
+Its order is **W1 → W3 → W5 → W9 → W8**, and it reverses this plan's W8-before-W9 because W9 is
 measured to fail on the equity leg too (see W9), not merely anticipated. W7 stays last for both.
 
 ## Status

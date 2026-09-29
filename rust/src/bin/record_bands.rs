@@ -5,9 +5,9 @@
 //!
 //! ```text
 //!   cargo run --release --bin record_bands -- -header -set nasdaq -series QQQ \
-//!       -yahoo ../../folio/data/yahoo/QQQ/prices.csv -from 1999-03-10 -to 2026-08-20
+//!       -yahoo <data>/yahoo/QQQ/prices.csv -from 1999-03-10 -to 2026-08-20
 //!   cargo run --release --bin record_bands -- -set sp500 -series CRSP \
-//!       -french ../../folio/tmp/french/F-F_Research_Data_Factors_daily.csv \
+//!       -french <data>/french/F-F_Research_Data_Factors_daily.csv \
 //!       -from 1954-01-04 -to 2026-06-30
 //! ```
 //!
@@ -34,7 +34,7 @@ const USAGE: &str =
                     -set NAME -series LABEL [-rows A,B] [-resamples N] [-seed S]
                     [-joint A] [-of N] [-header] [-coupling | -multiyear [-long]]
 
-  -yahoo FILE   folio's cached prices: the `dlog_adj_close` column; the first row is the anchor
+  -yahoo FILE   the consumer's cached prices: the `dlog_adj_close` column; the first row is the anchor
                 price, not a return, and is skipped
   -french FILE  Ken French's F-F_Research_Data_Factors_daily: Mkt-RF + RF compounded into an index
                 WITHOUT a leading 1.0 over the window, then its log returns -- which drops the
@@ -187,7 +187,7 @@ fn parse_args(args: &[String]) -> Opts {
     }
 }
 
-/// `(date, log return)` for every session of folio's cached Yahoo file after its first.
+/// `(date, log return)` for every session of the consumer's cached Yahoo file after its first.
 fn read_yahoo(file: &str) -> Vec<(String, f64)> {
     let text = std::fs::read_to_string(file).unwrap_or_else(|e| usage(&format!("{file}: {e}")));
     let mut lines = text.lines();

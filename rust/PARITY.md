@@ -334,7 +334,7 @@ Two consequences worth stating plainly:
 
 - **The gate cannot catch this and is not meant to.** A band asks "is this value plausible";
   both values were. Only the byte-diff asks "are these the same program".
-- **A consumer that runs only one twin has no local signal at all.** `folio` runs the Rust
+- **A consumer that runs only one twin has no local signal at all.** One consumer runs the Rust
   binary exclusively; had this shipped, it would have silently inherited a different
   calibration from the one every published number in the CHANGELOG describes, with nothing
   on its side to notice.

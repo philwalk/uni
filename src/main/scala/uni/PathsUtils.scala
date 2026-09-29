@@ -539,7 +539,7 @@ private[uni] def toPosixRel(raw: String): String =
   val cwd = toPosixAbs(config.userdir)
   val abs = toPosixAbs(raw)
   // fold only where the config says paths fold (0.16.0): the unconditional
-  // equalsIgnoreCase relativised `/home/Phil/x` against a cwd of `/home/phil` on
+  // equalsIgnoreCase relativised `/home/User/x` against a cwd of `/home/user` on
   // Linux -- a different, legal directory -- silently pointing callers elsewhere
   val fold = config.caseFold
   val isCwd  = if fold then abs.equalsIgnoreCase(cwd) else abs == cwd

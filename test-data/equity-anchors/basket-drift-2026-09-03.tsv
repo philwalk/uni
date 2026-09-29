@@ -3,7 +3,7 @@
 #
 # Measured 2026-09-03 from daily Yahoo adjusted closes over 2012-01-04..2026-08-31 (T = 14.6
 # years), LOG returns, on the same two groups the basket ruler uses (`basket-2026-09-02.tsv`):
-# folio's eight semiconductor names under SMH, and the cache's 26 single names with data from
+# the consumer's eight semiconductor names under SMH, and the cache's 26 single names with data from
 # 2012.  `scratchpad drift/measure.py`.
 #
 # THE DECOMPOSITION.  A name's realized drift over T years is its true drift plus estimation

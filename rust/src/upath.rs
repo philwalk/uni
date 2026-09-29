@@ -252,7 +252,7 @@ pub(crate) fn normalize_posix(p: &str) -> String {
 ///
 /// Since 0.16.0 the *deciding* comparisons (`posix_rel`'s cwd test, `relativize`)
 /// consult `PathContext::case_fold` and call this only where the context folds —
-/// unconditional folding relativised `/home/Phil/x` against `/home/phil` on Linux.
+/// unconditional folding relativised `/home/User/x` against `/home/user` on Linux.
 /// The remaining unconditional caller is the explicitly-named
 /// `StrExts::startsWithIgnoreCase`, whose insensitivity is its contract.
 #[must_use]

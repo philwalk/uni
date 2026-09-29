@@ -189,7 +189,7 @@ class MarketSimContractSuite extends FunSuite:
       "QQQ's 27-year kurtosis is BELOW the CRSP century's -- a shorter window holds fewer 1987s")
   }
 
-  test("the drawdown-shape episode definition is the one folio-pmw measures with") {
+  test("the drawdown-shape episode definition is the one the consumer measures with") {
     // A hand-built path with ONE episode, so the definition is pinned rather than described.
     // Peak at index 2, one -20% session, a grind to the trough at 5, recovery to a new high at 8.
     // This exists because the definition now lives in two repos: the consumer measures the same

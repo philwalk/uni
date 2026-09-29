@@ -8,7 +8,7 @@
 //
 // The question is narrow and the name says which one it is.  Given funds AA, BB, CC and rotation
 // times T1, T2, this asks whether THOSE MOMENTS beat moments a few sessions either side.  It does
-// not ask whether rotating beat staying invested (folio's untimed twin asks that, by pinning every
+// not ask whether rotating beat staying invested (the consumer's untimed twin asks that, by pinning every
 // decision at maximum risk), and it does not ask whether the RULE has skill, because the rule is
 // never re-run against the perturbed data.  Three different nulls, three different questions; the
 // only way they stay distinguishable is by not sharing a name.

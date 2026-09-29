@@ -211,7 +211,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 // `boomLen` (the boom regime), and `gate.fidelity` two rows.
 // 19 -> 20: `-macronull 2` carries BOTH panels: the path's own nine macro columns, graded as at
 // `-macronull 0`, and the sibling's beside them as `nullMacro*` (`macro_k::NULL_COLUMNS`, listed
-// under `ungradedChannelSeries`) -- folio's paired control in one pass, where before the null
+// under `ungradedChannelSeries`) -- the consumer's paired control in one pass, where before the null
 // panel meant a second emit of every world. `world` gained the satellite's three cycle dials.
 // 20 -> 21: `episodes`, THE EVENT LABELS: every 20%+ decline of the emitted path from its
 // trailing-year high, with its joint shape (the run-up into it, depth, speed, the vol at its
@@ -1087,7 +1087,7 @@ pub fn recipes() -> Vec<(&'static str, World, &'static str)> {
     open.range_down = 0.13;
     open.div_yield = 0.78;
     // The S&P default with THE BASKET on at its anchored dials and the dividend stream at its S&P
-    // anchor (`basket-2026-09-02.tsv`: folio's
+    // anchor (`basket-2026-09-02.tsv`: the consumer's
     // eight semis under SMH). Verified at 200x100: names vol 2.49x, gaps 2.13/yr; aggregate corr
     // 0.793, beta 1.562, vol 1.97x; pairwise 0.575, idio share 0.374, tail coincidence 0.547,
     // pairwise on the worst decile 0.682 vs 0.212 mid; the primary untouched. Time below peak
@@ -1315,7 +1315,7 @@ fn recipe_0245_sp500(mut w: World) -> World {
     w
 }
 
-/// THE SATELLITE'S RELATIVE CYCLE at its adopted values (folio's request 2; see `sat_cycle_sd`):
+/// THE SATELLITE'S RELATIVE CYCLE at its adopted values (consumer request 2; see `sat_cycle_sd`):
 /// innovations 0.0003 log a session, the relative drift's half-life 0.2 years, the level's 0.5.
 /// On 80 paths of the record's 27 years the QQQ/SPY record's relative-trend readings sit at the
 /// worlds' 20th (63 sessions), 79th (126) and 18th (252) percentiles, against the 73rd, 91st and
@@ -1338,7 +1338,7 @@ fn recipe_0245_nasdaq_basket(mut w: World) -> World {
 }
 
 /// THE NASDAQ RECIPE RE-SOLVED FOR THE TIMING STRUCTURE, THE LONG END AND THE SHORT RATE (items
-/// 33-34, folio's requests 1 and 3; unreleased): search-v111's member 2 with seven dials set by
+/// 33-34, consumer requests 1 and 3; unreleased): search-v111's member 2 with seven dials set by
 /// hand on the rulers. The recession's hazard at 1.5 a year per unit stress (6 a century where the
 /// record's 27 years hold three) with its vol at 0.5 (`recess_vol`: the earnings decline runs
 /// inside a turbulent spell), the credit regime carrying a decline (`regime_drift` 0.0005) at a
@@ -1350,11 +1350,11 @@ fn recipe_0245_nasdaq_basket(mut w: World) -> World {
 /// (0.0 to +1.3; record +1.4, inside), the 60-, 120- and 250-day variance ratios 0.89 / 0.90 /
 /// 1.04 (records 0.83 / 0.92 / 1.11), crashes 28 a century (25.6), the wings 6.3 / 6.2 (7.6 /
 /// 6.7), the short rate 2.0% at the floor 30% of sessions (2.1% / 37%), the bond's growth rally
-/// 6.2 (7.0), return per vol 0.32 (0.38), kurtosis 11.0 (9.6), d20 1.27. folio's acceptance —
+/// 6.2 (7.0), return per vol 0.32 (0.38), kurtosis 11.0 (9.6), d20 1.27. The consumer's acceptance —
 /// the record between the worlds' 20th and 80th percentiles on 128 record-length paths — reads
 /// the 55th (126-day variance ratio), 55th (252-day), 48th (the 12-month-to-1-month return
 /// correlation) and 66th (the 200-day moving-average edge); `0.24.4-nasdaq` read the 73rd, 77th,
-/// 73rd and 84th. On folio's production rule the worlds' timing rung reads -0.2 a year (median of
+/// 73rd and 84th. On the consumer's production rule the worlds' timing rung reads -0.2 a year (median of
 /// 128 histories; +4.1 on the record, above 88% of them) where `0.24.4-nasdaq`'s read -2.2 with
 /// the record above 98%.
 fn recipe_0245_nasdaq(mut w: World) -> World {
@@ -2332,7 +2332,7 @@ pub enum Crowd {
     Momentum,
     Trend(i32),
     VolScaled,
-    /// exposure keyed to distance from the running peak — folio's CDAP family as a crowd, so
+    /// exposure keyed to distance from the running peak — the consumer's CDAP family as a crowd, so
     /// "does a drawdown rule survive a crowd running a drawdown rule" is finally posable. The
     /// parameter is the cut threshold in PERCENT below the peak (drawdown10 = de-risk past
     /// -10%), reading `px[i-1]` alone like the other banded crowds.
@@ -2697,7 +2697,7 @@ pub struct World {
     /// higher-vol primary, and stacked on the Nasdaq recipe the leg's correlation climbed to
     /// 0.93 against the anchored 0.85 with nothing to catch it.
     pub sat_idio: f64,
-    /// THE SATELLITE'S RELATIVE CYCLE (folio's request 2): a slow component in the leg's return
+    /// THE SATELLITE'S RELATIVE CYCLE (consumer request 2): a slow component in the leg's return
     /// relative to the primary -- a persistent relative drift `g` (half-life `sat_drift_half`
     /// years, innovations `sat_cycle_sd` log a session from the cycle's own stream) integrated
     /// into a relative level `d` that reverts at `sat_level_half` years; the session's relative
@@ -2782,7 +2782,7 @@ pub struct World {
     /// shared variance dominates and pairwise correlation rises — the mechanism the record shows
     /// (0.60 on SPY's worst decile vs 0.28 mid). Own gaps: a per-name Student-t jump (JUMP_NU,
     /// the primary's skew) at `basket_gaps` per year past ~10%. Reaches no price; 0 = off, no
-    /// columns, bit-identical. Anchored on folio's eight semis under SMH
+    /// columns, bit-identical. Anchored on the consumer's eight semis under SMH
     /// (`basket-2026-09-02.tsv`): N = 8.
     pub basket: usize,
     /// sector leg: beta on the primary's observed return (anchored 1.56, the basket's beta on SPY)
@@ -2805,7 +2805,7 @@ pub struct World {
     /// Drawn once per name per path and centred EXACTLY, so the equal-weight sector's log drift is
     /// untouched and only the cross-section moves. 0 = off, bit-identical; needs N >= 2.
     ///
-    /// ANCHORED AT 0 by `basket-drift-2026-09-03.tsv`: among folio's eight the spread of realized
+    /// ANCHORED AT 0 by `basket-drift-2026-09-03.tsv`: among the consumer's eight the spread of realized
     /// drift (0.068) is entirely accounted for by what a 14.6-year window generates from their own
     /// idio vol (0.070), so no true dispersion is detectable, and selecting survivors truncates the
     /// left tail — 0 is a FLOOR from biased data, not a measurement. The names' time below peak is
@@ -2831,7 +2831,7 @@ pub struct World {
     /// them. The macro rows do not grade a null panel and the sidecar lists its columns as
     /// ungraded. Needs `macro_panel`; one extra price loop per path; 0 = the path's own panel,
     /// bit-identical.
-    /// 2 (THE PAIRED CONTROL, folio's request 5): the path's own panel as at 0, graded, and the
+    /// 2 (THE PAIRED CONTROL, consumer request 5): the path's own panel as at 0, graded, and the
     /// sibling's beside it as the `nullMacro*` columns, ungraded, so the no-edge comparison rides
     /// in the same file as the real panel instead of a second emit of every world.
     pub macro_null: usize,
@@ -6409,7 +6409,7 @@ fn depth_shares(px: &[f64]) -> (f64, f64, f64) {
 /// at its own volatility. The record's relation is QQQ against SPY over their shared window.
 #[derive(Clone, Copy, Debug)]
 pub struct SatStats {
-    /// THE RELATIVE TREND (folio's request 2): the autocorrelation of successive non-overlapping
+    /// THE RELATIVE TREND (consumer request 2): the autocorrelation of successive non-overlapping
     /// 63-, 126- and 252-session changes of log(satellite / primary), the leg ratio's persistence
     /// at a quarter, a half-year and a year (QQQ/SPY 1999-2026: +0.05, +0.18, -0.29)
     pub rel_trend: [f64; 3],
@@ -6921,7 +6921,7 @@ fn up_share_of(r: &[f64]) -> f64 {
     }
 }
 
-/// THE VOLATILITY-TIMING EDGE (folio's canonical rule, 2026-09-24), points a year of log growth:
+/// THE VOLATILITY-TIMING EDGE (the consumer's canonical rule, 2026-09-24), points a year of log growth:
 /// hold the index when its 24-session realized vol (sample sd) is below the series' own 60th
 /// percentile of that vol, cash at 0 at or above the 80th, keep the position between; the
 /// position decided on the vol through session t is held over t + 1; minus buy-and-hold, over
@@ -9726,7 +9726,7 @@ fn gate_checks_with(
     // loosely than it pins a level.
     if let Some(sd) = st.sat {
         for (name, got, lo, hi, dp) in [
-            // THE RELATIVE TREND (folio's request 2): bands are the record's own one-year-block
+            // THE RELATIVE TREND (consumer request 2): bands are the record's own one-year-block
             // resamples (QQQ/SPY 1999-2026, 2000 resamples, 5th-95th), inside which the record
             // reads +0.05, +0.18 and -0.29 -- the last at the band's edge
             ("satellite rel-trend 63d", sd.rel_trend[0], -0.20, 0.33, 2),
@@ -10301,7 +10301,7 @@ pub struct Anchors {
     /// zero, so its term is the linear |model - record| over the record, not a log ratio.
     pub vol_timing: f64,
     pub vol_timing_sd: f64,
-    /// The row's judgment in the loss. 3.0 on the Nasdaq set: the row folio's production gap
+    /// The row's judgment in the loss. 3.0 on the Nasdaq set: the row the consumer's production gap
     /// turns on (2026-09-24), where the worlds read -2.5 against the record's +1.4 and no
     /// search was ever pulled toward it; the precision rule alone leaves it at a tenth of the
     /// weight (sd_rel 2.03). 0 on the S&P set until its re-solve bundle: reported, not graded.
@@ -11346,7 +11346,7 @@ pub fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             1.00,
             wgt(1.0, a.vr60_sd),
         ),
-        // THE LONG END (folio's request 1, 2026-09-23): the same ratio at 120 and 250 sessions,
+        // THE LONG END (consumer request 1, 2026-09-23): the same ratio at 120 and 250 sessions,
         // where QQQ's rises (0.94, 1.12) and the worlds' falls. Graded toward the 60-day row's
         // theory value 1.00 at three times its weight, not toward QQQ's 1.12 (the record's rise
         // is one episode's; the NDX price index from 1990 reads the long end flat): the search
@@ -11389,7 +11389,7 @@ pub fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             a.up_share,
             wgt(0.0, a.up_share_sd),
         ),
-        // THE VOLATILITY-TIMING EDGE (folio, 2026-09-24): the first conditional row, graded at
+        // THE VOLATILITY-TIMING EDGE (a consumer's request, 2026-09-24): the first conditional row, graded at
         // `vol_timing_judgment` (3.0 on the Nasdaq set, 0 on the S&P's); the verdict judges it
         // against the record's band.
         (

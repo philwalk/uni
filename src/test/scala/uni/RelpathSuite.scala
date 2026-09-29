@@ -35,8 +35,8 @@ class RelpathSuite extends FunSuite:
 
   test("relpath folds case only where the config folds (0.16.0)") {
     // Windows rules fold: a case-twin of the cwd relativises. POSIX rules compare
-    // exactly: the unconditional fold used to relativise /home/Phil/x against a cwd
-    // of /home/phil on Linux -- a different, legal directory.
+    // exactly: the unconditional fold used to relativise /home/User/x against a cwd
+    // of /home/user on Linux -- a different, legal directory.
     injected() // isWindows = true → caseFold
     assertEquals(toPosixRel("C:/MUNIT/test/casefold.txt"), "casefold.txt")
     withMountLines(Seq("none / cygdrive binary,posix=0 0 0"), TestUtils.unixTestUser,

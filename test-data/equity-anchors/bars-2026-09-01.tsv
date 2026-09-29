@@ -1,7 +1,7 @@
 # INTRA-BAR RANGE + VOLUME: the anchor vector for the bar channels (`rangeScale`, `volIdio`),
 # which BarsAnchorSuite / bars_anchor_tests re-derive from this file. Editing a graded row moves
 # the shipped test bands; editing a `const` row must be accompanied by the code constant it pins.
-# Measured 2026-09-01 from folio's Yahoo cache OHLCV (SPY 1993-2026 = w1993, QQQ 1999-2026 =
+# Measured 2026-09-01 from the consumer's Yahoo cache OHLCV (SPY 1993-2026 = w1993, QQQ 1999-2026 =
 # w1999; scripts: the session's bars_anchor.py conventions).
 #
 # Conventions:

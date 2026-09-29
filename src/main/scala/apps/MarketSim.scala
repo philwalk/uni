@@ -245,7 +245,7 @@ object MarketSim:
   // `boomLen` (the boom regime), and `gate.fidelity` two rows.
   // 19 -> 20: `-macronull 2` carries BOTH panels: the path's own nine macro columns, graded as at
   // `-macronull 0`, and the sibling's beside them as `nullMacro*` (`MacroK.NullColumns`, listed
-  // under `ungradedChannelSeries`) -- folio's paired control in one pass.  `world` gained the
+  // under `ungradedChannelSeries`) -- the consumer's paired control in one pass.  `world` gained the
   // satellite's three cycle dials.
   // 20 -> 21: `episodes`, THE EVENT LABELS: every 20%+ decline of the emitted path from its
   // trailing-year high with its joint shape (`episodesBlock`; the Rust twin's `EMIT_SCHEMA` note
@@ -429,7 +429,7 @@ object MarketSim:
     "              ;   primary's observed return + -basketsector idio riding state x spiral) plus",
     "              ;   its own idio (-basketidio, on the vol state alone -- so correlation rises",
     "              ;   in stress) and its own gaps (-basketgaps per year, t-jumps).  The aggregate",
-    "              ;   is the sector.  Anchored N 8 on folio's semis under SMH.  Default 0 = off",
+    "              ;   is the sector.  Anchored N 8 on the consumer's semis under SMH.  Default 0 = off",
     "-basketdrift X; cross-sectional DRIFT DISPERSION: sd of the names' own annual log-drift",
     "              ;   offsets as a fraction of the primary's vol, centred so the sector is",
     "              ;   untouched.  ANCHORED AT 0: among the eight the spread of realized drift",
@@ -638,7 +638,7 @@ object MarketSim:
     case Momentum
     case Trend(calDays: Int)
     case VolScaled
-    /** exposure keyed to distance from the running peak -- folio's CDAP family as a crowd, so
+    /** exposure keyed to distance from the running peak -- the consumer's CDAP family as a crowd, so
       * "does a drawdown rule survive a crowd running a drawdown rule" is finally posable.  The
       * parameter is the cut threshold in PERCENT below the peak (drawdown10 = de-risk past
       * -10%), reading `px(i-1)` alone like the other banded crowds. */
@@ -1035,7 +1035,7 @@ object MarketSim:
                            // when `satBeta > 0`, so 0 is bit-identical off.  Anchors (SPY/QQQ
                            // 1999-2026): beta 1.20, corr 0.853, rolling-252d beta p5/med/p95
                            // 0.90/1.18/1.92.
-    satCycleSd: Double = 0.0,   // THE SATELLITE'S RELATIVE CYCLE (folio's request 2): a slow
+    satCycleSd: Double = 0.0,   // THE SATELLITE'S RELATIVE CYCLE (consumer request 2): a slow
                                 // component in the leg's return relative to the primary -- a
                                 // persistent relative drift (half-life `satDriftHalf` years,
                                 // innovations `satCycleSd` log a session from its own stream)
@@ -1142,7 +1142,7 @@ object MarketSim:
                            // shows (0.60 on SPY's worst decile vs 0.28 mid).  Own gaps: a
                            // per-name Student-t jump (JumpNu, the primary's skew) at `basketGaps`
                            // per year past ~10%.  Reaches no price; 0 = off, no columns,
-                           // bit-identical.  Anchored on folio's eight semis under SMH
+                           // bit-identical.  Anchored on the consumer's eight semis under SMH
                            // (`basket-2026-09-02.tsv`): N = 8.
     basketBeta: Double = 0.0,   // sector leg: beta on the primary's observed return (anchored
                                 // 1.56, the basket's beta on SPY)
@@ -1312,7 +1312,7 @@ object MarketSim:
                                 // Drawn once per name per path and centred EXACTLY, so the
                                 // equal-weight sector's log drift is untouched and only the
                                 // cross-section moves.  0 = off, bit-identical; needs N >= 2.
-                                // ANCHORED AT 0 by `basket-drift-2026-09-03.tsv`: among folio's
+                                // ANCHORED AT 0 by `basket-drift-2026-09-03.tsv`: among the consumer's
                                 // eight the spread of realized drift (0.068) is entirely
                                 // accounted for by what a 14.6-year window generates from their
                                 // own idio vol (0.070), so no true dispersion is detectable, and
@@ -1729,7 +1729,7 @@ object MarketSim:
                   volIdio = 0.34, overnight = 0.22, divYield = 0.78),
      "nasdaq"),
     // The S&P default with THE BASKET on at its anchored dials and the dividend stream at its
-    // S&P anchor (`basket-2026-09-02.tsv`: folio's eight semis under SMH).  Verified at 200x100:
+    // S&P anchor (`basket-2026-09-02.tsv`: the consumer's eight semis under SMH).  Verified at 200x100:
     // names vol 2.49x, gaps 2.13/yr; aggregate corr 0.793, beta 1.562, vol 1.97x; pairwise 0.575,
     // idio share 0.374, tail coincidence 0.547, pairwise on the worst decile 0.682 vs 0.212 mid;
     // the primary untouched.  Time below peak 0.548, a disclosed reading.
@@ -1938,7 +1938,7 @@ object MarketSim:
             "nasdaq"),
            ("0.24.4-sp500-channels", spChannels, "sp500"),
            // THE NASDAQ RECIPE RE-SOLVED FOR THE TIMING STRUCTURE, THE LONG END AND THE SHORT RATE
-           // (items 33-34, folio's requests 1 and 3; unreleased): search-v111's member 2 with seven
+           // (items 33-34, consumer requests 1 and 3; unreleased): search-v111's member 2 with seven
            // dials set by hand on the rulers -- the recession's hazard 1.5 with its vol 0.5, the
            // credit regime carrying a decline (`regimeDrift` 0.0005) at 0.6, the value pull 0.08,
            // the drift 13.5% and the rate mean 4.5% (the other literals the archive's).  On 33 seeds
@@ -1946,8 +1946,8 @@ object MarketSim:
            // band), no row regresses against `0.24.4-nasdaq`, every row inside its band on every seed
            // but the bubble coupling: the timing row +0.6 (record +1.4), the variance ratios 0.89 /
            // 0.90 / 1.04 (0.83 / 0.92 / 1.11), crashes 28 a century (25.6), the wings 6.3 / 6.2, the
-           // short rate 2.0% at the floor 30%, return per vol 0.32 (0.38).  folio's acceptance reads
-           // the 55th / 55th / 48th / 66th percentiles; on folio's production rule the worlds' timing
+           // short rate 2.0% at the floor 30%, return per vol 0.32 (0.38).  The consumer's acceptance reads
+           // the 55th / 55th / 48th / 66th percentiles; on the consumer's production rule the worlds' timing
            // rung reads -0.2 a year with the record's +4.1 above 88% of 128 histories (0.24.4: -2.2,
            // 98%).
            ("0.24.5-nasdaq", nq0245, "nasdaq"),
@@ -1964,7 +1964,7 @@ object MarketSim:
            // other dials re-solved by search, the noise skew at 0.85 for the up-day share (the Rust twin's doc
            // carries the readings).  On 32 fresh seeds at 200 x 100 every class passes on 32, 1.2 rows missed a
            // seed: valuation dispersion 0.31 (record 0.30), the lower wing 7.4% (6.7%), kurtosis 23.9 (21.8).
-           // The satellite's relative cycle at its adopted values (folio's request 2; see `satCycleSd`).
+           // The satellite's relative cycle at its adopted values (consumer request 2; see `satCycleSd`).
            ("0.24.5-sp500",
             spChannels.copy(trendShare = 0.052973269, depth = 18.015402, stress = 4.0334913,
                             drift = 0.12927572, fundVol = 0.03, volOfVol = 0.02633778,
@@ -4619,7 +4619,7 @@ object MarketSim:
                             ac20Ratio: Double, d5Ratio: Double, d10Ratio: Double,
                             crashRatio: Double)
 
-  /** THE LEG RATIO'S PERSISTENCE (`SatStats.relTrend`, folio's request 2): from the two legs' daily
+  /** THE LEG RATIO'S PERSISTENCE (`SatStats.relTrend`, consumer request 2): from the two legs' daily
     * log returns, the cumulative relative log level, then the lag-1 autocorrelation of its
     * successive non-overlapping h-session changes for h = 63, 126, 252 (`RelTrendHorizons`); NaN
     * where fewer than three changes fit.  QQQ/SPY 1999-2026: +0.05, +0.18, -0.29. */
@@ -5815,7 +5815,7 @@ object MarketSim:
     val satBands = st.sat match
       case None => Vector.empty
       case Some(sd) => Vector(
-        // THE RELATIVE TREND (folio's request 2): bands are the record's own one-year-block
+        // THE RELATIVE TREND (consumer request 2): bands are the record's own one-year-block
         // resamples (QQQ/SPY 1999-2026, 2000 resamples, 5th-95th), inside which the record reads
         // +0.05, +0.18 and -0.29 -- the last at the band's edge
         bandCheck("satellite rel-trend 63d", sd.relTrend(0), -0.20, 0.33, Fidelity),
@@ -6756,7 +6756,7 @@ object MarketSim:
     // finding, not an argument for dropping a row.  The depth rungs said the world was too deep
     // and named no cause; this row names it.
     ("variance ratio 60d", st => st.vr60,                                    1.00,  wgt(1.0, a.vr60Sd)),
-    // THE LONG END (folio's request 1): the ratio at 120 and 250 sessions, graded toward the
+    // THE LONG END (consumer request 1): the ratio at 120 and 250 sessions, graded toward the
     // 60-day row's theory value 1.00 at three times its weight; the verdict judges each against its band
     ("variance ratio 120d", st => st.vr120,                                  1.00,  wgt(3.0, a.vr60Sd)),
     ("variance ratio 250d", st => st.vr250,                                  1.00,  wgt(3.0, a.vr60Sd)),
@@ -6773,7 +6773,7 @@ object MarketSim:
     // judgment 0, so the loss does not see it, while the verdict judges it against the record's band
     // like every banded row.  The weight moves off 0 when a mechanism reaches the record.
     ("up-day share %",     st => st.upShare,                                a.upShare,  wgt(0.0, a.upShareSd)),
-    // THE VOLATILITY-TIMING EDGE (folio, 2026-09-24): the first conditional row.  REPORTED, NOT
+    // THE VOLATILITY-TIMING EDGE (a consumer's request, 2026-09-24): the first conditional row.  REPORTED, NOT
     // GRADED by the loss, judgment 0, for the reason the up-day share was: the verdict judges it
     // against the record's band, and a weight would have the search chase QQQ's 1999-2002 reward
     // (+1.4 points a year from 1999, -2.1 on NDX from 1990).
@@ -7356,7 +7356,7 @@ object MarketSim:
     if up + down == 0 then Double.NaN else up * 100.0 / (up + down)
 
   /** corr(r_t, r^2_{t+1}): the leverage effect at daily lag. */
-  /** THE VOLATILITY-TIMING EDGE (folio's canonical rule, 2026-09-24), points a year of log growth:
+  /** THE VOLATILITY-TIMING EDGE (the consumer's canonical rule, 2026-09-24), points a year of log growth:
     * hold the index when its 24-session realized vol (sample sd) is below the series' own 60th
     * percentile of that vol, cash at 0 at or above the 80th, keep the position between; the
     * position decided on the vol through session t is held over t + 1; minus buy-and-hold, over

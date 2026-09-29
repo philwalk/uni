@@ -65,7 +65,7 @@
 
 **Two fidelity rows: the volatility-timing edge and the bubble coupling**
 
-- `vol-timing edge pts/yr`, the first conditional row (folio's request, 2026-09-24): the canonical
+- `vol-timing edge pts/yr`, the first conditional row (a consumer's request, 2026-09-24): the canonical
   rule — hold the index when its 24-session realized vol is below the series' own 60th percentile
   of that vol, cash at 0 at or above the 80th, keep the position between, decided on the vol
   through a session and held over the next — as log growth minus buy-and-hold's, points a year.
@@ -84,7 +84,7 @@
 
 **The paired control in one pass: `-macronull 2`**
 
-- folio's request 5: the macro-panel exam pairs each world with the same prices under a panel
+- Consumer request 5: the macro-panel exam pairs each world with the same prices under a panel
   from a sibling path, which meant emitting every world twice. `-macronull 2` writes both in one
   file: the path's own nine macro columns, graded exactly as at `-macronull 0`, and the sibling's
   beside them as `nullMacroSpread` .. `nullMacroOutput`, listed under `ungradedChannelSeries`.
@@ -93,7 +93,7 @@
 **The satellite's relative cycle: `-satcyclesd` / `-satdrifthalf` / `-satlevelhalf`, and the
 `satellite rel-trend` rows**
 
-- folio's request 2: the leg ratio log(QQQ/SPY) trends at a half-year and reverses at a year
+- Consumer request 2: the leg ratio log(QQQ/SPY) trends at a half-year and reverses at a year
   (the autocorrelation of successive non-overlapping 63-, 126- and 252-session changes +0.05,
   +0.18, −0.29) where a leg that is beta times the primary plus independent noise has none. The
   cycle is a persistent relative drift (half-life `-satdrifthalf` years, innovations `-satcyclesd`
@@ -110,7 +110,7 @@
 
 **The long end of the variance ratio is graded: `variance ratio 120d` and `variance ratio 250d`**
 
-- folio's request 1: the 60-day row's statistic at 120 and 250 sessions, each a record-band row
+- Consumer request 1: the 60-day row's statistic at 120 and 250 sessions, each a record-band row
   (`recordbands-2026-09-26.tsv`, which reproduces every earlier row's record and percentiles; every
   joint band is re-split over the eighteen rows each set now carries), graded in the loss toward the
   60-day row's theory value 1.00 at three times its weight rather than toward QQQ's 1.11, since the
@@ -155,11 +155,11 @@ short rate**
   the shipped 31), the wings 6.3 / 6.2 (7.6 / 6.7), the short rate 2.0% at the floor 30% of
   sessions (2.1% / 37%; the shipped recipe 4.7% and never at the floor), the bond's growth rally
   6.2 (7.0; a miss on every seed of the shipped recipe), return per vol 0.32 (0.38), kurtosis
-  11.0 (9.6), d20 1.27. folio's acceptance test — the QQQ record between the worlds' 20th and
+  11.0 (9.6), d20 1.27. The consumer's acceptance test — the QQQ record between the worlds' 20th and
   80th percentiles on 128 paths of the record's 27 years — reads the 55th (126-day variance
   ratio), 55th (252-day), 48th (the 12-month-to-1-month return correlation) and 66th (the
   200-day moving-average edge), where the shipped recipe reads the 73rd, 77th, 73rd and 84th.
-  On folio's production rule, run on 128 histories of `0.24.5-nasdaq-basket` with folio's own
+  On the consumer's production rule, run on 128 histories of `0.24.5-nasdaq-basket` with the consumer's own
   scripts, the timing rung (the rule's in/out signal at 1x, points a year over buy-and-hold) has
   a median of -0.2 with the record's +4.1 above 88% of the histories, where the shipped world
   read -2.2 with the record above 98%; the rule's growth 10.2 against 3.2. The Nasdaq spreads
@@ -287,7 +287,7 @@ short rate**
   (`recordbands-2026-09-26.tsv`, which reproduces every earlier row's record and percentiles; the
   joint bands are re-split): 4.6% and 14.6% over 1954-2026, 2.1% and 37.3% over
   1999-2026. Every shipped world misses both — 4.8-5.6% and no session at the floor — which is the
-  carry gap folio measured on the Nasdaq worlds. The floor share is an additive row in the loss.
+  carry gap a consumer measured on the Nasdaq worlds. The floor share is an additive row in the loss.
   `-ratemean` is the 52nd searched dial (0-0.06; older archives refuse to resume). Sidecar
   `fidelity` carries the rows; the schema is unchanged.
 - The volatility-timing row is graded in the Nasdaq loss (judgment 3.0; 0 on the S&P), as an
@@ -1576,7 +1576,7 @@ short rate**
   primary is untouched and 0 is bit-identical. `-emit` gains `logBasket` and `logName1..N` when
   on; `channels.basket` carries the readings and `channels.level.kVs` the idio's level. Both twins
   byte-identical.
-- Graded at three levels against `basket-2026-09-02.tsv` (folio's eight semiconductor names under
+- Graded at three levels against `basket-2026-09-02.tsv` (the consumer's eight semiconductor names under
   SMH, 2012–2026; re-derived by `BasketAnchorSuite` / `basket_anchor_tests`): per-name vol ratio
   and gap rate against the eight's ranges, the aggregate's correlation, beta and vol ratio against
   the eight's own basket read on the anchor set's primary, pairwise correlation, idio share and
@@ -2367,7 +2367,7 @@ thresholds, against SPY 1993-2026.
 This is a SECOND episode definition and the difference is the point. The model's own crash count is
 a 15%-below-peak excursion re-arming at 2%, built for counting; these are
 peak-to-trough-to-full-recovery episodes, built for shape. They must not be mixed. The definition
-matches the one `folio-pmw` measures with, and lives here so a consumer is not maintaining a second
+matches the one the consumer measures with, and lives here so a consumer is not maintaining a second
 copy free to drift from ours.
 
 NOTHING IN IT IS GATED. The reference is one history — 12 episodes at the 10% threshold, 4 at the
@@ -4256,7 +4256,7 @@ pinned by the regenerated `path-parity` fixture:
   (their default filesystems are case-insensitive), Linux compares exactly, and
   synthetic configs follow the *simulated* platform so fixtures stay deterministic
   on any host. The unconditional fold in `relpath`'s cwd test relativised
-  `/home/Phil/x` against a cwd of `/home/phil` on Linux — a different, legal
+  `/home/User/x` against a cwd of `/home/user` on Linux — a different, legal
   directory — silently pointing callers at the wrong tree. `samePathString` and
   `UPath::relativize` consult the same flag (Java's own `relativize` is
   case-insensitive on `WindowsPath` and exact on `UnixPath`).

@@ -1,6 +1,6 @@
 # SPY-QQQ COUPLING: the anchor vector for the satellite equity leg (`satBeta`/`satIdio`),
 # which JointCouplingSuite / joint_coupling_tests re-derive from this file. Editing a graded
-# row moves the shipped test bands. Measured 2026-08-31 from folio's Yahoo cache (adj_close,
+# row moves the shipped test bands. Measured 2026-08-31 from the consumer's Yahoo cache (adj_close,
 # daily simple returns, inner-joined); the NDX rows are price-only, for the longer window.
 #
 # Conventions (one codebase measured both this record and the model's grading):

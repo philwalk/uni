@@ -18,7 +18,7 @@
 # it here.  `MacroPanelSuite` / `macro_panel_tests` re-derive the shipped bands from this file;
 # editing a graded row moves them.
 #
-# Measured 2026-09-06 from folio's caches: FRED daily CSVs (1990-01-02 .. 2026-09-04; NFCILEVERAGE
+# Measured 2026-09-06 from the consumer's caches: FRED daily CSVs (1990-01-02 .. 2026-09-04; NFCILEVERAGE
 # weekly, Fridays); equity histories CRSP = Ken French F-F_Research_Data_Factors_daily (202606
 # CRSP) Mkt-RF + RF compounded, the value-weighted US market TOTAL return, read from 1990-01-02;
 # SPY and QQQ = Yahoo adjusted close (total return); NDX = Yahoo Nasdaq-100 index close, a PRICE

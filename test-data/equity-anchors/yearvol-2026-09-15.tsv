@@ -20,7 +20,7 @@
 # ON the record's ordinary year; the pooled gap is the bust.  CRSP from 1926 reads 0.75 for the
 # same reason (1929-33).
 #
-# Sources: SPY and QQQ Yahoo adjusted close from folio's cache (through 2026-08-03); CRSP = Ken
+# Sources: SPY and QQQ Yahoo adjusted close from the consumer's cache (through 2026-08-03); CRSP = Ken
 # French F-F_Research_Data_Factors_daily (202606 vintage), Mkt-RF + RF compounded into a price
 # index, log returns of it.  Measured 2026-09-15.
 section	series	window	stat	n	value

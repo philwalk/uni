@@ -20,7 +20,7 @@
 #             and its two recipes 1.44 -- and `SPY-QQQ own` the slope between the two anchor sets'
 #             shipped numbers (20.7 at 16.0%, 25.6 at 26.9%).
 #
-# Measured 2026-09-07 from folio's caches; the leverage-effect rows added 2026-09-08.
+# Measured 2026-09-07 from the consumer's caches; the leverage-effect rows added 2026-09-08.
 section	series	window	stat	n	value
 profile	CRSP	w1926	ac1	26274	0.2982
 profile	CRSP	w1926	ac2	26274	0.3314

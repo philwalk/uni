@@ -65,7 +65,7 @@ pub struct PathContext {
     /// deterministic on any host; [`from_env`](Self::from_env) applies the host
     /// rule — Windows and macOS fold (their default filesystems are
     /// case-insensitive), Linux compares exactly. Folding there relativised
-    /// `/home/Phil/x` against a cwd of `/home/phil`, a different, legal directory.
+    /// `/home/User/x` against a cwd of `/home/user`, a different, legal directory.
     pub case_fold: bool,
     pub mounts: MountMaps,
     pub user: UserInfo,

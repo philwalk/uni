@@ -3,7 +3,7 @@
 # count (a depth reads the shallower, a duration the longer), which is the median the model rows
 # print.  NumPy averages the two, and at four episodes the conventions differ
 # by up to a third of a statistic (SPY at 20%: depth -33.7 here against -40.6 averaged).  Measured
-# 2026-09-02 with the model's own functions over date/price series exported from folio's caches:
+# 2026-09-02 with the model's own functions over date/price series exported from the consumer's caches:
 #   CRSP  Ken French F-F_Research_Data_Factors_daily (202606 CRSP), Mkt-RF + RF compounded: the
 #         value-weighted US market TOTAL return, 1926-07-01..2026-06-30
 #   SPY   Yahoo adjusted close (total return), 1993-01-29..2026-08-31

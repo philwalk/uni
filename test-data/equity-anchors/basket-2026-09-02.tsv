@@ -1,6 +1,6 @@
 # The BASKET ruler: what a cross-section of real single names looks like, at three levels, for the
 # `-basket` channel (N equity names as observational second-pass instances of the primary).  The
-# rows the model is graded against are the eight semiconductor names of folio's binary-trend-01
+# rows the model is graded against are the eight semiconductor names of the consumer's binary-trend-01
 # under the SMH sensor -- NVDA AMD AVGO TSM ASML MU KLAC LRCX -- over 2012-01-04..2026-08-31 (3685
 # sessions), daily Yahoo adjusted closes, LOG returns.  `BasketAnchorSuite` / `basket_anchor_tests`
 # re-derive the graded bands from the `eight` rows; editing a row moves the shipped bands.
@@ -22,7 +22,7 @@
 # against the set's primary vol (`SPY vol` / `QQQ vol`).  LEVEL 3 is what a basket rule reads.  The `population` rows are the
 # cache's 26 single names with data from 2012 (AAPL AMAT AMD ASML AVGO AXTI CAMT CAT CIEN CLS COHR
 # FN GLW GOOGL INTC JBL KLAC LRCX MRVL MSFT MU NVDA PLAB TSEM TSM VWDRY): SURVIVORSHIP-BIASED --
-# folio's book, selected today -- so context, never a band.
+# the consumer's book, selected today -- so context, never a band.
 #
 # The "aggregate clusters more than its members" check is NOT clean in the record (by era the basket
 # sits inside the members' range), so the acf1 rows are readings, not a gate.

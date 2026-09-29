@@ -354,7 +354,7 @@ pub fn posix_rel(ctx: &PathContext, raw: &str) -> Result<String, PathError> {
     let cwd = posix_abs(ctx, &ctx.user.dir.clone())?;
     let abs = posix_abs(ctx, raw)?;
     // fold only where the context says paths fold (0.16.0): the unconditional
-    // eq_ignore relativised `/home/Phil/x` against a cwd of `/home/phil` on Linux
+    // eq_ignore relativised `/home/User/x` against a cwd of `/home/user` on Linux
     // -- a different, legal directory -- silently pointing callers elsewhere
     let is_cwd = if ctx.case_fold {
         abs.eq_ignore_ascii_case(&cwd)

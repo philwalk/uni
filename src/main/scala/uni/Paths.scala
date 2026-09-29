@@ -63,7 +63,7 @@ trait PathsConfig {
    *  generate stay deterministic on any host. [[DefaultPathsConfig]] overrides with
    *  the host rule: Windows and macOS fold (their default filesystems are
    *  case-insensitive), Linux compares exactly -- folding there relativised
-   *  `/home/Phil/x` against a cwd of `/home/phil`, silently pointing callers at a
+   *  `/home/User/x` against a cwd of `/home/user`, silently pointing callers at a
    *  different tree. */
   def caseFold: Boolean = isWindows
 

@@ -8,7 +8,7 @@
 // `rust/src/bin/record_bands.rs`: same flags, same rows.
 //
 //     scala-cli run jsrc/recordBands.sc -- -header -set nasdaq -series QQQ \
-//         -yahoo ../folio/data/yahoo/QQQ/prices.csv -from 1999-03-10 -to 2026-08-20
+//         -yahoo <data>/yahoo/QQQ/prices.csv -from 1999-03-10 -to 2026-08-20
 //
 // IT DELEGATES.  Every row is read by `uni.apps.MarketSim.seriesReadings`, the functions the model
 // reads a path with, and resampled by `recordResamples`, so a band cannot drift from the statistic
@@ -24,7 +24,7 @@ object RecordBands {
   def usage(m: String = ""): Nothing = showUsage(m, "",
     "(-yahoo FILE | -french FILE | -fred FILE) -from YYYY-MM-DD -to YYYY-MM-DD -set NAME -series LABEL",
     "",
-    "-yahoo FILE   folio's cached prices: the `dlog_adj_close` column; the first row is the anchor",
+    "-yahoo FILE   the consumer's cached prices: the `dlog_adj_close` column; the first row is the anchor",
     "              price, not a return, and is skipped",
     "-french FILE  Ken French's F-F_Research_Data_Factors_daily: Mkt-RF + RF compounded into an index",
     "              WITHOUT a leading 1.0 over the window, then its log returns -- which drops the",
@@ -50,7 +50,7 @@ object RecordBands {
     "              by `bondReadings`, its resamples by `bondResamples`, its own joint band",
   )
 
-  /** `(date, log return)` for every session of folio's cached Yahoo file after its first. */
+  /** `(date, log return)` for every session of the consumer's cached Yahoo file after its first. */
   def readYahoo(file: String): Vector[(String, Double)] =
     val lines = file.asPath.lines.toVector
     val col = lines.headOption.getOrElse(usage(s"$file is empty")).split(',').map(_.trim)

@@ -287,7 +287,7 @@ reads that miss: on the Nasdaq set the timing row +0.1 (record +1.4; inside on e
 rate 1.8% and the floor share 30% (records 2.1% and 37%, 3% and 12% of reads missing), kurtosis 10.4
 (9.6, 5%), the up-day share 54.5 (54.8), lag-1 clustering 0.31 (0.29), the variance ratios 0.86 /
 0.83 / 0.96 (0.83 / 0.92 / 1.11), crashes 30 a century (25.6), the wings 7.0 / 6.2 (7.6 / 6.7), the
-bond's growth rally 5.2 against 7.0 (17%), and the bubble coupling the recipe's own miss. The set is drawn from the 122 members the search from the recipe admitted by the rule that reads the evidence rather than the luck of a seed: judged at 200 x 100 on four seeds, a member is out only when a gate row fails or a record-band row misses on the majority of them, never for a row the recipe itself misses on the majority (the bubble coupling, the family's standing miss), and every record-band row counts; a member that flips at a band's edge on one or two seeds is at the band, not outside it (`tmp/adopt32/setfilter2.py`): 39 of the 122, 29 of them at an edge on one or two seeds, where a clean sweep of the four seeds keeps 43 and had kept a different 37. On folio's acceptance test every member reads the
+bond's growth rally 5.2 against 7.0 (17%), and the bubble coupling the recipe's own miss. The set is drawn from the 122 members the search from the recipe admitted by the rule that reads the evidence rather than the luck of a seed: judged at 200 x 100 on four seeds, a member is out only when a gate row fails or a record-band row misses on the majority of them, never for a row the recipe itself misses on the majority (the bubble coupling, the family's standing miss), and every record-band row counts; a member that flips at a band's edge on one or two seeds is at the band, not outside it (`tmp/adopt32/setfilter2.py`): 39 of the 122, 29 of them at an edge on one or two seeds, where a clean sweep of the four seeds keeps 43 and had kept a different 37. On the consumer's acceptance test every member reads the
 record inside the 20th-80th percentiles on the two variance ratios and the correlation, and 20 of 37
 on the 200-day moving-average edge (median the 80th). Against the 0.24.4 set member for member
 (each row's median member distance from its record, seed by seed) it is nearer on eight rows (equity
@@ -880,7 +880,7 @@ weight 0 in the loss until a mechanism reaches it.
 
 **The volatility-timing edge** — `vol-timing edge pts/yr` — is the first *conditional* row: what
 follows a stretch of high realized volatility, which is the statistic a volatility-timing rule
-lives on where every other row grades an unconditional one. It is folio's canonical rule with
+lives on where every other row grades an unconditional one. It is the consumer's canonical rule with
 nothing fitted: hold the index when its 24-session realized vol is below the series' own 60th
 percentile of that vol, cash at 0 at or above the 80th, keep the position between, decided on the
 vol through a session and held over the next; the reading is the rule's log growth minus
@@ -889,14 +889,14 @@ whether stepping out of the top fifth of volatility stretches pays at any volati
 world path is read exactly as the record is. QQQ 1999-2026 reads +1.4 against a band of −9.7 to
 +13.6; CRSP 1954-2026 −4.2 against −7.3 to −0.3; both shipped worlds sit inside. The reward on QQQ
 is the 1999-2002 window's (the NDX price index from 1990 reads −2.1). The verdict judges the row
-against the record's band; the loss grades it at judgment 3.0 on the Nasdaq set, the row folio's
+against the record's band; the loss grades it at judgment 3.0 on the Nasdaq set, the row the consumer's
 production gap turns on, and at 0 on the S&P set.
 
 **The short rate** — `short rate %` and `rate floor share %` — is the rate path's mean, in
 percent, and the share of its sessions under 0.50%, both against the daily effective federal funds
 rate over the set's own window: 4.6% and 15% over 1954-2026, 2.1% and 37% over 1999-2026. It is
 what the bond's carry, the equity's markdown and a levered fund's financing all read, and the
-carry gap folio measured on the Nasdaq worlds (a 3x fund paying about 7 points a year more than
+carry gap a consumer measured on the Nasdaq worlds (a 3x fund paying about 7 points a year more than
 TQQQ did) is this row. The shipped worlds read 4.8% (S&P) and 5.6% (Nasdaq) with no session at
 the floor: the rate cannot go below zero, but chasing a 4.2% mean it never gets near it. The
 floor share is priced as an additive row, since a log ratio of a share that reads zero prices
@@ -1009,10 +1009,10 @@ with it.
 | `-volidio` | log turnover index riding the range: elasticity 0.59 to the range's deviation from its slow normal (frozen from the measured regression) plus a two-component persistent idio whose total sd is this dial (anchored 0.34). Requires `-rangescale`; adds `logVolume` to `-emit`. NOT searchable | 0 |
 | `-divyield` | DIVIDENDS: the world's mean dividend yield, %/yr. The session yield is Y × fundamental/price over the world's mean of it (a world constant solved on the same fixed ensemble as the bar level — the ensemble's mean fundamental/price is 2.06 at the default and 2.30 on the Nasdaq recipe, and a per-path mean would leak the path's future), so a rich session yields less and the ensemble's pooled mean yield is the dial; the reported median path's mean reads about 0.9× of it (2.62 at 2.95, 0.69 at 0.78), valuation epochs skewing the path means; `-emit` gains `logTraded` (the total-return `price` deflated by the accrued yield — `price` itself is unchanged) and `divYield`. Anchored 2.95 on Shiller's S&P 1954–2023 and 0.78 on QQQ 2005–2026 (`dividend-2026-09-02.tsv`); the level is graded when on. An identity parameter, never searched | 0 (off) |
 | `-overnight` | THE OPEN: the overnight share of the session's diffusive variance (0 ≤ X < 1). The open is the bridge point at that share of the session, with the session's news jump and jump-channel move landing overnight whole and the whole move becoming the gap when it overshoots the session on its own side; the bar then runs from the open over the remaining variance and the sign coupling reads the intraday return. `-emit` gains `logOpen`, and `logHigh`/`logLow` bracket the open and the close. Anchored 0.20 on the S&P default and 0.22 on the Nasdaq recipe against the record's overnight variance shares 0.33 / 0.28 (`bars-2026-09-01.tsv`, graded when on); the bar dials re-anchor with it, `-rangescale 0.78 -rangedown 0.13`, since the intraday bridge carries less of the session | 0 (open = prior close) |
-| `-basket` | THE BASKET: N single names as observational second-pass instances of the primary — each the shared sector leg (`-basketbeta` on the primary's observed return plus `-basketsector` idio riding the vol state × spiral, the satellite's construction) plus its own idio (`-basketidio`, riding the vol state WITHOUT the spiral, so shared variance dominates in stress and pairwise correlation rises) and its own gaps (`-basketgaps` per year, Student-t jumps of a frozen 9% size, SYMMETRIC — the down-skew belongs to the index and reaches names through the shared leg). The equal-weight aggregate (buy-and-hold, never rebalanced) is the sector, graded against the eight's basket on the set's own primary; `-emit` gains `logBasket` and `logName1..N`. Anchored N 8, beta 1.56, sector 1.1, idio 0.9, gaps 6.0 on folio's eight semiconductor names under SMH 2012–2026 (`basket-2026-09-02.tsv`); `-atrelease 0.24.0-basket` names the default with it on (`0.23.1-basket` the 0.23.1 world). The dials do NOT transport to the Nasdaq set — 8 / 1.37 / 0.7 / 0.85 / 8.0 there, which `-atrelease 0.24.0-nasdaq-basket` names | 0 (off) |
+| `-basket` | THE BASKET: N single names as observational second-pass instances of the primary — each the shared sector leg (`-basketbeta` on the primary's observed return plus `-basketsector` idio riding the vol state × spiral, the satellite's construction) plus its own idio (`-basketidio`, riding the vol state WITHOUT the spiral, so shared variance dominates in stress and pairwise correlation rises) and its own gaps (`-basketgaps` per year, Student-t jumps of a frozen 9% size, SYMMETRIC — the down-skew belongs to the index and reaches names through the shared leg). The equal-weight aggregate (buy-and-hold, never rebalanced) is the sector, graded against the eight's basket on the set's own primary; `-emit` gains `logBasket` and `logName1..N`. Anchored N 8, beta 1.56, sector 1.1, idio 0.9, gaps 6.0 on the consumer's eight semiconductor names under SMH 2012–2026 (`basket-2026-09-02.tsv`); `-atrelease 0.24.0-basket` names the default with it on (`0.23.1-basket` the 0.23.1 world). The dials do NOT transport to the Nasdaq set — 8 / 1.37 / 0.7 / 0.85 / 8.0 there, which `-atrelease 0.24.0-nasdaq-basket` names | 0 (off) |
 | `-basketdrift` | CROSS-SECTIONAL DRIFT DISPERSION: the sd of the names' own annual log-drift offsets, as a fraction of the primary's realized volatility, drawn once per name per path and centred exactly so the sector's log drift is untouched. Moves the SPREAD of time below peak across names, not its median. **Anchored at 0** and off in every recipe: the record cannot supply a positive value (below) | 0 (off) |
 | `-macro` | THE MACRO PANEL: 1 emits seven observables derived from the model's own state after the price loop — `macroSpread` (BAA10Y: equity + bond stress, fast and credit-cycle slow), `macroSlope` (T10Y2Y: the 10y−2y expectation the rate process implies; the one anchored-scale member), `macroCond` (NFCILEVERAGE: the leverage cycle's ratio + the crowd share, raw), `macroIvol` (VIXCLS: the conditional sd re-levelled onto the world's realized vol, × the record's variance risk premium) — each a persistent-noise read sized to the record's predictive R² — and five draw-free levels, `macroYield10` (DGS10: the 10-year the slope is a difference of), `macroPolicy` (DFF: the loop's own policy rate, re-set at a meeting to the nearest quarter point and held), and the credit system: `macroBankCredit` (TOTBKCR) and `macroOutput` (GDP) as indices with `macroCredit` (TOTBKCR/GDP, percent) the ratio they imply. No scale dials but the spread's drawdown term (`-spreaddd`, read off the record): a rank-reading consumer cannot see scale. Cadence, release lag and revisions are the consumer's point-in-time layer. Reaches no price; graded when on ([below](#the-macro-panel--macro)) | 0 (off) |
-| `-macronull` | THE NULL PANEL: 1 takes the four macro columns from a SIBLING path — the same world at another seed — so their marginals and persistence are this world's and their coupling to this path's price is nil: the no-edge comparison for a rule that reads them. The macro rows do not grade a null panel; the sidecar lists its columns as ungraded. 2 is THE PAIRED CONTROL (folio's request 5): the path's own panel as at 0, graded, and the sibling's beside it as nine `nullMacro*` columns, ungraded, so the no-edge comparison rides in the same file instead of a second emit of every world. Needs `-macro 1`; one extra price loop per path at 1 or 2 | 0 (the path's own panel) |
+| `-macronull` | THE NULL PANEL: 1 takes the four macro columns from a SIBLING path — the same world at another seed — so their marginals and persistence are this world's and their coupling to this path's price is nil: the no-edge comparison for a rule that reads them. The macro rows do not grade a null panel; the sidecar lists its columns as ungraded. 2 is THE PAIRED CONTROL (consumer request 5): the path's own panel as at 0, graded, and the sibling's beside it as nine `nullMacro*` columns, ungraded, so the no-edge comparison rides in the same file instead of a second emit of every world. Needs `-macro 1`; one extra price loop per path at 1 or 2 | 0 (the path's own panel) |
 | `-inflsize` | size of an inflation regime's rate-pressure target | 0.10 |
 | `-ratemean` | the level the policy rate chases between regimes, as a decimal; the realised mean adds the inflation pressure's mean and subtracts the accommodation's, and the floor at zero binds once it is low. Searched, graded by `short rate %` and `rate floor share %` against the set's own federal-funds window | 0.042 |
 | `-floorhold` | THE FLOOR HOLDS: while the equity's drawdown from its running peak exceeds this (log units), the policy accommodation does not unwind, so a rate the easing took to zero stays there until the market has recovered. The record held the floor for 7 and 2 years after 2008 and 2020 and lifted off 1.5-2.5 years after the pre-crash high was regained; at 0 the accommodation unwinds at `-unwind` from the moment stress fades and the floor is touched for days. Draw-free; the Nasdaq re-solve runs 0.05 with `-easing 0.08` | 0 |
@@ -1450,7 +1450,7 @@ the spiral, the satellite's construction) plus its **own idio**, riding the vol 
 its **own gaps**, a Student-t jump stream of its own. The model has no sector index, so the
 basket's equal-weight aggregate *is* the sector, and it is graded against SMH's relation to SPY.
 
-The ruler is a population of real names, not an index (`basket-2026-09-02.tsv`: folio's eight
+The ruler is a population of real names, not an index (`basket-2026-09-02.tsv`: the consumer's eight
 semiconductor names under SMH, 2012–2026, every number reproducing their published ones). Three
 levels, graded on every verdict — at the set's dials where the caller left the basket off:
 
@@ -1508,7 +1508,7 @@ range (0.4–5.1, AMD at the top); read the rate as a level, not as a match. The
 ### Why the names sit below their peaks, and what `-basketdrift` does about it
 
 The names spend more of their time than the record's do more than 20% below their running peak —
-0.548 on the S&P recipe and 0.710 on the Nasdaq, where folio's eight read 0.084–0.610 with a
+0.548 on the S&P recipe and 0.710 on the Nasdaq, where the consumer's eight read 0.084–0.610 with a
 median of 0.236. That row is **reported, not graded**. What is in it is the **common drift**, and
 that is survivorship.
 
@@ -1895,7 +1895,7 @@ never at the floor), the bond's growth rally 6.2 (7.0; a miss on every seed of `
 return per vol 0.32 (0.38), kurtosis 11.0 (9.6), d20 1.27. On 128 paths of the record's 27 years
 the QQQ record sits at the worlds' 55th percentile on the 126-day variance ratio, 55th on the
 250-day, 48th on the 12-month-to-1-month return correlation and 66th on the 200-day moving-average
-edge (`0.24.4-nasdaq`: 73rd, 77th, 73rd, 84th). On folio's production rule, run with folio's own
+edge (`0.24.4-nasdaq`: 73rd, 77th, 73rd, 84th). On the consumer's production rule, run with the consumer's own
 scripts on 128 histories of `0.24.5-nasdaq-basket`, the timing rung (the rule's in/out signal at
 1x, points a year over buy-and-hold) has a median of −0.2 with the record's +4.1 above 88% of the
 histories; `0.24.4-nasdaq-basket` read −2.2 with the record above 98%. The Nasdaq anchor set's
