@@ -242,7 +242,14 @@ object MarketSim:
   // supplied the anchor set's), and the `channels` block is present on every file, led by the
   // level the verdict's channels were sampled at.  `gradedSeries` keeps its meaning: the columns in
   // THIS file the verdict graded.  In the same schema `world` gained `boomRate`, `boomSize` and
-  // `boomLen` (the boom regime, 0 in every shipped world), and `gate.fidelity` two rows.
+  // `boomLen` (the boom regime), and `gate.fidelity` two rows.
+  // 19 -> 20: `-macronull 2` carries BOTH panels: the path's own nine macro columns, graded as at
+  // `-macronull 0`, and the sibling's beside them as `nullMacro*` (`MacroK.NullColumns`, listed
+  // under `ungradedChannelSeries`) -- folio's paired control in one pass.  `world` gained the
+  // satellite's three cycle dials.
+  // 20 -> 21: `episodes`, THE EVENT LABELS: every 20%+ decline of the emitted path from its
+  // trailing-year high with its joint shape (`episodesBlock`; the Rust twin's `EMIT_SCHEMA` note
+  // carries the fields).  `world` gained `spreadDd`.
   val EmitSchema: Int = 21
 
   val EmitSidecarKeys: Vector[String] =
@@ -6183,9 +6190,8 @@ object MarketSim:
     // mechanism reaches it; the verdict still judges it against the record's band.
     upShare: Double, upShareSd: Double,
     // THE VOLATILITY-TIMING EDGE (`volTimingOf`), from the same fixture: the record's own reading
-    // of the canonical rule against buy-and-hold.  REPORTED, NOT GRADED by the loss (weight 0):
-    // the verdict judges it against the record's band, and a fitted weight would have the search
-    // chase one history's episode.
+    // of the canonical rule against buy-and-hold, graded at `volTimingJudgment` (3.0 on the Nasdaq
+    // set, 0 on the S&P's); the verdict judges it against the record's band.
     volTiming: Double, volTimingSd: Double, volTimingJudgment: Double,
     // corr(r_t, r^2_{t+1}) from the same fixture -- the one leverage statistic that is stable
     // across every CRSP era and all 18 funds on close-only data.

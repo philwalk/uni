@@ -208,7 +208,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 // supplied the anchor set's), and the `channels` block is present on every file, led by the
 // level the verdict's channels were sampled at. `gradedSeries` keeps its meaning: the columns in
 // THIS file the verdict graded. In the same schema `world` gained `boomRate`, `boomSize` and
-// `boomLen` (the boom regime, 0 in every shipped world), and `gate.fidelity` two rows.
+// `boomLen` (the boom regime), and `gate.fidelity` two rows.
 // 19 -> 20: `-macronull 2` carries BOTH panels: the path's own nine macro columns, graded as at
 // `-macronull 0`, and the sibling's beside them as `nullMacro*` (`macro_k::NULL_COLUMNS`, listed
 // under `ungradedChannelSeries`) -- folio's paired control in one pass, where before the null
@@ -2412,8 +2412,8 @@ pub struct World {
     /// bit-identical; read off the record; a search holds it there with `-fix`.
     pub disaster_overshoot: f64,
     /// THE RECESSION (items 32/33): a fundamental decline in the disaster's shape -- `recess_size`
-    /// log spread evenly over `recess_len` years, then `recess_recover` of it regained over the
-    /// same length -- TRIGGERED BY STRESS rather than by a clock: each session no recession,
+    /// log spread evenly over `recess_len` years, then `recess_recover` of it regained over
+    /// twice that length -- TRIGGERED BY STRESS rather than by a clock: each session no recession,
     /// disaster or boom is running, one starts with probability `recess_rate * stress_idx / 252`
     /// (`stress_idx`, the slow one-sided stress index the easing reads). What it is for: in the
     /// record the declines that raised volatility kept going for a year or more because earnings
@@ -11198,10 +11198,9 @@ pub fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             a.up_share,
             wgt(0.0, a.up_share_sd),
         ),
-        // THE VOLATILITY-TIMING EDGE (folio, 2026-09-24): the first conditional row. REPORTED,
-        // NOT GRADED by the loss, judgment 0, for the reason the up-day share was: the verdict
-        // judges it against the record's band, and a weight would have the search chase QQQ's
-        // 1999-2002 reward (+1.4 points a year from 1999, -2.1 on NDX from 1990).
+        // THE VOLATILITY-TIMING EDGE (folio, 2026-09-24): the first conditional row, graded at
+        // `vol_timing_judgment` (3.0 on the Nasdaq set, 0 on the S&P's); the verdict judges it
+        // against the record's band.
         (
             "vol-timing edge pts/yr",
             (|st: &WorldStats| st.vol_timing) as StatFn,
@@ -13345,7 +13344,7 @@ pub fn calibrate_ranges() -> Vec<(&'static str, f64, f64, Setter, Getter)> {
             |w| w.floorhold,
         ),
         // THE RECESSION (items 32/33): the hazard per unit stress a year, the fall in log, its
-        // length in years and the share regained over the same length
+        // length in years and the share regained over twice that length
         (
             "recessRate",
             0.0,

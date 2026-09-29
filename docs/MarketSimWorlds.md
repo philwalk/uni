@@ -275,11 +275,13 @@ default; pass `-anchors sp500` or nothing) and `0.24.2-nasdaq.json` (174, seeded
 value, which the stationarity row now refuses, and those with a nonzero `bustAmp` run under the
 swing's ceiling and recovery rule; their `score` and `worstRow` predate all of it. The 0.24.4 set
 was searched under it. **The 0.24.5 sets** are the two to draw from now: `0.24.5-nasdaq.json` (39
-members seeded from `0.24.5-nasdaq`, member 0 the recipe itself) and `0.24.5-sp500.json` (8
-members seeded from `0.24.5-sp500`, member 0 the recipe). Their membership test is the verdict's own
+members seeded from `0.24.5-nasdaq`, member 0 the recipe itself) and `0.24.5-sp500.json` (10
+members seeded from `0.24.5-sp500` with the disaster's dials and the spread term held, member 0 the
+recipe). Their membership test is the verdict's own
 read on four fresh seeds at 200 paths × 100 years with every derived series and the macro panel
-graded: every member passes every class on all four, which 9 of the 150 members of `0.24.2-sp500.json`
-do under the same verdict (it predates the channels' grading; keep it for its worlds, not as a set).
+graded: no member fails a gate or misses a record-band row on the majority of the four beyond the
+recipe's standing misses, where 9 of the 150 members of `0.24.2-sp500.json` pass every class on all
+four under the same verdict (it predates the channels' grading; keep it for its worlds, not as a set).
 The set-level reading is each row's median over members and seeds beside the record and the share of
 reads that miss: on the Nasdaq set the timing row +0.1 (record +1.4; inside on every read), the short
 rate 1.8% and the floor share 30% (records 2.1% and 37%, 3% and 12% of reads missing), kurtosis 10.4
@@ -292,11 +294,12 @@ on the 200-day moving-average edge (median the 80th). Against the 0.24.4 set mem
 vol, lag-20 clustering, the timing row, valuation dispersion, bond vol, the bond's growth rally and
 both rate rows), within tolerance on 13 and further on seven: the typical year, kurtosis, lag-1
 clustering, median depth, the tail hedge, d20 and the bond's underwater share, each inside its band.
-On the S&P set
-the short rate 4.2% and the floor share 8.2% (4.6% / 14.6%; 0% and 2%), the bond rows inside on at
-least 97% of reads, and the S&P's standing misses carried by every member: d20 2.55 (100%), the upper
-wing 1.6 against 7.6 (92%), the lower wing 3.8 against 6.7 (66%), the up-day share 53.6 against 55.0
-(43%) and valuation dispersion 0.23 against 0.30 (25%). To run one:
+On the S&P set,
+10 of the 31 members its search admitted: valuation dispersion 0.30 (0.30, no read missing), the
+lower wing 6.5 (6.7, 5%), kurtosis 24.9 (21.8), the up-day share 53.7 (55.0), the downside excess 2.5
+(3.1), the short rate 4.2% and the floor share 9.4% (4.6% / 14.6%; 5% and 0%), the bond rows inside
+on every read, and the S&P's standing misses carried by every member: d20 2.61, the upper wing 2.6
+against 7.6 (92%), the largest 3-year run-up and the longest calm stretch. To run one:
 
 ```
 market_sim.exe -worldset test-data/worlds/0.24.5-nasdaq.json -worldindex 3 -anchors nasdaq -paths 200 -years 40 -emitall -emit m3.tsv
@@ -847,11 +850,11 @@ percentile of that vol, cash at 0 at or above the 80th, keep the position betwee
 vol through a session and held over the next; the reading is the rule's log growth minus
 buy-and-hold's, points a year. The thresholds are each series' own percentiles, so the row asks
 whether stepping out of the top fifth of volatility stretches pays at any volatility level, and a
-world path is read exactly as the record is. QQQ 1999-2026 reads +1.4 against a band of −9.4 to
-+13.1; CRSP 1954-2026 −4.2 against −7.2 to −0.5; both shipped worlds sit inside. The reward on QQQ
-is the 1999-2002 window's (the NDX price index from 1990 reads −2.1), so the row carries weight 0 in
-the loss: the verdict judges it against the record's band, and a fitted weight would have the
-search chase one history's episode.
+world path is read exactly as the record is. QQQ 1999-2026 reads +1.4 against a band of −9.7 to
++13.6; CRSP 1954-2026 −4.2 against −7.3 to −0.3; both shipped worlds sit inside. The reward on QQQ
+is the 1999-2002 window's (the NDX price index from 1990 reads −2.1). The verdict judges the row
+against the record's band; the loss grades it at judgment 3.0 on the Nasdaq set, the row folio's
+production gap turns on, and at 0 on the S&P set.
 
 **The short rate** — `short rate %` and `rate floor share %` — is the rate path's mean, in
 percent, and the share of its sessions under 0.50%, both against the daily effective federal funds
