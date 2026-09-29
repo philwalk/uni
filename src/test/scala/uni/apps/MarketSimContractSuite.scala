@@ -319,10 +319,18 @@ class MarketSimContractSuite extends FunSuite:
           s"[${r.name}] is an ensemble extreme and must carry no ratio: model/real grades the " +
           "ensemble size, not the model")
         assert(r.pctile.isDefined, s"[${r.name}] must carry a percentile in the ratio's place")
-        assertEquals(r.aggregation, "ensemble-extreme")
-        assertEquals(r.horizonYears, a.tailYears,
-          s"[${r.name}]'s percentile must be read at its own anchor's horizon, which for the " +
-          "tail is its own window and NOT the equity window")
+        if MarketSim.isMultiYear(r.name) then
+          assertEquals(r.aggregation, "single-history")
+          val window = if MarketSim.MultiYearRows.contains(r.name) then a.equityYears else a.bubbleYears
+          assertEquals(r.horizonYears, window, s"[${r.name}]'s own window")
+          val (lo, hi) = r.historyBand.getOrElse(fail(s"[${r.name}] must carry its joint band"))
+          assertEquals(r.miss, !(r.real >= lo && r.real <= hi), s"[${r.name}]")
+        else
+          assert(r.historyBand.isEmpty, s"[${r.name}]")
+          assertEquals(r.aggregation, "ensemble-extreme")
+          assertEquals(r.horizonYears, a.tailYears,
+            s"[${r.name}]'s percentile must be read at its own anchor's horizon, which for the " +
+            "tail is its own window and NOT the equity window")
       else
         assert(r.ratio.isDefined, s"[${r.name}] is a per-path value and must carry its ratio")
         assert(r.pctile.isEmpty, s"[${r.name}] is not an extreme and must not claim a percentile")

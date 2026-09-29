@@ -66,6 +66,91 @@ class RecordBandSuite extends FunSuite:
       assertEqualsDouble(a.volTiming, vt, 1e-6, s"$set: vol-timing edge against the record's")
   }
 
+  /** Thirty years of `pinnedSeries`' draws, for the rows a year is one observation of. */
+  private def pinnedLongSeries: Array[Double] =
+    val rng = new NumPyRNG(20260929L)
+    Array.tabulate(7560): i =>
+      val u = rng.nextDouble()
+      if i % 97 == 50 then -0.06 else (u - 0.47) * 0.03
+
+  // THE MULTI-YEAR ROWS' anchors are `multiyear-2026-09-29.tsv`'s records, row for row in both
+  // windows, and each statistic reads a hand-built series as stated.
+  test("the multi-year anchors are the fixture's records and the statistics read as stated") {
+    val rows = Paths.get("test-data/equity-anchors/multiyear-2026-09-29.tsv").lines.toVector
+      .filterNot(l => l.startsWith("#") || l.trim.isEmpty || l.startsWith("set\t"))
+      .map(_.split('\t').toVector)
+    assertEquals(rows.length, 24, "two sets, two windows, six rows")
+    for (set, a) <- sets
+        (names, records) <- Vector((MarketSim.MultiYearRows, a.multiYear),
+                                   (MarketSim.MultiYearLongRows, a.multiYearLong))
+        (name, got) <- names.zip(records) do
+      val r = rows.find(f => f(0) == set && f(1) == name).getOrElse(fail(s"fixture row [$set] $name missing"))
+      assertEqualsDouble(got, r(5).toDouble, 1e-6, s"$set: $name against the record's")
+    // forty years that alternate +20% and -10%, each year's move made in its first session so a
+    // block at any phase holds whole moves: successive years are perfectly opposed, and three of
+    // them vary no more than one
+    val y = MarketSim.DaysPerYear
+    val alt = Array.tabulate(40 * y): i =>
+      if i % y != 0 then 0.0 else if (i / y) % 2 == 0 then 0.2 else -0.1
+    val m = MarketSim.multiYearReadings(alt)
+    assertEqualsDouble(m(0), -1.0, 1e-9, "annual autocorr")
+    assert(m(1) > 0.30 && m(1) < 0.37, s"variance ratio 3y ${m(1)}")
+    // a constant return: every 3-year window is the mean one, and nothing falls
+    val flat = MarketSim.multiYearReadings(Array.fill(10 * y)(0.0004))
+    assertEqualsDouble(flat(3), 0.0, 1e-9, "3y p95 excess")
+    assert(flat(4).isNaN, "no decline, no gap")
+    assertEqualsDouble(flat(5), 0.0, 1e-12, "never under water")
+    assert(MarketSim.multiYearReadings(Array.fill(5 * y)(0.0004))(3).isNaN, "under six years, no 3-year tail")
+    // three falls of 0.4 log, their peaks ten years and five years apart and the fall's own
+    // session, each climbed out of at 0.001 a session: 177 sessions more than 20% under the peak
+    // after the first two, and the last 101 sessions after the third
+    val r = Array.fill(5 * y)(0.001) ++ Array(-0.4) ++ Array.fill(10 * y)(0.001) ++ Array(-0.4) ++
+      Array.fill(5 * y)(0.001) ++ Array(-0.4) ++ Array.fill(100)(0.001)
+    val f = MarketSim.multiYearReadings(r)
+    assertEqualsDouble(f(4), (10 * y + 1).toDouble / y, 1e-9, "decline gap p90")
+    assertEqualsDouble(f(5), (177 + 177 + 101) * 100.0 / (r.length + 1), 1e-9, "under water")
+  }
+
+  // THE JOINT BAND holds the histories it is read from: on every row of a window at once, all but
+  // about `MultiYearAlpha / 2` of them; and a window is read at its own length.
+  test("the multi-year band holds the histories it is read from") {
+    val rng = new NumPyRNG(20260929L)
+    val reads = Vector.fill(1000)(Vector.fill(6)(rng.randn()))
+    val bands = MarketSim.multiYearBands(Vector((MarketSim.MultiYearRows, reads)))
+    val inside = reads.count: x =>
+      MarketSim.MultiYearRows.zip(x).forall: (n, v) =>
+        val (lo, hi) = bands(n)
+        v >= lo && v <= hi
+    assert(inside >= 940 && inside <= 960, s"$inside of 1000 histories inside every band")
+    assert(MarketSim.multiYearBands(Vector((MarketSim.MultiYearRows, reads.take(10)))).isEmpty,
+      "too few histories to place a record")
+    for a <- Vector(MarketSim.SP500Anchors, MarketSim.NasdaqAnchors) do
+      val sims = MarketSim.simPaths(MarketSim.Defaults, 2, a.bubbleYears, MarketSim.DefaultSeed)
+      val long = MarketSim.multiYearHistories(a, sims, a.bubbleYears)
+      assertEquals(long.map(_._1), Vector(MarketSim.MultiYearLongRows), s"${a.name}: one window at the long horizon")
+      assert(MarketSim.multiYearHistories(a, sims, 3).isEmpty)
+  }
+
+  test("a pinned series reads the same multi-year rows in both twins") {
+    // `record_band_tests` pins these same values; a change here is a change there
+    val r = pinnedLongSeries
+    assertEquals(MarketSim.multiYearReadings(r), Vector(
+      -0.027652854715084944, 1.0932546095255011, 1.3537020801900945, 0.48959164694365975,
+      9.384920634920634, 19.785742626636686))
+    // the joint band of forty twenty-year stretches of it, as `multiYearBands` reads a world's
+    // histories
+    val reads = Vector.tabulate(40)(k => MarketSim.multiYearReadings(r.slice(k * 60, k * 60 + 5040)))
+    val (c, edges) = MarketSim.recordBandJoint(reads, Vector.range(0, 6), MarketSim.MultiYearAlpha / 2.0)
+    assertEquals(c, 0.48750000000000004)
+    assertEquals(edges, Vector(
+      (-0.2628711828928611, 0.013658019501475917),
+      (0.828774741719819, 1.2935407944701058),
+      (0.873770166713951, 1.7718478665236999),
+      (0.3648760869405728, 0.5040042264737004),
+      (7.142857142857143, 9.384920634920634),
+      (3.3326720888712558, 22.019440587185084)))
+  }
+
   // THE BUBBLE COUPLING's anchors are `bubblebust-2026-09-24.tsv`'s records, and the statistic
   // reads a hand-built series as stated: one 3-year run-up of +1.0 into a 50% fall counts, a high
   // without three years behind it does not, and a series with no 40% fall has no reading.

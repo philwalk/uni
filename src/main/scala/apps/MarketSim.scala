@@ -250,7 +250,12 @@ object MarketSim:
   // 20 -> 21: `episodes`, THE EVENT LABELS: every 20%+ decline of the emitted path from its
   // trailing-year high with its joint shape (`episodesBlock`; the Rust twin's `EMIT_SCHEMA` note
   // carries the fields).  `world` gained `spreadDd`.
-  val EmitSchema: Int = 21
+  // 21 -> 22: THE MULTI-YEAR ROWS.  `gate.fidelity` gained twelve rows of aggregation
+  // `single-history` (six statistics against the set's equity window and against its long window)
+  // and lost `largest 3y run-up`, `longest calm stretch` and `equity d20 vs real`, which `gate`
+  // now carries under `reported`.  Each fidelity row gained `historyBand`: on a multi-year row the
+  // world's joint band of single histories, outside which the record is a `miss`; null elsewhere.
+  val EmitSchema: Int = 22
 
   val EmitSidecarKeys: Vector[String] =
     Vector("generator", "version", "schema", "file", "columns", "header", "path", "world",
@@ -1957,7 +1962,7 @@ object MarketSim:
            // trend-free readings (1.5 log over three years, half back over five), its overshoot 0.31 and the
            // anticipated recovery 1, and the spread's drawdown term 3.0, read off the record and held fixed; the
            // other dials re-solved by search, the noise skew at 0.85 for the up-day share (the Rust twin's doc
-           // carries the readings).  On 32 fresh seeds at 200 x 100 every class passes on 32, 4.0 rows missed a
+           // carries the readings).  On 32 fresh seeds at 200 x 100 every class passes on 32, 1.2 rows missed a
            // seed: valuation dispersion 0.31 (record 0.30), the lower wing 7.4% (6.7%), kurtosis 23.9 (21.8).
            // The satellite's relative cycle at its adopted values (folio's request 2; see `satCycleSd`).
            ("0.24.5-sp500",
@@ -5153,7 +5158,10 @@ object MarketSim:
                                                   // qualifying decline are left out of the median
                               runUp3y: Double,    // median per-path largest 3-year log run-up
                                                   // (`runUp3yOf`) and longest calm stretch in
-                              calmStretch: Double, // sessions (`calmStretchOf`)
+                              calmStretch: Double, // sessions (`calmStretchOf`): reported
+                              multiYear: Vector[Double], // median per-path multi-year readings
+                                                  // (`multiYearOf`), the first five
+                                                  // `MultiYearRows`; the sixth reads `ddEq20`
                               shortRate: Double,  // median per-path mean short rate, percent, and
                               rateFloor: Double,  // share of sessions under `RateFloor`, percent
                                                   // (`rateReadings`)
@@ -5302,6 +5310,7 @@ object MarketSim:
     corrCalm: Double, corrInfl: Double,
     valDisp: Double, maxOver: Double, semiExcess: Double, upShare: Double, levCorr: Double,
     volTiming: Double, bubbleCoupling: Double, runUp3y: Double, calmStretch: Double,
+    multiYear: Vector[Double],
     shortRate: Double, rateFloor: Double,   // `rateReadings` of the path's rate
     tailHedge: Double,
     wingUp: Double, wingDown: Double, wingN: Double,   // the cycle's wings about its 20-year mean, as COUNTS over `wingsOf`'s sessions
@@ -5436,6 +5445,7 @@ object MarketSim:
       valDisp = valDisp, maxOver = maxOver, semiExcess = semiExcessOf(r), upShare = upShareOf(r),
       levCorr = levCorrOf(r), volTiming = volTimingOf(r), bubbleCoupling = bubbleCouplingOf(r),
       runUp3y = runUp3yOf(r), calmStretch = calmStretchOf(r),
+      multiYear = multiYearOf(r, sp.price),
       shortRate = rateReadings(sp.rate)(0), rateFloor = rateReadings(sp.rate)(1),
       wingUp = wings._1, wingDown = wings._2, wingN = wings._3,
       gapEarly = gd._1, gapEarlyN = gd._2, gapLate = gd._3, gapLateN = gd._4,
@@ -5515,6 +5525,7 @@ object MarketSim:
       bubbleCoupling = med(per.map(_.bubbleCoupling)),
       runUp3y = med(per.map(_.runUp3y)),
       calmStretch = med(per.map(_.calmStretch)),
+      multiYear = Vector.tabulate(5)(k => med(per.map(_.multiYear(k)))),
       shortRate = med(per.map(_.shortRate)),
       rateFloor = med(per.map(_.rateFloor)),
       levCorr = med(per.map(_.levCorr)),
@@ -6161,10 +6172,13 @@ object MarketSim:
     bubbleWindow: String, bubbleYears: Int,
     bubbleCoupling: Double, bubbleCouplingSd: Double,
     // THE LARGEST 3-YEAR RUN-UP's and THE LONGEST CALM STRETCH's records over the bubble window
-    // (`runUp3yOf`, `calmStretchOf`, the same fixture), graded as extreme rows like the bubble
-    // coupling; the sds are the spread of single histories at the window's length, relative
-    // to the record as every `Sd` here is
-    runUp3y: Double, runUp3ySd: Double, calmStretch: Double, calmStretchSd: Double,
+    // (`runUp3yOf`, `calmStretchOf`, the same fixture): reported, not graded.  Each is one number
+    // from one history -- the century's run-up sits at the 1st percentile of its own years
+    // resampled -- and the multi-year rows grade what they read.
+    runUp3y: Double, calmStretch: Double,
+    // THE MULTI-YEAR ROWS' records (`multiYearReadings`, `multiyear-2026-09-29.tsv`), in
+    // `MultiYearRows`' order: over the equity window, and over the long window (`bubbleWindow`)
+    multiYear: Vector[Double], multiYearLong: Vector[Double],
     // THE SHORT RATE's record: the daily effective federal funds rate (FRED DFF) over the equity
     // window's dates, its mean in percent and the share of its sessions under `RateFloor`
     // (`rateReadings`; `recordbands-2026-09-26.tsv`, whose bands the rows are graded by).  The
@@ -6459,7 +6473,9 @@ object MarketSim:
     tailWindow = "CRSP 1926-2026, the century", tailYears = 100,
     bubbleWindow = "CRSP 1926-2026, the century", bubbleYears = 100,
     bubbleCoupling = 0.114404, bubbleCouplingSd = 1.07,
-    runUp3y = 0.872450, runUp3ySd = 0.28, calmStretch = 2190.0, calmStretchSd = 0.61,
+    runUp3y = 0.872450, calmStretch = 2190.0,
+    multiYear = Vector(-0.127487, 0.745759, 0.732112, 0.324081, 8.599206, 12.589751),
+    multiYearLong = Vector(0.028270, 0.961668, 0.963278, 0.398297, 11.837302, 25.500495),
     rateWindow = "DFF 1954-2026", rateYears = 72,
     shortRate = 4.595174, shortRateSd = 0.09,
     rateFloor = 14.565588, rateFloorSd = 0.27,
@@ -6549,7 +6565,9 @@ object MarketSim:
     tailWindow = "QQQ 1999-2026", tailYears = 27,
     bubbleWindow = "NDX 1990-2026", bubbleYears = 37,
     bubbleCoupling = 1.042337, bubbleCouplingSd = 0.25,
-    runUp3y = 1.753345, runUp3ySd = 0.21, calmStretch = 1927.0, calmStretchSd = 0.30,
+    runUp3y = 1.753345, calmStretch = 1927.0,
+    multiYear = Vector(0.007813, 0.993439, 0.894361, 0.438273, 18.396825, 53.729182),
+    multiYearLong = Vector(0.100691, 0.983398, 0.964724, 0.740644, 18.396825, 41.888384),
     rateWindow = "DFF 1999-2026", rateYears = 27,
     shortRate = 2.136466, shortRateSd = 1.00,
     rateFloor = 37.313224, rateFloorSd = 0.64,
@@ -6633,7 +6651,47 @@ object MarketSim:
     case "nasdaq" | "ndx" | "qqq" => NasdaqAnchors
     case other => usage(s"unknown -anchors [$other]; use sp500 or nasdaq")
 
-  def fitTargets(a: Anchors): Vector[(String, WorldStats => Double, Double, Double)] = Vector(
+  /** THE MULTI-YEAR ROWS: the fidelity rows a year or more of a series is one observation of,
+    * read the same way on a model path and a record (`multiYearReadings`' order).  Graded by
+    * where the record falls among the world's single histories of the record's length, since a
+    * one-year block resample has no multi-year structure left to read: a row misses when the
+    * record falls outside the family's joint band of those histories (`multiYearBands`).  Graded
+    * against the set's equity window, and again against its long window (`MultiYearLongRows`,
+    * `Anchors.bubbleWindow`), because the record's eras disagree: CRSP's annual autocorrelation
+    * reads +0.03 over the century and -0.13 from 1954, its time 20% under the peak 25.5% and
+    * 12.6%. */
+  val MultiYearRows: Vector[String] = Vector(
+    "annual autocorr", "variance ratio 3y", "variance ratio 5y", "3y p95 excess",
+    "decline gap p90 y", "under water 20% %")
+
+  /** `MultiYearRows` against the set's long window, row for row. */
+  val MultiYearLongRows: Vector[String] = MultiYearRows.map(_ + " long")
+
+  /** One fidelity row of `fitTargets`: name, reading, target, weight. */
+  type FitTarget = (String, WorldStats => Double, Double, Double)
+
+  /** Each `MultiYearRows` statistic off a `WorldStats`, row for row. */
+  val MultiYearStats: Vector[WorldStats => Double] = Vector(
+    _.multiYear(0), _.multiYear(1), _.multiYear(2), _.multiYear(3), _.multiYear(4),
+    _.ddEq20 * 100.0)
+
+  /** THE MULTI-YEAR ROWS of `fitTargets`: each statistic against the equity window's record, then
+    * against the long window's.  Weight 0: the verdict grades them, and the loss does not see
+    * them until a re-solve weighs them. */
+  def multiYearTargets(a: Anchors): Vector[FitTarget] =
+    def rows(names: Vector[String], records: Vector[Double]): Vector[FitTarget] =
+      Vector.tabulate(6)(k => (names(k), MultiYearStats(k), records(k), 0.0))
+    rows(MultiYearRows, a.multiYear) ++ rows(MultiYearLongRows, a.multiYearLong)
+
+  /** THE ROWS THE MULTI-YEAR ROWS REPLACED, reported and not graded: name, the world's reading,
+    * the record.  The run-up and the calm stretch are one number from one history each; the 20%
+    * rung's fund relation reads the index itself at 2.3. */
+  def reportedRows(a: Anchors, st: WorldStats): Vector[(String, Double, Double)] = Vector(
+    ("largest 3y run-up", st.runUp3y, a.runUp3y),
+    ("longest calm stretch", st.calmStretch, a.calmStretch),
+    ("equity d20 vs real", st.eqD20VsReal, 1.0))
+
+  def fitTargets(a: Anchors): Vector[FitTarget] = Vector[FitTarget](
     ("equity vol %",       st => st.vol * 100,                              a.vol,  wgt(1.0, a.volSd)),
     // THE TYPICAL YEAR (item 24): the median calendar-year vol, so the pooled row above cannot be
     // closed by making every year more volatile.  QQQ 1999-2026 reads 18.3 against a pooled 26.9
@@ -6770,13 +6828,7 @@ object MarketSim:
     // median of those histories.  Judgment 0.5: one statistic of a handful of episodes per record,
     // partially redundant with the run-up and crash rows.
     ("bubble coupling 3y",  st => st.bubbleCoupling,                        a.bubbleCoupling, wgt(0.5, a.bubbleCouplingSd)),
-    // THE LARGEST 3-YEAR RUN-UP and THE LONGEST CALM STRETCH: extreme rows like the bubble
-    // coupling, on the same window.  The S&P worlds made run-ups the century never did (its largest
-    // below 99.9% of histories) and calm stretches it never had (below 98%): a world producing
-    // events the record rules out.  Judgment 1.0 each, the neutral judgment: the precision factor
-    // alone (the single-history spread relative to the record) sets how hard the row pulls.
-    ("largest 3y run-up",   st => st.runUp3y,                               a.runUp3y,        wgt(1.0, a.runUp3ySd)),
-    ("longest calm stretch", st => st.calmStretch,                          a.calmStretch,    wgt(1.0, a.calmStretchSd)),
+  ) ++ multiYearTargets(a) ++ Vector[FitTarget](
     // The "(24y)" is load-bearing, not decoration: this row is measured on a different horizon
     // from every other, and the label is the only part that travels when the number is quoted.
     ("bond vol % (24y)",   st => st.bondVol * 100,                          13.0,  wgt(1.0, a.bondVolSd)),
@@ -6852,12 +6904,8 @@ object MarketSim:
     // point.
     ("equity d5 vs real",   st => st.eqD5VsReal,                             1.00,  wgt(0.5, a.d5Sd)),
     ("equity d10 vs real",  st => st.eqD10VsReal,                            1.00,  wgt(1.0, a.d10Sd)),
-    // d20's sdRel moved 0.99 -> 1.56 in the 0.21.0 recovery-drag change, and like kurtosis's move
-    // it is a re-measurement of a statistic that genuinely became more variable, not a correction:
-    // slowing recovery from deep drawdowns makes time spent DEEP swing much harder between
-    // histories (p5 0.19, p95 4.35 over 25 years).  Weighting by measurability drops it to 0.06.
-    // No other target's sdRel moved beyond its own noise, so none were churned.
-    ("equity d20 vs real",  st => st.eqD20VsReal,                            1.00,  wgt(0.5, a.d20Sd)),
+    // THE 20% RUNG is graded against the index itself (`under water 20% %`, a multi-year row):
+    // on the fund relation CRSP from 1954 reads 2.3, the record missing its own row.
     // TLT's own reading over its 24 years, graded by that record's resample band -- see
     // `BondBandRows`
     ("bond depth vs vol",   st => st.bondDepthVsVol,                          a.bondDepth, wgt(0.5, a.bondDepthSd)),
@@ -6875,7 +6923,15 @@ object MarketSim:
     * pooling and a minimum does not; that is the whole distinction.  `MarketSimContractSuite`
     * requires every name here to be a fidelity target. */
   val ExtremeTargets: Set[String] =
-    Set("worst crash %", "bubble coupling 3y", "largest 3y run-up", "longest calm stretch")
+    Set("worst crash %", "bubble coupling 3y") ++ MultiYearRows ++ MultiYearLongRows
+
+  /** Whether a row is a multi-year row, of either window. */
+  def isMultiYear(name: String): Boolean =
+    MultiYearRows.contains(name) || MultiYearLongRows.contains(name)
+
+  /** The `ExtremeTargets` rows whose statFn reads an extreme over the pooled ensemble, sorted: a
+    * multi-year row's reads a median of paths, a level a report may print. */
+  def pooledExtremes: Vector[String] = ExtremeTargets.filterNot(isMultiYear).toVector.sorted
   /** Fidelity rows whose statistic is ADDITIVE and straddles zero (points a year): the loss prices
     * them as the linear |model - target| over |target|, the log ratio's small-deviation limit, since
     * a log ratio has no meaning across zero and its wrong-sign penalty grows as the reading nears it. */
@@ -7430,6 +7486,124 @@ object MarketSim:
       else run += 1
       i += 1
     math.max(best, run).toDouble
+
+  /** The share of record-like worlds the multi-year rows may jointly miss, split over the two
+    * windows by their rows (`multiYearBands`). */
+  val MultiYearAlpha: Double = 0.10
+
+  /** The block phases a block statistic is averaged over, evenly across the block's own length
+    * (`MultiYearPhaseStep` sessions apart per year of it): on one series the phase is a free
+    * parameter (see `varianceRatio`), and phases inside the first year of a 5-year block read the
+    * century's 5-year ratio as 0.55 where phases across the block read 0.96. */
+  val MultiYearPhases: Int = 12
+  val MultiYearPhaseStep: Int = DaysPerYear / MultiYearPhases
+  /** Fewest lagged pairs an autocorrelation is read from, and fewest blocks a variance. */
+  val MultiYearMinPairs: Int = 5
+  val MultiYearMinBlocks: Int = 3
+  /** The decline that opens an episode the gap row counts, in percent. */
+  val MultiYearDeclinePct: Double = 20.0
+
+  /** The changes of a log level over successive non-overlapping blocks of `b` sessions from `off`,
+    * inside its first `n` sessions. */
+  private def blockChanges(lp: Array[Double], n: Int, off: Int, b: Int): Array[Double] =
+    if off >= n then Array.empty[Double]
+    else Array.tabulate((n - off) / b)(j => lp(off + (j + 1) * b) - lp(off + j * b))
+
+  /** A sum in index order from +0.0, the order the Rust twin's `scala_sum` folds in. */
+  private def orderedSum(n: Int)(term: Int => Double): Double =
+    var s = 0.0
+    var i = 0
+    while i < n do
+      s += term(i)
+      i += 1
+    s
+
+  private def sampleVar(x: Array[Double]): Double =
+    val m = x.length
+    if m < 2 then Double.NaN
+    else
+      val mu = orderedSum(m)(x(_)) / m
+      orderedSum(m)(i => (x(i) - mu) * (x(i) - mu)) / (m - 1)
+
+  /** The correlation of a series with itself one step on, each side about its own mean. */
+  private def lag1Corr(x: Array[Double]): Double =
+    if x.length < MultiYearMinPairs + 1 then Double.NaN
+    else
+      val k = x.length - 1
+      val ma = orderedSum(k)(x(_)) / k
+      val mb = orderedSum(k)(i => x(i + 1)) / k
+      val saa = orderedSum(k)(i => (x(i) - ma) * (x(i) - ma))
+      val sbb = orderedSum(k)(i => (x(i + 1) - mb) * (x(i + 1) - mb))
+      val sab = orderedSum(k)(i => (x(i) - ma) * (x(i + 1) - mb))
+      val den = math.sqrt(saa * sbb)
+      if den > 0.0 then sab / den else Double.NaN
+
+  /** The mean over the phases of a `years`-long block of a statistic read at each, the phases
+    * that cannot be read left out; in phase order, the Rust twin's. */
+  private def phaseMean(years: Int)(read: Int => Double): Double =
+    val vs = Vector.tabulate(MultiYearPhases)(k => read(k * years * MultiYearPhaseStep))
+      .filter(_.isFinite)
+    if vs.isEmpty then Double.NaN else orderedSum(vs.length)(vs(_)) / vs.length
+
+  /** The variance of `k`-year log changes over `k` times the variance of the annual changes
+    * across the same span: non-overlapping blocks, sample variances, 1 without serial
+    * dependence. */
+  private def multiYearVr(lp: Array[Double], k: Int): Double =
+    phaseMean(k): off =>
+      val kb = blockChanges(lp, lp.length - 1, off, k * DaysPerYear)
+      if kb.length < MultiYearMinBlocks then Double.NaN
+      else
+        val span = off + kb.length * k * DaysPerYear
+        val v1 = sampleVar(blockChanges(lp, span, off, DaysPerYear))
+        if v1 > 0.0 then sampleVar(kb) / (k.toDouble * v1) else Double.NaN
+
+  /** The 95th percentile of the log return over every 756-session window, less the series' own
+    * mean 3-year return: the upper tail `runUp3yOf` reads the single largest of.  NaN under six
+    * years. */
+  private def ret3yP95Excess(lp: Array[Double]): Double =
+    val h = BubbleRunup
+    val n = lp.length - 1
+    if n < 2 * h then Double.NaN
+    else
+      val xs = Array.tabulate(n - h + 1)(i => lp(i + h) - lp(i))
+      pctileOf(finiteSorted(xs), 0.95) - (lp(n) - lp(0)) * h.toDouble / n.toDouble
+
+  /** The 90th percentile of the years between the peaks of successive declines of 20% or more:
+    * the spacing `calmStretchOf` reads the single longest of.  NaN under three declines. */
+  private def declineGapP90(px: Array[Double]): Double =
+    val peaks = episodes(px, MultiYearDeclinePct).map(_.peak)
+    if peaks.length < 3 then Double.NaN
+    else
+      val gaps = peaks.sliding(2).map(w => (w(1) - w(0)).toDouble / DaysPerYear.toDouble).toArray
+      pctileOf(finiteSorted(gaps), 0.90)
+
+  /** The first five `MultiYearRows` readings of one series: its daily log returns and the price
+    * they trace.  The sixth is `depthShares`' 20% rung. */
+  private[apps] def multiYearOf(r: Array[Double], px: Array[Double]): Vector[Double] =
+    val lp = new Array[Double](r.length + 1)
+    var i = 0
+    while i < r.length do
+      lp(i + 1) = lp(i) + r(i)
+      i += 1
+    Vector(
+      phaseMean(1)(off => lag1Corr(blockChanges(lp, r.length, off, DaysPerYear))),
+      multiYearVr(lp, 3),
+      multiYearVr(lp, 5),
+      ret3yP95Excess(lp),
+      declineGapP90(px))
+
+  /** Every `MultiYearRows` reading of ONE series of daily log returns, as the model reads it off
+    * one path; the price is rebuilt with `expDet`, so the twins' episodes agree to the bit. */
+  def multiYearReadings(r: Array[Double]): Vector[Double] =
+    val px = new Array[Double](r.length + 1)
+    var c = 0.0
+    px(0) = expDet(c)
+    var i = 0
+    while i < r.length do
+      c += r(i)
+      px(i + 1) = expDet(c)
+      i += 1
+    multiYearOf(r, px) :+ depthShares(px)._3 * 100.0
 
   private[apps] def levCorrOf(r: Array[Double]): Double =
     val sq = new Array[Double](math.max(r.length - 1, 0))
@@ -8436,7 +8610,7 @@ object MarketSim:
     // `-validate` reports these rows as a percentile; a reader who carries a level across from
     // this table to that one is comparing two different things.
     println()
-    println(s"  ROWS THAT ARE NOT FIDELITY RATIOS: ${ExtremeTargets.toVector.sorted.mkString(", ")}.")
+    println(s"  ROWS THAT ARE NOT FIDELITY RATIOS: ${pooledExtremes.mkString(", ")}.")
     println("  These are extremes over the pooled ensemble, so the LEVEL grades the ensemble size —")
     println("  read them across columns (which world is deeper), never against 1.00.  The AGGREGATE")
     println("  row includes them, and is the old equal-measurability objective's opinion regardless.")
@@ -8528,9 +8702,8 @@ object MarketSim:
     "up-day share %", "vol-timing edge pts/yr",
     "leverage corr", "valuation dispersion", "upper wing months %", "lower wing months %",
     "crashes/century", "median depth %",
-    "worst crash %", "bubble coupling 3y", "largest 3y run-up", "longest calm stretch",
-    "equity d5 vs real", "equity d10 vs real",
-    "equity d20 vs real")
+    "worst crash %", "bubble coupling 3y") ++ MultiYearRows ++ MultiYearLongRows ++ Vector(
+    "equity d5 vs real", "equity d10 vs real")
 
   /** The other half of the partition.  Read only by the partition test -- the report has no bond
     * section to drive; the list exists so a new fidelity target cannot land unclassified. */
@@ -8620,9 +8793,9 @@ object MarketSim:
           val flag = if math.abs(ra - rd) > 0.05 then f"<-- moves ${ra - rd}%.2f" else ""
           // Both columns share one ensemble size, so the MOVE is readable on every row; the LEVEL
           // is not, on the extremes -- see the note below and `-validate`'s percentile.
-          val kind = if ExtremeTargets.contains(name) then " *" else ""
+          val kind = if pooledExtremes.contains(name) then " *" else ""
           println(f"  $name%-22s$d%10.2f$at%11.2f$want%10.2f$rd%11.2f$ra%11.2f   $flag%s$kind%s")
-        if EquityTargets.exists(ExtremeTargets.contains) then
+        if EquityTargets.exists(pooledExtremes.contains) then
           println()
           println("  * an extreme over the pooled ensemble, not a per-path value: the MOVE between the two")
           println("    columns is real, the LEVEL grades the ensemble size.  -validate reports it as a")
@@ -8737,7 +8910,7 @@ object MarketSim:
     (a.equityWindow, a.equityYears,
      Vector("equity vol %", "typical-year vol %", "return per vol", "kurtosis", "crashes/century",
             "median depth %", "downside vol excess %", "up-day share %", "leverage corr",
-            "vol-timing edge pts/yr")),
+            "vol-timing edge pts/yr") ++ MultiYearRows),
     (a.clusterWindow, a.clusterYears,
      Vector("clustering lag 1", "clustering lag 20")),
     // Its own group because its own window -- see `Anchors.tailWindow`.  For both shipped sets this
@@ -8747,7 +8920,7 @@ object MarketSim:
     // Its own group because its own window: the Nasdaq's is the NDX price index from 1990, since
     // QQQ's record starts nine years too late for a 3-year run-up into the 2000 peak
     // (`Anchors.bubbleWindow`); the S&P's is the century, as the tail's is.
-    (a.bubbleWindow, a.bubbleYears, Vector("bubble coupling 3y", "largest 3y run-up", "longest calm stretch")),
+    (a.bubbleWindow, a.bubbleYears, "bubble coupling 3y" +: MultiYearLongRows),
     // The rate's record over the equity window's dates -- see `Anchors.rateWindow`.
     (a.rateWindow, a.rateYears, Vector("short rate %", "rate floor share %")),
     // The Shiller record is one series shared by every anchor set, at its own century horizon.
@@ -8759,8 +8932,7 @@ object MarketSim:
     ("equity funds + CRSP, 25y", 25, Vector("variance ratio 60d", "variance ratio 120d", "variance ratio 250d")),
     // 35 equity funds over 2001-2026; the horizon is one instrument's record, because that is what
     // each residual ratio in the fit was measured from.
-    ("equity funds, 25y", 25,
-     Vector("equity d5 vs real", "equity d10 vs real", "equity d20 vs real")),
+    ("equity funds, 25y", 25, Vector("equity d5 vs real", "equity d10 vs real")),
     (a.bondWindow, a.bondYears,
      Vector("bond vol % (24y)", "bond growth-crash", "bond infl-crash", "bond depth vs vol",
             "tail hedge corr")))
@@ -8783,10 +8955,13 @@ object MarketSim:
     * its record (four S&P rows), or an earlier vintage of the same series -- and a consumer dividing
     * by a `real` that was a target read a theory value as a bias.  `recordBand` is the record's
     * joint resampling band (`RecordBand.band`) and `recordPctile` where the model falls among those
-    * resamples: the reverse of `pctile`, which places the record among the model's histories. */
+    * resamples: the reverse of `pctile`, which places the record among the model's histories.
+    * `historyBand` is the world's joint band of single histories (`multiYearBands`), the band
+    * `miss` reads the record against, on a multi-year row. */
   final case class FidelityRow(name: String, model: Double, real: Double, target: Double,
                                ratio: Option[Double], pctile: Option[Int],
                                recordBand: Option[(Double, Double)], recordPctile: Option[Int],
+                               historyBand: Option[(Double, Double)],
                                horizonYears: Int, nHistories: Int):
     /** Stated as the admissible interval and NEGATED, so an unmeasurable row reports a miss rather
       * than a clean bill of health -- a `NaN` reading fails every outward comparison, and an
@@ -8794,6 +8969,7 @@ object MarketSim:
       * record band is judged by it alone. */
     def miss: Boolean = recordBand match
       case Some((lo, hi)) => !(model >= lo && model <= hi)
+      case None if isMultiYear(name) => !historyBand.exists((lo, hi) => real >= lo && real <= hi)
       case None => ratio match
         case Some(r) => !(r >= FidelityRatioBand._1 && r <= FidelityRatioBand._2)
         case None    => !pctile.exists(p => p >= ExtremePctBand._1 && p <= ExtremePctBand._2)
@@ -8807,7 +8983,10 @@ object MarketSim:
           if real > 0.0 then Some((FidelityRatioBand._1 * real, FidelityRatioBand._2 * real))
           else if real < 0.0 then Some((FidelityRatioBand._2 * real, FidelityRatioBand._1 * real))
           else None
-    def aggregation: String = if ExtremeTargets.contains(name) then "ensemble-extreme" else "per-path"
+    def aggregation: String =
+      if isMultiYear(name) then "single-history"
+      else if ExtremeTargets.contains(name) then "ensemble-extreme"
+      else "per-path"
 
   /** The horizon each target's anchor was read over, inverted from `anchorGroups` -- which the
     * contract test already pins as a partition of the fidelity targets, so every target has one. */
@@ -8856,22 +9035,56 @@ object MarketSim:
     // `measure`'s `worstDepth` for this path alone: its smallest episode depth, NaN without one
     case "worst crash %" => Some(episodes(p.price, 15.0).map(_.depthPct).minOption.getOrElse(Double.NaN))
     case "bubble coupling 3y" => Some(bubbleCouplingOf(dailyReturns(p.price)))
-    case "largest 3y run-up" => Some(runUp3yOf(dailyReturns(p.price)))
-    case "longest calm stretch" => Some(calmStretchOf(dailyReturns(p.price)))
     case _               => None
 
+  /** The multi-year windows read at `yrs`: each window's row names and every path's readings of
+    * them, in path order and `MultiYearRows`' order.  One pass over the paths, shared by the
+    * windows that are read at the same length. */
+  private[apps] def multiYearHistories(a: Anchors, sims: Vector[Path],
+                                       yrs: Int): Vector[(Vector[String], Vector[Vector[Double]])] =
+    val windows = Vector((MultiYearRows, a.equityYears), (MultiYearLongRows, a.bubbleYears))
+      .filter(_._2 == yrs).map(_._1)
+    if windows.isEmpty then Vector.empty
+    else
+      val reads = parMap(sims): p =>
+        multiYearOf(dailyReturns(p.price), p.price) :+ depthShares(p.price)._3 * 100.0
+      windows.map(_ -> reads)
+
+  /** THE MULTI-YEAR ROWS' JOINT BAND: each row's edges among the world's single histories of its
+    * window's length, at the ranks a record-like history stays inside on every row of its window
+    * at once with probability 1 - alpha (`recordBandJoint`, read on the world's histories instead
+    * of a record's resamples).  Alpha is `MultiYearAlpha` split over the two windows by their
+    * rows.  Empty under `ExtremeMinHistories` paths. */
+  private[apps] def multiYearBands(
+      histories: Vector[(Vector[String], Vector[Vector[Double]])]): Map[String, (Double, Double)] =
+    histories.filter(_._2.length >= ExtremeMinHistories).flatMap: (names, reads) =>
+      val (_, edges) = recordBandJoint(reads, Vector.range(0, MultiYearRows.length), MultiYearAlpha / 2.0)
+      names.zip(edges)
+    .toMap
+
   def extremeReadingsFrom(a: Anchors, sims: Vector[Path], yrs: Int): Map[String, Vector[Double]] =
+    extremeReadingsAndBands(a, sims, yrs)._1
+
+  /** `extremeReadingsFrom`, and the multi-year rows' joint bands (`multiYearBands`) off the same
+    * pass over the paths. */
+  private[apps] def extremeReadingsAndBands(a: Anchors, sims: Vector[Path], yrs: Int)
+      : (Map[String, Vector[Double]], Map[String, (Double, Double)]) =
     // `measure` per path only for a row with no direct reading, and then only once
     lazy val full = parMap(sims)(p => measure(Vector(p), yrs))
-    anchorGroups(a)
-      .filter((_, gy, names) => gy == yrs && names.exists(ExtremeTargets.contains))
-      .flatMap((_, _, names) => names.filter(ExtremeTargets.contains).map { nm =>
+    val histories = multiYearHistories(a, sims, yrs)
+    val multiYear = histories.flatMap: (names, reads) =>
+      names.zipWithIndex.map((nm, k) => nm -> reads.map(_(k)).filter(x => !x.isNaN))
+    def pooled(nm: String): Boolean = ExtremeTargets.contains(nm) && !isMultiYear(nm)
+    val others = anchorGroups(a)
+      .filter((_, gy, names) => gy == yrs && names.exists(pooled))
+      .flatMap((_, _, names) => names.filter(pooled).map { nm =>
         val (_, get, _, _) = fitTargets(a).find(_._1 == nm)
           .getOrElse(usage(s"ExtremeTargets names [$nm], which is not a fidelity target"))
         val direct = parMap(sims)(p => extremeReading(nm, p))
         val vals   = if direct.forall(_.isDefined) then direct.flatten else full.map(get)
         nm -> vals.filter(x => !x.isNaN)
-      }).toMap
+      })
+    ((multiYear ++ others).toMap, multiYearBands(histories))
 
   /** The median of `extremeReadingsFrom`, for an ensemble the caller already holds. */
   def extremeScoreStatsFrom(a: Anchors, sims: Vector[Path], yrs: Int): Map[String, Double] =
@@ -8896,14 +9109,16 @@ object MarketSim:
     extremeReadings(a, histories, seed, w).map((nm, xs) => nm -> extremeMedian(xs))
 
   /** What a read's own ensemble leaves out (`horizonReadings`): every banded row's reading at its
-    * record's horizon, and every extreme row's single-history readings at its anchor's. */
+    * record's horizon, every extreme row's single-history readings at its anchor's, and the
+    * multi-year rows' joint bands of those histories. */
   final case class HorizonReadings(banded: Map[String, Double],
-                                   extreme: Map[String, Vector[Double]]):
+                                   extreme: Map[String, Vector[Double]],
+                                   historyBand: Map[String, (Double, Double)]):
     /** The extreme rows as the loss reads them (`extremeScoreStats`). */
     def extremeScores: Map[String, Double] = extreme.map((nm, xs) => nm -> extremeMedian(xs))
 
   object HorizonReadings:
-    val empty: HorizonReadings = HorizonReadings(Map.empty, Map.empty)
+    val empty: HorizonReadings = HorizonReadings(Map.empty, Map.empty, Map.empty)
 
   /** THE READINGS A READ'S OWN ENSEMBLE LEAVES OUT, from ONE ensemble per horizon they need.
     *
@@ -8936,8 +9151,10 @@ object MarketSim:
       val banded = bandedAt.get(h).fold(Map.empty[String, Double]): rows =>
         val s = if h == years then st else measure(sims, h)
         rows.map((n, get, _, _) => n -> get(s)).toMap
-      val extreme = if extremeAt.contains(h) then extremeReadingsFrom(a, sims, h) else Map.empty
-      HorizonReadings(acc.banded ++ banded, acc.extreme ++ extreme)
+      val (extreme, bands) =
+        if extremeAt.contains(h) then extremeReadingsAndBands(a, sims, h)
+        else (Map.empty[String, Vector[Double]], Map.empty[String, (Double, Double)])
+      HorizonReadings(acc.banded ++ banded, acc.extreme ++ extreme, acc.historyBand ++ bands)
 
   /** The banded rows alone, each at its record's horizon (`horizonReadings`). */
   def bandedReadings(a: Anchors, st: WorldStats, years: Int, paths: Int, seed: Long,
@@ -8960,7 +9177,10 @@ object MarketSim:
       if ExtremeTargets.contains(name) then
         val xs = pcts.getOrElse(name, Vector.empty)
         val p  = if xs.size < ExtremeMinHistories then None else Some(anchorPctile(xs, want))
-        FidelityRow(name, got, want, want, None, p, None, None, hz.getOrElse(name, 0), xs.size)
+        // a multi-year row's reading is its histories' median, at the record's length
+        val model = if isMultiYear(name) then extremeMedian(xs) else got
+        FidelityRow(name, model, want, want, None, p, None, None, readings.historyBand.get(name),
+                    hz.getOrElse(name, 0), xs.size)
       else
         // the record, read the model's way, where the row has a band; the anchor elsewhere
         val band = a.recordBands.find(_.name == name)
@@ -8968,7 +9188,7 @@ object MarketSim:
         // a banded row's horizon is its record's, the length `model` and `real` were read over
         val horizon = if band.isDefined then recordBandYears(a, name) else hz.getOrElse(name, 0)
         FidelityRow(name, got, real, want, Some(if real != 0.0 then got / real else Double.NaN),
-                    None, band.map(_.band), band.flatMap(_.percentile(got)), horizon, 1)
+                    None, band.map(_.band), band.flatMap(_.percentile(got)), None, horizon, 1)
     }
 
   /** THE RECORD BANDS AS A SEARCH TERM.  Each banded row's excess past its joint band's nearer
@@ -9811,14 +10031,17 @@ object MarketSim:
     // model's way on every row with a `recordBand`, and `target` what the loss grades against;
     // `recordPercentile` places the MODEL among the record's resamples, the reverse of `percentile`,
     // so the two never share a field.
+    def band(b: Option[(Double, Double)]): String =
+      b.fold("null")((lo, hi) => s"[${num(lo)}, ${num(hi)}]")
     val fidelity = gateRows.map { r =>
       s"""    { "name": ${jsonStr(r.name)}, "model": ${num(r.model)}, "real": ${num(r.real)}, """ +
       s""""target": ${num(r.target)}, """ +
       s""""aggregation": ${jsonStr(r.aggregation)}, "horizonYears": ${r.horizonYears}, """ +
       s""""ratio": ${r.ratio.fold("null")(num)}, """ +
       s""""percentile": ${r.pctile.fold("null")(_.toString)}, """ +
-      s""""recordBand": ${r.recordBand.fold("null")((lo, hi) => s"[${num(lo)}, ${num(hi)}]")}, """ +
-      s""""recordPercentile": ${r.recordPctile.fold("null")(_.toString)}, "miss": ${r.miss} }"""
+      s""""recordBand": ${band(r.recordBand)}, """ +
+      s""""recordPercentile": ${r.recordPctile.fold("null")(_.toString)}, """ +
+      s""""historyBand": ${band(r.historyBand)}, "miss": ${r.miss} }"""
     }
     val json = Vector(
       "{",
@@ -9909,7 +10132,8 @@ object MarketSim:
       // THE PROFILE ROW'S READINGS.  `fidelity` below carries the loss rows, and the
       // variance-ratio profile is a gate row over four rungs, not a loss row: without this a
       // consumer learns the profile passed and cannot read it.
-      s"""    "varianceRatio": { ${VarRatioLadder.map(q => s""""$q": ${num(vrOf(gateSt, q))}""").mkString(", ")} }""",
+      s"""    "varianceRatio": { ${VarRatioLadder.map(q => s""""$q": ${num(vrOf(gateSt, q))}""").mkString(", ")} },""",
+      s"""    "reported": { ${reportedRows(a, gateSt).map((n, m, r) => s"""${jsonStr(n)}: { "model": ${num(m)}, "record": ${num(r)} }""").mkString(", ")} }""",
       "  },",
       // the verdict's readings, led by the level ITS channels were sampled at: the level is a
       // function of the primary alone, so it is this file's level wherever this file has one
@@ -10927,6 +11151,9 @@ ${rows.mkString(",\n")}
     println("      band is judged by where the model falls among one-year-block resamples of that")
     println("      record (`model@`, against its joint band); `target` is printed where the loss")
     println("      grades against something else.")
+    println("    NOTE: a multi-year row is judged by where the record falls among the world's single")
+    println("      histories of the record's length: a MISS is a record outside their joint band")
+    println("      (`within`), which a record-like world clears on every such row 90% of the time.")
     verdictRows.foreach { r =>
       val flag = if r.miss then "  <-- MISS" else ""
       val judgement = (r.ratio, r.pctile) match
@@ -10941,10 +11168,14 @@ ${rows.mkString(",\n")}
             then f"   target ${r.target}%.2f"
             else ""
           f"ratio $x%5.2f$band%s$target%s"
-        case (None, Some(p)) => f"record@ $p%3d%% of ${r.horizonYears}%dy histories (n=${r.nHistories}%d)"
+        case (None, Some(p)) =>
+          val band = r.historyBand.fold("")((lo, hi) => f"   within $lo%.2f..$hi%.2f")
+          f"record@ $p%3d%% of ${r.horizonYears}%dy histories (n=${r.nHistories}%d)$band%s"
         case (None, None)    => f"record@  n/a — ${r.nHistories}%d histories, needs $ExtremeMinHistories%d"
       println(f"     ${r.name}%-22s model ${r.model}%8.2f   real ${r.real}%8.2f   $judgement%s$flag%s")
     }
+    reportedRows(anchors, verdictSt).foreach: (name, model, record) =>
+      println(f"     $name%-22s model $model%8.2f   real $record%8.2f   reported, not graded")
 
     if validate then
       val checks = gateChecksAt(anchors, verdictSt, verdictBanded)

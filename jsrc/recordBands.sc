@@ -42,6 +42,8 @@ object RecordBands {
     "-coupling     print the record's bubble coupling (`bubbleCouplingOf`), largest 3-year run-up",
     "              and longest calm stretch instead, the rows of",
     "              `bubblebust-2026-09-24.tsv`: no resampling keeps the structure it measures",
+    "-multiyear    print the record's multi-year rows (`multiYearReadings`) instead, the rows of",
+    "              `multiyear-2026-09-29.tsv`; with -long under their long-window names",
     "-rate         print the two rate rows (`RateBandRows`) of a -fred window instead: the record",
     "              by `rateReadings`, its resamples by `rateResamples`, their own joint band",
     "-bond         print the bond row (`BondBandRows`) of a -yahoo window (TLT) instead: the record",
@@ -101,6 +103,7 @@ object RecordBands {
     var set = ""; var series = ""; var rows = Vector.empty[String]
     var resamples = 20000; var seed = 20260918L; var header = false
     var joint = 0.10; var of = 0; var coupling = false; var rate = false; var bond = false
+    var multiyear = false; var long = false
     eachArg(args.toSeq, usage) {
       case "-yahoo"     => yahoo = consumeNext
       case "-french"    => french = consumeNext
@@ -116,6 +119,8 @@ object RecordBands {
       case "-of"        => of = consumeNext.toIntOption.getOrElse(usage("-of wants a row count"))
       case "-header"    => header = true
       case "-coupling"  => coupling = true
+      case "-multiyear" => multiyear = true
+      case "-long"      => long = true
       case "-rate"      => rate = true
       case "-bond"      => bond = true
       case a            => usage(s"unrecognized arg [$a]")
@@ -149,6 +154,12 @@ object RecordBands {
       for (name, value) <- Vector(("bubble coupling 3y", MarketSim.bubbleCouplingOf(r)),
                                   ("largest 3y run-up", MarketSim.runUp3yOf(r)),
                                   ("longest calm stretch", MarketSim.calmStretchOf(r))) do
+        println(f"$set%s\t$name%s\t$series%s\t$window%s\t${r.length}%d\t$value%.6f")
+      return
+    if multiyear then
+      if header then println("set\trow\tseries\twindow\tn\trecord")
+      val names = if long then MarketSim.MultiYearLongRows else MarketSim.MultiYearRows
+      for (name, value) <- names.zip(MarketSim.multiYearReadings(r)) do
         println(f"$set%s\t$name%s\t$series%s\t$window%s\t${r.length}%d\t$value%.6f")
       return
     if rate then

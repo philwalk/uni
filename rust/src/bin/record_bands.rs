@@ -32,7 +32,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 const USAGE: &str =
     "usage: record_bands (-yahoo FILE | -french FILE) -from YYYY-MM-DD -to YYYY-MM-DD
                     -set NAME -series LABEL [-rows A,B] [-resamples N] [-seed S]
-                    [-joint A] [-of N] [-header]
+                    [-joint A] [-of N] [-header] [-coupling | -multiyear [-long]]
 
   -yahoo FILE   folio's cached prices: the `dlog_adj_close` column; the first row is the anchor
                 price, not a return, and is skipped
@@ -49,7 +49,9 @@ const USAGE: &str =
   -header       print the column header first
   -coupling     print the record's bubble coupling (`bubble_coupling_of`), largest 3-year run-up
                 and longest calm stretch instead, the rows of
-                `bubblebust-2026-09-24.tsv`: no resampling keeps the structure it measures";
+                `bubblebust-2026-09-24.tsv`: no resampling keeps the structure it measures
+  -multiyear    print the record's multi-year rows (`multi_year_readings`) instead, the rows of
+                `multiyear-2026-09-29.tsv`; with -long under their long-window names";
 
 fn usage(msg: &str) -> ! {
     if !msg.is_empty() {
@@ -81,6 +83,8 @@ struct Opts {
     of: usize,
     header: bool,
     coupling: bool,
+    multiyear: bool,
+    long: bool,
     rate: bool,
     bond: bool,
 }
@@ -90,6 +94,7 @@ fn parse_args(args: &[String]) -> Opts {
     let (mut set, mut series, mut rows) = (String::new(), String::new(), Vec::new());
     let (mut resamples, mut seed, mut header) = (20_000usize, 20_260_918u64, false);
     let mut coupling = false;
+    let (mut multiyear, mut long) = (false, false);
     let mut rate = false;
     let mut bond = false;
     let mut fred: Option<String> = None;
@@ -132,6 +137,8 @@ fn parse_args(args: &[String]) -> Opts {
             }
             "-header" => header = true,
             "-coupling" => coupling = true,
+            "-multiyear" => multiyear = true,
+            "-long" => long = true,
             "-rate" => rate = true,
             "-bond" => bond = true,
             other => usage(&format!("unrecognized arg [{other}]")),
@@ -173,6 +180,8 @@ fn parse_args(args: &[String]) -> Opts {
         of,
         header,
         coupling,
+        multiyear,
+        long,
         rate,
         bond,
     }
@@ -311,6 +320,10 @@ fn main() {
         }
         return;
     }
+    if o.multiyear {
+        print_multi_year_rows(&o, &r, &window);
+        return;
+    }
     if o.rate {
         print_rate_rows(&o, &r, &window);
         return;
@@ -368,6 +381,27 @@ fn main() {
             o.resamples,
             record[k],
             qs.join("\t")
+        );
+    }
+}
+
+/// The record's multi-year rows (`multi_year_readings`), under their long-window names with
+/// `-long`: records alone, since the rows are graded against the world's own histories.
+fn print_multi_year_rows(o: &Opts, r: &[f64], window: &str) {
+    if o.header {
+        println!("set\trow\tseries\twindow\tn\trecord");
+    }
+    let names = if o.long {
+        ms::MULTI_YEAR_LONG_ROWS
+    } else {
+        ms::MULTI_YEAR_ROWS
+    };
+    for (name, value) in names.iter().zip(ms::multi_year_readings(r)) {
+        println!(
+            "{}\t{name}\t{}\t{window}\t{}\t{value:.6}",
+            o.set,
+            o.series,
+            r.len()
         );
     }
 }

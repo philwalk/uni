@@ -219,7 +219,12 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 // so a consumer can judge a rule conditional on the event -- "in histories holding a 2000-shaped
 // bust" -- instead of on how often the simulator chose to produce one, a frequency no record can
 // pin. `world` gained `spreadDd`.
-const EMIT_SCHEMA: u32 = 21;
+// 21 -> 22: THE MULTI-YEAR ROWS. `gate.fidelity` gained twelve rows of aggregation
+// `single-history` (six statistics against the set's equity window and against its long window)
+// and lost `largest 3y run-up`, `longest calm stretch` and `equity d20 vs real`, which `gate`
+// now carries under `reported`. Each fidelity row gained `historyBand`: on a multi-year row the
+// world's joint band of single histories, outside which the record is a `miss`; null elsewhere.
+const EMIT_SCHEMA: u32 = 22;
 
 /// Frozen structural constants of the volume channel — see the `vol_idio` field. Measured
 /// from the SPY/QQQ volume-on-range regression (`bars-2026-09-01.tsv`, whose rows the
@@ -1238,11 +1243,11 @@ fn rows_0245(nq_0244: World) -> Vec<(&'static str, World, &'static str)> {
 /// spread's drawdown term at 3.0, all read off the record and held fixed; the other dials re-solved by
 /// search with valuation dispersion, the floor share and the bond's growth rally required inside their
 /// bands, and the noise skew at 0.85 for the up-day share. On 32 fresh seeds at 200 x 100 every class
-/// passes on 32, with 4.0 rows missed a seed: valuation dispersion 0.31 (record 0.30), the lower wing
+/// passes on 32, with 1.2 rows missed a seed: valuation dispersion 0.31 (record 0.30), the lower wing
 /// 7.4% (6.7%), kurtosis 23.9 (21.8), the downside excess 3.0 (3.1), the up-day share 53.6% (55.0%),
 /// the bond's inflation crash -27.8 (-27.9), the short rate 4.3% and the floor share 8.3% (4.6% /
-/// 14.6%), the bond's growth rally 9.3 (7.0), tail hedge corr -0.33 (-0.27). The upper wing, d20, the
-/// largest 3-year run-up and the longest calm stretch are its standing misses.
+/// 14.6%), the bond's growth rally 9.3 (7.0), tail hedge corr -0.33 (-0.27). The upper wing is its
+/// standing miss, and the 3-year variance ratio from 1954 misses on 5 of the 32.
 fn recipe_0245_sp500(mut w: World) -> World {
     w.trend_share = 0.052973269;
     w.depth = 18.015402;
@@ -6537,10 +6542,12 @@ pub struct WorldStats {
     /// qualifying decline are left out of the median
     pub bubble_coupling: f64,
     /// median per-path largest 3-year log run-up (`run_up_3y_of`) and longest calm stretch in
-    /// sessions (`calm_stretch_of`): the extreme rows that catch worlds trending where the
-    /// record did not
+    /// sessions (`calm_stretch_of`): reported, the multi-year rows grade what they read
     pub run_up_3y: f64,
     pub calm_stretch: f64,
+    /// median per-path multi-year readings (`multi_year_of`), the first five `MULTI_YEAR_ROWS`;
+    /// the sixth reads `dd_eq20`
+    pub multi_year: [f64; 5],
     /// median per-path mean short rate, percent, and share of sessions under `RATE_FLOOR`,
     /// percent (`rate_readings`)
     pub short_rate: f64,
@@ -7061,6 +7068,178 @@ pub fn calm_stretch_of(r: &[f64]) -> f64 {
         }
     }
     best.max(run) as f64
+}
+
+/// THE MULTI-YEAR ROWS: the fidelity rows a year or more of a series is one observation of, read
+/// the same way on a model path and a record (`multi_year_readings`' order). Graded by where
+/// the record falls among the world's single histories of the record's length, since a one-year
+/// block resample has no multi-year structure left to read: a row misses when the record falls
+/// outside the family's joint band of those histories (`multi_year_bands`). Graded against the
+/// set's equity window, and again against its long window (`MULTI_YEAR_LONG_ROWS`,
+/// `Anchors::bubble_window`), because the record's eras disagree: CRSP's annual autocorrelation
+/// reads +0.03 over the century and -0.13 from 1954, its time 20% under the peak 25.5% and 12.6%.
+pub const MULTI_YEAR_ROWS: [&str; 6] = [
+    "annual autocorr",
+    "variance ratio 3y",
+    "variance ratio 5y",
+    "3y p95 excess",
+    "decline gap p90 y",
+    "under water 20% %",
+];
+
+/// `MULTI_YEAR_ROWS` against the set's long window, row for row.
+pub const MULTI_YEAR_LONG_ROWS: [&str; 6] = [
+    "annual autocorr long",
+    "variance ratio 3y long",
+    "variance ratio 5y long",
+    "3y p95 excess long",
+    "decline gap p90 y long",
+    "under water 20% % long",
+];
+
+/// The share of record-like worlds the multi-year rows may jointly miss, split over the two
+/// windows by their rows (`multi_year_bands`).
+pub const MULTI_YEAR_ALPHA: f64 = 0.10;
+
+/// The block phases a block statistic is averaged over, evenly across the block's own length
+/// (`MULTI_YEAR_PHASE_STEP` sessions apart per year of it): on one series the phase is a free
+/// parameter (see `variance_ratio`), and phases inside the first year of a 5-year block read the
+/// century's 5-year ratio as 0.55 where phases across the block read 0.96.
+const MULTI_YEAR_PHASES: usize = 12;
+const MULTI_YEAR_PHASE_STEP: usize = DAYS_PER_YEAR / MULTI_YEAR_PHASES;
+/// Fewest lagged pairs an autocorrelation is read from, and fewest blocks a variance.
+const MULTI_YEAR_MIN_PAIRS: usize = 5;
+const MULTI_YEAR_MIN_BLOCKS: usize = 3;
+/// The decline that opens an episode the gap row counts, in percent.
+const MULTI_YEAR_DECLINE_PCT: f64 = 20.0;
+
+/// The changes of a log level over successive non-overlapping blocks of `b` sessions from `off`.
+fn block_changes(lp: &[f64], off: usize, b: usize) -> Vec<f64> {
+    let n = lp.len() - 1;
+    if off >= n {
+        return Vec::new();
+    }
+    (0..(n - off) / b)
+        .map(|j| lp[off + (j + 1) * b] - lp[off + j * b])
+        .collect()
+}
+
+fn sample_var(x: &[f64]) -> f64 {
+    let m = x.len();
+    if m < 2 {
+        return f64::NAN;
+    }
+    let mu = scala_sum(x.iter().copied()) / m as f64;
+    scala_sum(x.iter().map(|v| (v - mu) * (v - mu))) / (m - 1) as f64
+}
+
+/// The correlation of a series with itself one step on, each side about its own mean.
+fn lag1_corr(x: &[f64]) -> f64 {
+    if x.len() < MULTI_YEAR_MIN_PAIRS + 1 {
+        return f64::NAN;
+    }
+    let (a, b) = (&x[..x.len() - 1], &x[1..]);
+    let k = a.len() as f64;
+    let ma = scala_sum(a.iter().copied()) / k;
+    let mb = scala_sum(b.iter().copied()) / k;
+    let saa = scala_sum(a.iter().map(|v| (v - ma) * (v - ma)));
+    let sbb = scala_sum(b.iter().map(|v| (v - mb) * (v - mb)));
+    let sab = scala_sum(a.iter().zip(b).map(|(u, v)| (u - ma) * (v - mb)));
+    let den = (saa * sbb).sqrt();
+    if den > 0.0 { sab / den } else { f64::NAN }
+}
+
+/// The mean over the phases of a `years`-long block of a statistic read at each, the phases that
+/// cannot be read left out; in phase order, so the twins sum the same doubles in the same
+/// sequence.
+fn phase_mean(years: usize, read: impl Fn(usize) -> f64) -> f64 {
+    let vs: Vec<f64> = (0..MULTI_YEAR_PHASES)
+        .map(|k| read(k * years * MULTI_YEAR_PHASE_STEP))
+        .filter(|v| v.is_finite())
+        .collect();
+    if vs.is_empty() {
+        f64::NAN
+    } else {
+        scala_sum(vs.iter().copied()) / vs.len() as f64
+    }
+}
+
+/// The variance of `k`-year log changes over `k` times the variance of the annual changes across
+/// the same span: non-overlapping blocks, sample variances, 1 without serial dependence.
+fn multi_year_vr(lp: &[f64], k: usize) -> f64 {
+    phase_mean(k, |off| {
+        let kb = block_changes(lp, off, k * DAYS_PER_YEAR);
+        if kb.len() < MULTI_YEAR_MIN_BLOCKS {
+            return f64::NAN;
+        }
+        let span = off + kb.len() * k * DAYS_PER_YEAR;
+        let v1 = sample_var(&block_changes(&lp[..=span], off, DAYS_PER_YEAR));
+        if v1 > 0.0 {
+            sample_var(&kb) / (k as f64 * v1)
+        } else {
+            f64::NAN
+        }
+    })
+}
+
+/// The 95th percentile of the log return over every 756-session window, less the series' own
+/// mean 3-year return: the upper tail `run_up_3y_of` reads the single largest of. NaN under six
+/// years.
+fn ret_3y_p95_excess(lp: &[f64]) -> f64 {
+    let h = BUBBLE_RUNUP;
+    let n = lp.len() - 1;
+    if n < 2 * h {
+        return f64::NAN;
+    }
+    let xs: Vec<f64> = (h..=n).map(|k| lp[k] - lp[k - h]).collect();
+    pctile_of(&finite_sorted(&xs), 0.95) - (lp[n] - lp[0]) * h as f64 / n as f64
+}
+
+/// The 90th percentile of the years between the peaks of successive declines of 20% or more: the
+/// spacing `calm_stretch_of` reads the single longest of. NaN under three declines.
+fn decline_gap_p90(px: &[f64]) -> f64 {
+    let peaks: Vec<usize> = episodes(px, MULTI_YEAR_DECLINE_PCT)
+        .iter()
+        .map(|e| e.peak)
+        .collect();
+    if peaks.len() < 3 {
+        return f64::NAN;
+    }
+    let gaps: Vec<f64> = peaks
+        .windows(2)
+        .map(|w| (w[1] - w[0]) as f64 / DAYS_PER_YEAR as f64)
+        .collect();
+    pctile_of(&finite_sorted(&gaps), 0.90)
+}
+
+/// The first five `MULTI_YEAR_ROWS` readings of one series: its daily log returns and the price
+/// they trace. The sixth is `depth_shares`' 20% rung.
+fn multi_year_of(r: &[f64], px: &[f64]) -> [f64; 5] {
+    let mut lp = vec![0.0f64; r.len() + 1];
+    for i in 0..r.len() {
+        lp[i + 1] = lp[i] + r[i];
+    }
+    [
+        phase_mean(1, |off| lag1_corr(&block_changes(&lp, off, DAYS_PER_YEAR))),
+        multi_year_vr(&lp, 3),
+        multi_year_vr(&lp, 5),
+        ret_3y_p95_excess(&lp),
+        decline_gap_p90(px),
+    ]
+}
+
+/// Every `MULTI_YEAR_ROWS` reading of ONE series of daily log returns, as the model reads it off
+/// one path; the price is rebuilt with `exp_det`, so the twins' episodes agree to the bit.
+pub fn multi_year_readings(r: &[f64]) -> [f64; 6] {
+    let mut px = Vec::with_capacity(r.len() + 1);
+    let mut c = 0.0;
+    px.push(exp_det(c));
+    for x in r {
+        c += x;
+        px.push(exp_det(c));
+    }
+    let m = multi_year_of(r, &px);
+    [m[0], m[1], m[2], m[3], m[4], depth_shares(&px).2 * 100.0]
 }
 
 /// corr(r_t, r^2_{t+1}): the leverage effect at daily lag.
@@ -8644,6 +8823,7 @@ struct PathRead {
     bubble_coupling: f64,
     run_up_3y: f64,
     calm_stretch: f64,
+    multi_year: [f64; 5],
     tail_hedge: f64,
     infl_ann: f64,
     short_rate: f64,
@@ -8761,6 +8941,7 @@ fn path_read(s: &Path, years: usize) -> PathRead {
         bubble_coupling: bubble_coupling_of(&r),
         run_up_3y: run_up_3y_of(&r),
         calm_stretch: calm_stretch_of(&r),
+        multi_year: multi_year_of(&r, &s.price),
         short_rate: rate_readings(&s.rate)[0],
         rate_floor: rate_readings(&s.rate)[1],
         tail_hedge: {
@@ -8925,6 +9106,13 @@ pub fn measure(sims: &[Path], years: usize) -> WorldStats {
         bubble_coupling: med_by(|p| p.bubble_coupling),
         run_up_3y: med_by(|p| p.run_up_3y),
         calm_stretch: med_by(|p| p.calm_stretch),
+        multi_year: [
+            med_by(|p| p.multi_year[0]),
+            med_by(|p| p.multi_year[1]),
+            med_by(|p| p.multi_year[2]),
+            med_by(|p| p.multi_year[3]),
+            med_by(|p| p.multi_year[4]),
+        ],
         short_rate: med_by(|p| p.short_rate),
         rate_floor: med_by(|p| p.rate_floor),
         lev_corr: med_by(|p| p.lev_corr),
@@ -10065,13 +10253,16 @@ pub struct Anchors {
     pub bubble_coupling: f64,
     pub bubble_coupling_sd: f64,
     /// THE LARGEST 3-YEAR RUN-UP's and THE LONGEST CALM STRETCH's records over the bubble window
-    /// (`run_up_3y_of`, `calm_stretch_of`, `bubblebust-2026-09-24.tsv`), graded as extreme rows
-    /// like the bubble coupling; the sds are the spread of single histories at the window's length,
-    /// relative to the record as every `_sd` here is (the precision factor divides by it)
+    /// (`run_up_3y_of`, `calm_stretch_of`, `bubblebust-2026-09-24.tsv`): reported, not graded.
+    /// Each is one number from one history -- the century's run-up sits at the 1st percentile of
+    /// its own years resampled -- and the multi-year rows grade what they read.
     pub run_up_3y: f64,
-    pub run_up_3y_sd: f64,
     pub calm_stretch: f64,
-    pub calm_stretch_sd: f64,
+    /// THE MULTI-YEAR ROWS' records (`multi_year_readings`, `multiyear-2026-09-29.tsv`), in
+    /// `MULTI_YEAR_ROWS`' order: over the equity window, and over the long window
+    /// (`bubble_window`)
+    pub multi_year: [f64; 6],
+    pub multi_year_long: [f64; 6],
     /// THE SHORT RATE's record: the daily effective federal funds rate (FRED DFF) over the equity
     /// window's dates, its mean in percent and the share of its sessions under `RATE_FLOOR`
     /// (`rate_readings`; `recordbands-2026-09-26.tsv`, whose bands the rows are graded by). The
@@ -10827,9 +11018,9 @@ const SP500_ANCHORS: Anchors = Anchors {
     bubble_coupling: 0.114404,
     bubble_coupling_sd: 1.07,
     run_up_3y: 0.872450,
-    run_up_3y_sd: 0.28,
     calm_stretch: 2190.0,
-    calm_stretch_sd: 0.61,
+    multi_year: [-0.127487, 0.745759, 0.732112, 0.324081, 8.599206, 12.589751],
+    multi_year_long: [0.028270, 0.961668, 0.963278, 0.398297, 11.837302, 25.500495],
     rate_window: "DFF 1954-2026",
     rate_years: 72,
     bond_window: "clean TLT, 24y",
@@ -10955,9 +11146,9 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     bubble_coupling: 1.042337,
     bubble_coupling_sd: 0.25,
     run_up_3y: 1.753345,
-    run_up_3y_sd: 0.21,
     calm_stretch: 1927.0,
-    calm_stretch_sd: 0.30,
+    multi_year: [0.007813, 0.993439, 0.894361, 0.438273, 18.396825, 53.729182],
+    multi_year_long: [0.100691, 0.983398, 0.964724, 0.740644, 18.396825, 41.888384],
     rate_window: "DFF 1999-2026",
     rate_years: 27,
     bond_window: "clean TLT, 24y",
@@ -11052,7 +11243,7 @@ fn wgt(judgment: f64, sd_rel: f64) -> f64 {
 )]
 /// Every fidelity row `fitness` scores for an anchor set: name, reading, target, weight.
 pub fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
-    vec![
+    let mut rows = vec![
         (
             "equity vol %",
             (|st| st.vol * 100.0) as StatFn,
@@ -11297,25 +11488,9 @@ pub fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             a.bubble_coupling,
             wgt(0.5, a.bubble_coupling_sd),
         ),
-        // THE LARGEST 3-YEAR RUN-UP and THE LONGEST CALM STRETCH: extreme rows like the bubble
-        // coupling, on the same window. The S&P worlds made run-ups the century never did (its
-        // largest below 99.9% of histories) and calm stretches it never had (below 98%): the
-        // reverse of the Nasdaq's bubble gap, a world producing events the record rules out.
-        // Judgment 1.0 each, the neutral judgment: the precision factor alone (the single-history
-        // spread, 0.28 and 0.61 of the record on the S&P) sets how hard the row pulls. At 0.5 with
-        // the spreads mistyped as absolute the S&P re-solve (search-v128) did not move either row.
-        (
-            "largest 3y run-up",
-            (|st| st.run_up_3y) as StatFn,
-            a.run_up_3y,
-            wgt(1.0, a.run_up_3y_sd),
-        ),
-        (
-            "longest calm stretch",
-            (|st| st.calm_stretch) as StatFn,
-            a.calm_stretch,
-            wgt(1.0, a.calm_stretch_sd),
-        ),
+    ];
+    rows.extend(multi_year_targets(a));
+    rows.extend([
         // The "(24y)" is load-bearing, not decoration: this row is measured on a different
         // horizon from every other, and the label is the only part that travels when the number
         // is quoted.
@@ -11437,17 +11612,8 @@ pub fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             1.00,
             wgt(1.0, a.d10_sd),
         ),
-        // d20's sdRel moved 0.99 -> 1.56 in the 0.21.0 recovery-drag change, and like kurtosis's
-        // move it is a re-measurement of a statistic that genuinely became more variable, not a
-        // correction: slowing recovery from deep drawdowns makes time spent DEEP swing much harder
-        // between histories (p5 0.19, p95 4.35 over 25 years). Weighting by measurability drops it
-        // to 0.06. No other target's sdRel moved beyond its own noise, so none were churned.
-        (
-            "equity d20 vs real",
-            (|st: &WorldStats| st.eq_d20_vs_real()) as StatFn,
-            1.00,
-            wgt(0.5, a.d20_sd),
-        ),
+        // THE 20% RUNG is graded against the index itself (`under water 20% %`, a multi-year
+        // row): on the fund relation CRSP from 1954 reads 2.3, the record missing its own row.
         // TLT's own reading over its 24 years, graded by that record's resample band -- see
         // `BOND_BAND_ROWS`
         (
@@ -11456,7 +11622,41 @@ pub fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             a.bond_depth,
             wgt(0.5, a.bond_depth_sd),
         ),
+    ]);
+    rows
+}
+
+/// THE ROWS THE MULTI-YEAR ROWS REPLACED, reported and not graded: name, the world's reading,
+/// the record. The run-up and the calm stretch are one number from one history each; the 20%
+/// rung's fund relation reads the index itself at 2.3.
+pub fn reported_rows(a: Anchors, st: &WorldStats) -> [(&'static str, f64, f64); 3] {
+    [
+        ("largest 3y run-up", st.run_up_3y, a.run_up_3y),
+        ("longest calm stretch", st.calm_stretch, a.calm_stretch),
+        ("equity d20 vs real", st.eq_d20_vs_real(), 1.0),
     ]
+}
+
+/// Each `MULTI_YEAR_ROWS` statistic off a `WorldStats`, row for row.
+const MULTI_YEAR_STATS: [StatFn; 6] = [
+    |st| st.multi_year[0],
+    |st| st.multi_year[1],
+    |st| st.multi_year[2],
+    |st| st.multi_year[3],
+    |st| st.multi_year[4],
+    |st| st.dd_eq20 * 100.0,
+];
+
+/// THE MULTI-YEAR ROWS of `fit_targets`: each statistic against the equity window's record, then
+/// against the long window's. Weight 0: the verdict grades them, and the loss does not see them
+/// until a re-solve weighs them.
+fn multi_year_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
+    let rows = |names: [&'static str; 6], records: [f64; 6]| {
+        (0..6).map(move |k| (names[k], MULTI_YEAR_STATS[k], records[k], 0.0))
+    };
+    rows(MULTI_YEAR_ROWS, a.multi_year)
+        .chain(rows(MULTI_YEAR_LONG_ROWS, a.multi_year_long))
+        .collect()
 }
 
 /// Targets whose model statistic is an EXTREME order statistic over the pooled ensemble rather
@@ -11473,9 +11673,36 @@ pub fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
 const EXTREME_TARGETS: &[&str] = &[
     "worst crash %",
     "bubble coupling 3y",
-    "largest 3y run-up",
-    "longest calm stretch",
+    "annual autocorr",
+    "variance ratio 3y",
+    "variance ratio 5y",
+    "3y p95 excess",
+    "decline gap p90 y",
+    "under water 20% %",
+    "annual autocorr long",
+    "variance ratio 3y long",
+    "variance ratio 5y long",
+    "3y p95 excess long",
+    "decline gap p90 y long",
+    "under water 20% % long",
 ];
+
+/// Whether a row is a multi-year row, of either window.
+fn is_multi_year(name: &str) -> bool {
+    MULTI_YEAR_ROWS.contains(&name) || MULTI_YEAR_LONG_ROWS.contains(&name)
+}
+
+/// The `EXTREME_TARGETS` rows whose `StatFn` reads an extreme over the pooled ensemble, sorted: a
+/// multi-year row's reads a median of paths, a level a report may print.
+fn pooled_extremes() -> Vec<&'static str> {
+    let mut names: Vec<&'static str> = EXTREME_TARGETS
+        .iter()
+        .copied()
+        .filter(|n| !is_multi_year(n))
+        .collect();
+    names.sort_unstable();
+    names
+}
 
 /// The admissible interval for a per-path fidelity ratio on a row WITHOUT a `RecordBand`, and the
 /// admissible percentile band for an `EXTREME_TARGETS` row. Stated ONCE: the report, the sidecar and
@@ -11528,6 +11755,9 @@ pub struct FidelityRow {
     /// where the model falls among the record's resamples, in percent — the reverse of `pctile`,
     /// which places the record among the model's histories
     pub record_pctile: Option<usize>,
+    /// the world's joint band of single histories (`multi_year_bands`), the band `miss` reads
+    /// the record against, on a multi-year row
+    pub history_band: Option<(f64, f64)>,
     pub horizon_years: usize,
     pub n_histories: usize,
 }
@@ -11541,6 +11771,11 @@ impl FidelityRow {
     pub fn miss(&self) -> bool {
         if let Some((lo, hi)) = self.record_band {
             return !(lo..=hi).contains(&self.model);
+        }
+        if is_multi_year(self.name) {
+            return !self
+                .history_band
+                .is_some_and(|(lo, hi)| (lo..=hi).contains(&self.real));
         }
         match self.ratio {
             Some(r) => !(FIDELITY_RATIO_BAND.0..=FIDELITY_RATIO_BAND.1).contains(&r),
@@ -11576,7 +11811,9 @@ impl FidelityRow {
     }
 
     fn aggregation(&self) -> &'static str {
-        if EXTREME_TARGETS.contains(&self.name) {
+        if is_multi_year(self.name) {
+            "single-history"
+        } else if EXTREME_TARGETS.contains(&self.name) {
             "ensemble-extreme"
         } else {
             "per-path"
@@ -11653,10 +11890,66 @@ fn extreme_reading(nm: &str, p: &Path) -> Option<f64> {
             })
         }
         "bubble coupling 3y" => Some(bubble_coupling_of(&daily_returns(&p.price))),
-        "largest 3y run-up" => Some(run_up_3y_of(&daily_returns(&p.price))),
-        "longest calm stretch" => Some(calm_stretch_of(&daily_returns(&p.price))),
         _ => None,
     }
+}
+
+/// The multi-year windows read at `yrs`: each window's row names and every path's readings of
+/// them, in path order and `MULTI_YEAR_ROWS`' order. One pass over the paths, shared by the
+/// windows that are read at the same length.
+fn multi_year_histories(
+    a: Anchors,
+    sims: &[Path],
+    yrs: usize,
+) -> Vec<([&'static str; 6], Vec<[f64; 6]>)> {
+    let windows: Vec<[&'static str; 6]> = [
+        (MULTI_YEAR_ROWS, a.equity_years),
+        (MULTI_YEAR_LONG_ROWS, a.bubble_years),
+    ]
+    .into_iter()
+    .filter(|(_, y)| *y == yrs)
+    .map(|(names, _)| names)
+    .collect();
+    if windows.is_empty() {
+        return Vec::new();
+    }
+    let reads: Vec<[f64; 6]> = sims
+        .par_iter()
+        .map(|p| {
+            let m = multi_year_of(&daily_returns(&p.price), &p.price);
+            [
+                m[0],
+                m[1],
+                m[2],
+                m[3],
+                m[4],
+                depth_shares(&p.price).2 * 100.0,
+            ]
+        })
+        .collect();
+    windows.into_iter().map(|n| (n, reads.clone())).collect()
+}
+
+/// THE MULTI-YEAR ROWS' JOINT BAND at `yrs`: each row's edges among the world's single histories
+/// of that length, at the ranks a record-like history stays inside on every row of its window at
+/// once with probability 1 - alpha (`record_band_joint`, read on the world's histories instead of
+/// a record's resamples). Alpha is `MULTI_YEAR_ALPHA` split over the two windows by their rows.
+/// Empty under `EXTREME_MIN_HISTORIES` paths.
+fn multi_year_bands(
+    histories: &[([&'static str; 6], Vec<[f64; 6]>)],
+) -> std::collections::HashMap<&'static str, (f64, f64)> {
+    let mut out = std::collections::HashMap::new();
+    let rows: Vec<usize> = (0..MULTI_YEAR_ROWS.len()).collect();
+    for (names, reads) in histories {
+        if reads.len() < EXTREME_MIN_HISTORIES {
+            continue;
+        }
+        let (_, edges) = record_band_joint(reads, &rows, MULTI_YEAR_ALPHA / 2.0);
+        for (nm, e) in names.iter().copied().zip(edges) {
+            out.insert(nm, e);
+        }
+    }
+    out
 }
 
 pub fn extreme_readings_from(
@@ -11664,10 +11957,37 @@ pub fn extreme_readings_from(
     sims: &[Path],
     yrs: usize,
 ) -> std::collections::HashMap<&'static str, Vec<f64>> {
+    extreme_readings_and_bands(a, sims, yrs).0
+}
+
+/// `extreme_readings_from`, and the multi-year rows' joint bands (`multi_year_bands`) off the
+/// same pass over the paths.
+#[expect(
+    clippy::type_complexity,
+    reason = "two maps by row name: the readings and the bands"
+)]
+fn extreme_readings_and_bands(
+    a: Anchors,
+    sims: &[Path],
+    yrs: usize,
+) -> (
+    std::collections::HashMap<&'static str, Vec<f64>>,
+    std::collections::HashMap<&'static str, (f64, f64)>,
+) {
     let mut out: std::collections::HashMap<&'static str, Vec<f64>> =
         std::collections::HashMap::new();
     // `measure` per path only for a row with no direct reading, and then only once
     let mut full: Option<Vec<WorldStats>> = None;
+    let histories = multi_year_histories(a, sims, yrs);
+    let bands = multi_year_bands(&histories);
+    for (names, reads) in histories {
+        for (k, nm) in names.iter().copied().enumerate() {
+            out.insert(
+                nm,
+                reads.iter().map(|x| x[k]).filter(|x| !x.is_nan()).collect(),
+            );
+        }
+    }
     for (_, gy, names) in anchor_groups(a) {
         if gy != yrs {
             continue;
@@ -11675,7 +11995,7 @@ pub fn extreme_readings_from(
         for nm in names
             .iter()
             .copied()
-            .filter(|n| EXTREME_TARGETS.contains(n))
+            .filter(|n| EXTREME_TARGETS.contains(n) && !is_multi_year(n))
         {
             let Some((_, get, _, _)) = fit_targets(a).into_iter().find(|(n, _, _, _)| *n == nm)
             else {
@@ -11698,7 +12018,7 @@ pub fn extreme_readings_from(
             out.insert(nm, vals.into_iter().filter(|x| !x.is_nan()).collect());
         }
     }
-    out
+    (out, bands)
 }
 
 /// The median of `extreme_readings_from`, for an ensemble the caller already holds.
@@ -11748,11 +12068,13 @@ pub fn extreme_score_stats(
 }
 
 /// What a read's own ensemble leaves out (`horizon_readings`): every banded row's reading at its
-/// record's horizon, and every extreme row's single-history readings at its anchor's.
+/// record's horizon, every extreme row's single-history readings at its anchor's, and the
+/// multi-year rows' joint bands of those histories.
 #[derive(Default)]
 pub struct HorizonReadings {
     pub banded: std::collections::HashMap<&'static str, f64>,
     pub extreme: std::collections::HashMap<&'static str, Vec<f64>>,
+    pub history_band: std::collections::HashMap<&'static str, (f64, f64)>,
 }
 
 impl HorizonReadings {
@@ -11837,7 +12159,9 @@ pub fn horizon_readings(
             }
         }
         if extreme_at.contains(&h) {
-            out.extreme.extend(extreme_readings_from(a, sims, h));
+            let (readings, bands) = extreme_readings_and_bands(a, sims, h);
+            out.extreme.extend(readings);
+            out.history_band.extend(bands);
         }
     }
     out
@@ -11880,6 +12204,7 @@ pub fn fidelity_rows(
     let HorizonReadings {
         banded,
         extreme: readings,
+        history_band,
     } = horizon_readings(a, st, main, years, paths, seed, w, extreme_too);
     fit_targets(a)
         .into_iter()
@@ -11889,6 +12214,8 @@ pub fn fidelity_rows(
             if EXTREME_TARGETS.contains(&name) {
                 let empty: Vec<f64> = Vec::new();
                 let xs = readings.get(name).unwrap_or(&empty);
+                // a multi-year row's reading is its histories' median, at the record's length
+                let model = if is_multi_year(name) { med(xs) } else { model };
                 let pctile = if xs.len() < EXTREME_MIN_HISTORIES {
                     None
                 } else {
@@ -11903,6 +12230,7 @@ pub fn fidelity_rows(
                     pctile,
                     record_band: None,
                     record_pctile: None,
+                    history_band: history_band.get(name).copied(),
                     horizon_years,
                     n_histories: xs.len(),
                 }
@@ -11926,6 +12254,7 @@ pub fn fidelity_rows(
                     pctile: None,
                     record_band: band.map(RecordBand::band),
                     record_pctile: band.and_then(|b| b.percentile(model)),
+                    history_band: None,
                     horizon_years,
                     n_histories: 1,
                 }
@@ -14167,7 +14496,7 @@ fn run_release_report(a: Anchors, paths: usize, years: usize, seed: u64, base: &
     println!();
     println!(
         "  ROWS THAT ARE NOT FIDELITY RATIOS: {}.",
-        EXTREME_TARGETS.join(", ")
+        pooled_extremes().join(", ")
     );
     println!(
         "  These are extremes over the pooled ensemble, so the LEVEL grades the ensemble size —"
@@ -14304,7 +14633,7 @@ fn bond_relations() -> [Relation; 2] {
 /// target added or renamed fails the build until someone places it. The failure being prevented is
 /// a target silently absent from the equity section — a shorter table reads as a shorter list of
 /// concerns, not as a bug.
-const EQUITY_TARGETS: [&str; 25] = [
+const EQUITY_TARGETS: [&str; 34] = [
     "equity vol %",
     "typical-year vol %",
     "return per vol",
@@ -14325,11 +14654,20 @@ const EQUITY_TARGETS: [&str; 25] = [
     "median depth %",
     "worst crash %",
     "bubble coupling 3y",
-    "largest 3y run-up",
-    "longest calm stretch",
+    "annual autocorr",
+    "variance ratio 3y",
+    "variance ratio 5y",
+    "3y p95 excess",
+    "decline gap p90 y",
+    "under water 20% %",
+    "annual autocorr long",
+    "variance ratio 3y long",
+    "variance ratio 5y long",
+    "3y p95 excess long",
+    "decline gap p90 y long",
+    "under water 20% % long",
     "equity d5 vs real",
     "equity d10 vs real",
-    "equity d20 vs real",
 ];
 
 /// The other half of the partition. Read only by the partition test — the report has no bond
@@ -14481,7 +14819,7 @@ fn run_equity_at_anchor(a: Anchors, paths: usize, years: usize, seed: u64, base:
         };
         // Both columns share one ensemble size, so the MOVE is readable on every row; the LEVEL is
         // not, on the extremes — see the note below and `-validate`'s percentile.
-        let kind = if EXTREME_TARGETS.contains(&name) {
+        let kind = if pooled_extremes().contains(&name) {
             " *"
         } else {
             ""
@@ -14495,7 +14833,7 @@ fn run_equity_at_anchor(a: Anchors, paths: usize, years: usize, seed: u64, base:
             jf(ra, 0, 2)
         );
     }
-    if EQUITY_TARGETS.iter().any(|n| EXTREME_TARGETS.contains(n)) {
+    if EQUITY_TARGETS.iter().any(|n| pooled_extremes().contains(n)) {
         println!();
         println!(
             "  * an extreme over the pooled ensemble, not a per-path value: the MOVE between the two"
@@ -14724,6 +15062,12 @@ fn anchor_groups(a: Anchors) -> [(&'static str, usize, &'static [&'static str]);
                 "up-day share %",
                 "leverage corr",
                 "vol-timing edge pts/yr",
+                "annual autocorr",
+                "variance ratio 3y",
+                "variance ratio 5y",
+                "3y p95 excess",
+                "decline gap p90 y",
+                "under water 20% %",
             ],
         ),
         (
@@ -14743,8 +15087,12 @@ fn anchor_groups(a: Anchors) -> [(&'static str, usize, &'static [&'static str]);
             a.bubble_years,
             &[
                 "bubble coupling 3y",
-                "largest 3y run-up",
-                "longest calm stretch",
+                "annual autocorr long",
+                "variance ratio 3y long",
+                "variance ratio 5y long",
+                "3y p95 excess long",
+                "decline gap p90 y long",
+                "under water 20% % long",
             ],
         ),
         // The rate's record over the equity window's dates -- see `Anchors::rate_window`.
@@ -14781,11 +15129,7 @@ fn anchor_groups(a: Anchors) -> [(&'static str, usize, &'static [&'static str]);
         (
             "equity funds, 25y",
             25,
-            &[
-                "equity d5 vs real",
-                "equity d10 vs real",
-                "equity d20 vs real",
-            ],
+            &["equity d5 vs real", "equity d10 vs real"],
         ),
         (
             a.bond_window,
@@ -16735,14 +17079,18 @@ fn fidelity_row_json(r: &FidelityRow) -> String {
         r.pctile
             .map_or_else(|| "null".to_string(), |x| x.to_string())
     );
-    let tail = format!(
-        "\"recordBand\": {}, \"recordPercentile\": {}, \"miss\": {} }}",
-        r.record_band.map_or_else(
+    let band = |b: Option<(f64, f64)>| {
+        b.map_or_else(
             || "null".to_string(),
-            |(lo, hi)| format!("[{}, {}]", num(lo), num(hi))
-        ),
+            |(lo, hi)| format!("[{}, {}]", num(lo), num(hi)),
+        )
+    };
+    let tail = format!(
+        "\"recordBand\": {}, \"recordPercentile\": {}, \"historyBand\": {}, \"miss\": {} }}",
+        band(r.record_band),
         r.record_pctile
             .map_or_else(|| "null".to_string(), |x| x.to_string()),
+        band(r.history_band),
         r.miss()
     );
     head + &mid + &tail
@@ -17059,10 +17407,23 @@ fn write_emit_sidecar(
         // variance-ratio profile is a gate row over four rungs, not a loss row: without this a
         // consumer learns the profile passed and cannot read it.
         format!(
-            "    \"varianceRatio\": {{ {} }}",
+            "    \"varianceRatio\": {{ {} }},",
             VAR_RATIO_LADDER
                 .iter()
                 .map(|&q| format!("\"{q}\": {}", num(vr_of(gate_st, q))))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        format!(
+            "    \"reported\": {{ {} }}",
+            reported_rows(a, gate_st)
+                .iter()
+                .map(|(n, m, r)| format!(
+                    "{}: {{ \"model\": {}, \"record\": {} }}",
+                    json_str(n),
+                    num(*m),
+                    num(*r)
+                ))
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
@@ -18872,6 +19233,13 @@ pub fn main() {
     );
     println!("      record (`model@`, against its joint band); `target` is printed where the loss");
     println!("      grades against something else.");
+    println!(
+        "    NOTE: a multi-year row is judged by where the record falls among the world's single"
+    );
+    println!("      histories of the record's length: a MISS is a record outside their joint band");
+    println!(
+        "      (`within`), which a record-like world clears on every such row 90% of the time."
+    );
     for r in &verdict_rows {
         let flag = if r.miss() { "  <-- MISS" } else { "" };
         let judgement = match (r.ratio, r.pctile) {
@@ -18891,10 +19259,15 @@ pub fn main() {
                 };
                 format!("ratio {}{band}{target}", jf(x, 5, 2))
             }
-            (None, Some(pc)) => format!(
-                "record@ {pc:>3}% of {}y histories (n={})",
-                r.horizon_years, r.n_histories
-            ),
+            (None, Some(pc)) => {
+                let band = r.history_band.map_or_else(String::new, |(lo, hi)| {
+                    format!("   within {}..{}", jf(lo, 0, 2), jf(hi, 0, 2))
+                });
+                format!(
+                    "record@ {pc:>3}% of {}y histories (n={}){band}",
+                    r.horizon_years, r.n_histories
+                )
+            }
             (None, None) => format!(
                 "record@  n/a — {} histories, needs {EXTREME_MIN_HISTORIES}",
                 r.n_histories
@@ -18907,6 +19280,14 @@ pub fn main() {
             jf(r.real, 8, 2),
             judgement,
             flag
+        );
+    }
+    for (name, model, record) in reported_rows(anchors, &verdict_st) {
+        println!(
+            "     {:<22} model {}   real {}   reported, not graded",
+            name,
+            jf(model, 8, 2),
+            jf(record, 8, 2)
         );
     }
 
@@ -19797,6 +20178,21 @@ mod contract_tests {
         }
     }
 
+    /// A multi-year row is read at its own window's length and misses by its joint band.
+    fn assert_multi_year_row(a: Anchors, r: &FidelityRow) {
+        assert_eq!(r.aggregation(), "single-history");
+        let window = if MULTI_YEAR_ROWS.contains(&r.name) {
+            a.equity_years
+        } else {
+            a.bubble_years
+        };
+        assert_eq!(r.horizon_years, window, "[{}]'s own window", r.name);
+        let (lo, hi) = r
+            .history_band
+            .unwrap_or_else(|| panic!("[{}] must carry its joint band", r.name));
+        assert_eq!(r.miss(), !(lo..=hi).contains(&r.real), "[{}]", r.name);
+    }
+
     /// The invariant the sidecar rests on. A consumer must be able to tell the two apart from the
     /// DATA — `ratio: null` is what stops the division being made by accident, and a row that
     /// carried both would let it be made anyway.
@@ -19824,6 +20220,11 @@ mod contract_tests {
                     "[{}] must carry a percentile in the ratio's place",
                     r.name
                 );
+                if is_multi_year(r.name) {
+                    assert_multi_year_row(a, r);
+                    continue;
+                }
+                assert!(r.history_band.is_none(), "[{}]", r.name);
                 assert_eq!(r.aggregation(), "ensemble-extreme");
                 assert_eq!(
                     r.horizon_years, a.tail_years,
@@ -22468,6 +22869,116 @@ mod record_band_tests {
         );
     }
 
+    /// THE MULTI-YEAR ROWS' anchors are `multiyear-2026-09-29.tsv`'s records, row for row in both
+    /// windows, and each statistic reads a hand-built series as stated.
+    #[test]
+    fn the_multi_year_anchors_are_the_fixtures_records_and_the_statistics_read_as_stated() {
+        let lines: Vec<Vec<String>> =
+            std::fs::read_to_string("../test-data/equity-anchors/multiyear-2026-09-29.tsv")
+                .expect("fixture")
+                .lines()
+                .filter(|l| !(l.starts_with('#') || l.trim().is_empty() || l.starts_with("set\t")))
+                .map(|l| l.split('\t').map(str::to_string).collect())
+                .collect();
+        assert_eq!(lines.len(), 24, "two sets, two windows, six rows");
+        for (set, a) in sets() {
+            for (names, records) in [
+                (MULTI_YEAR_ROWS, a.multi_year),
+                (MULTI_YEAR_LONG_ROWS, a.multi_year_long),
+            ] {
+                for (name, got) in names.iter().zip(records) {
+                    let r = lines
+                        .iter()
+                        .find(|f| f[0] == set && f[1] == *name)
+                        .unwrap_or_else(|| panic!("fixture row [{set}] {name} missing"));
+                    let rec: f64 = r[5].parse().expect("number");
+                    assert!(
+                        (got - rec).abs() < 1e-6,
+                        "{set}: {name} {got} against the record's {rec}"
+                    );
+                }
+            }
+        }
+        // forty years that alternate +20% and -10%, each year's move made in its first session
+        // so a block at any phase holds whole moves: successive years are perfectly opposed, and
+        // three of them vary no more than one
+        let y = DAYS_PER_YEAR;
+        let alt: Vec<f64> = (0..40 * y)
+            .map(|i| match (i % y, (i / y) % 2) {
+                (0, 0) => 0.2,
+                (0, _) => -0.1,
+                _ => 0.0,
+            })
+            .collect();
+        let m = multi_year_readings(&alt);
+        assert!((m[0] + 1.0).abs() < 1e-9, "annual autocorr {}", m[0]);
+        assert!(m[1] > 0.30 && m[1] < 0.37, "variance ratio 3y {}", m[1]);
+        // a constant return: every 3-year window is the mean one, and nothing falls
+        let flat = multi_year_readings(&vec![0.0004; 10 * y]);
+        assert!(flat[3].abs() < 1e-9, "3y p95 excess {}", flat[3]);
+        assert!(flat[4].is_nan(), "no decline, no gap");
+        assert!(flat[5].abs() < 1e-12, "never under water");
+        assert!(
+            multi_year_readings(&vec![0.0004; 5 * y])[3].is_nan(),
+            "under six years, no 3-year tail"
+        );
+        // three falls of 0.4 log, their peaks ten years and five years apart and the fall's own
+        // session, each climbed out of at 0.001 a session: 177 sessions more than 20% under the
+        // peak after the first two, and the last 101 sessions after the third
+        let mut r = vec![0.001f64; 5 * y];
+        r.push(-0.4);
+        r.extend(std::iter::repeat_n(0.001, 10 * y));
+        r.push(-0.4);
+        r.extend(std::iter::repeat_n(0.001, 5 * y));
+        r.push(-0.4);
+        r.extend(std::iter::repeat_n(0.001, 100));
+        let m = multi_year_readings(&r);
+        let gap = (10 * y + 1) as f64 / y as f64;
+        assert!((m[4] - gap).abs() < 1e-9, "decline gap p90 {}", m[4]);
+        let under = (177 + 177 + 101) as f64 * 100.0 / (r.len() + 1) as f64;
+        assert!(
+            (m[5] - under).abs() < 1e-9,
+            "under water {} of {under}",
+            m[5]
+        );
+    }
+
+    /// THE JOINT BAND holds the histories it is read from: on every row of a window at once, all
+    /// but about `MULTI_YEAR_ALPHA / 2` of them; and a window is read at its own length.
+    #[test]
+    fn the_multi_year_band_holds_the_histories_it_is_read_from() {
+        let mut rng = NumPyRng::new(20_260_929);
+        let reads: Vec<[f64; 6]> = (0..1000)
+            .map(|_| std::array::from_fn(|_| rng.randn()))
+            .collect();
+        let histories = vec![(MULTI_YEAR_ROWS, reads.clone())];
+        let bands = multi_year_bands(&histories);
+        let inside = reads
+            .iter()
+            .filter(|x| {
+                MULTI_YEAR_ROWS.iter().zip(x.iter()).all(|(n, v)| {
+                    let (lo, hi) = bands[n];
+                    (lo..=hi).contains(v)
+                })
+            })
+            .count();
+        assert!(
+            (940..=960).contains(&inside),
+            "{inside} of 1000 histories inside every band"
+        );
+        assert!(
+            multi_year_bands(&[(MULTI_YEAR_ROWS, reads[..10].to_vec())]).is_empty(),
+            "too few histories to place a record"
+        );
+        for a in [SP500_ANCHORS, NASDAQ_ANCHORS] {
+            let sims = sim_paths(&default_world(), 2, a.bubble_years, DEFAULT_SEED);
+            let long = multi_year_histories(a, &sims, a.bubble_years);
+            assert_eq!(long.len(), 1, "{}: one window at the long horizon", a.name);
+            assert_eq!(long[0].0, MULTI_YEAR_LONG_ROWS);
+            assert!(multi_year_histories(a, &sims, 3).is_empty());
+        }
+    }
+
     /// THE BUBBLE COUPLING's anchors are `bubblebust-2026-09-24.tsv`'s records, and the statistic
     /// reads a hand-built series as stated: one 3-year run-up of +1.0 into a 50% fall counts, a
     /// high without three years behind it does not, and a series with no 40% fall has no reading.
@@ -22618,6 +23129,56 @@ mod record_band_tests {
                 assert!(b.misses(f64::NAN), "{set} {}: not a number misses", b.name);
             }
         }
+    }
+
+    /// Thirty years of `pinned_series`' draws, for the rows a year is one observation of.
+    fn pinned_long_series() -> Vec<f64> {
+        let mut rng = NumPyRng::new(20_260_929);
+        (0..7560)
+            .map(|i| {
+                let u = rng.next_f64();
+                if i % 97 == 50 {
+                    -0.06
+                } else {
+                    (u - 0.47) * 0.03
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_pinned_series_reads_the_same_multi_year_rows_in_both_twins() {
+        // `RecordBandSuite` pins these same values; a change here is a change there
+        let r = pinned_long_series();
+        assert_eq!(
+            multi_year_readings(&r),
+            [
+                -0.027652854715084944,
+                1.0932546095255011,
+                1.3537020801900945,
+                0.48959164694365975,
+                9.384920634920634,
+                19.785742626636686,
+            ]
+        );
+        // the joint band of forty twenty-year stretches of it, as `multi_year_bands` reads a
+        // world's histories
+        let reads: Vec<[f64; 6]> = (0..40)
+            .map(|k| multi_year_readings(&r[k * 60..k * 60 + 5040]))
+            .collect();
+        let (c, edges) = record_band_joint(&reads, &[0, 1, 2, 3, 4, 5], MULTI_YEAR_ALPHA / 2.0);
+        assert_eq!(c, 0.48750000000000004);
+        assert_eq!(
+            edges,
+            vec![
+                (-0.2628711828928611, 0.013658019501475917),
+                (0.828774741719819, 1.2935407944701058),
+                (0.873770166713951, 1.7718478665236999),
+                (0.3648760869405728, 0.5040042264737004),
+                (7.142857142857143, 9.384920634920634),
+                (3.3326720888712558, 22.019440587185084),
+            ]
+        );
     }
 
     #[test]

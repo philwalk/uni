@@ -298,8 +298,9 @@ On the S&P set,
 10 of the 31 members its search admitted: valuation dispersion 0.30 (0.30, no read missing), the
 lower wing 6.5 (6.7, 5%), kurtosis 24.9 (21.8), the up-day share 53.7 (55.0), the downside excess 2.5
 (3.1), the short rate 4.2% and the floor share 9.4% (4.6% / 14.6%; 5% and 0%), the bond rows inside
-on every read, and the S&P's standing misses carried by every member: d20 2.61, the upper wing 2.6
-against 7.6 (92%), the largest 3-year run-up and the longest calm stretch. To run one:
+on every read, and the S&P's standing miss carried by every member, the upper wing 2.6 against 7.6
+(92%). No member of either set misses a multi-year row on more than one of its four seeds (the
+3-year variance ratio from 1954 on 10% of the S&P set's reads). To run one:
 
 ```
 market_sim.exe -worldset test-data/worlds/0.24.5-nasdaq.json -worldindex 3 -anchors nasdaq -paths 200 -years 40 -emitall -emit m3.tsv
@@ -747,16 +748,6 @@ jumps and unwinds at any point of the cycle, not from the top of a run-up, so ND
 Nasdaq history and MISSES, and CRSP at the S&P's 92nd percentile. That is the item the mania work
 targets next; the row is what lets the search see it.
 
-**`largest 3y run-up`** and **`longest calm stretch`** are the third and fourth extreme rows, on the
-same window and for the reverse failure: a world producing events the record rules out. Per path the
-first is the largest log return over any 756 sessions and the second the most sessions in a row
-within 20% of the running peak. The century's run-up (CRSP x2.39, log 0.872) sat below 99.9% of the
-S&P worlds' single histories, whose median ran x3.8, and its calm stretch (2190 sessions) below 98%
-of theirs (median 4000): the S&P worlds trend at three years where the record does not. The NDX
-reads 1.753 and 1927 at the Nasdaq worlds' 88th and 30th. Both are in the loss at the neutral judgment
-1.0, the precision factor (the single-history spread relative to the record: 0.28 and 0.61 on the S&P)
-setting the pull; the S&P recipe is re-solved under them.
-
 Read it as `-noise`'s `real@`, because it is the same measurement: near 50% the record is a typical
 history of this model, near 0 or 100 it is not. It needs at least 20 histories to place a record at
 all — below that the row reports `n/a` and a MISS, since one history reads 0% or 100% and neither is
@@ -765,6 +756,51 @@ a measurement.
 In the sidecar such a row carries `"aggregation": "ensemble-extreme"`, `"ratio": null` and a
 `"percentile"`, so a consumer cannot make the division by accident. `"horizonYears"` is on every
 row: the length `model` was read over on a row with a record band, the anchor's record elsewhere.
+
+**The multi-year rows** grade what a year or more of a series is one observation of. Six
+statistics, each a row against the set's equity window and again, with `long` appended to its name,
+against the set's long window (the bubble coupling's: the CRSP century, the NDX price index from
+1990); `multiyear-2026-09-29.tsv` carries the records.
+
+| row | statistic |
+|---|---|
+| `annual autocorr` | the lag-1 correlation of successive annual log changes |
+| `variance ratio 3y`, `variance ratio 5y` | the variance of k-year log changes over k times the variance of the annual changes across the same span; 1 without serial dependence |
+| `3y p95 excess` | the 95th percentile of the log return over every 756-session window, less the series' own mean 3-year return |
+| `decline gap p90 y` | the 90th percentile of the years between the peaks of successive declines of 20% or more |
+| `under water 20% %` | sessions more than 20% under the running peak, in percent |
+
+Block statistics are averaged over twelve phases spread evenly across the block's own length. Two
+windows, because the record's eras disagree: CRSP's annual autocorrelation reads +0.03 over the
+century and −0.13 from 1954, its time under water 25.5% and 12.6%.
+
+Each row reports the record's percentile among the world's single histories of the window's length,
+as an extreme row does: a one-year block resample has no multi-year structure left to read, so
+these rows carry no record band. A row MISSES when the record falls outside the family's joint band
+of those histories, printed as `within`. The band's ranks are set so that a world the record is a
+typical history of clears all six rows of a window at once 95% of the time and both windows 90%; at
+200 histories its edges sit near the 1st and 99th percentiles. The rows carry weight 0 in the loss.
+
+```
+ variance ratio 3y   model   1.32   real   0.75   record@   3% of 72y histories (n=200)   within 0.66..1.91
+```
+
+On 32 fresh seeds at 200 × 100, `0.24.5-sp500` reads the record from 1954 at the 4th, 1st, 2nd, 9th
+and 7th percentile on the first five rows, the 3-year ratio outside its band on 5 seeds, and the
+century at the 19th, 8th, 8th, 22nd and 20th: the worlds' returns persist over two to five years
+where the record's since 1954 reverse. Time under water reads the 36th and 79th. `0.24.5-nasdaq`
+reads QQQ and the NDX between the 8th and 97th percentile, the decline gap outside its band on one
+seed.
+
+In the sidecar a multi-year row carries `"aggregation": "single-history"`, `"ratio": null`, a
+`"percentile"` and `"historyBand"`, the joint band its `miss` reads the record against.
+
+**`largest 3y run-up`**, **`longest calm stretch`** and **`equity d20 vs real`** are reported
+beneath the table and in the sidecar's `gate.reported`, and not graded. The first two are one number
+from one history each: the century's run-up (log 0.872) sits at the 1st percentile of its own years
+resampled in one-year blocks, so a world with the record's structure reads it as a miss. The fund
+relation behind the third reads the CRSP index itself at 2.3 from 1954 (12.6% of sessions under
+water against the relation's 5.5%); `under water 20% %` grades the rung against the index.
 
 **An extreme also needs its own window**, and that is a separate decision from its own horizon. The
 deepest episode is the one statistic a window can delete: across the committed fixture, median depth
@@ -1877,12 +1913,12 @@ the anticipated recovery 1, and the spread's drawdown term 3.0, all read off the
 fixed; the other dials re-solved by search with valuation dispersion, the floor share and the
 bond's growth rally required inside their bands, and the noise skew at 0.85 for the up-day share;
 the floor held and the rate mean at 6%, and the satellite's relative cycle at the Nasdaq basket's
-dials. On 32 fresh seeds at 200 × 100 every class passes on all 32 with 4.0 rows missed a seed:
+dials. On 32 fresh seeds at 200 × 100 every class passes on all 32 with 1.2 rows missed a seed:
 valuation dispersion 0.31 (record 0.30), the lower wing 7.4% (6.7%), kurtosis 23.9 (21.8), the
 downside excess 3.0 (3.1), the up-day share 53.6% (55.0%), the bond's inflation crash −27.8
 (−27.9), the short rate 4.3% and the floor share 8.3% (4.6% and 14.6%), the bond's growth rally
-9.3 (7.0), tail hedge corr −0.33 (−0.27); the upper wing, d20, the largest 3-year run-up and the
-longest calm stretch are its standing misses. It is member 0 of `test-data/worlds/0.24.5-sp500.json`
+9.3 (7.0), tail hedge corr −0.33 (−0.27); the upper wing is its standing miss, and the 3-year
+variance ratio from 1954 misses on 5 of the 32. It is member 0 of `test-data/worlds/0.24.5-sp500.json`
 and the S&P world to pin in place of `0.24.4-sp500-channels`.
 
 ## The bust swing — `-bustamp`

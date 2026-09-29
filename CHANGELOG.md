@@ -1,5 +1,42 @@
 ## Unreleased
 
+**Multi-year structure is graded, against the world's own histories**
+
+- Twelve fidelity rows: six statistics a year or more of a series is one observation of, each
+  against the set's equity window and, with `long` appended to its name, against the set's long
+  window (the CRSP century; the NDX price index from 1990). `annual autocorr`, the lag-1
+  correlation of successive annual log changes; `variance ratio 3y` and `variance ratio 5y`, the
+  variance of k-year log changes over k times the annual changes' across the same span;
+  `3y p95 excess`, the 95th percentile of the log return over every 756-session window less the
+  series' mean 3-year return; `decline gap p90 y`, the 90th percentile of the years between the
+  peaks of successive 20%+ declines; `under water 20% %`, sessions more than 20% under the running
+  peak. Block statistics average twelve phases spread across the block's length. Two windows
+  because the record's eras disagree: CRSP's annual autocorrelation reads +0.03 over the century
+  and -0.13 from 1954, its time under water 25.5% and 12.6%. Records in
+  `multiyear-2026-09-29.tsv`, from `record_bands -multiyear [-long]`.
+- Graded by where the record falls among the world's single histories of the window's length: a
+  one-year block resample keeps no multi-year structure, so these rows carry no record band. A row
+  misses when the record is outside the family's joint band of those histories (`within` in the
+  report), which a world the record is a typical history of clears on every row of both windows at
+  once 90% of the time. Weight 0 in the loss.
+- `largest 3y run-up`, `longest calm stretch` and `equity d20 vs real` are reported beneath the
+  fidelity table, neither graded nor in the loss. The century's largest run-up sits at the 1st
+  percentile of its own years resampled, so a world with the record's structure read it as a miss;
+  the fund relation behind the 20% rung reads the CRSP index itself at 2.3 from 1954.
+- Sidecar schema 21 → 22: the twelve rows carry `"aggregation": "single-history"`; every fidelity
+  row gained `historyBand` (the joint band on a multi-year row, null elsewhere); `gate` gained
+  `reported`, the three rows' readings and records.
+- What it shows, on 32 fresh seeds at 200 × 100: `0.24.5-sp500` misses 1.2 rows a seed, the upper
+  wing on every seed and the 3-year variance ratio from 1954 on 5 of them. The record from 1954
+  sits at the worlds' 4th, 1st, 2nd, 9th and 7th percentile on the annual autocorrelation, the two
+  variance ratios, the 3-year tail and the decline gap, and the century at the 19th, 8th, 8th,
+  22nd and 20th: the worlds' returns persist over two to five years where the record's since 1954
+  reverse. `0.24.5-nasdaq` misses 1.0, the bubble coupling on every seed and the decline gap
+  on one. Both calibration sets stand: no member misses a multi-year row on more than one of its
+  four judge seeds.
+- `-fitness` totals are not comparable with earlier ones, three rows having left the loss:
+  `0.24.5-sp500` reads 2.019 and `0.24.5-nasdaq` 2.925 at seed 1.
+
 **Every verdict grades every derived series and the macro panel**
 
 - The verdict ensemble runs the caller's world with every channel the caller left off at the
@@ -175,14 +212,10 @@ short rate**
   bit-identical. At 1 it moves the S&P recipe's annual-return autocorrelation +0.12 -> +0.09 (record
   -0.07): the worlds' year-to-year momentum is mostly the disaster's decline leg (2.0 log over 2.5
   years, half again 1929's depth), open.
-- `largest 3y run-up` and `longest calm stretch`, two extreme rows beside the bubble coupling on
-  its window (`run_up_3y_of` / `runUp3yOf`: the largest log return over any 756 sessions;
+- `largest 3y run-up` and `longest calm stretch`, two reported rows on the bubble coupling's
+  window (`run_up_3y_of` / `runUp3yOf`: the largest log return over any 756 sessions;
   `calm_stretch_of` / `calmStretchOf`: the most sessions in a row within 20% of the running peak;
-  records in `bubblebust-2026-09-24.tsv`, CRSP 0.872 and 2190 sessions, NDX 1.753 and 1927). Graded
-  by the record's percentile among single histories and in the loss at the neutral judgment 1.0 with
-  the single-history spread as the precision: the century's
-  run-up sat below 99.9% of the S&P worlds' and its calm stretch below 98%, a world producing events
-  the record rules out.
+  records in `bubblebust-2026-09-24.tsv`, CRSP 0.872 and 2190 sessions, NDX 1.753 and 1927).
 - `0.24.4` is a `-releases` row (`v0_24_4`, the 0.24.4 S&P default), so `-atrelease 0.24.4` and the
   tests that name it resolve under 0.24.5.
 - The emit sidecar's `episodes` block (schema 20 -> 21): every 20%+ decline of the emitted path
@@ -234,16 +267,16 @@ short rate**
   fixed; the other dials re-solved by search with valuation dispersion, the floor share and the
   bond's growth rally required inside their bands, the noise skew at 0.85 for the up-day share; the
   floor held while the market is more than 5% under its peak, the rate mean 6%. On 32 fresh seeds
-  at 200 × 100 every class passes on all 32, with 4.0 rows missed a seed: valuation dispersion 0.31
+  at 200 × 100 every class passes on all 32, with 1.2 rows missed a seed: valuation dispersion 0.31
   (record 0.30), the lower wing 7.4% (6.7%), kurtosis 23.9 (21.8), the downside excess 3.0 (3.1),
   the up-day share 53.6% (55.0%), the bond's inflation crash -27.8 (-27.9), the short rate 4.3% and
   the floor share 8.3% (4.6% / 14.6%), the bond's growth rally 9.3 (7.0), tail hedge corr -0.33
-  (-0.27). The upper wing, d20, the largest 3-year run-up and the longest calm stretch are its
-  standing misses. The S&P anchors' spreads are the default world's and stay.
+  (-0.27). The upper wing is its standing miss, and the 3-year variance ratio from 1954 misses on
+  5 of the 32. The S&P anchors' spreads are the default world's and stay.
 - `test-data/worlds/0.24.5-sp500.json`, the S&P calibration set from it: 10 members (member 0 the
   recipe) of the 31 its search admitted with the disaster's dials and the spread term held, none
   failing a gate or missing a record-band row on the majority of four fresh seeds beyond the
-  recipe's standing misses. Set-level, valuation dispersion 0.30 (record 0.30), the lower wing 6.5%
+  recipe's standing miss. Set-level, valuation dispersion 0.30 (record 0.30), the lower wing 6.5%
   (6.7%, 5% of reads missing), kurtosis 24.9 (21.8), the short rate 4.2% and the floor share 9.4%
   (4.6% / 14.6%), the bond rows inside on every read.
 
