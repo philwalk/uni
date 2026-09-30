@@ -48,6 +48,10 @@ object RecordBands {
     "              by `rateReadings`, its resamples by `rateResamples`, their own joint band",
     "-bond         print the bond row (`BondBandRows`) of a -yahoo window (TLT) instead: the record",
     "              by `bondReadings`, its resamples by `bondResamples`, its own joint band",
+    "-sectors DIR  THE SECTOR ROWS instead: Ken French's `10_Industry_Portfolios.CSV`,",
+    "              `49_Industry_Portfolios.CSV` and `F-F_Research_Data_Factors.CSV` in DIR as the",
+    "              library publishes them (unzipped), the rows of `sectors-2026-09-30.tsv` with 5-95",
+    "              block-bootstrap bands where a row has one",
   )
 
   /** `(date, log return)` for every session of the consumer's cached Yahoo file after its first. */
@@ -99,6 +103,15 @@ object RecordBands {
       case _ => false
 
   def main(args: Array[String]): Unit = {
+    val k = args.indexOf("-sectors")
+    if k >= 0 then
+      val dir = args.lift(k + 1).getOrElse(usage("-sectors needs a directory"))
+      def num(flag: String, default: Long): Long =
+        val i = args.indexOf(flag)
+        if i < 0 then default
+        else args.lift(i + 1).flatMap(_.toLongOption).getOrElse(usage(s"$flag wants a non-negative integer"))
+      printSectorRows(dir, num("-resamples", 20000L).toInt, num("-seed", 20260918L))
+      return
     var yahoo = ""; var french = ""; var fred = ""; var from = ""; var to = ""
     var set = ""; var series = ""; var rows = Vector.empty[String]
     var resamples = 20000; var seed = 20260918L; var header = false
@@ -216,6 +229,64 @@ object RecordBands {
   /** The bond row (`BondBandRows`) on a bond's return window (`-yahoo`, TLT): the record by
     * `bondReadings`, its block resamples by `bondResamples`, a joint band over the one row at this
     * window's share of the set's miss rate -- the same columns as the equity rows. */
+  /** The first monthly block of one of Ken French's published CSVs: the run of rows keyed `YYYYMM`
+    * that follows the first column-name row, as `YYYY-MM` and the columns in fractions; `-99.99`
+    * and `-999`, the library's missing marks, `None`. */
+  def readFrenchMonthly(file: String): (Vector[String], Vector[Vector[Option[Double]]]) =
+    val lines = Paths.get(file).lines.map(_.split(",", -1).map(_.trim).toVector).toVector
+    def isMonth(f: Vector[String]) = f.length > 1 && f(0).length == 6 && f(0).forall(_.isDigit)
+    val start = lines.indexWhere(isMonth)
+    if start < 0 then usage(s"$file: no monthly rows")
+    val cols  = lines(start).length - 1
+    val rows  = lines.drop(start).takeWhile(isMonth)
+    for r <- rows if r.length != cols + 1 do
+      usage(s"$file: [${r.mkString(",")}] has ${r.length} fields, the block ${cols + 1}")
+    val dates = rows.map(r => s"${r(0).take(4)}-${r(0).drop(4)}")
+    val table = Vector.tabulate(cols)(k => rows.map(r => r(k + 1).toDoubleOption.filter(_ > -99.0).map(_ / 100.0)))
+    (dates, table)
+
+  /** The panel of one industry table beside the factors, aligned on the months both hold. */
+  def sectorPanel(dir: String, table: String): (Vector[String], MarketSim.SectorPanel) =
+    val (fd, fac) = readFrenchMonthly(s"$dir/F-F_Research_Data_Factors.CSV")
+    val (id, ind) = readFrenchMonthly(s"$dir/$table")
+    val months = id.filter(fd.contains)
+    def pick(dates: Vector[String], col: Vector[Option[Double]]): Vector[Option[Double]] =
+      months.map(m => col(dates.indexOf(m)))
+    def must(v: Vector[Option[Double]]): Vector[Double] = v.map(_.getOrElse(usage("a blank in the factors file")))
+    val mktRf = must(pick(fd, fac(0)))
+    val rf    = must(pick(fd, fac(3)))
+    (months, MarketSim.SectorPanel(ind.map(c => pick(id, c)), mktRf.zip(rf).map(_ + _), rf))
+
+  /** THE SECTOR ROWS (`-sectors`): momentum (12-1 and 6-1, whole record and from 1963-07), the
+    * per-sector trend (the 12-month sign and the 10-month SMA) and the cross-section shape, on the
+    * 10- and 49-industry tables; one TSV row each, bands where a row has one. */
+  def printSectorRows(dir: String, resamples: Int, seed: Long): Unit =
+    println("row\ttable\tform\twindow\tstatistic\tvalue\tlo\thi\tmonths")
+    for (table, file, top) <- Vector(("industries10", "10_Industry_Portfolios.CSV", 3),
+                                     ("industries49", "49_Industry_Portfolios.CSV", 10)) do
+      val (months, p) = sectorPanel(dir, file)
+      val from63 = months.indexWhere(_ >= "1963-07")
+      if from63 < 0 then usage("no month from 1963-07")
+      eprintln(s"$table: ${p.returns.length} industries, ${months.length} months ${months.head}..${months.last}; " +
+               s"$resamples resamples, seed $seed")
+      for (label, form) <- Vector(("12-1", 11), ("6-1", 5)); (window, from) <- Vector(("all", 0), ("post-1963", from63)) do
+        val m = MarketSim.sectorMomentum(p, form, top, from)
+        val (lo, hi) = MarketSim.sectorMomentumBand(m.spreads, resamples, seed)
+        val n = m.spreads.length
+        println(f"momentum\t$table%s\t$label%s\t$window%s\tmean spread\t${m.mean}%.6f\t$lo%.6f\t$hi%.6f\t$n%d")
+        println(f"momentum\t$table%s\t$label%s\t$window%s\tt-stat\t${m.t}%.6f\t\t\t$n%d")
+        println(f"momentum\t$table%s\t$label%s\t$window%s\tshare positive\t${m.sharePositive}%.6f\t\t\t$n%d")
+      for (label, mode) <- Vector(("12m", MarketSim.SectorTrend.Sign12), ("sma10", MarketSim.SectorTrend.Sma10))
+          (window, from) <- Vector(("all", 0), ("post-1963", from63)) do
+        val (v, n) = MarketSim.sectorTrend(p, mode, from)
+        val (lo, hi) = MarketSim.sectorTrendBand(p, mode, from, resamples, seed)
+        println(f"trend\t$table%s\t$label%s\t$window%s\tpositive minus negative\t$v%.6f\t$lo%.6f\t$hi%.6f\t$n%d")
+      val (s, n) = MarketSim.sectorShape(p)
+      println(f"shape\t$table%s\t\tall\tmean cross-sectional sd\t${s(0)}%.6f\t\t\t${n(0)}%d")
+      println(f"shape\t$table%s\t\tall\tmedian pairwise correlation\t${s(1)}%.6f\t\t\t${n(0)}%d")
+      println(f"shape\t$table%s\t\tmarket worst decile\tmedian pairwise correlation\t${s(2)}%.6f\t\t\t${n(1)}%d")
+      println(f"shape\t$table%s\t\tmarket middle decile\tmedian pairwise correlation\t${s(3)}%.6f\t\t\t${n(2)}%d")
+
   def printBondRows(set: String, series: String, resamples: Int, seed: Long, joint: Double, of: Int,
                     header: Boolean, r: Array[Double], window: String): Unit =
     val record = MarketSim.bondReadings(r)

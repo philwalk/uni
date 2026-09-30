@@ -7468,6 +7468,312 @@ pub fn rate_readings(rate: &[f64]) -> [f64; 2] {
 /// 2.4 on a world whose rate spends a third of its time at zero -- one hiking cycle sinks a
 /// bond for years -- with TLT's own history at their 26th percentile.
 pub const BOND_BAND_ROWS: [&str; 1] = ["bond depth vs vol"];
+// ---- the sector rows -------------------------------------------------------------------------
+
+/// A PANEL OF INDUSTRY PORTFOLIOS read monthly, the record ruler of a sector channel: Ken
+/// French's value-weighted industry returns (10 or 49) beside the market (`Mkt-RF + RF`) and the
+/// bill rate, all simple monthly returns as fractions, `returns[industry][month]` `None` where the
+/// table is blank. Every row below is read from one of these, so a world's sector legs are read
+/// the same way once they are aggregated to months.
+pub struct SectorPanel {
+    pub returns: Vec<Vec<Option<f64>>>,
+    pub market: Vec<f64>,
+    pub rf: Vec<f64>,
+}
+
+/// months in one bootstrap block of the sector rows
+pub const SECTOR_BLOCK_MONTHS: usize = 12;
+/// complete months a pair of industries needs before its correlation counts
+pub const SECTOR_CORR_MIN_MONTHS: usize = 60;
+
+/// THE CROSS-SECTIONAL MOMENTUM ROW: each month, industries ranked by their cumulative return over
+/// the `form` months ending two months back (12-1: 11 months; 6-1: 5) in excess of the market's
+/// over the same months, an industry dropped from the month when any window month or the held
+/// month is blank; long the top `top`, short the bottom `top`, equal-weighted, held one month.
+/// `spreads` holds each held month's long-minus-short return from month `from` on; `mean`, the
+/// t-statistic on it and the share of positive months summarise them.
+pub struct SectorMomentum {
+    pub mean: f64,
+    pub t: f64,
+    pub share_positive: f64,
+    pub spreads: Vec<f64>,
+}
+
+fn cum_simple(r: &[f64]) -> f64 {
+    r.iter().fold(1.0, |acc, x| acc * (1.0 + x)) - 1.0
+}
+
+fn mean_of(v: &[f64]) -> f64 {
+    v.iter().sum::<f64>() / v.len() as f64
+}
+
+/// Pearson's correlation of two equal-length series.
+fn pearson_of(x: &[f64], y: &[f64]) -> f64 {
+    let (mx, my) = (mean_of(x), mean_of(y));
+    let (mut sxy, mut sxx, mut syy) = (0.0, 0.0, 0.0);
+    for (a, b) in x.iter().zip(y) {
+        sxy += (a - mx) * (b - my);
+        sxx += (a - mx) * (a - mx);
+        syy += (b - my) * (b - my);
+    }
+    sxy / (sxx * syy).sqrt()
+}
+
+fn sd1(v: &[f64]) -> f64 {
+    let m = mean_of(v);
+    (v.iter().map(|x| (x - m) * (x - m)).sum::<f64>() / (v.len() - 1) as f64).sqrt()
+}
+
+pub fn sector_momentum(p: &SectorPanel, form: usize, top: usize, from: usize) -> SectorMomentum {
+    let months = p.market.len();
+    let mut spreads = Vec::new();
+    for t in (form + 1).max(from)..months {
+        let lo = t - form - 1;
+        let mkt = cum_simple(&p.market[lo..t - 1]);
+        let mut scored: Vec<(f64, f64)> = Vec::new();
+        for ind in &p.returns {
+            let held = ind[t];
+            let window: Option<Vec<f64>> = ind[lo..t - 1].iter().copied().collect();
+            if let (Some(h), Some(w)) = (held, window) {
+                scored.push((cum_simple(&w) - mkt, h));
+            }
+        }
+        if scored.len() < 2 * top {
+            continue;
+        }
+        scored.sort_by(|a, b| b.0.total_cmp(&a.0));
+        let long = mean_of(&scored[..top].iter().map(|x| x.1).collect::<Vec<_>>());
+        let short = mean_of(
+            &scored[scored.len() - top..]
+                .iter()
+                .map(|x| x.1)
+                .collect::<Vec<_>>(),
+        );
+        spreads.push(long - short);
+    }
+    let n = spreads.len();
+    let mean = mean_of(&spreads);
+    SectorMomentum {
+        mean,
+        t: mean / (sd1(&spreads) / (n as f64).sqrt()),
+        share_positive: spreads.iter().filter(|&&x| x > 0.0).count() as f64 / n as f64,
+        spreads,
+    }
+}
+
+/// THE PER-SECTOR TREND ROW: for each industry the mean next-month return in excess of the bill
+/// rate after a positive signal minus after a negative one, averaged over the industries that show
+/// both signs. `Sign12`: the trailing twelve months' return in excess of the bill rate's, read at
+/// the end of the month before; `Sma10`: the industry's price index above its ten-month mean at
+/// the end of the month before. A month counts for an industry only where every month the signal
+/// reads is present.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SectorTrend {
+    Sign12,
+    Sma10,
+}
+
+/// `(signal, next-month excess)` per industry over the held months from `from`: what the row and
+/// its bootstrap both read.
+fn sector_trend_pairs(p: &SectorPanel, mode: SectorTrend, from: usize) -> Vec<Vec<(bool, f64)>> {
+    let months = p.market.len();
+    let look = match mode {
+        SectorTrend::Sign12 => 12,
+        SectorTrend::Sma10 => 10,
+    };
+    p.returns
+        .iter()
+        .map(|ind| {
+            // the price index over present months; a blank restarts it
+            let mut px = vec![f64::NAN; months];
+            let mut level = 1.0;
+            for (k, r) in ind.iter().enumerate() {
+                match r {
+                    Some(x) => {
+                        level *= 1.0 + x;
+                        px[k] = level;
+                    }
+                    None => level = 1.0,
+                }
+            }
+            (look.max(from)..months)
+                .filter_map(|t| {
+                    let held = ind[t]?;
+                    let window: Option<Vec<f64>> = ind[t - look..t].iter().copied().collect();
+                    let w = window?;
+                    let signal = match mode {
+                        SectorTrend::Sign12 => cum_simple(&w) > cum_simple(&p.rf[t - look..t]),
+                        SectorTrend::Sma10 => {
+                            let pxw = &px[t - look..t];
+                            if pxw.iter().any(|x| x.is_nan()) {
+                                return None;
+                            }
+                            px[t - 1] > mean_of(pxw)
+                        }
+                    };
+                    Some((signal, held - p.rf[t]))
+                })
+                .collect()
+        })
+        .collect()
+}
+
+fn trend_of_pairs(pairs: &[Vec<(bool, f64)>]) -> f64 {
+    let per: Vec<f64> = pairs
+        .iter()
+        .filter_map(|v| {
+            let pos: Vec<f64> = v.iter().filter(|x| x.0).map(|x| x.1).collect();
+            let neg: Vec<f64> = v.iter().filter(|x| !x.0).map(|x| x.1).collect();
+            (!pos.is_empty() && !neg.is_empty()).then(|| mean_of(&pos) - mean_of(&neg))
+        })
+        .collect();
+    mean_of(&per)
+}
+
+/// The trend row's reading and the number of held months it is read over.
+pub fn sector_trend(p: &SectorPanel, mode: SectorTrend, from: usize) -> (f64, usize) {
+    let pairs = sector_trend_pairs(p, mode, from);
+    let n = pairs.iter().map(Vec::len).max().unwrap_or(0);
+    (trend_of_pairs(&pairs), n)
+}
+
+/// Bootstrap month starts: `resamples` draws of `blocks` uniform block starts over a series of
+/// `n` months in `SECTOR_BLOCK_MONTHS` blocks, from one `NumPyRng(seed)`, resample-major.
+fn sector_block_starts(n: usize, resamples: usize, seed: u64) -> Vec<Vec<usize>> {
+    let l = SECTOR_BLOCK_MONTHS;
+    assert!(
+        n > l && u32::try_from(n).is_ok(),
+        "a panel must hold more than one block"
+    );
+    let blocks = n.div_ceil(l);
+    let bound = (n - l + 1) as u32;
+    let mut rng = NumPyRng::new(seed);
+    (0..resamples)
+        .map(|_| {
+            (0..blocks)
+                .map(|_| rng.next_bounded_u32(bound) as usize)
+                .collect()
+        })
+        .collect()
+}
+
+fn block_indices(starts: &[usize], n: usize) -> Vec<usize> {
+    let mut idx = Vec::with_capacity(n + SECTOR_BLOCK_MONTHS);
+    for &s in starts {
+        idx.extend(s..s + SECTOR_BLOCK_MONTHS);
+    }
+    idx.truncate(n);
+    idx
+}
+
+/// The 5th and 95th percentile of the momentum row's mean over block resamples of its spreads.
+pub fn sector_momentum_band(spreads: &[f64], resamples: usize, seed: u64) -> (f64, f64) {
+    let n = spreads.len();
+    let means: Vec<f64> = sector_block_starts(n, resamples, seed)
+        .par_iter()
+        .map(|st| {
+            mean_of(
+                &block_indices(st, n)
+                    .iter()
+                    .map(|&i| spreads[i])
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect();
+    let s = finite_sorted(&means);
+    (pctile_of(&s, 0.05), pctile_of(&s, 0.95))
+}
+
+/// The 5th and 95th percentile of the trend row over block resamples of its held months, the
+/// per-industry statistic recomputed on each.
+pub fn sector_trend_band(
+    p: &SectorPanel,
+    mode: SectorTrend,
+    from: usize,
+    resamples: usize,
+    seed: u64,
+) -> (f64, f64) {
+    let pairs = sector_trend_pairs(p, mode, from);
+    let n = pairs.iter().map(Vec::len).max().unwrap_or(0);
+    let vals: Vec<f64> = sector_block_starts(n, resamples, seed)
+        .par_iter()
+        .map(|st| {
+            let idx = block_indices(st, n);
+            let drawn: Vec<Vec<(bool, f64)>> = pairs
+                .iter()
+                .map(|v| idx.iter().filter_map(|&i| v.get(i).copied()).collect())
+                .collect();
+            trend_of_pairs(&drawn)
+        })
+        .collect();
+    let s = finite_sorted(&vals);
+    (pctile_of(&s, 0.05), pctile_of(&s, 0.95))
+}
+
+/// NumPy's default (linear) percentile of a sorted series; NaN of an empty one.
+fn linear_pctile(sorted: &[f64], q: f64) -> f64 {
+    if sorted.is_empty() {
+        return f64::NAN;
+    }
+    let pos = q * (sorted.len() - 1) as f64;
+    let lo = pos.floor() as usize;
+    let hi = (lo + 1).min(sorted.len() - 1);
+    sorted[lo] + (pos - lo as f64) * (sorted[hi] - sorted[lo])
+}
+
+/// THE CROSS-SECTION SHAPE ROWS: the mean over months of the cross-sectional sd of the industries'
+/// returns; the median pairwise correlation over the whole sample; the same over the months in
+/// the market's worst decile (at or under its 10th percentile) and over its middle decile (strictly
+/// between its 45th and 55th), a pair counting where it has `SECTOR_CORR_MIN_MONTHS` complete
+/// months, the median NumPy's (the mean of the middle two on an even count). Returns `[cs sd, corr, corr worst, corr middle]` and the three month counts.
+pub fn sector_shape(p: &SectorPanel) -> ([f64; 4], [usize; 3]) {
+    let months = p.market.len();
+    let cs: Vec<f64> = (0..months)
+        .filter_map(|t| {
+            let v: Vec<f64> = p.returns.iter().filter_map(|ind| ind[t]).collect();
+            (v.len() >= 2).then(|| sd1(&v))
+        })
+        .collect();
+    let sorted = finite_sorted(&p.market);
+    let (p10, p45, p55) = (
+        linear_pctile(&sorted, 0.10),
+        linear_pctile(&sorted, 0.45),
+        linear_pctile(&sorted, 0.55),
+    );
+    let all: Vec<usize> = (0..months).collect();
+    let worst: Vec<usize> = (0..months).filter(|&t| p.market[t] <= p10).collect();
+    let middle: Vec<usize> = (0..months)
+        .filter(|&t| p.market[t] > p45 && p.market[t] < p55)
+        .collect();
+    let corr_over = |ts: &[usize]| -> f64 {
+        let mut cs = Vec::new();
+        for a in 0..p.returns.len() {
+            for b in a + 1..p.returns.len() {
+                let (mut x, mut y) = (Vec::new(), Vec::new());
+                for &t in ts {
+                    if let (Some(u), Some(v)) = (p.returns[a][t], p.returns[b][t]) {
+                        x.push(u);
+                        y.push(v);
+                    }
+                }
+                if x.len() >= SECTOR_CORR_MIN_MONTHS {
+                    cs.push(pearson_of(&x, &y));
+                }
+            }
+        }
+        // the median as NumPy takes it, the mean of the two middle values on an even count
+        linear_pctile(&finite_sorted(&cs), 0.5)
+    };
+    (
+        [
+            mean_of(&cs),
+            corr_over(&all),
+            corr_over(&worst),
+            corr_over(&middle),
+        ],
+        [cs.len(), worst.len(), middle.len()],
+    )
+}
 
 /// The bond row on one series of daily log returns: the price it compounds to, its share of
 /// sessions more than 10% under the running peak, over the share its RMS volatility implies
@@ -23223,6 +23529,51 @@ mod record_band_tests {
             st.short_rate,
             base.short_rate
         );
+    }
+
+    /// THE SECTOR ROWS read a hand-built panel as stated, and the fixture holds the record's
+    /// 12-1 momentum on 10 industries as the docs quote it.
+    #[test]
+    fn the_sector_rows_read_a_hand_panel_as_stated_and_the_fixture_is_the_record() {
+        let months = 40;
+        // A gains 2% a month, B nothing, C loses 2%; the market and the bill rate are flat
+        let ind = |x: f64| -> Vec<Option<f64>> { vec![Some(x); months] };
+        let p = SectorPanel {
+            returns: vec![ind(0.02), ind(0.0), ind(-0.02)],
+            market: vec![0.0; months],
+            rf: vec![0.0; months],
+        };
+        let m = sector_momentum(&p, 11, 1, 0);
+        assert_eq!(m.spreads.len(), months - 12);
+        assert!((m.mean - 0.04).abs() < 1e-12 && m.share_positive == 1.0);
+        let (band_lo, band_hi) = sector_momentum_band(&m.spreads, 50, 7);
+        assert!((band_lo - 0.04).abs() < 1e-12 && (band_hi - 0.04).abs() < 1e-12);
+        // the trend row needs both signs: D rises 1% for a year, then falls 1%, then rises again
+        let d: Vec<Option<f64>> = (0..months)
+            .map(|k| Some(if (k / 12) % 2 == 0 { 0.01 } else { -0.01 }))
+            .collect();
+        let q = SectorPanel {
+            returns: vec![d],
+            market: vec![0.0; months],
+            rf: vec![0.0; months],
+        };
+        let (v, n) = sector_trend(&q, SectorTrend::Sign12, 0);
+        assert_eq!(n, months - 12);
+        assert!(v.is_finite());
+        // constant industries have no correlation to read, and a NaN there is the honest answer
+        let (s, ns) = sector_shape(&p);
+        assert!(s[0] > 0.0 && s[1].is_nan());
+        assert_eq!(ns[0], months);
+        let text = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../test-data/equity-anchors/sectors-2026-09-30.tsv"
+        ))
+        .expect("the sector fixture");
+        let row = text
+            .lines()
+            .find(|l| l.starts_with("momentum\tindustries10\t12-1\tall\tmean spread"))
+            .expect("the 12-1 row");
+        assert_eq!(row.split('\t').nth(5), Some("0.003923"));
     }
 
     /// THE MULTI-YEAR ROWS' anchors are `multiyear-2026-09-29.tsv`'s records, row for row in both

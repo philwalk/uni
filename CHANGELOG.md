@@ -39,6 +39,26 @@
 - `-fitness` totals are not comparable with earlier ones, three rows having left the loss and
   six entered it: `0.24.5-sp500` reads 2.862 and `0.24.5-nasdaq` 4.019 at seed 1.
 
+**The sector rows: the record ruler of a sector channel**
+
+- `record_bands -sectors <data>` reads Ken French's value-weighted monthly industry portfolios
+  (`10_Industry_Portfolios.CSV`, `49_Industry_Portfolios.CSV`, 1926-07 to 2026-08) beside the
+  market and the bill rate (`F-F_Research_Data_Factors.CSV`), the files as the library publishes
+  them, and
+  prints `test-data/equity-anchors/sectors-2026-09-30.tsv`: cross-sectional 12-1 and 6-1 momentum
+  (long the top 3 of 10, short the bottom 3, held one month; mean spread, t-statistic, share of
+  positive months, a 12-month block-bootstrap band), the per-sector trend (next-month excess return
+  after a positive 12-month sign or 10-month SMA signal minus after a negative one, averaged over
+  industries) and the cross-section shape (cross-sectional sd, median pairwise correlation whole,
+  in the market's worst decile and in its middle decile). Both twins (`sector_momentum` /
+  `sectorMomentum`, `sector_trend`, `sector_shape`); an independent implementation of the same
+  definitions reproduces every value to six decimals.
+- What the record says on 10 industries: 12-1 momentum +0.39% a month (t 3.4, band +0.21% to
+  +0.55%), 6-1 +0.14% and null from 1963; the 12-month trend +0.55%, the SMA form +0.37% with a band
+  through zero; cross-sectional sd 3.1%, pairwise correlation 0.70, 0.56 in the worst decile and
+  −0.03 in the middle. A sector channel, when built, is graded on these rows and never on a
+  rotation rule.
+
 **The drift regime's spread and the boom's fade are dials**
 
 - `-driftsd` (dial 67; default 0.04, the literal it replaces): the sd, a year, of the drift the

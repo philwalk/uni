@@ -33,6 +33,13 @@ const USAGE: &str =
     "usage: record_bands (-yahoo FILE | -french FILE) -from YYYY-MM-DD -to YYYY-MM-DD
                     -set NAME -series LABEL [-rows A,B] [-resamples N] [-seed S]
                     [-joint A] [-of N] [-header] [-coupling | -multiyear [-long]]
+       record_bands -sectors DIR [-resamples N] [-seed S]
+
+  -sectors DIR  THE SECTOR ROWS instead: Ken French's `10_Industry_Portfolios.CSV`,
+                `49_Industry_Portfolios.CSV` and `F-F_Research_Data_Factors.CSV` in DIR as the
+                library publishes them (unzipped), the first monthly block of each; prints the
+                momentum, trend and shape rows of `sectors-2026-09-30.tsv`, with 5-95
+                block-bootstrap bands where a row has one
 
   -yahoo FILE   the consumer's cached prices: the `dlog_adj_close` column; the first row is the anchor
                 price, not a return, and is skipped
@@ -290,8 +297,34 @@ fn returns_in_window(o: &Opts) -> Vec<(String, f64)> {
     }
 }
 
+/// `-sectors DIR [-resamples N] [-seed S]`: the sector rows, then done. False when the arguments
+/// name no `-sectors`.
+fn sector_mode(args: &[String]) -> bool {
+    let Some(k) = args.iter().position(|a| a == "-sectors") else {
+        return false;
+    };
+    let dir = args
+        .get(k + 1)
+        .cloned()
+        .unwrap_or_else(|| usage("-sectors needs a directory"));
+    let num = |flag: &str, default: u64| -> u64 {
+        args.iter().position(|a| a == flag).map_or(default, |i| {
+            args.get(i + 1)
+                .and_then(|v| v.parse().ok())
+                .unwrap_or_else(|| usage(&format!("{flag} wants a non-negative integer")))
+        })
+    };
+    let resamples = usize::try_from(num("-resamples", 20_000))
+        .unwrap_or_else(|_| usage("-resamples is too large"));
+    print_sector_rows(&dir, resamples, num("-seed", 20_260_918));
+    true
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if sector_mode(&args) {
+        return;
+    }
     let o = parse_args(&args);
     let dated = returns_in_window(&o);
     if dated.len() <= 252 {
@@ -500,4 +533,148 @@ fn print_bond_rows(o: &Opts, r: &[f64], window: &str) {
         record[0],
         qs.join("\t")
     );
+}
+
+/// The first monthly block of one of Ken French's published CSVs (`10_Industry_Portfolios.CSV`,
+/// `F-F_Research_Data_Factors.CSV`, ...): the run of rows keyed `YYYYMM` that follows the first
+/// column-name row, as `YYYY-MM` and the columns in fractions; `-99.99` and `-999`, the library's
+/// missing marks, `None`.
+fn read_french_monthly(file: &str) -> (Vec<String>, Vec<Vec<Option<f64>>>) {
+    let text = std::fs::read_to_string(file).unwrap_or_else(|e| usage(&format!("{file}: {e}")));
+    let lines: Vec<Vec<String>> = text
+        .lines()
+        .map(|l| l.split(',').map(|f| f.trim().to_string()).collect())
+        .collect();
+    let is_month =
+        |f: &[String]| f.len() > 1 && f[0].len() == 6 && f[0].bytes().all(|b| b.is_ascii_digit());
+    let start = lines
+        .iter()
+        .position(|f| is_month(f))
+        .unwrap_or_else(|| usage(&format!("{file}: no monthly rows")));
+    let cols = lines[start].len() - 1;
+    let mut dates = Vec::new();
+    let mut table: Vec<Vec<Option<f64>>> = vec![Vec::new(); cols];
+    for f in lines[start..].iter().take_while(|f| is_month(f)) {
+        if f.len() != cols + 1 {
+            usage(&format!(
+                "{file}: [{}] has {} fields, the block {}",
+                f.join(","),
+                f.len(),
+                cols + 1
+            ));
+        }
+        dates.push(format!("{}-{}", &f[0][0..4], &f[0][4..6]));
+        for (k, cell) in f[1..].iter().enumerate() {
+            let v: Option<f64> = cell.parse().ok();
+            table[k].push(v.filter(|x| *x > -99.0).map(|x| x / 100.0));
+        }
+    }
+    (dates, table)
+}
+
+/// The panel of one industry table beside the factors, aligned on the months both hold.
+fn sector_panel(dir: &str, table: &str) -> (Vec<String>, ms::SectorPanel) {
+    let (fd, fac) = read_french_monthly(&format!("{dir}/F-F_Research_Data_Factors.CSV"));
+    let (id, ind) = read_french_monthly(&format!("{dir}/{table}"));
+    let months: Vec<String> = id.iter().filter(|d| fd.contains(d)).cloned().collect();
+    let pick = |dates: &[String], col: &[Option<f64>]| -> Vec<Option<f64>> {
+        months
+            .iter()
+            .map(|m| {
+                col[dates
+                    .iter()
+                    .position(|d| d == m)
+                    .unwrap_or_else(|| usage("a month the factors hold is missing"))]
+            })
+            .collect()
+    };
+    let must = |v: Vec<Option<f64>>| -> Vec<f64> {
+        v.into_iter()
+            .map(|x| x.unwrap_or_else(|| usage("a blank in the factors file")))
+            .collect()
+    };
+    let mkt_rf = must(pick(&fd, &fac[0]));
+    let rf = must(pick(&fd, &fac[3]));
+    let market: Vec<f64> = mkt_rf.iter().zip(&rf).map(|(a, b)| a + b).collect();
+    let returns: Vec<Vec<Option<f64>>> = ind.iter().map(|c| pick(&id, c)).collect();
+    (
+        months,
+        ms::SectorPanel {
+            returns,
+            market,
+            rf,
+        },
+    )
+}
+
+/// THE SECTOR ROWS (`-sectors`): momentum (12-1 and 6-1, whole record and from 1963-07), the
+/// per-sector trend (the 12-month sign and the 10-month SMA) and the cross-section shape, on the
+/// 10- and 49-industry tables; one TSV row each, bands where a row has one.
+fn print_sector_rows(dir: &str, resamples: usize, seed: u64) {
+    println!("row\ttable\tform\twindow\tstatistic\tvalue\tlo\thi\tmonths");
+    for (table, file, top) in [
+        ("industries10", "10_Industry_Portfolios.CSV", 3usize),
+        ("industries49", "49_Industry_Portfolios.CSV", 10usize),
+    ] {
+        let (months, p) = sector_panel(dir, file);
+        let from63 = months
+            .iter()
+            .position(|d| d.as_str() >= "1963-07")
+            .unwrap_or_else(|| usage("no month from 1963-07"));
+        eprintln!(
+            "{table}: {} industries, {} months {}..{}; {resamples} resamples, seed {seed}",
+            p.returns.len(),
+            months.len(),
+            months[0],
+            months[months.len() - 1]
+        );
+        for (label, form) in [("12-1", 11usize), ("6-1", 5usize)] {
+            for (window, from) in [("all", 0usize), ("post-1963", from63)] {
+                let m = ms::sector_momentum(&p, form, top, from);
+                let (lo, hi) = ms::sector_momentum_band(&m.spreads, resamples, seed);
+                let n = m.spreads.len();
+                println!(
+                    "momentum\t{table}\t{label}\t{window}\tmean spread\t{:.6}\t{lo:.6}\t{hi:.6}\t{n}",
+                    m.mean
+                );
+                println!(
+                    "momentum\t{table}\t{label}\t{window}\tt-stat\t{:.6}\t\t\t{n}",
+                    m.t
+                );
+                println!(
+                    "momentum\t{table}\t{label}\t{window}\tshare positive\t{:.6}\t\t\t{n}",
+                    m.share_positive
+                );
+            }
+        }
+        for (label, mode) in [
+            ("12m", ms::SectorTrend::Sign12),
+            ("sma10", ms::SectorTrend::Sma10),
+        ] {
+            for (window, from) in [("all", 0usize), ("post-1963", from63)] {
+                let (v, n) = ms::sector_trend(&p, mode, from);
+                let (lo, hi) = ms::sector_trend_band(&p, mode, from, resamples, seed);
+                println!(
+                    "trend\t{table}\t{label}\t{window}\tpositive minus negative\t{v:.6}\t{lo:.6}\t{hi:.6}\t{n}"
+                );
+            }
+        }
+        let (s, n) = ms::sector_shape(&p);
+        println!(
+            "shape\t{table}\t\tall\tmean cross-sectional sd\t{:.6}\t\t\t{}",
+            s[0], n[0]
+        );
+        println!(
+            "shape\t{table}\t\tall\tmedian pairwise correlation\t{:.6}\t\t\t{}",
+            s[1], n[0]
+        );
+        println!(
+            "shape\t{table}\t\tmarket worst decile\tmedian pairwise correlation\t{:.6}\t\t\t{}",
+            s[2], n[1]
+        );
+        println!(
+            "shape\t{table}\t\tmarket middle decile\tmedian pairwise correlation\t{:.6}\t\t\t{}",
+            s[3], n[2]
+        );
+    }
 }

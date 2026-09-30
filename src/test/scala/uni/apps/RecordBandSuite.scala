@@ -75,6 +75,31 @@ class RecordBandSuite extends FunSuite:
 
   // THE MULTI-YEAR ROWS' anchors are `multiyear-2026-09-29.tsv`'s records, row for row in both
   // windows, and each statistic reads a hand-built series as stated.
+  // THE SECTOR ROWS read a hand-built panel as stated, and the fixture holds the record's 12-1
+  // momentum on 10 industries as the docs quote it.
+  test("the sector rows read a hand panel as stated and the fixture is the record") {
+    val months = 40
+    def ind(x: Double) = Vector.fill(months)(Some(x): Option[Double])
+    val p = MarketSim.SectorPanel(Vector(ind(0.02), ind(0.0), ind(-0.02)), Vector.fill(months)(0.0), Vector.fill(months)(0.0))
+    val m = MarketSim.sectorMomentum(p, 11, 1, 0)
+    assertEquals(m.spreads.length, months - 12)
+    assert(math.abs(m.mean - 0.04) < 1e-12 && m.sharePositive == 1.0)
+    val (lo, hi) = MarketSim.sectorMomentumBand(m.spreads, 50, 7L)
+    assert(math.abs(lo - 0.04) < 1e-12 && math.abs(hi - 0.04) < 1e-12)
+    val d = Vector.tabulate(months)(k => Some(if (k / 12) % 2 == 0 then 0.01 else -0.01): Option[Double])
+    val (v, n) = MarketSim.sectorTrend(MarketSim.SectorPanel(Vector(d), Vector.fill(months)(0.0), Vector.fill(months)(0.0)),
+                                       MarketSim.SectorTrend.Sign12, 0)
+    assertEquals(n, months - 12)
+    assert(!v.isNaN)
+    // constant industries have no correlation to read, and a NaN there is the honest answer
+    val (s, ns) = MarketSim.sectorShape(p)
+    assert(s(0) > 0.0 && s(1).isNaN)
+    assertEquals(ns(0), months)
+    val row = Paths.get("test-data/equity-anchors/sectors-2026-09-30.tsv").lines
+      .find(_.startsWith("momentum\tindustries10\t12-1\tall\tmean spread")).getOrElse(fail("the 12-1 row"))
+    assertEquals(row.split("\t")(5), "0.003923")
+  }
+
   test("the multi-year anchors are the fixture's records and the statistics read as stated") {
     val rows = Paths.get("test-data/equity-anchors/multiyear-2026-09-29.tsv").lines.toVector
       .filterNot(l => l.startsWith("#") || l.trim.isEmpty || l.startsWith("set\t"))

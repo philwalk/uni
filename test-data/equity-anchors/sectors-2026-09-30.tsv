@@ -1,0 +1,68 @@
+# THE SECTOR ROWS (2026-09-30): the record ruler of a sector channel, read from Ken French's
+# value-weighted monthly industry portfolios (10 and 49 industries) beside the market (Mkt-RF + RF)
+# and the bill rate, 1926-07 to 2026-08 (CRSP vintage 202608). Generator: `record_bands -sectors
+# <data> -resamples 2000 -seed 20260930`, with `10_Industry_Portfolios.CSV`,
+# `49_Industry_Portfolios.CSV` and `F-F_Research_Data_Factors.CSV` in <data> as the library
+# publishes them (unzipped; the first monthly block of each, -99.99 a missing month). Every value
+# reproduced to six decimals by an independent implementation of the same definitions.
+#
+# momentum   each month, industries ranked by their cumulative return over the `form` months ending
+#            two months back (12-1: eleven months; 6-1: five) in excess of the market's over the same
+#            months, an industry dropped from the month when any window month or the held month is
+#            blank; long the top 3 of 10 (10 of 49), short the bottom 3 (10), equal-weighted, held
+#            one month. `mean spread` is the mean monthly long-minus-short return; the band its 5th
+#            and 95th percentile over 12-month block resamples of the spread series. `post-1963`
+#            holds months from 1963-07.
+# trend      per industry, the mean next-month return in excess of the bill rate after a positive
+#            signal minus after a negative one, averaged over the industries; `12m`: the trailing
+#            twelve months' return over the bill rate's, `sma10`: the price index above its ten-month
+#            mean, both read at the end of the month before. The band resamples the held months in
+#            12-month blocks and recomputes the per-industry statistic.
+# shape      the mean over months of the cross-sectional sd of the industries' returns; the median
+#            pairwise correlation over the whole sample, over the months at or under the market's
+#            10th percentile and over those strictly between its 45th and 55th; a pair counts with
+#            60 complete months; the median NumPy's.
+#
+# Returns and spreads are monthly simple returns as fractions. The world is graded on the
+# 10-industry rows once a sector channel exists; the 49-industry rows are the record's own.
+row	table	form	window	statistic	value	lo	hi	months
+momentum	industries10	12-1	all	mean spread	0.003923	0.002111	0.005480	1190
+momentum	industries10	12-1	all	t-stat	3.396390			1190
+momentum	industries10	12-1	all	share positive	0.555462			1190
+momentum	industries10	12-1	post-1963	mean spread	0.003069	0.001082	0.005108	758
+momentum	industries10	12-1	post-1963	t-stat	2.160386			758
+momentum	industries10	12-1	post-1963	share positive	0.540897			758
+momentum	industries10	6-1	all	mean spread	0.001361	-0.000558	0.003409	1196
+momentum	industries10	6-1	all	t-stat	1.221655			1196
+momentum	industries10	6-1	all	share positive	0.550167			1196
+momentum	industries10	6-1	post-1963	mean spread	-0.000281	-0.002150	0.002167	758
+momentum	industries10	6-1	post-1963	t-stat	-0.207276			758
+momentum	industries10	6-1	post-1963	share positive	0.522427			758
+trend	industries10	12m	all	positive minus negative	0.005545	0.000214	0.010578	1190
+trend	industries10	12m	post-1963	positive minus negative	0.002554	-0.002658	0.007176	758
+trend	industries10	sma10	all	positive minus negative	0.003672	-0.002442	0.009168	1192
+trend	industries10	sma10	post-1963	positive minus negative	0.001558	-0.003824	0.006412	758
+shape	industries10		all	mean cross-sectional sd	0.030770			1202
+shape	industries10		all	median pairwise correlation	0.698582			1202
+shape	industries10		market worst decile	median pairwise correlation	0.560800			121
+shape	industries10		market middle decile	median pairwise correlation	-0.030675			116
+momentum	industries49	12-1	all	mean spread	0.006315	0.003928	0.008438	1190
+momentum	industries49	12-1	all	t-stat	4.598662			1190
+momentum	industries49	12-1	all	share positive	0.600840			1190
+momentum	industries49	12-1	post-1963	mean spread	0.006506	0.003760	0.009193	758
+momentum	industries49	12-1	post-1963	t-stat	3.965671			758
+momentum	industries49	12-1	post-1963	share positive	0.579156			758
+momentum	industries49	6-1	all	mean spread	0.003240	0.000508	0.005665	1196
+momentum	industries49	6-1	all	t-stat	2.424943			1196
+momentum	industries49	6-1	all	share positive	0.575251			1196
+momentum	industries49	6-1	post-1963	mean spread	0.003828	0.001536	0.006495	758
+momentum	industries49	6-1	post-1963	t-stat	2.458081			758
+momentum	industries49	6-1	post-1963	share positive	0.556728			758
+trend	industries49	12m	all	positive minus negative	0.004519	-0.000047	0.008588	1190
+trend	industries49	12m	post-1963	positive minus negative	0.001842	-0.002747	0.005919	758
+trend	industries49	sma10	all	positive minus negative	0.003827	-0.000975	0.007937	1192
+trend	industries49	sma10	post-1963	positive minus negative	0.001915	-0.002674	0.005796	758
+shape	industries49		all	mean cross-sectional sd	0.046523			1202
+shape	industries49		all	median pairwise correlation	0.584163			1202
+shape	industries49		market worst decile	median pairwise correlation	0.467769			121
+shape	industries49		market middle decile	median pairwise correlation	0.054814			116

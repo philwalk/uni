@@ -7767,6 +7767,181 @@ object MarketSim:
     * bond for years -- with TLT's own history at their 26th percentile. */
   val BondBandRows: Vector[String] = Vector("bond depth vs vol")
 
+
+  // ---- the sector rows -----------------------------------------------------------------------
+
+  /** A PANEL OF INDUSTRY PORTFOLIOS read monthly, the record ruler of a sector channel: Ken
+    * French's value-weighted industry returns (10 or 49) beside the market (`Mkt-RF + RF`) and the
+    * bill rate, all simple monthly returns as fractions, `returns(industry)(month)` `None` where the
+    * table is blank.  Every row below is read from one of these, so a world's sector legs are read
+    * the same way once they are aggregated to months. */
+  final case class SectorPanel(returns: Vector[Vector[Option[Double]]], market: Vector[Double],
+                               rf: Vector[Double])
+
+  /** months in one bootstrap block of the sector rows */
+  val SectorBlockMonths = 12
+  /** complete months a pair of industries needs before its correlation counts */
+  val SectorCorrMinMonths = 60
+
+  /** THE CROSS-SECTIONAL MOMENTUM ROW: each month, industries ranked by their cumulative return over
+    * the `form` months ending two months back (12-1: 11 months; 6-1: 5) in excess of the market's
+    * over the same months, an industry dropped from the month when any window month or the held
+    * month is blank; long the top `top`, short the bottom `top`, equal-weighted, held one month.
+    * `spreads` holds each held month's long-minus-short return from month `from` on; `mean`, the
+    * t-statistic on it and the share of positive months summarise them. */
+  final case class SectorMomentum(mean: Double, t: Double, sharePositive: Double, spreads: Vector[Double])
+
+  private def cumSimple(r: Seq[Double]): Double = r.foldLeft(1.0)((acc, x) => acc * (1.0 + x)) - 1.0
+  private def meanOf(v: Seq[Double]): Double = v.foldLeft(0.0)(_ + _) / v.length
+  private def sd1(v: Seq[Double]): Double =
+    val m = meanOf(v)
+    math.sqrt(v.foldLeft(0.0)((a, x) => a + (x - m) * (x - m)) / (v.length - 1))
+  /** Pearson's correlation of two equal-length series. */
+  private def pearsonOf(x: Seq[Double], y: Seq[Double]): Double =
+    val mx = meanOf(x); val my = meanOf(y)
+    var sxy = 0.0; var sxx = 0.0; var syy = 0.0
+    var i = 0
+    while i < x.length do
+      sxy += (x(i) - mx) * (y(i) - my); sxx += (x(i) - mx) * (x(i) - mx); syy += (y(i) - my) * (y(i) - my)
+      i += 1
+    sxy / math.sqrt(sxx * syy)
+
+  def sectorMomentum(p: SectorPanel, form: Int, top: Int, from: Int): SectorMomentum =
+    val months = p.market.length
+    val spreads = Vector.newBuilder[Double]
+    for t <- math.max(form + 1, from) until months do
+      val lo  = t - form - 1
+      val mkt = cumSimple(p.market.slice(lo, t - 1))
+      val scored = p.returns.flatMap { ind =>
+        val window = ind.slice(lo, t - 1)
+        if ind(t).isDefined && window.forall(_.isDefined) then Some((cumSimple(window.map(_.get)) - mkt, ind(t).get))
+        else None
+      }
+      if scored.length >= 2 * top then
+        val sorted = scored.sortWith((a, b) => a._1 > b._1)
+        val long   = meanOf(sorted.take(top).map(_._2))
+        val short  = meanOf(sorted.drop(sorted.length - top).map(_._2))
+        spreads += long - short
+    val s = spreads.result()
+    val n = s.length
+    val mean = meanOf(s)
+    SectorMomentum(mean, mean / (sd1(s) / math.sqrt(n.toDouble)), s.count(_ > 0.0).toDouble / n, s)
+
+  /** THE PER-SECTOR TREND ROW: for each industry the mean next-month return in excess of the bill
+    * rate after a positive signal minus after a negative one, averaged over the industries that show
+    * both signs.  `Sign12`: the trailing twelve months' return in excess of the bill rate's, read at
+    * the end of the month before; `Sma10`: the industry's price index above its ten-month mean at
+    * the end of the month before.  A month counts for an industry only where every month the signal
+    * reads is present. */
+  enum SectorTrend:
+    case Sign12, Sma10
+
+  /** `(signal, next-month excess)` per industry over the held months from `from`: what the row and
+    * its bootstrap both read. */
+  private def sectorTrendPairs(p: SectorPanel, mode: SectorTrend, from: Int): Vector[Vector[(Boolean, Double)]] =
+    val months = p.market.length
+    val look = mode match
+      case SectorTrend.Sign12 => 12
+      case SectorTrend.Sma10  => 10
+    p.returns.map { ind =>
+      // the price index over present months; a blank restarts it
+      val px = Array.fill(months)(Double.NaN)
+      var level = 1.0
+      for k <- 0 until months do
+        ind(k) match
+          case Some(x) => level *= 1.0 + x; px(k) = level
+          case None    => level = 1.0
+      (math.max(look, from) until months).flatMap { t =>
+        val window = ind.slice(t - look, t)
+        if ind(t).isEmpty || !window.forall(_.isDefined) then None
+        else
+          val w = window.map(_.get)
+          val signal = mode match
+            case SectorTrend.Sign12 => Some(cumSimple(w) > cumSimple(p.rf.slice(t - look, t)))
+            case SectorTrend.Sma10 =>
+              val pxw = px.slice(t - look, t)
+              if pxw.exists(_.isNaN) then None else Some(px(t - 1) > meanOf(pxw.toSeq))
+          signal.map(sg => (sg, ind(t).get - p.rf(t)))
+      }.toVector
+    }
+
+  private def trendOfPairs(pairs: Vector[Vector[(Boolean, Double)]]): Double =
+    val per = pairs.flatMap { v =>
+      val pos = v.filter(_._1).map(_._2)
+      val neg = v.filterNot(_._1).map(_._2)
+      if pos.nonEmpty && neg.nonEmpty then Some(meanOf(pos) - meanOf(neg)) else None
+    }
+    meanOf(per)
+
+  /** The trend row's reading and the number of held months it is read over. */
+  def sectorTrend(p: SectorPanel, mode: SectorTrend, from: Int): (Double, Int) =
+    val pairs = sectorTrendPairs(p, mode, from)
+    (trendOfPairs(pairs), pairs.map(_.length).maxOption.getOrElse(0))
+
+  /** Bootstrap month starts: `resamples` draws of `blocks` uniform block starts over a series of
+    * `n` months in `SectorBlockMonths` blocks, from one `NumPyRNG(seed)`, resample-major. */
+  private def sectorBlockStarts(n: Int, resamples: Int, seed: Long): Vector[Array[Int]] =
+    val l = SectorBlockMonths
+    require(n > l, "a panel must hold more than one block")
+    val blocks = (n + l - 1) / l
+    val rng = new NumPyRNG(seed)
+    Vector.fill(resamples)(Array.fill(blocks)(rng.nextBoundedInt(n - l + 1)))
+
+  private def blockIndices(starts: Array[Int], n: Int): Vector[Int] =
+    starts.toVector.flatMap(s => s until s + SectorBlockMonths).take(n)
+
+  /** The 5th and 95th percentile of the momentum row's mean over block resamples of its spreads. */
+  def sectorMomentumBand(spreads: Vector[Double], resamples: Int, seed: Long): (Double, Double) =
+    val n = spreads.length
+    val means = parMap(sectorBlockStarts(n, resamples, seed))(st => meanOf(blockIndices(st, n).map(spreads)))
+    val s = finiteSorted(means.toArray)
+    (pctileOf(s, 0.05), pctileOf(s, 0.95))
+
+  /** The 5th and 95th percentile of the trend row over block resamples of its held months, the
+    * per-industry statistic recomputed on each. */
+  def sectorTrendBand(p: SectorPanel, mode: SectorTrend, from: Int, resamples: Int, seed: Long): (Double, Double) =
+    val pairs = sectorTrendPairs(p, mode, from)
+    val n = pairs.map(_.length).maxOption.getOrElse(0)
+    val vals = parMap(sectorBlockStarts(n, resamples, seed)) { st =>
+      val idx = blockIndices(st, n)
+      trendOfPairs(pairs.map(v => idx.flatMap(i => v.lift(i))))
+    }
+    val s = finiteSorted(vals.toArray)
+    (pctileOf(s, 0.05), pctileOf(s, 0.95))
+
+  /** NumPy's default (linear) percentile of a sorted series; NaN of an empty one. */
+  private def linearPctile(sorted: Array[Double], q: Double): Double =
+    if sorted.isEmpty then return Double.NaN
+    val pos = q * (sorted.length - 1)
+    val lo  = math.floor(pos).toInt
+    val hi  = math.min(lo + 1, sorted.length - 1)
+    sorted(lo) + (pos - lo) * (sorted(hi) - sorted(lo))
+
+  /** THE CROSS-SECTION SHAPE ROWS: the mean over months of the cross-sectional sd of the industries'
+    * returns; the median pairwise correlation over the whole sample; the same over the months in
+    * the market's worst decile (at or under its 10th percentile) and over its middle decile (strictly
+    * between its 45th and 55th), a pair counting where it has `SectorCorrMinMonths` complete months,
+    * the median NumPy's (the mean of the middle two on an even count).  Returns
+    * `(cs sd, corr, corr worst, corr middle)` and the three month counts. */
+  def sectorShape(p: SectorPanel): (Vector[Double], Vector[Int]) =
+    val months = p.market.length
+    val cs = (0 until months).flatMap { t =>
+      val v = p.returns.flatMap(_(t))
+      if v.length >= 2 then Some(sd1(v)) else None
+    }.toVector
+    val sorted = finiteSorted(p.market.toArray)
+    val p10 = linearPctile(sorted, 0.10); val p45 = linearPctile(sorted, 0.45); val p55 = linearPctile(sorted, 0.55)
+    val all    = (0 until months).toVector
+    val worst  = all.filter(t => p.market(t) <= p10)
+    val middle = all.filter(t => p.market(t) > p45 && p.market(t) < p55)
+    def corrOver(ts: Vector[Int]): Double =
+      val cs = Vector.newBuilder[Double]
+      for a <- p.returns.indices; b <- a + 1 until p.returns.length do
+        val both = ts.flatMap(t => for (u <- p.returns(a)(t); v <- p.returns(b)(t)) yield (u, v))
+        if both.length >= SectorCorrMinMonths then cs += pearsonOf(both.map(_._1), both.map(_._2))
+      linearPctile(finiteSorted(cs.result().toArray), 0.5)
+    (Vector(meanOf(cs), corrOver(all), corrOver(worst), corrOver(middle)), Vector(cs.length, worst.length, middle.length))
+
   /** The bond row on one series of daily log returns: the price it compounds to, its share of
     * sessions more than 10% under the running peak, over the share its RMS volatility implies
     * (`BondD10Slope`, `BondD10Intercept`); NaN where the fit implies none. */

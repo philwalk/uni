@@ -691,6 +691,37 @@ drag net of the cycle) found no world that improves on it without moving other r
 Nasdaq recipe re-solved under the row (`0.24.4-nasdaq`) reaches its wings through the
 growth-extrapolation term with the cycle near 0 — see its recipe paragraph.
 
+## The sector rows — the record ruler of a sector channel
+
+A rotation rule needs sector legs that persist the way the record's industries do, and the record
+has to say how much that is before any dial is set. `record_bands -sectors <data>` reads Ken
+French's value-weighted monthly industry portfolios (`10_Industry_Portfolios.CSV`,
+`49_Industry_Portfolios.CSV`, 1926-07 on) beside the market (`Mkt-RF + RF`) and the bill rate
+(`F-F_Research_Data_Factors.CSV`), the files as the library publishes them, and prints
+`sectors-2026-09-30.tsv`: three rows, since
+rotation to cash mixes two persistences and a cross-section shape.
+
+- **momentum** — each month the industries are ranked by their cumulative return over the eleven
+  months ending two months back (12-1; the 6-1 form uses five) in excess of the market's over the
+  same months; long the top 3 of 10 (10 of 49), short the bottom 3 (10), equal-weighted, held one
+  month. The mean monthly long-minus-short return, its t-statistic and the share of positive
+  months, with a 5-95 band from 12-month block resamples of the spread series. 12-1 reads +0.39% a
+  month on 10 industries (t 3.4; +0.63% on 49) and holds from 1963; 6-1 reads +0.14% on 10 and is
+  null from 1963, so the world is graded on 12-1.
+- **trend** — per industry, the mean next-month return over the bill rate after a positive signal
+  minus after a negative one (the trailing twelve months over the bill rate, or the price index over
+  its ten-month mean, read at the end of the month before), averaged over the industries. This is
+  what rotation *to cash* exploits, and it is a different persistence from the cross-section's:
+  +0.55% (12-month sign) and +0.37% (SMA) on 10 industries, the second's band spanning zero.
+- **shape** — the mean cross-sectional sd of the industries' monthly returns (3.1%), the median
+  pairwise correlation (0.70), and the same correlation on the market's worst-decile months (0.56)
+  and its middle decile (−0.03): the rows a sector channel's beta spread and idio share are solved
+  on, the basket channel's mechanism row on sectors.
+
+An independent implementation of the same definitions (the fixture's header states them)
+reproduces every value to six decimals. No sector channel exists yet; when one does it is graded on the
+10-industry rows and never on a rotation rule.
+
 ## How tight are the anchors? — `-noise`
 
 Every fidelity target is a point read from one historical record. `-noise` reports, per target, the
