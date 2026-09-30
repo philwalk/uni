@@ -225,7 +225,10 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 // now carries under `reported`. Each fidelity row gained `historyBand`: on a multi-year row the
 // world's joint band of single histories, outside which the record is a `miss`; null elsewhere.
 // `world` gained `driftSd`, `boomFade` and the deleveraging's four dials.
-const EMIT_SCHEMA: u32 = 22;
+// 22 -> 23: THE CONDITIONAL RATE ROWS. `gate.fidelity` gained `post-trough rate %` and
+// `post-trough floor share %` (`RATE_AFTER_ROWS`): the short rate over the two years after each
+// 20% decline's trough, where a refuge holds cash.
+const EMIT_SCHEMA: u32 = 23;
 
 /// Frozen structural constants of the volume channel — see the `vol_idio` field. Measured
 /// from the SPY/QQQ volume-on-range regression (`bars-2026-09-01.tsv`, whose rows the
@@ -6717,6 +6720,10 @@ pub struct WorldStats {
     /// percent (`rate_readings`)
     pub short_rate: f64,
     pub rate_floor: f64,
+    /// median per-path `rate_after_readings`: the mean short rate in percent over the two years
+    /// after each 20% decline's trough and the share of those sessions under `RATE_FLOOR`
+    pub post_rate: f64,
+    pub post_floor: f64,
     /// median per-path corr(r_t, r^2_{t+1}) — the leverage effect at daily lag. The sharper
     /// signed-half block regression (Patton-Sheppard) was measured and CANNOT anchor on
     /// close-only data: era-split with the sign flipping (asymmetry-2026-08-31.tsv), the
@@ -7460,6 +7467,89 @@ pub fn rate_readings(rate: &[f64]) -> [f64; 2] {
     [mean, floor]
 }
 
+/// THE CONDITIONAL RATE ROWS: the short rate where a refuge holds cash -- the two years after
+/// each 20% decline's trough. `post-trough rate %` is the rate's mean in percent over the
+/// sessions within `RATE_AFTER_SESSIONS` after any trough of a decline of `RATE_AFTER_DECLINE_PCT`
+/// or more (the union of those windows), `post-trough floor share %` the share of them under
+/// `RATE_FLOOR`. The record's floor spells, 2009-15 and 2020-21, sit in those windows; a world
+/// whose spells do not overpays every arm that is in cash after an exit. Read on a price path and
+/// its rate path of equal length; the record's rate is the daily effective federal funds rate on
+/// the equity's session dates. NaN with no decline.
+pub const RATE_AFTER_ROWS: [&str; 2] = ["post-trough rate %", "post-trough floor share %"];
+pub const RATE_AFTER_SESSIONS: usize = 2 * DAYS_PER_YEAR;
+pub const RATE_AFTER_DECLINE_PCT: f64 = 20.0;
+
+#[must_use]
+pub fn rate_after_readings(px: &[f64], rate: &[f64]) -> [f64; 2] {
+    let n = px.len().min(rate.len());
+    let mut held = vec![false; n];
+    for e in episodes(&px[..n], RATE_AFTER_DECLINE_PCT) {
+        for h in &mut held[(e.trough + 1).min(n)..(e.trough + 1 + RATE_AFTER_SESSIONS).min(n)] {
+            *h = true;
+        }
+    }
+    let taken: Vec<f64> = (0..n).filter(|&i| held[i]).map(|i| rate[i]).collect();
+    if taken.is_empty() {
+        return [f64::NAN, f64::NAN];
+    }
+    let m = taken.len() as f64;
+    [
+        scala_sum(taken.iter().copied()) / m * 100.0,
+        taken.iter().filter(|x| **x < RATE_FLOOR).count() as f64 / m * 100.0,
+    ]
+}
+
+/// The conditional rate rows off a record: the price path rebuilt from the daily log returns with
+/// `exp_det` (the first session's level dropped, so the levels align with the rates, one a
+/// session) and the rates on those sessions.
+#[must_use]
+pub fn rate_after_of_returns(r: &[f64], rate: &[f64]) -> [f64; 2] {
+    let mut px = Vec::with_capacity(r.len());
+    let mut c = 0.0;
+    for x in r {
+        c += x;
+        px.push(exp_det(c));
+    }
+    rate_after_readings(&px, rate)
+}
+
+/// `record_resamples` on the paired record: the same one-year blocks and stream, the returns and
+/// the rates cut from the same starts so a resample keeps each decline beside its rates, read by
+/// `rate_after_of_returns`.
+#[must_use]
+pub fn rate_after_resamples(r: &[f64], rate: &[f64], resamples: usize, seed: u64) -> Vec<[f64; 2]> {
+    let n = r.len().min(rate.len());
+    let l = DAYS_PER_YEAR;
+    assert!(
+        n > l && u32::try_from(n).is_ok(),
+        "a record must be longer than one block, and shorter than 2^32 sessions"
+    );
+    let blocks = n.div_ceil(l);
+    let bound = (n - l + 1) as u32;
+    let mut rng = NumPyRng::new(seed);
+    let starts: Vec<Vec<usize>> = (0..resamples)
+        .map(|_| {
+            (0..blocks)
+                .map(|_| rng.next_bounded_u32(bound) as usize)
+                .collect()
+        })
+        .collect();
+    starts
+        .par_iter()
+        .map(|st| {
+            let mut x = Vec::with_capacity(blocks * l);
+            let mut y = Vec::with_capacity(blocks * l);
+            for &s in st {
+                x.extend_from_slice(&r[s..s + l]);
+                y.extend_from_slice(&rate[s..s + l]);
+            }
+            x.truncate(n);
+            y.truncate(n);
+            rate_after_of_returns(&x, &y)
+        })
+        .collect()
+}
+
 /// THE BOND BAND's row: the bond's underwater share against what its own volatility implies
 /// (`WorldStats::bond_depth_vs_vol`), read on one price series by `bond_readings`, whose record
 /// is TLT over its 24 years (`Anchors::bond_window`) and whose band is that record's own
@@ -7811,7 +7901,7 @@ pub const RECORD_BAND_CLUSTER_ROWS: [&str; 2] = ["clustering lag 1", "clustering
 pub fn record_band_years(a: Anchors, name: &str) -> usize {
     if RECORD_BAND_CLUSTER_ROWS.contains(&name) {
         a.cluster_years
-    } else if RATE_BAND_ROWS.contains(&name) {
+    } else if RATE_BAND_ROWS.contains(&name) || RATE_AFTER_ROWS.contains(&name) {
         a.rate_years
     } else if BOND_BAND_ROWS.contains(&name) {
         a.bond_years
@@ -9299,6 +9389,8 @@ struct PathRead {
     infl_ann: f64,
     short_rate: f64,
     rate_floor: f64,
+    post_rate: f64,
+    post_floor: f64,
 }
 
 #[expect(
@@ -9415,6 +9507,8 @@ fn path_read(s: &Path, years: usize) -> PathRead {
         multi_year: multi_year_of(&r, &s.price),
         short_rate: rate_readings(&s.rate)[0],
         rate_floor: rate_readings(&s.rate)[1],
+        post_rate: rate_after_readings(&s.price, &s.rate)[0],
+        post_floor: rate_after_readings(&s.price, &s.rate)[1],
         tail_hedge: {
             let idx: Vec<usize> = (1..s.price.len())
                 .filter(|&i| s.infl_press[i] <= INFL_REGIME_EDGE)
@@ -9586,6 +9680,8 @@ pub fn measure(sims: &[Path], years: usize) -> WorldStats {
         ],
         short_rate: med_by(|p| p.short_rate),
         rate_floor: med_by(|p| p.rate_floor),
+        post_rate: med_by(|p| p.post_rate),
+        post_floor: med_by(|p| p.post_floor),
         lev_corr: med_by(|p| p.lev_corr),
         tail_hedge: med_by(|p| p.tail_hedge),
         duration: sims[0].duration,
@@ -10757,6 +10853,16 @@ pub struct Anchors {
     pub short_rate_sd: f64,
     pub rate_floor: f64,
     pub rate_floor_sd: f64,
+    /// THE CONDITIONAL RATE ROWS' record (`rate_after_readings`; `rateafter-2026-09-30.tsv`): the
+    /// rate's mean over the two years after each 20% decline's trough and the share of those
+    /// sessions at the floor. The unconditional rows leave both open: a world can hold the
+    /// record's mean and floor share while its floor spells fall anywhere, and a refuge that
+    /// holds cash after an exit earns whatever the world pays THEN. On the record the floor
+    /// spells sit inside these windows.
+    pub post_rate: f64,
+    pub post_rate_sd: f64,
+    pub post_floor: f64,
+    pub post_floor_sd: f64,
     pub vol_band: (f64, f64),
     /// the typical year's: one sd of the row's own single-history spread (0.11 at 72 years,
     /// 0.18 at 27)
@@ -11068,7 +11174,7 @@ const DD_REFS_NASDAQ: [DdRef; 2] = [
 
 /// The S&P set's `RecordBand`s: `recordbands-2026-09-26.tsv`, CRSP total return 1954-2026 and, for
 /// the two clustering rows, the century -- each row on the window the set reads it over.
-const RECORD_BANDS_SP500: [RecordBand; 18] = [
+const RECORD_BANDS_SP500: [RecordBand; 20] = [
     RecordBand {
         name: "equity vol %",
         record: 15.676352,
@@ -11268,10 +11374,32 @@ const RECORD_BANDS_SP500: [RecordBand; 18] = [
         joint_c: 0.497225,
         joint: (0.372218, 2.074475),
     },
+    RecordBand {
+        name: "post-trough rate %",
+        record: 4.224745,
+        q: [
+            2.144602, 2.942697, 3.360528, 3.582556, 3.73377, 3.85856, 3.966475, 4.054824, 4.145714,
+            4.228515, 4.307179, 4.388629, 4.468837, 4.552457, 4.63954, 4.733537, 4.833045,
+            4.944309, 5.084584, 5.256703, 5.541803, 6.066292, 7.49054,
+        ],
+        joint_c: 0.496975,
+        joint: (2.702012, 6.481711),
+    },
+    RecordBand {
+        name: "post-trough floor share %",
+        record: 15.195221,
+        q: [
+            0.0, 2.17713, 5.782857, 7.936754, 9.379509, 10.649059, 11.656172, 12.642465, 13.650794,
+            14.493445, 15.397185, 16.269841, 17.123016, 18.009986, 18.964523, 20.0, 21.144818,
+            22.442681, 23.955279, 25.840807, 28.80307, 34.916157, 49.139502,
+        ],
+        joint_c: 0.496975,
+        joint: (0.523877, 38.611714),
+    },
 ];
 
 /// The Nasdaq set's `RecordBand`s: `recordbands-2026-09-26.tsv`, QQQ 1999-03-11..2026-08-20.
-const RECORD_BANDS_NASDAQ: [RecordBand; 18] = [
+const RECORD_BANDS_NASDAQ: [RecordBand; 20] = [
     RecordBand {
         name: "equity vol %",
         record: 26.901577,
@@ -11471,6 +11599,28 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 18] = [
         joint_c: 0.497225,
         joint: (0.372218, 2.074475),
     },
+    RecordBand {
+        name: "post-trough rate %",
+        record: 2.381665,
+        q: [
+            0.076667, 0.542868, 0.969619, 1.204042, 1.350615, 1.47125, 1.572957, 1.661881,
+            1.737877, 1.823357, 1.897781, 1.970781, 2.044314, 2.122868, 2.204282, 2.29558,
+            2.391973, 2.50025, 2.632432, 2.79433, 3.062561, 3.625339, 5.289821,
+        ],
+        joint_c: 0.496525,
+        joint: (0.312149, 3.971964),
+    },
+    RecordBand {
+        name: "post-trough floor share %",
+        record: 23.358002,
+        q: [
+            0.0, 3.448276, 16.666667, 22.096774, 25.536062, 28.477218, 30.798703, 32.918592,
+            34.753788, 36.720796, 38.540841, 40.394684, 42.302158, 44.206296, 46.285942, 48.216645,
+            50.0, 52.599263, 55.790646, 59.573333, 66.141332, 79.89418, 100.0,
+        ],
+        joint_c: 0.496525,
+        joint: (0.0, 90.873016),
+    },
 ];
 
 /// The S&P/CRSP set. The LEVELS are the ones every release before 0.21.0 hard-coded, moved rather
@@ -11510,6 +11660,10 @@ const SP500_ANCHORS: Anchors = Anchors {
     short_rate_sd: 0.09,
     rate_floor: 14.565588,
     rate_floor_sd: 0.27,
+    post_rate: 4.224745,
+    post_rate_sd: 0.15,
+    post_floor: 15.195221,
+    post_floor_sd: 0.46,
     vol: 16.0,
     vol_sd: 0.12,
     // CRSP 1954-2026 over all 252 block phases (`recordbands-2026-09-26.tsv`): 12.48, where
@@ -11641,6 +11795,10 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     short_rate_sd: 1.06,
     rate_floor: 37.313224,
     rate_floor_sd: 0.68,
+    post_rate: 2.381665,
+    post_rate_sd: 0.38,
+    post_floor: 23.358002,
+    post_floor_sd: 0.65,
     vol: 26.90,
     vol_sd: 0.18,
     // QQQ 1999-2026 over all 252 block phases (`recordbands-2026-09-26.tsv`): 19.97, where calendar
@@ -12039,6 +12197,21 @@ pub fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             (|st| st.rate_floor) as StatFn,
             a.rate_floor,
             wgt(0.5, a.rate_floor_sd),
+        ),
+        // THE CONDITIONAL RATE ROWS (`RATE_AFTER_ROWS`): the same two readings over the two years
+        // after each 20% decline's trough -- the rate a refuge earns holding cash after an exit,
+        // which the unconditional rows leave open. Graded like them; the share additive.
+        (
+            "post-trough rate %",
+            (|st| st.post_rate) as StatFn,
+            a.post_rate,
+            wgt(0.5, a.post_rate_sd),
+        ),
+        (
+            "post-trough floor share %",
+            (|st| st.post_floor) as StatFn,
+            a.post_floor,
+            wgt(0.5, a.post_floor_sd),
         ),
         // DEPTH PROFILE, stated RELATIVE to what a real fund of the same volatility and return
         // spends under water rather than as three absolute levels — see `EQUITY_D10_CORR` for the
@@ -12885,7 +13058,11 @@ fn scala_sign(x: f64) -> f64 {
 /// of sessions): the loss prices them as the linear |model - target| over |target|, the log
 /// ratio's small-deviation limit, since a log ratio has no meaning across zero and grows without
 /// bound as a reading nears it.
-pub const ADDITIVE_TARGETS: [&str; 2] = ["vol-timing edge pts/yr", "rate floor share %"];
+pub const ADDITIVE_TARGETS: [&str; 3] = [
+    "vol-timing edge pts/yr",
+    "rate floor share %",
+    "post-trough floor share %",
+];
 
 /// Scalar calibration loss: weighted |log(model/target)| over the fidelity targets, a
 /// penalty of 2 for a wrong sign, and 0.5 per failed gate check; `ADDITIVE_TARGETS` linear.
@@ -13604,6 +13781,104 @@ fn min_total(v: &[f64]) -> f64 {
         return f64::NAN;
     }
     sorted_total(v)[0]
+}
+
+// ---- the perpetual withdrawal rate ----------------------------------------------------------
+
+/// THE PERPETUAL WITHDRAWAL RATE of an arm, on the monthly grid a withdrawal schedule runs on.
+/// Month t ends at the last session of each calendar month of the synthetic calendar
+/// (`month_ends`). The arm holds through month t the exposure its rule had decided by the end
+/// of month t-1 (`e` at that session), the remainder in cash, rebalanced monthly: month t
+/// earns `w * r_eq + (1 - w) * cash - cost * |w - w_prev|`, r_eq the price ratio over the
+/// month (the price is the total-return level), cash the month's sessions' rate / DAYS_PER_YEAR
+/// summed and exponentiated, less 1, the one-way turnover charged at `cost` per unit. From
+/// wealth 1 at the end of month s, withdrawals of W times the CPI ratio at s+3, s+6, ..., s+H
+/// (`PWR_HORIZON_MONTHS`); with G(a) the growth from the end of month a to the end of month
+/// s+H, `PWR(s) = G(s) / sum over q of cpi(s+q)/cpi(s) * G(s+q)`, in percent of the starting
+/// wealth a year (x 4 x 100). Ruin at any withdrawal over the
+/// horizon is exactly PWR(s) < W, so the p-quantile of PWR over starts is W at P(ruin) = p. The
+/// first `PWR_WARMUP_MONTHS` months are not starts. Over the starts with a full horizon:
+/// `PWR_STAT_NAMES`, the 10th percentile (the element at index floor(0.10 n) of the sorted
+/// values) and the share of starts, in percent, under `PWR_RUIN_PCT`; NaN on a path too short
+/// for one start. An independent implementation of the same definition reads buy-and-hold on
+/// the default world's 40-year path at seed 20260813 to four decimals (the contract test).
+pub const PWR_HORIZON_MONTHS: usize = 180;
+pub const PWR_WARMUP_MONTHS: usize = 13;
+pub const PWR_RUIN_PCT: f64 = 4.0;
+pub const PWR_STAT_NAMES: [&str; 2] = ["real 15y PWR p10 %", "PWR < 4% starts %"];
+
+/// The last session of each calendar month of the synthetic calendar (`session_dates`) for a
+/// path of `n` sessions; the last session counts as its month's end.
+#[must_use]
+pub fn month_ends(n: usize) -> Vec<usize> {
+    let d = session_dates(n, "");
+    (0..n)
+        .filter(|&i| i + 1 == n || d[i][..7] != d[i + 1][..7])
+        .collect()
+}
+
+/// The arm's realized return for months 1 .. M-1 (`ends` the month-end sessions) by the
+/// mechanics above; the first month's turnover is 0.
+#[must_use]
+pub fn pwr_monthly_returns(p: &Path, e: &[f64], cost: f64, ends: &[usize]) -> Vec<f64> {
+    let mut out = Vec::with_capacity(ends.len().saturating_sub(1));
+    let mut w_prev = f64::NAN;
+    for t in 1..ends.len() {
+        let (a, b) = (ends[t - 1], ends[t]);
+        let w = e[a];
+        let eq = p.price[b] / p.price[a] - 1.0;
+        let cash = exp_det(scala_sum(
+            (a + 1..=b).map(|i| p.rate[i] / DAYS_PER_YEAR as f64),
+        )) - 1.0;
+        let turn = if w_prev.is_nan() {
+            0.0
+        } else {
+            (w - w_prev).abs()
+        };
+        out.push(w * eq + (1.0 - w) * cash - cost * turn);
+        w_prev = w;
+    }
+    out
+}
+
+/// PWR at every start with a full horizon, in start order; empty on a path too short for one.
+#[must_use]
+pub fn pwr_starts(p: &Path, e: &[f64], cost: f64, ends: &[usize]) -> Vec<f64> {
+    let h = PWR_HORIZON_MONTHS;
+    let m = ends.len();
+    if m < PWR_WARMUP_MONTHS + h + 1 {
+        return Vec::new();
+    }
+    let r = pwr_monthly_returns(p, e, cost, ends);
+    let cpi = |t: usize| p.cpi[ends[t]];
+    (PWR_WARMUP_MONTHS..m - h)
+        .map(|s| {
+            // g[k] = G(s + k): the growth from the end of month s + k to the end of s + h, built
+            // from the horizon's end; month m's return sits at r[m - 1]
+            let mut g = vec![0.0f64; h + 1];
+            g[h] = 1.0;
+            for k in (0..h).rev() {
+                g[k] = g[k + 1] * (1.0 + r[s + k]);
+            }
+            let den = scala_sum((1..=h / 3).map(|j| cpi(s + 3 * j) / cpi(s) * g[3 * j]));
+            g[0] / den * 400.0
+        })
+        .collect()
+}
+
+/// `PWR_STAT_NAMES` for one arm on one path.
+#[must_use]
+pub fn pwr_stats(p: &Path, e: &[f64], cost: f64, ends: &[usize]) -> [f64; 2] {
+    let starts = pwr_starts(p, e, cost, ends);
+    if starts.is_empty() {
+        return [f64::NAN, f64::NAN];
+    }
+    let sorted = sorted_total(&starts);
+    let n = sorted.len();
+    [
+        sorted[(0.10 * n as f64).floor() as usize],
+        starts.iter().filter(|x| **x < PWR_RUIN_PCT).count() as f64 / n as f64 * 100.0,
+    ]
 }
 
 /// The candidate grading statistics for one arm, NAMED AT THE SOURCE so no report can
@@ -15226,7 +15501,7 @@ const EQUITY_TARGETS: [&str; 34] = [
         reason = "the partition contract is read by the tests, never by a report"
     )
 )]
-const BOND_TARGETS: [&str; 7] = [
+const BOND_TARGETS: [&str; 9] = [
     "bond vol % (24y)",
     "bond growth-crash",
     "bond infl-crash",
@@ -15234,6 +15509,8 @@ const BOND_TARGETS: [&str; 7] = [
     "tail hedge corr",
     "short rate %",
     "rate floor share %",
+    "post-trough rate %",
+    "post-trough floor share %",
 ];
 
 /// Bisection bracket for the depth solve, and how many halvings. Ten steps over this bracket
@@ -15646,7 +15923,12 @@ fn anchor_groups(a: Anchors) -> [(&'static str, usize, &'static [&'static str]);
         (
             a.rate_window,
             a.rate_years,
-            &["short rate %", "rate floor share %"],
+            &[
+                "short rate %",
+                "rate floor share %",
+                "post-trough rate %",
+                "post-trough floor share %",
+            ],
         ),
         // The Shiller record is one series shared by every anchor set, at its own century horizon.
         (
@@ -15912,12 +16194,13 @@ fn run_power_report(
         true,
     ));
 
-    let names = stat_names();
+    let names: Vec<&str> = stat_names().into_iter().chain(PWR_STAT_NAMES).collect();
 
     // per contrast, per statistic: (hit rate, n*). Gate verdict travels with the numbers.
     let power = |w: &World, l: usize, sd: u64| -> (bool, PowerTable) {
         let sims = sim_paths(w, paths, l, sd);
         let ok = gate_ok_of(a, &measure(&sims, l), &sims, l, sd, w, gate_req);
+        let ends = month_ends(sims[0].price.len());
         let stats: Vec<Vec<Vec<f64>>> = (0..sims.len())
             .into_par_iter()
             .map(|k| {
@@ -15925,10 +16208,13 @@ fn run_power_report(
                 let ind = Indicators::new(&p.price);
                 arms.iter()
                     .map(|fna| {
-                        grading_stats(&arm_path(p, &fna(&ind), cost, Safe::Cash), l)
+                        let e = fna(&ind);
+                        let mut g: Vec<f64> = grading_stats(&arm_path(p, &e, cost, Safe::Cash), l)
                             .into_iter()
                             .map(|(_, v)| v)
-                            .collect()
+                            .collect();
+                        g.extend(pwr_stats(p, &e, cost, &ends));
+                        g
                     })
                     .collect()
             })
@@ -20599,6 +20885,66 @@ mod contract_tests {
     /// Every fidelity target must be classified as equity or bond, exactly once. The subset check
     /// this replaces caught renames but not ADDITIONS: a new equity target would simply never
     /// appear in the equity section, and a shorter table reads as a shorter list of concerns.
+    /// THE PERPETUAL WITHDRAWAL RATE of buy-and-hold on the default world's 40-year path at seed
+    /// 20260813 (the `-emit` fixture's path: price 15.205607 at its first session, 480 month
+    /// ends) reads what an independent implementation of the same definition read off the
+    /// emitted file: 287 starts, 7.8060 at the first, minimum 2.3736, p10 3.8441, median
+    /// 8.6133, 33 starts under 4%. The rule layer on a hand exposure: all cash reads the cash
+    /// leg's own compounding, a switch pays the turnover once.
+    #[test]
+    fn the_perpetual_withdrawal_rate_reads_what_an_independent_implementation_read() {
+        let p = &sim_paths(&default_world(), 1, 40, 20_260_813)[0];
+        assert!(
+            (p.price[0] - 15.205_607).abs() < 5e-7,
+            "the fixture's path: {}",
+            p.price[0]
+        );
+        let ends = month_ends(p.price.len());
+        assert_eq!(ends.len(), 480);
+        let e = vec![1.0; p.price.len()];
+        let starts = pwr_starts(p, &e, 0.001, &ends);
+        assert_eq!(starts.len(), 287);
+        let sorted = sorted_total(&starts);
+        for (got, want) in [
+            (starts[0], 7.8060),
+            (sorted[0], 2.3736),
+            (sorted[28], 3.8441),
+            (sorted[143], 8.6133),
+        ] {
+            assert!((got - want).abs() < 5e-5, "{got} vs {want}");
+        }
+        let [p10, under] = pwr_stats(p, &e, 0.001, &ends);
+        assert_eq!(p10, sorted[28]);
+        assert!((under - 33.0 / 287.0 * 100.0).abs() < 1e-9, "under {under}");
+        // all cash: month t earns the cash leg alone, whatever the cost
+        let cash_only = pwr_monthly_returns(p, &vec![0.0; p.price.len()], 0.001, &ends);
+        let (a, b) = (ends[5], ends[6]);
+        let want = exp_det(scala_sum(
+            (a + 1..=b).map(|i| p.rate[i] / DAYS_PER_YEAR as f64),
+        )) - 1.0;
+        assert_eq!(cash_only[5], want);
+        // a switch from cash to equity at the end of month 6 pays the turnover in month 7
+        let mut sw = vec![0.0; p.price.len()];
+        for x in &mut sw[ends[6]..] {
+            *x = 1.0;
+        }
+        let gross = pwr_monthly_returns(p, &sw, 0.0, &ends);
+        let net = pwr_monthly_returns(p, &sw, 0.001, &ends);
+        assert_eq!(gross[5], net[5]);
+        assert!(
+            ((gross[6] - net[6]) - 0.001).abs() < 1e-15,
+            "{} {}",
+            gross[6],
+            net[6]
+        );
+        assert_eq!(gross[6], p.price[ends[7]] / p.price[ends[6]] - 1.0);
+        assert!(
+            pwr_stats(p, &e, 0.001, &ends[..100])
+                .iter()
+                .all(|x| x.is_nan())
+        );
+    }
+
     #[test]
     fn fit_targets_partition_into_equity_and_bond() {
         let mut expected: Vec<&str> = EQUITY_TARGETS
@@ -23358,13 +23704,20 @@ mod year_vol_anchor_tests {
 mod record_band_tests {
     use super::*;
 
+    /// the record-band fixture's rows, then the conditional rate rows' (`rateafter-2026-09-30.tsv`,
+    /// the same columns) without their header
     fn lines() -> Vec<String> {
-        std::fs::read_to_string("../test-data/equity-anchors/recordbands-2026-09-26.tsv")
-            .expect("fixture")
-            .lines()
-            .filter(|l| !(l.starts_with('#') || l.trim().is_empty()))
-            .map(str::to_string)
-            .collect()
+        let read = |name: &str| -> Vec<String> {
+            std::fs::read_to_string(format!("../test-data/equity-anchors/{name}"))
+                .expect("fixture")
+                .lines()
+                .filter(|l| !(l.starts_with('#') || l.trim().is_empty()))
+                .map(str::to_string)
+                .collect()
+        };
+        let mut out = read("recordbands-2026-09-26.tsv");
+        out.extend(read("rateafter-2026-09-30.tsv").into_iter().skip(1));
+        out
     }
 
     fn row(set: &str, name: &str) -> Vec<f64> {
@@ -23448,11 +23801,12 @@ mod record_band_tests {
                 .iter()
                 .chain(RATE_BAND_ROWS.iter())
                 .chain(BOND_BAND_ROWS.iter())
+                .chain(RATE_AFTER_ROWS.iter())
                 .copied()
                 .collect();
             assert_eq!(
                 names, expect,
-                "{set}: the literals follow RECORD_BAND_ROWS, RATE_BAND_ROWS, BOND_BAND_ROWS"
+                "{set}: the literals follow RECORD_BAND_ROWS, RATE_BAND_ROWS, BOND_BAND_ROWS, RATE_AFTER_ROWS"
             );
             for b in a.record_bands {
                 let r = row(set, b.name);
@@ -23494,6 +23848,21 @@ mod record_band_tests {
                 "{set}: horizon"
             );
             assert_eq!(
+                a.post_rate,
+                row(set, "post-trough rate %")[0],
+                "{set}: post-trough rate"
+            );
+            assert_eq!(
+                a.post_floor,
+                row(set, "post-trough floor share %")[0],
+                "{set}: post-trough floor share"
+            );
+            assert_eq!(
+                record_band_years(a, "post-trough rate %"),
+                a.rate_years,
+                "{set}: the conditional rows read the rate window"
+            );
+            assert_eq!(
                 a.bond_depth,
                 row(set, "bond depth vs vol")[0],
                 "{set}: bond depth"
@@ -23513,6 +23882,52 @@ mod record_band_tests {
     /// THE FLOOR BINDS once the mean is low: the default world's rate never reaches 0.5%, and the
     /// same world at a 0.5% mean spends a share of its sessions there, which is what the row
     /// grades.
+    /// THE CONDITIONAL RATE ROWS on a hand path: two 20% declines whose post-trough windows
+    /// overlap, the union of the sessions after either trough (never the trough itself), the rate's
+    /// mean and floor share over them; NaN where no decline reaches 20%; and the paired resampler
+    /// on a pinned series, the value the Scala twin's `RecordBandSuite` pins.
+    #[test]
+    fn the_conditional_rate_rows_read_the_sessions_after_each_troughs_and_only_those() {
+        let px = [1.0, 1.1, 0.8, 0.85, 0.9, 1.2, 1.0, 0.7, 0.9, 1.3];
+        let rate = [
+            0.05, 0.05, 0.05, 0.001, 0.002, 0.004, 0.006, 0.01, 0.02, 0.03,
+        ];
+        let [mean, floor] = rate_after_readings(&px, &rate);
+        assert!((mean - 0.073 / 7.0 * 100.0).abs() < 1e-12, "mean {mean}");
+        assert!((floor - 300.0 / 7.0).abs() < 1e-12, "floor {floor}");
+        let calm = [1.0, 1.1, 1.0, 1.05, 0.95, 1.2];
+        let [m2, f2] = rate_after_readings(&calm, &rate[..6]);
+        assert!(m2.is_nan() && f2.is_nan(), "no decline, no reading");
+        // the same rows off the returns: the first level dropped, the rate aligned with it
+        let r: Vec<f64> = (1..px.len()).map(|i| (px[i] / px[i - 1]).ln()).collect();
+        let [m3, f3] = rate_after_of_returns(&r, &rate[1..]);
+        assert!(
+            (m3 - mean).abs() < 1e-9 && (f3 - floor).abs() < 1e-9,
+            "{m3} {f3}"
+        );
+        // uniform draws, no transcendental, so both twins read the same bits
+        let mut rng = NumPyRng::new(7);
+        let rs: Vec<f64> = (0..700).map(|_| (rng.next_f64() - 0.52) * 0.04).collect();
+        let rates: Vec<f64> = (0..700).map(|_| 0.001 + 0.02 * rng.next_f64()).collect();
+        let reads = rate_after_resamples(&rs, &rates, 3, 5);
+        assert_eq!(reads.len(), 3);
+        for x in &reads {
+            assert!(x[0].is_nan() || (0.0..=6.0).contains(&x[0]), "{x:?}");
+        }
+        let pin = [
+            1.222_787_483_729_952,
+            12.5,
+            1.145_010_398_988_397,
+            21.951_219_512_195_124,
+        ];
+        for (got, want) in [reads[0][0], reads[0][1], reads[1][0], reads[1][1]]
+            .iter()
+            .zip(pin)
+        {
+            assert!((got - want).abs() < 1e-12, "{got} vs {want}");
+        }
+    }
+
     #[test]
     fn the_rate_floor_binds_when_the_mean_is_low() {
         let base = measure(&sim_paths(&default_world(), 4, 30, DEFAULT_SEED), 30);

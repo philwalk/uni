@@ -256,7 +256,10 @@ object MarketSim:
   // now carries under `reported`.  Each fidelity row gained `historyBand`: on a multi-year row the
   // world's joint band of single histories, outside which the record is a `miss`; null elsewhere.
   // `world` gained `driftSd`, `boomFade` and the deleveraging's four dials.
-  val EmitSchema: Int = 22
+  // 22 -> 23: THE CONDITIONAL RATE ROWS.  `gate.fidelity` gained `post-trough rate %` and
+  // `post-trough floor share %` (`RateAfterRows`): the short rate over the two years after each
+  // 20% decline's trough, where a refuge holds cash.
+  val EmitSchema: Int = 23
 
   val EmitSidecarKeys: Vector[String] =
     Vector("generator", "version", "schema", "file", "columns", "header", "path", "world",
@@ -5258,6 +5261,10 @@ object MarketSim:
                               shortRate: Double,  // median per-path mean short rate, percent, and
                               rateFloor: Double,  // share of sessions under `RateFloor`, percent
                                                   // (`rateReadings`)
+                              postRate: Double,   // median per-path `rateAfterReadings`: the mean
+                              postFloor: Double,  // short rate in percent over the two years after
+                                                  // each 20% decline's trough, and the share of
+                                                  // those sessions under `RateFloor`
                               levCorr: Double,    // median per-path corr(r_t, r^2_{t+1}) -- the
                                                   // leverage effect at daily lag; the sharper
                                                   // signed-half regression CANNOT anchor on
@@ -5405,6 +5412,7 @@ object MarketSim:
     volTiming: Double, bubbleCoupling: Double, runUp3y: Double, calmStretch: Double,
     multiYear: Vector[Double],
     shortRate: Double, rateFloor: Double,   // `rateReadings` of the path's rate
+    postRate: Double, postFloor: Double,    // `rateAfterReadings` of the path's price and rate
     tailHedge: Double,
     wingUp: Double, wingDown: Double, wingN: Double,   // the cycle's wings about its 20-year mean, as COUNTS over `wingsOf`'s sessions
     gapEarly: Double, gapEarlyN: Double, gapLate: Double, gapLateN: Double,   // `gapDriftOf`'s sums and counts
@@ -5540,6 +5548,7 @@ object MarketSim:
       runUp3y = runUp3yOf(r), calmStretch = calmStretchOf(r),
       multiYear = multiYearOf(r, sp.price),
       shortRate = rateReadings(sp.rate)(0), rateFloor = rateReadings(sp.rate)(1),
+      postRate = rateAfterReadings(sp.price, sp.rate)(0), postFloor = rateAfterReadings(sp.price, sp.rate)(1),
       wingUp = wings._1, wingDown = wings._2, wingN = wings._3,
       gapEarly = gd._1, gapEarlyN = gd._2, gapLate = gd._3, gapLateN = gd._4,
       gapEarly2 = gs._1, gapLate2 = gs._2,
@@ -5621,6 +5630,8 @@ object MarketSim:
       multiYear = Vector.tabulate(5)(k => med(per.map(_.multiYear(k)))),
       shortRate = med(per.map(_.shortRate)),
       rateFloor = med(per.map(_.rateFloor)),
+      postRate = med(per.map(_.postRate)),
+      postFloor = med(per.map(_.postFloor)),
       levCorr = med(per.map(_.levCorr)),
       tailHedge = med(per.map(_.tailHedge)),
       duration = sims.head.duration,
@@ -6285,6 +6296,14 @@ object MarketSim:
     rateWindow: String, rateYears: Int,
     shortRate: Double, shortRateSd: Double,
     rateFloor: Double, rateFloorSd: Double,
+    // THE CONDITIONAL RATE ROWS' record (`rateAfterReadings`; `rateafter-2026-09-30.tsv`): the
+    // rate's mean over the two years after each 20% decline's trough and the share of those
+    // sessions at the floor.  The unconditional rows leave both open: a world can hold the
+    // record's mean and floor share while its floor spells fall anywhere, and a refuge that holds
+    // cash after an exit earns whatever the world pays THEN.  On the record the floor spells sit
+    // inside these windows.
+    postRate: Double, postRateSd: Double,
+    postFloor: Double, postFloorSd: Double,
     // THE BOND's record window: the clean 24-year TLT series every bond row is read over, and the
     // bond row's own record reading (`bondReadings`; `recordbands` fixture), the target
     // `bond depth vs vol` is graded against.
@@ -6494,7 +6513,13 @@ object MarketSim:
       0.497075, (5.030877, 26.091354)),
     RecordBand("bond depth vs vol", 1.029057,
       Vector(0.144525, 0.471083, 0.647434, 0.752934, 0.82832, 0.889519, 0.948797, 1.000965, 1.050809, 1.094922, 1.139143, 1.183327, 1.226545, 1.273317, 1.323438, 1.375117, 1.435519, 1.499503, 1.570601, 1.657599, 1.785306, 1.965568, 2.304313),
-      0.497225, (0.372218, 2.074475)))
+      0.497225, (0.372218, 2.074475)),
+    RecordBand("post-trough rate %", 4.224745,
+      Vector(2.144602, 2.942697, 3.360528, 3.582556, 3.73377, 3.85856, 3.966475, 4.054824, 4.145714, 4.228515, 4.307179, 4.388629, 4.468837, 4.552457, 4.63954, 4.733537, 4.833045, 4.944309, 5.084584, 5.256703, 5.541803, 6.066292, 7.49054),
+      0.496975, (2.702012, 6.481711)),
+    RecordBand("post-trough floor share %", 15.195221,
+      Vector(0.0, 2.17713, 5.782857, 7.936754, 9.379509, 10.649059, 11.656172, 12.642465, 13.650794, 14.493445, 15.397185, 16.269841, 17.123016, 18.009986, 18.964523, 20.0, 21.144818, 22.442681, 23.955279, 25.840807, 28.80307, 34.916157, 49.139502),
+      0.496975, (0.523877, 38.611714)))
 
   /** The Nasdaq set's `RecordBand`s: `recordbands-2026-09-26.tsv`, QQQ
     * 1999-03-11..2026-08-20. */
@@ -6552,7 +6577,13 @@ object MarketSim:
       0.496725, (16.073174, 62.575059)),
     RecordBand("bond depth vs vol", 1.029057,
       Vector(0.144525, 0.471083, 0.647434, 0.752934, 0.82832, 0.889519, 0.948797, 1.000965, 1.050809, 1.094922, 1.139143, 1.183327, 1.226545, 1.273317, 1.323438, 1.375117, 1.435519, 1.499503, 1.570601, 1.657599, 1.785306, 1.965568, 2.304313),
-      0.497225, (0.372218, 2.074475)))
+      0.497225, (0.372218, 2.074475)),
+    RecordBand("post-trough rate %", 2.381665,
+      Vector(0.076667, 0.542868, 0.969619, 1.204042, 1.350615, 1.47125, 1.572957, 1.661881, 1.737877, 1.823357, 1.897781, 1.970781, 2.044314, 2.122868, 2.204282, 2.29558, 2.391973, 2.50025, 2.632432, 2.79433, 3.062561, 3.625339, 5.289821),
+      0.496525, (0.312149, 3.971964)),
+    RecordBand("post-trough floor share %", 23.358002,
+      Vector(0.0, 3.448276, 16.666667, 22.096774, 25.536062, 28.477218, 30.798703, 32.918592, 34.753788, 36.720796, 38.540841, 40.394684, 42.302158, 44.206296, 46.285942, 48.216645, 50.0, 52.599263, 55.790646, 59.573333, 66.141332, 79.89418, 100.0),
+      0.496525, (0.0, 90.873016)))
 
   /** The S&P/CRSP set.  The LEVELS are the ones every release before 0.21.0 hard-coded, moved
     * rather than re-measured (except the two the 0.22 releases re-anchored -- `medDepth` and
@@ -6579,6 +6610,8 @@ object MarketSim:
     rateWindow = "DFF 1954-2026", rateYears = 72,
     shortRate = 4.595174, shortRateSd = 0.09,
     rateFloor = 14.565588, rateFloorSd = 0.27,
+    postRate = 4.224745, postRateSd = 0.15,
+    postFloor = 15.195221, postFloorSd = 0.46,
     bondWindow = "clean TLT, 24y", bondYears = 24, bondDepth = 1.029057,
     vol = 16.0,          volSd = 0.12,
     // CRSP 1954-2026 over all 252 block phases (`recordbands-2026-09-26.tsv`): 12.48, where
@@ -6673,6 +6706,8 @@ object MarketSim:
     rateWindow = "DFF 1999-2026", rateYears = 27,
     shortRate = 2.136466, shortRateSd = 1.06,
     rateFloor = 37.313224, rateFloorSd = 0.68,
+    postRate = 2.381665, postRateSd = 0.38,
+    postFloor = 23.358002, postFloorSd = 0.65,
     bondWindow = "clean TLT, 24y", bondYears = 24, bondDepth = 1.029057,
     vol = 26.90,         volSd = 0.18,
     // QQQ 1999-2026 over all 252 block phases (`recordbands-2026-09-26.tsv`): 19.97, where calendar
@@ -6973,6 +7008,11 @@ object MarketSim:
     // a share that reads 0 prices nothing but the zero.
     ("short rate %",       st => st.shortRate,                        a.shortRate,  wgt(0.5, a.shortRateSd)),
     ("rate floor share %", st => st.rateFloor,                        a.rateFloor,  wgt(0.5, a.rateFloorSd)),
+    // THE CONDITIONAL RATE ROWS (`RateAfterRows`): the same two readings over the two years after
+    // each 20% decline's trough -- the rate a refuge earns holding cash after an exit, which the
+    // unconditional rows leave open.  Graded like them; the share additive.
+    ("post-trough rate %", st => st.postRate,                         a.postRate,   wgt(0.5, a.postRateSd)),
+    ("post-trough floor share %", st => st.postFloor,                 a.postFloor,  wgt(0.5, a.postFloorSd)),
     // DEPTH PROFILE, stated RELATIVE to what a real fund of the same volatility and return spends
     // under water rather than as three absolute levels -- see `EquityD10Corr` for the relation and
     // `eqDepthVsReal` for what the ratio means.  A level target is a statement about one fund; a
@@ -7046,7 +7086,8 @@ object MarketSim:
   /** Fidelity rows whose statistic is ADDITIVE and straddles zero (points a year): the loss prices
     * them as the linear |model - target| over |target|, the log ratio's small-deviation limit, since
     * a log ratio has no meaning across zero and its wrong-sign penalty grows as the reading nears it. */
-  val AdditiveTargets: Set[String] = Set("vol-timing edge pts/yr", "rate floor share %")
+  val AdditiveTargets: Set[String] =
+    Set("vol-timing edge pts/yr", "rate floor share %", "post-trough floor share %")
 
   /** The admissible interval for a per-path fidelity ratio on a row WITHOUT a `RecordBand`, and the
     * admissible percentile band for an `ExtremeTargets` row.  Stated ONCE: the report, the sidecar
@@ -7367,6 +7408,93 @@ object MarketSim:
 
   val StatNames: Vector[String] = gradingStats(
     ArmPath(Array(0.0, 0.0), Array(0.0, 0.0), Array(0.0), 1.0, 0, 0, 0, 0, 0), 1).map(_._1)
+
+  // ---- the perpetual withdrawal rate ----------------------------------------------------------
+
+  /** THE PERPETUAL WITHDRAWAL RATE of an arm, on the monthly grid a withdrawal schedule runs on.
+    * Month t ends at the last session of each calendar month of the synthetic calendar
+    * (`monthEnds`).  The arm holds through month t the exposure its rule had decided by the end of
+    * month t-1 (`e` at that session), the remainder in cash, rebalanced monthly: month t earns
+    * w r_eq + (1 - w) cash - cost |w - w_prev|, r_eq the price ratio over the month (the price is
+    * the total-return level), cash exp(sum over the month's sessions of rate / DaysPerYear) - 1,
+    * the one-way turnover charged at `cost` per unit.  From wealth 1 at the end of month s,
+    * withdrawals of W times the CPI ratio at s+3, s+6, ..., s+H (`PwrHorizonMonths`); with G(a)
+    * the growth from the end of month a to the end of month s+H,
+    *   PWR(s) = G(s) / sum over q of cpi(s+q)/cpi(s) x G(s+q),
+    * in percent of the starting wealth a year (x 4 x 100).  Ruin at any withdrawal over the
+    * horizon is exactly PWR(s) < W, so the p-quantile of PWR over starts is W at P(ruin) = p.  The
+    * first `PwrWarmupMonths` months are not starts.  Over the starts with a full horizon:
+    * `PwrStatNames`, the 10th percentile (the element at index floor(0.10 n) of the sorted values)
+    * and the share of starts, in percent, under `PwrRuinPct`; NaN on a path too short for one
+    * start.  An independent implementation of the same definition reads buy-and-hold on the
+    * default world's 40-year path at seed 20260813 to four decimals (the contract test). */
+  val PwrHorizonMonths: Int = 180
+  val PwrWarmupMonths: Int = 13
+  val PwrRuinPct: Double = 4.0
+  val PwrStatNames: Vector[String] = Vector("real 15y PWR p10 %", "PWR < 4% starts %")
+
+  /** The last session of each calendar month of the synthetic calendar (`sessionDates`) for a
+    * path of `n` sessions; the last session counts as its month's end. */
+  def monthEnds(n: Int): Vector[Int] =
+    val d = sessionDates(n, "")
+    (0 until n).filter(i => i + 1 == n || d(i).substring(0, 7) != d(i + 1).substring(0, 7)).toVector
+
+  /** The arm's realized return for months 1 .. M-1 (`ends` the month-end sessions) by the
+    * mechanics above; the first month's turnover is 0. */
+  def pwrMonthlyReturns(p: Path, e: Array[Double], cost: Double, ends: Vector[Int]): Array[Double] =
+    val out = new Array[Double](math.max(ends.length - 1, 0))
+    var wPrev = Double.NaN
+    var t = 1
+    while t < ends.length do
+      val a = ends(t - 1)
+      val b = ends(t)
+      val w = e(a)
+      val eq = p.price(b) / p.price(a) - 1.0
+      var s = 0.0
+      var i = a + 1
+      while i <= b do
+        s += p.rate(i) / DaysPerYear
+        i += 1
+      val cash = expDet(s) - 1.0
+      val turn = if wPrev.isNaN then 0.0 else math.abs(w - wPrev)
+      out(t - 1) = w * eq + (1.0 - w) * cash - cost * turn
+      wPrev = w
+      t += 1
+    out
+
+  /** PWR at every start with a full horizon, in start order; empty on a path too short for one. */
+  def pwrStarts(p: Path, e: Array[Double], cost: Double, ends: Vector[Int]): Vector[Double] =
+    val h = PwrHorizonMonths
+    val m = ends.length
+    if m < PwrWarmupMonths + h + 1 then Vector.empty
+    else
+      val r = pwrMonthlyReturns(p, e, cost, ends)
+      def cpi(t: Int): Double = p.cpi(ends(t))
+      (PwrWarmupMonths until m - h).toVector.map { s =>
+        // g(k) = G(s + k): the growth from the end of month s + k to the end of s + h, built from
+        // the horizon's end; month m's return sits at r(m - 1)
+        val g = new Array[Double](h + 1)
+        g(h) = 1.0
+        var k = h - 1
+        while k >= 0 do
+          g(k) = g(k + 1) * (1.0 + r(s + k))
+          k -= 1
+        var den = 0.0
+        var j = 1
+        while j <= h / 3 do
+          den += cpi(s + 3 * j) / cpi(s) * g(3 * j)
+          j += 1
+        g(0) / den * 400.0
+      }
+
+  /** `PwrStatNames` for one arm on one path. */
+  def pwrStats(p: Path, e: Array[Double], cost: Double, ends: Vector[Int]): Vector[Double] =
+    val starts = pwrStarts(p, e, cost, ends)
+    if starts.isEmpty then Vector(Double.NaN, Double.NaN)
+    else
+      val sorted = starts.sorted
+      val n = sorted.length
+      Vector(sorted(math.floor(0.10 * n).toInt), starts.count(_ < PwrRuinPct).toDouble / n * 100.0)
 
   /** `%+w.df`, except that a rendering whose digits are ALL ZERO carries no sign.  The quantity
     * is zero to the precision shown, so a leading '-' there reports rounding NOISE as direction;
@@ -7758,6 +7886,77 @@ object MarketSim:
     val floor = rate.count(_ < RateFloor).toDouble / n * 100.0
     Vector(mean, floor)
 
+  /** THE CONDITIONAL RATE ROWS: the short rate where a refuge holds cash -- the two years after
+    * each 20% decline's trough.  `post-trough rate %` is the rate's mean in percent over the
+    * sessions within `RateAfterSessions` after any trough of a decline of `RateAfterDeclinePct` or
+    * more (the union of those windows), `post-trough floor share %` the share of them under
+    * `RateFloor`.  The record's floor spells, 2009-15 and 2020-21, sit in those windows; a world
+    * whose spells do not overpays every arm that is in cash after an exit.  Read on a price path
+    * and its rate path of equal length; the record's rate is the daily effective federal funds
+    * rate on the equity's session dates.  NaN with no decline. */
+  val RateAfterRows: Vector[String] = Vector("post-trough rate %", "post-trough floor share %")
+  val RateAfterSessions: Int = 2 * DaysPerYear
+  val RateAfterDeclinePct: Double = 20.0
+
+  def rateAfterReadings(px: Array[Double], rate: Array[Double]): Vector[Double] =
+    val n = math.min(px.length, rate.length)
+    val held = new Array[Boolean](n)
+    for e <- episodes(if px.length == n then px else px.take(n), RateAfterDeclinePct) do
+      var i = math.min(e.trough + 1, n)
+      val end = math.min(e.trough + 1 + RateAfterSessions, n)
+      while i < end do
+        held(i) = true
+        i += 1
+    var s = 0.0
+    var m = 0
+    var f = 0
+    var i = 0
+    while i < n do
+      if held(i) then
+        s += rate(i)
+        m += 1
+        if rate(i) < RateFloor then f += 1
+      i += 1
+    if m == 0 then Vector(Double.NaN, Double.NaN)
+    else Vector(s / m * 100.0, f.toDouble / m * 100.0)
+
+  /** The conditional rate rows off a record: the price path rebuilt from the daily log returns
+    * with `expDet` (the first session's level dropped, so the levels align with the rates, one a
+    * session) and the rates on those sessions. */
+  def rateAfterOfReturns(r: Array[Double], rate: Array[Double]): Vector[Double] =
+    val px = new Array[Double](r.length)
+    var c = 0.0
+    var i = 0
+    while i < r.length do
+      c += r(i)
+      px(i) = expDet(c)
+      i += 1
+    rateAfterReadings(px, rate)
+
+  /** `recordResamples` on the paired record: the same one-year blocks and stream, the returns
+    * and the rates cut from the same starts so a resample keeps each decline beside its rates,
+    * read by `rateAfterOfReturns`. */
+  def rateAfterResamples(r: Array[Double], rate: Array[Double], resamples: Int, seed: Long): Vector[Vector[Double]] =
+    val n = math.min(r.length, rate.length)
+    val l = DaysPerYear
+    require(n > l, "a record shorter than one block cannot be resampled in blocks")
+    val blocks = (n + l - 1) / l
+    val rng = new NumPyRNG(seed)
+    val starts = Vector.fill(resamples)(Array.fill(blocks)(rng.nextBoundedInt(n - l + 1)))
+    parMap(starts) { st =>
+      val x = new Array[Double](n)
+      val y = new Array[Double](n)
+      var pos = 0
+      var b = 0
+      while b < st.length && pos < n do
+        val len = math.min(l, n - pos)
+        System.arraycopy(r, st(b), x, pos, len)
+        System.arraycopy(rate, st(b), y, pos, len)
+        pos += len
+        b += 1
+      rateAfterOfReturns(x, y)
+    }
+
   /** THE BOND BAND's row: the bond's underwater share against what its own volatility implies
     * (`WorldStats.bondDepthVsVol`), read on one price series by `bondReadings`, whose record is
     * TLT over its 24 years (`Anchors.bondWindow`) and whose band is that record's own
@@ -7973,7 +8172,7 @@ object MarketSim:
     * one it is the spread of. */
   def recordBandYears(a: Anchors, name: String): Int =
     if RecordBandClusterRows.contains(name) then a.clusterYears
-    else if RateBandRows.contains(name) then a.rateYears
+    else if RateBandRows.contains(name) || RateAfterRows.contains(name) then a.rateYears
     else if BondBandRows.contains(name) then a.bondYears
     else a.equityYears
 
@@ -9004,7 +9203,8 @@ object MarketSim:
     * section to drive; the list exists so a new fidelity target cannot land unclassified. */
   val BondTargets = Vector(
     "bond vol % (24y)", "bond growth-crash", "bond infl-crash", "bond depth vs vol",
-    "tail hedge corr", "short rate %", "rate floor share %")
+    "tail hedge corr", "short rate %", "rate floor share %", "post-trough rate %",
+    "post-trough floor share %")
 
   /** Bisection bracket for the depth solve, and how many halvings.  Ten steps over this bracket
     * leaves the depth uncertain by 21/1024 ~ 0.021, worth about 0.03 points of volatility -- far
@@ -9217,7 +9417,8 @@ object MarketSim:
     // (`Anchors.bubbleWindow`); the S&P's is the century, as the tail's is.
     (a.bubbleWindow, a.bubbleYears, "bubble coupling 3y" +: MultiYearLongRows),
     // The rate's record over the equity window's dates -- see `Anchors.rateWindow`.
-    (a.rateWindow, a.rateYears, Vector("short rate %", "rate floor share %")),
+    (a.rateWindow, a.rateYears,
+     Vector("short rate %", "rate floor share %", "post-trough rate %", "post-trough floor share %")),
     // The Shiller record is one series shared by every anchor set, at its own century horizon.
     ("Shiller CAPE 1881-2023", 100, Vector("valuation dispersion", "upper wing months %", "lower wing months %")),
     // 18 equity funds and three CRSP windows, the shortest of them 24.9 years -- see
@@ -9647,18 +9848,24 @@ object MarketSim:
                (s"${focus(k).name}  vs always fully invested",         2 * k, alwaysIdx, false))
       } :+ (s"NULL — ${focus(0).name}  vs ITSELF on an independent path", 0, 0, true)
 
+    val names = StatNames ++ PwrStatNames
+
     /** per contrast, per statistic: (hit rate, n*).  Gate verdict travels with the numbers. */
     def power(w: World, L: Int, sd: Long): (Boolean, Vector[Vector[(Double, Double)]]) =
       val sims  = simPaths(w, paths, L, sd)
       val ok    = gateOkOf(a, measure(sims, L), sims, L, sd, w, gateReq)
+      val ends  = monthEnds(sims.head.price.length)
       val stats = java.util.stream.IntStream.range(0, sims.size).parallel().mapToObj { k =>
         val p   = sims(k)
         val ind = new Indicators(p.price)
-        arms.map(fn => gradingStats(armPath(p, fn(ind), cost, Safe.Cash), L).map(_._2))
+        arms.map { fn =>
+          val e = fn(ind)
+          gradingStats(armPath(p, e, cost, Safe.Cash), L).map(_._2) ++ pwrStats(p, e, cost, ends)
+        }
       }.toArray().toVector.map(_.asInstanceOf[Vector[Vector[Double]]])
       val np = stats.size
       val res = pairs.map { (_, ia, ib, isNull) =>
-        StatNames.indices.toVector.map { j =>
+        names.indices.toVector.map { j =>
           // the null pairs the first half of the paths against the second, giving genuinely
           // independent differences; pairing every path with a shifted partner would force the mean
           // to zero and the hit rate to 50% ARITHMETICALLY, which is a rigged control, not a check
@@ -9693,8 +9900,8 @@ object MarketSim:
       val verdict = if ok then "gate PASS" else "gate FAIL — read nothing from this block"
       println(f"\n  L = $L%3d years   ($paths%d independent histories, $verdict%s)")
       println(f"  ${"statistic"}%-19s" + pairs.indices.map(j => f"   C${j + 1}%-8d").mkString)
-      for j <- StatNames.indices do
-        println(f"  ${StatNames(j)}%-19s" + pairs.indices.map { c =>
+      for j <- names.indices do
+        println(f"  ${names(j)}%-19s" + pairs.indices.map { c =>
           val (hit, ns) = res(c)(j)
           if hit.isNaN then "       n/a" else f"  ${hit * 100}%3.0f/${nStarStr(ns)}%s"
         }.mkString)
@@ -9707,11 +9914,11 @@ object MarketSim:
       val passing  = perWorld.filter(_._2._1).map(_._2._2)
       println(f"  ${passing.size}%d of ${perWorld.size}%d worlds pass the gate")
       println(f"  ${"statistic"}%-19s ${"min n*"}%8s ${"median"}%8s ${"max n*"}%8s ${"median hit%"}%12s")
-      for j <- StatNames.indices do
+      for j <- names.indices do
         val ns = passing.map(_(0)(j)._2).filter(x => !x.isNaN).sorted
         val hs = passing.map(_(0)(j)._1).filter(x => !x.isNaN)
         val hm = if hs.isEmpty then "n/a" else f"${pctile(hs, 0.5) * 100}%.0f%%"
-        println(f"  ${StatNames(j)}%-19s ${nStarStr(ns.headOption.getOrElse(Double.NaN))}%8s " +
+        println(f"  ${names(j)}%-19s ${nStarStr(ns.headOption.getOrElse(Double.NaN))}%8s " +
                 f"${nStarStr(if ns.isEmpty then Double.NaN else pctile(ns, 0.5))}%8s " +
                 f"${nStarStr(ns.lastOption.getOrElse(Double.NaN))}%8s ${hm}%12s")
 

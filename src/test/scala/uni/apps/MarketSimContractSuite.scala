@@ -1077,3 +1077,39 @@ class MarketSimContractSuite extends FunSuite:
     val dip = series.take(800) ++ (1 to 50).map(i => 0.799 - i * 0.002)
     assert(MarketSim.episodeRows(dip, Array.fill(dip.length)(0.0), None).isEmpty)
   }
+
+  // THE PERPETUAL WITHDRAWAL RATE of buy-and-hold on the default world's 40-year path at seed
+  // 20260813 (the `-emit` fixture's path: price 15.205607 at its first session, 480 month ends)
+  // reads what an independent implementation of the same definition read off the emitted file:
+  // 287 starts, 7.8060 at the first, minimum 2.3736, p10 3.8441, median 8.6133, 33 starts under
+  // 4%.  The rule layer on a hand exposure: all cash reads the cash leg's own compounding, a
+  // switch pays the turnover once.
+  test("the perpetual withdrawal rate reads what an independent implementation read") {
+    val p = MarketSim.simPaths(MarketSim.Defaults, 1, 40, 20260813L).head
+    assert(math.abs(p.price(0) - 15.205607) < 5e-7, s"the fixture's path: ${p.price(0)}")
+    val ends = MarketSim.monthEnds(p.price.length)
+    assertEquals(ends.length, 480)
+    val e = Array.fill(p.price.length)(1.0)
+    val starts = MarketSim.pwrStarts(p, e, 0.001, ends)
+    assertEquals(starts.length, 287)
+    val sorted = starts.sorted
+    for (got, want) <- Vector((starts(0), 7.8060), (sorted(0), 2.3736), (sorted(28), 3.8441), (sorted(143), 8.6133)) do
+      assert(math.abs(got - want) < 5e-5, s"$got vs $want")
+    val st = MarketSim.pwrStats(p, e, 0.001, ends)
+    assertEquals(st(0), sorted(28))
+    assertEqualsDouble(st(1), 33.0 / 287.0 * 100.0, 1e-9, s"under ${st(1)}")
+    // all cash: month t earns the cash leg alone, whatever the cost
+    val cashOnly = MarketSim.pwrMonthlyReturns(p, Array.fill(p.price.length)(0.0), 0.001, ends)
+    val (a, b) = (ends(5), ends(6))
+    var s = 0.0
+    for i <- a + 1 to b do s += p.rate(i) / MarketSim.DaysPerYear
+    assertEquals(cashOnly(5), MarketSim.expDet(s) - 1.0)
+    // a switch from cash to equity at the end of month 6 pays the turnover in month 7
+    val sw = Array.tabulate(p.price.length)(i => if i >= ends(6) then 1.0 else 0.0)
+    val gross = MarketSim.pwrMonthlyReturns(p, sw, 0.0, ends)
+    val net   = MarketSim.pwrMonthlyReturns(p, sw, 0.001, ends)
+    assertEquals(gross(5), net(5))
+    assert(math.abs((gross(6) - net(6)) - 0.001) < 1e-15, s"${gross(6)} ${net(6)}")
+    assertEquals(gross(6), p.price(ends(7)) / p.price(ends(6)) - 1.0)
+    assert(MarketSim.pwrStats(p, e, 0.001, ends.take(100)).forall(_.isNaN))
+  }

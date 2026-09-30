@@ -1,5 +1,51 @@
 ## v0.24.5 — 2026-09-30
 
+**The perpetual withdrawal rate is a `-power` statistic**
+
+- Two rows in every `-power` table, `real 15y PWR p10 %` and `PWR < 4% starts %`, read on each
+  arm of each contrast beside the nine grading statistics, so the report prices what one history
+  resolves of an arm's withdrawal-rate edge over buy-and-hold (hit%, n*) the way it prices the
+  Sharpe's. On the monthly grid (month t ends at the last session of each calendar month of the
+  synthetic calendar) the arm holds through month t the exposure its rule had decided by the end
+  of month t-1, the remainder in cash, rebalanced monthly: the month earns
+  `w r_eq + (1 - w) cash - cost |w - w_prev|`, cash the month's sessions' rate compounded, the
+  one-way turnover at `-cost` (10 bp). From wealth 1 at the end of month s, quarterly withdrawals
+  of W times the CPI ratio over a 180-month horizon; with G(a) the growth from the end of month a
+  to the horizon's end, `PWR(s) = G(s) / sum_q cpi(s+q)/cpi(s) G(s+q)`, in percent of the starting
+  wealth a year, so ruin at any withdrawal is exactly PWR(s) < W and the p-quantile over starts is
+  W at P(ruin) = p. The first 13 months are not starts. The rows are the 10th percentile over the
+  starts with a full horizon (the element at index floor(0.10 n) of the sorted values) and the
+  share under 4% a year. `month_ends`, `pwr_monthly_returns`, `pwr_starts`, `pwr_stats` and the
+  Scala twins.
+- Buy-and-hold on the default world's 40-year path at seed 20260813 (the `-emit` fixture path)
+  reads 287 starts, 7.8060 at the first, minimum 2.3736, p10 3.8441, median 8.6133 and 33 starts
+  under 4%, the values an independent implementation of the same definition read off the emitted
+  file, to four decimals (the contract test in both twins). The emitted `price` is the
+  total-return level, so a reader that accrues `divYield` on top of it counts the dividends twice.
+
+**The rate after a decline is graded**
+
+- Two fidelity rows, `post-trough rate %` and `post-trough floor share %`: the short rate's mean
+  and its share of sessions under 0.50% over the two years after each 20% decline's trough, the
+  union of those windows, which is the rate a refuge earns holding cash after an exit. The
+  unconditional rows leave it open: a world can hold the record's mean and floor share with its
+  floor spells anywhere. Records off the daily federal funds rate on the equity window's sessions,
+  S&P 4.22% and 15.2% over 1954-2026, Nasdaq 2.38% and 23.4% over 1999-2026
+  (`rateafter-2026-09-30.tsv`, from `record_bands -rateafter`, the Scala tool the same); the bands
+  are paired one-year-block resamples, the returns and the rates cut from the same starts, with a
+  joint band over the two rows at 2/18 of the set's 0.10. Judgment 0.5 each in the loss at the
+  record's single-history spreads (S&P 0.15 / 0.46, Nasdaq 0.38 / 0.65); the share is additive.
+- Both shipped recipes pass without a re-solve. On seeds 5-8 at 200 × 100 no row misses:
+  `0.24.5-sp500` reads 4.0-4.3% and 13-15% (the record's 28th-47th and 34th-42nd percentiles),
+  `0.24.5-nasdaq` 1.9-2.2% and 22-32% (45th-67th and 10th-27th). The worlds' floor time sits
+  after troughs; the S&P worlds' unconditional floor share, 8-10% against the record's 14.6%, is
+  the record's 2011-15 spell, two to six years after the 2009 trough, which no post-trough window
+  holds.
+- Sidecar schema 22 → 23: `gate.fidelity` gained the two rows. `-fitness` totals gain their two
+  terms: `0.24.5-sp500` reads 2.932 and `0.24.5-nasdaq` 4.077 at seed 1.
+- `record_bands -yahoo` reads a `date,adj_close,dlog_adj_close` file, one row a session as Yahoo's
+  chart API gives it.
+
 **Multi-year structure is graded, against the world's own histories**
 
 - Twelve fidelity rows: six statistics a year or more of a series is one observation of, each

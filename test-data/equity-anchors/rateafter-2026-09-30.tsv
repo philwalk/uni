@@ -1,0 +1,25 @@
+# THE CONDITIONAL RATE ROWS (2026-09-30): the short rate where a refuge holds cash -- the two years
+# after each 20% decline's trough (`rate_after_readings` / `rateAfterReadings`): the union of the
+# 504 sessions after every trough of a 20%+ decline of the set's equity record, read on the daily
+# effective federal funds rate (FRED DFF) over those sessions.
+#
+# post-trough rate %          the rate's mean over those sessions, percent
+# post-trough floor share %   the share of them under 0.50%, percent
+#
+# The bands are the record's own: moving one-year-block resamples of the PAIRED series (the returns
+# and the rates cut from the same block starts, so a resample keeps each decline beside its rates),
+# 20000 resamples, seed 20260918; the joint band over the two rows at 2/18 of the set's 0.10 (the
+# sets' other 16 banded rows keep their 2026-09-26 bands, which were split over 16).
+#
+# Sources, public: QQQ adjusted closes from Yahoo's chart API (1999-03-10..2026-08-20); CRSP from
+# Ken French's F-F_Research_Data_Factors_daily (Mkt-RF + RF, 1954-01-04..2026-06-30); DFF from
+# FRED (fredgraph.csv?id=DFF). A session without a rate on its date is dropped.
+#   record_bands -set nasdaq -series QQQ -yahoo <data>/QQQ.csv -fred <data>/DFF.csv -rateafter
+#       -from 1999-03-10 -to 2026-08-20 -of 18 -header
+#   record_bands -set sp500 -series CRSP -french <data>/F-F_Research_Data_Factors_daily.csv
+#       -fred <data>/DFF.csv -rateafter -from 1954-01-04 -to 2026-06-30 -of 18
+set	row	series	window	n	resamples	record	p0	p1	p5	p10	p15	p20	p25	p30	p35	p40	p45	p50	p55	p60	p65	p70	p75	p80	p85	p90	p95	p99	p100	jointC	jointLo	jointHi
+nasdaq	post-trough rate %	QQQ	1999-03-11..2026-08-20	6904	20000	2.381665	0.076667	0.542868	0.969619	1.204042	1.350615	1.471250	1.572957	1.661881	1.737877	1.823357	1.897781	1.970781	2.044314	2.122868	2.204282	2.295580	2.391973	2.500250	2.632432	2.794330	3.062561	3.625339	5.289821	0.496525	0.312149	3.971964
+nasdaq	post-trough floor share %	QQQ	1999-03-11..2026-08-20	6904	20000	23.358002	0.000000	3.448276	16.666667	22.096774	25.536062	28.477218	30.798703	32.918592	34.753788	36.720796	38.540841	40.394684	42.302158	44.206296	46.285942	48.216645	50.000000	52.599263	55.790646	59.573333	66.141332	79.894180	100.000000	0.496525	0.000000	90.873016
+sp500	post-trough rate %	CRSP	1954-01-05..2026-06-30	18120	20000	4.224745	2.144602	2.942697	3.360528	3.582556	3.733770	3.858560	3.966475	4.054824	4.145714	4.228515	4.307179	4.388629	4.468837	4.552457	4.639540	4.733537	4.833045	4.944309	5.084584	5.256703	5.541803	6.066292	7.490540	0.496975	2.702012	6.481711
+sp500	post-trough floor share %	CRSP	1954-01-05..2026-06-30	18120	20000	15.195221	0.000000	2.177130	5.782857	7.936754	9.379509	10.649059	11.656172	12.642465	13.650794	14.493445	15.397185	16.269841	17.123016	18.009986	18.964523	20.000000	21.144818	22.442681	23.955279	25.840807	28.803070	34.916157	49.139502	0.496975	0.523877	38.611714

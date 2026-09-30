@@ -23,9 +23,11 @@ object RecordBands {
 
   def usage(m: String = ""): Nothing = showUsage(m, "",
     "(-yahoo FILE | -french FILE | -fred FILE) -from YYYY-MM-DD -to YYYY-MM-DD -set NAME -series LABEL",
+    "-rateafter -fred DFF (-yahoo FILE | -french FILE) -from -to -set -series [-of N]",
     "",
-    "-yahoo FILE   the consumer's cached prices: the `dlog_adj_close` column; the first row is the anchor",
-    "              price, not a return, and is skipped",
+    "-yahoo FILE   a `date,adj_close,dlog_adj_close` CSV of adjusted closes (Yahoo's chart API, one row",
+    "              a session): the `dlog_adj_close` column; the first row is the anchor price, not a",
+    "              return, and is skipped",
     "-french FILE  Ken French's F-F_Research_Data_Factors_daily: Mkt-RF + RF compounded into an index",
     "              WITHOUT a leading 1.0 over the window, then its log returns -- which drops the",
     "              window's first session (the persistence fixture's rule)",
@@ -48,13 +50,16 @@ object RecordBands {
     "              by `rateReadings`, its resamples by `rateResamples`, their own joint band",
     "-bond         print the bond row (`BondBandRows`) of a -yahoo window (TLT) instead: the record",
     "              by `bondReadings`, its resamples by `bondResamples`, its own joint band",
+    "-rateafter    THE CONDITIONAL RATE ROWS (`RateAfterRows`): the -fred rate on the equity window's",
+    "              session dates, the two years after each 20% decline's trough; the record by",
+    "              `rateAfterOfReturns`, its paired block resamples, their own joint band",
     "-sectors DIR  THE SECTOR ROWS instead: Ken French's `10_Industry_Portfolios.CSV`,",
     "              `49_Industry_Portfolios.CSV` and `F-F_Research_Data_Factors.CSV` in DIR as the",
     "              library publishes them (unzipped), the rows of `sectors-2026-09-30.tsv` with 5-95",
     "              block-bootstrap bands where a row has one",
   )
 
-  /** `(date, log return)` for every session of the consumer's cached Yahoo file after its first. */
+  /** `(date, log return)` for every session of a `date,adj_close,dlog_adj_close` file after its first. */
   def readYahoo(file: String): Vector[(String, Double)] =
     val lines = file.asPath.lines.toVector
     val col = lines.headOption.getOrElse(usage(s"$file is empty")).split(',').map(_.trim)
@@ -116,7 +121,7 @@ object RecordBands {
     var set = ""; var series = ""; var rows = Vector.empty[String]
     var resamples = 20000; var seed = 20260918L; var header = false
     var joint = 0.10; var of = 0; var coupling = false; var rate = false; var bond = false
-    var multiyear = false; var long = false
+    var multiyear = false; var long = false; var rateafter = false
     eachArg(args.toSeq, usage) {
       case "-yahoo"     => yahoo = consumeNext
       case "-french"    => french = consumeNext
@@ -136,8 +141,17 @@ object RecordBands {
       case "-long"      => long = true
       case "-rate"      => rate = true
       case "-bond"      => bond = true
+      case "-rateafter" => rateafter = true
       case a            => usage(s"unrecognized arg [$a]")
     }
+    // `-rateafter` reads a rate beside an equity source; every other mode exactly one source
+    val afterRate =
+      if !rateafter then ""
+      else if fred.isEmpty then usage("-rateafter wants a -fred rate beside the equity")
+      else
+        val f = fred
+        fred = ""
+        f
     if Vector(yahoo, french, fred).count(_.nonEmpty) != 1 then usage("give exactly one of -yahoo, -french and -fred")
     if rate != fred.nonEmpty then usage("-rate reads a -fred file, and a -fred file is read by -rate")
     if from.isEmpty || to.isEmpty then usage("-from and -to are required")
@@ -162,6 +176,13 @@ object RecordBands {
       usage(s"the window holds ${dated.length} sessions; a block bootstrap needs more than a year")
     val r = dated.map(_._2).toArray
     val window = s"${dated.head._1}..${dated.last._1}"
+    if afterRate.nonEmpty then
+      // the rate on the equity's session dates: a session without a rate is dropped
+      val rates = readFred(afterRate).toMap
+      val joined = dated.flatMap((d, x) => rates.get(d).map(v => (x, v)))
+      printRateAfterRows(set, series, resamples, seed, joint, of, header,
+                         joined.map(_._1).toArray, joined.map(_._2).toArray, window)
+      return
     if coupling then
       if header then println("set\trow\tseries\twindow\tn\trecord")
       for (name, value) <- Vector(("bubble coupling 3y", MarketSim.bubbleCouplingOf(r)),
@@ -302,4 +323,25 @@ object RecordBands {
     val (lo, hi) = edges(0)
     println(f"$set%s\t${MarketSim.BondBandRows(0)}%s\t$series%s\t$window%s\t${r.length}%d\t$resamples%d\t${record(0)}%.6f\t" +
             qs.mkString("\t") + f"\t$c%.6f\t$lo%.6f\t$hi%.6f")
+
+  /** THE CONDITIONAL RATE ROWS (`-rateafter`) on a `-fred` rate beside a `-yahoo` or `-french`
+    * equity window, joined on the equity's session dates: the record by `rateAfterOfReturns`,
+    * its paired block resamples by `rateAfterResamples`, a joint band over the two -- the rate
+    * rows' columns. */
+  def printRateAfterRows(set: String, series: String, resamples: Int, seed: Long, joint: Double, of: Int,
+                         header: Boolean, r: Array[Double], rate: Array[Double], window: String): Unit =
+    val record = MarketSim.rateAfterOfReturns(r, rate)
+    eprintln(f"$series%s: ${r.length}%d sessions $window%s joined with the rate; post-trough mean " +
+             f"${record(0)}%.4f%%, ${record(1)}%.2f%% under the floor; $resamples%d resamples, seed $seed%d")
+    val reads = MarketSim.rateAfterResamples(r, rate, resamples, seed)
+    if header then
+      println("set\trow\tseries\twindow\tn\tresamples\trecord\t" +
+              MarketSim.RecordBandPcts.map(p => s"p$p").mkString("\t") + "\tjointC\tjointLo\tjointHi")
+    val ks = MarketSim.RateAfterRows.indices.toVector
+    val alpha = joint * ks.length / (if of == 0 then ks.length else of)
+    val (c, edges) = MarketSim.recordBandJoint(reads, ks, alpha)
+    for (k, (lo, hi)) <- ks.zip(edges) do
+      val qs = MarketSim.recordBandQuantiles(reads.map(_(k))).map(v => f"$v%.6f")
+      println(f"$set%s\t${MarketSim.RateAfterRows(k)}%s\t$series%s\t$window%s\t${r.length}%d\t$resamples%d\t${record(k)}%.6f\t" +
+              qs.mkString("\t") + f"\t$c%.6f\t$lo%.6f\t$hi%.6f")
 }

@@ -10,9 +10,13 @@ import uni.data.*
   * the bit, so the Rust twin's `record_band_tests`, which pins the same values, shows the twins read
   * a record identically. */
 class RecordBandSuite extends FunSuite:
-  private val fixture = Paths.get("test-data/equity-anchors/recordbands-2026-09-26.tsv")
+  private def fixtureLines(name: String): Vector[String] =
+    Paths.get(s"test-data/equity-anchors/$name").lines.toVector
+      .filterNot(l => l.startsWith("#") || l.trim.isEmpty)
+  /** the record-band fixture's rows, then the conditional rate rows' (`rateafter-2026-09-30.tsv`,
+    * the same columns) without their header */
   private lazy val lines: Vector[String] =
-    fixture.lines.toVector.filterNot(l => l.startsWith("#") || l.trim.isEmpty)
+    fixtureLines("recordbands-2026-09-26.tsv") ++ fixtureLines("rateafter-2026-09-30.tsv").drop(1)
 
   private def row(set: String, name: String): Vector[Double] =
     lines.map(_.split('\t').toVector).find(r => r(0) == set && r(1) == name)
@@ -47,8 +51,8 @@ class RecordBandSuite extends FunSuite:
     assertEquals(header.drop(30), Vector("jointC", "jointLo", "jointHi"), "and the joint band")
     for (set, a) <- sets do
       assertEquals(a.recordBands.map(_.name),
-        MarketSim.RecordBandRows ++ MarketSim.RateBandRows ++ MarketSim.BondBandRows,
-        s"$set: the literals follow RecordBandRows, RateBandRows, BondBandRows")
+        MarketSim.RecordBandRows ++ MarketSim.RateBandRows ++ MarketSim.BondBandRows ++ MarketSim.RateAfterRows,
+        s"$set: the literals follow RecordBandRows, RateBandRows, BondBandRows, RateAfterRows")
       for b <- a.recordBands do
         val r = row(set, b.name)
         assertEquals(b.record, r.head, s"$set ${b.name}: record")
@@ -212,12 +216,43 @@ class RecordBandSuite extends FunSuite:
       assertEquals(a.shortRate, row(set, "short rate %").head, s"$set: short rate")
       assertEquals(a.rateFloor, row(set, "rate floor share %").head, s"$set: floor share")
       assertEquals(MarketSim.recordBandYears(a, "short rate %"), a.rateYears, s"$set: horizon")
+      assertEquals(a.postRate, row(set, "post-trough rate %").head, s"$set: post-trough rate")
+      assertEquals(a.postFloor, row(set, "post-trough floor share %").head, s"$set: post-trough floor share")
+      assertEquals(MarketSim.recordBandYears(a, "post-trough rate %"), a.rateYears,
+        s"$set: the conditional rows read the rate window")
       assertEquals(a.bondDepth, row(set, "bond depth vs vol").head, s"$set: bond depth")
       assertEquals(MarketSim.recordBandYears(a, "bond depth vs vol"), a.bondYears, s"$set: bond horizon")
     val path = Array(0.0, 0.004, 0.005, 0.01, 0.02, 0.03, 0.04, 0.05)
     val rr = MarketSim.rateReadings(path)
     assertEqualsDouble(rr(0), 1.9875, 1e-12, s"mean ${rr(0)}")
     assertEqualsDouble(rr(1), 25.0, 1e-12, s"floor share ${rr(1)}")
+  }
+
+  // THE CONDITIONAL RATE ROWS on a hand path: two 20% declines whose post-trough windows overlap,
+  // the union of the sessions after either trough (never the trough itself), the rate's mean and
+  // floor share over them; NaN where no decline reaches 20%; and the paired resampler on a pinned
+  // series, the values the Rust twin's `record_band_tests` pin.
+  test("the conditional rate rows read the sessions after each trough and only those") {
+    val px   = Array(1.0, 1.1, 0.8, 0.85, 0.9, 1.2, 1.0, 0.7, 0.9, 1.3)
+    val rate = Array(0.05, 0.05, 0.05, 0.001, 0.002, 0.004, 0.006, 0.01, 0.02, 0.03)
+    val rr = MarketSim.rateAfterReadings(px, rate)
+    assertEqualsDouble(rr(0), 0.073 / 7.0 * 100.0, 1e-12, s"mean ${rr(0)}")
+    assertEqualsDouble(rr(1), 300.0 / 7.0, 1e-12, s"floor ${rr(1)}")
+    val calm = MarketSim.rateAfterReadings(Array(1.0, 1.1, 1.0, 1.05, 0.95, 1.2), rate.take(6))
+    assert(calm(0).isNaN && calm(1).isNaN, "no decline, no reading")
+    val r = (1 until px.length).map(i => math.log(px(i) / px(i - 1))).toArray
+    val off = MarketSim.rateAfterOfReturns(r, rate.drop(1))
+    assertEqualsDouble(off(0), rr(0), 1e-9, "off the returns, the first level dropped")
+    assertEqualsDouble(off(1), rr(1), 1e-9, "and the rate aligned with it")
+    // uniform draws, no transcendental, so both twins read the same bits
+    val rng = new NumPyRNG(7L)
+    val rs = Array.fill(700)((rng.nextDouble() - 0.52) * 0.04)
+    val rates = Array.fill(700)(0.001 + 0.02 * rng.nextDouble())
+    val reads = MarketSim.rateAfterResamples(rs, rates, 3, 5L)
+    assertEquals(reads.length, 3)
+    val pin = Vector(1.222787483729952, 12.5, 1.145010398988397, 21.951219512195124)
+    for (got, want) <- Vector(reads(0)(0), reads(0)(1), reads(1)(0), reads(1)(1)).zip(pin) do
+      assertEqualsDouble(got, want, 1e-12, s"$got vs $want")
   }
 
   // THE FLOOR BINDS once the mean is low: the default world's rate never reaches 0.5%, and the

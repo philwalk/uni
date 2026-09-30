@@ -933,6 +933,18 @@ seeds) with the floor held while the market is in its drawdown (`-floorhold`); `
 8.7% (records 4.6% and 14.6%, inside both bands on every one of 32 seeds) with the floor held and
 the rate mean at 5.7%; the shipped S&P default's rate level is inside and its floor time is not.
 
+**The rate after a decline** — `post-trough rate %` and `post-trough floor share %` — is the same
+two readings over the two years after each 20% decline's trough, the union of those windows: what
+a refuge earns holding cash after an exit, which the two rows above leave open, since a world can
+hold the record's mean and floor share with its floor spells anywhere. The records are the federal
+funds rate on the equity window's own sessions, 4.2% and 15% over 1954-2026, 2.4% and 23% over
+1999-2026 (`rateafter-2026-09-30.tsv`, from `record_bands -rateafter`), banded by paired block
+resamples: the returns and the rates cut from the same starts, so a resample keeps each decline
+beside its rates. Both shipped recipes sit inside without a re-solve, `0.24.5-sp500` at 4.0-4.3%
+and 13-15% across seeds, `0.24.5-nasdaq` at 1.9-2.2% and 22-32%. The S&P worlds' floor time is
+post-trough time: their unconditional floor share, 8-10% against the record's 14.6%, is the
+record's 2011-15 spell, two to six years after the 2009 trough, which no post-trough window holds.
+
 **The bond's underwater share** — `bond depth vs vol` — is the share of sessions the bond spends
 more than 10% under its running peak, over the share its own volatility implies across real
 Treasury funds. Its record is TLT's own 24 years and its band that record's resamples (0.65 to 1.79

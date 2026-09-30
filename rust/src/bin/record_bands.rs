@@ -33,15 +33,20 @@ const USAGE: &str =
     "usage: record_bands (-yahoo FILE | -french FILE) -from YYYY-MM-DD -to YYYY-MM-DD
                     -set NAME -series LABEL [-rows A,B] [-resamples N] [-seed S]
                     [-joint A] [-of N] [-header] [-coupling | -multiyear [-long]]
+       record_bands -rateafter -fred DFF (-yahoo FILE | -french FILE) -from -to -set -series [-of N]
        record_bands -sectors DIR [-resamples N] [-seed S]
 
+  -rateafter    THE CONDITIONAL RATE ROWS (`RATE_AFTER_ROWS`): the -fred rate on the equity window's
+                session dates, the two years after each 20% decline's trough; the record by
+                `rate_after_of_returns`, its paired block resamples, their own joint band
   -sectors DIR  THE SECTOR ROWS instead: Ken French's `10_Industry_Portfolios.CSV`,
                 `49_Industry_Portfolios.CSV` and `F-F_Research_Data_Factors.CSV` in DIR as the
                 library publishes them (unzipped), the first monthly block of each; prints the
                 momentum, trend and shape rows of `sectors-2026-09-30.tsv`, with 5-95
                 block-bootstrap bands where a row has one
 
-  -yahoo FILE   the consumer's cached prices: the `dlog_adj_close` column; the first row is the anchor
+  -yahoo FILE   a `date,adj_close,dlog_adj_close` CSV of adjusted closes (Yahoo's chart API, one row a
+                session): the `dlog_adj_close` column; the first row is the anchor
                 price, not a return, and is skipped
   -french FILE  Ken French's F-F_Research_Data_Factors_daily: Mkt-RF + RF compounded into an index
                 WITHOUT a leading 1.0 over the window, then its log returns -- which drops the
@@ -94,6 +99,13 @@ struct Opts {
     long: bool,
     rate: bool,
     bond: bool,
+    /// `-rateafter`: the rate file read beside the equity source
+    after_rate: Option<String>,
+}
+
+/// A flag's numeric value, or the usage line.
+fn num<T: std::str::FromStr>(v: &str, msg: &str) -> T {
+    v.parse().unwrap_or_else(|_| usage(msg))
 }
 
 fn parse_args(args: &[String]) -> Opts {
@@ -104,6 +116,7 @@ fn parse_args(args: &[String]) -> Opts {
     let (mut multiyear, mut long) = (false, false);
     let mut rate = false;
     let mut bond = false;
+    let mut rateafter = false;
     let mut fred: Option<String> = None;
     let (mut joint, mut of) = (0.10f64, 0usize);
     let mut it = args.iter();
@@ -122,35 +135,25 @@ fn parse_args(args: &[String]) -> Opts {
             "-set" => set = next(),
             "-series" => series = next(),
             "-rows" => rows = next().split(',').map(|s| s.trim().to_string()).collect(),
-            "-resamples" => {
-                resamples = next()
-                    .parse()
-                    .unwrap_or_else(|_| usage("-resamples wants an integer"));
-            }
-            "-seed" => {
-                seed = next()
-                    .parse()
-                    .unwrap_or_else(|_| usage("-seed wants a non-negative integer"));
-            }
-            "-joint" => {
-                joint = next()
-                    .parse()
-                    .unwrap_or_else(|_| usage("-joint wants a share in (0, 1)"));
-            }
-            "-of" => {
-                of = next()
-                    .parse()
-                    .unwrap_or_else(|_| usage("-of wants a row count"));
-            }
+            "-resamples" => resamples = num(&next(), "-resamples wants an integer"),
+            "-seed" => seed = num(&next(), "-seed wants a non-negative integer"),
+            "-joint" => joint = num(&next(), "-joint wants a share in (0, 1)"),
+            "-of" => of = num(&next(), "-of wants a row count"),
             "-header" => header = true,
             "-coupling" => coupling = true,
             "-multiyear" => multiyear = true,
             "-long" => long = true,
             "-rate" => rate = true,
             "-bond" => bond = true,
+            "-rateafter" => rateafter = true,
             other => usage(&format!("unrecognized arg [{other}]")),
         }
     }
+    // `-rateafter` reads a rate beside an equity source; every other mode exactly one source
+    let after_rate = rateafter.then(|| {
+        fred.take()
+            .unwrap_or_else(|| usage("-rateafter wants a -fred rate"))
+    });
     let source = match (yahoo, french, fred) {
         (Some(f), None, None) => Source::Yahoo(f),
         (None, Some(f), None) => Source::French(f),
@@ -191,10 +194,11 @@ fn parse_args(args: &[String]) -> Opts {
         long,
         rate,
         bond,
+        after_rate,
     }
 }
 
-/// `(date, log return)` for every session of the consumer's cached Yahoo file after its first.
+/// `(date, log return)` for every session of a `date,adj_close,dlog_adj_close` file after its first.
 fn read_yahoo(file: &str) -> Vec<(String, f64)> {
     let text = std::fs::read_to_string(file).unwrap_or_else(|e| usage(&format!("{file}: {e}")));
     let mut lines = text.lines();
@@ -335,6 +339,10 @@ fn main() {
     }
     let r: Vec<f64> = dated.iter().map(|(_, x)| *x).collect();
     let window = format!("{}..{}", dated[0].0, dated[dated.len() - 1].0);
+    if let Some(rate_file) = &o.after_rate {
+        rate_after_mode(&o, rate_file, &dated, &window);
+        return;
+    }
     if o.coupling {
         if o.header {
             println!("set\trow\tseries\twindow\tn\trecord");
@@ -675,6 +683,92 @@ fn print_sector_rows(dir: &str, resamples: usize, seed: u64) {
         println!(
             "shape\t{table}\t\tmarket middle decile\tmedian pairwise correlation\t{:.6}\t\t\t{}",
             s[3], n[2]
+        );
+    }
+}
+
+/// `-rateafter`: the rate on the equity's session dates (a session without a rate is dropped),
+/// then the conditional rate rows.
+fn rate_after_mode(o: &Opts, rate_file: &str, dated: &[(String, f64)], window: &str) {
+    let rates: std::collections::HashMap<String, f64> = read_fred(rate_file).into_iter().collect();
+    let joined: Vec<(f64, f64)> = dated
+        .iter()
+        .filter_map(|(d, x)| rates.get(d).map(|v| (*x, *v)))
+        .collect();
+    let (r, rate): (Vec<f64>, Vec<f64>) = joined.into_iter().unzip();
+    print_rate_after_rows(o, &r, &rate, window);
+}
+
+/// The single-history spreads the anchors' `post_rate_sd` and `post_floor_sd` start from: the sd
+/// of the rate's log, the floor share's sd over the record (an additive row).
+fn rate_after_spreads(reads: &[[f64; 2]], floor_record: f64) -> String {
+    let sd = |xs: &[f64]| {
+        let m = xs.iter().sum::<f64>() / xs.len() as f64;
+        (xs.iter().map(|x| (x - m) * (x - m)).sum::<f64>() / xs.len() as f64).sqrt()
+    };
+    let logs: Vec<f64> = reads
+        .iter()
+        .map(|x| x[0].ln())
+        .filter(|v| v.is_finite())
+        .collect();
+    let shares: Vec<f64> = reads
+        .iter()
+        .map(|x| x[1])
+        .filter(|v| v.is_finite())
+        .collect();
+    format!(
+        "sd log rate {:.3}, floor share sd over record {:.3}",
+        sd(&logs),
+        sd(&shares) / floor_record
+    )
+}
+
+/// THE CONDITIONAL RATE ROWS (`-rateafter`) on a `-fred` rate beside a `-yahoo` or `-french`
+/// equity window, joined on the equity's session dates: the record by `rate_after_of_returns`,
+/// its paired block resamples by `rate_after_resamples`, a joint band over the two -- the rate
+/// rows' columns.
+fn print_rate_after_rows(o: &Opts, r: &[f64], rate: &[f64], window: &str) {
+    let record = ms::rate_after_of_returns(r, rate);
+    eprintln!(
+        "{}: {} sessions {window} joined with the rate; post-trough mean {:.4}%, {:.2}% under the floor; {} resamples, seed {}",
+        o.series,
+        r.len(),
+        record[0],
+        record[1],
+        o.resamples,
+        o.seed
+    );
+    let reads = ms::rate_after_resamples(r, rate, o.resamples, o.seed);
+    eprintln!("  spreads: {}", rate_after_spreads(&reads, record[1]));
+    if o.header {
+        let pcts: Vec<String> = ms::RECORD_BAND_PCTS
+            .iter()
+            .map(|p| format!("p{p}"))
+            .collect();
+        println!(
+            "set\trow\tseries\twindow\tn\tresamples\trecord\t{}\tjointC\tjointLo\tjointHi",
+            pcts.join("\t")
+        );
+    }
+    let ks: Vec<usize> = (0..ms::RATE_AFTER_ROWS.len()).collect();
+    let of = if o.of == 0 { ks.len() } else { o.of };
+    let alpha = o.joint * ks.len() as f64 / of as f64;
+    let (c, edges) = ms::record_band_joint(&reads, &ks, alpha);
+    for (&k, (lo, hi)) in ks.iter().zip(&edges) {
+        let name = ms::RATE_AFTER_ROWS[k];
+        let col: Vec<f64> = reads.iter().map(|x| x[k]).collect();
+        let qs: Vec<String> = ms::record_band_quantiles(&col)
+            .iter()
+            .map(|v| format!("{v:.6}"))
+            .collect();
+        println!(
+            "{}\t{name}\t{}\t{window}\t{}\t{}\t{:.6}\t{}\t{c:.6}\t{lo:.6}\t{hi:.6}",
+            o.set,
+            o.series,
+            r.len(),
+            o.resamples,
+            record[k],
+            qs.join("\t")
         );
     }
 }
