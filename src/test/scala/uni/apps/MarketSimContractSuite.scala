@@ -940,6 +940,42 @@ class MarketSimContractSuite extends FunSuite:
            "every release predates the boom regime and inherits rate 0")
   }
 
+  // The drift regime's spread and the boom's fade: every release holds the values that were
+  // literals before they were dials, a world without the spread draws the same streams, and a
+  // slower fade leaves the path alone until the first boom's build ends.
+  test("the drift spread and the boom's fade are the old literals by default") {
+    for (name, w, _) <- MarketSim.Recipes if !name.startsWith("0.24.5-") do
+      assert(w.driftSd == 0.04 && w.boomFade == 1.0,
+             s"$name predates the dials and holds the literals they replaced")
+    val w = MarketSim.namedWorld("0.24.4-nasdaq").get._1.copy(boomRate = 2.0, boomSize = 1.0, boomLen = 2.5)
+    val base = MarketSim.simulate(w, 100, MarketSim.DefaultSeed)
+    val flat = MarketSim.simulate(w.copy(driftSd = 0.0), 100, MarketSim.DefaultSeed)
+    assert(base.booms > 0 && flat.booms == base.booms, "the spread moves no other stream")
+    assert(!flat.price.sameElements(base.price), "a world without the spread is another world")
+    val slow = MarketSim.simulate(w.copy(boomFade = 6.0), 100, MarketSim.DefaultSeed)
+    val first = slow.price.indices.find(i => slow.price(i) != base.price(i))
+    assert(first.exists(_ > (2.5 * MarketSim.DaysPerYear).toInt),
+           s"the fade acts after a build, never before one (first difference at session $first)")
+  }
+
+  // The deleveraging: absent at rate 0 whatever its other dials read, bit for bit; on, it moves the
+  // path, and with a calm no path reaches before an episode may start it moves nothing, so its
+  // draws disturb no other stream; the Nasdaq recipe carries it and every release predates it.
+  test("the deleveraging is absent at zero and waits for the calm it is given") {
+    val off = MarketSim.Defaults
+    val a = MarketSim.simulate(off, 30, MarketSim.DefaultSeed)
+    val b = MarketSim.simulate(off.copy(delevSize = 0.9, delevLen = 0.5), 30, MarketSim.DefaultSeed)
+    assert(a.price.sameElements(b.price), "at rate 0 the deleveraging's other dials must be inert, bit for bit")
+    val base = MarketSim.namedWorld("0.24.4-nasdaq").get._1
+    val on   = base.copy(delevRate = 2.0, delevFrom = 0.0, delevSize = 0.3, delevLen = 0.05)
+    val p0 = MarketSim.simulate(base, 60, MarketSim.DefaultSeed)
+    assert(!MarketSim.simulate(on, 60, MarketSim.DefaultSeed).price.sameElements(p0.price),
+           "at rate 2 with no calm required the deleveraging moves the path")
+    assert(MarketSim.simulate(on.copy(delevFrom = 1000.0), 60, MarketSim.DefaultSeed).price.sameElements(p0.price),
+           "a calm no path reaches starts nothing and draws from no other stream")
+    assert(MarketSim.namedWorld("0.24.5-nasdaq").get._1.delevRate > 0.0, "the Nasdaq recipe carries the deleveraging")
+  }
+
   // The seven dials of items 32-34's forms are absent at their off values bit for bit whatever
   // their companions read, and every release predates them.
   test("the rate and recession forms are absent when off and releases inherit that") {
@@ -952,7 +988,8 @@ class MarketSimContractSuite extends FunSuite:
       assert(w.floorhold == 0.0 && w.recessRate == 0.0 && w.recessNews == 1.0 && w.recessVol == 0.0 &&
              w.regimeDrift == 0.0 && w.spreadDd == 0.0 && w.disasterAnticipate == 0.0 &&
              w.disasterOvershoot == 0.0 && w.volPull == 0.0 &&
-             w.discountLag == 0.0, s"$name predates the forms and inherits their off values")
+             w.discountLag == 0.0 && w.delevRate == 0.0,
+             s"$name predates the forms and inherits their off values")
   }
 
   // The floor holds: on the shipped recipe at a 3% mean with the record's cut size, the hold

@@ -358,19 +358,30 @@ object MarketSimSearch:
                           * watches nothing, and for a read that left before the table was read. */
                         watchMiss: Vector[String] = Vector.empty)
 
-  /** Does this read MISS the named gap row's band?  A row with a record band is judged by it; a row
-    * without one is graded by its ratio to the anchor's target, which is the verdict's `miss` for
-    * it (`FidelityRow.miss`).  An extreme row, graded by where the record falls among single
-    * histories of its own length, carries neither and `-gap` refuses it. */
-  def gapMisses(anchors: MarketSim.Anchors, nm: String, banded: Map[String, Double],
+  /** Does this read MISS the named gap row's band?  A row with a record band is judged by it; an
+    * extreme row by where the record falls among the read's single histories of its own length
+    * (outside 5-95, or too few to place it) and a multi-year row by their joint band, the
+    * verdict's `miss` for each; a row with none of these is graded by its ratio to the anchor's
+    * target (`FidelityRow.miss`). */
+  def gapMisses(anchors: MarketSim.Anchors, nm: String, hr: MarketSim.HorizonReadings,
                 st: MarketSim.WorldStats): Boolean =
     anchors.recordBands.find(_.name == nm) match
-      case Some(b) => b.misses(banded.getOrElse(nm, Double.NaN))
+      case Some(b) => b.misses(hr.banded.getOrElse(nm, Double.NaN))
       case None    =>
-        MarketSim.fitTargets(anchors).find(_._1 == nm).exists { (_, get, target, _) =>
-          val ratio = get(st) / target
-          !(ratio >= MarketSim.FidelityRatioBand._1 && ratio <= MarketSim.FidelityRatioBand._2)
-        }
+        val target = MarketSim.fitTargets(anchors).find(_._1 == nm).map(_._3).getOrElse(Double.NaN)
+        if MarketSim.isMultiYear(nm) then
+          !hr.historyBand.get(nm).exists((lo, hi) => target >= lo && target <= hi)
+        else if MarketSim.extremeTargetNames.contains(nm) then
+          !hr.extreme.get(nm).exists { xs =>
+            val p = MarketSim.anchorPctile(xs, target)
+            xs.size >= MarketSim.ExtremeMinHistories &&
+              p >= MarketSim.ExtremePctBand._1 && p <= MarketSim.ExtremePctBand._2
+          }
+        else
+          MarketSim.fitTargets(anchors).find(_._1 == nm).exists { (_, get, target, _) =>
+            val ratio = get(st) / target
+            !(ratio >= MarketSim.FidelityRatioBand._1 && ratio <= MarketSim.FidelityRatioBand._2)
+          }
 
   /** One seed's reading.  Every quantity the fidelity table grades is read at its record's horizon
     * and the extreme rows at their anchors', cut from the main ensemble where the horizon is
@@ -420,13 +431,13 @@ object MarketSimSearch:
     // fidelity band does, plus its distance past the edge, so the search has a slope back inside.
     // the gap rows' bands, read on this read: a miss on one is a failed gate (see `Objective`)
     val gapMiss =
-      if gated then obj.gap.filter(nm => gapMisses(anchors, nm, banded, st))
+      if gated then obj.gap.filter(nm => gapMisses(anchors, nm, hr, st))
       else Vector.empty[String]
     // the rows a seed is reported on, where the table was read: an early exit leaves `banded`
     // empty, and a banded row without a reading counts as a miss
     val watchMiss =
       if early then Vector.empty[String]
-      else obj.watch.filter(nm => gapMisses(anchors, nm, banded, st))
+      else obj.watch.filter(nm => gapMisses(anchors, nm, hr, st))
     // the held rows' distances on this read, in the judge's units: past a bar is a failed gate
     val holdMiss =
       if gated then obj.hold.collect {
@@ -1031,12 +1042,11 @@ object MarketSimSearch:
               "a row further from its record costs the difference")
       r
     }
-    // THE GAP ROWS (`-gap`): each must name a graded row of this anchor set -- a record band, or a
-    // fitness row the verdict grades by its ratio to the target.  An extreme row carries neither.
+    // THE GAP ROWS (`-gap`): each must name a graded row of this anchor set -- a record band or a
+    // fitness row
     val gapRows = gap.split(",").toVector.map(_.trim).filter(_.nonEmpty).map { g =>
       if anchors.recordBands.exists(_.name == g) then g
-      else if MarketSim.fitTargets(anchors).exists((n, _, _, _) =>
-             n == g && !MarketSim.extremeTargetNames.contains(n)) then g
+      else if MarketSim.fitTargets(anchors).exists((n, _, _, _) => n == g) then g
       else usage(s"-gap names [$g], which is not a graded row of [$anchorSpec]")
     }
     // THE HELD ROWS (`-hold ROW<=D,...`): each a graded, non-extreme row of this anchor set and a

@@ -224,6 +224,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 // and lost `largest 3y run-up`, `longest calm stretch` and `equity d20 vs real`, which `gate`
 // now carries under `reported`. Each fidelity row gained `historyBand`: on a multi-year row the
 // world's joint band of single histories, outside which the record is a `miss`; null elsewhere.
+// `world` gained `driftSd`, `boomFade` and the deleveraging's four dials.
 const EMIT_SCHEMA: u32 = 22;
 
 /// Frozen structural constants of the volume channel — see the `vol_idio` field. Measured
@@ -527,6 +528,8 @@ const INFL_REGIME_EDGE: f64 = 0.005;
 /// its last bit; a new spell can start once the level is back under 0.2.
 const CREDIT_GROWTH_SD: f64 = 0.104;
 const CREDIT_REGIME_THETA: f64 = 0.5;
+/// -ln 0.8: the drawdown that resets an expansion's age (`delev_rate`)
+const AGE_DEEP_LOG: f64 = 0.223_143_551_314_209_76;
 const CREDIT_REGIME_HOLD: usize = 126;
 const CREDIT_REGIME_DECAY: f64 = 0.9890579681360733;
 const CREDIT_REGIME_REARM: f64 = 0.2;
@@ -571,6 +574,12 @@ pub fn default_world() -> World {
         recess_news: 1.0,
         recess_vol: 0.0,
         regime_drift: 0.0,
+        drift_sd: 0.04,
+        boom_fade: 1.0,
+        delev_rate: 0.0,
+        delev_from: 2.0,
+        delev_size: 0.2,
+        delev_len: 0.1,
         spread_dd: 0.0,
         disaster_anticipate: 0.0,
         disaster_overshoot: 0.0,
@@ -833,6 +842,12 @@ fn v0_19_2() -> World {
         recess_news: 1.0,
         recess_vol: 0.0,
         regime_drift: 0.0,
+        drift_sd: 0.04,
+        boom_fade: 1.0,
+        delev_rate: 0.0,
+        delev_from: 2.0,
+        delev_size: 0.2,
+        delev_len: 0.1,
         spread_dd: 0.0,
         disaster_anticipate: 0.0,
         disaster_overshoot: 0.0,
@@ -930,6 +945,12 @@ fn v0_24_1() -> World {
         recess_news: 1.0,
         recess_vol: 0.0,
         regime_drift: 0.0,
+        drift_sd: 0.04,
+        boom_fade: 1.0,
+        delev_rate: 0.0,
+        delev_from: 2.0,
+        delev_size: 0.2,
+        delev_len: 0.1,
         spread_dd: 0.0,
         disaster_anticipate: 0.0,
         disaster_overshoot: 0.0,
@@ -1219,7 +1240,7 @@ pub fn recipes() -> Vec<(&'static str, World, &'static str)> {
     rows
 }
 
-/// The 0.24.5 recipes (unreleased).
+/// The 0.24.5 recipes.
 fn rows_0245(nq_0244: World) -> Vec<(&'static str, World, &'static str)> {
     vec![
         ("0.24.5-nasdaq", recipe_0245_nasdaq(nq_0244), "nasdaq"),
@@ -1236,81 +1257,88 @@ fn rows_0245(nq_0244: World) -> Vec<(&'static str, World, &'static str)> {
     ]
 }
 
-/// THE S&P RECIPE RE-SOLVED AROUND THE 1929 DISASTER (unreleased): the disaster at 1929-32's
+/// THE S&P RECIPE RE-SOLVED AROUND THE 1929 DISASTER: the disaster at 1929-32's
 /// trend-free readings off Shiller's earnings and the CRSP daily index — 1.5 log over three years
 /// evenly, half of it back over five (`disaster_size`, `disaster_len`, `disaster_recover`,
 /// `disaster_rec_len`), the valuation leg's overshoot 0.31 and the anticipated recovery 1 — and the
-/// spread's drawdown term at 3.0, all read off the record and held fixed; the other dials re-solved by
-/// search with valuation dispersion, the floor share and the bond's growth rally required inside their
-/// bands, and the noise skew at 0.85 for the up-day share. On 32 fresh seeds at 200 x 100 every class
-/// passes on 32, with 1.2 rows missed a seed: valuation dispersion 0.31 (record 0.30), the lower wing
-/// 7.4% (6.7%), kurtosis 23.9 (21.8), the downside excess 3.0 (3.1), the up-day share 53.6% (55.0%),
-/// the bond's inflation crash -27.8 (-27.9), the short rate 4.3% and the floor share 8.3% (4.6% /
-/// 14.6%), the bond's growth rally 9.3 (7.0), tail hedge corr -0.33 (-0.27). The upper wing is its
-/// standing miss, and the 3-year variance ratio from 1954 misses on 5 of the 32.
+/// spread's drawdown term at 3.0, all read off the record and held fixed; the other dials re-solved
+/// by search with the multi-year variance ratios in the loss and valuation dispersion and both
+/// wings required inside their bands: the drift regime's spread 0.005, growth not capitalized
+/// (`cap_years` 0.05), the wings from 1.4 booms a century of 1.0 log over 12 years fading at a
+/// 1.7-year half-life. On 32 fresh seeds at 200 x 100 every class passes on 32 and no row misses on
+/// any: the upper wing 6.8% (record 7.6%), the lower 7.6% (6.7%), valuation dispersion 0.32 (0.30),
+/// equity vol 17.2% (15.7%), the up-day share 54.4% (55.0%), the 60-, 120- and 250-day variance
+/// ratios 1.03 / 1.00 / 1.04 (1.01 / 1.03 / 1.03), the short rate 4.1% and the floor share 8.7%
+/// (4.6% / 14.6%), the bond's growth rally 8.8 (7.0) and inflation crash -31.2 (-27.9), tail hedge
+/// corr -0.30 (-0.27). Kurtosis 29.7 (21.8) and the downside excess 6.3 (3.1) sit at their bands'
+/// 86th and 87th percentile.
 fn recipe_0245_sp500(mut w: World) -> World {
-    w.trend_share = 0.052973269;
-    w.depth = 18.015402;
-    w.stress = 4.0334913;
-    w.drift = 0.12927572;
-    w.fund_vol = 0.03;
-    w.vol_of_vol = 0.02633778;
-    w.leverage = 0.11121662;
-    w.down_shock = 0.01387046;
-    w.jump_skew = 0.76015484;
-    w.jump_var = 0.16756524;
-    w.jump_rate = 0.0042363358;
-    w.news_rate = 0.47451628;
-    w.news_size = 0.035421047;
-    w.news_lev = 2.5878189;
-    w.news_revert = 0.32351801;
-    w.news_scale = 0.11982032;
-    w.news_bond = 0.19460614;
-    w.credit_regime = 0.16314499;
-    w.credit_regime_rate = 0.48687488;
-    w.slow_bond_infl = 0.18788882;
-    w.noise_skew = 0.85;
-    w.news_flip = 0.039819772;
-    w.value_pull = 0.050744312;
-    w.recovery_drag = 8.0048576;
-    w.recovery_floor = 0.066616651;
+    w.trend_share = 0.0514351;
+    w.depth = 17.881717;
+    w.stress = 4.2846632;
+    w.drift = 0.13637582;
+    w.fund_vol = 0.033139487;
+    w.vol_of_vol = 0.024000927;
+    w.leverage = 0.09405376;
+    w.down_shock = 0.014155829;
+    w.jump_skew = 0.73982917;
+    w.jump_var = 0.1914801;
+    w.jump_rate = 0.0036241359;
+    w.news_rate = 1.2601273;
+    w.news_size = 0.027712295;
+    w.news_lev = 0.0;
+    w.news_revert = 0.31051318;
+    w.news_scale = 0.20335923;
+    w.news_bond = 0.058307866;
+    w.credit_regime = 0.030016836;
+    w.credit_regime_rate = 1.1732987;
+    w.slow_bond_infl = 0.13567705;
+    w.noise_skew = 0.92170339;
+    w.news_flip = 0.23028718;
+    w.value_pull = 0.04441573;
+    w.recovery_drag = 4.9696996;
+    w.recovery_floor = 0.055204865;
     w.disaster_size = 1.5;
     w.disaster_len = 3.0;
     w.disaster_rec_len = 5.0;
-    w.boom_rate = 0.75338688;
-    w.boom_size = 0.67080707;
-    w.boom_len = 2.6931865;
-    w.recess_size = 0.58196498;
-    w.recess_len = 0.93905109;
-    w.recess_recover = 0.19277167;
-    w.recess_news = 1.0459283;
-    w.recess_vol = 0.026401209;
-    w.regime_drift = 0.00030014719;
+    w.boom_rate = 1.3840468;
+    w.boom_size = 1.0189439;
+    w.boom_len = 12.009931;
+    w.recess_size = 0.47009606;
+    w.recess_len = 1.3276927;
+    w.recess_recover = 0.15205535;
+    w.recess_news = 1.0;
+    w.recess_vol = 0.015269486;
+    w.regime_drift = 0.00077289421;
     w.disaster_anticipate = 1.0;
     w.disaster_overshoot = 0.31;
     w.belief_share = 0.97;
-    w.belief_years = 2.0268995;
-    w.belief_leak = 0.18444429;
-    w.cap_years = 3.5078893;
-    w.cycle_sd = 0.11074784;
-    w.cycle_years = 19.599533;
-    w.crowd_impact = 0.063830048;
-    w.easing = 0.086351469;
-    w.floorhold = 0.036314005;
-    w.refuge = 0.11284783;
-    w.refuge_days = 1.1366498;
-    w.lev_gain = 9.7961082;
-    w.bust_amp = 0.09345786;
-    w.slow_share = 0.19526483;
-    w.slow_vol = 0.86875143;
-    w.slow_perm = 0.24569577;
-    w.slow_beta = 0.53958104;
-    w.infl_size = 0.079140058;
-    w.discount = 7.4821889;
-    w.discount_ref = 0.2606615;
-    w.margin = 0.0066092611;
-    w.rate_mean = 0.06;
+    w.belief_years = 2.0916146;
+    w.belief_leak = 0.22131111;
+    w.cap_years = 0.051021858;
+    w.cycle_sd = 0.092517295;
+    w.cycle_years = 20.0;
+    w.crowd_impact = 0.049129039;
+    w.easing = 0.083710748;
+    w.floorhold = 0.072804876;
+    w.refuge = 0.13640012;
+    w.refuge_days = 1.2375965;
+    w.lev_gain = 9.710575;
+    w.bust_amp = 0.073532687;
+    w.slow_share = 0.17336695;
+    w.slow_vol = 0.98775397;
+    w.slow_perm = 0.13868301;
+    w.slow_beta = 0.49203672;
+    w.infl_size = 0.074547755;
+    w.discount = 6.5858285;
+    w.discount_ref = 1.3760451;
+    w.margin = 0.0066748246;
+    w.rate_mean = 0.056820968;
     w.spread_dd = 3.0;
+    w.recess_rate = 0.0025436284;
+    w.drift_sd = 0.0053411225;
+    w.boom_fade = 1.6627058;
+    w.vol_pull = 0.27869111;
     sat_cycle_0245(&mut w);
     w
 }
@@ -1337,88 +1365,90 @@ fn recipe_0245_nasdaq_basket(mut w: World) -> World {
     w
 }
 
-/// THE NASDAQ RECIPE RE-SOLVED FOR THE TIMING STRUCTURE, THE LONG END AND THE SHORT RATE (items
-/// 33-34, consumer requests 1 and 3; unreleased): search-v111's member 2 with seven dials set by
-/// hand on the rulers. The recession's hazard at 1.5 a year per unit stress (6 a century where the
-/// record's 27 years hold three) with its vol at 0.5 (`recess_vol`: the earnings decline runs
-/// inside a turbulent spell), the credit regime carrying a decline (`regime_drift` 0.0005) at a
-/// lower amplitude (0.6), the value pull at 0.08, the drift at 13.5% and the rate mean at 4.5% to
-/// re-solve the return and the floor time those cost; the other literals the archive's. On 33
-/// seeds (0-32) at 200 x 100 every class passes on 32 (seed 19's credit-spread lag reads a
-/// session under its band's -24), no row regresses against `0.24.4-nasdaq` on fresh seeds, and
-/// every row reads inside its band on every seed but the bubble coupling: the timing row +0.6
-/// (0.0 to +1.3; record +1.4, inside), the 60-, 120- and 250-day variance ratios 0.89 / 0.90 /
-/// 1.04 (records 0.83 / 0.92 / 1.11), crashes 28 a century (25.6), the wings 6.3 / 6.2 (7.6 /
-/// 6.7), the short rate 2.0% at the floor 30% of sessions (2.1% / 37%), the bond's growth rally
-/// 6.2 (7.0), return per vol 0.32 (0.38), kurtosis 11.0 (9.6), d20 1.27. The consumer's acceptance —
-/// the record between the worlds' 20th and 80th percentiles on 128 record-length paths — reads
-/// the 55th (126-day variance ratio), 55th (252-day), 48th (the 12-month-to-1-month return
-/// correlation) and 66th (the 200-day moving-average edge); `0.24.4-nasdaq` read the 73rd, 77th,
-/// 73rd and 84th. On the consumer's production rule the worlds' timing rung reads -0.2 a year (median of
-/// 128 histories; +4.1 on the record, above 88% of them) where `0.24.4-nasdaq`'s read -2.2 with
-/// the record above 98%.
+/// THE NASDAQ RECIPE RE-SOLVED AROUND THE BUBBLE COUPLING: the outgoing recipe missed
+/// it on every seed, its deep declines starting at ordinary highs through the spiral, the
+/// recession and the credit regime together. Re-solved by search from a world with those cut back,
+/// booms of 1.5 log and the deleveraging as the source of ordinary declines (the coupling,
+/// valuation dispersion and both wings gap rows), then the rate level set by hand (`rate_mean`
+/// 0.045, `infl_size` 0.10, `slow_bond_infl` 0.85). On 32 fresh seeds at 200 x 100 every class passes on 29 and no row misses on any: the bubble coupling at the record's 91st percentile (the
+/// outgoing recipe's 100th, a miss on every seed), the up-day share 55.1% (record 54.8%), the wings 6.9% / 7.1% (7.6% / 6.7%), the short rate 2.3% and the floor share 26% (2.1% / 37%), the 60-, 120- and 250-day variance ratios 0.92 / 0.92 / 1.08 (0.83 / 0.92 / 1.11), equity vol 24.6%
+/// (26.9%), kurtosis 10.3 (9.6), crashes 27 a century (25.6), the bond's growth rally 5.9 (7.0)
+/// and inflation crash -25.0 (-27.9), the timing row -0.7 (record +1.4, inside; the outgoing
+/// recipe +0.6). Toward their bands' edges and inside: leverage corr -0.06 (-0.11; band -0.17 to
+/// -0.03), valuation dispersion 0.41 (0.30; ratio 1.37 against an edge of 1.5), d20 1.40 (edge
+/// 1.5). Seed 29's bond vol reads a hair over its 1.10x-duration band and seeds 25 and 34 the 250-day variance ratio over its 1.30.
 fn recipe_0245_nasdaq(mut w: World) -> World {
-    w.trend_share = 0.16206258;
-    w.depth = 11.97807;
-    w.stress = 3.1245814;
-    w.drift = 0.135;
-    w.fund_vol = 0.03;
+    w.trend_share = 0.1245185;
+    w.depth = 11.992261;
+    w.stress = 3.7002025;
+    w.drift = 0.13540893;
+    w.fund_vol = 0.039957435;
     w.rate_mean = 0.045;
-    w.vol_of_vol = 0.019782185;
-    w.leverage = 0.11956591;
-    w.down_shock = 0.0094028421;
-    w.jump_skew = 0.40181632;
-    w.jump_var = 0.0067042998;
-    w.jump_rate = 0.0056657937;
-    w.news_rate = 22.102562;
-    w.news_size = 0.012917498;
-    w.news_lev = 49.640883;
-    w.news_revert = 0.59741761;
-    w.news_bond = 0.35948657;
-    w.news_bond_skip = 0.080650603;
-    w.credit_regime = 0.6;
-    w.credit_regime_rate = 15.106269;
-    w.slow_bond_infl = 0.84637482;
-    w.noise_skew = 0.23516287;
-    w.news_flip = 0.4557323;
-    w.value_pull = 0.08;
-    w.recovery_drag = 8.1555265;
-    w.recovery_floor = 0.10284597;
-    w.disaster_rate = 0.5212816;
-    w.disaster_size = 1.7951989;
-    w.disaster_recover = 0.6720218;
-    w.boom_rate = 2.2744563;
-    w.boom_size = 0.96101399;
-    w.boom_len = 2.2377797;
-    w.recess_rate = 1.5;
-    w.recess_size = 0.48366137;
-    w.recess_len = 1.5265747;
-    w.recess_recover = 0.59055711;
-    w.recess_news = 1.2461308;
-    w.recess_vol = 0.5;
-    w.regime_drift = 0.0005;
-    w.spread_dd = 1.5;
-    w.vol_pull = 0.81869132;
-    w.belief_share = 0.61313134;
-    w.belief_years = 1.2453281;
-    w.belief_leak = 0.095289707;
-    w.cap_years = 5.9950491;
-    w.cycle_years = 10.374459;
-    w.crowd_impact = 0.029968427;
-    w.easing = 0.086684243;
-    w.floorhold = 0.038880482;
-    w.refuge = 0.1685941;
-    w.refuge_days = 1.3072279;
-    w.lev_gain = 3.6644866;
-    w.bust_amp = 0.15522867;
-    w.slow_share = 0.19670248;
-    w.slow_vol = 0.9847244;
-    w.slow_perm = 0.061851081;
-    w.slow_beta = 0.88082057;
-    w.infl_size = 0.084518271;
-    w.discount = 7.0147671;
-    w.discount_ref = 1.5309653;
-    w.margin = 0.0069385301;
+    w.vol_of_vol = 0.020507585;
+    w.leverage = 0.05608502;
+    w.down_shock = 0.0063526579;
+    w.jump_skew = 0.29054563;
+    w.jump_var = 0.07072336;
+    w.jump_rate = 0.0057393316;
+    w.news_rate = 23.984823;
+    w.news_size = 0.013837892;
+    w.news_lev = 41.715506;
+    w.news_revert = 0.34836424;
+    w.news_bond = 0.28665647;
+    w.news_bond_skip = 0.16401261;
+    w.credit_regime = 0.60733242;
+    w.credit_regime_rate = 10.249483;
+    w.slow_bond_infl = 0.85;
+    w.noise_skew = 0.15540177;
+    w.news_flip = 0.40849992;
+    w.value_pull = 0.096363811;
+    w.recovery_drag = 3.9043346;
+    w.recovery_floor = 0.14393366;
+    w.disaster_rate = 0.77678709;
+    w.disaster_size = 1.4185505;
+    w.disaster_recover = 0.50571855;
+    w.boom_rate = 1.7901362;
+    w.boom_size = 1.8287137;
+    w.boom_len = 1.4406396;
+    w.recess_rate = 0.072847777;
+    w.recess_size = 0.71891493;
+    w.recess_len = 0.77428379;
+    w.recess_recover = 0.34480432;
+    w.recess_news = 2.4594523;
+    w.recess_vol = 0.74007038;
+    w.regime_drift = 0.00075564341;
+    w.spread_dd = 1.8389625;
+    w.vol_pull = 0.48871308;
+    w.belief_share = 0.76268373;
+    w.belief_years = 0.5;
+    w.belief_leak = 0.18725365;
+    w.cap_years = 3.629015;
+    w.cycle_years = 11.594997;
+    w.crowd_impact = 0.048471946;
+    w.easing = 0.09;
+    w.floorhold = 0.13413022;
+    w.refuge = 0.16778654;
+    w.refuge_days = 1.0938777;
+    w.lev_gain = 4.9382404;
+    w.bust_amp = 0.17970632;
+    w.slow_share = 0.38759481;
+    w.slow_vol = 1.2444423;
+    w.slow_perm = 0.0;
+    w.slow_beta = 0.67999501;
+    w.infl_size = 0.1;
+    w.discount = 5.7533143;
+    w.discount_ref = 0.0;
+    w.margin = 0.0068143829;
+    w.cycle_sd = 0.028565436;
+    w.news_scale = 0.06138917;
+    w.disaster_anticipate = 0.10794422;
+    w.disaster_overshoot = 0.10793019;
+    w.drift_sd = 0.032475792;
+    w.boom_fade = 2.1498033;
+    w.delev_rate = 1.0436419;
+    w.delev_from = 3.2645698;
+    w.delev_size = 0.26685543;
+    w.delev_len = 0.1117689;
     w
 }
 
@@ -1746,6 +1776,12 @@ fn v0_23_0() -> World {
         recess_news: 1.0,
         recess_vol: 0.0,
         regime_drift: 0.0,
+        drift_sd: 0.04,
+        boom_fade: 1.0,
+        delev_rate: 0.0,
+        delev_from: 2.0,
+        delev_size: 0.2,
+        delev_len: 0.1,
         spread_dd: 0.0,
         disaster_anticipate: 0.0,
         disaster_overshoot: 0.0,
@@ -1865,6 +1901,12 @@ fn v0_22_1() -> World {
         recess_news: 1.0,
         recess_vol: 0.0,
         regime_drift: 0.0,
+        drift_sd: 0.04,
+        boom_fade: 1.0,
+        delev_rate: 0.0,
+        delev_from: 2.0,
+        delev_size: 0.2,
+        delev_len: 0.1,
         spread_dd: 0.0,
         disaster_anticipate: 0.0,
         disaster_overshoot: 0.0,
@@ -1986,6 +2028,12 @@ fn v0_22_0() -> World {
         recess_news: 1.0,
         recess_vol: 0.0,
         regime_drift: 0.0,
+        drift_sd: 0.04,
+        boom_fade: 1.0,
+        delev_rate: 0.0,
+        delev_from: 2.0,
+        delev_size: 0.2,
+        delev_len: 0.1,
         spread_dd: 0.0,
         disaster_anticipate: 0.0,
         disaster_overshoot: 0.0,
@@ -2107,6 +2155,12 @@ fn v0_21_0() -> World {
         recess_news: 1.0,
         recess_vol: 0.0,
         regime_drift: 0.0,
+        drift_sd: 0.04,
+        boom_fade: 1.0,
+        delev_rate: 0.0,
+        delev_from: 2.0,
+        delev_size: 0.2,
+        delev_len: 0.1,
         spread_dd: 0.0,
         disaster_anticipate: 0.0,
         disaster_overshoot: 0.0,
@@ -2291,6 +2345,12 @@ fn v0_20_0() -> World {
         recess_news: 1.0,
         recess_vol: 0.0,
         regime_drift: 0.0,
+        drift_sd: 0.04,
+        boom_fade: 1.0,
+        delev_rate: 0.0,
+        delev_from: 2.0,
+        delev_size: 0.2,
+        delev_len: 0.1,
         spread_dd: 0.0,
         disaster_anticipate: 0.0,
         disaster_overshoot: 0.0,
@@ -2457,6 +2517,36 @@ pub struct World {
     /// wing from 7.8 to 5.6 (6.7); the return it costs is re-solved by `drift`, the floor time it
     /// adds by `rate_mean`. 0 is off and bit-identical; searched.
     pub regime_drift: f64,
+    /// THE DRIFT REGIME'S SPREAD: the fundamental's drift is redrawn every 1-11 years as `drift`
+    /// plus a normal draw of this sd, a year. A spell of growth a few points off the mean for
+    /// years is a trend at the 3- and 5-year horizon, and `cap_years` capitalizes it into the
+    /// price: at 0.04 with 3.5 years capitalized the 3-year variance ratio reads 1.32 and the
+    /// record from 1954 (0.75) sits at the worlds' 1st-3rd percentile; at 0 it reads 1.03 and
+    /// the record sits at the 14th-20th. The draw is consumed at any value, so the other streams
+    /// do not move with the dial; 0.04 is every earlier world's, bit for bit.
+    pub drift_sd: f64,
+    /// THE BOOM'S FADE, the half-life in years of the level's decay after the build
+    /// (`boom_rate`). At the shipped 1 a boom's level is two thirds gone a year after its peak,
+    /// a decline of half its size in one year; a slow build with that fade is a trend on the
+    /// way up and a crash on the way down, and a fast build with a fade of years spends the
+    /// same time far over the mean as a plateau. 1 is every earlier world's, bit for bit.
+    pub boom_fade: f64,
+    /// THE DELEVERAGING: forced selling that starts at this rate a year for each year the price
+    /// has gone without a 20% drawdown beyond `delev_from`, times the credit stock's growth over
+    /// its trailing year in sds where the leverage cycle runs (floored at 0: none starts while
+    /// credit contracts). The selling is a flow through the market's own step, `delev_size` log
+    /// of return spread evenly over `delev_len` years, so the stress index, the spiral and the
+    /// bond's refuge bid read it and the value pull buys it back; the fundamental does not move.
+    /// Without it 20% declines arrive as a Poisson process, the 90th-percentile gap between
+    /// them 17 years against the record's 8.6 from 1954 and the longest calm stretch twice the
+    /// century's. Through the credit stock the onsets are ones the macro panel's leverage member
+    /// precedes. None starts while a disaster, a recession or another runs. Own stream; 0 is
+    /// off, bit for bit.
+    pub delev_rate: f64,
+    /// years without a 20% drawdown before the expansion's age starts to count
+    pub delev_from: f64,
+    pub delev_size: f64,
+    pub delev_len: f64,
     /// THE MACRO SPREAD'S DRAWDOWN TERM, pp per unit of log drawdown from the trailing-year high:
     /// the persistent level a credit spread holds while equity is under water (the equity cushion
     /// under the debt). Read off the record per recipe as the spread's level over its window
@@ -4741,6 +4831,43 @@ fn derive_dividends(w: &World, px: &[f64], fv: &[f64], k_div: f64) -> (Vec<f64>,
     (y, t)
 }
 
+/// ONE SESSION OF THE DELEVERAGING (see `World::delev_rate`): the return the episode's selling
+/// takes off this session, 0 outside one. `drop` is the price's log drawdown before the session,
+/// `growth` the credit stock's rise over its trailing year, `clear` whether no disaster or
+/// recession runs. One draw a session while idle, whatever the hazard reads.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the loop's state passed by reference; the Scala twin's signature"
+)]
+fn delev_session(
+    w: &World,
+    rng: &mut NumPyRng,
+    calm_age: &mut usize,
+    left: &mut usize,
+    step: &mut f64,
+    drop: f64,
+    growth: f64,
+    clear: bool,
+) -> f64 {
+    if drop >= AGE_DEEP_LOG {
+        *calm_age = 0;
+    } else {
+        *calm_age += 1;
+    }
+    if *left > 0 {
+        *left -= 1;
+        return *step;
+    }
+    let over = (*calm_age as f64 / DAYS_PER_YEAR as f64 - w.delev_from).max(0.0);
+    let credit = (growth / CREDIT_GROWTH_SD).max(0.0);
+    let u = rng.next_f64();
+    if clear && u < w.delev_rate * over * credit / DAYS_PER_YEAR as f64 {
+        *left = ((w.delev_len * DAYS_PER_YEAR as f64) as usize).max(1);
+        *step = w.delev_size / *left as f64;
+    }
+    0.0
+}
+
 /// THE FUNDAMENTAL THE MARKET SEES (see `disaster_overshoot` and `disaster_anticipate`): while a
 /// disaster declines, less the overshoot's share of the decline so far; from its trough on, plus the
 /// anticipated share of the recovery still to come; otherwise the fundamental itself.
@@ -5120,6 +5247,12 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
     let mut boom_rng = NumPyRng::new(seed ^ 0xb00_0b00u64);
     let boom_prob = w.boom_rate / (100.0 * DAYS_PER_YEAR as f64);
     let mut boom = 0.0f64;
+    // the fade's per-session decay; the shipped half-life keeps its literal, bit for bit
+    let boom_fade = if w.boom_fade == 1.0 {
+        BOOM_FADE
+    } else {
+        exp_det(-std::f64::consts::LN_2 / (w.boom_fade * DAYS_PER_YEAR as f64))
+    };
     let mut boom_left = 0usize;
     let mut boom_step = 0.0f64;
     let mut boom_count = 0usize;
@@ -5162,9 +5295,33 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
         log_p: mc_vec(),
     };
 
+    // THE DELEVERAGING's state (see `delev_rate`): the sessions since the price was last
+    // `AGE_DEEP_LOG` under its peak, the sessions left of a running episode and its step
+    let mut delev_rng = NumPyRng::new(seed ^ 0x0de1_e7a6u64);
+    let mut calm_age = 0usize;
+    let mut delev_left = 0usize;
+    let mut delev_step = 0.0f64;
     let mut i = 0usize;
     while i < tot {
         let log_p_open = eq_m.log_p;
+        let delev_now = if w.delev_rate > 0.0 {
+            delev_session(
+                w,
+                &mut delev_rng,
+                &mut calm_age,
+                &mut delev_left,
+                &mut delev_step,
+                eq_m.peak - eq_m.log_p,
+                if lev_on {
+                    borrow - lev_slow
+                } else {
+                    CREDIT_GROWTH_SD
+                },
+                dis_left == 0 && recess_left == 0,
+            )
+        } else {
+            0.0
+        };
         // ---- exogenous layer: regimes, fundamental, the policy rate ----------------------
         regime_countdown -= 1;
         if regime_countdown <= 0 {
@@ -5173,7 +5330,7 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
             } else {
                 0.0
             };
-            drift_now = w.drift + rng.randn() * 0.04;
+            drift_now = w.drift + rng.randn() * w.drift_sd;
             regime_countdown = 250 + i64::from(rng.next_bounded_u32(2500));
         }
         // MACRO DISASTER: a rare multi-year collapse of the real fundamental. One uniform draw
@@ -5283,12 +5440,15 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
             } else {
                 w.news_rate * w.news_size / DAYS_PER_YEAR as f64
             };
-            // a recession's news (see `recess_news`): rate and compensator together; 1 is inert
+            // a recession's news (see `recess_news`): rate and compensator together; 1 is inert.
+            // Where the cap binds the compensator reads the capped rate, or it would return a
+            // drift the jumps never take; the uncapped branch keeps the released expression
             let (p_news, comp) = if recess_left > 0 && w.recess_news > 1.0 {
-                (
-                    (p_news * w.recess_news).min(NEWS_P_CAP),
-                    comp * w.recess_news,
-                )
+                if p_news * w.recess_news > NEWS_P_CAP {
+                    (NEWS_P_CAP, NEWS_P_CAP * w.news_size)
+                } else {
+                    (p_news * w.recess_news, comp * w.recess_news)
+                }
             } else {
                 (p_news, comp)
             };
@@ -5406,13 +5566,14 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
         // no same-day factor and the correlation flip could not appear at any setting.
         let markdown = if w.discount_lag > 0.0 || w.discount_ref > 0.0 {
             let marked = if w.discount_lag > 0.0 {
-                rate_marked += (rate - rate_marked) * dt / w.discount_lag;
+                // a lag under a session would overshoot: the weight is at most 1
+                rate_marked += (rate - rate_marked) * (dt / w.discount_lag).min(1.0);
                 rate_marked
             } else {
                 rate
             };
             let reference = if w.discount_ref > 0.0 {
-                rate_ref += (rate - rate_ref) * dt / w.discount_ref;
+                rate_ref += (rate - rate_ref) * (dt / w.discount_ref).min(1.0);
                 rate_ref
             } else {
                 w.rate_mean
@@ -5817,7 +5978,7 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
                 boom_left -= 1;
             } else {
                 if boom > 0.0 {
-                    boom_move = boom * BOOM_FADE - boom;
+                    boom_move = boom * boom_fade - boom;
                 }
                 if bust_s <= 0.0
                     && dis_left == 0
@@ -5883,6 +6044,10 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
             lev = borrow * (1.0 + dd_s);
         }
         let mut step_in = eq_flow + eq_shock;
+        if delev_now > 0.0 {
+            // sized in return: the step multiplies its input by the liquidity it reads here
+            step_in -= delev_now / eq_m.liquidity();
+        }
         if flip_owed > 0.0 {
             // THE DAY FLIP (see `news_flip`): the day's would-be return, reflected when the draw
             // fires; the debt the flips cannot pay at q0 = 1 is a lift
@@ -7314,7 +7479,7 @@ pub fn bond_readings(r: &[f64]) -> [f64; 1] {
     px.push(1.0);
     for &x in r {
         lp += x;
-        px.push(lp.exp());
+        px.push(exp_det(lp));
     }
     let vol =
         (scala_sum(r.iter().map(|x| x * x)) / r.len() as f64 * DAYS_PER_YEAR as f64).sqrt() * 100.0;
@@ -10263,6 +10428,12 @@ pub struct Anchors {
     /// (`bubble_window`)
     pub multi_year: [f64; 6],
     pub multi_year_long: [f64; 6],
+    /// the sd of the log of the 3- and 5-year variance ratios across single histories of the
+    /// set's recipe, equity window then long window: what the loss weighs those four rows by
+    pub multi_year_vr_sd: [f64; 2],
+    pub multi_year_long_vr_sd: [f64; 2],
+    /// the same spread for the decline gap, equity window then long window
+    pub decline_gap_sd: [f64; 2],
     /// THE SHORT RATE's record: the daily effective federal funds rate (FRED DFF) over the equity
     /// window's dates, its mean in percent and the share of its sessions under `RATE_FLOOR`
     /// (`rate_readings`; `recordbands-2026-09-26.tsv`, whose bands the rows are graded by). The
@@ -11021,6 +11192,9 @@ const SP500_ANCHORS: Anchors = Anchors {
     calm_stretch: 2190.0,
     multi_year: [-0.127487, 0.745759, 0.732112, 0.324081, 8.599206, 12.589751],
     multi_year_long: [0.028270, 0.961668, 0.963278, 0.398297, 11.837302, 25.500495],
+    multi_year_vr_sd: [0.24, 0.32],
+    multi_year_long_vr_sd: [0.20, 0.25],
+    decline_gap_sd: [0.35, 0.31],
     rate_window: "DFF 1954-2026",
     rate_years: 72,
     bond_window: "clean TLT, 24y",
@@ -11149,36 +11323,39 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     calm_stretch: 1927.0,
     multi_year: [0.007813, 0.993439, 0.894361, 0.438273, 18.396825, 53.729182],
     multi_year_long: [0.100691, 0.983398, 0.964724, 0.740644, 18.396825, 41.888384],
+    multi_year_vr_sd: [0.26, 0.49],
+    multi_year_long_vr_sd: [0.23, 0.40],
+    decline_gap_sd: [0.44, 0.39],
     rate_window: "DFF 1999-2026",
     rate_years: 27,
     bond_window: "clean TLT, 24y",
     bond_years: 24,
     bond_depth: 1.029057,
     short_rate: 2.136466,
-    short_rate_sd: 1.00,
+    short_rate_sd: 1.06,
     rate_floor: 37.313224,
-    rate_floor_sd: 0.64,
+    rate_floor_sd: 0.68,
     vol: 26.90,
-    vol_sd: 0.15,
+    vol_sd: 0.18,
     // QQQ 1999-2026 over all 252 block phases (`recordbands-2026-09-26.tsv`): 19.97, where calendar
     // years read 18.26 (`yearvol-2026-09-15.tsv`, w1999) — the bottom of the 18.2-21.5 phase range.
     // Either way it is well under the pooled 26.9: the window's vol is 2000-02 at 58 / 55 / 42%.
     year_vol: 20.0,
-    year_vol_sd: 0.19,
+    year_vol_sd: 0.17,
     ret_vol: 0.38,
-    ret_vol_sd: 0.44,
+    ret_vol_sd: 0.45,
     kurt: 9.55,
-    kurt_sd: 1.17,
+    kurt_sd: 1.59,
     ac1: 0.293,
-    ac1_sd: 0.21,
+    ac1_sd: 0.23,
     ac20: 0.249,
-    ac20_sd: 0.21,
+    ac20_sd: 0.25,
     crashes: 25.6,
-    crashes_sd: 0.48,
+    crashes_sd: 0.47,
     med_depth: -22.8,
-    med_depth_sd: 0.65,
+    med_depth_sd: 0.59,
     worst_depth: -83.0,
-    worst_depth_sd: 0.17,
+    worst_depth_sd: 0.20,
     // QQQ's own 5th-95th over its resamples (22.23-31.41, recordbands-2026-09-26.tsv), rounded
     // outward: a level gate no narrower than what the record's own history produces
     vol_band: (22.2, 31.5),
@@ -11187,17 +11364,17 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     ret_vol_band: (0.27, 0.47),
     // QQQ wfull row of asymmetry-2026-08-31.tsv; the tail hedge is QQQ/TLT.
     semi_excess: 1.13,
-    semi_excess_sd: 3.23,
+    semi_excess_sd: 3.16,
     // QQQ 1999-2026: 54.78% of moving sessions rise
     up_share: 54.8,
     up_share_sd: 0.02,
     vol_timing: 1.395702,
-    vol_timing_sd: 2.34,
+    vol_timing_sd: 2.35,
     vol_timing_judgment: 3.0,
     lev_corr: -0.1073,
-    lev_corr_sd: 0.45,
+    lev_corr_sd: 0.33,
     tail_hedge: -0.236,
-    tail_hedge_sd: 0.51,
+    tail_hedge_sd: 0.52,
     wing_up: 7.6,
     wing_up_sd: 0.90,
     wing_down: 6.7,
@@ -11205,15 +11382,15 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     // d20's spread is a fraction of the S&P world's (0.42 against 2.27): at Nasdaq volatility the
     // deep rung is pinned where the S&P default leaves it unreadable, so the row carries real
     // weight here.
-    val_disp_sd: 0.22,
-    vr60_sd: 0.20,
-    d5_sd: 0.11,
-    d10_sd: 0.19,
+    val_disp_sd: 0.32,
+    vr60_sd: 0.25,
+    d5_sd: 0.15,
+    d10_sd: 0.25,
     d20_sd: 0.42,
-    bond_vol_sd: 0.42,
-    bond_growth_sd: 2.03,
-    bond_infl_sd: 1.56,
-    bond_depth_sd: 0.53,
+    bond_vol_sd: 0.43,
+    bond_growth_sd: 1.86,
+    bond_infl_sd: 2.20,
+    bond_depth_sd: 0.46,
     dd_refs: &DD_REFS_NASDAQ,
     record_bands: &RECORD_BANDS_NASDAQ,
     div_yield: 0.78,
@@ -11648,15 +11825,34 @@ const MULTI_YEAR_STATS: [StatFn; 6] = [
 ];
 
 /// THE MULTI-YEAR ROWS of `fit_targets`: each statistic against the equity window's record, then
-/// against the long window's. Weight 0: the verdict grades them, and the loss does not see them
-/// until a re-solve weighs them.
+/// against the long window's. The 3- and 5-year variance ratios and the decline gap carry judgment
+/// 0.5 each at the spread of their logs across single histories; the other rows weigh 0 and are
+/// graded by the verdict alone.
 fn multi_year_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
-    let rows = |names: [&'static str; 6], records: [f64; 6]| {
-        (0..6).map(move |k| (names[k], MULTI_YEAR_STATS[k], records[k], 0.0))
+    let rows = |names: [&'static str; 6], records: [f64; 6], sd: [f64; 2], gap_sd: f64| {
+        (0..6).map(move |k| {
+            let weight = match k {
+                1 => wgt(0.5, sd[0]),
+                2 => wgt(0.5, sd[1]),
+                4 => wgt(0.5, gap_sd),
+                _ => 0.0,
+            };
+            (names[k], MULTI_YEAR_STATS[k], records[k], weight)
+        })
     };
-    rows(MULTI_YEAR_ROWS, a.multi_year)
-        .chain(rows(MULTI_YEAR_LONG_ROWS, a.multi_year_long))
-        .collect()
+    rows(
+        MULTI_YEAR_ROWS,
+        a.multi_year,
+        a.multi_year_vr_sd,
+        a.decline_gap_sd[0],
+    )
+    .chain(rows(
+        MULTI_YEAR_LONG_ROWS,
+        a.multi_year_long,
+        a.multi_year_long_vr_sd,
+        a.decline_gap_sd[1],
+    ))
+    .collect()
 }
 
 /// Targets whose model statistic is an EXTREME order statistic over the pooled ensemble rather
@@ -11688,7 +11884,7 @@ const EXTREME_TARGETS: &[&str] = &[
 ];
 
 /// Whether a row is a multi-year row, of either window.
-fn is_multi_year(name: &str) -> bool {
+pub fn is_multi_year(name: &str) -> bool {
     MULTI_YEAR_ROWS.contains(&name) || MULTI_YEAR_LONG_ROWS.contains(&name)
 }
 
@@ -11715,7 +11911,7 @@ fn pooled_extremes() -> Vec<&'static str> {
 /// record-like histories on that statistic — and it is the honest analogue of a ratio miss: both
 /// say "this level cannot be read off this world", neither says how far off it is.
 pub const FIDELITY_RATIO_BAND: (f64, f64) = (0.667, 1.5);
-const EXTREME_PCT_BAND: (usize, usize) = (5, 95);
+pub const EXTREME_PCT_BAND: (usize, usize) = (5, 95);
 
 /// Fewest single histories that can place a record within `EXTREME_PCT_BAND`. One history reads 0%
 /// or 100% and neither is a measurement; in general the resolution is `100/n` percentile points, so
@@ -11723,7 +11919,7 @@ const EXTREME_PCT_BAND: (usize, usize) = (5, 95);
 /// histories to place the record" and "the model cannot produce record-like histories" are
 /// different findings, and only the second is about the model, but neither is a clean bill of
 /// health in the one field a consumer reads to decide whether to trust the file.
-const EXTREME_MIN_HISTORIES: usize = 100 / EXTREME_PCT_BAND.0;
+pub const EXTREME_MIN_HISTORIES: usize = 100 / EXTREME_PCT_BAND.0;
 
 /// One fidelity row AS REPORTED. A per-path target carries a ratio; an `EXTREME_TARGETS` row
 /// carries the anchor's percentile among single histories instead, and no ratio. The two are
@@ -11824,7 +12020,7 @@ impl FidelityRow {
 /// Where an anchor falls among model readings, as a percentage. `-noise`'s `real@` column and the
 /// extreme rows' `record@` are the SAME number and are computed here so they stay so: two reports
 /// disagreeing about one world would replace the confusion being fixed with a new one.
-fn anchor_pctile(xs: &[f64], want: f64) -> usize {
+pub fn anchor_pctile(xs: &[f64], want: f64) -> usize {
     100 * xs.iter().filter(|x| **x <= want).count() / xs.len()
 }
 
@@ -13223,7 +13419,7 @@ const IDENTITY_PARAMS: &[&str] = &["duration", "divYield"];
 /// are in this order too, so the order is also the archive's format. Same shape as `EMIT_SCHEMA` /
 /// `EmitSchema`: the literal is in the model, checked by each twin's own contract test, and
 /// changing one twin without the other cannot pass.
-pub const CALIBRATE_DIAL_ORDER: [&str; 66] = [
+pub const CALIBRATE_DIAL_ORDER: [&str; 72] = [
     "depth",
     "trendShare",
     "drift",
@@ -13290,6 +13486,12 @@ pub const CALIBRATE_DIAL_ORDER: [&str; 66] = [
     "volPull",
     "discountLag",
     "discountRef",
+    "driftSd",
+    "boomFade",
+    "delevRate",
+    "delevFrom",
+    "delevSize",
+    "delevLen",
 ];
 
 /// THE SEARCHED DIALS STEPPED AND MEASURED IN LOG COORDINATES, ln(1 + x), by the calibration search
@@ -13653,7 +13855,7 @@ pub fn calibrate_ranges() -> Vec<(&'static str, f64, f64, Setter, Getter)> {
             |w, x| w.boom_size = x,
             |w| w.boom_size,
         ),
-        ("boomLen", 1.0, 4.0, |w, x| w.boom_len = x, |w| w.boom_len),
+        ("boomLen", 1.0, 16.0, |w, x| w.boom_len = x, |w| w.boom_len),
         // THE SHORT RATE's mean (item 34): the level the rate chases between regimes, solved per
         // anchor set under the rate rows -- the realised mean is this plus the inflation pressure's
         // mean less the accommodation's, and the floor at 0 binds once it is low.
@@ -13769,6 +13971,45 @@ pub fn calibrate_ranges() -> Vec<(&'static str, f64, f64, Setter, Getter)> {
             20.0,
             |w, x| w.discount_ref = x,
             |w| w.discount_ref,
+        ),
+        // the drift regime's spread, a year (see `drift_sd`)
+        ("driftSd", 0.0, 0.06, |w, x| w.drift_sd = x, |w| w.drift_sd),
+        // the boom's fade, a half-life in years (see `boom_fade`)
+        (
+            "boomFade",
+            0.5,
+            12.0,
+            |w, x| w.boom_fade = x,
+            |w| w.boom_fade,
+        ),
+        // the deleveraging (see `delev_rate`)
+        (
+            "delevRate",
+            0.0,
+            2.0,
+            |w, x| w.delev_rate = x,
+            |w| w.delev_rate,
+        ),
+        (
+            "delevFrom",
+            0.0,
+            6.0,
+            |w, x| w.delev_from = x,
+            |w| w.delev_from,
+        ),
+        (
+            "delevSize",
+            0.05,
+            0.6,
+            |w, x| w.delev_size = x,
+            |w| w.delev_size,
+        ),
+        (
+            "delevLen",
+            0.02,
+            1.0,
+            |w, x| w.delev_len = x,
+            |w| w.delev_len,
         ),
     ]
 }
@@ -16644,6 +16885,12 @@ pub fn world_json_body_fmt(w: &World, num: &dyn Fn(f64) -> String) -> Vec<String
         ("recessNews", num(w.recess_news)),
         ("recessVol", num(w.recess_vol)),
         ("regimeDrift", num(w.regime_drift)),
+        ("driftSd", num(w.drift_sd)),
+        ("boomFade", num(w.boom_fade)),
+        ("delevRate", num(w.delev_rate)),
+        ("delevFrom", num(w.delev_from)),
+        ("delevSize", num(w.delev_size)),
+        ("delevLen", num(w.delev_len)),
         ("spreadDd", num(w.spread_dd)),
         ("disasterAnticipate", num(w.disaster_anticipate)),
         ("disasterOvershoot", num(w.disaster_overshoot)),
@@ -17258,9 +17505,9 @@ fn episode_at(
 /// less at the peak, pp (null without the panel).
 fn episodes_block(p: &Path) -> String {
     let (series, lp): (&str, Vec<f64>) = if p.traded.is_empty() {
-        ("price", p.price.iter().map(|x| x.ln()).collect())
+        ("price", p.price.iter().map(|&x| ln_det(x)).collect())
     } else {
-        ("logTraded", p.traded.iter().map(|x| x.ln()).collect())
+        ("logTraded", p.traded.iter().map(|&x| ln_det(x)).collect())
     };
     let spread = p
         .macro_panel
@@ -17784,6 +18031,12 @@ pub fn main() {
     let mut recess_news = dw.recess_news;
     let mut recess_vol = dw.recess_vol;
     let mut regime_drift = dw.regime_drift;
+    let mut drift_sd = dw.drift_sd;
+    let mut boom_fade = dw.boom_fade;
+    let mut delev_rate = dw.delev_rate;
+    let mut delev_from = dw.delev_from;
+    let mut delev_size = dw.delev_size;
+    let mut delev_len = dw.delev_len;
     let mut spread_dd = dw.spread_dd;
     let mut disaster_anticipate = dw.disaster_anticipate;
     let mut disaster_overshoot = dw.disaster_overshoot;
@@ -17950,6 +18203,12 @@ pub fn main() {
             "-recessnews" => recess_news = req_f64(&mut it, "-recessnews"),
             "-recessvol" => recess_vol = req_f64(&mut it, "-recessvol"),
             "-regimedrift" => regime_drift = req_f64(&mut it, "-regimedrift"),
+            "-driftsd" => drift_sd = req_f64(&mut it, "-driftsd"),
+            "-boomfade" => boom_fade = req_f64(&mut it, "-boomfade"),
+            "-delevrate" => delev_rate = req_f64(&mut it, "-delevrate"),
+            "-delevfrom" => delev_from = req_f64(&mut it, "-delevfrom"),
+            "-delevsize" => delev_size = req_f64(&mut it, "-delevsize"),
+            "-delevlen" => delev_len = req_f64(&mut it, "-delevlen"),
             "-spreaddd" => spread_dd = req_f64(&mut it, "-spreaddd"),
             "-disasteranticipate" => {
                 disaster_anticipate = req_f64(&mut it, "-disasteranticipate");
@@ -18293,6 +18552,17 @@ pub fn main() {
         if regime_drift < 0.0 {
             cli_die(&format!("-regimedrift {regime_drift} must be at least 0"));
         }
+        non_neg("-driftsd", drift_sd);
+        non_neg("-delevrate", delev_rate);
+        non_neg("-delevfrom", delev_from);
+        if delev_rate > 0.0 && (delev_size <= 0.0 || delev_len <= 0.0) {
+            cli_die(&format!(
+                "-delevrate {delev_rate} needs -delevsize and -delevlen above 0"
+            ));
+        }
+        if boom_fade <= 0.0 {
+            cli_die(&format!("-boomfade {boom_fade} must be above 0"));
+        }
         if spread_dd < 0.0 {
             cli_die(&format!("-spreaddd {spread_dd} must be at least 0"));
         }
@@ -18426,6 +18696,12 @@ pub fn main() {
         recess_news,
         recess_vol,
         regime_drift,
+        drift_sd,
+        boom_fade,
+        delev_rate,
+        delev_from,
+        delev_size,
+        delev_len,
         spread_dd,
         disaster_anticipate,
         disaster_overshoot,
@@ -20481,7 +20757,8 @@ mod contract_tests {
                     && w.disaster_anticipate == 0.0
                     && w.disaster_overshoot == 0.0
                     && w.vol_pull == 0.0
-                    && w.discount_lag == 0.0,
+                    && w.discount_lag == 0.0
+                    && w.delev_rate == 0.0,
                 "{name} predates the forms and inherits their off values"
             );
         }
@@ -20520,6 +20797,85 @@ mod contract_tests {
         assert!(
             lh > 2 * DAYS_PER_YEAR && lh > lb,
             "the held world's longest floor spell ({lh} sessions) must exceed two years and the              unheld world's ({lb})"
+        );
+    }
+
+    /// The drift regime's spread and the boom's fade: every release holds the values that were
+    /// literals before they were dials, a world without the spread draws the same streams, and
+    /// a slower fade leaves the path alone until the first boom's build ends.
+    #[test]
+    fn the_drift_spread_and_the_booms_fade_are_the_old_literals_by_default() {
+        for (name, w, _) in recipes() {
+            if !name.starts_with("0.24.5-") {
+                assert!(
+                    w.drift_sd == 0.04 && w.boom_fade == 1.0,
+                    "{name} predates the dials and holds the literals they replaced"
+                );
+            }
+        }
+        let mut w = named_world("0.24.4-nasdaq").expect("recipe").0;
+        w.boom_rate = 2.0;
+        w.boom_size = 1.0;
+        w.boom_len = 2.5;
+        let base = simulate(&w, 100, DEFAULT_SEED);
+        let mut flat = w;
+        flat.drift_sd = 0.0;
+        let f = simulate(&flat, 100, DEFAULT_SEED);
+        assert!(
+            base.booms > 0 && f.booms == base.booms,
+            "the spread moves no other stream"
+        );
+        assert!(
+            f.price != base.price,
+            "a world without the spread is another world"
+        );
+        let mut slow = w;
+        slow.boom_fade = 6.0;
+        let s = simulate(&slow, 100, DEFAULT_SEED);
+        let first = (0..s.price.len())
+            .find(|&i| s.price[i] != base.price[i])
+            .expect("the fade moves the path");
+        assert!(
+            first > (2.5 * DAYS_PER_YEAR as f64) as usize,
+            "the fade acts after a build, never before one (first difference at session {first})"
+        );
+    }
+
+    /// The deleveraging: absent at rate 0 whatever its other dials read, bit for bit; on, it
+    /// moves the path, and with a calm no path reaches before an episode may start it moves
+    /// nothing, so its draws disturb no other stream; the Nasdaq recipe carries it and every
+    /// release predates it.
+    #[test]
+    fn the_deleveraging_is_absent_at_zero_and_waits_for_the_calm_it_is_given() {
+        let off = default_world();
+        let mut off2 = off;
+        off2.delev_size = 0.9;
+        off2.delev_len = 0.5;
+        let a = simulate(&off, 30, DEFAULT_SEED);
+        let b = simulate(&off2, 30, DEFAULT_SEED);
+        assert!(
+            a.price == b.price,
+            "at rate 0 the deleveraging's other dials must be inert, bit for bit"
+        );
+        let base = named_world("0.24.4-nasdaq").expect("recipe").0;
+        let mut on = base;
+        on.delev_rate = 2.0;
+        on.delev_from = 0.0;
+        on.delev_size = 0.3;
+        on.delev_len = 0.05;
+        let p0 = simulate(&base, 60, DEFAULT_SEED);
+        assert!(
+            simulate(&on, 60, DEFAULT_SEED).price != p0.price,
+            "at rate 2 with no calm required the deleveraging moves the path"
+        );
+        on.delev_from = 1000.0;
+        assert!(
+            simulate(&on, 60, DEFAULT_SEED).price == p0.price,
+            "a calm no path reaches starts nothing and draws from no other stream"
+        );
+        assert!(
+            named_world("0.24.5-nasdaq").expect("recipe").0.delev_rate > 0.0,
+            "the Nasdaq recipe carries the deleveraging"
         );
     }
 

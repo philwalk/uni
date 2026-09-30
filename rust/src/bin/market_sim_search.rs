@@ -564,7 +564,7 @@ fn one_read(
     // fidelity band does, plus its distance past the edge, so the search has a slope back inside.
     // the gap rows' bands, read on this read: a miss on one is a failed gate (see `Objective::gap`)
     let gap_miss = if gated {
-        gap_misses(anchors, &obj.gap, banded, &st)
+        gap_misses(anchors, &obj.gap, &hr, &st)
     } else {
         Vec::new()
     };
@@ -573,7 +573,7 @@ fn one_read(
     let watch_miss = if early {
         Vec::new()
     } else {
-        gap_misses(anchors, &obj.watch, banded, &st)
+        gap_misses(anchors, &obj.watch, &hr, &st)
     };
     // the held rows' distances on this read, in the judge's units: past a bar is a failed gate
     let hold_miss: Vec<&'static str> = if gated {
@@ -684,19 +684,42 @@ fn one_read(
 fn gap_misses(
     anchors: Anchors,
     gap: &[&'static str],
-    banded: &HashMap<&'static str, f64>,
+    hr: &ms::HorizonReadings,
     st: &ms::WorldStats,
 ) -> Vec<&'static str> {
+    let banded = &hr.banded;
     gap.iter()
         .copied()
         .filter(|nm| {
             if let Some(b) = anchors.record_bands.iter().find(|b| b.name == *nm) {
                 return b.misses(banded.get(nm).copied().unwrap_or(f64::NAN));
             }
+            // an extreme row is graded by where the record falls among single histories of its
+            // own length, the verdict's `miss` for it: outside 5-95, or too few histories to
+            // place it; a multi-year row by its histories' joint band
+            if ms::is_multi_year(nm) {
+                let record = ms::fit_targets(anchors)
+                    .into_iter()
+                    .find(|(n, _, _, _)| n == nm)
+                    .map_or(f64::NAN, |(_, _, t, _)| t);
+                return !hr
+                    .history_band
+                    .get(nm)
+                    .is_some_and(|(lo, hi)| (*lo..=*hi).contains(&record));
+            }
+            if ms::extreme_target_names().contains(nm) {
+                let record = ms::fit_targets(anchors)
+                    .into_iter()
+                    .find(|(n, _, _, _)| n == nm)
+                    .map_or(f64::NAN, |(_, _, t, _)| t);
+                return !hr.extreme.get(nm).is_some_and(|xs| {
+                    xs.len() >= ms::EXTREME_MIN_HISTORIES
+                        && (ms::EXTREME_PCT_BAND.0..=ms::EXTREME_PCT_BAND.1)
+                            .contains(&ms::anchor_pctile(xs, record))
+                });
+            }
             // a row without a record band is graded by its ratio to the anchor's target, which is
-            // the verdict's `miss` for it (`FidelityRow::miss`); an extreme row, graded by where
-            // the record falls among single histories of its own length, carries neither and
-            // `-gap` refuses it
+            // the verdict's `miss` for it (`FidelityRow::miss`)
             ms::fit_targets(anchors)
                 .into_iter()
                 .find(|(n, _, _, _)| n == nm)
@@ -1597,6 +1620,8 @@ fn usage(msg: &str) -> ! {
   -gap ROWS     ; comma-separated graded rows (e.g. 'kurtosis,up-day share %') a candidate
                 ;   must hold inside their bands on every read of its primary arm to be feasible:
                 ;   the rows a release has to close, which a priced miss lets a search trade away.
+                ;   An extreme row is held by the record's percentile among the read's single
+                ;   histories (5-95), a multi-year row by their joint band.
                 ;   The seed worlds are exempt (they root the lineages); -holdout holds them to it
   -fidelity L   ; comma-separated PxY ensembles (e.g. 20x40,30x60).  Score the frozen pool at
                 ;   -paths/-years and at each of these, report how well each RANKS the worlds
@@ -1988,7 +2013,7 @@ fn main() {
                     ms::fit_targets(anchors)
                         .into_iter()
                         .map(|(n, _, _, _)| n)
-                        .find(|n| *n == g && !ms::extreme_target_names().contains(n))
+                        .find(|n| *n == g)
                 })
                 .unwrap_or_else(|| {
                     usage(&format!(
@@ -3030,12 +3055,8 @@ mod gate_tests {
         let st = ms::measure(&main, years);
         let hr = ms::horizon_readings(anchors, &st, Some(&main), years, paths, seed, &w, true);
         let verdict = ms::fidelity_rows(anchors, &st, Some(&main), years, paths, seed, &w);
-        let extreme = ms::extreme_target_names();
         for row in &verdict {
-            if extreme.contains(&row.name) {
-                continue; // graded by a record percentile: `-gap` refuses it
-            }
-            let by_gap = !gap_misses(anchors, &[row.name], &hr.banded, &st).is_empty();
+            let by_gap = !gap_misses(anchors, &[row.name], &hr, &st).is_empty();
             assert_eq!(by_gap, row.miss(), "{} read differently by -gap", row.name);
         }
     }
