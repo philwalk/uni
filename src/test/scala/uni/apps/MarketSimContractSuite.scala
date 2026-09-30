@@ -1113,3 +1113,26 @@ class MarketSimContractSuite extends FunSuite:
     assertEquals(gross(6), p.price(ends(7)) / p.price(ends(6)) - 1.0)
     assert(MarketSim.pwrStats(p, e, 0.001, ends.take(100)).forall(_.isNaN))
   }
+
+  // THE MONTHLY FORMS on the fixture path: the 12-month return-sign arm reads p10 4.7030 and
+  // minimum 3.4778, the 10-month moving-average arm 3.2428 and 2.5021, an independent
+  // implementation's values to four decimals; the cadence combinator holds a rule's month-end
+  // exposure through the month; the severity curve's arm is the combined rule.
+  test("the monthly forms read what an independent implementation read") {
+    val p = MarketSim.simPaths(MarketSim.Defaults, 1, 40, 20260813L).head
+    val ind = new MarketSim.Indicators(p.price, p.rate)
+    val ends = MarketSim.monthEnds(p.price.length)
+    for (nm, p10, min) <- Vector(("sign 12m vs cash, monthly", 4.7030, 3.4778), ("SMA 10m, monthly", 3.2428, 2.5021)) do
+      val e = MarketSim.ruleNamed(nm).expose(ind)
+      val sorted = MarketSim.pwrStarts(p, e, 0.001, ends).sorted
+      assert(math.abs(sorted(28) - p10) < 5e-5, s"$nm p10 ${sorted(28)}")
+      assert(math.abs(sorted(0) - min) < 5e-5, s"$nm min ${sorted(0)}")
+    val daily = MarketSim.ruleNamed("trend 200d, floor 0%").expose(ind)
+    val held  = MarketSim.ruleNamed("trend 200d, floor 0%, monthly").expose(ind)
+    for t <- ends.indices do
+      val to = if t + 1 < ends.length then ends(t + 1) else held.length
+      assert((ends(t) until to).forall(k => held(k) == daily(ends(t))), s"month $t")
+    assert((0 until ends(0)).forall(k => held(k) == daily(k)))
+    assert(held.indices.exists(k => held(k) != daily(k)), "the cadence changes something")
+    assertEquals(MarketSim.Rules(MarketSim.SeverityArmIdx).name, "volatility + trend 200d, floor 0%")
+  }

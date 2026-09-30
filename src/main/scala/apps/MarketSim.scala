@@ -259,7 +259,10 @@ object MarketSim:
   // 22 -> 23: THE CONDITIONAL RATE ROWS.  `gate.fidelity` gained `post-trough rate %` and
   // `post-trough floor share %` (`RateAfterRows`): the short rate over the two years after each
   // 20% decline's trough, where a refuge holds cash.
-  val EmitSchema: Int = 23
+  // 23 -> 24: THE DECLINE LENGTH ROWS.  `gate.fidelity` gained `decline length p50 y` and
+  // `decline length max y` against both windows (`MultiYearRows`): the peak-to-trough length in
+  // years of the regained declines of 20% or more, their median and their longest.
+  val EmitSchema: Int = 24
 
   val EmitSidecarKeys: Vector[String] =
     Vector("generator", "version", "schema", "file", "columns", "header", "path", "world",
@@ -5256,8 +5259,8 @@ object MarketSim:
                                                   // (`runUp3yOf`) and longest calm stretch in
                               calmStretch: Double, // sessions (`calmStretchOf`): reported
                               multiYear: Vector[Double], // median per-path multi-year readings
-                                                  // (`multiYearOf`), the first five
-                                                  // `MultiYearRows`; the sixth reads `ddEq20`
+                                                  // (`multiYearOf`), the first seven
+                                                  // `MultiYearRows`; the eighth reads `ddEq20`
                               shortRate: Double,  // median per-path mean short rate, percent, and
                               rateFloor: Double,  // share of sessions under `RateFloor`, percent
                                                   // (`rateReadings`)
@@ -5627,7 +5630,7 @@ object MarketSim:
       bubbleCoupling = med(per.map(_.bubbleCoupling)),
       runUp3y = med(per.map(_.runUp3y)),
       calmStretch = med(per.map(_.calmStretch)),
-      multiYear = Vector.tabulate(5)(k => med(per.map(_.multiYear(k)))),
+      multiYear = Vector.tabulate(7)(k => med(per.map(_.multiYear(k)))),
       shortRate = med(per.map(_.shortRate)),
       rateFloor = med(per.map(_.rateFloor)),
       postRate = med(per.map(_.postRate)),
@@ -6603,8 +6606,8 @@ object MarketSim:
     bubbleWindow = "CRSP 1926-2026, the century", bubbleYears = 100,
     bubbleCoupling = 0.114404, bubbleCouplingSd = 1.07,
     runUp3y = 0.872450, calmStretch = 2190.0,
-    multiYear = Vector(-0.127487, 0.745759, 0.732112, 0.324081, 8.599206, 12.589751),
-    multiYearLong = Vector(0.028270, 0.961668, 0.963278, 0.398297, 11.837302, 25.500495),
+    multiYear = Vector(-0.127487, 0.745759, 0.732112, 0.324081, 8.599206, 0.662698, 2.527778, 12.589751),
+    multiYearLong = Vector(0.028270, 0.961668, 0.963278, 0.398297, 11.837302, 0.932540, 3.353175, 25.500495),
     multiYearVrSd = Vector(0.24, 0.32), multiYearLongVrSd = Vector(0.20, 0.25),
     declineGapSd = Vector(0.35, 0.31),
     rateWindow = "DFF 1954-2026", rateYears = 72,
@@ -6699,8 +6702,8 @@ object MarketSim:
     bubbleWindow = "NDX 1990-2026", bubbleYears = 37,
     bubbleCoupling = 1.042337, bubbleCouplingSd = 0.25,
     runUp3y = 1.753345, calmStretch = 1927.0,
-    multiYear = Vector(0.007813, 0.993439, 0.894361, 0.438273, 18.396825, 53.729182),
-    multiYearLong = Vector(0.100691, 0.983398, 0.964724, 0.740644, 18.396825, 41.888384),
+    multiYear = Vector(0.007813, 0.993439, 0.894362, 0.438273, 18.396825, 0.317460, 2.523810, 53.729182),
+    multiYearLong = Vector(0.100691, 0.983398, 0.964724, 0.740644, 18.396825, 0.246032, 2.515873, 41.888384),
     multiYearVrSd = Vector(0.26, 0.49), multiYearLongVrSd = Vector(0.23, 0.40),
     declineGapSd = Vector(0.44, 0.39),
     rateWindow = "DFF 1999-2026", rateYears = 27,
@@ -6799,7 +6802,7 @@ object MarketSim:
     * 12.6%. */
   val MultiYearRows: Vector[String] = Vector(
     "annual autocorr", "variance ratio 3y", "variance ratio 5y", "3y p95 excess",
-    "decline gap p90 y", "under water 20% %")
+    "decline gap p90 y", "decline length p50 y", "decline length max y", "under water 20% %")
 
   /** `MultiYearRows` against the set's long window, row for row. */
   val MultiYearLongRows: Vector[String] = MultiYearRows.map(_ + " long")
@@ -6810,7 +6813,7 @@ object MarketSim:
   /** Each `MultiYearRows` statistic off a `WorldStats`, row for row. */
   val MultiYearStats: Vector[WorldStats => Double] = Vector(
     _.multiYear(0), _.multiYear(1), _.multiYear(2), _.multiYear(3), _.multiYear(4),
-    _.ddEq20 * 100.0)
+    _.multiYear(5), _.multiYear(6), _.ddEq20 * 100.0)
 
   /** THE MULTI-YEAR ROWS of `fitTargets`: each statistic against the equity window's record, then
     * against the long window's.  The 3- and 5-year variance ratios and the decline gap carry
@@ -6819,7 +6822,7 @@ object MarketSim:
   def multiYearTargets(a: Anchors): Vector[FitTarget] =
     def rows(names: Vector[String], records: Vector[Double], sd: Vector[Double],
              gapSd: Double): Vector[FitTarget] =
-      Vector.tabulate(6): k =>
+      Vector.tabulate(8): k =>
         val weight = k match
           case 1 => wgt(0.5, sd(0))
           case 2 => wgt(0.5, sd(1))
@@ -7156,7 +7159,9 @@ object MarketSim:
 
   def sessionsFor(calDays: Int): Int = math.max(2, math.round(calDays * 252.0 / 365.25).toInt)
 
-  final class Indicators(val px: Array[Double]):
+  final class Indicators(val px: Array[Double], val rate: Array[Double]):
+    /** the month-end sessions (`monthEnds`), for the monthly forms */
+    lazy val ends: Vector[Int] = monthEnds(px.length)
     private val maCache = scala.collection.mutable.HashMap.empty[Int, Array[Double]]
     def ma(sessions: Int): Array[Double] = maCache.getOrElseUpdate(sessions, trailingMean(px, sessions))
     lazy val volRatio: Array[Double] =
@@ -7217,6 +7222,65 @@ object MarketSim:
         math.max(floor, math.min(v, t))
       }))
 
+  /** THE RETURN-SIGN FORM on the monthly grid (`monthEnds`): at each month's end from month
+    * `months` on, equity when the price ratio over the trailing `months` months exceeds cash's
+    * compounding over the same sessions, else cash, held through the next month; fully invested
+    * before the first decision.  Decided at a month's end, so `pwrStats` reads it as the monthly
+    * arm it is. */
+  def signRule(months: Int) =
+    Rule(s"sign ${months}m vs cash, monthly", ind =>
+      val ends = ind.ends
+      val out = Array.fill(ind.px.length)(1.0)
+      var t = months
+      while t < ends.length do
+        val a = ends(t - months)
+        val b = ends(t)
+        var s = 0.0
+        var i = a + 1
+        while i <= b do
+          s += ind.rate(i) / DaysPerYear
+          i += 1
+        val w = if ind.px(b) / ind.px(a) > expDet(s) then 1.0 else 0.0
+        val to = if t + 1 < ends.length then ends(t + 1) else ind.px.length
+        java.util.Arrays.fill(out, b, to, w)
+        t += 1
+      out)
+
+  /** THE MOVING-AVERAGE FORM on the monthly grid: from month `months` on, equity when the month's
+    * closing price is above the mean of the last `months` month-end closes, this one included,
+    * else cash, held through the next month; fully invested before the first decision. */
+  def smaRule(months: Int) =
+    Rule(s"SMA ${months}m, monthly", ind =>
+      val ends = ind.ends
+      val out = Array.fill(ind.px.length)(1.0)
+      var t = months
+      while t < ends.length do
+        var s = 0.0
+        var m = t + 1 - months
+        while m <= t do
+          s += ind.px(ends(m))
+          m += 1
+        val w = if ind.px(ends(t)) > s / months then 1.0 else 0.0
+        val to = if t + 1 < ends.length then ends(t + 1) else ind.px.length
+        java.util.Arrays.fill(out, ends(t), to, w)
+        t += 1
+      out)
+
+  /** THE CADENCE COMBINATOR: a rule's exposure re-read at each month's end (`monthEnds`) and held
+    * through the next month, the rule's own until the first month end.  What a monthly-rebalanced
+    * book does with a daily signal, and the form `pwrStats` reads a rule in. */
+  def monthly(r: Rule): Rule =
+    Rule(s"${r.name}, monthly", ind =>
+      val e = r.expose(ind)
+      val ends = ind.ends
+      val out = e.clone()
+      var t = 0
+      while t < ends.length do
+        val to = if t + 1 < ends.length then ends(t + 1) else e.length
+        java.util.Arrays.fill(out, ends(t), to, e(ends(t)))
+        t += 1
+      out)
+
   val Rules: Vector[Rule] = Vector(
     Rule("always fully invested", ind => Array.fill(ind.px.length)(1.0)),
     volRule(0.4),                       // production analog — the paired-comparison reference
@@ -7227,8 +7291,17 @@ object MarketSim:
     trendRule(250, 0.0),
     drawdownRule(10, 0.0),
     comboRule(200, 0.0),
+    // THE MONTHLY FORMS: the return-sign and moving-average rules decided at month ends, and the
+    // cadence combinator on two daily rules, so a monthly arm's power is measurable
+    signRule(12),
+    smaRule(10),
+    monthly(trendRule(200, 0.0)),
+    monthly(drawdownRule(10, 0.0)),
   )
   val RefIdx = 1
+  /** The rule the refuge severity curve is drawn for beside the reference: the combined rule, by
+    * its position in `Rules`, so rules appended after it do not move the curve. */
+  val SeverityArmIdx = 8
 
   // ---- evaluation ----------------------------------------------------------------------------
   // NOTE ON FRAMES: differences of annual returns (vsFlat, bonds-minus-cash, the decomposition)
@@ -7816,8 +7889,21 @@ object MarketSim:
       val gaps = peaks.sliding(2).map(w => (w(1) - w(0)).toDouble / DaysPerYear.toDouble).toArray
       pctileOf(finiteSorted(gaps), 0.90)
 
-  /** The first five `MultiYearRows` readings of one series: its daily log returns and the price
-    * they trace.  The sixth is `depthShares`' 20% rung. */
+  /** THE DECLINE LENGTH ROWS: the peak-to-trough lengths in years of the declines of
+    * `MultiYearDeclinePct` or more that were regained (a censored decline's trough is provisional),
+    * their median and their longest; NaN with none.  The depth rungs grade how far a decline goes
+    * and the gap how often; these grade how long it takes to get there, which with the depth sets
+    * what a withdrawal schedule started just before it survives. */
+  private def declineLengths(px: Array[Double]): Vector[Double] =
+    val lens = episodes(px, MultiYearDeclinePct).filterNot(_.censored)
+      .map(_.fallDays.toDouble / DaysPerYear.toDouble).toArray
+    if lens.isEmpty then Vector(Double.NaN, Double.NaN)
+    else
+      val s = finiteSorted(lens)
+      Vector(pctileOf(s, 0.50), s(s.length - 1))
+
+  /** The first seven `MultiYearRows` readings of one series: its daily log returns and the price
+    * they trace.  The eighth is `depthShares`' 20% rung. */
   private[apps] def multiYearOf(r: Array[Double], px: Array[Double]): Vector[Double] =
     val lp = new Array[Double](r.length + 1)
     var i = 0
@@ -7829,7 +7915,7 @@ object MarketSim:
       multiYearVr(lp, 3),
       multiYearVr(lp, 5),
       ret3yP95Excess(lp),
-      declineGapP90(px))
+      declineGapP90(px)) ++ declineLengths(px)
 
   /** Every `MultiYearRows` reading of ONE series of daily log returns, as the model reads it off
     * one path; the price is rebuilt with `expDet`, so the twins' episodes agree to the bit. */
@@ -8855,7 +8941,7 @@ object MarketSim:
       val ok = gateOkOf(a, st, sims, years, seed, w, gateReq)
       val evald = java.util.stream.IntStream.range(0, sims.size).parallel().mapToObj { k =>
         val s   = sims(k)
-        val ind = new Indicators(s.price)
+        val ind = new Indicators(s.price, s.rate)
         val eps = episodes(s.price, 15.0)
         val fl  = eps.map(ep => fundamentalLed(s, ep))
         Rules.map(r => evaluate(s, eps, fl, r, ind, cost, years, Safe.Cash)) ++
@@ -8989,13 +9075,13 @@ object MarketSim:
       // the worlds used so far" protects nothing about the next world someone dials up
       val okSev = gateOkOf(a, st, sims, years, seed, w, gateReq)
       val ev = java.util.stream.IntStream.range(0, sims.size).parallel().mapToObj { k =>
-        val s = sims(k); val ind = new Indicators(s.price)
+        val s = sims(k); val ind = new Indicators(s.price, s.rate)
         val eps = episodes(s.price, 15.0); val fl = eps.map(ep => fundamentalLed(s, ep))
-        Vector(RefIdx, Rules.size - 1).flatMap(j =>
+        Vector(RefIdx, SeverityArmIdx).flatMap(j =>
           Vector(evaluate(s, eps, fl, Rules(j), ind, cost, years, Safe.Cash)._1,
                  evaluate(s, eps, fl, Rules(j), ind, cost, years, Safe.Bond)._1))
       }.toArray().toVector.map(_.asInstanceOf[Vector[Outcome]])
-      for (j, off) <- Vector((RefIdx, 0), (Rules.size - 1, 2)) do
+      for (j, off) <- Vector((RefIdx, 0), (SeverityArmIdx, 2)) do
         val tot = ev.map(v => v(off + 1).ann - v(off).ann)
         val sta = ev.map(v => (v(off + 1).ann - v(off + 1).vsFlat) - (v(off).ann - v(off).vsFlat))
         val tim = ev.map(v => v(off + 1).vsFlat - v(off).vsFlat)
@@ -9857,7 +9943,7 @@ object MarketSim:
       val ends  = monthEnds(sims.head.price.length)
       val stats = java.util.stream.IntStream.range(0, sims.size).parallel().mapToObj { k =>
         val p   = sims(k)
-        val ind = new Indicators(p.price)
+        val ind = new Indicators(p.price, p.rate)
         arms.map { fn =>
           val e = fn(ind)
           gradingStats(armPath(p, e, cost, Safe.Cash), L).map(_._2) ++ pwrStats(p, e, cost, ends)
@@ -10075,7 +10161,7 @@ object MarketSim:
       val ok   = gateOkOf(a, measure(sims, years), sims, years, seed, w, gateReq)
       val per  = java.util.stream.IntStream.range(0, sims.size).parallel().mapToObj { k =>
         val p   = sims(k)
-        val ind = new Indicators(p.price)
+        val ind = new Indicators(p.price, p.rate)
         arms.map { (_, fn) =>
           val ap  = armPath(p, fn(ind), cost, Safe.Bond)
           val us  = underwater(ap.realLogEq)

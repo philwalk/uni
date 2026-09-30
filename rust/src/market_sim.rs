@@ -228,7 +228,10 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 // 22 -> 23: THE CONDITIONAL RATE ROWS. `gate.fidelity` gained `post-trough rate %` and
 // `post-trough floor share %` (`RATE_AFTER_ROWS`): the short rate over the two years after each
 // 20% decline's trough, where a refuge holds cash.
-const EMIT_SCHEMA: u32 = 23;
+// 23 -> 24: THE DECLINE LENGTH ROWS. `gate.fidelity` gained `decline length p50 y` and
+// `decline length max y` against both windows (`MULTI_YEAR_ROWS`): the peak-to-trough length in
+// years of the regained declines of 20% or more, their median and their longest.
+const EMIT_SCHEMA: u32 = 24;
 
 /// Frozen structural constants of the volume channel — see the `vol_idio` field. Measured
 /// from the SPY/QQQ volume-on-range regression (`bars-2026-09-01.tsv`, whose rows the
@@ -6713,9 +6716,9 @@ pub struct WorldStats {
     /// sessions (`calm_stretch_of`): reported, the multi-year rows grade what they read
     pub run_up_3y: f64,
     pub calm_stretch: f64,
-    /// median per-path multi-year readings (`multi_year_of`), the first five `MULTI_YEAR_ROWS`;
-    /// the sixth reads `dd_eq20`
-    pub multi_year: [f64; 5],
+    /// median per-path multi-year readings (`multi_year_of`), the first seven `MULTI_YEAR_ROWS`;
+    /// the eighth reads `dd_eq20`
+    pub multi_year: [f64; 7],
     /// median per-path mean short rate, percent, and share of sessions under `RATE_FLOOR`,
     /// percent (`rate_readings`)
     pub short_rate: f64,
@@ -7250,22 +7253,26 @@ pub fn calm_stretch_of(r: &[f64]) -> f64 {
 /// set's equity window, and again against its long window (`MULTI_YEAR_LONG_ROWS`,
 /// `Anchors::bubble_window`), because the record's eras disagree: CRSP's annual autocorrelation
 /// reads +0.03 over the century and -0.13 from 1954, its time 20% under the peak 25.5% and 12.6%.
-pub const MULTI_YEAR_ROWS: [&str; 6] = [
+pub const MULTI_YEAR_ROWS: [&str; 8] = [
     "annual autocorr",
     "variance ratio 3y",
     "variance ratio 5y",
     "3y p95 excess",
     "decline gap p90 y",
+    "decline length p50 y",
+    "decline length max y",
     "under water 20% %",
 ];
 
 /// `MULTI_YEAR_ROWS` against the set's long window, row for row.
-pub const MULTI_YEAR_LONG_ROWS: [&str; 6] = [
+pub const MULTI_YEAR_LONG_ROWS: [&str; 8] = [
     "annual autocorr long",
     "variance ratio 3y long",
     "variance ratio 5y long",
     "3y p95 excess long",
     "decline gap p90 y long",
+    "decline length p50 y long",
+    "decline length max y long",
     "under water 20% % long",
 ];
 
@@ -7384,9 +7391,27 @@ fn decline_gap_p90(px: &[f64]) -> f64 {
     pctile_of(&finite_sorted(&gaps), 0.90)
 }
 
-/// The first five `MULTI_YEAR_ROWS` readings of one series: its daily log returns and the price
-/// they trace. The sixth is `depth_shares`' 20% rung.
-fn multi_year_of(r: &[f64], px: &[f64]) -> [f64; 5] {
+/// THE DECLINE LENGTH ROWS: the peak-to-trough lengths in years of the declines of
+/// `MULTI_YEAR_DECLINE_PCT` or more that were regained (a censored decline's trough is
+/// provisional), their median and their longest; NaN with none. The depth rungs grade how far a
+/// decline goes and the gap how often; these grade how long it takes to get there, which with the
+/// depth sets what a withdrawal schedule started just before it survives.
+fn decline_lengths(px: &[f64]) -> [f64; 2] {
+    let lens: Vec<f64> = episodes(px, MULTI_YEAR_DECLINE_PCT)
+        .iter()
+        .filter(|e| !e.censored())
+        .map(|e| e.fall_days() as f64 / DAYS_PER_YEAR as f64)
+        .collect();
+    if lens.is_empty() {
+        return [f64::NAN, f64::NAN];
+    }
+    let s = finite_sorted(&lens);
+    [pctile_of(&s, 0.50), s[s.len() - 1]]
+}
+
+/// The first seven `MULTI_YEAR_ROWS` readings of one series: its daily log returns and the price
+/// they trace. The eighth is `depth_shares`' 20% rung.
+fn multi_year_of(r: &[f64], px: &[f64]) -> [f64; 7] {
     let mut lp = vec![0.0f64; r.len() + 1];
     for i in 0..r.len() {
         lp[i + 1] = lp[i] + r[i];
@@ -7397,12 +7422,14 @@ fn multi_year_of(r: &[f64], px: &[f64]) -> [f64; 5] {
         multi_year_vr(&lp, 5),
         ret_3y_p95_excess(&lp),
         decline_gap_p90(px),
+        decline_lengths(px)[0],
+        decline_lengths(px)[1],
     ]
 }
 
 /// Every `MULTI_YEAR_ROWS` reading of ONE series of daily log returns, as the model reads it off
 /// one path; the price is rebuilt with `exp_det`, so the twins' episodes agree to the bit.
-pub fn multi_year_readings(r: &[f64]) -> [f64; 6] {
+pub fn multi_year_readings(r: &[f64]) -> [f64; 8] {
     let mut px = Vec::with_capacity(r.len() + 1);
     let mut c = 0.0;
     px.push(exp_det(c));
@@ -7411,7 +7438,16 @@ pub fn multi_year_readings(r: &[f64]) -> [f64; 6] {
         px.push(exp_det(c));
     }
     let m = multi_year_of(r, &px);
-    [m[0], m[1], m[2], m[3], m[4], depth_shares(&px).2 * 100.0]
+    [
+        m[0],
+        m[1],
+        m[2],
+        m[3],
+        m[4],
+        m[5],
+        m[6],
+        depth_shares(&px).2 * 100.0,
+    ]
 }
 
 /// corr(r_t, r^2_{t+1}): the leverage effect at daily lag.
@@ -9384,7 +9420,7 @@ struct PathRead {
     bubble_coupling: f64,
     run_up_3y: f64,
     calm_stretch: f64,
-    multi_year: [f64; 5],
+    multi_year: [f64; 7],
     tail_hedge: f64,
     infl_ann: f64,
     short_rate: f64,
@@ -9677,6 +9713,8 @@ pub fn measure(sims: &[Path], years: usize) -> WorldStats {
             med_by(|p| p.multi_year[2]),
             med_by(|p| p.multi_year[3]),
             med_by(|p| p.multi_year[4]),
+            med_by(|p| p.multi_year[5]),
+            med_by(|p| p.multi_year[6]),
         ],
         short_rate: med_by(|p| p.short_rate),
         rate_floor: med_by(|p| p.rate_floor),
@@ -10828,8 +10866,8 @@ pub struct Anchors {
     /// THE MULTI-YEAR ROWS' records (`multi_year_readings`, `multiyear-2026-09-29.tsv`), in
     /// `MULTI_YEAR_ROWS`' order: over the equity window, and over the long window
     /// (`bubble_window`)
-    pub multi_year: [f64; 6],
-    pub multi_year_long: [f64; 6],
+    pub multi_year: [f64; 8],
+    pub multi_year_long: [f64; 8],
     /// the sd of the log of the 3- and 5-year variance ratios across single histories of the
     /// set's recipe, equity window then long window: what the loss weighs those four rows by
     pub multi_year_vr_sd: [f64; 2],
@@ -11646,8 +11684,12 @@ const SP500_ANCHORS: Anchors = Anchors {
     bubble_coupling_sd: 1.07,
     run_up_3y: 0.872450,
     calm_stretch: 2190.0,
-    multi_year: [-0.127487, 0.745759, 0.732112, 0.324081, 8.599206, 12.589751],
-    multi_year_long: [0.028270, 0.961668, 0.963278, 0.398297, 11.837302, 25.500495],
+    multi_year: [
+        -0.127487, 0.745759, 0.732112, 0.324081, 8.599206, 0.662698, 2.527778, 12.589751,
+    ],
+    multi_year_long: [
+        0.028270, 0.961668, 0.963278, 0.398297, 11.837302, 0.932540, 3.353175, 25.500495,
+    ],
     multi_year_vr_sd: [0.24, 0.32],
     multi_year_long_vr_sd: [0.20, 0.25],
     decline_gap_sd: [0.35, 0.31],
@@ -11781,8 +11823,12 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     bubble_coupling_sd: 0.25,
     run_up_3y: 1.753345,
     calm_stretch: 1927.0,
-    multi_year: [0.007813, 0.993439, 0.894361, 0.438273, 18.396825, 53.729182],
-    multi_year_long: [0.100691, 0.983398, 0.964724, 0.740644, 18.396825, 41.888384],
+    multi_year: [
+        0.007813, 0.993439, 0.894362, 0.438273, 18.396825, 0.317460, 2.523810, 53.729182,
+    ],
+    multi_year_long: [
+        0.100691, 0.983398, 0.964724, 0.740644, 18.396825, 0.246032, 2.515873, 41.888384,
+    ],
     multi_year_vr_sd: [0.26, 0.49],
     multi_year_long_vr_sd: [0.23, 0.40],
     decline_gap_sd: [0.44, 0.39],
@@ -12294,12 +12340,14 @@ pub fn reported_rows(a: Anchors, st: &WorldStats) -> [(&'static str, f64, f64); 
 }
 
 /// Each `MULTI_YEAR_ROWS` statistic off a `WorldStats`, row for row.
-const MULTI_YEAR_STATS: [StatFn; 6] = [
+const MULTI_YEAR_STATS: [StatFn; 8] = [
     |st| st.multi_year[0],
     |st| st.multi_year[1],
     |st| st.multi_year[2],
     |st| st.multi_year[3],
     |st| st.multi_year[4],
+    |st| st.multi_year[5],
+    |st| st.multi_year[6],
     |st| st.dd_eq20 * 100.0,
 ];
 
@@ -12308,8 +12356,8 @@ const MULTI_YEAR_STATS: [StatFn; 6] = [
 /// 0.5 each at the spread of their logs across single histories; the other rows weigh 0 and are
 /// graded by the verdict alone.
 fn multi_year_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
-    let rows = |names: [&'static str; 6], records: [f64; 6], sd: [f64; 2], gap_sd: f64| {
-        (0..6).map(move |k| {
+    let rows = |names: [&'static str; 8], records: [f64; 8], sd: [f64; 2], gap_sd: f64| {
+        (0..8).map(move |k| {
             let weight = match k {
                 1 => wgt(0.5, sd[0]),
                 2 => wgt(0.5, sd[1]),
@@ -12353,12 +12401,16 @@ const EXTREME_TARGETS: &[&str] = &[
     "variance ratio 5y",
     "3y p95 excess",
     "decline gap p90 y",
+    "decline length p50 y",
+    "decline length max y",
     "under water 20% %",
     "annual autocorr long",
     "variance ratio 3y long",
     "variance ratio 5y long",
     "3y p95 excess long",
     "decline gap p90 y long",
+    "decline length p50 y long",
+    "decline length max y long",
     "under water 20% % long",
 ];
 
@@ -12576,8 +12628,8 @@ fn multi_year_histories(
     a: Anchors,
     sims: &[Path],
     yrs: usize,
-) -> Vec<([&'static str; 6], Vec<[f64; 6]>)> {
-    let windows: Vec<[&'static str; 6]> = [
+) -> Vec<([&'static str; 8], Vec<[f64; 8]>)> {
+    let windows: Vec<[&'static str; 8]> = [
         (MULTI_YEAR_ROWS, a.equity_years),
         (MULTI_YEAR_LONG_ROWS, a.bubble_years),
     ]
@@ -12588,7 +12640,7 @@ fn multi_year_histories(
     if windows.is_empty() {
         return Vec::new();
     }
-    let reads: Vec<[f64; 6]> = sims
+    let reads: Vec<[f64; 8]> = sims
         .par_iter()
         .map(|p| {
             let m = multi_year_of(&daily_returns(&p.price), &p.price);
@@ -12598,6 +12650,8 @@ fn multi_year_histories(
                 m[2],
                 m[3],
                 m[4],
+                m[5],
+                m[6],
                 depth_shares(&p.price).2 * 100.0,
             ]
         })
@@ -12611,7 +12665,7 @@ fn multi_year_histories(
 /// a record's resamples). Alpha is `MULTI_YEAR_ALPHA` split over the two windows by their rows.
 /// Empty under `EXTREME_MIN_HISTORIES` paths.
 fn multi_year_bands(
-    histories: &[([&'static str; 6], Vec<[f64; 6]>)],
+    histories: &[([&'static str; 8], Vec<[f64; 8]>)],
 ) -> std::collections::HashMap<&'static str, (f64, f64)> {
     let mut out = std::collections::HashMap::new();
     let rows: Vec<usize> = (0..MULTI_YEAR_ROWS.len()).collect();
@@ -13171,17 +13225,27 @@ impl PartialOrd for Ord64 {
 /// an `Indicators` never crosses a thread, it is built inside each parallel path.
 struct Indicators {
     px: Vec<f64>,
+    /// the short rate a session, for the forms that hold cash against it
+    rate: Vec<f64>,
+    /// the month-end sessions (`month_ends`), for the monthly forms
+    ends: std::cell::OnceCell<Vec<usize>>,
     ma_cache: std::cell::RefCell<std::collections::HashMap<usize, std::rc::Rc<Vec<f64>>>>,
     vol_ratio: std::cell::OnceCell<Vec<f64>>,
 }
 
 impl Indicators {
-    fn new(px: &[f64]) -> Self {
+    fn new(px: &[f64], rate: &[f64]) -> Self {
         Self {
             px: px.to_vec(),
+            rate: rate.to_vec(),
+            ends: std::cell::OnceCell::new(),
             ma_cache: std::cell::RefCell::new(std::collections::HashMap::new()),
             vol_ratio: std::cell::OnceCell::new(),
         }
+    }
+
+    fn ends(&self) -> &[usize] {
+        self.ends.get_or_init(|| month_ends(self.px.len()))
     }
 
     fn ma(&self, sessions: usize) -> std::rc::Rc<Vec<f64>> {
@@ -13331,6 +13395,85 @@ fn combo_rule(cal_days: i32, floor: f64) -> Rule {
     }
 }
 
+/// THE RETURN-SIGN FORM on the monthly grid (`month_ends`): at each month's end from month
+/// `months` on, equity when the price ratio over the trailing `months` months exceeds cash's
+/// compounding over the same sessions, else cash, held through the next month; fully invested
+/// before the first decision. Decided at a month's end, so `pwr_stats` reads it as the monthly
+/// arm it is.
+fn sign_rule(months: usize) -> Rule {
+    Rule {
+        name: format!("sign {months}m vs cash, monthly"),
+        expose: Arc::new(move |ind: &Indicators| {
+            let ends = ind.ends();
+            let mut out = vec![1.0f64; ind.px.len()];
+            for t in months..ends.len() {
+                let (a, b) = (ends[t - months], ends[t]);
+                let cash = exp_det(scala_sum(
+                    (a + 1..=b).map(|i| ind.rate[i] / DAYS_PER_YEAR as f64),
+                ));
+                let w = if ind.px[b] / ind.px[a] > cash {
+                    1.0
+                } else {
+                    0.0
+                };
+                let to = ends.get(t + 1).copied().unwrap_or(ind.px.len());
+                for x in &mut out[b..to] {
+                    *x = w;
+                }
+            }
+            out
+        }),
+    }
+}
+
+/// THE MOVING-AVERAGE FORM on the monthly grid: from month `months` on, equity when the month's
+/// closing price is above the mean of the last `months` month-end closes, this one included,
+/// else cash, held through the next month; fully invested before the first decision.
+fn sma_rule(months: usize) -> Rule {
+    Rule {
+        name: format!("SMA {months}m, monthly"),
+        expose: Arc::new(move |ind: &Indicators| {
+            let ends = ind.ends();
+            let mut out = vec![1.0f64; ind.px.len()];
+            for t in months..ends.len() {
+                let mean = scala_sum((t + 1 - months..=t).map(|m| ind.px[ends[m]])) / months as f64;
+                let w = if ind.px[ends[t]] > mean { 1.0 } else { 0.0 };
+                let to = ends.get(t + 1).copied().unwrap_or(ind.px.len());
+                for x in &mut out[ends[t]..to] {
+                    *x = w;
+                }
+            }
+            out
+        }),
+    }
+}
+
+/// THE CADENCE COMBINATOR: a rule's exposure re-read at each month's end (`month_ends`) and held
+/// through the next month, the rule's own until the first month end. What a monthly-rebalanced
+/// book does with a daily signal, and the form `pwr_stats` reads a rule in.
+fn monthly(r: Rule) -> Rule {
+    let inner = r.expose;
+    Rule {
+        name: format!("{}, monthly", r.name),
+        expose: Arc::new(move |ind: &Indicators| {
+            let e = inner(ind);
+            let ends = ind.ends();
+            let mut out = e.clone();
+            for t in 0..ends.len() {
+                let to = ends.get(t + 1).copied().unwrap_or(e.len());
+                for x in &mut out[ends[t]..to] {
+                    *x = e[ends[t]];
+                }
+            }
+            out
+        }),
+    }
+}
+
+/// The rule the refuge severity curve is drawn for beside the reference: the combined rule, by
+/// its position in `rules()`, so rules appended after it do not move the curve.
+const SEVERITY_ARM_IDX: usize = 8;
+
 fn rules() -> Vec<Rule> {
     vec![
         Rule {
@@ -13346,6 +13489,12 @@ fn rules() -> Vec<Rule> {
         trend_rule(250, 0.0),
         drawdown_rule(10.0, 0.0),
         combo_rule(200, 0.0),
+        // THE MONTHLY FORMS: the return-sign and moving-average rules decided at month ends, and
+        // the cadence combinator on two daily rules, so a monthly arm's power is measurable
+        sign_rule(12),
+        sma_rule(10),
+        monthly(trend_rule(200, 0.0)),
+        monthly(drawdown_rule(10.0, 0.0)),
     ]
 }
 
@@ -14679,7 +14828,7 @@ fn eval_world(sims: &[Path], cost: f64, years: usize) -> Evald {
         .into_par_iter()
         .map(|k| {
             let s = &sims[k];
-            let ind = Indicators::new(&s.price);
+            let ind = Indicators::new(&s.price, &s.rate);
             let eps = episodes(&s.price, 15.0);
             let fl: Vec<bool> = eps.iter().map(|ep| fundamental_led(s, *ep)).collect();
             let mut out: PathOutcomes = rs
@@ -15110,11 +15259,11 @@ fn run_strategy_sweep(
             .into_par_iter()
             .map(|k| {
                 let s = &sims[k];
-                let ind = Indicators::new(&s.price);
+                let ind = Indicators::new(&s.price, &s.rate);
                 let eps = episodes(&s.price, 15.0);
                 let fl: Vec<bool> = eps.iter().map(|ep| fundamental_led(s, *ep)).collect();
                 let mut out = Vec::new();
-                for j in [REF_IDX, nr - 1] {
+                for j in [REF_IDX, SEVERITY_ARM_IDX] {
                     out.push(
                         evaluate(s, &eps, &fl, &rs[j].expose, &ind, cost, years, Safe::Cash).0,
                     );
@@ -15125,7 +15274,7 @@ fn run_strategy_sweep(
                 out
             })
             .collect();
-        for (j, off) in [(REF_IDX, 0usize), (nr - 1, 2usize)] {
+        for (j, off) in [(REF_IDX, 0usize), (SEVERITY_ARM_IDX, 2usize)] {
             let tot: Vec<f64> = ev.iter().map(|v| v[off + 1].ann - v[off].ann).collect();
             let sta: Vec<f64> = ev
                 .iter()
@@ -15455,7 +15604,7 @@ fn bond_relations() -> [Relation; 2] {
 /// target added or renamed fails the build until someone places it. The failure being prevented is
 /// a target silently absent from the equity section — a shorter table reads as a shorter list of
 /// concerns, not as a bug.
-const EQUITY_TARGETS: [&str; 34] = [
+const EQUITY_TARGETS: [&str; 38] = [
     "equity vol %",
     "typical-year vol %",
     "return per vol",
@@ -15481,12 +15630,16 @@ const EQUITY_TARGETS: [&str; 34] = [
     "variance ratio 5y",
     "3y p95 excess",
     "decline gap p90 y",
+    "decline length p50 y",
+    "decline length max y",
     "under water 20% %",
     "annual autocorr long",
     "variance ratio 3y long",
     "variance ratio 5y long",
     "3y p95 excess long",
     "decline gap p90 y long",
+    "decline length p50 y long",
+    "decline length max y long",
     "under water 20% % long",
     "equity d5 vs real",
     "equity d10 vs real",
@@ -15891,6 +16044,8 @@ fn anchor_groups(a: Anchors) -> [(&'static str, usize, &'static [&'static str]);
                 "variance ratio 5y",
                 "3y p95 excess",
                 "decline gap p90 y",
+                "decline length p50 y",
+                "decline length max y",
                 "under water 20% %",
             ],
         ),
@@ -15916,6 +16071,8 @@ fn anchor_groups(a: Anchors) -> [(&'static str, usize, &'static [&'static str]);
                 "variance ratio 5y long",
                 "3y p95 excess long",
                 "decline gap p90 y long",
+                "decline length p50 y long",
+                "decline length max y long",
                 "under water 20% % long",
             ],
         ),
@@ -16205,7 +16362,7 @@ fn run_power_report(
             .into_par_iter()
             .map(|k| {
                 let p = &sims[k];
-                let ind = Indicators::new(&p.price);
+                let ind = Indicators::new(&p.price, &p.rate);
                 arms.iter()
                     .map(|fna| {
                         let e = fna(&ind);
@@ -16706,7 +16863,7 @@ fn run_buffer_report(
             .into_par_iter()
             .map(|k| {
                 let p = &sims[k];
-                let ind = Indicators::new(&p.price);
+                let ind = Indicators::new(&p.price, &p.rate);
                 arms.iter()
                     .map(|(_, f)| {
                         let ap = arm_path(p, &f(&ind), cost, Safe::Bond);
@@ -20945,6 +21102,45 @@ mod contract_tests {
         );
     }
 
+    /// THE MONTHLY FORMS on the fixture path: the 12-month return-sign arm reads p10 4.7030 and
+    /// minimum 3.4778, the 10-month moving-average arm 3.2428 and 2.5021, an independent
+    /// implementation's values to four decimals; the cadence combinator holds a rule's month-end
+    /// exposure through the month; the severity curve's arm is the combined rule.
+    #[test]
+    fn the_monthly_forms_read_what_an_independent_implementation_read() {
+        let p = &sim_paths(&default_world(), 1, 40, 20_260_813)[0];
+        let ind = Indicators::new(&p.price, &p.rate);
+        let ends = month_ends(p.price.len());
+        for (nm, p10, min) in [
+            ("sign 12m vs cash, monthly", 4.7030, 3.4778),
+            ("SMA 10m, monthly", 3.2428, 2.5021),
+        ] {
+            let e = (rule_named(nm).expose)(&ind);
+            let starts = pwr_starts(p, &e, 0.001, &ends);
+            let sorted = sorted_total(&starts);
+            assert!((sorted[28] - p10).abs() < 5e-5, "{nm} p10 {}", sorted[28]);
+            assert!((sorted[0] - min).abs() < 5e-5, "{nm} min {}", sorted[0]);
+        }
+        let daily = (rule_named("trend 200d, floor 0%").expose)(&ind);
+        let held = (rule_named("trend 200d, floor 0%, monthly").expose)(&ind);
+        for t in 0..ends.len() {
+            let to = ends.get(t + 1).copied().unwrap_or(held.len());
+            assert!(
+                held[ends[t]..to].iter().all(|x| *x == daily[ends[t]]),
+                "month {t}"
+            );
+        }
+        assert_eq!(held[..ends[0]], daily[..ends[0]]);
+        assert!(
+            held.iter().zip(&daily).any(|(h, d)| h != d),
+            "the cadence changes something"
+        );
+        assert_eq!(
+            rules()[SEVERITY_ARM_IDX].name,
+            "volatility + trend 200d, floor 0%"
+        );
+    }
+
     #[test]
     fn fit_targets_partition_into_equity_and_bond() {
         let mut expected: Vec<&str> = EQUITY_TARGETS
@@ -24002,7 +24198,7 @@ mod record_band_tests {
                 .filter(|l| !(l.starts_with('#') || l.trim().is_empty() || l.starts_with("set\t")))
                 .map(|l| l.split('\t').map(str::to_string).collect())
                 .collect();
-        assert_eq!(lines.len(), 24, "two sets, two windows, six rows");
+        assert_eq!(lines.len(), 32, "two sets, two windows, eight rows");
         for (set, a) in sets() {
             for (names, records) in [
                 (MULTI_YEAR_ROWS, a.multi_year),
@@ -24039,7 +24235,11 @@ mod record_band_tests {
         let flat = multi_year_readings(&vec![0.0004; 10 * y]);
         assert!(flat[3].abs() < 1e-9, "3y p95 excess {}", flat[3]);
         assert!(flat[4].is_nan(), "no decline, no gap");
-        assert!(flat[5].abs() < 1e-12, "never under water");
+        assert!(
+            flat[5].is_nan() && flat[6].is_nan(),
+            "no decline, no length"
+        );
+        assert!(flat[7].abs() < 1e-12, "never under water");
         assert!(
             multi_year_readings(&vec![0.0004; 5 * y])[3].is_nan(),
             "under six years, no 3-year tail"
@@ -24059,9 +24259,42 @@ mod record_band_tests {
         assert!((m[4] - gap).abs() < 1e-9, "decline gap p90 {}", m[4]);
         let under = (177 + 177 + 101) as f64 * 100.0 / (r.len() + 1) as f64;
         assert!(
-            (m[5] - under).abs() < 1e-9,
+            (m[7] - under).abs() < 1e-9,
             "under water {} of {under}",
-            m[5]
+            m[7]
+        );
+    }
+
+    /// THE DECLINE LENGTHS read a hand series as stated: three falls of 0.4 log in one session
+    /// each, the third never regained and so not counted, read one session apiece; a fall spread
+    /// over 300 sessions and regained reads its own length.
+    #[test]
+    fn the_decline_lengths_read_a_hand_series_as_stated() {
+        let y = DAYS_PER_YEAR;
+        let mut r = vec![0.001f64; 5 * y];
+        r.push(-0.4);
+        r.extend(std::iter::repeat_n(0.001, 10 * y));
+        r.push(-0.4);
+        r.extend(std::iter::repeat_n(0.001, 5 * y));
+        r.push(-0.4);
+        r.extend(std::iter::repeat_n(0.001, 100));
+        let m = multi_year_readings(&r);
+        let one = 1.0 / y as f64;
+        assert!(
+            (m[5] - one).abs() < 1e-12 && (m[6] - one).abs() < 1e-12,
+            "lengths {} {}",
+            m[5],
+            m[6]
+        );
+        let mut slow = vec![0.001f64; 3 * y];
+        slow.extend(std::iter::repeat_n(-0.001, 300));
+        slow.extend(std::iter::repeat_n(0.001, 3 * y));
+        let s = multi_year_readings(&slow);
+        assert!(
+            (s[5] - 300.0 / y as f64).abs() < 1e-12 && s[5] == s[6],
+            "slow fall {} {}",
+            s[5],
+            s[6]
         );
     }
 
@@ -24070,7 +24303,7 @@ mod record_band_tests {
     #[test]
     fn the_multi_year_band_holds_the_histories_it_is_read_from() {
         let mut rng = NumPyRng::new(20_260_929);
-        let reads: Vec<[f64; 6]> = (0..1000)
+        let reads: Vec<[f64; 8]> = (0..1000)
             .map(|_| std::array::from_fn(|_| rng.randn()))
             .collect();
         let histories = vec![(MULTI_YEAR_ROWS, reads.clone())];
@@ -24280,15 +24513,18 @@ mod record_band_tests {
                 1.3537020801900945,
                 0.48959164694365975,
                 9.384920634920634,
+                0.873015873015873,
+                1.996031746031746,
                 19.785742626636686,
             ]
         );
         // the joint band of forty twenty-year stretches of it, as `multi_year_bands` reads a
         // world's histories
-        let reads: Vec<[f64; 6]> = (0..40)
+        let reads: Vec<[f64; 8]> = (0..40)
             .map(|k| multi_year_readings(&r[k * 60..k * 60 + 5040]))
             .collect();
-        let (c, edges) = record_band_joint(&reads, &[0, 1, 2, 3, 4, 5], MULTI_YEAR_ALPHA / 2.0);
+        let (c, edges) =
+            record_band_joint(&reads, &[0, 1, 2, 3, 4, 5, 6, 7], MULTI_YEAR_ALPHA / 2.0);
         assert_eq!(c, 0.48750000000000004);
         assert_eq!(
             edges,
@@ -24298,6 +24534,8 @@ mod record_band_tests {
                 (0.873770166713951, 1.7718478665236999),
                 (0.3648760869405728, 0.5040042264737004),
                 (7.142857142857143, 9.384920634920634),
+                (0.42063492063492064, 1.7063492063492063),
+                (1.7261904761904763, 2.7976190476190474),
                 (3.3326720888712558, 22.019440587185084),
             ]
         );

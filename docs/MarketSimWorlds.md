@@ -783,7 +783,7 @@ In the sidecar such a row carries `"aggregation": "ensemble-extreme"`, `"ratio":
 `"percentile"`, so a consumer cannot make the division by accident. `"horizonYears"` is on every
 row: the length `model` was read over on a row with a record band, the anchor's record elsewhere.
 
-**The multi-year rows** grade what a year or more of a series is one observation of. Six
+**The multi-year rows** grade what a year or more of a series is one observation of. Eight
 statistics, each a row against the set's equity window and again, with `long` appended to its name,
 against the set's long window (the bubble coupling's: the CRSP century, the NDX price index from
 1990); `multiyear-2026-09-29.tsv` carries the records.
@@ -794,6 +794,7 @@ against the set's long window (the bubble coupling's: the CRSP century, the NDX 
 | `variance ratio 3y`, `variance ratio 5y` | the variance of k-year log changes over k times the variance of the annual changes across the same span; 1 without serial dependence |
 | `3y p95 excess` | the 95th percentile of the log return over every 756-session window, less the series' own mean 3-year return |
 | `decline gap p90 y` | the 90th percentile of the years between the peaks of successive declines of 20% or more |
+| `decline length p50 y`, `decline length max y` | the peak-to-trough length in years of the regained declines of 20% or more, their median and their longest; with the depth rungs, what a withdrawal schedule started just before a decline survives |
 | `under water 20% %` | sessions more than 20% under the running peak, in percent |
 
 Block statistics are averaged over twelve phases spread evenly across the block's own length. Two

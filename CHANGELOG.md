@@ -1,5 +1,43 @@
 ## v0.24.5 — 2026-09-30
 
+**The decline length rows**
+
+- Two multi-year rows against each window, `decline length p50 y` and `decline length max y`:
+  the peak-to-trough length in years of the regained declines of 20% or more, their median and
+  their longest. The depth rungs grade how far a decline goes and the gap how often; these grade
+  how long it takes, which with the depth sets what a withdrawal schedule started just before it
+  survives. Records: CRSP from 1954 0.66 and 2.53 years, the century 0.93 and 3.35; QQQ 0.32 and
+  2.52, the NDX index from 1990 0.25 and 2.52. Graded like the other multi-year rows, by where the
+  record falls among the world's single histories, inside the window's joint band; weight 0 in
+  the loss. `multiyear-2026-09-29.tsv` regenerated with the rows from public sources (Yahoo's
+  chart API for QQQ and the NDX index, French's daily factors), every earlier row reproduced to
+  six decimals but QQQ's 5-year variance ratio in the last digit.
+- What it shows, on seeds 5-8 at 200 × 100 with no row missed by either recipe: `0.24.5-sp500`'s
+  median 20% decline takes 0.38-0.43 years against the record's 0.66 since 1954 (the record at
+  the worlds' 76th-80th percentile) and 0.93 over the century (94th-97th, the band's edge); its
+  longest 3.1-3.6 years against 2.53 (24th-34th) and 4.0-4.8 against the century's 3.35
+  (32nd-38th). `0.24.5-nasdaq`'s median 0.54-0.67 against QQQ's 0.32 (23rd-29th) and its
+  longest 2.4-2.6 against 2.52 (47th-54th); against the NDX index 0.58-0.66 and 3.1-3.9
+  (12th-16th and 27th-37th). The long grinds are there; the S&P worlds' ordinary declines are
+  the fast ones.
+- Sidecar schema 23 → 24: `gate.fidelity` gained the four rows.
+
+**The monthly forms: return-sign, moving average, and a cadence combinator**
+
+- Four rules appended to the report's arm set, `-powerarms` 10-13: `sign 12m vs cash, monthly`
+  (equity when the price ratio over the trailing twelve months exceeds cash's compounding over
+  the same sessions, else cash), `SMA 10m, monthly` (equity when the month's close is above the
+  mean of the last ten month-end closes, this one included), and the daily `trend 200d` and
+  `cut below -10%` rules under the cadence combinator, which re-reads a rule's exposure at each
+  month's end and holds it through the month. All four decide at a month's end, so `-power`
+  reads them as the monthly arms they are, and their withdrawal-rate rows are the arms' own.
+  The indicators carry the rate path for the forms that hold cash against it.
+- On the default world's 40-year path at seed 20260813 the return-sign arm reads PWR p10
+  4.7030 and minimum 3.4778, the moving-average arm 3.2428 and 2.5021, an independent
+  implementation's values to four decimals (the contract test in both twins).
+- The refuge severity curve is drawn for the combined rule by position, not for the last rule
+  in the list, so appended rules do not move it. `-strategies` gains the four rows.
+
 **The perpetual withdrawal rate is a `-power` statistic**
 
 - Two rows in every `-power` table, `real 15y PWR p10 %` and `PWR < 4% starts %`, read on each

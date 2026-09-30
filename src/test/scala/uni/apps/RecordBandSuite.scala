@@ -108,7 +108,7 @@ class RecordBandSuite extends FunSuite:
     val rows = Paths.get("test-data/equity-anchors/multiyear-2026-09-29.tsv").lines.toVector
       .filterNot(l => l.startsWith("#") || l.trim.isEmpty || l.startsWith("set\t"))
       .map(_.split('\t').toVector)
-    assertEquals(rows.length, 24, "two sets, two windows, six rows")
+    assertEquals(rows.length, 32, "two sets, two windows, eight rows")
     for (set, a) <- sets
         (names, records) <- Vector((MarketSim.MultiYearRows, a.multiYear),
                                    (MarketSim.MultiYearLongRows, a.multiYearLong))
@@ -128,7 +128,8 @@ class RecordBandSuite extends FunSuite:
     val flat = MarketSim.multiYearReadings(Array.fill(10 * y)(0.0004))
     assertEqualsDouble(flat(3), 0.0, 1e-9, "3y p95 excess")
     assert(flat(4).isNaN, "no decline, no gap")
-    assertEqualsDouble(flat(5), 0.0, 1e-12, "never under water")
+    assert(flat(5).isNaN && flat(6).isNaN, "no decline, no length")
+    assertEqualsDouble(flat(7), 0.0, 1e-12, "never under water")
     assert(MarketSim.multiYearReadings(Array.fill(5 * y)(0.0004))(3).isNaN, "under six years, no 3-year tail")
     // three falls of 0.4 log, their peaks ten years and five years apart and the fall's own
     // session, each climbed out of at 0.001 a session: 177 sessions more than 20% under the peak
@@ -137,14 +138,23 @@ class RecordBandSuite extends FunSuite:
       Array.fill(5 * y)(0.001) ++ Array(-0.4) ++ Array.fill(100)(0.001)
     val f = MarketSim.multiYearReadings(r)
     assertEqualsDouble(f(4), (10 * y + 1).toDouble / y, 1e-9, "decline gap p90")
-    assertEqualsDouble(f(5), (177 + 177 + 101) * 100.0 / (r.length + 1), 1e-9, "under water")
+    assertEqualsDouble(f(7), (177 + 177 + 101) * 100.0 / (r.length + 1), 1e-9, "under water")
+    // each fall takes one session; the third is never regained and does not count
+    val one = 1.0 / y
+    assertEqualsDouble(f(5), one, 1e-12, "length p50")
+    assertEqualsDouble(f(6), one, 1e-12, "length max")
+    // a fall spread over 300 sessions, regained: its length is the fall's
+    val slow = Array.fill(3 * y)(0.001) ++ Array.fill(300)(-0.001) ++ Array.fill(3 * y)(0.001)
+    val sl = MarketSim.multiYearReadings(slow)
+    assertEqualsDouble(sl(5), 300.0 / y, 1e-12, "slow fall")
+    assertEquals(sl(5), sl(6))
   }
 
   // THE JOINT BAND holds the histories it is read from: on every row of a window at once, all but
   // about `MultiYearAlpha / 2` of them; and a window is read at its own length.
   test("the multi-year band holds the histories it is read from") {
     val rng = new NumPyRNG(20260929L)
-    val reads = Vector.fill(1000)(Vector.fill(6)(rng.randn()))
+    val reads = Vector.fill(1000)(Vector.fill(8)(rng.randn()))
     val bands = MarketSim.multiYearBands(Vector((MarketSim.MultiYearRows, reads)))
     val inside = reads.count: x =>
       MarketSim.MultiYearRows.zip(x).forall: (n, v) =>
@@ -165,11 +175,11 @@ class RecordBandSuite extends FunSuite:
     val r = pinnedLongSeries
     assertEquals(MarketSim.multiYearReadings(r), Vector(
       -0.027652854715084944, 1.0932546095255011, 1.3537020801900945, 0.48959164694365975,
-      9.384920634920634, 19.785742626636686))
+      9.384920634920634, 0.873015873015873, 1.996031746031746, 19.785742626636686))
     // the joint band of forty twenty-year stretches of it, as `multiYearBands` reads a world's
     // histories
     val reads = Vector.tabulate(40)(k => MarketSim.multiYearReadings(r.slice(k * 60, k * 60 + 5040)))
-    val (c, edges) = MarketSim.recordBandJoint(reads, Vector.range(0, 6), MarketSim.MultiYearAlpha / 2.0)
+    val (c, edges) = MarketSim.recordBandJoint(reads, Vector.range(0, 8), MarketSim.MultiYearAlpha / 2.0)
     assertEquals(c, 0.48750000000000004)
     assertEquals(edges, Vector(
       (-0.2628711828928611, 0.013658019501475917),
@@ -177,6 +187,8 @@ class RecordBandSuite extends FunSuite:
       (0.873770166713951, 1.7718478665236999),
       (0.3648760869405728, 0.5040042264737004),
       (7.142857142857143, 9.384920634920634),
+      (0.42063492063492064, 1.7063492063492063),
+      (1.7261904761904763, 2.7976190476190474),
       (3.3326720888712558, 22.019440587185084)))
   }
 
