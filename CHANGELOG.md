@@ -1,5 +1,50 @@
 ## v0.24.5 — 2026-09-30
 
+**The timing rows**
+
+- Three fidelity rows on what a 10-month moving-average exit does, graded like the multi-year
+  rows (the record among the world's own century histories, a joint band at 0.05) against
+  Shiller's monthly S&P with dividends reinvested, 1871-2023, on both sets: `sma10 decline
+  avoided %`, the share of each 20%+ decline's log fall the rule was out for, averaged over the
+  declines (record 70.7); `sma10 false-exit return %`, the index's cumulative return over each
+  out-period that overlaps no decline's peak-to-trough window, averaged (3.08); and
+  `sma10 exits per year` (0.61). The rule is in for the next month when the month-end level is
+  above the mean of the last ten, this one included. Weight 0 in the loss. `timing_of_monthly` /
+  `timingOfMonthly` and `timing_of_path`; `record_bands -timing FILE` reads Shiller's Data sheet as
+  a `month,price,dividend,cpi` CSV (the fixture's header states the conversion); an independent
+  implementation of the same definitions agrees to six decimals.
+- What it shows, on seed 5 at 200 × 100: both shipped worlds miss all but one of the rows. On `0.24.5-sp500` the exit avoids 42.7% of a decline's fall against the record's 70.7 (the record at the worlds' 99th percentile), a false exit forgoes 6.7% against 3.1 (0th), and exits run 0.75 a year against 0.61 (7th); on `0.24.5-nasdaq-basket` 34.4% (100th), 7.7% (0th) and 0.96 a year (0th). The worlds' declines arrive too fast for a ten-month average to step aside from and their rallies between declines are too large for it to sit out cheaply: the valuation-led slow decline and the recovery that follows it, which the decline length rows and the sector trend row point at from other sides. The rows stay graded; they and the market's one-year trend are the next primary item.
+- Sidecar schema 25 → 26: `gate.fidelity` gained the three rows, single-history with their own
+  `historyBand`.
+
+**The sector channel — `-sectors`**
+
+- `-sectors K` adds K sector legs as observational second-pass instances of the primary: each its
+  beta on the primary's observed return (betas drawn once per path around 1 at the record's
+  cross-sectional dispersion, 0.216 across the ten industries, centred exactly), its own idio on
+  the vol state (`-sectoridio`, a fraction of the primary's realized volatility), and a slow
+  relative drift, an AR(1) state per leg with sd `-sectordriftsd` (a fraction of the primary's
+  annualized volatility) and half-life `-sectordrifthalf` years, centred across the legs so the
+  aggregate keeps the primary's drift. Reaches no price; 0 is bit-identical off. `-emit` gains
+  `logSector1..K` after the basket's columns; the sidecar `channels.sector` and
+  `verdictChannels.sector`. Schema 24 → 25.
+- Graded on the ten-industry ruler, read the ruler's way on the legs aggregated to calendar
+  months, in ratio forms that carry across primaries: momentum 12-1 and the two trend readings
+  over the cross-sectional sd at the record's bootstrap bands over its own, the cross-sectional
+  sd over the market's monthly sd at ±0.10 (the fixture gained that sd as a shape row), the
+  pairwise correlations at ±0.10 and ±0.15, and the mechanism that the middle decile's
+  correlation is below the worst decile's. One setting holds both sets, K 10, idio 0.7, drift
+  0.25 with a 2-year half-life, carried by `0.24.5-sp500` and `0.24.5-nasdaq-basket` and graded
+  on every verdict.
+- On seeds 5-8 at 200 × 100 every row holds on the Nasdaq recipe and every row but the 12-month
+  trend on the S&P recipe: momentum spread 0.126-0.131 of the cross-sectional sd (record 0.127),
+  that sd 0.59-0.60 of the market's (0.58), pairwise correlation 0.67 (0.70), 0.57-0.62 on the
+  worst decile (0.56) and 0.00-0.01 on the middle (−0.03). The S&P's trend row misses through
+  its primary: the record's market reads +0.50% a month after a positive trailing year against a
+  negative one, the S&P world's −0.44%, and the per-sector trend is the market's own carried into
+  every leg. The row stays graded; the market's one-year time-series momentum is the next primary
+  item.
+
 **The decline length rows**
 
 - Two multi-year rows against each window, `decline length p50 y` and `decline length max y`:

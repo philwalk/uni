@@ -39,6 +39,10 @@ const USAGE: &str =
   -rateafter    THE CONDITIONAL RATE ROWS (`RATE_AFTER_ROWS`): the -fred rate on the equity window's
                 session dates, the two years after each 20% decline's trough; the record by
                 `rate_after_of_returns`, its paired block resamples, their own joint band
+  -timing FILE  THE TIMING ROWS instead (`TIMING_ROWS`): Shiller's monthly S&P as a
+                `month,price,dividend,cpi` CSV, dividends reinvested, over -from..-to (YYYY-MM);
+                what a 10-month moving-average exit does on the record, the rows of
+                `timing-2026-09-30.tsv`
   -sectors DIR  THE SECTOR ROWS instead: Ken French's `10_Industry_Portfolios.CSV`,
                 `49_Industry_Portfolios.CSV` and `F-F_Research_Data_Factors.CSV` in DIR as the
                 library publishes them (unzipped), the first monthly block of each; prints the
@@ -303,6 +307,77 @@ fn returns_in_window(o: &Opts) -> Vec<(String, f64)> {
 
 /// `-sectors DIR [-resamples N] [-seed S]`: the sector rows, then done. False when the arguments
 /// name no `-sectors`.
+/// `(month, total-return level)` from Shiller's monthly S&P as a `month,price,dividend,cpi` CSV
+/// (the workbook's Data sheet: Date, P, D, CPI): the level compounds each month's price ratio
+/// with the dividend rate over twelve on the prior price, a blank dividend carrying the last one.
+fn read_shiller_monthly(file: &str) -> Vec<(String, f64)> {
+    let text = std::fs::read_to_string(file).unwrap_or_else(|e| usage(&format!("{file}: {e}")));
+    let mut out: Vec<(String, f64)> = Vec::new();
+    let mut prev_p = f64::NAN;
+    let mut last_d = f64::NAN;
+    let mut level = f64::NAN;
+    for l in text.lines().skip(1) {
+        let f: Vec<&str> = l.split(',').map(str::trim).collect();
+        if f.len() < 3 {
+            continue;
+        }
+        let p: f64 = f[1]
+            .parse()
+            .unwrap_or_else(|_| usage(&format!("{file}: price [{}]", f[1])));
+        if let Ok(d) = f[2].parse::<f64>() {
+            last_d = d;
+        }
+        level = if prev_p.is_nan() {
+            p
+        } else {
+            level * (p + last_d / 12.0) / prev_p
+        };
+        prev_p = p;
+        out.push((f[0].to_string(), level));
+    }
+    out
+}
+
+/// THE TIMING ROWS (`-timing FILE`): Shiller's monthly S&P over `-from`..`-to` (YYYY-MM), the
+/// three rows of `timing_of_monthly`, printed for the set named.
+fn timing_mode(args: &[String]) -> bool {
+    let Some(k) = args.iter().position(|a| a == "-timing") else {
+        return false;
+    };
+    let file = args
+        .get(k + 1)
+        .cloned()
+        .unwrap_or_else(|| usage("-timing needs Shiller's monthly CSV"));
+    let opt = |flag: &str| -> Option<String> {
+        args.iter()
+            .position(|a| a == flag)
+            .and_then(|i| args.get(i + 1).cloned())
+    };
+    let from = opt("-from").unwrap_or_default();
+    let to = opt("-to").unwrap_or_else(|| "9999-99".to_string());
+    let set = opt("-set").unwrap_or_else(|| usage("-set is required"));
+    let series = opt("-series").unwrap_or_else(|| usage("-series is required"));
+    let rows: Vec<(String, f64)> = read_shiller_monthly(&file)
+        .into_iter()
+        .filter(|(m, _)| m.as_str() >= from.as_str() && m.as_str() <= to.as_str())
+        .collect();
+    if rows.len() < 24 {
+        usage("the window holds fewer than two years of months");
+    }
+    let levels: Vec<f64> = rows.iter().map(|(_, x)| *x).collect();
+    let window = format!("{}..{}", rows[0].0, rows[rows.len() - 1].0);
+    if args.iter().any(|a| a == "-header") {
+        println!("set\trow\tseries\twindow\tn\trecord");
+    }
+    for (name, value) in ms::TIMING_ROWS.iter().zip(ms::timing_of_monthly(&levels)) {
+        println!(
+            "{set}\t{name}\t{series}\t{window}\t{}\t{value:.6}",
+            levels.len()
+        );
+    }
+    true
+}
+
 fn sector_mode(args: &[String]) -> bool {
     let Some(k) = args.iter().position(|a| a == "-sectors") else {
         return false;
@@ -327,6 +402,9 @@ fn sector_mode(args: &[String]) -> bool {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if sector_mode(&args) {
+        return;
+    }
+    if timing_mode(&args) {
         return;
     }
     let o = parse_args(&args);
@@ -671,6 +749,11 @@ fn print_sector_rows(dir: &str, resamples: usize, seed: u64) {
         println!(
             "shape\t{table}\t\tall\tmean cross-sectional sd\t{:.6}\t\t\t{}",
             s[0], n[0]
+        );
+        println!(
+            "shape\t{table}\t\tall\tmarket monthly sd\t{:.6}\t\t\t{}",
+            ms::sector_market_sd(&p),
+            p.market.len()
         );
         println!(
             "shape\t{table}\t\tall\tmedian pairwise correlation\t{:.6}\t\t\t{}",

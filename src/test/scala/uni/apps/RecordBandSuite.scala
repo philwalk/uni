@@ -446,3 +446,35 @@ class RecordBandSuite extends FunSuite:
       assertEqualsDouble(term(lo - 2.0 * sd), 2.0 * MarketSim.SdRelRef, 1e-12, "two sd short")
       assertEqualsDouble(term(Double.NaN), 4.0 * MarketSim.SdRelRef, 1e-12, "unmeasurable")
   }
+
+  // THE TIMING ROWS' anchors are the fixture's records; a hand series reads as stated; the joint
+  // band holds the histories it is read from; and a pinned path reads the same in both twins.
+  test("the timing anchors are the fixture's records and the statistic reads as stated") {
+    val rows = Paths.get("test-data/equity-anchors/timing-2026-09-30.tsv").lines.toVector
+      .filterNot(l => l.startsWith("#") || l.trim.isEmpty || l.startsWith("set\t"))
+      .map(_.split('\t').toVector)
+    assertEquals(rows.length, 6, "two sets, three rows")
+    for (set, a) <- sets; (name, got) <- MarketSim.TimingRows.zip(a.timing) do
+      val r = rows.find(f => f(0) == set && f(1) == name).getOrElse(fail(s"fixture row [$set] $name missing"))
+      assertEqualsDouble(got, r(5).toDouble, 1e-6, s"$set: $name against the record's")
+      assertEquals(MarketSim.recordBandYears(a, name), a.timingYears)
+    // 40 months up 2%, a 30% fall over three months, a climb: a decline the rule is partly out of
+    val up = Vector.iterate(1.0, 40)(_ * 1.02)
+    val top = up.last
+    val x = (up ++ Vector(top * 0.95, top * 0.85, top * 0.70) ++ Vector.iterate(top * 0.70 * 1.03, 30)(_ * 1.03)).toArray
+    val r = MarketSim.timingOfMonthly(x)
+    assert(r(0).isFinite && r(0) > 0.0 && r(0) < 100.0, s"avoided ${r(0)}")
+    assert(r(2) > 0.0, s"exits ${r(2)}")
+    val u = MarketSim.timingOfMonthly(Array.tabulate(60)(m => math.pow(1.02, m)))
+    assert(u(0).isNaN && u(1).isNaN && u(2) == 0.0, u.toString)
+    val rng = new NumPyRNG(20260930L)
+    val reads = Vector.fill(1000)(Vector.fill(3)(rng.randn()))
+    val bands = MarketSim.timingBands(reads)
+    val inside = reads.count(v => MarketSim.TimingRows.zip(v).forall((n, x) => { val (lo, hi) = bands(n); x >= lo && x <= hi }))
+    assert(inside >= 940 && inside <= 960, s"$inside of 1000 inside every band")
+    assert(MarketSim.timingBands(reads.take(10)).isEmpty)
+    // `timing_tests` pins these same values; a change here is a change there
+    val p = MarketSim.simPaths(MarketSim.Defaults, 1, 40, 20260930L).head
+    val pin = Vector(64.3574300622633, 4.6344206835310064, 0.825)
+    for (got, want) <- MarketSim.timingOfPath(p.price).zip(pin) do assertEqualsDouble(got, want, 1e-12, s"$got vs $want")
+  }

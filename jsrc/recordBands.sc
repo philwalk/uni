@@ -53,6 +53,10 @@ object RecordBands {
     "-rateafter    THE CONDITIONAL RATE ROWS (`RateAfterRows`): the -fred rate on the equity window's",
     "              session dates, the two years after each 20% decline's trough; the record by",
     "              `rateAfterOfReturns`, its paired block resamples, their own joint band",
+    "-timing FILE  THE TIMING ROWS instead (`TimingRows`): Shiller's monthly S&P as a",
+    "              `month,price,dividend,cpi` CSV, dividends reinvested, over -from..-to (YYYY-MM);",
+    "              what a 10-month moving-average exit does on the record, the rows of",
+    "              `timing-2026-09-30.tsv`",
     "-sectors DIR  THE SECTOR ROWS instead: Ken French's `10_Industry_Portfolios.CSV`,",
     "              `49_Industry_Portfolios.CSV` and `F-F_Research_Data_Factors.CSV` in DIR as the",
     "              library publishes them (unzipped), the rows of `sectors-2026-09-30.tsv` with 5-95",
@@ -82,6 +86,24 @@ object RecordBands {
         yield (s"${d.take(4)}-${d.slice(4, 6)}-${d.slice(6, 8)}", mkt + rf)
     }
 
+  /** `(month, total-return level)` from Shiller's monthly S&P as a `month,price,dividend,cpi` CSV
+    * (the workbook's Data sheet: Date, P, D, CPI): the level compounds each month's price ratio
+    * with the dividend rate over twelve on the prior price, a blank dividend carrying the last one. */
+  def readShillerMonthly(file: String): Vector[(String, Double)] =
+    var prevP = Double.NaN
+    var lastD = Double.NaN
+    var level = Double.NaN
+    file.asPath.lines.toVector.drop(1).flatMap { l =>
+      val f = l.split(',').map(_.trim)
+      if f.length < 3 then None
+      else
+        val p = f(1).toDoubleOption.getOrElse(usage(s"$file: price [${f(1)}]"))
+        f(2).toDoubleOption.foreach(d => lastD = d)
+        level = if prevP.isNaN then p else level * (p + lastD / 12.0) / prevP
+        prevP = p
+        Some((f(0), level))
+    }
+
   /** `(date, rate as a decimal)` for every Monday-Friday date of FRED's daily `date,value` CSV
     * (`observation_date,DFF` in fredgraph's spelling) whose value is a number. */
   def readFred(file: String): Vector[(String, Double)] =
@@ -108,6 +130,23 @@ object RecordBands {
       case _ => false
 
   def main(args: Array[String]): Unit = {
+    if args.contains("-timing") then
+      def opt(flag: String): Option[String] =
+        val i = args.indexOf(flag)
+        if i < 0 then None else args.lift(i + 1)
+      val file = opt("-timing").getOrElse(usage("-timing needs Shiller's monthly CSV"))
+      val from = opt("-from").getOrElse("")
+      val to = opt("-to").getOrElse("9999-99")
+      val set = opt("-set").getOrElse(usage("-set is required"))
+      val series = opt("-series").getOrElse(usage("-series is required"))
+      val rows = readShillerMonthly(file).filter((m, _) => m >= from && m <= to)
+      if rows.length < 24 then usage("the window holds fewer than two years of months")
+      val levels = rows.map(_._2).toArray
+      val window = s"${rows.head._1}..${rows.last._1}"
+      if args.contains("-header") then println("set	row	series	window	n	record")
+      for (name, value) <- MarketSim.TimingRows.zip(MarketSim.timingOfMonthly(levels)) do
+        println(f"$set%s	$name%s	$series%s	$window%s	${levels.length}%d	$value%.6f")
+      return
     val k = args.indexOf("-sectors")
     if k >= 0 then
       val dir = args.lift(k + 1).getOrElse(usage("-sectors needs a directory"))
@@ -304,6 +343,7 @@ object RecordBands {
         println(f"trend\t$table%s\t$label%s\t$window%s\tpositive minus negative\t$v%.6f\t$lo%.6f\t$hi%.6f\t$n%d")
       val (s, n) = MarketSim.sectorShape(p)
       println(f"shape\t$table%s\t\tall\tmean cross-sectional sd\t${s(0)}%.6f\t\t\t${n(0)}%d")
+      println(f"shape\t$table%s\t\tall\tmarket monthly sd\t${MarketSim.sectorMarketSd(p)}%.6f\t\t\t${p.market.length}%d")
       println(f"shape\t$table%s\t\tall\tmedian pairwise correlation\t${s(1)}%.6f\t\t\t${n(0)}%d")
       println(f"shape\t$table%s\t\tmarket worst decile\tmedian pairwise correlation\t${s(2)}%.6f\t\t\t${n(1)}%d")
       println(f"shape\t$table%s\t\tmarket middle decile\tmedian pairwise correlation\t${s(3)}%.6f\t\t\t${n(2)}%d")

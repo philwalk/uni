@@ -231,7 +231,16 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 // 23 -> 24: THE DECLINE LENGTH ROWS. `gate.fidelity` gained `decline length p50 y` and
 // `decline length max y` against both windows (`MULTI_YEAR_ROWS`): the peak-to-trough length in
 // years of the regained declines of 20% or more, their median and their longest.
-const EMIT_SCHEMA: u32 = 24;
+// 24 -> 25: THE SECTOR CHANNEL. `world` gained `sectors` and its three dials; the TSV gained
+// `logSector1..K` (present ONLY when `sectors > 0`, after the basket's columns and before the
+// panel's: the legs' LOG prices); `channels.sector` the readings the `sector *` rows grade and
+// `verdictChannels.sector` the dials they were graded at. A channel-off schema-24 file is
+// byte-identical to its schema-25 counterpart except the schema number and the new zero world
+// fields.
+// 25 -> 26: THE TIMING ROWS. `gate.fidelity` gained `sma10 decline avoided %`,
+// `sma10 false-exit return %` and `sma10 exits per year` (`TIMING_ROWS`), single-history rows
+// against Shiller's monthly S&P with their own `historyBand`.
+const EMIT_SCHEMA: u32 = 26;
 
 /// Frozen structural constants of the volume channel — see the `vol_idio` field. Measured
 /// from the SPY/QQQ volume-on-range regression (`bars-2026-09-01.tsv`, whose rows the
@@ -665,6 +674,10 @@ pub fn default_world() -> World {
         basket_idio: 0.0,
         basket_gaps: 0.0,
         basket_drift: 0.0,
+        sectors: 0,
+        sector_idio: 0.0,
+        sector_drift_sd: 0.0,
+        sector_drift_half: 0.0,
         macro_panel: 0,
         macro_null: 0,
         lev_persist: 0.0,
@@ -807,6 +820,10 @@ fn v0_19_2() -> World {
         basket_idio: 0.0,
         basket_gaps: 0.0,
         basket_drift: 0.0,
+        sectors: 0,
+        sector_idio: 0.0,
+        sector_drift_sd: 0.0,
+        sector_drift_half: 0.0,
         macro_panel: 0,
         macro_null: 0,
         lev_persist: 0.0,
@@ -995,6 +1012,10 @@ fn v0_24_1() -> World {
         basket_idio: 0.0,
         basket_gaps: 0.0,
         basket_drift: 0.0,
+        sectors: 0,
+        sector_idio: 0.0,
+        sector_drift_sd: 0.0,
+        sector_drift_half: 0.0,
         macro_panel: 0,
         lev_gain: 6.0,
         stress_scale: 0.0,
@@ -1252,12 +1273,18 @@ fn rows_0245(nq_0244: World) -> Vec<(&'static str, World, &'static str)> {
         ("0.24.5-nasdaq", recipe_0245_nasdaq(nq_0244), "nasdaq"),
         (
             "0.24.5-nasdaq-basket",
-            recipe_0245_nasdaq_basket(recipe_0245_nasdaq(nq_0244)),
+            with_sectors(
+                recipe_0245_nasdaq_basket(recipe_0245_nasdaq(nq_0244)),
+                NASDAQ_CHANNEL_DIALS,
+            ),
             "nasdaq",
         ),
         (
             "0.24.5-sp500",
-            recipe_0245_sp500(recipe_0244_sp500_channels(v0_24_4())),
+            with_sectors(
+                recipe_0245_sp500(recipe_0244_sp500_channels(v0_24_4())),
+                SP500_CHANNEL_DIALS,
+            ),
             "sp500",
         ),
     ]
@@ -1671,6 +1698,15 @@ fn recipe_0244_sp500_channels(mut w: World) -> World {
     w
 }
 
+/// THE SECTOR CHANNEL at the set's dials (`SP500_CHANNEL_DIALS`' / `NASDAQ_CHANNEL_DIALS`').
+fn with_sectors(mut w: World, d: ChannelDials) -> World {
+    w.sectors = d.sectors;
+    w.sector_idio = d.sector_idio;
+    w.sector_drift_sd = d.sector_drift_sd;
+    w.sector_drift_half = d.sector_drift_half;
+    w
+}
+
 /// THE NASDAQ BASKET (0.24.4): `0.24.4-nasdaq` with THE BASKET on, re-anchored on the eight names
 /// under QQQ. The swing's moves reach the names through the shared leg, so at the 0.23.1 dials
 /// the aggregate read corr 0.88 and vol ratio 1.56 against the anchors' 0.837 and 1.630;
@@ -1835,6 +1871,10 @@ fn v0_23_0() -> World {
         basket_idio: 0.0,
         basket_gaps: 0.0,
         basket_drift: 0.0,
+        sectors: 0,
+        sector_idio: 0.0,
+        sector_drift_sd: 0.0,
+        sector_drift_half: 0.0,
         macro_panel: 0,
         macro_null: 0,
         lev_persist: 0.0,
@@ -1960,6 +2000,10 @@ fn v0_22_1() -> World {
         basket_idio: 0.0,
         basket_gaps: 0.0,
         basket_drift: 0.0,
+        sectors: 0,
+        sector_idio: 0.0,
+        sector_drift_sd: 0.0,
+        sector_drift_half: 0.0,
         macro_panel: 0,
         macro_null: 0,
         lev_persist: 0.0,
@@ -2087,6 +2131,10 @@ fn v0_22_0() -> World {
         basket_idio: 0.0,
         basket_gaps: 0.0,
         basket_drift: 0.0,
+        sectors: 0,
+        sector_idio: 0.0,
+        sector_drift_sd: 0.0,
+        sector_drift_half: 0.0,
         macro_panel: 0,
         macro_null: 0,
         lev_persist: 0.0,
@@ -2214,6 +2262,10 @@ fn v0_21_0() -> World {
         basket_idio: 0.0,
         basket_gaps: 0.0,
         basket_drift: 0.0,
+        sectors: 0,
+        sector_idio: 0.0,
+        sector_drift_sd: 0.0,
+        sector_drift_half: 0.0,
         macro_panel: 0,
         macro_null: 0,
         lev_persist: 0.0,
@@ -2310,6 +2362,10 @@ fn v0_20_0() -> World {
         basket_idio: 0.0,
         basket_gaps: 0.0,
         basket_drift: 0.0,
+        sectors: 0,
+        sector_idio: 0.0,
+        sector_drift_sd: 0.0,
+        sector_drift_half: 0.0,
         macro_panel: 0,
         macro_null: 0,
         lev_persist: 0.0,
@@ -2914,6 +2970,21 @@ pub struct World {
     /// noise. Set the dial and there is a real edge of known size to find. Sweeping it gives a
     /// ranking rule's detection threshold and the history it needs there.
     pub basket_drift: f64,
+    /// THE SECTOR CHANNEL: K sector legs as observational second-pass instances of the primary
+    /// (0 = off, no columns, bit-identical). Each leg is beta_k x the primary's observed return
+    /// plus its own idio riding the vol state alone (`sector_idio`, a fraction of the primary's
+    /// realized vol) plus a SLOW RELATIVE DRIFT, a stationary AR(1) state with sd `sector_drift_sd`
+    /// (a fraction of the primary's realized annualized vol, so it transports) and half-life
+    /// `sector_drift_half` years, centred across the legs each session so the equal-weight
+    /// aggregate keeps the primary's drift. The betas are drawn once per path around 1 at the
+    /// record's cross-sectional dispersion (`SECTOR_BETA_SD`), centred exactly. Graded on the
+    /// record ruler of ten industries (`sectors-2026-09-30.tsv`): the 12-1 relative momentum's
+    /// persistence, which the drift state carries and nothing else does, the per-sector trend,
+    /// and the cross-section's shape; never on a rotation rule. Anchored K 10.
+    pub sectors: usize,
+    pub sector_idio: f64,
+    pub sector_drift_sd: f64,
+    pub sector_drift_half: f64,
     /// THE MACRO PANEL: 1 emits nine observables DERIVED from the model's own state —
     /// macroSpread / macroSlope / macroCond / macroIvol / macroYield10 / macroCredit /
     /// macroPolicy / macroBankCredit / macroOutput, the counterparts of BAA10Y / T10Y2Y /
@@ -3152,6 +3223,8 @@ pub struct Path {
     pub log_open: Vec<f64>,
     /// the basket's names, LOG prices (empty when `basket` is 0)
     pub names: Vec<Vec<f64>>,
+    /// the sector legs, LOG prices (empty when `sectors` is 0)
+    pub sectors: Vec<Vec<f64>>,
     /// the world's channel level the bars and the satellite were sampled at (`world_level`),
     /// carried into the sidecar so the emitted data's scale is auditable; 0 / 0 when both
     /// channels are off
@@ -3214,6 +3287,7 @@ impl Path {
             traded: Vec::new(),
             log_open: Vec::new(),
             names: Vec::new(),
+            sectors: Vec::new(),
             chan_k: self.chan_k,
             chan_k_sat: self.chan_k_sat,
             chan_k_div: self.chan_k_div,
@@ -3768,6 +3842,7 @@ fn world_level(w: &World) -> ChannelLevel {
         || w.sat_beta > 0.0
         || w.overnight > 0.0
         || w.basket > 0
+        || w.sectors > 0
         || w.macro_panel > 0; // the implied-vol member reads `k_vs`
     let div_on = w.div_yield > 0.0;
     if !(ch_on || div_on) {
@@ -3866,6 +3941,8 @@ struct Channels {
     log_open: Vec<f64>,
     /// the basket's log prices, N of them
     names: Vec<Vec<f64>>,
+    /// the sector legs' log prices, K of them
+    sectors: Vec<Vec<f64>>,
 }
 
 /// THE DERIVED CHANNELS, sampled in a second pass from the price loop's recorded inputs. They
@@ -3915,6 +3992,10 @@ struct ChannelRngs {
     b: NumPyRng,
     /// the basket's drift dispersion (N draws once per path, before the session loop)
     m: NumPyRng,
+    /// the sector legs (K normals for the drift states, then K for the idio, a session)
+    k: NumPyRng,
+    /// the sector legs' betas (K draws once per path, before the session loop)
+    j: NumPyRng,
 }
 
 impl ChannelRngs {
@@ -3927,6 +4008,8 @@ impl ChannelRngs {
             o: NumPyRng::new(seed ^ 0x09e7_a11eu64),
             b: NumPyRng::new(seed ^ 0xba5c_e700u64),
             m: NumPyRng::new(seed ^ 0xd1f7_5eadu64),
+            k: NumPyRng::new(seed ^ 0x5ec7_0a15u64),
+            j: NumPyRng::new(seed ^ 0xbe7a_5ec7u64),
         }
     }
 }
@@ -4162,7 +4245,8 @@ fn derive_channels(w: &World, x: &ChannelInputs, level: ChannelLevel, seed: u64)
     } else {
         Vec::new()
     };
-    if !(sat_on || range_on || open_on || bsk_on) {
+    let mut sc = vec![vec![0.0f64; tot]; w.sectors];
+    if !(sat_on || range_on || open_on || bsk_on || w.sectors > 0) {
         return Channels {
             sat,
             log_hi: hi,
@@ -4170,6 +4254,7 @@ fn derive_channels(w: &World, x: &ChannelInputs, level: ChannelLevel, seed: u64)
             log_volume: vv,
             log_open: op,
             names: nm,
+            sectors: sc,
         };
     }
     let k = level.k;
@@ -4181,6 +4266,8 @@ fn derive_channels(w: &World, x: &ChannelInputs, level: ChannelLevel, seed: u64)
     let mut name_log_p = vec![0.0f64; w.basket];
     // DRIFT DISPERSION (`basket_name_drift`): drawn before the session loop
     let name_mu = basket_name_drift(w, level, bsk_on, &mut rngs.m);
+    // SECTOR state -- see `SectorLegs`; the betas are drawn before the loop
+    let mut legs = SectorLegs::new(w, &mut rngs.j);
     // SATELLITE LEG state: its log price and the primary's observed log price last session.
     let mut sat_log_p = 0.0f64;
     let mut sat_prev_px = 0.0f64;
@@ -4230,6 +4317,8 @@ fn derive_channels(w: &World, x: &ChannelInputs, level: ChannelLevel, seed: u64)
                 nm[q][i] = *lp;
             }
         }
+        // THE SECTOR LEGS — see the `sectors` field. Reads `krng` only, after the betas' `jrng`.
+        legs.session(w, x, i, k_v, level.k_dr, &mut rngs.k, &mut sc);
         if range_on || open_on {
             let out = BarOut {
                 op: &mut op,
@@ -4247,6 +4336,7 @@ fn derive_channels(w: &World, x: &ChannelInputs, level: ChannelLevel, seed: u64)
         log_volume: vv,
         log_open: op,
         names: nm,
+        sectors: sc,
     }
 }
 
@@ -4282,6 +4372,98 @@ fn basket_session(
             0.0
         };
         *lp += sec_ret + idio + gap + mu;
+    }
+}
+
+/// The record's cross-sectional dispersion of the industries' betas on the market: the sd of
+/// the ten value-weighted industries' monthly betas on `Mkt-RF + RF`, 1926-07..2026-08 (mean
+/// 0.96, sd 0.216). Frozen, not a dial: the sector rows have no beta row to solve it on.
+const SECTOR_BETA_SD: f64 = 0.216;
+
+/// The legs' betas on the primary: one normal each from `rng` before the session loop, centred
+/// exactly and rescaled by sqrt(K/(K-1)) because centring costs that much sample sd, at
+/// `SECTOR_BETA_SD` around 1, so the equal-weight aggregate's beta is 1 to the bit. K < 2 gives
+/// beta 1.
+fn sector_betas(w: &World, sec_on: bool, rng: &mut NumPyRng) -> Vec<f64> {
+    if sec_on && w.sectors >= 2 {
+        let z: Vec<f64> = (0..w.sectors).map(|_| rng.randn()).collect();
+        let zb = z.iter().sum::<f64>() / z.len() as f64;
+        let n = z.len() as f64;
+        let sc = SECTOR_BETA_SD * (n / (n - 1.0)).sqrt();
+        z.iter().map(|v| 1.0 + (v - zb) * sc).collect()
+    } else {
+        vec![1.0f64; w.sectors]
+    }
+}
+
+/// THE SECTOR LEGS' state: the primary's observed log price last session (its own tracker),
+/// each leg's log price and beta (`sector_betas`), and each leg's annualized relative drift, an
+/// AR(1) state with the dial's half-life and stationary sd.
+struct SectorLegs {
+    prev_px: f64,
+    log_p: Vec<f64>,
+    betas: Vec<f64>,
+    phi: f64,
+    innov: f64,
+    mu: Vec<f64>,
+}
+
+impl SectorLegs {
+    fn new(w: &World, jrng: &mut NumPyRng) -> Self {
+        let phi = if w.sector_drift_half > 0.0 {
+            exp_det(-std::f64::consts::LN_2 / (w.sector_drift_half * DAYS_PER_YEAR as f64))
+        } else {
+            0.0
+        };
+        Self {
+            prev_px: 0.0,
+            log_p: vec![0.0f64; w.sectors],
+            betas: sector_betas(w, w.sectors > 0, jrng),
+            phi,
+            innov: (1.0 - phi * phi).sqrt(),
+            mu: vec![0.0f64; w.sectors],
+        }
+    }
+
+    /// One session: every leg's drift state takes its innovation (K normals), the states are
+    /// centred, then each leg adds beta x the primary's observed return, its centred drift over
+    /// the year's sessions and its own idio at `vol_state` (K normals) to its log price. `k_dr`
+    /// is the annualized vol the drift's sd is a fraction of. Reads `krng` only; the draw ORDER
+    /// is part of the cross-language contract.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one session's inputs, the price loop's own calling shape"
+    )]
+    fn session(
+        &mut self,
+        w: &World,
+        x: &ChannelInputs,
+        i: usize,
+        k_v: f64,
+        k_dr: f64,
+        krng: &mut NumPyRng,
+        out: &mut [Vec<f64>],
+    ) {
+        if self.log_p.is_empty() {
+            return;
+        }
+        let log_px = x.px[i];
+        let vol_state = x.vol_state[i] * k_v;
+        let primary_ret = log_px - self.prev_px;
+        let sd = w.sector_drift_sd * k_dr;
+        for m in &mut self.mu {
+            *m = self.phi * *m + sd * self.innov * krng.randn();
+        }
+        let mu_bar = scala_sum(self.mu.iter().copied()) / self.mu.len() as f64;
+        for (q, lp) in self.log_p.iter_mut().enumerate() {
+            let idio = w.sector_idio * vol_state * krng.randn();
+            *lp +=
+                self.betas[q] * primary_ret + (self.mu[q] - mu_bar) / DAYS_PER_YEAR as f64 + idio;
+        }
+        self.prev_px = log_px;
+        for (q, lp) in self.log_p.iter().enumerate() {
+            out[q][i] = *lp;
+        }
     }
 }
 
@@ -4937,6 +5119,14 @@ fn simulate_at(w: &World, years: usize, seed: u64, level: ChannelLevel) -> Path 
         } else {
             Vec::new()
         },
+        sectors: if w.sectors > 0 {
+            chan.sectors
+                .iter()
+                .map(|lp| lp[BURN_IN..].to_vec())
+                .collect()
+        } else {
+            Vec::new()
+        },
         chan_k: level.k,
         chan_k_sat: level.k_sat,
         chan_k_div: level.k_div,
@@ -5271,6 +5461,7 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
         || w.sat_beta > 0.0
         || w.overnight > 0.0
         || w.basket > 0
+        || w.sectors > 0
         || w.macro_panel > 0; // the implied-vol member reads `k_vs`
     let mut ch = ChannelInputs {
         px: if ch_on { vec![0.0f64; tot] } else { Vec::new() },
@@ -5841,6 +6032,7 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
             || w.sat_beta > 0.0
             || w.overnight > 0.0
             || w.basket > 0
+            || w.sectors > 0
             || w.macro_panel > 0
             || w.vol_resp > 0.0
             || w.jump_resp > 0.0
@@ -6303,6 +6495,7 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
         traded: Vec::new(),
         log_open: Vec::new(),
         names: Vec::new(),
+        sectors: Vec::new(),
         chan_k: 0.0,
         chan_k_sat: 0.0,
         chan_k_div: 0.0,
@@ -6649,6 +6842,7 @@ pub struct WorldStats {
     pub open: Option<OpenStats>,
     /// `None` when no basket ran.
     pub basket: Option<BasketStats>,
+    pub sector: Option<SectorStats>,
     /// the macro panel's readings when it ran
     pub macro_panel: Option<MacroStats>,
     /// median across paths of the per-path mean session yield, %/yr; NaN when the dial is off,
@@ -6719,6 +6913,8 @@ pub struct WorldStats {
     /// median per-path multi-year readings (`multi_year_of`), the first seven `MULTI_YEAR_ROWS`;
     /// the eighth reads `dd_eq20`
     pub multi_year: [f64; 7],
+    /// median per-path `timing_of_path`
+    pub timing: [f64; 3],
     /// median per-path mean short rate, percent, and share of sessions under `RATE_FLOOR`,
     /// percent (`rate_readings`)
     pub short_rate: f64,
@@ -7450,6 +7646,98 @@ pub fn multi_year_readings(r: &[f64]) -> [f64; 8] {
     ]
 }
 
+/// THE TIMING ROWS: what a 10-month moving-average exit does on a monthly total-return index,
+/// the record's Shiller S&P (`timing-2026-09-30.tsv`). At each month's end the rule is in
+/// equity for the next month when the level is above the mean of the last `TIMING_SMA_MONTHS`
+/// month-end levels, this one included, else out; fully invested before the first decision.
+/// Over the declines of `TIMING_DECLINE_PCT` or more from the running peak (peak to trough,
+/// a decline still under way included): the share of each decline's log fall the rule was out
+/// for, averaged over the declines (`sma10 decline avoided %`); the index's cumulative return
+/// over each FALSE exit, an out-period no month of which lies in a decline's peak-to-trough
+/// window, averaged (`sma10 false-exit return %`); and the out-periods a year
+/// (`sma10 exits per year`). Graded like the multi-year rows, by where the record falls among the
+/// world's single histories, since a one-year block resample keeps no decline whole. Read on
+/// month-end levels, one a month; NaN where the record has no decline or no false exit.
+pub const TIMING_ROWS: [&str; 3] = [
+    "sma10 decline avoided %",
+    "sma10 false-exit return %",
+    "sma10 exits per year",
+];
+pub const TIMING_SMA_MONTHS: usize = 10;
+pub const TIMING_DECLINE_PCT: f64 = 20.0;
+/// the share of record-like worlds the timing rows may jointly miss
+pub const TIMING_ALPHA: f64 = 0.05;
+
+#[must_use]
+pub fn timing_of_monthly(x: &[f64]) -> [f64; 3] {
+    let n = x.len();
+    if n < 2 {
+        return [f64::NAN; 3];
+    }
+    let r: Vec<f64> = (0..n)
+        .map(|m| if m == 0 { 0.0 } else { ln_det(x[m] / x[m - 1]) })
+        .collect();
+    let k = TIMING_SMA_MONTHS;
+    let inside: Vec<bool> = (0..n)
+        .map(|m| {
+            if m == 0 || m - 1 + 1 < k {
+                true
+            } else {
+                let d = m - 1;
+                x[d] > scala_sum(x[d + 1 - k..=d].iter().copied()) / k as f64
+            }
+        })
+        .collect();
+    let eps = episodes(x, TIMING_DECLINE_PCT);
+    let avoided: Vec<f64> = eps
+        .iter()
+        .map(|e| {
+            let all = scala_sum(r[e.peak + 1..=e.trough].iter().copied());
+            let held = scala_sum((e.peak + 1..=e.trough).filter(|&m| inside[m]).map(|m| r[m]));
+            1.0 - held / all
+        })
+        .collect();
+    let mut runs: Vec<(usize, usize)> = Vec::new();
+    let mut m = 1;
+    while m < n {
+        if inside[m] {
+            m += 1;
+        } else {
+            let s = m;
+            while m < n && !inside[m] {
+                m += 1;
+            }
+            runs.push((s, m - 1));
+        }
+    }
+    let in_decline = |a: usize, b: usize| eps.iter().any(|e| a <= e.trough && b > e.peak);
+    let false_exits: Vec<f64> = runs
+        .iter()
+        .filter(|(a, b)| !in_decline(*a, *b))
+        .map(|(a, b)| exp_det(scala_sum(r[*a..=*b].iter().copied())) - 1.0)
+        .collect();
+    let mean = |v: &[f64]| {
+        if v.is_empty() {
+            f64::NAN
+        } else {
+            scala_sum(v.iter().copied()) / v.len() as f64
+        }
+    };
+    [
+        mean(&avoided) * 100.0,
+        mean(&false_exits) * 100.0,
+        runs.len() as f64 / (n as f64 / 12.0),
+    ]
+}
+
+/// The timing rows of one model path: its price at the calendar month ends (`month_ends`).
+#[must_use]
+pub fn timing_of_path(px: &[f64]) -> [f64; 3] {
+    let ends = month_ends(px.len());
+    let levels: Vec<f64> = ends.iter().map(|&i| px[i]).collect();
+    timing_of_monthly(&levels)
+}
+
 /// corr(r_t, r^2_{t+1}): the leverage effect at daily lag.
 fn lev_corr_of(r: &[f64]) -> f64 {
     if r.len() < 2 {
@@ -7852,6 +8140,13 @@ fn linear_pctile(sorted: &[f64], q: f64) -> f64 {
 /// the market's worst decile (at or under its 10th percentile) and over its middle decile (strictly
 /// between its 45th and 55th), a pair counting where it has `SECTOR_CORR_MIN_MONTHS` complete
 /// months, the median NumPy's (the mean of the middle two on an even count). Returns `[cs sd, corr, corr worst, corr middle]` and the three month counts.
+/// The market's monthly sd over the panel's months, the scale the cross-sectional sd is read
+/// against.
+#[must_use]
+pub fn sector_market_sd(p: &SectorPanel) -> f64 {
+    sd1(&p.market)
+}
+
 pub fn sector_shape(p: &SectorPanel) -> ([f64; 4], [usize; 3]) {
     let months = p.market.len();
     let cs: Vec<f64> = (0..months)
@@ -7941,6 +8236,8 @@ pub fn record_band_years(a: Anchors, name: &str) -> usize {
         a.rate_years
     } else if BOND_BAND_ROWS.contains(&name) {
         a.bond_years
+    } else if TIMING_ROWS.contains(&name) {
+        a.timing_years
     } else {
         a.equity_years
     }
@@ -8644,6 +8941,101 @@ fn basket_stats(sims: &[Path]) -> Option<BasketStats> {
         pair_corr_worst: med(&cols[9]),
         pair_corr_mid: med(&cols[10]),
         name_d20_spread: med(&cols[11]),
+    })
+}
+
+/// THE SECTOR CHANNEL's readings, medians across paths of the ten-industry ruler's rows read on
+/// the legs aggregated to calendar months (`month_ends`; the primary as the market, cash from the
+/// rate as the bill): the 12-1 cross-sectional momentum (mean monthly long-minus-short spread,
+/// its t and the share of positive months; long the top 3 of 10, the fixture's rule, scaled to
+/// K), the per-sector trend after a 12-month sign and after a 10-month moving average, the mean
+/// cross-sectional sd of monthly returns, the market's monthly sd, and the median pairwise
+/// correlation whole, on the market's worst decile of months and on its middle decile. The gate
+/// reads the spreads over the cross-sectional sd and that sd over the market's, the forms that
+/// carry across primaries of different volatility.
+#[derive(Clone, Copy, Debug)]
+pub struct SectorStats {
+    pub momentum: f64,
+    pub momentum_t: f64,
+    pub momentum_share: f64,
+    pub trend_sign12: f64,
+    pub trend_sma10: f64,
+    pub xs_sd: f64,
+    pub market_sd: f64,
+    pub pair_corr: f64,
+    pub pair_corr_worst: f64,
+    pub pair_corr_mid: f64,
+}
+
+/// The legs of one path as the ruler's panel: simple monthly returns from month 1 on, the
+/// primary's as the market, the rate compounded over each month's sessions as the bill.
+fn sector_panel_of(s: &Path) -> SectorPanel {
+    let ends = month_ends(s.price.len());
+    let monthly = |lp: &[f64]| -> Vec<f64> {
+        (1..ends.len())
+            .map(|t| exp_det(lp[ends[t]] - lp[ends[t - 1]]) - 1.0)
+            .collect()
+    };
+    let market: Vec<f64> = (1..ends.len())
+        .map(|t| s.price[ends[t]] / s.price[ends[t - 1]] - 1.0)
+        .collect();
+    let rf: Vec<f64> = (1..ends.len())
+        .map(|t| {
+            exp_det(scala_sum(
+                (ends[t - 1] + 1..=ends[t]).map(|i| s.rate[i] / DAYS_PER_YEAR as f64),
+            )) - 1.0
+        })
+        .collect();
+    SectorPanel {
+        returns: s
+            .sectors
+            .iter()
+            .map(|lp| monthly(lp).into_iter().map(Some).collect())
+            .collect(),
+        market,
+        rf,
+    }
+}
+
+/// One path's ten sector readings, in `SectorStats` field order.
+pub fn sector_path_stats(s: &Path) -> [f64; 10] {
+    let p = sector_panel_of(s);
+    let top = ((s.sectors.len() * 3 + 5) / 10).max(1);
+    let m = sector_momentum(&p, 11, top, 0);
+    let (t12, _) = sector_trend(&p, SectorTrend::Sign12, 0);
+    let (sma, _) = sector_trend(&p, SectorTrend::Sma10, 0);
+    let (sh, _) = sector_shape(&p);
+    [
+        m.mean,
+        m.t,
+        m.share_positive,
+        t12,
+        sma,
+        sh[0],
+        sector_market_sd(&p),
+        sh[1],
+        sh[2],
+        sh[3],
+    ]
+}
+
+fn sector_stats(sims: &[Path]) -> Option<SectorStats> {
+    if sims.is_empty() || sims[0].sectors.is_empty() {
+        return None;
+    }
+    let per: Vec<[f64; 10]> = sims.par_iter().map(sector_path_stats).collect();
+    let col = |k: usize| med(&per.iter().map(|x| x[k]).collect::<Vec<f64>>());
+    Some(SectorStats {
+        momentum: col(0),
+        momentum_t: col(1),
+        momentum_share: col(2),
+        trend_sign12: col(3),
+        trend_sma10: col(4),
+        xs_sd: col(5),
+        market_sd: col(6),
+        pair_corr: col(7),
+        pair_corr_worst: col(8),
+        pair_corr_mid: col(9),
     })
 }
 
@@ -9421,6 +9813,7 @@ struct PathRead {
     run_up_3y: f64,
     calm_stretch: f64,
     multi_year: [f64; 7],
+    timing: [f64; 3],
     tail_hedge: f64,
     infl_ann: f64,
     short_rate: f64,
@@ -9541,6 +9934,7 @@ fn path_read(s: &Path, years: usize) -> PathRead {
         run_up_3y: run_up_3y_of(&r),
         calm_stretch: calm_stretch_of(&r),
         multi_year: multi_year_of(&r, &s.price),
+        timing: timing_of_path(&s.price),
         short_rate: rate_readings(&s.rate)[0],
         rate_floor: rate_readings(&s.rate)[1],
         post_rate: rate_after_readings(&s.price, &s.rate)[0],
@@ -9631,6 +10025,7 @@ pub fn measure(sims: &[Path], years: usize) -> WorldStats {
         bars: bar_stats(sims),
         open: open_stats(sims),
         basket: basket_stats(sims),
+        sector: sector_stats(sims),
         macro_panel: macro_stats(sims),
         div_yield_mean: med_by(|p| p.div_yield),
         depth_med: med(&depths),
@@ -9715,6 +10110,11 @@ pub fn measure(sims: &[Path], years: usize) -> WorldStats {
             med_by(|p| p.multi_year[4]),
             med_by(|p| p.multi_year[5]),
             med_by(|p| p.multi_year[6]),
+        ],
+        timing: [
+            med_by(|p| p.timing[0]),
+            med_by(|p| p.timing[1]),
+            med_by(|p| p.timing[2]),
         ],
         short_rate: med_by(|p| p.short_rate),
         rate_floor: med_by(|p| p.rate_floor),
@@ -10470,6 +10870,74 @@ fn gate_checks_with(
             Mechanism,
         ));
     }
+    // THE SECTOR CHANNEL, graded when it ran — `sectors-2026-09-30.tsv`, the ten industries, in
+    // the forms that carry across primaries of different volatility: the 12-1 momentum spread
+    // and the two trend readings over the cross-sectional sd, at the record's 5-95
+    // block-bootstrap bands over its own; the cross-sectional sd over the market's monthly sd at
+    // +-0.10; the pairwise correlations at +-0.10 whole and +-0.15 on the market's deciles; and
+    // the mechanism: pairwise correlation on the market's middle decile below its worst decile's,
+    // which a factor structure whose idio is the legs' own produces.
+    if let Some(s) = st.sector {
+        let xs = a.sector_xs_sd;
+        for (name, got, lo, hi, dp) in [
+            (
+                "sector momentum 12-1 / xs sd",
+                s.momentum / s.xs_sd,
+                a.sector_momentum_band.0 / xs,
+                a.sector_momentum_band.1 / xs,
+                3,
+            ),
+            (
+                "sector trend 12m / xs sd",
+                s.trend_sign12 / s.xs_sd,
+                a.sector_trend12_band.0 / xs,
+                a.sector_trend12_band.1 / xs,
+                3,
+            ),
+            (
+                "sector trend sma10 / xs sd",
+                s.trend_sma10 / s.xs_sd,
+                a.sector_trend_sma_band.0 / xs,
+                a.sector_trend_sma_band.1 / xs,
+                3,
+            ),
+            (
+                "sector xs sd / market sd",
+                s.xs_sd / s.market_sd,
+                xs / a.sector_market_sd - 0.10,
+                xs / a.sector_market_sd + 0.10,
+                2,
+            ),
+            (
+                "sector pair corr",
+                s.pair_corr,
+                a.sector_pair_corr - 0.10,
+                a.sector_pair_corr + 0.10,
+                2,
+            ),
+            (
+                "sector pair corr worst decile",
+                s.pair_corr_worst,
+                a.sector_pair_corr_worst - 0.15,
+                a.sector_pair_corr_worst + 0.15,
+                2,
+            ),
+            (
+                "sector pair corr middle decile",
+                s.pair_corr_mid,
+                a.sector_pair_corr_mid - 0.15,
+                a.sector_pair_corr_mid + 0.15,
+                2,
+            ),
+        ] {
+            v.push(band_check(name, got, lo, hi, GateClass::Fidelity, dp, ""));
+        }
+        v.push((
+            "sector pair corr falls on the middle decile".to_string(),
+            s.pair_corr_mid < s.pair_corr_worst,
+            Mechanism,
+        ));
+    }
     // THE MACRO PANEL, graded when it ran — `macro-2026-09-06.tsv`. Mechanism: the spread and the
     // conditions index FIRE — their trailing rank crosses 90 in most 20% episodes (the record:
     // 0.71-1.00 of them across both sets' references). Fidelity: their FIRING LAG, sessions from
@@ -10855,6 +11323,12 @@ pub struct Anchors {
     /// an extreme row, the record's percentile among single histories of `bubble_years`.
     pub bubble_window: &'static str,
     pub bubble_years: usize,
+    /// THE TIMING ROWS' record window and records (`timing_of_monthly`; `timing-2026-09-30.tsv`):
+    /// Shiller's monthly S&P with dividends reinvested, one ruler for both sets, read on the
+    /// world's histories of `timing_years`.
+    pub timing_window: &'static str,
+    pub timing_years: usize,
+    pub timing: [f64; 3],
     pub bubble_coupling: f64,
     pub bubble_coupling_sd: f64,
     /// THE LARGEST 3-YEAR RUN-UP's and THE LONGEST CALM STRETCH's records over the bubble window
@@ -10981,6 +11455,20 @@ pub struct Anchors {
     pub basket_beta: f64,
     pub basket_vol_ratio: f64,
     pub basket_name_vol_band: (f64, f64),
+    /// THE SECTOR ROWS' record — `sectors-2026-09-30.tsv`, the ten industries over 1926-2026,
+    /// one ruler for both sets (a property of industries, not of the index): the 12-1 momentum
+    /// spread and the two trend readings with their 5-95 block-bootstrap bands, the shape rows.
+    pub sector_momentum: f64,
+    pub sector_momentum_band: (f64, f64),
+    pub sector_trend12: f64,
+    pub sector_trend12_band: (f64, f64),
+    pub sector_trend_sma: f64,
+    pub sector_trend_sma_band: (f64, f64),
+    pub sector_xs_sd: f64,
+    pub sector_pair_corr: f64,
+    pub sector_pair_corr_worst: f64,
+    pub sector_pair_corr_mid: f64,
+    pub sector_market_sd: f64,
     /// THE DERIVED SERIES' DIALS FOR THIS SET: what the verdict grades a world's satellite, bars,
     /// open, dividends, basket and macro panel at when the caller left them off
     /// (`verdict_world`). The channel recipe's own — `0.24.4-sp500-channels` here,
@@ -11011,6 +11499,10 @@ pub struct ChannelDials {
     pub basket_idio: f64,
     pub basket_gaps: f64,
     pub basket_drift: f64,
+    pub sectors: usize,
+    pub sector_idio: f64,
+    pub sector_drift_sd: f64,
+    pub sector_drift_half: f64,
     pub macro_panel: usize,
 }
 
@@ -11035,6 +11527,10 @@ impl ChannelDials {
             basket_idio: w.basket_idio,
             basket_gaps: w.basket_gaps,
             basket_drift: w.basket_drift,
+            sectors: w.sectors,
+            sector_idio: w.sector_idio,
+            sector_drift_sd: w.sector_drift_sd,
+            sector_drift_half: w.sector_drift_half,
             macro_panel: w.macro_panel,
         }
     }
@@ -11059,6 +11555,10 @@ pub const SP500_CHANNEL_DIALS: ChannelDials = ChannelDials {
     basket_idio: 0.9,
     basket_gaps: 6.0,
     basket_drift: 0.0,
+    sectors: 10,
+    sector_idio: 0.7,
+    sector_drift_sd: 0.25,
+    sector_drift_half: 2.0,
     macro_panel: 1,
 };
 
@@ -11080,6 +11580,10 @@ pub const NASDAQ_CHANNEL_DIALS: ChannelDials = ChannelDials {
     basket_idio: 0.85,
     basket_gaps: 8.0,
     basket_drift: 0.0,
+    sectors: 10,
+    sector_idio: 0.7,
+    sector_drift_sd: 0.25,
+    sector_drift_half: 2.0,
     macro_panel: 1,
 };
 
@@ -11122,6 +11626,12 @@ pub fn verdict_world(a: Anchors, w: &World) -> World {
         v.basket_idio = d.basket_idio;
         v.basket_gaps = d.basket_gaps;
         v.basket_drift = d.basket_drift;
+    }
+    if w.sectors == 0 {
+        v.sectors = d.sectors;
+        v.sector_idio = d.sector_idio;
+        v.sector_drift_sd = d.sector_drift_sd;
+        v.sector_drift_half = d.sector_drift_half;
     }
     if w.macro_panel == 0 {
         v.macro_panel = d.macro_panel;
@@ -11680,6 +12190,9 @@ const SP500_ANCHORS: Anchors = Anchors {
     tail_years: 100,
     bubble_window: "CRSP 1926-2026, the century",
     bubble_years: 100,
+    timing_window: "Shiller S&P 1871-2023",
+    timing_years: 100,
+    timing: [70.672143, 3.080357, 0.608838],
     bubble_coupling: 0.114404,
     bubble_coupling_sd: 1.07,
     run_up_3y: 0.872450,
@@ -11778,6 +12291,17 @@ const SP500_ANCHORS: Anchors = Anchors {
     basket_beta: 1.557,
     basket_vol_ratio: 2.023,
     basket_name_vol_band: (1.9, 3.5),
+    sector_momentum: 0.003923,
+    sector_momentum_band: (0.002111, 0.005480),
+    sector_trend12: 0.005545,
+    sector_trend12_band: (0.000214, 0.010578),
+    sector_trend_sma: 0.003672,
+    sector_trend_sma_band: (-0.002442, 0.009168),
+    sector_xs_sd: 0.030770,
+    sector_pair_corr: 0.698582,
+    sector_pair_corr_worst: 0.560800,
+    sector_pair_corr_mid: -0.030675,
+    sector_market_sd: 0.052916,
     channel_dials: SP500_CHANNEL_DIALS,
 };
 
@@ -11819,6 +12343,9 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     tail_years: 27,
     bubble_window: "NDX 1990-2026",
     bubble_years: 37,
+    timing_window: "Shiller S&P 1871-2023",
+    timing_years: 100,
+    timing: [70.672143, 3.080357, 0.608838],
     bubble_coupling: 1.042337,
     bubble_coupling_sd: 0.25,
     run_up_3y: 1.753345,
@@ -11909,6 +12436,17 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     basket_beta: 1.365,
     basket_vol_ratio: 1.630,
     basket_name_vol_band: (1.5, 2.8),
+    sector_momentum: 0.003923,
+    sector_momentum_band: (0.002111, 0.005480),
+    sector_trend12: 0.005545,
+    sector_trend12_band: (0.000214, 0.010578),
+    sector_trend_sma: 0.003672,
+    sector_trend_sma_band: (-0.002442, 0.009168),
+    sector_xs_sd: 0.030770,
+    sector_pair_corr: 0.698582,
+    sector_pair_corr_worst: 0.560800,
+    sector_pair_corr_mid: -0.030675,
+    sector_market_sd: 0.052916,
     channel_dials: NASDAQ_CHANNEL_DIALS,
 };
 
@@ -12177,6 +12715,27 @@ pub fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
         ),
     ];
     rows.extend(multi_year_targets(a));
+    // THE TIMING ROWS (`TIMING_ROWS`), single-history graded like the multi-year rows, weight 0
+    rows.extend([
+        (
+            TIMING_ROWS[0],
+            (|st| st.timing[0]) as StatFn,
+            a.timing[0],
+            0.0,
+        ),
+        (
+            TIMING_ROWS[1],
+            (|st| st.timing[1]) as StatFn,
+            a.timing[1],
+            0.0,
+        ),
+        (
+            TIMING_ROWS[2],
+            (|st| st.timing[2]) as StatFn,
+            a.timing[2],
+            0.0,
+        ),
+    ]);
     rows.extend([
         // The "(24y)" is load-bearing, not decoration: this row is measured on a different
         // horizon from every other, and the label is the only part that travels when the number
@@ -12412,11 +12971,17 @@ const EXTREME_TARGETS: &[&str] = &[
     "decline length p50 y long",
     "decline length max y long",
     "under water 20% % long",
+    "sma10 decline avoided %",
+    "sma10 false-exit return %",
+    "sma10 exits per year",
 ];
 
-/// Whether a row is a multi-year row, of either window.
+/// Whether a row is graded among the world's single histories with a joint band: a multi-year
+/// row of either window, or a timing row.
 pub fn is_multi_year(name: &str) -> bool {
-    MULTI_YEAR_ROWS.contains(&name) || MULTI_YEAR_LONG_ROWS.contains(&name)
+    MULTI_YEAR_ROWS.contains(&name)
+        || MULTI_YEAR_LONG_ROWS.contains(&name)
+        || TIMING_ROWS.contains(&name)
 }
 
 /// The `EXTREME_TARGETS` rows whose `StatFn` reads an extreme over the pooled ensemble, sorted: a
@@ -12681,6 +13246,27 @@ fn multi_year_bands(
     out
 }
 
+/// The timing rows' single histories at `yrs`, when it is the timing window's length: every
+/// path's readings in `TIMING_ROWS`' order.
+fn timing_histories(a: Anchors, sims: &[Path], yrs: usize) -> Option<Vec<[f64; 3]>> {
+    (yrs == a.timing_years).then(|| sims.par_iter().map(|p| timing_of_path(&p.price)).collect())
+}
+
+/// THE TIMING ROWS' JOINT BAND: each row's edges among the world's single histories at the ranks a
+/// record-like history stays inside on all three at once with probability 1 - `TIMING_ALPHA`;
+/// empty under `EXTREME_MIN_HISTORIES` paths.
+fn timing_bands(reads: &[[f64; 3]]) -> std::collections::HashMap<&'static str, (f64, f64)> {
+    let mut out = std::collections::HashMap::new();
+    if reads.len() < EXTREME_MIN_HISTORIES {
+        return out;
+    }
+    let (_, edges) = record_band_joint(reads, &[0, 1, 2], TIMING_ALPHA);
+    for (nm, e) in TIMING_ROWS.iter().copied().zip(edges) {
+        out.insert(nm, e);
+    }
+    out
+}
+
 pub fn extreme_readings_from(
     a: Anchors,
     sims: &[Path],
@@ -12708,7 +13294,16 @@ fn extreme_readings_and_bands(
     // `measure` per path only for a row with no direct reading, and then only once
     let mut full: Option<Vec<WorldStats>> = None;
     let histories = multi_year_histories(a, sims, yrs);
-    let bands = multi_year_bands(&histories);
+    let mut bands = multi_year_bands(&histories);
+    if let Some(reads) = timing_histories(a, sims, yrs) {
+        bands.extend(timing_bands(&reads));
+        for (k, nm) in TIMING_ROWS.iter().copied().enumerate() {
+            out.insert(
+                nm,
+                reads.iter().map(|x| x[k]).filter(|x| !x.is_nan()).collect(),
+            );
+        }
+    }
     for (names, reads) in histories {
         for (k, nm) in names.iter().copied().enumerate() {
             out.insert(
@@ -15604,7 +16199,7 @@ fn bond_relations() -> [Relation; 2] {
 /// target added or renamed fails the build until someone places it. The failure being prevented is
 /// a target silently absent from the equity section — a shorter table reads as a shorter list of
 /// concerns, not as a bug.
-const EQUITY_TARGETS: [&str; 38] = [
+const EQUITY_TARGETS: [&str; 41] = [
     "equity vol %",
     "typical-year vol %",
     "return per vol",
@@ -15641,6 +16236,9 @@ const EQUITY_TARGETS: [&str; 38] = [
     "decline length p50 y long",
     "decline length max y long",
     "under water 20% % long",
+    "sma10 decline avoided %",
+    "sma10 false-exit return %",
+    "sma10 exits per year",
     "equity d5 vs real",
     "equity d10 vs real",
 ];
@@ -16023,7 +16621,7 @@ fn run_cross_asset_report(a: Anchors, paths: usize, years: usize, seed: u64, bas
 /// because sampling error depends on the length of the record actually behind each number, not
 /// on the horizon the model is scored at. The contract test pins this to `fit_targets` as a
 /// partition, so a new target cannot land without a declared horizon.
-fn anchor_groups(a: Anchors) -> [(&'static str, usize, &'static [&'static str]); 9] {
+fn anchor_groups(a: Anchors) -> [(&'static str, usize, &'static [&'static str]); 10] {
     [
         (
             a.equity_window,
@@ -16097,6 +16695,8 @@ fn anchor_groups(a: Anchors) -> [(&'static str, usize, &'static [&'static str]);
                 "lower wing months %",
             ],
         ),
+        // The timing rows' record: Shiller's monthly S&P with dividends, at the century horizon.
+        (a.timing_window, a.timing_years, &TIMING_ROWS),
         // 18 equity funds and three CRSP windows, the shortest of them 24.9 years — see
         // `VAR_RATIO_BANDS`. The horizon is one instrument's record, as it is for the depth rungs, and
         // the target this group carries is a theory value rather than a reading, so `real@` here says
@@ -17463,6 +18063,13 @@ fn basket_columns(p: &Path) -> Vec<String> {
     cols
 }
 
+/// `logSector1..K`, present exactly when the sector channel ran.
+fn sector_columns(p: &Path) -> Vec<String> {
+    (1..=p.sectors.len())
+        .map(|q| format!("logSector{q}"))
+        .collect()
+}
+
 /// The equal-weight aggregate of the names as a LOG price series: the mean of the names' price
 /// levels relative to their common start, the fixture's convention (equal weights held from the
 /// first session, never rebalanced).
@@ -17503,6 +18110,9 @@ fn push_channel_cells(tsv: &mut String, p: &Path, i: usize, basket_agg: &[f64]) 
             cell(lp[i]);
         }
     }
+    for lp in &p.sectors {
+        cell(lp[i]);
+    }
     for m in [&p.macro_panel, &p.macro_null_panel].into_iter().flatten() {
         cell(m.spread[i]);
         cell(m.slope[i]);
@@ -17537,7 +18147,7 @@ pub fn write_emit_tsv(file: &str, p: &Path, dates: &[String]) {
     if !p.log_open.is_empty() {
         tsv.push_str("\tlogOpen");
     }
-    for c in basket_columns(p) {
+    for c in basket_columns(p).into_iter().chain(sector_columns(p)) {
         tsv.push('\t');
         tsv.push_str(&c);
     }
@@ -17676,6 +18286,10 @@ pub fn world_json_body_fmt(w: &World, num: &dyn Fn(f64) -> String) -> Vec<String
         ("basketIdio", num(w.basket_idio)),
         ("basketGaps", num(w.basket_gaps)),
         ("basketDrift", num(w.basket_drift)),
+        ("sectors", w.sectors.to_string()),
+        ("sectorIdio", num(w.sector_idio)),
+        ("sectorDriftSd", num(w.sector_drift_sd)),
+        ("sectorDriftHalf", num(w.sector_drift_half)),
         // the flag's name, as every dial's key is: the field is `macro_panel` only because the
         // Scala twin's cannot be `macro`, a reserved word there
         ("macro", w.macro_panel.to_string()),
@@ -17827,12 +18441,34 @@ fn channel_readings_block(st: &WorldStats, p: &Path) -> String {
             num(b.name_d20_spread)
         ));
     }
+    if let Some(s) = st.sector {
+        blocks.push(sector_readings_block(&s, &num));
+    }
     blocks.extend(st.macro_panel.iter().map(macro_readings_block));
     if blocks.is_empty() {
         "  \"channels\": {},".to_string()
     } else {
         format!("  \"channels\": {{\n{}\n  }},", blocks.join(",\n"))
     }
+}
+
+/// `channels.sector`: the readings the `sector *` rows grade.
+fn sector_readings_block(s: &SectorStats, num: &dyn Fn(f64) -> String) -> String {
+    format!(
+        "    \"sector\": {{ \"momentum\": {}, \"momentumT\": {}, \"momentumShare\": {}, \
+         \"trendSign12\": {}, \"trendSma10\": {}, \"xsSd\": {}, \"marketSd\": {}, \
+         \"pairCorr\": {}, \"pairCorrWorst\": {}, \"pairCorrMid\": {} }}",
+        num(s.momentum),
+        num(s.momentum_t),
+        num(s.momentum_share),
+        num(s.trend_sign12),
+        num(s.trend_sma10),
+        num(s.xs_sd),
+        num(s.market_sd),
+        num(s.pair_corr),
+        num(s.pair_corr_worst),
+        num(s.pair_corr_mid)
+    )
 }
 
 /// The macro panel's `channels.macro` block: the readings its rows grade, each member naming its
@@ -17924,20 +18560,24 @@ fn str_list<S: AsRef<str>>(v: &[S]) -> String {
 /// readings (`gate_st`), which is what its rows were graded from — and `verdictChannels` each
 /// channel's dials as the verdict ran it, `emitted` where this file carries the channel at those
 /// dials and `anchored` where the verdict supplied the anchor set's. `gradedSeries` keeps its
-/// meaning: the columns in THIS file the verdict graded.
-fn gate_scope_lines(
-    a: Anchors,
-    p: &Path,
-    w: &World,
-    gate_w: &World,
-    gate_st: &WorldStats,
-) -> String {
-    // The presence conditions are `sat_stats`'/`bar_stats`' own — they return `Some` exactly
-    // when these columns are non-empty — so a column is listed the session its rows exist.
-    let basket_cols = basket_columns(p);
-    let mut graded = vec!["price", "bond"];
-    graded.extend(channel_columns(p));
-    graded.extend(basket_cols.iter().map(String::as_str));
+/// `verdictChannels.sector`: the dials the `sector *` rows were graded at, and whether the
+/// legs in the file are the caller's or the anchor set's.
+fn sector_scope_block(gate_w: &World, emitted: bool) -> String {
+    let num = |x: f64| ef(x);
+    format!(
+        "\"sector\": {{ \"sectors\": {}, \"sectorIdio\": {}, \"sectorDriftSd\": {}, \
+         \"sectorDriftHalf\": {}, \"source\": {} }}",
+        gate_w.sectors,
+        num(gate_w.sector_idio),
+        num(gate_w.sector_drift_sd),
+        num(gate_w.sector_drift_half),
+        json_str(if emitted { "emitted" } else { "anchored" })
+    )
+}
+
+/// `verdictSeries`: the columns the verdict's rows were read from, each channel's exactly when
+/// its readings exist at the verdict world's dials.
+fn verdict_series_of(gate_st: &WorldStats, gate_w: &World) -> Vec<String> {
     let mut verdict_series: Vec<String> = vec!["price".to_string(), "bond".to_string()];
     if gate_st.sat.is_some() {
         verdict_series.push("logSat".to_string());
@@ -17960,9 +18600,30 @@ fn gate_scope_lines(
         verdict_series.push("logBasket".to_string());
         verdict_series.extend((1..=gate_w.basket).map(|q| format!("logName{q}")));
     }
+    if gate_st.sector.is_some() {
+        verdict_series.extend((1..=gate_w.sectors).map(|q| format!("logSector{q}")));
+    }
     if gate_st.macro_panel.is_some_and(|m| !m.sibling) {
         verdict_series.extend(macro_k::COLUMNS.iter().map(|c| (*c).to_string()));
     }
+    verdict_series
+}
+
+/// meaning: the columns in THIS file the verdict graded.
+fn gate_scope_lines(
+    a: Anchors,
+    p: &Path,
+    w: &World,
+    gate_w: &World,
+    gate_st: &WorldStats,
+) -> String {
+    // The presence conditions are `sat_stats`'/`bar_stats`' own — they return `Some` exactly
+    // when these columns are non-empty — so a column is listed the session its rows exist.
+    let basket_cols = [basket_columns(p), sector_columns(p)].concat();
+    let mut graded = vec!["price", "bond"];
+    graded.extend(channel_columns(p));
+    graded.extend(basket_cols.iter().map(String::as_str));
+    let verdict_series = verdict_series_of(gate_st, gate_w);
     let num = |x: f64| ef(x);
     let source = |emitted: bool| json_str(if emitted { "emitted" } else { "anchored" });
     let verdict_channels = [
@@ -18007,6 +18668,7 @@ fn gate_scope_lines(
             num(gate_w.basket_drift),
             source(w.basket > 0)
         ),
+        sector_scope_block(gate_w, w.sectors > 0),
         format!(
             "\"macro\": {{ \"macro\": {}, \"source\": {} }}",
             gate_w.macro_panel,
@@ -18360,6 +19022,7 @@ fn write_emit_sidecar(
             let mut cols: Vec<String> = EMIT_COLUMNS.iter().map(|c| c.to_string()).collect();
             cols.extend(channel_columns(p).into_iter().map(str::to_string));
             cols.extend(basket_columns(p));
+            cols.extend(sector_columns(p));
             cols.extend(macro_columns(p).iter().map(|c| c.to_string()));
             cols.extend(null_macro_columns(p).iter().map(|c| c.to_string()));
             let refs: Vec<&str> = cols.iter().map(String::as_str).collect();
@@ -18831,6 +19494,10 @@ pub fn main() {
     let mut basket_idio = dw.basket_idio;
     let mut basket_gaps = dw.basket_gaps;
     let mut basket_drift = dw.basket_drift;
+    let mut sectors = dw.sectors;
+    let mut sector_idio = dw.sector_idio;
+    let mut sector_drift_sd = dw.sector_drift_sd;
+    let mut sector_drift_half = dw.sector_drift_half;
     let mut macro_panel = dw.macro_panel;
     let mut macro_null = dw.macro_null;
     let mut lev_gain = dw.lev_gain;
@@ -19008,6 +19675,10 @@ pub fn main() {
             "-basketidio" => basket_idio = req_f64(&mut it, "-basketidio"),
             "-basketgaps" => basket_gaps = req_f64(&mut it, "-basketgaps"),
             "-basketdrift" => basket_drift = req_f64(&mut it, "-basketdrift"),
+            "-sectors" => sectors = req_usize(&mut it, "-sectors"),
+            "-sectoridio" => sector_idio = req_f64(&mut it, "-sectoridio"),
+            "-sectordriftsd" => sector_drift_sd = req_f64(&mut it, "-sectordriftsd"),
+            "-sectordrifthalf" => sector_drift_half = req_f64(&mut it, "-sectordrifthalf"),
             "-macro" => macro_panel = req_usize(&mut it, "-macro"),
             "-macronull" => macro_null = req_usize(&mut it, "-macronull"),
             "-levgain" => lev_gain = req_f64(&mut it, "-levgain"),
@@ -19255,6 +19926,13 @@ pub fn main() {
         non_neg("-basketidio", basket_idio);
         non_neg("-basketgaps", basket_gaps);
         non_neg("-basketdrift", basket_drift);
+        non_neg("-sectoridio", sector_idio);
+        non_neg("-sectordriftsd", sector_drift_sd);
+        if sectors > 0 && sector_drift_half <= 0.0 {
+            cli_die(
+                "-sectors requires -sectordrifthalf > 0: the legs' drift state needs a half-life",
+            );
+        }
         if macro_panel > 1 {
             cli_die(&format!("-macro {macro_panel}: 0 (off) or 1 (the panel)"));
         }
@@ -19493,6 +20171,10 @@ pub fn main() {
         basket_idio,
         basket_gaps,
         basket_drift,
+        sectors,
+        sector_idio,
+        sector_drift_sd,
+        sector_drift_half,
         macro_panel,
         macro_null,
         lev_gain,
@@ -20034,6 +20716,31 @@ pub fn main() {
             jf(b.tail_coincidence, 0, 3),
             jf(b.pair_corr_worst, 0, 3),
             jf(b.pair_corr_mid, 0, 3)
+        );
+    }
+    if let Some(s) = st.sector {
+        println!(
+            "  sector momentum 12-1   spread {}%/mo ({} of xs sd)   t {}   share positive {}",
+            jf(s.momentum * 100.0, 0, 3),
+            jf(s.momentum / s.xs_sd, 0, 3),
+            jf(s.momentum_t, 0, 2),
+            jf(s.momentum_share, 0, 3)
+        );
+        println!(
+            "  sector trend           sign12 {}%/mo ({} of xs sd)   sma10 {}%/mo ({})",
+            jf(s.trend_sign12 * 100.0, 0, 3),
+            jf(s.trend_sign12 / s.xs_sd, 0, 3),
+            jf(s.trend_sma10 * 100.0, 0, 3),
+            jf(s.trend_sma10 / s.xs_sd, 0, 3)
+        );
+        println!(
+            "  sector shape           xs sd {}% ({} of the market's {}%)   pair corr {}   worst/mid {}/{}",
+            jf(s.xs_sd * 100.0, 0, 2),
+            jf(s.xs_sd / s.market_sd, 0, 3),
+            jf(s.market_sd * 100.0, 0, 2),
+            jf(s.pair_corr, 0, 3),
+            jf(s.pair_corr_worst, 0, 3),
+            jf(s.pair_corr_mid, 0, 3)
         );
     }
     if let Some(os) = st.open {
@@ -21307,6 +22014,8 @@ mod contract_tests {
         assert_eq!(r.aggregation(), "single-history");
         let window = if MULTI_YEAR_ROWS.contains(&r.name) {
             a.equity_years
+        } else if TIMING_ROWS.contains(&r.name) {
+            a.timing_years
         } else {
             a.bubble_years
         };
@@ -22244,6 +22953,10 @@ mod contract_tests {
         w.basket_idio = c.basket_idio;
         w.basket_gaps = c.basket_gaps;
         w.basket_drift = c.basket_drift;
+        w.sectors = c.sectors;
+        w.sector_idio = c.sector_idio;
+        w.sector_drift_sd = c.sector_drift_sd;
+        w.sector_drift_half = c.sector_drift_half;
         w.macro_panel = c.macro_panel;
         w
     }
@@ -26588,6 +27301,242 @@ mod basket_anchor_tests {
 /// that is the unusual thing worth pinning: the fixture says no true dispersion is DETECTABLE in a
 /// survivor cache, so a shipped world that turned this on would be asserting something the record
 /// cannot support. The Scala twin carries the same checks in `BasketDriftSuite`.
+/// THE SECTOR CHANNEL: off is bit-identical and carries no legs, every frozen world and every
+/// recipe but the channel ones keeps it off, the legs read their own streams only, the anchored
+/// dials sit inside the ruler's bands on both sets' channel recipes (the S&P's two trend rows
+/// excepted, its primary carrying no 12-month trend), the mechanism row discriminates, and a
+/// pinned path's readings are the Scala twin's to the bit.
+/// THE TIMING ROWS: the anchors are the fixture's records; a hand series reads as stated (a rule
+/// out for the whole of one decline and in for the whole of another averages 50% avoided, a
+/// false exit's return is the index's over it, exits a year count the out-periods); the joint
+/// band holds the histories it is read from; and a pinned path reads the same in both twins.
+#[cfg(test)]
+mod timing_tests {
+    use super::*;
+
+    #[test]
+    fn the_timing_anchors_are_the_fixtures_records() {
+        let lines: Vec<Vec<String>> =
+            std::fs::read_to_string("../test-data/equity-anchors/timing-2026-09-30.tsv")
+                .expect("fixture")
+                .lines()
+                .filter(|l| !(l.starts_with('#') || l.trim().is_empty() || l.starts_with("set\t")))
+                .map(|l| l.split('\t').map(str::to_string).collect())
+                .collect();
+        assert_eq!(lines.len(), 6, "two sets, three rows");
+        for (set, a) in [("sp500", SP500_ANCHORS), ("nasdaq", NASDAQ_ANCHORS)] {
+            for (name, got) in TIMING_ROWS.iter().zip(a.timing) {
+                let r = lines
+                    .iter()
+                    .find(|f| f[0] == set && f[1] == *name)
+                    .unwrap_or_else(|| panic!("fixture row [{set}] {name} missing"));
+                let rec: f64 = r[5].parse().expect("number");
+                assert!(
+                    (got - rec).abs() < 1e-6,
+                    "{set}: {name} {got} against {rec}"
+                );
+            }
+            assert_eq!(record_band_years(a, "sma10 exits per year"), a.timing_years);
+        }
+    }
+
+    #[test]
+    fn the_timing_rows_read_a_hand_series_as_stated() {
+        // 40 months up 2% a month (the rule in from month 10), a 30% fall over three months the
+        // rule is in for (the level is still above its mean at the first fall's end), then a
+        // climb, a second fall the rule is out for from its second month, and a climb out
+        let mut x = vec![1.0f64];
+        for _ in 0..39 {
+            x.push(x[x.len() - 1] * 1.02);
+        }
+        let top = x[x.len() - 1];
+        x.extend([top * 0.95, top * 0.85, top * 0.70]);
+        let mut lvl = top * 0.70;
+        for _ in 0..30 {
+            lvl *= 1.03;
+            x.push(lvl);
+        }
+        let r = timing_of_monthly(&x);
+        assert!(
+            r[0].is_finite() && r[0] > 0.0 && r[0] < 100.0,
+            "avoided {}",
+            r[0]
+        );
+        assert!(r[2] > 0.0, "exits {}", r[2]);
+        // no decline: the avoided share has no reading, the rule never exits an uptrend
+        let up: Vec<f64> = (0..60).map(|m| 1.02f64.powi(m)).collect();
+        let u = timing_of_monthly(&up);
+        assert!(u[0].is_nan() && u[1].is_nan() && u[2] == 0.0, "{u:?}");
+    }
+
+    #[test]
+    fn the_timing_band_holds_the_histories_it_is_read_from() {
+        let mut rng = NumPyRng::new(20_260_930);
+        let reads: Vec<[f64; 3]> = (0..1000)
+            .map(|_| std::array::from_fn(|_| rng.randn()))
+            .collect();
+        let bands = timing_bands(&reads);
+        let inside = reads
+            .iter()
+            .filter(|x| {
+                TIMING_ROWS.iter().zip(x.iter()).all(|(n, v)| {
+                    let (lo, hi) = bands[n];
+                    (lo..=hi).contains(v)
+                })
+            })
+            .count();
+        assert!(
+            (940..=960).contains(&inside),
+            "{inside} of 1000 inside every band"
+        );
+        assert!(timing_bands(&reads[..10]).is_empty());
+    }
+
+    #[test]
+    fn a_pinned_path_reads_the_same_timing_rows_in_both_twins() {
+        let p = &sim_paths(&default_world(), 1, 40, 20_260_930)[0];
+        let r = timing_of_path(&p.price);
+        let pin = [64.357_430_062_263_3, 4.634_420_683_531_006_4, 0.825];
+        for (got, want) in r.iter().zip(pin) {
+            assert!((got - want).abs() < 1e-12, "{got} vs {want}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod sector_channel_tests {
+    use super::*;
+
+    fn anchored() -> World {
+        let mut w = default_world();
+        w.sectors = SP500_CHANNEL_DIALS.sectors;
+        w.sector_idio = SP500_CHANNEL_DIALS.sector_idio;
+        w.sector_drift_sd = SP500_CHANNEL_DIALS.sector_drift_sd;
+        w.sector_drift_half = SP500_CHANNEL_DIALS.sector_drift_half;
+        w
+    }
+
+    #[test]
+    fn off_is_bit_identical_carries_no_legs_and_every_frozen_world_keeps_the_channel_off() {
+        let off = simulate(&default_world(), 3, DEFAULT_SEED);
+        let on = simulate(&anchored(), 3, DEFAULT_SEED);
+        assert!(off.sectors.is_empty());
+        assert_eq!(on.sectors.len(), 10);
+        assert!(
+            on.price == off.price && on.fundamental == off.fundamental && on.rate == off.rate,
+            "the legs are observational"
+        );
+        for (v, w) in releases() {
+            assert!(w.sectors == 0, "release {v}");
+        }
+        for (n, w, _) in recipes() {
+            let carries = n == "0.24.5-sp500" || n == "0.24.5-nasdaq-basket";
+            assert_eq!(w.sectors > 0, carries, "recipe {n}");
+        }
+        assert!(default_world().sectors == 0);
+        // the legs read their own streams: the basket and the satellite are untouched
+        let mut chans = default_world();
+        chans.sat_beta = 1.2;
+        chans.sat_idio = 0.77;
+        chans.basket = 8;
+        chans.basket_beta = 1.56;
+        chans.basket_sector = 1.1;
+        chans.basket_idio = 0.9;
+        chans.basket_gaps = 6.0;
+        let a = simulate(&chans, 3, DEFAULT_SEED);
+        let mut with = chans;
+        with.sectors = 10;
+        with.sector_idio = 0.7;
+        with.sector_drift_sd = 0.25;
+        with.sector_drift_half = 2.0;
+        let b = simulate(&with, 3, DEFAULT_SEED);
+        assert!(
+            a.sat == b.sat && a.names == b.names,
+            "the legs read their own streams only"
+        );
+        // the betas centre exactly and K < 2 reads beta 1
+        let mut rng = NumPyRng::new(7);
+        let betas = sector_betas(&with, true, &mut rng);
+        assert_eq!(betas.len(), 10);
+        assert!((betas.iter().sum::<f64>() / 10.0 - 1.0).abs() < 1e-12);
+        let mut one = with;
+        one.sectors = 1;
+        assert_eq!(sector_betas(&one, true, &mut rng), vec![1.0]);
+    }
+
+    /// The gate rows at the verdict horizon on a small ensemble: the ruler's bands are wide
+    /// enough that 8 paths read inside them wherever 200 do, the trend rows aside.
+    #[test]
+    fn the_anchored_legs_sit_on_the_ruler_and_the_mechanism_row_discriminates() {
+        let (sp, _) = named_world("0.24.5-sp500").expect("recipe");
+        let st = measure(&sim_paths(&sp, 8, 100, DEFAULT_SEED), 100);
+        let s = st.sector.expect("no sector readings with the channel on");
+        let rows: Vec<(String, bool, GateClass)> = gate_checks(anchors_named("sp500"), &st)
+            .into_iter()
+            .filter(|(n, _, _)| n.starts_with("sector "))
+            .collect();
+        assert_eq!(rows.len(), 8, "seven bands and the mechanism row");
+        for (n, ok, _) in &rows {
+            if n.starts_with("sector trend") {
+                continue;
+            }
+            assert!(
+                ok,
+                "{n}: momentum {} xs sd {} corr {}",
+                s.momentum, s.xs_sd, s.pair_corr
+            );
+        }
+        assert!(s.pair_corr_mid < s.pair_corr_worst && s.pair_corr_worst < s.pair_corr);
+        // the Nasdaq channel recipe reads every row inside, the trend rows too
+        let (nq, _) = named_world("0.24.5-nasdaq-basket").expect("recipe");
+        let st = measure(&sim_paths(&nq, 8, 100, DEFAULT_SEED + 1), 100);
+        for (n, ok, _) in gate_checks(anchors_named("nasdaq"), &st) {
+            if n.starts_with("sector ") {
+                assert!(ok, "{n}");
+            }
+        }
+        // the drift state carries the momentum the beta dispersion does not: without it the
+        // spread is the betas' alone (the top-ranked legs after an up-year are the high-beta
+        // ones, and the market's mean is positive), and the dial lifts it to the record's
+        let mut flat = anchored();
+        flat.sector_drift_sd = 0.0;
+        let st0 = measure(&sim_paths(&flat, 8, 100, DEFAULT_SEED), 100);
+        let s0 = st0.sector.expect("readings");
+        assert!(
+            s0.momentum > 0.0 && s0.momentum < s.momentum * 0.8,
+            "{} against {}",
+            s0.momentum,
+            s.momentum
+        );
+    }
+
+    /// The readings of one pinned path, the values the Scala twin pins: the legs' draws, the
+    /// monthly panel and the ruler's readers agree to the bit or the twins have diverged.
+    #[test]
+    fn a_pinned_path_reads_the_same_in_both_twins() {
+        let p = &sim_paths(&anchored(), 1, 60, 20_260_930)[0];
+        let r = sector_path_stats(p);
+        let n = p.sectors[0].len();
+        assert!((p.sectors[0][n - 1] - 9.960_537_272_916_381).abs() < 1e-12);
+        assert!((p.sectors[9][n - 1] - 11.539_547_582_776_594).abs() < 1e-12);
+        let pin = [
+            0.001_408_539_649_824_984,
+            1.299_046_091_786_327,
+            0.544_554_455_445_544_6,
+            -0.001_420_810_524_533_071_3,
+            0.000_326_881_381_889_554_2,
+            0.032_956_768_827_154_925,
+            0.048_272_723_134_552_45,
+            0.518_936_564_028_048_7,
+            0.579_964_177_740_568_5,
+            0.068_188_079_962_092_46,
+        ];
+        for (got, want) in r.iter().zip(pin) {
+            assert!((got - want).abs() < 1e-12, "{got} vs {want}");
+        }
+    }
+}
+
 #[cfg(test)]
 mod basket_drift_tests {
     use super::*;

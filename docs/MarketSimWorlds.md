@@ -719,8 +719,50 @@ rotation to cash mixes two persistences and a cross-section shape.
   on, the basket channel's mechanism row on sectors.
 
 An independent implementation of the same definitions (the fixture's header states them)
-reproduces every value to six decimals. No sector channel exists yet; when one does it is graded on the
-10-industry rows and never on a rotation rule.
+reproduces every value to six decimals. The sector channel below is graded on the 10-industry rows
+and never on a rotation rule.
+
+## The sector channel — `-sectors`
+
+`-sectors K` adds K sector legs as observational second-pass instances of the primary, the
+basket's construction with one addition. Each leg is its beta times the primary's observed return
+(betas drawn once per path around 1 at the record's cross-sectional dispersion, 0.216 across the
+ten industries, centred exactly so the equal-weight aggregate's beta is 1), plus its own idio on
+the vol state (`-sectoridio`, a fraction of the primary's realized volatility), plus a **slow
+relative drift**: an AR(1) state per leg with sd `-sectordriftsd` (a fraction of the primary's
+realized annualized volatility, so it transports) and half-life `-sectordrifthalf` years, centred
+across the legs each session so the aggregate keeps the primary's drift. That state is what
+carries the 12-1 relative momentum's persistence; nothing else in the channel does. Reaches no
+price; 0 is bit-identical off. `-emit` gains `logSector1..K`, the legs' log prices, after the
+basket's columns.
+
+The legs are graded on the ten-industry ruler above, read the ruler's way on the legs aggregated to
+calendar months (the primary as the market, the rate compounded as the bill), in the forms that
+carry across primaries of different volatility: the 12-1 momentum spread and the two trend
+readings over the cross-sectional sd, at the record's 5-95 block-bootstrap bands over its own; the
+cross-sectional sd over the market's monthly sd at ±0.10; the pairwise correlations at ±0.10 whole
+and ±0.15 on the market's deciles; and the mechanism, pairwise correlation on the market's middle
+decile below its worst decile's. One setting holds both sets: K 10, idio 0.7, drift 0.25 with a
+2-year half-life, in `0.24.5-sp500` and `0.24.5-nasdaq-basket`, and the verdict grades every world
+at it when the caller leaves the channel off.
+
+| row | record | `0.24.5-sp500`, seeds 5-8 | `0.24.5-nasdaq-basket` |
+|---|---|---|---|
+| momentum 12-1 spread / xs sd | 0.127 (0.069-0.178) | 0.126-0.131 | 0.110-0.120 |
+| trend 12m / xs sd | 0.180 (0.007-0.344) | **−0.012 to 0.002, a miss** | 0.110-0.128 |
+| trend sma10 / xs sd | 0.119 (−0.079-0.298) | −0.090 to −0.071, the edge | 0.006-0.021 |
+| xs sd / market sd | 0.581 | 0.590-0.600 | 0.626-0.630 |
+| pair corr; worst; middle decile | 0.70; 0.56; −0.03 | 0.67-0.68; 0.57-0.62; 0.00-0.01 | 0.64-0.65; 0.47-0.48; 0.00-0.01 |
+
+Two things to read off that table. Part of the momentum spread is the betas' alone: after an
+up-year the top-ranked legs are the high-beta ones and the market's mean is positive, so with the
+drift state off the S&P world still reads about 0.2% a month; the dial lifts it to the record's.
+And the S&P world **misses the 12-month trend row**, not through the channel but through its
+primary: the per-sector trend is the market's own carried into every leg, the record's market
+reads +0.50% a month after a positive trailing year against a negative one, and the S&P world's
+reads −0.44%. The Nasdaq world's booms carry it (+0.5%). The channel discloses a primary defect the
+existing rows never saw, the market's one-year time-series momentum, which is the next primary
+item; the row stays graded.
 
 ## How tight are the anchors? — `-noise`
 
@@ -921,6 +963,21 @@ is the 1999-2002 window's (the NDX price index from 1990 reads −2.1). The verd
 against the record's band; the loss grades it at judgment 3.0 on the Nasdaq set, the row the consumer's
 production gap turns on, and at 0 on the S&P set.
 
+**The timing rows** read what a 10-month moving-average exit does, the property a timing arm's
+withdrawal objective turns on, against Shiller's monthly S&P with dividends reinvested, 1871-2023
+(`timing-2026-09-30.tsv`, from `record_bands -timing`). At each month's end the rule is in equity
+for the next month when the level is above the mean of the last ten month-end levels, else out.
+Three rows, graded like the multi-year rows by where the record falls among the world's own
+century-long histories, inside their joint band at 0.05, on both sets:
+
+| row | statistic | record |
+|---|---|---|
+| `sma10 decline avoided %` | over the declines of 20% or more (peak to trough), the share of each decline's log fall the rule was out for, averaged | 70.7 |
+| `sma10 false-exit return %` | the index's cumulative return over each false exit (an out-period no month of which lies in a decline's peak-to-trough window), averaged | 3.08 |
+| `sma10 exits per year` | the out-periods a year | 0.61 |
+
+What it shows, on seed 5 at 200 × 100: both shipped worlds miss all but one of the rows. On `0.24.5-sp500` the exit avoids 42.7% of a decline's fall against the record's 70.7 (the record at the worlds' 99th percentile), a false exit forgoes 6.7% against 3.1 (0th), and exits run 0.75 a year against 0.61 (7th); on `0.24.5-nasdaq-basket` 34.4% (100th), 7.7% (0th) and 0.96 a year (0th). The worlds' declines arrive too fast for a ten-month average to step aside from and their rallies between declines are too large for it to sit out cheaply: the valuation-led slow decline and the recovery that follows it, which the decline length rows and the sector trend row point at from other sides. The rows stay graded; they and the market's one-year trend are the next primary item.
+
 **The short rate** — `short rate %` and `rate floor share %` — is the rate path's mean, in
 percent, and the share of its sessions under 0.50%, both against the daily effective federal funds
 rate over the set's own window: 4.6% and 15% over 1954-2026, 2.1% and 37% over 1999-2026. It is
@@ -1051,6 +1108,7 @@ with it.
 | `-overnight` | THE OPEN: the overnight share of the session's diffusive variance (0 ≤ X < 1). The open is the bridge point at that share of the session, with the session's news jump and jump-channel move landing overnight whole and the whole move becoming the gap when it overshoots the session on its own side; the bar then runs from the open over the remaining variance and the sign coupling reads the intraday return. `-emit` gains `logOpen`, and `logHigh`/`logLow` bracket the open and the close. Anchored 0.20 on the S&P default and 0.22 on the Nasdaq recipe against the record's overnight variance shares 0.33 / 0.28 (`bars-2026-09-01.tsv`, graded when on); the bar dials re-anchor with it, `-rangescale 0.78 -rangedown 0.13`, since the intraday bridge carries less of the session | 0 (open = prior close) |
 | `-basket` | THE BASKET: N single names as observational second-pass instances of the primary — each the shared sector leg (`-basketbeta` on the primary's observed return plus `-basketsector` idio riding the vol state × spiral, the satellite's construction) plus its own idio (`-basketidio`, riding the vol state WITHOUT the spiral, so shared variance dominates in stress and pairwise correlation rises) and its own gaps (`-basketgaps` per year, Student-t jumps of a frozen 9% size, SYMMETRIC — the down-skew belongs to the index and reaches names through the shared leg). The equal-weight aggregate (buy-and-hold, never rebalanced) is the sector, graded against the eight's basket on the set's own primary; `-emit` gains `logBasket` and `logName1..N`. Anchored N 8, beta 1.56, sector 1.1, idio 0.9, gaps 6.0 on the consumer's eight semiconductor names under SMH 2012–2026 (`basket-2026-09-02.tsv`); `-atrelease 0.24.0-basket` names the default with it on (`0.23.1-basket` the 0.23.1 world). The dials do NOT transport to the Nasdaq set — 8 / 1.37 / 0.7 / 0.85 / 8.0 there, which `-atrelease 0.24.0-nasdaq-basket` names | 0 (off) |
 | `-basketdrift` | CROSS-SECTIONAL DRIFT DISPERSION: the sd of the names' own annual log-drift offsets, as a fraction of the primary's realized volatility, drawn once per name per path and centred exactly so the sector's log drift is untouched. Moves the SPREAD of time below peak across names, not its median. **Anchored at 0** and off in every recipe: the record cannot supply a positive value (below) | 0 (off) |
+| `-sectors` | THE SECTOR CHANNEL: K sector legs as observational second-pass instances of the primary — each its beta on the primary's observed return (betas drawn once per path at the record's dispersion, centred), its own idio on the vol state (`-sectoridio`, a fraction of the primary's realized volatility) and a slow relative drift, an AR(1) state of sd `-sectordriftsd` (a fraction of the primary's annualized volatility) and half-life `-sectordrifthalf` years, centred across the legs. `-emit` gains `logSector1..K`. Graded on the ten-industry ruler as ratios that carry across primaries ([below](#the-sector-channel--sectors)). Anchored K 10, idio 0.7, drift 0.25, half-life 2 on both sets | 0 (off) |
 | `-macro` | THE MACRO PANEL: 1 emits seven observables derived from the model's own state after the price loop — `macroSpread` (BAA10Y: equity + bond stress, fast and credit-cycle slow), `macroSlope` (T10Y2Y: the 10y−2y expectation the rate process implies; the one anchored-scale member), `macroCond` (NFCILEVERAGE: the leverage cycle's ratio + the crowd share, raw), `macroIvol` (VIXCLS: the conditional sd re-levelled onto the world's realized vol, × the record's variance risk premium) — each a persistent-noise read sized to the record's predictive R² — and five draw-free levels, `macroYield10` (DGS10: the 10-year the slope is a difference of), `macroPolicy` (DFF: the loop's own policy rate, re-set at a meeting to the nearest quarter point and held), and the credit system: `macroBankCredit` (TOTBKCR) and `macroOutput` (GDP) as indices with `macroCredit` (TOTBKCR/GDP, percent) the ratio they imply. No scale dials but the spread's drawdown term (`-spreaddd`, read off the record): a rank-reading consumer cannot see scale. Cadence, release lag and revisions are the consumer's point-in-time layer. Reaches no price; graded when on ([below](#the-macro-panel--macro)) | 0 (off) |
 | `-macronull` | THE NULL PANEL: 1 takes the four macro columns from a SIBLING path — the same world at another seed — so their marginals and persistence are this world's and their coupling to this path's price is nil: the no-edge comparison for a rule that reads them. The macro rows do not grade a null panel; the sidecar lists its columns as ungraded. 2 is THE PAIRED CONTROL (consumer request 5): the path's own panel as at 0, graded, and the sibling's beside it as nine `nullMacro*` columns, ungraded, so the no-edge comparison rides in the same file instead of a second emit of every world. Needs `-macro 1`; one extra price loop per path at 1 or 2 | 0 (the path's own panel) |
 | `-inflsize` | size of an inflation regime's rate-pressure target | 0.10 |

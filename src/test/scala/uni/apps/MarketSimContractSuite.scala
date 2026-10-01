@@ -915,7 +915,8 @@ class MarketSimContractSuite extends FunSuite:
                          divYield = c.divYield, basket = c.basket, basketBeta = c.basketBeta,
                          basketSector = c.basketSector, basketIdio = c.basketIdio,
                          basketGaps = c.basketGaps, basketDrift = c.basketDrift,
-                         macroPanel = c.macroPanel), d)
+                         sectors = c.sectors, sectorIdio = c.sectorIdio, sectorDriftSd = c.sectorDriftSd,
+                         sectorDriftHalf = c.sectorDriftHalf, macroPanel = c.macroPanel), d)
     assertEquals(MarketSim.ChannelDials.of(MarketSim.verdictWorld(MarketSim.NasdaqAnchors, d)),
                  MarketSim.NasdaqChannelDials)
     val w = d.copy(satBeta = 1.5, satIdio = 0.5, macroPanel = 1, macroNull = 1)
@@ -1135,4 +1136,61 @@ class MarketSimContractSuite extends FunSuite:
     assert((0 until ends(0)).forall(k => held(k) == daily(k)))
     assert(held.indices.exists(k => held(k) != daily(k)), "the cadence changes something")
     assertEquals(MarketSim.Rules(MarketSim.SeverityArmIdx).name, "volatility + trend 200d, floor 0%")
+  }
+
+  // THE SECTOR CHANNEL: off is bit-identical and carries no legs, every frozen world and every
+  // recipe but the channel ones keeps it off, the legs read their own streams only, the betas
+  // centre exactly, and a pinned path's legs and readings are the Rust twin's to the bit.
+  test("the sector channel is off bit-identically and a pinned path reads the same in both twins") {
+    def anchored(w: MarketSim.World): MarketSim.World =
+      val d = MarketSim.Sp500ChannelDials
+      w.copy(sectors = d.sectors, sectorIdio = d.sectorIdio, sectorDriftSd = d.sectorDriftSd,
+             sectorDriftHalf = d.sectorDriftHalf)
+    val off = MarketSim.simulate(MarketSim.Defaults, 3, MarketSim.DefaultSeed)
+    val on  = MarketSim.simulate(anchored(MarketSim.Defaults), 3, MarketSim.DefaultSeed)
+    assert(off.sectors.isEmpty)
+    assertEquals(on.sectors.length, 10)
+    assert(on.price.sameElements(off.price) && on.rate.sameElements(off.rate), "the legs are observational")
+    for (v, w) <- MarketSim.Releases do assert(w.sectors == 0, s"release $v")
+    for (n, w, _) <- MarketSim.Recipes do
+      assertEquals(w.sectors > 0, n == "0.24.5-sp500" || n == "0.24.5-nasdaq-basket", s"recipe $n")
+    val chans = MarketSim.Defaults.copy(satBeta = 1.2, satIdio = 0.77, basket = 8, basketBeta = 1.56,
+                                        basketSector = 1.1, basketIdio = 0.9, basketGaps = 6.0)
+    val a = MarketSim.simulate(chans, 3, MarketSim.DefaultSeed)
+    val b = MarketSim.simulate(chans.copy(sectors = 10, sectorIdio = 0.7, sectorDriftSd = 0.25, sectorDriftHalf = 2.0),
+                               3, MarketSim.DefaultSeed)
+    assert(a.sat.sameElements(b.sat) && a.names.zip(b.names).forall((x, y) => x.sameElements(y)),
+      "the legs read their own streams only")
+    val rng = new NumPyRNG(7L)
+    val betas = MarketSim.sectorBetas(chans.copy(sectors = 10), true, rng)
+    assertEqualsDouble(betas.sum / 10, 1.0, 1e-12)
+    assertEquals(MarketSim.sectorBetas(chans.copy(sectors = 1), true, rng).toVector, Vector(1.0))
+    // `sector_channel_tests` pins these same values; a change here is a change there
+    val p = MarketSim.simPaths(anchored(MarketSim.Defaults), 1, 60, 20260930L).head
+    val n = p.sectors(0).length
+    assertEqualsDouble(p.sectors(0)(n - 1), 9.960537272916381, 1e-12)
+    assertEqualsDouble(p.sectors(9)(n - 1), 11.539547582776594, 1e-12)
+    val r = MarketSim.sectorPathStats(p)
+    val pin = Vector(0.0014085396498249839, 1.299046091786327, 0.5445544554455446, -0.0014208105245330713,
+                     0.0003268813818895542, 0.032956768827154925, 0.04827272313455245, 0.5189365640280487,
+                     0.5799641777405685, 0.06818807996209246)
+    for (got, want) <- r.zip(pin) do assertEqualsDouble(got, want, 1e-12, s"$got vs $want")
+  }
+
+  // The gate rows at the verdict horizon on a small ensemble: the ruler's bands hold the S&P
+  // recipe's legs on every row but the trend rows (its primary carries no 12-month trend), the
+  // Nasdaq channel recipe's on every row, and the mechanism row orders the three correlations.
+  test("the anchored sector legs sit on the ruler and the mechanism row discriminates") {
+    val sp = MarketSim.namedWorld("0.24.5-sp500").get._1
+    val st = MarketSim.measure(MarketSim.simPaths(sp, 8, 100, MarketSim.DefaultSeed), 100)
+    val sec = st.sector.getOrElse(fail("no sector readings with the channel on"))
+    val rows = MarketSim.gateChecks(MarketSim.SP500Anchors, st).filter(_._1.startsWith("sector "))
+    assertEquals(rows.length, 8, "seven bands and the mechanism row")
+    for (n, ok, _) <- rows if !n.startsWith("sector trend") do
+      assert(ok, s"$n: momentum ${sec.momentum} xs sd ${sec.xsSd} corr ${sec.pairCorr}")
+    assert(sec.pairCorrMid < sec.pairCorrWorst && sec.pairCorrWorst < sec.pairCorr)
+    val nq = MarketSim.namedWorld("0.24.5-nasdaq-basket").get._1
+    val stN = MarketSim.measure(MarketSim.simPaths(nq, 8, 100, MarketSim.DefaultSeed + 1), 100)
+    for (n, ok, _) <- MarketSim.gateChecks(MarketSim.NasdaqAnchors, stN) if n.startsWith("sector ") do
+      assert(ok, n)
   }

@@ -262,7 +262,16 @@ object MarketSim:
   // 23 -> 24: THE DECLINE LENGTH ROWS.  `gate.fidelity` gained `decline length p50 y` and
   // `decline length max y` against both windows (`MultiYearRows`): the peak-to-trough length in
   // years of the regained declines of 20% or more, their median and their longest.
-  val EmitSchema: Int = 24
+  // 24 -> 25: THE SECTOR CHANNEL.  `world` gained `sectors` and its three dials; the TSV gained
+  // `logSector1..K` (present ONLY when `sectors > 0`, after the basket's columns and before the
+  // panel's: the legs' LOG prices); `channels.sector` the readings the `sector *` rows grade and
+  // `verdictChannels.sector` the dials they were graded at.  A channel-off schema-24 file is
+  // byte-identical to its schema-25 counterpart except the schema number and the new zero world
+  // fields.
+  // 25 -> 26: THE TIMING ROWS.  `gate.fidelity` gained `sma10 decline avoided %`,
+  // `sma10 false-exit return %` and `sma10 exits per year` (`TimingRows`), single-history rows
+  // against Shiller's monthly S&P with their own `historyBand`.
+  val EmitSchema: Int = 26
 
   val EmitSidecarKeys: Vector[String] =
     Vector("generator", "version", "schema", "file", "columns", "header", "path", "world",
@@ -445,6 +454,15 @@ object MarketSim:
     "              ;   below peak is the COMMON drift (+0.304 vs the shared leg's +0.117), not",
     "              ;   this.  At 0 every name has the SAME expected drift, so the basket is a null",
     "              ;   world for a rule that ranks names: sweep the dial for its detection floor",
+    "-sectors K    ; THE SECTOR CHANNEL: K sector legs, each beta_k x the primary's observed return",
+    "              ;   (betas drawn once per path around 1 at the record's dispersion 0.216) plus its",
+    "              ;   own idio on the vol state (-sectoridio, a fraction of the primary's vol) plus a",
+    "              ;   SLOW RELATIVE DRIFT, an AR(1) state of sd -sectordriftsd (a fraction of the",
+    "              ;   primary's annualized vol) and half-life -sectordrifthalf years, centred across",
+    "              ;   the legs; -emit gains logSector1..K.  Graded on the ten-industry ruler",
+    "              ;   (sectors-2026-09-30.tsv): 12-1 momentum, per-sector trend, the cross-section's",
+    "              ;   shape, as ratios that carry across primaries.  Anchored K 10, idio 0.7, drift",
+    "              ;   0.25 with a 2-year half-life on both sets.  Default 0 = off",
     "-macro 1      ; THE MACRO PANEL: nine observables DERIVED from the model's own state, in",
     "              ;   their counterparts' units -- macroSpread (BAA10Y: equity + bond stress),",
     "              ;   macroSlope (T10Y2Y: the 10y-2y expectation the rate process implies; the",
@@ -1353,7 +1371,7 @@ object MarketSim:
                            // The macro rows do not grade a null panel and the sidecar lists its
                            // columns as ungraded.  Needs `macroPanel`; one extra price loop per
                            // path; 0 = the path's own panel, bit-identical.
-    basketDrift: Double = 0.0   // CROSS-SECTIONAL DRIFT DISPERSION: the sd of the names' own
+    basketDrift: Double = 0.0,  // CROSS-SECTIONAL DRIFT DISPERSION: the sd of the names' own
                                 // annual log-drift offsets, as a FRACTION of the primary's
                                 // realized annualized vol (`ChannelLevel.kDr`), so it transports.
                                 // Drawn once per name per path and centred EXACTLY, so the
@@ -1377,6 +1395,24 @@ object MarketSim:
                                 // it is noise.  Set the dial and there is a real edge of known
                                 // size to find.  Sweeping it gives a ranking rule's detection
                                 // threshold and the history it needs there.
+    sectors: Int = 0,           // THE SECTOR CHANNEL: K sector legs as observational
+                                // second-pass instances of the primary (0 = off, no columns,
+                                // bit-identical).  Each leg is beta_k x the primary's observed
+                                // return plus its own idio riding the vol state alone
+                                // (`sectorIdio`, a fraction of the primary's realized vol) plus
+                                // a SLOW RELATIVE DRIFT, a stationary AR(1) state with sd
+                                // `sectorDriftSd` (a fraction of the primary's realized
+                                // annualized vol) and half-life `sectorDriftHalf` years, centred
+                                // across the legs each session so the equal-weight aggregate
+                                // keeps the primary's drift.  The betas are drawn once per path
+                                // around 1 at the record's dispersion (`SectorBetaSd`), centred
+                                // exactly.  Graded on the ten-industry ruler
+                                // (`sectors-2026-09-30.tsv`): the 12-1 momentum's persistence,
+                                // which the drift state carries, the per-sector trend and the
+                                // cross-section's shape; never on a rotation rule.  Anchored K 10.
+    sectorIdio: Double = 0.0,
+    sectorDriftSd: Double = 0.0,
+    sectorDriftHalf: Double = 0.0,
   )
 
   final case class Path(price: Array[Double], rate: Array[Double], fundamental: Array[Double],
@@ -1433,6 +1469,8 @@ object MarketSim:
                                                  // (empty when `overnight` is 0)
                         names: Vector[Array[Double]] = Vector.empty,      // the basket's names,
                                                  // LOG prices (empty when `basket` is 0)
+                        sectors: Vector[Array[Double]] = Vector.empty,    // the sector legs, LOG
+                                                 // prices (empty when `sectors` is 0)
                         chanK: Double = 0.0,     // the world's channel level the bars and the
                         chanKSat: Double = 0.0,  // satellite were sampled at (`worldLevel`),
                                                  // carried into the sidecar so the emitted data's
@@ -1997,7 +2035,8 @@ object MarketSim:
            ("0.24.5-nasdaq-basket",
             nq0245.copy(basket = 8, basketBeta = 1.37, basketSector = 0.8, basketIdio = 0.85,
                         basketGaps = 8.0, satCycleSd = 0.0003, satDriftHalf = 0.2,
-                        satLevelHalf = 0.5),
+                        satLevelHalf = 0.5, sectors = 10, sectorIdio = 0.7, sectorDriftSd = 0.25,
+                        sectorDriftHalf = 2.0),
             "nasdaq"),
            // THE S&P RECIPE RE-SOLVED AROUND THE 1929 DISASTER: the disaster at 1929-32's
            // trend-free readings (1.5 log over three years, half back over five), its overshoot 0.31 and the
@@ -2030,7 +2069,8 @@ object MarketSim:
                             discountRef = 1.3760451, margin = 0.0066748246, rateMean = 0.056820968,
                             spreadDd = 3.0, recessRate = 0.0025436284, driftSd = 0.0053411225,
                             boomFade = 1.6627058, volPull = 0.27869111, satCycleSd = 0.0003,
-                            satDriftHalf = 0.2, satLevelHalf = 0.5),
+                            satDriftHalf = 0.2, satLevelHalf = 0.5, sectors = 10, sectorIdio = 0.7,
+                            sectorDriftSd = 0.25, sectorDriftHalf = 2.0),
             "sp500"))
 
   val Recipes: Vector[(String, World, String)] =
@@ -2742,9 +2782,15 @@ object MarketSim:
     * function of the world alone, so path k of (world, seed) stays reproducible from its sidecar
     * and every path of a world is sampled at one scale.  Sums run in path order then session
     * order in both twins.  0 / 0 when both channels are off -- never read. */
+  /** Whether any derived channel runs, so the price loop records its inputs and the world's
+    * level is solved: the bars, the satellite, the open, the basket, the sector legs, or the
+    * panel (whose implied-vol member reads `kVs`). */
+  def anyChannel(w: World): Boolean =
+    w.rangeScale > 0.0 || w.satBeta > 0.0 || w.overnight > 0.0 || w.basket > 0 || w.sectors > 0 ||
+      w.macroPanel > 0
+
   def worldLevel(w: World): ChannelLevel =
-    val chOn  = w.rangeScale > 0.0 || w.satBeta > 0.0 || w.overnight > 0.0 || w.basket > 0 ||
-                w.macroPanel > 0   // the implied-vol member reads `kVs`
+    val chOn  = anyChannel(w)
     val divOn = w.divYield > 0.0
     if !(chOn || divOn) then ChannelLevel(0.0, 0.0, 0.0, 0.0)
     else
@@ -2794,7 +2840,26 @@ object MarketSim:
   /** One path's derived channels: the satellite leg's price and the sampled bars. */
   final case class Channels(sat: Array[Double], logHi: Array[Double], logLo: Array[Double],
                             logVolume: Array[Double], logOpen: Array[Double],
-                            names: Vector[Array[Double]])   // the basket's log prices, N of them
+                            names: Vector[Array[Double]],   // the basket's log prices, N of them
+                            sectors: Vector[Array[Double]]) // the sector legs' log prices, K of them
+
+  /** The record's cross-sectional dispersion of the industries' betas on the market: the sd of
+    * the ten value-weighted industries' monthly betas on `Mkt-RF + RF`, 1926-07..2026-08 (mean
+    * 0.96, sd 0.216).  Frozen, not a dial: the sector rows have no beta row to solve it on. */
+  val SectorBetaSd: Double = 0.216
+
+  /** The legs' betas on the primary: one normal each from `rng` before the session loop, centred
+    * exactly and rescaled by sqrt(K/(K-1)) because centring costs that much sample sd, at
+    * `SectorBetaSd` around 1, so the equal-weight aggregate's beta is 1 to the bit.  K < 2 gives
+    * beta 1. */
+  def sectorBetas(w: World, secOn: Boolean, rng: NumPyRNG): Array[Double] =
+    if secOn && w.sectors >= 2 then
+      val z  = Array.fill(w.sectors)(rng.randn())
+      val zb = z.sum / z.length
+      val n  = z.length.toDouble
+      val sc = SectorBetaSd * math.sqrt(n / (n - 1.0))
+      z.map(v => 1.0 + (v - zb) * sc)
+    else Array.fill(w.sectors)(1.0)
 
   /** THE DERIVED CHANNELS, sampled in a second pass from the price loop's recorded inputs.  They
     * are OBSERVATIONAL -- nothing here reaches a price -- which is what licenses the second pass,
@@ -2834,19 +2899,23 @@ object MarketSim:
     val orng    = new NumPyRNG(seed ^ 0x09e7a11eL)
     val brng    = new NumPyRNG(seed ^ 0xba5ce700L)
     val mrng    = new NumPyRNG(seed ^ 0xd1f75eadL)
+    val krng    = new NumPyRNG(seed ^ 0x5ec70a15L) // the sector legs
+    val jrng    = new NumPyRNG(seed ^ 0xbe7a5ec7L) // the sector legs' betas
     val tot     = x.px.length
     val satOn   = w.satBeta > 0.0
     val rangeOn = w.rangeScale > 0.0
     val volOn   = rangeOn && w.volIdio > 0.0
     val openOn  = w.overnight > 0.0
     val bskOn   = w.basket > 0
+    val secOn   = w.sectors > 0
     val sat = if satOn then new Array[Double](tot) else Array.emptyDoubleArray
     val hi  = if rangeOn then new Array[Double](tot) else Array.emptyDoubleArray
     val lo  = if rangeOn then new Array[Double](tot) else Array.emptyDoubleArray
     val vv  = if volOn then new Array[Double](tot) else Array.emptyDoubleArray
     val op  = if openOn then new Array[Double](tot) else Array.emptyDoubleArray
     val nm  = if bskOn then Vector.fill(w.basket)(new Array[Double](tot)) else Vector.empty
-    if !(satOn || rangeOn || openOn || bskOn) then Channels(sat, hi, lo, vv, op, nm)
+    val sc  = if secOn then Vector.fill(w.sectors)(new Array[Double](tot)) else Vector.empty
+    if !(satOn || rangeOn || openOn || bskOn || secOn) then Channels(sat, hi, lo, vv, op, nm, sc)
     else
       val k  = level.k
       val kS = level.kSat
@@ -2868,6 +2937,15 @@ object MarketSim:
           val sc = w.basketDrift * level.kDr * math.sqrt(z.length / (z.length - 1.0)) / DaysPerYear
           z.map(v => (v - zb) * sc)
         else new Array[Double](w.basket)
+      // SECTOR state: the primary's observed log price last session (its own tracker), each leg's
+      // log price, the betas (`sectorBetas`, drawn before the loop) and the drift states with the
+      // dial's half-life and stationary sd.
+      var sectorPrevPx = 0.0
+      val secLogP  = new Array[Double](w.sectors)
+      val secBetas = sectorBetas(w, secOn, jrng)
+      val secMu    = new Array[Double](w.sectors)
+      val secPhi   = if w.sectorDriftHalf > 0.0 then expDet(-math.log(2.0) / (w.sectorDriftHalf * DaysPerYear)) else 0.0
+      val secInnov = math.sqrt(1.0 - secPhi * secPhi)
       // SATELLITE LEG state: its log price and the primary's observed log price last session.
       var satLogP = 0.0; var satPrevPx = 0.0
       // THE RELATIVE CYCLE's state (see `satCycleSd`): the drift and the level, their per-session
@@ -2944,6 +3022,31 @@ object MarketSim:
             nameLogP(q) += secRet + idio + gap + nameMu(q)
             nm(q)(i) = nameLogP(q)
             q += 1
+        // THE SECTOR LEGS -- see the `sectors` field.  Every leg's drift state takes its
+        // innovation (K normals), the states are centred, then each leg adds beta x the
+        // primary's return, its centred drift over the year's sessions and its own idio (K
+        // normals) to its log price.  Reads `krng` only, after the betas' `jrng`; the draw ORDER
+        // is part of the cross-language contract.
+        if secOn then
+          val primaryRet = logPx - sectorPrevPx
+          val sd = w.sectorDriftSd * level.kDr
+          var q = 0
+          while q < w.sectors do
+            secMu(q) = secPhi * secMu(q) + sd * secInnov * krng.randn()
+            q += 1
+          var muSum = 0.0
+          q = 0
+          while q < w.sectors do
+            muSum += secMu(q)
+            q += 1
+          val muBar = muSum / w.sectors
+          q = 0
+          while q < w.sectors do
+            val idio = w.sectorIdio * (x.volState(i) * kV) * krng.randn()
+            secLogP(q) += secBetas(q) * primaryRet + (secMu(q) - muBar) / DaysPerYear + idio
+            sc(q)(i) = secLogP(q)
+            q += 1
+          sectorPrevPx = logPx
         // THE OPEN -- see the `overnight` field.  The bridge point at share w of the session's
         // diffusive variance, jumps landing overnight whole, one normal from `orng` per session
         // read only when the dial is on; then the bar runs from it.
@@ -2998,7 +3101,7 @@ object MarketSim:
             volRxPrev = rx
         if rangeOn || openOn then barPrevPx = logPx
         i += 1
-      Channels(sat, hi, lo, vv, op, nm)
+      Channels(sat, hi, lo, vv, op, nm, sc)
 
   /** The price loop and the derived channels of one path; the channel arrays of `path` are
     * empty until `simulateAt` fills them. */
@@ -3388,6 +3491,7 @@ object MarketSim:
       logVolume = if w.volIdio > 0.0 then chan.logVolume.drop(BurnIn) else Array.emptyDoubleArray,
       logOpen   = if w.overnight > 0.0 then chan.logOpen.drop(BurnIn) else Array.emptyDoubleArray,
       names     = if w.basket > 0 then chan.names.map(_.drop(BurnIn)) else Vector.empty,
+      sectors   = if w.sectors > 0 then chan.sectors.map(_.drop(BurnIn)) else Vector.empty,
       chanK     = level.k,
       chanKSat  = level.kSat,
       chanKDiv  = level.kDiv,
@@ -3792,8 +3896,7 @@ object MarketSim:
     // observed log price, the session diffusion sd as the price received it, the satellite's
     // state factor, and the post-step realized scale the volume's down-term reads.  Empty when
     // both channels are off; draw-free either way, so off worlds stay bit-identical.
-    val chOn    = w.rangeScale > 0.0 || w.satBeta > 0.0 || w.overnight > 0.0 || w.basket > 0 ||
-                  w.macroPanel > 0
+    val chOn    = anyChannel(w)
     val chIn    = ChannelInputs.sized(chOn, tot)
     // THE MACRO PANEL's inputs, recorded per session and read after the loop by `deriveMacro`;
     // empty when the dial is off, draw-free either way.
@@ -4106,8 +4209,7 @@ object MarketSim:
       // BEFORE this session's update, like `dNoise` itself) -- plus the jump branch's
       // sqrt(1 - jumpVar) mixing.  Draw-free; 0.0 when both channels are off.
       val sessSigma =
-        if w.rangeScale > 0.0 || w.satBeta > 0.0 || w.overnight > 0.0 || w.basket > 0 ||
-           w.macroPanel > 0 || w.volResp > 0.0 || w.jumpResp > 0.0 then
+        if anyChannel(w) || w.volResp > 0.0 || w.jumpResp > 0.0 then
           val levMult = leverageMult(w, kickS)
           val jvMult  = jumpVarMult(w)
           newsDamp * SigmaN * Math.exp(logVol - volNorm) * levMult * jvMult * asymM * volRespM * regimeM *
@@ -4768,6 +4870,54 @@ object MarketSim:
                                // which is what `basketDrift` moves; the eight span 0.53
                                nameD20Spread: Double)
 
+  /** THE SECTOR CHANNEL's readings, medians across paths of the ten-industry ruler's rows read on
+    * the legs aggregated to calendar months (`monthEnds`; the primary as the market, cash from
+    * the rate as the bill): the 12-1 cross-sectional momentum (mean monthly long-minus-short
+    * spread, its t and the share of positive months; long the top 3 of 10, the fixture's rule,
+    * scaled to K), the per-sector trend after a 12-month sign and after a 10-month moving
+    * average, the mean cross-sectional sd of monthly returns, the market's monthly sd, and the
+    * median pairwise correlation whole, on the market's worst decile of months and on its middle
+    * decile.  The gate reads the spreads over the cross-sectional sd and that sd over the
+    * market's, the forms that carry across primaries of different volatility. */
+  final case class SectorStats(momentum: Double, momentumT: Double, momentumShare: Double,
+                               trendSign12: Double, trendSma10: Double, xsSd: Double,
+                               marketSd: Double, pairCorr: Double, pairCorrWorst: Double,
+                               pairCorrMid: Double)
+
+  /** The legs of one path as the ruler's panel: simple monthly returns from month 1 on, the
+    * primary's as the market, the rate compounded over each month's sessions as the bill. */
+  def sectorPanelOf(s: Path): SectorPanel =
+    val ends = monthEnds(s.price.length)
+    def monthly(lp: Array[Double]): Vector[Option[Double]] =
+      (1 until ends.length).toVector.map(t => Some(expDet(lp(ends(t)) - lp(ends(t - 1))) - 1.0))
+    val market = (1 until ends.length).toVector.map(t => s.price(ends(t)) / s.price(ends(t - 1)) - 1.0)
+    val rf = (1 until ends.length).toVector.map { t =>
+      var acc = 0.0
+      var i = ends(t - 1) + 1
+      while i <= ends(t) do
+        acc += s.rate(i) / DaysPerYear
+        i += 1
+      expDet(acc) - 1.0
+    }
+    SectorPanel(s.sectors.map(monthly), market, rf)
+
+  /** One path's ten sector readings, in `SectorStats` field order. */
+  def sectorPathStats(s: Path): Vector[Double] =
+    val p = sectorPanelOf(s)
+    val top = math.max((s.sectors.length * 3 + 5) / 10, 1)
+    val m = sectorMomentum(p, 11, top, 0)
+    val (t12, _) = sectorTrend(p, SectorTrend.Sign12, 0)
+    val (sma, _) = sectorTrend(p, SectorTrend.Sma10, 0)
+    val (sh, _) = sectorShape(p)
+    Vector(m.mean, m.t, m.sharePositive, t12, sma, sh(0), sectorMarketSd(p), sh(1), sh(2), sh(3))
+
+  def sectorStats(sims: Vector[Path]): Option[SectorStats] =
+    if sims.isEmpty || sims.head.sectors.isEmpty then None
+    else
+      val per = parMap(sims)(sectorPathStats)
+      def col(k: Int): Double = medOf(per.map(_(k)))
+      Some(SectorStats(col(0), col(1), col(2), col(3), col(4), col(5), col(6), col(7), col(8), col(9)))
+
   def basketStats(sims: Vector[Path]): Option[BasketStats] =
     if sims.isEmpty || sims.head.names.isEmpty then None
     else
@@ -5258,6 +5408,7 @@ object MarketSim:
                               runUp3y: Double,    // median per-path largest 3-year log run-up
                                                   // (`runUp3yOf`) and longest calm stretch in
                               calmStretch: Double, // sessions (`calmStretchOf`): reported
+                              timing: Vector[Double],    // median per-path `timingOfPath`
                               multiYear: Vector[Double], // median per-path multi-year readings
                                                   // (`multiYearOf`), the first seven
                                                   // `MultiYearRows`; the eighth reads `ddEq20`
@@ -5289,6 +5440,7 @@ object MarketSim:
                               bars: Option[BarStats] = None,
                               open: Option[OpenStats] = None,   // None when no open ran
                               basket: Option[BasketStats] = None, // None when no basket ran
+                              sector: Option[SectorStats] = None, // None when no sector channel ran
                               // median across paths of the per-path mean session yield, %/yr;
                               // NaN when the dial is off, and the gate then carries no row
                               divYieldMean: Double = Double.NaN):
@@ -5414,6 +5566,7 @@ object MarketSim:
     valDisp: Double, maxOver: Double, semiExcess: Double, upShare: Double, levCorr: Double,
     volTiming: Double, bubbleCoupling: Double, runUp3y: Double, calmStretch: Double,
     multiYear: Vector[Double],
+    timing: Vector[Double],
     shortRate: Double, rateFloor: Double,   // `rateReadings` of the path's rate
     postRate: Double, postFloor: Double,    // `rateAfterReadings` of the path's price and rate
     tailHedge: Double,
@@ -5550,6 +5703,7 @@ object MarketSim:
       levCorr = levCorrOf(r), volTiming = volTimingOf(r), bubbleCoupling = bubbleCouplingOf(r),
       runUp3y = runUp3yOf(r), calmStretch = calmStretchOf(r),
       multiYear = multiYearOf(r, sp.price),
+      timing = timingOfPath(sp.price),
       shortRate = rateReadings(sp.rate)(0), rateFloor = rateReadings(sp.rate)(1),
       postRate = rateAfterReadings(sp.price, sp.rate)(0), postFloor = rateAfterReadings(sp.price, sp.rate)(1),
       wingUp = wings._1, wingDown = wings._2, wingN = wings._3,
@@ -5601,7 +5755,7 @@ object MarketSim:
       retAc1 = med(per.map(_.retAc1)),
       annRet = med(per.map(_.annRet)),
       sat = satStats(sims), bars = barStats(sims), open = openStats(sims),
-      basket = basketStats(sims), macroPanel = macroStats(sims),
+      basket = basketStats(sims), sector = sectorStats(sims), macroPanel = macroStats(sims),
       divYieldMean = med(per.map(_.divYield)),
       nEpisodes = eps.size, epPerPath = eps.size.toDouble / sims.size,
       depthMed = med(eps.map(_.depthPct)), worstDepth = eps.map(_.depthPct).minOption.getOrElse(Double.NaN),
@@ -5631,6 +5785,7 @@ object MarketSim:
       runUp3y = med(per.map(_.runUp3y)),
       calmStretch = med(per.map(_.calmStretch)),
       multiYear = Vector.tabulate(7)(k => med(per.map(_.multiYear(k)))),
+      timing = Vector.tabulate(3)(k => med(per.map(_.timing(k)))),
       shortRate = med(per.map(_.shortRate)),
       rateFloor = med(per.map(_.rateFloor)),
       postRate = med(per.map(_.postRate)),
@@ -6008,6 +6163,29 @@ object MarketSim:
                bandCheck("basket idio share", b.idioShare, 0.26, 0.60, Fidelity),
                bandCheck("basket tail coincidence", b.tailCoincidence, 0.35, 0.60, Fidelity),
                ("basket pair corr rises on the worst decile", b.pairCorrWorst > b.pairCorrMid, Mechanism))
+    // THE SECTOR CHANNEL, graded when it ran -- `sectors-2026-09-30.tsv`, the ten industries, in
+    // the forms that carry across primaries of different volatility: the 12-1 momentum spread and
+    // the two trend readings over the cross-sectional sd, at the record's 5-95 block-bootstrap
+    // bands over its own; the cross-sectional sd over the market's monthly sd at +-0.10; the
+    // pairwise correlations at +-0.10 whole and +-0.15 on the market's deciles; and the
+    // mechanism: pairwise correlation on the market's middle decile below its worst decile's.
+    val sectorBands = st.sector.toVector.flatMap { s =>
+      val xs = a.sectorXsSd
+      Vector(bandCheck("sector momentum 12-1 / xs sd", s.momentum / s.xsSd,
+                       a.sectorMomentumBand._1 / xs, a.sectorMomentumBand._2 / xs, Fidelity, 3),
+             bandCheck("sector trend 12m / xs sd", s.trendSign12 / s.xsSd,
+                       a.sectorTrend12Band._1 / xs, a.sectorTrend12Band._2 / xs, Fidelity, 3),
+             bandCheck("sector trend sma10 / xs sd", s.trendSma10 / s.xsSd,
+                       a.sectorTrendSmaBand._1 / xs, a.sectorTrendSmaBand._2 / xs, Fidelity, 3),
+             bandCheck("sector xs sd / market sd", s.xsSd / s.marketSd,
+                       xs / a.sectorMarketSd - 0.10, xs / a.sectorMarketSd + 0.10, Fidelity),
+             bandCheck("sector pair corr", s.pairCorr, a.sectorPairCorr - 0.10, a.sectorPairCorr + 0.10, Fidelity),
+             bandCheck("sector pair corr worst decile", s.pairCorrWorst,
+                       a.sectorPairCorrWorst - 0.15, a.sectorPairCorrWorst + 0.15, Fidelity),
+             bandCheck("sector pair corr middle decile", s.pairCorrMid,
+                       a.sectorPairCorrMid - 0.15, a.sectorPairCorrMid + 0.15, Fidelity),
+             ("sector pair corr falls on the middle decile", s.pairCorrMid < s.pairCorrWorst, Mechanism))
+    }
     // THE MACRO PANEL, graded when it ran -- `macro-2026-09-06.tsv`.  Mechanism: the conditions
     // index BUILDS before the peak -- its mean trailing rank over the quarter before a 20% peak
     // clear of what a decoupled series reads there (the null panel: 0.49).  This is the coupling
@@ -6058,7 +6236,7 @@ object MarketSim:
                bandCheck("macro oracle bound r2", r2Max, -1e-12, MacroBands.OracleR2, Fidelity, 3),
                bandCheck("macro inversion share", ms.invShare, MacroBands.InvShare._1, MacroBands.InvShare._2, Fidelity),
                bandCheck("macro vol premium", ms.vrp, MacroBands.Vrp._1, MacroBands.Vrp._2, Fidelity))
-    base ++ eqDepthBands ++ depthBand ++ volBand ++ satBands ++ barBands ++ divBand ++ openBands ++ basketBands ++ macroBands
+    base ++ eqDepthBands ++ depthBand ++ volBand ++ satBands ++ barBands ++ divBand ++ openBands ++ basketBands ++ sectorBands ++ macroBands
 
   /** Whether an anchor-fitted band can be graded here: its driving variable inside the range the
     * anchor funds covered, and the statistic defined.  Mirrors `Relation.grade`'s refusal. */
@@ -6277,6 +6455,10 @@ object MarketSim:
     // record starts nine years too late for a 3-year run-up into the 2000 peak.  Graded as an
     // extreme row, the record's percentile among single histories of `bubbleYears`.
     bubbleWindow: String, bubbleYears: Int,
+    // THE TIMING ROWS' record window and records (`timingOfMonthly`; `timing-2026-09-30.tsv`):
+    // Shiller's monthly S&P with dividends reinvested, one ruler for both sets, read on the
+    // world's histories of `timingYears`
+    timingWindow: String, timingYears: Int, timing: Vector[Double],
     bubbleCoupling: Double, bubbleCouplingSd: Double,
     // THE LARGEST 3-YEAR RUN-UP's and THE LONGEST CALM STRETCH's records over the bubble window
     // (`runUp3yOf`, `calmStretchOf`, the same fixture): reported, not graded.  Each is one number
@@ -6366,6 +6548,14 @@ object MarketSim:
     // themselves and stays shared.
     basketCorr: Double, basketBeta: Double, basketVolRatio: Double,
     basketNameVolBand: (Double, Double),
+    // THE SECTOR ROWS' record -- `sectors-2026-09-30.tsv`, the ten industries over 1926-2026, one
+    // ruler for both sets: the 12-1 momentum spread and the two trend readings with their 5-95
+    // block-bootstrap bands, the shape rows, the market's monthly sd
+    sectorMomentum: Double, sectorMomentumBand: (Double, Double),
+    sectorTrend12: Double, sectorTrend12Band: (Double, Double),
+    sectorTrendSma: Double, sectorTrendSmaBand: (Double, Double),
+    sectorXsSd: Double, sectorPairCorr: Double, sectorPairCorrWorst: Double, sectorPairCorrMid: Double,
+    sectorMarketSd: Double,
     // THE DERIVED SERIES' DIALS FOR THIS SET: what the verdict grades a world's satellite, bars,
     // open, dividends, basket and macro panel at when the caller left them off (`verdictWorld`).
     // The channel recipe's own -- `0.24.4-sp500-channels` here, `0.24.4-nasdaq-basket` for the
@@ -6381,7 +6571,8 @@ object MarketSim:
     satBeta: Double, satIdio: Double, satCycleSd: Double, satDriftHalf: Double,
     satLevelHalf: Double, rangeScale: Double, rangeDown: Double, volIdio: Double,
     overnight: Double, divYield: Double, basket: Int, basketBeta: Double, basketSector: Double,
-    basketIdio: Double, basketGaps: Double, basketDrift: Double, macroPanel: Int)
+    basketIdio: Double, basketGaps: Double, basketDrift: Double,
+    sectors: Int, sectorIdio: Double, sectorDriftSd: Double, sectorDriftHalf: Double, macroPanel: Int)
 
   object ChannelDials:
     /** A world's derived-series dials. */
@@ -6389,7 +6580,8 @@ object MarketSim:
       ChannelDials(w.satBeta, w.satIdio, w.satCycleSd, w.satDriftHalf, w.satLevelHalf,
                    w.rangeScale, w.rangeDown, w.volIdio, w.overnight,
                    w.divYield, w.basket, w.basketBeta, w.basketSector, w.basketIdio, w.basketGaps,
-                   w.basketDrift, w.macroPanel)
+                   w.basketDrift,
+                   w.sectors, w.sectorIdio, w.sectorDriftSd, w.sectorDriftHalf, w.macroPanel)
 
   /** The S&P set's derived-series dials: `0.24.5-sp500`'s (its `levGain` is a primary
     * dial, not one of these). */
@@ -6397,14 +6589,16 @@ object MarketSim:
     satBeta = 1.2, satIdio = 0.77, satCycleSd = 0.0003, satDriftHalf = 0.2, satLevelHalf = 0.5,
     rangeScale = 0.78, rangeDown = 0.13, volIdio = 0.34,
     overnight = 0.14, divYield = 2.95, basket = 8, basketBeta = 1.56, basketSector = 1.1,
-    basketIdio = 0.9, basketGaps = 6.0, basketDrift = 0.0, macroPanel = 1)
+    basketIdio = 0.9, basketGaps = 6.0, basketDrift = 0.0,
+    sectors = 10, sectorIdio = 0.7, sectorDriftSd = 0.25, sectorDriftHalf = 2.0, macroPanel = 1)
 
   /** The Nasdaq set's derived-series dials: `0.24.5-nasdaq-basket`'s. */
   val NasdaqChannelDials: ChannelDials = ChannelDials(
     satBeta = 1.2, satIdio = 0.77, satCycleSd = 0.0003, satDriftHalf = 0.2, satLevelHalf = 0.5,
     rangeScale = 0.78, rangeDown = 0.13, volIdio = 0.34,
     overnight = 0.22, divYield = 0.78, basket = 8, basketBeta = 1.37, basketSector = 0.8,
-    basketIdio = 0.85, basketGaps = 8.0, basketDrift = 0.0, macroPanel = 1)
+    basketIdio = 0.85, basketGaps = 8.0, basketDrift = 0.0,
+    sectors = 10, sectorIdio = 0.7, sectorDriftSd = 0.25, sectorDriftHalf = 2.0, macroPanel = 1)
 
   /** THE VERDICT WORLD: the caller's world with every derived series the caller left off set to
     * the anchor set's dials, and the null panel off.  The verdict is a property of the world, and
@@ -6430,7 +6624,12 @@ object MarketSim:
         div.copy(basket = d.basket, basketBeta = d.basketBeta, basketSector = d.basketSector,
                  basketIdio = d.basketIdio, basketGaps = d.basketGaps, basketDrift = d.basketDrift)
       else div
-    val mac  = if w.macroPanel == 0 then bsk.copy(macroPanel = d.macroPanel) else bsk
+    val sec =
+      if w.sectors == 0 then
+        bsk.copy(sectors = d.sectors, sectorIdio = d.sectorIdio, sectorDriftSd = d.sectorDriftSd,
+                 sectorDriftHalf = d.sectorDriftHalf)
+      else bsk
+    val mac  = if w.macroPanel == 0 then sec.copy(macroPanel = d.macroPanel) else sec
     mac.copy(macroNull = 0)
 
   /** One real drawdown-shape reference: a series over a window, and per threshold (thr, episodes,
@@ -6604,6 +6803,7 @@ object MarketSim:
     clusterWindow = "CRSP 1926-2026, the century", clusterYears = 100,
     tailWindow = "CRSP 1926-2026, the century", tailYears = 100,
     bubbleWindow = "CRSP 1926-2026, the century", bubbleYears = 100,
+    timingWindow = "Shiller S&P 1871-2023", timingYears = 100, timing = Vector(70.672143, 3.080357, 0.608838),
     bubbleCoupling = 0.114404, bubbleCouplingSd = 1.07,
     runUp3y = 0.872450, calmStretch = 2190.0,
     multiYear = Vector(-0.127487, 0.745759, 0.732112, 0.324081, 8.599206, 0.662698, 2.527778, 12.589751),
@@ -6658,6 +6858,11 @@ object MarketSim:
     recordBands = RecordBandsSp500,
     divYield = 2.95, divYieldBand = (1.1, 5.8),
     basketCorr = 0.770, basketBeta = 1.557, basketVolRatio = 2.023, basketNameVolBand = (1.9, 3.5),
+    sectorMomentum = 0.003923, sectorMomentumBand = (0.002111, 0.005480),
+    sectorTrend12 = 0.005545, sectorTrend12Band = (0.000214, 0.010578),
+    sectorTrendSma = 0.003672, sectorTrendSmaBand = (-0.002442, 0.009168),
+    sectorXsSd = 0.030770, sectorPairCorr = 0.698582, sectorPairCorrWorst = 0.560800, sectorPairCorrMid = -0.030675,
+    sectorMarketSd = 0.052916,
     channelDials = Sp500ChannelDials)
 
   /** The Nasdaq-100 set, measured 2026-08-28 from QQQ daily adjusted closes over its own full
@@ -6700,6 +6905,7 @@ object MarketSim:
     clusterWindow = "QQQ 1999-2026", clusterYears = 27,
     tailWindow = "QQQ 1999-2026", tailYears = 27,
     bubbleWindow = "NDX 1990-2026", bubbleYears = 37,
+    timingWindow = "Shiller S&P 1871-2023", timingYears = 100, timing = Vector(70.672143, 3.080357, 0.608838),
     bubbleCoupling = 1.042337, bubbleCouplingSd = 0.25,
     runUp3y = 1.753345, calmStretch = 1927.0,
     multiYear = Vector(0.007813, 0.993439, 0.894362, 0.438273, 18.396825, 0.317460, 2.523810, 53.729182),
@@ -6747,6 +6953,11 @@ object MarketSim:
     recordBands = RecordBandsNasdaq,
     divYield = 0.78, divYieldBand = (0.3, 1.5),
     basketCorr = 0.837, basketBeta = 1.365, basketVolRatio = 1.630, basketNameVolBand = (1.5, 2.8),
+    sectorMomentum = 0.003923, sectorMomentumBand = (0.002111, 0.005480),
+    sectorTrend12 = 0.005545, sectorTrend12Band = (0.000214, 0.010578),
+    sectorTrendSma = 0.003672, sectorTrendSmaBand = (-0.002442, 0.009168),
+    sectorXsSd = 0.030770, sectorPairCorr = 0.698582, sectorPairCorrWorst = 0.560800, sectorPairCorrMid = -0.030675,
+    sectorMarketSd = 0.052916,
     channelDials = NasdaqChannelDials)
 
   val AnchorSets: Vector[Anchors] = Vector(SP500Anchors, NasdaqAnchors)
@@ -6807,6 +7018,15 @@ object MarketSim:
   /** `MultiYearRows` against the set's long window, row for row. */
   val MultiYearLongRows: Vector[String] = MultiYearRows.map(_ + " long")
 
+  /** THE TIMING ROWS' names and constants (`timingOfMonthly` below): declared here, before the
+    * target lists that name them. */
+  val TimingRows: Vector[String] =
+    Vector("sma10 decline avoided %", "sma10 false-exit return %", "sma10 exits per year")
+  val TimingSmaMonths: Int = 10
+  val TimingDeclinePct: Double = 20.0
+  /** the share of record-like worlds the timing rows may jointly miss */
+  val TimingAlpha: Double = 0.05
+
   /** One fidelity row of `fitTargets`: name, reading, target, weight. */
   type FitTarget = (String, WorldStats => Double, Double, Double)
 
@@ -6830,7 +7050,9 @@ object MarketSim:
           case _ => 0.0
         (names(k), MultiYearStats(k), records(k), weight)
     rows(MultiYearRows, a.multiYear, a.multiYearVrSd, a.declineGapSd(0)) ++
-      rows(MultiYearLongRows, a.multiYearLong, a.multiYearLongVrSd, a.declineGapSd(1))
+      rows(MultiYearLongRows, a.multiYearLong, a.multiYearLongVrSd, a.declineGapSd(1)) ++
+      // THE TIMING ROWS (`TimingRows`), single-history graded like the multi-year rows, weight 0
+      TimingRows.indices.toVector.map(k => (TimingRows(k), (st: WorldStats) => st.timing(k), a.timing(k), 0.0))
 
   /** THE ROWS THE MULTI-YEAR ROWS REPLACED, reported and not graded: name, the world's reading,
     * the record.  The run-up and the calm stretch are one number from one history each; the 20%
@@ -7077,11 +7299,11 @@ object MarketSim:
     * pooling and a minimum does not; that is the whole distinction.  `MarketSimContractSuite`
     * requires every name here to be a fidelity target. */
   val ExtremeTargets: Set[String] =
-    Set("worst crash %", "bubble coupling 3y") ++ MultiYearRows ++ MultiYearLongRows
+    Set("worst crash %", "bubble coupling 3y") ++ MultiYearRows ++ MultiYearLongRows ++ TimingRows
 
   /** Whether a row is a multi-year row, of either window. */
   def isMultiYear(name: String): Boolean =
-    MultiYearRows.contains(name) || MultiYearLongRows.contains(name)
+    MultiYearRows.contains(name) || MultiYearLongRows.contains(name) || TimingRows.contains(name)
 
   /** The `ExtremeTargets` rows whose statFn reads an extreme over the pooled ensemble, sorted: a
     * multi-year row's reads a median of paths, a level a report may print. */
@@ -7667,6 +7889,75 @@ object MarketSim:
       i += 1
     if up + down == 0 then Double.NaN else up * 100.0 / (up + down)
 
+  /** THE TIMING ROWS: what a 10-month moving-average exit does on a monthly total-return index,
+    * the record's Shiller S&P (`timing-2026-09-30.tsv`).  At each month's end the rule is in
+    * equity for the next month when the level is above the mean of the last `TimingSmaMonths`
+    * month-end levels, this one included, else out; fully invested before the first decision.
+    * Over the declines of `TimingDeclinePct` or more from the running peak (peak to trough, a
+    * decline still under way included): the share of each decline's log fall the rule was out
+    * for, averaged over the declines; the index's cumulative return over each FALSE exit, an
+    * out-period no month of which lies in a decline's peak-to-trough window, averaged; and the
+    * out-periods a year.  Graded like the multi-year rows, by where the record falls among the
+    * world's single histories.  Read on month-end levels, one a month; NaN where the record has
+    * no decline or no false exit. */
+
+  def timingOfMonthly(x: Array[Double]): Vector[Double] =
+    val n = x.length
+    if n < 2 then Vector(Double.NaN, Double.NaN, Double.NaN)
+    else
+      val r = Array.tabulate(n)(m => if m == 0 then 0.0 else lnDet(x(m) / x(m - 1)))
+      val k = TimingSmaMonths
+      val inside = Array.tabulate(n) { m =>
+        if m == 0 || m < k then true
+        else
+          val d = m - 1
+          var s = 0.0
+          var j = d + 1 - k
+          while j <= d do
+            s += x(j)
+            j += 1
+          x(d) > s / k
+      }
+      val eps = episodes(x, TimingDeclinePct)
+      val avoided = eps.map { e =>
+        var all = 0.0
+        var held = 0.0
+        var m = e.peak + 1
+        while m <= e.trough do
+          all += r(m)
+          if inside(m) then held += r(m)
+          m += 1
+        1.0 - held / all
+      }
+      val runs = scala.collection.mutable.ArrayBuffer.empty[(Int, Int)]
+      var m = 1
+      while m < n do
+        if inside(m) then m += 1
+        else
+          val s = m
+          while m < n && !inside(m) do m += 1
+          runs += ((s, m - 1))
+      def inDecline(a: Int, b: Int): Boolean = eps.exists(e => a <= e.trough && b >= e.peak + 1)
+      val falseExits = runs.toVector.filterNot((a, b) => inDecline(a, b)).map { (a, b) =>
+        var s = 0.0
+        var j = a
+        while j <= b do
+          s += r(j)
+          j += 1
+        expDet(s) - 1.0
+      }
+      def mean(v: Seq[Double]): Double =
+        if v.isEmpty then Double.NaN
+        else
+          var s = 0.0
+          v.foreach(s += _)
+          s / v.length
+      Vector(mean(avoided) * 100.0, mean(falseExits) * 100.0, runs.length.toDouble / (n / 12.0))
+
+  /** The timing rows of one model path: its price at the calendar month ends (`monthEnds`). */
+  def timingOfPath(px: Array[Double]): Vector[Double] =
+    timingOfMonthly(monthEnds(px.length).map(px).toArray)
+
   /** corr(r_t, r^2_{t+1}): the leverage effect at daily lag. */
   /** THE VOLATILITY-TIMING EDGE (the consumer's canonical rule, 2026-09-24), points a year of log growth:
     * hold the index when its 24-session realized vol (sample sd) is below the series' own 60th
@@ -8208,6 +8499,10 @@ object MarketSim:
     * between its 45th and 55th), a pair counting where it has `SectorCorrMinMonths` complete months,
     * the median NumPy's (the mean of the middle two on an even count).  Returns
     * `(cs sd, corr, corr worst, corr middle)` and the three month counts. */
+  /** The market's monthly sd over the panel's months, the scale the cross-sectional sd is read
+    * against. */
+  def sectorMarketSd(p: SectorPanel): Double = sd1(p.market)
+
   def sectorShape(p: SectorPanel): (Vector[Double], Vector[Int]) =
     val months = p.market.length
     val cs = (0 until months).flatMap { t =>
@@ -8260,6 +8555,7 @@ object MarketSim:
     if RecordBandClusterRows.contains(name) then a.clusterYears
     else if RateBandRows.contains(name) || RateAfterRows.contains(name) then a.rateYears
     else if BondBandRows.contains(name) then a.bondYears
+    else if TimingRows.contains(name) then a.timingYears
     else a.equityYears
 
   /** The percentiles a `RecordBand` carries: every 5th, and the 1st and 99th so a reading past the
@@ -9282,7 +9578,7 @@ object MarketSim:
     "up-day share %", "vol-timing edge pts/yr",
     "leverage corr", "valuation dispersion", "upper wing months %", "lower wing months %",
     "crashes/century", "median depth %",
-    "worst crash %", "bubble coupling 3y") ++ MultiYearRows ++ MultiYearLongRows ++ Vector(
+    "worst crash %", "bubble coupling 3y") ++ MultiYearRows ++ MultiYearLongRows ++ TimingRows ++ Vector(
     "equity d5 vs real", "equity d10 vs real")
 
   /** The other half of the partition.  Read only by the partition test -- the report has no bond
@@ -9507,6 +9803,8 @@ object MarketSim:
      Vector("short rate %", "rate floor share %", "post-trough rate %", "post-trough floor share %")),
     // The Shiller record is one series shared by every anchor set, at its own century horizon.
     ("Shiller CAPE 1881-2023", 100, Vector("valuation dispersion", "upper wing months %", "lower wing months %")),
+    // The timing rows' record: Shiller's monthly S&P with dividends, at the century horizon.
+    (a.timingWindow, a.timingYears, TimingRows),
     // 18 equity funds and three CRSP windows, the shortest of them 24.9 years -- see
     // `VarRatioBands`.  The horizon is one instrument's record, as it is for the depth rungs, and
     // the target this group carries is a theory value rather than a reading, so `real@` here says
@@ -9644,6 +9942,20 @@ object MarketSim:
       names.zip(edges)
     .toMap
 
+  /** The timing rows' single histories at `yrs`, when it is the timing window's length: every
+    * path's readings in `TimingRows`' order. */
+  private[apps] def timingHistories(a: Anchors, sims: Vector[Path], yrs: Int): Option[Vector[Vector[Double]]] =
+    if yrs == a.timingYears then Some(parMap(sims)(p => timingOfPath(p.price))) else None
+
+  /** THE TIMING ROWS' JOINT BAND: each row's edges among the world's single histories at the ranks
+    * a record-like history stays inside on all three at once with probability 1 - `TimingAlpha`;
+    * empty under `ExtremeMinHistories` paths. */
+  private[apps] def timingBands(reads: Vector[Vector[Double]]): Map[String, (Double, Double)] =
+    if reads.length < ExtremeMinHistories then Map.empty
+    else
+      val (_, edges) = recordBandJoint(reads, Vector(0, 1, 2), TimingAlpha)
+      TimingRows.zip(edges).toMap
+
   def extremeReadingsFrom(a: Anchors, sims: Vector[Path], yrs: Int): Map[String, Vector[Double]] =
     extremeReadingsAndBands(a, sims, yrs)._1
 
@@ -9656,6 +9968,8 @@ object MarketSim:
     val histories = multiYearHistories(a, sims, yrs)
     val multiYear = histories.flatMap: (names, reads) =>
       names.zipWithIndex.map((nm, k) => nm -> reads.map(_(k)).filter(x => !x.isNaN))
+    val timingReads = timingHistories(a, sims, yrs)
+    val timing = timingReads.toVector.flatMap(reads => TimingRows.zipWithIndex.map((nm, k) => nm -> reads.map(_(k)).filter(x => !x.isNaN)))
     def pooled(nm: String): Boolean = ExtremeTargets.contains(nm) && !isMultiYear(nm)
     val others = anchorGroups(a)
       .filter((_, gy, names) => gy == yrs && names.exists(pooled))
@@ -9666,7 +9980,7 @@ object MarketSim:
         val vals   = if direct.forall(_.isDefined) then direct.flatten else full.map(get)
         nm -> vals.filter(x => !x.isNaN)
       })
-    ((multiYear ++ others).toMap, multiYearBands(histories))
+    ((multiYear ++ timing ++ others).toMap, multiYearBands(histories) ++ timingReads.map(timingBands).getOrElse(Map.empty))
 
   /** The median of `extremeReadingsFrom`, for an ensemble the caller already holds. */
   def extremeScoreStatsFrom(a: Anchors, sims: Vector[Path], yrs: Int): Map[String, Double] =
@@ -10349,6 +10663,9 @@ object MarketSim:
     if p.names.isEmpty then Vector.empty
     else "logBasket" +: p.names.indices.map(q => s"logName${q + 1}").toVector
 
+  /** `logSector1..K`, present exactly when the sector channel ran. */
+  def sectorColumns(p: Path): Vector[String] = p.sectors.indices.map(q => s"logSector${q + 1}").toVector
+
   /** The equal-weight aggregate of the names as a LOG price series: the mean of the names'
     * price levels relative to their common start, the fixture's convention (equal weights held
     * from the first session, never rebalanced). */
@@ -10365,7 +10682,7 @@ object MarketSim:
       ++ (if p.logVolume.isEmpty then Vector() else Vector("logVolume"))
       ++ (if p.traded.isEmpty then Vector() else Vector("logTraded", "divYield"))
       ++ (if p.logOpen.isEmpty then Vector() else Vector("logOpen"))
-      ++ basketColumns(p)
+      ++ basketColumns(p) ++ sectorColumns(p)
       ++ (if p.macroPanel.isEmpty then Vector() else MacroK.Columns)
       ++ (if p.macroNullPanel.isEmpty then Vector() else MacroK.NullColumns)).mkString("\t")
     val basketAgg = if p.names.isEmpty then Array.emptyDoubleArray else basketAggregate(p.names)
@@ -10378,8 +10695,9 @@ object MarketSim:
       val s3 = if p.logVolume.isEmpty then s2 else s"$s2\t${ef(p.logVolume(i))}"
       val s4 = if p.traded.isEmpty then s3 else s"$s3\t${ef(math.log(p.traded(i)))}\t${ef(p.divYield(i))}"
       val s5 = if p.logOpen.isEmpty then s4 else s"$s4\t${ef(p.logOpen(i))}"
-      val s6 = if p.names.isEmpty then s5
-               else s5 + "\t" + ef(basketAgg(i)) + p.names.map(lp => "\t" + ef(lp(i))).mkString
+      val s6 = (if p.names.isEmpty then s5
+                else s5 + "\t" + ef(basketAgg(i)) + p.names.map(lp => "\t" + ef(lp(i))).mkString) +
+               p.sectors.map(lp => "\t" + ef(lp(i))).mkString
       def panelCells(m: MacroPanel): String =
         s"\t${ef(m.spread(i))}\t${ef(m.slope(i))}\t${ef(m.cond(i))}\t" +
         s"${ef(m.ivol(i))}\t${ef(m.yield10(i))}\t${ef(m.credit(i))}\t" +
@@ -10491,6 +10809,8 @@ object MarketSim:
       ("basket", w.basket.toString), ("basketBeta", num(w.basketBeta)),
       ("basketSector", num(w.basketSector)), ("basketIdio", num(w.basketIdio)),
       ("basketGaps", num(w.basketGaps)), ("basketDrift", num(w.basketDrift)),
+      ("sectors", w.sectors.toString), ("sectorIdio", num(w.sectorIdio)),
+      ("sectorDriftSd", num(w.sectorDriftSd)), ("sectorDriftHalf", num(w.sectorDriftHalf)),
       // the flag's name, as every dial's key is: the FIELD is `macroPanel` only because `macro`
       // is a reserved word in Scala, and a consumer reconstructing a world from this block passes
       // `-macro`
@@ -10549,6 +10869,12 @@ object MarketSim:
       s""""tailCoincidence": ${num(b.tailCoincidence)}, "pairCorrWorst": ${num(b.pairCorrWorst)}, "pairCorrMid": ${num(b.pairCorrMid)}, """ +
       s""""nameD20Spread": ${num(b.nameD20Spread)} }"""
     }
+    val secB = st.sector.toVector.map { x =>
+      s"""    "sector": { "momentum": ${num(x.momentum)}, "momentumT": ${num(x.momentumT)}, """ +
+      s""""momentumShare": ${num(x.momentumShare)}, "trendSign12": ${num(x.trendSign12)}, "trendSma10": ${num(x.trendSma10)}, """ +
+      s""""xsSd": ${num(x.xsSd)}, "marketSd": ${num(x.marketSd)}, "pairCorr": ${num(x.pairCorr)}, """ +
+      s""""pairCorrWorst": ${num(x.pairCorrWorst)}, "pairCorrMid": ${num(x.pairCorrMid)} }"""
+    }
     // The macro panel's readings, each member naming its counterpart and natural cadence -- the
     // routing a consumer's point-in-time loader needs, in the data rather than in prose.
     // A per-path spread beside each pooled statistic: `[p5, p50, p95]` of the per-path readings,
@@ -10570,7 +10896,7 @@ object MarketSim:
       s"""      "members": [\n""" +
       members.mkString(",\n") + "\n      ] }"
     }
-    val blocks = level ++ sat ++ bars ++ div ++ open ++ bsk ++ mac
+    val blocks = level ++ sat ++ bars ++ div ++ open ++ bsk ++ secB ++ mac
     if blocks.isEmpty then """  "channels": {},"""
     else "  \"channels\": {\n" + blocks.mkString(",\n") + "\n  },"
 
@@ -10598,6 +10924,8 @@ object MarketSim:
       s""""dividends": { "divYield": ${ef(gateW.divYield)}, "source": ${source(w.divYield > 0.0)} }""",
       s""""basket": { "basket": ${gateW.basket}, "basketBeta": ${ef(gateW.basketBeta)}, "basketSector": ${ef(gateW.basketSector)}, """ +
         s""""basketIdio": ${ef(gateW.basketIdio)}, "basketGaps": ${ef(gateW.basketGaps)}, "basketDrift": ${ef(gateW.basketDrift)}, "source": ${source(w.basket > 0)} }""",
+      s""""sector": { "sectors": ${gateW.sectors}, "sectorIdio": ${ef(gateW.sectorIdio)}, "sectorDriftSd": ${ef(gateW.sectorDriftSd)}, """ +
+        s""""sectorDriftHalf": ${ef(gateW.sectorDriftHalf)}, "source": ${source(w.sectors > 0)} }""",
       s""""macro": { "macro": ${gateW.macroPanel}, "source": ${source(w.macroPanel > 0 && w.macroNull != 1)} }""",
     ).mkString(", ")
 
@@ -10646,7 +10974,7 @@ object MarketSim:
         ++ (if p.logVolume.isEmpty then Vector() else Vector("logVolume"))
         ++ (if p.traded.isEmpty then Vector() else Vector("logTraded", "divYield"))
         ++ (if p.logOpen.isEmpty then Vector() else Vector("logOpen"))
-        ++ basketColumns(p)
+        ++ basketColumns(p) ++ sectorColumns(p)
         ++ (if p.macroPanel.isEmpty then Vector() else MacroK.Columns)
         ++ (if p.macroNullPanel.isEmpty then Vector() else MacroK.NullColumns))},""",
       """  "header": true,""",
@@ -10686,7 +11014,7 @@ object MarketSim:
         ++ (if p.logVolume.isEmpty then Vector() else Vector("logVolume"))
         ++ (if p.traded.isEmpty then Vector() else Vector("logTraded", "divYield"))
         ++ (if p.logOpen.isEmpty then Vector() else Vector("logOpen"))
-        ++ basketColumns(p)
+        ++ basketColumns(p) ++ sectorColumns(p)
         ++ (if p.macroPanel.exists(!_.sibling) then MacroK.Columns else Vector()))},""",
       // The field that says a column reached the file UNGRADED: `logSat` is covered by the
       // `satellite *` rows and the bar columns by the `bar *` rows, and the one case today is a
@@ -10708,6 +11036,7 @@ object MarketSim:
         ++ (if gateSt.divYieldMean.isFinite then Vector("logTraded", "divYield") else Vector())
         ++ (if gateSt.open.isDefined then Vector("logOpen") else Vector())
         ++ (if gateSt.basket.isDefined then "logBasket" +: (1 to gateW.basket).map(q => s"logName$q").toVector else Vector())
+        ++ (if gateSt.sector.isDefined then (1 to gateW.sectors).map(q => s"logSector$q").toVector else Vector())
         ++ (if gateSt.macroPanel.exists(!_.sibling) then MacroK.Columns else Vector()))},""",
       s"""    "verdictChannels": { ${verdictChannelsJson(w, gateW)} },""",
       s"""    "realism": ${jsonStr(if realismBad.isEmpty then "PASS" else "FAIL")},""",
@@ -11060,6 +11389,8 @@ ${rows.mkString(",\n")}
     var basket = dw.basket; var basketBeta = dw.basketBeta; var basketSector = dw.basketSector
     var basketIdio = dw.basketIdio; var basketGaps = dw.basketGaps
     var basketDrift = dw.basketDrift; var macroPanel = dw.macroPanel; var macroNull = dw.macroNull
+    var sectors = dw.sectors; var sectorIdio = dw.sectorIdio; var sectorDriftSd = dw.sectorDriftSd
+    var sectorDriftHalf = dw.sectorDriftHalf
     var levGain = dw.levGain; var stressScale = dw.stressScale
     var levPersist = dw.levPersist; var noiseAsym = dw.noiseAsym
     var noiseAsymPhi = dw.noiseAsymPhi
@@ -11199,6 +11530,10 @@ ${rows.mkString(",\n")}
       case "-basketidio" => basketIdio = numOr("-basketidio", consumeNext)
       case "-basketgaps" => basketGaps = numOr("-basketgaps", consumeNext)
       case "-basketdrift" => basketDrift = numOr("-basketdrift", consumeNext)
+      case "-sectors"    => sectors = intOr("-sectors", consumeNext)
+      case "-sectoridio" => sectorIdio = numOr("-sectoridio", consumeNext)
+      case "-sectordriftsd" => sectorDriftSd = numOr("-sectordriftsd", consumeNext)
+      case "-sectordrifthalf" => sectorDriftHalf = numOr("-sectordrifthalf", consumeNext)
       case "-macro"      => macroPanel = intOr("-macro", consumeNext)
       case "-macronull"  => macroNull = intOr("-macronull", consumeNext)
       case "-levgain"    => levGain = numOr("-levgain", consumeNext)
@@ -11350,6 +11685,10 @@ ${rows.mkString(",\n")}
 
     if basket > 0 && basketBeta <= 0.0 then
       usage("-basket requires -basketbeta > 0: a name with no sector leg is not a member of anything")
+    if sectors < 0 then usage(s"-sectors $sectors: the leg count cannot be negative")
+    if sectorIdio < 0.0 || sectorDriftSd < 0.0 then usage("-sectoridio and -sectordriftsd cannot be negative")
+    if sectors > 0 && sectorDriftHalf <= 0.0 then
+      usage("-sectors requires -sectordrifthalf > 0: the legs' drift state needs a half-life")
     if overnight >= 1.0 then
       usage(s"-overnight $overnight leaves the intraday session no variance to run the bridge on; it must be below 1")
     if volIdio > 0.0 && rangeScale <= 0.0 then
@@ -11456,7 +11795,9 @@ ${rows.mkString(",\n")}
                   rangeDown = rangeDown, volIdio = volIdio, divYield = divYield,
                   overnight = overnight, basket = basket, basketBeta = basketBeta,
                   basketSector = basketSector, basketIdio = basketIdio, basketGaps = basketGaps,
-                  basketDrift = basketDrift, macroPanel = macroPanel, macroNull = macroNull,
+                  basketDrift = basketDrift, sectors = sectors, sectorIdio = sectorIdio,
+                  sectorDriftSd = sectorDriftSd, sectorDriftHalf = sectorDriftHalf,
+                  macroPanel = macroPanel, macroNull = macroNull,
                   levGain = levGain, stressScale = stressScale, levPersist = levPersist,
                   noiseAsymPhi = noiseAsymPhi, volResp = volResp, volRespPhi = volRespPhi,
                   volRespAttack = volRespAttack, volRespCap = volRespCap,
@@ -11681,6 +12022,11 @@ ${rows.mkString(",\n")}
       println(f"  basket names           vol ratio ${b.nameVolRatio}%.2f   gaps/yr ${b.nameGaps}%.2f   d20 ${b.nameD20}%.3f (spread ${b.nameD20Spread}%.3f)")
       println(f"  basket aggregate       corr ${b.aggCorr}%.3f   beta ${b.aggBeta}%.3f   vol ratio ${b.aggVolRatio}%.2f")
       println(f"  basket structure       pair corr ${b.pairCorr}%.3f   idio share ${b.idioShare}%.3f   tail coincidence ${b.tailCoincidence}%.3f   pair corr worst/mid ${b.pairCorrWorst}%.3f/${b.pairCorrMid}%.3f")
+    }
+    st.sector.foreach { x =>
+      println(f"  sector momentum 12-1   spread ${x.momentum * 100}%.3f%%/mo (${x.momentum / x.xsSd}%.3f of xs sd)   t ${x.momentumT}%.2f   share positive ${x.momentumShare}%.3f")
+      println(f"  sector trend           sign12 ${x.trendSign12 * 100}%.3f%%/mo (${x.trendSign12 / x.xsSd}%.3f of xs sd)   sma10 ${x.trendSma10 * 100}%.3f%%/mo (${x.trendSma10 / x.xsSd}%.3f)")
+      println(f"  sector shape           xs sd ${x.xsSd * 100}%.2f%% (${x.xsSd / x.marketSd}%.3f of the market's ${x.marketSd * 100}%.2f%%)   pair corr ${x.pairCorr}%.3f   worst/mid ${x.pairCorrWorst}%.3f/${x.pairCorrMid}%.3f")
     }
     st.open.foreach { os =>
       println(f"  bar open               overnight share ${os.overnightShare}%.3f   gap share worst-1%% ${os.worstGapShare}%.3f vs all ${os.allGapShare}%.3f")

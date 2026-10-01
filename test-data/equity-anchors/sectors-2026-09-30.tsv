@@ -22,6 +22,9 @@
 #            pairwise correlation over the whole sample, over the months at or under the market's
 #            10th percentile and over those strictly between its 45th and 55th; a pair counts with
 #            60 complete months; the median NumPy's.
+#            The market's monthly sd over the same months is printed beside them: the scale the
+#            cross-sectional sd is graded against, so a world of another volatility reads the
+#            same ratio.
 #
 # Returns and spreads are monthly simple returns as fractions. The world is graded on the
 # 10-industry rows once a sector channel exists; the 49-industry rows are the record's own.
@@ -43,6 +46,7 @@ trend	industries10	12m	post-1963	positive minus negative	0.002554	-0.002658	0.00
 trend	industries10	sma10	all	positive minus negative	0.003672	-0.002442	0.009168	1192
 trend	industries10	sma10	post-1963	positive minus negative	0.001558	-0.003824	0.006412	758
 shape	industries10		all	mean cross-sectional sd	0.030770			1202
+shape	industries10		all	market monthly sd	0.052916			1202
 shape	industries10		all	median pairwise correlation	0.698582			1202
 shape	industries10		market worst decile	median pairwise correlation	0.560800			121
 shape	industries10		market middle decile	median pairwise correlation	-0.030675			116
@@ -63,6 +67,7 @@ trend	industries49	12m	post-1963	positive minus negative	0.001842	-0.002747	0.00
 trend	industries49	sma10	all	positive minus negative	0.003827	-0.000975	0.007937	1192
 trend	industries49	sma10	post-1963	positive minus negative	0.001915	-0.002674	0.005796	758
 shape	industries49		all	mean cross-sectional sd	0.046523			1202
+shape	industries49		all	market monthly sd	0.052916			1202
 shape	industries49		all	median pairwise correlation	0.584163			1202
 shape	industries49		market worst decile	median pairwise correlation	0.467769			121
 shape	industries49		market middle decile	median pairwise correlation	0.054814			116
