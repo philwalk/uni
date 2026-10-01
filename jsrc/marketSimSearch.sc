@@ -909,6 +909,7 @@ object MarketSimSearch:
     var gate = "realism,mechanism"
     var hold = ""
     var fix = ""
+    var seedSet = ""
     var transportWeight = 0.25
     var cov = 0.0; var covShrink = 0.3
     eachArg(args.toSeq, usage) {
@@ -940,6 +941,7 @@ object MarketSimSearch:
       case "-hold"      => hold = consumeNext
       case "-gap"       => gap = consumeNext
       case "-fix"       => fix = consumeNext
+      case "-seedset"   => seedSet = consumeNext
       case "-fidelity"  => fidelity = consumeNext
       case a          => usage(s"unrecognized arg [$a]")
     }
@@ -975,7 +977,20 @@ object MarketSimSearch:
           usage(s"-seeds names [${want.filterNot(n => got.exists(_._1 == n)).mkString(", ")}], " +
                 "which is not a release or recipe")
         got
-    val seedWorld = pool.toMap
+    val pool1 =
+      if seedSet.isEmpty then pool
+      else
+        val moves = seedSet.split(",").map(_.trim).filter(_.nonEmpty).toVector.map { kv =>
+          kv.split("=", 2) match
+            case Array(k, v) =>
+              val x = v.trim.toDoubleOption.getOrElse(usage(s"-seedset [$kv]: not a number"))
+              (k.trim, x)
+            case _ => usage(s"-seedset wants DIAL=VALUE, got [$kv]")
+        }
+        for (k, _) <- moves if !ranges.exists(_._1 == k) do
+          usage(s"-seedset names [$k], which is not a searched dial")
+        pool.map((n, w) => (n, moves.foldLeft(w)((acc, m) => ranges.find(_._1 == m._1).get._4(acc, m._2))))
+    val seedWorld = pool1.toMap
     def worldFor(n: String): World = seedWorld.getOrElse(n, MarketSim.Defaults)
     for t <- transport do
       val missing = MarketDials.filterNot(names.contains)
@@ -1001,23 +1016,23 @@ object MarketSimSearch:
     if fidelity.nonEmpty then
       val ens = parseEnsembles(fidelity)
       val seeds = (0 until reps).toVector.map(k => base + k * ReadStride)
-      println(s"cheap fidelity at $anchorSpec, ${pool.length} frozen worlds x $reps reps")
+      println(s"cheap fidelity at $anchorSpec, ${pool1.length} frozen worlds x $reps reps")
       def scoreAll(p: Int, y: Int): Vector[Read] =
-        pool.map((_, w) => judge(w, dialsOf(w), anchors, transport, p, y, seeds, plain))
+        pool1.map((_, w) => judge(w, dialsOf(w), anchors, transport, p, y, seeds, plain))
       val t0 = System.nanoTime()
       val reference = scoreAll(paths, years)
-      val refSecs = (System.nanoTime() - t0) / 1e9 / pool.length
+      val refSecs = (System.nanoTime() - t0) / 1e9 / pool1.length
       println(f"reference $paths x ${years}y: $refSecs%.3f s an evaluation\n")
       println("  ensemble      rank corr   feasibility agrees   s/eval   speedup")
       val refRaw = reference.map(_.raw)
       val rows = ens.flatMap { (p, y) =>
         val t = System.nanoTime()
         val got = scoreAll(p, y)
-        val secs = (System.nanoTime() - t) / 1e9 / pool.length
+        val secs = (System.nanoTime() - t) / 1e9 / pool1.length
         val agree = got.zip(reference).count((a, b) => a.feasible == b.feasible)
         println(f"  $p%3d x $y%3dy      ${spearman(got.map(_.raw), refRaw)}%9.3f   " +
-                f"$agree%10d of ${pool.length}%-6d   $secs%6.3f   ${refSecs / secs}%5.1fx")
-        pool.indices.map { i =>
+                f"$agree%10d of ${pool1.length}%-6d   $secs%6.3f   ${refSecs / secs}%5.1fx")
+        pool1.indices.map { i =>
           f"$p\t$y\t${pool(i)._1}\t${got(i).feasible}\t${got(i).raw}%.6f\t" +
           f"${reference(i).feasible}\t${reference(i).raw}%.6f"
         }
@@ -1093,7 +1108,8 @@ object MarketSimSearch:
                           "bar" -> f"$bar%.4f",
                           "seeds" -> (if seedSpec.isEmpty then "(all)" else seedSpec),
                           // the seed worlds' own values, not only their names: see `seedWorldsDigest`
-                          "seedWorlds" -> seedWorldsDigest(pool),
+                          "seedWorlds" -> seedWorldsDigest(pool1),
+                          "seedSet" -> (if seedSet.isEmpty then "(none)" else seedSet),
                           // how a candidate's reads are seeded: see `candidateSeed`
                           "candidateSeeds" -> candidateSeeds,
                           "noiseReads" -> noiseReads,
@@ -1177,7 +1193,7 @@ object MarketSimSearch:
         // them left nothing to search from.  Their misses are priced as any band's; every
         // candidate, and a `-holdout` re-score of every member, is held to the gap.
         val seedObj = obj.withoutGap
-        pool.map { (nm, w) =>
+        pool1.map { (nm, w) =>
           val r = judge(w, dialsOf(w), anchors, transport, paths, years,
                         (0 until reps).toVector.map(k => base + k * ReadStride), seedObj)
           println(f"  $nm%-24s ${if r.feasible then "feasible" else "REJECTED"}%-9s " +

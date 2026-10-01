@@ -241,7 +241,10 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 // `sma10 false-exit return %`, `sma10 exits per year` and `market sign12 trend %/mo`
 // (`TIMING_ROWS`), single-history rows against CRSP's month-end closes with their own
 // `historyBand`.
-const EMIT_SCHEMA: u32 = 26;
+// 26 -> 27: THE SLOW DECLINE's dials. `world` gained `recessReprice`, `recessBase`, `recessShape`,
+// `overshoot`, `overshootRate` and `recessRecMult`; a world at their defaults is byte-identical
+// to its schema-26 counterpart except the schema number and the new world fields.
+const EMIT_SCHEMA: u32 = 27;
 
 /// Frozen structural constants of the volume channel — see the `vol_idio` field. Measured
 /// from the SPY/QQQ volume-on-range regression (`bars-2026-09-01.tsv`, whose rows the
@@ -592,6 +595,9 @@ pub fn default_world() -> World {
         recess_reprice: 1.0,
         recess_base: 0.0,
         recess_shape: 0.0,
+        overshoot: 0.0,
+        overshoot_rate: 0.1,
+        recess_rec_mult: 2.0,
         regime_drift: 0.0,
         drift_sd: 0.04,
         boom_fade: 1.0,
@@ -871,6 +877,9 @@ fn v0_19_2() -> World {
         recess_reprice: 1.0,
         recess_base: 0.0,
         recess_shape: 0.0,
+        overshoot: 0.0,
+        overshoot_rate: 0.1,
+        recess_rec_mult: 2.0,
         regime_drift: 0.0,
         drift_sd: 0.04,
         boom_fade: 1.0,
@@ -977,6 +986,9 @@ fn v0_24_1() -> World {
         recess_reprice: 1.0,
         recess_base: 0.0,
         recess_shape: 0.0,
+        overshoot: 0.0,
+        overshoot_rate: 0.1,
+        recess_rec_mult: 2.0,
         regime_drift: 0.0,
         drift_sd: 0.04,
         boom_fade: 1.0,
@@ -1830,6 +1842,9 @@ fn v0_23_0() -> World {
         recess_reprice: 1.0,
         recess_base: 0.0,
         recess_shape: 0.0,
+        overshoot: 0.0,
+        overshoot_rate: 0.1,
+        recess_rec_mult: 2.0,
         regime_drift: 0.0,
         drift_sd: 0.04,
         boom_fade: 1.0,
@@ -1962,6 +1977,9 @@ fn v0_22_1() -> World {
         recess_reprice: 1.0,
         recess_base: 0.0,
         recess_shape: 0.0,
+        overshoot: 0.0,
+        overshoot_rate: 0.1,
+        recess_rec_mult: 2.0,
         regime_drift: 0.0,
         drift_sd: 0.04,
         boom_fade: 1.0,
@@ -2096,6 +2114,9 @@ fn v0_22_0() -> World {
         recess_reprice: 1.0,
         recess_base: 0.0,
         recess_shape: 0.0,
+        overshoot: 0.0,
+        overshoot_rate: 0.1,
+        recess_rec_mult: 2.0,
         regime_drift: 0.0,
         drift_sd: 0.04,
         boom_fade: 1.0,
@@ -2230,6 +2251,9 @@ fn v0_21_0() -> World {
         recess_reprice: 1.0,
         recess_base: 0.0,
         recess_shape: 0.0,
+        overshoot: 0.0,
+        overshoot_rate: 0.1,
+        recess_rec_mult: 2.0,
         regime_drift: 0.0,
         drift_sd: 0.04,
         boom_fade: 1.0,
@@ -2431,6 +2455,9 @@ fn v0_20_0() -> World {
         recess_reprice: 1.0,
         recess_base: 0.0,
         recess_shape: 0.0,
+        overshoot: 0.0,
+        overshoot_rate: 0.1,
+        recess_rec_mult: 2.0,
         regime_drift: 0.0,
         drift_sd: 0.04,
         boom_fade: 1.0,
@@ -2611,6 +2638,20 @@ pub struct World {
     /// leg, the record's shape (the first quarter of a long decline carries a fifth of the fall,
     /// the last quarter half). 0 is the even slide and bit-identical.
     pub recess_shape: f64,
+    /// THE OVERSHOOT (probe, 2026-10-01, CLI only): the share of the spiral's amplification of a
+    /// session's flow and noise that is transient -- liquidity moved the price further than the
+    /// order warranted, and the excess is given back over the following sessions at
+    /// `overshoot_rate` per session. Inside the record's declines the daily path mean-reverts
+    /// (VR250 0.75 from 1954) while the model's trends (1.68): the plunges and the bear rallies
+    /// both overshoot and partly reverse, the churn a slow decline is made of. 0 is off and
+    /// bit-identical.
+    pub overshoot: f64,
+    /// the overshoot's return rate per session (see `overshoot`)
+    pub overshoot_rate: f64,
+    /// THE RECOVERY'S LENGTH (probe, 2026-10-01, CLI only) as a multiple of `recess_len`: 2 is the
+    /// shipped leg and bit-identical; 1 regains the share over the decline's own length, the
+    /// record's V (2009, 1933), which turns the slide-and-regain into a reversal inside the year
+    pub recess_rec_mult: f64,
     /// THE REGIME'S DRIFT: during a credit-regime spell the real fundamental and the price fall
     /// together by this x the spell's level per session, repriced the same session so the value
     /// pull does not buy it back. The regime was a zero-mean turbulent spell; the record's
@@ -3481,6 +3522,17 @@ pub fn ln_det(x: f64) -> f64 {
     }
     let ef = f64::from(e);
     (ef * LN2_HI + 2.0 * sum) + ef * LN2_LO
+}
+
+/// `x^k` for x in [0, 1] through `exp_det` and `ln_det`, so both twins agree to the bit where a
+/// platform `pow` need not; 0 at 0.
+#[must_use]
+pub fn pow_det(x: f64, k: f64) -> f64 {
+    if x <= 0.0 {
+        0.0
+    } else {
+        exp_det(k * ln_det(x))
+    }
 }
 
 /// tanh from `exp_det` via (e^2x - 1)/(e^2x + 1), so the twins agree to the bit; past +-20 the
@@ -5478,6 +5530,8 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
     let mut recess_left = 0usize;
     let mut recess_step = 0.0f64;
     let mut recess_total = 0usize;
+    // the overshoot owed back to the price, in log units (see `overshoot`)
+    let mut over_owed = 0.0f64;
     let mut rrec_left = 0usize;
     let mut rrec_step = 0.0f64;
     let mut recess_count = 0usize;
@@ -5628,7 +5682,7 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
                     let t = (recess_total - recess_left) as f64;
                     let tt = recess_total as f64;
                     let k = w.recess_shape + 1.0;
-                    w.recess_size * (((t + 1.0) / tt).powf(k) - (t / tt).powf(k))
+                    w.recess_size * (pow_det((t + 1.0) / tt, k) - pow_det(t / tt, k))
                 } else {
                     recess_step
                 };
@@ -5638,7 +5692,8 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
                 if recess_left == 0 && w.recess_recover > 0.0 {
                     // regained over twice the decline's length: a recovery leg that outruns
                     // the price puts the price under its fundamental for years (the lower wing)
-                    rrec_left = ((2.0 * w.recess_len * DAYS_PER_YEAR as f64) as usize).max(1);
+                    rrec_left =
+                        ((w.recess_rec_mult * w.recess_len * DAYS_PER_YEAR as f64) as usize).max(1);
                     rrec_step = w.recess_recover * w.recess_size / rrec_left as f64;
                 }
             } else {
@@ -5995,7 +6050,7 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
             // (k+1)(t/T)^k, mean 1 over the slide, so the vol peaks where the fall is steepest
             let share = if w.recess_shape > 0.0 {
                 let t = (recess_total - recess_left) as f64 / recess_total as f64;
-                (w.recess_shape + 1.0) * t.powf(w.recess_shape)
+                (w.recess_shape + 1.0) * pow_det(t, w.recess_shape)
             } else {
                 1.0
             };
@@ -6301,6 +6356,12 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
             lev = borrow * (1.0 + dd_s);
         }
         let mut step_in = eq_flow + eq_shock;
+        if w.overshoot > 0.0 && over_owed != 0.0 {
+            // the give-back, sized in return like the deleveraging's input
+            let back = w.overshoot_rate * over_owed;
+            step_in -= back / eq_m.liquidity();
+            over_owed -= back;
+        }
         if delev_now > 0.0 {
             // sized in return: the step multiplies its input by the liquidity it reads here
             step_in -= delev_now / eq_m.liquidity();
@@ -6330,6 +6391,10 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
         }
         markdown_prev = markdown;
         let ret_e = eq_m.step(perceived_fair, step_in);
+        if w.overshoot > 0.0 {
+            // the amplification's excess over the unamplified order: (amp - 1) x input x impact
+            over_owed += w.overshoot * step_in * (eq_m.last_liq - eq_m.impact);
+        }
         if w.vol_resp > 0.0 || w.jump_resp > 0.0 {
             // The REALIZED decline, in units of the sd that generated it, saturated at four like
             // the kick's and centred at a normal's E[max(-z,0)] so the state has mean zero and the
@@ -11405,6 +11470,9 @@ pub struct Anchors {
     pub timing_window: &'static str,
     pub timing_years: usize,
     pub timing: [f64; 4],
+    /// the sd of `sma10 decline avoided %` across single histories of the set's recipe over the
+    /// record (30 x 100 years, 2026-10-01): what the loss weighs the row by
+    pub timing_sd: f64,
     pub bubble_coupling: f64,
     pub bubble_coupling_sd: f64,
     /// THE LARGEST 3-YEAR RUN-UP's and THE LONGEST CALM STRETCH's records over the bubble window
@@ -12269,6 +12337,7 @@ const SP500_ANCHORS: Anchors = Anchors {
     timing_window: "CRSP month-ends 1926-2026",
     timing_years: 100,
     timing: [64.682098, 5.818947, 0.750000, 0.656168],
+    timing_sd: 0.174,
     bubble_coupling: 0.114404,
     bubble_coupling_sd: 1.07,
     run_up_3y: 0.872450,
@@ -12422,6 +12491,7 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     timing_window: "CRSP month-ends 1926-2026",
     timing_years: 100,
     timing: [64.682098, 5.818947, 0.750000, 0.656168],
+    timing_sd: 0.172,
     bubble_coupling: 1.042337,
     bubble_coupling_sd: 0.25,
     run_up_3y: 1.753345,
@@ -12791,13 +12861,15 @@ pub fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
         ),
     ];
     rows.extend(multi_year_targets(a));
-    // THE TIMING ROWS (`TIMING_ROWS`), single-history graded like the multi-year rows, weight 0
+    // THE TIMING ROWS (`TIMING_ROWS`), single-history graded like the multi-year rows; the avoided
+    // share carries judgment 0.5 (the row the withdrawal objective hangs on; one statistic of ~10
+    // episodes a century), the other three weight 0
     rows.extend([
         (
             TIMING_ROWS[0],
             (|st| st.timing[0]) as StatFn,
             a.timing[0],
-            0.0,
+            wgt(0.5, a.timing_sd),
         ),
         (
             TIMING_ROWS[1],
@@ -14827,7 +14899,7 @@ const IDENTITY_PARAMS: &[&str] = &["duration", "divYield"];
 /// are in this order too, so the order is also the archive's format. Same shape as `EMIT_SCHEMA` /
 /// `EmitSchema`: the literal is in the model, checked by each twin's own contract test, and
 /// changing one twin without the other cannot pass.
-pub const CALIBRATE_DIAL_ORDER: [&str; 72] = [
+pub const CALIBRATE_DIAL_ORDER: [&str; 78] = [
     "depth",
     "trendShare",
     "drift",
@@ -14900,6 +14972,12 @@ pub const CALIBRATE_DIAL_ORDER: [&str; 72] = [
     "delevFrom",
     "delevSize",
     "delevLen",
+    "recessReprice",
+    "recessBase",
+    "recessShape",
+    "overshoot",
+    "overshootRate",
+    "recessRecMult",
 ];
 
 /// THE SEARCHED DIALS STEPPED AND MEASURED IN LOG COORDINATES, ln(1 + x), by the calibration search
@@ -15418,6 +15496,48 @@ pub fn calibrate_ranges() -> Vec<(&'static str, f64, f64, Setter, Getter)> {
             1.0,
             |w, x| w.delev_len = x,
             |w| w.delev_len,
+        ),
+        (
+            "recessReprice",
+            0.0,
+            1.0,
+            |w, x| w.recess_reprice = x,
+            |w| w.recess_reprice,
+        ),
+        (
+            "recessBase",
+            0.0,
+            1.5,
+            |w, x| w.recess_base = x,
+            |w| w.recess_base,
+        ),
+        (
+            "recessShape",
+            0.0,
+            3.0,
+            |w, x| w.recess_shape = x,
+            |w| w.recess_shape,
+        ),
+        (
+            "overshoot",
+            0.0,
+            1.0,
+            |w, x| w.overshoot = x,
+            |w| w.overshoot,
+        ),
+        (
+            "overshootRate",
+            0.05,
+            0.4,
+            |w, x| w.overshoot_rate = x,
+            |w| w.overshoot_rate,
+        ),
+        (
+            "recessRecMult",
+            0.5,
+            2.0,
+            |w, x| w.recess_rec_mult = x,
+            |w| w.recess_rec_mult,
         ),
     ]
 }
@@ -18328,6 +18448,11 @@ pub fn world_json_body_fmt(w: &World, num: &dyn Fn(f64) -> String) -> Vec<String
         ("recessNews", num(w.recess_news)),
         ("recessVol", num(w.recess_vol)),
         ("recessReprice", num(w.recess_reprice)),
+        ("recessBase", num(w.recess_base)),
+        ("recessShape", num(w.recess_shape)),
+        ("overshoot", num(w.overshoot)),
+        ("overshootRate", num(w.overshoot_rate)),
+        ("recessRecMult", num(w.recess_rec_mult)),
         ("regimeDrift", num(w.regime_drift)),
         ("driftSd", num(w.drift_sd)),
         ("boomFade", num(w.boom_fade)),
@@ -19530,6 +19655,9 @@ pub fn main() {
     let mut recess_reprice = dw.recess_reprice;
     let mut recess_base = dw.recess_base;
     let mut recess_shape = dw.recess_shape;
+    let mut overshoot = dw.overshoot;
+    let mut overshoot_rate = dw.overshoot_rate;
+    let mut recess_rec_mult = dw.recess_rec_mult;
     let mut regime_drift = dw.regime_drift;
     let mut drift_sd = dw.drift_sd;
     let mut boom_fade = dw.boom_fade;
@@ -19709,6 +19837,9 @@ pub fn main() {
             "-recessreprice" => recess_reprice = req_f64(&mut it, "-recessreprice"),
             "-recessbase" => recess_base = req_f64(&mut it, "-recessbase"),
             "-recessshape" => recess_shape = req_f64(&mut it, "-recessshape"),
+            "-overshoot" => overshoot = req_f64(&mut it, "-overshoot"),
+            "-overshootrate" => overshoot_rate = req_f64(&mut it, "-overshootrate"),
+            "-recessrecmult" => recess_rec_mult = req_f64(&mut it, "-recessrecmult"),
             "-regimedrift" => regime_drift = req_f64(&mut it, "-regimedrift"),
             "-driftsd" => drift_sd = req_f64(&mut it, "-driftsd"),
             "-boomfade" => boom_fade = req_f64(&mut it, "-boomfade"),
@@ -20069,6 +20200,19 @@ pub fn main() {
                 "-recessreprice {recess_reprice} must be in [0, 1]"
             ));
         }
+        non_neg("-recessbase", recess_base);
+        non_neg("-recessshape", recess_shape);
+        if !(0.0..=1.0).contains(&overshoot) {
+            cli_die(&format!("-overshoot {overshoot} must be in [0, 1]"));
+        }
+        if !(overshoot_rate > 0.0 && overshoot_rate <= 1.0) {
+            cli_die(&format!(
+                "-overshootrate {overshoot_rate} must be in (0, 1]"
+            ));
+        }
+        if recess_rec_mult <= 0.0 {
+            cli_die(&format!("-recessrecmult {recess_rec_mult} must be above 0"));
+        }
         if recess_vol < 0.0 {
             cli_die(&format!("-recessvol {recess_vol} must be at least 0"));
         }
@@ -20221,6 +20365,9 @@ pub fn main() {
         recess_reprice,
         recess_base,
         recess_shape,
+        overshoot,
+        overshoot_rate,
+        recess_rec_mult,
         regime_drift,
         drift_sd,
         boom_fade,

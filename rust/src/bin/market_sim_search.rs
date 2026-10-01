@@ -1614,6 +1614,10 @@ fn usage(msg: &str) -> ! {
   -noregress R  ; price every row a candidate holds further from its record than recipe R does,
                 ;   by the difference (R read at the search's ensemble, the mean of six reads):
                 ;   the release rule, which a dead zone alone lets every row drift inside
+  -seedset KV   ; comma-separated DIAL=VALUE (e.g. 'overshoot=0.8,recessBase=1') applied to every
+                ;   seed world before the search starts: the lineage roots at the recipe moved to a
+                ;   form found by hand, and the quality bar is judged against that world.  Searched
+                ;   dials only; recorded in the checkpoint with the seed worlds' digest
   -fix DIALS    ; comma-separated dials (e.g. 'disasterSize,disasterOvershoot') every child keeps
                 ;   at its parent's value, so at the seed's: the dials read off the record rather
                 ;   than solved.  The draws are made as without it, so the other dials step alike
@@ -1661,6 +1665,8 @@ struct Cfg {
     hold: String,
     /// dials held at the parent's value (`-fix`): read off the record, never searched
     fix: String,
+    /// searched dials moved on every seed world before the search starts (`-seedset`)
+    seed_set: String,
     gate: String,
     /// the share of children drawn from the archive's own covariance
     cov: f64,
@@ -1695,6 +1701,7 @@ fn parse_args() -> Cfg {
         gap: String::new(),
         hold: String::new(),
         fix: String::new(),
+        seed_set: String::new(),
         gate: "realism,mechanism".into(),
         cov: 0.0,
         cov_shrink: 0.3,
@@ -1740,6 +1747,7 @@ fn parse_args() -> Cfg {
             "-hold" => c.hold = need(&mut i, "-hold"),
             "-gap" => c.gap = need(&mut i, "-gap"),
             "-fix" => c.fix = need(&mut i, "-fix"),
+            "-seedset" => c.seed_set = need(&mut i, "-seedset"),
             "-h" | "-help" | "--help" => usage(""),
             a => usage(&format!("unrecognized arg [{a}]")),
         }
@@ -1841,6 +1849,45 @@ fn main() {
             ));
         }
         got
+    };
+    let pool: Vec<(String, World)> = if c.seed_set.is_empty() {
+        pool
+    } else {
+        let rs = ms::calibrate_ranges();
+        let moves: Vec<(ms::Setter, f64)> = c
+            .seed_set
+            .split(',')
+            .map(str::trim)
+            .filter(|x| !x.is_empty())
+            .map(|kv| {
+                let (k, v) = kv
+                    .split_once('=')
+                    .unwrap_or_else(|| usage(&format!("-seedset wants DIAL=VALUE, got [{kv}]")));
+                let x: f64 = v
+                    .trim()
+                    .parse()
+                    .unwrap_or_else(|_| usage(&format!("-seedset [{kv}]: not a number")));
+                let set = rs
+                    .iter()
+                    .find(|r| r.0 == k.trim())
+                    .map(|r| r.3)
+                    .unwrap_or_else(|| {
+                        usage(&format!(
+                            "-seedset names [{}], which is not a searched dial",
+                            k.trim()
+                        ))
+                    });
+                (set, x)
+            })
+            .collect();
+        pool.into_iter()
+            .map(|(n, mut w)| {
+                for (set, x) in &moves {
+                    set(&mut w, *x);
+                }
+                (n, w)
+            })
+            .collect()
     };
     let seed_world: HashMap<String, World> = pool.iter().cloned().collect();
     let world_for =
@@ -2125,6 +2172,14 @@ fn main() {
         ),
         // the seed worlds' own values, not only their names: see `seed_worlds_digest`
         ("seedWorlds".into(), seed_worlds_digest(&pool)),
+        (
+            "seedSet".into(),
+            if c.seed_set.is_empty() {
+                "(none)".to_string()
+            } else {
+                c.seed_set.clone()
+            },
+        ),
         // how a candidate's reads are seeded: see `candidate_seed`
         ("candidateSeeds".into(), candidate_seeds),
         ("noiseReads".into(), noise_reads),

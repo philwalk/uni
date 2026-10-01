@@ -272,7 +272,10 @@ object MarketSim:
   // `sma10 false-exit return %`, `sma10 exits per year` and `market sign12 trend %/mo`
   // (`TimingRows`), single-history rows against CRSP's month-end closes with their own
   // `historyBand`.
-  val EmitSchema: Int = 26
+  // 26 -> 27: THE SLOW DECLINE's dials. `world` gained `recessReprice`, `recessBase`, `recessShape`,
+  // `overshoot`, `overshootRate` and `recessRecMult`; a world at their defaults is byte-identical
+  // to its schema-26 counterpart except the schema number and the new world fields.
+  val EmitSchema: Int = 27
 
   val EmitSidecarKeys: Vector[String] =
     Vector("generator", "version", "schema", "file", "columns", "header", "path", "world",
@@ -604,6 +607,14 @@ object MarketSim:
     s"              ;   take while a recession runs (default ${Defaults.recessVol}; 0 is off)",
     s"-recessreprice X ; share of each recession step the price takes the same session; the rest",
     s"              ;   is a gap the value channel trades through (default ${Defaults.recessReprice})",
+    s"-recessbase B  ; added to the stress index in the recession's onset hazard, so a recession can",
+    s"              ;   start in a calm market (default ${Defaults.recessBase}; 0 is off)",
+    s"-recessshape k ; the slide's sessions take shares of -recesssize growing as (t/T)^k: a slow start",
+    s"              ;   and a steep end (default ${Defaults.recessShape}; 0 is the even slide)",
+    s"-overshoot S   ; share of the spiral's amplification given back over the following sessions",
+    s"              ;   (default ${Defaults.overshoot}; 0 is off)",
+    s"-overshootrate X ; the give-back per session (default ${Defaults.overshootRate})",
+    s"-recessrecmult M ; the recovery's length as a multiple of -recesslen (default ${Defaults.recessRecMult})",
     s"-regimedrift X ; the decline of the fundamental and the price per session, times the credit",
     s"              ;   regime's level, while a spell runs (default ${Defaults.regimeDrift}; 0 is off)",
     s"-driftsd X     ; the sd, a year, of the drift the fundamental redraws every 1-11 years",
@@ -992,6 +1003,20 @@ object MarketSim:
                                  // decline carries a fifth of the fall, the last quarter half);
                                  // `recessVol`'s multiplier follows the same share.  0 is the even
                                  // slide and bit-identical.
+    overshoot: Double = 0.0,     // THE OVERSHOOT (2026-10-01): the share of the spiral's
+                                 // amplification of a session's flow and noise that is transient
+                                 // -- liquidity moved the price further than the order warranted,
+                                 // and the excess is given back over the following sessions at
+                                 // `overshootRate` per session.  Inside the record's declines the
+                                 // daily path mean-reverts (VR250 0.75 from 1954) while the
+                                 // model's trends (1.68): the plunges and the bear rallies both
+                                 // overshoot and partly reverse, the churn a slow decline is made
+                                 // of.  0 is off and bit-identical.
+    overshootRate: Double = 0.1, // the overshoot's return rate per session (see `overshoot`)
+    recessRecMult: Double = 2.0, // THE RECOVERY'S LENGTH as a multiple of `recessLen`: 2 is the
+                                 // shipped leg and bit-identical; 1 regains the share over the
+                                 // decline's own length, the record's V (2009, 1933), which turns
+                                 // the slide-and-regain into a reversal inside the year
     regimeDrift: Double = 0.0,   // THE REGIME'S DRIFT: during a credit-regime spell the real
                                  // fundamental and the price fall together by this x the spell's
                                  // level per session, repriced the same session: the turbulent
@@ -2464,6 +2489,10 @@ object MarketSim:
     * s = (m - 1) / (m + 1), then (e ln2hi + ln m) + e ln2lo with fdlibm's split ln2 -- `Svg.log10`'s
     * series without the change of base, operation for operation in both twins, so they agree TO
     * THE BIT.  NaN for x <= 0 or NaN, +inf for +inf. */
+  /** `x^k` for x in [0, 1] through `expDet` and `lnDet`, so both twins agree to the bit where a
+    * platform `pow` need not; 0 at 0. */
+  def powDet(x: Double, k: Double): Double = if x <= 0.0 then 0.0 else expDet(k * lnDet(x))
+
   def lnDet(x: Double): Double =
     if x.isNaN || x <= 0.0 then Double.NaN
     else if x == Double.PositiveInfinity then Double.PositiveInfinity
@@ -2609,6 +2638,8 @@ object MarketSim:
     /** The liquidity multiplier this session's step will apply to flow and noise, read before
       * the step: `lastLiq`'s expression. */
     def liquidity: Double = (1.0 + stressK * stressAmp * levMult * gainMult) * impact
+    /** the base impact, the liquidity's floor */
+    def baseImpact: Double = impact
 
     /** The return `step` would make of `flowPlusNoise`, halts and clamps aside: affine in the
       * input, with slope `liquidity`.  What the day flip reads before the step. */
@@ -3575,7 +3606,21 @@ object MarketSim:
 
     /** the step's input less the selling, sized in return: the step multiplies its input by the
       * liquidity read here */
-    def into(x: Double, liquidity: Double): Double = if now > 0.0 then x - now / liquidity else x
+    def into(x: Double, m: Market): Double = if now > 0.0 then x - now / m.liquidity else x
+
+  /** THE OVERSHOOT's ledger (see `World.overshoot`): the amplification's excess owed back to the
+    * price, in log units.  `into` takes this session's give-back off the step's input, sized in
+    * return like the deleveraging's; `record` adds the session's excess, (amp - 1) x input x impact. */
+  private final class Overshoot(w: World):
+    var owed = 0.0
+    def into(x: Double, m: Market): Double =
+      if w.overshoot > 0.0 && owed != 0.0 then
+        val back = w.overshootRate * owed
+        owed -= back
+        x - back / m.liquidity
+      else x
+    def record(stepIn: Double, m: Market): Unit =
+      if w.overshoot > 0.0 then owed += w.overshoot * stepIn * (m.lastLiq - m.baseImpact)
 
   /** THE BUST SWING's state (item 25, see `bustAmp`): the gap's slow mean, the level at the
     * running peak, the armed state, the episode's low and the sessions since it, the swing and
@@ -3681,7 +3726,7 @@ object MarketSim:
   private[apps] def recessionStep(w: World, total: Int, left: Int, even: Double): Double =
     if w.recessShape > 0.0 then
       val t = (total - left).toDouble; val tt = total.toDouble; val k = w.recessShape + 1.0
-      w.recessSize * (Math.pow((t + 1.0) / tt, k) - Math.pow(t / tt, k))
+      w.recessSize * (powDet((t + 1.0) / tt, k) - powDet(t / tt, k))
     else even
   private[apps] def recessionVolMult(w: World, regimeM0: Double, recessLeft: Int, recessTotal: Int): Double =
     if recessLeft > 0 && w.recessVol > 0.0 then
@@ -3689,7 +3734,7 @@ object MarketSim:
       // (k+1)(t/T)^k, mean 1 over the slide, so the vol peaks where the fall is steepest
       val share =
         if w.recessShape > 0.0 then
-          (w.recessShape + 1.0) * Math.pow((recessTotal - recessLeft).toDouble / recessTotal, w.recessShape)
+          (w.recessShape + 1.0) * powDet((recessTotal - recessLeft).toDouble / recessTotal, w.recessShape)
         else 1.0
       regimeM0 * Math.exp(w.recessVol * share)
     else regimeM0
@@ -3928,6 +3973,7 @@ object MarketSim:
     val boomProb = w.boomRate / (100.0 * DaysPerYear)
     val boomFade = boomFadeOf(w)
     val delev = new Deleveraging(w, seed)
+    val over = new Overshoot(w)
     var boom = 0.0; var boomLeft = 0; var boomStep = 0.0; var boomCount = 0
     // THE CHANNELS' INPUTS, recorded per session and sampled AFTER the loop by `deriveChannels`
     // (see it for why the level is a world constant, never read off the path being emitted): the
@@ -3993,7 +4039,7 @@ object MarketSim:
           if recessLeft == 0 && w.recessRecover > 0.0 then
             // regained over twice the decline's length: a recovery leg that outruns the price
             // puts the price under its fundamental for years (the lower wing)
-            rrecLeft = max(1, (2.0 * w.recessLen * DaysPerYear).toInt)
+            rrecLeft = max(1, (w.recessRecMult * w.recessLen * DaysPerYear).toInt)
             rrecStep = w.recessRecover * w.recessSize / rrecLeft
         else
           if rrecLeft > 0 then
@@ -4381,7 +4427,7 @@ object MarketSim:
         lev = borrow * (1.0 + ddS)
       // THE DAY FLIP (see `newsFlip`): the day's would-be return, reflected when the draw fires;
       // the debt the flips cannot pay at q0 = 1 is a lift
-      val x0 = delev.into(eqFlow + eqShockA, eqM.liquidity)
+      val x0 = delev.into(over.into(eqFlow + eqShockA, eqM), eqM)
       val stepIn =
         if flipOwed > 0.0 then
           val sd = newsDamp * SigmaN * newsVolMultiplier(w, logVol, volNorm, kickS, volRespS) * asymM * regimeM
@@ -4391,6 +4437,7 @@ object MarketSim:
         else x0
       markdownPrev = markdown
       val retE = eqM.step(perceivedFair, stepIn)
+      over.record(stepIn, eqM)
       if w.volResp > 0.0 || w.jumpResp > 0.0 then
         // The REALIZED decline, in units of the sd that generated it, saturated at four like the
         // kick's and centred at a normal's E[max(-z,0)] so the state has mean zero and the
@@ -6500,6 +6547,9 @@ object MarketSim:
     // CRSP's month-end closes with dividends, the century, one ruler for both sets, read on the
     // world's histories of `timingYears`
     timingWindow: String, timingYears: Int, timing: Vector[Double],
+    // the sd of `sma10 decline avoided %` across single histories of the set's recipe over the record
+    // (30 x 100 years, 2026-10-01): what the loss weighs the row by
+    timingSd: Double,
     bubbleCoupling: Double, bubbleCouplingSd: Double,
     // THE LARGEST 3-YEAR RUN-UP's and THE LONGEST CALM STRETCH's records over the bubble window
     // (`runUp3yOf`, `calmStretchOf`, the same fixture): reported, not graded.  Each is one number
@@ -6845,6 +6895,7 @@ object MarketSim:
     tailWindow = "CRSP 1926-2026, the century", tailYears = 100,
     bubbleWindow = "CRSP 1926-2026, the century", bubbleYears = 100,
     timingWindow = "CRSP month-ends 1926-2026", timingYears = 100, timing = Vector(64.682098, 5.818947, 0.750000, 0.656168),
+    timingSd = 0.174,
     bubbleCoupling = 0.114404, bubbleCouplingSd = 1.07,
     runUp3y = 0.872450, calmStretch = 2190.0,
     multiYear = Vector(-0.127487, 0.745759, 0.732112, 0.324081, 8.599206, 0.662698, 2.527778, 12.589751),
@@ -6947,6 +6998,7 @@ object MarketSim:
     tailWindow = "QQQ 1999-2026", tailYears = 27,
     bubbleWindow = "NDX 1990-2026", bubbleYears = 37,
     timingWindow = "CRSP month-ends 1926-2026", timingYears = 100, timing = Vector(64.682098, 5.818947, 0.750000, 0.656168),
+    timingSd = 0.172,
     bubbleCoupling = 1.042337, bubbleCouplingSd = 0.25,
     runUp3y = 1.753345, calmStretch = 1927.0,
     multiYear = Vector(0.007813, 0.993439, 0.894362, 0.438273, 18.396825, 0.317460, 2.523810, 53.729182),
@@ -7093,8 +7145,11 @@ object MarketSim:
         (names(k), MultiYearStats(k), records(k), weight)
     rows(MultiYearRows, a.multiYear, a.multiYearVrSd, a.declineGapSd(0)) ++
       rows(MultiYearLongRows, a.multiYearLong, a.multiYearLongVrSd, a.declineGapSd(1)) ++
-      // THE TIMING ROWS (`TimingRows`), single-history graded like the multi-year rows, weight 0
-      TimingRows.indices.toVector.map(k => (TimingRows(k), (st: WorldStats) => st.timing(k), a.timing(k), 0.0))
+      // THE TIMING ROWS (`TimingRows`), single-history graded like the multi-year rows; the avoided
+      // share carries judgment 0.5 (the row the withdrawal objective hangs on; one statistic of ~10
+      // episodes a century), the other three weight 0
+      TimingRows.indices.toVector.map(k =>
+        (TimingRows(k), (st: WorldStats) => st.timing(k), a.timing(k), if k == 0 then wgt(0.5, a.timingSd) else 0.0))
 
   /** THE ROWS THE MULTI-YEAR ROWS REPLACED, reported and not graded: name, the world's reading,
     * the record.  The run-up and the calm stretch are one number from one history each; the 20%
@@ -9022,7 +9077,8 @@ object MarketSim:
     "recessSize", "recessLen", "recessRecover", "recessNews", "recessVol", "regimeDrift", "spreadDd",
     "disasterAnticipate", "disasterOvershoot",
     "volPull", "discountLag",
-    "discountRef", "driftSd", "boomFade", "delevRate", "delevFrom", "delevSize", "delevLen")
+    "discountRef", "driftSd", "boomFade", "delevRate", "delevFrom", "delevSize", "delevLen",
+    "recessReprice", "recessBase", "recessShape", "overshoot", "overshootRate", "recessRecMult")
 
   val CalibrateRanges: Vector[DialRange] = Vector(
     ("depth",       8.0,  26.0, (w, x) => w.copy(depth = x), _.depth),
@@ -9163,6 +9219,12 @@ object MarketSim:
     ("delevFrom",    0.0,  6.00, (w, x) => w.copy(delevFrom = x), _.delevFrom),
     ("delevSize",    0.05, 0.60, (w, x) => w.copy(delevSize = x), _.delevSize),
     ("delevLen",     0.02, 1.00, (w, x) => w.copy(delevLen = x), _.delevLen),
+    ("recessReprice", 0.0, 1.00, (w, x) => w.copy(recessReprice = x), _.recessReprice),
+    ("recessBase",   0.0,  1.50, (w, x) => w.copy(recessBase = x), _.recessBase),
+    ("recessShape",  0.0,  3.00, (w, x) => w.copy(recessShape = x), _.recessShape),
+    ("overshoot",    0.0,  1.00, (w, x) => w.copy(overshoot = x), _.overshoot),
+    ("overshootRate", 0.05, 0.40, (w, x) => w.copy(overshootRate = x), _.overshootRate),
+    ("recessRecMult", 0.5, 2.00, (w, x) => w.copy(recessRecMult = x), _.recessRecMult),
   )
 
   def calibrate(a: Anchors, nSamples: Int, base: World, seed: Long): Unit =
@@ -10839,7 +10901,9 @@ object MarketSim:
       ("recessRate", num(w.recessRate)), ("recessSize", num(w.recessSize)),
       ("recessLen", num(w.recessLen)), ("recessRecover", num(w.recessRecover)),
       ("recessNews", num(w.recessNews)), ("recessVol", num(w.recessVol)),
-      ("recessReprice", num(w.recessReprice)),
+      ("recessReprice", num(w.recessReprice)), ("recessBase", num(w.recessBase)),
+      ("recessShape", num(w.recessShape)), ("overshoot", num(w.overshoot)),
+      ("overshootRate", num(w.overshootRate)), ("recessRecMult", num(w.recessRecMult)),
       ("regimeDrift", num(w.regimeDrift)), ("driftSd", num(w.driftSd)),
       ("boomFade", num(w.boomFade)), ("delevRate", num(w.delevRate)),
       ("delevFrom", num(w.delevFrom)), ("delevSize", num(w.delevSize)),
@@ -11421,6 +11485,7 @@ ${rows.mkString(",\n")}
     var recessRecover = dw.recessRecover; var recessNews = dw.recessNews; var volPull = dw.volPull
     var recessVol = dw.recessVol; var regimeDrift = dw.regimeDrift; var spreadDd = dw.spreadDd
     var recessReprice = dw.recessReprice; var recessBase = dw.recessBase; var recessShape = dw.recessShape
+    var overshoot = dw.overshoot; var overshootRate = dw.overshootRate; var recessRecMult = dw.recessRecMult
     var disasterAnticipate = dw.disasterAnticipate; var disasterOvershoot = dw.disasterOvershoot
     var driftSd = dw.driftSd; var boomFade = dw.boomFade
     var delevRate = dw.delevRate; var delevFrom = dw.delevFrom
@@ -11544,6 +11609,9 @@ ${rows.mkString(",\n")}
       case "-recessreprice"   => recessReprice = numOr("-recessreprice", consumeNext)
       case "-recessbase"      => recessBase = numOr("-recessbase", consumeNext)
       case "-recessshape"     => recessShape = numOr("-recessshape", consumeNext)
+      case "-overshoot"       => overshoot = numOr("-overshoot", consumeNext)
+      case "-overshootrate"   => overshootRate = numOr("-overshootrate", consumeNext)
+      case "-recessrecmult"   => recessRecMult = numOr("-recessrecmult", consumeNext)
       case "-regimedrift"     => regimeDrift = numOr("-regimedrift", consumeNext)
       case "-driftsd"         => driftSd = numOr("-driftsd", consumeNext)
       case "-boomfade"        => boomFade = numOr("-boomfade", consumeNext)
@@ -11775,6 +11843,12 @@ ${rows.mkString(",\n")}
     nonNeg("-recessvol", recessVol)
     if !(recessReprice >= 0.0 && recessReprice <= 1.0) then
       usage(s"-recessreprice $recessReprice must be in [0, 1]")
+    nonNeg("-recessbase", recessBase)
+    nonNeg("-recessshape", recessShape)
+    if !(overshoot >= 0.0 && overshoot <= 1.0) then usage(s"-overshoot $overshoot must be in [0, 1]")
+    if !(overshootRate > 0.0 && overshootRate <= 1.0) then
+      usage(s"-overshootrate $overshootRate must be in (0, 1]")
+    if !(recessRecMult > 0.0) then usage(s"-recessrecmult $recessRecMult must be above 0")
     nonNeg("-regimedrift", regimeDrift)
     nonNeg("-driftsd", driftSd)
     if boomFade <= 0.0 then usage(s"-boomfade $boomFade must be above 0")
@@ -11837,6 +11911,7 @@ ${rows.mkString(",\n")}
                   recessRate = recessRate, recessSize = recessSize, recessLen = recessLen,
                   recessRecover = recessRecover, recessNews = recessNews, recessVol = recessVol,
                   recessReprice = recessReprice, recessBase = recessBase, recessShape = recessShape,
+                  overshoot = overshoot, overshootRate = overshootRate, recessRecMult = recessRecMult,
                   regimeDrift = regimeDrift, driftSd = driftSd, boomFade = boomFade,
                   delevRate = delevRate, delevFrom = delevFrom, delevSize = delevSize,
                   delevLen = delevLen,

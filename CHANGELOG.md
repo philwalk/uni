@@ -1,5 +1,36 @@
 ## v0.24.5 — 2026-09-30
 
+**The slow decline's dials**
+
+- Six dials, in both twins, searched (`CalibrateDialOrder` 72 → 78) and in every world file:
+  `-recessreprice X`, the share of each recession step (and of the recovery's) the price takes
+  the same session as the fundamental, the rest a gap the value channel trades through the step;
+  `-recessbase B`, added to the stress index in the recession's onset hazard, so a recession can
+  begin in a calm market and the stress arrives through the slide rather than before it;
+  `-recessshape k`, a convex slide whose sessions take shares of `-recesssize` growing as
+  (t/T)^k, a slow start and a steep end, with `-recessvol`'s multiplier following the same
+  share; `-overshoot S` and `-overshootrate X`, the share of the spiral's amplification of a
+  session's flow and noise that is transient, given back over the following sessions at X a
+  session; `-recessrecmult M`, the recovery leg's length as a multiple of `-recesslen`. Defaults
+  1 / 0 / 0 / 0 / 0.1 / 2 are bit-identical to v0.24.4's mechanics; the power is `pow_det`
+  (`exp_det` of `ln_det`) so the twins agree to the bit.
+- Why: the record's long declines are back-loaded — the first quarter of a 15-30 month decline
+  carries 19% of the fall and the last quarter 49%, so a ten-month moving-average exit misses
+  15% — and inside them the daily path mean-reverts (variance ratio 0.75 at 250 days, 1954-2026)
+  while the model's declines opened with the crash (37% in the first quarter, 34% missed) and
+  trended inside (1.68). A recession that starts in calm, slides convexly and is churned by the
+  overshoot reads the record's shape on both counts. On the S&P recipe at its hand-found form
+  (`-recessrate 0.08 -recessbase 1 -recessshape 1 -recessrecover 0.8 -recesslen 1.5
+  -recessnews 2.5 -overshoot 0.8 -overshootrate 0.2 -recessreprice 0.5`) the avoided share reads
+  54-57 on four seeds against the recipe's 40-44 (record 64.7), the inside-decline variance
+  ratio 1.0-1.1, kurtosis 24-27 against 27-31, vol unchanged; the recipes themselves are
+  unchanged, pending the re-solve.
+- `sma10 decline avoided %` carries judgment 0.5 in the loss (`Anchors.timing_sd`, the
+  single-history sd over the record: S&P 0.174, Nasdaq 0.172); the other three timing rows stay
+  at 0. `market_sim_search -seedset DIAL=VALUE,...` moves every seed world to a hand-found form
+  before a search, recorded in the checkpoint.
+- Sidecar schema 26 → 27: `world` gained the six dials.
+
 **The timing rows**
 
 - Four fidelity rows on what a 10-month moving-average exit does and on the market's own
