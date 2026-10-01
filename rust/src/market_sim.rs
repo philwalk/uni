@@ -238,8 +238,9 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 // byte-identical to its schema-25 counterpart except the schema number and the new zero world
 // fields.
 // 25 -> 26: THE TIMING ROWS. `gate.fidelity` gained `sma10 decline avoided %`,
-// `sma10 false-exit return %` and `sma10 exits per year` (`TIMING_ROWS`), single-history rows
-// against Shiller's monthly S&P with their own `historyBand`.
+// `sma10 false-exit return %`, `sma10 exits per year` and `market sign12 trend %/mo`
+// (`TIMING_ROWS`), single-history rows against CRSP's month-end closes with their own
+// `historyBand`.
 const EMIT_SCHEMA: u32 = 26;
 
 /// Frozen structural constants of the volume channel — see the `vol_idio` field. Measured
@@ -588,6 +589,7 @@ pub fn default_world() -> World {
         recess_recover: 0.5,
         recess_news: 1.0,
         recess_vol: 0.0,
+        recess_reprice: 1.0,
         regime_drift: 0.0,
         drift_sd: 0.04,
         boom_fade: 1.0,
@@ -864,6 +866,7 @@ fn v0_19_2() -> World {
         recess_recover: 0.5,
         recess_news: 1.0,
         recess_vol: 0.0,
+        recess_reprice: 1.0,
         regime_drift: 0.0,
         drift_sd: 0.04,
         boom_fade: 1.0,
@@ -967,6 +970,7 @@ fn v0_24_1() -> World {
         recess_recover: 0.5,
         recess_news: 1.0,
         recess_vol: 0.0,
+        recess_reprice: 1.0,
         regime_drift: 0.0,
         drift_sd: 0.04,
         boom_fade: 1.0,
@@ -1817,6 +1821,7 @@ fn v0_23_0() -> World {
         recess_recover: 0.5,
         recess_news: 1.0,
         recess_vol: 0.0,
+        recess_reprice: 1.0,
         regime_drift: 0.0,
         drift_sd: 0.04,
         boom_fade: 1.0,
@@ -1946,6 +1951,7 @@ fn v0_22_1() -> World {
         recess_recover: 0.5,
         recess_news: 1.0,
         recess_vol: 0.0,
+        recess_reprice: 1.0,
         regime_drift: 0.0,
         drift_sd: 0.04,
         boom_fade: 1.0,
@@ -2077,6 +2083,7 @@ fn v0_22_0() -> World {
         recess_recover: 0.5,
         recess_news: 1.0,
         recess_vol: 0.0,
+        recess_reprice: 1.0,
         regime_drift: 0.0,
         drift_sd: 0.04,
         boom_fade: 1.0,
@@ -2208,6 +2215,7 @@ fn v0_21_0() -> World {
         recess_recover: 0.5,
         recess_news: 1.0,
         recess_vol: 0.0,
+        recess_reprice: 1.0,
         regime_drift: 0.0,
         drift_sd: 0.04,
         boom_fade: 1.0,
@@ -2406,6 +2414,7 @@ fn v0_20_0() -> World {
         recess_recover: 0.5,
         recess_news: 1.0,
         recess_vol: 0.0,
+        recess_reprice: 1.0,
         regime_drift: 0.0,
         drift_sd: 0.04,
         boom_fade: 1.0,
@@ -2570,6 +2579,13 @@ pub struct World {
     /// at a cost in kurtosis (10.7 -> 13) and the implied vol's persistence that the search
     /// trades. 0 is off and bit-identical; searched.
     pub recess_vol: f64,
+    /// THE RECESSION'S REPRICING SHARE (probe, 2026-10-01): the share of each recession step
+    /// (and of the recovery's) taken by the price the same session as the fundamental; the rest
+    /// opens a gap the value channel sells (or buys) through the step, so the decline arrives as
+    /// the market's own legs and rallies, stress sees it and the spiral can amplify it. 1 is the
+    /// smooth repricing (bit-identical to before the dial), 0 leaves the whole decline to the
+    /// step.
+    pub recess_reprice: f64,
     /// THE REGIME'S DRIFT: during a credit-regime spell the real fundamental and the price fall
     /// together by this x the spell's level per session, repriced the same session so the value
     /// pull does not buy it back. The regime was a zero-mean turbulent spell; the record's
@@ -5583,7 +5599,7 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
                 // the recession opens no gap for the value pull to buy back and the wings (the
                 // price's time off its fundamental) are untouched
                 log_vbase -= recess_step;
-                eq_m.log_p -= recess_step;
+                eq_m.log_p -= recess_step * w.recess_reprice;
                 recess_left -= 1;
                 if recess_left == 0 && w.recess_recover > 0.0 {
                     // regained over twice the decline's length: a recovery leg that outruns
@@ -5594,7 +5610,7 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
             } else {
                 if rrec_left > 0 {
                     log_vbase += rrec_step;
-                    eq_m.log_p += rrec_step;
+                    eq_m.log_p += rrec_step * w.recess_reprice;
                     rrec_left -= 1;
                 }
                 if dis_left == 0
@@ -6914,7 +6930,7 @@ pub struct WorldStats {
     /// the eighth reads `dd_eq20`
     pub multi_year: [f64; 7],
     /// median per-path `timing_of_path`
-    pub timing: [f64; 3],
+    pub timing: [f64; 4],
     /// median per-path mean short rate, percent, and share of sessions under `RATE_FLOOR`,
     /// percent (`rate_readings`)
     pub short_rate: f64,
@@ -7647,21 +7663,27 @@ pub fn multi_year_readings(r: &[f64]) -> [f64; 8] {
 }
 
 /// THE TIMING ROWS: what a 10-month moving-average exit does on a monthly total-return index,
-/// the record's Shiller S&P (`timing-2026-09-30.tsv`). At each month's end the rule is in
-/// equity for the next month when the level is above the mean of the last `TIMING_SMA_MONTHS`
-/// month-end levels, this one included, else out; fully invested before the first decision.
-/// Over the declines of `TIMING_DECLINE_PCT` or more from the running peak (peak to trough,
-/// a decline still under way included): the share of each decline's log fall the rule was out
-/// for, averaged over the declines (`sma10 decline avoided %`); the index's cumulative return
-/// over each FALSE exit, an out-period no month of which lies in a decline's peak-to-trough
-/// window, averaged (`sma10 false-exit return %`); and the out-periods a year
-/// (`sma10 exits per year`). Graded like the multi-year rows, by where the record falls among the
-/// world's single histories, since a one-year block resample keeps no decline whole. Read on
-/// month-end levels, one a month; NaN where the record has no decline or no false exit.
-pub const TIMING_ROWS: [&str; 3] = [
+/// and the index's own one-year trend; the record's CRSP month-end closes 1926-2026
+/// (`timing-2026-09-30.tsv`). At each month's end the rule is in equity for the next month when
+/// the level is above the mean of the last `TIMING_SMA_MONTHS` month-end levels, this one
+/// included, else out; fully invested before the first decision. Over the declines of
+/// `TIMING_DECLINE_PCT` or more from the running peak (peak to trough, a decline still under way
+/// included): the share of each decline's log fall the rule was out for, averaged over the
+/// declines (`sma10 decline avoided %`); the index's cumulative return over each FALSE exit, an
+/// out-period no month of which lies in a decline's peak-to-trough window, averaged
+/// (`sma10 false-exit return %`); the out-periods a year (`sma10 exits per year`); and the
+/// index's mean next-month return after a positive trailing twelve months less after a negative
+/// one (`market sign12 trend %/mo`), the persistence a timing rule lives on. Graded like the
+/// multi-year rows, by where the record falls among the world's single histories, since a
+/// one-year block resample keeps no decline whole. Read on MONTH-END levels, one a month, as the
+/// model's are: a monthly average of daily prices (Shiller's series) smooths the rule's signal
+/// and overstates the index's persistence at short lags. NaN where the record has no decline or
+/// no false exit.
+pub const TIMING_ROWS: [&str; 4] = [
     "sma10 decline avoided %",
     "sma10 false-exit return %",
     "sma10 exits per year",
+    "market sign12 trend %/mo",
 ];
 pub const TIMING_SMA_MONTHS: usize = 10;
 pub const TIMING_DECLINE_PCT: f64 = 20.0;
@@ -7669,10 +7691,10 @@ pub const TIMING_DECLINE_PCT: f64 = 20.0;
 pub const TIMING_ALPHA: f64 = 0.05;
 
 #[must_use]
-pub fn timing_of_monthly(x: &[f64]) -> [f64; 3] {
+pub fn timing_of_monthly(x: &[f64]) -> [f64; 4] {
     let n = x.len();
     if n < 2 {
-        return [f64::NAN; 3];
+        return [f64::NAN; 4];
     }
     let r: Vec<f64> = (0..n)
         .map(|m| if m == 0 { 0.0 } else { ln_det(x[m] / x[m - 1]) })
@@ -7723,16 +7745,26 @@ pub fn timing_of_monthly(x: &[f64]) -> [f64; 3] {
             scala_sum(v.iter().copied()) / v.len() as f64
         }
     };
+    let (mut pos, mut neg): (Vec<f64>, Vec<f64>) = (Vec::new(), Vec::new());
+    for t in 12..n - 1 {
+        let next = x[t + 1] / x[t] - 1.0;
+        if x[t] / x[t - 12] > 1.0 {
+            pos.push(next);
+        } else {
+            neg.push(next);
+        }
+    }
     [
         mean(&avoided) * 100.0,
         mean(&false_exits) * 100.0,
         runs.len() as f64 / (n as f64 / 12.0),
+        (mean(&pos) - mean(&neg)) * 100.0,
     ]
 }
 
 /// The timing rows of one model path: its price at the calendar month ends (`month_ends`).
 #[must_use]
-pub fn timing_of_path(px: &[f64]) -> [f64; 3] {
+pub fn timing_of_path(px: &[f64]) -> [f64; 4] {
     let ends = month_ends(px.len());
     let levels: Vec<f64> = ends.iter().map(|&i| px[i]).collect();
     timing_of_monthly(&levels)
@@ -9813,7 +9845,7 @@ struct PathRead {
     run_up_3y: f64,
     calm_stretch: f64,
     multi_year: [f64; 7],
-    timing: [f64; 3],
+    timing: [f64; 4],
     tail_hedge: f64,
     infl_ann: f64,
     short_rate: f64,
@@ -10115,6 +10147,7 @@ pub fn measure(sims: &[Path], years: usize) -> WorldStats {
             med_by(|p| p.timing[0]),
             med_by(|p| p.timing[1]),
             med_by(|p| p.timing[2]),
+            med_by(|p| p.timing[3]),
         ],
         short_rate: med_by(|p| p.short_rate),
         rate_floor: med_by(|p| p.rate_floor),
@@ -11324,11 +11357,11 @@ pub struct Anchors {
     pub bubble_window: &'static str,
     pub bubble_years: usize,
     /// THE TIMING ROWS' record window and records (`timing_of_monthly`; `timing-2026-09-30.tsv`):
-    /// Shiller's monthly S&P with dividends reinvested, one ruler for both sets, read on the
+    /// CRSP's month-end closes with dividends, the century, one ruler for both sets, read on the
     /// world's histories of `timing_years`.
     pub timing_window: &'static str,
     pub timing_years: usize,
-    pub timing: [f64; 3],
+    pub timing: [f64; 4],
     pub bubble_coupling: f64,
     pub bubble_coupling_sd: f64,
     /// THE LARGEST 3-YEAR RUN-UP's and THE LONGEST CALM STRETCH's records over the bubble window
@@ -12190,9 +12223,9 @@ const SP500_ANCHORS: Anchors = Anchors {
     tail_years: 100,
     bubble_window: "CRSP 1926-2026, the century",
     bubble_years: 100,
-    timing_window: "Shiller S&P 1871-2023",
+    timing_window: "CRSP month-ends 1926-2026",
     timing_years: 100,
-    timing: [70.672143, 3.080357, 0.608838],
+    timing: [64.682098, 5.818947, 0.750000, 0.656168],
     bubble_coupling: 0.114404,
     bubble_coupling_sd: 1.07,
     run_up_3y: 0.872450,
@@ -12343,9 +12376,9 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     tail_years: 27,
     bubble_window: "NDX 1990-2026",
     bubble_years: 37,
-    timing_window: "Shiller S&P 1871-2023",
+    timing_window: "CRSP month-ends 1926-2026",
     timing_years: 100,
-    timing: [70.672143, 3.080357, 0.608838],
+    timing: [64.682098, 5.818947, 0.750000, 0.656168],
     bubble_coupling: 1.042337,
     bubble_coupling_sd: 0.25,
     run_up_3y: 1.753345,
@@ -12735,6 +12768,12 @@ pub fn fit_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             a.timing[2],
             0.0,
         ),
+        (
+            TIMING_ROWS[3],
+            (|st| st.timing[3]) as StatFn,
+            a.timing[3],
+            0.0,
+        ),
     ]);
     rows.extend([
         // The "(24y)" is load-bearing, not decoration: this row is measured on a different
@@ -12974,6 +13013,7 @@ const EXTREME_TARGETS: &[&str] = &[
     "sma10 decline avoided %",
     "sma10 false-exit return %",
     "sma10 exits per year",
+    "market sign12 trend %/mo",
 ];
 
 /// Whether a row is graded among the world's single histories with a joint band: a multi-year
@@ -13248,19 +13288,19 @@ fn multi_year_bands(
 
 /// The timing rows' single histories at `yrs`, when it is the timing window's length: every
 /// path's readings in `TIMING_ROWS`' order.
-fn timing_histories(a: Anchors, sims: &[Path], yrs: usize) -> Option<Vec<[f64; 3]>> {
+fn timing_histories(a: Anchors, sims: &[Path], yrs: usize) -> Option<Vec<[f64; 4]>> {
     (yrs == a.timing_years).then(|| sims.par_iter().map(|p| timing_of_path(&p.price)).collect())
 }
 
 /// THE TIMING ROWS' JOINT BAND: each row's edges among the world's single histories at the ranks a
 /// record-like history stays inside on all three at once with probability 1 - `TIMING_ALPHA`;
 /// empty under `EXTREME_MIN_HISTORIES` paths.
-fn timing_bands(reads: &[[f64; 3]]) -> std::collections::HashMap<&'static str, (f64, f64)> {
+fn timing_bands(reads: &[[f64; 4]]) -> std::collections::HashMap<&'static str, (f64, f64)> {
     let mut out = std::collections::HashMap::new();
     if reads.len() < EXTREME_MIN_HISTORIES {
         return out;
     }
-    let (_, edges) = record_band_joint(reads, &[0, 1, 2], TIMING_ALPHA);
+    let (_, edges) = record_band_joint(reads, &[0, 1, 2, 3], TIMING_ALPHA);
     for (nm, e) in TIMING_ROWS.iter().copied().zip(edges) {
         out.insert(nm, e);
     }
@@ -16199,7 +16239,7 @@ fn bond_relations() -> [Relation; 2] {
 /// target added or renamed fails the build until someone places it. The failure being prevented is
 /// a target silently absent from the equity section — a shorter table reads as a shorter list of
 /// concerns, not as a bug.
-const EQUITY_TARGETS: [&str; 41] = [
+const EQUITY_TARGETS: [&str; 42] = [
     "equity vol %",
     "typical-year vol %",
     "return per vol",
@@ -16239,6 +16279,7 @@ const EQUITY_TARGETS: [&str; 41] = [
     "sma10 decline avoided %",
     "sma10 false-exit return %",
     "sma10 exits per year",
+    "market sign12 trend %/mo",
     "equity d5 vs real",
     "equity d10 vs real",
 ];
@@ -18243,6 +18284,7 @@ pub fn world_json_body_fmt(w: &World, num: &dyn Fn(f64) -> String) -> Vec<String
         ("recessRecover", num(w.recess_recover)),
         ("recessNews", num(w.recess_news)),
         ("recessVol", num(w.recess_vol)),
+        ("recessReprice", num(w.recess_reprice)),
         ("regimeDrift", num(w.regime_drift)),
         ("driftSd", num(w.drift_sd)),
         ("boomFade", num(w.boom_fade)),
@@ -19442,6 +19484,7 @@ pub fn main() {
     let mut recess_recover = dw.recess_recover;
     let mut recess_news = dw.recess_news;
     let mut recess_vol = dw.recess_vol;
+    let mut recess_reprice = dw.recess_reprice;
     let mut regime_drift = dw.regime_drift;
     let mut drift_sd = dw.drift_sd;
     let mut boom_fade = dw.boom_fade;
@@ -19618,6 +19661,7 @@ pub fn main() {
             "-recessrecover" => recess_recover = req_f64(&mut it, "-recessrecover"),
             "-recessnews" => recess_news = req_f64(&mut it, "-recessnews"),
             "-recessvol" => recess_vol = req_f64(&mut it, "-recessvol"),
+            "-recessreprice" => recess_reprice = req_f64(&mut it, "-recessreprice"),
             "-regimedrift" => regime_drift = req_f64(&mut it, "-regimedrift"),
             "-driftsd" => drift_sd = req_f64(&mut it, "-driftsd"),
             "-boomfade" => boom_fade = req_f64(&mut it, "-boomfade"),
@@ -20122,6 +20166,7 @@ pub fn main() {
         recess_recover,
         recess_news,
         recess_vol,
+        recess_reprice,
         regime_drift,
         drift_sd,
         boom_fade,
@@ -27323,7 +27368,7 @@ mod timing_tests {
                 .filter(|l| !(l.starts_with('#') || l.trim().is_empty() || l.starts_with("set\t")))
                 .map(|l| l.split('\t').map(str::to_string).collect())
                 .collect();
-        assert_eq!(lines.len(), 6, "two sets, three rows");
+        assert_eq!(lines.len(), 8, "two sets, four rows");
         for (set, a) in [("sp500", SP500_ANCHORS), ("nasdaq", NASDAQ_ANCHORS)] {
             for (name, got) in TIMING_ROWS.iter().zip(a.timing) {
                 let r = lines
@@ -27366,13 +27411,16 @@ mod timing_tests {
         // no decline: the avoided share has no reading, the rule never exits an uptrend
         let up: Vec<f64> = (0..60).map(|m| 1.02f64.powi(m)).collect();
         let u = timing_of_monthly(&up);
-        assert!(u[0].is_nan() && u[1].is_nan() && u[2] == 0.0, "{u:?}");
+        assert!(
+            u[0].is_nan() && u[1].is_nan() && u[2] == 0.0 && u[3].is_nan(),
+            "{u:?}"
+        );
     }
 
     #[test]
     fn the_timing_band_holds_the_histories_it_is_read_from() {
         let mut rng = NumPyRng::new(20_260_930);
-        let reads: Vec<[f64; 3]> = (0..1000)
+        let reads: Vec<[f64; 4]> = (0..1000)
             .map(|_| std::array::from_fn(|_| rng.randn()))
             .collect();
         let bands = timing_bands(&reads);
@@ -27396,7 +27444,12 @@ mod timing_tests {
     fn a_pinned_path_reads_the_same_timing_rows_in_both_twins() {
         let p = &sim_paths(&default_world(), 1, 40, 20_260_930)[0];
         let r = timing_of_path(&p.price);
-        let pin = [64.357_430_062_263_3, 4.634_420_683_531_006_4, 0.825];
+        let pin = [
+            64.357_430_062_263_3,
+            4.634_420_683_531_006_4,
+            0.825,
+            -0.226_506_915_812_976_08,
+        ];
         for (got, want) in r.iter().zip(pin) {
             assert!((got - want).abs() < 1e-12, "{got} vs {want}");
         }

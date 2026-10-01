@@ -53,10 +53,11 @@ object RecordBands {
     "-rateafter    THE CONDITIONAL RATE ROWS (`RateAfterRows`): the -fred rate on the equity window's",
     "              session dates, the two years after each 20% decline's trough; the record by",
     "              `rateAfterOfReturns`, its paired block resamples, their own joint band",
-    "-timing FILE  THE TIMING ROWS instead (`TimingRows`): Shiller's monthly S&P as a",
-    "              `month,price,dividend,cpi` CSV, dividends reinvested, over -from..-to (YYYY-MM);",
-    "              what a 10-month moving-average exit does on the record, the rows of",
-    "              `timing-2026-09-30.tsv`",
+    "-timing       THE TIMING ROWS instead (`TimingRows`), on MONTH-END levels over -from..-to: what a",
+    "              10-month moving-average exit does on the record and the market's one-year trend, the",
+    "              rows of `timing-2026-09-30.tsv`, from -french FILE (CRSP's daily factors compounded,",
+    "              the ruler) or -shiller FILE (Shiller's monthly S&P as `month,price,dividend,cpi` --",
+    "              monthly AVERAGES, for comparison only)",
     "-sectors DIR  THE SECTOR ROWS instead: Ken French's `10_Industry_Portfolios.CSV`,",
     "              `49_Industry_Portfolios.CSV` and `F-F_Research_Data_Factors.CSV` in DIR as the",
     "              library publishes them (unzipped), the rows of `sectors-2026-09-30.tsv` with 5-95",
@@ -84,6 +85,17 @@ object RecordBands {
       else
         for mkt <- f(1).toDoubleOption; rf <- f(4).toDoubleOption
         yield (s"${d.take(4)}-${d.slice(4, 6)}-${d.slice(6, 8)}", mkt + rf)
+    }
+
+  /** `(month, total-return level at the month's last session)` from Ken French's daily factors:
+    * Mkt-RF + RF compounded from the window's first session, the level at each calendar month's
+    * last session. */
+  def readFrenchMonthEnds(file: String, from: String, to: String): Vector[(String, Double)] =
+    val days = readFrench(file).filter((d, _) => d >= from && d <= to)
+    var level = 1.0
+    days.zipWithIndex.flatMap { case ((d, x), k) =>
+      level *= 1.0 + x / 100.0
+      if k + 1 == days.length || days(k + 1)._1.take(7) != d.take(7) then Some((d.take(7), level)) else None
     }
 
   /** `(month, total-return level)` from Shiller's monthly S&P as a `month,price,dividend,cpi` CSV
@@ -134,18 +146,20 @@ object RecordBands {
       def opt(flag: String): Option[String] =
         val i = args.indexOf(flag)
         if i < 0 then None else args.lift(i + 1)
-      val file = opt("-timing").getOrElse(usage("-timing needs Shiller's monthly CSV"))
       val from = opt("-from").getOrElse("")
-      val to = opt("-to").getOrElse("9999-99")
+      val to = opt("-to").getOrElse("9999-99-99")
       val set = opt("-set").getOrElse(usage("-set is required"))
       val series = opt("-series").getOrElse(usage("-series is required"))
-      val rows = readShillerMonthly(file).filter((m, _) => m >= from && m <= to)
+      val rows = (opt("-french"), opt("-shiller")) match
+        case (Some(file), None) => readFrenchMonthEnds(file, from, to)
+        case (None, Some(file)) => readShillerMonthly(file).filter((m, _) => m >= from.take(7) && m <= to.take(7))
+        case _ => usage("-timing wants exactly one of -french FILE and -shiller FILE")
       if rows.length < 24 then usage("the window holds fewer than two years of months")
       val levels = rows.map(_._2).toArray
       val window = s"${rows.head._1}..${rows.last._1}"
-      if args.contains("-header") then println("set	row	series	window	n	record")
+      if args.contains("-header") then println("set\trow\tseries\twindow\tn\trecord")
       for (name, value) <- MarketSim.TimingRows.zip(MarketSim.timingOfMonthly(levels)) do
-        println(f"$set%s	$name%s	$series%s	$window%s	${levels.length}%d	$value%.6f")
+        println(f"$set%s\t$name%s\t$series%s\t$window%s\t${levels.length}%d\t$value%.6f")
       return
     val k = args.indexOf("-sectors")
     if k >= 0 then

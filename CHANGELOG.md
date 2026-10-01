@@ -2,19 +2,24 @@
 
 **The timing rows**
 
-- Three fidelity rows on what a 10-month moving-average exit does, graded like the multi-year
-  rows (the record among the world's own century histories, a joint band at 0.05) against
-  Shiller's monthly S&P with dividends reinvested, 1871-2023, on both sets: `sma10 decline
-  avoided %`, the share of each 20%+ decline's log fall the rule was out for, averaged over the
-  declines (record 70.7); `sma10 false-exit return %`, the index's cumulative return over each
-  out-period that overlaps no decline's peak-to-trough window, averaged (3.08); and
-  `sma10 exits per year` (0.61). The rule is in for the next month when the month-end level is
-  above the mean of the last ten, this one included. Weight 0 in the loss. `timing_of_monthly` /
-  `timingOfMonthly` and `timing_of_path`; `record_bands -timing FILE` reads Shiller's Data sheet as
-  a `month,price,dividend,cpi` CSV (the fixture's header states the conversion); an independent
-  implementation of the same definitions agrees to six decimals.
-- What it shows, on seed 5 at 200 × 100: both shipped worlds miss all but one of the rows. On `0.24.5-sp500` the exit avoids 42.7% of a decline's fall against the record's 70.7 (the record at the worlds' 99th percentile), a false exit forgoes 6.7% against 3.1 (0th), and exits run 0.75 a year against 0.61 (7th); on `0.24.5-nasdaq-basket` 34.4% (100th), 7.7% (0th) and 0.96 a year (0th). The worlds' declines arrive too fast for a ten-month average to step aside from and their rallies between declines are too large for it to sit out cheaply: the valuation-led slow decline and the recovery that follows it, which the decline length rows and the sector trend row point at from other sides. The rows stay graded; they and the market's one-year trend are the next primary item.
-- Sidecar schema 25 → 26: `gate.fidelity` gained the three rows, single-history with their own
+- Four fidelity rows on what a 10-month moving-average exit does and on the market's own
+  one-year trend, graded like the multi-year rows (the record among the world's own century
+  histories, a joint band at 0.05) against CRSP's month-end closes with dividends, 1926-2026, on
+  both sets: `sma10 decline avoided %`, the share of each 20%+ decline's log fall the rule was out
+  for, averaged over the declines (record 64.7); `sma10 false-exit return %`, the index's
+  cumulative return over each out-period that overlaps no decline's peak-to-trough window,
+  averaged (5.82); `sma10 exits per year` (0.75); and `market sign12 trend %/mo`, the index's mean
+  next-month return after a positive trailing year less after a negative one (0.66). The rule is
+  in for the next month when the month-end level is above the mean of the last ten, this one
+  included. Weight 0 in the loss. `timing_of_monthly` / `timingOfMonthly` and `timing_of_path`;
+  `record_bands -timing -french FILE` compounds French's daily factors to month-end levels; an
+  independent implementation of the same definitions agrees to six decimals.
+- Month-end closes, not Shiller's monthly S&P: Shiller's prices are monthly averages, and on the
+  same CRSP series the averages read a 4.0% false-exit return against the month ends' 5.8% and
+  0.55 exits a year against 0.75. `record_bands -timing -shiller FILE` reads Shiller's series for
+  the comparison (73 / 3.6 / 0.57 / 0.77 over 1926-2023).
+- What it shows, on seed 5 at 200 × 100: `0.24.5-sp500` sits inside all four bands, the avoided share at the edge: the exit avoids 42.7% of a decline's fall against the record's 64.7 (the record at the worlds' 94th percentile), a false exit forgoes 6.7% against 5.8 (20th), exits run 0.75 a year against 0.75 (50th), and the one-year trend reads +0.08% a month against 0.66 (75th) across histories that span −1.5 to +1.9. `0.24.5-nasdaq-basket` misses the avoided share, 34.4% (100th), with 7.7% false exits (3rd) and 0.96 exits a year (1st) at their edges and the trend +0.38 (68th). The one-year trend is a weak discriminator at a century, a history's reading spanning three points a month; the avoided share is the row that bites. The worlds' declines arrive too fast for a ten-month average to step aside from: the valuation-led slow decline, which the decline length rows point at from the other side.
+- Sidecar schema 25 → 26: `gate.fidelity` gained the four rows, single-history with their own
   `historyBand`.
 
 **The sector channel — `-sectors`**

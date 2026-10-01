@@ -964,19 +964,28 @@ against the record's band; the loss grades it at judgment 3.0 on the Nasdaq set,
 production gap turns on, and at 0 on the S&P set.
 
 **The timing rows** read what a 10-month moving-average exit does, the property a timing arm's
-withdrawal objective turns on, against Shiller's monthly S&P with dividends reinvested, 1871-2023
-(`timing-2026-09-30.tsv`, from `record_bands -timing`). At each month's end the rule is in equity
-for the next month when the level is above the mean of the last ten month-end levels, else out.
-Three rows, graded like the multi-year rows by where the record falls among the world's own
-century-long histories, inside their joint band at 0.05, on both sets:
+withdrawal objective turns on, and the market's own one-year trend, against CRSP's month-end
+closes with dividends over the century, 1926-2026 (`timing-2026-09-30.tsv`, from
+`record_bands -timing -french`). At each month's end the rule is in equity for the next month when
+the level is above the mean of the last ten month-end levels, else out. Four rows, graded like the
+multi-year rows by where the record falls among the world's own century-long histories, inside
+their joint band at 0.05, on both sets:
 
 | row | statistic | record |
 |---|---|---|
-| `sma10 decline avoided %` | over the declines of 20% or more (peak to trough), the share of each decline's log fall the rule was out for, averaged | 70.7 |
-| `sma10 false-exit return %` | the index's cumulative return over each false exit (an out-period no month of which lies in a decline's peak-to-trough window), averaged | 3.08 |
-| `sma10 exits per year` | the out-periods a year | 0.61 |
+| `sma10 decline avoided %` | over the declines of 20% or more (peak to trough), the share of each decline's log fall the rule was out for, averaged | 64.7 |
+| `sma10 false-exit return %` | the index's cumulative return over each false exit (an out-period no month of which lies in a decline's peak-to-trough window), averaged | 5.82 |
+| `sma10 exits per year` | the out-periods a year | 0.75 |
+| `market sign12 trend %/mo` | the index's mean next-month return after a positive trailing twelve months less after a negative one | 0.66 |
 
-What it shows, on seed 5 at 200 × 100: both shipped worlds miss all but one of the rows. On `0.24.5-sp500` the exit avoids 42.7% of a decline's fall against the record's 70.7 (the record at the worlds' 99th percentile), a false exit forgoes 6.7% against 3.1 (0th), and exits run 0.75 a year against 0.61 (7th); on `0.24.5-nasdaq-basket` 34.4% (100th), 7.7% (0th) and 0.96 a year (0th). The worlds' declines arrive too fast for a ten-month average to step aside from and their rallies between declines are too large for it to sit out cheaply: the valuation-led slow decline and the recovery that follows it, which the decline length rows and the sector trend row point at from other sides. The rows stay graded; they and the market's one-year trend are the next primary item.
+The record is month-end closes because the model's are. Shiller's monthly S&P, the natural
+longer record, is a monthly average of daily prices, and averaging smooths what the rule sees: on
+the same CRSP series the averages read a 4.0% false-exit return against the month ends' 5.8% and
+0.55 exits a year against 0.75, so two of the four rows would be artefacts of the series, not the
+rule. Shiller's own series reads 73 / 3.6 / 0.57 / 0.77 over 1926-2023 for comparison
+(`-shiller`).
+
+What it shows, on seed 5 at 200 × 100: `0.24.5-sp500` sits inside all four bands, the avoided share at the edge: the exit avoids 42.7% of a decline's fall against the record's 64.7 (the record at the worlds' 94th percentile), a false exit forgoes 6.7% against 5.8 (20th), exits run 0.75 a year against 0.75 (50th), and the one-year trend reads +0.08% a month against 0.66 (75th) across histories that span −1.5 to +1.9. `0.24.5-nasdaq-basket` misses the avoided share, 34.4% (100th), with 7.7% false exits (3rd) and 0.96 exits a year (1st) at their edges and the trend +0.38 (68th). The one-year trend is a weak discriminator at a century, a history's reading spanning three points a month; the avoided share is the row that bites. The worlds' declines arrive too fast for a ten-month average to step aside from: the valuation-led slow decline, which the decline length rows point at from the other side.
 
 **The short rate** — `short rate %` and `rate floor share %` — is the rate path's mean, in
 percent, and the share of its sessions under 0.50%, both against the daily effective federal funds

@@ -269,8 +269,9 @@ object MarketSim:
   // byte-identical to its schema-25 counterpart except the schema number and the new zero world
   // fields.
   // 25 -> 26: THE TIMING ROWS.  `gate.fidelity` gained `sma10 decline avoided %`,
-  // `sma10 false-exit return %` and `sma10 exits per year` (`TimingRows`), single-history rows
-  // against Shiller's monthly S&P with their own `historyBand`.
+  // `sma10 false-exit return %`, `sma10 exits per year` and `market sign12 trend %/mo`
+  // (`TimingRows`), single-history rows against CRSP's month-end closes with their own
+  // `historyBand`.
   val EmitSchema: Int = 26
 
   val EmitSidecarKeys: Vector[String] =
@@ -5785,7 +5786,7 @@ object MarketSim:
       runUp3y = med(per.map(_.runUp3y)),
       calmStretch = med(per.map(_.calmStretch)),
       multiYear = Vector.tabulate(7)(k => med(per.map(_.multiYear(k)))),
-      timing = Vector.tabulate(3)(k => med(per.map(_.timing(k)))),
+      timing = Vector.tabulate(4)(k => med(per.map(_.timing(k)))),
       shortRate = med(per.map(_.shortRate)),
       rateFloor = med(per.map(_.rateFloor)),
       postRate = med(per.map(_.postRate)),
@@ -6456,7 +6457,7 @@ object MarketSim:
     // extreme row, the record's percentile among single histories of `bubbleYears`.
     bubbleWindow: String, bubbleYears: Int,
     // THE TIMING ROWS' record window and records (`timingOfMonthly`; `timing-2026-09-30.tsv`):
-    // Shiller's monthly S&P with dividends reinvested, one ruler for both sets, read on the
+    // CRSP's month-end closes with dividends, the century, one ruler for both sets, read on the
     // world's histories of `timingYears`
     timingWindow: String, timingYears: Int, timing: Vector[Double],
     bubbleCoupling: Double, bubbleCouplingSd: Double,
@@ -6803,7 +6804,7 @@ object MarketSim:
     clusterWindow = "CRSP 1926-2026, the century", clusterYears = 100,
     tailWindow = "CRSP 1926-2026, the century", tailYears = 100,
     bubbleWindow = "CRSP 1926-2026, the century", bubbleYears = 100,
-    timingWindow = "Shiller S&P 1871-2023", timingYears = 100, timing = Vector(70.672143, 3.080357, 0.608838),
+    timingWindow = "CRSP month-ends 1926-2026", timingYears = 100, timing = Vector(64.682098, 5.818947, 0.750000, 0.656168),
     bubbleCoupling = 0.114404, bubbleCouplingSd = 1.07,
     runUp3y = 0.872450, calmStretch = 2190.0,
     multiYear = Vector(-0.127487, 0.745759, 0.732112, 0.324081, 8.599206, 0.662698, 2.527778, 12.589751),
@@ -6905,7 +6906,7 @@ object MarketSim:
     clusterWindow = "QQQ 1999-2026", clusterYears = 27,
     tailWindow = "QQQ 1999-2026", tailYears = 27,
     bubbleWindow = "NDX 1990-2026", bubbleYears = 37,
-    timingWindow = "Shiller S&P 1871-2023", timingYears = 100, timing = Vector(70.672143, 3.080357, 0.608838),
+    timingWindow = "CRSP month-ends 1926-2026", timingYears = 100, timing = Vector(64.682098, 5.818947, 0.750000, 0.656168),
     bubbleCoupling = 1.042337, bubbleCouplingSd = 0.25,
     runUp3y = 1.753345, calmStretch = 1927.0,
     multiYear = Vector(0.007813, 0.993439, 0.894362, 0.438273, 18.396825, 0.317460, 2.523810, 53.729182),
@@ -7021,7 +7022,8 @@ object MarketSim:
   /** THE TIMING ROWS' names and constants (`timingOfMonthly` below): declared here, before the
     * target lists that name them. */
   val TimingRows: Vector[String] =
-    Vector("sma10 decline avoided %", "sma10 false-exit return %", "sma10 exits per year")
+    Vector("sma10 decline avoided %", "sma10 false-exit return %", "sma10 exits per year",
+           "market sign12 trend %/mo")
   val TimingSmaMonths: Int = 10
   val TimingDeclinePct: Double = 20.0
   /** the share of record-like worlds the timing rows may jointly miss */
@@ -7890,20 +7892,23 @@ object MarketSim:
     if up + down == 0 then Double.NaN else up * 100.0 / (up + down)
 
   /** THE TIMING ROWS: what a 10-month moving-average exit does on a monthly total-return index,
-    * the record's Shiller S&P (`timing-2026-09-30.tsv`).  At each month's end the rule is in
-    * equity for the next month when the level is above the mean of the last `TimingSmaMonths`
-    * month-end levels, this one included, else out; fully invested before the first decision.
-    * Over the declines of `TimingDeclinePct` or more from the running peak (peak to trough, a
-    * decline still under way included): the share of each decline's log fall the rule was out
-    * for, averaged over the declines; the index's cumulative return over each FALSE exit, an
-    * out-period no month of which lies in a decline's peak-to-trough window, averaged; and the
-    * out-periods a year.  Graded like the multi-year rows, by where the record falls among the
-    * world's single histories.  Read on month-end levels, one a month; NaN where the record has
-    * no decline or no false exit. */
-
+    * and the index's own one-year trend; the record's CRSP month-end closes 1926-2026
+    * (`timing-2026-09-30.tsv`).  At each month's end the rule is in equity for the next month when
+    * the level is above the mean of the last `TimingSmaMonths` month-end levels, this one
+    * included, else out; fully invested before the first decision.  Over the declines of
+    * `TimingDeclinePct` or more from the running peak (peak to trough, a decline still under way
+    * included): the share of each decline's log fall the rule was out for, averaged over the
+    * declines; the index's cumulative return over each FALSE exit, an out-period no month of which
+    * lies in a decline's peak-to-trough window, averaged; the out-periods a year; and the index's
+    * mean next-month return after a positive trailing twelve months less after a negative one, the
+    * persistence a timing rule lives on.  Graded like the multi-year rows, by where the record
+    * falls among the world's single histories.  Read on MONTH-END levels, one a month, as the
+    * model's are: a monthly average of daily prices (Shiller's series) smooths the rule's signal
+    * and overstates the index's persistence at short lags.  NaN where the record has no decline
+    * or no false exit. */
   def timingOfMonthly(x: Array[Double]): Vector[Double] =
     val n = x.length
-    if n < 2 then Vector(Double.NaN, Double.NaN, Double.NaN)
+    if n < 2 then Vector(Double.NaN, Double.NaN, Double.NaN, Double.NaN)
     else
       val r = Array.tabulate(n)(m => if m == 0 then 0.0 else lnDet(x(m) / x(m - 1)))
       val k = TimingSmaMonths
@@ -7952,7 +7957,15 @@ object MarketSim:
           var s = 0.0
           v.foreach(s += _)
           s / v.length
-      Vector(mean(avoided) * 100.0, mean(falseExits) * 100.0, runs.length.toDouble / (n / 12.0))
+      val pos = scala.collection.mutable.ArrayBuffer.empty[Double]
+      val neg = scala.collection.mutable.ArrayBuffer.empty[Double]
+      var t = 12
+      while t < n - 1 do
+        val next = x(t + 1) / x(t) - 1.0
+        if x(t) / x(t - 12) > 1.0 then pos += next else neg += next
+        t += 1
+      Vector(mean(avoided) * 100.0, mean(falseExits) * 100.0, runs.length.toDouble / (n / 12.0),
+             (mean(pos.toVector) - mean(neg.toVector)) * 100.0)
 
   /** The timing rows of one model path: its price at the calendar month ends (`monthEnds`). */
   def timingOfPath(px: Array[Double]): Vector[Double] =
@@ -9953,7 +9966,7 @@ object MarketSim:
   private[apps] def timingBands(reads: Vector[Vector[Double]]): Map[String, (Double, Double)] =
     if reads.length < ExtremeMinHistories then Map.empty
     else
-      val (_, edges) = recordBandJoint(reads, Vector(0, 1, 2), TimingAlpha)
+      val (_, edges) = recordBandJoint(reads, Vector(0, 1, 2, 3), TimingAlpha)
       TimingRows.zip(edges).toMap
 
   def extremeReadingsFrom(a: Anchors, sims: Vector[Path], yrs: Int): Map[String, Vector[Double]] =

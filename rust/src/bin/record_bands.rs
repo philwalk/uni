@@ -39,10 +39,11 @@ const USAGE: &str =
   -rateafter    THE CONDITIONAL RATE ROWS (`RATE_AFTER_ROWS`): the -fred rate on the equity window's
                 session dates, the two years after each 20% decline's trough; the record by
                 `rate_after_of_returns`, its paired block resamples, their own joint band
-  -timing FILE  THE TIMING ROWS instead (`TIMING_ROWS`): Shiller's monthly S&P as a
-                `month,price,dividend,cpi` CSV, dividends reinvested, over -from..-to (YYYY-MM);
-                what a 10-month moving-average exit does on the record, the rows of
-                `timing-2026-09-30.tsv`
+  -timing       THE TIMING ROWS instead (`TIMING_ROWS`), on MONTH-END levels over -from..-to: what a
+                10-month moving-average exit does on the record and the market's one-year trend, the
+                rows of `timing-2026-09-30.tsv`, from -french FILE (CRSP's daily factors compounded,
+                the ruler) or -shiller FILE (a `month,price,dividend,cpi` CSV of Shiller's monthly
+                S&P -- monthly AVERAGES, for comparison only)
   -sectors DIR  THE SECTOR ROWS instead: Ken French's `10_Industry_Portfolios.CSV`,
                 `49_Industry_Portfolios.CSV` and `F-F_Research_Data_Factors.CSV` in DIR as the
                 library publishes them (unzipped), the first monthly block of each; prints the
@@ -338,29 +339,50 @@ fn read_shiller_monthly(file: &str) -> Vec<(String, f64)> {
     out
 }
 
-/// THE TIMING ROWS (`-timing FILE`): Shiller's monthly S&P over `-from`..`-to` (YYYY-MM), the
-/// three rows of `timing_of_monthly`, printed for the set named.
+/// `(month, total-return level at the month's last session)` from Ken French's daily factors:
+/// Mkt-RF + RF compounded from the window's first session, the level at each calendar month's
+/// last session.
+fn read_french_month_ends(file: &str, from: &str, to: &str) -> Vec<(String, f64)> {
+    let days: Vec<(String, f64)> = read_french(file)
+        .into_iter()
+        .filter(|(d, _)| d.as_str() >= from && d.as_str() <= to)
+        .collect();
+    let mut out: Vec<(String, f64)> = Vec::new();
+    let mut level = 1.0;
+    for (k, (d, x)) in days.iter().enumerate() {
+        level *= 1.0 + x / 100.0;
+        if k + 1 == days.len() || days[k + 1].0[..7] != d[..7] {
+            out.push((d[..7].to_string(), level));
+        }
+    }
+    out
+}
+
+/// THE TIMING ROWS (`-timing`): the four rows of `timing_of_monthly` on month-end levels, from
+/// `-french FILE` (CRSP's daily factors, the ruler) or `-shiller FILE` (monthly AVERAGES, for the
+/// comparison the fixture's header states), over `-from`..`-to` (YYYY-MM-DD or YYYY-MM), for the
+/// set named.
 fn timing_mode(args: &[String]) -> bool {
-    let Some(k) = args.iter().position(|a| a == "-timing") else {
+    if !args.iter().any(|a| a == "-timing") {
         return false;
-    };
-    let file = args
-        .get(k + 1)
-        .cloned()
-        .unwrap_or_else(|| usage("-timing needs Shiller's monthly CSV"));
+    }
     let opt = |flag: &str| -> Option<String> {
         args.iter()
             .position(|a| a == flag)
             .and_then(|i| args.get(i + 1).cloned())
     };
     let from = opt("-from").unwrap_or_default();
-    let to = opt("-to").unwrap_or_else(|| "9999-99".to_string());
+    let to = opt("-to").unwrap_or_else(|| "9999-99-99".to_string());
     let set = opt("-set").unwrap_or_else(|| usage("-set is required"));
     let series = opt("-series").unwrap_or_else(|| usage("-series is required"));
-    let rows: Vec<(String, f64)> = read_shiller_monthly(&file)
-        .into_iter()
-        .filter(|(m, _)| m.as_str() >= from.as_str() && m.as_str() <= to.as_str())
-        .collect();
+    let rows: Vec<(String, f64)> = match (opt("-french"), opt("-shiller")) {
+        (Some(file), None) => read_french_month_ends(&file, &from, &to),
+        (None, Some(file)) => read_shiller_monthly(&file)
+            .into_iter()
+            .filter(|(m, _)| m.as_str() >= &from[..from.len().min(7)] && m.as_str() <= &to[..7])
+            .collect(),
+        _ => usage("-timing wants exactly one of -french FILE and -shiller FILE"),
+    };
     if rows.len() < 24 {
         usage("the window holds fewer than two years of months");
     }
