@@ -2,7 +2,7 @@
 
 **The slow decline's dials**
 
-- Six dials, in both twins, searched (`CalibrateDialOrder` 72 → 78) and in every world file:
+- Eight dials, in both twins, searched (`CalibrateDialOrder` 72 → 80) and in every world file:
   `-recessreprice X`, the share of each recession step (and of the recovery's) the price takes
   the same session as the fundamental, the rest a gap the value channel trades through the step;
   `-recessbase B`, added to the stress index in the recession's onset hazard, so a recession can
@@ -11,9 +11,18 @@
   (t/T)^k, a slow start and a steep end, with `-recessvol`'s multiplier following the same
   share; `-overshoot S` and `-overshootrate X`, the share of the spiral's amplification of a
   session's flow and noise that is transient, given back over the following sessions at X a
-  session; `-recessrecmult M`, the recovery leg's length as a multiple of `-recesslen`. Defaults
-  1 / 0 / 0 / 0 / 0.1 / 2 are bit-identical to v0.24.4's mechanics; the power is `pow_det`
-  (`exp_det` of `ln_det`) so the twins agree to the bit.
+  session; `-recessrecmult M`, the recovery leg's length as a multiple of `-recesslen`;
+  `-recesscredit C` and `-recessinfl I`, added to the onset hazard's stress index, C times the
+  credit growth gap past the credit regime's threshold and I times the inflation pressure past the
+  regime edge, so a recession follows a credit expansion or tightening into inflation instead of
+  arriving at random. Defaults 1 / 0 / 0 / 0 / 0.1 / 2 / 0 / 0 are bit-identical to v0.24.4's
+  mechanics; the power is `pow_det` (`exp_det` of `ln_det`) so the twins agree to the bit.
+- A recession that starts in a calm market at random dilutes the macro panel's mechanism: the
+  conditions index concentrating 20% peaks falls from 1.84x to 1.45x (gate 1.4x) and the build-up
+  fidelity band fails on every seed read. Started by the credit growth gap instead
+  (`-recesscredit 10`, no calm base), the concentration holds at 1.69-1.73x and the build-up band
+  passes; the inflation term pulls the bond's inflation-crash loss to a third of the record's at
+  3 and stays off.
 - Why: the record's long declines are back-loaded — the first quarter of a 15-30 month decline
   carries 19% of the fall and the last quarter 49%, so a ten-month moving-average exit misses
   15% — and inside them the daily path mean-reverts (variance ratio 0.75 at 250 days, 1954-2026)
@@ -28,7 +37,8 @@
 - `sma10 decline avoided %` carries judgment 0.5 in the loss (`Anchors.timing_sd`, the
   single-history sd over the record: S&P 0.174, Nasdaq 0.172); the other three timing rows stay
   at 0. `market_sim_search -seedset DIAL=VALUE,...` moves every seed world to a hand-found form
-  before a search, recorded in the checkpoint.
+  before a search, recorded in the checkpoint; `-hold` takes a single-history row (the multi-year
+  and timing rows), held by the record's percentile points from 50 among the read's own histories.
 - Sidecar schema 26 → 27: `world` gained the six dials.
 
 **The timing rows**

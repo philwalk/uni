@@ -273,8 +273,9 @@ object MarketSim:
   // (`TimingRows`), single-history rows against CRSP's month-end closes with their own
   // `historyBand`.
   // 26 -> 27: THE SLOW DECLINE's dials. `world` gained `recessReprice`, `recessBase`, `recessShape`,
-  // `overshoot`, `overshootRate` and `recessRecMult`; a world at their defaults is byte-identical
-  // to its schema-26 counterpart except the schema number and the new world fields.
+  // `overshoot`, `overshootRate`, `recessRecMult`, `recessCredit` and `recessInfl`; a world at their
+  // defaults is byte-identical to its schema-26 counterpart except the schema number and the new
+  // world fields.
   val EmitSchema: Int = 27
 
   val EmitSidecarKeys: Vector[String] =
@@ -615,6 +616,9 @@ object MarketSim:
     s"              ;   (default ${Defaults.overshoot}; 0 is off)",
     s"-overshootrate X ; the give-back per session (default ${Defaults.overshootRate})",
     s"-recessrecmult M ; the recovery's length as a multiple of -recesslen (default ${Defaults.recessRecMult})",
+    s"-recesscredit C ; added to the onset hazard's stress index, C x the credit growth gap past its",
+    s"              ;   threshold: recessions follow credit expansions (default ${Defaults.recessCredit}; 0 is off)",
+    s"-recessinfl I  ; the same for inflation pressure above the regime edge (default ${Defaults.recessInfl}; 0 is off)",
     s"-regimedrift X ; the decline of the fundamental and the price per session, times the credit",
     s"              ;   regime's level, while a spell runs (default ${Defaults.regimeDrift}; 0 is off)",
     s"-driftsd X     ; the sd, a year, of the drift the fundamental redraws every 1-11 years",
@@ -1013,6 +1017,18 @@ object MarketSim:
                                  // overshoot and partly reverse, the churn a slow decline is made
                                  // of.  0 is off and bit-identical.
     overshootRate: Double = 0.1, // the overshoot's return rate per session (see `overshoot`)
+    recessCredit: Double = 0.0,  // THE RECESSION'S CREDIT ONSET (2026-10-01): added to the onset
+                                 // hazard's stress index, this x the credit growth gap the credit
+                                 // regime's onset reads ((borrow - levSlow) / CreditGrowthSd -
+                                 // CreditRegimeTheta, its positive part), so a recession follows a
+                                 // credit expansion (2000, 2007) rather than arriving at random.
+                                 // Reads the stock as it stood before the session; inert where the
+                                 // credit stock is not evolved.  0 is off and bit-identical.
+    recessInfl: Double = 0.0,    // THE RECESSION'S INFLATION ONSET (2026-10-01): added to the
+                                 // onset hazard's stress index, this x the inflation pressure
+                                 // above the regime edge in units of `InflRegimeEdge`, so a
+                                 // recession follows tightening into inflation (1973, 2022).  0 is
+                                 // off and bit-identical.
     recessRecMult: Double = 2.0, // THE RECOVERY'S LENGTH as a multiple of `recessLen`: 2 is the
                                  // shipped leg and bit-identical; 1 regains the share over the
                                  // decline's own length, the record's V (2009, 1933), which turns
@@ -2492,6 +2508,25 @@ object MarketSim:
   /** `x^k` for x in [0, 1] through `expDet` and `lnDet`, so both twins agree to the bit where a
     * platform `pow` need not; 0 at 0. */
   def powDet(x: Double, k: Double): Double = if x <= 0.0 then 0.0 else expDet(k * lnDet(x))
+
+  /** The recession's onset draw (see `recessRate`): one uniform from its own stream against the
+    * hazard, the stress index plus the calm base and the macro state's share. */
+  private[apps] def recessionStarts(w: World, rng: NumPyRNG, prob: Double, stressIdx: Double, levOn: Boolean,
+                                    borrow: Double, levSlow: Double, infl: Double): Boolean =
+    rng.nextDouble() < prob * (w.recessBase + stressIdx + recessionMacroOnset(w, levOn, borrow, levSlow, infl))
+
+  /** The macro state's share of the recession's onset hazard (see `recessCredit`, `recessInfl`):
+    * exactly 0 with both dials off, so the hazard is bit-identical. */
+  private[apps] def recessionMacroOnset(w: World, levOn: Boolean, borrow: Double, levSlow: Double,
+                                        infl: Double): Double =
+    val credit =
+      if w.recessCredit > 0.0 && levOn then
+        w.recessCredit * Math.max((borrow - levSlow) / CreditGrowthSd - CreditRegimeTheta, 0.0)
+      else 0.0
+    val inflation =
+      if w.recessInfl > 0.0 then w.recessInfl * Math.max((infl - InflRegimeEdge) / InflRegimeEdge, 0.0)
+      else 0.0
+    credit + inflation
 
   def lnDet(x: Double): Double =
     if x.isNaN || x <= 0.0 then Double.NaN
@@ -4044,7 +4079,8 @@ object MarketSim:
         else
           if rrecLeft > 0 then
             logVbase += rrecStep; eqM.logP += rrecStep * w.recessReprice; rrecLeft -= 1
-          if disLeft == 0 && boomLeft == 0 && recessRng.nextDouble() < recessProb * (w.recessBase + eqM.stressIdx) then
+          if disLeft == 0 && boomLeft == 0 &&
+             recessionStarts(w, recessRng, recessProb, eqM.stressIdx, levOn, borrow, levSlow, inflPress) then
             recessLeft = max(1, (w.recessLen * DaysPerYear).toInt)
             recessTotal = recessLeft
             recessStep = w.recessSize / recessLeft
@@ -9078,7 +9114,8 @@ object MarketSim:
     "disasterAnticipate", "disasterOvershoot",
     "volPull", "discountLag",
     "discountRef", "driftSd", "boomFade", "delevRate", "delevFrom", "delevSize", "delevLen",
-    "recessReprice", "recessBase", "recessShape", "overshoot", "overshootRate", "recessRecMult")
+    "recessReprice", "recessBase", "recessShape", "overshoot", "overshootRate", "recessRecMult",
+    "recessCredit", "recessInfl")
 
   val CalibrateRanges: Vector[DialRange] = Vector(
     ("depth",       8.0,  26.0, (w, x) => w.copy(depth = x), _.depth),
@@ -9225,6 +9262,8 @@ object MarketSim:
     ("overshoot",    0.0,  1.00, (w, x) => w.copy(overshoot = x), _.overshoot),
     ("overshootRate", 0.05, 0.40, (w, x) => w.copy(overshootRate = x), _.overshootRate),
     ("recessRecMult", 0.5, 2.00, (w, x) => w.copy(recessRecMult = x), _.recessRecMult),
+    ("recessCredit", 0.0, 20.0, (w, x) => w.copy(recessCredit = x), _.recessCredit),
+    ("recessInfl",   0.0,  2.00, (w, x) => w.copy(recessInfl = x), _.recessInfl),
   )
 
   def calibrate(a: Anchors, nSamples: Int, base: World, seed: Long): Unit =
@@ -10904,6 +10943,7 @@ object MarketSim:
       ("recessReprice", num(w.recessReprice)), ("recessBase", num(w.recessBase)),
       ("recessShape", num(w.recessShape)), ("overshoot", num(w.overshoot)),
       ("overshootRate", num(w.overshootRate)), ("recessRecMult", num(w.recessRecMult)),
+      ("recessCredit", num(w.recessCredit)), ("recessInfl", num(w.recessInfl)),
       ("regimeDrift", num(w.regimeDrift)), ("driftSd", num(w.driftSd)),
       ("boomFade", num(w.boomFade)), ("delevRate", num(w.delevRate)),
       ("delevFrom", num(w.delevFrom)), ("delevSize", num(w.delevSize)),
@@ -11486,6 +11526,7 @@ ${rows.mkString(",\n")}
     var recessVol = dw.recessVol; var regimeDrift = dw.regimeDrift; var spreadDd = dw.spreadDd
     var recessReprice = dw.recessReprice; var recessBase = dw.recessBase; var recessShape = dw.recessShape
     var overshoot = dw.overshoot; var overshootRate = dw.overshootRate; var recessRecMult = dw.recessRecMult
+    var recessCredit = dw.recessCredit; var recessInfl = dw.recessInfl
     var disasterAnticipate = dw.disasterAnticipate; var disasterOvershoot = dw.disasterOvershoot
     var driftSd = dw.driftSd; var boomFade = dw.boomFade
     var delevRate = dw.delevRate; var delevFrom = dw.delevFrom
@@ -11612,6 +11653,8 @@ ${rows.mkString(",\n")}
       case "-overshoot"       => overshoot = numOr("-overshoot", consumeNext)
       case "-overshootrate"   => overshootRate = numOr("-overshootrate", consumeNext)
       case "-recessrecmult"   => recessRecMult = numOr("-recessrecmult", consumeNext)
+      case "-recesscredit"    => recessCredit = numOr("-recesscredit", consumeNext)
+      case "-recessinfl"      => recessInfl = numOr("-recessinfl", consumeNext)
       case "-regimedrift"     => regimeDrift = numOr("-regimedrift", consumeNext)
       case "-driftsd"         => driftSd = numOr("-driftsd", consumeNext)
       case "-boomfade"        => boomFade = numOr("-boomfade", consumeNext)
@@ -11849,6 +11892,8 @@ ${rows.mkString(",\n")}
     if !(overshootRate > 0.0 && overshootRate <= 1.0) then
       usage(s"-overshootrate $overshootRate must be in (0, 1]")
     if !(recessRecMult > 0.0) then usage(s"-recessrecmult $recessRecMult must be above 0")
+    nonNeg("-recesscredit", recessCredit)
+    nonNeg("-recessinfl", recessInfl)
     nonNeg("-regimedrift", regimeDrift)
     nonNeg("-driftsd", driftSd)
     if boomFade <= 0.0 then usage(s"-boomfade $boomFade must be above 0")
@@ -11912,6 +11957,7 @@ ${rows.mkString(",\n")}
                   recessRecover = recessRecover, recessNews = recessNews, recessVol = recessVol,
                   recessReprice = recessReprice, recessBase = recessBase, recessShape = recessShape,
                   overshoot = overshoot, overshootRate = overshootRate, recessRecMult = recessRecMult,
+                  recessCredit = recessCredit, recessInfl = recessInfl,
                   regimeDrift = regimeDrift, driftSd = driftSd, boomFade = boomFade,
                   delevRate = delevRate, delevFrom = delevFrom, delevSize = delevSize,
                   delevLen = delevLen,

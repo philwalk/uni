@@ -242,8 +242,9 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 // (`TIMING_ROWS`), single-history rows against CRSP's month-end closes with their own
 // `historyBand`.
 // 26 -> 27: THE SLOW DECLINE's dials. `world` gained `recessReprice`, `recessBase`, `recessShape`,
-// `overshoot`, `overshootRate` and `recessRecMult`; a world at their defaults is byte-identical
-// to its schema-26 counterpart except the schema number and the new world fields.
+// `overshoot`, `overshootRate`, `recessRecMult`, `recessCredit` and `recessInfl`; a world at their
+// defaults is byte-identical to its schema-26 counterpart except the schema number and the new
+// world fields.
 const EMIT_SCHEMA: u32 = 27;
 
 /// Frozen structural constants of the volume channel — see the `vol_idio` field. Measured
@@ -598,6 +599,8 @@ pub fn default_world() -> World {
         overshoot: 0.0,
         overshoot_rate: 0.1,
         recess_rec_mult: 2.0,
+        recess_credit: 0.0,
+        recess_infl: 0.0,
         regime_drift: 0.0,
         drift_sd: 0.04,
         boom_fade: 1.0,
@@ -880,6 +883,8 @@ fn v0_19_2() -> World {
         overshoot: 0.0,
         overshoot_rate: 0.1,
         recess_rec_mult: 2.0,
+        recess_credit: 0.0,
+        recess_infl: 0.0,
         regime_drift: 0.0,
         drift_sd: 0.04,
         boom_fade: 1.0,
@@ -989,6 +994,8 @@ fn v0_24_1() -> World {
         overshoot: 0.0,
         overshoot_rate: 0.1,
         recess_rec_mult: 2.0,
+        recess_credit: 0.0,
+        recess_infl: 0.0,
         regime_drift: 0.0,
         drift_sd: 0.04,
         boom_fade: 1.0,
@@ -1845,6 +1852,8 @@ fn v0_23_0() -> World {
         overshoot: 0.0,
         overshoot_rate: 0.1,
         recess_rec_mult: 2.0,
+        recess_credit: 0.0,
+        recess_infl: 0.0,
         regime_drift: 0.0,
         drift_sd: 0.04,
         boom_fade: 1.0,
@@ -1980,6 +1989,8 @@ fn v0_22_1() -> World {
         overshoot: 0.0,
         overshoot_rate: 0.1,
         recess_rec_mult: 2.0,
+        recess_credit: 0.0,
+        recess_infl: 0.0,
         regime_drift: 0.0,
         drift_sd: 0.04,
         boom_fade: 1.0,
@@ -2117,6 +2128,8 @@ fn v0_22_0() -> World {
         overshoot: 0.0,
         overshoot_rate: 0.1,
         recess_rec_mult: 2.0,
+        recess_credit: 0.0,
+        recess_infl: 0.0,
         regime_drift: 0.0,
         drift_sd: 0.04,
         boom_fade: 1.0,
@@ -2254,6 +2267,8 @@ fn v0_21_0() -> World {
         overshoot: 0.0,
         overshoot_rate: 0.1,
         recess_rec_mult: 2.0,
+        recess_credit: 0.0,
+        recess_infl: 0.0,
         regime_drift: 0.0,
         drift_sd: 0.04,
         boom_fade: 1.0,
@@ -2458,6 +2473,8 @@ fn v0_20_0() -> World {
         overshoot: 0.0,
         overshoot_rate: 0.1,
         recess_rec_mult: 2.0,
+        recess_credit: 0.0,
+        recess_infl: 0.0,
         regime_drift: 0.0,
         drift_sd: 0.04,
         boom_fade: 1.0,
@@ -2652,6 +2669,18 @@ pub struct World {
     /// shipped leg and bit-identical; 1 regains the share over the decline's own length, the
     /// record's V (2009, 1933), which turns the slide-and-regain into a reversal inside the year
     pub recess_rec_mult: f64,
+    /// THE RECESSION'S CREDIT ONSET (2026-10-01): added to the onset hazard's
+    /// stress index, this x the credit growth gap the credit regime's onset reads
+    /// (`(borrow - lev_slow) / CREDIT_GROWTH_SD - CREDIT_REGIME_THETA`, its positive part), so a
+    /// recession follows a credit expansion (2000, 2007) rather than arriving at random. Reads the
+    /// stock as it stood before the session; inert where the credit stock is not evolved. 0 is off
+    /// and bit-identical.
+    pub recess_credit: f64,
+    /// THE RECESSION'S INFLATION ONSET (2026-10-01): added to the onset hazard's
+    /// stress index, this x the inflation pressure above the regime edge in units of
+    /// `INFL_REGIME_EDGE`, so a recession follows tightening into inflation (1973, 2022), where
+    /// the easing is suppressed and bonds fall with the price. 0 is off and bit-identical.
+    pub recess_infl: f64,
     /// THE REGIME'S DRIFT: during a credit-regime spell the real fundamental and the price fall
     /// together by this x the spell's level per session, repriced the same session so the value
     /// pull does not buy it back. The regime was a zero-mean turbulent spell; the record's
@@ -3522,6 +3551,22 @@ pub fn ln_det(x: f64) -> f64 {
     }
     let ef = f64::from(e);
     (ef * LN2_HI + 2.0 * sum) + ef * LN2_LO
+}
+
+/// The macro state's share of the recession's onset hazard (see `recess_credit`, `recess_infl`):
+/// exactly 0 with both dials off, so the hazard is bit-identical.
+fn recession_macro_onset(w: &World, lev_on: bool, borrow: f64, lev_slow: f64, infl: f64) -> f64 {
+    let credit = if w.recess_credit > 0.0 && lev_on {
+        w.recess_credit * ((borrow - lev_slow) / CREDIT_GROWTH_SD - CREDIT_REGIME_THETA).max(0.0)
+    } else {
+        0.0
+    };
+    let inflation = if w.recess_infl > 0.0 {
+        w.recess_infl * ((infl - INFL_REGIME_EDGE) / INFL_REGIME_EDGE).max(0.0)
+    } else {
+        0.0
+    };
+    credit + inflation
 }
 
 /// `x^k` for x in [0, 1] through `exp_det` and `ln_det`, so both twins agree to the bit where a
@@ -5704,7 +5749,11 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
                 }
                 if dis_left == 0
                     && boom_left == 0
-                    && recess_rng.next_f64() < recess_prob * (w.recess_base + eq_m.stress_idx)
+                    && recess_rng.next_f64()
+                        < recess_prob
+                            * (w.recess_base
+                                + eq_m.stress_idx
+                                + recession_macro_onset(w, lev_on, borrow, lev_slow, infl_press))
                 {
                     recess_left = ((w.recess_len * DAYS_PER_YEAR as f64) as usize).max(1);
                     recess_total = recess_left;
@@ -14899,7 +14948,7 @@ const IDENTITY_PARAMS: &[&str] = &["duration", "divYield"];
 /// are in this order too, so the order is also the archive's format. Same shape as `EMIT_SCHEMA` /
 /// `EmitSchema`: the literal is in the model, checked by each twin's own contract test, and
 /// changing one twin without the other cannot pass.
-pub const CALIBRATE_DIAL_ORDER: [&str; 78] = [
+pub const CALIBRATE_DIAL_ORDER: [&str; 80] = [
     "depth",
     "trendShare",
     "drift",
@@ -14978,6 +15027,8 @@ pub const CALIBRATE_DIAL_ORDER: [&str; 78] = [
     "overshoot",
     "overshootRate",
     "recessRecMult",
+    "recessCredit",
+    "recessInfl",
 ];
 
 /// THE SEARCHED DIALS STEPPED AND MEASURED IN LOG COORDINATES, ln(1 + x), by the calibration search
@@ -15538,6 +15589,20 @@ pub fn calibrate_ranges() -> Vec<(&'static str, f64, f64, Setter, Getter)> {
             2.0,
             |w, x| w.recess_rec_mult = x,
             |w| w.recess_rec_mult,
+        ),
+        (
+            "recessCredit",
+            0.0,
+            20.0,
+            |w, x| w.recess_credit = x,
+            |w| w.recess_credit,
+        ),
+        (
+            "recessInfl",
+            0.0,
+            2.0,
+            |w, x| w.recess_infl = x,
+            |w| w.recess_infl,
         ),
     ]
 }
@@ -18453,6 +18518,8 @@ pub fn world_json_body_fmt(w: &World, num: &dyn Fn(f64) -> String) -> Vec<String
         ("overshoot", num(w.overshoot)),
         ("overshootRate", num(w.overshoot_rate)),
         ("recessRecMult", num(w.recess_rec_mult)),
+        ("recessCredit", num(w.recess_credit)),
+        ("recessInfl", num(w.recess_infl)),
         ("regimeDrift", num(w.regime_drift)),
         ("driftSd", num(w.drift_sd)),
         ("boomFade", num(w.boom_fade)),
@@ -19658,6 +19725,8 @@ pub fn main() {
     let mut overshoot = dw.overshoot;
     let mut overshoot_rate = dw.overshoot_rate;
     let mut recess_rec_mult = dw.recess_rec_mult;
+    let mut recess_credit = dw.recess_credit;
+    let mut recess_infl = dw.recess_infl;
     let mut regime_drift = dw.regime_drift;
     let mut drift_sd = dw.drift_sd;
     let mut boom_fade = dw.boom_fade;
@@ -19840,6 +19909,8 @@ pub fn main() {
             "-overshoot" => overshoot = req_f64(&mut it, "-overshoot"),
             "-overshootrate" => overshoot_rate = req_f64(&mut it, "-overshootrate"),
             "-recessrecmult" => recess_rec_mult = req_f64(&mut it, "-recessrecmult"),
+            "-recesscredit" => recess_credit = req_f64(&mut it, "-recesscredit"),
+            "-recessinfl" => recess_infl = req_f64(&mut it, "-recessinfl"),
             "-regimedrift" => regime_drift = req_f64(&mut it, "-regimedrift"),
             "-driftsd" => drift_sd = req_f64(&mut it, "-driftsd"),
             "-boomfade" => boom_fade = req_f64(&mut it, "-boomfade"),
@@ -20210,6 +20281,8 @@ pub fn main() {
                 "-overshootrate {overshoot_rate} must be in (0, 1]"
             ));
         }
+        non_neg("-recesscredit", recess_credit);
+        non_neg("-recessinfl", recess_infl);
         if recess_rec_mult <= 0.0 {
             cli_die(&format!("-recessrecmult {recess_rec_mult} must be above 0"));
         }
@@ -20368,6 +20441,8 @@ pub fn main() {
         overshoot,
         overshoot_rate,
         recess_rec_mult,
+        recess_credit,
+        recess_infl,
         regime_drift,
         drift_sd,
         boom_fade,
