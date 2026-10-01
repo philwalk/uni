@@ -6996,6 +6996,11 @@ pub struct WorldStats {
     pub vr60: f64,
     pub vr120: f64,
     pub vr250: f64,
+    /// the era `VAR_RATIO_250_ERAS` grades the 250-session rung against (`vr250_era_of` the run's
+    /// years), and the percentile of its record among the paths' own 250-session readings; NaN
+    /// under `EXTREME_MIN_HISTORIES` paths
+    pub vr250_era: usize,
+    pub vr250_record_pct: f64,
     /// SIGNED lag-1 autocorrelation, the one horizon the ladder cannot see: a variance ratio
     /// constrains a weighted SUM of the first q-1 autocorrelations, so a world can hold vr60 at
     /// 1.0 with a positive first term paid for by negatives further out, and `ac1` above reads
@@ -7246,6 +7251,33 @@ const VAR_RATIO_LADDER: [usize; 4] = [20, 60, 120, 250];
 /// `persistence_anchor_tests`. The two long rungs cannot discriminate: at 250 sessions the record
 /// itself spans 0.24-1.56. They are graded anyway, inside ONE profile row with the slopes below,
 /// so a world clears the ladder as a shape and never rung by rung.
+/// THE 250-SESSION RUNG IS GRADED AGAINST THE RECORD OF THE RUN'S OWN LENGTH, not against the
+/// cross-section's envelope. Its envelope's top, 1.30, is ONE reading rounded up -- the CRSP
+/// century's 1.255 -- and the same market reads 1.034 from 1954 and 0.796 from 1990: at 250
+/// sessions the era is the axis, and a single history of a century spreads too widely for a box on
+/// the ensemble median to place it. So the rung is graded as the single-history rows are: the CRSP
+/// reading of the era whose length is nearest the run's years must fall inside the 5-95th
+/// percentile of the world's own histories of that length (`EXTREME_PCT_BAND`). Under
+/// `EXTREME_MIN_HISTORIES` paths the record cannot be placed and the rung keeps the envelope.
+/// `persistence_anchor_tests` pins each era to the fixture's CRSP row. Label, years, record.
+pub const VAR_RATIO_250_ERAS: [(&str, f64, f64); 3] = [
+    ("CRSP 1926-2026", 100.0, 1.255),
+    ("CRSP 1954-2026", 72.5, 1.034),
+    ("CRSP 1990-2026", 36.5, 0.796),
+];
+
+/// The era in `VAR_RATIO_250_ERAS` whose length is nearest `years`, the first on a tie.
+#[must_use]
+pub fn vr250_era_of(years: usize) -> usize {
+    let mut best = 0;
+    for (k, e) in VAR_RATIO_250_ERAS.iter().enumerate() {
+        if (e.1 - years as f64).abs() < (VAR_RATIO_250_ERAS[best].1 - years as f64).abs() {
+            best = k;
+        }
+    }
+    best
+}
+
 const VAR_RATIO_BANDS: [(usize, f64, f64); 4] = [
     (20, 0.70, 1.15),
     (60, 0.55, 1.20),
@@ -10206,6 +10238,19 @@ pub fn measure(sims: &[Path], years: usize) -> WorldStats {
         vr60: med_by(|p| p.vr[1]),
         vr120: med_by(|p| p.vr[2]),
         vr250: med_by(|p| p.vr[3]),
+        vr250_era: vr250_era_of(years),
+        vr250_record_pct: {
+            let xs: Vec<f64> = per
+                .iter()
+                .map(|p| p.vr[3])
+                .filter(|x| x.is_finite())
+                .collect();
+            if xs.len() < EXTREME_MIN_HISTORIES {
+                f64::NAN
+            } else {
+                anchor_pctile(&xs, VAR_RATIO_250_ERAS[vr250_era_of(years)].2) as f64
+            }
+        },
         ret_ac1: med_by(|p| p.ret_ac1),
         ann_ret: med_by(|p| p.ann_ret),
         n_episodes: eps.len(),
@@ -10409,6 +10454,16 @@ fn var_ratio_profile_check(st: &WorldStats) -> (String, bool, GateClass) {
     let rungs: Vec<(String, bool)> = VAR_RATIO_BANDS
         .iter()
         .map(|&(q, lo, hi)| {
+            if q == 250 && st.vr250_record_pct.is_finite() {
+                // graded against the record of the run's own length (see `VAR_RATIO_250_ERAS`)
+                let (era, _, record) = VAR_RATIO_250_ERAS[st.vr250_era];
+                let (plo, phi) = EXTREME_PCT_BAND;
+                let p = st.vr250_record_pct;
+                return (
+                    format!("{q}d {era} {record:.3} at record@{plo}-{phi}"),
+                    p >= plo as f64 && p <= phi as f64,
+                );
+            }
             let v = vr_of(st, q);
             (format!("{q}d {lo:.2}-{hi:.2}"), v > lo && v < hi)
         })
@@ -20944,6 +20999,13 @@ pub fn main() {
             .collect::<Vec<_>>()
             .join("  ")
     );
+    if st.vr250_record_pct.is_finite() {
+        let (era, _, record) = VAR_RATIO_250_ERAS[st.vr250_era];
+        println!(
+            "                         250d on these paths: the record of their length, {era} {record:.3}, at record@ {:.0}%",
+            st.vr250_record_pct
+        );
+    }
     println!();
     println!(
         "  drawdowns of 15%+      {}, {} per path; {} unrecovered at path end (included in depth)",
@@ -23817,6 +23879,7 @@ mod persistence_anchor_tests {
     struct Row {
         window: String,
         ticker: String,
+        years: f64,
         vr: [(usize, f64); 4],
         ac1: f64,
     }
@@ -23851,6 +23914,7 @@ mod persistence_anchor_tests {
                     Row {
                         window: f[0].to_string(),
                         ticker: f[1].to_string(),
+                        years: v(4),
                         vr: [(20, v(5)), (60, v(6)), (120, v(7)), (250, v(8))],
                         ac1: v(9),
                     }
@@ -23975,6 +24039,71 @@ mod persistence_anchor_tests {
                 );
             }
         }
+    }
+
+    /// Each era the 250-session rung is graded against is the fixture's own CRSP row: its record and
+    /// its length.
+    #[test]
+    fn the_250_session_eras_are_the_files_crsp_rows() {
+        let Some(rows) = rows() else { return };
+        for (era, years, record) in VAR_RATIO_250_ERAS {
+            let window = match era {
+                "CRSP 1926-2026" => "c1926",
+                "CRSP 1954-2026" => "c1954",
+                _ => "c1990",
+            };
+            let r = rows
+                .iter()
+                .find(|r| r.window == window && r.ticker == "CRSP-VW")
+                .unwrap_or_else(|| panic!("no {window} CRSP row"));
+            assert!(
+                (r.at(250) - record).abs() < 5e-4,
+                "{era}: the rung grades against {record}, the file says {}",
+                r.at(250)
+            );
+            assert!(
+                (r.years - years).abs() < 0.05,
+                "{era}: {years} years, the file says {}",
+                r.years
+            );
+        }
+        assert_eq!(vr250_era_of(100), 0);
+        assert_eq!(vr250_era_of(80), 1);
+        assert_eq!(vr250_era_of(30), 2);
+    }
+
+    /// The 250-session rung reads where the record falls among the paths, not the ensemble median: a
+    /// median above the envelope's 1.30 passes when the record sits inside the paths' 5-95, and a
+    /// median inside the envelope fails when the record sits outside them.
+    #[test]
+    fn the_250_session_rung_is_graded_by_the_records_placement() {
+        let mut st = measure(&sim_paths(&default_world(), 4, 30, DEFAULT_SEED), 30);
+        st.vr20 = 0.95;
+        st.vr60 = 0.95;
+        st.vr120 = 1.0;
+        st.vr250 = 1.40;
+        st.vr250_record_pct = 40.0;
+        let (name, pass, _) = var_ratio_profile_check(&st);
+        assert!(
+            pass,
+            "the record at the 40th percentile passes the rung: {name}"
+        );
+        assert!(
+            name.contains("250d CRSP 1990-2026 0.796 at record@5-95"),
+            "{name}"
+        );
+        st.vr250 = 1.0;
+        st.vr250_record_pct = 99.0;
+        assert!(
+            !var_ratio_profile_check(&st).1,
+            "the record above every path fails it"
+        );
+        st.vr250_record_pct = f64::NAN;
+        let (name, pass, _) = var_ratio_profile_check(&st);
+        assert!(
+            pass && name.contains("250d 0.45-1.30"),
+            "too few paths keep the envelope: {name}"
+        );
     }
 
     /// The reason the slopes exist: 0.70 at 20 sessions and 1.15 at 60 are each inside their

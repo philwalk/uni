@@ -1,5 +1,15 @@
 ## v0.24.5 — 2026-09-30
 
+**The 250-session rung graded against the record of the run's length**
+
+- The variance-ratio profile's 250-session rung passes when the CRSP reading of the era whose
+  length is nearest the run's years (1926-2026 1.255, 1954-2026 1.034, 1990-2026 0.796) falls
+  inside the 5-95th percentile of the world's own histories of that length, instead of a fixed
+  0.45-1.30 box on the ensemble median. The box's top was the century's one reading rounded up, and
+  at 250 sessions the record's era is the axis. Under 20 paths the rung keeps the box. The row's
+  name carries the era it graded against; `VAR_RATIO_250_ERAS` / `VarRatio250Eras`, pinned to the
+  persistence fixture's CRSP rows.
+
 **The slow decline's dials**
 
 - Eight dials, in both twins, searched (`CalibrateDialOrder` 72 → 80) and in every world file:

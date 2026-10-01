@@ -4911,6 +4911,26 @@ object MarketSim:
     * `PersistenceAnchorSuite`.  The two long rungs cannot discriminate: at 250 sessions the
     * record itself spans 0.24-1.56.  They are graded anyway, inside ONE profile row with the
     * slopes below, so a world clears the ladder as a shape and never rung by rung. */
+  /** THE 250-SESSION RUNG IS GRADED AGAINST THE RECORD OF THE RUN'S OWN LENGTH, not against the
+    * cross-section's envelope.  Its envelope's top, 1.30, is ONE reading rounded up -- the CRSP
+    * century's 1.255 -- and the same market reads 1.034 from 1954 and 0.796 from 1990: at 250
+    * sessions the era is the axis, and a single history of a century spreads too widely for a box
+    * on the ensemble median to place it.  So the rung is graded as the single-history rows are: the
+    * CRSP reading of the era whose length is nearest the run's years must fall inside the 5-95th
+    * percentile of the world's own histories of that length (`ExtremePctBand`).  Under
+    * `ExtremeMinHistories` paths the record cannot be placed and the rung keeps the envelope.
+    * `PersistenceAnchorSuite` pins each era to the fixture's CRSP row.  Label, years, record. */
+  val VarRatio250Eras: Vector[(String, Double, Double)] = Vector(
+    ("CRSP 1926-2026", 100.0, 1.255),
+    ("CRSP 1954-2026", 72.5, 1.034),
+    ("CRSP 1990-2026", 36.5, 0.796))
+
+  /** The era in `VarRatio250Eras` whose length is nearest `years`, the first on a tie. */
+  def vr250EraOf(years: Int): Int =
+    VarRatio250Eras.indices.foldLeft(0) { (best, k) =>
+      if math.abs(VarRatio250Eras(k)._2 - years) < math.abs(VarRatio250Eras(best)._2 - years) then k else best
+    }
+
   val VarRatioBands: Vector[(Int, Double, Double)] =
     Vector((20, 0.70, 1.15), (60, 0.55, 1.20), (120, 0.45, 1.20), (250, 0.45, 1.30))
   /** Adjacent-rung slopes vr(60)-vr(20) and vr(120)-vr(60), the cross-section's range rounded
@@ -5484,6 +5504,11 @@ object MarketSim:
                               lev20: Double = Double.NaN,
                               vr20: Double, vr60: Double,   // SIGNED-return persistence at each
                               vr120: Double, vr250: Double, // rung of `VarRatioLadder` -- `varianceRatio`
+                              // the era `VarRatio250Eras` grades the 250-session rung against
+                              // (`vr250EraOf` the run's years), and the percentile of its record
+                              // among the paths' own 250-session readings; NaN under
+                              // `ExtremeMinHistories` paths
+                              vr250Era: Int = 0, vr250RecordPct: Double = Double.NaN,
                               // SIGNED lag-1 autocorrelation, the one horizon the ladder cannot
                               // see: a variance ratio constrains a weighted SUM of the first q-1
                               // autocorrelations, so a world can hold vr60 at 1.0 with a positive
@@ -5876,6 +5901,12 @@ object MarketSim:
       vr60  = med(per.map(_.vr(1))),
       vr120 = med(per.map(_.vr(2))),
       vr250 = med(per.map(_.vr(3))),
+      vr250Era = vr250EraOf(years),
+      vr250RecordPct = {
+        val xs = per.map(_.vr(3)).filter(x => !x.isNaN && !x.isInfinite)
+        if xs.length < ExtremeMinHistories then Double.NaN
+        else anchorPctile(xs, VarRatio250Eras(vr250EraOf(years))._3).toDouble
+      },
       retAc1 = med(per.map(_.retAc1)),
       annRet = med(per.map(_.annRet)),
       sat = satStats(sims), bars = barStats(sims), open = openStats(sims),
@@ -6428,8 +6459,15 @@ object MarketSim:
     * read as bounds it does not enforce; the report's `trend persistence` lines show which rung
     * or slope failed. */
   def varRatioProfileCheck(st: WorldStats): (String, Boolean, GateClass) =
-    val rungs  = VarRatioBands.map((q, lo, hi) =>
-      (f"${q}%dd $lo%.2f-$hi%.2f", vrOf(st, q) > lo && vrOf(st, q) < hi))
+    val rungs  = VarRatioBands.map { (q, lo, hi) =>
+      if q == 250 && !st.vr250RecordPct.isNaN then
+        // graded against the record of the run's own length (see `VarRatio250Eras`)
+        val (era, _, record) = VarRatio250Eras(st.vr250Era)
+        val (plo, phi) = ExtremePctBand
+        (f"${q}%dd $era $record%.3f at record@$plo%d-$phi%d",
+         st.vr250RecordPct >= plo && st.vr250RecordPct <= phi)
+      else (f"${q}%dd $lo%.2f-$hi%.2f", vrOf(st, q) > lo && vrOf(st, q) < hi)
+    }
     val slopes = VarRatioSlopeBands.map { (a, b, lo, hi) =>
       val sl = vrOf(st, b) - vrOf(st, a)
       (f"$a%d->$b%d $lo%+.2f..$hi%+.2f", sl > lo && sl < hi)
@@ -12178,6 +12216,9 @@ ${rows.mkString(",\n")}
             VarRatioBands.map((q, lo, hi) => f"${q}%dd $lo%.2f-$hi%.2f").mkString("  ") + "; slopes " +
             VarRatioSlopeBands.map { (a, b, lo, hi) =>
               f"$a%d->$b%d ${vrOf(st, b) - vrOf(st, a) + 0.0}%+.3f ($lo%+.2f..$hi%+.2f)" }.mkString("  "))
+    if !st.vr250RecordPct.isNaN then
+      val (era, _, record) = VarRatio250Eras(st.vr250Era)
+      println(f"                         250d on these paths: the record of their length, $era $record%.3f, at record@ ${st.vr250RecordPct}%.0f%%")
     println()
     println(f"  drawdowns of 15%%+      ${st.nEpisodes}%d, ${st.epPerPath}%.1f per path; ${st.censored}%d unrecovered at path end (included in depth)")
     println(f"  their depth            median ${st.depthMed}%6.1f%%   worst ${st.worstDepth}%6.1f%%")

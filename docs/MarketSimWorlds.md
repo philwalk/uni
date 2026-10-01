@@ -1548,6 +1548,15 @@ the spreads of the recipe before it.
   evidence that did not change. A model ensemble already averages phases across its paths, so the
   model side barely moved.
 
+  The 250 rung is graded against the RECORD OF THE RUN'S OWN LENGTH, not that envelope. The
+  envelope's top, 1.30, is one reading rounded up — the CRSP century's 1.255 — and the same market
+  reads 1.034 from 1954 and 0.796 from 1990: at 250 sessions the era is the axis. The rung passes
+  when the CRSP reading of the era whose length is nearest the run's years (1926-2026, 1954-2026 or
+  1990-2026) falls inside the 5-95th percentile of the world's own histories of that length, the
+  rule the single-history rows follow; under 20 paths the record cannot be placed and the rung
+  keeps the envelope. A slow-decline world reading 1.33 on century paths sits beside the century's
+  1.255, not outside the record.
+
 - **The lag-1 rung is REPORTED, never graded, and it is the one the ladder cannot see.** A
   variance ratio constrains a weighted SUM of the first q-1 autocorrelations, so a world can hold
   vr60 at 1.0 with a positive first term paid for by negatives further out; the clustering rows
