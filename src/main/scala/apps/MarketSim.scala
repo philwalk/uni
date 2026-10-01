@@ -602,6 +602,8 @@ object MarketSim:
     s"              ;   (default ${Defaults.recessNews}; 1 is off)",
     s"-recessvol X   ; the log of the vol multiplier the noise, the session's sd and the vol state",
     s"              ;   take while a recession runs (default ${Defaults.recessVol}; 0 is off)",
+    s"-recessreprice X ; share of each recession step the price takes the same session; the rest",
+    s"              ;   is a gap the value channel trades through (default ${Defaults.recessReprice})",
     s"-regimedrift X ; the decline of the fundamental and the price per session, times the credit",
     s"              ;   regime's level, while a spell runs (default ${Defaults.regimeDrift}; 0 is off)",
     s"-driftsd X     ; the sd, a year, of the drift the fundamental redraws every 1-11 years",
@@ -970,6 +972,26 @@ object MarketSim:
                                  // earnings decline runs inside a turbulent spell (2000-02,
                                  // 2008), in the sessions a volatility rule is in cash.  0 is
                                  // off and bit-identical; searched.
+    recessReprice: Double = 1.0, // THE RECESSION'S REPRICING SHARE (probe, 2026-10-01): the
+                                 // share of each recession step (and of the recovery's) taken by
+                                 // the price the same session as the fundamental; the rest opens
+                                 // a gap the value channel sells (or buys) through the step, so
+                                 // the decline arrives as the market's own legs and rallies,
+                                 // stress sees it and the spiral can amplify it.  1 is the
+                                 // smooth repricing (bit-identical to before the dial), 0 leaves
+                                 // the whole decline to the step.
+    recessBase: Double = 0.0,    // THE RECESSION'S CALM ONSET (probe, 2026-10-01, CLI only): added
+                                 // to the stress index in the onset hazard, so a recession can
+                                 // begin in a calm market and the stress arrives through the slide
+                                 // (`recessVol`, `recessNews`) rather than before it.  0 is off
+                                 // and bit-identical.
+    recessShape: Double = 0.0,   // THE RECESSION'S PROFILE (probe, 2026-10-01, CLI only): the
+                                 // slide's sessions take shares of `recessSize` growing as
+                                 // (t/T)^shape, so the decline starts slowly and ends in its
+                                 // steepest leg, the record's shape (the first quarter of a long
+                                 // decline carries a fifth of the fall, the last quarter half);
+                                 // `recessVol`'s multiplier follows the same share.  0 is the even
+                                 // slide and bit-identical.
     regimeDrift: Double = 0.0,   // THE REGIME'S DRIFT: during a credit-regime spell the real
                                  // fundamental and the price fall together by this x the spell's
                                  // level per session, repriced the same session: the turbulent
@@ -3654,8 +3676,23 @@ object MarketSim:
     if w.leverage > 0.0 then Math.exp(w.leverage * kickS) else 1.0
   private[apps] def jumpVarMult(w: World): Double =
     if w.jumpVar > 0.0 then Math.sqrt(1.0 - w.jumpVar) else 1.0
-  private[apps] def recessionVolMult(w: World, regimeM0: Double, recessLeft: Int): Double =
-    if recessLeft > 0 && w.recessVol > 0.0 then regimeM0 * Math.exp(w.recessVol) else regimeM0
+  /** The slide's step this session: even (`recessSize / T`) or, with `recessShape` k > 0, the share
+    * ((t+1)/T)^(k+1) - (t/T)^(k+1) of `recessSize`, t sessions already taken of T. */
+  private[apps] def recessionStep(w: World, total: Int, left: Int, even: Double): Double =
+    if w.recessShape > 0.0 then
+      val t = (total - left).toDouble; val tt = total.toDouble; val k = w.recessShape + 1.0
+      w.recessSize * (Math.pow((t + 1.0) / tt, k) - Math.pow(t / tt, k))
+    else even
+  private[apps] def recessionVolMult(w: World, regimeM0: Double, recessLeft: Int, recessTotal: Int): Double =
+    if recessLeft > 0 && w.recessVol > 0.0 then
+      // with a convex profile (`recessShape`) the turbulence follows the slide's share:
+      // (k+1)(t/T)^k, mean 1 over the slide, so the vol peaks where the fall is steepest
+      val share =
+        if w.recessShape > 0.0 then
+          (w.recessShape + 1.0) * Math.pow((recessTotal - recessLeft).toDouble / recessTotal, w.recessShape)
+        else 1.0
+      regimeM0 * Math.exp(w.recessVol * share)
+    else regimeM0
   private[apps] def volResponseMult(w: World, volRespS: Double): Double =
     if w.volResp > 0.0 then Math.exp(w.volResp * volRespS) else 1.0
 
@@ -3883,7 +3920,7 @@ object MarketSim:
     // THE RECESSION's state (see `recessRate`): its own stream, read only while the dial is on
     val recessRng = new NumPyRNG(seed ^ 0x2ece5510L)
     val recessProb = w.recessRate / DaysPerYear
-    var recessLeft = 0; var recessStep = 0.0
+    var recessLeft = 0; var recessStep = 0.0; var recessTotal = 0
     var rrecLeft = 0; var rrecStep = 0.0
     var recessCount = 0
     // THE BOOM REGIME's state (see `boomRate`): its own stream, read only while the dial is on
@@ -3951,16 +3988,19 @@ object MarketSim:
           // the price falls with the earnings: repriced the same session, as news is, so the
           // recession opens no gap for the value pull to buy back and the wings (the price's
           // time off its fundamental) are untouched
-          logVbase -= recessStep; eqM.logP -= recessStep; recessLeft -= 1
+          val step = recessionStep(w, recessTotal, recessLeft, recessStep)
+          logVbase -= step; eqM.logP -= step * w.recessReprice; recessLeft -= 1
           if recessLeft == 0 && w.recessRecover > 0.0 then
             // regained over twice the decline's length: a recovery leg that outruns the price
             // puts the price under its fundamental for years (the lower wing)
             rrecLeft = max(1, (2.0 * w.recessLen * DaysPerYear).toInt)
             rrecStep = w.recessRecover * w.recessSize / rrecLeft
         else
-          if rrecLeft > 0 then { logVbase += rrecStep; eqM.logP += rrecStep; rrecLeft -= 1 }
-          if disLeft == 0 && boomLeft == 0 && recessRng.nextDouble() < recessProb * eqM.stressIdx then
+          if rrecLeft > 0 then
+            logVbase += rrecStep; eqM.logP += rrecStep * w.recessReprice; rrecLeft -= 1
+          if disLeft == 0 && boomLeft == 0 && recessRng.nextDouble() < recessProb * (w.recessBase + eqM.stressIdx) then
             recessLeft = max(1, (w.recessLen * DaysPerYear).toInt)
+            recessTotal = recessLeft
             recessStep = w.recessSize / recessLeft
             if i >= BurnIn then recessCount += 1
       logVbase += driftNow * dt + w.fundVol * sqdt * rng.randn()
@@ -4198,7 +4238,7 @@ object MarketSim:
           Math.exp(w.creditRegime * regimeR)
         else 1.0
       // THE RECESSION'S VOL (see `recessVol`): the decline runs inside a turbulent spell
-      val regimeM = recessionVolMult(w, regimeM0, recessLeft)
+      val regimeM = recessionVolMult(w, regimeM0, recessLeft, recessTotal)
       val dNoise  = if w.creditRegime > 0.0 || w.recessVol > 0.0 then dNoiseR * regimeM else dNoiseR
       // THE BUST SWING (see `BustSwing.advance`), repriced here, ahead of the step
       if w.bustAmp > 0.0 then bust.advance(eqM, logVbase, i)
@@ -10799,6 +10839,7 @@ object MarketSim:
       ("recessRate", num(w.recessRate)), ("recessSize", num(w.recessSize)),
       ("recessLen", num(w.recessLen)), ("recessRecover", num(w.recessRecover)),
       ("recessNews", num(w.recessNews)), ("recessVol", num(w.recessVol)),
+      ("recessReprice", num(w.recessReprice)),
       ("regimeDrift", num(w.regimeDrift)), ("driftSd", num(w.driftSd)),
       ("boomFade", num(w.boomFade)), ("delevRate", num(w.delevRate)),
       ("delevFrom", num(w.delevFrom)), ("delevSize", num(w.delevSize)),
@@ -11379,6 +11420,7 @@ ${rows.mkString(",\n")}
     var recessRate = dw.recessRate; var recessSize = dw.recessSize; var recessLen = dw.recessLen
     var recessRecover = dw.recessRecover; var recessNews = dw.recessNews; var volPull = dw.volPull
     var recessVol = dw.recessVol; var regimeDrift = dw.regimeDrift; var spreadDd = dw.spreadDd
+    var recessReprice = dw.recessReprice; var recessBase = dw.recessBase; var recessShape = dw.recessShape
     var disasterAnticipate = dw.disasterAnticipate; var disasterOvershoot = dw.disasterOvershoot
     var driftSd = dw.driftSd; var boomFade = dw.boomFade
     var delevRate = dw.delevRate; var delevFrom = dw.delevFrom
@@ -11499,6 +11541,9 @@ ${rows.mkString(",\n")}
       case "-recessrecover"   => recessRecover = numOr("-recessrecover", consumeNext)
       case "-recessnews"      => recessNews = numOr("-recessnews", consumeNext)
       case "-recessvol"       => recessVol = numOr("-recessvol", consumeNext)
+      case "-recessreprice"   => recessReprice = numOr("-recessreprice", consumeNext)
+      case "-recessbase"      => recessBase = numOr("-recessbase", consumeNext)
+      case "-recessshape"     => recessShape = numOr("-recessshape", consumeNext)
       case "-regimedrift"     => regimeDrift = numOr("-regimedrift", consumeNext)
       case "-driftsd"         => driftSd = numOr("-driftsd", consumeNext)
       case "-boomfade"        => boomFade = numOr("-boomfade", consumeNext)
@@ -11728,6 +11773,8 @@ ${rows.mkString(",\n")}
       usage(s"-recessrecover $recessRecover must be in [0, 1]")
     if !(recessNews >= 1.0) then usage(s"-recessnews $recessNews must be at least 1")
     nonNeg("-recessvol", recessVol)
+    if !(recessReprice >= 0.0 && recessReprice <= 1.0) then
+      usage(s"-recessreprice $recessReprice must be in [0, 1]")
     nonNeg("-regimedrift", regimeDrift)
     nonNeg("-driftsd", driftSd)
     if boomFade <= 0.0 then usage(s"-boomfade $boomFade must be above 0")
@@ -11789,6 +11836,7 @@ ${rows.mkString(",\n")}
                   boomRate = boomRate, boomSize = boomSize, boomLen = boomLen,
                   recessRate = recessRate, recessSize = recessSize, recessLen = recessLen,
                   recessRecover = recessRecover, recessNews = recessNews, recessVol = recessVol,
+                  recessReprice = recessReprice, recessBase = recessBase, recessShape = recessShape,
                   regimeDrift = regimeDrift, driftSd = driftSd, boomFade = boomFade,
                   delevRate = delevRate, delevFrom = delevFrom, delevSize = delevSize,
                   delevLen = delevLen,

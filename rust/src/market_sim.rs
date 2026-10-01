@@ -590,6 +590,8 @@ pub fn default_world() -> World {
         recess_news: 1.0,
         recess_vol: 0.0,
         recess_reprice: 1.0,
+        recess_base: 0.0,
+        recess_shape: 0.0,
         regime_drift: 0.0,
         drift_sd: 0.04,
         boom_fade: 1.0,
@@ -867,6 +869,8 @@ fn v0_19_2() -> World {
         recess_news: 1.0,
         recess_vol: 0.0,
         recess_reprice: 1.0,
+        recess_base: 0.0,
+        recess_shape: 0.0,
         regime_drift: 0.0,
         drift_sd: 0.04,
         boom_fade: 1.0,
@@ -971,6 +975,8 @@ fn v0_24_1() -> World {
         recess_news: 1.0,
         recess_vol: 0.0,
         recess_reprice: 1.0,
+        recess_base: 0.0,
+        recess_shape: 0.0,
         regime_drift: 0.0,
         drift_sd: 0.04,
         boom_fade: 1.0,
@@ -1822,6 +1828,8 @@ fn v0_23_0() -> World {
         recess_news: 1.0,
         recess_vol: 0.0,
         recess_reprice: 1.0,
+        recess_base: 0.0,
+        recess_shape: 0.0,
         regime_drift: 0.0,
         drift_sd: 0.04,
         boom_fade: 1.0,
@@ -1952,6 +1960,8 @@ fn v0_22_1() -> World {
         recess_news: 1.0,
         recess_vol: 0.0,
         recess_reprice: 1.0,
+        recess_base: 0.0,
+        recess_shape: 0.0,
         regime_drift: 0.0,
         drift_sd: 0.04,
         boom_fade: 1.0,
@@ -2084,6 +2094,8 @@ fn v0_22_0() -> World {
         recess_news: 1.0,
         recess_vol: 0.0,
         recess_reprice: 1.0,
+        recess_base: 0.0,
+        recess_shape: 0.0,
         regime_drift: 0.0,
         drift_sd: 0.04,
         boom_fade: 1.0,
@@ -2216,6 +2228,8 @@ fn v0_21_0() -> World {
         recess_news: 1.0,
         recess_vol: 0.0,
         recess_reprice: 1.0,
+        recess_base: 0.0,
+        recess_shape: 0.0,
         regime_drift: 0.0,
         drift_sd: 0.04,
         boom_fade: 1.0,
@@ -2415,6 +2429,8 @@ fn v0_20_0() -> World {
         recess_news: 1.0,
         recess_vol: 0.0,
         recess_reprice: 1.0,
+        recess_base: 0.0,
+        recess_shape: 0.0,
         regime_drift: 0.0,
         drift_sd: 0.04,
         boom_fade: 1.0,
@@ -2586,6 +2602,15 @@ pub struct World {
     /// smooth repricing (bit-identical to before the dial), 0 leaves the whole decline to the
     /// step.
     pub recess_reprice: f64,
+    /// THE RECESSION'S CALM ONSET (probe, 2026-10-01, CLI only): added to the stress index in the
+    /// onset hazard, so a recession can begin in a calm market and the stress arrives through the
+    /// slide (`recess_vol`, `recess_news`) rather than before it. 0 is off and bit-identical.
+    pub recess_base: f64,
+    /// THE RECESSION'S PROFILE (probe, 2026-10-01, CLI only): the slide's sessions take shares of
+    /// `recess_size` growing as (t/T)^shape, so the decline starts slowly and ends in its steepest
+    /// leg, the record's shape (the first quarter of a long decline carries a fifth of the fall,
+    /// the last quarter half). 0 is the even slide and bit-identical.
+    pub recess_shape: f64,
     /// THE REGIME'S DRIFT: during a credit-regime spell the real fundamental and the price fall
     /// together by this x the spell's level per session, repriced the same session so the value
     /// pull does not buy it back. The regime was a zero-mean turbulent spell; the record's
@@ -5452,6 +5477,7 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
     let recess_prob = w.recess_rate / DAYS_PER_YEAR as f64;
     let mut recess_left = 0usize;
     let mut recess_step = 0.0f64;
+    let mut recess_total = 0usize;
     let mut rrec_left = 0usize;
     let mut rrec_step = 0.0f64;
     let mut recess_count = 0usize;
@@ -5598,8 +5624,16 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
                 // the price falls with the earnings: repriced the same session, as news is, so
                 // the recession opens no gap for the value pull to buy back and the wings (the
                 // price's time off its fundamental) are untouched
-                log_vbase -= recess_step;
-                eq_m.log_p -= recess_step * w.recess_reprice;
+                let step = if w.recess_shape > 0.0 {
+                    let t = (recess_total - recess_left) as f64;
+                    let tt = recess_total as f64;
+                    let k = w.recess_shape + 1.0;
+                    w.recess_size * (((t + 1.0) / tt).powf(k) - (t / tt).powf(k))
+                } else {
+                    recess_step
+                };
+                log_vbase -= step;
+                eq_m.log_p -= step * w.recess_reprice;
                 recess_left -= 1;
                 if recess_left == 0 && w.recess_recover > 0.0 {
                     // regained over twice the decline's length: a recovery leg that outruns
@@ -5615,9 +5649,10 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
                 }
                 if dis_left == 0
                     && boom_left == 0
-                    && recess_rng.next_f64() < recess_prob * eq_m.stress_idx
+                    && recess_rng.next_f64() < recess_prob * (w.recess_base + eq_m.stress_idx)
                 {
                     recess_left = ((w.recess_len * DAYS_PER_YEAR as f64) as usize).max(1);
+                    recess_total = recess_left;
                     recess_step = w.recess_size / recess_left as f64;
                     if i >= BURN_IN {
                         recess_count += 1;
@@ -5956,7 +5991,15 @@ fn price_loop(w: &World, years: usize, seed: u64) -> Priced {
         };
         // THE RECESSION'S VOL (see `recess_vol`): the decline runs inside a turbulent spell
         let regime_m = if recess_left > 0 && w.recess_vol > 0.0 {
-            regime_m * w.recess_vol.exp()
+            // with a convex profile (`recess_shape`) the turbulence follows the slide's share:
+            // (k+1)(t/T)^k, mean 1 over the slide, so the vol peaks where the fall is steepest
+            let share = if w.recess_shape > 0.0 {
+                let t = (recess_total - recess_left) as f64 / recess_total as f64;
+                (w.recess_shape + 1.0) * t.powf(w.recess_shape)
+            } else {
+                1.0
+            };
+            regime_m * (w.recess_vol * share).exp()
         } else {
             regime_m
         };
@@ -19485,6 +19528,8 @@ pub fn main() {
     let mut recess_news = dw.recess_news;
     let mut recess_vol = dw.recess_vol;
     let mut recess_reprice = dw.recess_reprice;
+    let mut recess_base = dw.recess_base;
+    let mut recess_shape = dw.recess_shape;
     let mut regime_drift = dw.regime_drift;
     let mut drift_sd = dw.drift_sd;
     let mut boom_fade = dw.boom_fade;
@@ -19662,6 +19707,8 @@ pub fn main() {
             "-recessnews" => recess_news = req_f64(&mut it, "-recessnews"),
             "-recessvol" => recess_vol = req_f64(&mut it, "-recessvol"),
             "-recessreprice" => recess_reprice = req_f64(&mut it, "-recessreprice"),
+            "-recessbase" => recess_base = req_f64(&mut it, "-recessbase"),
+            "-recessshape" => recess_shape = req_f64(&mut it, "-recessshape"),
             "-regimedrift" => regime_drift = req_f64(&mut it, "-regimedrift"),
             "-driftsd" => drift_sd = req_f64(&mut it, "-driftsd"),
             "-boomfade" => boom_fade = req_f64(&mut it, "-boomfade"),
@@ -20017,6 +20064,11 @@ pub fn main() {
         if recess_news < 1.0 {
             cli_die(&format!("-recessnews {recess_news} must be at least 1"));
         }
+        if !(0.0..=1.0).contains(&recess_reprice) {
+            cli_die(&format!(
+                "-recessreprice {recess_reprice} must be in [0, 1]"
+            ));
+        }
         if recess_vol < 0.0 {
             cli_die(&format!("-recessvol {recess_vol} must be at least 0"));
         }
@@ -20167,6 +20219,8 @@ pub fn main() {
         recess_news,
         recess_vol,
         recess_reprice,
+        recess_base,
+        recess_shape,
         regime_drift,
         drift_sd,
         boom_fade,
