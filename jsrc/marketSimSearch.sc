@@ -92,7 +92,9 @@ object MarketSimSearch:
     "-hold BARS    ; comma-separated ROW<=D (e.g. 'equity vol %<=36.6,tail hedge corr<=0.08'): a graded",
     "              ;   row a candidate must hold within D of its record on every read of its primary",
     "              ;   arm to be feasible, D in the units a set is judged in -- percentile points from",
-    "              ;   the band's middle on a row with a record band, |ln(model/target)| on any other.",
+    "              ;   the band's middle on a row with a record band, the record's percentile points",
+    "              ;   from 50 among the read's histories on a single-history row (the multi-year and",
+    "              ;   timing rows), |ln(model/target)| on any other.",
     "              ;   What -gap is to a band's edges, for a distance: a priced row is traded away, and",
     "              ;   an archive ends where the loss pulls it whatever it was seeded from.  The seed",
     "              ;   worlds are exempt",
@@ -358,6 +360,21 @@ object MarketSimSearch:
                           * watches nothing, and for a read that left before the table was read. */
                         watchMiss: Vector[String] = Vector.empty)
 
+  /** A held row's distance on one read, in the judge's units (`-hold`): a single-history row's (the
+    * multi-year and timing rows) is the record's percentile points from 50 among the read's own
+    * histories, where the verdict places it, infinite under `ExtremeMinHistories` of them; any other
+    * row's is `judgeDistance`'s. */
+  def holdDistance(anchors: MarketSim.Anchors, nm: String, hr: MarketSim.HorizonReadings,
+                   st: MarketSim.WorldStats): Option[Double] =
+    if MarketSim.isMultiYear(nm) then
+      MarketSim.fitTargets(anchors).find(_._1 == nm).map(_._3).map { record =>
+        hr.extreme.get(nm) match
+          case Some(xs) if xs.length >= MarketSim.ExtremeMinHistories =>
+            math.abs(MarketSim.anchorPctile(xs, record).toDouble - 50.0)
+          case _ => Double.PositiveInfinity
+      }
+    else MarketSim.judgeDistance(anchors, nm, st, hr.banded)
+
   /** Does this read MISS the named gap row's band?  A row with a record band is judged by it; an
     * extreme row by where the record falls among the read's single histories of its own length
     * (outside 5-95, or too few to place it) and a multi-year row by their joint band, the
@@ -441,7 +458,7 @@ object MarketSimSearch:
     // the held rows' distances on this read, in the judge's units: past a bar is a failed gate
     val holdMiss =
       if gated then obj.hold.collect {
-        case (nm, bar) if MarketSim.judgeDistance(anchors, nm, st, banded).forall(_ > bar) => nm
+        case (nm, bar) if holdDistance(anchors, nm, hr, st).forall(_ > bar) => nm
       }
       else Vector.empty[String]
     val feasible = gated && gapMiss.isEmpty && holdMiss.isEmpty
@@ -1064,14 +1081,14 @@ object MarketSimSearch:
       else if MarketSim.fitTargets(anchors).exists((n, _, _, _) => n == g) then g
       else usage(s"-gap names [$g], which is not a graded row of [$anchorSpec]")
     }
-    // THE HELD ROWS (`-hold ROW<=D,...`): each a graded, non-extreme row of this anchor set and a
-    // finite distance at or above 0 in the judge's units
+    // THE HELD ROWS (`-hold ROW<=D,...`): each a graded row of this anchor set, single-history rows
+    // included, the other extreme rows not, and a finite distance at or above 0 in the judge's units
     val holdRows = hold.split(",").toVector.map(_.trim).filter(_.nonEmpty).map { h =>
       val at = h.indexOf("<=")
       if at < 0 then usage(s"-hold wants ROW<=D, got [$h]")
       val (row, bar) = (h.take(at).trim, h.drop(at + 2).trim)
       val names = anchors.recordBands.map(_.name) ++ MarketSim.fitTargets(anchors).map(_._1)
-      if !names.exists(n => n == row && !MarketSim.extremeTargetNames.contains(n)) then
+      if !names.exists(n => n == row && (MarketSim.isMultiYear(n) || !MarketSim.extremeTargetNames.contains(n))) then
         usage(s"-hold names [$row], which is not a graded row of [$anchorSpec]")
       val d = bar.toDoubleOption.filter(x => x.isFinite && x >= 0.0)
         .getOrElse(usage(s"-hold $row: [$bar] is not a distance"))

@@ -579,9 +579,7 @@ fn one_read(
     let hold_miss: Vec<&'static str> = if gated {
         obj.hold
             .iter()
-            .filter(|(nm, bar)| {
-                ms::judge_distance(anchors, nm, &st, banded).is_none_or(|d| d > *bar)
-            })
+            .filter(|(nm, bar)| hold_distance(anchors, nm, &hr, &st).is_none_or(|d| d > *bar))
             .map(|(nm, _)| *nm)
             .collect()
     } else {
@@ -681,6 +679,31 @@ fn one_read(
 
 /// The gap rows (`Objective::gap`) whose band this read misses: its banded reading outside the
 /// record's joint band, or no reading at all.
+/// A held row's distance on one read, in the judge's units (`-hold`): a single-history row's (the
+/// multi-year and timing rows) is the record's percentile points from 50 among the read's own
+/// histories, where the verdict places it, infinite under `EXTREME_MIN_HISTORIES` of them; any
+/// other row's is `judge_distance`'s.
+fn hold_distance(
+    anchors: Anchors,
+    nm: &str,
+    hr: &ms::HorizonReadings,
+    st: &ms::WorldStats,
+) -> Option<f64> {
+    if ms::is_multi_year(nm) {
+        let record = ms::fit_targets(anchors)
+            .into_iter()
+            .find(|(n, _, _, _)| *n == nm)
+            .map(|(_, _, t, _)| t)?;
+        return Some(match hr.extreme.get(nm) {
+            Some(xs) if xs.len() >= ms::EXTREME_MIN_HISTORIES => {
+                (ms::anchor_pctile(xs, record) as f64 - 50.0).abs()
+            }
+            _ => f64::INFINITY,
+        });
+    }
+    ms::judge_distance(anchors, nm, st, &hr.banded)
+}
+
 fn gap_misses(
     anchors: Anchors,
     gap: &[&'static str],
@@ -1602,7 +1625,9 @@ fn usage(msg: &str) -> ! {
   -hold BARS    ; comma-separated ROW<=D (e.g. 'equity vol %<=36.6,tail hedge corr<=0.08'): a graded
                 ;   row a candidate must hold within D of its record on every read of its primary
                 ;   arm to be feasible, D in the units a set is judged in -- percentile points from
-                ;   the band's middle on a row with a record band, |ln(model/target)| on any other.
+                ;   the band's middle on a row with a record band, the record's percentile points
+                ;   from 50 among the read's histories on a single-history row (the multi-year and
+                ;   timing rows), |ln(model/target)| on any other.
                 ;   What -gap is to a band's edges, for a distance: a priced row is traded away, and
                 ;   an archive ends where the loss pulls it whatever it was seeded from.  The seed
                 ;   worlds are exempt
@@ -2070,8 +2095,9 @@ fn main() {
                 })
         })
         .collect();
-    // THE HELD ROWS (`-hold ROW<=D,...`): each a graded, non-extreme row of this anchor set and a
-    // finite distance at or above 0 in the judge's units
+    // THE HELD ROWS (`-hold ROW<=D,...`): each a graded row of this anchor set, single-history
+    // rows included, the other extreme rows not, and a finite distance at or above 0 in the judge's
+    // units
     let hold: Vec<(&'static str, f64)> = c
         .hold
         .split(',')
@@ -2086,7 +2112,10 @@ fn main() {
                 .iter()
                 .map(|b| b.name)
                 .chain(ms::fit_targets(anchors).into_iter().map(|(n, _, _, _)| n))
-                .find(|n| *n == row.trim() && !ms::extreme_target_names().contains(n))
+                .find(|n| {
+                    *n == row.trim()
+                        && (ms::is_multi_year(n) || !ms::extreme_target_names().contains(n))
+                })
                 .unwrap_or_else(|| {
                     usage(&format!(
                         "-hold names [{}], which is not a graded row of [{}]",
