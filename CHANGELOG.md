@@ -1,5 +1,30 @@
 ## v0.24.5 — 2026-09-30
 
+**`0.24.5-sp500` re-solved around the slow decline**
+
+- The recession started by the credit cycle (`-recessrate 0.08 -recesscredit 10`, no calm
+  base), sliding convexly over 1.5 years (`-recessshape 1`), half of each step left to the value
+  channel (`-recessreprice 0.5`), 0.8 of it regained over its own length (`-recessrecover 0.8
+  -recessrecmult 1`), its news 2.5x, and churned by the overshoot (`-overshoot 0.8
+  -overshootrate 0.2`); the policy re-solved for the floor (`-easing 0.11 -ratemean 0.066`).
+  Every other dial unchanged. Searchable ranges widened to reach it: `easing` 0-0.15, `rateMean`
+  0-0.08.
+- On 32 seeds at 200 × 100 every class passes on 32 (the outgoing recipe on 4: the sector-trend
+  gate failed on 28) and no row misses on any. Against the outgoing recipe: the SMA10 exit avoids
+  57.9% of a decline's fall (40.6; record 64.7, now at the worlds' 74th percentile), kurtosis 24.9
+  (29.9; 21.8), the median decline lasts 1.00 years (0.42; 0.66), the 3- and 5-year variance
+  ratios 1.12 / 1.14 (1.20 / 1.28; 0.75 / 0.73), the lower wing 6.8% (7.8%; 6.7%), the short rate
+  4.33% and the floor share 9.4% (4.08 / 8.8; 4.6 / 14.6), the one-year trend +1.00%/mo (+0.08;
+  +0.66). Further from the record without a miss: the leverage correlation -0.07 (-0.09), at its
+  band's edge; the 250-day variance ratio 1.34 (1.04), inside the century's histories; time 20%
+  under water 26.3% (20.3%); the upper wing 6.2% (6.8%; 7.6%).
+- The policy is a trade: more easing lifts the floor share and the short-duration bond's depth
+  together. At 0.11 / 0.066 `-crossasset` reads no worse than the outgoing recipe at either rung
+  (bond depth vs vol 1.28-1.34 at 5.7 years, 1.44-1.51 at 13.5; outgoing 1.25-1.37, 1.48-1.52);
+  the 13.5-year rung is outside its 1.35 ceiling in both.
+- `test-data/worlds/0.24.5-sp500.json` predates the re-solve: its members, member 0 included, carry
+  the outgoing form.
+
 **The 250-session rung graded against the record of the run's length**
 
 - The variance-ratio profile's 250-session rung passes when the CRSP reading of the era whose

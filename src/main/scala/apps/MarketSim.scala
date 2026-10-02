@@ -2109,6 +2109,9 @@ object MarketSim:
            // and both wings required inside their bands (the Rust twin's doc carries the readings). On
            // 32 fresh seeds at 200 x 100 every class passes on 32 and no row misses on any. The
            // satellite's relative cycle at its adopted values (consumer request 2; see `satCycleSd`).
+           // THE SLOW DECLINE (2026-10-01): the recession started by the credit cycle, sliding
+           // convexly, half repriced, regained over its own length, churned by the overshoot; the
+           // policy re-solved for the floor (the Rust twin's doc carries the readings).
            ("0.24.5-sp500",
             spChannels.copy(trendShare = 0.0514351, depth = 17.881717, stress = 4.2846632,
                             drift = 0.13637582, fundVol = 0.033139487, volOfVol = 0.024000927,
@@ -2121,17 +2124,19 @@ object MarketSim:
                             recoveryDrag = 4.9696996, recoveryFloor = 0.055204865, disasterSize = 1.5,
                             disasterLen = 3.0, disasterRecLen = 5.0, boomRate = 1.3840468,
                             boomSize = 1.0189439, boomLen = 12.009931, recessSize = 0.47009606,
-                            recessLen = 1.3276927, recessRecover = 0.15205535, recessNews = 1.0,
-                            recessVol = 0.015269486, regimeDrift = 0.00077289421,
+                            recessLen = 1.5, recessRecover = 0.8, recessNews = 2.5,
+                            recessVol = 0.015269486, recessCredit = 10.0, recessShape = 1.0,
+                            recessReprice = 0.5, recessRecMult = 1.0, overshoot = 0.8,
+                            overshootRate = 0.2, regimeDrift = 0.00077289421,
                             disasterAnticipate = 1.0, disasterOvershoot = 0.31, beliefShare = 0.97,
                             beliefYears = 2.0916146, beliefLeak = 0.22131111, capYears = 0.051021858,
                             cycleSd = 0.092517295, cycleYears = 20.0, crowdImpact = 0.049129039,
-                            easing = 0.083710748, floorhold = 0.072804876, refuge = 0.13640012,
+                            easing = 0.11, floorhold = 0.072804876, refuge = 0.13640012,
                             refugeDays = 1.2375965, levGain = 9.710575, bustAmp = 0.073532687,
                             slowShare = 0.17336695, slowVol = 0.98775397, slowPerm = 0.13868301,
                             slowBeta = 0.49203672, inflSize = 0.074547755, discount = 6.5858285,
-                            discountRef = 1.3760451, margin = 0.0066748246, rateMean = 0.056820968,
-                            spreadDd = 3.0, recessRate = 0.0025436284, driftSd = 0.0053411225,
+                            discountRef = 1.3760451, margin = 0.0066748246, rateMean = 0.066,
+                            spreadDd = 3.0, recessRate = 0.08, driftSd = 0.0053411225,
                             boomFade = 1.6627058, volPull = 0.27869111, satCycleSd = 0.0003,
                             satDriftHalf = 0.2, satLevelHalf = 0.5, sectors = 10, sectorIdio = 0.7,
                             sectorDriftSd = 0.25, sectorDriftHalf = 2.0),
@@ -9198,7 +9203,7 @@ object MarketSim:
     ("newsRate",    0.00, 30.00, (w, x) => w.copy(newsRate = x), _.newsRate),
     ("newsSize",    0.00,  0.05, (w, x) => w.copy(newsSize = x), _.newsSize),
     ("refugeDays",  0.00,  3.00, (w, x) => w.copy(refugeDays = x), _.refugeDays),
-    ("easing",       0.0,  0.09, (w, x) => w.copy(easing = x), _.easing),
+    ("easing",       0.0,  0.15, (w, x) => w.copy(easing = x), _.easing),
     ("refuge",       0.0,  0.20, (w, x) => w.copy(refuge = x), _.refuge),
     ("inflSize",    0.03,  0.12, (w, x) => w.copy(inflSize = x), _.inflSize),
     ("discount",     3.0,  10.0, (w, x) => w.copy(discount = x), _.discount),
@@ -9258,7 +9263,7 @@ object MarketSim:
     // THE SHORT RATE's mean (item 34): the level the rate chases between regimes, solved per anchor
     // set under the rate rows -- the realised mean is this plus the inflation pressure's mean less
     // the accommodation's, and the floor at 0 binds once it is low.
-    ("rateMean",     0.0,  0.06, (w, x) => w.copy(rateMean = x), _.rateMean),
+    ("rateMean",     0.0,  0.08, (w, x) => w.copy(rateMean = x), _.rateMean),
     // THE FLOOR HOLDS (item 34): the drawdown past which the accommodation stops unwinding
     ("floorhold",    0.0,  0.60, (w, x) => w.copy(floorhold = x), _.floorhold),
     // THE RECESSION (items 32/33): the hazard per unit stress a year, the fall in log, its length

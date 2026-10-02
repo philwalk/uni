@@ -1334,6 +1334,22 @@ fn rows_0245(nq_0244: World) -> Vec<(&'static str, World, &'static str)> {
 /// (4.6% / 14.6%), the bond's growth rally 8.8 (7.0) and inflation crash -31.2 (-27.9), tail hedge
 /// corr -0.30 (-0.27). Kurtosis 29.7 (21.8) and the downside excess 6.3 (3.1) sit at their bands'
 /// 86th and 87th percentile.
+///
+/// THE SLOW DECLINE (2026-10-01): the recession started by the credit cycle (`recess_rate` 0.08,
+/// `recess_credit` 10, no calm base), sliding convexly over 1.5 years (`recess_shape` 1) with
+/// half of each step left for the value channel to trade (`recess_reprice` 0.5), 0.8 of it regained
+/// over the decline's own length (`recess_rec_mult` 1), its news 2.5x, and churned by the overshoot
+/// (0.8 of the spiral's amplification given back at 0.2 a session); the policy re-solved for the
+/// floor (`easing` 0.11, `rate_mean` 0.066: more easing lifts the floor share and the short-duration
+/// bond's depth together, and this is where `-crossasset` reads no worse than the outgoing recipe
+/// at either rung). On 32 seeds at 200 x 100 every class passes on 32 (the outgoing recipe 4, the
+/// sector-trend gate failing on 28) and no row misses on any; against the outgoing recipe the SMA10
+/// exit avoids 57.9% of a decline's fall (40.6; record 64.7), kurtosis 24.9 (29.9; 21.8), the median
+/// decline lasts 1.00 years (0.42; 0.66), the 3- and 5-year variance ratios 1.12 / 1.14 (1.20 /
+/// 1.28; 0.75 / 0.73), the lower wing 6.8% (7.8%; 6.7%), the short rate 4.33% and the floor share
+/// 9.4% (4.08 / 8.8; 4.6 / 14.6). Moved further without a miss: the leverage correlation -0.07
+/// (-0.09), at its band's edge; the 250-day variance ratio 1.34 (1.04), graded against the century;
+/// time 20% under water 26.3% (20.3%); the upper wing 6.2% (6.8%; 7.6%).
 fn recipe_0245_sp500(mut w: World) -> World {
     w.trend_share = 0.0514351;
     w.depth = 17.881717;
@@ -1367,10 +1383,16 @@ fn recipe_0245_sp500(mut w: World) -> World {
     w.boom_size = 1.0189439;
     w.boom_len = 12.009931;
     w.recess_size = 0.47009606;
-    w.recess_len = 1.3276927;
-    w.recess_recover = 0.15205535;
-    w.recess_news = 1.0;
+    w.recess_len = 1.5;
+    w.recess_recover = 0.8;
+    w.recess_news = 2.5;
     w.recess_vol = 0.015269486;
+    w.recess_credit = 10.0;
+    w.recess_shape = 1.0;
+    w.recess_reprice = 0.5;
+    w.recess_rec_mult = 1.0;
+    w.overshoot = 0.8;
+    w.overshoot_rate = 0.2;
     w.regime_drift = 0.00077289421;
     w.disaster_anticipate = 1.0;
     w.disaster_overshoot = 0.31;
@@ -1381,7 +1403,7 @@ fn recipe_0245_sp500(mut w: World) -> World {
     w.cycle_sd = 0.092517295;
     w.cycle_years = 20.0;
     w.crowd_impact = 0.049129039;
-    w.easing = 0.083710748;
+    w.easing = 0.11;
     w.floorhold = 0.072804876;
     w.refuge = 0.13640012;
     w.refuge_days = 1.2375965;
@@ -1395,9 +1417,9 @@ fn recipe_0245_sp500(mut w: World) -> World {
     w.discount = 6.5858285;
     w.discount_ref = 1.3760451;
     w.margin = 0.0066748246;
-    w.rate_mean = 0.056820968;
+    w.rate_mean = 0.066;
     w.spread_dd = 3.0;
-    w.recess_rate = 0.0025436284;
+    w.recess_rate = 0.08;
     w.drift_sd = 0.0053411225;
     w.boom_fade = 1.6627058;
     w.vol_pull = 0.27869111;
@@ -15280,7 +15302,7 @@ pub fn calibrate_ranges() -> Vec<(&'static str, f64, f64, Setter, Getter)> {
             |w, x| w.refuge_days = x,
             |w| w.refuge_days,
         ),
-        ("easing", 0.0, 0.09, |w, x| w.easing = x, |w| w.easing),
+        ("easing", 0.0, 0.15, |w, x| w.easing = x, |w| w.easing),
         ("refuge", 0.0, 0.20, |w, x| w.refuge = x, |w| w.refuge),
         (
             "inflSize",
@@ -15454,7 +15476,7 @@ pub fn calibrate_ranges() -> Vec<(&'static str, f64, f64, Setter, Getter)> {
         (
             "rateMean",
             0.0,
-            0.06,
+            0.08,
             |w, x| w.rate_mean = x,
             |w| w.rate_mean,
         ),

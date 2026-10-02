@@ -277,7 +277,8 @@ swing's ceiling and recovery rule; their `score` and `worstRow` predate all of i
 was searched under it. **The 0.24.5 sets** are the two to draw from now: `0.24.5-nasdaq.json` (4
 members from the search that found `0.24.5-nasdaq`, member 0 the recipe itself) and `0.24.5-sp500.json` (10
 members seeded from `0.24.5-sp500` with the disaster's dials and the spread term held, member 0 the
-recipe). Their membership test is the verdict's own
+recipe as it stood before its slow-decline re-solve: every member carries the outgoing form, without
+the credit-started recession and the overshoot). Their membership test is the verdict's own
 read on four fresh seeds at 200 paths × 100 years with every derived series and the macro panel
 graded: no member fails a gate or misses a record-band row on the majority of the four beyond the
 recipe's standing misses, where 9 of the 150 members of `0.24.2-sp500.json` pass every class on all
@@ -985,7 +986,7 @@ the same CRSP series the averages read a 4.0% false-exit return against the mont
 rule. Shiller's own series reads 73 / 3.6 / 0.57 / 0.77 over 1926-2023 for comparison
 (`-shiller`).
 
-What it shows, on seed 5 at 200 × 100: `0.24.5-sp500` sits inside all four bands, the avoided share at the edge: the exit avoids 42.7% of a decline's fall against the record's 64.7 (the record at the worlds' 94th percentile), a false exit forgoes 6.7% against 5.8 (20th), exits run 0.75 a year against 0.75 (50th), and the one-year trend reads +0.08% a month against 0.66 (75th) across histories that span −1.5 to +1.9. `0.24.5-nasdaq-basket` misses the avoided share, 34.4% (100th), with 7.7% false exits (3rd) and 0.96 exits a year (1st) at their edges and the trend +0.38 (68th). The one-year trend is a weak discriminator at a century, a history's reading spanning three points a month; the avoided share is the row that bites. The worlds' declines arrive too fast for a ten-month average to step aside from: the valuation-led slow decline, which the decline length rows point at from the other side.
+What it shows, on 32 seeds at 200 × 100 since the slow-decline re-solve: `0.24.5-sp500` sits inside all four bands, the exit avoiding 57.9% of a decline's fall against the record's 64.7 (the record at the worlds' 74th percentile; 94th before the re-solve), a false exit forgoing 6.0% against 5.8 (44th), 0.69 exits a year against 0.75 (76th), and the one-year trend +1.00% a month against 0.66 (24th). Before the re-solve, on seed 5: the exit avoided 42.7% of a decline's fall (the record at the worlds' 94th percentile), a false exit forgoes 6.7% against 5.8 (20th), exits run 0.75 a year against 0.75 (50th), and the one-year trend reads +0.08% a month against 0.66 (75th) across histories that span −1.5 to +1.9. `0.24.5-nasdaq-basket` misses the avoided share, 34.4% (100th), with 7.7% false exits (3rd) and 0.96 exits a year (1st) at their edges and the trend +0.38 (68th). The one-year trend is a weak discriminator at a century, a history's reading spanning three points a month; the avoided share is the row that bites. The worlds' declines arrive too fast for a ten-month average to step aside from: the valuation-led slow decline, which the decline length rows point at from the other side.
 
 **The short rate** — `short rate %` and `rate floor share %` — is the rate path's mean, in
 percent, and the share of its sessions under 0.50%, both against the daily effective federal funds
