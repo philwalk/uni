@@ -1,5 +1,26 @@
 ## v0.24.5 — 2026-09-30
 
+**`0.24.5-nasdaq` re-solved around the slow decline**
+
+- The S&P's form at the Nasdaq's scale: the recession started by the credit cycle (`-recessrate
+  0.08 -recesscredit 6`), a 0.35-log convex slide over 1.5 years, half of each step left to the
+  value channel, 0.8 regained over its own length, its news and vol damped to 1x and 0.15; the
+  overshoot at 0.4; the spread's drawdown term at 1.0 (`-spreaddd`, from 1.84). `0.24.5-nasdaq-basket`
+  carries it.
+- On 32 seeds at 200 × 100 every class passes on 32 (the outgoing recipe 31). Against the outgoing
+  recipe: the SMA10 exit avoids 43.6% of a decline's fall (34.8%, a miss on 72% of seeds; record
+  64.7, now at the worlds' 97th percentile), kurtosis 10.1 (10.5; 9.6), the 60-day, 3- and 5-year
+  variance ratios 0.90 / 1.25 / 1.19 (0.92 / 1.28 / 1.28). Further from the record: the bubble
+  coupling 0.12 (0.17; 0.11), the record at the worlds' 93rd percentile and a miss on 3 of 32
+  seeds; the median decline 0.92 years (0.64; QQQ 0.32); the 120- and 250-day variance ratios
+  0.97 / 1.23 (0.92 / 1.07). `-crossasset` reads no worse than the outgoing recipe on three seeds.
+- Two limits keep it short of the S&P's gain: a larger slide lifts the 60-to-120-session rise of
+  the variance ratio past every real series in the cross-section, and an overshoot of 0.8 drops the
+  sector legs' worst-decile correlation under its band. At 1.84 the spread's drawdown term forecast
+  the rest of a slide, its forward-60 R² 0.039 against the 0.03 bound.
+- `test-data/worlds/0.24.5-nasdaq.json` predates the re-solve: its members, member 0 included,
+  carry the outgoing form.
+
 **`0.24.5-sp500` re-solved around the slow decline**
 
 - The recession started by the credit cycle (`-recessrate 0.08 -recesscredit 10`, no calm

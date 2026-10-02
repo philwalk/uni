@@ -2069,10 +2069,11 @@ object MarketSim:
               slowBondInfl = 0.85, noiseSkew = 0.15540177, newsFlip = 0.40849992,
               valuePull = 0.096363811, recoveryDrag = 3.9043346, recoveryFloor = 0.14393366,
               disasterRate = 0.77678709, disasterSize = 1.4185505, disasterRecover = 0.50571855,
-              boomRate = 1.7901362, boomSize = 1.8287137, boomLen = 1.4406396, recessRate = 0.072847777,
-              recessSize = 0.71891493, recessLen = 0.77428379, recessRecover = 0.34480432,
-              recessNews = 2.4594523, recessVol = 0.74007038, regimeDrift = 0.00075564341,
-              spreadDd = 1.8389625, volPull = 0.48871308, beliefShare = 0.76268373, beliefYears = 0.5,
+              boomRate = 1.7901362, boomSize = 1.8287137, boomLen = 1.4406396, recessRate = 0.08,
+              recessSize = 0.35, recessLen = 1.5, recessRecover = 0.8,
+              recessNews = 1.0, recessVol = 0.15, recessCredit = 6.0, recessShape = 1.0,
+              recessReprice = 0.5, recessRecMult = 1.0, overshoot = 0.4, overshootRate = 0.2,
+              regimeDrift = 0.00075564341, spreadDd = 1.0, volPull = 0.48871308, beliefShare = 0.76268373, beliefYears = 0.5,
               beliefLeak = 0.18725365, capYears = 3.629015, cycleYears = 11.594997,
               crowdImpact = 0.048471946, easing = 0.09, floorhold = 0.13413022, refuge = 0.16778654,
               refugeDays = 1.0938777, levGain = 4.9382404, bustAmp = 0.17970632, slowShare = 0.38759481,
@@ -2092,7 +2093,10 @@ object MarketSim:
            // the spiral, the recession and the credit regime cut back, booms of 1.5 log and the
            // deleveraging the source of ordinary declines (the Rust twin's doc carries the readings).
            // On 32 fresh seeds at 200 x 100 every class passes on 29 and no row misses on any; the
-           // coupling at the record's 91st percentile.
+           // coupling at the record's 91st percentile.  THE SLOW DECLINE (2026-10-02): the S&P's form
+           // at the Nasdaq's scale -- the credit-started recession, a 0.35-log convex slide, the
+           // overshoot at 0.4, the spread's drawdown term at 1.0 (the Rust twin's doc carries the
+           // readings).
            ("0.24.5-nasdaq", nq0245, "nasdaq"),
            // THE NASDAQ BASKET on the 0.24.5 recipe: `0.24.4-nasdaq-basket`'s basket dials and the
            // satellite's relative cycle; the Nasdaq basket world to pin in place of 0.24.4's.

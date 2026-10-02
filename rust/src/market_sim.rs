@@ -1461,6 +1461,21 @@ fn recipe_0245_nasdaq_basket(mut w: World) -> World {
 /// recipe +0.6). Toward their bands' edges and inside: leverage corr -0.06 (-0.11; band -0.17 to
 /// -0.03), valuation dispersion 0.41 (0.30; ratio 1.37 against an edge of 1.5), d20 1.40 (edge
 /// 1.5). Seed 29's bond vol reads a hair over its 1.10x-duration band and seeds 25 and 34 the 250-day variance ratio over its 1.30.
+///
+/// THE SLOW DECLINE (2026-10-02), the S&P's form at the Nasdaq's scale: the recession started by
+/// the credit cycle (`recess_rate` 0.08, `recess_credit` 6), a 0.35-log convex slide over 1.5 years
+/// (`recess_shape` 1), half of each step left to the value channel, 0.8 of it regained over its own
+/// length, its news and vol damped (1x, 0.15: the recipe's 2.5x and 0.74 broke realism over a slide
+/// that long); the overshoot at 0.4 (at 0.8 the sector legs' worst-decile correlation falls under its
+/// band, the primary's amplified moves given back leaving the legs' own noise a larger share of the
+/// worst months); the spread's drawdown term at 1.0 (at 1.84 the spread forecasts the rest of a slide,
+/// its forward-60 R^2 0.039 against the 0.03 bound). A larger slide lifts the 60-to-120-session rise
+/// of the variance ratio past every real series in the cross-section. On 32 seeds at 200 x 100 every
+/// class passes on 32 (the outgoing recipe 31); against the outgoing recipe the SMA10 exit avoids
+/// 43.6% of a decline's fall (34.9, a miss on 72% of seeds; record 64.7), kurtosis 10.1 (10.5; 9.6),
+/// the 60-day, 3- and 5-year variance ratios 0.90 / 1.25 / 1.19 (0.92 / 1.28 / 1.28). Moved further:
+/// the bubble coupling 0.13 (0.17; record 0.11), a miss on 3 of 32 seeds; the median decline 0.92
+/// years (0.64; QQQ 0.32); the 120- and 250-day variance ratios 0.97 / 1.23 (0.92 / 1.07).
 fn recipe_0245_nasdaq(mut w: World) -> World {
     w.trend_share = 0.1245185;
     w.depth = 11.992261;
@@ -1494,14 +1509,20 @@ fn recipe_0245_nasdaq(mut w: World) -> World {
     w.boom_rate = 1.7901362;
     w.boom_size = 1.8287137;
     w.boom_len = 1.4406396;
-    w.recess_rate = 0.072847777;
-    w.recess_size = 0.71891493;
-    w.recess_len = 0.77428379;
-    w.recess_recover = 0.34480432;
-    w.recess_news = 2.4594523;
-    w.recess_vol = 0.74007038;
+    w.recess_rate = 0.08;
+    w.recess_size = 0.35;
+    w.recess_len = 1.5;
+    w.recess_recover = 0.8;
+    w.recess_news = 1.0;
+    w.recess_vol = 0.15;
+    w.recess_credit = 6.0;
+    w.recess_shape = 1.0;
+    w.recess_reprice = 0.5;
+    w.recess_rec_mult = 1.0;
+    w.overshoot = 0.4;
+    w.overshoot_rate = 0.2;
     w.regime_drift = 0.00075564341;
-    w.spread_dd = 1.8389625;
+    w.spread_dd = 1.0;
     w.vol_pull = 0.48871308;
     w.belief_share = 0.76268373;
     w.belief_years = 0.5;
