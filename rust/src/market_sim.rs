@@ -1474,7 +1474,8 @@ fn recipe_0245_nasdaq_basket(mut w: World) -> World {
 /// class passes on 32 (the outgoing recipe 31); against the outgoing recipe the SMA10 exit avoids
 /// 43.6% of a decline's fall (34.9, a miss on 72% of seeds; record 64.7), kurtosis 10.1 (10.5; 9.6),
 /// the 60-day, 3- and 5-year variance ratios 0.90 / 1.25 / 1.19 (0.92 / 1.28 / 1.28). Moved further:
-/// the bubble coupling 0.13 (0.17; record 0.11), a miss on 3 of 32 seeds; the median decline 0.92
+/// the bubble coupling 0.13 (0.17; record 1.04), the record at the worlds' 93rd percentile (91st) and a
+/// miss on 3 of 32 seeds; the median decline 0.92
 /// years (0.64; QQQ 0.32); the 120- and 250-day variance ratios 0.97 / 1.23 (0.92 / 1.07).
 fn recipe_0245_nasdaq(mut w: World) -> World {
     w.trend_share = 0.1245185;

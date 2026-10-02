@@ -11,15 +11,15 @@
   recipe: the SMA10 exit avoids 43.6% of a decline's fall (34.8%, a miss on 72% of seeds; record
   64.7, now at the worlds' 97th percentile), kurtosis 10.1 (10.5; 9.6), the 60-day, 3- and 5-year
   variance ratios 0.90 / 1.25 / 1.19 (0.92 / 1.28 / 1.28). Further from the record: the bubble
-  coupling 0.12 (0.17; 0.11), the record at the worlds' 93rd percentile and a miss on 3 of 32
+  coupling 0.12 (0.17; record 1.04), the record at the worlds' 93rd percentile (91st) and a miss on 3 of 32
   seeds; the median decline 0.92 years (0.64; QQQ 0.32); the 120- and 250-day variance ratios
   0.97 / 1.23 (0.92 / 1.07). `-crossasset` reads no worse than the outgoing recipe on three seeds.
 - Two limits keep it short of the S&P's gain: a larger slide lifts the 60-to-120-session rise of
   the variance ratio past every real series in the cross-section, and an overshoot of 0.8 drops the
   sector legs' worst-decile correlation under its band. At 1.84 the spread's drawdown term forecast
   the rest of a slide, its forward-60 R² 0.039 against the 0.03 bound.
-- `test-data/worlds/0.24.5-nasdaq.json` predates the re-solve: its members, member 0 included,
-  carry the outgoing form.
+- `test-data/worlds/0.24.5-nasdaq.json` rebuilt around it: 5 members, member 0 the recipe (see the
+  sets entry below).
 
 **`0.24.5-sp500` re-solved around the slow decline**
 
@@ -43,8 +43,20 @@
   together. At 0.11 / 0.066 `-crossasset` reads no worse than the outgoing recipe at either rung
   (bond depth vs vol 1.28-1.34 at 5.7 years, 1.44-1.51 at 13.5; outgoing 1.25-1.37, 1.48-1.52);
   the 13.5-year rung is outside its 1.35 ceiling in both.
-- `test-data/worlds/0.24.5-sp500.json` predates the re-solve: its members, member 0 included, carry
-  the outgoing form.
+- `test-data/worlds/0.24.5-sp500.json` rebuilt around it: 8 members, member 0 the recipe.
+
+**The 0.24.5 sets rebuilt around the slow-decline recipes**
+
+- `0.24.5-sp500.json` (8 members) and `0.24.5-nasdaq.json` (5), each searched from its recipe at
+  100-year paths (the 250-session rung grading against the century, as the verdict does) with the
+  avoided share held near the recipe's, member 0 the recipe. Each member passes every class on four
+  fresh seeds at 200 × 100 and misses no row on three of them unless the recipe does. Set medians over
+  members and seeds: the S&P set avoids 55.6% of a decline's fall (47.7-61.9; record 64.7), kurtosis
+  27.2 (21.8), the 3-year variance ratio 1.25 (0.75), 0.34 misses a read; the Nasdaq set 43.6%
+  (41.9-45.9), kurtosis 9.8 (9.6), the bubble coupling +0.15 (+1.04), 0.20 misses a read.
+- Fewer than the 30 members a set is meant to carry: of the S&P search's 185 members 87 pass every
+  class and 8 meet the row test, the lower wing the usual miss (62 of the 87); of the Nasdaq
+  search's 74, 16 and 5, the bond's crash rows the usual miss.
 
 **The 250-session rung graded against the record of the run's length**
 

@@ -274,29 +274,23 @@ default; pass `-anchors sp500` or nothing) and `0.24.2-nasdaq.json` (174, seeded
 `worstRow` are that objective's readings. Every member of the three older sets starts at fair
 value, which the stationarity row now refuses, and those with a nonzero `bustAmp` run under the
 swing's ceiling and recovery rule; their `score` and `worstRow` predate all of it. The 0.24.4 set
-was searched under it. **The 0.24.5 sets** are the two to draw from now: `0.24.5-nasdaq.json` (4
-members from the search that found `0.24.5-nasdaq`, member 0 the recipe as it stood before its slow-decline re-solve; every member carries the outgoing form) and `0.24.5-sp500.json` (10
-members seeded from `0.24.5-sp500` with the disaster's dials and the spread term held, member 0 the
-recipe as it stood before its slow-decline re-solve: every member carries the outgoing form, without
-the credit-started recession and the overshoot). Their membership test is the verdict's own
-read on four fresh seeds at 200 paths × 100 years with every derived series and the macro panel
-graded: no member fails a gate or misses a record-band row on the majority of the four beyond the
-recipe's standing misses, where 9 of the 150 members of `0.24.2-sp500.json` pass every class on all
-four under the same verdict (it predates the channels' grading; keep it for its worlds, not as a set).
-The set-level reading is each row's median over members and seeds beside the record and the share of
-reads that miss: on the Nasdaq set the bubble coupling +0.20 (record +1.04; inside on every read),
-the wings 7.1 / 6.4 (7.6 / 6.7; the lower wing missing on 12% of reads), the up-day share 54.8
-(54.8), kurtosis 10.7 (9.6), the short rate 1.4% and the floor share 35% (2.1% / 37%), the bond's
-inflation crash −20.6 (−27.9; 6%), leverage corr −0.07 (−0.11), valuation dispersion 0.41 (0.30).
-The set is the 3 of the 12 members of that search passing every class on all four judge seeds that
-miss no row on the majority of them, beside the recipe; a set search seeded from the recipe with the
-coupling a gap row admitted nothing in 344 generations, since at 60 paths the coupling flips
-outside 5-95 on a read of nearly every child of a world at the 91st. On the S&P set,
-10 of the 22 members its search admitted: valuation dispersion 0.33 (0.30), the wings 6.9 / 7.0
-(7.6 / 6.7), kurtosis 26.7 (21.8), the up-day share 54.1 (55.0), the downside excess 4.3 (3.1), the
-short rate 4.1% and the floor share 9.8% (4.6% / 14.6%; 5% and 0% of reads missing), the bond's
-growth rally 8.9 (7.0; 2%), every other row inside on every read. No member of either set misses a
-multi-year row on more than one of its four seeds. To run one:
+was searched under it. **The 0.24.5 sets** are the two to draw from now: `0.24.5-nasdaq.json` (5
+members) and `0.24.5-sp500.json` (8), each searched from its slow-decline recipe at 100-year paths (so
+the 250-session rung grades against the century, as the verdict does) with the avoided share held
+near the recipe's, member 0 the recipe itself. Their membership test is the verdict's own read on
+four fresh seeds at 200 paths × 100 years with every derived series and the macro panel graded: every
+class passes on all four, and no row misses on three or more of them unless the recipe misses it too,
+where 9 of the 150 members of `0.24.2-sp500.json` pass every class on all four under the same verdict
+(it predates the channels' grading; keep it for its worlds, not as a set). The yield is low and the
+sets are smaller than the 30 members a set is meant to carry: of the S&P search's 185 members 87 pass
+every class and 8 meet the row test, the lower wing the usual miss (62 of the 87); of the Nasdaq
+search's 74, 16 and 5, the bond's crash rows the usual miss. The set-level reading is each row's
+median over members and seeds, its range across reads, beside the record: on the S&P set the avoided
+share 55.6% (47.7-61.9; 64.7), kurtosis 27.2 (21.8), equity vol 16.9% (15.7%), the median decline
+0.80 years (0.66), the 3-year variance ratio 1.25 (0.75), the wings 6.2 / 6.9 (7.6 / 6.7), the floor
+share 11.8% (14.6%), leverage corr -0.07, 0.34 misses a read; on the Nasdaq set the avoided share
+43.6% (41.9-45.9), kurtosis 9.8 (9.6), equity vol 24.3% (26.9%), the bubble coupling +0.15 (+1.04),
+the wings 5.7 / 6.8 (7.6 / 6.7), the floor share 28% (37%), 0.20 misses a read. To run one:
 
 ```
 market_sim.exe -worldset test-data/worlds/0.24.5-nasdaq.json -worldindex 3 -anchors nasdaq -paths 200 -years 40 -emitall -emit m3.tsv
