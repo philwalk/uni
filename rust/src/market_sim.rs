@@ -12614,9 +12614,11 @@ const SP500_ANCHORS: Anchors = Anchors {
 /// Control: the same pipeline on SPY 1993-01-29 reproduces the committed w1993 fixture row exactly.
 ///
 /// THE SAMPLING SPREADS ARE THE NASDAQ WORLD'S OWN, frozen from
-/// `-noise -paths 200 -atrelease 0.24.5-nasdaq -anchors nasdaq`, the recipe this set describes;
-/// the run is seeded, so the same command reproduces every literal exactly but the wings', which
-/// are the record's own. The recipe's daily shape moved the largest ones: kurtosis 1.93 -> 1.02,
+/// `-noise -paths 200 -atrelease 0.24.5-nasdaq -anchors nasdaq`, the recipe this set describes,
+/// last at its slow-decline re-solve (2026-10-02; the same command at the outgoing recipe reproduced
+/// the previous literals to the digit but the coupling's, which was stale); the run is seeded, so
+/// the same command reproduces every literal exactly but the wings' (the record's own block
+/// bootstrap), the post-trough rate rows' and the multi-year rows' (log spreads, their own tools). The recipe's daily shape moved the largest ones: kurtosis 1.93 -> 1.02,
 /// the downside excess 4.26 -> 2.87, the leverage correlation 0.53 -> 0.37. They were
 /// first carried over from the S&P, and those values were badly wrong where the two worlds differ
 /// most: `med_depth_sd`
@@ -12639,9 +12641,9 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     timing_window: "CRSP month-ends 1926-2026",
     timing_years: 100,
     timing: [64.682098, 5.818947, 0.750000, 0.656168],
-    timing_sd: 0.172,
+    timing_sd: 0.17,
     bubble_coupling: 1.042337,
-    bubble_coupling_sd: 0.25,
+    bubble_coupling_sd: 0.41,
     run_up_3y: 1.753345,
     calm_stretch: 1927.0,
     multi_year: [
@@ -12659,7 +12661,7 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     bond_years: 24,
     bond_depth: 1.029057,
     short_rate: 2.136466,
-    short_rate_sd: 1.06,
+    short_rate_sd: 1.05,
     rate_floor: 37.313224,
     rate_floor_sd: 0.68,
     post_rate: 2.381665,
@@ -12672,19 +12674,19 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     // years read 18.26 (`yearvol-2026-09-15.tsv`, w1999) — the bottom of the 18.2-21.5 phase range.
     // Either way it is well under the pooled 26.9: the window's vol is 2000-02 at 58 / 55 / 42%.
     year_vol: 20.0,
-    year_vol_sd: 0.17,
+    year_vol_sd: 0.16,
     ret_vol: 0.38,
-    ret_vol_sd: 0.45,
+    ret_vol_sd: 0.47,
     kurt: 9.55,
-    kurt_sd: 1.59,
+    kurt_sd: 1.39,
     ac1: 0.293,
     ac1_sd: 0.23,
     ac20: 0.249,
     ac20_sd: 0.25,
     crashes: 25.6,
-    crashes_sd: 0.47,
+    crashes_sd: 0.45,
     med_depth: -22.8,
-    med_depth_sd: 0.59,
+    med_depth_sd: 0.69,
     worst_depth: -83.0,
     worst_depth_sd: 0.20,
     // QQQ's own 5th-95th over its resamples (22.23-31.41, recordbands-2026-09-26.tsv), rounded
@@ -12695,17 +12697,17 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     ret_vol_band: (0.27, 0.47),
     // QQQ wfull row of asymmetry-2026-08-31.tsv; the tail hedge is QQQ/TLT.
     semi_excess: 1.13,
-    semi_excess_sd: 3.16,
+    semi_excess_sd: 3.28,
     // QQQ 1999-2026: 54.78% of moving sessions rise
     up_share: 54.8,
     up_share_sd: 0.02,
     vol_timing: 1.395702,
-    vol_timing_sd: 2.35,
+    vol_timing_sd: 2.22,
     vol_timing_judgment: 3.0,
     lev_corr: -0.1073,
-    lev_corr_sd: 0.33,
+    lev_corr_sd: 0.36,
     tail_hedge: -0.236,
-    tail_hedge_sd: 0.52,
+    tail_hedge_sd: 0.51,
     wing_up: 7.6,
     wing_up_sd: 0.90,
     wing_down: 6.7,
@@ -12713,15 +12715,15 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     // d20's spread is a fraction of the S&P world's (0.42 against 2.27): at Nasdaq volatility the
     // deep rung is pinned where the S&P default leaves it unreadable, so the row carries real
     // weight here.
-    val_disp_sd: 0.32,
-    vr60_sd: 0.25,
-    d5_sd: 0.15,
+    val_disp_sd: 0.34,
+    vr60_sd: 0.24,
+    d5_sd: 0.14,
     d10_sd: 0.25,
     d20_sd: 0.42,
-    bond_vol_sd: 0.43,
-    bond_growth_sd: 1.86,
-    bond_infl_sd: 2.20,
-    bond_depth_sd: 0.46,
+    bond_vol_sd: 0.44,
+    bond_growth_sd: 1.78,
+    bond_infl_sd: 2.30,
+    bond_depth_sd: 0.51,
     dd_refs: &DD_REFS_NASDAQ,
     record_bands: &RECORD_BANDS_NASDAQ,
     div_yield: 0.78,

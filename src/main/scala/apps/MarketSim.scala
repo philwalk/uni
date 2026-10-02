@@ -7081,15 +7081,15 @@ object MarketSim:
     tailWindow = "QQQ 1999-2026", tailYears = 27,
     bubbleWindow = "NDX 1990-2026", bubbleYears = 37,
     timingWindow = "CRSP month-ends 1926-2026", timingYears = 100, timing = Vector(64.682098, 5.818947, 0.750000, 0.656168),
-    timingSd = 0.172,
-    bubbleCoupling = 1.042337, bubbleCouplingSd = 0.25,
+    timingSd = 0.17,
+    bubbleCoupling = 1.042337, bubbleCouplingSd = 0.41,
     runUp3y = 1.753345, calmStretch = 1927.0,
     multiYear = Vector(0.007813, 0.993439, 0.894362, 0.438273, 18.396825, 0.317460, 2.523810, 53.729182),
     multiYearLong = Vector(0.100691, 0.983398, 0.964724, 0.740644, 18.396825, 0.246032, 2.515873, 41.888384),
     multiYearVrSd = Vector(0.26, 0.49), multiYearLongVrSd = Vector(0.23, 0.40),
     declineGapSd = Vector(0.44, 0.39),
     rateWindow = "DFF 1999-2026", rateYears = 27,
-    shortRate = 2.136466, shortRateSd = 1.06,
+    shortRate = 2.136466, shortRateSd = 1.05,
     rateFloor = 37.313224, rateFloorSd = 0.68,
     postRate = 2.381665, postRateSd = 0.38,
     postFloor = 23.358002, postFloorSd = 0.65,
@@ -7098,13 +7098,13 @@ object MarketSim:
     // QQQ 1999-2026 over all 252 block phases (`recordbands-2026-09-26.tsv`): 19.97, where calendar
     // years read 18.26 (`yearvol-2026-09-15.tsv`, w1999) -- the bottom of the 18.2-21.5 phase range.
     // Either way it is well under the pooled 26.9: the window's vol is 2000-02 at 58 / 55 / 42%.
-    yearVol = 20.0,      yearVolSd = 0.17,
-    retVol = 0.38,       retVolSd = 0.45,
-    kurt = 9.55,         kurtSd = 1.59,
+    yearVol = 20.0,      yearVolSd = 0.16,
+    retVol = 0.38,       retVolSd = 0.47,
+    kurt = 9.55,         kurtSd = 1.39,
     ac1 = 0.293,         ac1Sd = 0.23,
     ac20 = 0.249,        ac20Sd = 0.25,
-    crashes = 25.6,      crashesSd = 0.47,
-    medDepth = -22.8,    medDepthSd = 0.59,
+    crashes = 25.6,      crashesSd = 0.45,
+    medDepth = -22.8,    medDepthSd = 0.69,
     worstDepth = -83.0,  worstDepthSd = 0.20,
     // QQQ's own 5th-95th over its resamples (22.23-31.41, recordbands-2026-09-26.tsv), rounded
     // outward: a level gate no narrower than what the record's own history produces
@@ -7113,18 +7113,18 @@ object MarketSim:
     yearVolBand = (16.4, 23.6),
     retVolBand = (0.27, 0.47),
     // QQQ wfull row of asymmetry-2026-08-31.tsv; the tail hedge is QQQ/TLT.
-    semiExcess = 1.13, semiExcessSd = 3.16,
+    semiExcess = 1.13, semiExcessSd = 3.28,
     // QQQ 1999-2026: 54.78% of moving sessions rise
     upShare = 54.8, upShareSd = 0.02,
-    volTiming = 1.395702, volTimingSd = 2.35, volTimingJudgment = 3.0,
-    levCorr = -0.1073, levCorrSd = 0.33,
-    tailHedge = -0.236, tailHedgeSd = 0.52,
+    volTiming = 1.395702, volTimingSd = 2.22, volTimingJudgment = 3.0,
+    levCorr = -0.1073, levCorrSd = 0.36,
+    tailHedge = -0.236, tailHedgeSd = 0.51,
     wingUp = 7.6, wingUpSd = 0.90, wingDown = 6.7, wingDownSd = 0.98,
     // d20's spread is a fraction of the S&P world's (0.42 against 2.27): at Nasdaq volatility the
     // deep rung is pinned where the S&P default leaves it unreadable, so the row carries real
     // weight here.
-    valDispSd = 0.32, vr60Sd = 0.25, d5Sd = 0.15, d10Sd = 0.25, d20Sd = 0.42,
-    bondVolSd = 0.43, bondGrowthSd = 1.86, bondInflSd = 2.20, bondDepthSd = 0.46,
+    valDispSd = 0.34, vr60Sd = 0.24, d5Sd = 0.14, d10Sd = 0.25, d20Sd = 0.42,
+    bondVolSd = 0.44, bondGrowthSd = 1.78, bondInflSd = 2.30, bondDepthSd = 0.51,
     ddRefs = DdRefsNasdaq,
     recordBands = RecordBandsNasdaq,
     divYield = 0.78, divYieldBand = (0.3, 1.5),

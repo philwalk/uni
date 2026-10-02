@@ -20,6 +20,11 @@
   the rest of a slide, its forward-60 R² 0.039 against the 0.03 bound.
 - `test-data/worlds/0.24.5-nasdaq.json` rebuilt around it: 5 members, member 0 the recipe (see the
   sets entry below).
+- The Nasdaq anchor spreads re-frozen at it from `-noise -paths 200`; the same command at the
+  outgoing recipe reproduced the previous literals to the digit but the coupling's, which was stale.
+  The moves, all the world's: kurtosis 1.59 → 1.39, median depth 0.59 → 0.69, bond depth vs vol
+  0.46 → 0.51, the bubble coupling 0.25 → 0.41, the rest by 0.01-0.13. The S&P spreads are the
+  default world's and stay.
 
 **`0.24.5-sp500` re-solved around the slow decline**
 
