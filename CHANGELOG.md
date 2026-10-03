@@ -1,4 +1,4 @@
-## v0.24.5 — 2026-09-30
+## v0.24.5 — 2026-10-03
 
 Written as one change from 0.24.4. Three new recipes, `0.24.5-sp500`, `0.24.5-nasdaq` and
 `0.24.5-nasdaq-basket`, pass every class on 32 fresh seeds at 200 × 100 and miss no record row,
