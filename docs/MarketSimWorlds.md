@@ -50,9 +50,21 @@ exit 0. Nothing to parse, so a caller can assert on it without depending on any 
 This catches the wrong binary, and it is the only check available *before* you spend the run. It
 stops working the moment you are handed a file instead of a command.
 
+A version names the code, not the recipe: before a release is published, a recipe can be re-solved
+under its name. `-digest` prints the digest of the world the other flags select, the same one the
+sidecar carries as `worldDigest`. `-buildid` prints the version, `+`, and a digest of every world
+`-atrelease` resolves. Key a cache of paths on the version, the world digest, the seed, the path
+index and the length together. The digest is a 64-bit FNV-1a over the `world` block with each dial
+written as its bit pattern, so it sees a change the block's six significant digits cannot, and both
+twins print the same digest.
+
+```
+market_sim.exe -atrelease 0.24.5-nasdaq -digest      # dc877ff8e1198f5f
+```
+
 **After the fact — the sidecar.** `-emit F` writes a sidecar beside the TSV — `F` with its
 extension replaced by `.json`, so `paths.tsv` → `paths.json` (a bare name gets `.json` appended) —
-and that is the only provenance that survives the file being moved. Four fields answer four
+and that is the only provenance that survives the file being moved. Five fields answer five
 different questions:
 
 | field | question |
@@ -60,6 +72,7 @@ different questions:
 | `schema` | can I parse this file? |
 | `version` | which release's simulator wrote it? |
 | `world` | with which parameters? |
+| `worldDigest` | exactly which world, to the bit? (schema 28) |
 | `gate` | was that world even admissible? |
 
 Each `gate.fidelity` row carries `real`, `target` and `miss`. `real` is the record, read the way the
@@ -274,23 +287,24 @@ default; pass `-anchors sp500` or nothing) and `0.24.2-nasdaq.json` (174, seeded
 `worstRow` are that objective's readings. Every member of the three older sets starts at fair
 value, which the stationarity row now refuses, and those with a nonzero `bustAmp` run under the
 swing's ceiling and recovery rule; their `score` and `worstRow` predate all of it. The 0.24.4 set
-was searched under it. **The 0.24.5 sets** are the two to draw from now: `0.24.5-nasdaq.json` (5
-members) and `0.24.5-sp500.json` (8), each searched from its slow-decline recipe at 100-year paths (so
-the 250-session rung grades against the century, as the verdict does) with the avoided share held
-near the recipe's, member 0 the recipe itself. Their membership test is the verdict's own read on
-four fresh seeds at 200 paths × 100 years with every derived series and the macro panel graded: every
+was searched under it. **The 0.24.5 sets** are the two to draw from now: `0.24.5-nasdaq.json` and `0.24.5-sp500.json`,
+30 members each, member 0 the recipe itself. Their membership test is the verdict's own read on four
+fresh seeds at 200 paths × 100 years with every derived series and the macro panel graded: every
 class passes on all four, and no row misses on three or more of them unless the recipe misses it too,
 where 9 of the 150 members of `0.24.2-sp500.json` pass every class on all four under the same verdict
-(it predates the channels' grading; keep it for its worlds, not as a set). The yield is low and the
-sets are smaller than the 30 members a set is meant to carry: of the S&P search's 185 members 87 pass
-every class and 8 meet the row test, the lower wing the usual miss (62 of the 87); of the Nasdaq
-search's 74, 16 and 5, the bond's crash rows the usual miss. The set-level reading is each row's
-median over members and seeds, its range across reads, beside the record: on the S&P set the avoided
-share 55.6% (47.7-61.9; 64.7), kurtosis 27.2 (21.8), equity vol 16.9% (15.7%), the median decline
-0.80 years (0.66), the 3-year variance ratio 1.25 (0.75), the wings 6.2 / 6.9 (7.6 / 6.7), the floor
-share 11.8% (14.6%), leverage corr -0.07, 0.34 misses a read; on the Nasdaq set the avoided share
-43.6% (41.9-45.9), kurtosis 9.8 (9.6), equity vol 24.3% (26.9%), the bubble coupling +0.15 (+1.04),
-the wings 5.7 / 6.8 (7.6 / 6.7), the floor share 28% (37%), 0.20 misses a read. To run one:
+(it predates the channels' grading; keep it for its worlds, not as a set). As a set, every graded
+row's median member distance from the record (percentile points from 50, or the log ratio) is no
+further than the outgoing set's beyond 5 points or 0.02. The members were searched at that same read,
+200 × 100 with every class gated: a search at fewer paths or under 100 years, or gating realism and
+mechanism alone, admits mostly members the test rejects (under 100 years the 250-session rung grades
+another era, and return per vol, a fidelity gate, sat under its floor on most Nasdaq candidates). The
+set-level reading is each row's median over members and seeds, its range across reads, beside the
+record: on the S&P set the avoided share 54.2% (47.7-62.8; 64.7), kurtosis 26.8 (21.8), equity vol
+16.7% (15.7%), the median decline 0.77 years (0.66), the 3-year variance ratio 1.24 (0.75), the wings
+6.4 / 7.7 (7.6 / 6.7), the floor share 11.2% (14.6%), leverage corr -0.07, 0.39 misses a read; on the
+Nasdaq set the avoided share 42.2% (37.5-47.9), kurtosis 9.7 (9.6), equity vol 24.0% (26.9%), return
+per vol 0.34 (0.38), the bubble coupling +0.14 (+1.04), the wings 6.0 / 7.3 (7.6 / 6.7), the floor
+share 28% (37%), 0.42 misses a read. To run one:
 
 ```
 market_sim.exe -worldset test-data/worlds/0.24.5-nasdaq.json -worldindex 3 -anchors nasdaq -paths 200 -years 40 -emitall -emit m3.tsv

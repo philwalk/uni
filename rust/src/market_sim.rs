@@ -21,7 +21,9 @@
 //!
 //! `-version` prints the crate version and exits, and the `-emit` sidecar records it. The
 //! default world moved at 0.19.1 and 0.19.2, so a consumer holding an emitted path needs to
-//! know which release wrote it; a stale binary on `PATH` is otherwise silent.
+//! know which release wrote it; a stale binary on `PATH` is otherwise silent. A version names the
+//! code, not the recipe, so `-buildid` adds a digest of every named world, `-digest` prints the
+//! selected world's, and the sidecar carries it as `worldDigest`.
 //!
 //! # Fidelity
 //!
@@ -245,7 +247,9 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 // `overshoot`, `overshootRate`, `recessRecMult`, `recessCredit` and `recessInfl`; a world at their
 // defaults is byte-identical to its schema-26 counterpart except the schema number and the new
 // world fields.
-const EMIT_SCHEMA: u32 = 27;
+// 27 -> 28: THE WORLD DIGEST. A top-level `worldDigest` after `world` (`world_digest`): the
+// world's identity beyond the version, since an unpublished recipe can change under its name.
+const EMIT_SCHEMA: u32 = 28;
 
 /// Frozen structural constants of the volume channel — see the `vol_idio` field. Measured
 /// from the SPY/QQQ volume-on-range regression (`bars-2026-09-01.tsv`, whose rows the
@@ -281,7 +285,7 @@ const DEFAULT_SEED: u64 = 20_260_813;
         reason = "the contract is read by the tests, never by the writer"
     )
 )]
-const EMIT_SIDECAR_KEYS: [&str; 12] = [
+const EMIT_SIDECAR_KEYS: [&str; 13] = [
     "generator",
     "version",
     "schema",
@@ -290,6 +294,7 @@ const EMIT_SIDECAR_KEYS: [&str; 12] = [
     "header",
     "path",
     "world",
+    "worldDigest",
     "gate",
     "channels",
     "episodes",
@@ -18559,6 +18564,44 @@ pub fn world_json_body(w: &World) -> Vec<String> {
     world_json_body_fmt(w, &ef)
 }
 
+const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(FNV_OFFSET, |h, b| {
+        (h ^ u64::from(*b)).wrapping_mul(FNV_PRIME)
+    })
+}
+
+/// THE WORLD DIGEST, the sidecar's `worldDigest` and `-digest`: a 64-bit FNV-1a over the
+/// `world` block's lines joined by newlines, each dial written as its IEEE-754 bit pattern in
+/// sixteen hex digits rather than at the sidecar's six significant digits, so worlds that differ
+/// in any dial differ here and the twins agree to the bit. Sixteen lowercase hex digits. A
+/// version names the code, not the recipe: an unpublished recipe can change under its name.
+pub fn world_digest(w: &World) -> String {
+    let body = world_json_body_fmt(w, &|x: f64| format!("{:016x}", x.to_bits()));
+    format!("{:016x}", fnv1a64(body.join("\n").as_bytes()))
+}
+
+/// THE BUILD IDENTITY `-buildid` prints: the version, `+`, and a digest of every world `-atrelease`
+/// resolves -- the default under the version, each release row, each recipe with its anchor set --
+/// as `name:digest` lines in that order. Two builds of one version whose named worlds differ print
+/// different identities; a change to the code alone does not move it, the version does.
+pub fn build_id() -> String {
+    let mut lines = vec![format!("{VERSION}:{}", world_digest(&default_world()))];
+    lines.extend(
+        releases()
+            .iter()
+            .map(|(n, w)| format!("{n}:{}", world_digest(w))),
+    );
+    lines.extend(
+        recipes()
+            .iter()
+            .map(|(n, w, a)| format!("{n}:{a}:{}", world_digest(w))),
+    );
+    format!("{VERSION}+{:016x}", fnv1a64(lines.join("\n").as_bytes()))
+}
+
 /// As above, with every dial rendered by `num`. A caller needing a different width than the
 /// report's asks for one here rather than keeping a second copy of the key list: the calibration
 /// search exports its archive at the archive's own width, because a consumer RECONSTRUCTS a world
@@ -19423,6 +19466,7 @@ fn write_emit_sidecar(
         "  \"world\": {".to_string(),
         world_body.join(",\n"),
         "  },".to_string(),
+        format!("  \"worldDigest\": {},", json_str(&world_digest(w))),
         "  \"gate\": {".to_string(),
         format!("    \"ensemblePaths\": {gate_paths},"),
         format!("    \"ensembleYears\": {gate_years},"),
@@ -19655,6 +19699,7 @@ pub fn main() {
     let mut emit_gate = 200usize;
     let mut gate_req = gate_default();
     let mut validate = false;
+    let mut digest_only = false;
     let mut buffer_report = false;
     let mut dd_shape = false;
     let mut power_report = false;
@@ -19941,6 +19986,12 @@ pub fn main() {
                 println!("{VERSION}");
                 std::process::exit(0)
             }
+            // The build's identity on one line (`build_id`), for a cache keyed beyond the version.
+            "-buildid" => {
+                println!("{}", build_id());
+                std::process::exit(0)
+            }
+            "-digest" => digest_only = true,
             "-paths" => {
                 paths = req_usize(&mut it, "-paths");
                 paths_given = true;
@@ -20639,6 +20690,11 @@ pub fn main() {
         discount_ref,
         margin,
     };
+    // the digest of the world the other flags select, the one an `-emit` sidecar would carry
+    if digest_only {
+        println!("{}", world_digest(&w));
+        return;
+    }
 
     // SATELLITE PROTOTYPE: write per-path primary+satellite LOG prices for grading against the
     // SPY-QQQ coupling anchors (the joint_anchor conventions, graded python-side). Deliberately
@@ -21808,6 +21864,55 @@ mod emit_sidecar_tests {
             Some(EMIT_SCHEMA),
             "EmitSchema in the Scala twin differs from EMIT_SCHEMA"
         );
+    }
+
+    /// The sidecar's `worldDigest` is the digest of the world it records, so a consumer keying a
+    /// cache on it keys on that world.
+    #[test]
+    fn emitted_sidecar_carries_the_worlds_digest() {
+        let lines = sidecar_lines("digest");
+        let got = lines
+            .iter()
+            .find_map(|l| l.strip_prefix("  \"worldDigest\": "))
+            .map(|v| v.trim_end_matches(',').trim_matches('"').to_string());
+        assert_eq!(got, Some(world_digest(&default_world())));
+    }
+
+    /// The digest's value is pinned, and the Scala twin pins the same literal
+    /// (`WorldDigestSuite`): a digest a consumer stores must not move with the language that
+    /// wrote the file, and an edit to the world block's fields moves it visibly, here.
+    #[test]
+    fn the_world_digest_is_pinned_across_the_twins() {
+        assert_eq!(world_digest(&default_world()), "19c204b1db97e1cb");
+        let (nq, _) = named_world("0.24.5-nasdaq").expect("recipe");
+        assert_eq!(world_digest(&nq), "dc877ff8e1198f5f");
+    }
+
+    /// One ulp in one dial moves the digest, where the sidecar's six significant digits cannot.
+    #[test]
+    fn the_world_digest_sees_one_ulp() {
+        let w = default_world();
+        let mut v = w;
+        v.drift = f64::from_bits(w.drift.to_bits() + 1);
+        assert_eq!(world_json_body(&w), world_json_body(&v));
+        assert_ne!(world_digest(&w), world_digest(&v));
+    }
+
+    /// Every named world `-atrelease` resolves has its own digest, and `-buildid` reads
+    /// `VERSION+` sixteen hex digits.
+    #[test]
+    fn named_worlds_digest_apart_and_the_build_id_has_its_shape() {
+        let mut seen: Vec<(String, String)> = recipes()
+            .into_iter()
+            .map(|(n, w, _)| (world_digest(&w), n.to_string()))
+            .collect();
+        seen.sort();
+        for p in seen.windows(2) {
+            assert_ne!(p[0].0, p[1].0, "{} and {} share a digest", p[0].1, p[1].1);
+        }
+        let id = build_id();
+        let tail = id.strip_prefix(&format!("{VERSION}+")).expect("VERSION+");
+        assert!(tail.len() == 16 && tail.bytes().all(|b| b.is_ascii_hexdigit()));
     }
 }
 

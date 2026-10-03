@@ -276,11 +276,13 @@ object MarketSim:
   // `overshoot`, `overshootRate`, `recessRecMult`, `recessCredit` and `recessInfl`; a world at their
   // defaults is byte-identical to its schema-26 counterpart except the schema number and the new
   // world fields.
-  val EmitSchema: Int = 27
+  // 27 -> 28: THE WORLD DIGEST.  A top-level `worldDigest` after `world` (`worldDigest`): the
+  // world's identity beyond the version, since an unpublished recipe can change under its name.
+  val EmitSchema: Int = 28
 
   val EmitSidecarKeys: Vector[String] =
     Vector("generator", "version", "schema", "file", "columns", "header", "path", "world",
-           "gate", "channels", "episodes", "fidelity")
+           "worldDigest", "gate", "channels", "episodes", "fidelity")
 
   // Numeric arguments fail LOUDLY.  `toInt` alone dies with a raw NumberFormatException, and the
   // Rust twin's old parse-or-default silently substituted the default — `-emitpath -1` emitted
@@ -298,6 +300,8 @@ object MarketSim:
 
   def usage(m: String = ""): Nothing = showUsage(m, "",
     "-version      ; print the version this simulator was built from, and exit",
+    "-buildid      ; print the version + a digest of every named world, and exit",
+    "-digest       ; print the selected world's digest (the sidecar's worldDigest), and exit",
     s"-paths N      ; independent price paths (default ${DefaultPaths})",
     s"-years Y      ; years per path (default ${DefaultYears})",
     s"-seed S       ; base random seed (default ${DefaultSeed})",
@@ -11035,6 +11039,34 @@ object MarketSim:
       ("discountRef", num(w.discountRef)), ("margin", num(w.margin)),
     ).map((nm, v) => s"""    ${jsonStr(nm)}: $v""")
 
+  private val FnvOffset = 0xcbf29ce484222325L
+  private val FnvPrime  = 0x100000001b3L
+
+  private def fnv1a64(bytes: Array[Byte]): Long =
+    bytes.foldLeft(FnvOffset)((h, b) => (h ^ (b & 0xffL)) * FnvPrime)
+
+  private def utf8(s: String): Array[Byte] = s.getBytes(java.nio.charset.StandardCharsets.UTF_8)
+
+  /** THE WORLD DIGEST, the sidecar's `worldDigest` and `-digest`: a 64-bit FNV-1a over the
+    * `world` block's lines joined by newlines, each dial written as its IEEE-754 bit pattern in
+    * sixteen hex digits rather than at the sidecar's six significant digits, so worlds that
+    * differ in any dial differ here and the twins agree to the bit.  Sixteen lowercase hex digits.
+    * A version names the code, not the recipe: an unpublished recipe can change under its name. */
+  def worldDigest(w: World): String =
+    val body = worldJsonBody(w, x => f"${java.lang.Double.doubleToRawLongBits(x)}%016x")
+    f"${fnv1a64(utf8(body.mkString("\n")))}%016x"
+
+  /** THE BUILD IDENTITY `-buildid` prints: the version, `+`, and a digest of every world
+    * `-atrelease` resolves -- the default under the version, each release row, each recipe with
+    * its anchor set -- as `name:digest` lines in that order.  Two builds of one version whose named
+    * worlds differ print different identities; a change to the code alone does not move it, the
+    * version does. */
+  def buildId: String =
+    val lines = Vector(s"$Version:${worldDigest(Defaults)}") ++
+      Releases.map((n, w) => s"$n:${worldDigest(w)}") ++
+      Recipes.map((n, w, a) => s"$n:$a:${worldDigest(w)}")
+    f"$Version+${fnv1a64(utf8(lines.mkString("\n")))}%016x"
+
   /** The channel readings the `satellite *` / `bar *` gate rows grade, as DATA: `fidelityFailed`
     * names a band, and a reader that never sees the report could not size a channel FAIL from
     * it.  Each object is present exactly when its channel ran (`satStats`/`barStats` return
@@ -11199,6 +11231,7 @@ object MarketSim:
       """  "world": {""",
       worldJsonBody(w).mkString(",\n"),
       "  },",
+      s"""  "worldDigest": ${jsonStr(worldDigest(w))},""",
       """  "gate": {""",
       s"""    "ensemblePaths": $gatePaths,""",
       s"""    "ensembleYears": $gateYears,""",
@@ -11403,6 +11436,7 @@ ${rows.mkString(",\n")}
     var anchorSpec = "sp500"
     var ddShape = false
     var emit = ""; var validate = false; var strategies = false; var single = false
+    var digestOnly = false
     var emitPath = 0; var emitAll = false; var emitStart = ""; var emitGate = DefaultEmitGate
     var emitFrom = 0
     var gateReq = GateDefault
@@ -11621,6 +11655,9 @@ ${rows.mkString(",\n")}
       // `[ "$(marketSim.sc -version)" = "$want" ] || exit 1`.  Handled where it is seen, so it
       // answers before any other flag is validated.
       case "-version"    => println(Version); System.exit(0)
+      // The build's identity on one line (`buildId`), for a cache keyed beyond the version.
+      case "-buildid"    => println(buildId); System.exit(0)
+      case "-digest"     => digestOnly = true
       case "-paths"      => paths = intOr("-paths", consumeNext); pathsGiven = true
       case "-years"      => years = intOr("-years", consumeNext); yearsGiven = true
       case "-seed"       => seed = longOr("-seed", consumeNext)
@@ -12036,6 +12073,10 @@ ${rows.mkString(",\n")}
                   slowShare = slowShare, slowVol = slowVol, slowLev = slowLev,
                   slowPhi = slowPhi, slowPerm = slowPerm, slowBeta = slowBeta,
                   noiseAsym = noiseAsym)
+    // the digest of the world the other flags select, the one an `-emit` sidecar would carry
+    if digestOnly then
+      println(worldDigest(w))
+      return
 
     // SATELLITE PROTOTYPE: write per-path primary+satellite LOG prices for grading against the
     // SPY-QQQ coupling anchors (the joint_anchor conventions, graded python-side).  Deliberately

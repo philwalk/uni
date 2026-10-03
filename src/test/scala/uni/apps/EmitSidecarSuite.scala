@@ -80,6 +80,13 @@ class EmitSidecarSuite extends FunSuite:
     }
   }
 
+  test("the emitted sidecar carries the digest of the world it records") {
+    withSidecar { (lines, _) =>
+      val got = lines.collectFirst { case s"""  "worldDigest": "${d}",""" => d }
+      assertEquals(got, Some(MarketSim.worldDigest(MarketSim.Defaults)))
+    }
+  }
+
   test("the Rust twin declares the same schema") {
     val rs = "rust/src/market_sim.rs".asPath
     assume(rs.exists, "rust twin not present in this tree (source tarball?)")
