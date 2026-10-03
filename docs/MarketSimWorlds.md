@@ -64,7 +64,7 @@ market_sim.exe -atrelease 0.24.5-nasdaq -digest      # dc877ff8e1198f5f
 
 **After the fact — the sidecar.** `-emit F` writes a sidecar beside the TSV — `F` with its
 extension replaced by `.json`, so `paths.tsv` → `paths.json` (a bare name gets `.json` appended) —
-and that is the only provenance that survives the file being moved. Five fields answer five
+and that is the only provenance that survives the file being moved. Six fields answer six
 different questions:
 
 | field | question |
@@ -74,6 +74,7 @@ different questions:
 | `world` | with which parameters? |
 | `worldDigest` | exactly which world, to the bit? (schema 28) |
 | `gate` | was that world even admissible? |
+| `reportedRows` | how does it read against records the set does not grade on? (schema 29) |
 
 Each `gate.fidelity` row carries `real`, `target` and `miss`. `real` is the record, read the way the
 model reads a path, on every row with a `recordBand`; `target` is what the loss grades against, and
@@ -84,6 +85,13 @@ true when the model falls outside the record's own joint resampling band, and
 outside 0.667-1.5. Either way a row that **cannot be computed** reads `miss: true` — a `null` model
 value is not a pass. A path holding a non-finite price is refused outright: `-emit` exits 2 and
 writes nothing, where every other gate verdict only warns.
+
+`reportedRows` holds rows read off records the set does not grade on, each shaped as a `fidelity`
+row and led by its `window`. They never enter a verdict; their `miss` says only where the record
+would fall. The Nasdaq set reports its timing rows against CRSP's century and the NDX from 1990,
+its bubble coupling against the NDX from 1990, and its multi-year rows against the NDX from 1990
+and QQQ (see [Each set on its own record](#each-set-on-its-own-record)); the S&P set reports
+nothing.
 
 **`schema` and `version` do not substitute for each other.** The default world moved at 0.19.1 and
 again at 0.19.2, so two files with identical columns and identical `schema` can still be
@@ -287,8 +295,9 @@ default; pass `-anchors sp500` or nothing) and `0.24.2-nasdaq.json` (174, seeded
 `worstRow` are that objective's readings. Every member of the three older sets starts at fair
 value, which the stationarity row now refuses, and those with a nonzero `bustAmp` run under the
 swing's ceiling and recovery rule; their `score` and `worstRow` predate all of it. The 0.24.4 set
-was searched under it. **The 0.24.5 sets** are the two to draw from now: `0.24.5-nasdaq.json` and `0.24.5-sp500.json`,
-30 members each, member 0 the recipe itself. Their membership test is the verdict's own read on four
+was searched under it. **The 0.24.6 sets** are the two to draw from now: `0.24.6-nasdaq.json` and
+`0.24.6-sp500.json`, 30 members each, member 0 the recipe itself, return per vol held at the record
+(the 0.24.5 sets, which ran low on it, stay as published). Their membership test is the verdict's own read on four
 fresh seeds at 200 paths × 100 years with every derived series and the macro panel graded: every
 class passes on all four, and no row misses on three or more of them unless the recipe misses it too,
 where 9 of the 150 members of `0.24.2-sp500.json` pass every class on all four under the same verdict
@@ -299,15 +308,16 @@ further than the outgoing set's beyond 5 points or 0.02. The members were search
 mechanism alone, admits mostly members the test rejects (under 100 years the 250-session rung grades
 another era, and return per vol, a fidelity gate, sat under its floor on most Nasdaq candidates). The
 set-level reading is each row's median over members and seeds, its range across reads, beside the
-record: on the S&P set the avoided share 54.2% (47.7-62.8; 64.7), kurtosis 26.8 (21.8), equity vol
-16.7% (15.7%), the median decline 0.77 years (0.66), the 3-year variance ratio 1.24 (0.75), the wings
-6.4 / 7.7 (7.6 / 6.7), the floor share 11.2% (14.6%), leverage corr -0.07, 0.39 misses a read; on the
-Nasdaq set the avoided share 42.2% (37.5-47.9), kurtosis 9.7 (9.6), equity vol 24.0% (26.9%), return
-per vol 0.34 (0.38), the bubble coupling +0.14 (+1.04), the wings 6.0 / 7.3 (7.6 / 6.7), the floor
-share 28% (37%), 0.42 misses a read. To run one:
+record: on the S&P set return per vol 0.68 (0.60-0.76; 0.69), the avoided share 53.0% (47.2-61.2;
+64.7), kurtosis 26.3 (21.8), equity vol 16.8% (15.7%), the median decline 0.73 years (0.66), the
+3-year variance ratio 1.24 (0.75), the wings 6.7 / 8.2 (7.6 / 6.7), the floor share 10.9% (14.6%),
+leverage corr -0.07, 0.42 misses a read; on the Nasdaq set return per vol 0.37 (0.27-0.44; 0.38), the
+avoided share 41.1% (27.8-46.6; the splice's 59.8), kurtosis 9.8 (9.6), equity vol 24.1% (26.9%), the
+bubble coupling +0.15 (+1.10, missed on two reads in three), the wings 6.5 / 7.2 (7.6 / 6.7), the
+floor share 28% (37%), 0.95 misses a read. To run one:
 
 ```
-market_sim.exe -worldset test-data/worlds/0.24.5-nasdaq.json -worldindex 3 -anchors nasdaq -paths 200 -years 40 -emitall -emit m3.tsv
+market_sim.exe -worldset test-data/worlds/0.24.6-nasdaq.json -worldindex 3 -anchors nasdaq -paths 200 -years 40 -emitall -emit m3.tsv
 ```
 
 `-worldindex` addresses a member by its own number, defaulting to 0. The member seeds every dial
@@ -817,13 +827,13 @@ among single histories of the anchor's own length**, and carry no ratio at all:
 **`bubble coupling 3y`** is the second extreme row, for the same reason and one more: no block
 resampling keeps the structure it measures. Per path it is the mean 3-year log run-up into the peaks
 of the 40%+ declines minus the mean 3-year run-up at every all-time high, so a positive reading says
-the deep declines followed larger run-ups than a typical high did. The record is its own window,
-`bubblebust-2026-09-24.tsv`: the NDX price index 1990-2026 for the Nasdaq set (+1.04; QQQ's record
-starts nine years too late for a 3-year run-up into the 2000 peak) and the CRSP century for the
-S&P (+0.11). Both shipped worlds read a median near −0.09: their deep declines start from spirals,
-jumps and unwinds at any point of the cycle, not from the top of a run-up, so NDX sits above every
-Nasdaq history and MISSES, and CRSP at the S&P's 92nd percentile. That is the item the mania work
-targets next; the row is what lets the search see it.
+the deep declines followed larger run-ups than a typical high did. The record is the set's long
+window, `bubblebust-2026-09-24.tsv`: for the Nasdaq set the 1971-2026 splice of the Composite and
+the NDX price indexes (+1.10; QQQ's record starts nine years too late for a 3-year run-up into the
+2000 peak), for the S&P the CRSP century (+0.11). `0.24.5-nasdaq` reads a median near +0.1 and
+places the splice at the 97th percentile, a miss; `0.24.5-sp500` places CRSP at the 73rd. The
+worlds' deep declines start from spirals, jumps and unwinds at any point of the cycle more often
+than from the top of a run-up.
 
 Read it as `-noise`'s `real@`, because it is the same measurement: near 50% the record is a typical
 history of this model, near 0 or 100 it is not. It needs at least 20 histories to place a record at
@@ -836,8 +846,10 @@ row: the length `model` was read over on a row with a record band, the anchor's 
 
 **The multi-year rows** grade what a year or more of a series is one observation of. Eight
 statistics, each a row against the set's equity window and again, with `long` appended to its name,
-against the set's long window (the bubble coupling's: the CRSP century, the NDX price index from
-1990); `multiyear-2026-09-29.tsv` carries the records.
+against the set's long window (the bubble coupling's: the CRSP century; the Nasdaq splice,
+1971-2026); `multiyear-2026-09-29.tsv` carries the records. The Nasdaq set grades its long window
+alone and reports QQQ's rows and the NDX's from 1990: both windows lie inside the one the
+consumer's rules were selected on.
 
 | row | statistic |
 |---|---|
@@ -857,9 +869,9 @@ as an extreme row does: a one-year block resample has no multi-year structure le
 these rows carry no record band. A row MISSES when the record falls outside the family's joint band
 of those histories, printed as `within`. The band's ranks are set so that a world the record is a
 typical history of clears all six rows of a window at once 95% of the time and both windows 90%; at
-200 histories its edges sit near the 1st and 99th percentiles. The four variance-ratio rows carry
+200 histories its edges sit near the 1st and 99th percentiles. The graded variance-ratio rows carry
 judgment 0.5 each in the loss, at the spread of their logs across single histories; the other
-eight weigh 0.
+rows weigh 0.
 
 ```
  variance ratio 3y   model   1.32   real   0.75   record@   3% of 72y histories (n=200)   within 0.66..1.91
@@ -973,19 +985,20 @@ against the record's band; the loss grades it at judgment 3.0 on the Nasdaq set,
 production gap turns on, and at 0 on the S&P set.
 
 **The timing rows** read what a 10-month moving-average exit does, the property a timing arm's
-withdrawal objective turns on, and the market's own one-year trend, against CRSP's month-end
-closes with dividends over the century, 1926-2026 (`timing-2026-09-30.tsv`, from
-`record_bands -timing -french`). At each month's end the rule is in equity for the next month when
-the level is above the mean of the last ten month-end levels, else out. Four rows, graded like the
-multi-year rows by where the record falls among the world's own century-long histories, inside
-their joint band at 0.05, on both sets:
+withdrawal objective turns on, and the market's own one-year trend, against each set's own index at
+its month-end closes (`timing-2026-09-30.tsv`, from `record_bands -timing`): CRSP's with dividends
+over 1926-2026 for the S&P, the 1971-2026 splice for the Nasdaq (see
+[Each set on its own record](#each-set-on-its-own-record)). At each month's end the rule is in
+equity for the next month when the level is above the mean of the last ten month-end levels, else
+out. Four rows, graded like the multi-year rows by where the record falls among the world's own
+histories of the record's length, inside their joint band at 0.05:
 
-| row | statistic | record |
-|---|---|---|
-| `sma10 decline avoided %` | over the declines of 20% or more (peak to trough), the share of each decline's log fall the rule was out for, averaged | 64.7 |
-| `sma10 false-exit return %` | the index's cumulative return over each false exit (an out-period no month of which lies in a decline's peak-to-trough window), averaged | 5.82 |
-| `sma10 exits per year` | the out-periods a year | 0.75 |
-| `market sign12 trend %/mo` | the index's mean next-month return after a positive trailing twelve months less after a negative one | 0.66 |
+| row | statistic | S&P record | Nasdaq record |
+|---|---|---|---|
+| `sma10 decline avoided %` | over the declines of 20% or more (peak to trough), the share of each decline's log fall the rule was out for, averaged | 64.7 | 59.8 |
+| `sma10 false-exit return %` | the index's cumulative return over each false exit (an out-period no month of which lies in a decline's peak-to-trough window), averaged | 5.82 | 7.66 |
+| `sma10 exits per year` | the out-periods a year | 0.75 | 0.81 |
+| `market sign12 trend %/mo` | the index's mean next-month return after a positive trailing twelve months less after a negative one | 0.66 | 1.10 |
 
 The record is month-end closes because the model's are. Shiller's monthly S&P, the natural
 longer record, is a monthly average of daily prices, and averaging smooths what the rule sees: on
@@ -1557,14 +1570,15 @@ the spreads of the recipe before it.
   evidence that did not change. A model ensemble already averages phases across its paths, so the
   model side barely moved.
 
-  The 250 rung is graded against the RECORD OF THE RUN'S OWN LENGTH, not that envelope. The
+  The 250 rung is graded against A RECORD OF THE SET'S OWN INDEX, not that envelope. The
   envelope's top, 1.30, is one reading rounded up — the CRSP century's 1.255 — and the same market
   reads 1.034 from 1954 and 0.796 from 1990: at 250 sessions the era is the axis. The rung passes
-  when the CRSP reading of the era whose length is nearest the run's years (1926-2026, 1954-2026 or
-  1990-2026) falls inside the 5-95th percentile of the world's own histories of that length, the
-  rule the single-history rows follow; under 20 paths the record cannot be placed and the rung
-  keeps the envelope. A slow-decline world reading 1.33 on century paths sits beside the century's
-  1.255, not outside the record.
+  when the set's era nearest the run's years falls inside the 5-95th percentile of the world's
+  histories of that era's length, cut from the run's paths, the rule the single-history rows
+  follow: for the S&P the CRSP reading over 1926-2026, 1954-2026 or 1990-2026, for the Nasdaq the
+  1971-2026 splice (1.204) at any run length. Under 20 paths the record cannot be placed and the
+  rung keeps the envelope. A slow-decline world reading 1.33 on century paths sits beside the
+  century's 1.255, not outside the record.
 
 - **The lag-1 rung is REPORTED, never graded, and it is the one the ladder cannot see.** A
   variance ratio constrains a weighted SUM of the first q-1 autocorrelations, so a world can hold
@@ -1577,6 +1591,41 @@ the spreads of the recipe before it.
   modern cross-section. A rule that reads one-day reversal will find the model's sign wrong for
   the modern era and right for the century it is scored on; the numbers the report quotes are the
   fixture's own, checked by the anchor suites so the printed claim cannot drift from the file.
+
+### Each set on its own record
+
+A row that reads the reward a timing rule earns cannot test whether that reward lasts when it is
+read off the window the rule was selected on. The Nasdaq consumer's rules were selected on the NDX
+from 1990, so the Nasdaq set grades its timing rows, its bubble coupling, its long-window
+multi-year rows and the variance-ratio profile's 250-session rung on the 1971-2026 splice: the
+Nasdaq Composite's daily returns through 1985-10-01 and the Nasdaq-100's after, both price indexes
+read from Yahoo's public ^IXIC and ^NDX series
+(`record_bands -yahoo IXIC.csv -splice NDX.csv -at 1985-10-01`). The same rows read off the NDX
+from 1990, QQQ and CRSP's century are reported, not graded (`reportedRows`). The unconditional rows
+— volatility, tails, the up-day share, the basket — stay on QQQ 1999-2026: they set the world's
+scale, and the traded fund has no longer record. The S&P set grades CRSP throughout.
+
+| row | splice 1971-2026 | NDX 1990-2026 | CRSP 1926-2026 |
+|---|---|---|---|
+| `sma10 decline avoided %` | 59.8 | 52.6 | 64.7 |
+| `sma10 false-exit return %` | 7.66 | 7.67 | 5.82 |
+| `sma10 exits per year` | 0.81 | 0.82 | 0.75 |
+| `market sign12 trend %/mo` | 1.10 | 1.53 | 0.66 |
+| `bubble coupling 3y` | +1.10 | +1.04 | |
+| `variance ratio 3y long`, `5y long` | 0.95, 0.91 | 0.98, 0.96 | |
+| `decline gap p90 y long` | 8.0 | 18.4 | |
+| `under water 20% % long` | 39.6 | 41.9 | |
+| variance ratio 250d (the profile's rung) | 1.20 | 1.06 | 1.26 |
+
+The splice and the NDX are price indexes; CRSP is total return.
+
+`0.24.6-nasdaq` on seeds 1-4 at 200 × 100 passes every class and reads every graded splice row
+inside its band but one: the avoided share's record at the 88th-90th percentile of the worlds'
+56-year histories (98th-100th against CRSP's century, outside its band on two seeds), the
+long-window multi-year rows between the 2nd and 38th, the 250-session rung at the 34th-39th. The
+bubble coupling misses on three seeds of four, the record at the 95th-97th percentile (93rd-95th
+against the NDX from 1990). All 30 members of `0.24.6-nasdaq.json` pass the set rule; their avoided
+share reads 41.1% and their coupling +0.15.
 
 ## A basket of names — `-basket`
 
@@ -2057,6 +2106,17 @@ bond's growth rally 8.8 (7.0) and inflation crash −31.2 (−27.9), tail hedge 
 Kurtosis 29.7 (21.8) and the downside excess 6.3 (3.1) sit at their bands' 86th and 87th percentile.
 It is member 0 of `test-data/worlds/0.24.5-sp500.json`
 and the S&P world to pin in place of `0.24.4-sp500-channels`.
+
+**`0.24.6-nasdaq`, `0.24.6-nasdaq-basket` and `0.24.6-sp500`** are the 0.24.5 recipes at the drift
+that holds return per vol at the record, every other dial unchanged: the Nasdaq's drift 0.1512
+(0.1354), return per vol 0.38 against QQQ's 0.38 (0.30); the S&P's 0.1475 (0.1364), return per vol
+0.69 against CRSP 1954-2026's 0.69 (0.61); seeds 1-4 at 200 × 100. 0.24.5's search let the loss
+slide the drift down while return per vol stayed inside its band, so every world's return ran under
+the record's. Against its 0.24.5 recipe on 24 fresh seeds, paired, `0.24.6-sp500` passes every class
+and misses nothing on all 24, as the old one does, and sits 0.51 closer to the record in summed
+distance a seed (t −5.2); `0.24.6-nasdaq` misses 0.88 rows a seed against 0.71 (worse on 5 seeds,
+better on 2; sign test p 0.23) and sits 0.09 closer. Each is member 0 of its `0.24.6` set, and the
+worlds to pin in place of the 0.24.5 recipes.
 
 ## The deleveraging — `-delevrate`
 

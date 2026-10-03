@@ -180,6 +180,53 @@ fn sum_range(a: &[f64], from: usize, until: usize) -> f64 {
     s
 }
 
+/// [`sum_d`]'s exact arithmetic over the elements `f(0)..f(n - 1)`, serially and without storing
+/// them: the same chunks, the same 8-way accumulators and combine tree, the partials folded in
+/// index order. For a caller already running across cores, which would pay `sum_d`'s parallel
+/// split on every call, and for a sum of a function of the elements, which would otherwise need
+/// them written out first.
+pub(crate) fn sum_d_serial_by(n: usize, f: impl Fn(usize) -> f64) -> f64 {
+    let range = |from: usize, until: usize| -> f64 {
+        let (mut s0, mut s1, mut s2, mut s3) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
+        let (mut s4, mut s5, mut s6, mut s7) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
+        let mut i = from;
+        let limit = until.saturating_sub(7);
+        while i < limit {
+            s0 += f(i);
+            s1 += f(i + 1);
+            s2 += f(i + 2);
+            s3 += f(i + 3);
+            s4 += f(i + 4);
+            s5 += f(i + 5);
+            s6 += f(i + 6);
+            s7 += f(i + 7);
+            i += 8;
+        }
+        let mut s = ((s0 + s1) + (s2 + s3)) + ((s4 + s5) + (s6 + s7));
+        while i < until {
+            s += f(i);
+            i += 1;
+        }
+        s
+    };
+    if n < PARALLEL_THRESHOLD {
+        return range(0, n);
+    }
+    let chunks = MAX_SUM_CHUNKS.min((n / PARALLEL_THRESHOLD).max(1));
+    let step = n.div_ceil(chunks);
+    let mut s = 0.0f64;
+    for c in 0..chunks {
+        let from = c * step;
+        let until = (from + step).min(n);
+        s += if from < until {
+            range(from, until)
+        } else {
+            0.0
+        };
+    }
+    s
+}
+
 /// Sum of a slice; chunked in parallel above [`PARALLEL_THRESHOLD`], with partials
 /// combined sequentially in index order. Bit-identical to Scala's `Mat.sumD`.
 pub(crate) fn sum_d(a: &[f64]) -> f64 {
@@ -1660,6 +1707,22 @@ mod tests {
         (0..n)
             .map(|i| (i as f64).sin() * 1e3 + 1e-9 * i as f64)
             .collect()
+    }
+
+    /// The serial sum by element function is `sum_d` to the bit, below the parallel threshold, at
+    /// it, at every chunk count and on the remainders.
+    #[test]
+    fn the_serial_sum_by_function_is_sum_d() {
+        for n in [
+            0usize, 1, 7, 8, 9, 100, 4095, 4096, 4097, 9000, 25_200, 70_001, 300_000,
+        ] {
+            let a = probe(n);
+            let serial = sum_d_serial_by(n, |i| a[i]);
+            assert_eq!(serial.to_bits(), sum_d(&a).to_bits(), "{n} elements");
+            let sq: Vec<f64> = a.iter().map(|x| x * x).collect();
+            let by = sum_d_serial_by(n, |i| a[i] * a[i]);
+            assert_eq!(by.to_bits(), sum_d(&sq).to_bits(), "{n} squares");
+        }
     }
 
     #[test]

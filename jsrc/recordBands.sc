@@ -22,12 +22,17 @@ object RecordBands {
   def eprintln(s: String = ""): Unit = System.err.print(s"$s\n")
 
   def usage(m: String = ""): Nothing = showUsage(m, "",
-    "(-yahoo FILE | -french FILE | -fred FILE) -from YYYY-MM-DD -to YYYY-MM-DD -set NAME -series LABEL",
+    "(-yahoo FILE [-splice FILE -at YYYY-MM-DD] | -french FILE | -fred FILE) -from YYYY-MM-DD -to YYYY-MM-DD",
+    "    -set NAME -series LABEL",
     "-rateafter -fred DFF (-yahoo FILE | -french FILE) -from -to -set -series [-of N]",
     "",
     "-yahoo FILE   a `date,adj_close,dlog_adj_close` CSV of adjusted closes (Yahoo's chart API, one row",
     "              a session): the `dlog_adj_close` column; the first row is the anchor price, not a",
     "              return, and is skipped",
+    "-splice FILE -at DATE",
+    "              a second such file continuing the -yahoo one: the -yahoo file's returns dated on or",
+    "              before DATE, then this file's dated after it (the Nasdaq splice: ^IXIC through",
+    "              1985-10-01, ^NDX after)",
     "-french FILE  Ken French's F-F_Research_Data_Factors_daily: Mkt-RF + RF compounded into an index",
     "              WITHOUT a leading 1.0 over the window, then its log returns -- which drops the",
     "              window's first session (the persistence fixture's rule)",
@@ -41,9 +46,9 @@ object RecordBands {
     "              rows jointly miss A x (rows here) / N of the time",
     "-of N         the set's banded rows across all its windows (default: the rows printed here)",
     "-header       print the column header first",
-    "-coupling     print the record's bubble coupling (`bubbleCouplingOf`), largest 3-year run-up",
-    "              and longest calm stretch instead, the rows of",
-    "              `bubblebust-2026-09-24.tsv`: no resampling keeps the structure it measures",
+    "-coupling     print the record's bubble coupling (`bubbleCouplingOf`), largest 3-year run-up,",
+    "              longest calm stretch and 250-session variance ratio (`varianceRatio`) instead, the",
+    "              rows of `bubblebust-2026-09-24.tsv`: no resampling keeps the structure they measure",
     "-multiyear    print the record's multi-year rows (`multiYearReadings`) instead, the rows of",
     "              `multiyear-2026-09-29.tsv`; with -long under their long-window names",
     "-rate         print the two rate rows (`RateBandRows`) of a -fred window instead: the record",
@@ -56,8 +61,9 @@ object RecordBands {
     "-timing       THE TIMING ROWS instead (`TimingRows`), on MONTH-END levels over -from..-to: what a",
     "              10-month moving-average exit does on the record and the market's one-year trend, the",
     "              rows of `timing-2026-09-30.tsv`, from -french FILE (CRSP's daily factors compounded,",
-    "              the ruler) or -shiller FILE (Shiller's monthly S&P as `month,price,dividend,cpi` --",
-    "              monthly AVERAGES, for comparison only)",
+    "              the ruler), -yahoo FILE (its log returns compounded, -splice as above) or -shiller",
+    "              FILE (Shiller's monthly S&P as `month,price,dividend,cpi` -- monthly AVERAGES, for",
+    "              comparison only)",
     "-sectors DIR  THE SECTOR ROWS instead: Ken French's `10_Industry_Portfolios.CSV`,",
     "              `49_Industry_Portfolios.CSV` and `F-F_Research_Data_Factors.CSV` in DIR as the",
     "              library publishes them (unzipped), the rows of `sectors-2026-09-30.tsv` with 5-95",
@@ -74,6 +80,23 @@ object RecordBands {
       val f = l.split(',')
       val v = f.lift(col).flatMap(_.trim.toDoubleOption).getOrElse(usage(s"$file: unreadable row [$l]"))
       (f(0).trim, v)
+    }
+
+  /** `readYahoo`'s returns, continued after `at` by a second file's when `splice` names one: the
+    * first file's returns dated on or before `at`, then the second's dated after it. */
+  def readYahooSpliced(file: String, splice: Option[(String, String)]): Vector[(String, Double)] =
+    splice match
+      case None             => readYahoo(file)
+      case Some((next, at)) => readYahoo(file).filter(_._1 <= at) ++ readYahoo(next).filter(_._1 > at)
+
+  /** `(month, level at the month's last session)` from dated daily log returns: the returns summed
+    * from the first, the level `expDet` of the sum, so the twins read the same levels. */
+  def logMonthEnds(days: Vector[(String, Double)]): Vector[(String, Double)] =
+    val sums = days.scanLeft(0.0)((c, dx) => c + dx._2).drop(1)
+    days.indices.toVector.flatMap { k =>
+      val d = days(k)._1
+      if k + 1 == days.length || days(k + 1)._1.take(7) != d.take(7) then Some((d.take(7), MarketSim.expDet(sums(k))))
+      else None
     }
 
   /** `(date, Mkt-RF + RF in percent)` for every dated row of Ken French's daily factor file. */
@@ -150,10 +173,16 @@ object RecordBands {
       val to = opt("-to").getOrElse("9999-99-99")
       val set = opt("-set").getOrElse(usage("-set is required"))
       val series = opt("-series").getOrElse(usage("-series is required"))
-      val rows = (opt("-french"), opt("-shiller")) match
-        case (Some(file), None) => readFrenchMonthEnds(file, from, to)
-        case (None, Some(file)) => readShillerMonthly(file).filter((m, _) => m >= from.take(7) && m <= to.take(7))
-        case _ => usage("-timing wants exactly one of -french FILE and -shiller FILE")
+      val rows = (opt("-french"), opt("-shiller"), opt("-yahoo")) match
+        case (Some(file), None, None) => readFrenchMonthEnds(file, from, to)
+        case (None, Some(file), None) => readShillerMonthly(file).filter((m, _) => m >= from.take(7) && m <= to.take(7))
+        case (None, None, Some(file)) =>
+          val splice = (opt("-splice"), opt("-at")) match
+            case (Some(f), Some(at)) => Some((f, at))
+            case (None, None)        => None
+            case _                   => usage("-splice FILE -at DATE go together")
+          logMonthEnds(readYahooSpliced(file, splice).filter((d, _) => d >= from && d <= to))
+        case _ => usage("-timing wants exactly one of -french FILE, -yahoo FILE and -shiller FILE")
       if rows.length < 24 then usage("the window holds fewer than two years of months")
       val levels = rows.map(_._2).toArray
       val window = s"${rows.head._1}..${rows.last._1}"
@@ -171,6 +200,7 @@ object RecordBands {
       printSectorRows(dir, num("-resamples", 20000L).toInt, num("-seed", 20260918L))
       return
     var yahoo = ""; var french = ""; var fred = ""; var from = ""; var to = ""
+    var splice = ""; var at = ""
     var set = ""; var series = ""; var rows = Vector.empty[String]
     var resamples = 20000; var seed = 20260918L; var header = false
     var joint = 0.10; var of = 0; var coupling = false; var rate = false; var bond = false
@@ -179,6 +209,8 @@ object RecordBands {
       case "-yahoo"     => yahoo = consumeNext
       case "-french"    => french = consumeNext
       case "-fred"      => fred = consumeNext
+      case "-splice"    => splice = consumeNext
+      case "-at"        => at = consumeNext
       case "-from"      => from = consumeNext
       case "-to"        => to = consumeNext
       case "-set"       => set = consumeNext
@@ -207,6 +239,8 @@ object RecordBands {
         f
     if Vector(yahoo, french, fred).count(_.nonEmpty) != 1 then usage("give exactly one of -yahoo, -french and -fred")
     if rate != fred.nonEmpty then usage("-rate reads a -fred file, and a -fred file is read by -rate")
+    if splice.isEmpty != at.isEmpty || (splice.nonEmpty && yahoo.isEmpty) then
+      usage("-splice FILE -at DATE go together, after a -yahoo file")
     if from.isEmpty || to.isEmpty then usage("-from and -to are required")
     if set.isEmpty || series.isEmpty then usage("-set and -series are required")
     rows.find(r => !MarketSim.RecordBandRows.contains(r))
@@ -217,7 +251,8 @@ object RecordBands {
     // no session dropped
     val dated: Vector[(String, Double)] =
       if fred.nonEmpty then readFred(fred).filter((d, _) => inWindow(d))
-      else if yahoo.nonEmpty then readYahoo(yahoo).filter((d, _) => inWindow(d))
+      else if yahoo.nonEmpty then
+        readYahooSpliced(yahoo, Option.when(splice.nonEmpty)((splice, at))).filter((d, _) => inWindow(d))
       else
         val days = readFrench(french).filter((d, _) => inWindow(d))
         val idx = days.scanLeft(1.0)((p, dx) => p * (1.0 + dx._2 / 100.0)).drop(1)
@@ -240,7 +275,8 @@ object RecordBands {
       if header then println("set\trow\tseries\twindow\tn\trecord")
       for (name, value) <- Vector(("bubble coupling 3y", MarketSim.bubbleCouplingOf(r)),
                                   ("largest 3y run-up", MarketSim.runUp3yOf(r)),
-                                  ("longest calm stretch", MarketSim.calmStretchOf(r))) do
+                                  ("longest calm stretch", MarketSim.calmStretchOf(r)),
+                                  ("variance ratio 250d", MarketSim.varianceRatio(r, 250))) do
         println(f"$set%s\t$name%s\t$series%s\t$window%s\t${r.length}%d\t$value%.6f")
       return
     if multiyear then

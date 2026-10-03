@@ -1,3 +1,91 @@
+## Unreleased
+
+**Each set on its own record.** The Nasdaq set grades its timing rows, its bubble coupling, its
+long-window multi-year rows and the variance-ratio profile's 250-session rung on the 1971-2026
+splice of the Nasdaq Composite (daily returns through 1985-10-01) and the Nasdaq-100 (after), both
+price indexes read from Yahoo's public ^IXIC and ^NDX series. A row that reads the reward a timing
+rule earns cannot test whether it lasts when it is read off the window the rule was selected on,
+and the Nasdaq consumer's rules were selected on the NDX from 1990. The same rows read off the NDX
+from 1990, QQQ 1999-2026 (the multi-year rows' equity window) and CRSP's century (the timing rows)
+are reported, not graded. The unconditional rows (volatility, tails, the up-day share, the basket)
+stay on QQQ. The S&P set is unchanged.
+
+| Nasdaq row | graded record (splice) | previously graded |
+|---|---|---|
+| `sma10 decline avoided %` | 59.8 | 64.7 (CRSP) |
+| `sma10 false-exit return %` | 7.66 | 5.82 (CRSP) |
+| `sma10 exits per year` | 0.81 | 0.75 (CRSP) |
+| `market sign12 trend %/mo` | 1.10 | 0.66 (CRSP) |
+| `bubble coupling 3y` | +1.10 | +1.04 (NDX 1990) |
+| `variance ratio 3y long`, `5y long` | 0.95, 0.91 | 0.98, 0.96 (NDX 1990) |
+| `decline gap p90 y long` | 8.0 | 18.4 (NDX 1990) |
+| `under water 20% % long` | 39.6 | 41.9 (NDX 1990) |
+| 250-session rung | 1.204 | 1.255 (CRSP century, at 100 years) |
+
+On seeds 1-4 at 200 × 100, `0.24.5-nasdaq` passes every class and places the splice's records
+inside every graded band but the coupling's: the avoided share at the 84th-89th percentile (98th
+against CRSP), the long-window multi-year rows between the 1st and 26th, the 250-session rung at the
+31st-42nd. The coupling misses on every seed, at the 96th-98th percentile (93rd-95th against the
+NDX from 1990). 29 of the 30 members of `0.24.5-nasdaq.json` pass the set rule under this grading;
+member 13 misses `decline length p50 y long` on three seeds of four.
+
+**Return per vol held at the record.** 0.24.5's search let the loss slide the recipes' drift
+down: return per vol stayed inside its band, so no gate saw it, and every world column read a
+lower return than the record's, the 3x legs about three times as much. `0.24.6-sp500` is
+`0.24.5-sp500` at drift 0.1475 (0.1364): return per vol 0.69 against CRSP 1954-2026's 0.69 (0.61),
+the median annual return 11.6% (10.4%) over 100-year paths. Against `0.24.5-sp500` on 24 fresh
+seeds, paired, both pass every class and miss nothing on all 24, and the new recipe sits 0.51
+closer to the record in summed distance a seed (t −5.2). `0.24.6-sp500.json` holds 30 members,
+member 0 the recipe, every one passing every class on seeds 1-4 under the set rule; its median
+member reads return per vol 0.68 (0.63 for `0.24.5-sp500.json`), with no row's median distance from
+the record worse than the outgoing set's beyond tolerance. `0.24.6-nasdaq` is
+`0.24.5-nasdaq` at drift 0.1512 (0.1354), which puts return per vol at QQQ's 0.38 on seeds 1-4 at
+200 × 100 where the 0.24.5 recipe reads 0.30; every other dial is unchanged, and
+`0.24.6-nasdaq-basket` carries the same drift. Against `0.24.5-nasdaq` on 24 fresh seeds, paired,
+it misses 0.88 rows a seed against 0.71 (worse on 5 seeds, better on 2; sign test p 0.23) and sits
+0.087 closer to the record in summed distance; the coupling misses on 19 seeds against 17.
+`0.24.6-nasdaq.json` holds 30 members, member 0 the recipe, every one passing every class on
+seeds 1-4 under the set rule; its median member reads return per vol 0.37 (0.34 for
+`0.24.5-nasdaq.json`), with no row's median distance from the record worse than the outgoing
+set's beyond tolerance. In this model a higher drift raises the short rate and cuts its time at
+the floor; the set's median member reads 1.90% and 27.9% of sessions at the floor (record 2.14%
+and 37.3%), where `0.24.5-nasdaq.json`'s read 1.91% and 28.1%.
+
+**Upgrading**
+
+- **Sidecar schema 28 → 29.** `reportedRows` follows `fidelity`: each a `fidelity` row led by its
+  `window`, never in a verdict (`miss` says only where the record would fall); `[]` where the set
+  reports nothing. The Nasdaq's `fidelity` list no longer holds the eight QQQ multi-year rows.
+- The 250-session rung reads each era's record among the world's histories cut to that era's
+  length, and a set grades the era of its own index nearest the run's years. The S&P at 100 years
+  reads as before.
+- The Nasdaq's loss spreads at the splice's 56 years: the avoided share 0.27, the coupling 0.32,
+  the long window's variance ratios 0.22 / 0.33 and decline gap 0.43.
+- API: `write_emitted` takes the reported rows after the fidelity rows; new
+  `reported_record_rows`, `ReportedRecord`, `ReportedRow`, `RowFamily`; `Anchors` gains
+  `vr250_eras` and `reported`, and `multi_year` is an `Option`; `vr250_era_of` takes the set's
+  eras and fractional years; `variance_ratio` is public. The Scala twin matches.
+- `record_bands`: `-splice FILE -at DATE` continues a `-yahoo` series with a second file's returns
+  dated after DATE; `-timing` reads `-yahoo`; `-coupling` also prints `variance ratio 250d`.
+- **Speed.** A world's measurement reads in about half the time with the derived channels on,
+  bit for bit the same: month ends come from integer calendar arithmetic, and the correlations
+  and clustering lags sum `MatD`'s way without its temporaries.
+
+**Calibration search** (`market_sim_search`), in both harnesses:
+
+- `-stage P` reads the first P paths alone and rejects a candidate when two or more rows fail
+  there; one that passes reads the rest, and the whole read is the unstaged one bit for bit.
+  `-stagecheck P` records the prefix's verdict without acting on it.
+- `-project DIAL:ROW` solves the dial for the row's record instead of stepping it: from the
+  parent's reading, along the row's slope in the dial read on the first seed world at the start.
+  The solve reads 8 significant digits, so the twins solve the same value. The 0.24.6 sets'
+  searched members came out of it; the members carried over from 0.24.5 had their drift solved
+  directly on four fresh seeds each.
+- `-seedworlds F` seeds from worlds given as TSV rows.
+- `-noregressset F` prices each row against the median member of a set's judged reads.
+- The search directory gains `cands.tsv` (every candidate's dials and seconds), `held.tsv`,
+  `stage.tsv` and `reference.tsv`.
+
 ## v0.24.5 — 2026-10-03
 
 Written as one change from 0.24.4. Three new recipes, `0.24.5-sp500`, `0.24.5-nasdaq` and

@@ -47,7 +47,7 @@ class PersistenceAnchorSuite extends FunSuite:
 
   test("each era the 250-session rung is graded against is the fixture's own CRSP row") {
     if rows.nonEmpty then
-      for (era, years, record) <- MarketSim.VarRatio250Eras do
+      for (era, years, record) <- MarketSim.VarRatio250Eras.filter(_._1.startsWith("CRSP")) do
         val window = era match
           case "CRSP 1926-2026" => "c1926"
           case "CRSP 1954-2026" => "c1954"
@@ -55,20 +55,27 @@ class PersistenceAnchorSuite extends FunSuite:
         val r = rows.find(r => r.window == window && r.ticker == "CRSP-VW").getOrElse(fail(s"no $window CRSP row"))
         assertEqualsDouble(r.vr(250), record, 5e-4, s"$era: the rung grades against $record")
         assertEqualsDouble(r.years, years, 0.05, s"$era: $years years")
-    assertEquals(MarketSim.vr250EraOf(100), 0)
-    assertEquals(MarketSim.vr250EraOf(80), 1)
-    assertEquals(MarketSim.vr250EraOf(30), 2)
+    assertEquals(MarketSim.vr250EraOf(MarketSim.SP500Anchors.vr250Eras, 100.0), 0)
+    assertEquals(MarketSim.vr250EraOf(MarketSim.SP500Anchors.vr250Eras, 80.0), 1)
+    assertEquals(MarketSim.vr250EraOf(MarketSim.SP500Anchors.vr250Eras, 30.0), 2)
+    assertEquals(MarketSim.vr250EraOf(MarketSim.NasdaqAnchors.vr250Eras, 100.0), 3)
   }
 
   test("the 250-session rung is graded by the record's placement among the paths") {
     val st0 = MarketSim.measure(MarketSim.simPaths(MarketSim.Defaults, 4, 30, MarketSim.DefaultSeed), 30)
-    val st = st0.copy(vr20 = 0.95, vr60 = 0.95, vr120 = 1.0, vr250 = 1.40, vr250RecordPct = 40.0)
-    val (name, pass, _) = MarketSim.varRatioProfileCheck(st)
+    val st = st0.copy(vr20 = 0.95, vr60 = 0.95, vr120 = 1.0, vr250 = 1.40,
+                      vr250RecordPcts = Vector(Double.NaN, Double.NaN, 40.0, 60.0))
+    val sp = MarketSim.SP500Anchors
+    val (name, pass, _) = MarketSim.varRatioProfileCheck(sp, st)
     assert(pass, s"the record at the 40th percentile passes the rung: $name")
     assert(name.contains("250d CRSP 1990-2026 0.796 at record@5-95"), name)
-    assert(!MarketSim.varRatioProfileCheck(st.copy(vr250 = 1.0, vr250RecordPct = 99.0))._2,
+    val (nameNq, _, _) = MarketSim.varRatioProfileCheck(MarketSim.NasdaqAnchors, st)
+    assert(nameNq.contains("250d IXIC+NDX 1971-2026 1.204 at record@5-95"),
+      s"the Nasdaq grades its own record at any length: $nameNq")
+    assert(!MarketSim.varRatioProfileCheck(sp, st.copy(vr250 = 1.0, vr250RecordPcts = st.vr250RecordPcts.updated(2, 99.0)))._2,
       "the record above every path fails it")
-    val (name2, pass2, _) = MarketSim.varRatioProfileCheck(st.copy(vr250 = 1.0, vr250RecordPct = Double.NaN))
+    val (name2, pass2, _) =
+      MarketSim.varRatioProfileCheck(sp, st.copy(vr250 = 1.0, vr250RecordPcts = st.vr250RecordPcts.updated(2, Double.NaN)))
     assert(pass2 && name2.contains("250d 0.45-1.30"), s"too few paths keep the envelope: $name2")
   }
 
@@ -131,7 +138,7 @@ class PersistenceAnchorSuite extends FunSuite:
     // envelope and no real series has that shape.
     val inside  = MarketSim.measure(MarketSim.simPaths(MarketSim.Defaults, 4, 30, MarketSim.DefaultSeed), 30)
     val shaped  = inside.copy(vr20 = 0.70, vr60 = 1.15, vr120 = 1.15, vr250 = 1.15)
-    val (name, pass, cls) = MarketSim.varRatioProfileCheck(shaped)
+    val (name, pass, cls) = MarketSim.varRatioProfileCheck(MarketSim.SP500Anchors, shaped)
     assert(!pass, s"a +0.45 slope between the short rungs must fail the profile: $name")
     assertEquals(cls, MarketSim.GateClass.Fidelity)
     assert(name.contains("20d 0.70-1.15") && name.contains("20->60 -0.20..+0.10"),

@@ -108,13 +108,24 @@ class RecordBandSuite extends FunSuite:
     val rows = Paths.get("test-data/equity-anchors/multiyear-2026-09-29.tsv").lines.toVector
       .filterNot(l => l.startsWith("#") || l.trim.isEmpty || l.startsWith("set\t"))
       .map(_.split('\t').toVector)
-    assertEquals(rows.length, 32, "two sets, two windows, eight rows")
-    for (set, a) <- sets
-        (names, records) <- Vector((MarketSim.MultiYearRows, a.multiYear),
-                                   (MarketSim.MultiYearLongRows, a.multiYearLong))
-        (name, got) <- names.zip(records) do
-      val r = rows.find(f => f(0) == set && f(1) == name).getOrElse(fail(s"fixture row [$set] $name missing"))
-      assertEqualsDouble(got, r(5).toDouble, 1e-6, s"$set: $name against the record's")
+    assertEquals(rows.length, 40, "two sets, two windows, eight rows, and the Nasdaq's splice")
+    def record(set: String, name: String, series: String): Double =
+      rows.find(f => f(0) == set && f(1) == name && f(2) == series)
+        .getOrElse(fail(s"fixture row [$set] $name $series missing"))(5).toDouble
+    val graded = Vector(("sp500", MarketSim.SP500Anchors, "CRSP", "CRSP"),
+                        ("nasdaq", MarketSim.NasdaqAnchors, "QQQ", "IXIC+NDX"))
+    for (set, a, series, longSeries) <- graded do
+      val windows = a.multiYear.map(m => (MarketSim.MultiYearRows, m, series)).toVector :+
+        (MarketSim.MultiYearLongRows, a.multiYearLong, longSeries)
+      for (names, records, s) <- windows; (name, got) <- names.zip(records) do
+        assertEqualsDouble(got, record(set, name, s), 1e-6, s"$set: $name against the record's")
+    assert(MarketSim.NasdaqAnchors.multiYear.isEmpty, "the Nasdaq's QQQ window is reported, not graded")
+    // the reported windows: QQQ under the equity window's names, the NDX under the long's
+    for rec <- MarketSim.NasdaqAnchors.reported.filter(_.family == MarketSim.RowFamily.MultiYear) do
+      val (series, names) =
+        if rec.window.startsWith("QQQ") then ("QQQ", MarketSim.MultiYearRows) else ("NDX", MarketSim.MultiYearLongRows)
+      for (name, got) <- names.zip(rec.records) do
+        assertEqualsDouble(got, record("nasdaq", name, series), 1e-6, s"nasdaq reported $series: $name")
     // forty years that alternate +20% and -10%, each year's move made in its first session so a
     // block at any phase holds whole moves: successive years are perfectly opposed, and three of
     // them vary no more than one
@@ -199,11 +210,20 @@ class RecordBandSuite extends FunSuite:
     val rows = Paths.get("test-data/equity-anchors/bubblebust-2026-09-24.tsv").lines.toVector
       .filterNot(l => l.startsWith("#") || l.trim.isEmpty || l.startsWith("set	"))
       .map(_.split('	').toVector)
-    for (set, a) <- sets do
+    def record(set: String, name: String, series: String): Double =
+      rows.find(f => f(0) == set && f(1) == name && f(2) == series)
+        .getOrElse(fail(s"fixture row [$set] $name $series missing"))(5).toDouble
+    for (set, a, series) <- Vector(("sp500", MarketSim.SP500Anchors, "CRSP"),
+                                   ("nasdaq", MarketSim.NasdaqAnchors, "IXIC+NDX")) do
       for (name, got) <- Vector(("bubble coupling 3y", a.bubbleCoupling), ("largest 3y run-up", a.runUp3y),
                                 ("longest calm stretch", a.calmStretch)) do
-        val r = rows.find(f => f(0) == set && f(1) == name).getOrElse(fail(s"fixture row [$set] $name missing"))
-        assertEqualsDouble(got, r(5).toDouble, 1e-6, s"$set: $name against the record's")
+        assertEqualsDouble(got, record(set, name, series), 1e-6, s"$set: $name against the record's")
+      // the 250-session rung's era over the set's long window is this file's reading
+      val (era, _, got) = MarketSim.VarRatio250Eras(MarketSim.vr250EraOf(a.vr250Eras, a.bubbleYears.toDouble))
+      assertEqualsDouble(got, record(set, "variance ratio 250d", series), 5e-4, s"$set: the 250-session era $era")
+    val ndx = MarketSim.NasdaqAnchors.reported.find(_.family == MarketSim.RowFamily.Coupling)
+      .getOrElse(fail("the NDX's coupling is reported"))
+    assertEqualsDouble(ndx.records(0), record("nasdaq", "bubble coupling 3y", "NDX"), 1e-6, "the NDX's coupling")
     // the run-up reads the best 3-year window and the calm stretch the longest run inside 20% of
     // the peak: 4 flat years, then +1.0 over 3 years, a 30% fall, then 2 flat years
     val hh = MarketSim.BubbleRunup
@@ -447,17 +467,56 @@ class RecordBandSuite extends FunSuite:
       assertEqualsDouble(term(Double.NaN), 4.0 * MarketSim.SdRelRef, 1e-12, "unmeasurable")
   }
 
+  // `monthEnds` reads the synthetic calendar's month ends in integer arithmetic; they are the month
+  // ends of its formatted dates, at every length a path takes.
+  test("month ends are the formatted calendar's") {
+    for n <- Vector(1, 2, 21, 252, 6805, 14112, 25201, 40000) do
+      val d = MarketSim.sessionDates(n, "")
+      val want = (0 until n).filter(i => i + 1 == n || d(i).substring(0, 7) != d(i + 1).substring(0, 7)).toVector
+      assertEquals(MarketSim.monthEnds(n), want, s"$n sessions")
+  }
+
+  // The reported records come out in the set's order, each row under its record's window, read on
+  // histories of the record's own length cut from the caller's ensemble; none is a fit target.
+  test("reported records read their own length and are never graded") {
+    val recs = Vector(
+      MarketSim.ReportedRecord(MarketSim.RowFamily.Coupling, "B 8y", 8, Vector(0.5)),
+      MarketSim.ReportedRecord(MarketSim.RowFamily.Timing, "A 4y", 4, Vector(50.0, 5.0, 0.8, 1.0)))
+    val a = MarketSim.NasdaqAnchors.copy(reported = recs)
+    val w = MarketSim.Defaults
+    val main = MarketSim.simPaths(w, MarketSim.ExtremeMinHistories, 8, MarketSim.DefaultSeed)
+    val rows = MarketSim.reportedRecordRows(a, Some(main), 8, main.length, MarketSim.DefaultSeed, w)
+    assertEquals(rows.map(r => (r.window, r.row.name)),
+                 ("B 8y", "bubble coupling 3y") +: MarketSim.TimingRows.map(("A 4y", _)))
+    val xs = main.map(p => MarketSim.timingOfPath(p.head(4).price)(2)).filter(!_.isNaN)
+    val sorted = xs.filter(_.isFinite).sorted
+    assertEquals(rows(3).row.model, sorted(sorted.size / 2))
+    assertEquals((rows(3).row.horizonYears, rows(3).row.nHistories), (4, xs.size))
+    assert(rows(3).row.historyBand.isDefined, "a timing row has its joint band")
+    val fit = MarketSim.fitTargets(MarketSim.NasdaqAnchors).map(_._1).toSet
+    assert(MarketSim.MultiYearRows.forall(n => !fit.contains(n)), "the Nasdaq's QQQ window is reported, not graded")
+    assert(MarketSim.MultiYearLongRows.forall(fit.contains))
+  }
+
   // THE TIMING ROWS' anchors are the fixture's records; a hand series reads as stated; the joint
   // band holds the histories it is read from; and a pinned path reads the same in both twins.
   test("the timing anchors are the fixture's records and the statistic reads as stated") {
     val rows = Paths.get("test-data/equity-anchors/timing-2026-09-30.tsv").lines.toVector
       .filterNot(l => l.startsWith("#") || l.trim.isEmpty || l.startsWith("set\t"))
       .map(_.split('\t').toVector)
-    assertEquals(rows.length, 8, "two sets, four rows")
-    for (set, a) <- sets; (name, got) <- MarketSim.TimingRows.zip(a.timing) do
-      val r = rows.find(f => f(0) == set && f(1) == name).getOrElse(fail(s"fixture row [$set] $name missing"))
-      assertEqualsDouble(got, r(5).toDouble, 1e-6, s"$set: $name against the record's")
+    assertEquals(rows.length, 16, "four rows: the S&P's CRSP, the Nasdaq's splice, CRSP and NDX")
+    def record(set: String, name: String, series: String): Double =
+      rows.find(f => f(0) == set && f(1) == name && f(2) == series)
+        .getOrElse(fail(s"fixture row [$set] $name $series missing"))(5).toDouble
+    val graded = Vector(("sp500", MarketSim.SP500Anchors, "CRSP"), ("nasdaq", MarketSim.NasdaqAnchors, "IXIC+NDX"))
+    for (set, a, series) <- graded; (name, got) <- MarketSim.TimingRows.zip(a.timing) do
+      assertEqualsDouble(got, record(set, name, series), 1e-6, s"$set: $name against the record's")
       assertEquals(MarketSim.recordBandYears(a, name), a.timingYears)
+    // the Nasdaq's reported records: CRSP's and the NDX's, by the window's series
+    val reportedTiming = MarketSim.NasdaqAnchors.reported.filter(_.family == MarketSim.RowFamily.Timing)
+    for rec <- reportedTiming; (name, got) <- MarketSim.TimingRows.zip(rec.records) do
+      val series = rec.window.takeWhile(_ != ' ')
+      assertEqualsDouble(got, record("nasdaq", name, series), 1e-6, s"nasdaq reported $series: $name")
     // 40 months up 2%, a 30% fall over three months, a climb: a decline the rule is partly out of
     val up = Vector.iterate(1.0, 40)(_ * 1.02)
     val top = up.last

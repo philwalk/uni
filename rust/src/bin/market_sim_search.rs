@@ -358,6 +358,18 @@ struct Objective {
     /// from, because seeding sets where an archive starts and the loss where it ends. The seed
     /// worlds are exempt, as they are from `-gap`.
     hold: Vec<(&'static str, f64)>,
+    /// THE STAGED READ (`-stage P`): the first P paths are read alone, and a candidate they reject
+    /// is rejected there; one they pass reads the rest, and the whole is the unstaged read bit for
+    /// bit, because path k is a function of the world, the horizon, the seed and k alone
+    /// (`sim_path_range`). Of a set search's reads 95% are rejections, each paid at full price.
+    /// 0 reads every path at once.
+    stage: usize,
+    /// `-stagecheck P`: read the prefix's verdict and record it (`Read::stage_fail`) without acting
+    /// on it, so how often the full read overturns a prefix's rejection can be measured
+    stage_check: bool,
+    /// THE PROJECTED ROW (`-project DIAL:ROW`): its reading on every read (`Read::held`), from
+    /// which the next child's dial is solved instead of stepped
+    project_row: Option<&'static str>,
 }
 
 impl Objective {
@@ -370,10 +382,14 @@ impl Objective {
             classes: ms::gate_default(),
             watch: Vec::new(),
             hold: Vec::new(),
+            stage: 0,
+            stage_check: false,
+            project_row: None,
         }
     }
 
-    /// the same pricing with the gap rows watched, not gated: the seed worlds' (see `main`)
+    /// the same pricing with the gap rows watched, not gated: the seed worlds' (see `main`), read
+    /// whole, since they root the lineages and set the bars
     fn without_gap(&self) -> Objective {
         Objective {
             dead: self.dead,
@@ -382,6 +398,24 @@ impl Objective {
             classes: self.classes.clone(),
             watch: self.gap.clone(),
             hold: Vec::new(),
+            stage: 0,
+            stage_check: false,
+            project_row: self.project_row,
+        }
+    }
+
+    /// the same judgement read whole: what a staged read applies to its prefix
+    fn unstaged(&self) -> Objective {
+        Objective {
+            dead: self.dead,
+            reference: self.reference.clone(),
+            gap: self.gap.clone(),
+            classes: self.classes.clone(),
+            watch: self.watch.clone(),
+            hold: self.hold.clone(),
+            stage: 0,
+            stage_check: false,
+            project_row: self.project_row,
         }
     }
 }
@@ -396,13 +430,30 @@ const NOREGRESS_READS: u64 = 6;
 /// meet a million paths apart, and the offsets are chosen so no two streams meet either
 /// (`read_streams_share_no_path` sweeps it). The streams past `-seed`: the seed pool and the
 /// holdout's train at `k * READ_STRIDE`, the holdout's fresh at `HOLDOUT_FRESH_OFFSET`, the
-/// `-noregress` reference at `NOREGRESS_OFFSET`, the candidates at `CANDIDATE_OFFSET`.
+/// `-noregress` reference at `NOREGRESS_OFFSET`, the candidates at `CANDIDATE_OFFSET`, the `-project`
+/// reads at `PROJECT_OFFSET`.
 #[cfg(test)]
 const PATH_STRIDE: u64 = 7919;
 const READ_STRIDE: u64 = 1_000_003;
 const HOLDOUT_FRESH_OFFSET: u64 = 991;
 const NOREGRESS_OFFSET: u64 = 7;
 const CANDIDATE_OFFSET: u64 = 3301;
+/// the `-project` slope and the readings of members a resumed archive brings without one
+const PROJECT_OFFSET: u64 = 5501;
+/// The `-project` slope's step, as a share of the dial's range, and its paired reads: two pairs on a
+/// twentieth of the range read the Nasdaq slope 3.35 against a secant of 4.0 at 200 paths, and a
+/// negative slope at 40.
+const PROJECT_STEP: f64 = 0.10;
+const PROJECT_SLOPE_READS: u64 = 4;
+/// The rows a staged read's prefix must fail before the candidate is rejected there (`-stage`).
+const STAGE_MIN_FAILS: usize = 2;
+
+/// A reading at eight significant digits, as the checkpoint writes every number: the projection is
+/// solved from these, so a fresh run, a resumed one and the other twin, whose readings differ in the
+/// last ulps, step a child's dial alike.
+fn round8(x: f64) -> f64 {
+    g8(x).parse().unwrap_or(x)
+}
 
 /// The seed of a candidate's read in seed slot `slot` (`evals + rep`). Candidates stepped by
 /// `PATH_STRIDE` once, which made consecutive reads one window sliding a path at a time: a
@@ -426,11 +477,7 @@ fn reference_distances(
     let reads: Vec<Vec<(&'static str, f64)>> = (1..=NOREGRESS_READS)
         .map(|j| {
             let s = (base as u64).wrapping_add(NOREGRESS_OFFSET + j * READ_STRIDE);
-            let main = ms::sim_paths(w, paths, years, s);
-            let st = ms::measure(&main, years);
-            let hr = ms::horizon_readings(anchors, &st, Some(&main), years, paths, s, w, true);
-            let (_, rows) = ms::fitness(anchors, &st, &hr.extreme_scores());
-            ms::record_distances(anchors, &rows, &hr.banded)
+            read_distances(w, anchors, paths, years, s)
         })
         .collect();
     reads[0]
@@ -488,6 +535,11 @@ struct Read {
     /// seed world's gap rows. Empty for a candidate, which watches nothing, and for a read that
     /// left before the table was read.
     watch_miss: Vec<&'static str>,
+    /// THE PREFIX'S VERDICT under `-stage`/`-stagecheck`: what the first P paths failed, empty when
+    /// they passed; `None` when the read was not staged
+    stage_fail: Option<Vec<String>>,
+    /// the projected row's reading (`Objective::project_row`), NaN without one
+    held: f64,
 }
 
 /// One seed's reading.  Every quantity the fidelity table grades is read at its record's horizon
@@ -498,11 +550,6 @@ struct Read {
 /// pooled row.
 ///
 /// `evaluate` stops at the first seed that fails, because feasibility needs every seed.
-#[expect(
-    clippy::too_many_lines,
-    reason = "one read scored in the order the Scala harness's oneRead scores it; splitting it \
-              would scatter the terms the twins' scores must add up in the same order"
-)]
 fn one_read(
     w: &World,
     anchors: Anchors,
@@ -511,12 +558,67 @@ fn one_read(
     s: u64,
     obj: &Objective,
 ) -> Read {
-    let dead = obj.dead;
     // the verdict world: every derived series and the macro panel graded at the anchor set's
     // dials where the candidate leaves them off, so feasibility is the bundle's, as a recipe's
     // verdict is; the primary is bit-identical, so the table's horizons read `w`
-    let main = ms::sim_paths(&ms::verdict_world(anchors, w), paths, years, s);
-    let st = ms::measure(&main, years);
+    let vw = ms::verdict_world(anchors, w);
+    if obj.stage == 0 || obj.stage >= paths {
+        return read_paths(
+            w,
+            anchors,
+            &ms::sim_paths(&vw, paths, years, s),
+            years,
+            s,
+            obj,
+        );
+    }
+    let mut main = ms::sim_path_range(&vw, 0, obj.stage, years, s);
+    let head = read_paths(w, anchors, &main, years, s, &obj.unstaged());
+    let stage_fail = if head.feasible {
+        Vec::new()
+    } else {
+        head.gate_fail.clone()
+    };
+    // two rows failing on the prefix, not one: a single near-edge row flips back on the whole read
+    // (7 of 18 feasible candidates were rejected that way at P = 50 in a measured run), two did not once
+    if stage_fail.len() >= STAGE_MIN_FAILS && !obj.stage_check {
+        return Read {
+            gate_fail: stage_fail.iter().map(|f| format!("stage: {f}")).collect(),
+            stage_fail: Some(stage_fail),
+            ..head
+        };
+    }
+    main.extend(ms::sim_path_range(
+        &vw,
+        obj.stage,
+        paths - obj.stage,
+        years,
+        s,
+    ));
+    Read {
+        stage_fail: Some(stage_fail),
+        ..read_paths(w, anchors, &main, years, s, obj)
+    }
+}
+
+/// One seed's reading of an ensemble already simulated (`one_read`): every path in `main`, path k
+/// read at seed `s + k * PATH_STRIDE`.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one read scored in the order the Scala harness's oneRead scores it; splitting it \
+              would scatter the terms the twins' scores must add up in the same order"
+)]
+fn read_paths(
+    w: &World,
+    anchors: Anchors,
+    main: &[ms::Path],
+    years: usize,
+    s: u64,
+    obj: &Objective,
+) -> Read {
+    let dead = obj.dead;
+    let paths = main.len();
+    let st = ms::measure(main, years);
     // THE VERDICT'S READINGS: vol, the typical year, return per vol, kurtosis, the clustering lags
     // and the crash rate are gated at their records' horizons (`gate_checks_at`), as a recipe's
     // verdict gates them, so the search and the verdict never disagree on those rows because they
@@ -532,9 +634,18 @@ fn one_read(
     let hr = if early {
         ms::HorizonReadings::default()
     } else {
-        ms::horizon_readings(anchors, &st, Some(&main), years, paths, s, w, true)
+        ms::horizon_readings(anchors, &st, Some(main), years, paths, s, w, true)
     };
     let banded = &hr.banded;
+    // at its record's horizon where the table read it, as the verdict reads it
+    let held = obj.project_row.map_or(f64::NAN, |nm| {
+        banded.get(nm).copied().unwrap_or_else(|| {
+            ms::fit_targets(anchors)
+                .into_iter()
+                .find(|(n, _, _, _)| *n == nm)
+                .map_or(f64::NAN, |(_, get, _, _)| get(&st))
+        })
+    });
     let checks = if early {
         own.into_iter()
             .filter(|(nm, _, _)| !ms::gate_reads_table(nm))
@@ -674,6 +785,8 @@ fn one_read(
         spread: 0.0,
         complete: true,
         watch_miss,
+        stage_fail: None,
+        held,
     }
 }
 
@@ -840,6 +953,9 @@ fn evaluate(
             .copied()
             .filter(|g| reads.iter().any(|r| r.watch_miss.contains(g)))
             .collect(),
+        // the last read's: every read before it passed its prefix, or it would have stopped there
+        stage_fail: reads.last().and_then(|r| r.stage_fail.clone()),
+        held: reads.iter().map(|r| r.held).sum::<f64>() / reads.len() as f64,
     }
 }
 
@@ -1015,8 +1131,10 @@ fn judge(
         },
         spread: a.spread.max(b.spread),
         complete: a.complete && b.complete,
-        // the primary arm's: the transport arm watches nothing
+        // the primary arm's: the transport arm watches nothing, is read whole and projects nothing
         watch_miss: a.watch_miss,
+        stage_fail: a.stage_fail,
+        held: a.held,
     }
 }
 
@@ -1254,6 +1372,195 @@ fn read_archive(dir: &str) -> Vec<Member> {
             }
         })
         .collect()
+}
+
+/// World rows (`-seedworlds`, `-noregressset`): a TSV whose header is `name` and the searched dials
+/// in table order, each row `base` with those dials.
+fn world_rows(file: &str, base: &World, flag: &str) -> Vec<(String, World)> {
+    let text = read_text(file).unwrap_or_else(|| usage(&format!("{flag} {file} cannot be read")));
+    let mut lines = text.lines().filter(|l| !l.trim().is_empty());
+    let head: Vec<&str> = lines.next().unwrap_or_default().split('\t').collect();
+    let nm = names();
+    if head.first() != Some(&"name") || head[1..] != nm[..] {
+        usage(&format!(
+            "{flag} {file}: the header must be `name` and the searched dials in table order"
+        ));
+    }
+    lines
+        .map(|l| {
+            let f: Vec<&str> = l.split('\t').collect();
+            if f.len() != head.len() {
+                usage(&format!("{flag} {file}: a row of {} fields", f.len()));
+            }
+            let dials: Vec<f64> = f[1..]
+                .iter()
+                .map(|x| {
+                    x.parse()
+                        .unwrap_or_else(|_| usage(&format!("{flag} {file}: not a number [{x}]")))
+                })
+                .collect();
+            (f[0].to_string(), world_of(base, &dials))
+        })
+        .collect()
+}
+
+/// FNV-1a over `text`, as the checkpoint's digests are taken.
+fn fnv(text: &str) -> String {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in text.bytes() {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    format!("{h:016x}")
+}
+
+/// One read's distance from the record on every fitness row, priced as `one_read` prices a candidate
+/// (`record_distances`).
+fn read_distances(
+    w: &World,
+    anchors: Anchors,
+    paths: usize,
+    years: usize,
+    s: u64,
+) -> Vec<(&'static str, f64)> {
+    let main = ms::sim_paths(w, paths, years, s);
+    let st = ms::measure(&main, years);
+    let hr = ms::horizon_readings(anchors, &st, Some(&main), years, paths, s, w, true);
+    let (_, rows) = ms::fitness(anchors, &st, &hr.extreme_scores());
+    ms::record_distances(anchors, &rows, &hr.banded)
+}
+
+/// The median of `xs`: the middle value, or the mean of the middle two.
+fn median(xs: &[f64]) -> f64 {
+    let mut v = xs.to_vec();
+    v.sort_by(f64::total_cmp);
+    let n = v.len();
+    if n % 2 == 1 {
+        v[n / 2]
+    } else {
+        (v[n / 2 - 1] + v[n / 2]) / 2.0
+    }
+}
+
+/// THE OUTGOING SET'S MEDIAN MEMBER (`-noregressset`): each fitness row's median over the members of
+/// their distance from the record, one read a member at the search's ensemble. A calibration set is
+/// released when every graded row's median member distance is no worse than the outgoing set's, and
+/// a child priced against one recipe drifts off that centre on every row the recipe was close on: in
+/// a set loop against 0.24.5-nasdaq's 30, two of 23 admitted children sat within the outgoing median
+/// on clustering lag 1, against 11 of the 22 worlds they came from. Read once and kept in
+/// `reference.tsv` under a digest of the set, the ensemble and the seed, since a set loop restarts the
+/// harness every round.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the set, the ensemble and the seed are what the reference means; the directory is \
+              where it is kept"
+)]
+fn set_reference(
+    rows: &[(String, World)],
+    file_text: &str,
+    anchors: Anchors,
+    paths: usize,
+    years: usize,
+    base: i64,
+    dir: &str,
+) -> (String, Vec<(&'static str, f64)>) {
+    let digest = fnv(&format!(
+        "{file_text}|{}|{paths}|{years}|{base}",
+        anchors.name
+    ));
+    let names_now: Vec<&'static str> = ms::fit_targets(anchors).iter().map(|t| t.0).collect();
+    let cached = read_text(&format!("{dir}/reference.tsv")).and_then(|t| {
+        let mut lines = t.lines();
+        (lines.next()? == format!("digest\t{digest}")).then_some(())?;
+        let got: Vec<(&'static str, f64)> = lines
+            .filter_map(|l| {
+                let (n, v) = l.split_once('\t')?;
+                let at = names_now.iter().position(|x| *x == n)?;
+                Some((names_now[at], v.parse().ok()?))
+            })
+            .collect();
+        (!got.is_empty()).then_some(got)
+    });
+    if let Some(r) = cached {
+        return (digest, r);
+    }
+    let reads: Vec<Vec<(&'static str, f64)>> = rows
+        .iter()
+        .enumerate()
+        .map(|(k, (_, w))| {
+            let s = (base as u64)
+                .wrapping_add(NOREGRESS_OFFSET + (NOREGRESS_READS + 1 + k as u64) * READ_STRIDE);
+            read_distances(w, anchors, paths, years, s)
+        })
+        .collect();
+    // at eight significant digits, as the checkpoint writes every number: the twins' readings differ
+    // in the last ulps, and a fresh run, a resumed one and the other twin all price against this text
+    let r: Vec<(&'static str, f64)> = reads[0]
+        .iter()
+        .enumerate()
+        .map(|(i, (name, _))| {
+            let xs: Vec<f64> = reads.iter().map(|m| m[i].1).collect();
+            let m = median(&xs);
+            (*name, g8(m).parse().unwrap_or(m))
+        })
+        .collect();
+    let mut out = format!("digest\t{digest}\n");
+    for (n, v) in &r {
+        let _ = writeln!(out, "{n}\t{}", g8(*v));
+    }
+    write_text(&format!("{dir}/reference.tsv"), &out);
+    (digest, r)
+}
+
+/// A member's key in `held.tsv`: its seed world and its dials as the archive writes them, so a
+/// member read back from the archive finds the reading it was admitted with.
+fn held_key(name: &str, dials: &[f64]) -> String {
+    let ds: Vec<String> = dials.iter().map(|x| g8(*x)).collect();
+    format!("{name}|{}", ds.join(","))
+}
+
+/// The projected row's reading of each member (`-project`), beside the archive.
+fn read_held(dir: &str) -> HashMap<String, f64> {
+    read_text(&format!("{dir}/held.tsv"))
+        .map(|t| {
+            t.lines()
+                .skip(1)
+                .filter_map(|l| {
+                    let (k, v) = l.rsplit_once('\t')?;
+                    Some((k.to_string(), v.parse().ok()?))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The current members' readings, rewritten with the archive.
+fn write_held(dir: &str, arc: &[Member], held: &HashMap<String, f64>) {
+    let mut out = String::from("member\theld\n");
+    for m in arc {
+        let k = held_key(&m.name, &m.dials);
+        if let Some(v) = held.get(&k) {
+            let _ = writeln!(out, "{k}\t{}", g8(*v));
+        }
+    }
+    write_text(&format!("{dir}/held.tsv"), &out);
+}
+
+/// Append `lines` to `dir/file`, writing `header` first when the file is new.
+fn append_tsv(dir: &str, file: &str, header: &str, lines: &[String]) {
+    let path = format!("{dir}/{file}");
+    let fresh = !std::path::Path::new(&path).exists();
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .unwrap_or_else(|e| usage(&format!("cannot append to {path}: {e}")));
+    if fresh {
+        let _ = writeln!(f, "{header}");
+    }
+    for l in lines {
+        let _ = writeln!(f, "{l}");
+    }
 }
 
 /// Append, never rewrite: the log of a multi-day run outlives any one process.
@@ -1636,6 +1943,7 @@ fn usage(msg: &str) -> ! {
                 ;   realism,mechanism, the verdict's own).  With fidelity the bands a search
                 ;   otherwise only prices gate too, which every member of a calibration set has to
                 ;   pass anyway; realism is always in
+  -noregressset F ; -noregress against a SET's median member: F as -seedworlds, one read each
   -noregress R  ; price every row a candidate holds further from its record than recipe R does,
                 ;   by the difference (R read at the search's ensemble, the mean of six reads):
                 ;   the release rule, which a dead zone alone lets every row drift inside
@@ -1646,6 +1954,15 @@ fn usage(msg: &str) -> ! {
   -fix DIALS    ; comma-separated dials (e.g. 'disasterSize,disasterOvershoot') every child keeps
                 ;   at its parent's value, so at the seed's: the dials read off the record rather
                 ;   than solved.  The draws are made as without it, so the other dials step alike
+  -stage P      ; read a candidate's first P paths alone and reject it there if they fail it;
+                ;   a candidate they pass reads the rest, and the whole is the unstaged read bit
+                ;   for bit (default 0: every path at once)
+  -stagecheck P ; read the same prefix and record its verdict in stage.tsv beside the full read's,
+                ;   never acting on it: how often a full read overturns a prefix's rejection
+  -project D:R  ; solve dial D for row R's record instead of stepping it ('drift:return per vol'):
+                ;   a child's D is its parent's plus the parent's miss on R over R's slope in D
+  -seedworlds F ; the seed worlds as a TSV of `name` and the searched dials in table order: each row
+                ;   is the first -seeds world with those dials and roots its own lineage and bar
   -gap ROWS     ; comma-separated graded rows (e.g. 'kurtosis,up-day share %') a candidate
                 ;   must hold inside their bands on every read of its primary arm to be feasible:
                 ;   the rows a release has to close, which a priced miss lets a search trade away.
@@ -1696,6 +2013,16 @@ struct Cfg {
     /// the share of children drawn from the archive's own covariance
     cov: f64,
     cov_shrink: f64,
+    /// paths read before a candidate may be rejected (`-stage`); 0 reads them all at once
+    stage: usize,
+    /// the same prefix read and recorded, never acted on (`-stagecheck`)
+    stage_check: usize,
+    /// `DIAL:ROW` solved rather than searched (`-project`)
+    project: String,
+    /// further seed worlds, one TSV row each (`-seedworlds`)
+    seed_worlds: String,
+    /// the outgoing SET whose median member a row is priced against (`-noregressset`)
+    noregress_set: String,
 }
 
 fn parse_args() -> Cfg {
@@ -1730,6 +2057,11 @@ fn parse_args() -> Cfg {
         gate: "realism,mechanism".into(),
         cov: 0.0,
         cov_shrink: 0.3,
+        stage: 0,
+        stage_check: 0,
+        project: String::new(),
+        seed_worlds: String::new(),
+        noregress_set: String::new(),
     };
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -1773,6 +2105,11 @@ fn parse_args() -> Cfg {
             "-gap" => c.gap = need(&mut i, "-gap"),
             "-fix" => c.fix = need(&mut i, "-fix"),
             "-seedset" => c.seed_set = need(&mut i, "-seedset"),
+            "-stage" => c.stage = num(&need(&mut i, "-stage"), "-stage"),
+            "-stagecheck" => c.stage_check = num(&need(&mut i, "-stagecheck"), "-stagecheck"),
+            "-project" => c.project = need(&mut i, "-project"),
+            "-seedworlds" => c.seed_worlds = need(&mut i, "-seedworlds"),
+            "-noregressset" => c.noregress_set = need(&mut i, "-noregressset"),
             "-h" | "-help" | "--help" => usage(""),
             a => usage(&format!("unrecognized arg [{a}]")),
         }
@@ -1914,6 +2251,26 @@ fn main() {
             })
             .collect()
     };
+    // THE SEED ROWS (`-seedworlds`): worlds of the first seed's lineage given by their searched dials,
+    // e.g. a calibration set's members moved by hand, so a search starts from all of them at once
+    // the world that carries a world row's other dials: the first -seeds world
+    let carrier: Option<World> = pool.first().map(|(_, w)| *w);
+    let pool: Vec<(String, World)> = if c.seed_worlds.is_empty() {
+        pool
+    } else {
+        let base = carrier
+            .unwrap_or_else(|| usage("-seedworlds wants a -seeds world to carry the other dials"));
+        let rows = world_rows(&c.seed_worlds, &base, "-seedworlds");
+        if rows.iter().any(|(n, _)| pool.iter().any(|(p, _)| p == n)) {
+            usage("-seedworlds: a row reuses a -seeds name");
+        }
+        if rows.is_empty() {
+            usage(&format!("-seedworlds {} holds no world", c.seed_worlds));
+        }
+        // the rows ARE the seed worlds: the -seeds world only carries their other dials, so the
+        // first row is member 0, the world a set loop treats as the recipe
+        rows
+    };
     let seed_world: HashMap<String, World> = pool.iter().cloned().collect();
     let world_for =
         |n: &str| -> World { seed_world.get(n).copied().unwrap_or_else(ms::default_world) };
@@ -1959,6 +2316,9 @@ fn main() {
         classes: ms::gate_default(),
         watch: Vec::new(),
         hold: Vec::new(),
+        stage: 0,
+        stage_check: false,
+        project_row: None,
     };
     if !c.fidelity.is_empty() {
         let ens = parse_ensembles(&c.fidelity);
@@ -2042,7 +2402,36 @@ fn main() {
 
     // THE REFERENCE (`-noregress`): the outgoing recipe read at this ensemble, before any candidate;
     // checked in every mode, read only where a candidate is scored (a search, `-holdout`)
-    let reference = if c.noregress.is_empty() {
+    if !c.noregress.is_empty() && !c.noregress_set.is_empty() {
+        usage("-noregress and -noregressset each set the reference; give one");
+    }
+    // `set:<digest>` names a set reference in the checkpoint and the objective digest
+    let mut noregress_name = c.noregress.clone();
+    let reference = if !c.noregress_set.is_empty() {
+        let base = carrier.unwrap_or_else(|| {
+            usage("-noregressset wants a -seeds world to carry the other dials")
+        });
+        let rows = world_rows(&c.noregress_set, &base, "-noregressset");
+        if rows.is_empty() {
+            usage(&format!("-noregressset {} holds no world", c.noregress_set));
+        }
+        let text = read_text(&c.noregress_set).unwrap_or_default();
+        if c.prune || !c.export_to.is_empty() {
+            None
+        } else {
+            let (digest, r) =
+                set_reference(&rows, &text, anchors, c.paths, c.years, c.base, &c.out);
+            noregress_name = format!("set:{digest}");
+            println!(
+                "noregress: the median member of {} ({} worlds) at {} x {}y; a row further from its record costs the difference",
+                c.noregress_set,
+                rows.len(),
+                c.paths,
+                c.years
+            );
+            Some(r)
+        }
+    } else if c.noregress.is_empty() {
         None
     } else {
         let (w, spec) = ms::named_world(&c.noregress).unwrap_or_else(|| {
@@ -2134,6 +2523,34 @@ fn main() {
             (name, d)
         })
         .collect();
+    // THE PROJECTED DIAL (`-project DIAL:ROW`): a searched dial and the graded row it is solved for
+    let project: Option<(usize, &'static str, f64)> = (!c.project.trim().is_empty()).then(|| {
+        let (dial, row) = c
+            .project
+            .split_once(':')
+            .unwrap_or_else(|| usage("-project wants DIAL:ROW, e.g. 'drift:return per vol'"));
+        let at = names()
+            .iter()
+            .position(|n| *n == dial.trim())
+            .unwrap_or_else(|| {
+                usage(&format!(
+                    "-project names [{dial}], which is not a searched dial"
+                ))
+            });
+        let (name, _, target, _) = ms::fit_targets(anchors)
+            .into_iter()
+            .find(|(n, _, _, _)| *n == row.trim())
+            .unwrap_or_else(|| {
+                usage(&format!(
+                    "-project names [{row}], which is not a graded row of {}",
+                    c.anchor_spec
+                ))
+            });
+        (at, name, target)
+    });
+    if c.stage > 0 && c.stage_check > 0 {
+        usage("-stage and -stagecheck each set the prefix; give one");
+    }
     let obj = Objective {
         dead: dead_zone(c.dead),
         reference,
@@ -2141,6 +2558,9 @@ fn main() {
         classes: ms::parse_gate(&c.gate),
         watch: Vec::new(),
         hold,
+        stage: c.stage.max(c.stage_check),
+        stage_check: c.stage_check > 0,
+        project_row: project.map(|(_, row, _)| row),
     };
 
     let mut prior = read_state(&c.out);
@@ -2174,7 +2594,9 @@ fn main() {
         _ => objective_digest(
             anchors,
             transport.as_ref(),
-            obj.reference.as_deref().map(|r| (c.noregress.as_str(), r)),
+            obj.reference
+                .as_deref()
+                .map(|r| (noregress_name.as_str(), r)),
             &obj.gap,
             &obj.hold,
         ),
@@ -2261,10 +2683,10 @@ fn main() {
         ),
         (
             "noregress".into(),
-            if c.noregress.is_empty() {
+            if noregress_name.is_empty() {
                 "(none)".to_string()
             } else {
-                c.noregress.clone()
+                noregress_name.clone()
             },
         ),
         (
@@ -2287,6 +2709,16 @@ fn main() {
                     .collect::<Vec<_>>()
                     .join(",")
             },
+        ),
+        // a prefix rejection can turn away a candidate the whole read would admit, so a staged
+        // archive is not the unstaged one's; `-stagecheck` acts on nothing and is not recorded
+        ("stage".into(), c.stage.to_string()),
+        (
+            "project".into(),
+            project.map_or_else(
+                || "(none)".to_string(),
+                |(at, row, _)| format!("{}:{row}", names()[at]),
+            ),
         ),
     ];
 
@@ -2319,6 +2751,13 @@ fn main() {
     }
     if !loaded.is_empty() && !prior.contains_key("gates") {
         prior.insert("gates".into(), "search-ensemble".into());
+    }
+    // one written before `-stage` read every path at once, and one before `-project` stepped every dial
+    if !loaded.is_empty() && !prior.contains_key("stage") {
+        prior.insert("stage".into(), "0".into());
+    }
+    if !loaded.is_empty() && !prior.contains_key("project") {
+        prior.insert("project".into(), "(none)".into());
     }
     // one written before `-cov` existed drew its children one dial at a time
     if !loaded.is_empty() && !prior.contains_key("proposal") {
@@ -2826,6 +3265,75 @@ fn main() {
         }
     }
     let fixed: Vec<bool> = rs.iter().map(|r| fix_names.contains(&r.0)).collect();
+    // THE PROJECTION (`-project`). Held as a `-hold`, a row the loss pulls through every free dial
+    // rejects the children that drift from it (search-v144's hold on return per vol starved
+    // admission); solved, every child starts on it. The slope is read on the first seed world at its
+    // own value and one step up, paired on the same seeds so the step is the whole difference; the
+    // readings of the members a resumed archive brings without one are read once here.
+    let mut held: HashMap<String, f64> = read_held(&c.out);
+    for (nm, w, r) in &seed_reads {
+        held.insert(held_key(nm, &dials_of(w)), round8(r.held));
+    }
+    let slope = project.map_or(f64::NAN, |(at, row, target)| {
+        let (nm, w, _) = &seed_reads[0];
+        let lo = dials_of(w);
+        let step = PROJECT_STEP * (rs[at].2 - rs[at].1);
+        let mut hi = lo.clone();
+        hi[at] = lo[at] + step;
+        let reading = |d: &[f64], k: u64| {
+            let s = (c.base as u64).wrapping_add(PROJECT_OFFSET + k * READ_STRIDE);
+            one_read(
+                &world_of(w, d),
+                anchors,
+                c.paths,
+                c.years,
+                s,
+                &obj.without_gap(),
+            )
+            .held
+        };
+        let slope = round8(
+            (0..PROJECT_SLOPE_READS)
+                .map(|k| (reading(&hi, k) - reading(&lo, k)) / step)
+                .sum::<f64>()
+                / PROJECT_SLOPE_READS as f64,
+        );
+        if !(slope.is_finite() && slope > 0.0) {
+            usage(&format!(
+                "-project: {row} reads a slope of {slope} in {} on {nm}; nothing to solve along",
+                rs[at].0
+            ));
+        }
+        println!(
+            "projecting {} onto {row} = {}: slope {} on {nm}",
+            rs[at].0,
+            g8(target),
+            g8(slope)
+        );
+        slope
+    });
+    if project.is_some() {
+        let missing: Vec<&Member> = start_arc
+            .iter()
+            .filter(|m| !held.contains_key(&held_key(&m.name, &m.dials)))
+            .collect();
+        for (k, m) in missing.iter().enumerate() {
+            let s = (c.base as u64)
+                .wrapping_add(PROJECT_OFFSET + (PROJECT_SLOPE_READS + k as u64) * READ_STRIDE);
+            let r = one_read(
+                &world_of(&world_for(&m.name), &m.dials),
+                anchors,
+                c.paths,
+                c.years,
+                s,
+                &obj.without_gap(),
+            );
+            held.insert(held_key(&m.name, &m.dials), round8(r.held));
+        }
+        if !missing.is_empty() {
+            println!("read {} members' projected row afresh", missing.len());
+        }
+    }
     // THE SPREAD TRACE the stopping rule reads: the descriptors of every candidate admitted so
     // far, by generation, rebuilt from the log on a resume so the rule reads the whole run
     let nd = DESC_NAMES.len();
@@ -2863,6 +3371,8 @@ fn main() {
         let mut rng =
             NumPyRng::new(((c.base ^ (g as i64).wrapping_mul(0x9e37_79b9)) & i64::MAX) as u64);
         let mut log = Vec::new();
+        let mut cands: Vec<String> = Vec::new();
+        let mut stage_log: Vec<String> = Vec::new();
         // the archive's shape is read once a generation; `-cov 0` reads none and draws nothing
         // extra, so a run without it proposes exactly what it always did
         let factor = if c.cov > 0.0 {
@@ -2890,6 +3400,14 @@ fn main() {
                         });
                         if fixed[i] {
                             parent.dials[i]
+                        } else if let Some((_, _, target)) = project.filter(|p| p.0 == i) {
+                            // the parent's miss on the row, closed along the slope; the draw is
+                            // made as without it, so the other dials step alike
+                            held.get(&held_key(&parent.name, &parent.dials))
+                                .filter(|h| h.is_finite())
+                                .map_or(parent.dials[i], |h| {
+                                    clamped(&rs[i], parent.dials[i] + (target - h) / slope)
+                                })
                         } else {
                             stepped(&rs[i], parent.dials[i], zi, c.sigma)
                         }
@@ -2946,6 +3464,8 @@ fn main() {
                 noise_n += 1;
                 noise_due = false;
             }
+            let child_key = held_key(&parent.name, &child);
+            let child_dials: Vec<String> = child.iter().map(|x| g8(*x)).collect();
             if r.feasible && !above_bar(&parent.name, r.score) {
                 // no reading yet is no margin: at `-reps 1` the first may come generations in
                 let noise = if noise_n > 0 {
@@ -2971,6 +3491,7 @@ fn main() {
                 took = entered;
                 if took {
                     trace.push((g, r.desc.clone()));
+                    held.insert(child_key, round8(r.held));
                 }
             }
             log.push(format!(
@@ -2987,13 +3508,58 @@ fn main() {
                 bs.join("\t"),
                 gate_fail
             ));
+            // every candidate's dials, so what it was can be read back without re-deriving the
+            // draws: the log carries its descriptors and the archive only the members
+            let staged = match &r.stage_fail {
+                None => "-",
+                Some(f) if f.is_empty() => "pass",
+                Some(_) => "fail",
+            };
+            cands.push(format!(
+                "{g}\t{evals}\t{}\t{}\t{took}\t{staged}\t{secs:.3}\t{}\t{}",
+                parent.name,
+                r.feasible,
+                g8(r.held),
+                child_dials.join("\t")
+            ));
+            if obj.stage_check {
+                stage_log.push(format!(
+                    "{g}\t{evals}\t{}\t{}\t{}\t{}",
+                    r.stage_fail.as_ref().is_some_and(Vec::is_empty),
+                    r.feasible,
+                    r.stage_fail
+                        .as_ref()
+                        .map_or(String::new(), |f| f.join("; ")),
+                    r.gate_fail.join("; ")
+                ));
+            }
             evals += c.reps as u64;
         }
         if c.reps == 1 {
             evals += 1;
         }
         append_log(&c.out, &log);
+        append_tsv(
+            &c.out,
+            "cands.tsv",
+            &format!(
+                "gen\teval\tparent\tfeasible\tadmitted\tstage\tseconds\theld\t{}",
+                names().join("\t")
+            ),
+            &cands,
+        );
+        if obj.stage_check {
+            append_tsv(
+                &c.out,
+                "stage.tsv",
+                "gen\teval\tprefixFeasible\tfeasible\tprefixFail\tgateFail",
+                &stage_log,
+            );
+        }
         write_archive(&c.out, &arc, g + 1, evals, (noise_sum, noise_n), &settings);
+        if project.is_some() {
+            write_held(&c.out, &arc, &held);
+        }
         let best = arc.iter().map(|m| m.score).fold(f64::INFINITY, f64::min);
         let raw = arc.iter().map(|m| m.raw).fold(f64::INFINITY, f64::min);
         let scores: Vec<f64> = arc.iter().map(|m| m.score).collect();
@@ -3028,11 +3594,12 @@ mod seed_stream_tests {
     fn read_streams_share_no_path() {
         const MAX_PATHS: i128 = 4096;
         let (path, read) = (PATH_STRIDE as i128, READ_STRIDE as i128);
-        let streams: [(&str, i128); 4] = [
+        let streams: [(&str, i128); 5] = [
             ("pool", 0),
             ("holdout fresh", HOLDOUT_FRESH_OFFSET as i128),
             ("noregress", NOREGRESS_OFFSET as i128),
             ("candidates", CANDIDATE_OFFSET as i128),
+            ("project", PROJECT_OFFSET as i128),
         ];
         // past this many slots apart the seeds are further apart than MAX_PATHS path strides
         let reach = MAX_PATHS * path / read + 2;
@@ -3084,6 +3651,55 @@ mod noise_tests {
             spread,
             complete,
             watch_miss: Vec::new(),
+            stage_fail: None,
+            held: f64::NAN,
+        }
+    }
+
+    /// A STAGED READ IS THE WHOLE READ when its prefix passes: the same paths, so the same reading
+    /// to the bit; and a prefix that fails rejects the candidate there, naming the stage.
+    #[test]
+    fn a_staged_read_is_the_whole_read_or_a_prefix_rejection() {
+        let anchors = ms::anchors_named("nasdaq");
+        let w = ms::named_world("0.24.5-nasdaq")
+            .expect("the Nasdaq recipe")
+            .0;
+        let base = Objective {
+            dead: dead_zone(0.5),
+            reference: None,
+            gap: Vec::new(),
+            classes: ms::parse_gate("realism,mechanism"),
+            watch: Vec::new(),
+            hold: Vec::new(),
+            stage: 0,
+            stage_check: false,
+            project_row: Some("return per vol"),
+        };
+        let staged = Objective {
+            stage: 12,
+            ..base.unstaged()
+        };
+        let checked = Objective {
+            stage: 12,
+            stage_check: true,
+            ..base.unstaged()
+        };
+        let (paths, years, s) = (40, 30, 20_261_003);
+        let whole = one_read(&w, anchors, paths, years, s, &base);
+        let check = one_read(&w, anchors, paths, years, s, &checked);
+        assert!(check.stage_fail.is_some());
+        assert_eq!(whole.score.to_bits(), check.score.to_bits());
+        assert_eq!(whole.total.to_bits(), check.total.to_bits());
+        assert_eq!(whole.held.to_bits(), check.held.to_bits());
+        assert_eq!(whole.feasible, check.feasible);
+        assert_eq!(whole.gate_fail, check.gate_fail);
+        let st = one_read(&w, anchors, paths, years, s, &staged);
+        if check.stage_fail.as_ref().is_some_and(Vec::is_empty) {
+            assert_eq!(whole.score.to_bits(), st.score.to_bits());
+            assert_eq!(whole.gate_fail, st.gate_fail);
+        } else {
+            assert!(!st.feasible);
+            assert!(st.gate_fail.iter().all(|f| f.starts_with("stage: ")));
         }
     }
 
@@ -3175,6 +3791,9 @@ mod watch_tests {
             classes: ms::parse_gate("realism"),
             watch: Vec::new(),
             hold: Vec::new(),
+            stage: 0,
+            stage_check: false,
+            project_row: None,
         }
         .without_gap();
         assert!(seed_obj.gap.is_empty() && seed_obj.watch == graded);

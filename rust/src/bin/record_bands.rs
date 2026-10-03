@@ -30,7 +30,8 @@ use uni::market_sim::{self as ms};
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 const USAGE: &str =
-    "usage: record_bands (-yahoo FILE | -french FILE) -from YYYY-MM-DD -to YYYY-MM-DD
+    "usage: record_bands (-yahoo FILE [-splice FILE -at YYYY-MM-DD] | -french FILE)
+                    -from YYYY-MM-DD -to YYYY-MM-DD
                     -set NAME -series LABEL [-rows A,B] [-resamples N] [-seed S]
                     [-joint A] [-of N] [-header] [-coupling | -multiyear [-long]]
        record_bands -rateafter -fred DFF (-yahoo FILE | -french FILE) -from -to -set -series [-of N]
@@ -42,8 +43,9 @@ const USAGE: &str =
   -timing       THE TIMING ROWS instead (`TIMING_ROWS`), on MONTH-END levels over -from..-to: what a
                 10-month moving-average exit does on the record and the market's one-year trend, the
                 rows of `timing-2026-09-30.tsv`, from -french FILE (CRSP's daily factors compounded,
-                the ruler) or -shiller FILE (a `month,price,dividend,cpi` CSV of Shiller's monthly
-                S&P -- monthly AVERAGES, for comparison only)
+                the ruler), -yahoo FILE (its log returns compounded, -splice as below) or -shiller
+                FILE (a `month,price,dividend,cpi` CSV of Shiller's monthly S&P -- monthly AVERAGES,
+                for comparison only)
   -sectors DIR  THE SECTOR ROWS instead: Ken French's `10_Industry_Portfolios.CSV`,
                 `49_Industry_Portfolios.CSV` and `F-F_Research_Data_Factors.CSV` in DIR as the
                 library publishes them (unzipped), the first monthly block of each; prints the
@@ -53,6 +55,10 @@ const USAGE: &str =
   -yahoo FILE   a `date,adj_close,dlog_adj_close` CSV of adjusted closes (Yahoo's chart API, one row a
                 session): the `dlog_adj_close` column; the first row is the anchor
                 price, not a return, and is skipped
+  -splice FILE -at DATE
+                a second such file continuing the -yahoo one: the -yahoo file's returns dated on or
+                before DATE, then this file's dated after it (the Nasdaq splice: ^IXIC through
+                1985-10-01, ^NDX after)
   -french FILE  Ken French's F-F_Research_Data_Factors_daily: Mkt-RF + RF compounded into an index
                 WITHOUT a leading 1.0 over the window, then its log returns -- which drops the
                 window's first session (the persistence fixture's rule)
@@ -64,9 +70,9 @@ const USAGE: &str =
                 rows jointly miss A x (rows here) / N of the time
   -of N         the set's banded rows across all its windows (default: the rows printed here)
   -header       print the column header first
-  -coupling     print the record's bubble coupling (`bubble_coupling_of`), largest 3-year run-up
-                and longest calm stretch instead, the rows of
-                `bubblebust-2026-09-24.tsv`: no resampling keeps the structure it measures
+  -coupling     print the record's bubble coupling (`bubble_coupling_of`), largest 3-year run-up,
+                longest calm stretch and 250-session variance ratio (`variance_ratio`) instead, the
+                rows of `bubblebust-2026-09-24.tsv`: no resampling keeps the structure they measure
   -multiyear    print the record's multi-year rows (`multi_year_readings`) instead, the rows of
                 `multiyear-2026-09-29.tsv`; with -long under their long-window names";
 
@@ -106,6 +112,9 @@ struct Opts {
     bond: bool,
     /// `-rateafter`: the rate file read beside the equity source
     after_rate: Option<String>,
+    /// `-splice FILE -at DATE`: the file continuing a `-yahoo` source, and the last date read
+    /// from the first
+    splice: Option<(String, String)>,
 }
 
 /// A flag's numeric value, or the usage line.
@@ -124,6 +133,7 @@ fn parse_args(args: &[String]) -> Opts {
     let mut rateafter = false;
     let mut fred: Option<String> = None;
     let (mut joint, mut of) = (0.10f64, 0usize);
+    let (mut splice, mut at): (Option<String>, Option<String>) = (None, None);
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut next = || {
@@ -135,6 +145,8 @@ fn parse_args(args: &[String]) -> Opts {
             "-yahoo" => yahoo = Some(next()),
             "-french" => french = Some(next()),
             "-fred" => fred = Some(next()),
+            "-splice" => splice = Some(next()),
+            "-at" => at = Some(next()),
             "-from" => from = Some(next()),
             "-to" => to = Some(next()),
             "-set" => set = next(),
@@ -168,6 +180,11 @@ fn parse_args(args: &[String]) -> Opts {
     if rate != matches!(source, Source::Fred(_)) {
         usage("-rate reads a -fred file, and a -fred file is read by -rate");
     }
+    let splice = match (splice, at) {
+        (Some(f), Some(d)) if matches!(source, Source::Yahoo(_)) => Some((f, d)),
+        (None, None) => None,
+        _ => usage("-splice FILE -at DATE go together, after a -yahoo file"),
+    };
     let (Some(from), Some(to)) = (from, to) else {
         usage("-from and -to are required")
     };
@@ -200,6 +217,7 @@ fn parse_args(args: &[String]) -> Opts {
         rate,
         bond,
         after_rate,
+        splice,
     }
 }
 
@@ -224,6 +242,23 @@ fn read_yahoo(file: &str) -> Vec<(String, f64)> {
             (f[0].trim().to_string(), v)
         })
         .collect()
+}
+
+/// `read_yahoo`'s returns, continued after `at` by a second file's when `splice` names one: the
+/// first file's returns dated on or before `at`, then the second's dated after it.
+fn read_yahoo_spliced(file: &str, splice: Option<(&str, &str)>) -> Vec<(String, f64)> {
+    match splice {
+        None => read_yahoo(file),
+        Some((next, at)) => read_yahoo(file)
+            .into_iter()
+            .filter(|(d, _)| d.as_str() <= at)
+            .chain(
+                read_yahoo(next)
+                    .into_iter()
+                    .filter(|(d, _)| d.as_str() > at),
+            )
+            .collect(),
+    }
 }
 
 /// `(date, Mkt-RF + RF in percent)` for every dated row of Ken French's daily factor file.
@@ -281,10 +316,13 @@ fn returns_in_window(o: &Opts) -> Vec<(String, f64)> {
             .into_iter()
             .filter(|(d, _)| in_window(d))
             .collect(),
-        Source::Yahoo(f) => read_yahoo(f)
-            .into_iter()
-            .filter(|(d, _)| in_window(d))
-            .collect(),
+        Source::Yahoo(f) => read_yahoo_spliced(
+            f,
+            o.splice.as_ref().map(|(s, at)| (s.as_str(), at.as_str())),
+        )
+        .into_iter()
+        .filter(|(d, _)| in_window(d))
+        .collect(),
         Source::French(f) => {
             let days: Vec<(String, f64)> = read_french(f)
                 .into_iter()
@@ -358,10 +396,24 @@ fn read_french_month_ends(file: &str, from: &str, to: &str) -> Vec<(String, f64)
     out
 }
 
+/// `(month, level at the month's last session)` from dated daily log returns: the returns
+/// summed from the first, the level `exp_det` of the sum, so the twins read the same levels.
+fn log_month_ends(days: &[(String, f64)]) -> Vec<(String, f64)> {
+    let mut out: Vec<(String, f64)> = Vec::new();
+    let mut c = 0.0;
+    for (k, (d, x)) in days.iter().enumerate() {
+        c += x;
+        if k + 1 == days.len() || days[k + 1].0[..7] != d[..7] {
+            out.push((d[..7].to_string(), ms::exp_det(c)));
+        }
+    }
+    out
+}
+
 /// THE TIMING ROWS (`-timing`): the four rows of `timing_of_monthly` on month-end levels, from
-/// `-french FILE` (CRSP's daily factors, the ruler) or `-shiller FILE` (monthly AVERAGES, for the
-/// comparison the fixture's header states), over `-from`..`-to` (YYYY-MM-DD or YYYY-MM), for the
-/// set named.
+/// `-french FILE` (CRSP's daily factors, the ruler), `-yahoo FILE` (its log returns, continued by
+/// `-splice FILE -at DATE`) or `-shiller FILE` (monthly AVERAGES, for the comparison the fixture's
+/// header states), over `-from`..`-to` (YYYY-MM-DD or YYYY-MM), for the set named.
 fn timing_mode(args: &[String]) -> bool {
     if !args.iter().any(|a| a == "-timing") {
         return false;
@@ -375,13 +427,28 @@ fn timing_mode(args: &[String]) -> bool {
     let to = opt("-to").unwrap_or_else(|| "9999-99-99".to_string());
     let set = opt("-set").unwrap_or_else(|| usage("-set is required"));
     let series = opt("-series").unwrap_or_else(|| usage("-series is required"));
-    let rows: Vec<(String, f64)> = match (opt("-french"), opt("-shiller")) {
-        (Some(file), None) => read_french_month_ends(&file, &from, &to),
-        (None, Some(file)) => read_shiller_monthly(&file)
+    let rows: Vec<(String, f64)> = match (opt("-french"), opt("-shiller"), opt("-yahoo")) {
+        (Some(file), None, None) => read_french_month_ends(&file, &from, &to),
+        (None, Some(file), None) => read_shiller_monthly(&file)
             .into_iter()
             .filter(|(m, _)| m.as_str() >= &from[..from.len().min(7)] && m.as_str() <= &to[..7])
             .collect(),
-        _ => usage("-timing wants exactly one of -french FILE and -shiller FILE"),
+        (None, None, Some(file)) => {
+            let splice = match (opt("-splice"), opt("-at")) {
+                (Some(f), Some(at)) => Some((f, at)),
+                (None, None) => None,
+                _ => usage("-splice FILE -at DATE go together"),
+            };
+            let days: Vec<(String, f64)> = read_yahoo_spliced(
+                &file,
+                splice.as_ref().map(|(f, at)| (f.as_str(), at.as_str())),
+            )
+            .into_iter()
+            .filter(|(d, _)| d.as_str() >= from.as_str() && d.as_str() <= to.as_str())
+            .collect();
+            log_month_ends(&days)
+        }
+        _ => usage("-timing wants exactly one of -french FILE, -yahoo FILE and -shiller FILE"),
     };
     if rows.len() < 24 {
         usage("the window holds fewer than two years of months");
@@ -451,6 +518,7 @@ fn main() {
             ("bubble coupling 3y", ms::bubble_coupling_of(&r)),
             ("largest 3y run-up", ms::run_up_3y_of(&r)),
             ("longest calm stretch", ms::calm_stretch_of(&r)),
+            ("variance ratio 250d", ms::variance_ratio(&r, 250)),
         ] {
             println!(
                 "{}\t{name}\t{}\t{window}\t{}\t{value:.6}",

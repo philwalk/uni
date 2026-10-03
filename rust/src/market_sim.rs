@@ -62,6 +62,7 @@ use crate::NumPyRng;
 use crate::udata::MatD;
 use crate::udata::java_format_f;
 use crate::udata::mat::java_double_compare;
+use crate::udata::mat::sum_d_serial_by;
 use crate::utime::UniDateTime;
 
 /// Which release this binary is, from `Cargo.toml` at compile time. Never a literal: a copied
@@ -249,7 +250,11 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 // world fields.
 // 27 -> 28: THE WORLD DIGEST. A top-level `worldDigest` after `world` (`world_digest`): the
 // world's identity beyond the version, since an unpublished recipe can change under its name.
-const EMIT_SCHEMA: u32 = 28;
+// 28 -> 29: THE REPORTED RECORDS. A top-level `reportedRows` after `fidelity`: rows the set reads
+// off records it does not grade on (`Anchors::reported`), each a fidelity row with its `window`
+// first. The Nasdaq's timing rows, bubble coupling and multi-year rows grade on the 1971-2026
+// splice of the Composite and the NDX; CRSP, the NDX from 1990 and QQQ are reported.
+const EMIT_SCHEMA: u32 = 29;
 
 /// Frozen structural constants of the volume channel — see the `vol_idio` field. Measured
 /// from the SPY/QQQ volume-on-range regression (`bars-2026-09-01.tsv`, whose rows the
@@ -285,7 +290,7 @@ const DEFAULT_SEED: u64 = 20_260_813;
         reason = "the contract is read by the tests, never by the writer"
     )
 )]
-const EMIT_SIDECAR_KEYS: [&str; 13] = [
+const EMIT_SIDECAR_KEYS: [&str; 14] = [
     "generator",
     "version",
     "schema",
@@ -299,6 +304,7 @@ const EMIT_SIDECAR_KEYS: [&str; 13] = [
     "channels",
     "episodes",
     "fidelity",
+    "reportedRows",
 ];
 
 const DAYS_PER_YEAR: usize = 252;
@@ -1298,7 +1304,38 @@ pub fn recipes() -> Vec<(&'static str, World, &'static str)> {
         ),
     ];
     rows.extend(rows_0245(nq_0244));
+    rows.extend(rows_0246(nq_0244));
     rows
+}
+
+/// The 0.24.6 recipes. THE DRIFT HELD AT THE RECORD: each 0.24.5 recipe at the drift that puts
+/// return per vol at its record on seeds 1-4 at 200 x 100, every other dial unchanged -- QQQ's
+/// 0.38 for the Nasdaq (the 0.24.5 recipe reads 0.30), CRSP 1954-2026's 0.69 for the S&P (0.61).
+/// The Nasdaq basket recipe takes the Nasdaq's drift under `0.24.5-nasdaq-basket`'s channel dials.
+fn rows_0246(nq_0244: World) -> Vec<(&'static str, World, &'static str)> {
+    let nq = World {
+        drift: 0.151_192_56,
+        ..recipe_0245_nasdaq(nq_0244)
+    };
+    vec![
+        ("0.24.6-nasdaq", nq, "nasdaq"),
+        (
+            "0.24.6-nasdaq-basket",
+            with_sectors(recipe_0245_nasdaq_basket(nq), NASDAQ_CHANNEL_DIALS),
+            "nasdaq",
+        ),
+        (
+            "0.24.6-sp500",
+            World {
+                drift: 0.147_474_57,
+                ..with_sectors(
+                    recipe_0245_sp500(recipe_0244_sp500_channels(v0_24_4())),
+                    SP500_CHANNEL_DIALS,
+                )
+            },
+            "sp500",
+        ),
+    ]
 }
 
 /// The 0.24.5 recipes.
@@ -6775,18 +6812,18 @@ fn autocorr_abs(r: &[f64], lag: usize) -> f64 {
 /// `autocorr_abs` at several lags, sharing what does not depend on the lag -- |r|, its centring and
 /// the denominator -- which a caller asking for four lags otherwise builds four times.
 fn autocorrs_abs(r: &[f64], lags: &[usize]) -> Vec<f64> {
-    let a = MatD::apply(r).abs();
-    let z = &a - a.mean();
-    let den = z.power(2).sum();
+    // `MatD`'s arithmetic without its temporaries (see `pearson`): Scala writes the products as
+    // z(0 until n-lag, 0) * z(lag until n, 0), exactly row slices of an n x 1 column
     let n = r.len();
+    let m = sum_d_serial_by(n, |i| r[i].abs()) / n as f64;
+    let z: Vec<f64> = r.iter().map(|x| x.abs() - m).collect();
+    let den = sum_d_serial_by(n, |i| z[i] * z[i]);
     lags.iter()
         .map(|&lag| {
             if den <= 0.0 || n <= lag {
                 f64::NAN
             } else {
-                // Scala writes these as z(0 until n-lag, 0) and z(lag until n, 0); on an n x 1
-                // column those are exactly row slices.
-                (&z.applyRowsAll(0..n - lag) * &z.applyRowsAll(lag..n)).sum() / den
+                sum_d_serial_by(n - lag, |i| z[i] * z[i + lag]) / den
             }
         })
         .collect()
@@ -6814,7 +6851,7 @@ fn autocorrs_abs(r: &[f64], lags: &[usize]) -> Vec<f64> {
 /// q offsets removes a free parameter nobody chose deliberately; it costs a factor of q in
 /// arithmetic on an O(n) statistic and nothing in interpretation, because each offset estimates
 /// the same quantity.
-fn variance_ratio(r: &[f64], q: usize) -> f64 {
+pub fn variance_ratio(r: &[f64], q: usize) -> f64 {
     let len = r.len();
     let n = len / q * q;
     if q < 2 || n < 2 * q {
@@ -6868,20 +6905,30 @@ fn variance_ratio(r: &[f64], q: usize) -> f64 {
     }
 }
 
-/// cov(a,b) / (sigma_a * sigma_b), in unnormalised sums — written as the formula.
+/// cov(a,b) / (sigma_a * sigma_b), in unnormalised sums — written as the formula. `MatD`'s
+/// arithmetic (`MatD::sum`'s accumulators, the centred values squared as `power(2)` squares
+/// them) without its temporaries or its parallel sums: this runs inside the per-path loops,
+/// which are already across cores, five sums a call.
 fn pearson(a: &[f64], b: &[f64]) -> f64 {
     if a.len() < 50 {
         return f64::NAN;
     }
-    let ma = MatD::apply(a);
-    let za = &ma - ma.mean();
-    let mb = MatD::apply(b);
-    let zb = &mb - mb.mean();
-    let den = (za.power(2).sum() * zb.power(2).sum()).sqrt();
+    let (na, nb) = (a.len(), b.len());
+    let ma = sum_d_serial_by(na, |i| a[i]) / na as f64;
+    let mb = sum_d_serial_by(nb, |i| b[i]) / nb as f64;
+    let saa = sum_d_serial_by(na, |i| {
+        let z = a[i] - ma;
+        z * z
+    });
+    let sbb = sum_d_serial_by(nb, |i| {
+        let z = b[i] - mb;
+        z * z
+    });
+    let den = (saa * sbb).sqrt();
     if den <= 0.0 {
         f64::NAN
     } else {
-        (&za * &zb).sum() / den
+        sum_d_serial_by(na, |i| (a[i] - ma) * (b[i] - mb)) / den
     }
 }
 
@@ -7045,11 +7092,10 @@ pub struct WorldStats {
     pub vr60: f64,
     pub vr120: f64,
     pub vr250: f64,
-    /// the era `VAR_RATIO_250_ERAS` grades the 250-session rung against (`vr250_era_of` the run's
-    /// years), and the percentile of its record among the paths' own 250-session readings; NaN
-    /// under `EXTREME_MIN_HISTORIES` paths
-    pub vr250_era: usize,
-    pub vr250_record_pct: f64,
+    /// the percentile of each `VAR_RATIO_250_ERAS` record among the paths' 250-session readings
+    /// over the era's own length, the run's where that is shorter; NaN under
+    /// `EXTREME_MIN_HISTORIES` paths. A set grades the one of its eras nearest the run's length.
+    pub vr250_record_pcts: [f64; VAR_RATIO_250_ERAS.len()],
     /// SIGNED lag-1 autocorrelation, the one horizon the ladder cannot see: a variance ratio
     /// constrains a weighted SUM of the first q-1 autocorrelations, so a world can hold vr60 at
     /// 1.0 with a positive first term paid for by negatives further out, and `ac1` above reads
@@ -7300,27 +7346,33 @@ const VAR_RATIO_LADDER: [usize; 4] = [20, 60, 120, 250];
 /// `persistence_anchor_tests`. The two long rungs cannot discriminate: at 250 sessions the record
 /// itself spans 0.24-1.56. They are graded anyway, inside ONE profile row with the slopes below,
 /// so a world clears the ladder as a shape and never rung by rung.
-/// THE 250-SESSION RUNG IS GRADED AGAINST THE RECORD OF THE RUN'S OWN LENGTH, not against the
+/// THE 250-SESSION RUNG IS GRADED AGAINST A RECORD OF THE SET'S OWN INDEX, not against the
 /// cross-section's envelope. Its envelope's top, 1.30, is ONE reading rounded up -- the CRSP
 /// century's 1.255 -- and the same market reads 1.034 from 1954 and 0.796 from 1990: at 250
 /// sessions the era is the axis, and a single history of a century spreads too widely for a box on
-/// the ensemble median to place it. So the rung is graded as the single-history rows are: the CRSP
-/// reading of the era whose length is nearest the run's years must fall inside the 5-95th
-/// percentile of the world's own histories of that length (`EXTREME_PCT_BAND`). Under
+/// the ensemble median to place it. So the rung is graded as the single-history rows are: of the
+/// set's eras (`Anchors::vr250_eras`), the one whose length is nearest the run's years must fall
+/// inside the 5-95th percentile of the world's histories of that era's length, cut from the run's
+/// paths (`EXTREME_PCT_BAND`). The S&P's eras are CRSP's; the Nasdaq's is the 1971-2026 splice of
+/// the Composite and the NDX alone, since its rules were selected on the NDX from 1990. Under
 /// `EXTREME_MIN_HISTORIES` paths the record cannot be placed and the rung keeps the envelope.
-/// `persistence_anchor_tests` pins each era to the fixture's CRSP row. Label, years, record.
-pub const VAR_RATIO_250_ERAS: [(&str, f64, f64); 3] = [
+/// `persistence_anchor_tests` pins each CRSP era to the fixture's CRSP row and the splice to
+/// `bubblebust-2026-09-24.tsv`'s. Label, years, record.
+pub const VAR_RATIO_250_ERAS: [(&str, f64, f64); 4] = [
     ("CRSP 1926-2026", 100.0, 1.255),
     ("CRSP 1954-2026", 72.5, 1.034),
     ("CRSP 1990-2026", 36.5, 0.796),
+    ("IXIC+NDX 1971-2026", 55.6, 1.204),
 ];
 
-/// The era in `VAR_RATIO_250_ERAS` whose length is nearest `years`, the first on a tie.
+/// Of `eras` (`VAR_RATIO_250_ERAS` indexes, at least one), the one whose length is nearest
+/// `years`, the first on a tie.
 #[must_use]
-pub fn vr250_era_of(years: usize) -> usize {
-    let mut best = 0;
-    for (k, e) in VAR_RATIO_250_ERAS.iter().enumerate() {
-        if (e.1 - years as f64).abs() < (VAR_RATIO_250_ERAS[best].1 - years as f64).abs() {
+pub fn vr250_era_of(eras: &[usize], years: f64) -> usize {
+    let gap = |k: usize| (VAR_RATIO_250_ERAS[k].1 - years).abs();
+    let mut best = eras[0];
+    for &k in eras {
+        if gap(k) < gap(best) {
             best = k;
         }
     }
@@ -7866,14 +7918,15 @@ fn multi_year_of(r: &[f64], px: &[f64]) -> [f64; 7] {
     for i in 0..r.len() {
         lp[i + 1] = lp[i] + r[i];
     }
+    let lengths = decline_lengths(px);
     [
         phase_mean(1, |off| lag1_corr(&block_changes(&lp, off, DAYS_PER_YEAR))),
         multi_year_vr(&lp, 3),
         multi_year_vr(&lp, 5),
         ret_3y_p95_excess(&lp),
         decline_gap_p90(px),
-        decline_lengths(px)[0],
-        decline_lengths(px)[1],
+        lengths[0],
+        lengths[1],
     ]
 }
 
@@ -10053,6 +10106,9 @@ struct PathRead {
     lev: [f64; 3],
     /// variance ratios at q = 20, `VAR_RATIO_Q`, 120 and 250
     vr: [f64; 4],
+    /// the 250-session ratio over each `VAR_RATIO_250_ERAS` era's length, the path's where that is
+    /// shorter
+    vr250_eras: [f64; VAR_RATIO_250_ERAS.len()],
     ret_ac1: f64,
     ann_ret: f64,
     div_yield: f64,
@@ -10098,7 +10154,19 @@ struct PathRead {
 )]
 fn path_read(s: &Path, years: usize) -> PathRead {
     let dpy = DAYS_PER_YEAR as f64;
+    // each series' log returns once: every reading below that takes ln(x[i] / x[i - 1]) takes
+    // these elements, which are those values to the bit
     let r = daily_returns(&s.price);
+    let rb = daily_returns(&s.bond);
+    // the valuation gap ln(P / V), once for its dispersion and its maximum
+    let gap: Vec<f64> = s
+        .price
+        .iter()
+        .zip(s.fundamental.iter())
+        .map(|(p, f)| (p / f).ln())
+        .collect();
+    let rate = rate_readings(&s.rate);
+    let post = rate_after_readings(&s.price, &s.rate);
     // once per path (was recomputed 3x)
     let eps = episodes(&s.price, 15.0);
     let bond_in_windows = |infl_regime: bool| -> Vec<f64> {
@@ -10115,17 +10183,12 @@ fn path_read(s: &Path, years: usize) -> PathRead {
         let idx: Vec<usize> = (1..s.price.len())
             .filter(|&i| (s.infl_press[i] > INFL_REGIME_EDGE) == infl_regime)
             .collect();
-        let a: Vec<f64> = idx
-            .iter()
-            .map(|&i| (s.price[i] / s.price[i - 1]).ln())
-            .collect();
-        let b: Vec<f64> = idx
-            .iter()
-            .map(|&i| (s.bond[i] / s.bond[i - 1]).ln())
-            .collect();
+        let a: Vec<f64> = idx.iter().map(|&i| r[i - 1]).collect();
+        let b: Vec<f64> = idx.iter().map(|&i| rb[i - 1]).collect();
         pearson(&a, &b)
     };
     let ac = autocorrs_abs(&r, &[1, 20, 5, 60]);
+    let vr250 = variance_ratio(&r, 250);
     let wings = wings_of(&s.price, &s.fundamental);
     let gd = gap_drift_of(&s.price, &s.fundamental);
     let gs = gap_spread_of(&s.price, &s.fundamental);
@@ -10141,8 +10204,16 @@ fn path_read(s: &Path, years: usize) -> PathRead {
             variance_ratio(&r, 20),
             variance_ratio(&r, VAR_RATIO_Q),
             variance_ratio(&r, 120),
-            variance_ratio(&r, 250),
+            vr250,
         ],
+        vr250_eras: VAR_RATIO_250_ERAS.map(|(_, era_years, _)| {
+            let m = (era_years * dpy).round() as usize;
+            if m < r.len() {
+                variance_ratio(&r[..m], 250)
+            } else {
+                vr250
+            }
+        }),
         ret_ac1: level_autocorr(&r, 1),
         ann_ret: (s.price[s.price.len() - 1] / s.price[0]).ln() / years as f64 * 100.0,
         div_yield: if s.div_yield.is_empty() {
@@ -10154,7 +10225,6 @@ fn path_read(s: &Path, years: usize) -> PathRead {
         // BOND_VOL_YEARS for why this row alone is windowed. A path shorter than one window
         // contributes itself, so a short run still reports something rather than nothing.
         bond_vol: {
-            let rb = daily_returns(&s.bond);
             let w = BOND_VOL_YEARS * DAYS_PER_YEAR;
             let nw = rb.len() / w;
             let segs: Vec<Vec<f64>> = if nw < 1 {
@@ -10171,14 +10241,8 @@ fn path_read(s: &Path, years: usize) -> PathRead {
         corr_calm: corr_in(false),
         corr_infl: corr_in(true),
         val_disp: {
-            let g: Vec<f64> = s
-                .price
-                .iter()
-                .zip(s.fundamental.iter())
-                .map(|(p, f)| (p / f).ln())
-                .collect();
-            let m = scala_sum(g.iter().copied()) / g.len() as f64;
-            (scala_sum(g.iter().map(|x| (x - m) * (x - m))) / (g.len() - 1) as f64).sqrt()
+            let m = scala_sum(gap.iter().copied()) / gap.len() as f64;
+            (scala_sum(gap.iter().map(|x| (x - m) * (x - m))) / (gap.len() - 1) as f64).sqrt()
         },
         wing_up: wings.0,
         wing_down: wings.1,
@@ -10189,12 +10253,7 @@ fn path_read(s: &Path, years: usize) -> PathRead {
         gap_late_n: gd.3,
         gap_early2: gs.0,
         gap_late2: gs.1,
-        max_over: s
-            .price
-            .iter()
-            .zip(s.fundamental.iter())
-            .map(|(p, f)| (p / f).ln())
-            .fold(f64::MIN, f64::max),
+        max_over: gap.iter().copied().fold(f64::MIN, f64::max),
         // the path's own returns, through the same functions a record is read with
         semi_excess: semi_excess_of(&r),
         up_share: up_share_of(&r),
@@ -10205,22 +10264,16 @@ fn path_read(s: &Path, years: usize) -> PathRead {
         calm_stretch: calm_stretch_of(&r),
         multi_year: multi_year_of(&r, &s.price),
         timing: timing_of_path(&s.price),
-        short_rate: rate_readings(&s.rate)[0],
-        rate_floor: rate_readings(&s.rate)[1],
-        post_rate: rate_after_readings(&s.price, &s.rate)[0],
-        post_floor: rate_after_readings(&s.price, &s.rate)[1],
+        short_rate: rate[0],
+        rate_floor: rate[1],
+        post_rate: post[0],
+        post_floor: post[1],
         tail_hedge: {
             let idx: Vec<usize> = (1..s.price.len())
                 .filter(|&i| s.infl_press[i] <= INFL_REGIME_EDGE)
                 .collect();
-            let re: Vec<f64> = idx
-                .iter()
-                .map(|&i| (s.price[i] / s.price[i - 1]).ln())
-                .collect();
-            let rb: Vec<f64> = idx
-                .iter()
-                .map(|&i| (s.bond[i] / s.bond[i - 1]).ln())
-                .collect();
+            let re: Vec<f64> = idx.iter().map(|&i| r[i - 1]).collect();
+            let rb: Vec<f64> = idx.iter().map(|&i| rb[i - 1]).collect();
             let q = pctile(&re, 0.10);
             let ta: Vec<f64> = re.iter().copied().filter(|x| *x < q).collect();
             let tb: Vec<f64> = re
@@ -10287,19 +10340,18 @@ pub fn measure(sims: &[Path], years: usize) -> WorldStats {
         vr60: med_by(|p| p.vr[1]),
         vr120: med_by(|p| p.vr[2]),
         vr250: med_by(|p| p.vr[3]),
-        vr250_era: vr250_era_of(years),
-        vr250_record_pct: {
+        vr250_record_pcts: std::array::from_fn(|e| {
             let xs: Vec<f64> = per
                 .iter()
-                .map(|p| p.vr[3])
+                .map(|p| p.vr250_eras[e])
                 .filter(|x| x.is_finite())
                 .collect();
             if xs.len() < EXTREME_MIN_HISTORIES {
                 f64::NAN
             } else {
-                anchor_pctile(&xs, VAR_RATIO_250_ERAS[vr250_era_of(years)].2) as f64
+                anchor_pctile(&xs, VAR_RATIO_250_ERAS[e].2) as f64
             }
-        },
+        }),
         ret_ac1: med_by(|p| p.ret_ac1),
         ann_ret: med_by(|p| p.ann_ret),
         n_episodes: eps.len(),
@@ -10499,15 +10551,17 @@ fn vr_of(st: &WorldStats, q: usize) -> f64 {
 /// slopes inside theirs. The name is derived from the bounds, as `band_check`'s is, so it cannot
 /// read as bounds it does not enforce; the report's `trend persistence` lines show which rung or
 /// slope failed.
-fn var_ratio_profile_check(st: &WorldStats) -> (String, bool, GateClass) {
+fn var_ratio_profile_check(a: Anchors, st: &WorldStats) -> (String, bool, GateClass) {
+    let era_k = vr250_era_of(a.vr250_eras, st.years_per_path);
     let rungs: Vec<(String, bool)> = VAR_RATIO_BANDS
         .iter()
         .map(|&(q, lo, hi)| {
-            if q == 250 && st.vr250_record_pct.is_finite() {
-                // graded against the record of the run's own length (see `VAR_RATIO_250_ERAS`)
-                let (era, _, record) = VAR_RATIO_250_ERAS[st.vr250_era];
+            if q == 250 && st.vr250_record_pcts[era_k].is_finite() {
+                // graded against the set's record nearest the run's length, over that record's
+                // own length (see `VAR_RATIO_250_ERAS`)
+                let (era, _, record) = VAR_RATIO_250_ERAS[era_k];
                 let (plo, phi) = EXTREME_PCT_BAND;
-                let p = st.vr250_record_pct;
+                let p = st.vr250_record_pcts[era_k];
                 return (
                     format!("{q}d {era} {record:.3} at record@{plo}-{phi}"),
                     p >= plo as f64 && p <= phi as f64,
@@ -10928,7 +10982,7 @@ fn gate_checks_with(
         // rule's information coefficient, a p-value calibrated on synthetic paths, a
         // drawdown-conditioned hazard — all of them inherit the trend this row measures, and none of
         // the other fifteen targets can see it.
-        var_ratio_profile_check(st),
+        var_ratio_profile_check(a, st),
         // Anchored on the record's CAPE dispersion (valuation-2026-08-30.tsv: 0.24-0.41 across
         // windows). A BAND, never a point ratio: the record has no observable fair value and
         // CAPE is a proxy, so the floor sits a stated haircut below the calmest window.
@@ -11612,14 +11666,20 @@ pub struct Anchors {
     pub worst_depth: f64,
     pub worst_depth_sd: f64,
     /// THE BUBBLE COUPLING's record (`bubble_coupling_of`, `bubblebust-2026-09-24.tsv`) and its
-    /// own window: the S&P's is the century, the Nasdaq's the NDX price index from 1990, since
-    /// QQQ's record starts nine years too late for a 3-year run-up into the 2000 peak. Graded as
-    /// an extreme row, the record's percentile among single histories of `bubble_years`.
+    /// own window, the set's long window: the S&P's is the century, the Nasdaq's the 1971-2026
+    /// splice of the Composite and the NDX price indexes, since QQQ's record starts nine years too
+    /// late for a 3-year run-up into the 2000 peak and the consumer's rules were selected on the
+    /// NDX from 1990. Graded as an extreme row, the record's percentile among single histories of
+    /// `bubble_years`.
     pub bubble_window: &'static str,
     pub bubble_years: usize,
-    /// THE TIMING ROWS' record window and records (`timing_of_monthly`; `timing-2026-09-30.tsv`):
-    /// CRSP's month-end closes with dividends, the century, one ruler for both sets, read on the
-    /// world's histories of `timing_years`.
+    /// THE 250-SESSION RUNG's eras, `VAR_RATIO_250_ERAS` indexes: the records of the set's own
+    /// index the rung may be graded against, the one nearest the run's length chosen
+    /// (`vr250_era_of`). The S&P's three CRSP eras; the Nasdaq's 1971-2026 splice alone.
+    pub vr250_eras: &'static [usize],
+    /// THE TIMING ROWS' record window and records (`timing_of_monthly`; `timing-2026-09-30.tsv`),
+    /// read on the world's histories of `timing_years`: the S&P's CRSP month-end closes with
+    /// dividends over the century, the Nasdaq's the splice's month-end closes.
     pub timing_window: &'static str,
     pub timing_years: usize,
     pub timing: [f64; 4],
@@ -11635,12 +11695,14 @@ pub struct Anchors {
     pub run_up_3y: f64,
     pub calm_stretch: f64,
     /// THE MULTI-YEAR ROWS' records (`multi_year_readings`, `multiyear-2026-09-29.tsv`), in
-    /// `MULTI_YEAR_ROWS`' order: over the equity window, and over the long window
-    /// (`bubble_window`)
-    pub multi_year: [f64; 8],
+    /// `MULTI_YEAR_ROWS`' order: over the equity window where the set grades it, and over the
+    /// long window (`bubble_window`). The Nasdaq reports its equity window instead (`reported`):
+    /// QQQ's record lies inside the window the consumer's rules were selected on.
+    pub multi_year: Option<[f64; 8]>,
     pub multi_year_long: [f64; 8],
     /// the sd of the log of the 3- and 5-year variance ratios across single histories of the
-    /// set's recipe, equity window then long window: what the loss weighs those four rows by
+    /// set's recipe, equity window then long window: what the loss weighs those four rows by (the
+    /// equity window's unread where the set reports it)
     pub multi_year_vr_sd: [f64; 2],
     pub multi_year_long_vr_sd: [f64; 2],
     /// the same spread for the decline gap, equity window then long window
@@ -11772,7 +11834,86 @@ pub struct Anchors {
     /// `0.24.4-nasdaq-basket` for the Nasdaq — and a test pins each to its recipe. A published
     /// recipe never moves, so neither do these.
     pub channel_dials: ChannelDials,
+    /// THE REPORTED RECORDS: the set's graded single-history rows read off windows it does not
+    /// grade on, each placed among the world's histories of that window's length. Never graded.
+    pub reported: &'static [ReportedRecord],
 }
+
+/// A family of single-history rows a `ReportedRecord` is read on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RowFamily {
+    /// `TIMING_ROWS`, `timing_of_path`, their joint band at `TIMING_ALPHA`
+    Timing,
+    /// `MULTI_YEAR_ROWS`, their joint band at half `MULTI_YEAR_ALPHA`, as one graded window's
+    MultiYear,
+    /// the bubble coupling, an extreme row's 5-95 percentile band
+    Coupling,
+}
+
+impl RowFamily {
+    /// The family's row names, in its readings' order.
+    #[must_use]
+    pub fn rows(self) -> &'static [&'static str] {
+        match self {
+            Self::Timing => &TIMING_ROWS,
+            Self::MultiYear => &MULTI_YEAR_ROWS,
+            Self::Coupling => &["bubble coupling 3y"],
+        }
+    }
+}
+
+/// A RECORD A SET REPORTS BESIDE THE ONE IT GRADES: one family's rows read off another window of
+/// the record, placed among the world's single histories of that window's length. Never graded:
+/// a window a consumer's rules were selected on cannot test whether their reward lasts, and
+/// another index's record is another market's.
+#[derive(Clone, Copy, Debug)]
+pub struct ReportedRecord {
+    pub family: RowFamily,
+    pub window: &'static str,
+    pub years: usize,
+    /// the record's readings, in `family.rows()` order
+    pub records: &'static [f64],
+}
+
+/// THE NASDAQ'S REPORTED RECORDS: CRSP's century (the S&P's timing record), the NDX from 1990
+/// and QQQ, the last two inside the window the consumer's rules were selected on. Records from
+/// `timing-2026-09-30.tsv`, `bubblebust-2026-09-24.tsv` and `multiyear-2026-09-29.tsv`.
+const NASDAQ_REPORTED: [ReportedRecord; 5] = [
+    ReportedRecord {
+        family: RowFamily::Timing,
+        window: "CRSP month-ends 1926-2026",
+        years: 100,
+        records: &[64.682098, 5.818947, 0.750000, 0.656168],
+    },
+    ReportedRecord {
+        family: RowFamily::Timing,
+        window: "NDX month-ends 1990-2026",
+        years: 37,
+        records: &[52.586943, 7.673684, 0.816327, 1.525398],
+    },
+    ReportedRecord {
+        family: RowFamily::Coupling,
+        window: "NDX 1990-2026",
+        years: 37,
+        records: &[1.042337],
+    },
+    ReportedRecord {
+        family: RowFamily::MultiYear,
+        window: "NDX 1990-2026",
+        years: 37,
+        records: &[
+            0.100691, 0.983398, 0.964724, 0.740644, 18.396825, 0.246032, 2.515873, 41.888384,
+        ],
+    },
+    ReportedRecord {
+        family: RowFamily::MultiYear,
+        window: "QQQ 1999-2026",
+        years: 27,
+        records: &[
+            0.007813, 0.993439, 0.894362, 0.438273, 18.396825, 0.317460, 2.523810, 53.729182,
+        ],
+    },
+];
 
 /// The dials of the derived series: the satellite leg, the bars and their volume, the open, the
 /// dividend stream, the basket and the macro panel. Every one is observational — it draws from its
@@ -12487,6 +12628,7 @@ const SP500_ANCHORS: Anchors = Anchors {
     tail_years: 100,
     bubble_window: "CRSP 1926-2026, the century",
     bubble_years: 100,
+    vr250_eras: &[0, 1, 2],
     timing_window: "CRSP month-ends 1926-2026",
     timing_years: 100,
     timing: [64.682098, 5.818947, 0.750000, 0.656168],
@@ -12495,9 +12637,9 @@ const SP500_ANCHORS: Anchors = Anchors {
     bubble_coupling_sd: 1.07,
     run_up_3y: 0.872450,
     calm_stretch: 2190.0,
-    multi_year: [
+    multi_year: Some([
         -0.127487, 0.745759, 0.732112, 0.324081, 8.599206, 0.662698, 2.527778, 12.589751,
-    ],
+    ]),
     multi_year_long: [
         0.028270, 0.961668, 0.963278, 0.398297, 11.837302, 0.932540, 3.353175, 25.500495,
     ],
@@ -12601,6 +12743,7 @@ const SP500_ANCHORS: Anchors = Anchors {
     sector_pair_corr_mid: -0.030675,
     sector_market_sd: 0.052916,
     channel_dials: SP500_CHANNEL_DIALS,
+    reported: &[],
 };
 
 /// The Nasdaq-100 set, measured 2026-08-28 from QQQ daily adjusted closes over its own full history,
@@ -12623,7 +12766,9 @@ const SP500_ANCHORS: Anchors = Anchors {
 /// last at its slow-decline re-solve (2026-10-02; the same command at the outgoing recipe reproduced
 /// the previous literals to the digit but the coupling's, which was stale); the run is seeded, so
 /// the same command reproduces every literal exactly but the wings' (the record's own block
-/// bootstrap), the post-trough rate rows' and the multi-year rows' (log spreads, their own tools). The recipe's daily shape moved the largest ones: kurtosis 1.93 -> 1.02,
+/// bootstrap), the post-trough rate rows' and the multi-year rows' (log spreads, their own tools).
+/// The timing, coupling and long-window spreads were re-measured at the splice's 56 years when the
+/// set moved onto it (2026-10-03). The recipe's daily shape moved the largest ones: kurtosis 1.93 -> 1.02,
 /// the downside excess 4.26 -> 2.87, the leverage correlation 0.53 -> 0.37. They were
 /// first carried over from the S&P, and those values were badly wrong where the two worlds differ
 /// most: `med_depth_sd`
@@ -12641,25 +12786,24 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     cluster_years: 27,
     tail_window: "QQQ 1999-2026",
     tail_years: 27,
-    bubble_window: "NDX 1990-2026",
-    bubble_years: 37,
-    timing_window: "CRSP month-ends 1926-2026",
-    timing_years: 100,
-    timing: [64.682098, 5.818947, 0.750000, 0.656168],
-    timing_sd: 0.17,
-    bubble_coupling: 1.042337,
-    bubble_coupling_sd: 0.41,
+    bubble_window: "IXIC+NDX 1971-2026",
+    bubble_years: 56,
+    vr250_eras: &[3],
+    timing_window: "IXIC+NDX month-ends 1971-2026",
+    timing_years: 56,
+    timing: [59.807540, 7.660919, 0.808383, 1.100813],
+    timing_sd: 0.27,
+    bubble_coupling: 1.104340,
+    bubble_coupling_sd: 0.32,
     run_up_3y: 1.753345,
     calm_stretch: 1927.0,
-    multi_year: [
-        0.007813, 0.993439, 0.894362, 0.438273, 18.396825, 0.317460, 2.523810, 53.729182,
-    ],
+    multi_year: None,
     multi_year_long: [
-        0.100691, 0.983398, 0.964724, 0.740644, 18.396825, 0.246032, 2.515873, 41.888384,
+        0.014692, 0.949281, 0.912220, 0.613509, 8.035714, 0.246032, 2.515873, 39.637712,
     ],
     multi_year_vr_sd: [0.26, 0.49],
-    multi_year_long_vr_sd: [0.23, 0.40],
-    decline_gap_sd: [0.44, 0.39],
+    multi_year_long_vr_sd: [0.22, 0.33],
+    decline_gap_sd: [0.44, 0.43],
     rate_window: "DFF 1999-2026",
     rate_years: 27,
     bond_window: "clean TLT, 24y",
@@ -12749,6 +12893,7 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     sector_pair_corr_mid: -0.030675,
     sector_market_sd: 0.052916,
     channel_dials: NASDAQ_CHANNEL_DIALS,
+    reported: &NASDAQ_REPORTED,
 };
 
 pub fn anchors_named(spec: &str) -> Anchors {
@@ -13219,8 +13364,8 @@ const MULTI_YEAR_STATS: [StatFn; 8] = [
     |st| st.dd_eq20 * 100.0,
 ];
 
-/// THE MULTI-YEAR ROWS of `fit_targets`: each statistic against the equity window's record, then
-/// against the long window's. The 3- and 5-year variance ratios and the decline gap carry judgment
+/// THE MULTI-YEAR ROWS of `fit_targets`: each statistic against the equity window's record where
+/// the set grades it, then against the long window's. The 3- and 5-year variance ratios and the decline gap carry judgment
 /// 0.5 each at the spread of their logs across single histories; the other rows weigh 0 and are
 /// graded by the verdict alone.
 fn multi_year_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
@@ -13235,19 +13380,23 @@ fn multi_year_targets(a: Anchors) -> Vec<(&'static str, StatFn, f64, f64)> {
             (names[k], MULTI_YEAR_STATS[k], records[k], weight)
         })
     };
-    rows(
-        MULTI_YEAR_ROWS,
-        a.multi_year,
-        a.multi_year_vr_sd,
-        a.decline_gap_sd[0],
-    )
-    .chain(rows(
-        MULTI_YEAR_LONG_ROWS,
-        a.multi_year_long,
-        a.multi_year_long_vr_sd,
-        a.decline_gap_sd[1],
-    ))
-    .collect()
+    a.multi_year
+        .into_iter()
+        .flat_map(|records| {
+            rows(
+                MULTI_YEAR_ROWS,
+                records,
+                a.multi_year_vr_sd,
+                a.decline_gap_sd[0],
+            )
+        })
+        .chain(rows(
+            MULTI_YEAR_LONG_ROWS,
+            a.multi_year_long,
+            a.multi_year_long_vr_sd,
+            a.decline_gap_sd[1],
+        ))
+        .collect()
 }
 
 /// Targets whose model statistic is an EXTREME order statistic over the pooled ensemble rather
@@ -13505,33 +13654,137 @@ fn multi_year_histories(
     yrs: usize,
 ) -> Vec<([&'static str; 8], Vec<[f64; 8]>)> {
     let windows: Vec<[&'static str; 8]> = [
-        (MULTI_YEAR_ROWS, a.equity_years),
-        (MULTI_YEAR_LONG_ROWS, a.bubble_years),
+        (MULTI_YEAR_ROWS, a.multi_year.map(|_| a.equity_years)),
+        (MULTI_YEAR_LONG_ROWS, Some(a.bubble_years)),
     ]
     .into_iter()
-    .filter(|(_, y)| *y == yrs)
+    .filter(|(_, y)| *y == Some(yrs))
     .map(|(names, _)| names)
     .collect();
     if windows.is_empty() {
         return Vec::new();
     }
-    let reads: Vec<[f64; 8]> = sims
-        .par_iter()
-        .map(|p| {
-            let m = multi_year_of(&daily_returns(&p.price), &p.price);
-            [
-                m[0],
-                m[1],
-                m[2],
-                m[3],
-                m[4],
-                m[5],
-                m[6],
-                depth_shares(&p.price).2 * 100.0,
-            ]
-        })
-        .collect();
+    let reads: Vec<[f64; 8]> = sims.par_iter().map(multi_year_path_reading).collect();
     windows.into_iter().map(|n| (n, reads.clone())).collect()
+}
+
+/// One path's `MULTI_YEAR_ROWS` readings, in their order.
+fn multi_year_path_reading(p: &Path) -> [f64; 8] {
+    let m = multi_year_of(&daily_returns(&p.price), &p.price);
+    [
+        m[0],
+        m[1],
+        m[2],
+        m[3],
+        m[4],
+        m[5],
+        m[6],
+        depth_shares(&p.price).2 * 100.0,
+    ]
+}
+
+/// One row of a reported record (`ReportedRecord`), never graded: `row.miss()` says only where
+/// the record would fall were it graded.
+#[derive(Debug, Clone)]
+pub struct ReportedRow {
+    pub window: &'static str,
+    pub row: FidelityRow,
+}
+
+/// Each row's edges of a joint band at `alpha` over histories `reads`; none under
+/// `EXTREME_MIN_HISTORIES` of them.
+fn joint_edges<const N: usize>(reads: &[[f64; N]], alpha: f64) -> Vec<Option<(f64, f64)>> {
+    if reads.len() < EXTREME_MIN_HISTORIES {
+        return vec![None; N];
+    }
+    let rows: Vec<usize> = (0..N).collect();
+    record_band_joint(reads, &rows, alpha)
+        .1
+        .into_iter()
+        .map(Some)
+        .collect()
+}
+
+/// Every single history's readings of one family's rows, and each row's joint-band edges.
+type FamilyReads = (Vec<Vec<f64>>, Vec<Option<(f64, f64)>>);
+
+/// One reported record's rows, read on `sims`, single histories of the record's length.
+fn reported_rows_on(rec: &ReportedRecord, sims: &[Path]) -> Vec<ReportedRow> {
+    let (reads, bands): FamilyReads = match rec.family {
+        RowFamily::Timing => {
+            let r: Vec<[f64; 4]> = sims.par_iter().map(|p| timing_of_path(&p.price)).collect();
+            let bands = joint_edges(&r, TIMING_ALPHA);
+            (r.iter().map(|x| x.to_vec()).collect(), bands)
+        }
+        RowFamily::MultiYear => {
+            let r: Vec<[f64; 8]> = sims.par_iter().map(multi_year_path_reading).collect();
+            let bands = joint_edges(&r, MULTI_YEAR_ALPHA / 2.0);
+            (r.iter().map(|x| x.to_vec()).collect(), bands)
+        }
+        RowFamily::Coupling => (
+            sims.par_iter()
+                .map(|p| vec![bubble_coupling_of(&daily_returns(&p.price))])
+                .collect(),
+            vec![None],
+        ),
+    };
+    rec.family
+        .rows()
+        .iter()
+        .zip(rec.records)
+        .zip(bands)
+        .enumerate()
+        .map(|(k, ((&name, &real), history_band))| {
+            let xs: Vec<f64> = reads.iter().map(|x| x[k]).filter(|x| !x.is_nan()).collect();
+            ReportedRow {
+                window: rec.window,
+                row: FidelityRow {
+                    name,
+                    model: med(&xs),
+                    real,
+                    target: real,
+                    ratio: None,
+                    pctile: (xs.len() >= EXTREME_MIN_HISTORIES).then(|| anchor_pctile(&xs, real)),
+                    record_band: None,
+                    record_pctile: None,
+                    history_band,
+                    horizon_years: rec.years,
+                    n_histories: xs.len(),
+                },
+            }
+        })
+        .collect()
+}
+
+/// THE REPORTED RECORDS' ROWS (`Anchors::reported`), in the set's order: each record's rows among
+/// the world's single histories of its own length, cut from `main` (the caller's ensemble at
+/// `years`) where that length is no longer, simulated once per length where it is.
+pub fn reported_record_rows(
+    a: Anchors,
+    main: Option<&[Path]>,
+    years: usize,
+    paths: usize,
+    seed: u64,
+    w: &World,
+) -> Vec<ReportedRow> {
+    let horizons: std::collections::BTreeSet<usize> = a.reported.iter().map(|r| r.years).collect();
+    let mut by_record: Vec<Vec<ReportedRow>> = vec![Vec::new(); a.reported.len()];
+    for h in horizons {
+        let own = main.filter(|_| h == years);
+        let cut: Option<Vec<Path>> = main
+            .filter(|_| h < years)
+            .map(|m| m.iter().map(|p| p.head(h)).collect());
+        let simulated = (own.is_none() && cut.is_none()).then(|| sim_paths(w, paths, h, seed));
+        let sims: &[Path] = simulated
+            .as_deref()
+            .or(cut.as_deref())
+            .or(own)
+            .unwrap_or_default();
+        for (k, rec) in a.reported.iter().enumerate().filter(|(_, r)| r.years == h) {
+            by_record[k] = reported_rows_on(rec, sims);
+        }
+    }
+    by_record.into_iter().flatten().collect()
 }
 
 /// THE MULTI-YEAR ROWS' JOINT BAND at `yrs`: each row's edges among the world's single histories
@@ -14862,13 +15115,32 @@ pub const PWR_RUIN_PCT: f64 = 4.0;
 pub const PWR_STAT_NAMES: [&str; 2] = ["real 15y PWR p10 %", "PWR < 4% starts %"];
 
 /// The last session of each calendar month of the synthetic calendar (`session_dates`) for a
-/// path of `n` sessions; the last session counts as its month's end.
+/// path of `n` sessions; the last session counts as its month's end. Read in integer calendar
+/// arithmetic, not off the formatted dates: a century's 25,200 date strings cost a read
+/// milliseconds a path, several times over.
 #[must_use]
 pub fn month_ends(n: usize) -> Vec<usize> {
-    let d = session_dates(n, "");
+    let ym =
+        |i: usize| civil_year_month(SYNTHETIC_START_DAY + (i as i64 * 365) / DAYS_PER_YEAR as i64);
     (0..n)
-        .filter(|&i| i + 1 == n || d[i][..7] != d[i + 1][..7])
+        .filter(|&i| i + 1 == n || ym(i) != ym(i + 1))
         .collect()
+}
+
+/// The synthetic calendar's first session, 1900-01-02, in days from 1970-01-01.
+const SYNTHETIC_START_DAY: i64 = -25_566;
+
+/// The proleptic Gregorian (year, month) of a count of days from 1970-01-01, in integer
+/// arithmetic (Hinnant's `civil_from_days`).
+fn civil_year_month(days: i64) -> (i64, i64) {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    (yoe + era * 400 + i64::from(m <= 2), m)
 }
 
 /// The arm's realized return for months 1 .. M-1 (`ends` the month-end sessions) by the
@@ -16996,7 +17268,23 @@ fn run_cross_asset_report(a: Anchors, paths: usize, years: usize, seed: u64, bas
 /// because sampling error depends on the length of the record actually behind each number, not
 /// on the horizon the model is scored at. The contract test pins this to `fit_targets` as a
 /// partition, so a new target cannot land without a declared horizon.
-fn anchor_groups(a: Anchors) -> [(&'static str, usize, &'static [&'static str]); 10] {
+fn anchor_groups(a: Anchors) -> Vec<(&'static str, usize, Vec<&'static str>)> {
+    let fit: Vec<&'static str> = fit_targets(a).into_iter().map(|t| t.0).collect();
+    // a row the set reports rather than grades (`Anchors::reported`) has no anchor horizon here
+    anchor_groups_all(a)
+        .into_iter()
+        .map(|(label, years, names)| {
+            (
+                label,
+                years,
+                names.iter().copied().filter(|n| fit.contains(n)).collect(),
+            )
+        })
+        .collect()
+}
+
+/// `anchor_groups` before the set's own fit targets filter it.
+fn anchor_groups_all(a: Anchors) -> [(&'static str, usize, &'static [&'static str]); 10] {
     [
         (
             a.equity_window,
@@ -17171,8 +17459,8 @@ fn run_noise_report(a: Anchors, paths: usize, seed: u64, base: &World) {
             .iter_mut()
             .find(|(l, y, _)| *l == label && *y == years)
         {
-            Some((_, _, acc)) => acc.extend_from_slice(names),
-            None => noise_groups.push((label, years, names.to_vec())),
+            Some((_, _, acc)) => acc.extend(names),
+            None => noise_groups.push((label, years, names)),
         }
     }
     for (label, years, targets) in noise_groups {
@@ -18355,6 +18643,7 @@ pub fn write_emitted(
     gate_paths: usize,
     gate_years: usize,
     gate_rows: &[FidelityRow],
+    gate_reported: &[ReportedRow],
     gate_w: &World,
     gate_level: &Path,
 ) {
@@ -18381,8 +18670,22 @@ pub fn write_emitted(
     let dates = session_dates(p.price.len(), start_ymd);
     write_emit_tsv(file, p, &dates);
     write_emit_sidecar(
-        a, file, p, k, w, years, seed, start_ymd, &dates, gate_st, gate_paths, gate_years,
-        gate_rows, gate_w, gate_level,
+        a,
+        file,
+        p,
+        k,
+        w,
+        years,
+        seed,
+        start_ymd,
+        &dates,
+        gate_st,
+        gate_paths,
+        gate_years,
+        gate_rows,
+        gate_reported,
+        gate_w,
+        gate_level,
     );
 }
 
@@ -19122,6 +19425,41 @@ fn gate_scope_lines(
     )
 }
 
+/// How the report judges one fidelity row: its ratio and record band, or where the record falls
+/// among the world's single histories, or why it cannot be placed.
+fn fidelity_judgement(r: &FidelityRow) -> String {
+    match (r.ratio, r.pctile) {
+        (Some(x), _) => {
+            let band = r.record_band.map_or_else(String::new, |(lo, hi)| {
+                let at = r
+                    .record_pctile
+                    .map_or_else(|| "n/a".to_string(), |p| format!("{p:>3}%"));
+                format!("   model@ {at} of {}..{}", jf(lo, 0, 2), jf(hi, 0, 2))
+            });
+            // printed only where it differs past rounding: vintage noise is not a difference
+            let target = if (r.target - r.real).abs() > 0.01 * r.real.abs().max(r.target.abs()) {
+                format!("   target {}", jf(r.target, 0, 2))
+            } else {
+                String::new()
+            };
+            format!("ratio {}{band}{target}", jf(x, 5, 2))
+        }
+        (None, Some(pc)) => {
+            let band = r.history_band.map_or_else(String::new, |(lo, hi)| {
+                format!("   within {}..{}", jf(lo, 0, 2), jf(hi, 0, 2))
+            });
+            format!(
+                "record@ {pc:>3}% of {}y histories (n={}){band}",
+                r.horizon_years, r.n_histories
+            )
+        }
+        (None, None) => format!(
+            "record@  n/a — {} histories, needs {EXTREME_MIN_HISTORIES}",
+            r.n_histories
+        ),
+    }
+}
+
 /// One fidelity row of the sidecar, as the Scala twin writes it, byte for byte.
 ///
 /// `aggregation` and `horizonYears` are the terms of the comparison, and they are in the DATA
@@ -19134,6 +19472,24 @@ fn gate_scope_lines(
 /// a `recordBand`, and `target` what the loss grades against; `recordPercentile` places the MODEL
 /// among the record's resamples, the reverse of `percentile`, so the two never share a field.
 fn fidelity_row_json(r: &FidelityRow) -> String {
+    fidelity_row_json_in(None, r)
+}
+
+/// The sidecar's `reportedRows`: never graded, the rows the set reads off records it does not
+/// grade on (`Anchors::reported`), each led by its window.
+fn reported_rows_json(rows: &[ReportedRow]) -> String {
+    if rows.is_empty() {
+        return "  \"reportedRows\": []".to_string();
+    }
+    let lines: Vec<String> = rows
+        .iter()
+        .map(|r| fidelity_row_json_in(Some(r.window), &r.row))
+        .collect();
+    format!("  \"reportedRows\": [\n{}\n  ]", lines.join(",\n"))
+}
+
+/// `fidelity_row_json`, led by the window a reported row was read off (`ReportedRow`).
+fn fidelity_row_json_in(window: Option<&str>, r: &FidelityRow) -> String {
     let num = |x: f64| -> String {
         if x.is_nan() {
             "null".to_string()
@@ -19144,7 +19500,8 @@ fn fidelity_row_json(r: &FidelityRow) -> String {
     // Three pieces, not one line-continued literal: `\<newline>` keeps the source indentation
     // inside the string, and the twins must emit byte-identical JSON.
     let head = format!(
-        "    {{ \"name\": {}, \"model\": {}, \"real\": {}, \"target\": {}, ",
+        "    {{ {}\"name\": {}, \"model\": {}, \"real\": {}, \"target\": {}, ",
+        window.map_or_else(String::new, |w| format!("\"window\": {}, ", json_str(w))),
         json_str(r.name),
         num(r.model),
         num(r.real),
@@ -19410,6 +19767,7 @@ fn write_emit_sidecar(
     gate_paths: usize,
     gate_years: usize,
     gate_rows: &[FidelityRow],
+    gate_reported: &[ReportedRow],
     gate_w: &World,
     gate_level: &Path,
 ) {
@@ -19426,6 +19784,7 @@ fn write_emit_sidecar(
         }
     };
     let fidelity: Vec<String> = gate_rows.iter().map(fidelity_row_json).collect();
+    let reported_block = reported_rows_json(gate_reported);
     let world_body = world_json_body(w);
     let verdict = |bad: &[String]| if bad.is_empty() { "PASS" } else { "FAIL" };
     let calendar = if start_ymd.is_empty() {
@@ -19515,7 +19874,8 @@ fn write_emit_sidecar(
         episodes_block(p),
         "  \"fidelity\": [".to_string(),
         fidelity.join(",\n"),
-        "  ]".to_string(),
+        "  ],".to_string(),
+        reported_block,
         "}".to_string(),
     ];
     write_or_die(&sidecar_name(file), &format!("{}\n", json.join("\n")));
@@ -20880,6 +21240,14 @@ pub fn main() {
         &w,
     );
     let verdict_banded = banded_of(&verdict_rows);
+    let verdict_reported = reported_record_rows(
+        anchors,
+        Some(verdict_main),
+        verdict_years,
+        verdict_paths,
+        seed,
+        &w,
+    );
 
     if !emit.is_empty() {
         let realism_bad = failed_in_at(anchors, &verdict_st, &verdict_banded, GateClass::Realism);
@@ -20958,6 +21326,7 @@ pub fn main() {
                         verdict_paths,
                         verdict_years,
                         &verdict_rows,
+                        &verdict_reported,
                         &vw,
                         &verdict_main[0],
                     );
@@ -20980,6 +21349,7 @@ pub fn main() {
                 verdict_paths,
                 verdict_years,
                 &verdict_rows,
+                &verdict_reported,
                 &vw,
                 &verdict_main[0],
             );
@@ -21101,11 +21471,12 @@ pub fn main() {
             .collect::<Vec<_>>()
             .join("  ")
     );
-    if st.vr250_record_pct.is_finite() {
-        let (era, _, record) = VAR_RATIO_250_ERAS[st.vr250_era];
+    let era_k = vr250_era_of(anchors.vr250_eras, st.years_per_path);
+    if st.vr250_record_pcts[era_k].is_finite() {
+        let (era, era_years, record) = VAR_RATIO_250_ERAS[era_k];
         println!(
-            "                         250d on these paths: the record of their length, {era} {record:.3}, at record@ {:.0}%",
-            st.vr250_record_pct
+            "                         250d on these paths: the set's record nearest their length, {era} {record:.3}, at record@ {:.0}% of {era_years}-year histories",
+            st.vr250_record_pcts[era_k]
         );
     }
     println!();
@@ -21459,43 +21830,12 @@ pub fn main() {
     );
     for r in &verdict_rows {
         let flag = if r.miss() { "  <-- MISS" } else { "" };
-        let judgement = match (r.ratio, r.pctile) {
-            (Some(x), _) => {
-                let band = r.record_band.map_or_else(String::new, |(lo, hi)| {
-                    let at = r
-                        .record_pctile
-                        .map_or_else(|| "n/a".to_string(), |p| format!("{p:>3}%"));
-                    format!("   model@ {at} of {}..{}", jf(lo, 0, 2), jf(hi, 0, 2))
-                });
-                // printed only where it differs past rounding: vintage noise is not a difference
-                let target = if (r.target - r.real).abs() > 0.01 * r.real.abs().max(r.target.abs())
-                {
-                    format!("   target {}", jf(r.target, 0, 2))
-                } else {
-                    String::new()
-                };
-                format!("ratio {}{band}{target}", jf(x, 5, 2))
-            }
-            (None, Some(pc)) => {
-                let band = r.history_band.map_or_else(String::new, |(lo, hi)| {
-                    format!("   within {}..{}", jf(lo, 0, 2), jf(hi, 0, 2))
-                });
-                format!(
-                    "record@ {pc:>3}% of {}y histories (n={}){band}",
-                    r.horizon_years, r.n_histories
-                )
-            }
-            (None, None) => format!(
-                "record@  n/a — {} histories, needs {EXTREME_MIN_HISTORIES}",
-                r.n_histories
-            ),
-        };
         println!(
             "     {:<22} model {}   real {}   {}{}",
             r.name,
             jf(r.model, 8, 2),
             jf(r.real, 8, 2),
-            judgement,
+            fidelity_judgement(r),
             flag
         );
     }
@@ -21506,6 +21846,23 @@ pub fn main() {
             jf(model, 8, 2),
             jf(record, 8, 2)
         );
+    }
+    if !verdict_reported.is_empty() {
+        println!(
+            "    REPORTED RECORDS, never graded: the same rows read off windows the set does not grade on"
+        );
+        for r in &verdict_reported {
+            let flag = if r.row.miss() { "  outside" } else { "" };
+            println!(
+                "     {:<22} model {}   real {}   {}{}   {}",
+                r.row.name,
+                jf(r.row.model, 8, 2),
+                jf(r.row.real, 8, 2),
+                fidelity_judgement(&r.row),
+                flag,
+                r.window
+            );
+        }
     }
 
     if validate {
@@ -21691,6 +22048,7 @@ mod emit_sidecar_tests {
             1,
             years,
             &rows,
+            &[],
             &w,
             &p,
         );
@@ -21734,6 +22092,7 @@ mod emit_sidecar_tests {
             1,
             years,
             &rows,
+            &[],
             &w,
             &p,
         );
@@ -22412,15 +22771,30 @@ mod contract_tests {
         // `-noise`, and one that names a target that does not exist would fail only when that row
         // was reached. Both are the silent-shrinkage failure the partition tests guard against, on
         // the ASSET axis — which only exists because 0.21.0 made the asset a parameter.
+        // A set may grade fewer rows only by REPORTING them (`Anchors::reported`): the Nasdaq's
+        // equity-window multi-year rows, read against QQQ there.
         let reference: Vec<&str> = fit_targets(SP500_ANCHORS)
             .into_iter()
             .map(|(n, _, _, _)| n)
             .collect();
         for a in [SP500_ANCHORS, NASDAQ_ANCHORS] {
             let got: Vec<&str> = fit_targets(a).into_iter().map(|(n, _, _, _)| n).collect();
+            let want: Vec<&str> = reference
+                .iter()
+                .copied()
+                .filter(|n| a.multi_year.is_some() || !MULTI_YEAR_ROWS.contains(n))
+                .collect();
             assert_eq!(
-                got, reference,
+                got, want,
                 "anchor set [{}] grades a different set of targets than SP500_ANCHORS does",
+                a.name
+            );
+            assert!(
+                a.multi_year.is_some()
+                    || a.reported
+                        .iter()
+                        .any(|r| r.family == RowFamily::MultiYear && r.years == a.equity_years),
+                "[{}] neither grades nor reports its equity window's multi-year rows",
                 a.name
             );
         }
@@ -22481,7 +22855,7 @@ mod contract_tests {
     fn anchor_groups_partition_the_fit_targets() {
         let mut expected: Vec<&str> = anchor_groups(SP500_ANCHORS)
             .into_iter()
-            .flat_map(|(_, _, ts)| ts.iter().copied())
+            .flat_map(|(_, _, ts)| ts)
             .collect();
         let mut actual: Vec<&str> = fit_targets(SP500_ANCHORS)
             .into_iter()
@@ -22897,7 +23271,7 @@ mod contract_tests {
     #[test]
     fn the_drift_spread_and_the_booms_fade_are_the_old_literals_by_default() {
         for (name, w, _) in recipes() {
-            if !name.starts_with("0.24.5-") {
+            if recipe_version(name) < "0.24.5" {
                 assert!(
                     w.drift_sd == 0.04 && w.boom_fade == 1.0,
                     "{name} predates the dials and holds the literals they replaced"
@@ -23754,10 +24128,16 @@ mod contract_tests {
             for years in [2usize, 8, 40] {
                 let sims = sim_paths(&w, 6, years, 20_260_813 + years as u64);
                 for nm in EXTREME_TARGETS.iter().copied() {
-                    let (_, get, _, _) = fit_targets(a)
-                        .into_iter()
-                        .find(|(n, _, _, _)| *n == nm)
-                        .expect("an extreme target is a fidelity target");
+                    // a row the set reports rather than grades is no fit target of it
+                    let Some((_, get, _, _)) =
+                        fit_targets(a).into_iter().find(|(n, _, _, _)| *n == nm)
+                    else {
+                        assert!(
+                            a.multi_year.is_none() && MULTI_YEAR_ROWS.contains(&nm),
+                            "{nm} is no fidelity target of {spec}"
+                        );
+                        continue;
+                    };
                     for p in &sims {
                         let Some(direct) = extreme_reading(nm, p) else {
                             continue;
@@ -24197,7 +24577,10 @@ mod persistence_anchor_tests {
     #[test]
     fn the_250_session_eras_are_the_files_crsp_rows() {
         let Some(rows) = rows() else { return };
-        for (era, years, record) in VAR_RATIO_250_ERAS {
+        for (era, years, record) in VAR_RATIO_250_ERAS
+            .into_iter()
+            .filter(|e| e.0.starts_with("CRSP"))
+        {
             let window = match era {
                 "CRSP 1926-2026" => "c1926",
                 "CRSP 1954-2026" => "c1954",
@@ -24218,9 +24601,10 @@ mod persistence_anchor_tests {
                 r.years
             );
         }
-        assert_eq!(vr250_era_of(100), 0);
-        assert_eq!(vr250_era_of(80), 1);
-        assert_eq!(vr250_era_of(30), 2);
+        assert_eq!(vr250_era_of(SP500_ANCHORS.vr250_eras, 100.0), 0);
+        assert_eq!(vr250_era_of(SP500_ANCHORS.vr250_eras, 80.0), 1);
+        assert_eq!(vr250_era_of(SP500_ANCHORS.vr250_eras, 30.0), 2);
+        assert_eq!(vr250_era_of(NASDAQ_ANCHORS.vr250_eras, 100.0), 3);
     }
 
     /// The 250-session rung reads where the record falls among the paths, not the ensemble median: a
@@ -24233,8 +24617,8 @@ mod persistence_anchor_tests {
         st.vr60 = 0.95;
         st.vr120 = 1.0;
         st.vr250 = 1.40;
-        st.vr250_record_pct = 40.0;
-        let (name, pass, _) = var_ratio_profile_check(&st);
+        st.vr250_record_pcts = [f64::NAN, f64::NAN, 40.0, 60.0];
+        let (name, pass, _) = var_ratio_profile_check(SP500_ANCHORS, &st);
         assert!(
             pass,
             "the record at the 40th percentile passes the rung: {name}"
@@ -24243,14 +24627,19 @@ mod persistence_anchor_tests {
             name.contains("250d CRSP 1990-2026 0.796 at record@5-95"),
             "{name}"
         );
-        st.vr250 = 1.0;
-        st.vr250_record_pct = 99.0;
+        let (name, _, _) = var_ratio_profile_check(NASDAQ_ANCHORS, &st);
         assert!(
-            !var_ratio_profile_check(&st).1,
+            name.contains("250d IXIC+NDX 1971-2026 1.204 at record@5-95"),
+            "the Nasdaq grades its own record at any length: {name}"
+        );
+        st.vr250 = 1.0;
+        st.vr250_record_pcts[2] = 99.0;
+        assert!(
+            !var_ratio_profile_check(SP500_ANCHORS, &st).1,
             "the record above every path fails it"
         );
-        st.vr250_record_pct = f64::NAN;
-        let (name, pass, _) = var_ratio_profile_check(&st);
+        st.vr250_record_pcts[2] = f64::NAN;
+        let (name, pass, _) = var_ratio_profile_check(SP500_ANCHORS, &st);
         assert!(
             pass && name.contains("250d 0.45-1.30"),
             "too few paths keep the envelope: {name}"
@@ -24266,7 +24655,7 @@ mod persistence_anchor_tests {
         st.vr60 = 1.15;
         st.vr120 = 1.15;
         st.vr250 = 1.15;
-        let (name, pass, cls) = var_ratio_profile_check(&st);
+        let (name, pass, cls) = var_ratio_profile_check(SP500_ANCHORS, &st);
         assert!(
             !pass,
             "a +0.45 slope between the short rungs must fail the profile: {name}"
@@ -25501,6 +25890,46 @@ mod record_band_tests {
         assert_eq!(row.split('\t').nth(5), Some("0.003923"));
     }
 
+    /// `multiyear-2026-09-29.tsv`'s record of one row over one series, for one set.
+    fn multi_year_record(set: &str, name: &str, series: &str) -> f64 {
+        std::fs::read_to_string("../test-data/equity-anchors/multiyear-2026-09-29.tsv")
+            .expect("fixture")
+            .lines()
+            .map(|l| l.split('\t').collect::<Vec<&str>>())
+            .find(|f| f.len() > 5 && f[0] == set && f[1] == name && f[2] == series)
+            .unwrap_or_else(|| panic!("fixture row [{set}] {name} {series} missing"))[5]
+            .parse()
+            .expect("number")
+    }
+
+    /// The Nasdaq's reported multi-year windows are the fixture's records: QQQ under the equity
+    /// window's names, the NDX from 1990 under the long window's. Its QQQ window is not graded.
+    #[test]
+    fn the_nasdaqs_reported_multi_year_windows_are_the_fixtures_records() {
+        assert!(
+            NASDAQ_ANCHORS.multi_year.is_none(),
+            "the Nasdaq's QQQ window is reported, not graded"
+        );
+        for rec in NASDAQ_ANCHORS
+            .reported
+            .iter()
+            .filter(|r| r.family == RowFamily::MultiYear)
+        {
+            let (series, names) = if rec.window.starts_with("QQQ") {
+                ("QQQ", MULTI_YEAR_ROWS)
+            } else {
+                ("NDX", MULTI_YEAR_LONG_ROWS)
+            };
+            for (name, got) in names.iter().zip(rec.records) {
+                let want = multi_year_record("nasdaq", name, series);
+                assert!(
+                    (got - want).abs() < 1e-6,
+                    "nasdaq reported {series}: {name} {got} against the record's {want}"
+                );
+            }
+        }
+    }
+
     /// THE MULTI-YEAR ROWS' anchors are `multiyear-2026-09-29.tsv`'s records, row for row in both
     /// windows, and each statistic reads a hand-built series as stated.
     #[test]
@@ -25512,18 +25941,24 @@ mod record_band_tests {
                 .filter(|l| !(l.starts_with('#') || l.trim().is_empty() || l.starts_with("set\t")))
                 .map(|l| l.split('\t').map(str::to_string).collect())
                 .collect();
-        assert_eq!(lines.len(), 32, "two sets, two windows, eight rows");
-        for (set, a) in sets() {
-            for (names, records) in [
-                (MULTI_YEAR_ROWS, a.multi_year),
-                (MULTI_YEAR_LONG_ROWS, a.multi_year_long),
-            ] {
+        assert_eq!(
+            lines.len(),
+            40,
+            "two sets, two windows, eight rows, and the Nasdaq's splice"
+        );
+        let record = multi_year_record;
+        for (set, a, series, long_series) in [
+            ("sp500", SP500_ANCHORS, "CRSP", "CRSP"),
+            ("nasdaq", NASDAQ_ANCHORS, "QQQ", "IXIC+NDX"),
+        ] {
+            let graded = a
+                .multi_year
+                .map(|m| (MULTI_YEAR_ROWS, m, series))
+                .into_iter()
+                .chain([(MULTI_YEAR_LONG_ROWS, a.multi_year_long, long_series)]);
+            for (names, records, series) in graded {
                 for (name, got) in names.iter().zip(records) {
-                    let r = lines
-                        .iter()
-                        .find(|f| f[0] == set && f[1] == *name)
-                        .unwrap_or_else(|| panic!("fixture row [{set}] {name} missing"));
-                    let rec: f64 = r[5].parse().expect("number");
+                    let rec = record(set, name, series);
                     assert!(
                         (got - rec).abs() < 1e-6,
                         "{set}: {name} {got} against the record's {rec}"
@@ -25660,23 +26095,44 @@ mod record_band_tests {
                 .filter(|l| !(l.starts_with('#') || l.trim().is_empty() || l.starts_with("set\t")))
                 .map(|l| l.split('\t').map(str::to_string).collect())
                 .collect();
-        for (set, a) in sets() {
+        let record = |set: &str, name: &str, series: &str| -> f64 {
+            lines
+                .iter()
+                .find(|f| f[0] == set && f[1] == name && f[2] == series)
+                .unwrap_or_else(|| panic!("fixture row [{set}] {name} {series} missing"))[5]
+                .parse()
+                .expect("number")
+        };
+        for (set, a, series) in [
+            ("sp500", SP500_ANCHORS, "CRSP"),
+            ("nasdaq", NASDAQ_ANCHORS, "IXIC+NDX"),
+        ] {
             for (name, got) in [
                 ("bubble coupling 3y", a.bubble_coupling),
                 ("largest 3y run-up", a.run_up_3y),
                 ("longest calm stretch", a.calm_stretch),
             ] {
-                let r = lines
-                    .iter()
-                    .find(|f| f[0] == set && f[1] == name)
-                    .unwrap_or_else(|| panic!("fixture row [{set}] {name} missing"));
-                let rec: f64 = r[5].parse().expect("number");
+                let rec = record(set, name, series);
                 assert!(
                     (got - rec).abs() < 1e-6,
                     "{set}: {name} {got} against the record's {rec}"
                 );
             }
+            // the 250-session rung's era over the set's long window is this file's reading
+            let (era, _, got) =
+                VAR_RATIO_250_ERAS[vr250_era_of(a.vr250_eras, a.bubble_years as f64)];
+            let rec = record(set, "variance ratio 250d", series);
+            assert!(
+                (got - rec).abs() < 5e-4,
+                "{set}: the 250-session era {era} reads {got} against the record's {rec}"
+            );
         }
+        let ndx = NASDAQ_ANCHORS
+            .reported
+            .iter()
+            .find(|r| r.family == RowFamily::Coupling)
+            .expect("the NDX's coupling is reported");
+        assert!((ndx.records[0] - record("nasdaq", "bubble coupling 3y", "NDX")).abs() < 1e-6);
         // the run-up reads the best 3-year window and the calm stretch the longest run inside 20%
         // of the peak: 4 flat years, then +1.0 over 3 years, a 30% fall, then 2 flat years
         let h = BUBBLE_RUNUP;
@@ -27818,7 +28274,10 @@ mod basket_anchor_tests {
         }
         for (n, w, _) in recipes() {
             // `0.24.5-sp500` is the channels recipe under its re-solve, and carries its basket
-            if !n.ends_with("basket") && !n.ends_with("channels") && n != "0.24.5-sp500" {
+            if !n.ends_with("basket")
+                && !n.ends_with("channels")
+                && !["0.24.5-sp500", "0.24.6-sp500"].contains(&n)
+            {
                 assert!(w.basket == 0, "recipe {n}");
             }
         }
@@ -27924,14 +28383,25 @@ mod timing_tests {
                 .filter(|l| !(l.starts_with('#') || l.trim().is_empty() || l.starts_with("set\t")))
                 .map(|l| l.split('\t').map(str::to_string).collect())
                 .collect();
-        assert_eq!(lines.len(), 8, "two sets, four rows");
-        for (set, a) in [("sp500", SP500_ANCHORS), ("nasdaq", NASDAQ_ANCHORS)] {
+        assert_eq!(
+            lines.len(),
+            16,
+            "four rows: the S&P's CRSP, the Nasdaq's splice, CRSP and NDX"
+        );
+        let record = |set: &str, name: &str, series: &str| -> f64 {
+            lines
+                .iter()
+                .find(|f| f[0] == set && f[1] == name && f[2] == series)
+                .unwrap_or_else(|| panic!("fixture row [{set}] {name} {series} missing"))[5]
+                .parse()
+                .expect("number")
+        };
+        for (set, a, series) in [
+            ("sp500", SP500_ANCHORS, "CRSP"),
+            ("nasdaq", NASDAQ_ANCHORS, "IXIC+NDX"),
+        ] {
             for (name, got) in TIMING_ROWS.iter().zip(a.timing) {
-                let r = lines
-                    .iter()
-                    .find(|f| f[0] == set && f[1] == *name)
-                    .unwrap_or_else(|| panic!("fixture row [{set}] {name} missing"));
-                let rec: f64 = r[5].parse().expect("number");
+                let rec = record(set, name, series);
                 assert!(
                     (got - rec).abs() < 1e-6,
                     "{set}: {name} {got} against {rec}"
@@ -27939,6 +28409,158 @@ mod timing_tests {
             }
             assert_eq!(record_band_years(a, "sma10 exits per year"), a.timing_years);
         }
+        // the Nasdaq's reported records: CRSP's and the NDX's, by the window's series
+        for rec in NASDAQ_ANCHORS
+            .reported
+            .iter()
+            .filter(|r| r.family == RowFamily::Timing)
+        {
+            let series = rec.window.split(' ').next().expect("a series");
+            for (name, got) in TIMING_ROWS.iter().zip(rec.records) {
+                let want = record("nasdaq", name, series);
+                assert!(
+                    (got - want).abs() < 1e-6,
+                    "nasdaq reported {series}: {name} {got} against {want}"
+                );
+            }
+        }
+    }
+
+    /// `pearson` and `autocorrs_abs` are `MatD`'s arithmetic to the bit, written without its
+    /// temporaries: the `MatD` forms they replaced are the oracles, on paths' own returns and on
+    /// series long enough to split the sums into chunks.
+    #[test]
+    fn pearson_and_the_clustering_lags_are_matds_arithmetic() {
+        let pearson_matd = |a: &[f64], b: &[f64]| -> f64 {
+            if a.len() < 50 {
+                return f64::NAN;
+            }
+            let ma = MatD::apply(a);
+            let za = &ma - ma.mean();
+            let mb = MatD::apply(b);
+            let zb = &mb - mb.mean();
+            let den = (za.power(2).sum() * zb.power(2).sum()).sqrt();
+            if den <= 0.0 {
+                f64::NAN
+            } else {
+                (&za * &zb).sum() / den
+            }
+        };
+        let autocorrs_matd = |r: &[f64], lags: &[usize]| -> Vec<f64> {
+            let a = MatD::apply(r).abs();
+            let z = &a - a.mean();
+            let den = z.power(2).sum();
+            let n = r.len();
+            lags.iter()
+                .map(|&lag| {
+                    if den <= 0.0 || n <= lag {
+                        f64::NAN
+                    } else {
+                        (&z.applyRowsAll(0..n - lag) * &z.applyRowsAll(lag..n)).sum() / den
+                    }
+                })
+                .collect()
+        };
+        let p = sim_paths(&default_world(), 2, 100, DEFAULT_SEED);
+        let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<u64>>();
+        for len in [49usize, 50, 300, 4096, 9000, 25_000] {
+            let a = daily_returns(&p[0].price[..=len]);
+            let b = daily_returns(&p[1].price[..=len]);
+            assert_eq!(
+                pearson(&a, &b).to_bits(),
+                pearson_matd(&a, &b).to_bits(),
+                "pearson at {len}"
+            );
+            let lags = [1, 20, 5, 60];
+            assert_eq!(
+                bits(&autocorrs_abs(&a, &lags)),
+                bits(&autocorrs_matd(&a, &lags)),
+                "autocorrs at {len}"
+            );
+        }
+        // a constant series has no spread to correlate; one whose mean rounds still matches
+        let flat = vec![0.5f64; 400];
+        assert!(pearson(&flat, &flat).is_nan() && pearson_matd(&flat, &flat).is_nan());
+        let near = vec![0.001f64; 400];
+        assert_eq!(
+            pearson(&near, &near).to_bits(),
+            pearson_matd(&near, &near).to_bits()
+        );
+    }
+
+    /// `month_ends` reads the synthetic calendar's month ends in integer arithmetic; they are the
+    /// month ends of its formatted dates, at every length a path takes.
+    #[test]
+    fn month_ends_are_the_formatted_calendars() {
+        for n in [1usize, 2, 21, 252, 6_805, 14_112, 25_201, 40_000] {
+            let d = session_dates(n, "");
+            let want: Vec<usize> = (0..n)
+                .filter(|&i| i + 1 == n || d[i][..7] != d[i + 1][..7])
+                .collect();
+            assert_eq!(month_ends(n), want, "{n} sessions");
+        }
+    }
+
+    /// The reported records come out in the set's order, each row under its record's window, read
+    /// on histories of the record's own length cut from the caller's ensemble; none is a fit
+    /// target.
+    #[test]
+    fn reported_records_read_their_own_length_and_are_never_graded() {
+        const RECORDS: [ReportedRecord; 2] = [
+            ReportedRecord {
+                family: RowFamily::Coupling,
+                window: "B 8y",
+                years: 8,
+                records: &[0.5],
+            },
+            ReportedRecord {
+                family: RowFamily::Timing,
+                window: "A 4y",
+                years: 4,
+                records: &[50.0, 5.0, 0.8, 1.0],
+            },
+        ];
+        let a = Anchors {
+            reported: &RECORDS,
+            ..NASDAQ_ANCHORS
+        };
+        let w = default_world();
+        let main = sim_paths(&w, EXTREME_MIN_HISTORIES, 8, DEFAULT_SEED);
+        let rows = reported_record_rows(a, Some(&main), 8, main.len(), DEFAULT_SEED, &w);
+        let got: Vec<(&str, &str)> = rows.iter().map(|r| (r.window, r.row.name)).collect();
+        assert_eq!(
+            got,
+            [
+                ("B 8y", "bubble coupling 3y"),
+                ("A 4y", TIMING_ROWS[0]),
+                ("A 4y", TIMING_ROWS[1]),
+                ("A 4y", TIMING_ROWS[2]),
+                ("A 4y", TIMING_ROWS[3]),
+            ]
+        );
+        let xs: Vec<f64> = main
+            .iter()
+            .map(|p| timing_of_path(&p.head(4).price)[2])
+            .filter(|x| !x.is_nan())
+            .collect();
+        assert_eq!(rows[3].row.model.to_bits(), med(&xs).to_bits());
+        assert_eq!(
+            (rows[3].row.horizon_years, rows[3].row.n_histories),
+            (4, xs.len())
+        );
+        assert!(
+            rows[3].row.history_band.is_some(),
+            "a timing row has its joint band"
+        );
+        let fit: Vec<&str> = fit_targets(NASDAQ_ANCHORS)
+            .into_iter()
+            .map(|t| t.0)
+            .collect();
+        assert!(
+            MULTI_YEAR_ROWS.iter().all(|n| !fit.contains(n)),
+            "the Nasdaq's QQQ window is reported, not graded"
+        );
+        assert!(MULTI_YEAR_LONG_ROWS.iter().all(|n| fit.contains(n)));
     }
 
     #[test]
@@ -28039,7 +28661,13 @@ mod sector_channel_tests {
             assert!(w.sectors == 0, "release {v}");
         }
         for (n, w, _) in recipes() {
-            let carries = n == "0.24.5-sp500" || n == "0.24.5-nasdaq-basket";
+            let carries = [
+                "0.24.5-sp500",
+                "0.24.5-nasdaq-basket",
+                "0.24.6-nasdaq-basket",
+                "0.24.6-sp500",
+            ]
+            .contains(&n);
             assert_eq!(w.sectors > 0, carries, "recipe {n}");
         }
         assert!(default_world().sectors == 0);
@@ -28756,11 +29384,9 @@ mod verdict_reading_tests {
         }
         // the table's reading, the channels' and the panel's lags are all there
         let has = |p: &str| bands.iter().any(|b| b.name.starts_with(p));
-        assert!(
-            bands
-                .iter()
-                .any(|b| b.name.starts_with("equity vol") && b.reading.to_bits() == 50f64.to_bits())
-        );
+        assert!(bands
+            .iter()
+            .any(|b| b.name.starts_with("equity vol") && b.reading.to_bits() == 50f64.to_bits()));
         assert!(has("satellite beta") && has("macro spread lag") && has("macro vol premium"));
     }
 

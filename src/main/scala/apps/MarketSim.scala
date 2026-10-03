@@ -278,11 +278,15 @@ object MarketSim:
   // world fields.
   // 27 -> 28: THE WORLD DIGEST.  A top-level `worldDigest` after `world` (`worldDigest`): the
   // world's identity beyond the version, since an unpublished recipe can change under its name.
-  val EmitSchema: Int = 28
+  // 28 -> 29: THE REPORTED RECORDS.  A top-level `reportedRows` after `fidelity`: rows the set
+  // reads off records it does not grade on (`Anchors.reported`), each a fidelity row with its
+  // `window` first.  The Nasdaq's timing rows, bubble coupling and multi-year rows grade on the
+  // 1971-2026 splice of the Composite and the NDX; CRSP, the NDX from 1990 and QQQ are reported.
+  val EmitSchema: Int = 29
 
   val EmitSidecarKeys: Vector[String] =
     Vector("generator", "version", "schema", "file", "columns", "header", "path", "world",
-           "worldDigest", "gate", "channels", "episodes", "fidelity")
+           "worldDigest", "gate", "channels", "episodes", "fidelity", "reportedRows")
 
   // Numeric arguments fail LOUDLY.  `toInt` alone dies with a raw NumberFormatException, and the
   // Rust twin's old parse-or-default silently substituted the default — `-emitpath -1` emitted
@@ -2150,8 +2154,22 @@ object MarketSim:
                             sectorDriftSd = 0.25, sectorDriftHalf = 2.0),
             "sp500"))
 
+  /** The 0.24.6 recipes.  THE DRIFT HELD AT THE RECORD: each 0.24.5 recipe at the drift that
+    * puts return per vol at its record on seeds 1-4 at 200 x 100, every other dial unchanged --
+    * QQQ's 0.38 for the Nasdaq (the 0.24.5 recipe reads 0.30), CRSP 1954-2026's 0.69 for the S&P
+    * (0.61).  The Nasdaq basket recipe takes the Nasdaq's drift under `0.24.5-nasdaq-basket`'s
+    * channel dials. */
+  val Recipes0246: Vector[(String, World, String)] =
+    def base(name: String): World =
+      Recipes0244.find(_._1 == name).map(_._2).getOrElse(sys.error(s"no base recipe $name"))
+    val nq = base("0.24.5-nasdaq").copy(drift = 0.15119256)
+    Vector(("0.24.6-nasdaq", nq, "nasdaq"),
+           ("0.24.6-nasdaq-basket", base("0.24.5-nasdaq-basket").copy(drift = nq.drift), "nasdaq"),
+           ("0.24.6-sp500", base("0.24.5-sp500").copy(drift = 0.14747457), "sp500"))
+
   val Recipes: Vector[(String, World, String)] =
-    Recipes0231 ++ MacroRecipes ++ Recipes0241 ++ Recipes0242 ++ Recipes0243 ++ Recipes0244
+    Recipes0231 ++ MacroRecipes ++ Recipes0241 ++ Recipes0242 ++ Recipes0243 ++ Recipes0244 ++
+      Recipes0246
 
   /** A recipe name's version, the leading digits and dots (`0.24.1-nasdaq-basket` -> `0.24.1`);
     * empty for a name that carries none.  Compares as a string, which orders these versions. */
@@ -4924,25 +4942,29 @@ object MarketSim:
     * `PersistenceAnchorSuite`.  The two long rungs cannot discriminate: at 250 sessions the
     * record itself spans 0.24-1.56.  They are graded anyway, inside ONE profile row with the
     * slopes below, so a world clears the ladder as a shape and never rung by rung. */
-  /** THE 250-SESSION RUNG IS GRADED AGAINST THE RECORD OF THE RUN'S OWN LENGTH, not against the
+  /** THE 250-SESSION RUNG IS GRADED AGAINST A RECORD OF THE SET'S OWN INDEX, not against the
     * cross-section's envelope.  Its envelope's top, 1.30, is ONE reading rounded up -- the CRSP
     * century's 1.255 -- and the same market reads 1.034 from 1954 and 0.796 from 1990: at 250
     * sessions the era is the axis, and a single history of a century spreads too widely for a box
-    * on the ensemble median to place it.  So the rung is graded as the single-history rows are: the
-    * CRSP reading of the era whose length is nearest the run's years must fall inside the 5-95th
-    * percentile of the world's own histories of that length (`ExtremePctBand`).  Under
-    * `ExtremeMinHistories` paths the record cannot be placed and the rung keeps the envelope.
-    * `PersistenceAnchorSuite` pins each era to the fixture's CRSP row.  Label, years, record. */
+    * on the ensemble median to place it.  So the rung is graded as the single-history rows are: of
+    * the set's eras (`Anchors.vr250Eras`), the one whose length is nearest the run's years must
+    * fall inside the 5-95th percentile of the world's histories of that era's length, cut from the
+    * run's paths (`ExtremePctBand`).  The S&P's eras are CRSP's; the Nasdaq's is the 1971-2026
+    * splice of the Composite and the NDX alone, since its rules were selected on the NDX from
+    * 1990.  Under `ExtremeMinHistories` paths the record cannot be placed and the rung keeps the
+    * envelope.  `PersistenceAnchorSuite` pins each CRSP era to the fixture's CRSP row and the
+    * splice to `bubblebust-2026-09-24.tsv`'s.  Label, years, record. */
   val VarRatio250Eras: Vector[(String, Double, Double)] = Vector(
     ("CRSP 1926-2026", 100.0, 1.255),
     ("CRSP 1954-2026", 72.5, 1.034),
-    ("CRSP 1990-2026", 36.5, 0.796))
+    ("CRSP 1990-2026", 36.5, 0.796),
+    ("IXIC+NDX 1971-2026", 55.6, 1.204))
 
-  /** The era in `VarRatio250Eras` whose length is nearest `years`, the first on a tie. */
-  def vr250EraOf(years: Int): Int =
-    VarRatio250Eras.indices.foldLeft(0) { (best, k) =>
-      if math.abs(VarRatio250Eras(k)._2 - years) < math.abs(VarRatio250Eras(best)._2 - years) then k else best
-    }
+  /** Of `eras` (`VarRatio250Eras` indexes, at least one), the one whose length is nearest
+    * `years`, the first on a tie. */
+  def vr250EraOf(eras: Vector[Int], years: Double): Int =
+    def gap(k: Int) = math.abs(VarRatio250Eras(k)._2 - years)
+    eras.foldLeft(eras.head)((best, k) => if gap(k) < gap(best) then k else best)
 
   val VarRatioBands: Vector[(Int, Double, Double)] =
     Vector((20, 0.70, 1.15), (60, 0.55, 1.20), (120, 0.45, 1.20), (250, 0.45, 1.30))
@@ -5517,11 +5539,11 @@ object MarketSim:
                               lev20: Double = Double.NaN,
                               vr20: Double, vr60: Double,   // SIGNED-return persistence at each
                               vr120: Double, vr250: Double, // rung of `VarRatioLadder` -- `varianceRatio`
-                              // the era `VarRatio250Eras` grades the 250-session rung against
-                              // (`vr250EraOf` the run's years), and the percentile of its record
-                              // among the paths' own 250-session readings; NaN under
-                              // `ExtremeMinHistories` paths
-                              vr250Era: Int = 0, vr250RecordPct: Double = Double.NaN,
+                              // the percentile of each `VarRatio250Eras` record among the
+                              // paths' 250-session readings over the era's own length, the run's
+                              // where that is shorter; NaN under `ExtremeMinHistories` paths.  A
+                              // set grades the one of its eras nearest the run's length.
+                              vr250RecordPcts: Vector[Double] = Vector.fill(VarRatio250Eras.length)(Double.NaN),
                               // SIGNED lag-1 autocorrelation, the one horizon the ladder cannot
                               // see: a variance ratio constrains a weighted SUM of the first q-1
                               // autocorrelations, so a world can hold vr60 at 1.0 with a positive
@@ -5721,6 +5743,8 @@ object MarketSim:
     ac: Vector[Double],      // clustering at lags 1, 20, 5 and 60
     lev: Vector[Double],     // the leverage profile at lags 1, 5 and 20
     vr: Vector[Double],      // variance ratios at q = 20, VarRatioQ, 120 and 250
+    // the 250-session ratio over each `VarRatio250Eras` era's length, the path's where that is shorter
+    vr250Eras: Vector[Double],
     retAc1: Double, annRet: Double, divYield: Double,
     bondVol: Vector[Double],
     bondGrowth: Vector[Double], bondInfl: Vector[Double],   // the bond over each episode, by regime
@@ -5832,6 +5856,7 @@ object MarketSim:
             k += 1
           j += 1
         pearson(x, y)
+    val vr250 = varianceRatio(r, 250)
     val wings = wingsOf(sp.price, sp.fundamental)
     val gd = gapDriftOf(sp.price, sp.fundamental)
     val gs = gapSpreadOf(sp.price, sp.fundamental)
@@ -5843,8 +5868,11 @@ object MarketSim:
       // the four clustering lags share |r|, its centring and its denominator
       ac   = autocorrsAbs(r, Vector(1, 20, 5, 60)),
       lev  = Vector(levAbs(r, 1), levAbs(r, 5), levAbs(r, 20)),
-      vr   = Vector(varianceRatio(r, 20), varianceRatio(r, VarRatioQ), varianceRatio(r, 120),
-                    varianceRatio(r, 250)),
+      vr   = Vector(varianceRatio(r, 20), varianceRatio(r, VarRatioQ), varianceRatio(r, 120), vr250),
+      vr250Eras = VarRatio250Eras.map { (_, eraYears, _) =>
+        val m = math.round(eraYears * DaysPerYear).toInt
+        if m < r.length then varianceRatio(r.take(m), 250) else vr250
+      },
       retAc1 = levelAutocorr(r, 1),
       annRet = math.log(sp.price.last / sp.price.head) / years * 100.0,
       divYield = if sp.divYield.isEmpty then Double.NaN else sp.divYield.sum / sp.divYield.length,
@@ -5914,11 +5942,10 @@ object MarketSim:
       vr60  = med(per.map(_.vr(1))),
       vr120 = med(per.map(_.vr(2))),
       vr250 = med(per.map(_.vr(3))),
-      vr250Era = vr250EraOf(years),
-      vr250RecordPct = {
-        val xs = per.map(_.vr(3)).filter(x => !x.isNaN && !x.isInfinite)
+      vr250RecordPcts = VarRatio250Eras.indices.toVector.map { e =>
+        val xs = per.map(_.vr250Eras(e)).filter(x => !x.isNaN && !x.isInfinite)
         if xs.length < ExtremeMinHistories then Double.NaN
-        else anchorPctile(xs, VarRatio250Eras(vr250EraOf(years))._3).toDouble
+        else anchorPctile(xs, VarRatio250Eras(e)._3).toDouble
       },
       retAc1 = med(per.map(_.retAc1)),
       annRet = med(per.map(_.annRet)),
@@ -6189,7 +6216,7 @@ object MarketSim:
       // rule's information coefficient, a p-value calibrated on synthetic paths, a
       // drawdown-conditioned hazard — all of them inherit the trend this row measures, and none of
       // the other fifteen targets can see it.
-      varRatioProfileCheck(st),
+      varRatioProfileCheck(a, st),
       // Anchored on the record's CAPE dispersion (valuation-2026-08-30.tsv: 0.24-0.41 across
       // windows).  A BAND, never a point ratio: the record has no observable fair value and CAPE
       // is a proxy, so the floor sits a stated haircut below the calmest window -- far enough
@@ -6471,14 +6498,16 @@ object MarketSim:
     * slopes inside theirs.  The name is derived from the bounds, as `bandCheck`'s is, so it cannot
     * read as bounds it does not enforce; the report's `trend persistence` lines show which rung
     * or slope failed. */
-  def varRatioProfileCheck(st: WorldStats): (String, Boolean, GateClass) =
+  def varRatioProfileCheck(a: Anchors, st: WorldStats): (String, Boolean, GateClass) =
+    val eraK = vr250EraOf(a.vr250Eras, st.yearsPerPath)
+    val pct  = st.vr250RecordPcts(eraK)
     val rungs  = VarRatioBands.map { (q, lo, hi) =>
-      if q == 250 && !st.vr250RecordPct.isNaN then
-        // graded against the record of the run's own length (see `VarRatio250Eras`)
-        val (era, _, record) = VarRatio250Eras(st.vr250Era)
+      if q == 250 && !pct.isNaN then
+        // graded against the set's record nearest the run's length, over that record's own
+        // length (see `VarRatio250Eras`)
+        val (era, _, record) = VarRatio250Eras(eraK)
         val (plo, phi) = ExtremePctBand
-        (f"${q}%dd $era $record%.3f at record@$plo%d-$phi%d",
-         st.vr250RecordPct >= plo && st.vr250RecordPct <= phi)
+        (f"${q}%dd $era $record%.3f at record@$plo%d-$phi%d", pct >= plo && pct <= phi)
       else (f"${q}%dd $lo%.2f-$hi%.2f", vrOf(st, q) > lo && vrOf(st, q) < hi)
     }
     val slopes = VarRatioSlopeBands.map { (a, b, lo, hi) =>
@@ -6626,13 +6655,19 @@ object MarketSim:
     medDepth: Double,   medDepthSd: Double,
     worstDepth: Double, worstDepthSd: Double,
     // THE BUBBLE COUPLING's record (`bubbleCouplingOf`, `bubblebust-2026-09-24.tsv`) and its own
-    // window: the S&P's is the century, the Nasdaq's the NDX price index from 1990, since QQQ's
-    // record starts nine years too late for a 3-year run-up into the 2000 peak.  Graded as an
-    // extreme row, the record's percentile among single histories of `bubbleYears`.
+    // window, the set's long window: the S&P's is the century, the Nasdaq's the 1971-2026 splice
+    // of the Composite and the NDX price indexes, since QQQ's record starts nine years too late for
+    // a 3-year run-up into the 2000 peak and the consumer's rules were selected on the NDX from
+    // 1990.  Graded as an extreme row, the record's percentile among single histories of
+    // `bubbleYears`.
     bubbleWindow: String, bubbleYears: Int,
-    // THE TIMING ROWS' record window and records (`timingOfMonthly`; `timing-2026-09-30.tsv`):
-    // CRSP's month-end closes with dividends, the century, one ruler for both sets, read on the
-    // world's histories of `timingYears`
+    // THE 250-SESSION RUNG's eras, `VarRatio250Eras` indexes: the records of the set's own index
+    // the rung may be graded against, the one nearest the run's length chosen (`vr250EraOf`).  The
+    // S&P's three CRSP eras; the Nasdaq's 1971-2026 splice alone.
+    vr250Eras: Vector[Int],
+    // THE TIMING ROWS' record window and records (`timingOfMonthly`; `timing-2026-09-30.tsv`),
+    // read on the world's histories of `timingYears`: the S&P's CRSP month-end closes with
+    // dividends over the century, the Nasdaq's the splice's month-end closes
     timingWindow: String, timingYears: Int, timing: Vector[Double],
     // the sd of `sma10 decline avoided %` across single histories of the set's recipe over the record
     // (30 x 100 years, 2026-10-01): what the loss weighs the row by
@@ -6644,10 +6679,13 @@ object MarketSim:
     // resampled -- and the multi-year rows grade what they read.
     runUp3y: Double, calmStretch: Double,
     // THE MULTI-YEAR ROWS' records (`multiYearReadings`, `multiyear-2026-09-29.tsv`), in
-    // `MultiYearRows`' order: over the equity window, and over the long window (`bubbleWindow`)
-    multiYear: Vector[Double], multiYearLong: Vector[Double],
+    // `MultiYearRows`' order: over the equity window where the set grades it, and over the long
+    // window (`bubbleWindow`).  The Nasdaq reports its equity window instead (`reported`): QQQ's
+    // record lies inside the window the consumer's rules were selected on.
+    multiYear: Option[Vector[Double]], multiYearLong: Vector[Double],
     // the sd of the log of the 3- and 5-year variance ratios across single histories of the
-    // set's recipe, equity window then long window: what the loss weighs those four rows by
+    // set's recipe, equity window then long window: what the loss weighs those four rows by (the
+    // equity window's unread where the set reports it)
     multiYearVrSd: Vector[Double], multiYearLongVrSd: Vector[Double],
     // the same spread for the decline gap, equity window then long window
     declineGapSd: Vector[Double],
@@ -6739,7 +6777,45 @@ object MarketSim:
     // The channel recipe's own -- `0.24.4-sp500-channels` here, `0.24.4-nasdaq-basket` for the
     // Nasdaq -- and a test pins each to its recipe.  A published recipe never moves, so neither
     // do these.
-    channelDials: ChannelDials)
+    channelDials: ChannelDials,
+    // THE REPORTED RECORDS: the set's graded single-history rows read off windows it does not
+    // grade on, each placed among the world's histories of that window's length.  Never graded.
+    reported: Vector[ReportedRecord])
+
+  /** A family of single-history rows a `ReportedRecord` is read on. */
+  enum RowFamily:
+    /** `TimingRows`, `timingOfPath`, their joint band at `TimingAlpha` */
+    case Timing
+    /** `MultiYearRows`, their joint band at half `MultiYearAlpha`, as one graded window's */
+    case MultiYear
+    /** the bubble coupling, an extreme row's 5-95 percentile band */
+    case Coupling
+
+    /** The family's row names, in its readings' order. */
+    def rows: Vector[String] = this match
+      case Timing    => TimingRows
+      case MultiYear => MultiYearRows
+      case Coupling  => Vector("bubble coupling 3y")
+
+  /** A RECORD A SET REPORTS BESIDE THE ONE IT GRADES: one family's rows read off another window of
+    * the record, placed among the world's single histories of that window's length.  Never
+    * graded: a window a consumer's rules were selected on cannot test whether their reward lasts,
+    * and another index's record is another market's.  `records` in `family.rows` order. */
+  final case class ReportedRecord(family: RowFamily, window: String, years: Int, records: Vector[Double])
+
+  /** THE NASDAQ'S REPORTED RECORDS: CRSP's century (the S&P's timing record), the NDX from 1990
+    * and QQQ, the last two inside the window the consumer's rules were selected on.  Records from
+    * `timing-2026-09-30.tsv`, `bubblebust-2026-09-24.tsv` and `multiyear-2026-09-29.tsv`. */
+  val NasdaqReported: Vector[ReportedRecord] = Vector(
+    ReportedRecord(RowFamily.Timing, "CRSP month-ends 1926-2026", 100,
+                   Vector(64.682098, 5.818947, 0.750000, 0.656168)),
+    ReportedRecord(RowFamily.Timing, "NDX month-ends 1990-2026", 37,
+                   Vector(52.586943, 7.673684, 0.816327, 1.525398)),
+    ReportedRecord(RowFamily.Coupling, "NDX 1990-2026", 37, Vector(1.042337)),
+    ReportedRecord(RowFamily.MultiYear, "NDX 1990-2026", 37,
+                   Vector(0.100691, 0.983398, 0.964724, 0.740644, 18.396825, 0.246032, 2.515873, 41.888384)),
+    ReportedRecord(RowFamily.MultiYear, "QQQ 1999-2026", 27,
+                   Vector(0.007813, 0.993439, 0.894362, 0.438273, 18.396825, 0.317460, 2.523810, 53.729182)))
 
   /** The dials of the derived series: the satellite leg, the bars and their volume, the open, the
     * dividend stream, the basket and the macro panel.  Every one is observational -- it draws from
@@ -6980,12 +7056,12 @@ object MarketSim:
     retVolWindow = "CRSP 1954-2026",
     clusterWindow = "CRSP 1926-2026, the century", clusterYears = 100,
     tailWindow = "CRSP 1926-2026, the century", tailYears = 100,
-    bubbleWindow = "CRSP 1926-2026, the century", bubbleYears = 100,
+    bubbleWindow = "CRSP 1926-2026, the century", bubbleYears = 100, vr250Eras = Vector(0, 1, 2),
     timingWindow = "CRSP month-ends 1926-2026", timingYears = 100, timing = Vector(64.682098, 5.818947, 0.750000, 0.656168),
     timingSd = 0.174,
     bubbleCoupling = 0.114404, bubbleCouplingSd = 1.07,
     runUp3y = 0.872450, calmStretch = 2190.0,
-    multiYear = Vector(-0.127487, 0.745759, 0.732112, 0.324081, 8.599206, 0.662698, 2.527778, 12.589751),
+    multiYear = Some(Vector(-0.127487, 0.745759, 0.732112, 0.324081, 8.599206, 0.662698, 2.527778, 12.589751)),
     multiYearLong = Vector(0.028270, 0.961668, 0.963278, 0.398297, 11.837302, 0.932540, 3.353175, 25.500495),
     multiYearVrSd = Vector(0.24, 0.32), multiYearLongVrSd = Vector(0.20, 0.25),
     declineGapSd = Vector(0.35, 0.31),
@@ -7042,7 +7118,8 @@ object MarketSim:
     sectorTrendSma = 0.003672, sectorTrendSmaBand = (-0.002442, 0.009168),
     sectorXsSd = 0.030770, sectorPairCorr = 0.698582, sectorPairCorrWorst = 0.560800, sectorPairCorrMid = -0.030675,
     sectorMarketSd = 0.052916,
-    channelDials = Sp500ChannelDials)
+    channelDials = Sp500ChannelDials,
+    reported = Vector.empty)
 
   /** The Nasdaq-100 set, measured 2026-08-28 from QQQ daily adjusted closes over its own full
     * history, 1999-03-10 to 2026-08-20 (27.4 years).
@@ -7065,7 +7142,8 @@ object MarketSim:
     * THE SAMPLING SPREADS ARE THE NASDAQ WORLD'S OWN, frozen from
     * `-noise -paths 200 -atrelease 0.24.5-nasdaq -anchors nasdaq`, the recipe this set describes;
     * the run is seeded, so the same command reproduces every literal exactly but the wings', which
-    * are the record's own.  The recipe's daily shape moved the largest ones: kurtosis 1.93 -> 1.02,
+    * are the record's own.  The timing, coupling and long-window spreads were re-measured at the
+    * splice's 56 years when the set moved onto it (2026-10-03).  The recipe's daily shape moved the largest ones: kurtosis 1.93 -> 1.02,
     * the downside excess 4.26 -> 2.87, the leverage correlation 0.53 -> 0.37.  They were first carried
     * over from the S&P, and the assumption that carried values
     * were "approximately right
@@ -7083,15 +7161,15 @@ object MarketSim:
     retVolWindow = "QQQ 1999-2026",
     clusterWindow = "QQQ 1999-2026", clusterYears = 27,
     tailWindow = "QQQ 1999-2026", tailYears = 27,
-    bubbleWindow = "NDX 1990-2026", bubbleYears = 37,
-    timingWindow = "CRSP month-ends 1926-2026", timingYears = 100, timing = Vector(64.682098, 5.818947, 0.750000, 0.656168),
-    timingSd = 0.17,
-    bubbleCoupling = 1.042337, bubbleCouplingSd = 0.41,
+    bubbleWindow = "IXIC+NDX 1971-2026", bubbleYears = 56, vr250Eras = Vector(3),
+    timingWindow = "IXIC+NDX month-ends 1971-2026", timingYears = 56, timing = Vector(59.807540, 7.660919, 0.808383, 1.100813),
+    timingSd = 0.27,
+    bubbleCoupling = 1.104340, bubbleCouplingSd = 0.32,
     runUp3y = 1.753345, calmStretch = 1927.0,
-    multiYear = Vector(0.007813, 0.993439, 0.894362, 0.438273, 18.396825, 0.317460, 2.523810, 53.729182),
-    multiYearLong = Vector(0.100691, 0.983398, 0.964724, 0.740644, 18.396825, 0.246032, 2.515873, 41.888384),
-    multiYearVrSd = Vector(0.26, 0.49), multiYearLongVrSd = Vector(0.23, 0.40),
-    declineGapSd = Vector(0.44, 0.39),
+    multiYear = None,
+    multiYearLong = Vector(0.014692, 0.949281, 0.912220, 0.613509, 8.035714, 0.246032, 2.515873, 39.637712),
+    multiYearVrSd = Vector(0.26, 0.49), multiYearLongVrSd = Vector(0.22, 0.33),
+    declineGapSd = Vector(0.44, 0.43),
     rateWindow = "DFF 1999-2026", rateYears = 27,
     shortRate = 2.136466, shortRateSd = 1.05,
     rateFloor = 37.313224, rateFloorSd = 0.68,
@@ -7138,7 +7216,8 @@ object MarketSim:
     sectorTrendSma = 0.003672, sectorTrendSmaBand = (-0.002442, 0.009168),
     sectorXsSd = 0.030770, sectorPairCorr = 0.698582, sectorPairCorrWorst = 0.560800, sectorPairCorrMid = -0.030675,
     sectorMarketSd = 0.052916,
-    channelDials = NasdaqChannelDials)
+    channelDials = NasdaqChannelDials,
+    reported = NasdaqReported)
 
   val AnchorSets: Vector[Anchors] = Vector(SP500Anchors, NasdaqAnchors)
 
@@ -7216,8 +7295,8 @@ object MarketSim:
     _.multiYear(0), _.multiYear(1), _.multiYear(2), _.multiYear(3), _.multiYear(4),
     _.multiYear(5), _.multiYear(6), _.ddEq20 * 100.0)
 
-  /** THE MULTI-YEAR ROWS of `fitTargets`: each statistic against the equity window's record, then
-    * against the long window's.  The 3- and 5-year variance ratios and the decline gap carry
+  /** THE MULTI-YEAR ROWS of `fitTargets`: each statistic against the equity window's record where
+    * the set grades it, then against the long window's.  The 3- and 5-year variance ratios and the decline gap carry
     * judgment 0.5 each at the spread of their logs across single histories; the other rows weigh
     * 0 and are graded by the verdict alone. */
   def multiYearTargets(a: Anchors): Vector[FitTarget] =
@@ -7230,7 +7309,7 @@ object MarketSim:
           case 4 => wgt(0.5, gapSd)
           case _ => 0.0
         (names(k), MultiYearStats(k), records(k), weight)
-    rows(MultiYearRows, a.multiYear, a.multiYearVrSd, a.declineGapSd(0)) ++
+    a.multiYear.fold(Vector.empty[FitTarget])(rows(MultiYearRows, _, a.multiYearVrSd, a.declineGapSd(0))) ++
       rows(MultiYearLongRows, a.multiYearLong, a.multiYearLongVrSd, a.declineGapSd(1)) ++
       // THE TIMING ROWS (`TimingRows`), single-history graded like the multi-year rows; the avoided
       // share carries judgment 0.5 (the row the withdrawal objective hangs on; one statistic of ~10
@@ -7913,10 +7992,27 @@ object MarketSim:
   val PwrStatNames: Vector[String] = Vector("real 15y PWR p10 %", "PWR < 4% starts %")
 
   /** The last session of each calendar month of the synthetic calendar (`sessionDates`) for a
-    * path of `n` sessions; the last session counts as its month's end. */
+    * path of `n` sessions; the last session counts as its month's end.  Read in integer calendar
+    * arithmetic, not off the formatted dates: a century's 25,200 date strings cost a read
+    * milliseconds a path, several times over. */
   def monthEnds(n: Int): Vector[Int] =
-    val d = sessionDates(n, "")
-    (0 until n).filter(i => i + 1 == n || d(i).substring(0, 7) != d(i + 1).substring(0, 7)).toVector
+    def ym(i: Int): (Long, Long) = civilYearMonth(SyntheticStartDay + (i * 365L) / DaysPerYear)
+    (0 until n).filter(i => i + 1 == n || ym(i) != ym(i + 1)).toVector
+
+  /** The synthetic calendar's first session, 1900-01-02, in days from 1970-01-01. */
+  private val SyntheticStartDay: Long = -25566L
+
+  /** The proleptic Gregorian (year, month) of a count of days from 1970-01-01, in integer
+    * arithmetic (Hinnant's `civil_from_days`). */
+  private def civilYearMonth(days: Long): (Long, Long) =
+    val z   = days + 719468L
+    val era = Math.floorDiv(z, 146097L)
+    val doe = z - era * 146097L
+    val yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+    val doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+    val mp  = (5 * doy + 2) / 153
+    val m   = if mp < 10 then mp + 3 else mp - 9
+    (yoe + era * 400 + (if m <= 2 then 1 else 0), m)
 
   /** The arm's realized return for months 1 .. M-1 (`ends` the month-end sessions) by the
     * mechanics above; the first month's turnover is 0. */
@@ -9988,7 +10084,12 @@ object MarketSim:
     * because sampling error depends on the length of the record actually behind each number, not
     * on the horizon the model is scored at.  The contract test pins this to `FitTargets` as a
     * partition, so a new target cannot land without a declared horizon. */
-  def anchorGroups(a: Anchors): Vector[(String, Int, Vector[String])] = Vector(
+  def anchorGroups(a: Anchors): Vector[(String, Int, Vector[String])] =
+    val fit = fitTargets(a).map(_._1).toSet
+    // a row the set reports rather than grades (`Anchors.reported`) has no anchor horizon here
+    anchorGroupsAll(a).map((label, years, names) => (label, years, names.filter(fit.contains)))
+
+  private def anchorGroupsAll(a: Anchors): Vector[(String, Int, Vector[String])] = Vector(
     (a.equityWindow, a.equityYears,
      Vector("equity vol %", "typical-year vol %", "return per vol", "kurtosis", "crashes/century",
             "median depth %", "downside vol excess %", "up-day share %", "leverage corr",
@@ -10127,13 +10228,61 @@ object MarketSim:
     * windows that are read at the same length. */
   private[apps] def multiYearHistories(a: Anchors, sims: Vector[Path],
                                        yrs: Int): Vector[(Vector[String], Vector[Vector[Double]])] =
-    val windows = Vector((MultiYearRows, a.equityYears), (MultiYearLongRows, a.bubbleYears))
-      .filter(_._2 == yrs).map(_._1)
+    val windows = Vector((MultiYearRows, a.multiYear.map(_ => a.equityYears)),
+                         (MultiYearLongRows, Some(a.bubbleYears)))
+      .filter(_._2.contains(yrs)).map(_._1)
     if windows.isEmpty then Vector.empty
     else
-      val reads = parMap(sims): p =>
-        multiYearOf(dailyReturns(p.price), p.price) :+ depthShares(p.price)._3 * 100.0
+      val reads = parMap(sims)(multiYearPathReading)
       windows.map(_ -> reads)
+
+  /** One path's `MultiYearRows` readings, in their order. */
+  private def multiYearPathReading(p: Path): Vector[Double] =
+    multiYearOf(dailyReturns(p.price), p.price) :+ depthShares(p.price)._3 * 100.0
+
+  /** One row of a reported record (`ReportedRecord`), never graded: `row.miss` says only where the
+    * record would fall were it graded. */
+  final case class ReportedRow(window: String, row: FidelityRow)
+
+  /** Each row's edges of a joint band at `alpha` over histories `reads`; none under
+    * `ExtremeMinHistories` of them. */
+  private def jointEdges(reads: Vector[Vector[Double]], width: Int,
+                         alpha: Double): Vector[Option[(Double, Double)]] =
+    if reads.length < ExtremeMinHistories then Vector.fill(width)(None)
+    else recordBandJoint(reads, Vector.range(0, width), alpha)._2.map(Some(_))
+
+  /** One reported record's rows, read on `sims`, single histories of the record's length. */
+  private def reportedRowsOn(rec: ReportedRecord, sims: Vector[Path]): Vector[ReportedRow] =
+    val (reads, bands) = rec.family match
+      case RowFamily.Timing =>
+        val r = parMap(sims)(p => timingOfPath(p.price))
+        (r, jointEdges(r, 4, TimingAlpha))
+      case RowFamily.MultiYear =>
+        val r = parMap(sims)(multiYearPathReading)
+        (r, jointEdges(r, 8, MultiYearAlpha / 2.0))
+      case RowFamily.Coupling =>
+        (parMap(sims)(p => Vector(bubbleCouplingOf(dailyReturns(p.price)))), Vector(None))
+    rec.family.rows.indices.toVector.map { k =>
+      val real = rec.records(k)
+      val xs = reads.map(_(k)).filter(x => !x.isNaN)
+      ReportedRow(rec.window,
+        FidelityRow(rec.family.rows(k), extremeMedian(xs), real, real, None,
+                    if xs.size < ExtremeMinHistories then None else Some(anchorPctile(xs, real)),
+                    None, None, bands(k), rec.years, xs.size))
+    }
+
+  /** THE REPORTED RECORDS' ROWS (`Anchors.reported`), in the set's order: each record's rows among
+    * the world's single histories of its own length, cut from `main` (the caller's ensemble at
+    * `years`) where that length is no longer, simulated once per length where it is. */
+  def reportedRecordRows(a: Anchors, main: Option[Vector[Path]], years: Int, paths: Int, seed: Long,
+                         w: World): Vector[ReportedRow] =
+    val simsAt = a.reported.map(_.years).distinct.map { h =>
+      h -> (main match
+        case Some(m) if h == years => m
+        case Some(m) if h < years  => m.map(_.head(h))
+        case _                      => simPaths(w, paths, h, seed))
+    }.toMap
+    a.reported.flatMap(rec => reportedRowsOn(rec, simsAt(rec.years)))
 
   /** THE MULTI-YEAR ROWS' JOINT BAND: each row's edges among the world's single histories of its
     * window's length, at the ranks a record-like history stays inside on every row of its window
@@ -10843,9 +10992,29 @@ object MarketSim:
     * much larger and (per `GateYears`) usually longer sample than the one path being written --
     * and `gateRows` are built from it once per batch, because building them simulates the extreme
     * rows' own-horizon ensemble. */
+  /** How the report judges one fidelity row: its ratio and record band, or where the record falls
+    * among the world's single histories, or why it cannot be placed. */
+  def fidelityJudgement(r: FidelityRow): String = (r.ratio, r.pctile) match
+    case (Some(x), _) =>
+      val band = r.recordBand.fold("") { (lo, hi) =>
+        val at = r.recordPctile.fold("n/a")(p => f"$p%3d%%")
+        f"   model@ $at%s of $lo%.2f..$hi%.2f"
+      }
+      // printed only where it differs past rounding: vintage noise is not a difference
+      val target =
+        if math.abs(r.target - r.real) > 0.01 * math.max(math.abs(r.real), math.abs(r.target))
+        then f"   target ${r.target}%.2f"
+        else ""
+      f"ratio $x%5.2f$band%s$target%s"
+    case (None, Some(p)) =>
+      val band = r.historyBand.fold("")((lo, hi) => f"   within $lo%.2f..$hi%.2f")
+      f"record@ $p%3d%% of ${r.horizonYears}%dy histories (n=${r.nHistories}%d)$band%s"
+    case (None, None)    => f"record@  n/a — ${r.nHistories}%d histories, needs $ExtremeMinHistories%d"
+
   def writeEmitted(a: Anchors, file: String, p: Path, k: Int, w: World, years: Int, seed: Long,
                    startYmd: String, gateSt: WorldStats, gatePaths: Int, gateYears: Int,
-                   gateRows: Vector[FidelityRow], gateW: World, gateLevel: Path): Unit =
+                   gateRows: Vector[FidelityRow], gateReported: Vector[ReportedRow], gateW: World,
+                   gateLevel: Path): Unit =
     // A non-finite path is refused, not written -- a file whose every row reads NaN is not data.
     // The CLI's clean refusal (message + exit 2) lives at the emit sites in `main`, which pre-check
     // before calling; here it THROWS, because this is also API and a `System.exit` in a library
@@ -10861,7 +11030,7 @@ object MarketSim:
     val dates = sessionDates(p.price.length, startYmd)
     writeEmitTsv(file, p, dates)
     writeEmitSidecar(a, file, p, k, w, years, seed, startYmd, dates, gateSt, gatePaths, gateYears,
-                     gateRows, gateW, gateLevel)
+                     gateRows, gateReported, gateW, gateLevel)
 
   /** The basket's optional columns: the aggregate, then one per name. */
   def basketColumns(p: Path): Vector[String] =
@@ -11169,7 +11338,7 @@ object MarketSim:
   def writeEmitSidecar(a: Anchors, file: String, p: Path, k: Int, w: World, years: Int, seed: Long,
                        startYmd: String, dates: Vector[String], gateSt: WorldStats,
                        gatePaths: Int, gateYears: Int, gateRows: Vector[FidelityRow],
-                       gateW: World, gateLevel: Path): Unit =
+                       gateReported: Vector[ReportedRow], gateW: World, gateLevel: Path): Unit =
     val n            = p.price.length
     val gateBanded   = bandedOf(gateRows)
     val realismBad   = failedInAt(a, gateSt, gateBanded, GateClass.Realism)
@@ -11189,8 +11358,8 @@ object MarketSim:
     // so the two never share a field.
     def band(b: Option[(Double, Double)]): String =
       b.fold("null")((lo, hi) => s"[${num(lo)}, ${num(hi)}]")
-    val fidelity = gateRows.map { r =>
-      s"""    { "name": ${jsonStr(r.name)}, "model": ${num(r.model)}, "real": ${num(r.real)}, """ +
+    def rowJson(window: Option[String], r: FidelityRow): String =
+      s"""    { ${window.fold("")(w => s""""window": ${jsonStr(w)}, """)}"name": ${jsonStr(r.name)}, "model": ${num(r.model)}, "real": ${num(r.real)}, """ +
       s""""target": ${num(r.target)}, """ +
       s""""aggregation": ${jsonStr(r.aggregation)}, "horizonYears": ${r.horizonYears}, """ +
       s""""ratio": ${r.ratio.fold("null")(num)}, """ +
@@ -11198,7 +11367,11 @@ object MarketSim:
       s""""recordBand": ${band(r.recordBand)}, """ +
       s""""recordPercentile": ${r.recordPctile.fold("null")(_.toString)}, """ +
       s""""historyBand": ${band(r.historyBand)}, "miss": ${r.miss} }"""
-    }
+    val fidelity = gateRows.map(rowJson(None, _))
+    // never graded: the rows the set reads off records it does not grade on (`Anchors.reported`)
+    val reportedBlock =
+      if gateReported.isEmpty then """  "reportedRows": []"""
+      else "  \"reportedRows\": [\n" + gateReported.map(r => rowJson(Some(r.window), r.row)).mkString(",\n") + "\n  ]"
     val json = Vector(
       "{",
       """  "generator": "market_sim",""",
@@ -11299,7 +11472,8 @@ object MarketSim:
       episodesBlock(p),
       """  "fidelity": [""",
       fidelity.mkString(",\n"),
-      "  ]",
+      "  ],",
+      reportedBlock,
       "}")
     sidecarName(file).asPath.writeLines(json)
 
@@ -12177,6 +12351,7 @@ ${rows.mkString(",\n")}
     val verdictSt = if ownVerdict then st else measure(verdictMain, verdictYears)
     val verdictRows = fidelityRows(anchors, verdictSt, Some(verdictMain), verdictYears, verdictPaths, seed, w)
     val verdictBanded = bandedOf(verdictRows)
+    val verdictReported = reportedRecordRows(anchors, Some(verdictMain), verdictYears, verdictPaths, seed, w)
 
     if emit.nonEmpty then
       val realismBad   = failedInAt(anchors, verdictSt, verdictBanded, GateClass.Realism)
@@ -12215,13 +12390,13 @@ ${rows.mkString(",\n")}
             val f = indexedName(emit, k, width)
             refuseNonFinite(batch(k - emitFrom), k, f)
             writeEmitted(anchors, f, batch(k - emitFrom), k, w, years, seed, emitStart, verdictSt,
-                         verdictPaths, verdictYears, verdictRows, vw, verdictMain.head)
+                         verdictPaths, verdictYears, verdictRows, verdictReported, vw, verdictMain.head)
             f
         else
           val p = pathAt(emitPath)
           refuseNonFinite(p, emitPath, emit)
           writeEmitted(anchors, emit, p, emitPath, w, years, seed, emitStart, verdictSt,
-                       verdictPaths, verdictYears, verdictRows, vw, verdictMain.head)
+                       verdictPaths, verdictYears, verdictRows, verdictReported, vw, verdictMain.head)
           Vector(emit)
       val sessions = pathAt(if emitAll then emitFrom else emitPath).price.length
       eprintln(s"wrote ${written.size} path(s), ${EmitColumns.size + (if w.satBeta > 0.0 then 1 else 0)
@@ -12266,9 +12441,10 @@ ${rows.mkString(",\n")}
             VarRatioBands.map((q, lo, hi) => f"${q}%dd $lo%.2f-$hi%.2f").mkString("  ") + "; slopes " +
             VarRatioSlopeBands.map { (a, b, lo, hi) =>
               f"$a%d->$b%d ${vrOf(st, b) - vrOf(st, a) + 0.0}%+.3f ($lo%+.2f..$hi%+.2f)" }.mkString("  "))
-    if !st.vr250RecordPct.isNaN then
-      val (era, _, record) = VarRatio250Eras(st.vr250Era)
-      println(f"                         250d on these paths: the record of their length, $era $record%.3f, at record@ ${st.vr250RecordPct}%.0f%%")
+    val eraK = vr250EraOf(anchors.vr250Eras, st.yearsPerPath)
+    if !st.vr250RecordPcts(eraK).isNaN then
+      val (era, eraYears, record) = VarRatio250Eras(eraK)
+      println(f"                         250d on these paths: the set's record nearest their length, $era $record%.3f, at record@ ${st.vr250RecordPcts(eraK)}%.0f%% of ${eraYears}-year histories")
     println()
     println(f"  drawdowns of 15%%+      ${st.nEpisodes}%d, ${st.epPerPath}%.1f per path; ${st.censored}%d unrecovered at path end (included in depth)")
     println(f"  their depth            median ${st.depthMed}%6.1f%%   worst ${st.worstDepth}%6.1f%%")
@@ -12384,26 +12560,16 @@ ${rows.mkString(",\n")}
     println("      (`within`), which a record-like world clears on every such row 90% of the time.")
     verdictRows.foreach { r =>
       val flag = if r.miss then "  <-- MISS" else ""
-      val judgement = (r.ratio, r.pctile) match
-        case (Some(x), _) =>
-          val band = r.recordBand.fold("") { (lo, hi) =>
-            val at = r.recordPctile.fold("n/a")(p => f"$p%3d%%")
-            f"   model@ $at%s of $lo%.2f..$hi%.2f"
-          }
-          // printed only where it differs past rounding: vintage noise is not a difference
-          val target =
-            if math.abs(r.target - r.real) > 0.01 * math.max(math.abs(r.real), math.abs(r.target))
-            then f"   target ${r.target}%.2f"
-            else ""
-          f"ratio $x%5.2f$band%s$target%s"
-        case (None, Some(p)) =>
-          val band = r.historyBand.fold("")((lo, hi) => f"   within $lo%.2f..$hi%.2f")
-          f"record@ $p%3d%% of ${r.horizonYears}%dy histories (n=${r.nHistories}%d)$band%s"
-        case (None, None)    => f"record@  n/a — ${r.nHistories}%d histories, needs $ExtremeMinHistories%d"
-      println(f"     ${r.name}%-22s model ${r.model}%8.2f   real ${r.real}%8.2f   $judgement%s$flag%s")
+      println(f"     ${r.name}%-22s model ${r.model}%8.2f   real ${r.real}%8.2f   ${fidelityJudgement(r)}%s$flag%s")
     }
     reportedRows(anchors, verdictSt).foreach: (name, model, record) =>
       println(f"     $name%-22s model $model%8.2f   real $record%8.2f   reported, not graded")
+    if verdictReported.nonEmpty then
+      println("    REPORTED RECORDS, never graded: the same rows read off windows the set does not grade on")
+      verdictReported.foreach { r =>
+        val flag = if r.row.miss then "  outside" else ""
+        println(f"     ${r.row.name}%-22s model ${r.row.model}%8.2f   real ${r.row.real}%8.2f   ${fidelityJudgement(r.row)}%s$flag%s   ${r.window}%s")
+      }
 
     if validate then
       val checks = gateChecksAt(anchors, verdictSt, verdictBanded)

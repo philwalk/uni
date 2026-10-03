@@ -134,14 +134,20 @@ class MarketSimContractSuite extends FunSuite:
     // and a set that names one that does not exist would fail only when that row was reached.
     // Both are the silent-shrinkage failure the partition tests above guard against, on the ASSET
     // axis -- which only exists because 0.21.0 made the asset a parameter.
+    // A set may grade fewer rows only by REPORTING them (`Anchors.reported`): the Nasdaq's
+    // equity-window multi-year rows, read against QQQ there.
     val reference = MarketSim.fitTargets(MarketSim.SP500Anchors).map(_._1)
     for a <- MarketSim.AnchorSets do
-      assertEquals(MarketSim.fitTargets(a).map(_._1), reference,
+      val want = reference.filter(n => a.multiYear.isDefined || !MarketSim.MultiYearRows.contains(n))
+      assertEquals(MarketSim.fitTargets(a).map(_._1), want,
         s"anchor set [${a.name}] grades a different set of targets than SP500Anchors does. " +
         "Every set must cover the same rows, or the loss means something different depending " +
         "on which index you passed.")
-      assertEquals(MarketSim.anchorGroups(a).flatMap(_._3).sorted, reference.sorted,
+      assertEquals(MarketSim.anchorGroups(a).flatMap(_._3).sorted, want.sorted,
         s"anchor set [${a.name}]'s groups do not cover its targets.")
+      assert(a.multiYear.isDefined ||
+             a.reported.exists(r => r.family == MarketSim.RowFamily.MultiYear && r.years == a.equityYears),
+        s"[${a.name}] neither grades nor reports its equity window's multi-year rows")
   }
 
   test("the S&P anchor set still holds the values every release before 0.21.0 hard-coded") {
@@ -945,7 +951,7 @@ class MarketSimContractSuite extends FunSuite:
   // literals before they were dials, a world without the spread draws the same streams, and a
   // slower fade leaves the path alone until the first boom's build ends.
   test("the drift spread and the boom's fade are the old literals by default") {
-    for (name, w, _) <- MarketSim.Recipes if !name.startsWith("0.24.5-") do
+    for (name, w, _) <- MarketSim.Recipes if MarketSim.recipeVersion(name) < "0.24.5" do
       assert(w.driftSd == 0.04 && w.boomFade == 1.0,
              s"$name predates the dials and holds the literals they replaced")
     val w = MarketSim.namedWorld("0.24.4-nasdaq").get._1.copy(boomRate = 2.0, boomSize = 1.0, boomLen = 2.5)
@@ -1049,7 +1055,8 @@ class MarketSimContractSuite extends FunSuite:
     do
       val a    = MarketSim.anchorsNamed(spec)
       val sims = MarketSim.simPaths(w, 6, years, 20260813L + years)
-      for nm <- MarketSim.ExtremeTargets do
+      // a row the set reports rather than grades is no fit target of it
+      for nm <- MarketSim.ExtremeTargets if a.multiYear.isDefined || !MarketSim.MultiYearRows.contains(nm) do
         val get = MarketSim.fitTargets(a).find(_._1 == nm).getOrElse(fail(s"$nm is not a fidelity target"))._2
         for p <- sims; direct <- MarketSim.extremeReading(nm, p) do
           val full = get(MarketSim.measure(Vector(p), years))
@@ -1153,7 +1160,9 @@ class MarketSimContractSuite extends FunSuite:
     assert(on.price.sameElements(off.price) && on.rate.sameElements(off.rate), "the legs are observational")
     for (v, w) <- MarketSim.Releases do assert(w.sectors == 0, s"release $v")
     for (n, w, _) <- MarketSim.Recipes do
-      assertEquals(w.sectors > 0, n == "0.24.5-sp500" || n == "0.24.5-nasdaq-basket", s"recipe $n")
+      assertEquals(w.sectors > 0,
+                   Set("0.24.5-sp500", "0.24.5-nasdaq-basket", "0.24.6-nasdaq-basket", "0.24.6-sp500").contains(n),
+                   s"recipe $n")
     val chans = MarketSim.Defaults.copy(satBeta = 1.2, satIdio = 0.77, basket = 8, basketBeta = 1.56,
                                         basketSector = 1.1, basketIdio = 0.9, basketGaps = 6.0)
     val a = MarketSim.simulate(chans, 3, MarketSim.DefaultSeed)

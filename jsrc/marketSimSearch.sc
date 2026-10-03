@@ -103,12 +103,22 @@ object MarketSimSearch:
     "              ;   realism,mechanism, the verdict's own).  With fidelity the bands a search",
     "              ;   otherwise only prices gate too, which every member of a calibration set has to",
     "              ;   pass anyway; realism is always in",
+    "-noregressset F ; -noregress against a SET's median member: F as -seedworlds, one read each",
     "-noregress R  ; price every row a candidate holds further from its record than recipe R does,",
     "              ;   by the difference (R read at the search's ensemble, the mean of six reads):",
     "              ;   the release rule, which a dead zone alone lets every row drift inside",
     "-fix DIALS    ; comma-separated dials (e.g. 'disasterSize,disasterOvershoot') every child keeps",
     "              ;   at its parent's value, so at the seed's: the dials read off the record rather",
     "              ;   than solved.  The draws are made as without it, so the other dials step alike",
+    "-stage P      ; read a candidate's first P paths alone and reject it there if they fail it;",
+    "              ;   a candidate they pass reads the rest, and the whole is the unstaged read bit",
+    "              ;   for bit (default 0: every path at once)",
+    "-stagecheck P ; read the same prefix and record its verdict in stage.tsv beside the full read's,",
+    "              ;   never acting on it: how often a full read overturns a prefix's rejection",
+    "-project D:R  ; solve dial D for row R's record instead of stepping it ('drift:return per vol'):",
+    "              ;   a child's D is its parent's plus the parent's miss on R over R's slope in D",
+    "-seedworlds F ; the seed worlds as a TSV of `name` and the searched dials in table order: each row",
+    "              ;   is the first -seeds world with those dials and roots its own lineage and bar",
     "-gap ROWS     ; comma-separated graded rows (e.g. 'kurtosis,up-day share %') a candidate",
     "              ;   must hold inside their bands on every read of its primary arm to be feasible:",
     "              ;   the rows a release has to close, which a priced miss lets a search trade away.",
@@ -185,13 +195,32 @@ object MarketSimSearch:
                                * from its record whatever they were seeded from, because seeding sets
                                * where an archive starts and the loss where it ends.  The seed worlds
                                * are exempt, as they are from `-gap`. */
-                             hold: Vector[(String, Double)] = Vector.empty):
+                             hold: Vector[(String, Double)] = Vector.empty,
+                             /** THE STAGED READ (`-stage P`): the first P paths are read alone, and
+                               * a candidate they reject is rejected there; one they pass reads the
+                               * rest, and the whole is the unstaged read bit for bit, because path k
+                               * is a function of the world, the horizon, the seed and k alone
+                               * (`simPathRange`).  Of a set search's reads 95% are rejections, each
+                               * paid at full price.  0 reads every path at once. */
+                             stage: Int = 0,
+                             /** `-stagecheck P`: read the prefix's verdict and record it
+                               * (`Read.stageFail`) without acting on it, so how often the full read
+                               * overturns a prefix's rejection can be measured */
+                             stageCheck: Boolean = false,
+                             /** THE PROJECTED ROW (`-project DIAL:ROW`): its reading on every read
+                               * (`Read.held`), from which the next child's dial is solved instead of
+                               * stepped */
+                             projectRow: Option[String] = None):
     /** the same dead zone without the reference or the gap rows: the transport arm's pricing */
     def plain: Objective =
       copy(reference = None, gap = Vector.empty, classes = MarketSim.GateDefault, watch = Vector.empty,
-           hold = Vector.empty)
-    /** the same pricing with the gap rows watched, not gated: the seed worlds' (see `main`) */
-    def withoutGap: Objective = copy(gap = Vector.empty, watch = gap, hold = Vector.empty)
+           hold = Vector.empty, stage = 0, stageCheck = false, projectRow = None)
+    /** the same pricing with the gap rows watched, not gated: the seed worlds' (see `main`), read
+      * whole, since they root the lineages and set the bars */
+    def withoutGap: Objective =
+      copy(gap = Vector.empty, watch = gap, hold = Vector.empty, stage = 0, stageCheck = false)
+    /** the same judgement read whole: what a staged read applies to its prefix */
+    def unstaged: Objective = copy(stage = 0, stageCheck = false)
 
   /** Reads of the `-noregress` recipe its reference is the mean of. */
   val NoregressReads = 6
@@ -203,12 +232,27 @@ object MarketSimSearch:
     * meet a million paths apart, and the offsets are chosen so no two streams meet either (the
     * Rust twin's `read_streams_share_no_path` sweeps it).  The streams past `-seed`: the seed pool
     * and the holdout's train at `k * ReadStride`, the holdout's fresh at `HoldoutFreshOffset`, the
-    * `-noregress` reference at `NoregressOffset`, the candidates at `CandidateOffset`. */
+    * `-noregress` reference at `NoregressOffset`, the candidates at `CandidateOffset`, the `-project`
+    * reads at `ProjectOffset`. */
   val PathStride = 7919L
   val ReadStride = 1000003L
   val HoldoutFreshOffset = 991L
   val NoregressOffset = 7L
   val CandidateOffset = 3301L
+  /** the `-project` slope and the readings of members a resumed archive brings without one */
+  val ProjectOffset = 5501L
+  /** The `-project` slope's step, as a share of the dial's range, and its paired reads: two pairs on a
+    * twentieth of the range read the Nasdaq slope 3.35 against a secant of 4.0 at 200 paths, and a
+    * negative slope at 40. */
+  val ProjectStep = 0.10
+  val ProjectSlopeReads = 4
+
+  /** A reading at eight significant digits, as the checkpoint writes every number: the projection is
+    * solved from these, so a fresh run, a resumed one and the other twin, whose readings differ in the
+    * last ulps, step a child's dial alike. */
+  def round8(x: Double): Double = f"$x%.8g".toDouble
+  /** The rows a staged read's prefix must fail before the candidate is rejected there (`-stage`). */
+  val StageMinFails = 2
 
   /** The seed of a candidate's read in seed slot `slot` (`evals + rep`).  Candidates stepped by
     * `PathStride` once, which made consecutive reads one window sliding a path at a time: a second
@@ -223,13 +267,85 @@ object MarketSimSearch:
   def referenceDistances(w: World, anchors: MarketSim.Anchors, paths: Int, years: Int,
                          base: Long): Vector[(String, Double)] =
     val reads = (1 to NoregressReads).toVector.map: j =>
-      val s = base + NoregressOffset + j * ReadStride
-      val main = MarketSim.simPaths(w, paths, years, s)
-      val st = MarketSim.measure(main, years)
-      val hr = MarketSim.horizonReadings(anchors, st, Some(main), years, paths, s, w, extremeToo = true)
-      val (_, rows) = MarketSim.fitness(anchors, st, hr.extremeScores)
-      MarketSim.recordDistances(anchors, rows, hr.banded)
+      readDistances(w, anchors, paths, years, base + NoregressOffset + j * ReadStride)
     reads.head.indices.toVector.map(i => (reads.head(i)._1, reads.map(_(i)._2).sum / reads.length))
+
+  /** One read's distance from the record on every fitness row, priced as `oneRead` prices a
+    * candidate (`recordDistances`). */
+  def readDistances(w: World, anchors: MarketSim.Anchors, paths: Int, years: Int,
+                    s: Long): Vector[(String, Double)] =
+    val main = MarketSim.simPaths(w, paths, years, s)
+    val st = MarketSim.measure(main, years)
+    val hr = MarketSim.horizonReadings(anchors, st, Some(main), years, paths, s, w, extremeToo = true)
+    val (_, rows) = MarketSim.fitness(anchors, st, hr.extremeScores)
+    MarketSim.recordDistances(anchors, rows, hr.banded)
+
+  /** The median of `xs`: the middle value, or the mean of the middle two. */
+  def median(xs: Vector[Double]): Double =
+    val v = xs.sortWith((a, b) => java.lang.Double.compare(a, b) < 0)
+    val n = v.length
+    if n % 2 == 1 then v(n / 2) else (v(n / 2 - 1) + v(n / 2)) / 2.0
+
+  /** FNV-1a over `text`'s UTF-8 bytes, as the checkpoint's digests are taken. */
+  def fnv(text: String): String =
+    val h = text.getBytes("UTF-8").foldLeft(0xcbf29ce484222325L) { (h, b) =>
+      (h ^ (b & 0xffL)) * 0x100000001b3L
+    }
+    f"$h%016x"
+
+  /** World rows (`-seedworlds`, `-noregressset`): a TSV whose header is `name` and the searched
+    * dials in table order, each row `base` with those dials. */
+  def worldRows(file: String, base: World, flag: String): Vector[(String, World)] =
+    val text = scala.util.Try(file.asPath.contentAsString).toOption
+      .getOrElse(usage(s"$flag $file cannot be read"))
+    val lines = text.split("\n").map(_.stripSuffix("\r")).filter(_.trim.nonEmpty).toVector
+    val head = lines.headOption.getOrElse("").split("\t", -1).toVector
+    if head.headOption.forall(_ != "name") || head.tail != names then
+      usage(s"$flag $file: the header must be `name` and the searched dials in table order")
+    lines.tail.map { l =>
+      val f = l.split("\t", -1).toVector
+      if f.length != head.length then usage(s"$flag $file: a row of ${f.length} fields")
+      val dials = f.tail.map(x => x.toDoubleOption.getOrElse(usage(s"$flag $file: not a number [$x]")))
+      (f.head, worldOf(base, dials))
+    }
+
+  /** THE OUTGOING SET'S MEDIAN MEMBER (`-noregressset`): each fitness row's median over the members
+    * of their distance from the record, one read a member at the search's ensemble.  A calibration
+    * set is released when every graded row's median member distance is no worse than the outgoing
+    * set's, and a child priced against one recipe drifts off that centre on every row the recipe was
+    * close on: in a set loop against 0.24.5-nasdaq's 30, two of 23 admitted children sat within the
+    * outgoing median on clustering lag 1, against 11 of the 22 worlds they came from.  Read once and
+    * kept in `reference.tsv` under a digest of the set, the ensemble and the seed, since a set loop
+    * restarts the harness every round. */
+  def setReference(rows: Vector[(String, World)], fileText: String, anchors: MarketSim.Anchors,
+                   paths: Int, years: Int, base: Long, dir: String): (String, Vector[(String, Double)]) =
+    val digest = fnv(s"$fileText|${anchors.name}|$paths|$years|$base")
+    val namesNow = MarketSim.fitTargets(anchors).map(_._1)
+    val cachePath = s"$dir/reference.tsv".asPath
+    val cached = Option.when(cachePath.exists)(cachePath.lines.toVector).flatMap { ls =>
+      Option.when(ls.headOption.contains(s"digest\t$digest")) {
+        ls.tail.flatMap { l =>
+          l.split("\t", 2) match
+            case Array(n, v) if namesNow.contains(n) => v.toDoubleOption.map(n -> _)
+            case _ => None
+        }
+      }.filter(_.nonEmpty)
+    }
+    cached match
+      case Some(r) => (digest, r)
+      case None =>
+        val reads = rows.zipWithIndex.map { case ((_, w), k) =>
+          readDistances(w, anchors, paths, years, base + NoregressOffset + (NoregressReads + 1 + k) * ReadStride)
+        }
+        // at eight significant digits, as the checkpoint writes every number: the twins' readings
+        // differ in the last ulps, and a fresh run, a resumed one and the other twin all price against
+        // this text
+        val r = reads.head.indices.toVector.map { i =>
+          val m = median(reads.map(_(i)._2))
+          (reads.head(i)._1, f"$m%.8g".toDouble)
+        }
+        cachePath.writeLines(s"digest\t$digest" +: r.map((n, v) => f"$n\t$v%.8g"))
+        (digest, r)
 
   def dialsOf(w: World): Vector[Double] = ranges.map((_, _, _, _, get) => get(w))
 
@@ -358,7 +474,13 @@ object MarketSimSearch:
                         /** THE WATCHED ROWS THIS READ MISSES (`Objective.watch`), in the order
                           * they were named: a seed world's gap rows.  Empty for a candidate, which
                           * watches nothing, and for a read that left before the table was read. */
-                        watchMiss: Vector[String] = Vector.empty)
+                        watchMiss: Vector[String] = Vector.empty,
+                        /** THE PREFIX'S VERDICT under `-stage`/`-stagecheck`: what the first P
+                          * paths failed, empty when they passed; `None` when the read was not
+                          * staged */
+                        stageFail: Option[Vector[String]] = None,
+                        /** the projected row's reading (`Objective.projectRow`), NaN without one */
+                        held: Double = Double.NaN)
 
   /** A held row's distance on one read, in the judge's units (`-hold`): a single-history row's (the
     * multi-year and timing rows) is the record's percentile points from 50 among the read's own
@@ -410,12 +532,32 @@ object MarketSimSearch:
     * `evaluate` stops at the first seed that fails, because feasibility needs every seed. */
   def oneRead(w: World, anchors: MarketSim.Anchors, paths: Int, years: Int,
               s: Long, obj: Objective): Read =
-    val dead = obj.dead
     // the verdict world: every derived series and the macro panel graded at the anchor set's
     // dials where the candidate leaves them off, so feasibility is the bundle's, as a recipe's
     // verdict is; the primary is bit-identical, so the table's horizons read `w`
-    val main = MarketSim.simPaths(MarketSim.verdictWorld(anchors, w), paths, years, s)
-    val st   = MarketSim.measure(main, years)
+    val vw = MarketSim.verdictWorld(anchors, w)
+    if obj.stage == 0 || obj.stage >= paths then
+      readPaths(w, anchors, MarketSim.simPaths(vw, paths, years, s), years, s, obj)
+    else
+      val head = MarketSim.simPathRange(vw, 0, obj.stage, years, s)
+      val first = readPaths(w, anchors, head, years, s, obj.unstaged)
+      val stageFail = if first.feasible then Vector.empty[String] else first.gateFail
+      // two rows failing on the prefix, not one: a single near-edge row flips back on the whole
+      // read (7 of 18 feasible candidates were rejected that way at P = 50 in a measured run), two
+      // did not once
+      if stageFail.length >= StageMinFails && !obj.stageCheck then
+        first.copy(gateFail = stageFail.map(f => s"stage: $f"), stageFail = Some(stageFail))
+      else
+        val main = head ++ MarketSim.simPathRange(vw, obj.stage, paths - obj.stage, years, s)
+        readPaths(w, anchors, main, years, s, obj).copy(stageFail = Some(stageFail))
+
+  /** One seed's reading of an ensemble already simulated (`oneRead`): every path in `main`, path k
+    * read at seed `s + k * PathStride`. */
+  def readPaths(w: World, anchors: MarketSim.Anchors, main: Vector[MarketSim.Path], years: Int,
+                s: Long, obj: Objective): Read =
+    val dead  = obj.dead
+    val paths = main.length
+    val st    = MarketSim.measure(main, years)
     // THE VERDICT'S READINGS: vol, the typical year, return per vol, kurtosis, the clustering lags
     // and the crash rate are gated at their records' horizons (`gateChecksAt`), as a recipe's
     // verdict gates them, so the search and the verdict never disagree on those rows because they
@@ -430,6 +572,11 @@ object MarketSimSearch:
       if early then MarketSim.HorizonReadings.empty
       else MarketSim.horizonReadings(anchors, st, Some(main), years, paths, s, w, extremeToo = true)
     val banded = hr.banded
+    // at its record's horizon where the table read it, as the verdict reads it
+    val held = obj.projectRow.fold(Double.NaN) { nm =>
+      banded.getOrElse(nm,
+        MarketSim.fitTargets(anchors).find(_._1 == nm).fold(Double.NaN)((_, get, _, _) => get(st)))
+    }
     val checks =
       if early then own.filterNot((nm, _, _) => MarketSim.gateReadsTable(nm))
       else MarketSim.gateChecksAt(anchors, st, banded)
@@ -485,7 +632,8 @@ object MarketSimSearch:
        else MarketSim.GateClass.values.toVector.filter(obj.classes.contains)
               .flatMap(cls => checks.collect { case (nm, false, c) if c == cls => nm })) ++
         regress.collect { case (nm, e) if e > dead => s"regress: $nm" }
-    Read(feasible, score, raw._1, raw._2, descOf(st), total, gateFail = gateFail, watchMiss = watchMiss)
+    Read(feasible, score, raw._1, raw._2, descOf(st), total, gateFail = gateFail, watchMiss = watchMiss,
+         held = held)
 
   def evaluate(w: World, anchors: MarketSim.Anchors, paths: Int, years: Int,
                seeds: Vector[Long], obj: Objective, bar: Option[Double] = None): Read =
@@ -508,7 +656,10 @@ object MarketSimSearch:
          // worst row, which on a rejected world is as often a read that passed
          spread, reads.find(!_.feasible).map(_.gateFail).getOrElse(hardest.gateFail), complete = !cut,
          // a row any read misses, in the order the rows were named
-         watchMiss = obj.watch.filter(g => reads.exists(_.watchMiss.contains(g))))
+         watchMiss = obj.watch.filter(g => reads.exists(_.watchMiss.contains(g))),
+         // the last read's: every read before it passed its prefix, or it would have stopped there
+         stageFail = reads.last.stageFail,
+         held = reads.map(_.held).sum / reads.length)
 
   // ---- cheap fidelity -------------------------------------------------------------------------
 
@@ -633,8 +784,9 @@ object MarketSimSearch:
              spread = math.max(a.spread, b.spread),
              gateFail = if b.feasible then a.gateFail ++ tb else tb,
              complete = a.complete && b.complete,
-             // the primary arm's: the transport arm watches nothing
-             watchMiss = a.watchMiss)
+             // the primary arm's: the transport arm watches nothing, is read whole and projects
+             // nothing
+             watchMiss = a.watchMiss, stageFail = a.stageFail, held = a.held)
 
   /** the OBJECTIVE, as a digest of every row a candidate is judged on -- each set's name, then each
     * row's name, target and weight, then each record band's edges, for the primary set and the
@@ -753,6 +905,36 @@ object MarketSimSearch:
     s"$dir/log.tsv".asPath.withWriter("UTF-8", append = true) { w =>
       lines.foreach(l => w.print(s"$l\n"))
     }
+
+  /** Append `lines` to `dir/file`, writing `header` first when the file is new. */
+  def appendTsv(dir: String, file: String, header: String, lines: Seq[String]): Unit =
+    val p = s"$dir/$file".asPath
+    val fresh = !p.exists
+    p.withWriter("UTF-8", append = true) { w =>
+      if fresh then w.print(s"$header\n")
+      lines.foreach(l => w.print(s"$l\n"))
+    }
+
+  /** A member's key in `held.tsv`: its seed world and its dials as the archive writes them, so a
+    * member read back from the archive finds the reading it was admitted with. */
+  def heldKey(name: String, dials: Vector[Double]): String =
+    s"$name|" + dials.map(x => f"$x%.8g").mkString(",")
+
+  /** The projected row's reading of each member (`-project`), beside the archive. */
+  def readHeld(dir: String): Map[String, Double] =
+    val p = s"$dir/held.tsv".asPath
+    if !p.exists then Map.empty
+    else p.lines.toVector.drop(1).flatMap { l =>
+      val at = l.lastIndexOf('\t')
+      if at < 0 then None else l.drop(at + 1).toDoubleOption.map(v => l.take(at) -> v)
+    }.toMap
+
+  /** The current members' readings, rewritten with the archive. */
+  def writeHeld(dir: String, arc: Vector[Member], held: Map[String, Double]): Unit =
+    s"$dir/held.tsv".asPath.writeLines("member\theld" +: arc.flatMap { m =>
+      val k = heldKey(m.name, m.dials)
+      held.get(k).map(v => f"$k\t$v%.8g")
+    })
 
   /** The archive as a worlds JSON in the sidecar's own key format -- what a consumer runs a
     * strategy across. */
@@ -927,6 +1109,7 @@ object MarketSimSearch:
     var hold = ""
     var fix = ""
     var seedSet = ""
+    var stage = 0; var stageCheck = 0; var project = ""; var seedWorlds = ""; var noregressSet = ""
     var transportWeight = 0.25
     var cov = 0.0; var covShrink = 0.3
     eachArg(args.toSeq, usage) {
@@ -959,6 +1142,11 @@ object MarketSimSearch:
       case "-gap"       => gap = consumeNext
       case "-fix"       => fix = consumeNext
       case "-seedset"   => seedSet = consumeNext
+      case "-stage"      => stage = intOr("-stage", consumeNext)
+      case "-stagecheck" => stageCheck = intOr("-stagecheck", consumeNext)
+      case "-project"    => project = consumeNext
+      case "-seedworlds" => seedWorlds = consumeNext
+      case "-noregressset" => noregressSet = consumeNext
       case "-fidelity"  => fidelity = consumeNext
       case a          => usage(s"unrecognized arg [$a]")
     }
@@ -1007,7 +1195,21 @@ object MarketSimSearch:
         for (k, _) <- moves if !ranges.exists(_._1 == k) do
           usage(s"-seedset names [$k], which is not a searched dial")
         pool.map((n, w) => (n, moves.foldLeft(w)((acc, m) => ranges.find(_._1 == m._1).get._4(acc, m._2))))
-    val seedWorld = pool1.toMap
+    // THE SEED ROWS (`-seedworlds`): worlds of the first seed's lineage given by their searched dials,
+    // e.g. a calibration set's members moved by hand, so a search starts from all of them at once.
+    // The rows ARE the seed worlds: the -seeds world only carries their other dials, so the first row
+    // is member 0, the world a set loop treats as the recipe
+    // the world that carries a world row's other dials: the first -seeds world
+    val carrier: Option[World] = pool1.headOption.map(_._2)
+    val pool2 =
+      if seedWorlds.isEmpty then pool1
+      else
+        val baseWorld = carrier.getOrElse(usage("-seedworlds wants a -seeds world to carry the other dials"))
+        val rows = worldRows(seedWorlds, baseWorld, "-seedworlds")
+        if rows.exists((n, _) => pool1.exists(_._1 == n)) then usage("-seedworlds: a row reuses a -seeds name")
+        if rows.isEmpty then usage(s"-seedworlds $seedWorlds holds no world")
+        rows
+    val seedWorld = pool2.toMap
     def worldFor(n: String): World = seedWorld.getOrElse(n, MarketSim.Defaults)
     for t <- transport do
       val missing = MarketDials.filterNot(names.contains)
@@ -1033,23 +1235,23 @@ object MarketSimSearch:
     if fidelity.nonEmpty then
       val ens = parseEnsembles(fidelity)
       val seeds = (0 until reps).toVector.map(k => base + k * ReadStride)
-      println(s"cheap fidelity at $anchorSpec, ${pool1.length} frozen worlds x $reps reps")
+      println(s"cheap fidelity at $anchorSpec, ${pool2.length} frozen worlds x $reps reps")
       def scoreAll(p: Int, y: Int): Vector[Read] =
-        pool1.map((_, w) => judge(w, dialsOf(w), anchors, transport, p, y, seeds, plain))
+        pool2.map((_, w) => judge(w, dialsOf(w), anchors, transport, p, y, seeds, plain))
       val t0 = System.nanoTime()
       val reference = scoreAll(paths, years)
-      val refSecs = (System.nanoTime() - t0) / 1e9 / pool1.length
+      val refSecs = (System.nanoTime() - t0) / 1e9 / pool2.length
       println(f"reference $paths x ${years}y: $refSecs%.3f s an evaluation\n")
       println("  ensemble      rank corr   feasibility agrees   s/eval   speedup")
       val refRaw = reference.map(_.raw)
       val rows = ens.flatMap { (p, y) =>
         val t = System.nanoTime()
         val got = scoreAll(p, y)
-        val secs = (System.nanoTime() - t) / 1e9 / pool1.length
+        val secs = (System.nanoTime() - t) / 1e9 / pool2.length
         val agree = got.zip(reference).count((a, b) => a.feasible == b.feasible)
         println(f"  $p%3d x $y%3dy      ${spearman(got.map(_.raw), refRaw)}%9.3f   " +
-                f"$agree%10d of ${pool1.length}%-6d   $secs%6.3f   ${refSecs / secs}%5.1fx")
-        pool1.indices.map { i =>
+                f"$agree%10d of ${pool2.length}%-6d   $secs%6.3f   ${refSecs / secs}%5.1fx")
+        pool2.indices.map { i =>
           f"$p\t$y\t${pool(i)._1}\t${got(i).feasible}\t${got(i).raw}%.6f\t" +
           f"${reference(i).feasible}\t${reference(i).raw}%.6f"
         }
@@ -1062,18 +1264,35 @@ object MarketSimSearch:
 
     // THE REFERENCE (`-noregress`): the outgoing recipe read at this ensemble, before any candidate;
     // checked in every mode, read only where a candidate is scored (a search, `-holdout`)
-    val reference = Option.when(noregress.nonEmpty) {
-      val (w, spec) = MarketSim.namedWorld(noregress).getOrElse(
-        usage(s"-noregress names [$noregress], which is not a release or recipe"))
-      if MarketSim.anchorsNamed(spec.getOrElse("sp500")).name != anchors.name then
-        usage(s"-noregress $noregress is anchored to another set than [$anchorSpec]")
-      w
-    }.filter(_ => !prune && exportTo.isEmpty).map { w =>
-      val r = referenceDistances(w, anchors, paths, years, base)
-      println(s"noregress: $noregress at $paths x ${years}y, the mean of $NoregressReads reads; " +
-              "a row further from its record costs the difference")
-      r
-    }
+    if noregress.nonEmpty && noregressSet.nonEmpty then
+      usage("-noregress and -noregressset each set the reference; give one")
+    // `set:<digest>` names a set reference in the checkpoint and the objective digest
+    val (noregressName, reference) =
+      if noregressSet.nonEmpty then
+        val baseWorld = carrier.getOrElse(usage("-noregressset wants a -seeds world to carry the other dials"))
+        val rows = worldRows(noregressSet, baseWorld, "-noregressset")
+        if rows.isEmpty then usage(s"-noregressset $noregressSet holds no world")
+        if prune || exportTo.nonEmpty then (noregress, None)
+        else
+          val text = scala.util.Try(noregressSet.asPath.contentAsString).getOrElse("").replace("\r", "")
+          val (digest, r) = setReference(rows, text, anchors, paths, years, base, out)
+          println(s"noregress: the median member of $noregressSet (${rows.length} worlds) at $paths x " +
+                  s"${years}y; a row further from its record costs the difference")
+          (s"set:$digest", Some(r))
+      else
+        val ref = Option.when(noregress.nonEmpty) {
+          val (w, spec) = MarketSim.namedWorld(noregress).getOrElse(
+            usage(s"-noregress names [$noregress], which is not a release or recipe"))
+          if MarketSim.anchorsNamed(spec.getOrElse("sp500")).name != anchors.name then
+            usage(s"-noregress $noregress is anchored to another set than [$anchorSpec]")
+          w
+        }.filter(_ => !prune && exportTo.isEmpty).map { w =>
+          val r = referenceDistances(w, anchors, paths, years, base)
+          println(s"noregress: $noregress at $paths x ${years}y, the mean of $NoregressReads reads; " +
+                  "a row further from its record costs the difference")
+          r
+        }
+        (noregress, ref)
     // THE GAP ROWS (`-gap`): each must name a graded row of this anchor set -- a record band or a
     // fitness row
     val gapRows = gap.split(",").toVector.map(_.trim).filter(_.nonEmpty).map { g =>
@@ -1094,7 +1313,21 @@ object MarketSimSearch:
         .getOrElse(usage(s"-hold $row: [$bar] is not a distance"))
       (row, d)
     }
-    val obj = Objective(deadZone(dead), reference, gapRows, MarketSim.parseGate(gate), hold = holdRows)
+    // THE PROJECTED DIAL (`-project DIAL:ROW`): a searched dial and the graded row it is solved for
+    val projection: Option[(Int, String, Double)] = Option.when(project.trim.nonEmpty) {
+      project.split(":", 2) match
+        case Array(dial, row) =>
+          val at = names.indexOf(dial.trim)
+          if at < 0 then usage(s"-project names [$dial], which is not a searched dial")
+          val (name, _, target, _) = MarketSim.fitTargets(anchors).find(_._1 == row.trim)
+            .getOrElse(usage(s"-project names [$row], which is not a graded row of $anchorSpec"))
+          (at, name, target)
+        case _ => usage("-project wants DIAL:ROW, e.g. 'drift:return per vol'")
+    }
+    if stage > 0 && stageCheck > 0 then usage("-stage and -stagecheck each set the prefix; give one")
+    val obj = Objective(deadZone(dead), reference, gapRows, MarketSim.parseGate(gate), hold = holdRows,
+                        stage = math.max(stage, stageCheck), stageCheck = stageCheck > 0,
+                        projectRow = projection.map(_._2))
 
     // `-export`, `-prune` and `-holdout` read no candidate, so they carry the archive's own scheme
     // (see `candidateSeed`): one written before the key was searched a path stride apart
@@ -1116,7 +1349,7 @@ object MarketSimSearch:
     // score nothing, so they carry the archive's own and never read the reference
     val objective = readState(out).get("objective") match
       case Some(recorded) if prune || exportTo.nonEmpty => recorded
-      case _ => objectiveDigest(anchors, transport, obj.reference.map(r => (noregress, r)), obj.gap, obj.hold)
+      case _ => objectiveDigest(anchors, transport, obj.reference.map(r => (noregressName, r)), obj.gap, obj.hold)
     val settings = Vector("paths" -> paths.toString, "years" -> years.toString,
                           "reps" -> reps.toString, "sigma" -> f"$sigma%.4f",
                           "dead" -> f"$dead%.4f", "keep" -> keep.toString,
@@ -1125,7 +1358,7 @@ object MarketSimSearch:
                           "bar" -> f"$bar%.4f",
                           "seeds" -> (if seedSpec.isEmpty then "(all)" else seedSpec),
                           // the seed worlds' own values, not only their names: see `seedWorldsDigest`
-                          "seedWorlds" -> seedWorldsDigest(pool1),
+                          "seedWorlds" -> seedWorldsDigest(pool2),
                           "seedSet" -> (if seedSet.isEmpty then "(none)" else seedSet),
                           // how a candidate's reads are seeded: see `candidateSeed`
                           "candidateSeeds" -> candidateSeeds,
@@ -1145,10 +1378,15 @@ object MarketSimSearch:
                           "objective" -> objective,
                           "transport" -> (if transportName.isEmpty then "(none)" else transportName),
                           "transportWeight" -> (if transportName.isEmpty then "(none)" else f"$transportWeight%.4f"),
-                          "noregress" -> (if noregress.isEmpty then "(none)" else noregress),
+                          "noregress" -> (if noregressName.isEmpty then "(none)" else noregressName),
                           "gap" -> (if obj.gap.isEmpty then "(none)" else obj.gap.mkString(",")),
                           "hold" -> holdText(obj.hold),
-                          "fix" -> (if fixNames.isEmpty then "(none)" else fixNames.mkString(",")))
+                          "fix" -> (if fixNames.isEmpty then "(none)" else fixNames.mkString(",")),
+                          // a prefix rejection can turn away a candidate the whole read would admit, so
+                          // a staged archive is not the unstaged one's; `-stagecheck` acts on nothing
+                          // and is not recorded
+                          "stage" -> stage.toString,
+                          "project" -> projection.fold("(none)")((at, row, _) => s"${names(at)}:$row"))
     val loaded = readArchive(out)
     // a checkpoint without `score` was scored on the worst row alone, and one without `gates` gated
     // on its own ensemble; a resume must refuse, not adopt, since its members were admitted by
@@ -1176,9 +1414,13 @@ object MarketSimSearch:
         if loaded.nonEmpty && !held.contains("gateClasses") then held + ("gateClasses" -> "realism,mechanism")
         else held
       // one without `transportWeight` priced its transport arm in full
-      if loaded.nonEmpty && !classed.contains("transportWeight") then
-        classed + ("transportWeight" -> (if classed.get("transport").forall(_ == "(none)") then "(none)" else "1.0000"))
-      else classed
+      val weighted =
+        if loaded.nonEmpty && !classed.contains("transportWeight") then
+          classed + ("transportWeight" -> (if classed.get("transport").forall(_ == "(none)") then "(none)" else "1.0000"))
+        else classed
+      // one written before `-stage` read every path at once, and one before `-project` stepped every dial
+      val staged = if loaded.nonEmpty && !weighted.contains("stage") then weighted + ("stage" -> "0") else weighted
+      if loaded.nonEmpty && !staged.contains("project") then staged + ("project" -> "(none)") else staged
     val gen0 = prior.getOrElse("gen", "0").toInt
     val evals0 = prior.getOrElse("evals", "0").toInt
     val nsum0 = prior.getOrElse("noiseSum", "0").toDouble
@@ -1210,7 +1452,7 @@ object MarketSimSearch:
         // them left nothing to search from.  Their misses are priced as any band's; every
         // candidate, and a `-holdout` re-score of every member, is held to the gap.
         val seedObj = obj.withoutGap
-        pool1.map { (nm, w) =>
+        pool2.map { (nm, w) =>
           val r = judge(w, dialsOf(w), anchors, transport, paths, years,
                         (0 until reps).toVector.map(k => base + k * ReadStride), seedObj)
           println(f"  $nm%-24s ${if r.feasible then "feasible" else "REJECTED"}%-9s " +
@@ -1402,12 +1644,44 @@ object MarketSimSearch:
         usage(s"$out/log.tsv was written with different columns; move it aside\n" +
               s"  it has [$had]\n  this binary writes [$logHeader]")
 
+    // THE PROJECTION (`-project`).  Held as a `-hold`, a row the loss pulls through every free dial
+    // rejects the children that drift from it (search-v144's hold on return per vol starved
+    // admission); solved, every child starts on it.  The slope is read on the first seed world at its
+    // own value and one step up, paired on the same seeds so the step is the whole difference; the
+    // readings of the members a resumed archive brings without one are read once here.
+    val heldSeeded: Map[String, Double] =
+      seedReads.foldLeft(readHeld(out))((m, t) => m + (heldKey(t._1, dialsOf(t._2)) -> round8(t._3.held)))
+    val slope = projection.fold(Double.NaN) { (at, row, target) =>
+      val (nm, w, _) = seedReads.head
+      val lo = dialsOf(w)
+      val step = ProjectStep * (ranges(at)._3 - ranges(at)._2)
+      val hi = lo.updated(at, lo(at) + step)
+      def reading(d: Vector[Double], k: Int): Double =
+        oneRead(worldOf(w, d), anchors, paths, years, base + ProjectOffset + k * ReadStride, obj.withoutGap).held
+      val s = round8((0 until ProjectSlopeReads).map(k => (reading(hi, k) - reading(lo, k)) / step).sum /
+        ProjectSlopeReads)
+      if !(s.isFinite && s > 0.0) then
+        usage(s"-project: $row reads a slope of $s in ${names(at)} on $nm; nothing to solve along")
+      println(f"projecting ${names(at)} onto $row = $target%.8g: slope $s%.8g on $nm")
+      s
+    }
+    val heldStart: Map[String, Double] =
+      if projection.isEmpty then heldSeeded
+      else
+        val missing = startArc.filterNot(m => heldSeeded.contains(heldKey(m.name, m.dials)))
+        if missing.nonEmpty then println(s"read ${missing.length} members' projected row afresh")
+        missing.zipWithIndex.foldLeft(heldSeeded) { case (m, (mem, k)) =>
+          val s = base + ProjectOffset + (ProjectSlopeReads + k) * ReadStride
+          val r = oneRead(worldOf(worldFor(mem.name), mem.dials), anchors, paths, years, s, obj.withoutGap)
+          m + (heldKey(mem.name, mem.dials) -> round8(r.held))
+        }
+
     /** One generation: `pop` mutations of members drawn from the archive, then a checkpoint.  The
       * archive is passed and returned rather than mutated, and a kill between generations loses
       * at most one generation's work. */
     def generation(arc: Vector[Member], g: Int, evals: Int, nsum0: Double, nn0: Int,
-                   trace0: Vector[(Int, Vector[Double])])
-        : (Vector[Member], Int, Double, Int, Vector[(Int, Vector[Double])]) =
+                   trace0: Vector[(Int, Vector[Double])], held0: Map[String, Double])
+        : (Vector[Member], Int, Double, Int, Vector[(Int, Vector[Double])], Map[String, Double]) =
       // The same `NumPyRNG` as the rest of the program and as the Rust harness: `randn` and `nextBoundedInt`
       // are gated bit-identical across the twins, so one `-seed` proposes the same candidates in both.
       // The mask keeps the derived seed non-negative in both languages.
@@ -1416,12 +1690,13 @@ object MarketSimSearch:
       // the noise read's slot (see `noiseReading`), past the generation's candidates and reserved
       // whether it is used or not, so a candidate's slot never depends on an outcome
       val noiseSlot = evals + pop * reps
-      val start = (arc, evals, Vector.empty[String], nsum0, nn0, trace0, reps == 1)
+      val start = (arc, evals, Vector.empty[String], nsum0, nn0, trace0, reps == 1,
+                   Vector.empty[String], Vector.empty[String], held0)
       // the archive's shape is read once a generation; `-cov 0` reads none and draws nothing
       // extra, so a run without it proposes exactly what it always did
       val factor = if cov > 0.0 then proposalFactor(arc, covShrink) else None
-      val (next, slots, log, nsum, nn, trace, _) =
-        (0 until pop).foldLeft(start) { case ((acc, ev, lg, nsum, nn, tr, noiseDue), _) =>
+      val (next, slots, log, nsum, nn, trace, _, cands, stageLog, heldNext) =
+        (0 until pop).foldLeft(start) { case ((acc, ev, lg, nsum, nn, tr, noiseDue, cl, sl, hm), _) =>
         val parent = acc(rng.nextBoundedInt(acc.length))
         val along = factor.filter(_ => rng.nextDouble() < cov)
         val z = parent.dials.indices.toVector.map(_ => rng.randn())
@@ -1429,7 +1704,14 @@ object MarketSimSearch:
           val zi = along match
             case Some(l) => (0 to i).foldLeft(0.0)((s, t) => s + l(i)(t) * z(t))
             case None    => z(i)
-          if fixed(i) then parent.dials(i) else stepped(i, parent.dials(i), zi, sigma)
+          if fixed(i) then parent.dials(i)
+          else projection.filter(_._1 == i) match
+            // the parent's miss on the row, closed along the slope; the draw is made as without it,
+            // so the other dials step alike
+            case Some((_, _, target)) =>
+              hm.get(heldKey(parent.name, parent.dials)).filter(_.isFinite)
+                .fold(parent.dials(i))(h => clamped(i, parent.dials(i) + (target - h) / slope))
+            case None => stepped(i, parent.dials(i), zi, sigma)
         })
         val t0 = System.nanoTime()
         // the lineage's bar, so an evaluation stops as soon as it is over it
@@ -1463,16 +1745,34 @@ object MarketSimSearch:
         val line = f"$g\t$ev\t${parent.name}\t${r.feasible}\t${r.score}%.6f\t${r.raw}%.6f" +
                    f"\t${r.worst}\t$secs%.3f\t" + r.desc.map(x => f"$x%.8g").mkString("\t") +
                    "\t" + r.gateFail.mkString("; ") + s"\t$took"
+        // every candidate's dials, so what it was can be read back without re-deriving the draws:
+        // the log carries its descriptors and the archive only the members
+        val staged = r.stageFail match
+          case None                  => "-"
+          case Some(f) if f.isEmpty  => "pass"
+          case Some(_)               => "fail"
+        val cand = f"$g\t$ev\t${parent.name}\t${r.feasible}\t$took\t$staged\t$secs%.3f\t${r.held}%.8g\t" +
+                   child.map(x => f"$x%.8g").mkString("\t")
+        val stageLine =
+          Option.when(obj.stageCheck)(s"$g\t$ev\t${r.stageFail.exists(_.isEmpty)}\t${r.feasible}\t" +
+            r.stageFail.fold("")(_.mkString("; ")) + "\t" + r.gateFail.mkString("; "))
         (grown, ev + reps, lg :+ line, nsum2, nn2, if took then tr :+ (g, r.desc) else tr,
-         noiseDue && reading.isEmpty)
+         noiseDue && reading.isEmpty, cl :+ cand, sl ++ stageLine,
+         if took then hm + (heldKey(parent.name, child) -> round8(r.held)) else hm)
       }
       val used = if reps == 1 then slots + 1 else slots
       appendLog(out, log)
+      appendTsv(out, "cands.tsv",
+                (Vector("gen", "eval", "parent", "feasible", "admitted", "stage", "seconds", "held") ++ names)
+                  .mkString("\t"), cands)
+      if obj.stageCheck then
+        appendTsv(out, "stage.tsv", "gen\teval\tprefixFeasible\tfeasible\tprefixFail\tgateFail", stageLog)
       writeArchive(out, next, g + 1, used, (nsum, nn), settings)
+      if projection.isDefined then writeHeld(out, next, heldNext)
       println(f"gen $g%5d  archive ${next.length}%3d  best ${next.map(_.score).min}%7.3f  " +
               f"median ${MarketSim.pctile(next.map(_.score), 0.5)}%7.3f  " +
               f"raw ${next.map(_.raw).min}%7.3f  slots $used%6d")
-      (next, used, nsum, nn, trace)
+      (next, used, nsum, nn, trace, heldNext)
 
     // `-gens 0` runs until the spread closes or the run is killed; the checkpoint after every
     // generation is what makes that safe.
@@ -1486,11 +1786,11 @@ object MarketSimSearch:
           (at, f.slice(8, 8 + descNames.length).toVector.map(x => x.toDoubleOption.getOrElse(Double.NaN))))
       }
     var arc = startArc; var g = gen0; var evals = evals0
-    var nsum = nsum0; var nn = nn0; var trace = trace0
+    var nsum = nsum0; var nn = nn0; var trace = trace0; var heldMap = heldStart
     var closed = false
     while !closed && (gens == 0 || g < gen0 + gens) do
-      val (a2, e2, s2, n2, t2) = generation(arc, g, evals, nsum, nn, trace)
-      arc = a2; evals = e2; nsum = s2; nn = n2; trace = t2; g += 1
+      val (a2, e2, s2, n2, t2, h2) = generation(arc, g, evals, nsum, nn, trace, heldMap)
+      arc = a2; evals = e2; nsum = s2; nn = n2; trace = t2; heldMap = h2; g += 1
       if close > 0.0 then
         spreadAdded(trace, g).foreach { (added, blk) =>
           if added < close then
