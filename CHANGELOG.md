@@ -35,21 +35,40 @@ lower return than the record's, the 3x legs about three times as much. `0.24.6-s
 `0.24.5-sp500` at drift 0.1475 (0.1364): return per vol 0.69 against CRSP 1954-2026's 0.69 (0.61),
 the median annual return 11.6% (10.4%) over 100-year paths. Against `0.24.5-sp500` on 24 fresh
 seeds, paired, both pass every class and miss nothing on all 24, and the new recipe sits 0.51
-closer to the record in summed distance a seed (t −5.2). `0.24.6-sp500.json` holds 30 members,
-member 0 the recipe, every one passing every class on seeds 1-4 under the set rule; its median
-member reads return per vol 0.68 (0.63 for `0.24.5-sp500.json`), with no row's median distance from
-the record worse than the outgoing set's beyond tolerance. `0.24.6-nasdaq` is
+closer to the record in summed distance a seed (t −5.2). `0.24.6-nasdaq` is
 `0.24.5-nasdaq` at drift 0.1512 (0.1354), which puts return per vol at QQQ's 0.38 on seeds 1-4 at
 200 × 100 where the 0.24.5 recipe reads 0.30; every other dial is unchanged, and
 `0.24.6-nasdaq-basket` carries the same drift. Against `0.24.5-nasdaq` on 24 fresh seeds, paired,
 it misses 0.88 rows a seed against 0.71 (worse on 5 seeds, better on 2; sign test p 0.23) and sits
 0.087 closer to the record in summed distance; the coupling misses on 19 seeds against 17.
-`0.24.6-nasdaq.json` holds 30 members, member 0 the recipe, every one passing every class on
-seeds 1-4 under the set rule; its median member reads return per vol 0.37 (0.34 for
-`0.24.5-nasdaq.json`), with no row's median distance from the record worse than the outgoing
-set's beyond tolerance. In this model a higher drift raises the short rate and cuts its time at
-the floor; the set's median member reads 1.90% and 27.9% of sessions at the floor (record 2.14%
-and 37.3%), where `0.24.5-nasdaq.json`'s read 1.91% and 28.1%.
+
+**The sets sample the drift.** `0.24.6-sp500.json` and `0.24.6-nasdaq.json` hold 30 members each,
+member 0 the recipe. One history pins the long-run drift only to its own sampling width, and a set
+whose members shared one drift would tell a consumer the long-run return is known exactly. So the
+members fill the 30 equal-probability strata of the drift's posterior, one each: a flat prior
+conditioned on the record's return per vol and on every other graded row, through the share of
+judged worlds at each drift that pass them. Member 0 sits in the stratum holding the record and
+members 1-29 follow in increasing return per vol, each its source world with only the drift moved.
+Return per vol runs 0.51-0.85 on the S&P (CRSP 1954-2026 0.69; drift 0.108-0.167) and 0.14-0.65 on
+the Nasdaq (QQQ 0.38; drift 0.090-0.205). Every member passes every class on seeds 1-4 under the
+set rule; the sets miss 0.28 rows a read on the S&P (0.42 for `0.24.5-sp500.json`) and 0.84 on the
+Nasdaq (0.95). The S&P's low side is a lower bound: at return per vol 0.53, worlds bred there pass
+the membership test 11 times in 22 against 22% of the pool's members moved there, so the posterior
+weights that side too lightly.
+
+**The set-level test for a sampled dial.** A median member's distance from the record rewards
+members bunched at the record, so it cannot test a set that samples a dial. On every graded row
+the recipe does not miss, the record's position in the set's pooled predictive (the mean over
+members of the record's percentile less 50, or of the log ratio) is compared with the outgoing
+set's within 5 points or 0.02, and the spread of member positions left after removing the drift's
+linear effect may be at most 1.45 times the outgoing set's plus the same tolerance. Against the
+0.24.5 sets the record sits further from the middle on six S&P rows (downside vol excess, equity
+d10, lower wing, sma10 exits, valuation dispersion, the 250-session variance ratio) and three
+Nasdaq rows (clustering lag 1, downside vol, kurtosis). All but one come from holding return per
+vol at the record: these are the drift-sensitive rows, and in this
+form they and the record's return per vol cannot both hold at once. Over all graded rows both sets
+sit nearer the record (summed centre distance in tolerance units: S&P 244 → 237, Nasdaq
+217 → 203).
 
 **The volatility exit, at 1x and 3x.** Two record-band rows read the consumer's simple
 volatility exit, written down completely: hold the index while the sample sd of the last 24 daily
@@ -138,6 +157,11 @@ window and blocks beside it. Every member of both sets passes all three rows on 
   `ReportedRecord`, `ReportedRow`, `RowFamily`; `Anchors` gains
   `vr250_eras` and `reported`, and `multi_year` is an `Option`; `vr250_era_of` takes the set's
   eras and fractional years; `variance_ratio` is public. The Scala twin matches.
+- The `return per vol` gate is the record's own joint band: `return per vol 0.31-1.09` on the S&P
+  (was `0.50-0.85`), `return per vol -0.18-0.97` on the Nasdaq (was `0.27-0.47`). A reader matching
+  the gate's label sees the new band in the name.
+- A set member's `score`, `worstRow` and `seededFrom` are its source world's search readings at that
+  world's drift.
 - `record_bands`: `-splice FILE -at DATE` continues a `-yahoo` series with a second file's returns
   dated after DATE; `-timing` reads `-yahoo`; `-coupling` also prints `variance ratio 250d`.
 - New `SAT_REF_DRIFT` (`SatRefDrift`): the satellite depth rows' reference drifts.
