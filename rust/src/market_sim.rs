@@ -267,6 +267,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 // with a ruler, `ungradedChannelSeries` otherwise; `logBasket` is never graded, and a run with a
 // ruler omits it unless an `-emitf32` run's `-emitcols` names it. A world without a basket loses
 // the basket rows, readings and `verdictSeries` entries the verdict used to supply.
+// `channels.macro` gained `warnings`, `falseAlarm` and `allClear` (`warning_counts`).
 const EMIT_SCHEMA: u32 = 30;
 
 /// Frozen structural constants of the volume channel — see the `vol_idio` field. Measured
@@ -10889,6 +10890,13 @@ pub struct MacroStats {
     pub hazard20y: f64,
     pub hazard10q: f64,
     pub p20q: f64,
+    /// THE WARNINGS (`warning_counts`), pooled over paths: how many, the share no 20% peak
+    /// followed within a quarter of their end, and the ALL-CLEAR -- the rate of a 20% peak within
+    /// a quarter from the quarter after a warning ends, over the unconditional rate. Reported,
+    /// never graded: the record's read on a handful of warnings
+    pub warnings: usize,
+    pub false_alarm: f64,
+    pub all_clear: f64,
     pub inv_share: f64,
     pub inv_dur: f64,
     pub vrp: f64,
@@ -11101,6 +11109,75 @@ struct HazardCounts {
     n_all: usize,
 }
 
+/// THE WARNINGS of one path, the build-up hazard's false-alarm rate and all-clear. A warning is a
+/// stretch the conditions index spends in its top decile, runs less than `WARNING_MERGE` sessions
+/// apart merged into one; it is FALSE when no 20% peak falls between its start and
+/// `WARNING_HORIZON` sessions after its end. The ALL-CLEAR sessions are the `WARNING_HORIZON` after
+/// each warning ends, outside every warning; their rate of a 20% peak within the horizon, over the
+/// hazard's unconditional rate, says whether leaving the top decile is safe to act on. A warning
+/// whose horizon runs past the path is not counted, nor is an all-clear session without a horizon.
+#[derive(Clone, Copy, Default)]
+struct WarningCounts {
+    warnings: usize,
+    false_alarms: usize,
+    clear_hits: usize,
+    clear_n: usize,
+}
+
+/// Sessions between two top-decile runs below which they are one warning: a quarter.
+pub const WARNING_MERGE: usize = 63;
+
+/// The horizon a warning answers for, and the all-clear's window and horizon: a quarter.
+pub const WARNING_HORIZON: usize = 63;
+
+fn warning_counts(held: &[f64], sp: &[DdSpan]) -> WarningCounts {
+    let n = held.len();
+    let h = WARNING_HORIZON;
+    let top: Vec<bool> = held.iter().map(|v| v.is_finite() && *v >= 0.90).collect();
+    let mut warns: Vec<(usize, usize)> = Vec::new();
+    let mut t = 0usize;
+    while t < n {
+        if top[t] {
+            let start = t;
+            while t < n && top[t] {
+                t += 1;
+            }
+            match warns.last_mut() {
+                Some(last) if start - last.1 - 1 < WARNING_MERGE => last.1 = t - 1,
+                _ => warns.push((start, t - 1)),
+            }
+        } else {
+            t += 1;
+        }
+    }
+    let peaks: Vec<usize> = sp.iter().map(|s| s.lo.saturating_sub(1)).collect();
+    let mut ahead = vec![false; n];
+    for &b in &peaks {
+        for a in &mut ahead[b.saturating_sub(h)..b] {
+            *a = true;
+        }
+    }
+    let mut c = WarningCounts::default();
+    for &(start, end) in &warns {
+        if end + h >= n {
+            continue;
+        }
+        c.warnings += 1;
+        if !peaks.iter().any(|&b| b >= start && b <= end + h) {
+            c.false_alarms += 1;
+        }
+        for u in (end + 1)..=(end + h) {
+            if !top[u] && held[u].is_finite() && u + h < n {
+                c.clear_n += 1;
+                if ahead[u] {
+                    c.clear_hits += 1;
+                }
+            }
+        }
+    }
+    c
+}
+
 struct MacroPathRead {
     members: [MemberRead; 9],
     inv_share: f64,
@@ -11109,6 +11186,7 @@ struct MacroPathRead {
     r2rv: f64,
     /// 20% peaks within a quarter, within a year, and 10% peaks within a quarter
     hazards: [HazardCounts; 3],
+    warnings: WarningCounts,
 }
 
 /// The conditions index read weekly like its counterpart: the last session of each five, ranked
@@ -11240,6 +11318,7 @@ fn macro_path_read(s: &Path) -> Option<MacroPathRead> {
         hazard_counts(&cond_held, &spans, 252),
         hazard_counts(&cond_held, &spans10, 63),
     ];
+    let warnings = warning_counts(&cond_held, &spans);
     let inv: Vec<bool> = m.slope.iter().map(|v| *v < 0.0).collect();
     let rv = fwd_realized_vol(&lp, 21);
     let l_iv: Vec<f64> = m.ivol.iter().map(|v| v.ln()).collect();
@@ -11269,6 +11348,7 @@ fn macro_path_read(s: &Path) -> Option<MacroPathRead> {
         },
         r2rv: r2_of(&l_iv, &l_rv),
         hazards,
+        warnings,
     })
 }
 
@@ -11344,6 +11424,8 @@ fn macro_stats(sims: &[Path]) -> Option<MacroStats> {
     });
     let spells: Vec<usize> = per.iter().flat_map(|p| p.spells.iter().copied()).collect();
     let (member_spread, hazard_spread) = macro_spreads(&per);
+    let p20q = hazard_ratio(0).1;
+    let (warnings, false_alarm, all_clear) = warning_rates(&per, p20q);
     Some(MacroStats {
         members,
         member_spread,
@@ -11367,8 +11449,35 @@ fn macro_stats(sims: &[Path]) -> Option<MacroStats> {
         hazard20q: hazard_ratio(0).0,
         hazard20y: hazard_ratio(1).0,
         hazard10q: hazard_ratio(2).0,
-        p20q: hazard_ratio(0).1,
+        p20q,
+        warnings,
+        false_alarm,
+        all_clear,
     })
+}
+
+/// The warnings, pooled the hazard's way: counts over every path, then the count, the false-alarm
+/// share and the all-clear over the unconditional quarter rate `p20q`.
+fn warning_rates(per: &[MacroPathRead], p20q: f64) -> (usize, f64, f64) {
+    let w = per
+        .iter()
+        .fold(WarningCounts::default(), |a, p| WarningCounts {
+            warnings: a.warnings + p.warnings.warnings,
+            false_alarms: a.false_alarms + p.warnings.false_alarms,
+            clear_hits: a.clear_hits + p.warnings.clear_hits,
+            clear_n: a.clear_n + p.warnings.clear_n,
+        });
+    let false_alarm = if w.warnings > 0 {
+        w.false_alarms as f64 / w.warnings as f64
+    } else {
+        f64::NAN
+    };
+    let all_clear = if w.clear_n > 0 && p20q > 0.0 {
+        w.clear_hits as f64 / w.clear_n as f64 / p20q
+    } else {
+        f64::NAN
+    };
+    (w.warnings, false_alarm, all_clear)
 }
 
 /// The per-path spreads: one reading per path — its own median over its episodes where the
@@ -13692,14 +13801,14 @@ const RECORD_BANDS_SP500: [RecordBand; 22] = [
     },
     RecordBand {
         name: "bond depth vs vol",
-        record: 1.029057,
+        record: 1.029058,
         q: [
-            0.144525, 0.471083, 0.647434, 0.752934, 0.82832, 0.889519, 0.948797, 1.000965,
-            1.050809, 1.094922, 1.139143, 1.183327, 1.226545, 1.273317, 1.323438, 1.375117,
-            1.435519, 1.499503, 1.570601, 1.657599, 1.785306, 1.965568, 2.304313,
+            0.144525, 0.471084, 0.647434, 0.752934, 0.828321, 0.88952, 0.948798, 1.000965,
+            1.050809, 1.094922, 1.139144, 1.183328, 1.226545, 1.27332, 1.323439, 1.375117,
+            1.435521, 1.499504, 1.570602, 1.657597, 1.785308, 1.965573, 2.304314,
         ],
         joint_c: 0.497225,
-        joint: (0.372218, 2.074475),
+        joint: (0.372219, 2.074475),
     },
     RecordBand {
         name: "post-trough rate %",
@@ -13753,23 +13862,23 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 22] = [
         name: "equity vol %",
         record: 26.901577,
         q: [
-            16.978047, 20.483348, 22.226065, 23.163107, 23.809259, 24.323458, 24.768747, 25.18708,
-            25.575214, 25.933833, 26.295109, 26.644488, 27.006345, 27.360215, 27.761212, 28.142,
-            28.557865, 29.048477, 29.609975, 30.314636, 31.408602, 33.344443, 38.171744,
+            16.978037, 20.483349, 22.226065, 23.163097, 23.809253, 24.323456, 24.76874, 25.187079,
+            25.575208, 25.933828, 26.295105, 26.644481, 27.006345, 27.360214, 27.76121, 28.142004,
+            28.55787, 29.048477, 29.609973, 30.314645, 31.4086, 33.34445, 38.171757,
         ],
-        joint_c: 0.495775,
-        joint: (19.850093, 34.191968),
+        joint_c: 0.495725,
+        joint: (19.878626, 34.181884),
     },
     RecordBand {
         name: "typical-year vol %",
-        record: 19.966715,
+        record: 19.966713,
         q: [
-            13.846252, 16.530688, 17.397075, 17.811595, 18.258322, 18.684506, 18.960346, 19.291191,
-            19.432684, 19.564056, 19.701465, 19.854891, 19.941719, 20.137238, 20.45154, 20.913609,
-            21.279249, 21.646618, 22.343644, 22.857755, 23.44498, 24.674651, 34.834227,
+            13.846234, 16.530707, 17.397078, 17.811599, 18.258337, 18.68451, 18.960351, 19.291152,
+            19.432688, 19.564064, 19.701482, 19.854883, 19.941735, 20.137221, 20.451535, 20.913599,
+            21.279221, 21.646616, 22.343636, 22.857745, 23.444964, 24.674639, 34.834256,
         ],
-        joint_c: 0.495775,
-        joint: (16.084733, 26.455213),
+        joint_c: 0.495725,
+        joint: (16.088202, 26.384206),
     },
     RecordBand {
         name: "return per vol",
@@ -13779,63 +13888,63 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 22] = [
             0.272005, 0.298493, 0.32861, 0.356969, 0.387892, 0.41683, 0.447033, 0.480692, 0.515387,
             0.552254, 0.597192, 0.653093, 0.741078, 0.899654, 1.220561,
         ],
-        joint_c: 0.495775,
-        joint: (-0.176345, 0.964258),
+        joint_c: 0.495725,
+        joint: (-0.17495, 0.963577),
     },
     RecordBand {
         name: "kurtosis",
-        record: 9.554069,
+        record: 9.55407,
         q: [
-            4.711033, 6.775459, 7.594679, 7.971117, 8.252677, 8.487016, 8.688466, 8.854247,
-            9.015825, 9.168515, 9.321957, 9.484207, 9.639491, 9.806465, 9.972342, 10.149984,
-            10.336813, 10.564895, 10.82796, 11.171723, 11.720816, 12.73469, 16.207453,
+            4.711036, 6.775437, 7.594671, 7.971104, 8.252674, 8.487022, 8.688472, 8.854258,
+            9.015805, 9.168505, 9.321964, 9.484194, 9.639484, 9.806452, 9.972343, 10.150002,
+            10.33683, 10.564881, 10.827992, 11.171733, 11.720846, 12.734709, 16.207478,
         ],
-        joint_c: 0.495775,
-        joint: (6.320988, 13.262918),
+        joint_c: 0.495725,
+        joint: (6.32246, 13.26027),
     },
     RecordBand {
         name: "clustering lag 1",
-        record: 0.29277,
+        record: 0.292768,
         q: [
-            0.105963, 0.200378, 0.232372, 0.24657, 0.255755, 0.262517, 0.268262, 0.272928,
-            0.277223, 0.281235, 0.285201, 0.288836, 0.292467, 0.29587, 0.299372, 0.30321, 0.307276,
-            0.311634, 0.316689, 0.322959, 0.332084, 0.349405, 0.393203,
+            0.105961, 0.200377, 0.23237, 0.246569, 0.255754, 0.262515, 0.26826, 0.272927, 0.277222,
+            0.281234, 0.285201, 0.288836, 0.292466, 0.295868, 0.29937, 0.303208, 0.307275,
+            0.311632, 0.316687, 0.322957, 0.332082, 0.349404, 0.3932,
         ],
-        joint_c: 0.495775,
-        joint: (0.182685, 0.356158),
+        joint_c: 0.495725,
+        joint: (0.18275, 0.355992),
     },
     RecordBand {
         name: "clustering lag 20",
-        record: 0.248803,
+        record: 0.248802,
         q: [
-            0.046058, 0.124548, 0.160759, 0.177523, 0.18792, 0.195603, 0.201787, 0.207376,
-            0.212243, 0.216785, 0.220706, 0.224759, 0.228608, 0.232376, 0.236302, 0.240176,
-            0.244481, 0.24902, 0.254205, 0.260078, 0.268727, 0.284755, 0.335159,
+            0.046058, 0.124547, 0.160758, 0.177522, 0.18792, 0.195602, 0.201786, 0.207376,
+            0.212243, 0.216783, 0.220706, 0.224758, 0.228607, 0.232376, 0.236301, 0.240175,
+            0.24448, 0.249019, 0.254204, 0.260077, 0.268726, 0.284754, 0.335159,
         ],
-        joint_c: 0.495775,
-        joint: (0.107942, 0.292101),
+        joint_c: 0.495725,
+        joint: (0.108076, 0.292081),
     },
     RecordBand {
         name: "variance ratio 60d",
         record: 0.831558,
         q: [
-            0.514834, 0.632326, 0.689445, 0.719287, 0.739068, 0.754811, 0.768352, 0.778939,
-            0.789056, 0.798778, 0.8083, 0.81691, 0.825511, 0.834846, 0.844108, 0.85396, 0.864269,
-            0.875894, 0.889135, 0.906583, 0.931117, 0.982527, 1.086121,
+            0.514834, 0.632326, 0.689445, 0.719287, 0.739068, 0.754811, 0.768353, 0.77894,
+            0.789056, 0.798778, 0.808301, 0.816911, 0.825511, 0.834846, 0.844107, 0.853961,
+            0.86427, 0.875894, 0.889136, 0.906583, 0.931117, 0.982527, 1.086122,
         ],
-        joint_c: 0.495775,
-        joint: (0.604932, 1.000927),
+        joint_c: 0.495725,
+        joint: (0.605084, 1.000813),
     },
     RecordBand {
         name: "downside vol excess %",
-        record: 1.072223,
+        record: 1.072263,
         q: [
-            -8.375022, -3.473217, -1.911703, -1.065323, -0.514075, -0.10874, 0.247915, 0.554157,
-            0.83595, 1.092732, 1.361124, 1.615989, 1.863066, 2.119029, 2.363603, 2.629444,
-            2.909271, 3.216147, 3.553364, 3.997832, 4.626134, 5.727797, 8.339008,
+            -8.374944, -3.473147, -1.911654, -1.06529, -0.514035, -0.108654, 0.247952, 0.554233,
+            0.836026, 1.092757, 1.361141, 1.615962, 1.863145, 2.119078, 2.363652, 2.62949,
+            2.909283, 3.216184, 3.553394, 3.997823, 4.626175, 5.727861, 8.339009,
         ],
-        joint_c: 0.495775,
-        joint: (-4.142547, 6.169085),
+        joint_c: 0.495725,
+        joint: (-4.14177, 6.160916),
     },
     RecordBand {
         name: "up-day share %",
@@ -13845,19 +13954,19 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 22] = [
             54.521625, 54.631518, 54.740061, 54.840588, 54.944574, 55.048812, 55.155316, 55.270821,
             55.395579, 55.526431, 55.678509, 55.874636, 56.166181, 56.691423, 58.06686,
         ],
-        joint_c: 0.495775,
-        joint: (52.613951, 56.905836),
+        joint_c: 0.495725,
+        joint: (52.614712, 56.90407),
     },
     RecordBand {
         name: "leverage corr",
         record: -0.107111,
         q: [
-            -0.195601, -0.165954, -0.148922, -0.139764, -0.133214, -0.128037, -0.123638, -0.119485,
-            -0.115678, -0.111994, -0.108432, -0.104824, -0.101165, -0.097354, -0.093575, -0.089341,
-            -0.084973, -0.080282, -0.074603, -0.067438, -0.05678, -0.037189, 0.001315,
+            -0.195599, -0.165953, -0.148921, -0.139763, -0.133214, -0.128036, -0.123638, -0.119485,
+            -0.115678, -0.111994, -0.10843, -0.104824, -0.101165, -0.097354, -0.093575, -0.089341,
+            -0.084974, -0.080282, -0.074603, -0.067438, -0.05678, -0.037189, 0.001314,
         ],
-        joint_c: 0.495775,
-        joint: (-0.17272, -0.028122),
+        joint_c: 0.495725,
+        joint: (-0.172497, -0.02826),
     },
     RecordBand {
         name: "crashes/century",
@@ -13867,53 +13976,53 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 22] = [
             29.200463, 29.200463, 32.850521, 32.850521, 32.850521, 36.500579, 36.500579, 40.150637,
             40.150637, 43.800695, 43.800695, 47.450753, 51.100811, 58.400927, 73.001159,
         ],
-        joint_c: 0.495775,
+        joint_c: 0.495725,
         joint: (3.650058, 62.050985),
     },
     RecordBand {
         name: "median depth %",
-        record: -22.796671,
+        record: -22.796651,
         q: [
-            -98.929999, -79.792922, -49.366815, -36.464957, -32.654551, -28.633866, -28.559349,
-            -28.469599, -25.233404, -24.944541, -23.318058, -22.796671, -22.796671, -22.7683,
-            -22.7683, -21.764737, -21.285594, -19.54298, -18.285694, -17.266643, -16.10439,
-            -15.859033, -15.000029,
+            -98.929999, -79.792945, -49.366832, -36.464964, -32.654502, -28.633858, -28.559365,
+            -28.469611, -25.233363, -24.94457, -23.318045, -22.796651, -22.796651, -22.768316,
+            -22.768316, -21.764667, -21.285608, -19.542987, -18.28574, -17.266635, -16.104397,
+            -15.859029, -15.000011,
         ],
-        joint_c: 0.495775,
-        joint: (-92.109019, -15.609315),
+        joint_c: 0.495725,
+        joint: (-91.880815, -15.609339),
     },
     RecordBand {
         name: "vol-timing edge pts/yr",
-        record: 1.395702,
+        record: 1.395705,
         q: [
-            -14.811461, -8.480341, -5.848033, -4.342122, -3.257243, -2.361273, -1.583315,
-            -0.849834, -0.175065, 0.486265, 1.140094, 1.79515, 2.425237, 3.054484, 3.715401,
-            4.420316, 5.18801, 5.99233, 6.891132, 8.008388, 9.509201, 12.319534, 17.678657,
+            -14.811454, -8.48034, -5.848031, -4.339258, -3.257247, -2.36127, -1.583319, -0.851476,
+            -0.174089, 0.48625, 1.140594, 1.79466, 2.425241, 3.054477, 3.715402, 4.420323,
+            5.188017, 5.991625, 6.892016, 8.00839, 9.509209, 12.319545, 17.678661,
         ],
-        joint_c: 0.495775,
-        joint: (-9.665527, 13.630702),
+        joint_c: 0.495725,
+        joint: (-9.663157, 13.628378),
     },
     RecordBand {
         name: "variance ratio 120d",
         record: 0.923272,
         q: [
-            0.382528, 0.541004, 0.633353, 0.688093, 0.723495, 0.750007, 0.773775, 0.79578,
-            0.814282, 0.831841, 0.849016, 0.865292, 0.882173, 0.899942, 0.916732, 0.934868,
+            0.382528, 0.541003, 0.633352, 0.688093, 0.723496, 0.750007, 0.773776, 0.795781,
+            0.814282, 0.831841, 0.849017, 0.865293, 0.882173, 0.899942, 0.916731, 0.934867,
             0.953161, 0.974375, 0.999842, 1.030191, 1.075804, 1.1611, 1.335886,
         ],
-        joint_c: 0.495775,
-        joint: (0.501251, 1.194677),
+        joint_c: 0.495725,
+        joint: (0.501397, 1.193725),
     },
     RecordBand {
         name: "variance ratio 250d",
         record: 1.106648,
         q: [
-            0.322401, 0.481016, 0.602653, 0.674201, 0.72305, 0.761262, 0.794593, 0.823583,
-            0.852795, 0.880536, 0.907209, 0.934726, 0.960711, 0.989173, 1.017197, 1.048521,
-            1.08214, 1.121155, 1.166465, 1.225195, 1.317713, 1.487675, 1.877279,
+            0.322401, 0.481016, 0.602654, 0.674201, 0.72305, 0.761262, 0.794594, 0.823584,
+            0.852794, 0.880536, 0.90721, 0.934726, 0.960711, 0.989172, 1.017198, 1.048521, 1.08214,
+            1.121157, 1.166464, 1.225195, 1.317712, 1.487674, 1.877279,
         ],
-        joint_c: 0.495775,
-        joint: (0.436192, 1.575484),
+        joint_c: 0.495725,
+        joint: (0.436483, 1.575381),
     },
     RecordBand {
         name: "short rate %",
@@ -13939,14 +14048,14 @@ const RECORD_BANDS_NASDAQ: [RecordBand; 22] = [
     },
     RecordBand {
         name: "bond depth vs vol",
-        record: 1.029057,
+        record: 1.029058,
         q: [
-            0.144525, 0.471083, 0.647434, 0.752934, 0.82832, 0.889519, 0.948797, 1.000965,
-            1.050809, 1.094922, 1.139143, 1.183327, 1.226545, 1.273317, 1.323438, 1.375117,
-            1.435519, 1.499503, 1.570601, 1.657599, 1.785306, 1.965568, 2.304313,
+            0.144525, 0.471084, 0.647434, 0.752934, 0.828321, 0.88952, 0.948798, 1.000965,
+            1.050809, 1.094922, 1.139144, 1.183328, 1.226545, 1.27332, 1.323439, 1.375117,
+            1.435521, 1.499504, 1.570602, 1.657597, 1.785308, 1.965573, 2.304314,
         ],
         joint_c: 0.497225,
-        joint: (0.372218, 2.074475),
+        joint: (0.372219, 2.074475),
     },
     RecordBand {
         name: "post-trough rate %",
@@ -14035,7 +14144,7 @@ const SP500_ANCHORS: Anchors = Anchors {
     rate_years: 72,
     bond_window: "clean TLT, 24y",
     bond_years: 24,
-    bond_depth: 1.029057,
+    bond_depth: 1.029058,
     short_rate: 4.595174,
     short_rate_sd: 0.09,
     rate_floor: 14.565588,
@@ -14190,7 +14299,7 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     rate_years: 27,
     bond_window: "clean TLT, 24y",
     bond_years: 24,
-    bond_depth: 1.029057,
+    bond_depth: 1.029058,
     short_rate: 2.136466,
     short_rate_sd: 1.05,
     rate_floor: 37.313224,
@@ -14232,7 +14341,7 @@ const NASDAQ_ANCHORS: Anchors = Anchors {
     // QQQ 1999-2026: 54.78% of moving sessions rise
     up_share: 54.8,
     up_share_sd: 0.02,
-    vol_timing: 1.395702,
+    vol_timing: 1.395705,
     vol_timing_sd: 2.22,
     vol_timing_judgment: 3.0,
     lev_corr: -0.1073,
@@ -21040,7 +21149,8 @@ fn macro_readings_block(ms: &MacroStats) -> String {
         .collect();
     format!(
         "    \"macro\": {{ \"null\": {}, \"episodes\": {}, \"invShare\": {}, \"invDur\": {}, \"vrp\": {}, \"r2rv\": {}, \
-         \"hazard20q\": {}, \"hazard20y\": {}, \"hazard10q\": {}, \"p20q\": {},\n      \
+         \"hazard20q\": {}, \"hazard20y\": {}, \"hazard10q\": {}, \"p20q\": {}, \"warnings\": {}, \
+         \"falseAlarm\": {}, \"allClear\": {},\n      \
          \"perPath\": {{ \"invShare\": {}, \"vrp\": {}, \"r2rv\": {}, \"hazard20q\": {} }},\n      \
          \"members\": [\n{}\n      ] }}",
         ms.sibling,
@@ -21053,6 +21163,9 @@ fn macro_readings_block(ms: &MacroStats) -> String {
         num(ms.hazard20y),
         num(ms.hazard10q),
         num(ms.p20q),
+        ms.warnings,
+        num(ms.false_alarm),
+        num(ms.all_clear),
         sp(ms.inv_share_spread),
         sp(ms.vrp_spread),
         sp(ms.r2rv_spread),
@@ -23491,6 +23604,12 @@ pub fn main() {
             jf(ms.p20q, 0, 3),
             jf(ms.hazard20y, 0, 2),
             jf(ms.hazard10q, 0, 2)
+        );
+        println!(
+            "    leverage warnings      {} warnings, false alarms {}% (no 20% peak by a quarter after it ends)   all-clear x{} (the quarter after one ends)",
+            ms.warnings,
+            jf(100.0 * ms.false_alarm, 0, 1),
+            jf(ms.all_clear, 0, 2)
         );
         let (c_r2, c_pre, _) = ms.member_spread[2];
         println!(
@@ -29262,6 +29381,30 @@ mod amplifier_anchor_tests {
 #[cfg(test)]
 mod macro_panel_tests {
     use super::*;
+
+    /// The warnings as defined: top-decile runs closer than a quarter are one warning, a warning
+    /// with a 20% peak by a quarter after its end is a hit and one without a false alarm, one whose
+    /// horizon runs past the path is not counted, and the all-clear sessions are the quarter after
+    /// each end.
+    #[test]
+    fn warnings_merge_close_runs_and_count_false_alarms_and_the_all_clear_quarter() {
+        let mut held = vec![0.5f64; 600];
+        for t in (100..150).chain(160..200).chain(400..420).chain(570..581) {
+            held[t] = 0.95;
+        }
+        let sp = [DdSpan {
+            lo: 231,
+            trough: 250,
+            hi: 300,
+            depth: -0.25,
+            censored: false,
+        }];
+        let c = warning_counts(&held, &sp);
+        assert_eq!(
+            (c.warnings, c.false_alarms, c.clear_hits, c.clear_n),
+            (2, 1, 30, 126)
+        );
+    }
 
     #[test]
     fn off_is_bit_identical_and_carries_no_columns_and_every_frozen_world_is_off() {

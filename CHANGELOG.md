@@ -56,19 +56,30 @@ Nasdaq (0.95). The S&P's low side is a lower bound: at return per vol 0.53, worl
 the membership test 11 times in 22 against 22% of the pool's members moved there, so the posterior
 weights that side too lightly.
 
-**The set-level test for a sampled dial.** A median member's distance from the record rewards
-members bunched at the record, so it cannot test a set that samples a dial. On every graded row
-the recipe does not miss, the record's position in the set's pooled predictive (the mean over
-members of the record's percentile less 50, or of the log ratio) is compared with the outgoing
-set's within 5 points or 0.02, and the spread of member positions left after removing the drift's
-linear effect may be at most 1.45 times the outgoing set's plus the same tolerance. Against the
-0.24.5 sets the record sits further from the middle on six S&P rows (downside vol excess, equity
-d10, lower wing, sma10 exits, valuation dispersion, the 250-session variance ratio) and three
-Nasdaq rows (clustering lag 1, downside vol, kurtosis). All but one come from holding return per
-vol at the record: these are the drift-sensitive rows, and in this
-form they and the record's return per vol cannot both hold at once. Over all graded rows both sets
-sit nearer the record (summed centre distance in tolerance units: S&P 244 → 237, Nasdaq
-217 → 203).
+**A set is scored against the record.** A median member's distance from the record rewards
+members bunched at it, so it cannot test a set that samples a dial. Each set is now scored by a
+proper score: on every graded row, the CRPS of the record under the set's pooled single histories
+(30 members, seeds 1-4, 200 paths of 100 years each), divided by a fixed yardstick (the record's
+own resample sd on a banded row, else the outgoing set's spread, frozen), summed over the rows. A
+proper score cannot be improved by widening a set to cover the record or by bunching its members on
+it. A set regresses when its summed score is worse beyond its sampling error, bootstrapped over
+members.
+
+| | rows | `0.24.5` set | `0.24.6` set | change, 95% interval |
+|---|---|---|---|---|
+| S&P | 53 | 25.87 | 25.51 | −0.36 (−1.35 to +0.83) |
+| Nasdaq | 45 | 23.18 | 23.54 | +0.36 (−0.31 to +1.00) |
+
+Neither set changes beyond its sampling error. What moved:
+
+- **S&P:** holding return per vol at the record moves the record to the middle of the set on return
+  per vol, and nearer on the up-day share, the 60-session variance ratio, kurtosis and clustering.
+  It sits further out on sma10 exits, equity d10, the 250-session variance ratio and leverage corr.
+- **Nasdaq:** nearer on leverage corr and the long-window decline gap. Further on the avoided share,
+  where the record now sits at the 91st percentile of the set (the 87th before), and on the
+  long-window variance ratios and annual autocorrelation.
+- **Rows outside the central 90%:** the record falls there on one S&P row (decline gap p90 y) and one
+  Nasdaq row (bubble coupling 3y), where 0.24.5's sets had one and two.
 
 **The volatility exit, at 1x and 3x.** Two record-band rows read the consumer's simple
 volatility exit, written down completely: hold the index while the sample sd of the last 24 daily
@@ -116,6 +127,17 @@ names:
 - The `*-basket` recipes keep their dials and eight names, emitted ungraded without a ruler. A
   basket costs about 0.2 ms and 0.23 MB a name per 100-year path: a 200 × 100 verdict reads in
   1.2 s at 8 names and 2.4 s at 45.
+
+**What a leverage warning is worth.** Beside the build-up hazard, the macro panel reports its
+warnings: stretches the conditions index spends in its top decile, runs fewer than a quarter apart
+merged into one.
+
+- **False alarms:** the share of warnings no 20% peak followed within a quarter of their end. The
+  record reads 75-88% over 20 warnings since 1990 (CRSP, SPY, the NDX; 16 on QQQ's window), and the
+  worlds 79% (`0.24.6-sp500`) and 75% (`0.24.6-nasdaq`).
+- **The all-clear:** the chance of a 20% peak within a quarter from the quarter after a warning
+  ends, over the unconditional chance. The record reads 0.28-0.38x and the worlds 1.0x. The record's
+  figure rests on one peak, March 2000, so it is reported, not graded.
 
 **Satellite depth rows at the record's drift.** The satellite's d5, d10 and crash ratios read both
 legs with their own realized drift replaced by SPY's and QQQ's over 1999-2026 (8.24% and 10.26% a
@@ -165,6 +187,18 @@ window and blocks beside it. Every member of both sets passes all three rows on 
 - `record_bands`: `-splice FILE -at DATE` continues a `-yahoo` series with a second file's returns
   dated after DATE; `-timing` reads `-yahoo`; `-coupling` also prints `variance ratio 250d`.
 - New `SAT_REF_DRIFT` (`SatRefDrift`): the satellite depth rows' reference drifts.
+- `channels.macro` gains `warnings`, `falseAlarm` and `allClear` (schema 30 covers them); new
+  `WARNING_MERGE` and `WARNING_HORIZON`.
+- `macro-2026-09-06.tsv` is read from public sources (FRED's CSVs, Yahoo, Ken French), each series
+  cut where it was first measured. Every row reproduces but those on the revised series
+  (NFCILEVERAGE, TOTBKCR, GDP), which move in the second or third decimal: the quarter hazard reads
+  2.72 / 2.20 / 2.04 / 1.44 on CRSP / SPY / NDX / QQQ, where it read 2.74 / 2.21 / 2.05 / 1.45. No
+  shipped band moves.
+- The Nasdaq record bands' QQQ rows and both sets' TLT bond row are read from Yahoo's public
+  adjusted closes taken 2026-10-04: records move in the sixth significant figure and band edges in
+  the third decimal at most (`bond depth vs vol` 1.029058, the Nasdaq vol-timing record 1.395705),
+  and no member of either set changes band membership. Every row of `recordbands-2026-09-26.tsv`
+  now regenerates from public sources.
 - API, the basket:
   - `Anchors` loses `basket_corr`, `basket_beta`, `basket_vol_ratio` and `basket_name_vol_band`, and
     gains `basket_ruler`.

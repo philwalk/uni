@@ -24,6 +24,16 @@ class MacroPanelSuite extends FunSuite:
     rs.find(r => r(0) == set && r(1) == series && r(2) == member && r(3) == stat)
       .getOrElse(fail(s"fixture row [$set $series $member $stat] missing"))(6).toDouble
 
+  // The warnings as defined: top-decile runs closer than a quarter are one warning, a warning with a
+  // 20% peak by a quarter after its end is a hit and one without a false alarm, one whose horizon
+  // runs past the path is not counted, and the all-clear sessions are the quarter after each end.
+  test("the warnings merge close runs, count false alarms, and read the all-clear quarter") {
+    val top = (100 until 150) ++ (160 until 200) ++ (400 until 420) ++ (570 to 580)
+    val held = Array.tabulate(600)(t => if top.contains(t) then 0.95 else 0.5)
+    val sp = Vector(MarketSim.DdSpan(231, 250, 300, -0.25, false))
+    assertEquals(MarketSim.warningCounts(held, sp), (2, 1, 30, 126))
+  }
+
   test("off is bit-identical and carries no columns; every frozen release and pre-0.24.0 recipe is off") {
     val off = MarketSim.simulate(MarketSim.Defaults, 3, MarketSim.DefaultSeed)
     val on  = MarketSim.simulate(MarketSim.Defaults.copy(macroPanel = 1), 3, MarketSim.DefaultSeed)

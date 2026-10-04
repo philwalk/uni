@@ -1952,7 +1952,7 @@ default gate ensemble, which is also what an emitted path's `channels.macro` car
 
 | row | record, S&P (CRSP / SPY) | model, `0.24.0-macro` | record, Nasdaq (NDX / QQQ) | model, `0.24.0-nasdaq` |
 |---|---|---|---|---|
-| conditions HAZARD (mechanism): a 20% peak within the next quarter, with the index in its top decile, as a multiple of the unconditional chance; within a year and for 10% dips reported | 2.74 / 2.21; 1.24 / 1.18; 1.64 / 1.27 | **1.68**; 1.39; 1.35 | 2.05 / 1.45; 0.80 / 0.40; 1.11 / 0.91 | **1.47**; 1.23; 1.14 |
+| conditions HAZARD (mechanism): a 20% peak within the next quarter, with the index in its top decile, as a multiple of the unconditional chance; within a year and for 10% dips reported | 2.72 / 2.20; 1.24 / 1.18; 1.63 / 1.26 | **1.68**; 1.39; 1.35 | 2.04 / 1.44; 0.79 / 0.40; 1.10 / 0.90 | **1.47**; 1.23; 1.14 |
 | conditions BUILD-UP: mean trailing rank over the quarter before the peak (mechanism: clear of a decoupled 0.48; fidelity: the record's level 0.82–1.00) | 0.94 / 0.94 | 0.92 | 0.92 / 0.82 | 0.84 |
 | build-up (reported): spread, implied vol, slope's share inverted | 0.60 / 0.16, 0.41 / 0.41, 0 / 0 | 0.45, 0.64, 0.00 | 0.16 / 0.16, 0.42 / 0.44, 0 / 0 | 0.48, 0.66, 0.00 |
 | firing lag, sessions (fidelity): spread, conditions | +7 / +7, −48 / −44 | −6, −63 | +16 / +16, −49 / +101 | −14, −63 |
@@ -1966,7 +1966,7 @@ default gate ensemble, which is also what an emitted path's `channels.macro` car
 
 The one genuinely leading signal in the record is the leverage index, and what it leads is a
 **hazard**: with NFCILEVERAGE in the top decile of its trailing year, a 20% peak falls within the
-next quarter 2.0–2.7× as often as unconditionally on CRSP, SPY and NDX (1.45× on QQQ's four
+next quarter 2.0–2.7× as often as unconditionally on CRSP, SPY and NDX (1.44× on QQQ's four
 episodes), fading to ~1.2× at a year and ~1× for 10% dips — leverage concentrates the big peaks,
 it does not cause ordinary corrections — and its **build-up**, the mean trailing rank over the
 quarter before a 20% peak, is 0.92–0.94: rising into 1998, 2000, 2007, 2018 and 2020 alike and
@@ -1993,6 +1993,21 @@ firings) and the model's index is already firing when the quarter before the pea
 the lookback's edge); its spread trails the peak by one to three weeks and the model's leads it
 by one to three; both lag bands are shared by the two sets, ±40 sessions around the four
 references' median. Both recipes pass realism, mechanism and fidelity on four seeds.
+
+**What a warning is worth** (reported, never graded). Read the index's top-decile stretches as
+warnings, with runs fewer than a quarter apart merged into one. The record has had 20 since 1990,
+16 over QQQ's window.
+
+- **False alarms:** most warnings are false. No 20% peak followed within a quarter of the warning's
+  end for 75% of them on CRSP, 85% on SPY, 80% on the NDX and 88% on QQQ. The worlds read 79%
+  (`0.24.6-sp500`) and 75% (`0.24.6-nasdaq`).
+- **The all-clear:** the chance of a 20% peak within a quarter, from the quarter after a warning
+  ends, over the unconditional chance. The record reads 0.28× to 0.38× and the worlds 1.0×. But the
+  record's figure rests on one peak, March 2000, and on none over QQQ's window, so one history
+  cannot say whether leaving the top decile is a real all-clear.
+
+`channels.macro` carries `warnings`, `falseAlarm` and `allClear`, and the report prints them under
+the hazard. The record's rows are in `macro-2026-09-06.tsv`.
 The 10% episodes, reported beside the graded rows as `lag10` / `fired10`, put more events behind
 the timing on the S&P: the record's leverage index fires 44 sessions before the peak over the
 8 fired episodes on each of CRSP and SPY (of 10 and 12), its spread 4 after over 9, and the model

@@ -295,6 +295,7 @@ object MarketSim:
   // only with a ruler, `ungradedChannelSeries` otherwise; `logBasket` is never graded, and a run
   // with a ruler omits it unless an `-emitf32` run's `-emitcols` names it.  A world without a
   // basket loses the basket rows, readings and `verdictSeries` entries the verdict used to supply.
+  // `channels.macro` gained `warnings`, `falseAlarm` and `allClear` (`warningCounts`).
   val EmitSchema: Int = 30
 
   val EmitSidecarKeys: Vector[String] =
@@ -5809,7 +5810,63 @@ object MarketSim:
                               // index sits in its top decile -- the mechanism's target (record
                               // 2.0-2.7 / ~1.2 / ~1 on the S&P) -- and the unconditional
                               // quarter probability of a 20% peak
-                              hazard20q: Double, hazard20y: Double, hazard10q: Double, p20q: Double)
+                              hazard20q: Double, hazard20y: Double, hazard10q: Double, p20q: Double,
+                              // THE WARNINGS (`warningCounts`), pooled over paths: how many, the
+                              // share no 20% peak followed within a quarter of their end, and the
+                              // ALL-CLEAR -- the rate of a 20% peak within a quarter from the
+                              // quarter after a warning ends, over the unconditional rate.
+                              // Reported, never graded: the record's read on a handful of warnings
+                              warnings: Int, falseAlarm: Double, allClear: Double)
+
+  /** Sessions between two top-decile runs below which they are one warning: a quarter. */
+  val WarningMerge = 63
+
+  /** The horizon a warning answers for, and the all-clear's window and horizon: a quarter. */
+  val WarningHorizon = 63
+
+  /** THE WARNINGS of one path, the build-up hazard's false-alarm rate and all-clear, as (warnings,
+    * false alarms, all-clear sessions with a 20% peak ahead, all-clear sessions).  A warning is a
+    * stretch the conditions index spends in its top decile, runs less than `WarningMerge` sessions
+    * apart merged into one; it is FALSE when no 20% peak falls between its start and
+    * `WarningHorizon` sessions after its end.  The ALL-CLEAR sessions are the `WarningHorizon`
+    * after each warning ends, outside every warning.  A warning whose horizon runs past the path is
+    * not counted, nor is an all-clear session without a horizon. */
+  private[apps] def warningCounts(held: Array[Double], sp: Vector[DdSpan]): (Int, Int, Int, Int) =
+    val n = held.length
+    val h = WarningHorizon
+    val top = held.map(v => v.isFinite && v >= 0.90)
+    val warns = Vector.newBuilder[(Int, Int)]
+    var last: Option[(Int, Int)] = None
+    var t = 0
+    while t < n do
+      if top(t) then
+        val start = t
+        while t < n && top(t) do t += 1
+        last = last match
+          case Some((s0, e0)) if start - e0 - 1 < WarningMerge => Some((s0, t - 1))
+          case prev =>
+            prev.foreach(warns += _)
+            Some((start, t - 1))
+      else t += 1
+    last.foreach(warns += _)
+    val peaks = sp.map(s => math.max(s.lo - 1, 0))
+    val ahead = new Array[Boolean](n)
+    for b <- peaks do
+      var k = math.max(b - h, 0)
+      while k < b do
+        ahead(k) = true
+        k += 1
+    var warnings = 0; var falseAlarms = 0; var clearHits = 0; var clearN = 0
+    for (start, end) <- warns.result() if end + h < n do
+      warnings += 1
+      if !peaks.exists(b => b >= start && b <= end + h) then falseAlarms += 1
+      var u = end + 1
+      while u <= end + h do
+        if !top(u) && held(u).isFinite && u + h < n then
+          clearN += 1
+          if ahead(u) then clearHits += 1
+        u += 1
+    (warnings, falseAlarms, clearHits, clearN)
 
   /** The rank rule a consumer's vote reads: the member's trailing-`win` percentile rank, the
     * share of the window (this reading included) at or below it; NaN until the window fills. */
@@ -6054,7 +6111,7 @@ object MarketSim:
                 rankMember(m.output)),
          inv.count(identity).toDouble / inv.length, runLengths(inv),
          if dOk.isEmpty then Double.NaN else dOk.sum / dOk.length,
-         r2Of(lIv, lRv), hz)
+         r2Of(lIv, lRv), hz, warningCounts(condHeld, spans))
       }
       // the hazards, pooled: (sum of hits in the top decile / its sessions) over (the same over
       // every session); NaN where nothing qualified
@@ -6091,6 +6148,10 @@ object MarketSim:
         if nTop > 0 && nAll > 0 && hitAll > 0 then (hitTop.toDouble / nTop) / (hitAll.toDouble / nAll)
         else Double.NaN
       })
+      // the warnings, pooled the hazard's way: counts over every path, then the ratios
+      val (wn, wf, wh, wc) = per.map(_._7).foldLeft((0, 0, 0, 0)) { case ((a, b, c, d), (e, f, g, h)) =>
+        (a + e, b + f, c + g, d + h) }
+      val p20q = hazardRatio(0)._2
       Some(MacroStats(members, medOf(per.map(_._2)),
                       if spells.isEmpty then Double.NaN else spells.sum.toDouble / spells.size,
                       medOf(per.map(_._4)), medOf(per.map(_._5)),
@@ -6098,7 +6159,9 @@ object MarketSim:
                       memberSpread, spreadOf(per.map(_._2)), spreadOf(per.map(_._4)),
                       spreadOf(per.map(_._5)), hazardSpread,
                       sims.head.macroPanel.get.sibling,
-                      hazardRatio(0)._1, hazardRatio(1)._1, hazardRatio(2)._1, hazardRatio(0)._2))
+                      hazardRatio(0)._1, hazardRatio(1)._1, hazardRatio(2)._1, p20q,
+                      wn, if wn > 0 then wf.toDouble / wn else Double.NaN,
+                      if wc > 0 && p20q > 0.0 then wh.toDouble / wc / p20q else Double.NaN))
 
   final case class WorldStats(vol: Double, kurt: Double, ac1: Double, ac20: Double,
                               // THE TYPICAL YEAR (item 24): the median calendar-year vol, the
@@ -7552,9 +7615,9 @@ object MarketSim:
     RecordBand("rate floor share %", 14.565588,
       Vector(2.507453, 6.30856, 8.50724, 9.774276, 10.642036, 11.355409, 11.983603, 12.537266, 13.074957, 13.575383, 14.086457, 14.576235, 15.044719, 15.561116, 16.072189, 16.615204, 17.243399, 17.908859, 18.728705, 19.734881, 21.268101, 24.382453, 31.079642),
       0.497075, (5.030877, 26.091354)),
-    RecordBand("bond depth vs vol", 1.029057,
-      Vector(0.144525, 0.471083, 0.647434, 0.752934, 0.82832, 0.889519, 0.948797, 1.000965, 1.050809, 1.094922, 1.139143, 1.183327, 1.226545, 1.273317, 1.323438, 1.375117, 1.435519, 1.499503, 1.570601, 1.657599, 1.785306, 1.965568, 2.304313),
-      0.497225, (0.372218, 2.074475)),
+    RecordBand("bond depth vs vol", 1.029058,
+      Vector(0.144525, 0.471084, 0.647434, 0.752934, 0.828321, 0.88952, 0.948798, 1.000965, 1.050809, 1.094922, 1.139144, 1.183328, 1.226545, 1.27332, 1.323439, 1.375117, 1.435521, 1.499504, 1.570602, 1.657597, 1.785308, 1.965573, 2.304314),
+      0.497225, (0.372219, 2.074475)),
     RecordBand("post-trough rate %", 4.224745,
       Vector(2.144602, 2.942697, 3.360528, 3.582556, 3.73377, 3.85856, 3.966475, 4.054824, 4.145714, 4.228515, 4.307179, 4.388629, 4.468837, 4.552457, 4.63954, 4.733537, 4.833045, 4.944309, 5.084584, 5.256703, 5.541803, 6.066292, 7.49054),
       0.496975, (2.702012, 6.481711)),
@@ -7572,59 +7635,59 @@ object MarketSim:
     * 1999-03-11..2026-08-20. */
   val RecordBandsNasdaq: Vector[RecordBand] = Vector(
     RecordBand("equity vol %", 26.901577,
-      Vector(16.978047, 20.483348, 22.226065, 23.163107, 23.809259, 24.323458, 24.768747, 25.18708, 25.575214, 25.933833, 26.295109, 26.644488, 27.006345, 27.360215, 27.761212, 28.142, 28.557865, 29.048477, 29.609975, 30.314636, 31.408602, 33.344443, 38.171744),
-      0.495775, (19.850093, 34.191968)),
-    RecordBand("typical-year vol %", 19.966715,
-      Vector(13.846252, 16.530688, 17.397075, 17.811595, 18.258322, 18.684506, 18.960346, 19.291191, 19.432684, 19.564056, 19.701465, 19.854891, 19.941719, 20.137238, 20.45154, 20.913609, 21.279249, 21.646618, 22.343644, 22.857755, 23.44498, 24.674651, 34.834227),
-      0.495775, (16.084733, 26.455213)),
+      Vector(16.978037, 20.483349, 22.226065, 23.163097, 23.809253, 24.323456, 24.76874, 25.187079, 25.575208, 25.933828, 26.295105, 26.644481, 27.006345, 27.360214, 27.76121, 28.142004, 28.55787, 29.048477, 29.609973, 30.314645, 31.4086, 33.34445, 38.171757),
+      0.495725, (19.878626, 34.181884)),
+    RecordBand("typical-year vol %", 19.966713,
+      Vector(13.846234, 16.530707, 17.397078, 17.811599, 18.258337, 18.68451, 18.960351, 19.291152, 19.432688, 19.564064, 19.701482, 19.854883, 19.941735, 20.137221, 20.451535, 20.913599, 21.279221, 21.646616, 22.343636, 22.857745, 23.444964, 24.674639, 34.834256),
+      0.495725, (16.088202, 26.384206)),
     RecordBand("return per vol", 0.380553,
       Vector(-0.403388, -0.12989, 0.005006, 0.082489, 0.131686, 0.172962, 0.208764, 0.243087, 0.272005, 0.298493, 0.32861, 0.356969, 0.387892, 0.41683, 0.447033, 0.480692, 0.515387, 0.552254, 0.597192, 0.653093, 0.741078, 0.899654, 1.220561),
-      0.495775, (-0.176345, 0.964258)),
-    RecordBand("kurtosis", 9.554069,
-      Vector(4.711033, 6.775459, 7.594679, 7.971117, 8.252677, 8.487016, 8.688466, 8.854247, 9.015825, 9.168515, 9.321957, 9.484207, 9.639491, 9.806465, 9.972342, 10.149984, 10.336813, 10.564895, 10.82796, 11.171723, 11.720816, 12.73469, 16.207453),
-      0.495775, (6.320988, 13.262918)),
-    RecordBand("clustering lag 1", 0.29277,
-      Vector(0.105963, 0.200378, 0.232372, 0.24657, 0.255755, 0.262517, 0.268262, 0.272928, 0.277223, 0.281235, 0.285201, 0.288836, 0.292467, 0.29587, 0.299372, 0.30321, 0.307276, 0.311634, 0.316689, 0.322959, 0.332084, 0.349405, 0.393203),
-      0.495775, (0.182685, 0.356158)),
-    RecordBand("clustering lag 20", 0.248803,
-      Vector(0.046058, 0.124548, 0.160759, 0.177523, 0.18792, 0.195603, 0.201787, 0.207376, 0.212243, 0.216785, 0.220706, 0.224759, 0.228608, 0.232376, 0.236302, 0.240176, 0.244481, 0.24902, 0.254205, 0.260078, 0.268727, 0.284755, 0.335159),
-      0.495775, (0.107942, 0.292101)),
+      0.495725, (-0.17495, 0.963577)),
+    RecordBand("kurtosis", 9.55407,
+      Vector(4.711036, 6.775437, 7.594671, 7.971104, 8.252674, 8.487022, 8.688472, 8.854258, 9.015805, 9.168505, 9.321964, 9.484194, 9.639484, 9.806452, 9.972343, 10.150002, 10.33683, 10.564881, 10.827992, 11.171733, 11.720846, 12.734709, 16.207478),
+      0.495725, (6.32246, 13.26027)),
+    RecordBand("clustering lag 1", 0.292768,
+      Vector(0.105961, 0.200377, 0.23237, 0.246569, 0.255754, 0.262515, 0.26826, 0.272927, 0.277222, 0.281234, 0.285201, 0.288836, 0.292466, 0.295868, 0.29937, 0.303208, 0.307275, 0.311632, 0.316687, 0.322957, 0.332082, 0.349404, 0.3932),
+      0.495725, (0.18275, 0.355992)),
+    RecordBand("clustering lag 20", 0.248802,
+      Vector(0.046058, 0.124547, 0.160758, 0.177522, 0.18792, 0.195602, 0.201786, 0.207376, 0.212243, 0.216783, 0.220706, 0.224758, 0.228607, 0.232376, 0.236301, 0.240175, 0.24448, 0.249019, 0.254204, 0.260077, 0.268726, 0.284754, 0.335159),
+      0.495725, (0.108076, 0.292081)),
     RecordBand("variance ratio 60d", 0.831558,
-      Vector(0.514834, 0.632326, 0.689445, 0.719287, 0.739068, 0.754811, 0.768352, 0.778939, 0.789056, 0.798778, 0.8083, 0.81691, 0.825511, 0.834846, 0.844108, 0.85396, 0.864269, 0.875894, 0.889135, 0.906583, 0.931117, 0.982527, 1.086121),
-      0.495775, (0.604932, 1.000927)),
-    RecordBand("downside vol excess %", 1.072223,
-      Vector(-8.375022, -3.473217, -1.911703, -1.065323, -0.514075, -0.10874, 0.247915, 0.554157, 0.83595, 1.092732, 1.361124, 1.615989, 1.863066, 2.119029, 2.363603, 2.629444, 2.909271, 3.216147, 3.553364, 3.997832, 4.626134, 5.727797, 8.339008),
-      0.495775, (-4.142547, 6.169085)),
+      Vector(0.514834, 0.632326, 0.689445, 0.719287, 0.739068, 0.754811, 0.768353, 0.77894, 0.789056, 0.798778, 0.808301, 0.816911, 0.825511, 0.834846, 0.844107, 0.853961, 0.86427, 0.875894, 0.889136, 0.906583, 0.931117, 0.982527, 1.086122),
+      0.495725, (0.605084, 1.000813)),
+    RecordBand("downside vol excess %", 1.072263,
+      Vector(-8.374944, -3.473147, -1.911654, -1.06529, -0.514035, -0.108654, 0.247952, 0.554233, 0.836026, 1.092757, 1.361141, 1.615962, 1.863145, 2.119078, 2.363652, 2.62949, 2.909283, 3.216184, 3.553394, 3.997823, 4.626175, 5.727861, 8.339009),
+      0.495725, (-4.14177, 6.160916)),
     RecordBand("up-day share %", 54.777163,
       Vector(50.86798, 52.901721, 53.463614, 53.77441, 53.982816, 54.143003, 54.283217, 54.407693, 54.521625, 54.631518, 54.740061, 54.840588, 54.944574, 55.048812, 55.155316, 55.270821, 55.395579, 55.526431, 55.678509, 55.874636, 56.166181, 56.691423, 58.06686),
-      0.495775, (52.613951, 56.905836)),
+      0.495725, (52.614712, 56.90407)),
     RecordBand("leverage corr", -0.107111,
-      Vector(-0.195601, -0.165954, -0.148922, -0.139764, -0.133214, -0.128037, -0.123638, -0.119485, -0.115678, -0.111994, -0.108432, -0.104824, -0.101165, -0.097354, -0.093575, -0.089341, -0.084973, -0.080282, -0.074603, -0.067438, -0.05678, -0.037189, 0.001315),
-      0.495775, (-0.17272, -0.028122)),
+      Vector(-0.195599, -0.165953, -0.148921, -0.139763, -0.133214, -0.128036, -0.123638, -0.119485, -0.115678, -0.111994, -0.10843, -0.104824, -0.101165, -0.097354, -0.093575, -0.089341, -0.084974, -0.080282, -0.074603, -0.067438, -0.05678, -0.037189, 0.001314),
+      0.495725, (-0.172497, -0.02826)),
     RecordBand("crashes/century", 25.550406,
       Vector(3.650058, 3.650058, 10.950174, 18.25029, 18.25029, 21.900348, 25.550406, 25.550406, 29.200463, 29.200463, 32.850521, 32.850521, 32.850521, 36.500579, 36.500579, 40.150637, 40.150637, 43.800695, 43.800695, 47.450753, 51.100811, 58.400927, 73.001159),
-      0.495775, (3.650058, 62.050985)),
-    RecordBand("median depth %", -22.796671,
-      Vector(-98.929999, -79.792922, -49.366815, -36.464957, -32.654551, -28.633866, -28.559349, -28.469599, -25.233404, -24.944541, -23.318058, -22.796671, -22.796671, -22.7683, -22.7683, -21.764737, -21.285594, -19.54298, -18.285694, -17.266643, -16.10439, -15.859033, -15.000029),
-      0.495775, (-92.109019, -15.609315)),
-    RecordBand("vol-timing edge pts/yr", 1.395702,
-      Vector(-14.811461, -8.480341, -5.848033, -4.342122, -3.257243, -2.361273, -1.583315, -0.849834, -0.175065, 0.486265, 1.140094, 1.79515, 2.425237, 3.054484, 3.715401, 4.420316, 5.18801, 5.99233, 6.891132, 8.008388, 9.509201, 12.319534, 17.678657),
-      0.495775, (-9.665527, 13.630702)),
+      0.495725, (3.650058, 62.050985)),
+    RecordBand("median depth %", -22.796651,
+      Vector(-98.929999, -79.792945, -49.366832, -36.464964, -32.654502, -28.633858, -28.559365, -28.469611, -25.233363, -24.94457, -23.318045, -22.796651, -22.796651, -22.768316, -22.768316, -21.764667, -21.285608, -19.542987, -18.28574, -17.266635, -16.104397, -15.859029, -15.000011),
+      0.495725, (-91.880815, -15.609339)),
+    RecordBand("vol-timing edge pts/yr", 1.395705,
+      Vector(-14.811454, -8.48034, -5.848031, -4.339258, -3.257247, -2.36127, -1.583319, -0.851476, -0.174089, 0.48625, 1.140594, 1.79466, 2.425241, 3.054477, 3.715402, 4.420323, 5.188017, 5.991625, 6.892016, 8.00839, 9.509209, 12.319545, 17.678661),
+      0.495725, (-9.663157, 13.628378)),
     RecordBand("variance ratio 120d", 0.923272,
-      Vector(0.382528, 0.541004, 0.633353, 0.688093, 0.723495, 0.750007, 0.773775, 0.79578, 0.814282, 0.831841, 0.849016, 0.865292, 0.882173, 0.899942, 0.916732, 0.934868, 0.953161, 0.974375, 0.999842, 1.030191, 1.075804, 1.1611, 1.335886),
-      0.495775, (0.501251, 1.194677)),
+      Vector(0.382528, 0.541003, 0.633352, 0.688093, 0.723496, 0.750007, 0.773776, 0.795781, 0.814282, 0.831841, 0.849017, 0.865293, 0.882173, 0.899942, 0.916731, 0.934867, 0.953161, 0.974375, 0.999842, 1.030191, 1.075804, 1.1611, 1.335886),
+      0.495725, (0.501397, 1.193725)),
     RecordBand("variance ratio 250d", 1.106648,
-      Vector(0.322401, 0.481016, 0.602653, 0.674201, 0.72305, 0.761262, 0.794593, 0.823583, 0.852795, 0.880536, 0.907209, 0.934726, 0.960711, 0.989173, 1.017197, 1.048521, 1.08214, 1.121155, 1.166465, 1.225195, 1.317713, 1.487675, 1.877279),
-      0.495775, (0.436192, 1.575484)),
+      Vector(0.322401, 0.481016, 0.602654, 0.674201, 0.72305, 0.761262, 0.794594, 0.823584, 0.852794, 0.880536, 0.90721, 0.934726, 0.960711, 0.989172, 1.017198, 1.048521, 1.08214, 1.121157, 1.166464, 1.225195, 1.317712, 1.487674, 1.877279),
+      0.495725, (0.436483, 1.575381)),
     RecordBand("short rate %", 2.136466,
       Vector(0.776798, 1.235883, 1.463321, 1.590816, 1.672375, 1.741374, 1.802569, 1.855851, 1.905629, 1.953942, 1.997838, 2.04316, 2.090443, 2.138789, 2.189316, 2.242692, 2.300256, 2.364969, 2.440335, 2.535389, 2.677798, 2.958886, 3.576963),
       0.496725, (1.09943, 3.120816)),
     RecordBand("rate floor share %", 37.313224,
       Vector(5.962854, 19.061584, 24.66136, 27.761486, 29.828236, 31.490015, 32.900433, 34.171205, 35.35819, 36.475353, 37.60648, 38.709677, 39.743053, 40.860215, 42.019271, 43.178327, 44.477028, 45.971233, 47.674906, 49.78355, 52.981427, 59.460969, 75.715682),
       0.496725, (16.073174, 62.575059)),
-    RecordBand("bond depth vs vol", 1.029057,
-      Vector(0.144525, 0.471083, 0.647434, 0.752934, 0.82832, 0.889519, 0.948797, 1.000965, 1.050809, 1.094922, 1.139143, 1.183327, 1.226545, 1.273317, 1.323438, 1.375117, 1.435519, 1.499503, 1.570601, 1.657599, 1.785306, 1.965568, 2.304313),
-      0.497225, (0.372218, 2.074475)),
+    RecordBand("bond depth vs vol", 1.029058,
+      Vector(0.144525, 0.471084, 0.647434, 0.752934, 0.828321, 0.88952, 0.948798, 1.000965, 1.050809, 1.094922, 1.139144, 1.183328, 1.226545, 1.27332, 1.323439, 1.375117, 1.435521, 1.499504, 1.570602, 1.657597, 1.785308, 1.965573, 2.304314),
+      0.497225, (0.372219, 2.074475)),
     RecordBand("post-trough rate %", 2.381665,
       Vector(0.076667, 0.542868, 0.969619, 1.204042, 1.350615, 1.47125, 1.572957, 1.661881, 1.737877, 1.823357, 1.897781, 1.970781, 2.044314, 2.122868, 2.204282, 2.29558, 2.391973, 2.50025, 2.632432, 2.79433, 3.062561, 3.625339, 5.289821),
       0.496525, (0.312149, 3.971964)),
@@ -7667,7 +7730,7 @@ object MarketSim:
     rateFloor = 14.565588, rateFloorSd = 0.27,
     postRate = 4.224745, postRateSd = 0.15,
     postFloor = 15.195221, postFloorSd = 0.46,
-    bondWindow = "clean TLT, 24y", bondYears = 24, bondDepth = 1.029057,
+    bondWindow = "clean TLT, 24y", bondYears = 24, bondDepth = 1.029058,
     vol = 16.0,          volSd = 0.12,
     // CRSP 1954-2026 over all 252 block phases (`recordbands-2026-09-26.tsv`): 12.48, where
     // calendar years read 12.87 (`yearvol-2026-09-15.tsv`, w1954); the S&P index's own daily
@@ -7771,7 +7834,7 @@ object MarketSim:
     rateFloor = 37.313224, rateFloorSd = 0.68,
     postRate = 2.381665, postRateSd = 0.38,
     postFloor = 23.358002, postFloorSd = 0.65,
-    bondWindow = "clean TLT, 24y", bondYears = 24, bondDepth = 1.029057,
+    bondWindow = "clean TLT, 24y", bondYears = 24, bondDepth = 1.029058,
     vol = 26.90,         volSd = 0.18,
     // QQQ 1999-2026 over all 252 block phases (`recordbands-2026-09-26.tsv`): 19.97, where calendar
     // years read 18.26 (`yearvol-2026-09-15.tsv`, w1999) -- the bottom of the 18.2-21.5 phase range.
@@ -7794,7 +7857,7 @@ object MarketSim:
     semiExcess = 1.13, semiExcessSd = 3.28,
     // QQQ 1999-2026: 54.78% of moving sessions rise
     upShare = 54.8, upShareSd = 0.02,
-    volTiming = 1.395702, volTimingSd = 2.22, volTimingJudgment = 3.0,
+    volTiming = 1.395705, volTimingSd = 2.22, volTimingJudgment = 3.0,
     levCorr = -0.1073, levCorrSd = 0.36,
     tailHedge = -0.236, tailHedgeSd = 0.51,
     wingUp = 7.6, wingUpSd = 0.90, wingDown = 6.7, wingDownSd = 0.98,
@@ -12176,7 +12239,8 @@ object MarketSim:
       }
       s"""    "macro": { "null": ${ms.sibling}, "episodes": ${ms.episodes}, "invShare": ${num(ms.invShare)}, "invDur": ${num(ms.invDur)}, """ +
       s""""vrp": ${num(ms.vrp)}, "r2rv": ${num(ms.r2rv)}, "hazard20q": ${num(ms.hazard20q)}, "hazard20y": ${num(ms.hazard20y)}, """ +
-      s""""hazard10q": ${num(ms.hazard10q)}, "p20q": ${num(ms.p20q)},\n""" +
+      s""""hazard10q": ${num(ms.hazard10q)}, "p20q": ${num(ms.p20q)}, "warnings": ${ms.warnings}, """ +
+      s""""falseAlarm": ${num(ms.falseAlarm)}, "allClear": ${num(ms.allClear)},\n""" +
       s"""      "perPath": { "invShare": ${sp(ms.invShareSpread)}, "vrp": ${sp(ms.vrpSpread)}, "r2rv": ${sp(ms.r2rvSpread)}, "hazard20q": ${sp(ms.hazardSpread)} },\n""" +
       s"""      "members": [\n""" +
       members.mkString(",\n") + "\n      ] }"
@@ -13426,7 +13490,7 @@ $body
     val eraK = vr250EraOf(anchors.vr250Eras, st.yearsPerPath)
     if !st.vr250RecordPcts(eraK).isNaN then
       val (era, eraYears, record) = VarRatio250Eras(eraK)
-      println(f"                         250d on these paths: the set's record nearest their length, $era $record%.3f, at record@ ${st.vr250RecordPcts(eraK)}%.0f%% of ${eraYears}-year histories")
+      println(f"                         250d on these paths: the set's record nearest their length, $era $record%.3f, at record@ ${st.vr250RecordPcts(eraK)}%.0f%% of ${if eraYears.isWhole then eraYears.toLong.toString else eraYears.toString}-year histories")
     println()
     println(f"  drawdowns of 15%%+      ${st.nEpisodes}%d, ${st.epPerPath}%.1f per path; ${st.censored}%d unrecovered at path end (included in depth)")
     println(f"  their depth            median ${st.depthMed}%6.1f%%   worst ${st.worstDepth}%6.1f%%")
@@ -13472,6 +13536,7 @@ $body
         val m = ms.members(j)
         println(f"    ${MacroK.Columns(j)}%-12s ${m.ac1}%7.4f ${m.acK}%7.4f ${m.r2fwd60}%8.4f ${m.warn}%7.3f ${m.warnFired}%6.2f ${m.lag}%5.0f ${m.lag10}%6.0f ${m.fired10}%8.2f ${m.prePeak}%5.2f ${m.lvl10}%8.2f ${m.lvl50}%8.2f ${m.lvl90}%8.2f")
       println(f"    leverage hazard        20%% peak within a quarter x${ms.hazard20q}%.2f (unconditional ${ms.p20q}%.3f)   within a year x${ms.hazard20y}%.2f   10%% within a quarter x${ms.hazard10q}%.2f")
+      println(f"    leverage warnings      ${ms.warnings}%d warnings, false alarms ${100.0 * ms.falseAlarm}%.1f%% (no 20%% peak by a quarter after it ends)   all-clear x${ms.allClear}%.2f (the quarter after one ends)")
       println(f"    per path (p5 / p50 / p95)  hazard x${ms.hazardSpread.p5}%.2f / ${ms.hazardSpread.p50}%.2f / ${ms.hazardSpread.p95}%.2f   slope inverted ${ms.invShareSpread.p5}%.2f / ${ms.invShareSpread.p50}%.2f / ${ms.invShareSpread.p95}%.2f   cond r2fwd60 ${ms.memberSpread(2)._1.p5}%.3f / ${ms.memberSpread(2)._1.p50}%.3f / ${ms.memberSpread(2)._1.p95}%.3f   cond build-up ${ms.memberSpread(2)._2.p5}%.2f / ${ms.memberSpread(2)._2.p50}%.2f / ${ms.memberSpread(2)._2.p95}%.2f")
       println(f"    slope inverted         share ${ms.invShare}%.3f   mean spell ${ms.invDur}%.1f sessions")
       println(f"    ivol premium           vrp ${ms.vrp}%.3f (log)   r2 vs forward realized ${ms.r2rv}%.3f")
